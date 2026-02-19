@@ -1,0 +1,50 @@
+{
+  "name": "@manifest-network/manifest-mcp-core",
+  "version": "0.1.0",
+  "description": "Transport-agnostic MCP server core for Cosmos SDK blockchain interactions with Manifest Network",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "type": "module",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "dev": "tsc --watch",
+    "lint": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "keywords": [
+    "mcp",
+    "cosmos",
+    "cosmjs",
+    "blockchain",
+    "manifest"
+  ],
+  "author": "Felix C. Morency",
+  "license": "MIT",
+  "files": [
+    "dist"
+  ],
+  "dependencies": {
+    "@cosmjs/encoding": "0.32.4",
+    "@cosmjs/proto-signing": "0.32.4",
+    "@cosmjs/stargate": "npm:@manifest-network/stargate@0.32.4-ll.3",
+    "@manifest-network/manifestjs": "2.2.0-billing-v2.3",
+    "@modelcontextprotocol/sdk": "1.25.3",
+    "limiter": "3.0.0"
+  },
+  "overrides": {
+    "@cosmjs/stargate": "npm:@manifest-network/stargate@0.32.4-ll.3",
+    "axios": "1.13.2"
+  },
+  "devDependencies": {
+    "@types/node": "20.19.30",
+    "typescript": "5.9.3",
+    "vitest": "4.0.18"
+  }
+}

@@ -1,0 +1,38 @@
+{
+  "name": "@manifest-network/manifest-mcp-node",
+  "version": "0.1.0",
+  "description": "Node.js MCP server for Manifest Network with stdio transport and keyfile wallet",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "type": "module",
+  "bin": {
+    "manifest-mcp-node": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "dev": "tsc -p tsconfig.build.json && node dist/index.js",
+    "start": "node dist/index.js",
+    "lint": "tsc --noEmit"
+  },
+  "keywords": [
+    "mcp",
+    "cosmos",
+    "blockchain",
+    "manifest",
+    "stdio"
+  ],
+  "author": "Felix C. Morency",
+  "license": "MIT",
+  "files": [
+    "dist"
+  ],
+  "dependencies": {
+    "@manifest-network/manifest-mcp-core": "*",
+    "@modelcontextprotocol/sdk": "1.25.3",
+    "dotenv": "^17.2.3"
+  },
+  "devDependencies": {
+    "@types/node": "20.19.30",
+    "typescript": "5.9.3"
+  }
+}
