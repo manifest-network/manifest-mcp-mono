@@ -1,3 +1,5 @@
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -7,7 +9,9 @@ export interface NodeMCPConfig {
   readonly rpcUrl: string;
   readonly gasPrice: string;
   readonly addressPrefix: string;
-  readonly mnemonic: string;
+  readonly mnemonic?: string;
+  readonly keyfilePath: string;
+  readonly keyPassword?: string;
 }
 
 function getEnvRequired(key: string): string {
@@ -24,12 +28,28 @@ function getEnvOptional(key: string, defaultValue: string): string {
   return process.env[key] || defaultValue;
 }
 
+function resolvePath(p: string): string {
+  if (p.startsWith('~/')) {
+    return join(homedir(), p.slice(2));
+  }
+  return p;
+}
+
+export function loadKeyfileConfig(): Pick<NodeMCPConfig, 'addressPrefix' | 'keyfilePath'> {
+  return {
+    addressPrefix: getEnvOptional('COSMOS_ADDRESS_PREFIX', 'manifest'),
+    keyfilePath: resolvePath(getEnvOptional('MANIFEST_KEY_FILE', join(homedir(), '.manifest', 'key.json'))),
+  };
+}
+
 export function loadConfig(): NodeMCPConfig {
   return {
     chainId: getEnvRequired('COSMOS_CHAIN_ID'),
     rpcUrl: getEnvRequired('COSMOS_RPC_URL'),
     gasPrice: getEnvRequired('COSMOS_GAS_PRICE'),
     addressPrefix: getEnvOptional('COSMOS_ADDRESS_PREFIX', 'manifest'),
-    mnemonic: getEnvRequired('COSMOS_MNEMONIC'),
+    mnemonic: process.env['COSMOS_MNEMONIC'],
+    keyfilePath: resolvePath(getEnvOptional('MANIFEST_KEY_FILE', join(homedir(), '.manifest', 'key.json'))),
+    keyPassword: process.env['MANIFEST_KEY_PASSWORD'],
   };
 }
