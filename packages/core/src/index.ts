@@ -34,6 +34,13 @@ const SENSITIVE_FIELDS = new Set([
 ]);
 
 /**
+ * JSON replacer that converts BigInt values to strings
+ */
+function bigIntReplacer(_key: string, value: unknown): unknown {
+  return typeof value === 'bigint' ? value.toString() : value;
+}
+
+/**
  * Parse raw args input into string array.
  */
 function parseArgs(rawArgs: unknown): string[] {
@@ -273,7 +280,7 @@ export class ManifestMCPServer {
           content: [
             {
               type: 'text',
-              text: JSON.stringify(errorResponse, null, 2),
+              text: JSON.stringify(errorResponse, bigIntReplacer, 2),
             },
           ],
           isError: true,
@@ -323,7 +330,7 @@ export class ManifestMCPServer {
           content: [
             {
               type: 'text',
-              text: JSON.stringify(result, null, 2),
+              text: JSON.stringify(result, bigIntReplacer, 2),
             },
           ],
         };
@@ -354,7 +361,7 @@ export class ManifestMCPServer {
           content: [
             {
               type: 'text',
-              text: JSON.stringify(result, null, 2),
+              text: JSON.stringify(result, bigIntReplacer, 2),
             },
           ],
         };
