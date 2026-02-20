@@ -112,9 +112,9 @@ export { InMemoryAppRegistry } from './registry.js';
 export { ProviderApiError } from './http/provider.js';
 
 /**
- * Tool definitions for the MCP server
+ * Base tools always available (chain interaction + read-only composites)
  */
-const tools: Tool[] = [
+const BASE_TOOLS: Tool[] = [
   {
     name: 'get_account_info',
     description: 'Get account address and key name for the configured key',
@@ -231,6 +231,12 @@ const tools: Tool[] = [
       required: [],
     },
   },
+];
+
+/**
+ * App-management tools that require an AppRegistry
+ */
+const APP_TOOLS: Tool[] = [
   {
     name: 'list_apps',
     description:
@@ -277,6 +283,36 @@ const tools: Tool[] = [
   },
 ];
 
+function requireString(
+  input: Record<string, unknown>,
+  field: string,
+  errorCode: ManifestMCPErrorCode = ManifestMCPErrorCode.QUERY_FAILED,
+): string {
+  const val = input[field];
+  if (typeof val !== 'string' || val.length === 0) {
+    throw new ManifestMCPError(
+      errorCode,
+      `${field} is required and must be a non-empty string`,
+    );
+  }
+  return val;
+}
+
+function requireStringEnum<T extends string>(
+  input: Record<string, unknown>,
+  field: string,
+  allowed: T[],
+): T {
+  const val = requireString(input, field);
+  if (!allowed.includes(val as T)) {
+    throw new ManifestMCPError(
+      ManifestMCPErrorCode.QUERY_FAILED,
+      `${field} must be one of: ${allowed.join(', ')}`,
+    );
+  }
+  return val as T;
+}
+
 /**
  * Options for creating a ManifestMCPServer
  */
@@ -295,12 +331,16 @@ export class ManifestMCPServer {
   private walletProvider: WalletProvider;
   private appRegistry: AppRegistry | undefined;
   private config: ManifestMCPConfig;
+  private tools: Tool[];
 
   constructor(options: ManifestMCPServerOptions) {
     this.config = createValidatedConfig(options.config);
     this.walletProvider = options.walletProvider;
     this.appRegistry = options.appRegistry;
     this.clientManager = CosmosClientManager.getInstance(this.config, this.walletProvider);
+    this.tools = this.appRegistry
+      ? [...BASE_TOOLS, ...APP_TOOLS]
+      : [...BASE_TOOLS];
 
     this.server = new Server(
       {
@@ -322,7 +362,7 @@ export class ManifestMCPServer {
    */
   private setupHandlers(): void {
     this.server.setRequestHandler(ListToolsRequestSchema, async () => ({
-      tools,
+      tools: this.tools,
     }));
 
     this.server.setRequestHandler(CallToolRequestSchema, async (request) => {
@@ -390,16 +430,9 @@ export class ManifestMCPServer {
       }
 
       case 'cosmos_query': {
-        const module = toolInput.module as string;
-        const subcommand = toolInput.subcommand as string;
+        const module = requireString(toolInput, 'module');
+        const subcommand = requireString(toolInput, 'subcommand');
         const args = parseArgs(toolInput.args);
-
-        if (!module || !subcommand) {
-          throw new ManifestMCPError(
-            ManifestMCPErrorCode.QUERY_FAILED,
-            'module and subcommand are required'
-          );
-        }
 
         const result = await cosmosQuery(this.clientManager, module, subcommand, args);
 
@@ -414,17 +447,10 @@ export class ManifestMCPServer {
       }
 
       case 'cosmos_tx': {
-        const module = toolInput.module as string;
-        const subcommand = toolInput.subcommand as string;
+        const module = requireString(toolInput, 'module', ManifestMCPErrorCode.TX_FAILED);
+        const subcommand = requireString(toolInput, 'subcommand', ManifestMCPErrorCode.TX_FAILED);
         const args = parseArgs(toolInput.args);
         const waitForConfirmation = (toolInput.wait_for_confirmation as boolean) || false;
-
-        if (!module || !subcommand) {
-          throw new ManifestMCPError(
-            ManifestMCPErrorCode.TX_FAILED,
-            'module and subcommand are required'
-          );
-        }
 
         const result = await cosmosTx(
           this.clientManager,
@@ -457,24 +483,10 @@ export class ManifestMCPServer {
       }
 
       case 'list_module_subcommands': {
-        const type = toolInput.type as string;
-        const module = toolInput.module as string;
+        const type = requireStringEnum(toolInput, 'type', ['query', 'tx'] as const);
+        const module = requireString(toolInput, 'module');
 
-        if (!type || !module) {
-          throw new ManifestMCPError(
-            ManifestMCPErrorCode.QUERY_FAILED,
-            'type and module are required'
-          );
-        }
-
-        if (type !== 'query' && type !== 'tx') {
-          throw new ManifestMCPError(
-            ManifestMCPErrorCode.QUERY_FAILED,
-            'type must be either "query" or "tx"'
-          );
-        }
-
-        const subcommands = getModuleSubcommands(type as 'query' | 'tx', module);
+        const subcommands = getModuleSubcommands(type, module);
         return {
           content: [
             {
@@ -547,13 +559,7 @@ export class ManifestMCPServer {
             'App registry is not configured. Pass appRegistry in ManifestMCPServerOptions.'
           );
         }
-        const name = toolInput.name as string;
-        if (!name) {
-          throw new ManifestMCPError(
-            ManifestMCPErrorCode.QUERY_FAILED,
-            'name is required'
-          );
-        }
+        const name = requireString(toolInput, 'name');
         const address = await this.walletProvider.getAddress();
         const queryClient = await this.clientManager.getQueryClient();
         const result = await appStatus(
@@ -580,13 +586,7 @@ export class ManifestMCPServer {
             'App registry is not configured. Pass appRegistry in ManifestMCPServerOptions.'
           );
         }
-        const name = toolInput.name as string;
-        if (!name) {
-          throw new ManifestMCPError(
-            ManifestMCPErrorCode.QUERY_FAILED,
-            'name is required'
-          );
-        }
+        const name = requireString(toolInput, 'name');
         const rawTail = toolInput.tail;
         const tail = typeof rawTail === 'number' && Number.isFinite(rawTail) && rawTail > 0
           ? Math.floor(rawTail)

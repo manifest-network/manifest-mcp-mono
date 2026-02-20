@@ -9,8 +9,43 @@ export class ProviderApiError extends Error {
   }
 }
 
+const LOCALHOST_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]']);
+
+export function validateProviderUrl(url: string): string {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw new ProviderApiError(0, `Invalid provider URL: ${url}`);
+  }
+
+  if (parsed.protocol === 'https:') {
+    return url.replace(/\/+$/, '');
+  }
+
+  if (parsed.protocol === 'http:' && LOCALHOST_HOSTS.has(parsed.hostname)) {
+    return url.replace(/\/+$/, '');
+  }
+
+  throw new ProviderApiError(
+    0,
+    `Provider URL must use HTTPS (or HTTP for localhost): ${url}`,
+  );
+}
+
 export async function checkedFetch(url: string, init?: RequestInit): Promise<Response> {
-  const res = await fetch(url, init);
+  let res: Response;
+  try {
+    res = await fetch(url, init);
+  } catch (err) {
+    if (err instanceof DOMException && err.name === 'AbortError') {
+      throw err;
+    }
+    throw new ProviderApiError(
+      0,
+      `Network request to ${url} failed: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
   if (!res.ok) {
     const body = await res.text().catch(() => '');
     throw new ProviderApiError(res.status, body || `HTTP ${res.status}`);
@@ -40,12 +75,18 @@ export async function getProviderHealth(
   providerApiUrl: string,
   timeoutMs = 5_000,
 ): Promise<ProviderHealthResponse> {
-  const url = `${providerApiUrl}/health`;
+  const validated = validateProviderUrl(providerApiUrl);
+  const url = `${validated}/health`;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const res = await checkedFetch(url, { signal: controller.signal });
     return await parseJsonResponse<ProviderHealthResponse>(res, url);
+  } catch (err) {
+    if (err instanceof DOMException && err.name === 'AbortError') {
+      throw new ProviderApiError(0, `Provider health check timed out after ${timeoutMs}ms: ${url}`);
+    }
+    throw err;
   } finally {
     clearTimeout(timer);
   }
@@ -62,7 +103,8 @@ export async function getLeaseConnectionInfo(
   leaseUuid: string,
   authToken: string,
 ): Promise<LeaseConnectionInfo> {
-  const url = `${providerApiUrl}/lease/${leaseUuid}/connection`;
+  const validated = validateProviderUrl(providerApiUrl);
+  const url = `${validated}/lease/${leaseUuid}/connection`;
   const res = await checkedFetch(url, {
     headers: { Authorization: `Bearer ${authToken}` },
   });
@@ -75,7 +117,8 @@ export async function uploadLeaseData(
   payload: string,
   authToken: string,
 ): Promise<void> {
-  await checkedFetch(`${providerApiUrl}/lease/${leaseUuid}/data`, {
+  const validated = validateProviderUrl(providerApiUrl);
+  await checkedFetch(`${validated}/lease/${leaseUuid}/data`, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${authToken}`,

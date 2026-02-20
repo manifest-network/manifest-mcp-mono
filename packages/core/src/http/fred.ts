@@ -1,4 +1,4 @@
-import { ProviderApiError, checkedFetch, parseJsonResponse } from './provider.js';
+import { ProviderApiError, checkedFetch, parseJsonResponse, validateProviderUrl } from './provider.js';
 
 export interface FredLeaseStatus {
   readonly status: string;
@@ -10,7 +10,8 @@ export async function getLeaseStatus(
   leaseUuid: string,
   authToken: string,
 ): Promise<FredLeaseStatus> {
-  const url = `${providerUrl}/fred/lease/${leaseUuid}/status`;
+  const validated = validateProviderUrl(providerUrl);
+  const url = `${validated}/fred/lease/${leaseUuid}/status`;
   const res = await checkedFetch(url, {
     headers: { Authorization: `Bearer ${authToken}` },
   });
@@ -27,8 +28,9 @@ export async function getLeaseLogs(
   authToken: string,
   tail?: number,
 ): Promise<FredLeaseLogs> {
+  const validated = validateProviderUrl(providerUrl);
   const qs = tail !== undefined ? `?tail=${tail}` : '';
-  const url = `${providerUrl}/fred/lease/${leaseUuid}/logs${qs}`;
+  const url = `${validated}/fred/lease/${leaseUuid}/logs${qs}`;
   const res = await checkedFetch(url, {
     headers: { Authorization: `Bearer ${authToken}` },
   });
@@ -46,7 +48,8 @@ export async function getLeaseProvision(
   leaseUuid: string,
   authToken: string,
 ): Promise<FredLeaseProvision> {
-  const url = `${providerUrl}/fred/lease/${leaseUuid}/provision`;
+  const validated = validateProviderUrl(providerUrl);
+  const url = `${validated}/fred/lease/${leaseUuid}/provision`;
   const res = await checkedFetch(url, {
     headers: { Authorization: `Bearer ${authToken}` },
   });
@@ -62,7 +65,8 @@ export async function restartLease(
   leaseUuid: string,
   authToken: string,
 ): Promise<FredActionResponse> {
-  const url = `${providerUrl}/fred/lease/${leaseUuid}/restart`;
+  const validated = validateProviderUrl(providerUrl);
+  const url = `${validated}/fred/lease/${leaseUuid}/restart`;
   const res = await checkedFetch(url, {
     method: 'POST',
     headers: { Authorization: `Bearer ${authToken}` },
@@ -76,7 +80,8 @@ export async function updateLease(
   payload: string,
   authToken: string,
 ): Promise<FredActionResponse> {
-  const url = `${providerUrl}/fred/lease/${leaseUuid}/update`;
+  const validated = validateProviderUrl(providerUrl);
+  const url = `${validated}/fred/lease/${leaseUuid}/update`;
   const res = await checkedFetch(url, {
     method: 'POST',
     headers: {

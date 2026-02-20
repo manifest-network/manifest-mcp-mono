@@ -87,6 +87,23 @@ If you use a mnemonic instead of a keyfile, replace `MANIFEST_KEY_PASSWORD` with
 
 `COSMOS_CHAIN_ID`, `COSMOS_RPC_URL`, and `COSMOS_GAS_PRICE` are only required when starting the MCP server, not for `keygen` or `import`.
 
+## Available MCP tools
+
+The node package exposes all 10 tools (the core package advertises 7 base tools; the node package adds an app registry which enables the remaining 3):
+
+| Tool | Description |
+|------|-------------|
+| `get_account_info` | Get the address of the configured wallet |
+| `cosmos_query` | Execute any Cosmos SDK query (bank, staking, gov, etc.) |
+| `cosmos_tx` | Sign and broadcast any Cosmos SDK transaction |
+| `list_modules` | List all available query and transaction modules |
+| `list_module_subcommands` | List subcommands for a specific module |
+| `browse_catalog` | Browse available cloud providers and service tiers |
+| `get_balance` | Get account balances, credit status, and spending estimates |
+| `list_apps` | List all deployed apps for the current account |
+| `app_status` | Get detailed status for a deployed app by name |
+| `get_logs` | Get logs for a deployed app by name |
+
 ## License
 
 MIT
