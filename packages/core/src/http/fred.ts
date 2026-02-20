@@ -1,5 +1,7 @@
 import { ProviderApiError, checkedFetch, parseJsonResponse, validateProviderUrl } from './provider.js';
 
+const MAX_TAIL = 1000;
+
 export interface FredLeaseStatus {
   readonly status: string;
   readonly services?: Record<string, { readonly ready: boolean; readonly available: number; readonly total: number }>;
@@ -29,7 +31,8 @@ export async function getLeaseLogs(
   tail?: number,
 ): Promise<FredLeaseLogs> {
   const validated = validateProviderUrl(providerUrl);
-  const qs = tail !== undefined ? `?tail=${tail}` : '';
+  const cappedTail = tail !== undefined ? Math.min(tail, MAX_TAIL) : undefined;
+  const qs = cappedTail !== undefined ? `?tail=${cappedTail}` : '';
   const url = `${validated}/fred/lease/${leaseUuid}/logs${qs}`;
   const res = await checkedFetch(url, {
     headers: { Authorization: `Bearer ${authToken}` },

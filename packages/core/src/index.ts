@@ -16,6 +16,7 @@ import {
 } from './types.js';
 import { createValidatedConfig } from './config.js';
 import { VERSION } from './version.js';
+import { requireString, requireStringEnum, parseArgs, optionalBoolean } from './validation.js';
 import type { AppRegistry } from './registry.js';
 import { createSignMessage, createAuthToken } from './http/auth.js';
 import { browseCatalog } from './tools/browseCatalog.js';
@@ -45,16 +46,6 @@ const SENSITIVE_FIELDS = new Set([
  */
 function bigIntReplacer(_key: string, value: unknown): unknown {
   return typeof value === 'bigint' ? value.toString() : value;
-}
-
-/**
- * Parse raw args input into string array.
- */
-function parseArgs(rawArgs: unknown): string[] {
-  if (Array.isArray(rawArgs)) {
-    return rawArgs.map(String);
-  }
-  return [];
 }
 
 /**
@@ -110,6 +101,10 @@ export { withRetry, isRetryableError, calculateBackoff, type RetryOptions } from
 export type { AppEntry, AppRegistry } from './registry.js';
 export { InMemoryAppRegistry } from './registry.js';
 export { ProviderApiError } from './http/provider.js';
+export { requireString, requireStringEnum, parseArgs, optionalBoolean } from './validation.js';
+
+/** Maximum number of log lines that can be requested via get_logs */
+const MAX_LOG_TAIL = 1000;
 
 /**
  * Base tools always available (chain interaction + read-only composites)
@@ -283,36 +278,6 @@ const APP_TOOLS: Tool[] = [
   },
 ];
 
-function requireString(
-  input: Record<string, unknown>,
-  field: string,
-  errorCode: ManifestMCPErrorCode = ManifestMCPErrorCode.QUERY_FAILED,
-): string {
-  const val = input[field];
-  if (typeof val !== 'string' || val.length === 0) {
-    throw new ManifestMCPError(
-      errorCode,
-      `${field} is required and must be a non-empty string`,
-    );
-  }
-  return val;
-}
-
-function requireStringEnum<T extends string>(
-  input: Record<string, unknown>,
-  field: string,
-  allowed: T[],
-): T {
-  const val = requireString(input, field);
-  if (!allowed.includes(val as T)) {
-    throw new ManifestMCPError(
-      ManifestMCPErrorCode.QUERY_FAILED,
-      `${field} must be one of: ${allowed.join(', ')}`,
-    );
-  }
-  return val as T;
-}
-
 /**
  * Options for creating a ManifestMCPServer
  */
@@ -450,7 +415,7 @@ export class ManifestMCPServer {
         const module = requireString(toolInput, 'module', ManifestMCPErrorCode.TX_FAILED);
         const subcommand = requireString(toolInput, 'subcommand', ManifestMCPErrorCode.TX_FAILED);
         const args = parseArgs(toolInput.args);
-        const waitForConfirmation = (toolInput.wait_for_confirmation as boolean) || false;
+        const waitForConfirmation = optionalBoolean(toolInput, 'wait_for_confirmation');
 
         const result = await cosmosTx(
           this.clientManager,
@@ -589,7 +554,7 @@ export class ManifestMCPServer {
         const name = requireString(toolInput, 'name');
         const rawTail = toolInput.tail;
         const tail = typeof rawTail === 'number' && Number.isFinite(rawTail) && rawTail > 0
-          ? Math.floor(rawTail)
+          ? Math.min(Math.floor(rawTail), MAX_LOG_TAIL)
           : undefined;
         const address = await this.walletProvider.getAddress();
         const result = await getAppLogs(
@@ -628,6 +593,13 @@ export class ManifestMCPServer {
     const message = createSignMessage(address, leaseUuid, timestamp);
     const { pub_key, signature } = await this.walletProvider.signArbitrary(address, message);
     return createAuthToken(address, leaseUuid, timestamp, pub_key.value, signature);
+  }
+
+  /**
+   * Get the advertised tool list (for testing / introspection)
+   */
+  getTools(): Tool[] {
+    return this.tools;
   }
 
   /**

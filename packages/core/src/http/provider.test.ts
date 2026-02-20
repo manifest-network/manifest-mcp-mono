@@ -94,11 +94,46 @@ describe('checkedFetch', () => {
     );
   });
 
-  it('should let AbortError pass through unwrapped', async () => {
+  it('should let AbortError pass through unwrapped when caller provides signal', async () => {
     const abortError = new DOMException('The operation was aborted', 'AbortError');
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(abortError));
-    await expect(checkedFetch('https://example.com')).rejects.toThrow(DOMException);
-    await expect(checkedFetch('https://example.com')).rejects.not.toThrow(ProviderApiError);
+    const controller = new AbortController();
+    await expect(checkedFetch('https://example.com', { signal: controller.signal })).rejects.toThrow(DOMException);
+    await expect(checkedFetch('https://example.com', { signal: controller.signal })).rejects.not.toThrow(ProviderApiError);
+  });
+
+  it('should convert internal timeout to ProviderApiError', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockImplementation((_url: string, init?: RequestInit) => {
+      return new Promise((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => {
+          reject(new DOMException('The operation was aborted', 'AbortError'));
+        });
+      });
+    }));
+    await expect(checkedFetch('https://slow.example.com', undefined, 50)).rejects.toThrow(ProviderApiError);
+    await expect(checkedFetch('https://slow.example.com', undefined, 50)).rejects.toThrow(/timed out/);
+  });
+
+  it('should not apply internal timeout when caller provides signal', async () => {
+    const controller = new AbortController();
+    vi.stubGlobal('fetch', vi.fn().mockImplementation((_url: string, init?: RequestInit) => {
+      return new Promise((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => {
+          reject(new DOMException('The operation was aborted', 'AbortError'));
+        });
+      });
+    }));
+    // Even with a short timeoutMs, the caller's signal takes precedence
+    const promise = checkedFetch('https://slow.example.com', { signal: controller.signal }, 50);
+    // Manually abort via the caller's controller
+    controller.abort();
+    try {
+      await promise;
+      expect.unreachable('should have thrown');
+    } catch (err) {
+      expect(err).toBeInstanceOf(DOMException);
+      expect(err).not.toBeInstanceOf(ProviderApiError);
+    }
   });
 });
 

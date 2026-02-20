@@ -33,18 +33,39 @@ export function validateProviderUrl(url: string): string {
   );
 }
 
-export async function checkedFetch(url: string, init?: RequestInit): Promise<Response> {
+const DEFAULT_FETCH_TIMEOUT_MS = 30_000;
+
+export async function checkedFetch(
+  url: string,
+  init?: RequestInit,
+  timeoutMs: number = DEFAULT_FETCH_TIMEOUT_MS,
+): Promise<Response> {
+  const callerProvidedSignal = init?.signal != null;
+  let controller: AbortController | undefined;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+
+  if (!callerProvidedSignal && timeoutMs > 0) {
+    controller = new AbortController();
+    timer = setTimeout(() => controller!.abort(), timeoutMs);
+    init = { ...init, signal: controller.signal };
+  }
+
   let res: Response;
   try {
     res = await fetch(url, init);
   } catch (err) {
     if (err instanceof DOMException && err.name === 'AbortError') {
+      if (controller && !callerProvidedSignal) {
+        throw new ProviderApiError(0, `Request to ${url} timed out after ${timeoutMs}ms`);
+      }
       throw err;
     }
     throw new ProviderApiError(
       0,
       `Network request to ${url} failed: ${err instanceof Error ? err.message : String(err)}`,
     );
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
   }
   if (!res.ok) {
     const body = await res.text().catch(() => '');
