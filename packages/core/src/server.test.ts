@@ -31,11 +31,13 @@ function makeMockWallet(): WalletProvider {
 
 function makeMockAppRegistry(): AppRegistry {
   return {
-    list: vi.fn().mockResolvedValue([]),
-    get: vi.fn().mockResolvedValue(undefined),
-    add: vi.fn().mockResolvedValue(undefined),
-    remove: vi.fn().mockResolvedValue(undefined),
-    update: vi.fn().mockResolvedValue(undefined),
+    getApps: vi.fn().mockReturnValue([]),
+    getApp: vi.fn().mockReturnValue({ name: 'test', leaseUuid: 'uuid', status: 'active' }),
+    findApp: vi.fn().mockReturnValue(undefined),
+    getAppByLease: vi.fn().mockReturnValue(undefined),
+    addApp: vi.fn(),
+    updateApp: vi.fn(),
+    removeApp: vi.fn(),
   };
 }
 
