@@ -151,6 +151,12 @@ export class KeyfileWalletProvider implements WalletProvider {
         );
       }
       this.address = accounts[0].address;
+      if (!this.address.startsWith(this.addressPrefix)) {
+        throw new ManifestMCPError(
+          ManifestMCPErrorCode.WALLET_CONNECTION_FAILED,
+          `Keyfile address prefix mismatch: keyfile produced "${this.address.slice(0, this.address.indexOf('1'))}" but config expects "${this.addressPrefix}". Regenerate the keyfile with the correct COSMOS_ADDRESS_PREFIX.`
+        );
+      }
       this.initPromise = null;
     } catch (error) {
       this.initPromise = null;
