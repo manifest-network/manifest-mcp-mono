@@ -41,6 +41,13 @@ See [`packages/node/README.md`](packages/node/README.md) for wallet setup and MC
 | `cosmos_tx` | Sign and broadcast any Cosmos SDK transaction |
 | `list_modules` | List all available query and transaction modules |
 | `list_module_subcommands` | List subcommands for a specific module |
+| `browse_catalog` | Browse available cloud providers and service tiers |
+| `get_balance` | Get account balances, credit status, and spending estimates |
+| `list_apps` | List all deployed apps for the current account * |
+| `app_status` | Get detailed status for a deployed app by name * |
+| `get_logs` | Get logs for a deployed app by name * |
+
+\* `list_apps`, `app_status`, and `get_logs` require an app registry and are only advertised when one is configured (e.g., when using the node package).
 
 Supported modules: `bank`, `staking`, `distribution`, `gov`, `billing`, `sku`, `group`, `auth` (query only), `manifest` (tx only).
 

@@ -1,7 +1,10 @@
 import { readFileSync } from 'node:fs';
 import { DirectSecp256k1HdWallet, type OfflineSigner } from '@cosmjs/proto-signing';
+import { Secp256k1HdWallet } from '@cosmjs/amino';
+import { toBase64 } from '@cosmjs/encoding';
 import {
   type WalletProvider,
+  type SignArbitraryResult,
   ManifestMCPError,
   ManifestMCPErrorCode,
 } from '@manifest-network/manifest-mcp-core';
@@ -11,6 +14,7 @@ export class KeyfileWalletProvider implements WalletProvider {
   private addressPrefix: string;
   private password: string | undefined;
   private wallet: DirectSecp256k1HdWallet | null = null;
+  private aminoWallet: Secp256k1HdWallet | null = null;
   private address: string | null = null;
   private disconnected = false;
 
@@ -120,6 +124,17 @@ export class KeyfileWalletProvider implements WalletProvider {
         );
       }
 
+      try {
+        this.aminoWallet = await Secp256k1HdWallet.fromMnemonic(this.wallet.mnemonic, {
+          prefix: this.addressPrefix,
+        });
+      } catch (err: unknown) {
+        throw new ManifestMCPError(
+          ManifestMCPErrorCode.WALLET_CONNECTION_FAILED,
+          `Failed to initialize amino signing wallet from keyfile at ${this.keyfilePath}: ${err instanceof Error ? err.message : String(err)}`
+        );
+      }
+
       let accounts;
       try {
         accounts = await this.wallet.getAccounts();
@@ -136,10 +151,17 @@ export class KeyfileWalletProvider implements WalletProvider {
         );
       }
       this.address = accounts[0].address;
+      if (!this.address.startsWith(this.addressPrefix)) {
+        throw new ManifestMCPError(
+          ManifestMCPErrorCode.WALLET_CONNECTION_FAILED,
+          `Keyfile address prefix mismatch: keyfile produced "${this.address.slice(0, this.address.indexOf('1'))}" but config expects "${this.addressPrefix}". Regenerate the keyfile with the correct COSMOS_ADDRESS_PREFIX.`
+        );
+      }
       this.initPromise = null;
     } catch (error) {
       this.initPromise = null;
       this.wallet = null;
+      this.aminoWallet = null;
       this.address = null;
       throw error;
     }
@@ -171,9 +193,51 @@ export class KeyfileWalletProvider implements WalletProvider {
 
   async disconnect(): Promise<void> {
     this.wallet = null;
+    this.aminoWallet = null;
     this.address = null;
     this.password = undefined;
     this.disconnected = true;
     this.initPromise = null;
+  }
+
+  async signArbitrary(address: string, data: string): Promise<SignArbitraryResult> {
+    await this.connect();
+
+    if (!this.aminoWallet) {
+      throw new ManifestMCPError(
+        ManifestMCPErrorCode.WALLET_NOT_CONNECTED,
+        'Amino wallet failed to initialize'
+      );
+    }
+
+    if (address !== this.address) {
+      throw new ManifestMCPError(
+        ManifestMCPErrorCode.INVALID_ADDRESS,
+        `Cannot sign for address "${address}": wallet address is "${this.address}"`
+      );
+    }
+
+    const signDoc = {
+      chain_id: '',
+      account_number: '0',
+      sequence: '0',
+      fee: { gas: '0', amount: [] },
+      msgs: [
+        {
+          type: 'sign/MsgSignData',
+          value: {
+            signer: address,
+            data: toBase64(new TextEncoder().encode(data)),
+          },
+        },
+      ],
+      memo: '',
+    };
+
+    const { signature } = await this.aminoWallet.signAmino(address, signDoc);
+    return {
+      pub_key: signature.pub_key,
+      signature: signature.signature,
+    };
   }
 }

@@ -16,6 +16,14 @@ import {
 } from './types.js';
 import { createValidatedConfig } from './config.js';
 import { VERSION } from './version.js';
+import { requireString, requireStringEnum, parseArgs, optionalBoolean } from './validation.js';
+import type { AppRegistry } from './registry.js';
+import { createSignMessage, createAuthToken } from './http/auth.js';
+import { browseCatalog } from './tools/browseCatalog.js';
+import { getBalance } from './tools/getBalance.js';
+import { listApps } from './tools/listApps.js';
+import { appStatus } from './tools/appStatus.js';
+import { getAppLogs } from './tools/getLogs.js';
 
 /**
  * Sensitive field names that should be redacted from error responses
@@ -38,16 +46,6 @@ const SENSITIVE_FIELDS = new Set([
  */
 function bigIntReplacer(_key: string, value: unknown): unknown {
   return typeof value === 'bigint' ? value.toString() : value;
-}
-
-/**
- * Parse raw args input into string array.
- */
-function parseArgs(rawArgs: unknown): string[] {
-  if (Array.isArray(rawArgs)) {
-    return rawArgs.map(String);
-  }
-  return [];
 }
 
 /**
@@ -100,11 +98,18 @@ export { cosmosQuery, cosmosTx } from './cosmos.js';
 export { getAvailableModules, getModuleSubcommands, getSubcommandUsage, getSupportedModules, isSubcommandSupported } from './modules.js';
 export { MnemonicWalletProvider } from './wallet/index.js';
 export { withRetry, isRetryableError, calculateBackoff, type RetryOptions } from './retry.js';
+export type { AppEntry, AppRegistry } from './registry.js';
+export { InMemoryAppRegistry } from './registry.js';
+export { ProviderApiError } from './http/provider.js';
+export { requireString, requireStringEnum, parseArgs, optionalBoolean } from './validation.js';
+
+/** Maximum number of log lines that can be requested via get_logs */
+const MAX_LOG_TAIL = 1000;
 
 /**
- * Tool definitions for the MCP server
+ * Base tools always available (chain interaction + read-only composites)
  */
-const tools: Tool[] = [
+const BASE_TOOLS: Tool[] = [
   {
     name: 'get_account_info',
     description: 'Get account address and key name for the configured key',
@@ -201,6 +206,76 @@ const tools: Tool[] = [
       required: ['type', 'module'],
     },
   },
+  {
+    name: 'browse_catalog',
+    description:
+      'Browse available cloud providers and service tiers. Returns active providers with health status and available SKU pricing.',
+    inputSchema: {
+      type: 'object',
+      properties: {},
+      required: [],
+    },
+  },
+  {
+    name: 'get_balance',
+    description:
+      'Get account balances, credit status, and spending estimates. Returns on-chain balances, credit account info, and estimated time until credit exhaustion.',
+    inputSchema: {
+      type: 'object',
+      properties: {},
+      required: [],
+    },
+  },
+];
+
+/**
+ * App-management tools that require an AppRegistry
+ */
+const APP_TOOLS: Tool[] = [
+  {
+    name: 'list_apps',
+    description:
+      'List all deployed apps for the current account. Returns apps with their status, lease UUID, and metadata. Reconciles chain state with local registry.',
+    inputSchema: {
+      type: 'object',
+      properties: {},
+      required: [],
+    },
+  },
+  {
+    name: 'app_status',
+    description:
+      'Get detailed status for a deployed app by name. Returns chain state, provider status, and connection info.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: {
+          type: 'string',
+          description: 'The name of the app to check',
+        },
+      },
+      required: ['name'],
+    },
+  },
+  {
+    name: 'get_logs',
+    description:
+      'Get logs for a deployed app by name. Returns recent logs from all services, truncated to fit LLM context.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: {
+          type: 'string',
+          description: 'The name of the app to get logs for',
+        },
+        tail: {
+          type: 'number',
+          description: 'Number of recent log lines to retrieve',
+        },
+      },
+      required: ['name'],
+    },
+  },
 ];
 
 /**
@@ -209,6 +284,7 @@ const tools: Tool[] = [
 export interface ManifestMCPServerOptions {
   config: ManifestMCPConfig;
   walletProvider: WalletProvider;
+  appRegistry?: AppRegistry;
 }
 
 /**
@@ -218,12 +294,18 @@ export class ManifestMCPServer {
   private server: Server;
   private clientManager: CosmosClientManager;
   private walletProvider: WalletProvider;
+  private appRegistry: AppRegistry | undefined;
   private config: ManifestMCPConfig;
+  private tools: Tool[];
 
   constructor(options: ManifestMCPServerOptions) {
     this.config = createValidatedConfig(options.config);
     this.walletProvider = options.walletProvider;
+    this.appRegistry = options.appRegistry;
     this.clientManager = CosmosClientManager.getInstance(this.config, this.walletProvider);
+    this.tools = this.appRegistry
+      ? [...BASE_TOOLS, ...APP_TOOLS]
+      : [...BASE_TOOLS];
 
     this.server = new Server(
       {
@@ -245,7 +327,7 @@ export class ManifestMCPServer {
    */
   private setupHandlers(): void {
     this.server.setRequestHandler(ListToolsRequestSchema, async () => ({
-      tools,
+      tools: this.tools,
     }));
 
     this.server.setRequestHandler(CallToolRequestSchema, async (request) => {
@@ -313,16 +395,9 @@ export class ManifestMCPServer {
       }
 
       case 'cosmos_query': {
-        const module = toolInput.module as string;
-        const subcommand = toolInput.subcommand as string;
+        const module = requireString(toolInput, 'module');
+        const subcommand = requireString(toolInput, 'subcommand');
         const args = parseArgs(toolInput.args);
-
-        if (!module || !subcommand) {
-          throw new ManifestMCPError(
-            ManifestMCPErrorCode.QUERY_FAILED,
-            'module and subcommand are required'
-          );
-        }
 
         const result = await cosmosQuery(this.clientManager, module, subcommand, args);
 
@@ -337,17 +412,10 @@ export class ManifestMCPServer {
       }
 
       case 'cosmos_tx': {
-        const module = toolInput.module as string;
-        const subcommand = toolInput.subcommand as string;
+        const module = requireString(toolInput, 'module', ManifestMCPErrorCode.TX_FAILED);
+        const subcommand = requireString(toolInput, 'subcommand', ManifestMCPErrorCode.TX_FAILED);
         const args = parseArgs(toolInput.args);
-        const waitForConfirmation = (toolInput.wait_for_confirmation as boolean) || false;
-
-        if (!module || !subcommand) {
-          throw new ManifestMCPError(
-            ManifestMCPErrorCode.TX_FAILED,
-            'module and subcommand are required'
-          );
-        }
+        const waitForConfirmation = optionalBoolean(toolInput, 'wait_for_confirmation');
 
         const result = await cosmosTx(
           this.clientManager,
@@ -380,24 +448,10 @@ export class ManifestMCPServer {
       }
 
       case 'list_module_subcommands': {
-        const type = toolInput.type as string;
-        const module = toolInput.module as string;
+        const type = requireStringEnum(toolInput, 'type', ['query', 'tx'] as const);
+        const module = requireString(toolInput, 'module');
 
-        if (!type || !module) {
-          throw new ManifestMCPError(
-            ManifestMCPErrorCode.QUERY_FAILED,
-            'type and module are required'
-          );
-        }
-
-        if (type !== 'query' && type !== 'tx') {
-          throw new ManifestMCPError(
-            ManifestMCPErrorCode.QUERY_FAILED,
-            'type must be either "query" or "tx"'
-          );
-        }
-
-        const subcommands = getModuleSubcommands(type as 'query' | 'tx', module);
+        const subcommands = getModuleSubcommands(type, module);
         return {
           content: [
             {
@@ -416,12 +470,136 @@ export class ManifestMCPServer {
         };
       }
 
+      case 'browse_catalog': {
+        const queryClient = await this.clientManager.getQueryClient();
+        const result = await browseCatalog(queryClient);
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify(result, bigIntReplacer, 2),
+            },
+          ],
+        };
+      }
+
+      case 'get_balance': {
+        const address = await this.walletProvider.getAddress();
+        const queryClient = await this.clientManager.getQueryClient();
+        const result = await getBalance(queryClient, address);
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify(result, bigIntReplacer, 2),
+            },
+          ],
+        };
+      }
+
+      case 'list_apps': {
+        if (!this.appRegistry) {
+          throw new ManifestMCPError(
+            ManifestMCPErrorCode.MISSING_CONFIG,
+            'App registry is not configured. Pass appRegistry in ManifestMCPServerOptions.'
+          );
+        }
+        const address = await this.walletProvider.getAddress();
+        const queryClient = await this.clientManager.getQueryClient();
+        const result = await listApps(queryClient, address, this.appRegistry);
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify(result, bigIntReplacer, 2),
+            },
+          ],
+        };
+      }
+
+      case 'app_status': {
+        if (!this.appRegistry) {
+          throw new ManifestMCPError(
+            ManifestMCPErrorCode.MISSING_CONFIG,
+            'App registry is not configured. Pass appRegistry in ManifestMCPServerOptions.'
+          );
+        }
+        const name = requireString(toolInput, 'name');
+        const address = await this.walletProvider.getAddress();
+        const queryClient = await this.clientManager.getQueryClient();
+        const result = await appStatus(
+          queryClient,
+          address,
+          name,
+          this.appRegistry,
+          (addr, leaseUuid) => this.getProviderAuthToken(addr, leaseUuid),
+        );
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify(result, bigIntReplacer, 2),
+            },
+          ],
+        };
+      }
+
+      case 'get_logs': {
+        if (!this.appRegistry) {
+          throw new ManifestMCPError(
+            ManifestMCPErrorCode.MISSING_CONFIG,
+            'App registry is not configured. Pass appRegistry in ManifestMCPServerOptions.'
+          );
+        }
+        const name = requireString(toolInput, 'name');
+        const rawTail = toolInput.tail;
+        const tail = typeof rawTail === 'number' && Number.isFinite(rawTail) && rawTail > 0
+          ? Math.min(Math.floor(rawTail), MAX_LOG_TAIL)
+          : undefined;
+        const address = await this.walletProvider.getAddress();
+        const result = await getAppLogs(
+          address,
+          name,
+          this.appRegistry,
+          (addr, leaseUuid) => this.getProviderAuthToken(addr, leaseUuid),
+          tail,
+        );
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify(result, bigIntReplacer, 2),
+            },
+          ],
+        };
+      }
+
       default:
         throw new ManifestMCPError(
           ManifestMCPErrorCode.UNKNOWN_ERROR,
           `Unknown tool: ${toolName}`
         );
     }
+  }
+
+  private async getProviderAuthToken(address: string, leaseUuid: string): Promise<string> {
+    if (!this.walletProvider.signArbitrary) {
+      throw new ManifestMCPError(
+        ManifestMCPErrorCode.WALLET_NOT_CONNECTED,
+        'Wallet does not support signArbitrary (ADR-036). Required for provider authentication.'
+      );
+    }
+    const timestamp = new Date().toISOString();
+    const message = createSignMessage(address, leaseUuid, timestamp);
+    const { pub_key, signature } = await this.walletProvider.signArbitrary(address, message);
+    return createAuthToken(address, leaseUuid, timestamp, pub_key.value, signature);
+  }
+
+  /**
+   * Get the advertised tool list (for testing / introspection)
+   */
+  getTools(): Tool[] {
+    return this.tools;
   }
 
   /**

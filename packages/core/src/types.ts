@@ -168,11 +168,18 @@ export interface ManifestMCPConfig {
  *
  * Any wallet that provides an OfflineSigner works (Keplr, Web3Auth, Leap, cosmos-kit, etc.)
  */
+export interface SignArbitraryResult {
+  readonly pub_key: { readonly type: string; readonly value: string };
+  readonly signature: string;
+}
+
 export interface WalletProvider {
   /** Get the wallet's address */
   getAddress(): Promise<string>;
   /** Get the offline signer for signing transactions */
   getSigner(): Promise<OfflineSigner>;
+  /** Optional: Sign arbitrary data (ADR-036) for off-chain authentication */
+  signArbitrary?(address: string, data: string): Promise<SignArbitraryResult>;
   /** Optional: Connect to the wallet */
   connect?(): Promise<void>;
   /** Optional: Disconnect from the wallet */
