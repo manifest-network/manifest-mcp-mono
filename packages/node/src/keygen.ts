@@ -29,6 +29,43 @@ function prompt(question: string): Promise<string> {
   });
 }
 
+function promptPassword(question: string): Promise<string> {
+  if (!process.stdin.isTTY) {
+    throw new Error(
+      'Interactive terminal required for key management commands. Cannot prompt for input in non-interactive mode.'
+    );
+  }
+  return new Promise((resolve) => {
+    let password = '';
+    process.stderr.write(question);
+    process.stdin.setRawMode(true);
+    process.stdin.resume();
+    process.stdin.setEncoding('utf8');
+    const onData = (ch: string): void => {
+      if (ch === '\r' || ch === '\n' || ch === '\u0004') {
+        process.stdin.setRawMode(false);
+        process.stdin.pause();
+        process.stdin.removeListener('data', onData);
+        process.stderr.write('\n');
+        resolve(password);
+      } else if (ch === '\u0003') {
+        process.stdin.setRawMode(false);
+        process.stdin.pause();
+        process.stdin.removeListener('data', onData);
+        process.stderr.write('\n');
+        process.exit(130);
+      } else if (ch === '\u007f' || ch === '\b') {
+        if (password.length > 0) {
+          password = password.slice(0, -1);
+        }
+      } else if (ch >= ' ') {
+        password += ch;
+      }
+    };
+    process.stdin.on('data', onData);
+  });
+}
+
 async function writeKeyfile(wallet: DirectSecp256k1HdWallet, keyfilePath: string, password: string): Promise<void> {
   let serialized: string;
   try {
@@ -65,7 +102,7 @@ export async function runKeygen(): Promise<void> {
 
   await confirmOverwrite(keyfilePath);
 
-  const password = await prompt('Enter password for keyfile encryption: ');
+  const password = await promptPassword('Enter password for keyfile encryption: ');
   if (!password) {
     console.error('Error: password cannot be empty.');
     process.exit(1);
@@ -105,7 +142,7 @@ export async function runImport(): Promise<void> {
     process.exit(1);
   }
 
-  const password = await prompt('Enter password for keyfile encryption: ');
+  const password = await promptPassword('Enter password for keyfile encryption: ');
   if (!password) {
     console.error('Error: password cannot be empty.');
     process.exit(1);
