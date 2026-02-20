@@ -16,6 +16,13 @@ import {
 } from './types.js';
 import { createValidatedConfig } from './config.js';
 import { VERSION } from './version.js';
+import type { AppRegistry } from './registry.js';
+import { createSignMessage, createAuthToken } from './http/auth.js';
+import { browseCatalog } from './tools/browseCatalog.js';
+import { getBalance } from './tools/getBalance.js';
+import { listApps } from './tools/listApps.js';
+import { appStatus } from './tools/appStatus.js';
+import { getAppLogs } from './tools/getLogs.js';
 
 /**
  * Sensitive field names that should be redacted from error responses
@@ -100,6 +107,9 @@ export { cosmosQuery, cosmosTx } from './cosmos.js';
 export { getAvailableModules, getModuleSubcommands, getSubcommandUsage, getSupportedModules, isSubcommandSupported } from './modules.js';
 export { MnemonicWalletProvider } from './wallet/index.js';
 export { withRetry, isRetryableError, calculateBackoff, type RetryOptions } from './retry.js';
+export type { AppEntry, AppRegistry } from './registry.js';
+export { InMemoryAppRegistry } from './registry.js';
+export { ProviderApiError } from './http/provider.js';
 
 /**
  * Tool definitions for the MCP server
@@ -201,6 +211,70 @@ const tools: Tool[] = [
       required: ['type', 'module'],
     },
   },
+  {
+    name: 'browse_catalog',
+    description:
+      'Browse available cloud providers and service tiers. Returns active providers with health status and available SKU pricing.',
+    inputSchema: {
+      type: 'object',
+      properties: {},
+      required: [],
+    },
+  },
+  {
+    name: 'get_balance',
+    description:
+      'Get account balances, credit status, and spending estimates. Returns on-chain balances, credit account info, and estimated time until credit exhaustion.',
+    inputSchema: {
+      type: 'object',
+      properties: {},
+      required: [],
+    },
+  },
+  {
+    name: 'list_apps',
+    description:
+      'List all deployed apps for the current account. Returns apps with their status, lease UUID, and metadata. Reconciles chain state with local registry.',
+    inputSchema: {
+      type: 'object',
+      properties: {},
+      required: [],
+    },
+  },
+  {
+    name: 'app_status',
+    description:
+      'Get detailed status for a deployed app by name. Returns chain state, provider status, and connection info.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: {
+          type: 'string',
+          description: 'The name of the app to check',
+        },
+      },
+      required: ['name'],
+    },
+  },
+  {
+    name: 'get_logs',
+    description:
+      'Get logs for a deployed app by name. Returns recent logs from all services, truncated to fit LLM context.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: {
+          type: 'string',
+          description: 'The name of the app to get logs for',
+        },
+        tail: {
+          type: 'number',
+          description: 'Number of recent log lines to retrieve',
+        },
+      },
+      required: ['name'],
+    },
+  },
 ];
 
 /**
@@ -209,6 +283,7 @@ const tools: Tool[] = [
 export interface ManifestMCPServerOptions {
   config: ManifestMCPConfig;
   walletProvider: WalletProvider;
+  appRegistry?: AppRegistry;
 }
 
 /**
@@ -218,11 +293,13 @@ export class ManifestMCPServer {
   private server: Server;
   private clientManager: CosmosClientManager;
   private walletProvider: WalletProvider;
+  private appRegistry: AppRegistry | undefined;
   private config: ManifestMCPConfig;
 
   constructor(options: ManifestMCPServerOptions) {
     this.config = createValidatedConfig(options.config);
     this.walletProvider = options.walletProvider;
+    this.appRegistry = options.appRegistry;
     this.clientManager = CosmosClientManager.getInstance(this.config, this.walletProvider);
 
     this.server = new Server(
@@ -416,12 +493,141 @@ export class ManifestMCPServer {
         };
       }
 
+      case 'browse_catalog': {
+        const queryClient = await this.clientManager.getQueryClient();
+        const result = await browseCatalog(queryClient);
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify(result, bigIntReplacer, 2),
+            },
+          ],
+        };
+      }
+
+      case 'get_balance': {
+        const address = await this.walletProvider.getAddress();
+        const queryClient = await this.clientManager.getQueryClient();
+        const result = await getBalance(queryClient, address);
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify(result, bigIntReplacer, 2),
+            },
+          ],
+        };
+      }
+
+      case 'list_apps': {
+        if (!this.appRegistry) {
+          throw new ManifestMCPError(
+            ManifestMCPErrorCode.MISSING_CONFIG,
+            'App registry is not configured. Pass appRegistry in ManifestMCPServerOptions.'
+          );
+        }
+        const address = await this.walletProvider.getAddress();
+        const queryClient = await this.clientManager.getQueryClient();
+        const result = await listApps(queryClient, address, this.appRegistry);
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify(result, bigIntReplacer, 2),
+            },
+          ],
+        };
+      }
+
+      case 'app_status': {
+        if (!this.appRegistry) {
+          throw new ManifestMCPError(
+            ManifestMCPErrorCode.MISSING_CONFIG,
+            'App registry is not configured. Pass appRegistry in ManifestMCPServerOptions.'
+          );
+        }
+        const name = toolInput.name as string;
+        if (!name) {
+          throw new ManifestMCPError(
+            ManifestMCPErrorCode.QUERY_FAILED,
+            'name is required'
+          );
+        }
+        const address = await this.walletProvider.getAddress();
+        const queryClient = await this.clientManager.getQueryClient();
+        const result = await appStatus(
+          queryClient,
+          address,
+          name,
+          this.appRegistry,
+          (addr, leaseUuid) => this.getProviderAuthToken(addr, leaseUuid),
+        );
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify(result, bigIntReplacer, 2),
+            },
+          ],
+        };
+      }
+
+      case 'get_logs': {
+        if (!this.appRegistry) {
+          throw new ManifestMCPError(
+            ManifestMCPErrorCode.MISSING_CONFIG,
+            'App registry is not configured. Pass appRegistry in ManifestMCPServerOptions.'
+          );
+        }
+        const name = toolInput.name as string;
+        if (!name) {
+          throw new ManifestMCPError(
+            ManifestMCPErrorCode.QUERY_FAILED,
+            'name is required'
+          );
+        }
+        const rawTail = toolInput.tail;
+        const tail = typeof rawTail === 'number' && Number.isFinite(rawTail) && rawTail > 0
+          ? Math.floor(rawTail)
+          : undefined;
+        const address = await this.walletProvider.getAddress();
+        const result = await getAppLogs(
+          address,
+          name,
+          this.appRegistry,
+          (addr, leaseUuid) => this.getProviderAuthToken(addr, leaseUuid),
+          tail,
+        );
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify(result, bigIntReplacer, 2),
+            },
+          ],
+        };
+      }
+
       default:
         throw new ManifestMCPError(
           ManifestMCPErrorCode.UNKNOWN_ERROR,
           `Unknown tool: ${toolName}`
         );
     }
+  }
+
+  private async getProviderAuthToken(address: string, leaseUuid: string): Promise<string> {
+    if (!this.walletProvider.signArbitrary) {
+      throw new ManifestMCPError(
+        ManifestMCPErrorCode.WALLET_NOT_CONNECTED,
+        'Wallet does not support signArbitrary (ADR-036). Required for provider authentication.'
+      );
+    }
+    const timestamp = new Date().toISOString();
+    const message = createSignMessage(address, leaseUuid, timestamp);
+    const { pub_key, signature } = await this.walletProvider.signArbitrary(address, message);
+    return createAuthToken(address, leaseUuid, timestamp, pub_key.value, signature);
   }
 
   /**

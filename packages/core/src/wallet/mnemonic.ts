@@ -1,5 +1,7 @@
 import { DirectSecp256k1HdWallet, OfflineSigner } from '@cosmjs/proto-signing';
-import { WalletProvider, ManifestMCPError, ManifestMCPErrorCode, ManifestMCPConfig } from '../types.js';
+import { Secp256k1HdWallet } from '@cosmjs/amino';
+import { toBase64 } from '@cosmjs/encoding';
+import { WalletProvider, SignArbitraryResult, ManifestMCPError, ManifestMCPErrorCode, ManifestMCPConfig } from '../types.js';
 
 /**
  * Mnemonic-based wallet provider for non-browser environments or testing
@@ -11,6 +13,7 @@ export class MnemonicWalletProvider implements WalletProvider {
   private config: ManifestMCPConfig;
   private mnemonic: string | null;
   private wallet: DirectSecp256k1HdWallet | null = null;
+  private aminoWallet: Secp256k1HdWallet | null = null;
   private address: string | null = null;
   private disconnected: boolean = false;
 
@@ -58,6 +61,9 @@ export class MnemonicWalletProvider implements WalletProvider {
         this.wallet = await DirectSecp256k1HdWallet.fromMnemonic(this.mnemonic!, {
           prefix,
         });
+        this.aminoWallet = await Secp256k1HdWallet.fromMnemonic(this.mnemonic!, {
+          prefix,
+        });
 
         const accounts = await this.wallet.getAccounts();
         if (accounts.length === 0) {
@@ -74,6 +80,7 @@ export class MnemonicWalletProvider implements WalletProvider {
         // Clear state on failure so retry is possible
         this.initPromise = null;
         this.wallet = null;
+        this.aminoWallet = null;
         this.address = null;
         if (error instanceof ManifestMCPError) {
           throw error;
@@ -107,6 +114,7 @@ export class MnemonicWalletProvider implements WalletProvider {
     // but we can remove all references to allow garbage collection
     this.mnemonic = null;
     this.wallet = null;
+    this.aminoWallet = null;
     this.address = null;
     this.initPromise = null;
     this.disconnected = true;
@@ -142,5 +150,49 @@ export class MnemonicWalletProvider implements WalletProvider {
     }
 
     return this.wallet;
+  }
+
+  /**
+   * Sign arbitrary data using ADR-036 amino sign doc
+   */
+  async signArbitrary(address: string, data: string): Promise<SignArbitraryResult> {
+    await this.initWallet();
+
+    if (!this.aminoWallet) {
+      throw new ManifestMCPError(
+        ManifestMCPErrorCode.WALLET_NOT_CONNECTED,
+        'Amino wallet failed to initialize'
+      );
+    }
+
+    if (address !== this.address) {
+      throw new ManifestMCPError(
+        ManifestMCPErrorCode.INVALID_ADDRESS,
+        `Cannot sign for address "${address}": wallet address is "${this.address}"`
+      );
+    }
+
+    const signDoc = {
+      chain_id: '',
+      account_number: '0',
+      sequence: '0',
+      fee: { gas: '0', amount: [] },
+      msgs: [
+        {
+          type: 'sign/MsgSignData',
+          value: {
+            signer: address,
+            data: toBase64(new TextEncoder().encode(data)),
+          },
+        },
+      ],
+      memo: '',
+    };
+
+    const { signature } = await this.aminoWallet.signAmino(address, signDoc);
+    return {
+      pub_key: signature.pub_key,
+      signature: signature.signature,
+    };
   }
 }
