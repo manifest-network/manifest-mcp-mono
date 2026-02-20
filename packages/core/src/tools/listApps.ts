@@ -29,21 +29,40 @@ export async function listApps(
     }
   }
 
-  // Merge chain leases with registry
+  // Resolve provider URLs from SKU module
   const allLeases = [...activeResult.leases, ...pendingResult.leases];
+  const uniqueProviderUuids = [...new Set(allLeases.map((l) => l.providerUuid).filter(Boolean))];
+  const providerUrlMap = new Map<string, string>();
+  await Promise.all(
+    uniqueProviderUuids.map(async (uuid) => {
+      try {
+        const result = await queryClient.liftedinit.sku.v1.provider({ uuid });
+        if (result.provider?.apiUrl) {
+          providerUrlMap.set(uuid, result.provider.apiUrl);
+        }
+      } catch {
+        // Provider lookup failed — leave providerUrl unset for this provider
+      }
+    }),
+  );
+
+  // Merge chain leases with registry
   for (const lease of allLeases) {
+    const providerUrl = providerUrlMap.get(lease.providerUuid);
     const existing = appRegistry.getAppByLease(address, lease.uuid);
     if (!existing) {
       appRegistry.addApp(address, {
         name: lease.uuid.slice(0, 8),
         leaseUuid: lease.uuid,
         providerUuid: lease.providerUuid,
+        providerUrl,
         createdAt: lease.createdAt?.toISOString(),
         status: activeLeaseUuids.has(lease.uuid) ? 'active' : 'pending',
       });
     } else {
       appRegistry.updateApp(address, lease.uuid, {
         status: activeLeaseUuids.has(lease.uuid) ? 'active' : 'pending',
+        ...(providerUrl && !existing.providerUrl && { providerUrl }),
       });
     }
   }
