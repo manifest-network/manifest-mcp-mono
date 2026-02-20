@@ -98,19 +98,8 @@ export async function getProviderHealth(
 ): Promise<ProviderHealthResponse> {
   const validated = validateProviderUrl(providerApiUrl);
   const url = `${validated}/health`;
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const res = await checkedFetch(url, { signal: controller.signal });
-    return await parseJsonResponse<ProviderHealthResponse>(res, url);
-  } catch (err) {
-    if (err instanceof DOMException && err.name === 'AbortError') {
-      throw new ProviderApiError(0, `Provider health check timed out after ${timeoutMs}ms: ${url}`);
-    }
-    throw err;
-  } finally {
-    clearTimeout(timer);
-  }
+  const res = await checkedFetch(url, undefined, timeoutMs);
+  return await parseJsonResponse<ProviderHealthResponse>(res, url);
 }
 
 export interface LeaseConnectionInfo {
