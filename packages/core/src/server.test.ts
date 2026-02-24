@@ -41,6 +41,26 @@ vi.mock('./tools/getLogs.js', () => ({
   getAppLogs: vi.fn(),
 }));
 
+vi.mock('./tools/fundCredits.js', () => ({
+  fundCredits: vi.fn(),
+}));
+
+vi.mock('./tools/deployApp.js', () => ({
+  deployApp: vi.fn(),
+}));
+
+vi.mock('./tools/stopApp.js', () => ({
+  stopApp: vi.fn(),
+}));
+
+vi.mock('./tools/restartApp.js', () => ({
+  restartApp: vi.fn(),
+}));
+
+vi.mock('./tools/updateApp.js', () => ({
+  updateApp: vi.fn(),
+}));
+
 import { ManifestMCPServer } from './index.js';
 import { ManifestMCPError, ManifestMCPErrorCode } from './types.js';
 import { cosmosQuery, cosmosTx } from './cosmos.js';
@@ -49,6 +69,11 @@ import { getBalance } from './tools/getBalance.js';
 import { listApps } from './tools/listApps.js';
 import { appStatus } from './tools/appStatus.js';
 import { getAppLogs } from './tools/getLogs.js';
+import { fundCredits } from './tools/fundCredits.js';
+import { deployApp } from './tools/deployApp.js';
+import { stopApp } from './tools/stopApp.js';
+import { restartApp } from './tools/restartApp.js';
+import { updateApp } from './tools/updateApp.js';
 import { makeMockConfig, makeMockWallet, makeMockAppRegistry } from './__test-utils__/mocks.js';
 
 const mockCosmosQuery = vi.mocked(cosmosQuery);
@@ -58,6 +83,11 @@ const mockGetBalance = vi.mocked(getBalance);
 const mockListApps = vi.mocked(listApps);
 const mockAppStatus = vi.mocked(appStatus);
 const mockGetAppLogs = vi.mocked(getAppLogs);
+const mockFundCredits = vi.mocked(fundCredits);
+const mockDeployApp = vi.mocked(deployApp);
+const mockStopApp = vi.mocked(stopApp);
+const mockRestartApp = vi.mocked(restartApp);
+const mockUpdateApp = vi.mocked(updateApp);
 
 /**
  * Helper: invoke a tool via the public MCP protocol using InMemoryTransport.
@@ -98,12 +128,17 @@ const BASE_TOOL_NAMES = [
   'list_module_subcommands',
   'browse_catalog',
   'get_balance',
+  'fund_credits',
 ];
 
 const APP_TOOL_NAMES = [
   'list_apps',
   'app_status',
   'get_logs',
+  'deploy_app',
+  'stop_app',
+  'restart_app',
+  'update_app',
 ];
 
 beforeEach(() => {
@@ -120,24 +155,24 @@ afterEach(async () => {
 
 describe('ManifestMCPServer', () => {
   describe('getTools', () => {
-    it('should return 7 base tools without appRegistry', () => {
+    it('should return 8 base tools without appRegistry', () => {
       const server = new ManifestMCPServer({
         config: makeMockConfig(),
         walletProvider: makeMockWallet(),
       });
       const tools = server.getTools();
-      expect(tools).toHaveLength(7);
+      expect(tools).toHaveLength(8);
       expect(tools.map(t => t.name)).toEqual(BASE_TOOL_NAMES);
     });
 
-    it('should return 10 tools with appRegistry', () => {
+    it('should return 15 tools with appRegistry', () => {
       const server = new ManifestMCPServer({
         config: makeMockConfig(),
         walletProvider: makeMockWallet(),
         appRegistry: makeMockAppRegistry(),
       });
       const tools = server.getTools();
-      expect(tools).toHaveLength(10);
+      expect(tools).toHaveLength(15);
       expect(tools.map(t => t.name)).toEqual([...BASE_TOOL_NAMES, ...APP_TOOL_NAMES]);
     });
 
@@ -288,6 +323,104 @@ describe('ManifestMCPServer', () => {
       const result = await callTool(server, 'get_logs', { name: 'test' });
 
       expect(mockGetAppLogs).toHaveBeenCalledOnce();
+      expect(result.isError).toBeUndefined();
+    });
+
+    it('routes fund_credits to fundCredits()', async () => {
+      mockFundCredits.mockResolvedValue({
+        module: 'billing',
+        subcommand: 'fund-credit',
+        transactionHash: 'HASH',
+        code: 0,
+        height: '100',
+        confirmed: true,
+      });
+
+      const server = new ManifestMCPServer({
+        config: makeMockConfig(),
+        walletProvider: makeMockWallet(),
+      });
+      const result = await callTool(server, 'fund_credits', { amount: '10000000umfx' });
+
+      expect(mockFundCredits).toHaveBeenCalledOnce();
+      expect(result.isError).toBeUndefined();
+    });
+
+    it('routes deploy_app to deployApp()', async () => {
+      mockDeployApp.mockResolvedValue({
+        app_name: 'test-app',
+        lease_uuid: 'lease-1',
+        status: 'running',
+      } as any);
+
+      const server = new ManifestMCPServer({
+        config: makeMockConfig(),
+        walletProvider: makeMockWallet({ signArbitrary: true }),
+        appRegistry: makeMockAppRegistry(),
+      });
+      const result = await callTool(server, 'deploy_app', {
+        image: 'nginx:alpine',
+        port: 80,
+        size: 'docker-micro',
+      });
+
+      expect(mockDeployApp).toHaveBeenCalledOnce();
+      expect(result.isError).toBeUndefined();
+    });
+
+    it('routes stop_app to stopApp()', async () => {
+      mockStopApp.mockResolvedValue({
+        app_name: 'test-app',
+        status: 'stopped',
+        transactionHash: 'TX',
+        code: 0,
+      });
+
+      const server = new ManifestMCPServer({
+        config: makeMockConfig(),
+        walletProvider: makeMockWallet(),
+        appRegistry: makeMockAppRegistry(),
+      });
+      const result = await callTool(server, 'stop_app', { app_name: 'test-app' });
+
+      expect(mockStopApp).toHaveBeenCalledOnce();
+      expect(result.isError).toBeUndefined();
+    });
+
+    it('routes restart_app to restartApp()', async () => {
+      mockRestartApp.mockResolvedValue({
+        app_name: 'test-app',
+        status: 'restarting',
+      });
+
+      const server = new ManifestMCPServer({
+        config: makeMockConfig(),
+        walletProvider: makeMockWallet({ signArbitrary: true }),
+        appRegistry: makeMockAppRegistry(),
+      });
+      const result = await callTool(server, 'restart_app', { app_name: 'test-app' });
+
+      expect(mockRestartApp).toHaveBeenCalledOnce();
+      expect(result.isError).toBeUndefined();
+    });
+
+    it('routes update_app to updateApp()', async () => {
+      mockUpdateApp.mockResolvedValue({
+        app_name: 'test-app',
+        status: 'updated',
+      });
+
+      const server = new ManifestMCPServer({
+        config: makeMockConfig(),
+        walletProvider: makeMockWallet({ signArbitrary: true }),
+        appRegistry: makeMockAppRegistry(),
+      });
+      const result = await callTool(server, 'update_app', {
+        app_name: 'test-app',
+        image: 'nginx:latest',
+      });
+
+      expect(mockUpdateApp).toHaveBeenCalledOnce();
       expect(result.isError).toBeUndefined();
     });
 
@@ -453,6 +586,54 @@ describe('ManifestMCPServer', () => {
         walletProvider: makeMockWallet(),
       });
       const result = await callTool(server, 'get_logs', { name: 'test' });
+
+      expect(result.isError).toBe(true);
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.code).toBe('MISSING_CONFIG');
+    });
+
+    it('deploy_app throws MISSING_CONFIG when appRegistry not provided', async () => {
+      const server = new ManifestMCPServer({
+        config: makeMockConfig(),
+        walletProvider: makeMockWallet(),
+      });
+      const result = await callTool(server, 'deploy_app', { image: 'x', port: 80, size: 's' });
+
+      expect(result.isError).toBe(true);
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.code).toBe('MISSING_CONFIG');
+    });
+
+    it('stop_app throws MISSING_CONFIG when appRegistry not provided', async () => {
+      const server = new ManifestMCPServer({
+        config: makeMockConfig(),
+        walletProvider: makeMockWallet(),
+      });
+      const result = await callTool(server, 'stop_app', { app_name: 'test' });
+
+      expect(result.isError).toBe(true);
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.code).toBe('MISSING_CONFIG');
+    });
+
+    it('restart_app throws MISSING_CONFIG when appRegistry not provided', async () => {
+      const server = new ManifestMCPServer({
+        config: makeMockConfig(),
+        walletProvider: makeMockWallet(),
+      });
+      const result = await callTool(server, 'restart_app', { app_name: 'test' });
+
+      expect(result.isError).toBe(true);
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.code).toBe('MISSING_CONFIG');
+    });
+
+    it('update_app throws MISSING_CONFIG when appRegistry not provided', async () => {
+      const server = new ManifestMCPServer({
+        config: makeMockConfig(),
+        walletProvider: makeMockWallet(),
+      });
+      const result = await callTool(server, 'update_app', { app_name: 'test' });
 
       expect(result.isError).toBe(true);
       const parsed = JSON.parse(result.content[0].text);
