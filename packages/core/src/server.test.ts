@@ -42,15 +42,14 @@ vi.mock('./tools/getLogs.js', () => ({
 }));
 
 import { ManifestMCPServer } from './index.js';
-import type { WalletProvider, ManifestMCPConfig } from './types.js';
 import { ManifestMCPError, ManifestMCPErrorCode } from './types.js';
-import type { AppRegistry } from './registry.js';
 import { cosmosQuery, cosmosTx } from './cosmos.js';
 import { browseCatalog } from './tools/browseCatalog.js';
 import { getBalance } from './tools/getBalance.js';
 import { listApps } from './tools/listApps.js';
 import { appStatus } from './tools/appStatus.js';
 import { getAppLogs } from './tools/getLogs.js';
+import { makeMockConfig, makeMockWallet, makeMockAppRegistry } from './__test-utils__/mocks.js';
 
 const mockCosmosQuery = vi.mocked(cosmosQuery);
 const mockCosmosTx = vi.mocked(cosmosTx);
@@ -59,41 +58,6 @@ const mockGetBalance = vi.mocked(getBalance);
 const mockListApps = vi.mocked(listApps);
 const mockAppStatus = vi.mocked(appStatus);
 const mockGetAppLogs = vi.mocked(getAppLogs);
-
-function makeMockConfig(): ManifestMCPConfig {
-  return {
-    chainId: 'test-chain',
-    rpcUrl: 'https://rpc.example.com',
-    gasPrice: '1.0umfx',
-    addressPrefix: 'manifest',
-  };
-}
-
-function makeMockWallet(opts?: { signArbitrary?: boolean }): WalletProvider {
-  const wallet: WalletProvider = {
-    getAddress: vi.fn().mockResolvedValue('manifest1abc'),
-    getSigner: vi.fn().mockResolvedValue({}),
-  };
-  if (opts?.signArbitrary) {
-    wallet.signArbitrary = vi.fn().mockResolvedValue({
-      pub_key: { type: 'tendermint/PubKeySecp256k1', value: 'mockPubKey' },
-      signature: 'mockSignature',
-    });
-  }
-  return wallet;
-}
-
-function makeMockAppRegistry(): AppRegistry {
-  return {
-    getApps: vi.fn().mockReturnValue([]),
-    getApp: vi.fn().mockReturnValue({ name: 'test', leaseUuid: 'uuid', status: 'active' }),
-    findApp: vi.fn().mockReturnValue(undefined),
-    getAppByLease: vi.fn().mockReturnValue(undefined),
-    addApp: vi.fn(),
-    updateApp: vi.fn(),
-    removeApp: vi.fn(),
-  };
-}
 
 /**
  * Helper: invoke a tool via the public MCP protocol using InMemoryTransport.
