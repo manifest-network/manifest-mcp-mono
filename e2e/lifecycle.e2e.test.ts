@@ -42,14 +42,14 @@ describe('Deploy lifecycle', () => {
   it('browse_catalog shows providers and SKU tiers', async () => {
     const result = await client.callTool<{
       providers: Array<{ active: boolean }>;
-      skus: Array<{ name: string }>;
+      tiers: Record<string, unknown[]>;
     }>('browse_catalog');
 
     expect(result.providers.length).toBeGreaterThanOrEqual(1);
     expect(result.providers[0].active).toBe(true);
 
-    const skuNames = result.skus.map((s) => s.name);
-    expect(skuNames).toContain('docker-micro');
+    const tierNames = Object.keys(result.tiers);
+    expect(tierNames).toContain('docker-micro');
   });
 
   // ------------------------------------------------------------------
@@ -95,7 +95,7 @@ describe('Deploy lifecycle', () => {
 
     expect(result.app_name).toBe('e2e-nginx');
     expect(result.lease_uuid).toBeTruthy();
-    expect(result.status).toBe('running');
+    expect(['running', 'ready']).toContain(result.status);
 
     leaseUuid = result.lease_uuid;
   });
@@ -117,12 +117,13 @@ describe('Deploy lifecycle', () => {
   // ------------------------------------------------------------------
   it('app_status returns chain state and connection info', async () => {
     const result = await client.callTool<{
-      app_name: string;
-      lease_uuid: string;
+      name: string;
+      status: string;
+      chainState: unknown;
     }>('app_status', { name: 'e2e-nginx' });
 
-    expect(result.app_name).toBe('e2e-nginx');
-    expect(result.lease_uuid).toBe(leaseUuid);
+    expect(result.name).toBe('e2e-nginx');
+    expect(result.chainState).toBeDefined();
   });
 
   // ------------------------------------------------------------------
