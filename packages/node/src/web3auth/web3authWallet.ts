@@ -90,6 +90,18 @@ export class Web3AuthWalletProvider implements WalletProvider {
   }
 }
 
+// Dummy EVM chain config required by the Web3Auth SDK; we only extract the raw key.
+const DUMMY_EVM_CHAIN = {
+  chainNamespace: 'eip155',
+  chainId: '0x1',
+  rpcTarget: 'https://rpc.ankr.com/eth',
+  displayName: 'Ethereum',
+  blockExplorerUrl: 'https://etherscan.io',
+  ticker: 'ETH',
+  tickerName: 'Ethereum',
+  logo: '',
+} as const;
+
 export async function extractPrivateKey(
   web3authConfig: Web3AuthConfig,
   idToken: string,
@@ -102,31 +114,48 @@ export async function extractPrivateKey(
   const web3auth = new Web3Auth({
     clientId: web3authConfig.clientId,
     web3AuthNetwork: web3authConfig.network,
-    // Dummy EVM chain config required by the SDK; we only extract the raw key
-    chains: [{
-      chainNamespace: 'eip155',
-      chainId: '0x1',
-      rpcTarget: 'https://rpc.ankr.com/eth',
-      displayName: 'Ethereum',
-      blockExplorerUrl: 'https://etherscan.io',
-      ticker: 'ETH',
-      tickerName: 'Ethereum',
-      logo: '',
-    }],
+    chains: [DUMMY_EVM_CHAIN],
   });
 
-  await web3auth.init();
+  try {
+    await web3auth.init();
+  } catch (err: unknown) {
+    throw new ManifestMCPError(
+      ManifestMCPErrorCode.WALLET_CONNECTION_FAILED,
+      `Web3Auth SDK initialization failed. Verify WEB3AUTH_CLIENT_ID and WEB3AUTH_NETWORK are correct. ` +
+      `(${err instanceof Error ? err.message : String(err)})`
+    );
+  }
 
-  const result = await web3auth.connect({
-    idToken,
-    authConnectionId: web3authConfig.verifier,
-    userId: verifierId,
-  });
+  let result: Awaited<ReturnType<typeof web3auth.connect>>;
+  try {
+    result = await web3auth.connect({
+      idToken,
+      authConnectionId: web3authConfig.verifier,
+      userId: verifierId,
+    });
+  } catch (err: unknown) {
+    throw new ManifestMCPError(
+      ManifestMCPErrorCode.WALLET_CONNECTION_FAILED,
+      `Web3Auth connect failed. The OAuth token may be expired or WEB3AUTH_VERIFIER may be misconfigured. ` +
+      `(${err instanceof Error ? err.message : String(err)})`
+    );
+  }
+
+  if (!result?.provider) {
+    throw new ManifestMCPError(
+      ManifestMCPErrorCode.WALLET_CONNECTION_FAILED,
+      'Web3Auth connect returned no provider. Verify WEB3AUTH_VERIFIER and WEB3AUTH_CLIENT_ID are correct.'
+    );
+  }
 
   const privateKey = await result.provider.request({ method: 'private_key' });
 
   if (!privateKey || typeof privateKey !== 'string') {
-    throw new Error('Web3Auth did not return a valid private key');
+    throw new ManifestMCPError(
+      ManifestMCPErrorCode.WALLET_CONNECTION_FAILED,
+      'Web3Auth did not return a valid private key'
+    );
   }
 
   return privateKey;

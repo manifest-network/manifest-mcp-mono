@@ -1,6 +1,7 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import dotenv from 'dotenv';
+import type { OAuthConfig, Web3AuthConfig } from './web3auth/types.js';
 
 dotenv.config();
 
@@ -43,16 +44,8 @@ export function loadKeyfileConfig(): Pick<NodeMCPConfig, 'addressPrefix' | 'keyf
 }
 
 export interface LoginConfig {
-  readonly oauthConfig: {
-    readonly provider: string;
-    readonly clientId: string;
-    readonly clientSecret: string;
-  };
-  readonly web3authConfig: {
-    readonly clientId: string;
-    readonly network: string;
-    readonly verifier: string;
-  };
+  readonly oauthConfig: OAuthConfig;
+  readonly web3authConfig: Web3AuthConfig;
   readonly addressPrefix: string;
 }
 

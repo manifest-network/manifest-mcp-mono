@@ -3,6 +3,7 @@ import { randomBytes } from 'node:crypto';
 import type { OAuthConfig, OAuthResult } from './types.js';
 
 const CALLBACK_PORT = 9876;
+const REDIRECT_URI = `http://localhost:${CALLBACK_PORT}/callback`;
 const TIMEOUT_MS = 120_000;
 
 function decodeJwtPayload(jwt: string): Record<string, unknown> {
@@ -15,12 +16,10 @@ function decodeJwtPayload(jwt: string): Record<string, unknown> {
 }
 
 function buildAuthorizeUrl(oauthConfig: OAuthConfig, state: string): string {
-  const redirectUri = `http://localhost:${CALLBACK_PORT}/callback`;
-
   if (oauthConfig.provider === 'google') {
     const params = new URLSearchParams({
       client_id: oauthConfig.clientId,
-      redirect_uri: redirectUri,
+      redirect_uri: REDIRECT_URI,
       response_type: 'code',
       scope: 'openid email profile',
       state,
@@ -37,8 +36,6 @@ async function exchangeCodeForToken(
   oauthConfig: OAuthConfig,
   code: string,
 ): Promise<{ id_token: string }> {
-  const redirectUri = `http://localhost:${CALLBACK_PORT}/callback`;
-
   if (oauthConfig.provider === 'google') {
     const res = await fetch('https://oauth2.googleapis.com/token', {
       method: 'POST',
@@ -47,7 +44,7 @@ async function exchangeCodeForToken(
         code,
         client_id: oauthConfig.clientId,
         client_secret: oauthConfig.clientSecret,
-        redirect_uri: redirectUri,
+        redirect_uri: REDIRECT_URI,
         grant_type: 'authorization_code',
       }),
     });
@@ -72,11 +69,17 @@ export async function runOAuthFlow(oauthConfig: OAuthConfig): Promise<OAuthResul
   return new Promise<OAuthResult>((resolve, reject) => {
     let server: Server;
     let settled = false;
+    let timer: ReturnType<typeof setTimeout>;
 
-    const timeout = setTimeout(() => {
+    function settle(): void {
+      settled = true;
+      clearTimeout(timer);
+      server?.close();
+    }
+
+    timer = setTimeout(() => {
       if (!settled) {
-        settled = true;
-        server?.close();
+        settle();
         reject(new Error('OAuth callback timed out after 120 seconds'));
       }
     }, TIMEOUT_MS);
@@ -97,31 +100,25 @@ export async function runOAuthFlow(oauthConfig: OAuthConfig): Promise<OAuthResul
       const error = url.searchParams.get('error');
 
       if (error) {
-        settled = true;
-        clearTimeout(timeout);
+        settle();
         res.writeHead(200, { 'Content-Type': 'text/html' });
         res.end('<html><body><h1>Authentication failed</h1><p>You can close this tab.</p></body></html>');
-        server.close();
         reject(new Error(`OAuth error: ${error}`));
         return;
       }
 
       if (callbackState !== state) {
-        settled = true;
-        clearTimeout(timeout);
+        settle();
         res.writeHead(400, { 'Content-Type': 'text/html' });
         res.end('<html><body><h1>Invalid state</h1><p>CSRF check failed. Please try again.</p></body></html>');
-        server.close();
         reject(new Error('OAuth state mismatch (possible CSRF)'));
         return;
       }
 
       if (!code) {
-        settled = true;
-        clearTimeout(timeout);
+        settle();
         res.writeHead(400, { 'Content-Type': 'text/html' });
         res.end('<html><body><h1>Missing code</h1><p>No authorization code received.</p></body></html>');
-        server.close();
         reject(new Error('OAuth callback missing authorization code'));
         return;
       }
@@ -135,18 +132,14 @@ export async function runOAuthFlow(oauthConfig: OAuthConfig): Promise<OAuthResul
           throw new Error('JWT id_token missing email claim');
         }
 
-        settled = true;
-        clearTimeout(timeout);
+        settle();
         res.writeHead(200, { 'Content-Type': 'text/html' });
         res.end('<html><body><h1>Login successful!</h1><p>You can close this tab and return to the terminal.</p></body></html>');
-        server.close();
         resolve({ idToken: tokens.id_token, verifierId });
       } catch (err) {
-        settled = true;
-        clearTimeout(timeout);
+        settle();
         res.writeHead(500, { 'Content-Type': 'text/html' });
         res.end('<html><body><h1>Token exchange failed</h1><p>Check the terminal for details.</p></body></html>');
-        server.close();
         reject(err);
       }
     });
@@ -155,15 +148,17 @@ export async function runOAuthFlow(oauthConfig: OAuthConfig): Promise<OAuthResul
       const authorizeUrl = buildAuthorizeUrl(oauthConfig, state);
       console.error(`Opening browser for authentication...`);
       console.error(`If the browser does not open, visit:\n${authorizeUrl}\n`);
-      open(authorizeUrl).catch(() => {
-        // open() may fail in headless environments — URL is already printed
+      open(authorizeUrl).catch((err: unknown) => {
+        console.error(
+          `Could not open browser automatically: ${err instanceof Error ? err.message : String(err)}\n` +
+          'Please open the URL above manually in your browser.'
+        );
       });
     });
 
     server.on('error', (err) => {
       if (!settled) {
-        settled = true;
-        clearTimeout(timeout);
+        settle();
         reject(new Error(`Failed to start OAuth callback server on port ${CALLBACK_PORT}: ${err.message}`));
       }
     });
