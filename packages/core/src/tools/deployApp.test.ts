@@ -23,7 +23,7 @@ import { uploadLeaseData, getLeaseConnectionInfo } from '../http/provider.js';
 import { pollLeaseUntilReady } from '../http/fred.js';
 import { InMemoryAppRegistry } from '../registry.js';
 import { makeMockClientManager, makeMockQueryClient } from '../__test-utils__/mocks.js';
-import { ManifestMCPError, ManifestMCPErrorCode } from '../types.js';
+import { ManifestMCPErrorCode } from '../types.js';
 
 const mockCosmosTx = vi.mocked(cosmosTx);
 const mockUploadLeaseData = vi.mocked(uploadLeaseData);
