@@ -72,7 +72,14 @@ async function main() {
       env.keyPassword,
     );
   } else {
-    const session = loadSession();
+    let session = null;
+    try {
+      session = loadSession();
+    } catch (err) {
+      console.error(
+        `Warning: ${err instanceof Error ? err.message : String(err)} Falling back to next wallet source.`
+      );
+    }
     if (session) {
       console.error(`Using Web3Auth session wallet (${session.verifierId})`);
       walletProvider = new Web3AuthWalletProvider(session.privateKeyHex, env.addressPrefix);

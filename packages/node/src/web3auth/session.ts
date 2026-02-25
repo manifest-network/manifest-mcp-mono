@@ -16,7 +16,9 @@ function isValidSession(data: unknown): data is SessionData {
     typeof obj.privateKeyHex === 'string' && obj.privateKeyHex.length > 0 &&
     typeof obj.verifierId === 'string' &&
     typeof obj.idToken === 'string' &&
-    typeof obj.address === 'string'
+    typeof obj.address === 'string' &&
+    typeof obj.oauthProvider === 'string' &&
+    typeof obj.createdAt === 'string'
   );
 }
 
