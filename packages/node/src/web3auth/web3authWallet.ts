@@ -84,13 +84,18 @@ export class Web3AuthWalletProvider implements WalletProvider {
   async disconnect(): Promise<void> {
     this.wallet = null;
     this.address = null;
+    // Note: JavaScript strings are immutable, so we can't truly zero the memory,
+    // but we remove all references to allow garbage collection.
     this.privateKeyHex = '';
     this.disconnected = true;
     this.initPromise = null;
   }
 }
 
-// Dummy EVM chain config required by the Web3Auth SDK; we only extract the raw key.
+// Dummy EVM chain config required by the Web3Auth Node SDK to initialise its
+// internal provider. We never broadcast to this chain — it is only used to
+// extract the raw secp256k1 private key.  Mainnet chainId '0x1' is used because
+// the Web3Auth SDK validates the chainId and some configurations reject testnets.
 const DUMMY_EVM_CHAIN = {
   chainNamespace: 'eip155',
   chainId: '0x1',
@@ -158,5 +163,17 @@ export async function extractPrivateKey(
     );
   }
 
-  return privateKey;
+  // Strip optional 0x prefix and validate 32-byte hex (64 hex characters).
+  const hex = privateKey.startsWith('0x') || privateKey.startsWith('0X')
+    ? privateKey.slice(2)
+    : privateKey;
+
+  if (!/^[0-9a-fA-F]{64}$/.test(hex)) {
+    throw new ManifestMCPError(
+      ManifestMCPErrorCode.WALLET_CONNECTION_FAILED,
+      'Web3Auth returned a private key in an unexpected format. Expected 32-byte hex string (64 hex characters).'
+    );
+  }
+
+  return hex;
 }

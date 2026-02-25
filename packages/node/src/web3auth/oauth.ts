@@ -2,7 +2,8 @@ import { createServer, type Server, type IncomingMessage, type ServerResponse } 
 import { randomBytes } from 'node:crypto';
 import type { OAuthConfig, OAuthResult } from './types.js';
 
-const CALLBACK_PORT = 9876;
+// Local OAuth callback port. Override with WEB3AUTH_OAUTH_CALLBACK_PORT if 9876 is in use.
+const CALLBACK_PORT = Number.parseInt(process.env.WEB3AUTH_OAUTH_CALLBACK_PORT ?? '9876', 10) || 9876;
 const REDIRECT_URI = `http://localhost:${CALLBACK_PORT}/callback`;
 const TIMEOUT_MS = 120_000;
 

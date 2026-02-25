@@ -76,8 +76,11 @@ async function main() {
     try {
       session = loadSession();
     } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
       console.error(
-        `Warning: ${err instanceof Error ? err.message : String(err)} Falling back to next wallet source.`
+        `Warning: Failed to load Web3Auth session (${message}). ` +
+        'Your session file may be corrupted — run "manifest-mcp-node logout" to clear it. ' +
+        'Falling back to next wallet source.'
       );
     }
     if (session) {
@@ -90,8 +93,9 @@ async function main() {
       console.error(
         'No wallet found. Either:\n' +
         `  1. Run "manifest-mcp-node keygen" to generate an encrypted keyfile at ${env.keyfilePath}\n` +
-        '  2. Run "manifest-mcp-node login" to authenticate via OAuth (Web3Auth)\n' +
-        '  3. Set the COSMOS_MNEMONIC environment variable'
+        '  2. Run "manifest-mcp-node import" to import a mnemonic into an encrypted keyfile\n' +
+        '  3. Run "manifest-mcp-node login" to authenticate via OAuth (Web3Auth)\n' +
+        '  4. Set the COSMOS_MNEMONIC environment variable'
       );
       process.exit(1);
     }

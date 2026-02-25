@@ -9,11 +9,13 @@ export function getSessionPath(): string {
   return SESSION_PATH;
 }
 
+const PRIVATE_KEY_HEX_RE = /^[0-9a-fA-F]{64}$/;
+
 function isValidSession(data: unknown): data is SessionData {
   if (typeof data !== 'object' || data === null) return false;
   const obj = data as Record<string, unknown>;
   return (
-    typeof obj.privateKeyHex === 'string' && obj.privateKeyHex.length > 0 &&
+    typeof obj.privateKeyHex === 'string' && PRIVATE_KEY_HEX_RE.test(obj.privateKeyHex) &&
     typeof obj.verifierId === 'string' &&
     typeof obj.idToken === 'string' &&
     typeof obj.address === 'string' &&
