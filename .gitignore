@@ -2,5 +2,9 @@ node_modules/
 dist/
 *.tsbuildinfo
 .env
+!e2e/.env
 .env.local
 .mcp.json
+
+# E2E artifacts
+e2e-logs.txt

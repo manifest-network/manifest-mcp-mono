@@ -77,7 +77,7 @@ interface BillingOverrides {
 
 interface SkuOverrides {
   providers?: { uuid: string; address: string; apiUrl: string; active: boolean }[];
-  skus?: { name: string; providerUuid: string; basePrice?: { amount: string; denom: string } }[];
+  skus?: { uuid?: string; name: string; providerUuid: string; basePrice?: { amount: string; denom: string } }[];
   providerLookup?: Record<string, { provider: { apiUrl: string } }>;
 }
 

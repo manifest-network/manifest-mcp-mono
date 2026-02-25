@@ -1,0 +1,48 @@
+name: E2E
+on:
+  schedule:
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Build Docker images
+        run: docker compose -f e2e/docker-compose.yml build
+
+      - name: Start devnet
+        run: docker compose -f e2e/docker-compose.yml up -d --wait --wait-timeout 180
+
+      - name: Install and build
+        run: npm ci && npm run build
+
+      - name: Run E2E tests
+        run: npm run test:e2e
+
+      - name: Collect logs on failure
+        if: failure()
+        run: docker compose -f e2e/docker-compose.yml logs > e2e-logs.txt
+
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-logs
+          path: e2e-logs.txt
+
+      - name: Teardown
+        if: always()
+        run: docker compose -f e2e/docker-compose.yml down -v --remove-orphans

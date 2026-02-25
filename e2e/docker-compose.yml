@@ -1,0 +1,133 @@
+# E2E Docker Compose for MCP Server Integration Testing
+#
+# Services:
+#   - chain: Blockchain node (manifest-ledger, billing-v2 branch)
+#   - init: Register provider and create SKUs, generate configs
+#   - docker-backend: Real Docker container provisioning backend
+#   - providerd: Provider daemon
+#
+# Usage:
+#   docker compose -f e2e/docker-compose.yml up -d --wait
+#   docker compose -f e2e/docker-compose.yml down -v --remove-orphans
+
+services:
+  # ===========================================================================
+  # Blockchain Node
+  # ===========================================================================
+  chain:
+    build:
+      context: ../submodules/manifest-ledger
+      dockerfile: ../../e2e/docker/manifest-ledger/Dockerfile
+    volumes:
+      - chain-data:/persistent
+      - shared-data:/shared
+      - ./scripts/init_chain.sh:/usr/local/bin/init_chain.sh:ro
+    ports:
+      - "9090:9090"   # gRPC
+      - "26657:26657" # RPC
+      - "1317:1317"   # REST
+    env_file: .env
+    entrypoint: ["/bin/bash"]
+    command: ["/usr/local/bin/init_chain.sh"]
+    healthcheck:
+      test: curl -sf http://localhost:26657/status | grep -q '"catching_up":false'
+      interval: 10s
+      timeout: 5s
+      retries: 30
+    networks:
+      - mcp-e2e
+
+  # ===========================================================================
+  # Chain Initialization (Provider + SKU Registration)
+  # ===========================================================================
+  init:
+    build:
+      context: ../submodules/manifest-ledger
+      dockerfile: ../../e2e/docker/manifest-ledger/Dockerfile
+    volumes:
+      - chain-data:/persistent
+      - shared-data:/shared
+      - ./scripts/init_billing.sh:/usr/local/bin/init_billing.sh:ro
+    env_file: .env
+    entrypoint: ["/bin/bash"]
+    command: ["/usr/local/bin/init_billing.sh"]
+    depends_on:
+      chain:
+        condition: service_healthy
+    restart: "no"
+    networks:
+      - mcp-e2e
+
+  # ===========================================================================
+  # Docker Backend (Real Container Provisioning)
+  # ===========================================================================
+  docker-backend:
+    build:
+      context: ../submodules/fred
+      dockerfile: ../../e2e/docker/fred/Dockerfile
+      target: docker-backend
+    volumes:
+      - shared-data:/shared:ro
+      - docker-backend-data:/data
+      - /var/run/docker.sock:/var/run/docker.sock
+    ports:
+      - "9001:9001"
+    command: ["/usr/bin/docker-backend", "--config", "/shared/docker-backend.yaml"]
+    healthcheck:
+      test: curl -f http://localhost:9001/health || exit 1
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    depends_on:
+      init:
+        condition: service_completed_successfully
+    networks:
+      - mcp-e2e
+
+  # ===========================================================================
+  # Provider Daemon
+  # ===========================================================================
+  providerd:
+    build:
+      context: ../submodules/fred
+      dockerfile: ../../e2e/docker/fred/Dockerfile
+      target: providerd
+    volumes:
+      - shared-data:/shared:ro
+      - providerd-data:/data
+    ports:
+      - "8080:8080"
+    command: ["/usr/bin/providerd", "--config", "/shared/providerd.yaml"]
+    healthcheck:
+      test: curl -f http://localhost:8080/health || exit 1
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    depends_on:
+      docker-backend:
+        condition: service_healthy
+    networks:
+      - mcp-e2e
+
+# =============================================================================
+# Volumes
+# =============================================================================
+volumes:
+  chain-data:
+    name: mcp-e2e-chain-data
+  shared-data:
+    name: mcp-e2e-shared-data
+  docker-backend-data:
+    name: mcp-e2e-docker-backend-data
+  providerd-data:
+    name: mcp-e2e-providerd-data
+
+# =============================================================================
+# Networks
+# =============================================================================
+networks:
+  mcp-e2e:
+    name: mcp-e2e-network
+    driver: bridge

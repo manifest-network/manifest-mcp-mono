@@ -1,0 +1,64 @@
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+
+vi.mock('../cosmos.js', () => ({
+  cosmosTx: vi.fn(),
+}));
+
+import { fundCredits } from './fundCredits.js';
+import { cosmosTx } from '../cosmos.js';
+import { makeMockClientManager } from '../__test-utils__/mocks.js';
+import { ManifestMCPError } from '../types.js';
+
+const mockCosmosTx = vi.mocked(cosmosTx);
+
+beforeEach(() => {
+  vi.clearAllMocks();
+});
+
+describe('fundCredits', () => {
+  it('calls cosmosTx with billing fund-credit and returns result', async () => {
+    const cm = makeMockClientManager({ address: 'manifest1tenant' });
+    mockCosmosTx.mockResolvedValue({
+      module: 'billing',
+      subcommand: 'fund-credit',
+      transactionHash: 'HASH123',
+      code: 0,
+      height: '100',
+      confirmed: true,
+    });
+
+    const result = await fundCredits(cm as any, '10000000umfx');
+
+    expect(mockCosmosTx).toHaveBeenCalledWith(
+      cm,
+      'billing',
+      'fund-credit',
+      ['manifest1tenant', '10000000umfx'],
+      true,
+    );
+    expect(result.transactionHash).toBe('HASH123');
+    expect(result.code).toBe(0);
+    expect(result.confirmed).toBe(true);
+  });
+
+  it('throws when tx returns nonzero code', async () => {
+    const cm = makeMockClientManager({ address: 'manifest1tenant' });
+    mockCosmosTx.mockResolvedValue({
+      module: 'billing',
+      subcommand: 'fund-credit',
+      transactionHash: 'TX_FAIL',
+      code: 5,
+      height: '100',
+      rawLog: 'insufficient funds',
+    });
+
+    await expect(fundCredits(cm as any, '10000000umfx')).rejects.toThrow(ManifestMCPError);
+  });
+
+  it('propagates errors from cosmosTx', async () => {
+    const cm = makeMockClientManager();
+    mockCosmosTx.mockRejectedValue(new Error('insufficient funds'));
+
+    await expect(fundCredits(cm as any, '999umfx')).rejects.toThrow('insufficient funds');
+  });
+});

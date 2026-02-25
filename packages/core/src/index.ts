@@ -18,12 +18,17 @@ import { createValidatedConfig } from './config.js';
 import { VERSION } from './version.js';
 import { requireString, requireStringEnum, parseArgs, optionalBoolean } from './validation.js';
 import type { AppRegistry } from './registry.js';
-import { createSignMessage, createAuthToken } from './http/auth.js';
+import { createSignMessage, createLeaseDataSignMessage, createAuthToken } from './http/auth.js';
 import { browseCatalog } from './tools/browseCatalog.js';
 import { getBalance } from './tools/getBalance.js';
 import { listApps } from './tools/listApps.js';
 import { appStatus } from './tools/appStatus.js';
 import { getAppLogs } from './tools/getLogs.js';
+import { fundCredits } from './tools/fundCredits.js';
+import { deployApp } from './tools/deployApp.js';
+import { stopApp } from './tools/stopApp.js';
+import { restartApp } from './tools/restartApp.js';
+import { updateApp } from './tools/updateApp.js';
 
 /**
  * Sensitive field names that should be redacted from error responses
@@ -226,6 +231,21 @@ const BASE_TOOLS: Tool[] = [
       required: [],
     },
   },
+  {
+    name: 'fund_credits',
+    description:
+      'Fund the credit account for deploying apps. Sends tokens to the billing credit account.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        amount: {
+          type: 'string',
+          description: 'Amount with denomination (e.g. "10000000umfx")',
+        },
+      },
+      required: ['amount'],
+    },
+  },
 ];
 
 /**
@@ -274,6 +294,96 @@ const APP_TOOLS: Tool[] = [
         },
       },
       required: ['name'],
+    },
+  },
+  {
+    name: 'deploy_app',
+    description:
+      'Deploy a new application. Creates a lease, uploads the manifest to the provider, and polls until the app is ready.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        image: {
+          type: 'string',
+          description: 'Docker image to deploy (e.g. "nginx:alpine")',
+        },
+        port: {
+          type: 'number',
+          description: 'Container port to expose (e.g. 80)',
+        },
+        size: {
+          type: 'string',
+          description: 'SKU tier name (e.g. "docker-micro", "docker-small")',
+        },
+        app_name: {
+          type: 'string',
+          description: 'Optional friendly name for the app',
+        },
+        env: {
+          type: 'object',
+          description: 'Optional environment variables as key-value pairs',
+          additionalProperties: { type: 'string' },
+        },
+      },
+      required: ['image', 'port', 'size'],
+    },
+  },
+  {
+    name: 'stop_app',
+    description:
+      'Stop a deployed app by closing its lease on-chain.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        app_name: {
+          type: 'string',
+          description: 'The name of the app to stop',
+        },
+      },
+      required: ['app_name'],
+    },
+  },
+  {
+    name: 'restart_app',
+    description:
+      'Restart a deployed app via the provider.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        app_name: {
+          type: 'string',
+          description: 'The name of the app to restart',
+        },
+      },
+      required: ['app_name'],
+    },
+  },
+  {
+    name: 'update_app',
+    description:
+      'Update a deployed app with new image, port, or environment variables.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        app_name: {
+          type: 'string',
+          description: 'The name of the app to update',
+        },
+        image: {
+          type: 'string',
+          description: 'New Docker image',
+        },
+        port: {
+          type: 'number',
+          description: 'New container port',
+        },
+        env: {
+          type: 'object',
+          description: 'New environment variables (replaces existing)',
+          additionalProperties: { type: 'string' },
+        },
+      },
+      required: ['app_name'],
     },
   },
 ];
@@ -497,6 +607,19 @@ export class ManifestMCPServer {
         };
       }
 
+      case 'fund_credits': {
+        const amount = requireString(toolInput, 'amount');
+        const result = await fundCredits(this.clientManager, amount);
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify(result, bigIntReplacer, 2),
+            },
+          ],
+        };
+      }
+
       case 'list_apps': {
         if (!this.appRegistry) {
           throw new ManifestMCPError(
@@ -574,6 +697,117 @@ export class ManifestMCPServer {
         };
       }
 
+      case 'deploy_app': {
+        if (!this.appRegistry) {
+          throw new ManifestMCPError(
+            ManifestMCPErrorCode.MISSING_CONFIG,
+            'App registry is not configured. Pass appRegistry in ManifestMCPServerOptions.'
+          );
+        }
+        const image = requireString(toolInput, 'image');
+        const port = toolInput.port;
+        if (typeof port !== 'number' || !Number.isFinite(port) || port <= 0) {
+          throw new ManifestMCPError(
+            ManifestMCPErrorCode.TX_FAILED,
+            'port must be a positive number',
+          );
+        }
+        const size = requireString(toolInput, 'size');
+        const appName = typeof toolInput.app_name === 'string' ? toolInput.app_name : undefined;
+        const env = toolInput.env as Record<string, string> | undefined;
+
+        const result = await deployApp(
+          this.clientManager,
+          this.appRegistry,
+          (addr, leaseUuid) => this.getProviderAuthToken(addr, leaseUuid),
+          (addr, leaseUuid, metaHashHex) => this.getLeaseDataAuthToken(addr, leaseUuid, metaHashHex),
+          { image, port, size, app_name: appName, env },
+        );
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify(result, bigIntReplacer, 2),
+            },
+          ],
+        };
+      }
+
+      case 'stop_app': {
+        if (!this.appRegistry) {
+          throw new ManifestMCPError(
+            ManifestMCPErrorCode.MISSING_CONFIG,
+            'App registry is not configured. Pass appRegistry in ManifestMCPServerOptions.'
+          );
+        }
+        const appName = requireString(toolInput, 'app_name');
+        const address = await this.walletProvider.getAddress();
+        const result = await stopApp(this.clientManager, address, appName, this.appRegistry);
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify(result, bigIntReplacer, 2),
+            },
+          ],
+        };
+      }
+
+      case 'restart_app': {
+        if (!this.appRegistry) {
+          throw new ManifestMCPError(
+            ManifestMCPErrorCode.MISSING_CONFIG,
+            'App registry is not configured. Pass appRegistry in ManifestMCPServerOptions.'
+          );
+        }
+        const appName = requireString(toolInput, 'app_name');
+        const address = await this.walletProvider.getAddress();
+        const result = await restartApp(
+          address,
+          appName,
+          this.appRegistry,
+          (addr, leaseUuid) => this.getProviderAuthToken(addr, leaseUuid),
+        );
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify(result, bigIntReplacer, 2),
+            },
+          ],
+        };
+      }
+
+      case 'update_app': {
+        if (!this.appRegistry) {
+          throw new ManifestMCPError(
+            ManifestMCPErrorCode.MISSING_CONFIG,
+            'App registry is not configured. Pass appRegistry in ManifestMCPServerOptions.'
+          );
+        }
+        const appName = requireString(toolInput, 'app_name');
+        const address = await this.walletProvider.getAddress();
+        const image = typeof toolInput.image === 'string' ? toolInput.image : undefined;
+        const port = typeof toolInput.port === 'number' ? toolInput.port : undefined;
+        const env = toolInput.env as Record<string, string> | undefined;
+
+        const result = await updateApp(
+          address,
+          appName,
+          this.appRegistry,
+          (addr, leaseUuid) => this.getProviderAuthToken(addr, leaseUuid),
+          { image, port, env },
+        );
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify(result, bigIntReplacer, 2),
+            },
+          ],
+        };
+      }
+
       default:
         throw new ManifestMCPError(
           ManifestMCPErrorCode.UNKNOWN_ERROR,
@@ -593,6 +827,19 @@ export class ManifestMCPServer {
     const message = createSignMessage(address, leaseUuid, timestamp);
     const { pub_key, signature } = await this.walletProvider.signArbitrary(address, message);
     return createAuthToken(address, leaseUuid, timestamp, pub_key.value, signature);
+  }
+
+  private async getLeaseDataAuthToken(address: string, leaseUuid: string, metaHashHex: string): Promise<string> {
+    if (!this.walletProvider.signArbitrary) {
+      throw new ManifestMCPError(
+        ManifestMCPErrorCode.WALLET_NOT_CONNECTED,
+        'Wallet does not support signArbitrary (ADR-036). Required for provider authentication.'
+      );
+    }
+    const timestamp = new Date().toISOString();
+    const message = createLeaseDataSignMessage(leaseUuid, metaHashHex, timestamp);
+    const { pub_key, signature } = await this.walletProvider.signArbitrary(address, message);
+    return createAuthToken(address, leaseUuid, timestamp, pub_key.value, signature, metaHashHex);
   }
 
   /**
