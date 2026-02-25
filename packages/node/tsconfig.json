@@ -13,6 +13,10 @@
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
     "moduleResolution": "node",
+    "baseUrl": ".",
+    "paths": {
+      "@web3auth/node-sdk": ["./src/web3auth/node-sdk.d.ts"]
+    },
     "resolveJsonModule": true,
     "declaration": true,
     "declarationMap": true,

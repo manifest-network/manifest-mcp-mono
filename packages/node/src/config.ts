@@ -42,6 +42,36 @@ export function loadKeyfileConfig(): Pick<NodeMCPConfig, 'addressPrefix' | 'keyf
   };
 }
 
+export interface LoginConfig {
+  readonly oauthConfig: {
+    readonly provider: string;
+    readonly clientId: string;
+    readonly clientSecret: string;
+  };
+  readonly web3authConfig: {
+    readonly clientId: string;
+    readonly network: string;
+    readonly verifier: string;
+  };
+  readonly addressPrefix: string;
+}
+
+export function loadLoginConfig(): LoginConfig {
+  return {
+    oauthConfig: {
+      provider: getEnvOptional('OAUTH_PROVIDER', 'google'),
+      clientId: getEnvRequired('OAUTH_CLIENT_ID'),
+      clientSecret: getEnvRequired('OAUTH_CLIENT_SECRET'),
+    },
+    web3authConfig: {
+      clientId: getEnvRequired('WEB3AUTH_CLIENT_ID'),
+      network: getEnvOptional('WEB3AUTH_NETWORK', 'sapphire_devnet'),
+      verifier: getEnvRequired('WEB3AUTH_VERIFIER'),
+    },
+    addressPrefix: getEnvOptional('COSMOS_ADDRESS_PREFIX', 'manifest'),
+  };
+}
+
 export function loadConfig(): NodeMCPConfig {
   return {
     chainId: getEnvRequired('COSMOS_CHAIN_ID'),

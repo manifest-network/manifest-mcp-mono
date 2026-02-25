@@ -11,6 +11,7 @@ import {
 } from '@manifest-network/manifest-mcp-core';
 import { loadConfig } from './config.js';
 import { KeyfileWalletProvider } from './keyfileWallet.js';
+import { Web3AuthWalletProvider, loadSession } from './web3auth/index.js';
 
 async function handleSubcommand(subcommand: string): Promise<void> {
   if (subcommand === 'keygen') {
@@ -23,12 +24,24 @@ async function handleSubcommand(subcommand: string): Promise<void> {
     await runImport();
     return;
   }
+  if (subcommand === 'login') {
+    const { runLogin } = await import('./login.js');
+    await runLogin();
+    return;
+  }
+  if (subcommand === 'logout') {
+    const { runLogout } = await import('./logout.js');
+    await runLogout();
+    return;
+  }
   console.error(
     `Unknown subcommand: "${subcommand}"\n\n` +
     'Usage:\n' +
     '  manifest-mcp-node              Start the MCP server\n' +
     '  manifest-mcp-node keygen       Generate a new encrypted keyfile\n' +
-    '  manifest-mcp-node import       Import a mnemonic into an encrypted keyfile\n'
+    '  manifest-mcp-node import       Import a mnemonic into an encrypted keyfile\n' +
+    '  manifest-mcp-node login        Authenticate via OAuth and cache a Web3Auth session\n' +
+    '  manifest-mcp-node logout       Remove the cached Web3Auth session\n'
   );
   process.exit(1);
 }
@@ -58,16 +71,23 @@ async function main() {
       env.addressPrefix,
       env.keyPassword,
     );
-  } else if (env.mnemonic) {
-    console.error('Using mnemonic wallet from COSMOS_MNEMONIC');
-    walletProvider = new MnemonicWalletProvider(config, env.mnemonic);
   } else {
-    console.error(
-      'No wallet found. Either:\n' +
-      `  1. Run "manifest-mcp-node keygen" to generate an encrypted keyfile at ${env.keyfilePath}\n` +
-      '  2. Set the COSMOS_MNEMONIC environment variable'
-    );
-    process.exit(1);
+    const session = loadSession();
+    if (session) {
+      console.error(`Using Web3Auth session wallet (${session.verifierId})`);
+      walletProvider = new Web3AuthWalletProvider(session.privateKeyHex, env.addressPrefix);
+    } else if (env.mnemonic) {
+      console.error('Using mnemonic wallet from COSMOS_MNEMONIC');
+      walletProvider = new MnemonicWalletProvider(config, env.mnemonic);
+    } else {
+      console.error(
+        'No wallet found. Either:\n' +
+        `  1. Run "manifest-mcp-node keygen" to generate an encrypted keyfile at ${env.keyfilePath}\n` +
+        '  2. Run "manifest-mcp-node login" to authenticate via OAuth (Web3Auth)\n' +
+        '  3. Set the COSMOS_MNEMONIC environment variable'
+      );
+      process.exit(1);
+    }
   }
 
   if (walletProvider.connect) {
