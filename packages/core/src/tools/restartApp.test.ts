@@ -4,74 +4,87 @@ vi.mock('../http/fred.js', () => ({
   restartLease: vi.fn(),
 }));
 
+vi.mock('./resolveLeaseProvider.js', () => ({
+  resolveLeaseProvider: vi.fn(),
+}));
+
 import { restartApp } from './restartApp.js';
 import { restartLease } from '../http/fred.js';
-import { InMemoryAppRegistry } from '../registry.js';
+import { resolveLeaseProvider } from './resolveLeaseProvider.js';
+import { makeMockQueryClient } from '../__test-utils__/mocks.js';
 import { ManifestMCPError, ManifestMCPErrorCode } from '../types.js';
 
 const mockRestartLease = vi.mocked(restartLease);
+const mockResolveLeaseProvider = vi.mocked(resolveLeaseProvider);
 
 const ADDRESS = 'manifest1user';
 const mockGetAuthToken = vi.fn().mockResolvedValue('auth-token-123');
 
 describe('restartApp', () => {
-  let registry: InMemoryAppRegistry;
-
   beforeEach(() => {
     vi.clearAllMocks();
-    registry = new InMemoryAppRegistry();
   });
 
-  it('restarts the lease via provider and returns status', async () => {
-    registry.addApp(ADDRESS, {
-      name: 'my-app',
-      leaseUuid: 'lease-1',
+  it('resolves provider from chain and restarts the lease', async () => {
+    const qc = makeMockQueryClient();
+    mockResolveLeaseProvider.mockResolvedValue({
+      providerUuid: 'prov-1',
       providerUrl: 'https://provider.example.com',
-      status: 'active',
+      leaseState: 2,
     });
-
     mockRestartLease.mockResolvedValue({ status: 'restarting' });
 
-    const result = await restartApp(ADDRESS, 'my-app', registry, mockGetAuthToken);
+    const result = await restartApp(qc, ADDRESS, 'lease-1', mockGetAuthToken);
 
+    expect(mockResolveLeaseProvider).toHaveBeenCalledWith(qc, 'lease-1');
     expect(mockRestartLease).toHaveBeenCalledWith(
       'https://provider.example.com',
       'lease-1',
       'auth-token-123',
     );
     expect(result).toEqual({
-      app_name: 'my-app',
+      lease_uuid: 'lease-1',
       status: 'restarting',
     });
   });
 
-  it('throws QUERY_FAILED when app has no providerUrl', async () => {
-    registry.addApp(ADDRESS, {
-      name: 'my-app',
-      leaseUuid: 'lease-1',
-      status: 'active',
-    });
+  it('throws when lease not found on chain', async () => {
+    const qc = makeMockQueryClient();
+    mockResolveLeaseProvider.mockRejectedValue(
+      new ManifestMCPError(ManifestMCPErrorCode.QUERY_FAILED, 'Lease "lease-1" not found on chain'),
+    );
 
     await expect(
-      restartApp(ADDRESS, 'my-app', registry, mockGetAuthToken),
+      restartApp(qc, ADDRESS, 'lease-1', mockGetAuthToken),
     ).rejects.toMatchObject({
       code: ManifestMCPErrorCode.QUERY_FAILED,
-      message: expect.stringContaining('no provider URL'),
     });
   });
 
-  it('throws when app not found in registry', async () => {
+  it('throws when lease is closed', async () => {
+    const qc = makeMockQueryClient();
+    mockResolveLeaseProvider.mockResolvedValue({
+      providerUuid: 'prov-1',
+      providerUrl: 'https://provider.example.com',
+      leaseState: 3,
+    });
+
     await expect(
-      restartApp(ADDRESS, 'nonexistent', registry, mockGetAuthToken),
-    ).rejects.toThrow(ManifestMCPError);
+      restartApp(qc, ADDRESS, 'lease-1', mockGetAuthToken),
+    ).rejects.toMatchObject({
+      code: ManifestMCPErrorCode.QUERY_FAILED,
+      message: expect.stringContaining('closed'),
+    });
+
+    expect(mockRestartLease).not.toHaveBeenCalled();
   });
 
   it('lets auth errors propagate', async () => {
-    registry.addApp(ADDRESS, {
-      name: 'my-app',
-      leaseUuid: 'lease-1',
+    const qc = makeMockQueryClient();
+    mockResolveLeaseProvider.mockResolvedValue({
+      providerUuid: 'prov-1',
       providerUrl: 'https://provider.example.com',
-      status: 'active',
+      leaseState: 2,
     });
 
     const authError = new ManifestMCPError(
@@ -81,7 +94,7 @@ describe('restartApp', () => {
     const failingGetAuthToken = vi.fn().mockRejectedValue(authError);
 
     await expect(
-      restartApp(ADDRESS, 'my-app', registry, failingGetAuthToken),
+      restartApp(qc, ADDRESS, 'lease-1', failingGetAuthToken),
     ).rejects.toBe(authError);
   });
 });

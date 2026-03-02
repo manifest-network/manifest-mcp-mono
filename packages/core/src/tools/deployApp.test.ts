@@ -21,7 +21,6 @@ import { deployApp, type DeployAppInput } from './deployApp.js';
 import { cosmosTx } from '../cosmos.js';
 import { uploadLeaseData, getLeaseConnectionInfo } from '../http/provider.js';
 import { pollLeaseUntilReady } from '../http/fred.js';
-import { InMemoryAppRegistry } from '../registry.js';
 import { makeMockClientManager, makeMockQueryClient } from '../__test-utils__/mocks.js';
 import { ManifestMCPErrorCode } from '../types.js';
 
@@ -53,17 +52,12 @@ const DEFAULT_INPUT: DeployAppInput = {
   image: 'nginx:alpine',
   port: 80,
   size: 'docker-micro',
-  app_name: 'e2e-nginx',
 };
 
 describe('deployApp', () => {
-  let registry: InMemoryAppRegistry;
-
   beforeEach(() => {
     vi.clearAllMocks();
-    registry = new InMemoryAppRegistry();
 
-    // Default happy-path mocks
     mockCosmosTx.mockResolvedValue({
       module: 'billing',
       subcommand: 'create-lease',
@@ -95,49 +89,26 @@ describe('deployApp', () => {
 
     const result = await deployApp(
       cm as any,
-      registry,
       mockGetAuthToken,
       mockGetLeaseDataAuthToken,
       DEFAULT_INPUT,
     );
 
-    expect(result.app_name).toBe('e2e-nginx');
     expect(result.lease_uuid).toBe('lease-uuid-1');
+    expect(result.provider_uuid).toBe('prov-1');
+    expect(result.provider_url).toBe('http://localhost:8080');
     expect(result.status).toBe('running');
 
-    // Verify cosmosTx was called for create-lease
     expect(mockCosmosTx).toHaveBeenCalledOnce();
     const txArgs = mockCosmosTx.mock.calls[0];
     expect(txArgs[1]).toBe('billing');
     expect(txArgs[2]).toBe('create-lease');
     expect(txArgs[3]).toContain('--meta-hash');
 
-    // Verify upload
     expect(mockUploadLeaseData).toHaveBeenCalledOnce();
     expect(mockUploadLeaseData.mock.calls[0][3]).toBe('lease-data-token');
 
-    // Verify polling
     expect(mockPollLeaseUntilReady).toHaveBeenCalledOnce();
-
-    // Verify registry
-    const app = registry.getApp('manifest1tenant', 'e2e-nginx');
-    expect(app.leaseUuid).toBe('lease-uuid-1');
-    expect(app.status).toBe('running');
-  });
-
-  it('uses lease UUID prefix as default app name when not provided', async () => {
-    const qc = makeQueryClient();
-    const cm = makeMockClientManager({ queryClient: qc, address: 'manifest1tenant' });
-
-    const result = await deployApp(
-      cm as any,
-      registry,
-      mockGetAuthToken,
-      mockGetLeaseDataAuthToken,
-      { image: 'nginx:alpine', port: 80, size: 'docker-micro' },
-    );
-
-    expect(result.app_name).toBe('lease-uu');
   });
 
   it('includes env in manifest when provided', async () => {
@@ -146,7 +117,6 @@ describe('deployApp', () => {
 
     await deployApp(
       cm as any,
-      registry,
       mockGetAuthToken,
       mockGetLeaseDataAuthToken,
       { ...DEFAULT_INPUT, env: { FOO: 'bar' } },
@@ -164,7 +134,6 @@ describe('deployApp', () => {
     await expect(
       deployApp(
         cm as any,
-        registry,
         mockGetAuthToken,
         mockGetLeaseDataAuthToken,
         { ...DEFAULT_INPUT, size: 'nonexistent-tier' },
@@ -190,7 +159,7 @@ describe('deployApp', () => {
     });
 
     await expect(
-      deployApp(cm as any, registry, mockGetAuthToken, mockGetLeaseDataAuthToken, DEFAULT_INPUT),
+      deployApp(cm as any, mockGetAuthToken, mockGetLeaseDataAuthToken, DEFAULT_INPUT),
     ).rejects.toMatchObject({
       code: ManifestMCPErrorCode.TX_FAILED,
     });
@@ -210,7 +179,7 @@ describe('deployApp', () => {
     });
 
     await expect(
-      deployApp(cm as any, registry, mockGetAuthToken, mockGetLeaseDataAuthToken, DEFAULT_INPUT),
+      deployApp(cm as any, mockGetAuthToken, mockGetLeaseDataAuthToken, DEFAULT_INPUT),
     ).rejects.toMatchObject({
       code: ManifestMCPErrorCode.TX_FAILED,
       message: expect.stringContaining('lease UUID'),
@@ -230,7 +199,7 @@ describe('deployApp', () => {
     });
 
     await expect(
-      deployApp(cm as any, registry, mockGetAuthToken, mockGetLeaseDataAuthToken, DEFAULT_INPUT),
+      deployApp(cm as any, mockGetAuthToken, mockGetLeaseDataAuthToken, DEFAULT_INPUT),
     ).rejects.toMatchObject({
       code: ManifestMCPErrorCode.TX_FAILED,
       message: expect.stringContaining('No events'),
@@ -245,7 +214,6 @@ describe('deployApp', () => {
 
     const result = await deployApp(
       cm as any,
-      registry,
       mockGetAuthToken,
       mockGetLeaseDataAuthToken,
       DEFAULT_INPUT,
@@ -254,5 +222,6 @@ describe('deployApp', () => {
     expect(result.status).toBe('running');
     expect(result.url).toBeUndefined();
     expect(result.connection).toBeUndefined();
+    expect(result.connectionError).toBe('connection refused');
   });
 });

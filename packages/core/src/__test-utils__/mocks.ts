@@ -1,6 +1,5 @@
 import { vi } from 'vitest';
 import type { ManifestMCPConfig, WalletProvider, SignArbitraryResult } from '../types.js';
-import type { AppRegistry } from '../registry.js';
 import type { ManifestQueryClient } from '../client.js';
 
 /**
@@ -34,24 +33,6 @@ export function makeMockWallet(
     } satisfies SignArbitraryResult);
   }
   return wallet;
-}
-
-/**
- * Create a mock AppRegistry (all vi.fn() stubs).
- */
-export function makeMockAppRegistry(
-  overrides?: Partial<AppRegistry>,
-): AppRegistry {
-  return {
-    getApps: vi.fn().mockReturnValue([]),
-    getApp: vi.fn().mockReturnValue({ name: 'test', leaseUuid: 'uuid', status: 'active' }),
-    findApp: vi.fn().mockReturnValue(undefined),
-    getAppByLease: vi.fn().mockReturnValue(undefined),
-    addApp: vi.fn(),
-    updateApp: vi.fn(),
-    removeApp: vi.fn(),
-    ...overrides,
-  };
 }
 
 /**
@@ -125,8 +106,9 @@ export function makeMockQueryClient(overrides?: {
             return { lease };
           }),
           leasesByTenant: vi.fn().mockImplementation(async ({ stateFilter }: { stateFilter: number }) => {
-            if (stateFilter === 2) return { leases: activeLeases };
-            if (stateFilter === 1) return { leases: pendingLeases };
+            if (stateFilter === 2) return { leases: activeLeases.map(l => ({ state: 2, ...l })) };
+            if (stateFilter === 1) return { leases: pendingLeases.map(l => ({ state: 1, ...l })) };
+            if (stateFilter === 3) return { leases: [] };
             return { leases: [] };
           }),
         },

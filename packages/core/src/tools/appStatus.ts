@@ -1,29 +1,22 @@
 import type { ManifestQueryClient } from '../client.js';
-import type { AppRegistry } from '../registry.js';
 import { getLeaseStatus, type FredLeaseStatus } from '../http/fred.js';
 import { getLeaseConnectionInfo, type LeaseConnectionInfo } from '../http/provider.js';
+import { resolveLeaseProvider } from './resolveLeaseProvider.js';
 
 export async function appStatus(
   queryClient: ManifestQueryClient,
   address: string,
-  appName: string,
-  appRegistry: AppRegistry,
+  leaseUuid: string,
   getAuthToken: (address: string, leaseUuid: string) => Promise<string>,
 ) {
-  const app = appRegistry.getApp(address, appName);
-  const billing = queryClient.liftedinit.billing.v1;
+  const leaseProvider = await resolveLeaseProvider(queryClient, leaseUuid);
 
-  const leaseResult = await billing.lease({ leaseUuid: app.leaseUuid });
-  const lease = leaseResult.lease;
-
-  const chainState = lease
-    ? {
-        state: lease.state,
-        providerUuid: lease.providerUuid,
-        createdAt: lease.createdAt?.toISOString(),
-        closedAt: lease.closedAt?.toISOString(),
-      }
-    : null;
+  const chainState = {
+    state: leaseProvider.leaseState,
+    providerUuid: leaseProvider.providerUuid,
+    createdAt: leaseProvider.leaseCreatedAt,
+    closedAt: leaseProvider.leaseClosedAt,
+  };
 
   let fredStatus: FredLeaseStatus | null = null;
   let connection: LeaseConnectionInfo | null = null;
@@ -31,27 +24,24 @@ export async function appStatus(
   let connectionError: string | undefined;
 
   // LeaseState: 1 = PENDING, 2 = ACTIVE
-  if (app.providerUrl && lease && (lease.state === 1 || lease.state === 2)) {
-    // Let auth errors propagate — they indicate wallet configuration problems
-    const authToken = await getAuthToken(address, app.leaseUuid);
+  if (leaseProvider.leaseState === 1 || leaseProvider.leaseState === 2) {
+    const authToken = await getAuthToken(address, leaseUuid);
 
     try {
-      fredStatus = await getLeaseStatus(app.providerUrl, app.leaseUuid, authToken);
+      fredStatus = await getLeaseStatus(leaseProvider.providerUrl, leaseUuid, authToken);
     } catch (err) {
       providerError = err instanceof Error ? err.message : String(err);
     }
 
     try {
-      connection = await getLeaseConnectionInfo(app.providerUrl, app.leaseUuid, authToken);
+      connection = await getLeaseConnectionInfo(leaseProvider.providerUrl, leaseUuid, authToken);
     } catch (err) {
       connectionError = err instanceof Error ? err.message : String(err);
     }
   }
 
   return {
-    name: app.name,
-    status: app.status,
-    ...(app.url && { url: app.url }),
+    lease_uuid: leaseUuid,
     ...(connection && { connection }),
     chainState,
     ...(fredStatus && { fredStatus }),

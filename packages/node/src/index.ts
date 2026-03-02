@@ -5,7 +5,6 @@ import {
   ManifestMCPServer,
   ManifestMCPError,
   MnemonicWalletProvider,
-  InMemoryAppRegistry,
   createValidatedConfig,
   type WalletProvider,
 } from '@manifest-network/manifest-mcp-core';
@@ -74,8 +73,7 @@ async function main() {
     await walletProvider.connect();
   }
 
-  const appRegistry = new InMemoryAppRegistry();
-  const mcpServer = new ManifestMCPServer({ config, walletProvider, appRegistry });
+  const mcpServer = new ManifestMCPServer({ config, walletProvider });
   const transport = new StdioServerTransport();
   await mcpServer.getServer().connect(transport);
 

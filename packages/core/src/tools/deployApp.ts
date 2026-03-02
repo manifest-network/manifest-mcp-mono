@@ -1,5 +1,4 @@
 import type { CosmosClientManager, ManifestQueryClient } from '../client.js';
-import type { AppRegistry } from '../registry.js';
 import { cosmosTx } from '../cosmos.js';
 import { ManifestMCPError, ManifestMCPErrorCode, type CosmosTxResult } from '../types.js';
 import { uploadLeaseData, getLeaseConnectionInfo } from '../http/provider.js';
@@ -76,17 +75,25 @@ export interface DeployAppInput {
   image: string;
   port: number;
   size: string;
-  app_name?: string;
   env?: Record<string, string>;
+}
+
+export interface DeployAppResult {
+  readonly lease_uuid: string;
+  readonly provider_uuid: string;
+  readonly provider_url: string;
+  readonly status: string;
+  readonly url?: string;
+  readonly connection?: Record<string, unknown>;
+  readonly connectionError?: string;
 }
 
 export async function deployApp(
   clientManager: CosmosClientManager,
-  appRegistry: AppRegistry,
   getAuthToken: (address: string, leaseUuid: string) => Promise<string>,
   getLeaseDataAuthToken: (address: string, leaseUuid: string, metaHashHex: string) => Promise<string>,
   input: DeployAppInput,
-) {
+): Promise<DeployAppResult> {
   const address = await clientManager.getAddress();
   const queryClient = await clientManager.getQueryClient();
 
@@ -140,6 +147,7 @@ export async function deployApp(
   // 9. Get connection info
   let connection: Record<string, unknown> | undefined;
   let url: string | undefined;
+  let connectionError: string | undefined;
   try {
     const connInfo = await getLeaseConnectionInfo(providerUrl, leaseUuid, authToken);
     connection = connInfo as unknown as Record<string, unknown>;
@@ -150,30 +158,17 @@ export async function deployApp(
       }
     }
   } catch (err) {
-    // Connection info is best-effort — log but don't fail the deploy
-    console.warn('Failed to fetch connection info:', err instanceof Error ? err.message : err);
+    // Connection info is best-effort — surface the error but don't fail the deploy
+    connectionError = err instanceof Error ? err.message : String(err);
   }
 
-  // 10. Register in app registry
-  const appName = input.app_name || leaseUuid.slice(0, 8);
-  appRegistry.addApp(address, {
-    name: appName,
-    leaseUuid,
-    size: input.size,
-    providerUuid,
-    providerUrl,
-    createdAt: new Date().toISOString(),
-    url,
-    connection,
-    status: status.status,
-    manifest: manifestJson,
-  });
-
   return {
-    app_name: appName,
     lease_uuid: leaseUuid,
+    provider_uuid: providerUuid,
+    provider_url: providerUrl,
     status: status.status,
     ...(url && { url }),
     ...(connection && { connection }),
+    ...(connectionError && { connectionError }),
   };
 }
