@@ -750,7 +750,7 @@ export class ManifestMCPServer {
 
       case 'update_app': {
         const leaseUuid = requireUuid(toolInput, 'lease_uuid', ManifestMCPErrorCode.TX_FAILED);
-        const manifest = requireString(toolInput, 'manifest');
+        const manifest = requireString(toolInput, 'manifest', ManifestMCPErrorCode.TX_FAILED);
 
         try {
           const parsed = JSON.parse(manifest);

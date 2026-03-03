@@ -22,7 +22,7 @@ import { cosmosTx } from '../cosmos.js';
 import { uploadLeaseData, getLeaseConnectionInfo } from '../http/provider.js';
 import { pollLeaseUntilReady } from '../http/fred.js';
 import { makeMockClientManager, makeMockQueryClient } from '../__test-utils__/mocks.js';
-import { ManifestMCPErrorCode } from '../types.js';
+import { ManifestMCPError, ManifestMCPErrorCode } from '../types.js';
 
 const mockCosmosTx = vi.mocked(cosmosTx);
 const mockUploadLeaseData = vi.mocked(uploadLeaseData);
@@ -148,15 +148,12 @@ describe('deployApp', () => {
     const qc = makeQueryClient();
     const cm = makeMockClientManager({ queryClient: qc, address: 'manifest1tenant' });
 
-    mockCosmosTx.mockResolvedValue({
-      module: 'billing',
-      subcommand: 'create-lease',
-      transactionHash: 'TX_FAIL',
-      code: 5,
-      height: '100',
-      rawLog: 'insufficient funds',
-      events: [],
-    });
+    mockCosmosTx.mockRejectedValue(
+      new ManifestMCPError(
+        ManifestMCPErrorCode.TX_FAILED,
+        'Transaction billing create-lease failed with code 5: insufficient funds',
+      ),
+    );
 
     await expect(
       deployApp(cm as any, mockGetAuthToken, mockGetLeaseDataAuthToken, DEFAULT_INPUT),
