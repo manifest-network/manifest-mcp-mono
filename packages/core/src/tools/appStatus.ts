@@ -1,5 +1,6 @@
 import type { ManifestQueryClient } from '../client.js';
 import { LeaseState } from '@manifest-network/manifestjs/dist/codegen/liftedinit/billing/v1/types';
+import { ManifestMCPError, ManifestMCPErrorCode } from '../types.js';
 import { getLeaseStatus, type FredLeaseStatus } from '../http/fred.js';
 import { getLeaseConnectionInfo, type LeaseConnectionInfo } from '../http/provider.js';
 import { resolveLeaseProvider } from './resolveLeaseProvider.js';
@@ -10,13 +11,21 @@ export async function appStatus(
   leaseUuid: string,
   getAuthToken: (address: string, leaseUuid: string) => Promise<string>,
 ) {
-  const leaseProvider = await resolveLeaseProvider(queryClient, leaseUuid);
+  const leaseResult = await queryClient.liftedinit.billing.v1.lease({ leaseUuid });
 
+  if (!leaseResult.lease) {
+    throw new ManifestMCPError(
+      ManifestMCPErrorCode.QUERY_FAILED,
+      `Lease "${leaseUuid}" not found on chain`,
+    );
+  }
+
+  const lease = leaseResult.lease;
   const chainState = {
-    state: leaseProvider.leaseState,
-    providerUuid: leaseProvider.providerUuid,
-    createdAt: leaseProvider.leaseCreatedAt,
-    closedAt: leaseProvider.leaseClosedAt,
+    state: lease.state,
+    providerUuid: lease.providerUuid,
+    createdAt: lease.createdAt?.toISOString(),
+    closedAt: lease.closedAt?.toISOString(),
   };
 
   let fredStatus: FredLeaseStatus | null = null;
@@ -24,19 +33,25 @@ export async function appStatus(
   let providerError: string | undefined;
   let connectionError: string | undefined;
 
-  if (leaseProvider.leaseState === LeaseState.LEASE_STATE_PENDING || leaseProvider.leaseState === LeaseState.LEASE_STATE_ACTIVE) {
+  if (lease.state === LeaseState.LEASE_STATE_PENDING || lease.state === LeaseState.LEASE_STATE_ACTIVE) {
+    const leaseProvider = await resolveLeaseProvider(queryClient, leaseUuid);
     const authToken = await getAuthToken(address, leaseUuid);
 
-    try {
-      fredStatus = await getLeaseStatus(leaseProvider.providerUrl, leaseUuid, authToken);
-    } catch (err) {
-      providerError = err instanceof Error ? err.message : String(err);
+    const [statusResult, connResult] = await Promise.allSettled([
+      getLeaseStatus(leaseProvider.providerUrl, leaseUuid, authToken),
+      getLeaseConnectionInfo(leaseProvider.providerUrl, leaseUuid, authToken),
+    ]);
+
+    if (statusResult.status === 'fulfilled') {
+      fredStatus = statusResult.value;
+    } else {
+      providerError = statusResult.reason instanceof Error ? statusResult.reason.message : String(statusResult.reason);
     }
 
-    try {
-      connection = await getLeaseConnectionInfo(leaseProvider.providerUrl, leaseUuid, authToken);
-    } catch (err) {
-      connectionError = err instanceof Error ? err.message : String(err);
+    if (connResult.status === 'fulfilled') {
+      connection = connResult.value;
+    } else {
+      connectionError = connResult.reason instanceof Error ? connResult.reason.message : String(connResult.reason);
     }
   }
 

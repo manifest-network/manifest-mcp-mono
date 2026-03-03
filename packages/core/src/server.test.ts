@@ -376,6 +376,40 @@ describe('ManifestMCPServer', () => {
       expect(result.isError).toBeUndefined();
     });
 
+    it('rejects update_app with invalid manifest JSON', async () => {
+      const server = new ManifestMCPServer({
+        config: makeMockConfig(),
+        walletProvider: makeMockWallet({ signArbitrary: true }),
+      });
+      const result = await callTool(server, 'update_app', {
+        lease_uuid: 'lease-1',
+        manifest: 'not valid json',
+      });
+
+      expect(result.isError).toBe(true);
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.code).toBe('TX_FAILED');
+      expect(parsed.message).toContain('Invalid manifest');
+      expect(mockUpdateApp).not.toHaveBeenCalled();
+    });
+
+    it('rejects update_app when manifest is a JSON array', async () => {
+      const server = new ManifestMCPServer({
+        config: makeMockConfig(),
+        walletProvider: makeMockWallet({ signArbitrary: true }),
+      });
+      const result = await callTool(server, 'update_app', {
+        lease_uuid: 'lease-1',
+        manifest: '[1, 2, 3]',
+      });
+
+      expect(result.isError).toBe(true);
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.code).toBe('TX_FAILED');
+      expect(parsed.message).toContain('Invalid manifest');
+      expect(mockUpdateApp).not.toHaveBeenCalled();
+    });
+
     it('routes list_modules to getAvailableModules()', async () => {
       const server = new ManifestMCPServer({
         config: makeMockConfig(),

@@ -82,7 +82,7 @@ describe('listApps', () => {
 
     const result = await listApps(client, ADDRESS);
 
-    // "all" queries state 1, 2, and 3
+    // "all" includes pending, active, closed, rejected, and expired leases
     expect(result.count).toBeGreaterThanOrEqual(2);
   });
 

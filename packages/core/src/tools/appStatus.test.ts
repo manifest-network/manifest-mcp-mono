@@ -37,7 +37,11 @@ describe('appStatus', () => {
   });
 
   it('returns chain state + fred status + connection info for active lease', async () => {
-    const qc = makeMockQueryClient();
+    const qc = makeMockQueryClient({
+      billing: {
+        lease: { uuid: 'lease-1', state: LeaseState.LEASE_STATE_ACTIVE, providerUuid: 'prov-1', createdAt: new Date('2025-01-01') },
+      },
+    });
     mockResolveLeaseProvider.mockResolvedValue({
       providerUuid: 'prov-1',
       providerUrl: 'https://provider.example.com',
@@ -65,22 +69,27 @@ describe('appStatus', () => {
     LeaseState.LEASE_STATE_CLOSED,
     LeaseState.LEASE_STATE_REJECTED,
     LeaseState.LEASE_STATE_EXPIRED,
-  ])('skips fred calls for non-operational lease state %i', async (state) => {
-    const qc = makeMockQueryClient();
-    mockResolveLeaseProvider.mockResolvedValue({
-      providerUuid: 'prov-1',
-      providerUrl: 'https://provider.example.com',
-      leaseState: state,
+  ])('skips fred calls and provider resolution for non-operational lease state %i', async (state) => {
+    const qc = makeMockQueryClient({
+      billing: {
+        lease: { uuid: 'lease-1', state, providerUuid: 'prov-1' },
+      },
     });
 
-    await appStatus(qc, ADDRESS, 'lease-1', mockGetAuthToken);
+    const result = await appStatus(qc, ADDRESS, 'lease-1', mockGetAuthToken);
 
+    expect(result.chainState.state).toBe(state);
+    expect(mockResolveLeaseProvider).not.toHaveBeenCalled();
     expect(mockGetLeaseStatus).not.toHaveBeenCalled();
     expect(mockGetLeaseConnectionInfo).not.toHaveBeenCalled();
   });
 
   it('makes fred calls for pending (state=1) leases', async () => {
-    const qc = makeMockQueryClient();
+    const qc = makeMockQueryClient({
+      billing: {
+        lease: { uuid: 'lease-1', state: LeaseState.LEASE_STATE_PENDING, providerUuid: 'prov-1' },
+      },
+    });
     mockResolveLeaseProvider.mockResolvedValue({
       providerUuid: 'prov-1',
       providerUrl: 'https://provider.example.com',
@@ -97,7 +106,11 @@ describe('appStatus', () => {
   });
 
   it('captures providerError when fred status call fails', async () => {
-    const qc = makeMockQueryClient();
+    const qc = makeMockQueryClient({
+      billing: {
+        lease: { uuid: 'lease-1', state: LeaseState.LEASE_STATE_ACTIVE, providerUuid: 'prov-1' },
+      },
+    });
     mockResolveLeaseProvider.mockResolvedValue({
       providerUuid: 'prov-1',
       providerUrl: 'https://provider.example.com',
@@ -115,7 +128,11 @@ describe('appStatus', () => {
   });
 
   it('captures connectionError when connection info call fails', async () => {
-    const qc = makeMockQueryClient();
+    const qc = makeMockQueryClient({
+      billing: {
+        lease: { uuid: 'lease-1', state: LeaseState.LEASE_STATE_ACTIVE, providerUuid: 'prov-1' },
+      },
+    });
     mockResolveLeaseProvider.mockResolvedValue({
       providerUuid: 'prov-1',
       providerUrl: 'https://provider.example.com',
@@ -133,7 +150,11 @@ describe('appStatus', () => {
   });
 
   it('lets auth errors propagate', async () => {
-    const qc = makeMockQueryClient();
+    const qc = makeMockQueryClient({
+      billing: {
+        lease: { uuid: 'lease-1', state: LeaseState.LEASE_STATE_ACTIVE, providerUuid: 'prov-1' },
+      },
+    });
     mockResolveLeaseProvider.mockResolvedValue({
       providerUuid: 'prov-1',
       providerUrl: 'https://provider.example.com',
@@ -152,13 +173,15 @@ describe('appStatus', () => {
   });
 
   it('throws when lease not found on chain', async () => {
-    const qc = makeMockQueryClient();
-    mockResolveLeaseProvider.mockRejectedValue(
-      new ManifestMCPError(ManifestMCPErrorCode.QUERY_FAILED, 'Lease "lease-1" not found on chain'),
-    );
+    const qc = makeMockQueryClient({
+      billing: { lease: null },
+    });
 
     await expect(
       appStatus(qc, ADDRESS, 'lease-1', mockGetAuthToken),
-    ).rejects.toThrow(ManifestMCPError);
+    ).rejects.toMatchObject({
+      code: ManifestMCPErrorCode.QUERY_FAILED,
+      message: expect.stringContaining('not found on chain'),
+    });
   });
 });

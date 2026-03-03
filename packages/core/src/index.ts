@@ -730,6 +730,19 @@ export class ManifestMCPServer {
       case 'update_app': {
         const leaseUuid = requireString(toolInput, 'lease_uuid');
         const manifest = requireString(toolInput, 'manifest');
+
+        try {
+          const parsed = JSON.parse(manifest);
+          if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+            throw new Error('must be a JSON object');
+          }
+        } catch (err) {
+          throw new ManifestMCPError(
+            ManifestMCPErrorCode.TX_FAILED,
+            `Invalid manifest: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+
         const address = await this.walletProvider.getAddress();
         const queryClient = await this.clientManager.getQueryClient();
 

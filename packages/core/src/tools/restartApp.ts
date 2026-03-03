@@ -1,5 +1,5 @@
 import type { ManifestQueryClient } from '../client.js';
-import { LeaseState } from '@manifest-network/manifestjs/dist/codegen/liftedinit/billing/v1/types';
+import { LeaseState, leaseStateToJSON } from '@manifest-network/manifestjs/dist/codegen/liftedinit/billing/v1/types';
 import { ManifestMCPError, ManifestMCPErrorCode } from '../types.js';
 import { restartLease } from '../http/fred.js';
 import { resolveLeaseProvider } from './resolveLeaseProvider.js';
@@ -15,7 +15,7 @@ export async function restartApp(
   if (leaseState !== LeaseState.LEASE_STATE_ACTIVE && leaseState !== LeaseState.LEASE_STATE_PENDING) {
     throw new ManifestMCPError(
       ManifestMCPErrorCode.QUERY_FAILED,
-      `Lease "${leaseUuid}" is not active (state: ${leaseState}) and cannot be restarted`,
+      `Lease "${leaseUuid}" is not active (state: ${leaseStateToJSON(leaseState)}) and cannot be restarted`,
     );
   }
 
