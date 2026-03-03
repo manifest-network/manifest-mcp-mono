@@ -13,7 +13,7 @@ import { getAppLogs } from './getLogs.js';
 import { getLeaseLogs } from '../http/fred.js';
 import { resolveProviderUrl } from './resolveLeaseProvider.js';
 import { makeMockQueryClient } from '../__test-utils__/mocks.js';
-import { ManifestMCPError, ManifestMCPErrorCode } from '../types.js';
+import { ManifestMCPErrorCode } from '../types.js';
 
 const mockGetLeaseLogs = vi.mocked(getLeaseLogs);
 const mockResolveProviderUrl = vi.mocked(resolveProviderUrl);
