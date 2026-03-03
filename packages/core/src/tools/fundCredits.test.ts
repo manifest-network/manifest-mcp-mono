@@ -7,7 +7,7 @@ vi.mock('../cosmos.js', () => ({
 import { fundCredits } from './fundCredits.js';
 import { cosmosTx } from '../cosmos.js';
 import { makeMockClientManager } from '../__test-utils__/mocks.js';
-import { ManifestMCPError } from '../types.js';
+import { ManifestMCPError, ManifestMCPErrorCode } from '../types.js';
 
 const mockCosmosTx = vi.mocked(cosmosTx);
 
@@ -45,7 +45,7 @@ describe('fundCredits', () => {
     const cm = makeMockClientManager({ address: 'manifest1tenant' });
     mockCosmosTx.mockRejectedValue(
       new ManifestMCPError(
-        'TX_FAILED' as any,
+        ManifestMCPErrorCode.TX_FAILED,
         'Transaction billing fund-credit failed with code 5: insufficient funds',
       ),
     );

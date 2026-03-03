@@ -7,7 +7,7 @@ vi.mock('../cosmos.js', () => ({
 import { stopApp } from './stopApp.js';
 import { cosmosTx } from '../cosmos.js';
 import { makeMockClientManager } from '../__test-utils__/mocks.js';
-import { ManifestMCPError } from '../types.js';
+import { ManifestMCPError, ManifestMCPErrorCode } from '../types.js';
 
 const mockCosmosTx = vi.mocked(cosmosTx);
 
@@ -48,7 +48,7 @@ describe('stopApp', () => {
     const cm = makeMockClientManager();
     mockCosmosTx.mockRejectedValue(
       new ManifestMCPError(
-        'TX_FAILED' as any,
+        ManifestMCPErrorCode.TX_FAILED,
         'Transaction billing close-lease failed with code 5: lease not found',
       ),
     );

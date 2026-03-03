@@ -189,6 +189,39 @@ describe('pollLeaseUntilReady', () => {
     ).rejects.toThrow(/timed out/);
   });
 
+  it('calls token factory on each poll iteration', async () => {
+    let callCount = 0;
+    mockFetch.mockImplementation(async () => {
+      callCount++;
+      if (callCount >= 2) {
+        return jsonResponse({ status: 'ready' });
+      }
+      return jsonResponse({ status: 'provisioning' });
+    });
+
+    const tokenFactory = vi.fn()
+      .mockResolvedValueOnce('token-1')
+      .mockResolvedValueOnce('token-2');
+
+    const promise = pollLeaseUntilReady(BASE_URL, LEASE_UUID, tokenFactory, {
+      intervalMs: 200,
+      timeoutMs: 10_000,
+    });
+
+    // First call with token-1
+    await vi.advanceTimersByTimeAsync(0);
+    expect(tokenFactory).toHaveBeenCalledTimes(1);
+    expect(mockFetch.mock.calls[0][1].headers.Authorization).toBe('Bearer token-1');
+
+    // Second call with token-2
+    await vi.advanceTimersByTimeAsync(200);
+
+    const result = await promise;
+    expect(result.status).toBe('ready');
+    expect(tokenFactory).toHaveBeenCalledTimes(2);
+    expect(mockFetch.mock.calls[1][1].headers.Authorization).toBe('Bearer token-2');
+  });
+
   it('polls at the specified interval and returns when ready', async () => {
     let callCount = 0;
     mockFetch.mockImplementation(async () => {

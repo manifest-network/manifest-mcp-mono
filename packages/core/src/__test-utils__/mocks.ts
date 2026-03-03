@@ -55,6 +55,7 @@ interface BillingOverrides {
   lease?: { uuid: string; state: LeaseState; providerUuid: string; createdAt?: Date; closedAt?: Date } | null;
   activeLeases?: { uuid: string; providerUuid: string; createdAt?: Date }[];
   pendingLeases?: { uuid: string; providerUuid: string; createdAt?: Date }[];
+  closedLeases?: { uuid: string; providerUuid: string; createdAt?: Date }[];
   rejectedLeases?: { uuid: string; providerUuid: string; createdAt?: Date }[];
   expiredLeases?: { uuid: string; providerUuid: string; createdAt?: Date }[];
 }
@@ -81,6 +82,7 @@ export function makeMockQueryClient(overrides?: {
   const lease = billing.lease ?? null;
   const activeLeases = billing.activeLeases ?? [];
   const pendingLeases = billing.pendingLeases ?? [];
+  const closedLeases = billing.closedLeases ?? [];
   const rejectedLeases = billing.rejectedLeases ?? [];
   const expiredLeases = billing.expiredLeases ?? [];
 
@@ -113,7 +115,7 @@ export function makeMockQueryClient(overrides?: {
           leasesByTenant: vi.fn().mockImplementation(async ({ stateFilter }: { stateFilter: LeaseState }) => {
             if (stateFilter === LeaseState.LEASE_STATE_ACTIVE) return { leases: activeLeases.map(l => ({ state: LeaseState.LEASE_STATE_ACTIVE, ...l })) };
             if (stateFilter === LeaseState.LEASE_STATE_PENDING) return { leases: pendingLeases.map(l => ({ state: LeaseState.LEASE_STATE_PENDING, ...l })) };
-            if (stateFilter === LeaseState.LEASE_STATE_CLOSED) return { leases: [] };
+            if (stateFilter === LeaseState.LEASE_STATE_CLOSED) return { leases: closedLeases.map(l => ({ state: LeaseState.LEASE_STATE_CLOSED, ...l })) };
             if (stateFilter === LeaseState.LEASE_STATE_REJECTED) return { leases: rejectedLeases.map(l => ({ state: LeaseState.LEASE_STATE_REJECTED, ...l })) };
             if (stateFilter === LeaseState.LEASE_STATE_EXPIRED) return { leases: expiredLeases.map(l => ({ state: LeaseState.LEASE_STATE_EXPIRED, ...l })) };
             return { leases: [] };
