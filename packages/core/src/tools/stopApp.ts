@@ -1,6 +1,5 @@
 import type { CosmosClientManager } from '../client.js';
 import { cosmosTx } from '../cosmos.js';
-import { ManifestMCPError, ManifestMCPErrorCode } from '../types.js';
 
 export interface StopAppResult {
   readonly lease_uuid: string;
@@ -20,14 +19,6 @@ export async function stopApp(
     [leaseUuid],
     true,
   );
-
-  if (result.code !== 0) {
-    throw new ManifestMCPError(
-      ManifestMCPErrorCode.TX_FAILED,
-      `Close lease failed with code ${result.code}`,
-      { rawLog: result.rawLog },
-    );
-  }
 
   return {
     lease_uuid: leaseUuid,

@@ -256,26 +256,26 @@ describe('ManifestMCPServer', () => {
     });
 
     it('routes app_status to appStatus()', async () => {
-      mockAppStatus.mockResolvedValue({ lease_uuid: 'lease-1', chainState: null } as any);
+      mockAppStatus.mockResolvedValue({ lease_uuid: '550e8400-e29b-41d4-a716-446655440000', chainState: null } as any);
 
       const server = new ManifestMCPServer({
         config: makeMockConfig(),
         walletProvider: makeMockWallet({ signArbitrary: true }),
       });
-      const result = await callTool(server, 'app_status', { lease_uuid: 'lease-1' });
+      const result = await callTool(server, 'app_status', { lease_uuid: '550e8400-e29b-41d4-a716-446655440000' });
 
       expect(mockAppStatus).toHaveBeenCalledOnce();
       expect(result.isError).toBeUndefined();
     });
 
     it('routes get_logs to getAppLogs()', async () => {
-      mockGetAppLogs.mockResolvedValue({ lease_uuid: 'lease-1', logs: {}, truncated: false });
+      mockGetAppLogs.mockResolvedValue({ lease_uuid: '550e8400-e29b-41d4-a716-446655440000', logs: {}, truncated: false });
 
       const server = new ManifestMCPServer({
         config: makeMockConfig(),
         walletProvider: makeMockWallet({ signArbitrary: true }),
       });
-      const result = await callTool(server, 'get_logs', { lease_uuid: 'lease-1' });
+      const result = await callTool(server, 'get_logs', { lease_uuid: '550e8400-e29b-41d4-a716-446655440000' });
 
       expect(mockGetAppLogs).toHaveBeenCalledOnce();
       expect(result.isError).toBeUndefined();
@@ -303,7 +303,7 @@ describe('ManifestMCPServer', () => {
 
     it('routes deploy_app to deployApp()', async () => {
       mockDeployApp.mockResolvedValue({
-        lease_uuid: 'lease-1',
+        lease_uuid: '550e8400-e29b-41d4-a716-446655440000',
         provider_uuid: 'prov-1',
         provider_url: 'http://localhost:8080',
         status: 'running',
@@ -325,7 +325,7 @@ describe('ManifestMCPServer', () => {
 
     it('routes stop_app to stopApp()', async () => {
       mockStopApp.mockResolvedValue({
-        lease_uuid: 'lease-1',
+        lease_uuid: '550e8400-e29b-41d4-a716-446655440000',
         status: 'stopped',
         transactionHash: 'TX',
         code: 0,
@@ -335,7 +335,7 @@ describe('ManifestMCPServer', () => {
         config: makeMockConfig(),
         walletProvider: makeMockWallet(),
       });
-      const result = await callTool(server, 'stop_app', { lease_uuid: 'lease-1' });
+      const result = await callTool(server, 'stop_app', { lease_uuid: '550e8400-e29b-41d4-a716-446655440000' });
 
       expect(mockStopApp).toHaveBeenCalledOnce();
       expect(result.isError).toBeUndefined();
@@ -343,7 +343,7 @@ describe('ManifestMCPServer', () => {
 
     it('routes restart_app to restartApp()', async () => {
       mockRestartApp.mockResolvedValue({
-        lease_uuid: 'lease-1',
+        lease_uuid: '550e8400-e29b-41d4-a716-446655440000',
         status: 'restarting',
       });
 
@@ -351,7 +351,7 @@ describe('ManifestMCPServer', () => {
         config: makeMockConfig(),
         walletProvider: makeMockWallet({ signArbitrary: true }),
       });
-      const result = await callTool(server, 'restart_app', { lease_uuid: 'lease-1' });
+      const result = await callTool(server, 'restart_app', { lease_uuid: '550e8400-e29b-41d4-a716-446655440000' });
 
       expect(mockRestartApp).toHaveBeenCalledOnce();
       expect(result.isError).toBeUndefined();
@@ -359,7 +359,7 @@ describe('ManifestMCPServer', () => {
 
     it('routes update_app to updateApp()', async () => {
       mockUpdateApp.mockResolvedValue({
-        lease_uuid: 'lease-1',
+        lease_uuid: '550e8400-e29b-41d4-a716-446655440000',
         status: 'updated',
       });
 
@@ -368,7 +368,7 @@ describe('ManifestMCPServer', () => {
         walletProvider: makeMockWallet({ signArbitrary: true }),
       });
       const result = await callTool(server, 'update_app', {
-        lease_uuid: 'lease-1',
+        lease_uuid: '550e8400-e29b-41d4-a716-446655440000',
         manifest: '{"image":"nginx:latest","ports":{"80/tcp":{}}}',
       });
 
@@ -382,7 +382,7 @@ describe('ManifestMCPServer', () => {
         walletProvider: makeMockWallet({ signArbitrary: true }),
       });
       const result = await callTool(server, 'update_app', {
-        lease_uuid: 'lease-1',
+        lease_uuid: '550e8400-e29b-41d4-a716-446655440000',
         manifest: 'not valid json',
       });
 
@@ -399,7 +399,7 @@ describe('ManifestMCPServer', () => {
         walletProvider: makeMockWallet({ signArbitrary: true }),
       });
       const result = await callTool(server, 'update_app', {
-        lease_uuid: 'lease-1',
+        lease_uuid: '550e8400-e29b-41d4-a716-446655440000',
         manifest: '[1, 2, 3]',
       });
 
@@ -559,7 +559,7 @@ describe('ManifestMCPServer', () => {
   describe('getProviderAuthToken', () => {
     it('throws when wallet lacks signArbitrary', async () => {
       mockAppStatus.mockImplementation(async (_qc, _addr, _leaseUuid, getAuthToken) => {
-        await getAuthToken('manifest1abc', 'lease-1');
+        await getAuthToken('manifest1abc', '550e8400-e29b-41d4-a716-446655440000');
         return {} as any;
       });
 
@@ -567,7 +567,7 @@ describe('ManifestMCPServer', () => {
         config: makeMockConfig(),
         walletProvider: makeMockWallet(), // no signArbitrary
       });
-      const result = await callTool(server, 'app_status', { lease_uuid: 'lease-1' });
+      const result = await callTool(server, 'app_status', { lease_uuid: '550e8400-e29b-41d4-a716-446655440000' });
 
       expect(result.isError).toBe(true);
       const parsed = JSON.parse(result.content[0].text);

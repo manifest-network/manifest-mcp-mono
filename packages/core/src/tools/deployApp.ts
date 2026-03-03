@@ -3,6 +3,7 @@ import { cosmosTx } from '../cosmos.js';
 import { ManifestMCPError, ManifestMCPErrorCode, type CosmosTxResult } from '../types.js';
 import { uploadLeaseData, getLeaseConnectionInfo } from '../http/provider.js';
 import { pollLeaseUntilReady } from '../http/fred.js';
+import type { FredLeaseStatus } from '../http/fred.js';
 
 function toHex(bytes: Uint8Array): string {
   return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
@@ -125,30 +126,40 @@ export async function deployApp(
     true,
   );
 
-  if (txResult.code !== 0) {
-    throw new ManifestMCPError(
-      ManifestMCPErrorCode.TX_FAILED,
-      `Create lease failed with code ${txResult.code}`,
-      { rawLog: txResult.rawLog },
-    );
-  }
-
   // 6. Extract lease UUID
   const leaseUuid = extractLeaseUuid(txResult);
 
-  // 7. Upload manifest with lease-data auth token
-  const leaseDataToken = await getLeaseDataAuthToken(address, leaseUuid, metaHashHex);
-  await uploadLeaseData(providerUrl, leaseUuid, manifestJson, leaseDataToken);
+  // Steps 7-9 run after the lease is created on-chain. If any fail, include the
+  // lease UUID in the error so the caller can close the orphaned lease.
+  let status: FredLeaseStatus;
+  try {
+    // 7. Upload manifest with lease-data auth token
+    const leaseDataToken = await getLeaseDataAuthToken(address, leaseUuid, metaHashHex);
+    await uploadLeaseData(providerUrl, leaseUuid, manifestJson, leaseDataToken);
 
-  // 8. Poll until ready
-  const authToken = await getAuthToken(address, leaseUuid);
-  const status = await pollLeaseUntilReady(providerUrl, leaseUuid, authToken);
+    // 8. Poll until ready (pass token factory so tokens refresh during long polls)
+    status = await pollLeaseUntilReady(
+      providerUrl,
+      leaseUuid,
+      () => getAuthToken(address, leaseUuid),
+    );
+  } catch (err) {
+    // TX_FAILED is intentional: the lease TX succeeded but the deploy is incomplete.
+    // This code is non-retryable, which is correct — retrying would create a duplicate lease.
+    throw new ManifestMCPError(
+      ManifestMCPErrorCode.TX_FAILED,
+      `Deploy partially succeeded: lease ${leaseUuid} was created but subsequent steps failed. ` +
+      `Close this lease with stop_app if needed. Error: ${err instanceof Error ? err.message : String(err)}`,
+      { lease_uuid: leaseUuid, provider_uuid: providerUuid, provider_url: providerUrl },
+    );
+  }
 
-  // 9. Get connection info
+  // 9. Get connection info (best-effort — surface the error but don't fail the deploy)
   let connection: Record<string, unknown> | undefined;
   let url: string | undefined;
   let connectionError: string | undefined;
   try {
+    const authToken = await getAuthToken(address, leaseUuid);
     const connInfo = await getLeaseConnectionInfo(providerUrl, leaseUuid, authToken);
     connection = connInfo as unknown as Record<string, unknown>;
     if (connInfo.host && connInfo.ports) {
@@ -158,7 +169,6 @@ export async function deployApp(
       }
     }
   } catch (err) {
-    // Connection info is best-effort — surface the error but don't fail the deploy
     connectionError = err instanceof Error ? err.message : String(err);
   }
 

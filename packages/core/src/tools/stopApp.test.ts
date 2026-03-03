@@ -44,16 +44,14 @@ describe('stopApp', () => {
     });
   });
 
-  it('throws when close-lease tx returns nonzero code', async () => {
+  it('throws when close-lease tx fails on-chain', async () => {
     const cm = makeMockClientManager();
-    mockCosmosTx.mockResolvedValue({
-      module: 'billing',
-      subcommand: 'close-lease',
-      transactionHash: 'TX_FAIL',
-      code: 5,
-      height: '200',
-      rawLog: 'lease not found',
-    });
+    mockCosmosTx.mockRejectedValue(
+      new ManifestMCPError(
+        'TX_FAILED' as any,
+        'Transaction billing close-lease failed with code 5: lease not found',
+      ),
+    );
 
     await expect(
       stopApp(cm as any, 'lease-1'),

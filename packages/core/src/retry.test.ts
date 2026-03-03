@@ -52,17 +52,17 @@ describe('isRetryableError', () => {
     it('should retry QUERY_FAILED with timeout message', () => {
       const error = new ManifestMCPError(
         ManifestMCPErrorCode.QUERY_FAILED,
-        'Request timeout after 30000ms'
+        'Request timed out after 30000ms'
       );
       expect(isRetryableError(error)).toBe(true);
     });
 
-    it('should retry TX_FAILED with 503 error', () => {
+    it('should not retry TX_FAILED errors (non-idempotent)', () => {
       const error = new ManifestMCPError(
         ManifestMCPErrorCode.TX_FAILED,
         'Service unavailable (503)'
       );
-      expect(isRetryableError(error)).toBe(true);
+      expect(isRetryableError(error)).toBe(false);
     });
   });
 
@@ -75,15 +75,22 @@ describe('isRetryableError', () => {
     });
 
     it('should retry timeout errors', () => {
-      expect(isRetryableError(new Error('timeout'))).toBe(true);
       expect(isRetryableError(new Error('Request timed out'))).toBe(true);
+      expect(isRetryableError(new Error('ETIMEDOUT'))).toBe(true);
     });
 
-    it('should retry 5xx HTTP errors', () => {
-      expect(isRetryableError(new Error('500 Internal Server Error'))).toBe(true);
-      expect(isRetryableError(new Error('502 Bad Gateway'))).toBe(true);
-      expect(isRetryableError(new Error('503 Service Unavailable'))).toBe(true);
-      expect(isRetryableError(new Error('504 Gateway Timeout'))).toBe(true);
+    it('should retry 5xx HTTP errors with descriptive messages', () => {
+      expect(isRetryableError(new Error('Internal Server Error'))).toBe(true);
+      expect(isRetryableError(new Error('Bad Gateway'))).toBe(true);
+      expect(isRetryableError(new Error('Service Unavailable'))).toBe(true);
+      expect(isRetryableError(new Error('Gateway Timeout'))).toBe(true);
+      expect(isRetryableError(new Error('HTTP 502'))).toBe(true);
+      expect(isRetryableError(new Error('status 503'))).toBe(true);
+    });
+
+    it('should not retry errors with bare numbers that are not HTTP status codes', () => {
+      expect(isRetryableError(new Error('proposal 500 not found'))).toBe(false);
+      expect(isRetryableError(new Error('account sequence 503'))).toBe(false);
     });
 
     it('should retry rate limit errors', () => {

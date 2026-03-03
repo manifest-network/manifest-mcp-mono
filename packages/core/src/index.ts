@@ -16,7 +16,7 @@ import {
 } from './types.js';
 import { createValidatedConfig } from './config.js';
 import { VERSION } from './version.js';
-import { requireString, requireStringEnum, parseArgs, optionalBoolean } from './validation.js';
+import { requireString, requireStringEnum, requireUuid, parseArgs, optionalBoolean } from './validation.js';
 import { createSignMessage, createLeaseDataSignMessage, createAuthToken } from './http/auth.js';
 import type { LeaseStateFilter } from './tools/listApps.js';
 import { browseCatalog } from './tools/browseCatalog.js';
@@ -109,7 +109,7 @@ export { resolveLeaseProvider, type LeaseProviderInfo } from './tools/resolveLea
 export { type LeaseStateFilter, type LeaseInfo } from './tools/listApps.js';
 export { type DeployAppResult, type DeployAppInput } from './tools/deployApp.js';
 export { type StopAppResult } from './tools/stopApp.js';
-export { requireString, requireStringEnum, parseArgs, optionalBoolean } from './validation.js';
+export { requireString, requireStringEnum, requireUuid, parseArgs, optionalBoolean } from './validation.js';
 
 /** Maximum number of log lines that can be requested via get_logs */
 const MAX_LOG_TAIL = 1000;
@@ -622,7 +622,7 @@ export class ManifestMCPServer {
       }
 
       case 'app_status': {
-        const leaseUuid = requireString(toolInput, 'lease_uuid');
+        const leaseUuid = requireUuid(toolInput, 'lease_uuid');
         const address = await this.walletProvider.getAddress();
         const queryClient = await this.clientManager.getQueryClient();
         const result = await appStatus(
@@ -642,7 +642,7 @@ export class ManifestMCPServer {
       }
 
       case 'get_logs': {
-        const leaseUuid = requireString(toolInput, 'lease_uuid');
+        const leaseUuid = requireUuid(toolInput, 'lease_uuid');
         const rawTail = toolInput.tail;
         const tail = typeof rawTail === 'number' && Number.isFinite(rawTail) && rawTail > 0
           ? Math.min(Math.floor(rawTail), MAX_LOG_TAIL)
@@ -676,7 +676,25 @@ export class ManifestMCPServer {
           );
         }
         const size = requireString(toolInput, 'size');
-        const env = toolInput.env as Record<string, string> | undefined;
+        let env: Record<string, string> | undefined;
+        if (toolInput.env !== undefined && toolInput.env !== null) {
+          if (typeof toolInput.env !== 'object' || Array.isArray(toolInput.env)) {
+            throw new ManifestMCPError(
+              ManifestMCPErrorCode.TX_FAILED,
+              'env must be an object mapping string keys to string values',
+            );
+          }
+          env = {};
+          for (const [key, value] of Object.entries(toolInput.env)) {
+            if (typeof value !== 'string') {
+              throw new ManifestMCPError(
+                ManifestMCPErrorCode.TX_FAILED,
+                `env value for key "${key}" must be a string, got ${typeof value}`,
+              );
+            }
+            env[key] = value;
+          }
+        }
 
         const result = await deployApp(
           this.clientManager,
@@ -695,7 +713,7 @@ export class ManifestMCPServer {
       }
 
       case 'stop_app': {
-        const leaseUuid = requireString(toolInput, 'lease_uuid');
+        const leaseUuid = requireUuid(toolInput, 'lease_uuid');
         const result = await stopApp(this.clientManager, leaseUuid);
         return {
           content: [
@@ -708,7 +726,7 @@ export class ManifestMCPServer {
       }
 
       case 'restart_app': {
-        const leaseUuid = requireString(toolInput, 'lease_uuid');
+        const leaseUuid = requireUuid(toolInput, 'lease_uuid');
         const address = await this.walletProvider.getAddress();
         const queryClient = await this.clientManager.getQueryClient();
         const result = await restartApp(
@@ -728,7 +746,7 @@ export class ManifestMCPServer {
       }
 
       case 'update_app': {
-        const leaseUuid = requireString(toolInput, 'lease_uuid');
+        const leaseUuid = requireUuid(toolInput, 'lease_uuid');
         const manifest = requireString(toolInput, 'manifest');
 
         try {

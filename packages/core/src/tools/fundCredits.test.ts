@@ -41,16 +41,14 @@ describe('fundCredits', () => {
     expect(result.confirmed).toBe(true);
   });
 
-  it('throws when tx returns nonzero code', async () => {
+  it('throws when tx fails on-chain', async () => {
     const cm = makeMockClientManager({ address: 'manifest1tenant' });
-    mockCosmosTx.mockResolvedValue({
-      module: 'billing',
-      subcommand: 'fund-credit',
-      transactionHash: 'TX_FAIL',
-      code: 5,
-      height: '100',
-      rawLog: 'insufficient funds',
-    });
+    mockCosmosTx.mockRejectedValue(
+      new ManifestMCPError(
+        'TX_FAILED' as any,
+        'Transaction billing fund-credit failed with code 5: insufficient funds',
+      ),
+    );
 
     await expect(fundCredits(cm as any, '10000000umfx')).rejects.toThrow(ManifestMCPError);
   });

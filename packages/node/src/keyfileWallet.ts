@@ -100,6 +100,8 @@ export class KeyfileWalletProvider implements WalletProvider {
             `Failed to decrypt keyfile at ${this.keyfilePath}. Verify that MANIFEST_KEY_PASSWORD is correct. (${err instanceof Error ? err.message : String(err)})`
           );
         }
+        // Clear password from memory as soon as decryption succeeds
+        this.password = undefined;
       } else if (obj.mnemonic) {
         if (typeof obj.mnemonic !== 'string') {
           throw new ManifestMCPError(

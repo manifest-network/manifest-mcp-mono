@@ -124,8 +124,8 @@ export async function runKeygen(): Promise<void> {
     if (accounts.length > 0) {
       console.error(`Address: ${accounts[0].address}`);
     }
-  } catch {
-    console.error('Note: could not derive address for display, but the keyfile was written successfully.');
+  } catch (err) {
+    console.error(`Note: could not derive address for display (${err instanceof Error ? err.message : String(err)}), but the keyfile was written successfully.`);
   }
 }
 
@@ -136,7 +136,7 @@ export async function runImport(): Promise<void> {
 
   await confirmOverwrite(keyfilePath);
 
-  const mnemonic = await prompt('Enter mnemonic: ');
+  const mnemonic = await promptPassword('Enter mnemonic (hidden): ');
   if (!mnemonic.trim()) {
     console.error('Error: mnemonic cannot be empty.');
     process.exit(1);
@@ -168,7 +168,7 @@ export async function runImport(): Promise<void> {
     if (accounts.length > 0) {
       console.error(`Address: ${accounts[0].address}`);
     }
-  } catch {
-    console.error('Note: could not derive address for display, but the keyfile was written successfully.');
+  } catch (err) {
+    console.error(`Note: could not derive address for display (${err instanceof Error ? err.message : String(err)}), but the keyfile was written successfully.`);
   }
 }

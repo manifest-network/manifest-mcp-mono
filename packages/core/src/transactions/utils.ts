@@ -453,7 +453,8 @@ export function parseAmount(amountStr: string): { amount: string; denom: string 
 }
 
 /**
- * Build transaction result from DeliverTxResponse
+ * Build transaction result from DeliverTxResponse.
+ * Throws ManifestMCPError if the transaction failed on-chain (non-zero code).
  */
 export function buildTxResult(
   module: string,
@@ -461,6 +462,21 @@ export function buildTxResult(
   result: Awaited<ReturnType<SigningStargateClient['signAndBroadcast']>>,
   waitForConfirmation: boolean
 ): CosmosTxResult {
+  if (result.code !== 0) {
+    throw new ManifestMCPError(
+      ManifestMCPErrorCode.TX_FAILED,
+      `Transaction ${module} ${subcommand} failed with code ${result.code}: ${result.rawLog || 'no details'}`,
+      {
+        module,
+        subcommand,
+        code: result.code,
+        transactionHash: result.transactionHash,
+        rawLog: result.rawLog,
+        height: String(result.height),
+      }
+    );
+  }
+
   return {
     module,
     subcommand,
@@ -472,7 +488,7 @@ export function buildTxResult(
     gasWanted: String(result.gasWanted),
     events: result.events,
     ...(waitForConfirmation && {
-      confirmed: result.code === 0,
+      confirmed: true,
       confirmationHeight: String(result.height),
     }),
   };
