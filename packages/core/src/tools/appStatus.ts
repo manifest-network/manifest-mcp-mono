@@ -1,4 +1,5 @@
 import type { ManifestQueryClient } from '../client.js';
+import { LeaseState } from '@manifest-network/manifestjs/dist/codegen/liftedinit/billing/v1/types';
 import { getLeaseStatus, type FredLeaseStatus } from '../http/fred.js';
 import { getLeaseConnectionInfo, type LeaseConnectionInfo } from '../http/provider.js';
 import { resolveLeaseProvider } from './resolveLeaseProvider.js';
@@ -23,8 +24,7 @@ export async function appStatus(
   let providerError: string | undefined;
   let connectionError: string | undefined;
 
-  // LeaseState: 1 = PENDING, 2 = ACTIVE
-  if (leaseProvider.leaseState === 1 || leaseProvider.leaseState === 2) {
+  if (leaseProvider.leaseState === LeaseState.LEASE_STATE_PENDING || leaseProvider.leaseState === LeaseState.LEASE_STATE_ACTIVE) {
     const authToken = await getAuthToken(address, leaseUuid);
 
     try {

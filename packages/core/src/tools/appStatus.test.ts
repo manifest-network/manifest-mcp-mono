@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { LeaseState } from '@manifest-network/manifestjs/dist/codegen/liftedinit/billing/v1/types';
 
 vi.mock('../http/fred.js', () => ({
   getLeaseStatus: vi.fn(),
@@ -40,7 +41,7 @@ describe('appStatus', () => {
     mockResolveLeaseProvider.mockResolvedValue({
       providerUuid: 'prov-1',
       providerUrl: 'https://provider.example.com',
-      leaseState: 2,
+      leaseState: LeaseState.LEASE_STATE_ACTIVE,
       leaseCreatedAt: '2025-01-01T00:00:00.000Z',
     });
 
@@ -51,7 +52,7 @@ describe('appStatus', () => {
 
     expect(result.lease_uuid).toBe('lease-1');
     expect(result.chainState).toEqual({
-      state: 2,
+      state: LeaseState.LEASE_STATE_ACTIVE,
       providerUuid: 'prov-1',
       createdAt: '2025-01-01T00:00:00.000Z',
       closedAt: undefined,
@@ -60,12 +61,16 @@ describe('appStatus', () => {
     expect(result.connection).toEqual({ host: '1.2.3.4', ports: { http: 8080 } });
   });
 
-  it('skips fred calls for non-active/pending lease states', async () => {
+  it.each([
+    LeaseState.LEASE_STATE_CLOSED,
+    LeaseState.LEASE_STATE_REJECTED,
+    LeaseState.LEASE_STATE_EXPIRED,
+  ])('skips fred calls for non-operational lease state %i', async (state) => {
     const qc = makeMockQueryClient();
     mockResolveLeaseProvider.mockResolvedValue({
       providerUuid: 'prov-1',
       providerUrl: 'https://provider.example.com',
-      leaseState: 3, // closed
+      leaseState: state,
     });
 
     await appStatus(qc, ADDRESS, 'lease-1', mockGetAuthToken);
@@ -79,7 +84,7 @@ describe('appStatus', () => {
     mockResolveLeaseProvider.mockResolvedValue({
       providerUuid: 'prov-1',
       providerUrl: 'https://provider.example.com',
-      leaseState: 1,
+      leaseState: LeaseState.LEASE_STATE_PENDING,
     });
 
     mockGetLeaseStatus.mockResolvedValue({ status: 'provisioning' });
@@ -96,7 +101,7 @@ describe('appStatus', () => {
     mockResolveLeaseProvider.mockResolvedValue({
       providerUuid: 'prov-1',
       providerUrl: 'https://provider.example.com',
-      leaseState: 2,
+      leaseState: LeaseState.LEASE_STATE_ACTIVE,
     });
 
     mockGetLeaseStatus.mockRejectedValue(new Error('provider down'));
@@ -114,7 +119,7 @@ describe('appStatus', () => {
     mockResolveLeaseProvider.mockResolvedValue({
       providerUuid: 'prov-1',
       providerUrl: 'https://provider.example.com',
-      leaseState: 2,
+      leaseState: LeaseState.LEASE_STATE_ACTIVE,
     });
 
     mockGetLeaseStatus.mockResolvedValue({ status: 'running' });
@@ -132,7 +137,7 @@ describe('appStatus', () => {
     mockResolveLeaseProvider.mockResolvedValue({
       providerUuid: 'prov-1',
       providerUrl: 'https://provider.example.com',
-      leaseState: 2,
+      leaseState: LeaseState.LEASE_STATE_ACTIVE,
     });
 
     const authError = new ManifestMCPError(

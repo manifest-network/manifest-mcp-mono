@@ -1,4 +1,5 @@
 import type { ManifestQueryClient } from '../client.js';
+import { LeaseState } from '@manifest-network/manifestjs/dist/codegen/liftedinit/billing/v1/types';
 import { ManifestMCPError, ManifestMCPErrorCode } from '../types.js';
 import { getLeaseLogs } from '../http/fred.js';
 import { resolveLeaseProvider } from './resolveLeaseProvider.js';
@@ -14,10 +15,10 @@ export async function getAppLogs(
 ) {
   const { providerUrl, leaseState } = await resolveLeaseProvider(queryClient, leaseUuid);
 
-  if (leaseState === 3) {
+  if (leaseState !== LeaseState.LEASE_STATE_ACTIVE && leaseState !== LeaseState.LEASE_STATE_PENDING) {
     throw new ManifestMCPError(
       ManifestMCPErrorCode.QUERY_FAILED,
-      `Lease "${leaseUuid}" is closed; logs are no longer available`,
+      `Lease "${leaseUuid}" is not active (state: ${leaseState}); logs are not available`,
     );
   }
 

@@ -1,6 +1,7 @@
 import { vi } from 'vitest';
 import type { ManifestMCPConfig, WalletProvider, SignArbitraryResult } from '../types.js';
 import type { ManifestQueryClient } from '../client.js';
+import { LeaseState } from '@manifest-network/manifestjs/dist/codegen/liftedinit/billing/v1/types';
 
 /**
  * Create a mock ManifestMCPConfig with sensible defaults.
@@ -51,9 +52,11 @@ interface BillingOverrides {
     estimatedDurationSeconds: bigint;
     activeLeaseCount: bigint;
   } | null;
-  lease?: { uuid: string; state: number; providerUuid: string; createdAt?: Date; closedAt?: Date } | null;
+  lease?: { uuid: string; state: LeaseState; providerUuid: string; createdAt?: Date; closedAt?: Date } | null;
   activeLeases?: { uuid: string; providerUuid: string; createdAt?: Date }[];
   pendingLeases?: { uuid: string; providerUuid: string; createdAt?: Date }[];
+  rejectedLeases?: { uuid: string; providerUuid: string; createdAt?: Date }[];
+  expiredLeases?: { uuid: string; providerUuid: string; createdAt?: Date }[];
 }
 
 interface SkuOverrides {
@@ -78,6 +81,8 @@ export function makeMockQueryClient(overrides?: {
   const lease = billing.lease ?? null;
   const activeLeases = billing.activeLeases ?? [];
   const pendingLeases = billing.pendingLeases ?? [];
+  const rejectedLeases = billing.rejectedLeases ?? [];
+  const expiredLeases = billing.expiredLeases ?? [];
 
   const providers = sku.providers ?? [];
   const skus = sku.skus ?? [];
@@ -105,10 +110,12 @@ export function makeMockQueryClient(overrides?: {
           lease: vi.fn().mockImplementation(async () => {
             return { lease };
           }),
-          leasesByTenant: vi.fn().mockImplementation(async ({ stateFilter }: { stateFilter: number }) => {
-            if (stateFilter === 2) return { leases: activeLeases.map(l => ({ state: 2, ...l })) };
-            if (stateFilter === 1) return { leases: pendingLeases.map(l => ({ state: 1, ...l })) };
-            if (stateFilter === 3) return { leases: [] };
+          leasesByTenant: vi.fn().mockImplementation(async ({ stateFilter }: { stateFilter: LeaseState }) => {
+            if (stateFilter === LeaseState.LEASE_STATE_ACTIVE) return { leases: activeLeases.map(l => ({ state: LeaseState.LEASE_STATE_ACTIVE, ...l })) };
+            if (stateFilter === LeaseState.LEASE_STATE_PENDING) return { leases: pendingLeases.map(l => ({ state: LeaseState.LEASE_STATE_PENDING, ...l })) };
+            if (stateFilter === LeaseState.LEASE_STATE_CLOSED) return { leases: [] };
+            if (stateFilter === LeaseState.LEASE_STATE_REJECTED) return { leases: rejectedLeases.map(l => ({ state: LeaseState.LEASE_STATE_REJECTED, ...l })) };
+            if (stateFilter === LeaseState.LEASE_STATE_EXPIRED) return { leases: expiredLeases.map(l => ({ state: LeaseState.LEASE_STATE_EXPIRED, ...l })) };
             return { leases: [] };
           }),
         },

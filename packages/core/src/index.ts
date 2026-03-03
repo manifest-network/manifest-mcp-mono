@@ -104,6 +104,7 @@ export { getAvailableModules, getModuleSubcommands, getSubcommandUsage, getSuppo
 export { MnemonicWalletProvider } from './wallet/index.js';
 export { withRetry, isRetryableError, calculateBackoff, type RetryOptions } from './retry.js';
 export { ProviderApiError } from './http/provider.js';
+export { LeaseState } from '@manifest-network/manifestjs/dist/codegen/liftedinit/billing/v1/types';
 export { resolveLeaseProvider, type LeaseProviderInfo } from './tools/resolveLeaseProvider.js';
 export { type LeaseStateFilter, type LeaseInfo } from './tools/listApps.js';
 export { type DeployAppResult, type DeployAppInput } from './tools/deployApp.js';
@@ -257,7 +258,7 @@ const TOOLS: Tool[] = [
       properties: {
         state: {
           type: 'string',
-          enum: ['all', 'pending', 'active', 'closed'],
+          enum: ['all', 'pending', 'active', 'closed', 'rejected', 'expired'],
           description: 'Filter leases by state (default: "all")',
         },
       },
@@ -605,7 +606,7 @@ export class ManifestMCPServer {
       case 'list_apps': {
         const address = await this.walletProvider.getAddress();
         const queryClient = await this.clientManager.getQueryClient();
-        const VALID_STATE_FILTERS = ['all', 'pending', 'active', 'closed'] as const;
+        const VALID_STATE_FILTERS = ['all', 'pending', 'active', 'closed', 'rejected', 'expired'] as const;
         const stateFilter: LeaseStateFilter = typeof toolInput.state === 'string'
           ? requireStringEnum(toolInput, 'state', VALID_STATE_FILTERS)
           : 'all';

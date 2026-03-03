@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { LeaseState } from '@manifest-network/manifestjs/dist/codegen/liftedinit/billing/v1/types';
 import { resolveLeaseProvider } from './resolveLeaseProvider.js';
 import { makeMockQueryClient } from '../__test-utils__/mocks.js';
 import { ManifestMCPErrorCode } from '../types.js';
@@ -13,7 +14,7 @@ describe('resolveLeaseProvider', () => {
       billing: {
         lease: {
           uuid: 'lease-1',
-          state: 2,
+          state: LeaseState.LEASE_STATE_ACTIVE,
           providerUuid: 'prov-1',
           createdAt: new Date('2025-01-01'),
         },
@@ -30,7 +31,7 @@ describe('resolveLeaseProvider', () => {
     expect(result).toEqual({
       providerUuid: 'prov-1',
       providerUrl: 'https://provider.example.com',
-      leaseState: 2,
+      leaseState: LeaseState.LEASE_STATE_ACTIVE,
       leaseCreatedAt: '2025-01-01T00:00:00.000Z',
       leaseClosedAt: undefined,
     });
@@ -52,7 +53,7 @@ describe('resolveLeaseProvider', () => {
   it('throws QUERY_FAILED when lease has no provider UUID', async () => {
     const qc = makeMockQueryClient({
       billing: {
-        lease: { uuid: 'lease-1', state: 2, providerUuid: '' },
+        lease: { uuid: 'lease-1', state: LeaseState.LEASE_STATE_ACTIVE, providerUuid: '' },
       },
     });
 
@@ -67,7 +68,7 @@ describe('resolveLeaseProvider', () => {
   it('throws QUERY_FAILED when provider has no API URL', async () => {
     const qc = makeMockQueryClient({
       billing: {
-        lease: { uuid: 'lease-1', state: 2, providerUuid: 'prov-bad' },
+        lease: { uuid: 'lease-1', state: LeaseState.LEASE_STATE_ACTIVE, providerUuid: 'prov-bad' },
       },
       sku: {
         providerLookup: {
@@ -89,7 +90,7 @@ describe('resolveLeaseProvider', () => {
       billing: {
         lease: {
           uuid: 'lease-1',
-          state: 3,
+          state: LeaseState.LEASE_STATE_CLOSED,
           providerUuid: 'prov-1',
           createdAt: new Date('2025-01-01'),
           closedAt: new Date('2025-06-01'),

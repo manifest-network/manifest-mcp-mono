@@ -112,6 +112,65 @@ describe('listApps', () => {
     expect(result.leases[0].createdAt).toBe('2025-06-15T10:30:00.000Z');
   });
 
+  it('returns rejected leases when filter is "rejected"', async () => {
+    const client = makeMockQueryClient({
+      billing: {
+        activeLeases: [
+          { uuid: 'lease-active', providerUuid: 'prov-1' },
+        ],
+        rejectedLeases: [
+          { uuid: 'lease-rejected', providerUuid: 'prov-1' },
+        ],
+      },
+    });
+
+    const result = await listApps(client, ADDRESS, 'rejected');
+
+    expect(result.leases).toHaveLength(1);
+    expect(result.leases[0].uuid).toBe('lease-rejected');
+    expect(result.leases[0].stateLabel).toBe('rejected');
+  });
+
+  it('returns expired leases when filter is "expired"', async () => {
+    const client = makeMockQueryClient({
+      billing: {
+        expiredLeases: [
+          { uuid: 'lease-expired', providerUuid: 'prov-1' },
+        ],
+      },
+    });
+
+    const result = await listApps(client, ADDRESS, 'expired');
+
+    expect(result.leases).toHaveLength(1);
+    expect(result.leases[0].uuid).toBe('lease-expired');
+    expect(result.leases[0].stateLabel).toBe('expired');
+  });
+
+  it('"all" filter includes rejected and expired leases', async () => {
+    const client = makeMockQueryClient({
+      billing: {
+        activeLeases: [
+          { uuid: 'lease-active', providerUuid: 'prov-1' },
+        ],
+        pendingLeases: [],
+        rejectedLeases: [
+          { uuid: 'lease-rejected', providerUuid: 'prov-1' },
+        ],
+        expiredLeases: [
+          { uuid: 'lease-expired', providerUuid: 'prov-1' },
+        ],
+      },
+    });
+
+    const result = await listApps(client, ADDRESS, 'all');
+
+    const uuids = result.leases.map(l => l.uuid);
+    expect(uuids).toContain('lease-active');
+    expect(uuids).toContain('lease-rejected');
+    expect(uuids).toContain('lease-expired');
+  });
+
   it('includes providerUuid in lease info', async () => {
     const client = makeMockQueryClient({
       billing: {

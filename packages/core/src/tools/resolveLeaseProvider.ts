@@ -1,10 +1,11 @@
 import type { ManifestQueryClient } from '../client.js';
+import { LeaseState } from '@manifest-network/manifestjs/dist/codegen/liftedinit/billing/v1/types';
 import { ManifestMCPError, ManifestMCPErrorCode } from '../types.js';
 
 export interface LeaseProviderInfo {
   readonly providerUuid: string;
   readonly providerUrl: string;
-  readonly leaseState: number;
+  readonly leaseState: LeaseState;
   readonly leaseCreatedAt?: string;
   readonly leaseClosedAt?: string;
 }

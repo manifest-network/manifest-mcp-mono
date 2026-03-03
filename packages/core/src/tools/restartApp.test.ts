@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { LeaseState } from '@manifest-network/manifestjs/dist/codegen/liftedinit/billing/v1/types';
 
 vi.mock('../http/fred.js', () => ({
   restartLease: vi.fn(),
@@ -30,7 +31,7 @@ describe('restartApp', () => {
     mockResolveLeaseProvider.mockResolvedValue({
       providerUuid: 'prov-1',
       providerUrl: 'https://provider.example.com',
-      leaseState: 2,
+      leaseState: LeaseState.LEASE_STATE_ACTIVE,
     });
     mockRestartLease.mockResolvedValue({ status: 'restarting' });
 
@@ -66,14 +67,50 @@ describe('restartApp', () => {
     mockResolveLeaseProvider.mockResolvedValue({
       providerUuid: 'prov-1',
       providerUrl: 'https://provider.example.com',
-      leaseState: 3,
+      leaseState: LeaseState.LEASE_STATE_CLOSED,
     });
 
     await expect(
       restartApp(qc, ADDRESS, 'lease-1', mockGetAuthToken),
     ).rejects.toMatchObject({
       code: ManifestMCPErrorCode.QUERY_FAILED,
-      message: expect.stringContaining('closed'),
+      message: expect.stringContaining('not active'),
+    });
+
+    expect(mockRestartLease).not.toHaveBeenCalled();
+  });
+
+  it('throws when lease is rejected', async () => {
+    const qc = makeMockQueryClient();
+    mockResolveLeaseProvider.mockResolvedValue({
+      providerUuid: 'prov-1',
+      providerUrl: 'https://provider.example.com',
+      leaseState: LeaseState.LEASE_STATE_REJECTED,
+    });
+
+    await expect(
+      restartApp(qc, ADDRESS, 'lease-1', mockGetAuthToken),
+    ).rejects.toMatchObject({
+      code: ManifestMCPErrorCode.QUERY_FAILED,
+      message: expect.stringContaining('not active'),
+    });
+
+    expect(mockRestartLease).not.toHaveBeenCalled();
+  });
+
+  it('throws when lease is expired', async () => {
+    const qc = makeMockQueryClient();
+    mockResolveLeaseProvider.mockResolvedValue({
+      providerUuid: 'prov-1',
+      providerUrl: 'https://provider.example.com',
+      leaseState: LeaseState.LEASE_STATE_EXPIRED,
+    });
+
+    await expect(
+      restartApp(qc, ADDRESS, 'lease-1', mockGetAuthToken),
+    ).rejects.toMatchObject({
+      code: ManifestMCPErrorCode.QUERY_FAILED,
+      message: expect.stringContaining('not active'),
     });
 
     expect(mockRestartLease).not.toHaveBeenCalled();
@@ -84,7 +121,7 @@ describe('restartApp', () => {
     mockResolveLeaseProvider.mockResolvedValue({
       providerUuid: 'prov-1',
       providerUrl: 'https://provider.example.com',
-      leaseState: 2,
+      leaseState: LeaseState.LEASE_STATE_ACTIVE,
     });
 
     const authError = new ManifestMCPError(
