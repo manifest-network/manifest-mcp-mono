@@ -507,7 +507,7 @@ export class ManifestMCPServer {
       case 'cosmos_tx': {
         const module = requireString(toolInput, 'module', ManifestMCPErrorCode.TX_FAILED);
         const subcommand = requireString(toolInput, 'subcommand', ManifestMCPErrorCode.TX_FAILED);
-        const args = parseArgs(toolInput.args);
+        const args = parseArgs(toolInput.args, ManifestMCPErrorCode.TX_FAILED);
         const waitForConfirmation = optionalBoolean(toolInput, 'wait_for_confirmation');
 
         const result = await cosmosTx(
@@ -716,7 +716,7 @@ export class ManifestMCPServer {
       }
 
       case 'stop_app': {
-        const leaseUuid = requireUuid(toolInput, 'lease_uuid');
+        const leaseUuid = requireUuid(toolInput, 'lease_uuid', ManifestMCPErrorCode.TX_FAILED);
         const result = await stopApp(this.clientManager, leaseUuid);
         return {
           content: [
@@ -749,7 +749,7 @@ export class ManifestMCPServer {
       }
 
       case 'update_app': {
-        const leaseUuid = requireUuid(toolInput, 'lease_uuid');
+        const leaseUuid = requireUuid(toolInput, 'lease_uuid', ManifestMCPErrorCode.TX_FAILED);
         const manifest = requireString(toolInput, 'manifest');
 
         try {

@@ -17,6 +17,13 @@ export async function resolveProviderUrl(
   queryClient: ManifestQueryClient,
   providerUuid: string,
 ): Promise<string> {
+  if (!providerUuid) {
+    throw new ManifestMCPError(
+      ManifestMCPErrorCode.QUERY_FAILED,
+      'Provider UUID is empty; the lease may not have an assigned provider',
+    );
+  }
+
   const providerResult = await queryClient.liftedinit.sku.v1.provider({
     uuid: providerUuid,
   });

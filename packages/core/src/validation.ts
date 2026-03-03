@@ -40,7 +40,10 @@ export function requireStringEnum<T extends string>(
  * Parse raw args input into string array.
  * Throws if a non-array, non-nullish value is provided (e.g., a bare string).
  */
-export function parseArgs(rawArgs: unknown): string[] {
+export function parseArgs(
+  rawArgs: unknown,
+  errorCode: ManifestMCPErrorCode = ManifestMCPErrorCode.QUERY_FAILED,
+): string[] {
   if (rawArgs === undefined || rawArgs === null) {
     return [];
   }
@@ -49,12 +52,12 @@ export function parseArgs(rawArgs: unknown): string[] {
   }
   if (typeof rawArgs === 'string') {
     throw new ManifestMCPError(
-      ManifestMCPErrorCode.QUERY_FAILED,
+      errorCode,
       `args must be an array of strings, not a single string. Use ["${rawArgs}"] instead of "${rawArgs}".`,
     );
   }
   throw new ManifestMCPError(
-    ManifestMCPErrorCode.QUERY_FAILED,
+    errorCode,
     `args must be an array of strings, got ${typeof rawArgs}`,
   );
 }
