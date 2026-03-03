@@ -6,17 +6,17 @@ vi.mock('../http/fred.js', () => ({
 }));
 
 vi.mock('./resolveLeaseProvider.js', () => ({
-  resolveLeaseProvider: vi.fn(),
+  resolveProviderUrl: vi.fn(),
 }));
 
 import { updateApp } from './updateApp.js';
 import { updateLease } from '../http/fred.js';
-import { resolveLeaseProvider } from './resolveLeaseProvider.js';
+import { resolveProviderUrl } from './resolveLeaseProvider.js';
 import { makeMockQueryClient } from '../__test-utils__/mocks.js';
 import { ManifestMCPError, ManifestMCPErrorCode } from '../types.js';
 
 const mockUpdateLease = vi.mocked(updateLease);
-const mockResolveLeaseProvider = vi.mocked(resolveLeaseProvider);
+const mockResolveProviderUrl = vi.mocked(resolveProviderUrl);
 
 const ADDRESS = 'manifest1user';
 const mockGetAuthToken = vi.fn().mockResolvedValue('auth-token-123');
@@ -24,21 +24,21 @@ const mockGetAuthToken = vi.fn().mockResolvedValue('auth-token-123');
 describe('updateApp', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockResolveLeaseProvider.mockResolvedValue({
-      providerUuid: 'prov-1',
-      providerUrl: 'https://provider.example.com',
-      leaseState: LeaseState.LEASE_STATE_ACTIVE,
-    });
+    mockResolveProviderUrl.mockResolvedValue('https://provider.example.com');
   });
 
-  it('resolves provider from chain and updates the lease with given manifest', async () => {
-    const qc = makeMockQueryClient();
+  it('queries lease, resolves provider URL, and updates the lease', async () => {
+    const qc = makeMockQueryClient({
+      billing: {
+        lease: { uuid: 'lease-1', state: LeaseState.LEASE_STATE_ACTIVE, providerUuid: 'prov-1' },
+      },
+    });
     const manifest = JSON.stringify({ image: 'nginx:latest', ports: { '80/tcp': {} } });
     mockUpdateLease.mockResolvedValue({ status: 'updated' });
 
     const result = await updateApp(qc, ADDRESS, 'lease-1', mockGetAuthToken, manifest);
 
-    expect(mockResolveLeaseProvider).toHaveBeenCalledWith(qc, 'lease-1');
+    expect(mockResolveProviderUrl).toHaveBeenCalledWith(qc, 'prov-1');
     expect(mockUpdateLease).toHaveBeenCalledWith(
       'https://provider.example.com',
       'lease-1',
@@ -52,7 +52,11 @@ describe('updateApp', () => {
   });
 
   it('passes manifest string through without modification', async () => {
-    const qc = makeMockQueryClient();
+    const qc = makeMockQueryClient({
+      billing: {
+        lease: { uuid: 'lease-1', state: LeaseState.LEASE_STATE_ACTIVE, providerUuid: 'prov-1' },
+      },
+    });
     const manifest = '{"image":"redis:7","ports":{"6379/tcp":{}},"env":{"FOO":"bar"}}';
     mockUpdateLease.mockResolvedValue({ status: 'updated' });
 
@@ -62,24 +66,25 @@ describe('updateApp', () => {
   });
 
   it('throws when lease not found on chain', async () => {
-    const qc = makeMockQueryClient();
-    mockResolveLeaseProvider.mockRejectedValue(
-      new ManifestMCPError(ManifestMCPErrorCode.QUERY_FAILED, 'Lease "lease-1" not found on chain'),
-    );
+    const qc = makeMockQueryClient({
+      billing: { lease: null },
+    });
 
     await expect(
       updateApp(qc, ADDRESS, 'lease-1', mockGetAuthToken, '{}'),
     ).rejects.toMatchObject({
       code: ManifestMCPErrorCode.QUERY_FAILED,
+      message: expect.stringContaining('not found on chain'),
     });
+
+    expect(mockResolveProviderUrl).not.toHaveBeenCalled();
   });
 
-  it('throws when lease is closed', async () => {
-    const qc = makeMockQueryClient();
-    mockResolveLeaseProvider.mockResolvedValue({
-      providerUuid: 'prov-1',
-      providerUrl: 'https://provider.example.com',
-      leaseState: LeaseState.LEASE_STATE_CLOSED,
+  it('throws when lease is closed without resolving provider', async () => {
+    const qc = makeMockQueryClient({
+      billing: {
+        lease: { uuid: 'lease-1', state: LeaseState.LEASE_STATE_CLOSED, providerUuid: 'prov-1' },
+      },
     });
 
     await expect(
@@ -89,15 +94,15 @@ describe('updateApp', () => {
       message: expect.stringContaining('not active'),
     });
 
+    expect(mockResolveProviderUrl).not.toHaveBeenCalled();
     expect(mockUpdateLease).not.toHaveBeenCalled();
   });
 
-  it('throws when lease is rejected', async () => {
-    const qc = makeMockQueryClient();
-    mockResolveLeaseProvider.mockResolvedValue({
-      providerUuid: 'prov-1',
-      providerUrl: 'https://provider.example.com',
-      leaseState: LeaseState.LEASE_STATE_REJECTED,
+  it('throws when lease is rejected without resolving provider', async () => {
+    const qc = makeMockQueryClient({
+      billing: {
+        lease: { uuid: 'lease-1', state: LeaseState.LEASE_STATE_REJECTED, providerUuid: 'prov-1' },
+      },
     });
 
     await expect(
@@ -107,15 +112,15 @@ describe('updateApp', () => {
       message: expect.stringContaining('not active'),
     });
 
+    expect(mockResolveProviderUrl).not.toHaveBeenCalled();
     expect(mockUpdateLease).not.toHaveBeenCalled();
   });
 
-  it('throws when lease is expired', async () => {
-    const qc = makeMockQueryClient();
-    mockResolveLeaseProvider.mockResolvedValue({
-      providerUuid: 'prov-1',
-      providerUrl: 'https://provider.example.com',
-      leaseState: LeaseState.LEASE_STATE_EXPIRED,
+  it('throws when lease is expired without resolving provider', async () => {
+    const qc = makeMockQueryClient({
+      billing: {
+        lease: { uuid: 'lease-1', state: LeaseState.LEASE_STATE_EXPIRED, providerUuid: 'prov-1' },
+      },
     });
 
     await expect(
@@ -125,11 +130,16 @@ describe('updateApp', () => {
       message: expect.stringContaining('not active'),
     });
 
+    expect(mockResolveProviderUrl).not.toHaveBeenCalled();
     expect(mockUpdateLease).not.toHaveBeenCalled();
   });
 
   it('lets auth errors propagate', async () => {
-    const qc = makeMockQueryClient();
+    const qc = makeMockQueryClient({
+      billing: {
+        lease: { uuid: 'lease-1', state: LeaseState.LEASE_STATE_ACTIVE, providerUuid: 'prov-1' },
+      },
+    });
     const authError = new ManifestMCPError(
       ManifestMCPErrorCode.WALLET_NOT_CONNECTED,
       'signArbitrary not supported',

@@ -2,7 +2,7 @@ import type { ManifestQueryClient } from '../client.js';
 import { LeaseState, leaseStateToJSON } from '@manifest-network/manifestjs/dist/codegen/liftedinit/billing/v1/types';
 import { ManifestMCPError, ManifestMCPErrorCode } from '../types.js';
 import { getLeaseLogs } from '../http/fred.js';
-import { resolveLeaseProvider } from './resolveLeaseProvider.js';
+import { resolveProviderUrl } from './resolveLeaseProvider.js';
 
 const MAX_LOG_CHARS = 4000;
 
@@ -13,15 +13,25 @@ export async function getAppLogs(
   getAuthToken: (address: string, leaseUuid: string) => Promise<string>,
   tail?: number,
 ) {
-  const { providerUrl, leaseState } = await resolveLeaseProvider(queryClient, leaseUuid);
+  const leaseResult = await queryClient.liftedinit.billing.v1.lease({ leaseUuid });
 
-  if (leaseState !== LeaseState.LEASE_STATE_ACTIVE && leaseState !== LeaseState.LEASE_STATE_PENDING) {
+  if (!leaseResult.lease) {
     throw new ManifestMCPError(
       ManifestMCPErrorCode.QUERY_FAILED,
-      `Lease "${leaseUuid}" is not active (state: ${leaseStateToJSON(leaseState)}); logs are not available`,
+      `Lease "${leaseUuid}" not found on chain`,
     );
   }
 
+  const lease = leaseResult.lease;
+
+  if (lease.state !== LeaseState.LEASE_STATE_ACTIVE && lease.state !== LeaseState.LEASE_STATE_PENDING) {
+    throw new ManifestMCPError(
+      ManifestMCPErrorCode.QUERY_FAILED,
+      `Lease "${leaseUuid}" is not active (state: ${leaseStateToJSON(lease.state)}); logs are not available`,
+    );
+  }
+
+  const providerUrl = await resolveProviderUrl(queryClient, lease.providerUuid);
   const authToken = await getAuthToken(address, leaseUuid);
   const result = await getLeaseLogs(providerUrl, leaseUuid, authToken, tail);
 

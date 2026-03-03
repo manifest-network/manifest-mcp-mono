@@ -3,7 +3,7 @@ import { LeaseState } from '@manifest-network/manifestjs/dist/codegen/liftedinit
 import { ManifestMCPError, ManifestMCPErrorCode } from '../types.js';
 import { getLeaseStatus, type FredLeaseStatus } from '../http/fred.js';
 import { getLeaseConnectionInfo, type LeaseConnectionInfo } from '../http/provider.js';
-import { resolveLeaseProvider } from './resolveLeaseProvider.js';
+import { resolveProviderUrl } from './resolveLeaseProvider.js';
 
 export async function appStatus(
   queryClient: ManifestQueryClient,
@@ -34,12 +34,12 @@ export async function appStatus(
   let connectionError: string | undefined;
 
   if (lease.state === LeaseState.LEASE_STATE_PENDING || lease.state === LeaseState.LEASE_STATE_ACTIVE) {
-    const leaseProvider = await resolveLeaseProvider(queryClient, leaseUuid);
+    const providerUrl = await resolveProviderUrl(queryClient, lease.providerUuid);
     const authToken = await getAuthToken(address, leaseUuid);
 
     const [statusResult, connResult] = await Promise.allSettled([
-      getLeaseStatus(leaseProvider.providerUrl, leaseUuid, authToken),
-      getLeaseConnectionInfo(leaseProvider.providerUrl, leaseUuid, authToken),
+      getLeaseStatus(providerUrl, leaseUuid, authToken),
+      getLeaseConnectionInfo(providerUrl, leaseUuid, authToken),
     ]);
 
     if (statusResult.status === 'fulfilled') {

@@ -11,6 +11,27 @@ export interface LeaseProviderInfo {
 }
 
 /**
+ * Look up the API URL for a provider by its UUID via the SKU module.
+ */
+export async function resolveProviderUrl(
+  queryClient: ManifestQueryClient,
+  providerUuid: string,
+): Promise<string> {
+  const providerResult = await queryClient.liftedinit.sku.v1.provider({
+    uuid: providerUuid,
+  });
+
+  if (!providerResult.provider?.apiUrl) {
+    throw new ManifestMCPError(
+      ManifestMCPErrorCode.QUERY_FAILED,
+      `Provider "${providerUuid}" has no API URL`,
+    );
+  }
+
+  return providerResult.provider.apiUrl;
+}
+
+/**
  * Resolve the provider API URL for a given lease UUID by querying the chain.
  *
  * Chain path: billing.lease({leaseUuid}) → providerUuid
@@ -38,20 +59,11 @@ export async function resolveLeaseProvider(
     );
   }
 
-  const providerResult = await queryClient.liftedinit.sku.v1.provider({
-    uuid: lease.providerUuid,
-  });
-
-  if (!providerResult.provider?.apiUrl) {
-    throw new ManifestMCPError(
-      ManifestMCPErrorCode.QUERY_FAILED,
-      `Provider "${lease.providerUuid}" has no API URL`,
-    );
-  }
+  const providerUrl = await resolveProviderUrl(queryClient, lease.providerUuid);
 
   return {
     providerUuid: lease.providerUuid,
-    providerUrl: providerResult.provider.apiUrl,
+    providerUrl,
     leaseState: lease.state,
     leaseCreatedAt: lease.createdAt?.toISOString(),
     leaseClosedAt: lease.closedAt?.toISOString(),

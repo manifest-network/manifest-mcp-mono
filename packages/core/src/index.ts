@@ -105,7 +105,7 @@ export { MnemonicWalletProvider } from './wallet/index.js';
 export { withRetry, isRetryableError, calculateBackoff, type RetryOptions } from './retry.js';
 export { ProviderApiError } from './http/provider.js';
 export { LeaseState } from '@manifest-network/manifestjs/dist/codegen/liftedinit/billing/v1/types';
-export { resolveLeaseProvider, type LeaseProviderInfo } from './tools/resolveLeaseProvider.js';
+export { resolveLeaseProvider, resolveProviderUrl, type LeaseProviderInfo } from './tools/resolveLeaseProvider.js';
 export { type LeaseStateFilter, type LeaseInfo } from './tools/listApps.js';
 export { type DeployAppResult, type DeployAppInput } from './tools/deployApp.js';
 export { type StopAppResult } from './tools/stopApp.js';
@@ -607,9 +607,12 @@ export class ManifestMCPServer {
         const address = await this.walletProvider.getAddress();
         const queryClient = await this.clientManager.getQueryClient();
         const VALID_STATE_FILTERS = ['all', 'pending', 'active', 'closed', 'rejected', 'expired'] as const;
-        const stateFilter: LeaseStateFilter = typeof toolInput.state === 'string'
-          ? requireStringEnum(toolInput, 'state', VALID_STATE_FILTERS)
-          : 'all';
+        let stateFilter: LeaseStateFilter;
+        if ('state' in toolInput) {
+          stateFilter = requireStringEnum(toolInput, 'state', VALID_STATE_FILTERS);
+        } else {
+          stateFilter = 'all';
+        }
         const result = await listApps(queryClient, address, stateFilter);
         return {
           content: [

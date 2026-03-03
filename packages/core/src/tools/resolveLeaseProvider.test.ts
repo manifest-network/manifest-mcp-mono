@@ -1,8 +1,48 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { LeaseState } from '@manifest-network/manifestjs/dist/codegen/liftedinit/billing/v1/types';
-import { resolveLeaseProvider } from './resolveLeaseProvider.js';
+import { resolveLeaseProvider, resolveProviderUrl } from './resolveLeaseProvider.js';
 import { makeMockQueryClient } from '../__test-utils__/mocks.js';
 import { ManifestMCPErrorCode } from '../types.js';
+
+describe('resolveProviderUrl', () => {
+  it('returns the API URL for a valid provider UUID', async () => {
+    const qc = makeMockQueryClient({
+      sku: {
+        providerLookup: {
+          'prov-1': { provider: { apiUrl: 'https://provider.example.com' } },
+        },
+      },
+    });
+
+    const url = await resolveProviderUrl(qc, 'prov-1');
+    expect(url).toBe('https://provider.example.com');
+  });
+
+  it('throws QUERY_FAILED when provider has no API URL', async () => {
+    const qc = makeMockQueryClient({
+      sku: {
+        providerLookup: {
+          'prov-bad': { provider: { apiUrl: '' } },
+        },
+      },
+    });
+
+    await expect(
+      resolveProviderUrl(qc, 'prov-bad'),
+    ).rejects.toMatchObject({
+      code: ManifestMCPErrorCode.QUERY_FAILED,
+      message: expect.stringContaining('no API URL'),
+    });
+  });
+
+  it('throws when provider not found', async () => {
+    const qc = makeMockQueryClient();
+
+    await expect(
+      resolveProviderUrl(qc, 'nonexistent'),
+    ).rejects.toThrow();
+  });
+});
 
 describe('resolveLeaseProvider', () => {
   beforeEach(() => {
