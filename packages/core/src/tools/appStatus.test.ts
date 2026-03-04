@@ -133,7 +133,7 @@ describe('appStatus', () => {
     expect(result.connection).toBeUndefined();
   });
 
-  it('returns chain state with providerError when auth token fails', async () => {
+  it('throws infrastructure errors from auth token (WALLET_NOT_CONNECTED)', async () => {
     const qc = makeMockQueryClient({
       billing: {
         lease: { uuid: 'lease-1', state: LeaseState.LEASE_STATE_ACTIVE, providerUuid: 'prov-1' },
@@ -145,16 +145,30 @@ describe('appStatus', () => {
       new ManifestMCPError(ManifestMCPErrorCode.WALLET_NOT_CONNECTED, 'signArbitrary not supported'),
     );
 
+    await expect(
+      appStatus(qc, ADDRESS, 'lease-1', failingGetAuthToken),
+    ).rejects.toMatchObject({
+      code: ManifestMCPErrorCode.WALLET_NOT_CONNECTED,
+    });
+  });
+
+  it('returns providerError for non-infrastructure auth token errors', async () => {
+    const qc = makeMockQueryClient({
+      billing: {
+        lease: { uuid: 'lease-1', state: LeaseState.LEASE_STATE_ACTIVE, providerUuid: 'prov-1' },
+      },
+    });
+    mockResolveProviderUrl.mockResolvedValue('https://provider.example.com');
+
+    const failingGetAuthToken = vi.fn().mockRejectedValue(new Error('signing failed'));
+
     const result = await appStatus(qc, ADDRESS, 'lease-1', failingGetAuthToken);
 
     expect(result.lease_uuid).toBe('lease-1');
-    expect(result.chainState.state).toBe(LeaseState.LEASE_STATE_ACTIVE);
-    expect(result.providerError).toContain('signArbitrary not supported');
-    expect(result.fredStatus).toBeUndefined();
-    expect(result.connection).toBeUndefined();
+    expect(result.providerError).toContain('signing failed');
   });
 
-  it('returns chain state with providerError when provider resolution fails', async () => {
+  it('returns chain state with providerError when provider resolution fails (non-infrastructure)', async () => {
     const qc = makeMockQueryClient({
       billing: {
         lease: { uuid: 'lease-1', state: LeaseState.LEASE_STATE_ACTIVE, providerUuid: 'prov-1' },
@@ -171,6 +185,23 @@ describe('appStatus', () => {
     expect(result.providerError).toContain('Provider "prov-1" has no API URL');
     expect(result.fredStatus).toBeUndefined();
     expect(result.connection).toBeUndefined();
+  });
+
+  it('throws infrastructure errors from provider resolution (RPC_CONNECTION_FAILED)', async () => {
+    const qc = makeMockQueryClient({
+      billing: {
+        lease: { uuid: 'lease-1', state: LeaseState.LEASE_STATE_ACTIVE, providerUuid: 'prov-1' },
+      },
+    });
+    mockResolveProviderUrl.mockRejectedValue(
+      new ManifestMCPError(ManifestMCPErrorCode.RPC_CONNECTION_FAILED, 'RPC node unreachable'),
+    );
+
+    await expect(
+      appStatus(qc, ADDRESS, 'lease-1', mockGetAuthToken),
+    ).rejects.toMatchObject({
+      code: ManifestMCPErrorCode.RPC_CONNECTION_FAILED,
+    });
   });
 
   it('throws when lease not found on chain', async () => {

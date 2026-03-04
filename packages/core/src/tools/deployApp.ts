@@ -4,15 +4,13 @@ import { ManifestMCPError, ManifestMCPErrorCode, type CosmosTxResult } from '../
 import { uploadLeaseData, getLeaseConnectionInfo } from '../http/provider.js';
 import { pollLeaseUntilReady } from '../http/fred.js';
 import type { FredLeaseStatus } from '../http/fred.js';
-
-function toHex(bytes: Uint8Array): string {
-  return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
-}
+import { bytesToHex } from '../transactions/utils.js';
+import { MAX_PAGE_LIMIT } from '../queries/utils.js';
 
 async function sha256(data: string): Promise<string> {
   const encoded = new TextEncoder().encode(data);
   const hashBuffer = await crypto.subtle.digest('SHA-256', encoded);
-  return toHex(new Uint8Array(hashBuffer));
+  return bytesToHex(new Uint8Array(hashBuffer));
 }
 
 function extractLeaseUuid(txResult: CosmosTxResult): string {
@@ -43,7 +41,14 @@ async function findSkuUuid(
   queryClient: ManifestQueryClient,
   size: string,
 ): Promise<{ skuUuid: string; providerUuid: string }> {
-  const result = await queryClient.liftedinit.sku.v1.sKUs({ activeOnly: true });
+  const pagination = {
+    key: new Uint8Array(),
+    offset: BigInt(0),
+    limit: MAX_PAGE_LIMIT,
+    countTotal: false,
+    reverse: false,
+  };
+  const result = await queryClient.liftedinit.sku.v1.sKUs({ activeOnly: true, pagination });
 
   for (const sku of result.skus) {
     if (sku.name === size) {

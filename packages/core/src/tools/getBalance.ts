@@ -1,7 +1,10 @@
 import type { ManifestQueryClient } from '../client.js';
+import { ManifestMCPError } from '../types.js';
 
 function catchNotFound<T>(promise: Promise<T>): Promise<T | null> {
   return promise.catch((err: unknown) => {
+    // Never suppress structured infrastructure errors
+    if (err instanceof ManifestMCPError) throw err;
     if (!(err instanceof Error)) throw err;
     const msg = err.message;
     // Match Cosmos SDK / gRPC NOT_FOUND patterns (key not found, account not found, etc.)

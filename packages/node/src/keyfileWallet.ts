@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { DirectSecp256k1HdWallet, type OfflineSigner } from '@cosmjs/proto-signing';
 import { Secp256k1HdWallet } from '@cosmjs/amino';
-import { toBase64 } from '@cosmjs/encoding';
+import { toBase64, fromBech32 } from '@cosmjs/encoding';
 import {
   type WalletProvider,
   type SignArbitraryResult,
@@ -151,10 +151,11 @@ export class KeyfileWalletProvider implements WalletProvider {
         );
       }
       this.address = accounts[0].address;
-      if (!this.address.startsWith(this.addressPrefix)) {
+      const actualPrefix = fromBech32(this.address).prefix;
+      if (actualPrefix !== this.addressPrefix) {
         throw new ManifestMCPError(
           ManifestMCPErrorCode.WALLET_CONNECTION_FAILED,
-          `Keyfile address prefix mismatch: keyfile produced "${this.address.slice(0, this.address.indexOf('1'))}" but config expects "${this.addressPrefix}". Regenerate the keyfile with the correct COSMOS_ADDRESS_PREFIX.`
+          `Keyfile address prefix mismatch: keyfile produced "${actualPrefix}" but config expects "${this.addressPrefix}". Regenerate the keyfile with the correct COSMOS_ADDRESS_PREFIX.`
         );
       }
       // Clear password from memory only after full initialization succeeds,

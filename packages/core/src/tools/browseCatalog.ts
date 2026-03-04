@@ -19,12 +19,12 @@ export async function browseCatalog(queryClient: ManifestQueryClient) {
         healthy = health.status === 'ok' || health.status === 'healthy';
         providerUuid = health.provider_uuid;
       } catch (err) {
-        healthError =
-          err instanceof ProviderApiError
-            ? `HTTP ${err.status}: ${err.message}`
-            : err instanceof Error
-              ? err.message
-              : String(err);
+        if (err instanceof ProviderApiError) {
+          healthError = `HTTP ${err.status}: ${err.message}`;
+        } else {
+          // Re-throw unexpected errors (programming bugs, etc.)
+          throw err;
+        }
       }
       return {
         uuid: p.uuid,

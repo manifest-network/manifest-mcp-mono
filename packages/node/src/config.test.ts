@@ -75,6 +75,17 @@ describe('loadConfig', () => {
     expect(config.keyfilePath).toBe(`${homedir()}/my-key.json`);
     expect(config.keyfilePath).not.toContain('~');
   });
+
+  it('should preserve empty string env vars instead of falling back to default', async () => {
+    process.env['COSMOS_CHAIN_ID'] = 'test-chain';
+    process.env['COSMOS_RPC_URL'] = 'https://rpc.test.com';
+    process.env['COSMOS_GAS_PRICE'] = '0.025umfx';
+    process.env['COSMOS_ADDRESS_PREFIX'] = '';
+
+    const { loadConfig } = await importConfig();
+    const config = loadConfig();
+    expect(config.addressPrefix).toBe('');
+  });
 });
 
 describe('loadKeyfileConfig', () => {

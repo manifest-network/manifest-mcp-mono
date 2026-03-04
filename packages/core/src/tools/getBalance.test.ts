@@ -1,6 +1,7 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { getBalance } from './getBalance.js';
 import { makeMockQueryClient } from '../__test-utils__/mocks.js';
+import { ManifestMCPError, ManifestMCPErrorCode } from '../types.js';
 
 describe('getBalance', () => {
   const address = 'manifest1abc';
@@ -60,5 +61,17 @@ describe('getBalance', () => {
     });
     const result = await getBalance(client, address);
     expect(result.hours_remaining).toBe('0');
+  });
+
+  it('should propagate ManifestMCPError instead of suppressing as not-found', async () => {
+    const client = makeMockQueryClient();
+    // Override the creditAccount mock to throw a ManifestMCPError
+    vi.mocked(client.liftedinit.billing.v1.creditAccount).mockRejectedValue(
+      new ManifestMCPError(ManifestMCPErrorCode.RPC_CONNECTION_FAILED, 'credit account not found on disconnected node'),
+    );
+
+    await expect(getBalance(client, address)).rejects.toMatchObject({
+      code: ManifestMCPErrorCode.RPC_CONNECTION_FAILED,
+    });
   });
 });

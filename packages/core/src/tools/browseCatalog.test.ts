@@ -76,7 +76,7 @@ describe('browseCatalog', () => {
     expect(result.providers[0].healthError).toBe('HTTP 503: Service Unavailable');
   });
 
-  it('handles generic error in health check', async () => {
+  it('re-throws unexpected non-ProviderApiError errors from health check', async () => {
     const client = makeMockQueryClient({
       sku: {
         providers: [
@@ -85,12 +85,9 @@ describe('browseCatalog', () => {
         skus: [],
       },
     });
-    mockGetProviderHealth.mockRejectedValue(new Error('DNS resolution failed'));
+    mockGetProviderHealth.mockRejectedValue(new TypeError('Cannot read properties of undefined'));
 
-    const result = await browseCatalog(client);
-
-    expect(result.providers[0].healthy).toBe(false);
-    expect(result.providers[0].healthError).toBe('DNS resolution failed');
+    await expect(browseCatalog(client)).rejects.toThrow(TypeError);
   });
 
   it('groups SKUs into tiers by name', async () => {

@@ -30,6 +30,7 @@ export async function resolveProviderUrl(
       uuid: providerUuid,
     });
   } catch (error) {
+    if (error instanceof ManifestMCPError) throw error;
     const message = error instanceof Error ? error.message : String(error);
     throw new ManifestMCPError(
       ManifestMCPErrorCode.QUERY_FAILED,

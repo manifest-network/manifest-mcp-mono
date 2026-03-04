@@ -4,7 +4,7 @@ import {
   CreditAccountsResult, CreditAddressResult, WithdrawableAmountResult,
   ProviderWithdrawableResult, CreditEstimateResult
 } from '../types.js';
-import { parseBigInt, requireArgs, extractPaginationArgs } from './utils.js';
+import { requireArgs, extractPaginationArgs } from './utils.js';
 import { throwUnsupportedSubcommand } from '../modules.js';
 
 /** Billing query result union type */
@@ -103,11 +103,10 @@ export async function routeBillingQuery(
     }
 
     case 'provider-withdrawable': {
-      requireArgs(args, 1, ['provider-uuid'], 'billing provider-withdrawable');
-      const [providerUuid] = args;
-      // Optional: limit for max leases to process (default 100, max 1000)
-      const limit = args[1] ? parseBigInt(args[1], 'limit') : BigInt(100);
-      const result = await billing.providerWithdrawable({ providerUuid, limit });
+      const { pagination, remainingArgs } = extractPaginationArgs(args, 'billing provider-withdrawable');
+      requireArgs(remainingArgs, 1, ['provider-uuid'], 'billing provider-withdrawable');
+      const [providerUuid] = remainingArgs;
+      const result = await billing.providerWithdrawable({ providerUuid, limit: pagination.limit });
       return { amounts: result.amounts };
     }
 

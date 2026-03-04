@@ -672,10 +672,10 @@ export class ManifestMCPServer {
       case 'deploy_app': {
         const image = requireString(toolInput, 'image');
         const port = toolInput.port;
-        if (typeof port !== 'number' || !Number.isFinite(port) || port <= 0) {
+        if (typeof port !== 'number' || !Number.isInteger(port) || port < 1 || port > 65535) {
           throw new ManifestMCPError(
             ManifestMCPErrorCode.TX_FAILED,
-            'port must be a positive number',
+            'port must be an integer between 1 and 65535',
           );
         }
         const size = requireString(toolInput, 'size');

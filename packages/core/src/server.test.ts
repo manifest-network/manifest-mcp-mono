@@ -448,6 +448,42 @@ describe('ManifestMCPServer', () => {
       expect(mockDeployApp).not.toHaveBeenCalled();
     });
 
+    it.each([0, -1, 65536, 80.5, NaN, Infinity])('rejects deploy_app with invalid port %s', async (port) => {
+      const server = new ManifestMCPServer({
+        config: makeMockConfig(),
+        walletProvider: makeMockWallet({ signArbitrary: true }),
+      });
+      const result = await callTool(server, 'deploy_app', {
+        image: 'nginx:alpine',
+        port,
+        size: 'docker-micro',
+      });
+
+      expect(result.isError).toBe(true);
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.code).toBe('TX_FAILED');
+      expect(parsed.message).toContain('port must be an integer between 1 and 65535');
+      expect(mockDeployApp).not.toHaveBeenCalled();
+    });
+
+    it('rejects deploy_app with non-number port', async () => {
+      const server = new ManifestMCPServer({
+        config: makeMockConfig(),
+        walletProvider: makeMockWallet({ signArbitrary: true }),
+      });
+      const result = await callTool(server, 'deploy_app', {
+        image: 'nginx:alpine',
+        port: '80',
+        size: 'docker-micro',
+      });
+
+      expect(result.isError).toBe(true);
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.code).toBe('TX_FAILED');
+      expect(parsed.message).toContain('port must be an integer between 1 and 65535');
+      expect(mockDeployApp).not.toHaveBeenCalled();
+    });
+
     it('routes list_modules to getAvailableModules()', async () => {
       const server = new ManifestMCPServer({
         config: makeMockConfig(),
