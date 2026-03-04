@@ -1,5 +1,5 @@
 import type { ManifestQueryClient } from '../client.js';
-import { LeaseState } from '@manifest-network/manifestjs/dist/codegen/liftedinit/billing/v1/types';
+import { LeaseState } from '@manifest-network/manifestjs/dist/codegen/liftedinit/billing/v1/types.js';
 import { ManifestMCPError, ManifestMCPErrorCode } from '../types.js';
 
 export interface LeaseProviderInfo {

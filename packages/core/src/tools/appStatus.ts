@@ -1,5 +1,5 @@
 import type { ManifestQueryClient } from '../client.js';
-import { LeaseState } from '@manifest-network/manifestjs/dist/codegen/liftedinit/billing/v1/types';
+import { LeaseState } from '@manifest-network/manifestjs/dist/codegen/liftedinit/billing/v1/types.js';
 import { ManifestMCPError, ManifestMCPErrorCode } from '../types.js';
 import { getLeaseStatus, type FredLeaseStatus } from '../http/fred.js';
 import { getLeaseConnectionInfo, type LeaseConnectionInfo } from '../http/provider.js';

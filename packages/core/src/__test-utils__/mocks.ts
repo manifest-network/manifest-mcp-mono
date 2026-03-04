@@ -1,7 +1,7 @@
 import { vi } from 'vitest';
 import type { ManifestMCPConfig, WalletProvider, SignArbitraryResult } from '../types.js';
 import type { ManifestQueryClient } from '../client.js';
-import { LeaseState } from '@manifest-network/manifestjs/dist/codegen/liftedinit/billing/v1/types';
+import { LeaseState } from '@manifest-network/manifestjs/dist/codegen/liftedinit/billing/v1/types.js';
 
 /**
  * Create a mock ManifestMCPConfig with sensible defaults.

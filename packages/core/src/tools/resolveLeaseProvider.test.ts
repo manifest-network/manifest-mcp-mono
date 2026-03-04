@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { LeaseState } from '@manifest-network/manifestjs/dist/codegen/liftedinit/billing/v1/types';
+import { LeaseState } from '@manifest-network/manifestjs/dist/codegen/liftedinit/billing/v1/types.js';
 import { resolveLeaseProvider, resolveProviderUrl } from './resolveLeaseProvider.js';
 import { makeMockQueryClient } from '../__test-utils__/mocks.js';
 import { ManifestMCPErrorCode } from '../types.js';

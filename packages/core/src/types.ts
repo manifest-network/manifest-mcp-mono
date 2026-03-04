@@ -5,7 +5,7 @@ import type {
   Params as BankParams,
   Metadata as BankMetadata,
   SendEnabled,
-} from '@manifest-network/manifestjs/dist/codegen/cosmos/bank/v1beta1/bank';
+} from '@manifest-network/manifestjs/dist/codegen/cosmos/bank/v1beta1/bank.js';
 
 // Staking module types
 import type {
@@ -16,7 +16,7 @@ import type {
   Pool as StakingPool,
   Params as StakingParams,
   HistoricalInfo,
-} from '@manifest-network/manifestjs/dist/codegen/cosmos/staking/v1beta1/staking';
+} from '@manifest-network/manifestjs/dist/codegen/cosmos/staking/v1beta1/staking.js';
 
 // Distribution module types
 import type {
@@ -25,7 +25,7 @@ import type {
   ValidatorOutstandingRewards,
   ValidatorSlashEvent,
   DelegationDelegatorReward,
-} from '@manifest-network/manifestjs/dist/codegen/cosmos/distribution/v1beta1/distribution';
+} from '@manifest-network/manifestjs/dist/codegen/cosmos/distribution/v1beta1/distribution.js';
 
 // Gov module types (v1 for newer chains)
 import type {
@@ -37,20 +37,20 @@ import type {
   VotingParams,
   DepositParams,
   TallyParams,
-} from '@manifest-network/manifestjs/dist/codegen/cosmos/gov/v1/gov';
+} from '@manifest-network/manifestjs/dist/codegen/cosmos/gov/v1/gov.js';
 
 // Protobuf Any type for polymorphic account types
-import type { Any } from '@manifest-network/manifestjs/dist/codegen/google/protobuf/any';
+import type { Any } from '@manifest-network/manifestjs/dist/codegen/google/protobuf/any.js';
 
 // Billing credit estimate response
-import type { QueryCreditEstimateResponse } from '@manifest-network/manifestjs/dist/codegen/liftedinit/billing/v1/query';
+import type { QueryCreditEstimateResponse } from '@manifest-network/manifestjs/dist/codegen/liftedinit/billing/v1/query.js';
 
 // Auth module types
 import type {
   BaseAccount,
   ModuleAccount,
   Params as AuthParams,
-} from '@manifest-network/manifestjs/dist/codegen/cosmos/auth/v1beta1/auth';
+} from '@manifest-network/manifestjs/dist/codegen/cosmos/auth/v1beta1/auth.js';
 
 // Group module types
 import type {
@@ -60,25 +60,25 @@ import type {
   Proposal as GroupProposal,
   Vote as GroupVote,
   TallyResult as GroupTallyResult,
-} from '@manifest-network/manifestjs/dist/codegen/cosmos/group/v1/types';
+} from '@manifest-network/manifestjs/dist/codegen/cosmos/group/v1/types.js';
 
 // Billing module types (Manifest-specific)
 import type {
   Lease,
   CreditAccount,
   Params as BillingParams,
-} from '@manifest-network/manifestjs/dist/codegen/liftedinit/billing/v1/types';
+} from '@manifest-network/manifestjs/dist/codegen/liftedinit/billing/v1/types.js';
 
 import type {
   LeaseItemInput,
-} from '@manifest-network/manifestjs/dist/codegen/liftedinit/billing/v1/tx';
+} from '@manifest-network/manifestjs/dist/codegen/liftedinit/billing/v1/tx.js';
 
 // SKU module types (Manifest-specific)
 import type {
   Provider,
   SKU,
   Params as SkuParams,
-} from '@manifest-network/manifestjs/dist/codegen/liftedinit/sku/v1/types';
+} from '@manifest-network/manifestjs/dist/codegen/liftedinit/sku/v1/types.js';
 
 // Re-export commonly used protobuf types for consumers
 export type {

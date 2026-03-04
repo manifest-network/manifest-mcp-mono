@@ -12,6 +12,7 @@
   },
   "devDependencies": {
     "@modelcontextprotocol/sdk": "1.25.3",
+    "tsdown": "^0.12.5",
     "vitest": "4.0.18"
   }
 }
