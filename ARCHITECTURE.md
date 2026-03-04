@@ -97,7 +97,7 @@ src/
     ├── fundCredits.ts    Send tokens to billing account
     ├── listApps.ts       Query leases by state
     ├── appStatus.ts      Lease status + provider info
-    ├── getLogs.ts         Fetch container logs
+    ├── getLogs.ts        Fetch container logs
     ├── deployApp.ts      Create lease and deploy container
     ├── stopApp.ts        Close lease on-chain
     ├── restartApp.ts     Restart via provider API
@@ -202,7 +202,7 @@ This is handled by `http/auth.ts` and used by the high-level tools that interact
 
 ## Error handling
 
-Errors use the `ManifestMCPErrorCode` enum (19 codes across 6 categories):
+Errors use the `ManifestMCPErrorCode` enum (20 codes across 7 categories):
 
 | Category | Codes |
 |----------|-------|
