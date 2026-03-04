@@ -62,8 +62,8 @@ src/
 │
 ├── http/                 HTTP clients for off-chain services
 │   ├── auth.ts           ADR-036 signature-based authentication
-│   ├── provider.ts       Provider API client (deployment, status, logs)
-│   └── fred.ts           Fred API client (container orchestration)
+│   ├── provider.ts       Provider API client (URL validation, health, lease info & uploads)
+│   └── fred.ts           Fred API client (lease status, logs, restart, update)
 │
 ├── wallet/               Wallet provider implementations
 │   ├── index.ts          Barrel re-exports
@@ -107,7 +107,7 @@ src/
 
 ### Key components
 
-**ManifestMCPServer** (`index.ts`) — The main entry point. Registers 15 MCP tools with JSON schemas and routes `CallToolRequest` messages to the appropriate handler. Handles error sanitization (redacts sensitive fields like mnemonics and passwords from responses).
+**ManifestMCPServer** (`index.ts`) — The main entry point. Registers 15 MCP tools with JSON schemas and routes `CallToolRequest` messages to the appropriate handler. Handles error sanitization (redacts sensitive fields like mnemonics and passwords from error responses).
 
 **CosmosClientManager** (`client.ts`) — Keyed-instance cache that manages RPC client lifecycle (one instance per `chainId:rpcUrl` pair). Key features:
 - Lazy initialization with promise-based concurrency control (multiple callers wait for the same init)
@@ -214,7 +214,7 @@ Errors use the `ManifestMCPErrorCode` enum (20 codes across 7 categories):
 | Module | `UNKNOWN_MODULE`, `UNKNOWN_SUBCOMMAND` |
 | General | `UNKNOWN_ERROR` |
 
-All errors returned to MCP clients are sanitized — sensitive fields (mnemonics, passwords, keys, tokens) are redacted from error messages.
+Error responses returned to MCP clients sanitize structured fields (such as `input` and `details`) via a redaction helper so that sensitive values (mnemonics, passwords, keys, tokens) are not exposed; the top-level `error.message` string is passed through verbatim and should not contain secrets.
 
 ## Configuration
 
