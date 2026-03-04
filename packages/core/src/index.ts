@@ -1,9 +1,7 @@
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
-import {
-  ListToolsRequestSchema,
-  CallToolRequestSchema,
-  Tool,
-} from '@modelcontextprotocol/sdk/types.js';
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
+import { z } from 'zod';
 import { CosmosClientManager } from './client.js';
 import { cosmosQuery, cosmosTx } from './cosmos.js';
 import { getAvailableModules, getModuleSubcommands } from './modules.js';
@@ -16,7 +14,6 @@ import {
 } from './types.js';
 import { createValidatedConfig } from './config.js';
 import { VERSION } from './version.js';
-import { requireString, requireStringEnum, requireUuid, parseArgs, optionalBoolean } from './validation.js';
 import { createSignMessage, createLeaseDataSignMessage, createAuthToken } from './http/auth.js';
 import type { LeaseStateFilter } from './tools/listApps.js';
 import { browseCatalog } from './tools/browseCatalog.js';
@@ -114,269 +111,8 @@ export { requireString, requireStringEnum, requireUuid, parseArgs, optionalBoole
 /** Maximum number of log lines that can be requested via get_logs */
 const MAX_LOG_TAIL = 1000;
 
-/**
- * All tools exposed by the MCP server
- */
-const TOOLS: Tool[] = [
-  {
-    name: 'get_account_info',
-    description: 'Get account address and key name for the configured key',
-    inputSchema: {
-      type: 'object',
-      properties: {},
-      required: [],
-    },
-  },
-  {
-    name: 'cosmos_query',
-    description:
-      'Execute any Cosmos SDK query command. Use list_modules and list_module_subcommands to discover available options.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        module: {
-          type: 'string',
-          description:
-            'The module name (e.g., "bank", "staking", "distribution", "gov", "auth")',
-        },
-        subcommand: {
-          type: 'string',
-          description:
-            'The subcommand (e.g., "balance", "balances", "delegations", "rewards", "proposals")',
-        },
-        args: {
-          type: 'array',
-          items: { type: 'string' },
-          description:
-            'Additional arguments as an array of strings (e.g., ["<address>", "umfx"] for bank balance). Use array to preserve arguments with spaces.',
-        },
-      },
-      required: ['module', 'subcommand'],
-    },
-  },
-  {
-    name: 'cosmos_tx',
-    description:
-      'Execute any Cosmos SDK transaction. Automatically signs with the configured key and estimates gas. Use list_modules and list_module_subcommands to discover available options.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        module: {
-          type: 'string',
-          description: 'The module name (e.g., "bank", "staking", "gov")',
-        },
-        subcommand: {
-          type: 'string',
-          description: 'The subcommand (e.g., "send", "delegate", "unbond", "vote")',
-        },
-        args: {
-          type: 'array',
-          items: { type: 'string' },
-          description:
-            'Arguments to the transaction as an array of strings (e.g., ["<to_address>", "1000umfx"] for bank send). Use array to preserve arguments with spaces.',
-        },
-        wait_for_confirmation: {
-          type: 'boolean',
-          description:
-            'If true, wait for the transaction to be included in a block before returning. Defaults to false (broadcast only).',
-        },
-      },
-      required: ['module', 'subcommand', 'args'],
-    },
-  },
-  {
-    name: 'list_modules',
-    description:
-      'List all available query and transaction modules supported by the chain',
-    inputSchema: {
-      type: 'object',
-      properties: {},
-      required: [],
-    },
-  },
-  {
-    name: 'list_module_subcommands',
-    description:
-      'List all available subcommands for a specific module (query or tx)',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        type: {
-          type: 'string',
-          enum: ['query', 'tx'],
-          description: 'Whether to list query or transaction subcommands',
-        },
-        module: {
-          type: 'string',
-          description: 'The module name (e.g., "bank", "staking")',
-        },
-      },
-      required: ['type', 'module'],
-    },
-  },
-  {
-    name: 'browse_catalog',
-    description:
-      'Browse available cloud providers and service tiers. Returns active providers with health status and available SKU pricing.',
-    inputSchema: {
-      type: 'object',
-      properties: {},
-      required: [],
-    },
-  },
-  {
-    name: 'get_balance',
-    description:
-      'Get account balances, credit status, and spending estimates. Returns on-chain balances, credit account info, and estimated time until credit exhaustion.',
-    inputSchema: {
-      type: 'object',
-      properties: {},
-      required: [],
-    },
-  },
-  {
-    name: 'fund_credits',
-    description:
-      'Fund the credit account for deploying apps. Sends tokens to the billing credit account.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        amount: {
-          type: 'string',
-          description: 'Amount with denomination (e.g. "10000000umfx")',
-        },
-      },
-      required: ['amount'],
-    },
-  },
-  {
-    name: 'list_apps',
-    description:
-      'List all leases for the current account. Returns leases with their state, provider UUID, and timestamps.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        state: {
-          type: 'string',
-          enum: ['all', 'pending', 'active', 'closed', 'rejected', 'expired'],
-          description: 'Filter leases by state (default: "all")',
-        },
-      },
-      required: [],
-    },
-  },
-  {
-    name: 'app_status',
-    description:
-      'Get detailed status for a deployed app by lease UUID. Returns chain state, provider status, and connection info.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        lease_uuid: {
-          type: 'string',
-          description: 'The lease UUID of the app to check',
-        },
-      },
-      required: ['lease_uuid'],
-    },
-  },
-  {
-    name: 'get_logs',
-    description:
-      'Get logs for a deployed app by lease UUID. Returns recent logs from all services, truncated to fit LLM context.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        lease_uuid: {
-          type: 'string',
-          description: 'The lease UUID of the app to get logs for',
-        },
-        tail: {
-          type: 'number',
-          description: 'Number of recent log lines to retrieve',
-        },
-      },
-      required: ['lease_uuid'],
-    },
-  },
-  {
-    name: 'deploy_app',
-    description:
-      'Deploy a new application. Creates a lease, uploads the manifest to the provider, and polls until the app is ready.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        image: {
-          type: 'string',
-          description: 'Docker image to deploy (e.g. "nginx:alpine")',
-        },
-        port: {
-          type: 'number',
-          description: 'Container port to expose (e.g. 80)',
-        },
-        size: {
-          type: 'string',
-          description: 'SKU tier name (e.g. "docker-micro", "docker-small")',
-        },
-        env: {
-          type: 'object',
-          description: 'Optional environment variables as key-value pairs',
-          additionalProperties: { type: 'string' },
-        },
-      },
-      required: ['image', 'port', 'size'],
-    },
-  },
-  {
-    name: 'stop_app',
-    description:
-      'Stop a deployed app by closing its lease on-chain.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        lease_uuid: {
-          type: 'string',
-          description: 'The lease UUID of the app to stop',
-        },
-      },
-      required: ['lease_uuid'],
-    },
-  },
-  {
-    name: 'restart_app',
-    description:
-      'Restart a deployed app via the provider.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        lease_uuid: {
-          type: 'string',
-          description: 'The lease UUID of the app to restart',
-        },
-      },
-      required: ['lease_uuid'],
-    },
-  },
-  {
-    name: 'update_app',
-    description:
-      'Update a deployed app with a new manifest.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        lease_uuid: {
-          type: 'string',
-          description: 'The lease UUID of the app to update',
-        },
-        manifest: {
-          type: 'string',
-          description: 'The full manifest JSON string to deploy',
-        },
-      },
-      required: ['lease_uuid', 'manifest'],
-    },
-  },
-];
+/** Valid lease state filter values */
+const VALID_STATE_FILTERS = ['all', 'pending', 'active', 'closed', 'rejected', 'expired'] as const;
 
 /**
  * Options for creating a ManifestMCPServer
@@ -387,10 +123,75 @@ export interface ManifestMCPServerOptions {
 }
 
 /**
+ * Wrap a tool handler with error handling that preserves the existing error format.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- args are validated by McpServer before reaching the handler
+function withErrorHandling(
+  toolName: string,
+  fn: (...fnArgs: any[]) => Promise<CallToolResult>,
+): (...cbArgs: any[]) => Promise<CallToolResult> {
+  // For tools with no inputSchema, McpServer calls cb(extra) with one arg.
+  // For tools with inputSchema, McpServer calls cb(parsedArgs, extra).
+  // fn.length tells us whether the handler expects args (length >= 1) or not (length 0).
+  const hasArgs = fn.length >= 1;
+
+  return async (...cbArgs: any[]) => {
+    const args = hasArgs ? (cbArgs[0] ?? {}) : {};
+    try {
+      return hasArgs ? await fn(args, cbArgs[1]) : await fn(cbArgs[0]);
+    } catch (error) {
+      let errorResponse: Record<string, unknown> = {
+        error: true,
+        tool: toolName,
+        input: sanitizeForLogging(args),
+      };
+
+      if (error instanceof ManifestMCPError) {
+        errorResponse = {
+          ...errorResponse,
+          code: error.code,
+          message: error.message,
+          details: sanitizeForLogging(error.details),
+        };
+      } else {
+        errorResponse = {
+          ...errorResponse,
+          message: error instanceof Error ? error.message : String(error),
+        };
+      }
+
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: JSON.stringify(errorResponse, bigIntReplacer, 2),
+          },
+        ],
+        isError: true,
+      };
+    }
+  };
+}
+
+/**
+ * Helper to build a successful JSON text response
+ */
+function jsonResponse(data: unknown, replacer: ((key: string, value: unknown) => unknown) | null = null): CallToolResult {
+  return {
+    content: [
+      {
+        type: 'text' as const,
+        text: JSON.stringify(data, replacer as Parameters<typeof JSON.stringify>[1], 2),
+      },
+    ],
+  };
+}
+
+/**
  * Transport-agnostic ManifestMCPServer class
  */
 export class ManifestMCPServer {
-  private server: Server;
+  private mcpServer: McpServer;
   private clientManager: CosmosClientManager;
   private walletProvider: WalletProvider;
   private config: ManifestMCPConfig;
@@ -400,7 +201,7 @@ export class ManifestMCPServer {
     this.walletProvider = options.walletProvider;
     this.clientManager = CosmosClientManager.getInstance(this.config, this.walletProvider);
 
-    this.server = new Server(
+    this.mcpServer = new McpServer(
       {
         name: '@manifest-network/manifest-mcp-core',
         version: VERSION,
@@ -412,220 +213,173 @@ export class ManifestMCPServer {
       }
     );
 
-    this.setupHandlers();
+    this.registerTools();
   }
 
   /**
-   * Set up the MCP request handlers
+   * Register all MCP tools with Zod schemas and directive descriptions
    */
-  private setupHandlers(): void {
-    this.server.setRequestHandler(ListToolsRequestSchema, async () => ({
-      tools: TOOLS,
-    }));
-
-    this.server.setRequestHandler(CallToolRequestSchema, async (request) => {
-      const toolName = request.params.name;
-      const toolInput = request.params.arguments || {};
-
-      try {
-        return await this.handleToolCall(toolName, toolInput);
-      } catch (error) {
-        // Build detailed error response with sanitized inputs
-        let errorResponse: Record<string, unknown> = {
-          error: true,
-          tool: toolName,
-          input: sanitizeForLogging(toolInput),
-        };
-
-        if (error instanceof ManifestMCPError) {
-          errorResponse = {
-            ...errorResponse,
-            code: error.code,
-            message: error.message,
-            details: sanitizeForLogging(error.details),
-          };
-        } else {
-          errorResponse = {
-            ...errorResponse,
-            message: error instanceof Error ? error.message : String(error),
-          };
-        }
-
-        return {
-          content: [
-            {
-              type: 'text',
-              text: JSON.stringify(errorResponse, bigIntReplacer, 2),
-            },
-          ],
-          isError: true,
-        };
-      }
-    });
-  }
-
-  /**
-   * Handle a tool call
-   */
-  private async handleToolCall(
-    toolName: string,
-    toolInput: Record<string, unknown>
-  ): Promise<{ content: Array<{ type: string; text: string }>; isError?: boolean }> {
-    switch (toolName) {
-      case 'get_account_info': {
+  private registerTools(): void {
+    // ── get_account_info ──
+    this.mcpServer.registerTool(
+      'get_account_info',
+      {
+        description: 'Get the wallet address for the configured key. Use this to check which account is active.',
+      },
+      withErrorHandling('get_account_info', async () => {
         const address = await this.walletProvider.getAddress();
-        const accountInfo: AccountInfo = {
-          address,
-        };
-        return {
-          content: [
-            {
-              type: 'text',
-              text: JSON.stringify(accountInfo, null, 2),
-            },
-          ],
-        };
-      }
+        const accountInfo: AccountInfo = { address };
+        return jsonResponse(accountInfo);
+      }),
+    );
 
-      case 'cosmos_query': {
-        const module = requireString(toolInput, 'module');
-        const subcommand = requireString(toolInput, 'subcommand');
-        const args = parseArgs(toolInput.args);
+    // ── cosmos_query ──
+    this.mcpServer.registerTool(
+      'cosmos_query',
+      {
+        description: 'Execute any Cosmos SDK query command. Use this for chain queries not covered by the high-level tools (get_balance, list_apps, etc.). Call list_modules and list_module_subcommands first to discover available options.',
+        inputSchema: {
+          module: z.string().describe('The module name (e.g., "bank", "staking", "distribution", "gov", "auth")'),
+          subcommand: z.string().describe('The subcommand (e.g., "balance", "balances", "delegations", "rewards", "proposals")'),
+          args: z.array(z.string()).optional().describe('Additional arguments as an array of strings (e.g., ["<address>", "umfx"] for bank balance). Use array to preserve arguments with spaces.'),
+        },
+      },
+      withErrorHandling('cosmos_query', async (args) => {
+        const result = await cosmosQuery(
+          this.clientManager,
+          args.module as string,
+          args.subcommand as string,
+          (args.args as string[] | undefined) ?? [],
+        );
+        return jsonResponse(result, bigIntReplacer);
+      }),
+    );
 
-        const result = await cosmosQuery(this.clientManager, module, subcommand, args);
-
-        return {
-          content: [
-            {
-              type: 'text',
-              text: JSON.stringify(result, bigIntReplacer, 2),
-            },
-          ],
-        };
-      }
-
-      case 'cosmos_tx': {
-        const module = requireString(toolInput, 'module', ManifestMCPErrorCode.TX_FAILED);
-        const subcommand = requireString(toolInput, 'subcommand', ManifestMCPErrorCode.TX_FAILED);
-        const args = parseArgs(toolInput.args, ManifestMCPErrorCode.TX_FAILED);
-        const waitForConfirmation = optionalBoolean(toolInput, 'wait_for_confirmation');
-
+    // ── cosmos_tx ──
+    this.mcpServer.registerTool(
+      'cosmos_tx',
+      {
+        description: 'Execute any Cosmos SDK transaction with automatic signing and gas estimation. Use this for chain transactions not covered by the high-level tools (fund_credits, deploy_app, stop_app, etc.). Call list_modules and list_module_subcommands first to discover available options.',
+        inputSchema: {
+          module: z.string().describe('The module name (e.g., "bank", "staking", "gov")'),
+          subcommand: z.string().describe('The subcommand (e.g., "send", "delegate", "unbond", "vote")'),
+          args: z.array(z.string()).describe('Arguments to the transaction as an array of strings (e.g., ["<to_address>", "1000umfx"] for bank send). Use array to preserve arguments with spaces.'),
+          wait_for_confirmation: z.boolean().optional().describe('If true, wait for the transaction to be included in a block before returning. Defaults to false (broadcast only).'),
+        },
+      },
+      withErrorHandling('cosmos_tx', async (args) => {
         const result = await cosmosTx(
           this.clientManager,
-          module,
-          subcommand,
-          args,
-          waitForConfirmation
+          args.module as string,
+          args.subcommand as string,
+          args.args as string[],
+          (args.wait_for_confirmation as boolean | undefined) ?? false,
         );
+        return jsonResponse(result, bigIntReplacer);
+      }),
+    );
 
-        return {
-          content: [
-            {
-              type: 'text',
-              text: JSON.stringify(result, bigIntReplacer, 2),
-            },
-          ],
-        };
-      }
-
-      case 'list_modules': {
+    // ── list_modules ──
+    this.mcpServer.registerTool(
+      'list_modules',
+      {
+        description: 'List all available query and transaction modules. Call this before using cosmos_query or cosmos_tx to discover what modules are available.',
+      },
+      withErrorHandling('list_modules', async () => {
         const modules = getAvailableModules();
-        return {
-          content: [
-            {
-              type: 'text',
-              text: JSON.stringify(modules, null, 2),
-            },
-          ],
-        };
-      }
+        return jsonResponse(modules);
+      }),
+    );
 
-      case 'list_module_subcommands': {
-        const type = requireStringEnum(toolInput, 'type', ['query', 'tx'] as const);
-        const module = requireString(toolInput, 'module');
-
+    // ── list_module_subcommands ──
+    this.mcpServer.registerTool(
+      'list_module_subcommands',
+      {
+        description: 'List available subcommands for a specific module. Call this after list_modules to discover the exact subcommand names and required arguments before calling cosmos_query or cosmos_tx.',
+        inputSchema: {
+          type: z.enum(['query', 'tx']).describe('Whether to list query or transaction subcommands'),
+          module: z.string().describe('The module name (e.g., "bank", "staking")'),
+        },
+      },
+      withErrorHandling('list_module_subcommands', async (args) => {
+        const type = args.type as 'query' | 'tx';
+        const module = args.module as string;
         const subcommands = getModuleSubcommands(type, module);
-        return {
-          content: [
-            {
-              type: 'text',
-              text: JSON.stringify(
-                {
-                  type,
-                  module,
-                  subcommands,
-                },
-                null,
-                2
-              ),
-            },
-          ],
-        };
-      }
+        return jsonResponse({ type, module, subcommands });
+      }),
+    );
 
-      case 'browse_catalog': {
+    // ── browse_catalog ──
+    this.mcpServer.registerTool(
+      'browse_catalog',
+      {
+        description: 'Browse available cloud providers and service tiers. Use this before deploy_app to see which providers are online and what SKU sizes (e.g. docker-micro, docker-small) are available with pricing.',
+      },
+      withErrorHandling('browse_catalog', async () => {
         const queryClient = await this.clientManager.getQueryClient();
         const result = await browseCatalog(queryClient);
-        return {
-          content: [
-            {
-              type: 'text',
-              text: JSON.stringify(result, bigIntReplacer, 2),
-            },
-          ],
-        };
-      }
+        return jsonResponse(result, bigIntReplacer);
+      }),
+    );
 
-      case 'get_balance': {
+    // ── get_balance ──
+    this.mcpServer.registerTool(
+      'get_balance',
+      {
+        description: 'Get account balances, credit status, and spending estimates. Use this to check if you have enough credits before deploying, or to monitor remaining credit lifetime.',
+      },
+      withErrorHandling('get_balance', async () => {
         const address = await this.walletProvider.getAddress();
         const queryClient = await this.clientManager.getQueryClient();
         const result = await getBalance(queryClient, address);
-        return {
-          content: [
-            {
-              type: 'text',
-              text: JSON.stringify(result, bigIntReplacer, 2),
-            },
-          ],
-        };
-      }
+        return jsonResponse(result, bigIntReplacer);
+      }),
+    );
 
-      case 'fund_credits': {
-        const amount = requireString(toolInput, 'amount');
-        const result = await fundCredits(this.clientManager, amount);
-        return {
-          content: [
-            {
-              type: 'text',
-              text: JSON.stringify(result, bigIntReplacer, 2),
-            },
-          ],
-        };
-      }
+    // ── fund_credits ──
+    this.mcpServer.registerTool(
+      'fund_credits',
+      {
+        description: 'Fund the billing credit account by sending tokens from the wallet. Use this when get_balance shows insufficient credits for deploying apps.',
+        inputSchema: {
+          amount: z.string().describe('Amount with denomination (e.g. "10000000umfx")'),
+        },
+      },
+      withErrorHandling('fund_credits', async (args) => {
+        const result = await fundCredits(this.clientManager, args.amount as string);
+        return jsonResponse(result, bigIntReplacer);
+      }),
+    );
 
-      case 'list_apps': {
+    // ── list_apps ──
+    this.mcpServer.registerTool(
+      'list_apps',
+      {
+        description: 'List all leases (deployed apps) for the current account. Use this to find lease UUIDs needed by app_status, get_logs, stop_app, restart_app, and update_app.',
+        inputSchema: {
+          state: z.enum(VALID_STATE_FILTERS).optional().describe('Filter leases by state (default: "all")'),
+        },
+      },
+      withErrorHandling('list_apps', async (args) => {
         const address = await this.walletProvider.getAddress();
         const queryClient = await this.clientManager.getQueryClient();
-        const VALID_STATE_FILTERS = ['all', 'pending', 'active', 'closed', 'rejected', 'expired'] as const;
-        let stateFilter: LeaseStateFilter;
-        if ('state' in toolInput) {
-          stateFilter = requireStringEnum(toolInput, 'state', VALID_STATE_FILTERS);
-        } else {
-          stateFilter = 'all';
-        }
+        const stateFilter: LeaseStateFilter = (args.state as LeaseStateFilter | undefined) ?? 'all';
         const result = await listApps(queryClient, address, stateFilter);
-        return {
-          content: [
-            {
-              type: 'text',
-              text: JSON.stringify(result, bigIntReplacer, 2),
-            },
-          ],
-        };
-      }
+        return jsonResponse(result, bigIntReplacer);
+      }),
+    );
 
-      case 'app_status': {
-        const leaseUuid = requireUuid(toolInput, 'lease_uuid');
+    // ── app_status ──
+    this.mcpServer.registerTool(
+      'app_status',
+      {
+        description: 'Get detailed status and connection info for a deployed app. Use this after deploy_app or list_apps to check if an app is running and get its URL.',
+        inputSchema: {
+          lease_uuid: z.string().uuid().describe('The lease UUID of the app to check'),
+        },
+      },
+      withErrorHandling('app_status', async (args) => {
+        const leaseUuid = args.lease_uuid as string;
         const address = await this.walletProvider.getAddress();
         const queryClient = await this.clientManager.getQueryClient();
         const result = await appStatus(
@@ -634,22 +388,23 @@ export class ManifestMCPServer {
           leaseUuid,
           (addr, uuid) => this.getProviderAuthToken(addr, uuid),
         );
-        return {
-          content: [
-            {
-              type: 'text',
-              text: JSON.stringify(result, bigIntReplacer, 2),
-            },
-          ],
-        };
-      }
+        return jsonResponse(result, bigIntReplacer);
+      }),
+    );
 
-      case 'get_logs': {
-        const leaseUuid = requireUuid(toolInput, 'lease_uuid');
-        const rawTail = toolInput.tail;
-        const tail = typeof rawTail === 'number' && Number.isFinite(rawTail) && rawTail > 0
-          ? Math.min(Math.floor(rawTail), MAX_LOG_TAIL)
-          : undefined;
+    // ── get_logs ──
+    this.mcpServer.registerTool(
+      'get_logs',
+      {
+        description: 'Get recent container logs for a deployed app. Use this to debug apps that are failing or to verify an app started correctly after deploy_app.',
+        inputSchema: {
+          lease_uuid: z.string().uuid().describe('The lease UUID of the app to get logs for'),
+          tail: z.number().int().min(1).max(MAX_LOG_TAIL).optional().describe('Number of recent log lines to retrieve'),
+        },
+      },
+      withErrorHandling('get_logs', async (args) => {
+        const leaseUuid = args.lease_uuid as string;
+        const tail = args.tail as number | undefined;
         const address = await this.walletProvider.getAddress();
         const queryClient = await this.clientManager.getQueryClient();
         const result = await getAppLogs(
@@ -659,77 +414,64 @@ export class ManifestMCPServer {
           (addr, uuid) => this.getProviderAuthToken(addr, uuid),
           tail,
         );
-        return {
-          content: [
-            {
-              type: 'text',
-              text: JSON.stringify(result, bigIntReplacer, 2),
-            },
-          ],
-        };
-      }
+        return jsonResponse(result, bigIntReplacer);
+      }),
+    );
 
-      case 'deploy_app': {
-        const image = requireString(toolInput, 'image');
-        const port = toolInput.port;
-        if (typeof port !== 'number' || !Number.isInteger(port) || port < 1 || port > 65535) {
-          throw new ManifestMCPError(
-            ManifestMCPErrorCode.TX_FAILED,
-            'port must be an integer between 1 and 65535',
-          );
-        }
-        const size = requireString(toolInput, 'size');
-        let env: Record<string, string> | undefined;
-        if (toolInput.env !== undefined && toolInput.env !== null) {
-          if (typeof toolInput.env !== 'object' || Array.isArray(toolInput.env)) {
-            throw new ManifestMCPError(
-              ManifestMCPErrorCode.TX_FAILED,
-              'env must be an object mapping string keys to string values',
-            );
-          }
-          env = {};
-          for (const [key, value] of Object.entries(toolInput.env)) {
-            if (typeof value !== 'string') {
-              throw new ManifestMCPError(
-                ManifestMCPErrorCode.TX_FAILED,
-                `env value for key "${key}" must be a string, got ${typeof value}`,
-              );
-            }
-            env[key] = value;
-          }
-        }
-
+    // ── deploy_app ──
+    this.mcpServer.registerTool(
+      'deploy_app',
+      {
+        description: 'Deploy a new containerized application. Requires funded credits (use fund_credits if needed). Creates a lease on-chain, uploads the container manifest to a provider, and polls until ready. Use browse_catalog first to see available SKU sizes.',
+        inputSchema: {
+          image: z.string().describe('Docker image to deploy (e.g. "nginx:alpine")'),
+          port: z.number().int().min(1).max(65535).describe('Container port to expose (e.g. 80)'),
+          size: z.string().describe('SKU tier name (e.g. "docker-micro", "docker-small")'),
+          env: z.record(z.string(), z.string()).optional().describe('Optional environment variables as key-value pairs'),
+        },
+      },
+      withErrorHandling('deploy_app', async (args) => {
         const result = await deployApp(
           this.clientManager,
           (addr, uuid) => this.getProviderAuthToken(addr, uuid),
           (addr, uuid, metaHashHex) => this.getLeaseDataAuthToken(addr, uuid, metaHashHex),
-          { image, port, size, env },
+          {
+            image: args.image as string,
+            port: args.port as number,
+            size: args.size as string,
+            env: args.env as Record<string, string> | undefined,
+          },
         );
-        return {
-          content: [
-            {
-              type: 'text',
-              text: JSON.stringify(result, bigIntReplacer, 2),
-            },
-          ],
-        };
-      }
+        return jsonResponse(result, bigIntReplacer);
+      }),
+    );
 
-      case 'stop_app': {
-        const leaseUuid = requireUuid(toolInput, 'lease_uuid', ManifestMCPErrorCode.TX_FAILED);
-        const result = await stopApp(this.clientManager, leaseUuid);
-        return {
-          content: [
-            {
-              type: 'text',
-              text: JSON.stringify(result, bigIntReplacer, 2),
-            },
-          ],
-        };
-      }
+    // ── stop_app ──
+    this.mcpServer.registerTool(
+      'stop_app',
+      {
+        description: 'Stop a deployed app by closing its lease on-chain. This is permanent — the app cannot be restarted after stopping. Use restart_app instead if you just want to restart it.',
+        inputSchema: {
+          lease_uuid: z.string().uuid().describe('The lease UUID of the app to stop'),
+        },
+      },
+      withErrorHandling('stop_app', async (args) => {
+        const result = await stopApp(this.clientManager, args.lease_uuid as string);
+        return jsonResponse(result, bigIntReplacer);
+      }),
+    );
 
-      case 'restart_app': {
-        const leaseUuid = requireUuid(toolInput, 'lease_uuid');
+    // ── restart_app ──
+    this.mcpServer.registerTool(
+      'restart_app',
+      {
+        description: 'Restart a running app via the provider without closing its lease. Use this to apply configuration changes or recover from a crash.',
+        inputSchema: {
+          lease_uuid: z.string().uuid().describe('The lease UUID of the app to restart'),
+        },
+      },
+      withErrorHandling('restart_app', async (args) => {
+        const leaseUuid = args.lease_uuid as string;
         const address = await this.walletProvider.getAddress();
         const queryClient = await this.clientManager.getQueryClient();
         const result = await restartApp(
@@ -738,19 +480,22 @@ export class ManifestMCPServer {
           leaseUuid,
           (addr, uuid) => this.getProviderAuthToken(addr, uuid),
         );
-        return {
-          content: [
-            {
-              type: 'text',
-              text: JSON.stringify(result, bigIntReplacer, 2),
-            },
-          ],
-        };
-      }
+        return jsonResponse(result, bigIntReplacer);
+      }),
+    );
 
-      case 'update_app': {
-        const leaseUuid = requireUuid(toolInput, 'lease_uuid', ManifestMCPErrorCode.TX_FAILED);
-        const manifest = requireString(toolInput, 'manifest', ManifestMCPErrorCode.TX_FAILED);
+    // ── update_app ──
+    this.mcpServer.registerTool(
+      'update_app',
+      {
+        description: 'Update a deployed app with a new container manifest. Use this to change the Docker image, ports, or environment variables of a running app without closing the lease.',
+        inputSchema: {
+          lease_uuid: z.string().uuid().describe('The lease UUID of the app to update'),
+          manifest: z.string().describe('The full manifest JSON string to deploy'),
+        },
+      },
+      withErrorHandling('update_app', async (args) => {
+        const manifest = args.manifest as string;
 
         try {
           const parsed = JSON.parse(manifest);
@@ -764,6 +509,7 @@ export class ManifestMCPServer {
           );
         }
 
+        const leaseUuid = args.lease_uuid as string;
         const address = await this.walletProvider.getAddress();
         const queryClient = await this.clientManager.getQueryClient();
 
@@ -774,22 +520,9 @@ export class ManifestMCPServer {
           (addr, uuid) => this.getProviderAuthToken(addr, uuid),
           manifest,
         );
-        return {
-          content: [
-            {
-              type: 'text',
-              text: JSON.stringify(result, bigIntReplacer, 2),
-            },
-          ],
-        };
-      }
-
-      default:
-        throw new ManifestMCPError(
-          ManifestMCPErrorCode.UNKNOWN_ERROR,
-          `Unknown tool: ${toolName}`
-        );
-    }
+        return jsonResponse(result, bigIntReplacer);
+      }),
+    );
   }
 
   private async getProviderAuthToken(address: string, leaseUuid: string): Promise<string> {
@@ -819,17 +552,10 @@ export class ManifestMCPServer {
   }
 
   /**
-   * Get the advertised tool list (for testing / introspection)
-   */
-  getTools(): Tool[] {
-    return TOOLS;
-  }
-
-  /**
    * Get the underlying MCP server instance
    */
   getServer(): Server {
-    return this.server;
+    return this.mcpServer.server;
   }
 
   /**
