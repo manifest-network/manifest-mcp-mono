@@ -132,10 +132,9 @@ function withErrorHandling(
 ): (...cbArgs: any[]) => Promise<CallToolResult> {
   // For tools with no inputSchema, McpServer calls cb(extra) with one arg.
   // For tools with inputSchema, McpServer calls cb(parsedArgs, extra).
-  // fn.length tells us whether the handler expects args (length >= 1) or not (length 0).
-  const hasArgs = fn.length >= 1;
-
+  // We infer from cbArgs.length at call time (not fn.length) so default parameters are safe.
   return async (...cbArgs: any[]) => {
+    const hasArgs = cbArgs.length >= 2;
     const args = hasArgs ? (cbArgs[0] ?? {}) : {};
     try {
       return hasArgs ? await fn(args, cbArgs[1]) : await fn(cbArgs[0]);
