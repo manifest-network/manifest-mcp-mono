@@ -469,7 +469,7 @@ describe('ManifestMCPServer', () => {
       expect(mockDeployApp).not.toHaveBeenCalled();
     });
 
-    it.each([0, -1, 65536])('rejects deploy_app with out-of-range port %s (Zod validation)', async (port) => {
+    it.each([0, -1, 65536, 80.5, NaN, Infinity])('rejects deploy_app with out-of-range port %s (Zod validation)', async (port) => {
       const server = new ManifestMCPServer({
         config: makeMockConfig(),
         walletProvider: makeMockWallet({ signArbitrary: true }),
