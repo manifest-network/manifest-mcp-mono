@@ -113,6 +113,15 @@ export function makeMockQueryClient(overrides?: {
             return { lease };
           }),
           leasesByTenant: vi.fn().mockImplementation(async ({ stateFilter }: { stateFilter: LeaseState }) => {
+            if (stateFilter === LeaseState.LEASE_STATE_UNSPECIFIED) {
+              return { leases: [
+                ...activeLeases.map(l => ({ state: LeaseState.LEASE_STATE_ACTIVE, ...l })),
+                ...pendingLeases.map(l => ({ state: LeaseState.LEASE_STATE_PENDING, ...l })),
+                ...closedLeases.map(l => ({ state: LeaseState.LEASE_STATE_CLOSED, ...l })),
+                ...rejectedLeases.map(l => ({ state: LeaseState.LEASE_STATE_REJECTED, ...l })),
+                ...expiredLeases.map(l => ({ state: LeaseState.LEASE_STATE_EXPIRED, ...l })),
+              ] };
+            }
             if (stateFilter === LeaseState.LEASE_STATE_ACTIVE) return { leases: activeLeases.map(l => ({ state: LeaseState.LEASE_STATE_ACTIVE, ...l })) };
             if (stateFilter === LeaseState.LEASE_STATE_PENDING) return { leases: pendingLeases.map(l => ({ state: LeaseState.LEASE_STATE_PENDING, ...l })) };
             if (stateFilter === LeaseState.LEASE_STATE_CLOSED) return { leases: closedLeases.map(l => ({ state: LeaseState.LEASE_STATE_CLOSED, ...l })) };

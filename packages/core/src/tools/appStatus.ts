@@ -34,8 +34,27 @@ export async function appStatus(
   let connectionError: string | undefined;
 
   if (lease.state === LeaseState.LEASE_STATE_PENDING || lease.state === LeaseState.LEASE_STATE_ACTIVE) {
-    const providerUrl = await resolveProviderUrl(queryClient, lease.providerUuid);
-    const authToken = await getAuthToken(address, leaseUuid);
+    let providerUrl: string;
+    try {
+      providerUrl = await resolveProviderUrl(queryClient, lease.providerUuid);
+    } catch (err) {
+      return {
+        lease_uuid: leaseUuid,
+        chainState,
+        providerError: `Could not resolve provider: ${err instanceof Error ? err.message : String(err)}`,
+      };
+    }
+
+    let authToken: string;
+    try {
+      authToken = await getAuthToken(address, leaseUuid);
+    } catch (err) {
+      return {
+        lease_uuid: leaseUuid,
+        chainState,
+        providerError: `Auth token error: ${err instanceof Error ? err.message : String(err)}`,
+      };
+    }
 
     const [statusResult, connResult] = await Promise.allSettled([
       getLeaseStatus(providerUrl, leaseUuid, authToken),

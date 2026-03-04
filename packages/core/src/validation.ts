@@ -74,9 +74,10 @@ export function requireUuid(
 ): string {
   const val = requireString(input, field, errorCode);
   if (!UUID_PATTERN.test(val)) {
+    const display = val.length > 50 ? val.slice(0, 50) + '...' : val;
     throw new ManifestMCPError(
       errorCode,
-      `${field} must be a valid UUID (e.g., "550e8400-e29b-41d4-a716-446655440000"), got "${val}"`,
+      `${field} must be a valid UUID (e.g., "550e8400-e29b-41d4-a716-446655440000"), got "${display}"`,
     );
   }
   return val;

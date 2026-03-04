@@ -410,6 +410,44 @@ describe('ManifestMCPServer', () => {
       expect(mockUpdateApp).not.toHaveBeenCalled();
     });
 
+    it('rejects deploy_app when env is an array', async () => {
+      const server = new ManifestMCPServer({
+        config: makeMockConfig(),
+        walletProvider: makeMockWallet({ signArbitrary: true }),
+      });
+      const result = await callTool(server, 'deploy_app', {
+        image: 'nginx:alpine',
+        port: 80,
+        size: 'docker-micro',
+        env: ['not', 'an', 'object'],
+      });
+
+      expect(result.isError).toBe(true);
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.code).toBe('TX_FAILED');
+      expect(parsed.message).toContain('env must be an object');
+      expect(mockDeployApp).not.toHaveBeenCalled();
+    });
+
+    it('rejects deploy_app when env contains non-string values', async () => {
+      const server = new ManifestMCPServer({
+        config: makeMockConfig(),
+        walletProvider: makeMockWallet({ signArbitrary: true }),
+      });
+      const result = await callTool(server, 'deploy_app', {
+        image: 'nginx:alpine',
+        port: 80,
+        size: 'docker-micro',
+        env: { FOO: 123 },
+      });
+
+      expect(result.isError).toBe(true);
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.code).toBe('TX_FAILED');
+      expect(parsed.message).toContain('FOO');
+      expect(mockDeployApp).not.toHaveBeenCalled();
+    });
+
     it('routes list_modules to getAvailableModules()', async () => {
       const server = new ManifestMCPServer({
         config: makeMockConfig(),

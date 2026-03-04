@@ -133,7 +133,7 @@ describe('appStatus', () => {
     expect(result.connection).toBeUndefined();
   });
 
-  it('lets auth errors propagate', async () => {
+  it('returns chain state with providerError when auth token fails', async () => {
     const qc = makeMockQueryClient({
       billing: {
         lease: { uuid: 'lease-1', state: LeaseState.LEASE_STATE_ACTIVE, providerUuid: 'prov-1' },
@@ -141,15 +141,36 @@ describe('appStatus', () => {
     });
     mockResolveProviderUrl.mockResolvedValue('https://provider.example.com');
 
-    const authError = new ManifestMCPError(
-      ManifestMCPErrorCode.WALLET_NOT_CONNECTED,
-      'signArbitrary not supported',
+    const failingGetAuthToken = vi.fn().mockRejectedValue(
+      new ManifestMCPError(ManifestMCPErrorCode.WALLET_NOT_CONNECTED, 'signArbitrary not supported'),
     );
-    const failingGetAuthToken = vi.fn().mockRejectedValue(authError);
 
-    await expect(
-      appStatus(qc, ADDRESS, 'lease-1', failingGetAuthToken),
-    ).rejects.toBe(authError);
+    const result = await appStatus(qc, ADDRESS, 'lease-1', failingGetAuthToken);
+
+    expect(result.lease_uuid).toBe('lease-1');
+    expect(result.chainState.state).toBe(LeaseState.LEASE_STATE_ACTIVE);
+    expect(result.providerError).toContain('signArbitrary not supported');
+    expect(result.fredStatus).toBeUndefined();
+    expect(result.connection).toBeUndefined();
+  });
+
+  it('returns chain state with providerError when provider resolution fails', async () => {
+    const qc = makeMockQueryClient({
+      billing: {
+        lease: { uuid: 'lease-1', state: LeaseState.LEASE_STATE_ACTIVE, providerUuid: 'prov-1' },
+      },
+    });
+    mockResolveProviderUrl.mockRejectedValue(
+      new ManifestMCPError(ManifestMCPErrorCode.QUERY_FAILED, 'Provider "prov-1" has no API URL'),
+    );
+
+    const result = await appStatus(qc, ADDRESS, 'lease-1', mockGetAuthToken);
+
+    expect(result.lease_uuid).toBe('lease-1');
+    expect(result.chainState.state).toBe(LeaseState.LEASE_STATE_ACTIVE);
+    expect(result.providerError).toContain('Provider "prov-1" has no API URL');
+    expect(result.fredStatus).toBeUndefined();
+    expect(result.connection).toBeUndefined();
   });
 
   it('throws when lease not found on chain', async () => {

@@ -144,13 +144,18 @@ export async function deployApp(
       () => getAuthToken(address, leaseUuid),
     );
   } catch (err) {
-    // TX_FAILED is intentional: the lease TX succeeded but the deploy is incomplete.
-    // This code is non-retryable, which is correct — retrying would create a duplicate lease.
+    // Preserve the original error code (e.g. WALLET_NOT_CONNECTED) so callers can
+    // distinguish auth/config problems from transient deploy failures. For unknown
+    // errors, use TX_FAILED which is non-retryable — retrying would create a duplicate lease.
+    const code = err instanceof ManifestMCPError ? err.code : ManifestMCPErrorCode.TX_FAILED;
+    const details = err instanceof ManifestMCPError
+      ? { ...err.details, lease_uuid: leaseUuid, provider_uuid: providerUuid, provider_url: providerUrl }
+      : { lease_uuid: leaseUuid, provider_uuid: providerUuid, provider_url: providerUrl };
     throw new ManifestMCPError(
-      ManifestMCPErrorCode.TX_FAILED,
+      code,
       `Deploy partially succeeded: lease ${leaseUuid} was created but subsequent steps failed. ` +
       `Close this lease with stop_app if needed. Error: ${err instanceof Error ? err.message : String(err)}`,
-      { lease_uuid: leaseUuid, provider_uuid: providerUuid, provider_url: providerUrl },
+      details,
     );
   }
 

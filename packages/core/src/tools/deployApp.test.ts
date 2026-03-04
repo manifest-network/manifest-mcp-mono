@@ -29,8 +29,8 @@ const mockUploadLeaseData = vi.mocked(uploadLeaseData);
 const mockGetLeaseConnectionInfo = vi.mocked(getLeaseConnectionInfo);
 const mockPollLeaseUntilReady = vi.mocked(pollLeaseUntilReady);
 
-const mockGetAuthToken = vi.fn().mockResolvedValue('auth-token');
-const mockGetLeaseDataAuthToken = vi.fn().mockResolvedValue('lease-data-token');
+const mockGetAuthToken = vi.fn();
+const mockGetLeaseDataAuthToken = vi.fn();
 
 function makeQueryClient() {
   return makeMockQueryClient({
@@ -75,6 +75,8 @@ describe('deployApp', () => {
       ],
     });
 
+    mockGetAuthToken.mockResolvedValue('auth-token');
+    mockGetLeaseDataAuthToken.mockResolvedValue('lease-data-token');
     mockUploadLeaseData.mockResolvedValue(undefined);
     mockPollLeaseUntilReady.mockResolvedValue({ status: 'running' });
     mockGetLeaseConnectionInfo.mockResolvedValue({
@@ -200,6 +202,53 @@ describe('deployApp', () => {
     ).rejects.toMatchObject({
       code: ManifestMCPErrorCode.TX_FAILED,
       message: expect.stringContaining('No events'),
+    });
+  });
+
+  it('throws with lease UUID in details when upload fails after lease creation', async () => {
+    const qc = makeQueryClient();
+    const cm = makeMockClientManager({ queryClient: qc, address: 'manifest1tenant' });
+
+    mockUploadLeaseData.mockRejectedValue(new Error('upload timeout'));
+
+    await expect(
+      deployApp(cm as any, mockGetAuthToken, mockGetLeaseDataAuthToken, DEFAULT_INPUT),
+    ).rejects.toMatchObject({
+      code: ManifestMCPErrorCode.TX_FAILED,
+      message: expect.stringContaining('lease lease-uuid-1 was created'),
+      details: expect.objectContaining({ lease_uuid: 'lease-uuid-1' }),
+    });
+  });
+
+  it('throws with lease UUID in details when polling fails after upload', async () => {
+    const qc = makeQueryClient();
+    const cm = makeMockClientManager({ queryClient: qc, address: 'manifest1tenant' });
+
+    mockPollLeaseUntilReady.mockRejectedValue(new Error('timed out'));
+
+    await expect(
+      deployApp(cm as any, mockGetAuthToken, mockGetLeaseDataAuthToken, DEFAULT_INPUT),
+    ).rejects.toMatchObject({
+      code: ManifestMCPErrorCode.TX_FAILED,
+      message: expect.stringContaining('lease lease-uuid-1 was created'),
+      details: expect.objectContaining({ lease_uuid: 'lease-uuid-1' }),
+    });
+  });
+
+  it('preserves original error code when ManifestMCPError thrown after lease creation', async () => {
+    const qc = makeQueryClient();
+    const cm = makeMockClientManager({ queryClient: qc, address: 'manifest1tenant' });
+
+    mockGetLeaseDataAuthToken.mockRejectedValue(
+      new ManifestMCPError(ManifestMCPErrorCode.WALLET_NOT_CONNECTED, 'signArbitrary not supported'),
+    );
+
+    await expect(
+      deployApp(cm as any, mockGetAuthToken, mockGetLeaseDataAuthToken, DEFAULT_INPUT),
+    ).rejects.toMatchObject({
+      code: ManifestMCPErrorCode.WALLET_NOT_CONNECTED,
+      message: expect.stringContaining('lease lease-uuid-1 was created'),
+      details: expect.objectContaining({ lease_uuid: 'lease-uuid-1' }),
     });
   });
 
