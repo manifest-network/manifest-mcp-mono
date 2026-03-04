@@ -33,6 +33,9 @@ export class MCPTestClient {
       args: [serverEntry],
       env: {
         ...process.env,
+        // Force keyfile to a nonexistent path so the server always falls
+        // through to the mnemonic wallet, regardless of host-local keyfiles.
+        MANIFEST_KEY_FILE: '/dev/null/nonexistent',
         COSMOS_CHAIN_ID: options.chainId ?? 'manifest-localnet',
         COSMOS_RPC_URL: options.rpcUrl ?? 'http://localhost:26657',
         COSMOS_GAS_PRICE: options.gasPrice ?? '0.01umfx',
