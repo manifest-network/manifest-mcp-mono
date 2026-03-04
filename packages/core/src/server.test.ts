@@ -150,15 +150,27 @@ afterEach(async () => {
 });
 
 describe('ManifestMCPServer', () => {
-  describe('getTools', () => {
-    it('should return all 15 tools', () => {
+  describe('listTools via protocol', () => {
+    it('should advertise all 15 tools', async () => {
       const server = new ManifestMCPServer({
         config: makeMockConfig(),
         walletProvider: makeMockWallet(),
       });
-      const tools = server.getTools();
-      expect(tools).toHaveLength(15);
-      expect(tools.map(t => t.name)).toEqual(ALL_TOOL_NAMES);
+
+      const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+      activeTransports.push(clientTransport, serverTransport);
+
+      const client = new Client({ name: 'test-client', version: '1.0.0' });
+      await server.getServer().connect(serverTransport);
+      await client.connect(clientTransport);
+
+      try {
+        const result = await client.listTools();
+        expect(result.tools).toHaveLength(15);
+        expect(result.tools.map(t => t.name).sort()).toEqual([...ALL_TOOL_NAMES].sort());
+      } finally {
+        await client.close();
+      }
     });
   });
 
@@ -410,7 +422,7 @@ describe('ManifestMCPServer', () => {
       expect(mockUpdateApp).not.toHaveBeenCalled();
     });
 
-    it('rejects deploy_app when env is an array', async () => {
+    it('rejects deploy_app when env is an array (Zod validation)', async () => {
       const server = new ManifestMCPServer({
         config: makeMockConfig(),
         walletProvider: makeMockWallet({ signArbitrary: true }),
@@ -423,13 +435,10 @@ describe('ManifestMCPServer', () => {
       });
 
       expect(result.isError).toBe(true);
-      const parsed = JSON.parse(result.content[0].text);
-      expect(parsed.code).toBe('TX_FAILED');
-      expect(parsed.message).toContain('env must be an object');
       expect(mockDeployApp).not.toHaveBeenCalled();
     });
 
-    it('rejects deploy_app when env contains non-string values', async () => {
+    it('rejects deploy_app when env contains non-string values (Zod validation)', async () => {
       const server = new ManifestMCPServer({
         config: makeMockConfig(),
         walletProvider: makeMockWallet({ signArbitrary: true }),
@@ -442,31 +451,10 @@ describe('ManifestMCPServer', () => {
       });
 
       expect(result.isError).toBe(true);
-      const parsed = JSON.parse(result.content[0].text);
-      expect(parsed.code).toBe('TX_FAILED');
-      expect(parsed.message).toContain('FOO');
       expect(mockDeployApp).not.toHaveBeenCalled();
     });
 
-    it.each([0, -1, 65536, 80.5, NaN, Infinity])('rejects deploy_app with invalid port %s', async (port) => {
-      const server = new ManifestMCPServer({
-        config: makeMockConfig(),
-        walletProvider: makeMockWallet({ signArbitrary: true }),
-      });
-      const result = await callTool(server, 'deploy_app', {
-        image: 'nginx:alpine',
-        port,
-        size: 'docker-micro',
-      });
-
-      expect(result.isError).toBe(true);
-      const parsed = JSON.parse(result.content[0].text);
-      expect(parsed.code).toBe('TX_FAILED');
-      expect(parsed.message).toContain('port must be an integer between 1 and 65535');
-      expect(mockDeployApp).not.toHaveBeenCalled();
-    });
-
-    it('rejects deploy_app with non-number port', async () => {
+    it('rejects deploy_app with non-number port (Zod validation)', async () => {
       const server = new ManifestMCPServer({
         config: makeMockConfig(),
         walletProvider: makeMockWallet({ signArbitrary: true }),
@@ -478,10 +466,35 @@ describe('ManifestMCPServer', () => {
       });
 
       expect(result.isError).toBe(true);
-      const parsed = JSON.parse(result.content[0].text);
-      expect(parsed.code).toBe('TX_FAILED');
-      expect(parsed.message).toContain('port must be an integer between 1 and 65535');
       expect(mockDeployApp).not.toHaveBeenCalled();
+    });
+
+    // NaN and Infinity serialize to null over JSON transport, so they test null rejection rather than
+    // NaN/Infinity rejection specifically. Still valuable as edge-case guards.
+    it.each([0, -1, 65536, 80.5, NaN, Infinity])('rejects deploy_app with out-of-range port %s (Zod validation)', async (port) => {
+      const server = new ManifestMCPServer({
+        config: makeMockConfig(),
+        walletProvider: makeMockWallet({ signArbitrary: true }),
+      });
+      const result = await callTool(server, 'deploy_app', {
+        image: 'nginx:alpine',
+        port,
+        size: 'docker-micro',
+      });
+
+      expect(result.isError).toBe(true);
+      expect(mockDeployApp).not.toHaveBeenCalled();
+    });
+
+    it('rejects app_status with invalid UUID (Zod validation)', async () => {
+      const server = new ManifestMCPServer({
+        config: makeMockConfig(),
+        walletProvider: makeMockWallet({ signArbitrary: true }),
+      });
+      const result = await callTool(server, 'app_status', { lease_uuid: 'not-a-uuid' });
+
+      expect(result.isError).toBe(true);
+      expect(mockAppStatus).not.toHaveBeenCalled();
     });
 
     it('routes list_modules to getAvailableModules()', async () => {
@@ -616,17 +629,15 @@ describe('ManifestMCPServer', () => {
   });
 
   describe('unknown tool', () => {
-    it('returns UNKNOWN_ERROR for unrecognized tool name', async () => {
+    it('returns an error for unrecognized tool name', async () => {
       const server = new ManifestMCPServer({
         config: makeMockConfig(),
         walletProvider: makeMockWallet(),
       });
+      // McpServer returns an error for unknown tools via the SDK
       const result = await callTool(server, 'nonexistent_tool');
 
       expect(result.isError).toBe(true);
-      const parsed = JSON.parse(result.content[0].text);
-      expect(parsed.code).toBe('UNKNOWN_ERROR');
-      expect(parsed.message).toContain('nonexistent_tool');
     });
   });
 
