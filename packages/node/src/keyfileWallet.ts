@@ -100,8 +100,6 @@ export class KeyfileWalletProvider implements WalletProvider {
             `Failed to decrypt keyfile at ${this.keyfilePath}. Verify that MANIFEST_KEY_PASSWORD is correct. (${err instanceof Error ? err.message : String(err)})`
           );
         }
-        // Clear password from memory as soon as decryption succeeds
-        this.password = undefined;
       } else if (obj.mnemonic) {
         if (typeof obj.mnemonic !== 'string') {
           throw new ManifestMCPError(
@@ -159,6 +157,9 @@ export class KeyfileWalletProvider implements WalletProvider {
           `Keyfile address prefix mismatch: keyfile produced "${this.address.slice(0, this.address.indexOf('1'))}" but config expects "${this.addressPrefix}". Regenerate the keyfile with the correct COSMOS_ADDRESS_PREFIX.`
         );
       }
+      // Clear password from memory only after full initialization succeeds,
+      // so that a retry after a partial failure can still use it.
+      this.password = undefined;
       this.initPromise = null;
     } catch (error) {
       this.initPromise = null;
