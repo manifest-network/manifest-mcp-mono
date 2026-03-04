@@ -35,12 +35,15 @@ describe('resolveProviderUrl', () => {
     });
   });
 
-  it('throws when provider not found', async () => {
+  it('throws QUERY_FAILED when provider RPC lookup fails', async () => {
     const qc = makeMockQueryClient();
 
     await expect(
       resolveProviderUrl(qc, 'nonexistent'),
-    ).rejects.toThrow();
+    ).rejects.toMatchObject({
+      code: ManifestMCPErrorCode.QUERY_FAILED,
+      message: expect.stringContaining('Failed to resolve provider "nonexistent"'),
+    });
   });
 });
 

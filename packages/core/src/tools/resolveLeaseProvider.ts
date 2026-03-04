@@ -24,9 +24,18 @@ export async function resolveProviderUrl(
     );
   }
 
-  const providerResult = await queryClient.liftedinit.sku.v1.provider({
-    uuid: providerUuid,
-  });
+  let providerResult;
+  try {
+    providerResult = await queryClient.liftedinit.sku.v1.provider({
+      uuid: providerUuid,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new ManifestMCPError(
+      ManifestMCPErrorCode.QUERY_FAILED,
+      `Failed to resolve provider "${providerUuid}" via SKU module: ${message}`,
+    );
+  }
 
   if (!providerResult.provider?.apiUrl) {
     throw new ManifestMCPError(
