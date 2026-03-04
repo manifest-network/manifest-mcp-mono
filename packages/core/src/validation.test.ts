@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { requireString, requireStringEnum, parseArgs, optionalBoolean } from './validation.js';
+import { requireString, requireStringEnum, requireUuid, parseArgs, optionalBoolean } from './validation.js';
 import { ManifestMCPError, ManifestMCPErrorCode } from './types.js';
 
 describe('requireString', () => {
@@ -55,6 +55,40 @@ describe('requireStringEnum', () => {
   });
 });
 
+describe('requireUuid', () => {
+  it('should return a valid UUID', () => {
+    expect(requireUuid({ id: '550e8400-e29b-41d4-a716-446655440000' }, 'id'))
+      .toBe('550e8400-e29b-41d4-a716-446655440000');
+  });
+
+  it('should accept uppercase hex digits', () => {
+    expect(requireUuid({ id: '550E8400-E29B-41D4-A716-446655440000' }, 'id'))
+      .toBe('550E8400-E29B-41D4-A716-446655440000');
+  });
+
+  it('should throw for non-UUID string', () => {
+    expect(() => requireUuid({ id: 'not-a-uuid' }, 'id')).toThrow(ManifestMCPError);
+    expect(() => requireUuid({ id: 'not-a-uuid' }, 'id')).toThrow(/must be a valid UUID/);
+  });
+
+  it('should throw for missing field', () => {
+    expect(() => requireUuid({}, 'id')).toThrow(ManifestMCPError);
+  });
+
+  it('should throw for empty string', () => {
+    expect(() => requireUuid({ id: '' }, 'id')).toThrow(ManifestMCPError);
+  });
+
+  it('should use custom error code', () => {
+    try {
+      requireUuid({ id: 'bad' }, 'id', ManifestMCPErrorCode.TX_FAILED);
+    } catch (err) {
+      expect(err).toBeInstanceOf(ManifestMCPError);
+      expect((err as ManifestMCPError).code).toBe(ManifestMCPErrorCode.TX_FAILED);
+    }
+  });
+});
+
 describe('optionalBoolean', () => {
   it('should return true when value is true', () => {
     expect(optionalBoolean({ flag: true }, 'flag')).toBe(true);
@@ -103,11 +137,19 @@ describe('parseArgs', () => {
     expect(parseArgs([1, true, 'ok'])).toEqual(['1', 'true', 'ok']);
   });
 
-  it('should return empty array for non-array input', () => {
+  it('should return empty array for undefined/null', () => {
     expect(parseArgs(undefined)).toEqual([]);
     expect(parseArgs(null)).toEqual([]);
-    expect(parseArgs('not-an-array')).toEqual([]);
-    expect(parseArgs(42)).toEqual([]);
+  });
+
+  it('should throw for string input with helpful message', () => {
+    expect(() => parseArgs('not-an-array')).toThrow(ManifestMCPError);
+    expect(() => parseArgs('not-an-array')).toThrow('args must be an array of strings, not a single string');
+  });
+
+  it('should throw for other non-array types', () => {
+    expect(() => parseArgs(42)).toThrow(ManifestMCPError);
+    expect(() => parseArgs(42)).toThrow('args must be an array of strings, got number');
   });
 
   it('should return empty array for empty array', () => {

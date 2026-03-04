@@ -1,7 +1,7 @@
 import { vi } from 'vitest';
 import type { ManifestMCPConfig, WalletProvider, SignArbitraryResult } from '../types.js';
-import type { AppRegistry } from '../registry.js';
 import type { ManifestQueryClient } from '../client.js';
+import { LeaseState } from '@manifest-network/manifestjs/dist/codegen/liftedinit/billing/v1/types.js';
 
 /**
  * Create a mock ManifestMCPConfig with sensible defaults.
@@ -37,24 +37,6 @@ export function makeMockWallet(
 }
 
 /**
- * Create a mock AppRegistry (all vi.fn() stubs).
- */
-export function makeMockAppRegistry(
-  overrides?: Partial<AppRegistry>,
-): AppRegistry {
-  return {
-    getApps: vi.fn().mockReturnValue([]),
-    getApp: vi.fn().mockReturnValue({ name: 'test', leaseUuid: 'uuid', status: 'active' }),
-    findApp: vi.fn().mockReturnValue(undefined),
-    getAppByLease: vi.fn().mockReturnValue(undefined),
-    addApp: vi.fn(),
-    updateApp: vi.fn(),
-    removeApp: vi.fn(),
-    ...overrides,
-  };
-}
-
-/**
  * Billing mock data defaults
  */
 interface BillingOverrides {
@@ -70,9 +52,12 @@ interface BillingOverrides {
     estimatedDurationSeconds: bigint;
     activeLeaseCount: bigint;
   } | null;
-  lease?: { uuid: string; state: number; providerUuid: string; createdAt?: Date; closedAt?: Date } | null;
+  lease?: { uuid: string; state: LeaseState; providerUuid: string; createdAt?: Date; closedAt?: Date } | null;
   activeLeases?: { uuid: string; providerUuid: string; createdAt?: Date }[];
   pendingLeases?: { uuid: string; providerUuid: string; createdAt?: Date }[];
+  closedLeases?: { uuid: string; providerUuid: string; createdAt?: Date }[];
+  rejectedLeases?: { uuid: string; providerUuid: string; createdAt?: Date }[];
+  expiredLeases?: { uuid: string; providerUuid: string; createdAt?: Date }[];
 }
 
 interface SkuOverrides {
@@ -97,6 +82,9 @@ export function makeMockQueryClient(overrides?: {
   const lease = billing.lease ?? null;
   const activeLeases = billing.activeLeases ?? [];
   const pendingLeases = billing.pendingLeases ?? [];
+  const closedLeases = billing.closedLeases ?? [];
+  const rejectedLeases = billing.rejectedLeases ?? [];
+  const expiredLeases = billing.expiredLeases ?? [];
 
   const providers = sku.providers ?? [];
   const skus = sku.skus ?? [];
@@ -124,9 +112,21 @@ export function makeMockQueryClient(overrides?: {
           lease: vi.fn().mockImplementation(async () => {
             return { lease };
           }),
-          leasesByTenant: vi.fn().mockImplementation(async ({ stateFilter }: { stateFilter: number }) => {
-            if (stateFilter === 2) return { leases: activeLeases };
-            if (stateFilter === 1) return { leases: pendingLeases };
+          leasesByTenant: vi.fn().mockImplementation(async ({ stateFilter }: { stateFilter: LeaseState }) => {
+            if (stateFilter === LeaseState.LEASE_STATE_UNSPECIFIED) {
+              return { leases: [
+                ...activeLeases.map(l => ({ state: LeaseState.LEASE_STATE_ACTIVE, ...l })),
+                ...pendingLeases.map(l => ({ state: LeaseState.LEASE_STATE_PENDING, ...l })),
+                ...closedLeases.map(l => ({ state: LeaseState.LEASE_STATE_CLOSED, ...l })),
+                ...rejectedLeases.map(l => ({ state: LeaseState.LEASE_STATE_REJECTED, ...l })),
+                ...expiredLeases.map(l => ({ state: LeaseState.LEASE_STATE_EXPIRED, ...l })),
+              ] };
+            }
+            if (stateFilter === LeaseState.LEASE_STATE_ACTIVE) return { leases: activeLeases.map(l => ({ state: LeaseState.LEASE_STATE_ACTIVE, ...l })) };
+            if (stateFilter === LeaseState.LEASE_STATE_PENDING) return { leases: pendingLeases.map(l => ({ state: LeaseState.LEASE_STATE_PENDING, ...l })) };
+            if (stateFilter === LeaseState.LEASE_STATE_CLOSED) return { leases: closedLeases.map(l => ({ state: LeaseState.LEASE_STATE_CLOSED, ...l })) };
+            if (stateFilter === LeaseState.LEASE_STATE_REJECTED) return { leases: rejectedLeases.map(l => ({ state: LeaseState.LEASE_STATE_REJECTED, ...l })) };
+            if (stateFilter === LeaseState.LEASE_STATE_EXPIRED) return { leases: expiredLeases.map(l => ({ state: LeaseState.LEASE_STATE_EXPIRED, ...l })) };
             return { leases: [] };
           }),
         },

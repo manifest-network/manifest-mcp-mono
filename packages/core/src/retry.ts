@@ -26,37 +26,44 @@ const NON_RETRYABLE_ERROR_CODES: ManifestMCPErrorCode[] = [
   ManifestMCPErrorCode.UNKNOWN_MODULE,
   ManifestMCPErrorCode.UNKNOWN_SUBCOMMAND,
 
-  // Transaction failures due to validation - won't change on retry
+  // Transaction failures - on-chain rejection or broadcast failure
+  // Retrying could cause double-spend for non-idempotent operations
+  ManifestMCPErrorCode.TX_FAILED,
+  ManifestMCPErrorCode.TX_BROADCAST_FAILED,
   ManifestMCPErrorCode.INSUFFICIENT_FUNDS,
 ];
 
 /**
- * Check if an error message indicates a transient failure that should be retried
+ * Check if an error message indicates a transient failure that should be retried.
+ *
+ * Uses specific patterns to avoid false positives (e.g. "proposal 500" matching
+ * bare "500", or "connection to validator not authorized" matching "connection").
  */
 function isTransientErrorMessage(message: string): boolean {
   const lowerMessage = message.toLowerCase();
 
-  // Network-level errors
+  // Node.js / system error codes (specific, no false positives)
   if (
     lowerMessage.includes('econnrefused') ||
     lowerMessage.includes('econnreset') ||
     lowerMessage.includes('etimedout') ||
     lowerMessage.includes('enotfound') ||
-    lowerMessage.includes('network') ||
-    lowerMessage.includes('socket') ||
-    lowerMessage.includes('timeout') ||
+    lowerMessage.includes('epipe') ||
+    lowerMessage.includes('socket hang up') ||
     lowerMessage.includes('timed out') ||
-    lowerMessage.includes('connection')
+    lowerMessage.includes('network request failed') ||
+    lowerMessage.includes('fetch failed')
   ) {
     return true;
   }
 
-  // HTTP 5xx errors (server-side issues)
+  // HTTP 5xx errors — match "HTTP 5xx" or "status 5xx" patterns, not bare numbers
+  if (/\b(?:http|status)\s*5\d{2}\b/.test(lowerMessage)) {
+    return true;
+  }
+
+  // HTTP 5xx descriptive strings
   if (
-    lowerMessage.includes('500') ||
-    lowerMessage.includes('502') ||
-    lowerMessage.includes('503') ||
-    lowerMessage.includes('504') ||
     lowerMessage.includes('internal server error') ||
     lowerMessage.includes('bad gateway') ||
     lowerMessage.includes('service unavailable') ||
@@ -65,8 +72,8 @@ function isTransientErrorMessage(message: string): boolean {
     return true;
   }
 
-  // Rate limiting (should be handled by rate limiter, but retry if we hit it anyway)
-  if (lowerMessage.includes('429') || lowerMessage.includes('too many requests')) {
+  // Rate limiting
+  if (/\b429\b/.test(lowerMessage) || lowerMessage.includes('too many requests')) {
     return true;
   }
 

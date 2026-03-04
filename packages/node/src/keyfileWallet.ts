@@ -157,6 +157,9 @@ export class KeyfileWalletProvider implements WalletProvider {
           `Keyfile address prefix mismatch: keyfile produced "${this.address.slice(0, this.address.indexOf('1'))}" but config expects "${this.addressPrefix}". Regenerate the keyfile with the correct COSMOS_ADDRESS_PREFIX.`
         );
       }
+      // Clear password from memory only after full initialization succeeds,
+      // so that a retry after a partial failure can still use it.
+      this.password = undefined;
       this.initPromise = null;
     } catch (error) {
       this.initPromise = null;

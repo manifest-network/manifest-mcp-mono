@@ -7,7 +7,7 @@ vi.mock('../cosmos.js', () => ({
 import { fundCredits } from './fundCredits.js';
 import { cosmosTx } from '../cosmos.js';
 import { makeMockClientManager } from '../__test-utils__/mocks.js';
-import { ManifestMCPError } from '../types.js';
+import { ManifestMCPError, ManifestMCPErrorCode } from '../types.js';
 
 const mockCosmosTx = vi.mocked(cosmosTx);
 
@@ -41,16 +41,14 @@ describe('fundCredits', () => {
     expect(result.confirmed).toBe(true);
   });
 
-  it('throws when tx returns nonzero code', async () => {
+  it('throws when tx fails on-chain', async () => {
     const cm = makeMockClientManager({ address: 'manifest1tenant' });
-    mockCosmosTx.mockResolvedValue({
-      module: 'billing',
-      subcommand: 'fund-credit',
-      transactionHash: 'TX_FAIL',
-      code: 5,
-      height: '100',
-      rawLog: 'insufficient funds',
-    });
+    mockCosmosTx.mockRejectedValue(
+      new ManifestMCPError(
+        ManifestMCPErrorCode.TX_FAILED,
+        'Transaction billing fund-credit failed with code 5: insufficient funds',
+      ),
+    );
 
     await expect(fundCredits(cm as any, '10000000umfx')).rejects.toThrow(ManifestMCPError);
   });

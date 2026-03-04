@@ -89,20 +89,25 @@ If you use a mnemonic instead of a keyfile, replace `MANIFEST_KEY_PASSWORD` with
 
 ## Available MCP tools
 
-The node package exposes all 10 tools (the core package advertises 7 base tools; the node package adds an app registry which enables the remaining 3):
+The server exposes 15 tools:
 
 | Tool | Description |
 |------|-------------|
-| `get_account_info` | Get the address of the configured wallet |
-| `cosmos_query` | Execute any Cosmos SDK query (bank, staking, gov, etc.) |
-| `cosmos_tx` | Sign and broadcast any Cosmos SDK transaction |
+| `get_account_info` | Get account address and key name for the configured key |
+| `cosmos_query` | Execute any Cosmos SDK query command |
+| `cosmos_tx` | Execute any Cosmos SDK transaction |
 | `list_modules` | List all available query and transaction modules |
-| `list_module_subcommands` | List subcommands for a specific module |
+| `list_module_subcommands` | List all available subcommands for a specific module |
 | `browse_catalog` | Browse available cloud providers and service tiers |
 | `get_balance` | Get account balances, credit status, and spending estimates |
-| `list_apps` | List all deployed apps for the current account |
-| `app_status` | Get detailed status for a deployed app by name |
-| `get_logs` | Get logs for a deployed app by name |
+| `fund_credits` | Fund the credit account for deploying apps |
+| `list_apps` | List all leases for the current account |
+| `app_status` | Get detailed status for a deployed app by lease UUID |
+| `get_logs` | Get logs for a deployed app by lease UUID |
+| `deploy_app` | Deploy a new application |
+| `stop_app` | Stop a deployed app by closing its lease on-chain |
+| `restart_app` | Restart a deployed app via the provider |
+| `update_app` | Update a deployed app with a new manifest |
 
 ## License
 

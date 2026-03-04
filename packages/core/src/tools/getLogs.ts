@@ -1,27 +1,39 @@
-import type { AppRegistry } from '../registry.js';
-import { getLeaseLogs } from '../http/fred.js';
+import type { ManifestQueryClient } from '../client.js';
+import { LeaseState, leaseStateToJSON } from '@manifest-network/manifestjs/dist/codegen/liftedinit/billing/v1/types.js';
 import { ManifestMCPError, ManifestMCPErrorCode } from '../types.js';
+import { getLeaseLogs } from '../http/fred.js';
+import { resolveProviderUrl } from './resolveLeaseProvider.js';
 
 const MAX_LOG_CHARS = 4000;
 
 export async function getAppLogs(
+  queryClient: ManifestQueryClient,
   address: string,
-  appName: string,
-  appRegistry: AppRegistry,
+  leaseUuid: string,
   getAuthToken: (address: string, leaseUuid: string) => Promise<string>,
   tail?: number,
 ) {
-  const app = appRegistry.getApp(address, appName);
+  const leaseResult = await queryClient.liftedinit.billing.v1.lease({ leaseUuid });
 
-  if (!app.providerUrl) {
+  if (!leaseResult.lease) {
     throw new ManifestMCPError(
       ManifestMCPErrorCode.QUERY_FAILED,
-      `App "${appName}" has no provider URL`,
+      `Lease "${leaseUuid}" not found on chain`,
     );
   }
 
-  const authToken = await getAuthToken(address, app.leaseUuid);
-  const result = await getLeaseLogs(app.providerUrl, app.leaseUuid, authToken, tail);
+  const lease = leaseResult.lease;
+
+  if (lease.state !== LeaseState.LEASE_STATE_ACTIVE && lease.state !== LeaseState.LEASE_STATE_PENDING) {
+    throw new ManifestMCPError(
+      ManifestMCPErrorCode.QUERY_FAILED,
+      `Lease "${leaseUuid}" is not active (state: ${leaseStateToJSON(lease.state)}); logs are not available`,
+    );
+  }
+
+  const providerUrl = await resolveProviderUrl(queryClient, lease.providerUuid);
+  const authToken = await getAuthToken(address, leaseUuid);
+  const result = await getLeaseLogs(providerUrl, leaseUuid, authToken, tail);
 
   let truncated = false;
   const logs: Record<string, string> = {};
@@ -43,7 +55,7 @@ export async function getAppLogs(
   }
 
   return {
-    app_name: app.name,
+    lease_uuid: leaseUuid,
     logs,
     truncated,
   };

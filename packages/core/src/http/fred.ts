@@ -104,14 +104,15 @@ export interface PollOptions {
 export async function pollLeaseUntilReady(
   providerUrl: string,
   leaseUuid: string,
-  authToken: string,
+  authToken: string | (() => Promise<string>),
   opts: PollOptions = {},
 ): Promise<FredLeaseStatus> {
   const { intervalMs = 3_000, timeoutMs = 120_000 } = opts;
   const deadline = Date.now() + timeoutMs;
 
   while (Date.now() < deadline) {
-    const status = await getLeaseStatus(providerUrl, leaseUuid, authToken);
+    const token = typeof authToken === 'function' ? await authToken() : authToken;
+    const status = await getLeaseStatus(providerUrl, leaseUuid, token);
     if (status.status === 'ready' || status.status === 'running') {
       return status;
     }

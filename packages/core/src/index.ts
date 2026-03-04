@@ -16,9 +16,9 @@ import {
 } from './types.js';
 import { createValidatedConfig } from './config.js';
 import { VERSION } from './version.js';
-import { requireString, requireStringEnum, parseArgs, optionalBoolean } from './validation.js';
-import type { AppRegistry } from './registry.js';
+import { requireString, requireStringEnum, requireUuid, parseArgs, optionalBoolean } from './validation.js';
 import { createSignMessage, createLeaseDataSignMessage, createAuthToken } from './http/auth.js';
+import type { LeaseStateFilter } from './tools/listApps.js';
 import { browseCatalog } from './tools/browseCatalog.js';
 import { getBalance } from './tools/getBalance.js';
 import { listApps } from './tools/listApps.js';
@@ -103,18 +103,21 @@ export { cosmosQuery, cosmosTx } from './cosmos.js';
 export { getAvailableModules, getModuleSubcommands, getSubcommandUsage, getSupportedModules, isSubcommandSupported } from './modules.js';
 export { MnemonicWalletProvider } from './wallet/index.js';
 export { withRetry, isRetryableError, calculateBackoff, type RetryOptions } from './retry.js';
-export type { AppEntry, AppRegistry } from './registry.js';
-export { InMemoryAppRegistry } from './registry.js';
 export { ProviderApiError } from './http/provider.js';
-export { requireString, requireStringEnum, parseArgs, optionalBoolean } from './validation.js';
+export { LeaseState } from '@manifest-network/manifestjs/dist/codegen/liftedinit/billing/v1/types.js';
+export { resolveLeaseProvider, resolveProviderUrl, type LeaseProviderInfo } from './tools/resolveLeaseProvider.js';
+export { type LeaseStateFilter, type LeaseInfo } from './tools/listApps.js';
+export { type DeployAppResult, type DeployAppInput } from './tools/deployApp.js';
+export { type StopAppResult } from './tools/stopApp.js';
+export { requireString, requireStringEnum, requireUuid, parseArgs, optionalBoolean } from './validation.js';
 
 /** Maximum number of log lines that can be requested via get_logs */
 const MAX_LOG_TAIL = 1000;
 
 /**
- * Base tools always available (chain interaction + read-only composites)
+ * All tools exposed by the MCP server
  */
-const BASE_TOOLS: Tool[] = [
+const TOOLS: Tool[] = [
   {
     name: 'get_account_info',
     description: 'Get account address and key name for the configured key',
@@ -246,54 +249,54 @@ const BASE_TOOLS: Tool[] = [
       required: ['amount'],
     },
   },
-];
-
-/**
- * App-management tools that require an AppRegistry
- */
-const APP_TOOLS: Tool[] = [
   {
     name: 'list_apps',
     description:
-      'List all deployed apps for the current account. Returns apps with their status, lease UUID, and metadata. Reconciles chain state with local registry.',
+      'List all leases for the current account. Returns leases with their state, provider UUID, and timestamps.',
     inputSchema: {
       type: 'object',
-      properties: {},
+      properties: {
+        state: {
+          type: 'string',
+          enum: ['all', 'pending', 'active', 'closed', 'rejected', 'expired'],
+          description: 'Filter leases by state (default: "all")',
+        },
+      },
       required: [],
     },
   },
   {
     name: 'app_status',
     description:
-      'Get detailed status for a deployed app by name. Returns chain state, provider status, and connection info.',
+      'Get detailed status for a deployed app by lease UUID. Returns chain state, provider status, and connection info.',
     inputSchema: {
       type: 'object',
       properties: {
-        name: {
+        lease_uuid: {
           type: 'string',
-          description: 'The name of the app to check',
+          description: 'The lease UUID of the app to check',
         },
       },
-      required: ['name'],
+      required: ['lease_uuid'],
     },
   },
   {
     name: 'get_logs',
     description:
-      'Get logs for a deployed app by name. Returns recent logs from all services, truncated to fit LLM context.',
+      'Get logs for a deployed app by lease UUID. Returns recent logs from all services, truncated to fit LLM context.',
     inputSchema: {
       type: 'object',
       properties: {
-        name: {
+        lease_uuid: {
           type: 'string',
-          description: 'The name of the app to get logs for',
+          description: 'The lease UUID of the app to get logs for',
         },
         tail: {
           type: 'number',
           description: 'Number of recent log lines to retrieve',
         },
       },
-      required: ['name'],
+      required: ['lease_uuid'],
     },
   },
   {
@@ -315,10 +318,6 @@ const APP_TOOLS: Tool[] = [
           type: 'string',
           description: 'SKU tier name (e.g. "docker-micro", "docker-small")',
         },
-        app_name: {
-          type: 'string',
-          description: 'Optional friendly name for the app',
-        },
         env: {
           type: 'object',
           description: 'Optional environment variables as key-value pairs',
@@ -335,12 +334,12 @@ const APP_TOOLS: Tool[] = [
     inputSchema: {
       type: 'object',
       properties: {
-        app_name: {
+        lease_uuid: {
           type: 'string',
-          description: 'The name of the app to stop',
+          description: 'The lease UUID of the app to stop',
         },
       },
-      required: ['app_name'],
+      required: ['lease_uuid'],
     },
   },
   {
@@ -350,40 +349,31 @@ const APP_TOOLS: Tool[] = [
     inputSchema: {
       type: 'object',
       properties: {
-        app_name: {
+        lease_uuid: {
           type: 'string',
-          description: 'The name of the app to restart',
+          description: 'The lease UUID of the app to restart',
         },
       },
-      required: ['app_name'],
+      required: ['lease_uuid'],
     },
   },
   {
     name: 'update_app',
     description:
-      'Update a deployed app with new image, port, or environment variables.',
+      'Update a deployed app with a new manifest.',
     inputSchema: {
       type: 'object',
       properties: {
-        app_name: {
+        lease_uuid: {
           type: 'string',
-          description: 'The name of the app to update',
+          description: 'The lease UUID of the app to update',
         },
-        image: {
+        manifest: {
           type: 'string',
-          description: 'New Docker image',
-        },
-        port: {
-          type: 'number',
-          description: 'New container port',
-        },
-        env: {
-          type: 'object',
-          description: 'New environment variables (replaces existing)',
-          additionalProperties: { type: 'string' },
+          description: 'The full manifest JSON string to deploy',
         },
       },
-      required: ['app_name'],
+      required: ['lease_uuid', 'manifest'],
     },
   },
 ];
@@ -394,7 +384,6 @@ const APP_TOOLS: Tool[] = [
 export interface ManifestMCPServerOptions {
   config: ManifestMCPConfig;
   walletProvider: WalletProvider;
-  appRegistry?: AppRegistry;
 }
 
 /**
@@ -404,18 +393,12 @@ export class ManifestMCPServer {
   private server: Server;
   private clientManager: CosmosClientManager;
   private walletProvider: WalletProvider;
-  private appRegistry: AppRegistry | undefined;
   private config: ManifestMCPConfig;
-  private tools: Tool[];
 
   constructor(options: ManifestMCPServerOptions) {
     this.config = createValidatedConfig(options.config);
     this.walletProvider = options.walletProvider;
-    this.appRegistry = options.appRegistry;
     this.clientManager = CosmosClientManager.getInstance(this.config, this.walletProvider);
-    this.tools = this.appRegistry
-      ? [...BASE_TOOLS, ...APP_TOOLS]
-      : [...BASE_TOOLS];
 
     this.server = new Server(
       {
@@ -437,7 +420,7 @@ export class ManifestMCPServer {
    */
   private setupHandlers(): void {
     this.server.setRequestHandler(ListToolsRequestSchema, async () => ({
-      tools: this.tools,
+      tools: TOOLS,
     }));
 
     this.server.setRequestHandler(CallToolRequestSchema, async (request) => {
@@ -524,7 +507,7 @@ export class ManifestMCPServer {
       case 'cosmos_tx': {
         const module = requireString(toolInput, 'module', ManifestMCPErrorCode.TX_FAILED);
         const subcommand = requireString(toolInput, 'subcommand', ManifestMCPErrorCode.TX_FAILED);
-        const args = parseArgs(toolInput.args);
+        const args = parseArgs(toolInput.args, ManifestMCPErrorCode.TX_FAILED);
         const waitForConfirmation = optionalBoolean(toolInput, 'wait_for_confirmation');
 
         const result = await cosmosTx(
@@ -621,15 +604,16 @@ export class ManifestMCPServer {
       }
 
       case 'list_apps': {
-        if (!this.appRegistry) {
-          throw new ManifestMCPError(
-            ManifestMCPErrorCode.MISSING_CONFIG,
-            'App registry is not configured. Pass appRegistry in ManifestMCPServerOptions.'
-          );
-        }
         const address = await this.walletProvider.getAddress();
         const queryClient = await this.clientManager.getQueryClient();
-        const result = await listApps(queryClient, address, this.appRegistry);
+        const VALID_STATE_FILTERS = ['all', 'pending', 'active', 'closed', 'rejected', 'expired'] as const;
+        let stateFilter: LeaseStateFilter;
+        if ('state' in toolInput) {
+          stateFilter = requireStringEnum(toolInput, 'state', VALID_STATE_FILTERS);
+        } else {
+          stateFilter = 'all';
+        }
+        const result = await listApps(queryClient, address, stateFilter);
         return {
           content: [
             {
@@ -641,21 +625,14 @@ export class ManifestMCPServer {
       }
 
       case 'app_status': {
-        if (!this.appRegistry) {
-          throw new ManifestMCPError(
-            ManifestMCPErrorCode.MISSING_CONFIG,
-            'App registry is not configured. Pass appRegistry in ManifestMCPServerOptions.'
-          );
-        }
-        const name = requireString(toolInput, 'name');
+        const leaseUuid = requireUuid(toolInput, 'lease_uuid');
         const address = await this.walletProvider.getAddress();
         const queryClient = await this.clientManager.getQueryClient();
         const result = await appStatus(
           queryClient,
           address,
-          name,
-          this.appRegistry,
-          (addr, leaseUuid) => this.getProviderAuthToken(addr, leaseUuid),
+          leaseUuid,
+          (addr, uuid) => this.getProviderAuthToken(addr, uuid),
         );
         return {
           content: [
@@ -668,23 +645,18 @@ export class ManifestMCPServer {
       }
 
       case 'get_logs': {
-        if (!this.appRegistry) {
-          throw new ManifestMCPError(
-            ManifestMCPErrorCode.MISSING_CONFIG,
-            'App registry is not configured. Pass appRegistry in ManifestMCPServerOptions.'
-          );
-        }
-        const name = requireString(toolInput, 'name');
+        const leaseUuid = requireUuid(toolInput, 'lease_uuid');
         const rawTail = toolInput.tail;
         const tail = typeof rawTail === 'number' && Number.isFinite(rawTail) && rawTail > 0
           ? Math.min(Math.floor(rawTail), MAX_LOG_TAIL)
           : undefined;
         const address = await this.walletProvider.getAddress();
+        const queryClient = await this.clientManager.getQueryClient();
         const result = await getAppLogs(
+          queryClient,
           address,
-          name,
-          this.appRegistry,
-          (addr, leaseUuid) => this.getProviderAuthToken(addr, leaseUuid),
+          leaseUuid,
+          (addr, uuid) => this.getProviderAuthToken(addr, uuid),
           tail,
         );
         return {
@@ -698,12 +670,6 @@ export class ManifestMCPServer {
       }
 
       case 'deploy_app': {
-        if (!this.appRegistry) {
-          throw new ManifestMCPError(
-            ManifestMCPErrorCode.MISSING_CONFIG,
-            'App registry is not configured. Pass appRegistry in ManifestMCPServerOptions.'
-          );
-        }
         const image = requireString(toolInput, 'image');
         const port = toolInput.port;
         if (typeof port !== 'number' || !Number.isFinite(port) || port <= 0) {
@@ -713,15 +679,31 @@ export class ManifestMCPServer {
           );
         }
         const size = requireString(toolInput, 'size');
-        const appName = typeof toolInput.app_name === 'string' ? toolInput.app_name : undefined;
-        const env = toolInput.env as Record<string, string> | undefined;
+        let env: Record<string, string> | undefined;
+        if (toolInput.env !== undefined && toolInput.env !== null) {
+          if (typeof toolInput.env !== 'object' || Array.isArray(toolInput.env)) {
+            throw new ManifestMCPError(
+              ManifestMCPErrorCode.TX_FAILED,
+              'env must be an object mapping string keys to string values',
+            );
+          }
+          env = {};
+          for (const [key, value] of Object.entries(toolInput.env)) {
+            if (typeof value !== 'string') {
+              throw new ManifestMCPError(
+                ManifestMCPErrorCode.TX_FAILED,
+                `env value for key "${key}" must be a string, got ${typeof value}`,
+              );
+            }
+            env[key] = value;
+          }
+        }
 
         const result = await deployApp(
           this.clientManager,
-          this.appRegistry,
-          (addr, leaseUuid) => this.getProviderAuthToken(addr, leaseUuid),
-          (addr, leaseUuid, metaHashHex) => this.getLeaseDataAuthToken(addr, leaseUuid, metaHashHex),
-          { image, port, size, app_name: appName, env },
+          (addr, uuid) => this.getProviderAuthToken(addr, uuid),
+          (addr, uuid, metaHashHex) => this.getLeaseDataAuthToken(addr, uuid, metaHashHex),
+          { image, port, size, env },
         );
         return {
           content: [
@@ -734,15 +716,8 @@ export class ManifestMCPServer {
       }
 
       case 'stop_app': {
-        if (!this.appRegistry) {
-          throw new ManifestMCPError(
-            ManifestMCPErrorCode.MISSING_CONFIG,
-            'App registry is not configured. Pass appRegistry in ManifestMCPServerOptions.'
-          );
-        }
-        const appName = requireString(toolInput, 'app_name');
-        const address = await this.walletProvider.getAddress();
-        const result = await stopApp(this.clientManager, address, appName, this.appRegistry);
+        const leaseUuid = requireUuid(toolInput, 'lease_uuid', ManifestMCPErrorCode.TX_FAILED);
+        const result = await stopApp(this.clientManager, leaseUuid);
         return {
           content: [
             {
@@ -754,19 +729,14 @@ export class ManifestMCPServer {
       }
 
       case 'restart_app': {
-        if (!this.appRegistry) {
-          throw new ManifestMCPError(
-            ManifestMCPErrorCode.MISSING_CONFIG,
-            'App registry is not configured. Pass appRegistry in ManifestMCPServerOptions.'
-          );
-        }
-        const appName = requireString(toolInput, 'app_name');
+        const leaseUuid = requireUuid(toolInput, 'lease_uuid');
         const address = await this.walletProvider.getAddress();
+        const queryClient = await this.clientManager.getQueryClient();
         const result = await restartApp(
+          queryClient,
           address,
-          appName,
-          this.appRegistry,
-          (addr, leaseUuid) => this.getProviderAuthToken(addr, leaseUuid),
+          leaseUuid,
+          (addr, uuid) => this.getProviderAuthToken(addr, uuid),
         );
         return {
           content: [
@@ -779,24 +749,30 @@ export class ManifestMCPServer {
       }
 
       case 'update_app': {
-        if (!this.appRegistry) {
+        const leaseUuid = requireUuid(toolInput, 'lease_uuid', ManifestMCPErrorCode.TX_FAILED);
+        const manifest = requireString(toolInput, 'manifest', ManifestMCPErrorCode.TX_FAILED);
+
+        try {
+          const parsed = JSON.parse(manifest);
+          if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+            throw new Error('must be a JSON object');
+          }
+        } catch (err) {
           throw new ManifestMCPError(
-            ManifestMCPErrorCode.MISSING_CONFIG,
-            'App registry is not configured. Pass appRegistry in ManifestMCPServerOptions.'
+            ManifestMCPErrorCode.TX_FAILED,
+            `Invalid manifest: ${err instanceof Error ? err.message : String(err)}`,
           );
         }
-        const appName = requireString(toolInput, 'app_name');
+
         const address = await this.walletProvider.getAddress();
-        const image = typeof toolInput.image === 'string' ? toolInput.image : undefined;
-        const port = typeof toolInput.port === 'number' ? toolInput.port : undefined;
-        const env = toolInput.env as Record<string, string> | undefined;
+        const queryClient = await this.clientManager.getQueryClient();
 
         const result = await updateApp(
+          queryClient,
           address,
-          appName,
-          this.appRegistry,
-          (addr, leaseUuid) => this.getProviderAuthToken(addr, leaseUuid),
-          { image, port, env },
+          leaseUuid,
+          (addr, uuid) => this.getProviderAuthToken(addr, uuid),
+          manifest,
         );
         return {
           content: [
@@ -846,7 +822,7 @@ export class ManifestMCPServer {
    * Get the advertised tool list (for testing / introspection)
    */
   getTools(): Tool[] {
-    return this.tools;
+    return TOOLS;
   }
 
   /**

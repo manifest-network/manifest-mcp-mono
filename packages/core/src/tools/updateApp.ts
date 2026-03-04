@@ -1,53 +1,40 @@
-import type { AppRegistry } from '../registry.js';
-import { updateLease } from '../http/fred.js';
+import type { ManifestQueryClient } from '../client.js';
+import { LeaseState, leaseStateToJSON } from '@manifest-network/manifestjs/dist/codegen/liftedinit/billing/v1/types.js';
 import { ManifestMCPError, ManifestMCPErrorCode } from '../types.js';
+import { updateLease } from '../http/fred.js';
+import { resolveProviderUrl } from './resolveLeaseProvider.js';
 
 export async function updateApp(
+  queryClient: ManifestQueryClient,
   address: string,
-  appName: string,
-  appRegistry: AppRegistry,
+  leaseUuid: string,
   getAuthToken: (address: string, leaseUuid: string) => Promise<string>,
-  updates: { image?: string; port?: number; env?: Record<string, string> },
+  manifest: string,
 ) {
-  const app = appRegistry.getApp(address, appName);
+  const leaseResult = await queryClient.liftedinit.billing.v1.lease({ leaseUuid });
 
-  if (!app.providerUrl) {
+  if (!leaseResult.lease) {
     throw new ManifestMCPError(
       ManifestMCPErrorCode.QUERY_FAILED,
-      `App "${appName}" has no provider URL`,
+      `Lease "${leaseUuid}" not found on chain`,
     );
   }
 
-  // Parse existing manifest or start fresh
-  let manifest: Record<string, unknown> = {};
-  if (app.manifest) {
-    try {
-      manifest = JSON.parse(app.manifest);
-    } catch (err) {
-      console.warn('Invalid stored manifest, starting fresh:', err instanceof Error ? err.message : err);
-    }
+  const lease = leaseResult.lease;
+
+  if (lease.state !== LeaseState.LEASE_STATE_ACTIVE && lease.state !== LeaseState.LEASE_STATE_PENDING) {
+    throw new ManifestMCPError(
+      ManifestMCPErrorCode.QUERY_FAILED,
+      `Lease "${leaseUuid}" is not active (state: ${leaseStateToJSON(lease.state)}) and cannot be updated`,
+    );
   }
 
-  // Merge updates
-  if (updates.image !== undefined) {
-    manifest.image = updates.image;
-  }
-  if (updates.port !== undefined) {
-    manifest.ports = { [`${updates.port}/tcp`]: {} };
-  }
-  if (updates.env !== undefined) {
-    manifest.env = updates.env;
-  }
-
-  const manifestJson = JSON.stringify(manifest);
-
-  const authToken = await getAuthToken(address, app.leaseUuid);
-  const result = await updateLease(app.providerUrl, app.leaseUuid, manifestJson, authToken);
-
-  appRegistry.updateApp(address, app.leaseUuid, { manifest: manifestJson });
+  const providerUrl = await resolveProviderUrl(queryClient, lease.providerUuid);
+  const authToken = await getAuthToken(address, leaseUuid);
+  const result = await updateLease(providerUrl, leaseUuid, manifest, authToken);
 
   return {
-    app_name: app.name,
+    lease_uuid: leaseUuid,
     status: result.status,
   };
 }

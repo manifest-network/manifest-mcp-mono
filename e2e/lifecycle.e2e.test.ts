@@ -83,18 +83,19 @@ describe('Deploy lifecycle', () => {
 
   it('deploy_app deploys nginx', async () => {
     const result = await client.callTool<{
-      app_name: string;
       lease_uuid: string;
+      provider_uuid: string;
+      provider_url: string;
       status: string;
     }>('deploy_app', {
       image: 'nginx:alpine',
       port: 80,
       size: 'docker-micro',
-      app_name: 'e2e-nginx',
     });
 
-    expect(result.app_name).toBe('e2e-nginx');
     expect(result.lease_uuid).toBeTruthy();
+    expect(result.provider_uuid).toBeTruthy();
+    expect(result.provider_url).toBeTruthy();
     expect(['running', 'ready']).toContain(result.status);
 
     leaseUuid = result.lease_uuid;
@@ -103,13 +104,14 @@ describe('Deploy lifecycle', () => {
   // ------------------------------------------------------------------
   // 7. List apps
   // ------------------------------------------------------------------
-  it('list_apps includes the deployed app', async () => {
+  it('list_apps includes the deployed lease', async () => {
     const result = await client.callTool<{
-      apps: Array<{ name: string; status: string }>;
-    }>('list_apps');
+      leases: Array<{ uuid: string; stateLabel: string }>;
+    }>('list_apps', { state: 'active' });
 
-    const app = result.apps.find((a) => a.name === 'e2e-nginx');
-    expect(app).toBeDefined();
+    const lease = result.leases.find((l) => l.uuid === leaseUuid);
+    expect(lease).toBeDefined();
+    expect(lease!.stateLabel).toBe('active');
   });
 
   // ------------------------------------------------------------------
@@ -117,12 +119,11 @@ describe('Deploy lifecycle', () => {
   // ------------------------------------------------------------------
   it('app_status returns chain state and connection info', async () => {
     const result = await client.callTool<{
-      name: string;
-      status: string;
+      lease_uuid: string;
       chainState: unknown;
-    }>('app_status', { name: 'e2e-nginx' });
+    }>('app_status', { lease_uuid: leaseUuid });
 
-    expect(result.name).toBe('e2e-nginx');
+    expect(result.lease_uuid).toBe(leaseUuid);
     expect(result.chainState).toBeDefined();
   });
 
@@ -131,11 +132,11 @@ describe('Deploy lifecycle', () => {
   // ------------------------------------------------------------------
   it('get_logs returns log data', async () => {
     const result = await client.callTool<{
-      app_name: string;
+      lease_uuid: string;
       logs: unknown;
-    }>('get_logs', { name: 'e2e-nginx', tail: 10 });
+    }>('get_logs', { lease_uuid: leaseUuid, tail: 10 });
 
-    expect(result.app_name).toBe('e2e-nginx');
+    expect(result.lease_uuid).toBe(leaseUuid);
     expect(result.logs).toBeDefined();
   });
 
@@ -144,26 +145,32 @@ describe('Deploy lifecycle', () => {
   // ------------------------------------------------------------------
   it('restart_app succeeds', async () => {
     const result = await client.callTool<{
-      app_name: string;
+      lease_uuid: string;
       status: string;
-    }>('restart_app', { app_name: 'e2e-nginx' });
+    }>('restart_app', { lease_uuid: leaseUuid });
 
-    expect(result.app_name).toBe('e2e-nginx');
+    expect(result.lease_uuid).toBe(leaseUuid);
   });
 
   // ------------------------------------------------------------------
   // 11. Update app
   // ------------------------------------------------------------------
-  it('update_app with env succeeds', async () => {
-    const result = await client.callTool<{
-      app_name: string;
-      status: string;
-    }>('update_app', {
-      app_name: 'e2e-nginx',
+  it('update_app with new manifest succeeds', async () => {
+    const manifest = JSON.stringify({
+      image: 'nginx:alpine',
+      ports: { '80/tcp': {} },
       env: { E2E_TEST: 'true' },
     });
 
-    expect(result.app_name).toBe('e2e-nginx');
+    const result = await client.callTool<{
+      lease_uuid: string;
+      status: string;
+    }>('update_app', {
+      lease_uuid: leaseUuid,
+      manifest,
+    });
+
+    expect(result.lease_uuid).toBe(leaseUuid);
   });
 
   // ------------------------------------------------------------------
@@ -171,24 +178,24 @@ describe('Deploy lifecycle', () => {
   // ------------------------------------------------------------------
   it('stop_app closes the lease', async () => {
     const result = await client.callTool<{
-      app_name: string;
+      lease_uuid: string;
       status: string;
-    }>('stop_app', { app_name: 'e2e-nginx' });
+    }>('stop_app', { lease_uuid: leaseUuid });
 
-    expect(result.app_name).toBe('e2e-nginx');
+    expect(result.lease_uuid).toBe(leaseUuid);
     expect(result.status).toBe('stopped');
   });
 
   // ------------------------------------------------------------------
   // 13. Verify stopped
   // ------------------------------------------------------------------
-  it('list_apps shows app as stopped', async () => {
+  it('list_apps shows lease as closed', async () => {
     const result = await client.callTool<{
-      apps: Array<{ name: string; status: string }>;
-    }>('list_apps');
+      leases: Array<{ uuid: string; stateLabel: string }>;
+    }>('list_apps', { state: 'closed' });
 
-    const app = result.apps.find((a) => a.name === 'e2e-nginx');
-    expect(app).toBeDefined();
-    expect(app!.status).toBe('stopped');
+    const lease = result.leases.find((l) => l.uuid === leaseUuid);
+    expect(lease).toBeDefined();
+    expect(lease!.stateLabel).toBe('closed');
   });
 });

@@ -38,12 +38,49 @@ export function requireStringEnum<T extends string>(
 
 /**
  * Parse raw args input into string array.
+ * Throws if a non-array, non-nullish value is provided (e.g., a bare string).
  */
-export function parseArgs(rawArgs: unknown): string[] {
+export function parseArgs(
+  rawArgs: unknown,
+  errorCode: ManifestMCPErrorCode = ManifestMCPErrorCode.QUERY_FAILED,
+): string[] {
+  if (rawArgs === undefined || rawArgs === null) {
+    return [];
+  }
   if (Array.isArray(rawArgs)) {
     return rawArgs.map(String);
   }
-  return [];
+  if (typeof rawArgs === 'string') {
+    throw new ManifestMCPError(
+      errorCode,
+      `args must be an array of strings, not a single string. Use ["${rawArgs}"] instead of "${rawArgs}".`,
+    );
+  }
+  throw new ManifestMCPError(
+    errorCode,
+    `args must be an array of strings, got ${typeof rawArgs}`,
+  );
+}
+
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Require a non-empty string field that is a valid UUID.
+ */
+export function requireUuid(
+  input: Record<string, unknown>,
+  field: string,
+  errorCode: ManifestMCPErrorCode = ManifestMCPErrorCode.QUERY_FAILED,
+): string {
+  const val = requireString(input, field, errorCode);
+  if (!UUID_PATTERN.test(val)) {
+    const display = val.length > 50 ? val.slice(0, 50) + '...' : val;
+    throw new ManifestMCPError(
+      errorCode,
+      `${field} must be a valid UUID (e.g., "550e8400-e29b-41d4-a716-446655440000"), got "${display}"`,
+    );
+  }
+  return val;
 }
 
 /**

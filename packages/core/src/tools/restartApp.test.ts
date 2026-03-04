@@ -1,77 +1,128 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { LeaseState } from '@manifest-network/manifestjs/dist/codegen/liftedinit/billing/v1/types.js';
 
 vi.mock('../http/fred.js', () => ({
   restartLease: vi.fn(),
 }));
 
+vi.mock('./resolveLeaseProvider.js', () => ({
+  resolveProviderUrl: vi.fn(),
+}));
+
 import { restartApp } from './restartApp.js';
 import { restartLease } from '../http/fred.js';
-import { InMemoryAppRegistry } from '../registry.js';
+import { resolveProviderUrl } from './resolveLeaseProvider.js';
+import { makeMockQueryClient } from '../__test-utils__/mocks.js';
 import { ManifestMCPError, ManifestMCPErrorCode } from '../types.js';
 
 const mockRestartLease = vi.mocked(restartLease);
+const mockResolveProviderUrl = vi.mocked(resolveProviderUrl);
 
 const ADDRESS = 'manifest1user';
 const mockGetAuthToken = vi.fn().mockResolvedValue('auth-token-123');
 
 describe('restartApp', () => {
-  let registry: InMemoryAppRegistry;
-
   beforeEach(() => {
     vi.clearAllMocks();
-    registry = new InMemoryAppRegistry();
+    mockResolveProviderUrl.mockResolvedValue('https://provider.example.com');
   });
 
-  it('restarts the lease via provider and returns status', async () => {
-    registry.addApp(ADDRESS, {
-      name: 'my-app',
-      leaseUuid: 'lease-1',
-      providerUrl: 'https://provider.example.com',
-      status: 'active',
+  it('queries lease, resolves provider URL, and restarts the lease', async () => {
+    const qc = makeMockQueryClient({
+      billing: {
+        lease: { uuid: 'lease-1', state: LeaseState.LEASE_STATE_ACTIVE, providerUuid: 'prov-1' },
+      },
     });
-
     mockRestartLease.mockResolvedValue({ status: 'restarting' });
 
-    const result = await restartApp(ADDRESS, 'my-app', registry, mockGetAuthToken);
+    const result = await restartApp(qc, ADDRESS, 'lease-1', mockGetAuthToken);
 
+    expect(mockResolveProviderUrl).toHaveBeenCalledWith(qc, 'prov-1');
     expect(mockRestartLease).toHaveBeenCalledWith(
       'https://provider.example.com',
       'lease-1',
       'auth-token-123',
     );
     expect(result).toEqual({
-      app_name: 'my-app',
+      lease_uuid: 'lease-1',
       status: 'restarting',
     });
   });
 
-  it('throws QUERY_FAILED when app has no providerUrl', async () => {
-    registry.addApp(ADDRESS, {
-      name: 'my-app',
-      leaseUuid: 'lease-1',
-      status: 'active',
+  it('throws when lease not found on chain', async () => {
+    const qc = makeMockQueryClient({
+      billing: { lease: null },
     });
 
     await expect(
-      restartApp(ADDRESS, 'my-app', registry, mockGetAuthToken),
+      restartApp(qc, ADDRESS, 'lease-1', mockGetAuthToken),
     ).rejects.toMatchObject({
       code: ManifestMCPErrorCode.QUERY_FAILED,
-      message: expect.stringContaining('no provider URL'),
+      message: expect.stringContaining('not found on chain'),
     });
+
+    expect(mockResolveProviderUrl).not.toHaveBeenCalled();
   });
 
-  it('throws when app not found in registry', async () => {
+  it('throws when lease is closed without resolving provider', async () => {
+    const qc = makeMockQueryClient({
+      billing: {
+        lease: { uuid: 'lease-1', state: LeaseState.LEASE_STATE_CLOSED, providerUuid: 'prov-1' },
+      },
+    });
+
     await expect(
-      restartApp(ADDRESS, 'nonexistent', registry, mockGetAuthToken),
-    ).rejects.toThrow(ManifestMCPError);
+      restartApp(qc, ADDRESS, 'lease-1', mockGetAuthToken),
+    ).rejects.toMatchObject({
+      code: ManifestMCPErrorCode.QUERY_FAILED,
+      message: expect.stringContaining('not active'),
+    });
+
+    expect(mockResolveProviderUrl).not.toHaveBeenCalled();
+    expect(mockRestartLease).not.toHaveBeenCalled();
+  });
+
+  it('throws when lease is rejected without resolving provider', async () => {
+    const qc = makeMockQueryClient({
+      billing: {
+        lease: { uuid: 'lease-1', state: LeaseState.LEASE_STATE_REJECTED, providerUuid: 'prov-1' },
+      },
+    });
+
+    await expect(
+      restartApp(qc, ADDRESS, 'lease-1', mockGetAuthToken),
+    ).rejects.toMatchObject({
+      code: ManifestMCPErrorCode.QUERY_FAILED,
+      message: expect.stringContaining('not active'),
+    });
+
+    expect(mockResolveProviderUrl).not.toHaveBeenCalled();
+    expect(mockRestartLease).not.toHaveBeenCalled();
+  });
+
+  it('throws when lease is expired without resolving provider', async () => {
+    const qc = makeMockQueryClient({
+      billing: {
+        lease: { uuid: 'lease-1', state: LeaseState.LEASE_STATE_EXPIRED, providerUuid: 'prov-1' },
+      },
+    });
+
+    await expect(
+      restartApp(qc, ADDRESS, 'lease-1', mockGetAuthToken),
+    ).rejects.toMatchObject({
+      code: ManifestMCPErrorCode.QUERY_FAILED,
+      message: expect.stringContaining('not active'),
+    });
+
+    expect(mockResolveProviderUrl).not.toHaveBeenCalled();
+    expect(mockRestartLease).not.toHaveBeenCalled();
   });
 
   it('lets auth errors propagate', async () => {
-    registry.addApp(ADDRESS, {
-      name: 'my-app',
-      leaseUuid: 'lease-1',
-      providerUrl: 'https://provider.example.com',
-      status: 'active',
+    const qc = makeMockQueryClient({
+      billing: {
+        lease: { uuid: 'lease-1', state: LeaseState.LEASE_STATE_ACTIVE, providerUuid: 'prov-1' },
+      },
     });
 
     const authError = new ManifestMCPError(
@@ -81,7 +132,7 @@ describe('restartApp', () => {
     const failingGetAuthToken = vi.fn().mockRejectedValue(authError);
 
     await expect(
-      restartApp(ADDRESS, 'my-app', registry, failingGetAuthToken),
+      restartApp(qc, ADDRESS, 'lease-1', failingGetAuthToken),
     ).rejects.toBe(authError);
   });
 });
