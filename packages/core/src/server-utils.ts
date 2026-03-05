@@ -105,7 +105,8 @@ export function withErrorHandling<T extends (...args: any[]) => Promise<CallTool
       if (error instanceof ManifestMCPError) {
         console.error(`[${toolName}] Tool error [${errorCode}]: ${errorMessage}`);
       } else {
-        console.error(`[${toolName}] Tool error [${errorCode}]:`, error);
+        const stack = error instanceof Error && error.stack ? `\n${error.stack}` : '';
+        console.error(`[${toolName}] Tool error [${errorCode}]: ${errorMessage}${stack}`);
       }
 
       let errorResponse: Record<string, unknown> = {

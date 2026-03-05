@@ -239,14 +239,16 @@ describe('withErrorHandling', () => {
     spy.mockRestore();
   });
 
-  it('logs full error object for non-ManifestMCPError', async () => {
+  it('logs message and stack for non-ManifestMCPError', async () => {
     const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
     const err = new TypeError('cannot read property of null');
     const handler = withErrorHandling<TestToolCb>('my_tool', async () => {
       throw err;
     });
     await handler({}, {});
-    expect(spy).toHaveBeenCalledWith('[my_tool] Tool error [UNKNOWN]:', err);
+    const logged = spy.mock.calls[0][0] as string;
+    expect(logged).toContain('[my_tool] Tool error [UNKNOWN]: cannot read property of null');
+    expect(logged).toContain('TypeError');
     spy.mockRestore();
   });
 });

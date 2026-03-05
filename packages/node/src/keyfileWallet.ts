@@ -51,7 +51,7 @@ export class KeyfileWalletProvider implements WalletProvider {
         if (code === 'ENOENT') {
           throw new ManifestMCPError(
             ManifestMCPErrorCode.WALLET_CONNECTION_FAILED,
-            `Keyfile not found at ${this.keyfilePath}. Run "manifest-mcp-chain keygen" or "manifest-mcp-cloud keygen" to generate one, or check MANIFEST_KEY_FILE.`
+            `Keyfile not found at ${this.keyfilePath}. Run "manifest-mcp-chain keygen" / "manifest-mcp-cloud keygen" to generate one, or "manifest-mcp-chain import" / "manifest-mcp-cloud import" to import an existing mnemonic. Check MANIFEST_KEY_FILE if the path is wrong.`
           );
         }
         if (code === 'EACCES') {
