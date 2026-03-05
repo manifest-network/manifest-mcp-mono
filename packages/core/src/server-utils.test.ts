@@ -51,6 +51,17 @@ describe('sanitizeForLogging', () => {
     expect(result['safe']).toBe('visible');
   });
 
+  it('redacts generic key and token fields', () => {
+    const result = sanitizeForLogging({
+      key: 'supersecret',
+      token: 'abc123',
+      safe: 'visible',
+    }) as Record<string, string>;
+    expect(result['key']).toBe('[REDACTED]');
+    expect(result['token']).toBe('[REDACTED]');
+    expect(result['safe']).toBe('visible');
+  });
+
   it('redacts sensitive fields case-insensitively', () => {
     const result = sanitizeForLogging({ Password: 'secret' }) as Record<string, string>;
     expect(result['Password']).toBe('[REDACTED]');

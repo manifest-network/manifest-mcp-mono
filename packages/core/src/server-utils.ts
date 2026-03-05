@@ -13,6 +13,8 @@ export const SENSITIVE_FIELDS = new Set([
   'secret',
   'password',
   'seed',
+  'key',
+  'token',
   'apikey',
   'api_key',
   'auth_token',
