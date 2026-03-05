@@ -77,9 +77,27 @@ describe('sanitizeForLogging', () => {
     expect(sanitizeForLogging(words)).toBe('[REDACTED - possible mnemonic]');
   });
 
+  it('redacts 15-word strings as possible mnemonic', () => {
+    const words = Array.from({ length: 15 }, (_, i) => `word${i}`).join(' ');
+    expect(sanitizeForLogging(words)).toBe('[REDACTED - possible mnemonic]');
+  });
+
+  it('redacts 18-word strings as possible mnemonic', () => {
+    const words = Array.from({ length: 18 }, (_, i) => `word${i}`).join(' ');
+    expect(sanitizeForLogging(words)).toBe('[REDACTED - possible mnemonic]');
+  });
+
+  it('redacts 21-word strings as possible mnemonic', () => {
+    const words = Array.from({ length: 21 }, (_, i) => `word${i}`).join(' ');
+    expect(sanitizeForLogging(words)).toBe('[REDACTED - possible mnemonic]');
+  });
+
   it('does not redact strings with other word counts', () => {
     expect(sanitizeForLogging('hello world')).toBe('hello world');
     expect(sanitizeForLogging('one two three')).toBe('one two three');
+    // 13 words — not a valid BIP-39 length
+    const thirteen = Array.from({ length: 13 }, (_, i) => `word${i}`).join(' ');
+    expect(sanitizeForLogging(thirteen)).toBe(thirteen);
   });
 
   it('recursively sanitizes arrays', () => {
@@ -122,7 +140,7 @@ describe('jsonResponse', () => {
   });
 });
 
-// Callback type for testing tools that accept (args, extra)
+// Callback type for testing tools that accept async (args, extra)
 type TestToolCb = (_args: Record<string, unknown>, _extra: unknown) => Promise<CallToolResult>;
 
 describe('withErrorHandling', () => {

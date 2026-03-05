@@ -72,7 +72,7 @@ export class KeyfileWalletProvider implements WalletProvider {
       } catch {
         throw new ManifestMCPError(
           ManifestMCPErrorCode.WALLET_CONNECTION_FAILED,
-          `Keyfile at ${this.keyfilePath} contains invalid JSON. The file may be corrupted. Regenerate with "manifest-mcp-chain keygen" or "manifest-mcp-cloud keygen".`
+          `Keyfile at ${this.keyfilePath} contains invalid JSON. The file may be corrupted. Regenerate with "manifest-mcp-chain keygen" / "manifest-mcp-cloud keygen" or import an existing mnemonic with "manifest-mcp-chain import" / "manifest-mcp-cloud import".`
         );
       }
 

@@ -44,9 +44,9 @@ export function sanitizeForLogging(obj: unknown, depth = 0): unknown {
   }
 
   if (typeof obj === 'string') {
-    // Redact strings that look like mnemonics (12 or 24 words)
+    // Redact strings that look like BIP-39 mnemonics (12/15/18/21/24 words)
     const wordCount = obj.trim().split(/\s+/).length;
-    if (wordCount === 12 || wordCount === 24) {
+    if (wordCount >= 12 && wordCount <= 24 && wordCount % 3 === 0) {
       return '[REDACTED - possible mnemonic]';
     }
     return obj;
@@ -87,7 +87,7 @@ export interface ManifestMCPServerOptions {
  * McpServer.registerTool flow through without requiring manual casts.
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- preserves ToolCallback<Args> signature from McpServer
-export function withErrorHandling<T extends (...args: any[]) => CallToolResult | Promise<CallToolResult>>(
+export function withErrorHandling<T extends (...args: any[]) => Promise<CallToolResult>>(
   toolName: string,
   fn: T,
 ): T {
