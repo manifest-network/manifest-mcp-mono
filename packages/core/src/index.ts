@@ -20,8 +20,6 @@ export {
   SENSITIVE_FIELDS,
   bigIntReplacer,
   sanitizeForLogging,
-  MAX_LOG_TAIL,
-  VALID_STATE_FILTERS,
   type ManifestMCPServerOptions,
   type MnemonicServerConfig,
   withErrorHandling,

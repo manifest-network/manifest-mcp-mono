@@ -77,9 +77,9 @@ export class ChainMCPServer {
       withErrorHandling('cosmos_query', async (args) => {
         const result = await cosmosQuery(
           this.clientManager,
-          args.module as string,
-          args.subcommand as string,
-          (args.args as string[] | undefined) ?? [],
+          args.module,
+          args.subcommand,
+          args.args ?? [],
         );
         return jsonResponse(result, bigIntReplacer);
       }),
@@ -100,10 +100,10 @@ export class ChainMCPServer {
       withErrorHandling('cosmos_tx', async (args) => {
         const result = await cosmosTx(
           this.clientManager,
-          args.module as string,
-          args.subcommand as string,
-          args.args as string[],
-          (args.wait_for_confirmation as boolean | undefined) ?? false,
+          args.module,
+          args.subcommand,
+          args.args,
+          args.wait_for_confirmation ?? false,
         );
         return jsonResponse(result, bigIntReplacer);
       }),
@@ -132,10 +132,8 @@ export class ChainMCPServer {
         },
       },
       withErrorHandling('list_module_subcommands', async (args) => {
-        const type = args.type as 'query' | 'tx';
-        const module = args.module as string;
-        const subcommands = getModuleSubcommands(type, module);
-        return jsonResponse({ type, module, subcommands });
+        const subcommands = getModuleSubcommands(args.type, args.module);
+        return jsonResponse({ type: args.type, module: args.module, subcommands });
       }),
     );
   }

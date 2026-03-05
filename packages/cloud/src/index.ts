@@ -13,12 +13,9 @@ import {
   ManifestMCPErrorCode,
   type ManifestMCPServerOptions,
   type MnemonicServerConfig,
-  type LeaseStateFilter,
   withErrorHandling,
   jsonResponse,
   bigIntReplacer,
-  MAX_LOG_TAIL,
-  VALID_STATE_FILTERS,
   browseCatalog,
   getBalance,
   listApps,
@@ -33,6 +30,12 @@ import {
 import type { WalletProvider } from '@manifest-network/manifest-mcp-core';
 
 export type { ManifestMCPServerOptions } from '@manifest-network/manifest-mcp-core';
+
+/** Maximum number of log lines that can be requested via get_logs */
+const MAX_LOG_TAIL = 1000;
+
+/** Valid lease state filter values */
+const VALID_STATE_FILTERS = ['all', 'pending', 'active', 'closed', 'rejected', 'expired'] as const;
 
 /**
  * MCP server for Manifest cloud deployment operations.
@@ -126,7 +129,7 @@ export class CloudMCPServer {
         },
       },
       withErrorHandling('fund_credits', async (args) => {
-        const result = await fundCredits(this.clientManager, args.amount as string);
+        const result = await fundCredits(this.clientManager, args.amount);
         return jsonResponse(result, bigIntReplacer);
       }),
     );
@@ -143,8 +146,7 @@ export class CloudMCPServer {
       withErrorHandling('list_apps', async (args) => {
         const address = await this.walletProvider.getAddress();
         const queryClient = await this.clientManager.getQueryClient();
-        const stateFilter: LeaseStateFilter = (args.state as LeaseStateFilter | undefined) ?? 'all';
-        const result = await listApps(queryClient, address, stateFilter);
+        const result = await listApps(queryClient, address, args.state ?? 'all');
         return jsonResponse(result, bigIntReplacer);
       }),
     );
@@ -159,7 +161,7 @@ export class CloudMCPServer {
         },
       },
       withErrorHandling('app_status', async (args) => {
-        const leaseUuid = args.lease_uuid as string;
+        const leaseUuid = args.lease_uuid;
         const address = await this.walletProvider.getAddress();
         const queryClient = await this.clientManager.getQueryClient();
         const result = await appStatus(
@@ -183,8 +185,8 @@ export class CloudMCPServer {
         },
       },
       withErrorHandling('get_logs', async (args) => {
-        const leaseUuid = args.lease_uuid as string;
-        const tail = args.tail as number | undefined;
+        const leaseUuid = args.lease_uuid;
+        const tail = args.tail;
         const address = await this.walletProvider.getAddress();
         const queryClient = await this.clientManager.getQueryClient();
         const result = await getAppLogs(
@@ -216,10 +218,10 @@ export class CloudMCPServer {
           (addr, uuid) => this.getProviderAuthToken(addr, uuid),
           (addr, uuid, metaHashHex) => this.getLeaseDataAuthToken(addr, uuid, metaHashHex),
           {
-            image: args.image as string,
-            port: args.port as number,
-            size: args.size as string,
-            env: args.env as Record<string, string> | undefined,
+            image: args.image,
+            port: args.port,
+            size: args.size,
+            env: args.env,
           },
         );
         return jsonResponse(result, bigIntReplacer);
@@ -236,7 +238,7 @@ export class CloudMCPServer {
         },
       },
       withErrorHandling('stop_app', async (args) => {
-        const result = await stopApp(this.clientManager, args.lease_uuid as string);
+        const result = await stopApp(this.clientManager, args.lease_uuid);
         return jsonResponse(result, bigIntReplacer);
       }),
     );
@@ -251,7 +253,7 @@ export class CloudMCPServer {
         },
       },
       withErrorHandling('restart_app', async (args) => {
-        const leaseUuid = args.lease_uuid as string;
+        const leaseUuid = args.lease_uuid;
         const address = await this.walletProvider.getAddress();
         const queryClient = await this.clientManager.getQueryClient();
         const result = await restartApp(
@@ -275,7 +277,7 @@ export class CloudMCPServer {
         },
       },
       withErrorHandling('update_app', async (args) => {
-        const manifest = args.manifest as string;
+        const manifest = args.manifest;
 
         try {
           const parsed = JSON.parse(manifest);
@@ -284,12 +286,12 @@ export class CloudMCPServer {
           }
         } catch (err) {
           throw new ManifestMCPError(
-            ManifestMCPErrorCode.TX_FAILED,
+            ManifestMCPErrorCode.INVALID_CONFIG,
             `Invalid manifest: ${err instanceof Error ? err.message : String(err)}`,
           );
         }
 
-        const leaseUuid = args.lease_uuid as string;
+        const leaseUuid = args.lease_uuid;
         const address = await this.walletProvider.getAddress();
         const queryClient = await this.clientManager.getQueryClient();
 

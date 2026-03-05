@@ -307,7 +307,7 @@ describe('CloudMCPServer', () => {
 
       expect(result.isError).toBe(true);
       const parsed = JSON.parse(result.content[0].text);
-      expect(parsed.code).toBe('TX_FAILED');
+      expect(parsed.code).toBe('INVALID_CONFIG');
       expect(parsed.message).toContain('Invalid manifest');
       expect(mockUpdateApp).not.toHaveBeenCalled();
     });
@@ -324,7 +324,7 @@ describe('CloudMCPServer', () => {
 
       expect(result.isError).toBe(true);
       const parsed = JSON.parse(result.content[0].text);
-      expect(parsed.code).toBe('TX_FAILED');
+      expect(parsed.code).toBe('INVALID_CONFIG');
       expect(parsed.message).toContain('Invalid manifest');
       expect(mockUpdateApp).not.toHaveBeenCalled();
     });

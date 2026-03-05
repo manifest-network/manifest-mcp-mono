@@ -111,16 +111,19 @@ describe('jsonResponse', () => {
   });
 });
 
+// Callback type for testing tools that accept (args, extra)
+type TestToolCb = (_args: Record<string, unknown>, _extra: unknown) => Promise<CallToolResult>;
+
 describe('withErrorHandling', () => {
   it('passes through successful results', async () => {
-    const handler = withErrorHandling('test', async () => jsonResponse({ ok: true }));
+    const handler = withErrorHandling<TestToolCb>('test', async () => jsonResponse({ ok: true }));
     const result = await handler({}, {});
     expect(result.isError).toBeUndefined();
     expect(JSON.parse(textOf(result))).toEqual({ ok: true });
   });
 
   it('catches ManifestMCPError and returns structured response', async () => {
-    const handler = withErrorHandling('test', async () => {
+    const handler = withErrorHandling<TestToolCb>('test', async () => {
       throw new ManifestMCPError(ManifestMCPErrorCode.QUERY_FAILED, 'broken', { extra: 'info' });
     });
     const result = await handler({}, {});
@@ -132,7 +135,7 @@ describe('withErrorHandling', () => {
   });
 
   it('catches generic Error and returns message', async () => {
-    const handler = withErrorHandling('test', async () => {
+    const handler = withErrorHandling<TestToolCb>('test', async () => {
       throw new Error('generic');
     });
     const result = await handler({}, {});
@@ -143,7 +146,7 @@ describe('withErrorHandling', () => {
   });
 
   it('catches non-Error thrown values', async () => {
-    const handler = withErrorHandling('test', async () => {
+    const handler = withErrorHandling<TestToolCb>('test', async () => {
       throw 'string-error';
     });
     const result = await handler({}, {});
@@ -170,7 +173,7 @@ describe('withErrorHandling', () => {
   });
 
   it('redacts sensitive fields in error input', async () => {
-    const handler = withErrorHandling('test', async () => {
+    const handler = withErrorHandling<TestToolCb>('test', async () => {
       throw new Error('fail');
     });
     const result = await handler({ password: 'secret123' }, {});
@@ -183,7 +186,7 @@ describe('withErrorHandling', () => {
     // Create a details object with a toJSON that throws — sanitizeForLogging
     // copies plain properties so it won't trigger toJSON, but JSON.stringify will.
     const details = { info: 'value', toJSON() { throw new Error('toJSON exploded'); } };
-    const handler = withErrorHandling('test', async () => {
+    const handler = withErrorHandling<TestToolCb>('test', async () => {
       throw new ManifestMCPError(ManifestMCPErrorCode.QUERY_FAILED, 'broken', details);
     });
     const result = await handler({}, {});
@@ -199,7 +202,7 @@ describe('withErrorHandling', () => {
 
   it('logs ManifestMCPError message to stderr', async () => {
     const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
-    const handler = withErrorHandling('my_tool', async () => {
+    const handler = withErrorHandling<TestToolCb>('my_tool', async () => {
       throw new ManifestMCPError(ManifestMCPErrorCode.TX_FAILED, 'tx broke');
     });
     await handler({}, {});
@@ -210,7 +213,7 @@ describe('withErrorHandling', () => {
   it('logs full error object for non-ManifestMCPError', async () => {
     const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
     const err = new TypeError('cannot read property of null');
-    const handler = withErrorHandling('my_tool', async () => {
+    const handler = withErrorHandling<TestToolCb>('my_tool', async () => {
       throw err;
     });
     await handler({}, {});

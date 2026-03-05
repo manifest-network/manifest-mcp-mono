@@ -13,10 +13,12 @@ export const SENSITIVE_FIELDS = new Set([
   'secret',
   'password',
   'seed',
-  'key',
-  'token',
   'apikey',
   'api_key',
+  'auth_token',
+  'bearer_token',
+  'access_token',
+  'refresh_token',
 ]);
 
 /**
@@ -68,12 +70,6 @@ export function sanitizeForLogging(obj: unknown, depth = 0): unknown {
   return obj;
 }
 
-/** Maximum number of log lines that can be requested via get_logs */
-export const MAX_LOG_TAIL = 1000;
-
-/** Valid lease state filter values */
-export const VALID_STATE_FILTERS = ['all', 'pending', 'active', 'closed', 'rejected', 'expired'] as const;
-
 /**
  * Options for creating a chain or cloud MCP server
  */
@@ -84,16 +80,19 @@ export interface ManifestMCPServerOptions {
 
 /**
  * Wrap a tool handler with error handling that preserves the existing error format.
+ *
+ * Generic over the callback type so that Zod-inferred argument types from
+ * McpServer.registerTool flow through without requiring manual casts.
  */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- args are validated by McpServer before reaching the handler
-export function withErrorHandling(
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- preserves ToolCallback<Args> signature from McpServer
+export function withErrorHandling<T extends (...args: any[]) => CallToolResult | Promise<CallToolResult>>(
   toolName: string,
-  fn: (...fnArgs: any[]) => Promise<CallToolResult>,
-): (...cbArgs: any[]) => Promise<CallToolResult> {
+  fn: T,
+): T {
   // For tools with no inputSchema, McpServer calls cb(extra) with one arg.
   // For tools with inputSchema, McpServer calls cb(parsedArgs, extra).
   // We infer from cbArgs.length at call time (not fn.length) so default parameters are safe.
-  return async (...cbArgs: any[]) => {
+  const wrapped = async (...cbArgs: any[]) => {
     const hasArgs = cbArgs.length >= 2;
     const args = hasArgs ? (cbArgs[0] ?? {}) : {};
     try {
@@ -152,6 +151,7 @@ export function withErrorHandling(
       };
     }
   };
+  return wrapped as T;
 }
 
 /**
