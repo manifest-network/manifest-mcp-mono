@@ -11,7 +11,7 @@ describe('Chain tools', () => {
   const client = new MCPTestClient();
 
   beforeAll(async () => {
-    await client.connect();
+    await client.connect({ serverEntry: 'packages/node/dist/chain.js' });
   });
 
   afterAll(async () => {
@@ -84,22 +84,14 @@ describe('Chain tools', () => {
     expect(result.code).toBe(0);
   });
 
-  it('listTools returns all expected tools', async () => {
+  it('listTools returns all expected chain tools', async () => {
     const tools = await client.listTools();
 
     expect(tools).toContain('get_account_info');
     expect(tools).toContain('cosmos_query');
     expect(tools).toContain('cosmos_tx');
     expect(tools).toContain('list_modules');
-    expect(tools).toContain('browse_catalog');
-    expect(tools).toContain('get_balance');
-    expect(tools).toContain('fund_credits');
-    expect(tools).toContain('deploy_app');
-    expect(tools).toContain('stop_app');
-    expect(tools).toContain('restart_app');
-    expect(tools).toContain('update_app');
-    expect(tools).toContain('list_apps');
-    expect(tools).toContain('app_status');
-    expect(tools).toContain('get_logs');
+    expect(tools).toContain('list_module_subcommands');
+    expect(tools).toHaveLength(5);
   });
 });

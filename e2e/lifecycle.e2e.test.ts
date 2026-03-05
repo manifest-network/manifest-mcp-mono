@@ -13,7 +13,7 @@ describe('Deploy lifecycle', () => {
   const client = new MCPTestClient();
 
   beforeAll(async () => {
-    await client.connect();
+    await client.connect({ serverEntry: 'packages/node/dist/cloud.js' });
   });
 
   afterAll(async () => {
@@ -21,15 +21,7 @@ describe('Deploy lifecycle', () => {
   });
 
   // ------------------------------------------------------------------
-  // 1. Account info
-  // ------------------------------------------------------------------
-  it('get_account_info returns a manifest address', async () => {
-    const result = await client.callTool<{ address: string }>('get_account_info');
-    expect(result.address).toMatch(/^manifest1/);
-  });
-
-  // ------------------------------------------------------------------
-  // 2. Balance check
+  // 1. Balance check (smoke test — confirms wallet/chain connection)
   // ------------------------------------------------------------------
   it('get_balance returns initial balances', async () => {
     const result = await client.callTool<{ balances: unknown }>('get_balance');
@@ -37,7 +29,7 @@ describe('Deploy lifecycle', () => {
   });
 
   // ------------------------------------------------------------------
-  // 3. Browse catalog
+  // 2. Browse catalog
   // ------------------------------------------------------------------
   it('browse_catalog shows providers and SKU tiers', async () => {
     const result = await client.callTool<{
@@ -53,7 +45,7 @@ describe('Deploy lifecycle', () => {
   });
 
   // ------------------------------------------------------------------
-  // 4. Fund credits
+  // 3. Fund credits
   // ------------------------------------------------------------------
   it('fund_credits succeeds', async () => {
     const result = await client.callTool<{
@@ -66,7 +58,7 @@ describe('Deploy lifecycle', () => {
   });
 
   // ------------------------------------------------------------------
-  // 5. Verify credits
+  // 4. Verify credits
   // ------------------------------------------------------------------
   it('get_balance reflects funded credits', async () => {
     const result = await client.callTool<{
@@ -77,7 +69,7 @@ describe('Deploy lifecycle', () => {
   });
 
   // ------------------------------------------------------------------
-  // 6. Deploy app
+  // 5. Deploy app
   // ------------------------------------------------------------------
   let leaseUuid: string;
 
@@ -102,7 +94,7 @@ describe('Deploy lifecycle', () => {
   });
 
   // ------------------------------------------------------------------
-  // 7. List apps
+  // 6. List apps
   // ------------------------------------------------------------------
   it('list_apps includes the deployed lease', async () => {
     const result = await client.callTool<{
@@ -115,7 +107,7 @@ describe('Deploy lifecycle', () => {
   });
 
   // ------------------------------------------------------------------
-  // 8. App status
+  // 7. App status
   // ------------------------------------------------------------------
   it('app_status returns chain state and connection info', async () => {
     const result = await client.callTool<{
@@ -128,7 +120,7 @@ describe('Deploy lifecycle', () => {
   });
 
   // ------------------------------------------------------------------
-  // 9. Get logs
+  // 8. Get logs
   // ------------------------------------------------------------------
   it('get_logs returns log data', async () => {
     const result = await client.callTool<{
@@ -141,7 +133,7 @@ describe('Deploy lifecycle', () => {
   });
 
   // ------------------------------------------------------------------
-  // 10. Restart app
+  // 9. Restart app
   // ------------------------------------------------------------------
   it('restart_app succeeds', async () => {
     const result = await client.callTool<{
@@ -153,7 +145,7 @@ describe('Deploy lifecycle', () => {
   });
 
   // ------------------------------------------------------------------
-  // 11. Update app
+  // 10. Update app
   // ------------------------------------------------------------------
   it('update_app with new manifest succeeds', async () => {
     const manifest = JSON.stringify({
@@ -174,7 +166,7 @@ describe('Deploy lifecycle', () => {
   });
 
   // ------------------------------------------------------------------
-  // 12. Stop app
+  // 11. Stop app
   // ------------------------------------------------------------------
   it('stop_app closes the lease', async () => {
     const result = await client.callTool<{
@@ -187,7 +179,7 @@ describe('Deploy lifecycle', () => {
   });
 
   // ------------------------------------------------------------------
-  // 13. Verify stopped
+  // 12. Verify stopped
   // ------------------------------------------------------------------
   it('list_apps shows lease as closed', async () => {
     const result = await client.callTool<{
@@ -197,5 +189,24 @@ describe('Deploy lifecycle', () => {
     const lease = result.leases.find((l) => l.uuid === leaseUuid);
     expect(lease).toBeDefined();
     expect(lease!.stateLabel).toBe('closed');
+  });
+
+  // ------------------------------------------------------------------
+  // 13. Verify tool list
+  // ------------------------------------------------------------------
+  it('listTools returns all expected cloud tools', async () => {
+    const tools = await client.listTools();
+
+    expect(tools).toContain('browse_catalog');
+    expect(tools).toContain('get_balance');
+    expect(tools).toContain('fund_credits');
+    expect(tools).toContain('list_apps');
+    expect(tools).toContain('app_status');
+    expect(tools).toContain('get_logs');
+    expect(tools).toContain('deploy_app');
+    expect(tools).toContain('stop_app');
+    expect(tools).toContain('restart_app');
+    expect(tools).toContain('update_app');
+    expect(tools).toHaveLength(10);
   });
 });

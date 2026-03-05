@@ -11,6 +11,7 @@ export interface MCPTestClientOptions {
   chainId?: string;
   rpcUrl?: string;
   gasPrice?: string;
+  serverEntry?: string;
 }
 
 /**
@@ -26,7 +27,10 @@ export class MCPTestClient {
   }
 
   async connect(options: MCPTestClientOptions = {}): Promise<void> {
-    const serverEntry = resolve(process.cwd(), 'packages/node/dist/index.js');
+    const serverEntry = resolve(
+      process.cwd(),
+      options.serverEntry ?? 'packages/node/dist/chain.js',
+    );
 
     this.transport = new StdioClientTransport({
       command: 'node',
