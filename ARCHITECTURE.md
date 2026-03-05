@@ -180,6 +180,7 @@ Both entry points share the same wallet resolution and subcommand handling:
 
 ```
 src/
+├── bootstrap.ts          Shared CLI bootstrap (wallet resolution, transport, error handling)
 ├── chain.ts              Chain CLI entry point
 ├── cloud.ts              Cloud CLI entry point
 ├── config.ts             Environment variable loading

@@ -3,7 +3,6 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import {
   CosmosClientManager,
-  createValidatedConfig,
   createMnemonicServer,
   createSignMessage,
   createLeaseDataSignMessage,
@@ -44,7 +43,7 @@ export class CloudMCPServer {
   private config: ManifestMCPConfig;
 
   constructor(options: ManifestMCPServerOptions) {
-    this.config = createValidatedConfig(options.config);
+    this.config = options.config;
     this.walletProvider = options.walletProvider;
     this.clientManager = CosmosClientManager.getInstance(this.config, this.walletProvider);
 

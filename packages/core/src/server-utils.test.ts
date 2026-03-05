@@ -176,11 +176,13 @@ describe('withErrorHandling', () => {
     expect(parsed.input.password).toBe('[REDACTED]');
   });
 
-  it('falls back to minimal JSON when stringify fails', async () => {
-    const circular: Record<string, unknown> = {};
-    circular.self = circular;
+  it('falls back to minimal JSON and logs serialization failure when stringify fails', async () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    // Create a details object with a toJSON that throws — sanitizeForLogging
+    // copies plain properties so it won't trigger toJSON, but JSON.stringify will.
+    const details = { info: 'value', toJSON() { throw new Error('toJSON exploded'); } };
     const handler = withErrorHandling('test', async () => {
-      throw new ManifestMCPError(ManifestMCPErrorCode.QUERY_FAILED, 'broken', circular);
+      throw new ManifestMCPError(ManifestMCPErrorCode.QUERY_FAILED, 'broken', details);
     });
     const result = await handler({}, {});
     expect(result.isError).toBe(true);
@@ -188,6 +190,9 @@ describe('withErrorHandling', () => {
     expect(parsed.error).toBe(true);
     expect(parsed.tool).toBe('test');
     expect(parsed.message).toBe('broken');
+    const calls = spy.mock.calls.map(c => c[0] as string);
+    expect(calls.some(c => c.includes('[test] Failed to serialize error response:'))).toBe(true);
+    spy.mockRestore();
   });
 
   it('logs errors to stderr', async () => {

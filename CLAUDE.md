@@ -45,13 +45,13 @@ Two MCP servers bridging AI assistants to Cosmos SDK blockchains (Manifest Netwo
 - **`CosmosClientManager`** (`client.ts`) — Keyed singleton (per `chainId:rpcUrl`), lazy init with promise dedup, token-bucket rate limiting via `limiter`, callers call `acquireRateLimit()` before RPC.
 - **Module registry** (`modules.ts`) — `QUERY_MODULES` / `TX_MODULES` maps: metadata + handler function per module. Adding a module = add handler file + register in map.
 - **`cosmos.ts`** — Routes `(module, subcommand, args)` → handler. Wraps in `withRetry()` and rate limiting.
-- **`server-utils.ts`** — Shared server utilities: `withErrorHandling`, `jsonResponse`, `bigIntReplacer`, `sanitizeForLogging`, `ManifestMCPServerOptions`.
+- **`server-utils.ts`** — Shared server utilities: `withErrorHandling`, `jsonResponse`, `bigIntReplacer`, `sanitizeForLogging`, `ManifestMCPServerOptions`, `createMnemonicServer`.
 - **`http/auth.ts`** — ADR-036 client-side auth tokens (signed message → base64 Bearer token, 60s expiry). No auth endpoint round-trip.
 - **`http/provider.ts` / `http/fred.ts`** — Off-chain provider API clients with timeout handling.
 
 ### Wallet resolution (node package)
 
-`packages/node/src/chain.ts` and `cloud.ts` resolve wallet in order: encrypted keyfile (`MANIFEST_KEY_FILE`) → mnemonic env var (`COSMOS_MNEMONIC`) → error. Both implement `WalletProvider` interface from core including optional `signArbitrary` for ADR-036.
+`packages/node/src/bootstrap.ts` resolves wallet in order: encrypted keyfile (`MANIFEST_KEY_FILE`) → mnemonic env var (`COSMOS_MNEMONIC`) → error. Both `chain.ts` and `cloud.ts` delegate to this shared bootstrap. Both wallet providers implement `WalletProvider` interface from core including optional `signArbitrary` for ADR-036.
 
 ### Error handling
 

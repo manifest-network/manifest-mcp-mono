@@ -7,7 +7,6 @@ import {
   cosmosTx,
   getAvailableModules,
   getModuleSubcommands,
-  createValidatedConfig,
   createMnemonicServer,
   VERSION,
   type ManifestMCPServerOptions,
@@ -31,7 +30,7 @@ export class ChainMCPServer {
   private config: ManifestMCPConfig;
 
   constructor(options: ManifestMCPServerOptions) {
-    this.config = createValidatedConfig(options.config);
+    this.config = options.config;
     this.walletProvider = options.walletProvider;
     this.clientManager = CosmosClientManager.getInstance(this.config, this.walletProvider);
 

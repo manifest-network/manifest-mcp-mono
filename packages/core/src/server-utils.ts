@@ -126,7 +126,10 @@ export function withErrorHandling(
       let responseText: string;
       try {
         responseText = JSON.stringify(errorResponse, bigIntReplacer, 2);
-      } catch {
+      } catch (stringifyError) {
+        console.error(
+          `[${toolName}] Failed to serialize error response: ${stringifyError instanceof Error ? stringifyError.message : String(stringifyError)}`
+        );
         responseText = JSON.stringify({
           error: true,
           tool: toolName,

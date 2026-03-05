@@ -170,6 +170,23 @@ describe('ChainMCPServer', () => {
       expect(parsed).toHaveProperty('queryModules');
       expect(parsed).toHaveProperty('txModules');
     });
+
+    it('routes list_module_subcommands to getModuleSubcommands()', async () => {
+      const server = new ChainMCPServer({
+        config: makeMockConfig(),
+        walletProvider: makeMockWallet(),
+      });
+      const result = await callTool(server, 'list_module_subcommands', {
+        type: 'query',
+        module: 'bank',
+      });
+
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.type).toBe('query');
+      expect(parsed.module).toBe('bank');
+      expect(parsed).toHaveProperty('subcommands');
+      expect(result.isError).toBeUndefined();
+    });
   });
 
   describe('error handling', () => {
