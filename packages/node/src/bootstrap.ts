@@ -110,7 +110,9 @@ export function bootstrap(cfg: BootstrapConfig): void {
     if (error instanceof ManifestMCPError) {
       console.error(`Fatal error [${error.code}]: ${error.message}`);
     } else {
-      console.error('Fatal error:', error);
+      const msg = error instanceof Error ? error.message : String(error);
+      const stack = error instanceof Error && error.stack ? `\n${error.stack}` : '';
+      console.error(`Fatal error: ${msg}${stack}`);
     }
     process.exit(1);
   });
