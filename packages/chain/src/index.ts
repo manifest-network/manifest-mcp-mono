@@ -8,6 +8,7 @@ import {
   getAvailableModules,
   getModuleSubcommands,
   createMnemonicServer,
+  createValidatedConfig,
   VERSION,
   type ManifestMCPServerOptions,
   type MnemonicServerConfig,
@@ -16,7 +17,7 @@ import {
   jsonResponse,
   bigIntReplacer,
 } from '@manifest-network/manifest-mcp-core';
-import type { ManifestMCPConfig, WalletProvider } from '@manifest-network/manifest-mcp-core';
+import type { WalletProvider } from '@manifest-network/manifest-mcp-core';
 
 export type { ManifestMCPServerOptions } from '@manifest-network/manifest-mcp-core';
 
@@ -27,12 +28,11 @@ export class ChainMCPServer {
   private mcpServer: McpServer;
   private clientManager: CosmosClientManager;
   private walletProvider: WalletProvider;
-  private config: ManifestMCPConfig;
 
   constructor(options: ManifestMCPServerOptions) {
-    this.config = options.config;
+    const config = createValidatedConfig(options.config);
     this.walletProvider = options.walletProvider;
-    this.clientManager = CosmosClientManager.getInstance(this.config, this.walletProvider);
+    this.clientManager = CosmosClientManager.getInstance(config, this.walletProvider);
 
     this.mcpServer = new McpServer(
       {
@@ -67,7 +67,7 @@ export class ChainMCPServer {
     this.mcpServer.registerTool(
       'cosmos_query',
       {
-        description: 'Execute any Cosmos SDK query command. Use this for chain queries not covered by the high-level tools (get_balance, list_apps, etc.). Call list_modules and list_module_subcommands first to discover available options.',
+        description: 'Execute any Cosmos SDK query command. Call list_modules and list_module_subcommands first to discover available options.',
         inputSchema: {
           module: z.string().describe('The module name (e.g., "bank", "staking", "distribution", "gov", "auth")'),
           subcommand: z.string().describe('The subcommand (e.g., "balance", "balances", "delegations", "rewards", "proposals")'),
@@ -89,7 +89,7 @@ export class ChainMCPServer {
     this.mcpServer.registerTool(
       'cosmos_tx',
       {
-        description: 'Execute any Cosmos SDK transaction with automatic signing and gas estimation. Use this for chain transactions not covered by the high-level tools (fund_credits, deploy_app, stop_app, etc.). Call list_modules and list_module_subcommands first to discover available options.',
+        description: 'Execute any Cosmos SDK transaction with automatic signing and gas estimation. Call list_modules and list_module_subcommands first to discover available options.',
         inputSchema: {
           module: z.string().describe('The module name (e.g., "bank", "staking", "gov")'),
           subcommand: z.string().describe('The subcommand (e.g., "send", "delegate", "unbond", "vote")'),

@@ -53,7 +53,7 @@ submodules/
   fred/                                            Container orchestration backend (main branch)
 ```
 
-Dependency direction: **node → {chain, cloud, core}** and **{chain, cloud} → core** (never reverse). Core has no knowledge of MCP servers, transports, or Node.js-specific APIs.
+Dependency direction: **node → {chain, cloud, core}** and **{chain, cloud} → core** (never reverse). Core has no knowledge of transports or Node.js-specific APIs, though it exports MCP-typed server utilities (`withErrorHandling`, `jsonResponse`) consumed by chain and cloud packages.
 
 ## Package: core
 
@@ -65,6 +65,8 @@ The core package is a shared library containing all blockchain logic, tool imple
 src/
 ├── index.ts              Re-exports all public API
 ├── server-utils.ts       Server utilities (error handling, sanitization, response helpers)
+├── __test-utils__/
+│   └── mocks.ts          Shared test mocks (imported cross-package by chain/cloud tests)
 ├── client.ts             CosmosClientManager — keyed-instance RPC client lifecycle
 ├── config.ts             Configuration validation and defaults
 ├── cosmos.ts             cosmosQuery / cosmosTx routing to module handlers

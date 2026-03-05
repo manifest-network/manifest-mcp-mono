@@ -269,6 +269,49 @@ describe('ChainMCPServer', () => {
     });
   });
 
+  describe('Zod validation', () => {
+    it('rejects list_module_subcommands with invalid type', async () => {
+      const server = new ChainMCPServer({
+        config: makeMockConfig(),
+        walletProvider: makeMockWallet(),
+      });
+      const result = await callTool(server, 'list_module_subcommands', {
+        type: 'invalid',
+        module: 'bank',
+      });
+
+      expect(result.isError).toBe(true);
+    });
+
+    it('rejects cosmos_query when module is missing', async () => {
+      const server = new ChainMCPServer({
+        config: makeMockConfig(),
+        walletProvider: makeMockWallet(),
+      });
+      const result = await callTool(server, 'cosmos_query', {
+        subcommand: 'balances',
+      });
+
+      expect(result.isError).toBe(true);
+      expect(mockCosmosQuery).not.toHaveBeenCalled();
+    });
+
+    it('rejects cosmos_tx when args is not an array', async () => {
+      const server = new ChainMCPServer({
+        config: makeMockConfig(),
+        walletProvider: makeMockWallet(),
+      });
+      const result = await callTool(server, 'cosmos_tx', {
+        module: 'bank',
+        subcommand: 'send',
+        args: 'not-an-array',
+      });
+
+      expect(result.isError).toBe(true);
+      expect(mockCosmosTx).not.toHaveBeenCalled();
+    });
+  });
+
   describe('unknown tool', () => {
     it('returns an error for unrecognized tool name', async () => {
       const server = new ChainMCPServer({

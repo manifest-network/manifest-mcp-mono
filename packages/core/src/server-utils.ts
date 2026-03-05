@@ -101,7 +101,11 @@ export function withErrorHandling(
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       const errorCode = error instanceof ManifestMCPError ? error.code : 'UNKNOWN';
-      console.error(`[${toolName}] Tool error [${errorCode}]: ${errorMessage}`);
+      if (error instanceof ManifestMCPError) {
+        console.error(`[${toolName}] Tool error [${errorCode}]: ${errorMessage}`);
+      } else {
+        console.error(`[${toolName}] Tool error [${errorCode}]:`, error);
+      }
 
       let errorResponse: Record<string, unknown> = {
         error: true,

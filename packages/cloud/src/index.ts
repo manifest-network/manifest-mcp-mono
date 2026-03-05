@@ -4,6 +4,7 @@ import { z } from 'zod';
 import {
   CosmosClientManager,
   createMnemonicServer,
+  createValidatedConfig,
   createSignMessage,
   createLeaseDataSignMessage,
   createAuthToken,
@@ -29,7 +30,7 @@ import {
   restartApp,
   updateApp,
 } from '@manifest-network/manifest-mcp-core';
-import type { ManifestMCPConfig, WalletProvider } from '@manifest-network/manifest-mcp-core';
+import type { WalletProvider } from '@manifest-network/manifest-mcp-core';
 
 export type { ManifestMCPServerOptions } from '@manifest-network/manifest-mcp-core';
 
@@ -40,12 +41,11 @@ export class CloudMCPServer {
   private mcpServer: McpServer;
   private clientManager: CosmosClientManager;
   private walletProvider: WalletProvider;
-  private config: ManifestMCPConfig;
 
   constructor(options: ManifestMCPServerOptions) {
-    this.config = options.config;
+    const config = createValidatedConfig(options.config);
     this.walletProvider = options.walletProvider;
-    this.clientManager = CosmosClientManager.getInstance(this.config, this.walletProvider);
+    this.clientManager = CosmosClientManager.getInstance(config, this.walletProvider);
 
     this.mcpServer = new McpServer(
       {

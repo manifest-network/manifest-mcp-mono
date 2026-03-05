@@ -32,8 +32,7 @@
   "author": "Felix C. Morency",
   "license": "MIT",
   "files": [
-    "dist",
-    "!dist/__test-utils__"
+    "dist"
   ],
   "dependencies": {
     "@cosmjs/amino": "0.32.4",

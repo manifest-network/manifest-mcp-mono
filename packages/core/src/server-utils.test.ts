@@ -6,6 +6,8 @@ import {
   sanitizeForLogging,
   withErrorHandling,
   jsonResponse,
+  createMnemonicServer,
+  type ManifestMCPServerOptions,
 } from './server-utils.js';
 import { ManifestMCPError, ManifestMCPErrorCode } from './types.js';
 
@@ -195,7 +197,7 @@ describe('withErrorHandling', () => {
     spy.mockRestore();
   });
 
-  it('logs errors to stderr', async () => {
+  it('logs ManifestMCPError message to stderr', async () => {
     const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
     const handler = withErrorHandling('my_tool', async () => {
       throw new ManifestMCPError(ManifestMCPErrorCode.TX_FAILED, 'tx broke');
@@ -203,5 +205,80 @@ describe('withErrorHandling', () => {
     await handler({}, {});
     expect(spy).toHaveBeenCalledWith('[my_tool] Tool error [TX_FAILED]: tx broke');
     spy.mockRestore();
+  });
+
+  it('logs full error object for non-ManifestMCPError', async () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const err = new TypeError('cannot read property of null');
+    const handler = withErrorHandling('my_tool', async () => {
+      throw err;
+    });
+    await handler({}, {});
+    expect(spy).toHaveBeenCalledWith('[my_tool] Tool error [UNKNOWN]:', err);
+    spy.mockRestore();
+  });
+});
+
+describe('createMnemonicServer', () => {
+  it('validates config, creates wallet, connects, and returns server instance', async () => {
+    class FakeServer {
+      opts: ManifestMCPServerOptions;
+      constructor(opts: ManifestMCPServerOptions) {
+        this.opts = opts;
+      }
+    }
+
+    const server = await createMnemonicServer(
+      {
+        chainId: 'test-chain',
+        rpcUrl: 'https://rpc.example.com',
+        gasPrice: '1.0umfx',
+        mnemonic: 'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about',
+      },
+      FakeServer as unknown as new (opts: ManifestMCPServerOptions) => FakeServer,
+    );
+
+    expect(server).toBeInstanceOf(FakeServer);
+    // Config should be validated — addressPrefix gets its default
+    expect(server.opts.config.addressPrefix).toBe('manifest');
+    // Wallet should be connected and usable
+    const address = await server.opts.walletProvider.getAddress();
+    expect(address).toMatch(/^manifest1/);
+  });
+
+  it('rejects invalid config', async () => {
+    class FakeServer {
+      constructor(_opts: ManifestMCPServerOptions) {}
+    }
+
+    await expect(
+      createMnemonicServer(
+        {
+          chainId: '',
+          rpcUrl: 'https://rpc.example.com',
+          gasPrice: '1.0umfx',
+          mnemonic: 'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about',
+        },
+        FakeServer as unknown as new (opts: ManifestMCPServerOptions) => FakeServer,
+      ),
+    ).rejects.toThrow();
+  });
+
+  it('rejects invalid mnemonic', async () => {
+    class FakeServer {
+      constructor(_opts: ManifestMCPServerOptions) {}
+    }
+
+    await expect(
+      createMnemonicServer(
+        {
+          chainId: 'test-chain',
+          rpcUrl: 'https://rpc.example.com',
+          gasPrice: '1.0umfx',
+          mnemonic: 'invalid mnemonic words',
+        },
+        FakeServer as unknown as new (opts: ManifestMCPServerOptions) => FakeServer,
+      ),
+    ).rejects.toThrow();
   });
 });

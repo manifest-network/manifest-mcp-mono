@@ -423,6 +423,59 @@ describe('CloudMCPServer', () => {
     });
   });
 
+  describe('getLeaseDataAuthToken', () => {
+    it('throws when wallet lacks signArbitrary', async () => {
+      mockDeployApp.mockImplementation(async (_cm, _getAuth, getLeaseDataAuth) => {
+        await getLeaseDataAuth('manifest1abc', '550e8400-e29b-41d4-a716-446655440000', 'deadbeef');
+        return {} as any;
+      });
+
+      const server = new CloudMCPServer({
+        config: makeMockConfig(),
+        walletProvider: makeMockWallet(), // no signArbitrary
+      });
+      const result = await callTool(server, 'deploy_app', {
+        image: 'nginx:alpine',
+        port: 80,
+        size: 'docker-micro',
+      });
+
+      expect(result.isError).toBe(true);
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.code).toBe('WALLET_NOT_CONNECTED');
+      expect(parsed.message).toContain('signArbitrary');
+    });
+
+    it('calls signArbitrary with lease data sign message', async () => {
+      const wallet = makeMockWallet({ signArbitrary: true });
+
+      mockDeployApp.mockImplementation(async (_cm, _getAuth, getLeaseDataAuth) => {
+        const token = await getLeaseDataAuth('manifest1abc', '550e8400-e29b-41d4-a716-446655440000', 'deadbeef');
+        expect(typeof token).toBe('string');
+        expect(token.length).toBeGreaterThan(0);
+        return {
+          lease_uuid: '550e8400-e29b-41d4-a716-446655440000',
+          provider_uuid: 'prov-1',
+          provider_url: 'http://localhost:8080',
+          status: 'running',
+        };
+      });
+
+      const server = new CloudMCPServer({
+        config: makeMockConfig(),
+        walletProvider: wallet,
+      });
+      const result = await callTool(server, 'deploy_app', {
+        image: 'nginx:alpine',
+        port: 80,
+        size: 'docker-micro',
+      });
+
+      expect(result.isError).toBeUndefined();
+      expect(wallet.signArbitrary).toHaveBeenCalledOnce();
+    });
+  });
+
   describe('error handling', () => {
     it('ManifestMCPError produces {error, code, message, details} with isError=true', async () => {
       mockBrowseCatalog.mockRejectedValue(
