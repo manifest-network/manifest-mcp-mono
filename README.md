@@ -1,6 +1,6 @@
 # Manifest MCP
 
-MCP server for [Manifest Network](https://www.manifestai.com/) and Cosmos SDK chains.
+MCP servers for [Manifest Network](https://www.manifestai.com/) and Cosmos SDK chains.
 
 Exposes on-chain queries and transactions as [Model Context Protocol](https://modelcontextprotocol.io/) tools, so any MCP-compatible client (Claude Desktop, Cursor, etc.) can interact with the blockchain through natural language.
 
