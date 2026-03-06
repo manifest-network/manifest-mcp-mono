@@ -26,6 +26,17 @@ import { getLeaseProvision, getLeaseReleases } from './http/fred.js';
 import { resolveProviderUrl } from './tools/resolveLeaseProvider.js';
 
 export type { ManifestMCPServerOptions } from '@manifest-network/manifest-mcp-core';
+export {
+  type BuildManifestOptions,
+  deriveAppNameFromImage,
+  validateServiceName,
+  buildManifest,
+  buildStackManifest,
+  mergeManifest,
+  isStackManifest,
+  parseStackManifest,
+  getServiceNames,
+} from './manifest.js';
 
 const MAX_LOG_TAIL = 1000;
 
