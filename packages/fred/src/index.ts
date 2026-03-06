@@ -37,6 +37,7 @@ export {
   parseStackManifest,
   getServiceNames,
 } from './manifest.js';
+export type { ServiceConfig } from './tools/deployApp.js';
 
 const MAX_LOG_TAIL = 1000;
 
@@ -160,8 +161,8 @@ export class FredMCPServer {
       {
         description: 'Deploy a new containerized application. Requires funded credits (use fund_credit if needed). Creates a lease on-chain, uploads the container manifest to a provider, and polls until ready. Use browse_catalog first to see available SKU sizes.',
         inputSchema: {
-          image: z.string().describe('Docker image to deploy (e.g. "nginx:alpine")'),
-          port: z.number().int().min(1).max(65535).describe('Container port to expose (e.g. 80)'),
+          image: z.string().optional().describe('Docker image to deploy. Required unless services is provided.'),
+          port: z.number().int().min(1).max(65535).optional().describe('Container port to expose. Required unless services is provided.'),
           size: z.string().describe('SKU tier name (e.g. "docker-micro", "docker-small")'),
           env: z.record(z.string(), z.string()).optional().describe('Environment variables as key-value pairs'),
           command: z.array(z.string()).optional().describe('Override container command (entrypoint)'),
@@ -181,6 +182,28 @@ export class FredMCPServer {
           labels: z.record(z.string(), z.string()).optional().describe('Container labels as key-value pairs'),
           storage: z.string().optional().describe('Storage SKU name for persistent disk (adds a second lease item)'),
           depends_on: z.record(z.string(), z.object({ condition: z.string() })).optional().describe('Service dependencies'),
+          services: z.record(
+            z.string(),
+            z.object({
+              image: z.string(),
+              ports: z.record(z.string(), z.object({})).optional(),
+              env: z.record(z.string(), z.string()).optional(),
+              command: z.array(z.string()).optional(),
+              args: z.array(z.string()).optional(),
+              user: z.string().optional(),
+              tmpfs: z.array(z.string()).optional(),
+              health_check: z.object({
+                test: z.array(z.string()),
+                interval: z.string().optional(),
+                timeout: z.string().optional(),
+                retries: z.number().int().optional(),
+                start_period: z.string().optional(),
+              }).optional(),
+              depends_on: z.record(z.string(), z.object({ condition: z.string() })).optional(),
+              expose: z.array(z.string()).optional(),
+              labels: z.record(z.string(), z.string()).optional(),
+            })
+          ).optional().describe('Multi-service stack. Mutually exclusive with image/port. Keys are service names (RFC 1123 DNS labels).'),
         },
       },
       withErrorHandling('deploy_app', async (args) => {
@@ -204,6 +227,7 @@ export class FredMCPServer {
             labels: args.labels,
             storage: args.storage,
             depends_on: args.depends_on,
+            services: args.services,
           },
         );
         return jsonResponse(result, bigIntReplacer);
@@ -241,6 +265,7 @@ export class FredMCPServer {
         inputSchema: {
           lease_uuid: z.string().uuid().describe('The lease UUID of the app to update'),
           manifest: z.string().describe('The full manifest JSON string to deploy'),
+          existing_manifest: z.string().optional().describe('The current manifest JSON. When provided, the new manifest is merged over the existing one (env, ports, labels merged; other fields carried forward if not in new).'),
         },
       },
       withErrorHandling('update_app', async (args) => {
@@ -268,6 +293,7 @@ export class FredMCPServer {
           leaseUuid,
           (addr, uuid) => this.getProviderAuthToken(addr, uuid),
           manifest,
+          args.existing_manifest,
         );
         return jsonResponse(result, bigIntReplacer);
       }),

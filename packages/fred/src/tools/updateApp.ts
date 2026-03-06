@@ -3,6 +3,7 @@ import { LeaseState, leaseStateToJSON } from '@manifest-network/manifestjs/dist/
 import { ManifestMCPError, ManifestMCPErrorCode } from '@manifest-network/manifest-mcp-core';
 import { updateLease } from '../http/fred.js';
 import { resolveProviderUrl } from './resolveLeaseProvider.js';
+import { mergeManifest } from '../manifest.js';
 
 export async function updateApp(
   queryClient: ManifestQueryClient,
@@ -10,6 +11,7 @@ export async function updateApp(
   leaseUuid: string,
   getAuthToken: (address: string, leaseUuid: string) => Promise<string>,
   manifest: string,
+  existingManifest?: string,
   fetchFn?: typeof globalThis.fetch,
 ) {
   const leaseResult = await queryClient.liftedinit.billing.v1.lease({ leaseUuid });
@@ -30,9 +32,16 @@ export async function updateApp(
     );
   }
 
+  let finalManifest = manifest;
+  if (existingManifest) {
+    const parsed = JSON.parse(manifest);
+    const merged = mergeManifest(parsed, existingManifest);
+    finalManifest = JSON.stringify(merged);
+  }
+
   const providerUrl = await resolveProviderUrl(queryClient, lease.providerUuid);
   const authToken = await getAuthToken(address, leaseUuid);
-  const result = await updateLease(providerUrl, leaseUuid, manifest, authToken, fetchFn);
+  const result = await updateLease(providerUrl, leaseUuid, finalManifest, authToken, fetchFn);
 
   return {
     lease_uuid: leaseUuid,

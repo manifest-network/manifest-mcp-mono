@@ -3,6 +3,7 @@ import { cosmosTx, ManifestMCPError, ManifestMCPErrorCode, type CosmosTxResult, 
 import { uploadLeaseData, getLeaseConnectionInfo } from '../http/provider.js';
 import { pollLeaseUntilReady } from '../http/fred.js';
 import type { FredLeaseStatus } from '../http/fred.js';
+import { buildManifest, buildStackManifest, validateServiceName, type BuildManifestOptions } from '../manifest.js';
 
 async function sha256(data: string): Promise<string> {
   const encoded = new TextEncoder().encode(data);
@@ -75,9 +76,23 @@ async function getProviderUrl(
   return result.provider.apiUrl;
 }
 
-export interface DeployAppInput {
+export interface ServiceConfig {
   image: string;
-  port: number;
+  ports?: Record<string, Record<string, never>>;
+  env?: Record<string, string>;
+  command?: string[];
+  args?: string[];
+  user?: string;
+  tmpfs?: string[];
+  health_check?: { test: string[]; interval?: string; timeout?: string; retries?: number; start_period?: string };
+  depends_on?: Record<string, { condition: string }>;
+  expose?: string[];
+  labels?: Record<string, string>;
+}
+
+export interface DeployAppInput {
+  image?: string;
+  port?: number;
   size: string;
   env?: Record<string, string>;
   command?: string[];
@@ -97,6 +112,7 @@ export interface DeployAppInput {
   labels?: Record<string, string>;
   storage?: string;
   depends_on?: Record<string, { condition: string }>;
+  services?: Record<string, ServiceConfig>;
 }
 
 export interface DeployAppResult {
@@ -116,33 +132,89 @@ export async function deployApp(
   input: DeployAppInput,
   fetchFn?: typeof globalThis.fetch,
 ): Promise<DeployAppResult> {
+  // Validate mutually exclusive inputs
+  if (input.image && input.services) {
+    throw new ManifestMCPError(
+      ManifestMCPErrorCode.INVALID_CONFIG,
+      'image and services are mutually exclusive',
+    );
+  }
+  if (!input.image && !input.services) {
+    throw new ManifestMCPError(
+      ManifestMCPErrorCode.INVALID_CONFIG,
+      'either image or services is required',
+    );
+  }
+  if (input.image && !input.port) {
+    throw new ManifestMCPError(
+      ManifestMCPErrorCode.INVALID_CONFIG,
+      'port is required when using image',
+    );
+  }
+
   const address = await clientManager.getAddress();
   const queryClient = await clientManager.getQueryClient();
 
   // 1. Build manifest
-  const manifest: Record<string, unknown> = {
-    image: input.image,
-    ports: { [`${input.port}/tcp`]: {} },
-  };
-  if (input.env) manifest.env = input.env;
-  if (input.command) manifest.command = input.command;
-  if (input.args) manifest.args = input.args;
-  if (input.user) manifest.user = input.user;
-  if (input.tmpfs) manifest.tmpfs = input.tmpfs;
-  if (input.health_check) manifest.health_check = input.health_check;
-  if (input.stop_grace_period) manifest.stop_grace_period = input.stop_grace_period;
-  if (input.init !== undefined) manifest.init = input.init;
-  if (input.expose) manifest.expose = input.expose;
-  if (input.labels) manifest.labels = input.labels;
-  if (input.depends_on) manifest.depends_on = input.depends_on;
-  const manifestJson = JSON.stringify(manifest);
+  let manifestJson: string;
+  if (input.services) {
+    for (const name of Object.keys(input.services)) {
+      if (!validateServiceName(name)) {
+        throw new ManifestMCPError(
+          ManifestMCPErrorCode.INVALID_CONFIG,
+          `Invalid service name: "${name}". Must be 1-63 chars, lowercase alphanumeric + hyphens, no leading/trailing hyphens.`,
+        );
+      }
+    }
+
+    const services: Record<string, BuildManifestOptions> = {};
+    for (const [name, svc] of Object.entries(input.services)) {
+      services[name] = {
+        image: svc.image,
+        ports: svc.ports ?? {},
+        env: svc.env,
+        command: svc.command,
+        args: svc.args,
+        user: svc.user,
+        tmpfs: svc.tmpfs,
+        health_check: svc.health_check,
+        depends_on: svc.depends_on,
+        expose: svc.expose,
+        labels: svc.labels,
+      };
+    }
+    manifestJson = JSON.stringify(buildStackManifest({ services }));
+  } else {
+    manifestJson = JSON.stringify(buildManifest({
+      image: input.image!,
+      ports: { [`${input.port}/tcp`]: {} },
+      env: input.env,
+      command: input.command,
+      args: input.args,
+      user: input.user,
+      tmpfs: input.tmpfs,
+      health_check: input.health_check,
+      stop_grace_period: input.stop_grace_period,
+      init: input.init,
+      expose: input.expose,
+      labels: input.labels,
+      depends_on: input.depends_on,
+    }));
+  }
 
   // 2. SHA-256 hash of manifest
   const metaHashHex = await sha256(manifestJson);
 
   // 3. Find matching SKU(s)
   const { skuUuid, providerUuid } = await findSkuUuid(queryClient, input.size);
-  const leaseItems = [`${skuUuid}:1`];
+
+  let leaseItems: string[];
+  if (input.services) {
+    const serviceNames = Object.keys(input.services);
+    leaseItems = serviceNames.map(name => `${skuUuid}:1:${name}`);
+  } else {
+    leaseItems = [`${skuUuid}:1`];
+  }
 
   if (input.storage) {
     const { skuUuid: storageSkuUuid } = await findSkuUuid(queryClient, input.storage);
