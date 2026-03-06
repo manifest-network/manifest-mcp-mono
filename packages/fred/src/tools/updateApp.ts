@@ -3,7 +3,7 @@ import { ManifestMCPError, ManifestMCPErrorCode } from '@manifest-network/manife
 import { updateLease } from '../http/fred.js';
 import { resolveProviderUrl } from './resolveLeaseProvider.js';
 import { fetchActiveLease } from './fetchActiveLease.js';
-import { mergeManifest, isStackManifest } from '../manifest.js';
+import { mergeManifest, isStackManifest, validateServiceName } from '../manifest.js';
 
 export async function updateApp(
   queryClient: ManifestQueryClient,
@@ -20,6 +20,14 @@ export async function updateApp(
   if (existingManifest) {
     const parsed = JSON.parse(manifest) as Record<string, unknown>;
     if (isStackManifest(parsed)) {
+      for (const name of Object.keys(parsed)) {
+        if (!validateServiceName(name)) {
+          throw new ManifestMCPError(
+            ManifestMCPErrorCode.INVALID_CONFIG,
+            `Invalid service name: "${name}". Must be 1-63 chars, lowercase alphanumeric + hyphens, no leading/trailing hyphens.`,
+          );
+        }
+      }
       // Per-service merge: merge each service independently
       let oldStack: Record<string, unknown>;
       try {

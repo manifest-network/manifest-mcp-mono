@@ -53,15 +53,18 @@ export class MnemonicWalletProvider implements WalletProvider {
       );
     }
 
+    // Capture mnemonic before the async IIFE so disconnect() cannot null it mid-flight
+    const mnemonic = this.mnemonic;
+
     // Start initialization and cache the promise to prevent concurrent init
     this.initPromise = (async () => {
       const prefix = this.config.addressPrefix ?? 'manifest';
 
       try {
-        this.wallet = await DirectSecp256k1HdWallet.fromMnemonic(this.mnemonic!, {
+        this.wallet = await DirectSecp256k1HdWallet.fromMnemonic(mnemonic, {
           prefix,
         });
-        this.aminoWallet = await Secp256k1HdWallet.fromMnemonic(this.mnemonic!, {
+        this.aminoWallet = await Secp256k1HdWallet.fromMnemonic(mnemonic, {
           prefix,
         });
 

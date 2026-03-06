@@ -35,34 +35,48 @@ function promptPassword(question: string): Promise<string> {
       'Interactive terminal required for key management commands. Cannot prompt for input in non-interactive mode.'
     );
   }
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     let password = '';
     process.stderr.write(question);
     process.stdin.setRawMode(true);
     process.stdin.resume();
     process.stdin.setEncoding('utf8');
+
+    const cleanup = (): void => {
+      process.stdin.setRawMode(false);
+      process.stdin.pause();
+      process.stdin.removeListener('data', onData);
+      process.stdin.removeListener('error', onError);
+      process.stderr.write('\n');
+    };
+
+    const onError = (err: Error): void => {
+      cleanup();
+      reject(new Error(`stdin error during password prompt: ${err.message}`));
+    };
+
     const onData = (ch: string): void => {
-      if (ch === '\r' || ch === '\n' || ch === '\u0004') {
-        process.stdin.setRawMode(false);
-        process.stdin.pause();
-        process.stdin.removeListener('data', onData);
-        process.stderr.write('\n');
+      if (ch === '\r' || ch === '\n') {
+        cleanup();
         resolve(password);
+      } else if (ch === '\u0004') {
+        // Ctrl+D (EOF) — reject instead of resolving with partial input
+        cleanup();
+        reject(new Error('Input stream closed before password was entered.'));
       } else if (ch === '\u0003') {
-        process.stdin.setRawMode(false);
-        process.stdin.pause();
-        process.stdin.removeListener('data', onData);
-        process.stderr.write('\n');
+        cleanup();
         process.exit(130);
       } else if (ch === '\u007f' || ch === '\b') {
         if (password.length > 0) {
-          password = password.slice(0, -1);
+          password = [...password].slice(0, -1).join('');
         }
       } else if (ch >= ' ') {
         password += ch;
       }
     };
+
     process.stdin.on('data', onData);
+    process.stdin.on('error', onError);
   });
 }
 
