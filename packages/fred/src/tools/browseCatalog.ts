@@ -1,12 +1,21 @@
-import type { ManifestQueryClient } from '../client.js';
+import type { ManifestQueryClient } from '@manifest-network/manifest-mcp-core';
+import { MAX_PAGE_LIMIT } from '@manifest-network/manifest-mcp-core';
 import { getProviderHealth, ProviderApiError } from '../http/provider.js';
 
 export async function browseCatalog(queryClient: ManifestQueryClient) {
   const sku = queryClient.liftedinit.sku.v1;
 
+  const pagination = {
+    key: new Uint8Array(),
+    offset: BigInt(0),
+    limit: MAX_PAGE_LIMIT,
+    countTotal: false,
+    reverse: false,
+  };
+
   const [providersResult, skusResult] = await Promise.all([
-    sku.providers({ activeOnly: true }),
-    sku.sKUs({ activeOnly: true }),
+    sku.providers({ activeOnly: true, pagination }),
+    sku.sKUs({ activeOnly: true, pagination }),
   ]);
 
   const providers = await Promise.all(
@@ -22,7 +31,6 @@ export async function browseCatalog(queryClient: ManifestQueryClient) {
         if (err instanceof ProviderApiError) {
           healthError = `HTTP ${err.status}: ${err.message}`;
         } else {
-          // Re-throw unexpected errors (programming bugs, etc.)
           throw err;
         }
       }

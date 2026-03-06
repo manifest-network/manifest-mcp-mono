@@ -2,7 +2,8 @@
   "references": [
     { "path": "packages/core" },
     { "path": "packages/chain" },
-    { "path": "packages/cloud" },
+    { "path": "packages/lease" },
+    { "path": "packages/fred" },
     { "path": "packages/node" }
   ],
   "files": []

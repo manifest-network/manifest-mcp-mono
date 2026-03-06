@@ -1,16 +1,14 @@
-import type { CosmosClientManager, ManifestQueryClient } from '../client.js';
-import { cosmosTx } from '../cosmos.js';
-import { ManifestMCPError, ManifestMCPErrorCode, type CosmosTxResult } from '../types.js';
+import type { CosmosClientManager, ManifestQueryClient } from '@manifest-network/manifest-mcp-core';
+import { cosmosTx, ManifestMCPError, ManifestMCPErrorCode, type CosmosTxResult, MAX_PAGE_LIMIT } from '@manifest-network/manifest-mcp-core';
 import { uploadLeaseData, getLeaseConnectionInfo } from '../http/provider.js';
 import { pollLeaseUntilReady } from '../http/fred.js';
 import type { FredLeaseStatus } from '../http/fred.js';
-import { bytesToHex } from '../transactions/utils.js';
-import { MAX_PAGE_LIMIT } from '../queries/utils.js';
 
 async function sha256(data: string): Promise<string> {
   const encoded = new TextEncoder().encode(data);
   const hashBuffer = await crypto.subtle.digest('SHA-256', encoded);
-  return bytesToHex(new Uint8Array(hashBuffer));
+  const bytes = new Uint8Array(hashBuffer);
+  return Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
 }
 
 function extractLeaseUuid(txResult: CosmosTxResult): string {
@@ -166,15 +164,13 @@ export async function deployApp(
   // 6. Extract lease UUID
   const leaseUuid = extractLeaseUuid(txResult);
 
-  // Steps 7-9 run after the lease is created on-chain. If any fail, include the
-  // lease UUID in the error so the caller can close the orphaned lease.
   let status: FredLeaseStatus;
   try {
     // 7. Upload manifest with lease-data auth token
     const leaseDataToken = await getLeaseDataAuthToken(address, leaseUuid, metaHashHex);
     await uploadLeaseData(providerUrl, leaseUuid, manifestJson, leaseDataToken, fetchFn);
 
-    // 8. Poll until ready (pass token factory so tokens refresh during long polls)
+    // 8. Poll until ready
     status = await pollLeaseUntilReady(
       providerUrl,
       leaseUuid,
@@ -183,9 +179,6 @@ export async function deployApp(
       fetchFn,
     );
   } catch (err) {
-    // Preserve the original error code (e.g. WALLET_NOT_CONNECTED) so callers can
-    // distinguish auth/config problems from transient deploy failures. For unknown
-    // errors, use TX_FAILED which is non-retryable — retrying would create a duplicate lease.
     const code = err instanceof ManifestMCPError ? err.code : ManifestMCPErrorCode.TX_FAILED;
     const details = err instanceof ManifestMCPError
       ? { ...err.details, lease_uuid: leaseUuid, provider_uuid: providerUuid, provider_url: providerUrl }
@@ -198,7 +191,7 @@ export async function deployApp(
     );
   }
 
-  // 9. Get connection info (best-effort — surface the error but don't fail the deploy)
+  // 9. Get connection info (best-effort)
   let connection: Record<string, unknown> | undefined;
   let url: string | undefined;
   let connectionError: string | undefined;

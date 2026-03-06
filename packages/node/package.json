@@ -5,7 +5,8 @@
   "type": "module",
   "bin": {
     "manifest-mcp-chain": "dist/chain.js",
-    "manifest-mcp-cloud": "dist/cloud.js"
+    "manifest-mcp-lease": "dist/lease.js",
+    "manifest-mcp-fred": "dist/fred.js"
   },
   "scripts": {
     "build": "tsdown",
@@ -31,7 +32,8 @@
     "@cosmjs/proto-signing": "0.32.4",
     "@manifest-network/manifest-mcp-core": "*",
     "@manifest-network/manifest-mcp-chain": "*",
-    "@manifest-network/manifest-mcp-cloud": "*",
+    "@manifest-network/manifest-mcp-lease": "*",
+    "@manifest-network/manifest-mcp-fred": "*",
     "@modelcontextprotocol/sdk": "1.25.3",
     "dotenv": "^17.2.3"
   },

@@ -5,11 +5,7 @@ import {
   CosmosClientManager,
   createMnemonicServer,
   createValidatedConfig,
-  createSignMessage,
-  createLeaseDataSignMessage,
-  createAuthToken,
   VERSION,
-  LeaseState,
   ManifestMCPError,
   ManifestMCPErrorCode,
   type ManifestMCPServerOptions,
@@ -17,52 +13,21 @@ import {
   withErrorHandling,
   jsonResponse,
   bigIntReplacer,
-  browseCatalog,
-  getBalance,
-  listApps,
-  appStatus,
-  getAppLogs,
-  fundCredits,
-  deployApp,
-  stopApp,
-  restartApp,
-  updateApp,
 } from '@manifest-network/manifest-mcp-core';
-import { leaseStateToJSON } from '@manifest-network/manifestjs/dist/codegen/liftedinit/billing/v1/types.js';
 import type { WalletProvider } from '@manifest-network/manifest-mcp-core';
+import { createSignMessage, createLeaseDataSignMessage, createAuthToken } from './http/auth.js';
+import { browseCatalog } from './tools/browseCatalog.js';
+import { appStatus } from './tools/appStatus.js';
+import { getAppLogs } from './tools/getLogs.js';
+import { deployApp } from './tools/deployApp.js';
+import { restartApp } from './tools/restartApp.js';
+import { updateApp } from './tools/updateApp.js';
 
 export type { ManifestMCPServerOptions } from '@manifest-network/manifest-mcp-core';
 
-/** Maximum number of log lines that can be requested via get_logs */
 const MAX_LOG_TAIL = 1000;
 
-/** Valid lease state filter values */
-const VALID_STATE_FILTERS = ['all', 'pending', 'active', 'closed', 'rejected', 'expired'] as const;
-
-const STATE_FILTER_MAP: Record<typeof VALID_STATE_FILTERS[number], LeaseState> = {
-  all: LeaseState.LEASE_STATE_UNSPECIFIED,
-  pending: LeaseState.LEASE_STATE_PENDING,
-  active: LeaseState.LEASE_STATE_ACTIVE,
-  closed: LeaseState.LEASE_STATE_CLOSED,
-  rejected: LeaseState.LEASE_STATE_REJECTED,
-  expired: LeaseState.LEASE_STATE_EXPIRED,
-};
-
-function leaseStateLabel(state: LeaseState): string {
-  switch (state) {
-    case LeaseState.LEASE_STATE_PENDING: return 'pending';
-    case LeaseState.LEASE_STATE_ACTIVE: return 'active';
-    case LeaseState.LEASE_STATE_CLOSED: return 'closed';
-    case LeaseState.LEASE_STATE_REJECTED: return 'rejected';
-    case LeaseState.LEASE_STATE_EXPIRED: return 'expired';
-    default: return leaseStateToJSON(state).toLowerCase();
-  }
-}
-
-/**
- * MCP server for Manifest cloud deployment operations.
- */
-export class CloudMCPServer {
+export class FredMCPServer {
   private mcpServer: McpServer;
   private clientManager: CosmosClientManager;
   private walletProvider: WalletProvider;
@@ -74,7 +39,7 @@ export class CloudMCPServer {
 
     this.mcpServer = new McpServer(
       {
-        name: '@manifest-network/manifest-mcp-cloud',
+        name: '@manifest-network/manifest-mcp-fred',
         version: VERSION,
       },
       {
@@ -114,11 +79,11 @@ export class CloudMCPServer {
   }
 
   private registerTools(): void {
-    // ── browse_catalog ──
+    // -- browse_catalog --
     this.mcpServer.registerTool(
       'browse_catalog',
       {
-        description: 'Browse available cloud providers and service tiers. Use this before deploy_app to see which providers are online and what SKU sizes (e.g. docker-micro, docker-small) are available with pricing.',
+        description: 'Browse available cloud providers and service tiers with live health checks. Use this before deploy_app to see which providers are online and what SKU sizes (e.g. docker-micro, docker-small) are available with pricing.',
       },
       withErrorHandling('browse_catalog', async () => {
         const queryClient = await this.clientManager.getQueryClient();
@@ -127,57 +92,11 @@ export class CloudMCPServer {
       }),
     );
 
-    // ── get_balance ──
-    this.mcpServer.registerTool(
-      'get_balance',
-      {
-        description: 'Get account balances, credit status, and spending estimates. Use this to check if you have enough credits before deploying, or to monitor remaining credit lifetime.',
-      },
-      withErrorHandling('get_balance', async () => {
-        const address = await this.walletProvider.getAddress();
-        const queryClient = await this.clientManager.getQueryClient();
-        const result = await getBalance(queryClient, address);
-        return jsonResponse(result, bigIntReplacer);
-      }),
-    );
-
-    // ── fund_credits ──
-    this.mcpServer.registerTool(
-      'fund_credits',
-      {
-        description: 'Fund the billing credit account by sending tokens from the wallet. Use this when get_balance shows insufficient credits for deploying apps.',
-        inputSchema: {
-          amount: z.string().describe('Amount with denomination (e.g. "10000000umfx")'),
-        },
-      },
-      withErrorHandling('fund_credits', async (args) => {
-        const result = await fundCredits(this.clientManager, args.amount);
-        return jsonResponse(result, bigIntReplacer);
-      }),
-    );
-
-    // ── list_apps ──
-    this.mcpServer.registerTool(
-      'list_apps',
-      {
-        description: 'List all leases (deployed apps) for the current account. Use this to find lease UUIDs needed by app_status, get_logs, stop_app, restart_app, and update_app.',
-        inputSchema: {
-          state: z.enum(VALID_STATE_FILTERS).optional().describe('Filter leases by state (default: "all")'),
-        },
-      },
-      withErrorHandling('list_apps', async (args) => {
-        const address = await this.walletProvider.getAddress();
-        const queryClient = await this.clientManager.getQueryClient();
-        const result = await listApps(queryClient, address, args.state ?? 'all');
-        return jsonResponse(result, bigIntReplacer);
-      }),
-    );
-
-    // ── app_status ──
+    // -- app_status --
     this.mcpServer.registerTool(
       'app_status',
       {
-        description: 'Get detailed status and connection info for a deployed app. Use this after deploy_app or list_apps to check if an app is running and get its URL.',
+        description: 'Get detailed status and connection info for a deployed app. Use this after deploy_app to check if an app is running and get its URL.',
         inputSchema: {
           lease_uuid: z.string().uuid().describe('The lease UUID of the app to check'),
         },
@@ -196,7 +115,7 @@ export class CloudMCPServer {
       }),
     );
 
-    // ── get_logs ──
+    // -- get_logs --
     this.mcpServer.registerTool(
       'get_logs',
       {
@@ -222,11 +141,11 @@ export class CloudMCPServer {
       }),
     );
 
-    // ── deploy_app ──
+    // -- deploy_app --
     this.mcpServer.registerTool(
       'deploy_app',
       {
-        description: 'Deploy a new containerized application. Requires funded credits (use fund_credits if needed). Creates a lease on-chain, uploads the container manifest to a provider, and polls until ready. Use browse_catalog first to see available SKU sizes.',
+        description: 'Deploy a new containerized application. Requires funded credits (use fund_credit if needed). Creates a lease on-chain, uploads the container manifest to a provider, and polls until ready. Use browse_catalog first to see available SKU sizes.',
         inputSchema: {
           image: z.string().describe('Docker image to deploy (e.g. "nginx:alpine")'),
           port: z.number().int().min(1).max(65535).describe('Container port to expose (e.g. 80)'),
@@ -278,22 +197,7 @@ export class CloudMCPServer {
       }),
     );
 
-    // ── stop_app ──
-    this.mcpServer.registerTool(
-      'stop_app',
-      {
-        description: 'Stop a deployed app by closing its lease on-chain. This is permanent — the app cannot be restarted after stopping. Use restart_app instead if you just want to restart it.',
-        inputSchema: {
-          lease_uuid: z.string().uuid().describe('The lease UUID of the app to stop'),
-        },
-      },
-      withErrorHandling('stop_app', async (args) => {
-        const result = await stopApp(this.clientManager, args.lease_uuid);
-        return jsonResponse(result, bigIntReplacer);
-      }),
-    );
-
-    // ── restart_app ──
+    // -- restart_app --
     this.mcpServer.registerTool(
       'restart_app',
       {
@@ -316,7 +220,7 @@ export class CloudMCPServer {
       }),
     );
 
-    // ── update_app ──
+    // -- update_app --
     this.mcpServer.registerTool(
       'update_app',
       {
@@ -355,58 +259,6 @@ export class CloudMCPServer {
         return jsonResponse(result, bigIntReplacer);
       }),
     );
-
-    // ── lease_history ──
-    this.mcpServer.registerTool(
-      'lease_history',
-      {
-        description: 'Get paginated on-chain lease history for the current account. Use this to review past deployments, check lease states, and audit billing history.',
-        inputSchema: {
-          state: z.enum(VALID_STATE_FILTERS).optional().describe('Filter by lease state (default: "all")'),
-          limit: z.number().int().min(1).max(100).optional().describe('Maximum number of results (default: 50, max: 100)'),
-          offset: z.number().int().min(0).optional().describe('Number of results to skip for pagination (default: 0)'),
-        },
-      },
-      withErrorHandling('lease_history', async (args) => {
-        const address = await this.walletProvider.getAddress();
-        const queryClient = await this.clientManager.getQueryClient();
-
-        const limit = BigInt(args.limit ?? 50);
-        const offset = BigInt(args.offset ?? 0);
-        const stateKey = (args.state ?? 'all') as keyof typeof STATE_FILTER_MAP;
-        const stateFilter = STATE_FILTER_MAP[stateKey];
-
-        const billing = queryClient.liftedinit.billing.v1;
-        const result = await billing.leasesByTenant({
-          tenant: address,
-          stateFilter,
-          pagination: {
-            key: new Uint8Array(),
-            offset,
-            limit,
-            countTotal: true,
-            reverse: false,
-          },
-        });
-
-        const leases = result.leases.map((l: { uuid: string; state: LeaseState; providerUuid: string; createdAt?: Date; closedAt?: Date; items?: { skuUuid: string; quantity: bigint }[] }) => ({
-          uuid: l.uuid,
-          state: l.state,
-          stateLabel: leaseStateLabel(l.state),
-          providerUuid: l.providerUuid,
-          createdAt: l.createdAt?.toISOString(),
-          closedAt: l.closedAt?.toISOString(),
-          items: l.items?.map((item: { skuUuid: string; quantity: bigint }) => ({
-            skuUuid: item.skuUuid,
-            quantity: item.quantity,
-          })),
-        }));
-
-        const total = result.pagination?.total ?? BigInt(0);
-
-        return jsonResponse({ leases, total }, bigIntReplacer);
-      }),
-    );
   }
 
   getServer(): Server {
@@ -422,6 +274,6 @@ export class CloudMCPServer {
   }
 }
 
-export function createMnemonicCloudServer(config: MnemonicServerConfig): Promise<CloudMCPServer> {
-  return createMnemonicServer(config, CloudMCPServer);
+export function createMnemonicFredServer(config: MnemonicServerConfig): Promise<FredMCPServer> {
+  return createMnemonicServer(config, FredMCPServer);
 }

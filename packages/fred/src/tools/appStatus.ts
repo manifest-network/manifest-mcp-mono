@@ -1,6 +1,6 @@
-import type { ManifestQueryClient } from '../client.js';
+import type { ManifestQueryClient } from '@manifest-network/manifest-mcp-core';
 import { LeaseState } from '@manifest-network/manifestjs/dist/codegen/liftedinit/billing/v1/types.js';
-import { ManifestMCPError, ManifestMCPErrorCode } from '../types.js';
+import { ManifestMCPError, ManifestMCPErrorCode } from '@manifest-network/manifest-mcp-core';
 import { getLeaseStatus, type FredLeaseStatus } from '../http/fred.js';
 import { getLeaseConnectionInfo, type LeaseConnectionInfo } from '../http/provider.js';
 import { resolveProviderUrl } from './resolveLeaseProvider.js';

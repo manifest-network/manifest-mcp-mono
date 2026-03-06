@@ -10,7 +10,7 @@ npm run lint           # Type-check all packages (tsc --noEmit)
 npm run test           # Unit tests all packages (vitest)
 npm run test:e2e       # E2E tests against live chain (requires docker-compose up)
 
-# Per-package (run from packages/core, packages/chain, packages/cloud, or packages/node)
+# Per-package (run from packages/core, packages/chain, packages/lease, packages/fred, or packages/node)
 npm run build          # tsdown
 npm run lint           # tsc --noEmit
 npm run test           # vitest run
@@ -27,35 +27,36 @@ docker compose -f e2e/docker-compose.yml down -v --remove-orphans
 
 ## Architecture
 
-Two MCP servers bridging AI assistants to Cosmos SDK blockchains (Manifest Network). Four npm workspace packages with strict dependency direction: **node → chain/cloud → core** (never reverse).
+Three MCP servers bridging AI assistants to Cosmos SDK blockchains (Manifest Network). Five npm workspace packages with strict dependency direction: **node -> {chain, lease, fred} -> core** (never reverse).
 
-- **`packages/core`** — Shared library. All blockchain logic, tool implementation functions, HTTP clients, server utilities. Not an MCP server itself.
-- **`packages/chain`** — MCP server with 5 chain tools: `get_account_info`, `cosmos_query`, `cosmos_tx`, `list_modules`, `list_module_subcommands`.
-- **`packages/cloud`** — MCP server with 10 deployment tools: `browse_catalog`, `get_balance`, `fund_credits`, `list_apps`, `app_status`, `get_logs`, `deploy_app`, `stop_app`, `restart_app`, `update_app`.
-- **`packages/node`** — Two CLI entry points (`manifest-mcp-chain`, `manifest-mcp-cloud`) with stdio transport + encrypted keyfile wallet.
+- **`packages/core`** -- Shared library. Cosmos logic, on-chain tool functions, server utilities. No HTTP clients (those live in fred). Not an MCP server itself.
+- **`packages/chain`** -- MCP server with 5 chain tools: `get_account_info`, `cosmos_query`, `cosmos_tx`, `list_modules`, `list_module_subcommands`.
+- **`packages/lease`** -- MCP server with 6 on-chain lease tools: `credit_balance`, `fund_credit`, `leases_by_tenant`, `close_lease`, `get_skus`, `get_providers`.
+- **`packages/fred`** -- MCP server with 6 provider/Fred tools: `browse_catalog`, `deploy_app`, `app_status`, `get_logs`, `restart_app`, `update_app`. Contains HTTP clients (auth, provider, fred) and tool implementations.
+- **`packages/node`** -- Three CLI entry points (`manifest-mcp-chain`, `manifest-mcp-lease`, `manifest-mcp-fred`) with stdio transport + encrypted keyfile wallet.
 
 ### Tool layers (3 tiers)
 
-1. **Discovery** — `list_modules`, `list_module_subcommands` → powered by static registry in `modules.ts`
-2. **Generic chain** — `cosmos_query`, `cosmos_tx`, `get_account_info` → routed through `cosmos.ts` to per-module handlers in `queries/` and `transactions/`
-3. **High-level Manifest** — `deploy_app`, `stop_app`, etc. → orchestration in `tools/` that compose generic chain operations with provider HTTP calls
+1. **Discovery** -- `list_modules`, `list_module_subcommands` -> powered by static registry in `modules.ts`
+2. **Generic chain** -- `cosmos_query`, `cosmos_tx`, `get_account_info` -> routed through `cosmos.ts` to per-module handlers in `queries/` and `transactions/`
+3. **High-level Manifest** -- on-chain lease tools in `packages/lease` (using core's tool functions) and provider-dependent tools in `packages/fred` (composing chain operations with provider HTTP calls)
 
 ### Key components
 
-- **`CosmosClientManager`** (`client.ts`) — Keyed singleton (per `chainId:rpcUrl`), lazy init with promise dedup, token-bucket rate limiting via `limiter`, callers call `acquireRateLimit()` before RPC.
-- **Module registry** (`modules.ts`) — `QUERY_MODULES` / `TX_MODULES` maps: metadata + handler function per module. Adding a module = add handler file + register in map.
-- **`cosmos.ts`** — Routes `(module, subcommand, args)` → handler. Wraps in `withRetry()` and rate limiting.
-- **`server-utils.ts`** — Shared server utilities: `withErrorHandling`, `jsonResponse`, `bigIntReplacer`, `sanitizeForLogging`, `ManifestMCPServerOptions`, `createMnemonicServer`.
-- **`http/auth.ts`** — ADR-036 client-side auth tokens (signed message → base64 Bearer token, 60s expiry). No auth endpoint round-trip.
-- **`http/provider.ts` / `http/fred.ts`** — Off-chain provider API clients with timeout handling.
+- **`CosmosClientManager`** (`client.ts`) -- Keyed singleton (per `chainId:rpcUrl`), lazy init with promise dedup, token-bucket rate limiting via `limiter`, callers call `acquireRateLimit()` before RPC.
+- **Module registry** (`modules.ts`) -- `QUERY_MODULES` / `TX_MODULES` maps: metadata + handler function per module. Adding a module = add handler file + register in map.
+- **`cosmos.ts`** -- Routes `(module, subcommand, args)` -> handler. Wraps in `withRetry()` and rate limiting.
+- **`server-utils.ts`** -- Shared server utilities: `withErrorHandling`, `jsonResponse`, `bigIntReplacer`, `sanitizeForLogging`, `ManifestMCPServerOptions`, `createMnemonicServer`.
+- **`http/auth.ts`** (fred package) -- ADR-036 client-side auth tokens (signed message -> base64 Bearer token, 60s expiry). No auth endpoint round-trip.
+- **`http/provider.ts` / `http/fred.ts`** (fred package) -- Off-chain provider API clients with timeout handling.
 
 ### Wallet resolution (node package)
 
-`packages/node/src/bootstrap.ts` resolves wallet in order: encrypted keyfile (`MANIFEST_KEY_FILE`) → mnemonic env var (`COSMOS_MNEMONIC`) → error. Both `chain.ts` and `cloud.ts` delegate to this shared bootstrap. Both wallet providers implement `WalletProvider` interface from core including optional `signArbitrary` for ADR-036.
+`packages/node/src/bootstrap.ts` resolves wallet in order: encrypted keyfile (`MANIFEST_KEY_FILE`) -> mnemonic env var (`COSMOS_MNEMONIC`) -> error. All three entry points (`chain.ts`, `lease.ts`, and `fred.ts`) delegate to this shared bootstrap. All wallet providers implement `WalletProvider` interface from core including optional `signArbitrary` for ADR-036.
 
 ### Error handling
 
-`ManifestMCPError` with `ManifestMCPErrorCode` enum (20 codes, 7 categories). Error responses are sanitized via `sanitizeForLogging()` which redacts sensitive fields (mnemonics, passwords, keys, tokens). Retry logic (`retry.ts`) classifies errors as transient vs permanent — only transient errors (connection, 5xx, 429) are retried.
+`ManifestMCPError` with `ManifestMCPErrorCode` enum (20 codes, 7 categories). Error responses are sanitized via `sanitizeForLogging()` which redacts sensitive fields (mnemonics, passwords, keys, tokens). Retry logic (`retry.ts`) classifies errors as transient vs permanent -- only transient errors (connection, 5xx, 429) are retried.
 
 ## Conventions
 
@@ -72,10 +73,10 @@ Two MCP servers bridging AI assistants to Cosmos SDK blockchains (Manifest Netwo
 
 | Variable | Required | Default |
 |----------|----------|---------|
-| `COSMOS_CHAIN_ID` | Yes | — |
-| `COSMOS_RPC_URL` | Yes | — |
-| `COSMOS_GAS_PRICE` | Yes | — |
+| `COSMOS_CHAIN_ID` | Yes | -- |
+| `COSMOS_RPC_URL` | Yes | -- |
+| `COSMOS_GAS_PRICE` | Yes | -- |
 | `COSMOS_ADDRESS_PREFIX` | No | `manifest` |
 | `MANIFEST_KEY_FILE` | No | `~/.manifest/key.json` |
-| `MANIFEST_KEY_PASSWORD` | No | — |
-| `COSMOS_MNEMONIC` | No | — |
+| `MANIFEST_KEY_PASSWORD` | No | -- |
+| `COSMOS_MNEMONIC` | No | -- |

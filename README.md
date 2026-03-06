@@ -8,13 +8,14 @@ Exposes on-chain queries and transactions as [Model Context Protocol](https://mo
 
 ```
 packages/
-  core/    @manifest-network/manifest-mcp-core    Shared library: Cosmos logic, tool functions, server utilities
+  core/    @manifest-network/manifest-mcp-core    Shared library: Cosmos logic, on-chain tool functions
   chain/   @manifest-network/manifest-mcp-chain   MCP server for chain operations (5 tools)
-  cloud/   @manifest-network/manifest-mcp-cloud   MCP server for cloud deployments (10 tools)
+  lease/   @manifest-network/manifest-mcp-lease   MCP server for on-chain lease operations (6 tools)
+  fred/    @manifest-network/manifest-mcp-fred    MCP server for provider/Fred operations (6 tools)
   node/    @manifest-network/manifest-mcp-node    CLI entry points + encrypted keyfile wallet
 ```
 
-Dependency direction: **node → chain/cloud → core** (never reverse).
+Dependency direction: **node -> {chain, lease, fred} -> core** (never reverse).
 
 ## Prerequisites
 
@@ -38,7 +39,7 @@ See [`packages/node/README.md`](packages/node/README.md) for wallet setup and MC
 
 ## MCP tools
 
-### Chain server (`manifest-mcp-chain`) — 5 tools
+### Chain server (`manifest-mcp-chain`) -- 5 tools
 
 | Tool | Description |
 |------|-------------|
@@ -48,18 +49,25 @@ See [`packages/node/README.md`](packages/node/README.md) for wallet setup and MC
 | `list_modules` | List all available query and transaction modules |
 | `list_module_subcommands` | List subcommands for a specific module |
 
-### Cloud server (`manifest-mcp-cloud`) — 10 tools
+### Lease server (`manifest-mcp-lease`) -- 6 tools
 
 | Tool | Description |
 |------|-------------|
-| `browse_catalog` | Browse available cloud providers and service tiers |
-| `get_balance` | Get account balances, credit status, and spending estimates |
-| `fund_credits` | Fund the credit account for deploying apps |
-| `list_apps` | List all leases for the current account |
+| `credit_balance` | Query on-chain credit balance |
+| `fund_credit` | Send tokens to the billing account |
+| `leases_by_tenant` | List leases for the current account by state |
+| `close_lease` | Close a lease on-chain |
+| `get_skus` | List available SKUs |
+| `get_providers` | List available providers |
+
+### Fred server (`manifest-mcp-fred`) -- 6 tools
+
+| Tool | Description |
+|------|-------------|
+| `browse_catalog` | Browse available providers and service tiers with health checks |
+| `deploy_app` | Deploy a new application (create lease + deploy container) |
 | `app_status` | Get detailed status for a deployed app by lease UUID |
 | `get_logs` | Get logs for a deployed app by lease UUID |
-| `deploy_app` | Deploy a new application |
-| `stop_app` | Stop a deployed app by closing its lease on-chain |
 | `restart_app` | Restart a deployed app via the provider |
 | `update_app` | Update a deployed app with a new manifest |
 
