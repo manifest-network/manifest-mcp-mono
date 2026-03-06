@@ -9,6 +9,7 @@ export async function restartApp(
   address: string,
   leaseUuid: string,
   getAuthToken: (address: string, leaseUuid: string) => Promise<string>,
+  fetchFn?: typeof globalThis.fetch,
 ) {
   const leaseResult = await queryClient.liftedinit.billing.v1.lease({ leaseUuid });
 
@@ -30,7 +31,7 @@ export async function restartApp(
 
   const providerUrl = await resolveProviderUrl(queryClient, lease.providerUuid);
   const authToken = await getAuthToken(address, leaseUuid);
-  const result = await restartLease(providerUrl, leaseUuid, authToken);
+  const result = await restartLease(providerUrl, leaseUuid, authToken, fetchFn);
 
   return {
     lease_uuid: leaseUuid,

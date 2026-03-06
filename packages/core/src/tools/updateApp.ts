@@ -10,6 +10,7 @@ export async function updateApp(
   leaseUuid: string,
   getAuthToken: (address: string, leaseUuid: string) => Promise<string>,
   manifest: string,
+  fetchFn?: typeof globalThis.fetch,
 ) {
   const leaseResult = await queryClient.liftedinit.billing.v1.lease({ leaseUuid });
 
@@ -31,7 +32,7 @@ export async function updateApp(
 
   const providerUrl = await resolveProviderUrl(queryClient, lease.providerUuid);
   const authToken = await getAuthToken(address, leaseUuid);
-  const result = await updateLease(providerUrl, leaseUuid, manifest, authToken);
+  const result = await updateLease(providerUrl, leaseUuid, manifest, authToken, fetchFn);
 
   return {
     lease_uuid: leaseUuid,

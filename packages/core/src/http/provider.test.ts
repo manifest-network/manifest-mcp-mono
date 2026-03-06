@@ -114,6 +114,16 @@ describe('checkedFetch', () => {
     await expect(checkedFetch('https://slow.example.com', undefined, 50)).rejects.toThrow(/timed out/);
   });
 
+  it('should use custom fetchFn when provided', async () => {
+    const customFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+    });
+    const res = await checkedFetch('https://example.com/health', undefined, undefined, customFetch);
+    expect(res.ok).toBe(true);
+    expect(customFetch).toHaveBeenCalledOnce();
+  });
+
   it('should not apply internal timeout when caller provides signal', async () => {
     const controller = new AbortController();
     vi.stubGlobal('fetch', vi.fn().mockImplementation((_url: string, init?: RequestInit) => {

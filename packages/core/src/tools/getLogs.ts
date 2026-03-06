@@ -12,6 +12,7 @@ export async function getAppLogs(
   leaseUuid: string,
   getAuthToken: (address: string, leaseUuid: string) => Promise<string>,
   tail?: number,
+  fetchFn?: typeof globalThis.fetch,
 ) {
   const leaseResult = await queryClient.liftedinit.billing.v1.lease({ leaseUuid });
 
@@ -33,7 +34,7 @@ export async function getAppLogs(
 
   const providerUrl = await resolveProviderUrl(queryClient, lease.providerUuid);
   const authToken = await getAuthToken(address, leaseUuid);
-  const result = await getLeaseLogs(providerUrl, leaseUuid, authToken, tail);
+  const result = await getLeaseLogs(providerUrl, leaseUuid, authToken, tail, fetchFn);
 
   let truncated = false;
   const logs: Record<string, string> = {};

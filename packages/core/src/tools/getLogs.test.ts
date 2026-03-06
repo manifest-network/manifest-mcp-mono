@@ -181,6 +181,7 @@ describe('getAppLogs', () => {
       'lease-1',
       'auth-token-123',
       100,
+      undefined,
     );
   });
 

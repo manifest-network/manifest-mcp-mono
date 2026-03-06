@@ -19,6 +19,7 @@ export async function appStatus(
   address: string,
   leaseUuid: string,
   getAuthToken: (address: string, leaseUuid: string) => Promise<string>,
+  fetchFn?: typeof globalThis.fetch,
 ) {
   const leaseResult = await queryClient.liftedinit.billing.v1.lease({ leaseUuid });
 
@@ -68,8 +69,8 @@ export async function appStatus(
     }
 
     const [statusResult, connResult] = await Promise.allSettled([
-      getLeaseStatus(providerUrl, leaseUuid, authToken),
-      getLeaseConnectionInfo(providerUrl, leaseUuid, authToken),
+      getLeaseStatus(providerUrl, leaseUuid, authToken, fetchFn),
+      getLeaseConnectionInfo(providerUrl, leaseUuid, authToken, fetchFn),
     ]);
 
     if (statusResult.status === 'fulfilled') {

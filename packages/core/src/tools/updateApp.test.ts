@@ -44,6 +44,7 @@ describe('updateApp', () => {
       'lease-1',
       manifest,
       'auth-token-123',
+      undefined,
     );
     expect(result).toEqual({
       lease_uuid: 'lease-1',

@@ -39,6 +39,7 @@ export async function checkedFetch(
   url: string,
   init?: RequestInit,
   timeoutMs: number = DEFAULT_FETCH_TIMEOUT_MS,
+  fetchFn: typeof globalThis.fetch = globalThis.fetch,
 ): Promise<Response> {
   const callerProvidedSignal = init?.signal != null;
   let controller: AbortController | undefined;
@@ -52,7 +53,7 @@ export async function checkedFetch(
 
   let res: Response;
   try {
-    res = await fetch(url, init);
+    res = await fetchFn(url, init);
   } catch (err) {
     if (err instanceof DOMException && err.name === 'AbortError') {
       if (controller && !callerProvidedSignal) {
@@ -95,10 +96,11 @@ export interface ProviderHealthResponse {
 export async function getProviderHealth(
   providerApiUrl: string,
   timeoutMs = 5_000,
+  fetchFn?: typeof globalThis.fetch,
 ): Promise<ProviderHealthResponse> {
   const validated = validateProviderUrl(providerApiUrl);
   const url = `${validated}/health`;
-  const res = await checkedFetch(url, undefined, timeoutMs);
+  const res = await checkedFetch(url, undefined, timeoutMs, fetchFn);
   return await parseJsonResponse<ProviderHealthResponse>(res, url);
 }
 
@@ -112,12 +114,13 @@ export async function getLeaseConnectionInfo(
   providerApiUrl: string,
   leaseUuid: string,
   authToken: string,
+  fetchFn?: typeof globalThis.fetch,
 ): Promise<LeaseConnectionInfo> {
   const validated = validateProviderUrl(providerApiUrl);
   const url = `${validated}/lease/${leaseUuid}/connection`;
   const res = await checkedFetch(url, {
     headers: { Authorization: `Bearer ${authToken}` },
-  });
+  }, undefined, fetchFn);
   return await parseJsonResponse<LeaseConnectionInfo>(res, url);
 }
 
@@ -126,6 +129,7 @@ export async function uploadLeaseData(
   leaseUuid: string,
   payload: string,
   authToken: string,
+  fetchFn?: typeof globalThis.fetch,
 ): Promise<void> {
   const validated = validateProviderUrl(providerApiUrl);
   await checkedFetch(`${validated}/lease/${leaseUuid}/data`, {
@@ -135,5 +139,5 @@ export async function uploadLeaseData(
       'Content-Type': 'application/octet-stream',
     },
     body: payload,
-  });
+  }, undefined, fetchFn);
 }

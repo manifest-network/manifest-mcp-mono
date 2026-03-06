@@ -99,6 +99,7 @@ export async function deployApp(
   getAuthToken: (address: string, leaseUuid: string) => Promise<string>,
   getLeaseDataAuthToken: (address: string, leaseUuid: string, metaHashHex: string) => Promise<string>,
   input: DeployAppInput,
+  fetchFn?: typeof globalThis.fetch,
 ): Promise<DeployAppResult> {
   const address = await clientManager.getAddress();
   const queryClient = await clientManager.getQueryClient();
@@ -140,13 +141,15 @@ export async function deployApp(
   try {
     // 7. Upload manifest with lease-data auth token
     const leaseDataToken = await getLeaseDataAuthToken(address, leaseUuid, metaHashHex);
-    await uploadLeaseData(providerUrl, leaseUuid, manifestJson, leaseDataToken);
+    await uploadLeaseData(providerUrl, leaseUuid, manifestJson, leaseDataToken, fetchFn);
 
     // 8. Poll until ready (pass token factory so tokens refresh during long polls)
     status = await pollLeaseUntilReady(
       providerUrl,
       leaseUuid,
       () => getAuthToken(address, leaseUuid),
+      undefined,
+      fetchFn,
     );
   } catch (err) {
     // Preserve the original error code (e.g. WALLET_NOT_CONNECTED) so callers can
@@ -170,7 +173,7 @@ export async function deployApp(
   let connectionError: string | undefined;
   try {
     const authToken = await getAuthToken(address, leaseUuid);
-    const connInfo = await getLeaseConnectionInfo(providerUrl, leaseUuid, authToken);
+    const connInfo = await getLeaseConnectionInfo(providerUrl, leaseUuid, authToken, fetchFn);
     connection = connInfo as unknown as Record<string, unknown>;
     if (connInfo.host && connInfo.ports) {
       const firstPort = Object.values(connInfo.ports)[0];

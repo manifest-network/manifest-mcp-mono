@@ -11,12 +11,13 @@ export async function getLeaseStatus(
   providerUrl: string,
   leaseUuid: string,
   authToken: string,
+  fetchFn?: typeof globalThis.fetch,
 ): Promise<FredLeaseStatus> {
   const validated = validateProviderUrl(providerUrl);
   const url = `${validated}/fred/lease/${leaseUuid}/status`;
   const res = await checkedFetch(url, {
     headers: { Authorization: `Bearer ${authToken}` },
-  });
+  }, undefined, fetchFn);
   return await parseJsonResponse<FredLeaseStatus>(res, url);
 }
 
@@ -29,6 +30,7 @@ export async function getLeaseLogs(
   leaseUuid: string,
   authToken: string,
   tail?: number,
+  fetchFn?: typeof globalThis.fetch,
 ): Promise<FredLeaseLogs> {
   const validated = validateProviderUrl(providerUrl);
   const cappedTail = tail !== undefined ? Math.min(tail, MAX_TAIL) : undefined;
@@ -36,7 +38,7 @@ export async function getLeaseLogs(
   const url = `${validated}/fred/lease/${leaseUuid}/logs${qs}`;
   const res = await checkedFetch(url, {
     headers: { Authorization: `Bearer ${authToken}` },
-  });
+  }, undefined, fetchFn);
   return await parseJsonResponse<FredLeaseLogs>(res, url);
 }
 
@@ -50,12 +52,13 @@ export async function getLeaseProvision(
   providerUrl: string,
   leaseUuid: string,
   authToken: string,
+  fetchFn?: typeof globalThis.fetch,
 ): Promise<FredLeaseProvision> {
   const validated = validateProviderUrl(providerUrl);
   const url = `${validated}/fred/lease/${leaseUuid}/provision`;
   const res = await checkedFetch(url, {
     headers: { Authorization: `Bearer ${authToken}` },
-  });
+  }, undefined, fetchFn);
   return await parseJsonResponse<FredLeaseProvision>(res, url);
 }
 
@@ -67,13 +70,14 @@ export async function restartLease(
   providerUrl: string,
   leaseUuid: string,
   authToken: string,
+  fetchFn?: typeof globalThis.fetch,
 ): Promise<FredActionResponse> {
   const validated = validateProviderUrl(providerUrl);
   const url = `${validated}/fred/lease/${leaseUuid}/restart`;
   const res = await checkedFetch(url, {
     method: 'POST',
     headers: { Authorization: `Bearer ${authToken}` },
-  });
+  }, undefined, fetchFn);
   return await parseJsonResponse<FredActionResponse>(res, url);
 }
 
@@ -82,6 +86,7 @@ export async function updateLease(
   leaseUuid: string,
   payload: string,
   authToken: string,
+  fetchFn?: typeof globalThis.fetch,
 ): Promise<FredActionResponse> {
   const validated = validateProviderUrl(providerUrl);
   const url = `${validated}/fred/lease/${leaseUuid}/update`;
@@ -92,7 +97,7 @@ export async function updateLease(
       'Content-Type': 'application/octet-stream',
     },
     body: payload,
-  });
+  }, undefined, fetchFn);
   return await parseJsonResponse<FredActionResponse>(res, url);
 }
 
@@ -106,13 +111,14 @@ export async function pollLeaseUntilReady(
   leaseUuid: string,
   authToken: string | (() => Promise<string>),
   opts: PollOptions = {},
+  fetchFn?: typeof globalThis.fetch,
 ): Promise<FredLeaseStatus> {
   const { intervalMs = 3_000, timeoutMs = 120_000 } = opts;
   const deadline = Date.now() + timeoutMs;
 
   while (Date.now() < deadline) {
     const token = typeof authToken === 'function' ? await authToken() : authToken;
-    const status = await getLeaseStatus(providerUrl, leaseUuid, token);
+    const status = await getLeaseStatus(providerUrl, leaseUuid, token, fetchFn);
     if (status.status === 'ready' || status.status === 'running') {
       return status;
     }

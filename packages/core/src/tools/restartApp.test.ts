@@ -42,6 +42,7 @@ describe('restartApp', () => {
       'https://provider.example.com',
       'lease-1',
       'auth-token-123',
+      undefined,
     );
     expect(result).toEqual({
       lease_uuid: 'lease-1',

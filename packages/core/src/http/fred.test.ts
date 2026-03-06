@@ -52,6 +52,16 @@ describe('getLeaseStatus', () => {
 
     await expect(getLeaseStatus(BASE_URL, LEASE_UUID, AUTH_TOKEN)).rejects.toThrow(ProviderApiError);
   });
+
+  it('uses custom fetchFn when provided', async () => {
+    const customFetch = vi.fn().mockResolvedValue(jsonResponse({ status: 'ready' }));
+
+    const result = await getLeaseStatus(BASE_URL, LEASE_UUID, AUTH_TOKEN, customFetch);
+
+    expect(result).toEqual({ status: 'ready' });
+    expect(customFetch).toHaveBeenCalledOnce();
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
 });
 
 describe('getLeaseLogs', () => {
