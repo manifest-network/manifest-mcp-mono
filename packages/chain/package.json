@@ -1,14 +1,19 @@
 {
-  "name": "@manifest-network/manifest-mcp-node",
+  "name": "@manifest-network/manifest-mcp-chain",
   "version": "0.1.0",
-  "description": "Node.js MCP servers for Manifest Network with stdio transport and keyfile wallet",
+  "description": "MCP server for Cosmos SDK chain operations (queries, transactions, module discovery)",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
   "type": "module",
-  "bin": {
-    "manifest-mcp-chain": "dist/chain.js",
-    "manifest-mcp-cloud": "dist/cloud.js"
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
   },
   "scripts": {
     "build": "tsdown",
+    "dev": "tsdown --watch",
     "lint": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest"
@@ -17,8 +22,7 @@
     "mcp",
     "cosmos",
     "blockchain",
-    "manifest",
-    "stdio"
+    "manifest"
   ],
   "author": "Felix C. Morency",
   "license": "MIT",
@@ -26,14 +30,9 @@
     "dist"
   ],
   "dependencies": {
-    "@cosmjs/amino": "0.32.4",
-    "@cosmjs/encoding": "0.32.4",
-    "@cosmjs/proto-signing": "0.32.4",
     "@manifest-network/manifest-mcp-core": "*",
-    "@manifest-network/manifest-mcp-chain": "*",
-    "@manifest-network/manifest-mcp-cloud": "*",
     "@modelcontextprotocol/sdk": "1.25.3",
-    "dotenv": "^17.2.3"
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@types/node": "20.19.30",

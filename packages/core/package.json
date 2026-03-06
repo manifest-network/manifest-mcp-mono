@@ -1,7 +1,7 @@
 {
   "name": "@manifest-network/manifest-mcp-core",
   "version": "0.1.0",
-  "description": "Transport-agnostic MCP server core for Cosmos SDK blockchain interactions with Manifest Network",
+  "description": "Shared library for Cosmos SDK blockchain logic, tool functions, and HTTP clients (Manifest Network)",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "type": "module",
@@ -9,6 +9,10 @@
     ".": {
       "import": "./dist/index.js",
       "types": "./dist/index.d.ts"
+    },
+    "./__test-utils__/mocks.js": {
+      "import": "./dist/__test-utils__/mocks.js",
+      "types": "./dist/__test-utils__/mocks.d.ts"
     }
   },
   "scripts": {

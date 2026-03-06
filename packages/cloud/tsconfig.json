@@ -20,9 +20,7 @@
     "composite": true
   },
   "references": [
-    { "path": "../core" },
-    { "path": "../chain" },
-    { "path": "../cloud" }
+    { "path": "../core" }
   ],
   "include": ["src/**/*"],
   "exclude": ["node_modules", "dist"]

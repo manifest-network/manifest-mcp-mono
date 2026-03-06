@@ -1,56 +1,72 @@
 # Architecture
 
-This document describes the architecture of the Manifest MCP monorepo — an MCP server that bridges AI assistants to Cosmos SDK blockchains, with first-class support for the Manifest Network.
+This document describes the architecture of the Manifest MCP monorepo — MCP servers that bridge AI assistants to Cosmos SDK blockchains, with first-class support for the Manifest Network.
 
 ## Overview
 
-The server implements the [Model Context Protocol](https://modelcontextprotocol.io/) (MCP), exposing blockchain queries, transactions, and Manifest-specific deployment tools to any MCP-compatible client (Claude Desktop, Cursor, etc.).
+The servers implement the [Model Context Protocol](https://modelcontextprotocol.io/) (MCP), exposing blockchain queries, transactions, and Manifest-specific deployment tools to any MCP-compatible client (Claude Desktop, Cursor, etc.).
+
+The 15 tools are split across two MCP servers to stay under the LLM tool-selection accuracy ceiling:
+
+- **Chain server** (5 tools) — Generic Cosmos SDK operations: queries, transactions, module discovery
+- **Cloud server** (10 tools) — Manifest cloud deployment: app lifecycle, billing, provider management
 
 ```
 ┌─────────────────────┐
 │   MCP Client        │  Claude Desktop, Cursor, etc.
 │   (AI Assistant)    │
-└────────┬────────────┘
-         │ stdio (JSON-RPC)
-┌────────▼────────────┐
-│   manifest-mcp-node │  Transport + wallet resolution
-│   (packages/node)   │
-└────────┬────────────┘
-         │ in-process
-┌────────▼────────────┐
-│   manifest-mcp-core │  MCP server, tool routing, Cosmos logic
-│   (packages/core)   │
-└────────┬────────────┘
-         │ RPC / HTTP
-    ┌────▼────┐  ┌─────────┐
-    │  Chain  │  │ Provider│  Manifest ledger + cloud providers
-    │  (RPC)  │  │  (HTTP) │
-    └─────────┘  └─────────┘
+└───┬────────────┬────┘
+    │ stdio      │ stdio
+┌───▼──────┐ ┌───▼──────┐
+│  chain   │ │  cloud   │  Transport + wallet resolution
+│ (node)   │ │ (node)   │
+└───┬──────┘ └───┬──────┘
+    │            │
+┌───▼──────┐ ┌───▼──────┐
+│  chain   │ │  cloud   │  MCP server, tool registration
+│ (pkg)    │ │ (pkg)    │
+└───┬──────┘ └───┬──────┘
+    │            │
+    └──────┬─────┘
+    ┌──────▼─────┐
+    │    core    │  Shared: Cosmos logic, tool impls, HTTP clients
+    │  (pkg)     │
+    └──────┬─────┘
+           │ RPC / HTTP
+      ┌────▼────┐  ┌─────────┐
+      │  Chain  │  │ Provider│  Manifest ledger + cloud providers
+      │  (RPC)  │  │  (HTTP) │
+      └─────────┘  └─────────┘
 ```
 
 ## Monorepo structure
 
 ```
 packages/
-  core/   @manifest-network/manifest-mcp-core   Transport-agnostic server & Cosmos logic
-  node/   @manifest-network/manifest-mcp-node   Node.js stdio transport + encrypted keyfile wallet
-e2e/                                             End-to-end tests against a live chain
+  core/    @manifest-network/manifest-mcp-core    Shared library (Cosmos logic, tool functions, HTTP clients)
+  chain/   @manifest-network/manifest-mcp-chain   MCP server: 5 chain tools
+  cloud/   @manifest-network/manifest-mcp-cloud   MCP server: 10 deployment tools
+  node/    @manifest-network/manifest-mcp-node     Two CLIs: manifest-mcp-chain, manifest-mcp-cloud
+e2e/                                               End-to-end tests against a live chain
 submodules/
-  manifest-ledger/                               Cosmos SDK blockchain (billing-v2 branch)
-  fred/                                          Container orchestration backend (main branch)
+  manifest-ledger/                                 Cosmos SDK blockchain (billing-v2 branch)
+  fred/                                            Container orchestration backend (main branch)
 ```
 
-The two packages have a clear dependency direction: **node depends on core**, never the reverse. Core has no knowledge of transports or Node.js-specific APIs.
+Dependency direction: **node → {chain, cloud, core}** and **{chain, cloud} → core** (never reverse). Core has no knowledge of transports or Node.js-specific APIs, though it exports MCP-typed server utilities (`withErrorHandling`, `jsonResponse`) consumed by chain and cloud packages.
 
 ## Package: core
 
-The core package contains all blockchain logic and the MCP server implementation. It is transport-agnostic — it creates an MCP `Server` instance but does not bind it to any transport.
+The core package is a shared library containing all blockchain logic, tool implementation functions, HTTP clients, and server utilities. It is **not** an MCP server itself — it exports building blocks that chain and cloud packages compose into servers.
 
 ### Source layout
 
 ```
 src/
-├── index.ts              MCP server class, tool definitions, request routing
+├── index.ts              Re-exports all public API
+├── server-utils.ts       Server utilities (error handling, sanitization, response helpers)
+├── __test-utils__/
+│   └── mocks.ts          Shared test mocks (imported cross-package by chain/cloud tests)
 ├── client.ts             CosmosClientManager — keyed-instance RPC client lifecycle
 ├── config.ts             Configuration validation and defaults
 ├── cosmos.ts             cosmosQuery / cosmosTx routing to module handlers
@@ -91,7 +107,7 @@ src/
 │   ├── group.ts          Group governance transactions
 │   └── utils.ts          Signature and broadcast helpers
 │
-└── tools/                High-level Manifest deployment tools
+└── tools/                High-level Manifest deployment tool functions
     ├── browseCatalog.ts  List providers and SKU pricing
     ├── getBalance.ts     On-chain + credit balance
     ├── fundCredits.ts    Send tokens to billing account
@@ -107,8 +123,6 @@ src/
 
 ### Key components
 
-**ManifestMCPServer** (`index.ts`) — The main entry point. Registers 15 MCP tools with JSON schemas and routes `CallToolRequest` messages to the appropriate handler. Handles error sanitization (redacts sensitive fields like mnemonics and passwords from error responses).
-
 **CosmosClientManager** (`client.ts`) — Keyed-instance cache that manages RPC client lifecycle (one instance per `chainId:rpcUrl` pair). Key features:
 - Lazy initialization with promise-based concurrency control (multiple callers wait for the same init)
 - Token-bucket rate limiting (default: 10 requests/sec via `limiter`), acquired by callers before RPC calls
@@ -118,29 +132,59 @@ src/
 
 **cosmosQuery / cosmosTx** (`cosmos.ts`) — Routes a `(module, subcommand, args)` tuple to the correct query or transaction handler by looking up the module registry.
 
-### Tool categories
+**Server utilities** (`server-utils.ts`) — Shared by chain and cloud packages: `withErrorHandling` (wraps tool handlers with error sanitization), `jsonResponse` (formats successful responses), `bigIntReplacer` (serializes BigInt), `sanitizeForLogging` (redacts sensitive fields).
 
-The 15 MCP tools fall into three categories:
+## Package: chain
 
-| Category | Tools | Purpose |
-|----------|-------|---------|
-| **Discovery** | `list_modules`, `list_module_subcommands` | Let the AI explore available chain operations |
-| **Generic chain** | `get_account_info`, `cosmos_query`, `cosmos_tx` | Execute any Cosmos SDK query or transaction |
-| **Manifest deployment** | `browse_catalog`, `get_balance`, `fund_credits`, `list_apps`, `app_status`, `get_logs`, `deploy_app`, `stop_app`, `restart_app`, `update_app` | High-level app lifecycle management |
+The chain package is an MCP server that registers 5 generic Cosmos SDK tools:
 
-The generic chain tools (`cosmos_query`, `cosmos_tx`) support 9 modules: `bank`, `staking`, `distribution`, `gov`, `auth` (query only), `billing`, `sku`, `group`, and `manifest` (tx only).
+| Tool | Purpose |
+|------|---------|
+| `get_account_info` | Get the active wallet address |
+| `cosmos_query` | Execute any Cosmos SDK query |
+| `cosmos_tx` | Execute any Cosmos SDK transaction |
+| `list_modules` | Discover available query/tx modules |
+| `list_module_subcommands` | Discover subcommands for a module |
+
+The `ChainMCPServer` class takes a `ManifestMCPServerOptions` (config + walletProvider), creates an `McpServer`, and registers the 5 tools using core's `cosmosQuery`, `cosmosTx`, and module registry functions.
+
+## Package: cloud
+
+The cloud package is an MCP server that registers 10 Manifest deployment tools:
+
+| Tool | Purpose |
+|------|---------|
+| `browse_catalog` | List providers and SKU pricing |
+| `get_balance` | On-chain + credit balance |
+| `fund_credits` | Send tokens to billing account |
+| `list_apps` | Query leases by state |
+| `app_status` | Lease status + provider info |
+| `get_logs` | Fetch container logs |
+| `deploy_app` | Create lease and deploy container |
+| `stop_app` | Close lease on-chain |
+| `restart_app` | Restart via provider API |
+| `update_app` | Update container manifest |
+
+The `CloudMCPServer` class handles ADR-036 provider authentication internally (via `getProviderAuthToken` and `getLeaseDataAuthToken` private methods) and delegates to core's tool functions.
 
 ## Package: node
 
-The node package provides the Node.js runtime entry point. It is intentionally thin:
+The node package provides two Node.js CLI entry points:
+
+- **`manifest-mcp-chain`** (`chain.ts`) — Spawns `ChainMCPServer` with stdio transport
+- **`manifest-mcp-cloud`** (`cloud.ts`) — Spawns `CloudMCPServer` with stdio transport
+
+Both entry points share the same wallet resolution and subcommand handling:
 
 1. **Wallet resolution** — Checks for an encrypted keyfile first (`KeyfileWalletProvider`), falls back to a BIP-39 mnemonic env var (`MnemonicWalletProvider`)
-2. **Transport binding** — Connects the core `Server` to a `StdioServerTransport`
+2. **Transport binding** — Connects the server to a `StdioServerTransport`
 3. **CLI subcommands** — `keygen` and `import` for wallet management (interactive, password-protected)
 
 ```
 src/
-├── index.ts              CLI entry point and server bootstrap
+├── bootstrap.ts          Shared CLI bootstrap (wallet resolution, transport, error handling)
+├── chain.ts              Chain CLI entry point
+├── cloud.ts              Cloud CLI entry point
 ├── config.ts             Environment variable loading
 ├── keyfileWallet.ts      Encrypted keyfile wallet provider
 └── keygen.ts             Interactive key generation and import
@@ -148,7 +192,7 @@ src/
 
 ### Wallet provider interface
 
-Both packages share the `WalletProvider` interface from core:
+All packages share the `WalletProvider` interface from core:
 
 ```typescript
 interface WalletProvider {
@@ -171,8 +215,8 @@ MCP Client
   → JSON-RPC over stdio
     → StdioServerTransport (node)
       → Server.handleRequest (MCP SDK)
-        → CallToolRequestSchema handler (core/index.ts)
-          → Tool handler (e.g., cosmos_query → cosmos.ts → queries/bank.ts)
+        → Tool handler (chain or cloud server)
+          → Core function (e.g., cosmosQuery → cosmos.ts → queries/bank.ts)
             → CosmosClientManager.getQueryClient()
               → RPC call to chain
             ← Response
@@ -183,7 +227,7 @@ MCP Client
   ← Displayed to user
 ```
 
-For Manifest deployment tools, the flow additionally involves:
+For Manifest deployment tools (cloud server), the flow additionally involves:
 1. Querying on-chain state (lease, billing, SKU data) via RPC
 2. Authenticating with providers using ADR-036 signed messages
 3. Calling provider HTTP APIs (via `http/provider.ts` and `http/fred.ts`)
@@ -198,7 +242,7 @@ Provider APIs require authentication via ADR-036 arbitrary message signing:
 
 There is no round-trip to an auth endpoint — the token is constructed entirely client-side. Tokens expire after 60 seconds.
 
-This is handled by `http/auth.ts` and used by the high-level tools that interact with providers (deploy, status, logs, restart, update).
+This is handled by `http/auth.ts` and used by the cloud server tools that interact with providers (deploy, status, logs, restart, update).
 
 ## Error handling
 

@@ -146,7 +146,7 @@ export interface RetryConfig {
 }
 
 /**
- * Configuration for the Manifest MCP Browser server
+ * Configuration for the Manifest MCP server
  */
 export interface ManifestMCPConfig {
   /** Chain ID (e.g., "manifest-ledger-testnet") */
@@ -263,7 +263,7 @@ export enum ManifestMCPErrorCode {
 }
 
 /**
- * Custom error class for Manifest MCP Browser errors
+ * Custom error class for Manifest MCP errors
  */
 export class ManifestMCPError extends Error {
   public readonly code: ManifestMCPErrorCode;
