@@ -82,6 +82,23 @@ export interface DeployAppInput {
   port: number;
   size: string;
   env?: Record<string, string>;
+  command?: string[];
+  args?: string[];
+  user?: string;
+  tmpfs?: string[];
+  health_check?: {
+    test: string[];
+    interval?: string;
+    timeout?: string;
+    retries?: number;
+    start_period?: string;
+  };
+  stop_grace_period?: string;
+  init?: boolean;
+  expose?: string[];
+  labels?: Record<string, string>;
+  storage?: string;
+  depends_on?: Record<string, { condition: string }>;
 }
 
 export interface DeployAppResult {
@@ -109,16 +126,30 @@ export async function deployApp(
     image: input.image,
     ports: { [`${input.port}/tcp`]: {} },
   };
-  if (input.env) {
-    manifest.env = input.env;
-  }
+  if (input.env) manifest.env = input.env;
+  if (input.command) manifest.command = input.command;
+  if (input.args) manifest.args = input.args;
+  if (input.user) manifest.user = input.user;
+  if (input.tmpfs) manifest.tmpfs = input.tmpfs;
+  if (input.health_check) manifest.health_check = input.health_check;
+  if (input.stop_grace_period) manifest.stop_grace_period = input.stop_grace_period;
+  if (input.init !== undefined) manifest.init = input.init;
+  if (input.expose) manifest.expose = input.expose;
+  if (input.labels) manifest.labels = input.labels;
+  if (input.depends_on) manifest.depends_on = input.depends_on;
   const manifestJson = JSON.stringify(manifest);
 
   // 2. SHA-256 hash of manifest
   const metaHashHex = await sha256(manifestJson);
 
-  // 3. Find matching SKU
+  // 3. Find matching SKU(s)
   const { skuUuid, providerUuid } = await findSkuUuid(queryClient, input.size);
+  const leaseItems = [`${skuUuid}:1`];
+
+  if (input.storage) {
+    const { skuUuid: storageSkuUuid } = await findSkuUuid(queryClient, input.storage);
+    leaseItems.push(`${storageSkuUuid}:1`);
+  }
 
   // 4. Get provider URL
   const providerUrl = await getProviderUrl(queryClient, providerUuid);
@@ -128,7 +159,7 @@ export async function deployApp(
     clientManager,
     'billing',
     'create-lease',
-    ['--meta-hash', metaHashHex, `${skuUuid}:1`],
+    ['--meta-hash', metaHashHex, ...leaseItems],
     true,
   );
 
