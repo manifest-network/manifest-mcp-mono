@@ -33,6 +33,8 @@ import { CloudMCPServer } from './index.js';
 import {
   ManifestMCPError,
   ManifestMCPErrorCode,
+  LeaseState,
+  CosmosClientManager,
   browseCatalog,
   getBalance,
   listApps,
@@ -95,6 +97,7 @@ const CLOUD_TOOL_NAMES = [
   'stop_app',
   'restart_app',
   'update_app',
+  'lease_history',
 ];
 
 beforeEach(() => {
@@ -111,7 +114,7 @@ afterEach(async () => {
 
 describe('CloudMCPServer', () => {
   describe('listTools via protocol', () => {
-    it('should advertise exactly 10 cloud tools', async () => {
+    it('should advertise exactly 11 cloud tools', async () => {
       const server = new CloudMCPServer({
         config: makeMockConfig(),
         walletProvider: makeMockWallet(),
@@ -126,7 +129,7 @@ describe('CloudMCPServer', () => {
 
       try {
         const result = await client.listTools();
-        expect(result.tools).toHaveLength(10);
+        expect(result.tools).toHaveLength(11);
         expect(result.tools.map(t => t.name).sort()).toEqual([...CLOUD_TOOL_NAMES].sort());
       } finally {
         await client.close();
@@ -590,6 +593,119 @@ describe('CloudMCPServer', () => {
 
       const parsed = JSON.parse(result.content[0].text);
       expect(parsed.details.data).toBe('[REDACTED - possible mnemonic]');
+    });
+  });
+
+  describe('lease_history', () => {
+    function setupLeaseHistoryMock(leases: unknown[], total = BigInt(0)) {
+      const mockLeasesByTenant = vi.fn().mockResolvedValue({
+        leases,
+        pagination: { nextKey: new Uint8Array(), total },
+      });
+      const mockGetQueryClient = vi.fn().mockResolvedValue({
+        liftedinit: {
+          billing: { v1: { leasesByTenant: mockLeasesByTenant } },
+        },
+      });
+      (CosmosClientManager.getInstance as ReturnType<typeof vi.fn>).mockReturnValue({
+        disconnect: vi.fn(),
+        getQueryClient: mockGetQueryClient,
+        getSigningClient: vi.fn().mockResolvedValue({}),
+        getAddress: vi.fn().mockResolvedValue('manifest1abc'),
+        getConfig: vi.fn().mockReturnValue({}),
+        acquireRateLimit: vi.fn().mockResolvedValue(undefined),
+      });
+      return mockLeasesByTenant;
+    }
+
+    it('returns all leases with state=all', async () => {
+      setupLeaseHistoryMock([
+        { uuid: 'lease-1', state: LeaseState.LEASE_STATE_ACTIVE, providerUuid: 'prov-1', createdAt: new Date('2025-01-01'), items: [] },
+        { uuid: 'lease-2', state: LeaseState.LEASE_STATE_CLOSED, providerUuid: 'prov-1', createdAt: new Date('2025-01-02'), closedAt: new Date('2025-01-03'), items: [] },
+      ], BigInt(2));
+
+      const server = new CloudMCPServer({ config: makeMockConfig(), walletProvider: makeMockWallet() });
+      const result = await callTool(server, 'lease_history');
+
+      expect(result.isError).toBeUndefined();
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.leases).toHaveLength(2);
+      expect(parsed.leases[0].uuid).toBe('lease-1');
+      expect(parsed.leases[0].stateLabel).toBe('active');
+      expect(parsed.leases[1].uuid).toBe('lease-2');
+      expect(parsed.leases[1].stateLabel).toBe('closed');
+      expect(parsed.leases[1].closedAt).toBe('2025-01-03T00:00:00.000Z');
+      expect(parsed.total).toBe('2');
+    });
+
+    it('filters by state=active', async () => {
+      const mock = setupLeaseHistoryMock([
+        { uuid: 'lease-1', state: LeaseState.LEASE_STATE_ACTIVE, providerUuid: 'prov-1', items: [] },
+      ], BigInt(1));
+
+      const server = new CloudMCPServer({ config: makeMockConfig(), walletProvider: makeMockWallet() });
+      const result = await callTool(server, 'lease_history', { state: 'active' });
+
+      expect(result.isError).toBeUndefined();
+      const callArgs = mock.mock.calls[0][0];
+      expect(callArgs.stateFilter).toBe(LeaseState.LEASE_STATE_ACTIVE);
+    });
+
+    it('passes limit and offset to query as pagination', async () => {
+      const mock = setupLeaseHistoryMock([], BigInt(0));
+
+      const server = new CloudMCPServer({ config: makeMockConfig(), walletProvider: makeMockWallet() });
+      await callTool(server, 'lease_history', { limit: 10, offset: 20 });
+
+      const callArgs = mock.mock.calls[0][0];
+      expect(callArgs.pagination.limit).toBe(BigInt(10));
+      expect(callArgs.pagination.offset).toBe(BigInt(20));
+      expect(callArgs.pagination.countTotal).toBe(true);
+    });
+
+    it('returns total from pagination response', async () => {
+      setupLeaseHistoryMock([], BigInt(42));
+
+      const server = new CloudMCPServer({ config: makeMockConfig(), walletProvider: makeMockWallet() });
+      const result = await callTool(server, 'lease_history');
+
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.total).toBe('42');
+      expect(parsed.leases).toHaveLength(0);
+    });
+
+    it('extracts lease items with skuUuid and quantity', async () => {
+      setupLeaseHistoryMock([
+        {
+          uuid: 'lease-1',
+          state: LeaseState.LEASE_STATE_ACTIVE,
+          providerUuid: 'prov-1',
+          items: [
+            { skuUuid: 'sku-1', quantity: BigInt(1) },
+            { skuUuid: 'sku-2', quantity: BigInt(3) },
+          ],
+        },
+      ], BigInt(1));
+
+      const server = new CloudMCPServer({ config: makeMockConfig(), walletProvider: makeMockWallet() });
+      const result = await callTool(server, 'lease_history');
+
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.leases[0].items).toEqual([
+        { skuUuid: 'sku-1', quantity: '1' },
+        { skuUuid: 'sku-2', quantity: '3' },
+      ]);
+    });
+
+    it('returns empty result set', async () => {
+      setupLeaseHistoryMock([], BigInt(0));
+
+      const server = new CloudMCPServer({ config: makeMockConfig(), walletProvider: makeMockWallet() });
+      const result = await callTool(server, 'lease_history');
+
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.leases).toEqual([]);
+      expect(parsed.total).toBe('0');
     });
   });
 

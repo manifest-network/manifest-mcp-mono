@@ -9,6 +9,7 @@ import {
   createLeaseDataSignMessage,
   createAuthToken,
   VERSION,
+  LeaseState,
   ManifestMCPError,
   ManifestMCPErrorCode,
   type ManifestMCPServerOptions,
@@ -27,6 +28,7 @@ import {
   restartApp,
   updateApp,
 } from '@manifest-network/manifest-mcp-core';
+import { leaseStateToJSON } from '@manifest-network/manifestjs/dist/codegen/liftedinit/billing/v1/types.js';
 import type { WalletProvider } from '@manifest-network/manifest-mcp-core';
 
 export type { ManifestMCPServerOptions } from '@manifest-network/manifest-mcp-core';
@@ -36,6 +38,26 @@ const MAX_LOG_TAIL = 1000;
 
 /** Valid lease state filter values */
 const VALID_STATE_FILTERS = ['all', 'pending', 'active', 'closed', 'rejected', 'expired'] as const;
+
+const STATE_FILTER_MAP: Record<typeof VALID_STATE_FILTERS[number], LeaseState> = {
+  all: LeaseState.LEASE_STATE_UNSPECIFIED,
+  pending: LeaseState.LEASE_STATE_PENDING,
+  active: LeaseState.LEASE_STATE_ACTIVE,
+  closed: LeaseState.LEASE_STATE_CLOSED,
+  rejected: LeaseState.LEASE_STATE_REJECTED,
+  expired: LeaseState.LEASE_STATE_EXPIRED,
+};
+
+function leaseStateLabel(state: LeaseState): string {
+  switch (state) {
+    case LeaseState.LEASE_STATE_PENDING: return 'pending';
+    case LeaseState.LEASE_STATE_ACTIVE: return 'active';
+    case LeaseState.LEASE_STATE_CLOSED: return 'closed';
+    case LeaseState.LEASE_STATE_REJECTED: return 'rejected';
+    case LeaseState.LEASE_STATE_EXPIRED: return 'expired';
+    default: return leaseStateToJSON(state).toLowerCase();
+  }
+}
 
 /**
  * MCP server for Manifest cloud deployment operations.
@@ -331,6 +353,58 @@ export class CloudMCPServer {
           manifest,
         );
         return jsonResponse(result, bigIntReplacer);
+      }),
+    );
+
+    // ── lease_history ──
+    this.mcpServer.registerTool(
+      'lease_history',
+      {
+        description: 'Get paginated on-chain lease history for the current account. Use this to review past deployments, check lease states, and audit billing history.',
+        inputSchema: {
+          state: z.enum(VALID_STATE_FILTERS).optional().describe('Filter by lease state (default: "all")'),
+          limit: z.number().int().min(1).max(100).optional().describe('Maximum number of results (default: 50, max: 100)'),
+          offset: z.number().int().min(0).optional().describe('Number of results to skip for pagination (default: 0)'),
+        },
+      },
+      withErrorHandling('lease_history', async (args) => {
+        const address = await this.walletProvider.getAddress();
+        const queryClient = await this.clientManager.getQueryClient();
+
+        const limit = BigInt(args.limit ?? 50);
+        const offset = BigInt(args.offset ?? 0);
+        const stateKey = (args.state ?? 'all') as keyof typeof STATE_FILTER_MAP;
+        const stateFilter = STATE_FILTER_MAP[stateKey];
+
+        const billing = queryClient.liftedinit.billing.v1;
+        const result = await billing.leasesByTenant({
+          tenant: address,
+          stateFilter,
+          pagination: {
+            key: new Uint8Array(),
+            offset,
+            limit,
+            countTotal: true,
+            reverse: false,
+          },
+        });
+
+        const leases = result.leases.map((l: { uuid: string; state: LeaseState; providerUuid: string; createdAt?: Date; closedAt?: Date; items?: { skuUuid: string; quantity: bigint }[] }) => ({
+          uuid: l.uuid,
+          state: l.state,
+          stateLabel: leaseStateLabel(l.state),
+          providerUuid: l.providerUuid,
+          createdAt: l.createdAt?.toISOString(),
+          closedAt: l.closedAt?.toISOString(),
+          items: l.items?.map((item: { skuUuid: string; quantity: bigint }) => ({
+            skuUuid: item.skuUuid,
+            quantity: item.quantity,
+          })),
+        }));
+
+        const total = result.pagination?.total ?? BigInt(0);
+
+        return jsonResponse({ leases, total }, bigIntReplacer);
       }),
     );
   }
