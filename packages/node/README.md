@@ -21,15 +21,15 @@ Both servers need a wallet to sign transactions. Choose one of the options below
 ### Option A — Generate a new keyfile (recommended)
 
 ```bash
-npx manifest-mcp-chain keygen
+npx manifest-mcp-chain keygen   # or: npx manifest-mcp-cloud keygen
 ```
 
-You will be prompted for an encryption password. The keyfile is written to `~/.manifest/key.json` (mode `0600`).
+Both CLIs share the same keyfile (`~/.manifest/key.json`), so either command works. You will be prompted for an encryption password. The keyfile is written with mode `0600`.
 
 ### Option B — Import an existing mnemonic
 
 ```bash
-npx manifest-mcp-chain import
+npx manifest-mcp-chain import   # or: npx manifest-mcp-cloud import
 ```
 
 You will be prompted for your mnemonic (any valid BIP-39 length: 12, 15, 18, 21, or 24 words) and an encryption password. The wallet is derived from the mnemonic, encrypted, and stored in the same keyfile location. The raw mnemonic is not retained.
