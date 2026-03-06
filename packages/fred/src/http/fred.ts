@@ -14,7 +14,7 @@ export async function getLeaseStatus(
   fetchFn?: typeof globalThis.fetch,
 ): Promise<FredLeaseStatus> {
   const validated = validateProviderUrl(providerUrl);
-  const url = `${validated}/v1/leases/${leaseUuid}/status`;
+  const url = `${validated}/v1/leases/${encodeURIComponent(leaseUuid)}/status`;
   const res = await checkedFetch(url, {
     headers: { Authorization: `Bearer ${authToken}` },
   }, undefined, fetchFn);
@@ -35,7 +35,7 @@ export async function getLeaseLogs(
   const validated = validateProviderUrl(providerUrl);
   const cappedTail = tail !== undefined ? Math.min(tail, MAX_TAIL) : undefined;
   const qs = cappedTail !== undefined ? `?tail=${cappedTail}` : '';
-  const url = `${validated}/v1/leases/${leaseUuid}/logs${qs}`;
+  const url = `${validated}/v1/leases/${encodeURIComponent(leaseUuid)}/logs${qs}`;
   const res = await checkedFetch(url, {
     headers: { Authorization: `Bearer ${authToken}` },
   }, undefined, fetchFn);
@@ -55,7 +55,7 @@ export async function getLeaseProvision(
   fetchFn?: typeof globalThis.fetch,
 ): Promise<FredLeaseProvision> {
   const validated = validateProviderUrl(providerUrl);
-  const url = `${validated}/v1/leases/${leaseUuid}/provision`;
+  const url = `${validated}/v1/leases/${encodeURIComponent(leaseUuid)}/provision`;
   const res = await checkedFetch(url, {
     headers: { Authorization: `Bearer ${authToken}` },
   }, undefined, fetchFn);
@@ -73,7 +73,7 @@ export async function restartLease(
   fetchFn?: typeof globalThis.fetch,
 ): Promise<FredActionResponse> {
   const validated = validateProviderUrl(providerUrl);
-  const url = `${validated}/v1/leases/${leaseUuid}/restart`;
+  const url = `${validated}/v1/leases/${encodeURIComponent(leaseUuid)}/restart`;
   const res = await checkedFetch(url, {
     method: 'POST',
     headers: { Authorization: `Bearer ${authToken}` },
@@ -89,7 +89,7 @@ export async function updateLease(
   fetchFn?: typeof globalThis.fetch,
 ): Promise<FredActionResponse> {
   const validated = validateProviderUrl(providerUrl);
-  const url = `${validated}/v1/leases/${leaseUuid}/update`;
+  const url = `${validated}/v1/leases/${encodeURIComponent(leaseUuid)}/update`;
   const res = await checkedFetch(url, {
     method: 'POST',
     headers: {
@@ -121,7 +121,7 @@ export async function getLeaseReleases(
   fetchFn?: typeof globalThis.fetch,
 ): Promise<FredLeaseReleases> {
   const validated = validateProviderUrl(providerUrl);
-  const url = `${validated}/v1/leases/${leaseUuid}/releases`;
+  const url = `${validated}/v1/leases/${encodeURIComponent(leaseUuid)}/releases`;
   const res = await checkedFetch(url, {
     headers: { Authorization: `Bearer ${authToken}` },
   }, undefined, fetchFn);
@@ -140,7 +140,7 @@ export async function getLeaseInfo(
   fetchFn?: typeof globalThis.fetch,
 ): Promise<FredLeaseInfo> {
   const validated = validateProviderUrl(providerUrl);
-  const url = `${validated}/v1/leases/${leaseUuid}/info`;
+  const url = `${validated}/v1/leases/${encodeURIComponent(leaseUuid)}/info`;
   const res = await checkedFetch(url, {
     headers: { Authorization: `Bearer ${authToken}` },
   }, undefined, fetchFn);

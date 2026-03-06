@@ -1,8 +1,7 @@
 import type { ManifestQueryClient } from '@manifest-network/manifest-mcp-core';
-import { LeaseState, leaseStateToJSON } from '@manifest-network/manifestjs/dist/codegen/liftedinit/billing/v1/types.js';
-import { ManifestMCPError, ManifestMCPErrorCode } from '@manifest-network/manifest-mcp-core';
 import { restartLease } from '../http/fred.js';
 import { resolveProviderUrl } from './resolveLeaseProvider.js';
+import { fetchActiveLease } from './fetchActiveLease.js';
 
 export async function restartApp(
   queryClient: ManifestQueryClient,
@@ -11,23 +10,7 @@ export async function restartApp(
   getAuthToken: (address: string, leaseUuid: string) => Promise<string>,
   fetchFn?: typeof globalThis.fetch,
 ) {
-  const leaseResult = await queryClient.liftedinit.billing.v1.lease({ leaseUuid });
-
-  if (!leaseResult.lease) {
-    throw new ManifestMCPError(
-      ManifestMCPErrorCode.QUERY_FAILED,
-      `Lease "${leaseUuid}" not found on chain`,
-    );
-  }
-
-  const lease = leaseResult.lease;
-
-  if (lease.state !== LeaseState.LEASE_STATE_ACTIVE && lease.state !== LeaseState.LEASE_STATE_PENDING) {
-    throw new ManifestMCPError(
-      ManifestMCPErrorCode.QUERY_FAILED,
-      `Lease "${leaseUuid}" is not active (state: ${leaseStateToJSON(lease.state)}) and cannot be restarted`,
-    );
-  }
+  const lease = await fetchActiveLease(queryClient, leaseUuid, 'cannot be restarted');
 
   const providerUrl = await resolveProviderUrl(queryClient, lease.providerUuid);
   const authToken = await getAuthToken(address, leaseUuid);

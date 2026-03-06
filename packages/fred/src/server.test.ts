@@ -1,8 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
-import { LeaseState } from '@manifest-network/manifestjs/dist/codegen/liftedinit/billing/v1/types.js';
-
 vi.mock('@manifest-network/manifest-mcp-core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@manifest-network/manifest-mcp-core')>();
   return {
@@ -29,6 +27,10 @@ vi.mock('./tools/resolveLeaseProvider.js', () => ({
   resolveProviderUrl: vi.fn(),
 }));
 
+vi.mock('./tools/fetchActiveLease.js', () => ({
+  fetchActiveLease: vi.fn(),
+}));
+
 vi.mock('./tools/browseCatalog.js', () => ({ browseCatalog: vi.fn().mockResolvedValue({ providers: [], tiers: {} }) }));
 vi.mock('./tools/appStatus.js', () => ({ appStatus: vi.fn().mockResolvedValue({}) }));
 vi.mock('./tools/getLogs.js', () => ({ getAppLogs: vi.fn().mockResolvedValue({}) }));
@@ -37,14 +39,16 @@ vi.mock('./tools/restartApp.js', () => ({ restartApp: vi.fn().mockResolvedValue(
 vi.mock('./tools/updateApp.js', () => ({ updateApp: vi.fn().mockResolvedValue({}) }));
 
 import { FredMCPServer } from './index.js';
-import { CosmosClientManager, ManifestMCPError, ManifestMCPErrorCode } from '@manifest-network/manifest-mcp-core';
+import { ManifestMCPError, ManifestMCPErrorCode } from '@manifest-network/manifest-mcp-core';
 import { getLeaseProvision, getLeaseReleases } from './http/fred.js';
 import { resolveProviderUrl } from './tools/resolveLeaseProvider.js';
+import { fetchActiveLease } from './tools/fetchActiveLease.js';
 import { makeMockConfig, makeMockWallet } from '@manifest-network/manifest-mcp-core/__test-utils__/mocks.js';
 
 const mockGetLeaseProvision = vi.mocked(getLeaseProvision);
 const mockGetLeaseReleases = vi.mocked(getLeaseReleases);
 const mockResolveProviderUrl = vi.mocked(resolveProviderUrl);
+const mockFetchActiveLease = vi.mocked(fetchActiveLease);
 
 const LEASE_UUID = '550e8400-e29b-41d4-a716-446655440000';
 
@@ -75,24 +79,6 @@ async function callTool(
   }
 }
 
-function setupLeaseQueryMock(lease: { uuid: string; state: LeaseState; providerUuid: string } | null) {
-  const mockLease = vi.fn().mockResolvedValue({ lease });
-  const mockGetQueryClient = vi.fn().mockResolvedValue({
-    liftedinit: {
-      billing: { v1: { lease: mockLease } },
-    },
-  });
-  (CosmosClientManager.getInstance as ReturnType<typeof vi.fn>).mockReturnValue({
-    disconnect: vi.fn(),
-    getQueryClient: mockGetQueryClient,
-    getSigningClient: vi.fn().mockResolvedValue({}),
-    getAddress: vi.fn().mockResolvedValue('manifest1abc'),
-    getConfig: vi.fn().mockReturnValue({}),
-    acquireRateLimit: vi.fn().mockResolvedValue(undefined),
-  });
-  return mockLease;
-}
-
 beforeEach(() => {
   vi.clearAllMocks();
   activeTransports = [];
@@ -108,7 +94,7 @@ afterEach(async () => {
 describe('FredMCPServer', () => {
   describe('app_diagnostics', () => {
     it('returns provision diagnostics for a valid lease', async () => {
-      setupLeaseQueryMock({ uuid: LEASE_UUID, state: LeaseState.LEASE_STATE_ACTIVE, providerUuid: 'prov-1' });
+      mockFetchActiveLease.mockResolvedValue({ providerUuid: 'prov-1' } as Awaited<ReturnType<typeof fetchActiveLease>>);
       mockResolveProviderUrl.mockResolvedValue('https://provider.example.com');
       mockGetLeaseProvision.mockResolvedValue({
         status: 'provisioned',
@@ -129,12 +115,15 @@ describe('FredMCPServer', () => {
       expect(parsed.fail_count).toBe(2);
       expect(parsed.last_error).toBe('image pull timeout');
 
+      expect(mockFetchActiveLease).toHaveBeenCalledWith(expect.anything(), LEASE_UUID, 'cannot be diagnosed');
       expect(mockResolveProviderUrl).toHaveBeenCalledWith(expect.anything(), 'prov-1');
       expect(mockGetLeaseProvision).toHaveBeenCalledOnce();
     });
 
     it('returns error when lease not found on chain', async () => {
-      setupLeaseQueryMock(null);
+      mockFetchActiveLease.mockRejectedValue(
+        new ManifestMCPError(ManifestMCPErrorCode.QUERY_FAILED, `Lease "${LEASE_UUID}" not found on chain`),
+      );
 
       const server = new FredMCPServer({
         config: makeMockConfig(),
@@ -150,7 +139,7 @@ describe('FredMCPServer', () => {
     });
 
     it('returns error when provider URL resolution fails', async () => {
-      setupLeaseQueryMock({ uuid: LEASE_UUID, state: LeaseState.LEASE_STATE_ACTIVE, providerUuid: 'prov-1' });
+      mockFetchActiveLease.mockResolvedValue({ providerUuid: 'prov-1' } as Awaited<ReturnType<typeof fetchActiveLease>>);
       mockResolveProviderUrl.mockRejectedValue(
         new ManifestMCPError(ManifestMCPErrorCode.QUERY_FAILED, 'Provider "prov-1" has no API URL'),
       );
@@ -171,7 +160,7 @@ describe('FredMCPServer', () => {
 
   describe('app_releases', () => {
     it('returns release history for a valid lease', async () => {
-      setupLeaseQueryMock({ uuid: LEASE_UUID, state: LeaseState.LEASE_STATE_ACTIVE, providerUuid: 'prov-1' });
+      mockFetchActiveLease.mockResolvedValue({ providerUuid: 'prov-1' } as Awaited<ReturnType<typeof fetchActiveLease>>);
       mockResolveProviderUrl.mockResolvedValue('https://provider.example.com');
       mockGetLeaseReleases.mockResolvedValue({
         releases: [
@@ -193,12 +182,15 @@ describe('FredMCPServer', () => {
       expect(parsed.releases[0]).toEqual({ version: 1, image: 'nginx:1.0', status: 'active', created_at: '2025-01-01T00:00:00Z' });
       expect(parsed.releases[1]).toEqual({ version: 2, image: 'nginx:2.0', status: 'deploying', created_at: '2025-01-02T00:00:00Z', error: 'timeout' });
 
+      expect(mockFetchActiveLease).toHaveBeenCalledWith(expect.anything(), LEASE_UUID, 'releases are not available');
       expect(mockResolveProviderUrl).toHaveBeenCalledWith(expect.anything(), 'prov-1');
       expect(mockGetLeaseReleases).toHaveBeenCalledOnce();
     });
 
     it('returns error when lease not found on chain', async () => {
-      setupLeaseQueryMock(null);
+      mockFetchActiveLease.mockRejectedValue(
+        new ManifestMCPError(ManifestMCPErrorCode.QUERY_FAILED, `Lease "${LEASE_UUID}" not found on chain`),
+      );
 
       const server = new FredMCPServer({
         config: makeMockConfig(),
@@ -214,7 +206,7 @@ describe('FredMCPServer', () => {
     });
 
     it('returns error when provider URL resolution fails', async () => {
-      setupLeaseQueryMock({ uuid: LEASE_UUID, state: LeaseState.LEASE_STATE_ACTIVE, providerUuid: 'prov-1' });
+      mockFetchActiveLease.mockResolvedValue({ providerUuid: 'prov-1' } as Awaited<ReturnType<typeof fetchActiveLease>>);
       mockResolveProviderUrl.mockRejectedValue(
         new ManifestMCPError(ManifestMCPErrorCode.QUERY_FAILED, 'Provider "prov-1" has no API URL'),
       );

@@ -11,7 +11,7 @@ packages/
   core/    @manifest-network/manifest-mcp-core    Shared library: Cosmos logic, on-chain tool functions
   chain/   @manifest-network/manifest-mcp-chain   MCP server for chain operations (5 tools)
   lease/   @manifest-network/manifest-mcp-lease   MCP server for on-chain lease operations (6 tools)
-  fred/    @manifest-network/manifest-mcp-fred    MCP server for provider/Fred operations (6 tools)
+  fred/    @manifest-network/manifest-mcp-fred    MCP server for provider/Fred operations (8 tools)
   node/    @manifest-network/manifest-mcp-node    CLI entry points + encrypted keyfile wallet
 ```
 
@@ -60,7 +60,7 @@ See [`packages/node/README.md`](packages/node/README.md) for wallet setup and MC
 | `get_skus` | List available SKUs |
 | `get_providers` | List available providers |
 
-### Fred server (`manifest-mcp-fred`) -- 6 tools
+### Fred server (`manifest-mcp-fred`) -- 8 tools
 
 | Tool | Description |
 |------|-------------|
@@ -70,6 +70,8 @@ See [`packages/node/README.md`](packages/node/README.md) for wallet setup and MC
 | `get_logs` | Get logs for a deployed app by lease UUID |
 | `restart_app` | Restart a deployed app via the provider |
 | `update_app` | Update a deployed app with a new manifest |
+| `app_diagnostics` | Get provision diagnostics for a deployed app |
+| `app_releases` | Get release/version history for a deployed app |
 
 Supported modules: `bank`, `staking`, `distribution`, `gov`, `billing`, `sku`, `group`, `auth` (query only), `manifest` (tx only).
 

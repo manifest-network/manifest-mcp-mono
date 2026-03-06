@@ -8,23 +8,31 @@ import { MCPTestClient } from './helpers/mcp-client.js';
  *   docker compose -f e2e/docker-compose.yml up -d --wait
  *
  * Tests run sequentially — each step depends on previous state.
+ * Uses two MCP servers: lease (on-chain operations) and fred (provider operations).
  */
 describe('Deploy lifecycle', () => {
-  const client = new MCPTestClient();
+  const leaseClient = new MCPTestClient();
+  const fredClient = new MCPTestClient();
 
   beforeAll(async () => {
-    await client.connect({ serverEntry: 'packages/node/dist/cloud.js' });
+    await Promise.all([
+      leaseClient.connect({ serverEntry: 'packages/node/dist/lease.js' }),
+      fredClient.connect({ serverEntry: 'packages/node/dist/fred.js' }),
+    ]);
   });
 
   afterAll(async () => {
-    await client.close();
+    await Promise.all([
+      leaseClient.close(),
+      fredClient.close(),
+    ]);
   });
 
   // ------------------------------------------------------------------
   // 1. Balance check (smoke test — confirms wallet/chain connection)
   // ------------------------------------------------------------------
-  it('get_balance returns initial balances', async () => {
-    const result = await client.callTool<{ balances: unknown }>('get_balance');
+  it('credit_balance returns initial balances', async () => {
+    const result = await leaseClient.callTool<{ balances: unknown }>('credit_balance');
     expect(result.balances).toBeDefined();
   });
 
@@ -32,7 +40,7 @@ describe('Deploy lifecycle', () => {
   // 2. Browse catalog
   // ------------------------------------------------------------------
   it('browse_catalog shows providers and SKU tiers', async () => {
-    const result = await client.callTool<{
+    const result = await fredClient.callTool<{
       providers: Array<{ active: boolean }>;
       tiers: Record<string, unknown[]>;
     }>('browse_catalog');
@@ -47,11 +55,11 @@ describe('Deploy lifecycle', () => {
   // ------------------------------------------------------------------
   // 3. Fund credits
   // ------------------------------------------------------------------
-  it('fund_credits succeeds', async () => {
-    const result = await client.callTool<{
+  it('fund_credit succeeds', async () => {
+    const result = await leaseClient.callTool<{
       code: number;
       transactionHash: string;
-    }>('fund_credits', { amount: '10000000umfx' });
+    }>('fund_credit', { amount: '10000000umfx' });
 
     expect(result.code).toBe(0);
     expect(result.transactionHash).toBeTruthy();
@@ -60,10 +68,10 @@ describe('Deploy lifecycle', () => {
   // ------------------------------------------------------------------
   // 4. Verify credits
   // ------------------------------------------------------------------
-  it('get_balance reflects funded credits', async () => {
-    const result = await client.callTool<{
+  it('credit_balance reflects funded credits', async () => {
+    const result = await leaseClient.callTool<{
       credits?: { balance?: unknown };
-    }>('get_balance');
+    }>('credit_balance');
 
     expect(result.credits).toBeDefined();
   });
@@ -74,7 +82,7 @@ describe('Deploy lifecycle', () => {
   let leaseUuid: string;
 
   it('deploy_app deploys nginx', async () => {
-    const result = await client.callTool<{
+    const result = await fredClient.callTool<{
       lease_uuid: string;
       provider_uuid: string;
       provider_url: string;
@@ -94,12 +102,12 @@ describe('Deploy lifecycle', () => {
   });
 
   // ------------------------------------------------------------------
-  // 6. List apps
+  // 6. List leases
   // ------------------------------------------------------------------
-  it('list_apps includes the deployed lease', async () => {
-    const result = await client.callTool<{
+  it('leases_by_tenant includes the deployed lease', async () => {
+    const result = await leaseClient.callTool<{
       leases: Array<{ uuid: string; stateLabel: string }>;
-    }>('list_apps', { state: 'active' });
+    }>('leases_by_tenant', { state: 'active' });
 
     const lease = result.leases.find((l) => l.uuid === leaseUuid);
     expect(lease).toBeDefined();
@@ -110,7 +118,7 @@ describe('Deploy lifecycle', () => {
   // 7. App status
   // ------------------------------------------------------------------
   it('app_status returns chain state and connection info', async () => {
-    const result = await client.callTool<{
+    const result = await fredClient.callTool<{
       lease_uuid: string;
       chainState: unknown;
     }>('app_status', { lease_uuid: leaseUuid });
@@ -123,7 +131,7 @@ describe('Deploy lifecycle', () => {
   // 8. Get logs
   // ------------------------------------------------------------------
   it('get_logs returns log data', async () => {
-    const result = await client.callTool<{
+    const result = await fredClient.callTool<{
       lease_uuid: string;
       logs: unknown;
     }>('get_logs', { lease_uuid: leaseUuid, tail: 10 });
@@ -136,7 +144,7 @@ describe('Deploy lifecycle', () => {
   // 9. Restart app
   // ------------------------------------------------------------------
   it('restart_app succeeds', async () => {
-    const result = await client.callTool<{
+    const result = await fredClient.callTool<{
       lease_uuid: string;
       status: string;
     }>('restart_app', { lease_uuid: leaseUuid });
@@ -154,7 +162,7 @@ describe('Deploy lifecycle', () => {
       env: { E2E_TEST: 'true' },
     });
 
-    const result = await client.callTool<{
+    const result = await fredClient.callTool<{
       lease_uuid: string;
       status: string;
     }>('update_app', {
@@ -166,13 +174,13 @@ describe('Deploy lifecycle', () => {
   });
 
   // ------------------------------------------------------------------
-  // 11. Stop app
+  // 11. Close lease
   // ------------------------------------------------------------------
-  it('stop_app closes the lease', async () => {
-    const result = await client.callTool<{
+  it('close_lease closes the lease', async () => {
+    const result = await leaseClient.callTool<{
       lease_uuid: string;
       status: string;
-    }>('stop_app', { lease_uuid: leaseUuid });
+    }>('close_lease', { lease_uuid: leaseUuid });
 
     expect(result.lease_uuid).toBe(leaseUuid);
     expect(result.status).toBe('stopped');
@@ -181,10 +189,10 @@ describe('Deploy lifecycle', () => {
   // ------------------------------------------------------------------
   // 12. Verify stopped
   // ------------------------------------------------------------------
-  it('list_apps shows lease as closed', async () => {
-    const result = await client.callTool<{
+  it('leases_by_tenant shows lease as closed', async () => {
+    const result = await leaseClient.callTool<{
       leases: Array<{ uuid: string; stateLabel: string }>;
-    }>('list_apps', { state: 'closed' });
+    }>('leases_by_tenant', { state: 'closed' });
 
     const lease = result.leases.find((l) => l.uuid === leaseUuid);
     expect(lease).toBeDefined();
@@ -192,21 +200,31 @@ describe('Deploy lifecycle', () => {
   });
 
   // ------------------------------------------------------------------
-  // 13. Verify tool list
+  // 13. Verify tool lists
   // ------------------------------------------------------------------
-  it('listTools returns all expected cloud tools', async () => {
-    const tools = await client.listTools();
+  it('lease server lists all expected tools', async () => {
+    const tools = await leaseClient.listTools();
+
+    expect(tools).toContain('credit_balance');
+    expect(tools).toContain('fund_credit');
+    expect(tools).toContain('leases_by_tenant');
+    expect(tools).toContain('close_lease');
+    expect(tools).toContain('get_skus');
+    expect(tools).toContain('get_providers');
+    expect(tools).toHaveLength(6);
+  });
+
+  it('fred server lists all expected tools', async () => {
+    const tools = await fredClient.listTools();
 
     expect(tools).toContain('browse_catalog');
-    expect(tools).toContain('get_balance');
-    expect(tools).toContain('fund_credits');
-    expect(tools).toContain('list_apps');
+    expect(tools).toContain('deploy_app');
     expect(tools).toContain('app_status');
     expect(tools).toContain('get_logs');
-    expect(tools).toContain('deploy_app');
-    expect(tools).toContain('stop_app');
     expect(tools).toContain('restart_app');
     expect(tools).toContain('update_app');
-    expect(tools).toHaveLength(10);
+    expect(tools).toContain('app_diagnostics');
+    expect(tools).toContain('app_releases');
+    expect(tools).toHaveLength(8);
   });
 });

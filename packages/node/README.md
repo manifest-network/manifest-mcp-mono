@@ -5,7 +5,7 @@ Node.js CLI entry points for the Manifest MCP servers with stdio transport and e
 Provides three binaries:
 - **`manifest-mcp-chain`** -- Chain MCP server (5 tools: queries, transactions, module discovery)
 - **`manifest-mcp-lease`** -- Lease MCP server (6 tools: credit balance, funding, lease queries, SKUs, providers)
-- **`manifest-mcp-fred`** -- Fred MCP server (6 tools: catalog, deployment, status, logs, restart, update)
+- **`manifest-mcp-fred`** -- Fred MCP server (8 tools: catalog, deployment, status, logs, restart, update, diagnostics, releases)
 
 ## Setup
 
@@ -141,7 +141,7 @@ If you use a mnemonic instead of a keyfile, replace `MANIFEST_KEY_PASSWORD` with
 | `get_skus` | List available SKUs |
 | `get_providers` | List available providers |
 
-## Fred server tools (6)
+## Fred server tools (8)
 
 | Tool | Description |
 |------|-------------|
@@ -151,6 +151,8 @@ If you use a mnemonic instead of a keyfile, replace `MANIFEST_KEY_PASSWORD` with
 | `get_logs` | Get logs for a deployed app by lease UUID |
 | `restart_app` | Restart a deployed app via the provider |
 | `update_app` | Update a deployed app with a new manifest |
+| `app_diagnostics` | Get provision diagnostics for a deployed app |
+| `app_releases` | Get release/version history for a deployed app |
 
 ## License
 

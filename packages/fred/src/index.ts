@@ -24,6 +24,7 @@ import { restartApp } from './tools/restartApp.js';
 import { updateApp } from './tools/updateApp.js';
 import { getLeaseProvision, getLeaseReleases } from './http/fred.js';
 import { resolveProviderUrl } from './tools/resolveLeaseProvider.js';
+import { fetchActiveLease } from './tools/fetchActiveLease.js';
 
 export type { ManifestMCPServerOptions } from '@manifest-network/manifest-mcp-core';
 export {
@@ -314,15 +315,8 @@ export class FredMCPServer {
         const address = await this.walletProvider.getAddress();
         const queryClient = await this.clientManager.getQueryClient();
 
-        const leaseResult = await queryClient.liftedinit.billing.v1.lease({ leaseUuid });
-        if (!leaseResult.lease) {
-          throw new ManifestMCPError(
-            ManifestMCPErrorCode.QUERY_FAILED,
-            `Lease "${leaseUuid}" not found on chain`,
-          );
-        }
-
-        const providerUrl = await resolveProviderUrl(queryClient, leaseResult.lease.providerUuid);
+        const lease = await fetchActiveLease(queryClient, leaseUuid, 'cannot be diagnosed');
+        const providerUrl = await resolveProviderUrl(queryClient, lease.providerUuid);
         const authToken = await this.getProviderAuthToken(address, leaseUuid);
         const provision = await getLeaseProvision(providerUrl, leaseUuid, authToken);
 
@@ -349,15 +343,8 @@ export class FredMCPServer {
         const address = await this.walletProvider.getAddress();
         const queryClient = await this.clientManager.getQueryClient();
 
-        const leaseResult = await queryClient.liftedinit.billing.v1.lease({ leaseUuid });
-        if (!leaseResult.lease) {
-          throw new ManifestMCPError(
-            ManifestMCPErrorCode.QUERY_FAILED,
-            `Lease "${leaseUuid}" not found on chain`,
-          );
-        }
-
-        const providerUrl = await resolveProviderUrl(queryClient, leaseResult.lease.providerUuid);
+        const lease = await fetchActiveLease(queryClient, leaseUuid, 'releases are not available');
+        const providerUrl = await resolveProviderUrl(queryClient, lease.providerUuid);
         const authToken = await this.getProviderAuthToken(address, leaseUuid);
         const result = await getLeaseReleases(providerUrl, leaseUuid, authToken);
 
