@@ -117,7 +117,7 @@ export async function getLeaseConnectionInfo(
   fetchFn?: typeof globalThis.fetch,
 ): Promise<LeaseConnectionInfo> {
   const validated = validateProviderUrl(providerApiUrl);
-  const url = `${validated}/lease/${leaseUuid}/connection`;
+  const url = `${validated}/v1/leases/${leaseUuid}/connection`;
   const res = await checkedFetch(url, {
     headers: { Authorization: `Bearer ${authToken}` },
   }, undefined, fetchFn);
@@ -132,7 +132,7 @@ export async function uploadLeaseData(
   fetchFn?: typeof globalThis.fetch,
 ): Promise<void> {
   const validated = validateProviderUrl(providerApiUrl);
-  await checkedFetch(`${validated}/lease/${leaseUuid}/data`, {
+  await checkedFetch(`${validated}/v1/leases/${leaseUuid}/data`, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${authToken}`,

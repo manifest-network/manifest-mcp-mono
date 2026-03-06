@@ -6,6 +6,8 @@ import {
   restartLease,
   updateLease,
   pollLeaseUntilReady,
+  getLeaseReleases,
+  getLeaseInfo,
 } from './fred.js';
 import { ProviderApiError } from './provider.js';
 
@@ -43,7 +45,7 @@ describe('getLeaseStatus', () => {
     expect(result).toEqual({ status: 'running', services: {} });
     expect(mockFetch).toHaveBeenCalledOnce();
     const [url, init] = mockFetch.mock.calls[0];
-    expect(url).toBe(`${BASE_URL}/fred/lease/${LEASE_UUID}/status`);
+    expect(url).toBe(`${BASE_URL}/v1/leases/${LEASE_UUID}/status`);
     expect(init.headers.Authorization).toBe(`Bearer ${AUTH_TOKEN}`);
   });
 
@@ -71,7 +73,7 @@ describe('getLeaseLogs', () => {
     await getLeaseLogs(BASE_URL, LEASE_UUID, AUTH_TOKEN, 50);
 
     const [url] = mockFetch.mock.calls[0];
-    expect(url).toBe(`${BASE_URL}/fred/lease/${LEASE_UUID}/logs?tail=50`);
+    expect(url).toBe(`${BASE_URL}/v1/leases/${LEASE_UUID}/logs?tail=50`);
   });
 
   it('caps tail at 1000', async () => {
@@ -89,7 +91,7 @@ describe('getLeaseLogs', () => {
     await getLeaseLogs(BASE_URL, LEASE_UUID, AUTH_TOKEN);
 
     const [url] = mockFetch.mock.calls[0];
-    expect(url).toBe(`${BASE_URL}/fred/lease/${LEASE_UUID}/logs`);
+    expect(url).toBe(`${BASE_URL}/v1/leases/${LEASE_UUID}/logs`);
   });
 
   it('returns parsed log response', async () => {
@@ -108,7 +110,7 @@ describe('getLeaseProvision', () => {
 
     expect(result).toEqual({ status: 'provisioned' });
     const [url] = mockFetch.mock.calls[0];
-    expect(url).toBe(`${BASE_URL}/fred/lease/${LEASE_UUID}/provision`);
+    expect(url).toBe(`${BASE_URL}/v1/leases/${LEASE_UUID}/provision`);
   });
 });
 
@@ -120,7 +122,7 @@ describe('restartLease', () => {
 
     expect(result).toEqual({ status: 'restarting' });
     const [url, init] = mockFetch.mock.calls[0];
-    expect(url).toBe(`${BASE_URL}/fred/lease/${LEASE_UUID}/restart`);
+    expect(url).toBe(`${BASE_URL}/v1/leases/${LEASE_UUID}/restart`);
     expect(init.method).toBe('POST');
     expect(init.headers.Authorization).toBe(`Bearer ${AUTH_TOKEN}`);
   });
@@ -135,11 +137,73 @@ describe('updateLease', () => {
 
     expect(result).toEqual({ status: 'updating' });
     const [url, init] = mockFetch.mock.calls[0];
-    expect(url).toBe(`${BASE_URL}/fred/lease/${LEASE_UUID}/update`);
+    expect(url).toBe(`${BASE_URL}/v1/leases/${LEASE_UUID}/update`);
     expect(init.method).toBe('POST');
     expect(init.headers['Content-Type']).toBe('application/octet-stream');
     expect(init.headers.Authorization).toBe(`Bearer ${AUTH_TOKEN}`);
     expect(init.body).toBe(payload);
+  });
+});
+
+describe('getLeaseReleases', () => {
+  it('constructs correct URL and returns releases', async () => {
+    const releases = [
+      { version: 1, image: 'nginx:1.0', status: 'active', created_at: '2025-01-01T00:00:00Z' },
+      { version: 2, image: 'nginx:2.0', status: 'deploying', created_at: '2025-01-02T00:00:00Z', error: 'timeout' },
+    ];
+    mockFetch.mockResolvedValue(jsonResponse({ releases }));
+
+    const result = await getLeaseReleases(BASE_URL, LEASE_UUID, AUTH_TOKEN);
+
+    expect(result).toEqual({ releases });
+    const [url, init] = mockFetch.mock.calls[0];
+    expect(url).toBe(`${BASE_URL}/v1/leases/${LEASE_UUID}/releases`);
+    expect(init.headers.Authorization).toBe(`Bearer ${AUTH_TOKEN}`);
+  });
+
+  it('throws ProviderApiError on HTTP error', async () => {
+    mockFetch.mockResolvedValue(new Response('not found', { status: 404 }));
+
+    await expect(getLeaseReleases(BASE_URL, LEASE_UUID, AUTH_TOKEN)).rejects.toThrow(ProviderApiError);
+  });
+
+  it('uses custom fetchFn when provided', async () => {
+    const customFetch = vi.fn().mockResolvedValue(jsonResponse({ releases: [] }));
+
+    const result = await getLeaseReleases(BASE_URL, LEASE_UUID, AUTH_TOKEN, customFetch);
+
+    expect(result).toEqual({ releases: [] });
+    expect(customFetch).toHaveBeenCalledOnce();
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+});
+
+describe('getLeaseInfo', () => {
+  it('constructs correct URL and returns info', async () => {
+    mockFetch.mockResolvedValue(jsonResponse({ host: '1.2.3.4', ports: { '80/tcp': 32001 } }));
+
+    const result = await getLeaseInfo(BASE_URL, LEASE_UUID, AUTH_TOKEN);
+
+    expect(result).toEqual({ host: '1.2.3.4', ports: { '80/tcp': 32001 } });
+    const [url, init] = mockFetch.mock.calls[0];
+    expect(url).toBe(`${BASE_URL}/v1/leases/${LEASE_UUID}/info`);
+    expect(init.headers.Authorization).toBe(`Bearer ${AUTH_TOKEN}`);
+  });
+
+  it('throws ProviderApiError on HTTP error', async () => {
+    mockFetch.mockResolvedValue(new Response('forbidden', { status: 403 }));
+
+    await expect(getLeaseInfo(BASE_URL, LEASE_UUID, AUTH_TOKEN)).rejects.toThrow(ProviderApiError);
+  });
+
+  it('uses custom fetchFn when provided', async () => {
+    const customFetch = vi.fn().mockResolvedValue(jsonResponse({ host: 'app.local' }));
+
+    const result = await getLeaseInfo(BASE_URL, LEASE_UUID, AUTH_TOKEN, customFetch);
+
+    expect(result).toEqual({ host: 'app.local' });
+    expect(customFetch).toHaveBeenCalledOnce();
+    expect(mockFetch).not.toHaveBeenCalled();
   });
 });
 

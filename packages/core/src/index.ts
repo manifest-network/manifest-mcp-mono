@@ -7,6 +7,7 @@ export { getAvailableModules, getModuleSubcommands, getSubcommandUsage, getSuppo
 export { MnemonicWalletProvider } from './wallet/index.js';
 export { withRetry, isRetryableError, calculateBackoff, type RetryOptions } from './retry.js';
 export { ProviderApiError } from './http/provider.js';
+export { type FredLeaseRelease, type FredLeaseReleases, type FredLeaseInfo, getLeaseReleases, getLeaseInfo } from './http/fred.js';
 export { LeaseState } from '@manifest-network/manifestjs/dist/codegen/liftedinit/billing/v1/types.js';
 export { resolveLeaseProvider, resolveProviderUrl, type LeaseProviderInfo } from './tools/resolveLeaseProvider.js';
 export { type LeaseStateFilter, type LeaseInfo } from './tools/listApps.js';
