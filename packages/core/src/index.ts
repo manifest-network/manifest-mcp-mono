@@ -4,7 +4,7 @@ export { createConfig, createValidatedConfig, validateConfig, DEFAULT_RETRY_CONF
 export { CosmosClientManager, type ManifestQueryClient } from './client.js';
 export { cosmosQuery, cosmosTx } from './cosmos.js';
 export { getAvailableModules, getModuleSubcommands, getSubcommandUsage, getSupportedModules, isSubcommandSupported } from './modules.js';
-export { MnemonicWalletProvider } from './wallet/index.js';
+export { MnemonicWalletProvider, signArbitraryWithAmino } from './wallet/index.js';
 export { withRetry, isRetryableError, calculateBackoff, type RetryOptions } from './retry.js';
 export { LeaseState } from '@manifest-network/manifestjs/dist/codegen/liftedinit/billing/v1/types.js';
 export { type StopAppResult } from './tools/stopApp.js';

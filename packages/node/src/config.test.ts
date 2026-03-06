@@ -76,7 +76,7 @@ describe('loadConfig', () => {
     expect(config.keyfilePath).not.toContain('~');
   });
 
-  it('should preserve empty string env vars instead of falling back to default', async () => {
+  it('should fall back to default when env var is empty string', async () => {
     process.env['COSMOS_CHAIN_ID'] = 'test-chain';
     process.env['COSMOS_RPC_URL'] = 'https://rpc.test.com';
     process.env['COSMOS_GAS_PRICE'] = '0.025umfx';
@@ -84,7 +84,7 @@ describe('loadConfig', () => {
 
     const { loadConfig } = await importConfig();
     const config = loadConfig();
-    expect(config.addressPrefix).toBe('');
+    expect(config.addressPrefix).toBe('manifest');
   });
 });
 

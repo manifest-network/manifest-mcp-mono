@@ -85,6 +85,7 @@ export interface ServiceConfig {
   user?: string;
   tmpfs?: string[];
   health_check?: { test: string[]; interval?: string; timeout?: string; retries?: number; start_period?: string };
+  stop_grace_period?: string;
   depends_on?: Record<string, { condition: string }>;
   expose?: string[];
   labels?: Record<string, string>;
@@ -178,6 +179,7 @@ export async function deployApp(
         user: svc.user,
         tmpfs: svc.tmpfs,
         health_check: svc.health_check,
+        stop_grace_period: svc.stop_grace_period,
         depends_on: svc.depends_on,
         expose: svc.expose,
         labels: svc.labels,

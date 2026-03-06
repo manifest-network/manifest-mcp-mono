@@ -3,7 +3,7 @@ import { LeaseState, leaseStateToJSON } from '@manifest-network/manifestjs/dist/
 import { ManifestMCPError, ManifestMCPErrorCode } from '@manifest-network/manifest-mcp-core';
 import { updateLease } from '../http/fred.js';
 import { resolveProviderUrl } from './resolveLeaseProvider.js';
-import { mergeManifest } from '../manifest.js';
+import { mergeManifest, isStackManifest } from '../manifest.js';
 
 export async function updateApp(
   queryClient: ManifestQueryClient,
@@ -34,9 +34,28 @@ export async function updateApp(
 
   let finalManifest = manifest;
   if (existingManifest) {
-    const parsed = JSON.parse(manifest);
-    const merged = mergeManifest(parsed, existingManifest);
-    finalManifest = JSON.stringify(merged);
+    const parsed = JSON.parse(manifest) as Record<string, unknown>;
+    if (isStackManifest(parsed)) {
+      // Per-service merge: merge each service independently
+      let oldStack: Record<string, unknown>;
+      try {
+        oldStack = JSON.parse(existingManifest) as Record<string, unknown>;
+      } catch (err) {
+        throw new ManifestMCPError(
+          ManifestMCPErrorCode.INVALID_CONFIG,
+          `Invalid existing_manifest: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+      const mergedStack: Record<string, unknown> = {};
+      for (const [svc, svcManifest] of Object.entries(parsed)) {
+        const oldSvcJson = oldStack[svc] ? JSON.stringify(oldStack[svc]) : '{}';
+        mergedStack[svc] = mergeManifest(svcManifest as Record<string, unknown>, oldSvcJson);
+      }
+      finalManifest = JSON.stringify(mergedStack);
+    } else {
+      const merged = mergeManifest(parsed, existingManifest);
+      finalManifest = JSON.stringify(merged);
+    }
   }
 
   const providerUrl = await resolveProviderUrl(queryClient, lease.providerUuid);

@@ -39,15 +39,3 @@ export function createAuthToken(
   };
   return toBase64(new TextEncoder().encode(JSON.stringify(payload)));
 }
-
-const AUTH_EXPIRY_MS = 60_000;
-const AUTH_FUTURE_TOLERANCE_MS = 10_000;
-
-export function validateAuthTimestamp(timestamp: string): boolean {
-  const ts = new Date(timestamp).getTime();
-  if (isNaN(ts)) return false;
-  const now = Date.now();
-  if (ts > now + AUTH_FUTURE_TOLERANCE_MS) return false;
-  if (now - ts > AUTH_EXPIRY_MS) return false;
-  return true;
-}

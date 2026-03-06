@@ -24,7 +24,6 @@ const NON_RETRYABLE_ERROR_CODES: ManifestMCPErrorCode[] = [
   ManifestMCPErrorCode.UNSUPPORTED_TX,
   ManifestMCPErrorCode.UNSUPPORTED_QUERY,
   ManifestMCPErrorCode.UNKNOWN_MODULE,
-  ManifestMCPErrorCode.UNKNOWN_SUBCOMMAND,
 
   // Transaction failures - on-chain rejection or broadcast failure
   // Retrying could cause double-spend for non-idempotent operations

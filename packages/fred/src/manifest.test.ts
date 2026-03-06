@@ -206,16 +206,14 @@ describe('mergeManifest', () => {
     expect(result.image).toBe('nginx:2');
   });
 
-  it('invalid old JSON returns new manifest as-is', () => {
+  it('invalid old JSON throws', () => {
     const newManifest = { image: 'nginx:2', ports: { '80/tcp': {} } };
-    const result = mergeManifest(newManifest, 'not valid json');
-    expect(result).toEqual(newManifest);
+    expect(() => mergeManifest(newManifest, 'not valid json')).toThrow('invalid JSON');
   });
 
-  it('old manifest that is an array returns new manifest as-is', () => {
+  it('old manifest that is an array throws', () => {
     const newManifest = { image: 'nginx:2' };
-    const result = mergeManifest(newManifest, '[1, 2, 3]');
-    expect(result).toEqual(newManifest);
+    expect(() => mergeManifest(newManifest, '[1, 2, 3]')).toThrow('must be a JSON object');
   });
 });
 

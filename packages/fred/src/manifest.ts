@@ -108,11 +108,14 @@ export function mergeManifest(
   try {
     const parsed = JSON.parse(oldManifestJson);
     if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
-      return newManifest;
+      throw new Error('existing_manifest must be a JSON object');
     }
     old = parsed as Record<string, unknown>;
-  } catch {
-    return newManifest;
+  } catch (err) {
+    if (err instanceof SyntaxError) {
+      throw new Error(`existing_manifest contains invalid JSON: ${err.message}`);
+    }
+    throw err;
   }
 
   const merged: Record<string, unknown> = { ...newManifest };

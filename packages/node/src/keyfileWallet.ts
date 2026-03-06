@@ -1,12 +1,13 @@
 import { readFileSync } from 'node:fs';
 import { DirectSecp256k1HdWallet, type OfflineSigner } from '@cosmjs/proto-signing';
 import { Secp256k1HdWallet } from '@cosmjs/amino';
-import { toBase64, fromBech32 } from '@cosmjs/encoding';
+import { fromBech32 } from '@cosmjs/encoding';
 import {
   type WalletProvider,
   type SignArbitraryResult,
   ManifestMCPError,
   ManifestMCPErrorCode,
+  signArbitraryWithAmino,
 } from '@manifest-network/manifest-mcp-core';
 
 export class KeyfileWalletProvider implements WalletProvider {
@@ -214,34 +215,6 @@ export class KeyfileWalletProvider implements WalletProvider {
       );
     }
 
-    if (address !== this.address) {
-      throw new ManifestMCPError(
-        ManifestMCPErrorCode.INVALID_ADDRESS,
-        `Cannot sign for address "${address}": wallet address is "${this.address}"`
-      );
-    }
-
-    const signDoc = {
-      chain_id: '',
-      account_number: '0',
-      sequence: '0',
-      fee: { gas: '0', amount: [] },
-      msgs: [
-        {
-          type: 'sign/MsgSignData',
-          value: {
-            signer: address,
-            data: toBase64(new TextEncoder().encode(data)),
-          },
-        },
-      ],
-      memo: '',
-    };
-
-    const { signature } = await this.aminoWallet.signAmino(address, signDoc);
-    return {
-      pub_key: signature.pub_key,
-      signature: signature.signature,
-    };
+    return signArbitraryWithAmino(this.aminoWallet, this.address!, address, data);
   }
 }

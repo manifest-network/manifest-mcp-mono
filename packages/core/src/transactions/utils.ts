@@ -37,6 +37,14 @@ export function extractFlag(
     return { value: undefined, consumedIndices: [] };
   }
 
+  // Detect duplicate flags
+  if (args.indexOf(flagName, flagIndex + 1) !== -1) {
+    throw new ManifestMCPError(
+      ManifestMCPErrorCode.TX_FAILED,
+      `Duplicate ${flagName} flag in ${context}`
+    );
+  }
+
   const value = args[flagIndex + 1];
   if (!value || value.startsWith('--')) {
     throw new ManifestMCPError(
@@ -426,8 +434,8 @@ export function parseLeaseItem(input: string): ParsedLeaseItem {
  * Supports simple denoms (umfx), IBC denoms (ibc/...), and factory denoms (factory/creator/subdenom)
  */
 export function parseAmount(amountStr: string): { amount: string; denom: string } {
-  // Regex supports alphanumeric denoms with slashes and underscores for IBC/factory denoms
-  const match = amountStr.match(/^(\d+)([a-zA-Z][a-zA-Z0-9/_]*)$/);
+  // Regex supports alphanumeric denoms with slashes, underscores, and hyphens for IBC/factory denoms
+  const match = amountStr.match(/^(\d+)([a-zA-Z][a-zA-Z0-9/_-]*)$/);
   if (!match) {
     // Provide specific hints based on common mistakes
     let hint = '';

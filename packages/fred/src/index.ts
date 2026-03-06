@@ -199,6 +199,7 @@ export class FredMCPServer {
                 retries: z.number().int().optional(),
                 start_period: z.string().optional(),
               }).optional(),
+              stop_grace_period: z.string().optional(),
               depends_on: z.record(z.string(), z.object({ condition: z.string() })).optional(),
               expose: z.array(z.string()).optional(),
               labels: z.record(z.string(), z.string()).optional(),

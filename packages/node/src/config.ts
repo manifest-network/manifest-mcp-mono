@@ -25,7 +25,9 @@ function getEnvRequired(key: string): string {
 }
 
 function getEnvOptional(key: string, defaultValue: string): string {
-  return process.env[key] ?? defaultValue;
+  const value = process.env[key];
+  if (value === undefined || value === '') return defaultValue;
+  return value;
 }
 
 function resolvePath(p: string): string {

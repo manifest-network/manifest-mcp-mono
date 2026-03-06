@@ -32,7 +32,7 @@ Three MCP servers bridging AI assistants to Cosmos SDK blockchains (Manifest Net
 - **`packages/core`** -- Shared library. Cosmos logic, on-chain tool functions, server utilities. No HTTP clients (those live in fred). Not an MCP server itself.
 - **`packages/chain`** -- MCP server with 5 chain tools: `get_account_info`, `cosmos_query`, `cosmos_tx`, `list_modules`, `list_module_subcommands`.
 - **`packages/lease`** -- MCP server with 6 on-chain lease tools: `credit_balance`, `fund_credit`, `leases_by_tenant`, `close_lease`, `get_skus`, `get_providers`.
-- **`packages/fred`** -- MCP server with 6 provider/Fred tools: `browse_catalog`, `deploy_app`, `app_status`, `get_logs`, `restart_app`, `update_app`. Contains HTTP clients (auth, provider, fred) and tool implementations.
+- **`packages/fred`** -- MCP server with 8 provider/Fred tools: `browse_catalog`, `deploy_app`, `app_status`, `get_logs`, `restart_app`, `update_app`, `app_diagnostics`, `app_releases`. Contains HTTP clients (auth, provider, fred) and tool implementations.
 - **`packages/node`** -- Three CLI entry points (`manifest-mcp-chain`, `manifest-mcp-lease`, `manifest-mcp-fred`) with stdio transport + encrypted keyfile wallet.
 
 ### Tool layers (3 tiers)
@@ -56,7 +56,7 @@ Three MCP servers bridging AI assistants to Cosmos SDK blockchains (Manifest Net
 
 ### Error handling
 
-`ManifestMCPError` with `ManifestMCPErrorCode` enum (20 codes, 7 categories). Error responses are sanitized via `sanitizeForLogging()` which redacts sensitive fields (mnemonics, passwords, keys, tokens). Retry logic (`retry.ts`) classifies errors as transient vs permanent -- only transient errors (connection, 5xx, 429) are retried.
+`ManifestMCPError` with `ManifestMCPErrorCode` enum (15 codes, 6 categories). Error responses are sanitized via `sanitizeForLogging()` which redacts sensitive fields (mnemonics, passwords, keys, tokens). Retry logic (`retry.ts`) classifies errors as transient vs permanent -- only transient errors (connection, 5xx, 429) are retried.
 
 ## Conventions
 

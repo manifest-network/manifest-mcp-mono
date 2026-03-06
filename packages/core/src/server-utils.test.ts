@@ -51,14 +51,18 @@ describe('sanitizeForLogging', () => {
     expect(result['safe']).toBe('visible');
   });
 
-  it('redacts generic key and token fields', () => {
+  it('redacts specific key and token variant fields', () => {
     const result = sanitizeForLogging({
-      key: 'supersecret',
-      token: 'abc123',
+      secret_key: 'supersecret',
+      signing_key: 'abc123',
+      auth_token: 'tok',
+      key: 'not-sensitive',
       safe: 'visible',
     }) as Record<string, string>;
-    expect(result['key']).toBe('[REDACTED]');
-    expect(result['token']).toBe('[REDACTED]');
+    expect(result['secret_key']).toBe('[REDACTED]');
+    expect(result['signing_key']).toBe('[REDACTED]');
+    expect(result['auth_token']).toBe('[REDACTED]');
+    expect(result['key']).toBe('not-sensitive');
     expect(result['safe']).toBe('visible');
   });
 

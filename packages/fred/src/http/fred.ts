@@ -161,10 +161,12 @@ export async function pollLeaseUntilReady(
 ): Promise<FredLeaseStatus> {
   const { intervalMs = 3_000, timeoutMs = 120_000 } = opts;
   const deadline = Date.now() + timeoutMs;
+  let lastStatus: string | undefined;
 
   while (Date.now() < deadline) {
     const token = typeof authToken === 'function' ? await authToken() : authToken;
     const status = await getLeaseStatus(providerUrl, leaseUuid, token, fetchFn);
+    lastStatus = status.status;
     if (status.status === 'ready' || status.status === 'running') {
       return status;
     }
@@ -174,5 +176,5 @@ export async function pollLeaseUntilReady(
     await new Promise(resolve => setTimeout(resolve, intervalMs));
   }
 
-  throw new ProviderApiError(0, `Lease ${leaseUuid} poll timed out after ${timeoutMs}ms`);
+  throw new ProviderApiError(0, `Lease ${leaseUuid} poll timed out after ${timeoutMs}ms (last status: ${lastStatus ?? 'unknown'})`);
 }
