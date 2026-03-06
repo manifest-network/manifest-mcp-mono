@@ -22,6 +22,8 @@ import { getAppLogs } from './tools/getLogs.js';
 import { deployApp } from './tools/deployApp.js';
 import { restartApp } from './tools/restartApp.js';
 import { updateApp } from './tools/updateApp.js';
+import { getLeaseProvision, getLeaseReleases } from './http/fred.js';
+import { resolveProviderUrl } from './tools/resolveLeaseProvider.js';
 
 export type { ManifestMCPServerOptions } from '@manifest-network/manifest-mcp-core';
 
@@ -257,6 +259,74 @@ export class FredMCPServer {
           manifest,
         );
         return jsonResponse(result, bigIntReplacer);
+      }),
+    );
+
+    // -- app_diagnostics --
+    this.mcpServer.registerTool(
+      'app_diagnostics',
+      {
+        description: 'Get provision diagnostics for a deployed app. Use this to debug apps stuck in provisioning or that failed to start. Returns provision status, failure count, and last error message.',
+        inputSchema: {
+          lease_uuid: z.string().uuid().describe('The lease UUID of the app to diagnose'),
+        },
+      },
+      withErrorHandling('app_diagnostics', async (args) => {
+        const leaseUuid = args.lease_uuid;
+        const address = await this.walletProvider.getAddress();
+        const queryClient = await this.clientManager.getQueryClient();
+
+        const leaseResult = await queryClient.liftedinit.billing.v1.lease({ leaseUuid });
+        if (!leaseResult.lease) {
+          throw new ManifestMCPError(
+            ManifestMCPErrorCode.QUERY_FAILED,
+            `Lease "${leaseUuid}" not found on chain`,
+          );
+        }
+
+        const providerUrl = await resolveProviderUrl(queryClient, leaseResult.lease.providerUuid);
+        const authToken = await this.getProviderAuthToken(address, leaseUuid);
+        const provision = await getLeaseProvision(providerUrl, leaseUuid, authToken);
+
+        return jsonResponse({
+          lease_uuid: leaseUuid,
+          provision_status: provision.status,
+          fail_count: provision.fail_count,
+          last_error: provision.last_error,
+        }, bigIntReplacer);
+      }),
+    );
+
+    // -- app_releases --
+    this.mcpServer.registerTool(
+      'app_releases',
+      {
+        description: 'Get release/version history for a deployed app. Use this to see what versions have been deployed, when they were created, and their status.',
+        inputSchema: {
+          lease_uuid: z.string().uuid().describe('The lease UUID of the app to get release history for'),
+        },
+      },
+      withErrorHandling('app_releases', async (args) => {
+        const leaseUuid = args.lease_uuid;
+        const address = await this.walletProvider.getAddress();
+        const queryClient = await this.clientManager.getQueryClient();
+
+        const leaseResult = await queryClient.liftedinit.billing.v1.lease({ leaseUuid });
+        if (!leaseResult.lease) {
+          throw new ManifestMCPError(
+            ManifestMCPErrorCode.QUERY_FAILED,
+            `Lease "${leaseUuid}" not found on chain`,
+          );
+        }
+
+        const providerUrl = await resolveProviderUrl(queryClient, leaseResult.lease.providerUuid);
+        const authToken = await this.getProviderAuthToken(address, leaseUuid);
+        const result = await getLeaseReleases(providerUrl, leaseUuid, authToken);
+
+        return jsonResponse({
+          lease_uuid: leaseUuid,
+          releases: result.releases,
+        }, bigIntReplacer);
       }),
     );
   }
