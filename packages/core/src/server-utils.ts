@@ -6,7 +6,7 @@ import { createValidatedConfig } from './config.js';
 /**
  * Sensitive field names that should be redacted from error responses
  */
-export const SENSITIVE_FIELDS = new Set([
+export const SENSITIVE_FIELDS: ReadonlySet<string> = new Set([
   'mnemonic',
   'privatekey',
   'private_key',
