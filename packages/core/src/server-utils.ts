@@ -44,10 +44,16 @@ export function sanitizeForLogging(obj: unknown, depth = 0): unknown {
   }
 
   if (typeof obj === 'string') {
-    // Redact strings that look like BIP-39 mnemonics (12/15/18/21/24 words)
-    const wordCount = obj.trim().split(/\s+/).length;
+    // Redact strings that look like BIP-39 mnemonics (12/15/18/21/24 words).
+    // BIP-39 words are all lowercase alphabetic, so require that to avoid
+    // false positives on error messages that happen to be 12/24 words.
+    const words = obj.trim().split(/\s+/);
+    const wordCount = words.length;
     if (wordCount >= 12 && wordCount <= 24 && wordCount % 3 === 0) {
-      return '[REDACTED - possible mnemonic]';
+      const allLowercaseAlpha = words.every(w => /^[a-z]+$/.test(w));
+      if (allLowercaseAlpha) {
+        return '[REDACTED - possible mnemonic]';
+      }
     }
     return obj;
   }
@@ -73,7 +79,7 @@ export function sanitizeForLogging(obj: unknown, depth = 0): unknown {
 }
 
 /**
- * Options for creating a chain or cloud MCP server
+ * Options for creating a chain, lease, or fred MCP server
  */
 export interface ManifestMCPServerOptions {
   config: ManifestMCPConfig;
@@ -186,8 +192,8 @@ export interface MnemonicServerConfig {
 /**
  * Generic factory that creates any MCP server class with a mnemonic wallet.
  *
- * Eliminates the duplicated createMnemonicChainServer / createMnemonicCloudServer
- * pattern -- callers pass the server constructor instead.
+ * Eliminates duplicated createMnemonic*Server patterns -- callers pass the
+ * server constructor instead.
  */
 export async function createMnemonicServer<T>(
   config: MnemonicServerConfig,

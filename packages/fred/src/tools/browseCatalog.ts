@@ -31,7 +31,7 @@ export async function browseCatalog(queryClient: ManifestQueryClient) {
         if (err instanceof ProviderApiError) {
           healthError = `HTTP ${err.status}: ${err.message}`;
         } else {
-          throw err;
+          healthError = `Health check failed: ${err instanceof Error ? err.message : String(err)}`;
         }
       }
       return {

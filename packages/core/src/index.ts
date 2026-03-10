@@ -6,7 +6,7 @@ export { cosmosQuery, cosmosTx } from './cosmos.js';
 export { getAvailableModules, getModuleSubcommands, getSubcommandUsage, getSupportedModules, isSubcommandSupported } from './modules.js';
 export { MnemonicWalletProvider, signArbitraryWithAmino } from './wallet/index.js';
 export { withRetry, isRetryableError, calculateBackoff, type RetryOptions } from './retry.js';
-export { LeaseState } from '@manifest-network/manifestjs/dist/codegen/liftedinit/billing/v1/types.js';
+export { LeaseState, leaseStateToJSON } from '@manifest-network/manifestjs/dist/codegen/liftedinit/billing/v1/types.js';
 export { type StopAppResult } from './tools/stopApp.js';
 export { requireString, requireStringEnum, requireUuid, parseArgs, optionalBoolean } from './validation.js';
 export { VERSION } from './version.js';

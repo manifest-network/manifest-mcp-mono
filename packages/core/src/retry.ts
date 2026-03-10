@@ -17,6 +17,7 @@ const NON_RETRYABLE_ERROR_CODES: ManifestMCPErrorCode[] = [
 
   // Wallet errors - require user action
   ManifestMCPErrorCode.WALLET_NOT_CONNECTED,
+  ManifestMCPErrorCode.WALLET_CONNECTION_FAILED,
   ManifestMCPErrorCode.INVALID_MNEMONIC,
 
   // Validation errors - input is invalid

@@ -16,6 +16,7 @@ import {
   fundCredits,
   stopApp,
 } from '@manifest-network/manifest-mcp-core';
+// TODO: import from @manifest-network/manifest-mcp-core once core is rebuilt
 import { leaseStateToJSON } from '@manifest-network/manifestjs/dist/codegen/liftedinit/billing/v1/types.js';
 import type { WalletProvider } from '@manifest-network/manifest-mcp-core';
 

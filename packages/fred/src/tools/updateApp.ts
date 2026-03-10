@@ -18,7 +18,15 @@ export async function updateApp(
 
   let finalManifest = manifest;
   if (existingManifest) {
-    const parsed = JSON.parse(manifest) as Record<string, unknown>;
+    let parsed: Record<string, unknown>;
+    try {
+      parsed = JSON.parse(manifest) as Record<string, unknown>;
+    } catch (err) {
+      throw new ManifestMCPError(
+        ManifestMCPErrorCode.INVALID_CONFIG,
+        `Invalid manifest JSON: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
     if (isStackManifest(parsed)) {
       for (const name of Object.keys(parsed)) {
         if (!validateServiceName(name)) {

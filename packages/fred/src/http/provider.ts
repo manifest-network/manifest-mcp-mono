@@ -69,7 +69,9 @@ export async function checkedFetch(
     if (timer !== undefined) clearTimeout(timer);
   }
   if (!res.ok) {
-    const body = await res.text().catch(() => '');
+    const body = await res.text().catch((readErr: unknown) =>
+      `[body read failed: ${readErr instanceof Error ? readErr.message : String(readErr)}]`,
+    );
     throw new ProviderApiError(res.status, body || `HTTP ${res.status}`);
   }
   return res;

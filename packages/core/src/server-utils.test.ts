@@ -77,23 +77,33 @@ describe('sanitizeForLogging', () => {
   });
 
   it('redacts 24-word strings as possible mnemonic', () => {
-    const words = Array.from({ length: 24 }, (_, i) => `word${i}`).join(' ');
+    const words = 'abandon ability able about above absent absorb abstract absurd abuse access accident ' +
+      'acid acoustic acquire across act action actor actress actual adapt add addict';
     expect(sanitizeForLogging(words)).toBe('[REDACTED - possible mnemonic]');
   });
 
   it('redacts 15-word strings as possible mnemonic', () => {
-    const words = Array.from({ length: 15 }, (_, i) => `word${i}`).join(' ');
+    const words = 'abandon ability able about above absent absorb abstract absurd abuse access accident acid acoustic acquire';
     expect(sanitizeForLogging(words)).toBe('[REDACTED - possible mnemonic]');
   });
 
   it('redacts 18-word strings as possible mnemonic', () => {
-    const words = Array.from({ length: 18 }, (_, i) => `word${i}`).join(' ');
+    const words = 'abandon ability able about above absent absorb abstract absurd abuse access accident acid acoustic acquire across act action';
     expect(sanitizeForLogging(words)).toBe('[REDACTED - possible mnemonic]');
   });
 
   it('redacts 21-word strings as possible mnemonic', () => {
-    const words = Array.from({ length: 21 }, (_, i) => `word${i}`).join(' ');
+    const words = 'abandon ability able about above absent absorb abstract absurd abuse access accident ' +
+      'acid acoustic acquire across act action actor actress actual';
     expect(sanitizeForLogging(words)).toBe('[REDACTED - possible mnemonic]');
+  });
+
+  it('does not redact 12-word strings containing non-alpha characters', () => {
+    // Error messages or data that happen to be 12 words should not be redacted
+    const errorMsg = 'The transaction failed because the account has insufficient funds for gas';
+    expect(sanitizeForLogging(errorMsg)).toBe(errorMsg);
+    const numberedWords = Array.from({ length: 12 }, (_, i) => `word${i}`).join(' ');
+    expect(sanitizeForLogging(numberedWords)).toBe(numberedWords);
   });
 
   it('does not redact strings with other word counts', () => {

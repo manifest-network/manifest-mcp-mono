@@ -71,7 +71,7 @@ function resolveWallet(
 }
 
 /**
- * Shared bootstrap for both chain and cloud CLI entry points.
+ * Shared bootstrap for all three CLI entry points (chain, lease, fred).
  *
  * Handles subcommand dispatch, config loading, wallet resolution,
  * transport setup, and top-level error handling.

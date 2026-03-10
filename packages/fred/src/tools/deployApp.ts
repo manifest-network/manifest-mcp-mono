@@ -4,6 +4,7 @@ import { uploadLeaseData, getLeaseConnectionInfo } from '../http/provider.js';
 import { pollLeaseUntilReady } from '../http/fred.js';
 import type { FredLeaseStatus } from '../http/fred.js';
 import { buildManifest, buildStackManifest, validateServiceName, type BuildManifestOptions } from '../manifest.js';
+import { resolveProviderUrl } from './resolveLeaseProvider.js';
 
 async function sha256(data: string): Promise<string> {
   const encoded = new TextEncoder().encode(data);
@@ -60,20 +61,6 @@ async function findSkuUuid(
     ManifestMCPErrorCode.QUERY_FAILED,
     `SKU tier "${size}" not found. Available: ${available.join(', ')}`,
   );
-}
-
-async function getProviderUrl(
-  queryClient: ManifestQueryClient,
-  providerUuid: string,
-): Promise<string> {
-  const result = await queryClient.liftedinit.sku.v1.provider({ uuid: providerUuid });
-  if (!result.provider?.apiUrl) {
-    throw new ManifestMCPError(
-      ManifestMCPErrorCode.QUERY_FAILED,
-      `Provider ${providerUuid} has no API URL`,
-    );
-  }
-  return result.provider.apiUrl;
 }
 
 export interface ServiceConfig {
@@ -224,7 +211,7 @@ export async function deployApp(
   }
 
   // 4. Get provider URL
-  const providerUrl = await getProviderUrl(queryClient, providerUuid);
+  const providerUrl = await resolveProviderUrl(queryClient, providerUuid);
 
   // 5. Create lease
   const txResult = await cosmosTx(
@@ -260,7 +247,7 @@ export async function deployApp(
     throw new ManifestMCPError(
       code,
       `Deploy partially succeeded: lease ${leaseUuid} was created but subsequent steps failed. ` +
-      `Close this lease with stop_app if needed. Error: ${err instanceof Error ? err.message : String(err)}`,
+      `Close this lease with close_lease if needed. Error: ${err instanceof Error ? err.message : String(err)}`,
       details,
     );
   }
@@ -280,6 +267,7 @@ export async function deployApp(
       }
     }
   } catch (err) {
+    console.error(`[deploy_app] Failed to fetch connection info for lease ${leaseUuid}: ${err instanceof Error ? err.message : String(err)}`);
     connectionError = err instanceof Error ? err.message : String(err);
   }
 

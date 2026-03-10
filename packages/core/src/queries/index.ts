@@ -5,7 +5,6 @@ export {
   extractPaginationArgs,
   DEFAULT_PAGE_LIMIT,
   MAX_PAGE_LIMIT,
-  defaultPagination,
 } from './utils.js';
 export type { PaginationConfig } from './utils.js';
 export { routeBankQuery } from './bank.js';
