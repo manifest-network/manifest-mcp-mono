@@ -1,6 +1,6 @@
 import type { CosmosClientManager, ManifestQueryClient } from '@manifest-network/manifest-mcp-core';
-import { cosmosTx, ManifestMCPError, ManifestMCPErrorCode, type CosmosTxResult, MAX_PAGE_LIMIT } from '@manifest-network/manifest-mcp-core';
-import { uploadLeaseData, getLeaseConnectionInfo } from '../http/provider.js';
+import { cosmosTx, ManifestMCPError, ManifestMCPErrorCode, sanitizeForLogging, type CosmosTxResult, MAX_PAGE_LIMIT } from '@manifest-network/manifest-mcp-core';
+import { uploadLeaseData, getLeaseConnectionInfo, type LeaseConnectionInfo } from '../http/provider.js';
 import { pollLeaseUntilReady } from '../http/fred.js';
 import type { FredLeaseStatus } from '../http/fred.js';
 import { buildManifest, buildStackManifest, validateServiceName, type BuildManifestOptions } from '../manifest.js';
@@ -109,7 +109,7 @@ export interface DeployAppResult {
   readonly provider_url: string;
   readonly status: string;
   readonly url?: string;
-  readonly connection?: Record<string, unknown>;
+  readonly connection?: LeaseConnectionInfo;
   readonly connectionError?: string;
 }
 
@@ -240,7 +240,7 @@ export async function deployApp(
       fetchFn,
     );
   } catch (err) {
-    const code = err instanceof ManifestMCPError ? err.code : ManifestMCPErrorCode.TX_FAILED;
+    const code = err instanceof ManifestMCPError ? err.code : ManifestMCPErrorCode.QUERY_FAILED;
     const details = err instanceof ManifestMCPError
       ? { ...err.details, lease_uuid: leaseUuid, provider_uuid: providerUuid, provider_url: providerUrl }
       : { lease_uuid: leaseUuid, provider_uuid: providerUuid, provider_url: providerUrl };
@@ -253,13 +253,13 @@ export async function deployApp(
   }
 
   // 9. Get connection info (best-effort)
-  let connection: Record<string, unknown> | undefined;
+  let connection: LeaseConnectionInfo | undefined;
   let url: string | undefined;
   let connectionError: string | undefined;
   try {
     const authToken = await getAuthToken(address, leaseUuid);
     const connInfo = await getLeaseConnectionInfo(providerUrl, leaseUuid, authToken, fetchFn);
-    connection = connInfo as unknown as Record<string, unknown>;
+    connection = connInfo;
     if (connInfo.host && connInfo.ports) {
       const firstPort = Object.values(connInfo.ports)[0];
       if (firstPort) {
@@ -267,7 +267,7 @@ export async function deployApp(
       }
     }
   } catch (err) {
-    console.error(`[deploy_app] Failed to fetch connection info for lease ${leaseUuid}: ${err instanceof Error ? err.message : String(err)}`);
+    console.error(`[deploy_app] Failed to fetch connection info for lease ${leaseUuid}: ${sanitizeForLogging(err instanceof Error ? err.message : String(err))}`);
     connectionError = err instanceof Error ? err.message : String(err);
   }
 

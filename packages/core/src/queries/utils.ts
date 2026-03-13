@@ -48,12 +48,6 @@ export function createPagination(limit?: bigint): PaginationConfig {
 }
 
 /**
- * Default pagination configuration for queries (for backwards compatibility)
- * @deprecated Use createPagination() instead for configurable limits
- */
-export const defaultPagination = createPagination();
-
-/**
  * Extract --limit flag from args and return pagination config with remaining args.
  * Use this helper for paginated queries.
  *

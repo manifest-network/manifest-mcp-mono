@@ -91,12 +91,13 @@ export function optionalBoolean(
   input: Record<string, unknown>,
   field: string,
   defaultValue = false,
+  errorCode: ManifestMCPErrorCode = ManifestMCPErrorCode.QUERY_FAILED,
 ): boolean {
   const val = input[field];
   if (val === undefined || val === null) return defaultValue;
   if (typeof val === 'boolean') return val;
   throw new ManifestMCPError(
-    ManifestMCPErrorCode.TX_FAILED,
+    errorCode,
     `${field} must be a boolean, got ${typeof val}`,
   );
 }

@@ -121,6 +121,15 @@ export async function runKeygen(): Promise<void> {
     console.error('Error: password cannot be empty.');
     process.exit(1);
   }
+  if (password.length < 8) {
+    console.error('Error: password must be at least 8 characters.');
+    process.exit(1);
+  }
+  const confirmPassword = await promptPassword('Confirm password: ');
+  if (password !== confirmPassword) {
+    console.error('Error: passwords do not match.');
+    process.exit(1);
+  }
 
   let wallet: DirectSecp256k1HdWallet;
   try {
@@ -159,6 +168,15 @@ export async function runImport(): Promise<void> {
   const password = await promptPassword('Enter password for keyfile encryption: ');
   if (!password) {
     console.error('Error: password cannot be empty.');
+    process.exit(1);
+  }
+  if (password.length < 8) {
+    console.error('Error: password must be at least 8 characters.');
+    process.exit(1);
+  }
+  const confirmPassword = await promptPassword('Confirm password: ');
+  if (password !== confirmPassword) {
+    console.error('Error: passwords do not match.');
     process.exit(1);
   }
 

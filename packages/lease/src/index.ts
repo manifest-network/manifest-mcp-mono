@@ -7,6 +7,7 @@ import {
   createValidatedConfig,
   VERSION,
   LeaseState,
+  leaseStateToJSON,
   type ManifestMCPServerOptions,
   type MnemonicServerConfig,
   withErrorHandling,
@@ -16,8 +17,6 @@ import {
   fundCredits,
   stopApp,
 } from '@manifest-network/manifest-mcp-core';
-// TODO: import from @manifest-network/manifest-mcp-core once core is rebuilt
-import { leaseStateToJSON } from '@manifest-network/manifestjs/dist/codegen/liftedinit/billing/v1/types.js';
 import type { WalletProvider } from '@manifest-network/manifest-mcp-core';
 
 export type { ManifestMCPServerOptions } from '@manifest-network/manifest-mcp-core';
@@ -42,6 +41,20 @@ function leaseStateLabel(state: LeaseState): string {
     case LeaseState.LEASE_STATE_EXPIRED: return 'expired';
     default: return leaseStateToJSON(state).toLowerCase();
   }
+}
+
+interface LeaseItemRecord {
+  skuUuid: string;
+  quantity: bigint;
+}
+
+interface LeaseRecord {
+  uuid: string;
+  state: LeaseState;
+  providerUuid: string;
+  createdAt?: Date;
+  closedAt?: Date;
+  items?: LeaseItemRecord[];
 }
 
 export class LeaseMCPServer {
@@ -132,14 +145,14 @@ export class LeaseMCPServer {
           },
         });
 
-        const leases = result.leases.map((l: { uuid: string; state: LeaseState; providerUuid: string; createdAt?: Date; closedAt?: Date; items?: { skuUuid: string; quantity: bigint }[] }) => ({
+        const leases = result.leases.map((l: LeaseRecord) => ({
           uuid: l.uuid,
           state: l.state,
           stateLabel: leaseStateLabel(l.state),
           providerUuid: l.providerUuid,
           createdAt: l.createdAt?.toISOString(),
           closedAt: l.closedAt?.toISOString(),
-          items: l.items?.map((item: { skuUuid: string; quantity: bigint }) => ({
+          items: l.items?.map((item: LeaseItemRecord) => ({
             skuUuid: item.skuUuid,
             quantity: item.quantity,
           })),

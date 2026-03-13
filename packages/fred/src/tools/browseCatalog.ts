@@ -1,6 +1,15 @@
 import type { ManifestQueryClient } from '@manifest-network/manifest-mcp-core';
-import { MAX_PAGE_LIMIT } from '@manifest-network/manifest-mcp-core';
+import { MAX_PAGE_LIMIT, ManifestMCPError, ManifestMCPErrorCode } from '@manifest-network/manifest-mcp-core';
 import { getProviderHealth, ProviderApiError } from '../http/provider.js';
+
+const INFRASTRUCTURE_ERROR_CODES = new Set([
+  ManifestMCPErrorCode.WALLET_NOT_CONNECTED,
+  ManifestMCPErrorCode.WALLET_CONNECTION_FAILED,
+  ManifestMCPErrorCode.RPC_CONNECTION_FAILED,
+  ManifestMCPErrorCode.INVALID_MNEMONIC,
+  ManifestMCPErrorCode.INVALID_CONFIG,
+  ManifestMCPErrorCode.CLIENT_NOT_INITIALIZED,
+]);
 
 export async function browseCatalog(queryClient: ManifestQueryClient) {
   const sku = queryClient.liftedinit.sku.v1;
@@ -28,6 +37,7 @@ export async function browseCatalog(queryClient: ManifestQueryClient) {
         healthy = health.status === 'ok' || health.status === 'healthy';
         providerUuid = health.provider_uuid;
       } catch (err) {
+        if (err instanceof ManifestMCPError && INFRASTRUCTURE_ERROR_CODES.has(err.code)) throw err;
         if (err instanceof ProviderApiError) {
           healthError = `HTTP ${err.status}: ${err.message}`;
         } else {

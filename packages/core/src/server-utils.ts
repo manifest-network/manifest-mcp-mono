@@ -23,6 +23,10 @@ export const SENSITIVE_FIELDS: ReadonlySet<string> = new Set([
   'refresh_token',
 ]);
 
+// Note: standalone "key" and "token" are intentionally excluded from SENSITIVE_FIELDS
+// because they are too generic — they would match pagination keys, map keys, and
+// non-sensitive token identifiers. Use compound names (api_key, auth_token, etc.) instead.
+
 /**
  * JSON replacer that converts BigInt values to strings
  */

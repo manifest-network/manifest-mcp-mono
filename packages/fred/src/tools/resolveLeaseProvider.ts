@@ -1,5 +1,6 @@
 import type { ManifestQueryClient } from '@manifest-network/manifest-mcp-core';
 import { ManifestMCPError, ManifestMCPErrorCode } from '@manifest-network/manifest-mcp-core';
+import { validateProviderUrl } from '../http/provider.js';
 
 export async function resolveProviderUrl(
   queryClient: ManifestQueryClient,
@@ -33,5 +34,5 @@ export async function resolveProviderUrl(
     );
   }
 
-  return providerResult.provider.apiUrl;
+  return validateProviderUrl(providerResult.provider.apiUrl);
 }

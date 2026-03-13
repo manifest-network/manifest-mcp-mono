@@ -33,7 +33,7 @@ Three MCP servers bridging AI assistants to Cosmos SDK blockchains (Manifest Net
 - **`packages/chain`** -- MCP server with 5 chain tools: `get_account_info`, `cosmos_query`, `cosmos_tx`, `list_modules`, `list_module_subcommands`.
 - **`packages/lease`** -- MCP server with 6 on-chain lease tools: `credit_balance`, `fund_credit`, `leases_by_tenant`, `close_lease`, `get_skus`, `get_providers`.
 - **`packages/fred`** -- MCP server with 8 provider/Fred tools: `browse_catalog`, `deploy_app`, `app_status`, `get_logs`, `restart_app`, `update_app`, `app_diagnostics`, `app_releases`. Contains HTTP clients (auth, provider, fred) and tool implementations.
-- **`packages/node`** -- Three CLI entry points (`manifest-mcp-chain`, `manifest-mcp-lease`, `manifest-mcp-fred`) with stdio transport + encrypted keyfile wallet.
+- **`packages/node`** -- Three CLI entry points (`manifest-mcp-chain`, `manifest-mcp-lease`, `manifest-mcp-fred`) with stdio transport + keyfile wallet. Each also supports `keygen` and `import` subcommands for key management.
 
 ### Tool layers (3 tiers)
 
@@ -47,12 +47,12 @@ Three MCP servers bridging AI assistants to Cosmos SDK blockchains (Manifest Net
 - **Module registry** (`modules.ts`) -- `QUERY_MODULES` / `TX_MODULES` maps: metadata + handler function per module. Adding a module = add handler file + register in map.
 - **`cosmos.ts`** -- Routes `(module, subcommand, args)` -> handler. Wraps in `withRetry()` and rate limiting.
 - **`server-utils.ts`** -- Shared server utilities: `withErrorHandling`, `jsonResponse`, `bigIntReplacer`, `sanitizeForLogging`, `ManifestMCPServerOptions`, `createMnemonicServer`.
-- **`http/auth.ts`** (fred package) -- ADR-036 client-side auth tokens (signed message -> base64 Bearer token, 60s expiry). No auth endpoint round-trip.
+- **`http/auth.ts`** (fred package) -- ADR-036 client-side auth tokens (signed message -> base64 Bearer token with embedded timestamp; expiry enforced server-side). No auth endpoint round-trip.
 - **`http/provider.ts` / `http/fred.ts`** (fred package) -- Off-chain provider API clients with timeout handling.
 
 ### Wallet resolution (node package)
 
-`packages/node/src/bootstrap.ts` resolves wallet in order: encrypted keyfile (`MANIFEST_KEY_FILE`) -> mnemonic env var (`COSMOS_MNEMONIC`) -> error. All three entry points (`chain.ts`, `lease.ts`, and `fred.ts`) delegate to this shared bootstrap. All wallet providers implement `WalletProvider` interface from core including optional `signArbitrary` for ADR-036.
+`packages/node/src/bootstrap.ts` resolves wallet in order: keyfile (`MANIFEST_KEY_FILE`, encrypted or plaintext) -> mnemonic env var (`COSMOS_MNEMONIC`) -> fatal exit with usage instructions. All three entry points (`chain.ts`, `lease.ts`, and `fred.ts`) delegate to this shared bootstrap. All wallet providers implement `WalletProvider` interface from core including optional `signArbitrary` for ADR-036.
 
 ### Error handling
 
@@ -65,7 +65,7 @@ Three MCP servers bridging AI assistants to Cosmos SDK blockchains (Manifest Net
 - Tests are co-located `*.test.ts` files. E2E tests live in `/e2e/`.
 - Query handlers: `routeXxxQuery(queryClient, subcommand, args)` with switch on subcommand.
 - Transaction handlers: `routeXxxTransaction(client, senderAddress, subcommand, args, waitForConfirmation)`.
-- Input validation via helpers in `validation.ts` (`requireString`, `requireUuid`, `parseArgs`, etc.).
+- Input validation via helpers in `validation.ts` (`requireString`, `requireStringEnum`, `requireUuid`, `parseArgs`, `optionalBoolean`).
 - BigInt values serialized to strings via `bigIntReplacer` JSON replacer.
 - `@cosmjs/stargate` is overridden to `@manifest-network/stargate` (custom fork). See core `package.json` overrides.
 
@@ -80,3 +80,5 @@ Three MCP servers bridging AI assistants to Cosmos SDK blockchains (Manifest Net
 | `MANIFEST_KEY_FILE` | No | `~/.manifest/key.json` |
 | `MANIFEST_KEY_PASSWORD` | No | -- |
 | `COSMOS_MNEMONIC` | No | -- |
+
+The node package loads `.env` files automatically via `dotenv`.

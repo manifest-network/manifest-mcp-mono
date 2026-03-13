@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { readFileSync, statSync } from 'node:fs';
 import { DirectSecp256k1HdWallet, type OfflineSigner } from '@cosmjs/proto-signing';
 import { Secp256k1HdWallet } from '@cosmjs/amino';
 import { fromBech32 } from '@cosmjs/encoding';
@@ -67,6 +67,19 @@ export class KeyfileWalletProvider implements WalletProvider {
         );
       }
 
+      // Warn if keyfile has overly permissive permissions
+      try {
+        const mode = statSync(this.keyfilePath).mode & 0o777;
+        if (mode & 0o077) {
+          console.error(
+            `WARNING: Keyfile ${this.keyfilePath} has permissions 0${mode.toString(8)}; recommended 0600. ` +
+            `Fix with: chmod 600 ${this.keyfilePath}`
+          );
+        }
+      } catch {
+        // Best-effort check; don't block wallet init if stat fails
+      }
+
       let data: unknown;
       try {
         data = JSON.parse(raw);
@@ -108,6 +121,10 @@ export class KeyfileWalletProvider implements WalletProvider {
             `Keyfile at ${this.keyfilePath} has a "mnemonic" field that is not a string. Expected a BIP-39 mnemonic phrase.`
           );
         }
+        console.error(
+          `WARNING: Keyfile at ${this.keyfilePath} contains an unencrypted mnemonic. ` +
+          `Consider encrypting with "${this.addressPrefix === 'manifest' ? 'manifest-mcp-chain' : 'manifest-mcp-' + this.addressPrefix} import".`
+        );
         try {
           this.wallet = await DirectSecp256k1HdWallet.fromMnemonic(obj.mnemonic, {
             prefix: this.addressPrefix,
@@ -215,6 +232,12 @@ export class KeyfileWalletProvider implements WalletProvider {
       );
     }
 
-    return signArbitraryWithAmino(this.aminoWallet, this.address!, address, data);
+    if (!this.address) {
+      throw new ManifestMCPError(
+        ManifestMCPErrorCode.WALLET_NOT_CONNECTED,
+        'Wallet address not initialized',
+      );
+    }
+    return signArbitraryWithAmino(this.aminoWallet, this.address, address, data);
   }
 }

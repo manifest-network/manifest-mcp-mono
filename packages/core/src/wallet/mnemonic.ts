@@ -165,6 +165,12 @@ export class MnemonicWalletProvider implements WalletProvider {
       );
     }
 
-    return signArbitraryWithAmino(this.aminoWallet, this.address!, address, data);
+    if (!this.address) {
+      throw new ManifestMCPError(
+        ManifestMCPErrorCode.WALLET_NOT_CONNECTED,
+        'Wallet address not initialized',
+      );
+    }
+    return signArbitraryWithAmino(this.aminoWallet, this.address, address, data);
   }
 }

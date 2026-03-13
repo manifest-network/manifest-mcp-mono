@@ -160,8 +160,12 @@ export function isStackManifest(manifest: unknown): boolean {
   }
   const obj = manifest as Record<string, unknown>;
   if ('image' in obj) return false;
-  return Object.values(obj).some(
-    v => v !== null && typeof v === 'object' && !Array.isArray(v) && 'image' in (v as Record<string, unknown>),
+  const serviceValues = Object.values(obj).filter(
+    v => v !== null && typeof v === 'object' && !Array.isArray(v),
+  );
+  if (serviceValues.length === 0) return false;
+  return serviceValues.every(
+    v => 'image' in (v as Record<string, unknown>),
   );
 }
 

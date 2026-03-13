@@ -231,7 +231,7 @@ export class CosmosClientManager {
         const gasPrice = GasPrice.fromString(this.config.gasPrice);
         const { registry, aminoTypes } = getSigningManifestClientOptions();
 
-        // Configure endpoint with HTTP timeout
+        // Configure endpoint as HttpEndpoint object (required for custom options)
         const endpoint: HttpEndpoint = {
           url: this.config.rpcUrl,
           headers: {},

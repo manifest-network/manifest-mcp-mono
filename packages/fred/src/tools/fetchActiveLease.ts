@@ -1,7 +1,10 @@
-import type { ManifestQueryClient } from '@manifest-network/manifest-mcp-core';
-// TODO: import from @manifest-network/manifest-mcp-core once core is rebuilt
-import { LeaseState, leaseStateToJSON } from '@manifest-network/manifestjs/dist/codegen/liftedinit/billing/v1/types.js';
-import { ManifestMCPError, ManifestMCPErrorCode } from '@manifest-network/manifest-mcp-core';
+import {
+  type ManifestQueryClient,
+  LeaseState,
+  leaseStateToJSON,
+  ManifestMCPError,
+  ManifestMCPErrorCode,
+} from '@manifest-network/manifest-mcp-core';
 
 /**
  * Fetches a lease by UUID, validates it exists and is in active/pending state.
