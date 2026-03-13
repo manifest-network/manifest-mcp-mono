@@ -6,11 +6,11 @@ This document describes the architecture of the Manifest MCP monorepo -- MCP ser
 
 The servers implement the [Model Context Protocol](https://modelcontextprotocol.io/) (MCP), exposing blockchain queries, transactions, and Manifest-specific deployment tools to any MCP-compatible client (Claude Desktop, Cursor, etc.).
 
-The 17 tools are split across three MCP servers to stay under the LLM tool-selection accuracy ceiling:
+The 19 tools are split across three MCP servers to stay under the LLM tool-selection accuracy ceiling:
 
 - **Chain server** (5 tools) -- Generic Cosmos SDK operations: queries, transactions, module discovery
 - **Lease server** (6 tools) -- On-chain lease operations: credit balance, funding, lease queries, SKUs, providers
-- **Fred server** (6 tools) -- Provider/Fred-dependent operations: catalog browsing, app deployment, status, logs, restart, update
+- **Fred server** (8 tools) -- Provider/Fred-dependent operations: catalog browsing, app deployment, status, logs, restart, update, diagnostics, releases
 
 ```
 ┌─────────────────────┐
@@ -47,7 +47,7 @@ packages/
   core/    @manifest-network/manifest-mcp-core    Shared library (Cosmos logic, on-chain tool functions)
   chain/   @manifest-network/manifest-mcp-chain   MCP server: 5 chain tools
   lease/   @manifest-network/manifest-mcp-lease   MCP server: 6 on-chain lease tools
-  fred/    @manifest-network/manifest-mcp-fred    MCP server: 6 provider/Fred tools
+  fred/    @manifest-network/manifest-mcp-fred    MCP server: 8 provider/Fred tools
   node/    @manifest-network/manifest-mcp-node    Three CLIs: manifest-mcp-chain, manifest-mcp-lease, manifest-mcp-fred
 e2e/                                               End-to-end tests against a live chain
 submodules/
@@ -107,7 +107,6 @@ src/
 └── tools/                On-chain tool functions (used by lease package)
     ├── getBalance.ts     On-chain + credit balance
     ├── fundCredits.ts    Send tokens to billing account
-    ├── listApps.ts       Query leases by state
     └── stopApp.ts        Close lease on-chain
 ```
 
@@ -155,7 +154,7 @@ The lease server performs purely on-chain operations using core's tool functions
 
 ## Package: fred
 
-The fred package is an MCP server that registers 6 provider/Fred-dependent tools:
+The fred package is an MCP server that registers 8 provider/Fred-dependent tools:
 
 | Tool | Purpose |
 |------|---------|
@@ -165,6 +164,8 @@ The fred package is an MCP server that registers 6 provider/Fred-dependent tools
 | `get_logs` | Fetch container logs |
 | `restart_app` | Restart via provider API |
 | `update_app` | Update container manifest |
+| `app_diagnostics` | Detailed lease diagnostics (provision status, connection info) |
+| `app_releases` | List deployment release history |
 
 The fred server handles ADR-036 provider authentication internally and contains the HTTP clients for provider and Fred APIs.
 
@@ -172,19 +173,21 @@ The fred server handles ADR-036 provider authentication internally and contains 
 
 ```
 src/
-├── index.ts              FredMCPServer (6 tools)
+├── index.ts              FredMCPServer (8 tools)
+├── manifest.ts           Manifest building, merging, and validation
 ├── http/
 │   ├── auth.ts           ADR-036 signature-based authentication
 │   ├── provider.ts       Provider API client (URL validation, health, lease info & uploads)
 │   └── fred.ts           Fred API client (lease status, logs, restart, update, releases)
 └── tools/
-    ├── browseCatalog.ts  List providers + SKU pricing with health checks
-    ├── deployApp.ts      Create lease + deploy container
-    ├── appStatus.ts      Lease status + provider info
-    ├── getLogs.ts         Fetch container logs
-    ├── restartApp.ts      Restart via provider API
-    ├── updateApp.ts       Update container manifest
-    └── resolveLeaseProvider.ts  Provider URL lookup
+    ├── fetchActiveLease.ts      Shared helper: resolve active lease
+    ├── resolveLeaseProvider.ts  Provider URL lookup
+    ├── browseCatalog.ts         List providers + SKU pricing with health checks
+    ├── deployApp.ts             Create lease + deploy container
+    ├── appStatus.ts             Lease status + provider info
+    ├── getLogs.ts               Fetch container logs
+    ├── restartApp.ts            Restart via provider API
+    └── updateApp.ts             Update container manifest
 ```
 
 ## Package: node
@@ -262,23 +265,22 @@ Provider APIs require authentication via ADR-036 arbitrary message signing:
 2. The signature, public key, and metadata are assembled into a JSON payload and base64-encoded client-side via `createAuthToken()`
 3. The base64 token is included as a `Bearer` token in HTTP Authorization headers
 
-There is no round-trip to an auth endpoint -- the token is constructed entirely client-side. Tokens expire after 60 seconds.
+There is no round-trip to an auth endpoint -- the token is constructed entirely client-side. Token expiry is enforced server-side by the provider.
 
 This is handled by `http/auth.ts` in the fred package and used by fred server tools that interact with providers (deploy, status, logs, restart, update).
 
 ## Error handling
 
-Errors use the `ManifestMCPErrorCode` enum (20 codes across 7 categories):
+Errors use the `ManifestMCPErrorCode` enum (15 codes across 6 categories):
 
 | Category | Codes |
 |----------|-------|
 | Configuration | `INVALID_CONFIG`, `MISSING_CONFIG` |
-| Wallet | `WALLET_NOT_CONNECTED`, `WALLET_CONNECTION_FAILED`, `KEPLR_NOT_INSTALLED`, `INVALID_MNEMONIC` |
+| Wallet | `WALLET_NOT_CONNECTED`, `WALLET_CONNECTION_FAILED`, `INVALID_MNEMONIC` |
 | Client/RPC | `CLIENT_NOT_INITIALIZED`, `RPC_CONNECTION_FAILED` |
 | Query | `QUERY_FAILED`, `UNSUPPORTED_QUERY`, `INVALID_ADDRESS` |
-| Transaction | `TX_FAILED`, `TX_SIMULATION_FAILED`, `TX_BROADCAST_FAILED`, `TX_CONFIRMATION_TIMEOUT`, `UNSUPPORTED_TX`, `INSUFFICIENT_FUNDS` |
-| Module | `UNKNOWN_MODULE`, `UNKNOWN_SUBCOMMAND` |
-| General | `UNKNOWN_ERROR` |
+| Transaction | `TX_FAILED`, `TX_BROADCAST_FAILED`, `UNSUPPORTED_TX`, `INSUFFICIENT_FUNDS` |
+| Module | `UNKNOWN_MODULE` |
 
 Error responses returned to MCP clients sanitize structured fields (such as `input` and `details`) via a redaction helper so that sensitive values (mnemonics, passwords, keys, tokens) are not exposed; the top-level `error.message` string is passed through verbatim and should not contain secrets.
 
