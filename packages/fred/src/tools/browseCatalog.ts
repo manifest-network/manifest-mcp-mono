@@ -1,15 +1,36 @@
 import type { ManifestQueryClient } from '@manifest-network/manifest-mcp-core';
-import { MAX_PAGE_LIMIT, ManifestMCPError, ManifestMCPErrorCode } from '@manifest-network/manifest-mcp-core';
+import { MAX_PAGE_LIMIT, ManifestMCPError, INFRASTRUCTURE_ERROR_CODES } from '@manifest-network/manifest-mcp-core';
 import { getProviderHealth, ProviderApiError } from '../http/provider.js';
 
-const INFRASTRUCTURE_ERROR_CODES = new Set([
-  ManifestMCPErrorCode.WALLET_NOT_CONNECTED,
-  ManifestMCPErrorCode.WALLET_CONNECTION_FAILED,
-  ManifestMCPErrorCode.RPC_CONNECTION_FAILED,
-  ManifestMCPErrorCode.INVALID_MNEMONIC,
-  ManifestMCPErrorCode.INVALID_CONFIG,
-  ManifestMCPErrorCode.CLIENT_NOT_INITIALIZED,
-]);
+/** Maximum concurrent outgoing health check requests to provider APIs */
+const MAX_CONCURRENT_HEALTH_CHECKS = 5;
+
+/**
+ * Run an array of async functions with a concurrency limit.
+ * Returns results in the same order as the input.
+ */
+export async function mapWithConcurrency<T, R>(
+  items: T[],
+  limit: number,
+  fn: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let nextIndex = 0;
+
+  async function worker(): Promise<void> {
+    while (nextIndex < items.length) {
+      const idx = nextIndex++;
+      results[idx] = await fn(items[idx]);
+    }
+  }
+
+  const workers = Array.from(
+    { length: Math.min(limit, items.length) },
+    () => worker(),
+  );
+  await Promise.all(workers);
+  return results;
+}
 
 export async function browseCatalog(queryClient: ManifestQueryClient) {
   const sku = queryClient.liftedinit.sku.v1;
@@ -27,8 +48,10 @@ export async function browseCatalog(queryClient: ManifestQueryClient) {
     sku.sKUs({ activeOnly: true, pagination }),
   ]);
 
-  const providers = await Promise.all(
-    providersResult.providers.map(async (p) => {
+  const providers = await mapWithConcurrency(
+    providersResult.providers,
+    MAX_CONCURRENT_HEALTH_CHECKS,
+    async (p) => {
       let healthy = false;
       let providerUuid: string | undefined;
       let healthError: string | undefined;
@@ -53,7 +76,7 @@ export async function browseCatalog(queryClient: ManifestQueryClient) {
         providerUuid,
         ...(healthError && { healthError }),
       };
-    }),
+    },
   );
 
   const providerByUuid = new Map(

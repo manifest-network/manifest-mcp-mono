@@ -2,20 +2,12 @@ import {
   type ManifestQueryClient,
   LeaseState,
   ManifestMCPError,
+  INFRASTRUCTURE_ERROR_CODES,
   ManifestMCPErrorCode,
 } from '@manifest-network/manifest-mcp-core';
 import { getLeaseStatus, type FredLeaseStatus } from '../http/fred.js';
 import { getLeaseConnectionInfo, type LeaseConnectionInfo } from '../http/provider.js';
 import { resolveProviderUrl } from './resolveLeaseProvider.js';
-
-const INFRASTRUCTURE_ERROR_CODES = new Set([
-  ManifestMCPErrorCode.WALLET_NOT_CONNECTED,
-  ManifestMCPErrorCode.WALLET_CONNECTION_FAILED,
-  ManifestMCPErrorCode.RPC_CONNECTION_FAILED,
-  ManifestMCPErrorCode.INVALID_MNEMONIC,
-  ManifestMCPErrorCode.INVALID_CONFIG,
-  ManifestMCPErrorCode.CLIENT_NOT_INITIALIZED,
-]);
 
 export async function appStatus(
   queryClient: ManifestQueryClient,

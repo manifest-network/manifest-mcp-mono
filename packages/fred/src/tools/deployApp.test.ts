@@ -67,7 +67,7 @@ describe('deployApp', () => {
         {
           type: 'liftedinit.billing.v1.LeaseCreated',
           attributes: [
-            { key: 'lease_uuid', value: '"lease-uuid-1"' },
+            { key: 'lease_uuid', value: '"550e8400-e29b-41d4-a716-446655440000"' },
           ],
         },
       ],
@@ -94,7 +94,7 @@ describe('deployApp', () => {
       { image: 'nginx:alpine', port: 80, size: 'docker-micro', env: { FOO: 'bar' } },
     );
 
-    expect(result.lease_uuid).toBe('lease-uuid-1');
+    expect(result.lease_uuid).toBe('550e8400-e29b-41d4-a716-446655440000');
 
     // Verify manifest passed to upload contains only provided fields
     const payload = mockUploadLeaseData.mock.calls[0][2];
@@ -199,6 +199,39 @@ describe('deployApp', () => {
     ).rejects.toMatchObject({
       code: ManifestMCPErrorCode.INVALID_CONFIG,
       message: expect.stringContaining('port is required'),
+    });
+  });
+
+  it('throws when chain event returns malformed lease UUID', async () => {
+    mockCosmosTx.mockResolvedValue({
+      module: 'billing',
+      subcommand: 'create-lease',
+      transactionHash: 'TX123',
+      code: 0,
+      height: '100',
+      confirmed: true,
+      events: [
+        {
+          type: 'liftedinit.billing.v1.LeaseCreated',
+          attributes: [
+            { key: 'lease_uuid', value: '"not-a-valid-uuid"' },
+          ],
+        },
+      ],
+    });
+
+    const qc = makeQueryClient();
+    const cm = makeMockClientManager({ queryClient: qc, address: 'manifest1tenant' });
+
+    await expect(
+      deployApp(cm as any, mockGetAuthToken, mockGetLeaseDataAuthToken, {
+        image: 'nginx:alpine',
+        port: 80,
+        size: 'docker-micro',
+      }),
+    ).rejects.toMatchObject({
+      code: ManifestMCPErrorCode.TX_FAILED,
+      message: expect.stringContaining('must be a valid UUID'),
     });
   });
 

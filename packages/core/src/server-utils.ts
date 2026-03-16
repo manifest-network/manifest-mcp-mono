@@ -1,7 +1,20 @@
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
-import { ManifestMCPError, type ManifestMCPConfig, type WalletProvider } from './types.js';
+import { ManifestMCPError, ManifestMCPErrorCode, type ManifestMCPConfig, type WalletProvider } from './types.js';
 import { MnemonicWalletProvider } from './wallet/index.js';
 import { createValidatedConfig } from './config.js';
+
+/**
+ * Error codes that indicate infrastructure-level failures (wallet, RPC, config).
+ * Used by tool implementations to distinguish infrastructure errors from
+ * provider/application errors so that infrastructure errors are always re-thrown.
+ */
+export const INFRASTRUCTURE_ERROR_CODES: ReadonlySet<ManifestMCPErrorCode> = new Set([
+  ManifestMCPErrorCode.WALLET_NOT_CONNECTED,
+  ManifestMCPErrorCode.WALLET_CONNECTION_FAILED,
+  ManifestMCPErrorCode.RPC_CONNECTION_FAILED,
+  ManifestMCPErrorCode.INVALID_MNEMONIC,
+  ManifestMCPErrorCode.INVALID_CONFIG,
+]);
 
 /**
  * Sensitive field names that should be redacted from error responses
@@ -119,6 +132,10 @@ export function withErrorHandling<T extends (...args: any[]) => Promise<CallTool
         console.error(`[${toolName}] Tool error [${errorCode}]: ${errorMessage}${stack}`);
       }
 
+      // Sanitize error messages before including in the MCP response.
+      // This catches mnemonic-like strings in error messages and redacts them.
+      const safeMessage = sanitizeForLogging(errorMessage) as string;
+
       let errorResponse: Record<string, unknown> = {
         error: true,
         tool: toolName,
@@ -129,13 +146,13 @@ export function withErrorHandling<T extends (...args: any[]) => Promise<CallTool
         errorResponse = {
           ...errorResponse,
           code: error.code,
-          message: error.message,
+          message: sanitizeForLogging(error.message) as string,
           details: sanitizeForLogging(error.details),
         };
       } else {
         errorResponse = {
           ...errorResponse,
-          message: errorMessage,
+          message: safeMessage,
         };
       }
 
@@ -149,7 +166,7 @@ export function withErrorHandling<T extends (...args: any[]) => Promise<CallTool
         responseText = JSON.stringify({
           error: true,
           tool: toolName,
-          message: errorMessage,
+          message: safeMessage,
         });
       }
 

@@ -80,7 +80,8 @@ src/
 │
 ├── wallet/               Wallet provider implementations
 │   ├── index.ts          Barrel re-exports
-│   └── mnemonic.ts       MnemonicWalletProvider (BIP-39)
+│   ├── mnemonic.ts       MnemonicWalletProvider (BIP-39)
+│   └── sign-arbitrary.ts ADR-036 signArbitrary with amino wallet
 │
 ├── queries/              Cosmos SDK query handlers (one file per module)
 │   ├── bank.ts           Balance, supply, denom metadata
@@ -173,7 +174,7 @@ The fred server handles ADR-036 provider authentication internally and contains 
 
 ```
 src/
-├── index.ts              FredMCPServer (8 tools)
+├── index.ts              FredMCPServer (8 tools; app_diagnostics and app_releases are inline here)
 ├── manifest.ts           Manifest building, merging, and validation
 ├── http/
 │   ├── auth.ts           ADR-036 signature-based authentication
@@ -267,17 +268,17 @@ Provider APIs require authentication via ADR-036 arbitrary message signing:
 
 There is no round-trip to an auth endpoint -- the token is constructed entirely client-side. Token expiry is enforced server-side by the provider.
 
-This is handled by `http/auth.ts` in the fred package and used by fred server tools that interact with providers (deploy, status, logs, restart, update).
+This is handled by `http/auth.ts` in the fred package and used by all fred server tools that interact with providers (deploy, status, logs, restart, update, diagnostics, releases).
 
 ## Error handling
 
-Errors use the `ManifestMCPErrorCode` enum (15 codes across 6 categories):
+Errors use the `ManifestMCPErrorCode` enum (14 codes across 6 categories):
 
 | Category | Codes |
 |----------|-------|
 | Configuration | `INVALID_CONFIG`, `MISSING_CONFIG` |
 | Wallet | `WALLET_NOT_CONNECTED`, `WALLET_CONNECTION_FAILED`, `INVALID_MNEMONIC` |
-| Client/RPC | `CLIENT_NOT_INITIALIZED`, `RPC_CONNECTION_FAILED` |
+| Client/RPC | `RPC_CONNECTION_FAILED` |
 | Query | `QUERY_FAILED`, `UNSUPPORTED_QUERY`, `INVALID_ADDRESS` |
 | Transaction | `TX_FAILED`, `TX_BROADCAST_FAILED`, `UNSUPPORTED_TX`, `INSUFFICIENT_FUNDS` |
 | Module | `UNKNOWN_MODULE` |

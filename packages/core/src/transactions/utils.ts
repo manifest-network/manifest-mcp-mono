@@ -1,6 +1,7 @@
 import { SigningStargateClient } from '@cosmjs/stargate';
 import { fromBech32, fromHex, toHex } from '@cosmjs/encoding';
 import { ManifestMCPError, ManifestMCPErrorCode, CosmosTxResult } from '../types.js';
+import { DNS_LABEL_RE } from '../validation.js';
 
 /** Maximum number of arguments allowed */
 export const MAX_ARGS = 100;
@@ -363,9 +364,6 @@ export function parseVoteOption(optionStr: string, voteOptionEnum: VoteOptionEnu
       );
   }
 }
-
-/** RFC 1123 DNS label pattern: 1-63 lowercase alphanumeric or hyphens, no leading/trailing hyphen */
-const DNS_LABEL_RE = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 
 /**
  * Parsed lease item with optional service name for stack deployments.

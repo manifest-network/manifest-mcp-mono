@@ -31,7 +31,7 @@ function isLocalhostHostname(hostname: string): boolean {
  * Validate URL format and check if it uses HTTPS or is localhost (HTTP allowed for local dev)
  * Returns validation result with error reason if invalid
  */
-function validateRpcUrl(url: string): { valid: boolean; reason?: string } {
+function validateRpcUrl(url: string): { valid: true } | { valid: false; reason: string } {
   let parsed: URL;
   try {
     parsed = new URL(url);
@@ -115,7 +115,7 @@ export function validateConfig(config: Partial<ManifestMCPConfig>): ValidationRe
   } else {
     const urlCheck = validateRpcUrl(config.rpcUrl);
     if (!urlCheck.valid) {
-      errors.push(urlCheck.reason!);
+      errors.push(urlCheck.reason);
     }
   }
 

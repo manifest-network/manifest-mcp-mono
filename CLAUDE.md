@@ -27,7 +27,7 @@ docker compose -f e2e/docker-compose.yml down -v --remove-orphans
 
 ## Architecture
 
-Three MCP servers bridging AI assistants to Cosmos SDK blockchains (Manifest Network). Five npm workspace packages with strict dependency direction: **node -> {chain, lease, fred} -> core** (never reverse).
+Three MCP servers bridging AI assistants to Cosmos SDK blockchains (Manifest Network). Five npm workspace packages with strict dependency direction: **node -> {chain, lease, fred, core}** and **{chain, lease, fred} -> core** (never reverse).
 
 - **`packages/core`** -- Shared library. Cosmos logic, on-chain tool functions, server utilities. No HTTP clients (those live in fred). Not an MCP server itself.
 - **`packages/chain`** -- MCP server with 5 chain tools: `get_account_info`, `cosmos_query`, `cosmos_tx`, `list_modules`, `list_module_subcommands`.
@@ -56,7 +56,7 @@ Three MCP servers bridging AI assistants to Cosmos SDK blockchains (Manifest Net
 
 ### Error handling
 
-`ManifestMCPError` with `ManifestMCPErrorCode` enum (15 codes, 6 categories). Error responses are sanitized via `sanitizeForLogging()` which redacts sensitive fields (mnemonics, passwords, keys, tokens). Retry logic (`retry.ts`) classifies errors as transient vs permanent -- only transient errors (connection, 5xx, 429) are retried.
+`ManifestMCPError` with `ManifestMCPErrorCode` enum (14 codes, 6 categories). Error responses are sanitized via `sanitizeForLogging()` which redacts sensitive fields (mnemonics, passwords, keys, tokens). Retry logic (`retry.ts`) classifies errors as transient vs permanent -- only transient errors (connection, 5xx, 429) are retried.
 
 ## Conventions
 

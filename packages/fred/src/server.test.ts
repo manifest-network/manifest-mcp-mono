@@ -18,10 +18,14 @@ vi.mock('@manifest-network/manifest-mcp-core', async (importOriginal) => {
   };
 });
 
-vi.mock('./http/fred.js', () => ({
-  getLeaseProvision: vi.fn(),
-  getLeaseReleases: vi.fn(),
-}));
+vi.mock('./http/fred.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./http/fred.js')>();
+  return {
+    ...actual,
+    getLeaseProvision: vi.fn(),
+    getLeaseReleases: vi.fn(),
+  };
+});
 
 vi.mock('./tools/resolveLeaseProvider.js', () => ({
   resolveProviderUrl: vi.fn(),
@@ -222,6 +226,24 @@ describe('FredMCPServer', () => {
       expect(parsed.code).toBe('QUERY_FAILED');
       expect(parsed.message).toContain('has no API URL');
       expect(mockGetLeaseReleases).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('missing signArbitrary', () => {
+    it('returns INVALID_CONFIG when wallet lacks signArbitrary', async () => {
+      mockFetchActiveLease.mockResolvedValue({ providerUuid: 'prov-1' } as Awaited<ReturnType<typeof fetchActiveLease>>);
+      mockResolveProviderUrl.mockResolvedValue('https://provider.example.com');
+
+      const server = new FredMCPServer({
+        config: makeMockConfig(),
+        walletProvider: makeMockWallet(), // no signArbitrary
+      });
+      const result = await callTool(server, 'app_diagnostics', { lease_uuid: LEASE_UUID });
+
+      expect(result.isError).toBe(true);
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.code).toBe('INVALID_CONFIG');
+      expect(parsed.message).toContain('signArbitrary');
     });
   });
 });

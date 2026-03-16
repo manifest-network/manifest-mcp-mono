@@ -1,6 +1,6 @@
 import { ProviderApiError, checkedFetch, parseJsonResponse, validateProviderUrl } from './provider.js';
 
-const MAX_TAIL = 1000;
+export const MAX_TAIL = 1000;
 
 export interface FredLeaseStatus {
   readonly status: string;

@@ -1,5 +1,5 @@
 import type { CosmosClientManager, ManifestQueryClient } from '@manifest-network/manifest-mcp-core';
-import { cosmosTx, ManifestMCPError, ManifestMCPErrorCode, sanitizeForLogging, type CosmosTxResult, MAX_PAGE_LIMIT } from '@manifest-network/manifest-mcp-core';
+import { cosmosTx, ManifestMCPError, ManifestMCPErrorCode, sanitizeForLogging, type CosmosTxResult, MAX_PAGE_LIMIT, requireUuid } from '@manifest-network/manifest-mcp-core';
 import { uploadLeaseData, getLeaseConnectionInfo, type LeaseConnectionInfo } from '../http/provider.js';
 import { pollLeaseUntilReady } from '../http/fred.js';
 import type { FredLeaseStatus } from '../http/fred.js';
@@ -25,7 +25,10 @@ function extractLeaseUuid(txResult: CosmosTxResult): string {
     if (!event.type.includes('lease') && !event.type.includes('Lease')) continue;
     for (const attr of event.attributes) {
       if (attr.key === 'lease_uuid' || attr.key === 'uuid') {
-        return attr.value.replace(/^"|"$/g, '');
+        const raw = attr.value.replace(/^"|"$/g, '');
+        // Validate the extracted value is a proper UUID
+        requireUuid({ lease_uuid: raw }, 'lease_uuid', ManifestMCPErrorCode.TX_FAILED);
+        return raw;
       }
     }
   }
@@ -174,8 +177,11 @@ export async function deployApp(
     }
     manifestJson = JSON.stringify(buildStackManifest({ services }));
   } else {
+    // image is guaranteed defined here: the guard above ensures !image && !services is false,
+    // and the if-branch handles the services case. TypeScript can't narrow across if/else.
+    const image = input.image as string;
     manifestJson = JSON.stringify(buildManifest({
-      image: input.image!,
+      image,
       ports: { [`${input.port}/tcp`]: {} },
       env: input.env,
       command: input.command,
@@ -267,8 +273,10 @@ export async function deployApp(
       }
     }
   } catch (err) {
-    console.error(`[deploy_app] Failed to fetch connection info for lease ${leaseUuid}: ${sanitizeForLogging(err instanceof Error ? err.message : String(err))}`);
-    connectionError = err instanceof Error ? err.message : String(err);
+    const rawMsg = err instanceof Error ? err.message : String(err);
+    // Log raw message to stderr for debugging; sanitize only the user-facing return value
+    console.error(`[deploy_app] Failed to fetch connection info for lease ${leaseUuid}: ${rawMsg}`);
+    connectionError = sanitizeForLogging(rawMsg) as string;
   }
 
   return {

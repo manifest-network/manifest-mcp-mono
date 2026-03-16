@@ -8,13 +8,14 @@ export { MnemonicWalletProvider, signArbitraryWithAmino } from './wallet/index.j
 export { withRetry, isRetryableError, calculateBackoff, type RetryOptions } from './retry.js';
 export { LeaseState, leaseStateToJSON } from '@manifest-network/manifestjs/dist/codegen/liftedinit/billing/v1/types.js';
 export { type StopAppResult } from './tools/stopApp.js';
-export { requireString, requireStringEnum, requireUuid, parseArgs, optionalBoolean } from './validation.js';
+export { requireString, requireStringEnum, requireUuid, parseArgs, optionalBoolean, DNS_LABEL_RE } from './validation.js';
 export { VERSION } from './version.js';
 export { MAX_PAGE_LIMIT } from './queries/utils.js';
 
 // Server utilities (used by chain/lease/fred packages)
 export {
   SENSITIVE_FIELDS,
+  INFRASTRUCTURE_ERROR_CODES,
   bigIntReplacer,
   sanitizeForLogging,
   type ManifestMCPServerOptions,

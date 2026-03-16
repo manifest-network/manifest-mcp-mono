@@ -265,6 +265,32 @@ describe('withErrorHandling', () => {
     expect(logged).toContain('TypeError');
     spy.mockRestore();
   });
+
+  it('sanitizes standalone mnemonic error messages before returning to MCP client', async () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    // A standalone 12-word mnemonic as the entire error message
+    const mnemonic = 'abandon ability able about above absent absorb abstract absurd abuse access accident';
+    const handler = withErrorHandling<TestToolCb>('test', async () => {
+      throw new Error(mnemonic);
+    });
+    const result = await handler({}, {});
+    expect(result.isError).toBe(true);
+    const parsed = JSON.parse(textOf(result));
+    expect(parsed.message).toBe('[REDACTED - possible mnemonic]');
+    spy.mockRestore();
+  });
+
+  it('sanitizes ManifestMCPError message with standalone mnemonic', async () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const mnemonic = 'abandon ability able about above absent absorb abstract absurd abuse access accident';
+    const handler = withErrorHandling<TestToolCb>('test', async () => {
+      throw new ManifestMCPError(ManifestMCPErrorCode.WALLET_CONNECTION_FAILED, mnemonic);
+    });
+    const result = await handler({}, {});
+    const parsed = JSON.parse(textOf(result));
+    expect(parsed.message).toBe('[REDACTED - possible mnemonic]');
+    spy.mockRestore();
+  });
 });
 
 describe('createMnemonicServer', () => {

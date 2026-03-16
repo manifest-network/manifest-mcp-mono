@@ -8,12 +8,18 @@ import { withRetry } from './retry.js';
 const VALID_NAME_PATTERN = /^[a-zA-Z0-9_][a-zA-Z0-9_-]*$/;
 
 /**
- * Validate that a string is safe for use as a module or subcommand name
+ * Validate that a string is safe for use as a module or subcommand name.
+ * Uses the appropriate UNSUPPORTED_QUERY or UNSUPPORTED_TX code so that
+ * the error is immediately classified as non-retryable.
  */
-function validateName(name: string, field: string): void {
+function validateName(
+  name: string,
+  field: string,
+  errorCode: ManifestMCPErrorCode,
+): void {
   if (!name || !VALID_NAME_PATTERN.test(name)) {
     throw new ManifestMCPError(
-      ManifestMCPErrorCode.QUERY_FAILED,
+      errorCode,
       `Invalid ${field}: "${name}". Only alphanumeric characters, hyphens, and underscores are allowed.`
     );
   }
@@ -31,8 +37,8 @@ export async function cosmosQuery(
   subcommand: string,
   args: string[] = []
 ): Promise<CosmosQueryResult> {
-  validateName(module, 'module');
-  validateName(subcommand, 'subcommand');
+  validateName(module, 'module', ManifestMCPErrorCode.UNSUPPORTED_QUERY);
+  validateName(subcommand, 'subcommand', ManifestMCPErrorCode.UNSUPPORTED_QUERY);
 
   // Get handler from registry (throws if module not found) - do this before retry loop
   const handler = getQueryHandler(module);
@@ -85,8 +91,8 @@ export async function cosmosTx(
   args: string[] = [],
   waitForConfirmation: boolean = false
 ): Promise<CosmosTxResult> {
-  validateName(module, 'module');
-  validateName(subcommand, 'subcommand');
+  validateName(module, 'module', ManifestMCPErrorCode.UNSUPPORTED_TX);
+  validateName(subcommand, 'subcommand', ManifestMCPErrorCode.UNSUPPORTED_TX);
 
   // Get handler from registry (throws if module not found) - do this before retry loop
   const handler = getTxHandler(module);

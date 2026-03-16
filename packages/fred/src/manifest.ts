@@ -20,8 +20,9 @@ export interface BuildManifestOptions {
   depends_on?: Record<string, { condition: string }>;
 }
 
+import { DNS_LABEL_RE } from '@manifest-network/manifest-mcp-core';
+
 const MAX_NAME_LENGTH = 32;
-const DNS_LABEL_RE = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/;
 
 export function deriveAppNameFromImage(image: string): string {
   // Strip registry prefix (everything before the last /)

@@ -46,9 +46,10 @@ export async function checkedFetch(
   let timer: ReturnType<typeof setTimeout> | undefined;
 
   if (!callerProvidedSignal && timeoutMs > 0) {
-    controller = new AbortController();
-    timer = setTimeout(() => controller!.abort(), timeoutMs);
-    init = { ...init, signal: controller.signal };
+    const ctrl = new AbortController();
+    controller = ctrl;
+    timer = setTimeout(() => ctrl.abort(), timeoutMs);
+    init = { ...init, signal: ctrl.signal };
   }
 
   let res: Response;

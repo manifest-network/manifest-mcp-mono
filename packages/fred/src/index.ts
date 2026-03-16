@@ -22,7 +22,7 @@ import { getAppLogs } from './tools/getLogs.js';
 import { deployApp } from './tools/deployApp.js';
 import { restartApp } from './tools/restartApp.js';
 import { updateApp } from './tools/updateApp.js';
-import { getLeaseProvision, getLeaseReleases } from './http/fred.js';
+import { getLeaseProvision, getLeaseReleases, MAX_TAIL } from './http/fred.js';
 import { resolveProviderUrl } from './tools/resolveLeaseProvider.js';
 import { fetchActiveLease } from './tools/fetchActiveLease.js';
 
@@ -39,8 +39,6 @@ export {
   getServiceNames,
 } from './manifest.js';
 export type { ServiceConfig } from './tools/deployApp.js';
-
-const MAX_LOG_TAIL = 1000;
 
 export class FredMCPServer {
   private mcpServer: McpServer;
@@ -70,8 +68,8 @@ export class FredMCPServer {
   private async getProviderAuthToken(address: string, leaseUuid: string): Promise<string> {
     if (!this.walletProvider.signArbitrary) {
       throw new ManifestMCPError(
-        ManifestMCPErrorCode.WALLET_NOT_CONNECTED,
-        'Wallet does not support signArbitrary (ADR-036). Required for provider authentication.'
+        ManifestMCPErrorCode.INVALID_CONFIG,
+        'Wallet does not support signArbitrary (ADR-036). Required for provider authentication. Use a wallet provider that implements signArbitrary.'
       );
     }
     const timestamp = new Date().toISOString();
@@ -83,8 +81,8 @@ export class FredMCPServer {
   private async getLeaseDataAuthToken(address: string, leaseUuid: string, metaHashHex: string): Promise<string> {
     if (!this.walletProvider.signArbitrary) {
       throw new ManifestMCPError(
-        ManifestMCPErrorCode.WALLET_NOT_CONNECTED,
-        'Wallet does not support signArbitrary (ADR-036). Required for provider authentication.'
+        ManifestMCPErrorCode.INVALID_CONFIG,
+        'Wallet does not support signArbitrary (ADR-036). Required for provider authentication. Use a wallet provider that implements signArbitrary.'
       );
     }
     const timestamp = new Date().toISOString();
@@ -137,7 +135,7 @@ export class FredMCPServer {
         description: 'Get recent container logs for a deployed app. Use this to debug apps that are failing or to verify an app started correctly after deploy_app.',
         inputSchema: {
           lease_uuid: z.string().uuid().describe('The lease UUID of the app to get logs for'),
-          tail: z.number().int().min(1).max(MAX_LOG_TAIL).optional().describe('Number of recent log lines to retrieve'),
+          tail: z.number().int().min(1).max(MAX_TAIL).optional().describe('Number of recent log lines to retrieve'),
         },
       },
       withErrorHandling('get_logs', async (args) => {
