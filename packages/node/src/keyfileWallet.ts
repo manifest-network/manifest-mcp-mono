@@ -52,7 +52,7 @@ export class KeyfileWalletProvider implements WalletProvider {
         if (code === 'ENOENT') {
           throw new ManifestMCPError(
             ManifestMCPErrorCode.WALLET_CONNECTION_FAILED,
-            `Keyfile not found at ${this.keyfilePath}. Run "manifest-mcp-chain keygen" to generate one, or "manifest-mcp-chain import" to import an existing mnemonic. Check MANIFEST_KEY_FILE if the path is wrong.`
+            `Keyfile not found at ${this.keyfilePath}. Run "<cli> keygen" to generate one, or "<cli> import" to import an existing mnemonic (where <cli> is manifest-mcp-chain, manifest-mcp-lease, or manifest-mcp-fred). Check MANIFEST_KEY_FILE if the path is wrong.`
           );
         }
         if (code === 'EACCES') {
@@ -86,7 +86,7 @@ export class KeyfileWalletProvider implements WalletProvider {
       } catch {
         throw new ManifestMCPError(
           ManifestMCPErrorCode.WALLET_CONNECTION_FAILED,
-          `Keyfile at ${this.keyfilePath} contains invalid JSON. The file may be corrupted. Regenerate with "manifest-mcp-chain keygen" or import an existing mnemonic with "manifest-mcp-chain import".`
+          `Keyfile at ${this.keyfilePath} contains invalid JSON. The file may be corrupted. Regenerate with "<cli> keygen" or import an existing mnemonic with "<cli> import" (any manifest-mcp-* CLI).`
         );
       }
 
@@ -123,7 +123,7 @@ export class KeyfileWalletProvider implements WalletProvider {
         }
         console.error(
           `WARNING: Keyfile at ${this.keyfilePath} contains an unencrypted mnemonic. ` +
-          `Consider encrypting with "${this.addressPrefix === 'manifest' ? 'manifest-mcp-chain' : 'manifest-mcp-' + this.addressPrefix} import".`
+          'Consider encrypting with "<cli> import" (any manifest-mcp-* CLI).'
         );
         try {
           this.wallet = await DirectSecp256k1HdWallet.fromMnemonic(obj.mnemonic, {
