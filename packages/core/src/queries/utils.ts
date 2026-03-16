@@ -59,7 +59,7 @@ export function extractPaginationArgs(
   args: string[],
   context: string
 ): { pagination: PaginationConfig; remainingArgs: string[] } {
-  const { value: limitStr, consumedIndices } = extractFlag(args, '--limit', context);
+  const { value: limitStr, consumedIndices } = extractFlag(args, '--limit', context, ManifestMCPErrorCode.QUERY_FAILED);
   const remainingArgs = filterConsumedArgs(args, consumedIndices);
 
   let pagination: PaginationConfig;

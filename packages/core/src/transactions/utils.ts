@@ -31,7 +31,8 @@ export interface ExtractedFlag {
 export function extractFlag(
   args: string[],
   flagName: string,
-  context: string
+  context: string,
+  errorCode: ManifestMCPErrorCode = ManifestMCPErrorCode.TX_FAILED,
 ): ExtractedFlag {
   const flagIndex = args.indexOf(flagName);
   if (flagIndex === -1) {
@@ -41,7 +42,7 @@ export function extractFlag(
   // Detect duplicate flags
   if (args.indexOf(flagName, flagIndex + 1) !== -1) {
     throw new ManifestMCPError(
-      ManifestMCPErrorCode.TX_FAILED,
+      errorCode,
       `Duplicate ${flagName} flag in ${context}`
     );
   }
@@ -49,7 +50,7 @@ export function extractFlag(
   const value = args[flagIndex + 1];
   if (!value || value.startsWith('--')) {
     throw new ManifestMCPError(
-      ManifestMCPErrorCode.TX_FAILED,
+      errorCode,
       `${flagName} flag requires a value in ${context}`
     );
   }
