@@ -1,7 +1,7 @@
 import { DirectSecp256k1HdWallet, OfflineSigner } from '@cosmjs/proto-signing';
 import { Secp256k1HdWallet } from '@cosmjs/amino';
-import { toBase64 } from '@cosmjs/encoding';
 import { WalletProvider, SignArbitraryResult, ManifestMCPError, ManifestMCPErrorCode, ManifestMCPConfig } from '../types.js';
+import { signArbitraryWithAmino } from './sign-arbitrary.js';
 
 /**
  * Mnemonic-based wallet provider for non-browser environments or testing
@@ -53,15 +53,18 @@ export class MnemonicWalletProvider implements WalletProvider {
       );
     }
 
+    // Capture mnemonic before the async IIFE so disconnect() cannot null it mid-flight
+    const mnemonic = this.mnemonic;
+
     // Start initialization and cache the promise to prevent concurrent init
     this.initPromise = (async () => {
       const prefix = this.config.addressPrefix ?? 'manifest';
 
       try {
-        this.wallet = await DirectSecp256k1HdWallet.fromMnemonic(this.mnemonic!, {
+        this.wallet = await DirectSecp256k1HdWallet.fromMnemonic(mnemonic, {
           prefix,
         });
-        this.aminoWallet = await Secp256k1HdWallet.fromMnemonic(this.mnemonic!, {
+        this.aminoWallet = await Secp256k1HdWallet.fromMnemonic(mnemonic, {
           prefix,
         });
 
@@ -152,9 +155,6 @@ export class MnemonicWalletProvider implements WalletProvider {
     return this.wallet;
   }
 
-  /**
-   * Sign arbitrary data using ADR-036 amino sign doc
-   */
   async signArbitrary(address: string, data: string): Promise<SignArbitraryResult> {
     await this.initWallet();
 
@@ -165,34 +165,12 @@ export class MnemonicWalletProvider implements WalletProvider {
       );
     }
 
-    if (address !== this.address) {
+    if (!this.address) {
       throw new ManifestMCPError(
-        ManifestMCPErrorCode.INVALID_ADDRESS,
-        `Cannot sign for address "${address}": wallet address is "${this.address}"`
+        ManifestMCPErrorCode.WALLET_NOT_CONNECTED,
+        'Wallet address not initialized',
       );
     }
-
-    const signDoc = {
-      chain_id: '',
-      account_number: '0',
-      sequence: '0',
-      fee: { gas: '0', amount: [] },
-      msgs: [
-        {
-          type: 'sign/MsgSignData',
-          value: {
-            signer: address,
-            data: toBase64(new TextEncoder().encode(data)),
-          },
-        },
-      ],
-      memo: '',
-    };
-
-    const { signature } = await this.aminoWallet.signAmino(address, signDoc);
-    return {
-      pub_key: signature.pub_key,
-      signature: signature.signature,
-    };
+    return signArbitraryWithAmino(this.aminoWallet, this.address, address, data);
   }
 }

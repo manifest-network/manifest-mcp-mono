@@ -5,6 +5,7 @@ import {
   ManifestMCPError,
   MnemonicWalletProvider,
   createValidatedConfig,
+  sanitizeForLogging,
   type WalletProvider,
 } from '@manifest-network/manifest-mcp-core';
 import { loadConfig } from './config.js';
@@ -71,7 +72,7 @@ function resolveWallet(
 }
 
 /**
- * Shared bootstrap for both chain and cloud CLI entry points.
+ * Shared bootstrap for all three CLI entry points (chain, lease, fred).
  *
  * Handles subcommand dispatch, config loading, wallet resolution,
  * transport setup, and top-level error handling.
@@ -108,11 +109,10 @@ export function bootstrap(cfg: BootstrapConfig): void {
 
   main().catch((error) => {
     if (error instanceof ManifestMCPError) {
-      console.error(`Fatal error [${error.code}]: ${error.message}`);
+      console.error(`Fatal error [${error.code}]: ${sanitizeForLogging(error.message) as string}`);
     } else {
       const msg = error instanceof Error ? error.message : String(error);
-      const stack = error instanceof Error && error.stack ? `\n${error.stack}` : '';
-      console.error(`Fatal error: ${msg}${stack}`);
+      console.error(`Fatal error: ${sanitizeForLogging(msg) as string}`);
     }
     process.exit(1);
   });

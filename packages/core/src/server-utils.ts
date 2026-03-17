@@ -1,7 +1,20 @@
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
-import { ManifestMCPError, type ManifestMCPConfig, type WalletProvider } from './types.js';
+import { ManifestMCPError, ManifestMCPErrorCode, type ManifestMCPConfig, type WalletProvider } from './types.js';
 import { MnemonicWalletProvider } from './wallet/index.js';
 import { createValidatedConfig } from './config.js';
+
+/**
+ * Error codes that indicate infrastructure-level failures (wallet, RPC, config).
+ * Used by tool implementations to distinguish infrastructure errors from
+ * provider/application errors so that infrastructure errors are always re-thrown.
+ */
+export const INFRASTRUCTURE_ERROR_CODES: ReadonlySet<ManifestMCPErrorCode> = new Set([
+  ManifestMCPErrorCode.WALLET_NOT_CONNECTED,
+  ManifestMCPErrorCode.WALLET_CONNECTION_FAILED,
+  ManifestMCPErrorCode.RPC_CONNECTION_FAILED,
+  ManifestMCPErrorCode.INVALID_MNEMONIC,
+  ManifestMCPErrorCode.INVALID_CONFIG,
+]);
 
 /**
  * Sensitive field names that should be redacted from error responses
@@ -13,8 +26,8 @@ export const SENSITIVE_FIELDS: ReadonlySet<string> = new Set([
   'secret',
   'password',
   'seed',
-  'key',
-  'token',
+  'secret_key',
+  'signing_key',
   'apikey',
   'api_key',
   'auth_token',
@@ -22,6 +35,10 @@ export const SENSITIVE_FIELDS: ReadonlySet<string> = new Set([
   'access_token',
   'refresh_token',
 ]);
+
+// Note: standalone "key" and "token" are intentionally excluded from SENSITIVE_FIELDS
+// because they are too generic — they would match pagination keys, map keys, and
+// non-sensitive token identifiers. Use compound names (api_key, auth_token, etc.) instead.
 
 /**
  * JSON replacer that converts BigInt values to strings
@@ -44,10 +61,16 @@ export function sanitizeForLogging(obj: unknown, depth = 0): unknown {
   }
 
   if (typeof obj === 'string') {
-    // Redact strings that look like BIP-39 mnemonics (12/15/18/21/24 words)
-    const wordCount = obj.trim().split(/\s+/).length;
+    // Redact strings that look like BIP-39 mnemonics (12/15/18/21/24 words).
+    // BIP-39 words are all lowercase alphabetic, so require that to avoid
+    // false positives on error messages that happen to be 12/24 words.
+    const words = obj.trim().split(/\s+/);
+    const wordCount = words.length;
     if (wordCount >= 12 && wordCount <= 24 && wordCount % 3 === 0) {
-      return '[REDACTED - possible mnemonic]';
+      const allLowercaseAlpha = words.every(w => /^[a-z]+$/.test(w));
+      if (allLowercaseAlpha) {
+        return '[REDACTED - possible mnemonic]';
+      }
     }
     return obj;
   }
@@ -73,7 +96,7 @@ export function sanitizeForLogging(obj: unknown, depth = 0): unknown {
 }
 
 /**
- * Options for creating a chain or cloud MCP server
+ * Options for creating a chain, lease, or fred MCP server
  */
 export interface ManifestMCPServerOptions {
   config: ManifestMCPConfig;
@@ -109,6 +132,10 @@ export function withErrorHandling<T extends (...args: any[]) => Promise<CallTool
         console.error(`[${toolName}] Tool error [${errorCode}]: ${errorMessage}${stack}`);
       }
 
+      // Sanitize error messages before including in the MCP response.
+      // This catches mnemonic-like strings in error messages and redacts them.
+      const safeMessage = sanitizeForLogging(errorMessage) as string;
+
       let errorResponse: Record<string, unknown> = {
         error: true,
         tool: toolName,
@@ -119,13 +146,13 @@ export function withErrorHandling<T extends (...args: any[]) => Promise<CallTool
         errorResponse = {
           ...errorResponse,
           code: error.code,
-          message: error.message,
+          message: sanitizeForLogging(error.message) as string,
           details: sanitizeForLogging(error.details),
         };
       } else {
         errorResponse = {
           ...errorResponse,
-          message: errorMessage,
+          message: safeMessage,
         };
       }
 
@@ -139,7 +166,7 @@ export function withErrorHandling<T extends (...args: any[]) => Promise<CallTool
         responseText = JSON.stringify({
           error: true,
           tool: toolName,
-          message: errorMessage,
+          message: safeMessage,
         });
       }
 
@@ -186,8 +213,8 @@ export interface MnemonicServerConfig {
 /**
  * Generic factory that creates any MCP server class with a mnemonic wallet.
  *
- * Eliminates the duplicated createMnemonicChainServer / createMnemonicCloudServer
- * pattern -- callers pass the server constructor instead.
+ * Eliminates duplicated createMnemonic*Server patterns -- callers pass the
+ * server constructor instead.
  */
 export async function createMnemonicServer<T>(
   config: MnemonicServerConfig,

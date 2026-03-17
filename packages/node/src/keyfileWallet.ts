@@ -1,12 +1,13 @@
-import { readFileSync } from 'node:fs';
+import { readFileSync, statSync } from 'node:fs';
 import { DirectSecp256k1HdWallet, type OfflineSigner } from '@cosmjs/proto-signing';
 import { Secp256k1HdWallet } from '@cosmjs/amino';
-import { toBase64, fromBech32 } from '@cosmjs/encoding';
+import { fromBech32 } from '@cosmjs/encoding';
 import {
   type WalletProvider,
   type SignArbitraryResult,
   ManifestMCPError,
   ManifestMCPErrorCode,
+  signArbitraryWithAmino,
 } from '@manifest-network/manifest-mcp-core';
 
 export class KeyfileWalletProvider implements WalletProvider {
@@ -51,7 +52,7 @@ export class KeyfileWalletProvider implements WalletProvider {
         if (code === 'ENOENT') {
           throw new ManifestMCPError(
             ManifestMCPErrorCode.WALLET_CONNECTION_FAILED,
-            `Keyfile not found at ${this.keyfilePath}. Run "manifest-mcp-chain keygen" / "manifest-mcp-cloud keygen" to generate one, or "manifest-mcp-chain import" / "manifest-mcp-cloud import" to import an existing mnemonic. Check MANIFEST_KEY_FILE if the path is wrong.`
+            `Keyfile not found at ${this.keyfilePath}. Run "<cli> keygen" to generate one, or "<cli> import" to import an existing mnemonic (where <cli> is manifest-mcp-chain, manifest-mcp-lease, or manifest-mcp-fred). Check MANIFEST_KEY_FILE if the path is wrong.`
           );
         }
         if (code === 'EACCES') {
@@ -66,13 +67,26 @@ export class KeyfileWalletProvider implements WalletProvider {
         );
       }
 
+      // Warn if keyfile has overly permissive permissions
+      try {
+        const mode = statSync(this.keyfilePath).mode & 0o777;
+        if (mode & 0o077) {
+          console.error(
+            `WARNING: Keyfile ${this.keyfilePath} has permissions 0${mode.toString(8)}; recommended 0600. ` +
+            `Fix with: chmod 600 ${this.keyfilePath}`
+          );
+        }
+      } catch {
+        // Best-effort check; don't block wallet init if stat fails
+      }
+
       let data: unknown;
       try {
         data = JSON.parse(raw);
       } catch {
         throw new ManifestMCPError(
           ManifestMCPErrorCode.WALLET_CONNECTION_FAILED,
-          `Keyfile at ${this.keyfilePath} contains invalid JSON. The file may be corrupted. Regenerate with "manifest-mcp-chain keygen" / "manifest-mcp-cloud keygen" or import an existing mnemonic with "manifest-mcp-chain import" / "manifest-mcp-cloud import".`
+          `Keyfile at ${this.keyfilePath} contains invalid JSON. The file may be corrupted. Regenerate with "<cli> keygen" or import an existing mnemonic with "<cli> import" (any manifest-mcp-* CLI).`
         );
       }
 
@@ -107,6 +121,10 @@ export class KeyfileWalletProvider implements WalletProvider {
             `Keyfile at ${this.keyfilePath} has a "mnemonic" field that is not a string. Expected a BIP-39 mnemonic phrase.`
           );
         }
+        console.error(
+          `WARNING: Keyfile at ${this.keyfilePath} contains an unencrypted mnemonic. ` +
+          'Consider encrypting with "<cli> import" (any manifest-mcp-* CLI).'
+        );
         try {
           this.wallet = await DirectSecp256k1HdWallet.fromMnemonic(obj.mnemonic, {
             prefix: this.addressPrefix,
@@ -214,34 +232,12 @@ export class KeyfileWalletProvider implements WalletProvider {
       );
     }
 
-    if (address !== this.address) {
+    if (!this.address) {
       throw new ManifestMCPError(
-        ManifestMCPErrorCode.INVALID_ADDRESS,
-        `Cannot sign for address "${address}": wallet address is "${this.address}"`
+        ManifestMCPErrorCode.WALLET_NOT_CONNECTED,
+        'Wallet address not initialized',
       );
     }
-
-    const signDoc = {
-      chain_id: '',
-      account_number: '0',
-      sequence: '0',
-      fee: { gas: '0', amount: [] },
-      msgs: [
-        {
-          type: 'sign/MsgSignData',
-          value: {
-            signer: address,
-            data: toBase64(new TextEncoder().encode(data)),
-          },
-        },
-      ],
-      memo: '',
-    };
-
-    const { signature } = await this.aminoWallet.signAmino(address, signDoc);
-    return {
-      pub_key: signature.pub_key,
-      signature: signature.signature,
-    };
+    return signArbitraryWithAmino(this.aminoWallet, this.address, address, data);
   }
 }

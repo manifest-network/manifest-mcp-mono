@@ -22,7 +22,8 @@
   "references": [
     { "path": "../core" },
     { "path": "../chain" },
-    { "path": "../cloud" }
+    { "path": "../lease" },
+    { "path": "../fred" }
   ],
   "include": ["src/**/*"],
   "exclude": ["node_modules", "dist"]

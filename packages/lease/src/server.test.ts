@@ -1,0 +1,272 @@
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
+
+const mockGetBalance = vi.fn();
+const mockFundCredits = vi.fn();
+const mockStopApp = vi.fn();
+const mockLeasesByTenant = vi.fn();
+const mockSKUs = vi.fn();
+const mockProviders = vi.fn();
+
+vi.mock('@manifest-network/manifest-mcp-core', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@manifest-network/manifest-mcp-core')>();
+  return {
+    ...actual,
+    CosmosClientManager: {
+      getInstance: vi.fn().mockReturnValue({
+        disconnect: vi.fn(),
+        getQueryClient: vi.fn().mockResolvedValue({
+          liftedinit: {
+            billing: {
+              v1: {
+                leasesByTenant: (...args: unknown[]) => mockLeasesByTenant(...args),
+              },
+            },
+            sku: {
+              v1: {
+                sKUs: (...args: unknown[]) => mockSKUs(...args),
+                providers: (...args: unknown[]) => mockProviders(...args),
+              },
+            },
+          },
+        }),
+        getSigningClient: vi.fn().mockResolvedValue({}),
+        getAddress: vi.fn().mockResolvedValue('manifest1abc'),
+        getConfig: vi.fn().mockReturnValue({}),
+        acquireRateLimit: vi.fn().mockResolvedValue(undefined),
+      }),
+    },
+    getBalance: (...args: unknown[]) => mockGetBalance(...args),
+    fundCredits: (...args: unknown[]) => mockFundCredits(...args),
+    stopApp: (...args: unknown[]) => mockStopApp(...args),
+  };
+});
+
+import { LeaseMCPServer } from './index.js';
+import { ManifestMCPError, ManifestMCPErrorCode } from '@manifest-network/manifest-mcp-core';
+import { makeMockConfig, makeMockWallet } from '@manifest-network/manifest-mcp-core/__test-utils__/mocks.js';
+
+let activeTransports: InMemoryTransport[] = [];
+
+interface ToolResult {
+  content: Array<{ type: string; text: string }>;
+  isError?: boolean;
+}
+
+async function callTool(
+  server: LeaseMCPServer,
+  toolName: string,
+  toolInput: Record<string, unknown> = {},
+): Promise<ToolResult> {
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  activeTransports.push(clientTransport, serverTransport);
+
+  const client = new Client({ name: 'test-client', version: '1.0.0' });
+
+  await server.getServer().connect(serverTransport);
+  await client.connect(clientTransport);
+
+  try {
+    return await client.callTool({ name: toolName, arguments: toolInput }) as ToolResult;
+  } finally {
+    await client.close();
+  }
+}
+
+const LEASE_TOOL_NAMES = [
+  'credit_balance',
+  'fund_credit',
+  'leases_by_tenant',
+  'close_lease',
+  'get_skus',
+  'get_providers',
+];
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  activeTransports = [];
+});
+
+afterEach(async () => {
+  for (const t of activeTransports) {
+    await t.close();
+  }
+  activeTransports = [];
+});
+
+describe('LeaseMCPServer', () => {
+  describe('listTools via protocol', () => {
+    it('should advertise exactly 6 lease tools', async () => {
+      const server = new LeaseMCPServer({
+        config: makeMockConfig(),
+        walletProvider: makeMockWallet(),
+      });
+
+      const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+      activeTransports.push(clientTransport, serverTransport);
+
+      const client = new Client({ name: 'test-client', version: '1.0.0' });
+      await server.getServer().connect(serverTransport);
+      await client.connect(clientTransport);
+
+      try {
+        const result = await client.listTools();
+        expect(result.tools).toHaveLength(6);
+        expect(result.tools.map(t => t.name).sort()).toEqual([...LEASE_TOOL_NAMES].sort());
+      } finally {
+        await client.close();
+      }
+    });
+  });
+
+  describe('credit_balance', () => {
+    it('routes to getBalance and returns result', async () => {
+      mockGetBalance.mockResolvedValue({ balance: '1000', credits: '500' });
+
+      const server = new LeaseMCPServer({
+        config: makeMockConfig(),
+        walletProvider: makeMockWallet(),
+      });
+      const result = await callTool(server, 'credit_balance');
+
+      expect(mockGetBalance).toHaveBeenCalledOnce();
+      expect(result.isError).toBeUndefined();
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.balance).toBe('1000');
+    });
+  });
+
+  describe('fund_credit', () => {
+    it('routes to fundCredits with amount', async () => {
+      mockFundCredits.mockResolvedValue({ transactionHash: 'HASH1', code: 0 });
+
+      const server = new LeaseMCPServer({
+        config: makeMockConfig(),
+        walletProvider: makeMockWallet(),
+      });
+      const result = await callTool(server, 'fund_credit', { amount: '10000000umfx' });
+
+      expect(mockFundCredits).toHaveBeenCalledOnce();
+      expect(result.isError).toBeUndefined();
+    });
+  });
+
+  describe('leases_by_tenant', () => {
+    it('returns leases with state labels and pagination', async () => {
+      mockLeasesByTenant.mockResolvedValue({
+        leases: [
+          {
+            uuid: 'lease-1',
+            state: 1, // LEASE_STATE_PENDING
+            providerUuid: 'prov-1',
+            createdAt: new Date('2025-01-01T00:00:00Z'),
+            closedAt: undefined,
+            items: [{ skuUuid: 'sku-1', quantity: BigInt(1) }],
+          },
+        ],
+        pagination: { total: BigInt(1) },
+      });
+
+      const server = new LeaseMCPServer({
+        config: makeMockConfig(),
+        walletProvider: makeMockWallet(),
+      });
+      const result = await callTool(server, 'leases_by_tenant', { state: 'all' });
+
+      expect(result.isError).toBeUndefined();
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.leases).toHaveLength(1);
+      expect(parsed.leases[0].uuid).toBe('lease-1');
+      expect(parsed.leases[0].stateLabel).toBe('pending');
+      expect(parsed.leases[0].items[0].quantity).toBe('1');
+      expect(parsed.total).toBe('1');
+    });
+
+    it('passes pagination params correctly', async () => {
+      mockLeasesByTenant.mockResolvedValue({ leases: [], pagination: { total: BigInt(0) } });
+
+      const server = new LeaseMCPServer({
+        config: makeMockConfig(),
+        walletProvider: makeMockWallet(),
+      });
+      await callTool(server, 'leases_by_tenant', { limit: 10, offset: 5 });
+
+      expect(mockLeasesByTenant).toHaveBeenCalledOnce();
+      const call = mockLeasesByTenant.mock.calls[0][0];
+      expect(call.pagination.limit).toBe(BigInt(10));
+      expect(call.pagination.offset).toBe(BigInt(5));
+    });
+  });
+
+  describe('close_lease', () => {
+    it('routes to stopApp with lease UUID', async () => {
+      mockStopApp.mockResolvedValue({ transactionHash: 'HASH2', code: 0 });
+
+      const server = new LeaseMCPServer({
+        config: makeMockConfig(),
+        walletProvider: makeMockWallet(),
+      });
+      const result = await callTool(server, 'close_lease', {
+        lease_uuid: '550e8400-e29b-41d4-a716-446655440000',
+      });
+
+      expect(mockStopApp).toHaveBeenCalledOnce();
+      expect(result.isError).toBeUndefined();
+    });
+  });
+
+  describe('get_skus', () => {
+    it('returns SKUs with active_only default true', async () => {
+      mockSKUs.mockResolvedValue({ skus: [{ name: 'docker-micro', uuid: 'sku-1' }] });
+
+      const server = new LeaseMCPServer({
+        config: makeMockConfig(),
+        walletProvider: makeMockWallet(),
+      });
+      const result = await callTool(server, 'get_skus', {});
+
+      expect(mockSKUs).toHaveBeenCalledWith({ activeOnly: true });
+      expect(result.isError).toBeUndefined();
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.skus).toHaveLength(1);
+    });
+  });
+
+  describe('get_providers', () => {
+    it('returns providers with active_only default true', async () => {
+      mockProviders.mockResolvedValue({ providers: [{ uuid: 'prov-1', address: 'manifest1x' }] });
+
+      const server = new LeaseMCPServer({
+        config: makeMockConfig(),
+        walletProvider: makeMockWallet(),
+      });
+      const result = await callTool(server, 'get_providers', {});
+
+      expect(mockProviders).toHaveBeenCalledWith({ activeOnly: true });
+      expect(result.isError).toBeUndefined();
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.providers).toHaveLength(1);
+    });
+  });
+
+  describe('error handling', () => {
+    it('ManifestMCPError produces structured error response', async () => {
+      mockGetBalance.mockRejectedValue(
+        new ManifestMCPError(ManifestMCPErrorCode.QUERY_FAILED, 'credit query failed'),
+      );
+
+      const server = new LeaseMCPServer({
+        config: makeMockConfig(),
+        walletProvider: makeMockWallet(),
+      });
+      const result = await callTool(server, 'credit_balance');
+
+      expect(result.isError).toBe(true);
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.error).toBe(true);
+      expect(parsed.code).toBe('QUERY_FAILED');
+      expect(parsed.message).toBe('credit query failed');
+    });
+  });
+});

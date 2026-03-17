@@ -118,9 +118,18 @@ describe('optionalBoolean', () => {
     expect(() => optionalBoolean({ flag: 1 }, 'flag')).toThrow(/must be a boolean, got number/);
   });
 
-  it('should use TX_FAILED error code', () => {
+  it('should default to QUERY_FAILED error code', () => {
     try {
       optionalBoolean({ flag: 'yes' }, 'flag');
+    } catch (err) {
+      expect(err).toBeInstanceOf(ManifestMCPError);
+      expect((err as ManifestMCPError).code).toBe(ManifestMCPErrorCode.QUERY_FAILED);
+    }
+  });
+
+  it('should use custom error code', () => {
+    try {
+      optionalBoolean({ flag: 'yes' }, 'flag', false, ManifestMCPErrorCode.TX_FAILED);
     } catch (err) {
       expect(err).toBeInstanceOf(ManifestMCPError);
       expect((err as ManifestMCPError).code).toBe(ManifestMCPErrorCode.TX_FAILED);

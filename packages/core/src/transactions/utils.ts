@@ -1,6 +1,7 @@
 import { SigningStargateClient } from '@cosmjs/stargate';
 import { fromBech32, fromHex, toHex } from '@cosmjs/encoding';
 import { ManifestMCPError, ManifestMCPErrorCode, CosmosTxResult } from '../types.js';
+import { DNS_LABEL_RE } from '../validation.js';
 
 /** Maximum number of arguments allowed */
 export const MAX_ARGS = 100;
@@ -30,17 +31,26 @@ export interface ExtractedFlag {
 export function extractFlag(
   args: string[],
   flagName: string,
-  context: string
+  context: string,
+  errorCode: ManifestMCPErrorCode = ManifestMCPErrorCode.TX_FAILED,
 ): ExtractedFlag {
   const flagIndex = args.indexOf(flagName);
   if (flagIndex === -1) {
     return { value: undefined, consumedIndices: [] };
   }
 
+  // Detect duplicate flags
+  if (args.indexOf(flagName, flagIndex + 1) !== -1) {
+    throw new ManifestMCPError(
+      errorCode,
+      `Duplicate ${flagName} flag in ${context}`
+    );
+  }
+
   const value = args[flagIndex + 1];
   if (!value || value.startsWith('--')) {
     throw new ManifestMCPError(
-      ManifestMCPErrorCode.TX_FAILED,
+      errorCode,
       `${flagName} flag requires a value in ${context}`
     );
   }
@@ -356,9 +366,6 @@ export function parseVoteOption(optionStr: string, voteOptionEnum: VoteOptionEnu
   }
 }
 
-/** RFC 1123 DNS label pattern: 1-63 lowercase alphanumeric or hyphens, no leading/trailing hyphen */
-const DNS_LABEL_RE = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
-
 /**
  * Parsed lease item with optional service name for stack deployments.
  */
@@ -426,8 +433,8 @@ export function parseLeaseItem(input: string): ParsedLeaseItem {
  * Supports simple denoms (umfx), IBC denoms (ibc/...), and factory denoms (factory/creator/subdenom)
  */
 export function parseAmount(amountStr: string): { amount: string; denom: string } {
-  // Regex supports alphanumeric denoms with slashes and underscores for IBC/factory denoms
-  const match = amountStr.match(/^(\d+)([a-zA-Z][a-zA-Z0-9/_]*)$/);
+  // Regex supports alphanumeric denoms with slashes, underscores, and hyphens for IBC/factory denoms
+  const match = amountStr.match(/^(\d+)([a-zA-Z][a-zA-Z0-9/_-]*)$/);
   if (!match) {
     // Provide specific hints based on common mistakes
     let hint = '';

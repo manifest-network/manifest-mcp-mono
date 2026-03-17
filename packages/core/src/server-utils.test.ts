@@ -51,14 +51,18 @@ describe('sanitizeForLogging', () => {
     expect(result['safe']).toBe('visible');
   });
 
-  it('redacts generic key and token fields', () => {
+  it('redacts specific key and token variant fields', () => {
     const result = sanitizeForLogging({
-      key: 'supersecret',
-      token: 'abc123',
+      secret_key: 'supersecret',
+      signing_key: 'abc123',
+      auth_token: 'tok',
+      key: 'not-sensitive',
       safe: 'visible',
     }) as Record<string, string>;
-    expect(result['key']).toBe('[REDACTED]');
-    expect(result['token']).toBe('[REDACTED]');
+    expect(result['secret_key']).toBe('[REDACTED]');
+    expect(result['signing_key']).toBe('[REDACTED]');
+    expect(result['auth_token']).toBe('[REDACTED]');
+    expect(result['key']).toBe('not-sensitive');
     expect(result['safe']).toBe('visible');
   });
 
@@ -73,23 +77,33 @@ describe('sanitizeForLogging', () => {
   });
 
   it('redacts 24-word strings as possible mnemonic', () => {
-    const words = Array.from({ length: 24 }, (_, i) => `word${i}`).join(' ');
+    const words = 'abandon ability able about above absent absorb abstract absurd abuse access accident ' +
+      'acid acoustic acquire across act action actor actress actual adapt add addict';
     expect(sanitizeForLogging(words)).toBe('[REDACTED - possible mnemonic]');
   });
 
   it('redacts 15-word strings as possible mnemonic', () => {
-    const words = Array.from({ length: 15 }, (_, i) => `word${i}`).join(' ');
+    const words = 'abandon ability able about above absent absorb abstract absurd abuse access accident acid acoustic acquire';
     expect(sanitizeForLogging(words)).toBe('[REDACTED - possible mnemonic]');
   });
 
   it('redacts 18-word strings as possible mnemonic', () => {
-    const words = Array.from({ length: 18 }, (_, i) => `word${i}`).join(' ');
+    const words = 'abandon ability able about above absent absorb abstract absurd abuse access accident acid acoustic acquire across act action';
     expect(sanitizeForLogging(words)).toBe('[REDACTED - possible mnemonic]');
   });
 
   it('redacts 21-word strings as possible mnemonic', () => {
-    const words = Array.from({ length: 21 }, (_, i) => `word${i}`).join(' ');
+    const words = 'abandon ability able about above absent absorb abstract absurd abuse access accident ' +
+      'acid acoustic acquire across act action actor actress actual';
     expect(sanitizeForLogging(words)).toBe('[REDACTED - possible mnemonic]');
+  });
+
+  it('does not redact 12-word strings containing non-alpha characters', () => {
+    // Error messages or data that happen to be 12 words should not be redacted
+    const errorMsg = 'The transaction failed because the account has insufficient funds for gas';
+    expect(sanitizeForLogging(errorMsg)).toBe(errorMsg);
+    const numberedWords = Array.from({ length: 12 }, (_, i) => `word${i}`).join(' ');
+    expect(sanitizeForLogging(numberedWords)).toBe(numberedWords);
   });
 
   it('does not redact strings with other word counts', () => {
@@ -249,6 +263,32 @@ describe('withErrorHandling', () => {
     const logged = spy.mock.calls[0][0] as string;
     expect(logged).toContain('[my_tool] Tool error [UNKNOWN]: cannot read property of null');
     expect(logged).toContain('TypeError');
+    spy.mockRestore();
+  });
+
+  it('sanitizes standalone mnemonic error messages before returning to MCP client', async () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    // A standalone 12-word mnemonic as the entire error message
+    const mnemonic = 'abandon ability able about above absent absorb abstract absurd abuse access accident';
+    const handler = withErrorHandling<TestToolCb>('test', async () => {
+      throw new Error(mnemonic);
+    });
+    const result = await handler({}, {});
+    expect(result.isError).toBe(true);
+    const parsed = JSON.parse(textOf(result));
+    expect(parsed.message).toBe('[REDACTED - possible mnemonic]');
+    spy.mockRestore();
+  });
+
+  it('sanitizes ManifestMCPError message with standalone mnemonic', async () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const mnemonic = 'abandon ability able about above absent absorb abstract absurd abuse access accident';
+    const handler = withErrorHandling<TestToolCb>('test', async () => {
+      throw new ManifestMCPError(ManifestMCPErrorCode.WALLET_CONNECTION_FAILED, mnemonic);
+    });
+    const result = await handler({}, {});
+    const parsed = JSON.parse(textOf(result));
+    expect(parsed.message).toBe('[REDACTED - possible mnemonic]');
     spy.mockRestore();
   });
 });

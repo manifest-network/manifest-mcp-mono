@@ -95,27 +95,31 @@ describe('cosmosQuery', () => {
     await expect(cosmosQuery(clientManager, 'bank', 'balances')).rejects.toBe(original);
   });
 
-  it('validates module name (rejects invalid chars)', async () => {
-    await expect(cosmosQuery(clientManager, 'bank;drop', 'balances')).rejects.toThrow(
-      /Invalid module/,
-    );
+  it('validates module name (rejects invalid chars) with UNSUPPORTED_QUERY', async () => {
+    await expect(cosmosQuery(clientManager, 'bank;drop', 'balances')).rejects.toMatchObject({
+      code: ManifestMCPErrorCode.UNSUPPORTED_QUERY,
+      message: expect.stringContaining('Invalid module'),
+    });
   });
 
-  it('validates subcommand name (rejects invalid chars)', async () => {
+  it('validates subcommand name (rejects invalid chars) with UNSUPPORTED_QUERY', async () => {
     mockGetQueryHandler.mockReturnValue(vi.fn());
-    await expect(cosmosQuery(clientManager, 'bank', 'bal ances')).rejects.toThrow(
-      /Invalid subcommand/,
-    );
+    await expect(cosmosQuery(clientManager, 'bank', 'bal ances')).rejects.toMatchObject({
+      code: ManifestMCPErrorCode.UNSUPPORTED_QUERY,
+      message: expect.stringContaining('Invalid subcommand'),
+    });
   });
 
   it('rejects empty module name', async () => {
-    await expect(cosmosQuery(clientManager, '', 'balances')).rejects.toThrow(/Invalid module/);
+    await expect(cosmosQuery(clientManager, '', 'balances')).rejects.toMatchObject({
+      code: ManifestMCPErrorCode.UNSUPPORTED_QUERY,
+    });
   });
 
   it('rejects module name starting with hyphen', async () => {
-    await expect(cosmosQuery(clientManager, '-bank', 'balances')).rejects.toThrow(
-      /Invalid module/,
-    );
+    await expect(cosmosQuery(clientManager, '-bank', 'balances')).rejects.toMatchObject({
+      code: ManifestMCPErrorCode.UNSUPPORTED_QUERY,
+    });
   });
 
   it('allows underscores and hyphens in names', async () => {
@@ -213,10 +217,19 @@ describe('cosmosTx', () => {
     });
   });
 
-  it('validates module/subcommand names', async () => {
-    await expect(cosmosTx(clientManager, 'bad module', 'send', [])).rejects.toThrow(
-      /Invalid module/,
-    );
+  it('validates module name with UNSUPPORTED_TX', async () => {
+    await expect(cosmosTx(clientManager, 'bad module', 'send', [])).rejects.toMatchObject({
+      code: ManifestMCPErrorCode.UNSUPPORTED_TX,
+      message: expect.stringContaining('Invalid module'),
+    });
+  });
+
+  it('validates subcommand name with UNSUPPORTED_TX', async () => {
+    mockGetTxHandler.mockReturnValue(vi.fn());
+    await expect(cosmosTx(clientManager, 'bank', 'bad;cmd', [])).rejects.toMatchObject({
+      code: ManifestMCPErrorCode.UNSUPPORTED_TX,
+      message: expect.stringContaining('Invalid subcommand'),
+    });
   });
 
   it('acquires rate limit before RPC call', async () => {

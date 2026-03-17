@@ -1,0 +1,45 @@
+{
+  "name": "@manifest-network/manifest-mcp-lease",
+  "version": "0.1.0",
+  "description": "MCP server for Manifest on-chain lease operations (billing, SKU, credits)",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "type": "module",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsdown",
+    "dev": "tsdown --watch",
+    "lint": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "keywords": [
+    "mcp",
+    "cosmos",
+    "blockchain",
+    "manifest",
+    "lease",
+    "billing"
+  ],
+  "author": "Felix C. Morency",
+  "license": "MIT",
+  "files": [
+    "dist"
+  ],
+  "dependencies": {
+    "@manifest-network/manifest-mcp-core": "*",
+    "@manifest-network/manifestjs": "2.2.0-billing-v2.3",
+    "@modelcontextprotocol/sdk": "1.25.3",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/node": "20.19.30",
+    "typescript": "5.9.3",
+    "vitest": "4.0.18"
+  }
+}

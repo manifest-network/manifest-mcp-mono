@@ -62,6 +62,9 @@ export function parseArgs(
   );
 }
 
+/** RFC 1123 DNS label pattern: 1-63 lowercase alphanumeric or hyphens, no leading/trailing hyphen */
+export const DNS_LABEL_RE = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
+
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
@@ -91,12 +94,13 @@ export function optionalBoolean(
   input: Record<string, unknown>,
   field: string,
   defaultValue = false,
+  errorCode: ManifestMCPErrorCode = ManifestMCPErrorCode.QUERY_FAILED,
 ): boolean {
   const val = input[field];
   if (val === undefined || val === null) return defaultValue;
   if (typeof val === 'boolean') return val;
   throw new ManifestMCPError(
-    ManifestMCPErrorCode.TX_FAILED,
+    errorCode,
     `${field} must be a boolean, got ${typeof val}`,
   );
 }

@@ -1,7 +1,7 @@
 {
   "name": "@manifest-network/manifest-mcp-core",
   "version": "0.1.0",
-  "description": "Shared library for Cosmos SDK blockchain logic, tool functions, and HTTP clients (Manifest Network)",
+  "description": "Shared library for Cosmos SDK blockchain logic, tool functions, and server utilities (Manifest Network)",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "type": "module",
