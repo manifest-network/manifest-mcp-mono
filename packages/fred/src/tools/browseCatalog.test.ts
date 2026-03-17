@@ -41,6 +41,11 @@ describe('mapWithConcurrency', () => {
     expect(fn).not.toHaveBeenCalled();
   });
 
+  it('clamps limit to at least 1 when given 0', async () => {
+    const results = await mapWithConcurrency([1, 2, 3], 0, async (x) => x * 2);
+    expect(results).toEqual([2, 4, 6]);
+  });
+
   it('propagates errors from fn', async () => {
     await expect(
       mapWithConcurrency([1, 2, 3], 2, async (item) => {

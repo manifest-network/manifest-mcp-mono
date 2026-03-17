@@ -24,8 +24,9 @@ export async function mapWithConcurrency<T, R>(
     }
   }
 
+  const workerCount = Math.min(Math.max(limit, 1), items.length);
   const workers = Array.from(
-    { length: Math.min(limit, items.length) },
+    { length: workerCount },
     () => worker(),
   );
   await Promise.all(workers);
