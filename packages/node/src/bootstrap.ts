@@ -109,10 +109,10 @@ export function bootstrap(cfg: BootstrapConfig): void {
 
   main().catch((error) => {
     if (error instanceof ManifestMCPError) {
-      console.error(`Fatal error [${error.code}]: ${sanitizeForLogging(error.message)}`);
+      console.error(`Fatal error [${error.code}]: ${sanitizeForLogging(error.message) as string}`);
     } else {
       const msg = error instanceof Error ? error.message : String(error);
-      console.error(`Fatal error: ${sanitizeForLogging(msg)}`);
+      console.error(`Fatal error: ${sanitizeForLogging(msg) as string}`);
     }
     process.exit(1);
   });

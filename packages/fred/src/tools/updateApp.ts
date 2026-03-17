@@ -53,8 +53,16 @@ export async function updateApp(
       }
       finalManifest = JSON.stringify(mergedStack);
     } else {
-      const merged = mergeManifest(parsed, existingManifest);
-      finalManifest = JSON.stringify(merged);
+      try {
+        const merged = mergeManifest(parsed, existingManifest);
+        finalManifest = JSON.stringify(merged);
+      } catch (err) {
+        if (err instanceof ManifestMCPError) throw err;
+        throw new ManifestMCPError(
+          ManifestMCPErrorCode.INVALID_CONFIG,
+          `Invalid existing_manifest: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
     }
   }
 
