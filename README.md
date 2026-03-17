@@ -8,7 +8,7 @@ Exposes on-chain queries and transactions as [Model Context Protocol](https://mo
 
 ```
 packages/
-  core/    @manifest-network/manifest-mcp-core    Shared library: Cosmos logic, on-chain tool functions
+  core/    @manifest-network/manifest-mcp-core    Shared library: Cosmos logic, on-chain tool functions, server utilities
   chain/   @manifest-network/manifest-mcp-chain   MCP server for chain operations (5 tools)
   lease/   @manifest-network/manifest-mcp-lease   MCP server for on-chain lease operations (6 tools)
   fred/    @manifest-network/manifest-mcp-fred    MCP server for provider/Fred operations (8 tools)
