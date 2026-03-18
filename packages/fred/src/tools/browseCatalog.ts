@@ -1,5 +1,5 @@
 import type { ManifestQueryClient } from '@manifest-network/manifest-mcp-core';
-import { MAX_PAGE_LIMIT, ManifestMCPError, INFRASTRUCTURE_ERROR_CODES } from '@manifest-network/manifest-mcp-core';
+import { MAX_PAGE_LIMIT, createPagination, ManifestMCPError, INFRASTRUCTURE_ERROR_CODES } from '@manifest-network/manifest-mcp-core';
 import { getProviderHealth, ProviderApiError } from '../http/provider.js';
 
 /** Maximum concurrent outgoing health check requests to provider APIs */
@@ -36,13 +36,7 @@ export async function mapWithConcurrency<T, R>(
 export async function browseCatalog(queryClient: ManifestQueryClient) {
   const sku = queryClient.liftedinit.sku.v1;
 
-  const pagination = {
-    key: new Uint8Array(),
-    offset: BigInt(0),
-    limit: MAX_PAGE_LIMIT,
-    countTotal: false,
-    reverse: false,
-  };
+  const pagination = createPagination(MAX_PAGE_LIMIT);
 
   const [providersResult, skusResult] = await Promise.all([
     sku.providers({ activeOnly: true, pagination }),
