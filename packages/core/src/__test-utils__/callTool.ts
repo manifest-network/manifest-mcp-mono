@@ -11,16 +11,15 @@ export interface ToolResult {
  * Shared test helper: connects an MCP client to a server via in-memory
  * transport, calls the given tool, then cleans up both transports.
  *
- * Transports are tracked in `activeTransports` only while the call is
- * in flight and removed after cleanup, so callers' `afterEach` hooks
- * won't double-close.
+ * Cleanup always runs via the `finally` block: client and both transports
+ * are closed, then removed from `activeTransports` to prevent double-close
+ * in the caller's `afterEach`.
  *
  * @param server  - The MCP `Server` instance (from `getServer()`)
  * @param toolName - Name of the tool to invoke
  * @param toolInput - Optional tool arguments
  * @param activeTransports - Optional mutable array; transports are added
- *   before connect and removed after cleanup so only leaked transports
- *   (from mid-connect failures) remain for the caller's `afterEach`.
+ *   before the call and removed after cleanup completes.
  */
 export async function callTool(
   server: Server,
@@ -43,8 +42,10 @@ export async function callTool(
     await clientTransport.close().catch(() => {});
     await serverTransport.close().catch(() => {});
 
-    // Remove from tracking array so afterEach won't double-close
-    const idx = activeTransports.indexOf(clientTransport);
-    if (idx !== -1) activeTransports.splice(idx, 2);
+    // Remove by identity so afterEach won't double-close
+    for (const t of [clientTransport, serverTransport]) {
+      const idx = activeTransports.indexOf(t);
+      if (idx !== -1) activeTransports.splice(idx, 1);
+    }
   }
 }
