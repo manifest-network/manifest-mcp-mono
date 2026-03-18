@@ -1,20 +1,21 @@
-import { describe, it, expect, vi } from 'vitest';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
+import { describe, expect, it, vi } from 'vitest';
 import {
-  SENSITIVE_FIELDS,
   bigIntReplacer,
+  createMnemonicServer,
+  jsonResponse,
+  type ManifestMCPServerOptions,
+  SENSITIVE_FIELDS,
   sanitizeForLogging,
   withErrorHandling,
-  jsonResponse,
-  createMnemonicServer,
-  type ManifestMCPServerOptions,
 } from './server-utils.js';
 import { ManifestMCPError, ManifestMCPErrorCode } from './types.js';
 
 /** Extract the text string from the first content item of a CallToolResult */
 function textOf(result: CallToolResult): string {
   const item = result.content[0];
-  if (item.type !== 'text') throw new Error(`Expected text content, got ${item.type}`);
+  if (item.type !== 'text')
+    throw new Error(`Expected text content, got ${item.type}`);
   return item.text;
 }
 
@@ -42,13 +43,13 @@ describe('sanitizeForLogging', () => {
     for (const field of SENSITIVE_FIELDS) {
       input[field] = 'secret-value';
     }
-    input['safe'] = 'visible';
+    input.safe = 'visible';
 
     const result = sanitizeForLogging(input) as Record<string, string>;
     for (const field of SENSITIVE_FIELDS) {
       expect(result[field]).toBe('[REDACTED]');
     }
-    expect(result['safe']).toBe('visible');
+    expect(result.safe).toBe('visible');
   });
 
   it('redacts specific key and token variant fields', () => {
@@ -59,50 +60,61 @@ describe('sanitizeForLogging', () => {
       key: 'not-sensitive',
       safe: 'visible',
     }) as Record<string, string>;
-    expect(result['secret_key']).toBe('[REDACTED]');
-    expect(result['signing_key']).toBe('[REDACTED]');
-    expect(result['auth_token']).toBe('[REDACTED]');
-    expect(result['key']).toBe('not-sensitive');
-    expect(result['safe']).toBe('visible');
+    expect(result.secret_key).toBe('[REDACTED]');
+    expect(result.signing_key).toBe('[REDACTED]');
+    expect(result.auth_token).toBe('[REDACTED]');
+    expect(result.key).toBe('not-sensitive');
+    expect(result.safe).toBe('visible');
   });
 
   it('redacts sensitive fields case-insensitively', () => {
-    const result = sanitizeForLogging({ Password: 'secret' }) as Record<string, string>;
-    expect(result['Password']).toBe('[REDACTED]');
+    const result = sanitizeForLogging({ Password: 'secret' }) as Record<
+      string,
+      string
+    >;
+    expect(result.Password).toBe('[REDACTED]');
   });
 
   it('redacts 12-word strings as possible mnemonic', () => {
-    const words = 'one two three four five six seven eight nine ten eleven twelve';
+    const words =
+      'one two three four five six seven eight nine ten eleven twelve';
     expect(sanitizeForLogging(words)).toBe('[REDACTED - possible mnemonic]');
   });
 
   it('redacts 24-word strings as possible mnemonic', () => {
-    const words = 'abandon ability able about above absent absorb abstract absurd abuse access accident ' +
+    const words =
+      'abandon ability able about above absent absorb abstract absurd abuse access accident ' +
       'acid acoustic acquire across act action actor actress actual adapt add addict';
     expect(sanitizeForLogging(words)).toBe('[REDACTED - possible mnemonic]');
   });
 
   it('redacts 15-word strings as possible mnemonic', () => {
-    const words = 'abandon ability able about above absent absorb abstract absurd abuse access accident acid acoustic acquire';
+    const words =
+      'abandon ability able about above absent absorb abstract absurd abuse access accident acid acoustic acquire';
     expect(sanitizeForLogging(words)).toBe('[REDACTED - possible mnemonic]');
   });
 
   it('redacts 18-word strings as possible mnemonic', () => {
-    const words = 'abandon ability able about above absent absorb abstract absurd abuse access accident acid acoustic acquire across act action';
+    const words =
+      'abandon ability able about above absent absorb abstract absurd abuse access accident acid acoustic acquire across act action';
     expect(sanitizeForLogging(words)).toBe('[REDACTED - possible mnemonic]');
   });
 
   it('redacts 21-word strings as possible mnemonic', () => {
-    const words = 'abandon ability able about above absent absorb abstract absurd abuse access accident ' +
+    const words =
+      'abandon ability able about above absent absorb abstract absurd abuse access accident ' +
       'acid acoustic acquire across act action actor actress actual';
     expect(sanitizeForLogging(words)).toBe('[REDACTED - possible mnemonic]');
   });
 
   it('does not redact 12-word strings containing non-alpha characters', () => {
     // Error messages or data that happen to be 12 words should not be redacted
-    const errorMsg = 'The transaction failed because the account has insufficient funds for gas';
+    const errorMsg =
+      'The transaction failed because the account has insufficient funds for gas';
     expect(sanitizeForLogging(errorMsg)).toBe(errorMsg);
-    const numberedWords = Array.from({ length: 12 }, (_, i) => `word${i}`).join(' ');
+    const numberedWords = Array.from({ length: 12 }, (_, i) => `word${i}`).join(
+      ' ',
+    );
     expect(sanitizeForLogging(numberedWords)).toBe(numberedWords);
   });
 
@@ -115,12 +127,17 @@ describe('sanitizeForLogging', () => {
   });
 
   it('recursively sanitizes arrays', () => {
-    const result = sanitizeForLogging([{ password: 'x' }]) as Array<Record<string, string>>;
+    const result = sanitizeForLogging([{ password: 'x' }]) as Array<
+      Record<string, string>
+    >;
     expect(result[0].password).toBe('[REDACTED]');
   });
 
   it('recursively sanitizes nested objects', () => {
-    const result = sanitizeForLogging({ nested: { mnemonic: 'x' } }) as Record<string, Record<string, string>>;
+    const result = sanitizeForLogging({ nested: { mnemonic: 'x' } }) as Record<
+      string,
+      Record<string, string>
+    >;
     expect(result.nested.mnemonic).toBe('[REDACTED]');
   });
 
@@ -155,11 +172,16 @@ describe('jsonResponse', () => {
 });
 
 // Callback type for testing tools that accept async (args, extra)
-type TestToolCb = (_args: Record<string, unknown>, _extra: unknown) => Promise<CallToolResult>;
+type TestToolCb = (
+  _args: Record<string, unknown>,
+  _extra: unknown,
+) => Promise<CallToolResult>;
 
 describe('withErrorHandling', () => {
   it('passes through successful results', async () => {
-    const handler = withErrorHandling<TestToolCb>('test', async () => jsonResponse({ ok: true }));
+    const handler = withErrorHandling<TestToolCb>('test', async () =>
+      jsonResponse({ ok: true }),
+    );
     const result = await handler({}, {});
     expect(result.isError).toBeUndefined();
     expect(JSON.parse(textOf(result))).toEqual({ ok: true });
@@ -167,7 +189,9 @@ describe('withErrorHandling', () => {
 
   it('catches ManifestMCPError and returns structured response', async () => {
     const handler = withErrorHandling<TestToolCb>('test', async () => {
-      throw new ManifestMCPError(ManifestMCPErrorCode.QUERY_FAILED, 'broken', { extra: 'info' });
+      throw new ManifestMCPError(ManifestMCPErrorCode.QUERY_FAILED, 'broken', {
+        extra: 'info',
+      });
     });
     const result = await handler({}, {});
     expect(result.isError).toBe(true);
@@ -228,9 +252,18 @@ describe('withErrorHandling', () => {
     const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
     // Create a details object with a toJSON that throws — sanitizeForLogging
     // copies plain properties so it won't trigger toJSON, but JSON.stringify will.
-    const details = { info: 'value', toJSON() { throw new Error('toJSON exploded'); } };
+    const details = {
+      info: 'value',
+      toJSON() {
+        throw new Error('toJSON exploded');
+      },
+    };
     const handler = withErrorHandling<TestToolCb>('test', async () => {
-      throw new ManifestMCPError(ManifestMCPErrorCode.QUERY_FAILED, 'broken', details);
+      throw new ManifestMCPError(
+        ManifestMCPErrorCode.QUERY_FAILED,
+        'broken',
+        details,
+      );
     });
     const result = await handler({}, {});
     expect(result.isError).toBe(true);
@@ -238,8 +271,12 @@ describe('withErrorHandling', () => {
     expect(parsed.error).toBe(true);
     expect(parsed.tool).toBe('test');
     expect(parsed.message).toBe('broken');
-    const calls = spy.mock.calls.map(c => c[0] as string);
-    expect(calls.some(c => c.includes('[test] Failed to serialize error response:'))).toBe(true);
+    const calls = spy.mock.calls.map((c) => c[0] as string);
+    expect(
+      calls.some((c) =>
+        c.includes('[test] Failed to serialize error response:'),
+      ),
+    ).toBe(true);
     spy.mockRestore();
   });
 
@@ -249,7 +286,9 @@ describe('withErrorHandling', () => {
       throw new ManifestMCPError(ManifestMCPErrorCode.TX_FAILED, 'tx broke');
     });
     await handler({}, {});
-    expect(spy).toHaveBeenCalledWith('[my_tool] Tool error [TX_FAILED]: tx broke');
+    expect(spy).toHaveBeenCalledWith(
+      '[my_tool] Tool error [TX_FAILED]: tx broke',
+    );
     spy.mockRestore();
   });
 
@@ -261,7 +300,9 @@ describe('withErrorHandling', () => {
     });
     await handler({}, {});
     const logged = spy.mock.calls[0][0] as string;
-    expect(logged).toContain('[my_tool] Tool error [UNKNOWN]: cannot read property of null');
+    expect(logged).toContain(
+      '[my_tool] Tool error [UNKNOWN]: cannot read property of null',
+    );
     expect(logged).toContain('TypeError');
     spy.mockRestore();
   });
@@ -269,7 +310,8 @@ describe('withErrorHandling', () => {
   it('sanitizes standalone mnemonic error messages before returning to MCP client', async () => {
     const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
     // A standalone 12-word mnemonic as the entire error message
-    const mnemonic = 'abandon ability able about above absent absorb abstract absurd abuse access accident';
+    const mnemonic =
+      'abandon ability able about above absent absorb abstract absurd abuse access accident';
     const handler = withErrorHandling<TestToolCb>('test', async () => {
       throw new Error(mnemonic);
     });
@@ -282,9 +324,13 @@ describe('withErrorHandling', () => {
 
   it('sanitizes ManifestMCPError message with standalone mnemonic', async () => {
     const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
-    const mnemonic = 'abandon ability able about above absent absorb abstract absurd abuse access accident';
+    const mnemonic =
+      'abandon ability able about above absent absorb abstract absurd abuse access accident';
     const handler = withErrorHandling<TestToolCb>('test', async () => {
-      throw new ManifestMCPError(ManifestMCPErrorCode.WALLET_CONNECTION_FAILED, mnemonic);
+      throw new ManifestMCPError(
+        ManifestMCPErrorCode.WALLET_CONNECTION_FAILED,
+        mnemonic,
+      );
     });
     const result = await handler({}, {});
     const parsed = JSON.parse(textOf(result));
@@ -307,9 +353,12 @@ describe('createMnemonicServer', () => {
         chainId: 'test-chain',
         rpcUrl: 'https://rpc.example.com',
         gasPrice: '1.0umfx',
-        mnemonic: 'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about',
+        mnemonic:
+          'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about',
       },
-      FakeServer as unknown as new (opts: ManifestMCPServerOptions) => FakeServer,
+      FakeServer as unknown as new (
+        opts: ManifestMCPServerOptions,
+      ) => FakeServer,
     );
 
     expect(server).toBeInstanceOf(FakeServer);
@@ -321,9 +370,7 @@ describe('createMnemonicServer', () => {
   });
 
   it('rejects invalid config', async () => {
-    class FakeServer {
-      constructor(_opts: ManifestMCPServerOptions) {}
-    }
+    class FakeServer {}
 
     await expect(
       createMnemonicServer(
@@ -331,17 +378,18 @@ describe('createMnemonicServer', () => {
           chainId: '',
           rpcUrl: 'https://rpc.example.com',
           gasPrice: '1.0umfx',
-          mnemonic: 'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about',
+          mnemonic:
+            'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about',
         },
-        FakeServer as unknown as new (opts: ManifestMCPServerOptions) => FakeServer,
+        FakeServer as unknown as new (
+          opts: ManifestMCPServerOptions,
+        ) => FakeServer,
       ),
     ).rejects.toThrow();
   });
 
   it('rejects invalid mnemonic', async () => {
-    class FakeServer {
-      constructor(_opts: ManifestMCPServerOptions) {}
-    }
+    class FakeServer {}
 
     await expect(
       createMnemonicServer(
@@ -351,7 +399,9 @@ describe('createMnemonicServer', () => {
           gasPrice: '1.0umfx',
           mnemonic: 'invalid mnemonic words',
         },
-        FakeServer as unknown as new (opts: ManifestMCPServerOptions) => FakeServer,
+        FakeServer as unknown as new (
+          opts: ManifestMCPServerOptions,
+        ) => FakeServer,
       ),
     ).rejects.toThrow();
   });

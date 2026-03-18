@@ -1,6 +1,10 @@
-import { SigningStargateClient } from '@cosmjs/stargate';
 import { fromBech32, fromHex, toHex } from '@cosmjs/encoding';
-import { ManifestMCPError, ManifestMCPErrorCode, CosmosTxResult } from '../types.js';
+import type { SigningStargateClient } from '@cosmjs/stargate';
+import {
+  type CosmosTxResult,
+  ManifestMCPError,
+  ManifestMCPErrorCode,
+} from '../types.js';
 import { DNS_LABEL_RE } from '../validation.js';
 
 /** Maximum number of arguments allowed */
@@ -43,7 +47,7 @@ export function extractFlag(
   if (args.indexOf(flagName, flagIndex + 1) !== -1) {
     throw new ManifestMCPError(
       errorCode,
-      `Duplicate ${flagName} flag in ${context}`
+      `Duplicate ${flagName} flag in ${context}`,
     );
   }
 
@@ -51,7 +55,7 @@ export function extractFlag(
   if (!value || value.startsWith('--')) {
     throw new ManifestMCPError(
       errorCode,
-      `${flagName} flag requires a value in ${context}`
+      `${flagName} flag requires a value in ${context}`,
     );
   }
 
@@ -76,7 +80,10 @@ export interface ExtractedBooleanFlag {
  * @param flagName - The flag to look for (e.g., '--active-only')
  * @returns Object with boolean value and filtered args
  */
-export function extractBooleanFlag(args: string[], flagName: string): ExtractedBooleanFlag {
+export function extractBooleanFlag(
+  args: string[],
+  flagName: string,
+): ExtractedBooleanFlag {
   const flagIndex = args.indexOf(flagName);
   if (flagIndex === -1) {
     return { value: false, remainingArgs: args };
@@ -88,7 +95,10 @@ export function extractBooleanFlag(args: string[], flagName: string): ExtractedB
 /**
  * Filter args to remove consumed flag indices
  */
-export function filterConsumedArgs(args: string[], consumedIndices: number[]): string[] {
+export function filterConsumedArgs(
+  args: string[],
+  consumedIndices: number[],
+): string[] {
   if (consumedIndices.length === 0) {
     return args;
   }
@@ -113,25 +123,25 @@ export function parseColonPair(
   input: string,
   leftName: string,
   rightName: string,
-  context: string
+  context: string,
 ): [string, string] {
   const colonIndex = input.indexOf(':');
   if (colonIndex === -1) {
     throw new ManifestMCPError(
       ManifestMCPErrorCode.TX_FAILED,
-      `Invalid ${context} format: "${input}". Missing colon separator. Expected format: ${leftName}:${rightName}`
+      `Invalid ${context} format: "${input}". Missing colon separator. Expected format: ${leftName}:${rightName}`,
     );
   }
   if (colonIndex === 0) {
     throw new ManifestMCPError(
       ManifestMCPErrorCode.TX_FAILED,
-      `Invalid ${context} format: "${input}". Missing ${leftName}. Expected format: ${leftName}:${rightName}`
+      `Invalid ${context} format: "${input}". Missing ${leftName}. Expected format: ${leftName}:${rightName}`,
     );
   }
   if (colonIndex === input.length - 1) {
     throw new ManifestMCPError(
       ManifestMCPErrorCode.TX_FAILED,
-      `Invalid ${context} format: "${input}". Missing ${rightName}. Expected format: ${leftName}:${rightName}`
+      `Invalid ${context} format: "${input}". Missing ${rightName}. Expected format: ${leftName}:${rightName}`,
     );
   }
   return [input.slice(0, colonIndex), input.slice(colonIndex + 1)];
@@ -144,7 +154,7 @@ export function validateArgsLength(args: string[], context: string): void {
   if (args.length > MAX_ARGS) {
     throw new ManifestMCPError(
       ManifestMCPErrorCode.TX_FAILED,
-      `Too many arguments for ${context}: ${args.length}. Maximum allowed: ${MAX_ARGS}`
+      `Too many arguments for ${context}: ${args.length}. Maximum allowed: ${MAX_ARGS}`,
     );
   }
 }
@@ -165,16 +175,15 @@ export function requireArgs(
   minCount: number,
   expectedNames: string[],
   context: string,
-  errorCode: ManifestMCPErrorCode = ManifestMCPErrorCode.TX_FAILED
+  errorCode: ManifestMCPErrorCode = ManifestMCPErrorCode.TX_FAILED,
 ): void {
   if (args.length >= minCount) {
     return;
   }
 
   const expectedList = expectedNames.slice(0, minCount).join(', ');
-  const receivedList = args.length === 0
-    ? 'none'
-    : args.map(a => `"${a}"`).join(', ');
+  const receivedList =
+    args.length === 0 ? 'none' : args.map((a) => `"${a}"`).join(', ');
 
   throw new ManifestMCPError(
     errorCode,
@@ -184,18 +193,22 @@ export function requireArgs(
       receivedArgs: args,
       receivedCount: args.length,
       requiredCount: minCount,
-    }
+    },
   );
 }
 
 /**
  * Validate a bech32 address using @cosmjs/encoding
  */
-export function validateAddress(address: string, fieldName: string, expectedPrefix?: string): void {
+export function validateAddress(
+  address: string,
+  fieldName: string,
+  expectedPrefix?: string,
+): void {
   if (!address || address.trim() === '') {
     throw new ManifestMCPError(
       ManifestMCPErrorCode.INVALID_ADDRESS,
-      `${fieldName} is required`
+      `${fieldName} is required`,
     );
   }
 
@@ -204,7 +217,7 @@ export function validateAddress(address: string, fieldName: string, expectedPref
     if (expectedPrefix && prefix !== expectedPrefix) {
       throw new ManifestMCPError(
         ManifestMCPErrorCode.INVALID_ADDRESS,
-        `Invalid ${fieldName}: "${address}". Expected prefix "${expectedPrefix}", got "${prefix}"`
+        `Invalid ${fieldName}: "${address}". Expected prefix "${expectedPrefix}", got "${prefix}"`,
       );
     }
   } catch (error) {
@@ -213,7 +226,7 @@ export function validateAddress(address: string, fieldName: string, expectedPref
     }
     throw new ManifestMCPError(
       ManifestMCPErrorCode.INVALID_ADDRESS,
-      `Invalid ${fieldName}: "${address}". Not a valid bech32 address.`
+      `Invalid ${fieldName}: "${address}". Not a valid bech32 address.`,
     );
   }
 }
@@ -225,7 +238,7 @@ export function validateMemo(memo: string): void {
   if (memo.length > MAX_MEMO_LENGTH) {
     throw new ManifestMCPError(
       ManifestMCPErrorCode.TX_FAILED,
-      `Memo too long: ${memo.length} characters. Maximum allowed: ${MAX_MEMO_LENGTH}`
+      `Memo too long: ${memo.length} characters. Maximum allowed: ${MAX_MEMO_LENGTH}`,
     );
   }
 }
@@ -244,13 +257,13 @@ export function parseHexBytes(
   hexString: string,
   fieldName: string,
   maxBytes: number,
-  errorCode: ManifestMCPErrorCode = ManifestMCPErrorCode.TX_FAILED
+  errorCode: ManifestMCPErrorCode = ManifestMCPErrorCode.TX_FAILED,
 ): Uint8Array {
   // Check for empty string
   if (!hexString || hexString.trim() === '') {
     throw new ManifestMCPError(
       errorCode,
-      `Invalid ${fieldName}: empty value. Expected a hex string.`
+      `Invalid ${fieldName}: empty value. Expected a hex string.`,
     );
   }
 
@@ -258,7 +271,7 @@ export function parseHexBytes(
   if (hexString.length % 2 !== 0) {
     throw new ManifestMCPError(
       errorCode,
-      `Invalid ${fieldName}: hex string must have even length. Got ${hexString.length} characters.`
+      `Invalid ${fieldName}: hex string must have even length. Got ${hexString.length} characters.`,
     );
   }
 
@@ -267,17 +280,17 @@ export function parseHexBytes(
   if (byteLength > maxBytes) {
     throw new ManifestMCPError(
       errorCode,
-      `Invalid ${fieldName}: exceeds maximum ${maxBytes} bytes. Got ${byteLength} bytes (${hexString.length} hex chars).`
+      `Invalid ${fieldName}: exceeds maximum ${maxBytes} bytes. Got ${byteLength} bytes (${hexString.length} hex chars).`,
     );
   }
 
   // Use @cosmjs/encoding for browser-compatible hex parsing
   try {
     return fromHex(hexString);
-  } catch (error) {
+  } catch (_error) {
     throw new ManifestMCPError(
       errorCode,
-      `Invalid ${fieldName}: "${hexString}". Must contain only hexadecimal characters (0-9, a-f, A-F).`
+      `Invalid ${fieldName}: "${hexString}". Must contain only hexadecimal characters (0-9, a-f, A-F).`,
     );
   }
 }
@@ -297,13 +310,13 @@ export function bytesToHex(bytes: Uint8Array): string {
 export function parseBigIntWithCode(
   value: string,
   fieldName: string,
-  errorCode: ManifestMCPErrorCode
+  errorCode: ManifestMCPErrorCode,
 ): bigint {
   // Check for empty string explicitly (BigInt('') returns 0n, not an error)
   if (!value || value.trim() === '') {
     throw new ManifestMCPError(
       errorCode,
-      `Invalid ${fieldName}: empty value. Expected a valid integer.`
+      `Invalid ${fieldName}: empty value. Expected a valid integer.`,
     );
   }
 
@@ -312,7 +325,7 @@ export function parseBigIntWithCode(
   } catch {
     throw new ManifestMCPError(
       errorCode,
-      `Invalid ${fieldName}: "${value}". Expected a valid integer.`
+      `Invalid ${fieldName}: "${value}". Expected a valid integer.`,
     );
   }
 }
@@ -342,7 +355,10 @@ interface VoteOptionEnum {
  * @param optionStr - Vote option string (yes, no, abstain, no_with_veto, or 1-4)
  * @param voteOptionEnum - The VoteOption enum object from the relevant cosmos module
  */
-export function parseVoteOption(optionStr: string, voteOptionEnum: VoteOptionEnum): number {
+export function parseVoteOption(
+  optionStr: string,
+  voteOptionEnum: VoteOptionEnum,
+): number {
   const option = optionStr.toLowerCase();
   switch (option) {
     case 'yes':
@@ -361,7 +377,7 @@ export function parseVoteOption(optionStr: string, voteOptionEnum: VoteOptionEnu
     default:
       throw new ManifestMCPError(
         ManifestMCPErrorCode.TX_FAILED,
-        `Invalid vote option: ${optionStr}. Expected: yes, no, abstain, or no_with_veto`
+        `Invalid vote option: ${optionStr}. Expected: yes, no, abstain, or no_with_veto`,
       );
   }
 }
@@ -387,7 +403,7 @@ export function parseLeaseItem(input: string): ParsedLeaseItem {
   if (parts.length < 2 || parts.length > 3) {
     throw new ManifestMCPError(
       ManifestMCPErrorCode.TX_FAILED,
-      `Invalid lease item format: "${input}". Expected sku-uuid:quantity or sku-uuid:quantity:service-name`
+      `Invalid lease item format: "${input}". Expected sku-uuid:quantity or sku-uuid:quantity:service-name`,
     );
   }
 
@@ -396,14 +412,14 @@ export function parseLeaseItem(input: string): ParsedLeaseItem {
   if (!skuUuid) {
     throw new ManifestMCPError(
       ManifestMCPErrorCode.TX_FAILED,
-      `Invalid lease item format: "${input}". Missing sku-uuid.`
+      `Invalid lease item format: "${input}". Missing sku-uuid.`,
     );
   }
 
   if (!quantityStr) {
     throw new ManifestMCPError(
       ManifestMCPErrorCode.TX_FAILED,
-      `Invalid lease item format: "${input}". Missing quantity.`
+      `Invalid lease item format: "${input}". Missing quantity.`,
     );
   }
 
@@ -413,14 +429,14 @@ export function parseLeaseItem(input: string): ParsedLeaseItem {
     if (!serviceName) {
       throw new ManifestMCPError(
         ManifestMCPErrorCode.TX_FAILED,
-        `Invalid lease item format: "${input}". Empty service-name after trailing colon.`
+        `Invalid lease item format: "${input}". Empty service-name after trailing colon.`,
       );
     }
     if (!DNS_LABEL_RE.test(serviceName)) {
       throw new ManifestMCPError(
         ManifestMCPErrorCode.TX_FAILED,
         `Invalid service name: "${serviceName}". Must be a valid RFC 1123 DNS label: ` +
-        `1-63 lowercase alphanumeric characters or hyphens, must not start or end with a hyphen.`
+          `1-63 lowercase alphanumeric characters or hyphens, must not start or end with a hyphen.`,
       );
     }
   }
@@ -432,7 +448,10 @@ export function parseLeaseItem(input: string): ParsedLeaseItem {
  * Parse amount string into coin (e.g., "1000umfx" -> { amount: "1000", denom: "umfx" })
  * Supports simple denoms (umfx), IBC denoms (ibc/...), and factory denoms (factory/creator/subdenom)
  */
-export function parseAmount(amountStr: string): { amount: string; denom: string } {
+export function parseAmount(amountStr: string): {
+  amount: string;
+  denom: string;
+} {
   // Regex supports alphanumeric denoms with slashes, underscores, and hyphens for IBC/factory denoms
   const match = amountStr.match(/^(\d+)([a-zA-Z][a-zA-Z0-9/_-]*)$/);
   if (!match) {
@@ -453,7 +472,11 @@ export function parseAmount(amountStr: string): { amount: string; denom: string 
     throw new ManifestMCPError(
       ManifestMCPErrorCode.TX_FAILED,
       `Invalid amount format: "${amountStr}".${hint} Expected format: <number><denom> (e.g., "1000000umfx" or "1000000factory/address/subdenom")`,
-      { receivedValue: amountStr, expectedFormat: '<number><denom>', example: '1000000umfx' }
+      {
+        receivedValue: amountStr,
+        expectedFormat: '<number><denom>',
+        example: '1000000umfx',
+      },
     );
   }
   return { amount: match[1], denom: match[2] };
@@ -467,7 +490,7 @@ export function buildTxResult(
   module: string,
   subcommand: string,
   result: Awaited<ReturnType<SigningStargateClient['signAndBroadcast']>>,
-  waitForConfirmation: boolean
+  waitForConfirmation: boolean,
 ): CosmosTxResult {
   if (result.code !== 0) {
     throw new ManifestMCPError(
@@ -480,7 +503,7 @@ export function buildTxResult(
         transactionHash: result.transactionHash,
         rawLog: result.rawLog,
         height: String(result.height),
-      }
+      },
     );
   }
 

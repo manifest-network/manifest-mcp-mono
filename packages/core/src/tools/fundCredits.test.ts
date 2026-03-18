@@ -1,13 +1,13 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../cosmos.js', () => ({
   cosmosTx: vi.fn(),
 }));
 
-import { fundCredits } from './fundCredits.js';
-import { cosmosTx } from '../cosmos.js';
 import { makeMockClientManager } from '../__test-utils__/mocks.js';
+import { cosmosTx } from '../cosmos.js';
 import { ManifestMCPError, ManifestMCPErrorCode } from '../types.js';
+import { fundCredits } from './fundCredits.js';
 
 const mockCosmosTx = vi.mocked(cosmosTx);
 
@@ -50,13 +50,17 @@ describe('fundCredits', () => {
       ),
     );
 
-    await expect(fundCredits(cm as any, '10000000umfx')).rejects.toThrow(ManifestMCPError);
+    await expect(fundCredits(cm as any, '10000000umfx')).rejects.toThrow(
+      ManifestMCPError,
+    );
   });
 
   it('propagates errors from cosmosTx', async () => {
     const cm = makeMockClientManager();
     mockCosmosTx.mockRejectedValue(new Error('insufficient funds'));
 
-    await expect(fundCredits(cm as any, '999umfx')).rejects.toThrow('insufficient funds');
+    await expect(fundCredits(cm as any, '999umfx')).rejects.toThrow(
+      'insufficient funds',
+    );
   });
 });

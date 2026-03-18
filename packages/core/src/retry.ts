@@ -1,4 +1,8 @@
-import { ManifestMCPError, ManifestMCPErrorCode, RetryConfig } from './types.js';
+import {
+  ManifestMCPError,
+  ManifestMCPErrorCode,
+  type RetryConfig,
+} from './types.js';
 
 /** Default retry configuration */
 export const DEFAULT_RETRY_CONFIG: Required<RetryConfig> = {
@@ -73,7 +77,10 @@ function isTransientErrorMessage(message: string): boolean {
   }
 
   // Rate limiting
-  if (/\b429\b/.test(lowerMessage) || lowerMessage.includes('too many requests')) {
+  if (
+    /\b429\b/.test(lowerMessage) ||
+    lowerMessage.includes('too many requests')
+  ) {
     return true;
   }
 
@@ -109,9 +116,13 @@ export function isRetryableError(error: unknown): boolean {
  * @param maxDelayMs - Maximum delay cap
  * @returns Delay in milliseconds
  */
-export function calculateBackoff(attempt: number, baseDelayMs: number, maxDelayMs: number): number {
+export function calculateBackoff(
+  attempt: number,
+  baseDelayMs: number,
+  maxDelayMs: number,
+): number {
   // Exponential backoff: baseDelay * 2^attempt
-  const exponentialDelay = baseDelayMs * Math.pow(2, attempt);
+  const exponentialDelay = baseDelayMs * 2 ** attempt;
 
   // Cap at max delay
   const cappedDelay = Math.min(exponentialDelay, maxDelayMs);
@@ -159,7 +170,7 @@ export interface RetryOptions {
  */
 export async function withRetry<T>(
   operation: () => Promise<T>,
-  options: RetryOptions = {}
+  options: RetryOptions = {},
 ): Promise<T> {
   const config = {
     ...DEFAULT_RETRY_CONFIG,
@@ -183,7 +194,11 @@ export async function withRetry<T>(
       }
 
       // Calculate backoff delay
-      const delayMs = calculateBackoff(attempt, config.baseDelayMs, config.maxDelayMs);
+      const delayMs = calculateBackoff(
+        attempt,
+        config.baseDelayMs,
+        config.maxDelayMs,
+      );
 
       // Notify callback if provided
       if (options.onRetry) {

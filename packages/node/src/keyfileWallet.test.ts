@@ -1,5 +1,8 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { ManifestMCPError, ManifestMCPErrorCode } from '@manifest-network/manifest-mcp-core';
+import {
+  ManifestMCPError,
+  ManifestMCPErrorCode,
+} from '@manifest-network/manifest-mcp-core';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 // A valid 24-word test mnemonic (DO NOT use in production)
 const TEST_MNEMONIC =
@@ -21,7 +24,9 @@ beforeEach(() => {
 describe('KeyfileWalletProvider', () => {
   describe('connect from plaintext mnemonic keyfile', () => {
     it('should derive a manifest1... address', async () => {
-      mockedReadFileSync.mockReturnValue(JSON.stringify({ mnemonic: TEST_MNEMONIC }));
+      mockedReadFileSync.mockReturnValue(
+        JSON.stringify({ mnemonic: TEST_MNEMONIC }),
+      );
       const provider = new KeyfileWalletProvider('/fake/key.json', 'manifest');
       await provider.connect();
       const address = await provider.getAddress();
@@ -33,9 +38,14 @@ describe('KeyfileWalletProvider', () => {
     it('should throw for missing file (ENOENT)', async () => {
       const err = new Error('ENOENT') as NodeJS.ErrnoException;
       err.code = 'ENOENT';
-      mockedReadFileSync.mockImplementation(() => { throw err; });
+      mockedReadFileSync.mockImplementation(() => {
+        throw err;
+      });
 
-      const provider = new KeyfileWalletProvider('/missing/key.json', 'manifest');
+      const provider = new KeyfileWalletProvider(
+        '/missing/key.json',
+        'manifest',
+      );
       await expect(provider.connect()).rejects.toThrow(ManifestMCPError);
       await expect(provider.connect()).rejects.toThrow(/Keyfile not found/);
     });
@@ -43,9 +53,14 @@ describe('KeyfileWalletProvider', () => {
     it('should throw for permission denied (EACCES)', async () => {
       const err = new Error('EACCES') as NodeJS.ErrnoException;
       err.code = 'EACCES';
-      mockedReadFileSync.mockImplementation(() => { throw err; });
+      mockedReadFileSync.mockImplementation(() => {
+        throw err;
+      });
 
-      const provider = new KeyfileWalletProvider('/secret/key.json', 'manifest');
+      const provider = new KeyfileWalletProvider(
+        '/secret/key.json',
+        'manifest',
+      );
       await expect(provider.connect()).rejects.toThrow(ManifestMCPError);
       await expect(provider.connect()).rejects.toThrow(/Permission denied/);
     });
@@ -59,7 +74,9 @@ describe('KeyfileWalletProvider', () => {
     });
 
     it('should throw for encrypted keyfile without password', async () => {
-      mockedReadFileSync.mockReturnValue(JSON.stringify({ type: 'directsecp256k1hdwallet-v1', data: 'xyz' }));
+      mockedReadFileSync.mockReturnValue(
+        JSON.stringify({ type: 'directsecp256k1hdwallet-v1', data: 'xyz' }),
+      );
 
       const provider = new KeyfileWalletProvider('/enc/key.json', 'manifest');
       await expect(provider.connect()).rejects.toThrow(ManifestMCPError);
@@ -71,33 +88,47 @@ describe('KeyfileWalletProvider', () => {
 
       const provider = new KeyfileWalletProvider('/weird/key.json', 'manifest');
       await expect(provider.connect()).rejects.toThrow(ManifestMCPError);
-      await expect(provider.connect()).rejects.toThrow(/Unrecognized keyfile format/);
+      await expect(provider.connect()).rejects.toThrow(
+        /Unrecognized keyfile format/,
+      );
     });
 
     it('should throw for non-string mnemonic field', async () => {
       mockedReadFileSync.mockReturnValue(JSON.stringify({ mnemonic: 12345 }));
 
-      const provider = new KeyfileWalletProvider('/bad-mnemonic/key.json', 'manifest');
+      const provider = new KeyfileWalletProvider(
+        '/bad-mnemonic/key.json',
+        'manifest',
+      );
       await expect(provider.connect()).rejects.toThrow(ManifestMCPError);
       await expect(provider.connect()).rejects.toThrow(/not a string/);
     });
 
     it('should throw for invalid mnemonic words', async () => {
-      mockedReadFileSync.mockReturnValue(JSON.stringify({ mnemonic: 'not a valid mnemonic phrase at all' }));
+      mockedReadFileSync.mockReturnValue(
+        JSON.stringify({ mnemonic: 'not a valid mnemonic phrase at all' }),
+      );
 
-      const provider = new KeyfileWalletProvider('/bad-words/key.json', 'manifest');
+      const provider = new KeyfileWalletProvider(
+        '/bad-words/key.json',
+        'manifest',
+      );
       await expect(provider.connect()).rejects.toThrow(ManifestMCPError);
       try {
         await provider.connect();
       } catch (err) {
-        expect((err as ManifestMCPError).code).toBe(ManifestMCPErrorCode.INVALID_MNEMONIC);
+        expect((err as ManifestMCPError).code).toBe(
+          ManifestMCPErrorCode.INVALID_MNEMONIC,
+        );
       }
     });
   });
 
   describe('signArbitrary', () => {
     it('should sign for the correct address', async () => {
-      mockedReadFileSync.mockReturnValue(JSON.stringify({ mnemonic: TEST_MNEMONIC }));
+      mockedReadFileSync.mockReturnValue(
+        JSON.stringify({ mnemonic: TEST_MNEMONIC }),
+      );
       const provider = new KeyfileWalletProvider('/fake/key.json', 'manifest');
       await provider.connect();
       const address = await provider.getAddress();
@@ -110,18 +141,26 @@ describe('KeyfileWalletProvider', () => {
     });
 
     it('should throw for wrong address', async () => {
-      mockedReadFileSync.mockReturnValue(JSON.stringify({ mnemonic: TEST_MNEMONIC }));
+      mockedReadFileSync.mockReturnValue(
+        JSON.stringify({ mnemonic: TEST_MNEMONIC }),
+      );
       const provider = new KeyfileWalletProvider('/fake/key.json', 'manifest');
       await provider.connect();
 
-      await expect(provider.signArbitrary('manifest1wrong', 'test-data')).rejects.toThrow(ManifestMCPError);
-      await expect(provider.signArbitrary('manifest1wrong', 'test-data')).rejects.toThrow(/Cannot sign for address/);
+      await expect(
+        provider.signArbitrary('manifest1wrong', 'test-data'),
+      ).rejects.toThrow(ManifestMCPError);
+      await expect(
+        provider.signArbitrary('manifest1wrong', 'test-data'),
+      ).rejects.toThrow(/Cannot sign for address/);
     });
   });
 
   describe('disconnect', () => {
     it('should prevent reconnection after disconnect', async () => {
-      mockedReadFileSync.mockReturnValue(JSON.stringify({ mnemonic: TEST_MNEMONIC }));
+      mockedReadFileSync.mockReturnValue(
+        JSON.stringify({ mnemonic: TEST_MNEMONIC }),
+      );
       const provider = new KeyfileWalletProvider('/fake/key.json', 'manifest');
       await provider.connect();
       await provider.disconnect();

@@ -1,6 +1,10 @@
 import { toBase64 } from '@cosmjs/encoding';
 
-export function createSignMessage(tenant: string, leaseUuid: string, timestamp: string): string {
+export function createSignMessage(
+  tenant: string,
+  leaseUuid: string,
+  timestamp: string,
+): string {
   return `${tenant}:${leaseUuid}:${timestamp}`;
 }
 

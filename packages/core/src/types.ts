@@ -1,77 +1,67 @@
 import type { OfflineSigner } from '@cosmjs/proto-signing';
-
+// Auth module types
+import type {
+  Params as AuthParams,
+  BaseAccount,
+  ModuleAccount,
+} from '@manifest-network/manifestjs/dist/codegen/cosmos/auth/v1beta1/auth.js';
 // Bank module types
 import type {
-  Params as BankParams,
   Metadata as BankMetadata,
+  Params as BankParams,
   SendEnabled,
 } from '@manifest-network/manifestjs/dist/codegen/cosmos/bank/v1beta1/bank.js';
 
-// Staking module types
-import type {
-  Validator,
-  DelegationResponse,
-  UnbondingDelegation,
-  RedelegationResponse,
-  Pool as StakingPool,
-  Params as StakingParams,
-  HistoricalInfo,
-} from '@manifest-network/manifestjs/dist/codegen/cosmos/staking/v1beta1/staking.js';
-
 // Distribution module types
 import type {
+  DelegationDelegatorReward,
   Params as DistributionParams,
   ValidatorAccumulatedCommission,
   ValidatorOutstandingRewards,
   ValidatorSlashEvent,
-  DelegationDelegatorReward,
 } from '@manifest-network/manifestjs/dist/codegen/cosmos/distribution/v1beta1/distribution.js';
 
 // Gov module types (v1 for newer chains)
 import type {
-  Proposal as GovProposal,
-  Vote as GovVote,
-  Deposit as GovDeposit,
-  TallyResult as GovTallyResult,
-  Params as GovParams,
-  VotingParams,
   DepositParams,
+  Deposit as GovDeposit,
+  Params as GovParams,
+  Proposal as GovProposal,
+  TallyResult as GovTallyResult,
+  Vote as GovVote,
   TallyParams,
+  VotingParams,
 } from '@manifest-network/manifestjs/dist/codegen/cosmos/gov/v1/gov.js';
-
-// Protobuf Any type for polymorphic account types
-import type { Any } from '@manifest-network/manifestjs/dist/codegen/google/protobuf/any.js';
-
-// Billing credit estimate response
-import type { QueryCreditEstimateResponse } from '@manifest-network/manifestjs/dist/codegen/liftedinit/billing/v1/query.js';
-
-// Auth module types
-import type {
-  BaseAccount,
-  ModuleAccount,
-  Params as AuthParams,
-} from '@manifest-network/manifestjs/dist/codegen/cosmos/auth/v1beta1/auth.js';
-
 // Group module types
 import type {
   GroupInfo,
-  GroupPolicyInfo,
   GroupMember,
+  GroupPolicyInfo,
   Proposal as GroupProposal,
-  Vote as GroupVote,
   TallyResult as GroupTallyResult,
+  Vote as GroupVote,
 } from '@manifest-network/manifestjs/dist/codegen/cosmos/group/v1/types.js';
-
+// Staking module types
+import type {
+  DelegationResponse,
+  HistoricalInfo,
+  RedelegationResponse,
+  Params as StakingParams,
+  Pool as StakingPool,
+  UnbondingDelegation,
+  Validator,
+} from '@manifest-network/manifestjs/dist/codegen/cosmos/staking/v1beta1/staking.js';
+// Protobuf Any type for polymorphic account types
+import type { Any } from '@manifest-network/manifestjs/dist/codegen/google/protobuf/any.js';
+// Billing credit estimate response
+import type { QueryCreditEstimateResponse } from '@manifest-network/manifestjs/dist/codegen/liftedinit/billing/v1/query.js';
+import type { LeaseItemInput } from '@manifest-network/manifestjs/dist/codegen/liftedinit/billing/v1/tx.js';
 // Billing module types (Manifest-specific)
 import type {
-  Lease,
-  CreditAccount,
   Params as BillingParams,
+  CreditAccount,
+  Lease,
 } from '@manifest-network/manifestjs/dist/codegen/liftedinit/billing/v1/types.js';
-
-import type {
-  LeaseItemInput,
-} from '@manifest-network/manifestjs/dist/codegen/liftedinit/billing/v1/tx.js';
 
 // SKU module types (Manifest-specific)
 import type {
@@ -82,47 +72,47 @@ import type {
 
 // Re-export commonly used protobuf types for consumers
 export type {
-  BankParams,
+  Any,
+  AuthParams,
   BankMetadata,
-  SendEnabled,
-  Validator,
+  BankParams,
+  BaseAccount,
+  BillingParams,
+  CreditAccount,
+  DelegationDelegatorReward,
   DelegationResponse,
-  UnbondingDelegation,
-  RedelegationResponse,
-  StakingPool,
-  StakingParams,
-  HistoricalInfo,
+  DepositParams,
   DistributionParams,
+  GovDeposit,
+  GovParams,
+  GovProposal,
+  GovTallyResult,
+  GovVote,
+  GroupInfo,
+  GroupMember,
+  GroupPolicyInfo,
+  GroupProposal,
+  GroupTallyResult,
+  GroupVote,
+  HistoricalInfo,
+  Lease,
+  LeaseItemInput,
+  ModuleAccount,
+  Provider,
+  QueryCreditEstimateResponse,
+  RedelegationResponse,
+  SendEnabled,
+  SKU,
+  SkuParams,
+  StakingParams,
+  StakingPool,
+  TallyParams,
+  UnbondingDelegation,
+  Validator,
   ValidatorAccumulatedCommission,
   ValidatorOutstandingRewards,
   ValidatorSlashEvent,
-  DelegationDelegatorReward,
-  GovProposal,
-  GovVote,
-  GovDeposit,
-  GovTallyResult,
-  GovParams,
   VotingParams,
-  DepositParams,
-  TallyParams,
-  BaseAccount,
-  ModuleAccount,
-  AuthParams,
-  Any,
-  GroupInfo,
-  GroupPolicyInfo,
-  GroupMember,
-  GroupProposal,
-  GroupVote,
-  GroupTallyResult,
-  Lease,
-  LeaseItemInput,
-  CreditAccount,
-  BillingParams,
-  QueryCreditEstimateResponse,
-  Provider,
-  SKU,
-  SkuParams,
 };
 
 /**
@@ -202,7 +192,10 @@ export interface CosmosTxResult {
   readonly gasWanted?: string;
   readonly events?: readonly {
     readonly type: string;
-    readonly attributes: readonly { readonly key: string; readonly value: string }[];
+    readonly attributes: readonly {
+      readonly key: string;
+      readonly value: string;
+    }[];
   }[];
 }
 
@@ -264,7 +257,7 @@ export class ManifestMCPError extends Error {
   constructor(
     code: ManifestMCPErrorCode,
     message: string,
-    details?: Record<string, unknown>
+    details?: Record<string, unknown>,
   ) {
     super(message);
     this.name = 'ManifestMCPError';

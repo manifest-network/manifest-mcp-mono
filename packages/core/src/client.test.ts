@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ManifestMCPError, ManifestMCPErrorCode } from './types.js';
 
 // Mock external dependencies
@@ -36,19 +36,25 @@ vi.mock('./retry.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./retry.js')>();
   return {
     ...actual,
-    withRetry: vi.fn().mockImplementation(async (operation: () => Promise<unknown>) => {
-      return operation();
-    }),
+    withRetry: vi
+      .fn()
+      .mockImplementation(async (operation: () => Promise<unknown>) => {
+        return operation();
+      }),
   };
 });
 
-import { CosmosClientManager } from './client.js';
-import { liftedinit } from '@manifest-network/manifestjs';
 import { SigningStargateClient } from '@cosmjs/stargate';
-import type { WalletProvider, ManifestMCPConfig } from './types.js';
+import { liftedinit } from '@manifest-network/manifestjs';
+import { CosmosClientManager } from './client.js';
+import type { ManifestMCPConfig, WalletProvider } from './types.js';
 
-const mockCreateRPCQueryClient = vi.mocked(liftedinit.ClientFactory.createRPCQueryClient);
-const mockConnectWithSigner = vi.mocked(SigningStargateClient.connectWithSigner);
+const mockCreateRPCQueryClient = vi.mocked(
+  liftedinit.ClientFactory.createRPCQueryClient,
+);
+const mockConnectWithSigner = vi.mocked(
+  SigningStargateClient.connectWithSigner,
+);
 
 function makeConfig(overrides?: Partial<ManifestMCPConfig>): ManifestMCPConfig {
   return {
@@ -91,15 +97,27 @@ describe('CosmosClientManager', () => {
 
     it('returns different instances for different rpcUrl', () => {
       const wallet = makeWallet();
-      const a = CosmosClientManager.getInstance(makeConfig({ rpcUrl: 'https://a.com' }), wallet);
-      const b = CosmosClientManager.getInstance(makeConfig({ rpcUrl: 'https://b.com' }), wallet);
+      const a = CosmosClientManager.getInstance(
+        makeConfig({ rpcUrl: 'https://a.com' }),
+        wallet,
+      );
+      const b = CosmosClientManager.getInstance(
+        makeConfig({ rpcUrl: 'https://b.com' }),
+        wallet,
+      );
       expect(a).not.toBe(b);
     });
 
     it('returns different instances for different chainId', () => {
       const wallet = makeWallet();
-      const a = CosmosClientManager.getInstance(makeConfig({ chainId: 'chain-a' }), wallet);
-      const b = CosmosClientManager.getInstance(makeConfig({ chainId: 'chain-b' }), wallet);
+      const a = CosmosClientManager.getInstance(
+        makeConfig({ chainId: 'chain-a' }),
+        wallet,
+      );
+      const b = CosmosClientManager.getInstance(
+        makeConfig({ chainId: 'chain-b' }),
+        wallet,
+      );
       expect(a).not.toBe(b);
     });
 
@@ -111,12 +129,18 @@ describe('CosmosClientManager', () => {
         .mockResolvedValueOnce(client1 as any)
         .mockResolvedValueOnce(client2 as any);
 
-      const instance = CosmosClientManager.getInstance(makeConfig({ gasPrice: '1.0umfx' }), wallet);
+      const instance = CosmosClientManager.getInstance(
+        makeConfig({ gasPrice: '1.0umfx' }),
+        wallet,
+      );
       const sc1 = await instance.getSigningClient();
       expect(sc1).toBe(client1);
 
       // Re-get with different gasPrice — should create new signing client
-      CosmosClientManager.getInstance(makeConfig({ gasPrice: '2.0umfx' }), wallet);
+      CosmosClientManager.getInstance(
+        makeConfig({ gasPrice: '2.0umfx' }),
+        wallet,
+      );
       const sc2 = await instance.getSigningClient();
       expect(sc2).toBe(client2);
       expect(mockConnectWithSigner).toHaveBeenCalledTimes(2);
@@ -154,7 +178,10 @@ describe('CosmosClientManager', () => {
       const mockQC = { mock: 'queryClient' };
       mockCreateRPCQueryClient.mockResolvedValue(mockQC as any);
 
-      const instance = CosmosClientManager.getInstance(makeConfig(), makeWallet());
+      const instance = CosmosClientManager.getInstance(
+        makeConfig(),
+        makeWallet(),
+      );
       const client1 = await instance.getQueryClient();
       const client2 = await instance.getQueryClient();
 
@@ -166,10 +193,16 @@ describe('CosmosClientManager', () => {
     it('deduplicates concurrent init calls', async () => {
       let resolveInit!: (value: any) => void;
       mockCreateRPCQueryClient.mockImplementation(
-        () => new Promise((resolve) => { resolveInit = resolve; }) as any,
+        () =>
+          new Promise((resolve) => {
+            resolveInit = resolve;
+          }) as any,
       );
 
-      const instance = CosmosClientManager.getInstance(makeConfig(), makeWallet());
+      const instance = CosmosClientManager.getInstance(
+        makeConfig(),
+        makeWallet(),
+      );
       const p1 = instance.getQueryClient();
       const p2 = instance.getQueryClient();
 
@@ -184,7 +217,10 @@ describe('CosmosClientManager', () => {
     it('wraps non-ManifestMCPError into RPC_CONNECTION_FAILED', async () => {
       mockCreateRPCQueryClient.mockRejectedValue(new Error('ECONNREFUSED'));
 
-      const instance = CosmosClientManager.getInstance(makeConfig(), makeWallet());
+      const instance = CosmosClientManager.getInstance(
+        makeConfig(),
+        makeWallet(),
+      );
       await expect(instance.getQueryClient()).rejects.toMatchObject({
         code: ManifestMCPErrorCode.RPC_CONNECTION_FAILED,
         message: expect.stringContaining('ECONNREFUSED'),
@@ -192,10 +228,16 @@ describe('CosmosClientManager', () => {
     });
 
     it('re-throws ManifestMCPError as-is', async () => {
-      const original = new ManifestMCPError(ManifestMCPErrorCode.RPC_CONNECTION_FAILED, 'custom');
+      const original = new ManifestMCPError(
+        ManifestMCPErrorCode.RPC_CONNECTION_FAILED,
+        'custom',
+      );
       mockCreateRPCQueryClient.mockRejectedValue(original);
 
-      const instance = CosmosClientManager.getInstance(makeConfig(), makeWallet());
+      const instance = CosmosClientManager.getInstance(
+        makeConfig(),
+        makeWallet(),
+      );
       await expect(instance.getQueryClient()).rejects.toBe(original);
     });
 
@@ -210,7 +252,10 @@ describe('CosmosClientManager', () => {
       const mockSC = { disconnect: vi.fn() };
       mockConnectWithSigner.mockResolvedValue(mockSC as any);
 
-      const instance = CosmosClientManager.getInstance(makeConfig(), makeWallet());
+      const instance = CosmosClientManager.getInstance(
+        makeConfig(),
+        makeWallet(),
+      );
       const client1 = await instance.getSigningClient();
       const client2 = await instance.getSigningClient();
 
@@ -225,7 +270,10 @@ describe('CosmosClientManager', () => {
       let resolveSigner!: (value: any) => void;
       const wallet = makeWallet({
         getSigner: vi.fn().mockImplementation(
-          () => new Promise((resolve) => { resolveSigner = resolve; }),
+          () =>
+            new Promise((resolve) => {
+              resolveSigner = resolve;
+            }),
         ),
       });
 
@@ -247,7 +295,10 @@ describe('CosmosClientManager', () => {
     it('wraps non-ManifestMCPError into RPC_CONNECTION_FAILED', async () => {
       mockConnectWithSigner.mockRejectedValue(new Error('timeout'));
 
-      const instance = CosmosClientManager.getInstance(makeConfig(), makeWallet());
+      const instance = CosmosClientManager.getInstance(
+        makeConfig(),
+        makeWallet(),
+      );
       await expect(instance.getSigningClient()).rejects.toMatchObject({
         code: ManifestMCPErrorCode.RPC_CONNECTION_FAILED,
         message: expect.stringContaining('timeout'),
@@ -261,7 +312,10 @@ describe('CosmosClientManager', () => {
         .mockResolvedValueOnce({ mock: 'qc1' } as any)
         .mockResolvedValueOnce({ mock: 'qc2' } as any);
 
-      const instance = CosmosClientManager.getInstance(makeConfig(), makeWallet());
+      const instance = CosmosClientManager.getInstance(
+        makeConfig(),
+        makeWallet(),
+      );
       await instance.getSigningClient();
       const qc1 = await instance.getQueryClient();
       expect(qc1).toEqual({ mock: 'qc1' });

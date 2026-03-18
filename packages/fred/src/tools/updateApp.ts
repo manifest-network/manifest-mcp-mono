@@ -1,9 +1,16 @@
 import type { ManifestQueryClient } from '@manifest-network/manifest-mcp-core';
-import { ManifestMCPError, ManifestMCPErrorCode } from '@manifest-network/manifest-mcp-core';
+import {
+  ManifestMCPError,
+  ManifestMCPErrorCode,
+} from '@manifest-network/manifest-mcp-core';
 import { updateLease } from '../http/fred.js';
-import { resolveProviderUrl } from './resolveLeaseProvider.js';
+import {
+  isStackManifest,
+  mergeManifest,
+  validateServiceName,
+} from '../manifest.js';
 import { fetchActiveLease } from './fetchActiveLease.js';
-import { mergeManifest, isStackManifest, validateServiceName } from '../manifest.js';
+import { resolveProviderUrl } from './resolveLeaseProvider.js';
 
 export async function updateApp(
   queryClient: ManifestQueryClient,
@@ -14,7 +21,11 @@ export async function updateApp(
   existingManifest?: string,
   fetchFn?: typeof globalThis.fetch,
 ) {
-  const lease = await fetchActiveLease(queryClient, leaseUuid, 'cannot be updated');
+  const lease = await fetchActiveLease(
+    queryClient,
+    leaseUuid,
+    'cannot be updated',
+  );
 
   let finalManifest = manifest;
   if (existingManifest) {
@@ -49,7 +60,10 @@ export async function updateApp(
       const mergedStack: Record<string, unknown> = {};
       for (const [svc, svcManifest] of Object.entries(parsed)) {
         const oldSvcJson = oldStack[svc] ? JSON.stringify(oldStack[svc]) : '{}';
-        mergedStack[svc] = mergeManifest(svcManifest as Record<string, unknown>, oldSvcJson);
+        mergedStack[svc] = mergeManifest(
+          svcManifest as Record<string, unknown>,
+          oldSvcJson,
+        );
       }
       finalManifest = JSON.stringify(mergedStack);
     } else {
@@ -68,7 +82,13 @@ export async function updateApp(
 
   const providerUrl = await resolveProviderUrl(queryClient, lease.providerUuid);
   const authToken = await getAuthToken(address, leaseUuid);
-  const result = await updateLease(providerUrl, leaseUuid, finalManifest, authToken, fetchFn);
+  const result = await updateLease(
+    providerUrl,
+    leaseUuid,
+    finalManifest,
+    authToken,
+    fetchFn,
+  );
 
   return {
     lease_uuid: leaseUuid,

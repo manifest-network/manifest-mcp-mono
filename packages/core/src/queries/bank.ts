@@ -1,10 +1,16 @@
-import { ManifestQueryClient } from '../client.js';
-import {
-  BalanceResult, BalancesResult, TotalSupplyResult, SupplyOfResult,
-  BankParamsResult, DenomMetadataResult, DenomsMetadataResult, SendEnabledResult
-} from '../types.js';
-import { requireArgs, extractPaginationArgs } from './utils.js';
+import type { ManifestQueryClient } from '../client.js';
 import { throwUnsupportedSubcommand } from '../modules.js';
+import type {
+  BalanceResult,
+  BalancesResult,
+  BankParamsResult,
+  DenomMetadataResult,
+  DenomsMetadataResult,
+  SendEnabledResult,
+  SupplyOfResult,
+  TotalSupplyResult,
+} from '../types.js';
+import { extractPaginationArgs, requireArgs } from './utils.js';
 
 /** Bank query result union type */
 type BankQueryResult =
@@ -25,7 +31,7 @@ type BankQueryResult =
 export async function routeBankQuery(
   queryClient: ManifestQueryClient,
   subcommand: string,
-  args: string[]
+  args: string[],
 ): Promise<BankQueryResult> {
   const bank = queryClient.cosmos.bank.v1beta1;
 
@@ -38,15 +44,25 @@ export async function routeBankQuery(
     }
 
     case 'balances': {
-      const { pagination, remainingArgs } = extractPaginationArgs(args, 'bank balances');
+      const { pagination, remainingArgs } = extractPaginationArgs(
+        args,
+        'bank balances',
+      );
       requireArgs(remainingArgs, 1, ['address'], 'bank balances');
       const [address] = remainingArgs;
-      const result = await bank.allBalances({ address, resolveDenom: false, pagination });
+      const result = await bank.allBalances({
+        address,
+        resolveDenom: false,
+        pagination,
+      });
       return { balances: result.balances, pagination: result.pagination };
     }
 
     case 'spendable-balances': {
-      const { pagination, remainingArgs } = extractPaginationArgs(args, 'bank spendable-balances');
+      const { pagination, remainingArgs } = extractPaginationArgs(
+        args,
+        'bank spendable-balances',
+      );
       requireArgs(remainingArgs, 1, ['address'], 'bank spendable-balances');
       const [address] = remainingArgs;
       const result = await bank.spendableBalances({ address, pagination });
@@ -80,13 +96,19 @@ export async function routeBankQuery(
     }
 
     case 'denoms-metadata': {
-      const { pagination } = extractPaginationArgs(args, 'bank denoms-metadata');
+      const { pagination } = extractPaginationArgs(
+        args,
+        'bank denoms-metadata',
+      );
       const result = await bank.denomsMetadata({ pagination });
       return { metadatas: result.metadatas, pagination: result.pagination };
     }
 
     case 'send-enabled': {
-      const { pagination, remainingArgs } = extractPaginationArgs(args, 'bank send-enabled');
+      const { pagination, remainingArgs } = extractPaginationArgs(
+        args,
+        'bank send-enabled',
+      );
       // Optional: denoms can be empty to query all
       const denoms = remainingArgs.length > 0 ? remainingArgs : [];
       const result = await bank.sendEnabled({ denoms, pagination });

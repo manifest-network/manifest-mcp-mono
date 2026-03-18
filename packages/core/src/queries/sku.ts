@@ -1,10 +1,17 @@
-import { ManifestQueryClient } from '../client.js';
-import {
-  SkuParamsResult, ProviderResult, ProvidersResult,
-  SkuResult, SkusResult
-} from '../types.js';
-import { requireArgs, extractPaginationArgs, extractBooleanFlag } from './utils.js';
+import type { ManifestQueryClient } from '../client.js';
 import { throwUnsupportedSubcommand } from '../modules.js';
+import type {
+  ProviderResult,
+  ProvidersResult,
+  SkuParamsResult,
+  SkuResult,
+  SkusResult,
+} from '../types.js';
+import {
+  extractBooleanFlag,
+  extractPaginationArgs,
+  requireArgs,
+} from './utils.js';
 
 /** SKU query result union type */
 type SkuQueryResult =
@@ -23,7 +30,7 @@ type SkuQueryResult =
 export async function routeSkuQuery(
   queryClient: ManifestQueryClient,
   subcommand: string,
-  args: string[]
+  args: string[],
 ): Promise<SkuQueryResult> {
   const sku = queryClient.liftedinit.sku.v1;
 
@@ -41,7 +48,8 @@ export async function routeSkuQuery(
     }
 
     case 'providers': {
-      const { value: activeOnly, remainingArgs: afterBool } = extractBooleanFlag(args, '--active-only');
+      const { value: activeOnly, remainingArgs: afterBool } =
+        extractBooleanFlag(args, '--active-only');
       const { pagination } = extractPaginationArgs(afterBool, 'sku providers');
       const result = await sku.providers({ pagination, activeOnly });
       return { providers: result.providers, pagination: result.pagination };
@@ -55,27 +63,44 @@ export async function routeSkuQuery(
     }
 
     case 'skus': {
-      const { value: activeOnly, remainingArgs: afterBool } = extractBooleanFlag(args, '--active-only');
+      const { value: activeOnly, remainingArgs: afterBool } =
+        extractBooleanFlag(args, '--active-only');
       const { pagination } = extractPaginationArgs(afterBool, 'sku skus');
       const result = await sku.sKUs({ pagination, activeOnly });
       return { skus: result.skus, pagination: result.pagination };
     }
 
     case 'skus-by-provider': {
-      const { value: activeOnly, remainingArgs: afterBool } = extractBooleanFlag(args, '--active-only');
-      const { pagination, remainingArgs } = extractPaginationArgs(afterBool, 'sku skus-by-provider');
+      const { value: activeOnly, remainingArgs: afterBool } =
+        extractBooleanFlag(args, '--active-only');
+      const { pagination, remainingArgs } = extractPaginationArgs(
+        afterBool,
+        'sku skus-by-provider',
+      );
       requireArgs(remainingArgs, 1, ['provider-uuid'], 'sku skus-by-provider');
       const [providerUuid] = remainingArgs;
-      const result = await sku.sKUsByProvider({ providerUuid, pagination, activeOnly });
+      const result = await sku.sKUsByProvider({
+        providerUuid,
+        pagination,
+        activeOnly,
+      });
       return { skus: result.skus, pagination: result.pagination };
     }
 
     case 'provider-by-address': {
-      const { value: activeOnly, remainingArgs: afterBool } = extractBooleanFlag(args, '--active-only');
-      const { pagination, remainingArgs } = extractPaginationArgs(afterBool, 'sku provider-by-address');
+      const { value: activeOnly, remainingArgs: afterBool } =
+        extractBooleanFlag(args, '--active-only');
+      const { pagination, remainingArgs } = extractPaginationArgs(
+        afterBool,
+        'sku provider-by-address',
+      );
       requireArgs(remainingArgs, 1, ['address'], 'sku provider-by-address');
       const [address] = remainingArgs;
-      const result = await sku.providerByAddress({ address, pagination, activeOnly });
+      const result = await sku.providerByAddress({
+        address,
+        pagination,
+        activeOnly,
+      });
       return { providers: result.providers, pagination: result.pagination };
     }
 

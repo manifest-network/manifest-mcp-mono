@@ -1,10 +1,21 @@
-import { ManifestQueryClient } from '../client.js';
-import {
-  ProposalResult, ProposalsResult, VoteResult, VotesResult,
-  DepositResult, DepositsResult, TallyResult, GovParamsResult
-} from '../types.js';
-import { parseBigInt, parseInteger, requireArgs, extractPaginationArgs } from './utils.js';
+import type { ManifestQueryClient } from '../client.js';
 import { throwUnsupportedSubcommand } from '../modules.js';
+import type {
+  DepositResult,
+  DepositsResult,
+  GovParamsResult,
+  ProposalResult,
+  ProposalsResult,
+  TallyResult,
+  VoteResult,
+  VotesResult,
+} from '../types.js';
+import {
+  extractPaginationArgs,
+  parseBigInt,
+  parseInteger,
+  requireArgs,
+} from './utils.js';
 
 /** Gov query result union type */
 type GovQueryResult =
@@ -25,7 +36,7 @@ type GovQueryResult =
 export async function routeGovQuery(
   queryClient: ManifestQueryClient,
   subcommand: string,
-  args: string[]
+  args: string[],
 ): Promise<GovQueryResult> {
   const gov = queryClient.cosmos.gov.v1;
 
@@ -38,12 +49,22 @@ export async function routeGovQuery(
     }
 
     case 'proposals': {
-      const { pagination, remainingArgs } = extractPaginationArgs(args, 'gov proposals');
+      const { pagination, remainingArgs } = extractPaginationArgs(
+        args,
+        'gov proposals',
+      );
       // All optional: status filter, voter, depositor
-      const proposalStatus = remainingArgs[0] ? parseInteger(remainingArgs[0], 'status') : 0;
+      const proposalStatus = remainingArgs[0]
+        ? parseInteger(remainingArgs[0], 'status')
+        : 0;
       const voter = remainingArgs[1] || '';
       const depositor = remainingArgs[2] || '';
-      const result = await gov.proposals({ proposalStatus, voter, depositor, pagination });
+      const result = await gov.proposals({
+        proposalStatus,
+        voter,
+        depositor,
+        pagination,
+      });
       return { proposals: result.proposals, pagination: result.pagination };
     }
 
@@ -56,7 +77,10 @@ export async function routeGovQuery(
     }
 
     case 'votes': {
-      const { pagination, remainingArgs } = extractPaginationArgs(args, 'gov votes');
+      const { pagination, remainingArgs } = extractPaginationArgs(
+        args,
+        'gov votes',
+      );
       requireArgs(remainingArgs, 1, ['proposal-id'], 'gov votes');
       const proposalId = parseBigInt(remainingArgs[0], 'proposal-id');
       const result = await gov.votes({ proposalId, pagination });
@@ -72,7 +96,10 @@ export async function routeGovQuery(
     }
 
     case 'deposits': {
-      const { pagination, remainingArgs } = extractPaginationArgs(args, 'gov deposits');
+      const { pagination, remainingArgs } = extractPaginationArgs(
+        args,
+        'gov deposits',
+      );
       requireArgs(remainingArgs, 1, ['proposal-id'], 'gov deposits');
       const proposalId = parseBigInt(remainingArgs[0], 'proposal-id');
       const result = await gov.deposits({ proposalId, pagination });

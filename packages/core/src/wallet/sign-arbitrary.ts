@@ -1,6 +1,10 @@
 import type { Secp256k1HdWallet } from '@cosmjs/amino';
 import { toBase64 } from '@cosmjs/encoding';
-import { ManifestMCPError, ManifestMCPErrorCode, type SignArbitraryResult } from '../types.js';
+import {
+  ManifestMCPError,
+  ManifestMCPErrorCode,
+  type SignArbitraryResult,
+} from '../types.js';
 
 /**
  * Sign arbitrary data using ADR-036 amino sign doc.

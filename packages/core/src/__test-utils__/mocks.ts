@@ -1,12 +1,18 @@
-import { vi } from 'vitest';
-import type { ManifestMCPConfig, WalletProvider, SignArbitraryResult } from '../types.js';
-import type { ManifestQueryClient } from '../client.js';
 import { LeaseState } from '@manifest-network/manifestjs/dist/codegen/liftedinit/billing/v1/types.js';
+import { vi } from 'vitest';
+import type { ManifestQueryClient } from '../client.js';
+import type {
+  ManifestMCPConfig,
+  SignArbitraryResult,
+  WalletProvider,
+} from '../types.js';
 
 /**
  * Create a mock ManifestMCPConfig with sensible defaults.
  */
-export function makeMockConfig(overrides?: Partial<ManifestMCPConfig>): ManifestMCPConfig {
+export function makeMockConfig(
+  overrides?: Partial<ManifestMCPConfig>,
+): ManifestMCPConfig {
   return {
     chainId: 'test-chain',
     rpcUrl: 'https://rpc.example.com',
@@ -20,9 +26,9 @@ export function makeMockConfig(overrides?: Partial<ManifestMCPConfig>): Manifest
  * Create a mock WalletProvider.
  * Pass `signArbitrary: true` to include a signArbitrary stub.
  */
-export function makeMockWallet(
-  opts?: { signArbitrary?: boolean },
-): WalletProvider {
+export function makeMockWallet(opts?: {
+  signArbitrary?: boolean;
+}): WalletProvider {
   const wallet: WalletProvider = {
     getAddress: vi.fn().mockResolvedValue('manifest1abc'),
     getSigner: vi.fn().mockResolvedValue({}),
@@ -52,7 +58,13 @@ interface BillingOverrides {
     estimatedDurationSeconds: bigint;
     activeLeaseCount: bigint;
   } | null;
-  lease?: { uuid: string; state: LeaseState; providerUuid: string; createdAt?: Date; closedAt?: Date } | null;
+  lease?: {
+    uuid: string;
+    state: LeaseState;
+    providerUuid: string;
+    createdAt?: Date;
+    closedAt?: Date;
+  } | null;
   activeLeases?: { uuid: string; providerUuid: string; createdAt?: Date }[];
   pendingLeases?: { uuid: string; providerUuid: string; createdAt?: Date }[];
   closedLeases?: { uuid: string; providerUuid: string; createdAt?: Date }[];
@@ -61,8 +73,18 @@ interface BillingOverrides {
 }
 
 interface SkuOverrides {
-  providers?: { uuid: string; address: string; apiUrl: string; active: boolean }[];
-  skus?: { uuid?: string; name: string; providerUuid: string; basePrice?: { amount: string; denom: string } }[];
+  providers?: {
+    uuid: string;
+    address: string;
+    apiUrl: string;
+    active: boolean;
+  }[];
+  skus?: {
+    uuid?: string;
+    name: string;
+    providerUuid: string;
+    basePrice?: { amount: string; denom: string };
+  }[];
   providerLookup?: Record<string, { provider: { apiUrl: string } }>;
 }
 
@@ -112,33 +134,86 @@ export function makeMockQueryClient(overrides?: {
           lease: vi.fn().mockImplementation(async () => {
             return { lease };
           }),
-          leasesByTenant: vi.fn().mockImplementation(async ({ stateFilter }: { stateFilter: LeaseState }) => {
-            if (stateFilter === LeaseState.LEASE_STATE_UNSPECIFIED) {
-              return { leases: [
-                ...activeLeases.map(l => ({ state: LeaseState.LEASE_STATE_ACTIVE, ...l })),
-                ...pendingLeases.map(l => ({ state: LeaseState.LEASE_STATE_PENDING, ...l })),
-                ...closedLeases.map(l => ({ state: LeaseState.LEASE_STATE_CLOSED, ...l })),
-                ...rejectedLeases.map(l => ({ state: LeaseState.LEASE_STATE_REJECTED, ...l })),
-                ...expiredLeases.map(l => ({ state: LeaseState.LEASE_STATE_EXPIRED, ...l })),
-              ] };
-            }
-            if (stateFilter === LeaseState.LEASE_STATE_ACTIVE) return { leases: activeLeases.map(l => ({ state: LeaseState.LEASE_STATE_ACTIVE, ...l })) };
-            if (stateFilter === LeaseState.LEASE_STATE_PENDING) return { leases: pendingLeases.map(l => ({ state: LeaseState.LEASE_STATE_PENDING, ...l })) };
-            if (stateFilter === LeaseState.LEASE_STATE_CLOSED) return { leases: closedLeases.map(l => ({ state: LeaseState.LEASE_STATE_CLOSED, ...l })) };
-            if (stateFilter === LeaseState.LEASE_STATE_REJECTED) return { leases: rejectedLeases.map(l => ({ state: LeaseState.LEASE_STATE_REJECTED, ...l })) };
-            if (stateFilter === LeaseState.LEASE_STATE_EXPIRED) return { leases: expiredLeases.map(l => ({ state: LeaseState.LEASE_STATE_EXPIRED, ...l })) };
-            return { leases: [] };
-          }),
+          leasesByTenant: vi
+            .fn()
+            .mockImplementation(
+              async ({ stateFilter }: { stateFilter: LeaseState }) => {
+                if (stateFilter === LeaseState.LEASE_STATE_UNSPECIFIED) {
+                  return {
+                    leases: [
+                      ...activeLeases.map((l) => ({
+                        state: LeaseState.LEASE_STATE_ACTIVE,
+                        ...l,
+                      })),
+                      ...pendingLeases.map((l) => ({
+                        state: LeaseState.LEASE_STATE_PENDING,
+                        ...l,
+                      })),
+                      ...closedLeases.map((l) => ({
+                        state: LeaseState.LEASE_STATE_CLOSED,
+                        ...l,
+                      })),
+                      ...rejectedLeases.map((l) => ({
+                        state: LeaseState.LEASE_STATE_REJECTED,
+                        ...l,
+                      })),
+                      ...expiredLeases.map((l) => ({
+                        state: LeaseState.LEASE_STATE_EXPIRED,
+                        ...l,
+                      })),
+                    ],
+                  };
+                }
+                if (stateFilter === LeaseState.LEASE_STATE_ACTIVE)
+                  return {
+                    leases: activeLeases.map((l) => ({
+                      state: LeaseState.LEASE_STATE_ACTIVE,
+                      ...l,
+                    })),
+                  };
+                if (stateFilter === LeaseState.LEASE_STATE_PENDING)
+                  return {
+                    leases: pendingLeases.map((l) => ({
+                      state: LeaseState.LEASE_STATE_PENDING,
+                      ...l,
+                    })),
+                  };
+                if (stateFilter === LeaseState.LEASE_STATE_CLOSED)
+                  return {
+                    leases: closedLeases.map((l) => ({
+                      state: LeaseState.LEASE_STATE_CLOSED,
+                      ...l,
+                    })),
+                  };
+                if (stateFilter === LeaseState.LEASE_STATE_REJECTED)
+                  return {
+                    leases: rejectedLeases.map((l) => ({
+                      state: LeaseState.LEASE_STATE_REJECTED,
+                      ...l,
+                    })),
+                  };
+                if (stateFilter === LeaseState.LEASE_STATE_EXPIRED)
+                  return {
+                    leases: expiredLeases.map((l) => ({
+                      state: LeaseState.LEASE_STATE_EXPIRED,
+                      ...l,
+                    })),
+                  };
+                return { leases: [] };
+              },
+            ),
         },
       },
       sku: {
         v1: {
           providers: vi.fn().mockResolvedValue({ providers }),
           sKUs: vi.fn().mockResolvedValue({ skus }),
-          provider: vi.fn().mockImplementation(async ({ uuid }: { uuid: string }) => {
-            if (providerLookup[uuid]) return providerLookup[uuid];
-            throw new Error(`provider ${uuid} not found`);
-          }),
+          provider: vi
+            .fn()
+            .mockImplementation(async ({ uuid }: { uuid: string }) => {
+              if (providerLookup[uuid]) return providerLookup[uuid];
+              throw new Error(`provider ${uuid} not found`);
+            }),
         },
       },
     },

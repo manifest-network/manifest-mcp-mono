@@ -1,5 +1,9 @@
-import { describe, it, expect } from 'vitest';
-import { createConfig, validateConfig, createValidatedConfig } from './config.js';
+import { describe, expect, it } from 'vitest';
+import {
+  createConfig,
+  createValidatedConfig,
+  validateConfig,
+} from './config.js';
 import { ManifestMCPError, ManifestMCPErrorCode } from './types.js';
 
 describe('createConfig', () => {
@@ -79,7 +83,7 @@ describe('validateConfig', () => {
     });
 
     expect(result.valid).toBe(false);
-    expect(result.errors.some(e => e.includes('chainId'))).toBe(true);
+    expect(result.errors.some((e) => e.includes('chainId'))).toBe(true);
   });
 
   it('should validate rpcUrl format', () => {
@@ -90,7 +94,7 @@ describe('validateConfig', () => {
     });
 
     expect(result.valid).toBe(false);
-    expect(result.errors.some(e => e.includes('rpcUrl'))).toBe(true);
+    expect(result.errors.some((e) => e.includes('rpcUrl'))).toBe(true);
   });
 
   it('should validate gasPrice format', () => {
@@ -101,7 +105,7 @@ describe('validateConfig', () => {
     });
 
     expect(result.valid).toBe(false);
-    expect(result.errors.some(e => e.includes('gasPrice'))).toBe(true);
+    expect(result.errors.some((e) => e.includes('gasPrice'))).toBe(true);
   });
 
   it('should validate optional addressPrefix', () => {
@@ -113,7 +117,7 @@ describe('validateConfig', () => {
     });
 
     expect(result.valid).toBe(false);
-    expect(result.errors.some(e => e.includes('addressPrefix'))).toBe(true);
+    expect(result.errors.some((e) => e.includes('addressPrefix'))).toBe(true);
   });
 
   it('should accept HTTPS URLs', () => {
@@ -164,7 +168,7 @@ describe('validateConfig', () => {
     });
 
     expect(result.valid).toBe(false);
-    expect(result.errors.some(e => e.includes('HTTPS'))).toBe(true);
+    expect(result.errors.some((e) => e.includes('HTTPS'))).toBe(true);
   });
 
   it('should accept valid rateLimit config', () => {
@@ -187,7 +191,9 @@ describe('validateConfig', () => {
     });
 
     expect(result.valid).toBe(false);
-    expect(result.errors.some(e => e.includes('requestsPerSecond'))).toBe(true);
+    expect(result.errors.some((e) => e.includes('requestsPerSecond'))).toBe(
+      true,
+    );
   });
 
   it('should reject negative rateLimit.requestsPerSecond', () => {
@@ -199,7 +205,9 @@ describe('validateConfig', () => {
     });
 
     expect(result.valid).toBe(false);
-    expect(result.errors.some(e => e.includes('requestsPerSecond'))).toBe(true);
+    expect(result.errors.some((e) => e.includes('requestsPerSecond'))).toBe(
+      true,
+    );
   });
 
   it('should reject zero rateLimit.requestsPerSecond', () => {
@@ -211,7 +219,9 @@ describe('validateConfig', () => {
     });
 
     expect(result.valid).toBe(false);
-    expect(result.errors.some(e => e.includes('requestsPerSecond'))).toBe(true);
+    expect(result.errors.some((e) => e.includes('requestsPerSecond'))).toBe(
+      true,
+    );
   });
 
   it('should reject null rateLimit', () => {
@@ -223,7 +233,9 @@ describe('validateConfig', () => {
     });
 
     expect(result.valid).toBe(false);
-    expect(result.errors.some(e => e.includes('rateLimit must be a plain object'))).toBe(true);
+    expect(
+      result.errors.some((e) => e.includes('rateLimit must be a plain object')),
+    ).toBe(true);
   });
 
   it('should reject non-object rateLimit', () => {
@@ -235,7 +247,9 @@ describe('validateConfig', () => {
     });
 
     expect(result.valid).toBe(false);
-    expect(result.errors.some(e => e.includes('rateLimit must be a plain object'))).toBe(true);
+    expect(
+      result.errors.some((e) => e.includes('rateLimit must be a plain object')),
+    ).toBe(true);
   });
 
   it('should reject array rateLimit', () => {
@@ -247,7 +261,9 @@ describe('validateConfig', () => {
     });
 
     expect(result.valid).toBe(false);
-    expect(result.errors.some(e => e.includes('rateLimit must be a plain object'))).toBe(true);
+    expect(
+      result.errors.some((e) => e.includes('rateLimit must be a plain object')),
+    ).toBe(true);
   });
 });
 
@@ -263,11 +279,13 @@ describe('createValidatedConfig', () => {
   });
 
   it('should throw ManifestMCPError for invalid input', () => {
-    expect(() => createValidatedConfig({
-      chainId: '',
-      rpcUrl: '',
-      gasPrice: '',
-    })).toThrow(ManifestMCPError);
+    expect(() =>
+      createValidatedConfig({
+        chainId: '',
+        rpcUrl: '',
+        gasPrice: '',
+      }),
+    ).toThrow(ManifestMCPError);
   });
 
   it('should have INVALID_CONFIG error code', () => {
@@ -278,7 +296,9 @@ describe('createValidatedConfig', () => {
         gasPrice: '',
       });
     } catch (error) {
-      expect((error as ManifestMCPError).code).toBe(ManifestMCPErrorCode.INVALID_CONFIG);
+      expect((error as ManifestMCPError).code).toBe(
+        ManifestMCPErrorCode.INVALID_CONFIG,
+      );
     }
   });
 
@@ -341,7 +361,9 @@ describe('validateConfig retry options', () => {
     });
 
     expect(result.valid).toBe(false);
-    expect(result.errors.some(e => e.includes('retry must be a plain object'))).toBe(true);
+    expect(
+      result.errors.some((e) => e.includes('retry must be a plain object')),
+    ).toBe(true);
   });
 
   it('should reject null retry config', () => {
@@ -353,7 +375,9 @@ describe('validateConfig retry options', () => {
     });
 
     expect(result.valid).toBe(false);
-    expect(result.errors.some(e => e.includes('retry must be a plain object'))).toBe(true);
+    expect(
+      result.errors.some((e) => e.includes('retry must be a plain object')),
+    ).toBe(true);
   });
 
   it('should reject negative maxRetries', () => {
@@ -365,7 +389,7 @@ describe('validateConfig retry options', () => {
     });
 
     expect(result.valid).toBe(false);
-    expect(result.errors.some(e => e.includes('maxRetries'))).toBe(true);
+    expect(result.errors.some((e) => e.includes('maxRetries'))).toBe(true);
   });
 
   it('should reject non-integer maxRetries', () => {
@@ -377,7 +401,7 @@ describe('validateConfig retry options', () => {
     });
 
     expect(result.valid).toBe(false);
-    expect(result.errors.some(e => e.includes('maxRetries'))).toBe(true);
+    expect(result.errors.some((e) => e.includes('maxRetries'))).toBe(true);
   });
 
   it('should reject zero baseDelayMs', () => {
@@ -389,7 +413,7 @@ describe('validateConfig retry options', () => {
     });
 
     expect(result.valid).toBe(false);
-    expect(result.errors.some(e => e.includes('baseDelayMs'))).toBe(true);
+    expect(result.errors.some((e) => e.includes('baseDelayMs'))).toBe(true);
   });
 
   it('should reject negative baseDelayMs', () => {
@@ -401,7 +425,7 @@ describe('validateConfig retry options', () => {
     });
 
     expect(result.valid).toBe(false);
-    expect(result.errors.some(e => e.includes('baseDelayMs'))).toBe(true);
+    expect(result.errors.some((e) => e.includes('baseDelayMs'))).toBe(true);
   });
 
   it('should reject zero maxDelayMs', () => {
@@ -413,7 +437,7 @@ describe('validateConfig retry options', () => {
     });
 
     expect(result.valid).toBe(false);
-    expect(result.errors.some(e => e.includes('maxDelayMs'))).toBe(true);
+    expect(result.errors.some((e) => e.includes('maxDelayMs'))).toBe(true);
   });
 
   it('should reject maxDelayMs less than baseDelayMs', () => {
@@ -425,6 +449,10 @@ describe('validateConfig retry options', () => {
     });
 
     expect(result.valid).toBe(false);
-    expect(result.errors.some(e => e.includes('maxDelayMs must be greater than or equal to'))).toBe(true);
+    expect(
+      result.errors.some((e) =>
+        e.includes('maxDelayMs must be greater than or equal to'),
+      ),
+    ).toBe(true);
   });
 });

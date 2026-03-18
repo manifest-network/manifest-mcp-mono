@@ -1,8 +1,21 @@
-import { SigningStargateClient } from '@cosmjs/stargate';
+import type { SigningStargateClient } from '@cosmjs/stargate';
 import { cosmos } from '@manifest-network/manifestjs';
-import { ManifestMCPError, ManifestMCPErrorCode, CosmosTxResult } from '../types.js';
 import { throwUnsupportedSubcommand } from '../modules.js';
-import { parseAmount, buildTxResult, parseBigInt, validateArgsLength, extractFlag, filterConsumedArgs, requireArgs, parseVoteOption } from './utils.js';
+import {
+  type CosmosTxResult,
+  ManifestMCPError,
+  ManifestMCPErrorCode,
+} from '../types.js';
+import {
+  buildTxResult,
+  extractFlag,
+  filterConsumedArgs,
+  parseAmount,
+  parseBigInt,
+  parseVoteOption,
+  requireArgs,
+  validateArgsLength,
+} from './utils.js';
 
 const { MsgVote, MsgDeposit, MsgVoteWeighted, VoteOption } = cosmos.gov.v1;
 
@@ -41,7 +54,7 @@ function parseWeightToFixed18(weightStr: string): string {
   if (!/^\d+(\.\d+)?$/.test(weightStr)) {
     throw new ManifestMCPError(
       ManifestMCPErrorCode.TX_FAILED,
-      `Invalid weight format: "${weightStr}". Expected decimal like "0.5" or "0.333333333333333333"`
+      `Invalid weight format: "${weightStr}". Expected decimal like "0.5" or "0.333333333333333333"`,
     );
   }
 
@@ -67,7 +80,7 @@ export async function routeGovTransaction(
   senderAddress: string,
   subcommand: string,
   args: string[],
-  waitForConfirmation: boolean
+  waitForConfirmation: boolean,
 ): Promise<CosmosTxResult> {
   validateArgsLength(args, 'gov transaction');
 
@@ -75,7 +88,10 @@ export async function routeGovTransaction(
     case 'vote': {
       // Extract optional flags before positional args
       const metadataFlag = extractFlag(args, '--metadata', 'gov vote');
-      const positionalArgs = filterConsumedArgs(args, metadataFlag.consumedIndices);
+      const positionalArgs = filterConsumedArgs(
+        args,
+        metadataFlag.consumedIndices,
+      );
 
       requireArgs(positionalArgs, 2, ['proposal-id', 'option'], 'gov vote');
       const [proposalIdStr, optionStr] = positionalArgs;
@@ -93,7 +109,11 @@ export async function routeGovTransaction(
         }),
       };
 
-      const result = await client.signAndBroadcast(senderAddress, [msg], 'auto');
+      const result = await client.signAndBroadcast(
+        senderAddress,
+        [msg],
+        'auto',
+      );
       return buildTxResult('gov', 'vote', result, waitForConfirmation);
     }
 
@@ -108,7 +128,7 @@ export async function routeGovTransaction(
         if (!optName || !weightStr) {
           throw new ManifestMCPError(
             ManifestMCPErrorCode.TX_FAILED,
-            `Invalid weighted vote format: ${opt}. Expected format: option=weight`
+            `Invalid weighted vote format: ${opt}. Expected format: option=weight`,
           );
         }
         const option = parseVoteOption(optName, VoteOption);
@@ -119,11 +139,14 @@ export async function routeGovTransaction(
       });
 
       // Validate that weights sum to exactly 1.0 (10^18 in fixed-point)
-      const totalWeight = options.reduce((sum, opt) => sum + BigInt(opt.weight), BigInt(0));
+      const totalWeight = options.reduce(
+        (sum, opt) => sum + BigInt(opt.weight),
+        BigInt(0),
+      );
       if (totalWeight !== FIXED18_ONE) {
         throw new ManifestMCPError(
           ManifestMCPErrorCode.TX_FAILED,
-          `Weighted vote options must sum to exactly 1.0. Got ${formatFixed18(totalWeight)} (${options.map(o => o.weight).join(' + ')} = ${totalWeight})`
+          `Weighted vote options must sum to exactly 1.0. Got ${formatFixed18(totalWeight)} (${options.map((o) => o.weight).join(' + ')} = ${totalWeight})`,
         );
       }
 
@@ -137,7 +160,11 @@ export async function routeGovTransaction(
         }),
       };
 
-      const result = await client.signAndBroadcast(senderAddress, [msg], 'auto');
+      const result = await client.signAndBroadcast(
+        senderAddress,
+        [msg],
+        'auto',
+      );
       return buildTxResult('gov', 'weighted-vote', result, waitForConfirmation);
     }
 
@@ -156,7 +183,11 @@ export async function routeGovTransaction(
         }),
       };
 
-      const result = await client.signAndBroadcast(senderAddress, [msg], 'auto');
+      const result = await client.signAndBroadcast(
+        senderAddress,
+        [msg],
+        'auto',
+      );
       return buildTxResult('gov', 'deposit', result, waitForConfirmation);
     }
 

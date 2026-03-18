@@ -1,9 +1,12 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@manifest-network/manifest-mcp-core', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@manifest-network/manifest-mcp-core')>();
+  const actual =
+    await importOriginal<
+      typeof import('@manifest-network/manifest-mcp-core')
+    >();
   return {
     ...actual,
     CosmosClientManager: {
@@ -21,23 +24,38 @@ vi.mock('@manifest-network/manifest-mcp-core', async (importOriginal) => {
   };
 });
 
-import { ChainMCPServer } from './index.js';
 import {
-  ManifestMCPError,
-  ManifestMCPErrorCode,
   cosmosQuery,
   cosmosTx,
+  ManifestMCPError,
+  ManifestMCPErrorCode,
 } from '@manifest-network/manifest-mcp-core';
-import { makeMockConfig, makeMockWallet } from '@manifest-network/manifest-mcp-core/__test-utils__/mocks.js';
-import { callTool as callToolHelper, type ToolResult } from '@manifest-network/manifest-mcp-core/__test-utils__/callTool.js';
+import {
+  callTool as callToolHelper,
+  type ToolResult,
+} from '@manifest-network/manifest-mcp-core/__test-utils__/callTool.js';
+import {
+  makeMockConfig,
+  makeMockWallet,
+} from '@manifest-network/manifest-mcp-core/__test-utils__/mocks.js';
+import { ChainMCPServer } from './index.js';
 
 const mockCosmosQuery = vi.mocked(cosmosQuery);
 const mockCosmosTx = vi.mocked(cosmosTx);
 
 let activeTransports: InMemoryTransport[] = [];
 
-function callTool(server: ChainMCPServer, toolName: string, toolInput: Record<string, unknown> = {}): Promise<ToolResult> {
-  return callToolHelper(server.getServer(), toolName, toolInput, activeTransports);
+function callTool(
+  server: ChainMCPServer,
+  toolName: string,
+  toolInput: Record<string, unknown> = {},
+): Promise<ToolResult> {
+  return callToolHelper(
+    server.getServer(),
+    toolName,
+    toolInput,
+    activeTransports,
+  );
 }
 
 const CHAIN_TOOL_NAMES = [
@@ -68,7 +86,8 @@ describe('ChainMCPServer', () => {
         walletProvider: makeMockWallet(),
       });
 
-      const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+      const [clientTransport, serverTransport] =
+        InMemoryTransport.createLinkedPair();
       activeTransports.push(clientTransport, serverTransport);
 
       const client = new Client({ name: 'test-client', version: '1.0.0' });
@@ -78,7 +97,9 @@ describe('ChainMCPServer', () => {
       try {
         const result = await client.listTools();
         expect(result.tools).toHaveLength(5);
-        expect(result.tools.map(t => t.name).sort()).toEqual([...CHAIN_TOOL_NAMES].sort());
+        expect(result.tools.map((t) => t.name).sort()).toEqual(
+          [...CHAIN_TOOL_NAMES].sort(),
+        );
       } finally {
         await client.close();
       }
@@ -172,14 +193,21 @@ describe('ChainMCPServer', () => {
   describe('error handling', () => {
     it('ManifestMCPError produces {error, code, message, details} with isError=true', async () => {
       mockCosmosQuery.mockRejectedValue(
-        new ManifestMCPError(ManifestMCPErrorCode.QUERY_FAILED, 'something broke', { extra: 'info' }),
+        new ManifestMCPError(
+          ManifestMCPErrorCode.QUERY_FAILED,
+          'something broke',
+          { extra: 'info' },
+        ),
       );
 
       const server = new ChainMCPServer({
         config: makeMockConfig(),
         walletProvider: makeMockWallet(),
       });
-      const result = await callTool(server, 'cosmos_query', { module: 'bank', subcommand: 'balances' });
+      const result = await callTool(server, 'cosmos_query', {
+        module: 'bank',
+        subcommand: 'balances',
+      });
 
       expect(result.isError).toBe(true);
       const parsed = JSON.parse(result.content[0].text);
@@ -196,7 +224,10 @@ describe('ChainMCPServer', () => {
         config: makeMockConfig(),
         walletProvider: makeMockWallet(),
       });
-      const result = await callTool(server, 'cosmos_query', { module: 'bank', subcommand: 'balances' });
+      const result = await callTool(server, 'cosmos_query', {
+        module: 'bank',
+        subcommand: 'balances',
+      });
 
       expect(result.isError).toBe(true);
       const parsed = JSON.parse(result.content[0].text);
@@ -211,14 +242,19 @@ describe('ChainMCPServer', () => {
       mockCosmosQuery.mockResolvedValue({
         module: 'bank',
         subcommand: 'balances',
-        result: { balances: [{ denom: 'umfx', amount: BigInt('999999999999999999') }] },
+        result: {
+          balances: [{ denom: 'umfx', amount: BigInt('999999999999999999') }],
+        },
       } as any);
 
       const server = new ChainMCPServer({
         config: makeMockConfig(),
         walletProvider: makeMockWallet(),
       });
-      const result = await callTool(server, 'cosmos_query', { module: 'bank', subcommand: 'balances' });
+      const result = await callTool(server, 'cosmos_query', {
+        module: 'bank',
+        subcommand: 'balances',
+      });
 
       expect(result.isError).toBeUndefined();
       const parsed = JSON.parse(result.content[0].text);
@@ -240,7 +276,11 @@ describe('ChainMCPServer', () => {
         config: makeMockConfig(),
         walletProvider: makeMockWallet(),
       });
-      const result = await callTool(server, 'cosmos_tx', { module: 'bank', subcommand: 'send', args: [] });
+      const result = await callTool(server, 'cosmos_tx', {
+        module: 'bank',
+        subcommand: 'send',
+        args: [],
+      });
 
       const parsed = JSON.parse(result.content[0].text);
       expect(parsed.details.mnemonic).toBe('[REDACTED]');

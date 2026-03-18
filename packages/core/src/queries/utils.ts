@@ -1,8 +1,15 @@
+import {
+  extractBooleanFlag,
+  extractFlag,
+  filterConsumedArgs,
+  parseBigIntWithCode,
+  requireArgs as requireArgsBase,
+  validateAddress,
+} from '../transactions/utils.js';
 import { ManifestMCPError, ManifestMCPErrorCode } from '../types.js';
-import { parseBigIntWithCode, requireArgs as requireArgsBase, extractFlag, filterConsumedArgs, validateAddress, extractBooleanFlag } from '../transactions/utils.js';
 
-export { validateAddress, extractBooleanFlag };
 export type { ExtractedBooleanFlag } from '../transactions/utils.js';
+export { extractBooleanFlag, validateAddress };
 
 /** Default page size limit for paginated queries to prevent resource exhaustion */
 export const DEFAULT_PAGE_LIMIT = BigInt(100);
@@ -57,9 +64,14 @@ export function createPagination(limit?: bigint): PaginationConfig {
  */
 export function extractPaginationArgs(
   args: string[],
-  context: string
+  context: string,
 ): { pagination: PaginationConfig; remainingArgs: string[] } {
-  const { value: limitStr, consumedIndices } = extractFlag(args, '--limit', context, ManifestMCPErrorCode.QUERY_FAILED);
+  const { value: limitStr, consumedIndices } = extractFlag(
+    args,
+    '--limit',
+    context,
+    ManifestMCPErrorCode.QUERY_FAILED,
+  );
   const remainingArgs = filterConsumedArgs(args, consumedIndices);
 
   let pagination: PaginationConfig;
@@ -68,7 +80,7 @@ export function extractPaginationArgs(
     if (limit < BigInt(1) || limit > MAX_PAGE_LIMIT) {
       throw new ManifestMCPError(
         ManifestMCPErrorCode.QUERY_FAILED,
-        `Invalid limit: ${limit}. Must be between 1 and ${MAX_PAGE_LIMIT}.`
+        `Invalid limit: ${limit}. Must be between 1 and ${MAX_PAGE_LIMIT}.`,
       );
     }
     pagination = createPagination(limit);
@@ -83,7 +95,11 @@ export function extractPaginationArgs(
  * Safely parse a string to BigInt with proper error handling (for queries)
  */
 export function parseBigInt(value: string, fieldName: string): bigint {
-  return parseBigIntWithCode(value, fieldName, ManifestMCPErrorCode.QUERY_FAILED);
+  return parseBigIntWithCode(
+    value,
+    fieldName,
+    ManifestMCPErrorCode.QUERY_FAILED,
+  );
 }
 
 /**
@@ -95,7 +111,7 @@ export function parseInteger(value: string, fieldName: string): number {
   if (Number.isNaN(parsed)) {
     throw new ManifestMCPError(
       ManifestMCPErrorCode.QUERY_FAILED,
-      `Invalid ${fieldName}: "${value}". Expected a valid integer.`
+      `Invalid ${fieldName}: "${value}". Expected a valid integer.`,
     );
   }
   return parsed;
@@ -109,7 +125,13 @@ export function requireArgs(
   args: string[],
   minCount: number,
   expectedNames: string[],
-  context: string
+  context: string,
 ): void {
-  requireArgsBase(args, minCount, expectedNames, context, ManifestMCPErrorCode.QUERY_FAILED);
+  requireArgsBase(
+    args,
+    minCount,
+    expectedNames,
+    context,
+    ManifestMCPErrorCode.QUERY_FAILED,
+  );
 }

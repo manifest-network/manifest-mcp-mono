@@ -1,16 +1,37 @@
-import type { CosmosClientManager, ManifestQueryClient } from '@manifest-network/manifest-mcp-core';
-import { cosmosTx, ManifestMCPError, ManifestMCPErrorCode, sanitizeForLogging, type CosmosTxResult, MAX_PAGE_LIMIT, createPagination, requireUuid } from '@manifest-network/manifest-mcp-core';
-import { uploadLeaseData, getLeaseConnectionInfo, type LeaseConnectionInfo } from '../http/provider.js';
-import { pollLeaseUntilReady } from '../http/fred.js';
+import type {
+  CosmosClientManager,
+  ManifestQueryClient,
+} from '@manifest-network/manifest-mcp-core';
+import {
+  type CosmosTxResult,
+  cosmosTx,
+  createPagination,
+  MAX_PAGE_LIMIT,
+  ManifestMCPError,
+  ManifestMCPErrorCode,
+  requireUuid,
+  sanitizeForLogging,
+} from '@manifest-network/manifest-mcp-core';
 import type { FredLeaseStatus } from '../http/fred.js';
-import { buildManifest, buildStackManifest, validateServiceName, type BuildManifestOptions } from '../manifest.js';
+import { pollLeaseUntilReady } from '../http/fred.js';
+import {
+  getLeaseConnectionInfo,
+  type LeaseConnectionInfo,
+  uploadLeaseData,
+} from '../http/provider.js';
+import {
+  type BuildManifestOptions,
+  buildManifest,
+  buildStackManifest,
+  validateServiceName,
+} from '../manifest.js';
 import { resolveProviderUrl } from './resolveLeaseProvider.js';
 
 async function sha256(data: string): Promise<string> {
   const encoded = new TextEncoder().encode(data);
   const hashBuffer = await crypto.subtle.digest('SHA-256', encoded);
   const bytes = new Uint8Array(hashBuffer);
-  return Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
 }
 
 function extractLeaseUuid(txResult: CosmosTxResult): string {
@@ -22,12 +43,17 @@ function extractLeaseUuid(txResult: CosmosTxResult): string {
   }
 
   for (const event of txResult.events) {
-    if (!event.type.includes('lease') && !event.type.includes('Lease')) continue;
+    if (!event.type.includes('lease') && !event.type.includes('Lease'))
+      continue;
     for (const attr of event.attributes) {
       if (attr.key === 'lease_uuid' || attr.key === 'uuid') {
         const raw = attr.value.replace(/^"|"$/g, '');
         // Validate the extracted value is a proper UUID
-        requireUuid({ lease_uuid: raw }, 'lease_uuid', ManifestMCPErrorCode.TX_FAILED);
+        requireUuid(
+          { lease_uuid: raw },
+          'lease_uuid',
+          ManifestMCPErrorCode.TX_FAILED,
+        );
         return raw;
       }
     }
@@ -45,7 +71,10 @@ async function findSkuUuid(
   size: string,
 ): Promise<{ skuUuid: string; providerUuid: string }> {
   const pagination = createPagination(MAX_PAGE_LIMIT);
-  const result = await queryClient.liftedinit.sku.v1.sKUs({ activeOnly: true, pagination });
+  const result = await queryClient.liftedinit.sku.v1.sKUs({
+    activeOnly: true,
+    pagination,
+  });
 
   for (const sku of result.skus) {
     if (sku.name === size) {
@@ -68,7 +97,13 @@ export interface ServiceConfig {
   args?: string[];
   user?: string;
   tmpfs?: string[];
-  health_check?: { test: string[]; interval?: string; timeout?: string; retries?: number; start_period?: string };
+  health_check?: {
+    test: string[];
+    interval?: string;
+    timeout?: string;
+    retries?: number;
+    start_period?: string;
+  };
   stop_grace_period?: string;
   depends_on?: Record<string, { condition: string }>;
   expose?: string[];
@@ -113,7 +148,11 @@ export interface DeployAppResult {
 export async function deployApp(
   clientManager: CosmosClientManager,
   getAuthToken: (address: string, leaseUuid: string) => Promise<string>,
-  getLeaseDataAuthToken: (address: string, leaseUuid: string, metaHashHex: string) => Promise<string>,
+  getLeaseDataAuthToken: (
+    address: string,
+    leaseUuid: string,
+    metaHashHex: string,
+  ) => Promise<string>,
   input: DeployAppInput,
   fetchFn?: typeof globalThis.fetch,
 ): Promise<DeployAppResult> {
@@ -174,21 +213,23 @@ export async function deployApp(
     // image is guaranteed defined here: the guard above ensures !image && !services is false,
     // and the if-branch handles the services case. TypeScript can't narrow across if/else.
     const image = input.image as string;
-    manifestJson = JSON.stringify(buildManifest({
-      image,
-      ports: { [`${input.port}/tcp`]: {} },
-      env: input.env,
-      command: input.command,
-      args: input.args,
-      user: input.user,
-      tmpfs: input.tmpfs,
-      health_check: input.health_check,
-      stop_grace_period: input.stop_grace_period,
-      init: input.init,
-      expose: input.expose,
-      labels: input.labels,
-      depends_on: input.depends_on,
-    }));
+    manifestJson = JSON.stringify(
+      buildManifest({
+        image,
+        ports: { [`${input.port}/tcp`]: {} },
+        env: input.env,
+        command: input.command,
+        args: input.args,
+        user: input.user,
+        tmpfs: input.tmpfs,
+        health_check: input.health_check,
+        stop_grace_period: input.stop_grace_period,
+        init: input.init,
+        expose: input.expose,
+        labels: input.labels,
+        depends_on: input.depends_on,
+      }),
+    );
   }
 
   // 2. SHA-256 hash of manifest
@@ -200,13 +241,16 @@ export async function deployApp(
   let leaseItems: string[];
   if (input.services) {
     const serviceNames = Object.keys(input.services);
-    leaseItems = serviceNames.map(name => `${skuUuid}:1:${name}`);
+    leaseItems = serviceNames.map((name) => `${skuUuid}:1:${name}`);
   } else {
     leaseItems = [`${skuUuid}:1`];
   }
 
   if (input.storage) {
-    const { skuUuid: storageSkuUuid } = await findSkuUuid(queryClient, input.storage);
+    const { skuUuid: storageSkuUuid } = await findSkuUuid(
+      queryClient,
+      input.storage,
+    );
     leaseItems.push(`${storageSkuUuid}:1`);
   }
 
@@ -228,8 +272,18 @@ export async function deployApp(
   let status: FredLeaseStatus;
   try {
     // 7. Upload manifest with lease-data auth token
-    const leaseDataToken = await getLeaseDataAuthToken(address, leaseUuid, metaHashHex);
-    await uploadLeaseData(providerUrl, leaseUuid, manifestJson, leaseDataToken, fetchFn);
+    const leaseDataToken = await getLeaseDataAuthToken(
+      address,
+      leaseUuid,
+      metaHashHex,
+    );
+    await uploadLeaseData(
+      providerUrl,
+      leaseUuid,
+      manifestJson,
+      leaseDataToken,
+      fetchFn,
+    );
 
     // 8. Poll until ready
     status = await pollLeaseUntilReady(
@@ -240,14 +294,27 @@ export async function deployApp(
       fetchFn,
     );
   } catch (err) {
-    const code = err instanceof ManifestMCPError ? err.code : ManifestMCPErrorCode.QUERY_FAILED;
-    const details = err instanceof ManifestMCPError
-      ? { ...err.details, lease_uuid: leaseUuid, provider_uuid: providerUuid, provider_url: providerUrl }
-      : { lease_uuid: leaseUuid, provider_uuid: providerUuid, provider_url: providerUrl };
+    const code =
+      err instanceof ManifestMCPError
+        ? err.code
+        : ManifestMCPErrorCode.QUERY_FAILED;
+    const details =
+      err instanceof ManifestMCPError
+        ? {
+            ...err.details,
+            lease_uuid: leaseUuid,
+            provider_uuid: providerUuid,
+            provider_url: providerUrl,
+          }
+        : {
+            lease_uuid: leaseUuid,
+            provider_uuid: providerUuid,
+            provider_url: providerUrl,
+          };
     throw new ManifestMCPError(
       code,
       `Deploy partially succeeded: lease ${leaseUuid} was created but subsequent steps failed. ` +
-      `Close this lease with close_lease if needed. Error: ${err instanceof Error ? err.message : String(err)}`,
+        `Close this lease with close_lease if needed. Error: ${err instanceof Error ? err.message : String(err)}`,
       details,
     );
   }
@@ -258,7 +325,12 @@ export async function deployApp(
   let connectionError: string | undefined;
   try {
     const authToken = await getAuthToken(address, leaseUuid);
-    const connInfo = await getLeaseConnectionInfo(providerUrl, leaseUuid, authToken, fetchFn);
+    const connInfo = await getLeaseConnectionInfo(
+      providerUrl,
+      leaseUuid,
+      authToken,
+      fetchFn,
+    );
     connection = connInfo;
     if (connInfo.host && connInfo.ports) {
       const firstPort = Object.values(connInfo.ports)[0];
@@ -269,7 +341,9 @@ export async function deployApp(
   } catch (err) {
     const rawMsg = err instanceof Error ? err.message : String(err);
     // Log raw message to stderr for debugging; sanitize only the user-facing return value
-    console.error(`[deploy_app] Failed to fetch connection info for lease ${leaseUuid}: ${rawMsg}`);
+    console.error(
+      `[deploy_app] Failed to fetch connection info for lease ${leaseUuid}: ${rawMsg}`,
+    );
     connectionError = sanitizeForLogging(rawMsg) as string;
   }
 

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ManifestMCPError, ManifestMCPErrorCode } from './types.js';
 
 // Mock modules before imports
@@ -12,9 +12,11 @@ vi.mock('./retry.js', async (importOriginal) => {
   return {
     ...actual,
     // Execute immediately without actual retry/backoff for fast tests
-    withRetry: vi.fn().mockImplementation(async (operation: () => Promise<unknown>) => {
-      return operation();
-    }),
+    withRetry: vi
+      .fn()
+      .mockImplementation(async (operation: () => Promise<unknown>) => {
+        return operation();
+      }),
   };
 });
 
@@ -47,7 +49,9 @@ describe('cosmosQuery', () => {
     const mockHandler = vi.fn().mockResolvedValue({ balances: [] });
     mockGetQueryHandler.mockReturnValue(mockHandler);
 
-    const result = await cosmosQuery(clientManager, 'bank', 'balances', ['manifest1abc']);
+    const result = await cosmosQuery(clientManager, 'bank', 'balances', [
+      'manifest1abc',
+    ]);
 
     expect(mockGetQueryHandler).toHaveBeenCalledWith('bank');
     expect(result).toEqual({
@@ -81,22 +85,31 @@ describe('cosmosQuery', () => {
     const mockHandler = vi.fn().mockRejectedValue(new Error('network fail'));
     mockGetQueryHandler.mockReturnValue(mockHandler);
 
-    await expect(cosmosQuery(clientManager, 'bank', 'balances')).rejects.toMatchObject({
+    await expect(
+      cosmosQuery(clientManager, 'bank', 'balances'),
+    ).rejects.toMatchObject({
       code: ManifestMCPErrorCode.QUERY_FAILED,
       message: expect.stringContaining('network fail'),
     });
   });
 
   it('re-throws ManifestMCPError as-is', async () => {
-    const original = new ManifestMCPError(ManifestMCPErrorCode.UNSUPPORTED_QUERY, 'nope');
+    const original = new ManifestMCPError(
+      ManifestMCPErrorCode.UNSUPPORTED_QUERY,
+      'nope',
+    );
     const mockHandler = vi.fn().mockRejectedValue(original);
     mockGetQueryHandler.mockReturnValue(mockHandler);
 
-    await expect(cosmosQuery(clientManager, 'bank', 'balances')).rejects.toBe(original);
+    await expect(cosmosQuery(clientManager, 'bank', 'balances')).rejects.toBe(
+      original,
+    );
   });
 
   it('validates module name (rejects invalid chars) with UNSUPPORTED_QUERY', async () => {
-    await expect(cosmosQuery(clientManager, 'bank;drop', 'balances')).rejects.toMatchObject({
+    await expect(
+      cosmosQuery(clientManager, 'bank;drop', 'balances'),
+    ).rejects.toMatchObject({
       code: ManifestMCPErrorCode.UNSUPPORTED_QUERY,
       message: expect.stringContaining('Invalid module'),
     });
@@ -104,20 +117,26 @@ describe('cosmosQuery', () => {
 
   it('validates subcommand name (rejects invalid chars) with UNSUPPORTED_QUERY', async () => {
     mockGetQueryHandler.mockReturnValue(vi.fn());
-    await expect(cosmosQuery(clientManager, 'bank', 'bal ances')).rejects.toMatchObject({
+    await expect(
+      cosmosQuery(clientManager, 'bank', 'bal ances'),
+    ).rejects.toMatchObject({
       code: ManifestMCPErrorCode.UNSUPPORTED_QUERY,
       message: expect.stringContaining('Invalid subcommand'),
     });
   });
 
   it('rejects empty module name', async () => {
-    await expect(cosmosQuery(clientManager, '', 'balances')).rejects.toMatchObject({
+    await expect(
+      cosmosQuery(clientManager, '', 'balances'),
+    ).rejects.toMatchObject({
       code: ManifestMCPErrorCode.UNSUPPORTED_QUERY,
     });
   });
 
   it('rejects module name starting with hyphen', async () => {
-    await expect(cosmosQuery(clientManager, '-bank', 'balances')).rejects.toMatchObject({
+    await expect(
+      cosmosQuery(clientManager, '-bank', 'balances'),
+    ).rejects.toMatchObject({
       code: ManifestMCPErrorCode.UNSUPPORTED_QUERY,
     });
   });
@@ -151,7 +170,10 @@ describe('cosmosTx', () => {
     const mockHandler = vi.fn().mockResolvedValue(txResult);
     mockGetTxHandler.mockReturnValue(mockHandler);
 
-    const result = await cosmosTx(clientManager, 'bank', 'send', ['addr', '100umfx']);
+    const result = await cosmosTx(clientManager, 'bank', 'send', [
+      'addr',
+      '100umfx',
+    ]);
 
     expect(mockGetTxHandler).toHaveBeenCalledWith('bank');
     expect(mockHandler).toHaveBeenCalledWith(
@@ -165,7 +187,13 @@ describe('cosmosTx', () => {
   });
 
   it('passes waitForConfirmation to handler', async () => {
-    const mockHandler = vi.fn().mockResolvedValue({ module: 'bank', subcommand: 'send', transactionHash: 'X', code: 0, height: '1' });
+    const mockHandler = vi.fn().mockResolvedValue({
+      module: 'bank',
+      subcommand: 'send',
+      transactionHash: 'X',
+      code: 0,
+      height: '1',
+    });
     mockGetTxHandler.mockReturnValue(mockHandler);
 
     await cosmosTx(clientManager, 'bank', 'send', [], true);
@@ -180,17 +208,23 @@ describe('cosmosTx', () => {
   });
 
   it('enriches ManifestMCPError with module/subcommand/args context', async () => {
-    const original = new ManifestMCPError(ManifestMCPErrorCode.TX_FAILED, 'insufficient gas');
+    const original = new ManifestMCPError(
+      ManifestMCPErrorCode.TX_FAILED,
+      'insufficient gas',
+    );
     const mockHandler = vi.fn().mockRejectedValue(original);
     mockGetTxHandler.mockReturnValue(mockHandler);
 
-    await expect(cosmosTx(clientManager, 'bank', 'send', ['addr', '100umfx'])).rejects.toSatisfy(
+    await expect(
+      cosmosTx(clientManager, 'bank', 'send', ['addr', '100umfx']),
+    ).rejects.toSatisfy(
       (err: ManifestMCPError) =>
         err instanceof ManifestMCPError &&
         err.code === ManifestMCPErrorCode.TX_FAILED &&
         err.details?.module === 'bank' &&
         err.details?.subcommand === 'send' &&
-        JSON.stringify(err.details?.args) === JSON.stringify(['addr', '100umfx']),
+        JSON.stringify(err.details?.args) ===
+          JSON.stringify(['addr', '100umfx']),
     );
   });
 
@@ -203,14 +237,18 @@ describe('cosmosTx', () => {
     const mockHandler = vi.fn().mockRejectedValue(original);
     mockGetTxHandler.mockReturnValue(mockHandler);
 
-    await expect(cosmosTx(clientManager, 'bank', 'send', [])).rejects.toBe(original);
+    await expect(cosmosTx(clientManager, 'bank', 'send', [])).rejects.toBe(
+      original,
+    );
   });
 
   it('wraps unknown errors into TX_FAILED', async () => {
     const mockHandler = vi.fn().mockRejectedValue(new Error('random error'));
     mockGetTxHandler.mockReturnValue(mockHandler);
 
-    await expect(cosmosTx(clientManager, 'bank', 'send', ['addr'])).rejects.toMatchObject({
+    await expect(
+      cosmosTx(clientManager, 'bank', 'send', ['addr']),
+    ).rejects.toMatchObject({
       code: ManifestMCPErrorCode.TX_FAILED,
       message: expect.stringContaining('random error'),
       details: expect.objectContaining({ module: 'bank', subcommand: 'send' }),
@@ -218,7 +256,9 @@ describe('cosmosTx', () => {
   });
 
   it('validates module name with UNSUPPORTED_TX', async () => {
-    await expect(cosmosTx(clientManager, 'bad module', 'send', [])).rejects.toMatchObject({
+    await expect(
+      cosmosTx(clientManager, 'bad module', 'send', []),
+    ).rejects.toMatchObject({
       code: ManifestMCPErrorCode.UNSUPPORTED_TX,
       message: expect.stringContaining('Invalid module'),
     });
@@ -226,7 +266,9 @@ describe('cosmosTx', () => {
 
   it('validates subcommand name with UNSUPPORTED_TX', async () => {
     mockGetTxHandler.mockReturnValue(vi.fn());
-    await expect(cosmosTx(clientManager, 'bank', 'bad;cmd', [])).rejects.toMatchObject({
+    await expect(
+      cosmosTx(clientManager, 'bank', 'bad;cmd', []),
+    ).rejects.toMatchObject({
       code: ManifestMCPErrorCode.UNSUPPORTED_TX,
       message: expect.stringContaining('Invalid subcommand'),
     });
@@ -247,12 +289,23 @@ describe('cosmosTx', () => {
     });
     const mockHandler = vi.fn().mockImplementation(async () => {
       callOrder.push('handler');
-      return { module: 'bank', subcommand: 'send', transactionHash: 'X', code: 0, height: '1' };
+      return {
+        module: 'bank',
+        subcommand: 'send',
+        transactionHash: 'X',
+        code: 0,
+        height: '1',
+      };
     });
     mockGetTxHandler.mockReturnValue(mockHandler);
 
     await cosmosTx(clientManager, 'bank', 'send', []);
 
-    expect(callOrder).toEqual(['rateLimit', 'getClient', 'getAddress', 'handler']);
+    expect(callOrder).toEqual([
+      'rateLimit',
+      'getClient',
+      'getAddress',
+      'handler',
+    ]);
   });
 });

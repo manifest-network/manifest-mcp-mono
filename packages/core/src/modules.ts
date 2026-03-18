@@ -1,26 +1,32 @@
-import { SigningStargateClient } from '@cosmjs/stargate';
-import { ModuleInfo, AvailableModules, ManifestMCPError, ManifestMCPErrorCode, CosmosTxResult, QueryResult } from './types.js';
-import { ManifestQueryClient } from './client.js';
+import type { SigningStargateClient } from '@cosmjs/stargate';
+import type { ManifestQueryClient } from './client.js';
+import { routeAuthQuery } from './queries/auth.js';
 
 // Import query handlers
 import { routeBankQuery } from './queries/bank.js';
-import { routeStakingQuery } from './queries/staking.js';
+import { routeBillingQuery } from './queries/billing.js';
 import { routeDistributionQuery } from './queries/distribution.js';
 import { routeGovQuery } from './queries/gov.js';
-import { routeAuthQuery } from './queries/auth.js';
-import { routeBillingQuery } from './queries/billing.js';
-import { routeSkuQuery } from './queries/sku.js';
 import { routeGroupQuery } from './queries/group.js';
-
+import { routeSkuQuery } from './queries/sku.js';
+import { routeStakingQuery } from './queries/staking.js';
 // Import transaction handlers
 import { routeBankTransaction } from './transactions/bank.js';
-import { routeStakingTransaction } from './transactions/staking.js';
+import { routeBillingTransaction } from './transactions/billing.js';
 import { routeDistributionTransaction } from './transactions/distribution.js';
 import { routeGovTransaction } from './transactions/gov.js';
-import { routeBillingTransaction } from './transactions/billing.js';
+import { routeGroupTransaction } from './transactions/group.js';
 import { routeManifestTransaction } from './transactions/manifest.js';
 import { routeSkuTransaction } from './transactions/sku.js';
-import { routeGroupTransaction } from './transactions/group.js';
+import { routeStakingTransaction } from './transactions/staking.js';
+import {
+  type AvailableModules,
+  type CosmosTxResult,
+  ManifestMCPError,
+  ManifestMCPErrorCode,
+  type ModuleInfo,
+  type QueryResult,
+} from './types.js';
 
 /**
  * Handler function type for query modules
@@ -28,7 +34,7 @@ import { routeGroupTransaction } from './transactions/group.js';
 export type QueryHandler = (
   queryClient: ManifestQueryClient,
   subcommand: string,
-  args: string[]
+  args: string[],
 ) => Promise<QueryResult>;
 
 /**
@@ -39,7 +45,7 @@ export type TxHandler = (
   senderAddress: string,
   subcommand: string,
   args: string[],
-  waitForConfirmation: boolean
+  waitForConfirmation: boolean,
 ) => Promise<CosmosTxResult>;
 
 /**
@@ -53,16 +59,18 @@ export type TxHandler = (
 export function throwUnsupportedSubcommand(
   type: 'query' | 'tx',
   module: string,
-  subcommand: string
+  subcommand: string,
 ): never {
   const registry = type === 'query' ? QUERY_MODULES : TX_MODULES;
   const moduleInfo = registry[module];
-  const availableSubcommands = moduleInfo?.subcommands.map(s => s.name) ?? [];
+  const availableSubcommands = moduleInfo?.subcommands.map((s) => s.name) ?? [];
 
   throw new ManifestMCPError(
-    type === 'query' ? ManifestMCPErrorCode.UNSUPPORTED_QUERY : ManifestMCPErrorCode.UNSUPPORTED_TX,
+    type === 'query'
+      ? ManifestMCPErrorCode.UNSUPPORTED_QUERY
+      : ManifestMCPErrorCode.UNSUPPORTED_TX,
     `Unsupported ${module} ${type === 'query' ? 'query' : 'transaction'} subcommand: ${subcommand}`,
-    { availableSubcommands }
+    { availableSubcommands },
   );
 }
 
@@ -102,16 +110,32 @@ const QUERY_MODULES: QueryModuleRegistry = {
     description: 'Querying commands for the bank module',
     handler: routeBankQuery,
     subcommands: [
-      { name: 'balance', description: 'Query account balance for a specific denom' },
+      {
+        name: 'balance',
+        description: 'Query account balance for a specific denom',
+      },
       { name: 'balances', description: 'Query all balances for an account' },
-      { name: 'spendable-balances', description: 'Query spendable balances for an account' },
+      {
+        name: 'spendable-balances',
+        description: 'Query spendable balances for an account',
+      },
       { name: 'total-supply', description: 'Query total supply of all tokens' },
-      { name: 'total', description: 'Query total supply of all tokens (alias for total-supply)' },
+      {
+        name: 'total',
+        description:
+          'Query total supply of all tokens (alias for total-supply)',
+      },
       { name: 'supply-of', description: 'Query supply of a specific denom' },
       { name: 'params', description: 'Query bank parameters' },
-      { name: 'denom-metadata', description: 'Query metadata for a specific denom' },
+      {
+        name: 'denom-metadata',
+        description: 'Query metadata for a specific denom',
+      },
       { name: 'denoms-metadata', description: 'Query metadata for all denoms' },
-      { name: 'send-enabled', description: 'Query send enabled status for denoms' },
+      {
+        name: 'send-enabled',
+        description: 'Query send enabled status for denoms',
+      },
     ],
   },
   staking: {
@@ -119,31 +143,61 @@ const QUERY_MODULES: QueryModuleRegistry = {
     handler: routeStakingQuery,
     subcommands: [
       { name: 'delegation', description: 'Query a delegation' },
-      { name: 'delegations', description: 'Query all delegations for a delegator' },
-      { name: 'unbonding-delegation', description: 'Query an unbonding delegation' },
-      { name: 'unbonding-delegations', description: 'Query all unbonding delegations for a delegator' },
+      {
+        name: 'delegations',
+        description: 'Query all delegations for a delegator',
+      },
+      {
+        name: 'unbonding-delegation',
+        description: 'Query an unbonding delegation',
+      },
+      {
+        name: 'unbonding-delegations',
+        description: 'Query all unbonding delegations for a delegator',
+      },
       { name: 'redelegations', description: 'Query redelegations' },
       { name: 'validator', description: 'Query a validator' },
       { name: 'validators', description: 'Query all validators' },
-      { name: 'validator-delegations', description: 'Query all delegations to a validator' },
-      { name: 'validator-unbonding-delegations', description: 'Query all unbonding delegations from a validator' },
+      {
+        name: 'validator-delegations',
+        description: 'Query all delegations to a validator',
+      },
+      {
+        name: 'validator-unbonding-delegations',
+        description: 'Query all unbonding delegations from a validator',
+      },
       { name: 'pool', description: 'Query staking pool' },
       { name: 'params', description: 'Query staking parameters' },
-      { name: 'historical-info', description: 'Query historical info at a height' },
+      {
+        name: 'historical-info',
+        description: 'Query historical info at a height',
+      },
     ],
   },
   distribution: {
     description: 'Querying commands for the distribution module',
     handler: routeDistributionQuery,
     subcommands: [
-      { name: 'rewards', description: 'Query distribution rewards for a delegator' },
+      {
+        name: 'rewards',
+        description: 'Query distribution rewards for a delegator',
+      },
       { name: 'commission', description: 'Query validator commission' },
       { name: 'community-pool', description: 'Query community pool coins' },
       { name: 'params', description: 'Query distribution parameters' },
-      { name: 'validator-outstanding-rewards', description: 'Query validator outstanding rewards' },
+      {
+        name: 'validator-outstanding-rewards',
+        description: 'Query validator outstanding rewards',
+      },
       { name: 'slashes', description: 'Query slashes for a validator' },
-      { name: 'delegator-validators', description: 'Query validators for a delegator' },
-      { name: 'delegator-withdraw-address', description: 'Query delegator withdraw address' },
+      {
+        name: 'delegator-validators',
+        description: 'Query validators for a delegator',
+      },
+      {
+        name: 'delegator-withdraw-address',
+        description: 'Query delegator withdraw address',
+      },
     ],
   },
   gov: {
@@ -168,9 +222,18 @@ const QUERY_MODULES: QueryModuleRegistry = {
       { name: 'accounts', description: 'Query all accounts' },
       { name: 'params', description: 'Query auth parameters' },
       { name: 'module-accounts', description: 'Query all module accounts' },
-      { name: 'module-account-by-name', description: 'Query module account by name' },
-      { name: 'address-bytes-to-string', description: 'Convert address bytes to string' },
-      { name: 'address-string-to-bytes', description: 'Convert address string to bytes' },
+      {
+        name: 'module-account-by-name',
+        description: 'Query module account by name',
+      },
+      {
+        name: 'address-bytes-to-string',
+        description: 'Convert address bytes to string',
+      },
+      {
+        name: 'address-string-to-bytes',
+        description: 'Convert address string to bytes',
+      },
       { name: 'bech32-prefix', description: 'Query bech32 prefix' },
       { name: 'account-info', description: 'Query account info' },
     ],
@@ -182,15 +245,33 @@ const QUERY_MODULES: QueryModuleRegistry = {
       { name: 'params', description: 'Query billing parameters' },
       { name: 'lease', description: 'Query a lease by UUID' },
       { name: 'leases', description: 'Query all leases' },
-      { name: 'leases-by-tenant', description: 'Query leases by tenant address' },
+      {
+        name: 'leases-by-tenant',
+        description: 'Query leases by tenant address',
+      },
       { name: 'leases-by-provider', description: 'Query leases by provider' },
       { name: 'leases-by-sku', description: 'Query leases by SKU UUID' },
-      { name: 'credit-account', description: 'Query credit account for a tenant' },
+      {
+        name: 'credit-account',
+        description: 'Query credit account for a tenant',
+      },
       { name: 'credit-accounts', description: 'Query all credit accounts' },
-      { name: 'credit-address', description: 'Query credit address for a tenant' },
-      { name: 'withdrawable-amount', description: 'Query withdrawable amount for a lease' },
-      { name: 'provider-withdrawable', description: 'Query withdrawable amount for a provider' },
-      { name: 'credit-estimate', description: 'Query credit estimate for a tenant' },
+      {
+        name: 'credit-address',
+        description: 'Query credit address for a tenant',
+      },
+      {
+        name: 'withdrawable-amount',
+        description: 'Query withdrawable amount for a lease',
+      },
+      {
+        name: 'provider-withdrawable',
+        description: 'Query withdrawable amount for a provider',
+      },
+      {
+        name: 'credit-estimate',
+        description: 'Query credit estimate for a tenant',
+      },
     ],
   },
   sku: {
@@ -198,31 +279,103 @@ const QUERY_MODULES: QueryModuleRegistry = {
     handler: routeSkuQuery,
     subcommands: [
       { name: 'params', description: 'Query SKU module parameters' },
-      { name: 'provider', description: 'Query a provider by UUID', args: '<provider-uuid>' },
-      { name: 'providers', description: 'Query all providers', args: '[--active-only] [--limit N]' },
+      {
+        name: 'provider',
+        description: 'Query a provider by UUID',
+        args: '<provider-uuid>',
+      },
+      {
+        name: 'providers',
+        description: 'Query all providers',
+        args: '[--active-only] [--limit N]',
+      },
       { name: 'sku', description: 'Query a SKU by UUID', args: '<sku-uuid>' },
-      { name: 'skus', description: 'Query all SKUs', args: '[--active-only] [--limit N]' },
-      { name: 'skus-by-provider', description: 'Query SKUs by provider UUID', args: '<provider-uuid> [--active-only] [--limit N]' },
-      { name: 'provider-by-address', description: 'Query providers by address', args: '<address> [--active-only] [--limit N]' },
+      {
+        name: 'skus',
+        description: 'Query all SKUs',
+        args: '[--active-only] [--limit N]',
+      },
+      {
+        name: 'skus-by-provider',
+        description: 'Query SKUs by provider UUID',
+        args: '<provider-uuid> [--active-only] [--limit N]',
+      },
+      {
+        name: 'provider-by-address',
+        description: 'Query providers by address',
+        args: '<address> [--active-only] [--limit N]',
+      },
     ],
   },
   group: {
     description: 'Querying commands for the group module',
     handler: routeGroupQuery,
     subcommands: [
-      { name: 'group-info', description: 'Query group info by ID', args: '<group-id>' },
-      { name: 'group-policy-info', description: 'Query group policy info by address', args: '<group-policy-address>' },
-      { name: 'group-members', description: 'Query group members', args: '<group-id> [--limit N]' },
-      { name: 'groups-by-admin', description: 'Query groups by admin address', args: '<admin-address> [--limit N]' },
-      { name: 'group-policies-by-group', description: 'Query group policies by group ID', args: '<group-id> [--limit N]' },
-      { name: 'group-policies-by-admin', description: 'Query group policies by admin address', args: '<admin-address> [--limit N]' },
-      { name: 'proposal', description: 'Query a group proposal by ID', args: '<proposal-id>' },
-      { name: 'proposals-by-group-policy', description: 'Query proposals by group policy address', args: '<group-policy-address> [--limit N]' },
-      { name: 'vote', description: 'Query a vote by proposal ID and voter', args: '<proposal-id> <voter-address>' },
-      { name: 'votes-by-proposal', description: 'Query votes by proposal ID', args: '<proposal-id> [--limit N]' },
-      { name: 'votes-by-voter', description: 'Query votes by voter address', args: '<voter-address> [--limit N]' },
-      { name: 'groups-by-member', description: 'Query groups by member address', args: '<member-address> [--limit N]' },
-      { name: 'tally', description: 'Query tally result for a proposal', args: '<proposal-id>' },
+      {
+        name: 'group-info',
+        description: 'Query group info by ID',
+        args: '<group-id>',
+      },
+      {
+        name: 'group-policy-info',
+        description: 'Query group policy info by address',
+        args: '<group-policy-address>',
+      },
+      {
+        name: 'group-members',
+        description: 'Query group members',
+        args: '<group-id> [--limit N]',
+      },
+      {
+        name: 'groups-by-admin',
+        description: 'Query groups by admin address',
+        args: '<admin-address> [--limit N]',
+      },
+      {
+        name: 'group-policies-by-group',
+        description: 'Query group policies by group ID',
+        args: '<group-id> [--limit N]',
+      },
+      {
+        name: 'group-policies-by-admin',
+        description: 'Query group policies by admin address',
+        args: '<admin-address> [--limit N]',
+      },
+      {
+        name: 'proposal',
+        description: 'Query a group proposal by ID',
+        args: '<proposal-id>',
+      },
+      {
+        name: 'proposals-by-group-policy',
+        description: 'Query proposals by group policy address',
+        args: '<group-policy-address> [--limit N]',
+      },
+      {
+        name: 'vote',
+        description: 'Query a vote by proposal ID and voter',
+        args: '<proposal-id> <voter-address>',
+      },
+      {
+        name: 'votes-by-proposal',
+        description: 'Query votes by proposal ID',
+        args: '<proposal-id> [--limit N]',
+      },
+      {
+        name: 'votes-by-voter',
+        description: 'Query votes by voter address',
+        args: '<voter-address> [--limit N]',
+      },
+      {
+        name: 'groups-by-member',
+        description: 'Query groups by member address',
+        args: '<member-address> [--limit N]',
+      },
+      {
+        name: 'tally',
+        description: 'Query tally result for a proposal',
+        args: '<proposal-id>',
+      },
       { name: 'groups', description: 'Query all groups', args: '[--limit N]' },
     ],
   },
@@ -237,8 +390,16 @@ const TX_MODULES: TxModuleRegistry = {
     description: 'Bank transaction subcommands',
     handler: routeBankTransaction,
     subcommands: [
-      { name: 'send', description: 'Send tokens to another account', args: '<to-address> <amount> (e.g., manifest1abc... 1000000umfx)' },
-      { name: 'multi-send', description: 'Send tokens to multiple accounts', args: '<to-address:amount>... (e.g., manifest1a:1000umfx manifest1b:2000umfx)' },
+      {
+        name: 'send',
+        description: 'Send tokens to another account',
+        args: '<to-address> <amount> (e.g., manifest1abc... 1000000umfx)',
+      },
+      {
+        name: 'multi-send',
+        description: 'Send tokens to multiple accounts',
+        args: '<to-address:amount>... (e.g., manifest1a:1000umfx manifest1b:2000umfx)',
+      },
     ],
   },
   staking: {
@@ -247,15 +408,24 @@ const TX_MODULES: TxModuleRegistry = {
     subcommands: [
       { name: 'delegate', description: 'Delegate tokens to a validator' },
       { name: 'unbond', description: 'Unbond tokens from a validator' },
-      { name: 'undelegate', description: 'Unbond tokens from a validator (alias for unbond)' },
-      { name: 'redelegate', description: 'Redelegate tokens from one validator to another' },
+      {
+        name: 'undelegate',
+        description: 'Unbond tokens from a validator (alias for unbond)',
+      },
+      {
+        name: 'redelegate',
+        description: 'Redelegate tokens from one validator to another',
+      },
     ],
   },
   distribution: {
     description: 'Distribution transaction subcommands',
     handler: routeDistributionTransaction,
     subcommands: [
-      { name: 'withdraw-rewards', description: 'Withdraw rewards from a validator' },
+      {
+        name: 'withdraw-rewards',
+        description: 'Withdraw rewards from a validator',
+      },
       { name: 'set-withdraw-addr', description: 'Set withdraw address' },
       { name: 'fund-community-pool', description: 'Fund the community pool' },
     ],
@@ -273,15 +443,51 @@ const TX_MODULES: TxModuleRegistry = {
     description: 'Manifest billing transaction subcommands',
     handler: routeBillingTransaction,
     subcommands: [
-      { name: 'fund-credit', description: 'Fund credit for a tenant', args: '<tenant-address> <amount> (e.g., manifest1abc... 1000000umfx)' },
-      { name: 'create-lease', description: 'Create a new lease', args: '[--meta-hash <hex>] <sku-uuid:quantity[:service-name]>... (e.g., sku-123:1 or sku-123:1:web sku-123:1:db)' },
-      { name: 'close-lease', description: 'Close one or more leases', args: '[--reason <text>] <lease-uuid>... (e.g., lease-123 lease-456)' },
-      { name: 'withdraw', description: 'Withdraw earnings from leases', args: '<lease-uuid>... OR --provider <provider-uuid> [--limit <1-100>]' },
-      { name: 'create-lease-for-tenant', description: 'Create a lease on behalf of a tenant', args: '<tenant-address> [--meta-hash <hex>] <sku-uuid:quantity[:service-name]>...' },
-      { name: 'acknowledge-lease', description: 'Acknowledge one or more pending leases', args: '<lease-uuid>...' },
-      { name: 'reject-lease', description: 'Reject one or more pending leases', args: '[--reason <text>] <lease-uuid>...' },
-      { name: 'cancel-lease', description: 'Cancel one or more pending leases', args: '<lease-uuid>...' },
-      { name: 'update-params', description: 'Update billing module parameters (governance)', args: '<max-leases-per-tenant> <max-items-per-lease> <min-lease-duration> <max-pending-leases-per-tenant> <pending-timeout> [<allowed-address>...]' },
+      {
+        name: 'fund-credit',
+        description: 'Fund credit for a tenant',
+        args: '<tenant-address> <amount> (e.g., manifest1abc... 1000000umfx)',
+      },
+      {
+        name: 'create-lease',
+        description: 'Create a new lease',
+        args: '[--meta-hash <hex>] <sku-uuid:quantity[:service-name]>... (e.g., sku-123:1 or sku-123:1:web sku-123:1:db)',
+      },
+      {
+        name: 'close-lease',
+        description: 'Close one or more leases',
+        args: '[--reason <text>] <lease-uuid>... (e.g., lease-123 lease-456)',
+      },
+      {
+        name: 'withdraw',
+        description: 'Withdraw earnings from leases',
+        args: '<lease-uuid>... OR --provider <provider-uuid> [--limit <1-100>]',
+      },
+      {
+        name: 'create-lease-for-tenant',
+        description: 'Create a lease on behalf of a tenant',
+        args: '<tenant-address> [--meta-hash <hex>] <sku-uuid:quantity[:service-name]>...',
+      },
+      {
+        name: 'acknowledge-lease',
+        description: 'Acknowledge one or more pending leases',
+        args: '<lease-uuid>...',
+      },
+      {
+        name: 'reject-lease',
+        description: 'Reject one or more pending leases',
+        args: '[--reason <text>] <lease-uuid>...',
+      },
+      {
+        name: 'cancel-lease',
+        description: 'Cancel one or more pending leases',
+        args: '<lease-uuid>...',
+      },
+      {
+        name: 'update-params',
+        description: 'Update billing module parameters (governance)',
+        args: '<max-leases-per-tenant> <max-items-per-lease> <min-lease-duration> <max-pending-leases-per-tenant> <pending-timeout> [<allowed-address>...]',
+      },
     ],
   },
   manifest: {
@@ -296,32 +502,112 @@ const TX_MODULES: TxModuleRegistry = {
     description: 'Manifest SKU module transaction subcommands',
     handler: routeSkuTransaction,
     subcommands: [
-      { name: 'create-provider', description: 'Create a new provider', args: '<address> <payout-address> <api-url> [--meta-hash <hex>]' },
-      { name: 'update-provider', description: 'Update an existing provider', args: '<provider-uuid> <address> <payout-address> <api-url> [--meta-hash <hex>] [--active <true|false>]' },
-      { name: 'deactivate-provider', description: 'Deactivate a provider', args: '<provider-uuid>' },
-      { name: 'create-sku', description: 'Create a new SKU', args: '<provider-uuid> <name> <unit (per-hour|per-day)> <base-price> [--meta-hash <hex>]' },
-      { name: 'update-sku', description: 'Update an existing SKU', args: '<sku-uuid> <provider-uuid> <name> <unit (per-hour|per-day)> <base-price> [--meta-hash <hex>] [--active <true|false>]' },
-      { name: 'deactivate-sku', description: 'Deactivate a SKU', args: '<sku-uuid>' },
-      { name: 'update-params', description: 'Update SKU module parameters (governance)', args: '<allowed-address>...' },
+      {
+        name: 'create-provider',
+        description: 'Create a new provider',
+        args: '<address> <payout-address> <api-url> [--meta-hash <hex>]',
+      },
+      {
+        name: 'update-provider',
+        description: 'Update an existing provider',
+        args: '<provider-uuid> <address> <payout-address> <api-url> [--meta-hash <hex>] [--active <true|false>]',
+      },
+      {
+        name: 'deactivate-provider',
+        description: 'Deactivate a provider',
+        args: '<provider-uuid>',
+      },
+      {
+        name: 'create-sku',
+        description: 'Create a new SKU',
+        args: '<provider-uuid> <name> <unit (per-hour|per-day)> <base-price> [--meta-hash <hex>]',
+      },
+      {
+        name: 'update-sku',
+        description: 'Update an existing SKU',
+        args: '<sku-uuid> <provider-uuid> <name> <unit (per-hour|per-day)> <base-price> [--meta-hash <hex>] [--active <true|false>]',
+      },
+      {
+        name: 'deactivate-sku',
+        description: 'Deactivate a SKU',
+        args: '<sku-uuid>',
+      },
+      {
+        name: 'update-params',
+        description: 'Update SKU module parameters (governance)',
+        args: '<allowed-address>...',
+      },
     ],
   },
   group: {
     description: 'Group module transaction subcommands',
     handler: routeGroupTransaction,
     subcommands: [
-      { name: 'create-group', description: 'Create a new group', args: '<metadata> <address:weight>...' },
-      { name: 'update-group-members', description: 'Update group members', args: '<group-id> <address:weight>...' },
-      { name: 'update-group-admin', description: 'Update group admin', args: '<group-id> <new-admin-address>' },
-      { name: 'update-group-metadata', description: 'Update group metadata', args: '<group-id> <metadata>' },
-      { name: 'create-group-policy', description: 'Create a group policy', args: '<group-id> <metadata> <policy-type> <threshold-or-pct> <voting-period-secs> <min-execution-period-secs>' },
-      { name: 'update-group-policy-admin', description: 'Update group policy admin', args: '<group-policy-address> <new-admin-address>' },
-      { name: 'create-group-with-policy', description: 'Create a group with policy', args: '<group-metadata> <group-policy-metadata> <policy-type> <threshold-or-pct> <voting-period-secs> <min-execution-period-secs> [--group-policy-as-admin] <address:weight>...' },
-      { name: 'update-group-policy-decision-policy', description: 'Update group policy decision policy', args: '<group-policy-address> <policy-type> <threshold-or-pct> <voting-period-secs> <min-execution-period-secs>' },
-      { name: 'update-group-policy-metadata', description: 'Update group policy metadata', args: '<group-policy-address> <metadata>' },
-      { name: 'submit-proposal', description: 'Submit a group proposal', args: '<group-policy-address> <title> <summary> [--exec try] [--metadata <text>] [<message-json>...]' },
-      { name: 'withdraw-proposal', description: 'Withdraw a group proposal', args: '<proposal-id>' },
-      { name: 'vote', description: 'Vote on a group proposal', args: '<proposal-id> <option (yes|no|abstain|no_with_veto)> [--metadata <text>] [--exec try]' },
-      { name: 'exec', description: 'Execute a passed group proposal', args: '<proposal-id>' },
+      {
+        name: 'create-group',
+        description: 'Create a new group',
+        args: '<metadata> <address:weight>...',
+      },
+      {
+        name: 'update-group-members',
+        description: 'Update group members',
+        args: '<group-id> <address:weight>...',
+      },
+      {
+        name: 'update-group-admin',
+        description: 'Update group admin',
+        args: '<group-id> <new-admin-address>',
+      },
+      {
+        name: 'update-group-metadata',
+        description: 'Update group metadata',
+        args: '<group-id> <metadata>',
+      },
+      {
+        name: 'create-group-policy',
+        description: 'Create a group policy',
+        args: '<group-id> <metadata> <policy-type> <threshold-or-pct> <voting-period-secs> <min-execution-period-secs>',
+      },
+      {
+        name: 'update-group-policy-admin',
+        description: 'Update group policy admin',
+        args: '<group-policy-address> <new-admin-address>',
+      },
+      {
+        name: 'create-group-with-policy',
+        description: 'Create a group with policy',
+        args: '<group-metadata> <group-policy-metadata> <policy-type> <threshold-or-pct> <voting-period-secs> <min-execution-period-secs> [--group-policy-as-admin] <address:weight>...',
+      },
+      {
+        name: 'update-group-policy-decision-policy',
+        description: 'Update group policy decision policy',
+        args: '<group-policy-address> <policy-type> <threshold-or-pct> <voting-period-secs> <min-execution-period-secs>',
+      },
+      {
+        name: 'update-group-policy-metadata',
+        description: 'Update group policy metadata',
+        args: '<group-policy-address> <metadata>',
+      },
+      {
+        name: 'submit-proposal',
+        description: 'Submit a group proposal',
+        args: '<group-policy-address> <title> <summary> [--exec try] [--metadata <text>] [<message-json>...]',
+      },
+      {
+        name: 'withdraw-proposal',
+        description: 'Withdraw a group proposal',
+        args: '<proposal-id>',
+      },
+      {
+        name: 'vote',
+        description: 'Vote on a group proposal',
+        args: '<proposal-id> <option (yes|no|abstain|no_with_veto)> [--metadata <text>] [--exec try]',
+      },
+      {
+        name: 'exec',
+        description: 'Execute a passed group proposal',
+        args: '<proposal-id>',
+      },
       { name: 'leave-group', description: 'Leave a group', args: '<group-id>' },
     ],
   },
@@ -335,14 +621,14 @@ export function getAvailableModules(): AvailableModules {
     ([name, info]) => ({
       name,
       description: info.description,
-    })
+    }),
   );
 
   const txModules: ModuleInfo[] = Object.entries(TX_MODULES).map(
     ([name, info]) => ({
       name,
       description: info.description,
-    })
+    }),
   );
 
   return {
@@ -356,7 +642,7 @@ export function getAvailableModules(): AvailableModules {
  */
 export function getModuleSubcommands(
   type: 'query' | 'tx',
-  module: string
+  module: string,
 ): ModuleInfo[] {
   const registry = type === 'query' ? QUERY_MODULES : TX_MODULES;
   const moduleInfo = registry[module];
@@ -365,7 +651,7 @@ export function getModuleSubcommands(
     throw new ManifestMCPError(
       ManifestMCPErrorCode.UNKNOWN_MODULE,
       `Unknown ${type} module: ${module}`,
-      { availableModules: Object.keys(registry) }
+      { availableModules: Object.keys(registry) },
     );
   }
 
@@ -382,7 +668,7 @@ export function getModuleSubcommands(
 export function isSubcommandSupported(
   type: 'query' | 'tx',
   module: string,
-  subcommand: string
+  subcommand: string,
 ): boolean {
   const registry = type === 'query' ? QUERY_MODULES : TX_MODULES;
   const moduleInfo = registry[module];
@@ -401,7 +687,7 @@ export function isSubcommandSupported(
 export function getSubcommandUsage(
   type: 'query' | 'tx',
   module: string,
-  subcommand: string
+  subcommand: string,
 ): string | undefined {
   const registry = type === 'query' ? QUERY_MODULES : TX_MODULES;
   const moduleInfo = registry[module];
@@ -447,7 +733,7 @@ export function getQueryHandler(module: string): QueryHandler {
     throw new ManifestMCPError(
       ManifestMCPErrorCode.UNKNOWN_MODULE,
       `Unknown query module: ${module}`,
-      { availableModules: Object.keys(QUERY_MODULES) }
+      { availableModules: Object.keys(QUERY_MODULES) },
     );
   }
   return moduleInfo.handler;
@@ -463,7 +749,7 @@ export function getTxHandler(module: string): TxHandler {
     throw new ManifestMCPError(
       ManifestMCPErrorCode.UNKNOWN_MODULE,
       `Unknown tx module: ${module}`,
-      { availableModules: Object.keys(TX_MODULES) }
+      { availableModules: Object.keys(TX_MODULES) },
     );
   }
   return moduleInfo.handler;

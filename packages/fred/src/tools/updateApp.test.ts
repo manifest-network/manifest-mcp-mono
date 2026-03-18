@@ -1,5 +1,5 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { LeaseState } from '@manifest-network/manifestjs/dist/codegen/liftedinit/billing/v1/types.js';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../http/fred.js', () => ({
   updateLease: vi.fn(),
@@ -9,10 +9,10 @@ vi.mock('./resolveLeaseProvider.js', () => ({
   resolveProviderUrl: vi.fn(),
 }));
 
-import { updateApp } from './updateApp.js';
+import { makeMockQueryClient } from '@manifest-network/manifest-mcp-core/__test-utils__/mocks.js';
 import { updateLease } from '../http/fred.js';
 import { resolveProviderUrl } from './resolveLeaseProvider.js';
-import { makeMockQueryClient } from '@manifest-network/manifest-mcp-core/__test-utils__/mocks.js';
+import { updateApp } from './updateApp.js';
 
 const mockUpdateLease = vi.mocked(updateLease);
 const mockResolveProviderUrl = vi.mocked(resolveProviderUrl);
@@ -30,11 +30,18 @@ describe('updateApp', () => {
   it('without existingManifest: full replacement', async () => {
     const qc = makeMockQueryClient({
       billing: {
-        lease: { uuid: LEASE_UUID, state: LeaseState.LEASE_STATE_ACTIVE, providerUuid: 'prov-1' },
+        lease: {
+          uuid: LEASE_UUID,
+          state: LeaseState.LEASE_STATE_ACTIVE,
+          providerUuid: 'prov-1',
+        },
       },
     });
 
-    const manifest = JSON.stringify({ image: 'nginx:2', ports: { '80/tcp': {} } });
+    const manifest = JSON.stringify({
+      image: 'nginx:2',
+      ports: { '80/tcp': {} },
+    });
     await updateApp(qc, 'manifest1abc', LEASE_UUID, mockGetAuthToken, manifest);
 
     // Should pass manifest through unchanged
@@ -50,11 +57,18 @@ describe('updateApp', () => {
   it('with existingManifest: env merged, ports merged, fields carried forward', async () => {
     const qc = makeMockQueryClient({
       billing: {
-        lease: { uuid: LEASE_UUID, state: LeaseState.LEASE_STATE_ACTIVE, providerUuid: 'prov-1' },
+        lease: {
+          uuid: LEASE_UUID,
+          state: LeaseState.LEASE_STATE_ACTIVE,
+          providerUuid: 'prov-1',
+        },
       },
     });
 
-    const newManifest = JSON.stringify({ image: 'nginx:2', env: { NEW: 'val' } });
+    const newManifest = JSON.stringify({
+      image: 'nginx:2',
+      env: { NEW: 'val' },
+    });
     const existingManifest = JSON.stringify({
       image: 'nginx:1',
       ports: { '80/tcp': {} },
@@ -62,7 +76,14 @@ describe('updateApp', () => {
       user: '1000:1000',
     });
 
-    await updateApp(qc, 'manifest1abc', LEASE_UUID, mockGetAuthToken, newManifest, existingManifest);
+    await updateApp(
+      qc,
+      'manifest1abc',
+      LEASE_UUID,
+      mockGetAuthToken,
+      newManifest,
+      existingManifest,
+    );
 
     const sentManifest = JSON.parse(mockUpdateLease.mock.calls[0][2]);
     expect(sentManifest.image).toBe('nginx:2');

@@ -58,7 +58,10 @@ export async function checkedFetch(
   } catch (err) {
     if (err instanceof DOMException && err.name === 'AbortError') {
       if (controller && !callerProvidedSignal) {
-        throw new ProviderApiError(0, `Request to ${url} timed out after ${timeoutMs}ms`);
+        throw new ProviderApiError(
+          0,
+          `Request to ${url} timed out after ${timeoutMs}ms`,
+        );
       }
       throw err;
     }
@@ -70,20 +73,27 @@ export async function checkedFetch(
     if (timer !== undefined) clearTimeout(timer);
   }
   if (!res.ok) {
-    const body = await res.text().catch((readErr: unknown) =>
-      `[body read failed: ${readErr instanceof Error ? readErr.message : String(readErr)}]`,
-    );
+    const body = await res
+      .text()
+      .catch(
+        (readErr: unknown) =>
+          `[body read failed: ${readErr instanceof Error ? readErr.message : String(readErr)}]`,
+      );
     throw new ProviderApiError(res.status, body || `HTTP ${res.status}`);
   }
   return res;
 }
 
-export async function parseJsonResponse<T>(res: Response, url: string): Promise<T> {
+export async function parseJsonResponse<T>(
+  res: Response,
+  url: string,
+): Promise<T> {
   const text = await res.text();
   try {
     return JSON.parse(text) as T;
   } catch (parseErr) {
-    const reason = parseErr instanceof Error ? parseErr.message : 'parse failed';
+    const reason =
+      parseErr instanceof Error ? parseErr.message : 'parse failed';
     throw new ProviderApiError(
       res.status,
       `Invalid JSON from ${url} (${reason}): ${text.slice(0, 200)}`,
@@ -121,9 +131,14 @@ export async function getLeaseConnectionInfo(
 ): Promise<LeaseConnectionInfo> {
   const validated = validateProviderUrl(providerApiUrl);
   const url = `${validated}/v1/leases/${encodeURIComponent(leaseUuid)}/connection`;
-  const res = await checkedFetch(url, {
-    headers: { Authorization: `Bearer ${authToken}` },
-  }, undefined, fetchFn);
+  const res = await checkedFetch(
+    url,
+    {
+      headers: { Authorization: `Bearer ${authToken}` },
+    },
+    undefined,
+    fetchFn,
+  );
   return await parseJsonResponse<LeaseConnectionInfo>(res, url);
 }
 
@@ -135,12 +150,17 @@ export async function uploadLeaseData(
   fetchFn?: typeof globalThis.fetch,
 ): Promise<void> {
   const validated = validateProviderUrl(providerApiUrl);
-  await checkedFetch(`${validated}/v1/leases/${encodeURIComponent(leaseUuid)}/data`, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${authToken}`,
-      'Content-Type': 'application/octet-stream',
+  await checkedFetch(
+    `${validated}/v1/leases/${encodeURIComponent(leaseUuid)}/data`,
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${authToken}`,
+        'Content-Type': 'application/octet-stream',
+      },
+      body: payload,
     },
-    body: payload,
-  }, undefined, fetchFn);
+    undefined,
+    fetchFn,
+  );
 }

@@ -69,7 +69,9 @@ export function validateServiceName(name: string): boolean {
   return DNS_LABEL_RE.test(name);
 }
 
-export function buildManifest(opts: BuildManifestOptions): Record<string, unknown> {
+export function buildManifest(
+  opts: BuildManifestOptions,
+): Record<string, unknown> {
   const manifest: Record<string, unknown> = {
     image: opts.image,
     ports: opts.ports,
@@ -80,7 +82,8 @@ export function buildManifest(opts: BuildManifestOptions): Record<string, unknow
   if (opts.user) manifest.user = opts.user;
   if (opts.tmpfs) manifest.tmpfs = opts.tmpfs;
   if (opts.health_check) manifest.health_check = opts.health_check;
-  if (opts.stop_grace_period) manifest.stop_grace_period = opts.stop_grace_period;
+  if (opts.stop_grace_period)
+    manifest.stop_grace_period = opts.stop_grace_period;
   if (opts.init !== undefined) manifest.init = opts.init;
   if (opts.expose) manifest.expose = opts.expose;
   if (opts.labels) manifest.labels = opts.labels;
@@ -88,7 +91,9 @@ export function buildManifest(opts: BuildManifestOptions): Record<string, unknow
   return manifest;
 }
 
-export function buildStackManifest(opts: { services: Record<string, BuildManifestOptions> }): Record<string, unknown> {
+export function buildStackManifest(opts: {
+  services: Record<string, BuildManifestOptions>;
+}): Record<string, unknown> {
   const stack: Record<string, unknown> = {};
   for (const [name, serviceOpts] of Object.entries(opts.services)) {
     stack[name] = buildManifest(serviceOpts);
@@ -97,8 +102,15 @@ export function buildStackManifest(opts: { services: Record<string, BuildManifes
 }
 
 const CARRY_FORWARD_KEYS = [
-  'user', 'tmpfs', 'command', 'args', 'health_check',
-  'stop_grace_period', 'init', 'expose', 'depends_on',
+  'user',
+  'tmpfs',
+  'command',
+  'args',
+  'health_check',
+  'stop_grace_period',
+  'init',
+  'expose',
+  'depends_on',
 ] as const;
 
 export function mergeManifest(
@@ -108,13 +120,19 @@ export function mergeManifest(
   let old: Record<string, unknown>;
   try {
     const parsed = JSON.parse(oldManifestJson);
-    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    if (
+      parsed === null ||
+      typeof parsed !== 'object' ||
+      Array.isArray(parsed)
+    ) {
       throw new Error('existing_manifest must be a JSON object');
     }
     old = parsed as Record<string, unknown>;
   } catch (err) {
     if (err instanceof SyntaxError) {
-      throw new Error(`existing_manifest contains invalid JSON: ${err.message}`);
+      throw new Error(
+        `existing_manifest contains invalid JSON: ${err.message}`,
+      );
     }
     throw err;
   }
@@ -156,24 +174,30 @@ export function mergeManifest(
 }
 
 export function isStackManifest(manifest: unknown): boolean {
-  if (manifest === null || typeof manifest !== 'object' || Array.isArray(manifest)) {
+  if (
+    manifest === null ||
+    typeof manifest !== 'object' ||
+    Array.isArray(manifest)
+  ) {
     return false;
   }
   const obj = manifest as Record<string, unknown>;
   if ('image' in obj) return false;
   const serviceValues = Object.values(obj).filter(
-    v => v !== null && typeof v === 'object' && !Array.isArray(v),
+    (v) => v !== null && typeof v === 'object' && !Array.isArray(v),
   );
   if (serviceValues.length === 0) return false;
-  return serviceValues.every(
-    v => 'image' in (v as Record<string, unknown>),
-  );
+  return serviceValues.every((v) => 'image' in (v as Record<string, unknown>));
 }
 
-export function parseStackManifest(json: string): Record<string, Record<string, unknown>> {
+export function parseStackManifest(
+  json: string,
+): Record<string, Record<string, unknown>> {
   const parsed = JSON.parse(json);
   if (!isStackManifest(parsed)) {
-    throw new Error('Not a valid stack manifest: expected an object without a top-level "image" key, containing service objects with "image" keys');
+    throw new Error(
+      'Not a valid stack manifest: expected an object without a top-level "image" key, containing service objects with "image" keys',
+    );
   }
   return parsed as Record<string, Record<string, unknown>>;
 }

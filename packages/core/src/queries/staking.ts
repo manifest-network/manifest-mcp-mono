@@ -1,11 +1,18 @@
-import { ManifestQueryClient } from '../client.js';
-import {
-  DelegationResult, DelegationsResult, UnbondingDelegationResult, UnbondingDelegationsResult,
-  RedelegationsResult, ValidatorResult, ValidatorsResult, StakingPoolResult,
-  StakingParamsResult, HistoricalInfoResult
-} from '../types.js';
-import { parseBigInt, requireArgs, extractPaginationArgs } from './utils.js';
+import type { ManifestQueryClient } from '../client.js';
 import { throwUnsupportedSubcommand } from '../modules.js';
+import type {
+  DelegationResult,
+  DelegationsResult,
+  HistoricalInfoResult,
+  RedelegationsResult,
+  StakingParamsResult,
+  StakingPoolResult,
+  UnbondingDelegationResult,
+  UnbondingDelegationsResult,
+  ValidatorResult,
+  ValidatorsResult,
+} from '../types.js';
+import { extractPaginationArgs, parseBigInt, requireArgs } from './utils.js';
 
 /** Staking query result union type */
 type StakingQueryResult =
@@ -28,13 +35,18 @@ type StakingQueryResult =
 export async function routeStakingQuery(
   queryClient: ManifestQueryClient,
   subcommand: string,
-  args: string[]
+  args: string[],
 ): Promise<StakingQueryResult> {
   const staking = queryClient.cosmos.staking.v1beta1;
 
   switch (subcommand) {
     case 'delegation': {
-      requireArgs(args, 2, ['delegator-address', 'validator-address'], 'staking delegation');
+      requireArgs(
+        args,
+        2,
+        ['delegator-address', 'validator-address'],
+        'staking delegation',
+      );
       const [delegatorAddr, validatorAddr] = args;
       const result = await staking.delegation({
         delegatorAddr,
@@ -44,10 +56,21 @@ export async function routeStakingQuery(
     }
 
     case 'delegations': {
-      const { pagination, remainingArgs } = extractPaginationArgs(args, 'staking delegations');
-      requireArgs(remainingArgs, 1, ['delegator-address'], 'staking delegations');
+      const { pagination, remainingArgs } = extractPaginationArgs(
+        args,
+        'staking delegations',
+      );
+      requireArgs(
+        remainingArgs,
+        1,
+        ['delegator-address'],
+        'staking delegations',
+      );
       const [delegatorAddr] = remainingArgs;
-      const result = await staking.delegatorDelegations({ delegatorAddr, pagination });
+      const result = await staking.delegatorDelegations({
+        delegatorAddr,
+        pagination,
+      });
       return {
         delegationResponses: result.delegationResponses,
         pagination: result.pagination,
@@ -55,7 +78,12 @@ export async function routeStakingQuery(
     }
 
     case 'unbonding-delegation': {
-      requireArgs(args, 2, ['delegator-address', 'validator-address'], 'staking unbonding-delegation');
+      requireArgs(
+        args,
+        2,
+        ['delegator-address', 'validator-address'],
+        'staking unbonding-delegation',
+      );
       const [delegatorAddr, validatorAddr] = args;
       const result = await staking.unbondingDelegation({
         delegatorAddr,
@@ -65,10 +93,21 @@ export async function routeStakingQuery(
     }
 
     case 'unbonding-delegations': {
-      const { pagination, remainingArgs } = extractPaginationArgs(args, 'staking unbonding-delegations');
-      requireArgs(remainingArgs, 1, ['delegator-address'], 'staking unbonding-delegations');
+      const { pagination, remainingArgs } = extractPaginationArgs(
+        args,
+        'staking unbonding-delegations',
+      );
+      requireArgs(
+        remainingArgs,
+        1,
+        ['delegator-address'],
+        'staking unbonding-delegations',
+      );
       const [delegatorAddr] = remainingArgs;
-      const result = await staking.delegatorUnbondingDelegations({ delegatorAddr, pagination });
+      const result = await staking.delegatorUnbondingDelegations({
+        delegatorAddr,
+        pagination,
+      });
       return {
         unbondingResponses: result.unbondingResponses,
         pagination: result.pagination,
@@ -76,8 +115,16 @@ export async function routeStakingQuery(
     }
 
     case 'redelegations': {
-      const { pagination, remainingArgs } = extractPaginationArgs(args, 'staking redelegations');
-      requireArgs(remainingArgs, 1, ['delegator-address'], 'staking redelegations');
+      const { pagination, remainingArgs } = extractPaginationArgs(
+        args,
+        'staking redelegations',
+      );
+      requireArgs(
+        remainingArgs,
+        1,
+        ['delegator-address'],
+        'staking redelegations',
+      );
       const [delegatorAddr] = remainingArgs;
       // Optional: src and dst validator addresses for filtering
       const srcValidatorAddr = remainingArgs[1] || '';
@@ -102,7 +149,10 @@ export async function routeStakingQuery(
     }
 
     case 'validators': {
-      const { pagination, remainingArgs } = extractPaginationArgs(args, 'staking validators');
+      const { pagination, remainingArgs } = extractPaginationArgs(
+        args,
+        'staking validators',
+      );
       // Optional: status filter
       const status = remainingArgs[0] || '';
       const result = await staking.validators({ status, pagination });
@@ -110,10 +160,21 @@ export async function routeStakingQuery(
     }
 
     case 'validator-delegations': {
-      const { pagination, remainingArgs } = extractPaginationArgs(args, 'staking validator-delegations');
-      requireArgs(remainingArgs, 1, ['validator-address'], 'staking validator-delegations');
+      const { pagination, remainingArgs } = extractPaginationArgs(
+        args,
+        'staking validator-delegations',
+      );
+      requireArgs(
+        remainingArgs,
+        1,
+        ['validator-address'],
+        'staking validator-delegations',
+      );
       const [validatorAddr] = remainingArgs;
-      const result = await staking.validatorDelegations({ validatorAddr, pagination });
+      const result = await staking.validatorDelegations({
+        validatorAddr,
+        pagination,
+      });
       return {
         delegationResponses: result.delegationResponses,
         pagination: result.pagination,
@@ -121,10 +182,21 @@ export async function routeStakingQuery(
     }
 
     case 'validator-unbonding-delegations': {
-      const { pagination, remainingArgs } = extractPaginationArgs(args, 'staking validator-unbonding-delegations');
-      requireArgs(remainingArgs, 1, ['validator-address'], 'staking validator-unbonding-delegations');
+      const { pagination, remainingArgs } = extractPaginationArgs(
+        args,
+        'staking validator-unbonding-delegations',
+      );
+      requireArgs(
+        remainingArgs,
+        1,
+        ['validator-address'],
+        'staking validator-unbonding-delegations',
+      );
       const [validatorAddr] = remainingArgs;
-      const result = await staking.validatorUnbondingDelegations({ validatorAddr, pagination });
+      const result = await staking.validatorUnbondingDelegations({
+        validatorAddr,
+        pagination,
+      });
       return {
         unbondingResponses: result.unbondingResponses,
         pagination: result.pagination,

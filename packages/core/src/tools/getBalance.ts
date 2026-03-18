@@ -8,14 +8,21 @@ function catchNotFound<T>(promise: Promise<T>): Promise<T | null> {
     if (!(err instanceof Error)) throw err;
     const msg = err.message;
     // Match Cosmos SDK / gRPC NOT_FOUND patterns (key not found, account not found, etc.)
-    if (/key not found/i.test(msg) || /account.*not found/i.test(msg) || /credit.*not found/i.test(msg)) {
+    if (
+      /key not found/i.test(msg) ||
+      /account.*not found/i.test(msg) ||
+      /credit.*not found/i.test(msg)
+    ) {
       return null;
     }
     throw err;
   });
 }
 
-export async function getBalance(queryClient: ManifestQueryClient, address: string) {
+export async function getBalance(
+  queryClient: ManifestQueryClient,
+  address: string,
+) {
   const bank = queryClient.cosmos.bank.v1beta1;
   const billing = queryClient.liftedinit.billing.v1;
 
@@ -29,10 +36,12 @@ export async function getBalance(queryClient: ManifestQueryClient, address: stri
     ? {
         active_leases: creditResult.creditAccount.activeLeaseCount.toString(),
         pending_leases: creditResult.creditAccount.pendingLeaseCount.toString(),
-        reserved_amounts: creditResult.creditAccount.reservedAmounts.map((c) => ({
-          denom: c.denom,
-          amount: c.amount,
-        })),
+        reserved_amounts: creditResult.creditAccount.reservedAmounts.map(
+          (c) => ({
+            denom: c.denom,
+            amount: c.amount,
+          }),
+        ),
       }
     : null;
 
@@ -48,7 +57,9 @@ export async function getBalance(queryClient: ManifestQueryClient, address: stri
         })),
         hours_remaining:
           estimateResult.estimatedDurationSeconds > 0n
-            ? (Number(estimateResult.estimatedDurationSeconds) / 3600).toFixed(1)
+            ? (Number(estimateResult.estimatedDurationSeconds) / 3600).toFixed(
+                1,
+              )
             : '0',
         running_apps: estimateResult.activeLeaseCount.toString(),
       }

@@ -1,17 +1,38 @@
-import { describe, it, expect } from 'vitest';
 import { toBech32 } from '@cosmjs/encoding';
-import { parseAmount, parseBigInt, extractFlag, extractBooleanFlag, filterConsumedArgs, parseColonPair, parseLeaseItem, validateAddress, validateMemo, validateArgsLength, requireArgs, parseHexBytes, bytesToHex, parseVoteOption } from './utils.js';
+import { describe, expect, it } from 'vitest';
 import { ManifestMCPError, ManifestMCPErrorCode } from '../types.js';
+import {
+  bytesToHex,
+  extractBooleanFlag,
+  extractFlag,
+  filterConsumedArgs,
+  parseAmount,
+  parseBigInt,
+  parseColonPair,
+  parseHexBytes,
+  parseLeaseItem,
+  parseVoteOption,
+  requireArgs,
+  validateAddress,
+  validateArgsLength,
+  validateMemo,
+} from './utils.js';
 
 describe('parseAmount', () => {
   it('should parse valid amount strings', () => {
     expect(parseAmount('1000umfx')).toEqual({ amount: '1000', denom: 'umfx' });
     expect(parseAmount('1uatom')).toEqual({ amount: '1', denom: 'uatom' });
-    expect(parseAmount('999999999token')).toEqual({ amount: '999999999', denom: 'token' });
+    expect(parseAmount('999999999token')).toEqual({
+      amount: '999999999',
+      denom: 'token',
+    });
   });
 
   it('should handle denominations with numbers', () => {
-    expect(parseAmount('100ibc123')).toEqual({ amount: '100', denom: 'ibc123' });
+    expect(parseAmount('100ibc123')).toEqual({
+      amount: '100',
+      denom: 'ibc123',
+    });
   });
 
   it('should handle factory denoms with slashes', () => {
@@ -29,7 +50,10 @@ describe('parseAmount', () => {
   });
 
   it('should handle denoms with underscores', () => {
-    expect(parseAmount('100my_token')).toEqual({ amount: '100', denom: 'my_token' });
+    expect(parseAmount('100my_token')).toEqual({
+      amount: '100',
+      denom: 'my_token',
+    });
   });
 
   it('should throw ManifestMCPError for invalid format', () => {
@@ -45,7 +69,9 @@ describe('parseAmount', () => {
       parseAmount('invalid');
     } catch (error) {
       expect(error).toBeInstanceOf(ManifestMCPError);
-      expect((error as ManifestMCPError).code).toBe(ManifestMCPErrorCode.TX_FAILED);
+      expect((error as ManifestMCPError).code).toBe(
+        ManifestMCPErrorCode.TX_FAILED,
+      );
     }
   });
 
@@ -53,7 +79,9 @@ describe('parseAmount', () => {
     try {
       parseAmount('');
     } catch (error) {
-      expect((error as ManifestMCPError).message).toContain('Received empty string');
+      expect((error as ManifestMCPError).message).toContain(
+        'Received empty string',
+      );
     }
   });
 
@@ -69,7 +97,9 @@ describe('parseAmount', () => {
     try {
       parseAmount('1,000umfx');
     } catch (error) {
-      expect((error as ManifestMCPError).message).toContain('Do not use commas');
+      expect((error as ManifestMCPError).message).toContain(
+        'Do not use commas',
+      );
     }
   });
 
@@ -77,7 +107,9 @@ describe('parseAmount', () => {
     try {
       parseAmount('1000');
     } catch (error) {
-      expect((error as ManifestMCPError).message).toContain('Missing denomination');
+      expect((error as ManifestMCPError).message).toContain(
+        'Missing denomination',
+      );
     }
   });
 
@@ -85,7 +117,9 @@ describe('parseAmount', () => {
     try {
       parseAmount('umfx1000');
     } catch (error) {
-      expect((error as ManifestMCPError).message).toContain('must start with a number');
+      expect((error as ManifestMCPError).message).toContain(
+        'must start with a number',
+      );
     }
   });
 
@@ -104,7 +138,9 @@ describe('parseBigInt', () => {
   it('should parse valid integer strings', () => {
     expect(parseBigInt('0', 'test')).toBe(BigInt(0));
     expect(parseBigInt('123', 'test')).toBe(BigInt(123));
-    expect(parseBigInt('9999999999999999999', 'test')).toBe(BigInt('9999999999999999999'));
+    expect(parseBigInt('9999999999999999999', 'test')).toBe(
+      BigInt('9999999999999999999'),
+    );
   });
 
   it('should throw ManifestMCPError for invalid integers', () => {
@@ -143,17 +179,25 @@ describe('extractFlag', () => {
   });
 
   it('should handle flag in middle of args', () => {
-    const result = extractFlag(['arg1', '--memo', 'hello', 'arg2'], '--memo', 'test');
+    const result = extractFlag(
+      ['arg1', '--memo', 'hello', 'arg2'],
+      '--memo',
+      'test',
+    );
     expect(result.value).toBe('hello');
     expect(result.consumedIndices).toEqual([1, 2]);
   });
 
   it('should throw when flag has no value', () => {
-    expect(() => extractFlag(['--memo'], '--memo', 'test')).toThrow(ManifestMCPError);
+    expect(() => extractFlag(['--memo'], '--memo', 'test')).toThrow(
+      ManifestMCPError,
+    );
   });
 
   it('should throw when flag value looks like another flag', () => {
-    expect(() => extractFlag(['--memo', '--other'], '--memo', 'test')).toThrow(ManifestMCPError);
+    expect(() => extractFlag(['--memo', '--other'], '--memo', 'test')).toThrow(
+      ManifestMCPError,
+    );
   });
 
   it('should include context in error message', () => {
@@ -190,25 +234,41 @@ describe('filterConsumedArgs', () => {
 
 describe('parseColonPair', () => {
   it('should parse valid colon-separated pairs', () => {
-    expect(parseColonPair('address:amount', 'address', 'amount', 'test')).toEqual(['address', 'amount']);
-    expect(parseColonPair('key:value', 'key', 'value', 'test')).toEqual(['key', 'value']);
+    expect(
+      parseColonPair('address:amount', 'address', 'amount', 'test'),
+    ).toEqual(['address', 'amount']);
+    expect(parseColonPair('key:value', 'key', 'value', 'test')).toEqual([
+      'key',
+      'value',
+    ]);
   });
 
   it('should handle values with colons (takes first colon as separator)', () => {
-    const result = parseColonPair('address:100:extra', 'address', 'amount', 'test');
+    const result = parseColonPair(
+      'address:100:extra',
+      'address',
+      'amount',
+      'test',
+    );
     expect(result).toEqual(['address', '100:extra']);
   });
 
   it('should throw for missing colon', () => {
-    expect(() => parseColonPair('nodelimiter', 'left', 'right', 'test')).toThrow(ManifestMCPError);
+    expect(() =>
+      parseColonPair('nodelimiter', 'left', 'right', 'test'),
+    ).toThrow(ManifestMCPError);
   });
 
   it('should throw for empty left side', () => {
-    expect(() => parseColonPair(':value', 'left', 'right', 'test')).toThrow(ManifestMCPError);
+    expect(() => parseColonPair(':value', 'left', 'right', 'test')).toThrow(
+      ManifestMCPError,
+    );
   });
 
   it('should throw for empty right side', () => {
-    expect(() => parseColonPair('key:', 'left', 'right', 'test')).toThrow(ManifestMCPError);
+    expect(() => parseColonPair('key:', 'left', 'right', 'test')).toThrow(
+      ManifestMCPError,
+    );
   });
 
   it('should include context and field names in error messages', () => {
@@ -242,17 +302,27 @@ describe('parseColonPair', () => {
 describe('parseLeaseItem', () => {
   it('should parse sku-uuid:quantity (no service name)', () => {
     const result = parseLeaseItem('sku-123:1');
-    expect(result).toEqual({ skuUuid: 'sku-123', quantity: BigInt(1), serviceName: '' });
+    expect(result).toEqual({
+      skuUuid: 'sku-123',
+      quantity: BigInt(1),
+      serviceName: '',
+    });
   });
 
   it('should parse sku-uuid:quantity:service-name', () => {
     const result = parseLeaseItem('sku-123:1:web');
-    expect(result).toEqual({ skuUuid: 'sku-123', quantity: BigInt(1), serviceName: 'web' });
+    expect(result).toEqual({
+      skuUuid: 'sku-123',
+      quantity: BigInt(1),
+      serviceName: 'web',
+    });
   });
 
   it('should accept valid DNS label service names', () => {
     expect(parseLeaseItem('sku:2:db').serviceName).toBe('db');
-    expect(parseLeaseItem('sku:1:my-service-1').serviceName).toBe('my-service-1');
+    expect(parseLeaseItem('sku:1:my-service-1').serviceName).toBe(
+      'my-service-1',
+    );
     expect(parseLeaseItem('sku:1:a').serviceName).toBe('a');
     expect(parseLeaseItem('sku:1:a1b2c3').serviceName).toBe('a1b2c3');
   });
@@ -316,15 +386,21 @@ describe('validateAddress', () => {
   });
 
   it('should throw for invalid bech32 address', () => {
-    expect(() => validateAddress('notanaddress', 'recipient')).toThrow(ManifestMCPError);
-    expect(() => validateAddress('manifest1invalid', 'recipient')).toThrow(ManifestMCPError);
+    expect(() => validateAddress('notanaddress', 'recipient')).toThrow(
+      ManifestMCPError,
+    );
+    expect(() => validateAddress('manifest1invalid', 'recipient')).toThrow(
+      ManifestMCPError,
+    );
   });
 
   it('should use INVALID_ADDRESS error code', () => {
     try {
       validateAddress('invalid', 'recipient');
     } catch (error) {
-      expect((error as ManifestMCPError).code).toBe(ManifestMCPErrorCode.INVALID_ADDRESS);
+      expect((error as ManifestMCPError).code).toBe(
+        ManifestMCPErrorCode.INVALID_ADDRESS,
+      );
     }
   });
 
@@ -332,16 +408,22 @@ describe('validateAddress', () => {
     try {
       validateAddress('invalid', 'validator address');
     } catch (error) {
-      expect((error as ManifestMCPError).message).toContain('validator address');
+      expect((error as ManifestMCPError).message).toContain(
+        'validator address',
+      );
     }
   });
 
   it('should validate expected prefix when provided', () => {
     // Should pass when prefix matches
-    expect(() => validateAddress(validManifestAddress, 'test', 'manifest')).not.toThrow();
+    expect(() =>
+      validateAddress(validManifestAddress, 'test', 'manifest'),
+    ).not.toThrow();
 
     // Should fail when prefix doesn't match
-    expect(() => validateAddress(validManifestAddress, 'test', 'cosmos')).toThrow(ManifestMCPError);
+    expect(() =>
+      validateAddress(validManifestAddress, 'test', 'cosmos'),
+    ).toThrow(ManifestMCPError);
   });
 
   it('should include expected prefix in error message', () => {
@@ -371,7 +453,9 @@ describe('validateMemo', () => {
     try {
       validateMemo('a'.repeat(300));
     } catch (error) {
-      expect((error as ManifestMCPError).code).toBe(ManifestMCPErrorCode.TX_FAILED);
+      expect((error as ManifestMCPError).code).toBe(
+        ManifestMCPErrorCode.TX_FAILED,
+      );
     }
   });
 
@@ -390,19 +474,27 @@ describe('validateArgsLength', () => {
   it('should accept args within limit', () => {
     expect(() => validateArgsLength([], 'test')).not.toThrow();
     expect(() => validateArgsLength(['a', 'b', 'c'], 'test')).not.toThrow();
-    expect(() => validateArgsLength(new Array(100).fill('arg'), 'test')).not.toThrow();
+    expect(() =>
+      validateArgsLength(new Array(100).fill('arg'), 'test'),
+    ).not.toThrow();
   });
 
   it('should throw for args exceeding 100 items', () => {
-    expect(() => validateArgsLength(new Array(101).fill('arg'), 'test')).toThrow(ManifestMCPError);
-    expect(() => validateArgsLength(new Array(200).fill('arg'), 'test')).toThrow(ManifestMCPError);
+    expect(() =>
+      validateArgsLength(new Array(101).fill('arg'), 'test'),
+    ).toThrow(ManifestMCPError);
+    expect(() =>
+      validateArgsLength(new Array(200).fill('arg'), 'test'),
+    ).toThrow(ManifestMCPError);
   });
 
   it('should use TX_FAILED error code', () => {
     try {
       validateArgsLength(new Array(150).fill('arg'), 'test');
     } catch (error) {
-      expect((error as ManifestMCPError).code).toBe(ManifestMCPErrorCode.TX_FAILED);
+      expect((error as ManifestMCPError).code).toBe(
+        ManifestMCPErrorCode.TX_FAILED,
+      );
     }
   });
 
@@ -420,8 +512,12 @@ describe('validateArgsLength', () => {
 
 describe('requireArgs', () => {
   it('should pass when args meet minimum count', () => {
-    expect(() => requireArgs(['a', 'b'], 2, ['arg1', 'arg2'], 'test')).not.toThrow();
-    expect(() => requireArgs(['a', 'b', 'c'], 2, ['arg1', 'arg2'], 'test')).not.toThrow();
+    expect(() =>
+      requireArgs(['a', 'b'], 2, ['arg1', 'arg2'], 'test'),
+    ).not.toThrow();
+    expect(() =>
+      requireArgs(['a', 'b', 'c'], 2, ['arg1', 'arg2'], 'test'),
+    ).not.toThrow();
   });
 
   it('should pass when zero args required', () => {
@@ -429,15 +525,21 @@ describe('requireArgs', () => {
   });
 
   it('should throw when args below minimum count', () => {
-    expect(() => requireArgs(['a'], 2, ['arg1', 'arg2'], 'test')).toThrow(ManifestMCPError);
-    expect(() => requireArgs([], 1, ['arg1'], 'test')).toThrow(ManifestMCPError);
+    expect(() => requireArgs(['a'], 2, ['arg1', 'arg2'], 'test')).toThrow(
+      ManifestMCPError,
+    );
+    expect(() => requireArgs([], 1, ['arg1'], 'test')).toThrow(
+      ManifestMCPError,
+    );
   });
 
   it('should use TX_FAILED error code by default', () => {
     try {
       requireArgs([], 1, ['arg1'], 'test');
     } catch (error) {
-      expect((error as ManifestMCPError).code).toBe(ManifestMCPErrorCode.TX_FAILED);
+      expect((error as ManifestMCPError).code).toBe(
+        ManifestMCPErrorCode.TX_FAILED,
+      );
     }
   });
 
@@ -487,24 +589,32 @@ describe('requireArgs', () => {
     try {
       requireArgs([], 1, ['arg1'], 'test', ManifestMCPErrorCode.QUERY_FAILED);
     } catch (error) {
-      expect((error as ManifestMCPError).code).toBe(ManifestMCPErrorCode.QUERY_FAILED);
+      expect((error as ManifestMCPError).code).toBe(
+        ManifestMCPErrorCode.QUERY_FAILED,
+      );
     }
   });
 });
 
 describe('parseHexBytes', () => {
   it('should parse valid hex strings', () => {
-    expect(parseHexBytes('deadbeef', 'test', 100)).toEqual(new Uint8Array([0xde, 0xad, 0xbe, 0xef]));
+    expect(parseHexBytes('deadbeef', 'test', 100)).toEqual(
+      new Uint8Array([0xde, 0xad, 0xbe, 0xef]),
+    );
     expect(parseHexBytes('00', 'test', 100)).toEqual(new Uint8Array([0x00]));
     expect(parseHexBytes('ff', 'test', 100)).toEqual(new Uint8Array([0xff]));
     expect(parseHexBytes('0123456789abcdef', 'test', 100)).toEqual(
-      new Uint8Array([0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef])
+      new Uint8Array([0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef]),
     );
   });
 
   it('should be case-insensitive', () => {
-    expect(parseHexBytes('DEADBEEF', 'test', 100)).toEqual(new Uint8Array([0xde, 0xad, 0xbe, 0xef]));
-    expect(parseHexBytes('DeAdBeEf', 'test', 100)).toEqual(new Uint8Array([0xde, 0xad, 0xbe, 0xef]));
+    expect(parseHexBytes('DEADBEEF', 'test', 100)).toEqual(
+      new Uint8Array([0xde, 0xad, 0xbe, 0xef]),
+    );
+    expect(parseHexBytes('DeAdBeEf', 'test', 100)).toEqual(
+      new Uint8Array([0xde, 0xad, 0xbe, 0xef]),
+    );
   });
 
   it('should throw for empty string', () => {
@@ -515,16 +625,24 @@ describe('parseHexBytes', () => {
   it('should throw for odd-length hex strings', () => {
     expect(() => parseHexBytes('abc', 'field', 100)).toThrow(ManifestMCPError);
     expect(() => parseHexBytes('1', 'field', 100)).toThrow(ManifestMCPError);
-    expect(() => parseHexBytes('12345', 'field', 100)).toThrow(ManifestMCPError);
+    expect(() => parseHexBytes('12345', 'field', 100)).toThrow(
+      ManifestMCPError,
+    );
   });
 
   it('should throw for exceeding max bytes', () => {
-    expect(() => parseHexBytes('deadbeef', 'field', 2)).toThrow(ManifestMCPError);
-    expect(() => parseHexBytes('0102030405', 'field', 2)).toThrow(ManifestMCPError);
+    expect(() => parseHexBytes('deadbeef', 'field', 2)).toThrow(
+      ManifestMCPError,
+    );
+    expect(() => parseHexBytes('0102030405', 'field', 2)).toThrow(
+      ManifestMCPError,
+    );
   });
 
   it('should accept exactly max bytes', () => {
-    expect(parseHexBytes('deadbeef', 'test', 4)).toEqual(new Uint8Array([0xde, 0xad, 0xbe, 0xef]));
+    expect(parseHexBytes('deadbeef', 'test', 4)).toEqual(
+      new Uint8Array([0xde, 0xad, 0xbe, 0xef]),
+    );
   });
 
   it('should throw for invalid hex characters', () => {
@@ -537,7 +655,9 @@ describe('parseHexBytes', () => {
     try {
       parseHexBytes('', 'field', 100);
     } catch (error) {
-      expect((error as ManifestMCPError).code).toBe(ManifestMCPErrorCode.TX_FAILED);
+      expect((error as ManifestMCPError).code).toBe(
+        ManifestMCPErrorCode.TX_FAILED,
+      );
     }
   });
 
@@ -545,7 +665,9 @@ describe('parseHexBytes', () => {
     try {
       parseHexBytes('', 'field', 100, ManifestMCPErrorCode.QUERY_FAILED);
     } catch (error) {
-      expect((error as ManifestMCPError).code).toBe(ManifestMCPErrorCode.QUERY_FAILED);
+      expect((error as ManifestMCPError).code).toBe(
+        ManifestMCPErrorCode.QUERY_FAILED,
+      );
     }
   });
 
@@ -560,10 +682,16 @@ describe('parseHexBytes', () => {
 
 describe('bytesToHex', () => {
   it('should convert bytes to hex string', () => {
-    expect(bytesToHex(new Uint8Array([0xde, 0xad, 0xbe, 0xef]))).toBe('deadbeef');
+    expect(bytesToHex(new Uint8Array([0xde, 0xad, 0xbe, 0xef]))).toBe(
+      'deadbeef',
+    );
     expect(bytesToHex(new Uint8Array([0x00]))).toBe('00');
     expect(bytesToHex(new Uint8Array([0xff]))).toBe('ff');
-    expect(bytesToHex(new Uint8Array([0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef]))).toBe('0123456789abcdef');
+    expect(
+      bytesToHex(
+        new Uint8Array([0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef]),
+      ),
+    ).toBe('0123456789abcdef');
   });
 
   it('should handle empty array', () => {
@@ -579,7 +707,10 @@ describe('bytesToHex', () => {
 
 describe('extractBooleanFlag', () => {
   it('should return true and filtered args when flag is present', () => {
-    const result = extractBooleanFlag(['arg1', '--active-only', 'arg2'], '--active-only');
+    const result = extractBooleanFlag(
+      ['arg1', '--active-only', 'arg2'],
+      '--active-only',
+    );
     expect(result.value).toBe(true);
     expect(result.remainingArgs).toEqual(['arg1', 'arg2']);
   });
@@ -662,17 +793,27 @@ describe('parseVoteOption', () => {
   });
 
   it('should throw ManifestMCPError for invalid option', () => {
-    expect(() => parseVoteOption('invalid', mockVoteOption)).toThrow(ManifestMCPError);
-    expect(() => parseVoteOption('maybe', mockVoteOption)).toThrow(ManifestMCPError);
-    expect(() => parseVoteOption('0', mockVoteOption)).toThrow(ManifestMCPError);
-    expect(() => parseVoteOption('5', mockVoteOption)).toThrow(ManifestMCPError);
+    expect(() => parseVoteOption('invalid', mockVoteOption)).toThrow(
+      ManifestMCPError,
+    );
+    expect(() => parseVoteOption('maybe', mockVoteOption)).toThrow(
+      ManifestMCPError,
+    );
+    expect(() => parseVoteOption('0', mockVoteOption)).toThrow(
+      ManifestMCPError,
+    );
+    expect(() => parseVoteOption('5', mockVoteOption)).toThrow(
+      ManifestMCPError,
+    );
   });
 
   it('should use TX_FAILED error code', () => {
     try {
       parseVoteOption('invalid', mockVoteOption);
     } catch (error) {
-      expect((error as ManifestMCPError).code).toBe(ManifestMCPErrorCode.TX_FAILED);
+      expect((error as ManifestMCPError).code).toBe(
+        ManifestMCPErrorCode.TX_FAILED,
+      );
     }
   });
 

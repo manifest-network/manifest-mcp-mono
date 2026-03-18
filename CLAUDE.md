@@ -8,6 +8,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 npm run build          # Build all packages (tsdown, unbundled ESM)
 npm run lint           # Type-check all packages (tsc --noEmit)
 npm run test           # Unit tests all packages (vitest)
+npm run check          # Lint, format, and import sorting check via biome
+npm run check:fix      # Auto-fix biome issues
+npm run format         # Format all packages via biome
 npm run test:e2e       # E2E tests against live chain (requires docker-compose up)
 
 # Per-package (run from packages/core, packages/chain, packages/lease, packages/fred, or packages/node)
@@ -68,6 +71,7 @@ Three MCP servers bridging AI assistants to Cosmos SDK blockchains (Manifest Net
 - Input validation via helpers in `validation.ts` (`requireString`, `requireStringEnum`, `requireUuid`, `parseArgs`, `optionalBoolean`).
 - BigInt values serialized to strings via `bigIntReplacer` JSON replacer.
 - `@cosmjs/stargate` is overridden to `@manifest-network/stargate` (custom fork). See core `package.json` overrides.
+- Code formatting, linting, and import sorting enforced by Biome (see `biome.json`). Run `npm run check` before committing.
 
 ## Environment variables (node package)
 
@@ -80,5 +84,8 @@ Three MCP servers bridging AI assistants to Cosmos SDK blockchains (Manifest Net
 | `MANIFEST_KEY_FILE` | No | `~/.manifest/key.json` |
 | `MANIFEST_KEY_PASSWORD` | No | -- |
 | `COSMOS_MNEMONIC` | No | -- |
+| `LOG_LEVEL` | No | `warn` |
+
+`LOG_LEVEL` accepts `debug`, `info`, `warn`, `error`, or `silent`. Logs go to stderr.
 
 The node package loads `.env` files automatically via `dotenv`.

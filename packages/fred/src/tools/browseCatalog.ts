@@ -1,5 +1,10 @@
 import type { ManifestQueryClient } from '@manifest-network/manifest-mcp-core';
-import { MAX_PAGE_LIMIT, createPagination, ManifestMCPError, INFRASTRUCTURE_ERROR_CODES } from '@manifest-network/manifest-mcp-core';
+import {
+  createPagination,
+  INFRASTRUCTURE_ERROR_CODES,
+  MAX_PAGE_LIMIT,
+  ManifestMCPError,
+} from '@manifest-network/manifest-mcp-core';
 import { getProviderHealth, ProviderApiError } from '../http/provider.js';
 
 /** Maximum concurrent outgoing health check requests to provider APIs */
@@ -25,10 +30,7 @@ export async function mapWithConcurrency<T, R>(
   }
 
   const workerCount = Math.min(Math.max(limit, 1), items.length);
-  const workers = Array.from(
-    { length: workerCount },
-    () => worker(),
-  );
+  const workers = Array.from({ length: workerCount }, () => worker());
   await Promise.all(workers);
   return results;
 }
@@ -55,7 +57,11 @@ export async function browseCatalog(queryClient: ManifestQueryClient) {
         healthy = health.status === 'ok' || health.status === 'healthy';
         providerUuid = health.provider_uuid;
       } catch (err) {
-        if (err instanceof ManifestMCPError && INFRASTRUCTURE_ERROR_CODES.has(err.code)) throw err;
+        if (
+          err instanceof ManifestMCPError &&
+          INFRASTRUCTURE_ERROR_CODES.has(err.code)
+        )
+          throw err;
         if (err instanceof ProviderApiError) {
           healthError = `HTTP ${err.status}: ${err.message}`;
         } else {
@@ -78,7 +84,10 @@ export async function browseCatalog(queryClient: ManifestQueryClient) {
     providersResult.providers.map((p) => [p.uuid, p]),
   );
 
-  const tiers: Record<string, Array<{ provider: string; price: string | null; unit: string | null }>> = {};
+  const tiers: Record<
+    string,
+    Array<{ provider: string; price: string | null; unit: string | null }>
+  > = {};
   for (const s of skusResult.skus) {
     const provider = providerByUuid.get(s.providerUuid);
     const entry = {

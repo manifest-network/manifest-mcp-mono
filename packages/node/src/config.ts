@@ -18,7 +18,7 @@ function getEnvRequired(key: string): string {
   const value = process.env[key];
   if (!value) {
     throw new Error(
-      `Environment variable ${key} is not set. Please check your .env file or environment.`
+      `Environment variable ${key} is not set. Please check your .env file or environment.`,
     );
   }
   return value;
@@ -37,10 +37,18 @@ function resolvePath(p: string): string {
   return p;
 }
 
-export function loadKeyfileConfig(): Pick<NodeMCPConfig, 'addressPrefix' | 'keyfilePath'> {
+export function loadKeyfileConfig(): Pick<
+  NodeMCPConfig,
+  'addressPrefix' | 'keyfilePath'
+> {
   return {
     addressPrefix: getEnvOptional('COSMOS_ADDRESS_PREFIX', 'manifest'),
-    keyfilePath: resolvePath(getEnvOptional('MANIFEST_KEY_FILE', join(homedir(), '.manifest', 'key.json'))),
+    keyfilePath: resolvePath(
+      getEnvOptional(
+        'MANIFEST_KEY_FILE',
+        join(homedir(), '.manifest', 'key.json'),
+      ),
+    ),
   };
 }
 
@@ -50,8 +58,13 @@ export function loadConfig(): NodeMCPConfig {
     rpcUrl: getEnvRequired('COSMOS_RPC_URL'),
     gasPrice: getEnvRequired('COSMOS_GAS_PRICE'),
     addressPrefix: getEnvOptional('COSMOS_ADDRESS_PREFIX', 'manifest'),
-    mnemonic: process.env['COSMOS_MNEMONIC'],
-    keyfilePath: resolvePath(getEnvOptional('MANIFEST_KEY_FILE', join(homedir(), '.manifest', 'key.json'))),
-    keyPassword: process.env['MANIFEST_KEY_PASSWORD'],
+    mnemonic: process.env.COSMOS_MNEMONIC,
+    keyfilePath: resolvePath(
+      getEnvOptional(
+        'MANIFEST_KEY_FILE',
+        join(homedir(), '.manifest', 'key.json'),
+      ),
+    ),
+    keyPassword: process.env.MANIFEST_KEY_PASSWORD,
   };
 }
