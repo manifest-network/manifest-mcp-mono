@@ -1,5 +1,5 @@
 import type { CosmosClientManager, ManifestQueryClient } from '@manifest-network/manifest-mcp-core';
-import { cosmosTx, ManifestMCPError, ManifestMCPErrorCode, sanitizeForLogging, type CosmosTxResult, MAX_PAGE_LIMIT, requireUuid } from '@manifest-network/manifest-mcp-core';
+import { cosmosTx, ManifestMCPError, ManifestMCPErrorCode, sanitizeForLogging, type CosmosTxResult, MAX_PAGE_LIMIT, createPagination, requireUuid } from '@manifest-network/manifest-mcp-core';
 import { uploadLeaseData, getLeaseConnectionInfo, type LeaseConnectionInfo } from '../http/provider.js';
 import { pollLeaseUntilReady } from '../http/fred.js';
 import type { FredLeaseStatus } from '../http/fred.js';
@@ -44,13 +44,7 @@ async function findSkuUuid(
   queryClient: ManifestQueryClient,
   size: string,
 ): Promise<{ skuUuid: string; providerUuid: string }> {
-  const pagination = {
-    key: new Uint8Array(),
-    offset: BigInt(0),
-    limit: MAX_PAGE_LIMIT,
-    countTotal: false,
-    reverse: false,
-  };
+  const pagination = createPagination(MAX_PAGE_LIMIT);
   const result = await queryClient.liftedinit.sku.v1.sKUs({ activeOnly: true, pagination });
 
   for (const sku of result.skus) {

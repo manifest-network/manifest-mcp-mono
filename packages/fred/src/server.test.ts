@@ -1,5 +1,4 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 vi.mock('@manifest-network/manifest-mcp-core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@manifest-network/manifest-mcp-core')>();
@@ -48,6 +47,7 @@ import { getLeaseProvision, getLeaseReleases } from './http/fred.js';
 import { resolveProviderUrl } from './tools/resolveLeaseProvider.js';
 import { fetchActiveLease } from './tools/fetchActiveLease.js';
 import { makeMockConfig, makeMockWallet } from '@manifest-network/manifest-mcp-core/__test-utils__/mocks.js';
+import { callTool as callToolHelper, type ToolResult } from '@manifest-network/manifest-mcp-core/__test-utils__/callTool.js';
 
 const mockGetLeaseProvision = vi.mocked(getLeaseProvision);
 const mockGetLeaseReleases = vi.mocked(getLeaseReleases);
@@ -58,29 +58,8 @@ const LEASE_UUID = '550e8400-e29b-41d4-a716-446655440000';
 
 let activeTransports: InMemoryTransport[] = [];
 
-interface ToolResult {
-  content: Array<{ type: string; text: string }>;
-  isError?: boolean;
-}
-
-async function callTool(
-  server: FredMCPServer,
-  toolName: string,
-  toolInput: Record<string, unknown> = {},
-): Promise<ToolResult> {
-  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
-  activeTransports.push(clientTransport, serverTransport);
-
-  const client = new Client({ name: 'test-client', version: '1.0.0' });
-
-  await server.getServer().connect(serverTransport);
-  await client.connect(clientTransport);
-
-  try {
-    return await client.callTool({ name: toolName, arguments: toolInput }) as ToolResult;
-  } finally {
-    await client.close();
-  }
+function callTool(server: FredMCPServer, toolName: string, toolInput: Record<string, unknown> = {}): Promise<ToolResult> {
+  return callToolHelper(server.getServer(), toolName, toolInput, activeTransports);
 }
 
 beforeEach(() => {

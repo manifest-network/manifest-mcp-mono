@@ -10,7 +10,7 @@ export { LeaseState, leaseStateToJSON } from '@manifest-network/manifestjs/dist/
 export { type StopAppResult } from './tools/stopApp.js';
 export { requireString, requireStringEnum, requireUuid, parseArgs, optionalBoolean, DNS_LABEL_RE } from './validation.js';
 export { VERSION } from './version.js';
-export { MAX_PAGE_LIMIT } from './queries/utils.js';
+export { MAX_PAGE_LIMIT, createPagination } from './queries/utils.js';
 
 // Server utilities (used by chain/lease/fred packages)
 export {

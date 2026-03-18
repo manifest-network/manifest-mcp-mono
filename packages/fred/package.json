@@ -28,17 +28,27 @@
   ],
   "author": "Felix C. Morency",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/manifest-network/manifest-mcp-mono.git",
+    "directory": "packages/fred"
+  },
+  "homepage": "https://github.com/manifest-network/manifest-mcp-mono#readme",
+  "bugs": "https://github.com/manifest-network/manifest-mcp-mono/issues",
+  "engines": {
+    "node": ">=20"
+  },
   "files": [
     "dist"
   ],
   "dependencies": {
     "@cosmjs/encoding": "0.32.4",
     "@manifest-network/manifest-mcp-core": "*",
-    "@manifest-network/manifestjs": "2.2.0-billing-v2.3",
-    "@modelcontextprotocol/sdk": "1.25.3",
+    "@modelcontextprotocol/sdk": "1.27.1",
     "zod": "^4.3.6"
   },
   "devDependencies": {
+    "@manifest-network/manifestjs": "2.2.0-billing-v2.3",
     "@types/node": "20.19.30",
     "typescript": "5.9.3",
     "vitest": "4.0.18"

@@ -29,35 +29,15 @@ import {
   cosmosTx,
 } from '@manifest-network/manifest-mcp-core';
 import { makeMockConfig, makeMockWallet } from '@manifest-network/manifest-mcp-core/__test-utils__/mocks.js';
+import { callTool as callToolHelper, type ToolResult } from '@manifest-network/manifest-mcp-core/__test-utils__/callTool.js';
 
 const mockCosmosQuery = vi.mocked(cosmosQuery);
 const mockCosmosTx = vi.mocked(cosmosTx);
 
 let activeTransports: InMemoryTransport[] = [];
 
-interface ToolResult {
-  content: Array<{ type: string; text: string }>;
-  isError?: boolean;
-}
-
-async function callTool(
-  server: ChainMCPServer,
-  toolName: string,
-  toolInput: Record<string, unknown> = {},
-): Promise<ToolResult> {
-  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
-  activeTransports.push(clientTransport, serverTransport);
-
-  const client = new Client({ name: 'test-client', version: '1.0.0' });
-
-  await server.getServer().connect(serverTransport);
-  await client.connect(clientTransport);
-
-  try {
-    return await client.callTool({ name: toolName, arguments: toolInput }) as ToolResult;
-  } finally {
-    await client.close();
-  }
+function callTool(server: ChainMCPServer, toolName: string, toolInput: Record<string, unknown> = {}): Promise<ToolResult> {
+  return callToolHelper(server.getServer(), toolName, toolInput, activeTransports);
 }
 
 const CHAIN_TOOL_NAMES = [

@@ -13,6 +13,10 @@
     "./__test-utils__/mocks.js": {
       "import": "./dist/__test-utils__/mocks.js",
       "types": "./dist/__test-utils__/mocks.d.ts"
+    },
+    "./__test-utils__/callTool.js": {
+      "import": "./dist/__test-utils__/callTool.js",
+      "types": "./dist/__test-utils__/callTool.d.ts"
     }
   },
   "scripts": {
@@ -31,6 +35,16 @@
   ],
   "author": "Felix C. Morency",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/manifest-network/manifest-mcp-mono.git",
+    "directory": "packages/core"
+  },
+  "homepage": "https://github.com/manifest-network/manifest-mcp-mono#readme",
+  "bugs": "https://github.com/manifest-network/manifest-mcp-mono/issues",
+  "engines": {
+    "node": ">=20"
+  },
   "files": [
     "dist"
   ],
@@ -40,9 +54,8 @@
     "@cosmjs/proto-signing": "0.32.4",
     "@cosmjs/stargate": "npm:@manifest-network/stargate@0.32.4-ll.3",
     "@manifest-network/manifestjs": "2.2.0-billing-v2.3",
-    "@modelcontextprotocol/sdk": "1.25.3",
-    "limiter": "3.0.0",
-    "zod": "^4.3.6"
+    "@modelcontextprotocol/sdk": "1.27.1",
+    "limiter": "3.0.0"
   },
   "overrides": {
     "@cosmjs/stargate": "npm:@manifest-network/stargate@0.32.4-ll.3",
