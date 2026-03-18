@@ -9,13 +9,13 @@ export interface ToolResult {
 
 /**
  * Shared test helper: connects an MCP client to a server via in-memory
- * transport, calls the given tool, then cleans up.
+ * transport, calls the given tool, then cleans up both transports.
  *
  * @param server  - The MCP `Server` instance (from `getServer()`)
  * @param toolName - Name of the tool to invoke
  * @param toolInput - Optional tool arguments
- * @param activeTransports - Mutable array that tracks open transports
- *   so the caller's `afterEach` can close them on failure.
+ * @param activeTransports - Optional mutable array for the caller's
+ *   `afterEach` to close transports if this helper throws before cleanup.
  */
 export async function callTool(
   server: Server,
@@ -35,5 +35,7 @@ export async function callTool(
     return await client.callTool({ name: toolName, arguments: toolInput }) as ToolResult;
   } finally {
     await client.close();
+    await clientTransport.close().catch(() => {});
+    await serverTransport.close().catch(() => {});
   }
 }
