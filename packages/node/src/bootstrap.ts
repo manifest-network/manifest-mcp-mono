@@ -45,7 +45,8 @@ function handleSubcommand(
       `  ${cliName} keygen       Generate a new encrypted keyfile\n` +
       `  ${cliName} import       Import a mnemonic into an encrypted keyfile\n`,
   );
-  return process.exit(1) as never;
+  process.exit(1);
+  throw new Error('unreachable');
 }
 
 function resolveWallet(
@@ -72,7 +73,8 @@ function resolveWallet(
       `  1. Run "${cliName} keygen" to generate an encrypted keyfile at ${env.keyfilePath}\n` +
       '  2. Set the COSMOS_MNEMONIC environment variable',
   );
-  return process.exit(1) as never;
+  process.exit(1);
+  throw new Error('unreachable');
 }
 
 /**

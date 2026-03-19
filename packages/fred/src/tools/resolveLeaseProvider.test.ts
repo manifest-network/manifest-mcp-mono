@@ -68,8 +68,6 @@ describe('resolveProviderUrl', () => {
     await expect(resolveProviderUrl(qc, 'prov-1')).rejects.toThrow(
       ProviderApiError,
     );
-    await expect(resolveProviderUrl(qc, 'prov-1')).rejects.toThrow(
-      'HTTPS',
-    );
+    await expect(resolveProviderUrl(qc, 'prov-1')).rejects.toThrow('HTTPS');
   });
 });
