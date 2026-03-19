@@ -20,7 +20,7 @@ function resolveLevel(): LogLevel {
   const env =
     typeof process !== 'undefined' ? process.env.LOG_LEVEL : undefined;
   if (!env) return 'warn';
-  if (env in LOG_LEVEL_ORDER) return env as LogLevel;
+  if (Object.hasOwn(LOG_LEVEL_ORDER, env)) return env as LogLevel;
   console.error(
     `[WARN] Invalid LOG_LEVEL "${env}". Valid values: debug, info, warn, error, silent. Defaulting to "warn".`,
   );
