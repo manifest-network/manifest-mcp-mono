@@ -1,6 +1,7 @@
 import { ManifestMCPError } from '@manifest-network/manifest-mcp-core';
 import { makeMockQueryClient } from '@manifest-network/manifest-mcp-core/__test-utils__/mocks.js';
 import { describe, expect, it } from 'vitest';
+import { ProviderApiError } from '../http/provider.js';
 import { resolveProviderUrl } from './resolveLeaseProvider.js';
 
 describe('resolveProviderUrl', () => {
@@ -53,5 +54,22 @@ describe('resolveProviderUrl', () => {
     (qc.liftedinit.sku.v1.provider as any).mockRejectedValue(err);
 
     await expect(resolveProviderUrl(qc, 'prov-1')).rejects.toBe(err);
+  });
+
+  it('re-throws ProviderApiError from validateProviderUrl without wrapping', async () => {
+    const qc = makeMockQueryClient({
+      sku: {
+        providerLookup: {
+          'prov-1': { provider: { apiUrl: 'http://example.com' } },
+        },
+      },
+    });
+
+    await expect(resolveProviderUrl(qc, 'prov-1')).rejects.toThrow(
+      ProviderApiError,
+    );
+    await expect(resolveProviderUrl(qc, 'prov-1')).rejects.toThrow(
+      'HTTPS',
+    );
   });
 });
