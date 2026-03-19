@@ -11,6 +11,19 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { loadConfig } from './config.js';
 import { KeyfileWalletProvider } from './keyfileWallet.js';
 
+/** Thrown after process.exit() to halt control flow when exit is mocked. */
+class ExitError extends Error {
+  constructor() {
+    super();
+    this.name = 'ExitError';
+  }
+}
+
+function exit(code: number): never {
+  process.exit(code);
+  throw new ExitError();
+}
+
 /**
  * Configuration for bootstrapping a CLI entry point.
  */
@@ -45,8 +58,7 @@ function handleSubcommand(
       `  ${cliName} keygen       Generate a new encrypted keyfile\n` +
       `  ${cliName} import       Import a mnemonic into an encrypted keyfile\n`,
   );
-  process.exit(1);
-  throw new Error('unreachable');
+  exit(1);
 }
 
 function resolveWallet(
@@ -73,8 +85,7 @@ function resolveWallet(
       `  1. Run "${cliName} keygen" to generate an encrypted keyfile at ${env.keyfilePath}\n` +
       '  2. Set the COSMOS_MNEMONIC environment variable',
   );
-  process.exit(1);
-  throw new Error('unreachable');
+  exit(1);
 }
 
 /**
@@ -114,6 +125,7 @@ export function bootstrap(cfg: BootstrapConfig): void {
   }
 
   main().catch((error) => {
+    if (error instanceof ExitError) return;
     if (error instanceof ManifestMCPError) {
       console.error(
         `Fatal error [${error.code}]: ${sanitizeForLogging(error.message) as string}`,
