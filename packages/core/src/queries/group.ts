@@ -1,12 +1,23 @@
-import { ManifestQueryClient } from '../client.js';
-import {
-  GroupInfoResult, GroupPolicyInfoResult, GroupMembersResult,
-  GroupsResult, GroupPoliciesResult, GroupProposalResult,
-  GroupProposalsResult, GroupVoteResult, GroupVotesResult,
-  GroupTallyQueryResult
-} from '../types.js';
-import { parseBigInt, requireArgs, extractPaginationArgs, validateAddress } from './utils.js';
+import type { ManifestQueryClient } from '../client.js';
 import { throwUnsupportedSubcommand } from '../modules.js';
+import type {
+  GroupInfoResult,
+  GroupMembersResult,
+  GroupPoliciesResult,
+  GroupPolicyInfoResult,
+  GroupProposalResult,
+  GroupProposalsResult,
+  GroupsResult,
+  GroupTallyQueryResult,
+  GroupVoteResult,
+  GroupVotesResult,
+} from '../types.js';
+import {
+  extractPaginationArgs,
+  parseBigInt,
+  requireArgs,
+  validateAddress,
+} from './utils.js';
 
 /** Group query result union type */
 type GroupQueryResultUnion =
@@ -29,7 +40,7 @@ type GroupQueryResultUnion =
 export async function routeGroupQuery(
   queryClient: ManifestQueryClient,
   subcommand: string,
-  args: string[]
+  args: string[],
 ): Promise<GroupQueryResultUnion> {
   const group = queryClient.cosmos.group.v1;
 
@@ -49,7 +60,10 @@ export async function routeGroupQuery(
     }
 
     case 'group-members': {
-      const { pagination, remainingArgs } = extractPaginationArgs(args, 'group group-members');
+      const { pagination, remainingArgs } = extractPaginationArgs(
+        args,
+        'group group-members',
+      );
       requireArgs(remainingArgs, 1, ['group-id'], 'group group-members');
       const groupId = parseBigInt(remainingArgs[0], 'group-id');
       const result = await group.groupMembers({ groupId, pagination });
@@ -57,27 +71,58 @@ export async function routeGroupQuery(
     }
 
     case 'groups-by-admin': {
-      const { pagination, remainingArgs } = extractPaginationArgs(args, 'group groups-by-admin');
+      const { pagination, remainingArgs } = extractPaginationArgs(
+        args,
+        'group groups-by-admin',
+      );
       requireArgs(remainingArgs, 1, ['admin-address'], 'group groups-by-admin');
       validateAddress(remainingArgs[0], 'admin address');
-      const result = await group.groupsByAdmin({ admin: remainingArgs[0], pagination });
+      const result = await group.groupsByAdmin({
+        admin: remainingArgs[0],
+        pagination,
+      });
       return { groups: result.groups, pagination: result.pagination };
     }
 
     case 'group-policies-by-group': {
-      const { pagination, remainingArgs } = extractPaginationArgs(args, 'group group-policies-by-group');
-      requireArgs(remainingArgs, 1, ['group-id'], 'group group-policies-by-group');
+      const { pagination, remainingArgs } = extractPaginationArgs(
+        args,
+        'group group-policies-by-group',
+      );
+      requireArgs(
+        remainingArgs,
+        1,
+        ['group-id'],
+        'group group-policies-by-group',
+      );
       const groupId = parseBigInt(remainingArgs[0], 'group-id');
       const result = await group.groupPoliciesByGroup({ groupId, pagination });
-      return { groupPolicies: result.groupPolicies, pagination: result.pagination };
+      return {
+        groupPolicies: result.groupPolicies,
+        pagination: result.pagination,
+      };
     }
 
     case 'group-policies-by-admin': {
-      const { pagination, remainingArgs } = extractPaginationArgs(args, 'group group-policies-by-admin');
-      requireArgs(remainingArgs, 1, ['admin-address'], 'group group-policies-by-admin');
+      const { pagination, remainingArgs } = extractPaginationArgs(
+        args,
+        'group group-policies-by-admin',
+      );
+      requireArgs(
+        remainingArgs,
+        1,
+        ['admin-address'],
+        'group group-policies-by-admin',
+      );
       validateAddress(remainingArgs[0], 'admin address');
-      const result = await group.groupPoliciesByAdmin({ admin: remainingArgs[0], pagination });
-      return { groupPolicies: result.groupPolicies, pagination: result.pagination };
+      const result = await group.groupPoliciesByAdmin({
+        admin: remainingArgs[0],
+        pagination,
+      });
+      return {
+        groupPolicies: result.groupPolicies,
+        pagination: result.pagination,
+      };
     }
 
     case 'proposal': {
@@ -88,10 +133,21 @@ export async function routeGroupQuery(
     }
 
     case 'proposals-by-group-policy': {
-      const { pagination, remainingArgs } = extractPaginationArgs(args, 'group proposals-by-group-policy');
-      requireArgs(remainingArgs, 1, ['group-policy-address'], 'group proposals-by-group-policy');
+      const { pagination, remainingArgs } = extractPaginationArgs(
+        args,
+        'group proposals-by-group-policy',
+      );
+      requireArgs(
+        remainingArgs,
+        1,
+        ['group-policy-address'],
+        'group proposals-by-group-policy',
+      );
       validateAddress(remainingArgs[0], 'group policy address');
-      const result = await group.proposalsByGroupPolicy({ address: remainingArgs[0], pagination });
+      const result = await group.proposalsByGroupPolicy({
+        address: remainingArgs[0],
+        pagination,
+      });
       return { proposals: result.proposals, pagination: result.pagination };
     }
 
@@ -99,12 +155,18 @@ export async function routeGroupQuery(
       requireArgs(args, 2, ['proposal-id', 'voter-address'], 'group vote');
       const proposalId = parseBigInt(args[0], 'proposal-id');
       validateAddress(args[1], 'voter address');
-      const result = await group.voteByProposalVoter({ proposalId, voter: args[1] });
+      const result = await group.voteByProposalVoter({
+        proposalId,
+        voter: args[1],
+      });
       return { vote: result.vote };
     }
 
     case 'votes-by-proposal': {
-      const { pagination, remainingArgs } = extractPaginationArgs(args, 'group votes-by-proposal');
+      const { pagination, remainingArgs } = extractPaginationArgs(
+        args,
+        'group votes-by-proposal',
+      );
       requireArgs(remainingArgs, 1, ['proposal-id'], 'group votes-by-proposal');
       const proposalId = parseBigInt(remainingArgs[0], 'proposal-id');
       const result = await group.votesByProposal({ proposalId, pagination });
@@ -112,18 +174,35 @@ export async function routeGroupQuery(
     }
 
     case 'votes-by-voter': {
-      const { pagination, remainingArgs } = extractPaginationArgs(args, 'group votes-by-voter');
+      const { pagination, remainingArgs } = extractPaginationArgs(
+        args,
+        'group votes-by-voter',
+      );
       requireArgs(remainingArgs, 1, ['voter-address'], 'group votes-by-voter');
       validateAddress(remainingArgs[0], 'voter address');
-      const result = await group.votesByVoter({ voter: remainingArgs[0], pagination });
+      const result = await group.votesByVoter({
+        voter: remainingArgs[0],
+        pagination,
+      });
       return { votes: result.votes, pagination: result.pagination };
     }
 
     case 'groups-by-member': {
-      const { pagination, remainingArgs } = extractPaginationArgs(args, 'group groups-by-member');
-      requireArgs(remainingArgs, 1, ['member-address'], 'group groups-by-member');
+      const { pagination, remainingArgs } = extractPaginationArgs(
+        args,
+        'group groups-by-member',
+      );
+      requireArgs(
+        remainingArgs,
+        1,
+        ['member-address'],
+        'group groups-by-member',
+      );
       validateAddress(remainingArgs[0], 'member address');
-      const result = await group.groupsByMember({ address: remainingArgs[0], pagination });
+      const result = await group.groupsByMember({
+        address: remainingArgs[0],
+        pagination,
+      });
       return { groups: result.groups, pagination: result.pagination };
     }
 

@@ -1,10 +1,22 @@
-import { ProviderApiError, checkedFetch, parseJsonResponse, validateProviderUrl } from './provider.js';
+import {
+  checkedFetch,
+  ProviderApiError,
+  parseJsonResponse,
+  validateProviderUrl,
+} from './provider.js';
 
 export const MAX_TAIL = 1000;
 
 export interface FredLeaseStatus {
   readonly status: string;
-  readonly services?: Record<string, { readonly ready: boolean; readonly available: number; readonly total: number }>;
+  readonly services?: Record<
+    string,
+    {
+      readonly ready: boolean;
+      readonly available: number;
+      readonly total: number;
+    }
+  >;
 }
 
 export async function getLeaseStatus(
@@ -15,9 +27,14 @@ export async function getLeaseStatus(
 ): Promise<FredLeaseStatus> {
   const validated = validateProviderUrl(providerUrl);
   const url = `${validated}/v1/leases/${encodeURIComponent(leaseUuid)}/status`;
-  const res = await checkedFetch(url, {
-    headers: { Authorization: `Bearer ${authToken}` },
-  }, undefined, fetchFn);
+  const res = await checkedFetch(
+    url,
+    {
+      headers: { Authorization: `Bearer ${authToken}` },
+    },
+    undefined,
+    fetchFn,
+  );
   return await parseJsonResponse<FredLeaseStatus>(res, url);
 }
 
@@ -36,9 +53,14 @@ export async function getLeaseLogs(
   const cappedTail = tail !== undefined ? Math.min(tail, MAX_TAIL) : undefined;
   const qs = cappedTail !== undefined ? `?tail=${cappedTail}` : '';
   const url = `${validated}/v1/leases/${encodeURIComponent(leaseUuid)}/logs${qs}`;
-  const res = await checkedFetch(url, {
-    headers: { Authorization: `Bearer ${authToken}` },
-  }, undefined, fetchFn);
+  const res = await checkedFetch(
+    url,
+    {
+      headers: { Authorization: `Bearer ${authToken}` },
+    },
+    undefined,
+    fetchFn,
+  );
   return await parseJsonResponse<FredLeaseLogs>(res, url);
 }
 
@@ -56,9 +78,14 @@ export async function getLeaseProvision(
 ): Promise<FredLeaseProvision> {
   const validated = validateProviderUrl(providerUrl);
   const url = `${validated}/v1/leases/${encodeURIComponent(leaseUuid)}/provision`;
-  const res = await checkedFetch(url, {
-    headers: { Authorization: `Bearer ${authToken}` },
-  }, undefined, fetchFn);
+  const res = await checkedFetch(
+    url,
+    {
+      headers: { Authorization: `Bearer ${authToken}` },
+    },
+    undefined,
+    fetchFn,
+  );
   return await parseJsonResponse<FredLeaseProvision>(res, url);
 }
 
@@ -74,10 +101,15 @@ export async function restartLease(
 ): Promise<FredActionResponse> {
   const validated = validateProviderUrl(providerUrl);
   const url = `${validated}/v1/leases/${encodeURIComponent(leaseUuid)}/restart`;
-  const res = await checkedFetch(url, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${authToken}` },
-  }, undefined, fetchFn);
+  const res = await checkedFetch(
+    url,
+    {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${authToken}` },
+    },
+    undefined,
+    fetchFn,
+  );
   return await parseJsonResponse<FredActionResponse>(res, url);
 }
 
@@ -90,14 +122,19 @@ export async function updateLease(
 ): Promise<FredActionResponse> {
   const validated = validateProviderUrl(providerUrl);
   const url = `${validated}/v1/leases/${encodeURIComponent(leaseUuid)}/update`;
-  const res = await checkedFetch(url, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${authToken}`,
-      'Content-Type': 'application/octet-stream',
+  const res = await checkedFetch(
+    url,
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${authToken}`,
+        'Content-Type': 'application/octet-stream',
+      },
+      body: payload,
     },
-    body: payload,
-  }, undefined, fetchFn);
+    undefined,
+    fetchFn,
+  );
   return await parseJsonResponse<FredActionResponse>(res, url);
 }
 
@@ -122,9 +159,14 @@ export async function getLeaseReleases(
 ): Promise<FredLeaseReleases> {
   const validated = validateProviderUrl(providerUrl);
   const url = `${validated}/v1/leases/${encodeURIComponent(leaseUuid)}/releases`;
-  const res = await checkedFetch(url, {
-    headers: { Authorization: `Bearer ${authToken}` },
-  }, undefined, fetchFn);
+  const res = await checkedFetch(
+    url,
+    {
+      headers: { Authorization: `Bearer ${authToken}` },
+    },
+    undefined,
+    fetchFn,
+  );
   return await parseJsonResponse<FredLeaseReleases>(res, url);
 }
 
@@ -141,9 +183,14 @@ export async function getLeaseInfo(
 ): Promise<FredLeaseInfo> {
   const validated = validateProviderUrl(providerUrl);
   const url = `${validated}/v1/leases/${encodeURIComponent(leaseUuid)}/info`;
-  const res = await checkedFetch(url, {
-    headers: { Authorization: `Bearer ${authToken}` },
-  }, undefined, fetchFn);
+  const res = await checkedFetch(
+    url,
+    {
+      headers: { Authorization: `Bearer ${authToken}` },
+    },
+    undefined,
+    fetchFn,
+  );
   return await parseJsonResponse<FredLeaseInfo>(res, url);
 }
 
@@ -164,17 +211,24 @@ export async function pollLeaseUntilReady(
   let lastStatus: string | undefined;
 
   while (Date.now() < deadline) {
-    const token = typeof authToken === 'function' ? await authToken() : authToken;
+    const token =
+      typeof authToken === 'function' ? await authToken() : authToken;
     const status = await getLeaseStatus(providerUrl, leaseUuid, token, fetchFn);
     lastStatus = status.status;
     if (status.status === 'ready' || status.status === 'running') {
       return status;
     }
     if (status.status === 'failed' || status.status === 'error') {
-      throw new ProviderApiError(0, `Lease ${leaseUuid} entered ${status.status} state`);
+      throw new ProviderApiError(
+        0,
+        `Lease ${leaseUuid} entered ${status.status} state`,
+      );
     }
-    await new Promise(resolve => setTimeout(resolve, intervalMs));
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
   }
 
-  throw new ProviderApiError(0, `Lease ${leaseUuid} poll timed out after ${timeoutMs}ms (last status: ${lastStatus ?? 'unknown'})`);
+  throw new ProviderApiError(
+    0,
+    `Lease ${leaseUuid} poll timed out after ${timeoutMs}ms (last status: ${lastStatus ?? 'unknown'})`,
+  );
 }

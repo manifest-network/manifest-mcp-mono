@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('./provider.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./provider.js')>();
@@ -10,7 +10,12 @@ vi.mock('./provider.js', async (importOriginal) => {
   };
 });
 
-import { pollLeaseUntilReady, getLeaseLogs, getLeaseStatus, MAX_TAIL } from './fred.js';
+import {
+  getLeaseLogs,
+  getLeaseStatus,
+  MAX_TAIL,
+  pollLeaseUntilReady,
+} from './fred.js';
 import { checkedFetch, parseJsonResponse } from './provider.js';
 
 const mockCheckedFetch = vi.mocked(checkedFetch);
@@ -32,7 +37,9 @@ describe('getLeaseStatus', () => {
     expect(result).toEqual({ status: 'ready' });
     expect(mockCheckedFetch).toHaveBeenCalledWith(
       expect.stringContaining(`/v1/leases/${LEASE_UUID}/status`),
-      expect.objectContaining({ headers: { Authorization: `Bearer ${AUTH_TOKEN}` } }),
+      expect.objectContaining({
+        headers: { Authorization: `Bearer ${AUTH_TOKEN}` },
+      }),
       undefined,
       undefined,
     );
@@ -78,10 +85,15 @@ describe('pollLeaseUntilReady', () => {
     mockCheckedFetch.mockResolvedValue({} as Response);
     mockParseJsonResponse.mockResolvedValue({ status: 'ready' });
 
-    const result = await pollLeaseUntilReady(PROVIDER_URL, LEASE_UUID, AUTH_TOKEN, {
-      intervalMs: 10,
-      timeoutMs: 1000,
-    });
+    const result = await pollLeaseUntilReady(
+      PROVIDER_URL,
+      LEASE_UUID,
+      AUTH_TOKEN,
+      {
+        intervalMs: 10,
+        timeoutMs: 1000,
+      },
+    );
     expect(result.status).toBe('ready');
     expect(mockCheckedFetch).toHaveBeenCalledOnce();
   });
@@ -90,10 +102,15 @@ describe('pollLeaseUntilReady', () => {
     mockCheckedFetch.mockResolvedValue({} as Response);
     mockParseJsonResponse.mockResolvedValue({ status: 'running' });
 
-    const result = await pollLeaseUntilReady(PROVIDER_URL, LEASE_UUID, AUTH_TOKEN, {
-      intervalMs: 10,
-      timeoutMs: 1000,
-    });
+    const result = await pollLeaseUntilReady(
+      PROVIDER_URL,
+      LEASE_UUID,
+      AUTH_TOKEN,
+      {
+        intervalMs: 10,
+        timeoutMs: 1000,
+      },
+    );
     expect(result.status).toBe('running');
   });
 
@@ -129,10 +146,15 @@ describe('pollLeaseUntilReady', () => {
       return { status: callCount < 3 ? 'pending' : 'ready' };
     });
 
-    const result = await pollLeaseUntilReady(PROVIDER_URL, LEASE_UUID, AUTH_TOKEN, {
-      intervalMs: 10,
-      timeoutMs: 5000,
-    });
+    const result = await pollLeaseUntilReady(
+      PROVIDER_URL,
+      LEASE_UUID,
+      AUTH_TOKEN,
+      {
+        intervalMs: 10,
+        timeoutMs: 5000,
+      },
+    );
     expect(result.status).toBe('ready');
     expect(callCount).toBe(3);
   });
@@ -157,7 +179,8 @@ describe('pollLeaseUntilReady', () => {
       return { status: callCount < 2 ? 'pending' : 'ready' };
     });
 
-    const tokenFn = vi.fn()
+    const tokenFn = vi
+      .fn()
       .mockResolvedValueOnce('token-1')
       .mockResolvedValueOnce('token-2');
 
@@ -168,8 +191,14 @@ describe('pollLeaseUntilReady', () => {
 
     expect(tokenFn).toHaveBeenCalledTimes(2);
     // Verify different tokens were used in successive calls
-    const firstAuth = mockCheckedFetch.mock.calls[0][1]?.headers as Record<string, string>;
-    const secondAuth = mockCheckedFetch.mock.calls[1][1]?.headers as Record<string, string>;
+    const firstAuth = mockCheckedFetch.mock.calls[0][1]?.headers as Record<
+      string,
+      string
+    >;
+    const secondAuth = mockCheckedFetch.mock.calls[1][1]?.headers as Record<
+      string,
+      string
+    >;
     expect(firstAuth.Authorization).toBe('Bearer token-1');
     expect(secondAuth.Authorization).toBe('Bearer token-2');
   });

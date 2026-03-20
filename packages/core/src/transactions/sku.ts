@@ -1,12 +1,30 @@
-import { SigningStargateClient } from '@cosmjs/stargate';
+import type { SigningStargateClient } from '@cosmjs/stargate';
 import { liftedinit } from '@manifest-network/manifestjs';
-import { CosmosTxResult, ManifestMCPError, ManifestMCPErrorCode } from '../types.js';
-import { parseAmount, buildTxResult, validateAddress, validateArgsLength, extractFlag, filterConsumedArgs, requireArgs, parseHexBytes, MAX_META_HASH_BYTES } from './utils.js';
 import { throwUnsupportedSubcommand } from '../modules.js';
+import {
+  type CosmosTxResult,
+  ManifestMCPError,
+  ManifestMCPErrorCode,
+} from '../types.js';
+import {
+  buildTxResult,
+  extractFlag,
+  filterConsumedArgs,
+  MAX_META_HASH_BYTES,
+  parseAmount,
+  parseHexBytes,
+  requireArgs,
+  validateAddress,
+  validateArgsLength,
+} from './utils.js';
 
 const {
-  MsgCreateProvider, MsgUpdateProvider, MsgDeactivateProvider,
-  MsgCreateSKU, MsgUpdateSKU, MsgDeactivateSKU,
+  MsgCreateProvider,
+  MsgUpdateProvider,
+  MsgDeactivateProvider,
+  MsgCreateSKU,
+  MsgUpdateSKU,
+  MsgDeactivateSKU,
   MsgUpdateParams,
   Unit,
 } = liftedinit.sku.v1;
@@ -24,7 +42,7 @@ function parseUnit(value: string): number {
     default:
       throw new ManifestMCPError(
         ManifestMCPErrorCode.TX_FAILED,
-        `Invalid unit: "${value}". Expected "per-hour" or "per-day".`
+        `Invalid unit: "${value}". Expected "per-hour" or "per-day".`,
       );
   }
 }
@@ -38,7 +56,7 @@ function parseBooleanString(value: string, fieldName: string): boolean {
   if (lower === 'false') return false;
   throw new ManifestMCPError(
     ManifestMCPErrorCode.TX_FAILED,
-    `Invalid ${fieldName}: "${value}". Expected "true" or "false".`
+    `Invalid ${fieldName}: "${value}". Expected "true" or "false".`,
   );
 }
 
@@ -50,18 +68,29 @@ export async function routeSkuTransaction(
   senderAddress: string,
   subcommand: string,
   args: string[],
-  waitForConfirmation: boolean
+  waitForConfirmation: boolean,
 ): Promise<CosmosTxResult> {
   validateArgsLength(args, 'sku transaction');
 
   switch (subcommand) {
     case 'create-provider': {
       // Parse optional --meta-hash flag
-      const { value: metaHashHex, consumedIndices } = extractFlag(args, '--meta-hash', 'sku create-provider');
-      const metaHash = metaHashHex ? parseHexBytes(metaHashHex, 'meta-hash', MAX_META_HASH_BYTES) : new Uint8Array();
+      const { value: metaHashHex, consumedIndices } = extractFlag(
+        args,
+        '--meta-hash',
+        'sku create-provider',
+      );
+      const metaHash = metaHashHex
+        ? parseHexBytes(metaHashHex, 'meta-hash', MAX_META_HASH_BYTES)
+        : new Uint8Array();
       const positionalArgs = filterConsumedArgs(args, consumedIndices);
 
-      requireArgs(positionalArgs, 3, ['address', 'payout-address', 'api-url'], 'sku create-provider');
+      requireArgs(
+        positionalArgs,
+        3,
+        ['address', 'payout-address', 'api-url'],
+        'sku create-provider',
+      );
       const [address, payoutAddress, apiUrl] = positionalArgs;
       validateAddress(address, 'address');
       validateAddress(payoutAddress, 'payout address');
@@ -77,24 +106,49 @@ export async function routeSkuTransaction(
         }),
       };
 
-      const result = await client.signAndBroadcast(senderAddress, [msg], 'auto');
-      return buildTxResult('sku', 'create-provider', result, waitForConfirmation);
+      const result = await client.signAndBroadcast(
+        senderAddress,
+        [msg],
+        'auto',
+      );
+      return buildTxResult(
+        'sku',
+        'create-provider',
+        result,
+        waitForConfirmation,
+      );
     }
 
     case 'update-provider': {
       // Parse optional flags
-      const metaHashFlag = extractFlag(args, '--meta-hash', 'sku update-provider');
+      const metaHashFlag = extractFlag(
+        args,
+        '--meta-hash',
+        'sku update-provider',
+      );
       const activeFlag = extractFlag(args, '--active', 'sku update-provider');
-      const allConsumed = [...metaHashFlag.consumedIndices, ...activeFlag.consumedIndices];
+      const allConsumed = [
+        ...metaHashFlag.consumedIndices,
+        ...activeFlag.consumedIndices,
+      ];
       const positionalArgs = filterConsumedArgs(args, allConsumed);
 
-      requireArgs(positionalArgs, 4, ['provider-uuid', 'address', 'payout-address', 'api-url'], 'sku update-provider');
+      requireArgs(
+        positionalArgs,
+        4,
+        ['provider-uuid', 'address', 'payout-address', 'api-url'],
+        'sku update-provider',
+      );
       const [uuid, address, payoutAddress, apiUrl] = positionalArgs;
       validateAddress(address, 'address');
       validateAddress(payoutAddress, 'payout address');
 
-      const metaHash = metaHashFlag.value ? parseHexBytes(metaHashFlag.value, 'meta-hash', MAX_META_HASH_BYTES) : new Uint8Array();
-      const active = activeFlag.value ? parseBooleanString(activeFlag.value, 'active') : true;
+      const metaHash = metaHashFlag.value
+        ? parseHexBytes(metaHashFlag.value, 'meta-hash', MAX_META_HASH_BYTES)
+        : new Uint8Array();
+      const active = activeFlag.value
+        ? parseBooleanString(activeFlag.value, 'active')
+        : true;
 
       const msg = {
         typeUrl: '/liftedinit.sku.v1.MsgUpdateProvider',
@@ -109,8 +163,17 @@ export async function routeSkuTransaction(
         }),
       };
 
-      const result = await client.signAndBroadcast(senderAddress, [msg], 'auto');
-      return buildTxResult('sku', 'update-provider', result, waitForConfirmation);
+      const result = await client.signAndBroadcast(
+        senderAddress,
+        [msg],
+        'auto',
+      );
+      return buildTxResult(
+        'sku',
+        'update-provider',
+        result,
+        waitForConfirmation,
+      );
     }
 
     case 'deactivate-provider': {
@@ -125,17 +188,37 @@ export async function routeSkuTransaction(
         }),
       };
 
-      const result = await client.signAndBroadcast(senderAddress, [msg], 'auto');
-      return buildTxResult('sku', 'deactivate-provider', result, waitForConfirmation);
+      const result = await client.signAndBroadcast(
+        senderAddress,
+        [msg],
+        'auto',
+      );
+      return buildTxResult(
+        'sku',
+        'deactivate-provider',
+        result,
+        waitForConfirmation,
+      );
     }
 
     case 'create-sku': {
       // Parse optional --meta-hash flag
-      const { value: metaHashHex, consumedIndices } = extractFlag(args, '--meta-hash', 'sku create-sku');
-      const metaHash = metaHashHex ? parseHexBytes(metaHashHex, 'meta-hash', MAX_META_HASH_BYTES) : new Uint8Array();
+      const { value: metaHashHex, consumedIndices } = extractFlag(
+        args,
+        '--meta-hash',
+        'sku create-sku',
+      );
+      const metaHash = metaHashHex
+        ? parseHexBytes(metaHashHex, 'meta-hash', MAX_META_HASH_BYTES)
+        : new Uint8Array();
       const positionalArgs = filterConsumedArgs(args, consumedIndices);
 
-      requireArgs(positionalArgs, 4, ['provider-uuid', 'name', 'unit', 'base-price'], 'sku create-sku');
+      requireArgs(
+        positionalArgs,
+        4,
+        ['provider-uuid', 'name', 'unit', 'base-price'],
+        'sku create-sku',
+      );
       const [providerUuid, name, unitStr, basePriceStr] = positionalArgs;
 
       const unit = parseUnit(unitStr);
@@ -153,7 +236,11 @@ export async function routeSkuTransaction(
         }),
       };
 
-      const result = await client.signAndBroadcast(senderAddress, [msg], 'auto');
+      const result = await client.signAndBroadcast(
+        senderAddress,
+        [msg],
+        'auto',
+      );
       return buildTxResult('sku', 'create-sku', result, waitForConfirmation);
     }
 
@@ -161,16 +248,28 @@ export async function routeSkuTransaction(
       // Parse optional flags
       const metaHashFlag = extractFlag(args, '--meta-hash', 'sku update-sku');
       const activeFlag = extractFlag(args, '--active', 'sku update-sku');
-      const allConsumed = [...metaHashFlag.consumedIndices, ...activeFlag.consumedIndices];
+      const allConsumed = [
+        ...metaHashFlag.consumedIndices,
+        ...activeFlag.consumedIndices,
+      ];
       const positionalArgs = filterConsumedArgs(args, allConsumed);
 
-      requireArgs(positionalArgs, 5, ['sku-uuid', 'provider-uuid', 'name', 'unit', 'base-price'], 'sku update-sku');
+      requireArgs(
+        positionalArgs,
+        5,
+        ['sku-uuid', 'provider-uuid', 'name', 'unit', 'base-price'],
+        'sku update-sku',
+      );
       const [uuid, providerUuid, name, unitStr, basePriceStr] = positionalArgs;
 
       const unit = parseUnit(unitStr);
       const { amount, denom } = parseAmount(basePriceStr);
-      const metaHash = metaHashFlag.value ? parseHexBytes(metaHashFlag.value, 'meta-hash', MAX_META_HASH_BYTES) : new Uint8Array();
-      const active = activeFlag.value ? parseBooleanString(activeFlag.value, 'active') : true;
+      const metaHash = metaHashFlag.value
+        ? parseHexBytes(metaHashFlag.value, 'meta-hash', MAX_META_HASH_BYTES)
+        : new Uint8Array();
+      const active = activeFlag.value
+        ? parseBooleanString(activeFlag.value, 'active')
+        : true;
 
       const msg = {
         typeUrl: '/liftedinit.sku.v1.MsgUpdateSKU',
@@ -186,7 +285,11 @@ export async function routeSkuTransaction(
         }),
       };
 
-      const result = await client.signAndBroadcast(senderAddress, [msg], 'auto');
+      const result = await client.signAndBroadcast(
+        senderAddress,
+        [msg],
+        'auto',
+      );
       return buildTxResult('sku', 'update-sku', result, waitForConfirmation);
     }
 
@@ -202,8 +305,17 @@ export async function routeSkuTransaction(
         }),
       };
 
-      const result = await client.signAndBroadcast(senderAddress, [msg], 'auto');
-      return buildTxResult('sku', 'deactivate-sku', result, waitForConfirmation);
+      const result = await client.signAndBroadcast(
+        senderAddress,
+        [msg],
+        'auto',
+      );
+      return buildTxResult(
+        'sku',
+        'deactivate-sku',
+        result,
+        waitForConfirmation,
+      );
     }
 
     case 'update-params': {
@@ -222,7 +334,11 @@ export async function routeSkuTransaction(
         }),
       };
 
-      const result = await client.signAndBroadcast(senderAddress, [msg], 'auto');
+      const result = await client.signAndBroadcast(
+        senderAddress,
+        [msg],
+        'auto',
+      );
       return buildTxResult('sku', 'update-params', result, waitForConfirmation);
     }
 

@@ -1,7 +1,12 @@
-import { CosmosClientManager } from './client.js';
-import { CosmosQueryResult, CosmosTxResult, ManifestMCPError, ManifestMCPErrorCode } from './types.js';
+import type { CosmosClientManager } from './client.js';
 import { getQueryHandler, getTxHandler } from './modules.js';
 import { withRetry } from './retry.js';
+import {
+  type CosmosQueryResult,
+  type CosmosTxResult,
+  ManifestMCPError,
+  ManifestMCPErrorCode,
+} from './types.js';
 
 // Validation pattern for module/subcommand names (alphanumeric, hyphens, underscores)
 // First character must not be a hyphen to prevent potential issues
@@ -20,7 +25,7 @@ function validateName(
   if (!name || !VALID_NAME_PATTERN.test(name)) {
     throw new ManifestMCPError(
       errorCode,
-      `Invalid ${field}: "${name}". Only alphanumeric characters, hyphens, and underscores are allowed.`
+      `Invalid ${field}: "${name}". Only alphanumeric characters, hyphens, and underscores are allowed.`,
     );
   }
 }
@@ -35,10 +40,14 @@ export async function cosmosQuery(
   clientManager: CosmosClientManager,
   module: string,
   subcommand: string,
-  args: string[] = []
+  args: string[] = [],
 ): Promise<CosmosQueryResult> {
   validateName(module, 'module', ManifestMCPErrorCode.UNSUPPORTED_QUERY);
-  validateName(subcommand, 'subcommand', ManifestMCPErrorCode.UNSUPPORTED_QUERY);
+  validateName(
+    subcommand,
+    'subcommand',
+    ManifestMCPErrorCode.UNSUPPORTED_QUERY,
+  );
 
   // Get handler from registry (throws if module not found) - do this before retry loop
   const handler = getQueryHandler(module);
@@ -64,14 +73,14 @@ export async function cosmosQuery(
         }
         throw new ManifestMCPError(
           ManifestMCPErrorCode.QUERY_FAILED,
-          `Query ${module} ${subcommand} failed: ${error instanceof Error ? error.message : String(error)}`
+          `Query ${module} ${subcommand} failed: ${error instanceof Error ? error.message : String(error)}`,
         );
       }
     },
     {
       config: clientManager.getConfig().retry,
       operationName: `query ${module} ${subcommand}`,
-    }
+    },
   );
 }
 
@@ -89,7 +98,7 @@ export async function cosmosTx(
   module: string,
   subcommand: string,
   args: string[] = [],
-  waitForConfirmation: boolean = false
+  waitForConfirmation: boolean = false,
 ): Promise<CosmosTxResult> {
   validateName(module, 'module', ManifestMCPErrorCode.UNSUPPORTED_TX);
   validateName(subcommand, 'subcommand', ManifestMCPErrorCode.UNSUPPORTED_TX);
@@ -111,30 +120,31 @@ export async function cosmosTx(
           senderAddress,
           subcommand,
           args,
-          waitForConfirmation
+          waitForConfirmation,
         );
       } catch (error) {
         if (error instanceof ManifestMCPError) {
           // Re-throw with enriched context if not already present
           if (!error.details?.module) {
-            throw new ManifestMCPError(
-              error.code,
-              error.message,
-              { ...error.details, module, subcommand, args }
-            );
+            throw new ManifestMCPError(error.code, error.message, {
+              ...error.details,
+              module,
+              subcommand,
+              args,
+            });
           }
           throw error;
         }
         throw new ManifestMCPError(
           ManifestMCPErrorCode.TX_FAILED,
           `Tx ${module} ${subcommand} failed: ${error instanceof Error ? error.message : String(error)}`,
-          { module, subcommand, args }
+          { module, subcommand, args },
         );
       }
     },
     {
       config: clientManager.getConfig().retry,
       operationName: `tx ${module} ${subcommand}`,
-    }
+    },
   );
 }

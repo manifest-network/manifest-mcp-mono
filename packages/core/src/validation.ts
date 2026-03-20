@@ -65,7 +65,8 @@ export function parseArgs(
 /** RFC 1123 DNS label pattern: 1-63 lowercase alphanumeric or hyphens, no leading/trailing hyphen */
 export const DNS_LABEL_RE = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 
-const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
  * Require a non-empty string field that is a valid UUID.
@@ -77,7 +78,7 @@ export function requireUuid(
 ): string {
   const val = requireString(input, field, errorCode);
   if (!UUID_PATTERN.test(val)) {
-    const display = val.length > 50 ? val.slice(0, 50) + '...' : val;
+    const display = val.length > 50 ? `${val.slice(0, 50)}...` : val;
     throw new ManifestMCPError(
       errorCode,
       `${field} must be a valid UUID (e.g., "550e8400-e29b-41d4-a716-446655440000"), got "${display}"`,

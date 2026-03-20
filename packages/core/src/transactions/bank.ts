@@ -1,8 +1,18 @@
-import { SigningStargateClient } from '@cosmjs/stargate';
+import type { SigningStargateClient } from '@cosmjs/stargate';
 import { cosmos } from '@manifest-network/manifestjs';
-import { CosmosTxResult } from '../types.js';
 import { throwUnsupportedSubcommand } from '../modules.js';
-import { parseAmount, buildTxResult, validateAddress, validateMemo, validateArgsLength, extractFlag, filterConsumedArgs, parseColonPair, requireArgs } from './utils.js';
+import type { CosmosTxResult } from '../types.js';
+import {
+  buildTxResult,
+  extractFlag,
+  filterConsumedArgs,
+  parseAmount,
+  parseColonPair,
+  requireArgs,
+  validateAddress,
+  validateArgsLength,
+  validateMemo,
+} from './utils.js';
 
 const { MsgSend, MsgMultiSend } = cosmos.bank.v1beta1;
 
@@ -14,7 +24,7 @@ export async function routeBankTransaction(
   senderAddress: string,
   subcommand: string,
   args: string[],
-  waitForConfirmation: boolean
+  waitForConfirmation: boolean,
 ): Promise<CosmosTxResult> {
   validateArgsLength(args, 'bank transaction');
 
@@ -24,7 +34,12 @@ export async function routeBankTransaction(
       const memoFlag = extractFlag(args, '--memo', 'bank send');
       const positionalArgs = filterConsumedArgs(args, memoFlag.consumedIndices);
 
-      requireArgs(positionalArgs, 2, ['recipient-address', 'amount'], 'bank send');
+      requireArgs(
+        positionalArgs,
+        2,
+        ['recipient-address', 'amount'],
+        'bank send',
+      );
       const [recipientAddress, amountStr] = positionalArgs;
       validateAddress(recipientAddress, 'recipient address');
       const { amount, denom } = parseAmount(amountStr);
@@ -42,7 +57,12 @@ export async function routeBankTransaction(
         }),
       };
 
-      const result = await client.signAndBroadcast(senderAddress, [msg], 'auto', memo);
+      const result = await client.signAndBroadcast(
+        senderAddress,
+        [msg],
+        'auto',
+        memo,
+      );
       return buildTxResult('bank', 'send', result, waitForConfirmation);
     }
 
@@ -50,7 +70,12 @@ export async function routeBankTransaction(
       requireArgs(args, 1, ['recipient:amount'], 'bank multi-send');
       // Parse format: multi-send recipient1:amount1 recipient2:amount2 ...
       const outputs = args.map((arg) => {
-        const [address, amountStr] = parseColonPair(arg, 'address', 'amount', 'multi-send');
+        const [address, amountStr] = parseColonPair(
+          arg,
+          'address',
+          'amount',
+          'multi-send',
+        );
         validateAddress(address, 'recipient address');
         const { amount, denom } = parseAmount(amountStr);
         return { address, coins: [{ denom, amount }] };
@@ -65,10 +90,12 @@ export async function routeBankTransaction(
         }
       }
 
-      const inputCoins = Array.from(totalByDenom.entries()).map(([denom, amount]) => ({
-        denom,
-        amount: amount.toString(),
-      }));
+      const inputCoins = Array.from(totalByDenom.entries()).map(
+        ([denom, amount]) => ({
+          denom,
+          amount: amount.toString(),
+        }),
+      );
 
       const msg = {
         typeUrl: '/cosmos.bank.v1beta1.MsgMultiSend',
@@ -78,7 +105,11 @@ export async function routeBankTransaction(
         }),
       };
 
-      const result = await client.signAndBroadcast(senderAddress, [msg], 'auto');
+      const result = await client.signAndBroadcast(
+        senderAddress,
+        [msg],
+        'auto',
+      );
       return buildTxResult('bank', 'multi-send', result, waitForConfirmation);
     }
 

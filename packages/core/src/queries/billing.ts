@@ -1,11 +1,17 @@
-import { ManifestQueryClient } from '../client.js';
-import {
-  BillingParamsResult, LeaseResult, LeasesResult, CreditAccountResult,
-  CreditAccountsResult, CreditAddressResult, WithdrawableAmountResult,
-  ProviderWithdrawableResult, CreditEstimateResult
-} from '../types.js';
-import { requireArgs, extractPaginationArgs } from './utils.js';
+import type { ManifestQueryClient } from '../client.js';
 import { throwUnsupportedSubcommand } from '../modules.js';
+import type {
+  BillingParamsResult,
+  CreditAccountResult,
+  CreditAccountsResult,
+  CreditAddressResult,
+  CreditEstimateResult,
+  LeaseResult,
+  LeasesResult,
+  ProviderWithdrawableResult,
+  WithdrawableAmountResult,
+} from '../types.js';
+import { extractPaginationArgs, requireArgs } from './utils.js';
 
 /** Billing query result union type */
 type BillingQueryResult =
@@ -27,7 +33,7 @@ type BillingQueryResult =
 export async function routeBillingQuery(
   queryClient: ManifestQueryClient,
   subcommand: string,
-  args: string[]
+  args: string[],
 ): Promise<BillingQueryResult> {
   const billing = queryClient.liftedinit.billing.v1;
 
@@ -52,26 +58,57 @@ export async function routeBillingQuery(
     }
 
     case 'leases-by-tenant': {
-      const { pagination, remainingArgs } = extractPaginationArgs(args, 'billing leases-by-tenant');
-      requireArgs(remainingArgs, 1, ['tenant-address'], 'billing leases-by-tenant');
+      const { pagination, remainingArgs } = extractPaginationArgs(
+        args,
+        'billing leases-by-tenant',
+      );
+      requireArgs(
+        remainingArgs,
+        1,
+        ['tenant-address'],
+        'billing leases-by-tenant',
+      );
       const [tenant] = remainingArgs;
-      const result = await billing.leasesByTenant({ tenant, stateFilter: 0, pagination });
+      const result = await billing.leasesByTenant({
+        tenant,
+        stateFilter: 0,
+        pagination,
+      });
       return { leases: result.leases, pagination: result.pagination };
     }
 
     case 'leases-by-provider': {
-      const { pagination, remainingArgs } = extractPaginationArgs(args, 'billing leases-by-provider');
-      requireArgs(remainingArgs, 1, ['provider-uuid'], 'billing leases-by-provider');
+      const { pagination, remainingArgs } = extractPaginationArgs(
+        args,
+        'billing leases-by-provider',
+      );
+      requireArgs(
+        remainingArgs,
+        1,
+        ['provider-uuid'],
+        'billing leases-by-provider',
+      );
       const [providerUuid] = remainingArgs;
-      const result = await billing.leasesByProvider({ providerUuid, stateFilter: 0, pagination });
+      const result = await billing.leasesByProvider({
+        providerUuid,
+        stateFilter: 0,
+        pagination,
+      });
       return { leases: result.leases, pagination: result.pagination };
     }
 
     case 'leases-by-sku': {
-      const { pagination, remainingArgs } = extractPaginationArgs(args, 'billing leases-by-sku');
+      const { pagination, remainingArgs } = extractPaginationArgs(
+        args,
+        'billing leases-by-sku',
+      );
       requireArgs(remainingArgs, 1, ['sku-uuid'], 'billing leases-by-sku');
       const [skuUuid] = remainingArgs;
-      const result = await billing.leasesBySKU({ skuUuid, stateFilter: 0, pagination });
+      const result = await billing.leasesBySKU({
+        skuUuid,
+        stateFilter: 0,
+        pagination,
+      });
       return { leases: result.leases, pagination: result.pagination };
     }
 
@@ -83,9 +120,15 @@ export async function routeBillingQuery(
     }
 
     case 'credit-accounts': {
-      const { pagination } = extractPaginationArgs(args, 'billing credit-accounts');
+      const { pagination } = extractPaginationArgs(
+        args,
+        'billing credit-accounts',
+      );
       const result = await billing.creditAccounts({ pagination });
-      return { creditAccounts: result.creditAccounts, pagination: result.pagination };
+      return {
+        creditAccounts: result.creditAccounts,
+        pagination: result.pagination,
+      };
     }
 
     case 'credit-address': {
@@ -103,10 +146,21 @@ export async function routeBillingQuery(
     }
 
     case 'provider-withdrawable': {
-      const { pagination, remainingArgs } = extractPaginationArgs(args, 'billing provider-withdrawable');
-      requireArgs(remainingArgs, 1, ['provider-uuid'], 'billing provider-withdrawable');
+      const { pagination, remainingArgs } = extractPaginationArgs(
+        args,
+        'billing provider-withdrawable',
+      );
+      requireArgs(
+        remainingArgs,
+        1,
+        ['provider-uuid'],
+        'billing provider-withdrawable',
+      );
       const [providerUuid] = remainingArgs;
-      const result = await billing.providerWithdrawable({ providerUuid, limit: pagination.limit });
+      const result = await billing.providerWithdrawable({
+        providerUuid,
+        limit: pagination.limit,
+      });
       return { amounts: result.amounts };
     }
 

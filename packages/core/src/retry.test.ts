@@ -1,9 +1,9 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
-  isRetryableError,
   calculateBackoff,
-  withRetry,
   DEFAULT_RETRY_CONFIG,
+  isRetryableError,
+  withRetry,
 } from './retry.js';
 import { ManifestMCPError, ManifestMCPErrorCode } from './types.js';
 
@@ -12,7 +12,7 @@ describe('isRetryableError', () => {
     it('should not retry INVALID_CONFIG errors', () => {
       const error = new ManifestMCPError(
         ManifestMCPErrorCode.INVALID_CONFIG,
-        'Invalid config'
+        'Invalid config',
       );
       expect(isRetryableError(error)).toBe(false);
     });
@@ -20,7 +20,7 @@ describe('isRetryableError', () => {
     it('should not retry INVALID_ADDRESS errors', () => {
       const error = new ManifestMCPError(
         ManifestMCPErrorCode.INVALID_ADDRESS,
-        'Invalid address'
+        'Invalid address',
       );
       expect(isRetryableError(error)).toBe(false);
     });
@@ -28,7 +28,7 @@ describe('isRetryableError', () => {
     it('should not retry INSUFFICIENT_FUNDS errors', () => {
       const error = new ManifestMCPError(
         ManifestMCPErrorCode.INSUFFICIENT_FUNDS,
-        'Insufficient funds'
+        'Insufficient funds',
       );
       expect(isRetryableError(error)).toBe(false);
     });
@@ -36,7 +36,7 @@ describe('isRetryableError', () => {
     it('should not retry WALLET_NOT_CONNECTED errors', () => {
       const error = new ManifestMCPError(
         ManifestMCPErrorCode.WALLET_NOT_CONNECTED,
-        'Wallet not connected'
+        'Wallet not connected',
       );
       expect(isRetryableError(error)).toBe(false);
     });
@@ -44,7 +44,7 @@ describe('isRetryableError', () => {
     it('should retry RPC_CONNECTION_FAILED with network error message', () => {
       const error = new ManifestMCPError(
         ManifestMCPErrorCode.RPC_CONNECTION_FAILED,
-        'Connection refused: ECONNREFUSED'
+        'Connection refused: ECONNREFUSED',
       );
       expect(isRetryableError(error)).toBe(true);
     });
@@ -52,7 +52,7 @@ describe('isRetryableError', () => {
     it('should retry QUERY_FAILED with timeout message', () => {
       const error = new ManifestMCPError(
         ManifestMCPErrorCode.QUERY_FAILED,
-        'Request timed out after 30000ms'
+        'Request timed out after 30000ms',
       );
       expect(isRetryableError(error)).toBe(true);
     });
@@ -60,7 +60,7 @@ describe('isRetryableError', () => {
     it('should not retry TX_FAILED errors (non-idempotent)', () => {
       const error = new ManifestMCPError(
         ManifestMCPErrorCode.TX_FAILED,
-        'Service unavailable (503)'
+        'Service unavailable (503)',
       );
       expect(isRetryableError(error)).toBe(false);
     });
@@ -159,7 +159,7 @@ describe('withRetry', () => {
   it('should not retry on non-retryable error', async () => {
     const error = new ManifestMCPError(
       ManifestMCPErrorCode.INVALID_ADDRESS,
-      'Invalid address'
+      'Invalid address',
     );
     const operation = vi.fn().mockRejectedValue(error);
 
@@ -189,7 +189,7 @@ describe('withRetry', () => {
     await expect(
       withRetry(operation, {
         config: { maxRetries: 2, baseDelayMs: 10, maxDelayMs: 100 },
-      })
+      }),
     ).rejects.toThrow(error);
 
     // Initial attempt + 2 retries = 3 calls
@@ -212,7 +212,7 @@ describe('withRetry', () => {
     expect(onRetry).toHaveBeenCalledWith(
       expect.any(Error),
       1, // attempt number
-      expect.any(Number) // delay
+      expect.any(Number), // delay
     );
   });
 
@@ -229,7 +229,7 @@ describe('withRetry', () => {
     await expect(
       withRetry(operation, {
         config: { maxRetries: 0, baseDelayMs: 10, maxDelayMs: 100 },
-      })
+      }),
     ).rejects.toThrow(error);
 
     expect(operation).toHaveBeenCalledTimes(1);

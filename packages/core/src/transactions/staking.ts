@@ -1,10 +1,17 @@
-import { SigningStargateClient } from '@cosmjs/stargate';
+import type { SigningStargateClient } from '@cosmjs/stargate';
 import { cosmos } from '@manifest-network/manifestjs';
-import { CosmosTxResult } from '../types.js';
 import { throwUnsupportedSubcommand } from '../modules.js';
-import { parseAmount, buildTxResult, validateAddress, validateArgsLength, requireArgs } from './utils.js';
+import type { CosmosTxResult } from '../types.js';
+import {
+  buildTxResult,
+  parseAmount,
+  requireArgs,
+  validateAddress,
+  validateArgsLength,
+} from './utils.js';
 
-const { MsgDelegate, MsgUndelegate, MsgBeginRedelegate } = cosmos.staking.v1beta1;
+const { MsgDelegate, MsgUndelegate, MsgBeginRedelegate } =
+  cosmos.staking.v1beta1;
 
 /**
  * Route staking transaction to appropriate handler
@@ -14,7 +21,7 @@ export async function routeStakingTransaction(
   senderAddress: string,
   subcommand: string,
   args: string[],
-  waitForConfirmation: boolean
+  waitForConfirmation: boolean,
 ): Promise<CosmosTxResult> {
   validateArgsLength(args, 'staking transaction');
 
@@ -34,7 +41,11 @@ export async function routeStakingTransaction(
         }),
       };
 
-      const result = await client.signAndBroadcast(senderAddress, [msg], 'auto');
+      const result = await client.signAndBroadcast(
+        senderAddress,
+        [msg],
+        'auto',
+      );
       return buildTxResult('staking', 'delegate', result, waitForConfirmation);
     }
 
@@ -54,12 +65,21 @@ export async function routeStakingTransaction(
         }),
       };
 
-      const result = await client.signAndBroadcast(senderAddress, [msg], 'auto');
+      const result = await client.signAndBroadcast(
+        senderAddress,
+        [msg],
+        'auto',
+      );
       return buildTxResult('staking', 'unbond', result, waitForConfirmation);
     }
 
     case 'redelegate': {
-      requireArgs(args, 3, ['src-validator', 'dst-validator', 'amount'], 'staking redelegate');
+      requireArgs(
+        args,
+        3,
+        ['src-validator', 'dst-validator', 'amount'],
+        'staking redelegate',
+      );
       const [srcValidatorAddress, dstValidatorAddress, amountStr] = args;
       validateAddress(srcValidatorAddress, 'source validator address');
       validateAddress(dstValidatorAddress, 'destination validator address');
@@ -75,8 +95,17 @@ export async function routeStakingTransaction(
         }),
       };
 
-      const result = await client.signAndBroadcast(senderAddress, [msg], 'auto');
-      return buildTxResult('staking', 'redelegate', result, waitForConfirmation);
+      const result = await client.signAndBroadcast(
+        senderAddress,
+        [msg],
+        'auto',
+      );
+      return buildTxResult(
+        'staking',
+        'redelegate',
+        result,
+        waitForConfirmation,
+      );
     }
 
     default:

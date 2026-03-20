@@ -1,9 +1,9 @@
-import { describe, it, expect } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import {
   getAvailableModules,
   getModuleSubcommands,
-  isSubcommandSupported,
   getSupportedModules,
+  isSubcommandSupported,
   throwUnsupportedSubcommand,
 } from './modules.js';
 import { ManifestMCPError, ManifestMCPErrorCode } from './types.js';
@@ -20,7 +20,7 @@ describe('getAvailableModules', () => {
 
   it('should include expected query modules', () => {
     const modules = getAvailableModules();
-    const queryNames = modules.queryModules.map(m => m.name);
+    const queryNames = modules.queryModules.map((m) => m.name);
 
     expect(queryNames).toContain('bank');
     expect(queryNames).toContain('staking');
@@ -34,7 +34,7 @@ describe('getAvailableModules', () => {
 
   it('should include expected tx modules', () => {
     const modules = getAvailableModules();
-    const txNames = modules.txModules.map(m => m.name);
+    const txNames = modules.txModules.map((m) => m.name);
 
     expect(txNames).toContain('bank');
     expect(txNames).toContain('staking');
@@ -52,35 +52,39 @@ describe('getModuleSubcommands', () => {
     const subcommands = getModuleSubcommands('query', 'bank');
 
     expect(subcommands.length).toBeGreaterThan(0);
-    expect(subcommands.some(s => s.name === 'balance')).toBe(true);
-    expect(subcommands.some(s => s.name === 'balances')).toBe(true);
+    expect(subcommands.some((s) => s.name === 'balance')).toBe(true);
+    expect(subcommands.some((s) => s.name === 'balances')).toBe(true);
   });
 
   it('should return subcommands for valid tx module', () => {
     const subcommands = getModuleSubcommands('tx', 'bank');
 
     expect(subcommands.length).toBeGreaterThan(0);
-    expect(subcommands.some(s => s.name === 'send')).toBe(true);
+    expect(subcommands.some((s) => s.name === 'send')).toBe(true);
   });
 
   it('should throw ManifestMCPError for unknown module', () => {
-    expect(() => getModuleSubcommands('query', 'unknown')).toThrow(ManifestMCPError);
+    expect(() => getModuleSubcommands('query', 'unknown')).toThrow(
+      ManifestMCPError,
+    );
   });
 
   it('should have UNKNOWN_MODULE error code', () => {
     try {
       getModuleSubcommands('query', 'unknown');
     } catch (error) {
-      expect((error as ManifestMCPError).code).toBe(ManifestMCPErrorCode.UNKNOWN_MODULE);
+      expect((error as ManifestMCPError).code).toBe(
+        ManifestMCPErrorCode.UNKNOWN_MODULE,
+      );
     }
   });
 
   it('should include aliases in subcommands', () => {
     const bankSubcommands = getModuleSubcommands('query', 'bank');
-    expect(bankSubcommands.some(s => s.name === 'total')).toBe(true);
+    expect(bankSubcommands.some((s) => s.name === 'total')).toBe(true);
 
     const stakingSubcommands = getModuleSubcommands('tx', 'staking');
-    expect(stakingSubcommands.some(s => s.name === 'undelegate')).toBe(true);
+    expect(stakingSubcommands.some((s) => s.name === 'undelegate')).toBe(true);
   });
 });
 
@@ -133,18 +137,24 @@ describe('getSupportedModules', () => {
 
 describe('throwUnsupportedSubcommand', () => {
   it('should throw ManifestMCPError for unsupported query subcommand', () => {
-    expect(() => throwUnsupportedSubcommand('query', 'bank', 'unknown')).toThrow(ManifestMCPError);
+    expect(() =>
+      throwUnsupportedSubcommand('query', 'bank', 'unknown'),
+    ).toThrow(ManifestMCPError);
   });
 
   it('should throw ManifestMCPError for unsupported tx subcommand', () => {
-    expect(() => throwUnsupportedSubcommand('tx', 'bank', 'unknown')).toThrow(ManifestMCPError);
+    expect(() => throwUnsupportedSubcommand('tx', 'bank', 'unknown')).toThrow(
+      ManifestMCPError,
+    );
   });
 
   it('should use UNSUPPORTED_QUERY error code for queries', () => {
     try {
       throwUnsupportedSubcommand('query', 'bank', 'unknown');
     } catch (error) {
-      expect((error as ManifestMCPError).code).toBe(ManifestMCPErrorCode.UNSUPPORTED_QUERY);
+      expect((error as ManifestMCPError).code).toBe(
+        ManifestMCPErrorCode.UNSUPPORTED_QUERY,
+      );
     }
   });
 
@@ -152,7 +162,9 @@ describe('throwUnsupportedSubcommand', () => {
     try {
       throwUnsupportedSubcommand('tx', 'bank', 'unknown');
     } catch (error) {
-      expect((error as ManifestMCPError).code).toBe(ManifestMCPErrorCode.UNSUPPORTED_TX);
+      expect((error as ManifestMCPError).code).toBe(
+        ManifestMCPErrorCode.UNSUPPORTED_TX,
+      );
     }
   });
 

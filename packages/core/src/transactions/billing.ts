@@ -1,12 +1,34 @@
-import { SigningStargateClient } from '@cosmjs/stargate';
+import type { SigningStargateClient } from '@cosmjs/stargate';
 import { liftedinit } from '@manifest-network/manifestjs';
-import { CosmosTxResult, ManifestMCPError, ManifestMCPErrorCode } from '../types.js';
-import { parseAmount, buildTxResult, parseBigInt, validateAddress, validateArgsLength, extractFlag, filterConsumedArgs, parseLeaseItem, requireArgs, parseHexBytes, MAX_META_HASH_BYTES } from './utils.js';
 import { getSubcommandUsage, throwUnsupportedSubcommand } from '../modules.js';
+import {
+  type CosmosTxResult,
+  ManifestMCPError,
+  ManifestMCPErrorCode,
+} from '../types.js';
+import {
+  buildTxResult,
+  extractFlag,
+  filterConsumedArgs,
+  MAX_META_HASH_BYTES,
+  parseAmount,
+  parseBigInt,
+  parseHexBytes,
+  parseLeaseItem,
+  requireArgs,
+  validateAddress,
+  validateArgsLength,
+} from './utils.js';
 
 const {
-  MsgFundCredit, MsgCreateLease, MsgCloseLease, MsgWithdraw,
-  MsgCreateLeaseForTenant, MsgAcknowledgeLease, MsgRejectLease, MsgCancelLease,
+  MsgFundCredit,
+  MsgCreateLease,
+  MsgCloseLease,
+  MsgWithdraw,
+  MsgCreateLeaseForTenant,
+  MsgAcknowledgeLease,
+  MsgRejectLease,
+  MsgCancelLease,
   MsgUpdateParams,
 } = liftedinit.billing.v1;
 
@@ -18,7 +40,7 @@ export async function routeBillingTransaction(
   senderAddress: string,
   subcommand: string,
   args: string[],
-  waitForConfirmation: boolean
+  waitForConfirmation: boolean,
 ): Promise<CosmosTxResult> {
   validateArgsLength(args, 'billing transaction');
 
@@ -38,18 +60,38 @@ export async function routeBillingTransaction(
         }),
       };
 
-      const result = await client.signAndBroadcast(senderAddress, [msg], 'auto');
-      return buildTxResult('billing', 'fund-credit', result, waitForConfirmation);
+      const result = await client.signAndBroadcast(
+        senderAddress,
+        [msg],
+        'auto',
+      );
+      return buildTxResult(
+        'billing',
+        'fund-credit',
+        result,
+        waitForConfirmation,
+      );
     }
 
     case 'create-lease': {
       // Parse optional --meta-hash flag (can appear anywhere in args)
-      const { value: metaHashHex, consumedIndices } = extractFlag(args, '--meta-hash', 'billing create-lease');
-      const metaHash = metaHashHex ? parseHexBytes(metaHashHex, 'meta-hash', MAX_META_HASH_BYTES) : undefined;
+      const { value: metaHashHex, consumedIndices } = extractFlag(
+        args,
+        '--meta-hash',
+        'billing create-lease',
+      );
+      const metaHash = metaHashHex
+        ? parseHexBytes(metaHashHex, 'meta-hash', MAX_META_HASH_BYTES)
+        : undefined;
 
       // Filter out --meta-hash and its value to get item args
       const itemArgs = filterConsumedArgs(args, consumedIndices);
-      requireArgs(itemArgs, 1, ['sku-uuid:quantity[:service-name]'], 'billing create-lease');
+      requireArgs(
+        itemArgs,
+        1,
+        ['sku-uuid:quantity[:service-name]'],
+        'billing create-lease',
+      );
 
       // Parse items (format: sku-uuid:quantity or sku-uuid:quantity:service-name)
       const items = itemArgs.map((arg) => parseLeaseItem(arg));
@@ -63,13 +105,26 @@ export async function routeBillingTransaction(
         }),
       };
 
-      const result = await client.signAndBroadcast(senderAddress, [msg], 'auto');
-      return buildTxResult('billing', 'create-lease', result, waitForConfirmation);
+      const result = await client.signAndBroadcast(
+        senderAddress,
+        [msg],
+        'auto',
+      );
+      return buildTxResult(
+        'billing',
+        'create-lease',
+        result,
+        waitForConfirmation,
+      );
     }
 
     case 'close-lease': {
       // Parse optional --reason flag
-      const { value: reason, consumedIndices } = extractFlag(args, '--reason', 'billing close-lease');
+      const { value: reason, consumedIndices } = extractFlag(
+        args,
+        '--reason',
+        'billing close-lease',
+      );
       const leaseArgs = filterConsumedArgs(args, consumedIndices);
       requireArgs(leaseArgs, 1, ['lease-uuid'], 'billing close-lease');
 
@@ -85,8 +140,17 @@ export async function routeBillingTransaction(
         }),
       };
 
-      const result = await client.signAndBroadcast(senderAddress, [msg], 'auto');
-      return buildTxResult('billing', 'close-lease', result, waitForConfirmation);
+      const result = await client.signAndBroadcast(
+        senderAddress,
+        [msg],
+        'auto',
+      );
+      return buildTxResult(
+        'billing',
+        'close-lease',
+        result,
+        waitForConfirmation,
+      );
     }
 
     case 'withdraw': {
@@ -110,33 +174,36 @@ export async function routeBillingTransaction(
           if (limit < BigInt(1) || limit > BigInt(100)) {
             throw new ManifestMCPError(
               ManifestMCPErrorCode.TX_FAILED,
-              `Invalid limit: ${limit}. Must be between 1 and 100.`
+              `Invalid limit: ${limit}. Must be between 1 and 100.`,
             );
           }
         }
 
         // Check for any extra arguments that weren't consumed
-        const allConsumed = [...providerFlag.consumedIndices, ...limitFlag.consumedIndices];
+        const allConsumed = [
+          ...providerFlag.consumedIndices,
+          ...limitFlag.consumedIndices,
+        ];
         const extraArgs = filterConsumedArgs(args, allConsumed);
         if (extraArgs.length > 0) {
           const usage = getSubcommandUsage('tx', 'billing', 'withdraw');
           throw new ManifestMCPError(
             ManifestMCPErrorCode.TX_FAILED,
             `Provider-wide withdrawal does not accept additional arguments. ` +
-            `Got unexpected: ${extraArgs.map(a => `"${a}"`).join(', ')}. ` +
-            `For lease-specific withdrawal, omit --provider flag. Usage: withdraw ${usage ?? '<args>'}`
+              `Got unexpected: ${extraArgs.map((a) => `"${a}"`).join(', ')}. ` +
+              `For lease-specific withdrawal, omit --provider flag. Usage: withdraw ${usage ?? '<args>'}`,
           );
         }
       } else {
         // Lease-specific withdrawal mode
         // Check for unexpected flags (--limit without --provider is invalid)
-        const unexpectedFlags = args.filter(arg => arg.startsWith('--'));
+        const unexpectedFlags = args.filter((arg) => arg.startsWith('--'));
         if (unexpectedFlags.length > 0) {
           const usage = getSubcommandUsage('tx', 'billing', 'withdraw');
           throw new ManifestMCPError(
             ManifestMCPErrorCode.TX_FAILED,
             `Unexpected flag(s) in lease-specific withdrawal mode: ${unexpectedFlags.join(', ')}. ` +
-            `Use --provider for provider-wide withdrawal. Usage: withdraw ${usage ?? '<args>'}`
+              `Use --provider for provider-wide withdrawal. Usage: withdraw ${usage ?? '<args>'}`,
           );
         }
 
@@ -153,18 +220,33 @@ export async function routeBillingTransaction(
         }),
       };
 
-      const result = await client.signAndBroadcast(senderAddress, [msg], 'auto');
+      const result = await client.signAndBroadcast(
+        senderAddress,
+        [msg],
+        'auto',
+      );
       return buildTxResult('billing', 'withdraw', result, waitForConfirmation);
     }
 
     case 'create-lease-for-tenant': {
       // Parse optional --meta-hash flag
-      const { value: metaHashHex, consumedIndices } = extractFlag(args, '--meta-hash', 'billing create-lease-for-tenant');
-      const metaHash = metaHashHex ? parseHexBytes(metaHashHex, 'meta-hash', MAX_META_HASH_BYTES) : undefined;
+      const { value: metaHashHex, consumedIndices } = extractFlag(
+        args,
+        '--meta-hash',
+        'billing create-lease-for-tenant',
+      );
+      const metaHash = metaHashHex
+        ? parseHexBytes(metaHashHex, 'meta-hash', MAX_META_HASH_BYTES)
+        : undefined;
 
       // Filter out --meta-hash and its value to get remaining args
       const remainingArgs = filterConsumedArgs(args, consumedIndices);
-      requireArgs(remainingArgs, 2, ['tenant-address', 'sku-uuid:quantity[:service-name]'], 'billing create-lease-for-tenant');
+      requireArgs(
+        remainingArgs,
+        2,
+        ['tenant-address', 'sku-uuid:quantity[:service-name]'],
+        'billing create-lease-for-tenant',
+      );
 
       const [tenant, ...itemArgs] = remainingArgs;
       validateAddress(tenant, 'tenant address');
@@ -182,8 +264,17 @@ export async function routeBillingTransaction(
         }),
       };
 
-      const result = await client.signAndBroadcast(senderAddress, [msg], 'auto');
-      return buildTxResult('billing', 'create-lease-for-tenant', result, waitForConfirmation);
+      const result = await client.signAndBroadcast(
+        senderAddress,
+        [msg],
+        'auto',
+      );
+      return buildTxResult(
+        'billing',
+        'create-lease-for-tenant',
+        result,
+        waitForConfirmation,
+      );
     }
 
     case 'acknowledge-lease': {
@@ -198,13 +289,26 @@ export async function routeBillingTransaction(
         }),
       };
 
-      const result = await client.signAndBroadcast(senderAddress, [msg], 'auto');
-      return buildTxResult('billing', 'acknowledge-lease', result, waitForConfirmation);
+      const result = await client.signAndBroadcast(
+        senderAddress,
+        [msg],
+        'auto',
+      );
+      return buildTxResult(
+        'billing',
+        'acknowledge-lease',
+        result,
+        waitForConfirmation,
+      );
     }
 
     case 'reject-lease': {
       // Parse optional --reason flag
-      const { value: reason, consumedIndices } = extractFlag(args, '--reason', 'billing reject-lease');
+      const { value: reason, consumedIndices } = extractFlag(
+        args,
+        '--reason',
+        'billing reject-lease',
+      );
       const leaseArgs = filterConsumedArgs(args, consumedIndices);
       requireArgs(leaseArgs, 1, ['lease-uuid'], 'billing reject-lease');
 
@@ -219,8 +323,17 @@ export async function routeBillingTransaction(
         }),
       };
 
-      const result = await client.signAndBroadcast(senderAddress, [msg], 'auto');
-      return buildTxResult('billing', 'reject-lease', result, waitForConfirmation);
+      const result = await client.signAndBroadcast(
+        senderAddress,
+        [msg],
+        'auto',
+      );
+      return buildTxResult(
+        'billing',
+        'reject-lease',
+        result,
+        waitForConfirmation,
+      );
     }
 
     case 'cancel-lease': {
@@ -235,19 +348,39 @@ export async function routeBillingTransaction(
         }),
       };
 
-      const result = await client.signAndBroadcast(senderAddress, [msg], 'auto');
-      return buildTxResult('billing', 'cancel-lease', result, waitForConfirmation);
+      const result = await client.signAndBroadcast(
+        senderAddress,
+        [msg],
+        'auto',
+      );
+      return buildTxResult(
+        'billing',
+        'cancel-lease',
+        result,
+        waitForConfirmation,
+      );
     }
 
     case 'update-params': {
-      requireArgs(args, 5, [
-        'max-leases-per-tenant', 'max-items-per-lease', 'min-lease-duration',
-        'max-pending-leases-per-tenant', 'pending-timeout',
-      ], 'billing update-params');
+      requireArgs(
+        args,
+        5,
+        [
+          'max-leases-per-tenant',
+          'max-items-per-lease',
+          'min-lease-duration',
+          'max-pending-leases-per-tenant',
+          'pending-timeout',
+        ],
+        'billing update-params',
+      );
 
       const [
-        maxLeasesPerTenantStr, maxItemsPerLeaseStr, minLeaseDurationStr,
-        maxPendingLeasesPerTenantStr, pendingTimeoutStr,
+        maxLeasesPerTenantStr,
+        maxItemsPerLeaseStr,
+        minLeaseDurationStr,
+        maxPendingLeasesPerTenantStr,
+        pendingTimeoutStr,
         ...allowedAddresses
       ] = args;
 
@@ -260,18 +393,39 @@ export async function routeBillingTransaction(
         value: MsgUpdateParams.fromPartial({
           authority: senderAddress,
           params: {
-            maxLeasesPerTenant: parseBigInt(maxLeasesPerTenantStr, 'max-leases-per-tenant'),
-            maxItemsPerLease: parseBigInt(maxItemsPerLeaseStr, 'max-items-per-lease'),
-            minLeaseDuration: parseBigInt(minLeaseDurationStr, 'min-lease-duration'),
-            maxPendingLeasesPerTenant: parseBigInt(maxPendingLeasesPerTenantStr, 'max-pending-leases-per-tenant'),
+            maxLeasesPerTenant: parseBigInt(
+              maxLeasesPerTenantStr,
+              'max-leases-per-tenant',
+            ),
+            maxItemsPerLease: parseBigInt(
+              maxItemsPerLeaseStr,
+              'max-items-per-lease',
+            ),
+            minLeaseDuration: parseBigInt(
+              minLeaseDurationStr,
+              'min-lease-duration',
+            ),
+            maxPendingLeasesPerTenant: parseBigInt(
+              maxPendingLeasesPerTenantStr,
+              'max-pending-leases-per-tenant',
+            ),
             pendingTimeout: parseBigInt(pendingTimeoutStr, 'pending-timeout'),
             allowedList: allowedAddresses,
           },
         }),
       };
 
-      const result = await client.signAndBroadcast(senderAddress, [msg], 'auto');
-      return buildTxResult('billing', 'update-params', result, waitForConfirmation);
+      const result = await client.signAndBroadcast(
+        senderAddress,
+        [msg],
+        'auto',
+      );
+      return buildTxResult(
+        'billing',
+        'update-params',
+        result,
+        waitForConfirmation,
+      );
     }
 
     default:

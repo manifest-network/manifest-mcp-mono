@@ -1,13 +1,13 @@
-import { describe, it, expect } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import {
-  deriveAppNameFromImage,
-  validateServiceName,
   buildManifest,
   buildStackManifest,
-  mergeManifest,
-  isStackManifest,
-  parseStackManifest,
+  deriveAppNameFromImage,
   getServiceNames,
+  isStackManifest,
+  mergeManifest,
+  parseStackManifest,
+  validateServiceName,
 } from './manifest.js';
 
 describe('deriveAppNameFromImage', () => {
@@ -32,7 +32,9 @@ describe('deriveAppNameFromImage', () => {
   });
 
   it('registry + digest stripped', () => {
-    expect(deriveAppNameFromImage('my-registry.com/org/my-app@sha256:abc123')).toBe('my-app');
+    expect(
+      deriveAppNameFromImage('my-registry.com/org/my-app@sha256:abc123'),
+    ).toBe('my-app');
   });
 
   it('long name truncated to 32 chars', () => {
@@ -55,7 +57,7 @@ describe('deriveAppNameFromImage', () => {
 
   it('truncation does not leave trailing hyphen', () => {
     // 30 a's + hyphen + more chars → truncated at 32, trailing hyphen trimmed
-    const img = 'a'.repeat(30) + '-' + 'b'.repeat(10);
+    const img = `${'a'.repeat(30)}-${'b'.repeat(10)}`;
     const result = deriveAppNameFromImage(img);
     expect(result.length).toBeLessThanOrEqual(32);
     expect(result).not.toMatch(/-$/);
@@ -105,7 +107,11 @@ describe('buildManifest', () => {
       args: ['-c', 'echo hello'],
       user: '1000:1000',
       tmpfs: ['/tmp:size=64M'],
-      health_check: { test: ['CMD', 'curl', '-f', 'http://localhost/'], interval: '30s', retries: 3 },
+      health_check: {
+        test: ['CMD', 'curl', '-f', 'http://localhost/'],
+        interval: '30s',
+        retries: 3,
+      },
       stop_grace_period: '30s',
       init: true,
       expose: ['8080/tcp'],
@@ -118,7 +124,11 @@ describe('buildManifest', () => {
     expect(result.args).toEqual(['-c', 'echo hello']);
     expect(result.user).toBe('1000:1000');
     expect(result.tmpfs).toEqual(['/tmp:size=64M']);
-    expect(result.health_check).toEqual({ test: ['CMD', 'curl', '-f', 'http://localhost/'], interval: '30s', retries: 3 });
+    expect(result.health_check).toEqual({
+      test: ['CMD', 'curl', '-f', 'http://localhost/'],
+      interval: '30s',
+      retries: 3,
+    });
     expect(result.stop_grace_period).toBe('30s');
     expect(result.init).toBe(true);
     expect(result.expose).toEqual(['8080/tcp']);
@@ -149,7 +159,11 @@ describe('buildStackManifest', () => {
     const result = buildStackManifest({
       services: {
         web: { image: 'nginx', ports: { '80/tcp': {} } },
-        db: { image: 'mysql:8', ports: { '3306/tcp': {} }, env: { MYSQL_ROOT_PASSWORD: 'secret' } },
+        db: {
+          image: 'mysql:8',
+          ports: { '3306/tcp': {} },
+          env: { MYSQL_ROOT_PASSWORD: 'secret' },
+        },
       },
     });
     expect(Object.keys(result)).toEqual(['web', 'db']);
@@ -190,7 +204,12 @@ describe('mergeManifest', () => {
   it('fields carried forward from old when not in new', () => {
     const result = mergeManifest(
       { image: 'nginx:2' },
-      JSON.stringify({ image: 'nginx:1', user: '1000:1000', tmpfs: ['/tmp'], command: ['/bin/sh'] }),
+      JSON.stringify({
+        image: 'nginx:1',
+        user: '1000:1000',
+        tmpfs: ['/tmp'],
+        command: ['/bin/sh'],
+      }),
     );
     expect(result.image).toBe('nginx:2');
     expect(result.user).toBe('1000:1000');
@@ -208,25 +227,33 @@ describe('mergeManifest', () => {
 
   it('invalid old JSON throws', () => {
     const newManifest = { image: 'nginx:2', ports: { '80/tcp': {} } };
-    expect(() => mergeManifest(newManifest, 'not valid json')).toThrow('invalid JSON');
+    expect(() => mergeManifest(newManifest, 'not valid json')).toThrow(
+      'invalid JSON',
+    );
   });
 
   it('old manifest that is an array throws', () => {
     const newManifest = { image: 'nginx:2' };
-    expect(() => mergeManifest(newManifest, '[1, 2, 3]')).toThrow('must be a JSON object');
+    expect(() => mergeManifest(newManifest, '[1, 2, 3]')).toThrow(
+      'must be a JSON object',
+    );
   });
 });
 
 describe('isStackManifest', () => {
   it('single-service manifest returns false', () => {
-    expect(isStackManifest({ image: 'nginx', ports: { '80/tcp': {} } })).toBe(false);
+    expect(isStackManifest({ image: 'nginx', ports: { '80/tcp': {} } })).toBe(
+      false,
+    );
   });
 
   it('stack manifest returns true', () => {
-    expect(isStackManifest({
-      web: { image: 'nginx', ports: { '80/tcp': {} } },
-      db: { image: 'mysql:8', ports: { '3306/tcp': {} } },
-    })).toBe(true);
+    expect(
+      isStackManifest({
+        web: { image: 'nginx', ports: { '80/tcp': {} } },
+        db: { image: 'mysql:8', ports: { '3306/tcp': {} } },
+      }),
+    ).toBe(true);
   });
 
   it('null returns false', () => {
@@ -258,16 +285,20 @@ describe('parseStackManifest', () => {
   });
 
   it('throws on single-service manifest', () => {
-    expect(() => parseStackManifest(JSON.stringify({ image: 'nginx' }))).toThrow(/Not a valid stack manifest/);
+    expect(() =>
+      parseStackManifest(JSON.stringify({ image: 'nginx' })),
+    ).toThrow(/Not a valid stack manifest/);
   });
 });
 
 describe('getServiceNames', () => {
   it('returns keys for stack manifest', () => {
-    expect(getServiceNames({
-      web: { image: 'nginx' },
-      db: { image: 'mysql' },
-    })).toEqual(['web', 'db']);
+    expect(
+      getServiceNames({
+        web: { image: 'nginx' },
+        db: { image: 'mysql' },
+      }),
+    ).toEqual(['web', 'db']);
   });
 
   it('returns empty array for single-service manifest', () => {

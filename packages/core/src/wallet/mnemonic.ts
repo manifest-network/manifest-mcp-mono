@@ -1,6 +1,15 @@
-import { DirectSecp256k1HdWallet, OfflineSigner } from '@cosmjs/proto-signing';
 import { Secp256k1HdWallet } from '@cosmjs/amino';
-import { WalletProvider, SignArbitraryResult, ManifestMCPError, ManifestMCPErrorCode, ManifestMCPConfig } from '../types.js';
+import {
+  DirectSecp256k1HdWallet,
+  type OfflineSigner,
+} from '@cosmjs/proto-signing';
+import {
+  type ManifestMCPConfig,
+  ManifestMCPError,
+  ManifestMCPErrorCode,
+  type SignArbitraryResult,
+  type WalletProvider,
+} from '../types.js';
 import { signArbitraryWithAmino } from './sign-arbitrary.js';
 
 /**
@@ -32,7 +41,7 @@ export class MnemonicWalletProvider implements WalletProvider {
     if (this.disconnected) {
       throw new ManifestMCPError(
         ManifestMCPErrorCode.WALLET_NOT_CONNECTED,
-        'Wallet has been disconnected and cannot be reconnected. Create a new MnemonicWalletProvider instance.'
+        'Wallet has been disconnected and cannot be reconnected. Create a new MnemonicWalletProvider instance.',
       );
     }
 
@@ -49,7 +58,7 @@ export class MnemonicWalletProvider implements WalletProvider {
     if (!this.mnemonic) {
       throw new ManifestMCPError(
         ManifestMCPErrorCode.WALLET_NOT_CONNECTED,
-        'Mnemonic has been cleared. Create a new MnemonicWalletProvider instance.'
+        'Mnemonic has been cleared. Create a new MnemonicWalletProvider instance.',
       );
     }
 
@@ -72,7 +81,7 @@ export class MnemonicWalletProvider implements WalletProvider {
         if (accounts.length === 0) {
           throw new ManifestMCPError(
             ManifestMCPErrorCode.INVALID_MNEMONIC,
-            'No accounts derived from mnemonic'
+            'No accounts derived from mnemonic',
           );
         }
 
@@ -90,7 +99,7 @@ export class MnemonicWalletProvider implements WalletProvider {
         }
         throw new ManifestMCPError(
           ManifestMCPErrorCode.INVALID_MNEMONIC,
-          `Failed to create wallet from mnemonic: ${error instanceof Error ? error.message : String(error)}`
+          `Failed to create wallet from mnemonic: ${error instanceof Error ? error.message : String(error)}`,
         );
       }
     })();
@@ -132,7 +141,7 @@ export class MnemonicWalletProvider implements WalletProvider {
     if (!this.address) {
       throw new ManifestMCPError(
         ManifestMCPErrorCode.WALLET_NOT_CONNECTED,
-        'Wallet failed to initialize'
+        'Wallet failed to initialize',
       );
     }
 
@@ -148,20 +157,23 @@ export class MnemonicWalletProvider implements WalletProvider {
     if (!this.wallet) {
       throw new ManifestMCPError(
         ManifestMCPErrorCode.WALLET_NOT_CONNECTED,
-        'Wallet failed to initialize'
+        'Wallet failed to initialize',
       );
     }
 
     return this.wallet;
   }
 
-  async signArbitrary(address: string, data: string): Promise<SignArbitraryResult> {
+  async signArbitrary(
+    address: string,
+    data: string,
+  ): Promise<SignArbitraryResult> {
     await this.initWallet();
 
     if (!this.aminoWallet) {
       throw new ManifestMCPError(
         ManifestMCPErrorCode.WALLET_NOT_CONNECTED,
-        'Amino wallet failed to initialize'
+        'Amino wallet failed to initialize',
       );
     }
 
@@ -171,6 +183,11 @@ export class MnemonicWalletProvider implements WalletProvider {
         'Wallet address not initialized',
       );
     }
-    return signArbitraryWithAmino(this.aminoWallet, this.address, address, data);
+    return signArbitraryWithAmino(
+      this.aminoWallet,
+      this.address,
+      address,
+      data,
+    );
   }
 }

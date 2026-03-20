@@ -1,29 +1,39 @@
-import { Server } from '@modelcontextprotocol/sdk/server/index.js';
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { z } from 'zod';
+import type { WalletProvider } from '@manifest-network/manifest-mcp-core';
 import {
+  bigIntReplacer,
   CosmosClientManager,
   createMnemonicServer,
   createValidatedConfig,
-  VERSION,
+  fundCredits,
+  getBalance,
+  jsonResponse,
   LeaseState,
   leaseStateToJSON,
   type ManifestMCPServerOptions,
   type MnemonicServerConfig,
-  withErrorHandling,
-  jsonResponse,
-  bigIntReplacer,
-  getBalance,
-  fundCredits,
   stopApp,
+  VERSION,
+  withErrorHandling,
 } from '@manifest-network/manifest-mcp-core';
-import type { WalletProvider } from '@manifest-network/manifest-mcp-core';
+import type { Server } from '@modelcontextprotocol/sdk/server/index.js';
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { z } from 'zod';
 
 export type { ManifestMCPServerOptions } from '@manifest-network/manifest-mcp-core';
 
-const VALID_STATE_FILTERS = ['all', 'pending', 'active', 'closed', 'rejected', 'expired'] as const;
+const VALID_STATE_FILTERS = [
+  'all',
+  'pending',
+  'active',
+  'closed',
+  'rejected',
+  'expired',
+] as const;
 
-const STATE_FILTER_MAP: Record<typeof VALID_STATE_FILTERS[number], LeaseState> = {
+const STATE_FILTER_MAP: Record<
+  (typeof VALID_STATE_FILTERS)[number],
+  LeaseState
+> = {
   all: LeaseState.LEASE_STATE_UNSPECIFIED,
   pending: LeaseState.LEASE_STATE_PENDING,
   active: LeaseState.LEASE_STATE_ACTIVE,
@@ -34,12 +44,18 @@ const STATE_FILTER_MAP: Record<typeof VALID_STATE_FILTERS[number], LeaseState> =
 
 function leaseStateLabel(state: LeaseState): string {
   switch (state) {
-    case LeaseState.LEASE_STATE_PENDING: return 'pending';
-    case LeaseState.LEASE_STATE_ACTIVE: return 'active';
-    case LeaseState.LEASE_STATE_CLOSED: return 'closed';
-    case LeaseState.LEASE_STATE_REJECTED: return 'rejected';
-    case LeaseState.LEASE_STATE_EXPIRED: return 'expired';
-    default: return leaseStateToJSON(state).toLowerCase();
+    case LeaseState.LEASE_STATE_PENDING:
+      return 'pending';
+    case LeaseState.LEASE_STATE_ACTIVE:
+      return 'active';
+    case LeaseState.LEASE_STATE_CLOSED:
+      return 'closed';
+    case LeaseState.LEASE_STATE_REJECTED:
+      return 'rejected';
+    case LeaseState.LEASE_STATE_EXPIRED:
+      return 'expired';
+    default:
+      return leaseStateToJSON(state).toLowerCase();
   }
 }
 
@@ -65,7 +81,10 @@ export class LeaseMCPServer {
   constructor(options: ManifestMCPServerOptions) {
     const config = createValidatedConfig(options.config);
     this.walletProvider = options.walletProvider;
-    this.clientManager = CosmosClientManager.getInstance(config, this.walletProvider);
+    this.clientManager = CosmosClientManager.getInstance(
+      config,
+      this.walletProvider,
+    );
 
     this.mcpServer = new McpServer(
       {
@@ -76,7 +95,7 @@ export class LeaseMCPServer {
         capabilities: {
           tools: {},
         },
-      }
+      },
     );
 
     this.registerTools();
@@ -87,7 +106,8 @@ export class LeaseMCPServer {
     this.mcpServer.registerTool(
       'credit_balance',
       {
-        description: 'Get account balances, credit status, and spending estimates. Use this to check if you have enough credits before deploying, or to monitor remaining credit lifetime.',
+        description:
+          'Get account balances, credit status, and spending estimates. Use this to check if you have enough credits before deploying, or to monitor remaining credit lifetime.',
       },
       withErrorHandling('credit_balance', async () => {
         const address = await this.walletProvider.getAddress();
@@ -101,9 +121,12 @@ export class LeaseMCPServer {
     this.mcpServer.registerTool(
       'fund_credit',
       {
-        description: 'Fund the billing credit account by sending tokens from the wallet. Use this when credit_balance shows insufficient credits.',
+        description:
+          'Fund the billing credit account by sending tokens from the wallet. Use this when credit_balance shows insufficient credits.',
         inputSchema: {
-          amount: z.string().describe('Amount with denomination (e.g. "10000000umfx")'),
+          amount: z
+            .string()
+            .describe('Amount with denomination (e.g. "10000000umfx")'),
         },
       },
       withErrorHandling('fund_credit', async (args) => {
@@ -116,11 +139,26 @@ export class LeaseMCPServer {
     this.mcpServer.registerTool(
       'leases_by_tenant',
       {
-        description: 'List leases for the current account with optional state filtering and pagination. Use this to find lease UUIDs, review deployment history, and audit billing.',
+        description:
+          'List leases for the current account with optional state filtering and pagination. Use this to find lease UUIDs, review deployment history, and audit billing.',
         inputSchema: {
-          state: z.enum(VALID_STATE_FILTERS).optional().describe('Filter by lease state (default: "all")'),
-          limit: z.number().int().min(1).max(100).optional().describe('Maximum number of results (default: 50, max: 100)'),
-          offset: z.number().int().min(0).optional().describe('Number of results to skip for pagination (default: 0)'),
+          state: z
+            .enum(VALID_STATE_FILTERS)
+            .optional()
+            .describe('Filter by lease state (default: "all")'),
+          limit: z
+            .number()
+            .int()
+            .min(1)
+            .max(100)
+            .optional()
+            .describe('Maximum number of results (default: 50, max: 100)'),
+          offset: z
+            .number()
+            .int()
+            .min(0)
+            .optional()
+            .describe('Number of results to skip for pagination (default: 0)'),
         },
       },
       withErrorHandling('leases_by_tenant', async (args) => {
@@ -168,7 +206,8 @@ export class LeaseMCPServer {
     this.mcpServer.registerTool(
       'close_lease',
       {
-        description: 'Close a lease on-chain. This is permanent — the lease cannot be reopened after closing.',
+        description:
+          'Close a lease on-chain. This is permanent — the lease cannot be reopened after closing.',
         inputSchema: {
           lease_uuid: z.string().uuid().describe('The lease UUID to close'),
         },
@@ -183,9 +222,13 @@ export class LeaseMCPServer {
     this.mcpServer.registerTool(
       'get_skus',
       {
-        description: 'List available SKUs (service tiers) with pricing. Use this to see what sizes are available before creating a lease.',
+        description:
+          'List available SKUs (service tiers) with pricing. Use this to see what sizes are available before creating a lease.',
         inputSchema: {
-          active_only: z.boolean().optional().describe('Only return active SKUs (default: true)'),
+          active_only: z
+            .boolean()
+            .optional()
+            .describe('Only return active SKUs (default: true)'),
         },
       },
       withErrorHandling('get_skus', async (args) => {
@@ -200,15 +243,21 @@ export class LeaseMCPServer {
     this.mcpServer.registerTool(
       'get_providers',
       {
-        description: 'List registered providers. Use this to see which providers are available on-chain.',
+        description:
+          'List registered providers. Use this to see which providers are available on-chain.',
         inputSchema: {
-          active_only: z.boolean().optional().describe('Only return active providers (default: true)'),
+          active_only: z
+            .boolean()
+            .optional()
+            .describe('Only return active providers (default: true)'),
         },
       },
       withErrorHandling('get_providers', async (args) => {
         const queryClient = await this.clientManager.getQueryClient();
         const activeOnly = args.active_only ?? true;
-        const result = await queryClient.liftedinit.sku.v1.providers({ activeOnly });
+        const result = await queryClient.liftedinit.sku.v1.providers({
+          activeOnly,
+        });
         return jsonResponse({ providers: result.providers }, bigIntReplacer);
       }),
     );
@@ -227,6 +276,8 @@ export class LeaseMCPServer {
   }
 }
 
-export function createMnemonicLeaseServer(config: MnemonicServerConfig): Promise<LeaseMCPServer> {
+export function createMnemonicLeaseServer(
+  config: MnemonicServerConfig,
+): Promise<LeaseMCPServer> {
   return createMnemonicServer(config, LeaseMCPServer);
 }

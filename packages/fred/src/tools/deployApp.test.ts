@@ -1,7 +1,10 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@manifest-network/manifest-mcp-core', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@manifest-network/manifest-mcp-core')>();
+  const actual =
+    await importOriginal<
+      typeof import('@manifest-network/manifest-mcp-core')
+    >();
   return {
     ...actual,
     cosmosTx: vi.fn(),
@@ -21,12 +24,17 @@ vi.mock('../http/fred.js', () => ({
   pollLeaseUntilReady: vi.fn(),
 }));
 
-import { deployApp } from './deployApp.js';
-import { cosmosTx } from '@manifest-network/manifest-mcp-core';
-import { uploadLeaseData, getLeaseConnectionInfo } from '../http/provider.js';
+import {
+  cosmosTx,
+  ManifestMCPErrorCode,
+} from '@manifest-network/manifest-mcp-core';
+import {
+  makeMockClientManager,
+  makeMockQueryClient,
+} from '@manifest-network/manifest-mcp-core/__test-utils__/mocks.js';
 import { pollLeaseUntilReady } from '../http/fred.js';
-import { makeMockClientManager, makeMockQueryClient } from '@manifest-network/manifest-mcp-core/__test-utils__/mocks.js';
-import { ManifestMCPErrorCode } from '@manifest-network/manifest-mcp-core';
+import { getLeaseConnectionInfo, uploadLeaseData } from '../http/provider.js';
+import { deployApp } from './deployApp.js';
 
 const mockCosmosTx = vi.mocked(cosmosTx);
 const mockUploadLeaseData = vi.mocked(uploadLeaseData);
@@ -40,10 +48,20 @@ function makeQueryClient() {
   return makeMockQueryClient({
     sku: {
       providers: [
-        { uuid: 'prov-1', address: 'manifest1prov', apiUrl: 'http://localhost:8080', active: true },
+        {
+          uuid: 'prov-1',
+          address: 'manifest1prov',
+          apiUrl: 'http://localhost:8080',
+          active: true,
+        },
       ],
       skus: [
-        { uuid: 'sku-micro-uuid', name: 'docker-micro', providerUuid: 'prov-1', basePrice: { amount: '36000', denom: 'umfx' } },
+        {
+          uuid: 'sku-micro-uuid',
+          name: 'docker-micro',
+          providerUuid: 'prov-1',
+          basePrice: { amount: '36000', denom: 'umfx' },
+        },
       ],
       providerLookup: {
         'prov-1': { provider: { apiUrl: 'http://localhost:8080' } } as any,
@@ -67,7 +85,10 @@ describe('deployApp', () => {
         {
           type: 'liftedinit.billing.v1.LeaseCreated',
           attributes: [
-            { key: 'lease_uuid', value: '"550e8400-e29b-41d4-a716-446655440000"' },
+            {
+              key: 'lease_uuid',
+              value: '"550e8400-e29b-41d4-a716-446655440000"',
+            },
           ],
         },
       ],
@@ -85,13 +106,21 @@ describe('deployApp', () => {
 
   it('single-service deploy uses buildManifest', async () => {
     const qc = makeQueryClient();
-    const cm = makeMockClientManager({ queryClient: qc, address: 'manifest1tenant' });
+    const cm = makeMockClientManager({
+      queryClient: qc,
+      address: 'manifest1tenant',
+    });
 
     const result = await deployApp(
       cm as any,
       mockGetAuthToken,
       mockGetLeaseDataAuthToken,
-      { image: 'nginx:alpine', port: 80, size: 'docker-micro', env: { FOO: 'bar' } },
+      {
+        image: 'nginx:alpine',
+        port: 80,
+        size: 'docker-micro',
+        env: { FOO: 'bar' },
+      },
     );
 
     expect(result.lease_uuid).toBe('550e8400-e29b-41d4-a716-446655440000');
@@ -110,44 +139,48 @@ describe('deployApp', () => {
 
   it('stack deploy with 2 services produces stack manifest', async () => {
     const qc = makeQueryClient();
-    const cm = makeMockClientManager({ queryClient: qc, address: 'manifest1tenant' });
+    const cm = makeMockClientManager({
+      queryClient: qc,
+      address: 'manifest1tenant',
+    });
 
-    await deployApp(
-      cm as any,
-      mockGetAuthToken,
-      mockGetLeaseDataAuthToken,
-      {
-        size: 'docker-micro',
-        services: {
-          web: { image: 'nginx', ports: { '80/tcp': {} } },
-          db: { image: 'mysql:8', ports: { '3306/tcp': {} }, env: { MYSQL_ROOT_PASSWORD: 'secret' } },
+    await deployApp(cm as any, mockGetAuthToken, mockGetLeaseDataAuthToken, {
+      size: 'docker-micro',
+      services: {
+        web: { image: 'nginx', ports: { '80/tcp': {} } },
+        db: {
+          image: 'mysql:8',
+          ports: { '3306/tcp': {} },
+          env: { MYSQL_ROOT_PASSWORD: 'secret' },
         },
       },
-    );
+    });
 
     const payload = mockUploadLeaseData.mock.calls[0][2];
     const manifest = JSON.parse(payload);
     expect(Object.keys(manifest)).toEqual(['web', 'db']);
     expect(manifest.web).toEqual({ image: 'nginx', ports: { '80/tcp': {} } });
-    expect(manifest.db).toEqual({ image: 'mysql:8', ports: { '3306/tcp': {} }, env: { MYSQL_ROOT_PASSWORD: 'secret' } });
+    expect(manifest.db).toEqual({
+      image: 'mysql:8',
+      ports: { '3306/tcp': {} },
+      env: { MYSQL_ROOT_PASSWORD: 'secret' },
+    });
   });
 
   it('stack deploy lease items include service names', async () => {
     const qc = makeQueryClient();
-    const cm = makeMockClientManager({ queryClient: qc, address: 'manifest1tenant' });
+    const cm = makeMockClientManager({
+      queryClient: qc,
+      address: 'manifest1tenant',
+    });
 
-    await deployApp(
-      cm as any,
-      mockGetAuthToken,
-      mockGetLeaseDataAuthToken,
-      {
-        size: 'docker-micro',
-        services: {
-          web: { image: 'nginx' },
-          db: { image: 'mysql:8' },
-        },
+    await deployApp(cm as any, mockGetAuthToken, mockGetLeaseDataAuthToken, {
+      size: 'docker-micro',
+      services: {
+        web: { image: 'nginx' },
+        db: { image: 'mysql:8' },
       },
-    );
+    });
 
     const txArgs = mockCosmosTx.mock.calls[0][3] as string[];
     expect(txArgs).toContain('sku-micro-uuid:1:web');
@@ -213,15 +246,16 @@ describe('deployApp', () => {
       events: [
         {
           type: 'liftedinit.billing.v1.LeaseCreated',
-          attributes: [
-            { key: 'lease_uuid', value: '"not-a-valid-uuid"' },
-          ],
+          attributes: [{ key: 'lease_uuid', value: '"not-a-valid-uuid"' }],
         },
       ],
     });
 
     const qc = makeQueryClient();
-    const cm = makeMockClientManager({ queryClient: qc, address: 'manifest1tenant' });
+    const cm = makeMockClientManager({
+      queryClient: qc,
+      address: 'manifest1tenant',
+    });
 
     await expect(
       deployApp(cm as any, mockGetAuthToken, mockGetLeaseDataAuthToken, {

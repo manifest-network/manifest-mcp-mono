@@ -1,5 +1,9 @@
-import { ManifestMCPConfig, ManifestMCPError, ManifestMCPErrorCode } from './types.js';
 import { DEFAULT_RETRY_CONFIG } from './retry.js';
+import {
+  type ManifestMCPConfig,
+  ManifestMCPError,
+  ManifestMCPErrorCode,
+} from './types.js';
 
 /**
  * Default address prefix for Manifest Network
@@ -31,7 +35,9 @@ function isLocalhostHostname(hostname: string): boolean {
  * Validate URL format and check if it uses HTTPS or is localhost (HTTP allowed for local dev)
  * Returns validation result with error reason if invalid
  */
-function validateRpcUrl(url: string): { valid: true } | { valid: false; reason: string } {
+function validateRpcUrl(
+  url: string,
+): { valid: true } | { valid: false; reason: string } {
   let parsed: URL;
   try {
     parsed = new URL(url);
@@ -79,7 +85,8 @@ export function createConfig(input: ManifestMCPConfig): ManifestMCPConfig {
     gasPrice: input.gasPrice,
     addressPrefix: input.addressPrefix ?? DEFAULT_ADDRESS_PREFIX,
     rateLimit: {
-      requestsPerSecond: input.rateLimit?.requestsPerSecond ?? DEFAULT_REQUESTS_PER_SECOND,
+      requestsPerSecond:
+        input.rateLimit?.requestsPerSecond ?? DEFAULT_REQUESTS_PER_SECOND,
     },
     retry: {
       maxRetries: input.retry?.maxRetries ?? DEFAULT_RETRY_CONFIG.maxRetries,
@@ -100,14 +107,18 @@ export interface ValidationResult {
 /**
  * Validate a configuration object
  */
-export function validateConfig(config: Partial<ManifestMCPConfig>): ValidationResult {
+export function validateConfig(
+  config: Partial<ManifestMCPConfig>,
+): ValidationResult {
   const errors: string[] = [];
 
   // Required fields
   if (!config.chainId) {
     errors.push('chainId is required');
   } else if (!isValidChainId(config.chainId)) {
-    errors.push('chainId must be alphanumeric with hyphens (e.g., "manifest-ledger-testnet")');
+    errors.push(
+      'chainId must be alphanumeric with hyphens (e.g., "manifest-ledger-testnet")',
+    );
   }
 
   if (!config.rpcUrl) {
@@ -122,7 +133,9 @@ export function validateConfig(config: Partial<ManifestMCPConfig>): ValidationRe
   if (!config.gasPrice) {
     errors.push('gasPrice is required');
   } else if (!isValidGasPrice(config.gasPrice)) {
-    errors.push('gasPrice must be a number followed by denomination (e.g., "1.0umfx")');
+    errors.push(
+      'gasPrice must be a number followed by denomination (e.g., "1.0umfx")',
+    );
   }
 
   // Optional fields
@@ -133,7 +146,11 @@ export function validateConfig(config: Partial<ManifestMCPConfig>): ValidationRe
   }
 
   if (config.rateLimit !== undefined) {
-    if (typeof config.rateLimit !== 'object' || config.rateLimit === null || Array.isArray(config.rateLimit)) {
+    if (
+      typeof config.rateLimit !== 'object' ||
+      config.rateLimit === null ||
+      Array.isArray(config.rateLimit)
+    ) {
       errors.push('rateLimit must be a plain object');
     } else if (config.rateLimit.requestsPerSecond !== undefined) {
       if (
@@ -147,7 +164,11 @@ export function validateConfig(config: Partial<ManifestMCPConfig>): ValidationRe
   }
 
   if (config.retry !== undefined) {
-    if (typeof config.retry !== 'object' || config.retry === null || Array.isArray(config.retry)) {
+    if (
+      typeof config.retry !== 'object' ||
+      config.retry === null ||
+      Array.isArray(config.retry)
+    ) {
       errors.push('retry must be a plain object');
     } else {
       if (config.retry.maxRetries !== undefined) {
@@ -183,7 +204,9 @@ export function validateConfig(config: Partial<ManifestMCPConfig>): ValidationRe
         config.retry.maxDelayMs !== undefined &&
         config.retry.maxDelayMs < config.retry.baseDelayMs
       ) {
-        errors.push('retry.maxDelayMs must be greater than or equal to retry.baseDelayMs');
+        errors.push(
+          'retry.maxDelayMs must be greater than or equal to retry.baseDelayMs',
+        );
       }
     }
   }
@@ -197,17 +220,18 @@ export function validateConfig(config: Partial<ManifestMCPConfig>): ValidationRe
 /**
  * Create and validate a configuration, throwing on invalid config
  */
-export function createValidatedConfig(input: ManifestMCPConfig): ManifestMCPConfig {
+export function createValidatedConfig(
+  input: ManifestMCPConfig,
+): ManifestMCPConfig {
   const validation = validateConfig(input);
 
   if (!validation.valid) {
     throw new ManifestMCPError(
       ManifestMCPErrorCode.INVALID_CONFIG,
       `Invalid configuration: ${validation.errors.join(', ')}`,
-      { errors: validation.errors }
+      { errors: validation.errors },
     );
   }
 
   return createConfig(input);
 }
-

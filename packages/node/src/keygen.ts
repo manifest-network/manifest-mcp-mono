@@ -7,7 +7,7 @@ import { loadKeyfileConfig } from './config.js';
 function prompt(question: string): Promise<string> {
   if (!process.stdin.isTTY) {
     throw new Error(
-      'Interactive terminal required for key management commands. Cannot prompt for input in non-interactive mode.'
+      'Interactive terminal required for key management commands. Cannot prompt for input in non-interactive mode.',
     );
   }
   const rl = createInterface({
@@ -32,7 +32,7 @@ function prompt(question: string): Promise<string> {
 function promptPassword(question: string): Promise<string> {
   if (!process.stdin.isTTY) {
     throw new Error(
-      'Interactive terminal required for key management commands. Cannot prompt for input in non-interactive mode.'
+      'Interactive terminal required for key management commands. Cannot prompt for input in non-interactive mode.',
     );
   }
   return new Promise((resolve, reject) => {
@@ -80,13 +80,17 @@ function promptPassword(question: string): Promise<string> {
   });
 }
 
-async function writeKeyfile(wallet: DirectSecp256k1HdWallet, keyfilePath: string, password: string): Promise<void> {
+async function writeKeyfile(
+  wallet: DirectSecp256k1HdWallet,
+  keyfilePath: string,
+  password: string,
+): Promise<void> {
   let serialized: string;
   try {
     serialized = await wallet.serialize(password);
   } catch (err: unknown) {
     throw new Error(
-      `Failed to encrypt wallet: ${err instanceof Error ? err.message : String(err)}`
+      `Failed to encrypt wallet: ${err instanceof Error ? err.message : String(err)}`,
     );
   }
   try {
@@ -94,14 +98,16 @@ async function writeKeyfile(wallet: DirectSecp256k1HdWallet, keyfilePath: string
     writeFileSync(keyfilePath, serialized, { mode: 0o600 });
   } catch (err: unknown) {
     throw new Error(
-      `Failed to write keyfile to ${keyfilePath}: ${err instanceof Error ? err.message : String(err)}`
+      `Failed to write keyfile to ${keyfilePath}: ${err instanceof Error ? err.message : String(err)}`,
     );
   }
 }
 
 async function confirmOverwrite(keyfilePath: string): Promise<void> {
   if (existsSync(keyfilePath)) {
-    const answer = await prompt(`Keyfile already exists at ${keyfilePath}. Overwrite? (yes/no): `);
+    const answer = await prompt(
+      `Keyfile already exists at ${keyfilePath}. Overwrite? (yes/no): `,
+    );
     if (answer.toLowerCase() !== 'yes') {
       console.error('Aborted. Existing keyfile was not modified.');
       process.exit(0);
@@ -116,7 +122,9 @@ export async function runKeygen(): Promise<void> {
 
   await confirmOverwrite(keyfilePath);
 
-  const password = await promptPassword('Enter password for keyfile encryption: ');
+  const password = await promptPassword(
+    'Enter password for keyfile encryption: ',
+  );
   if (!password) {
     console.error('Error: password cannot be empty.');
     process.exit(1);
@@ -135,7 +143,9 @@ export async function runKeygen(): Promise<void> {
   try {
     wallet = await DirectSecp256k1HdWallet.generate(24, { prefix });
   } catch (err: unknown) {
-    console.error(`Failed to generate wallet: ${err instanceof Error ? err.message : String(err)}`);
+    console.error(
+      `Failed to generate wallet: ${err instanceof Error ? err.message : String(err)}`,
+    );
     process.exit(1);
   }
 
@@ -148,7 +158,9 @@ export async function runKeygen(): Promise<void> {
       console.error(`Address: ${accounts[0].address}`);
     }
   } catch (err) {
-    console.error(`Note: could not derive address for display (${err instanceof Error ? err.message : String(err)}), but the keyfile was written successfully.`);
+    console.error(
+      `Note: could not derive address for display (${err instanceof Error ? err.message : String(err)}), but the keyfile was written successfully.`,
+    );
   }
 }
 
@@ -165,7 +177,9 @@ export async function runImport(): Promise<void> {
     process.exit(1);
   }
 
-  const password = await promptPassword('Enter password for keyfile encryption: ');
+  const password = await promptPassword(
+    'Enter password for keyfile encryption: ',
+  );
   if (!password) {
     console.error('Error: password cannot be empty.');
     process.exit(1);
@@ -182,12 +196,14 @@ export async function runImport(): Promise<void> {
 
   let wallet: DirectSecp256k1HdWallet;
   try {
-    wallet = await DirectSecp256k1HdWallet.fromMnemonic(mnemonic.trim(), { prefix });
+    wallet = await DirectSecp256k1HdWallet.fromMnemonic(mnemonic.trim(), {
+      prefix,
+    });
   } catch (err: unknown) {
     console.error(
       `Invalid mnemonic: ${err instanceof Error ? err.message : String(err)}\n` +
-      'Please verify your mnemonic phrase has the correct number of words (12, 15, 18, 21, or 24) ' +
-      'and all words are valid BIP-39 words.'
+        'Please verify your mnemonic phrase has the correct number of words (12, 15, 18, 21, or 24) ' +
+        'and all words are valid BIP-39 words.',
     );
     process.exit(1);
   }
@@ -201,6 +217,8 @@ export async function runImport(): Promise<void> {
       console.error(`Address: ${accounts[0].address}`);
     }
   } catch (err) {
-    console.error(`Note: could not derive address for display (${err instanceof Error ? err.message : String(err)}), but the keyfile was written successfully.`);
+    console.error(
+      `Note: could not derive address for display (${err instanceof Error ? err.message : String(err)}), but the keyfile was written successfully.`,
+    );
   }
 }

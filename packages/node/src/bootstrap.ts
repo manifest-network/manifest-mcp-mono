@@ -1,15 +1,28 @@
 import { existsSync } from 'node:fs';
-import { Server } from '@modelcontextprotocol/sdk/server/index.js';
-import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import {
+  createValidatedConfig,
   ManifestMCPError,
   MnemonicWalletProvider,
-  createValidatedConfig,
   sanitizeForLogging,
   type WalletProvider,
 } from '@manifest-network/manifest-mcp-core';
+import type { Server } from '@modelcontextprotocol/sdk/server/index.js';
+import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { loadConfig } from './config.js';
 import { KeyfileWalletProvider } from './keyfileWallet.js';
+
+/** Thrown after process.exit() to halt control flow when exit is mocked. */
+class ExitError extends Error {
+  constructor() {
+    super();
+    this.name = 'ExitError';
+  }
+}
+
+function exit(code: number): never {
+  process.exit(code);
+  throw new ExitError();
+}
 
 /**
  * Configuration for bootstrapping a CLI entry point.
@@ -26,7 +39,11 @@ export interface BootstrapConfig {
   }) => Server;
 }
 
-function handleSubcommand(cliName: string, label: string, subcommand: string): Promise<void> {
+function handleSubcommand(
+  cliName: string,
+  label: string,
+  subcommand: string,
+): Promise<void> {
   if (subcommand === 'keygen') {
     return import('./keygen.js').then(({ runKeygen }) => runKeygen());
   }
@@ -36,12 +53,12 @@ function handleSubcommand(cliName: string, label: string, subcommand: string): P
 
   console.error(
     `Unknown subcommand: "${subcommand}"\n\n` +
-    'Usage:\n' +
-    `  ${cliName}              Start the ${label} MCP server\n` +
-    `  ${cliName} keygen       Generate a new encrypted keyfile\n` +
-    `  ${cliName} import       Import a mnemonic into an encrypted keyfile\n`
+      'Usage:\n' +
+      `  ${cliName}              Start the ${label} MCP server\n` +
+      `  ${cliName} keygen       Generate a new encrypted keyfile\n` +
+      `  ${cliName} import       Import a mnemonic into an encrypted keyfile\n`,
   );
-  process.exit(1);
+  exit(1);
 }
 
 function resolveWallet(
@@ -65,10 +82,10 @@ function resolveWallet(
 
   console.error(
     'No wallet found. Either:\n' +
-    `  1. Run "${cliName} keygen" to generate an encrypted keyfile at ${env.keyfilePath}\n` +
-    '  2. Set the COSMOS_MNEMONIC environment variable'
+      `  1. Run "${cliName} keygen" to generate an encrypted keyfile at ${env.keyfilePath}\n` +
+      '  2. Set the COSMOS_MNEMONIC environment variable',
   );
-  process.exit(1);
+  exit(1);
 }
 
 /**
@@ -108,8 +125,11 @@ export function bootstrap(cfg: BootstrapConfig): void {
   }
 
   main().catch((error) => {
+    if (error instanceof ExitError) return;
     if (error instanceof ManifestMCPError) {
-      console.error(`Fatal error [${error.code}]: ${sanitizeForLogging(error.message) as string}`);
+      console.error(
+        `Fatal error [${error.code}]: ${sanitizeForLogging(error.message) as string}`,
+      );
     } else {
       const msg = error instanceof Error ? error.message : String(error);
       console.error(`Fatal error: ${sanitizeForLogging(msg) as string}`);

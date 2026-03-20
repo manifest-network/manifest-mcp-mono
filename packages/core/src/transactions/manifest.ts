@@ -1,8 +1,15 @@
-import { SigningStargateClient } from '@cosmjs/stargate';
+import type { SigningStargateClient } from '@cosmjs/stargate';
 import { liftedinit } from '@manifest-network/manifestjs';
-import { CosmosTxResult } from '../types.js';
 import { throwUnsupportedSubcommand } from '../modules.js';
-import { parseAmount, buildTxResult, validateAddress, validateArgsLength, parseColonPair, requireArgs } from './utils.js';
+import type { CosmosTxResult } from '../types.js';
+import {
+  buildTxResult,
+  parseAmount,
+  parseColonPair,
+  requireArgs,
+  validateAddress,
+  validateArgsLength,
+} from './utils.js';
 
 const { MsgPayout, MsgBurnHeldBalance } = liftedinit.manifest.v1;
 
@@ -14,7 +21,7 @@ export async function routeManifestTransaction(
   senderAddress: string,
   subcommand: string,
   args: string[],
-  waitForConfirmation: boolean
+  waitForConfirmation: boolean,
 ): Promise<CosmosTxResult> {
   validateArgsLength(args, 'manifest transaction');
 
@@ -23,7 +30,12 @@ export async function routeManifestTransaction(
       requireArgs(args, 1, ['address:amount'], 'manifest payout');
       // Parse payout pairs (format: address:amount ...)
       const payoutPairs = args.map((arg) => {
-        const [address, amountStr] = parseColonPair(arg, 'address', 'amount', 'payout pair');
+        const [address, amountStr] = parseColonPair(
+          arg,
+          'address',
+          'amount',
+          'payout pair',
+        );
         validateAddress(address, 'payout recipient address');
         const { amount, denom } = parseAmount(amountStr);
         return { address, coin: { denom, amount } };
@@ -37,7 +49,11 @@ export async function routeManifestTransaction(
         }),
       };
 
-      const result = await client.signAndBroadcast(senderAddress, [msg], 'auto');
+      const result = await client.signAndBroadcast(
+        senderAddress,
+        [msg],
+        'auto',
+      );
       return buildTxResult('manifest', 'payout', result, waitForConfirmation);
     }
 
@@ -57,8 +73,17 @@ export async function routeManifestTransaction(
         }),
       };
 
-      const result = await client.signAndBroadcast(senderAddress, [msg], 'auto');
-      return buildTxResult('manifest', 'burn-held-balance', result, waitForConfirmation);
+      const result = await client.signAndBroadcast(
+        senderAddress,
+        [msg],
+        'auto',
+      );
+      return buildTxResult(
+        'manifest',
+        'burn-held-balance',
+        result,
+        waitForConfirmation,
+      );
     }
 
     default:

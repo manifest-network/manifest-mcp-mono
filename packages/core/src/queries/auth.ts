@@ -1,12 +1,18 @@
-import { ManifestQueryClient } from '../client.js';
-import {
-  ManifestMCPErrorCode,
-  AuthAccountResult, AuthAccountsResult, AuthParamsResult, ModuleAccountsResult,
-  AddressBytesToStringResult, AddressStringToBytesResult, Bech32PrefixResult, AccountInfoResult
-} from '../types.js';
-import { requireArgs, extractPaginationArgs } from './utils.js';
-import { parseHexBytes, bytesToHex } from '../transactions/utils.js';
+import type { ManifestQueryClient } from '../client.js';
 import { throwUnsupportedSubcommand } from '../modules.js';
+import { bytesToHex, parseHexBytes } from '../transactions/utils.js';
+import {
+  type AccountInfoResult,
+  type AddressBytesToStringResult,
+  type AddressStringToBytesResult,
+  type AuthAccountResult,
+  type AuthAccountsResult,
+  type AuthParamsResult,
+  type Bech32PrefixResult,
+  ManifestMCPErrorCode,
+  type ModuleAccountsResult,
+} from '../types.js';
+import { extractPaginationArgs, requireArgs } from './utils.js';
 
 /** Maximum address bytes length (256 bytes, more than enough for any address) */
 const MAX_ADDRESS_BYTES = 256;
@@ -30,7 +36,7 @@ type AuthQueryResult =
 export async function routeAuthQuery(
   queryClient: ManifestQueryClient,
   subcommand: string,
-  args: string[]
+  args: string[],
 ): Promise<AuthQueryResult> {
   const auth = queryClient.cosmos.auth.v1beta1;
 
@@ -67,7 +73,12 @@ export async function routeAuthQuery(
 
     case 'address-bytes-to-string': {
       requireArgs(args, 1, ['address-bytes'], 'auth address-bytes-to-string');
-      const addressBytes = parseHexBytes(args[0], 'address-bytes', MAX_ADDRESS_BYTES, ManifestMCPErrorCode.QUERY_FAILED);
+      const addressBytes = parseHexBytes(
+        args[0],
+        'address-bytes',
+        MAX_ADDRESS_BYTES,
+        ManifestMCPErrorCode.QUERY_FAILED,
+      );
       const result = await auth.addressBytesToString({ addressBytes });
       return { addressString: result.addressString };
     }

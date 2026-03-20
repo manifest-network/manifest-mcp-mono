@@ -1,9 +1,9 @@
 import {
-  type ManifestQueryClient,
   LeaseState,
   leaseStateToJSON,
   ManifestMCPError,
   ManifestMCPErrorCode,
+  type ManifestQueryClient,
 } from '@manifest-network/manifest-mcp-core';
 
 /**
@@ -15,7 +15,9 @@ export async function fetchActiveLease(
   leaseUuid: string,
   action: string,
 ) {
-  const leaseResult = await queryClient.liftedinit.billing.v1.lease({ leaseUuid });
+  const leaseResult = await queryClient.liftedinit.billing.v1.lease({
+    leaseUuid,
+  });
 
   if (!leaseResult.lease) {
     throw new ManifestMCPError(
@@ -26,7 +28,10 @@ export async function fetchActiveLease(
 
   const lease = leaseResult.lease;
 
-  if (lease.state !== LeaseState.LEASE_STATE_ACTIVE && lease.state !== LeaseState.LEASE_STATE_PENDING) {
+  if (
+    lease.state !== LeaseState.LEASE_STATE_ACTIVE &&
+    lease.state !== LeaseState.LEASE_STATE_PENDING
+  ) {
     throw new ManifestMCPError(
       ManifestMCPErrorCode.QUERY_FAILED,
       `Lease "${leaseUuid}" is not active (state: ${leaseStateToJSON(lease.state)}); ${action}`,

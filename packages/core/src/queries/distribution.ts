@@ -1,11 +1,16 @@
-import { ManifestQueryClient } from '../client.js';
-import {
-  RewardsResult, CommissionResult, CommunityPoolResult, DistributionParamsResult,
-  ValidatorOutstandingRewardsResult, SlashesResult, DelegatorValidatorsResult,
-  DelegatorWithdrawAddressResult
-} from '../types.js';
-import { parseBigInt, requireArgs, extractPaginationArgs } from './utils.js';
+import type { ManifestQueryClient } from '../client.js';
 import { throwUnsupportedSubcommand } from '../modules.js';
+import type {
+  CommissionResult,
+  CommunityPoolResult,
+  DelegatorValidatorsResult,
+  DelegatorWithdrawAddressResult,
+  DistributionParamsResult,
+  RewardsResult,
+  SlashesResult,
+  ValidatorOutstandingRewardsResult,
+} from '../types.js';
+import { extractPaginationArgs, parseBigInt, requireArgs } from './utils.js';
 
 /** Distribution query result union type */
 type DistributionQueryResult =
@@ -26,7 +31,7 @@ type DistributionQueryResult =
 export async function routeDistributionQuery(
   queryClient: ManifestQueryClient,
   subcommand: string,
-  args: string[]
+  args: string[],
 ): Promise<DistributionQueryResult> {
   const distribution = queryClient.cosmos.distribution.v1beta1;
 
@@ -46,7 +51,9 @@ export async function routeDistributionQuery(
         return { rewards: result.rewards };
       } else {
         // Get rewards from all validators
-        const result = await distribution.delegationTotalRewards({ delegatorAddress });
+        const result = await distribution.delegationTotalRewards({
+          delegatorAddress,
+        });
         return {
           rewards: result.rewards,
           total: result.total,
@@ -57,7 +64,9 @@ export async function routeDistributionQuery(
     case 'commission': {
       requireArgs(args, 1, ['validator-address'], 'distribution commission');
       const [validatorAddress] = args;
-      const result = await distribution.validatorCommission({ validatorAddress });
+      const result = await distribution.validatorCommission({
+        validatorAddress,
+      });
       return { commission: result.commission };
     }
 
@@ -72,19 +81,38 @@ export async function routeDistributionQuery(
     }
 
     case 'validator-outstanding-rewards': {
-      requireArgs(args, 1, ['validator-address'], 'distribution validator-outstanding-rewards');
+      requireArgs(
+        args,
+        1,
+        ['validator-address'],
+        'distribution validator-outstanding-rewards',
+      );
       const [validatorAddress] = args;
-      const result = await distribution.validatorOutstandingRewards({ validatorAddress });
+      const result = await distribution.validatorOutstandingRewards({
+        validatorAddress,
+      });
       return { rewards: result.rewards };
     }
 
     case 'slashes': {
-      const { pagination, remainingArgs } = extractPaginationArgs(args, 'distribution slashes');
-      requireArgs(remainingArgs, 1, ['validator-address'], 'distribution slashes');
+      const { pagination, remainingArgs } = extractPaginationArgs(
+        args,
+        'distribution slashes',
+      );
+      requireArgs(
+        remainingArgs,
+        1,
+        ['validator-address'],
+        'distribution slashes',
+      );
       const [validatorAddress] = remainingArgs;
       // Optional: starting and ending height for filtering
-      const startingHeight = remainingArgs[1] ? parseBigInt(remainingArgs[1], 'starting-height') : BigInt(0);
-      const endingHeight = remainingArgs[2] ? parseBigInt(remainingArgs[2], 'ending-height') : BigInt(Number.MAX_SAFE_INTEGER);
+      const startingHeight = remainingArgs[1]
+        ? parseBigInt(remainingArgs[1], 'starting-height')
+        : BigInt(0);
+      const endingHeight = remainingArgs[2]
+        ? parseBigInt(remainingArgs[2], 'ending-height')
+        : BigInt(Number.MAX_SAFE_INTEGER);
       const result = await distribution.validatorSlashes({
         validatorAddress,
         startingHeight,
@@ -95,16 +123,30 @@ export async function routeDistributionQuery(
     }
 
     case 'delegator-validators': {
-      requireArgs(args, 1, ['delegator-address'], 'distribution delegator-validators');
+      requireArgs(
+        args,
+        1,
+        ['delegator-address'],
+        'distribution delegator-validators',
+      );
       const [delegatorAddress] = args;
-      const result = await distribution.delegatorValidators({ delegatorAddress });
+      const result = await distribution.delegatorValidators({
+        delegatorAddress,
+      });
       return { validators: result.validators };
     }
 
     case 'delegator-withdraw-address': {
-      requireArgs(args, 1, ['delegator-address'], 'distribution delegator-withdraw-address');
+      requireArgs(
+        args,
+        1,
+        ['delegator-address'],
+        'distribution delegator-withdraw-address',
+      );
       const [delegatorAddress] = args;
-      const result = await distribution.delegatorWithdrawAddress({ delegatorAddress });
+      const result = await distribution.delegatorWithdrawAddress({
+        delegatorAddress,
+      });
       return { withdrawAddress: result.withdrawAddress };
     }
 

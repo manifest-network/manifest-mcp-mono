@@ -49,8 +49,8 @@
   },
   "devDependencies": {
     "@manifest-network/manifestjs": "2.2.0-billing-v2.3",
-    "@types/node": "20.19.30",
+    "@types/node": "22.15.29",
     "typescript": "5.9.3",
-    "vitest": "4.0.18"
+    "vitest": "4.1.0"
   }
 }

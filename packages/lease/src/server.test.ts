@@ -1,6 +1,6 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mockGetBalance = vi.fn();
 const mockFundCredits = vi.fn();
@@ -10,7 +10,10 @@ const mockSKUs = vi.fn();
 const mockProviders = vi.fn();
 
 vi.mock('@manifest-network/manifest-mcp-core', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@manifest-network/manifest-mcp-core')>();
+  const actual =
+    await importOriginal<
+      typeof import('@manifest-network/manifest-mcp-core')
+    >();
   return {
     ...actual,
     CosmosClientManager: {
@@ -20,7 +23,8 @@ vi.mock('@manifest-network/manifest-mcp-core', async (importOriginal) => {
           liftedinit: {
             billing: {
               v1: {
-                leasesByTenant: (...args: unknown[]) => mockLeasesByTenant(...args),
+                leasesByTenant: (...args: unknown[]) =>
+                  mockLeasesByTenant(...args),
               },
             },
             sku: {
@@ -43,15 +47,33 @@ vi.mock('@manifest-network/manifest-mcp-core', async (importOriginal) => {
   };
 });
 
+import {
+  ManifestMCPError,
+  ManifestMCPErrorCode,
+} from '@manifest-network/manifest-mcp-core';
+import {
+  callTool as callToolHelper,
+  type ToolResult,
+} from '@manifest-network/manifest-mcp-core/__test-utils__/callTool.js';
+import {
+  makeMockConfig,
+  makeMockWallet,
+} from '@manifest-network/manifest-mcp-core/__test-utils__/mocks.js';
 import { LeaseMCPServer } from './index.js';
-import { ManifestMCPError, ManifestMCPErrorCode } from '@manifest-network/manifest-mcp-core';
-import { makeMockConfig, makeMockWallet } from '@manifest-network/manifest-mcp-core/__test-utils__/mocks.js';
-import { callTool as callToolHelper, type ToolResult } from '@manifest-network/manifest-mcp-core/__test-utils__/callTool.js';
 
 let activeTransports: InMemoryTransport[] = [];
 
-function callTool(server: LeaseMCPServer, toolName: string, toolInput: Record<string, unknown> = {}): Promise<ToolResult> {
-  return callToolHelper(server.getServer(), toolName, toolInput, activeTransports);
+function callTool(
+  server: LeaseMCPServer,
+  toolName: string,
+  toolInput: Record<string, unknown> = {},
+): Promise<ToolResult> {
+  return callToolHelper(
+    server.getServer(),
+    toolName,
+    toolInput,
+    activeTransports,
+  );
 }
 
 const LEASE_TOOL_NAMES = [
@@ -83,7 +105,8 @@ describe('LeaseMCPServer', () => {
         walletProvider: makeMockWallet(),
       });
 
-      const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+      const [clientTransport, serverTransport] =
+        InMemoryTransport.createLinkedPair();
       activeTransports.push(clientTransport, serverTransport);
 
       const client = new Client({ name: 'test-client', version: '1.0.0' });
@@ -93,7 +116,9 @@ describe('LeaseMCPServer', () => {
       try {
         const result = await client.listTools();
         expect(result.tools).toHaveLength(6);
-        expect(result.tools.map(t => t.name).sort()).toEqual([...LEASE_TOOL_NAMES].sort());
+        expect(result.tools.map((t) => t.name).sort()).toEqual(
+          [...LEASE_TOOL_NAMES].sort(),
+        );
       } finally {
         await client.close();
       }
@@ -125,7 +150,9 @@ describe('LeaseMCPServer', () => {
         config: makeMockConfig(),
         walletProvider: makeMockWallet(),
       });
-      const result = await callTool(server, 'fund_credit', { amount: '10000000umfx' });
+      const result = await callTool(server, 'fund_credit', {
+        amount: '10000000umfx',
+      });
 
       expect(mockFundCredits).toHaveBeenCalledOnce();
       expect(result.isError).toBeUndefined();
@@ -152,7 +179,9 @@ describe('LeaseMCPServer', () => {
         config: makeMockConfig(),
         walletProvider: makeMockWallet(),
       });
-      const result = await callTool(server, 'leases_by_tenant', { state: 'all' });
+      const result = await callTool(server, 'leases_by_tenant', {
+        state: 'all',
+      });
 
       expect(result.isError).toBeUndefined();
       const parsed = JSON.parse(result.content[0].text);
@@ -164,7 +193,10 @@ describe('LeaseMCPServer', () => {
     });
 
     it('passes pagination params correctly', async () => {
-      mockLeasesByTenant.mockResolvedValue({ leases: [], pagination: { total: BigInt(0) } });
+      mockLeasesByTenant.mockResolvedValue({
+        leases: [],
+        pagination: { total: BigInt(0) },
+      });
 
       const server = new LeaseMCPServer({
         config: makeMockConfig(),
@@ -198,7 +230,9 @@ describe('LeaseMCPServer', () => {
 
   describe('get_skus', () => {
     it('returns SKUs with active_only default true', async () => {
-      mockSKUs.mockResolvedValue({ skus: [{ name: 'docker-micro', uuid: 'sku-1' }] });
+      mockSKUs.mockResolvedValue({
+        skus: [{ name: 'docker-micro', uuid: 'sku-1' }],
+      });
 
       const server = new LeaseMCPServer({
         config: makeMockConfig(),
@@ -215,7 +249,9 @@ describe('LeaseMCPServer', () => {
 
   describe('get_providers', () => {
     it('returns providers with active_only default true', async () => {
-      mockProviders.mockResolvedValue({ providers: [{ uuid: 'prov-1', address: 'manifest1x' }] });
+      mockProviders.mockResolvedValue({
+        providers: [{ uuid: 'prov-1', address: 'manifest1x' }],
+      });
 
       const server = new LeaseMCPServer({
         config: makeMockConfig(),
@@ -233,7 +269,10 @@ describe('LeaseMCPServer', () => {
   describe('error handling', () => {
     it('ManifestMCPError produces structured error response', async () => {
       mockGetBalance.mockRejectedValue(
-        new ManifestMCPError(ManifestMCPErrorCode.QUERY_FAILED, 'credit query failed'),
+        new ManifestMCPError(
+          ManifestMCPErrorCode.QUERY_FAILED,
+          'credit query failed',
+        ),
       );
 
       const server = new LeaseMCPServer({

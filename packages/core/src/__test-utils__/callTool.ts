@@ -27,7 +27,8 @@ export async function callTool(
   toolInput: Record<string, unknown> = {},
   activeTransports: InMemoryTransport[] = [],
 ): Promise<ToolResult> {
-  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
   activeTransports.push(clientTransport, serverTransport);
 
   const client = new Client({ name: 'test-client', version: '1.0.0' });
@@ -36,7 +37,10 @@ export async function callTool(
     await server.connect(serverTransport);
     await client.connect(clientTransport);
 
-    return await client.callTool({ name: toolName, arguments: toolInput }) as ToolResult;
+    return (await client.callTool({
+      name: toolName,
+      arguments: toolInput,
+    })) as ToolResult;
   } finally {
     await client.close().catch(() => {});
     await clientTransport.close().catch(() => {});

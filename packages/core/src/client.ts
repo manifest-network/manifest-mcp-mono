@@ -1,25 +1,36 @@
-import { SigningStargateClient, GasPrice, HttpEndpoint } from '@cosmjs/stargate';
-import {
-  cosmosProtoRegistry,
-  cosmosAminoConverters,
-  liftedinitProtoRegistry,
-  liftedinitAminoConverters,
-  strangeloveVenturesProtoRegistry,
-  strangeloveVenturesAminoConverters,
-  osmosisProtoRegistry,
-  osmosisAminoConverters,
-  liftedinit,
-} from '@manifest-network/manifestjs';
 import { Registry } from '@cosmjs/proto-signing';
-import { AminoTypes } from '@cosmjs/stargate';
+import {
+  AminoTypes,
+  GasPrice,
+  type HttpEndpoint,
+  SigningStargateClient,
+} from '@cosmjs/stargate';
+import {
+  cosmosAminoConverters,
+  cosmosProtoRegistry,
+  liftedinit,
+  liftedinitAminoConverters,
+  liftedinitProtoRegistry,
+  osmosisAminoConverters,
+  osmosisProtoRegistry,
+  strangeloveVenturesAminoConverters,
+  strangeloveVenturesProtoRegistry,
+} from '@manifest-network/manifestjs';
 import { RateLimiter } from 'limiter';
-import { ManifestMCPConfig, WalletProvider, ManifestMCPError, ManifestMCPErrorCode } from './types.js';
 import { DEFAULT_REQUESTS_PER_SECOND } from './config.js';
 import { withRetry } from './retry.js';
+import {
+  type ManifestMCPConfig,
+  ManifestMCPError,
+  ManifestMCPErrorCode,
+  type WalletProvider,
+} from './types.js';
 
 // Type for the RPC query client from manifestjs liftedinit bundle
 // This includes cosmos modules + liftedinit-specific modules (billing, manifest, sku)
-export type ManifestQueryClient = Awaited<ReturnType<typeof liftedinit.ClientFactory.createRPCQueryClient>>;
+export type ManifestQueryClient = Awaited<
+  ReturnType<typeof liftedinit.ClientFactory.createRPCQueryClient>
+>;
 
 /**
  * Extract the registry type expected by SigningStargateClient.connectWithSigner.
@@ -28,7 +39,11 @@ export type ManifestQueryClient = Awaited<ReturnType<typeof liftedinit.ClientFac
  * in SigningStargateClientOptions due to telescope-generated proto types. This type alias
  * extracts the expected registry type from the function signature to enable type-safe casting.
  */
-type SigningClientRegistry = Parameters<typeof SigningStargateClient.connectWithSigner>[2] extends { registry?: infer R } ? R : never;
+type SigningClientRegistry = Parameters<
+  typeof SigningStargateClient.connectWithSigner
+>[2] extends { registry?: infer R }
+  ? R
+  : never;
 
 /** Default timeout for transaction broadcast (60 seconds) */
 const DEFAULT_BROADCAST_TIMEOUT_MS = 60_000;
@@ -73,12 +88,16 @@ export class CosmosClientManager {
   private queryClientPromise: Promise<ManifestQueryClient> | null = null;
   private signingClientPromise: Promise<SigningStargateClient> | null = null;
 
-  private constructor(config: ManifestMCPConfig, walletProvider: WalletProvider) {
+  private constructor(
+    config: ManifestMCPConfig,
+    walletProvider: WalletProvider,
+  ) {
     this.config = config;
     this.walletProvider = walletProvider;
 
     // Initialize rate limiter with configured or default requests per second
-    const requestsPerSecond = config.rateLimit?.requestsPerSecond ?? DEFAULT_REQUESTS_PER_SECOND;
+    const requestsPerSecond =
+      config.rateLimit?.requestsPerSecond ?? DEFAULT_REQUESTS_PER_SECOND;
     this.rateLimiter = new RateLimiter({
       tokensPerInterval: requestsPerSecond,
       interval: 'second',
@@ -94,7 +113,7 @@ export class CosmosClientManager {
    */
   static getInstance(
     config: ManifestMCPConfig,
-    walletProvider: WalletProvider
+    walletProvider: WalletProvider,
   ): CosmosClientManager {
     const key = `${config.chainId}:${config.rpcUrl}`;
     let instance = CosmosClientManager.instances.get(key);
@@ -109,7 +128,8 @@ export class CosmosClientManager {
         instance.walletProvider !== walletProvider;
 
       const rateLimitChanged =
-        instance.config.rateLimit?.requestsPerSecond !== config.rateLimit?.requestsPerSecond;
+        instance.config.rateLimit?.requestsPerSecond !==
+        config.rateLimit?.requestsPerSecond;
 
       // Always update config reference
       instance.config = config;
@@ -127,7 +147,8 @@ export class CosmosClientManager {
 
       // Update rate limiter independently (doesn't affect signing client)
       if (rateLimitChanged) {
-        const newRps = config.rateLimit?.requestsPerSecond ?? DEFAULT_REQUESTS_PER_SECOND;
+        const newRps =
+          config.rateLimit?.requestsPerSecond ?? DEFAULT_REQUESTS_PER_SECOND;
         instance.rateLimiter = new RateLimiter({
           tokensPerInterval: newRps,
           interval: 'second',
@@ -173,13 +194,14 @@ export class CosmosClientManager {
         // Use liftedinit ClientFactory which includes cosmos + liftedinit modules
         // Wrap with retry for transient connection failures
         const client = await withRetry(
-          () => liftedinit.ClientFactory.createRPCQueryClient({
-            rpcEndpoint: this.config.rpcUrl,
-          }),
+          () =>
+            liftedinit.ClientFactory.createRPCQueryClient({
+              rpcEndpoint: this.config.rpcUrl,
+            }),
           {
             config: this.config.retry,
             operationName: 'connect query client',
-          }
+          },
         );
         // Only store if this is still the active promise
         if (this.queryClientPromise === thisInitPromise) {
@@ -198,7 +220,7 @@ export class CosmosClientManager {
         throw new ManifestMCPError(
           ManifestMCPErrorCode.RPC_CONNECTION_FAILED,
           `Failed to connect to RPC endpoint: ${error instanceof Error ? error.message : String(error)}`,
-          { rpcUrl: this.config.rpcUrl }
+          { rpcUrl: this.config.rpcUrl },
         );
       }
     })();
@@ -242,21 +264,18 @@ export class CosmosClientManager {
         // This is a known limitation with custom cosmos-sdk module registries.
         // Wrap with retry for transient connection failures
         const client = await withRetry(
-          () => SigningStargateClient.connectWithSigner(
-            endpoint,
-            signer,
-            {
+          () =>
+            SigningStargateClient.connectWithSigner(endpoint, signer, {
               registry: registry as SigningClientRegistry,
               aminoTypes,
               gasPrice,
               broadcastTimeoutMs: DEFAULT_BROADCAST_TIMEOUT_MS,
               broadcastPollIntervalMs: DEFAULT_BROADCAST_POLL_INTERVAL_MS,
-            }
-          ),
+            }),
           {
             config: this.config.retry,
             operationName: 'connect signing client',
-          }
+          },
         );
         // Only store if this is still the active promise
         if (this.signingClientPromise === thisInitPromise) {
@@ -278,7 +297,7 @@ export class CosmosClientManager {
         throw new ManifestMCPError(
           ManifestMCPErrorCode.RPC_CONNECTION_FAILED,
           `Failed to connect signing client: ${error instanceof Error ? error.message : String(error)}`,
-          { rpcUrl: this.config.rpcUrl }
+          { rpcUrl: this.config.rpcUrl },
         );
       }
     })();

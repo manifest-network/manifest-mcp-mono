@@ -1,24 +1,36 @@
-import { describe, it, expect } from 'vitest';
 import { fromBase64 } from '@cosmjs/encoding';
-import { createSignMessage, createLeaseDataSignMessage, createAuthToken } from './auth.js';
+import { describe, expect, it } from 'vitest';
+import {
+  createAuthToken,
+  createLeaseDataSignMessage,
+  createSignMessage,
+} from './auth.js';
 
 describe('createSignMessage', () => {
   it('formats tenant:leaseUuid:timestamp', () => {
-    expect(createSignMessage('t1', 'uuid1', '2025-01-01T00:00:00Z'))
-      .toBe('t1:uuid1:2025-01-01T00:00:00Z');
+    expect(createSignMessage('t1', 'uuid1', '2025-01-01T00:00:00Z')).toBe(
+      't1:uuid1:2025-01-01T00:00:00Z',
+    );
   });
 });
 
 describe('createLeaseDataSignMessage', () => {
   it('formats with manifest lease data prefix', () => {
-    expect(createLeaseDataSignMessage('uuid1', 'abc123', '2025-01-01T00:00:00Z'))
-      .toBe('manifest lease data uuid1 abc123 2025-01-01T00:00:00Z');
+    expect(
+      createLeaseDataSignMessage('uuid1', 'abc123', '2025-01-01T00:00:00Z'),
+    ).toBe('manifest lease data uuid1 abc123 2025-01-01T00:00:00Z');
   });
 });
 
 describe('createAuthToken', () => {
   it('creates base64-encoded JSON token without meta_hash_hex', () => {
-    const token = createAuthToken('tenant1', 'lease1', '2025-01-01T00:00:00Z', 'pk1', 'sig1');
+    const token = createAuthToken(
+      'tenant1',
+      'lease1',
+      '2025-01-01T00:00:00Z',
+      'pk1',
+      'sig1',
+    );
     const decoded = JSON.parse(new TextDecoder().decode(fromBase64(token)));
     expect(decoded.tenant).toBe('tenant1');
     expect(decoded.lease_uuid).toBe('lease1');

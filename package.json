@@ -7,12 +7,16 @@
   "scripts": {
     "build": "npm run build --workspaces",
     "lint": "npm run lint --workspaces --if-present",
+    "check": "biome check packages/",
+    "check:fix": "biome check --write packages/",
+    "format": "biome format --write packages/",
     "test": "npm run test --workspaces --if-present",
     "test:e2e": "vitest run --config e2e/vitest.config.ts"
   },
   "devDependencies": {
+    "@biomejs/biome": "^2.4.8",
     "@modelcontextprotocol/sdk": "1.27.1",
-    "tsdown": "^0.12.5",
-    "vitest": "4.0.18"
+    "tsdown": "^0.21.4",
+    "vitest": "^4.1.0"
   }
 }

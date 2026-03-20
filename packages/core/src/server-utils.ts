@@ -1,20 +1,26 @@
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
-import { ManifestMCPError, ManifestMCPErrorCode, type ManifestMCPConfig, type WalletProvider } from './types.js';
-import { MnemonicWalletProvider } from './wallet/index.js';
 import { createValidatedConfig } from './config.js';
+import {
+  type ManifestMCPConfig,
+  ManifestMCPError,
+  ManifestMCPErrorCode,
+  type WalletProvider,
+} from './types.js';
+import { MnemonicWalletProvider } from './wallet/index.js';
 
 /**
  * Error codes that indicate infrastructure-level failures (wallet, RPC, config).
  * Used by tool implementations to distinguish infrastructure errors from
  * provider/application errors so that infrastructure errors are always re-thrown.
  */
-export const INFRASTRUCTURE_ERROR_CODES: ReadonlySet<ManifestMCPErrorCode> = new Set([
-  ManifestMCPErrorCode.WALLET_NOT_CONNECTED,
-  ManifestMCPErrorCode.WALLET_CONNECTION_FAILED,
-  ManifestMCPErrorCode.RPC_CONNECTION_FAILED,
-  ManifestMCPErrorCode.INVALID_MNEMONIC,
-  ManifestMCPErrorCode.INVALID_CONFIG,
-]);
+export const INFRASTRUCTURE_ERROR_CODES: ReadonlySet<ManifestMCPErrorCode> =
+  new Set([
+    ManifestMCPErrorCode.WALLET_NOT_CONNECTED,
+    ManifestMCPErrorCode.WALLET_CONNECTION_FAILED,
+    ManifestMCPErrorCode.RPC_CONNECTION_FAILED,
+    ManifestMCPErrorCode.INVALID_MNEMONIC,
+    ManifestMCPErrorCode.INVALID_CONFIG,
+  ]);
 
 /**
  * Sensitive field names that should be redacted from error responses
@@ -67,7 +73,7 @@ export function sanitizeForLogging(obj: unknown, depth = 0): unknown {
     const words = obj.trim().split(/\s+/);
     const wordCount = words.length;
     if (wordCount >= 12 && wordCount <= 24 && wordCount % 3 === 0) {
-      const allLowercaseAlpha = words.every(w => /^[a-z]+$/.test(w));
+      const allLowercaseAlpha = words.every((w) => /^[a-z]+$/.test(w));
       if (allLowercaseAlpha) {
         return '[REDACTED - possible mnemonic]';
       }
@@ -76,7 +82,7 @@ export function sanitizeForLogging(obj: unknown, depth = 0): unknown {
   }
 
   if (Array.isArray(obj)) {
-    return obj.map(item => sanitizeForLogging(item, depth + 1));
+    return obj.map((item) => sanitizeForLogging(item, depth + 1));
   }
 
   if (typeof obj === 'object') {
@@ -110,10 +116,9 @@ export interface ManifestMCPServerOptions {
  * McpServer.registerTool flow through without requiring manual casts.
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- preserves ToolCallback<Args> signature from McpServer
-export function withErrorHandling<T extends (...args: any[]) => Promise<CallToolResult>>(
-  toolName: string,
-  fn: T,
-): T {
+export function withErrorHandling<
+  T extends (...args: any[]) => Promise<CallToolResult>,
+>(toolName: string, fn: T): T {
   // For tools with no inputSchema, McpServer calls cb(extra) with one arg.
   // For tools with inputSchema, McpServer calls cb(parsedArgs, extra).
   // We infer from cbArgs.length at call time (not fn.length) so default parameters are safe.
@@ -123,13 +128,20 @@ export function withErrorHandling<T extends (...args: any[]) => Promise<CallTool
     try {
       return hasArgs ? await fn(args, cbArgs[1]) : await fn(cbArgs[0]);
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      const errorCode = error instanceof ManifestMCPError ? error.code : 'UNKNOWN';
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
+      const errorCode =
+        error instanceof ManifestMCPError ? error.code : 'UNKNOWN';
       if (error instanceof ManifestMCPError) {
-        console.error(`[${toolName}] Tool error [${errorCode}]: ${errorMessage}`);
+        console.error(
+          `[${toolName}] Tool error [${errorCode}]: ${errorMessage}`,
+        );
       } else {
-        const stack = error instanceof Error && error.stack ? `\n${error.stack}` : '';
-        console.error(`[${toolName}] Tool error [${errorCode}]: ${errorMessage}${stack}`);
+        const stack =
+          error instanceof Error && error.stack ? `\n${error.stack}` : '';
+        console.error(
+          `[${toolName}] Tool error [${errorCode}]: ${errorMessage}${stack}`,
+        );
       }
 
       // Sanitize error messages before including in the MCP response.
@@ -161,7 +173,7 @@ export function withErrorHandling<T extends (...args: any[]) => Promise<CallTool
         responseText = JSON.stringify(errorResponse, bigIntReplacer, 2);
       } catch (stringifyError) {
         console.error(
-          `[${toolName}] Failed to serialize error response: ${stringifyError instanceof Error ? stringifyError.message : String(stringifyError)}`
+          `[${toolName}] Failed to serialize error response: ${stringifyError instanceof Error ? stringifyError.message : String(stringifyError)}`,
         );
         responseText = JSON.stringify({
           error: true,
@@ -188,7 +200,10 @@ export function withErrorHandling<T extends (...args: any[]) => Promise<CallTool
  * Helper to build a successful JSON text response
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- matches JSON.stringify's replacer signature
-export function jsonResponse(data: unknown, replacer?: (key: string, value: any) => any): CallToolResult {
+export function jsonResponse(
+  data: unknown,
+  replacer?: (key: string, value: any) => any,
+): CallToolResult {
   return {
     content: [
       {

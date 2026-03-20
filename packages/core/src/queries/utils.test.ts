@@ -1,19 +1,21 @@
-import { describe, it, expect } from 'vitest';
+import { describe, expect, it } from 'vitest';
+import { ManifestMCPError, ManifestMCPErrorCode } from '../types.js';
 import {
+  createPagination,
+  DEFAULT_PAGE_LIMIT,
+  extractPaginationArgs,
+  MAX_PAGE_LIMIT,
   parseBigInt,
   parseInteger,
-  createPagination,
-  extractPaginationArgs,
-  DEFAULT_PAGE_LIMIT,
-  MAX_PAGE_LIMIT,
 } from './utils.js';
-import { ManifestMCPError, ManifestMCPErrorCode } from '../types.js';
 
 describe('parseBigInt', () => {
   it('should parse valid integer strings', () => {
     expect(parseBigInt('0', 'height')).toBe(BigInt(0));
     expect(parseBigInt('123', 'height')).toBe(BigInt(123));
-    expect(parseBigInt('9999999999999999999', 'height')).toBe(BigInt('9999999999999999999'));
+    expect(parseBigInt('9999999999999999999', 'height')).toBe(
+      BigInt('9999999999999999999'),
+    );
   });
 
   it('should throw ManifestMCPError for invalid integers', () => {
@@ -32,7 +34,9 @@ describe('parseBigInt', () => {
       parseBigInt('invalid', 'height');
     } catch (error) {
       expect(error).toBeInstanceOf(ManifestMCPError);
-      expect((error as ManifestMCPError).code).toBe(ManifestMCPErrorCode.QUERY_FAILED);
+      expect((error as ManifestMCPError).code).toBe(
+        ManifestMCPErrorCode.QUERY_FAILED,
+      );
     }
   });
 
@@ -62,7 +66,9 @@ describe('parseInteger', () => {
       parseInteger('invalid', 'status');
     } catch (error) {
       expect(error).toBeInstanceOf(ManifestMCPError);
-      expect((error as ManifestMCPError).code).toBe(ManifestMCPErrorCode.QUERY_FAILED);
+      expect((error as ManifestMCPError).code).toBe(
+        ManifestMCPErrorCode.QUERY_FAILED,
+      );
     }
   });
 });
@@ -98,7 +104,10 @@ describe('createPagination', () => {
 
 describe('extractPaginationArgs', () => {
   it('should return default pagination when no --limit flag', () => {
-    const { pagination, remainingArgs } = extractPaginationArgs(['arg1', 'arg2'], 'test');
+    const { pagination, remainingArgs } = extractPaginationArgs(
+      ['arg1', 'arg2'],
+      'test',
+    );
     expect(pagination.limit).toBe(DEFAULT_PAGE_LIMIT);
     expect(remainingArgs).toEqual(['arg1', 'arg2']);
   });
@@ -106,7 +115,7 @@ describe('extractPaginationArgs', () => {
   it('should extract --limit flag and value', () => {
     const { pagination, remainingArgs } = extractPaginationArgs(
       ['arg1', '--limit', '50', 'arg2'],
-      'test'
+      'test',
     );
     expect(pagination.limit).toBe(BigInt(50));
     expect(remainingArgs).toEqual(['arg1', 'arg2']);
@@ -115,7 +124,7 @@ describe('extractPaginationArgs', () => {
   it('should handle --limit at end of args', () => {
     const { pagination, remainingArgs } = extractPaginationArgs(
       ['arg1', '--limit', '25'],
-      'test'
+      'test',
     );
     expect(pagination.limit).toBe(BigInt(25));
     expect(remainingArgs).toEqual(['arg1']);
@@ -124,28 +133,28 @@ describe('extractPaginationArgs', () => {
   it('should handle --limit at start of args', () => {
     const { pagination, remainingArgs } = extractPaginationArgs(
       ['--limit', '75', 'arg1'],
-      'test'
+      'test',
     );
     expect(pagination.limit).toBe(BigInt(75));
     expect(remainingArgs).toEqual(['arg1']);
   });
 
   it('should throw for invalid limit value', () => {
-    expect(() =>
-      extractPaginationArgs(['--limit', 'abc'], 'test')
-    ).toThrow(ManifestMCPError);
+    expect(() => extractPaginationArgs(['--limit', 'abc'], 'test')).toThrow(
+      ManifestMCPError,
+    );
   });
 
   it('should throw for limit below minimum', () => {
-    expect(() =>
-      extractPaginationArgs(['--limit', '0'], 'test')
-    ).toThrow(ManifestMCPError);
+    expect(() => extractPaginationArgs(['--limit', '0'], 'test')).toThrow(
+      ManifestMCPError,
+    );
   });
 
   it('should throw for limit above maximum', () => {
-    expect(() =>
-      extractPaginationArgs(['--limit', '9999'], 'test')
-    ).toThrow(ManifestMCPError);
+    expect(() => extractPaginationArgs(['--limit', '9999'], 'test')).toThrow(
+      ManifestMCPError,
+    );
   });
 
   it('should handle empty args array', () => {

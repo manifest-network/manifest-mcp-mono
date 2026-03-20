@@ -1,13 +1,13 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../cosmos.js', () => ({
   cosmosTx: vi.fn(),
 }));
 
-import { stopApp } from './stopApp.js';
-import { cosmosTx } from '../cosmos.js';
 import { makeMockClientManager } from '../__test-utils__/mocks.js';
+import { cosmosTx } from '../cosmos.js';
 import { ManifestMCPError, ManifestMCPErrorCode } from '../types.js';
+import { stopApp } from './stopApp.js';
 
 const mockCosmosTx = vi.mocked(cosmosTx);
 
@@ -53,17 +53,15 @@ describe('stopApp', () => {
       ),
     );
 
-    await expect(
-      stopApp(cm as any, 'lease-1'),
-    ).rejects.toThrow(ManifestMCPError);
+    await expect(stopApp(cm as any, 'lease-1')).rejects.toThrow(
+      ManifestMCPError,
+    );
   });
 
   it('propagates tx errors', async () => {
     const cm = makeMockClientManager();
     mockCosmosTx.mockRejectedValue(new Error('tx failed'));
 
-    await expect(
-      stopApp(cm as any, 'lease-1'),
-    ).rejects.toThrow('tx failed');
+    await expect(stopApp(cm as any, 'lease-1')).rejects.toThrow('tx failed');
   });
 });
