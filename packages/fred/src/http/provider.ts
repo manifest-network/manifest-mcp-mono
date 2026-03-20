@@ -145,7 +145,7 @@ export async function getLeaseConnectionInfo(
 export async function uploadLeaseData(
   providerApiUrl: string,
   leaseUuid: string,
-  payload: string,
+  payload: Uint8Array,
   authToken: string,
   fetchFn?: typeof globalThis.fetch,
 ): Promise<void> {

@@ -125,8 +125,10 @@ describe('deployApp', () => {
 
     expect(result.lease_uuid).toBe('550e8400-e29b-41d4-a716-446655440000');
 
-    // Verify manifest passed to upload contains only provided fields
-    const payload = mockUploadLeaseData.mock.calls[0][2];
+    // Verify manifest is uploaded as Uint8Array with correct content
+    const rawPayload = mockUploadLeaseData.mock.calls[0][2];
+    expect(rawPayload).toBeInstanceOf(Uint8Array);
+    const payload = new TextDecoder().decode(rawPayload);
     const manifest = JSON.parse(payload);
     expect(manifest).toEqual({
       image: 'nginx:alpine',
@@ -156,11 +158,17 @@ describe('deployApp', () => {
       },
     });
 
-    const payload = mockUploadLeaseData.mock.calls[0][2];
+    const payload = new TextDecoder().decode(
+      mockUploadLeaseData.mock.calls[0][2],
+    );
     const manifest = JSON.parse(payload);
-    expect(Object.keys(manifest)).toEqual(['web', 'db']);
-    expect(manifest.web).toEqual({ image: 'nginx', ports: { '80/tcp': {} } });
-    expect(manifest.db).toEqual({
+    expect(Object.keys(manifest)).toEqual(['services']);
+    expect(Object.keys(manifest.services)).toEqual(['web', 'db']);
+    expect(manifest.services.web).toEqual({
+      image: 'nginx',
+      ports: { '80/tcp': {} },
+    });
+    expect(manifest.services.db).toEqual({
       image: 'mysql:8',
       ports: { '3306/tcp': {} },
       env: { MYSQL_ROOT_PASSWORD: 'secret' },

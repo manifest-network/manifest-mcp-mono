@@ -3,6 +3,7 @@ import {
   buildManifest,
   buildStackManifest,
   deriveAppNameFromImage,
+  normalizePorts,
   getServiceNames,
   isStackManifest,
   mergeManifest,
@@ -15,8 +16,8 @@ describe('deriveAppNameFromImage', () => {
     expect(deriveAppNameFromImage('nginx')).toBe('nginx');
   });
 
-  it('image with tag', () => {
-    expect(deriveAppNameFromImage('redis:8.4')).toBe('redis-8-4');
+  it('image with tag stripped', () => {
+    expect(deriveAppNameFromImage('redis:8.4')).toBe('redis');
   });
 
   it('latest tag stripped', () => {
@@ -24,7 +25,7 @@ describe('deriveAppNameFromImage', () => {
   });
 
   it('registry prefix stripped', () => {
-    expect(deriveAppNameFromImage('ghcr.io/foo/bar:v2')).toBe('bar-v2');
+    expect(deriveAppNameFromImage('ghcr.io/foo/bar:v2')).toBe('bar');
   });
 
   it('digest stripped', () => {
@@ -56,7 +57,7 @@ describe('deriveAppNameFromImage', () => {
   });
 
   it('truncation does not leave trailing hyphen', () => {
-    // 30 a's + hyphen + more chars → truncated at 32, trailing hyphen trimmed
+    // 30 a's + hyphen + more chars -> truncated at 32, trailing hyphen trimmed
     const img = `${'a'.repeat(30)}-${'b'.repeat(10)}`;
     const result = deriveAppNameFromImage(img);
     expect(result.length).toBeLessThanOrEqual(32);
@@ -65,9 +66,12 @@ describe('deriveAppNameFromImage', () => {
 });
 
 describe('validateServiceName', () => {
-  it.each(['web', 'db', 'my-service', 'a', 'a1', '0'])('valid: %s', (name) => {
-    expect(validateServiceName(name)).toBe(true);
-  });
+  it.each(['web', 'db', 'my-service', 'a', 'a1', '0'])(
+    'valid: %s',
+    (name) => {
+      expect(validateServiceName(name)).toBe(true);
+    },
+  );
 
   it.each([
     ['', 'empty'],
@@ -133,7 +137,9 @@ describe('buildManifest', () => {
     expect(result.init).toBe(true);
     expect(result.expose).toEqual(['8080/tcp']);
     expect(result.labels).toEqual({ app: 'test' });
-    expect(result.depends_on).toEqual({ db: { condition: 'service_healthy' } });
+    expect(result.depends_on).toEqual({
+      db: { condition: 'service_healthy' },
+    });
   });
 
   it('optional fields omitted when not provided', () => {
@@ -155,7 +161,7 @@ describe('buildManifest', () => {
 });
 
 describe('buildStackManifest', () => {
-  it('builds multi-service stack', () => {
+  it('builds multi-service stack with services wrapper', () => {
     const result = buildStackManifest({
       services: {
         web: { image: 'nginx', ports: { '80/tcp': {} } },
@@ -166,13 +172,73 @@ describe('buildStackManifest', () => {
         },
       },
     });
-    expect(Object.keys(result)).toEqual(['web', 'db']);
-    expect(result.web).toEqual({ image: 'nginx', ports: { '80/tcp': {} } });
-    expect(result.db).toEqual({
+    expect(Object.keys(result)).toEqual(['services']);
+    expect(Object.keys(result.services)).toEqual(['web', 'db']);
+    expect(result.services.web).toEqual({
+      image: 'nginx',
+      ports: { '80/tcp': {} },
+    });
+    expect(result.services.db).toEqual({
       image: 'mysql:8',
       ports: { '3306/tcp': {} },
       env: { MYSQL_ROOT_PASSWORD: 'secret' },
     });
+  });
+});
+
+describe('normalizePorts', () => {
+  it('single port defaults to tcp', () => {
+    expect(normalizePorts('80')).toEqual({ '80/tcp': {} });
+  });
+
+  it('explicit udp protocol', () => {
+    expect(normalizePorts('53/udp')).toEqual({ '53/udp': {} });
+  });
+
+  it('comma-separated ports', () => {
+    expect(normalizePorts('80, 443')).toEqual({
+      '80/tcp': {},
+      '443/tcp': {},
+    });
+  });
+
+  it('mixed protocols', () => {
+    expect(normalizePorts('8080/tcp,53/udp')).toEqual({
+      '8080/tcp': {},
+      '53/udp': {},
+    });
+  });
+
+  it('port 1 is valid', () => {
+    expect(normalizePorts('1')).toEqual({ '1/tcp': {} });
+  });
+
+  it('port 65535 is valid', () => {
+    expect(normalizePorts('65535')).toEqual({ '65535/tcp': {} });
+  });
+
+  it('port 0 throws', () => {
+    expect(() => normalizePorts('0')).toThrow('Invalid port');
+  });
+
+  it('port 65536 throws', () => {
+    expect(() => normalizePorts('65536')).toThrow('Invalid port');
+  });
+
+  it('non-numeric port throws', () => {
+    expect(() => normalizePorts('abc')).toThrow('Invalid port');
+  });
+
+  it('invalid protocol throws', () => {
+    expect(() => normalizePorts('80/sctp')).toThrow('Invalid protocol');
+  });
+
+  it('leading zeros throw', () => {
+    expect(() => normalizePorts('080')).toThrow('Invalid port');
+  });
+
+  it('empty string returns empty object', () => {
+    expect(normalizePorts('')).toEqual({});
   });
 });
 
@@ -196,7 +262,10 @@ describe('mergeManifest', () => {
   it('labels merged: old defaults, new overrides', () => {
     const result = mergeManifest(
       { image: 'nginx:2', labels: { app: 'new', tier: 'web' } },
-      JSON.stringify({ image: 'nginx:1', labels: { app: 'old', env: 'prod' } }),
+      JSON.stringify({
+        image: 'nginx:1',
+        labels: { app: 'old', env: 'prod' },
+      }),
     );
     expect(result.labels).toEqual({ app: 'new', env: 'prod', tier: 'web' });
   });
@@ -247,13 +316,32 @@ describe('isStackManifest', () => {
     );
   });
 
-  it('stack manifest returns true', () => {
+  it('wrapped stack manifest returns true', () => {
+    expect(
+      isStackManifest({
+        services: {
+          web: { image: 'nginx', ports: { '80/tcp': {} } },
+          db: { image: 'mysql:8', ports: { '3306/tcp': {} } },
+        },
+      }),
+    ).toBe(true);
+  });
+
+  it('single-service wrapped stack returns true', () => {
+    expect(
+      isStackManifest({
+        services: { web: { image: 'nginx' } },
+      }),
+    ).toBe(true);
+  });
+
+  it('unwrapped stack (no services key) returns false', () => {
     expect(
       isStackManifest({
         web: { image: 'nginx', ports: { '80/tcp': {} } },
         db: { image: 'mysql:8', ports: { '3306/tcp': {} } },
       }),
-    ).toBe(true);
+    ).toBe(false);
   });
 
   it('null returns false', () => {
@@ -267,17 +355,43 @@ describe('isStackManifest', () => {
   it('empty object returns false', () => {
     expect(isStackManifest({})).toBe(false);
   });
+
+  it('services is null returns false', () => {
+    expect(isStackManifest({ services: null })).toBe(false);
+  });
+
+  it('services is array returns false', () => {
+    expect(isStackManifest({ services: [1, 2] })).toBe(false);
+  });
+
+  it('services with no image entries returns false', () => {
+    expect(isStackManifest({ services: { web: { ports: {} } } })).toBe(false);
+  });
+
+  it('empty services object returns false', () => {
+    expect(isStackManifest({ services: {} })).toBe(false);
+  });
+
+  it('services with mixed object/non-object values returns false', () => {
+    expect(
+      isStackManifest({
+        services: { web: { image: 'nginx' }, config: 'not-an-object' },
+      }),
+    ).toBe(false);
+  });
 });
 
 describe('parseStackManifest', () => {
-  it('parses valid stack manifest', () => {
+  it('parses valid wrapped stack manifest', () => {
     const json = JSON.stringify({
-      web: { image: 'nginx' },
-      db: { image: 'mysql:8' },
+      services: {
+        web: { image: 'nginx' },
+        db: { image: 'mysql:8' },
+      },
     });
     const result = parseStackManifest(json);
-    expect(Object.keys(result)).toEqual(['web', 'db']);
-    expect(result.web.image).toBe('nginx');
+    expect(Object.keys(result.services)).toEqual(['web', 'db']);
+    expect(result.services.web.image).toBe('nginx');
   });
 
   it('throws on invalid JSON', () => {
@@ -289,14 +403,27 @@ describe('parseStackManifest', () => {
       parseStackManifest(JSON.stringify({ image: 'nginx' })),
     ).toThrow(/Not a valid stack manifest/);
   });
+
+  it('throws on unwrapped stack', () => {
+    expect(() =>
+      parseStackManifest(
+        JSON.stringify({
+          web: { image: 'nginx' },
+          db: { image: 'mysql:8' },
+        }),
+      ),
+    ).toThrow(/Not a valid stack manifest/);
+  });
 });
 
 describe('getServiceNames', () => {
-  it('returns keys for stack manifest', () => {
+  it('returns keys for wrapped stack manifest', () => {
     expect(
       getServiceNames({
-        web: { image: 'nginx' },
-        db: { image: 'mysql' },
+        services: {
+          web: { image: 'nginx' },
+          db: { image: 'mysql' },
+        },
       }),
     ).toEqual(['web', 'db']);
   });
@@ -307,5 +434,14 @@ describe('getServiceNames', () => {
 
   it('returns empty array for non-object', () => {
     expect(getServiceNames(null)).toEqual([]);
+  });
+
+  it('returns empty array for unwrapped stack', () => {
+    expect(
+      getServiceNames({
+        web: { image: 'nginx' },
+        db: { image: 'mysql' },
+      }),
+    ).toEqual([]);
   });
 });

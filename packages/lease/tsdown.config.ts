@@ -8,6 +8,6 @@ export default defineConfig({
   sourcemap: true,
   clean: true,
   target: 'es2020',
-  platform: 'node',
+  platform: 'neutral',
   fixedExtension: false,
 });

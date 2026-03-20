@@ -33,14 +33,15 @@ import { updateApp } from './tools/updateApp.js';
 export type { ManifestMCPServerOptions } from '@manifest-network/manifest-mcp-core';
 export {
   type BuildManifestOptions,
+  deriveAppNameFromImage,
+  validateServiceName,
+  normalizePorts,
   buildManifest,
   buildStackManifest,
-  deriveAppNameFromImage,
   getServiceNames,
   isStackManifest,
   mergeManifest,
   parseStackManifest,
-  validateServiceName,
 } from './manifest.js';
 export type { ServiceConfig } from './tools/deployApp.js';
 
@@ -72,22 +73,24 @@ export class FredMCPServer {
     this.registerTools();
   }
 
-  private async getProviderAuthToken(
-    address: string,
-    leaseUuid: string,
-  ): Promise<string> {
+  private requireSignArbitrary(): NonNullable<WalletProvider['signArbitrary']> {
     if (!this.walletProvider.signArbitrary) {
       throw new ManifestMCPError(
         ManifestMCPErrorCode.INVALID_CONFIG,
         'Wallet does not support signArbitrary (ADR-036). Required for provider authentication. Use a wallet provider that implements signArbitrary.',
       );
     }
-    const timestamp = new Date().toISOString();
+    return this.walletProvider.signArbitrary;
+  }
+
+  private async getProviderAuthToken(
+    address: string,
+    leaseUuid: string,
+  ): Promise<string> {
+    const signArbitrary = this.requireSignArbitrary();
+    const timestamp = Math.floor(Date.now() / 1000);
     const message = createSignMessage(address, leaseUuid, timestamp);
-    const { pub_key, signature } = await this.walletProvider.signArbitrary(
-      address,
-      message,
-    );
+    const { pub_key, signature } = await signArbitrary(address, message);
     return createAuthToken(
       address,
       leaseUuid,
@@ -102,22 +105,14 @@ export class FredMCPServer {
     leaseUuid: string,
     metaHashHex: string,
   ): Promise<string> {
-    if (!this.walletProvider.signArbitrary) {
-      throw new ManifestMCPError(
-        ManifestMCPErrorCode.INVALID_CONFIG,
-        'Wallet does not support signArbitrary (ADR-036). Required for provider authentication. Use a wallet provider that implements signArbitrary.',
-      );
-    }
-    const timestamp = new Date().toISOString();
+    const signArbitrary = this.requireSignArbitrary();
+    const timestamp = Math.floor(Date.now() / 1000);
     const message = createLeaseDataSignMessage(
       leaseUuid,
       metaHashHex,
       timestamp,
     );
-    const { pub_key, signature } = await this.walletProvider.signArbitrary(
-      address,
-      message,
-    );
+    const { pub_key, signature } = await signArbitrary(address, message);
     return createAuthToken(
       address,
       leaseUuid,

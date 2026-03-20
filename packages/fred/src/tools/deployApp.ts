@@ -280,7 +280,7 @@ export async function deployApp(
     await uploadLeaseData(
       providerUrl,
       leaseUuid,
-      manifestJson,
+      new TextEncoder().encode(manifestJson),
       leaseDataToken,
       fetchFn,
     );

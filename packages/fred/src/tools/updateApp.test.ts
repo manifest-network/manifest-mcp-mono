@@ -9,6 +9,7 @@ vi.mock('./resolveLeaseProvider.js', () => ({
   resolveProviderUrl: vi.fn(),
 }));
 
+import { ManifestMCPErrorCode } from '@manifest-network/manifest-mcp-core';
 import { makeMockQueryClient } from '@manifest-network/manifest-mcp-core/__test-utils__/mocks.js';
 import { updateLease } from '../http/fred.js';
 import { resolveProviderUrl } from './resolveLeaseProvider.js';
@@ -42,7 +43,13 @@ describe('updateApp', () => {
       image: 'nginx:2',
       ports: { '80/tcp': {} },
     });
-    await updateApp(qc, 'manifest1abc', LEASE_UUID, mockGetAuthToken, manifest);
+    await updateApp(
+      qc,
+      'manifest1abc',
+      LEASE_UUID,
+      mockGetAuthToken,
+      manifest,
+    );
 
     // Should pass manifest through unchanged
     expect(mockUpdateLease).toHaveBeenCalledWith(
@@ -90,5 +97,122 @@ describe('updateApp', () => {
     expect(sentManifest.env).toEqual({ OLD: 'kept', NEW: 'val' });
     expect(sentManifest.ports).toEqual({ '80/tcp': {} });
     expect(sentManifest.user).toBe('1000:1000');
+  });
+
+  it('stack merge: per-service env merged with services wrapper in output', async () => {
+    const qc = makeMockQueryClient({
+      billing: {
+        lease: {
+          uuid: LEASE_UUID,
+          state: LeaseState.LEASE_STATE_ACTIVE,
+          providerUuid: 'prov-1',
+        },
+      },
+    });
+
+    const newManifest = JSON.stringify({
+      services: {
+        web: { image: 'nginx:2', env: { NEW: 'val' } },
+        db: { image: 'mysql:9' },
+      },
+    });
+    const existingManifest = JSON.stringify({
+      services: {
+        web: {
+          image: 'nginx:1',
+          env: { OLD: 'kept', NEW: 'overridden' },
+          ports: { '80/tcp': {} },
+        },
+        db: { image: 'mysql:8', ports: { '3306/tcp': {} } },
+      },
+    });
+
+    await updateApp(
+      qc,
+      'manifest1abc',
+      LEASE_UUID,
+      mockGetAuthToken,
+      newManifest,
+      existingManifest,
+    );
+
+    const sent = JSON.parse(mockUpdateLease.mock.calls[0][2]);
+    expect(sent.services).toBeDefined();
+    expect(sent.services.web.image).toBe('nginx:2');
+    expect(sent.services.web.env).toEqual({ OLD: 'kept', NEW: 'val' });
+    expect(sent.services.web.ports).toEqual({ '80/tcp': {} });
+    expect(sent.services.db.image).toBe('mysql:9');
+    expect(sent.services.db.ports).toEqual({ '3306/tcp': {} });
+  });
+
+  it('stack merge: new service gets empty merge base', async () => {
+    const qc = makeMockQueryClient({
+      billing: {
+        lease: {
+          uuid: LEASE_UUID,
+          state: LeaseState.LEASE_STATE_ACTIVE,
+          providerUuid: 'prov-1',
+        },
+      },
+    });
+
+    const newManifest = JSON.stringify({
+      services: {
+        web: { image: 'nginx' },
+        cache: { image: 'redis', env: { MAXMEM: '64mb' } },
+      },
+    });
+    const existingManifest = JSON.stringify({
+      services: {
+        web: { image: 'nginx', env: { OLD: 'val' } },
+      },
+    });
+
+    await updateApp(
+      qc,
+      'manifest1abc',
+      LEASE_UUID,
+      mockGetAuthToken,
+      newManifest,
+      existingManifest,
+    );
+
+    const sent = JSON.parse(mockUpdateLease.mock.calls[0][2]);
+    expect(sent.services.cache.image).toBe('redis');
+    expect(sent.services.cache.env).toEqual({ MAXMEM: '64mb' });
+  });
+
+  it('stack merge: throws when existing_manifest is not a stack', async () => {
+    const qc = makeMockQueryClient({
+      billing: {
+        lease: {
+          uuid: LEASE_UUID,
+          state: LeaseState.LEASE_STATE_ACTIVE,
+          providerUuid: 'prov-1',
+        },
+      },
+    });
+
+    const newManifest = JSON.stringify({
+      services: { web: { image: 'nginx' } },
+    });
+    const existingManifest = JSON.stringify({
+      image: 'nginx',
+      ports: { '80/tcp': {} },
+    });
+
+    await expect(
+      updateApp(
+        qc,
+        'manifest1abc',
+        LEASE_UUID,
+        mockGetAuthToken,
+        newManifest,
+        existingManifest,
+      ),
+    ).rejects.toMatchObject({
+      code: ManifestMCPErrorCode.INVALID_CONFIG,
+      message: expect.stringContaining('Cannot merge'),
+    });
   });
 });
