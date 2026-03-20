@@ -182,6 +182,59 @@ describe('updateApp', () => {
     expect(sent.services.cache.env).toEqual({ MAXMEM: '64mb' });
   });
 
+  it('throws on invalid manifest JSON when existingManifest is provided', async () => {
+    const qc = makeMockQueryClient({
+      billing: {
+        lease: { uuid: LEASE_UUID, state: LeaseState.LEASE_STATE_ACTIVE, providerUuid: 'prov-1' },
+      },
+    });
+
+    await expect(
+      updateApp(qc, 'manifest1abc', LEASE_UUID, mockGetAuthToken, 'not-valid-json', '{"image":"nginx"}'),
+    ).rejects.toMatchObject({
+      code: ManifestMCPErrorCode.INVALID_CONFIG,
+      message: expect.stringContaining('Invalid manifest JSON'),
+    });
+  });
+
+  it('stack merge: throws on unparseable existingManifest JSON', async () => {
+    const qc = makeMockQueryClient({
+      billing: {
+        lease: { uuid: LEASE_UUID, state: LeaseState.LEASE_STATE_ACTIVE, providerUuid: 'prov-1' },
+      },
+    });
+
+    const newManifest = JSON.stringify({
+      services: { web: { image: 'nginx' } },
+    });
+
+    await expect(
+      updateApp(qc, 'manifest1abc', LEASE_UUID, mockGetAuthToken, newManifest, 'not-valid-json'),
+    ).rejects.toMatchObject({
+      code: ManifestMCPErrorCode.INVALID_CONFIG,
+      message: expect.stringContaining('Invalid existing_manifest'),
+    });
+  });
+
+  it('stack merge: throws on invalid service name', async () => {
+    const qc = makeMockQueryClient({
+      billing: {
+        lease: { uuid: LEASE_UUID, state: LeaseState.LEASE_STATE_ACTIVE, providerUuid: 'prov-1' },
+      },
+    });
+
+    const newManifest = JSON.stringify({
+      services: { 'INVALID_NAME!': { image: 'nginx' } },
+    });
+
+    await expect(
+      updateApp(qc, 'manifest1abc', LEASE_UUID, mockGetAuthToken, newManifest, '{"services":{"web":{"image":"old"}}}'),
+    ).rejects.toMatchObject({
+      code: ManifestMCPErrorCode.INVALID_CONFIG,
+      message: expect.stringContaining('Invalid service name'),
+    });
+  });
+
   it('stack merge: throws when existing_manifest is not a stack', async () => {
     const qc = makeMockQueryClient({
       billing: {
