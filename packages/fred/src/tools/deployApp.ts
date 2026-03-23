@@ -333,7 +333,7 @@ export async function deployApp(
       fetchFn,
     );
     connection = connResp.connection;
-    if (connection.host && connection.ports) {
+    if (connection.ports) {
       const firstPort = Object.values(connection.ports)[0];
       if (typeof firstPort === 'number' || typeof firstPort === 'string') {
         url = `${connection.host}:${firstPort}`;
