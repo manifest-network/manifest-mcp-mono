@@ -51,15 +51,12 @@ describe('loadConfig', () => {
     expect(() => loadConfig()).toThrow(/COSMOS_RPC_URL or COSMOS_REST_URL/);
   });
 
-  it('should return undefined gasPrice when COSMOS_RPC_URL is set without COSMOS_GAS_PRICE', async () => {
+  it('should throw when COSMOS_RPC_URL is set without COSMOS_GAS_PRICE', async () => {
     process.env['COSMOS_CHAIN_ID'] = 'test-chain';
     process.env['COSMOS_RPC_URL'] = 'https://rpc.test.com';
 
     const { loadConfig } = await importConfig();
-    const config = loadConfig();
-    expect(config.rpcUrl).toBe('https://rpc.test.com');
-    expect(config.gasPrice).toBeUndefined();
-    // gasPrice validation is deferred to createValidatedConfig
+    expect(() => loadConfig()).toThrow(/COSMOS_GAS_PRICE/);
   });
 
   it('should accept COSMOS_REST_URL without COSMOS_RPC_URL', async () => {

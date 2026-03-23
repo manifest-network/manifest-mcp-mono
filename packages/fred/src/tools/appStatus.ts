@@ -8,7 +8,7 @@ import {
 import { type FredLeaseStatus, getLeaseStatus } from '../http/fred.js';
 import {
   getLeaseConnectionInfo,
-  type LeaseConnectionResponse,
+  type ConnectionDetails,
 } from '../http/provider.js';
 import { resolveProviderUrl } from './resolveLeaseProvider.js';
 
@@ -39,7 +39,7 @@ export async function appStatus(
   };
 
   let fredStatus: FredLeaseStatus | null = null;
-  let connection: LeaseConnectionResponse | null = null;
+  let connection: ConnectionDetails | null = null;
   let providerError: string | undefined;
   let connectionError: string | undefined;
 
@@ -94,7 +94,7 @@ export async function appStatus(
     }
 
     if (connResult.status === 'fulfilled') {
-      connection = connResult.value;
+      connection = connResult.value.connection;
     } else {
       connectionError =
         connResult.reason instanceof Error

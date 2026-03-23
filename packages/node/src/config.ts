@@ -62,7 +62,13 @@ export function loadConfig(): NodeMCPConfig {
   if (!rpcUrl && !restUrl) {
     throw new Error(
       'At least one of COSMOS_RPC_URL or COSMOS_REST_URL must be set. ' +
-      'Set COSMOS_RPC_URL for full access (queries + transactions) or COSMOS_REST_URL for query-only mode.'
+        'Set COSMOS_RPC_URL for full access (queries + transactions) or COSMOS_REST_URL for query-only mode.',
+    );
+  }
+
+  if (rpcUrl && !gasPrice) {
+    throw new Error(
+      'COSMOS_GAS_PRICE is required when COSMOS_RPC_URL is set (e.g., COSMOS_GAS_PRICE="0.025umfx").',
     );
   }
 

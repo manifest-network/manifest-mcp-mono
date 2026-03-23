@@ -37,6 +37,9 @@ describe('getAppLogs', () => {
       },
     });
     mockGetLeaseLogs.mockResolvedValue({
+      lease_uuid: LEASE_UUID,
+      tenant: 'manifest1abc',
+      provider_uuid: 'prov-1',
       logs: { web: 'line1\nline2' },
     });
 
@@ -65,6 +68,9 @@ describe('getAppLogs', () => {
 
     const longLog = 'x'.repeat(5000);
     mockGetLeaseLogs.mockResolvedValue({
+      lease_uuid: LEASE_UUID,
+      tenant: 'manifest1abc',
+      provider_uuid: 'prov-1',
       logs: { web: longLog },
     });
 
@@ -91,6 +97,9 @@ describe('getAppLogs', () => {
     });
 
     mockGetLeaseLogs.mockResolvedValue({
+      lease_uuid: LEASE_UUID,
+      tenant: 'manifest1abc',
+      provider_uuid: 'prov-1',
       logs: {
         web: 'x'.repeat(4000),
         worker: 'should be skipped',
@@ -135,7 +144,7 @@ describe('getAppLogs', () => {
         },
       },
     });
-    mockGetLeaseLogs.mockResolvedValue({ logs: {} });
+    mockGetLeaseLogs.mockResolvedValue({ lease_uuid: LEASE_UUID, tenant: 'manifest1abc', provider_uuid: 'prov-1', logs: {} });
 
     await getAppLogs(qc, 'manifest1abc', LEASE_UUID, mockGetAuthToken, 50);
 
