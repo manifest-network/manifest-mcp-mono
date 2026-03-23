@@ -128,8 +128,6 @@ export class CosmosClientManager {
         instance.config.gasPrice !== config.gasPrice ||
         instance.walletProvider !== walletProvider;
 
-      const queryClientAffected = instance.config.restUrl !== config.restUrl;
-
       const rateLimitChanged =
         instance.config.rateLimit?.requestsPerSecond !==
         config.rateLimit?.requestsPerSecond;
@@ -146,12 +144,6 @@ export class CosmosClientManager {
         }
         // Also clear the promise to allow re-initialization with new config
         instance.signingClientPromise = null;
-      }
-
-      // Invalidate query client if restUrl changed
-      if (queryClientAffected) {
-        instance.queryClient = null;
-        instance.queryClientPromise = null;
       }
 
       // Update rate limiter independently (doesn't affect signing client)
