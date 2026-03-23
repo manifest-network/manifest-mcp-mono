@@ -43,7 +43,44 @@ export {
   mergeManifest,
   parseStackManifest,
 } from './manifest.js';
-export type { ServiceConfig } from './tools/deployApp.js';
+export { type ServiceConfig, type DeployAppInput, type DeployAppResult, deployApp } from './tools/deployApp.js';
+export { browseCatalog, mapWithConcurrency } from './tools/browseCatalog.js';
+export { appStatus } from './tools/appStatus.js';
+export { getAppLogs } from './tools/getLogs.js';
+export { restartApp } from './tools/restartApp.js';
+export { updateApp } from './tools/updateApp.js';
+export { resolveProviderUrl } from './tools/resolveLeaseProvider.js';
+export { fetchActiveLease } from './tools/fetchActiveLease.js';
+export { createSignMessage, createLeaseDataSignMessage, createAuthToken, type AuthTokenPayload } from './http/auth.js';
+export {
+  getProviderHealth,
+  getLeaseConnectionInfo,
+  uploadLeaseData,
+  checkedFetch,
+  validateProviderUrl,
+  ProviderApiError,
+  type ProviderHealthResponse,
+  type LeaseConnectionInfo,
+} from './http/provider.js';
+export {
+  getLeaseStatus,
+  getLeaseLogs,
+  getLeaseProvision,
+  restartLease,
+  updateLease,
+  getLeaseReleases,
+  getLeaseInfo,
+  pollLeaseUntilReady,
+  type FredLeaseStatus,
+  type FredLeaseLogs,
+  type FredLeaseProvision,
+  type FredActionResponse,
+  type FredLeaseRelease,
+  type FredLeaseReleases,
+  type FredLeaseInfo,
+  type PollOptions,
+  MAX_TAIL,
+} from './http/fred.js';
 
 export class FredMCPServer {
   private mcpServer: McpServer;
