@@ -1,9 +1,9 @@
 import {
   INFRASTRUCTURE_ERROR_CODES,
+  LeaseState,
   ManifestMCPError,
   ManifestMCPErrorCode,
 } from '@manifest-network/manifest-mcp-core';
-import { LeaseState } from '@manifest-network/manifestjs/dist/codegen/liftedinit/billing/v1/types.js';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../http/fred.js', () => ({

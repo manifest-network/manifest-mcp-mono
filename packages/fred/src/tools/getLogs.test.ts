@@ -1,4 +1,4 @@
-import { LeaseState } from '@manifest-network/manifestjs/dist/codegen/liftedinit/billing/v1/types.js';
+import { LeaseState } from '@manifest-network/manifest-mcp-core';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../http/fred.js', () => ({
