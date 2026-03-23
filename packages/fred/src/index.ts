@@ -31,6 +31,7 @@ import { restartApp } from './tools/restartApp.js';
 import { updateApp } from './tools/updateApp.js';
 
 export type { ManifestMCPServerOptions } from '@manifest-network/manifest-mcp-core';
+export { ManifestMCPError, ManifestMCPErrorCode, INFRASTRUCTURE_ERROR_CODES } from '@manifest-network/manifest-mcp-core';
 export {
   type BuildManifestOptions,
   deriveAppNameFromImage,
