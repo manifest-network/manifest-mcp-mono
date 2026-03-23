@@ -116,7 +116,9 @@ export class CosmosClientManager {
     config: ManifestMCPConfig,
     walletProvider: WalletProvider,
   ): CosmosClientManager {
-    const key = `${config.chainId}:${config.rpcUrl ?? ''}:${config.restUrl ?? ''}`;
+    const parts = [config.chainId, config.rpcUrl ?? ''];
+    if (config.restUrl) parts.push(config.restUrl);
+    const key = parts.join(':');
     let instance = CosmosClientManager.instances.get(key);
 
     if (!instance) {
