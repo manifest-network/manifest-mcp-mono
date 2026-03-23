@@ -93,7 +93,7 @@ export async function updateApp(
   const result = await updateLease(
     providerUrl,
     leaseUuid,
-    finalManifest,
+    new TextEncoder().encode(finalManifest),
     authToken,
     fetchFn,
   );

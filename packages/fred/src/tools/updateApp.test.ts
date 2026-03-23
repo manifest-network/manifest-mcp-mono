@@ -45,14 +45,10 @@ describe('updateApp', () => {
     });
     await updateApp(qc, 'manifest1abc', LEASE_UUID, mockGetAuthToken, manifest);
 
-    // Should pass manifest through unchanged
-    expect(mockUpdateLease).toHaveBeenCalledWith(
-      'https://provider.example.com',
-      LEASE_UUID,
-      manifest,
-      'auth-token',
-      undefined,
-    );
+    // Should pass manifest through unchanged (encoded as Uint8Array)
+    const rawPayload = mockUpdateLease.mock.calls[0][2] as Uint8Array;
+    expect(rawPayload).toBeInstanceOf(Uint8Array);
+    expect(new TextDecoder().decode(rawPayload)).toBe(manifest);
   });
 
   it('with existingManifest: env merged, ports merged, fields carried forward', async () => {
@@ -86,7 +82,9 @@ describe('updateApp', () => {
       existingManifest,
     );
 
-    const sentManifest = JSON.parse(mockUpdateLease.mock.calls[0][2]);
+    const sentManifest = JSON.parse(
+      new TextDecoder().decode(mockUpdateLease.mock.calls[0][2] as Uint8Array),
+    );
     expect(sentManifest.image).toBe('nginx:2');
     expect(sentManifest.env).toEqual({ OLD: 'kept', NEW: 'val' });
     expect(sentManifest.ports).toEqual({ '80/tcp': {} });
@@ -130,7 +128,9 @@ describe('updateApp', () => {
       existingManifest,
     );
 
-    const sent = JSON.parse(mockUpdateLease.mock.calls[0][2]);
+    const sent = JSON.parse(
+      new TextDecoder().decode(mockUpdateLease.mock.calls[0][2] as Uint8Array),
+    );
     expect(sent.services).toBeDefined();
     expect(sent.services.web.image).toBe('nginx:2');
     expect(sent.services.web.env).toEqual({ OLD: 'kept', NEW: 'val' });
@@ -171,7 +171,9 @@ describe('updateApp', () => {
       existingManifest,
     );
 
-    const sent = JSON.parse(mockUpdateLease.mock.calls[0][2]);
+    const sent = JSON.parse(
+      new TextDecoder().decode(mockUpdateLease.mock.calls[0][2] as Uint8Array),
+    );
     expect(sent.services.cache.image).toBe('redis');
     expect(sent.services.cache.env).toEqual({ MAXMEM: '64mb' });
   });

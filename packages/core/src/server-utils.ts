@@ -220,8 +220,9 @@ export function jsonResponse(
  */
 export interface MnemonicServerConfig {
   chainId: string;
-  rpcUrl: string;
-  gasPrice: string;
+  rpcUrl?: string;
+  gasPrice?: string;
+  restUrl?: string;
   addressPrefix?: string;
   mnemonic: string;
 }

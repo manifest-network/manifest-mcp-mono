@@ -20,7 +20,11 @@ export interface BuildManifestOptions {
   depends_on?: Record<string, { condition: string }>;
 }
 
-import { DNS_LABEL_RE } from '@manifest-network/manifest-mcp-core';
+import {
+  DNS_LABEL_RE,
+  ManifestMCPError,
+  ManifestMCPErrorCode,
+} from '@manifest-network/manifest-mcp-core';
 
 const MAX_NAME_LENGTH = 32;
 
@@ -103,12 +107,14 @@ export function normalizePorts(
       portNum > 65535 ||
       String(portNum) !== portStr
     ) {
-      throw new Error(
+      throw new ManifestMCPError(
+        ManifestMCPErrorCode.INVALID_CONFIG,
         `Invalid port: "${portStr}". Port must be a number between 1 and 65535.`,
       );
     }
     if (!VALID_PROTOCOLS.has(protocol)) {
-      throw new Error(
+      throw new ManifestMCPError(
+        ManifestMCPErrorCode.INVALID_CONFIG,
         `Invalid protocol: "${protocol}". Must be "tcp" or "udp".`,
       );
     }
@@ -151,12 +157,16 @@ export function mergeManifest(
       typeof parsed !== 'object' ||
       Array.isArray(parsed)
     ) {
-      throw new Error('existing_manifest must be a JSON object');
+      throw new ManifestMCPError(
+        ManifestMCPErrorCode.INVALID_CONFIG,
+        'existing_manifest must be a JSON object',
+      );
     }
     old = parsed as Record<string, unknown>;
   } catch (err) {
     if (err instanceof SyntaxError) {
-      throw new Error(
+      throw new ManifestMCPError(
+        ManifestMCPErrorCode.INVALID_CONFIG,
         `existing_manifest contains invalid JSON: ${err.message}`,
       );
     }
@@ -231,9 +241,21 @@ export function isStackManifest(
 export function parseStackManifest(json: string): {
   services: Record<string, Record<string, unknown>>;
 } {
-  const parsed = JSON.parse(json);
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(json);
+  } catch (err) {
+    if (err instanceof SyntaxError) {
+      throw new ManifestMCPError(
+        ManifestMCPErrorCode.INVALID_CONFIG,
+        `Stack manifest contains invalid JSON: ${err.message}`,
+      );
+    }
+    throw err;
+  }
   if (!isStackManifest(parsed)) {
-    throw new Error(
+    throw new ManifestMCPError(
+      ManifestMCPErrorCode.INVALID_CONFIG,
       'Not a valid stack manifest: expected { services: { ... } } where each service has an "image" key',
     );
   }

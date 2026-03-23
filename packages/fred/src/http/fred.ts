@@ -1,6 +1,7 @@
 import {
   LeaseState,
   leaseStateFromJSON,
+  logger,
 } from '@manifest-network/manifest-mcp-core';
 import {
   checkedFetch,
@@ -57,7 +58,14 @@ export async function getLeaseStatus(
     fetchFn,
   );
   const raw = await parseJsonResponse<RawLeaseStatus>(res, url);
-  return { ...raw, state: leaseStateFromJSON(raw.state) };
+  const state = leaseStateFromJSON(raw.state);
+  if (state === LeaseState.UNRECOGNIZED) {
+    logger.warn(
+      `[getLeaseStatus] Unrecognized lease state "${raw.state}" for lease ${leaseUuid}. ` +
+        'The provider may be running a newer version than the client supports.',
+    );
+  }
+  return { ...raw, state };
 }
 
 export interface FredLeaseLogs {
@@ -141,7 +149,7 @@ export async function restartLease(
 export async function updateLease(
   providerUrl: string,
   leaseUuid: string,
-  payload: string,
+  payload: Uint8Array,
   authToken: string,
   fetchFn?: typeof globalThis.fetch,
 ): Promise<FredActionResponse> {
