@@ -1,22 +1,43 @@
 import {
+  LeaseState,
+  leaseStateFromJSON,
+} from '@manifest-network/manifest-mcp-core';
+import {
   checkedFetch,
-  ProviderApiError,
   parseJsonResponse,
+  ProviderApiError,
   validateProviderUrl,
 } from './provider.js';
 
 export const MAX_TAIL = 1000;
 
-export interface FredLeaseStatus {
+export interface FredInstanceInfo {
+  readonly name: string;
   readonly status: string;
-  readonly services?: Record<
-    string,
-    {
-      readonly ready: boolean;
-      readonly available: number;
-      readonly total: number;
-    }
-  >;
+  readonly ports?: Record<string, number>;
+  readonly fqdn?: string;
+}
+
+export interface FredServiceStatus {
+  readonly instances: readonly FredInstanceInfo[];
+}
+
+export interface FredLeaseStatus {
+  readonly state: LeaseState;
+  readonly provision_status?: string;
+  readonly phase?: string;
+  readonly steps?: Record<string, string>;
+  readonly instances?: readonly FredInstanceInfo[];
+  readonly endpoints?: Record<string, string>;
+  readonly last_error?: string;
+  readonly fail_count?: number;
+  readonly created_at?: string;
+  readonly services?: Record<string, FredServiceStatus>;
+}
+
+/** Raw wire shape before LeaseState conversion */
+interface RawLeaseStatus extends Omit<FredLeaseStatus, 'state'> {
+  readonly state: string;
 }
 
 export async function getLeaseStatus(
@@ -35,10 +56,14 @@ export async function getLeaseStatus(
     undefined,
     fetchFn,
   );
-  return await parseJsonResponse<FredLeaseStatus>(res, url);
+  const raw = await parseJsonResponse<RawLeaseStatus>(res, url);
+  return { ...raw, state: leaseStateFromJSON(raw.state) };
 }
 
 export interface FredLeaseLogs {
+  readonly lease_uuid: string;
+  readonly tenant: string;
+  readonly provider_uuid: string;
   readonly logs: Record<string, string>;
 }
 
@@ -50,7 +75,8 @@ export async function getLeaseLogs(
   fetchFn?: typeof globalThis.fetch,
 ): Promise<FredLeaseLogs> {
   const validated = validateProviderUrl(providerUrl);
-  const cappedTail = tail !== undefined ? Math.min(tail, MAX_TAIL) : undefined;
+  const cappedTail =
+    tail !== undefined ? Math.min(tail, MAX_TAIL) : undefined;
   const qs = cappedTail !== undefined ? `?tail=${cappedTail}` : '';
   const url = `${validated}/v1/leases/${encodeURIComponent(leaseUuid)}/logs${qs}`;
   const res = await checkedFetch(
@@ -66,8 +92,8 @@ export async function getLeaseLogs(
 
 export interface FredLeaseProvision {
   readonly status: string;
-  readonly fail_count?: number;
-  readonly last_error?: string;
+  readonly fail_count: number;
+  readonly last_error: string;
 }
 
 export async function getLeaseProvision(
@@ -148,6 +174,9 @@ export interface FredLeaseRelease {
 }
 
 export interface FredLeaseReleases {
+  readonly lease_uuid: string;
+  readonly tenant: string;
+  readonly provider_uuid: string;
   readonly releases: readonly FredLeaseRelease[];
 }
 
@@ -197,6 +226,31 @@ export async function getLeaseInfo(
 export interface PollOptions {
   readonly intervalMs?: number;
   readonly timeoutMs?: number;
+  readonly abortSignal?: AbortSignal;
+  readonly onProgress?: (status: FredLeaseStatus) => void;
+}
+
+function leaseStateName(state: LeaseState): string {
+  return LeaseState[state] ?? String(state);
+}
+
+function abortableSleep(ms: number, signal?: AbortSignal): Promise<void> {
+  if (!signal) return new Promise((resolve) => setTimeout(resolve, ms));
+  signal.throwIfAborted();
+  return new Promise<void>((resolve, reject) => {
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(
+        signal.reason ??
+          new DOMException('The operation was aborted', 'AbortError'),
+      );
+    };
+    const timer = setTimeout(() => {
+      signal.removeEventListener('abort', onAbort);
+      resolve();
+    }, ms);
+    signal.addEventListener('abort', onAbort, { once: true });
+  });
 }
 
 export async function pollLeaseUntilReady(
@@ -206,29 +260,50 @@ export async function pollLeaseUntilReady(
   opts: PollOptions = {},
   fetchFn?: typeof globalThis.fetch,
 ): Promise<FredLeaseStatus> {
-  const { intervalMs = 3_000, timeoutMs = 120_000 } = opts;
+  const {
+    intervalMs = 3_000,
+    timeoutMs = 120_000,
+    abortSignal,
+    onProgress,
+  } = opts;
   const deadline = Date.now() + timeoutMs;
-  let lastStatus: string | undefined;
+  let lastState: LeaseState | undefined;
 
   while (Date.now() < deadline) {
+    abortSignal?.throwIfAborted();
     const token =
       typeof authToken === 'function' ? await authToken() : authToken;
-    const status = await getLeaseStatus(providerUrl, leaseUuid, token, fetchFn);
-    lastStatus = status.status;
-    if (status.status === 'ready' || status.status === 'running') {
-      return status;
+    const status = await getLeaseStatus(
+      providerUrl,
+      leaseUuid,
+      token,
+      fetchFn,
+    );
+    lastState = status.state;
+    onProgress?.(status);
+    switch (status.state) {
+      case LeaseState.LEASE_STATE_ACTIVE:
+        return status;
+      case LeaseState.LEASE_STATE_PENDING:
+        break;
+      case LeaseState.LEASE_STATE_CLOSED:
+      case LeaseState.LEASE_STATE_REJECTED:
+      case LeaseState.LEASE_STATE_EXPIRED:
+        throw new ProviderApiError(
+          0,
+          `Lease ${leaseUuid} entered terminal state ${leaseStateName(status.state)}`,
+        );
+      default:
+        throw new ProviderApiError(
+          0,
+          `Lease ${leaseUuid} returned unexpected state ${leaseStateName(status.state)}`,
+        );
     }
-    if (status.status === 'failed' || status.status === 'error') {
-      throw new ProviderApiError(
-        0,
-        `Lease ${leaseUuid} entered ${status.status} state`,
-      );
-    }
-    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+    await abortableSleep(intervalMs, abortSignal);
   }
 
   throw new ProviderApiError(
     0,
-    `Lease ${leaseUuid} poll timed out after ${timeoutMs}ms (last status: ${lastStatus ?? 'unknown'})`,
+    `Lease ${leaseUuid} poll timed out after ${timeoutMs}ms (last state: ${lastState !== undefined ? leaseStateName(lastState) : 'unknown'})`,
   );
 }

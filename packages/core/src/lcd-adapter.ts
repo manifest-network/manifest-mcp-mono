@@ -47,18 +47,20 @@ function findConverter(
   return converter;
 }
 
+type AsyncFn = (...args: unknown[]) => Promise<unknown>;
+
 function adaptModule(
   lcdMod: unknown,
   converterNs: unknown,
-): Record<string, Function> {
+): Record<string, AsyncFn> {
   const lcdModule = lcdMod as Record<string, unknown>;
   const converterNamespace = converterNs as Record<string, unknown>;
-  const adapted: Record<string, Function> = {};
+  const adapted: Record<string, AsyncFn> = {};
 
   for (const key of Object.keys(lcdModule)) {
     if (key === 'req' || typeof lcdModule[key] !== 'function') continue;
 
-    const originalFn = lcdModule[key] as Function;
+    const originalFn = lcdModule[key] as AsyncFn;
 
     adapted[key] = async (...args: unknown[]) => {
       const converter = findConverter(converterNamespace, key);

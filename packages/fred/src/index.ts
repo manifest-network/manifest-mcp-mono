@@ -61,7 +61,10 @@ export {
   validateProviderUrl,
   ProviderApiError,
   type ProviderHealthResponse,
-  type LeaseConnectionInfo,
+  type InstanceInfo,
+  type ServiceConnectionDetails,
+  type ConnectionDetails,
+  type LeaseConnectionResponse,
 } from './http/provider.js';
 export {
   getLeaseStatus,
@@ -72,6 +75,8 @@ export {
   getLeaseReleases,
   getLeaseInfo,
   pollLeaseUntilReady,
+  type FredInstanceInfo,
+  type FredServiceStatus,
   type FredLeaseStatus,
   type FredLeaseLogs,
   type FredLeaseProvision,

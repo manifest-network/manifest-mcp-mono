@@ -26,6 +26,7 @@ vi.mock('../http/fred.js', () => ({
 
 import {
   cosmosTx,
+  LeaseState,
   ManifestMCPErrorCode,
 } from '@manifest-network/manifest-mcp-core';
 import {
@@ -97,10 +98,15 @@ describe('deployApp', () => {
     mockGetAuthToken.mockResolvedValue('auth-token');
     mockGetLeaseDataAuthToken.mockResolvedValue('lease-data-token');
     mockUploadLeaseData.mockResolvedValue(undefined);
-    mockPollLeaseUntilReady.mockResolvedValue({ status: 'running' });
+    mockPollLeaseUntilReady.mockResolvedValue({ state: LeaseState.LEASE_STATE_ACTIVE });
     mockGetLeaseConnectionInfo.mockResolvedValue({
-      host: 'app.localhost',
-      ports: { '80/tcp': 32001 },
+      lease_uuid: '550e8400-e29b-41d4-a716-446655440000',
+      tenant: 'manifest1tenant',
+      provider_uuid: 'prov-1',
+      connection: {
+        host: 'app.localhost',
+        ports: { '80/tcp': 32001 },
+      },
     });
   });
 
@@ -124,6 +130,9 @@ describe('deployApp', () => {
     );
 
     expect(result.lease_uuid).toBe('550e8400-e29b-41d4-a716-446655440000');
+    expect(result.state).toBe(LeaseState.LEASE_STATE_ACTIVE);
+    expect(result.url).toBe('app.localhost:32001');
+    expect(result.connection).toEqual({ host: 'app.localhost', ports: { '80/tcp': 32001 } });
 
     // Verify manifest is uploaded as Uint8Array with correct content
     const rawPayload = mockUploadLeaseData.mock.calls[0][2];

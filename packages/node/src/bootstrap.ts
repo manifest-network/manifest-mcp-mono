@@ -108,6 +108,7 @@ export function bootstrap(cfg: BootstrapConfig): void {
       chainId: env.chainId,
       rpcUrl: env.rpcUrl,
       gasPrice: env.gasPrice,
+      restUrl: env.restUrl,
       addressPrefix: env.addressPrefix,
     });
 

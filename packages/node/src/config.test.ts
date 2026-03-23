@@ -12,6 +12,7 @@ beforeEach(() => {
   delete process.env.COSMOS_CHAIN_ID;
   delete process.env.COSMOS_RPC_URL;
   delete process.env.COSMOS_GAS_PRICE;
+  delete process.env.COSMOS_REST_URL;
   delete process.env.COSMOS_ADDRESS_PREFIX;
   delete process.env.COSMOS_MNEMONIC;
   delete process.env.MANIFEST_KEY_FILE;
@@ -41,6 +42,47 @@ describe('loadConfig', () => {
 
     const { loadConfig } = await importConfig();
     expect(() => loadConfig()).toThrow(/COSMOS_CHAIN_ID/);
+  });
+
+  it('should throw when neither COSMOS_RPC_URL nor COSMOS_REST_URL is set', async () => {
+    process.env['COSMOS_CHAIN_ID'] = 'test-chain';
+
+    const { loadConfig } = await importConfig();
+    expect(() => loadConfig()).toThrow(/COSMOS_RPC_URL or COSMOS_REST_URL/);
+  });
+
+  it('should return undefined gasPrice when COSMOS_RPC_URL is set without COSMOS_GAS_PRICE', async () => {
+    process.env['COSMOS_CHAIN_ID'] = 'test-chain';
+    process.env['COSMOS_RPC_URL'] = 'https://rpc.test.com';
+
+    const { loadConfig } = await importConfig();
+    const config = loadConfig();
+    expect(config.rpcUrl).toBe('https://rpc.test.com');
+    expect(config.gasPrice).toBeUndefined();
+    // gasPrice validation is deferred to createValidatedConfig
+  });
+
+  it('should accept COSMOS_REST_URL without COSMOS_RPC_URL', async () => {
+    process.env['COSMOS_CHAIN_ID'] = 'test-chain';
+    process.env['COSMOS_REST_URL'] = 'https://rest.test.com';
+
+    const { loadConfig } = await importConfig();
+    const config = loadConfig();
+    expect(config.restUrl).toBe('https://rest.test.com');
+    expect(config.rpcUrl).toBeUndefined();
+    expect(config.gasPrice).toBeUndefined();
+  });
+
+  it('should accept both COSMOS_RPC_URL and COSMOS_REST_URL', async () => {
+    process.env['COSMOS_CHAIN_ID'] = 'test-chain';
+    process.env['COSMOS_RPC_URL'] = 'https://rpc.test.com';
+    process.env['COSMOS_GAS_PRICE'] = '0.025umfx';
+    process.env['COSMOS_REST_URL'] = 'https://rest.test.com';
+
+    const { loadConfig } = await importConfig();
+    const config = loadConfig();
+    expect(config.rpcUrl).toBe('https://rpc.test.com');
+    expect(config.restUrl).toBe('https://rest.test.com');
   });
 
   it('should default addressPrefix to "manifest"', async () => {

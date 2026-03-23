@@ -32,10 +32,10 @@ docker compose -f e2e/docker-compose.yml down -v --remove-orphans
 
 Three MCP servers bridging AI assistants to Cosmos SDK blockchains (Manifest Network). Five npm workspace packages with strict dependency direction: **node -> {chain, lease, fred} -> core** (never reverse; node also depends on core directly).
 
-- **`packages/core`** -- Shared library. Cosmos logic, on-chain tool functions, server utilities. No HTTP clients (those live in fred). Not an MCP server itself.
+- **`packages/core`** -- Shared library. Cosmos logic, on-chain tool functions, server utilities, LCD/REST adapter (`lcd-adapter.ts`). No HTTP clients (those live in fred). Not an MCP server itself. Built with `platform: "neutral"` for browser compatibility.
 - **`packages/chain`** -- MCP server with 5 chain tools: `get_account_info`, `cosmos_query`, `cosmos_tx`, `list_modules`, `list_module_subcommands`.
 - **`packages/lease`** -- MCP server with 6 on-chain lease tools: `credit_balance`, `fund_credit`, `leases_by_tenant`, `close_lease`, `get_skus`, `get_providers`.
-- **`packages/fred`** -- MCP server with 8 provider/Fred tools: `browse_catalog`, `deploy_app`, `app_status`, `get_logs`, `restart_app`, `update_app`, `app_diagnostics`, `app_releases`. Contains HTTP clients (auth, provider, fred) and tool implementations.
+- **`packages/fred`** -- MCP server with 8 provider/Fred tools: `browse_catalog`, `deploy_app`, `app_status`, `get_logs`, `restart_app`, `update_app`, `app_diagnostics`, `app_releases`. Contains HTTP clients (auth, provider, fred) and tool implementations. Also exports all tool functions and HTTP clients for library consumers. Stack manifests use `{ services: { ... } }` wrapper format; upload payloads are `Uint8Array`.
 - **`packages/node`** -- Three CLI entry points (`manifest-mcp-chain`, `manifest-mcp-lease`, `manifest-mcp-fred`) with stdio transport + keyfile wallet. Each also supports `keygen` and `import` subcommands for key management.
 
 ### Tool layers (3 tiers)
@@ -46,11 +46,12 @@ Three MCP servers bridging AI assistants to Cosmos SDK blockchains (Manifest Net
 
 ### Key components
 
-- **`CosmosClientManager`** (`client.ts`) -- Keyed singleton (per `chainId:rpcUrl`), lazy init with promise dedup, token-bucket rate limiting via `limiter`, callers call `acquireRateLimit()` before RPC.
+- **`CosmosClientManager`** (`client.ts`) -- Keyed singleton (per `chainId:rpcUrl:restUrl`), lazy init with promise dedup, token-bucket rate limiting via `limiter`, callers call `acquireRateLimit()` before RPC. Supports two modes: full mode (rpcUrl + gasPrice for queries + transactions) and query-only mode (restUrl only, signing throws `INVALID_CONFIG`). When `restUrl` is configured it is preferred for queries even if `rpcUrl` is also present.
+- **`lcd-adapter.ts`** (core) -- Adapts the LCD/REST client from manifestjs to match the `ManifestQueryClient` shape used by RPC. Converts snake_case LCD responses to camelCase via `snakeToCamelDeep`, then runs them through protobuf `fromJSON` converters. Modules without LCD support (e.g., `cosmos.orm`, `liftedinit.manifest`) return `unsupportedModule` proxies that throw `UNSUPPORTED_QUERY` on access.
 - **Module registry** (`modules.ts`) -- `QUERY_MODULES` / `TX_MODULES` maps: metadata + handler function per module. Adding a module = add handler file + register in map.
 - **`cosmos.ts`** -- Routes `(module, subcommand, args)` -> handler. Wraps in `withRetry()` and rate limiting.
 - **`server-utils.ts`** -- Shared server utilities: `withErrorHandling`, `jsonResponse`, `bigIntReplacer`, `sanitizeForLogging`, `ManifestMCPServerOptions`, `createMnemonicServer`.
-- **`http/auth.ts`** (fred package) -- ADR-036 client-side auth tokens (signed message -> base64 Bearer token with embedded timestamp; expiry enforced server-side). No auth endpoint round-trip.
+- **`http/auth.ts`** (fred package) -- ADR-036 client-side auth tokens (signed message -> base64 Bearer token with embedded unix epoch timestamp; expiry enforced server-side). No auth endpoint round-trip. Token payload uses `meta_hash` (not `meta_hash_hex`) and `timestamp` is a number (unix seconds).
 - **`http/provider.ts` / `http/fred.ts`** (fred package) -- Off-chain provider API clients with timeout handling.
 
 ### Wallet resolution (node package)
@@ -64,7 +65,7 @@ Three MCP servers bridging AI assistants to Cosmos SDK blockchains (Manifest Net
 ## Conventions
 
 - ESM-only (`"type": "module"`). Use `.js` extensions in imports (e.g., `'./client.js'`).
-- `tsdown` builds unbundled ESM with `.d.ts` and sourcemaps. Not tsc.
+- `tsdown` builds unbundled ESM with `.d.ts` and sourcemaps. Not tsc. Core/chain/lease/fred use `platform: "neutral"` (`.js` output); node uses `platform: "node"` (`.mjs` output).
 - Tests are co-located `*.test.ts` files. E2E tests live in `/e2e/`.
 - Query handlers: `routeXxxQuery(queryClient, subcommand, args)` with switch on subcommand.
 - Transaction handlers: `routeXxxTransaction(client, senderAddress, subcommand, args, waitForConfirmation)`.
@@ -78,8 +79,9 @@ Three MCP servers bridging AI assistants to Cosmos SDK blockchains (Manifest Net
 | Variable | Required | Default |
 |----------|----------|---------|
 | `COSMOS_CHAIN_ID` | Yes | -- |
-| `COSMOS_RPC_URL` | Yes | -- |
-| `COSMOS_GAS_PRICE` | Yes | -- |
+| `COSMOS_RPC_URL` | One of `RPC_URL` or `REST_URL` required | -- |
+| `COSMOS_GAS_PRICE` | Required when `RPC_URL` is set | -- |
+| `COSMOS_REST_URL` | One of `RPC_URL` or `REST_URL` required | -- |
 | `COSMOS_ADDRESS_PREFIX` | No | `manifest` |
 | `MANIFEST_KEY_FILE` | No | `~/.manifest/key.json` |
 | `MANIFEST_KEY_PASSWORD` | No | -- |
@@ -87,5 +89,7 @@ Three MCP servers bridging AI assistants to Cosmos SDK blockchains (Manifest Net
 | `LOG_LEVEL` | No | `warn` |
 
 `LOG_LEVEL` accepts `debug`, `info`, `warn`, `error`, or `silent`. Logs go to stderr.
+
+Set `COSMOS_RPC_URL` + `COSMOS_GAS_PRICE` for full access (queries + transactions). Set `COSMOS_REST_URL` alone for query-only mode (LCD/REST). When both are set, `REST_URL` is preferred for queries.
 
 The node package loads `.env` files automatically via `dotenv`.
