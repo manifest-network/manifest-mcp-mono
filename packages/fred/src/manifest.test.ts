@@ -3,10 +3,10 @@ import {
   buildManifest,
   buildStackManifest,
   deriveAppNameFromImage,
-  normalizePorts,
   getServiceNames,
   isStackManifest,
   mergeManifest,
+  normalizePorts,
   parseStackManifest,
   validateServiceName,
 } from './manifest.js';
@@ -66,12 +66,9 @@ describe('deriveAppNameFromImage', () => {
 });
 
 describe('validateServiceName', () => {
-  it.each(['web', 'db', 'my-service', 'a', 'a1', '0'])(
-    'valid: %s',
-    (name) => {
-      expect(validateServiceName(name)).toBe(true);
-    },
-  );
+  it.each(['web', 'db', 'my-service', 'a', 'a1', '0'])('valid: %s', (name) => {
+    expect(validateServiceName(name)).toBe(true);
+  });
 
   it.each([
     ['', 'empty'],

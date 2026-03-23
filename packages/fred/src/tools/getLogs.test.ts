@@ -144,7 +144,12 @@ describe('getAppLogs', () => {
         },
       },
     });
-    mockGetLeaseLogs.mockResolvedValue({ lease_uuid: LEASE_UUID, tenant: 'manifest1abc', provider_uuid: 'prov-1', logs: {} });
+    mockGetLeaseLogs.mockResolvedValue({
+      lease_uuid: LEASE_UUID,
+      tenant: 'manifest1abc',
+      provider_uuid: 'prov-1',
+      logs: {},
+    });
 
     await getAppLogs(qc, 'manifest1abc', LEASE_UUID, mockGetAuthToken, 50);
 

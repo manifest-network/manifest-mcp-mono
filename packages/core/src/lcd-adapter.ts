@@ -1,6 +1,6 @@
 import { cosmos, liftedinit } from '@manifest-network/manifestjs';
-import { ManifestMCPError, ManifestMCPErrorCode } from './types.js';
 import type { ManifestQueryClient } from './client.js';
+import { ManifestMCPError, ManifestMCPErrorCode } from './types.js';
 
 function snakeToCamel(s: string): string {
   return s.replace(/_(.)/g, (_, c: string) => c.toUpperCase());
@@ -10,12 +10,17 @@ function snakeToCamelDeep(obj: unknown): unknown {
   if (Array.isArray(obj)) {
     return obj.map(snakeToCamelDeep);
   }
-  if (obj !== null && typeof obj === 'object' && !(obj instanceof Date) && !(obj instanceof Uint8Array)) {
+  if (
+    obj !== null &&
+    typeof obj === 'object' &&
+    !(obj instanceof Date) &&
+    !(obj instanceof Uint8Array)
+  ) {
     return Object.fromEntries(
       Object.entries(obj as Record<string, unknown>).map(([k, v]) => [
         snakeToCamel(k),
         snakeToCamelDeep(v),
-      ])
+      ]),
     );
   }
   return obj;
@@ -37,7 +42,9 @@ function findConverter(
   const queryName = `Query${uc}Response`;
   const plainName = `${uc}Response`;
 
-  const converter = (namespace[queryName] ?? namespace[plainName]) as Converter | undefined;
+  const converter = (namespace[queryName] ?? namespace[plainName]) as
+    | Converter
+    | undefined;
   if (!converter?.fromJSON) {
     throw new ManifestMCPError(
       ManifestMCPErrorCode.QUERY_FAILED,
@@ -90,20 +97,25 @@ function adaptModule(
 }
 
 function unsupportedModule(modulePath: string): unknown {
-  return new Proxy({}, {
-    get(_target, prop) {
-      if (typeof prop === 'string') {
-        throw new ManifestMCPError(
-          ManifestMCPErrorCode.UNSUPPORTED_QUERY,
-          `Module "${modulePath}" is not available via LCD/REST. Use an RPC endpoint instead.`,
-        );
-      }
-      return undefined;
+  return new Proxy(
+    {},
+    {
+      get(_target, prop) {
+        if (typeof prop === 'string') {
+          throw new ManifestMCPError(
+            ManifestMCPErrorCode.UNSUPPORTED_QUERY,
+            `Module "${modulePath}" is not available via LCD/REST. Use an RPC endpoint instead.`,
+          );
+        }
+        return undefined;
+      },
     },
-  });
+  );
 }
 
-export async function createLCDQueryClient(restEndpoint: string): Promise<ManifestQueryClient> {
+export async function createLCDQueryClient(
+  restEndpoint: string,
+): Promise<ManifestQueryClient> {
   let lcd: Awaited<ReturnType<typeof liftedinit.ClientFactory.createLCDClient>>;
   try {
     lcd = await liftedinit.ClientFactory.createLCDClient({ restEndpoint });
@@ -117,28 +129,74 @@ export async function createLCDQueryClient(restEndpoint: string): Promise<Manife
   try {
     return {
       cosmos: {
-        auth: { v1beta1: adaptModule(lcd.cosmos.auth.v1beta1, cosmos.auth.v1beta1) },
-        authz: { v1beta1: adaptModule(lcd.cosmos.authz.v1beta1, cosmos.authz.v1beta1) },
-        bank: { v1beta1: adaptModule(lcd.cosmos.bank.v1beta1, cosmos.bank.v1beta1) },
-        base: { node: { v1beta1: adaptModule(lcd.cosmos.base.node.v1beta1, cosmos.base.node.v1beta1) } },
+        auth: {
+          v1beta1: adaptModule(lcd.cosmos.auth.v1beta1, cosmos.auth.v1beta1),
+        },
+        authz: {
+          v1beta1: adaptModule(lcd.cosmos.authz.v1beta1, cosmos.authz.v1beta1),
+        },
+        bank: {
+          v1beta1: adaptModule(lcd.cosmos.bank.v1beta1, cosmos.bank.v1beta1),
+        },
+        base: {
+          node: {
+            v1beta1: adaptModule(
+              lcd.cosmos.base.node.v1beta1,
+              cosmos.base.node.v1beta1,
+            ),
+          },
+        },
         circuit: { v1: adaptModule(lcd.cosmos.circuit.v1, cosmos.circuit.v1) },
-        consensus: { v1: adaptModule(lcd.cosmos.consensus.v1, cosmos.consensus.v1) },
-        distribution: { v1beta1: adaptModule(lcd.cosmos.distribution.v1beta1, cosmos.distribution.v1beta1) },
-        feegrant: { v1beta1: adaptModule(lcd.cosmos.feegrant.v1beta1, cosmos.feegrant.v1beta1) },
+        consensus: {
+          v1: adaptModule(lcd.cosmos.consensus.v1, cosmos.consensus.v1),
+        },
+        distribution: {
+          v1beta1: adaptModule(
+            lcd.cosmos.distribution.v1beta1,
+            cosmos.distribution.v1beta1,
+          ),
+        },
+        feegrant: {
+          v1beta1: adaptModule(
+            lcd.cosmos.feegrant.v1beta1,
+            cosmos.feegrant.v1beta1,
+          ),
+        },
         gov: {
           v1: adaptModule(lcd.cosmos.gov.v1, cosmos.gov.v1),
           v1beta1: adaptModule(lcd.cosmos.gov.v1beta1, cosmos.gov.v1beta1),
         },
         group: { v1: adaptModule(lcd.cosmos.group.v1, cosmos.group.v1) },
-        mint: { v1beta1: adaptModule(lcd.cosmos.mint.v1beta1, cosmos.mint.v1beta1) },
-        orm: { query: { v1alpha1: unsupportedModule('cosmos.orm.query.v1alpha1') } },
-        params: { v1beta1: adaptModule(lcd.cosmos.params.v1beta1, cosmos.params.v1beta1) },
-        staking: { v1beta1: adaptModule(lcd.cosmos.staking.v1beta1, cosmos.staking.v1beta1) },
+        mint: {
+          v1beta1: adaptModule(lcd.cosmos.mint.v1beta1, cosmos.mint.v1beta1),
+        },
+        orm: {
+          query: { v1alpha1: unsupportedModule('cosmos.orm.query.v1alpha1') },
+        },
+        params: {
+          v1beta1: adaptModule(
+            lcd.cosmos.params.v1beta1,
+            cosmos.params.v1beta1,
+          ),
+        },
+        staking: {
+          v1beta1: adaptModule(
+            lcd.cosmos.staking.v1beta1,
+            cosmos.staking.v1beta1,
+          ),
+        },
         tx: { v1beta1: adaptModule(lcd.cosmos.tx.v1beta1, cosmos.tx.v1beta1) },
-        upgrade: { v1beta1: adaptModule(lcd.cosmos.upgrade.v1beta1, cosmos.upgrade.v1beta1) },
+        upgrade: {
+          v1beta1: adaptModule(
+            lcd.cosmos.upgrade.v1beta1,
+            cosmos.upgrade.v1beta1,
+          ),
+        },
       },
       liftedinit: {
-        billing: { v1: adaptModule(lcd.liftedinit.billing.v1, liftedinit.billing.v1) },
+        billing: {
+          v1: adaptModule(lcd.liftedinit.billing.v1, liftedinit.billing.v1),
+        },
         manifest: { v1: unsupportedModule('liftedinit.manifest.v1') },
         sku: { v1: adaptModule(lcd.liftedinit.sku.v1, liftedinit.sku.v1) },
       },
@@ -154,8 +212,8 @@ export async function createLCDQueryClient(restEndpoint: string): Promise<Manife
 
 // Re-export for testing
 export {
-  snakeToCamelDeep as _snakeToCamelDeep,
-  findConverter as _findConverter,
   adaptModule as _adaptModule,
+  findConverter as _findConverter,
+  snakeToCamelDeep as _snakeToCamelDeep,
   unsupportedModule as _unsupportedModule,
 };

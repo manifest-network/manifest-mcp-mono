@@ -43,13 +43,7 @@ describe('updateApp', () => {
       image: 'nginx:2',
       ports: { '80/tcp': {} },
     });
-    await updateApp(
-      qc,
-      'manifest1abc',
-      LEASE_UUID,
-      mockGetAuthToken,
-      manifest,
-    );
+    await updateApp(qc, 'manifest1abc', LEASE_UUID, mockGetAuthToken, manifest);
 
     // Should pass manifest through unchanged
     expect(mockUpdateLease).toHaveBeenCalledWith(
@@ -185,12 +179,23 @@ describe('updateApp', () => {
   it('throws on invalid manifest JSON when existingManifest is provided', async () => {
     const qc = makeMockQueryClient({
       billing: {
-        lease: { uuid: LEASE_UUID, state: LeaseState.LEASE_STATE_ACTIVE, providerUuid: 'prov-1' },
+        lease: {
+          uuid: LEASE_UUID,
+          state: LeaseState.LEASE_STATE_ACTIVE,
+          providerUuid: 'prov-1',
+        },
       },
     });
 
     await expect(
-      updateApp(qc, 'manifest1abc', LEASE_UUID, mockGetAuthToken, 'not-valid-json', '{"image":"nginx"}'),
+      updateApp(
+        qc,
+        'manifest1abc',
+        LEASE_UUID,
+        mockGetAuthToken,
+        'not-valid-json',
+        '{"image":"nginx"}',
+      ),
     ).rejects.toMatchObject({
       code: ManifestMCPErrorCode.INVALID_CONFIG,
       message: expect.stringContaining('Invalid manifest JSON'),
@@ -200,7 +205,11 @@ describe('updateApp', () => {
   it('stack merge: throws on unparseable existingManifest JSON', async () => {
     const qc = makeMockQueryClient({
       billing: {
-        lease: { uuid: LEASE_UUID, state: LeaseState.LEASE_STATE_ACTIVE, providerUuid: 'prov-1' },
+        lease: {
+          uuid: LEASE_UUID,
+          state: LeaseState.LEASE_STATE_ACTIVE,
+          providerUuid: 'prov-1',
+        },
       },
     });
 
@@ -209,7 +218,14 @@ describe('updateApp', () => {
     });
 
     await expect(
-      updateApp(qc, 'manifest1abc', LEASE_UUID, mockGetAuthToken, newManifest, 'not-valid-json'),
+      updateApp(
+        qc,
+        'manifest1abc',
+        LEASE_UUID,
+        mockGetAuthToken,
+        newManifest,
+        'not-valid-json',
+      ),
     ).rejects.toMatchObject({
       code: ManifestMCPErrorCode.INVALID_CONFIG,
       message: expect.stringContaining('Invalid existing_manifest'),
@@ -219,7 +235,11 @@ describe('updateApp', () => {
   it('stack merge: throws on invalid service name', async () => {
     const qc = makeMockQueryClient({
       billing: {
-        lease: { uuid: LEASE_UUID, state: LeaseState.LEASE_STATE_ACTIVE, providerUuid: 'prov-1' },
+        lease: {
+          uuid: LEASE_UUID,
+          state: LeaseState.LEASE_STATE_ACTIVE,
+          providerUuid: 'prov-1',
+        },
       },
     });
 
@@ -228,7 +248,14 @@ describe('updateApp', () => {
     });
 
     await expect(
-      updateApp(qc, 'manifest1abc', LEASE_UUID, mockGetAuthToken, newManifest, '{"services":{"web":{"image":"old"}}}'),
+      updateApp(
+        qc,
+        'manifest1abc',
+        LEASE_UUID,
+        mockGetAuthToken,
+        newManifest,
+        '{"services":{"web":{"image":"old"}}}',
+      ),
     ).rejects.toMatchObject({
       code: ManifestMCPErrorCode.INVALID_CONFIG,
       message: expect.stringContaining('Invalid service name'),

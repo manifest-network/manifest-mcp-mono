@@ -35,7 +35,10 @@ export async function mapWithConcurrency<T, R>(
   return results;
 }
 
-export async function browseCatalog(queryClient: ManifestQueryClient, fetchFn?: typeof globalThis.fetch) {
+export async function browseCatalog(
+  queryClient: ManifestQueryClient,
+  fetchFn?: typeof globalThis.fetch,
+) {
   const sku = queryClient.liftedinit.sku.v1;
 
   const pagination = createPagination(MAX_PAGE_LIMIT);

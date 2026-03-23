@@ -45,23 +45,23 @@ describe('loadConfig', () => {
   });
 
   it('should throw when neither COSMOS_RPC_URL nor COSMOS_REST_URL is set', async () => {
-    process.env['COSMOS_CHAIN_ID'] = 'test-chain';
+    process.env.COSMOS_CHAIN_ID = 'test-chain';
 
     const { loadConfig } = await importConfig();
     expect(() => loadConfig()).toThrow(/COSMOS_RPC_URL or COSMOS_REST_URL/);
   });
 
   it('should throw when COSMOS_RPC_URL is set without COSMOS_GAS_PRICE', async () => {
-    process.env['COSMOS_CHAIN_ID'] = 'test-chain';
-    process.env['COSMOS_RPC_URL'] = 'https://rpc.test.com';
+    process.env.COSMOS_CHAIN_ID = 'test-chain';
+    process.env.COSMOS_RPC_URL = 'https://rpc.test.com';
 
     const { loadConfig } = await importConfig();
     expect(() => loadConfig()).toThrow(/COSMOS_GAS_PRICE/);
   });
 
   it('should accept COSMOS_REST_URL without COSMOS_RPC_URL', async () => {
-    process.env['COSMOS_CHAIN_ID'] = 'test-chain';
-    process.env['COSMOS_REST_URL'] = 'https://rest.test.com';
+    process.env.COSMOS_CHAIN_ID = 'test-chain';
+    process.env.COSMOS_REST_URL = 'https://rest.test.com';
 
     const { loadConfig } = await importConfig();
     const config = loadConfig();
@@ -71,10 +71,10 @@ describe('loadConfig', () => {
   });
 
   it('should accept both COSMOS_RPC_URL and COSMOS_REST_URL', async () => {
-    process.env['COSMOS_CHAIN_ID'] = 'test-chain';
-    process.env['COSMOS_RPC_URL'] = 'https://rpc.test.com';
-    process.env['COSMOS_GAS_PRICE'] = '0.025umfx';
-    process.env['COSMOS_REST_URL'] = 'https://rest.test.com';
+    process.env.COSMOS_CHAIN_ID = 'test-chain';
+    process.env.COSMOS_RPC_URL = 'https://rpc.test.com';
+    process.env.COSMOS_GAS_PRICE = '0.025umfx';
+    process.env.COSMOS_REST_URL = 'https://rest.test.com';
 
     const { loadConfig } = await importConfig();
     const config = loadConfig();

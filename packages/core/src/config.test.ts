@@ -71,7 +71,9 @@ describe('validateConfig', () => {
 
     expect(result.valid).toBe(false);
     expect(result.errors).toContain('chainId is required');
-    expect(result.errors).toContain('At least one of rpcUrl or restUrl is required');
+    expect(result.errors).toContain(
+      'At least one of rpcUrl or restUrl is required',
+    );
   });
 
   it('should require gasPrice when rpcUrl is provided', () => {
@@ -81,7 +83,9 @@ describe('validateConfig', () => {
     });
 
     expect(result.valid).toBe(false);
-    expect(result.errors).toContain('gasPrice is required when rpcUrl is provided');
+    expect(result.errors).toContain(
+      'gasPrice is required when rpcUrl is provided',
+    );
   });
 
   it('should accept restUrl without rpcUrl or gasPrice', () => {
@@ -111,7 +115,7 @@ describe('validateConfig', () => {
     });
 
     expect(result.valid).toBe(false);
-    expect(result.errors.some(e => e.includes('restUrl'))).toBe(true);
+    expect(result.errors.some((e) => e.includes('restUrl'))).toBe(true);
   });
 
   it('should validate chainId format', () => {

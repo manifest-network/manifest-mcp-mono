@@ -1,21 +1,30 @@
-import { describe, it, expect, vi } from 'vitest';
-import { _snakeToCamelDeep as snakeToCamelDeep, _findConverter as findConverter, _adaptModule as adaptModule, _unsupportedModule as unsupportedModule } from './lcd-adapter.js';
+import { describe, expect, it, vi } from 'vitest';
+import {
+  _adaptModule as adaptModule,
+  _findConverter as findConverter,
+  _snakeToCamelDeep as snakeToCamelDeep,
+  _unsupportedModule as unsupportedModule,
+} from './lcd-adapter.js';
 import { ManifestMCPError, ManifestMCPErrorCode } from './types.js';
 
 describe('snakeToCamelDeep', () => {
   it('converts simple snake_case keys', () => {
-    expect(snakeToCamelDeep({ provider_uuid: 'abc', lease_uuid: '123' }))
-      .toEqual({ providerUuid: 'abc', leaseUuid: '123' });
+    expect(
+      snakeToCamelDeep({ provider_uuid: 'abc', lease_uuid: '123' }),
+    ).toEqual({ providerUuid: 'abc', leaseUuid: '123' });
   });
 
   it('converts nested objects', () => {
-    expect(snakeToCamelDeep({ outer_key: { inner_key: 'val' } }))
-      .toEqual({ outerKey: { innerKey: 'val' } });
+    expect(snakeToCamelDeep({ outer_key: { inner_key: 'val' } })).toEqual({
+      outerKey: { innerKey: 'val' },
+    });
   });
 
   it('converts arrays of objects', () => {
-    expect(snakeToCamelDeep([{ foo_bar: 1 }, { baz_qux: 2 }]))
-      .toEqual([{ fooBar: 1 }, { bazQux: 2 }]);
+    expect(snakeToCamelDeep([{ foo_bar: 1 }, { baz_qux: 2 }])).toEqual([
+      { fooBar: 1 },
+      { bazQux: 2 },
+    ]);
   });
 
   it('passes through primitives', () => {
@@ -37,8 +46,9 @@ describe('snakeToCamelDeep', () => {
   });
 
   it('leaves already-camelCase keys unchanged', () => {
-    expect(snakeToCamelDeep({ providerUuid: 'abc' }))
-      .toEqual({ providerUuid: 'abc' });
+    expect(snakeToCamelDeep({ providerUuid: 'abc' })).toEqual({
+      providerUuid: 'abc',
+    });
   });
 
   it('handles empty objects', () => {
@@ -46,12 +56,14 @@ describe('snakeToCamelDeep', () => {
   });
 
   it('handles deeply nested structures', () => {
-    expect(snakeToCamelDeep({
-      credit_account: {
-        balance: { amount: '100', denom: 'umfx' },
-        tenant_address: 'manifest1abc',
-      },
-    })).toEqual({
+    expect(
+      snakeToCamelDeep({
+        credit_account: {
+          balance: { amount: '100', denom: 'umfx' },
+          tenant_address: 'manifest1abc',
+        },
+      }),
+    ).toEqual({
       creditAccount: {
         balance: { amount: '100', denom: 'umfx' },
         tenantAddress: 'manifest1abc',
@@ -60,12 +72,14 @@ describe('snakeToCamelDeep', () => {
   });
 
   it('handles arrays nested inside objects', () => {
-    expect(snakeToCamelDeep({
-      lease_items: [
-        { sku_uuid: 'a', item_count: 1 },
-        { sku_uuid: 'b', item_count: 2 },
-      ],
-    })).toEqual({
+    expect(
+      snakeToCamelDeep({
+        lease_items: [
+          { sku_uuid: 'a', item_count: 1 },
+          { sku_uuid: 'b', item_count: 2 },
+        ],
+      }),
+    ).toEqual({
       leaseItems: [
         { skuUuid: 'a', itemCount: 1 },
         { skuUuid: 'b', itemCount: 2 },
@@ -74,13 +88,13 @@ describe('snakeToCamelDeep', () => {
   });
 
   it('handles keys with uppercase after underscore', () => {
-    expect(snakeToCamelDeep({ status_OK: true }))
-      .toEqual({ statusOK: true });
+    expect(snakeToCamelDeep({ status_OK: true })).toEqual({ statusOK: true });
   });
 
   it('handles keys with digits after underscore', () => {
-    expect(snakeToCamelDeep({ v1beta1_balance: '100' }))
-      .toEqual({ v1beta1Balance: '100' });
+    expect(snakeToCamelDeep({ v1beta1_balance: '100' })).toEqual({
+      v1beta1Balance: '100',
+    });
   });
 });
 
@@ -111,8 +125,12 @@ describe('findConverter', () => {
     try {
       findConverter({}, 'nonexistent');
     } catch (e) {
-      expect((e as ManifestMCPError).code).toBe(ManifestMCPErrorCode.QUERY_FAILED);
-      expect((e as ManifestMCPError).message).toContain('No response converter found');
+      expect((e as ManifestMCPError).code).toBe(
+        ManifestMCPErrorCode.QUERY_FAILED,
+      );
+      expect((e as ManifestMCPError).message).toContain(
+        'No response converter found',
+      );
     }
   });
 
@@ -124,9 +142,13 @@ describe('findConverter', () => {
 
 describe('adaptModule', () => {
   it('wraps LCD methods with snakeToCamel and fromJSON conversion', async () => {
-    const originalFn = vi.fn().mockResolvedValue({ total_count: '5', some_data: 'raw' });
+    const originalFn = vi
+      .fn()
+      .mockResolvedValue({ total_count: '5', some_data: 'raw' });
     const lcdModule = { myMethod: originalFn, req: {} };
-    const converter = { fromJSON: vi.fn().mockReturnValue({ totalCount: 5, someData: 'raw' }) };
+    const converter = {
+      fromJSON: vi.fn().mockReturnValue({ totalCount: 5, someData: 'raw' }),
+    };
     const converterNamespace = { QueryMyMethodResponse: converter };
 
     const adapted = adaptModule(lcdModule, converterNamespace);
@@ -136,7 +158,10 @@ describe('adaptModule', () => {
 
     const result = await adapted.myMethod('arg1');
     expect(originalFn).toHaveBeenCalledWith('arg1');
-    expect(converter.fromJSON).toHaveBeenCalledWith({ totalCount: '5', someData: 'raw' });
+    expect(converter.fromJSON).toHaveBeenCalledWith({
+      totalCount: '5',
+      someData: 'raw',
+    });
     expect(result).toEqual({ totalCount: 5, someData: 'raw' });
   });
 
@@ -165,14 +190,20 @@ describe('adaptModule', () => {
     const originalFn = vi.fn().mockResolvedValue({});
     const lcdModule = { myMethod: originalFn };
     const converterNamespace = {
-      QueryMyMethodResponse: { fromJSON: () => { throw new Error('bad data'); } },
+      QueryMyMethodResponse: {
+        fromJSON: () => {
+          throw new Error('bad data');
+        },
+      },
     };
 
     const adapted = adaptModule(lcdModule, converterNamespace);
 
     await expect(adapted.myMethod()).rejects.toMatchObject({
       code: ManifestMCPErrorCode.QUERY_FAILED,
-      message: expect.stringContaining('Failed to convert LCD response for "myMethod"'),
+      message: expect.stringContaining(
+        'Failed to convert LCD response for "myMethod"',
+      ),
     });
   });
 });
@@ -184,8 +215,12 @@ describe('unsupportedModule', () => {
     try {
       (proxy as any).get;
     } catch (e) {
-      expect((e as ManifestMCPError).code).toBe(ManifestMCPErrorCode.UNSUPPORTED_QUERY);
-      expect((e as ManifestMCPError).message).toContain('not available via LCD/REST');
+      expect((e as ManifestMCPError).code).toBe(
+        ManifestMCPErrorCode.UNSUPPORTED_QUERY,
+      );
+      expect((e as ManifestMCPError).message).toContain(
+        'not available via LCD/REST',
+      );
     }
   });
 

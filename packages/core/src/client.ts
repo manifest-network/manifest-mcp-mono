@@ -18,8 +18,8 @@ import {
 } from '@manifest-network/manifestjs';
 import { RateLimiter } from 'limiter';
 import { DEFAULT_REQUESTS_PER_SECOND } from './config.js';
-import { withRetry } from './retry.js';
 import { createLCDQueryClient } from './lcd-adapter.js';
+import { withRetry } from './retry.js';
 import {
   type ManifestMCPConfig,
   ManifestMCPError,
@@ -128,8 +128,7 @@ export class CosmosClientManager {
         instance.config.gasPrice !== config.gasPrice ||
         instance.walletProvider !== walletProvider;
 
-      const queryClientAffected =
-        instance.config.restUrl !== config.restUrl;
+      const queryClientAffected = instance.config.restUrl !== config.restUrl;
 
       const rateLimitChanged =
         instance.config.rateLimit?.requestsPerSecond !==

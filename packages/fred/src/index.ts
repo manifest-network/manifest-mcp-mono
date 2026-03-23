@@ -31,62 +31,76 @@ import { restartApp } from './tools/restartApp.js';
 import { updateApp } from './tools/updateApp.js';
 
 export type { ManifestMCPServerOptions } from '@manifest-network/manifest-mcp-core';
-export { ManifestMCPError, ManifestMCPErrorCode, INFRASTRUCTURE_ERROR_CODES } from '@manifest-network/manifest-mcp-core';
+export {
+  INFRASTRUCTURE_ERROR_CODES,
+  ManifestMCPError,
+  ManifestMCPErrorCode,
+} from '@manifest-network/manifest-mcp-core';
+export {
+  type AuthTokenPayload,
+  createAuthToken,
+  createLeaseDataSignMessage,
+  createSignMessage,
+} from './http/auth.js';
+export {
+  type FredActionResponse,
+  type FredInstanceInfo,
+  type FredLeaseInfo,
+  type FredLeaseLogs,
+  type FredLeaseProvision,
+  type FredLeaseRelease,
+  type FredLeaseReleases,
+  type FredLeaseStatus,
+  type FredServiceStatus,
+  getLeaseInfo,
+  getLeaseLogs,
+  getLeaseProvision,
+  getLeaseReleases,
+  getLeaseStatus,
+  MAX_TAIL,
+  type PollOptions,
+  pollLeaseUntilReady,
+  restartLease,
+  updateLease,
+} from './http/fred.js';
+export {
+  type ConnectionDetails,
+  checkedFetch,
+  getLeaseConnectionInfo,
+  getProviderHealth,
+  type InstanceInfo,
+  type LeaseConnectionResponse,
+  ProviderApiError,
+  type ProviderHealthResponse,
+  type ServiceConnectionDetails,
+  uploadLeaseData,
+  validateProviderUrl,
+} from './http/provider.js';
 export {
   type BuildManifestOptions,
-  deriveAppNameFromImage,
-  validateServiceName,
-  normalizePorts,
   buildManifest,
   buildStackManifest,
+  deriveAppNameFromImage,
   getServiceNames,
   isStackManifest,
   mergeManifest,
+  normalizePorts,
   parseStackManifest,
+  validateServiceName,
 } from './manifest.js';
-export { type ServiceConfig, type DeployAppInput, type DeployAppResult, deployApp } from './tools/deployApp.js';
-export { browseCatalog, mapWithConcurrency } from './tools/browseCatalog.js';
 export { appStatus } from './tools/appStatus.js';
+export { browseCatalog, mapWithConcurrency } from './tools/browseCatalog.js';
+export {
+  type DeployAppInput,
+  type DeployAppResult,
+  deployApp,
+  type ServiceConfig,
+} from './tools/deployApp.js';
+export { fetchActiveLease } from './tools/fetchActiveLease.js';
 export { getAppLogs } from './tools/getLogs.js';
+export { resolveProviderUrl } from './tools/resolveLeaseProvider.js';
 export { restartApp } from './tools/restartApp.js';
 export { updateApp } from './tools/updateApp.js';
-export { resolveProviderUrl } from './tools/resolveLeaseProvider.js';
-export { fetchActiveLease } from './tools/fetchActiveLease.js';
-export { createSignMessage, createLeaseDataSignMessage, createAuthToken, type AuthTokenPayload } from './http/auth.js';
-export {
-  getProviderHealth,
-  getLeaseConnectionInfo,
-  uploadLeaseData,
-  checkedFetch,
-  validateProviderUrl,
-  ProviderApiError,
-  type ProviderHealthResponse,
-  type InstanceInfo,
-  type ServiceConnectionDetails,
-  type ConnectionDetails,
-  type LeaseConnectionResponse,
-} from './http/provider.js';
-export {
-  getLeaseStatus,
-  getLeaseLogs,
-  getLeaseProvision,
-  restartLease,
-  updateLease,
-  getLeaseReleases,
-  getLeaseInfo,
-  pollLeaseUntilReady,
-  type FredInstanceInfo,
-  type FredServiceStatus,
-  type FredLeaseStatus,
-  type FredLeaseLogs,
-  type FredLeaseProvision,
-  type FredActionResponse,
-  type FredLeaseRelease,
-  type FredLeaseReleases,
-  type FredLeaseInfo,
-  type PollOptions,
-  MAX_TAIL,
-} from './http/fred.js';
 
 export class FredMCPServer {
   private mcpServer: McpServer;

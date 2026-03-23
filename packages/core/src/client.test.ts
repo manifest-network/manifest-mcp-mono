@@ -369,11 +369,17 @@ describe('CosmosClientManager', () => {
   describe('LCD/REST query-only mode', () => {
     it('uses LCD client when restUrl is configured', async () => {
       const instance = CosmosClientManager.getInstance(
-        makeConfig({ restUrl: 'https://rest.example.com', rpcUrl: undefined, gasPrice: undefined }),
+        makeConfig({
+          restUrl: 'https://rest.example.com',
+          rpcUrl: undefined,
+          gasPrice: undefined,
+        }),
         makeWallet(),
       );
       const client = await instance.getQueryClient();
-      expect(mockCreateLCDQueryClient).toHaveBeenCalledWith('https://rest.example.com');
+      expect(mockCreateLCDQueryClient).toHaveBeenCalledWith(
+        'https://rest.example.com',
+      );
       expect(mockCreateRPCQueryClient).not.toHaveBeenCalled();
       expect(client).toEqual({ mock: 'lcdClient' });
     });
@@ -384,13 +390,19 @@ describe('CosmosClientManager', () => {
         makeWallet(),
       );
       await instance.getQueryClient();
-      expect(mockCreateLCDQueryClient).toHaveBeenCalledWith('https://rest.example.com');
+      expect(mockCreateLCDQueryClient).toHaveBeenCalledWith(
+        'https://rest.example.com',
+      );
       expect(mockCreateRPCQueryClient).not.toHaveBeenCalled();
     });
 
     it('throws INVALID_CONFIG from getSigningClient when rpcUrl is not configured', async () => {
       const instance = CosmosClientManager.getInstance(
-        makeConfig({ restUrl: 'https://rest.example.com', rpcUrl: undefined, gasPrice: undefined }),
+        makeConfig({
+          restUrl: 'https://rest.example.com',
+          rpcUrl: undefined,
+          gasPrice: undefined,
+        }),
         makeWallet(),
       );
       await expect(instance.getSigningClient()).rejects.toMatchObject({
@@ -401,7 +413,11 @@ describe('CosmosClientManager', () => {
 
     it('throws INVALID_CONFIG from getQueryClient when neither URL is configured', async () => {
       const instance = CosmosClientManager.getInstance(
-        makeConfig({ rpcUrl: undefined, gasPrice: undefined, restUrl: undefined }),
+        makeConfig({
+          rpcUrl: undefined,
+          gasPrice: undefined,
+          restUrl: undefined,
+        }),
         makeWallet(),
       );
       await expect(instance.getQueryClient()).rejects.toMatchObject({

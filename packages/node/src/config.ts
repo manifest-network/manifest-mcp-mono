@@ -54,9 +54,9 @@ export function loadKeyfileConfig(): Pick<
 }
 
 export function loadConfig(): NodeMCPConfig {
-  const rpcUrl = process.env['COSMOS_RPC_URL'] || undefined;
-  const gasPrice = process.env['COSMOS_GAS_PRICE'] || undefined;
-  const restUrl = process.env['COSMOS_REST_URL'] || undefined;
+  const rpcUrl = process.env.COSMOS_RPC_URL || undefined;
+  const gasPrice = process.env.COSMOS_GAS_PRICE || undefined;
+  const restUrl = process.env.COSMOS_REST_URL || undefined;
 
   // At least one endpoint is required
   if (!rpcUrl && !restUrl) {

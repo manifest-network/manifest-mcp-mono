@@ -7,8 +7,8 @@ import {
 } from '@manifest-network/manifest-mcp-core';
 import { type FredLeaseStatus, getLeaseStatus } from '../http/fred.js';
 import {
-  getLeaseConnectionInfo,
   type ConnectionDetails,
+  getLeaseConnectionInfo,
 } from '../http/provider.js';
 import { resolveProviderUrl } from './resolveLeaseProvider.js';
 

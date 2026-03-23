@@ -88,10 +88,7 @@ export async function updateApp(
     }
   }
 
-  const providerUrl = await resolveProviderUrl(
-    queryClient,
-    lease.providerUuid,
-  );
+  const providerUrl = await resolveProviderUrl(queryClient, lease.providerUuid);
   const authToken = await getAuthToken(address, leaseUuid);
   const result = await updateLease(
     providerUrl,

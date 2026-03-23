@@ -4,8 +4,8 @@ import {
 } from '@manifest-network/manifest-mcp-core';
 import {
   checkedFetch,
-  parseJsonResponse,
   ProviderApiError,
+  parseJsonResponse,
   validateProviderUrl,
 } from './provider.js';
 
@@ -75,8 +75,7 @@ export async function getLeaseLogs(
   fetchFn?: typeof globalThis.fetch,
 ): Promise<FredLeaseLogs> {
   const validated = validateProviderUrl(providerUrl);
-  const cappedTail =
-    tail !== undefined ? Math.min(tail, MAX_TAIL) : undefined;
+  const cappedTail = tail !== undefined ? Math.min(tail, MAX_TAIL) : undefined;
   const qs = cappedTail !== undefined ? `?tail=${cappedTail}` : '';
   const url = `${validated}/v1/leases/${encodeURIComponent(leaseUuid)}/logs${qs}`;
   const res = await checkedFetch(
@@ -273,12 +272,7 @@ export async function pollLeaseUntilReady(
     abortSignal?.throwIfAborted();
     const token =
       typeof authToken === 'function' ? await authToken() : authToken;
-    const status = await getLeaseStatus(
-      providerUrl,
-      leaseUuid,
-      token,
-      fetchFn,
-    );
+    const status = await getLeaseStatus(providerUrl, leaseUuid, token, fetchFn);
     lastState = status.state;
     onProgress?.(status);
     switch (status.state) {

@@ -195,8 +195,7 @@ describe('pollLeaseUntilReady', () => {
     mockParseJsonResponse.mockImplementation(async () => {
       callCount++;
       return {
-        state:
-          callCount < 3 ? 'LEASE_STATE_PENDING' : 'LEASE_STATE_ACTIVE',
+        state: callCount < 3 ? 'LEASE_STATE_PENDING' : 'LEASE_STATE_ACTIVE',
       };
     });
 
@@ -231,8 +230,7 @@ describe('pollLeaseUntilReady', () => {
     mockParseJsonResponse.mockImplementation(async () => {
       callCount++;
       return {
-        state:
-          callCount < 2 ? 'LEASE_STATE_PENDING' : 'LEASE_STATE_ACTIVE',
+        state: callCount < 2 ? 'LEASE_STATE_PENDING' : 'LEASE_STATE_ACTIVE',
       };
     });
 
@@ -314,8 +312,7 @@ describe('pollLeaseUntilReady', () => {
     mockParseJsonResponse.mockImplementation(async () => {
       callCount++;
       return {
-        state:
-          callCount < 3 ? 'LEASE_STATE_PENDING' : 'LEASE_STATE_ACTIVE',
+        state: callCount < 3 ? 'LEASE_STATE_PENDING' : 'LEASE_STATE_ACTIVE',
       };
     });
 

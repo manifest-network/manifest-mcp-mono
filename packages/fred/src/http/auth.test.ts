@@ -16,9 +16,9 @@ describe('createSignMessage', () => {
 
 describe('createLeaseDataSignMessage', () => {
   it('formats with manifest lease data prefix', () => {
-    expect(
-      createLeaseDataSignMessage('uuid1', 'abc123', 1735689600),
-    ).toBe('manifest lease data uuid1 abc123 1735689600');
+    expect(createLeaseDataSignMessage('uuid1', 'abc123', 1735689600)).toBe(
+      'manifest lease data uuid1 abc123 1735689600',
+    );
   });
 });
 
@@ -41,7 +41,14 @@ describe('createAuthToken', () => {
   });
 
   it('includes meta_hash when provided', () => {
-    const token = createAuthToken('t', 'l', 1735689600, 'pk', 'sig', 'deadbeef');
+    const token = createAuthToken(
+      't',
+      'l',
+      1735689600,
+      'pk',
+      'sig',
+      'deadbeef',
+    );
     const decoded = JSON.parse(new TextDecoder().decode(fromBase64(token)));
     expect(decoded.meta_hash).toBe('deadbeef');
   });

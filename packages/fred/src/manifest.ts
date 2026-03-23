@@ -98,7 +98,7 @@ export function normalizePorts(
     const protocol = slashIdx >= 0 ? trimmed.slice(slashIdx + 1) : 'tcp';
     const portNum = parseInt(portStr, 10);
     if (
-      isNaN(portNum) ||
+      Number.isNaN(portNum) ||
       portNum < 1 ||
       portNum > 65535 ||
       String(portNum) !== portStr
@@ -228,9 +228,9 @@ export function isStackManifest(
   );
 }
 
-export function parseStackManifest(
-  json: string,
-): { services: Record<string, Record<string, unknown>> } {
+export function parseStackManifest(json: string): {
+  services: Record<string, Record<string, unknown>>;
+} {
   const parsed = JSON.parse(json);
   if (!isStackManifest(parsed)) {
     throw new Error(
