@@ -189,6 +189,7 @@ export class FredMCPServer {
           'Browse available cloud providers and service tiers with live health checks. Use this before deploy_app to see which providers are online and what SKU sizes (e.g. docker-micro, docker-small) are available with pricing.',
       },
       withErrorHandling('browse_catalog', async () => {
+        await this.clientManager.acquireRateLimit();
         const queryClient = await this.clientManager.getQueryClient();
         const result = await browseCatalog(queryClient);
         return jsonResponse(result, bigIntReplacer);
@@ -211,6 +212,7 @@ export class FredMCPServer {
       withErrorHandling('app_status', async (args) => {
         const leaseUuid = args.lease_uuid;
         const address = await this.walletProvider.getAddress();
+        await this.clientManager.acquireRateLimit();
         const queryClient = await this.clientManager.getQueryClient();
         const result = await appStatus(
           queryClient,
@@ -246,6 +248,7 @@ export class FredMCPServer {
         const leaseUuid = args.lease_uuid;
         const tail = args.tail;
         const address = await this.walletProvider.getAddress();
+        await this.clientManager.acquireRateLimit();
         const queryClient = await this.clientManager.getQueryClient();
         const result = await getAppLogs(
           queryClient,
@@ -418,6 +421,7 @@ export class FredMCPServer {
       withErrorHandling('restart_app', async (args) => {
         const leaseUuid = args.lease_uuid;
         const address = await this.walletProvider.getAddress();
+        await this.clientManager.acquireRateLimit();
         const queryClient = await this.clientManager.getQueryClient();
         const result = await restartApp(
           queryClient,
@@ -472,6 +476,7 @@ export class FredMCPServer {
 
         const leaseUuid = args.lease_uuid;
         const address = await this.walletProvider.getAddress();
+        await this.clientManager.acquireRateLimit();
         const queryClient = await this.clientManager.getQueryClient();
 
         const result = await updateApp(
@@ -502,6 +507,7 @@ export class FredMCPServer {
       withErrorHandling('app_diagnostics', async (args) => {
         const leaseUuid = args.lease_uuid;
         const address = await this.walletProvider.getAddress();
+        await this.clientManager.acquireRateLimit();
         const queryClient = await this.clientManager.getQueryClient();
 
         const lease = await fetchActiveLease(
@@ -548,6 +554,7 @@ export class FredMCPServer {
       withErrorHandling('app_releases', async (args) => {
         const leaseUuid = args.lease_uuid;
         const address = await this.walletProvider.getAddress();
+        await this.clientManager.acquireRateLimit();
         const queryClient = await this.clientManager.getQueryClient();
 
         const lease = await fetchActiveLease(

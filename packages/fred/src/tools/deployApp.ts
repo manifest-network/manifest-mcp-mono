@@ -7,6 +7,7 @@ import type {
 import {
   cosmosTx,
   createPagination,
+  logger,
   MAX_PAGE_LIMIT,
   ManifestMCPError,
   ManifestMCPErrorCode,
@@ -178,6 +179,7 @@ export async function deployApp(
   }
 
   const address = await clientManager.getAddress();
+  await clientManager.acquireRateLimit();
   const queryClient = await clientManager.getQueryClient();
 
   // 1. Build manifest
@@ -342,7 +344,7 @@ export async function deployApp(
   } catch (err) {
     const rawMsg = err instanceof Error ? err.message : String(err);
     // Log raw message to stderr for debugging; sanitize only the user-facing return value
-    console.error(
+    logger.error(
       `[deploy_app] Failed to fetch connection info for lease ${leaseUuid}: ${rawMsg}`,
     );
     connectionError = sanitizeForLogging(rawMsg) as string;

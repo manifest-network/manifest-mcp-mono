@@ -65,7 +65,7 @@ Three MCP servers bridging AI assistants to Cosmos SDK blockchains (Manifest Net
 ## Conventions
 
 - ESM-only (`"type": "module"`). Use `.js` extensions in imports (e.g., `'./client.js'`).
-- `tsdown` builds unbundled ESM with `.d.ts` and sourcemaps. Not tsc. Core/chain/lease/fred use `platform: "neutral"` (`.js` output); node uses `platform: "node"` (`.mjs` output).
+- `tsdown` builds unbundled ESM with `.d.ts` and sourcemaps. Not tsc. Core/chain/lease/fred use `platform: "neutral"` (`.js` output); node uses `platform: "node"` (`.js` output, ESM via package.json type).
 - Tests are co-located `*.test.ts` files. E2E tests live in `/e2e/`.
 - Query handlers: `routeXxxQuery(queryClient, subcommand, args)` with switch on subcommand.
 - Transaction handlers: `routeXxxTransaction(client, senderAddress, subcommand, args, waitForConfirmation)`.

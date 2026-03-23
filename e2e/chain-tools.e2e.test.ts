@@ -11,7 +11,7 @@ describe('Chain tools', () => {
   const client = new MCPTestClient();
 
   beforeAll(async () => {
-    await client.connect({ serverEntry: 'packages/node/dist/chain.mjs' });
+    await client.connect({ serverEntry: 'packages/node/dist/chain.js' });
   });
 
   afterAll(async () => {

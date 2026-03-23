@@ -4,9 +4,9 @@
   "description": "Node.js MCP servers for Manifest Network with stdio transport and keyfile wallet",
   "type": "module",
   "bin": {
-    "manifest-mcp-chain": "dist/chain.mjs",
-    "manifest-mcp-lease": "dist/lease.mjs",
-    "manifest-mcp-fred": "dist/fred.mjs"
+    "manifest-mcp-chain": "dist/chain.js",
+    "manifest-mcp-lease": "dist/lease.js",
+    "manifest-mcp-fred": "dist/fred.js"
   },
   "scripts": {
     "build": "tsdown",

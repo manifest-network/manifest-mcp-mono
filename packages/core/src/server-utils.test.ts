@@ -271,7 +271,7 @@ describe('withErrorHandling', () => {
     expect(parsed.error).toBe(true);
     expect(parsed.tool).toBe('test');
     expect(parsed.message).toBe('broken');
-    const calls = spy.mock.calls.map((c) => c[0] as string);
+    const calls = spy.mock.calls.map((c) => c.map((a) => String(a)).join(' '));
     expect(
       calls.some((c) =>
         c.includes('[test] Failed to serialize error response:'),
@@ -287,6 +287,7 @@ describe('withErrorHandling', () => {
     });
     await handler({}, {});
     expect(spy).toHaveBeenCalledWith(
+      '[ERROR]',
       '[my_tool] Tool error [TX_FAILED]: tx broke',
     );
     spy.mockRestore();
@@ -299,7 +300,8 @@ describe('withErrorHandling', () => {
       throw err;
     });
     await handler({}, {});
-    const logged = spy.mock.calls[0][0] as string;
+    // logger.error calls console.error('[ERROR]', message)
+    const logged = spy.mock.calls[0].map((a) => String(a)).join(' ');
     expect(logged).toContain(
       '[my_tool] Tool error [UNKNOWN]: cannot read property of null',
     );

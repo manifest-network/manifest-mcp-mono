@@ -1,9 +1,11 @@
 import {
   INFRASTRUCTURE_ERROR_CODES,
   LeaseState,
+  logger,
   ManifestMCPError,
   ManifestMCPErrorCode,
   type ManifestQueryClient,
+  sanitizeForLogging,
 } from '@manifest-network/manifest-mcp-core';
 import { type FredLeaseStatus, getLeaseStatus } from '../http/fred.js';
 import {
@@ -56,10 +58,12 @@ export async function appStatus(
         INFRASTRUCTURE_ERROR_CODES.has(err.code)
       )
         throw err;
+      const rawMsg = `Could not resolve provider: ${err instanceof Error ? err.message : String(err)}`;
+      logger.error(`[app_status] ${rawMsg}`);
       return {
         lease_uuid: leaseUuid,
         chainState,
-        providerError: `Could not resolve provider: ${err instanceof Error ? err.message : String(err)}`,
+        providerError: sanitizeForLogging(rawMsg) as string,
       };
     }
 
@@ -72,10 +76,12 @@ export async function appStatus(
         INFRASTRUCTURE_ERROR_CODES.has(err.code)
       )
         throw err;
+      const rawMsg = `Auth token error: ${err instanceof Error ? err.message : String(err)}`;
+      logger.error(`[app_status] ${rawMsg}`);
       return {
         lease_uuid: leaseUuid,
         chainState,
-        providerError: `Auth token error: ${err instanceof Error ? err.message : String(err)}`,
+        providerError: sanitizeForLogging(rawMsg) as string,
       };
     }
 
@@ -87,19 +93,27 @@ export async function appStatus(
     if (statusResult.status === 'fulfilled') {
       fredStatus = statusResult.value;
     } else {
-      providerError =
+      const rawMsg =
         statusResult.reason instanceof Error
           ? statusResult.reason.message
           : String(statusResult.reason);
+      logger.error(
+        `[app_status] Failed to get lease status for ${leaseUuid}: ${rawMsg}`,
+      );
+      providerError = sanitizeForLogging(rawMsg) as string;
     }
 
     if (connResult.status === 'fulfilled') {
       connection = connResult.value.connection;
     } else {
-      connectionError =
+      const rawMsg =
         connResult.reason instanceof Error
           ? connResult.reason.message
           : String(connResult.reason);
+      logger.error(
+        `[app_status] Failed to get connection info for ${leaseUuid}: ${rawMsg}`,
+      );
+      connectionError = sanitizeForLogging(rawMsg) as string;
     }
   }
 
