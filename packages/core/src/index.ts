@@ -5,6 +5,7 @@ export {
   leaseStateToJSON,
 } from '@manifest-network/manifestjs/dist/codegen/liftedinit/billing/v1/types.js';
 export { CosmosClientManager, type ManifestQueryClient } from './client.js';
+export { createLCDQueryClient } from './lcd-adapter.js';
 export {
   createConfig,
   createValidatedConfig,

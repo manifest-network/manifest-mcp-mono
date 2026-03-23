@@ -141,10 +141,12 @@ export interface RetryConfig {
 export interface ManifestMCPConfig {
   /** Chain ID (e.g., "manifest-ledger-testnet") */
   readonly chainId: string;
-  /** RPC endpoint URL */
-  readonly rpcUrl: string;
-  /** Gas price with denomination (e.g., "1.0umfx") */
-  readonly gasPrice: string;
+  /** RPC endpoint URL (required for transactions; optional if restUrl provided for query-only mode) */
+  readonly rpcUrl?: string;
+  /** Gas price with denomination (e.g., "1.0umfx"); required when rpcUrl is provided */
+  readonly gasPrice?: string;
+  /** REST/LCD endpoint URL for queries (e.g., "http://localhost:1317") */
+  readonly restUrl?: string;
   /** Address prefix (e.g., "manifest") */
   readonly addressPrefix?: string;
   /** Rate limiting configuration */

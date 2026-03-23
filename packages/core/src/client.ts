@@ -19,6 +19,7 @@ import {
 import { RateLimiter } from 'limiter';
 import { DEFAULT_REQUESTS_PER_SECOND } from './config.js';
 import { withRetry } from './retry.js';
+import { createLCDQueryClient } from './lcd-adapter.js';
 import {
   type ManifestMCPConfig,
   ManifestMCPError,
@@ -106,7 +107,7 @@ export class CosmosClientManager {
 
   /**
    * Get or create a singleton instance for the given config.
-   * Instances are keyed by chainId:rpcUrl. For existing instances:
+   * Instances are keyed by chainId:rpcUrl:restUrl. For existing instances:
    * - Config and walletProvider references are always updated
    * - Signing client is disconnected/recreated if gasPrice or walletProvider changed
    * - Rate limiter is updated if requestsPerSecond changed (without affecting signing client)
@@ -115,7 +116,7 @@ export class CosmosClientManager {
     config: ManifestMCPConfig,
     walletProvider: WalletProvider,
   ): CosmosClientManager {
-    const key = `${config.chainId}:${config.rpcUrl}`;
+    const key = `${config.chainId}:${config.rpcUrl ?? ''}:${config.restUrl ?? ''}`;
     let instance = CosmosClientManager.instances.get(key);
 
     if (!instance) {
@@ -126,6 +127,9 @@ export class CosmosClientManager {
       const signingClientAffected =
         instance.config.gasPrice !== config.gasPrice ||
         instance.walletProvider !== walletProvider;
+
+      const queryClientAffected =
+        instance.config.restUrl !== config.restUrl;
 
       const rateLimitChanged =
         instance.config.rateLimit?.requestsPerSecond !==
@@ -143,6 +147,12 @@ export class CosmosClientManager {
         }
         // Also clear the promise to allow re-initialization with new config
         instance.signingClientPromise = null;
+      }
+
+      // Invalidate query client if restUrl changed
+      if (queryClientAffected) {
+        instance.queryClient = null;
+        instance.queryClientPromise = null;
       }
 
       // Update rate limiter independently (doesn't affect signing client)
@@ -191,18 +201,34 @@ export class CosmosClientManager {
       // Capture reference to detect if superseded by disconnect/config change
       const thisInitPromise = this.queryClientPromise;
       try {
-        // Use liftedinit ClientFactory which includes cosmos + liftedinit modules
-        // Wrap with retry for transient connection failures
-        const client = await withRetry(
-          () =>
-            liftedinit.ClientFactory.createRPCQueryClient({
-              rpcEndpoint: this.config.rpcUrl,
-            }),
-          {
-            config: this.config.retry,
-            operationName: 'connect query client',
-          },
-        );
+        let client: ManifestQueryClient;
+        if (this.config.restUrl) {
+          // Use LCD/REST for queries when restUrl is configured
+          client = await withRetry(
+            () => createLCDQueryClient(this.config.restUrl!),
+            {
+              config: this.config.retry,
+              operationName: 'connect LCD query client',
+            },
+          );
+        } else if (this.config.rpcUrl) {
+          // Use RPC (existing behavior)
+          client = await withRetry(
+            () =>
+              liftedinit.ClientFactory.createRPCQueryClient({
+                rpcEndpoint: this.config.rpcUrl!,
+              }),
+            {
+              config: this.config.retry,
+              operationName: 'connect query client',
+            },
+          );
+        } else {
+          throw new ManifestMCPError(
+            ManifestMCPErrorCode.INVALID_CONFIG,
+            'Cannot create query client: neither restUrl nor rpcUrl is configured.',
+          );
+        }
         // Only store if this is still the active promise
         if (this.queryClientPromise === thisInitPromise) {
           this.queryClient = client;
@@ -217,10 +243,11 @@ export class CosmosClientManager {
         if (error instanceof ManifestMCPError) {
           throw error;
         }
+        const endpoint = this.config.restUrl ?? this.config.rpcUrl;
         throw new ManifestMCPError(
           ManifestMCPErrorCode.RPC_CONNECTION_FAILED,
-          `Failed to connect to RPC endpoint: ${error instanceof Error ? error.message : String(error)}`,
-          { rpcUrl: this.config.rpcUrl },
+          `Failed to connect to ${this.config.restUrl ? 'REST' : 'RPC'} endpoint: ${error instanceof Error ? error.message : String(error)}`,
+          { url: endpoint },
         );
       }
     })();
@@ -234,6 +261,13 @@ export class CosmosClientManager {
    * Automatically retries on transient connection failures with exponential backoff.
    */
   async getSigningClient(): Promise<SigningStargateClient> {
+    if (!this.config.rpcUrl || !this.config.gasPrice) {
+      throw new ManifestMCPError(
+        ManifestMCPErrorCode.INVALID_CONFIG,
+        'Signing client requires rpcUrl and gasPrice configuration. Current config is query-only (REST).',
+      );
+    }
+
     // Return cached client if available
     if (this.signingClient) {
       return this.signingClient;
@@ -250,12 +284,12 @@ export class CosmosClientManager {
       const thisInitPromise = this.signingClientPromise;
       try {
         const signer = await this.walletProvider.getSigner();
-        const gasPrice = GasPrice.fromString(this.config.gasPrice);
+        const gasPrice = GasPrice.fromString(this.config.gasPrice!);
         const { registry, aminoTypes } = getSigningManifestClientOptions();
 
         // Configure endpoint as HttpEndpoint object (required for custom options)
         const endpoint: HttpEndpoint = {
-          url: this.config.rpcUrl,
+          url: this.config.rpcUrl!,
           headers: {},
         };
 

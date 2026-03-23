@@ -32,6 +32,10 @@ vi.mock('@cosmjs/proto-signing', () => ({
   Registry: class MockRegistry {},
 }));
 
+vi.mock('./lcd-adapter.js', () => ({
+  createLCDQueryClient: vi.fn().mockResolvedValue({ mock: 'lcdClient' }),
+}));
+
 vi.mock('./retry.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./retry.js')>();
   return {
@@ -47,7 +51,10 @@ vi.mock('./retry.js', async (importOriginal) => {
 import { SigningStargateClient } from '@cosmjs/stargate';
 import { liftedinit } from '@manifest-network/manifestjs';
 import { CosmosClientManager } from './client.js';
+import { createLCDQueryClient } from './lcd-adapter.js';
 import type { ManifestMCPConfig, WalletProvider } from './types.js';
+
+const mockCreateLCDQueryClient = vi.mocked(createLCDQueryClient);
 
 const mockCreateRPCQueryClient = vi.mocked(
   liftedinit.ClientFactory.createRPCQueryClient,
@@ -356,6 +363,51 @@ describe('CosmosClientManager', () => {
       const config = makeConfig({ chainId: 'my-chain' });
       const instance = CosmosClientManager.getInstance(config, makeWallet());
       expect(instance.getConfig().chainId).toBe('my-chain');
+    });
+  });
+
+  describe('LCD/REST query-only mode', () => {
+    it('uses LCD client when restUrl is configured', async () => {
+      const instance = CosmosClientManager.getInstance(
+        makeConfig({ restUrl: 'https://rest.example.com', rpcUrl: undefined, gasPrice: undefined }),
+        makeWallet(),
+      );
+      const client = await instance.getQueryClient();
+      expect(mockCreateLCDQueryClient).toHaveBeenCalledWith('https://rest.example.com');
+      expect(mockCreateRPCQueryClient).not.toHaveBeenCalled();
+      expect(client).toEqual({ mock: 'lcdClient' });
+    });
+
+    it('prefers LCD when both restUrl and rpcUrl are configured', async () => {
+      const instance = CosmosClientManager.getInstance(
+        makeConfig({ restUrl: 'https://rest.example.com' }),
+        makeWallet(),
+      );
+      await instance.getQueryClient();
+      expect(mockCreateLCDQueryClient).toHaveBeenCalledWith('https://rest.example.com');
+      expect(mockCreateRPCQueryClient).not.toHaveBeenCalled();
+    });
+
+    it('throws INVALID_CONFIG from getSigningClient when rpcUrl is not configured', async () => {
+      const instance = CosmosClientManager.getInstance(
+        makeConfig({ restUrl: 'https://rest.example.com', rpcUrl: undefined, gasPrice: undefined }),
+        makeWallet(),
+      );
+      await expect(instance.getSigningClient()).rejects.toMatchObject({
+        code: ManifestMCPErrorCode.INVALID_CONFIG,
+        message: expect.stringContaining('query-only'),
+      });
+    });
+
+    it('throws INVALID_CONFIG from getQueryClient when neither URL is configured', async () => {
+      const instance = CosmosClientManager.getInstance(
+        makeConfig({ rpcUrl: undefined, gasPrice: undefined, restUrl: undefined }),
+        makeWallet(),
+      );
+      await expect(instance.getQueryClient()).rejects.toMatchObject({
+        code: ManifestMCPErrorCode.INVALID_CONFIG,
+        message: expect.stringContaining('neither restUrl nor rpcUrl'),
+      });
     });
   });
 });
