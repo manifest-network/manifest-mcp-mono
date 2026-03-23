@@ -68,9 +68,9 @@ function adaptModule(
     if (key === 'req' || typeof lcdModule[key] !== 'function') continue;
 
     const originalFn = lcdModule[key] as AsyncFn;
+    const converter = findConverter(converterNamespace, key);
 
     adapted[key] = async (...args: unknown[]) => {
-      const converter = findConverter(converterNamespace, key);
       let sdkResult: unknown;
       try {
         sdkResult = await originalFn.call(lcdModule, ...args);

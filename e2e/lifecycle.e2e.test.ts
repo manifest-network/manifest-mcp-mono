@@ -87,7 +87,7 @@ describe('Deploy lifecycle', () => {
       lease_uuid: string;
       provider_uuid: string;
       provider_url: string;
-      state: number;
+      state: LeaseState;
     }>('deploy_app', {
       image: 'nginx:alpine',
       port: 80,
