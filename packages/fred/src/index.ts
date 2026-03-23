@@ -137,7 +137,7 @@ export class FredMCPServer {
         'Wallet does not support signArbitrary (ADR-036). Required for provider authentication. Use a wallet provider that implements signArbitrary.',
       );
     }
-    return this.walletProvider.signArbitrary;
+    return this.walletProvider.signArbitrary.bind(this.walletProvider);
   }
 
   private async getProviderAuthToken(
