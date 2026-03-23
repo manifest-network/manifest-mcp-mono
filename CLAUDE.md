@@ -79,9 +79,9 @@ Three MCP servers bridging AI assistants to Cosmos SDK blockchains (Manifest Net
 | Variable | Required | Default |
 |----------|----------|---------|
 | `COSMOS_CHAIN_ID` | Yes | -- |
-| `COSMOS_RPC_URL` | One of `RPC_URL` or `REST_URL` required | -- |
-| `COSMOS_GAS_PRICE` | Required when `RPC_URL` is set | -- |
-| `COSMOS_REST_URL` | One of `RPC_URL` or `REST_URL` required | -- |
+| `COSMOS_RPC_URL` | One of `COSMOS_RPC_URL` or `COSMOS_REST_URL` required | -- |
+| `COSMOS_GAS_PRICE` | Required when `COSMOS_RPC_URL` is set | -- |
+| `COSMOS_REST_URL` | One of `COSMOS_RPC_URL` or `COSMOS_REST_URL` required | -- |
 | `COSMOS_ADDRESS_PREFIX` | No | `manifest` |
 | `MANIFEST_KEY_FILE` | No | `~/.manifest/key.json` |
 | `MANIFEST_KEY_PASSWORD` | No | -- |
@@ -90,6 +90,6 @@ Three MCP servers bridging AI assistants to Cosmos SDK blockchains (Manifest Net
 
 `LOG_LEVEL` accepts `debug`, `info`, `warn`, `error`, or `silent`. Logs go to stderr.
 
-Set `COSMOS_RPC_URL` + `COSMOS_GAS_PRICE` for full access (queries + transactions). Set `COSMOS_REST_URL` alone for query-only mode (LCD/REST). When both are set, `REST_URL` is preferred for queries.
+Set `COSMOS_RPC_URL` + `COSMOS_GAS_PRICE` for full access (queries + transactions). Set `COSMOS_REST_URL` alone for query-only mode (LCD/REST). When both are set, `COSMOS_REST_URL` is preferred for queries.
 
 The node package loads `.env` files automatically via `dotenv`.
