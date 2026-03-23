@@ -16,8 +16,8 @@ describe('Deploy lifecycle', () => {
 
   beforeAll(async () => {
     await Promise.all([
-      leaseClient.connect({ serverEntry: 'packages/node/dist/lease.js' }),
-      fredClient.connect({ serverEntry: 'packages/node/dist/fred.js' }),
+      leaseClient.connect({ serverEntry: 'packages/node/dist/lease.mjs' }),
+      fredClient.connect({ serverEntry: 'packages/node/dist/fred.mjs' }),
     ]);
   });
 
