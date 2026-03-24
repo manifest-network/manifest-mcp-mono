@@ -36,12 +36,12 @@ else
     echo "=== Registering provider ==="
 
     # Create provider on-chain
-    # api-url is http://localhost:8080 because the MCP server runs on the HOST
-    # and reaches providerd via the Docker port mapping
+    # api-url must use HTTPS (chain validation). Providerd is configured with
+    # a self-signed TLS cert; the MCP server accepts it via NODE_TLS_REJECT_UNAUTHORIZED=0.
     $BINARY tx sku create-provider \
         "$ADDR1" \
         "$ADDR1" \
-        --api-url "http://localhost:8080" \
+        --api-url "https://localhost:8080" \
         --from $KEY \
         --home $HOME_DIR \
         --keyring-backend $KEYRING \
@@ -142,6 +142,14 @@ echo "=== Copying keyring to shared volume ==="
 mkdir -p /shared/keyring
 cp -r $HOME_DIR/keyring-test /shared/keyring/
 
+echo "=== Generating self-signed TLS certificate ==="
+
+mkdir -p /shared/tls
+openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 \
+    -keyout /shared/tls/key.pem -out /shared/tls/cert.pem \
+    -days 1 -nodes -subj "/CN=localhost" \
+    -addext "subjectAltName=DNS:localhost,DNS:providerd,IP:127.0.0.1"
+
 echo "=== Generating providerd.yaml ==="
 
 cat > /shared/providerd.yaml << YAML
@@ -161,6 +169,8 @@ keyring_dir: "/shared/keyring"
 key_name: "${KEY}"
 
 api_listen_addr: ":8080"
+tls_cert_file: "/shared/tls/cert.pem"
+tls_key_file: "/shared/tls/key.pem"
 rate_limit_rps: 100
 rate_limit_burst: 200
 
@@ -170,7 +180,7 @@ backends:
     timeout: 30s
     default: true
 
-callback_base_url: "http://providerd:8080"
+callback_base_url: "https://providerd:8080"
 callback_secret: "${CALLBACK_SECRET}"
 
 withdraw_interval: "1m"

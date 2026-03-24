@@ -44,6 +44,8 @@ export class MCPTestClient {
         COSMOS_RPC_URL: options.rpcUrl ?? 'http://localhost:26657',
         COSMOS_GAS_PRICE: options.gasPrice ?? '0.01umfx',
         COSMOS_MNEMONIC: options.mnemonic ?? DEFAULT_MNEMONIC,
+        // Accept self-signed TLS cert from e2e providerd
+        NODE_TLS_REJECT_UNAUTHORIZED: '0',
       },
     });
 
