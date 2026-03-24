@@ -35,7 +35,10 @@ export async function mapWithConcurrency<T, R>(
   return results;
 }
 
-export async function browseCatalog(queryClient: ManifestQueryClient) {
+export async function browseCatalog(
+  queryClient: ManifestQueryClient,
+  fetchFn?: typeof globalThis.fetch,
+) {
   const sku = queryClient.liftedinit.sku.v1;
 
   const pagination = createPagination(MAX_PAGE_LIMIT);
@@ -53,7 +56,7 @@ export async function browseCatalog(queryClient: ManifestQueryClient) {
       let providerUuid: string | undefined;
       let healthError: string | undefined;
       try {
-        const health = await getProviderHealth(p.apiUrl);
+        const health = await getProviderHealth(p.apiUrl, undefined, fetchFn);
         healthy = health.status === 'ok' || health.status === 'healthy';
         providerUuid = health.provider_uuid;
       } catch (err) {

@@ -1,3 +1,4 @@
+import { LeaseState } from '@manifest-network/manifest-mcp-core';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('./provider.js', async (importOriginal) => {
@@ -28,13 +29,13 @@ const AUTH_TOKEN = 'test-token';
 describe('getLeaseStatus', () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it('fetches status with auth header', async () => {
+  it('fetches status with auth header and converts state to LeaseState', async () => {
     const mockRes = {} as Response;
     mockCheckedFetch.mockResolvedValue(mockRes);
-    mockParseJsonResponse.mockResolvedValue({ status: 'ready' });
+    mockParseJsonResponse.mockResolvedValue({ state: 'LEASE_STATE_ACTIVE' });
 
     const result = await getLeaseStatus(PROVIDER_URL, LEASE_UUID, AUTH_TOKEN);
-    expect(result).toEqual({ status: 'ready' });
+    expect(result.state).toBe(LeaseState.LEASE_STATE_ACTIVE);
     expect(mockCheckedFetch).toHaveBeenCalledWith(
       expect.stringContaining(`/v1/leases/${LEASE_UUID}/status`),
       expect.objectContaining({
@@ -43,6 +44,32 @@ describe('getLeaseStatus', () => {
       undefined,
       undefined,
     );
+  });
+
+  it('returns UNRECOGNIZED for unknown state strings', async () => {
+    mockCheckedFetch.mockResolvedValue({} as Response);
+    mockParseJsonResponse.mockResolvedValue({ state: 'something_unknown' });
+
+    const result = await getLeaseStatus(PROVIDER_URL, LEASE_UUID, AUTH_TOKEN);
+    expect(result.state).toBe(LeaseState.UNRECOGNIZED);
+  });
+
+  it('preserves all wire fields through conversion', async () => {
+    mockCheckedFetch.mockResolvedValue({} as Response);
+    mockParseJsonResponse.mockResolvedValue({
+      state: 'LEASE_STATE_ACTIVE',
+      provision_status: 'provisioned',
+      last_error: 'timeout',
+      fail_count: 3,
+      endpoints: { http: 'https://app.example.com' },
+    });
+
+    const result = await getLeaseStatus(PROVIDER_URL, LEASE_UUID, AUTH_TOKEN);
+    expect(result.state).toBe(LeaseState.LEASE_STATE_ACTIVE);
+    expect(result.provision_status).toBe('provisioned');
+    expect(result.last_error).toBe('timeout');
+    expect(result.fail_count).toBe(3);
+    expect(result.endpoints).toEqual({ http: 'https://app.example.com' });
   });
 });
 
@@ -81,9 +108,9 @@ describe('getLeaseLogs', () => {
 describe('pollLeaseUntilReady', () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it('returns immediately when status is ready', async () => {
+  it('returns immediately when state is ACTIVE', async () => {
     mockCheckedFetch.mockResolvedValue({} as Response);
-    mockParseJsonResponse.mockResolvedValue({ status: 'ready' });
+    mockParseJsonResponse.mockResolvedValue({ state: 'LEASE_STATE_ACTIVE' });
 
     const result = await pollLeaseUntilReady(
       PROVIDER_URL,
@@ -94,56 +121,82 @@ describe('pollLeaseUntilReady', () => {
         timeoutMs: 1000,
       },
     );
-    expect(result.status).toBe('ready');
+    expect(result.state).toBe(LeaseState.LEASE_STATE_ACTIVE);
     expect(mockCheckedFetch).toHaveBeenCalledOnce();
   });
 
-  it('returns when status is running', async () => {
+  it('throws on CLOSED state', async () => {
     mockCheckedFetch.mockResolvedValue({} as Response);
-    mockParseJsonResponse.mockResolvedValue({ status: 'running' });
-
-    const result = await pollLeaseUntilReady(
-      PROVIDER_URL,
-      LEASE_UUID,
-      AUTH_TOKEN,
-      {
-        intervalMs: 10,
-        timeoutMs: 1000,
-      },
-    );
-    expect(result.status).toBe('running');
-  });
-
-  it('throws on failed status', async () => {
-    mockCheckedFetch.mockResolvedValue({} as Response);
-    mockParseJsonResponse.mockResolvedValue({ status: 'failed' });
+    mockParseJsonResponse.mockResolvedValue({ state: 'LEASE_STATE_CLOSED' });
 
     await expect(
       pollLeaseUntilReady(PROVIDER_URL, LEASE_UUID, AUTH_TOKEN, {
         intervalMs: 10,
         timeoutMs: 1000,
       }),
-    ).rejects.toThrow(/entered failed state/);
+    ).rejects.toThrow(/terminal state/);
   });
 
-  it('throws on error status', async () => {
+  it('throws on REJECTED state', async () => {
     mockCheckedFetch.mockResolvedValue({} as Response);
-    mockParseJsonResponse.mockResolvedValue({ status: 'error' });
+    mockParseJsonResponse.mockResolvedValue({ state: 'LEASE_STATE_REJECTED' });
 
     await expect(
       pollLeaseUntilReady(PROVIDER_URL, LEASE_UUID, AUTH_TOKEN, {
         intervalMs: 10,
         timeoutMs: 1000,
       }),
-    ).rejects.toThrow(/entered error state/);
+    ).rejects.toThrow(/terminal state/);
   });
 
-  it('polls until ready after pending', async () => {
+  it('throws on EXPIRED state', async () => {
+    mockCheckedFetch.mockResolvedValue({} as Response);
+    mockParseJsonResponse.mockResolvedValue({ state: 'LEASE_STATE_EXPIRED' });
+
+    await expect(
+      pollLeaseUntilReady(PROVIDER_URL, LEASE_UUID, AUTH_TOKEN, {
+        intervalMs: 10,
+        timeoutMs: 1000,
+      }),
+    ).rejects.toThrow(/terminal state/);
+  });
+
+  it('throws immediately on UNRECOGNIZED state', async () => {
+    mockCheckedFetch.mockResolvedValue({} as Response);
+    mockParseJsonResponse.mockResolvedValue({ state: 'SOME_FUTURE_STATE' });
+
+    await expect(
+      pollLeaseUntilReady(PROVIDER_URL, LEASE_UUID, AUTH_TOKEN, {
+        intervalMs: 10,
+        timeoutMs: 5000,
+      }),
+    ).rejects.toThrow(/unexpected state/);
+    expect(mockCheckedFetch).toHaveBeenCalledOnce();
+  });
+
+  it('throws immediately on UNSPECIFIED state', async () => {
+    mockCheckedFetch.mockResolvedValue({} as Response);
+    mockParseJsonResponse.mockResolvedValue({
+      state: 'LEASE_STATE_UNSPECIFIED',
+    });
+
+    await expect(
+      pollLeaseUntilReady(PROVIDER_URL, LEASE_UUID, AUTH_TOKEN, {
+        intervalMs: 10,
+        timeoutMs: 5000,
+      }),
+    ).rejects.toThrow(/unexpected state/);
+    expect(mockCheckedFetch).toHaveBeenCalledOnce();
+  });
+
+  it('polls until ACTIVE after PENDING', async () => {
     mockCheckedFetch.mockResolvedValue({} as Response);
     let callCount = 0;
     mockParseJsonResponse.mockImplementation(async () => {
       callCount++;
-      return { status: callCount < 3 ? 'pending' : 'ready' };
+      return {
+        state: callCount < 3 ? 'LEASE_STATE_PENDING' : 'LEASE_STATE_ACTIVE',
+      };
     });
 
     const result = await pollLeaseUntilReady(
@@ -155,13 +208,13 @@ describe('pollLeaseUntilReady', () => {
         timeoutMs: 5000,
       },
     );
-    expect(result.status).toBe('ready');
+    expect(result.state).toBe(LeaseState.LEASE_STATE_ACTIVE);
     expect(callCount).toBe(3);
   });
 
-  it('times out if never ready', async () => {
+  it('times out if never active', async () => {
     mockCheckedFetch.mockResolvedValue({} as Response);
-    mockParseJsonResponse.mockResolvedValue({ status: 'pending' });
+    mockParseJsonResponse.mockResolvedValue({ state: 'LEASE_STATE_PENDING' });
 
     await expect(
       pollLeaseUntilReady(PROVIDER_URL, LEASE_UUID, AUTH_TOKEN, {
@@ -176,7 +229,9 @@ describe('pollLeaseUntilReady', () => {
     let callCount = 0;
     mockParseJsonResponse.mockImplementation(async () => {
       callCount++;
-      return { status: callCount < 2 ? 'pending' : 'ready' };
+      return {
+        state: callCount < 2 ? 'LEASE_STATE_PENDING' : 'LEASE_STATE_ACTIVE',
+      };
     });
 
     const tokenFn = vi
@@ -203,15 +258,80 @@ describe('pollLeaseUntilReady', () => {
     expect(secondAuth.Authorization).toBe('Bearer token-2');
   });
 
-  it('includes last status in timeout error message', async () => {
+  it('includes last state in timeout error message', async () => {
     mockCheckedFetch.mockResolvedValue({} as Response);
-    mockParseJsonResponse.mockResolvedValue({ status: 'provisioning' });
+    mockParseJsonResponse.mockResolvedValue({ state: 'LEASE_STATE_PENDING' });
 
     await expect(
       pollLeaseUntilReady(PROVIDER_URL, LEASE_UUID, AUTH_TOKEN, {
         intervalMs: 10,
         timeoutMs: 50,
       }),
-    ).rejects.toThrow(/last status: provisioning/);
+    ).rejects.toThrow(/LEASE_STATE_PENDING/);
+  });
+
+  it('aborts immediately with a pre-aborted signal', async () => {
+    mockCheckedFetch.mockResolvedValue({} as Response);
+    mockParseJsonResponse.mockResolvedValue({ state: 'LEASE_STATE_PENDING' });
+
+    const controller = new AbortController();
+    controller.abort(new Error('cancelled'));
+
+    await expect(
+      pollLeaseUntilReady(PROVIDER_URL, LEASE_UUID, AUTH_TOKEN, {
+        intervalMs: 10,
+        timeoutMs: 5000,
+        abortSignal: controller.signal,
+      }),
+    ).rejects.toThrow(/cancelled/);
+    expect(mockCheckedFetch).not.toHaveBeenCalled();
+  });
+
+  it('aborts during sleep between polls', async () => {
+    mockCheckedFetch.mockResolvedValue({} as Response);
+    mockParseJsonResponse.mockResolvedValue({ state: 'LEASE_STATE_PENDING' });
+
+    const controller = new AbortController();
+    // Abort after a short delay (during the sleep interval)
+    setTimeout(() => controller.abort(new Error('user cancelled')), 30);
+
+    await expect(
+      pollLeaseUntilReady(PROVIDER_URL, LEASE_UUID, AUTH_TOKEN, {
+        intervalMs: 5000,
+        timeoutMs: 30000,
+        abortSignal: controller.signal,
+      }),
+    ).rejects.toThrow(/user cancelled/);
+    // Should have polled once, then been aborted during sleep
+    expect(mockCheckedFetch).toHaveBeenCalledOnce();
+  });
+
+  it('calls onProgress on each poll iteration', async () => {
+    mockCheckedFetch.mockResolvedValue({} as Response);
+    let callCount = 0;
+    mockParseJsonResponse.mockImplementation(async () => {
+      callCount++;
+      return {
+        state: callCount < 3 ? 'LEASE_STATE_PENDING' : 'LEASE_STATE_ACTIVE',
+      };
+    });
+
+    const onProgress = vi.fn();
+    await pollLeaseUntilReady(PROVIDER_URL, LEASE_UUID, AUTH_TOKEN, {
+      intervalMs: 10,
+      timeoutMs: 5000,
+      onProgress,
+    });
+
+    expect(onProgress).toHaveBeenCalledTimes(3);
+    expect(onProgress).toHaveBeenNthCalledWith(1, {
+      state: LeaseState.LEASE_STATE_PENDING,
+    });
+    expect(onProgress).toHaveBeenNthCalledWith(2, {
+      state: LeaseState.LEASE_STATE_PENDING,
+    });
+    expect(onProgress).toHaveBeenNthCalledWith(3, {
+      state: LeaseState.LEASE_STATE_ACTIVE,
+    });
   });
 });

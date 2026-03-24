@@ -111,6 +111,7 @@ export class LeaseMCPServer {
       },
       withErrorHandling('credit_balance', async () => {
         const address = await this.walletProvider.getAddress();
+        await this.clientManager.acquireRateLimit();
         const queryClient = await this.clientManager.getQueryClient();
         const result = await getBalance(queryClient, address);
         return jsonResponse(result, bigIntReplacer);
@@ -163,6 +164,7 @@ export class LeaseMCPServer {
       },
       withErrorHandling('leases_by_tenant', async (args) => {
         const address = await this.walletProvider.getAddress();
+        await this.clientManager.acquireRateLimit();
         const queryClient = await this.clientManager.getQueryClient();
 
         const limit = BigInt(args.limit ?? 50);
@@ -232,6 +234,7 @@ export class LeaseMCPServer {
         },
       },
       withErrorHandling('get_skus', async (args) => {
+        await this.clientManager.acquireRateLimit();
         const queryClient = await this.clientManager.getQueryClient();
         const activeOnly = args.active_only ?? true;
         const result = await queryClient.liftedinit.sku.v1.sKUs({ activeOnly });
@@ -253,6 +256,7 @@ export class LeaseMCPServer {
         },
       },
       withErrorHandling('get_providers', async (args) => {
+        await this.clientManager.acquireRateLimit();
         const queryClient = await this.clientManager.getQueryClient();
         const activeOnly = args.active_only ?? true;
         const result = await queryClient.liftedinit.sku.v1.providers({

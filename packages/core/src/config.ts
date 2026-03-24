@@ -35,14 +35,15 @@ function isLocalhostHostname(hostname: string): boolean {
  * Validate URL format and check if it uses HTTPS or is localhost (HTTP allowed for local dev)
  * Returns validation result with error reason if invalid
  */
-function validateRpcUrl(
+function validateEndpointUrl(
   url: string,
+  label: string,
 ): { valid: true } | { valid: false; reason: string } {
   let parsed: URL;
   try {
     parsed = new URL(url);
   } catch {
-    return { valid: false, reason: 'rpcUrl must be a valid URL' };
+    return { valid: false, reason: `${label} must be a valid URL` };
   }
 
   if (parsed.protocol === 'https:') {
@@ -55,7 +56,7 @@ function validateRpcUrl(
 
   return {
     valid: false,
-    reason: `RPC URL must use HTTPS (got ${parsed.protocol}//). HTTP is only allowed for local development (localhost, 127.0.0.1, ::1).`,
+    reason: `${label} must use HTTPS (got ${parsed.protocol}//). HTTP is only allowed for local development (localhost, 127.0.0.1, ::1).`,
   };
 }
 
@@ -83,6 +84,7 @@ export function createConfig(input: ManifestMCPConfig): ManifestMCPConfig {
     chainId: input.chainId,
     rpcUrl: input.rpcUrl,
     gasPrice: input.gasPrice,
+    restUrl: input.restUrl,
     addressPrefix: input.addressPrefix ?? DEFAULT_ADDRESS_PREFIX,
     rateLimit: {
       requestsPerSecond:
@@ -121,18 +123,29 @@ export function validateConfig(
     );
   }
 
-  if (!config.rpcUrl) {
-    errors.push('rpcUrl is required');
-  } else {
-    const urlCheck = validateRpcUrl(config.rpcUrl);
+  // At least one of rpcUrl or restUrl must be provided
+  if (!config.rpcUrl && !config.restUrl) {
+    errors.push('At least one of rpcUrl or restUrl is required');
+  }
+
+  if (config.rpcUrl) {
+    const urlCheck = validateEndpointUrl(config.rpcUrl, 'rpcUrl');
     if (!urlCheck.valid) {
       errors.push(urlCheck.reason);
     }
   }
 
-  if (!config.gasPrice) {
-    errors.push('gasPrice is required');
-  } else if (!isValidGasPrice(config.gasPrice)) {
+  if (config.restUrl) {
+    const urlCheck = validateEndpointUrl(config.restUrl, 'restUrl');
+    if (!urlCheck.valid) {
+      errors.push(urlCheck.reason);
+    }
+  }
+
+  // gasPrice required when rpcUrl is provided (needed for signing)
+  if (config.rpcUrl && !config.gasPrice) {
+    errors.push('gasPrice is required when rpcUrl is provided');
+  } else if (config.gasPrice && !isValidGasPrice(config.gasPrice)) {
     errors.push(
       'gasPrice must be a number followed by denomination (e.g., "1.0umfx")',
     );

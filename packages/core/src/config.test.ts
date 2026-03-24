@@ -71,8 +71,51 @@ describe('validateConfig', () => {
 
     expect(result.valid).toBe(false);
     expect(result.errors).toContain('chainId is required');
-    expect(result.errors).toContain('rpcUrl is required');
-    expect(result.errors).toContain('gasPrice is required');
+    expect(result.errors).toContain(
+      'At least one of rpcUrl or restUrl is required',
+    );
+  });
+
+  it('should require gasPrice when rpcUrl is provided', () => {
+    const result = validateConfig({
+      chainId: 'manifest-ledger-testnet',
+      rpcUrl: 'https://rpc.example.com',
+    });
+
+    expect(result.valid).toBe(false);
+    expect(result.errors).toContain(
+      'gasPrice is required when rpcUrl is provided',
+    );
+  });
+
+  it('should accept restUrl without rpcUrl or gasPrice', () => {
+    const result = validateConfig({
+      chainId: 'manifest-ledger-testnet',
+      restUrl: 'https://rest.example.com',
+    });
+
+    expect(result.valid).toBe(true);
+  });
+
+  it('should accept both rpcUrl and restUrl', () => {
+    const result = validateConfig({
+      chainId: 'manifest-ledger-testnet',
+      rpcUrl: 'https://rpc.example.com',
+      gasPrice: '1.0umfx',
+      restUrl: 'https://rest.example.com',
+    });
+
+    expect(result.valid).toBe(true);
+  });
+
+  it('should validate restUrl format', () => {
+    const result = validateConfig({
+      chainId: 'manifest-ledger-testnet',
+      restUrl: 'http://non-localhost.com',
+    });
+
+    expect(result.valid).toBe(false);
+    expect(result.errors.some((e) => e.includes('restUrl'))).toBe(true);
   });
 
   it('should validate chainId format', () => {

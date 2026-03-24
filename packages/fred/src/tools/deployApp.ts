@@ -1,11 +1,13 @@
 import type {
   CosmosClientManager,
+  CosmosTxResult,
+  LeaseState,
   ManifestQueryClient,
 } from '@manifest-network/manifest-mcp-core';
 import {
-  type CosmosTxResult,
   cosmosTx,
   createPagination,
+  logger,
   MAX_PAGE_LIMIT,
   ManifestMCPError,
   ManifestMCPErrorCode,
@@ -15,8 +17,8 @@ import {
 import type { FredLeaseStatus } from '../http/fred.js';
 import { pollLeaseUntilReady } from '../http/fred.js';
 import {
+  type ConnectionDetails,
   getLeaseConnectionInfo,
-  type LeaseConnectionInfo,
   uploadLeaseData,
 } from '../http/provider.js';
 import {
@@ -139,9 +141,9 @@ export interface DeployAppResult {
   readonly lease_uuid: string;
   readonly provider_uuid: string;
   readonly provider_url: string;
-  readonly status: string;
+  readonly state: LeaseState;
   readonly url?: string;
-  readonly connection?: LeaseConnectionInfo;
+  readonly connection?: ConnectionDetails;
   readonly connectionError?: string;
 }
 
@@ -177,6 +179,7 @@ export async function deployApp(
   }
 
   const address = await clientManager.getAddress();
+  await clientManager.acquireRateLimit();
   const queryClient = await clientManager.getQueryClient();
 
   // 1. Build manifest
@@ -280,7 +283,7 @@ export async function deployApp(
     await uploadLeaseData(
       providerUrl,
       leaseUuid,
-      manifestJson,
+      new TextEncoder().encode(manifestJson),
       leaseDataToken,
       fetchFn,
     );
@@ -320,28 +323,28 @@ export async function deployApp(
   }
 
   // 9. Get connection info (best-effort)
-  let connection: LeaseConnectionInfo | undefined;
+  let connection: ConnectionDetails | undefined;
   let url: string | undefined;
   let connectionError: string | undefined;
   try {
     const authToken = await getAuthToken(address, leaseUuid);
-    const connInfo = await getLeaseConnectionInfo(
+    const connResp = await getLeaseConnectionInfo(
       providerUrl,
       leaseUuid,
       authToken,
       fetchFn,
     );
-    connection = connInfo;
-    if (connInfo.host && connInfo.ports) {
-      const firstPort = Object.values(connInfo.ports)[0];
-      if (firstPort) {
-        url = `${connInfo.host}:${firstPort}`;
+    connection = connResp.connection;
+    if (connection.host && connection.ports) {
+      const firstPort = Object.values(connection.ports)[0];
+      if (typeof firstPort === 'number' || typeof firstPort === 'string') {
+        url = `${connection.host}:${firstPort}`;
       }
     }
   } catch (err) {
     const rawMsg = err instanceof Error ? err.message : String(err);
     // Log raw message to stderr for debugging; sanitize only the user-facing return value
-    console.error(
+    logger.error(
       `[deploy_app] Failed to fetch connection info for lease ${leaseUuid}: ${rawMsg}`,
     );
     connectionError = sanitizeForLogging(rawMsg) as string;
@@ -351,7 +354,7 @@ export async function deployApp(
     lease_uuid: leaseUuid,
     provider_uuid: providerUuid,
     provider_url: providerUrl,
-    status: status.status,
+    state: status.state,
     ...(url && { url }),
     ...(connection && { connection }),
     ...(connectionError && { connectionError }),

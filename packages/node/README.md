@@ -111,14 +111,18 @@ If you use a mnemonic instead of a keyfile, replace `MANIFEST_KEY_PASSWORD` with
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `COSMOS_CHAIN_ID` | Yes | -- | Chain ID (e.g. `manifest-ledger-beta`) |
-| `COSMOS_RPC_URL` | Yes | -- | RPC endpoint URL (HTTPS required; HTTP allowed for localhost) |
-| `COSMOS_GAS_PRICE` | Yes | -- | Gas price with denom (e.g. `0.01umfx`) |
+| `COSMOS_RPC_URL` | One of `COSMOS_RPC_URL` or `COSMOS_REST_URL` required | -- | RPC endpoint URL (HTTPS required; HTTP allowed for localhost) |
+| `COSMOS_GAS_PRICE` | Required when `COSMOS_RPC_URL` is set | -- | Gas price with denom (e.g. `0.01umfx`) |
+| `COSMOS_REST_URL` | One of `COSMOS_RPC_URL` or `COSMOS_REST_URL` required | -- | LCD/REST endpoint URL for query-only mode |
 | `COSMOS_ADDRESS_PREFIX` | No | `manifest` | Bech32 address prefix |
 | `MANIFEST_KEY_FILE` | No | `~/.manifest/key.json` | Path to the encrypted keyfile |
 | `MANIFEST_KEY_PASSWORD` | No | -- | Password to decrypt the keyfile |
 | `COSMOS_MNEMONIC` | No | -- | BIP-39 mnemonic (fallback when no keyfile exists) |
+| `LOG_LEVEL` | No | `warn` | Log level: `debug`, `info`, `warn`, `error`, or `silent` |
 
-`COSMOS_CHAIN_ID`, `COSMOS_RPC_URL`, and `COSMOS_GAS_PRICE` are only required when starting an MCP server, not for `keygen` or `import`.
+Set `COSMOS_RPC_URL` + `COSMOS_GAS_PRICE` for full access (queries + transactions). Set `COSMOS_REST_URL` alone for query-only mode (LCD/REST). When both are set, `COSMOS_REST_URL` is preferred for queries.
+
+`COSMOS_CHAIN_ID` and at least one endpoint URL are only required when starting an MCP server, not for `keygen` or `import`.
 
 ## Chain server tools (5)
 

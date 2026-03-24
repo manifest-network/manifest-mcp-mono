@@ -19,8 +19,8 @@ Dependency direction: **node -> {chain, lease, fred} -> core** (never reverse).
 
 ## Prerequisites
 
-- Node.js >= 18
-- npm >= 9 (ships with Node 18+)
+- Node.js >= 20
+- npm >= 9 (ships with Node 20+)
 
 ## Quick start
 

@@ -1,5 +1,5 @@
+import { LeaseState } from '@manifest-network/manifest-mcp-core';
 import { makeMockQueryClient } from '@manifest-network/manifest-mcp-core/__test-utils__/mocks.js';
-import { LeaseState } from '@manifest-network/manifestjs/dist/codegen/liftedinit/billing/v1/types.js';
 import { describe, expect, it } from 'vitest';
 import { fetchActiveLease } from './fetchActiveLease.js';
 

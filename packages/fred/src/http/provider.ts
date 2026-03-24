@@ -104,6 +104,9 @@ export async function parseJsonResponse<T>(
 export interface ProviderHealthResponse {
   readonly status: string;
   readonly provider_uuid: string;
+  readonly checks?: {
+    readonly chain?: { readonly status: string };
+  };
 }
 
 export async function getProviderHealth(
@@ -117,10 +120,37 @@ export async function getProviderHealth(
   return await parseJsonResponse<ProviderHealthResponse>(res, url);
 }
 
-export interface LeaseConnectionInfo {
+export interface InstanceInfo {
+  readonly instance_index: number;
+  readonly container_id: string;
+  readonly image: string;
+  readonly status: string;
+  readonly ports?: Record<string, unknown>;
+  readonly fqdn?: string;
+}
+
+export interface ServiceConnectionDetails {
+  readonly host?: string;
+  readonly fqdn?: string;
+  readonly ports?: Record<string, unknown>;
+  readonly instances?: readonly InstanceInfo[];
+}
+
+export interface ConnectionDetails {
   readonly host: string;
-  readonly ports: Record<string, number>;
-  readonly metadata?: Record<string, unknown>;
+  readonly fqdn?: string;
+  readonly ports?: Record<string, unknown>;
+  readonly instances?: readonly InstanceInfo[];
+  readonly protocol?: string;
+  readonly metadata?: Record<string, string>;
+  readonly services?: Record<string, ServiceConnectionDetails>;
+}
+
+export interface LeaseConnectionResponse {
+  readonly lease_uuid: string;
+  readonly tenant: string;
+  readonly provider_uuid: string;
+  readonly connection: ConnectionDetails;
 }
 
 export async function getLeaseConnectionInfo(
@@ -128,7 +158,7 @@ export async function getLeaseConnectionInfo(
   leaseUuid: string,
   authToken: string,
   fetchFn?: typeof globalThis.fetch,
-): Promise<LeaseConnectionInfo> {
+): Promise<LeaseConnectionResponse> {
   const validated = validateProviderUrl(providerApiUrl);
   const url = `${validated}/v1/leases/${encodeURIComponent(leaseUuid)}/connection`;
   const res = await checkedFetch(
@@ -139,13 +169,13 @@ export async function getLeaseConnectionInfo(
     undefined,
     fetchFn,
   );
-  return await parseJsonResponse<LeaseConnectionInfo>(res, url);
+  return await parseJsonResponse<LeaseConnectionResponse>(res, url);
 }
 
 export async function uploadLeaseData(
   providerApiUrl: string,
   leaseUuid: string,
-  payload: string,
+  payload: Uint8Array,
   authToken: string,
   fetchFn?: typeof globalThis.fetch,
 ): Promise<void> {

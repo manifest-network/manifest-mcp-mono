@@ -32,6 +32,51 @@ import { updateApp } from './tools/updateApp.js';
 
 export type { ManifestMCPServerOptions } from '@manifest-network/manifest-mcp-core';
 export {
+  INFRASTRUCTURE_ERROR_CODES,
+  ManifestMCPError,
+  ManifestMCPErrorCode,
+} from '@manifest-network/manifest-mcp-core';
+export {
+  type AuthTokenPayload,
+  createAuthToken,
+  createLeaseDataSignMessage,
+  createSignMessage,
+} from './http/auth.js';
+export {
+  type FredActionResponse,
+  type FredInstanceInfo,
+  type FredLeaseInfo,
+  type FredLeaseLogs,
+  type FredLeaseProvision,
+  type FredLeaseRelease,
+  type FredLeaseReleases,
+  type FredLeaseStatus,
+  type FredServiceStatus,
+  getLeaseInfo,
+  getLeaseLogs,
+  getLeaseProvision,
+  getLeaseReleases,
+  getLeaseStatus,
+  MAX_TAIL,
+  type PollOptions,
+  pollLeaseUntilReady,
+  restartLease,
+  updateLease,
+} from './http/fred.js';
+export {
+  type ConnectionDetails,
+  checkedFetch,
+  getLeaseConnectionInfo,
+  getProviderHealth,
+  type InstanceInfo,
+  type LeaseConnectionResponse,
+  ProviderApiError,
+  type ProviderHealthResponse,
+  type ServiceConnectionDetails,
+  uploadLeaseData,
+  validateProviderUrl,
+} from './http/provider.js';
+export {
   type BuildManifestOptions,
   buildManifest,
   buildStackManifest,
@@ -39,10 +84,23 @@ export {
   getServiceNames,
   isStackManifest,
   mergeManifest,
+  normalizePorts,
   parseStackManifest,
   validateServiceName,
 } from './manifest.js';
-export type { ServiceConfig } from './tools/deployApp.js';
+export { appStatus } from './tools/appStatus.js';
+export { browseCatalog, mapWithConcurrency } from './tools/browseCatalog.js';
+export {
+  type DeployAppInput,
+  type DeployAppResult,
+  deployApp,
+  type ServiceConfig,
+} from './tools/deployApp.js';
+export { fetchActiveLease } from './tools/fetchActiveLease.js';
+export { getAppLogs } from './tools/getLogs.js';
+export { resolveProviderUrl } from './tools/resolveLeaseProvider.js';
+export { restartApp } from './tools/restartApp.js';
+export { updateApp } from './tools/updateApp.js';
 
 export class FredMCPServer {
   private mcpServer: McpServer;
@@ -72,22 +130,24 @@ export class FredMCPServer {
     this.registerTools();
   }
 
-  private async getProviderAuthToken(
-    address: string,
-    leaseUuid: string,
-  ): Promise<string> {
+  private requireSignArbitrary(): NonNullable<WalletProvider['signArbitrary']> {
     if (!this.walletProvider.signArbitrary) {
       throw new ManifestMCPError(
         ManifestMCPErrorCode.INVALID_CONFIG,
         'Wallet does not support signArbitrary (ADR-036). Required for provider authentication. Use a wallet provider that implements signArbitrary.',
       );
     }
-    const timestamp = new Date().toISOString();
+    return this.walletProvider.signArbitrary.bind(this.walletProvider);
+  }
+
+  private async getProviderAuthToken(
+    address: string,
+    leaseUuid: string,
+  ): Promise<string> {
+    const signArbitrary = this.requireSignArbitrary();
+    const timestamp = Math.floor(Date.now() / 1000);
     const message = createSignMessage(address, leaseUuid, timestamp);
-    const { pub_key, signature } = await this.walletProvider.signArbitrary(
-      address,
-      message,
-    );
+    const { pub_key, signature } = await signArbitrary(address, message);
     return createAuthToken(
       address,
       leaseUuid,
@@ -102,22 +162,14 @@ export class FredMCPServer {
     leaseUuid: string,
     metaHashHex: string,
   ): Promise<string> {
-    if (!this.walletProvider.signArbitrary) {
-      throw new ManifestMCPError(
-        ManifestMCPErrorCode.INVALID_CONFIG,
-        'Wallet does not support signArbitrary (ADR-036). Required for provider authentication. Use a wallet provider that implements signArbitrary.',
-      );
-    }
-    const timestamp = new Date().toISOString();
+    const signArbitrary = this.requireSignArbitrary();
+    const timestamp = Math.floor(Date.now() / 1000);
     const message = createLeaseDataSignMessage(
       leaseUuid,
       metaHashHex,
       timestamp,
     );
-    const { pub_key, signature } = await this.walletProvider.signArbitrary(
-      address,
-      message,
-    );
+    const { pub_key, signature } = await signArbitrary(address, message);
     return createAuthToken(
       address,
       leaseUuid,
@@ -137,6 +189,7 @@ export class FredMCPServer {
           'Browse available cloud providers and service tiers with live health checks. Use this before deploy_app to see which providers are online and what SKU sizes (e.g. docker-micro, docker-small) are available with pricing.',
       },
       withErrorHandling('browse_catalog', async () => {
+        await this.clientManager.acquireRateLimit();
         const queryClient = await this.clientManager.getQueryClient();
         const result = await browseCatalog(queryClient);
         return jsonResponse(result, bigIntReplacer);
@@ -159,6 +212,7 @@ export class FredMCPServer {
       withErrorHandling('app_status', async (args) => {
         const leaseUuid = args.lease_uuid;
         const address = await this.walletProvider.getAddress();
+        await this.clientManager.acquireRateLimit();
         const queryClient = await this.clientManager.getQueryClient();
         const result = await appStatus(
           queryClient,
@@ -194,6 +248,7 @@ export class FredMCPServer {
         const leaseUuid = args.lease_uuid;
         const tail = args.tail;
         const address = await this.walletProvider.getAddress();
+        await this.clientManager.acquireRateLimit();
         const queryClient = await this.clientManager.getQueryClient();
         const result = await getAppLogs(
           queryClient,
@@ -366,6 +421,7 @@ export class FredMCPServer {
       withErrorHandling('restart_app', async (args) => {
         const leaseUuid = args.lease_uuid;
         const address = await this.walletProvider.getAddress();
+        await this.clientManager.acquireRateLimit();
         const queryClient = await this.clientManager.getQueryClient();
         const result = await restartApp(
           queryClient,
@@ -420,6 +476,7 @@ export class FredMCPServer {
 
         const leaseUuid = args.lease_uuid;
         const address = await this.walletProvider.getAddress();
+        await this.clientManager.acquireRateLimit();
         const queryClient = await this.clientManager.getQueryClient();
 
         const result = await updateApp(
@@ -450,6 +507,7 @@ export class FredMCPServer {
       withErrorHandling('app_diagnostics', async (args) => {
         const leaseUuid = args.lease_uuid;
         const address = await this.walletProvider.getAddress();
+        await this.clientManager.acquireRateLimit();
         const queryClient = await this.clientManager.getQueryClient();
 
         const lease = await fetchActiveLease(
@@ -496,6 +554,7 @@ export class FredMCPServer {
       withErrorHandling('app_releases', async (args) => {
         const leaseUuid = args.lease_uuid;
         const address = await this.walletProvider.getAddress();
+        await this.clientManager.acquireRateLimit();
         const queryClient = await this.clientManager.getQueryClient();
 
         const lease = await fetchActiveLease(

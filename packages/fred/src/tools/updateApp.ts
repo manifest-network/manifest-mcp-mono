@@ -39,7 +39,7 @@ export async function updateApp(
       );
     }
     if (isStackManifest(parsed)) {
-      for (const name of Object.keys(parsed)) {
+      for (const name of Object.keys(parsed.services)) {
         if (!validateServiceName(name)) {
           throw new ManifestMCPError(
             ManifestMCPErrorCode.INVALID_CONFIG,
@@ -48,24 +48,32 @@ export async function updateApp(
         }
       }
       // Per-service merge: merge each service independently
-      let oldStack: Record<string, unknown>;
+      let oldParsed: unknown;
       try {
-        oldStack = JSON.parse(existingManifest) as Record<string, unknown>;
+        oldParsed = JSON.parse(existingManifest);
       } catch (err) {
         throw new ManifestMCPError(
           ManifestMCPErrorCode.INVALID_CONFIG,
           `Invalid existing_manifest: ${err instanceof Error ? err.message : String(err)}`,
         );
       }
+      if (!isStackManifest(oldParsed)) {
+        throw new ManifestMCPError(
+          ManifestMCPErrorCode.INVALID_CONFIG,
+          'Cannot merge: new manifest is a stack but existing_manifest is not. Provide a stack-format existing_manifest or omit existing_manifest for full replacement.',
+        );
+      }
       const mergedStack: Record<string, unknown> = {};
-      for (const [svc, svcManifest] of Object.entries(parsed)) {
-        const oldSvcJson = oldStack[svc] ? JSON.stringify(oldStack[svc]) : '{}';
+      for (const [svc, svcManifest] of Object.entries(parsed.services)) {
+        const oldSvcJson = oldParsed.services[svc]
+          ? JSON.stringify(oldParsed.services[svc])
+          : '{}';
         mergedStack[svc] = mergeManifest(
           svcManifest as Record<string, unknown>,
           oldSvcJson,
         );
       }
-      finalManifest = JSON.stringify(mergedStack);
+      finalManifest = JSON.stringify({ services: mergedStack });
     } else {
       try {
         const merged = mergeManifest(parsed, existingManifest);
@@ -85,7 +93,7 @@ export async function updateApp(
   const result = await updateLease(
     providerUrl,
     leaseUuid,
-    finalManifest,
+    new TextEncoder().encode(finalManifest),
     authToken,
     fetchFn,
   );

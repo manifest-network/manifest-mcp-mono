@@ -205,6 +205,9 @@ describe('FredMCPServer', () => {
       } as Awaited<ReturnType<typeof fetchActiveLease>>);
       mockResolveProviderUrl.mockResolvedValue('https://provider.example.com');
       mockGetLeaseReleases.mockResolvedValue({
+        lease_uuid: LEASE_UUID,
+        tenant: 'manifest1tenant',
+        provider_uuid: 'prov-1',
         releases: [
           {
             version: 1,

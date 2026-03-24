@@ -20,7 +20,11 @@ export interface BuildManifestOptions {
   depends_on?: Record<string, { condition: string }>;
 }
 
-import { DNS_LABEL_RE } from '@manifest-network/manifest-mcp-core';
+import {
+  DNS_LABEL_RE,
+  ManifestMCPError,
+  ManifestMCPErrorCode,
+} from '@manifest-network/manifest-mcp-core';
 
 const MAX_NAME_LENGTH = 32;
 
@@ -35,17 +39,10 @@ export function deriveAppNameFromImage(image: string): string {
     name = name.slice(0, atIdx);
   }
 
-  // Split tag
+  // Strip tag unconditionally
   const colonIdx = name.indexOf(':');
-  let tag: string | undefined;
   if (colonIdx >= 0) {
-    tag = name.slice(colonIdx + 1);
     name = name.slice(0, colonIdx);
-  }
-
-  // Include tag if meaningful (not "latest")
-  if (tag && tag !== 'latest') {
-    name = `${name}-${tag}`;
   }
 
   // Normalize: lowercase, replace non-alphanumeric with hyphens
@@ -91,14 +88,49 @@ export function buildManifest(
   return manifest;
 }
 
+const VALID_PROTOCOLS = new Set(['tcp', 'udp']);
+
+export function normalizePorts(
+  port: string,
+): Record<string, Record<string, never>> {
+  const result: Record<string, Record<string, never>> = {};
+  for (const raw of port.split(',')) {
+    const trimmed = raw.trim();
+    if (!trimmed) continue;
+    const slashIdx = trimmed.indexOf('/');
+    const portStr = slashIdx >= 0 ? trimmed.slice(0, slashIdx) : trimmed;
+    const protocol = slashIdx >= 0 ? trimmed.slice(slashIdx + 1) : 'tcp';
+    const portNum = parseInt(portStr, 10);
+    if (
+      Number.isNaN(portNum) ||
+      portNum < 1 ||
+      portNum > 65535 ||
+      String(portNum) !== portStr
+    ) {
+      throw new ManifestMCPError(
+        ManifestMCPErrorCode.INVALID_CONFIG,
+        `Invalid port: "${portStr}". Port must be a number between 1 and 65535.`,
+      );
+    }
+    if (!VALID_PROTOCOLS.has(protocol)) {
+      throw new ManifestMCPError(
+        ManifestMCPErrorCode.INVALID_CONFIG,
+        `Invalid protocol: "${protocol}". Must be "tcp" or "udp".`,
+      );
+    }
+    result[`${portNum}/${protocol}`] = {};
+  }
+  return result;
+}
+
 export function buildStackManifest(opts: {
   services: Record<string, BuildManifestOptions>;
-}): Record<string, unknown> {
+}): { services: Record<string, unknown> } {
   const stack: Record<string, unknown> = {};
   for (const [name, serviceOpts] of Object.entries(opts.services)) {
     stack[name] = buildManifest(serviceOpts);
   }
-  return stack;
+  return { services: stack };
 }
 
 const CARRY_FORWARD_KEYS = [
@@ -125,12 +157,16 @@ export function mergeManifest(
       typeof parsed !== 'object' ||
       Array.isArray(parsed)
     ) {
-      throw new Error('existing_manifest must be a JSON object');
+      throw new ManifestMCPError(
+        ManifestMCPErrorCode.INVALID_CONFIG,
+        'existing_manifest must be a JSON object',
+      );
     }
     old = parsed as Record<string, unknown>;
   } catch (err) {
     if (err instanceof SyntaxError) {
-      throw new Error(
+      throw new ManifestMCPError(
+        ManifestMCPErrorCode.INVALID_CONFIG,
         `existing_manifest contains invalid JSON: ${err.message}`,
       );
     }
@@ -173,7 +209,9 @@ export function mergeManifest(
   return merged;
 }
 
-export function isStackManifest(manifest: unknown): boolean {
+export function isStackManifest(
+  manifest: unknown,
+): manifest is { services: Record<string, Record<string, unknown>> } {
   if (
     manifest === null ||
     typeof manifest !== 'object' ||
@@ -181,28 +219,50 @@ export function isStackManifest(manifest: unknown): boolean {
   ) {
     return false;
   }
-  const obj = manifest as Record<string, unknown>;
-  if ('image' in obj) return false;
-  const serviceValues = Object.values(obj).filter(
-    (v) => v !== null && typeof v === 'object' && !Array.isArray(v),
+  const services = (manifest as Record<string, unknown>).services;
+  if (
+    services === null ||
+    typeof services !== 'object' ||
+    Array.isArray(services)
+  ) {
+    return false;
+  }
+  const entries = Object.values(services as Record<string, unknown>);
+  if (entries.length === 0) return false;
+  return entries.every(
+    (v) =>
+      v !== null &&
+      typeof v === 'object' &&
+      !Array.isArray(v) &&
+      'image' in (v as Record<string, unknown>),
   );
-  if (serviceValues.length === 0) return false;
-  return serviceValues.every((v) => 'image' in (v as Record<string, unknown>));
 }
 
-export function parseStackManifest(
-  json: string,
-): Record<string, Record<string, unknown>> {
-  const parsed = JSON.parse(json);
+export function parseStackManifest(json: string): {
+  services: Record<string, Record<string, unknown>>;
+} {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(json);
+  } catch (err) {
+    if (err instanceof SyntaxError) {
+      throw new ManifestMCPError(
+        ManifestMCPErrorCode.INVALID_CONFIG,
+        `Stack manifest contains invalid JSON: ${err.message}`,
+      );
+    }
+    throw err;
+  }
   if (!isStackManifest(parsed)) {
-    throw new Error(
-      'Not a valid stack manifest: expected an object without a top-level "image" key, containing service objects with "image" keys',
+    throw new ManifestMCPError(
+      ManifestMCPErrorCode.INVALID_CONFIG,
+      'Not a valid stack manifest: expected { services: { ... } } where each service has an "image" key',
     );
   }
-  return parsed as Record<string, Record<string, unknown>>;
+  return parsed;
 }
 
 export function getServiceNames(manifest: unknown): string[] {
   if (!isStackManifest(manifest)) return [];
-  return Object.keys(manifest as Record<string, unknown>);
+  return Object.keys(manifest.services);
 }

@@ -1,4 +1,4 @@
-import { LeaseState } from '@manifest-network/manifestjs/dist/codegen/liftedinit/billing/v1/types.js';
+import { LeaseState } from '@manifest-network/manifest-mcp-core';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../http/fred.js', () => ({
@@ -37,6 +37,9 @@ describe('getAppLogs', () => {
       },
     });
     mockGetLeaseLogs.mockResolvedValue({
+      lease_uuid: LEASE_UUID,
+      tenant: 'manifest1abc',
+      provider_uuid: 'prov-1',
       logs: { web: 'line1\nline2' },
     });
 
@@ -65,6 +68,9 @@ describe('getAppLogs', () => {
 
     const longLog = 'x'.repeat(5000);
     mockGetLeaseLogs.mockResolvedValue({
+      lease_uuid: LEASE_UUID,
+      tenant: 'manifest1abc',
+      provider_uuid: 'prov-1',
       logs: { web: longLog },
     });
 
@@ -91,6 +97,9 @@ describe('getAppLogs', () => {
     });
 
     mockGetLeaseLogs.mockResolvedValue({
+      lease_uuid: LEASE_UUID,
+      tenant: 'manifest1abc',
+      provider_uuid: 'prov-1',
       logs: {
         web: 'x'.repeat(4000),
         worker: 'should be skipped',
@@ -135,7 +144,12 @@ describe('getAppLogs', () => {
         },
       },
     });
-    mockGetLeaseLogs.mockResolvedValue({ logs: {} });
+    mockGetLeaseLogs.mockResolvedValue({
+      lease_uuid: LEASE_UUID,
+      tenant: 'manifest1abc',
+      provider_uuid: 'prov-1',
+      logs: {},
+    });
 
     await getAppLogs(qc, 'manifest1abc', LEASE_UUID, mockGetAuthToken, 50);
 

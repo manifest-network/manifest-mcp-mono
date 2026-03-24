@@ -1,5 +1,6 @@
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { createValidatedConfig } from './config.js';
+import { logger } from './logger.js';
 import {
   type ManifestMCPConfig,
   ManifestMCPError,
@@ -133,13 +134,13 @@ export function withErrorHandling<
       const errorCode =
         error instanceof ManifestMCPError ? error.code : 'UNKNOWN';
       if (error instanceof ManifestMCPError) {
-        console.error(
+        logger.error(
           `[${toolName}] Tool error [${errorCode}]: ${errorMessage}`,
         );
       } else {
         const stack =
           error instanceof Error && error.stack ? `\n${error.stack}` : '';
-        console.error(
+        logger.error(
           `[${toolName}] Tool error [${errorCode}]: ${errorMessage}${stack}`,
         );
       }
@@ -172,7 +173,7 @@ export function withErrorHandling<
       try {
         responseText = JSON.stringify(errorResponse, bigIntReplacer, 2);
       } catch (stringifyError) {
-        console.error(
+        logger.error(
           `[${toolName}] Failed to serialize error response: ${stringifyError instanceof Error ? stringifyError.message : String(stringifyError)}`,
         );
         responseText = JSON.stringify({
@@ -219,8 +220,9 @@ export function jsonResponse(
  */
 export interface MnemonicServerConfig {
   chainId: string;
-  rpcUrl: string;
-  gasPrice: string;
+  rpcUrl?: string;
+  gasPrice?: string;
+  restUrl?: string;
   addressPrefix?: string;
   mnemonic: string;
 }

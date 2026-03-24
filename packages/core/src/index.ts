@@ -2,6 +2,7 @@
 
 export {
   LeaseState,
+  leaseStateFromJSON,
   leaseStateToJSON,
 } from '@manifest-network/manifestjs/dist/codegen/liftedinit/billing/v1/types.js';
 export { CosmosClientManager, type ManifestQueryClient } from './client.js';
@@ -13,6 +14,7 @@ export {
   validateConfig,
 } from './config.js';
 export { cosmosQuery, cosmosTx } from './cosmos.js';
+export { createLCDQueryClient } from './lcd-adapter.js';
 export { type LogLevel, logger } from './logger.js';
 export {
   getAvailableModules,

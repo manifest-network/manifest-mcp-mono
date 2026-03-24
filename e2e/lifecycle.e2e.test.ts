@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { LeaseState } from '@manifest-network/manifest-mcp-core';
 import { MCPTestClient } from './helpers/mcp-client.js';
 
 /**
@@ -86,7 +87,7 @@ describe('Deploy lifecycle', () => {
       lease_uuid: string;
       provider_uuid: string;
       provider_url: string;
-      status: string;
+      state: LeaseState;
     }>('deploy_app', {
       image: 'nginx:alpine',
       port: 80,
@@ -96,7 +97,7 @@ describe('Deploy lifecycle', () => {
     expect(result.lease_uuid).toBeTruthy();
     expect(result.provider_uuid).toBeTruthy();
     expect(result.provider_url).toBeTruthy();
-    expect(['running', 'ready']).toContain(result.status);
+    expect(result.state).toBe(LeaseState.LEASE_STATE_ACTIVE);
 
     leaseUuid = result.lease_uuid;
   });

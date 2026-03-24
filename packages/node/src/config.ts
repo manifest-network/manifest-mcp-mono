@@ -6,8 +6,9 @@ dotenv.config();
 
 export interface NodeMCPConfig {
   readonly chainId: string;
-  readonly rpcUrl: string;
-  readonly gasPrice: string;
+  readonly rpcUrl?: string;
+  readonly gasPrice?: string;
+  readonly restUrl?: string;
   readonly addressPrefix: string;
   readonly mnemonic?: string;
   readonly keyfilePath: string;
@@ -53,10 +54,29 @@ export function loadKeyfileConfig(): Pick<
 }
 
 export function loadConfig(): NodeMCPConfig {
+  const rpcUrl = process.env.COSMOS_RPC_URL || undefined;
+  const gasPrice = process.env.COSMOS_GAS_PRICE || undefined;
+  const restUrl = process.env.COSMOS_REST_URL || undefined;
+
+  // At least one endpoint is required
+  if (!rpcUrl && !restUrl) {
+    throw new Error(
+      'At least one of COSMOS_RPC_URL or COSMOS_REST_URL must be set. ' +
+        'Set COSMOS_RPC_URL for full access (queries + transactions) or COSMOS_REST_URL for query-only mode.',
+    );
+  }
+
+  if (rpcUrl && !gasPrice) {
+    throw new Error(
+      'COSMOS_GAS_PRICE is required when COSMOS_RPC_URL is set (e.g., COSMOS_GAS_PRICE="0.025umfx").',
+    );
+  }
+
   return {
     chainId: getEnvRequired('COSMOS_CHAIN_ID'),
-    rpcUrl: getEnvRequired('COSMOS_RPC_URL'),
-    gasPrice: getEnvRequired('COSMOS_GAS_PRICE'),
+    rpcUrl,
+    gasPrice,
+    restUrl,
     addressPrefix: getEnvOptional('COSMOS_ADDRESS_PREFIX', 'manifest'),
     mnemonic: process.env.COSMOS_MNEMONIC,
     keyfilePath: resolvePath(

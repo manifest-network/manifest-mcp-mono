@@ -1,9 +1,9 @@
 import {
   INFRASTRUCTURE_ERROR_CODES,
+  LeaseState,
   ManifestMCPError,
   ManifestMCPErrorCode,
 } from '@manifest-network/manifest-mcp-core';
-import { LeaseState } from '@manifest-network/manifestjs/dist/codegen/liftedinit/billing/v1/types.js';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../http/fred.js', () => ({
@@ -48,12 +48,17 @@ describe('appStatus', () => {
     vi.clearAllMocks();
     mockResolveProviderUrl.mockResolvedValue('https://provider.example.com');
     mockGetLeaseStatus.mockResolvedValue({
-      status: 'running',
-      services: { web: { ready: true, available: 1, total: 1 } },
+      state: LeaseState.LEASE_STATE_ACTIVE,
+      services: { web: { instances: [{ name: 'web-0', status: 'running' }] } },
     });
     mockGetLeaseConnectionInfo.mockResolvedValue({
-      host: 'app.example.com',
-      ports: { '80/tcp': 8080 },
+      lease_uuid: LEASE_UUID,
+      tenant: 'manifest1abc',
+      provider_uuid: 'prov-1',
+      connection: {
+        host: 'app.example.com',
+        ports: { '80/tcp': 8080 },
+      },
     });
   });
 
@@ -68,7 +73,7 @@ describe('appStatus', () => {
 
     expect(result.lease_uuid).toBe(LEASE_UUID);
     expect(result.chainState.state).toBe(LeaseState.LEASE_STATE_ACTIVE);
-    expect(result.fredStatus?.status).toBe('running');
+    expect(result.fredStatus?.state).toBe(LeaseState.LEASE_STATE_ACTIVE);
     expect(result.connection?.host).toBe('app.example.com');
   });
 
@@ -177,7 +182,7 @@ describe('appStatus', () => {
       mockGetAuthToken,
     );
 
-    expect(result.fredStatus?.status).toBe('running');
+    expect(result.fredStatus?.state).toBe(LeaseState.LEASE_STATE_ACTIVE);
     expect(result.connectionError).toBe('connection failed');
   });
 });
