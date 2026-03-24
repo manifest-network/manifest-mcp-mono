@@ -88,6 +88,37 @@ npm run lint
 npm run test
 ```
 
+## Releasing
+
+All five packages are versioned in lockstep and published together.
+
+### Setup (one-time)
+
+1. Create an npm [granular access token](https://docs.npmjs.com/creating-and-viewing-access-tokens) with publish permission for the `@manifest-network` scope.
+2. Add it as a repository secret named `NPM_TOKEN` in **Settings → Secrets and variables → Actions**.
+
+### Publishing a release
+
+```bash
+# 1. Bump versions (updates all package.json files and syncs the lockfile)
+npm run release:version -- 0.2.0
+
+# 2. Commit and tag
+git add -A
+git commit -m "chore: release v0.2.0"
+git tag v0.2.0
+
+# 3. Push (triggers the release workflow)
+git push origin main --tags
+```
+
+Pushing a `vMAJOR.MINOR.PATCH` tag triggers the [Release workflow](.github/workflows/release.yml), which:
+
+1. Validates the tag version matches `package.json`
+2. Builds, lints, checks formatting, and tests
+3. Publishes all packages to npm (with [provenance](https://docs.npmjs.com/generating-provenance-statements)) in dependency order: `core → chain → lease → fred → node`
+4. Creates a GitHub Release with auto-generated notes
+
 ## License
 
 MIT
