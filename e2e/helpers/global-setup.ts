@@ -6,7 +6,7 @@ const CERT_DIR = resolve(import.meta.dirname, '..', '.tls');
 const CERT_PATH = resolve(CERT_DIR, 'cert.pem');
 
 /**
- * Extract the self-signed CA cert from the e2e providerd container
+ * Extract the self-signed TLS cert from the e2e providerd container
  * so the MCP server child processes can trust it via NODE_EXTRA_CA_CERTS.
  */
 export function setup() {

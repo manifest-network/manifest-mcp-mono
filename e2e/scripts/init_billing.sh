@@ -4,6 +4,7 @@
 # - Create test SKUs (docker-micro, docker-small, docker-medium, docker-large)
 # - Query SKU UUIDs
 # - Copy keyring to shared volume
+# - Generate a self-signed TLS certificate for providerd
 # - Generate providerd.yaml and docker-backend.yaml configs
 
 set -e
@@ -37,7 +38,7 @@ else
 
     # Create provider on-chain
     # api-url must use HTTPS (chain validation). Providerd is configured with
-    # a self-signed TLS cert; the MCP server accepts it via NODE_TLS_REJECT_UNAUTHORIZED=0.
+    # a self-signed TLS cert; the MCP server trusts it via NODE_EXTRA_CA_CERTS.
     $BINARY tx sku create-provider \
         "$ADDR1" \
         "$ADDR1" \
