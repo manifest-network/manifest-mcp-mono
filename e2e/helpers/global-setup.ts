@@ -12,13 +12,15 @@ const CERT_PATH = resolve(CERT_DIR, 'cert.pem');
 export function setup() {
   mkdirSync(CERT_DIR, { recursive: true });
   try {
-    execFileSync('docker', ['cp', 'e2e-providerd-1:/shared/tls/cert.pem', CERT_PATH], {
-      stdio: 'pipe',
-    });
+    execFileSync(
+      'docker',
+      ['compose', '-f', 'e2e/docker-compose.yml', 'cp', 'providerd:/shared/tls/cert.pem', CERT_PATH],
+      { stdio: 'pipe' },
+    );
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     throw new Error(
-      `Failed to extract TLS cert from e2e-providerd-1 container: ${msg}\n` +
+      `Failed to extract TLS cert from providerd service: ${msg}\n` +
         'Ensure the Docker E2E stack is running:\n' +
         '  docker compose -f e2e/docker-compose.yml up -d --wait --wait-timeout 180',
     );

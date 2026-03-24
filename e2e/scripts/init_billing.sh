@@ -28,7 +28,7 @@ EXISTING_PROVIDER=$(curl -s "http://chain:1317/liftedinit/sku/v1/provider/addres
 
 if [ -n "$EXISTING_PROVIDER" ]; then
     echo "Provider already exists with UUID: $EXISTING_PROVIDER"
-    if [ -f /shared/providerd.yaml ] && [ -f /shared/docker-backend.yaml ] && [ -f /shared/tls/cert.pem ]; then
+    if [ -f /shared/providerd.yaml ] && [ -f /shared/docker-backend.yaml ] && [ -f /shared/tls/cert.pem ] && [ -f /shared/tls/key.pem ]; then
         echo "Configs already exist. Skipping."
         exit 0
     fi
