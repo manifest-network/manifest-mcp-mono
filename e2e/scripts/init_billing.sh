@@ -147,7 +147,7 @@ echo "=== Generating self-signed TLS certificate ==="
 mkdir -p /shared/tls
 openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 \
     -keyout /shared/tls/key.pem -out /shared/tls/cert.pem \
-    -days 1 -nodes -subj "/CN=localhost" \
+    -days 365 -nodes -subj "/CN=localhost" \
     -addext "subjectAltName=DNS:localhost,DNS:providerd,IP:127.0.0.1"
 
 echo "=== Generating providerd.yaml ==="

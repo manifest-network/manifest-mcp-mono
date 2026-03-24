@@ -14,3 +14,4 @@ packages/*/src/**/*.d.ts.map
 
 # E2E artifacts
 e2e-logs.txt
+e2e/.tls/
