@@ -38,7 +38,7 @@ FROM alpine:3.22
 COPY --from=go-builder /code/build/manifestd /usr/bin/manifestd
 
 # Install runtime dependencies
-RUN apk add --no-cache curl make bash jq sed
+RUN apk add --no-cache curl make bash jq sed openssl
 
 WORKDIR /opt
 

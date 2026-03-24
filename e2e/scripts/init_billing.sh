@@ -4,6 +4,7 @@
 # - Create test SKUs (docker-micro, docker-small, docker-medium, docker-large)
 # - Query SKU UUIDs
 # - Copy keyring to shared volume
+# - Generate a self-signed TLS certificate for providerd
 # - Generate providerd.yaml and docker-backend.yaml configs
 
 set -e
@@ -27,7 +28,7 @@ EXISTING_PROVIDER=$(curl -s "http://chain:1317/liftedinit/sku/v1/provider/addres
 
 if [ -n "$EXISTING_PROVIDER" ]; then
     echo "Provider already exists with UUID: $EXISTING_PROVIDER"
-    if [ -f /shared/providerd.yaml ] && [ -f /shared/docker-backend.yaml ]; then
+    if [ -f /shared/providerd.yaml ] && [ -f /shared/docker-backend.yaml ] && [ -f /shared/tls/cert.pem ] && [ -f /shared/tls/key.pem ]; then
         echo "Configs already exist. Skipping."
         exit 0
     fi
@@ -36,12 +37,12 @@ else
     echo "=== Registering provider ==="
 
     # Create provider on-chain
-    # api-url is http://localhost:8080 because the MCP server runs on the HOST
-    # and reaches providerd via the Docker port mapping
+    # api-url must use HTTPS (chain validation). Providerd is configured with
+    # a self-signed TLS cert; the MCP server trusts it via NODE_EXTRA_CA_CERTS.
     $BINARY tx sku create-provider \
         "$ADDR1" \
         "$ADDR1" \
-        --api-url "http://localhost:8080" \
+        --api-url "https://localhost:8080" \
         --from $KEY \
         --home $HOME_DIR \
         --keyring-backend $KEYRING \
@@ -142,6 +143,14 @@ echo "=== Copying keyring to shared volume ==="
 mkdir -p /shared/keyring
 cp -r $HOME_DIR/keyring-test /shared/keyring/
 
+echo "=== Generating self-signed TLS certificate ==="
+
+mkdir -p /shared/tls
+openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 \
+    -keyout /shared/tls/key.pem -out /shared/tls/cert.pem \
+    -days 365 -nodes -subj "/CN=localhost" \
+    -addext "subjectAltName=DNS:localhost,DNS:providerd,IP:127.0.0.1"
+
 echo "=== Generating providerd.yaml ==="
 
 cat > /shared/providerd.yaml << YAML
@@ -161,6 +170,8 @@ keyring_dir: "/shared/keyring"
 key_name: "${KEY}"
 
 api_listen_addr: ":8080"
+tls_cert_file: "/shared/tls/cert.pem"
+tls_key_file: "/shared/tls/key.pem"
 rate_limit_rps: 100
 rate_limit_burst: 200
 
@@ -170,7 +181,7 @@ backends:
     timeout: 30s
     default: true
 
-callback_base_url: "http://providerd:8080"
+callback_base_url: "https://providerd:8080"
 callback_secret: "${CALLBACK_SECRET}"
 
 withdraw_interval: "1m"

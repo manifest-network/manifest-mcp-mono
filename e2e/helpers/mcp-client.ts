@@ -44,6 +44,10 @@ export class MCPTestClient {
         COSMOS_RPC_URL: options.rpcUrl ?? 'http://localhost:26657',
         COSMOS_GAS_PRICE: options.gasPrice ?? '0.01umfx',
         COSMOS_MNEMONIC: options.mnemonic ?? DEFAULT_MNEMONIC,
+        // Trust the self-signed CA cert from e2e providerd (extracted by global-setup.ts)
+        ...(process.env.E2E_TLS_CERT_PATH && {
+          NODE_EXTRA_CA_CERTS: process.env.E2E_TLS_CERT_PATH,
+        }),
       },
     });
 
