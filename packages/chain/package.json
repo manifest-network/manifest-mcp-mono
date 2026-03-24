@@ -36,11 +36,14 @@
   "engines": {
     "node": ">=20"
   },
+  "publishConfig": {
+    "access": "public"
+  },
   "files": [
     "dist"
   ],
   "dependencies": {
-    "@manifest-network/manifest-mcp-core": "*",
+    "@manifest-network/manifest-mcp-core": "^0.1.0",
     "@modelcontextprotocol/sdk": "1.27.1",
     "zod": "^4.3.6"
   },

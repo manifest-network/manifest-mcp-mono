@@ -33,6 +33,9 @@
   "engines": {
     "node": ">=20"
   },
+  "publishConfig": {
+    "access": "public"
+  },
   "files": [
     "dist"
   ],
@@ -40,10 +43,10 @@
     "@cosmjs/amino": "0.32.4",
     "@cosmjs/encoding": "0.32.4",
     "@cosmjs/proto-signing": "0.32.4",
-    "@manifest-network/manifest-mcp-core": "*",
-    "@manifest-network/manifest-mcp-chain": "*",
-    "@manifest-network/manifest-mcp-lease": "*",
-    "@manifest-network/manifest-mcp-fred": "*",
+    "@manifest-network/manifest-mcp-core": "^0.1.0",
+    "@manifest-network/manifest-mcp-chain": "^0.1.0",
+    "@manifest-network/manifest-mcp-lease": "^0.1.0",
+    "@manifest-network/manifest-mcp-fred": "^0.1.0",
     "@modelcontextprotocol/sdk": "1.27.1",
     "dotenv": "^17.2.3"
   },
