@@ -18,7 +18,6 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          registry-url: https://registry.npmjs.org
 
       - name: Validate tag matches all package versions
         run: |
@@ -35,21 +34,6 @@ jobs:
             exit 1
           fi
 
-      - name: Validate npm authentication
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: |
-          if [ -z "$NODE_AUTH_TOKEN" ]; then
-            echo "::error::NPM_TOKEN secret is not configured. Add it in Settings > Secrets > Actions."
-            exit 1
-          fi
-          NPM_USER=$(npm whoami 2>&1) || {
-            echo "::error::NPM_TOKEN is set but authentication failed. The token may be expired or revoked."
-            echo "npm whoami output: $NPM_USER"
-            exit 1
-          }
-          echo "Authenticated to npm as: $NPM_USER"
-
       - run: npm ci
 
       - run: npm run build
@@ -61,8 +45,6 @@ jobs:
       - run: npm test
 
       - name: Publish packages to npm
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           publish() {
             local ws="$1" pkg="$2" ver="$3"
