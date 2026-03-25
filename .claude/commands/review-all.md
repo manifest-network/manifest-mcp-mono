@@ -1,0 +1,4 @@
+ Can you review this project? Make sure the code is idiomatic with Typescript best practices. Make
+ sure the code is secure. Make sure the code architecture is sound. Make sure the code architecture
+ follows best practices. Make sure the code is well tested. Make sure the documentation is
+ up-to-date and in sync with the code. Identify and report any gaps.
