@@ -2,24 +2,24 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.2.3] - 2025
+## [0.2.3]
 
 - Fix: include `--ignore-scripts` in lockfile sync recovery instructions
 - Fix: make GitHub Release step idempotent on workflow re-runs
 
-## [0.2.2] - 2025
+## [0.2.2]
 
 - Fix: improve README accuracy and validate workspace package names
 - Fix: add `--ignore-scripts` to lockfile sync, use `fileURLToPath` for Node 20.0 compatibility
 - Docs: clarify GitHub Release creation is best-effort
 
-## [0.2.1] - 2025
+## [0.2.1]
 
 - Fix: set vitest root so E2E global setup and tests resolve correctly
 - Fix: validate all workspace versions match tag, improve error message
 - Feat: add tag-triggered npm release workflow and version script
 
-## [0.2.0] - 2025
+## [0.2.0]
 
 Initial public release.
 

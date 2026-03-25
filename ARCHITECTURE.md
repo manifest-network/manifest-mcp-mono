@@ -69,7 +69,7 @@ src/
 ├── logger.ts             Leveled logger (stderr output, configurable via LOG_LEVEL env var)
 ├── server-utils.ts       Server utilities (error handling, sanitization, response helpers)
 ├── __test-utils__/
-│   ├── callTool.ts       MCP tool invocation helper for integration tests
+│   ├── callTool.ts       MCP tool invocation helper for unit tests (in-memory transport)
 │   └── mocks.ts          Shared test mocks (imported cross-package by chain/lease/fred tests)
 ├── client.ts             CosmosClientManager -- keyed-instance client lifecycle (RPC + LCD)
 ├── lcd-adapter.ts        LCD/REST adapter -- converts LCD responses to RPC query client shape
