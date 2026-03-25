@@ -80,14 +80,14 @@ jobs:
           publish packages/node  @manifest-network/manifest-mcp-node  "$VERSION"
 
       - name: Create GitHub Release
-        id: gh_release
-        continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" --generate-notes
-
-      - name: Warn if GitHub Release failed
-        if: steps.gh_release.outcome == 'failure'
         run: |
-          echo "::warning::All packages were published to npm, but GitHub Release creation failed."
-          echo "::warning::Create the release manually: gh release create $GITHUB_REF_NAME --generate-notes"
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            echo "Release $GITHUB_REF_NAME already exists, skipping"
+          else
+            gh release create "$GITHUB_REF_NAME" --generate-notes || {
+              echo "::warning::Packages were published to npm, but GitHub Release creation failed."
+              echo "::warning::Create it manually: gh release create $GITHUB_REF_NAME --generate-notes"
+            }
+          fi
