@@ -22,7 +22,7 @@ npm install @manifest-network/manifest-mcp-chain
 
 ### As an MCP server (via node package)
 
-See [`packages/node/README.md`](../node/README.md) for CLI usage and MCP client integration.
+See [`packages/node/README.md`](https://github.com/manifest-network/manifest-mcp-mono/blob/main/packages/node/README.md) for CLI usage and MCP client integration.
 
 ### As a library
 
