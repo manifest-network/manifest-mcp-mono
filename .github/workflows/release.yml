@@ -45,7 +45,7 @@ jobs:
           fi
           NPM_USER=$(npm whoami 2>&1) || {
             echo "::error::NPM_TOKEN is set but authentication failed. The token may be expired or revoked."
-            echo "::error::npm whoami output: $NPM_USER"
+            echo "npm whoami output: $NPM_USER"
             exit 1
           }
           echo "Authenticated to npm as: $NPM_USER"
