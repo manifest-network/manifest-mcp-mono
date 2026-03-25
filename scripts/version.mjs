@@ -25,7 +25,7 @@ try {
   entries = readdirSync(pkgDir, { withFileTypes: true });
 } catch (err) {
   console.error(`Cannot read packages directory: ${err.message}`);
-  console.error("Make sure you are running from the repository root.");
+  console.error(`Expected packages directory at: ${pkgDir}`);
   process.exit(1);
 }
 const workspacePkgJsons = entries

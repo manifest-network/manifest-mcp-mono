@@ -20,12 +20,18 @@ jobs:
           cache: npm
           registry-url: https://registry.npmjs.org
 
-      - name: Validate tag matches package version
+      - name: Validate tag matches all package versions
         run: |
           TAG_VERSION="${GITHUB_REF_NAME#v}"
-          PKG_VERSION=$(node -p "require('./package.json').version")
-          if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
-            echo "::error::Tag version ($TAG_VERSION) does not match package.json version ($PKG_VERSION)"
+          MISMATCH=0
+          for pkg in package.json packages/*/package.json; do
+            PKG_VERSION=$(node -p "require('./${pkg}').version")
+            if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
+              echo "::error::${pkg} version ($PKG_VERSION) does not match tag ($TAG_VERSION)"
+              MISMATCH=1
+            fi
+          done
+          if [ "$MISMATCH" -eq 1 ]; then
             exit 1
           fi
 
