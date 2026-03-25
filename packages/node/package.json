@@ -51,8 +51,8 @@
     "dotenv": "^17.2.3"
   },
   "devDependencies": {
-    "@types/node": "22.15.29",
-    "typescript": "5.9.3",
-    "vitest": "4.1.0"
+    "@types/node": "25.5.0",
+    "typescript": "6.0.2",
+    "vitest": "4.1.1"
   }
 }
