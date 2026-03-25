@@ -94,7 +94,7 @@ try {
     `All package.json files were updated to ${version} but the lockfile is stale.`,
   );
   console.error("Resolve the issue above, then run:");
-  console.error("  npm install --package-lock-only");
+  console.error("  npm install --package-lock-only --ignore-scripts");
   process.exit(1);
 }
 
