@@ -67,6 +67,8 @@ manifest-mcp-fred import          Import a mnemonic into an encrypted keyfile
 
 Add the following to your `claude_desktop_config.json`:
 
+Replace the placeholder values below with your actual chain ID, RPC/REST endpoint, gas price, and keyfile password.
+
 ```jsonc
 {
   "mcpServers": {
@@ -74,8 +76,8 @@ Add the following to your `claude_desktop_config.json`:
       "command": "npx",
       "args": ["manifest-mcp-chain"],
       "env": {
-        "COSMOS_CHAIN_ID": "manifest-ledger-beta",
-        "COSMOS_RPC_URL": "https://nodes.chandrastation.com/rpc/manifest/",
+        "COSMOS_CHAIN_ID": "your-chain-id",
+        "COSMOS_RPC_URL": "https://your-rpc-endpoint/",
         "COSMOS_GAS_PRICE": "0.01umfx",
         "MANIFEST_KEY_PASSWORD": "your-keyfile-password"
       }
@@ -84,8 +86,8 @@ Add the following to your `claude_desktop_config.json`:
       "command": "npx",
       "args": ["manifest-mcp-lease"],
       "env": {
-        "COSMOS_CHAIN_ID": "manifest-ledger-beta",
-        "COSMOS_RPC_URL": "https://nodes.chandrastation.com/rpc/manifest/",
+        "COSMOS_CHAIN_ID": "your-chain-id",
+        "COSMOS_RPC_URL": "https://your-rpc-endpoint/",
         "COSMOS_GAS_PRICE": "0.01umfx",
         "MANIFEST_KEY_PASSWORD": "your-keyfile-password"
       }
@@ -94,8 +96,8 @@ Add the following to your `claude_desktop_config.json`:
       "command": "npx",
       "args": ["manifest-mcp-fred"],
       "env": {
-        "COSMOS_CHAIN_ID": "manifest-ledger-beta",
-        "COSMOS_RPC_URL": "https://nodes.chandrastation.com/rpc/manifest/",
+        "COSMOS_CHAIN_ID": "your-chain-id",
+        "COSMOS_RPC_URL": "https://your-rpc-endpoint/",
         "COSMOS_GAS_PRICE": "0.01umfx",
         "MANIFEST_KEY_PASSWORD": "your-keyfile-password"
       }
@@ -105,6 +107,28 @@ Add the following to your `claude_desktop_config.json`:
 ```
 
 If you use a mnemonic instead of a keyfile, replace `MANIFEST_KEY_PASSWORD` with `COSMOS_MNEMONIC`.
+
+#### Query-only mode (REST/LCD)
+
+To use query-only mode without transaction signing, replace `COSMOS_RPC_URL` and `COSMOS_GAS_PRICE` with `COSMOS_REST_URL`:
+
+```jsonc
+{
+  "mcpServers": {
+    "manifest-chain": {
+      "command": "npx",
+      "args": ["manifest-mcp-chain"],
+      "env": {
+        "COSMOS_CHAIN_ID": "your-chain-id",
+        "COSMOS_REST_URL": "https://your-rest-endpoint/",
+        "MANIFEST_KEY_PASSWORD": "your-keyfile-password"
+      }
+    }
+  }
+}
+```
+
+A wallet is still required at startup even in query-only mode. Transaction tools will return an `INVALID_CONFIG` error.
 
 ## Environment variables
 
