@@ -86,7 +86,7 @@ for (const { rel, filepath, pkg } of packages) {
 
 console.log("\nSyncing package-lock.json...");
 try {
-  execSync("npm install --package-lock-only", { cwd: root, stdio: "inherit" });
+  execSync("npm install --package-lock-only --ignore-scripts", { cwd: root, stdio: "inherit" });
 } catch (err) {
   console.error("\nFailed to sync package-lock.json.");
   if (err.status != null) {
