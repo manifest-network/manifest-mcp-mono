@@ -18,8 +18,14 @@ import {
 import type { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
+import { requestFaucet } from './faucet.js';
 
 export type { ManifestMCPServerOptions } from '@manifest-network/manifest-mcp-core';
+
+export interface ChainMCPServerOptions extends ManifestMCPServerOptions {
+  /** Faucet base URL. When set, the `request_faucet` tool is registered. */
+  readonly faucetUrl?: string;
+}
 
 /**
  * MCP server for Cosmos SDK chain operations: queries, transactions, and module discovery.
@@ -29,7 +35,7 @@ export class ChainMCPServer {
   private clientManager: CosmosClientManager;
   private walletProvider: WalletProvider;
 
-  constructor(options: ManifestMCPServerOptions) {
+  constructor(options: ChainMCPServerOptions) {
     const config = createValidatedConfig(options.config);
     this.walletProvider = options.walletProvider;
     this.clientManager = CosmosClientManager.getInstance(
@@ -49,10 +55,10 @@ export class ChainMCPServer {
       },
     );
 
-    this.registerTools();
+    this.registerTools(options.faucetUrl);
   }
 
-  private registerTools(): void {
+  private registerTools(faucetUrl?: string): void {
     // ── get_account_info ──
     this.mcpServer.registerTool(
       'get_account_info',
@@ -180,6 +186,31 @@ export class ChainMCPServer {
         });
       }),
     );
+
+    if (faucetUrl) {
+      this.mcpServer.registerTool(
+        'request_faucet',
+        {
+          description:
+            'Request testnet tokens from the faucet. ' +
+            'Each denom has an independent cooldown period. ' +
+            'If no denom is specified, all available denoms are requested.',
+          inputSchema: {
+            denom: z
+              .string()
+              .optional()
+              .describe(
+                'Specific denom to request (e.g. "umfx"). If omitted, requests all available denoms.',
+              ),
+          },
+        },
+        withErrorHandling('request_faucet', async (args) => {
+          const address = await this.walletProvider.getAddress();
+          const result = await requestFaucet(faucetUrl, address, args.denom);
+          return jsonResponse(result);
+        }),
+      );
+    }
   }
 
   getServer(): Server {
