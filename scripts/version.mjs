@@ -38,27 +38,25 @@ const packageJsonPaths = ["package.json", ...workspacePkgJsons];
 const packages = [];
 for (const rel of packageJsonPaths) {
   const filepath = resolve(root, rel);
-  let raw;
   try {
-    raw = readFileSync(filepath, "utf-8");
+    const raw = readFileSync(filepath, "utf-8");
+    const pkg = JSON.parse(raw);
+    packages.push({ rel, filepath, pkg });
   } catch (err) {
-    console.error(`Failed to read ${rel}: ${err.message}`);
+    console.error(`Failed to load ${rel}: ${err.message}`);
     process.exit(1);
   }
-  let pkg;
-  try {
-    pkg = JSON.parse(raw);
-  } catch (err) {
-    console.error(`Failed to parse ${rel}: ${err.message}`);
-    process.exit(1);
-  }
-  packages.push({ rel, filepath, pkg });
 }
 
 // Collect internal package names from workspace packages (skip root)
-const internalPackages = new Set(
-  packages.filter((p) => p.rel !== "package.json").map((p) => p.pkg.name),
-);
+const workspacePackages = packages.filter((p) => p.rel !== "package.json");
+for (const p of workspacePackages) {
+  if (!p.pkg.name) {
+    console.error(`${p.rel} is missing a "name" field`);
+    process.exit(1);
+  }
+}
+const internalPackages = new Set(workspacePackages.map((p) => p.pkg.name));
 
 const caretVersion = `^${version}`;
 
