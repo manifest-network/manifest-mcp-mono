@@ -88,7 +88,7 @@ Three MCP servers bridging AI assistants to Cosmos SDK blockchains (Manifest Net
 | `COSMOS_MNEMONIC` | No | -- |
 | `LOG_LEVEL` | No | `warn` |
 
-`LOG_LEVEL` accepts `debug`, `info`, `warn`, `error`, or `silent`. Logs go to stderr.
+`LOG_LEVEL` accepts `debug`, `info`, `warn`, `error`, or `silent`. Logs go to stderr. Note: `LOG_LEVEL` is read by the core package's logger module (`logger.ts`) at import time via `process.env`, not by the node package's config loader. It takes effect in any process that imports core.
 
 Set `COSMOS_RPC_URL` + `COSMOS_GAS_PRICE` for full access (queries + transactions). Set `COSMOS_REST_URL` alone for query-only mode (LCD/REST). When both are set, `COSMOS_REST_URL` is preferred for queries.
 

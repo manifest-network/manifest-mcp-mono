@@ -66,8 +66,10 @@ The core package is a shared library containing Cosmos logic, on-chain tool func
 ```
 src/
 ├── index.ts              Re-exports all public API
+├── logger.ts             Leveled logger (stderr output, configurable via LOG_LEVEL env var)
 ├── server-utils.ts       Server utilities (error handling, sanitization, response helpers)
 ├── __test-utils__/
+│   ├── callTool.ts       MCP tool invocation helper for unit tests (in-memory transport)
 │   └── mocks.ts          Shared test mocks (imported cross-package by chain/lease/fred tests)
 ├── client.ts             CosmosClientManager -- keyed-instance client lifecycle (RPC + LCD)
 ├── lcd-adapter.ts        LCD/REST adapter -- converts LCD responses to RPC query client shape
@@ -174,7 +176,7 @@ The fred package is an MCP server that registers 8 provider/Fred-dependent tools
 | `get_logs` | Fetch container logs |
 | `restart_app` | Restart via provider API |
 | `update_app` | Update container manifest |
-| `app_diagnostics` | Detailed lease diagnostics (provision status, connection info) |
+| `app_diagnostics` | Provision diagnostics (status, failure count, last error) |
 | `app_releases` | List deployment release history |
 
 The fred server handles ADR-036 provider authentication internally and contains the HTTP clients for provider and Fred APIs. The package also exports all tool functions and HTTP clients for use by library consumers (e.g., Barney) without requiring the MCP protocol.
@@ -340,11 +342,42 @@ Configuration is validated at startup via `createValidatedConfig`:
 - **Rate limiting**: requests per second (must be positive integer, default: 10)
 - **Retry**: max retries, base delay, max delay (with cross-field validation: max delay >= base delay)
 
+## Logging
+
+All MCP server output goes to **stderr** because stdout is reserved for the MCP JSON-RPC protocol. The leveled logger (`core/src/logger.ts`) reads `process.env.LOG_LEVEL` at import time and supports `debug`, `info`, `warn`, `error`, and `silent` (default: `warn`). The level can also be changed at runtime via `logger.setLevel()`.
+
+`LOG_LEVEL` is a core-level concern -- it is read directly from the environment by the logger module, not loaded by the node package's config system. It takes effect in any process that imports core.
+
+## E2E testing
+
+End-to-end tests live in `/e2e/` and run against a real Manifest chain via Docker Compose:
+
+```
+e2e/
+├── docker-compose.yml          Spins up manifestd + providerd with TLS
+├── chain-tools.e2e.test.ts     Chain server tool tests (queries, transactions, modules)
+├── lifecycle.e2e.test.ts       Full lease lifecycle (deploy, status, logs, restart, update, close)
+├── vitest.config.ts            Vitest config with 5-minute timeout
+├── docker/                     Dockerfiles for chain and provider containers
+├── scripts/                    Init scripts (chain genesis, billing setup)
+└── helpers/
+    ├── global-setup.ts         Docker health checks and wallet funding
+    └── mcp-client.ts           Spawns MCP server processes and provides a callTool helper
+```
+
+To run:
+
+```bash
+docker compose -f e2e/docker-compose.yml up -d --wait --wait-timeout 180
+npm run test:e2e
+docker compose -f e2e/docker-compose.yml down -v --remove-orphans
+```
+
 ## Build and test
 
 - **Build**: `tsdown` (unbundled ESM output with sourcemaps and `.d.ts` declarations). Core, chain, lease, and fred use `platform: "neutral"` for browser compatibility; node uses `platform: "node"`.
 - **Unit tests**: Vitest, co-located `*.test.ts` files
-- **E2E tests**: `/e2e` directory, runs against a live chain with a 5-minute timeout
+- **E2E tests**: See [E2E testing](#e2e-testing) above
 - **Type checking**: `tsc --noEmit`
 
 ## Dependencies

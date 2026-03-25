@@ -77,6 +77,8 @@ Supported modules: `bank`, `staking`, `distribution`, `gov`, `billing`, `sku`, `
 
 ## Development
 
+For a deeper look at the codebase design, see [`ARCHITECTURE.md`](ARCHITECTURE.md).
+
 ```bash
 # Build all packages
 npm run build
@@ -84,9 +86,26 @@ npm run build
 # Lint (type-check)
 npm run lint
 
-# Run tests
+# Run unit tests
 npm run test
+
+# Run E2E tests (requires Docker)
+docker compose -f e2e/docker-compose.yml up -d --wait --wait-timeout 180
+npm run test:e2e
+docker compose -f e2e/docker-compose.yml down -v --remove-orphans
+
+# Code formatting and import sorting (Biome)
+npm run check        # check only
+npm run check:fix    # auto-fix
 ```
+
+### Adding a new module
+
+1. Create a query handler in `packages/core/src/queries/<module>.ts` implementing `routeXxxQuery()`
+2. Create a transaction handler in `packages/core/src/transactions/<module>.ts` implementing `routeXxxTransaction()`
+3. Register both in the `QUERY_MODULES` / `TX_MODULES` maps in `packages/core/src/modules.ts`
+
+The module is then automatically available through the `cosmos_query` and `cosmos_tx` tools, and discoverable via `list_modules` and `list_module_subcommands`.
 
 ## Releasing
 
