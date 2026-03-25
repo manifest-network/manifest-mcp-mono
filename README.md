@@ -117,7 +117,7 @@ Pushing a `vMAJOR.MINOR.PATCH` tag triggers the [Release workflow](.github/workf
 1. Validates the tag version matches `package.json`
 2. Builds, lints, checks formatting, and tests
 3. Publishes all packages to npm (with [provenance](https://docs.npmjs.com/generating-provenance-statements)) in dependency order: `core → chain → lease → fred → node`
-4. Creates a GitHub Release with auto-generated notes
+4. Creates a GitHub Release with auto-generated notes (best-effort — publish succeeds even if this fails)
 
 ## License
 
