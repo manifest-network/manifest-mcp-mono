@@ -2,6 +2,10 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+vi.mock('./faucet.js', () => ({
+  requestFaucet: vi.fn(),
+}));
+
 vi.mock('@manifest-network/manifest-mcp-core', async (importOriginal) => {
   const actual =
     await importOriginal<
@@ -38,7 +42,10 @@ import {
   makeMockConfig,
   makeMockWallet,
 } from '@manifest-network/manifest-mcp-core/__test-utils__/mocks.js';
+import { requestFaucet } from './faucet.js';
 import { ChainMCPServer } from './index.js';
+
+const mockRequestFaucet = vi.mocked(requestFaucet);
 
 const mockCosmosQuery = vi.mocked(cosmosQuery);
 const mockCosmosTx = vi.mocked(cosmosTx);
@@ -99,6 +106,32 @@ describe('ChainMCPServer', () => {
         expect(result.tools).toHaveLength(5);
         expect(result.tools.map((t) => t.name).sort()).toEqual(
           [...CHAIN_TOOL_NAMES].sort(),
+        );
+      } finally {
+        await client.close();
+      }
+    });
+
+    it('should advertise 6 tools when faucetUrl is provided', async () => {
+      const server = new ChainMCPServer({
+        config: makeMockConfig(),
+        walletProvider: makeMockWallet(),
+        faucetUrl: 'https://faucet.test.com',
+      });
+
+      const [clientTransport, serverTransport] =
+        InMemoryTransport.createLinkedPair();
+      activeTransports.push(clientTransport, serverTransport);
+
+      const client = new Client({ name: 'test-client', version: '1.0.0' });
+      await server.getServer().connect(serverTransport);
+      await client.connect(clientTransport);
+
+      try {
+        const result = await client.listTools();
+        expect(result.tools).toHaveLength(6);
+        expect(result.tools.map((t) => t.name).sort()).toEqual(
+          [...CHAIN_TOOL_NAMES, 'request_faucet'].sort(),
         );
       } finally {
         await client.close();
@@ -188,9 +221,75 @@ describe('ChainMCPServer', () => {
       expect(parsed).toHaveProperty('subcommands');
       expect(result.isError).toBeUndefined();
     });
+
+    it('routes request_faucet to requestFaucet()', async () => {
+      mockRequestFaucet.mockResolvedValue({
+        address: 'manifest1abc',
+        results: [{ denom: 'umfx', success: true, transactionHash: 'TX1' }],
+      });
+
+      const server = new ChainMCPServer({
+        config: makeMockConfig(),
+        walletProvider: makeMockWallet(),
+        faucetUrl: 'https://faucet.test.com',
+      });
+      const result = await callTool(server, 'request_faucet');
+
+      expect(mockRequestFaucet).toHaveBeenCalledWith(
+        'https://faucet.test.com',
+        'manifest1abc',
+        undefined,
+      );
+      expect(result.isError).toBeUndefined();
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.results[0].denom).toBe('umfx');
+    });
+
+    it('request_faucet passes denom when provided', async () => {
+      mockRequestFaucet.mockResolvedValue({
+        address: 'manifest1abc',
+        results: [{ denom: 'umfx', success: true, transactionHash: 'TX1' }],
+      });
+
+      const server = new ChainMCPServer({
+        config: makeMockConfig(),
+        walletProvider: makeMockWallet(),
+        faucetUrl: 'https://faucet.test.com',
+      });
+      const result = await callTool(server, 'request_faucet', {
+        denom: 'umfx',
+      });
+
+      expect(mockRequestFaucet).toHaveBeenCalledWith(
+        'https://faucet.test.com',
+        'manifest1abc',
+        'umfx',
+      );
+      expect(result.isError).toBeUndefined();
+    });
   });
 
   describe('error handling', () => {
+    it('request_faucet error produces isError=true', async () => {
+      mockRequestFaucet.mockRejectedValue(
+        new ManifestMCPError(
+          ManifestMCPErrorCode.QUERY_FAILED,
+          'Faucet status returned HTTP 503',
+        ),
+      );
+
+      const server = new ChainMCPServer({
+        config: makeMockConfig(),
+        walletProvider: makeMockWallet(),
+        faucetUrl: 'https://faucet.test.com',
+      });
+      const result = await callTool(server, 'request_faucet');
+
+      expect(result.isError).toBe(true);
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.code).toBe('QUERY_FAILED');
+    });
+
     it('ManifestMCPError produces {error, code, message, details} with isError=true', async () => {
       mockCosmosQuery.mockRejectedValue(
         new ManifestMCPError(

@@ -33,7 +33,7 @@ docker compose -f e2e/docker-compose.yml down -v --remove-orphans
 Three MCP servers bridging AI assistants to Cosmos SDK blockchains (Manifest Network). Five npm workspace packages with strict dependency direction: **node -> {chain, lease, fred} -> core** (never reverse; node also depends on core directly).
 
 - **`packages/core`** -- Shared library. Cosmos logic, on-chain tool functions, server utilities, LCD/REST adapter (`lcd-adapter.ts`). No HTTP clients (those live in fred). Not an MCP server itself. Built with `platform: "neutral"` for browser compatibility.
-- **`packages/chain`** -- MCP server with 5 chain tools: `get_account_info`, `cosmos_query`, `cosmos_tx`, `list_modules`, `list_module_subcommands`.
+- **`packages/chain`** -- MCP server with 5 chain tools (+ optional `request_faucet` when `MANIFEST_FAUCET_URL` is set): `get_account_info`, `cosmos_query`, `cosmos_tx`, `list_modules`, `list_module_subcommands`.
 - **`packages/lease`** -- MCP server with 6 on-chain lease tools: `credit_balance`, `fund_credit`, `leases_by_tenant`, `close_lease`, `get_skus`, `get_providers`.
 - **`packages/fred`** -- MCP server with 8 provider/Fred tools: `browse_catalog`, `deploy_app`, `app_status`, `get_logs`, `restart_app`, `update_app`, `app_diagnostics`, `app_releases`. Contains HTTP clients (auth, provider, fred) and tool implementations. Also exports all tool functions and HTTP clients for library consumers. Stack manifests use `{ services: { ... } }` wrapper format; upload payloads are `Uint8Array`.
 - **`packages/node`** -- Three CLI entry points (`manifest-mcp-chain`, `manifest-mcp-lease`, `manifest-mcp-fred`) with stdio transport + keyfile wallet. Each also supports `keygen` and `import` subcommands for key management.
@@ -86,6 +86,7 @@ Three MCP servers bridging AI assistants to Cosmos SDK blockchains (Manifest Net
 | `MANIFEST_KEY_FILE` | No | `~/.manifest/key.json` |
 | `MANIFEST_KEY_PASSWORD` | No | -- |
 | `COSMOS_MNEMONIC` | No | -- |
+| `MANIFEST_FAUCET_URL` | No | -- |
 | `LOG_LEVEL` | No | `warn` |
 
 `LOG_LEVEL` accepts `debug`, `info`, `warn`, `error`, or `silent`. Logs go to stderr. Note: `LOG_LEVEL` is read by the core package's logger module (`logger.ts`) at import time via `process.env`, not by the node package's config loader. It takes effect in any process that imports core.
