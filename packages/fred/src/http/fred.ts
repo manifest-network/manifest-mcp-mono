@@ -155,15 +155,17 @@ export async function updateLease(
 ): Promise<FredActionResponse> {
   const validated = validateProviderUrl(providerUrl);
   const url = `${validated}/v1/leases/${encodeURIComponent(leaseUuid)}/update`;
+  // The provider expects JSON with base64-encoded payload (Go []byte field)
+  const b64 = btoa(String.fromCharCode(...payload));
   const res = await checkedFetch(
     url,
     {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${authToken}`,
-        'Content-Type': 'application/octet-stream',
+        'Content-Type': 'application/json',
       },
-      body: payload,
+      body: JSON.stringify({ payload: b64 }),
     },
     undefined,
     fetchFn,

@@ -140,12 +140,34 @@ export class FredMCPServer {
     return this.walletProvider.signArbitrary.bind(this.walletProvider);
   }
 
+  /** Last unix-second used for auth token generation.
+   *  The provider rejects replayed tokens (same signature = same second),
+   *  so we ensure each token uses a unique timestamp. When multiple tokens
+   *  are needed within the same wall-clock second we wait for the next
+   *  second rather than drifting into the future (the provider enforces
+   *  a 10 s max-future-skew). */
+  private lastAuthTimestamp = 0;
+
+  private async nextAuthTimestamp(): Promise<number> {
+    const now = Math.floor(Date.now() / 1000);
+    if (now > this.lastAuthTimestamp) {
+      this.lastAuthTimestamp = now;
+      return now;
+    }
+    // Same second as last token — wait for the clock to advance
+    await new Promise((resolve) =>
+      setTimeout(resolve, (this.lastAuthTimestamp - now + 1) * 1000),
+    );
+    this.lastAuthTimestamp = Math.floor(Date.now() / 1000);
+    return this.lastAuthTimestamp;
+  }
+
   private async getProviderAuthToken(
     address: string,
     leaseUuid: string,
   ): Promise<string> {
     const signArbitrary = this.requireSignArbitrary();
-    const timestamp = Math.floor(Date.now() / 1000);
+    const timestamp = await this.nextAuthTimestamp();
     const message = createSignMessage(address, leaseUuid, timestamp);
     const { pub_key, signature } = await signArbitrary(address, message);
     return createAuthToken(
@@ -163,7 +185,7 @@ export class FredMCPServer {
     metaHashHex: string,
   ): Promise<string> {
     const signArbitrary = this.requireSignArbitrary();
-    const timestamp = Math.floor(Date.now() / 1000);
+    const timestamp = await this.nextAuthTimestamp();
     const message = createLeaseDataSignMessage(
       leaseUuid,
       metaHashHex,

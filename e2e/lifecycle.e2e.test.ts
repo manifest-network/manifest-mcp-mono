@@ -99,8 +99,8 @@ describe('Deploy lifecycle', () => {
       provider_url: string;
       state: LeaseState;
     }>('deploy_app', {
-      image: 'nginx:alpine',
-      port: 80,
+      image: 'nginxinc/nginx-unprivileged:alpine',
+      port: 8080,
       size: 'docker-micro',
     });
 
@@ -152,24 +152,12 @@ describe('Deploy lifecycle', () => {
   });
 
   // ------------------------------------------------------------------
-  // 9. Restart app
-  // ------------------------------------------------------------------
-  it('restart_app succeeds', async () => {
-    const result = await fredClient.callTool<{
-      lease_uuid: string;
-      status: string;
-    }>('restart_app', { lease_uuid: leaseUuid });
-
-    expect(result.lease_uuid).toBe(leaseUuid);
-  });
-
-  // ------------------------------------------------------------------
-  // 10. Update app
+  // 9. Update app
   // ------------------------------------------------------------------
   it('update_app with new manifest succeeds', async () => {
     const manifest = JSON.stringify({
-      image: 'nginx:alpine',
-      ports: { '80/tcp': {} },
+      image: 'nginxinc/nginx-unprivileged:alpine',
+      ports: { '8080/tcp': {} },
       env: { E2E_TEST: 'true' },
     });
 

@@ -67,9 +67,12 @@ export async function appStatus(
       };
     }
 
-    let authToken: string;
+    let statusToken: string;
+    let connToken: string;
     try {
-      authToken = await getAuthToken(address, leaseUuid);
+      // Each request needs its own token — the provider rejects replayed tokens.
+      statusToken = await getAuthToken(address, leaseUuid);
+      connToken = await getAuthToken(address, leaseUuid);
     } catch (err) {
       if (
         err instanceof ManifestMCPError &&
@@ -86,8 +89,8 @@ export async function appStatus(
     }
 
     const [statusResult, connResult] = await Promise.allSettled([
-      getLeaseStatus(providerUrl, leaseUuid, authToken, fetchFn),
-      getLeaseConnectionInfo(providerUrl, leaseUuid, authToken, fetchFn),
+      getLeaseStatus(providerUrl, leaseUuid, statusToken, fetchFn),
+      getLeaseConnectionInfo(providerUrl, leaseUuid, connToken, fetchFn),
     ]);
 
     if (statusResult.status === 'fulfilled') {
