@@ -157,17 +157,21 @@ export class FredMCPServer {
    */
   private nextAuthTimestamp(): Promise<number> {
     const result = this.timestampQueue.then(async () => {
-      const now = Math.floor(Date.now() / 1000);
+      let now = Math.floor(Date.now() / 1000);
       if (now > this.lastAuthTimestamp) {
         this.lastAuthTimestamp = now;
         return now;
       }
-      // Same second as last token — wait for the clock to advance
-      await new Promise((resolve) =>
-        setTimeout(resolve, (this.lastAuthTimestamp - now + 1) * 1000),
-      );
-      this.lastAuthTimestamp = Math.floor(Date.now() / 1000);
-      return this.lastAuthTimestamp;
+      // Same second as last token — wait for the clock to advance. Loop
+      // in case a backward clock adjustment (e.g. NTP step) causes the
+      // post-sleep read to still match the previous timestamp.
+      while (now <= this.lastAuthTimestamp) {
+        const sleepMs = (this.lastAuthTimestamp - now + 1) * 1000;
+        await new Promise((resolve) => setTimeout(resolve, sleepMs));
+        now = Math.floor(Date.now() / 1000);
+      }
+      this.lastAuthTimestamp = now;
+      return now;
     });
     // Settle the queue regardless of success/failure so a single error
     // does not permanently poison subsequent callers.

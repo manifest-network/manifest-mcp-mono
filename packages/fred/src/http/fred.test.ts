@@ -373,7 +373,7 @@ describe('updateLease', () => {
     mockCheckedFetch.mockResolvedValue(mockRes);
     mockParseJsonResponse.mockResolvedValue({ status: 'updated' });
 
-    // 128KB payload — exceeds the ~64K argument limit of String.fromCharCode
+    // 128KB payload — ensures large payloads are handled correctly
     const large = new Uint8Array(128 * 1024).fill(65); // all 'A'
     await updateLease(PROVIDER_URL, LEASE_UUID, large, AUTH_TOKEN);
 
