@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.3]
+
+- Fix(chain): align `FaucetStatusResponse` with real faucet API (`availableTokens` string[] instead of `tokens` Coin[])
+- Fix(chain): validate full faucet `/status` response shape with zod
+- Refactor(chain): consolidate faucet types (`FaucetHolder`/`FaucetDistributor` -> `FaucetAccount`)
+- Test(chain): add faucet edge-case tests (URL normalization, non-array tokens, missing txHash, non-Error throws)
+
 ## [0.3.2]
 
 - Fix(core): bump gas simulation multiplier to 1.5 to match CLI `--gas-adjustment`
