@@ -94,27 +94,24 @@ export async function appStatus(
       getLeaseConnectionInfo(providerUrl, leaseUuid, connToken, fetchFn),
     ]);
 
-    function rejectionMessage(reason: unknown): string {
-      const raw = reason instanceof Error ? reason.message : String(reason);
-      return sanitizeForLogging(raw) as string;
+    function handleRejection(label: string, reason: unknown): string {
+      const rawMsg = reason instanceof Error ? reason.message : String(reason);
+      logger.error(
+        `[app_status] Failed to get ${label} for ${leaseUuid}: ${rawMsg}`,
+      );
+      return sanitizeForLogging(rawMsg) as string;
     }
 
     if (statusResult.status === 'fulfilled') {
       fredStatus = statusResult.value;
     } else {
-      providerError = rejectionMessage(statusResult.reason);
-      logger.error(
-        `[app_status] Failed to get lease status for ${leaseUuid}: ${providerError}`,
-      );
+      providerError = handleRejection('lease status', statusResult.reason);
     }
 
     if (connResult.status === 'fulfilled') {
       connection = connResult.value.connection;
     } else {
-      connectionError = rejectionMessage(connResult.reason);
-      logger.error(
-        `[app_status] Failed to get connection info for ${leaseUuid}: ${connectionError}`,
-      );
+      connectionError = handleRejection('connection info', connResult.reason);
     }
   }
 

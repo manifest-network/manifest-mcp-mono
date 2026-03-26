@@ -140,20 +140,23 @@ export class FredMCPServer {
     return this.walletProvider.signArbitrary.bind(this.walletProvider);
   }
 
-  /** Last unix-second used for auth token generation.
-   *  ADR-036 signing is deterministic, so tokens sharing the same timestamp
-   *  produce identical signatures. The provider's replay tracker rejects
-   *  duplicate signatures on protected endpoints (connection, restart, update).
-   *  We ensure each token uses a unique timestamp by waiting for the clock to
-   *  advance rather than drifting into the future (the provider enforces a
-   *  30 s max token age and 10 s max-future-skew).
-   *  Access is serialized via {@link timestampQueue} so concurrent callers
-   *  cannot observe the same {@link lastAuthTimestamp}. */
+  /** Last unix-second used for auth token generation. */
   private lastAuthTimestamp = 0;
+  /** Serializes access to {@link lastAuthTimestamp}. */
   private timestampQueue: Promise<number> = Promise.resolve(0);
 
+  /**
+   * Return a unix-second timestamp guaranteed to differ from the previous one.
+   *
+   * ADR-036 signing is deterministic, so tokens sharing the same timestamp
+   * produce identical signatures. The provider's replay tracker rejects
+   * duplicate signatures on protected endpoints (connection, restart, update).
+   * We wait for the wall clock to advance rather than drifting into the future
+   * (the provider enforces a 30 s max token age and 10 s max-future-skew).
+   * The promise queue ensures concurrent callers are serialized.
+   */
   private nextAuthTimestamp(): Promise<number> {
-    this.timestampQueue = this.timestampQueue.then(async () => {
+    const result = this.timestampQueue.then(async () => {
       const now = Math.floor(Date.now() / 1000);
       if (now > this.lastAuthTimestamp) {
         this.lastAuthTimestamp = now;
@@ -166,7 +169,10 @@ export class FredMCPServer {
       this.lastAuthTimestamp = Math.floor(Date.now() / 1000);
       return this.lastAuthTimestamp;
     });
-    return this.timestampQueue;
+    // Settle the queue regardless of success/failure so a single error
+    // does not permanently poison subsequent callers.
+    this.timestampQueue = result.catch(() => this.lastAuthTimestamp);
+    return result;
   }
 
   private async getProviderAuthToken(
