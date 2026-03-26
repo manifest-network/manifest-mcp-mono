@@ -225,7 +225,7 @@ describe('ChainMCPServer', () => {
     it('routes request_faucet to requestFaucet()', async () => {
       mockRequestFaucet.mockResolvedValue({
         address: 'manifest1abc',
-        results: [{ denom: 'umfx', success: true, transactionHash: 'TX1' }],
+        results: [{ denom: 'umfx', success: true }],
       });
 
       const server = new ChainMCPServer({
@@ -248,7 +248,7 @@ describe('ChainMCPServer', () => {
     it('request_faucet passes denom when provided', async () => {
       mockRequestFaucet.mockResolvedValue({
         address: 'manifest1abc',
-        results: [{ denom: 'umfx', success: true, transactionHash: 'TX1' }],
+        results: [{ denom: 'umfx', success: true }],
       });
 
       const server = new ChainMCPServer({

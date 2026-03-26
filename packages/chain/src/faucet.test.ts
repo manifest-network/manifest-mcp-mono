@@ -7,7 +7,7 @@ import {
 } from './faucet.js';
 
 function mockFetch(
-  responses: Array<{ status: number; body: unknown }>,
+  responses: Array<{ status: number; body: string | Record<string, unknown> }>,
 ): typeof globalThis.fetch {
   let callIndex = 0;
   return vi.fn(async () => {
@@ -17,7 +17,8 @@ function mockFetch(
       ok: r.status >= 200 && r.status < 300,
       status: r.status,
       statusText: `HTTP ${r.status}`,
-      json: async () => r.body,
+      json: async () =>
+        typeof r.body === 'string' ? JSON.parse(r.body) : r.body,
       text: async () =>
         typeof r.body === 'string' ? r.body : JSON.stringify(r.body),
     } as Response;
@@ -151,10 +152,8 @@ describe('fetchFaucetStatus', () => {
 });
 
 describe('requestFaucetCredit', () => {
-  it('returns success with transactionHash on 200', async () => {
-    const fetch = mockFetch([
-      { status: 200, body: { transactionHash: 'HASH123' } },
-    ]);
+  it('returns success on 200 with plain text body', async () => {
+    const fetch = mockFetch([{ status: 200, body: 'ok' }]);
 
     const result = await requestFaucetCredit(
       FAUCET_URL,
@@ -163,11 +162,7 @@ describe('requestFaucetCredit', () => {
       fetch,
     );
 
-    expect(result).toEqual({
-      denom: 'umfx',
-      success: true,
-      transactionHash: 'HASH123',
-    });
+    expect(result).toEqual({ denom: 'umfx', success: true });
     expect(fetch).toHaveBeenCalledWith(
       `${FAUCET_URL}/credit`,
       expect.objectContaining({
@@ -178,11 +173,11 @@ describe('requestFaucetCredit', () => {
     );
   });
 
-  it('returns failure with error on non-200', async () => {
+  it('returns failure with error on cooldown (405)', async () => {
     const fetch = mockFetch([
       {
-        status: 429,
-        body: 'Cooldown active for umfx. Try again in 85000s.',
+        status: 405,
+        body: 'Too many requests for the same address. Blocked to prevent draining. Please wait 86400 seconds and try it again!',
       },
     ]);
 
@@ -195,7 +190,59 @@ describe('requestFaucetCredit', () => {
 
     expect(result.success).toBe(false);
     expect(result.denom).toBe('umfx');
-    expect(result.error).toContain('Cooldown');
+    expect(result.error).toContain('Too many requests');
+  });
+
+  it('returns failure on bad address (400)', async () => {
+    const fetch = mockFetch([
+      {
+        status: 400,
+        body: 'Address is not in the expected format for this chain.',
+      },
+    ]);
+
+    const result = await requestFaucetCredit(
+      FAUCET_URL,
+      ADDRESS,
+      'umfx',
+      fetch,
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('Address is not in the expected format');
+  });
+
+  it('returns failure on unavailable token (422)', async () => {
+    const fetch = mockFetch([
+      {
+        status: 422,
+        body: 'Token is not available. Available tokens are: umfx,upwr',
+      },
+    ]);
+
+    const result = await requestFaucetCredit(
+      FAUCET_URL,
+      ADDRESS,
+      'ubad',
+      fetch,
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('Token is not available');
+  });
+
+  it('returns failure on send error (500)', async () => {
+    const fetch = mockFetch([{ status: 500, body: 'Sending tokens failed' }]);
+
+    const result = await requestFaucetCredit(
+      FAUCET_URL,
+      ADDRESS,
+      'umfx',
+      fetch,
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('Sending tokens failed');
   });
 
   it('returns failure on network error', async () => {
@@ -210,23 +257,6 @@ describe('requestFaucetCredit', () => {
 
     expect(result.success).toBe(false);
     expect(result.error).toBe('Connection refused');
-  });
-
-  it('returns success without transactionHash when not in response', async () => {
-    const fetch = mockFetch([{ status: 200, body: {} }]);
-
-    const result = await requestFaucetCredit(
-      FAUCET_URL,
-      ADDRESS,
-      'umfx',
-      fetch,
-    );
-
-    expect(result).toEqual({
-      denom: 'umfx',
-      success: true,
-      transactionHash: undefined,
-    });
   });
 
   it('handles non-Error thrown values', async () => {
@@ -248,9 +278,7 @@ describe('requestFaucetCredit', () => {
 
 describe('requestFaucet', () => {
   it('requests specific denom without calling /status', async () => {
-    const fetch = mockFetch([
-      { status: 200, body: { transactionHash: 'TX1' } },
-    ]);
+    const fetch = mockFetch([{ status: 200, body: 'ok' }]);
 
     const result = await requestFaucet(FAUCET_URL, ADDRESS, 'umfx', fetch);
 
@@ -266,8 +294,8 @@ describe('requestFaucet', () => {
     // /status + 2x /credit
     const fetch = mockFetch([
       { status: 200, body: statusBody() },
-      { status: 200, body: { transactionHash: 'TX_MFX' } },
-      { status: 200, body: { transactionHash: 'TX_PWR' } },
+      { status: 200, body: 'ok' },
+      { status: 200, body: 'ok' },
     ]);
 
     const result = await requestFaucet(FAUCET_URL, ADDRESS, undefined, fetch);
@@ -276,11 +304,14 @@ describe('requestFaucet', () => {
     expect(result.results.every((r) => r.success)).toBe(true);
   });
 
-  it('handles partial success', async () => {
+  it('handles partial success (one denom on cooldown)', async () => {
     const fetch = mockFetch([
       { status: 200, body: statusBody() },
-      { status: 200, body: { transactionHash: 'TX_MFX' } },
-      { status: 429, body: 'Cooldown active for upwr.' },
+      { status: 200, body: 'ok' },
+      {
+        status: 405,
+        body: 'Too many requests for the same address. Blocked to prevent draining. Please wait 86400 seconds and try it again!',
+      },
     ]);
 
     const result = await requestFaucet(FAUCET_URL, ADDRESS, undefined, fetch);
@@ -309,7 +340,7 @@ describe('requestFaucet', () => {
           availableTokens: ['', 'umfx', ''],
         }),
       },
-      { status: 200, body: { transactionHash: 'TX1' } },
+      { status: 200, body: 'ok' },
     ]);
 
     const result = await requestFaucet(FAUCET_URL, ADDRESS, undefined, fetch);

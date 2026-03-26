@@ -1,4 +1,5 @@
 import {
+  logger,
   ManifestMCPError,
   ManifestMCPErrorCode,
 } from '@manifest-network/manifest-mcp-core';
@@ -30,7 +31,6 @@ export type FaucetStatusResponse = z.infer<typeof FaucetStatusResponseSchema>;
 export interface FaucetDripResult {
   readonly denom: string;
   readonly success: boolean;
-  readonly transactionHash?: string;
   readonly error?: string;
 }
 
@@ -107,17 +107,18 @@ export async function requestFaucetCredit(
       signal: AbortSignal.timeout(15_000),
     });
 
+    const text = await res.text().catch(() => res.statusText);
+
     if (!res.ok) {
-      const text = await res.text().catch(() => res.statusText);
-      return { denom, success: false, error: text || `HTTP ${res.status}` };
+      return {
+        denom,
+        success: false,
+        error: text || `HTTP ${res.status}`,
+      };
     }
 
-    const body = (await res.json()) as { transactionHash?: string };
-    return {
-      denom,
-      success: true,
-      transactionHash: body.transactionHash,
-    };
+    logger.debug(`Faucet /credit ${denom}: ${text}`);
+    return { denom, success: true };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     return { denom, success: false, error: message };
