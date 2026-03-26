@@ -40,6 +40,8 @@ describe('Deploy lifecycle', () => {
   // ------------------------------------------------------------------
   // 2. Browse catalog
   // ------------------------------------------------------------------
+  let skuDenom: string;
+
   it('browse_catalog shows providers and SKU tiers', async () => {
     const result = await fredClient.callTool<{
       providers: Array<{ active: boolean }>;
@@ -51,6 +53,14 @@ describe('Deploy lifecycle', () => {
 
     const tierNames = Object.keys(result.tiers);
     expect(tierNames).toContain('docker-micro');
+
+    // Discover the pricing denom so fund_credit uses the correct token
+    const skus = await leaseClient.callTool<{
+      skus: Array<{ name: string; basePrice: { denom: string } }>;
+    }>('get_skus');
+    const micro = skus.skus.find((s) => s.name === 'docker-micro');
+    expect(micro).toBeDefined();
+    skuDenom = micro!.basePrice.denom;
   });
 
   // ------------------------------------------------------------------
@@ -60,7 +70,7 @@ describe('Deploy lifecycle', () => {
     const result = await leaseClient.callTool<{
       code: number;
       transactionHash: string;
-    }>('fund_credit', { amount: '10000000umfx' });
+    }>('fund_credit', { amount: `10000000${skuDenom}` });
 
     expect(result.code).toBe(0);
     expect(result.transactionHash).toBeTruthy();
