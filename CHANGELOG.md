@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.2]
+
+- Fix(core): bump gas simulation multiplier to 1.5 to match CLI `--gas-adjustment`
+- Fix(fred): add `AuthTimestampTracker` to guarantee unique auth token timestamps, preventing replay rejection on protected endpoints
+- Fix(fred): send JSON with base64-encoded payload in `updateLease` instead of raw octet-stream
+- Fix(fred): generate separate auth tokens for status and connection requests in `appStatus`
+- Fix(e2e): use unprivileged nginx image, discover SKU denom dynamically, disable file parallelism
+
 ## [0.3.1]
 
 - Fix: re-export faucet functions and types (`requestFaucet`, `requestFaucetCredit`, `fetchFaucetStatus`) from chain package entry
