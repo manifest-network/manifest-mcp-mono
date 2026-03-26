@@ -21,6 +21,16 @@ import { z } from 'zod';
 import { requestFaucet } from './faucet.js';
 
 export type { ManifestMCPServerOptions } from '@manifest-network/manifest-mcp-core';
+export type {
+  FaucetDripResult,
+  FaucetStatusResponse,
+  RequestFaucetResult,
+} from './faucet.js';
+export {
+  fetchFaucetStatus,
+  requestFaucet,
+  requestFaucetCredit,
+} from './faucet.js';
 
 export interface ChainMCPServerOptions extends ManifestMCPServerOptions {
   /** Faucet base URL. When set, the `request_faucet` tool is registered. */
