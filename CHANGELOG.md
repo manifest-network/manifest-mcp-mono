@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.4]
+
+- Fix(chain): handle plain-text faucet `/credit` responses from CosmJS faucet (was crashing on `res.json()`)
+- **Breaking**: remove `transactionHash` from `FaucetDripResult` (the CosmJS faucet never returns one)
+- Test(chain): add faucet tests for all faucet HTTP status codes (200, 400, 405, 422, 500)
+
 ## [0.3.3]
 
 - Fix(chain): align `FaucetStatusResponse` with real faucet API (`availableTokens` string[] instead of `tokens` Coin[])
