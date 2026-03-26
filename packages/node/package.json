@@ -40,9 +40,9 @@
     "dist"
   ],
   "dependencies": {
-    "@cosmjs/amino": "0.32.4",
-    "@cosmjs/encoding": "0.32.4",
-    "@cosmjs/proto-signing": "0.32.4",
+    "@cosmjs/amino": "0.38.1",
+    "@cosmjs/encoding": "0.38.1",
+    "@cosmjs/proto-signing": "0.38.1",
     "@manifest-network/manifest-mcp-core": "^0.3.4",
     "@manifest-network/manifest-mcp-chain": "^0.3.4",
     "@manifest-network/manifest-mcp-lease": "^0.3.4",
