@@ -70,7 +70,8 @@ export async function appStatus(
     let statusToken: string;
     let connToken: string;
     try {
-      // Each request needs its own token — the provider rejects replayed tokens.
+      // The connection endpoint checks replay; using separate tokens avoids
+      // sharing a signature across concurrent requests.
       statusToken = await getAuthToken(address, leaseUuid);
       connToken = await getAuthToken(address, leaseUuid);
     } catch (err) {
@@ -93,30 +94,27 @@ export async function appStatus(
       getLeaseConnectionInfo(providerUrl, leaseUuid, connToken, fetchFn),
     ]);
 
+    function rejectionMessage(reason: unknown): string {
+      const raw = reason instanceof Error ? reason.message : String(reason);
+      return sanitizeForLogging(raw) as string;
+    }
+
     if (statusResult.status === 'fulfilled') {
       fredStatus = statusResult.value;
     } else {
-      const rawMsg =
-        statusResult.reason instanceof Error
-          ? statusResult.reason.message
-          : String(statusResult.reason);
+      providerError = rejectionMessage(statusResult.reason);
       logger.error(
-        `[app_status] Failed to get lease status for ${leaseUuid}: ${rawMsg}`,
+        `[app_status] Failed to get lease status for ${leaseUuid}: ${providerError}`,
       );
-      providerError = sanitizeForLogging(rawMsg) as string;
     }
 
     if (connResult.status === 'fulfilled') {
       connection = connResult.value.connection;
     } else {
-      const rawMsg =
-        connResult.reason instanceof Error
-          ? connResult.reason.message
-          : String(connResult.reason);
+      connectionError = rejectionMessage(connResult.reason);
       logger.error(
-        `[app_status] Failed to get connection info for ${leaseUuid}: ${rawMsg}`,
+        `[app_status] Failed to get connection info for ${leaseUuid}: ${connectionError}`,
       );
-      connectionError = sanitizeForLogging(rawMsg) as string;
     }
   }
 

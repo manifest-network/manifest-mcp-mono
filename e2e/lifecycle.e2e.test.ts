@@ -173,7 +173,7 @@ describe('Deploy lifecycle', () => {
   });
 
   // ------------------------------------------------------------------
-  // 11. Close lease
+  // 10. Close lease
   // ------------------------------------------------------------------
   it('close_lease closes the lease', async () => {
     const result = await leaseClient.callTool<{
@@ -186,7 +186,7 @@ describe('Deploy lifecycle', () => {
   });
 
   // ------------------------------------------------------------------
-  // 12. Verify stopped
+  // 11. Verify stopped
   // ------------------------------------------------------------------
   it('leases_by_tenant shows lease as closed', async () => {
     const result = await leaseClient.callTool<{
@@ -199,7 +199,7 @@ describe('Deploy lifecycle', () => {
   });
 
   // ------------------------------------------------------------------
-  // 13. Verify tool lists
+  // 12. Verify tool lists
   // ------------------------------------------------------------------
   it('lease server lists all expected tools', async () => {
     const tools = await leaseClient.listTools();

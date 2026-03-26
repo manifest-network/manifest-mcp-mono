@@ -310,10 +310,12 @@ export class CosmosClientManager {
                 broadcastPollIntervalMs: DEFAULT_BROADCAST_POLL_INTERVAL_MS,
               },
             );
-            // Override the default 1.4x gas multiplier used when fee is 'auto'
-            (
-              c as unknown as { defaultGasMultiplier: number }
-            ).defaultGasMultiplier = DEFAULT_GAS_MULTIPLIER;
+            // The property is private readonly with no constructor option,
+            // so we must bypass TypeScript's access control to override it.
+            const record = c as unknown as Record<string, unknown>;
+            if (typeof record.defaultGasMultiplier === 'number') {
+              record.defaultGasMultiplier = DEFAULT_GAS_MULTIPLIER;
+            }
             return c;
           },
           {

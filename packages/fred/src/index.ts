@@ -141,25 +141,32 @@ export class FredMCPServer {
   }
 
   /** Last unix-second used for auth token generation.
-   *  The provider rejects replayed tokens (same signature = same second),
-   *  so we ensure each token uses a unique timestamp. When multiple tokens
-   *  are needed within the same wall-clock second we wait for the next
-   *  second rather than drifting into the future (the provider enforces
-   *  a 10 s max-future-skew). */
+   *  ADR-036 signing is deterministic, so tokens sharing the same timestamp
+   *  produce identical signatures. The provider's replay tracker rejects
+   *  duplicate signatures on protected endpoints (connection, restart, update).
+   *  We ensure each token uses a unique timestamp by waiting for the clock to
+   *  advance rather than drifting into the future (the provider enforces a
+   *  30 s max token age and 10 s max-future-skew).
+   *  Access is serialized via {@link timestampQueue} so concurrent callers
+   *  cannot observe the same {@link lastAuthTimestamp}. */
   private lastAuthTimestamp = 0;
+  private timestampQueue: Promise<number> = Promise.resolve(0);
 
-  private async nextAuthTimestamp(): Promise<number> {
-    const now = Math.floor(Date.now() / 1000);
-    if (now > this.lastAuthTimestamp) {
-      this.lastAuthTimestamp = now;
-      return now;
-    }
-    // Same second as last token — wait for the clock to advance
-    await new Promise((resolve) =>
-      setTimeout(resolve, (this.lastAuthTimestamp - now + 1) * 1000),
-    );
-    this.lastAuthTimestamp = Math.floor(Date.now() / 1000);
-    return this.lastAuthTimestamp;
+  private nextAuthTimestamp(): Promise<number> {
+    this.timestampQueue = this.timestampQueue.then(async () => {
+      const now = Math.floor(Date.now() / 1000);
+      if (now > this.lastAuthTimestamp) {
+        this.lastAuthTimestamp = now;
+        return now;
+      }
+      // Same second as last token — wait for the clock to advance
+      await new Promise((resolve) =>
+        setTimeout(resolve, (this.lastAuthTimestamp - now + 1) * 1000),
+      );
+      this.lastAuthTimestamp = Math.floor(Date.now() / 1000);
+      return this.lastAuthTimestamp;
+    });
+    return this.timestampQueue;
   }
 
   private async getProviderAuthToken(

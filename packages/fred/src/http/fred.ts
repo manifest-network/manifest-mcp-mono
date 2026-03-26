@@ -155,8 +155,15 @@ export async function updateLease(
 ): Promise<FredActionResponse> {
   const validated = validateProviderUrl(providerUrl);
   const url = `${validated}/v1/leases/${encodeURIComponent(leaseUuid)}/update`;
-  // The provider expects JSON with base64-encoded payload (Go []byte field)
-  const b64 = btoa(String.fromCharCode(...payload));
+  // The provider expects JSON with base64-encoded payload (Go []byte field).
+  // Chunk the conversion to avoid exceeding the max-arguments limit of
+  // String.fromCharCode for large payloads.
+  const CHUNK = 0x8000;
+  let binary = '';
+  for (let i = 0; i < payload.length; i += CHUNK) {
+    binary += String.fromCharCode(...payload.subarray(i, i + CHUNK));
+  }
+  const b64 = btoa(binary);
   const res = await checkedFetch(
     url,
     {
