@@ -17,10 +17,6 @@ export class AuthTimestampTracker {
   next(): Promise<number> {
     const result = this.queue.then(async () => {
       let now = Math.floor(Date.now() / 1000);
-      if (now > this.last) {
-        this.last = now;
-        return now;
-      }
       while (now <= this.last) {
         const sleepMs = (this.last - now + 1) * 1000;
         await new Promise((resolve) => setTimeout(resolve, sleepMs));
