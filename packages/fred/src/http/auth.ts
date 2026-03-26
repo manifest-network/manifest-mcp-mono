@@ -18,7 +18,9 @@ export class AuthTimestampTracker {
     const result = this.queue.then(async () => {
       let now = Math.floor(Date.now() / 1000);
       while (now <= this.last) {
-        const sleepMs = (this.last - now + 1) * 1000;
+        // Cap sleep at 1 s so forward clock jumps (e.g. NTP) are
+        // picked up quickly instead of waiting the full precomputed delay.
+        const sleepMs = Math.min((this.last - now + 1) * 1000, 1000);
         await new Promise((resolve) => setTimeout(resolve, sleepMs));
         now = Math.floor(Date.now() / 1000);
       }
