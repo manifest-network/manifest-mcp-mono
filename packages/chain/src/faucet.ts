@@ -1,28 +1,37 @@
 import {
-  type Coin,
   ManifestMCPError,
   ManifestMCPErrorCode,
 } from '@manifest-network/manifest-mcp-core';
+import { z } from 'zod';
 
-export interface FaucetDistributor {
-  readonly address: string;
-  readonly balance: readonly Coin[];
-}
+const CoinSchema = z.object({
+  denom: z.string(),
+  amount: z.string(),
+});
 
-export interface FaucetHolder {
-  readonly address: string;
-  readonly balance: readonly Coin[];
-}
+const FaucetDistributorSchema = z.object({
+  address: z.string(),
+  balance: z.array(CoinSchema),
+});
 
-export interface FaucetStatusResponse {
-  readonly status: string;
-  readonly nodeUrl: string;
-  readonly chainId: string;
-  readonly chainTokens: readonly string[];
-  readonly availableTokens: readonly string[];
-  readonly holder: FaucetHolder;
-  readonly distributors: readonly FaucetDistributor[];
-}
+const FaucetHolderSchema = z.object({
+  address: z.string(),
+  balance: z.array(CoinSchema),
+});
+
+const FaucetStatusResponseSchema = z.object({
+  status: z.string(),
+  nodeUrl: z.string(),
+  chainId: z.string(),
+  chainTokens: z.array(z.string()),
+  availableTokens: z.array(z.string()),
+  holder: FaucetHolderSchema,
+  distributors: z.array(FaucetDistributorSchema),
+});
+
+export type FaucetDistributor = z.infer<typeof FaucetDistributorSchema>;
+export type FaucetHolder = z.infer<typeof FaucetHolderSchema>;
+export type FaucetStatusResponse = z.infer<typeof FaucetStatusResponseSchema>;
 
 export interface FaucetDripResult {
   readonly denom: string;
@@ -73,15 +82,15 @@ export async function fetchFaucetStatus(
     );
   }
 
-  const status = body as FaucetStatusResponse;
-  if (!Array.isArray(status?.availableTokens)) {
+  const parsed = FaucetStatusResponseSchema.safeParse(body);
+  if (!parsed.success) {
     throw new ManifestMCPError(
       ManifestMCPErrorCode.QUERY_FAILED,
-      'Faucet /status response missing "availableTokens" array',
+      `Faucet /status response has invalid shape: ${parsed.error.message}`,
     );
   }
 
-  return status;
+  return parsed.data;
 }
 
 /**

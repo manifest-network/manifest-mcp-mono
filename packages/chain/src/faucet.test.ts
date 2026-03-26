@@ -111,6 +111,19 @@ describe('fetchFaucetStatus', () => {
     );
   });
 
+  it('throws ManifestMCPError when required fields are missing', async () => {
+    const fetch = mockFetch([
+      {
+        status: 200,
+        body: { status: 'ok', availableTokens: ['umfx'], chainTokens: [] },
+      },
+    ]);
+
+    await expect(fetchFaucetStatus(FAUCET_URL, fetch)).rejects.toThrow(
+      ManifestMCPError,
+    );
+  });
+
   it('strips trailing slashes from faucet URL', async () => {
     const body = {
       status: 'ok',
