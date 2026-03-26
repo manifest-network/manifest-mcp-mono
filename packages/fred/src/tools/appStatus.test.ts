@@ -168,6 +168,30 @@ describe('appStatus', () => {
     expect(result.fredStatus).toBeUndefined();
   });
 
+  it('calls getAuthToken twice with distinct tokens for status and connection', async () => {
+    const qc = makeActiveQc();
+    const distinctTokenFn = vi
+      .fn()
+      .mockResolvedValueOnce('status-token')
+      .mockResolvedValueOnce('conn-token');
+
+    await appStatus(qc, 'manifest1abc', LEASE_UUID, distinctTokenFn);
+
+    expect(distinctTokenFn).toHaveBeenCalledTimes(2);
+    expect(mockGetLeaseStatus).toHaveBeenCalledWith(
+      expect.any(String),
+      LEASE_UUID,
+      'status-token',
+      undefined,
+    );
+    expect(mockGetLeaseConnectionInfo).toHaveBeenCalledWith(
+      expect.any(String),
+      LEASE_UUID,
+      'conn-token',
+      undefined,
+    );
+  });
+
   it('returns connectionError when only connection info fails', async () => {
     const qc = makeActiveQc();
     mockGetLeaseConnectionInfo.mockRejectedValue(
