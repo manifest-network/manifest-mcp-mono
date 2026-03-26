@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.1]
+
+- Fix: re-export faucet functions and types (`requestFaucet`, `requestFaucetCredit`, `fetchFaucetStatus`) from chain package entry
+
 ## [0.3.0]
 
 - Feat: add `request_faucet` tool for chain server (enabled when `MANIFEST_FAUCET_URL` is set)
