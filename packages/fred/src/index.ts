@@ -148,7 +148,7 @@ export class FredMCPServer {
     leaseUuid: string,
   ): Promise<string> {
     const signArbitrary = this.requireSignArbitrary();
-    const timestamp = this.authTimestamps.next();
+    const timestamp = await this.authTimestamps.next();
     const message = createSignMessage(address, leaseUuid, timestamp);
     const { pub_key, signature } = await signArbitrary(address, message);
     return createAuthToken(
@@ -166,7 +166,7 @@ export class FredMCPServer {
     metaHashHex: string,
   ): Promise<string> {
     const signArbitrary = this.requireSignArbitrary();
-    const timestamp = this.authTimestamps.next();
+    const timestamp = await this.authTimestamps.next();
     const message = createLeaseDataSignMessage(
       leaseUuid,
       metaHashHex,
