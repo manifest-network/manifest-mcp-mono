@@ -33,16 +33,33 @@ function mockFetchError(error: Error): typeof globalThis.fetch {
 const FAUCET_URL = 'https://faucet.test.com';
 const ADDRESS = 'manifest1abc';
 
+/** Builds a valid faucet /status response body with optional overrides. */
+function statusBody(
+  overrides: Record<string, unknown> = {},
+): Record<string, unknown> {
+  return {
+    status: 'ok',
+    nodeUrl: 'http://localhost:26657',
+    chainId: 'manifest-ledger-beta',
+    chainTokens: ['umfx', 'upwr'],
+    availableTokens: ['umfx', 'upwr'],
+    holder: { address: 'manifest1faucet', balance: [] },
+    distributors: [],
+    ...overrides,
+  };
+}
+
 describe('fetchFaucetStatus', () => {
   it('returns status with available denoms', async () => {
-    const body = {
-      address: 'manifest1faucet',
-      tokens: [
-        { denom: 'umfx', amount: '10000000' },
-        { denom: 'upwr', amount: '10000000' },
-      ],
-      cooldown: 86400,
-    };
+    const body = statusBody({
+      holder: {
+        address: 'manifest1faucet',
+        balance: [
+          { denom: 'umfx', amount: '10000000' },
+          { denom: 'upwr', amount: '10000000' },
+        ],
+      },
+    });
     const fetch = mockFetch([{ status: 200, body }]);
 
     const result = await fetchFaucetStatus(FAUCET_URL, fetch);
@@ -86,11 +103,49 @@ describe('fetchFaucetStatus', () => {
     );
   });
 
-  it('throws ManifestMCPError when tokens field is missing', async () => {
-    const fetch = mockFetch([{ status: 200, body: { address: 'x' } }]);
+  it('throws ManifestMCPError when availableTokens field is missing', async () => {
+    const fetch = mockFetch([{ status: 200, body: { status: 'ok' } }]);
 
     await expect(fetchFaucetStatus(FAUCET_URL, fetch)).rejects.toThrow(
       ManifestMCPError,
+    );
+  });
+
+  it('throws ManifestMCPError when availableTokens is not an array', async () => {
+    const fetch = mockFetch([
+      { status: 200, body: { status: 'ok', availableTokens: 'umfx' } },
+    ]);
+
+    await expect(fetchFaucetStatus(FAUCET_URL, fetch)).rejects.toThrow(
+      ManifestMCPError,
+    );
+  });
+
+  it('throws ManifestMCPError when required fields are missing', async () => {
+    const fetch = mockFetch([
+      {
+        status: 200,
+        body: { status: 'ok', availableTokens: ['umfx'], chainTokens: [] },
+      },
+    ]);
+
+    await expect(fetchFaucetStatus(FAUCET_URL, fetch)).rejects.toThrow(
+      ManifestMCPError,
+    );
+  });
+
+  it('strips trailing slashes from faucet URL', async () => {
+    const body = statusBody({
+      chainTokens: ['umfx'],
+      availableTokens: ['umfx'],
+    });
+    const fetch = mockFetch([{ status: 200, body }]);
+
+    await fetchFaucetStatus('https://faucet.test.com///', fetch);
+
+    expect(fetch).toHaveBeenCalledWith(
+      'https://faucet.test.com/status',
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
   });
 });
@@ -156,6 +211,39 @@ describe('requestFaucetCredit', () => {
     expect(result.success).toBe(false);
     expect(result.error).toBe('Connection refused');
   });
+
+  it('returns success without transactionHash when not in response', async () => {
+    const fetch = mockFetch([{ status: 200, body: {} }]);
+
+    const result = await requestFaucetCredit(
+      FAUCET_URL,
+      ADDRESS,
+      'umfx',
+      fetch,
+    );
+
+    expect(result).toEqual({
+      denom: 'umfx',
+      success: true,
+      transactionHash: undefined,
+    });
+  });
+
+  it('handles non-Error thrown values', async () => {
+    const fetch = vi.fn(async () => {
+      throw 'string error';
+    }) as unknown as typeof globalThis.fetch;
+
+    const result = await requestFaucetCredit(
+      FAUCET_URL,
+      ADDRESS,
+      'umfx',
+      fetch,
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.error).toBe('string error');
+  });
 });
 
 describe('requestFaucet', () => {
@@ -175,17 +263,9 @@ describe('requestFaucet', () => {
   });
 
   it('discovers denoms from /status and requests all', async () => {
-    const statusBody = {
-      address: 'manifest1faucet',
-      tokens: [
-        { denom: 'umfx', amount: '10000000' },
-        { denom: 'upwr', amount: '10000000' },
-      ],
-      cooldown: 86400,
-    };
     // /status + 2x /credit
     const fetch = mockFetch([
-      { status: 200, body: statusBody },
+      { status: 200, body: statusBody() },
       { status: 200, body: { transactionHash: 'TX_MFX' } },
       { status: 200, body: { transactionHash: 'TX_PWR' } },
     ]);
@@ -197,16 +277,8 @@ describe('requestFaucet', () => {
   });
 
   it('handles partial success', async () => {
-    const statusBody = {
-      address: 'manifest1faucet',
-      tokens: [
-        { denom: 'umfx', amount: '10000000' },
-        { denom: 'upwr', amount: '10000000' },
-      ],
-      cooldown: 86400,
-    };
     const fetch = mockFetch([
-      { status: 200, body: statusBody },
+      { status: 200, body: statusBody() },
       { status: 200, body: { transactionHash: 'TX_MFX' } },
       { status: 429, body: 'Cooldown active for upwr.' },
     ]);
@@ -228,13 +300,47 @@ describe('requestFaucet', () => {
     ).rejects.toThrow(ManifestMCPError);
   });
 
+  it('filters empty strings from availableTokens', async () => {
+    const fetch = mockFetch([
+      {
+        status: 200,
+        body: statusBody({
+          chainTokens: ['umfx', ''],
+          availableTokens: ['', 'umfx', ''],
+        }),
+      },
+      { status: 200, body: { transactionHash: 'TX1' } },
+    ]);
+
+    const result = await requestFaucet(FAUCET_URL, ADDRESS, undefined, fetch);
+
+    expect(result.results).toHaveLength(1);
+    expect(result.results[0].denom).toBe('umfx');
+  });
+
+  it('throws when all availableTokens are empty strings', async () => {
+    const fetch = mockFetch([
+      {
+        status: 200,
+        body: statusBody({
+          chainTokens: [],
+          availableTokens: ['', ''],
+        }),
+      },
+    ]);
+
+    await expect(
+      requestFaucet(FAUCET_URL, ADDRESS, undefined, fetch),
+    ).rejects.toThrow(ManifestMCPError);
+  });
+
   it('throws when faucet has no tokens configured', async () => {
-    const statusBody = {
-      address: 'manifest1faucet',
-      tokens: [],
-      cooldown: 86400,
-    };
-    const fetch = mockFetch([{ status: 200, body: statusBody }]);
+    const fetch = mockFetch([
+      {
+        status: 200,
+        body: statusBody({ chainTokens: [], availableTokens: [] }),
+      },
+    ]);
 
     await expect(
       requestFaucet(FAUCET_URL, ADDRESS, undefined, fetch),

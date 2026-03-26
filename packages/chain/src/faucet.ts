@@ -1,14 +1,31 @@
 import {
-  type Coin,
   ManifestMCPError,
   ManifestMCPErrorCode,
 } from '@manifest-network/manifest-mcp-core';
+import { z } from 'zod';
 
-export interface FaucetStatusResponse {
-  readonly address: string;
-  readonly tokens: readonly Coin[];
-  readonly cooldown: number;
-}
+const CoinSchema = z.object({
+  denom: z.string(),
+  amount: z.string(),
+});
+
+const FaucetAccountSchema = z.object({
+  address: z.string(),
+  balance: z.array(CoinSchema),
+});
+
+const FaucetStatusResponseSchema = z.object({
+  status: z.string(),
+  nodeUrl: z.string(),
+  chainId: z.string(),
+  chainTokens: z.array(z.string()),
+  availableTokens: z.array(z.string()),
+  holder: FaucetAccountSchema,
+  distributors: z.array(FaucetAccountSchema),
+});
+
+export type FaucetAccount = z.infer<typeof FaucetAccountSchema>;
+export type FaucetStatusResponse = z.infer<typeof FaucetStatusResponseSchema>;
 
 export interface FaucetDripResult {
   readonly denom: string;
@@ -23,7 +40,7 @@ export interface RequestFaucetResult {
 }
 
 /**
- * Fetch available denoms and cooldown info from the faucet `/status` endpoint.
+ * Fetch faucet status including available tokens from the `/status` endpoint.
  */
 export async function fetchFaucetStatus(
   faucetUrl: string,
@@ -59,15 +76,15 @@ export async function fetchFaucetStatus(
     );
   }
 
-  const status = body as FaucetStatusResponse;
-  if (!Array.isArray(status?.tokens)) {
+  const parsed = FaucetStatusResponseSchema.safeParse(body);
+  if (!parsed.success) {
     throw new ManifestMCPError(
       ManifestMCPErrorCode.QUERY_FAILED,
-      'Faucet /status response missing "tokens" array',
+      `Faucet /status response has invalid shape: ${parsed.error.message}`,
     );
   }
 
-  return status;
+  return parsed.data;
 }
 
 /**
@@ -130,9 +147,7 @@ export async function requestFaucet(
   }
 
   const status = await fetchFaucetStatus(faucetUrl, fetchFn);
-  const denoms = status.tokens
-    .map((t) => t.denom)
-    .filter((d): d is string => typeof d === 'string' && d.length > 0);
+  const denoms = status.availableTokens.filter((d) => d.length > 0);
 
   if (denoms.length === 0) {
     throw new ManifestMCPError(
