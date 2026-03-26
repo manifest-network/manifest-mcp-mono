@@ -16,6 +16,7 @@ import type { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import {
+  AuthTimestampTracker,
   createAuthToken,
   createLeaseDataSignMessage,
   createSignMessage,
@@ -140,51 +141,14 @@ export class FredMCPServer {
     return this.walletProvider.signArbitrary.bind(this.walletProvider);
   }
 
-  /** Last unix-second used for auth token generation. */
-  private lastAuthTimestamp = 0;
-  /** Serializes access to {@link lastAuthTimestamp}. */
-  private timestampQueue: Promise<number> = Promise.resolve(0);
-
-  /**
-   * Return a unix-second timestamp guaranteed to differ from the previous one.
-   *
-   * ADR-036 signing is deterministic, so tokens sharing the same timestamp
-   * produce identical signatures. The provider's replay tracker rejects
-   * duplicate signatures on protected endpoints (connection, restart, update).
-   * We wait for the wall clock to advance rather than drifting into the future
-   * (the provider enforces a 30 s max token age and 10 s max-future-skew).
-   * The promise queue ensures concurrent callers are serialized.
-   */
-  private nextAuthTimestamp(): Promise<number> {
-    const result = this.timestampQueue.then(async () => {
-      let now = Math.floor(Date.now() / 1000);
-      if (now > this.lastAuthTimestamp) {
-        this.lastAuthTimestamp = now;
-        return now;
-      }
-      // Same second as last token — wait for the clock to advance. Loop
-      // in case a backward clock adjustment (e.g. NTP step) causes the
-      // post-sleep read to still match the previous timestamp.
-      while (now <= this.lastAuthTimestamp) {
-        const sleepMs = (this.lastAuthTimestamp - now + 1) * 1000;
-        await new Promise((resolve) => setTimeout(resolve, sleepMs));
-        now = Math.floor(Date.now() / 1000);
-      }
-      this.lastAuthTimestamp = now;
-      return now;
-    });
-    // Settle the queue regardless of success/failure so a single error
-    // does not permanently poison subsequent callers.
-    this.timestampQueue = result.catch(() => this.lastAuthTimestamp);
-    return result;
-  }
+  private authTimestamps = new AuthTimestampTracker();
 
   private async getProviderAuthToken(
     address: string,
     leaseUuid: string,
   ): Promise<string> {
     const signArbitrary = this.requireSignArbitrary();
-    const timestamp = await this.nextAuthTimestamp();
+    const timestamp = this.authTimestamps.next();
     const message = createSignMessage(address, leaseUuid, timestamp);
     const { pub_key, signature } = await signArbitrary(address, message);
     return createAuthToken(
@@ -202,7 +166,7 @@ export class FredMCPServer {
     metaHashHex: string,
   ): Promise<string> {
     const signArbitrary = this.requireSignArbitrary();
-    const timestamp = await this.nextAuthTimestamp();
+    const timestamp = this.authTimestamps.next();
     const message = createLeaseDataSignMessage(
       leaseUuid,
       metaHashHex,

@@ -255,6 +255,32 @@ describe('CosmosClientManager', () => {
   });
 
   describe('getSigningClient', () => {
+    it('overrides defaultGasMultiplier when property exists', async () => {
+      const mockSC = { disconnect: vi.fn(), defaultGasMultiplier: 1.4 };
+      mockConnectWithSigner.mockResolvedValue(mockSC as any);
+
+      const instance = CosmosClientManager.getInstance(
+        makeConfig(),
+        makeWallet(),
+      );
+      await instance.getSigningClient();
+
+      expect(mockSC.defaultGasMultiplier).toBe(1.5);
+    });
+
+    it('leaves client unchanged when defaultGasMultiplier is absent', async () => {
+      const mockSC = { disconnect: vi.fn() };
+      mockConnectWithSigner.mockResolvedValue(mockSC as any);
+
+      const instance = CosmosClientManager.getInstance(
+        makeConfig(),
+        makeWallet(),
+      );
+      await instance.getSigningClient();
+
+      expect((mockSC as any).defaultGasMultiplier).toBeUndefined();
+    });
+
     it('creates and returns signing client', async () => {
       const mockSC = { disconnect: vi.fn() };
       mockConnectWithSigner.mockResolvedValue(mockSC as any);
