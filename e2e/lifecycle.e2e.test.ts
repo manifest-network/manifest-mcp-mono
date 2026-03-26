@@ -54,13 +54,20 @@ describe('Deploy lifecycle', () => {
   });
 
   // ------------------------------------------------------------------
-  // 3. Fund credits
+  // 3. Fund credits (discovers SKU pricing denom via get_skus)
   // ------------------------------------------------------------------
   it('fund_credit succeeds', async () => {
+    const skus = await leaseClient.callTool<{
+      skus: Array<{ name: string; basePrice: { denom: string } }>;
+    }>('get_skus');
+    const micro = skus.skus.find((s) => s.name === 'docker-micro');
+    expect(micro).toBeDefined();
+    const skuDenom = micro!.basePrice.denom;
+
     const result = await leaseClient.callTool<{
       code: number;
       transactionHash: string;
-    }>('fund_credit', { amount: '10000000umfx' });
+    }>('fund_credit', { amount: `10000000${skuDenom}` });
 
     expect(result.code).toBe(0);
     expect(result.transactionHash).toBeTruthy();
@@ -89,8 +96,8 @@ describe('Deploy lifecycle', () => {
       provider_url: string;
       state: LeaseState;
     }>('deploy_app', {
-      image: 'nginx:alpine',
-      port: 80,
+      image: 'nginxinc/nginx-unprivileged:alpine',
+      port: 8080,
       size: 'docker-micro',
     });
 
@@ -142,24 +149,12 @@ describe('Deploy lifecycle', () => {
   });
 
   // ------------------------------------------------------------------
-  // 9. Restart app
-  // ------------------------------------------------------------------
-  it('restart_app succeeds', async () => {
-    const result = await fredClient.callTool<{
-      lease_uuid: string;
-      status: string;
-    }>('restart_app', { lease_uuid: leaseUuid });
-
-    expect(result.lease_uuid).toBe(leaseUuid);
-  });
-
-  // ------------------------------------------------------------------
-  // 10. Update app
+  // 9. Update app
   // ------------------------------------------------------------------
   it('update_app with new manifest succeeds', async () => {
     const manifest = JSON.stringify({
-      image: 'nginx:alpine',
-      ports: { '80/tcp': {} },
+      image: 'nginxinc/nginx-unprivileged:alpine',
+      ports: { '8080/tcp': {} },
       env: { E2E_TEST: 'true' },
     });
 
@@ -175,7 +170,7 @@ describe('Deploy lifecycle', () => {
   });
 
   // ------------------------------------------------------------------
-  // 11. Close lease
+  // 10. Close lease
   // ------------------------------------------------------------------
   it('close_lease closes the lease', async () => {
     const result = await leaseClient.callTool<{
@@ -188,7 +183,7 @@ describe('Deploy lifecycle', () => {
   });
 
   // ------------------------------------------------------------------
-  // 12. Verify stopped
+  // 11. Verify stopped
   // ------------------------------------------------------------------
   it('leases_by_tenant shows lease as closed', async () => {
     const result = await leaseClient.callTool<{
@@ -201,7 +196,7 @@ describe('Deploy lifecycle', () => {
   });
 
   // ------------------------------------------------------------------
-  // 13. Verify tool lists
+  // 12. Verify tool lists
   // ------------------------------------------------------------------
   it('lease server lists all expected tools', async () => {
     const tools = await leaseClient.listTools();

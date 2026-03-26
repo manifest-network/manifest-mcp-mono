@@ -16,6 +16,7 @@ import {
   getLeaseStatus,
   MAX_TAIL,
   pollLeaseUntilReady,
+  updateLease,
 } from './fred.js';
 import { checkedFetch, parseJsonResponse } from './provider.js';
 
@@ -333,5 +334,54 @@ describe('pollLeaseUntilReady', () => {
     expect(onProgress).toHaveBeenNthCalledWith(3, {
       state: LeaseState.LEASE_STATE_ACTIVE,
     });
+  });
+});
+
+describe('updateLease', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('sends JSON body with base64-encoded payload', async () => {
+    const mockRes = {} as Response;
+    mockCheckedFetch.mockResolvedValue(mockRes);
+    mockParseJsonResponse.mockResolvedValue({ status: 'updated' });
+
+    const payload = new TextEncoder().encode('{"image":"nginx:alpine"}');
+    await updateLease(PROVIDER_URL, LEASE_UUID, payload, AUTH_TOKEN);
+
+    expect(mockCheckedFetch).toHaveBeenCalledWith(
+      expect.stringContaining(`/v1/leases/${LEASE_UUID}/update`),
+      expect.objectContaining({
+        method: 'POST',
+        headers: expect.objectContaining({
+          Authorization: `Bearer ${AUTH_TOKEN}`,
+          'Content-Type': 'application/json',
+        }),
+      }),
+      undefined,
+      undefined,
+    );
+
+    const body = JSON.parse(
+      mockCheckedFetch.mock.calls[0][1]?.body as string,
+    ) as { payload: string };
+    const decoded = atob(body.payload);
+    expect(decoded).toBe('{"image":"nginx:alpine"}');
+  });
+
+  it('handles large payloads without stack overflow', async () => {
+    const mockRes = {} as Response;
+    mockCheckedFetch.mockResolvedValue(mockRes);
+    mockParseJsonResponse.mockResolvedValue({ status: 'updated' });
+
+    // 128KB payload — ensures large payloads are handled correctly
+    const large = new Uint8Array(128 * 1024).fill(65); // all 'A'
+    await updateLease(PROVIDER_URL, LEASE_UUID, large, AUTH_TOKEN);
+
+    const body = JSON.parse(
+      mockCheckedFetch.mock.calls[0][1]?.body as string,
+    ) as { payload: string };
+    const decoded = atob(body.payload);
+    expect(decoded.length).toBe(128 * 1024);
+    expect(decoded[0]).toBe('A');
   });
 });

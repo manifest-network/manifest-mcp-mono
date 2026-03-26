@@ -67,9 +67,14 @@ export async function appStatus(
       };
     }
 
-    let authToken: string;
+    let statusToken: string;
+    let connToken: string;
     try {
-      authToken = await getAuthToken(address, leaseUuid);
+      // The connection endpoint enforces replay protection (status does not),
+      // but we generate separate tokens for both to keep each request
+      // independently authenticated.
+      statusToken = await getAuthToken(address, leaseUuid);
+      connToken = await getAuthToken(address, leaseUuid);
     } catch (err) {
       if (
         err instanceof ManifestMCPError &&
@@ -86,34 +91,28 @@ export async function appStatus(
     }
 
     const [statusResult, connResult] = await Promise.allSettled([
-      getLeaseStatus(providerUrl, leaseUuid, authToken, fetchFn),
-      getLeaseConnectionInfo(providerUrl, leaseUuid, authToken, fetchFn),
+      getLeaseStatus(providerUrl, leaseUuid, statusToken, fetchFn),
+      getLeaseConnectionInfo(providerUrl, leaseUuid, connToken, fetchFn),
     ]);
+
+    function handleRejection(label: string, reason: unknown): string {
+      const rawMsg = reason instanceof Error ? reason.message : String(reason);
+      logger.error(
+        `[app_status] Failed to get ${label} for ${leaseUuid}: ${rawMsg}`,
+      );
+      return sanitizeForLogging(rawMsg) as string;
+    }
 
     if (statusResult.status === 'fulfilled') {
       fredStatus = statusResult.value;
     } else {
-      const rawMsg =
-        statusResult.reason instanceof Error
-          ? statusResult.reason.message
-          : String(statusResult.reason);
-      logger.error(
-        `[app_status] Failed to get lease status for ${leaseUuid}: ${rawMsg}`,
-      );
-      providerError = sanitizeForLogging(rawMsg) as string;
+      providerError = handleRejection('lease status', statusResult.reason);
     }
 
     if (connResult.status === 'fulfilled') {
       connection = connResult.value.connection;
     } else {
-      const rawMsg =
-        connResult.reason instanceof Error
-          ? connResult.reason.message
-          : String(connResult.reason);
-      logger.error(
-        `[app_status] Failed to get connection info for ${leaseUuid}: ${rawMsg}`,
-      );
-      connectionError = sanitizeForLogging(rawMsg) as string;
+      connectionError = handleRejection('connection info', connResult.reason);
     }
   }
 

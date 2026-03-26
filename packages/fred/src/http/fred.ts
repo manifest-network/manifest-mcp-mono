@@ -1,3 +1,4 @@
+import { toBase64 } from '@cosmjs/encoding';
 import {
   LeaseState,
   leaseStateFromJSON,
@@ -155,15 +156,17 @@ export async function updateLease(
 ): Promise<FredActionResponse> {
   const validated = validateProviderUrl(providerUrl);
   const url = `${validated}/v1/leases/${encodeURIComponent(leaseUuid)}/update`;
+  // The provider expects JSON with a base64-encoded payload (Go []byte field).
+  const b64 = toBase64(payload);
   const res = await checkedFetch(
     url,
     {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${authToken}`,
-        'Content-Type': 'application/octet-stream',
+        'Content-Type': 'application/json',
       },
-      body: payload,
+      body: JSON.stringify({ payload: b64 }),
     },
     undefined,
     fetchFn,

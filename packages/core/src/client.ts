@@ -53,6 +53,13 @@ const DEFAULT_BROADCAST_TIMEOUT_MS = 60_000;
 const DEFAULT_BROADCAST_POLL_INTERVAL_MS = 3_000;
 
 /**
+ * Gas simulation multiplier. CosmJS defaults to 1.4 but billing module
+ * transactions (close-lease in particular) can exceed that. 1.5 matches
+ * the --gas-adjustment used by the CLI.
+ */
+const DEFAULT_GAS_MULTIPLIER = 1.5;
+
+/**
  * Get combined signing client options with all Manifest registries
  */
 function getSigningManifestClientOptions() {
@@ -291,14 +298,26 @@ export class CosmosClientManager {
         // This is a known limitation with custom cosmos-sdk module registries.
         // Wrap with retry for transient connection failures
         const client = await withRetry(
-          () =>
-            SigningStargateClient.connectWithSigner(endpoint, signer, {
-              registry: registry as SigningClientRegistry,
-              aminoTypes,
-              gasPrice,
-              broadcastTimeoutMs: DEFAULT_BROADCAST_TIMEOUT_MS,
-              broadcastPollIntervalMs: DEFAULT_BROADCAST_POLL_INTERVAL_MS,
-            }),
+          async () => {
+            const c = await SigningStargateClient.connectWithSigner(
+              endpoint,
+              signer,
+              {
+                registry: registry as SigningClientRegistry,
+                aminoTypes,
+                gasPrice,
+                broadcastTimeoutMs: DEFAULT_BROADCAST_TIMEOUT_MS,
+                broadcastPollIntervalMs: DEFAULT_BROADCAST_POLL_INTERVAL_MS,
+              },
+            );
+            // The property is private readonly with no constructor option,
+            // so we must bypass TypeScript's access control to override it.
+            const record = c as unknown as Record<string, unknown>;
+            if (typeof record.defaultGasMultiplier === 'number') {
+              record.defaultGasMultiplier = DEFAULT_GAS_MULTIPLIER;
+            }
+            return c;
+          },
           {
             config: this.config.retry,
             operationName: 'connect signing client',

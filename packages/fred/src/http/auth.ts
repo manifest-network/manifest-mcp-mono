@@ -1,5 +1,37 @@
 import { toBase64 } from '@cosmjs/encoding';
 
+/**
+ * Produces unix-second timestamps guaranteed unique across calls.
+ *
+ * ADR-036 signing is deterministic, so tokens sharing the same timestamp
+ * produce identical signatures. The provider's replay tracker rejects
+ * duplicate signatures on protected endpoints (connection, restart, update).
+ * We wait for the wall clock to advance rather than drifting into the future
+ * (the provider enforces a 30 s max token age and 10 s max-future-skew).
+ * A promise queue serializes concurrent callers.
+ */
+export class AuthTimestampTracker {
+  private last = 0;
+  private queue: Promise<number> = Promise.resolve(0);
+
+  next(): Promise<number> {
+    const result = this.queue.then(async () => {
+      let now = Math.floor(Date.now() / 1000);
+      while (now <= this.last) {
+        // Cap sleep at 1 s so forward clock jumps (e.g. NTP) are
+        // picked up quickly instead of waiting the full precomputed delay.
+        const sleepMs = Math.min((this.last - now + 1) * 1000, 1000);
+        await new Promise((resolve) => setTimeout(resolve, sleepMs));
+        now = Math.floor(Date.now() / 1000);
+      }
+      this.last = now;
+      return now;
+    });
+    this.queue = result.catch(() => this.last);
+    return result;
+  }
+}
+
 export function createSignMessage(
   tenant: string,
   leaseUuid: string,

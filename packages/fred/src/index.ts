@@ -16,6 +16,7 @@ import type { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import {
+  AuthTimestampTracker,
   createAuthToken,
   createLeaseDataSignMessage,
   createSignMessage,
@@ -140,12 +141,14 @@ export class FredMCPServer {
     return this.walletProvider.signArbitrary.bind(this.walletProvider);
   }
 
+  private authTimestamps = new AuthTimestampTracker();
+
   private async getProviderAuthToken(
     address: string,
     leaseUuid: string,
   ): Promise<string> {
     const signArbitrary = this.requireSignArbitrary();
-    const timestamp = Math.floor(Date.now() / 1000);
+    const timestamp = await this.authTimestamps.next();
     const message = createSignMessage(address, leaseUuid, timestamp);
     const { pub_key, signature } = await signArbitrary(address, message);
     return createAuthToken(
@@ -163,7 +166,7 @@ export class FredMCPServer {
     metaHashHex: string,
   ): Promise<string> {
     const signArbitrary = this.requireSignArbitrary();
-    const timestamp = Math.floor(Date.now() / 1000);
+    const timestamp = await this.authTimestamps.next();
     const message = createLeaseDataSignMessage(
       leaseUuid,
       metaHashHex,
