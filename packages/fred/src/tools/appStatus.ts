@@ -70,8 +70,9 @@ export async function appStatus(
     let statusToken: string;
     let connToken: string;
     try {
-      // The connection endpoint checks replay; using separate tokens avoids
-      // sharing a signature across concurrent requests.
+      // The connection endpoint enforces replay protection (status does not),
+      // but we generate separate tokens for both to keep each request
+      // independently authenticated.
       statusToken = await getAuthToken(address, leaseUuid);
       connToken = await getAuthToken(address, leaseUuid);
     } catch (err) {
