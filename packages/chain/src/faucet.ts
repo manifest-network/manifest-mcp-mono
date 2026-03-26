@@ -4,10 +4,24 @@ import {
   ManifestMCPErrorCode,
 } from '@manifest-network/manifest-mcp-core';
 
-export interface FaucetStatusResponse {
+export interface FaucetDistributor {
   readonly address: string;
-  readonly tokens: readonly Coin[];
-  readonly cooldown: number;
+  readonly balance: readonly Coin[];
+}
+
+export interface FaucetHolder {
+  readonly address: string;
+  readonly balance: readonly Coin[];
+}
+
+export interface FaucetStatusResponse {
+  readonly status: string;
+  readonly nodeUrl: string;
+  readonly chainId: string;
+  readonly chainTokens: readonly string[];
+  readonly availableTokens: readonly string[];
+  readonly holder: FaucetHolder;
+  readonly distributors: readonly FaucetDistributor[];
 }
 
 export interface FaucetDripResult {
@@ -23,7 +37,7 @@ export interface RequestFaucetResult {
 }
 
 /**
- * Fetch available denoms and cooldown info from the faucet `/status` endpoint.
+ * Fetch faucet status including available tokens from the `/status` endpoint.
  */
 export async function fetchFaucetStatus(
   faucetUrl: string,
@@ -60,10 +74,10 @@ export async function fetchFaucetStatus(
   }
 
   const status = body as FaucetStatusResponse;
-  if (!Array.isArray(status?.tokens)) {
+  if (!Array.isArray(status?.availableTokens)) {
     throw new ManifestMCPError(
       ManifestMCPErrorCode.QUERY_FAILED,
-      'Faucet /status response missing "tokens" array',
+      'Faucet /status response missing "availableTokens" array',
     );
   }
 
@@ -130,9 +144,9 @@ export async function requestFaucet(
   }
 
   const status = await fetchFaucetStatus(faucetUrl, fetchFn);
-  const denoms = status.tokens
-    .map((t) => t.denom)
-    .filter((d): d is string => typeof d === 'string' && d.length > 0);
+  const denoms = status.availableTokens.filter(
+    (d): d is string => typeof d === 'string' && d.length > 0,
+  );
 
   if (denoms.length === 0) {
     throw new ManifestMCPError(

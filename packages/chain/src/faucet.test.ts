@@ -36,12 +36,19 @@ const ADDRESS = 'manifest1abc';
 describe('fetchFaucetStatus', () => {
   it('returns status with available denoms', async () => {
     const body = {
-      address: 'manifest1faucet',
-      tokens: [
-        { denom: 'umfx', amount: '10000000' },
-        { denom: 'upwr', amount: '10000000' },
-      ],
-      cooldown: 86400,
+      status: 'ok',
+      nodeUrl: 'http://localhost:26657',
+      chainId: 'manifest-ledger-beta',
+      chainTokens: ['umfx', 'upwr'],
+      availableTokens: ['umfx', 'upwr'],
+      holder: {
+        address: 'manifest1faucet',
+        balance: [
+          { denom: 'umfx', amount: '10000000' },
+          { denom: 'upwr', amount: '10000000' },
+        ],
+      },
+      distributors: [],
     };
     const fetch = mockFetch([{ status: 200, body }]);
 
@@ -86,8 +93,8 @@ describe('fetchFaucetStatus', () => {
     );
   });
 
-  it('throws ManifestMCPError when tokens field is missing', async () => {
-    const fetch = mockFetch([{ status: 200, body: { address: 'x' } }]);
+  it('throws ManifestMCPError when availableTokens field is missing', async () => {
+    const fetch = mockFetch([{ status: 200, body: { status: 'ok' } }]);
 
     await expect(fetchFaucetStatus(FAUCET_URL, fetch)).rejects.toThrow(
       ManifestMCPError,
@@ -176,12 +183,13 @@ describe('requestFaucet', () => {
 
   it('discovers denoms from /status and requests all', async () => {
     const statusBody = {
-      address: 'manifest1faucet',
-      tokens: [
-        { denom: 'umfx', amount: '10000000' },
-        { denom: 'upwr', amount: '10000000' },
-      ],
-      cooldown: 86400,
+      status: 'ok',
+      nodeUrl: 'http://localhost:26657',
+      chainId: 'manifest-ledger-beta',
+      chainTokens: ['umfx', 'upwr'],
+      availableTokens: ['umfx', 'upwr'],
+      holder: { address: 'manifest1faucet', balance: [] },
+      distributors: [],
     };
     // /status + 2x /credit
     const fetch = mockFetch([
@@ -198,12 +206,13 @@ describe('requestFaucet', () => {
 
   it('handles partial success', async () => {
     const statusBody = {
-      address: 'manifest1faucet',
-      tokens: [
-        { denom: 'umfx', amount: '10000000' },
-        { denom: 'upwr', amount: '10000000' },
-      ],
-      cooldown: 86400,
+      status: 'ok',
+      nodeUrl: 'http://localhost:26657',
+      chainId: 'manifest-ledger-beta',
+      chainTokens: ['umfx', 'upwr'],
+      availableTokens: ['umfx', 'upwr'],
+      holder: { address: 'manifest1faucet', balance: [] },
+      distributors: [],
     };
     const fetch = mockFetch([
       { status: 200, body: statusBody },
@@ -230,9 +239,13 @@ describe('requestFaucet', () => {
 
   it('throws when faucet has no tokens configured', async () => {
     const statusBody = {
-      address: 'manifest1faucet',
-      tokens: [],
-      cooldown: 86400,
+      status: 'ok',
+      nodeUrl: 'http://localhost:26657',
+      chainId: 'manifest-ledger-beta',
+      chainTokens: [],
+      availableTokens: [],
+      holder: { address: 'manifest1faucet', balance: [] },
+      distributors: [],
     };
     const fetch = mockFetch([{ status: 200, body: statusBody }]);
 
