@@ -29,7 +29,8 @@ export async function fetchFaucetStatus(
   faucetUrl: string,
   fetchFn: typeof globalThis.fetch = globalThis.fetch,
 ): Promise<FaucetStatusResponse> {
-  const url = `${faucetUrl}/status`;
+  const base = faucetUrl.replace(/\/+$/, '');
+  const url = `${base}/status`;
   let res: Response;
   try {
     res = await fetchFn(url, { signal: AbortSignal.timeout(10_000) });
@@ -79,7 +80,8 @@ export async function requestFaucetCredit(
   denom: string,
   fetchFn: typeof globalThis.fetch = globalThis.fetch,
 ): Promise<FaucetDripResult> {
-  const url = `${faucetUrl}/credit`;
+  const base = faucetUrl.replace(/\/+$/, '');
+  const url = `${base}/credit`;
   try {
     const res = await fetchFn(url, {
       method: 'POST',
@@ -128,7 +130,9 @@ export async function requestFaucet(
   }
 
   const status = await fetchFaucetStatus(faucetUrl, fetchFn);
-  const denoms = status.tokens.map((t) => t.denom);
+  const denoms = status.tokens
+    .map((t) => t.denom)
+    .filter((d): d is string => typeof d === 'string' && d.length > 0);
 
   if (denoms.length === 0) {
     throw new ManifestMCPError(

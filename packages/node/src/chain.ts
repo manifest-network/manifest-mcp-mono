@@ -2,7 +2,7 @@
 import { ChainMCPServer } from '@manifest-network/manifest-mcp-chain';
 import { bootstrap } from './bootstrap.js';
 
-const faucetUrl = process.env.MANIFEST_FAUCET_URL || undefined;
+const faucetUrl = process.env.MANIFEST_FAUCET_URL?.trim() || undefined;
 
 bootstrap({
   cliName: 'manifest-mcp-chain',

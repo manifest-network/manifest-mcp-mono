@@ -198,6 +198,8 @@ export class ChainMCPServer {
           inputSchema: {
             denom: z
               .string()
+              .trim()
+              .min(1)
               .optional()
               .describe(
                 'Specific denom to request (e.g. "umfx"). If omitted, requests all available denoms.',
