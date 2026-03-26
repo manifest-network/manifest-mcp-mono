@@ -100,6 +100,36 @@ describe('fetchFaucetStatus', () => {
       ManifestMCPError,
     );
   });
+
+  it('throws ManifestMCPError when availableTokens is not an array', async () => {
+    const fetch = mockFetch([
+      { status: 200, body: { status: 'ok', availableTokens: 'umfx' } },
+    ]);
+
+    await expect(fetchFaucetStatus(FAUCET_URL, fetch)).rejects.toThrow(
+      ManifestMCPError,
+    );
+  });
+
+  it('strips trailing slashes from faucet URL', async () => {
+    const body = {
+      status: 'ok',
+      nodeUrl: 'http://localhost:26657',
+      chainId: 'manifest-ledger-beta',
+      chainTokens: ['umfx'],
+      availableTokens: ['umfx'],
+      holder: { address: 'manifest1faucet', balance: [] },
+      distributors: [],
+    };
+    const fetch = mockFetch([{ status: 200, body }]);
+
+    await fetchFaucetStatus('https://faucet.test.com///', fetch);
+
+    expect(fetch).toHaveBeenCalledWith(
+      'https://faucet.test.com/status',
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
+  });
 });
 
 describe('requestFaucetCredit', () => {
@@ -162,6 +192,39 @@ describe('requestFaucetCredit', () => {
 
     expect(result.success).toBe(false);
     expect(result.error).toBe('Connection refused');
+  });
+
+  it('returns success without transactionHash when not in response', async () => {
+    const fetch = mockFetch([{ status: 200, body: {} }]);
+
+    const result = await requestFaucetCredit(
+      FAUCET_URL,
+      ADDRESS,
+      'umfx',
+      fetch,
+    );
+
+    expect(result).toEqual({
+      denom: 'umfx',
+      success: true,
+      transactionHash: undefined,
+    });
+  });
+
+  it('handles non-Error thrown values', async () => {
+    const fetch = vi.fn(async () => {
+      throw 'string error';
+    }) as unknown as typeof globalThis.fetch;
+
+    const result = await requestFaucetCredit(
+      FAUCET_URL,
+      ADDRESS,
+      'umfx',
+      fetch,
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.error).toBe('string error');
   });
 });
 
@@ -231,6 +294,44 @@ describe('requestFaucet', () => {
 
   it('propagates error when /status endpoint fails', async () => {
     const fetch = mockFetch([{ status: 503, body: 'Service Unavailable' }]);
+
+    await expect(
+      requestFaucet(FAUCET_URL, ADDRESS, undefined, fetch),
+    ).rejects.toThrow(ManifestMCPError);
+  });
+
+  it('filters empty strings from availableTokens', async () => {
+    const statusBody = {
+      status: 'ok',
+      nodeUrl: 'http://localhost:26657',
+      chainId: 'manifest-ledger-beta',
+      chainTokens: ['umfx', ''],
+      availableTokens: ['', 'umfx', ''],
+      holder: { address: 'manifest1faucet', balance: [] },
+      distributors: [],
+    };
+    const fetch = mockFetch([
+      { status: 200, body: statusBody },
+      { status: 200, body: { transactionHash: 'TX1' } },
+    ]);
+
+    const result = await requestFaucet(FAUCET_URL, ADDRESS, undefined, fetch);
+
+    expect(result.results).toHaveLength(1);
+    expect(result.results[0].denom).toBe('umfx');
+  });
+
+  it('throws when all availableTokens are empty strings', async () => {
+    const statusBody = {
+      status: 'ok',
+      nodeUrl: 'http://localhost:26657',
+      chainId: 'manifest-ledger-beta',
+      chainTokens: [],
+      availableTokens: ['', ''],
+      holder: { address: 'manifest1faucet', balance: [] },
+      distributors: [],
+    };
+    const fetch = mockFetch([{ status: 200, body: statusBody }]);
 
     await expect(
       requestFaucet(FAUCET_URL, ADDRESS, undefined, fetch),
