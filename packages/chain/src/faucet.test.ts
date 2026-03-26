@@ -33,14 +33,25 @@ function mockFetchError(error: Error): typeof globalThis.fetch {
 const FAUCET_URL = 'https://faucet.test.com';
 const ADDRESS = 'manifest1abc';
 
+/** Builds a valid faucet /status response body with optional overrides. */
+function statusBody(
+  overrides: Record<string, unknown> = {},
+): Record<string, unknown> {
+  return {
+    status: 'ok',
+    nodeUrl: 'http://localhost:26657',
+    chainId: 'manifest-ledger-beta',
+    chainTokens: ['umfx', 'upwr'],
+    availableTokens: ['umfx', 'upwr'],
+    holder: { address: 'manifest1faucet', balance: [] },
+    distributors: [],
+    ...overrides,
+  };
+}
+
 describe('fetchFaucetStatus', () => {
   it('returns status with available denoms', async () => {
-    const body = {
-      status: 'ok',
-      nodeUrl: 'http://localhost:26657',
-      chainId: 'manifest-ledger-beta',
-      chainTokens: ['umfx', 'upwr'],
-      availableTokens: ['umfx', 'upwr'],
+    const body = statusBody({
       holder: {
         address: 'manifest1faucet',
         balance: [
@@ -48,8 +59,7 @@ describe('fetchFaucetStatus', () => {
           { denom: 'upwr', amount: '10000000' },
         ],
       },
-      distributors: [],
-    };
+    });
     const fetch = mockFetch([{ status: 200, body }]);
 
     const result = await fetchFaucetStatus(FAUCET_URL, fetch);
@@ -125,15 +135,10 @@ describe('fetchFaucetStatus', () => {
   });
 
   it('strips trailing slashes from faucet URL', async () => {
-    const body = {
-      status: 'ok',
-      nodeUrl: 'http://localhost:26657',
-      chainId: 'manifest-ledger-beta',
+    const body = statusBody({
       chainTokens: ['umfx'],
       availableTokens: ['umfx'],
-      holder: { address: 'manifest1faucet', balance: [] },
-      distributors: [],
-    };
+    });
     const fetch = mockFetch([{ status: 200, body }]);
 
     await fetchFaucetStatus('https://faucet.test.com///', fetch);
@@ -258,18 +263,9 @@ describe('requestFaucet', () => {
   });
 
   it('discovers denoms from /status and requests all', async () => {
-    const statusBody = {
-      status: 'ok',
-      nodeUrl: 'http://localhost:26657',
-      chainId: 'manifest-ledger-beta',
-      chainTokens: ['umfx', 'upwr'],
-      availableTokens: ['umfx', 'upwr'],
-      holder: { address: 'manifest1faucet', balance: [] },
-      distributors: [],
-    };
     // /status + 2x /credit
     const fetch = mockFetch([
-      { status: 200, body: statusBody },
+      { status: 200, body: statusBody() },
       { status: 200, body: { transactionHash: 'TX_MFX' } },
       { status: 200, body: { transactionHash: 'TX_PWR' } },
     ]);
@@ -281,17 +277,8 @@ describe('requestFaucet', () => {
   });
 
   it('handles partial success', async () => {
-    const statusBody = {
-      status: 'ok',
-      nodeUrl: 'http://localhost:26657',
-      chainId: 'manifest-ledger-beta',
-      chainTokens: ['umfx', 'upwr'],
-      availableTokens: ['umfx', 'upwr'],
-      holder: { address: 'manifest1faucet', balance: [] },
-      distributors: [],
-    };
     const fetch = mockFetch([
-      { status: 200, body: statusBody },
+      { status: 200, body: statusBody() },
       { status: 200, body: { transactionHash: 'TX_MFX' } },
       { status: 429, body: 'Cooldown active for upwr.' },
     ]);
@@ -314,17 +301,14 @@ describe('requestFaucet', () => {
   });
 
   it('filters empty strings from availableTokens', async () => {
-    const statusBody = {
-      status: 'ok',
-      nodeUrl: 'http://localhost:26657',
-      chainId: 'manifest-ledger-beta',
-      chainTokens: ['umfx', ''],
-      availableTokens: ['', 'umfx', ''],
-      holder: { address: 'manifest1faucet', balance: [] },
-      distributors: [],
-    };
     const fetch = mockFetch([
-      { status: 200, body: statusBody },
+      {
+        status: 200,
+        body: statusBody({
+          chainTokens: ['umfx', ''],
+          availableTokens: ['', 'umfx', ''],
+        }),
+      },
       { status: 200, body: { transactionHash: 'TX1' } },
     ]);
 
@@ -335,16 +319,15 @@ describe('requestFaucet', () => {
   });
 
   it('throws when all availableTokens are empty strings', async () => {
-    const statusBody = {
-      status: 'ok',
-      nodeUrl: 'http://localhost:26657',
-      chainId: 'manifest-ledger-beta',
-      chainTokens: [],
-      availableTokens: ['', ''],
-      holder: { address: 'manifest1faucet', balance: [] },
-      distributors: [],
-    };
-    const fetch = mockFetch([{ status: 200, body: statusBody }]);
+    const fetch = mockFetch([
+      {
+        status: 200,
+        body: statusBody({
+          chainTokens: [],
+          availableTokens: ['', ''],
+        }),
+      },
+    ]);
 
     await expect(
       requestFaucet(FAUCET_URL, ADDRESS, undefined, fetch),
@@ -352,16 +335,12 @@ describe('requestFaucet', () => {
   });
 
   it('throws when faucet has no tokens configured', async () => {
-    const statusBody = {
-      status: 'ok',
-      nodeUrl: 'http://localhost:26657',
-      chainId: 'manifest-ledger-beta',
-      chainTokens: [],
-      availableTokens: [],
-      holder: { address: 'manifest1faucet', balance: [] },
-      distributors: [],
-    };
-    const fetch = mockFetch([{ status: 200, body: statusBody }]);
+    const fetch = mockFetch([
+      {
+        status: 200,
+        body: statusBody({ chainTokens: [], availableTokens: [] }),
+      },
+    ]);
 
     await expect(
       requestFaucet(FAUCET_URL, ADDRESS, undefined, fetch),

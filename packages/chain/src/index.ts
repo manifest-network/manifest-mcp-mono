@@ -22,9 +22,8 @@ import { requestFaucet } from './faucet.js';
 
 export type { ManifestMCPServerOptions } from '@manifest-network/manifest-mcp-core';
 export type {
-  FaucetDistributor,
+  FaucetAccount,
   FaucetDripResult,
-  FaucetHolder,
   FaucetStatusResponse,
   RequestFaucetResult,
 } from './faucet.js';

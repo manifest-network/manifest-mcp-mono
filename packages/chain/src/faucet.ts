@@ -9,12 +9,7 @@ const CoinSchema = z.object({
   amount: z.string(),
 });
 
-const FaucetDistributorSchema = z.object({
-  address: z.string(),
-  balance: z.array(CoinSchema),
-});
-
-const FaucetHolderSchema = z.object({
+const FaucetAccountSchema = z.object({
   address: z.string(),
   balance: z.array(CoinSchema),
 });
@@ -25,12 +20,11 @@ const FaucetStatusResponseSchema = z.object({
   chainId: z.string(),
   chainTokens: z.array(z.string()),
   availableTokens: z.array(z.string()),
-  holder: FaucetHolderSchema,
-  distributors: z.array(FaucetDistributorSchema),
+  holder: FaucetAccountSchema,
+  distributors: z.array(FaucetAccountSchema),
 });
 
-export type FaucetDistributor = z.infer<typeof FaucetDistributorSchema>;
-export type FaucetHolder = z.infer<typeof FaucetHolderSchema>;
+export type FaucetAccount = z.infer<typeof FaucetAccountSchema>;
 export type FaucetStatusResponse = z.infer<typeof FaucetStatusResponseSchema>;
 
 export interface FaucetDripResult {
@@ -153,9 +147,7 @@ export async function requestFaucet(
   }
 
   const status = await fetchFaucetStatus(faucetUrl, fetchFn);
-  const denoms = status.availableTokens.filter(
-    (d): d is string => typeof d === 'string' && d.length > 0,
-  );
+  const denoms = status.availableTokens.filter((d) => d.length > 0);
 
   if (denoms.length === 0) {
     throw new ManifestMCPError(
