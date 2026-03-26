@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.0]
+
+- Feat: add `request_faucet` tool for chain server (enabled when `MANIFEST_FAUCET_URL` is set)
+- Docs: fix inaccuracies and fill gaps across all documentation
+
 ## [0.2.3]
 
 - Fix: include `--ignore-scripts` in lockfile sync recovery instructions
