@@ -224,6 +224,7 @@ export interface MnemonicServerConfig {
   gasPrice?: string;
   restUrl?: string;
   addressPrefix?: string;
+  gasMultiplier?: number;
   mnemonic: string;
 }
 

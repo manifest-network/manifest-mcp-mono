@@ -17,7 +17,10 @@ import {
   strangeloveVenturesProtoRegistry,
 } from '@manifest-network/manifestjs';
 import { RateLimiter } from 'limiter';
-import { DEFAULT_REQUESTS_PER_SECOND } from './config.js';
+import {
+  DEFAULT_GAS_MULTIPLIER,
+  DEFAULT_REQUESTS_PER_SECOND,
+} from './config.js';
 import { createLCDQueryClient } from './lcd-adapter.js';
 import { withRetry } from './retry.js';
 import {
@@ -51,13 +54,6 @@ const DEFAULT_BROADCAST_TIMEOUT_MS = 60_000;
 
 /** Default polling interval for transaction confirmation (3 seconds) */
 const DEFAULT_BROADCAST_POLL_INTERVAL_MS = 3_000;
-
-/**
- * Gas simulation multiplier. CosmJS defaults to 1.4 but billing module
- * transactions (close-lease in particular) can exceed that. 1.5 matches
- * the --gas-adjustment used by the CLI.
- */
-const DEFAULT_GAS_MULTIPLIER = 1.5;
 
 /**
  * Get combined signing client options with all Manifest registries
@@ -116,7 +112,7 @@ export class CosmosClientManager {
    * Get or create a singleton instance for the given config.
    * Instances are keyed by chainId:rpcUrl:restUrl. For existing instances:
    * - Config and walletProvider references are always updated
-   * - Signing client is disconnected/recreated if gasPrice or walletProvider changed
+   * - Signing client is disconnected/recreated if gasPrice, gasMultiplier, or walletProvider changed
    * - Rate limiter is updated if requestsPerSecond changed (without affecting signing client)
    */
   static getInstance(
@@ -135,6 +131,7 @@ export class CosmosClientManager {
       // Check what changed to determine what needs updating
       const signingClientAffected =
         instance.config.gasPrice !== config.gasPrice ||
+        instance.config.gasMultiplier !== config.gasMultiplier ||
         instance.walletProvider !== walletProvider;
 
       const rateLimitChanged =
@@ -314,7 +311,8 @@ export class CosmosClientManager {
             // so we must bypass TypeScript's access control to override it.
             const record = c as unknown as Record<string, unknown>;
             if (typeof record.defaultGasMultiplier === 'number') {
-              record.defaultGasMultiplier = DEFAULT_GAS_MULTIPLIER;
+              record.defaultGasMultiplier =
+                this.config.gasMultiplier ?? DEFAULT_GAS_MULTIPLIER;
             }
             return c;
           },

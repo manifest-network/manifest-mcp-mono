@@ -15,6 +15,13 @@ const DEFAULT_ADDRESS_PREFIX = 'manifest';
  */
 export const DEFAULT_REQUESTS_PER_SECOND = 10;
 
+/**
+ * Default gas simulation multiplier. CosmJS defaults to 1.4 but billing module
+ * transactions (close-lease in particular) can exceed that. 1.5 matches
+ * the --gas-adjustment used by the CLI.
+ */
+export const DEFAULT_GAS_MULTIPLIER = 1.5;
+
 // Re-export for consumers
 export { DEFAULT_RETRY_CONFIG };
 
@@ -107,6 +114,7 @@ export function createConfig(input: ManifestMCPConfig): ManifestMCPConfig {
       baseDelayMs: input.retry?.baseDelayMs ?? DEFAULT_RETRY_CONFIG.baseDelayMs,
       maxDelayMs: input.retry?.maxDelayMs ?? DEFAULT_RETRY_CONFIG.maxDelayMs,
     },
+    gasMultiplier: input.gasMultiplier ?? DEFAULT_GAS_MULTIPLIER,
   };
 }
 
@@ -233,6 +241,15 @@ export function validateConfig(
           'retry.maxDelayMs must be greater than or equal to retry.baseDelayMs',
         );
       }
+    }
+  }
+
+  if (config.gasMultiplier !== undefined) {
+    if (
+      typeof config.gasMultiplier !== 'number' ||
+      !(config.gasMultiplier >= 1)
+    ) {
+      errors.push('gasMultiplier must be a number >= 1');
     }
   }
 

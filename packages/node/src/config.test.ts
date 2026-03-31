@@ -14,6 +14,7 @@ beforeEach(() => {
   delete process.env.COSMOS_GAS_PRICE;
   delete process.env.COSMOS_REST_URL;
   delete process.env.COSMOS_ADDRESS_PREFIX;
+  delete process.env.COSMOS_GAS_MULTIPLIER;
   delete process.env.COSMOS_MNEMONIC;
   delete process.env.MANIFEST_KEY_FILE;
   delete process.env.MANIFEST_KEY_PASSWORD;

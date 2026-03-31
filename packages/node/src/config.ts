@@ -10,6 +10,7 @@ export interface NodeMCPConfig {
   readonly gasPrice?: string;
   readonly restUrl?: string;
   readonly addressPrefix: string;
+  readonly gasMultiplier?: number;
   readonly mnemonic?: string;
   readonly keyfilePath: string;
   readonly keyPassword?: string;
@@ -57,6 +58,11 @@ export function loadConfig(): NodeMCPConfig {
   const rpcUrl = process.env.COSMOS_RPC_URL || undefined;
   const gasPrice = process.env.COSMOS_GAS_PRICE || undefined;
   const restUrl = process.env.COSMOS_REST_URL || undefined;
+  const gasMultiplierRaw = process.env.COSMOS_GAS_MULTIPLIER;
+  const gasMultiplier =
+    gasMultiplierRaw !== undefined && gasMultiplierRaw !== ''
+      ? Number.parseFloat(gasMultiplierRaw)
+      : undefined;
 
   // At least one endpoint is required
   if (!rpcUrl && !restUrl) {
@@ -85,6 +91,7 @@ export function loadConfig(): NodeMCPConfig {
         join(homedir(), '.manifest', 'key.json'),
       ),
     ),
+    gasMultiplier,
     keyPassword: process.env.MANIFEST_KEY_PASSWORD,
   };
 }
