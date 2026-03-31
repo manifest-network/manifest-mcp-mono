@@ -183,6 +183,38 @@ describe('validateConfig', () => {
     expect(result.valid).toBe(true);
   });
 
+  it('should reject gas price with denom shorter than 3 characters', () => {
+    const result = validateConfig({
+      chainId: 'test',
+      rpcUrl: 'https://example.com',
+      gasPrice: '1.0ab',
+    });
+
+    expect(result.valid).toBe(false);
+    expect(result.errors.some((e) => e.includes('gasPrice'))).toBe(true);
+  });
+
+  it('should accept gas price with denom of exactly 3 characters', () => {
+    const result = validateConfig({
+      chainId: 'test',
+      rpcUrl: 'https://example.com',
+      gasPrice: '1.0abc',
+    });
+
+    expect(result.valid).toBe(true);
+  });
+
+  it('should reject gas price with denom longer than 128 characters', () => {
+    const result = validateConfig({
+      chainId: 'test',
+      rpcUrl: 'https://example.com',
+      gasPrice: '1.0a' + 'b'.repeat(128),
+    });
+
+    expect(result.valid).toBe(false);
+    expect(result.errors.some((e) => e.includes('gasPrice'))).toBe(true);
+  });
+
   it('should accept integer gas price without decimal', () => {
     const result = validateConfig({
       chainId: 'test',

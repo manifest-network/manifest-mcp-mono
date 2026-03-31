@@ -69,10 +69,15 @@ function isValidGasPrice(gasPrice: string): boolean {
   // (factory/manifest1.../utoken). Denoms are made of non-empty segments
   // separated by '/', with the first segment starting with a letter.
   // Each segment may contain letters, digits, dots, colons, underscores,
-  // and hyphens.
-  return /^\d+(\.\d+)?[a-zA-Z][a-zA-Z0-9.:_-]*(?:\/[a-zA-Z0-9.:_-]+)*$/.test(
-    gasPrice,
+  // and hyphens. Denom length must be 3-128 chars per the Cosmos SDK spec.
+  const match = gasPrice.match(
+    /^(\d+(?:\.\d+)?)([a-zA-Z][a-zA-Z0-9.:_-]*(?:\/[a-zA-Z0-9.:_-]+)*)$/,
   );
+  if (!match) {
+    return false;
+  }
+  const denom = match[2];
+  return denom.length >= 3 && denom.length <= 128;
 }
 
 /**
