@@ -151,6 +151,146 @@ describe('validateConfig', () => {
     expect(result.errors.some((e) => e.includes('gasPrice'))).toBe(true);
   });
 
+  it('should accept factory denom gas price', () => {
+    const result = validateConfig({
+      chainId: 'test',
+      rpcUrl: 'https://example.com',
+      gasPrice:
+        '0.5factory/manifest1afk9zr2hn2jsac63h4hm60vl9z3e5u69gndzf7c99cqge3vzwjzsfmy9qj/upwr',
+    });
+
+    expect(result.valid).toBe(true);
+  });
+
+  it('should accept IBC denom gas price', () => {
+    const result = validateConfig({
+      chainId: 'test',
+      rpcUrl: 'https://example.com',
+      gasPrice:
+        '0.01ibc/ED07A3391A112B175915CD8FAF43A2DA8E4790EDE12566649D0C2F97716B8518',
+    });
+
+    expect(result.valid).toBe(true);
+  });
+
+  it('should accept denom with dots, underscores, hyphens, and colons', () => {
+    const result = validateConfig({
+      chainId: 'test',
+      rpcUrl: 'https://example.com',
+      gasPrice: '1.0my-chain_token.v2:beta',
+    });
+
+    expect(result.valid).toBe(true);
+  });
+
+  it('should reject gas price with denom shorter than 3 characters', () => {
+    const result = validateConfig({
+      chainId: 'test',
+      rpcUrl: 'https://example.com',
+      gasPrice: '1.0ab',
+    });
+
+    expect(result.valid).toBe(false);
+    expect(result.errors.some((e) => e.includes('gasPrice'))).toBe(true);
+  });
+
+  it('should accept gas price with denom of exactly 3 characters', () => {
+    const result = validateConfig({
+      chainId: 'test',
+      rpcUrl: 'https://example.com',
+      gasPrice: '1.0abc',
+    });
+
+    expect(result.valid).toBe(true);
+  });
+
+  it('should reject gas price with denom longer than 128 characters', () => {
+    const result = validateConfig({
+      chainId: 'test',
+      rpcUrl: 'https://example.com',
+      gasPrice: '1.0a' + 'b'.repeat(128),
+    });
+
+    expect(result.valid).toBe(false);
+    expect(result.errors.some((e) => e.includes('gasPrice'))).toBe(true);
+  });
+
+  it('should accept integer gas price without decimal', () => {
+    const result = validateConfig({
+      chainId: 'test',
+      rpcUrl: 'https://example.com',
+      gasPrice: '100umfx',
+    });
+
+    expect(result.valid).toBe(true);
+  });
+
+  it('should reject gas price with denom starting with a slash', () => {
+    const result = validateConfig({
+      chainId: 'test',
+      rpcUrl: 'https://example.com',
+      gasPrice: '0.5/factory/manifest1abc/upwr',
+    });
+
+    expect(result.valid).toBe(false);
+    expect(result.errors.some((e) => e.includes('gasPrice'))).toBe(true);
+  });
+
+  it('should reject gas price with trailing slash in IBC denom', () => {
+    const result = validateConfig({
+      chainId: 'test',
+      rpcUrl: 'https://example.com',
+      gasPrice: '0.5ibc/',
+    });
+
+    expect(result.valid).toBe(false);
+    expect(result.errors.some((e) => e.includes('gasPrice'))).toBe(true);
+  });
+
+  it('should reject gas price with trailing slash in factory denom path', () => {
+    const result = validateConfig({
+      chainId: 'test',
+      rpcUrl: 'https://example.com',
+      gasPrice: '0.5factory/creator/',
+    });
+
+    expect(result.valid).toBe(false);
+    expect(result.errors.some((e) => e.includes('gasPrice'))).toBe(true);
+  });
+
+  it('should reject gas price with empty path segment in denom', () => {
+    const result = validateConfig({
+      chainId: 'test',
+      rpcUrl: 'https://example.com',
+      gasPrice: '0.5factory//creator/upwr',
+    });
+
+    expect(result.valid).toBe(false);
+    expect(result.errors.some((e) => e.includes('gasPrice'))).toBe(true);
+  });
+
+  it('should reject gas price with no denom', () => {
+    const result = validateConfig({
+      chainId: 'test',
+      rpcUrl: 'https://example.com',
+      gasPrice: '0.025',
+    });
+
+    expect(result.valid).toBe(false);
+    expect(result.errors.some((e) => e.includes('gasPrice'))).toBe(true);
+  });
+
+  it('should reject gas price with leading dot', () => {
+    const result = validateConfig({
+      chainId: 'test',
+      rpcUrl: 'https://example.com',
+      gasPrice: '.5umfx',
+    });
+
+    expect(result.valid).toBe(false);
+    expect(result.errors.some((e) => e.includes('gasPrice'))).toBe(true);
+  });
+
   it('should validate optional addressPrefix', () => {
     const result = validateConfig({
       chainId: 'test',

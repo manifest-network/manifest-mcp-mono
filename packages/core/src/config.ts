@@ -64,8 +64,20 @@ function validateEndpointUrl(
  * Validate gas price format (e.g., "1.0umfx")
  */
 function isValidGasPrice(gasPrice: string): boolean {
-  // Gas price should be a number followed by a denomination
-  return /^\d+(\.\d+)?[a-zA-Z]+$/.test(gasPrice);
+  // Gas price should be a number followed by a denomination.
+  // Denoms can be simple (umfx), IBC (ibc/ABC123...), or factory
+  // (factory/manifest1.../utoken). Denoms are made of non-empty segments
+  // separated by '/', with the first segment starting with a letter.
+  // Each segment may contain letters, digits, dots, colons, underscores,
+  // and hyphens. Denom length must be 3-128 chars per the Cosmos SDK spec.
+  const match = gasPrice.match(
+    /^(\d+(?:\.\d+)?)([a-zA-Z][a-zA-Z0-9.:_-]*(?:\/[a-zA-Z0-9.:_-]+)*)$/,
+  );
+  if (!match) {
+    return false;
+  }
+  const denom = match[2];
+  return denom.length >= 3 && denom.length <= 128;
 }
 
 /**
@@ -147,7 +159,7 @@ export function validateConfig(
     errors.push('gasPrice is required when rpcUrl is provided');
   } else if (config.gasPrice && !isValidGasPrice(config.gasPrice)) {
     errors.push(
-      'gasPrice must be a number followed by denomination (e.g., "1.0umfx")',
+      'gasPrice must be a number followed by denomination (e.g., "1.0umfx", "0.5factory/addr/udenom", or "0.25ibc/ABC123")',
     );
   }
 
