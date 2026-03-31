@@ -173,6 +173,16 @@ describe('validateConfig', () => {
     expect(result.valid).toBe(true);
   });
 
+  it('should accept denom with dots, underscores, hyphens, and colons', () => {
+    const result = validateConfig({
+      chainId: 'test',
+      rpcUrl: 'https://example.com',
+      gasPrice: '1.0my-chain_token.v2:beta',
+    });
+
+    expect(result.valid).toBe(true);
+  });
+
   it('should accept integer gas price without decimal', () => {
     const result = validateConfig({
       chainId: 'test',
