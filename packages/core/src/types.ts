@@ -153,7 +153,7 @@ export interface ManifestMCPConfig {
   readonly rateLimit?: RateLimitConfig;
   /** Retry configuration for transient failures */
   readonly retry?: RetryConfig;
-  /** Gas simulation multiplier (default: 1.5). Increase if transactions fail with out-of-gas errors. */
+  /** Gas simulation multiplier (default: 1.5, minimum: 1). Increase if transactions fail with out-of-gas errors. */
   readonly gasMultiplier?: number;
 }
 

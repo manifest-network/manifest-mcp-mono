@@ -219,13 +219,13 @@ export function jsonResponse(
  * Config shape accepted by createMnemonicServer.
  */
 export interface MnemonicServerConfig {
-  chainId: string;
-  rpcUrl?: string;
-  gasPrice?: string;
-  restUrl?: string;
-  addressPrefix?: string;
-  gasMultiplier?: number;
-  mnemonic: string;
+  readonly chainId: string;
+  readonly rpcUrl?: string;
+  readonly gasPrice?: string;
+  readonly restUrl?: string;
+  readonly addressPrefix?: string;
+  readonly gasMultiplier?: number;
+  readonly mnemonic: string;
 }
 
 /**

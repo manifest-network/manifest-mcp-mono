@@ -116,6 +116,58 @@ describe('loadConfig', () => {
     expect(config.keyfilePath).not.toContain('~');
   });
 
+  it('should parse COSMOS_GAS_MULTIPLIER as a number', async () => {
+    process.env.COSMOS_CHAIN_ID = 'test-chain';
+    process.env.COSMOS_RPC_URL = 'https://rpc.test.com';
+    process.env.COSMOS_GAS_PRICE = '0.025umfx';
+    process.env.COSMOS_GAS_MULTIPLIER = '2.0';
+
+    const { loadConfig } = await importConfig();
+    const config = loadConfig();
+    expect(config.gasMultiplier).toBe(2.0);
+  });
+
+  it('should leave gasMultiplier undefined when env var is not set', async () => {
+    process.env.COSMOS_CHAIN_ID = 'test-chain';
+    process.env.COSMOS_RPC_URL = 'https://rpc.test.com';
+    process.env.COSMOS_GAS_PRICE = '0.025umfx';
+
+    const { loadConfig } = await importConfig();
+    const config = loadConfig();
+    expect(config.gasMultiplier).toBeUndefined();
+  });
+
+  it('should leave gasMultiplier undefined when env var is empty string', async () => {
+    process.env.COSMOS_CHAIN_ID = 'test-chain';
+    process.env.COSMOS_RPC_URL = 'https://rpc.test.com';
+    process.env.COSMOS_GAS_PRICE = '0.025umfx';
+    process.env.COSMOS_GAS_MULTIPLIER = '';
+
+    const { loadConfig } = await importConfig();
+    const config = loadConfig();
+    expect(config.gasMultiplier).toBeUndefined();
+  });
+
+  it('should throw for non-numeric COSMOS_GAS_MULTIPLIER', async () => {
+    process.env.COSMOS_CHAIN_ID = 'test-chain';
+    process.env.COSMOS_RPC_URL = 'https://rpc.test.com';
+    process.env.COSMOS_GAS_PRICE = '0.025umfx';
+    process.env.COSMOS_GAS_MULTIPLIER = 'abc';
+
+    const { loadConfig } = await importConfig();
+    expect(() => loadConfig()).toThrow(/COSMOS_GAS_MULTIPLIER/);
+  });
+
+  it('should throw for Infinity COSMOS_GAS_MULTIPLIER', async () => {
+    process.env.COSMOS_CHAIN_ID = 'test-chain';
+    process.env.COSMOS_RPC_URL = 'https://rpc.test.com';
+    process.env.COSMOS_GAS_PRICE = '0.025umfx';
+    process.env.COSMOS_GAS_MULTIPLIER = 'Infinity';
+
+    const { loadConfig } = await importConfig();
+    expect(() => loadConfig()).toThrow(/COSMOS_GAS_MULTIPLIER/);
+  });
+
   it('should fall back to default when env var is empty string', async () => {
     process.env.COSMOS_CHAIN_ID = 'test-chain';
     process.env.COSMOS_RPC_URL = 'https://rpc.test.com';

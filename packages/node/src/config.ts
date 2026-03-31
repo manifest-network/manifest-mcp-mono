@@ -59,10 +59,15 @@ export function loadConfig(): NodeMCPConfig {
   const gasPrice = process.env.COSMOS_GAS_PRICE || undefined;
   const restUrl = process.env.COSMOS_REST_URL || undefined;
   const gasMultiplierRaw = process.env.COSMOS_GAS_MULTIPLIER;
-  const gasMultiplier =
-    gasMultiplierRaw !== undefined && gasMultiplierRaw !== ''
-      ? Number.parseFloat(gasMultiplierRaw)
-      : undefined;
+  let gasMultiplier: number | undefined;
+  if (gasMultiplierRaw !== undefined && gasMultiplierRaw !== '') {
+    gasMultiplier = Number.parseFloat(gasMultiplierRaw);
+    if (!Number.isFinite(gasMultiplier)) {
+      throw new Error(
+        `COSMOS_GAS_MULTIPLIER must be a valid number, got "${gasMultiplierRaw}"`,
+      );
+    }
+  }
 
   // At least one endpoint is required
   if (!rpcUrl && !restUrl) {

@@ -153,6 +153,31 @@ describe('CosmosClientManager', () => {
       expect(mockConnectWithSigner).toHaveBeenCalledTimes(2);
     });
 
+    it('invalidates signing client when gasMultiplier changes', async () => {
+      const wallet = makeWallet();
+      const client1 = { disconnect: vi.fn() };
+      const client2 = { disconnect: vi.fn() };
+      mockConnectWithSigner
+        .mockResolvedValueOnce(client1 as any)
+        .mockResolvedValueOnce(client2 as any);
+
+      const instance = CosmosClientManager.getInstance(
+        makeConfig({ gasMultiplier: 1.5 }),
+        wallet,
+      );
+      const sc1 = await instance.getSigningClient();
+      expect(sc1).toBe(client1);
+
+      // Re-get with different gasMultiplier — should create new signing client
+      CosmosClientManager.getInstance(
+        makeConfig({ gasMultiplier: 2.5 }),
+        wallet,
+      );
+      const sc2 = await instance.getSigningClient();
+      expect(sc2).toBe(client2);
+      expect(mockConnectWithSigner).toHaveBeenCalledTimes(2);
+    });
+
     it('invalidates signing client when walletProvider changes', async () => {
       const wallet1 = makeWallet();
       const wallet2 = makeWallet();
@@ -266,6 +291,19 @@ describe('CosmosClientManager', () => {
       await instance.getSigningClient();
 
       expect(mockSC.defaultGasMultiplier).toBe(1.5);
+    });
+
+    it('applies custom gasMultiplier from config', async () => {
+      const mockSC = { disconnect: vi.fn(), defaultGasMultiplier: 1.4 };
+      mockConnectWithSigner.mockResolvedValue(mockSC as any);
+
+      const instance = CosmosClientManager.getInstance(
+        makeConfig({ gasMultiplier: 2.5 }),
+        makeWallet(),
+      );
+      await instance.getSigningClient();
+
+      expect(mockSC.defaultGasMultiplier).toBe(2.5);
     });
 
     it('leaves client unchanged when defaultGasMultiplier is absent', async () => {

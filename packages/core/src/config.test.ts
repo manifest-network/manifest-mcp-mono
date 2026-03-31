@@ -31,6 +31,27 @@ describe('createConfig', () => {
     expect(config.addressPrefix).toBe('custom');
   });
 
+  it('should apply default gasMultiplier', () => {
+    const config = createConfig({
+      chainId: 'test-chain',
+      rpcUrl: 'https://example.com',
+      gasPrice: '1.0umfx',
+    });
+
+    expect(config.gasMultiplier).toBe(1.5);
+  });
+
+  it('should preserve provided gasMultiplier', () => {
+    const config = createConfig({
+      chainId: 'test-chain',
+      rpcUrl: 'https://example.com',
+      gasPrice: '1.0umfx',
+      gasMultiplier: 2.0,
+    });
+
+    expect(config.gasMultiplier).toBe(2.0);
+  });
+
   it('should apply default rateLimit', () => {
     const config = createConfig({
       chainId: 'test-chain',
@@ -509,6 +530,124 @@ describe('createValidatedConfig', () => {
     expect(config.retry?.maxRetries).toBe(5);
     expect(config.retry?.baseDelayMs).toBe(500);
     expect(config.retry?.maxDelayMs).toBe(5000);
+  });
+});
+
+describe('validateConfig gasMultiplier', () => {
+  it('should accept valid gasMultiplier', () => {
+    const result = validateConfig({
+      chainId: 'test',
+      rpcUrl: 'https://example.com',
+      gasPrice: '1.0umfx',
+      gasMultiplier: 2.0,
+    });
+
+    expect(result.valid).toBe(true);
+  });
+
+  it('should accept gasMultiplier of exactly 1', () => {
+    const result = validateConfig({
+      chainId: 'test',
+      rpcUrl: 'https://example.com',
+      gasPrice: '1.0umfx',
+      gasMultiplier: 1,
+    });
+
+    expect(result.valid).toBe(true);
+  });
+
+  it('should accept undefined gasMultiplier', () => {
+    const result = validateConfig({
+      chainId: 'test',
+      rpcUrl: 'https://example.com',
+      gasPrice: '1.0umfx',
+    });
+
+    expect(result.valid).toBe(true);
+  });
+
+  it('should reject gasMultiplier less than 1', () => {
+    const result = validateConfig({
+      chainId: 'test',
+      rpcUrl: 'https://example.com',
+      gasPrice: '1.0umfx',
+      gasMultiplier: 0.5,
+    });
+
+    expect(result.valid).toBe(false);
+    expect(result.errors.some((e) => e.includes('gasMultiplier'))).toBe(true);
+  });
+
+  it('should reject gasMultiplier of 0', () => {
+    const result = validateConfig({
+      chainId: 'test',
+      rpcUrl: 'https://example.com',
+      gasPrice: '1.0umfx',
+      gasMultiplier: 0,
+    });
+
+    expect(result.valid).toBe(false);
+    expect(result.errors.some((e) => e.includes('gasMultiplier'))).toBe(true);
+  });
+
+  it('should reject negative gasMultiplier', () => {
+    const result = validateConfig({
+      chainId: 'test',
+      rpcUrl: 'https://example.com',
+      gasPrice: '1.0umfx',
+      gasMultiplier: -1,
+    });
+
+    expect(result.valid).toBe(false);
+    expect(result.errors.some((e) => e.includes('gasMultiplier'))).toBe(true);
+  });
+
+  it('should reject NaN gasMultiplier', () => {
+    const result = validateConfig({
+      chainId: 'test',
+      rpcUrl: 'https://example.com',
+      gasPrice: '1.0umfx',
+      gasMultiplier: Number.NaN,
+    });
+
+    expect(result.valid).toBe(false);
+    expect(result.errors.some((e) => e.includes('gasMultiplier'))).toBe(true);
+  });
+
+  it('should reject non-number gasMultiplier', () => {
+    const result = validateConfig({
+      chainId: 'test',
+      rpcUrl: 'https://example.com',
+      gasPrice: '1.0umfx',
+      gasMultiplier: 'high' as unknown as number,
+    });
+
+    expect(result.valid).toBe(false);
+    expect(result.errors.some((e) => e.includes('gasMultiplier'))).toBe(true);
+  });
+
+  it('should reject Infinity gasMultiplier', () => {
+    const result = validateConfig({
+      chainId: 'test',
+      rpcUrl: 'https://example.com',
+      gasPrice: '1.0umfx',
+      gasMultiplier: Number.POSITIVE_INFINITY,
+    });
+
+    expect(result.valid).toBe(false);
+    expect(result.errors.some((e) => e.includes('gasMultiplier'))).toBe(true);
+  });
+
+  it('should reject -Infinity gasMultiplier', () => {
+    const result = validateConfig({
+      chainId: 'test',
+      rpcUrl: 'https://example.com',
+      gasPrice: '1.0umfx',
+      gasMultiplier: Number.NEGATIVE_INFINITY,
+    });
+
+    expect(result.valid).toBe(false);
+    expect(result.errors.some((e) => e.includes('gasMultiplier'))).toBe(true);
   });
 });
 
