@@ -194,6 +194,39 @@ describe('validateConfig', () => {
     expect(result.errors.some((e) => e.includes('gasPrice'))).toBe(true);
   });
 
+  it('should reject gas price with trailing slash in IBC denom', () => {
+    const result = validateConfig({
+      chainId: 'test',
+      rpcUrl: 'https://example.com',
+      gasPrice: '0.5ibc/',
+    });
+
+    expect(result.valid).toBe(false);
+    expect(result.errors.some((e) => e.includes('gasPrice'))).toBe(true);
+  });
+
+  it('should reject gas price with trailing slash in factory denom path', () => {
+    const result = validateConfig({
+      chainId: 'test',
+      rpcUrl: 'https://example.com',
+      gasPrice: '0.5factory/creator/',
+    });
+
+    expect(result.valid).toBe(false);
+    expect(result.errors.some((e) => e.includes('gasPrice'))).toBe(true);
+  });
+
+  it('should reject gas price with empty path segment in denom', () => {
+    const result = validateConfig({
+      chainId: 'test',
+      rpcUrl: 'https://example.com',
+      gasPrice: '0.5factory//creator/upwr',
+    });
+
+    expect(result.valid).toBe(false);
+    expect(result.errors.some((e) => e.includes('gasPrice'))).toBe(true);
+  });
+
   it('should reject gas price with no denom', () => {
     const result = validateConfig({
       chainId: 'test',

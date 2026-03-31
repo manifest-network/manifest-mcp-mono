@@ -66,9 +66,13 @@ function validateEndpointUrl(
 function isValidGasPrice(gasPrice: string): boolean {
   // Gas price should be a number followed by a denomination.
   // Denoms can be simple (umfx), IBC (ibc/ABC123...), or factory
-  // (factory/manifest1.../utoken) so we allow letters, digits, slashes, and dots
-  // after the initial letter.
-  return /^\d+(\.\d+)?[a-zA-Z][a-zA-Z0-9/.:_-]*$/.test(gasPrice);
+  // (factory/manifest1.../utoken). Denoms are made of non-empty segments
+  // separated by '/', with the first segment starting with a letter.
+  // Each segment may contain letters, digits, dots, colons, underscores,
+  // and hyphens.
+  return /^\d+(\.\d+)?[a-zA-Z][a-zA-Z0-9.:_-]*(?:\/[a-zA-Z0-9.:_-]+)*$/.test(
+    gasPrice,
+  );
 }
 
 /**
@@ -150,7 +154,7 @@ export function validateConfig(
     errors.push('gasPrice is required when rpcUrl is provided');
   } else if (config.gasPrice && !isValidGasPrice(config.gasPrice)) {
     errors.push(
-      'gasPrice must be a number followed by denomination (e.g., "1.0umfx" or "0.5factory/addr/udenom")',
+      'gasPrice must be a number followed by denomination (e.g., "1.0umfx", "0.5factory/addr/udenom", or "0.25ibc/<hash>")',
     );
   }
 
