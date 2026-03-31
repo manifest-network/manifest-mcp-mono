@@ -154,7 +154,7 @@ export function validateConfig(
     errors.push('gasPrice is required when rpcUrl is provided');
   } else if (config.gasPrice && !isValidGasPrice(config.gasPrice)) {
     errors.push(
-      'gasPrice must be a number followed by denomination (e.g., "1.0umfx", "0.5factory/addr/udenom", or "0.25ibc/<hash>")',
+      'gasPrice must be a number followed by denomination (e.g., "1.0umfx", "0.5factory/addr/udenom", or "0.25ibc/ABC123")',
     );
   }
 
