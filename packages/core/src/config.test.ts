@@ -151,6 +151,71 @@ describe('validateConfig', () => {
     expect(result.errors.some((e) => e.includes('gasPrice'))).toBe(true);
   });
 
+  it('should accept factory denom gas price', () => {
+    const result = validateConfig({
+      chainId: 'test',
+      rpcUrl: 'https://example.com',
+      gasPrice:
+        '0.5factory/manifest1afk9zr2hn2jsac63h4hm60vl9z3e5u69gndzf7c99cqge3vzwjzsfmy9qj/upwr',
+    });
+
+    expect(result.valid).toBe(true);
+  });
+
+  it('should accept IBC denom gas price', () => {
+    const result = validateConfig({
+      chainId: 'test',
+      rpcUrl: 'https://example.com',
+      gasPrice:
+        '0.01ibc/ED07A3391A112B175915CD8FAF43A2DA8E4790EDE12566649D0C2F97716B8518',
+    });
+
+    expect(result.valid).toBe(true);
+  });
+
+  it('should accept integer gas price without decimal', () => {
+    const result = validateConfig({
+      chainId: 'test',
+      rpcUrl: 'https://example.com',
+      gasPrice: '100umfx',
+    });
+
+    expect(result.valid).toBe(true);
+  });
+
+  it('should reject gas price with denom starting with a slash', () => {
+    const result = validateConfig({
+      chainId: 'test',
+      rpcUrl: 'https://example.com',
+      gasPrice: '0.5/factory/manifest1abc/upwr',
+    });
+
+    expect(result.valid).toBe(false);
+    expect(result.errors.some((e) => e.includes('gasPrice'))).toBe(true);
+  });
+
+  it('should reject gas price with no denom', () => {
+    const result = validateConfig({
+      chainId: 'test',
+      rpcUrl: 'https://example.com',
+      gasPrice: '0.025',
+    });
+
+    expect(result.valid).toBe(false);
+    expect(result.errors.some((e) => e.includes('gasPrice'))).toBe(true);
+  });
+
+  it('should reject gas price with leading dot', () => {
+    const result = validateConfig({
+      chainId: 'test',
+      rpcUrl: 'https://example.com',
+      gasPrice: '.5umfx',
+    });
+
+    expect(result.valid).toBe(false);
+    expect(result.errors.some((e) => e.includes('gasPrice'))).toBe(true);
+  });
+
   it('should validate optional addressPrefix', () => {
     const result = validateConfig({
       chainId: 'test',
