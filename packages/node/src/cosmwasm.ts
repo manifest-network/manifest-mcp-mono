@@ -6,8 +6,7 @@ bootstrap({
   cliName: 'manifest-mcp-cosmwasm',
   label: 'cosmwasm',
   createServer: (opts) => {
-    const converterAddress =
-      process.env.MANIFEST_CONVERTER_ADDRESS?.trim();
+    const converterAddress = process.env.MANIFEST_CONVERTER_ADDRESS?.trim();
     if (!converterAddress) {
       process.stderr.write(
         'Error: MANIFEST_CONVERTER_ADDRESS environment variable is required.\n' +
