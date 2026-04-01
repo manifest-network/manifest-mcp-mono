@@ -148,6 +148,7 @@ export class ChainMCPServer {
             ),
           gas_multiplier: z
             .number()
+            .finite()
             .min(1)
             .optional()
             .describe(

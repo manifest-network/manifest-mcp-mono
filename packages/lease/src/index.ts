@@ -130,6 +130,7 @@ export class LeaseMCPServer {
             .describe('Amount with denomination (e.g. "10000000umfx")'),
           gas_multiplier: z
             .number()
+            .finite()
             .min(1)
             .optional()
             .describe(
@@ -227,6 +228,7 @@ export class LeaseMCPServer {
           lease_uuid: z.string().uuid().describe('The lease UUID to close'),
           gas_multiplier: z
             .number()
+            .finite()
             .min(1)
             .optional()
             .describe(

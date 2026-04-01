@@ -379,6 +379,7 @@ export class FredMCPServer {
             ),
           gas_multiplier: z
             .number()
+            .finite()
             .min(1)
             .optional()
             .describe(
