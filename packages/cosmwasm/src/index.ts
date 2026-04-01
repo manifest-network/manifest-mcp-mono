@@ -39,10 +39,14 @@ interface ConverterConfig {
  * Calculate the conversion output using integer arithmetic on a decimal rate string.
  * e.g., amount="1000000", rate="0.379" -> "379000"
  */
-function calculateConversion(amount: string, rateStr: string): string {
+function calculateConversion(
+  amount: string,
+  rateStr: string,
+  amountErrorCode: ManifestMCPErrorCode = ManifestMCPErrorCode.TX_FAILED,
+): string {
   if (!/^\d+$/.test(amount)) {
     throw new ManifestMCPError(
-      ManifestMCPErrorCode.TX_FAILED,
+      amountErrorCode,
       `Invalid conversion amount: "${amount}". Must be a non-negative integer string.`,
     );
   }
@@ -157,7 +161,11 @@ export class CosmwasmMCPServer {
         };
 
         if (args.amount) {
-          const outputAmount = calculateConversion(args.amount, config.rate);
+          const outputAmount = calculateConversion(
+            args.amount,
+            config.rate,
+            ManifestMCPErrorCode.QUERY_FAILED,
+          );
           response.preview = {
             input_amount: args.amount,
             input_denom: config.source_denom,
@@ -183,10 +191,10 @@ export class CosmwasmMCPServer {
         },
       },
       withErrorHandling('convert_mfx_to_pwr', async (args) => {
-        if (args.amount === '0') {
+        if (!/^\d+$/.test(args.amount) || BigInt(args.amount) === 0n) {
           throw new ManifestMCPError(
             ManifestMCPErrorCode.TX_FAILED,
-            'Conversion amount must be greater than zero.',
+            `Invalid conversion amount: "${args.amount}". Must be a positive integer string.`,
           );
         }
 

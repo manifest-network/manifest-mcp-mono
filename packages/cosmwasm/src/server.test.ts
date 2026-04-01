@@ -179,14 +179,22 @@ describe('CosmwasmMCPServer', () => {
     });
 
     it('rejects zero amount', async () => {
-      mockConfigResponse();
       const server = makeServer();
       const result = await callTool(server, 'convert_mfx_to_pwr', {
         amount: '0',
       });
       expect(result.isError).toBe(true);
       const text = (result.content[0] as { text: string }).text;
-      expect(text).toContain('greater than zero');
+      expect(text).toContain('positive integer string');
+      expect(mockSignAndBroadcast).not.toHaveBeenCalled();
+    });
+
+    it('rejects zero-equivalent amounts like "00"', async () => {
+      const server = makeServer();
+      const result = await callTool(server, 'convert_mfx_to_pwr', {
+        amount: '00',
+      });
+      expect(result.isError).toBe(true);
       expect(mockSignAndBroadcast).not.toHaveBeenCalled();
     });
 

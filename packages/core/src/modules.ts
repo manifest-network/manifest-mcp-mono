@@ -697,17 +697,17 @@ const TX_MODULES: TxModuleRegistry = {
       {
         name: 'instantiate',
         description: 'Instantiate a contract from a code ID',
-        args: '<code_id> <json_msg> <label> [--admin <addr>] [--funds <amount>] [--memo <text>]',
+        args: '<code_id> <json_msg> <label> [--admin <addr>] [--funds <number><denom>[,<number><denom>...]] [--memo <text>]',
       },
       {
         name: 'instantiate2',
         description: 'Instantiate a contract with a predictable address',
-        args: '<code_id> <json_msg> <label> <salt> [--admin <addr>] [--funds <amount>] [--memo <text>]',
+        args: '<code_id> <json_msg> <label> <salt> [--admin <addr>] [--funds <number><denom>[,<number><denom>...]] [--memo <text>]',
       },
       {
         name: 'execute',
         description: 'Execute a smart contract',
-        args: '<contract_addr> <json_msg> [--funds <amount>[,<amount>...]] [--memo <text>]',
+        args: '<contract_addr> <json_msg> [--funds <number><denom>[,<number><denom>...]] [--memo <text>]',
       },
       {
         name: 'migrate',
