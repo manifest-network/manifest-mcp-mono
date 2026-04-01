@@ -22,6 +22,7 @@ import {
   DEFAULT_REQUESTS_PER_SECOND,
 } from './config.js';
 import { createLCDQueryClient } from './lcd-adapter.js';
+import { logger } from './logger.js';
 import { withRetry } from './retry.js';
 import {
   type ManifestMCPConfig,
@@ -313,6 +314,14 @@ export class CosmosClientManager {
             if (typeof record.defaultGasMultiplier === 'number') {
               record.defaultGasMultiplier =
                 this.config.gasMultiplier ?? DEFAULT_GAS_MULTIPLIER;
+            } else {
+              const effective =
+                this.config.gasMultiplier ?? DEFAULT_GAS_MULTIPLIER;
+              logger.warn(
+                `gasMultiplier ${effective} could not be applied: ` +
+                  `SigningStargateClient.defaultGasMultiplier is ${typeof record.defaultGasMultiplier}, expected number. ` +
+                  `Transactions will use the CosmJS built-in gas multiplier instead.`,
+              );
             }
             return c;
           },

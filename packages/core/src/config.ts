@@ -18,7 +18,7 @@ export const DEFAULT_REQUESTS_PER_SECOND = 10;
 /**
  * Default gas simulation multiplier. CosmJS defaults to 1.4 but billing module
  * transactions (close-lease in particular) can exceed that. 1.5 matches
- * the --gas-adjustment default used by the manifestd CLI.
+ * the --gas-adjustment value used in this project's CLI scripts.
  */
 export const DEFAULT_GAS_MULTIPLIER = 1.5;
 

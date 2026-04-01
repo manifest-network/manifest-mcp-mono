@@ -36,6 +36,15 @@ vi.mock('./lcd-adapter.js', () => ({
   createLCDQueryClient: vi.fn().mockResolvedValue({ mock: 'lcdClient' }),
 }));
 
+vi.mock('./logger.js', () => ({
+  logger: {
+    warn: vi.fn(),
+    debug: vi.fn(),
+    info: vi.fn(),
+    error: vi.fn(),
+  },
+}));
+
 vi.mock('./retry.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./retry.js')>();
   return {
@@ -52,6 +61,7 @@ import { SigningStargateClient } from '@cosmjs/stargate';
 import { liftedinit } from '@manifest-network/manifestjs';
 import { CosmosClientManager } from './client.js';
 import { createLCDQueryClient } from './lcd-adapter.js';
+import { logger } from './logger.js';
 import type { ManifestMCPConfig, WalletProvider } from './types.js';
 
 const mockCreateLCDQueryClient = vi.mocked(createLCDQueryClient);
@@ -306,7 +316,7 @@ describe('CosmosClientManager', () => {
       expect(mockSC.defaultGasMultiplier).toBe(2.5);
     });
 
-    it('leaves client unchanged when defaultGasMultiplier is absent', async () => {
+    it('warns when defaultGasMultiplier is absent', async () => {
       const mockSC = { disconnect: vi.fn() };
       mockConnectWithSigner.mockResolvedValue(mockSC as any);
 
@@ -317,6 +327,24 @@ describe('CosmosClientManager', () => {
       await instance.getSigningClient();
 
       expect((mockSC as any).defaultGasMultiplier).toBeUndefined();
+      expect(logger.warn).toHaveBeenCalledWith(
+        expect.stringContaining('could not be applied'),
+      );
+    });
+
+    it('warns with custom multiplier when defaultGasMultiplier is absent', async () => {
+      const mockSC = { disconnect: vi.fn() };
+      mockConnectWithSigner.mockResolvedValue(mockSC as any);
+
+      const instance = CosmosClientManager.getInstance(
+        makeConfig({ gasMultiplier: 2.0 }),
+        makeWallet(),
+      );
+      await instance.getSigningClient();
+
+      expect(logger.warn).toHaveBeenCalledWith(
+        expect.stringContaining('gasMultiplier 2 could not be applied'),
+      );
     });
 
     it('creates and returns signing client', async () => {

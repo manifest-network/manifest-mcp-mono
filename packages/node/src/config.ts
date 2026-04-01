@@ -62,9 +62,9 @@ export function loadConfig(): NodeMCPConfig {
   let gasMultiplier: number | undefined;
   if (gasMultiplierRaw !== undefined && gasMultiplierRaw !== '') {
     gasMultiplier = Number.parseFloat(gasMultiplierRaw);
-    if (!Number.isFinite(gasMultiplier)) {
+    if (!Number.isFinite(gasMultiplier) || gasMultiplier < 1) {
       throw new Error(
-        `COSMOS_GAS_MULTIPLIER must be a valid number, got "${gasMultiplierRaw}"`,
+        `COSMOS_GAS_MULTIPLIER must be a finite number >= 1, got "${gasMultiplierRaw}"`,
       );
     }
   }
