@@ -10,7 +10,7 @@ export interface NodeMCPConfig {
   readonly gasPrice?: string;
   readonly restUrl?: string;
   readonly addressPrefix: string;
-  /** Gas simulation multiplier (default: 1.5, minimum: 1). Parsed from COSMOS_GAS_MULTIPLIER. */
+  /** Gas simulation multiplier parsed from COSMOS_GAS_MULTIPLIER (minimum: 1). When undefined, a default of 1.5 is applied downstream by createConfig. */
   readonly gasMultiplier?: number;
   readonly mnemonic?: string;
   readonly keyfilePath: string;

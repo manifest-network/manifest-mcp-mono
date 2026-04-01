@@ -319,7 +319,7 @@ export class CosmosClientManager {
                 this.config.gasMultiplier ?? DEFAULT_GAS_MULTIPLIER;
               logger.warn(
                 `gasMultiplier ${effective} could not be applied: ` +
-                  `SigningStargateClient.defaultGasMultiplier is ${typeof record.defaultGasMultiplier}, expected number. ` +
+                  `signing client defaultGasMultiplier is ${typeof record.defaultGasMultiplier}, expected number. ` +
                   `Transactions will use the CosmJS built-in gas multiplier instead.`,
               );
             }
