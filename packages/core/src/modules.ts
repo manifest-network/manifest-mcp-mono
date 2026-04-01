@@ -707,22 +707,22 @@ const TX_MODULES: TxModuleRegistry = {
       {
         name: 'execute',
         description: 'Execute a smart contract',
-        args: '<contract_addr> <json_msg> [--funds <number><denom>[,<number><denom>...]] [--memo <text>]',
+        args: '<contract_address> <json_msg> [--funds <number><denom>[,<number><denom>...]] [--memo <text>]',
       },
       {
         name: 'migrate',
         description: 'Migrate a contract to a new code version',
-        args: '<contract_addr> <new_code_id> <json_msg> [--memo <text>]',
+        args: '<contract_address> <new_code_id> <json_msg> [--memo <text>]',
       },
       {
         name: 'update-admin',
         description: 'Update the admin of a contract',
-        args: '<contract_addr> <new_admin> [--memo <text>]',
+        args: '<contract_address> <new_admin> [--memo <text>]',
       },
       {
         name: 'clear-admin',
         description: 'Remove the admin of a contract',
-        args: '<contract_addr> [--memo <text>]',
+        args: '<contract_address> [--memo <text>]',
       },
     ],
   },
