@@ -1,4 +1,4 @@
-import { fromHex, fromUtf8, toUtf8 } from '@cosmjs/encoding';
+import { fromHex, fromUtf8, toBase64, toUtf8 } from '@cosmjs/encoding';
 import type { ManifestQueryClient } from '../client.js';
 import { throwUnsupportedSubcommand } from '../modules.js';
 import type {
@@ -109,7 +109,7 @@ export async function routeWasmQuery(
         );
       }
       const result = await wasm.rawContractState({ address, queryData });
-      return { data: result.data };
+      return { data: toBase64(result.data) };
     }
 
     case 'smart-contract-state': {
@@ -149,7 +149,7 @@ export async function routeWasmQuery(
       const [codeIdStr] = args;
       const codeId = parseBigInt(codeIdStr, 'code_id');
       const result = await wasm.code({ codeId });
-      return { codeInfo: result.codeInfo, data: result.data };
+      return { codeInfo: result.codeInfo, data: toBase64(result.data) };
     }
 
     case 'codes': {

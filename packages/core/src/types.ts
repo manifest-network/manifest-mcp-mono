@@ -633,7 +633,7 @@ export interface WasmAllContractStateResult extends PaginatedResult {
 }
 
 export interface WasmRawContractStateResult {
-  readonly data: Uint8Array;
+  readonly data: string; // base64-encoded
 }
 
 export interface WasmSmartContractStateResult {
@@ -642,7 +642,7 @@ export interface WasmSmartContractStateResult {
 
 export interface WasmCodeResult {
   readonly codeInfo?: CodeInfoResponse;
-  readonly data: Uint8Array;
+  readonly data: string; // base64-encoded wasm bytecode
 }
 
 export interface WasmCodesResult extends PaginatedResult {
