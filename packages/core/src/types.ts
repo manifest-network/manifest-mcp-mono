@@ -51,6 +51,14 @@ import type {
   UnbondingDelegation,
   Validator,
 } from '@manifest-network/manifestjs/dist/codegen/cosmos/staking/v1beta1/staking.js';
+import type { CodeInfoResponse } from '@manifest-network/manifestjs/dist/codegen/cosmwasm/wasm/v1/query.js';
+// CosmWasm module types
+import type {
+  ContractCodeHistoryEntry,
+  ContractInfo,
+  Model,
+  Params as WasmParams,
+} from '@manifest-network/manifestjs/dist/codegen/cosmwasm/wasm/v1/types.js';
 // Protobuf Any type for polymorphic account types
 import type { Any } from '@manifest-network/manifestjs/dist/codegen/google/protobuf/any.js';
 // Billing credit estimate response
@@ -62,7 +70,6 @@ import type {
   CreditAccount,
   Lease,
 } from '@manifest-network/manifestjs/dist/codegen/liftedinit/billing/v1/types.js';
-
 // SKU module types (Manifest-specific)
 import type {
   Provider,
@@ -78,6 +85,9 @@ export type {
   BankParams,
   BaseAccount,
   BillingParams,
+  CodeInfoResponse,
+  ContractCodeHistoryEntry,
+  ContractInfo,
   CreditAccount,
   DelegationDelegatorReward,
   DelegationResponse,
@@ -97,6 +107,7 @@ export type {
   HistoricalInfo,
   Lease,
   LeaseItemInput,
+  Model,
   ModuleAccount,
   Provider,
   QueryCreditEstimateResponse,
@@ -113,6 +124,7 @@ export type {
   ValidatorOutstandingRewards,
   ValidatorSlashEvent,
   VotingParams,
+  WasmParams,
 };
 
 /**
@@ -603,6 +615,64 @@ export interface SkusResult extends PaginatedResult {
   readonly skus: readonly SKU[];
 }
 
+// CosmWasm query results
+export interface WasmContractInfoResult {
+  readonly contractInfo?: ContractInfo;
+}
+
+export interface WasmContractHistoryResult extends PaginatedResult {
+  readonly entries: readonly ContractCodeHistoryEntry[];
+}
+
+export interface WasmContractsByCodeResult extends PaginatedResult {
+  readonly contracts: readonly string[];
+}
+
+export interface WasmAllContractStateResult extends PaginatedResult {
+  readonly models: readonly Model[];
+}
+
+export interface WasmRawContractStateResult {
+  readonly data: Uint8Array;
+}
+
+export interface WasmSmartContractStateResult {
+  readonly data: unknown;
+}
+
+export interface WasmCodeResult {
+  readonly codeInfo?: CodeInfoResponse;
+  readonly data: Uint8Array;
+}
+
+export interface WasmCodesResult extends PaginatedResult {
+  readonly codeInfos: readonly CodeInfoResponse[];
+}
+
+export interface WasmCodeInfoResult {
+  readonly codeInfo?: CodeInfoResponse;
+}
+
+export interface WasmPinnedCodesResult extends PaginatedResult {
+  readonly codeIds: readonly bigint[];
+}
+
+export interface WasmParamsResult {
+  readonly params?: WasmParams;
+}
+
+export interface WasmContractsByCreatorResult extends PaginatedResult {
+  readonly contractAddresses: readonly string[];
+}
+
+export interface WasmLimitsConfigResult {
+  readonly config: string;
+}
+
+export interface WasmBuildAddressResult {
+  readonly address: string;
+}
+
 /**
  * Union type of all query results for type-safe handling
  */
@@ -672,7 +742,21 @@ export type QueryResult =
   | GroupProposalsResult
   | GroupVoteResult
   | GroupVotesResult
-  | GroupTallyQueryResult;
+  | GroupTallyQueryResult
+  | WasmContractInfoResult
+  | WasmContractHistoryResult
+  | WasmContractsByCodeResult
+  | WasmAllContractStateResult
+  | WasmRawContractStateResult
+  | WasmSmartContractStateResult
+  | WasmCodeResult
+  | WasmCodesResult
+  | WasmCodeInfoResult
+  | WasmPinnedCodesResult
+  | WasmParamsResult
+  | WasmContractsByCreatorResult
+  | WasmLimitsConfigResult
+  | WasmBuildAddressResult;
 
 /**
  * Result from a Cosmos query

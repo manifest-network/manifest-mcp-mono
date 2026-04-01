@@ -10,6 +10,7 @@ import { routeGovQuery } from './queries/gov.js';
 import { routeGroupQuery } from './queries/group.js';
 import { routeSkuQuery } from './queries/sku.js';
 import { routeStakingQuery } from './queries/staking.js';
+import { routeWasmQuery } from './queries/wasm.js';
 // Import transaction handlers
 import { routeBankTransaction } from './transactions/bank.js';
 import { routeBillingTransaction } from './transactions/billing.js';
@@ -19,6 +20,7 @@ import { routeGroupTransaction } from './transactions/group.js';
 import { routeManifestTransaction } from './transactions/manifest.js';
 import { routeSkuTransaction } from './transactions/sku.js';
 import { routeStakingTransaction } from './transactions/staking.js';
+import { routeWasmTransaction } from './transactions/wasm.js';
 import {
   type AvailableModules,
   type CosmosTxResult,
@@ -379,6 +381,78 @@ const QUERY_MODULES: QueryModuleRegistry = {
       { name: 'groups', description: 'Query all groups', args: '[--limit N]' },
     ],
   },
+  wasm: {
+    description: 'Querying commands for the CosmWasm wasm module',
+    handler: routeWasmQuery,
+    subcommands: [
+      {
+        name: 'contract-info',
+        description: 'Query contract info by address',
+        args: '<address>',
+      },
+      {
+        name: 'contract-history',
+        description: 'Query contract code history',
+        args: '<address> [--limit N]',
+      },
+      {
+        name: 'contracts-by-code',
+        description: 'Query contracts by code ID',
+        args: '<code_id> [--limit N]',
+      },
+      {
+        name: 'all-contract-state',
+        description: 'Query all key-value pairs in contract state',
+        args: '<address> [--limit N]',
+      },
+      {
+        name: 'raw-contract-state',
+        description: 'Query raw contract state by hex-encoded key',
+        args: '<address> <query_data_hex>',
+      },
+      {
+        name: 'smart-contract-state',
+        description: 'Execute a smart query against a contract',
+        args: '<address> <query_json>',
+      },
+      {
+        name: 'code',
+        description: 'Query code info and data by code ID',
+        args: '<code_id>',
+      },
+      {
+        name: 'codes',
+        description: 'Query all stored wasm codes',
+        args: '[--limit N]',
+      },
+      {
+        name: 'code-info',
+        description: 'Query code metadata by code ID',
+        args: '<code_id>',
+      },
+      {
+        name: 'pinned-codes',
+        description: 'Query pinned code IDs',
+        args: '[--limit N]',
+      },
+      { name: 'params', description: 'Query wasm module parameters' },
+      {
+        name: 'contracts-by-creator',
+        description: 'Query contracts by creator address',
+        args: '<creator_address> [--limit N]',
+      },
+      {
+        name: 'wasm-limits-config',
+        description: 'Query wasm limits configuration',
+      },
+      {
+        name: 'build-address',
+        description:
+          'Compute contract address from code hash, creator, and salt',
+        args: '<code_hash> <creator_address> <salt>',
+      },
+    ],
+  },
 };
 
 /**
@@ -609,6 +683,47 @@ const TX_MODULES: TxModuleRegistry = {
         args: '<proposal-id>',
       },
       { name: 'leave-group', description: 'Leave a group', args: '<group-id>' },
+    ],
+  },
+  wasm: {
+    description: 'CosmWasm wasm transaction subcommands',
+    handler: routeWasmTransaction,
+    subcommands: [
+      {
+        name: 'store-code',
+        description: 'Upload wasm contract code (base64-encoded)',
+        args: '<wasm_bytes_base64> [--instantiate-permission everybody|nobody|addr1,addr2] [--memo <text>]',
+      },
+      {
+        name: 'instantiate',
+        description: 'Instantiate a contract from a code ID',
+        args: '<code_id> <json_msg> <label> [--admin <addr>] [--funds <amount>] [--memo <text>]',
+      },
+      {
+        name: 'instantiate2',
+        description: 'Instantiate a contract with a predictable address',
+        args: '<code_id> <json_msg> <label> <salt> [--admin <addr>] [--funds <amount>] [--memo <text>]',
+      },
+      {
+        name: 'execute',
+        description: 'Execute a smart contract',
+        args: '<contract_addr> <json_msg> [--funds <amount>[,<amount>...]] [--memo <text>]',
+      },
+      {
+        name: 'migrate',
+        description: 'Migrate a contract to a new code version',
+        args: '<contract_addr> <new_code_id> <json_msg> [--memo <text>]',
+      },
+      {
+        name: 'update-admin',
+        description: 'Update the admin of a contract',
+        args: '<contract_addr> <new_admin> [--memo <text>]',
+      },
+      {
+        name: 'clear-admin',
+        description: 'Remove the admin of a contract',
+        args: '<contract_addr> [--memo <text>]',
+      },
     ],
   },
 };

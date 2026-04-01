@@ -15,3 +15,4 @@ export {
   parseHexBytes,
   parseLeaseItem,
 } from './utils.js';
+export { routeWasmTransaction } from './wasm.js';

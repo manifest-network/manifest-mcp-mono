@@ -8,8 +8,15 @@ vi.mock('@manifest-network/manifestjs', () => ({
       createRPCQueryClient: vi.fn(),
     },
   },
+  cosmwasm: {
+    ClientFactory: {
+      createRPCQueryClient: vi.fn().mockResolvedValue({ cosmwasm: {} }),
+    },
+  },
   cosmosProtoRegistry: [],
   cosmosAminoConverters: {},
+  cosmwasmProtoRegistry: [],
+  cosmwasmAminoConverters: {},
   liftedinitProtoRegistry: [],
   liftedinitAminoConverters: {},
   strangeloveVenturesProtoRegistry: [],
@@ -58,7 +65,10 @@ vi.mock('./retry.js', async (importOriginal) => {
 });
 
 import { SigningStargateClient } from '@cosmjs/stargate';
-import { liftedinit } from '@manifest-network/manifestjs';
+import {
+  cosmwasm as cosmwasmNs,
+  liftedinit,
+} from '@manifest-network/manifestjs';
 import { CosmosClientManager } from './client.js';
 import { createLCDQueryClient } from './lcd-adapter.js';
 import { logger } from './logger.js';
@@ -68,6 +78,9 @@ const mockCreateLCDQueryClient = vi.mocked(createLCDQueryClient);
 
 const mockCreateRPCQueryClient = vi.mocked(
   liftedinit.ClientFactory.createRPCQueryClient,
+);
+const mockCreateCosmwasmRPCQueryClient = vi.mocked(
+  cosmwasmNs.ClientFactory.createRPCQueryClient,
 );
 const mockConnectWithSigner = vi.mocked(
   SigningStargateClient.connectWithSigner,
@@ -96,6 +109,9 @@ describe('CosmosClientManager', () => {
     CosmosClientManager.clearInstances();
     // Restore default mock return values after clearAllMocks
     mockCreateRPCQueryClient.mockResolvedValue({ mock: 'defaultQC' } as any);
+    mockCreateCosmwasmRPCQueryClient.mockResolvedValue({
+      cosmwasm: {},
+    } as any);
     mockConnectWithSigner.mockResolvedValue({ disconnect: vi.fn() } as any);
   });
 
@@ -227,8 +243,8 @@ describe('CosmosClientManager', () => {
       const client1 = await instance.getQueryClient();
       const client2 = await instance.getQueryClient();
 
-      expect(client1).toBe(mockQC);
-      expect(client2).toBe(mockQC);
+      expect(client1).toMatchObject(mockQC);
+      expect(client2).toBe(client1); // cached
       expect(mockCreateRPCQueryClient).toHaveBeenCalledOnce();
     });
 
@@ -251,7 +267,7 @@ describe('CosmosClientManager', () => {
       resolveInit({ mock: 'queryClient' });
 
       const [c1, c2] = await Promise.all([p1, p2]);
-      expect(c1).toEqual({ mock: 'queryClient' });
+      expect(c1).toMatchObject({ mock: 'queryClient' });
       expect(c2).toBe(c1);
       expect(mockCreateRPCQueryClient).toHaveBeenCalledOnce();
     });
@@ -417,13 +433,13 @@ describe('CosmosClientManager', () => {
       );
       await instance.getSigningClient();
       const qc1 = await instance.getQueryClient();
-      expect(qc1).toEqual({ mock: 'qc1' });
+      expect(qc1).toMatchObject({ mock: 'qc1' });
 
       instance.disconnect();
 
       // Subsequent calls should re-initialize
       const qc2 = await instance.getQueryClient();
-      expect(qc2).toEqual({ mock: 'qc2' });
+      expect(qc2).toMatchObject({ mock: 'qc2' });
     });
   });
 

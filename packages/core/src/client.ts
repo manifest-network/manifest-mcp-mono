@@ -8,6 +8,9 @@ import {
 import {
   cosmosAminoConverters,
   cosmosProtoRegistry,
+  cosmwasmAminoConverters,
+  cosmwasm as cosmwasmNs,
+  cosmwasmProtoRegistry,
   liftedinit,
   liftedinitAminoConverters,
   liftedinitProtoRegistry,
@@ -31,11 +34,16 @@ import {
   type WalletProvider,
 } from './types.js';
 
-// Type for the RPC query client from manifestjs liftedinit bundle
-// This includes cosmos modules + liftedinit-specific modules (billing, manifest, sku)
-export type ManifestQueryClient = Awaited<
+// Combined query client type: liftedinit modules (cosmos + billing/manifest/sku) + cosmwasm
+// Uses Pick to extract only the cosmwasm namespace, avoiding conflicts with overlapping cosmos types.
+type LiftedinitQueryClient = Awaited<
   ReturnType<typeof liftedinit.ClientFactory.createRPCQueryClient>
 >;
+type CosmwasmQueryClient = Awaited<
+  ReturnType<typeof cosmwasmNs.ClientFactory.createRPCQueryClient>
+>;
+export type ManifestQueryClient = LiftedinitQueryClient &
+  Pick<CosmwasmQueryClient, 'cosmwasm'>;
 
 /**
  * Extract the registry type expected by SigningStargateClient.connectWithSigner.
@@ -65,6 +73,7 @@ function getSigningManifestClientOptions() {
     ...liftedinitProtoRegistry,
     ...strangeloveVenturesProtoRegistry,
     ...osmosisProtoRegistry,
+    ...cosmwasmProtoRegistry,
   ]);
 
   const aminoTypes = new AminoTypes({
@@ -72,6 +81,7 @@ function getSigningManifestClientOptions() {
     ...liftedinitAminoConverters,
     ...strangeloveVenturesAminoConverters,
     ...osmosisAminoConverters,
+    ...cosmwasmAminoConverters,
   });
 
   return { registry, aminoTypes };
@@ -210,12 +220,22 @@ export class CosmosClientManager {
             },
           );
         } else if (this.config.rpcUrl) {
-          // Use RPC (existing behavior)
+          // Use RPC: merge liftedinit + cosmwasm namespaces into a single client
           client = await withRetry(
-            () =>
-              liftedinit.ClientFactory.createRPCQueryClient({
-                rpcEndpoint: this.config.rpcUrl!,
-              }),
+            async () => {
+              const [liftedinitClient, cosmwasmClient] = await Promise.all([
+                liftedinit.ClientFactory.createRPCQueryClient({
+                  rpcEndpoint: this.config.rpcUrl!,
+                }),
+                cosmwasmNs.ClientFactory.createRPCQueryClient({
+                  rpcEndpoint: this.config.rpcUrl!,
+                }),
+              ]);
+              return {
+                ...liftedinitClient,
+                cosmwasm: cosmwasmClient.cosmwasm,
+              } as ManifestQueryClient;
+            },
             {
               config: this.config.retry,
               operationName: 'connect query client',
