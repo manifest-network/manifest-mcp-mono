@@ -10,6 +10,7 @@ export interface NodeMCPConfig {
   readonly gasPrice?: string;
   readonly restUrl?: string;
   readonly addressPrefix: string;
+  /** Gas simulation multiplier (default: 1.5, minimum: 1). Parsed from COSMOS_GAS_MULTIPLIER. */
   readonly gasMultiplier?: number;
   readonly mnemonic?: string;
   readonly keyfilePath: string;
@@ -61,7 +62,7 @@ export function loadConfig(): NodeMCPConfig {
   const gasMultiplierRaw = process.env.COSMOS_GAS_MULTIPLIER;
   let gasMultiplier: number | undefined;
   if (gasMultiplierRaw !== undefined && gasMultiplierRaw !== '') {
-    gasMultiplier = Number.parseFloat(gasMultiplierRaw);
+    gasMultiplier = Number(gasMultiplierRaw);
     if (!Number.isFinite(gasMultiplier) || gasMultiplier < 1) {
       throw new Error(
         `COSMOS_GAS_MULTIPLIER must be a finite number >= 1, got "${gasMultiplierRaw}"`,

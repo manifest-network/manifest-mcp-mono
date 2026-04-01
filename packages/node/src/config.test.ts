@@ -168,6 +168,26 @@ describe('loadConfig', () => {
     expect(() => loadConfig()).toThrow(/COSMOS_GAS_MULTIPLIER/);
   });
 
+  it('should throw for COSMOS_GAS_MULTIPLIER with trailing garbage', async () => {
+    process.env.COSMOS_CHAIN_ID = 'test-chain';
+    process.env.COSMOS_RPC_URL = 'https://rpc.test.com';
+    process.env.COSMOS_GAS_PRICE = '0.025umfx';
+    process.env.COSMOS_GAS_MULTIPLIER = '2.0abc';
+
+    const { loadConfig } = await importConfig();
+    expect(() => loadConfig()).toThrow(/COSMOS_GAS_MULTIPLIER/);
+  });
+
+  it('should throw for COSMOS_GAS_MULTIPLIER with denom suffix', async () => {
+    process.env.COSMOS_CHAIN_ID = 'test-chain';
+    process.env.COSMOS_RPC_URL = 'https://rpc.test.com';
+    process.env.COSMOS_GAS_PRICE = '0.025umfx';
+    process.env.COSMOS_GAS_MULTIPLIER = '1.5umfx';
+
+    const { loadConfig } = await importConfig();
+    expect(() => loadConfig()).toThrow(/COSMOS_GAS_MULTIPLIER/);
+  });
+
   it('should throw for Infinity COSMOS_GAS_MULTIPLIER', async () => {
     process.env.COSMOS_CHAIN_ID = 'test-chain';
     process.env.COSMOS_RPC_URL = 'https://rpc.test.com';

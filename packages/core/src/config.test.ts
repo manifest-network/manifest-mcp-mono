@@ -531,6 +531,17 @@ describe('createValidatedConfig', () => {
     expect(config.retry?.baseDelayMs).toBe(500);
     expect(config.retry?.maxDelayMs).toBe(5000);
   });
+
+  it('should reject invalid gasMultiplier', () => {
+    expect(() =>
+      createValidatedConfig({
+        chainId: 'test-chain',
+        rpcUrl: 'https://example.com',
+        gasPrice: '1.0umfx',
+        gasMultiplier: 0.5,
+      }),
+    ).toThrow(ManifestMCPError);
+  });
 });
 
 describe('validateConfig gasMultiplier', () => {
