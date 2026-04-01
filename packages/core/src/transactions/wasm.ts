@@ -255,7 +255,7 @@ export async function routeWasmTransaction(
       requireArgs(
         positionalArgs,
         2,
-        ['contract_address', 'json_message'],
+        ['contract_address', 'json_msg'],
         'wasm execute',
       );
       const [contractAddress, jsonMessage] = positionalArgs;
@@ -292,7 +292,7 @@ export async function routeWasmTransaction(
       requireArgs(
         positionalArgs,
         3,
-        ['contract_address', 'new_code_id', 'json_message'],
+        ['contract_address', 'new_code_id', 'json_msg'],
         'wasm migrate',
       );
       const [contractAddress, newCodeIdStr, jsonMessage] = positionalArgs;

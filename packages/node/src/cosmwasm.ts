@@ -8,11 +8,10 @@ bootstrap({
   createServer: (opts) => {
     const converterAddress = process.env.MANIFEST_CONVERTER_ADDRESS?.trim();
     if (!converterAddress) {
-      process.stderr.write(
-        'Error: MANIFEST_CONVERTER_ADDRESS environment variable is required.\n' +
-          'Set it to the bech32 address of the MFX-to-PWR converter contract.\n',
+      throw new Error(
+        'MANIFEST_CONVERTER_ADDRESS environment variable is required. ' +
+          'Set it to the bech32 address of the MFX-to-PWR converter contract.',
       );
-      process.exit(1);
     }
     return new CosmwasmMCPServer({ ...opts, converterAddress }).getServer();
   },

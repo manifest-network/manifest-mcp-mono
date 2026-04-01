@@ -123,7 +123,7 @@ export function makeMockQueryClient(overrides?: {
     cosmwasm: {
       wasm: {
         v1: {
-          contractInfo: vi.fn().mockResolvedValue({ contractInfo: null }),
+          contractInfo: vi.fn().mockResolvedValue({}),
           contractHistory: vi
             .fn()
             .mockResolvedValue({ entries: [], pagination: null }),
