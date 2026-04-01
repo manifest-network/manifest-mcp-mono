@@ -390,6 +390,31 @@ describe('createMnemonicServer', () => {
     ).rejects.toThrow();
   });
 
+  it('passes gasMultiplier through to validated config', async () => {
+    class FakeServer {
+      opts: ManifestMCPServerOptions;
+      constructor(opts: ManifestMCPServerOptions) {
+        this.opts = opts;
+      }
+    }
+
+    const server = await createMnemonicServer(
+      {
+        chainId: 'test-chain',
+        rpcUrl: 'https://rpc.example.com',
+        gasPrice: '1.0umfx',
+        gasMultiplier: 2.5,
+        mnemonic:
+          'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about',
+      },
+      FakeServer as unknown as new (
+        opts: ManifestMCPServerOptions,
+      ) => FakeServer,
+    );
+
+    expect(server.opts.config.gasMultiplier).toBe(2.5);
+  });
+
   it('rejects invalid mnemonic', async () => {
     class FakeServer {}
 

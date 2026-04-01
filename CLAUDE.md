@@ -82,6 +82,7 @@ Three MCP servers bridging AI assistants to Cosmos SDK blockchains (Manifest Net
 | `COSMOS_RPC_URL` | One of `COSMOS_RPC_URL` or `COSMOS_REST_URL` required | -- |
 | `COSMOS_GAS_PRICE` | Required when `COSMOS_RPC_URL` is set | -- |
 | `COSMOS_REST_URL` | One of `COSMOS_RPC_URL` or `COSMOS_REST_URL` required | -- |
+| `COSMOS_GAS_MULTIPLIER` | No | `1.5` (must be >= 1) |
 | `COSMOS_ADDRESS_PREFIX` | No | `manifest` |
 | `MANIFEST_KEY_FILE` | No | `~/.manifest/key.json` |
 | `MANIFEST_KEY_PASSWORD` | No | -- |

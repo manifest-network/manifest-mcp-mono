@@ -10,6 +10,8 @@ export interface NodeMCPConfig {
   readonly gasPrice?: string;
   readonly restUrl?: string;
   readonly addressPrefix: string;
+  /** Gas simulation multiplier parsed from COSMOS_GAS_MULTIPLIER (minimum: 1). When undefined, a default of 1.5 is applied downstream by createConfig. */
+  readonly gasMultiplier?: number;
   readonly mnemonic?: string;
   readonly keyfilePath: string;
   readonly keyPassword?: string;
@@ -57,6 +59,16 @@ export function loadConfig(): NodeMCPConfig {
   const rpcUrl = process.env.COSMOS_RPC_URL || undefined;
   const gasPrice = process.env.COSMOS_GAS_PRICE || undefined;
   const restUrl = process.env.COSMOS_REST_URL || undefined;
+  const gasMultiplierRaw = process.env.COSMOS_GAS_MULTIPLIER;
+  let gasMultiplier: number | undefined;
+  if (gasMultiplierRaw !== undefined && gasMultiplierRaw !== '') {
+    gasMultiplier = Number(gasMultiplierRaw);
+    if (!Number.isFinite(gasMultiplier) || gasMultiplier < 1) {
+      throw new Error(
+        `COSMOS_GAS_MULTIPLIER must be a finite number >= 1, got "${gasMultiplierRaw}"`,
+      );
+    }
+  }
 
   // At least one endpoint is required
   if (!rpcUrl && !restUrl) {
@@ -85,6 +97,7 @@ export function loadConfig(): NodeMCPConfig {
         join(homedir(), '.manifest', 'key.json'),
       ),
     ),
+    gasMultiplier,
     keyPassword: process.env.MANIFEST_KEY_PASSWORD,
   };
 }

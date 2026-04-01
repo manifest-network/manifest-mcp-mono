@@ -217,15 +217,14 @@ export function jsonResponse(
 
 /**
  * Config shape accepted by createMnemonicServer.
+ * Derives from ManifestMCPConfig (minus rateLimit/retry) so new config fields propagate automatically.
  */
-export interface MnemonicServerConfig {
-  chainId: string;
-  rpcUrl?: string;
-  gasPrice?: string;
-  restUrl?: string;
-  addressPrefix?: string;
-  mnemonic: string;
-}
+export type MnemonicServerConfig = Omit<
+  ManifestMCPConfig,
+  'rateLimit' | 'retry'
+> & {
+  readonly mnemonic: string;
+};
 
 /**
  * Generic factory that creates any MCP server class with a mnemonic wallet.

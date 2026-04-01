@@ -110,6 +110,7 @@ export function bootstrap(cfg: BootstrapConfig): void {
       gasPrice: env.gasPrice,
       restUrl: env.restUrl,
       addressPrefix: env.addressPrefix,
+      gasMultiplier: env.gasMultiplier,
     });
 
     const walletProvider = resolveWallet(env, config, cfg.cliName);
