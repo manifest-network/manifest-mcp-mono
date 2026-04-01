@@ -143,7 +143,12 @@ export function makeMockQueryClient(overrides?: {
             .fn()
             .mockResolvedValue({ codeInfo: null, data: new Uint8Array() }),
           codes: vi.fn().mockResolvedValue({ codeInfos: [], pagination: null }),
-          codeInfo: vi.fn().mockResolvedValue({ codeInfo: null }),
+          codeInfo: vi.fn().mockResolvedValue({
+            codeId: BigInt(0),
+            creator: '',
+            checksum: new Uint8Array(),
+            instantiatePermission: { permission: 0, addresses: [] },
+          }),
           pinnedCodes: vi
             .fn()
             .mockResolvedValue({ codeIds: [], pagination: null }),

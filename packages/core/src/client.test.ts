@@ -244,8 +244,10 @@ describe('CosmosClientManager', () => {
       const client2 = await instance.getQueryClient();
 
       expect(client1).toMatchObject(mockQC);
+      expect(client1).toHaveProperty('cosmwasm');
       expect(client2).toBe(client1); // cached
       expect(mockCreateRPCQueryClient).toHaveBeenCalledOnce();
+      expect(mockCreateCosmwasmRPCQueryClient).toHaveBeenCalledOnce();
     });
 
     it('deduplicates concurrent init calls', async () => {
@@ -268,8 +270,10 @@ describe('CosmosClientManager', () => {
 
       const [c1, c2] = await Promise.all([p1, p2]);
       expect(c1).toMatchObject({ mock: 'queryClient' });
+      expect(c1).toHaveProperty('cosmwasm');
       expect(c2).toBe(c1);
       expect(mockCreateRPCQueryClient).toHaveBeenCalledOnce();
+      expect(mockCreateCosmwasmRPCQueryClient).toHaveBeenCalledOnce();
     });
 
     it('wraps non-ManifestMCPError into RPC_CONNECTION_FAILED', async () => {
