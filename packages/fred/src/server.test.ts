@@ -71,9 +71,11 @@ import {
 } from '@manifest-network/manifest-mcp-core/__test-utils__/mocks.js';
 import { getLeaseProvision, getLeaseReleases } from './http/fred.js';
 import { FredMCPServer } from './index.js';
+import { deployApp } from './tools/deployApp.js';
 import { fetchActiveLease } from './tools/fetchActiveLease.js';
 import { resolveProviderUrl } from './tools/resolveLeaseProvider.js';
 
+const mockDeployApp = vi.mocked(deployApp);
 const mockGetLeaseProvision = vi.mocked(getLeaseProvision);
 const mockGetLeaseReleases = vi.mocked(getLeaseReleases);
 const mockResolveProviderUrl = vi.mocked(resolveProviderUrl);
@@ -332,6 +334,28 @@ describe('FredMCPServer', () => {
       const parsed = JSON.parse(result.content[0].text);
       expect(parsed.code).toBe('INVALID_CONFIG');
       expect(parsed.message).toContain('signArbitrary');
+    });
+  });
+
+  describe('deploy_app', () => {
+    it('passes gas_multiplier to deployApp input', async () => {
+      const server = new FredMCPServer({
+        config: makeMockConfig(),
+        walletProvider: makeMockWallet({ signArbitrary: true }),
+      });
+      await callTool(server, 'deploy_app', {
+        image: 'nginx:alpine',
+        port: 80,
+        size: 'docker-micro',
+        gas_multiplier: 3.5,
+      });
+
+      expect(mockDeployApp).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.any(Function),
+        expect.any(Function),
+        expect.objectContaining({ gasMultiplier: 3.5 }),
+      );
     });
   });
 });

@@ -157,6 +157,25 @@ describe('LeaseMCPServer', () => {
       expect(mockFundCredits).toHaveBeenCalledOnce();
       expect(result.isError).toBeUndefined();
     });
+
+    it('passes gas_multiplier override to fundCredits', async () => {
+      mockFundCredits.mockResolvedValue({ transactionHash: 'HASH1', code: 0 });
+
+      const server = new LeaseMCPServer({
+        config: makeMockConfig(),
+        walletProvider: makeMockWallet(),
+      });
+      await callTool(server, 'fund_credit', {
+        amount: '10000000umfx',
+        gas_multiplier: 2.5,
+      });
+
+      expect(mockFundCredits).toHaveBeenCalledWith(
+        expect.anything(),
+        '10000000umfx',
+        { gasMultiplier: 2.5 },
+      );
+    });
   });
 
   describe('leases_by_tenant', () => {
@@ -225,6 +244,25 @@ describe('LeaseMCPServer', () => {
 
       expect(mockStopApp).toHaveBeenCalledOnce();
       expect(result.isError).toBeUndefined();
+    });
+
+    it('passes gas_multiplier override to stopApp', async () => {
+      mockStopApp.mockResolvedValue({ transactionHash: 'HASH2', code: 0 });
+
+      const server = new LeaseMCPServer({
+        config: makeMockConfig(),
+        walletProvider: makeMockWallet(),
+      });
+      await callTool(server, 'close_lease', {
+        lease_uuid: '550e8400-e29b-41d4-a716-446655440000',
+        gas_multiplier: 4.0,
+      });
+
+      expect(mockStopApp).toHaveBeenCalledWith(
+        expect.anything(),
+        '550e8400-e29b-41d4-a716-446655440000',
+        { gasMultiplier: 4.0 },
+      );
     });
   });
 
