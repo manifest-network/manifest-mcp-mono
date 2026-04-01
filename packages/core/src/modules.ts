@@ -26,6 +26,7 @@ import {
   ManifestMCPErrorCode,
   type ModuleInfo,
   type QueryResult,
+  type TxOptions,
 } from './types.js';
 
 /**
@@ -46,6 +47,7 @@ export type TxHandler = (
   subcommand: string,
   args: string[],
   waitForConfirmation: boolean,
+  options?: TxOptions,
 ) => Promise<CosmosTxResult>;
 
 /**

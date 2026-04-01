@@ -128,10 +128,23 @@ export class LeaseMCPServer {
           amount: z
             .string()
             .describe('Amount with denomination (e.g. "10000000umfx")'),
+          gas_multiplier: z
+            .number()
+            .min(1)
+            .optional()
+            .describe(
+              'Gas simulation multiplier override for this transaction. Defaults to the server-configured value (typically 1.5). Increase if a transaction fails with out-of-gas errors.',
+            ),
         },
       },
       withErrorHandling('fund_credit', async (args) => {
-        const result = await fundCredits(this.clientManager, args.amount);
+        const result = await fundCredits(
+          this.clientManager,
+          args.amount,
+          args.gas_multiplier !== undefined
+            ? { gasMultiplier: args.gas_multiplier }
+            : undefined,
+        );
         return jsonResponse(result, bigIntReplacer);
       }),
     );
@@ -212,10 +225,23 @@ export class LeaseMCPServer {
           'Close a lease on-chain. This is permanent — the lease cannot be reopened after closing.',
         inputSchema: {
           lease_uuid: z.string().uuid().describe('The lease UUID to close'),
+          gas_multiplier: z
+            .number()
+            .min(1)
+            .optional()
+            .describe(
+              'Gas simulation multiplier override for this transaction. Defaults to the server-configured value (typically 1.5). Increase if a transaction fails with out-of-gas errors.',
+            ),
         },
       },
       withErrorHandling('close_lease', async (args) => {
-        const result = await stopApp(this.clientManager, args.lease_uuid);
+        const result = await stopApp(
+          this.clientManager,
+          args.lease_uuid,
+          args.gas_multiplier !== undefined
+            ? { gasMultiplier: args.gas_multiplier }
+            : undefined,
+        );
         return jsonResponse(result, bigIntReplacer);
       }),
     );

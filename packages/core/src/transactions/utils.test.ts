@@ -1,7 +1,8 @@
 import { toBech32 } from '@cosmjs/encoding';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, type Mock, vi } from 'vitest';
 import { ManifestMCPError, ManifestMCPErrorCode } from '../types.js';
 import {
+  buildGasFee,
   bytesToHex,
   extractBooleanFlag,
   extractFlag,
@@ -823,5 +824,76 @@ describe('parseVoteOption', () => {
     } catch (error) {
       expect((error as ManifestMCPError).message).toContain('badvalue');
     }
+  });
+});
+
+describe('buildGasFee', () => {
+  function makeMockClient(gasEstimate: number) {
+    return {
+      simulate: vi.fn().mockResolvedValue(gasEstimate),
+    } as unknown as { simulate: Mock } & Parameters<typeof buildGasFee>[0];
+  }
+
+  const senderAddress = 'manifest1sender';
+  const messages = [
+    { typeUrl: '/cosmos.bank.v1beta1.MsgSend', value: {} },
+  ] as Parameters<typeof buildGasFee>[2];
+
+  it('returns auto when options is undefined', async () => {
+    const client = makeMockClient(100000);
+    const fee = await buildGasFee(client, senderAddress, messages);
+
+    expect(fee).toBe('auto');
+    expect(client.simulate).not.toHaveBeenCalled();
+  });
+
+  it('computes fee via simulate + calculateFee when options provided', async () => {
+    const client = makeMockClient(100000);
+    const options = { gasMultiplier: 1.5, gasPrice: '0.025umfx' };
+
+    const fee = await buildGasFee(client, senderAddress, messages, options);
+
+    expect(client.simulate).toHaveBeenCalledWith(
+      senderAddress,
+      messages,
+      undefined,
+    );
+    expect(fee).not.toBe('auto');
+    expect(fee).toHaveProperty('amount');
+    expect(fee).toHaveProperty('gas');
+    // 100000 * 1.5 = 150000
+    expect((fee as { gas: string }).gas).toBe('150000');
+  });
+
+  it('passes memo through to simulate', async () => {
+    const client = makeMockClient(100000);
+    const options = { gasMultiplier: 2.0, gasPrice: '1.0umfx' };
+
+    await buildGasFee(client, senderAddress, messages, options, 'test memo');
+
+    expect(client.simulate).toHaveBeenCalledWith(
+      senderAddress,
+      messages,
+      'test memo',
+    );
+  });
+
+  it('applies Math.ceil to gas estimate * multiplier', async () => {
+    const client = makeMockClient(100001);
+    const options = { gasMultiplier: 1.5, gasPrice: '1.0umfx' };
+
+    const fee = await buildGasFee(client, senderAddress, messages, options);
+
+    // 100001 * 1.5 = 150001.5, ceil = 150002
+    expect((fee as { gas: string }).gas).toBe('150002');
+  });
+
+  it('handles gasMultiplier of exactly 1.0', async () => {
+    const client = makeMockClient(200000);
+    const options = { gasMultiplier: 1.0, gasPrice: '1.0umfx' };
+
+    const fee = await buildGasFee(client, senderAddress, messages, options);
+
+    expect((fee as { gas: string }).gas).toBe('200000');
   });
 });

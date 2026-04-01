@@ -377,6 +377,13 @@ export class FredMCPServer {
             .describe(
               'Multi-service stack. Mutually exclusive with image/port. Keys are service names (RFC 1123 DNS labels).',
             ),
+          gas_multiplier: z
+            .number()
+            .min(1)
+            .optional()
+            .describe(
+              'Gas simulation multiplier override for this transaction. Defaults to the server-configured value (typically 1.5). Increase if a transaction fails with out-of-gas errors.',
+            ),
         },
       },
       withErrorHandling('deploy_app', async (args) => {
@@ -402,6 +409,7 @@ export class FredMCPServer {
             storage: args.storage,
             depends_on: args.depends_on,
             services: args.services,
+            gasMultiplier: args.gas_multiplier,
           },
         );
         return jsonResponse(result, bigIntReplacer);

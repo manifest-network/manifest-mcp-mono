@@ -1,8 +1,9 @@
 import type { SigningStargateClient } from '@cosmjs/stargate';
 import { cosmos } from '@manifest-network/manifestjs';
 import { throwUnsupportedSubcommand } from '../modules.js';
-import type { CosmosTxResult } from '../types.js';
+import type { CosmosTxResult, TxOptions } from '../types.js';
 import {
+  buildGasFee,
   buildTxResult,
   parseAmount,
   requireArgs,
@@ -25,6 +26,7 @@ export async function routeDistributionTransaction(
   subcommand: string,
   args: string[],
   waitForConfirmation: boolean,
+  options?: TxOptions,
 ): Promise<CosmosTxResult> {
   validateArgsLength(args, 'distribution transaction');
 
@@ -47,11 +49,8 @@ export async function routeDistributionTransaction(
         }),
       };
 
-      const result = await client.signAndBroadcast(
-        senderAddress,
-        [msg],
-        'auto',
-      );
+      const fee = await buildGasFee(client, senderAddress, [msg], options);
+      const result = await client.signAndBroadcast(senderAddress, [msg], fee);
       return buildTxResult(
         'distribution',
         'withdraw-rewards',
@@ -78,11 +77,8 @@ export async function routeDistributionTransaction(
         }),
       };
 
-      const result = await client.signAndBroadcast(
-        senderAddress,
-        [msg],
-        'auto',
-      );
+      const fee = await buildGasFee(client, senderAddress, [msg], options);
+      const result = await client.signAndBroadcast(senderAddress, [msg], fee);
       return buildTxResult(
         'distribution',
         'set-withdraw-addr',
@@ -104,11 +100,8 @@ export async function routeDistributionTransaction(
         }),
       };
 
-      const result = await client.signAndBroadcast(
-        senderAddress,
-        [msg],
-        'auto',
-      );
+      const fee = await buildGasFee(client, senderAddress, [msg], options);
+      const result = await client.signAndBroadcast(senderAddress, [msg], fee);
       return buildTxResult(
         'distribution',
         'fund-community-pool',

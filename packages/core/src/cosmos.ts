@@ -6,6 +6,8 @@ import {
   type CosmosTxResult,
   ManifestMCPError,
   ManifestMCPErrorCode,
+  type TxOptions,
+  type TxOverrides,
 } from './types.js';
 
 // Validation pattern for module/subcommand names (alphanumeric, hyphens, underscores)
@@ -99,9 +101,32 @@ export async function cosmosTx(
   subcommand: string,
   args: string[] = [],
   waitForConfirmation: boolean = false,
+  overrides?: TxOverrides,
 ): Promise<CosmosTxResult> {
   validateName(module, 'module', ManifestMCPErrorCode.UNSUPPORTED_TX);
   validateName(subcommand, 'subcommand', ManifestMCPErrorCode.UNSUPPORTED_TX);
+
+  // Build fully-resolved gas options from caller overrides + server config
+  let txOptions: TxOptions | undefined;
+  if (overrides?.gasMultiplier !== undefined) {
+    if (
+      !Number.isFinite(overrides.gasMultiplier) ||
+      overrides.gasMultiplier < 1
+    ) {
+      throw new ManifestMCPError(
+        ManifestMCPErrorCode.INVALID_CONFIG,
+        `gasMultiplier must be a finite number >= 1, got ${overrides.gasMultiplier}`,
+      );
+    }
+    const gasPrice = clientManager.getConfig().gasPrice;
+    if (!gasPrice) {
+      throw new ManifestMCPError(
+        ManifestMCPErrorCode.INVALID_CONFIG,
+        'gasMultiplier override requires gasPrice configuration',
+      );
+    }
+    txOptions = { gasMultiplier: overrides.gasMultiplier, gasPrice };
+  }
 
   // Get handler from registry (throws if module not found) - do this before retry loop
   const handler = getTxHandler(module);
@@ -121,6 +146,7 @@ export async function cosmosTx(
           subcommand,
           args,
           waitForConfirmation,
+          txOptions,
         );
       } catch (error) {
         if (error instanceof ManifestMCPError) {

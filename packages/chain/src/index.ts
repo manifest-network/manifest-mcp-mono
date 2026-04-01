@@ -146,6 +146,13 @@ export class ChainMCPServer {
             .describe(
               'If true, wait for the transaction to be included in a block before returning. Defaults to false (broadcast only).',
             ),
+          gas_multiplier: z
+            .number()
+            .min(1)
+            .optional()
+            .describe(
+              'Gas simulation multiplier override for this transaction. Defaults to the server-configured value (typically 1.5). Increase if a transaction fails with out-of-gas errors.',
+            ),
         },
       },
       withErrorHandling('cosmos_tx', async (args) => {
@@ -155,6 +162,9 @@ export class ChainMCPServer {
           args.subcommand,
           args.args,
           args.wait_for_confirmation ?? false,
+          args.gas_multiplier !== undefined
+            ? { gasMultiplier: args.gas_multiplier }
+            : undefined,
         );
         return jsonResponse(result, bigIntReplacer);
       }),
