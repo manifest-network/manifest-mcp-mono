@@ -20,7 +20,7 @@ jobs:
           cache: npm
 
       - name: Upgrade npm for OIDC trusted publishing
-        run: npm install -g npm@latest --ignore-scripts
+        run: npx npm@10.9.2 install -g npm@10.9.2
 
       - name: Validate tag matches all package versions
         run: |
