@@ -19,9 +19,6 @@ jobs:
           node-version: 22
           cache: npm
 
-      - name: Upgrade npm for OIDC trusted publishing
-        run: npm install -g npm@latest
-
       - name: Validate tag matches all package versions
         run: |
           TAG_VERSION="${GITHUB_REF_NAME#v}"
