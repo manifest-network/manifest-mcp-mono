@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.7]
+
+- Fix(core): re-encode wasm LCD response data for fromJSON compatibility (#34)
+
 ## [0.4.6]
 
 - Fix(core): base64-encode wasm `queryData` in LCD adapter (#33)
