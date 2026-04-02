@@ -1,6 +1,6 @@
 {
   "name": "@manifest-network/manifest-mcp-node",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "description": "Node.js MCP servers for Manifest Network with stdio transport and keyfile wallet",
   "type": "module",
   "bin": {
@@ -44,11 +44,11 @@
     "@cosmjs/amino": "0.32.4",
     "@cosmjs/encoding": "0.32.4",
     "@cosmjs/proto-signing": "0.32.4",
-    "@manifest-network/manifest-mcp-core": "^0.4.1",
-    "@manifest-network/manifest-mcp-chain": "^0.4.1",
-    "@manifest-network/manifest-mcp-lease": "^0.4.1",
-    "@manifest-network/manifest-mcp-cosmwasm": "^0.4.1",
-    "@manifest-network/manifest-mcp-fred": "^0.4.1",
+    "@manifest-network/manifest-mcp-core": "^0.4.2",
+    "@manifest-network/manifest-mcp-chain": "^0.4.2",
+    "@manifest-network/manifest-mcp-lease": "^0.4.2",
+    "@manifest-network/manifest-mcp-cosmwasm": "^0.4.2",
+    "@manifest-network/manifest-mcp-fred": "^0.4.2",
     "@modelcontextprotocol/sdk": "1.27.1",
     "dotenv": "^17.2.3"
   },

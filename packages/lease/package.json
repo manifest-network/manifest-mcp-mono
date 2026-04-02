@@ -1,6 +1,6 @@
 {
   "name": "@manifest-network/manifest-mcp-lease",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "description": "MCP server for Manifest on-chain lease operations (billing, SKU, credits)",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -45,7 +45,7 @@
     "dist"
   ],
   "dependencies": {
-    "@manifest-network/manifest-mcp-core": "^0.4.1",
+    "@manifest-network/manifest-mcp-core": "^0.4.2",
     "@modelcontextprotocol/sdk": "1.27.1",
     "zod": "^4.3.6"
   },

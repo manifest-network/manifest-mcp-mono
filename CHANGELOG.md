@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.2]
+
+- Docs: add cosmwasm package across all documentation, fix stale tool/server/CLI counts, add missing env vars
+- Fix(ci): add cosmwasm package to npm publish list in release workflow
+- Fix(ci): use `--ignore-scripts` for npm self-upgrade to avoid `promise-retry` module error on GitHub Actions runners
+- Fix(ci): update setup instructions from NPM_TOKEN to OIDC trusted publishing
+
 ## [0.4.0]
 
 - Feat(cosmwasm): add new `packages/cosmwasm` MCP server with `get_mfx_to_pwr_rate` and `convert_mfx_to_pwr` tools for the on-chain MFX-to-PWR converter contract
