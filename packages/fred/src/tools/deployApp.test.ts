@@ -153,6 +153,30 @@ describe('deployApp', () => {
     expect(manifest.user).toBeUndefined();
   });
 
+  it('passes gasMultiplier override to cosmosTx', async () => {
+    const qc = makeQueryClient();
+    const cm = makeMockClientManager({
+      queryClient: qc,
+      address: 'manifest1tenant',
+    });
+
+    await deployApp(cm as any, mockGetAuthToken, mockGetLeaseDataAuthToken, {
+      image: 'nginx:alpine',
+      port: 80,
+      size: 'docker-micro',
+      gasMultiplier: 5.0,
+    });
+
+    expect(mockCosmosTx).toHaveBeenCalledWith(
+      expect.anything(),
+      'billing',
+      'create-lease',
+      expect.any(Array),
+      true,
+      { gasMultiplier: 5.0 },
+    );
+  });
+
   it('stack deploy with 2 services produces stack manifest', async () => {
     const qc = makeQueryClient();
     const cm = makeMockClientManager({

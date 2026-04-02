@@ -35,6 +35,7 @@ describe('fundCredits', () => {
       'fund-credit',
       ['manifest1tenant', '10000000umfx'],
       true,
+      undefined,
     );
     expect(result.transactionHash).toBe('HASH123');
     expect(result.code).toBe(0);

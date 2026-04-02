@@ -1,5 +1,6 @@
 import type { CosmosClientManager } from '../client.js';
 import { cosmosTx } from '../cosmos.js';
+import type { TxOverrides } from '../types.js';
 
 export interface StopAppResult {
   readonly lease_uuid: string;
@@ -11,6 +12,7 @@ export interface StopAppResult {
 export async function stopApp(
   clientManager: CosmosClientManager,
   leaseUuid: string,
+  overrides?: TxOverrides,
 ): Promise<StopAppResult> {
   const result = await cosmosTx(
     clientManager,
@@ -18,6 +20,7 @@ export async function stopApp(
     'close-lease',
     [leaseUuid],
     true,
+    overrides,
   );
 
   return {

@@ -35,6 +35,7 @@ describe('stopApp', () => {
       'close-lease',
       ['lease-1'],
       true,
+      undefined,
     );
     expect(result).toEqual({
       lease_uuid: 'lease-1',

@@ -193,6 +193,36 @@ describe('ChainMCPServer', () => {
       expect(result.isError).toBeUndefined();
     });
 
+    it('passes gas_multiplier override to cosmosTx', async () => {
+      mockCosmosTx.mockResolvedValue({
+        module: 'bank',
+        subcommand: 'send',
+        transactionHash: 'X',
+        code: 0,
+        height: '1',
+      });
+
+      const server = new ChainMCPServer({
+        config: makeMockConfig(),
+        walletProvider: makeMockWallet(),
+      });
+      await callTool(server, 'cosmos_tx', {
+        module: 'bank',
+        subcommand: 'send',
+        args: ['addr', '100umfx'],
+        gas_multiplier: 3.0,
+      });
+
+      expect(mockCosmosTx).toHaveBeenCalledWith(
+        expect.anything(),
+        'bank',
+        'send',
+        ['addr', '100umfx'],
+        false,
+        { gasMultiplier: 3.0 },
+      );
+    });
+
     it('routes list_modules to getAvailableModules()', async () => {
       const server = new ChainMCPServer({
         config: makeMockConfig(),

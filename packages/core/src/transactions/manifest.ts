@@ -1,8 +1,9 @@
 import type { SigningStargateClient } from '@cosmjs/stargate';
 import { liftedinit } from '@manifest-network/manifestjs';
 import { throwUnsupportedSubcommand } from '../modules.js';
-import type { CosmosTxResult } from '../types.js';
+import type { CosmosTxResult, TxOptions } from '../types.js';
 import {
+  buildGasFee,
   buildTxResult,
   parseAmount,
   parseColonPair,
@@ -22,6 +23,7 @@ export async function routeManifestTransaction(
   subcommand: string,
   args: string[],
   waitForConfirmation: boolean,
+  options?: TxOptions,
 ): Promise<CosmosTxResult> {
   validateArgsLength(args, 'manifest transaction');
 
@@ -49,11 +51,8 @@ export async function routeManifestTransaction(
         }),
       };
 
-      const result = await client.signAndBroadcast(
-        senderAddress,
-        [msg],
-        'auto',
-      );
+      const fee = await buildGasFee(client, senderAddress, [msg], options);
+      const result = await client.signAndBroadcast(senderAddress, [msg], fee);
       return buildTxResult('manifest', 'payout', result, waitForConfirmation);
     }
 
@@ -73,11 +72,8 @@ export async function routeManifestTransaction(
         }),
       };
 
-      const result = await client.signAndBroadcast(
-        senderAddress,
-        [msg],
-        'auto',
-      );
+      const fee = await buildGasFee(client, senderAddress, [msg], options);
+      const result = await client.signAndBroadcast(senderAddress, [msg], fee);
       return buildTxResult(
         'manifest',
         'burn-held-balance',

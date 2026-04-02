@@ -135,6 +135,7 @@ export interface DeployAppInput {
   storage?: string;
   depends_on?: Record<string, { condition: string }>;
   services?: Record<string, ServiceConfig>;
+  gasMultiplier?: number;
 }
 
 export interface DeployAppResult {
@@ -261,12 +262,17 @@ export async function deployApp(
   const providerUrl = await resolveProviderUrl(queryClient, providerUuid);
 
   // 5. Create lease
+  const overrides =
+    input.gasMultiplier !== undefined
+      ? { gasMultiplier: input.gasMultiplier }
+      : undefined;
   const txResult = await cosmosTx(
     clientManager,
     'billing',
     'create-lease',
     ['--meta-hash', metaHashHex, ...leaseItems],
     true,
+    overrides,
   );
 
   // 6. Extract lease UUID

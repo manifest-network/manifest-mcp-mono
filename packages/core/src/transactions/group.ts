@@ -6,8 +6,10 @@ import {
   type CosmosTxResult,
   ManifestMCPError,
   ManifestMCPErrorCode,
+  type TxOptions,
 } from '../types.js';
 import {
+  buildGasFee,
   buildTxResult,
   extractBooleanFlag,
   extractFlag,
@@ -192,6 +194,7 @@ export async function routeGroupTransaction(
   subcommand: string,
   args: string[],
   waitForConfirmation: boolean,
+  options?: TxOptions,
 ): Promise<CosmosTxResult> {
   validateArgsLength(args, 'group transaction');
 
@@ -215,11 +218,8 @@ export async function routeGroupTransaction(
         }),
       };
 
-      const result = await client.signAndBroadcast(
-        senderAddress,
-        [msg],
-        'auto',
-      );
+      const fee = await buildGasFee(client, senderAddress, [msg], options);
+      const result = await client.signAndBroadcast(senderAddress, [msg], fee);
       return buildTxResult(
         'group',
         'create-group',
@@ -248,11 +248,8 @@ export async function routeGroupTransaction(
         }),
       };
 
-      const result = await client.signAndBroadcast(
-        senderAddress,
-        [msg],
-        'auto',
-      );
+      const fee = await buildGasFee(client, senderAddress, [msg], options);
+      const result = await client.signAndBroadcast(senderAddress, [msg], fee);
       return buildTxResult(
         'group',
         'update-group-members',
@@ -281,11 +278,8 @@ export async function routeGroupTransaction(
         }),
       };
 
-      const result = await client.signAndBroadcast(
-        senderAddress,
-        [msg],
-        'auto',
-      );
+      const fee = await buildGasFee(client, senderAddress, [msg], options);
+      const result = await client.signAndBroadcast(senderAddress, [msg], fee);
       return buildTxResult(
         'group',
         'update-group-admin',
@@ -313,11 +307,8 @@ export async function routeGroupTransaction(
         }),
       };
 
-      const result = await client.signAndBroadcast(
-        senderAddress,
-        [msg],
-        'auto',
-      );
+      const fee = await buildGasFee(client, senderAddress, [msg], options);
+      const result = await client.signAndBroadcast(senderAddress, [msg], fee);
       return buildTxResult(
         'group',
         'update-group-metadata',
@@ -366,11 +357,8 @@ export async function routeGroupTransaction(
         }),
       };
 
-      const result = await client.signAndBroadcast(
-        senderAddress,
-        [msg],
-        'auto',
-      );
+      const fee = await buildGasFee(client, senderAddress, [msg], options);
+      const result = await client.signAndBroadcast(senderAddress, [msg], fee);
       return buildTxResult(
         'group',
         'create-group-policy',
@@ -399,11 +387,8 @@ export async function routeGroupTransaction(
         }),
       };
 
-      const result = await client.signAndBroadcast(
-        senderAddress,
-        [msg],
-        'auto',
-      );
+      const fee = await buildGasFee(client, senderAddress, [msg], options);
+      const result = await client.signAndBroadcast(senderAddress, [msg], fee);
       return buildTxResult(
         'group',
         'update-group-policy-admin',
@@ -461,11 +446,8 @@ export async function routeGroupTransaction(
         }),
       };
 
-      const result = await client.signAndBroadcast(
-        senderAddress,
-        [msg],
-        'auto',
-      );
+      const fee = await buildGasFee(client, senderAddress, [msg], options);
+      const result = await client.signAndBroadcast(senderAddress, [msg], fee);
       return buildTxResult(
         'group',
         'create-group-with-policy',
@@ -511,11 +493,8 @@ export async function routeGroupTransaction(
         }),
       };
 
-      const result = await client.signAndBroadcast(
-        senderAddress,
-        [msg],
-        'auto',
-      );
+      const fee = await buildGasFee(client, senderAddress, [msg], options);
+      const result = await client.signAndBroadcast(senderAddress, [msg], fee);
       return buildTxResult(
         'group',
         'update-group-policy-decision-policy',
@@ -543,11 +522,8 @@ export async function routeGroupTransaction(
         }),
       };
 
-      const result = await client.signAndBroadcast(
-        senderAddress,
-        [msg],
-        'auto',
-      );
+      const fee = await buildGasFee(client, senderAddress, [msg], options);
+      const result = await client.signAndBroadcast(senderAddress, [msg], fee);
       return buildTxResult(
         'group',
         'update-group-policy-metadata',
@@ -600,11 +576,8 @@ export async function routeGroupTransaction(
         }),
       };
 
-      const result = await client.signAndBroadcast(
-        senderAddress,
-        [msg],
-        'auto',
-      );
+      const fee = await buildGasFee(client, senderAddress, [msg], options);
+      const result = await client.signAndBroadcast(senderAddress, [msg], fee);
       return buildTxResult(
         'group',
         'submit-proposal',
@@ -625,11 +598,8 @@ export async function routeGroupTransaction(
         }),
       };
 
-      const result = await client.signAndBroadcast(
-        senderAddress,
-        [msg],
-        'auto',
-      );
+      const fee = await buildGasFee(client, senderAddress, [msg], options);
+      const result = await client.signAndBroadcast(senderAddress, [msg], fee);
       return buildTxResult(
         'group',
         'withdraw-proposal',
@@ -666,11 +636,8 @@ export async function routeGroupTransaction(
         }),
       };
 
-      const result = await client.signAndBroadcast(
-        senderAddress,
-        [msg],
-        'auto',
-      );
+      const fee = await buildGasFee(client, senderAddress, [msg], options);
+      const result = await client.signAndBroadcast(senderAddress, [msg], fee);
       return buildTxResult('group', 'vote', result, waitForConfirmation);
     }
 
@@ -686,11 +653,8 @@ export async function routeGroupTransaction(
         }),
       };
 
-      const result = await client.signAndBroadcast(
-        senderAddress,
-        [msg],
-        'auto',
-      );
+      const fee = await buildGasFee(client, senderAddress, [msg], options);
+      const result = await client.signAndBroadcast(senderAddress, [msg], fee);
       return buildTxResult('group', 'exec', result, waitForConfirmation);
     }
 
@@ -706,11 +670,8 @@ export async function routeGroupTransaction(
         }),
       };
 
-      const result = await client.signAndBroadcast(
-        senderAddress,
-        [msg],
-        'auto',
-      );
+      const fee = await buildGasFee(client, senderAddress, [msg], options);
+      const result = await client.signAndBroadcast(senderAddress, [msg], fee);
       return buildTxResult('group', 'leave-group', result, waitForConfirmation);
     }
 

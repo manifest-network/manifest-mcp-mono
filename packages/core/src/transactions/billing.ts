@@ -5,8 +5,10 @@ import {
   type CosmosTxResult,
   ManifestMCPError,
   ManifestMCPErrorCode,
+  type TxOptions,
 } from '../types.js';
 import {
+  buildGasFee,
   buildTxResult,
   extractFlag,
   filterConsumedArgs,
@@ -41,6 +43,7 @@ export async function routeBillingTransaction(
   subcommand: string,
   args: string[],
   waitForConfirmation: boolean,
+  options?: TxOptions,
 ): Promise<CosmosTxResult> {
   validateArgsLength(args, 'billing transaction');
 
@@ -60,11 +63,8 @@ export async function routeBillingTransaction(
         }),
       };
 
-      const result = await client.signAndBroadcast(
-        senderAddress,
-        [msg],
-        'auto',
-      );
+      const fee = await buildGasFee(client, senderAddress, [msg], options);
+      const result = await client.signAndBroadcast(senderAddress, [msg], fee);
       return buildTxResult(
         'billing',
         'fund-credit',
@@ -105,11 +105,8 @@ export async function routeBillingTransaction(
         }),
       };
 
-      const result = await client.signAndBroadcast(
-        senderAddress,
-        [msg],
-        'auto',
-      );
+      const fee = await buildGasFee(client, senderAddress, [msg], options);
+      const result = await client.signAndBroadcast(senderAddress, [msg], fee);
       return buildTxResult(
         'billing',
         'create-lease',
@@ -140,11 +137,8 @@ export async function routeBillingTransaction(
         }),
       };
 
-      const result = await client.signAndBroadcast(
-        senderAddress,
-        [msg],
-        'auto',
-      );
+      const fee = await buildGasFee(client, senderAddress, [msg], options);
+      const result = await client.signAndBroadcast(senderAddress, [msg], fee);
       return buildTxResult(
         'billing',
         'close-lease',
@@ -220,11 +214,8 @@ export async function routeBillingTransaction(
         }),
       };
 
-      const result = await client.signAndBroadcast(
-        senderAddress,
-        [msg],
-        'auto',
-      );
+      const fee = await buildGasFee(client, senderAddress, [msg], options);
+      const result = await client.signAndBroadcast(senderAddress, [msg], fee);
       return buildTxResult('billing', 'withdraw', result, waitForConfirmation);
     }
 
@@ -264,11 +255,8 @@ export async function routeBillingTransaction(
         }),
       };
 
-      const result = await client.signAndBroadcast(
-        senderAddress,
-        [msg],
-        'auto',
-      );
+      const fee = await buildGasFee(client, senderAddress, [msg], options);
+      const result = await client.signAndBroadcast(senderAddress, [msg], fee);
       return buildTxResult(
         'billing',
         'create-lease-for-tenant',
@@ -289,11 +277,8 @@ export async function routeBillingTransaction(
         }),
       };
 
-      const result = await client.signAndBroadcast(
-        senderAddress,
-        [msg],
-        'auto',
-      );
+      const fee = await buildGasFee(client, senderAddress, [msg], options);
+      const result = await client.signAndBroadcast(senderAddress, [msg], fee);
       return buildTxResult(
         'billing',
         'acknowledge-lease',
@@ -323,11 +308,8 @@ export async function routeBillingTransaction(
         }),
       };
 
-      const result = await client.signAndBroadcast(
-        senderAddress,
-        [msg],
-        'auto',
-      );
+      const fee = await buildGasFee(client, senderAddress, [msg], options);
+      const result = await client.signAndBroadcast(senderAddress, [msg], fee);
       return buildTxResult(
         'billing',
         'reject-lease',
@@ -348,11 +330,8 @@ export async function routeBillingTransaction(
         }),
       };
 
-      const result = await client.signAndBroadcast(
-        senderAddress,
-        [msg],
-        'auto',
-      );
+      const fee = await buildGasFee(client, senderAddress, [msg], options);
+      const result = await client.signAndBroadcast(senderAddress, [msg], fee);
       return buildTxResult(
         'billing',
         'cancel-lease',
@@ -415,11 +394,8 @@ export async function routeBillingTransaction(
         }),
       };
 
-      const result = await client.signAndBroadcast(
-        senderAddress,
-        [msg],
-        'auto',
-      );
+      const fee = await buildGasFee(client, senderAddress, [msg], options);
+      const result = await client.signAndBroadcast(senderAddress, [msg], fee);
       return buildTxResult(
         'billing',
         'update-params',

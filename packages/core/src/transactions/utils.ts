@@ -1,9 +1,12 @@
 import { fromBech32, fromHex, toHex } from '@cosmjs/encoding';
+import type { EncodeObject } from '@cosmjs/proto-signing';
 import type { SigningStargateClient } from '@cosmjs/stargate';
+import { calculateFee, type StdFee } from '@cosmjs/stargate';
 import {
   type CosmosTxResult,
   ManifestMCPError,
   ManifestMCPErrorCode,
+  type TxOptions,
 } from '../types.js';
 import { DNS_LABEL_RE } from '../validation.js';
 
@@ -522,4 +525,21 @@ export function buildTxResult(
       confirmationHeight: String(result.height),
     }),
   };
+}
+
+/**
+ * Compute the transaction fee using simulate + calculateFee when gas options
+ * are provided, otherwise return 'auto' to use the client's default behavior.
+ */
+export async function buildGasFee(
+  client: SigningStargateClient,
+  signerAddress: string,
+  messages: readonly EncodeObject[],
+  options?: TxOptions,
+  memo?: string,
+): Promise<StdFee | 'auto'> {
+  if (!options) return 'auto';
+  const gasEstimate = await client.simulate(signerAddress, messages, memo);
+  const gasLimit = Math.ceil(gasEstimate * options.gasMultiplier);
+  return calculateFee(gasLimit, options.gasPrice);
 }

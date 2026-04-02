@@ -182,6 +182,7 @@ describe('cosmosTx', () => {
       'send',
       ['addr', '100umfx'],
       false,
+      undefined,
     );
     expect(result).toEqual(txResult);
   });
@@ -204,6 +205,7 @@ describe('cosmosTx', () => {
       'send',
       [],
       true,
+      undefined,
     );
   });
 
@@ -307,5 +309,88 @@ describe('cosmosTx', () => {
       'getAddress',
       'handler',
     ]);
+  });
+
+  it('rejects gasMultiplier < 1', async () => {
+    mockGetTxHandler.mockReturnValue(vi.fn());
+
+    await expect(
+      cosmosTx(clientManager, 'bank', 'send', [], false, {
+        gasMultiplier: 0.5,
+      }),
+    ).rejects.toMatchObject({
+      code: ManifestMCPErrorCode.INVALID_CONFIG,
+      message: expect.stringContaining('gasMultiplier'),
+    });
+  });
+
+  it('rejects gasMultiplier of NaN', async () => {
+    mockGetTxHandler.mockReturnValue(vi.fn());
+
+    await expect(
+      cosmosTx(clientManager, 'bank', 'send', [], false, {
+        gasMultiplier: NaN,
+      }),
+    ).rejects.toMatchObject({
+      code: ManifestMCPErrorCode.INVALID_CONFIG,
+      message: expect.stringContaining('gasMultiplier'),
+    });
+  });
+
+  it('rejects gasMultiplier of Infinity', async () => {
+    mockGetTxHandler.mockReturnValue(vi.fn());
+
+    await expect(
+      cosmosTx(clientManager, 'bank', 'send', [], false, {
+        gasMultiplier: Infinity,
+      }),
+    ).rejects.toMatchObject({
+      code: ManifestMCPErrorCode.INVALID_CONFIG,
+      message: expect.stringContaining('gasMultiplier'),
+    });
+  });
+
+  it('rejects gasMultiplier when gasPrice is not configured', async () => {
+    mockGetTxHandler.mockReturnValue(vi.fn());
+    // Default mock has no gasPrice in config
+
+    await expect(
+      cosmosTx(clientManager, 'bank', 'send', [], false, {
+        gasMultiplier: 2.0,
+      }),
+    ).rejects.toMatchObject({
+      code: ManifestMCPErrorCode.INVALID_CONFIG,
+      message: expect.stringContaining('gasPrice'),
+    });
+  });
+
+  it('passes resolved TxOptions to handler when gasMultiplier override provided', async () => {
+    const mockHandler = vi.fn().mockResolvedValue({
+      module: 'bank',
+      subcommand: 'send',
+      transactionHash: 'X',
+      code: 0,
+      height: '1',
+    });
+    mockGetTxHandler.mockReturnValue(mockHandler);
+
+    // Override config to include gasPrice
+    clientManager.getConfig.mockReturnValue({
+      retry: { maxRetries: 3 },
+      gasPrice: '1.0umfx',
+    });
+
+    await cosmosTx(clientManager, 'bank', 'send', [], false, {
+      gasMultiplier: 2.5,
+    });
+
+    expect(mockHandler).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      'send',
+      [],
+      false,
+      { gasMultiplier: 2.5, gasPrice: '1.0umfx' },
+    );
   });
 });

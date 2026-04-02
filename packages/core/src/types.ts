@@ -170,6 +170,22 @@ export interface ManifestMCPConfig {
 }
 
 /**
+ * Per-transaction overrides supplied by external callers (MCP tools, library consumers).
+ */
+export interface TxOverrides {
+  readonly gasMultiplier?: number;
+}
+
+/**
+ * Fully-resolved gas options passed to transaction handlers.
+ * Constructed by `cosmosTx()` from caller-supplied `TxOverrides` and server config.
+ */
+export interface TxOptions {
+  readonly gasMultiplier: number;
+  readonly gasPrice: string;
+}
+
+/**
  * Wallet provider interface for different wallet implementations
  *
  * Any wallet that provides an OfflineSigner works (Keplr, Web3Auth, Leap, cosmos-kit, etc.)

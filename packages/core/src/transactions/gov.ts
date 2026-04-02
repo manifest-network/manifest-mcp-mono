@@ -5,8 +5,10 @@ import {
   type CosmosTxResult,
   ManifestMCPError,
   ManifestMCPErrorCode,
+  type TxOptions,
 } from '../types.js';
 import {
+  buildGasFee,
   buildTxResult,
   extractFlag,
   filterConsumedArgs,
@@ -81,6 +83,7 @@ export async function routeGovTransaction(
   subcommand: string,
   args: string[],
   waitForConfirmation: boolean,
+  options?: TxOptions,
 ): Promise<CosmosTxResult> {
   validateArgsLength(args, 'gov transaction');
 
@@ -109,11 +112,8 @@ export async function routeGovTransaction(
         }),
       };
 
-      const result = await client.signAndBroadcast(
-        senderAddress,
-        [msg],
-        'auto',
-      );
+      const fee = await buildGasFee(client, senderAddress, [msg], options);
+      const result = await client.signAndBroadcast(senderAddress, [msg], fee);
       return buildTxResult('gov', 'vote', result, waitForConfirmation);
     }
 
@@ -123,7 +123,7 @@ export async function routeGovTransaction(
       const proposalId = parseBigInt(proposalIdStr, 'proposal-id');
 
       // Parse weighted options (format: yes=0.5,no=0.3,abstain=0.2)
-      const options = optionsStr.split(',').map((opt) => {
+      const voteOptions = optionsStr.split(',').map((opt) => {
         const [optName, weightStr] = opt.split('=');
         if (!optName || !weightStr) {
           throw new ManifestMCPError(
@@ -139,14 +139,14 @@ export async function routeGovTransaction(
       });
 
       // Validate that weights sum to exactly 1.0 (10^18 in fixed-point)
-      const totalWeight = options.reduce(
+      const totalWeight = voteOptions.reduce(
         (sum, opt) => sum + BigInt(opt.weight),
         BigInt(0),
       );
       if (totalWeight !== FIXED18_ONE) {
         throw new ManifestMCPError(
           ManifestMCPErrorCode.TX_FAILED,
-          `Weighted vote options must sum to exactly 1.0. Got ${formatFixed18(totalWeight)} (${options.map((o) => o.weight).join(' + ')} = ${totalWeight})`,
+          `Weighted vote options must sum to exactly 1.0. Got ${formatFixed18(totalWeight)} (${voteOptions.map((o) => o.weight).join(' + ')} = ${totalWeight})`,
         );
       }
 
@@ -155,16 +155,13 @@ export async function routeGovTransaction(
         value: MsgVoteWeighted.fromPartial({
           proposalId,
           voter: senderAddress,
-          options,
+          options: voteOptions,
           metadata: '',
         }),
       };
 
-      const result = await client.signAndBroadcast(
-        senderAddress,
-        [msg],
-        'auto',
-      );
+      const fee = await buildGasFee(client, senderAddress, [msg], options);
+      const result = await client.signAndBroadcast(senderAddress, [msg], fee);
       return buildTxResult('gov', 'weighted-vote', result, waitForConfirmation);
     }
 
@@ -183,11 +180,8 @@ export async function routeGovTransaction(
         }),
       };
 
-      const result = await client.signAndBroadcast(
-        senderAddress,
-        [msg],
-        'auto',
-      );
+      const fee = await buildGasFee(client, senderAddress, [msg], options);
+      const result = await client.signAndBroadcast(senderAddress, [msg], fee);
       return buildTxResult('gov', 'deposit', result, waitForConfirmation);
     }
 
