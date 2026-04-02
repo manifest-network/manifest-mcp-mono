@@ -1,6 +1,6 @@
 {
   "name": "@manifest-network/manifest-mcp-fred",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "MCP server for Manifest provider (Fred) operations (deploy, status, logs, restart, update)",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -46,7 +46,7 @@
   ],
   "dependencies": {
     "@cosmjs/encoding": "0.32.4",
-    "@manifest-network/manifest-mcp-core": "^0.4.0",
+    "@manifest-network/manifest-mcp-core": "^0.4.1",
     "@modelcontextprotocol/sdk": "1.27.1",
     "zod": "^4.3.6"
   },
