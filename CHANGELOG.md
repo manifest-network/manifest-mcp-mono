@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.4]
+
+- Fix(ci): pin npm to 11.5.1 for OIDC trusted publishing (10.9.2 was too old, lacked OIDC auth support)
+
 ## [0.4.3]
 
 - Fix(ci): use `npx npm@10.9.2` to bootstrap npm upgrade, bypassing broken bundled npm on GitHub Actions runners
