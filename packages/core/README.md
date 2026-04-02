@@ -1,6 +1,6 @@
 # @manifest-network/manifest-mcp-core
 
-Shared library for Manifest MCP servers. Contains Cosmos SDK logic, on-chain tool functions, server utilities, and the LCD/REST adapter. This package is **not** an MCP server itself -- it provides building blocks that the chain, lease, and fred packages compose into servers.
+Shared library for Manifest MCP servers. Contains Cosmos SDK logic, on-chain tool functions, server utilities, and the LCD/REST adapter. This package is **not** an MCP server itself -- it provides building blocks that the chain, lease, fred, and cosmwasm packages compose into servers.
 
 ## Installation
 
@@ -32,6 +32,7 @@ npm install @manifest-network/manifest-mcp-core
 | billing | yes | yes |
 | sku | yes | yes |
 | group | yes | yes |
+| wasm | yes | yes |
 | auth | yes | -- |
 | manifest | -- | yes |
 

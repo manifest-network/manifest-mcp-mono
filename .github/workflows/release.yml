@@ -58,11 +58,12 @@ jobs:
             npm publish --workspace "$ws" --provenance --access public
           }
           VERSION=$(node -p "require('./package.json').version")
-          publish packages/core  @manifest-network/manifest-mcp-core  "$VERSION"
-          publish packages/chain @manifest-network/manifest-mcp-chain "$VERSION"
-          publish packages/lease @manifest-network/manifest-mcp-lease "$VERSION"
-          publish packages/fred  @manifest-network/manifest-mcp-fred  "$VERSION"
-          publish packages/node  @manifest-network/manifest-mcp-node  "$VERSION"
+          publish packages/core     @manifest-network/manifest-mcp-core     "$VERSION"
+          publish packages/chain    @manifest-network/manifest-mcp-chain    "$VERSION"
+          publish packages/lease    @manifest-network/manifest-mcp-lease    "$VERSION"
+          publish packages/fred     @manifest-network/manifest-mcp-fred     "$VERSION"
+          publish packages/cosmwasm @manifest-network/manifest-mcp-cosmwasm "$VERSION"
+          publish packages/node     @manifest-network/manifest-mcp-node     "$VERSION"
 
       - name: Create GitHub Release
         env:

@@ -44,7 +44,7 @@ docker compose -f e2e/docker-compose.yml down -v --remove-orphans
 
 See [`ARCHITECTURE.md`](ARCHITECTURE.md) for a detailed design overview.
 
-Dependency direction: **node -> {chain, lease, fred} -> core** (never reverse).
+Dependency direction: **node -> {chain, lease, fred, cosmwasm} -> core** (never reverse).
 
 ## Adding a new Cosmos SDK module
 

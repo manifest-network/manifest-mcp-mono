@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.0]
+
+- Feat(cosmwasm): add new `packages/cosmwasm` MCP server with `get_mfx_to_pwr_rate` and `convert_mfx_to_pwr` tools for the on-chain MFX-to-PWR converter contract
+- Feat(core): add CosmWasm query and transaction routing to the module registry
+- Feat(core): per-transaction `gas_multiplier` override on `cosmos_tx`, allowing callers to adjust gas simulation per call
+- Feat(node): add `manifest-mcp-cosmwasm` CLI entry point
+
+## [0.3.5]
+
+- Feat(core): configurable gas multiplier via `COSMOS_GAS_MULTIPLIER` env var (default `1.5`, must be >= 1)
+- Fix(core): support factory and IBC denoms in gas price validation (e.g. `factory/manifest1.../umfx`, `ibc/...`)
+
 ## [0.3.4]
 
 - Fix(chain): handle plain-text faucet `/credit` responses from CosmJS faucet (was crashing on `res.json()`)

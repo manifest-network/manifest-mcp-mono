@@ -2,10 +2,11 @@
 
 Node.js CLI entry points for the Manifest MCP servers with stdio transport and encrypted keyfile wallet.
 
-Provides three binaries:
+Provides four binaries:
 - **`manifest-mcp-chain`** -- Chain MCP server (5 tools: queries, transactions, module discovery)
 - **`manifest-mcp-lease`** -- Lease MCP server (6 tools: credit balance, funding, lease queries, SKUs, providers)
 - **`manifest-mcp-fred`** -- Fred MCP server (8 tools: catalog, deployment, status, logs, restart, update, diagnostics, releases)
+- **`manifest-mcp-cosmwasm`** -- CosmWasm MCP server (2 tools: MFX-to-PWR rate query, token conversion)
 
 ## Setup
 
@@ -17,7 +18,7 @@ npm run build
 
 ## Wallet setup
 
-All three servers need a wallet to sign transactions. Choose one of the options below.
+All four servers need a wallet to sign transactions. Choose one of the options below.
 
 ### Option A -- Generate a new keyfile (recommended)
 
@@ -25,7 +26,7 @@ All three servers need a wallet to sign transactions. Choose one of the options 
 npx manifest-mcp-chain keygen
 ```
 
-All CLIs share the same keyfile (`~/.manifest/key.json`), so any of the three commands works for `keygen` and `import`. You will be prompted for an encryption password. The keyfile is written with mode `0600`.
+All CLIs share the same keyfile (`~/.manifest/key.json`), so any of the four commands works for `keygen` and `import`. You will be prompted for an encryption password. The keyfile is written with mode `0600`.
 
 ### Option B -- Import an existing mnemonic
 
@@ -59,6 +60,10 @@ manifest-mcp-lease import         Import a mnemonic into an encrypted keyfile
 manifest-mcp-fred                 Start the fred MCP server (stdio)
 manifest-mcp-fred keygen          Generate a new encrypted keyfile
 manifest-mcp-fred import          Import a mnemonic into an encrypted keyfile
+
+manifest-mcp-cosmwasm             Start the cosmwasm MCP server (stdio)
+manifest-mcp-cosmwasm keygen      Generate a new encrypted keyfile
+manifest-mcp-cosmwasm import      Import a mnemonic into an encrypted keyfile
 ```
 
 ## MCP client integration
@@ -101,6 +106,17 @@ Replace the placeholder values below with your actual chain ID, RPC/REST endpoin
         "COSMOS_GAS_PRICE": "0.01umfx",
         "MANIFEST_KEY_PASSWORD": "your-keyfile-password"
       }
+    },
+    "manifest-cosmwasm": {
+      "command": "npx",
+      "args": ["manifest-mcp-cosmwasm"],
+      "env": {
+        "COSMOS_CHAIN_ID": "your-chain-id",
+        "COSMOS_RPC_URL": "https://your-rpc-endpoint/",
+        "COSMOS_GAS_PRICE": "0.01umfx",
+        "MANIFEST_KEY_PASSWORD": "your-keyfile-password",
+        "MANIFEST_CONVERTER_ADDRESS": "manifest1..."
+      }
     }
   }
 }
@@ -138,10 +154,13 @@ A wallet is still required at startup even in query-only mode. Transaction tools
 | `COSMOS_RPC_URL` | One of `COSMOS_RPC_URL` or `COSMOS_REST_URL` required | -- | RPC endpoint URL (HTTPS required; HTTP allowed for localhost) |
 | `COSMOS_GAS_PRICE` | Required when `COSMOS_RPC_URL` is set | -- | Gas price with denom (e.g. `0.01umfx`) |
 | `COSMOS_REST_URL` | One of `COSMOS_RPC_URL` or `COSMOS_REST_URL` required | -- | LCD/REST endpoint URL for query-only mode |
+| `COSMOS_GAS_MULTIPLIER` | No | `1.5` | Gas simulation multiplier (must be >= 1) |
 | `COSMOS_ADDRESS_PREFIX` | No | `manifest` | Bech32 address prefix |
 | `MANIFEST_KEY_FILE` | No | `~/.manifest/key.json` | Path to the encrypted keyfile |
 | `MANIFEST_KEY_PASSWORD` | No | -- | Password to decrypt the keyfile |
 | `COSMOS_MNEMONIC` | No | -- | BIP-39 mnemonic (fallback when no keyfile exists) |
+| `MANIFEST_FAUCET_URL` | No | -- | Faucet URL (enables `request_faucet` tool on chain server) |
+| `MANIFEST_CONVERTER_ADDRESS` | Required for cosmwasm server | -- | CosmWasm converter contract address |
 | `LOG_LEVEL` | No | `warn` | Log level: `debug`, `info`, `warn`, `error`, or `silent` |
 
 Set `COSMOS_RPC_URL` + `COSMOS_GAS_PRICE` for full access (queries + transactions). Set `COSMOS_REST_URL` alone for query-only mode (LCD/REST). When both are set, `COSMOS_REST_URL` is preferred for queries.
@@ -181,6 +200,13 @@ Set `COSMOS_RPC_URL` + `COSMOS_GAS_PRICE` for full access (queries + transaction
 | `update_app` | Update a deployed app with a new manifest |
 | `app_diagnostics` | Get provision diagnostics for a deployed app |
 | `app_releases` | Get release/version history for a deployed app |
+
+## CosmWasm server tools (2)
+
+| Tool | Description |
+|------|-------------|
+| `get_mfx_to_pwr_rate` | Get the current MFX-to-PWR conversion rate and preview amounts |
+| `convert_mfx_to_pwr` | Convert MFX tokens to PWR via the on-chain converter contract |
 
 ## License
 

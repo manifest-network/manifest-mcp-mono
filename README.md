@@ -8,14 +8,15 @@ Exposes on-chain queries and transactions as [Model Context Protocol](https://mo
 
 ```
 packages/
-  core/    @manifest-network/manifest-mcp-core    Shared library: Cosmos logic, on-chain tool functions, server utilities
-  chain/   @manifest-network/manifest-mcp-chain   MCP server for chain operations (5 tools)
-  lease/   @manifest-network/manifest-mcp-lease   MCP server for on-chain lease operations (6 tools)
-  fred/    @manifest-network/manifest-mcp-fred    MCP server for provider/Fred operations (8 tools)
-  node/    @manifest-network/manifest-mcp-node    CLI entry points + encrypted keyfile wallet
+  core/      @manifest-network/manifest-mcp-core      Shared library: Cosmos logic, on-chain tool functions, server utilities
+  chain/     @manifest-network/manifest-mcp-chain     MCP server for chain operations (5 tools)
+  lease/     @manifest-network/manifest-mcp-lease     MCP server for on-chain lease operations (6 tools)
+  fred/      @manifest-network/manifest-mcp-fred      MCP server for provider/Fred operations (8 tools)
+  cosmwasm/  @manifest-network/manifest-mcp-cosmwasm  MCP server for MFX-to-PWR converter (2 tools)
+  node/      @manifest-network/manifest-mcp-node      CLI entry points + encrypted keyfile wallet
 ```
 
-Dependency direction: **node -> {chain, lease, fred} -> core** (never reverse).
+Dependency direction: **node -> {chain, lease, fred, cosmwasm} -> core** (never reverse).
 
 ## Prerequisites
 
@@ -73,7 +74,14 @@ See [`packages/node/README.md`](packages/node/README.md) for wallet setup and MC
 | `app_diagnostics` | Get provision diagnostics for a deployed app |
 | `app_releases` | Get release/version history for a deployed app |
 
-Supported modules: `bank`, `staking`, `distribution`, `gov`, `billing`, `sku`, `group`, `auth` (query only), `manifest` (tx only).
+### CosmWasm server (`manifest-mcp-cosmwasm`) -- 2 tools
+
+| Tool | Description |
+|------|-------------|
+| `get_mfx_to_pwr_rate` | Get the current MFX-to-PWR conversion rate and preview amounts |
+| `convert_mfx_to_pwr` | Convert MFX tokens to PWR via the on-chain converter contract |
+
+Supported modules: `bank`, `staking`, `distribution`, `gov`, `billing`, `sku`, `group`, `wasm`, `auth` (query only), `manifest` (tx only).
 
 ## Development
 
@@ -109,12 +117,11 @@ The module is then automatically available through the `cosmos_query` and `cosmo
 
 ## Releasing
 
-All five packages are versioned in lockstep and published together.
+All six packages are versioned in lockstep and published together.
 
 ### Setup (one-time)
 
-1. Create an npm [granular access token](https://docs.npmjs.com/creating-and-viewing-access-tokens) with publish permission for the `@manifest-network` scope.
-2. Add it as a repository secret named `NPM_TOKEN` in **Settings → Secrets and variables → Actions**.
+The release workflow uses npm OIDC trusted publishing (provenance). No npm token is needed as a repository secret -- authentication is handled automatically via GitHub's OIDC identity provider. Ensure the npm package is [linked to the repository](https://docs.npmjs.com/generating-provenance-statements#linking-a-package-to-a-repository) for provenance to work.
 
 ### Publishing a release
 
@@ -135,7 +142,7 @@ Pushing a `vMAJOR.MINOR.PATCH` tag triggers the [Release workflow](.github/workf
 
 1. Validates the tag version matches all `package.json` files
 2. Builds, type-checks, runs Biome checks, and tests
-3. Publishes all packages to npm (with [provenance](https://docs.npmjs.com/generating-provenance-statements)) in dependency order: `core → chain → lease → fred → node`
+3. Publishes all packages to npm (with [provenance](https://docs.npmjs.com/generating-provenance-statements)) in dependency order: `core → chain → lease → fred → cosmwasm → node`
 4. Creates a GitHub Release with auto-generated notes (best-effort — publish succeeds even if this fails)
 
 ## License
