@@ -1,4 +1,4 @@
-import { toBase64 } from '@cosmjs/encoding';
+import { toBase64, toUtf8 } from '@cosmjs/encoding';
 import {
   cosmos,
   cosmwasm as cosmwasmNs,
@@ -138,13 +138,25 @@ function patchWasmQueryData(wasmLcd: unknown): Record<string, unknown> {
       );
       continue;
     }
-    patched[method] = (params: Record<string, unknown>) => {
+    patched[method] = async (params: Record<string, unknown>) => {
       const queryData = params.queryData;
-      return original.call(mod, {
+      const result = (await original.call(mod, {
         ...params,
         queryData:
           queryData instanceof Uint8Array ? toBase64(queryData) : queryData,
-      });
+      })) as Record<string, unknown>;
+
+      // The LCD REST API returns `data` as a parsed JSON object, but the
+      // protobuf `fromJSON` converter expects a base64 string representing
+      // the UTF-8 bytes of the JSON payload.  Re-encode so the adapter's
+      // normal snakeToCamel → fromJSON pipeline works correctly.
+      if (result.data != null && typeof result.data !== 'string') {
+        return {
+          ...result,
+          data: toBase64(toUtf8(JSON.stringify(result.data))),
+        };
+      }
+      return result;
     };
   }
   return patched;

@@ -245,6 +245,40 @@ describe('patchWasmQueryData', () => {
     });
   });
 
+  it('re-encodes object data as base64 JSON for fromJSON compatibility', async () => {
+    const contractResponse = { poa_admin: 'manifest1abc', rate: '0.379' };
+    const mockFn = vi.fn().mockResolvedValue({ data: contractResponse });
+    const patched = patchWasmQueryData({ smartContractState: mockFn, req: {} });
+
+    const result = (await (
+      patched.smartContractState as (...args: unknown[]) => Promise<unknown>
+    )({
+      address: 'manifest1abc',
+      queryData: 'eyJjb25maWciOnt9fQ==',
+    })) as { data: unknown };
+
+    expect(typeof result.data).toBe('string');
+    expect(result.data).toBe(
+      toBase64(toUtf8(JSON.stringify(contractResponse))),
+    );
+  });
+
+  it('passes through string data unchanged', async () => {
+    const mockFn = vi
+      .fn()
+      .mockResolvedValue({ data: 'already-base64-encoded' });
+    const patched = patchWasmQueryData({ smartContractState: mockFn, req: {} });
+
+    const result = (await (
+      patched.smartContractState as (...args: unknown[]) => Promise<unknown>
+    )({
+      address: 'manifest1abc',
+      queryData: 'eyJjb25maWciOnt9fQ==',
+    })) as { data: unknown };
+
+    expect(result.data).toBe('already-base64-encoded');
+  });
+
   it('warns and skips methods that do not exist on the module', async () => {
     const { logger } = await import('./logger.js');
     const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
