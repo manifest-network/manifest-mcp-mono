@@ -640,17 +640,28 @@ export interface WasmSmartContractStateResult {
   readonly data: unknown;
 }
 
+/** JSON-safe representation of CodeInfoResponse with dataHash encoded as base64. */
+export interface WasmCodeInfo {
+  readonly codeId: bigint;
+  readonly creator: string;
+  readonly dataHash: string; // base64-encoded
+  readonly instantiatePermission: {
+    readonly permission: number;
+    readonly addresses: readonly string[];
+  };
+}
+
 export interface WasmCodeResult {
-  readonly codeInfo?: CodeInfoResponse;
+  readonly codeInfo?: WasmCodeInfo;
   readonly data: string; // base64-encoded wasm bytecode
 }
 
 export interface WasmCodesResult extends PaginatedResult {
-  readonly codeInfos: readonly CodeInfoResponse[];
+  readonly codeInfos: readonly WasmCodeInfo[];
 }
 
 export interface WasmCodeInfoResult {
-  readonly codeInfo?: CodeInfoResponse;
+  readonly codeInfo?: WasmCodeInfo;
 }
 
 export interface WasmPinnedCodesResult extends PaginatedResult {

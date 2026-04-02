@@ -17,8 +17,27 @@ import type {
   WasmRawContractStateResult,
   WasmSmartContractStateResult,
 } from '../types.js';
-import { ManifestMCPError, ManifestMCPErrorCode } from '../types.js';
+import {
+  ManifestMCPError,
+  ManifestMCPErrorCode,
+  type WasmCodeInfo,
+} from '../types.js';
 import { extractPaginationArgs, parseBigInt, requireArgs } from './utils.js';
+
+/** Convert a CodeInfoResponse (with Uint8Array dataHash) to a JSON-safe WasmCodeInfo. */
+function toWasmCodeInfo(info: {
+  codeId: bigint;
+  creator: string;
+  dataHash: Uint8Array;
+  instantiatePermission: { permission: number; addresses: string[] };
+}): WasmCodeInfo {
+  return {
+    codeId: info.codeId,
+    creator: info.creator,
+    dataHash: toBase64(info.dataHash),
+    instantiatePermission: info.instantiatePermission,
+  };
+}
 
 /** Wasm query result union type */
 type WasmQueryResult =
@@ -149,13 +168,19 @@ export async function routeWasmQuery(
       const [codeIdStr] = args;
       const codeId = parseBigInt(codeIdStr, 'code_id');
       const result = await wasm.code({ codeId });
-      return { codeInfo: result.codeInfo, data: toBase64(result.data) };
+      return {
+        codeInfo: result.codeInfo ? toWasmCodeInfo(result.codeInfo) : undefined,
+        data: toBase64(result.data),
+      };
     }
 
     case 'codes': {
       const { pagination } = extractPaginationArgs(args, 'wasm codes');
       const result = await wasm.codes({ pagination });
-      return { codeInfos: result.codeInfos, pagination: result.pagination };
+      return {
+        codeInfos: result.codeInfos.map(toWasmCodeInfo),
+        pagination: result.pagination,
+      };
     }
 
     case 'code-info': {
@@ -164,12 +189,12 @@ export async function routeWasmQuery(
       const codeId = parseBigInt(codeIdStr, 'code_id');
       const result = await wasm.codeInfo({ codeId });
       return {
-        codeInfo: {
+        codeInfo: toWasmCodeInfo({
           codeId: result.codeId,
           creator: result.creator,
           dataHash: result.checksum,
           instantiatePermission: result.instantiatePermission,
-        },
+        }),
       };
     }
 
