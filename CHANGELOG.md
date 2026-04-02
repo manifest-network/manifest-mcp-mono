@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.5]
+
+- Fix(ci): re-release v0.4.4 which failed to publish all packages due to npm registry propagation delay
+
 ## [0.4.4]
 
 - Fix(ci): pin npm to 11.5.1 for OIDC trusted publishing (10.9.2 was too old, lacked OIDC auth support)

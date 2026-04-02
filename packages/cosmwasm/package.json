@@ -1,6 +1,6 @@
 {
   "name": "@manifest-network/manifest-mcp-cosmwasm",
-  "version": "0.4.4",
+  "version": "0.4.5",
   "description": "MCP server for Manifest MFX-to-PWR converter contract operations",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
