@@ -219,7 +219,7 @@ describe('patchWasmQueryData', () => {
     const mockFn = vi.fn().mockResolvedValue({ data: 'result' });
     const patched = patchWasmQueryData({ [method]: mockFn, req: {} });
 
-    await (patched[method] as (...args: never) => unknown)({
+    await (patched[method] as (...args: unknown[]) => unknown)({
       address: 'manifest1abc',
       queryData: queryBytes,
     });
@@ -234,7 +234,7 @@ describe('patchWasmQueryData', () => {
     const mockFn = vi.fn().mockResolvedValue({ data: 'result' });
     const patched = patchWasmQueryData({ smartContractState: mockFn, req: {} });
 
-    await (patched.smartContractState as (...args: never) => unknown)({
+    await (patched.smartContractState as (...args: unknown[]) => unknown)({
       address: 'manifest1abc',
       queryData: 'already-base64',
     });
