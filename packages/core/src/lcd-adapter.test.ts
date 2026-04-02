@@ -1,7 +1,9 @@
+import { toBase64, toUtf8 } from '@cosmjs/encoding';
 import { describe, expect, it, vi } from 'vitest';
 import {
   _adaptModule as adaptModule,
   _findConverter as findConverter,
+  _patchWasmQueryData as patchWasmQueryData,
   _snakeToCamelDeep as snakeToCamelDeep,
   _unsupportedModule as unsupportedModule,
 } from './lcd-adapter.js';
@@ -205,6 +207,70 @@ describe('adaptModule', () => {
         'Failed to convert LCD response for "myMethod"',
       ),
     });
+  });
+});
+
+describe('patchWasmQueryData', () => {
+  it.each([
+    'smartContractState',
+    'rawContractState',
+  ] as const)('converts Uint8Array queryData to base64 for %s', async (method) => {
+    const queryBytes = toUtf8(JSON.stringify({ config: {} }));
+    const mockFn = vi.fn().mockResolvedValue({ data: 'result' });
+    const patched = patchWasmQueryData({ [method]: mockFn, req: {} });
+
+    await (patched[method] as (...args: never) => unknown)({
+      address: 'manifest1abc',
+      queryData: queryBytes,
+    });
+
+    expect(mockFn).toHaveBeenCalledWith({
+      address: 'manifest1abc',
+      queryData: toBase64(queryBytes),
+    });
+  });
+
+  it('passes through non-Uint8Array queryData unchanged', async () => {
+    const mockFn = vi.fn().mockResolvedValue({ data: 'result' });
+    const patched = patchWasmQueryData({ smartContractState: mockFn, req: {} });
+
+    await (patched.smartContractState as (...args: never) => unknown)({
+      address: 'manifest1abc',
+      queryData: 'already-base64',
+    });
+
+    expect(mockFn).toHaveBeenCalledWith({
+      address: 'manifest1abc',
+      queryData: 'already-base64',
+    });
+  });
+
+  it('warns and skips methods that do not exist on the module', async () => {
+    const { logger } = await import('./logger.js');
+    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+
+    expect(() =>
+      patchWasmQueryData({ otherMethod: vi.fn(), req: {} }),
+    ).not.toThrow();
+
+    expect(warnSpy).toHaveBeenCalledTimes(2);
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('smartContractState'),
+    );
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('rawContractState'),
+    );
+    warnSpy.mockRestore();
+  });
+
+  it('returns a new object without mutating the original', () => {
+    const mockFn = vi.fn().mockResolvedValue({ data: 'result' });
+    const wasmLcd = { smartContractState: mockFn, req: {} };
+    const result = patchWasmQueryData(wasmLcd);
+
+    expect(result).not.toBe(wasmLcd);
+    expect(wasmLcd.smartContractState).toBe(mockFn);
+    expect(result.smartContractState).not.toBe(mockFn);
   });
 });
 

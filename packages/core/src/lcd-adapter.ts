@@ -1,9 +1,11 @@
+import { toBase64 } from '@cosmjs/encoding';
 import {
   cosmos,
   cosmwasm as cosmwasmNs,
   liftedinit,
 } from '@manifest-network/manifestjs';
 import type { ManifestQueryClient } from './client.js';
+import { logger } from './logger.js';
 import { ManifestMCPError, ManifestMCPErrorCode } from './types.js';
 
 function snakeToCamel(s: string): string {
@@ -117,6 +119,37 @@ function unsupportedModule(modulePath: string): unknown {
   );
 }
 
+/**
+ * The generated LCD client interpolates `queryData` (Uint8Array) directly into
+ * the URL path via template literal, producing comma-separated byte values
+ * (e.g. `smart/123,34,99,...`) instead of base64. The REST API expects base64.
+ * Patch the methods to convert queryData before the URL is constructed.
+ */
+function patchWasmQueryData(wasmLcd: unknown): Record<string, unknown> {
+  const mod = wasmLcd as Record<string, unknown>;
+  const patched: Record<string, unknown> = { ...mod };
+  for (const method of ['smartContractState', 'rawContractState']) {
+    const original = mod[method] as (
+      params: Record<string, unknown>,
+    ) => Promise<unknown>;
+    if (typeof original !== 'function') {
+      logger.warn(
+        `patchWasmQueryData: expected method "${method}" not found on wasm LCD module. Wasm queries may fail with malformed URLs.`,
+      );
+      continue;
+    }
+    patched[method] = (params: Record<string, unknown>) => {
+      const queryData = params.queryData;
+      return original.call(mod, {
+        ...params,
+        queryData:
+          queryData instanceof Uint8Array ? toBase64(queryData) : queryData,
+      });
+    };
+  }
+  return patched;
+}
+
 export async function createLCDQueryClient(
   restEndpoint: string,
 ): Promise<ManifestQueryClient> {
@@ -212,7 +245,10 @@ export async function createLCDQueryClient(
       },
       cosmwasm: {
         wasm: {
-          v1: adaptModule(cosmwasmLcd.cosmwasm.wasm.v1, cosmwasmNs.wasm.v1),
+          v1: adaptModule(
+            patchWasmQueryData(cosmwasmLcd.cosmwasm.wasm.v1),
+            cosmwasmNs.wasm.v1,
+          ),
         },
       },
     } as ManifestQueryClient;
@@ -229,6 +265,7 @@ export async function createLCDQueryClient(
 export {
   adaptModule as _adaptModule,
   findConverter as _findConverter,
+  patchWasmQueryData as _patchWasmQueryData,
   snakeToCamelDeep as _snakeToCamelDeep,
   unsupportedModule as _unsupportedModule,
 };
