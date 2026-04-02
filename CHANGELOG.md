@@ -4,10 +4,18 @@ All notable changes to this project will be documented in this file.
 
 ## [0.4.3]
 
+- Fix(ci): use `npx npm@10.9.2` to bootstrap npm upgrade, bypassing broken bundled npm on GitHub Actions runners
+
+## [0.4.2]
+
+- Fix(ci): use `--ignore-scripts` for npm self-upgrade in release workflow (insufficient — see 0.4.3)
+
+## [0.4.1]
+
 - Docs: add cosmwasm package across all documentation, fix stale tool/server/CLI counts, add missing env vars
 - Fix(ci): add cosmwasm package to npm publish list in release workflow
-- Fix(ci): use `npx npm@10.9.2` to bootstrap npm upgrade, bypassing broken bundled npm on GitHub Actions runners
 - Fix(ci): update setup instructions from NPM_TOKEN to OIDC trusted publishing
+- Fix(ci): remove npm self-upgrade step from release workflow (broke OIDC publishing — see 0.4.2)
 
 ## [0.4.0]
 
