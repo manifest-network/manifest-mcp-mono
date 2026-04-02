@@ -1,16 +1,19 @@
 {
-  "name": "@manifest-network/manifest-mcp-node",
+  "name": "@manifest-network/manifest-mcp-cosmwasm",
   "version": "0.3.5",
-  "description": "Node.js MCP servers for Manifest Network with stdio transport and keyfile wallet",
+  "description": "MCP server for Manifest MFX-to-PWR converter contract operations",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
   "type": "module",
-  "bin": {
-    "manifest-mcp-chain": "dist/chain.js",
-    "manifest-mcp-lease": "dist/lease.js",
-    "manifest-mcp-fred": "dist/fred.js",
-    "manifest-mcp-cosmwasm": "dist/cosmwasm.js"
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
   },
   "scripts": {
     "build": "tsdown",
+    "dev": "tsdown --watch",
     "lint": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest"
@@ -18,16 +21,15 @@
   "keywords": [
     "mcp",
     "cosmos",
-    "blockchain",
-    "manifest",
-    "stdio"
+    "cosmwasm",
+    "manifest"
   ],
   "author": "Felix C. Morency",
   "license": "MIT",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/manifest-network/manifest-mcp-mono.git",
-    "directory": "packages/node"
+    "directory": "packages/cosmwasm"
   },
   "homepage": "https://github.com/manifest-network/manifest-mcp-mono#readme",
   "bugs": "https://github.com/manifest-network/manifest-mcp-mono/issues",
@@ -41,16 +43,11 @@
     "dist"
   ],
   "dependencies": {
-    "@cosmjs/amino": "0.32.4",
     "@cosmjs/encoding": "0.32.4",
-    "@cosmjs/proto-signing": "0.32.4",
     "@manifest-network/manifest-mcp-core": "^0.3.5",
-    "@manifest-network/manifest-mcp-chain": "^0.3.5",
-    "@manifest-network/manifest-mcp-lease": "^0.3.5",
-    "@manifest-network/manifest-mcp-cosmwasm": "^0.3.5",
-    "@manifest-network/manifest-mcp-fred": "^0.3.5",
+    "@manifest-network/manifestjs": "2.2.0-billing-v2.3",
     "@modelcontextprotocol/sdk": "1.27.1",
-    "dotenv": "^17.2.3"
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@types/node": "22.15.29",

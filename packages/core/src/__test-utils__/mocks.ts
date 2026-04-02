@@ -120,6 +120,47 @@ export function makeMockQueryClient(overrides?: {
         },
       },
     },
+    cosmwasm: {
+      wasm: {
+        v1: {
+          contractInfo: vi.fn().mockResolvedValue({}),
+          contractHistory: vi
+            .fn()
+            .mockResolvedValue({ entries: [], pagination: null }),
+          contractsByCode: vi
+            .fn()
+            .mockResolvedValue({ contracts: [], pagination: null }),
+          allContractState: vi
+            .fn()
+            .mockResolvedValue({ models: [], pagination: null }),
+          rawContractState: vi
+            .fn()
+            .mockResolvedValue({ data: new Uint8Array() }),
+          smartContractState: vi
+            .fn()
+            .mockResolvedValue({ data: new Uint8Array() }),
+          code: vi
+            .fn()
+            .mockResolvedValue({ codeInfo: null, data: new Uint8Array() }),
+          codes: vi.fn().mockResolvedValue({ codeInfos: [], pagination: null }),
+          codeInfo: vi.fn().mockResolvedValue({
+            codeId: BigInt(0),
+            creator: '',
+            checksum: new Uint8Array(),
+            instantiatePermission: { permission: 0, addresses: [] },
+          }),
+          pinnedCodes: vi
+            .fn()
+            .mockResolvedValue({ codeIds: [], pagination: null }),
+          params: vi.fn().mockResolvedValue({ params: null }),
+          contractsByCreator: vi
+            .fn()
+            .mockResolvedValue({ contractAddresses: [], pagination: null }),
+          wasmLimitsConfig: vi.fn().mockResolvedValue({ config: '{}' }),
+          buildAddress: vi.fn().mockResolvedValue({ address: '' }),
+        },
+      },
+    },
     liftedinit: {
       billing: {
         v1: {

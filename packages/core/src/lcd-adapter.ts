@@ -1,4 +1,8 @@
-import { cosmos, liftedinit } from '@manifest-network/manifestjs';
+import {
+  cosmos,
+  cosmwasm as cosmwasmNs,
+  liftedinit,
+} from '@manifest-network/manifestjs';
 import type { ManifestQueryClient } from './client.js';
 import { ManifestMCPError, ManifestMCPErrorCode } from './types.js';
 
@@ -117,8 +121,14 @@ export async function createLCDQueryClient(
   restEndpoint: string,
 ): Promise<ManifestQueryClient> {
   let lcd: Awaited<ReturnType<typeof liftedinit.ClientFactory.createLCDClient>>;
+  let cosmwasmLcd: Awaited<
+    ReturnType<typeof cosmwasmNs.ClientFactory.createLCDClient>
+  >;
   try {
-    lcd = await liftedinit.ClientFactory.createLCDClient({ restEndpoint });
+    [lcd, cosmwasmLcd] = await Promise.all([
+      liftedinit.ClientFactory.createLCDClient({ restEndpoint }),
+      cosmwasmNs.ClientFactory.createLCDClient({ restEndpoint }),
+    ]);
   } catch (error) {
     throw new ManifestMCPError(
       ManifestMCPErrorCode.RPC_CONNECTION_FAILED,
@@ -199,6 +209,11 @@ export async function createLCDQueryClient(
         },
         manifest: { v1: unsupportedModule('liftedinit.manifest.v1') },
         sku: { v1: adaptModule(lcd.liftedinit.sku.v1, liftedinit.sku.v1) },
+      },
+      cosmwasm: {
+        wasm: {
+          v1: adaptModule(cosmwasmLcd.cosmwasm.wasm.v1, cosmwasmNs.wasm.v1),
+        },
       },
     } as ManifestQueryClient;
   } catch (error) {

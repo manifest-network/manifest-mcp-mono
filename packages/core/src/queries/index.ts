@@ -15,3 +15,4 @@ export {
   parseBigInt,
   parseInteger,
 } from './utils.js';
+export { routeWasmQuery } from './wasm.js';
