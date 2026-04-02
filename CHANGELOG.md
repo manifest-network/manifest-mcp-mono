@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.6]
+
+- Fix(core): base64-encode wasm `queryData` in LCD adapter (#33)
+
 ## [0.4.5]
 
 - Fix(ci): re-release v0.4.4 which failed to publish all packages due to npm registry propagation delay

@@ -1,6 +1,6 @@
 {
   "name": "@manifest-network/manifest-mcp-node",
-  "version": "0.4.5",
+  "version": "0.4.6",
   "description": "Node.js MCP servers for Manifest Network with stdio transport and keyfile wallet",
   "type": "module",
   "bin": {
