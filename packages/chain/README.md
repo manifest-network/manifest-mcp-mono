@@ -1,6 +1,6 @@
 # @manifest-network/manifest-mcp-chain
 
-MCP server for generic Cosmos SDK chain operations. Registers 5 tools for queries, transactions, and module discovery.
+MCP server for generic Cosmos SDK chain operations. Registers 6 tools for queries, transactions, fee estimation, and module discovery.
 
 ## Installation
 
@@ -15,6 +15,7 @@ npm install @manifest-network/manifest-mcp-chain
 | `get_account_info` | Get the address of the configured wallet |
 | `cosmos_query` | Execute any Cosmos SDK query (bank, staking, gov, etc.) |
 | `cosmos_tx` | Sign and broadcast any Cosmos SDK transaction |
+| `cosmos_estimate_fee` | Estimate gas and fee for a transaction without broadcasting |
 | `list_modules` | List all available query and transaction modules |
 | `list_module_subcommands` | List subcommands for a specific module |
 

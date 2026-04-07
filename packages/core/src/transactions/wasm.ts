@@ -2,9 +2,10 @@ import { fromBase64, toUtf8 } from '@cosmjs/encoding';
 import type { SigningStargateClient } from '@cosmjs/stargate';
 import { cosmwasm } from '@manifest-network/manifestjs';
 import { throwUnsupportedSubcommand } from '../modules.js';
-import type { CosmosTxResult } from '../types.js';
+import type { BuiltMessages, CosmosTxResult, TxOptions } from '../types.js';
 import { ManifestMCPError, ManifestMCPErrorCode } from '../types.js';
 import {
+  buildGasFee,
   buildTxResult,
   extractFlag,
   filterConsumedArgs,
@@ -86,15 +87,13 @@ function parseInstantiatePermission(value: string): {
 }
 
 /**
- * Route wasm transaction to appropriate handler
+ * Build messages for a wasm transaction subcommand (no signing/broadcasting).
  */
-export async function routeWasmTransaction(
-  client: SigningStargateClient,
+export function buildWasmMessages(
   senderAddress: string,
   subcommand: string,
   args: string[],
-  waitForConfirmation: boolean,
-): Promise<CosmosTxResult> {
+): BuiltMessages {
   validateArgsLength(args, 'wasm transaction');
 
   switch (subcommand) {
@@ -139,13 +138,7 @@ export async function routeWasmTransaction(
         }),
       };
 
-      const result = await client.signAndBroadcast(
-        senderAddress,
-        [msg],
-        'auto',
-        memo,
-      );
-      return buildTxResult('wasm', 'store-code', result, waitForConfirmation);
+      return { messages: [msg], memo };
     }
 
     case 'instantiate': {
@@ -186,13 +179,7 @@ export async function routeWasmTransaction(
         }),
       };
 
-      const result = await client.signAndBroadcast(
-        senderAddress,
-        [msg],
-        'auto',
-        memo,
-      );
-      return buildTxResult('wasm', 'instantiate', result, waitForConfirmation);
+      return { messages: [msg], memo };
     }
 
     case 'instantiate2': {
@@ -235,13 +222,7 @@ export async function routeWasmTransaction(
         }),
       };
 
-      const result = await client.signAndBroadcast(
-        senderAddress,
-        [msg],
-        'auto',
-        memo,
-      );
-      return buildTxResult('wasm', 'instantiate2', result, waitForConfirmation);
+      return { messages: [msg], memo };
     }
 
     case 'execute': {
@@ -276,13 +257,7 @@ export async function routeWasmTransaction(
         }),
       };
 
-      const result = await client.signAndBroadcast(
-        senderAddress,
-        [msg],
-        'auto',
-        memo,
-      );
-      return buildTxResult('wasm', 'execute', result, waitForConfirmation);
+      return { messages: [msg], memo };
     }
 
     case 'migrate': {
@@ -313,13 +288,7 @@ export async function routeWasmTransaction(
         }),
       };
 
-      const result = await client.signAndBroadcast(
-        senderAddress,
-        [msg],
-        'auto',
-        memo,
-      );
-      return buildTxResult('wasm', 'migrate', result, waitForConfirmation);
+      return { messages: [msg], memo };
     }
 
     case 'update-admin': {
@@ -348,13 +317,7 @@ export async function routeWasmTransaction(
         }),
       };
 
-      const result = await client.signAndBroadcast(
-        senderAddress,
-        [msg],
-        'auto',
-        memo,
-      );
-      return buildTxResult('wasm', 'update-admin', result, waitForConfirmation);
+      return { messages: [msg], memo };
     }
 
     case 'clear-admin': {
@@ -376,16 +339,43 @@ export async function routeWasmTransaction(
         }),
       };
 
-      const result = await client.signAndBroadcast(
-        senderAddress,
-        [msg],
-        'auto',
-        memo,
-      );
-      return buildTxResult('wasm', 'clear-admin', result, waitForConfirmation);
+      return { messages: [msg], memo };
     }
 
     default:
       throwUnsupportedSubcommand('tx', 'wasm', subcommand);
   }
+}
+
+/**
+ * Route wasm transaction to appropriate handler
+ */
+export async function routeWasmTransaction(
+  client: SigningStargateClient,
+  senderAddress: string,
+  subcommand: string,
+  args: string[],
+  waitForConfirmation: boolean,
+  options?: TxOptions,
+): Promise<CosmosTxResult> {
+  const built = buildWasmMessages(senderAddress, subcommand, args);
+  const fee = await buildGasFee(
+    client,
+    senderAddress,
+    built.messages,
+    options,
+    built.memo,
+  );
+  const result = await client.signAndBroadcast(
+    senderAddress,
+    built.messages,
+    fee,
+    built.memo,
+  );
+  return buildTxResult(
+    'wasm',
+    built.canonicalSubcommand ?? subcommand,
+    result,
+    waitForConfirmation,
+  );
 }

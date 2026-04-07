@@ -1,7 +1,7 @@
 import type { SigningStargateClient } from '@cosmjs/stargate';
 import { cosmos } from '@manifest-network/manifestjs';
 import { throwUnsupportedSubcommand } from '../modules.js';
-import type { CosmosTxResult, TxOptions } from '../types.js';
+import type { BuiltMessages, CosmosTxResult, TxOptions } from '../types.js';
 import {
   buildGasFee,
   buildTxResult,
@@ -18,16 +18,13 @@ import {
 const { MsgSend, MsgMultiSend } = cosmos.bank.v1beta1;
 
 /**
- * Route bank transaction to appropriate handler
+ * Build messages for a bank transaction subcommand (no signing/broadcasting).
  */
-export async function routeBankTransaction(
-  client: SigningStargateClient,
+export function buildBankMessages(
   senderAddress: string,
   subcommand: string,
   args: string[],
-  waitForConfirmation: boolean,
-  options?: TxOptions,
-): Promise<CosmosTxResult> {
+): BuiltMessages {
   validateArgsLength(args, 'bank transaction');
 
   switch (subcommand) {
@@ -59,20 +56,7 @@ export async function routeBankTransaction(
         }),
       };
 
-      const fee = await buildGasFee(
-        client,
-        senderAddress,
-        [msg],
-        options,
-        memo,
-      );
-      const result = await client.signAndBroadcast(
-        senderAddress,
-        [msg],
-        fee,
-        memo,
-      );
-      return buildTxResult('bank', 'send', result, waitForConfirmation);
+      return { messages: [msg], memo };
     }
 
     case 'multi-send': {
@@ -114,12 +98,43 @@ export async function routeBankTransaction(
         }),
       };
 
-      const fee = await buildGasFee(client, senderAddress, [msg], options);
-      const result = await client.signAndBroadcast(senderAddress, [msg], fee);
-      return buildTxResult('bank', 'multi-send', result, waitForConfirmation);
+      return { messages: [msg], memo: '' };
     }
 
     default:
       throwUnsupportedSubcommand('tx', 'bank', subcommand);
   }
+}
+
+/**
+ * Route bank transaction to appropriate handler
+ */
+export async function routeBankTransaction(
+  client: SigningStargateClient,
+  senderAddress: string,
+  subcommand: string,
+  args: string[],
+  waitForConfirmation: boolean,
+  options?: TxOptions,
+): Promise<CosmosTxResult> {
+  const built = buildBankMessages(senderAddress, subcommand, args);
+  const fee = await buildGasFee(
+    client,
+    senderAddress,
+    built.messages,
+    options,
+    built.memo,
+  );
+  const result = await client.signAndBroadcast(
+    senderAddress,
+    built.messages,
+    fee,
+    built.memo,
+  );
+  return buildTxResult(
+    'bank',
+    built.canonicalSubcommand ?? subcommand,
+    result,
+    waitForConfirmation,
+  );
 }

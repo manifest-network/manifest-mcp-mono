@@ -5,6 +5,7 @@ import { ManifestMCPError, ManifestMCPErrorCode } from './types.js';
 vi.mock('./modules.js', () => ({
   getQueryHandler: vi.fn(),
   getTxHandler: vi.fn(),
+  getTxMsgBuilder: vi.fn(),
 }));
 
 vi.mock('./retry.js', async (importOriginal) => {
@@ -20,11 +21,12 @@ vi.mock('./retry.js', async (importOriginal) => {
   };
 });
 
-import { cosmosQuery, cosmosTx } from './cosmos.js';
-import { getQueryHandler, getTxHandler } from './modules.js';
+import { cosmosEstimateFee, cosmosQuery, cosmosTx } from './cosmos.js';
+import { getQueryHandler, getTxHandler, getTxMsgBuilder } from './modules.js';
 
 const mockGetQueryHandler = vi.mocked(getQueryHandler);
 const mockGetTxHandler = vi.mocked(getTxHandler);
+const mockGetTxMsgBuilder = vi.mocked(getTxMsgBuilder);
 
 function makeMockClientManager() {
   return {
@@ -392,5 +394,355 @@ describe('cosmosTx', () => {
       false,
       { gasMultiplier: 2.5, gasPrice: '1.0umfx' },
     );
+  });
+});
+
+describe('cosmosEstimateFee', () => {
+  let clientManager: ReturnType<typeof makeMockClientManager>;
+  let mockSimulate: ReturnType<typeof vi.fn>;
+
+  function setupHappyPath(opts?: {
+    gasEstimate?: number;
+    canonicalSubcommand?: string;
+    memo?: string;
+    config?: Record<string, unknown>;
+  }) {
+    mockSimulate = vi.fn().mockResolvedValue(opts?.gasEstimate ?? 100000);
+    clientManager.getSigningClient.mockResolvedValue({
+      simulate: mockSimulate,
+    });
+    clientManager.getConfig.mockReturnValue({
+      retry: { maxRetries: 3 },
+      gasPrice: '1.0umfx',
+      ...opts?.config,
+    });
+    const mockBuilder = vi.fn().mockReturnValue({
+      messages: [
+        { typeUrl: '/cosmos.bank.v1beta1.MsgSend', value: { fake: true } },
+      ],
+      memo: opts?.memo ?? '',
+      ...(opts?.canonicalSubcommand !== undefined && {
+        canonicalSubcommand: opts.canonicalSubcommand,
+      }),
+    });
+    mockGetTxMsgBuilder.mockReturnValue(mockBuilder);
+    return mockBuilder;
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    clientManager = makeMockClientManager();
+  });
+
+  it('happy path: dispatches to builder, simulates, returns fee estimate shape', async () => {
+    setupHappyPath({ gasEstimate: 100000 });
+
+    const result = await cosmosEstimateFee(clientManager, 'bank', 'send', [
+      'addr',
+      '100umfx',
+    ]);
+
+    expect(mockGetTxMsgBuilder).toHaveBeenCalledWith('bank');
+    expect(result).toEqual({
+      module: 'bank',
+      subcommand: 'send',
+      gasEstimate: '100000',
+      fee: {
+        amount: [{ denom: 'umfx', amount: '150000' }],
+        gas: '150000',
+      },
+    });
+  });
+
+  it('builder is called with (senderAddress, subcommand, args)', async () => {
+    const mockBuilder = setupHappyPath();
+
+    await cosmosEstimateFee(clientManager, 'bank', 'send', ['addr', '100umfx']);
+
+    expect(mockBuilder).toHaveBeenCalledWith('manifest1sender', 'send', [
+      'addr',
+      '100umfx',
+    ]);
+  });
+
+  it('memo from builder is forwarded to simulate', async () => {
+    setupHappyPath({ memo: 'hello' });
+
+    await cosmosEstimateFee(clientManager, 'bank', 'send', []);
+
+    expect(mockSimulate).toHaveBeenCalledWith(
+      'manifest1sender',
+      expect.any(Array),
+      'hello',
+    );
+  });
+
+  it('empty memo from builder is forwarded to simulate', async () => {
+    setupHappyPath({ memo: '' });
+
+    await cosmosEstimateFee(clientManager, 'bank', 'send', []);
+
+    expect(mockSimulate).toHaveBeenCalledWith(
+      'manifest1sender',
+      expect.any(Array),
+      '',
+    );
+  });
+
+  it('fee.gas equals Math.ceil(gasEstimate * gasMultiplier)', async () => {
+    setupHappyPath({ gasEstimate: 100001 });
+
+    const result = await cosmosEstimateFee(clientManager, 'bank', 'send', [], {
+      gasMultiplier: 1.5,
+    });
+
+    // 100001 * 1.5 = 150001.5 -> ceil = 150002
+    expect(result.fee.gas).toBe('150002');
+  });
+
+  it('gasEstimate is the raw simulation value as a string', async () => {
+    setupHappyPath({ gasEstimate: 100000 });
+
+    const result = await cosmosEstimateFee(clientManager, 'bank', 'send', []);
+
+    expect(result.gasEstimate).toBe('100000');
+    expect(typeof result.gasEstimate).toBe('string');
+  });
+
+  it('subcommand normalization via canonicalSubcommand', async () => {
+    setupHappyPath({ canonicalSubcommand: 'unbond' });
+
+    const result = await cosmosEstimateFee(
+      clientManager,
+      'staking',
+      'undelegate',
+      [],
+    );
+
+    expect(result.subcommand).toBe('unbond');
+  });
+
+  it('subcommand passthrough when builder does not normalize', async () => {
+    setupHappyPath();
+
+    const result = await cosmosEstimateFee(clientManager, 'bank', 'send', []);
+
+    expect(result.subcommand).toBe('send');
+  });
+
+  it('validates module name with UNSUPPORTED_TX', async () => {
+    await expect(
+      cosmosEstimateFee(clientManager, 'bad module', 'send', []),
+    ).rejects.toMatchObject({
+      code: ManifestMCPErrorCode.UNSUPPORTED_TX,
+      message: expect.stringContaining('Invalid module'),
+    });
+  });
+
+  it('validates subcommand name with UNSUPPORTED_TX', async () => {
+    clientManager.getConfig.mockReturnValue({
+      retry: { maxRetries: 3 },
+      gasPrice: '1.0umfx',
+    });
+    await expect(
+      cosmosEstimateFee(clientManager, 'bank', 'bad;cmd', []),
+    ).rejects.toMatchObject({
+      code: ManifestMCPErrorCode.UNSUPPORTED_TX,
+      message: expect.stringContaining('Invalid subcommand'),
+    });
+  });
+
+  it('rejects gasMultiplier < 1', async () => {
+    clientManager.getConfig.mockReturnValue({
+      retry: { maxRetries: 3 },
+      gasPrice: '1.0umfx',
+    });
+    await expect(
+      cosmosEstimateFee(clientManager, 'bank', 'send', [], {
+        gasMultiplier: 0.5,
+      }),
+    ).rejects.toMatchObject({
+      code: ManifestMCPErrorCode.INVALID_CONFIG,
+      message: expect.stringContaining('gasMultiplier'),
+    });
+  });
+
+  it('rejects gasMultiplier of NaN', async () => {
+    clientManager.getConfig.mockReturnValue({
+      retry: { maxRetries: 3 },
+      gasPrice: '1.0umfx',
+    });
+    await expect(
+      cosmosEstimateFee(clientManager, 'bank', 'send', [], {
+        gasMultiplier: NaN,
+      }),
+    ).rejects.toMatchObject({
+      code: ManifestMCPErrorCode.INVALID_CONFIG,
+    });
+  });
+
+  it('rejects gasMultiplier of Infinity', async () => {
+    clientManager.getConfig.mockReturnValue({
+      retry: { maxRetries: 3 },
+      gasPrice: '1.0umfx',
+    });
+    await expect(
+      cosmosEstimateFee(clientManager, 'bank', 'send', [], {
+        gasMultiplier: Infinity,
+      }),
+    ).rejects.toMatchObject({
+      code: ManifestMCPErrorCode.INVALID_CONFIG,
+    });
+  });
+
+  it('requires gasPrice in config', async () => {
+    // Default mock has no gasPrice
+    await expect(
+      cosmosEstimateFee(clientManager, 'bank', 'send', []),
+    ).rejects.toMatchObject({
+      code: ManifestMCPErrorCode.INVALID_CONFIG,
+      message: expect.stringContaining('gasPrice'),
+    });
+  });
+
+  it('propagates UNKNOWN_MODULE from getTxMsgBuilder without retry', async () => {
+    clientManager.getConfig.mockReturnValue({
+      retry: { maxRetries: 3 },
+      gasPrice: '1.0umfx',
+    });
+    mockGetTxMsgBuilder.mockImplementation(() => {
+      throw new ManifestMCPError(
+        ManifestMCPErrorCode.UNKNOWN_MODULE,
+        'Unknown tx module: nonexistent',
+        { availableModules: ['bank', 'staking'] },
+      );
+    });
+
+    await expect(
+      cosmosEstimateFee(clientManager, 'nonexistent', 'send', []),
+    ).rejects.toMatchObject({
+      code: ManifestMCPErrorCode.UNKNOWN_MODULE,
+      message: expect.stringContaining('Unknown tx module'),
+    });
+    // Should be called exactly once (before retry loop, no retry)
+    expect(mockGetTxMsgBuilder).toHaveBeenCalledTimes(1);
+    // Should NOT have entered the retry loop
+    expect(clientManager.acquireRateLimit).not.toHaveBeenCalled();
+    expect(clientManager.getSigningClient).not.toHaveBeenCalled();
+  });
+
+  it('acquires rate limit before RPC call', async () => {
+    const callOrder: string[] = [];
+    clientManager.acquireRateLimit.mockImplementation(async () => {
+      callOrder.push('rateLimit');
+    });
+    const simulate = vi.fn().mockImplementation(async () => {
+      callOrder.push('simulate');
+      return 100000;
+    });
+    clientManager.getSigningClient.mockImplementation(async () => {
+      callOrder.push('getClient');
+      return { simulate };
+    });
+    clientManager.getAddress.mockImplementation(async () => {
+      callOrder.push('getAddress');
+      return 'manifest1sender';
+    });
+    clientManager.getConfig.mockReturnValue({
+      retry: { maxRetries: 3 },
+      gasPrice: '1.0umfx',
+    });
+    mockGetTxMsgBuilder.mockReturnValue(
+      vi
+        .fn()
+        .mockReturnValue({ messages: [{ typeUrl: 'x', value: {} }], memo: '' }),
+    );
+
+    await cosmosEstimateFee(clientManager, 'bank', 'send', []);
+
+    expect(callOrder).toEqual([
+      'rateLimit',
+      'getClient',
+      'getAddress',
+      'simulate',
+    ]);
+  });
+
+  it('enriches ManifestMCPError without module details', async () => {
+    clientManager.getConfig.mockReturnValue({
+      retry: { maxRetries: 3 },
+      gasPrice: '1.0umfx',
+    });
+    const original = new ManifestMCPError(
+      ManifestMCPErrorCode.INVALID_ADDRESS,
+      'bad address',
+    );
+    mockGetTxMsgBuilder.mockReturnValue(
+      vi.fn().mockImplementation(() => {
+        throw original;
+      }),
+    );
+    clientManager.getSigningClient.mockResolvedValue({
+      simulate: vi.fn(),
+    });
+
+    await expect(
+      cosmosEstimateFee(clientManager, 'bank', 'send', ['addr', '100umfx']),
+    ).rejects.toSatisfy(
+      (err: ManifestMCPError) =>
+        err instanceof ManifestMCPError &&
+        err.code === ManifestMCPErrorCode.INVALID_ADDRESS &&
+        err.details?.module === 'bank' &&
+        err.details?.subcommand === 'send' &&
+        JSON.stringify(err.details?.args) ===
+          JSON.stringify(['addr', '100umfx']),
+    );
+  });
+
+  it('does not double-enrich ManifestMCPError that already has module', async () => {
+    clientManager.getConfig.mockReturnValue({
+      retry: { maxRetries: 3 },
+      gasPrice: '1.0umfx',
+    });
+    const original = new ManifestMCPError(
+      ManifestMCPErrorCode.INVALID_ADDRESS,
+      'bad address',
+      { module: 'other', subcommand: 'other' },
+    );
+    mockGetTxMsgBuilder.mockReturnValue(
+      vi.fn().mockImplementation(() => {
+        throw original;
+      }),
+    );
+    clientManager.getSigningClient.mockResolvedValue({
+      simulate: vi.fn(),
+    });
+
+    await expect(
+      cosmosEstimateFee(clientManager, 'bank', 'send', []),
+    ).rejects.toBe(original);
+  });
+
+  it('wraps unknown errors as SIMULATION_FAILED with context', async () => {
+    clientManager.getConfig.mockReturnValue({
+      retry: { maxRetries: 3 },
+      gasPrice: '1.0umfx',
+    });
+    mockGetTxMsgBuilder.mockReturnValue(
+      vi
+        .fn()
+        .mockReturnValue({ messages: [{ typeUrl: 'x', value: {} }], memo: '' }),
+    );
+    clientManager.getSigningClient.mockResolvedValue({
+      simulate: vi.fn().mockRejectedValue(new Error('insufficient funds')),
+    });
+
+    await expect(
+      cosmosEstimateFee(clientManager, 'bank', 'send', ['addr']),
+    ).rejects.toMatchObject({
+      code: ManifestMCPErrorCode.SIMULATION_FAILED,
+      message: expect.stringContaining('insufficient funds'),
+      details: expect.objectContaining({ module: 'bank', subcommand: 'send' }),
+    });
   });
 });

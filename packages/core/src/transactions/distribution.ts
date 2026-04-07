@@ -1,7 +1,7 @@
 import type { SigningStargateClient } from '@cosmjs/stargate';
 import { cosmos } from '@manifest-network/manifestjs';
 import { throwUnsupportedSubcommand } from '../modules.js';
-import type { CosmosTxResult, TxOptions } from '../types.js';
+import type { BuiltMessages, CosmosTxResult, TxOptions } from '../types.js';
 import {
   buildGasFee,
   buildTxResult,
@@ -18,16 +18,13 @@ const {
 } = cosmos.distribution.v1beta1;
 
 /**
- * Route distribution transaction to appropriate handler
+ * Build messages for a distribution transaction subcommand (no signing/broadcasting).
  */
-export async function routeDistributionTransaction(
-  client: SigningStargateClient,
+export function buildDistributionMessages(
   senderAddress: string,
   subcommand: string,
   args: string[],
-  waitForConfirmation: boolean,
-  options?: TxOptions,
-): Promise<CosmosTxResult> {
+): BuiltMessages {
   validateArgsLength(args, 'distribution transaction');
 
   switch (subcommand) {
@@ -49,14 +46,7 @@ export async function routeDistributionTransaction(
         }),
       };
 
-      const fee = await buildGasFee(client, senderAddress, [msg], options);
-      const result = await client.signAndBroadcast(senderAddress, [msg], fee);
-      return buildTxResult(
-        'distribution',
-        'withdraw-rewards',
-        result,
-        waitForConfirmation,
-      );
+      return { messages: [msg], memo: '' };
     }
 
     case 'set-withdraw-addr': {
@@ -77,14 +67,7 @@ export async function routeDistributionTransaction(
         }),
       };
 
-      const fee = await buildGasFee(client, senderAddress, [msg], options);
-      const result = await client.signAndBroadcast(senderAddress, [msg], fee);
-      return buildTxResult(
-        'distribution',
-        'set-withdraw-addr',
-        result,
-        waitForConfirmation,
-      );
+      return { messages: [msg], memo: '' };
     }
 
     case 'fund-community-pool': {
@@ -100,17 +83,43 @@ export async function routeDistributionTransaction(
         }),
       };
 
-      const fee = await buildGasFee(client, senderAddress, [msg], options);
-      const result = await client.signAndBroadcast(senderAddress, [msg], fee);
-      return buildTxResult(
-        'distribution',
-        'fund-community-pool',
-        result,
-        waitForConfirmation,
-      );
+      return { messages: [msg], memo: '' };
     }
 
     default:
       throwUnsupportedSubcommand('tx', 'distribution', subcommand);
   }
+}
+
+/**
+ * Route distribution transaction to appropriate handler
+ */
+export async function routeDistributionTransaction(
+  client: SigningStargateClient,
+  senderAddress: string,
+  subcommand: string,
+  args: string[],
+  waitForConfirmation: boolean,
+  options?: TxOptions,
+): Promise<CosmosTxResult> {
+  const built = buildDistributionMessages(senderAddress, subcommand, args);
+  const fee = await buildGasFee(
+    client,
+    senderAddress,
+    built.messages,
+    options,
+    built.memo,
+  );
+  const result = await client.signAndBroadcast(
+    senderAddress,
+    built.messages,
+    fee,
+    built.memo,
+  );
+  return buildTxResult(
+    'distribution',
+    built.canonicalSubcommand ?? subcommand,
+    result,
+    waitForConfirmation,
+  );
 }

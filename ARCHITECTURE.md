@@ -139,17 +139,18 @@ Key features:
 
 ## Package: chain
 
-The chain package is an MCP server that registers 5 generic Cosmos SDK tools:
+The chain package is an MCP server that registers 6 generic Cosmos SDK tools:
 
 | Tool | Purpose |
 |------|---------|
 | `get_account_info` | Get the active wallet address |
 | `cosmos_query` | Execute any Cosmos SDK query |
 | `cosmos_tx` | Execute any Cosmos SDK transaction |
+| `cosmos_estimate_fee` | Estimate gas/fee for a transaction without broadcasting |
 | `list_modules` | Discover available query/tx modules |
 | `list_module_subcommands` | Discover subcommands for a module |
 
-The `ChainMCPServer` class takes a `ManifestMCPServerOptions` (config + walletProvider), creates an `McpServer`, and registers the 5 tools using core's `cosmosQuery`, `cosmosTx`, and module registry functions.
+The `ChainMCPServer` class takes a `ManifestMCPServerOptions` (config + walletProvider), creates an `McpServer`, and registers the 6 tools using core's `cosmosQuery`, `cosmosTx`, `cosmosEstimateFee`, and module registry functions.
 
 ## Package: lease
 

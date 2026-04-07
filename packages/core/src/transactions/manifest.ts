@@ -1,7 +1,7 @@
 import type { SigningStargateClient } from '@cosmjs/stargate';
 import { liftedinit } from '@manifest-network/manifestjs';
 import { throwUnsupportedSubcommand } from '../modules.js';
-import type { CosmosTxResult, TxOptions } from '../types.js';
+import type { BuiltMessages, CosmosTxResult, TxOptions } from '../types.js';
 import {
   buildGasFee,
   buildTxResult,
@@ -15,16 +15,13 @@ import {
 const { MsgPayout, MsgBurnHeldBalance } = liftedinit.manifest.v1;
 
 /**
- * Route manifest transaction to appropriate handler
+ * Build messages for a manifest transaction subcommand (no signing/broadcasting).
  */
-export async function routeManifestTransaction(
-  client: SigningStargateClient,
+export function buildManifestMessages(
   senderAddress: string,
   subcommand: string,
   args: string[],
-  waitForConfirmation: boolean,
-  options?: TxOptions,
-): Promise<CosmosTxResult> {
+): BuiltMessages {
   validateArgsLength(args, 'manifest transaction');
 
   switch (subcommand) {
@@ -51,9 +48,7 @@ export async function routeManifestTransaction(
         }),
       };
 
-      const fee = await buildGasFee(client, senderAddress, [msg], options);
-      const result = await client.signAndBroadcast(senderAddress, [msg], fee);
-      return buildTxResult('manifest', 'payout', result, waitForConfirmation);
+      return { messages: [msg], memo: '' };
     }
 
     case 'burn-held-balance': {
@@ -72,17 +67,43 @@ export async function routeManifestTransaction(
         }),
       };
 
-      const fee = await buildGasFee(client, senderAddress, [msg], options);
-      const result = await client.signAndBroadcast(senderAddress, [msg], fee);
-      return buildTxResult(
-        'manifest',
-        'burn-held-balance',
-        result,
-        waitForConfirmation,
-      );
+      return { messages: [msg], memo: '' };
     }
 
     default:
       throwUnsupportedSubcommand('tx', 'manifest', subcommand);
   }
+}
+
+/**
+ * Route manifest transaction to appropriate handler
+ */
+export async function routeManifestTransaction(
+  client: SigningStargateClient,
+  senderAddress: string,
+  subcommand: string,
+  args: string[],
+  waitForConfirmation: boolean,
+  options?: TxOptions,
+): Promise<CosmosTxResult> {
+  const built = buildManifestMessages(senderAddress, subcommand, args);
+  const fee = await buildGasFee(
+    client,
+    senderAddress,
+    built.messages,
+    options,
+    built.memo,
+  );
+  const result = await client.signAndBroadcast(
+    senderAddress,
+    built.messages,
+    fee,
+    built.memo,
+  );
+  return buildTxResult(
+    'manifest',
+    built.canonicalSubcommand ?? subcommand,
+    result,
+    waitForConfirmation,
+  );
 }

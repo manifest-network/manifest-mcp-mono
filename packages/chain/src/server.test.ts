@@ -25,10 +25,12 @@ vi.mock('@manifest-network/manifest-mcp-core', async (importOriginal) => {
     },
     cosmosQuery: vi.fn(),
     cosmosTx: vi.fn(),
+    cosmosEstimateFee: vi.fn(),
   };
 });
 
 import {
+  cosmosEstimateFee,
   cosmosQuery,
   cosmosTx,
   ManifestMCPError,
@@ -49,6 +51,7 @@ const mockRequestFaucet = vi.mocked(requestFaucet);
 
 const mockCosmosQuery = vi.mocked(cosmosQuery);
 const mockCosmosTx = vi.mocked(cosmosTx);
+const mockCosmosEstimateFee = vi.mocked(cosmosEstimateFee);
 
 let activeTransports: InMemoryTransport[] = [];
 
@@ -69,6 +72,7 @@ const CHAIN_TOOL_NAMES = [
   'get_account_info',
   'cosmos_query',
   'cosmos_tx',
+  'cosmos_estimate_fee',
   'list_modules',
   'list_module_subcommands',
 ];
@@ -87,7 +91,7 @@ afterEach(async () => {
 
 describe('ChainMCPServer', () => {
   describe('listTools via protocol', () => {
-    it('should advertise exactly 5 chain tools', async () => {
+    it('should advertise exactly 6 chain tools', async () => {
       const server = new ChainMCPServer({
         config: makeMockConfig(),
         walletProvider: makeMockWallet(),
@@ -103,7 +107,7 @@ describe('ChainMCPServer', () => {
 
       try {
         const result = await client.listTools();
-        expect(result.tools).toHaveLength(5);
+        expect(result.tools).toHaveLength(6);
         expect(result.tools.map((t) => t.name).sort()).toEqual(
           [...CHAIN_TOOL_NAMES].sort(),
         );
@@ -112,7 +116,7 @@ describe('ChainMCPServer', () => {
       }
     });
 
-    it('should advertise 6 tools when faucetUrl is provided', async () => {
+    it('should advertise 7 tools when faucetUrl is provided', async () => {
       const server = new ChainMCPServer({
         config: makeMockConfig(),
         walletProvider: makeMockWallet(),
@@ -129,7 +133,7 @@ describe('ChainMCPServer', () => {
 
       try {
         const result = await client.listTools();
-        expect(result.tools).toHaveLength(6);
+        expect(result.tools).toHaveLength(7);
         expect(result.tools.map((t) => t.name).sort()).toEqual(
           [...CHAIN_TOOL_NAMES, 'request_faucet'].sort(),
         );
@@ -220,6 +224,83 @@ describe('ChainMCPServer', () => {
         ['addr', '100umfx'],
         false,
         { gasMultiplier: 3.0 },
+      );
+    });
+
+    it('routes cosmos_estimate_fee to cosmosEstimateFee()', async () => {
+      mockCosmosEstimateFee.mockResolvedValue({
+        module: 'bank',
+        subcommand: 'send',
+        gasEstimate: '100000',
+        fee: { amount: [{ denom: 'umfx', amount: '150000' }], gas: '150000' },
+      });
+
+      const server = new ChainMCPServer({
+        config: makeMockConfig(),
+        walletProvider: makeMockWallet(),
+      });
+      const result = await callTool(server, 'cosmos_estimate_fee', {
+        module: 'bank',
+        subcommand: 'send',
+        args: ['addr', '100umfx'],
+      });
+
+      expect(mockCosmosEstimateFee).toHaveBeenCalledOnce();
+      expect(result.isError).toBeUndefined();
+    });
+
+    it('passes gas_multiplier override to cosmosEstimateFee', async () => {
+      mockCosmosEstimateFee.mockResolvedValue({
+        module: 'bank',
+        subcommand: 'send',
+        gasEstimate: '100000',
+        fee: { amount: [{ denom: 'umfx', amount: '300000' }], gas: '300000' },
+      });
+
+      const server = new ChainMCPServer({
+        config: makeMockConfig(),
+        walletProvider: makeMockWallet(),
+      });
+      await callTool(server, 'cosmos_estimate_fee', {
+        module: 'bank',
+        subcommand: 'send',
+        args: ['addr', '100umfx'],
+        gas_multiplier: 3.0,
+      });
+
+      expect(mockCosmosEstimateFee).toHaveBeenCalledWith(
+        expect.anything(),
+        'bank',
+        'send',
+        ['addr', '100umfx'],
+        { gasMultiplier: 3.0 },
+      );
+    });
+
+    it('passes undefined (not {}) when no gas_multiplier override', async () => {
+      mockCosmosEstimateFee.mockResolvedValue({
+        module: 'bank',
+        subcommand: 'send',
+        gasEstimate: '100000',
+        fee: { amount: [{ denom: 'umfx', amount: '150000' }], gas: '150000' },
+      });
+
+      const server = new ChainMCPServer({
+        config: makeMockConfig(),
+        walletProvider: makeMockWallet(),
+      });
+      await callTool(server, 'cosmos_estimate_fee', {
+        module: 'bank',
+        subcommand: 'send',
+        args: ['addr', '100umfx'],
+      });
+
+      expect(mockCosmosEstimateFee).toHaveBeenCalledWith(
+        expect.anything(),
+        'bank',
+        'send',
+        ['addr', '100umfx'],
+        undefined,
       );
     });
 
@@ -346,6 +427,31 @@ describe('ChainMCPServer', () => {
       expect(parsed.details).toEqual({ extra: 'info' });
     });
 
+    it('cosmos_estimate_fee error produces {error, code, message, details} with isError=true', async () => {
+      mockCosmosEstimateFee.mockRejectedValue(
+        new ManifestMCPError(
+          ManifestMCPErrorCode.SIMULATION_FAILED,
+          'simulation failed',
+          { module: 'bank', subcommand: 'send' },
+        ),
+      );
+
+      const server = new ChainMCPServer({
+        config: makeMockConfig(),
+        walletProvider: makeMockWallet(),
+      });
+      const result = await callTool(server, 'cosmos_estimate_fee', {
+        module: 'bank',
+        subcommand: 'send',
+        args: ['addr', '100umfx'],
+      });
+
+      expect(result.isError).toBe(true);
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.code).toBe('SIMULATION_FAILED');
+      expect(parsed.message).toBe('simulation failed');
+    });
+
     it('generic Error produces {error, message} with isError=true', async () => {
       mockCosmosQuery.mockRejectedValue(new Error('unexpected'));
 
@@ -458,6 +564,51 @@ describe('ChainMCPServer', () => {
 
       expect(result.isError).toBe(true);
       expect(mockCosmosTx).not.toHaveBeenCalled();
+    });
+
+    it('rejects cosmos_estimate_fee when module is missing', async () => {
+      const server = new ChainMCPServer({
+        config: makeMockConfig(),
+        walletProvider: makeMockWallet(),
+      });
+      const result = await callTool(server, 'cosmos_estimate_fee', {
+        subcommand: 'send',
+        args: ['addr', '100umfx'],
+      });
+
+      expect(result.isError).toBe(true);
+      expect(mockCosmosEstimateFee).not.toHaveBeenCalled();
+    });
+
+    it('rejects cosmos_estimate_fee when args is not an array', async () => {
+      const server = new ChainMCPServer({
+        config: makeMockConfig(),
+        walletProvider: makeMockWallet(),
+      });
+      const result = await callTool(server, 'cosmos_estimate_fee', {
+        module: 'bank',
+        subcommand: 'send',
+        args: 'not-an-array',
+      });
+
+      expect(result.isError).toBe(true);
+      expect(mockCosmosEstimateFee).not.toHaveBeenCalled();
+    });
+
+    it('rejects cosmos_estimate_fee when gas_multiplier < 1', async () => {
+      const server = new ChainMCPServer({
+        config: makeMockConfig(),
+        walletProvider: makeMockWallet(),
+      });
+      const result = await callTool(server, 'cosmos_estimate_fee', {
+        module: 'bank',
+        subcommand: 'send',
+        args: ['addr', '100umfx'],
+        gas_multiplier: 0.5,
+      });
+
+      expect(result.isError).toBe(true);
+      expect(mockCosmosEstimateFee).not.toHaveBeenCalled();
     });
   });
 

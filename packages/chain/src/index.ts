@@ -3,6 +3,7 @@ import {
   type AccountInfo,
   bigIntReplacer,
   CosmosClientManager,
+  cosmosEstimateFee,
   cosmosQuery,
   cosmosTx,
   createMnemonicServer,
@@ -163,6 +164,52 @@ export class ChainMCPServer {
           args.subcommand,
           args.args,
           args.wait_for_confirmation ?? false,
+          args.gas_multiplier !== undefined
+            ? { gasMultiplier: args.gas_multiplier }
+            : undefined,
+        );
+        return jsonResponse(result, bigIntReplacer);
+      }),
+    );
+
+    // ── cosmos_estimate_fee ──
+    this.mcpServer.registerTool(
+      'cosmos_estimate_fee',
+      {
+        description:
+          'Estimate the gas and fee for any Cosmos SDK transaction without broadcasting it. ' +
+          'Runs the same simulation cosmos_tx would run internally. ' +
+          'Call list_modules and list_module_subcommands first to discover available options.',
+        inputSchema: {
+          module: z
+            .string()
+            .describe('The module name (e.g., "bank", "staking", "gov")'),
+          subcommand: z
+            .string()
+            .describe(
+              'The subcommand (e.g., "send", "delegate", "unbond", "vote")',
+            ),
+          args: z
+            .array(z.string())
+            .describe(
+              'Arguments to the transaction as an array of strings (e.g., ["<to_address>", "1000umfx"] for bank send). Use array to preserve arguments with spaces.',
+            ),
+          gas_multiplier: z
+            .number()
+            .finite()
+            .min(1)
+            .optional()
+            .describe(
+              'Gas simulation multiplier override for this estimation. Defaults to the server-configured value (typically 1.5).',
+            ),
+        },
+      },
+      withErrorHandling('cosmos_estimate_fee', async (args) => {
+        const result = await cosmosEstimateFee(
+          this.clientManager,
+          args.module,
+          args.subcommand,
+          args.args,
           args.gas_multiplier !== undefined
             ? { gasMultiplier: args.gas_multiplier }
             : undefined,

@@ -1,11 +1,20 @@
-export { routeBankTransaction } from './bank.js';
-export { routeBillingTransaction } from './billing.js';
-export { routeDistributionTransaction } from './distribution.js';
-export { routeGovTransaction } from './gov.js';
-export { routeGroupTransaction } from './group.js';
-export { routeManifestTransaction } from './manifest.js';
-export { routeSkuTransaction } from './sku.js';
-export { routeStakingTransaction } from './staking.js';
+export { buildBankMessages, routeBankTransaction } from './bank.js';
+export {
+  buildBillingMessages,
+  routeBillingTransaction,
+} from './billing.js';
+export {
+  buildDistributionMessages,
+  routeDistributionTransaction,
+} from './distribution.js';
+export { buildGovMessages, routeGovTransaction } from './gov.js';
+export { buildGroupMessages, routeGroupTransaction } from './group.js';
+export {
+  buildManifestMessages,
+  routeManifestTransaction,
+} from './manifest.js';
+export { buildSkuMessages, routeSkuTransaction } from './sku.js';
+export { buildStakingMessages, routeStakingTransaction } from './staking.js';
 export type { ParsedLeaseItem } from './utils.js';
 export {
   buildTxResult,
@@ -15,4 +24,4 @@ export {
   parseHexBytes,
   parseLeaseItem,
 } from './utils.js';
-export { routeWasmTransaction } from './wasm.js';
+export { buildWasmMessages, routeWasmTransaction } from './wasm.js';

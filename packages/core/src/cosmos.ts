@@ -1,9 +1,12 @@
+import { calculateFee } from '@cosmjs/stargate';
 import type { CosmosClientManager } from './client.js';
-import { getQueryHandler, getTxHandler } from './modules.js';
+import { DEFAULT_GAS_MULTIPLIER } from './config.js';
+import { getQueryHandler, getTxHandler, getTxMsgBuilder } from './modules.js';
 import { withRetry } from './retry.js';
 import {
   type CosmosQueryResult,
   type CosmosTxResult,
+  type FeeEstimateResult,
   ManifestMCPError,
   ManifestMCPErrorCode,
   type TxOptions,
@@ -171,6 +174,106 @@ export async function cosmosTx(
     {
       config: clientManager.getConfig().retry,
       operationName: `tx ${module} ${subcommand}`,
+    },
+  );
+}
+
+/**
+ * Estimate the fee for a Cosmos transaction without broadcasting it.
+ *
+ * Looks up the message builder for the given module, builds the messages,
+ * and calls `client.simulate()` to get a gas estimate. Multiplies by the
+ * configured (or overridden) gas multiplier and computes the fee.
+ *
+ * Automatically retries on transient failures via `withRetry`.
+ *
+ * @returns FeeEstimateResult with raw gas estimate and computed fee
+ */
+export async function cosmosEstimateFee(
+  clientManager: CosmosClientManager,
+  module: string,
+  subcommand: string,
+  args: string[] = [],
+  overrides?: TxOverrides,
+): Promise<FeeEstimateResult> {
+  validateName(module, 'module', ManifestMCPErrorCode.UNSUPPORTED_TX);
+  validateName(subcommand, 'subcommand', ManifestMCPErrorCode.UNSUPPORTED_TX);
+
+  // Always need gasPrice for fee calculation (unlike cosmosTx which can use 'auto')
+  const config = clientManager.getConfig();
+  const gasPrice = config.gasPrice;
+  if (!gasPrice) {
+    throw new ManifestMCPError(
+      ManifestMCPErrorCode.INVALID_CONFIG,
+      'Fee estimation requires gasPrice configuration',
+    );
+  }
+
+  // Resolve multiplier: override > config > default.
+  // Explicit fallback (no `!`) — safer if a test constructs config without createConfig.
+  const gasMultiplier =
+    overrides?.gasMultiplier ?? config.gasMultiplier ?? DEFAULT_GAS_MULTIPLIER;
+  if (!Number.isFinite(gasMultiplier) || gasMultiplier < 1) {
+    throw new ManifestMCPError(
+      ManifestMCPErrorCode.INVALID_CONFIG,
+      `gasMultiplier must be a finite number >= 1, got ${gasMultiplier}`,
+    );
+  }
+
+  // Get builder from registry (throws if module not found) - do this before retry loop
+  const builder = getTxMsgBuilder(module);
+
+  return withRetry(
+    async () => {
+      // Apply rate limiting before making RPC request
+      await clientManager.acquireRateLimit();
+
+      const signingClient = await clientManager.getSigningClient();
+      const senderAddress = await clientManager.getAddress();
+
+      try {
+        const built = builder(senderAddress, subcommand, args);
+        const gasEstimate = await signingClient.simulate(
+          senderAddress,
+          built.messages,
+          built.memo,
+        );
+        const gasLimit = Math.ceil(gasEstimate * gasMultiplier);
+        const fee = calculateFee(gasLimit, gasPrice);
+
+        return {
+          module,
+          subcommand: built.canonicalSubcommand ?? subcommand,
+          gasEstimate: String(gasEstimate),
+          fee: { amount: fee.amount, gas: fee.gas },
+        };
+      } catch (error) {
+        if (error instanceof ManifestMCPError) {
+          // Re-throw with enriched context if not already present (mirrors cosmosTx)
+          if (!error.details?.module) {
+            throw new ManifestMCPError(error.code, error.message, {
+              ...error.details,
+              module,
+              subcommand,
+              args,
+            });
+          }
+          throw error;
+        }
+        // SIMULATION_FAILED is NOT in NON_RETRYABLE_ERROR_CODES, so withRetry
+        // will fall through to isTransientErrorMessage for message-based
+        // classification. Transient errors (network/5xx) get retried; real
+        // simulation failures (insufficient funds, etc) fail fast.
+        throw new ManifestMCPError(
+          ManifestMCPErrorCode.SIMULATION_FAILED,
+          `Fee estimation for ${module} ${subcommand} failed: ${error instanceof Error ? error.message : String(error)}`,
+          { module, subcommand, args },
+        );
+      }
+    },
+    {
+      config: config.retry,
+      operationName: `estimate ${module} ${subcommand}`,
     },
   );
 }
