@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.0]
+
+- Feat(chain): add `cosmos_estimate_fee` MCP tool (#35)
+
 ## [0.4.7]
 
 - Fix(core): re-encode wasm LCD response data for fromJSON compatibility (#34)
