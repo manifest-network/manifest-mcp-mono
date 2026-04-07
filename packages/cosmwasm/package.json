@@ -46,7 +46,7 @@
     "@cosmjs/encoding": "0.32.4",
     "@manifest-network/manifest-mcp-core": "^0.5.0",
     "@manifest-network/manifestjs": "2.2.0-billing-v2.3",
-    "@modelcontextprotocol/sdk": "1.27.1",
+    "@modelcontextprotocol/sdk": "1.29.0",
     "zod": "^4.3.6"
   },
   "devDependencies": {
