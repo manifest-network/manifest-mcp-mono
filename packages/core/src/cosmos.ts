@@ -209,15 +209,17 @@ export async function cosmosEstimateFee(
     );
   }
 
-  // Resolve multiplier: override > config > default.
-  // Explicit fallback (no `!`) — safer if a test constructs config without createConfig.
-  const gasMultiplier =
-    overrides?.gasMultiplier ?? config.gasMultiplier ?? DEFAULT_GAS_MULTIPLIER;
-  if (!Number.isFinite(gasMultiplier) || gasMultiplier < 1) {
-    throw new ManifestMCPError(
-      ManifestMCPErrorCode.INVALID_CONFIG,
-      `gasMultiplier must be a finite number >= 1, got ${gasMultiplier}`,
-    );
+  // Validate the override eagerly (the resolved fallback values are always valid).
+  if (overrides?.gasMultiplier !== undefined) {
+    if (
+      !Number.isFinite(overrides.gasMultiplier) ||
+      overrides.gasMultiplier < 1
+    ) {
+      throw new ManifestMCPError(
+        ManifestMCPErrorCode.INVALID_CONFIG,
+        `gasMultiplier must be a finite number >= 1, got ${overrides.gasMultiplier}`,
+      );
+    }
   }
 
   // Get builder from registry (throws if module not found) - do this before retry loop
@@ -230,6 +232,21 @@ export async function cosmosEstimateFee(
 
       const signingClient = await clientManager.getSigningClient();
       const senderAddress = await clientManager.getAddress();
+
+      // Resolve gasMultiplier from the signing client when no override is provided.
+      // This guarantees parity with cosmosTx's 'auto' path: client.ts patches the
+      // signing client's defaultGasMultiplier to config.gasMultiplier; if that
+      // patch fails (rare — only when CosmJS internals change), the client
+      // falls back to CosmJS's built-in default. Reading from the client uses
+      // the same value cosmosTx would.
+      const clientMultiplier = (
+        signingClient as unknown as { defaultGasMultiplier?: unknown }
+      ).defaultGasMultiplier;
+      const gasMultiplier =
+        overrides?.gasMultiplier ??
+        (typeof clientMultiplier === 'number'
+          ? clientMultiplier
+          : DEFAULT_GAS_MULTIPLIER);
 
       try {
         const built = builder(senderAddress, subcommand, args);

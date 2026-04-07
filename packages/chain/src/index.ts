@@ -191,8 +191,9 @@ export class ChainMCPServer {
             ),
           args: z
             .array(z.string())
+            .optional()
             .describe(
-              'Arguments to the transaction as an array of strings (e.g., ["<to_address>", "1000umfx"] for bank send). Use array to preserve arguments with spaces.',
+              'Arguments to the transaction as an array of strings (e.g., ["<to_address>", "1000umfx"] for bank send). Use array to preserve arguments with spaces. Omit for subcommands that take no arguments.',
             ),
           gas_multiplier: z
             .number()
@@ -209,7 +210,7 @@ export class ChainMCPServer {
           this.clientManager,
           args.module,
           args.subcommand,
-          args.args,
+          args.args ?? [],
           args.gas_multiplier !== undefined
             ? { gasMultiplier: args.gas_multiplier }
             : undefined,

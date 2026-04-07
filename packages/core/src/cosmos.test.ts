@@ -605,6 +605,51 @@ describe('cosmosEstimateFee', () => {
     });
   });
 
+  it('reads gasMultiplier from signing client when no override (parity with cosmosTx)', async () => {
+    clientManager.getConfig.mockReturnValue({
+      retry: { maxRetries: 3 },
+      gasPrice: '1.0umfx',
+    });
+    // Signing client carries the patched defaultGasMultiplier from client.ts.
+    // cosmosEstimateFee should read from here, not from config, so that both
+    // tools agree even if the patch fell back to CosmJS's built-in default.
+    clientManager.getSigningClient.mockResolvedValue({
+      simulate: vi.fn().mockResolvedValue(100000),
+      defaultGasMultiplier: 2.0,
+    });
+    mockGetTxMsgBuilder.mockReturnValue(
+      vi
+        .fn()
+        .mockReturnValue({ messages: [{ typeUrl: 'x', value: {} }], memo: '' }),
+    );
+
+    const result = await cosmosEstimateFee(clientManager, 'bank', 'send', []);
+
+    // 100000 * 2.0 = 200000 (uses signing client's multiplier, not DEFAULT 1.5)
+    expect(result.fee.gas).toBe('200000');
+  });
+
+  it('falls back to DEFAULT_GAS_MULTIPLIER when signing client has no defaultGasMultiplier', async () => {
+    clientManager.getConfig.mockReturnValue({
+      retry: { maxRetries: 3 },
+      gasPrice: '1.0umfx',
+    });
+    // Signing client without defaultGasMultiplier (e.g., patch failed)
+    clientManager.getSigningClient.mockResolvedValue({
+      simulate: vi.fn().mockResolvedValue(100000),
+    });
+    mockGetTxMsgBuilder.mockReturnValue(
+      vi
+        .fn()
+        .mockReturnValue({ messages: [{ typeUrl: 'x', value: {} }], memo: '' }),
+    );
+
+    const result = await cosmosEstimateFee(clientManager, 'bank', 'send', []);
+
+    // 100000 * 1.5 (DEFAULT_GAS_MULTIPLIER) = 150000
+    expect(result.fee.gas).toBe('150000');
+  });
+
   it('propagates UNKNOWN_MODULE from getTxMsgBuilder without retry', async () => {
     clientManager.getConfig.mockReturnValue({
       retry: { maxRetries: 3 },

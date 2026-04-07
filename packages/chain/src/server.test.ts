@@ -277,6 +277,34 @@ describe('ChainMCPServer', () => {
       );
     });
 
+    it('cosmos_estimate_fee accepts missing args (defaults to [])', async () => {
+      mockCosmosEstimateFee.mockResolvedValue({
+        module: 'bank',
+        subcommand: 'params',
+        gasEstimate: '50000',
+        fee: { amount: [{ denom: 'umfx', amount: '75000' }], gas: '75000' },
+      });
+
+      const server = new ChainMCPServer({
+        config: makeMockConfig(),
+        walletProvider: makeMockWallet(),
+      });
+      const result = await callTool(server, 'cosmos_estimate_fee', {
+        module: 'bank',
+        subcommand: 'params',
+        // args omitted intentionally
+      });
+
+      expect(result.isError).toBeUndefined();
+      expect(mockCosmosEstimateFee).toHaveBeenCalledWith(
+        expect.anything(),
+        'bank',
+        'params',
+        [],
+        undefined,
+      );
+    });
+
     it('passes undefined (not {}) when no gas_multiplier override', async () => {
       mockCosmosEstimateFee.mockResolvedValue({
         module: 'bank',
