@@ -13,7 +13,7 @@ export {
   type ValidationResult,
   validateConfig,
 } from './config.js';
-export { cosmosQuery, cosmosTx } from './cosmos.js';
+export { cosmosEstimateFee, cosmosQuery, cosmosTx } from './cosmos.js';
 export { createLCDQueryClient } from './lcd-adapter.js';
 export { type LogLevel, logger } from './logger.js';
 export {

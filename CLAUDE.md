@@ -33,7 +33,7 @@ docker compose -f e2e/docker-compose.yml down -v --remove-orphans
 Four MCP servers bridging AI assistants to Cosmos SDK blockchains (Manifest Network). Six npm workspace packages with strict dependency direction: **node -> {chain, lease, fred, cosmwasm} -> core** (never reverse; node also depends on core directly).
 
 - **`packages/core`** -- Shared library. Cosmos logic, on-chain tool functions, server utilities, LCD/REST adapter (`lcd-adapter.ts`). No HTTP clients (those live in fred). Not an MCP server itself. Built with `platform: "neutral"` for browser compatibility.
-- **`packages/chain`** -- MCP server with 5 chain tools (+ optional `request_faucet` when `MANIFEST_FAUCET_URL` is set): `get_account_info`, `cosmos_query`, `cosmos_tx`, `list_modules`, `list_module_subcommands`.
+- **`packages/chain`** -- MCP server with 6 chain tools (+ optional `request_faucet` when `MANIFEST_FAUCET_URL` is set): `get_account_info`, `cosmos_query`, `cosmos_tx`, `cosmos_estimate_fee`, `list_modules`, `list_module_subcommands`.
 - **`packages/lease`** -- MCP server with 6 on-chain lease tools: `credit_balance`, `fund_credit`, `leases_by_tenant`, `close_lease`, `get_skus`, `get_providers`.
 - **`packages/fred`** -- MCP server with 8 provider/Fred tools: `browse_catalog`, `deploy_app`, `app_status`, `get_logs`, `restart_app`, `update_app`, `app_diagnostics`, `app_releases`. Contains HTTP clients (auth, provider, fred) and tool implementations. Also exports all tool functions and HTTP clients for library consumers. Stack manifests use `{ services: { ... } }` wrapper format; upload payloads are `Uint8Array`.
 - **`packages/cosmwasm`** -- MCP server with 2 converter tools: `get_mfx_to_pwr_rate`, `convert_mfx_to_pwr`. Requires `MANIFEST_CONVERTER_ADDRESS` env var. Uses the on-chain MFX→PWR converter contract (CosmWasm smart contract with `{"convert":{}}` execute and `{"config":{}}` query).
@@ -42,7 +42,7 @@ Four MCP servers bridging AI assistants to Cosmos SDK blockchains (Manifest Netw
 ### Tool layers (3 tiers)
 
 1. **Discovery** -- `list_modules`, `list_module_subcommands` -> powered by static registry in `modules.ts`
-2. **Generic chain** -- `cosmos_query`, `cosmos_tx`, `get_account_info` -> routed through `cosmos.ts` to per-module handlers in `queries/` and `transactions/`
+2. **Generic chain** -- `cosmos_query`, `cosmos_tx`, `cosmos_estimate_fee`, `get_account_info` -> routed through `cosmos.ts` to per-module handlers in `queries/` and `transactions/`
 3. **High-level Manifest** -- on-chain lease tools in `packages/lease` (using core's tool functions), provider-dependent tools in `packages/fred` (composing chain operations with provider HTTP calls), and MFX→PWR converter tools in `packages/cosmwasm` (composing CosmWasm queries with contract execution)
 
 ### Key components

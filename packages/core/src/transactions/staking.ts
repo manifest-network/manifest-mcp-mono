@@ -1,7 +1,7 @@
 import type { SigningStargateClient } from '@cosmjs/stargate';
 import { cosmos } from '@manifest-network/manifestjs';
 import { throwUnsupportedSubcommand } from '../modules.js';
-import type { CosmosTxResult, TxOptions } from '../types.js';
+import type { BuiltMessages, CosmosTxResult, TxOptions } from '../types.js';
 import {
   buildGasFee,
   buildTxResult,
@@ -15,16 +15,13 @@ const { MsgDelegate, MsgUndelegate, MsgBeginRedelegate } =
   cosmos.staking.v1beta1;
 
 /**
- * Route staking transaction to appropriate handler
+ * Build messages for a staking transaction subcommand (no signing/broadcasting).
  */
-export async function routeStakingTransaction(
-  client: SigningStargateClient,
+export function buildStakingMessages(
   senderAddress: string,
   subcommand: string,
   args: string[],
-  waitForConfirmation: boolean,
-  options?: TxOptions,
-): Promise<CosmosTxResult> {
+): BuiltMessages {
   validateArgsLength(args, 'staking transaction');
 
   switch (subcommand) {
@@ -43,9 +40,7 @@ export async function routeStakingTransaction(
         }),
       };
 
-      const fee = await buildGasFee(client, senderAddress, [msg], options);
-      const result = await client.signAndBroadcast(senderAddress, [msg], fee);
-      return buildTxResult('staking', 'delegate', result, waitForConfirmation);
+      return { messages: [msg], memo: '' };
     }
 
     case 'unbond':
@@ -64,9 +59,7 @@ export async function routeStakingTransaction(
         }),
       };
 
-      const fee = await buildGasFee(client, senderAddress, [msg], options);
-      const result = await client.signAndBroadcast(senderAddress, [msg], fee);
-      return buildTxResult('staking', 'unbond', result, waitForConfirmation);
+      return { messages: [msg], memo: '', canonicalSubcommand: 'unbond' };
     }
 
     case 'redelegate': {
@@ -91,17 +84,43 @@ export async function routeStakingTransaction(
         }),
       };
 
-      const fee = await buildGasFee(client, senderAddress, [msg], options);
-      const result = await client.signAndBroadcast(senderAddress, [msg], fee);
-      return buildTxResult(
-        'staking',
-        'redelegate',
-        result,
-        waitForConfirmation,
-      );
+      return { messages: [msg], memo: '' };
     }
 
     default:
       throwUnsupportedSubcommand('tx', 'staking', subcommand);
   }
+}
+
+/**
+ * Route staking transaction to appropriate handler
+ */
+export async function routeStakingTransaction(
+  client: SigningStargateClient,
+  senderAddress: string,
+  subcommand: string,
+  args: string[],
+  waitForConfirmation: boolean,
+  options?: TxOptions,
+): Promise<CosmosTxResult> {
+  const built = buildStakingMessages(senderAddress, subcommand, args);
+  const fee = await buildGasFee(
+    client,
+    senderAddress,
+    built.messages,
+    options,
+    built.memo,
+  );
+  const result = await client.signAndBroadcast(
+    senderAddress,
+    built.messages,
+    fee,
+    built.memo,
+  );
+  return buildTxResult(
+    'staking',
+    built.canonicalSubcommand ?? subcommand,
+    result,
+    waitForConfirmation,
+  );
 }

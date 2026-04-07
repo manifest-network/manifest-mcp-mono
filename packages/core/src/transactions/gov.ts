@@ -2,6 +2,7 @@ import type { SigningStargateClient } from '@cosmjs/stargate';
 import { cosmos } from '@manifest-network/manifestjs';
 import { throwUnsupportedSubcommand } from '../modules.js';
 import {
+  type BuiltMessages,
   type CosmosTxResult,
   ManifestMCPError,
   ManifestMCPErrorCode,
@@ -75,16 +76,13 @@ function parseWeightToFixed18(weightStr: string): string {
 }
 
 /**
- * Route gov transaction to appropriate handler
+ * Build messages for a gov transaction subcommand (no signing/broadcasting).
  */
-export async function routeGovTransaction(
-  client: SigningStargateClient,
+export function buildGovMessages(
   senderAddress: string,
   subcommand: string,
   args: string[],
-  waitForConfirmation: boolean,
-  options?: TxOptions,
-): Promise<CosmosTxResult> {
+): BuiltMessages {
   validateArgsLength(args, 'gov transaction');
 
   switch (subcommand) {
@@ -112,9 +110,7 @@ export async function routeGovTransaction(
         }),
       };
 
-      const fee = await buildGasFee(client, senderAddress, [msg], options);
-      const result = await client.signAndBroadcast(senderAddress, [msg], fee);
-      return buildTxResult('gov', 'vote', result, waitForConfirmation);
+      return { messages: [msg], memo: '' };
     }
 
     case 'weighted-vote': {
@@ -160,9 +156,7 @@ export async function routeGovTransaction(
         }),
       };
 
-      const fee = await buildGasFee(client, senderAddress, [msg], options);
-      const result = await client.signAndBroadcast(senderAddress, [msg], fee);
-      return buildTxResult('gov', 'weighted-vote', result, waitForConfirmation);
+      return { messages: [msg], memo: '' };
     }
 
     case 'deposit': {
@@ -180,12 +174,43 @@ export async function routeGovTransaction(
         }),
       };
 
-      const fee = await buildGasFee(client, senderAddress, [msg], options);
-      const result = await client.signAndBroadcast(senderAddress, [msg], fee);
-      return buildTxResult('gov', 'deposit', result, waitForConfirmation);
+      return { messages: [msg], memo: '' };
     }
 
     default:
       throwUnsupportedSubcommand('tx', 'gov', subcommand);
   }
+}
+
+/**
+ * Route gov transaction to appropriate handler
+ */
+export async function routeGovTransaction(
+  client: SigningStargateClient,
+  senderAddress: string,
+  subcommand: string,
+  args: string[],
+  waitForConfirmation: boolean,
+  options?: TxOptions,
+): Promise<CosmosTxResult> {
+  const built = buildGovMessages(senderAddress, subcommand, args);
+  const fee = await buildGasFee(
+    client,
+    senderAddress,
+    built.messages,
+    options,
+    built.memo,
+  );
+  const result = await client.signAndBroadcast(
+    senderAddress,
+    built.messages,
+    fee,
+    built.memo,
+  );
+  return buildTxResult(
+    'gov',
+    built.canonicalSubcommand ?? subcommand,
+    result,
+    waitForConfirmation,
+  );
 }

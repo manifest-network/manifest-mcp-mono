@@ -84,14 +84,63 @@ describe('Chain tools', () => {
     expect(result.code).toBe(0);
   });
 
+  it('cosmos_estimate_fee bank send returns gas/fee without broadcasting', async () => {
+    const { address } = await client.callTool<{ address: string }>('get_account_info');
+
+    // Query balance before
+    const balanceBefore = await client.callTool<{
+      result: { balances: { denom: string; amount: string }[] };
+    }>('cosmos_query', {
+      module: 'bank',
+      subcommand: 'balances',
+      args: [address],
+    });
+    const umfxBefore = balanceBefore.result.balances.find(
+      (b) => b.denom === 'umfx',
+    );
+
+    const result = await client.callTool<{
+      module: string;
+      subcommand: string;
+      gasEstimate: string;
+      fee: { amount: { denom: string; amount: string }[]; gas: string };
+    }>('cosmos_estimate_fee', {
+      module: 'bank',
+      subcommand: 'send',
+      args: [address, '1000umfx'],
+    });
+
+    expect(result.module).toBe('bank');
+    expect(result.subcommand).toBe('send');
+    expect(Number(result.gasEstimate)).toBeGreaterThan(0);
+    expect(Number(result.fee.gas)).toBeGreaterThanOrEqual(
+      Number(result.gasEstimate),
+    );
+    expect(result.fee.amount[0].denom).toBe('umfx');
+
+    // Query balance after — should be unchanged (no broadcast)
+    const balanceAfter = await client.callTool<{
+      result: { balances: { denom: string; amount: string }[] };
+    }>('cosmos_query', {
+      module: 'bank',
+      subcommand: 'balances',
+      args: [address],
+    });
+    const umfxAfter = balanceAfter.result.balances.find(
+      (b) => b.denom === 'umfx',
+    );
+    expect(umfxAfter?.amount).toBe(umfxBefore?.amount);
+  });
+
   it('listTools returns all expected chain tools', async () => {
     const tools = await client.listTools();
 
     expect(tools).toContain('get_account_info');
     expect(tools).toContain('cosmos_query');
     expect(tools).toContain('cosmos_tx');
+    expect(tools).toContain('cosmos_estimate_fee');
     expect(tools).toContain('list_modules');
     expect(tools).toContain('list_module_subcommands');
-    expect(tools).toHaveLength(5);
+    expect(tools).toHaveLength(6);
   });
 });

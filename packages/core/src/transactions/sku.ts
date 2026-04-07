@@ -2,6 +2,7 @@ import type { SigningStargateClient } from '@cosmjs/stargate';
 import { liftedinit } from '@manifest-network/manifestjs';
 import { throwUnsupportedSubcommand } from '../modules.js';
 import {
+  type BuiltMessages,
   type CosmosTxResult,
   ManifestMCPError,
   ManifestMCPErrorCode,
@@ -63,16 +64,13 @@ function parseBooleanString(value: string, fieldName: string): boolean {
 }
 
 /**
- * Route SKU transaction to appropriate handler
+ * Build messages for a SKU transaction subcommand (no signing/broadcasting).
  */
-export async function routeSkuTransaction(
-  client: SigningStargateClient,
+export function buildSkuMessages(
   senderAddress: string,
   subcommand: string,
   args: string[],
-  waitForConfirmation: boolean,
-  options?: TxOptions,
-): Promise<CosmosTxResult> {
+): BuiltMessages {
   validateArgsLength(args, 'sku transaction');
 
   switch (subcommand) {
@@ -109,14 +107,7 @@ export async function routeSkuTransaction(
         }),
       };
 
-      const fee = await buildGasFee(client, senderAddress, [msg], options);
-      const result = await client.signAndBroadcast(senderAddress, [msg], fee);
-      return buildTxResult(
-        'sku',
-        'create-provider',
-        result,
-        waitForConfirmation,
-      );
+      return { messages: [msg], memo: '' };
     }
 
     case 'update-provider': {
@@ -163,14 +154,7 @@ export async function routeSkuTransaction(
         }),
       };
 
-      const fee = await buildGasFee(client, senderAddress, [msg], options);
-      const result = await client.signAndBroadcast(senderAddress, [msg], fee);
-      return buildTxResult(
-        'sku',
-        'update-provider',
-        result,
-        waitForConfirmation,
-      );
+      return { messages: [msg], memo: '' };
     }
 
     case 'deactivate-provider': {
@@ -185,14 +169,7 @@ export async function routeSkuTransaction(
         }),
       };
 
-      const fee = await buildGasFee(client, senderAddress, [msg], options);
-      const result = await client.signAndBroadcast(senderAddress, [msg], fee);
-      return buildTxResult(
-        'sku',
-        'deactivate-provider',
-        result,
-        waitForConfirmation,
-      );
+      return { messages: [msg], memo: '' };
     }
 
     case 'create-sku': {
@@ -230,9 +207,7 @@ export async function routeSkuTransaction(
         }),
       };
 
-      const fee = await buildGasFee(client, senderAddress, [msg], options);
-      const result = await client.signAndBroadcast(senderAddress, [msg], fee);
-      return buildTxResult('sku', 'create-sku', result, waitForConfirmation);
+      return { messages: [msg], memo: '' };
     }
 
     case 'update-sku': {
@@ -276,9 +251,7 @@ export async function routeSkuTransaction(
         }),
       };
 
-      const fee = await buildGasFee(client, senderAddress, [msg], options);
-      const result = await client.signAndBroadcast(senderAddress, [msg], fee);
-      return buildTxResult('sku', 'update-sku', result, waitForConfirmation);
+      return { messages: [msg], memo: '' };
     }
 
     case 'deactivate-sku': {
@@ -293,14 +266,7 @@ export async function routeSkuTransaction(
         }),
       };
 
-      const fee = await buildGasFee(client, senderAddress, [msg], options);
-      const result = await client.signAndBroadcast(senderAddress, [msg], fee);
-      return buildTxResult(
-        'sku',
-        'deactivate-sku',
-        result,
-        waitForConfirmation,
-      );
+      return { messages: [msg], memo: '' };
     }
 
     case 'update-params': {
@@ -319,12 +285,43 @@ export async function routeSkuTransaction(
         }),
       };
 
-      const fee = await buildGasFee(client, senderAddress, [msg], options);
-      const result = await client.signAndBroadcast(senderAddress, [msg], fee);
-      return buildTxResult('sku', 'update-params', result, waitForConfirmation);
+      return { messages: [msg], memo: '' };
     }
 
     default:
       throwUnsupportedSubcommand('tx', 'sku', subcommand);
   }
+}
+
+/**
+ * Route SKU transaction to appropriate handler
+ */
+export async function routeSkuTransaction(
+  client: SigningStargateClient,
+  senderAddress: string,
+  subcommand: string,
+  args: string[],
+  waitForConfirmation: boolean,
+  options?: TxOptions,
+): Promise<CosmosTxResult> {
+  const built = buildSkuMessages(senderAddress, subcommand, args);
+  const fee = await buildGasFee(
+    client,
+    senderAddress,
+    built.messages,
+    options,
+    built.memo,
+  );
+  const result = await client.signAndBroadcast(
+    senderAddress,
+    built.messages,
+    fee,
+    built.memo,
+  );
+  return buildTxResult(
+    'sku',
+    built.canonicalSubcommand ?? subcommand,
+    result,
+    waitForConfirmation,
+  );
 }

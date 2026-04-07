@@ -3,6 +3,7 @@ import type { SigningStargateClient } from '@cosmjs/stargate';
 import { cosmos } from '@manifest-network/manifestjs';
 import { throwUnsupportedSubcommand } from '../modules.js';
 import {
+  type BuiltMessages,
   type CosmosTxResult,
   ManifestMCPError,
   ManifestMCPErrorCode,
@@ -186,16 +187,13 @@ function parseProposalMessages(
 }
 
 /**
- * Route group transaction to appropriate handler
+ * Build messages for a group transaction subcommand (no signing/broadcasting).
  */
-export async function routeGroupTransaction(
-  client: SigningStargateClient,
+export function buildGroupMessages(
   senderAddress: string,
   subcommand: string,
   args: string[],
-  waitForConfirmation: boolean,
-  options?: TxOptions,
-): Promise<CosmosTxResult> {
+): BuiltMessages {
   validateArgsLength(args, 'group transaction');
 
   switch (subcommand) {
@@ -218,14 +216,7 @@ export async function routeGroupTransaction(
         }),
       };
 
-      const fee = await buildGasFee(client, senderAddress, [msg], options);
-      const result = await client.signAndBroadcast(senderAddress, [msg], fee);
-      return buildTxResult(
-        'group',
-        'create-group',
-        result,
-        waitForConfirmation,
-      );
+      return { messages: [msg], memo: '' };
     }
 
     case 'update-group-members': {
@@ -248,14 +239,7 @@ export async function routeGroupTransaction(
         }),
       };
 
-      const fee = await buildGasFee(client, senderAddress, [msg], options);
-      const result = await client.signAndBroadcast(senderAddress, [msg], fee);
-      return buildTxResult(
-        'group',
-        'update-group-members',
-        result,
-        waitForConfirmation,
-      );
+      return { messages: [msg], memo: '' };
     }
 
     case 'update-group-admin': {
@@ -278,14 +262,7 @@ export async function routeGroupTransaction(
         }),
       };
 
-      const fee = await buildGasFee(client, senderAddress, [msg], options);
-      const result = await client.signAndBroadcast(senderAddress, [msg], fee);
-      return buildTxResult(
-        'group',
-        'update-group-admin',
-        result,
-        waitForConfirmation,
-      );
+      return { messages: [msg], memo: '' };
     }
 
     case 'update-group-metadata': {
@@ -307,14 +284,7 @@ export async function routeGroupTransaction(
         }),
       };
 
-      const fee = await buildGasFee(client, senderAddress, [msg], options);
-      const result = await client.signAndBroadcast(senderAddress, [msg], fee);
-      return buildTxResult(
-        'group',
-        'update-group-metadata',
-        result,
-        waitForConfirmation,
-      );
+      return { messages: [msg], memo: '' };
     }
 
     case 'create-group-policy': {
@@ -357,14 +327,7 @@ export async function routeGroupTransaction(
         }),
       };
 
-      const fee = await buildGasFee(client, senderAddress, [msg], options);
-      const result = await client.signAndBroadcast(senderAddress, [msg], fee);
-      return buildTxResult(
-        'group',
-        'create-group-policy',
-        result,
-        waitForConfirmation,
-      );
+      return { messages: [msg], memo: '' };
     }
 
     case 'update-group-policy-admin': {
@@ -387,14 +350,7 @@ export async function routeGroupTransaction(
         }),
       };
 
-      const fee = await buildGasFee(client, senderAddress, [msg], options);
-      const result = await client.signAndBroadcast(senderAddress, [msg], fee);
-      return buildTxResult(
-        'group',
-        'update-group-policy-admin',
-        result,
-        waitForConfirmation,
-      );
+      return { messages: [msg], memo: '' };
     }
 
     case 'create-group-with-policy': {
@@ -446,14 +402,7 @@ export async function routeGroupTransaction(
         }),
       };
 
-      const fee = await buildGasFee(client, senderAddress, [msg], options);
-      const result = await client.signAndBroadcast(senderAddress, [msg], fee);
-      return buildTxResult(
-        'group',
-        'create-group-with-policy',
-        result,
-        waitForConfirmation,
-      );
+      return { messages: [msg], memo: '' };
     }
 
     case 'update-group-policy-decision-policy': {
@@ -493,14 +442,7 @@ export async function routeGroupTransaction(
         }),
       };
 
-      const fee = await buildGasFee(client, senderAddress, [msg], options);
-      const result = await client.signAndBroadcast(senderAddress, [msg], fee);
-      return buildTxResult(
-        'group',
-        'update-group-policy-decision-policy',
-        result,
-        waitForConfirmation,
-      );
+      return { messages: [msg], memo: '' };
     }
 
     case 'update-group-policy-metadata': {
@@ -522,14 +464,7 @@ export async function routeGroupTransaction(
         }),
       };
 
-      const fee = await buildGasFee(client, senderAddress, [msg], options);
-      const result = await client.signAndBroadcast(senderAddress, [msg], fee);
-      return buildTxResult(
-        'group',
-        'update-group-policy-metadata',
-        result,
-        waitForConfirmation,
-      );
+      return { messages: [msg], memo: '' };
     }
 
     case 'submit-proposal': {
@@ -576,14 +511,7 @@ export async function routeGroupTransaction(
         }),
       };
 
-      const fee = await buildGasFee(client, senderAddress, [msg], options);
-      const result = await client.signAndBroadcast(senderAddress, [msg], fee);
-      return buildTxResult(
-        'group',
-        'submit-proposal',
-        result,
-        waitForConfirmation,
-      );
+      return { messages: [msg], memo: '' };
     }
 
     case 'withdraw-proposal': {
@@ -598,14 +526,7 @@ export async function routeGroupTransaction(
         }),
       };
 
-      const fee = await buildGasFee(client, senderAddress, [msg], options);
-      const result = await client.signAndBroadcast(senderAddress, [msg], fee);
-      return buildTxResult(
-        'group',
-        'withdraw-proposal',
-        result,
-        waitForConfirmation,
-      );
+      return { messages: [msg], memo: '' };
     }
 
     case 'vote': {
@@ -636,9 +557,7 @@ export async function routeGroupTransaction(
         }),
       };
 
-      const fee = await buildGasFee(client, senderAddress, [msg], options);
-      const result = await client.signAndBroadcast(senderAddress, [msg], fee);
-      return buildTxResult('group', 'vote', result, waitForConfirmation);
+      return { messages: [msg], memo: '' };
     }
 
     case 'exec': {
@@ -653,9 +572,7 @@ export async function routeGroupTransaction(
         }),
       };
 
-      const fee = await buildGasFee(client, senderAddress, [msg], options);
-      const result = await client.signAndBroadcast(senderAddress, [msg], fee);
-      return buildTxResult('group', 'exec', result, waitForConfirmation);
+      return { messages: [msg], memo: '' };
     }
 
     case 'leave-group': {
@@ -670,12 +587,43 @@ export async function routeGroupTransaction(
         }),
       };
 
-      const fee = await buildGasFee(client, senderAddress, [msg], options);
-      const result = await client.signAndBroadcast(senderAddress, [msg], fee);
-      return buildTxResult('group', 'leave-group', result, waitForConfirmation);
+      return { messages: [msg], memo: '' };
     }
 
     default:
       throwUnsupportedSubcommand('tx', 'group', subcommand);
   }
+}
+
+/**
+ * Route group transaction to appropriate handler
+ */
+export async function routeGroupTransaction(
+  client: SigningStargateClient,
+  senderAddress: string,
+  subcommand: string,
+  args: string[],
+  waitForConfirmation: boolean,
+  options?: TxOptions,
+): Promise<CosmosTxResult> {
+  const built = buildGroupMessages(senderAddress, subcommand, args);
+  const fee = await buildGasFee(
+    client,
+    senderAddress,
+    built.messages,
+    options,
+    built.memo,
+  );
+  const result = await client.signAndBroadcast(
+    senderAddress,
+    built.messages,
+    fee,
+    built.memo,
+  );
+  return buildTxResult(
+    'group',
+    built.canonicalSubcommand ?? subcommand,
+    result,
+    waitForConfirmation,
+  );
 }

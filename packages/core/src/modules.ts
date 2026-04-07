@@ -12,17 +12,39 @@ import { routeSkuQuery } from './queries/sku.js';
 import { routeStakingQuery } from './queries/staking.js';
 import { routeWasmQuery } from './queries/wasm.js';
 // Import transaction handlers
-import { routeBankTransaction } from './transactions/bank.js';
-import { routeBillingTransaction } from './transactions/billing.js';
-import { routeDistributionTransaction } from './transactions/distribution.js';
-import { routeGovTransaction } from './transactions/gov.js';
-import { routeGroupTransaction } from './transactions/group.js';
-import { routeManifestTransaction } from './transactions/manifest.js';
-import { routeSkuTransaction } from './transactions/sku.js';
-import { routeStakingTransaction } from './transactions/staking.js';
-import { routeWasmTransaction } from './transactions/wasm.js';
+import {
+  buildBankMessages,
+  routeBankTransaction,
+} from './transactions/bank.js';
+import {
+  buildBillingMessages,
+  routeBillingTransaction,
+} from './transactions/billing.js';
+import {
+  buildDistributionMessages,
+  routeDistributionTransaction,
+} from './transactions/distribution.js';
+import { buildGovMessages, routeGovTransaction } from './transactions/gov.js';
+import {
+  buildGroupMessages,
+  routeGroupTransaction,
+} from './transactions/group.js';
+import {
+  buildManifestMessages,
+  routeManifestTransaction,
+} from './transactions/manifest.js';
+import { buildSkuMessages, routeSkuTransaction } from './transactions/sku.js';
+import {
+  buildStakingMessages,
+  routeStakingTransaction,
+} from './transactions/staking.js';
+import {
+  buildWasmMessages,
+  routeWasmTransaction,
+} from './transactions/wasm.js';
 import {
   type AvailableModules,
+  type BuiltMessages,
   type CosmosTxResult,
   ManifestMCPError,
   ManifestMCPErrorCode,
@@ -51,6 +73,16 @@ export type TxHandler = (
   waitForConfirmation: boolean,
   options?: TxOptions,
 ) => Promise<CosmosTxResult>;
+
+/**
+ * Pure synchronous function type for building transaction messages.
+ * Used by `cosmosEstimateFee` to obtain `EncodeObject[]` without signing/broadcasting.
+ */
+export type TxMsgBuilder = (
+  senderAddress: string,
+  subcommand: string,
+  args: string[],
+) => BuiltMessages;
 
 /**
  * Throw an error for an unsupported subcommand.
@@ -102,6 +134,7 @@ interface TxModuleRegistry {
     description: string;
     subcommands: SubcommandInfo[];
     handler: TxHandler;
+    msgBuilder: TxMsgBuilder;
   };
 }
 
@@ -465,6 +498,7 @@ const TX_MODULES: TxModuleRegistry = {
   bank: {
     description: 'Bank transaction subcommands',
     handler: routeBankTransaction,
+    msgBuilder: buildBankMessages,
     subcommands: [
       {
         name: 'send',
@@ -481,6 +515,7 @@ const TX_MODULES: TxModuleRegistry = {
   staking: {
     description: 'Staking transaction subcommands',
     handler: routeStakingTransaction,
+    msgBuilder: buildStakingMessages,
     subcommands: [
       { name: 'delegate', description: 'Delegate tokens to a validator' },
       { name: 'unbond', description: 'Unbond tokens from a validator' },
@@ -497,6 +532,7 @@ const TX_MODULES: TxModuleRegistry = {
   distribution: {
     description: 'Distribution transaction subcommands',
     handler: routeDistributionTransaction,
+    msgBuilder: buildDistributionMessages,
     subcommands: [
       {
         name: 'withdraw-rewards',
@@ -509,6 +545,7 @@ const TX_MODULES: TxModuleRegistry = {
   gov: {
     description: 'Governance transaction subcommands',
     handler: routeGovTransaction,
+    msgBuilder: buildGovMessages,
     subcommands: [
       { name: 'vote', description: 'Vote on a proposal' },
       { name: 'weighted-vote', description: 'Weighted vote on a proposal' },
@@ -518,6 +555,7 @@ const TX_MODULES: TxModuleRegistry = {
   billing: {
     description: 'Manifest billing transaction subcommands',
     handler: routeBillingTransaction,
+    msgBuilder: buildBillingMessages,
     subcommands: [
       {
         name: 'fund-credit',
@@ -569,6 +607,7 @@ const TX_MODULES: TxModuleRegistry = {
   manifest: {
     description: 'Manifest module transaction subcommands',
     handler: routeManifestTransaction,
+    msgBuilder: buildManifestMessages,
     subcommands: [
       { name: 'payout', description: 'Execute a payout to multiple addresses' },
       { name: 'burn-held-balance', description: 'Burn held balance' },
@@ -577,6 +616,7 @@ const TX_MODULES: TxModuleRegistry = {
   sku: {
     description: 'Manifest SKU module transaction subcommands',
     handler: routeSkuTransaction,
+    msgBuilder: buildSkuMessages,
     subcommands: [
       {
         name: 'create-provider',
@@ -618,6 +658,7 @@ const TX_MODULES: TxModuleRegistry = {
   group: {
     description: 'Group module transaction subcommands',
     handler: routeGroupTransaction,
+    msgBuilder: buildGroupMessages,
     subcommands: [
       {
         name: 'create-group',
@@ -690,6 +731,7 @@ const TX_MODULES: TxModuleRegistry = {
   wasm: {
     description: 'CosmWasm wasm transaction subcommands',
     handler: routeWasmTransaction,
+    msgBuilder: buildWasmMessages,
     subcommands: [
       {
         name: 'store-code',
@@ -870,4 +912,20 @@ export function getTxHandler(module: string): TxHandler {
     );
   }
   return moduleInfo.handler;
+}
+
+/**
+ * Get the message builder function for a transaction module
+ * @throws ManifestMCPError if module is not found
+ */
+export function getTxMsgBuilder(module: string): TxMsgBuilder {
+  const moduleInfo = TX_MODULES[module];
+  if (!moduleInfo) {
+    throw new ManifestMCPError(
+      ManifestMCPErrorCode.UNKNOWN_MODULE,
+      `Unknown tx module: ${module}`,
+      { availableModules: Object.keys(TX_MODULES) },
+    );
+  }
+  return moduleInfo.msgBuilder;
 }

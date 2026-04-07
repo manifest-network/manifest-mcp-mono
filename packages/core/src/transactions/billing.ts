@@ -2,6 +2,7 @@ import type { SigningStargateClient } from '@cosmjs/stargate';
 import { liftedinit } from '@manifest-network/manifestjs';
 import { getSubcommandUsage, throwUnsupportedSubcommand } from '../modules.js';
 import {
+  type BuiltMessages,
   type CosmosTxResult,
   ManifestMCPError,
   ManifestMCPErrorCode,
@@ -35,16 +36,13 @@ const {
 } = liftedinit.billing.v1;
 
 /**
- * Route billing transaction to appropriate handler
+ * Build messages for a billing transaction subcommand (no signing/broadcasting).
  */
-export async function routeBillingTransaction(
-  client: SigningStargateClient,
+export function buildBillingMessages(
   senderAddress: string,
   subcommand: string,
   args: string[],
-  waitForConfirmation: boolean,
-  options?: TxOptions,
-): Promise<CosmosTxResult> {
+): BuiltMessages {
   validateArgsLength(args, 'billing transaction');
 
   switch (subcommand) {
@@ -63,14 +61,7 @@ export async function routeBillingTransaction(
         }),
       };
 
-      const fee = await buildGasFee(client, senderAddress, [msg], options);
-      const result = await client.signAndBroadcast(senderAddress, [msg], fee);
-      return buildTxResult(
-        'billing',
-        'fund-credit',
-        result,
-        waitForConfirmation,
-      );
+      return { messages: [msg], memo: '' };
     }
 
     case 'create-lease': {
@@ -105,14 +96,7 @@ export async function routeBillingTransaction(
         }),
       };
 
-      const fee = await buildGasFee(client, senderAddress, [msg], options);
-      const result = await client.signAndBroadcast(senderAddress, [msg], fee);
-      return buildTxResult(
-        'billing',
-        'create-lease',
-        result,
-        waitForConfirmation,
-      );
+      return { messages: [msg], memo: '' };
     }
 
     case 'close-lease': {
@@ -137,14 +121,7 @@ export async function routeBillingTransaction(
         }),
       };
 
-      const fee = await buildGasFee(client, senderAddress, [msg], options);
-      const result = await client.signAndBroadcast(senderAddress, [msg], fee);
-      return buildTxResult(
-        'billing',
-        'close-lease',
-        result,
-        waitForConfirmation,
-      );
+      return { messages: [msg], memo: '' };
     }
 
     case 'withdraw': {
@@ -214,9 +191,7 @@ export async function routeBillingTransaction(
         }),
       };
 
-      const fee = await buildGasFee(client, senderAddress, [msg], options);
-      const result = await client.signAndBroadcast(senderAddress, [msg], fee);
-      return buildTxResult('billing', 'withdraw', result, waitForConfirmation);
+      return { messages: [msg], memo: '' };
     }
 
     case 'create-lease-for-tenant': {
@@ -255,14 +230,7 @@ export async function routeBillingTransaction(
         }),
       };
 
-      const fee = await buildGasFee(client, senderAddress, [msg], options);
-      const result = await client.signAndBroadcast(senderAddress, [msg], fee);
-      return buildTxResult(
-        'billing',
-        'create-lease-for-tenant',
-        result,
-        waitForConfirmation,
-      );
+      return { messages: [msg], memo: '' };
     }
 
     case 'acknowledge-lease': {
@@ -277,14 +245,7 @@ export async function routeBillingTransaction(
         }),
       };
 
-      const fee = await buildGasFee(client, senderAddress, [msg], options);
-      const result = await client.signAndBroadcast(senderAddress, [msg], fee);
-      return buildTxResult(
-        'billing',
-        'acknowledge-lease',
-        result,
-        waitForConfirmation,
-      );
+      return { messages: [msg], memo: '' };
     }
 
     case 'reject-lease': {
@@ -308,14 +269,7 @@ export async function routeBillingTransaction(
         }),
       };
 
-      const fee = await buildGasFee(client, senderAddress, [msg], options);
-      const result = await client.signAndBroadcast(senderAddress, [msg], fee);
-      return buildTxResult(
-        'billing',
-        'reject-lease',
-        result,
-        waitForConfirmation,
-      );
+      return { messages: [msg], memo: '' };
     }
 
     case 'cancel-lease': {
@@ -330,14 +284,7 @@ export async function routeBillingTransaction(
         }),
       };
 
-      const fee = await buildGasFee(client, senderAddress, [msg], options);
-      const result = await client.signAndBroadcast(senderAddress, [msg], fee);
-      return buildTxResult(
-        'billing',
-        'cancel-lease',
-        result,
-        waitForConfirmation,
-      );
+      return { messages: [msg], memo: '' };
     }
 
     case 'update-params': {
@@ -394,17 +341,43 @@ export async function routeBillingTransaction(
         }),
       };
 
-      const fee = await buildGasFee(client, senderAddress, [msg], options);
-      const result = await client.signAndBroadcast(senderAddress, [msg], fee);
-      return buildTxResult(
-        'billing',
-        'update-params',
-        result,
-        waitForConfirmation,
-      );
+      return { messages: [msg], memo: '' };
     }
 
     default:
       throwUnsupportedSubcommand('tx', 'billing', subcommand);
   }
+}
+
+/**
+ * Route billing transaction to appropriate handler
+ */
+export async function routeBillingTransaction(
+  client: SigningStargateClient,
+  senderAddress: string,
+  subcommand: string,
+  args: string[],
+  waitForConfirmation: boolean,
+  options?: TxOptions,
+): Promise<CosmosTxResult> {
+  const built = buildBillingMessages(senderAddress, subcommand, args);
+  const fee = await buildGasFee(
+    client,
+    senderAddress,
+    built.messages,
+    options,
+    built.memo,
+  );
+  const result = await client.signAndBroadcast(
+    senderAddress,
+    built.messages,
+    fee,
+    built.memo,
+  );
+  return buildTxResult(
+    'billing',
+    built.canonicalSubcommand ?? subcommand,
+    result,
+    waitForConfirmation,
+  );
 }

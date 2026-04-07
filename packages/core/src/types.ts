@@ -1,4 +1,4 @@
-import type { OfflineSigner } from '@cosmjs/proto-signing';
+import type { EncodeObject, OfflineSigner } from '@cosmjs/proto-signing';
 // Auth module types
 import type {
   Params as AuthParams,
@@ -209,6 +209,49 @@ export interface WalletProvider {
 }
 
 /**
+ * Messages built by a transaction module's message builder, ready for
+ * simulation or signing/broadcasting.
+ */
+export interface BuiltMessages {
+  readonly messages: readonly EncodeObject[];
+  /**
+   * Memo string (default ''). Required (not optional) for type cleanliness:
+   * call sites get a guaranteed string and don't need `?? ''` coalescing.
+   * (At the protobuf encoding layer, '' and undefined are byte-equivalent,
+   * so this is purely a type-design choice, not a behavior fix.)
+   */
+  readonly memo: string;
+  /**
+   * Canonical subcommand name when the input was an alias.
+   * E.g., staking accepts both 'unbond' and 'undelegate' and reports 'unbond' for both.
+   * When omitted, callers should use the original subcommand they passed in.
+   */
+  readonly canonicalSubcommand?: string;
+}
+
+/**
+ * Result from a fee estimation (simulation without broadcast)
+ */
+export interface FeeEstimateResult {
+  readonly module: string;
+  /** Canonical subcommand name (e.g., 'undelegate' is normalized to 'unbond'). */
+  readonly subcommand: string;
+  /**
+   * Raw gas estimate from simulation, stringified for serialization consistency
+   * with `CosmosTxResult.gasUsed` / `gasWanted`.
+   */
+  readonly gasEstimate: string;
+  readonly fee: {
+    readonly amount: readonly {
+      readonly denom: string;
+      readonly amount: string;
+    }[];
+    /** Gas limit, equal to ceil(gasEstimate * gasMultiplier). */
+    readonly gas: string;
+  };
+}
+
+/**
  * Result from a Cosmos transaction
  */
 export interface CosmosTxResult {
@@ -274,6 +317,7 @@ export enum ManifestMCPErrorCode {
   TX_BROADCAST_FAILED = 'TX_BROADCAST_FAILED',
   UNSUPPORTED_TX = 'UNSUPPORTED_TX',
   INSUFFICIENT_FUNDS = 'INSUFFICIENT_FUNDS',
+  SIMULATION_FAILED = 'SIMULATION_FAILED',
 
   // Module errors
   UNKNOWN_MODULE = 'UNKNOWN_MODULE',
