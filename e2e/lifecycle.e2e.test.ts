@@ -123,6 +123,53 @@ describe('Deploy lifecycle', () => {
   });
 
   // ------------------------------------------------------------------
+  // 6b. Tenant overrides — same wiring, different target account
+  // ------------------------------------------------------------------
+  // ADDR1 from e2e/.env — the provider address, a known on-chain account.
+  const OTHER_TENANT = 'manifest1hj5fveer5cjtn4wd6wstzugjfdxzl0xp8ws9ct';
+
+  it('fund_credit funds a different tenant when `tenant` is provided', async () => {
+    const skus = await leaseClient.callTool<{
+      skus: Array<{ name: string; basePrice: { denom: string } }>;
+    }>('get_skus');
+    const micro = skus.skus.find((s) => s.name === 'docker-micro');
+    const skuDenom = micro!.basePrice.denom;
+
+    const result = await leaseClient.callTool<{
+      sender: string;
+      tenant: string;
+      amount: string;
+      code: number;
+      transactionHash: string;
+    }>('fund_credit', {
+      amount: `1000000${skuDenom}`,
+      tenant: OTHER_TENANT,
+    });
+
+    expect(result.code).toBe(0);
+    expect(result.transactionHash).toBeTruthy();
+    expect(result.tenant).toBe(OTHER_TENANT);
+    expect(result.sender).not.toBe(OTHER_TENANT);
+  });
+
+  it('credit_balance queries a different tenant when `tenant` is provided', async () => {
+    const result = await leaseClient.callTool<{
+      credits?: unknown;
+      balances: unknown;
+    }>('credit_balance', { tenant: OTHER_TENANT });
+
+    expect(result.balances).toBeDefined();
+  });
+
+  it('leases_by_tenant lists a different tenant when `tenant` is provided', async () => {
+    const result = await leaseClient.callTool<{
+      leases: Array<{ uuid: string }>;
+    }>('leases_by_tenant', { tenant: OTHER_TENANT });
+
+    expect(result.leases.find((l) => l.uuid === leaseUuid)).toBeUndefined();
+  });
+
+  // ------------------------------------------------------------------
   // 7. App status
   // ------------------------------------------------------------------
   it('app_status returns chain state and connection info', async () => {

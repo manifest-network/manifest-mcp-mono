@@ -16,8 +16,8 @@ beforeEach(() => {
 });
 
 describe('fundCredits', () => {
-  it('calls cosmosTx with billing fund-credit and returns result', async () => {
-    const cm = makeMockClientManager({ address: 'manifest1tenant' });
+  it('defaults tenant to the sender address', async () => {
+    const cm = makeMockClientManager({ address: 'manifest1sender' });
     mockCosmosTx.mockResolvedValue({
       module: 'billing',
       subcommand: 'fund-credit',
@@ -33,17 +33,56 @@ describe('fundCredits', () => {
       cm,
       'billing',
       'fund-credit',
-      ['manifest1tenant', '10000000umfx'],
+      ['manifest1sender', '10000000umfx'],
       true,
       undefined,
     );
-    expect(result.transactionHash).toBe('HASH123');
-    expect(result.code).toBe(0);
-    expect(result.confirmed).toBe(true);
+    expect(result).toEqual({
+      sender: 'manifest1sender',
+      tenant: 'manifest1sender',
+      amount: '10000000umfx',
+      transactionHash: 'HASH123',
+      code: 0,
+    });
+  });
+
+  it('routes explicit tenant through and echoes it in the result', async () => {
+    const cm = makeMockClientManager({ address: 'manifest1sender' });
+    mockCosmosTx.mockResolvedValue({
+      module: 'billing',
+      subcommand: 'fund-credit',
+      transactionHash: 'HASH456',
+      code: 0,
+      height: '101',
+      confirmed: true,
+    });
+
+    const result = await fundCredits(
+      cm as any,
+      '10000000umfx',
+      undefined,
+      'manifest1other',
+    );
+
+    expect(mockCosmosTx).toHaveBeenCalledWith(
+      cm,
+      'billing',
+      'fund-credit',
+      ['manifest1other', '10000000umfx'],
+      true,
+      undefined,
+    );
+    expect(result).toEqual({
+      sender: 'manifest1sender',
+      tenant: 'manifest1other',
+      amount: '10000000umfx',
+      transactionHash: 'HASH456',
+      code: 0,
+    });
   });
 
   it('throws when tx fails on-chain', async () => {
-    const cm = makeMockClientManager({ address: 'manifest1tenant' });
+    const cm = makeMockClientManager({ address: 'manifest1sender' });
     mockCosmosTx.mockRejectedValue(
       new ManifestMCPError(
         ManifestMCPErrorCode.TX_FAILED,

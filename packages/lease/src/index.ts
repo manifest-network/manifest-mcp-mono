@@ -107,10 +107,19 @@ export class LeaseMCPServer {
       'credit_balance',
       {
         description:
-          'Get account balances, credit status, and spending estimates. Use this to check if you have enough credits before deploying, or to monitor remaining credit lifetime.',
+          "Get account balances, credit status, and spending estimates. Defaults to the caller's own account; pass `tenant` to query a different account. Use this to check if you have enough credits before deploying, or to monitor remaining credit lifetime.",
+        inputSchema: {
+          tenant: z
+            .string()
+            .min(1)
+            .optional()
+            .describe(
+              'Tenant address to query (bech32). Defaults to the caller when omitted.',
+            ),
+        },
       },
-      withErrorHandling('credit_balance', async () => {
-        const address = await this.walletProvider.getAddress();
+      withErrorHandling('credit_balance', async (args) => {
+        const address = args.tenant ?? (await this.walletProvider.getAddress());
         await this.clientManager.acquireRateLimit();
         const queryClient = await this.clientManager.getQueryClient();
         const result = await getBalance(queryClient, address);
@@ -123,11 +132,18 @@ export class LeaseMCPServer {
       'fund_credit',
       {
         description:
-          'Fund the billing credit account by sending tokens from the wallet. Use this when credit_balance shows insufficient credits.',
+          "Fund the billing credit account by sending tokens from the wallet. Defaults to funding the sender's own account; pass `tenant` to fund a different account's credit on its behalf. Use this when credit_balance shows insufficient credits.",
         inputSchema: {
           amount: z
             .string()
             .describe('Amount with denomination (e.g. "10000000umfx")'),
+          tenant: z
+            .string()
+            .min(1)
+            .optional()
+            .describe(
+              'Tenant address whose credit account is being funded (bech32). Defaults to the sender when omitted.',
+            ),
           gas_multiplier: z
             .number()
             .finite()
@@ -145,6 +161,7 @@ export class LeaseMCPServer {
           args.gas_multiplier !== undefined
             ? { gasMultiplier: args.gas_multiplier }
             : undefined,
+          args.tenant,
         );
         return jsonResponse(result, bigIntReplacer);
       }),
@@ -155,8 +172,15 @@ export class LeaseMCPServer {
       'leases_by_tenant',
       {
         description:
-          'List leases for the current account with optional state filtering and pagination. Use this to find lease UUIDs, review deployment history, and audit billing.',
+          "List leases with optional state filtering and pagination. Defaults to the caller; pass `tenant` to list another account's leases. Use this to find lease UUIDs, review deployment history, and audit billing.",
         inputSchema: {
+          tenant: z
+            .string()
+            .min(1)
+            .optional()
+            .describe(
+              'Tenant address whose leases to list (bech32). Defaults to the caller when omitted.',
+            ),
           state: z
             .enum(VALID_STATE_FILTERS)
             .optional()
@@ -177,7 +201,7 @@ export class LeaseMCPServer {
         },
       },
       withErrorHandling('leases_by_tenant', async (args) => {
-        const address = await this.walletProvider.getAddress();
+        const address = args.tenant ?? (await this.walletProvider.getAddress());
         await this.clientManager.acquireRateLimit();
         const queryClient = await this.clientManager.getQueryClient();
 

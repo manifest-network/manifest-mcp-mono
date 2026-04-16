@@ -158,9 +158,9 @@ The lease package is an MCP server that registers 6 on-chain lease tools:
 
 | Tool | Purpose |
 |------|---------|
-| `credit_balance` | Query on-chain credit balance |
-| `fund_credit` | Send tokens to billing account |
-| `leases_by_tenant` | Query leases by tenant and state |
+| `credit_balance` | Query on-chain credit balance (defaults to the caller; accepts `tenant`) |
+| `fund_credit` | Send tokens to a billing credit account (defaults to the sender; accepts `tenant`) |
+| `leases_by_tenant` | Query leases by tenant and state (defaults to the caller; accepts `tenant`) |
 | `close_lease` | Close a lease on-chain |
 | `get_skus` | List available SKUs |
 | `get_providers` | List available providers |

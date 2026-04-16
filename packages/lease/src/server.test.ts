@@ -126,7 +126,7 @@ describe('LeaseMCPServer', () => {
   });
 
   describe('credit_balance', () => {
-    it('routes to getBalance and returns result', async () => {
+    it('routes to getBalance with caller address by default', async () => {
       mockGetBalance.mockResolvedValue({ balance: '1000', credits: '500' });
 
       const server = new LeaseMCPServer({
@@ -136,15 +136,37 @@ describe('LeaseMCPServer', () => {
       const result = await callTool(server, 'credit_balance');
 
       expect(mockGetBalance).toHaveBeenCalledOnce();
+      expect(mockGetBalance.mock.calls[0][1]).toBe('manifest1abc');
       expect(result.isError).toBeUndefined();
       const parsed = JSON.parse(result.content[0].text);
       expect(parsed.balance).toBe('1000');
     });
+
+    it('passes tenant override to getBalance', async () => {
+      mockGetBalance.mockResolvedValue({ balance: '0', credits: '0' });
+
+      const server = new LeaseMCPServer({
+        config: makeMockConfig(),
+        walletProvider: makeMockWallet(),
+      });
+      await callTool(server, 'credit_balance', { tenant: 'manifest1other' });
+
+      expect(mockGetBalance).toHaveBeenCalledOnce();
+      expect(mockGetBalance.mock.calls[0][1]).toBe('manifest1other');
+    });
   });
 
   describe('fund_credit', () => {
-    it('routes to fundCredits with amount', async () => {
-      mockFundCredits.mockResolvedValue({ transactionHash: 'HASH1', code: 0 });
+    const fundResult = {
+      sender: 'manifest1abc',
+      tenant: 'manifest1abc',
+      amount: '10000000umfx',
+      transactionHash: 'HASH1',
+      code: 0,
+    };
+
+    it('routes to fundCredits with amount and no tenant override', async () => {
+      mockFundCredits.mockResolvedValue(fundResult);
 
       const server = new LeaseMCPServer({
         config: makeMockConfig(),
@@ -154,12 +176,17 @@ describe('LeaseMCPServer', () => {
         amount: '10000000umfx',
       });
 
-      expect(mockFundCredits).toHaveBeenCalledOnce();
+      expect(mockFundCredits).toHaveBeenCalledWith(
+        expect.anything(),
+        '10000000umfx',
+        undefined,
+        undefined,
+      );
       expect(result.isError).toBeUndefined();
     });
 
     it('passes gas_multiplier override to fundCredits', async () => {
-      mockFundCredits.mockResolvedValue({ transactionHash: 'HASH1', code: 0 });
+      mockFundCredits.mockResolvedValue(fundResult);
 
       const server = new LeaseMCPServer({
         config: makeMockConfig(),
@@ -174,6 +201,30 @@ describe('LeaseMCPServer', () => {
         expect.anything(),
         '10000000umfx',
         { gasMultiplier: 2.5 },
+        undefined,
+      );
+    });
+
+    it('passes tenant override to fundCredits', async () => {
+      mockFundCredits.mockResolvedValue({
+        ...fundResult,
+        tenant: 'manifest1other',
+      });
+
+      const server = new LeaseMCPServer({
+        config: makeMockConfig(),
+        walletProvider: makeMockWallet(),
+      });
+      await callTool(server, 'fund_credit', {
+        amount: '10000000umfx',
+        tenant: 'manifest1other',
+      });
+
+      expect(mockFundCredits).toHaveBeenCalledWith(
+        expect.anything(),
+        '10000000umfx',
+        undefined,
+        'manifest1other',
       );
     });
   });
@@ -227,6 +278,38 @@ describe('LeaseMCPServer', () => {
       const call = mockLeasesByTenant.mock.calls[0][0];
       expect(call.pagination.limit).toBe(BigInt(10));
       expect(call.pagination.offset).toBe(BigInt(5));
+    });
+
+    it('uses caller address as tenant by default', async () => {
+      mockLeasesByTenant.mockResolvedValue({
+        leases: [],
+        pagination: { total: BigInt(0) },
+      });
+
+      const server = new LeaseMCPServer({
+        config: makeMockConfig(),
+        walletProvider: makeMockWallet(),
+      });
+      await callTool(server, 'leases_by_tenant', {});
+
+      expect(mockLeasesByTenant).toHaveBeenCalledOnce();
+      expect(mockLeasesByTenant.mock.calls[0][0].tenant).toBe('manifest1abc');
+    });
+
+    it('passes tenant override to the query', async () => {
+      mockLeasesByTenant.mockResolvedValue({
+        leases: [],
+        pagination: { total: BigInt(0) },
+      });
+
+      const server = new LeaseMCPServer({
+        config: makeMockConfig(),
+        walletProvider: makeMockWallet(),
+      });
+      await callTool(server, 'leases_by_tenant', { tenant: 'manifest1other' });
+
+      expect(mockLeasesByTenant).toHaveBeenCalledOnce();
+      expect(mockLeasesByTenant.mock.calls[0][0].tenant).toBe('manifest1other');
     });
   });
 
