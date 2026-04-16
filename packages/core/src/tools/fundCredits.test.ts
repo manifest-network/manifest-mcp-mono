@@ -38,11 +38,15 @@ describe('fundCredits', () => {
       undefined,
     );
     expect(result).toEqual({
+      module: 'billing',
+      subcommand: 'fund-credit',
+      transactionHash: 'HASH123',
+      code: 0,
+      height: '100',
+      confirmed: true,
       sender: 'manifest1sender',
       tenant: 'manifest1sender',
       amount: '10000000umfx',
-      transactionHash: 'HASH123',
-      code: 0,
     });
   });
 
@@ -73,11 +77,15 @@ describe('fundCredits', () => {
       undefined,
     );
     expect(result).toEqual({
+      module: 'billing',
+      subcommand: 'fund-credit',
+      transactionHash: 'HASH456',
+      code: 0,
+      height: '101',
+      confirmed: true,
       sender: 'manifest1sender',
       tenant: 'manifest1other',
       amount: '10000000umfx',
-      transactionHash: 'HASH456',
-      code: 0,
     });
   });
 

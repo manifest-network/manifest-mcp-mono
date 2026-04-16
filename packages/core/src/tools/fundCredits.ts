@@ -1,13 +1,11 @@
 import type { CosmosClientManager } from '../client.js';
 import { cosmosTx } from '../cosmos.js';
-import type { TxOverrides } from '../types.js';
+import type { CosmosTxResult, TxOverrides } from '../types.js';
 
-export interface FundCreditsResult {
+export interface FundCreditsResult extends CosmosTxResult {
   readonly sender: string;
   readonly tenant: string;
   readonly amount: string;
-  readonly transactionHash: string;
-  readonly code: number;
 }
 
 export async function fundCredits(
@@ -27,10 +25,9 @@ export async function fundCredits(
     overrides,
   );
   return {
+    ...result,
     sender,
     tenant: recipient,
     amount,
-    transactionHash: result.transactionHash,
-    code: result.code,
   };
 }
