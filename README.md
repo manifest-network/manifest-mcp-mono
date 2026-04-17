@@ -54,9 +54,9 @@ See [`packages/node/README.md`](packages/node/README.md) for wallet setup and MC
 
 | Tool | Description |
 |------|-------------|
-| `credit_balance` | Query on-chain credit balance |
-| `fund_credit` | Send tokens to the billing account |
-| `leases_by_tenant` | List leases for the current account by state |
+| `credit_balance` | Query on-chain credit balance (defaults to the caller; accepts `tenant`) |
+| `fund_credit` | Send tokens to a billing credit account (defaults to the sender; accepts `tenant`) |
+| `leases_by_tenant` | List leases by state (defaults to the caller; accepts `tenant`) |
 | `close_lease` | Close a lease on-chain |
 | `get_skus` | List available SKUs |
 | `get_providers` | List available providers |

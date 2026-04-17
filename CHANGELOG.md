@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+- Feat(lease): `fund_credit`, `credit_balance`, and `leases_by_tenant` accept optional `tenant` to operate on a third-party account (#38)
+
 ## [0.5.0]
 
 - Feat(chain): add `cosmos_estimate_fee` MCP tool (#35)

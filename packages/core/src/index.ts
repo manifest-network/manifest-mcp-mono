@@ -42,10 +42,11 @@ export {
   sanitizeForLogging,
   withErrorHandling,
 } from './server-utils.js';
-export { fundCredits } from './tools/fundCredits.js';
+export { type FundCreditsResult, fundCredits } from './tools/fundCredits.js';
 // Tool functions (used by lease package)
 export { getBalance } from './tools/getBalance.js';
 export { type StopAppResult, stopApp } from './tools/stopApp.js';
+export { validateAddress } from './transactions/utils.js';
 export * from './types.js';
 export {
   DNS_LABEL_RE,
