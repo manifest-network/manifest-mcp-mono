@@ -125,7 +125,9 @@ describe('Deploy lifecycle', () => {
   // ------------------------------------------------------------------
   // 6b. Tenant overrides — same wiring, different target account
   // ------------------------------------------------------------------
-  // ADDR1 from e2e/.env — the provider address, a known on-chain account.
+  // Provider address (matches ADDR1/PROVIDER_ADDRESS in e2e/.env). Hardcoded
+  // here because vitest does not auto-load .env; keep in sync if the devnet
+  // provider key ever changes.
   const OTHER_TENANT = 'manifest1hj5fveer5cjtn4wd6wstzugjfdxzl0xp8ws9ct';
 
   it('fund_credit funds a different tenant when `tenant` is provided', async () => {

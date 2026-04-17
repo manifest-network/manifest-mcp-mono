@@ -13,6 +13,7 @@ import {
   type MnemonicServerConfig,
   stopApp,
   VERSION,
+  validateAddress,
   withErrorHandling,
 } from '@manifest-network/manifest-mcp-core';
 import type { Server } from '@modelcontextprotocol/sdk/server/index.js';
@@ -119,6 +120,9 @@ export class LeaseMCPServer {
         },
       },
       withErrorHandling('credit_balance', async (args) => {
+        if (args.tenant !== undefined) {
+          validateAddress(args.tenant, 'tenant');
+        }
         const address = args.tenant ?? (await this.walletProvider.getAddress());
         await this.clientManager.acquireRateLimit();
         const queryClient = await this.clientManager.getQueryClient();
@@ -201,6 +205,9 @@ export class LeaseMCPServer {
         },
       },
       withErrorHandling('leases_by_tenant', async (args) => {
+        if (args.tenant !== undefined) {
+          validateAddress(args.tenant, 'tenant');
+        }
         const address = args.tenant ?? (await this.walletProvider.getAddress());
         await this.clientManager.acquireRateLimit();
         const queryClient = await this.clientManager.getQueryClient();

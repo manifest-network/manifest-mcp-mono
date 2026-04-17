@@ -149,10 +149,29 @@ describe('LeaseMCPServer', () => {
         config: makeMockConfig(),
         walletProvider: makeMockWallet(),
       });
-      await callTool(server, 'credit_balance', { tenant: 'manifest1other' });
+      await callTool(server, 'credit_balance', {
+        tenant: 'manifest1am058pdux3hyulcmfgj4m3hhrlfn8nzmx97smg',
+      });
 
       expect(mockGetBalance).toHaveBeenCalledOnce();
-      expect(mockGetBalance.mock.calls[0][1]).toBe('manifest1other');
+      expect(mockGetBalance.mock.calls[0][1]).toBe(
+        'manifest1am058pdux3hyulcmfgj4m3hhrlfn8nzmx97smg',
+      );
+    });
+
+    it('rejects invalid bech32 tenant before querying', async () => {
+      const server = new LeaseMCPServer({
+        config: makeMockConfig(),
+        walletProvider: makeMockWallet(),
+      });
+      const result = await callTool(server, 'credit_balance', {
+        tenant: 'not-a-bech32',
+      });
+
+      expect(result.isError).toBe(true);
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.code).toBe(ManifestMCPErrorCode.INVALID_ADDRESS);
+      expect(mockGetBalance).not.toHaveBeenCalled();
     });
   });
 
@@ -306,10 +325,29 @@ describe('LeaseMCPServer', () => {
         config: makeMockConfig(),
         walletProvider: makeMockWallet(),
       });
-      await callTool(server, 'leases_by_tenant', { tenant: 'manifest1other' });
+      await callTool(server, 'leases_by_tenant', {
+        tenant: 'manifest1am058pdux3hyulcmfgj4m3hhrlfn8nzmx97smg',
+      });
 
       expect(mockLeasesByTenant).toHaveBeenCalledOnce();
-      expect(mockLeasesByTenant.mock.calls[0][0].tenant).toBe('manifest1other');
+      expect(mockLeasesByTenant.mock.calls[0][0].tenant).toBe(
+        'manifest1am058pdux3hyulcmfgj4m3hhrlfn8nzmx97smg',
+      );
+    });
+
+    it('rejects invalid bech32 tenant before querying', async () => {
+      const server = new LeaseMCPServer({
+        config: makeMockConfig(),
+        walletProvider: makeMockWallet(),
+      });
+      const result = await callTool(server, 'leases_by_tenant', {
+        tenant: 'not-a-bech32',
+      });
+
+      expect(result.isError).toBe(true);
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.code).toBe(ManifestMCPErrorCode.INVALID_ADDRESS);
+      expect(mockLeasesByTenant).not.toHaveBeenCalled();
     });
   });
 
