@@ -65,14 +65,14 @@ describe('fundCredits', () => {
       cm as any,
       '10000000umfx',
       undefined,
-      'manifest1other',
+      'manifest1am058pdux3hyulcmfgj4m3hhrlfn8nzmx97smg',
     );
 
     expect(mockCosmosTx).toHaveBeenCalledWith(
       cm,
       'billing',
       'fund-credit',
-      ['manifest1other', '10000000umfx'],
+      ['manifest1am058pdux3hyulcmfgj4m3hhrlfn8nzmx97smg', '10000000umfx'],
       true,
       undefined,
     );
@@ -84,7 +84,7 @@ describe('fundCredits', () => {
       height: '101',
       confirmed: true,
       sender: 'manifest1sender',
-      tenant: 'manifest1other',
+      tenant: 'manifest1am058pdux3hyulcmfgj4m3hhrlfn8nzmx97smg',
       amount: '10000000umfx',
     });
   });

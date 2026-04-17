@@ -227,7 +227,7 @@ describe('LeaseMCPServer', () => {
     it('passes tenant override to fundCredits', async () => {
       mockFundCredits.mockResolvedValue({
         ...fundResult,
-        tenant: 'manifest1other',
+        tenant: 'manifest1am058pdux3hyulcmfgj4m3hhrlfn8nzmx97smg',
       });
 
       const server = new LeaseMCPServer({
@@ -236,14 +236,14 @@ describe('LeaseMCPServer', () => {
       });
       await callTool(server, 'fund_credit', {
         amount: '10000000umfx',
-        tenant: 'manifest1other',
+        tenant: 'manifest1am058pdux3hyulcmfgj4m3hhrlfn8nzmx97smg',
       });
 
       expect(mockFundCredits).toHaveBeenCalledWith(
         expect.anything(),
         '10000000umfx',
         undefined,
-        'manifest1other',
+        'manifest1am058pdux3hyulcmfgj4m3hhrlfn8nzmx97smg',
       );
     });
   });
