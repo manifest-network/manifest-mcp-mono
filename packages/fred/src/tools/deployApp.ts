@@ -322,13 +322,11 @@ export async function deployApp(
     // Chain-terminal states are self-explanatory and need no "close this lease"
     // advice (the lease is already terminal on-chain). Let Barney & friends
     // observe the typed error directly via `instanceof` / `err.chainState`.
-    // Re-throw with deployApp's provider context so callers don't need to
-    // re-query the chain to recover it.
+    // withContext preserves the original stack (debugging points at the poll,
+    // not at this catch) while attaching deployApp's provider context so
+    // callers don't need to re-query the chain to recover it.
     if (err instanceof TerminalChainStateError) {
-      throw new TerminalChainStateError(err.leaseUuid, err.chainState, {
-        providerUuid,
-        providerUrl,
-      });
+      throw err.withContext({ providerUuid, providerUrl });
     }
     const code =
       err instanceof ManifestMCPError

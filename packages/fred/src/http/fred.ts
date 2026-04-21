@@ -293,6 +293,21 @@ export class TerminalChainStateError extends ProviderApiError {
     this.providerUrl = context?.providerUrl;
     Object.setPrototypeOf(this, TerminalChainStateError.prototype);
   }
+
+  /**
+   * Returns a new instance with the same lease/state and the supplied context,
+   * preserving the original stack trace so debugging points to where the
+   * terminal state was first detected.
+   */
+  withContext(context: TerminalChainStateContext): TerminalChainStateError {
+    const enriched = new TerminalChainStateError(
+      this.leaseUuid,
+      this.chainState,
+      context,
+    );
+    if (this.stack) enriched.stack = this.stack;
+    return enriched;
+  }
 }
 
 function abortableSleep(ms: number, signal?: AbortSignal): Promise<void> {

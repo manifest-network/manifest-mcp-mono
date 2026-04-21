@@ -565,12 +565,12 @@ describe('deployApp', () => {
       address: 'manifest1tenant',
     });
 
-    mockPollLeaseUntilReady.mockRejectedValue(
-      new TerminalChainStateError(
-        '550e8400-e29b-41d4-a716-446655440000',
-        'rejected',
-      ),
+    const original = new TerminalChainStateError(
+      '550e8400-e29b-41d4-a716-446655440000',
+      'rejected',
     );
+    const originalStack = original.stack;
+    mockPollLeaseUntilReady.mockRejectedValue(original);
 
     let caught: unknown;
     try {
@@ -593,6 +593,8 @@ describe('deployApp', () => {
     expect((caught as TerminalChainStateError).providerUrl).toBe(
       'http://localhost:8080',
     );
+    // Stack trace must point at the origin (poll), not at the deployApp catch.
+    expect((caught as Error).stack).toBe(originalStack);
     // Must NOT be wrapped with the "Deploy partially succeeded" advice.
     expect((caught as Error).message).not.toMatch(/Deploy partially succeeded/);
     expect((caught as Error).message).not.toMatch(/close_lease/);
