@@ -409,6 +409,33 @@ describe('pollLeaseUntilReady', () => {
     expect(checkChainState).toHaveBeenCalledTimes(2);
   });
 
+  it('honors abortSignal aborted while checkChainState is awaiting', async () => {
+    mockCheckedFetch.mockResolvedValue({} as Response);
+    mockParseJsonResponse.mockResolvedValue({ state: 'LEASE_STATE_PENDING' });
+
+    const controller = new AbortController();
+    const checkChainState = vi.fn(async () => {
+      // Simulate a slow chain RPC; abort mid-await.
+      await new Promise((r) => setTimeout(r, 20));
+      controller.abort(new Error('cancelled during chain check'));
+      await new Promise((r) => setTimeout(r, 5));
+      return null;
+    });
+
+    await expect(
+      pollLeaseUntilReady(PROVIDER_URL, LEASE_UUID, AUTH_TOKEN, {
+        intervalMs: 10,
+        timeoutMs: 5000,
+        abortSignal: controller.signal,
+        checkChainState,
+      }),
+    ).rejects.toThrow(/cancelled during chain check/);
+
+    // Provider status must not be fetched after the signal aborted.
+    expect(mockCheckedFetch).not.toHaveBeenCalled();
+    expect(checkChainState).toHaveBeenCalledTimes(1);
+  });
+
   it('propagates errors thrown by checkChainState', async () => {
     mockCheckedFetch.mockResolvedValue({} as Response);
     mockParseJsonResponse.mockResolvedValue({ state: 'LEASE_STATE_PENDING' });

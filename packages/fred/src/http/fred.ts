@@ -325,9 +325,11 @@ export async function pollLeaseUntilReady(
       if (chainState) {
         throw new TerminalChainStateError(leaseUuid, chainState.state);
       }
+      abortSignal?.throwIfAborted();
     }
     const token =
       typeof authToken === 'function' ? await authToken() : authToken;
+    abortSignal?.throwIfAborted();
     const status = await getLeaseStatus(providerUrl, leaseUuid, token, fetchFn);
     lastState = status.state;
     onProgress?.(status);
