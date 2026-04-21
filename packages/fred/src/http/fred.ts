@@ -259,6 +259,29 @@ function leaseStateName(state: LeaseState): string {
   return LeaseState[state] ?? String(state);
 }
 
+/**
+ * Thrown by pollLeaseUntilReady when the caller's checkChainState callback
+ * reports a terminal lease state on-chain. Extends ProviderApiError so
+ * existing catchers keep working; use `instanceof TerminalChainStateError`
+ * or read `chainState` to distinguish from provider-reported terminal states.
+ */
+export class TerminalChainStateError extends ProviderApiError {
+  public readonly chainState: TerminalChainLeaseState;
+  public readonly leaseUuid: string;
+
+  constructor(leaseUuid: string, chainState: TerminalChainLeaseState) {
+    const mapped = CHAIN_STATE_TO_LEASE_STATE[chainState];
+    super(
+      0,
+      `Lease ${leaseUuid} entered terminal state ${leaseStateName(mapped)} on chain`,
+    );
+    this.name = 'TerminalChainStateError';
+    this.chainState = chainState;
+    this.leaseUuid = leaseUuid;
+    Object.setPrototypeOf(this, TerminalChainStateError.prototype);
+  }
+}
+
 function abortableSleep(ms: number, signal?: AbortSignal): Promise<void> {
   if (!signal) return new Promise((resolve) => setTimeout(resolve, ms));
   signal.throwIfAborted();
@@ -300,11 +323,7 @@ export async function pollLeaseUntilReady(
     if (checkChainState) {
       const chainState = await checkChainState();
       if (chainState) {
-        const mapped = CHAIN_STATE_TO_LEASE_STATE[chainState.state];
-        throw new ProviderApiError(
-          0,
-          `Lease ${leaseUuid} entered terminal state ${leaseStateName(mapped)} on chain`,
-        );
+        throw new TerminalChainStateError(leaseUuid, chainState.state);
       }
     }
     const token =

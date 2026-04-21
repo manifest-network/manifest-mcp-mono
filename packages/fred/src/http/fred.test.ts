@@ -16,9 +16,14 @@ import {
   getLeaseStatus,
   MAX_TAIL,
   pollLeaseUntilReady,
+  TerminalChainStateError,
   updateLease,
 } from './fred.js';
-import { checkedFetch, parseJsonResponse } from './provider.js';
+import {
+  checkedFetch,
+  ProviderApiError,
+  parseJsonResponse,
+} from './provider.js';
 
 const mockCheckedFetch = vi.mocked(checkedFetch);
 const mockParseJsonResponse = vi.mocked(parseJsonResponse);
@@ -327,18 +332,34 @@ describe('pollLeaseUntilReady', () => {
     expect(checkChainState).toHaveBeenCalledTimes(3);
   });
 
-  it('throws with chain terminal state when checkChainState returns rejected', async () => {
+  it('throws TerminalChainStateError with typed chainState + leaseUuid fields', async () => {
     mockCheckedFetch.mockResolvedValue({} as Response);
     mockParseJsonResponse.mockResolvedValue({ state: 'LEASE_STATE_PENDING' });
 
     const checkChainState = vi.fn().mockResolvedValue({ state: 'rejected' });
-    await expect(
-      pollLeaseUntilReady(PROVIDER_URL, LEASE_UUID, AUTH_TOKEN, {
+
+    let caught: unknown;
+    try {
+      await pollLeaseUntilReady(PROVIDER_URL, LEASE_UUID, AUTH_TOKEN, {
         intervalMs: 10,
         timeoutMs: 5000,
         checkChainState,
-      }),
-    ).rejects.toThrow(/LEASE_STATE_REJECTED on chain/);
+      });
+    } catch (err) {
+      caught = err;
+    }
+
+    expect(caught).toBeInstanceOf(TerminalChainStateError);
+    // Backward compat: still an instance of ProviderApiError.
+    expect(caught).toBeInstanceOf(ProviderApiError);
+    expect((caught as TerminalChainStateError).chainState).toBe('rejected');
+    expect((caught as TerminalChainStateError).leaseUuid).toBe(LEASE_UUID);
+    expect((caught as TerminalChainStateError).name).toBe(
+      'TerminalChainStateError',
+    );
+    expect((caught as TerminalChainStateError).message).toMatch(
+      /LEASE_STATE_REJECTED on chain/,
+    );
     expect(mockCheckedFetch).not.toHaveBeenCalled();
   });
 

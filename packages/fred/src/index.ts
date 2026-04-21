@@ -64,6 +64,7 @@ export {
   restartLease,
   type TerminalChainLeaseState,
   type TerminalChainState,
+  TerminalChainStateError,
   updateLease,
 } from './http/fred.js';
 export {
