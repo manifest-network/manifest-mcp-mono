@@ -51,7 +51,7 @@
     "zod": "^4.3.6"
   },
   "devDependencies": {
-    "@manifest-network/manifestjs": "2.2.0-billing-v2.3",
+    "@manifest-network/manifestjs": "2.3.0",
     "@types/node": "22.15.29",
     "typescript": "5.9.3",
     "vitest": "4.1.0"
