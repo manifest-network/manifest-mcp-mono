@@ -154,6 +154,35 @@ describe('checkedFetch', () => {
     expect(mockFetch).not.toHaveBeenCalled();
   });
 
+  it('does not misclassify caller cancel as timeout when fetch is slow to reject', async () => {
+    const controller = new AbortController();
+    // Simulate a fetch that ignores the abort signal and takes longer than the
+    // timeout to reject. Without the race guard, the timer would fire during
+    // the gap between caller abort and fetch rejection, flipping timedOut=true.
+    const mockFetch = vi.fn((_url: string, _opts?: RequestInit) => {
+      return new Promise<Response>((_resolve, reject) => {
+        setTimeout(
+          () =>
+            reject(new DOMException('The operation was aborted', 'AbortError')),
+          80,
+        );
+      });
+    });
+
+    const callerReason = new Error('user cancelled');
+    const fetchPromise = checkedFetch(
+      'https://example.com',
+      { signal: controller.signal },
+      20, // timeout would fire at ~20ms
+      mockFetch as unknown as typeof globalThis.fetch,
+    );
+    // Abort at 5ms, well before the internal timeout.
+    setTimeout(() => controller.abort(callerReason), 5);
+
+    // Must surface the caller's reason, not the "timed out" ProviderApiError.
+    await expect(fetchPromise).rejects.toBe(callerReason);
+  });
+
   it('removes caller-signal listener on successful fetch (no leak)', async () => {
     const controller = new AbortController();
     const addSpy = vi.spyOn(controller.signal, 'addEventListener');

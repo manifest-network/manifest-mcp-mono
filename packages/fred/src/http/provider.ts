@@ -53,11 +53,21 @@ export async function checkedFetch(
   if (callerSignal?.aborted) {
     composed.abort(callerSignal.reason);
   } else if (callerSignal) {
-    callerAbortHandler = () => composed.abort(callerSignal.reason);
+    callerAbortHandler = () => {
+      // Clear the timer so a delayed fetch rejection can't be misclassified
+      // as a timeout after the caller already cancelled.
+      if (timer !== undefined) {
+        clearTimeout(timer);
+        timer = undefined;
+      }
+      composed.abort(callerSignal.reason);
+    };
     callerSignal.addEventListener('abort', callerAbortHandler, { once: true });
   }
   if (timeoutMs > 0 && !composed.signal.aborted) {
     timer = setTimeout(() => {
+      // Defensive: if the caller already aborted, don't flip timedOut.
+      if (composed.signal.aborted) return;
       timedOut = true;
       composed.abort();
     }, timeoutMs);
