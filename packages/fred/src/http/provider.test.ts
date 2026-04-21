@@ -68,6 +68,158 @@ describe('checkedFetch', () => {
       checkedFetch('https://example.com', undefined, 5000, mockFetch),
     ).rejects.toThrow(ProviderApiError);
   });
+
+  it('enforces internal timeout even when caller provides abortSignal', async () => {
+    const controller = new AbortController();
+    // Simulate a hung request: fetch resolves only when its signal aborts.
+    const mockFetch = vi.fn((_url: string, opts?: RequestInit) => {
+      return new Promise<Response>((_resolve, reject) => {
+        opts?.signal?.addEventListener('abort', () => {
+          reject(new DOMException('The operation was aborted', 'AbortError'));
+        });
+      });
+    });
+
+    await expect(
+      checkedFetch(
+        'https://example.com',
+        { signal: controller.signal },
+        20, // 20 ms internal timeout
+        mockFetch as unknown as typeof globalThis.fetch,
+      ),
+    ).rejects.toThrow(/timed out after 20ms/);
+  });
+
+  it("rethrows the caller's abort reason (not a generic AbortError) on mid-flight abort", async () => {
+    const controller = new AbortController();
+    const mockFetch = vi.fn((_url: string, opts?: RequestInit) => {
+      return new Promise<Response>((_resolve, reject) => {
+        opts?.signal?.addEventListener('abort', () => {
+          reject(new DOMException('The operation was aborted', 'AbortError'));
+        });
+      });
+    });
+
+    const fetchPromise = checkedFetch(
+      'https://example.com',
+      { signal: controller.signal },
+      5000,
+      mockFetch as unknown as typeof globalThis.fetch,
+    );
+    const callerReason = new Error('user cancelled');
+    setTimeout(() => controller.abort(callerReason), 10);
+
+    await expect(fetchPromise).rejects.toBe(callerReason);
+  });
+
+  it('rethrows the default AbortError when caller aborts without a reason', async () => {
+    const controller = new AbortController();
+    const mockFetch = vi.fn((_url: string, opts?: RequestInit) => {
+      return new Promise<Response>((_resolve, reject) => {
+        opts?.signal?.addEventListener('abort', () => {
+          reject(new DOMException('The operation was aborted', 'AbortError'));
+        });
+      });
+    });
+
+    const fetchPromise = checkedFetch(
+      'https://example.com',
+      { signal: controller.signal },
+      5000,
+      mockFetch as unknown as typeof globalThis.fetch,
+    );
+    setTimeout(() => controller.abort(), 10);
+
+    await expect(fetchPromise).rejects.toSatisfy(
+      (err: unknown) =>
+        err instanceof DOMException &&
+        err.name === 'AbortError' &&
+        !String(err).includes('timed out'),
+    );
+  });
+
+  it('aborts immediately when caller signal is pre-aborted', async () => {
+    const controller = new AbortController();
+    controller.abort(new Error('already cancelled'));
+    const mockFetch = vi.fn(async () => new Response('ok'));
+
+    await expect(
+      checkedFetch(
+        'https://example.com',
+        { signal: controller.signal },
+        5000,
+        mockFetch as unknown as typeof globalThis.fetch,
+      ),
+    ).rejects.toThrow(/already cancelled/);
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it('does not misclassify caller cancel as timeout when fetch is slow to reject', async () => {
+    // Fake timers remove real-time flakiness on loaded CI: the 5/20/80ms
+    // ordering (caller abort < internal timeout < mock fetch rejection) is
+    // advanced deterministically.
+    vi.useFakeTimers();
+    try {
+      const controller = new AbortController();
+      const mockFetch = vi.fn((_url: string, _opts?: RequestInit) => {
+        return new Promise<Response>((_resolve, reject) => {
+          setTimeout(
+            () =>
+              reject(
+                new DOMException('The operation was aborted', 'AbortError'),
+              ),
+            80,
+          );
+        });
+      });
+
+      const callerReason = new Error('user cancelled');
+      const fetchPromise = checkedFetch(
+        'https://example.com',
+        { signal: controller.signal },
+        20, // internal timeout at 20ms — should be cleared by the caller abort
+        mockFetch as unknown as typeof globalThis.fetch,
+      );
+      // Capture the rejection eagerly so advancing timers doesn't surface an
+      // unhandled-rejection warning in vitest.
+      let caught: unknown;
+      fetchPromise.catch((err: unknown) => {
+        caught = err;
+      });
+      setTimeout(() => controller.abort(callerReason), 5);
+
+      await vi.advanceTimersByTimeAsync(80);
+
+      // Must surface the caller's reason, not a "timed out" ProviderApiError.
+      expect(caught).toBe(callerReason);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('removes caller-signal listener on successful fetch (no leak)', async () => {
+    const controller = new AbortController();
+    const addSpy = vi.spyOn(controller.signal, 'addEventListener');
+    const removeSpy = vi.spyOn(controller.signal, 'removeEventListener');
+    const mockFetch = vi.fn().mockResolvedValue(new Response('ok'));
+
+    await checkedFetch(
+      'https://example.com',
+      { signal: controller.signal },
+      5000,
+      mockFetch as unknown as typeof globalThis.fetch,
+    );
+
+    // One abort listener attached and cleaned up.
+    const abortAttachCount = addSpy.mock.calls.filter(
+      ([ev]) => ev === 'abort',
+    ).length;
+    const abortRemoveCount = removeSpy.mock.calls.filter(
+      ([ev]) => ev === 'abort',
+    ).length;
+    expect(abortAttachCount).toBe(abortRemoveCount);
+    expect(abortAttachCount).toBeGreaterThan(0);
+  });
 });
 
 describe('parseJsonResponse', () => {

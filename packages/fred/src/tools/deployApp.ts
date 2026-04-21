@@ -14,8 +14,8 @@ import {
   requireUuid,
   sanitizeForLogging,
 } from '@manifest-network/manifest-mcp-core';
-import type { FredLeaseStatus } from '../http/fred.js';
-import { pollLeaseUntilReady } from '../http/fred.js';
+import type { FredLeaseStatus, PollOptions } from '../http/fred.js';
+import { pollLeaseUntilReady, TerminalChainStateError } from '../http/fred.js';
 import {
   type ConnectionDetails,
   getLeaseConnectionInfo,
@@ -136,6 +136,15 @@ export interface DeployAppInput {
   depends_on?: Record<string, { condition: string }>;
   services?: Record<string, ServiceConfig>;
   gasMultiplier?: number;
+  /** Fires once after the create-lease TX confirms, before upload/poll. Awaited. Errors propagate. */
+  onLeaseCreated?: (
+    leaseUuid: string,
+    providerUrl: string,
+  ) => void | Promise<void>;
+  /** Aborts upload and poll (not the already-submitted chain TX). */
+  abortSignal?: AbortSignal;
+  /** Forwarded to the internal pollLeaseUntilReady call. abortSignal is the top-level field above. */
+  pollOptions?: Omit<PollOptions, 'abortSignal'>;
 }
 
 export interface DeployAppResult {
@@ -278,8 +287,14 @@ export async function deployApp(
   // 6. Extract lease UUID
   const leaseUuid = extractLeaseUuid(txResult);
 
+  // Outside the partial-success try: callback errors surface raw, not wrapped.
+  // The lease exists on-chain regardless of abortSignal state — always notify.
+  await input.onLeaseCreated?.(leaseUuid, providerUrl);
+
   let status: FredLeaseStatus;
   try {
+    input.abortSignal?.throwIfAborted();
+
     // 7. Upload manifest with lease-data auth token
     const leaseDataToken = await getLeaseDataAuthToken(
       address,
@@ -292,6 +307,7 @@ export async function deployApp(
       new TextEncoder().encode(manifestJson),
       leaseDataToken,
       fetchFn,
+      input.abortSignal,
     );
 
     // 8. Poll until ready
@@ -299,10 +315,19 @@ export async function deployApp(
       providerUrl,
       leaseUuid,
       () => getAuthToken(address, leaseUuid),
-      undefined,
+      { ...input.pollOptions, abortSignal: input.abortSignal },
       fetchFn,
     );
   } catch (err) {
+    // Chain-terminal states are self-explanatory and need no "close this lease"
+    // advice (the lease is already terminal on-chain). Let Barney & friends
+    // observe the typed error directly via `instanceof` / `err.chainState`.
+    // withContext preserves the original stack (debugging points at the poll,
+    // not at this catch) while attaching deployApp's provider context so
+    // callers don't need to re-query the chain to recover it.
+    if (err instanceof TerminalChainStateError) {
+      throw err.withContext({ providerUuid, providerUrl });
+    }
     const code =
       err instanceof ManifestMCPError
         ? err.code

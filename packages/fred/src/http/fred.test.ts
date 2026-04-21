@@ -16,9 +16,14 @@ import {
   getLeaseStatus,
   MAX_TAIL,
   pollLeaseUntilReady,
+  TerminalChainStateError,
   updateLease,
 } from './fred.js';
-import { checkedFetch, parseJsonResponse } from './provider.js';
+import {
+  checkedFetch,
+  ProviderApiError,
+  parseJsonResponse,
+} from './provider.js';
 
 const mockCheckedFetch = vi.mocked(checkedFetch);
 const mockParseJsonResponse = vi.mocked(parseJsonResponse);
@@ -305,6 +310,168 @@ describe('pollLeaseUntilReady', () => {
     ).rejects.toThrow(/user cancelled/);
     // Should have polled once, then been aborted during sleep
     expect(mockCheckedFetch).toHaveBeenCalledOnce();
+  });
+
+  it('invokes checkChainState before the provider on each iteration', async () => {
+    mockCheckedFetch.mockResolvedValue({} as Response);
+    let callCount = 0;
+    mockParseJsonResponse.mockImplementation(async () => {
+      callCount++;
+      return {
+        state: callCount < 3 ? 'LEASE_STATE_PENDING' : 'LEASE_STATE_ACTIVE',
+      };
+    });
+
+    const checkChainState = vi.fn().mockResolvedValue(null);
+    await pollLeaseUntilReady(PROVIDER_URL, LEASE_UUID, AUTH_TOKEN, {
+      intervalMs: 10,
+      timeoutMs: 5000,
+      checkChainState,
+    });
+
+    expect(checkChainState).toHaveBeenCalledTimes(3);
+  });
+
+  it('throws TerminalChainStateError with typed chainState + leaseUuid fields', async () => {
+    mockCheckedFetch.mockResolvedValue({} as Response);
+    mockParseJsonResponse.mockResolvedValue({ state: 'LEASE_STATE_PENDING' });
+
+    const checkChainState = vi.fn().mockResolvedValue({ state: 'rejected' });
+
+    let caught: unknown;
+    try {
+      await pollLeaseUntilReady(PROVIDER_URL, LEASE_UUID, AUTH_TOKEN, {
+        intervalMs: 10,
+        timeoutMs: 5000,
+        checkChainState,
+      });
+    } catch (err) {
+      caught = err;
+    }
+
+    expect(caught).toBeInstanceOf(TerminalChainStateError);
+    // Backward compat: still an instance of ProviderApiError.
+    expect(caught).toBeInstanceOf(ProviderApiError);
+    expect((caught as TerminalChainStateError).chainState).toBe('rejected');
+    expect((caught as TerminalChainStateError).leaseUuid).toBe(LEASE_UUID);
+    expect((caught as TerminalChainStateError).name).toBe(
+      'TerminalChainStateError',
+    );
+    expect((caught as TerminalChainStateError).message).toMatch(
+      /LEASE_STATE_REJECTED on chain/,
+    );
+    expect(mockCheckedFetch).not.toHaveBeenCalled();
+  });
+
+  it('maps closed and expired chain states onto their lease states', async () => {
+    mockCheckedFetch.mockResolvedValue({} as Response);
+    mockParseJsonResponse.mockResolvedValue({ state: 'LEASE_STATE_PENDING' });
+
+    await expect(
+      pollLeaseUntilReady(PROVIDER_URL, LEASE_UUID, AUTH_TOKEN, {
+        intervalMs: 10,
+        timeoutMs: 5000,
+        checkChainState: () => Promise.resolve({ state: 'closed' }),
+      }),
+    ).rejects.toThrow(/LEASE_STATE_CLOSED on chain/);
+
+    await expect(
+      pollLeaseUntilReady(PROVIDER_URL, LEASE_UUID, AUTH_TOKEN, {
+        intervalMs: 10,
+        timeoutMs: 5000,
+        checkChainState: () => Promise.resolve({ state: 'expired' }),
+      }),
+    ).rejects.toThrow(/LEASE_STATE_EXPIRED on chain/);
+  });
+
+  it('continues polling while checkChainState returns null', async () => {
+    mockCheckedFetch.mockResolvedValue({} as Response);
+    let callCount = 0;
+    mockParseJsonResponse.mockImplementation(async () => {
+      callCount++;
+      return {
+        state: callCount < 2 ? 'LEASE_STATE_PENDING' : 'LEASE_STATE_ACTIVE',
+      };
+    });
+
+    const checkChainState = vi.fn().mockResolvedValue(null);
+    const result = await pollLeaseUntilReady(
+      PROVIDER_URL,
+      LEASE_UUID,
+      AUTH_TOKEN,
+      {
+        intervalMs: 10,
+        timeoutMs: 5000,
+        checkChainState,
+      },
+    );
+    expect(result.state).toBe(LeaseState.LEASE_STATE_ACTIVE);
+    expect(checkChainState).toHaveBeenCalledTimes(2);
+  });
+
+  it('abortSignal takes precedence over a terminal chainState in the same iteration', async () => {
+    mockCheckedFetch.mockResolvedValue({} as Response);
+    mockParseJsonResponse.mockResolvedValue({ state: 'LEASE_STATE_PENDING' });
+
+    const controller = new AbortController();
+    controller.abort(new Error('aborted before iteration'));
+    const checkChainState = vi.fn().mockResolvedValue({ state: 'rejected' });
+
+    // With a pre-aborted signal, the top-of-loop throwIfAborted fires before
+    // checkChainState is ever called. Locks in the ordering.
+    await expect(
+      pollLeaseUntilReady(PROVIDER_URL, LEASE_UUID, AUTH_TOKEN, {
+        intervalMs: 10,
+        timeoutMs: 5000,
+        abortSignal: controller.signal,
+        checkChainState,
+      }),
+    ).rejects.toThrow(/aborted before iteration/);
+    expect(checkChainState).not.toHaveBeenCalled();
+  });
+
+  it('honors abortSignal aborted while checkChainState is awaiting', async () => {
+    mockCheckedFetch.mockResolvedValue({} as Response);
+    mockParseJsonResponse.mockResolvedValue({ state: 'LEASE_STATE_PENDING' });
+
+    const controller = new AbortController();
+    const checkChainState = vi.fn(async () => {
+      // Simulate a slow chain RPC; abort mid-await.
+      await new Promise((r) => setTimeout(r, 20));
+      controller.abort(new Error('cancelled during chain check'));
+      await new Promise((r) => setTimeout(r, 5));
+      return null;
+    });
+
+    await expect(
+      pollLeaseUntilReady(PROVIDER_URL, LEASE_UUID, AUTH_TOKEN, {
+        intervalMs: 10,
+        timeoutMs: 5000,
+        abortSignal: controller.signal,
+        checkChainState,
+      }),
+    ).rejects.toThrow(/cancelled during chain check/);
+
+    // Provider status must not be fetched after the signal aborted.
+    expect(mockCheckedFetch).not.toHaveBeenCalled();
+    expect(checkChainState).toHaveBeenCalledTimes(1);
+  });
+
+  it('propagates errors thrown by checkChainState', async () => {
+    mockCheckedFetch.mockResolvedValue({} as Response);
+    mockParseJsonResponse.mockResolvedValue({ state: 'LEASE_STATE_PENDING' });
+
+    const checkChainState = vi
+      .fn()
+      .mockRejectedValue(new Error('chain RPC down'));
+    await expect(
+      pollLeaseUntilReady(PROVIDER_URL, LEASE_UUID, AUTH_TOKEN, {
+        intervalMs: 10,
+        timeoutMs: 5000,
+        checkChainState,
+      }),
+    ).rejects.toThrow(/chain RPC down/);
+    expect(mockCheckedFetch).not.toHaveBeenCalled();
   });
 
   it('calls onProgress on each poll iteration', async () => {

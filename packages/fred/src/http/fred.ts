@@ -233,15 +233,81 @@ export async function getLeaseInfo(
   return await parseJsonResponse<FredLeaseInfo>(res, url);
 }
 
+export type TerminalChainLeaseState = 'closed' | 'rejected' | 'expired';
+
+export interface TerminalChainState {
+  readonly state: TerminalChainLeaseState;
+}
+
 export interface PollOptions {
   readonly intervalMs?: number;
   readonly timeoutMs?: number;
   readonly abortSignal?: AbortSignal;
   readonly onProgress?: (status: FredLeaseStatus) => void;
+  /** Runs once per iteration before the provider is queried. Non-null return throws; errors propagate. */
+  readonly checkChainState?: () => Promise<TerminalChainState | null>;
 }
+
+const CHAIN_STATE_TO_LEASE_STATE: Record<TerminalChainLeaseState, LeaseState> =
+  {
+    closed: LeaseState.LEASE_STATE_CLOSED,
+    rejected: LeaseState.LEASE_STATE_REJECTED,
+    expired: LeaseState.LEASE_STATE_EXPIRED,
+  };
 
 function leaseStateName(state: LeaseState): string {
   return LeaseState[state] ?? String(state);
+}
+
+/**
+ * Thrown by pollLeaseUntilReady when the caller's checkChainState callback
+ * reports a terminal lease state on-chain. Extends ProviderApiError so
+ * existing catchers keep working; use `instanceof TerminalChainStateError`
+ * or read `chainState` to distinguish from provider-reported terminal states.
+ */
+export interface TerminalChainStateContext {
+  readonly providerUuid?: string;
+  readonly providerUrl?: string;
+}
+
+export class TerminalChainStateError extends ProviderApiError {
+  public readonly chainState: TerminalChainLeaseState;
+  public readonly leaseUuid: string;
+  public readonly providerUuid?: string;
+  public readonly providerUrl?: string;
+
+  constructor(
+    leaseUuid: string,
+    chainState: TerminalChainLeaseState,
+    context?: TerminalChainStateContext,
+  ) {
+    const mapped = CHAIN_STATE_TO_LEASE_STATE[chainState];
+    super(
+      0,
+      `Lease ${leaseUuid} entered terminal state ${leaseStateName(mapped)} on chain`,
+    );
+    this.name = 'TerminalChainStateError';
+    this.chainState = chainState;
+    this.leaseUuid = leaseUuid;
+    this.providerUuid = context?.providerUuid;
+    this.providerUrl = context?.providerUrl;
+    Object.setPrototypeOf(this, TerminalChainStateError.prototype);
+  }
+
+  /**
+   * Returns a new instance with the same lease/state and the supplied context,
+   * preserving the original stack trace so debugging points to where the
+   * terminal state was first detected.
+   */
+  withContext(context: TerminalChainStateContext): TerminalChainStateError {
+    const enriched = new TerminalChainStateError(
+      this.leaseUuid,
+      this.chainState,
+      context,
+    );
+    if (this.stack) enriched.stack = this.stack;
+    return enriched;
+  }
 }
 
 function abortableSleep(ms: number, signal?: AbortSignal): Promise<void> {
@@ -275,14 +341,23 @@ export async function pollLeaseUntilReady(
     timeoutMs = 120_000,
     abortSignal,
     onProgress,
+    checkChainState,
   } = opts;
   const deadline = Date.now() + timeoutMs;
   let lastState: LeaseState | undefined;
 
   while (Date.now() < deadline) {
     abortSignal?.throwIfAborted();
+    if (checkChainState) {
+      const chainState = await checkChainState();
+      if (chainState) {
+        throw new TerminalChainStateError(leaseUuid, chainState.state);
+      }
+      abortSignal?.throwIfAborted();
+    }
     const token =
       typeof authToken === 'function' ? await authToken() : authToken;
+    abortSignal?.throwIfAborted();
     const status = await getLeaseStatus(providerUrl, leaseUuid, token, fetchFn);
     lastState = status.state;
     onProgress?.(status);
