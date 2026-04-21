@@ -90,7 +90,7 @@ describe('checkedFetch', () => {
     ).rejects.toThrow(/timed out after 20ms/);
   });
 
-  it('rethrows AbortError (not timeout) when caller aborts', async () => {
+  it("rethrows the caller's abort reason (not a generic AbortError) on mid-flight abort", async () => {
     const controller = new AbortController();
     const mockFetch = vi.fn((_url: string, opts?: RequestInit) => {
       return new Promise<Response>((_resolve, reject) => {
@@ -106,7 +106,29 @@ describe('checkedFetch', () => {
       5000,
       mockFetch as unknown as typeof globalThis.fetch,
     );
-    setTimeout(() => controller.abort(new Error('user cancelled')), 10);
+    const callerReason = new Error('user cancelled');
+    setTimeout(() => controller.abort(callerReason), 10);
+
+    await expect(fetchPromise).rejects.toBe(callerReason);
+  });
+
+  it('rethrows the default AbortError when caller aborts without a reason', async () => {
+    const controller = new AbortController();
+    const mockFetch = vi.fn((_url: string, opts?: RequestInit) => {
+      return new Promise<Response>((_resolve, reject) => {
+        opts?.signal?.addEventListener('abort', () => {
+          reject(new DOMException('The operation was aborted', 'AbortError'));
+        });
+      });
+    });
+
+    const fetchPromise = checkedFetch(
+      'https://example.com',
+      { signal: controller.signal },
+      5000,
+      mockFetch as unknown as typeof globalThis.fetch,
+    );
+    setTimeout(() => controller.abort(), 10);
 
     await expect(fetchPromise).rejects.toSatisfy(
       (err: unknown) =>

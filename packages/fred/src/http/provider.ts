@@ -76,10 +76,11 @@ export async function checkedFetch(
           `Request to ${url} timed out after ${timeoutMs}ms`,
         );
       }
-      throw err;
+      // Surface the caller's original abort reason (e.g. `new Error('cancelled')`)
+      // rather than the fetch-internal DOMException AbortError.
+      throw composed.signal.reason;
     }
-    // Re-throw the caller's abort reason as-is (e.g. `new Error('cancelled')`).
-    if (composed.signal.aborted && !timedOut) throw err;
+    if (composed.signal.aborted && !timedOut) throw composed.signal.reason;
     throw new ProviderApiError(
       0,
       `Network request to ${url} failed: ${err instanceof Error ? err.message : String(err)}`,
