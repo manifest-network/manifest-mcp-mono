@@ -307,6 +307,104 @@ describe('pollLeaseUntilReady', () => {
     expect(mockCheckedFetch).toHaveBeenCalledOnce();
   });
 
+  it('invokes checkChainState before the provider on each iteration', async () => {
+    mockCheckedFetch.mockResolvedValue({} as Response);
+    let callCount = 0;
+    mockParseJsonResponse.mockImplementation(async () => {
+      callCount++;
+      return {
+        state: callCount < 3 ? 'LEASE_STATE_PENDING' : 'LEASE_STATE_ACTIVE',
+      };
+    });
+
+    const checkChainState = vi.fn().mockResolvedValue(null);
+    await pollLeaseUntilReady(PROVIDER_URL, LEASE_UUID, AUTH_TOKEN, {
+      intervalMs: 10,
+      timeoutMs: 5000,
+      checkChainState,
+    });
+
+    expect(checkChainState).toHaveBeenCalledTimes(3);
+  });
+
+  it('throws with chain terminal state when checkChainState returns rejected', async () => {
+    mockCheckedFetch.mockResolvedValue({} as Response);
+    mockParseJsonResponse.mockResolvedValue({ state: 'LEASE_STATE_PENDING' });
+
+    const checkChainState = vi.fn().mockResolvedValue({ state: 'rejected' });
+    await expect(
+      pollLeaseUntilReady(PROVIDER_URL, LEASE_UUID, AUTH_TOKEN, {
+        intervalMs: 10,
+        timeoutMs: 5000,
+        checkChainState,
+      }),
+    ).rejects.toThrow(/LEASE_STATE_REJECTED on chain/);
+    expect(mockCheckedFetch).not.toHaveBeenCalled();
+  });
+
+  it('maps closed and expired chain states onto their lease states', async () => {
+    mockCheckedFetch.mockResolvedValue({} as Response);
+    mockParseJsonResponse.mockResolvedValue({ state: 'LEASE_STATE_PENDING' });
+
+    await expect(
+      pollLeaseUntilReady(PROVIDER_URL, LEASE_UUID, AUTH_TOKEN, {
+        intervalMs: 10,
+        timeoutMs: 5000,
+        checkChainState: () => Promise.resolve({ state: 'closed' }),
+      }),
+    ).rejects.toThrow(/LEASE_STATE_CLOSED on chain/);
+
+    await expect(
+      pollLeaseUntilReady(PROVIDER_URL, LEASE_UUID, AUTH_TOKEN, {
+        intervalMs: 10,
+        timeoutMs: 5000,
+        checkChainState: () => Promise.resolve({ state: 'expired' }),
+      }),
+    ).rejects.toThrow(/LEASE_STATE_EXPIRED on chain/);
+  });
+
+  it('continues polling while checkChainState returns null', async () => {
+    mockCheckedFetch.mockResolvedValue({} as Response);
+    let callCount = 0;
+    mockParseJsonResponse.mockImplementation(async () => {
+      callCount++;
+      return {
+        state: callCount < 2 ? 'LEASE_STATE_PENDING' : 'LEASE_STATE_ACTIVE',
+      };
+    });
+
+    const checkChainState = vi.fn().mockResolvedValue(null);
+    const result = await pollLeaseUntilReady(
+      PROVIDER_URL,
+      LEASE_UUID,
+      AUTH_TOKEN,
+      {
+        intervalMs: 10,
+        timeoutMs: 5000,
+        checkChainState,
+      },
+    );
+    expect(result.state).toBe(LeaseState.LEASE_STATE_ACTIVE);
+    expect(checkChainState).toHaveBeenCalledTimes(2);
+  });
+
+  it('propagates errors thrown by checkChainState', async () => {
+    mockCheckedFetch.mockResolvedValue({} as Response);
+    mockParseJsonResponse.mockResolvedValue({ state: 'LEASE_STATE_PENDING' });
+
+    const checkChainState = vi
+      .fn()
+      .mockRejectedValue(new Error('chain RPC down'));
+    await expect(
+      pollLeaseUntilReady(PROVIDER_URL, LEASE_UUID, AUTH_TOKEN, {
+        intervalMs: 10,
+        timeoutMs: 5000,
+        checkChainState,
+      }),
+    ).rejects.toThrow(/chain RPC down/);
+    expect(mockCheckedFetch).not.toHaveBeenCalled();
+  });
+
   it('calls onProgress on each poll iteration', async () => {
     mockCheckedFetch.mockResolvedValue({} as Response);
     let callCount = 0;

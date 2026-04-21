@@ -62,6 +62,8 @@ export {
   type PollOptions,
   pollLeaseUntilReady,
   restartLease,
+  type TerminalChainLeaseState,
+  type TerminalChainState,
   updateLease,
 } from './http/fred.js';
 export {

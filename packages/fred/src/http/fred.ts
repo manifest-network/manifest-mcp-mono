@@ -233,12 +233,32 @@ export async function getLeaseInfo(
   return await parseJsonResponse<FredLeaseInfo>(res, url);
 }
 
+export type TerminalChainLeaseState = 'closed' | 'rejected' | 'expired';
+
+export interface TerminalChainState {
+  readonly state: TerminalChainLeaseState;
+}
+
 export interface PollOptions {
   readonly intervalMs?: number;
   readonly timeoutMs?: number;
   readonly abortSignal?: AbortSignal;
   readonly onProgress?: (status: FredLeaseStatus) => void;
+  /**
+   * Optional callback invoked once per iteration before the provider is queried.
+   * Return a `TerminalChainState` to stop polling (poll throws `ProviderApiError`);
+   * return `null` to continue. Errors thrown from the callback are not caught and
+   * will abort the poll.
+   */
+  readonly checkChainState?: () => Promise<TerminalChainState | null>;
 }
+
+const CHAIN_STATE_TO_LEASE_STATE: Record<TerminalChainLeaseState, LeaseState> =
+  {
+    closed: LeaseState.LEASE_STATE_CLOSED,
+    rejected: LeaseState.LEASE_STATE_REJECTED,
+    expired: LeaseState.LEASE_STATE_EXPIRED,
+  };
 
 function leaseStateName(state: LeaseState): string {
   return LeaseState[state] ?? String(state);
@@ -275,12 +295,23 @@ export async function pollLeaseUntilReady(
     timeoutMs = 120_000,
     abortSignal,
     onProgress,
+    checkChainState,
   } = opts;
   const deadline = Date.now() + timeoutMs;
   let lastState: LeaseState | undefined;
 
   while (Date.now() < deadline) {
     abortSignal?.throwIfAborted();
+    if (checkChainState) {
+      const chainState = await checkChainState();
+      if (chainState) {
+        const mapped = CHAIN_STATE_TO_LEASE_STATE[chainState.state];
+        throw new ProviderApiError(
+          0,
+          `Lease ${leaseUuid} entered terminal state ${leaseStateName(mapped)} on chain`,
+        );
+      }
+    }
     const token =
       typeof authToken === 'function' ? await authToken() : authToken;
     const status = await getLeaseStatus(providerUrl, leaseUuid, token, fetchFn);
