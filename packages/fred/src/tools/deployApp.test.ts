@@ -502,6 +502,39 @@ describe('deployApp', () => {
     expect(forwarded).toEqual({ abortSignal: undefined });
   });
 
+  it('fires onLeaseCreated even when abortSignal is already aborted (lease exists on-chain)', async () => {
+    const qc = makeQueryClient();
+    const cm = makeMockClientManager({
+      queryClient: qc,
+      address: 'manifest1tenant',
+    });
+
+    const controller = new AbortController();
+    controller.abort(new Error('user cancelled'));
+
+    const onLeaseCreated = vi.fn();
+
+    await expect(
+      deployApp(cm as any, mockGetAuthToken, mockGetLeaseDataAuthToken, {
+        image: 'nginx:alpine',
+        port: 80,
+        size: 'docker-micro',
+        abortSignal: controller.signal,
+        onLeaseCreated,
+      }),
+    ).rejects.toThrow();
+
+    // The lease was created on-chain — caller MUST be notified regardless of abort state.
+    expect(onLeaseCreated).toHaveBeenCalledTimes(1);
+    expect(onLeaseCreated).toHaveBeenCalledWith(
+      '550e8400-e29b-41d4-a716-446655440000',
+      'http://localhost:8080',
+    );
+    // Downstream work (upload, poll) must NOT run after the aborted signal is observed.
+    expect(mockUploadLeaseData).not.toHaveBeenCalled();
+    expect(mockPollLeaseUntilReady).not.toHaveBeenCalled();
+  });
+
   it('threads abortSignal into uploadLeaseData and aborts before upload if already aborted', async () => {
     const qc = makeQueryClient();
     const cm = makeMockClientManager({
@@ -525,7 +558,7 @@ describe('deployApp', () => {
     expect(mockPollLeaseUntilReady).not.toHaveBeenCalled();
   });
 
-  it('lets TerminalChainStateError escape the partial-success wrapper', async () => {
+  it('lets TerminalChainStateError escape the partial-success wrapper and attaches provider context', async () => {
     const qc = makeQueryClient();
     const cm = makeMockClientManager({
       queryClient: qc,
@@ -554,6 +587,11 @@ describe('deployApp', () => {
     expect((caught as TerminalChainStateError).chainState).toBe('rejected');
     expect((caught as TerminalChainStateError).leaseUuid).toBe(
       '550e8400-e29b-41d4-a716-446655440000',
+    );
+    // deployApp enriches the thrown error with provider context so Barney doesn't re-query.
+    expect((caught as TerminalChainStateError).providerUuid).toBe('prov-1');
+    expect((caught as TerminalChainStateError).providerUrl).toBe(
+      'http://localhost:8080',
     );
     // Must NOT be wrapped with the "Deploy partially succeeded" advice.
     expect((caught as Error).message).not.toMatch(/Deploy partially succeeded/);

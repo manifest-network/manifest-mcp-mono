@@ -409,6 +409,27 @@ describe('pollLeaseUntilReady', () => {
     expect(checkChainState).toHaveBeenCalledTimes(2);
   });
 
+  it('abortSignal takes precedence over a terminal chainState in the same iteration', async () => {
+    mockCheckedFetch.mockResolvedValue({} as Response);
+    mockParseJsonResponse.mockResolvedValue({ state: 'LEASE_STATE_PENDING' });
+
+    const controller = new AbortController();
+    controller.abort(new Error('aborted before iteration'));
+    const checkChainState = vi.fn().mockResolvedValue({ state: 'rejected' });
+
+    // With a pre-aborted signal, the top-of-loop throwIfAborted fires before
+    // checkChainState is ever called. Locks in the ordering.
+    await expect(
+      pollLeaseUntilReady(PROVIDER_URL, LEASE_UUID, AUTH_TOKEN, {
+        intervalMs: 10,
+        timeoutMs: 5000,
+        abortSignal: controller.signal,
+        checkChainState,
+      }),
+    ).rejects.toThrow(/aborted before iteration/);
+    expect(checkChainState).not.toHaveBeenCalled();
+  });
+
   it('honors abortSignal aborted while checkChainState is awaiting', async () => {
     mockCheckedFetch.mockResolvedValue({} as Response);
     mockParseJsonResponse.mockResolvedValue({ state: 'LEASE_STATE_PENDING' });

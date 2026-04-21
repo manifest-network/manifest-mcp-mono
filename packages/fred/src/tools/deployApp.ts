@@ -143,11 +143,8 @@ export interface DeployAppInput {
   ) => void | Promise<void>;
   /** Aborts upload and poll (not the already-submitted chain TX). */
   abortSignal?: AbortSignal;
-  /** Forwarded to the internal pollLeaseUntilReady call. */
-  pollOptions?: Pick<
-    PollOptions,
-    'intervalMs' | 'timeoutMs' | 'checkChainState' | 'onProgress'
-  >;
+  /** Forwarded to the internal pollLeaseUntilReady call. abortSignal is the top-level field above. */
+  pollOptions?: Omit<PollOptions, 'abortSignal'>;
 }
 
 export interface DeployAppResult {
@@ -325,7 +322,14 @@ export async function deployApp(
     // Chain-terminal states are self-explanatory and need no "close this lease"
     // advice (the lease is already terminal on-chain). Let Barney & friends
     // observe the typed error directly via `instanceof` / `err.chainState`.
-    if (err instanceof TerminalChainStateError) throw err;
+    // Re-throw with deployApp's provider context so callers don't need to
+    // re-query the chain to recover it.
+    if (err instanceof TerminalChainStateError) {
+      throw new TerminalChainStateError(err.leaseUuid, err.chainState, {
+        providerUuid,
+        providerUrl,
+      });
+    }
     const code =
       err instanceof ManifestMCPError
         ? err.code

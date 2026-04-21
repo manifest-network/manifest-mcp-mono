@@ -265,11 +265,22 @@ function leaseStateName(state: LeaseState): string {
  * existing catchers keep working; use `instanceof TerminalChainStateError`
  * or read `chainState` to distinguish from provider-reported terminal states.
  */
+export interface TerminalChainStateContext {
+  readonly providerUuid?: string;
+  readonly providerUrl?: string;
+}
+
 export class TerminalChainStateError extends ProviderApiError {
   public readonly chainState: TerminalChainLeaseState;
   public readonly leaseUuid: string;
+  public readonly providerUuid?: string;
+  public readonly providerUrl?: string;
 
-  constructor(leaseUuid: string, chainState: TerminalChainLeaseState) {
+  constructor(
+    leaseUuid: string,
+    chainState: TerminalChainLeaseState,
+    context?: TerminalChainStateContext,
+  ) {
     const mapped = CHAIN_STATE_TO_LEASE_STATE[chainState];
     super(
       0,
@@ -278,6 +289,8 @@ export class TerminalChainStateError extends ProviderApiError {
     this.name = 'TerminalChainStateError';
     this.chainState = chainState;
     this.leaseUuid = leaseUuid;
+    this.providerUuid = context?.providerUuid;
+    this.providerUrl = context?.providerUrl;
     Object.setPrototypeOf(this, TerminalChainStateError.prototype);
   }
 }
