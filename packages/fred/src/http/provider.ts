@@ -41,23 +41,36 @@ export async function checkedFetch(
   timeoutMs: number = DEFAULT_FETCH_TIMEOUT_MS,
   fetchFn: typeof globalThis.fetch = globalThis.fetch,
 ): Promise<Response> {
-  const callerProvidedSignal = init?.signal != null;
-  let controller: AbortController | undefined;
-  let timer: ReturnType<typeof setTimeout> | undefined;
+  const callerSignal = init?.signal ?? undefined;
 
-  if (!callerProvidedSignal && timeoutMs > 0) {
-    const ctrl = new AbortController();
-    controller = ctrl;
-    timer = setTimeout(() => ctrl.abort(), timeoutMs);
-    init = { ...init, signal: ctrl.signal };
+  // Compose the caller's signal with an internal timeout so callers cannot
+  // accidentally disable the safety net by supplying their own signal.
+  const composed = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let timedOut = false;
+  let callerAbortHandler: (() => void) | undefined;
+
+  if (callerSignal?.aborted) {
+    composed.abort(callerSignal.reason);
+  } else if (callerSignal) {
+    callerAbortHandler = () => composed.abort(callerSignal.reason);
+    callerSignal.addEventListener('abort', callerAbortHandler, { once: true });
+  }
+  if (timeoutMs > 0 && !composed.signal.aborted) {
+    timer = setTimeout(() => {
+      timedOut = true;
+      composed.abort();
+    }, timeoutMs);
   }
 
   let res: Response;
   try {
-    res = await fetchFn(url, init);
+    // Don't even dispatch fetch if the caller's signal is already aborted.
+    composed.signal.throwIfAborted();
+    res = await fetchFn(url, { ...init, signal: composed.signal });
   } catch (err) {
     if (err instanceof DOMException && err.name === 'AbortError') {
-      if (controller && !callerProvidedSignal) {
+      if (timedOut) {
         throw new ProviderApiError(
           0,
           `Request to ${url} timed out after ${timeoutMs}ms`,
@@ -65,12 +78,17 @@ export async function checkedFetch(
       }
       throw err;
     }
+    // Re-throw the caller's abort reason as-is (e.g. `new Error('cancelled')`).
+    if (composed.signal.aborted && !timedOut) throw err;
     throw new ProviderApiError(
       0,
       `Network request to ${url} failed: ${err instanceof Error ? err.message : String(err)}`,
     );
   } finally {
     if (timer !== undefined) clearTimeout(timer);
+    if (callerAbortHandler && callerSignal) {
+      callerSignal.removeEventListener('abort', callerAbortHandler);
+    }
   }
   if (!res.ok) {
     const body = await res
