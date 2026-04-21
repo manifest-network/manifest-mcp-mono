@@ -4,7 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.6.0]
+
 - Feat(lease): `fund_credit`, `credit_balance`, and `leases_by_tenant` accept optional `tenant` to operate on a third-party account (#38)
+- Feat(lease): support optional `tenant` on more methods (#39)
+- Chore(deps): bump `@manifest-network/manifestjs` to 2.3.0
 
 ## [0.5.0]
 
