@@ -394,7 +394,58 @@ describe('deployApp', () => {
     expect(mockPollLeaseUntilReady).not.toHaveBeenCalled();
   });
 
-  it('forwards pollOptions to pollLeaseUntilReady', async () => {
+  it('awaits async onLeaseCreated before upload', async () => {
+    const qc = makeQueryClient();
+    const cm = makeMockClientManager({
+      queryClient: qc,
+      address: 'manifest1tenant',
+    });
+
+    const order: string[] = [];
+    mockUploadLeaseData.mockImplementation(async () => {
+      order.push('upload');
+    });
+
+    const onLeaseCreated = vi.fn(async () => {
+      await new Promise((r) => setTimeout(r, 10));
+      order.push('onLeaseCreated-done');
+    });
+
+    await deployApp(cm as any, mockGetAuthToken, mockGetLeaseDataAuthToken, {
+      image: 'nginx:alpine',
+      port: 80,
+      size: 'docker-micro',
+      onLeaseCreated,
+    });
+
+    expect(order).toEqual(['onLeaseCreated-done', 'upload']);
+  });
+
+  it('propagates async onLeaseCreated rejection raw', async () => {
+    const qc = makeQueryClient();
+    const cm = makeMockClientManager({
+      queryClient: qc,
+      address: 'manifest1tenant',
+    });
+
+    const onLeaseCreated = vi.fn(async () => {
+      throw new Error('async registry write failed');
+    });
+
+    await expect(
+      deployApp(cm as any, mockGetAuthToken, mockGetLeaseDataAuthToken, {
+        image: 'nginx:alpine',
+        port: 80,
+        size: 'docker-micro',
+        onLeaseCreated,
+      }),
+    ).rejects.toThrow(/async registry write failed/);
+
+    expect(mockUploadLeaseData).not.toHaveBeenCalled();
+    expect(mockPollLeaseUntilReady).not.toHaveBeenCalled();
+  });
+
+  it('forwards pollOptions and abortSignal to pollLeaseUntilReady', async () => {
     const qc = makeQueryClient();
     const cm = makeMockClientManager({
       queryClient: qc,
@@ -409,10 +460,10 @@ describe('deployApp', () => {
       image: 'nginx:alpine',
       port: 80,
       size: 'docker-micro',
+      abortSignal: controller.signal,
       pollOptions: {
         intervalMs: 123,
         timeoutMs: 45_678,
-        abortSignal: controller.signal,
         onProgress,
         checkChainState,
       },
@@ -423,13 +474,13 @@ describe('deployApp', () => {
     expect(forwarded).toEqual({
       intervalMs: 123,
       timeoutMs: 45_678,
-      abortSignal: controller.signal,
       onProgress,
       checkChainState,
+      abortSignal: controller.signal,
     });
   });
 
-  it('passes undefined pollOptions when not provided (preserves poll defaults)', async () => {
+  it('passes undefined pollOptions fields when not provided (preserves poll defaults)', async () => {
     const qc = makeQueryClient();
     const cm = makeMockClientManager({
       queryClient: qc,
@@ -443,6 +494,51 @@ describe('deployApp', () => {
     });
 
     expect(mockPollLeaseUntilReady).toHaveBeenCalledTimes(1);
-    expect(mockPollLeaseUntilReady.mock.calls[0][3]).toBeUndefined();
+    const forwarded = mockPollLeaseUntilReady.mock.calls[0][3];
+    expect(forwarded).toEqual({ abortSignal: undefined });
+  });
+
+  it('threads abortSignal into uploadLeaseData and aborts before upload if already aborted', async () => {
+    const qc = makeQueryClient();
+    const cm = makeMockClientManager({
+      queryClient: qc,
+      address: 'manifest1tenant',
+    });
+
+    const controller = new AbortController();
+    controller.abort(new Error('user cancelled'));
+
+    await expect(
+      deployApp(cm as any, mockGetAuthToken, mockGetLeaseDataAuthToken, {
+        image: 'nginx:alpine',
+        port: 80,
+        size: 'docker-micro',
+        abortSignal: controller.signal,
+      }),
+    ).rejects.toThrow(/user cancelled|partially succeeded/);
+
+    expect(mockUploadLeaseData).not.toHaveBeenCalled();
+    expect(mockPollLeaseUntilReady).not.toHaveBeenCalled();
+  });
+
+  it('passes abortSignal to uploadLeaseData when not aborted', async () => {
+    const qc = makeQueryClient();
+    const cm = makeMockClientManager({
+      queryClient: qc,
+      address: 'manifest1tenant',
+    });
+
+    const controller = new AbortController();
+
+    await deployApp(cm as any, mockGetAuthToken, mockGetLeaseDataAuthToken, {
+      image: 'nginx:alpine',
+      port: 80,
+      size: 'docker-micro',
+      abortSignal: controller.signal,
+    });
+
+    expect(mockUploadLeaseData).toHaveBeenCalledTimes(1);
+    // uploadLeaseData(url, uuid, payload, token, fetchFn?, abortSignal?)
+    expect(mockUploadLeaseData.mock.calls[0][5]).toBe(controller.signal);
   });
 });

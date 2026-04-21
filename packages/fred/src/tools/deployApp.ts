@@ -136,16 +136,17 @@ export interface DeployAppInput {
   depends_on?: Record<string, { condition: string }>;
   services?: Record<string, ServiceConfig>;
   gasMultiplier?: number;
-  /** Fires once after the create-lease TX confirms, before upload/poll. Errors propagate. */
-  onLeaseCreated?: (leaseUuid: string, providerUrl: string) => void;
+  /** Fires once after the create-lease TX confirms, before upload/poll. Awaited. Errors propagate. */
+  onLeaseCreated?: (
+    leaseUuid: string,
+    providerUrl: string,
+  ) => void | Promise<void>;
+  /** Aborts upload and poll (not the already-submitted chain TX). */
+  abortSignal?: AbortSignal;
   /** Forwarded to the internal pollLeaseUntilReady call. */
   pollOptions?: Pick<
     PollOptions,
-    | 'intervalMs'
-    | 'timeoutMs'
-    | 'abortSignal'
-    | 'checkChainState'
-    | 'onProgress'
+    'intervalMs' | 'timeoutMs' | 'checkChainState' | 'onProgress'
   >;
 }
 
@@ -290,10 +291,13 @@ export async function deployApp(
   const leaseUuid = extractLeaseUuid(txResult);
 
   // Outside the partial-success try: callback errors surface raw, not wrapped.
-  input.onLeaseCreated?.(leaseUuid, providerUrl);
+  // The lease exists on-chain regardless of abortSignal state — always notify.
+  await input.onLeaseCreated?.(leaseUuid, providerUrl);
 
   let status: FredLeaseStatus;
   try {
+    input.abortSignal?.throwIfAborted();
+
     // 7. Upload manifest with lease-data auth token
     const leaseDataToken = await getLeaseDataAuthToken(
       address,
@@ -306,6 +310,7 @@ export async function deployApp(
       new TextEncoder().encode(manifestJson),
       leaseDataToken,
       fetchFn,
+      input.abortSignal,
     );
 
     // 8. Poll until ready
@@ -313,7 +318,7 @@ export async function deployApp(
       providerUrl,
       leaseUuid,
       () => getAuthToken(address, leaseUuid),
-      input.pollOptions,
+      { ...input.pollOptions, abortSignal: input.abortSignal },
       fetchFn,
     );
   } catch (err) {

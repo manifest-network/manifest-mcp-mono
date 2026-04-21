@@ -178,18 +178,23 @@ export async function uploadLeaseData(
   payload: Uint8Array,
   authToken: string,
   fetchFn?: typeof globalThis.fetch,
+  abortSignal?: AbortSignal,
 ): Promise<void> {
   const validated = validateProviderUrl(providerApiUrl);
+  const init: RequestInit = {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${authToken}`,
+      'Content-Type': 'application/octet-stream',
+    },
+    body: payload,
+  };
+  if (abortSignal) {
+    init.signal = abortSignal;
+  }
   await checkedFetch(
     `${validated}/v1/leases/${encodeURIComponent(leaseUuid)}/data`,
-    {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${authToken}`,
-        'Content-Type': 'application/octet-stream',
-      },
-      body: payload,
-    },
+    init,
     undefined,
     fetchFn,
   );
