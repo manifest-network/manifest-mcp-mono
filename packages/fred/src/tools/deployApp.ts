@@ -15,7 +15,7 @@ import {
   sanitizeForLogging,
 } from '@manifest-network/manifest-mcp-core';
 import type { FredLeaseStatus, PollOptions } from '../http/fred.js';
-import { pollLeaseUntilReady } from '../http/fred.js';
+import { pollLeaseUntilReady, TerminalChainStateError } from '../http/fred.js';
 import {
   type ConnectionDetails,
   getLeaseConnectionInfo,
@@ -322,6 +322,10 @@ export async function deployApp(
       fetchFn,
     );
   } catch (err) {
+    // Chain-terminal states are self-explanatory and need no "close this lease"
+    // advice (the lease is already terminal on-chain). Let Barney & friends
+    // observe the typed error directly via `instanceof` / `err.chainState`.
+    if (err instanceof TerminalChainStateError) throw err;
     const code =
       err instanceof ManifestMCPError
         ? err.code

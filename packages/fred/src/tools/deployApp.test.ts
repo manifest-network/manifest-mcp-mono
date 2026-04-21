@@ -20,9 +20,13 @@ vi.mock('../http/provider.js', async (importOriginal) => {
   };
 });
 
-vi.mock('../http/fred.js', () => ({
-  pollLeaseUntilReady: vi.fn(),
-}));
+vi.mock('../http/fred.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../http/fred.js')>();
+  return {
+    ...actual,
+    pollLeaseUntilReady: vi.fn(),
+  };
+});
 
 import {
   cosmosTx,
@@ -33,7 +37,7 @@ import {
   makeMockClientManager,
   makeMockQueryClient,
 } from '@manifest-network/manifest-mcp-core/__test-utils__/mocks.js';
-import { pollLeaseUntilReady } from '../http/fred.js';
+import { pollLeaseUntilReady, TerminalChainStateError } from '../http/fred.js';
 import { getLeaseConnectionInfo, uploadLeaseData } from '../http/provider.js';
 import { deployApp } from './deployApp.js';
 
@@ -519,6 +523,61 @@ describe('deployApp', () => {
 
     expect(mockUploadLeaseData).not.toHaveBeenCalled();
     expect(mockPollLeaseUntilReady).not.toHaveBeenCalled();
+  });
+
+  it('lets TerminalChainStateError escape the partial-success wrapper', async () => {
+    const qc = makeQueryClient();
+    const cm = makeMockClientManager({
+      queryClient: qc,
+      address: 'manifest1tenant',
+    });
+
+    mockPollLeaseUntilReady.mockRejectedValue(
+      new TerminalChainStateError(
+        '550e8400-e29b-41d4-a716-446655440000',
+        'rejected',
+      ),
+    );
+
+    let caught: unknown;
+    try {
+      await deployApp(cm as any, mockGetAuthToken, mockGetLeaseDataAuthToken, {
+        image: 'nginx:alpine',
+        port: 80,
+        size: 'docker-micro',
+      });
+    } catch (err) {
+      caught = err;
+    }
+
+    expect(caught).toBeInstanceOf(TerminalChainStateError);
+    expect((caught as TerminalChainStateError).chainState).toBe('rejected');
+    expect((caught as TerminalChainStateError).leaseUuid).toBe(
+      '550e8400-e29b-41d4-a716-446655440000',
+    );
+    // Must NOT be wrapped with the "Deploy partially succeeded" advice.
+    expect((caught as Error).message).not.toMatch(/Deploy partially succeeded/);
+    expect((caught as Error).message).not.toMatch(/close_lease/);
+  });
+
+  it('still wraps non-TerminalChainStateError poll failures with partial-success advice', async () => {
+    const qc = makeQueryClient();
+    const cm = makeMockClientManager({
+      queryClient: qc,
+      address: 'manifest1tenant',
+    });
+
+    mockPollLeaseUntilReady.mockRejectedValue(
+      new Error('provider unreachable'),
+    );
+
+    await expect(
+      deployApp(cm as any, mockGetAuthToken, mockGetLeaseDataAuthToken, {
+        image: 'nginx:alpine',
+        port: 80,
+        size: 'docker-micro',
+      }),
+    ).rejects.toThrow(/Deploy partially succeeded/);
   });
 
   it('passes abortSignal to uploadLeaseData when not aborted', async () => {
