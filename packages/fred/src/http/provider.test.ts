@@ -155,32 +155,46 @@ describe('checkedFetch', () => {
   });
 
   it('does not misclassify caller cancel as timeout when fetch is slow to reject', async () => {
-    const controller = new AbortController();
-    // Simulate a fetch that ignores the abort signal and takes longer than the
-    // timeout to reject. Without the race guard, the timer would fire during
-    // the gap between caller abort and fetch rejection, flipping timedOut=true.
-    const mockFetch = vi.fn((_url: string, _opts?: RequestInit) => {
-      return new Promise<Response>((_resolve, reject) => {
-        setTimeout(
-          () =>
-            reject(new DOMException('The operation was aborted', 'AbortError')),
-          80,
-        );
+    // Fake timers remove real-time flakiness on loaded CI: the 5/20/80ms
+    // ordering (caller abort < internal timeout < mock fetch rejection) is
+    // advanced deterministically.
+    vi.useFakeTimers();
+    try {
+      const controller = new AbortController();
+      const mockFetch = vi.fn((_url: string, _opts?: RequestInit) => {
+        return new Promise<Response>((_resolve, reject) => {
+          setTimeout(
+            () =>
+              reject(
+                new DOMException('The operation was aborted', 'AbortError'),
+              ),
+            80,
+          );
+        });
       });
-    });
 
-    const callerReason = new Error('user cancelled');
-    const fetchPromise = checkedFetch(
-      'https://example.com',
-      { signal: controller.signal },
-      20, // timeout would fire at ~20ms
-      mockFetch as unknown as typeof globalThis.fetch,
-    );
-    // Abort at 5ms, well before the internal timeout.
-    setTimeout(() => controller.abort(callerReason), 5);
+      const callerReason = new Error('user cancelled');
+      const fetchPromise = checkedFetch(
+        'https://example.com',
+        { signal: controller.signal },
+        20, // internal timeout at 20ms — should be cleared by the caller abort
+        mockFetch as unknown as typeof globalThis.fetch,
+      );
+      // Capture the rejection eagerly so advancing timers doesn't surface an
+      // unhandled-rejection warning in vitest.
+      let caught: unknown;
+      fetchPromise.catch((err: unknown) => {
+        caught = err;
+      });
+      setTimeout(() => controller.abort(callerReason), 5);
 
-    // Must surface the caller's reason, not the "timed out" ProviderApiError.
-    await expect(fetchPromise).rejects.toBe(callerReason);
+      await vi.advanceTimersByTimeAsync(80);
+
+      // Must surface the caller's reason, not a "timed out" ProviderApiError.
+      expect(caught).toBe(callerReason);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('removes caller-signal listener on successful fetch (no leak)', async () => {
