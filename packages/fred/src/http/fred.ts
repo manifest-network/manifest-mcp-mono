@@ -244,12 +244,7 @@ export interface PollOptions {
   readonly timeoutMs?: number;
   readonly abortSignal?: AbortSignal;
   readonly onProgress?: (status: FredLeaseStatus) => void;
-  /**
-   * Optional callback invoked once per iteration before the provider is queried.
-   * Return a `TerminalChainState` to stop polling (poll throws `ProviderApiError`);
-   * return `null` to continue. Errors thrown from the callback are not caught and
-   * will abort the poll.
-   */
+  /** Runs once per iteration before the provider is queried. Non-null return throws; errors propagate. */
   readonly checkChainState?: () => Promise<TerminalChainState | null>;
 }
 

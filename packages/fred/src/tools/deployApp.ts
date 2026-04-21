@@ -14,7 +14,7 @@ import {
   requireUuid,
   sanitizeForLogging,
 } from '@manifest-network/manifest-mcp-core';
-import type { FredLeaseStatus } from '../http/fred.js';
+import type { FredLeaseStatus, PollOptions } from '../http/fred.js';
 import { pollLeaseUntilReady } from '../http/fred.js';
 import {
   type ConnectionDetails,
@@ -136,6 +136,17 @@ export interface DeployAppInput {
   depends_on?: Record<string, { condition: string }>;
   services?: Record<string, ServiceConfig>;
   gasMultiplier?: number;
+  /** Fires once after the create-lease TX confirms, before upload/poll. Errors propagate. */
+  onLeaseCreated?: (leaseUuid: string, providerUrl: string) => void;
+  /** Forwarded to the internal pollLeaseUntilReady call. */
+  pollOptions?: Pick<
+    PollOptions,
+    | 'intervalMs'
+    | 'timeoutMs'
+    | 'abortSignal'
+    | 'checkChainState'
+    | 'onProgress'
+  >;
 }
 
 export interface DeployAppResult {
@@ -278,6 +289,9 @@ export async function deployApp(
   // 6. Extract lease UUID
   const leaseUuid = extractLeaseUuid(txResult);
 
+  // Outside the partial-success try: callback errors surface raw, not wrapped.
+  input.onLeaseCreated?.(leaseUuid, providerUrl);
+
   let status: FredLeaseStatus;
   try {
     // 7. Upload manifest with lease-data auth token
@@ -299,7 +313,7 @@ export async function deployApp(
       providerUrl,
       leaseUuid,
       () => getAuthToken(address, leaseUuid),
-      undefined,
+      input.pollOptions,
       fetchFn,
     );
   } catch (err) {
