@@ -73,7 +73,7 @@ export async function routeWasmQuery(
       requireArgs(args, 1, ['address'], 'wasm contract-info');
       const [address] = args;
       const result = await wasm.contractInfo({ address });
-      return { contractInfo: result.contractInfo };
+      return { address, contractInfo: result.contractInfo };
     }
 
     case 'contract-history': {

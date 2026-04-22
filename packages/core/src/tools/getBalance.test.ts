@@ -19,15 +19,19 @@ describe('getBalance', () => {
         creditAccount: {
           activeLeaseCount: 2n,
           pendingLeaseCount: 1n,
-          reservedAmounts: [{ denom: 'umfx', amount: '500' }],
+          reservedAmounts: [{ denom: 'upwr', amount: '500' }],
         },
+        creditAccountBalances: [{ denom: 'upwr', amount: '10000' }],
+        creditAccountAvailableBalances: [{ denom: 'upwr', amount: '9500' }],
       },
     });
     const result = await getBalance(client, address);
     expect(result.credits).toEqual({
       active_leases: '2',
       pending_leases: '1',
-      reserved_amounts: [{ denom: 'umfx', amount: '500' }],
+      reserved_amounts: [{ denom: 'upwr', amount: '500' }],
+      balances: [{ denom: 'upwr', amount: '10000' }],
+      available_balances: [{ denom: 'upwr', amount: '9500' }],
     });
   });
 
@@ -43,6 +47,9 @@ describe('getBalance', () => {
       },
     });
     const result = await getBalance(client, address);
+    expect(result.current_balance).toEqual([
+      { denom: 'umfx', amount: '100000' },
+    ]);
     expect(result.spending_per_hour).toEqual([
       { denom: 'umfx', amount: '36000' },
     ]);
