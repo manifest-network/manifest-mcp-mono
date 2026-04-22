@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.6.2]
+
+- Fix(core): surface dropped proto fields in query handlers and `getBalance` (#41)
+
 ## [0.6.1]
 
 - Feat(fred): add `checkChainState`, `onLeaseCreated`, `abortSignal`, and `pollOptions` hooks to `deployApp` and `pollLeaseUntilReady`; introduce `TerminalChainStateError` for chain-reported terminal lease states (#40)
