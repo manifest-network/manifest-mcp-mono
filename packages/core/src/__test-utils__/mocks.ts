@@ -52,6 +52,8 @@ interface BillingOverrides {
     pendingLeaseCount: bigint;
     reservedAmounts: { denom: string; amount: string }[];
   } | null;
+  creditAccountBalances?: { denom: string; amount: string }[];
+  creditAccountAvailableBalances?: { denom: string; amount: string }[];
   creditEstimate?: {
     currentBalance: { denom: string; amount: string }[];
     totalRatePerSecond: { denom: string; amount: string }[];
@@ -100,6 +102,9 @@ export function makeMockQueryClient(overrides?: {
 
   const balances = billing.balances ?? [{ denom: 'umfx', amount: '1000000' }];
   const creditAccount = billing.creditAccount ?? null;
+  const creditAccountBalances = billing.creditAccountBalances ?? [];
+  const creditAccountAvailableBalances =
+    billing.creditAccountAvailableBalances ?? [];
   const creditEstimate = billing.creditEstimate ?? null;
   const lease = billing.lease ?? null;
   const activeLeases = billing.activeLeases ?? [];
@@ -166,7 +171,11 @@ export function makeMockQueryClient(overrides?: {
         v1: {
           creditAccount: vi.fn().mockImplementation(async () => {
             if (creditAccount === null) throw new Error('key not found');
-            return { creditAccount };
+            return {
+              creditAccount,
+              balances: creditAccountBalances,
+              availableBalances: creditAccountAvailableBalances,
+            };
           }),
           creditEstimate: vi.fn().mockImplementation(async () => {
             if (creditEstimate === null) throw new Error('credit not found');

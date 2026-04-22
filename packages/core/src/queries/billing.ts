@@ -116,7 +116,11 @@ export async function routeBillingQuery(
       requireArgs(args, 1, ['tenant-address'], 'billing credit-account');
       const [tenant] = args;
       const result = await billing.creditAccount({ tenant });
-      return { creditAccount: result.creditAccount };
+      return {
+        creditAccount: result.creditAccount,
+        balances: result.balances,
+        availableBalances: result.availableBalances,
+      };
     }
 
     case 'credit-accounts': {
@@ -161,7 +165,11 @@ export async function routeBillingQuery(
         providerUuid,
         limit: pagination.limit,
       });
-      return { amounts: result.amounts };
+      return {
+        amounts: result.amounts,
+        leaseCount: result.leaseCount,
+        hasMore: result.hasMore,
+      };
     }
 
     case 'credit-estimate': {

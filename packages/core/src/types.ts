@@ -591,6 +591,8 @@ export interface LeasesResult extends PaginatedResult {
 
 export interface CreditAccountResult {
   readonly creditAccount?: CreditAccount;
+  readonly balances?: readonly Coin[];
+  readonly availableBalances?: readonly Coin[];
 }
 
 export interface CreditAccountsResult extends PaginatedResult {
@@ -607,6 +609,8 @@ export interface WithdrawableAmountResult {
 
 export interface ProviderWithdrawableResult {
   readonly amounts: readonly Coin[];
+  readonly leaseCount: bigint;
+  readonly hasMore: boolean;
 }
 
 export interface CreditEstimateResult {
@@ -677,6 +681,7 @@ export interface SkusResult extends PaginatedResult {
 
 // CosmWasm query results
 export interface WasmContractInfoResult {
+  readonly address?: string;
   readonly contractInfo?: ContractInfo;
 }
 

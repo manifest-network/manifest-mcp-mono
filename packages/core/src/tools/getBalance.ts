@@ -42,6 +42,14 @@ export async function getBalance(
             amount: c.amount,
           }),
         ),
+        balances: creditResult.balances.map((c) => ({
+          denom: c.denom,
+          amount: c.amount,
+        })),
+        available_balances: creditResult.availableBalances.map((c) => ({
+          denom: c.denom,
+          amount: c.amount,
+        })),
       }
     : null;
 
@@ -68,6 +76,7 @@ export async function getBalance(
   return {
     credits,
     ...(estimate && {
+      current_balance: estimate.current_balance,
       spending_per_hour: estimate.spending_per_hour,
       hours_remaining: estimate.hours_remaining,
       running_apps: estimate.running_apps,
