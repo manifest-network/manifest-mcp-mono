@@ -42,14 +42,16 @@ export async function getBalance(
             amount: c.amount,
           }),
         ),
-        balances: creditResult.balances.map((c) => ({
+        balances: (creditResult.balances ?? []).map((c) => ({
           denom: c.denom,
           amount: c.amount,
         })),
-        available_balances: creditResult.availableBalances.map((c) => ({
-          denom: c.denom,
-          amount: c.amount,
-        })),
+        available_balances: (creditResult.availableBalances ?? []).map(
+          (c) => ({
+            denom: c.denom,
+            amount: c.amount,
+          }),
+        ),
       }
     : null;
 
