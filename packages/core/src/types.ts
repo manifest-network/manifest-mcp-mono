@@ -609,8 +609,8 @@ export interface WithdrawableAmountResult {
 
 export interface ProviderWithdrawableResult {
   readonly amounts: readonly Coin[];
-  readonly leaseCount: bigint;
-  readonly hasMore: boolean;
+  readonly leaseCount?: bigint;
+  readonly hasMore?: boolean;
 }
 
 export interface CreditEstimateResult {
