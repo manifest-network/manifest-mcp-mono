@@ -71,13 +71,21 @@ describe('AuthTokenService', () => {
   });
 
   it('serializes concurrent calls so timestamps are strictly increasing', async () => {
-    const service = new AuthTokenService(makeWallet(true));
-    const [a, b] = await Promise.all([
-      service.providerToken(TENANT, LEASE_UUID),
-      service.providerToken(TENANT, LEASE_UUID),
-    ]);
-    const ta = decodeToken(a).timestamp;
-    const tb = decodeToken(b).timestamp;
-    expect(tb).toBeGreaterThan(ta);
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'));
+    try {
+      const service = new AuthTokenService(makeWallet(true));
+      const firstToken = service.providerToken(TENANT, LEASE_UUID);
+      const secondToken = service.providerToken(TENANT, LEASE_UUID);
+
+      await vi.advanceTimersByTimeAsync(1000);
+
+      const [a, b] = await Promise.all([firstToken, secondToken]);
+      const ta = decodeToken(a).timestamp;
+      const tb = decodeToken(b).timestamp;
+      expect(tb).toBeGreaterThan(ta);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

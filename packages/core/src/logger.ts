@@ -15,6 +15,8 @@ const LOG_LEVEL_ORDER: Record<LogLevel, number> = {
   silent: 4,
 };
 
+const VALID_LOG_LEVELS = new Set<string>(Object.keys(LOG_LEVEL_ORDER));
+
 /**
  * Parse an untrusted string into a `LogLevel`. Returns `'warn'` for `undefined`,
  * empty, or unrecognized values; emits a stderr warning on the unrecognized case.
@@ -22,8 +24,7 @@ const LOG_LEVEL_ORDER: Record<LogLevel, number> = {
  */
 export function parseLogLevel(raw: string | undefined): LogLevel {
   if (!raw) return 'warn';
-  const validLevels = new Set<string>(Object.keys(LOG_LEVEL_ORDER));
-  if (validLevels.has(raw)) return raw as LogLevel;
+  if (VALID_LOG_LEVELS.has(raw)) return raw as LogLevel;
   console.error(
     `[WARN] Invalid LOG_LEVEL "${raw}". Valid values: debug, info, warn, error, silent. Defaulting to "warn".`,
   );
