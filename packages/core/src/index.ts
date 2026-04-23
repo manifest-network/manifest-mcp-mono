@@ -15,7 +15,7 @@ export {
 } from './config.js';
 export { cosmosEstimateFee, cosmosQuery, cosmosTx } from './cosmos.js';
 export { createLCDQueryClient } from './lcd-adapter.js';
-export { type LogLevel, logger } from './logger.js';
+export { type LogLevel, logger, parseLogLevel } from './logger.js';
 export {
   getAvailableModules,
   getModuleSubcommands,

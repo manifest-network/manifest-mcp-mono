@@ -17,7 +17,7 @@ npm install @manifest-network/manifest-mcp-core
 - **On-chain tool functions** (`tools/`) -- `getBalance`, `fundCredits`, `stopApp` (used by the lease package)
 - **Server utilities** (`server-utils.ts`) -- `withErrorHandling`, `jsonResponse`, `bigIntReplacer`, `sanitizeForLogging`
 - **Wallet providers** (`wallet/`) -- `MnemonicWalletProvider` (BIP-39), `signArbitraryWithAmino` (ADR-036)
-- **Logger** (`logger.ts`) -- Leveled logger (stderr output, configurable via `LOG_LEVEL` env var)
+- **Logger** (`logger.ts`) -- Leveled logger (stderr output; defaults to `warn`, configurable via `logger.setLevel()`; the node package's bootstrap reads `LOG_LEVEL` and applies it)
 - **Retry** (`retry.ts`) -- Exponential backoff with transient/permanent error classification
 - **Validation** (`validation.ts`) -- Input validation helpers (`requireString`, `requireUuid`, `parseArgs`, etc.)
 

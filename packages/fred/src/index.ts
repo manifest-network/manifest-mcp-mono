@@ -15,12 +15,7 @@ import {
 import type { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
-import {
-  AuthTimestampTracker,
-  createAuthToken,
-  createLeaseDataSignMessage,
-  createSignMessage,
-} from './http/auth.js';
+import { AuthTokenService } from './http/auth-token-service.js';
 import { getLeaseProvision, getLeaseReleases, MAX_TAIL } from './http/fred.js';
 import { appStatus } from './tools/appStatus.js';
 import { browseCatalog } from './tools/browseCatalog.js';
@@ -111,6 +106,7 @@ export class FredMCPServer {
   private mcpServer: McpServer;
   private clientManager: CosmosClientManager;
   private walletProvider: WalletProvider;
+  private authTokens: AuthTokenService;
 
   constructor(options: ManifestMCPServerOptions) {
     const config = createValidatedConfig(options.config);
@@ -119,6 +115,7 @@ export class FredMCPServer {
       config,
       this.walletProvider,
     );
+    this.authTokens = new AuthTokenService(this.walletProvider);
 
     this.mcpServer = new McpServer(
       {
@@ -133,58 +130,6 @@ export class FredMCPServer {
     );
 
     this.registerTools();
-  }
-
-  private requireSignArbitrary(): NonNullable<WalletProvider['signArbitrary']> {
-    if (!this.walletProvider.signArbitrary) {
-      throw new ManifestMCPError(
-        ManifestMCPErrorCode.INVALID_CONFIG,
-        'Wallet does not support signArbitrary (ADR-036). Required for provider authentication. Use a wallet provider that implements signArbitrary.',
-      );
-    }
-    return this.walletProvider.signArbitrary.bind(this.walletProvider);
-  }
-
-  private authTimestamps = new AuthTimestampTracker();
-
-  private async getProviderAuthToken(
-    address: string,
-    leaseUuid: string,
-  ): Promise<string> {
-    const signArbitrary = this.requireSignArbitrary();
-    const timestamp = await this.authTimestamps.next();
-    const message = createSignMessage(address, leaseUuid, timestamp);
-    const { pub_key, signature } = await signArbitrary(address, message);
-    return createAuthToken(
-      address,
-      leaseUuid,
-      timestamp,
-      pub_key.value,
-      signature,
-    );
-  }
-
-  private async getLeaseDataAuthToken(
-    address: string,
-    leaseUuid: string,
-    metaHashHex: string,
-  ): Promise<string> {
-    const signArbitrary = this.requireSignArbitrary();
-    const timestamp = await this.authTimestamps.next();
-    const message = createLeaseDataSignMessage(
-      leaseUuid,
-      metaHashHex,
-      timestamp,
-    );
-    const { pub_key, signature } = await signArbitrary(address, message);
-    return createAuthToken(
-      address,
-      leaseUuid,
-      timestamp,
-      pub_key.value,
-      signature,
-      metaHashHex,
-    );
   }
 
   private registerTools(): void {
@@ -225,7 +170,7 @@ export class FredMCPServer {
           queryClient,
           address,
           leaseUuid,
-          (addr, uuid) => this.getProviderAuthToken(addr, uuid),
+          (addr, uuid) => this.authTokens.providerToken(addr, uuid),
         );
         return jsonResponse(result, bigIntReplacer);
       }),
@@ -261,7 +206,7 @@ export class FredMCPServer {
           queryClient,
           address,
           leaseUuid,
-          (addr, uuid) => this.getProviderAuthToken(addr, uuid),
+          (addr, uuid) => this.authTokens.providerToken(addr, uuid),
           tail,
         );
         return jsonResponse(result, bigIntReplacer);
@@ -394,9 +339,9 @@ export class FredMCPServer {
       withErrorHandling('deploy_app', async (args) => {
         const result = await deployApp(
           this.clientManager,
-          (addr, uuid) => this.getProviderAuthToken(addr, uuid),
+          (addr, uuid) => this.authTokens.providerToken(addr, uuid),
           (addr, uuid, metaHashHex) =>
-            this.getLeaseDataAuthToken(addr, uuid, metaHashHex),
+            this.authTokens.leaseDataToken(addr, uuid, metaHashHex),
           {
             image: args.image,
             port: args.port,
@@ -443,7 +388,7 @@ export class FredMCPServer {
           queryClient,
           address,
           leaseUuid,
-          (addr, uuid) => this.getProviderAuthToken(addr, uuid),
+          (addr, uuid) => this.authTokens.providerToken(addr, uuid),
         );
         return jsonResponse(result, bigIntReplacer);
       }),
@@ -499,7 +444,7 @@ export class FredMCPServer {
           queryClient,
           address,
           leaseUuid,
-          (addr, uuid) => this.getProviderAuthToken(addr, uuid),
+          (addr, uuid) => this.authTokens.providerToken(addr, uuid),
           manifest,
           args.existing_manifest,
         );
@@ -535,7 +480,10 @@ export class FredMCPServer {
           queryClient,
           lease.providerUuid,
         );
-        const authToken = await this.getProviderAuthToken(address, leaseUuid);
+        const authToken = await this.authTokens.providerToken(
+          address,
+          leaseUuid,
+        );
         const provision = await getLeaseProvision(
           providerUrl,
           leaseUuid,
@@ -582,7 +530,10 @@ export class FredMCPServer {
           queryClient,
           lease.providerUuid,
         );
-        const authToken = await this.getProviderAuthToken(address, leaseUuid);
+        const authToken = await this.authTokens.providerToken(
+          address,
+          leaseUuid,
+        );
         const result = await getLeaseReleases(
           providerUrl,
           leaseUuid,

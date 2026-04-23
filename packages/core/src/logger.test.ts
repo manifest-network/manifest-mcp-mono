@@ -1,27 +1,13 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { logger } from './logger.js';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { logger, parseLogLevel } from './logger.js';
 
 describe('logger', () => {
-  let savedLogLevel: string | undefined;
-
-  beforeEach(() => {
-    savedLogLevel = process.env.LOG_LEVEL;
-    delete process.env.LOG_LEVEL;
-  });
-
   afterEach(() => {
-    if (savedLogLevel !== undefined) {
-      process.env.LOG_LEVEL = savedLogLevel;
-    } else {
-      delete process.env.LOG_LEVEL;
-    }
     logger.setLevel('warn');
     vi.restoreAllMocks();
   });
 
-  it('defaults to warn level when LOG_LEVEL is unset', () => {
-    // The module-level resolveLevel() already ran at import time.
-    // Reset to the expected default via setLevel to test behavior.
+  it('defaults to warn level', () => {
     logger.setLevel('warn');
     expect(logger.getLevel()).toBe('warn');
   });
@@ -68,5 +54,36 @@ describe('logger', () => {
 
     logger.debug('hello');
     expect(spy).toHaveBeenCalledWith('[DEBUG]', 'hello');
+  });
+});
+
+describe('parseLogLevel', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it.each([
+    'debug',
+    'info',
+    'warn',
+    'error',
+    'silent',
+  ] as const)('round-trips valid level %s', (level) => {
+    expect(parseLogLevel(level)).toBe(level);
+  });
+
+  it('returns warn for undefined', () => {
+    expect(parseLogLevel(undefined)).toBe('warn');
+  });
+
+  it('returns warn for empty string', () => {
+    expect(parseLogLevel('')).toBe('warn');
+  });
+
+  it('returns warn and warns on invalid input', () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    expect(parseLogLevel('spam')).toBe('warn');
+    expect(spy).toHaveBeenCalledOnce();
+    expect(spy.mock.calls[0]?.[0]).toContain('Invalid LOG_LEVEL "spam"');
   });
 });

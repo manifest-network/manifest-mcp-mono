@@ -2,8 +2,7 @@
  * Leveled logger for MCP server processes.
  *
  * All output goes to stderr because stdout is reserved for MCP protocol messages.
- * The level is resolved from `process.env.LOG_LEVEL` at import time and can be
- * overridden at runtime via `logger.setLevel()`.
+ * The level defaults to `warn`; callers set it explicitly via `logger.setLevel()`.
  */
 
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error' | 'silent';
@@ -16,19 +15,23 @@ const LOG_LEVEL_ORDER: Record<LogLevel, number> = {
   silent: 4,
 };
 
-function resolveLevel(): LogLevel {
-  const env =
-    typeof process !== 'undefined' ? process.env.LOG_LEVEL : undefined;
-  if (!env) return 'warn';
-  const validLevels = new Set<string>(Object.keys(LOG_LEVEL_ORDER));
-  if (validLevels.has(env)) return env as LogLevel;
+const VALID_LOG_LEVELS = new Set<string>(Object.keys(LOG_LEVEL_ORDER));
+
+/**
+ * Parse an untrusted string into a `LogLevel`. Returns `'warn'` for `undefined`,
+ * empty, or unrecognized values; emits a stderr warning on the unrecognized case.
+ * Node-specific env resolution lives in the node package's bootstrap.
+ */
+export function parseLogLevel(raw: string | undefined): LogLevel {
+  if (!raw) return 'warn';
+  if (VALID_LOG_LEVELS.has(raw)) return raw as LogLevel;
   console.error(
-    `[WARN] Invalid LOG_LEVEL "${env}". Valid values: debug, info, warn, error, silent. Defaulting to "warn".`,
+    `[WARN] Invalid LOG_LEVEL "${raw}". Valid values: debug, info, warn, error, silent. Defaulting to "warn".`,
   );
   return 'warn';
 }
 
-let currentLevel: LogLevel = resolveLevel();
+let currentLevel: LogLevel = 'warn';
 
 function shouldLog(level: LogLevel): boolean {
   return LOG_LEVEL_ORDER[level] >= LOG_LEVEL_ORDER[currentLevel];

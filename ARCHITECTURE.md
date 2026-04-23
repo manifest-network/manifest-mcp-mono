@@ -68,7 +68,7 @@ The core package is a shared library containing Cosmos logic, on-chain tool func
 ```
 src/
 ├── index.ts              Re-exports all public API
-├── logger.ts             Leveled logger (stderr output, configurable via LOG_LEVEL env var)
+├── logger.ts             Leveled logger (stderr output; level set via logger.setLevel(), defaults to warn)
 ├── server-utils.ts       Server utilities (error handling, sanitization, response helpers)
 ├── __test-utils__/
 │   ├── callTool.ts       MCP tool invocation helper for unit tests (in-memory transport)
@@ -360,9 +360,9 @@ Configuration is validated at startup via `createValidatedConfig`:
 
 ## Logging
 
-All MCP server output goes to **stderr** because stdout is reserved for the MCP JSON-RPC protocol. The leveled logger (`core/src/logger.ts`) reads `process.env.LOG_LEVEL` at import time and supports `debug`, `info`, `warn`, `error`, and `silent` (default: `warn`). The level can also be changed at runtime via `logger.setLevel()`.
+All MCP server output goes to **stderr** because stdout is reserved for the MCP JSON-RPC protocol. The leveled logger (`core/src/logger.ts`) supports `debug`, `info`, `warn`, `error`, and `silent` (default: `warn`). The level is set explicitly via `logger.setLevel()`.
 
-`LOG_LEVEL` is a core-level concern -- it is read directly from the environment by the logger module, not loaded by the node package's config system. It takes effect in any process that imports core.
+`LOG_LEVEL` is a node-level concern: the node package's `bootstrap()` reads `process.env.LOG_LEVEL` after `.env` loads and calls `logger.setLevel(parseLogLevel(...))`. Core's logger has no knowledge of env vars, keeping core compatible with `platform: "neutral"` consumers (e.g. browser).
 
 ## E2E testing
 
