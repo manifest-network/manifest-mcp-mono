@@ -201,9 +201,6 @@ export class CosmwasmMCPServer {
         // convert back to MFX from PWR through this tool.
         annotations: mutatingAnnotations('Convert MFX to PWR (one-way)', {
           destructive: true,
-          // Each conversion consumes more MFX and emits more PWR; never
-          // idempotent.
-          idempotent: false,
         }),
         _meta: manifestMeta({
           broadcasts: true,

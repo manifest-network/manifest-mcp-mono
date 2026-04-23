@@ -88,29 +88,28 @@ export function readOnlyAnnotations(
  * `_meta.manifest.broadcasts` and is intentionally decoupled (e.g.,
  * `request_faucet` mutates external state but the agent doesn't broadcast).
  *
- * Both flags are required at the call site so that adding a new mutating
- * tool can't silently inherit a wrong default — the spec's own default for
- * `destructiveHint` is `true`, and our policy is to make every bit a
- * deliberate decision rather than a lookup against a default.
+ * `destructive` is required because the spec defaults `destructiveHint` to
+ * `true`, which is wrong for most of our mutating tools (deploy_app,
+ * fund_credit, restart_app, request_faucet are additive). Forcing the call
+ * site to declare it traps that wrong-default mistake at compile time.
  *
- * - `destructive` distinguishes additive mutations (deploy_app, fund_credit
- *   — adding state) from destructive ones (close_lease, update_app, convert
- *   — removing or replacing state). Per spec, `destructiveHint` is only
- *   meaningful when `readOnlyHint=false`, which is always the case here.
- * - `idempotent` is true only for tools where calling twice with the same
- *   args has no extra effect (e.g., close_lease — a repeated call on an
- *   already-closed lease leaves the same end state). Most broadcasting
- *   tools are not idempotent because they consume gas on every attempt.
+ * `idempotent` is optional and defaults to `false` — the spec default and
+ * the right answer for almost every mutating tool we ship (broadcasts
+ * consume gas on every attempt; HTTP-side mutations create new state on
+ * every call). Override to `true` only for the rare tool where repeating a
+ * call with the same args is a no-op (e.g., close_lease — closing an
+ * already-closed lease converges to the same state). Per-tool tests pin
+ * the resulting `idempotentHint` value either way.
  */
 export function mutatingAnnotations(
   title: string,
-  options: { destructive: boolean; idempotent: boolean },
+  options: { destructive: boolean; idempotent?: boolean },
 ): ToolAnnotations {
   return {
     title,
     readOnlyHint: false,
     destructiveHint: options.destructive,
-    idempotentHint: options.idempotent,
+    idempotentHint: options.idempotent ?? false,
     openWorldHint: true,
   };
 }

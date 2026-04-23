@@ -175,9 +175,6 @@ export class ChainMCPServer {
           // Generic tx — can carry destructive messages (close, redelegate
           // away, gov vote, etc.). Treat conservatively as destructive.
           destructive: true,
-          // Each broadcast consumes gas and produces a new tx hash even for
-          // an identical message; never idempotent.
-          idempotent: false,
         }),
         _meta: manifestMeta({
           broadcasts: true,
