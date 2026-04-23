@@ -10,6 +10,9 @@ import {
   type ManifestMCPServerOptions,
   type MnemonicServerConfig,
   MnemonicWalletProvider,
+  manifestMeta,
+  mutatingAnnotations,
+  readOnlyAnnotations,
   VERSION,
   withErrorHandling,
 } from '@manifest-network/manifest-mcp-core';
@@ -148,6 +151,11 @@ export class CosmwasmMCPServer {
               'Optional amount of umfx to preview conversion for (e.g. "1000000" for 1 MFX)',
             ),
         },
+        annotations: readOnlyAnnotations('Get MFX-to-PWR conversion rate'),
+        _meta: manifestMeta({
+          broadcasts: false,
+          estimable: false,
+        }),
       },
       withErrorHandling('get_mfx_to_pwr_rate', async (args) => {
         const config = await this.queryConverterConfig();
@@ -189,6 +197,15 @@ export class CosmwasmMCPServer {
             .string()
             .describe('Amount of umfx to convert (e.g. "1000000" for 1 MFX)'),
         },
+        // Destructive: one-way conversion. The MFX is consumed; you cannot
+        // convert back to MFX from PWR through this tool.
+        annotations: mutatingAnnotations('Convert MFX to PWR (one-way)', {
+          destructive: true,
+        }),
+        _meta: manifestMeta({
+          broadcasts: true,
+          estimable: false,
+        }),
       },
       withErrorHandling('convert_mfx_to_pwr', async (args) => {
         if (!/^\d+$/.test(args.amount) || BigInt(args.amount) === 0n) {

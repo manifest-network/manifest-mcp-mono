@@ -1,4 +1,5 @@
-import type { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@manifest-network/manifest-mcp-core', async (importOriginal) => {
@@ -111,6 +112,119 @@ afterEach(async () => {
 });
 
 describe('FredMCPServer', () => {
+  // The annotations + _meta.manifest matrix is the contract the
+  // manifest-agent plugin relies on to derive its broadcast policy. Pin it
+  // explicitly per tool: a change here is a downstream-visible change and
+  // should require updating the plugin in lockstep.
+  describe('tool annotations + _meta.manifest', () => {
+    async function listTools() {
+      const server = new FredMCPServer({
+        config: makeMockConfig(),
+        walletProvider: makeMockWallet(),
+      });
+      const [clientTransport, serverTransport] =
+        InMemoryTransport.createLinkedPair();
+      activeTransports.push(clientTransport, serverTransport);
+      const client = new Client({ name: 'test-client', version: '1.0.0' });
+      await server.getServer().connect(serverTransport);
+      await client.connect(clientTransport);
+      try {
+        const result = await client.listTools();
+        return new Map(result.tools.map((t) => [t.name, t]));
+      } finally {
+        await client.close();
+      }
+    }
+
+    it('every tool has annotations.title and _meta.manifest at the current version', async () => {
+      // Safety net: when a new tool is registered, this test fails until the
+      // contract metadata is added. Per-tool tests below pin the values.
+      const tools = await listTools();
+      expect(tools.size).toBeGreaterThan(0);
+      for (const [name, tool] of tools) {
+        expect(tool.annotations?.title, `${name} annotations.title`).toEqual(
+          expect.any(String),
+        );
+        expect(tool._meta, `${name} _meta`).toMatchObject({
+          manifest: {
+            v: 1,
+            broadcasts: expect.any(Boolean),
+            estimable: expect.any(Boolean),
+          },
+        });
+      }
+    });
+
+    it('read-only tools: browse_catalog, app_status, get_logs, app_diagnostics, app_releases', async () => {
+      const tools = await listTools();
+      const readOnly = [
+        'browse_catalog',
+        'app_status',
+        'get_logs',
+        'app_diagnostics',
+        'app_releases',
+      ] as const;
+      for (const name of readOnly) {
+        const t = tools.get(name);
+        expect(t?.annotations, name).toMatchObject({
+          readOnlyHint: true,
+          idempotentHint: true,
+          openWorldHint: true,
+        });
+        expect(t?._meta?.manifest, name).toEqual({
+          v: 1,
+          broadcasts: false,
+          estimable: false,
+        });
+      }
+    });
+
+    it('deploy_app broadcasts an additive (non-destructive), fund-spending tx', async () => {
+      const t = (await listTools()).get('deploy_app');
+      expect(t?.annotations).toMatchObject({
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: true,
+      });
+      expect(t?._meta?.manifest).toEqual({
+        v: 1,
+        broadcasts: true,
+        estimable: false,
+      });
+    });
+
+    it('restart_app broadcasts an additive, fund-spending tx (not idempotent: each call triggers a fresh restart cycle)', async () => {
+      const t = (await listTools()).get('restart_app');
+      expect(t?.annotations).toMatchObject({
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: true,
+      });
+      expect(t?._meta?.manifest).toEqual({
+        v: 1,
+        broadcasts: true,
+        estimable: false,
+      });
+    });
+
+    it('update_app broadcasts a destructive (replaces config), fund-spending tx', async () => {
+      const t = (await listTools()).get('update_app');
+      expect(t?.annotations).toMatchObject({
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: false,
+        openWorldHint: true,
+      });
+      expect(t?._meta?.manifest).toEqual({
+        v: 1,
+        broadcasts: true,
+        estimable: false,
+      });
+    });
+  });
+
   describe('app_diagnostics', () => {
     it('returns provision diagnostics for a valid lease', async () => {
       mockFetchActiveLease.mockResolvedValue({

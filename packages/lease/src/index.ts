@@ -11,6 +11,9 @@ import {
   leaseStateToJSON,
   type ManifestMCPServerOptions,
   type MnemonicServerConfig,
+  manifestMeta,
+  mutatingAnnotations,
+  readOnlyAnnotations,
   stopApp,
   VERSION,
   validateAddress,
@@ -118,6 +121,11 @@ export class LeaseMCPServer {
               'Tenant address to query (bech32). Defaults to the caller when omitted.',
             ),
         },
+        annotations: readOnlyAnnotations('Get billing credit balance'),
+        _meta: manifestMeta({
+          broadcasts: false,
+          estimable: false,
+        }),
       },
       withErrorHandling('credit_balance', async (args) => {
         if (args.tenant !== undefined) {
@@ -157,6 +165,14 @@ export class LeaseMCPServer {
               'Gas simulation multiplier override for this transaction. Defaults to the server-configured value (typically 1.5). Increase if a transaction fails with out-of-gas errors.',
             ),
         },
+        // Additive: increases credit balance, doesn't replace or remove state.
+        annotations: mutatingAnnotations('Fund billing credit account', {
+          destructive: false,
+        }),
+        _meta: manifestMeta({
+          broadcasts: true,
+          estimable: false,
+        }),
       },
       withErrorHandling('fund_credit', async (args) => {
         const result = await fundCredits(
@@ -203,6 +219,11 @@ export class LeaseMCPServer {
             .optional()
             .describe('Number of results to skip for pagination (default: 0)'),
         },
+        annotations: readOnlyAnnotations('List leases for a tenant'),
+        _meta: manifestMeta({
+          broadcasts: false,
+          estimable: false,
+        }),
       },
       withErrorHandling('leases_by_tenant', async (args) => {
         if (args.tenant !== undefined) {
@@ -266,6 +287,17 @@ export class LeaseMCPServer {
               'Gas simulation multiplier override for this transaction. Defaults to the server-configured value (typically 1.5). Increase if a transaction fails with out-of-gas errors.',
             ),
         },
+        // Closing is permanent — the lease cannot be reopened.
+        // Idempotent in the sense that closing a closed lease is a no-op,
+        // but the state transition itself happens once.
+        annotations: mutatingAnnotations('Close a lease (permanent)', {
+          destructive: true,
+          idempotent: true,
+        }),
+        _meta: manifestMeta({
+          broadcasts: true,
+          estimable: false,
+        }),
       },
       withErrorHandling('close_lease', async (args) => {
         const result = await stopApp(
@@ -291,6 +323,11 @@ export class LeaseMCPServer {
             .optional()
             .describe('Only return active SKUs (default: true)'),
         },
+        annotations: readOnlyAnnotations('List service tiers and pricing'),
+        _meta: manifestMeta({
+          broadcasts: false,
+          estimable: false,
+        }),
       },
       withErrorHandling('get_skus', async (args) => {
         await this.clientManager.acquireRateLimit();
@@ -313,6 +350,11 @@ export class LeaseMCPServer {
             .optional()
             .describe('Only return active providers (default: true)'),
         },
+        annotations: readOnlyAnnotations('List registered providers'),
+        _meta: manifestMeta({
+          broadcasts: false,
+          estimable: false,
+        }),
       },
       withErrorHandling('get_providers', async (args) => {
         await this.clientManager.acquireRateLimit();

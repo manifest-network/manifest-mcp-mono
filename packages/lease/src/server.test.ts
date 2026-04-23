@@ -125,6 +125,103 @@ describe('LeaseMCPServer', () => {
     });
   });
 
+  // The annotations + _meta.manifest matrix is the contract the
+  // manifest-agent plugin relies on to derive its broadcast policy. Pin it
+  // explicitly per tool: a change here is a downstream-visible change and
+  // should require updating the plugin in lockstep.
+  describe('tool annotations + _meta.manifest', () => {
+    async function listTools() {
+      const server = new LeaseMCPServer({
+        config: makeMockConfig(),
+        walletProvider: makeMockWallet(),
+      });
+      const [clientTransport, serverTransport] =
+        InMemoryTransport.createLinkedPair();
+      activeTransports.push(clientTransport, serverTransport);
+      const client = new Client({ name: 'test-client', version: '1.0.0' });
+      await server.getServer().connect(serverTransport);
+      await client.connect(clientTransport);
+      try {
+        const result = await client.listTools();
+        return new Map(result.tools.map((t) => [t.name, t]));
+      } finally {
+        await client.close();
+      }
+    }
+
+    it('every tool has annotations.title and _meta.manifest at the current version', async () => {
+      // Safety net: when a new tool is registered, this test fails until the
+      // contract metadata is added. Per-tool tests below pin the values.
+      const tools = await listTools();
+      expect(tools.size).toBeGreaterThan(0);
+      for (const [name, tool] of tools) {
+        expect(tool.annotations?.title, `${name} annotations.title`).toEqual(
+          expect.any(String),
+        );
+        expect(tool._meta, `${name} _meta`).toMatchObject({
+          manifest: {
+            v: 1,
+            broadcasts: expect.any(Boolean),
+            estimable: expect.any(Boolean),
+          },
+        });
+      }
+    });
+
+    it('read-only tools: credit_balance, leases_by_tenant, get_skus, get_providers', async () => {
+      const tools = await listTools();
+      const readOnly = [
+        'credit_balance',
+        'leases_by_tenant',
+        'get_skus',
+        'get_providers',
+      ] as const;
+      for (const name of readOnly) {
+        const t = tools.get(name);
+        expect(t?.annotations, name).toMatchObject({
+          readOnlyHint: true,
+          idempotentHint: true,
+          openWorldHint: true,
+        });
+        expect(t?._meta?.manifest, name).toEqual({
+          v: 1,
+          broadcasts: false,
+          estimable: false,
+        });
+      }
+    });
+
+    it('fund_credit broadcasts an additive (non-destructive), fund-spending tx', async () => {
+      const t = (await listTools()).get('fund_credit');
+      expect(t?.annotations).toMatchObject({
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: true,
+      });
+      expect(t?._meta?.manifest).toEqual({
+        v: 1,
+        broadcasts: true,
+        estimable: false,
+      });
+    });
+
+    it('close_lease broadcasts a destructive, idempotent (closing a closed lease is a no-op), fund-spending tx', async () => {
+      const t = (await listTools()).get('close_lease');
+      expect(t?.annotations).toMatchObject({
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: true,
+        openWorldHint: true,
+      });
+      expect(t?._meta?.manifest).toEqual({
+        v: 1,
+        broadcasts: true,
+        estimable: false,
+      });
+    });
+  });
+
   describe('credit_balance', () => {
     it('routes to getBalance with caller address by default', async () => {
       mockGetBalance.mockResolvedValue({ balance: '1000', credits: '500' });
