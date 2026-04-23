@@ -168,6 +168,8 @@ export class LeaseMCPServer {
         // Additive: increases credit balance, doesn't replace or remove state.
         annotations: mutatingAnnotations('Fund billing credit account', {
           destructive: false,
+          // Each call adds funds and consumes gas; not idempotent.
+          idempotent: false,
         }),
         _meta: manifestMeta({
           broadcasts: true,

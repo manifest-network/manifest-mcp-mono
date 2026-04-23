@@ -184,6 +184,7 @@ describe('FredMCPServer', () => {
       expect(t?.annotations).toMatchObject({
         readOnlyHint: false,
         destructiveHint: false,
+        idempotentHint: false,
         openWorldHint: true,
       });
       expect(t?._meta?.manifest).toEqual({
@@ -213,6 +214,7 @@ describe('FredMCPServer', () => {
       expect(t?.annotations).toMatchObject({
         readOnlyHint: false,
         destructiveHint: true,
+        idempotentHint: false,
         openWorldHint: true,
       });
       expect(t?._meta?.manifest).toEqual({

@@ -252,6 +252,7 @@ describe('ChainMCPServer', () => {
       expect(t?.annotations).toMatchObject({
         readOnlyHint: false,
         destructiveHint: true,
+        idempotentHint: false,
         openWorldHint: true,
       });
       expect(t?._meta?.manifest).toEqual({

@@ -357,6 +357,8 @@ export class FredMCPServer {
         // replace any existing app's state.
         annotations: mutatingAnnotations('Deploy a containerized app', {
           destructive: false,
+          // Each call creates a new lease; never idempotent.
+          idempotent: false,
         }),
         _meta: manifestMeta({
           broadcasts: true,
@@ -410,6 +412,7 @@ export class FredMCPServer {
         // the app is already running.
         annotations: mutatingAnnotations('Restart a deployed app', {
           destructive: false,
+          idempotent: false,
         }),
         _meta: manifestMeta({
           broadcasts: true,
@@ -453,9 +456,11 @@ export class FredMCPServer {
             ),
         },
         // Destructive: replaces the running app's manifest. Even with the
-        // merge mode, prior config can be overwritten.
+        // merge mode, prior config can be overwritten. Not idempotent: each
+        // call consumes gas and creates a new release on the provider.
         annotations: mutatingAnnotations('Update a deployed app manifest', {
           destructive: true,
+          idempotent: false,
         }),
         _meta: manifestMeta({
           broadcasts: true,

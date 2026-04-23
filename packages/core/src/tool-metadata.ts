@@ -88,24 +88,29 @@ export function readOnlyAnnotations(
  * `_meta.manifest.broadcasts` and is intentionally decoupled (e.g.,
  * `request_faucet` mutates external state but the agent doesn't broadcast).
  *
- * `destructive` distinguishes additive mutations (deploy_app, fund_credit —
- * adding state) from destructive ones (close_lease, update_app, convert —
- * removing or replacing state). Per spec, `destructiveHint` is only
- * meaningful when `readOnlyHint=false`, which is always the case here.
+ * Both flags are required at the call site so that adding a new mutating
+ * tool can't silently inherit a wrong default — the spec's own default for
+ * `destructiveHint` is `true`, and our policy is to make every bit a
+ * deliberate decision rather than a lookup against a default.
  *
- * `idempotent` defaults to false; pass true only for tools where calling
- * twice with the same args has no extra effect (e.g., close_lease — a
- * repeated call on an already-closed lease leaves the same end state).
+ * - `destructive` distinguishes additive mutations (deploy_app, fund_credit
+ *   — adding state) from destructive ones (close_lease, update_app, convert
+ *   — removing or replacing state). Per spec, `destructiveHint` is only
+ *   meaningful when `readOnlyHint=false`, which is always the case here.
+ * - `idempotent` is true only for tools where calling twice with the same
+ *   args has no extra effect (e.g., close_lease — a repeated call on an
+ *   already-closed lease leaves the same end state). Most broadcasting
+ *   tools are not idempotent because they consume gas on every attempt.
  */
 export function mutatingAnnotations(
   title: string,
-  options: { destructive: boolean; idempotent?: boolean },
+  options: { destructive: boolean; idempotent: boolean },
 ): ToolAnnotations {
   return {
     title,
     readOnlyHint: false,
     destructiveHint: options.destructive,
-    idempotentHint: options.idempotent ?? false,
+    idempotentHint: options.idempotent,
     openWorldHint: true,
   };
 }
