@@ -82,18 +82,22 @@ export function readOnlyAnnotations(
 }
 
 /**
- * Standard annotations for a tool that broadcasts a transaction.
+ * Standard annotations for a mutating tool (`readOnlyHint: false`). This
+ * emits the spec-level "tool modifies state" shape; the Manifest-domain
+ * signal for "agent's wallet signs and broadcasts" lives in
+ * `_meta.manifest.broadcasts` and is intentionally decoupled (e.g.,
+ * `request_faucet` mutates external state but the agent doesn't broadcast).
  *
- * `destructive` distinguishes additive broadcasts (deploy_app, fund_credit —
+ * `destructive` distinguishes additive mutations (deploy_app, fund_credit —
  * adding state) from destructive ones (close_lease, update_app, convert —
- * removing or replacing state). Per spec, `destructiveHint` is only meaningful
- * when `readOnlyHint=false`, which is always the case here.
+ * removing or replacing state). Per spec, `destructiveHint` is only
+ * meaningful when `readOnlyHint=false`, which is always the case here.
  *
  * `idempotent` defaults to false; pass true only for tools where calling
- * twice with the same args has no extra effect (e.g., restart_app converges
- * to the same running state — debatable, see test for the rationale).
+ * twice with the same args has no extra effect (e.g., close_lease — a
+ * repeated call on an already-closed lease leaves the same end state).
  */
-export function broadcastAnnotations(
+export function mutatingAnnotations(
   title: string,
   options: { destructive: boolean; idempotent?: boolean },
 ): ToolAnnotations {

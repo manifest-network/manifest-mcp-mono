@@ -44,12 +44,12 @@ export {
 } from './server-utils.js';
 // Annotation helpers (used by chain/lease/fred/cosmwasm packages)
 export {
-  broadcastAnnotations,
   MANIFEST_TOOL_META_VERSION,
   type ManifestToolMeta,
   type ManifestToolMetaContainer,
   type ManifestToolMetaVersion,
   manifestMeta,
+  mutatingAnnotations,
   readOnlyAnnotations,
 } from './tool-metadata.js';
 export { type FundCreditsResult, fundCredits } from './tools/fundCredits.js';

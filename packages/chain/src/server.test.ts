@@ -195,8 +195,10 @@ describe('ChainMCPServer', () => {
         idempotentHint: true,
         openWorldHint: false,
       });
-      expect(t?._meta).toEqual({
-        manifest: { v: 1, broadcasts: false, estimable: false },
+      expect(t?._meta?.manifest).toEqual({
+        v: 1,
+        broadcasts: false,
+        estimable: false,
       });
     });
 
@@ -207,8 +209,10 @@ describe('ChainMCPServer', () => {
         idempotentHint: true,
         openWorldHint: true,
       });
-      expect(t?._meta).toEqual({
-        manifest: { v: 1, broadcasts: false, estimable: false },
+      expect(t?._meta?.manifest).toEqual({
+        v: 1,
+        broadcasts: false,
+        estimable: false,
       });
     });
 
@@ -219,8 +223,10 @@ describe('ChainMCPServer', () => {
         idempotentHint: true,
         openWorldHint: true,
       });
-      expect(t?._meta).toEqual({
-        manifest: { v: 1, broadcasts: false, estimable: false },
+      expect(t?._meta?.manifest).toEqual({
+        v: 1,
+        broadcasts: false,
+        estimable: false,
       });
     });
 
@@ -233,8 +239,10 @@ describe('ChainMCPServer', () => {
           idempotentHint: true,
           openWorldHint: false,
         });
-        expect(t?._meta, name).toEqual({
-          manifest: { v: 1, broadcasts: false, estimable: false },
+        expect(t?._meta?.manifest, name).toEqual({
+          v: 1,
+          broadcasts: false,
+          estimable: false,
         });
       }
     });
@@ -246,8 +254,10 @@ describe('ChainMCPServer', () => {
         destructiveHint: true,
         openWorldHint: true,
       });
-      expect(t?._meta).toEqual({
-        manifest: { v: 1, broadcasts: true, estimable: true },
+      expect(t?._meta?.manifest).toEqual({
+        v: 1,
+        broadcasts: true,
+        estimable: true,
       });
     });
 
@@ -261,10 +271,13 @@ describe('ChainMCPServer', () => {
       expect(t?.annotations).toMatchObject({
         readOnlyHint: false,
         destructiveHint: false,
+        idempotentHint: false,
         openWorldHint: true,
       });
-      expect(t?._meta).toEqual({
-        manifest: { v: 1, broadcasts: false, estimable: false },
+      expect(t?._meta?.manifest).toEqual({
+        v: 1,
+        broadcasts: false,
+        estimable: false,
       });
     });
   });

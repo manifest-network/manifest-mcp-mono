@@ -1,7 +1,6 @@
 import type { WalletProvider } from '@manifest-network/manifest-mcp-core';
 import {
   bigIntReplacer,
-  broadcastAnnotations,
   CosmosClientManager,
   createMnemonicServer,
   createValidatedConfig,
@@ -11,6 +10,7 @@ import {
   type ManifestMCPServerOptions,
   type MnemonicServerConfig,
   manifestMeta,
+  mutatingAnnotations,
   readOnlyAnnotations,
   VERSION,
   withErrorHandling,
@@ -355,7 +355,7 @@ export class FredMCPServer {
         },
         // Additive: creates a new lease and uploads a manifest. Does not
         // replace any existing app's state.
-        annotations: broadcastAnnotations('Deploy a containerized app', {
+        annotations: mutatingAnnotations('Deploy a containerized app', {
           destructive: false,
         }),
         _meta: manifestMeta({
@@ -408,7 +408,7 @@ export class FredMCPServer {
         // Additive: triggers a restart cycle without replacing config.
         // Not idempotent — each call triggers a fresh restart even when
         // the app is already running.
-        annotations: broadcastAnnotations('Restart a deployed app', {
+        annotations: mutatingAnnotations('Restart a deployed app', {
           destructive: false,
         }),
         _meta: manifestMeta({
@@ -454,7 +454,7 @@ export class FredMCPServer {
         },
         // Destructive: replaces the running app's manifest. Even with the
         // merge mode, prior config can be overwritten.
-        annotations: broadcastAnnotations('Update a deployed app manifest', {
+        annotations: mutatingAnnotations('Update a deployed app manifest', {
           destructive: true,
         }),
         _meta: manifestMeta({

@@ -2,7 +2,6 @@ import { fromUtf8, toUtf8 } from '@cosmjs/encoding';
 import type { WalletProvider } from '@manifest-network/manifest-mcp-core';
 import {
   bigIntReplacer,
-  broadcastAnnotations,
   CosmosClientManager,
   createValidatedConfig,
   jsonResponse,
@@ -12,6 +11,7 @@ import {
   type MnemonicServerConfig,
   MnemonicWalletProvider,
   manifestMeta,
+  mutatingAnnotations,
   readOnlyAnnotations,
   VERSION,
   withErrorHandling,
@@ -199,7 +199,7 @@ export class CosmwasmMCPServer {
         },
         // Destructive: one-way conversion. The MFX is consumed; you cannot
         // convert back to MFX from PWR through this tool.
-        annotations: broadcastAnnotations('Convert MFX to PWR (one-way)', {
+        annotations: mutatingAnnotations('Convert MFX to PWR (one-way)', {
           destructive: true,
         }),
         _meta: manifestMeta({

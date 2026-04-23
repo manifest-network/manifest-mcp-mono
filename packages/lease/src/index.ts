@@ -1,7 +1,6 @@
 import type { WalletProvider } from '@manifest-network/manifest-mcp-core';
 import {
   bigIntReplacer,
-  broadcastAnnotations,
   CosmosClientManager,
   createMnemonicServer,
   createValidatedConfig,
@@ -13,6 +12,7 @@ import {
   type ManifestMCPServerOptions,
   type MnemonicServerConfig,
   manifestMeta,
+  mutatingAnnotations,
   readOnlyAnnotations,
   stopApp,
   VERSION,
@@ -166,7 +166,7 @@ export class LeaseMCPServer {
             ),
         },
         // Additive: increases credit balance, doesn't replace or remove state.
-        annotations: broadcastAnnotations('Fund billing credit account', {
+        annotations: mutatingAnnotations('Fund billing credit account', {
           destructive: false,
         }),
         _meta: manifestMeta({
@@ -290,7 +290,7 @@ export class LeaseMCPServer {
         // Closing is permanent — the lease cannot be reopened.
         // Idempotent in the sense that closing a closed lease is a no-op,
         // but the state transition itself happens once.
-        annotations: broadcastAnnotations('Close a lease (permanent)', {
+        annotations: mutatingAnnotations('Close a lease (permanent)', {
           destructive: true,
           idempotent: true,
         }),

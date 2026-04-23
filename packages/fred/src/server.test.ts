@@ -171,8 +171,10 @@ describe('FredMCPServer', () => {
           idempotentHint: true,
           openWorldHint: true,
         });
-        expect(t?._meta, name).toEqual({
-          manifest: { v: 1, broadcasts: false, estimable: false },
+        expect(t?._meta?.manifest, name).toEqual({
+          v: 1,
+          broadcasts: false,
+          estimable: false,
         });
       }
     });
@@ -184,8 +186,10 @@ describe('FredMCPServer', () => {
         destructiveHint: false,
         openWorldHint: true,
       });
-      expect(t?._meta).toEqual({
-        manifest: { v: 1, broadcasts: true, estimable: false },
+      expect(t?._meta?.manifest).toEqual({
+        v: 1,
+        broadcasts: true,
+        estimable: false,
       });
     });
 
@@ -197,8 +201,10 @@ describe('FredMCPServer', () => {
         idempotentHint: false,
         openWorldHint: true,
       });
-      expect(t?._meta).toEqual({
-        manifest: { v: 1, broadcasts: true, estimable: false },
+      expect(t?._meta?.manifest).toEqual({
+        v: 1,
+        broadcasts: true,
+        estimable: false,
       });
     });
 
@@ -209,8 +215,10 @@ describe('FredMCPServer', () => {
         destructiveHint: true,
         openWorldHint: true,
       });
-      expect(t?._meta).toEqual({
-        manifest: { v: 1, broadcasts: true, estimable: false },
+      expect(t?._meta?.manifest).toEqual({
+        v: 1,
+        broadcasts: true,
+        estimable: false,
       });
     });
   });

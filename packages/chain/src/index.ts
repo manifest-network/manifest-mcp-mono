@@ -2,7 +2,6 @@ import type { WalletProvider } from '@manifest-network/manifest-mcp-core';
 import {
   type AccountInfo,
   bigIntReplacer,
-  broadcastAnnotations,
   CosmosClientManager,
   cosmosEstimateFee,
   cosmosQuery,
@@ -15,6 +14,7 @@ import {
   type ManifestMCPServerOptions,
   type MnemonicServerConfig,
   manifestMeta,
+  mutatingAnnotations,
   readOnlyAnnotations,
   VERSION,
   withErrorHandling,
@@ -171,14 +171,11 @@ export class ChainMCPServer {
               'Gas simulation multiplier override for this transaction. Defaults to the server-configured value (typically 1.5). Increase if a transaction fails with out-of-gas errors.',
             ),
         },
-        annotations: broadcastAnnotations(
-          'Broadcast a Cosmos SDK transaction',
-          {
-            // Generic tx — can carry destructive messages (close, redelegate
-            // away, gov vote, etc.). Treat conservatively as destructive.
-            destructive: true,
-          },
-        ),
+        annotations: mutatingAnnotations('Broadcast a Cosmos SDK transaction', {
+          // Generic tx — can carry destructive messages (close, redelegate
+          // away, gov vote, etc.). Treat conservatively as destructive.
+          destructive: true,
+        }),
         _meta: manifestMeta({
           broadcasts: true,
           estimable: true,
@@ -330,7 +327,7 @@ export class ChainMCPServer {
           // broadcasts; from the agent's perspective this is an HTTP request
           // that returns funds. Hence broadcasts=false. It does mutate
           // external state, so readOnlyHint is false.
-          annotations: broadcastAnnotations(
+          annotations: mutatingAnnotations(
             'Request testnet tokens from faucet',
             {
               destructive: false,

@@ -183,8 +183,10 @@ describe('LeaseMCPServer', () => {
           idempotentHint: true,
           openWorldHint: true,
         });
-        expect(t?._meta, name).toEqual({
-          manifest: { v: 1, broadcasts: false, estimable: false },
+        expect(t?._meta?.manifest, name).toEqual({
+          v: 1,
+          broadcasts: false,
+          estimable: false,
         });
       }
     });
@@ -196,20 +198,25 @@ describe('LeaseMCPServer', () => {
         destructiveHint: false,
         openWorldHint: true,
       });
-      expect(t?._meta).toEqual({
-        manifest: { v: 1, broadcasts: true, estimable: false },
+      expect(t?._meta?.manifest).toEqual({
+        v: 1,
+        broadcasts: true,
+        estimable: false,
       });
     });
 
-    it('close_lease broadcasts a destructive (permanent), fund-spending tx', async () => {
+    it('close_lease broadcasts a destructive, idempotent (closing a closed lease is a no-op), fund-spending tx', async () => {
       const t = (await listTools()).get('close_lease');
       expect(t?.annotations).toMatchObject({
         readOnlyHint: false,
         destructiveHint: true,
+        idempotentHint: true,
         openWorldHint: true,
       });
-      expect(t?._meta).toEqual({
-        manifest: { v: 1, broadcasts: true, estimable: false },
+      expect(t?._meta?.manifest).toEqual({
+        v: 1,
+        broadcasts: true,
+        estimable: false,
       });
     });
   });

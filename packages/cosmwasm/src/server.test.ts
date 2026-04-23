@@ -174,8 +174,10 @@ describe('CosmwasmMCPServer', () => {
         idempotentHint: true,
         openWorldHint: true,
       });
-      expect(t?._meta).toEqual({
-        manifest: { v: 1, broadcasts: false, estimable: false },
+      expect(t?._meta?.manifest).toEqual({
+        v: 1,
+        broadcasts: false,
+        estimable: false,
       });
     });
 
@@ -187,8 +189,10 @@ describe('CosmwasmMCPServer', () => {
         destructiveHint: true,
         openWorldHint: true,
       });
-      expect(t?._meta).toEqual({
-        manifest: { v: 1, broadcasts: true, estimable: false },
+      expect(t?._meta?.manifest).toEqual({
+        v: 1,
+        broadcasts: true,
+        estimable: false,
       });
     });
   });
