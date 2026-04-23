@@ -1,8 +1,10 @@
 import { existsSync } from 'node:fs';
 import {
   createValidatedConfig,
+  logger,
   ManifestMCPError,
   MnemonicWalletProvider,
+  parseLogLevel,
   sanitizeForLogging,
   type WalletProvider,
 } from '@manifest-network/manifest-mcp-core';
@@ -96,6 +98,8 @@ function resolveWallet(
  */
 export function bootstrap(cfg: BootstrapConfig): void {
   async function main(): Promise<void> {
+    logger.setLevel(parseLogLevel(process.env.LOG_LEVEL));
+
     const subcommand = process.argv[2];
     if (subcommand) {
       await handleSubcommand(cfg.cliName, cfg.label, subcommand);
