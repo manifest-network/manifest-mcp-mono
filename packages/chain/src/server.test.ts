@@ -143,6 +143,132 @@ describe('ChainMCPServer', () => {
     });
   });
 
+  // The annotations + _meta.manifest matrix is the contract the
+  // manifest-agent plugin relies on to derive its broadcast policy. Pin it
+  // explicitly per tool: a change here is a downstream-visible change and
+  // should require updating the plugin in lockstep.
+  describe('tool annotations + _meta.manifest', () => {
+    async function listTools(faucetUrl?: string) {
+      const server = new ChainMCPServer({
+        config: makeMockConfig(),
+        walletProvider: makeMockWallet(),
+        faucetUrl,
+      });
+      const [clientTransport, serverTransport] =
+        InMemoryTransport.createLinkedPair();
+      activeTransports.push(clientTransport, serverTransport);
+      const client = new Client({ name: 'test-client', version: '1.0.0' });
+      await server.getServer().connect(serverTransport);
+      await client.connect(clientTransport);
+      try {
+        const result = await client.listTools();
+        return new Map(result.tools.map((t) => [t.name, t]));
+      } finally {
+        await client.close();
+      }
+    }
+
+    it('every tool has annotations.title and _meta.manifest at the current version', async () => {
+      // Safety net: when a new tool is registered, this test fails until the
+      // contract metadata is added. Per-tool tests below pin the values.
+      // Includes the conditional faucet tool by passing faucetUrl.
+      const tools = await listTools('https://faucet.test.com');
+      expect(tools.size).toBeGreaterThan(0);
+      for (const [name, tool] of tools) {
+        expect(tool.annotations?.title, `${name} annotations.title`).toEqual(
+          expect.any(String),
+        );
+        expect(tool._meta, `${name} _meta`).toMatchObject({
+          manifest: {
+            v: 1,
+            broadcasts: expect.any(Boolean),
+            estimable: expect.any(Boolean),
+          },
+        });
+      }
+    });
+
+    it('get_account_info is read-only and local (no openWorld)', async () => {
+      const t = (await listTools()).get('get_account_info');
+      expect(t?.annotations).toMatchObject({
+        readOnlyHint: true,
+        idempotentHint: true,
+        openWorldHint: false,
+      });
+      expect(t?._meta).toEqual({
+        manifest: { v: 1, broadcasts: false, estimable: false },
+      });
+    });
+
+    it('cosmos_query is read-only and openWorld', async () => {
+      const t = (await listTools()).get('cosmos_query');
+      expect(t?.annotations).toMatchObject({
+        readOnlyHint: true,
+        idempotentHint: true,
+        openWorldHint: true,
+      });
+      expect(t?._meta).toEqual({
+        manifest: { v: 1, broadcasts: false, estimable: false },
+      });
+    });
+
+    it('cosmos_estimate_fee is read-only', async () => {
+      const t = (await listTools()).get('cosmos_estimate_fee');
+      expect(t?.annotations).toMatchObject({
+        readOnlyHint: true,
+        idempotentHint: true,
+        openWorldHint: true,
+      });
+      expect(t?._meta).toEqual({
+        manifest: { v: 1, broadcasts: false, estimable: false },
+      });
+    });
+
+    it('list_modules and list_module_subcommands are read-only and local', async () => {
+      const tools = await listTools();
+      for (const name of ['list_modules', 'list_module_subcommands'] as const) {
+        const t = tools.get(name);
+        expect(t?.annotations, name).toMatchObject({
+          readOnlyHint: true,
+          idempotentHint: true,
+          openWorldHint: false,
+        });
+        expect(t?._meta, name).toEqual({
+          manifest: { v: 1, broadcasts: false, estimable: false },
+        });
+      }
+    });
+
+    it('cosmos_tx is the one estimable broadcaster (destructive, fund-spending)', async () => {
+      const t = (await listTools()).get('cosmos_tx');
+      expect(t?.annotations).toMatchObject({
+        readOnlyHint: false,
+        destructiveHint: true,
+        openWorldHint: true,
+      });
+      expect(t?._meta).toEqual({
+        manifest: { v: 1, broadcasts: true, estimable: true },
+      });
+    });
+
+    it('request_faucet mutates external state but agent does not broadcast or pay', async () => {
+      // Faucet operator's wallet signs and broadcasts; from the agent's
+      // perspective the call is an HTTP request returning funds. Hence
+      // readOnlyHint=false (state changes) but broadcasts=false.
+      const t = (await listTools('https://faucet.test.com')).get(
+        'request_faucet',
+      );
+      expect(t?.annotations).toMatchObject({
+        readOnlyHint: false,
+        destructiveHint: false,
+        openWorldHint: true,
+      });
+      expect(t?._meta).toEqual({
+        manifest: { v: 1, broadcasts: false, estimable: false },
+      });
+    });
+  });
+
   describe('handleToolCall dispatch', () => {
     it('routes get_account_info to wallet.getAddress()', async () => {
       const server = new ChainMCPServer({

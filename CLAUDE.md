@@ -63,6 +63,15 @@ Four MCP servers bridging AI assistants to Cosmos SDK blockchains (Manifest Netw
 
 `ManifestMCPError` with `ManifestMCPErrorCode` enum (14 codes, 6 categories). Error responses are sanitized via `sanitizeForLogging()` which redacts sensitive fields (mnemonics, passwords, keys, tokens). Retry logic (`retry.ts`) classifies errors as transient vs permanent -- only transient errors (connection, 5xx, 429) are retried.
 
+### Tool annotations and `_meta.manifest`
+
+Every `registerTool` call across the four MCP servers must pass two extra fields beyond `description` and `inputSchema`:
+
+- **`annotations`** -- standard MCP `ToolAnnotations` (`title`, `readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`). Built via the helpers `readOnlyAnnotations(title)` or `broadcastAnnotations(title, { destructive, idempotent? })` exported from core (`tool-metadata.ts`). These are spec-blessed UX hints generic MCP clients consume.
+- **`_meta`** -- a `manifestMeta({ broadcasts, estimable })` container under the `manifest` namespace. The helper injects a leading `v: 1` schema version so plugin readers can branch safely as fields evolve. These flags express Manifest-specific signals the standard annotations can't (e.g., `request_faucet` is `readOnlyHint: false` because it mutates external state, but `broadcasts: false` because the agent's wallet doesn't sign). The `manifest-agent` plugin reads `_meta.manifest` to derive its broadcast policy.
+
+Both are advisory hints, not enforcement. The plugin's `PreToolUse` hook regex is the security boundary. The annotation matrix is pinned per tool by `describe('tool annotations + _meta.manifest', ...)` blocks in each `server.test.ts`; treat those tests as the public contract -- changing them is downstream-visible and requires a coordinated plugin update.
+
 ## Conventions
 
 - ESM-only (`"type": "module"`). Use `.js` extensions in imports (e.g., `'./client.js'`).

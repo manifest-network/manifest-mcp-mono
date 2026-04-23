@@ -1,6 +1,7 @@
 import type { WalletProvider } from '@manifest-network/manifest-mcp-core';
 import {
   bigIntReplacer,
+  broadcastAnnotations,
   CosmosClientManager,
   createMnemonicServer,
   createValidatedConfig,
@@ -9,6 +10,8 @@ import {
   ManifestMCPErrorCode,
   type ManifestMCPServerOptions,
   type MnemonicServerConfig,
+  manifestMeta,
+  readOnlyAnnotations,
   VERSION,
   withErrorHandling,
 } from '@manifest-network/manifest-mcp-core';
@@ -139,6 +142,11 @@ export class FredMCPServer {
       {
         description:
           'Browse available cloud providers and service tiers with live health checks. Use this before deploy_app to see which providers are online and what SKU sizes (e.g. docker-micro, docker-small) are available with pricing.',
+        annotations: readOnlyAnnotations('Browse providers and SKUs'),
+        _meta: manifestMeta({
+          broadcasts: false,
+          estimable: false,
+        }),
       },
       withErrorHandling('browse_catalog', async () => {
         await this.clientManager.acquireRateLimit();
@@ -160,6 +168,11 @@ export class FredMCPServer {
             .uuid()
             .describe('The lease UUID of the app to check'),
         },
+        annotations: readOnlyAnnotations('Get deployed app status'),
+        _meta: manifestMeta({
+          broadcasts: false,
+          estimable: false,
+        }),
       },
       withErrorHandling('app_status', async (args) => {
         const leaseUuid = args.lease_uuid;
@@ -195,6 +208,11 @@ export class FredMCPServer {
             .optional()
             .describe('Number of recent log lines to retrieve'),
         },
+        annotations: readOnlyAnnotations('Get container logs'),
+        _meta: manifestMeta({
+          broadcasts: false,
+          estimable: false,
+        }),
       },
       withErrorHandling('get_logs', async (args) => {
         const leaseUuid = args.lease_uuid;
@@ -335,6 +353,15 @@ export class FredMCPServer {
               'Gas simulation multiplier override for this transaction. Defaults to the server-configured value (typically 1.5). Increase if a transaction fails with out-of-gas errors.',
             ),
         },
+        // Additive: creates a new lease and uploads a manifest. Does not
+        // replace any existing app's state.
+        annotations: broadcastAnnotations('Deploy a containerized app', {
+          destructive: false,
+        }),
+        _meta: manifestMeta({
+          broadcasts: true,
+          estimable: false,
+        }),
       },
       withErrorHandling('deploy_app', async (args) => {
         const result = await deployApp(
@@ -378,6 +405,16 @@ export class FredMCPServer {
             .uuid()
             .describe('The lease UUID of the app to restart'),
         },
+        // Additive: triggers a restart cycle without replacing config.
+        // Not idempotent — each call triggers a fresh restart even when
+        // the app is already running.
+        annotations: broadcastAnnotations('Restart a deployed app', {
+          destructive: false,
+        }),
+        _meta: manifestMeta({
+          broadcasts: true,
+          estimable: false,
+        }),
       },
       withErrorHandling('restart_app', async (args) => {
         const leaseUuid = args.lease_uuid;
@@ -415,6 +452,15 @@ export class FredMCPServer {
               'The current manifest JSON. When provided, the new manifest is merged over the existing one (env, ports, labels merged; other fields carried forward if not in new).',
             ),
         },
+        // Destructive: replaces the running app's manifest. Even with the
+        // merge mode, prior config can be overwritten.
+        annotations: broadcastAnnotations('Update a deployed app manifest', {
+          destructive: true,
+        }),
+        _meta: manifestMeta({
+          broadcasts: true,
+          estimable: false,
+        }),
       },
       withErrorHandling('update_app', async (args) => {
         const manifest = args.manifest;
@@ -464,6 +510,11 @@ export class FredMCPServer {
             .uuid()
             .describe('The lease UUID of the app to diagnose'),
         },
+        annotations: readOnlyAnnotations('Get app provision diagnostics'),
+        _meta: manifestMeta({
+          broadcasts: false,
+          estimable: false,
+        }),
       },
       withErrorHandling('app_diagnostics', async (args) => {
         const leaseUuid = args.lease_uuid;
@@ -514,6 +565,11 @@ export class FredMCPServer {
             .uuid()
             .describe('The lease UUID of the app to get release history for'),
         },
+        annotations: readOnlyAnnotations('Get app release history'),
+        _meta: manifestMeta({
+          broadcasts: false,
+          estimable: false,
+        }),
       },
       withErrorHandling('app_releases', async (args) => {
         const leaseUuid = args.lease_uuid;

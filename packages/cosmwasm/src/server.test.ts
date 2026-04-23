@@ -126,6 +126,73 @@ describe('CosmwasmMCPServer', () => {
     });
   });
 
+  // The annotations + _meta.manifest matrix is the contract the
+  // manifest-agent plugin relies on to derive its broadcast policy. Pin it
+  // explicitly per tool: a change here is a downstream-visible change and
+  // should require updating the plugin in lockstep.
+  describe('tool annotations + _meta.manifest', () => {
+    async function listTools() {
+      const server = makeServer();
+      const [clientTransport, serverTransport] =
+        InMemoryTransport.createLinkedPair();
+      activeTransports.push(clientTransport, serverTransport);
+      const client = new Client({ name: 'test-client', version: '1.0.0' });
+      await server.getServer().connect(serverTransport);
+      await client.connect(clientTransport);
+      try {
+        const result = await client.listTools();
+        return new Map(result.tools.map((t) => [t.name, t]));
+      } finally {
+        await client.close();
+      }
+    }
+
+    it('every tool has annotations.title and _meta.manifest at the current version', async () => {
+      // Safety net: when a new tool is registered, this test fails until the
+      // contract metadata is added. Per-tool tests below pin the values.
+      const tools = await listTools();
+      expect(tools.size).toBeGreaterThan(0);
+      for (const [name, tool] of tools) {
+        expect(tool.annotations?.title, `${name} annotations.title`).toEqual(
+          expect.any(String),
+        );
+        expect(tool._meta, `${name} _meta`).toMatchObject({
+          manifest: {
+            v: 1,
+            broadcasts: expect.any(Boolean),
+            estimable: expect.any(Boolean),
+          },
+        });
+      }
+    });
+
+    it('get_mfx_to_pwr_rate is read-only', async () => {
+      const tools = await listTools();
+      const t = tools.get('get_mfx_to_pwr_rate');
+      expect(t?.annotations).toMatchObject({
+        readOnlyHint: true,
+        idempotentHint: true,
+        openWorldHint: true,
+      });
+      expect(t?._meta).toEqual({
+        manifest: { v: 1, broadcasts: false, estimable: false },
+      });
+    });
+
+    it('convert_mfx_to_pwr broadcasts a destructive, fund-spending tx', async () => {
+      const tools = await listTools();
+      const t = tools.get('convert_mfx_to_pwr');
+      expect(t?.annotations).toMatchObject({
+        readOnlyHint: false,
+        destructiveHint: true,
+        openWorldHint: true,
+      });
+      expect(t?._meta).toEqual({
+        manifest: { v: 1, broadcasts: true, estimable: false },
+      });
+    });
+  });
+
   describe('get_mfx_to_pwr_rate', () => {
     it('returns rate config without preview when no amount given', async () => {
       mockConfigResponse();

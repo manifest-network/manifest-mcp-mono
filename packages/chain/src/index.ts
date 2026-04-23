@@ -2,6 +2,7 @@ import type { WalletProvider } from '@manifest-network/manifest-mcp-core';
 import {
   type AccountInfo,
   bigIntReplacer,
+  broadcastAnnotations,
   CosmosClientManager,
   cosmosEstimateFee,
   cosmosQuery,
@@ -13,6 +14,8 @@ import {
   jsonResponse,
   type ManifestMCPServerOptions,
   type MnemonicServerConfig,
+  manifestMeta,
+  readOnlyAnnotations,
   VERSION,
   withErrorHandling,
 } from '@manifest-network/manifest-mcp-core';
@@ -77,6 +80,13 @@ export class ChainMCPServer {
       {
         description:
           'Get the wallet address for the configured key. Use this to check which account is active.',
+        annotations: readOnlyAnnotations('Get agent wallet address', {
+          openWorld: false,
+        }),
+        _meta: manifestMeta({
+          broadcasts: false,
+          estimable: false,
+        }),
       },
       withErrorHandling('get_account_info', async () => {
         const address = await this.walletProvider.getAddress();
@@ -109,6 +119,11 @@ export class ChainMCPServer {
               'Additional arguments as an array of strings (e.g., ["<address>", "umfx"] for bank balance). Use array to preserve arguments with spaces.',
             ),
         },
+        annotations: readOnlyAnnotations('Run a Cosmos SDK query'),
+        _meta: manifestMeta({
+          broadcasts: false,
+          estimable: false,
+        }),
       },
       withErrorHandling('cosmos_query', async (args) => {
         const result = await cosmosQuery(
@@ -156,6 +171,18 @@ export class ChainMCPServer {
               'Gas simulation multiplier override for this transaction. Defaults to the server-configured value (typically 1.5). Increase if a transaction fails with out-of-gas errors.',
             ),
         },
+        annotations: broadcastAnnotations(
+          'Broadcast a Cosmos SDK transaction',
+          {
+            // Generic tx — can carry destructive messages (close, redelegate
+            // away, gov vote, etc.). Treat conservatively as destructive.
+            destructive: true,
+          },
+        ),
+        _meta: manifestMeta({
+          broadcasts: true,
+          estimable: true,
+        }),
       },
       withErrorHandling('cosmos_tx', async (args) => {
         const result = await cosmosTx(
@@ -204,6 +231,11 @@ export class ChainMCPServer {
               'Gas simulation multiplier override for this estimation. Defaults to the server-configured value (typically 1.5).',
             ),
         },
+        annotations: readOnlyAnnotations('Estimate Cosmos SDK transaction fee'),
+        _meta: manifestMeta({
+          broadcasts: false,
+          estimable: false,
+        }),
       },
       withErrorHandling('cosmos_estimate_fee', async (args) => {
         const result = await cosmosEstimateFee(
@@ -225,6 +257,14 @@ export class ChainMCPServer {
       {
         description:
           'List all available query and transaction modules. Call this before using cosmos_query or cosmos_tx to discover what modules are available.',
+        // Backed by a static in-process registry (modules.ts), no chain RPC.
+        annotations: readOnlyAnnotations('List Cosmos SDK modules', {
+          openWorld: false,
+        }),
+        _meta: manifestMeta({
+          broadcasts: false,
+          estimable: false,
+        }),
       },
       withErrorHandling('list_modules', async () => {
         const modules = getAvailableModules();
@@ -246,6 +286,17 @@ export class ChainMCPServer {
             .string()
             .describe('The module name (e.g., "bank", "staking")'),
         },
+        // Backed by a static in-process registry (modules.ts), no chain RPC.
+        annotations: readOnlyAnnotations(
+          'List subcommands for a Cosmos SDK module',
+          {
+            openWorld: false,
+          },
+        ),
+        _meta: manifestMeta({
+          broadcasts: false,
+          estimable: false,
+        }),
       },
       withErrorHandling('list_module_subcommands', async (args) => {
         const subcommands = getModuleSubcommands(args.type, args.module);
@@ -275,6 +326,21 @@ export class ChainMCPServer {
                 'Specific denom to request (e.g. "umfx"). If omitted, requests all available denoms.',
               ),
           },
+          // The faucet operator's wallet (not the agent's) signs and
+          // broadcasts; from the agent's perspective this is an HTTP request
+          // that returns funds. Hence broadcasts=false. It does mutate
+          // external state, so readOnlyHint is false.
+          annotations: broadcastAnnotations(
+            'Request testnet tokens from faucet',
+            {
+              destructive: false,
+              idempotent: false,
+            },
+          ),
+          _meta: manifestMeta({
+            broadcasts: false,
+            estimable: false,
+          }),
         },
         withErrorHandling('request_faucet', async (args) => {
           const address = await this.walletProvider.getAddress();
