@@ -8,8 +8,11 @@ import { routeBillingQuery } from './queries/billing.js';
 import { routeDistributionQuery } from './queries/distribution.js';
 import { routeGovQuery } from './queries/gov.js';
 import { routeGroupQuery } from './queries/group.js';
+import { routeIbcTransferQuery } from './queries/ibc-transfer.js';
+import { routePoAQuery } from './queries/poa.js';
 import { routeSkuQuery } from './queries/sku.js';
 import { routeStakingQuery } from './queries/staking.js';
+import { routeTokenfactoryQuery } from './queries/tokenfactory.js';
 import { routeWasmQuery } from './queries/wasm.js';
 // Import transaction handlers
 import {
@@ -30,14 +33,23 @@ import {
   routeGroupTransaction,
 } from './transactions/group.js';
 import {
+  buildIbcTransferMessages,
+  routeIbcTransferTransaction,
+} from './transactions/ibc-transfer.js';
+import {
   buildManifestMessages,
   routeManifestTransaction,
 } from './transactions/manifest.js';
+import { buildPoAMessages, routePoATransaction } from './transactions/poa.js';
 import { buildSkuMessages, routeSkuTransaction } from './transactions/sku.js';
 import {
   buildStakingMessages,
   routeStakingTransaction,
 } from './transactions/staking.js';
+import {
+  buildTokenfactoryMessages,
+  routeTokenfactoryTransaction,
+} from './transactions/tokenfactory.js';
 import {
   buildWasmMessages,
   routeWasmTransaction,
@@ -416,6 +428,62 @@ const QUERY_MODULES: QueryModuleRegistry = {
       { name: 'groups', description: 'Query all groups', args: '[--limit N]' },
     ],
   },
+  poa: {
+    description:
+      'Querying commands for the Proof-of-Authority (strangelove_ventures) module',
+    handler: routePoAQuery,
+    subcommands: [
+      { name: 'authority', description: 'Query the PoA module authority' },
+      {
+        name: 'consensus-power',
+        description: 'Query the consensus power of a validator',
+        args: '<validator-address>',
+      },
+      {
+        name: 'pending-validators',
+        description: 'Query validators pending acceptance into the set',
+      },
+    ],
+  },
+  tokenfactory: {
+    description: 'Querying commands for the tokenfactory (osmosis) module',
+    handler: routeTokenfactoryQuery,
+    subcommands: [
+      { name: 'params', description: 'Query tokenfactory module parameters' },
+      {
+        name: 'denom-authority-metadata',
+        description: 'Query authority metadata for a denom',
+        args: '<denom>',
+      },
+      {
+        name: 'denoms-from-creator',
+        description: 'Query denoms created by an address',
+        args: '<creator-address>',
+      },
+      {
+        name: 'denoms-from-admin',
+        description: 'Query denoms administered by an address',
+        args: '<admin-address>',
+      },
+    ],
+  },
+  'ibc-transfer': {
+    description: 'Querying commands for the IBC fungible-token transfer module',
+    handler: routeIbcTransferQuery,
+    subcommands: [
+      { name: 'params', description: 'Query IBC transfer module parameters' },
+      {
+        name: 'denom-trace',
+        description: 'Query a denom trace by hash (without the "ibc/" prefix)',
+        args: '<hash>',
+      },
+      {
+        name: 'denom-traces',
+        description: 'Query all denom traces',
+        args: '[--limit N]',
+      },
+    ],
+  },
   wasm: {
     description: 'Querying commands for the CosmWasm wasm module',
     handler: routeWasmQuery,
@@ -726,6 +794,98 @@ const TX_MODULES: TxModuleRegistry = {
         args: '<proposal-id>',
       },
       { name: 'leave-group', description: 'Leave a group', args: '<group-id>' },
+    ],
+  },
+  poa: {
+    description:
+      'Proof-of-Authority (strangelove_ventures) transaction subcommands',
+    handler: routePoATransaction,
+    msgBuilder: buildPoAMessages,
+    subcommands: [
+      {
+        name: 'set-power',
+        description: "Set a validator's consensus power",
+        args: '<validator-address> <power> [--unsafe]',
+      },
+      {
+        name: 'remove-validator',
+        description: 'Remove an active validator from the set',
+        args: '<validator-address>',
+      },
+      {
+        name: 'remove-pending',
+        description: 'Remove a pending validator from the queue',
+        args: '<validator-address>',
+      },
+      {
+        name: 'update-staking-params',
+        description:
+          'Update x/staking module parameters (governance). Params provided as JSON.',
+        args: '<params-json>',
+      },
+      {
+        name: 'create-validator',
+        description:
+          'Create a new PoA validator. Message body provided as JSON (see MsgCreateValidator).',
+        args: '<msg-json>',
+      },
+    ],
+  },
+  tokenfactory: {
+    description: 'Tokenfactory (osmosis) transaction subcommands',
+    handler: routeTokenfactoryTransaction,
+    msgBuilder: buildTokenfactoryMessages,
+    subcommands: [
+      {
+        name: 'create-denom',
+        description:
+          'Create a new factory denom (factory/<creator>/<subdenom>)',
+        args: '<subdenom>',
+      },
+      {
+        name: 'mint',
+        description: 'Mint factory-denom tokens to an address',
+        args: '<amount> <mint-to-address> (e.g., 1000000factory/addr/sub manifest1abc...)',
+      },
+      {
+        name: 'burn',
+        description: 'Burn factory-denom tokens from an address',
+        args: '<amount> <burn-from-address>',
+      },
+      {
+        name: 'change-admin',
+        description: 'Change the admin of a factory denom',
+        args: '<denom> <new-admin>',
+      },
+      {
+        name: 'set-denom-metadata',
+        description: 'Set bank metadata for a factory denom (metadata as JSON)',
+        args: '<metadata-json>',
+      },
+      {
+        name: 'force-transfer',
+        description:
+          'Force-transfer factory-denom tokens between two addresses',
+        args: '<amount> <from-address> <to-address>',
+      },
+      {
+        name: 'update-params',
+        description:
+          'Update tokenfactory module parameters (governance). Params as JSON.',
+        args: '<params-json>',
+      },
+    ],
+  },
+  'ibc-transfer': {
+    description: 'IBC fungible-token transfer transaction subcommands',
+    handler: routeIbcTransferTransaction,
+    msgBuilder: buildIbcTransferMessages,
+    subcommands: [
+      {
+        name: 'transfer',
+        description: 'Transfer tokens over IBC (ICS-20)',
+        args: '<source-port> <source-channel> <receiver> <amount> [--memo <text>] [--timeout-height <rev>-<height>] [--timeout-timestamp <ns>]',
+      },
     ],
   },
   wasm: {

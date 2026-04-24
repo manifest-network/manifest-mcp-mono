@@ -10,11 +10,20 @@ export {
 export { buildGovMessages, routeGovTransaction } from './gov.js';
 export { buildGroupMessages, routeGroupTransaction } from './group.js';
 export {
+  buildIbcTransferMessages,
+  routeIbcTransferTransaction,
+} from './ibc-transfer.js';
+export {
   buildManifestMessages,
   routeManifestTransaction,
 } from './manifest.js';
+export { buildPoAMessages, routePoATransaction } from './poa.js';
 export { buildSkuMessages, routeSkuTransaction } from './sku.js';
 export { buildStakingMessages, routeStakingTransaction } from './staking.js';
+export {
+  buildTokenfactoryMessages,
+  routeTokenfactoryTransaction,
+} from './tokenfactory.js';
 export type { ParsedLeaseItem } from './utils.js';
 export {
   buildTxResult,

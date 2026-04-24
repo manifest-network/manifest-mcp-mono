@@ -11,12 +11,17 @@ import {
   cosmwasmAminoConverters,
   cosmwasm as cosmwasmNs,
   cosmwasmProtoRegistry,
+  ibcAminoConverters,
+  ibc as ibcNs,
+  ibcProtoRegistry,
   liftedinit,
   liftedinitAminoConverters,
   liftedinitProtoRegistry,
   osmosisAminoConverters,
+  osmosis as osmosisNs,
   osmosisProtoRegistry,
   strangeloveVenturesAminoConverters,
+  strangelove_ventures as strangeloveVenturesNs,
   strangeloveVenturesProtoRegistry,
 } from '@manifest-network/manifestjs';
 import { RateLimiter } from 'limiter';
@@ -35,15 +40,28 @@ import {
 } from './types.js';
 
 // Combined query client type: liftedinit modules (cosmos + billing/manifest/sku) + cosmwasm
-// Uses Pick to extract only the cosmwasm namespace, avoiding conflicts with overlapping cosmos types.
+// + strangelove_ventures (poa) + osmosis (tokenfactory) + ibc (transfer, channel, client, connection).
+// Uses Pick to extract only each factory's unique namespace, avoiding conflicts with overlapping cosmos types.
 type LiftedinitQueryClient = Awaited<
   ReturnType<typeof liftedinit.ClientFactory.createRPCQueryClient>
 >;
 type CosmwasmQueryClient = Awaited<
   ReturnType<typeof cosmwasmNs.ClientFactory.createRPCQueryClient>
 >;
+type StrangeloveVenturesQueryClient = Awaited<
+  ReturnType<typeof strangeloveVenturesNs.ClientFactory.createRPCQueryClient>
+>;
+type OsmosisQueryClient = Awaited<
+  ReturnType<typeof osmosisNs.ClientFactory.createRPCQueryClient>
+>;
+type IbcQueryClient = Awaited<
+  ReturnType<typeof ibcNs.ClientFactory.createRPCQueryClient>
+>;
 export type ManifestQueryClient = LiftedinitQueryClient &
-  Pick<CosmwasmQueryClient, 'cosmwasm'>;
+  Pick<CosmwasmQueryClient, 'cosmwasm'> &
+  Pick<StrangeloveVenturesQueryClient, 'strangelove_ventures'> &
+  Pick<OsmosisQueryClient, 'osmosis'> &
+  Pick<IbcQueryClient, 'ibc'>;
 
 /**
  * Extract the registry type expected by SigningStargateClient.connectWithSigner.
@@ -74,6 +92,7 @@ function getSigningManifestClientOptions() {
     ...strangeloveVenturesProtoRegistry,
     ...osmosisProtoRegistry,
     ...cosmwasmProtoRegistry,
+    ...ibcProtoRegistry,
   ]);
 
   const aminoTypes = new AminoTypes({
@@ -82,6 +101,7 @@ function getSigningManifestClientOptions() {
     ...strangeloveVenturesAminoConverters,
     ...osmosisAminoConverters,
     ...cosmwasmAminoConverters,
+    ...ibcAminoConverters,
   });
 
   return { registry, aminoTypes };
@@ -220,20 +240,38 @@ export class CosmosClientManager {
             },
           );
         } else if (this.config.rpcUrl) {
-          // Use RPC: merge liftedinit + cosmwasm namespaces into a single client
+          // Use RPC: merge liftedinit + cosmwasm + strangelove_ventures + osmosis + ibc namespaces
           client = await withRetry(
             async () => {
-              const [liftedinitClient, cosmwasmClient] = await Promise.all([
+              const [
+                liftedinitClient,
+                cosmwasmClient,
+                strangeloveClient,
+                osmosisClient,
+                ibcClient,
+              ] = await Promise.all([
                 liftedinit.ClientFactory.createRPCQueryClient({
                   rpcEndpoint: this.config.rpcUrl!,
                 }),
                 cosmwasmNs.ClientFactory.createRPCQueryClient({
                   rpcEndpoint: this.config.rpcUrl!,
                 }),
+                strangeloveVenturesNs.ClientFactory.createRPCQueryClient({
+                  rpcEndpoint: this.config.rpcUrl!,
+                }),
+                osmosisNs.ClientFactory.createRPCQueryClient({
+                  rpcEndpoint: this.config.rpcUrl!,
+                }),
+                ibcNs.ClientFactory.createRPCQueryClient({
+                  rpcEndpoint: this.config.rpcUrl!,
+                }),
               ]);
               return {
                 ...liftedinitClient,
                 cosmwasm: cosmwasmClient.cosmwasm,
+                strangelove_ventures: strangeloveClient.strangelove_ventures,
+                osmosis: osmosisClient.osmosis,
+                ibc: ibcClient.ibc,
               } as ManifestQueryClient;
             },
             {

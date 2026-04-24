@@ -2,7 +2,10 @@ import { toBase64, toUtf8 } from '@cosmjs/encoding';
 import {
   cosmos,
   cosmwasm as cosmwasmNs,
+  ibc as ibcNs,
   liftedinit,
+  osmosis as osmosisNs,
+  strangelove_ventures as strangeloveVenturesNs,
 } from '@manifest-network/manifestjs';
 import type { ManifestQueryClient } from './client.js';
 import { logger } from './logger.js';
@@ -169,10 +172,20 @@ export async function createLCDQueryClient(
   let cosmwasmLcd: Awaited<
     ReturnType<typeof cosmwasmNs.ClientFactory.createLCDClient>
   >;
+  let strangeloveLcd: Awaited<
+    ReturnType<typeof strangeloveVenturesNs.ClientFactory.createLCDClient>
+  >;
+  let osmosisLcd: Awaited<
+    ReturnType<typeof osmosisNs.ClientFactory.createLCDClient>
+  >;
+  let ibcLcd: Awaited<ReturnType<typeof ibcNs.ClientFactory.createLCDClient>>;
   try {
-    [lcd, cosmwasmLcd] = await Promise.all([
+    [lcd, cosmwasmLcd, strangeloveLcd, osmosisLcd, ibcLcd] = await Promise.all([
       liftedinit.ClientFactory.createLCDClient({ restEndpoint }),
       cosmwasmNs.ClientFactory.createLCDClient({ restEndpoint }),
+      strangeloveVenturesNs.ClientFactory.createLCDClient({ restEndpoint }),
+      osmosisNs.ClientFactory.createLCDClient({ restEndpoint }),
+      ibcNs.ClientFactory.createLCDClient({ restEndpoint }),
     ]);
   } catch (error) {
     throw new ManifestMCPError(
@@ -261,6 +274,46 @@ export async function createLCDQueryClient(
             patchWasmQueryData(cosmwasmLcd.cosmwasm.wasm.v1),
             cosmwasmNs.wasm.v1,
           ),
+        },
+      },
+      strangelove_ventures: {
+        poa: {
+          v1: adaptModule(
+            strangeloveLcd.strangelove_ventures.poa.v1,
+            strangeloveVenturesNs.poa.v1,
+          ),
+        },
+      },
+      osmosis: {
+        tokenfactory: {
+          v1beta1: adaptModule(
+            osmosisLcd.osmosis.tokenfactory.v1beta1,
+            osmosisNs.tokenfactory.v1beta1,
+          ),
+        },
+      },
+      ibc: {
+        applications: {
+          transfer: {
+            v1: adaptModule(
+              ibcLcd.ibc.applications.transfer.v1,
+              ibcNs.applications.transfer.v1,
+            ),
+          },
+        },
+        core: {
+          channel: {
+            v1: adaptModule(ibcLcd.ibc.core.channel.v1, ibcNs.core.channel.v1),
+          },
+          client: {
+            v1: adaptModule(ibcLcd.ibc.core.client.v1, ibcNs.core.client.v1),
+          },
+          connection: {
+            v1: adaptModule(
+              ibcLcd.ibc.core.connection.v1,
+              ibcNs.core.connection.v1,
+            ),
+          },
         },
       },
     } as ManifestQueryClient;

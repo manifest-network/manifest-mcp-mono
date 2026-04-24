@@ -61,6 +61,11 @@ import type {
 } from '@manifest-network/manifestjs/dist/codegen/cosmwasm/wasm/v1/types.js';
 // Protobuf Any type for polymorphic account types
 import type { Any } from '@manifest-network/manifestjs/dist/codegen/google/protobuf/any.js';
+// IBC transfer types
+import type {
+  DenomTrace,
+  Params as IbcTransferParams,
+} from '@manifest-network/manifestjs/dist/codegen/ibc/applications/transfer/v1/transfer.js';
 // Billing credit estimate response
 import type { QueryCreditEstimateResponse } from '@manifest-network/manifestjs/dist/codegen/liftedinit/billing/v1/query.js';
 import type { LeaseItemInput } from '@manifest-network/manifestjs/dist/codegen/liftedinit/billing/v1/tx.js';
@@ -76,6 +81,12 @@ import type {
   SKU,
   Params as SkuParams,
 } from '@manifest-network/manifestjs/dist/codegen/liftedinit/sku/v1/types.js';
+// Tokenfactory types (Osmosis)
+import type { DenomAuthorityMetadata } from '@manifest-network/manifestjs/dist/codegen/osmosis/tokenfactory/v1beta1/authorityMetadata.js';
+import type { Params as TokenfactoryParams } from '@manifest-network/manifestjs/dist/codegen/osmosis/tokenfactory/v1beta1/params.js';
+// Proof-of-Authority (strangelove-ventures) types
+import type { StakingParams as PoAStakingParams } from '@manifest-network/manifestjs/dist/codegen/strangelove_ventures/poa/v1/params.js';
+import type { Validator as PoAValidator } from '@manifest-network/manifestjs/dist/codegen/strangelove_ventures/poa/v1/validator.js';
 
 // Re-export commonly used protobuf types for consumers
 export type {
@@ -91,6 +102,8 @@ export type {
   CreditAccount,
   DelegationDelegatorReward,
   DelegationResponse,
+  DenomAuthorityMetadata,
+  DenomTrace,
   DepositParams,
   DistributionParams,
   GovDeposit,
@@ -105,10 +118,13 @@ export type {
   GroupTallyResult,
   GroupVote,
   HistoricalInfo,
+  IbcTransferParams,
   Lease,
   LeaseItemInput,
   Model,
   ModuleAccount,
+  PoAStakingParams,
+  PoAValidator,
   Provider,
   QueryCreditEstimateResponse,
   RedelegationResponse,
@@ -118,6 +134,7 @@ export type {
   StakingParams,
   StakingPool,
   TallyParams,
+  TokenfactoryParams,
   UnbondingDelegation,
   Validator,
   ValidatorAccumulatedCommission,
@@ -749,6 +766,49 @@ export interface WasmBuildAddressResult {
   readonly address: string;
 }
 
+// Proof-of-Authority (strangelove_ventures) query results
+export interface PoAAuthorityResult {
+  readonly authority: string;
+}
+
+export interface PoAConsensusPowerResult {
+  readonly consensusPower: bigint;
+}
+
+export interface PoAPendingValidatorsResult {
+  readonly pending: readonly PoAValidator[];
+}
+
+// Tokenfactory (osmosis) query results
+export interface TokenfactoryParamsResult {
+  readonly params?: TokenfactoryParams;
+}
+
+export interface DenomAuthorityMetadataResult {
+  readonly authorityMetadata?: DenomAuthorityMetadata;
+}
+
+export interface DenomsFromCreatorResult {
+  readonly denoms: readonly string[];
+}
+
+export interface DenomsFromAdminResult {
+  readonly denoms: readonly string[];
+}
+
+// IBC transfer query results
+export interface IbcDenomTraceResult {
+  readonly denomTrace?: DenomTrace;
+}
+
+export interface IbcDenomTracesResult extends PaginatedResult {
+  readonly denomTraces: readonly DenomTrace[];
+}
+
+export interface IbcTransferParamsResult {
+  readonly params?: IbcTransferParams;
+}
+
 /**
  * Union type of all query results for type-safe handling
  */
@@ -832,7 +892,17 @@ export type QueryResult =
   | WasmParamsResult
   | WasmContractsByCreatorResult
   | WasmLimitsConfigResult
-  | WasmBuildAddressResult;
+  | WasmBuildAddressResult
+  | PoAAuthorityResult
+  | PoAConsensusPowerResult
+  | PoAPendingValidatorsResult
+  | TokenfactoryParamsResult
+  | DenomAuthorityMetadataResult
+  | DenomsFromCreatorResult
+  | DenomsFromAdminResult
+  | IbcDenomTraceResult
+  | IbcDenomTracesResult
+  | IbcTransferParamsResult;
 
 /**
  * Result from a Cosmos query
