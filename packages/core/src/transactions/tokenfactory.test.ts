@@ -112,6 +112,41 @@ describe('buildTokenfactoryMessages', () => {
     ).toThrow(/invalid JSON/);
   });
 
+  it('rejects update-params with null', () => {
+    expect(() =>
+      buildTokenfactoryMessages(SENDER, 'update-params', ['null']),
+    ).toThrow();
+  });
+
+  it('rejects update-params with typo (unknown key)', () => {
+    const badJson = JSON.stringify({ denomCreationFees: [] });
+    expect(() =>
+      buildTokenfactoryMessages(SENDER, 'update-params', [badJson]),
+    ).toThrow(/denomCreationFees/);
+  });
+
+  it('rejects set-denom-metadata with missing required field', () => {
+    // `base` is required; missing it triggers a schema error.
+    const bad = JSON.stringify({
+      denomUnits: [{ denom: FACTORY_DENOM, exponent: 0 }],
+      display: FACTORY_DENOM,
+    });
+    expect(() =>
+      buildTokenfactoryMessages(SENDER, 'set-denom-metadata', [bad]),
+    ).toThrow(/base/);
+  });
+
+  it('rejects set-denom-metadata with empty denomUnits', () => {
+    const bad = JSON.stringify({
+      denomUnits: [],
+      base: FACTORY_DENOM,
+      display: FACTORY_DENOM,
+    });
+    expect(() =>
+      buildTokenfactoryMessages(SENDER, 'set-denom-metadata', [bad]),
+    ).toThrow(/denomUnits/);
+  });
+
   it('throws on unknown subcommand', () => {
     expect(() =>
       buildTokenfactoryMessages(SENDER, 'nonexistent', []),

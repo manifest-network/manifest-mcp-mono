@@ -1,13 +1,12 @@
 import type { SigningStargateClient } from '@cosmjs/stargate';
 import { osmosis as osmosisNs } from '@manifest-network/manifestjs';
 import { throwUnsupportedSubcommand } from '../modules.js';
+import type { BuiltMessages, CosmosTxResult, TxOptions } from '../types.js';
 import {
-  type BuiltMessages,
-  type CosmosTxResult,
-  ManifestMCPError,
-  ManifestMCPErrorCode,
-  type TxOptions,
-} from '../types.js';
+  BankMetadataSchema,
+  parseJsonWithSchema,
+  TokenfactoryParamsSchema,
+} from './json-schemas.js';
 import {
   buildGasFee,
   buildTxResult,
@@ -26,17 +25,6 @@ const {
   MsgForceTransfer,
   MsgUpdateParams,
 } = osmosisNs.tokenfactory.v1beta1;
-
-function parseJsonMsg<T>(input: string, context: string): T {
-  try {
-    return JSON.parse(input) as T;
-  } catch (error) {
-    throw new ManifestMCPError(
-      ManifestMCPErrorCode.TX_FAILED,
-      `${context}: invalid JSON: ${error instanceof Error ? error.message : String(error)}`,
-    );
-  }
-}
 
 /**
  * Build messages for a tokenfactory (osmosis) transaction subcommand.
@@ -125,8 +113,9 @@ export function buildTokenfactoryMessages(
         ['metadata-json'],
         'tokenfactory set-denom-metadata',
       );
-      const metadata = parseJsonMsg<unknown>(
+      const metadata = parseJsonWithSchema(
         args[0],
+        BankMetadataSchema,
         'tokenfactory set-denom-metadata metadata-json',
       );
 
@@ -134,9 +123,7 @@ export function buildTokenfactoryMessages(
         typeUrl: '/osmosis.tokenfactory.v1beta1.MsgSetDenomMetadata',
         value: MsgSetDenomMetadata.fromPartial({
           sender: senderAddress,
-          metadata: metadata as Parameters<
-            typeof MsgSetDenomMetadata.fromPartial
-          >[0]['metadata'],
+          metadata,
         }),
       };
       return { messages: [msg], memo: '' };
@@ -168,16 +155,22 @@ export function buildTokenfactoryMessages(
 
     case 'update-params': {
       requireArgs(args, 1, ['params-json'], 'tokenfactory update-params');
-      const params = parseJsonMsg<unknown>(
+      const params = parseJsonWithSchema(
         args[0],
+        TokenfactoryParamsSchema,
         'tokenfactory update-params params-json',
       );
 
       const msg = {
         typeUrl: '/osmosis.tokenfactory.v1beta1.MsgUpdateParams',
+        // Telescope generates MsgUpdateParams.params as cosmos.bank.v1beta1.Params
+        // in this module (a proto-import mismatch in the upstream tokenfactory
+        // proto). Runtime encoder expects tokenfactory's Params shape, which
+        // TokenfactoryParamsSchema enforces; cast through the generated type
+        // boundary.
         value: MsgUpdateParams.fromPartial({
           authority: senderAddress,
-          params: params as Parameters<
+          params: params as unknown as Parameters<
             typeof MsgUpdateParams.fromPartial
           >[0]['params'],
         }),

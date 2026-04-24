@@ -70,6 +70,48 @@ describe('buildPoAMessages', () => {
     ).toThrow(/invalid JSON/);
   });
 
+  it('rejects update-staking-params with null', () => {
+    expect(() =>
+      buildPoAMessages(SENDER, 'update-staking-params', ['null']),
+    ).toThrow();
+  });
+
+  it('rejects update-staking-params with array', () => {
+    expect(() =>
+      buildPoAMessages(SENDER, 'update-staking-params', ['[1,2,3]']),
+    ).toThrow();
+  });
+
+  it('rejects update-staking-params with typo (unknown key)', () => {
+    // Catches the silent-field-drop footgun: `unbondingTim` would be dropped
+    // by fromPartial and broadcast as a zero-valued `unbondingTime`.
+    const badJson = JSON.stringify({
+      unbondingTim: { seconds: '1209600', nanos: 0 },
+      maxValidators: 100,
+      maxEntries: 7,
+      historicalEntries: 10000,
+      bondDenom: 'umfx',
+      minCommissionRate: '0',
+    });
+    expect(() =>
+      buildPoAMessages(SENDER, 'update-staking-params', [badJson]),
+    ).toThrow(/unbondingTim/);
+  });
+
+  it('rejects update-staking-params with missing required field', () => {
+    const badJson = JSON.stringify({
+      unbondingTime: { seconds: '1209600', nanos: 0 },
+      maxValidators: 100,
+      maxEntries: 7,
+      historicalEntries: 10000,
+      // bondDenom missing
+      minCommissionRate: '0',
+    });
+    expect(() =>
+      buildPoAMessages(SENDER, 'update-staking-params', [badJson]),
+    ).toThrow(/bondDenom/);
+  });
+
   it('throws on unknown subcommand', () => {
     expect(() => buildPoAMessages(SENDER, 'nonexistent', [])).toThrow();
   });

@@ -9,6 +9,7 @@ import {
   ManifestMCPErrorCode,
   type TxOptions,
 } from '../types.js';
+import { PoAStakingParamsSchema, parseJsonWithSchema } from './json-schemas.js';
 import {
   buildGasFee,
   buildTxResult,
@@ -118,8 +119,9 @@ export function buildPoAMessages(
 
     case 'update-staking-params': {
       requireArgs(args, 1, ['params-json'], 'poa update-staking-params');
-      const params = parseJsonMsg<unknown>(
+      const params = parseJsonWithSchema(
         args[0],
+        PoAStakingParamsSchema,
         'poa update-staking-params params-json',
       );
 
@@ -127,9 +129,7 @@ export function buildPoAMessages(
         typeUrl: '/strangelove_ventures.poa.v1.MsgUpdateStakingParams',
         value: MsgUpdateStakingParams.fromPartial({
           sender: senderAddress,
-          params: params as Parameters<
-            typeof MsgUpdateStakingParams.fromPartial
-          >[0]['params'],
+          params,
         }),
       };
       return { messages: [msg], memo: '' };
