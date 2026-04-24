@@ -10,20 +10,20 @@ import { ManifestMCPError, ManifestMCPErrorCode } from '../types.js';
  * from JSON-safe primitives (JSON has no bigint).
  */
 
-/** Accept string | number | bigint and coerce to bigint; rejects other types. */
+/**
+ * Parse a decimal-integer string into a bigint.
+ *
+ * Strings-only deliberately. Cosmos-sdk proto JSON always serializes int64 /
+ * uint64 as decimal strings — accepting JS numbers would silently truncate
+ * values above 2^53 and accepting arbitrary strings would let surprises
+ * through: `BigInt("")` returns `0n`, `BigInt("0x10")` returns `16n`, and
+ * `BigInt("  10  ")` returns `10n`. A strict `/^-?\d+$/` matches the on-wire
+ * convention exactly and makes `BigInt(v)` total.
+ */
 const bigintFromJson = z
-  .union([z.string(), z.number(), z.bigint()])
-  .transform((v, ctx) => {
-    try {
-      return BigInt(v);
-    } catch {
-      ctx.addIssue({
-        code: 'custom',
-        message: `Cannot coerce ${JSON.stringify(v)} to bigint`,
-      });
-      return z.NEVER;
-    }
-  });
+  .string()
+  .regex(/^-?\d+$/, 'must be a decimal integer string (e.g. "1209600")')
+  .transform((v) => BigInt(v));
 
 /** google.protobuf.Duration ({ seconds: bigint, nanos: int32 }) */
 const DurationSchema = z

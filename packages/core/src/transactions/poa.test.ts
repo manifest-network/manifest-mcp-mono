@@ -112,6 +112,44 @@ describe('buildPoAMessages', () => {
     ).toThrow(/bondDenom/);
   });
 
+  // Pins the bigintFromJson tightening: strings must be decimal integers.
+  // Without the regex, BigInt("") returns 0n, BigInt("0x10") returns 16n, and
+  // "  10  " / "1e10" each produce surprising values — reintroducing the
+  // zero-valued-field footgun these schemas were written to prevent.
+  it.each([
+    ['empty string', ''],
+    ['whitespace', '  '],
+    ['hex literal', '0x10'],
+    ['scientific notation', '1e10'],
+    ['decimal', '1.5'],
+  ])('rejects update-staking-params when unbondingTime.seconds is %s', (_label, seconds) => {
+    const badJson = JSON.stringify({
+      unbondingTime: { seconds, nanos: 0 },
+      maxValidators: 100,
+      maxEntries: 7,
+      historicalEntries: 10000,
+      bondDenom: 'umfx',
+      minCommissionRate: '0',
+    });
+    expect(() =>
+      buildPoAMessages(SENDER, 'update-staking-params', [badJson]),
+    ).toThrow(/unbondingTime\.seconds/);
+  });
+
+  it('rejects update-staking-params when unbondingTime.seconds is a JS number (precision-loss guard)', () => {
+    const badJson = JSON.stringify({
+      unbondingTime: { seconds: 1209600, nanos: 0 },
+      maxValidators: 100,
+      maxEntries: 7,
+      historicalEntries: 10000,
+      bondDenom: 'umfx',
+      minCommissionRate: '0',
+    });
+    expect(() =>
+      buildPoAMessages(SENDER, 'update-staking-params', [badJson]),
+    ).toThrow(/unbondingTime\.seconds/);
+  });
+
   it('throws on unknown subcommand', () => {
     expect(() => buildPoAMessages(SENDER, 'nonexistent', [])).toThrow();
   });
