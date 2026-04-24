@@ -1,3 +1,4 @@
+import { fromBech32 } from '@cosmjs/encoding';
 import type { SigningStargateClient } from '@cosmjs/stargate';
 import { strangelove_ventures as strangeloveVenturesNs } from '@manifest-network/manifestjs';
 import { throwUnsupportedSubcommand } from '../modules.js';
@@ -51,6 +52,12 @@ export function buildPoAMessages(
 ): BuiltMessages {
   validateArgsLength(args, 'poa transaction');
 
+  // Derive the operator address prefix from the sender (e.g. "manifest" ->
+  // "manifestvaloper"). PoA validator targets must be valoper-prefixed; a
+  // wallet-prefixed address (easy mistake) would pass bech32 validation and
+  // only fail at broadcast with an opaque chain error.
+  const valoperPrefix = `${fromBech32(senderAddress).prefix}valoper`;
+
   switch (subcommand) {
     case 'set-power': {
       const { value: unsafe, remainingArgs } = extractBooleanFlag(
@@ -64,7 +71,7 @@ export function buildPoAMessages(
         'poa set-power',
       );
       const [validatorAddress, powerStr] = remainingArgs;
-      validateAddress(validatorAddress, 'validator address');
+      validateAddress(validatorAddress, 'validator address', valoperPrefix);
       const power = parseBigInt(powerStr, 'power');
 
       const msg = {
@@ -82,7 +89,7 @@ export function buildPoAMessages(
     case 'remove-validator': {
       requireArgs(args, 1, ['validator-address'], 'poa remove-validator');
       const [validatorAddress] = args;
-      validateAddress(validatorAddress, 'validator address');
+      validateAddress(validatorAddress, 'validator address', valoperPrefix);
 
       const msg = {
         typeUrl: '/strangelove_ventures.poa.v1.MsgRemoveValidator',
@@ -97,7 +104,7 @@ export function buildPoAMessages(
     case 'remove-pending': {
       requireArgs(args, 1, ['validator-address'], 'poa remove-pending');
       const [validatorAddress] = args;
-      validateAddress(validatorAddress, 'validator address');
+      validateAddress(validatorAddress, 'validator address', valoperPrefix);
 
       const msg = {
         typeUrl: '/strangelove_ventures.poa.v1.MsgRemovePending',

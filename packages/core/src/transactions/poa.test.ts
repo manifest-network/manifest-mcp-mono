@@ -83,4 +83,25 @@ describe('buildPoAMessages', () => {
       buildPoAMessages(SENDER, 'set-power', ['not-an-address', '1000']),
     ).toThrow();
   });
+
+  it('rejects set-power when passed a wallet-prefix address instead of valoper', () => {
+    // SENDER is "manifest1..."; using it as the validator target is a common
+    // mistake that the chain would reject with an opaque error — we catch it
+    // locally by deriving the valoper prefix from the sender.
+    expect(() =>
+      buildPoAMessages(SENDER, 'set-power', [SENDER, '1000']),
+    ).toThrow(/manifestvaloper/);
+  });
+
+  it('rejects remove-validator when passed a wallet-prefix address', () => {
+    expect(() =>
+      buildPoAMessages(SENDER, 'remove-validator', [SENDER]),
+    ).toThrow(/manifestvaloper/);
+  });
+
+  it('rejects remove-pending when passed a wallet-prefix address', () => {
+    expect(() => buildPoAMessages(SENDER, 'remove-pending', [SENDER])).toThrow(
+      /manifestvaloper/,
+    );
+  });
 });
