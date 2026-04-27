@@ -75,10 +75,13 @@ update_test_genesis '.app_state["wasm"]["params"]["code_upload_access"]["permiss
 update_test_genesis '.app_state["wasm"]["params"]["instantiate_default_permission"]="Everybody"'
 
 # SKU module - add provider to allowed_list
-update_test_genesis '.app_state["sku"]["params"]["allowed_list"]=["'${ADDR1}'"]'
+# ADDR2 is included so the e2e test wallet (tenant) can also self-register
+# as a provider via cosmos_tx, unlocking sku/billing routing coverage that
+# would otherwise require a second signing key.
+update_test_genesis '.app_state["sku"]["params"]["allowed_list"]=["'${ADDR1}'","'${ADDR2}'"]'
 
 # Billing module - add provider to allowed_list
-update_test_genesis '.app_state["billing"]["params"]["allowed_list"]=["'${ADDR1}'"]'
+update_test_genesis '.app_state["billing"]["params"]["allowed_list"]=["'${ADDR1}'","'${ADDR2}'"]'
 
 echo "=== Adding genesis accounts ==="
 
