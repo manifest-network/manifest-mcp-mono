@@ -5,6 +5,7 @@ import { resolve } from 'node:path';
 const CERT_DIR = resolve(import.meta.dirname, '..', '.tls');
 const CERT_PATH = resolve(CERT_DIR, 'cert.pem');
 const CONVERTER_ENV_PATH = resolve(CERT_DIR, 'converter.env');
+const CONVERTER_WASM_PATH = resolve(CERT_DIR, 'converter.wasm');
 
 /**
  * Extract the self-signed TLS cert from the e2e providerd container
@@ -59,5 +60,20 @@ export function setup() {
   } catch {
     // Best-effort: cosmwasm tests will fail with a clear error if
     // MANIFEST_CONVERTER_ADDRESS is unset.
+  }
+
+  // Converter wasm binary from chain container (baked into the image at
+  // /usr/local/share/converter.wasm). wasm-mutations.e2e.test.ts uses this
+  // for store-code.
+  try {
+    execFileSync(
+      'docker',
+      ['compose', '-f', 'e2e/docker-compose.yml', 'cp', 'chain:/usr/local/share/converter.wasm', CONVERTER_WASM_PATH],
+      { stdio: 'pipe' },
+    );
+    process.env.E2E_CONVERTER_WASM_PATH = CONVERTER_WASM_PATH;
+  } catch {
+    // Best-effort: wasm-mutations tests will fail with a clear error if
+    // E2E_CONVERTER_WASM_PATH is unset.
   }
 }
