@@ -123,4 +123,49 @@ describe('buildIbcTransferMessages', () => {
       ]),
     ).toThrow(/source-channel/);
   });
+
+  it('trims whitespace on source-port, source-channel, and receiver', () => {
+    // Stray whitespace should never reach the chain; build with padded
+    // inputs and assert the message carries the trimmed values verbatim.
+    const built = buildIbcTransferMessages(SENDER, 'transfer', [
+      ' transfer ',
+      ' channel-0 ',
+      ` ${RECEIVER} `,
+      '1000umfx',
+    ]);
+    expect(built.messages[0].value).toMatchObject({
+      sourcePort: 'transfer',
+      sourceChannel: 'channel-0',
+      receiver: RECEIVER,
+    });
+  });
+
+  it('rejects --timeout-height with three segments ("1-2-3")', () => {
+    // Without the strict 2-part check, destructuring would silently take
+    // [numStr, heightStr] = ["1", "2"] and drop "3", producing a height
+    // that doesn't match what the user typed.
+    expect(() =>
+      buildIbcTransferMessages(SENDER, 'transfer', [
+        'transfer',
+        'channel-0',
+        RECEIVER,
+        '1000umfx',
+        '--timeout-height',
+        '1-2-3',
+      ]),
+    ).toThrow(/revision-number/);
+  });
+
+  it('rejects negative --timeout-timestamp', () => {
+    expect(() =>
+      buildIbcTransferMessages(SENDER, 'transfer', [
+        'transfer',
+        'channel-0',
+        RECEIVER,
+        '1000umfx',
+        '--timeout-timestamp',
+        '-1',
+      ]),
+    ).toThrow(/non-negative/);
+  });
 });

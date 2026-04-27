@@ -143,6 +143,7 @@ describe('buildPoAMessages', () => {
     ['hex literal', '0x10'],
     ['scientific notation', '1e10'],
     ['decimal', '1.5'],
+    ['negative', '-1'],
   ])('rejects update-staking-params when unbondingTime.seconds is %s', (_label, seconds) => {
     const badJson = JSON.stringify({
       unbondingTime: { seconds, nanos: 0 },

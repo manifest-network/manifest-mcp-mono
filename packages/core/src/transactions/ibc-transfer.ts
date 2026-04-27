@@ -63,26 +63,31 @@ export function buildIbcTransferMessages(
         ['source-port', 'source-channel', 'receiver', 'amount'],
         'ibc-transfer transfer',
       );
-      const [sourcePort, sourceChannel, receiver, amountStr] = positionalArgs;
+      const [sourcePortRaw, sourceChannelRaw, receiverRaw, amountStr] =
+        positionalArgs;
       const { amount, denom } = parseAmount(amountStr);
 
-      // Source port/channel are on this chain — fail loudly when blank
-      // instead of letting empty strings reach the chain. Receiver is on the
-      // destination chain; we don't validate its bech32 prefix because the
-      // destination chain may use a different address format.
-      if (!sourcePort || sourcePort.trim() === '') {
+      // Source port/channel are on this chain — fail loudly when blank, and
+      // forward trimmed values so stray whitespace doesn't reach the chain.
+      // Receiver is on the destination chain; we don't validate its bech32
+      // prefix because the destination chain may use a different address
+      // format, but we still trim incidental whitespace.
+      const sourcePort = sourcePortRaw?.trim() ?? '';
+      const sourceChannel = sourceChannelRaw?.trim() ?? '';
+      const receiver = receiverRaw?.trim() ?? '';
+      if (!sourcePort) {
         throw new ManifestMCPError(
           ManifestMCPErrorCode.TX_FAILED,
           'ibc-transfer transfer: source-port is required',
         );
       }
-      if (!sourceChannel || sourceChannel.trim() === '') {
+      if (!sourceChannel) {
         throw new ManifestMCPError(
           ManifestMCPErrorCode.TX_FAILED,
           'ibc-transfer transfer: source-channel is required',
         );
       }
-      if (!receiver || receiver.trim() === '') {
+      if (!receiver) {
         throw new ManifestMCPError(
           ManifestMCPErrorCode.TX_FAILED,
           'ibc-transfer transfer: receiver is required',
@@ -94,19 +99,25 @@ export function buildIbcTransferMessages(
         validateMemo(memo);
       }
 
-      // timeout-height parsed as "<revisionNumber>-<revisionHeight>"
+      // timeout-height parsed as exactly "<revisionNumber>-<revisionHeight>".
+      // Strict 2-part split: rejects "1-2-3" (would silently drop the trailing
+      // "-3" if we just destructured) and other malformed shapes.
       let timeoutHeight = {
         revisionNumber: BigInt(0),
         revisionHeight: BigInt(0),
       };
       if (timeoutHeightFlag.value) {
-        const [numStr, heightStr] = timeoutHeightFlag.value.split('-');
-        if (!numStr || !heightStr) {
+        const parts = timeoutHeightFlag.value.split('-');
+        if (parts.length !== 2 || !parts[0] || !parts[1]) {
           throw new ManifestMCPError(
             ManifestMCPErrorCode.TX_FAILED,
             `Invalid --timeout-height "${timeoutHeightFlag.value}". Expected "<revision-number>-<revision-height>".`,
           );
         }
+        const [numStr, heightStr] = parts;
+        // Note: negative values cannot reach parseBigInt here because `-` is
+        // the field separator — `-1-1000` splits to 3 parts and is rejected
+        // by the length check above.
         timeoutHeight = {
           revisionNumber: parseBigInt(numStr, 'timeout-height revision-number'),
           revisionHeight: parseBigInt(
@@ -123,6 +134,12 @@ export function buildIbcTransferMessages(
           timeoutTimestampFlag.value,
           'timeout-timestamp',
         );
+        if (timeoutTimestamp < BigInt(0)) {
+          throw new ManifestMCPError(
+            ManifestMCPErrorCode.TX_FAILED,
+            'timeout-timestamp must be non-negative',
+          );
+        }
       } else if (
         timeoutHeight.revisionNumber === BigInt(0) &&
         timeoutHeight.revisionHeight === BigInt(0)
