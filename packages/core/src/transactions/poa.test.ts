@@ -158,6 +158,41 @@ describe('buildPoAMessages', () => {
     ).toThrow(/unbondingTime\.seconds/);
   });
 
+  it.each([
+    ['negative', -1],
+    ['too large', 1_000_000_000],
+  ])('rejects update-staking-params when unbondingTime.nanos is %s', (_label, nanos) => {
+    const badJson = JSON.stringify({
+      unbondingTime: { seconds: '1209600', nanos },
+      maxValidators: 100,
+      maxEntries: 7,
+      historicalEntries: 10000,
+      bondDenom: 'umfx',
+      minCommissionRate: '0',
+    });
+    expect(() =>
+      buildPoAMessages(SENDER, 'update-staking-params', [badJson]),
+    ).toThrow(/unbondingTime\.nanos/);
+  });
+
+  it('accepts update-staking-params when unbondingTime.nanos is omitted (defaults to 0)', () => {
+    // Whole-second durations are common; the schema defaults nanos to 0 so
+    // callers don't have to spell it out.
+    const json = JSON.stringify({
+      unbondingTime: { seconds: '1209600' },
+      maxValidators: 100,
+      maxEntries: 7,
+      historicalEntries: 10000,
+      bondDenom: 'umfx',
+      minCommissionRate: '0',
+    });
+    const built = buildPoAMessages(SENDER, 'update-staking-params', [json]);
+    const value = built.messages[0].value as {
+      params: { unbondingTime: { nanos: number } };
+    };
+    expect(value.params.unbondingTime.nanos).toBe(0);
+  });
+
   it('rejects update-staking-params when unbondingTime.seconds is a JS number (precision-loss guard)', () => {
     const badJson = JSON.stringify({
       unbondingTime: { seconds: 1209600, nanos: 0 },

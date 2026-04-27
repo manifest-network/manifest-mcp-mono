@@ -30,11 +30,18 @@ const bigintFromJson = z
   )
   .transform((v) => BigInt(v));
 
-/** google.protobuf.Duration ({ seconds: bigint, nanos: int32 }) */
+/**
+ * google.protobuf.Duration ({ seconds: bigint, nanos: int32 }).
+ *
+ * Per the proto spec, `nanos` is bounded to `[-999_999_999, +999_999_999]`;
+ * since `seconds` is non-negative on this API surface, we also constrain
+ * `nanos` to `[0, 999_999_999]`. Defaults to 0 so callers can omit it for
+ * whole-second durations (`{ seconds: "1209600" }`).
+ */
 const DurationSchema = z
   .object({
     seconds: bigintFromJson,
-    nanos: z.number().int().optional(),
+    nanos: z.number().int().min(0).max(999_999_999).default(0),
   })
   .strict();
 
