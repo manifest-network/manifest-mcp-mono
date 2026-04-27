@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+- Feat(core): add Proof-of-Authority (`poa`), tokenfactory, and IBC transfer (`ibc-transfer`) modules with query and transaction routing through `cosmos_query`/`cosmos_tx`/`cosmos_estimate_fee`. Tokenfactory `update-params` is intentionally not exposed pending an upstream `manifestjs` codegen fix (`MsgUpdateParams.params` is wired to `cosmos.bank.v1beta1.Params` instead of the local tokenfactory `Params`).
+- Fix(core): validate `poa create-validator` JSON input with a strict zod schema; reject unknown keys, validate validator address valoper prefix, and base64-decode the `pubkey.value` so `Any.encode` produces correct wire bytes.
+- Fix(core): require non-empty `source-port` and `source-channel` on `ibc-transfer transfer` instead of forwarding blank strings to the chain.
+
 ## [0.6.2]
 
 - Fix(core): surface dropped proto fields in query handlers and `getBalance` (#41)

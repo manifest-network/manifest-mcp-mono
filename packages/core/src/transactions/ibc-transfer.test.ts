@@ -101,4 +101,26 @@ describe('buildIbcTransferMessages', () => {
       buildIbcTransferMessages(SENDER, 'transfer', ['transfer', 'channel-0']),
     ).toThrow();
   });
+
+  it('rejects transfer with empty source-port', () => {
+    expect(() =>
+      buildIbcTransferMessages(SENDER, 'transfer', [
+        '',
+        'channel-0',
+        RECEIVER,
+        '1000umfx',
+      ]),
+    ).toThrow(/source-port/);
+  });
+
+  it('rejects transfer with whitespace source-channel', () => {
+    expect(() =>
+      buildIbcTransferMessages(SENDER, 'transfer', [
+        'transfer',
+        '   ',
+        RECEIVER,
+        '1000umfx',
+      ]),
+    ).toThrow(/source-channel/);
+  });
 });

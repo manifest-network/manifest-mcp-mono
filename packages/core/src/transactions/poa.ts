@@ -1,4 +1,4 @@
-import { fromBech32 } from '@cosmjs/encoding';
+import { fromBase64, fromBech32, toBech32 } from '@cosmjs/encoding';
 import type { SigningStargateClient } from '@cosmjs/stargate';
 import { strangelove_ventures as strangeloveVenturesNs } from '@manifest-network/manifestjs';
 import { throwUnsupportedSubcommand } from '../modules.js';
@@ -9,7 +9,11 @@ import {
   ManifestMCPErrorCode,
   type TxOptions,
 } from '../types.js';
-import { PoAStakingParamsSchema, parseJsonWithSchema } from './json-schemas.js';
+import {
+  MsgCreateValidatorSchema,
+  PoAStakingParamsSchema,
+  parseJsonWithSchema,
+} from './json-schemas.js';
 import {
   buildGasFee,
   buildTxResult,
@@ -27,17 +31,6 @@ const {
   MsgUpdateStakingParams,
   MsgCreateValidator,
 } = strangeloveVenturesNs.poa.v1;
-
-function parseJsonMsg<T>(input: string, context: string): T {
-  try {
-    return JSON.parse(input) as T;
-  } catch (error) {
-    throw new ManifestMCPError(
-      ManifestMCPErrorCode.TX_FAILED,
-      `${context}: invalid JSON: ${error instanceof Error ? error.message : String(error)}`,
-    );
-  }
-}
 
 /**
  * Build messages for a PoA transaction subcommand (no signing/broadcasting).
@@ -136,23 +129,60 @@ export function buildPoAMessages(
     }
 
     case 'create-validator': {
-      // Accepts the full MsgCreateValidator body as JSON. Sender's delegator/validator
-      // address defaults to the wallet address when omitted in the JSON.
+      // Accepts the MsgCreateValidator body as JSON. The schema rejects
+      // unknown keys so typos (e.g. `descripton`) fail loudly instead of
+      // silently dropping fields.
+      //
+      // `validatorAddress` is required and must be valoper-prefixed.
+      // `delegatorAddress` is deprecated upstream — when omitted we derive it
+      // from the validator-address bytes using the wallet's bech32 prefix
+      // (per the proto comment: the two addresses refer to the same account,
+      // differing only in bech32 notation).
       requireArgs(args, 1, ['msg-json'], 'poa create-validator');
-      const body = parseJsonMsg<Record<string, unknown>>(
+      const body = parseJsonWithSchema(
         args[0],
+        MsgCreateValidatorSchema,
         'poa create-validator msg-json',
       );
+
+      validateAddress(
+        body.validatorAddress,
+        'create-validator validator address',
+        valoperPrefix,
+      );
+      const validatorBytes = fromBech32(body.validatorAddress).data;
+      const walletPrefix = fromBech32(senderAddress).prefix;
+      const delegatorAddress =
+        body.delegatorAddress ?? toBech32(walletPrefix, validatorBytes);
+      validateAddress(
+        delegatorAddress,
+        'create-validator delegator address',
+        walletPrefix,
+      );
+
+      // Any.fromPartial expects `value` as Uint8Array, not base64. Decode the
+      // pubkey bytes here so the on-wire encoding matches what the chain
+      // expects to deserialize into the inner PubKey message.
+      let pubkeyValue: Uint8Array;
+      try {
+        pubkeyValue = fromBase64(body.pubkey.value);
+      } catch (error) {
+        throw new ManifestMCPError(
+          ManifestMCPErrorCode.TX_FAILED,
+          `poa create-validator pubkey.value: invalid base64: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
 
       const msg = {
         typeUrl: '/strangelove_ventures.poa.v1.MsgCreateValidator',
         value: MsgCreateValidator.fromPartial({
-          delegatorAddress:
-            (body.delegatorAddress as string | undefined) ?? senderAddress,
-          validatorAddress:
-            (body.validatorAddress as string | undefined) ?? senderAddress,
-          ...body,
-        } as Parameters<typeof MsgCreateValidator.fromPartial>[0]),
+          description: body.description,
+          commission: body.commission,
+          minSelfDelegation: body.minSelfDelegation,
+          delegatorAddress,
+          validatorAddress: body.validatorAddress,
+          pubkey: { typeUrl: body.pubkey.typeUrl, value: pubkeyValue },
+        }),
       };
       return { messages: [msg], memo: '' };
     }

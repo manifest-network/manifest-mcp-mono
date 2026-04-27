@@ -95,36 +95,6 @@ describe('buildTokenfactoryMessages', () => {
     );
   });
 
-  it('builds MsgUpdateParams from JSON', () => {
-    const params = JSON.stringify({
-      denomCreationFee: [{ denom: 'umfx', amount: '1000000' }],
-    });
-    const built = buildTokenfactoryMessages(SENDER, 'update-params', [params]);
-    expect(built.messages[0].typeUrl).toBe(
-      '/osmosis.tokenfactory.v1beta1.MsgUpdateParams',
-    );
-    expect(built.messages[0].value).toMatchObject({ authority: SENDER });
-  });
-
-  it('rejects invalid JSON for update-params', () => {
-    expect(() =>
-      buildTokenfactoryMessages(SENDER, 'update-params', ['not-json']),
-    ).toThrow(/invalid JSON/);
-  });
-
-  it('rejects update-params with null', () => {
-    expect(() =>
-      buildTokenfactoryMessages(SENDER, 'update-params', ['null']),
-    ).toThrow();
-  });
-
-  it('rejects update-params with typo (unknown key)', () => {
-    const badJson = JSON.stringify({ denomCreationFees: [] });
-    expect(() =>
-      buildTokenfactoryMessages(SENDER, 'update-params', [badJson]),
-    ).toThrow(/denomCreationFees/);
-  });
-
   it('rejects set-denom-metadata with missing required field', () => {
     // `base` is required; missing it triggers a schema error.
     const bad = JSON.stringify({

@@ -33,6 +33,9 @@ npm install @manifest-network/manifest-mcp-core
 | sku | yes | yes |
 | group | yes | yes |
 | wasm | yes | yes |
+| poa | yes | yes |
+| tokenfactory | yes | yes |
+| ibc-transfer | yes | yes |
 | auth | yes | -- |
 | manifest | -- | yes |
 

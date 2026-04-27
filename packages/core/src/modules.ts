@@ -868,12 +868,6 @@ const TX_MODULES: TxModuleRegistry = {
           'Force-transfer factory-denom tokens between two addresses',
         args: '<amount> <from-address> <to-address>',
       },
-      {
-        name: 'update-params',
-        description:
-          'Update tokenfactory module parameters (governance). Params as JSON.',
-        args: '<params-json>',
-      },
     ],
   },
   'ibc-transfer': {

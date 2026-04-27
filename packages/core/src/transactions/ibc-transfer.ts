@@ -66,8 +66,22 @@ export function buildIbcTransferMessages(
       const [sourcePort, sourceChannel, receiver, amountStr] = positionalArgs;
       const { amount, denom } = parseAmount(amountStr);
 
-      // Receiver is on the destination chain; we don't validate the bech32
-      // prefix here because it may follow the destination's address format.
+      // Source port/channel are on this chain — fail loudly when blank
+      // instead of letting empty strings reach the chain. Receiver is on the
+      // destination chain; we don't validate its bech32 prefix because the
+      // destination chain may use a different address format.
+      if (!sourcePort || sourcePort.trim() === '') {
+        throw new ManifestMCPError(
+          ManifestMCPErrorCode.TX_FAILED,
+          'ibc-transfer transfer: source-port is required',
+        );
+      }
+      if (!sourceChannel || sourceChannel.trim() === '') {
+        throw new ManifestMCPError(
+          ManifestMCPErrorCode.TX_FAILED,
+          'ibc-transfer transfer: source-channel is required',
+        );
+      }
       if (!receiver || receiver.trim() === '') {
         throw new ManifestMCPError(
           ManifestMCPErrorCode.TX_FAILED,

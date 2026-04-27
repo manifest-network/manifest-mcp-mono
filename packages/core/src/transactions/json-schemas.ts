@@ -33,16 +33,6 @@ const DurationSchema = z
   })
   .strict();
 
-/** cosmos.base.v1beta1.Coin ({ denom: string, amount: string }) */
-const CoinSchema = z
-  .object({
-    denom: z.string().min(1),
-    amount: z
-      .string()
-      .regex(/^\d+$/, 'amount must be a non-negative integer string'),
-  })
-  .strict();
-
 /** cosmos.bank.v1beta1.DenomUnit */
 const DenomUnitSchema = z
   .object({
@@ -89,15 +79,61 @@ export const PoAStakingParamsSchema = z
   })
   .strict();
 
-/**
- * osmosis.tokenfactory.v1beta1.Params — used by tokenfactory update-params.
- * `denomCreationGasConsume` is optional per proto; `denomCreationFee` may be
- * empty (module uses gas consumption instead when fee is empty).
- */
-export const TokenfactoryParamsSchema = z
+/** cosmos.Dec on the wire — non-negative decimal, fractional part optional. */
+const DecimalString = z
+  .string()
+  .regex(/^\d+(\.\d+)?$/, 'must be a decimal string (e.g. "0.05")');
+
+/** strangelove_ventures.poa.v1.Description */
+const PoADescriptionSchema = z
   .object({
-    denomCreationFee: z.array(CoinSchema).default([]),
-    denomCreationGasConsume: bigintFromJson.optional(),
+    moniker: z.string().min(1),
+    identity: z.string().default(''),
+    website: z.string().default(''),
+    securityContact: z.string().default(''),
+    details: z.string().default(''),
+  })
+  .strict();
+
+/** strangelove_ventures.poa.v1.CommissionRates */
+const PoACommissionRatesSchema = z
+  .object({
+    rate: DecimalString,
+    maxRate: DecimalString,
+    maxChangeRate: DecimalString,
+  })
+  .strict();
+
+/** google.protobuf.Any — pubkey on MsgCreateValidator. */
+const AnySchema = z
+  .object({
+    typeUrl: z.string().min(1),
+    value: z.string().min(1),
+  })
+  .strict();
+
+/**
+ * strangelove_ventures.poa.v1.MsgCreateValidator — used by poa create-validator.
+ *
+ * `validatorAddress` is required (must be valoper-prefixed). `delegatorAddress`
+ * is deprecated upstream — when omitted, the route handler derives it from the
+ * validator address bytes using the wallet's bech32 prefix. `pubkey` is a
+ * `google.protobuf.Any` with a `typeUrl` (e.g. `/cosmos.crypto.ed25519.PubKey`)
+ * and a base64 `value`.
+ */
+export const MsgCreateValidatorSchema = z
+  .object({
+    description: PoADescriptionSchema,
+    commission: PoACommissionRatesSchema,
+    minSelfDelegation: z
+      .string()
+      .regex(
+        /^\d+$/,
+        'minSelfDelegation must be a non-negative integer string',
+      ),
+    delegatorAddress: z.string().min(1).optional(),
+    validatorAddress: z.string().min(1),
+    pubkey: AnySchema,
   })
   .strict();
 
