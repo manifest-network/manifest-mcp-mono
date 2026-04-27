@@ -12,6 +12,12 @@ export interface MCPTestClientOptions {
   rpcUrl?: string;
   gasPrice?: string;
   serverEntry?: string;
+  /**
+   * Converter contract address. Required for the cosmwasm server. Defaults
+   * to `process.env.MANIFEST_CONVERTER_ADDRESS`, which `global-setup.ts`
+   * populates from the chain container's `/shared/converter.env`.
+   */
+  converterAddress?: string;
 }
 
 /**
@@ -32,6 +38,9 @@ export class MCPTestClient {
       options.serverEntry ?? 'packages/node/dist/chain.js',
     );
 
+    const converterAddress =
+      options.converterAddress ?? process.env.MANIFEST_CONVERTER_ADDRESS;
+
     this.transport = new StdioClientTransport({
       command: 'node',
       args: [serverEntry],
@@ -47,6 +56,9 @@ export class MCPTestClient {
         // Trust the self-signed CA cert from e2e providerd (extracted by global-setup.ts)
         ...(process.env.E2E_TLS_CERT_PATH && {
           NODE_EXTRA_CA_CERTS: process.env.E2E_TLS_CERT_PATH,
+        }),
+        ...(converterAddress && {
+          MANIFEST_CONVERTER_ADDRESS: converterAddress,
         }),
       },
     });

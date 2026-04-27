@@ -40,6 +40,13 @@ COPY --from=go-builder /code/build/manifestd /usr/bin/manifestd
 # Install runtime dependencies
 RUN apk add --no-cache curl make bash jq sed openssl
 
+# Download the MFX→PWR converter wasm artifact at build time so init scripts
+# can run offline. Pinned to v0.2.0 — bump SHA256 alongside the URL.
+ARG CONVERTER_WASM_URL=https://github.com/manifest-network/manifest-contracts/releases/download/v0.2.0/converter.wasm
+ARG CONVERTER_WASM_SHA256=2c85770a97449e70da7be9e80d7b81546bcf43267e4014af46444bc6623e95da
+RUN curl -sSLf -o /usr/local/share/converter.wasm "${CONVERTER_WASM_URL}" \
+  && echo "${CONVERTER_WASM_SHA256}  /usr/local/share/converter.wasm" | sha256sum -c -
+
 WORKDIR /opt
 
 # REST API, P2P, RPC, gRPC
