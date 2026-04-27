@@ -81,7 +81,7 @@ See [`packages/node/README.md`](packages/node/README.md) for wallet setup and MC
 | `get_mfx_to_pwr_rate` | Get the current MFX-to-PWR conversion rate and preview amounts |
 | `convert_mfx_to_pwr` | Convert MFX tokens to PWR via the on-chain converter contract |
 
-Supported modules: `bank`, `staking`, `distribution`, `gov`, `billing`, `sku`, `group`, `wasm`, `auth` (query only), `manifest` (tx only).
+Supported modules: `bank`, `staking`, `distribution`, `gov`, `billing`, `sku`, `group`, `wasm`, `poa`, `tokenfactory`, `ibc-transfer`, `auth` (query only), `manifest` (tx only).
 
 ## Development
 

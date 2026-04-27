@@ -1,0 +1,226 @@
+import { fromBase64, fromBech32, toBech32 } from '@cosmjs/encoding';
+import type { SigningStargateClient } from '@cosmjs/stargate';
+import { strangelove_ventures as strangeloveVenturesNs } from '@manifest-network/manifestjs';
+import { throwUnsupportedSubcommand } from '../modules.js';
+import {
+  type BuiltMessages,
+  type CosmosTxResult,
+  ManifestMCPError,
+  ManifestMCPErrorCode,
+  type TxOptions,
+} from '../types.js';
+import {
+  MsgCreateValidatorSchema,
+  PoAStakingParamsSchema,
+  parseJsonWithSchema,
+} from './json-schemas.js';
+import {
+  buildGasFee,
+  buildTxResult,
+  extractBooleanFlag,
+  parseBigInt,
+  requireArgs,
+  validateAddress,
+  validateArgsLength,
+} from './utils.js';
+
+const {
+  MsgSetPower,
+  MsgRemoveValidator,
+  MsgRemovePending,
+  MsgUpdateStakingParams,
+  MsgCreateValidator,
+} = strangeloveVenturesNs.poa.v1;
+
+/**
+ * Build messages for a PoA transaction subcommand (no signing/broadcasting).
+ *
+ * Sender is set to the configured wallet address. For governance-authority-only
+ * messages (`update-staking-params`, `remove-validator`), the sender must match
+ * the configured PoA authority; the chain rejects the tx otherwise.
+ */
+export function buildPoAMessages(
+  senderAddress: string,
+  subcommand: string,
+  args: string[],
+): BuiltMessages {
+  validateArgsLength(args, 'poa transaction');
+
+  // Derive the operator address prefix from the sender (e.g. "manifest" ->
+  // "manifestvaloper"). PoA validator targets must be valoper-prefixed; a
+  // wallet-prefixed address (easy mistake) would pass bech32 validation and
+  // only fail at broadcast with an opaque chain error.
+  const valoperPrefix = `${fromBech32(senderAddress).prefix}valoper`;
+
+  switch (subcommand) {
+    case 'set-power': {
+      const { value: unsafe, remainingArgs } = extractBooleanFlag(
+        args,
+        '--unsafe',
+      );
+      requireArgs(
+        remainingArgs,
+        2,
+        ['validator-address', 'power'],
+        'poa set-power',
+      );
+      const [validatorAddress, powerStr] = remainingArgs;
+      validateAddress(validatorAddress, 'validator address', valoperPrefix);
+      const power = parseBigInt(powerStr, 'power');
+
+      const msg = {
+        typeUrl: '/strangelove_ventures.poa.v1.MsgSetPower',
+        value: MsgSetPower.fromPartial({
+          sender: senderAddress,
+          validatorAddress,
+          power,
+          unsafe,
+        }),
+      };
+      return { messages: [msg], memo: '' };
+    }
+
+    case 'remove-validator': {
+      requireArgs(args, 1, ['validator-address'], 'poa remove-validator');
+      const [validatorAddress] = args;
+      validateAddress(validatorAddress, 'validator address', valoperPrefix);
+
+      const msg = {
+        typeUrl: '/strangelove_ventures.poa.v1.MsgRemoveValidator',
+        value: MsgRemoveValidator.fromPartial({
+          sender: senderAddress,
+          validatorAddress,
+        }),
+      };
+      return { messages: [msg], memo: '' };
+    }
+
+    case 'remove-pending': {
+      requireArgs(args, 1, ['validator-address'], 'poa remove-pending');
+      const [validatorAddress] = args;
+      validateAddress(validatorAddress, 'validator address', valoperPrefix);
+
+      const msg = {
+        typeUrl: '/strangelove_ventures.poa.v1.MsgRemovePending',
+        value: MsgRemovePending.fromPartial({
+          sender: senderAddress,
+          validatorAddress,
+        }),
+      };
+      return { messages: [msg], memo: '' };
+    }
+
+    case 'update-staking-params': {
+      requireArgs(args, 1, ['params-json'], 'poa update-staking-params');
+      const params = parseJsonWithSchema(
+        args[0],
+        PoAStakingParamsSchema,
+        'poa update-staking-params params-json',
+      );
+
+      const msg = {
+        typeUrl: '/strangelove_ventures.poa.v1.MsgUpdateStakingParams',
+        value: MsgUpdateStakingParams.fromPartial({
+          sender: senderAddress,
+          params,
+        }),
+      };
+      return { messages: [msg], memo: '' };
+    }
+
+    case 'create-validator': {
+      // Accepts the MsgCreateValidator body as JSON. The schema rejects
+      // unknown keys so typos (e.g. `descripton`) fail loudly instead of
+      // silently dropping fields.
+      //
+      // `validatorAddress` is required and must be valoper-prefixed.
+      // `delegatorAddress` is deprecated upstream — when omitted we derive it
+      // from the validator-address bytes using the wallet's bech32 prefix
+      // (per the proto comment: the two addresses refer to the same account,
+      // differing only in bech32 notation).
+      requireArgs(args, 1, ['msg-json'], 'poa create-validator');
+      const body = parseJsonWithSchema(
+        args[0],
+        MsgCreateValidatorSchema,
+        'poa create-validator msg-json',
+      );
+
+      validateAddress(
+        body.validatorAddress,
+        'create-validator validator address',
+        valoperPrefix,
+      );
+      const validatorBytes = fromBech32(body.validatorAddress).data;
+      const walletPrefix = fromBech32(senderAddress).prefix;
+      const delegatorAddress =
+        body.delegatorAddress ?? toBech32(walletPrefix, validatorBytes);
+      validateAddress(
+        delegatorAddress,
+        'create-validator delegator address',
+        walletPrefix,
+      );
+
+      // Any.fromPartial expects `value` as Uint8Array, not base64. Decode the
+      // pubkey bytes here so the on-wire encoding matches what the chain
+      // expects to deserialize into the inner PubKey message.
+      let pubkeyValue: Uint8Array;
+      try {
+        pubkeyValue = fromBase64(body.pubkey.value);
+      } catch (error) {
+        throw new ManifestMCPError(
+          ManifestMCPErrorCode.TX_FAILED,
+          `poa create-validator pubkey.value: invalid base64: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+
+      const msg = {
+        typeUrl: '/strangelove_ventures.poa.v1.MsgCreateValidator',
+        value: MsgCreateValidator.fromPartial({
+          description: body.description,
+          commission: body.commission,
+          minSelfDelegation: body.minSelfDelegation,
+          delegatorAddress,
+          validatorAddress: body.validatorAddress,
+          pubkey: { typeUrl: body.pubkey.typeUrl, value: pubkeyValue },
+        }),
+      };
+      return { messages: [msg], memo: '' };
+    }
+
+    default:
+      throwUnsupportedSubcommand('tx', 'poa', subcommand);
+  }
+}
+
+/**
+ * Route PoA transaction to appropriate handler
+ */
+export async function routePoATransaction(
+  client: SigningStargateClient,
+  senderAddress: string,
+  subcommand: string,
+  args: string[],
+  waitForConfirmation: boolean,
+  options?: TxOptions,
+): Promise<CosmosTxResult> {
+  const built = buildPoAMessages(senderAddress, subcommand, args);
+  const fee = await buildGasFee(
+    client,
+    senderAddress,
+    built.messages,
+    options,
+    built.memo,
+  );
+  const result = await client.signAndBroadcast(
+    senderAddress,
+    built.messages,
+    fee,
+    built.memo,
+  );
+  return buildTxResult(
+    'poa',
+    built.canonicalSubcommand ?? subcommand,
+    result,
+    waitForConfirmation,
+  );
+}

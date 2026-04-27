@@ -13,6 +13,23 @@ vi.mock('@manifest-network/manifestjs', () => ({
       createRPCQueryClient: vi.fn().mockResolvedValue({ cosmwasm: {} }),
     },
   },
+  strangelove_ventures: {
+    ClientFactory: {
+      createRPCQueryClient: vi
+        .fn()
+        .mockResolvedValue({ strangelove_ventures: {} }),
+    },
+  },
+  osmosis: {
+    ClientFactory: {
+      createRPCQueryClient: vi.fn().mockResolvedValue({ osmosis: {} }),
+    },
+  },
+  ibc: {
+    ClientFactory: {
+      createRPCQueryClient: vi.fn().mockResolvedValue({ ibc: {} }),
+    },
+  },
   cosmosProtoRegistry: [],
   cosmosAminoConverters: {},
   cosmwasmProtoRegistry: [],
@@ -23,6 +40,8 @@ vi.mock('@manifest-network/manifestjs', () => ({
   strangeloveVenturesAminoConverters: {},
   osmosisProtoRegistry: [],
   osmosisAminoConverters: {},
+  ibcProtoRegistry: [],
+  ibcAminoConverters: {},
 }));
 
 vi.mock('@cosmjs/stargate', () => ({
