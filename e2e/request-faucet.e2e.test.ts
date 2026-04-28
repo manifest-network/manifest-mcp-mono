@@ -28,10 +28,14 @@ interface FaucetResult {
 }
 
 describe('request_faucet', () => {
-  // Two clients pointed at the same chain: the faucet-aware one for invoking
-  // request_faucet, and a query client for balance checks before/after. The
-  // query client is also faucet-aware just to keep the env consistent — its
-  // tool list will also include request_faucet but we don't call it.
+  // Two clients pointed at the same chain: faucetClient is started with
+  // MANIFEST_FAUCET_URL set so the conditional `request_faucet` tool gets
+  // registered, queryClient is started without it (default no-faucet
+  // chain server) and is used for balance checks before/after each drip.
+  // Splitting the work this way also doubles as a sanity check that the
+  // conditional registration is per-process: queryClient's tool list
+  // does NOT include request_faucet (this is not asserted here — see
+  // tool-annotations.e2e.test.ts for the explicit pin).
   const faucetClient = new MCPTestClient();
   const queryClient = new MCPTestClient();
 

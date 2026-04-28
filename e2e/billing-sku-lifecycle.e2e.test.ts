@@ -28,6 +28,15 @@ import { MCPTestClient, parseToolErrorCode } from './helpers/mcp-client.js';
  * `update-params` for both modules is governance-only (POA admin via
  * group proposal); `create-lease-for-tenant` is admin-only too. Both
  * out of scope here.
+ *
+ * Re-runnability: this file assumes a fresh chain state (the suite-wide
+ * convention — `docker compose -f e2e/docker-compose.yml down -v` between
+ * runs). `sku create-provider` is keyed by address and can only be run
+ * once per address per chain, so a re-run against a persistent devnet
+ * would fail at provider registration. Other create-* tests in the
+ * suite (groups, leases, wasm code IDs) follow the same convention.
+ * Mutations that *can* be made re-runnable use a timestamp suffix —
+ * see `SKU_NAME` below.
  */
 
 const POA_ADMIN_ADDRESS =
@@ -38,6 +47,14 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 describe('Billing/SKU lifecycle', () => {
   const client = new MCPTestClient();
+
+  // Unique SKU name per run — matches the convention used in chain-tools
+  // (`e2e${Date.now()}` subdenoms) and chain-routing (`routing${Date.now()}`).
+  // SKU names are unique-per-provider on chain; suffixing with a timestamp
+  // makes the test re-runnable against accumulated state without collisions.
+  // The provider itself is keyed by address and can't be timestamp-suffixed —
+  // see the file preamble for the standing fresh-chain-state convention.
+  const SKU_NAME = `bsl-cpu-${Date.now()}`;
 
   let testAddress: string;
   let providerUuid: string;
@@ -118,7 +135,7 @@ describe('Billing/SKU lifecycle', () => {
       module: 'sku',
       subcommand: 'create-sku',
       // [provider-uuid, name, unit, base-price]
-      args: [providerUuid, 'bsl-cpu', 'per-hour', `3600${PWR_DENOM}`],
+      args: [providerUuid, SKU_NAME, 'per-hour', `3600${PWR_DENOM}`],
       wait_for_confirmation: true,
     });
     expect(result.code).toBe(0);
@@ -130,7 +147,7 @@ describe('Billing/SKU lifecycle', () => {
       subcommand: 'skus-by-provider',
       args: [providerUuid],
     });
-    const found = lookup.result.skus.find((s) => s.name === 'bsl-cpu');
+    const found = lookup.result.skus.find((s) => s.name === SKU_NAME);
     expect(found).toBeDefined();
     skuUuid = found!.uuid;
   });
@@ -140,7 +157,7 @@ describe('Billing/SKU lifecycle', () => {
       module: 'sku',
       subcommand: 'update-sku',
       // [sku-uuid, provider-uuid, name, unit, base-price]
-      args: [skuUuid, providerUuid, 'bsl-cpu', 'per-hour', `7200${PWR_DENOM}`],
+      args: [skuUuid, providerUuid, SKU_NAME, 'per-hour', `7200${PWR_DENOM}`],
       wait_for_confirmation: true,
     });
     expect(result.code).toBe(0);
