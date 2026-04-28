@@ -107,6 +107,37 @@ export class MCPTestClient {
     return JSON.parse(text) as T;
   }
 
+  /**
+   * Call a tool and return the parsed error response (NOT the success
+   * payload). Throws if the tool returned successfully — useful for tests
+   * that explicitly assert error paths and want to inspect the structured
+   * error fields (`code`, `message`, `details`, `input`).
+   */
+  async callToolExpectError(
+    name: string,
+    args: Record<string, unknown> = {},
+  ): Promise<{
+    error: true;
+    tool: string;
+    code?: string;
+    message?: string;
+    details?: unknown;
+    input?: unknown;
+  }> {
+    const result = await this.client.callTool({ name, arguments: args });
+    if (!result.isError) {
+      throw new Error(
+        `Expected tool "${name}" to return isError: true, got success`,
+      );
+    }
+    const content = result.content as Array<{ type: string; text?: string }>;
+    const text = content?.[0]?.text;
+    if (!text) {
+      throw new Error(`Tool "${name}" returned no text content`);
+    }
+    return JSON.parse(text);
+  }
+
   async listTools(): Promise<string[]> {
     const result = await this.client.listTools();
     return result.tools.map((t) => t.name);
