@@ -16,9 +16,13 @@ import { MCPTestClient } from './helpers/mcp-client.js';
  * plugin update and updates to *both* test files.
  */
 
+// Title strings are owned by the server (user-facing copy that may be
+// tweaked for clarity without contract impact). The matrix below pins
+// only the flag-shaped fields — `title` is asserted to exist and be a
+// non-empty string in `assertToolMatrix`, mirroring the unit-test
+// contract in packages/{chain,lease,fred,cosmwasm}/src/server.test.ts
+// (`expect.any(String)`).
 interface ExpectedAnnotations {
-  title: string; // exact title (not asserted today — title strings are owned
-  // by the server; we only assert it's a non-empty string)
   readOnlyHint: boolean;
   destructiveHint?: boolean; // only asserted for mutating tools
   idempotentHint: boolean;
@@ -29,7 +33,6 @@ interface ExpectedAnnotations {
 
 const CHAIN_MATRIX: Record<string, ExpectedAnnotations> = {
   get_account_info: {
-    title: 'Get account info',
     readOnlyHint: true,
     idempotentHint: true,
     openWorldHint: false,
@@ -37,7 +40,6 @@ const CHAIN_MATRIX: Record<string, ExpectedAnnotations> = {
     estimable: false,
   },
   cosmos_query: {
-    title: 'Cosmos query',
     readOnlyHint: true,
     idempotentHint: true,
     openWorldHint: true,
@@ -45,7 +47,6 @@ const CHAIN_MATRIX: Record<string, ExpectedAnnotations> = {
     estimable: false,
   },
   cosmos_estimate_fee: {
-    title: 'Estimate fee',
     readOnlyHint: true,
     idempotentHint: true,
     openWorldHint: true,
@@ -53,7 +54,6 @@ const CHAIN_MATRIX: Record<string, ExpectedAnnotations> = {
     estimable: false,
   },
   list_modules: {
-    title: 'List modules',
     readOnlyHint: true,
     idempotentHint: true,
     openWorldHint: false,
@@ -61,7 +61,6 @@ const CHAIN_MATRIX: Record<string, ExpectedAnnotations> = {
     estimable: false,
   },
   list_module_subcommands: {
-    title: 'List module subcommands',
     readOnlyHint: true,
     idempotentHint: true,
     openWorldHint: false,
@@ -69,7 +68,6 @@ const CHAIN_MATRIX: Record<string, ExpectedAnnotations> = {
     estimable: false,
   },
   cosmos_tx: {
-    title: 'Cosmos tx',
     readOnlyHint: false,
     destructiveHint: true,
     idempotentHint: false,
@@ -78,7 +76,6 @@ const CHAIN_MATRIX: Record<string, ExpectedAnnotations> = {
     estimable: true,
   },
   request_faucet: {
-    title: 'Request faucet funds',
     readOnlyHint: false,
     destructiveHint: false,
     idempotentHint: false,
@@ -90,7 +87,6 @@ const CHAIN_MATRIX: Record<string, ExpectedAnnotations> = {
 
 const LEASE_MATRIX: Record<string, ExpectedAnnotations> = {
   credit_balance: {
-    title: 'Credit balance',
     readOnlyHint: true,
     idempotentHint: true,
     openWorldHint: true,
@@ -98,7 +94,6 @@ const LEASE_MATRIX: Record<string, ExpectedAnnotations> = {
     estimable: false,
   },
   leases_by_tenant: {
-    title: 'Leases by tenant',
     readOnlyHint: true,
     idempotentHint: true,
     openWorldHint: true,
@@ -106,7 +101,6 @@ const LEASE_MATRIX: Record<string, ExpectedAnnotations> = {
     estimable: false,
   },
   get_skus: {
-    title: 'Get SKUs',
     readOnlyHint: true,
     idempotentHint: true,
     openWorldHint: true,
@@ -114,7 +108,6 @@ const LEASE_MATRIX: Record<string, ExpectedAnnotations> = {
     estimable: false,
   },
   get_providers: {
-    title: 'Get providers',
     readOnlyHint: true,
     idempotentHint: true,
     openWorldHint: true,
@@ -122,7 +115,6 @@ const LEASE_MATRIX: Record<string, ExpectedAnnotations> = {
     estimable: false,
   },
   fund_credit: {
-    title: 'Fund credit',
     readOnlyHint: false,
     destructiveHint: false,
     idempotentHint: false,
@@ -131,7 +123,6 @@ const LEASE_MATRIX: Record<string, ExpectedAnnotations> = {
     estimable: false,
   },
   close_lease: {
-    title: 'Close lease',
     readOnlyHint: false,
     destructiveHint: true,
     idempotentHint: true,
@@ -143,7 +134,6 @@ const LEASE_MATRIX: Record<string, ExpectedAnnotations> = {
 
 const FRED_MATRIX: Record<string, ExpectedAnnotations> = {
   browse_catalog: {
-    title: 'Browse catalog',
     readOnlyHint: true,
     idempotentHint: true,
     openWorldHint: true,
@@ -151,7 +141,6 @@ const FRED_MATRIX: Record<string, ExpectedAnnotations> = {
     estimable: false,
   },
   app_status: {
-    title: 'App status',
     readOnlyHint: true,
     idempotentHint: true,
     openWorldHint: true,
@@ -159,7 +148,6 @@ const FRED_MATRIX: Record<string, ExpectedAnnotations> = {
     estimable: false,
   },
   get_logs: {
-    title: 'Get logs',
     readOnlyHint: true,
     idempotentHint: true,
     openWorldHint: true,
@@ -167,7 +155,6 @@ const FRED_MATRIX: Record<string, ExpectedAnnotations> = {
     estimable: false,
   },
   app_diagnostics: {
-    title: 'App diagnostics',
     readOnlyHint: true,
     idempotentHint: true,
     openWorldHint: true,
@@ -175,7 +162,6 @@ const FRED_MATRIX: Record<string, ExpectedAnnotations> = {
     estimable: false,
   },
   app_releases: {
-    title: 'App releases',
     readOnlyHint: true,
     idempotentHint: true,
     openWorldHint: true,
@@ -183,7 +169,6 @@ const FRED_MATRIX: Record<string, ExpectedAnnotations> = {
     estimable: false,
   },
   deploy_app: {
-    title: 'Deploy app',
     readOnlyHint: false,
     destructiveHint: false,
     idempotentHint: false,
@@ -192,7 +177,6 @@ const FRED_MATRIX: Record<string, ExpectedAnnotations> = {
     estimable: false,
   },
   restart_app: {
-    title: 'Restart app',
     readOnlyHint: false,
     destructiveHint: false,
     idempotentHint: false,
@@ -201,7 +185,6 @@ const FRED_MATRIX: Record<string, ExpectedAnnotations> = {
     estimable: false,
   },
   update_app: {
-    title: 'Update app',
     readOnlyHint: false,
     destructiveHint: true,
     idempotentHint: false,
@@ -213,7 +196,6 @@ const FRED_MATRIX: Record<string, ExpectedAnnotations> = {
 
 const COSMWASM_MATRIX: Record<string, ExpectedAnnotations> = {
   get_mfx_to_pwr_rate: {
-    title: 'Get MFX-to-PWR rate',
     readOnlyHint: true,
     idempotentHint: true,
     openWorldHint: true,
@@ -221,7 +203,6 @@ const COSMWASM_MATRIX: Record<string, ExpectedAnnotations> = {
     estimable: false,
   },
   convert_mfx_to_pwr: {
-    title: 'Convert MFX to PWR',
     readOnlyHint: false,
     destructiveHint: true,
     idempotentHint: false,
