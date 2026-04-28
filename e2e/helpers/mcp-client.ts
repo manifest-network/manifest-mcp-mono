@@ -18,6 +18,12 @@ export interface MCPTestClientOptions {
    * populates from the chain container's `/shared/converter.env`.
    */
   converterAddress?: string;
+  /**
+   * Faucet URL. When set, the chain server registers the optional
+   * `request_faucet` tool. Tests that need to verify the conditional
+   * registration matrix pass this even if no faucet container is running.
+   */
+  faucetUrl?: string;
 }
 
 /**
@@ -60,6 +66,9 @@ export class MCPTestClient {
         ...(converterAddress && {
           MANIFEST_CONVERTER_ADDRESS: converterAddress,
         }),
+        ...(options.faucetUrl && {
+          MANIFEST_FAUCET_URL: options.faucetUrl,
+        }),
       },
     });
 
@@ -101,6 +110,42 @@ export class MCPTestClient {
   async listTools(): Promise<string[]> {
     const result = await this.client.listTools();
     return result.tools.map((t) => t.name);
+  }
+
+  /**
+   * Like `listTools()` but returns the full tool descriptors (annotations,
+   * _meta, inputSchema, etc.). Used by tool-annotations.e2e.test.ts to
+   * assert the annotation matrix over the live MCP transport.
+   */
+  async listToolsRaw(): Promise<
+    Array<{
+      name: string;
+      annotations?: {
+        title?: string;
+        readOnlyHint?: boolean;
+        destructiveHint?: boolean;
+        idempotentHint?: boolean;
+        openWorldHint?: boolean;
+      };
+      _meta?: {
+        manifest?: { v: number; broadcasts: boolean; estimable: boolean };
+      };
+    }>
+  > {
+    const result = await this.client.listTools();
+    return result.tools as Array<{
+      name: string;
+      annotations?: {
+        title?: string;
+        readOnlyHint?: boolean;
+        destructiveHint?: boolean;
+        idempotentHint?: boolean;
+        openWorldHint?: boolean;
+      };
+      _meta?: {
+        manifest?: { v: number; broadcasts: boolean; estimable: boolean };
+      };
+    }>;
   }
 
   async close(): Promise<void> {
