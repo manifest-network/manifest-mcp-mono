@@ -350,6 +350,25 @@ describe('Billing/SKU lifecycle', () => {
   // Both must run after all leases on the SKU are settled, otherwise the
   // chain typically rejects with "still in use".
   // ==========================================================================
+
+  // If self-ack was rejected upstream, flow A's lease was created but never
+  // acknowledged/closed — it's still bound to the SKU. Cancel it before
+  // deactivation. cancel-lease is tenant-only and works on any non-terminal
+  // lease, so it's a safe terminal action regardless of state. No-op when
+  // selfAckOk is true (close-lease already terminated the lease).
+  it('cleanup: cancel flow A lease if self-ack was rejected', async () => {
+    if (selfAckOk) {
+      return;
+    }
+    const result = await client.callTool<{ code: number }>('cosmos_tx', {
+      module: 'billing',
+      subcommand: 'cancel-lease',
+      args: [activeLeaseUuid],
+      wait_for_confirmation: true,
+    });
+    expect(result.code).toBe(0);
+  });
+
   it('tx: sku deactivate-sku', async () => {
     const result = await client.callTool<{ code: number }>('cosmos_tx', {
       module: 'sku',

@@ -265,13 +265,16 @@ echo "SKU docker-micro UUID: $MICRO_UUID"
 #      to POA_ADMIN_ADDRESS for runtime privileged ops; the actual sender does
 #      not need to be the POA admin since instantiate_default_permission is
 #      Everybody.
-#   3. Transfer tokenfactory admin authority on factory/POA_ADMIN/upwr to the
-#      contract via a group proposal. The denom's admin is POA_ADMIN_ADDRESS
-#      (a group policy address with no signing key), so MsgChangeAdmin must go
-#      through the group. The policy is threshold-1 with $ADDR1 as a member of
-#      weight 1, so `--exec try` lets the proposal pass and execute in a
-#      single tx — proposers' signatures count as Yes votes (see manifestd
-#      `tx group submit-proposal --help`).
+#   3. Grant the contract authz from POA_ADMIN for MsgBurnHeldBalance and
+#      MsgMint via a group proposal. The denom admin stays POA_ADMIN —
+#      we do NOT change it — because the contract executes those messages
+#      with sender=POA_ADMIN via authz, not as the denom's direct admin.
+#      Since POA_ADMIN_ADDRESS is a group policy address with no signing
+#      key, the MsgGrant must be submitted through the group. The policy
+#      is threshold-1 with $ADDR1 as a member of weight 1, so `--exec try`
+#      lets the proposal pass and execute in a single tx — proposers'
+#      signatures count as Yes votes (see manifestd `tx group
+#      submit-proposal --help`).
 # =============================================================================
 
 if [ -f /shared/converter.env ]; then
