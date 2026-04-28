@@ -24,6 +24,19 @@ export interface MCPTestClientOptions {
    * registration matrix pass this even if no faucet container is running.
    */
   faucetUrl?: string;
+  /**
+   * REST/LCD URL. When set, `COSMOS_REST_URL` is exported to the spawned
+   * process. The CosmosClientManager prefers REST for queries when both
+   * REST and RPC are configured. Set together with `disableRpc: true` to
+   * test query-only mode where signing throws INVALID_CONFIG.
+   */
+  restUrl?: string;
+  /**
+   * If true, omit `COSMOS_RPC_URL` and `COSMOS_GAS_PRICE` from the
+   * spawned process env so the server boots in query-only (REST) mode.
+   * Pair with `restUrl`. Defaults to false.
+   */
+  disableRpc?: boolean;
 }
 
 /**
@@ -47,29 +60,37 @@ export class MCPTestClient {
     const converterAddress =
       options.converterAddress ?? process.env.MANIFEST_CONVERTER_ADDRESS;
 
+    // Build env carefully so REST-only mode actually omits COSMOS_RPC_URL /
+    // COSMOS_GAS_PRICE rather than receiving an empty string (the bootstrap
+    // treats an empty string as "set" and tries to connect to it).
+    const env: Record<string, string> = {
+      ...process.env,
+      MANIFEST_KEY_FILE: '/dev/null/nonexistent',
+      COSMOS_CHAIN_ID: options.chainId ?? 'manifest-localnet',
+      COSMOS_MNEMONIC: options.mnemonic ?? DEFAULT_MNEMONIC,
+    };
+
+    if (!options.disableRpc) {
+      env.COSMOS_RPC_URL = options.rpcUrl ?? 'http://localhost:26657';
+      env.COSMOS_GAS_PRICE = options.gasPrice ?? '0.01umfx';
+    }
+    if (options.restUrl) {
+      env.COSMOS_REST_URL = options.restUrl;
+    }
+    if (process.env.E2E_TLS_CERT_PATH) {
+      env.NODE_EXTRA_CA_CERTS = process.env.E2E_TLS_CERT_PATH;
+    }
+    if (converterAddress) {
+      env.MANIFEST_CONVERTER_ADDRESS = converterAddress;
+    }
+    if (options.faucetUrl) {
+      env.MANIFEST_FAUCET_URL = options.faucetUrl;
+    }
+
     this.transport = new StdioClientTransport({
       command: 'node',
       args: [serverEntry],
-      env: {
-        ...process.env,
-        // Force keyfile to a nonexistent path so the server always falls
-        // through to the mnemonic wallet, regardless of host-local keyfiles.
-        MANIFEST_KEY_FILE: '/dev/null/nonexistent',
-        COSMOS_CHAIN_ID: options.chainId ?? 'manifest-localnet',
-        COSMOS_RPC_URL: options.rpcUrl ?? 'http://localhost:26657',
-        COSMOS_GAS_PRICE: options.gasPrice ?? '0.01umfx',
-        COSMOS_MNEMONIC: options.mnemonic ?? DEFAULT_MNEMONIC,
-        // Trust the self-signed CA cert from e2e providerd (extracted by global-setup.ts)
-        ...(process.env.E2E_TLS_CERT_PATH && {
-          NODE_EXTRA_CA_CERTS: process.env.E2E_TLS_CERT_PATH,
-        }),
-        ...(converterAddress && {
-          MANIFEST_CONVERTER_ADDRESS: converterAddress,
-        }),
-        ...(options.faucetUrl && {
-          MANIFEST_FAUCET_URL: options.faucetUrl,
-        }),
-      },
+      env,
     });
 
     await this.client.connect(this.transport);
