@@ -86,6 +86,46 @@ services:
       - mcp-e2e
 
   # ===========================================================================
+  # CosmJS Faucet (patched for tokenfactory denoms)
+  #
+  # Drips MFX + factory/POA_ADMIN/upwr (PWR) to any requested address.
+  # Used by request-faucet.e2e.test.ts to exercise the chain server's
+  # conditional `request_faucet` tool registration.
+  # ===========================================================================
+  faucet:
+    build:
+      context: ./docker/faucet
+    volumes:
+      - ./scripts/start_faucet.sh:/app/start_faucet.sh:ro
+    ports:
+      - "8000:8000"
+    environment:
+      - FAUCET_CONCURRENCY=3
+      - FAUCET_PORT=8000
+      - FAUCET_MNEMONIC=${MNEMO3}
+      - FAUCET_ADDRESS_PREFIX=manifest
+      - FAUCET_TOKENS=umfx,factory/${POA_ADMIN_ADDRESS}/upwr
+      - FAUCET_CREDIT_AMOUNT_UMFX=${FAUCET_CREDIT_AMOUNT_MFX}
+      - FAUCET_PWR_DENOM=factory/${POA_ADMIN_ADDRESS}/upwr
+      - FAUCET_CREDIT_AMOUNT_PWR=${FAUCET_CREDIT_AMOUNT_PWR}
+      - FAUCET_COOLDOWN_TIME=${FAUCET_COOLDOWN_TIME}
+      - FAUCET_GAS_LIMIT=200000
+      - FAUCET_GAS_PRICE=0umfx
+      - FAUCET_MEMO=Sent by Manifest e2e faucet
+    command: ["/bin/sh", "/app/start_faucet.sh"]
+    healthcheck:
+      test: wget -q -O /dev/null http://localhost:8000/status || exit 1
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    depends_on:
+      chain:
+        condition: service_healthy
+    networks:
+      - mcp-e2e
+
+  # ===========================================================================
   # Provider Daemon
   # ===========================================================================
   providerd:

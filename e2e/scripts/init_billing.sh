@@ -28,7 +28,7 @@ EXISTING_PROVIDER=$(curl -s "http://chain:1317/liftedinit/sku/v1/provider/addres
 
 if [ -n "$EXISTING_PROVIDER" ]; then
     echo "Provider already exists with UUID: $EXISTING_PROVIDER"
-    if [ -f /shared/providerd.yaml ] && [ -f /shared/docker-backend.yaml ] && [ -f /shared/tls/cert.pem ] && [ -f /shared/tls/key.pem ]; then
+    if [ -f /shared/providerd.yaml ] && [ -f /shared/docker-backend.yaml ] && [ -f /shared/tls/cert.pem ] && [ -f /shared/tls/key.pem ] && [ -f /shared/converter.env ]; then
         echo "Configs already exist. Skipping."
         exit 0
     fi
@@ -254,3 +254,219 @@ cat /shared/docker-backend.yaml
 echo "=== Billing module initialized successfully ==="
 echo "Provider UUID: $PROVIDER_UUID"
 echo "SKU docker-micro UUID: $MICRO_UUID"
+
+# =============================================================================
+# MFX → PWR Converter Contract
+# =============================================================================
+# Deploy and configure the converter wasm so the cosmwasm MCP server can be
+# exercised end-to-end. Three steps:
+#   1. Store the wasm (any signer; wasm.params.code_upload_access=Everybody).
+#   2. Instantiate from $KEY (provider). The instantiate msg sets `poa_admin`
+#      to POA_ADMIN_ADDRESS for runtime privileged ops; the actual sender does
+#      not need to be the POA admin since instantiate_default_permission is
+#      Everybody.
+#   3. Grant the contract authz from POA_ADMIN for MsgBurnHeldBalance and
+#      MsgMint via a group proposal. The denom admin stays POA_ADMIN —
+#      we do NOT change it — because the contract executes those messages
+#      with sender=POA_ADMIN via authz, not as the denom's direct admin.
+#      Since POA_ADMIN_ADDRESS is a group policy address with no signing
+#      key, the MsgGrant must be submitted through the group. The policy
+#      is threshold-1 with $ADDR1 as a member of weight 1, so `--exec try`
+#      lets the proposal pass and execute in a single tx — proposers'
+#      signatures count as Yes votes (see manifestd `tx group
+#      submit-proposal --help`).
+# =============================================================================
+
+if [ -f /shared/converter.env ]; then
+    echo "=== Converter already deployed, skipping ==="
+    cat /shared/converter.env
+else
+    CONVERTER_WASM_PATH=/usr/local/share/converter.wasm
+    if [ ! -f "$CONVERTER_WASM_PATH" ]; then
+        echo "ERROR: converter wasm not found at $CONVERTER_WASM_PATH (built into image)"
+        exit 1
+    fi
+
+    PWR_DENOM="factory/${POA_ADMIN_ADDRESS}/upwr"
+
+    echo "=== Storing converter wasm ==="
+
+    $BINARY tx wasm store "$CONVERTER_WASM_PATH" \
+        --from $KEY \
+        --home $HOME_DIR \
+        --keyring-backend $KEYRING \
+        --chain-id $CHAIN_ID \
+        --node http://chain:$RPC \
+        --gas auto \
+        --gas-adjustment 1.5 \
+        --gas-prices 0.025$DENOM \
+        --yes
+
+    sleep 5
+
+    # Find our code_id by scanning for the wasm we just uploaded. The provider
+    # is the only uploader on this fresh devnet, so taking the highest code_id
+    # is safe; if we ever upload more wasms, switch to filtering by checksum.
+    CODE_ID=$($BINARY query wasm list-code \
+        --node http://chain:$RPC \
+        --output json | jq -r '.code_infos | sort_by(.code_id | tonumber) | last | .code_id')
+
+    if [ -z "$CODE_ID" ] || [ "$CODE_ID" = "null" ]; then
+        echo "ERROR: Failed to discover converter code_id after store"
+        exit 1
+    fi
+
+    echo "Converter code_id: $CODE_ID"
+
+    echo "=== Instantiating converter ==="
+
+    # rate=0.379 is asserted by e2e/cosmwasm.e2e.test.ts. Keep the two in
+    # sync if you change either one.
+    INSTANTIATE_MSG=$(jq -nc \
+        --arg admin "$POA_ADMIN_ADDRESS" \
+        --arg poa_admin "$POA_ADMIN_ADDRESS" \
+        --arg target_denom "$PWR_DENOM" \
+        '{admin:$admin, poa_admin:$poa_admin, rate:"0.379", source_denom:"umfx", target_denom:$target_denom, paused:false}')
+
+    # Snapshot the existing contracts at this code_id BEFORE instantiate.
+    # If a previous run got past store-code + instantiate but failed before
+    # writing converter.env, list-contract-by-code [0] would pick the
+    # orphan contract on the next run instead of the new one we're about
+    # to create. Diffing before/after eliminates the race.
+    BEFORE_CONTRACTS=$($BINARY query wasm list-contract-by-code "$CODE_ID" \
+        --node http://chain:$RPC \
+        --output json 2>/dev/null | jq -r '.contracts[]?' | sort)
+
+    $BINARY tx wasm instantiate "$CODE_ID" "$INSTANTIATE_MSG" \
+        --label "converter" \
+        --admin "$POA_ADMIN_ADDRESS" \
+        --from $KEY \
+        --home $HOME_DIR \
+        --keyring-backend $KEYRING \
+        --chain-id $CHAIN_ID \
+        --node http://chain:$RPC \
+        --gas auto \
+        --gas-adjustment 1.5 \
+        --gas-prices 0.025$DENOM \
+        --yes
+
+    sleep 5
+
+    AFTER_CONTRACTS=$($BINARY query wasm list-contract-by-code "$CODE_ID" \
+        --node http://chain:$RPC \
+        --output json | jq -r '.contracts[]?' | sort)
+
+    # Take the address that's in AFTER but not BEFORE — guaranteed to be
+    # the contract we just instantiated. comm -13 prints lines unique to
+    # the second sorted input.
+    CONTRACT_ADDR=$(comm -13 <(echo "$BEFORE_CONTRACTS") <(echo "$AFTER_CONTRACTS") | head -n1)
+
+    if [ -z "$CONTRACT_ADDR" ] || [ "$CONTRACT_ADDR" = "null" ]; then
+        echo "ERROR: Failed to identify the newly instantiated contract"
+        echo "  before: $BEFORE_CONTRACTS"
+        echo "  after:  $AFTER_CONTRACTS"
+        exit 1
+    fi
+
+    echo "Converter contract address: $CONTRACT_ADDR"
+
+    echo "=== Granting authz privileges to contract (group proposal) ==="
+
+    # Group proposal granting authz from POA_ADMIN to the contract for the
+    # two privileged message types it needs to execute "on behalf of" the
+    # POA admin during a Convert call (converter v0.2.0 — revisit if the
+    # contract is upgraded with a different privilege model):
+    #   - MsgBurnHeldBalance (manifest module): burn the MFX deposited by
+    #     the caller as part of the conversion.
+    #   - MsgMint (tokenfactory): mint the PWR for the caller, since
+    #     POA_ADMIN is the admin of the PWR denom and the contract executes
+    #     MsgMint with sender=POA_ADMIN via authz.
+    # Note: we deliberately do not transfer tokenfactory admin to the
+    # contract — the contract's design is to use authz, so POA_ADMIN must
+    # remain the denom admin for MsgMint(sender=POA_ADMIN) to be authorized.
+    PROPOSAL_FILE=$(mktemp)
+    jq -n \
+        --arg gpa "$POA_ADMIN_ADDRESS" \
+        --arg proposer "$ADDR1" \
+        --arg grantee "$CONTRACT_ADDR" \
+        '{
+          group_policy_address: $gpa,
+          proposers: [$proposer],
+          metadata: "",
+          messages: [
+            {
+              "@type": "/cosmos.authz.v1beta1.MsgGrant",
+              granter: $gpa,
+              grantee: $grantee,
+              grant: {
+                authorization: {
+                  "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
+                  msg: "/liftedinit.manifest.v1.MsgBurnHeldBalance"
+                }
+              }
+            },
+            {
+              "@type": "/cosmos.authz.v1beta1.MsgGrant",
+              granter: $gpa,
+              grantee: $grantee,
+              grant: {
+                authorization: {
+                  "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
+                  msg: "/osmosis.tokenfactory.v1beta1.MsgMint"
+                }
+              }
+            }
+          ],
+          title: "Grant converter authz",
+          summary: "Grant MsgBurnHeldBalance and MsgMint authz from POA admin to the converter contract"
+        }' > "$PROPOSAL_FILE"
+
+    # --exec try: with threshold=1 and the proposer as a weight-1 group member,
+    # the proposer's signature counts as a Yes vote and the proposal executes
+    # immediately in the same tx — no separate vote/exec step or 30s wait.
+    $BINARY tx group submit-proposal "$PROPOSAL_FILE" \
+        --exec try \
+        --from $KEY \
+        --home $HOME_DIR \
+        --keyring-backend $KEYRING \
+        --chain-id $CHAIN_ID \
+        --node http://chain:$RPC \
+        --gas auto \
+        --gas-adjustment 2.0 \
+        --gas-prices 0.025$DENOM \
+        --yes
+
+    rm -f "$PROPOSAL_FILE"
+    sleep 5
+
+    # Verify both authz grants actually landed.
+    GRANTS_JSON=$($BINARY query authz grants "$POA_ADMIN_ADDRESS" "$CONTRACT_ADDR" \
+        --node http://chain:$RPC \
+        --output json)
+
+    # The CLI returns amino-encoded JSON: each grant has authorization.value.msg
+    # for GenericAuthorization (not authorization.msg).
+    GRANTED_MSGS=$(echo "$GRANTS_JSON" | jq -r '[.grants[].authorization.value.msg]')
+    GRANT_COUNT=$(echo "$GRANTED_MSGS" | jq 'length')
+    HAS_BURN=$(echo "$GRANTED_MSGS" | jq 'any(. == "/liftedinit.manifest.v1.MsgBurnHeldBalance")')
+    HAS_MINT=$(echo "$GRANTED_MSGS" | jq 'any(. == "/osmosis.tokenfactory.v1beta1.MsgMint")')
+
+    if [ "$HAS_BURN" != "true" ] || [ "$HAS_MINT" != "true" ]; then
+        echo "ERROR: missing authz grants from $POA_ADMIN_ADDRESS to $CONTRACT_ADDR"
+        echo "  found $GRANT_COUNT grants: $(echo "$GRANTED_MSGS" | jq -c .)"
+        echo "  expected: MsgBurnHeldBalance=$HAS_BURN, MsgMint=$HAS_MINT"
+        echo "Group proposal likely failed to execute. Check 'manifestd query group proposals-by-group-policy $POA_ADMIN_ADDRESS'."
+        exit 1
+    fi
+
+    echo "Authz grants confirmed: MsgBurnHeldBalance + MsgMint"
+
+    cat > /shared/converter.env << ENV
+# Auto-generated by init_billing.sh
+MANIFEST_CONVERTER_ADDRESS=$CONTRACT_ADDR
+MANIFEST_CONVERTER_CODE_ID=$CODE_ID
+ENV
+
+    echo "=== Converter deployed successfully ==="
+    cat /shared/converter.env
+fi

@@ -29,6 +29,9 @@ echo "$MNEMO1" | $BINARY keys add "$KEY" --home="$HOME_DIR" --keyring-backend "$
 # Import tenant key
 echo "$MNEMO2" | $BINARY keys add "$KEY2" --home="$HOME_DIR" --keyring-backend "$KEYRING" --recover
 
+# Import faucet key — used by the CosmJS faucet sidecar to sign /credit txs.
+echo "$MNEMO3" | $BINARY keys add "$KEY3" --home="$HOME_DIR" --keyring-backend "$KEYRING" --recover
+
 # Initialize chain
 $BINARY init $MONIKER --home=$HOME_DIR --chain-id $CHAIN_ID
 
@@ -75,10 +78,13 @@ update_test_genesis '.app_state["wasm"]["params"]["code_upload_access"]["permiss
 update_test_genesis '.app_state["wasm"]["params"]["instantiate_default_permission"]="Everybody"'
 
 # SKU module - add provider to allowed_list
-update_test_genesis '.app_state["sku"]["params"]["allowed_list"]=["'${ADDR1}'"]'
+# ADDR2 is included so the e2e test wallet (tenant) can also self-register
+# as a provider via cosmos_tx, unlocking sku/billing routing coverage that
+# would otherwise require a second signing key.
+update_test_genesis '.app_state["sku"]["params"]["allowed_list"]=["'${ADDR1}'","'${ADDR2}'"]'
 
 # Billing module - add provider to allowed_list
-update_test_genesis '.app_state["billing"]["params"]["allowed_list"]=["'${ADDR1}'"]'
+update_test_genesis '.app_state["billing"]["params"]["allowed_list"]=["'${ADDR1}'","'${ADDR2}'"]'
 
 echo "=== Adding genesis accounts ==="
 
@@ -90,6 +96,11 @@ $BINARY genesis add-genesis-account $KEY 100000000000000000${BOND_DENOM},1000000
 
 # Add tenant account with fee denom and PWR
 $BINARY genesis add-genesis-account $KEY2 100000000000000000000000000000${DENOM},1000000000000${PWR_DENOM} --keyring-backend $KEYRING --home=$HOME_DIR
+
+# Add faucet account with a large allocation of MFX and PWR so the CosmJS
+# faucet sidecar has plenty to drip from. Amounts must be at least
+# `FAUCET_CREDIT_AMOUNT_*` per drip times the number of expected drips.
+$BINARY genesis add-genesis-account $KEY3 1000000000000${DENOM},1000000000000${PWR_DENOM} --keyring-backend $KEYRING --home=$HOME_DIR
 
 echo "=== Creating validator ==="
 

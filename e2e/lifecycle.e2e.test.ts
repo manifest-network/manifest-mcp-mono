@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { LeaseState } from '@manifest-network/manifest-mcp-core';
-import { MCPTestClient } from './helpers/mcp-client.js';
+import { MCPTestClient, parseToolErrorCode } from './helpers/mcp-client.js';
 
 /**
  * Full deploy lifecycle E2E test.
@@ -11,6 +11,12 @@ import { MCPTestClient } from './helpers/mcp-client.js';
  * Tests run sequentially — each step depends on previous state.
  * Uses two MCP servers: lease (on-chain operations) and fred (provider operations).
  */
+// Provider address (matches ADDR1/PROVIDER_ADDRESS in e2e/.env). Hardcoded
+// here because vitest does not auto-load .env; keep in sync if the devnet
+// provider key ever changes. Hoisted to module scope so it can be referenced
+// from earlier tests (get_providers) as well as the tenant-override tests.
+const OTHER_TENANT = 'manifest1hj5fveer5cjtn4wd6wstzugjfdxzl0xp8ws9ct';
+
 describe('Deploy lifecycle', () => {
   const leaseClient = new MCPTestClient();
   const fredClient = new MCPTestClient();
@@ -51,6 +57,20 @@ describe('Deploy lifecycle', () => {
 
     const tierNames = Object.keys(result.tiers);
     expect(tierNames).toContain('docker-micro');
+  });
+
+  it('get_providers lists registered providers (default: active only)', async () => {
+    const result = await leaseClient.callTool<{
+      providers: Array<{ uuid: string; address: string; active: boolean }>;
+    }>('get_providers');
+
+    expect(result.providers.length).toBeGreaterThanOrEqual(1);
+    // All returned providers should be active by default.
+    expect(result.providers.every((p) => p.active)).toBe(true);
+    // The provider registered by init_billing.sh must appear.
+    expect(
+      result.providers.find((p) => p.address === OTHER_TENANT),
+    ).toBeDefined();
   });
 
   // ------------------------------------------------------------------
@@ -125,10 +145,6 @@ describe('Deploy lifecycle', () => {
   // ------------------------------------------------------------------
   // 6b. Tenant overrides — same wiring, different target account
   // ------------------------------------------------------------------
-  // Provider address (matches ADDR1/PROVIDER_ADDRESS in e2e/.env). Hardcoded
-  // here because vitest does not auto-load .env; keep in sync if the devnet
-  // provider key ever changes.
-  const OTHER_TENANT = 'manifest1hj5fveer5cjtn4wd6wstzugjfdxzl0xp8ws9ct';
 
   it('fund_credit funds a different tenant when `tenant` is provided', async () => {
     const skus = await leaseClient.callTool<{
@@ -184,6 +200,14 @@ describe('Deploy lifecycle', () => {
     expect(result.chainState).toBeDefined();
   });
 
+  it('app_diagnostics returns provision diagnostics for the active lease', async () => {
+    const result = await fredClient.callTool<{
+      lease_uuid: string;
+    }>('app_diagnostics', { lease_uuid: leaseUuid });
+
+    expect(result.lease_uuid).toBe(leaseUuid);
+  });
+
   // ------------------------------------------------------------------
   // 8. Get logs
   // ------------------------------------------------------------------
@@ -216,6 +240,54 @@ describe('Deploy lifecycle', () => {
     });
 
     expect(result.lease_uuid).toBe(leaseUuid);
+  });
+
+  it('app_releases lists at least one release after update_app', async () => {
+    const result = await fredClient.callTool<{
+      lease_uuid: string;
+    }>('app_releases', { lease_uuid: leaseUuid });
+
+    expect(result.lease_uuid).toBe(leaseUuid);
+  });
+
+  // restart_app last — it briefly puts the app in a non-stable state that
+  // makes update_app return 409 invalid-state. Placed after the other
+  // provider-side ops to avoid the conflict. Also: update_app itself
+  // triggers a transient state, so wait a few seconds before issuing
+  // restart_app to give the app time to settle.
+  it('restart_app triggers a restart on the active lease', async () => {
+    // Poll until the app is in a stable state before restarting. The fred
+    // restart_app handler surfaces provider-side HTTP errors as a non-
+    // ManifestMCPError, so the thrown error code is `[UNKNOWN]` and the
+    // message is the JSON body, e.g. `{"error":"invalid state for restart","code":409}`.
+    // We retry only on that exact shape — anything else (a TX_FAILED, a
+    // transport hiccup, an UNSUPPORTED_*) is a real failure and re-throws.
+    const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+    let restartOk = false;
+    let lastErr: unknown;
+    for (let attempt = 0; attempt < 10; attempt++) {
+      try {
+        const result = await fredClient.callTool<{
+          lease_uuid: string;
+        }>('restart_app', { lease_uuid: leaseUuid });
+        expect(result.lease_uuid).toBe(leaseUuid);
+        restartOk = true;
+        break;
+      } catch (err) {
+        lastErr = err;
+        const code = parseToolErrorCode(err);
+        const msg = err instanceof Error ? err.message : String(err);
+        const isTransient409 =
+          code === 'UNKNOWN' &&
+          /"code"\s*:\s*409/.test(msg) &&
+          /invalid state/i.test(msg);
+        if (!isTransient409) throw err;
+        await sleep(2_000);
+      }
+    }
+    if (!restartOk) {
+      throw new Error(`restart_app never succeeded after retries: ${lastErr}`);
+    }
   });
 
   // ------------------------------------------------------------------
