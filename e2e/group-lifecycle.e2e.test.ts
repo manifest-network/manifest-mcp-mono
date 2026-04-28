@@ -18,11 +18,13 @@ import { MCPTestClient } from './helpers/mcp-client.js';
  *   - leave-group
  *   - create-group-with-policy (separate, single-tx variant)
  *
- * Voting period is set to 10s so vote / votes-by-proposal / tally queries
+ * Voting period starts at 10s on create-group-policy and is bumped to 12s
+ * mid-test by update-group-policy-decision-policy. The votable proposal is
+ * submitted *after* the bump, so vote / votes-by-proposal / tally queries
  * land while the proposal is still active (cosmos-sdk x/group prunes the
  * proposal — and its votes — once it transitions to ACCEPTED/REJECTED and
  * minExecutionPeriod has elapsed). After all in-period queries we sleep
- * past the voting period and explicitly exec.
+ * past the voting period (~13s) and explicitly exec.
  */
 
 const PROVIDER_ADDRESS = 'manifest1hj5fveer5cjtn4wd6wstzugjfdxzl0xp8ws9ct';
@@ -262,6 +264,7 @@ describe('Group lifecycle', () => {
     const result = await client.callTool<{ code: number }>('cosmos_tx', {
       module: 'group',
       subcommand: 'update-group-policy-decision-policy',
+      // [policy-address, policy-type, threshold-or-pct, voting-period-secs, min-exec-secs]
       args: [policyAddress, 'threshold', '1', '12', '0'],
       wait_for_confirmation: true,
     });

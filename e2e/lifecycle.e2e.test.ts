@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { LeaseState } from '@manifest-network/manifest-mcp-core';
-import { MCPTestClient } from './helpers/mcp-client.js';
+import { MCPTestClient, parseToolErrorCode } from './helpers/mcp-client.js';
 
 /**
  * Full deploy lifecycle E2E test.
@@ -145,8 +145,6 @@ describe('Deploy lifecycle', () => {
   // ------------------------------------------------------------------
   // 6b. Tenant overrides — same wiring, different target account
   // ------------------------------------------------------------------
-  // OTHER_TENANT is the provider address (ADDR1) — hoisted to module scope
-  // above so earlier tests (get_providers) can reference it.
 
   it('fund_credit funds a different tenant when `tenant` is provided', async () => {
     const skus = await leaseClient.callTool<{
@@ -258,7 +256,12 @@ describe('Deploy lifecycle', () => {
   // triggers a transient state, so wait a few seconds before issuing
   // restart_app to give the app time to settle.
   it('restart_app triggers a restart on the active lease', async () => {
-    // Poll until the app is in a stable state before restarting.
+    // Poll until the app is in a stable state before restarting. The fred
+    // restart_app handler surfaces provider-side HTTP errors as a non-
+    // ManifestMCPError, so the thrown error code is `[UNKNOWN]` and the
+    // message is the JSON body, e.g. `{"error":"invalid state for restart","code":409}`.
+    // We retry only on that exact shape — anything else (a TX_FAILED, a
+    // transport hiccup, an UNSUPPORTED_*) is a real failure and re-throws.
     const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
     let restartOk = false;
     let lastErr: unknown;
@@ -272,9 +275,13 @@ describe('Deploy lifecycle', () => {
         break;
       } catch (err) {
         lastErr = err;
-        // 409 invalid-state is expected while the app is still settling
-        // from update_app. Other errors should propagate immediately.
-        if (!String(err).includes('invalid state')) throw err;
+        const code = parseToolErrorCode(err);
+        const msg = err instanceof Error ? err.message : String(err);
+        const isTransient409 =
+          code === 'UNKNOWN' &&
+          /"code"\s*:\s*409/.test(msg) &&
+          /invalid state/i.test(msg);
+        if (!isTransient409) throw err;
         await sleep(2_000);
       }
     }

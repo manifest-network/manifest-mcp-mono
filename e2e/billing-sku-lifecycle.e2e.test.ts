@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { MCPTestClient } from './helpers/mcp-client.js';
+import { MCPTestClient, parseToolErrorCode } from './helpers/mcp-client.js';
 
 /**
  * End-to-end coverage for every billing/sku tx subcommand routed through
@@ -8,9 +8,13 @@ import { MCPTestClient } from './helpers/mcp-client.js';
  *
  * Setup: init_chain.sh now seeds ADDR2 (the test wallet, MNEMO2) into
  * `sku.params.allowed_list` and `billing.params.allowed_list`, so the
- * test wallet can register itself as a provider and self-acknowledge
- * leases. ADDR1's provider (registered by init_billing.sh) is left
- * untouched — the lifecycle test continues to use it for deploy_app.
+ * test wallet can register itself as a provider. The test then *attempts*
+ * to self-acknowledge its own leases; if the chain rejects this (e.g. a
+ * future keeper version forbids tenant=provider), the close-lease and
+ * withdraw flows skip with a console.warn while flows B (reject) and C
+ * (cancel) remain valid as standalone routing-coverage tests.
+ * ADDR1's provider (registered by init_billing.sh) is left untouched —
+ * the lifecycle test continues to use it for deploy_app.
  *
  * Order of operations (chain state must match for each step):
  *   1. SKU side: create-provider, update-provider, create-sku, update-sku
@@ -208,9 +212,17 @@ describe('Billing/SKU lifecycle', () => {
       });
       expect(result.code).toBe(0);
     } catch (err) {
+      // Only swallow chain-side rejection (TX_FAILED). Routing-layer
+      // regressions (UNSUPPORTED_TX, UNKNOWN_MODULE, INVALID_ADDRESS,
+      // transport failures) must surface — they are not "self-ack
+      // disallowed", they are bugs.
+      const code = parseToolErrorCode(err);
+      if (code !== 'TX_FAILED') {
+        throw err;
+      }
       selfAckOk = false;
       console.warn(
-        `[billing-sku-lifecycle] self-acknowledgement not allowed — close/withdraw paths will be skipped: ${err}`,
+        `[billing-sku-lifecycle] self-acknowledgement rejected by chain — close/withdraw paths will be skipped: ${err}`,
       );
     }
   });

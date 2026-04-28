@@ -317,6 +317,8 @@ else
 
     echo "=== Instantiating converter ==="
 
+    # rate=0.379 is asserted by e2e/cosmwasm.e2e.test.ts. Keep the two in
+    # sync if you change either one.
     INSTANTIATE_MSG=$(jq -nc \
         --arg admin "$POA_ADMIN_ADDRESS" \
         --arg poa_admin "$POA_ADMIN_ADDRESS" \
@@ -353,7 +355,8 @@ else
 
     # Group proposal granting authz from POA_ADMIN to the contract for the
     # two privileged message types it needs to execute "on behalf of" the
-    # POA admin during a Convert call:
+    # POA admin during a Convert call (converter v0.2.0 — revisit if the
+    # contract is upgraded with a different privilege model):
     #   - MsgBurnHeldBalance (manifest module): burn the MFX deposited by
     #     the caller as part of the conversion.
     #   - MsgMint (tokenfactory): mint the PWR for the caller, since

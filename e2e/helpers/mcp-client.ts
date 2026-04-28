@@ -135,7 +135,13 @@ export class MCPTestClient {
     if (!text) {
       throw new Error(`Tool "${name}" returned no text content`);
     }
-    return JSON.parse(text);
+    try {
+      return JSON.parse(text);
+    } catch {
+      throw new Error(
+        `Tool "${name}" returned non-JSON error body (raw): ${text}`,
+      );
+    }
   }
 
   async listTools(): Promise<string[]> {
@@ -182,4 +188,23 @@ export class MCPTestClient {
   async close(): Promise<void> {
     await this.client.close();
   }
+}
+
+/**
+ * Parse the `[CODE]` prefix out of an Error thrown by `callTool`.
+ *
+ * `callTool` formats failures as: `Tool "${name}" failed [${code}]: ${message}`.
+ * Probes that swallow expected chain-side errors (e.g. "wasm migrate has no
+ * migrate entry point", "distribution module disabled on POA") use this to
+ * narrow their catch — anything that isn't one of the expected codes is a
+ * routing/transport regression and gets re-thrown.
+ *
+ * Returns `null` if the error message doesn't match the callTool format
+ * (e.g., a plain Error from MCPTestClient itself), in which case the caller
+ * should treat it as unexpected and re-throw.
+ */
+export function parseToolErrorCode(err: unknown): string | null {
+  const msg = err instanceof Error ? err.message : String(err);
+  const match = msg.match(/failed \[([A-Z_]+)\]:/);
+  return match ? match[1] : null;
 }

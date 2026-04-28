@@ -57,9 +57,15 @@ export function setup() {
     if (match) {
       process.env.MANIFEST_CONVERTER_ADDRESS = match[1].trim();
     }
-  } catch {
-    // Best-effort: cosmwasm tests will fail with a clear error if
-    // MANIFEST_CONVERTER_ADDRESS is unset.
+  } catch (err) {
+    const stderr =
+      err && typeof (err as { stderr?: Buffer }).stderr?.toString === 'function'
+        ? (err as { stderr: Buffer }).stderr.toString().trim()
+        : '';
+    console.warn(
+      '[e2e] Could not extract converter.env from chain — cosmwasm tests will fail.\n' +
+        (stderr ? `  ${stderr}\n` : ''),
+    );
   }
 
   // Converter wasm binary from chain container (baked into the image at
@@ -72,8 +78,14 @@ export function setup() {
       { stdio: 'pipe' },
     );
     process.env.E2E_CONVERTER_WASM_PATH = CONVERTER_WASM_PATH;
-  } catch {
-    // Best-effort: wasm-mutations tests will fail with a clear error if
-    // E2E_CONVERTER_WASM_PATH is unset.
+  } catch (err) {
+    const stderr =
+      err && typeof (err as { stderr?: Buffer }).stderr?.toString === 'function'
+        ? (err as { stderr: Buffer }).stderr.toString().trim()
+        : '';
+    console.warn(
+      '[e2e] Could not extract converter.wasm from chain — wasm-mutations tests will fail.\n' +
+        (stderr ? `  ${stderr}\n` : ''),
+    );
   }
 }

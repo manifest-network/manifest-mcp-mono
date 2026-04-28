@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { MCPTestClient } from './helpers/mcp-client.js';
+import { MCPTestClient, parseToolErrorCode } from './helpers/mcp-client.js';
 
 /**
  * Comprehensive routing coverage for cosmos_query / cosmos_tx beyond the
@@ -8,14 +8,19 @@ import { MCPTestClient } from './helpers/mcp-client.js';
  * that is actually used on POA Manifest, so that a regression in
  * cosmos.ts routing or any per-module handler surfaces in e2e.
  *
- * Out of scope here (covered or skipped elsewhere — see ENG-50):
+ * Out of scope here:
  *   - staking, gov: disabled on POA Manifest
- *   - manifest payout / burn-held-balance: POA-admin-only, needs a group
- *     proposal (PR-2)
+ *   - manifest payout / burn-held-balance: POA-admin-only, would need a
+ *     group proposal flow
  *   - poa admin txs: POA-admin-only
  *   - ibc-transfer transfer: needs a second chain
- *   - group lifecycle txs (submit-proposal/vote/exec/etc.): PR-2
- *   - wasm txs (store-code/instantiate/execute via cosmos_tx): PR-2
+ *   - group lifecycle txs (submit-proposal/vote/exec/etc.): see
+ *     e2e/group-lifecycle.e2e.test.ts
+ *   - wasm txs via cosmos_tx (store-code/instantiate/execute/migrate/
+ *     update-admin/clear-admin): see e2e/wasm-mutations.e2e.test.ts
+ *   - billing/sku mutating txs via cosmos_tx (create-provider, create-sku,
+ *     create-lease, acknowledge-lease, etc.): see
+ *     e2e/billing-sku-lifecycle.e2e.test.ts
  *
  * Devnet addresses come from e2e/.env. The constants below mirror those
  * so we don't shell out to read .env during the test.
@@ -51,10 +56,20 @@ describe('Chain routing coverage', () => {
     // Discover provider/sku UUIDs created by init_billing.sh — used by sku
     // and billing query tests below. Best-effort: tests that need them
     // skip the assertion if undefined.
+    //
+    // Filter by ADDR1 explicitly: billing-sku-lifecycle (alphabetically
+    // earlier) self-registers the test wallet as a *second* provider. A
+    // bare providers[0] would be order-dependent and may surface either
+    // ADDR1 or testAddress — downstream `skus-by-provider` etc. would
+    // pass against the wrong provider's SKUs.
     try {
       const providers = await client.callTool<{
-        result: { providers: Array<{ uuid: string }> };
-      }>('cosmos_query', { module: 'sku', subcommand: 'providers' });
+        result: { providers: Array<{ uuid: string; address: string }> };
+      }>('cosmos_query', {
+        module: 'sku',
+        subcommand: 'provider-by-address',
+        args: [PROVIDER_ADDRESS],
+      });
       providerUuid = providers.result.providers[0]?.uuid;
     } catch {
       // ignore
@@ -689,7 +704,7 @@ describe('Chain routing coverage', () => {
   });
 
   // ==========================================================================
-  // wasm — queries (txs go through PR-2)
+  // wasm — queries (txs covered in e2e/wasm-mutations.e2e.test.ts)
   //
   // Uses MANIFEST_CONVERTER_ADDRESS (code_id=1) deployed by init_billing.sh.
   // ==========================================================================
@@ -884,6 +899,18 @@ describe('Chain routing coverage', () => {
   // than failing the suite.
   // ==========================================================================
   describe('distribution probes', () => {
+    // Each probe accepts success OR a chain-side rejection (QUERY_FAILED /
+    // TX_FAILED with a chain-emitted message). UNSUPPORTED_QUERY / *_TX,
+    // UNKNOWN_MODULE, or transport-shaped failures are real regressions
+    // and re-throw — they would mean the routing layer broke, not that
+    // the module is disabled.
+    const expectChainSide = (err: unknown, expectedCodes: string[]): void => {
+      const code = parseToolErrorCode(err);
+      if (!code || !expectedCodes.includes(code)) {
+        throw err;
+      }
+    };
+
     it('query: params (probe)', async () => {
       try {
         const result = await client.callTool<{
@@ -891,7 +918,10 @@ describe('Chain routing coverage', () => {
         }>('cosmos_query', { module: 'distribution', subcommand: 'params' });
         expect(result.result.params).toBeDefined();
       } catch (err) {
-        console.warn(`[chain-routing] distribution params probe failed: ${err}`);
+        expectChainSide(err, ['QUERY_FAILED']);
+        console.warn(
+          `[chain-routing] distribution params probe rejected by chain: ${err}`,
+        );
       }
     });
 
@@ -905,7 +935,10 @@ describe('Chain routing coverage', () => {
         });
         expect(result.result.pool).toBeDefined();
       } catch (err) {
-        console.warn(`[chain-routing] distribution community-pool probe failed: ${err}`);
+        expectChainSide(err, ['QUERY_FAILED']);
+        console.warn(
+          `[chain-routing] distribution community-pool probe rejected by chain: ${err}`,
+        );
       }
     });
 
@@ -919,8 +952,9 @@ describe('Chain routing coverage', () => {
         });
         expect(result.code).toBe(0);
       } catch (err) {
+        expectChainSide(err, ['TX_FAILED']);
         console.warn(
-          `[chain-routing] distribution fund-community-pool probe failed: ${err}`,
+          `[chain-routing] distribution fund-community-pool probe rejected by chain: ${err}`,
         );
       }
     });

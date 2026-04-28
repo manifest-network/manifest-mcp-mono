@@ -105,6 +105,8 @@ describe('Cosmwasm tools', () => {
     const umfxBefore = before.get('umfx') ?? 0n;
     const pwrBefore = before.get(pwrDenom) ?? 0n;
 
+    // Convert 1 MFX. Expected PWR delta is floor(1_000_000 * 0.379) = 379_000
+    // — rate 0.379 is hardcoded in init_billing.sh's instantiate msg.
     const amount = 1_000_000n;
     const result = await cosmwasmClient.callTool<{
       transactionHash: string;

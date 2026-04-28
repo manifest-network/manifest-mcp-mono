@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { MCPTestClient } from './helpers/mcp-client.js';
+import { MCPTestClient, parseToolErrorCode } from './helpers/mcp-client.js';
 
 /**
  * End-to-end coverage for every wasm tx subcommand routed through
@@ -12,8 +12,12 @@ import { MCPTestClient } from './helpers/mcp-client.js';
  * to e2e/.tls/converter.wasm and exports the path via
  * E2E_CONVERTER_WASM_PATH. We re-upload it here with store-code, then
  * walk through instantiate, instantiate2, execute, update-admin, and
- * clear-admin. Migrate is probed (the v0.2.0 converter does not expose
- * a migrate entry point — so we just verify the routing path).
+ * clear-admin. Migrate is probed: the converter shipped with this devnet
+ * (v0.2.0 today) historically lacks a migrate handler, so the probe
+ * accepts both code-0 success and a TX_FAILED chain-side rejection
+ * containing `migrate wasm contract failed` — both prove the routing
+ * reached the chain. Anything else (UNSUPPORTED_TX, UNKNOWN_MODULE,
+ * transport failure) is a real regression and re-throws.
  *
  * Tests within this file run sequentially and depend on each other
  * (e.g., the freshly stored code_id flows into instantiate; freshly
@@ -366,9 +370,21 @@ describe('Wasm tx lifecycle', () => {
       expect(result.code).toBe(0);
     } catch (err) {
       // Contract-side rejection (no migrate entry, type mismatch, etc.) is
-      // acceptable — it proves routing reached the chain. Surface the error
-      // so it can be inspected, but don't fail the test.
-      console.warn(`[wasm-mutations] migrate probe failed (expected if contract has no migrate handler): ${err}`);
+      // acceptable — it proves routing reached the chain. But UNSUPPORTED_TX,
+      // INVALID_ADDRESS, or transport-level failures would be real regressions
+      // and must re-throw. Chain-side rejection from a contract surfaces as
+      // TX_FAILED with a `migrate wasm contract failed` message.
+      const code = parseToolErrorCode(err);
+      if (code !== 'TX_FAILED') {
+        throw err;
+      }
+      const msg = err instanceof Error ? err.message : String(err);
+      if (!/migrate wasm contract failed|no migrate handler|kind: Serialization/i.test(msg)) {
+        throw err;
+      }
+      console.warn(
+        `[wasm-mutations] migrate probe rejected by contract (expected for v0.2.0 converter): ${msg}`,
+      );
     }
   });
 });
