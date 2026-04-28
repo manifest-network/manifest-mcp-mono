@@ -37,6 +37,25 @@ export interface MCPTestClientOptions {
    * Pair with `restUrl`. Defaults to false.
    */
   disableRpc?: boolean;
+  /**
+   * When set, the spawned process receives `MANIFEST_KEY_FILE=<path>`,
+   * overriding the default sentinel that forces the mnemonic branch.
+   * Pair with `disableMnemonic: true` to drive the keyfile bootstrap
+   * path exclusively (the file must already exist with a valid
+   * encrypted-wallet or `{mnemonic: ...}` payload).
+   */
+  keyFile?: string;
+  /**
+   * When set, exports `MANIFEST_KEY_PASSWORD` to the spawned process
+   * for decrypting an encrypted keyfile.
+   */
+  keyPassword?: string;
+  /**
+   * If true, omit `COSMOS_MNEMONIC` so the bootstrap can't fall back
+   * to the mnemonic branch. Used together with `keyFile` to test the
+   * encrypted/plaintext keyfile resolution paths.
+   */
+  disableMnemonic?: boolean;
 }
 
 /**
@@ -65,10 +84,18 @@ export class MCPTestClient {
     // treats an empty string as "set" and tries to connect to it).
     const env: Record<string, string> = {
       ...process.env,
-      MANIFEST_KEY_FILE: '/dev/null/nonexistent',
+      // Force keyfile to a sentinel path so the server falls through to
+      // the mnemonic wallet, regardless of host-local keyfiles. Caller
+      // can override via options.keyFile to drive the keyfile path.
+      MANIFEST_KEY_FILE: options.keyFile ?? '/dev/null/nonexistent',
       COSMOS_CHAIN_ID: options.chainId ?? 'manifest-localnet',
-      COSMOS_MNEMONIC: options.mnemonic ?? DEFAULT_MNEMONIC,
     };
+    if (!options.disableMnemonic) {
+      env.COSMOS_MNEMONIC = options.mnemonic ?? DEFAULT_MNEMONIC;
+    }
+    if (options.keyPassword !== undefined) {
+      env.MANIFEST_KEY_PASSWORD = options.keyPassword;
+    }
 
     if (!options.disableRpc) {
       env.COSMOS_RPC_URL = options.rpcUrl ?? 'http://localhost:26657';
