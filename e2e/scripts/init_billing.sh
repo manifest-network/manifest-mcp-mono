@@ -325,6 +325,15 @@ else
         --arg target_denom "$PWR_DENOM" \
         '{admin:$admin, poa_admin:$poa_admin, rate:"0.379", source_denom:"umfx", target_denom:$target_denom, paused:false}')
 
+    # Snapshot the existing contracts at this code_id BEFORE instantiate.
+    # If a previous run got past store-code + instantiate but failed before
+    # writing converter.env, list-contract-by-code [0] would pick the
+    # orphan contract on the next run instead of the new one we're about
+    # to create. Diffing before/after eliminates the race.
+    BEFORE_CONTRACTS=$($BINARY query wasm list-contract-by-code "$CODE_ID" \
+        --node http://chain:$RPC \
+        --output json 2>/dev/null | jq -r '.contracts[]?' | sort)
+
     $BINARY tx wasm instantiate "$CODE_ID" "$INSTANTIATE_MSG" \
         --label "converter" \
         --admin "$POA_ADMIN_ADDRESS" \
@@ -340,12 +349,19 @@ else
 
     sleep 5
 
-    CONTRACT_ADDR=$($BINARY query wasm list-contract-by-code "$CODE_ID" \
+    AFTER_CONTRACTS=$($BINARY query wasm list-contract-by-code "$CODE_ID" \
         --node http://chain:$RPC \
-        --output json | jq -r '.contracts[0]')
+        --output json | jq -r '.contracts[]?' | sort)
+
+    # Take the address that's in AFTER but not BEFORE — guaranteed to be
+    # the contract we just instantiated. comm -13 prints lines unique to
+    # the second sorted input.
+    CONTRACT_ADDR=$(comm -13 <(echo "$BEFORE_CONTRACTS") <(echo "$AFTER_CONTRACTS") | head -n1)
 
     if [ -z "$CONTRACT_ADDR" ] || [ "$CONTRACT_ADDR" = "null" ]; then
-        echo "ERROR: Failed to query contract address after instantiate"
+        echo "ERROR: Failed to identify the newly instantiated contract"
+        echo "  before: $BEFORE_CONTRACTS"
+        echo "  after:  $AFTER_CONTRACTS"
         exit 1
     fi
 

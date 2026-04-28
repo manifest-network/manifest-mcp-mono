@@ -79,17 +79,35 @@ export class MCPTestClient {
     const converterAddress =
       options.converterAddress ?? process.env.MANIFEST_CONVERTER_ADDRESS;
 
-    // Build env carefully so REST-only mode actually omits COSMOS_RPC_URL /
-    // COSMOS_GAS_PRICE rather than receiving an empty string (the bootstrap
-    // treats an empty string as "set" and tries to connect to it).
-    const env: Record<string, string> = {
-      ...process.env,
-      // Force keyfile to a sentinel path so the server falls through to
-      // the mnemonic wallet, regardless of host-local keyfiles. Caller
-      // can override via options.keyFile to drive the keyfile path.
-      MANIFEST_KEY_FILE: options.keyFile ?? '/dev/null/nonexistent',
-      COSMOS_CHAIN_ID: options.chainId ?? 'manifest-localnet',
-    };
+    // Build env carefully:
+    //   1. Inherit only entries with defined string values from process.env
+    //      (NodeJS.ProcessEnv values are typed `string | undefined`).
+    //   2. Explicitly delete the keys that any of our options can opt out
+    //      of (RPC, mnemonic, REST, faucet, converter address). Otherwise
+    //      a developer with one of these set in their shell would silently
+    //      override the test's intent — e.g. a stray COSMOS_RPC_URL would
+    //      defeat `disableRpc: true`, and a stray MANIFEST_FAUCET_URL
+    //      would make the chain server register `request_faucet` even
+    //      when the test wants the no-faucet branch.
+    const env: Record<string, string> = {};
+    for (const [k, v] of Object.entries(process.env)) {
+      if (typeof v === 'string') env[k] = v;
+    }
+
+    delete env.COSMOS_RPC_URL;
+    delete env.COSMOS_GAS_PRICE;
+    delete env.COSMOS_REST_URL;
+    delete env.COSMOS_MNEMONIC;
+    delete env.MANIFEST_FAUCET_URL;
+    delete env.MANIFEST_CONVERTER_ADDRESS;
+    delete env.MANIFEST_KEY_PASSWORD;
+
+    // Force keyfile to a sentinel path so the server falls through to the
+    // mnemonic wallet, regardless of host-local keyfiles. Caller can
+    // override via options.keyFile to drive the keyfile path.
+    env.MANIFEST_KEY_FILE = options.keyFile ?? '/dev/null/nonexistent';
+    env.COSMOS_CHAIN_ID = options.chainId ?? 'manifest-localnet';
+
     if (!options.disableMnemonic) {
       env.COSMOS_MNEMONIC = options.mnemonic ?? DEFAULT_MNEMONIC;
     }

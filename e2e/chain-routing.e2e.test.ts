@@ -706,10 +706,24 @@ describe('Chain routing coverage', () => {
   // ==========================================================================
   // wasm — queries (txs covered in e2e/wasm-mutations.e2e.test.ts)
   //
-  // Uses MANIFEST_CONVERTER_ADDRESS (code_id=1) deployed by init_billing.sh.
+  // Uses the converter deployed by init_billing.sh, with the actual
+  // code_id derived at runtime (init_billing.sh writes it to
+  // /shared/converter.env, global-setup.ts copies it out into
+  // process.env.MANIFEST_CONVERTER_CODE_ID). Hardcoding `'1'` would be
+  // fragile against any earlier wasm upload in the run.
   // ==========================================================================
   describe('wasm queries', () => {
-    const codeId = '1';
+    let codeId: string;
+
+    beforeAll(() => {
+      const fromEnv = process.env.MANIFEST_CONVERTER_CODE_ID;
+      if (!fromEnv) {
+        throw new Error(
+          'MANIFEST_CONVERTER_CODE_ID not set — global-setup.ts could not extract it from /shared/converter.env',
+        );
+      }
+      codeId = fromEnv;
+    });
 
     it('params', async () => {
       const result = await client.callTool<{ result: { params: unknown } }>(

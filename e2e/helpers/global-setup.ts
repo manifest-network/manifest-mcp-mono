@@ -53,9 +53,13 @@ export function setup() {
       { stdio: 'pipe' },
     );
     const contents = readFileSync(CONVERTER_ENV_PATH, 'utf8');
-    const match = /^MANIFEST_CONVERTER_ADDRESS=(.+)$/m.exec(contents);
-    if (match) {
-      process.env.MANIFEST_CONVERTER_ADDRESS = match[1].trim();
+    const addressMatch = /^MANIFEST_CONVERTER_ADDRESS=(.+)$/m.exec(contents);
+    if (addressMatch) {
+      process.env.MANIFEST_CONVERTER_ADDRESS = addressMatch[1].trim();
+    }
+    const codeIdMatch = /^MANIFEST_CONVERTER_CODE_ID=(.+)$/m.exec(contents);
+    if (codeIdMatch) {
+      process.env.MANIFEST_CONVERTER_CODE_ID = codeIdMatch[1].trim();
     }
   } catch (err) {
     const stderr =
