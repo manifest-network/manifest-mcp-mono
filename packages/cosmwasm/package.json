@@ -43,7 +43,7 @@
     "dist"
   ],
   "dependencies": {
-    "@cosmjs/encoding": "0.32.4",
+    "@cosmjs/encoding": "0.38.1",
     "@manifest-network/manifest-mcp-core": "^0.6.2",
     "@manifest-network/manifestjs": "2.3.0",
     "@modelcontextprotocol/sdk": "1.27.1",
