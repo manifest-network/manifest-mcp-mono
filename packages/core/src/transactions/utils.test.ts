@@ -12,6 +12,7 @@ import {
   parseColonPair,
   parseHexBytes,
   parseLeaseItem,
+  parseUnixSecondsToDate,
   parseVoteOption,
   requireArgs,
   validateAddress,
@@ -163,6 +164,48 @@ describe('parseBigInt', () => {
       expect(error).toBeInstanceOf(ManifestMCPError);
       expect((error as ManifestMCPError).message).toContain('proposal-id');
     }
+  });
+});
+
+describe('parseUnixSecondsToDate', () => {
+  it('parses a typical future timestamp', () => {
+    const date = parseUnixSecondsToDate('2000000000', 'expiration');
+    expect(date).toBeInstanceOf(Date);
+    expect(date.getTime()).toBe(2_000_000_000 * 1000);
+  });
+
+  it('accepts the unix epoch (zero)', () => {
+    const date = parseUnixSecondsToDate('0', 'expiration');
+    expect(date.getTime()).toBe(0);
+  });
+
+  it('rejects negative timestamps', () => {
+    expect(() => parseUnixSecondsToDate('-1', 'expiration')).toThrow(
+      /non-negative/i,
+    );
+  });
+
+  it('rejects values outside JavaScript Date range', () => {
+    // 8.64e15 ms is the Date max (= 8.64e12 seconds); one second past the
+    // boundary becomes 8.64e15 + 1000 ms, which overflows the limit.
+    expect(() => parseUnixSecondsToDate('8640000000001', 'expiration')).toThrow(
+      /out of range/i,
+    );
+  });
+
+  it('rejects values that would silently produce Invalid Date', () => {
+    // Within Number.MAX_SAFE_INTEGER but outside Date range — this is the
+    // case the previous bound (>MAX_SAFE_INTEGER only) failed to catch.
+    const seconds = String(BigInt(8_640_000_000_000) + BigInt(1));
+    expect(() => parseUnixSecondsToDate(seconds, 'expiration')).toThrow(
+      /out of range/i,
+    );
+  });
+
+  it('rejects non-numeric input via parseBigInt', () => {
+    expect(() => parseUnixSecondsToDate('not-a-number', 'expiration')).toThrow(
+      ManifestMCPError,
+    );
   });
 });
 

@@ -19,6 +19,10 @@ import { routeTokenfactoryQuery } from './queries/tokenfactory.js';
 import { routeWasmQuery } from './queries/wasm.js';
 // Import transaction handlers
 import {
+  buildAuthzMessages,
+  routeAuthzTransaction,
+} from './transactions/authz.js';
+import {
   buildBankMessages,
   routeBankTransaction,
 } from './transactions/bank.js';
@@ -30,6 +34,10 @@ import {
   buildDistributionMessages,
   routeDistributionTransaction,
 } from './transactions/distribution.js';
+import {
+  buildFeegrantMessages,
+  routeFeegrantTransaction,
+} from './transactions/feegrant.js';
 import { buildGovMessages, routeGovTransaction } from './transactions/gov.js';
 import {
   buildGroupMessages,
@@ -624,6 +632,30 @@ const QUERY_MODULES: QueryModuleRegistry = {
  * Each module includes metadata and its handler function
  */
 const TX_MODULES: TxModuleRegistry = {
+  authz: {
+    description: 'Authz transaction subcommands',
+    handler: routeAuthzTransaction,
+    msgBuilder: buildAuthzMessages,
+    subcommands: [
+      {
+        name: 'grant',
+        description:
+          'Grant the grantee a GenericAuthorization for a specific msg type URL',
+        args: '<grantee-address> <msg-type-url> [--expiration <unix-seconds>]',
+      },
+      {
+        name: 'revoke',
+        description: 'Revoke a previously granted authorization for a msg type',
+        args: '<grantee-address> <msg-type-url>',
+      },
+      {
+        name: 'exec',
+        description:
+          'Execute one or more inner messages on behalf of their granters; signed by the grantee',
+        args: '<inner-msg-json>... (each is JSON with "@type" and message fields)',
+      },
+    ],
+  },
   bank: {
     description: 'Bank transaction subcommands',
     handler: routeBankTransaction,
@@ -669,6 +701,29 @@ const TX_MODULES: TxModuleRegistry = {
       },
       { name: 'set-withdraw-addr', description: 'Set withdraw address' },
       { name: 'fund-community-pool', description: 'Fund the community pool' },
+    ],
+  },
+  feegrant: {
+    description: 'Feegrant transaction subcommands',
+    handler: routeFeegrantTransaction,
+    msgBuilder: buildFeegrantMessages,
+    subcommands: [
+      {
+        name: 'grant-allowance',
+        description:
+          'Grant a BasicAllowance to a grantee, optionally capped by spend limit and expiration',
+        args: '<grantee-address> [--spend-limit <amount>] [--expiration <unix-seconds>]',
+      },
+      {
+        name: 'revoke-allowance',
+        description: 'Revoke an existing fee allowance from a grantee',
+        args: '<grantee-address>',
+      },
+      {
+        name: 'prune-allowances',
+        description:
+          'Permissionlessly prune expired fee allowances; signer is the pruner',
+      },
     ],
   },
   gov: {
