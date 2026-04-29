@@ -6,8 +6,10 @@ import {
   getServiceNames,
   isStackManifest,
   mergeManifest,
+  metaHashHex,
   normalizePorts,
   parseStackManifest,
+  validateManifest,
   validateServiceName,
 } from './manifest.js';
 
@@ -440,5 +442,275 @@ describe('getServiceNames', () => {
         db: { image: 'mysql' },
       }),
     ).toEqual([]);
+  });
+});
+
+describe('metaHashHex', () => {
+  it('produces a 64-char lowercase hex SHA-256', async () => {
+    const hash = await metaHashHex('{"image":"nginx"}');
+    expect(hash).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it('is stable for the same input', async () => {
+    const a = await metaHashHex('{"image":"nginx"}');
+    const b = await metaHashHex('{"image":"nginx"}');
+    expect(a).toBe(b);
+  });
+
+  it('differs for different inputs', async () => {
+    const a = await metaHashHex('{"image":"nginx"}');
+    const b = await metaHashHex('{"image":"redis"}');
+    expect(a).not.toBe(b);
+  });
+});
+
+describe('validateManifest', () => {
+  describe('structural', () => {
+    it('rejects non-object input', () => {
+      expect(validateManifest(null).valid).toBe(false);
+      expect(validateManifest('foo').valid).toBe(false);
+      expect(validateManifest([]).valid).toBe(false);
+    });
+
+    it('accepts a minimal single-service manifest', () => {
+      const result = validateManifest({ image: 'nginx:latest' });
+      expect(result.valid).toBe(true);
+      expect(result.format).toBe('single');
+    });
+
+    it('detects stack format from services key', () => {
+      const result = validateManifest({
+        services: { web: { image: 'nginx' } },
+      });
+      expect(result.format).toBe('stack');
+      expect(result.valid).toBe(true);
+    });
+
+    it('flags unknown top-level fields on a single manifest', () => {
+      const result = validateManifest({ image: 'nginx', volumes: ['/data'] });
+      expect(result.valid).toBe(false);
+      expect(result.errors.some((e) => e.includes('volumes'))).toBe(true);
+    });
+
+    it('rejects empty services map', () => {
+      const result = validateManifest({ services: {} });
+      // isStackManifest requires at least one service so this is actually
+      // detected as a single-service manifest with `services` as an unknown
+      // top-level field. Either way, validation should fail.
+      expect(result.valid).toBe(false);
+    });
+  });
+
+  describe('env', () => {
+    const cases: Array<[string, boolean]> = [
+      ['DATABASE_URL', true],
+      ['APP_PORT', true],
+      ['PATH', false],
+      ['path', false],
+      ['LD_PRELOAD', false],
+      ['ld_library_path', false],
+      ['FRED_TOKEN', false],
+      ['DOCKER_HOST', false],
+    ];
+    for (const [name, ok] of cases) {
+      it(`${ok ? 'accepts' : 'blocks'} env name "${name}"`, () => {
+        const r = validateManifest({
+          image: 'nginx',
+          env: { [name]: 'x' },
+        });
+        expect(r.valid).toBe(ok);
+      });
+    }
+  });
+
+  describe('labels', () => {
+    it('accepts non-fred-prefix labels', () => {
+      expect(
+        validateManifest({
+          image: 'nginx',
+          labels: { app: 'myapp', version: '1.0' },
+        }).valid,
+      ).toBe(true);
+    });
+
+    it('rejects fred.* prefix', () => {
+      const r = validateManifest({
+        image: 'nginx',
+        labels: { 'fred.lease': 'abc' },
+      });
+      expect(r.valid).toBe(false);
+      expect(r.errors.some((e) => e.includes('fred.'))).toBe(true);
+    });
+  });
+
+  describe('ports', () => {
+    it('accepts port/protocol keys', () => {
+      const r = validateManifest({
+        image: 'nginx',
+        ports: { '80/tcp': {}, '53/udp': {} },
+      });
+      expect(r.valid).toBe(true);
+    });
+
+    it('rejects bare port without protocol', () => {
+      const r = validateManifest({ image: 'nginx', ports: { '80': {} } });
+      expect(r.valid).toBe(false);
+    });
+
+    it('rejects unknown protocol', () => {
+      const r = validateManifest({
+        image: 'nginx',
+        ports: { '80/sctp': {} },
+      });
+      expect(r.valid).toBe(false);
+    });
+
+    it('rejects ports above 65535', () => {
+      // PORT_KEY_RE permits up to 5 digits, so the regex alone would let
+      // 70000/tcp through. validatePort() closes the gap.
+      const r = validateManifest({
+        image: 'nginx',
+        ports: { '70000/tcp': {} },
+      });
+      expect(r.valid).toBe(false);
+      expect(r.errors.some((e) => e.includes('70000'))).toBe(true);
+    });
+
+    it('accepts the maximum legal port 65535/tcp', () => {
+      const r = validateManifest({
+        image: 'nginx',
+        ports: { '65535/tcp': {} },
+      });
+      expect(r.valid).toBe(true);
+    });
+  });
+
+  describe('tmpfs', () => {
+    it('rejects more than 4 entries', () => {
+      const r = validateManifest({
+        image: 'nginx',
+        tmpfs: ['/a', '/b', '/c', '/d', '/e'],
+      });
+      expect(r.valid).toBe(false);
+    });
+
+    it('rejects /tmp, /run, and sub-paths of /proc /sys /dev', () => {
+      const blocked = ['/tmp', '/run', '/proc/x', '/sys/y', '/dev/null'];
+      for (const path of blocked) {
+        const r = validateManifest({ image: 'nginx', tmpfs: [path] });
+        expect(r.valid, `path=${path}`).toBe(false);
+      }
+    });
+
+    it('accepts well-formed mounts', () => {
+      const r = validateManifest({
+        image: 'nginx',
+        tmpfs: ['/var/cache/app', '/run/mysqld'],
+      });
+      expect(r.valid).toBe(true);
+    });
+  });
+
+  describe('depends_on', () => {
+    it('rejects non-empty depends_on in single-service manifest', () => {
+      const r = validateManifest({
+        image: 'nginx',
+        depends_on: { db: { condition: 'service_started' } },
+      });
+      expect(r.valid).toBe(false);
+    });
+
+    it('accepts depends_on referencing a sibling in stack', () => {
+      const r = validateManifest({
+        services: {
+          web: {
+            image: 'nginx',
+            depends_on: { db: { condition: 'service_healthy' } },
+          },
+          db: {
+            image: 'postgres',
+            health_check: { test: ['CMD', 'pg_isready'] },
+          },
+        },
+      });
+      expect(r.valid).toBe(true);
+    });
+
+    it('rejects depends_on referencing an undefined service', () => {
+      const r = validateManifest({
+        services: {
+          web: {
+            image: 'nginx',
+            depends_on: { ghost: { condition: 'service_started' } },
+          },
+        },
+      });
+      expect(r.valid).toBe(false);
+    });
+
+    it('rejects self-reference', () => {
+      const r = validateManifest({
+        services: {
+          web: {
+            image: 'nginx',
+            depends_on: { web: { condition: 'service_started' } },
+          },
+        },
+      });
+      expect(r.valid).toBe(false);
+    });
+  });
+
+  describe('health_check', () => {
+    it('accepts CMD and CMD-SHELL forms', () => {
+      const a = validateManifest({
+        image: 'nginx',
+        health_check: { test: ['CMD', 'curl', '-f', 'http://localhost'] },
+      });
+      const b = validateManifest({
+        image: 'nginx',
+        health_check: {
+          test: ['CMD-SHELL', 'curl -f http://localhost || exit 1'],
+        },
+      });
+      expect(a.valid).toBe(true);
+      expect(b.valid).toBe(true);
+    });
+
+    it('rejects CMD without arguments', () => {
+      const r = validateManifest({
+        image: 'nginx',
+        health_check: { test: ['CMD'] },
+      });
+      expect(r.valid).toBe(false);
+    });
+
+    it('accepts NONE as a single-element test', () => {
+      const r = validateManifest({
+        image: 'nginx',
+        health_check: { test: ['NONE'] },
+      });
+      expect(r.valid).toBe(true);
+    });
+
+    it('rejects negative retries', () => {
+      const r = validateManifest({
+        image: 'nginx',
+        health_check: { test: ['NONE'], retries: -1 },
+      });
+      expect(r.valid).toBe(false);
+    });
+  });
+
+  describe('service names', () => {
+    it('rejects uppercase service names in stack', () => {
+      const r = validateManifest({ services: { Web: { image: 'nginx' } } });
+      expect(r.valid).toBe(false);
+    });
+
+    it('rejects underscore in service names', () => {
+      const r = validateManifest({ services: { my_db: { image: 'p' } } });
+      expect(r.valid).toBe(false);
+    });
   });
 });

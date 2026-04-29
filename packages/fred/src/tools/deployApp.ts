@@ -25,16 +25,10 @@ import {
   type BuildManifestOptions,
   buildManifest,
   buildStackManifest,
+  metaHashHex,
   validateServiceName,
 } from '../manifest.js';
 import { resolveProviderUrl } from './resolveLeaseProvider.js';
-
-async function sha256(data: string): Promise<string> {
-  const encoded = new TextEncoder().encode(data);
-  const hashBuffer = await crypto.subtle.digest('SHA-256', encoded);
-  const bytes = new Uint8Array(hashBuffer);
-  return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
-}
 
 function extractLeaseUuid(txResult: CosmosTxResult): string {
   if (!txResult.events) {
@@ -245,8 +239,8 @@ export async function deployApp(
     );
   }
 
-  // 2. SHA-256 hash of manifest
-  const metaHashHex = await sha256(manifestJson);
+  // 2. SHA-256 hash of manifest (must match `meta_hash` recorded on-chain).
+  const manifestMetaHash = await metaHashHex(manifestJson);
 
   // 3. Find matching SKU(s)
   const { skuUuid, providerUuid } = await findSkuUuid(queryClient, input.size);
@@ -279,7 +273,7 @@ export async function deployApp(
     clientManager,
     'billing',
     'create-lease',
-    ['--meta-hash', metaHashHex, ...leaseItems],
+    ['--meta-hash', manifestMetaHash, ...leaseItems],
     true,
     overrides,
   );
@@ -299,7 +293,7 @@ export async function deployApp(
     const leaseDataToken = await getLeaseDataAuthToken(
       address,
       leaseUuid,
-      metaHashHex,
+      manifestMetaHash,
     );
     await uploadLeaseData(
       providerUrl,

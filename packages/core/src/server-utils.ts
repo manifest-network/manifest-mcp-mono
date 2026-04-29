@@ -216,6 +216,37 @@ export function jsonResponse(
 }
 
 /**
+ * Helper to build a successful CallToolResult with both `structuredContent`
+ * (consumed by clients that validate against the tool's outputSchema) and
+ * `content` (text fallback for clients that don't). Use this for any tool
+ * registered with an `outputSchema`. Per MCP spec, `structuredContent` must
+ * be a JSON object — `data` is therefore typed as a record.
+ *
+ * The optional `replacer` is applied to BOTH `structuredContent` and the
+ * text fallback by round-tripping through JSON. This keeps `structuredContent`
+ * JSON-serializable for the wire, even if the caller hands us a `BigInt`,
+ * `Date`, or anything else `JSON.stringify` knows how to convert via the
+ * replacer.
+ */
+export function structuredResponse(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- matches JSON.stringify's replacer signature
+  data: Record<string, unknown>,
+  replacer?: (key: string, value: any) => any,
+): CallToolResult {
+  const serialized = JSON.stringify(data, replacer);
+  const structuredContent = JSON.parse(serialized) as Record<string, unknown>;
+  return {
+    structuredContent,
+    content: [
+      {
+        type: 'text' as const,
+        text: JSON.stringify(structuredContent, undefined, 2),
+      },
+    ],
+  };
+}
+
+/**
  * Config shape accepted by createMnemonicServer.
  * Derives from ManifestMCPConfig (minus rateLimit/retry) so new config fields propagate automatically.
  */

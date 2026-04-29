@@ -7,6 +7,7 @@ import {
   type ManifestMCPServerOptions,
   SENSITIVE_FIELDS,
   sanitizeForLogging,
+  structuredResponse,
   withErrorHandling,
 } from './server-utils.js';
 import { ManifestMCPError, ManifestMCPErrorCode } from './types.js';
@@ -168,6 +169,25 @@ describe('jsonResponse', () => {
   it('works without replacer', () => {
     const result = jsonResponse({ a: 1 });
     expect(JSON.parse(textOf(result))).toEqual({ a: 1 });
+  });
+});
+
+describe('structuredResponse', () => {
+  it('returns both structuredContent and text content', () => {
+    const result = structuredResponse({ foo: 'bar', n: 1 });
+    expect(result.structuredContent).toEqual({ foo: 'bar', n: 1 });
+    expect(result.content).toHaveLength(1);
+    expect(JSON.parse(textOf(result))).toEqual({ foo: 'bar', n: 1 });
+  });
+
+  it('applies the replacer to both structuredContent and the text fallback', () => {
+    // structuredContent is sent over the wire and must be JSON-serializable.
+    // The replacer is the only thing standing between a BigInt-bearing
+    // result and a TypeError on the wire, so the helper must apply it to
+    // structuredContent too — not only to the text fallback.
+    const result = structuredResponse({ val: BigInt(42) }, bigIntReplacer);
+    expect(result.structuredContent).toEqual({ val: '42' });
+    expect(JSON.parse(textOf(result))).toEqual({ val: '42' });
   });
 });
 

@@ -15,6 +15,7 @@ import {
   mutatingAnnotations,
   readOnlyAnnotations,
   stopApp,
+  structuredResponse,
   VERSION,
   validateAddress,
   withErrorHandling,
@@ -121,6 +122,20 @@ export class LeaseMCPServer {
               'Tenant address to query (bech32). Defaults to the caller when omitted.',
             ),
         },
+        outputSchema: {
+          credits: z.looseObject({}).nullable(),
+          current_balance: z
+            .array(z.object({ denom: z.string(), amount: z.string() }))
+            .optional(),
+          spending_per_hour: z
+            .array(z.object({ denom: z.string(), amount: z.string() }))
+            .optional(),
+          hours_remaining: z.string().optional(),
+          running_apps: z.string().optional(),
+          balances: z.array(
+            z.object({ denom: z.string(), amount: z.string() }),
+          ),
+        },
         annotations: readOnlyAnnotations('Get billing credit balance'),
         _meta: manifestMeta({
           broadcasts: false,
@@ -135,7 +150,10 @@ export class LeaseMCPServer {
         await this.clientManager.acquireRateLimit();
         const queryClient = await this.clientManager.getQueryClient();
         const result = await getBalance(queryClient, address);
-        return jsonResponse(result, bigIntReplacer);
+        return structuredResponse(
+          result as unknown as Record<string, unknown>,
+          bigIntReplacer,
+        );
       }),
     );
 
