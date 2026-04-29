@@ -363,7 +363,11 @@ function validateService(
       errors.push(`${scope}.ports: must be an object`);
     } else {
       for (const key of Object.keys(service.ports)) {
-        if (!PORT_KEY_RE.test(key)) {
+        // PORT_KEY_RE permits up to 5 digits (so 1-99999); the docs and the
+        // error message limit ports to 1-65535. validatePort closes the gap
+        // so 70000/tcp doesn't silently pass pre-flight.
+        const match = key.match(PORT_KEY_RE);
+        if (!match || !validatePort(match[1])) {
           errors.push(
             `${scope}.ports["${key}"]: must be in "port/protocol" format with port 1-65535 and protocol tcp|udp`,
           );

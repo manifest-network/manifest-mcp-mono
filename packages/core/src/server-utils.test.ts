@@ -180,10 +180,13 @@ describe('structuredResponse', () => {
     expect(JSON.parse(textOf(result))).toEqual({ foo: 'bar', n: 1 });
   });
 
-  it('uses custom replacer for the text fallback', () => {
+  it('applies the replacer to both structuredContent and the text fallback', () => {
+    // structuredContent is sent over the wire and must be JSON-serializable.
+    // The replacer is the only thing standing between a BigInt-bearing
+    // result and a TypeError on the wire, so the helper must apply it to
+    // structuredContent too — not only to the text fallback.
     const result = structuredResponse({ val: BigInt(42) }, bigIntReplacer);
-    // structuredContent retains the original (callers should serialize before passing)
-    // but the text fallback uses the replacer.
+    expect(result.structuredContent).toEqual({ val: '42' });
     expect(JSON.parse(textOf(result))).toEqual({ val: '42' });
   });
 });

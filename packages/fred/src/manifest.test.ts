@@ -564,6 +564,25 @@ describe('validateManifest', () => {
       });
       expect(r.valid).toBe(false);
     });
+
+    it('rejects ports above 65535', () => {
+      // PORT_KEY_RE permits up to 5 digits, so the regex alone would let
+      // 70000/tcp through. validatePort() closes the gap.
+      const r = validateManifest({
+        image: 'nginx',
+        ports: { '70000/tcp': {} },
+      });
+      expect(r.valid).toBe(false);
+      expect(r.errors.some((e) => e.includes('70000'))).toBe(true);
+    });
+
+    it('accepts the maximum legal port 65535/tcp', () => {
+      const r = validateManifest({
+        image: 'nginx',
+        ports: { '65535/tcp': {} },
+      });
+      expect(r.valid).toBe(true);
+    });
   });
 
   describe('tmpfs', () => {
