@@ -168,6 +168,27 @@ const FRED_MATRIX: Record<string, ExpectedAnnotations> = {
     broadcasts: false,
     estimable: false,
   },
+  wait_for_app_ready: {
+    readOnlyHint: true,
+    idempotentHint: true,
+    openWorldHint: true,
+    broadcasts: false,
+    estimable: false,
+  },
+  build_manifest_preview: {
+    readOnlyHint: true,
+    idempotentHint: true,
+    openWorldHint: true,
+    broadcasts: false,
+    estimable: false,
+  },
+  check_deployment_readiness: {
+    readOnlyHint: true,
+    idempotentHint: true,
+    openWorldHint: true,
+    broadcasts: false,
+    estimable: false,
+  },
   deploy_app: {
     readOnlyHint: false,
     destructiveHint: false,
@@ -361,7 +382,7 @@ describe('Tool annotations + _meta.manifest (live MCP transport)', () => {
 
     it('every fred tool matches the annotation matrix', async () => {
       const tools = await client.listToolsRaw();
-      expect(tools).toHaveLength(8);
+      expect(tools).toHaveLength(11);
       for (const tool of tools) {
         const expected = FRED_MATRIX[tool.name];
         expect(expected, `unexpected tool ${tool.name}`).toBeDefined();
