@@ -16,6 +16,7 @@ import {
   manifestMeta,
   mutatingAnnotations,
   readOnlyAnnotations,
+  structuredResponse,
   VERSION,
   withErrorHandling,
 } from '@manifest-network/manifest-mcp-core';
@@ -228,6 +229,17 @@ export class ChainMCPServer {
               'Gas simulation multiplier override for this estimation. Defaults to the server-configured value (typically 1.5).',
             ),
         },
+        outputSchema: {
+          module: z.string(),
+          subcommand: z.string(),
+          gasEstimate: z.string(),
+          fee: z.object({
+            amount: z.array(
+              z.object({ denom: z.string(), amount: z.string() }),
+            ),
+            gas: z.string(),
+          }),
+        },
         annotations: readOnlyAnnotations('Estimate Cosmos SDK transaction fee'),
         _meta: manifestMeta({
           broadcasts: false,
@@ -244,7 +256,10 @@ export class ChainMCPServer {
             ? { gasMultiplier: args.gas_multiplier }
             : undefined,
         );
-        return jsonResponse(result, bigIntReplacer);
+        return structuredResponse(
+          result as unknown as Record<string, unknown>,
+          bigIntReplacer,
+        );
       }),
     );
 

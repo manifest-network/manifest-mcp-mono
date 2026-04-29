@@ -223,8 +223,15 @@ describe('LeaseMCPServer', () => {
   });
 
   describe('credit_balance', () => {
+    // Shape mirrors what core/src/tools/getBalance.ts actually returns; the
+    // tool now declares an outputSchema so the fixture must satisfy it.
+    const balanceFixture = {
+      credits: null,
+      balances: [{ denom: 'umfx', amount: '1000' }],
+    };
+
     it('routes to getBalance with caller address by default', async () => {
-      mockGetBalance.mockResolvedValue({ balance: '1000', credits: '500' });
+      mockGetBalance.mockResolvedValue(balanceFixture);
 
       const server = new LeaseMCPServer({
         config: makeMockConfig(),
@@ -236,11 +243,11 @@ describe('LeaseMCPServer', () => {
       expect(mockGetBalance.mock.calls[0][1]).toBe('manifest1abc');
       expect(result.isError).toBeUndefined();
       const parsed = JSON.parse(result.content[0].text);
-      expect(parsed.balance).toBe('1000');
+      expect(parsed.balances[0].denom).toBe('umfx');
     });
 
     it('passes tenant override to getBalance', async () => {
-      mockGetBalance.mockResolvedValue({ balance: '0', credits: '0' });
+      mockGetBalance.mockResolvedValue(balanceFixture);
 
       const server = new LeaseMCPServer({
         config: makeMockConfig(),

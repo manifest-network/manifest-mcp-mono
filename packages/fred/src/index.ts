@@ -181,6 +181,10 @@ export class FredMCPServer {
       {
         description:
           'Browse available cloud providers and service tiers with live health checks. Use this before deploy_app to see which providers are online and what SKU sizes (e.g. docker-micro, docker-small) are available with pricing.',
+        outputSchema: {
+          providers: z.array(z.looseObject({})),
+          tiers: z.record(z.string(), z.array(z.looseObject({}))),
+        },
         annotations: readOnlyAnnotations('Browse providers and SKUs'),
         _meta: manifestMeta({
           broadcasts: false,
@@ -191,7 +195,10 @@ export class FredMCPServer {
         await this.clientManager.acquireRateLimit();
         const queryClient = await this.clientManager.getQueryClient();
         const result = await browseCatalog(queryClient);
-        return jsonResponse(result, bigIntReplacer);
+        return structuredResponse(
+          result as unknown as Record<string, unknown>,
+          bigIntReplacer,
+        );
       }),
     );
 
@@ -206,6 +213,17 @@ export class FredMCPServer {
             .string()
             .uuid()
             .describe('The lease UUID of the app to check'),
+        },
+        outputSchema: {
+          lease_uuid: z.string(),
+          chainState: z.looseObject({
+            state: z.number(),
+            providerUuid: z.string(),
+          }),
+          connection: z.looseObject({}).optional(),
+          fredStatus: z.looseObject({}).optional(),
+          providerError: z.string().optional(),
+          connectionError: z.string().optional(),
         },
         annotations: readOnlyAnnotations('Get deployed app status'),
         _meta: manifestMeta({
@@ -224,7 +242,10 @@ export class FredMCPServer {
           leaseUuid,
           (addr, uuid) => this.authTokens.providerToken(addr, uuid),
         );
-        return jsonResponse(result, bigIntReplacer);
+        return structuredResponse(
+          result as unknown as Record<string, unknown>,
+          bigIntReplacer,
+        );
       }),
     );
 
@@ -687,6 +708,15 @@ export class FredMCPServer {
               'Gas simulation multiplier override for this transaction. Defaults to the server-configured value (typically 1.5). Increase if a transaction fails with out-of-gas errors.',
             ),
         },
+        outputSchema: {
+          lease_uuid: z.string(),
+          provider_uuid: z.string(),
+          provider_url: z.string(),
+          state: z.number(),
+          url: z.string().optional(),
+          connection: z.looseObject({}).optional(),
+          connectionError: z.string().optional(),
+        },
         // Additive: creates a new lease and uploads a manifest. Does not
         // replace any existing app's state.
         annotations: mutatingAnnotations('Deploy a containerized app', {
@@ -748,7 +778,10 @@ export class FredMCPServer {
                 : undefined,
             },
           );
-          return jsonResponse(result, bigIntReplacer);
+          return structuredResponse(
+            result as unknown as Record<string, unknown>,
+            bigIntReplacer,
+          );
         },
       ),
     );
@@ -812,6 +845,10 @@ export class FredMCPServer {
               'The current manifest JSON. When provided, the new manifest is merged over the existing one (env, ports, labels merged; other fields carried forward if not in new).',
             ),
         },
+        outputSchema: {
+          lease_uuid: z.string(),
+          status: z.string(),
+        },
         // Destructive: replaces the running app's manifest. Even with the
         // merge mode, prior config can be overwritten.
         annotations: mutatingAnnotations('Update a deployed app manifest', {
@@ -854,7 +891,10 @@ export class FredMCPServer {
           manifest,
           args.existing_manifest,
         );
-        return jsonResponse(result, bigIntReplacer);
+        return structuredResponse(
+          result as unknown as Record<string, unknown>,
+          bigIntReplacer,
+        );
       }),
     );
 
@@ -869,6 +909,12 @@ export class FredMCPServer {
             .string()
             .uuid()
             .describe('The lease UUID of the app to diagnose'),
+        },
+        outputSchema: {
+          lease_uuid: z.string(),
+          provision_status: z.string(),
+          fail_count: z.number(),
+          last_error: z.string(),
         },
         annotations: readOnlyAnnotations('Get app provision diagnostics'),
         _meta: manifestMeta({
@@ -901,7 +947,7 @@ export class FredMCPServer {
           authToken,
         );
 
-        return jsonResponse(
+        return structuredResponse(
           {
             lease_uuid: leaseUuid,
             provision_status: provision.status,
@@ -924,6 +970,17 @@ export class FredMCPServer {
             .string()
             .uuid()
             .describe('The lease UUID of the app to get release history for'),
+        },
+        outputSchema: {
+          lease_uuid: z.string(),
+          releases: z.array(
+            z.looseObject({
+              version: z.number(),
+              image: z.string(),
+              status: z.string(),
+              created_at: z.string(),
+            }),
+          ),
         },
         annotations: readOnlyAnnotations('Get app release history'),
         _meta: manifestMeta({
@@ -956,7 +1013,7 @@ export class FredMCPServer {
           authToken,
         );
 
-        return jsonResponse(
+        return structuredResponse(
           {
             lease_uuid: leaseUuid,
             releases: result.releases,
