@@ -615,6 +615,100 @@ describe('FredMCPServer', () => {
     });
   });
 
+  describe('prompts', () => {
+    async function withClient<T>(
+      server: FredMCPServer,
+      fn: (client: Client) => Promise<T>,
+    ): Promise<T> {
+      const [clientTransport, serverTransport] =
+        InMemoryTransport.createLinkedPair();
+      activeTransports.push(clientTransport, serverTransport);
+      const client = new Client({ name: 'test-client', version: '1.0.0' });
+      await server.getServer().connect(serverTransport);
+      await client.connect(clientTransport);
+      try {
+        return await fn(client);
+      } finally {
+        await client.close();
+      }
+    }
+
+    it('lists three workflow prompts', async () => {
+      const server = new FredMCPServer({
+        config: makeMockConfig(),
+        walletProvider: makeMockWallet(),
+      });
+      const result = await withClient(server, (c) => c.listPrompts());
+      const names = result.prompts.map((p) => p.name);
+      expect(names).toEqual(
+        expect.arrayContaining([
+          'deploy-containerized-app',
+          'diagnose-failing-app',
+          'shutdown-all-leases',
+        ]),
+      );
+    });
+
+    it('renders deploy-containerized-app with the supplied image/port/size', async () => {
+      const server = new FredMCPServer({
+        config: makeMockConfig(),
+        walletProvider: makeMockWallet(),
+      });
+      const result = await withClient(server, (c) =>
+        c.getPrompt({
+          name: 'deploy-containerized-app',
+          arguments: { image: 'nginx:1.25', port: '80', size: 'docker-micro' },
+        }),
+      );
+      expect(result.messages).toHaveLength(1);
+      const m = result.messages[0];
+      expect(m.role).toBe('user');
+      const text = (m.content as { type: string; text: string }).text;
+      expect(text).toContain('nginx:1.25');
+      expect(text).toContain('docker-micro');
+      // Pins the workflow contract so a downstream change requires test update.
+      expect(text).toContain('check_deployment_readiness');
+      expect(text).toContain('build_manifest_preview');
+      expect(text).toContain('deploy_app');
+      expect(text).toContain('wait_for_app_ready');
+    });
+
+    it('renders diagnose-failing-app with the supplied lease_uuid', async () => {
+      const server = new FredMCPServer({
+        config: makeMockConfig(),
+        walletProvider: makeMockWallet(),
+      });
+      const result = await withClient(server, (c) =>
+        c.getPrompt({
+          name: 'diagnose-failing-app',
+          arguments: { lease_uuid: LEASE_UUID },
+        }),
+      );
+      const text = (
+        result.messages[0].content as { type: string; text: string }
+      ).text;
+      expect(text).toContain(LEASE_UUID);
+      expect(text).toContain('app_status');
+      expect(text).toContain('app_diagnostics');
+      expect(text).toContain('get_logs');
+    });
+
+    it('renders shutdown-all-leases without arguments', async () => {
+      const server = new FredMCPServer({
+        config: makeMockConfig(),
+        walletProvider: makeMockWallet(),
+      });
+      const result = await withClient(server, (c) =>
+        c.getPrompt({ name: 'shutdown-all-leases' }),
+      );
+      const text = (
+        result.messages[0].content as { type: string; text: string }
+      ).text;
+      expect(text).toContain('manifest://leases/active');
+      expect(text).toContain('close_lease');
+    });
+  });
+
   describe('check_deployment_readiness', () => {
     it('forwards size and image to the tool function', async () => {
       const server = new FredMCPServer({
