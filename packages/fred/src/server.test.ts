@@ -57,6 +57,19 @@ vi.mock('./tools/restartApp.js', () => ({
 vi.mock('./tools/updateApp.js', () => ({
   updateApp: vi.fn().mockResolvedValue({}),
 }));
+vi.mock('./tools/checkDeploymentReadiness.js', () => ({
+  checkDeploymentReadiness: vi.fn().mockResolvedValue({
+    tenant: 'manifest1abc',
+    image: null,
+    size: null,
+    wallet_balances: [{ denom: 'umfx', amount: '5000000' }],
+    credits: null,
+    sku: null,
+    available_sku_names: [],
+    ready: false,
+    missing_steps: ['Credit account does not exist for this tenant.'],
+  }),
+}));
 vi.mock('./tools/waitForAppReady.js', () => ({
   waitForAppReady: vi.fn().mockResolvedValue({
     lease_uuid: '550e8400-e29b-41d4-a716-446655440000',
@@ -82,6 +95,7 @@ import {
 } from '@manifest-network/manifest-mcp-core/__test-utils__/mocks.js';
 import { getLeaseProvision, getLeaseReleases } from './http/fred.js';
 import { FredMCPServer } from './index.js';
+import { checkDeploymentReadiness } from './tools/checkDeploymentReadiness.js';
 import { deployApp } from './tools/deployApp.js';
 import { fetchActiveLease } from './tools/fetchActiveLease.js';
 import { resolveProviderUrl } from './tools/resolveLeaseProvider.js';
@@ -93,6 +107,7 @@ const mockGetLeaseReleases = vi.mocked(getLeaseReleases);
 const mockResolveProviderUrl = vi.mocked(resolveProviderUrl);
 const mockFetchActiveLease = vi.mocked(fetchActiveLease);
 const mockWaitForAppReady = vi.mocked(waitForAppReady);
+const mockCheckDeploymentReadiness = vi.mocked(checkDeploymentReadiness);
 
 const LEASE_UUID = '550e8400-e29b-41d4-a716-446655440000';
 
@@ -167,7 +182,7 @@ describe('FredMCPServer', () => {
       }
     });
 
-    it('read-only tools: browse_catalog, app_status, get_logs, app_diagnostics, app_releases, wait_for_app_ready, build_manifest_preview', async () => {
+    it('read-only tools: browse_catalog, app_status, get_logs, app_diagnostics, app_releases, wait_for_app_ready, build_manifest_preview, check_deployment_readiness', async () => {
       const tools = await listTools();
       const readOnly = [
         'browse_catalog',
@@ -177,6 +192,7 @@ describe('FredMCPServer', () => {
         'app_releases',
         'wait_for_app_ready',
         'build_manifest_preview',
+        'check_deployment_readiness',
       ] as const;
       for (const name of readOnly) {
         const t = tools.get(name);
@@ -462,6 +478,30 @@ describe('FredMCPServer', () => {
       const parsed = JSON.parse(result.content[0].text);
       expect(parsed.code).toBe('INVALID_CONFIG');
       expect(parsed.message).toContain('signArbitrary');
+    });
+  });
+
+  describe('check_deployment_readiness', () => {
+    it('forwards size and image to the tool function', async () => {
+      const server = new FredMCPServer({
+        config: makeMockConfig(),
+        walletProvider: makeMockWallet(),
+      });
+      const result = await callTool(server, 'check_deployment_readiness', {
+        size: 'docker-micro',
+        image: 'nginx:alpine',
+      });
+
+      expect(result.isError).toBeUndefined();
+      expect(mockCheckDeploymentReadiness).toHaveBeenCalledWith(
+        expect.anything(),
+        'manifest1abc',
+        { size: 'docker-micro', image: 'nginx:alpine' },
+      );
+      expect(result.structuredContent).toMatchObject({
+        ready: false,
+        missing_steps: expect.any(Array),
+      });
     });
   });
 

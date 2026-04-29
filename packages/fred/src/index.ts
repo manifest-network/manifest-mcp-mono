@@ -31,6 +31,7 @@ import { getLeaseProvision, getLeaseReleases, MAX_TAIL } from './http/fred.js';
 import { appStatus } from './tools/appStatus.js';
 import { browseCatalog } from './tools/browseCatalog.js';
 import { buildManifestPreview } from './tools/buildManifestPreview.js';
+import { checkDeploymentReadiness } from './tools/checkDeploymentReadiness.js';
 import { deployApp } from './tools/deployApp.js';
 import { fetchActiveLease } from './tools/fetchActiveLease.js';
 import { getAppLogs } from './tools/getLogs.js';
@@ -113,6 +114,12 @@ export {
   buildManifestPreview,
   type ManifestPreviewServiceInput,
 } from './tools/buildManifestPreview.js';
+export {
+  type CheckDeploymentReadinessInput,
+  type CheckDeploymentReadinessResult,
+  checkDeploymentReadiness,
+  type SkuSummary,
+} from './tools/checkDeploymentReadiness.js';
 export {
   type DeployAppInput,
   type DeployAppResult,
@@ -347,6 +354,75 @@ export class FredMCPServer {
           tail,
         );
         return jsonResponse(result, bigIntReplacer);
+      }),
+    );
+
+    // -- check_deployment_readiness --
+    this.mcpServer.registerTool(
+      'check_deployment_readiness',
+      {
+        description:
+          "Pre-flight check for deploy_app: surfaces the caller's wallet balances, credit account, requested SKU availability, and a human-readable list of missing steps. Use this before deploy_app to decide whether to fund credits, switch SKU, or top up the wallet. Note: the chain does not expose provider allowed_registries, so a `ready: true` does not guarantee the registry of `image` is allowed — that is checked at upload time.",
+        inputSchema: {
+          size: z
+            .string()
+            .optional()
+            .describe(
+              'SKU tier to verify availability for (e.g. "docker-micro"). Omit to skip the SKU check.',
+            ),
+          image: z
+            .string()
+            .optional()
+            .describe(
+              'Image planned for deployment. Recorded on the result for downstream display; not validated.',
+            ),
+        },
+        outputSchema: {
+          tenant: z.string(),
+          image: z.string().nullable(),
+          size: z.string().nullable(),
+          wallet_balances: z.array(
+            z.object({ denom: z.string(), amount: z.string() }),
+          ),
+          credits: z.looseObject({}).nullable(),
+          current_balance: z
+            .array(z.object({ denom: z.string(), amount: z.string() }))
+            .optional(),
+          hours_remaining: z.string().optional(),
+          sku: z
+            .object({
+              name: z.string(),
+              uuid: z.string(),
+              provider_uuid: z.string(),
+              price: z
+                .object({ amount: z.string(), denom: z.string() })
+                .optional(),
+              active: z.boolean(),
+              stateful: z.boolean(),
+            })
+            .nullable(),
+          available_sku_names: z.array(z.string()),
+          ready: z.boolean(),
+          missing_steps: z.array(z.string()),
+        },
+        annotations: readOnlyAnnotations('Check deploy pre-flight readiness'),
+        _meta: manifestMeta({
+          broadcasts: false,
+          estimable: false,
+        }),
+      },
+      withErrorHandling('check_deployment_readiness', async (args) => {
+        const address = await this.walletProvider.getAddress();
+        await this.clientManager.acquireRateLimit();
+        const queryClient = await this.clientManager.getQueryClient();
+        const result = await checkDeploymentReadiness(queryClient, address, {
+          size: args.size,
+          image: args.image,
+        });
+        return structuredResponse(
+          result as unknown as Record<string, unknown>,
+          bigIntReplacer,
+        );
       }),
     );
 
