@@ -1,20 +1,14 @@
 import type { SigningStargateClient } from '@cosmjs/stargate';
 import { cosmos } from '@manifest-network/manifestjs';
 import { throwUnsupportedSubcommand } from '../modules.js';
-import {
-  type BuiltMessages,
-  type CosmosTxResult,
-  ManifestMCPError,
-  ManifestMCPErrorCode,
-  type TxOptions,
-} from '../types.js';
+import type { BuiltMessages, CosmosTxResult, TxOptions } from '../types.js';
 import {
   buildGasFee,
   buildTxResult,
   extractFlag,
   filterConsumedArgs,
   parseAmount,
-  parseBigInt,
+  parseUnixSecondsToDate,
   requireArgs,
   validateAddress,
   validateArgsLength,
@@ -24,18 +18,6 @@ const { MsgGrantAllowance, MsgRevokeAllowance, MsgPruneAllowances } =
   cosmos.feegrant.v1beta1;
 
 const BASIC_ALLOWANCE_TYPE_URL = '/cosmos.feegrant.v1beta1.BasicAllowance';
-
-function parseUnixSecondsToDate(seconds: string, fieldName: string): Date {
-  const big = parseBigInt(seconds, fieldName);
-  const ms = big * BigInt(1000);
-  if (ms > BigInt(Number.MAX_SAFE_INTEGER)) {
-    throw new ManifestMCPError(
-      ManifestMCPErrorCode.TX_FAILED,
-      `${fieldName} too large: "${seconds}" overflows JavaScript Date range.`,
-    );
-  }
-  return new Date(Number(ms));
-}
 
 /**
  * Build messages for a feegrant transaction subcommand (no signing/broadcasting).

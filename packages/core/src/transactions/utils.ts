@@ -340,6 +340,37 @@ export function parseBigInt(value: string, fieldName: string): bigint {
   return parseBigIntWithCode(value, fieldName, ManifestMCPErrorCode.TX_FAILED);
 }
 
+/** Maximum value JavaScript Date can represent (ms since epoch). */
+const MAX_DATE_MS = BigInt(8_640_000_000_000_000);
+
+/**
+ * Parse a unix-seconds string into a JavaScript Date, rejecting values outside
+ * the Date range (~±271_821 years from epoch). Negative values are rejected
+ * because all chain-side timestamp fields we use today represent absolute
+ * future moments (grants, allowances, etc.) — pre-1970 expirations would be
+ * nonsensical and almost certainly indicate a caller bug.
+ */
+export function parseUnixSecondsToDate(
+  seconds: string,
+  fieldName: string,
+): Date {
+  const big = parseBigInt(seconds, fieldName);
+  if (big < BigInt(0)) {
+    throw new ManifestMCPError(
+      ManifestMCPErrorCode.TX_FAILED,
+      `${fieldName} must be a non-negative unix timestamp; got "${seconds}".`,
+    );
+  }
+  const ms = big * BigInt(1000);
+  if (ms > MAX_DATE_MS) {
+    throw new ManifestMCPError(
+      ManifestMCPErrorCode.TX_FAILED,
+      `${fieldName} out of range: "${seconds}" overflows the JavaScript Date range.`,
+    );
+  }
+  return new Date(Number(ms));
+}
+
 /**
  * Interface for VoteOption-like enums from cosmos protobuf modules.
  * Both cosmos.gov.v1.VoteOption and cosmos.group.v1.VoteOption share this shape.

@@ -14,7 +14,7 @@ import {
   buildTxResult,
   extractFlag,
   filterConsumedArgs,
-  parseBigInt,
+  parseUnixSecondsToDate,
   requireArgs,
   validateAddress,
   validateArgsLength,
@@ -34,18 +34,6 @@ function validateMsgTypeUrl(msgTypeUrl: string, context: string): void {
       `Invalid msg-type-url for ${context}: "${msgTypeUrl}". Expected a fully-qualified protobuf type URL (e.g., "/cosmos.bank.v1beta1.MsgSend").`,
     );
   }
-}
-
-function parseUnixSecondsToDate(seconds: string, fieldName: string): Date {
-  const big = parseBigInt(seconds, fieldName);
-  const ms = big * BigInt(1000);
-  if (ms > BigInt(Number.MAX_SAFE_INTEGER)) {
-    throw new ManifestMCPError(
-      ManifestMCPErrorCode.TX_FAILED,
-      `${fieldName} too large: "${seconds}" overflows JavaScript Date range.`,
-    );
-  }
-  return new Date(Number(ms));
 }
 
 /**
