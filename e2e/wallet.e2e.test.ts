@@ -186,6 +186,154 @@ describe('Wallet bootstrap (keyfile)', () => {
   });
 });
 
+/**
+ * Spawn `manifest-mcp-chain` with a custom env, wait for it to exit, and
+ * return its stderr + exit code. The MCP server normally runs forever on
+ * stdio; this helper is for negative paths where the server is expected
+ * to exit fatally during bootstrap (bad keyfile, bad mnemonic, missing
+ * config). bootstrap.ts:135-138 prints `Fatal error [<CODE>]: ...` for
+ * `ManifestMCPError` instances, so callers assert against that prefix.
+ *
+ * `extraEnv` keys override the inherited env. Pass `null` to delete a key
+ * the inherited env may have set (e.g., COSMOS_MNEMONIC from .env).
+ *
+ * loadConfig() validates COSMOS_CHAIN_ID + at least one of (RPC, REST) +
+ * COSMOS_GAS_PRICE when RPC is set. These throw plain Error before
+ * reaching the wallet code, so the helper preseeds them with the same
+ * defaults MCPTestClient.connect() uses. The caller's extraEnv still
+ * wins (pass null to exercise a missing-config branch).
+ */
+async function spawnChainExpectingFatal(
+  extraEnv: Record<string, string | null>,
+  timeoutMs = 5000,
+): Promise<{ code: number | null; signal: NodeJS.Signals | null; stderr: string }> {
+  return new Promise((resolveRun, rejectRun) => {
+    const env: Record<string, string> = {};
+    for (const [k, v] of Object.entries(process.env)) {
+      if (typeof v === 'string') env[k] = v;
+    }
+
+    // Mirror MCPTestClient defaults so loadConfig() accepts the env and
+    // the failure surfaces from the wallet bootstrap, not the config
+    // validation. Caller's extraEnv overrides these. LOG_LEVEL=silent
+    // suppresses logger output during the negative-path tests; the
+    // bootstrap-side `Fatal error [...]` message we assert on goes to
+    // console.error directly, not through the logger.
+    env.COSMOS_CHAIN_ID ??= 'manifest-localnet';
+    env.COSMOS_RPC_URL ??= 'http://localhost:26657';
+    env.COSMOS_GAS_PRICE ??= '0.01umfx';
+    env.LOG_LEVEL ??= 'silent';
+
+    for (const [k, v] of Object.entries(extraEnv)) {
+      if (v === null) {
+        delete env[k];
+      } else {
+        env[k] = v;
+      }
+    }
+
+    const child = spawn('node', [resolve(process.cwd(), CHAIN_ENTRY)], {
+      env,
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    let stderr = '';
+    child.stderr.on('data', (chunk: Buffer) => {
+      stderr += chunk.toString();
+    });
+    child.on('error', (err) => {
+      clearTimeout(killTimer);
+      rejectRun(err);
+    });
+    child.on('close', (code, signal) => {
+      clearTimeout(killTimer);
+      resolveRun({ code, signal, stderr });
+    });
+    // Server should exit on its own; if it doesn't, it survived a fatal
+    // path it shouldn't have. Tests assert `signal !== 'SIGKILL'` to
+    // distinguish "exited fatally as expected" from "had to be killed".
+    const killTimer = setTimeout(() => {
+      child.kill('SIGKILL');
+    }, timeoutMs);
+    child.stdin.end();
+  });
+}
+
+describe('Wallet bootstrap (fatal error codes)', () => {
+  /**
+   * bootstrap() prints `Fatal error [INVALID_MNEMONIC]: ...` when
+   * MnemonicWalletProvider.connect() rewraps a CosmJS BIP-39 derivation
+   * failure. The test passes a structurally-shaped-but-invalid 24-word
+   * phrase to trigger CosmJS validation rather than the address-prefix
+   * check.
+   */
+  it('exits with [INVALID_MNEMONIC] when COSMOS_MNEMONIC is malformed', async () => {
+    const { code, signal, stderr } = await spawnChainExpectingFatal({
+      // 24 lowercase words that are NOT in the BIP-39 wordlist.
+      COSMOS_MNEMONIC:
+        'foo bar baz qux quux corge grault garply waldo fred plugh xyzzy ' +
+        'thud foo bar baz qux quux corge grault garply waldo fred plugh',
+      MANIFEST_KEY_FILE: '/dev/null/nonexistent',
+      MANIFEST_KEY_PASSWORD: null,
+    });
+    // Distinguish "exited fatally as expected" from "had to be killed
+    // because it survived bootstrap" — the latter is the regression
+    // signal we care about and would otherwise look like a missing log.
+    expect(signal).not.toBe('SIGKILL');
+    expect(code).not.toBe(0);
+    expect(stderr).toMatch(/Fatal error \[INVALID_MNEMONIC\]/);
+  });
+
+  /**
+   * KeyfileWalletProvider.initWallet() throws WALLET_CONNECTION_FAILED
+   * for missing/unreadable keyfiles. Pointing MANIFEST_KEY_FILE at a
+   * directory triggers the read-failure branch (readFileSync raises
+   * EISDIR on a directory).
+   */
+  it('exits with [WALLET_CONNECTION_FAILED] when MANIFEST_KEY_FILE points at a directory', async () => {
+    // /tmp is guaranteed to exist and be a directory.
+    const { code, signal, stderr } = await spawnChainExpectingFatal({
+      MANIFEST_KEY_FILE: '/tmp',
+      COSMOS_MNEMONIC: null,
+      MANIFEST_KEY_PASSWORD: null,
+    });
+    expect(signal).not.toBe('SIGKILL');
+    expect(code).not.toBe(0);
+    expect(stderr).toMatch(/Fatal error \[WALLET_CONNECTION_FAILED\]/);
+  });
+
+  /**
+   * Same code path as above, exercised through an encrypted keyfile
+   * with no MANIFEST_KEY_PASSWORD set. We pin the stderr code prefix —
+   * the existing keyfile-failure test elsewhere in this file only
+   * asserts that connect() rejected.
+   */
+  it('exits with [WALLET_CONNECTION_FAILED] for an encrypted keyfile without password', async () => {
+    // Build the encrypted keyfile inline since the outer describe's
+    // beforeAll only runs for tests inside that describe block.
+    const fixtureDir = mkdtempSync(join(tmpdir(), 'wallet-fatal-'));
+    const fixturePath = join(fixtureDir, 'encrypted.json');
+    try {
+      const wallet = await DirectSecp256k1HdWallet.fromMnemonic(TEST_MNEMONIC, {
+        prefix: 'manifest',
+      });
+      const serialized = await wallet.serialize(KEYFILE_PASSWORD);
+      writeFileSync(fixturePath, serialized, { mode: 0o600 });
+
+      const { code, signal, stderr } = await spawnChainExpectingFatal({
+        MANIFEST_KEY_FILE: fixturePath,
+        COSMOS_MNEMONIC: null,
+        MANIFEST_KEY_PASSWORD: null,
+      });
+      expect(signal).not.toBe('SIGKILL');
+      expect(code).not.toBe(0);
+      expect(stderr).toMatch(/Fatal error \[WALLET_CONNECTION_FAILED\]/);
+      expect(stderr).toMatch(/MANIFEST_KEY_PASSWORD/);
+    } finally {
+      rmSync(fixtureDir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('keygen / import subcommands (non-interactive)', () => {
   // The CLI deliberately rejects non-TTY input (packages/node/src/keygen.ts:9).
   // We pin that user-visible behavior here so a regression that silently

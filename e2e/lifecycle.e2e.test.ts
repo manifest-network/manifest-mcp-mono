@@ -242,6 +242,67 @@ describe('Deploy lifecycle', () => {
     expect(result.lease_uuid).toBe(leaseUuid);
   });
 
+  it('update_app with existing_manifest merges over prior config', async () => {
+    // Merge mode: the new manifest only specifies an additional env var.
+    // existing_manifest carries the ports + base env from the previous
+    // update so the resulting manifest still has the ports binding plus
+    // the merged env (E2E_TEST + E2E_MERGE).
+    //
+    // The previous update_app left the app in a transient state — the
+    // provider returns 409 invalid-state until the deployment settles.
+    // Poll on the 409 until it succeeds.
+    //
+    // Fragility note: the 409 detection assumes fred's update_app handler
+    // does NOT wrap provider HTTP errors as a typed ManifestMCPError, so
+    // the raw provider JSON body falls through and parseToolErrorCode
+    // returns 'UNKNOWN'. If fred ever introduces a structured wrap (e.g.
+    // a PROVIDER_REJECTED code), the code === 'UNKNOWN' check below
+    // becomes false and the retry loop bypasses transient 409s — the
+    // test then fails flakily on the first call. The same coupling
+    // exists in the restart_app test below; fix both call sites together
+    // when fred's error wrapping changes.
+    const existingManifest = JSON.stringify({
+      image: 'nginxinc/nginx-unprivileged:alpine',
+      ports: { '8080/tcp': {} },
+      env: { E2E_TEST: 'true' },
+    });
+    const newManifest = JSON.stringify({
+      image: 'nginxinc/nginx-unprivileged:alpine',
+      env: { E2E_MERGE: 'merged' },
+    });
+
+    const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+    let mergeOk = false;
+    let lastErr: unknown;
+    for (let attempt = 0; attempt < 10; attempt++) {
+      try {
+        const result = await fredClient.callTool<{
+          lease_uuid: string;
+        }>('update_app', {
+          lease_uuid: leaseUuid,
+          manifest: newManifest,
+          existing_manifest: existingManifest,
+        });
+        expect(result.lease_uuid).toBe(leaseUuid);
+        mergeOk = true;
+        break;
+      } catch (err) {
+        lastErr = err;
+        const code = parseToolErrorCode(err);
+        const msg = err instanceof Error ? err.message : String(err);
+        const isTransient409 =
+          code === 'UNKNOWN' &&
+          /"code"\s*:\s*409/.test(msg) &&
+          /invalid state/i.test(msg);
+        if (!isTransient409) throw err;
+        await sleep(2_000);
+      }
+    }
+    if (!mergeOk) {
+      throw new Error(`update_app merge never succeeded after retries: ${lastErr}`);
+    }
+  });
+
   it('app_releases lists at least one release after update_app', async () => {
     const result = await fredClient.callTool<{
       lease_uuid: string;

@@ -61,7 +61,7 @@ Four MCP servers bridging AI assistants to Cosmos SDK blockchains (Manifest Netw
 
 ### Error handling
 
-`ManifestMCPError` with `ManifestMCPErrorCode` enum (14 codes, 6 categories). Error responses are sanitized via `sanitizeForLogging()` which redacts sensitive fields (mnemonics, passwords, keys, tokens). Retry logic (`retry.ts`) classifies errors as transient vs permanent -- only transient errors (connection, 5xx, 429) are retried.
+`ManifestMCPError` with `ManifestMCPErrorCode` enum (11 codes, 6 categories). Error responses are sanitized via `sanitizeForLogging()` which redacts sensitive fields (mnemonics, passwords, keys, tokens). Retry logic (`retry.ts`) classifies errors as transient vs permanent -- only transient errors (connection, 5xx, 429) are retried.
 
 ### Tool annotations and `_meta.manifest`
 

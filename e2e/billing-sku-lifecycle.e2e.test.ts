@@ -26,8 +26,12 @@ import { MCPTestClient, parseToolErrorCode } from './helpers/mcp-client.js';
  *   6. SKU cleanup: deactivate-sku, deactivate-provider
  *
  * `update-params` for both modules is governance-only (POA admin via
- * group proposal); `create-lease-for-tenant` is admin-only too. Both
- * out of scope here.
+ * group proposal) and remains out of scope here.
+ * `create-lease-for-tenant` is admin-gated by billing.params.allowed_list,
+ * which init_chain.sh seeds with the test wallet (so create-provider can
+ * self-register). The probe at the end of the file exercises this path
+ * as a positive case and cancels the resulting lease to avoid leaking
+ * state into the deactivate-sku test that follows.
  *
  * Re-runnability: this file assumes a fresh chain state (the suite-wide
  * convention — `docker compose -f e2e/docker-compose.yml down -v` between
@@ -219,6 +223,31 @@ describe('Billing/SKU lifecycle', () => {
     activeLeaseUuid = newLease!.uuid;
   });
 
+  it('query: billing lease (singular) returns the just-created lease by UUID', async () => {
+    const result = await client.callTool<{
+      result: { lease: { uuid: string; tenant: string } };
+    }>('cosmos_query', {
+      module: 'billing',
+      subcommand: 'lease',
+      args: [activeLeaseUuid],
+    });
+    expect(result.result.lease.uuid).toBe(activeLeaseUuid);
+    expect(result.result.lease.tenant).toBe(testAddress);
+  });
+
+  it('query: billing withdrawable-amount for the active lease', async () => {
+    // Empty amount list is fine for a freshly-created lease — we only
+    // need the routing path to succeed.
+    const result = await client.callTool<{
+      result: { amounts: Array<{ denom: string; amount: string }> };
+    }>('cosmos_query', {
+      module: 'billing',
+      subcommand: 'withdrawable-amount',
+      args: [activeLeaseUuid],
+    });
+    expect(Array.isArray(result.result.amounts)).toBe(true);
+  });
+
   it('tx: billing acknowledge-lease (flow A) — provider self-acknowledges (probe)', async () => {
     try {
       const result = await client.callTool<{ code: number }>('cosmos_tx', {
@@ -381,6 +410,62 @@ describe('Billing/SKU lifecycle', () => {
       module: 'billing',
       subcommand: 'cancel-lease',
       args: [activeLeaseUuid],
+      wait_for_confirmation: true,
+    });
+    expect(result.code).toBe(0);
+  });
+
+  // create-lease-for-tenant routes through the MsgCreateLeaseForTenant
+  // handler with `authority: senderAddress`. The chain validates the
+  // authority against `billing.params.allowed_list`; init_chain.sh seeds
+  // the test wallet into that list (so the create-provider test can
+  // self-register), which means this call is *authorized* on the devnet
+  // and the expected outcome is success.
+  //
+  // Must run before `deactivate-sku` below: with an inactive SKU, the
+  // chain rejects with "sku not active" before this code path can prove
+  // the routing.
+  //
+  // Cleanup: the call creates a real lease, so we cancel it immediately
+  // after to avoid state leak (the lease is bound to the SKU and would
+  // block deactivation).
+  let tenantLeaseUuid: string | undefined;
+  it('tx: billing create-lease-for-tenant succeeds when authority is allow-listed', async () => {
+    const beforeRes = await client.callTool<{
+      result: { leases: Array<{ uuid: string }> };
+    }>('cosmos_query', {
+      module: 'billing',
+      subcommand: 'leases-by-tenant',
+      args: [testAddress],
+    });
+    const beforeIds = new Set(beforeRes.result.leases.map((l) => l.uuid));
+
+    const result = await client.callTool<{ code: number }>('cosmos_tx', {
+      module: 'billing',
+      subcommand: 'create-lease-for-tenant',
+      args: [testAddress, `${skuUuid}:1`],
+      wait_for_confirmation: true,
+    });
+    expect(result.code).toBe(0);
+
+    const afterRes = await client.callTool<{
+      result: { leases: Array<{ uuid: string }> };
+    }>('cosmos_query', {
+      module: 'billing',
+      subcommand: 'leases-by-tenant',
+      args: [testAddress],
+    });
+    const newLease = afterRes.result.leases.find((l) => !beforeIds.has(l.uuid));
+    expect(newLease).toBeDefined();
+    tenantLeaseUuid = newLease!.uuid;
+  });
+
+  it('cleanup: cancel the create-lease-for-tenant probe lease', async () => {
+    if (!tenantLeaseUuid) return;
+    const result = await client.callTool<{ code: number }>('cosmos_tx', {
+      module: 'billing',
+      subcommand: 'cancel-lease',
+      args: [tenantLeaseUuid],
       wait_for_confirmation: true,
     });
     expect(result.code).toBe(0);

@@ -15,8 +15,11 @@ import { MCPTestClient } from './helpers/mcp-client.js';
  *   - INVALID_CONFIG signing-without-rpc — covered by ENG-51 (REST-only
  *     mode). Adding it here would require a second MCPTestClient with a
  *     different env, which ENG-51 will set up holistically.
- *   - Retry classification — would need a mock HTTP/RPC server that
- *     returns 503; deferred.
+ *   - Retry classification — covered by ENG-76.
+ *   - Startup-fatal codes (INVALID_MNEMONIC, WALLET_CONNECTION_FAILED) —
+ *     covered by wallet.e2e.test.ts which spawns chain.js directly and
+ *     inspects stderr; those errors fire before the MCP transport is up,
+ *     so they're not reachable through MCPTestClient.callTool.
  */
 
 describe('Error paths through MCP transport', () => {
@@ -121,6 +124,45 @@ describe('Error paths through MCP transport', () => {
       // than the generic TX_FAILED catch-all).
       expect(err.code).toBe('INVALID_ADDRESS');
       expect(err.message).toMatch(/address|bech32|invalid/i);
+    });
+  });
+
+  // ==========================================================================
+  // Simulation failure — SIMULATION_FAILED
+  //
+  // cosmosEstimateFee throws SIMULATION_FAILED when signingClient.simulate()
+  // rejects on the chain side. The wrap is non-retryable because
+  // isTransientErrorMessage() doesn't match the chain's auth/state errors
+  // — fail-fast is correct for a doomed tx.
+  //
+  // We trigger via `tokenfactory burn` against the genesis PWR denom
+  // (factory/<POA admin>/upwr). The test wallet does not admin that
+  // denom, so the chain rejects the burn during simulation. Note: bank
+  // send with an unfundable amount does NOT work — the chain only checks
+  // spendable balance at delivery, not simulation, so simulate() returns
+  // a successful gas estimate.
+  // ==========================================================================
+  describe('Simulation failure', () => {
+    const POA_ADMIN_ADDRESS =
+      'manifest1afk9zr2hn2jsac63h4hm60vl9z3e5u69gndzf7c99cqge3vzwjzsfmy9qj';
+    const PWR_DENOM = `factory/${POA_ADMIN_ADDRESS}/upwr`;
+
+    it('SIMULATION_FAILED when cosmos_estimate_fee simulates an unauthorized tokenfactory burn', async () => {
+      const err = await client.callToolExpectError('cosmos_estimate_fee', {
+        module: 'tokenfactory',
+        subcommand: 'burn',
+        // Burn 1 upwr from POA admin's address — we don't admin this denom,
+        // so the chain rejects the burn at simulation time.
+        args: [`1${PWR_DENOM}`, POA_ADMIN_ADDRESS],
+      });
+      expect(err.code).toBe('SIMULATION_FAILED');
+      // Handler enriches details with the routing context.
+      const details = err.details as {
+        module?: string;
+        subcommand?: string;
+      };
+      expect(details?.module).toBe('tokenfactory');
+      expect(details?.subcommand).toBe('burn');
     });
   });
 

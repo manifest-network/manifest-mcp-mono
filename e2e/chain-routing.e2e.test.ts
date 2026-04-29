@@ -438,6 +438,43 @@ describe('Chain routing coverage', () => {
       expect(before - after).toBe(burnAmount);
     });
 
+    it('tx: force-transfer moves admin-controlled tokens between two addresses', async () => {
+      // Must run before change-admin below (which moves admin off the
+      // test wallet); force-transfer requires denom-admin authority.
+      const transferAmount = 50_000n;
+
+      const recipientBeforeRes = await client.callTool<{
+        result: { balance: { amount: string } };
+      }>('cosmos_query', {
+        module: 'bank',
+        subcommand: 'balance',
+        args: [PROVIDER_ADDRESS, denom],
+      });
+      const recipientBefore = BigInt(
+        recipientBeforeRes.result.balance.amount ?? '0',
+      );
+
+      const result = await client.callTool<{ code: number }>('cosmos_tx', {
+        module: 'tokenfactory',
+        subcommand: 'force-transfer',
+        args: [`${transferAmount}${denom}`, testAddress, PROVIDER_ADDRESS],
+        wait_for_confirmation: true,
+      });
+      expect(result.code).toBe(0);
+
+      const recipientAfterRes = await client.callTool<{
+        result: { balance: { amount: string } };
+      }>('cosmos_query', {
+        module: 'bank',
+        subcommand: 'balance',
+        args: [PROVIDER_ADDRESS, denom],
+      });
+      const recipientAfter = BigInt(
+        recipientAfterRes.result.balance.amount ?? '0',
+      );
+      expect(recipientAfter - recipientBefore).toBe(transferAmount);
+    });
+
     it('tx: set-denom-metadata', async () => {
       const metadata = JSON.stringify({
         base: denom,
@@ -971,6 +1008,75 @@ describe('Chain routing coverage', () => {
           `[chain-routing] distribution fund-community-pool probe rejected by chain: ${err}`,
         );
       }
+    });
+  });
+
+  // Staking is *operationally* disabled on POA Manifest (validator-set
+  // changes go through poa, not staking) but the read-only params/pool
+  // queries are still served by the module. A regression in
+  // lcd-adapter.ts's snake_case→camelCase converter or the staking proto
+  // converter would surface as a QUERY_FAILED here, so we want loud
+  // failure rather than a swallowed warn.
+  describe('staking queries', () => {
+    it('params', async () => {
+      const result = await client.callTool<{
+        result: { params?: { bondDenom?: string } };
+      }>('cosmos_query', { module: 'staking', subcommand: 'params' });
+      expect(result.result.params).toBeDefined();
+    });
+
+    it('pool', async () => {
+      const result = await client.callTool<{
+        result: { pool?: { bondedTokens?: string; notBondedTokens?: string } };
+      }>('cosmos_query', { module: 'staking', subcommand: 'pool' });
+      expect(result.result.pool).toBeDefined();
+    });
+  });
+
+  describe('ibc-transfer queries', () => {
+    // The devnet has no IBC channels open (single-chain compose), but
+    // params/denom-traces queries always respond — params returns module
+    // defaults, denom-traces returns an empty list. denom-trace by hash
+    // is the only one that's expected to fail (no traces to find).
+    const expectChainSide = (err: unknown, expectedCodes: string[]): void => {
+      const code = parseToolErrorCode(err);
+      if (!code || !expectedCodes.includes(code)) {
+        throw err;
+      }
+    };
+
+    it('params', async () => {
+      const result = await client.callTool<{
+        result: {
+          params?: { sendEnabled?: boolean; receiveEnabled?: boolean };
+        };
+      }>('cosmos_query', { module: 'ibc-transfer', subcommand: 'params' });
+      expect(result.result.params).toBeDefined();
+    });
+
+    it('denom-traces', async () => {
+      const result = await client.callTool<{
+        result: { denomTraces: unknown[] };
+      }>('cosmos_query', { module: 'ibc-transfer', subcommand: 'denom-traces' });
+      expect(Array.isArray(result.result.denomTraces)).toBe(true);
+    });
+
+    it('denom-trace fails QUERY_FAILED for an unknown hash', async () => {
+      // Sentinel `threw` so a future regression where the LCD adapter
+      // synthesizes empty success responses for 404s gets caught — without
+      // it, the empty try block would silently pass.
+      let threw = false;
+      try {
+        await client.callTool('cosmos_query', {
+          module: 'ibc-transfer',
+          subcommand: 'denom-trace',
+          args: ['0000000000000000000000000000000000000000000000000000000000000000'],
+        });
+      } catch (err) {
+        threw = true;
+        expectChainSide(err, ['QUERY_FAILED']);
+      }
+      expect(threw).toBe(true);
     });
   });
 

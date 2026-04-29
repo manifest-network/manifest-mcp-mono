@@ -102,6 +102,17 @@ export class MCPTestClient {
     delete env.MANIFEST_CONVERTER_ADDRESS;
     delete env.MANIFEST_KEY_PASSWORD;
 
+    // Silence the spawned server's logger by default. withErrorHandling
+    // logs every tool error at error level; tests that exercise error
+    // paths (errors.e2e, retry.e2e, every callToolExpectError) would
+    // otherwise flood stderr with `[ERROR] Tool error [...]` lines that
+    // are *expected* by the test. Genuine bugs still surface as test
+    // failures (tool returns isError → callTool throws → vitest reports).
+    // Bootstrap console.error messages (wallet selection, server start)
+    // bypass the logger and stay visible. Override by exporting LOG_LEVEL
+    // in the host shell.
+    env.LOG_LEVEL ??= 'silent';
+
     // Force keyfile to a sentinel path so the server falls through to the
     // mnemonic wallet, regardless of host-local keyfiles. Caller can
     // override via options.keyFile to drive the keyfile path.
