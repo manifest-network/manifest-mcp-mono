@@ -68,6 +68,7 @@ vi.mock('./tools/waitForAppReady.js', () => ({
 }));
 
 import {
+  LeaseState,
   ManifestMCPError,
   ManifestMCPErrorCode,
 } from '@manifest-network/manifest-mcp-core';
@@ -569,6 +570,90 @@ describe('FredMCPServer', () => {
         expect.any(Function),
         expect.objectContaining({ gasMultiplier: 3.5 }),
       );
+    });
+
+    it('omits progress callbacks when client does not request progress', async () => {
+      const server = new FredMCPServer({
+        config: makeMockConfig(),
+        walletProvider: makeMockWallet({ signArbitrary: true }),
+      });
+      await callTool(server, 'deploy_app', {
+        image: 'nginx',
+        port: 80,
+        size: 'docker-micro',
+      });
+
+      const input = mockDeployApp.mock.calls.at(-1)?.[3];
+      expect(input?.onLeaseCreated).toBeUndefined();
+      expect(input?.pollOptions).toBeUndefined();
+    });
+
+    it('fans deployApp lifecycle callbacks out as MCP progress notifications', async () => {
+      // Drive the deployApp mock through onLeaseCreated and two onProgress
+      // ticks so we can assert the server-side wiring forwards them as
+      // notifications/progress messages over the wire.
+      mockDeployApp.mockImplementationOnce(async (_cm, _a, _b, input) => {
+        await input.onLeaseCreated?.(
+          'lease-uuid-1',
+          'https://provider.example.com',
+        );
+        input.pollOptions?.onProgress?.({
+          state: LeaseState.LEASE_STATE_PENDING,
+          provision_status: 'image_pulling',
+        } as unknown as Parameters<
+          NonNullable<typeof input.pollOptions.onProgress>
+        >[0]);
+        input.pollOptions?.onProgress?.({
+          state: LeaseState.LEASE_STATE_ACTIVE,
+        } as unknown as Parameters<
+          NonNullable<typeof input.pollOptions.onProgress>
+        >[0]);
+        return {
+          lease_uuid: 'lease-uuid-1',
+          provider_uuid: 'p1',
+          provider_url: 'https://provider.example.com',
+          state: LeaseState.LEASE_STATE_ACTIVE,
+        } as unknown as Awaited<ReturnType<typeof deployApp>>;
+      });
+
+      const server = new FredMCPServer({
+        config: makeMockConfig(),
+        walletProvider: makeMockWallet({ signArbitrary: true }),
+      });
+      const [clientTransport, serverTransport] =
+        InMemoryTransport.createLinkedPair();
+      activeTransports.push(clientTransport, serverTransport);
+      const client = new Client({ name: 'test-client', version: '1.0.0' });
+      await server.getServer().connect(serverTransport);
+      await client.connect(clientTransport);
+
+      const messages: string[] = [];
+      try {
+        await client.callTool(
+          {
+            name: 'deploy_app',
+            arguments: {
+              image: 'nginx',
+              port: 80,
+              size: 'docker-micro',
+            },
+          },
+          undefined,
+          {
+            onprogress: (p) => {
+              if (p.message) messages.push(p.message);
+            },
+          },
+        );
+      } finally {
+        await client.close();
+      }
+
+      expect(messages).toHaveLength(3);
+      expect(messages[0]).toContain('lease-uuid-1');
+      expect(messages[1]).toMatch(/PENDING/);
+      expect(messages[1]).toMatch(/image_pulling/);
+      expect(messages[2]).toMatch(/ACTIVE/);
     });
   });
 });

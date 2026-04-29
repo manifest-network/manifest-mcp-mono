@@ -5,6 +5,8 @@ import {
   createMnemonicServer,
   createValidatedConfig,
   jsonResponse,
+  leaseStateToJSON,
+  logger,
   ManifestMCPError,
   ManifestMCPErrorCode,
   type ManifestMCPServerOptions,
@@ -18,6 +20,11 @@ import {
 } from '@manifest-network/manifest-mcp-core';
 import type { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import type { RequestHandlerExtra } from '@modelcontextprotocol/sdk/shared/protocol.js';
+import type {
+  ServerNotification,
+  ServerRequest,
+} from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import { AuthTokenService } from './http/auth-token-service.js';
 import { getLeaseProvision, getLeaseReleases, MAX_TAIL } from './http/fred.js';
@@ -256,32 +263,49 @@ export class FredMCPServer {
           estimable: false,
         }),
       },
-      withErrorHandling('wait_for_app_ready', async (args) => {
-        const leaseUuid = args.lease_uuid;
-        const address = await this.walletProvider.getAddress();
-        await this.clientManager.acquireRateLimit();
-        const queryClient = await this.clientManager.getQueryClient();
-        const result = await waitForAppReady(
-          queryClient,
-          address,
-          leaseUuid,
-          (addr, uuid) => this.authTokens.providerToken(addr, uuid),
-          {
-            timeoutMs:
-              args.timeout_seconds !== undefined
-                ? args.timeout_seconds * 1_000
+      withErrorHandling(
+        'wait_for_app_ready',
+        async (
+          args,
+          extra: RequestHandlerExtra<ServerRequest, ServerNotification>,
+        ) => {
+          const emit = this.progressEmitter('wait_for_app_ready', extra);
+          const leaseUuid = args.lease_uuid;
+          const address = await this.walletProvider.getAddress();
+          await this.clientManager.acquireRateLimit();
+          const queryClient = await this.clientManager.getQueryClient();
+          const result = await waitForAppReady(
+            queryClient,
+            address,
+            leaseUuid,
+            (addr, uuid) => this.authTokens.providerToken(addr, uuid),
+            {
+              timeoutMs:
+                args.timeout_seconds !== undefined
+                  ? args.timeout_seconds * 1_000
+                  : undefined,
+              intervalMs:
+                args.interval_seconds !== undefined
+                  ? args.interval_seconds * 1_000
+                  : undefined,
+              abortSignal: extra.signal,
+              onProgress: emit
+                ? (status) => {
+                    const state = leaseStateToJSON(status.state);
+                    const provision = status.provision_status
+                      ? `, provision=${status.provision_status}`
+                      : '';
+                    emit(`Polling lease: state=${state}${provision}`);
+                  }
                 : undefined,
-            intervalMs:
-              args.interval_seconds !== undefined
-                ? args.interval_seconds * 1_000
-                : undefined,
-          },
-        );
-        return structuredResponse(
-          result as unknown as Record<string, unknown>,
-          bigIntReplacer,
-        );
-      }),
+            },
+          );
+          return structuredResponse(
+            result as unknown as Record<string, unknown>,
+            bigIntReplacer,
+          );
+        },
+      ),
     );
 
     // -- get_logs --
@@ -590,34 +614,60 @@ export class FredMCPServer {
           estimable: false,
         }),
       },
-      withErrorHandling('deploy_app', async (args) => {
-        const result = await deployApp(
-          this.clientManager,
-          (addr, uuid) => this.authTokens.providerToken(addr, uuid),
-          (addr, uuid, metaHashHex) =>
-            this.authTokens.leaseDataToken(addr, uuid, metaHashHex),
-          {
-            image: args.image,
-            port: args.port,
-            size: args.size,
-            env: args.env,
-            command: args.command,
-            args: args.args,
-            user: args.user,
-            tmpfs: args.tmpfs,
-            health_check: args.health_check,
-            stop_grace_period: args.stop_grace_period,
-            init: args.init,
-            expose: args.expose,
-            labels: args.labels,
-            storage: args.storage,
-            depends_on: args.depends_on,
-            services: args.services,
-            gasMultiplier: args.gas_multiplier,
-          },
-        );
-        return jsonResponse(result, bigIntReplacer);
-      }),
+      withErrorHandling(
+        'deploy_app',
+        async (
+          args,
+          extra: RequestHandlerExtra<ServerRequest, ServerNotification>,
+        ) => {
+          const emit = this.progressEmitter('deploy_app', extra);
+          const result = await deployApp(
+            this.clientManager,
+            (addr, uuid) => this.authTokens.providerToken(addr, uuid),
+            (addr, uuid, metaHashHex) =>
+              this.authTokens.leaseDataToken(addr, uuid, metaHashHex),
+            {
+              image: args.image,
+              port: args.port,
+              size: args.size,
+              env: args.env,
+              command: args.command,
+              args: args.args,
+              user: args.user,
+              tmpfs: args.tmpfs,
+              health_check: args.health_check,
+              stop_grace_period: args.stop_grace_period,
+              init: args.init,
+              expose: args.expose,
+              labels: args.labels,
+              storage: args.storage,
+              depends_on: args.depends_on,
+              services: args.services,
+              gasMultiplier: args.gas_multiplier,
+              abortSignal: extra.signal,
+              onLeaseCreated: emit
+                ? (leaseUuid, providerUrl) => {
+                    emit(
+                      `Lease ${leaseUuid} created on chain at ${providerUrl}; uploading manifest`,
+                    );
+                  }
+                : undefined,
+              pollOptions: emit
+                ? {
+                    onProgress: (status) => {
+                      const state = leaseStateToJSON(status.state);
+                      const provision = status.provision_status
+                        ? `, provision=${status.provision_status}`
+                        : '';
+                      emit(`Polling lease: state=${state}${provision}`);
+                    },
+                  }
+                : undefined,
+            },
+          );
+          return jsonResponse(result, bigIntReplacer);
+        },
+      ),
     );
 
     // -- restart_app --
@@ -832,6 +882,41 @@ export class FredMCPServer {
         );
       }),
     );
+  }
+
+  /**
+   * Builds a fire-and-forget progress emitter for a long-running tool.
+   * Returns `undefined` if the caller didn't request progress (no
+   * `progressToken` in `extra._meta`); callers can branch on that to skip
+   * notification work entirely.
+   *
+   * Notifications are best-effort: failures are logged but don't fail the
+   * tool. Each call increments the progress counter.
+   */
+  private progressEmitter(
+    toolName: string,
+    extra: RequestHandlerExtra<ServerRequest, ServerNotification>,
+  ): ((message: string) => void) | undefined {
+    const token = extra._meta?.progressToken;
+    if (token === undefined) return undefined;
+    let counter = 0;
+    return (message: string) => {
+      counter += 1;
+      void extra
+        .sendNotification({
+          method: 'notifications/progress',
+          params: {
+            progressToken: token,
+            progress: counter,
+            message,
+          },
+        })
+        .catch((err: unknown) => {
+          logger.warn(
+            `[${toolName}] progress notification failed: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        });
+    };
   }
 
   getServer(): Server {
