@@ -17,7 +17,6 @@ export const DEFAULT_RETRY_CONFIG: Required<RetryConfig> = {
 const NON_RETRYABLE_ERROR_CODES: ManifestMCPErrorCode[] = [
   // Configuration errors - won't change on retry
   ManifestMCPErrorCode.INVALID_CONFIG,
-  ManifestMCPErrorCode.MISSING_CONFIG,
 
   // Wallet errors - require user action
   ManifestMCPErrorCode.WALLET_NOT_CONNECTED,
@@ -30,11 +29,9 @@ const NON_RETRYABLE_ERROR_CODES: ManifestMCPErrorCode[] = [
   ManifestMCPErrorCode.UNSUPPORTED_QUERY,
   ManifestMCPErrorCode.UNKNOWN_MODULE,
 
-  // Transaction failures - on-chain rejection or broadcast failure
-  // Retrying could cause double-spend for non-idempotent operations
+  // Transaction failures - on-chain rejection. Retrying could cause
+  // double-spend for non-idempotent operations.
   ManifestMCPErrorCode.TX_FAILED,
-  ManifestMCPErrorCode.TX_BROADCAST_FAILED,
-  ManifestMCPErrorCode.INSUFFICIENT_FUNDS,
 ];
 
 /**

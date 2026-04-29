@@ -168,11 +168,9 @@ describe('REST/LCD mode', () => {
       }
       expect(err).toBeDefined();
       // The exact code depends on retry classification of connection
-      // failures. RPC_CONNECTION_FAILED is the documented one; allow
-      // either that or TX_BROADCAST_FAILED in case the chain returns
-      // before the connection drops.
+      // failures. RPC_CONNECTION_FAILED is the documented one.
       const code = parseToolErrorCode(err);
-      expect(code).toMatch(/RPC_CONNECTION_FAILED|TX_BROADCAST_FAILED|TX_FAILED|UNKNOWN/);
+      expect(code).toMatch(/RPC_CONNECTION_FAILED|TX_FAILED|UNKNOWN/);
     });
   });
 });

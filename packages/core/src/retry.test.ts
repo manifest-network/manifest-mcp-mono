@@ -25,14 +25,6 @@ describe('isRetryableError', () => {
       expect(isRetryableError(error)).toBe(false);
     });
 
-    it('should not retry INSUFFICIENT_FUNDS errors', () => {
-      const error = new ManifestMCPError(
-        ManifestMCPErrorCode.INSUFFICIENT_FUNDS,
-        'Insufficient funds',
-      );
-      expect(isRetryableError(error)).toBe(false);
-    });
-
     it('should not retry WALLET_NOT_CONNECTED errors', () => {
       const error = new ManifestMCPError(
         ManifestMCPErrorCode.WALLET_NOT_CONNECTED,

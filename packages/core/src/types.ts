@@ -314,7 +314,6 @@ export interface AvailableModules {
 export enum ManifestMCPErrorCode {
   // Configuration errors
   INVALID_CONFIG = 'INVALID_CONFIG',
-  MISSING_CONFIG = 'MISSING_CONFIG',
 
   // Wallet errors
   WALLET_NOT_CONNECTED = 'WALLET_NOT_CONNECTED',
@@ -331,9 +330,7 @@ export enum ManifestMCPErrorCode {
 
   // Transaction errors
   TX_FAILED = 'TX_FAILED',
-  TX_BROADCAST_FAILED = 'TX_BROADCAST_FAILED',
   UNSUPPORTED_TX = 'UNSUPPORTED_TX',
-  INSUFFICIENT_FUNDS = 'INSUFFICIENT_FUNDS',
   SIMULATION_FAILED = 'SIMULATION_FAILED',
 
   // Module errors

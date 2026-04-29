@@ -333,15 +333,15 @@ This is handled by `http/auth.ts` in the fred package and used by all fred serve
 
 ## Error handling
 
-Errors use the `ManifestMCPErrorCode` enum (14 codes across 6 categories):
+Errors use the `ManifestMCPErrorCode` enum (11 codes across 6 categories):
 
 | Category | Codes |
 |----------|-------|
-| Configuration | `INVALID_CONFIG`, `MISSING_CONFIG` |
+| Configuration | `INVALID_CONFIG` |
 | Wallet | `WALLET_NOT_CONNECTED`, `WALLET_CONNECTION_FAILED`, `INVALID_MNEMONIC` |
 | Client/RPC | `RPC_CONNECTION_FAILED` |
 | Query | `QUERY_FAILED`, `UNSUPPORTED_QUERY`, `INVALID_ADDRESS` |
-| Transaction | `TX_FAILED`, `TX_BROADCAST_FAILED`, `UNSUPPORTED_TX`, `INSUFFICIENT_FUNDS` |
+| Transaction | `TX_FAILED`, `UNSUPPORTED_TX`, `SIMULATION_FAILED` |
 | Module | `UNKNOWN_MODULE` |
 
 Error responses returned to MCP clients sanitize structured fields (such as `input` and `details`) via a redaction helper so that sensitive values (mnemonics, passwords, keys, tokens) are not exposed; the top-level `error.message` string is passed through verbatim and should not contain secrets.
