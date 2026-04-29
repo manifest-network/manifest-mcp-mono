@@ -40,6 +40,7 @@ export {
   type MnemonicServerConfig,
   SENSITIVE_FIELDS,
   sanitizeForLogging,
+  structuredResponse,
   withErrorHandling,
 } from './server-utils.js';
 // Annotation helpers (used by chain/lease/fred/cosmwasm packages)

@@ -12,6 +12,7 @@ import {
   manifestMeta,
   mutatingAnnotations,
   readOnlyAnnotations,
+  structuredResponse,
   VERSION,
   withErrorHandling,
 } from '@manifest-network/manifest-mcp-core';
@@ -28,6 +29,7 @@ import { getAppLogs } from './tools/getLogs.js';
 import { resolveProviderUrl } from './tools/resolveLeaseProvider.js';
 import { restartApp } from './tools/restartApp.js';
 import { updateApp } from './tools/updateApp.js';
+import { waitForAppReady } from './tools/waitForAppReady.js';
 
 export type { ManifestMCPServerOptions } from '@manifest-network/manifest-mcp-core';
 export {
@@ -104,6 +106,11 @@ export { getAppLogs } from './tools/getLogs.js';
 export { resolveProviderUrl } from './tools/resolveLeaseProvider.js';
 export { restartApp } from './tools/restartApp.js';
 export { updateApp } from './tools/updateApp.js';
+export {
+  type WaitForAppReadyOptions,
+  type WaitForAppReadyResult,
+  waitForAppReady,
+} from './tools/waitForAppReady.js';
 
 export class FredMCPServer {
   private mcpServer: McpServer;
@@ -186,6 +193,83 @@ export class FredMCPServer {
           (addr, uuid) => this.authTokens.providerToken(addr, uuid),
         );
         return jsonResponse(result, bigIntReplacer);
+      }),
+    );
+
+    // -- wait_for_app_ready --
+    this.mcpServer.registerTool(
+      'wait_for_app_ready',
+      {
+        description:
+          'Wait for a deployed app to reach the ACTIVE state on the provider, polling at the configured interval. Use this after deploy_app instead of looping app_status manually. Throws on timeout or terminal lease state.',
+        inputSchema: {
+          lease_uuid: z
+            .string()
+            .uuid()
+            .describe('The lease UUID of the app to wait on'),
+          timeout_seconds: z
+            .number()
+            .int()
+            .min(1)
+            .max(600)
+            .optional()
+            .describe(
+              'Maximum seconds to wait before throwing. Defaults to 120s.',
+            ),
+          interval_seconds: z
+            .number()
+            .int()
+            .min(1)
+            .max(60)
+            .optional()
+            .describe('Seconds between status polls. Defaults to 3s.'),
+        },
+        outputSchema: {
+          lease_uuid: z.string().describe('The lease UUID that was waited on'),
+          provider_uuid: z.string().describe('Provider hosting the lease'),
+          provider_url: z.string().describe('Provider API URL'),
+          state: z
+            .string()
+            .describe(
+              'Final lease state, JSON-encoded LeaseState (e.g. LEASE_STATE_ACTIVE)',
+            ),
+          status: z
+            .looseObject({})
+            .describe(
+              'Raw provider status payload (instances, endpoints, services, etc.)',
+            ),
+        },
+        annotations: readOnlyAnnotations('Wait for deployed app readiness'),
+        _meta: manifestMeta({
+          broadcasts: false,
+          estimable: false,
+        }),
+      },
+      withErrorHandling('wait_for_app_ready', async (args) => {
+        const leaseUuid = args.lease_uuid;
+        const address = await this.walletProvider.getAddress();
+        await this.clientManager.acquireRateLimit();
+        const queryClient = await this.clientManager.getQueryClient();
+        const result = await waitForAppReady(
+          queryClient,
+          address,
+          leaseUuid,
+          (addr, uuid) => this.authTokens.providerToken(addr, uuid),
+          {
+            timeoutMs:
+              args.timeout_seconds !== undefined
+                ? args.timeout_seconds * 1_000
+                : undefined,
+            intervalMs:
+              args.interval_seconds !== undefined
+                ? args.interval_seconds * 1_000
+                : undefined,
+          },
+        );
+        return structuredResponse(
+          result as unknown as Record<string, unknown>,
+          bigIntReplacer,
+        );
       }),
     );
 

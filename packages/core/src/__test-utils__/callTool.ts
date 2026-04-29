@@ -5,6 +5,7 @@ import type { Server } from '@modelcontextprotocol/sdk/server/index.js';
 export interface ToolResult {
   content: Array<{ type: string; text: string }>;
   isError?: boolean;
+  structuredContent?: Record<string, unknown>;
 }
 
 /**

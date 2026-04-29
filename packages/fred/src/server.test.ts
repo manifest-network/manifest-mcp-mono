@@ -57,6 +57,15 @@ vi.mock('./tools/restartApp.js', () => ({
 vi.mock('./tools/updateApp.js', () => ({
   updateApp: vi.fn().mockResolvedValue({}),
 }));
+vi.mock('./tools/waitForAppReady.js', () => ({
+  waitForAppReady: vi.fn().mockResolvedValue({
+    lease_uuid: '550e8400-e29b-41d4-a716-446655440000',
+    provider_uuid: 'prov-1',
+    provider_url: 'https://provider.example.com',
+    state: 'LEASE_STATE_ACTIVE',
+    status: { state: 3 },
+  }),
+}));
 
 import {
   ManifestMCPError,
@@ -75,12 +84,14 @@ import { FredMCPServer } from './index.js';
 import { deployApp } from './tools/deployApp.js';
 import { fetchActiveLease } from './tools/fetchActiveLease.js';
 import { resolveProviderUrl } from './tools/resolveLeaseProvider.js';
+import { waitForAppReady } from './tools/waitForAppReady.js';
 
 const mockDeployApp = vi.mocked(deployApp);
 const mockGetLeaseProvision = vi.mocked(getLeaseProvision);
 const mockGetLeaseReleases = vi.mocked(getLeaseReleases);
 const mockResolveProviderUrl = vi.mocked(resolveProviderUrl);
 const mockFetchActiveLease = vi.mocked(fetchActiveLease);
+const mockWaitForAppReady = vi.mocked(waitForAppReady);
 
 const LEASE_UUID = '550e8400-e29b-41d4-a716-446655440000';
 
@@ -155,7 +166,7 @@ describe('FredMCPServer', () => {
       }
     });
 
-    it('read-only tools: browse_catalog, app_status, get_logs, app_diagnostics, app_releases', async () => {
+    it('read-only tools: browse_catalog, app_status, get_logs, app_diagnostics, app_releases, wait_for_app_ready', async () => {
       const tools = await listTools();
       const readOnly = [
         'browse_catalog',
@@ -163,6 +174,7 @@ describe('FredMCPServer', () => {
         'get_logs',
         'app_diagnostics',
         'app_releases',
+        'wait_for_app_ready',
       ] as const;
       for (const name of readOnly) {
         const t = tools.get(name);
@@ -448,6 +460,51 @@ describe('FredMCPServer', () => {
       const parsed = JSON.parse(result.content[0].text);
       expect(parsed.code).toBe('INVALID_CONFIG');
       expect(parsed.message).toContain('signArbitrary');
+    });
+  });
+
+  describe('wait_for_app_ready', () => {
+    it('forwards lease_uuid and converts seconds to milliseconds', async () => {
+      const server = new FredMCPServer({
+        config: makeMockConfig(),
+        walletProvider: makeMockWallet({ signArbitrary: true }),
+      });
+      const result = await callTool(server, 'wait_for_app_ready', {
+        lease_uuid: LEASE_UUID,
+        timeout_seconds: 30,
+        interval_seconds: 5,
+      });
+
+      expect(result.isError).toBeUndefined();
+      expect(result.structuredContent).toMatchObject({
+        lease_uuid: LEASE_UUID,
+        state: 'LEASE_STATE_ACTIVE',
+      });
+
+      expect(mockWaitForAppReady).toHaveBeenCalledWith(
+        expect.anything(),
+        'manifest1abc',
+        LEASE_UUID,
+        expect.any(Function),
+        expect.objectContaining({
+          timeoutMs: 30_000,
+          intervalMs: 5_000,
+        }),
+      );
+    });
+
+    it('omits timeout/interval when not provided', async () => {
+      const server = new FredMCPServer({
+        config: makeMockConfig(),
+        walletProvider: makeMockWallet({ signArbitrary: true }),
+      });
+      await callTool(server, 'wait_for_app_ready', { lease_uuid: LEASE_UUID });
+
+      const opts = mockWaitForAppReady.mock.calls.at(-1)?.[4];
+      expect(opts).toMatchObject({
+        timeoutMs: undefined,
+        intervalMs: undefined,
+      });
     });
   });
 

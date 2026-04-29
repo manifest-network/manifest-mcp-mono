@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+- Feat(fred): add `wait_for_app_ready` MCP tool that wraps `pollLeaseUntilReady` so agents can wait on a lease reaching `LEASE_STATE_ACTIVE` without re-implementing the polling loop. Accepts `timeout_seconds` (1–600) and `interval_seconds` (1–60); declares an `outputSchema` with `lease_uuid`, `provider_uuid`, `provider_url`, `state`, and the raw provider `status` payload (ENG-84).
+- Feat(core): add `structuredResponse` helper alongside `jsonResponse` for tools that declare an `outputSchema`. Returns both `structuredContent` (the typed payload) and a JSON `text` fallback so older clients keep working (ENG-84).
 - Feat(core): add Proof-of-Authority (`poa`), tokenfactory, and IBC transfer (`ibc-transfer`) modules with query and transaction routing through `cosmos_query`/`cosmos_tx`/`cosmos_estimate_fee`. Tokenfactory `update-params` is intentionally not exposed pending an upstream `manifestjs` codegen fix (`MsgUpdateParams.params` is wired to `cosmos.bank.v1beta1.Params` instead of the local tokenfactory `Params`).
 - Fix(core): validate `poa create-validator` JSON input with a strict zod schema; reject unknown keys, validate validator address valoper prefix, and base64-decode the `pubkey.value` so `Any.encode` produces correct wire bytes.
 - Fix(core): require non-empty `source-port` and `source-channel` on `ibc-transfer transfer` instead of forwarding blank strings to the chain.
