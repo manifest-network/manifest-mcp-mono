@@ -81,6 +81,7 @@ vi.mock('./tools/waitForAppReady.js', () => ({
 }));
 
 import {
+  CosmosClientManager,
   LeaseState,
   ManifestMCPError,
   ManifestMCPErrorCode,
@@ -91,6 +92,7 @@ import {
 } from '@manifest-network/manifest-mcp-core/__test-utils__/callTool.js';
 import {
   makeMockConfig,
+  makeMockQueryClient,
   makeMockWallet,
 } from '@manifest-network/manifest-mcp-core/__test-utils__/mocks.js';
 import { getLeaseProvision, getLeaseReleases } from './http/fred.js';
@@ -478,6 +480,138 @@ describe('FredMCPServer', () => {
       const parsed = JSON.parse(result.content[0].text);
       expect(parsed.code).toBe('INVALID_CONFIG');
       expect(parsed.message).toContain('signArbitrary');
+    });
+  });
+
+  describe('resources', () => {
+    async function withClient<T>(
+      server: FredMCPServer,
+      fn: (client: Client) => Promise<T>,
+    ): Promise<T> {
+      const [clientTransport, serverTransport] =
+        InMemoryTransport.createLinkedPair();
+      activeTransports.push(clientTransport, serverTransport);
+      const client = new Client({ name: 'test-client', version: '1.0.0' });
+      await server.getServer().connect(serverTransport);
+      await client.connect(clientTransport);
+      try {
+        return await fn(client);
+      } finally {
+        await client.close();
+      }
+    }
+
+    function withRealQueryClient(): void {
+      const qc = makeMockQueryClient({
+        billing: {
+          activeLeases: [
+            {
+              uuid: 'a-1',
+              providerUuid: 'p1',
+              createdAt: new Date('2026-01-01T00:00:00Z'),
+            },
+          ],
+          pendingLeases: [],
+          closedLeases: [
+            {
+              uuid: 'c-1',
+              providerUuid: 'p1',
+              createdAt: new Date('2025-12-25T00:00:00Z'),
+              closedAt: new Date('2025-12-26T00:00:00Z'),
+            },
+          ],
+        },
+        sku: {
+          providers: [
+            {
+              uuid: 'p1',
+              address: 'manifest1prov',
+              apiUrl: 'https://prov.example',
+              active: true,
+            },
+          ],
+          skus: [
+            {
+              uuid: 'sku-1',
+              name: 'docker-micro',
+              providerUuid: 'p1',
+              basePrice: { amount: '100', denom: 'upwr' },
+            },
+          ],
+        },
+      });
+      vi.mocked(CosmosClientManager.getInstance).mockReturnValue({
+        disconnect: vi.fn(),
+        getQueryClient: vi.fn().mockResolvedValue(qc),
+        getSigningClient: vi.fn().mockResolvedValue({}),
+        getAddress: vi.fn().mockResolvedValue('manifest1abc'),
+        getConfig: vi.fn().mockReturnValue({}),
+        acquireRateLimit: vi.fn().mockResolvedValue(undefined),
+      } as unknown as CosmosClientManager);
+    }
+
+    it('lists three resources with manifest:// URIs', async () => {
+      withRealQueryClient();
+      const server = new FredMCPServer({
+        config: makeMockConfig(),
+        walletProvider: makeMockWallet(),
+      });
+      const result = await withClient(server, (c) => c.listResources());
+      const uris = result.resources.map((r) => r.uri);
+      expect(uris).toEqual(
+        expect.arrayContaining([
+          'manifest://leases/active',
+          'manifest://leases/recent',
+          'manifest://providers',
+        ]),
+      );
+    });
+
+    it('reads manifest://providers as JSON', async () => {
+      withRealQueryClient();
+      const server = new FredMCPServer({
+        config: makeMockConfig(),
+        walletProvider: makeMockWallet(),
+      });
+      const result = await withClient(server, (c) =>
+        c.readResource({ uri: 'manifest://providers' }),
+      );
+      expect(result.contents).toHaveLength(1);
+      expect(result.contents[0].mimeType).toBe('application/json');
+      const parsed = JSON.parse(result.contents[0].text as string);
+      expect(parsed.providers).toHaveLength(1);
+      expect(parsed.providers[0].uuid).toBe('p1');
+      expect(parsed.skus[0].name).toBe('docker-micro');
+    });
+
+    it('reads manifest://leases/active with tenant and counts', async () => {
+      withRealQueryClient();
+      const server = new FredMCPServer({
+        config: makeMockConfig(),
+        walletProvider: makeMockWallet(),
+      });
+      const result = await withClient(server, (c) =>
+        c.readResource({ uri: 'manifest://leases/active' }),
+      );
+      const parsed = JSON.parse(result.contents[0].text as string);
+      expect(parsed.tenant).toBe('manifest1abc');
+      expect(parsed.counts.active).toBe(1);
+      expect(parsed.counts.pending).toBe(0);
+      expect(parsed.active[0].uuid).toBe('a-1');
+    });
+
+    it('reads manifest://leases/recent (any state, reverse order)', async () => {
+      withRealQueryClient();
+      const server = new FredMCPServer({
+        config: makeMockConfig(),
+        walletProvider: makeMockWallet(),
+      });
+      const result = await withClient(server, (c) =>
+        c.readResource({ uri: 'manifest://leases/recent' }),
+      );
+      const parsed = JSON.parse(result.contents[0].text as string);
+      expect(parsed.tenant).toBe('manifest1abc');
+      expect(parsed.leases.length).toBeGreaterThanOrEqual(1);
     });
   });
 
