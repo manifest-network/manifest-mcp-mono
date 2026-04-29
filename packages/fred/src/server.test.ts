@@ -141,6 +141,27 @@ afterEach(async () => {
 });
 
 describe('FredMCPServer', () => {
+  // Connects an MCP client to the server over an in-memory transport,
+  // pushes both transports into `activeTransports` for afterEach cleanup,
+  // runs `fn`, and closes the client. Shared between the resources and
+  // prompts blocks; per-test cleanup also runs in the top-level afterEach.
+  async function withClient<T>(
+    server: FredMCPServer,
+    fn: (client: Client) => Promise<T>,
+  ): Promise<T> {
+    const [clientTransport, serverTransport] =
+      InMemoryTransport.createLinkedPair();
+    activeTransports.push(clientTransport, serverTransport);
+    const client = new Client({ name: 'test-client', version: '1.0.0' });
+    await server.getServer().connect(serverTransport);
+    await client.connect(clientTransport);
+    try {
+      return await fn(client);
+    } finally {
+      await client.close();
+    }
+  }
+
   // The annotations + _meta.manifest matrix is the contract the
   // manifest-agent plugin relies on to derive its broadcast policy. Pin it
   // explicitly per tool: a change here is a downstream-visible change and
@@ -484,23 +505,6 @@ describe('FredMCPServer', () => {
   });
 
   describe('resources', () => {
-    async function withClient<T>(
-      server: FredMCPServer,
-      fn: (client: Client) => Promise<T>,
-    ): Promise<T> {
-      const [clientTransport, serverTransport] =
-        InMemoryTransport.createLinkedPair();
-      activeTransports.push(clientTransport, serverTransport);
-      const client = new Client({ name: 'test-client', version: '1.0.0' });
-      await server.getServer().connect(serverTransport);
-      await client.connect(clientTransport);
-      try {
-        return await fn(client);
-      } finally {
-        await client.close();
-      }
-    }
-
     // Resource contents are a union of text/blob shapes; resources we register
     // always emit text/json so we narrow at the test layer.
     function textOf(content: { text?: string; blob?: string }): string {
@@ -624,23 +628,6 @@ describe('FredMCPServer', () => {
   });
 
   describe('prompts', () => {
-    async function withClient<T>(
-      server: FredMCPServer,
-      fn: (client: Client) => Promise<T>,
-    ): Promise<T> {
-      const [clientTransport, serverTransport] =
-        InMemoryTransport.createLinkedPair();
-      activeTransports.push(clientTransport, serverTransport);
-      const client = new Client({ name: 'test-client', version: '1.0.0' });
-      await server.getServer().connect(serverTransport);
-      await client.connect(clientTransport);
-      try {
-        return await fn(client);
-      } finally {
-        await client.close();
-      }
-    }
-
     it('lists three workflow prompts', async () => {
       const server = new FredMCPServer({
         config: makeMockConfig(),
