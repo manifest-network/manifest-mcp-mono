@@ -166,7 +166,7 @@ describe('FredMCPServer', () => {
       }
     });
 
-    it('read-only tools: browse_catalog, app_status, get_logs, app_diagnostics, app_releases, wait_for_app_ready', async () => {
+    it('read-only tools: browse_catalog, app_status, get_logs, app_diagnostics, app_releases, wait_for_app_ready, build_manifest_preview', async () => {
       const tools = await listTools();
       const readOnly = [
         'browse_catalog',
@@ -175,6 +175,7 @@ describe('FredMCPServer', () => {
         'app_diagnostics',
         'app_releases',
         'wait_for_app_ready',
+        'build_manifest_preview',
       ] as const;
       for (const name of readOnly) {
         const t = tools.get(name);
@@ -460,6 +461,47 @@ describe('FredMCPServer', () => {
       const parsed = JSON.parse(result.content[0].text);
       expect(parsed.code).toBe('INVALID_CONFIG');
       expect(parsed.message).toContain('signArbitrary');
+    });
+  });
+
+  describe('build_manifest_preview', () => {
+    it('returns canonical manifest, meta_hash, and validation', async () => {
+      const server = new FredMCPServer({
+        config: makeMockConfig(),
+        walletProvider: makeMockWallet(),
+      });
+      const result = await callTool(server, 'build_manifest_preview', {
+        image: 'nginx:1.25',
+        port: 80,
+      });
+
+      expect(result.isError).toBeUndefined();
+      expect(result.structuredContent).toMatchObject({
+        format: 'single',
+        validation: { valid: true, errors: [] },
+      });
+      const sc = result.structuredContent as Record<string, unknown>;
+      expect(sc.meta_hash_hex).toMatch(/^[0-9a-f]{64}$/);
+      expect(typeof sc.manifest_json).toBe('string');
+    });
+
+    it('reports validation errors without erroring the call', async () => {
+      const server = new FredMCPServer({
+        config: makeMockConfig(),
+        walletProvider: makeMockWallet(),
+      });
+      const result = await callTool(server, 'build_manifest_preview', {
+        image: 'nginx:1.25',
+        port: 80,
+        env: { PATH: '/bin' },
+      });
+
+      expect(result.isError).toBeUndefined();
+      const sc = result.structuredContent as {
+        validation: { valid: boolean; errors: string[] };
+      };
+      expect(sc.validation.valid).toBe(false);
+      expect(sc.validation.errors.some((e) => e.includes('PATH'))).toBe(true);
     });
   });
 

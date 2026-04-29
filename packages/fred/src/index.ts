@@ -23,6 +23,7 @@ import { AuthTokenService } from './http/auth-token-service.js';
 import { getLeaseProvision, getLeaseReleases, MAX_TAIL } from './http/fred.js';
 import { appStatus } from './tools/appStatus.js';
 import { browseCatalog } from './tools/browseCatalog.js';
+import { buildManifestPreview } from './tools/buildManifestPreview.js';
 import { deployApp } from './tools/deployApp.js';
 import { fetchActiveLease } from './tools/fetchActiveLease.js';
 import { getAppLogs } from './tools/getLogs.js';
@@ -88,13 +89,23 @@ export {
   deriveAppNameFromImage,
   getServiceNames,
   isStackManifest,
+  type ManifestFormat,
+  type ManifestValidationResult,
   mergeManifest,
+  metaHashHex,
   normalizePorts,
   parseStackManifest,
+  validateManifest,
   validateServiceName,
 } from './manifest.js';
 export { appStatus } from './tools/appStatus.js';
 export { browseCatalog, mapWithConcurrency } from './tools/browseCatalog.js';
+export {
+  type BuildManifestPreviewInput,
+  type BuildManifestPreviewResult,
+  buildManifestPreview,
+  type ManifestPreviewServiceInput,
+} from './tools/buildManifestPreview.js';
 export {
   type DeployAppInput,
   type DeployAppResult,
@@ -312,6 +323,138 @@ export class FredMCPServer {
           tail,
         );
         return jsonResponse(result, bigIntReplacer);
+      }),
+    );
+
+    // -- build_manifest_preview --
+    this.mcpServer.registerTool(
+      'build_manifest_preview',
+      {
+        description:
+          'Build a deployment manifest, validate it against the documented Fred rules, and compute the SHA-256 meta_hash that would be recorded on-chain. Use this BEFORE deploy_app to catch invalid manifests without paying for a lease. Two modes: raw `manifest` JSON string, or structured fields (image+port, or services for stacks).',
+        inputSchema: {
+          manifest: z
+            .string()
+            .optional()
+            .describe(
+              'Raw manifest JSON string. Mutually exclusive with structured fields below.',
+            ),
+          image: z
+            .string()
+            .optional()
+            .describe(
+              'Single-service image. Required (with port) when not using manifest or services.',
+            ),
+          port: z
+            .number()
+            .int()
+            .min(1)
+            .max(65535)
+            .optional()
+            .describe('Container port to expose. Required with image.'),
+          env: z
+            .record(z.string(), z.string())
+            .optional()
+            .describe('Environment variables as key-value pairs.'),
+          command: z.array(z.string()).optional(),
+          args: z.array(z.string()).optional(),
+          user: z.string().optional(),
+          tmpfs: z.array(z.string()).optional(),
+          health_check: z
+            .object({
+              test: z.array(z.string()),
+              interval: z.string().optional(),
+              timeout: z.string().optional(),
+              retries: z.number().int().optional(),
+              start_period: z.string().optional(),
+            })
+            .optional(),
+          stop_grace_period: z.string().optional(),
+          init: z.boolean().optional(),
+          expose: z.array(z.string()).optional(),
+          labels: z.record(z.string(), z.string()).optional(),
+          depends_on: z
+            .record(z.string(), z.object({ condition: z.string() }))
+            .optional(),
+          services: z
+            .record(
+              z.string(),
+              z.object({
+                image: z.string(),
+                ports: z.record(z.string(), z.object({})).optional(),
+                env: z.record(z.string(), z.string()).optional(),
+                command: z.array(z.string()).optional(),
+                args: z.array(z.string()).optional(),
+                user: z.string().optional(),
+                tmpfs: z.array(z.string()).optional(),
+                health_check: z
+                  .object({
+                    test: z.array(z.string()),
+                    interval: z.string().optional(),
+                    timeout: z.string().optional(),
+                    retries: z.number().int().optional(),
+                    start_period: z.string().optional(),
+                  })
+                  .optional(),
+                stop_grace_period: z.string().optional(),
+                depends_on: z
+                  .record(z.string(), z.object({ condition: z.string() }))
+                  .optional(),
+                expose: z.array(z.string()).optional(),
+                labels: z.record(z.string(), z.string()).optional(),
+              }),
+            )
+            .optional()
+            .describe(
+              'Multi-service stack. Mutually exclusive with image/port and manifest.',
+            ),
+        },
+        outputSchema: {
+          manifest_json: z
+            .string()
+            .describe('Canonical manifest JSON that would be uploaded'),
+          manifest: z
+            .looseObject({})
+            .describe('Parsed manifest object (same content as manifest_json)'),
+          format: z
+            .enum(['single', 'stack'])
+            .describe('Detected manifest format'),
+          meta_hash_hex: z
+            .string()
+            .describe('SHA-256 of manifest_json, lowercase hex'),
+          validation: z.object({
+            valid: z.boolean(),
+            errors: z.array(z.string()),
+          }),
+        },
+        annotations: readOnlyAnnotations('Preview and validate a manifest'),
+        _meta: manifestMeta({
+          broadcasts: false,
+          estimable: false,
+        }),
+      },
+      withErrorHandling('build_manifest_preview', async (args) => {
+        const result = await buildManifestPreview({
+          manifest: args.manifest,
+          image: args.image,
+          port: args.port,
+          env: args.env,
+          command: args.command,
+          args: args.args,
+          user: args.user,
+          tmpfs: args.tmpfs,
+          health_check: args.health_check,
+          stop_grace_period: args.stop_grace_period,
+          init: args.init,
+          expose: args.expose,
+          labels: args.labels,
+          depends_on: args.depends_on,
+          services: args.services,
+        });
+        return structuredResponse(
+          result as unknown as Record<string, unknown>,
+          bigIntReplacer,
+        );
       }),
     );
 

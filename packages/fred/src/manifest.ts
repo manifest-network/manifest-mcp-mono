@@ -266,3 +266,395 @@ export function getServiceNames(manifest: unknown): string[] {
   if (!isStackManifest(manifest)) return [];
   return Object.keys(manifest.services);
 }
+
+/**
+ * Computes the lowercase hex SHA-256 of the manifest JSON. The result must
+ * match the `meta_hash` recorded on-chain — Fred rejects uploads whose body
+ * hash does not match. Callers are responsible for serializing exactly the
+ * bytes that will be uploaded.
+ */
+export async function metaHashHex(manifestJson: string): Promise<string> {
+  const encoded = new TextEncoder().encode(manifestJson);
+  const hashBuffer = await crypto.subtle.digest('SHA-256', encoded);
+  const bytes = new Uint8Array(hashBuffer);
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+export type ManifestFormat = 'single' | 'stack';
+
+export interface ManifestValidationResult {
+  readonly valid: boolean;
+  readonly errors: readonly string[];
+  readonly format: ManifestFormat | null;
+}
+
+const ALLOWED_TOP_LEVEL_KEYS = new Set<string>([
+  'image',
+  'ports',
+  'env',
+  'command',
+  'args',
+  'labels',
+  'health_check',
+  'tmpfs',
+  'user',
+  'depends_on',
+  'stop_grace_period',
+  'init',
+  'expose',
+]);
+
+const HEALTH_CHECK_KEYS = new Set<string>([
+  'test',
+  'interval',
+  'timeout',
+  'retries',
+  'start_period',
+]);
+
+const PORT_KEY_RE = /^([1-9][0-9]{0,4})\/(tcp|udp)$/i;
+const EXPOSE_PORT_RE = /^([1-9][0-9]{0,4})$/;
+const ENV_NAME_BLOCKED_RE = /^(path|ld_|fred_|docker_)/i;
+const TMPFS_BLOCKED = new Set<string>(['/', '/tmp', '/run']);
+const TMPFS_BLOCKED_PREFIXES = ['/proc', '/sys', '/dev'];
+const HEALTH_CHECK_TYPES = new Set<string>(['CMD', 'CMD-SHELL', 'NONE']);
+const DEPENDS_ON_CONDITIONS = new Set<string>([
+  'service_started',
+  'service_healthy',
+]);
+
+function isPlainObject(v: unknown): v is Record<string, unknown> {
+  return v !== null && typeof v === 'object' && !Array.isArray(v);
+}
+
+function validatePort(portStr: string): boolean {
+  const n = Number(portStr);
+  return Number.isInteger(n) && n >= 1 && n <= 65535;
+}
+
+function validateService(
+  service: unknown,
+  scope: string,
+  inStack: boolean,
+  errors: string[],
+): void {
+  if (!isPlainObject(service)) {
+    errors.push(`${scope}: must be a JSON object`);
+    return;
+  }
+
+  // image (required, non-empty string)
+  if (!('image' in service)) {
+    errors.push(`${scope}.image: required`);
+  } else if (typeof service.image !== 'string' || service.image.length === 0) {
+    errors.push(`${scope}.image: must be a non-empty string`);
+  }
+
+  // unknown keys
+  for (const key of Object.keys(service)) {
+    if (!ALLOWED_TOP_LEVEL_KEYS.has(key)) {
+      errors.push(`${scope}.${key}: unknown field`);
+    }
+  }
+
+  // ports
+  if ('ports' in service) {
+    if (!isPlainObject(service.ports)) {
+      errors.push(`${scope}.ports: must be an object`);
+    } else {
+      for (const key of Object.keys(service.ports)) {
+        if (!PORT_KEY_RE.test(key)) {
+          errors.push(
+            `${scope}.ports["${key}"]: must be in "port/protocol" format with port 1-65535 and protocol tcp|udp`,
+          );
+        }
+      }
+    }
+  }
+
+  // env: name validation
+  if ('env' in service) {
+    if (!isPlainObject(service.env)) {
+      errors.push(`${scope}.env: must be an object`);
+    } else {
+      for (const [name, value] of Object.entries(service.env)) {
+        if (name.length === 0) {
+          errors.push(`${scope}.env: variable name cannot be empty`);
+        } else if (name.includes('=') || name.includes(' ')) {
+          errors.push(
+            `${scope}.env["${name}"]: name cannot contain '=' or NUL`,
+          );
+        } else if (ENV_NAME_BLOCKED_RE.test(name)) {
+          errors.push(
+            `${scope}.env["${name}"]: blocked variable name (PATH, LD_*, FRED_*, DOCKER_* are reserved)`,
+          );
+        }
+        if (typeof value !== 'string') {
+          errors.push(`${scope}.env["${name}"]: value must be a string`);
+        }
+      }
+    }
+  }
+
+  // labels: fred.* prefix is reserved
+  if ('labels' in service) {
+    if (!isPlainObject(service.labels)) {
+      errors.push(`${scope}.labels: must be an object`);
+    } else {
+      for (const key of Object.keys(service.labels)) {
+        if (key.startsWith('fred.')) {
+          errors.push(
+            `${scope}.labels["${key}"]: reserved prefix 'fred.' is not allowed`,
+          );
+        }
+      }
+    }
+  }
+
+  // tmpfs
+  if ('tmpfs' in service) {
+    if (!Array.isArray(service.tmpfs)) {
+      errors.push(`${scope}.tmpfs: must be an array of strings`);
+    } else {
+      if (service.tmpfs.length > 4) {
+        errors.push(
+          `${scope}.tmpfs: too many mounts (${service.tmpfs.length}), maximum is 4`,
+        );
+      }
+      const seen = new Set<string>();
+      for (const path of service.tmpfs) {
+        if (typeof path !== 'string') {
+          errors.push(`${scope}.tmpfs: entries must be strings`);
+          continue;
+        }
+        if (!path.startsWith('/')) {
+          errors.push(`${scope}.tmpfs["${path}"]: must be an absolute path`);
+        }
+        if (TMPFS_BLOCKED.has(path)) {
+          errors.push(
+            `${scope}.tmpfs["${path}"]: path is managed by the backend`,
+          );
+        }
+        for (const prefix of TMPFS_BLOCKED_PREFIXES) {
+          if (path === prefix || path.startsWith(`${prefix}/`)) {
+            errors.push(
+              `${scope}.tmpfs["${path}"]: path is under sensitive path ${prefix}`,
+            );
+          }
+        }
+        if (seen.has(path)) {
+          errors.push(`${scope}.tmpfs["${path}"]: duplicate mount`);
+        }
+        seen.add(path);
+      }
+    }
+  }
+
+  // user
+  if ('user' in service) {
+    if (typeof service.user !== 'string') {
+      errors.push(`${scope}.user: must be a string`);
+    } else if (service.user.length > 0) {
+      const u = service.user;
+      if (/\s/.test(u)) {
+        errors.push(`${scope}.user: cannot contain whitespace`);
+      } else {
+        const colon = u.indexOf(':');
+        if (colon === 0 || colon === u.length - 1) {
+          errors.push(`${scope}.user: user/group parts cannot be empty`);
+        }
+      }
+    }
+  }
+
+  // health_check
+  if ('health_check' in service) {
+    if (!isPlainObject(service.health_check)) {
+      errors.push(`${scope}.health_check: must be an object`);
+    } else {
+      const hc = service.health_check;
+      for (const key of Object.keys(hc)) {
+        if (!HEALTH_CHECK_KEYS.has(key)) {
+          errors.push(`${scope}.health_check.${key}: unknown field`);
+        }
+      }
+      if (!('test' in hc)) {
+        errors.push(`${scope}.health_check.test: required`);
+      } else if (
+        !Array.isArray(hc.test) ||
+        hc.test.length === 0 ||
+        !hc.test.every((s) => typeof s === 'string')
+      ) {
+        errors.push(`${scope}.health_check.test: must be a non-empty string[]`);
+      } else {
+        const head = hc.test[0];
+        if (!HEALTH_CHECK_TYPES.has(head)) {
+          errors.push(
+            `${scope}.health_check.test[0]: must be CMD, CMD-SHELL, or NONE`,
+          );
+        } else if (head !== 'NONE' && hc.test.length < 2) {
+          errors.push(
+            `${scope}.health_check.test: ${head} requires at least one argument after the type`,
+          );
+        } else if (head === 'NONE' && hc.test.length > 1) {
+          errors.push(
+            `${scope}.health_check.test: NONE accepts no further arguments`,
+          );
+        }
+      }
+      if (
+        'retries' in hc &&
+        (typeof hc.retries !== 'number' ||
+          !Number.isInteger(hc.retries) ||
+          hc.retries < 0)
+      ) {
+        errors.push(
+          `${scope}.health_check.retries: must be a non-negative integer`,
+        );
+      }
+    }
+  }
+
+  // depends_on: only valid in stack
+  if ('depends_on' in service) {
+    if (!isPlainObject(service.depends_on)) {
+      errors.push(`${scope}.depends_on: must be an object`);
+    } else {
+      const entries = Object.entries(service.depends_on);
+      if (entries.length > 0 && !inStack) {
+        errors.push(
+          `${scope}.depends_on: only allowed inside a stack manifest (services map)`,
+        );
+      }
+      for (const [name, cond] of entries) {
+        if (!isPlainObject(cond)) {
+          errors.push(`${scope}.depends_on["${name}"]: must be an object`);
+          continue;
+        }
+        for (const k of Object.keys(cond)) {
+          if (k !== 'condition') {
+            errors.push(`${scope}.depends_on["${name}"].${k}: unknown field`);
+          }
+        }
+        if (
+          typeof cond.condition !== 'string' ||
+          !DEPENDS_ON_CONDITIONS.has(cond.condition)
+        ) {
+          errors.push(
+            `${scope}.depends_on["${name}"].condition: must be "service_started" or "service_healthy"`,
+          );
+        }
+      }
+    }
+  }
+
+  // expose
+  if ('expose' in service) {
+    if (!Array.isArray(service.expose)) {
+      errors.push(`${scope}.expose: must be an array of port strings`);
+    } else {
+      const seen = new Set<string>();
+      for (const p of service.expose) {
+        if (typeof p !== 'string' || !EXPOSE_PORT_RE.test(p)) {
+          errors.push(
+            `${scope}.expose["${String(p)}"]: must be a port number string (1-65535)`,
+          );
+        } else if (!validatePort(p)) {
+          errors.push(`${scope}.expose["${p}"]: port out of range`);
+        }
+        if (seen.has(String(p))) {
+          errors.push(`${scope}.expose["${String(p)}"]: duplicate`);
+        }
+        seen.add(String(p));
+      }
+    }
+  }
+
+  // init / stop_grace_period: minimal type checks (range validation is runtime).
+  if ('init' in service && typeof service.init !== 'boolean') {
+    errors.push(`${scope}.init: must be a boolean`);
+  }
+  if ('stop_grace_period' in service) {
+    const v = service.stop_grace_period;
+    if (typeof v !== 'string' && typeof v !== 'number') {
+      errors.push(
+        `${scope}.stop_grace_period: must be a duration string or integer nanoseconds`,
+      );
+    }
+  }
+}
+
+/**
+ * Validates a parsed manifest object against the documented Fred rules.
+ * Pre-flight only: catches the constraints documented in the public spec
+ * (env-name blocklist, label prefix, port format, tmpfs limits, RFC 1123
+ * service names, depends_on placement, unknown fields). The provider does
+ * the canonical validation server-side; this helper exists so agents can
+ * reject obviously-broken manifests before paying for a lease.
+ */
+export function validateManifest(manifest: unknown): ManifestValidationResult {
+  const errors: string[] = [];
+
+  if (!isPlainObject(manifest)) {
+    return {
+      valid: false,
+      errors: ['manifest must be a JSON object'],
+      format: null,
+    };
+  }
+
+  if (isStackManifest(manifest)) {
+    // Stack manifest — only `services` is allowed at the top level.
+    for (const key of Object.keys(manifest)) {
+      if (key !== 'services') {
+        errors.push(`${key}: unknown top-level field for stack manifest`);
+      }
+    }
+    const serviceNames = Object.keys(manifest.services);
+    if (serviceNames.length === 0) {
+      errors.push('services: at least one service is required');
+    }
+    for (const name of serviceNames) {
+      if (!validateServiceName(name)) {
+        errors.push(
+          `services["${name}"]: must be a valid RFC 1123 DNS label (1-63 chars, lowercase alphanumeric + hyphens)`,
+        );
+      }
+      validateService(
+        manifest.services[name],
+        `services["${name}"]`,
+        true,
+        errors,
+      );
+    }
+    // Cross-service: depends_on must only reference defined services and not self.
+    for (const [name, svc] of Object.entries(manifest.services)) {
+      if (isPlainObject(svc) && isPlainObject(svc.depends_on)) {
+        for (const dep of Object.keys(svc.depends_on)) {
+          if (dep === name) {
+            errors.push(
+              `services["${name}"].depends_on["${dep}"]: a service cannot depend on itself`,
+            );
+          } else if (!serviceNames.includes(dep)) {
+            errors.push(
+              `services["${name}"].depends_on["${dep}"]: references undefined service`,
+            );
+          }
+        }
+      }
+    }
+    return {
+      valid: errors.length === 0,
+      errors,
+      format: 'stack',
+    };
+  }
+
+  // Single-service manifest.
+  validateService(manifest, '', false, errors);
+  return {
+    valid: errors.length === 0,
+    errors,
+    format: 'single',
+  };
+}
