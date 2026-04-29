@@ -384,7 +384,7 @@ function validateService(
       for (const [name, value] of Object.entries(service.env)) {
         if (name.length === 0) {
           errors.push(`${scope}.env: variable name cannot be empty`);
-        } else if (name.includes('=') || name.includes(' ')) {
+        } else if (name.includes('=') || name.includes('\0')) {
           errors.push(
             `${scope}.env["${name}"]: name cannot contain '=' or NUL`,
           );

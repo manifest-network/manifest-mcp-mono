@@ -157,6 +157,18 @@ export async function buildManifestPreview(
         'services is mutually exclusive with image/port',
       );
     }
+    if (Object.keys(input.services).length === 0) {
+      // services={} is a hard structural failure: caller signalled stack
+      // intent but defined zero services. Without this guard, the empty
+      // map would round-trip into a single-service manifest (because
+      // isStackManifest treats an empty services map as "not a stack")
+      // and validation errors would be misleading. Per the docstring:
+      // hard structural failures throw.
+      throw new ManifestMCPError(
+        ManifestMCPErrorCode.INVALID_CONFIG,
+        'services is empty; provide at least one service or use image/port for a single-service manifest',
+      );
+    }
     const services: Record<string, BuildManifestOptions> = {};
     for (const [name, svc] of Object.entries(input.services)) {
       services[name] = toBuildOptions(svc);

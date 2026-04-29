@@ -94,11 +94,11 @@ export async function checkDeploymentReadiness(
   }
   if (!balance.credits) {
     missing.push(
-      'Credit account does not exist for this tenant. Call fund_credit to create and fund it.',
+      'Credit account does not exist for this tenant. Call `fund_credit` (manifest-mcp-lease server) to create and fund it.',
     );
   } else if (balance.credits.available_balances.length === 0) {
     missing.push(
-      'Credit account exists but has no available balance. Call fund_credit to top it up.',
+      'Credit account exists but has no available balance. Call `fund_credit` (manifest-mcp-lease server) to top it up.',
     );
   }
   if (balance.balances.length === 0) {

@@ -33,6 +33,14 @@ describe('buildManifestPreview', () => {
       ).rejects.toMatchObject({ code: ManifestMCPErrorCode.INVALID_CONFIG });
     });
 
+    it('rejects empty services (hard structural failure per docstring)', async () => {
+      // Without this guard, services={} silently round-trips into a
+      // single-service classification with confusing per-field errors.
+      await expect(
+        buildManifestPreview({ services: {} }),
+      ).rejects.toMatchObject({ code: ManifestMCPErrorCode.INVALID_CONFIG });
+    });
+
     it('rejects image without port', async () => {
       await expect(
         buildManifestPreview({ image: 'nginx' }),
