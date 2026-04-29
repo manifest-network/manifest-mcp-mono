@@ -165,4 +165,30 @@ describe('checkDeploymentReadiness', () => {
     });
     expect(result.image).toBe('ghcr.io/example/web:v1');
   });
+
+  it('caps available_sku_names so a large catalog cannot bloat the response', async () => {
+    const skus = Array.from({ length: 75 }, (_, i) => ({
+      uuid: `sku-${i}`,
+      name: `tier-${i}`,
+      providerUuid: 'prov-1',
+    }));
+    const qc = makeQc({
+      walletBalances: [{ denom: 'umfx', amount: '5000000' }],
+      creditAccount: {
+        activeLeaseCount: 0n,
+        pendingLeaseCount: 0n,
+        reservedAmounts: [],
+      },
+      creditAccountAvailableBalances: [{ denom: 'upwr', amount: '1' }],
+      skus,
+    });
+
+    const result = await checkDeploymentReadiness(qc, ADDRESS, {
+      size: 'tier-60',
+    });
+    // The requested tier still resolves (uses the full Map for lookup,
+    // not the truncated list).
+    expect(result.sku?.name).toBe('tier-60');
+    expect(result.available_sku_names.length).toBe(50);
+  });
 });

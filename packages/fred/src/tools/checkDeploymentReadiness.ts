@@ -5,6 +5,15 @@ import {
   type ManifestQueryClient,
 } from '@manifest-network/manifest-mcp-core';
 
+/**
+ * `available_sku_names` is bounded so the response never bloats an LLM
+ * context if a provider lists many SKUs. The chain query itself is bounded
+ * by `MAX_PAGE_LIMIT` (1000), but agents only need a hint of what's
+ * available — the lookup against `size` is exact. 50 mirrors the spirit of
+ * the 10-name slice already used in `missing_steps`.
+ */
+const MAX_SKU_NAMES_RETURNED = 50;
+
 export interface CheckDeploymentReadinessInput {
   /** SKU tier to verify availability for (e.g. "docker-micro"). Optional. */
   readonly size?: string;
@@ -123,7 +132,10 @@ export async function checkDeploymentReadiness(
       hours_remaining: balance.hours_remaining,
     }),
     sku: skuSummary,
-    available_sku_names: Array.from(skuByName.keys()),
+    available_sku_names: Array.from(skuByName.keys()).slice(
+      0,
+      MAX_SKU_NAMES_RETURNED,
+    ),
     ready: missing.length === 0,
     missing_steps: missing,
   };

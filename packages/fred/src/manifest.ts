@@ -631,7 +631,10 @@ export function validateManifest(manifest: unknown): ManifestValidationResult {
         errors,
       );
     }
-    // Cross-service: depends_on must only reference defined services and not self.
+    // Cross-service: depends_on must only reference defined services and not
+    // self. Set lookup keeps the cross-check linear in total dep edges
+    // instead of O(services * deps * services).
+    const serviceNameSet = new Set(serviceNames);
     for (const [name, svc] of Object.entries(manifest.services)) {
       if (isPlainObject(svc) && isPlainObject(svc.depends_on)) {
         for (const dep of Object.keys(svc.depends_on)) {
@@ -639,7 +642,7 @@ export function validateManifest(manifest: unknown): ManifestValidationResult {
             errors.push(
               `services["${name}"].depends_on["${dep}"]: a service cannot depend on itself`,
             );
-          } else if (!serviceNames.includes(dep)) {
+          } else if (!serviceNameSet.has(dep)) {
             errors.push(
               `services["${name}"].depends_on["${dep}"]: references undefined service`,
             );
