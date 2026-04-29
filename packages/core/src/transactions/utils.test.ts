@@ -186,7 +186,8 @@ describe('parseUnixSecondsToDate', () => {
   });
 
   it('rejects values outside JavaScript Date range', () => {
-    // 8.64e15 ms is the Date max; 8.64e12 + 1 seconds * 1000 overflows by 1 ms
+    // 8.64e15 ms is the Date max (= 8.64e12 seconds); one second past the
+    // boundary becomes 8.64e15 + 1000 ms, which overflows the limit.
     expect(() => parseUnixSecondsToDate('8640000000001', 'expiration')).toThrow(
       /out of range/i,
     );
