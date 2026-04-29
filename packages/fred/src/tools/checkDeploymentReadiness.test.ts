@@ -18,7 +18,6 @@ function makeQc(opts: {
     providerUuid: string;
     basePrice?: { denom: string; amount: string };
     active?: boolean;
-    diskMb?: bigint;
   }>;
 }) {
   return makeMockQueryClient({
@@ -54,7 +53,6 @@ describe('checkDeploymentReadiness', () => {
           providerUuid: 'prov-1',
           basePrice: { denom: 'upwr', amount: '100' },
           active: true,
-          diskMb: 0n,
         },
       ],
     });
@@ -65,7 +63,7 @@ describe('checkDeploymentReadiness', () => {
     expect(result.ready).toBe(true);
     expect(result.missing_steps).toHaveLength(0);
     expect(result.sku?.name).toBe('docker-micro');
-    expect(result.sku?.stateful).toBe(false);
+    expect(result.sku?.active).toBe(true);
     expect(result.available_sku_names).toEqual(['docker-micro']);
   });
 

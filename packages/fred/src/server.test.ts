@@ -501,6 +501,15 @@ describe('FredMCPServer', () => {
       }
     }
 
+    // Resource contents are a union of text/blob shapes; resources we register
+    // always emit text/json so we narrow at the test layer.
+    function textOf(content: { text?: string; blob?: string }): string {
+      if (typeof content.text !== 'string') {
+        throw new Error('resource contents missing text');
+      }
+      return content.text;
+    }
+
     function withRealQueryClient(): void {
       const qc = makeMockQueryClient({
         billing: {
@@ -517,7 +526,6 @@ describe('FredMCPServer', () => {
               uuid: 'c-1',
               providerUuid: 'p1',
               createdAt: new Date('2025-12-25T00:00:00Z'),
-              closedAt: new Date('2025-12-26T00:00:00Z'),
             },
           ],
         },
@@ -578,7 +586,7 @@ describe('FredMCPServer', () => {
       );
       expect(result.contents).toHaveLength(1);
       expect(result.contents[0].mimeType).toBe('application/json');
-      const parsed = JSON.parse(result.contents[0].text as string);
+      const parsed = JSON.parse(textOf(result.contents[0]));
       expect(parsed.providers).toHaveLength(1);
       expect(parsed.providers[0].uuid).toBe('p1');
       expect(parsed.skus[0].name).toBe('docker-micro');
@@ -593,7 +601,7 @@ describe('FredMCPServer', () => {
       const result = await withClient(server, (c) =>
         c.readResource({ uri: 'manifest://leases/active' }),
       );
-      const parsed = JSON.parse(result.contents[0].text as string);
+      const parsed = JSON.parse(textOf(result.contents[0]));
       expect(parsed.tenant).toBe('manifest1abc');
       expect(parsed.counts.active).toBe(1);
       expect(parsed.counts.pending).toBe(0);
@@ -609,7 +617,7 @@ describe('FredMCPServer', () => {
       const result = await withClient(server, (c) =>
         c.readResource({ uri: 'manifest://leases/recent' }),
       );
-      const parsed = JSON.parse(result.contents[0].text as string);
+      const parsed = JSON.parse(textOf(result.contents[0]));
       expect(parsed.tenant).toBe('manifest1abc');
       expect(parsed.leases.length).toBeGreaterThanOrEqual(1);
     });

@@ -24,7 +24,6 @@ export interface SkuSummary {
   readonly provider_uuid: string;
   readonly price?: { readonly amount: string; readonly denom: string };
   readonly active: boolean;
-  readonly stateful: boolean;
 }
 
 export interface CheckDeploymentReadinessResult {
@@ -108,7 +107,6 @@ export async function checkDeploymentReadiness(
           ? { amount: sku.basePrice.amount, denom: sku.basePrice.denom }
           : undefined,
         active: sku.active,
-        stateful: sku.diskMb > 0n,
       }
     : null;
 

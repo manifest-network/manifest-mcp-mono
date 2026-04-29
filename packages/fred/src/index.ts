@@ -426,7 +426,6 @@ export class FredMCPServer {
                 .object({ amount: z.string(), denom: z.string() })
                 .optional(),
               active: z.boolean(),
-              stateful: z.boolean(),
             })
             .nullable(),
           available_sku_names: z.array(z.string()),
@@ -1167,7 +1166,6 @@ export class FredMCPServer {
           name: s.name,
           provider_uuid: s.providerUuid,
           active: s.active,
-          stateful: s.diskMb > 0n,
           base_price: s.basePrice
             ? { amount: s.basePrice.amount, denom: s.basePrice.denom }
             : null,
