@@ -33,6 +33,12 @@ describe('Chain tools', () => {
     const txNames = result.txModules.map((m) => m.name);
     expect(queryNames).toContain('bank');
     expect(txNames).toContain('bank');
+    // Standard cosmos read-only modules wired through the LCD adapter must
+    // also be reachable via cosmos_query routing (regression guard for the
+    // adapter-vs-registry asymmetry that existed pre-audit).
+    expect(queryNames).toEqual(
+      expect.arrayContaining(['authz', 'feegrant', 'mint']),
+    );
   });
 
   it('list_module_subcommands returns bank query subcommands', async () => {
@@ -140,6 +146,23 @@ describe('Chain tools', () => {
   // so this block focuses on the modules the chain actually uses generically:
   // auth, poa (read-only), tokenfactory, and group.
   // ------------------------------------------------------------------
+
+  it('cosmos_query mint params reaches the chain and returns mint denom', async () => {
+    // End-to-end smoke for one of the newly-registered standard cosmos
+    // modules (authz/feegrant/mint). Mint is the cleanest probe — no args
+    // and a fixed-shape response. POA Manifest still serves x/mint params
+    // even though minting is effectively static.
+    const result = await client.callTool<{
+      result: { params?: { mintDenom: string } };
+    }>('cosmos_query', {
+      module: 'mint',
+      subcommand: 'params',
+    });
+
+    expect(result.result.params).toBeDefined();
+    expect(typeof result.result.params!.mintDenom).toBe('string');
+    expect(result.result.params!.mintDenom.length).toBeGreaterThan(0);
+  });
 
   it('cosmos_query auth account returns the test wallet account', async () => {
     const { address } = await client.callTool<{ address: string }>('get_account_info');

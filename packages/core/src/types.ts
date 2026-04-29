@@ -5,6 +5,11 @@ import type {
   BaseAccount,
   ModuleAccount,
 } from '@manifest-network/manifestjs/dist/codegen/cosmos/auth/v1beta1/auth.js';
+// Authz module types
+import type {
+  Grant as AuthzGrant,
+  GrantAuthorization as AuthzGrantAuthorization,
+} from '@manifest-network/manifestjs/dist/codegen/cosmos/authz/v1beta1/authz.js';
 // Bank module types
 import type {
   Metadata as BankMetadata,
@@ -20,7 +25,8 @@ import type {
   ValidatorOutstandingRewards,
   ValidatorSlashEvent,
 } from '@manifest-network/manifestjs/dist/codegen/cosmos/distribution/v1beta1/distribution.js';
-
+// Feegrant module types
+import type { Grant as FeegrantGrant } from '@manifest-network/manifestjs/dist/codegen/cosmos/feegrant/v1beta1/feegrant.js';
 // Gov module types (v1 for newer chains)
 import type {
   DepositParams,
@@ -41,6 +47,8 @@ import type {
   TallyResult as GroupTallyResult,
   Vote as GroupVote,
 } from '@manifest-network/manifestjs/dist/codegen/cosmos/group/v1/types.js';
+// Mint module types
+import type { Params as MintParams } from '@manifest-network/manifestjs/dist/codegen/cosmos/mint/v1beta1/mint.js';
 // Staking module types
 import type {
   DelegationResponse,
@@ -92,6 +100,8 @@ import type { Validator as PoAValidator } from '@manifest-network/manifestjs/dis
 export type {
   Any,
   AuthParams,
+  AuthzGrant,
+  AuthzGrantAuthorization,
   BankMetadata,
   BankParams,
   BaseAccount,
@@ -106,6 +116,7 @@ export type {
   DenomTrace,
   DepositParams,
   DistributionParams,
+  FeegrantGrant,
   GovDeposit,
   GovParams,
   GovProposal,
@@ -121,6 +132,7 @@ export type {
   IbcTransferParams,
   Lease,
   LeaseItemInput,
+  MintParams,
   Model,
   ModuleAccount,
   PoAStakingParams,
@@ -796,6 +808,41 @@ export interface DenomsFromAdminResult {
   readonly denoms: readonly string[];
 }
 
+// Authz query results
+export interface AuthzGrantsResult extends PaginatedResult {
+  readonly grants: readonly AuthzGrant[];
+}
+
+export interface AuthzGranterGrantsResult extends PaginatedResult {
+  readonly grants: readonly AuthzGrantAuthorization[];
+}
+
+export interface AuthzGranteeGrantsResult extends PaginatedResult {
+  readonly grants: readonly AuthzGrantAuthorization[];
+}
+
+// Feegrant query results
+export interface FeegrantAllowanceResult {
+  readonly allowance?: FeegrantGrant;
+}
+
+export interface FeegrantAllowancesResult extends PaginatedResult {
+  readonly allowances: readonly FeegrantGrant[];
+}
+
+// Mint query results
+export interface MintParamsResult {
+  readonly params?: MintParams;
+}
+
+export interface MintInflationResult {
+  readonly inflation: string;
+}
+
+export interface MintAnnualProvisionsResult {
+  readonly annualProvisions: string;
+}
+
 // IBC transfer query results
 export interface IbcDenomTraceResult {
   readonly denomTrace?: DenomTrace;
@@ -855,6 +902,14 @@ export type QueryResult =
   | AddressStringToBytesResult
   | Bech32PrefixResult
   | AccountInfoResult
+  | AuthzGrantsResult
+  | AuthzGranterGrantsResult
+  | AuthzGranteeGrantsResult
+  | FeegrantAllowanceResult
+  | FeegrantAllowancesResult
+  | MintParamsResult
+  | MintInflationResult
+  | MintAnnualProvisionsResult
   | BillingParamsResult
   | LeaseResult
   | LeasesResult

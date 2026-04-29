@@ -1,14 +1,17 @@
 import type { SigningStargateClient } from '@cosmjs/stargate';
 import type { ManifestQueryClient } from './client.js';
 import { routeAuthQuery } from './queries/auth.js';
+import { routeAuthzQuery } from './queries/authz.js';
 
 // Import query handlers
 import { routeBankQuery } from './queries/bank.js';
 import { routeBillingQuery } from './queries/billing.js';
 import { routeDistributionQuery } from './queries/distribution.js';
+import { routeFeegrantQuery } from './queries/feegrant.js';
 import { routeGovQuery } from './queries/gov.js';
 import { routeGroupQuery } from './queries/group.js';
 import { routeIbcTransferQuery } from './queries/ibc-transfer.js';
+import { routeMintQuery } from './queries/mint.js';
 import { routePoAQuery } from './queries/poa.js';
 import { routeSkuQuery } from './queries/sku.js';
 import { routeStakingQuery } from './queries/staking.js';
@@ -261,6 +264,64 @@ const QUERY_MODULES: QueryModuleRegistry = {
       { name: 'deposits', description: 'Query all deposits on a proposal' },
       { name: 'tally', description: 'Query tally of a proposal' },
       { name: 'params', description: 'Query governance parameters' },
+    ],
+  },
+  authz: {
+    description: 'Querying commands for the authz module',
+    handler: routeAuthzQuery,
+    subcommands: [
+      {
+        name: 'grants',
+        description:
+          'Query authorization grants from a granter to a grantee, optionally filtered by msg type URL',
+        args: '<granter-address> <grantee-address> [--msg-type-url <url>] [--limit N]',
+      },
+      {
+        name: 'granter-grants',
+        description: 'Query all grants issued by a granter',
+        args: '<granter-address> [--limit N]',
+      },
+      {
+        name: 'grantee-grants',
+        description: 'Query all grants received by a grantee',
+        args: '<grantee-address> [--limit N]',
+      },
+    ],
+  },
+  feegrant: {
+    description: 'Querying commands for the feegrant module',
+    handler: routeFeegrantQuery,
+    subcommands: [
+      {
+        name: 'allowance',
+        description: 'Query a fee allowance granted to a grantee by a granter',
+        args: '<granter-address> <grantee-address>',
+      },
+      {
+        name: 'allowances',
+        description: 'Query all fee allowances granted to a grantee',
+        args: '<grantee-address> [--limit N]',
+      },
+      {
+        name: 'allowances-by-granter',
+        description: 'Query all fee allowances issued by a granter',
+        args: '<granter-address> [--limit N]',
+      },
+    ],
+  },
+  mint: {
+    description: 'Querying commands for the mint module',
+    handler: routeMintQuery,
+    subcommands: [
+      { name: 'params', description: 'Query mint module parameters' },
+      {
+        name: 'inflation',
+        description: 'Query the current minting inflation rate',
+      },
+      {
+        name: 'annual-provisions',
+        description: 'Query the current minting annual provisions',
+      },
     ],
   },
   auth: {
