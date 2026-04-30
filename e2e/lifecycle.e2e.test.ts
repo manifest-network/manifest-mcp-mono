@@ -403,6 +403,9 @@ describe('Deploy lifecycle', () => {
     expect(tools).toContain('update_app');
     expect(tools).toContain('app_diagnostics');
     expect(tools).toContain('app_releases');
-    expect(tools).toHaveLength(8);
+    expect(tools).toContain('wait_for_app_ready');
+    expect(tools).toContain('build_manifest_preview');
+    expect(tools).toContain('check_deployment_readiness');
+    expect(tools).toHaveLength(11);
   });
 });

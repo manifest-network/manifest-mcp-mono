@@ -913,7 +913,11 @@ export class FredMCPServer {
           lease_uuid: z.string(),
           provision_status: z.string(),
           fail_count: z.number(),
-          last_error: z.string(),
+          // The provider omits last_error when there's no recent failure.
+          // structuredResponse's JSON.stringify round-trip drops undefined
+          // keys, so the parsed structuredContent has no `last_error` at
+          // all in the success case — declare optional to match.
+          last_error: z.string().optional(),
         },
         annotations: readOnlyAnnotations('Get app provision diagnostics'),
         _meta: manifestMeta({

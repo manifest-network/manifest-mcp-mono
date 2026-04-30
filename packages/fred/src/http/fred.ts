@@ -101,7 +101,12 @@ export async function getLeaseLogs(
 export interface FredLeaseProvision {
   readonly status: string;
   readonly fail_count: number;
-  readonly last_error: string;
+  /**
+   * Set only when the most recent provisioning attempt failed. The Fred
+   * provider omits the field on success, so the optional marker matches
+   * the wire shape (and matches the same field on FredLeaseStatus above).
+   */
+  readonly last_error?: string;
 }
 
 export async function getLeaseProvision(

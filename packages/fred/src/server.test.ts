@@ -317,6 +317,40 @@ describe('FredMCPServer', () => {
       expect(mockGetLeaseProvision).toHaveBeenCalledOnce();
     });
 
+    it('accepts a provision response without last_error', async () => {
+      // Pins the regression caught by nightly e2e: the Fred provider omits
+      // last_error when there's no recent failure, so the outputSchema
+      // must declare it optional. structuredResponse's JSON.stringify
+      // round-trip drops the undefined key entirely; the resulting
+      // structuredContent has no `last_error` property and the SDK's
+      // output validation must still accept it.
+      mockFetchActiveLease.mockResolvedValue({
+        providerUuid: 'prov-1',
+      } as Awaited<ReturnType<typeof fetchActiveLease>>);
+      mockResolveProviderUrl.mockResolvedValue('https://provider.example.com');
+      mockGetLeaseProvision.mockResolvedValue({
+        status: 'provisioned',
+        fail_count: 0,
+        // FredLeaseProvision.last_error is optional; omit it to model the
+        // success-case provider response.
+      });
+
+      const server = new FredMCPServer({
+        config: makeMockConfig(),
+        walletProvider: makeMockWallet({ signArbitrary: true }),
+      });
+      const result = await callTool(server, 'app_diagnostics', {
+        lease_uuid: LEASE_UUID,
+      });
+
+      expect(result.isError).toBeUndefined();
+      const sc = result.structuredContent as Record<string, unknown>;
+      expect(sc.lease_uuid).toBe(LEASE_UUID);
+      expect(sc.provision_status).toBe('provisioned');
+      expect(sc.fail_count).toBe(0);
+      expect(sc.last_error).toBeUndefined();
+    });
+
     it('returns error when lease not found on chain', async () => {
       mockFetchActiveLease.mockRejectedValue(
         new ManifestMCPError(
