@@ -331,7 +331,8 @@ describe('FredMCPServer', () => {
       mockGetLeaseProvision.mockResolvedValue({
         status: 'provisioned',
         fail_count: 0,
-        last_error: undefined as unknown as string,
+        // FredLeaseProvision.last_error is optional; omit it to model the
+        // success-case provider response.
       });
 
       const server = new FredMCPServer({

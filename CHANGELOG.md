@@ -4,6 +4,7 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+- Fix(fred): `FredLeaseProvision.last_error` is now declared optional in the public TypeScript interface, matching the runtime behavior the M1 outputSchema fix already reflects. Removes an unsafe `undefined as unknown as string` cast from the regression test (ENG-87).
 - Fix(fred): `app_diagnostics` outputSchema declares `last_error` as optional. The Fred provider omits the field when there's no recent failure, so the M1 schema (`last_error: z.string()`) was rejecting valid responses with `Output validation error: expected string, received undefined`. Caught by nightly e2e (ENG-87 fixup of ENG-84).
 - Fix(fred): `build_manifest_preview` now throws `INVALID_CONFIG` when called with `services: {}`. Previously the empty stack round-tripped into a single-service classification (since `isStackManifest` returns false for empty services), producing misleading `services: unknown field` and `image: required` validation errors. The function's docstring promises that hard structural failures throw — empty services qualifies (ENG-84).
 - Fix(fred): replace the literal NUL byte (`U+0000`) embedded in `manifest.ts:387` with the explicit `'\0'` escape. Code behavior is unchanged (it was, and still is, checking for NUL — matching the env-name "cannot contain '=' or NUL" error message); the source is now reviewable in editors and `git diff` without the NUL being silently rendered as a space (ENG-84).
