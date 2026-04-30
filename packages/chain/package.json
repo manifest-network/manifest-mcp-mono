@@ -1,6 +1,6 @@
 {
   "name": "@manifest-network/manifest-mcp-chain",
-  "version": "0.6.2",
+  "version": "0.7.0",
   "description": "MCP server for Cosmos SDK chain operations (queries, transactions, module discovery)",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -43,7 +43,7 @@
     "dist"
   ],
   "dependencies": {
-    "@manifest-network/manifest-mcp-core": "^0.6.2",
+    "@manifest-network/manifest-mcp-core": "^0.7.0",
     "@modelcontextprotocol/sdk": "1.27.1",
     "zod": "^4.3.6"
   },
