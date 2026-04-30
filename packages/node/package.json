@@ -49,7 +49,7 @@
     "@manifest-network/manifest-mcp-lease": "^0.7.0",
     "@manifest-network/manifest-mcp-cosmwasm": "^0.7.0",
     "@manifest-network/manifest-mcp-fred": "^0.7.0",
-    "@modelcontextprotocol/sdk": "1.27.1",
+    "@modelcontextprotocol/sdk": "1.29.0",
     "dotenv": "^17.2.3"
   },
   "devDependencies": {
