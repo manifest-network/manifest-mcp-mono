@@ -372,9 +372,7 @@ export function buildBillingMessages(
       requireArgs(
         positional,
         expected,
-        clearIndex !== -1
-          ? ['lease-uuid']
-          : ['lease-uuid', 'custom-domain'],
+        clearIndex !== -1 ? ['lease-uuid'] : ['lease-uuid', 'custom-domain'],
         'billing set-item-custom-domain',
       );
 

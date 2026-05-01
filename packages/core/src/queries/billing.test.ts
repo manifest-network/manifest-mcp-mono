@@ -43,9 +43,7 @@ function makeMockBillingClient(overrides?: {
         v1: {
           creditAccount: vi.fn().mockResolvedValue(creditAccount),
           providerWithdrawable: vi.fn().mockResolvedValue(providerWithdrawable),
-          leaseByCustomDomain: vi
-            .fn()
-            .mockResolvedValue(leaseByCustomDomain),
+          leaseByCustomDomain: vi.fn().mockResolvedValue(leaseByCustomDomain),
         },
       },
     },

@@ -433,9 +433,10 @@ export class LeaseMCPServer {
       withErrorHandling('lease_by_custom_domain', async (args) => {
         await this.clientManager.acquireRateLimit();
         const queryClient = await this.clientManager.getQueryClient();
-        const result = await queryClient.liftedinit.billing.v1.leaseByCustomDomain(
-          { customDomain: args.custom_domain },
-        );
+        const result =
+          await queryClient.liftedinit.billing.v1.leaseByCustomDomain({
+            customDomain: args.custom_domain,
+          });
         return jsonResponse(
           { lease: result.lease, service_name: result.serviceName },
           bigIntReplacer,

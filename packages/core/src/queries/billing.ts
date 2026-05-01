@@ -182,12 +182,7 @@ export async function routeBillingQuery(
     }
 
     case 'lease-by-custom-domain': {
-      requireArgs(
-        args,
-        1,
-        ['custom-domain'],
-        'billing lease-by-custom-domain',
-      );
+      requireArgs(args, 1, ['custom-domain'], 'billing lease-by-custom-domain');
       const [customDomain] = args;
       const result = await billing.leaseByCustomDomain({ customDomain });
       return { lease: result.lease, serviceName: result.serviceName };

@@ -116,16 +116,11 @@ describe('buildBillingMessages — update-params', () => {
       '.example.test',
     ]);
 
-    expect(messages[0].typeUrl).toBe(
-      '/liftedinit.billing.v1.MsgUpdateParams',
-    );
+    expect(messages[0].typeUrl).toBe('/liftedinit.billing.v1.MsgUpdateParams');
     expect(messages[0].value).toMatchObject({
       authority: SENDER,
       params: expect.objectContaining({
-        reservedDomainSuffixes: [
-          '.barney0.manifest0.net',
-          '.example.test',
-        ],
+        reservedDomainSuffixes: ['.barney0.manifest0.net', '.example.test'],
         allowedList: [],
       }),
     });
