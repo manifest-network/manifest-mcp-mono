@@ -8,10 +8,12 @@ import {
   ManifestMCPErrorCode,
   type TxOptions,
 } from '../types.js';
+import { DNS_LABEL_RE } from '../validation.js';
 import {
   buildGasFee,
   buildTxResult,
   extractFlag,
+  extractRepeatedFlag,
   filterConsumedArgs,
   MAX_META_HASH_BYTES,
   parseAmount,
@@ -32,6 +34,7 @@ const {
   MsgAcknowledgeLease,
   MsgRejectLease,
   MsgCancelLease,
+  MsgSetItemCustomDomain,
   MsgUpdateParams,
 } = liftedinit.billing.v1;
 
@@ -288,8 +291,18 @@ export function buildBillingMessages(
     }
 
     case 'update-params': {
-      requireArgs(
+      const reservedSuffixFlag = extractRepeatedFlag(
         args,
+        '--reserved-suffix',
+        'billing update-params',
+      );
+      const positional = filterConsumedArgs(
+        args,
+        reservedSuffixFlag.consumedIndices,
+      );
+
+      requireArgs(
+        positional,
         5,
         [
           'max-leases-per-tenant',
@@ -308,7 +321,7 @@ export function buildBillingMessages(
         maxPendingLeasesPerTenantStr,
         pendingTimeoutStr,
         ...allowedAddresses
-      ] = args;
+      ] = positional;
 
       for (const addr of allowedAddresses) {
         validateAddress(addr, 'allowed address');
@@ -337,7 +350,70 @@ export function buildBillingMessages(
             ),
             pendingTimeout: parseBigInt(pendingTimeoutStr, 'pending-timeout'),
             allowedList: allowedAddresses,
+            reservedDomainSuffixes: reservedSuffixFlag.values,
           },
+        }),
+      };
+
+      return { messages: [msg], memo: '' };
+    }
+
+    case 'set-item-custom-domain': {
+      const serviceNameFlag = extractFlag(
+        args,
+        '--service-name',
+        'billing set-item-custom-domain',
+      );
+      const clearIndex = args.indexOf('--clear');
+      const clearing = clearIndex !== -1;
+      const consumed = [...serviceNameFlag.consumedIndices];
+      if (clearing) consumed.push(clearIndex);
+      const positional = filterConsumedArgs(args, consumed);
+
+      const expected = clearing ? 1 : 2;
+      requireArgs(
+        positional,
+        expected,
+        clearing ? ['lease-uuid'] : ['lease-uuid', 'custom-domain'],
+        'billing set-item-custom-domain',
+      );
+      if (positional.length > expected) {
+        throw new ManifestMCPError(
+          ManifestMCPErrorCode.TX_FAILED,
+          clearing
+            ? `Cannot combine --clear with a positional <custom-domain> in billing set-item-custom-domain. ` +
+                `Pass either <lease-uuid> <custom-domain> to set, or <lease-uuid> --clear to clear. ` +
+                `Got unexpected positional arg(s): ${positional
+                  .slice(expected)
+                  .map((a) => `"${a}"`)
+                  .join(', ')}.`
+            : `billing set-item-custom-domain accepts at most 2 positional arguments. ` +
+                `Got unexpected positional arg(s): ${positional
+                  .slice(expected)
+                  .map((a) => `"${a}"`)
+                  .join(', ')}.`,
+        );
+      }
+
+      const [leaseUuid, customDomainArg] = positional;
+      const customDomain = clearing ? '' : customDomainArg;
+
+      const serviceName = serviceNameFlag.value ?? '';
+      if (serviceName !== '' && !DNS_LABEL_RE.test(serviceName)) {
+        throw new ManifestMCPError(
+          ManifestMCPErrorCode.TX_FAILED,
+          `Invalid service name: "${serviceName}". Must be a valid RFC 1123 DNS label: ` +
+            `1-63 lowercase alphanumeric characters or hyphens, must not start or end with a hyphen.`,
+        );
+      }
+
+      const msg = {
+        typeUrl: '/liftedinit.billing.v1.MsgSetItemCustomDomain',
+        value: MsgSetItemCustomDomain.fromPartial({
+          sender: senderAddress,
+          leaseUuid,
+          serviceName,
+          customDomain,
         }),
       };
 

@@ -6,6 +6,7 @@ import type {
   CreditAccountsResult,
   CreditAddressResult,
   CreditEstimateResult,
+  LeaseByCustomDomainResult,
   LeaseResult,
   LeasesResult,
   ProviderWithdrawableResult,
@@ -23,7 +24,8 @@ type BillingQueryResult =
   | CreditAddressResult
   | WithdrawableAmountResult
   | ProviderWithdrawableResult
-  | CreditEstimateResult;
+  | CreditEstimateResult
+  | LeaseByCustomDomainResult;
 
 /**
  * Route billing module query to manifestjs query client
@@ -177,6 +179,13 @@ export async function routeBillingQuery(
       const [tenant] = args;
       const result = await billing.creditEstimate({ tenant });
       return { estimate: result };
+    }
+
+    case 'lease-by-custom-domain': {
+      requireArgs(args, 1, ['custom-domain'], 'billing lease-by-custom-domain');
+      const [customDomain] = args;
+      const result = await billing.leaseByCustomDomain({ customDomain });
+      return { lease: result.lease, serviceName: result.serviceName };
     }
 
     default:

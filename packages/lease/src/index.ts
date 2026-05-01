@@ -9,11 +9,14 @@ import {
   jsonResponse,
   LeaseState,
   leaseStateToJSON,
+  ManifestMCPError,
+  ManifestMCPErrorCode,
   type ManifestMCPServerOptions,
   type MnemonicServerConfig,
   manifestMeta,
   mutatingAnnotations,
   readOnlyAnnotations,
+  setItemCustomDomain,
   stopApp,
   structuredResponse,
   VERSION,
@@ -67,6 +70,8 @@ function leaseStateLabel(state: LeaseState): string {
 interface LeaseItemRecord {
   skuUuid: string;
   quantity: bigint;
+  serviceName?: string;
+  customDomain?: string;
 }
 
 interface LeaseRecord {
@@ -279,6 +284,8 @@ export class LeaseMCPServer {
           items: l.items?.map((item: LeaseItemRecord) => ({
             skuUuid: item.skuUuid,
             quantity: item.quantity,
+            serviceName: item.serviceName,
+            customDomain: item.customDomain,
           })),
         }));
 
@@ -326,6 +333,118 @@ export class LeaseMCPServer {
             : undefined,
         );
         return jsonResponse(result, bigIntReplacer);
+      }),
+    );
+
+    // -- set_item_custom_domain --
+    this.mcpServer.registerTool(
+      'set_item_custom_domain',
+      {
+        description:
+          'Set or clear the custom domain (FQDN) on a lease item. Pass `custom_domain` to set, or `clear: true` to remove it. For stack (multi-service) leases, pass `service_name` to address the target item; for legacy single-item leases, omit it. Signer must be the lease tenant, the module authority, or an address in `params.allowed_list`.',
+        inputSchema: {
+          lease_uuid: z
+            .string()
+            .uuid()
+            .describe('The lease UUID that owns the target item'),
+          custom_domain: z
+            .string()
+            .optional()
+            .describe(
+              'FQDN to assign (e.g. "app.example.com"). Mutually exclusive with `clear: true`. The chain validates format, lowercase, and reserved-suffix rules.',
+            ),
+          service_name: z
+            .string()
+            .optional()
+            .describe(
+              'DNS label addressing the LeaseItem inside a stack lease (e.g. "web"). Omit for a 1-item legacy lease.',
+            ),
+          clear: z
+            .boolean()
+            .optional()
+            .describe(
+              'Set true to clear the existing domain and free its reverse-index entry.',
+            ),
+          gas_multiplier: z
+            .number()
+            .finite()
+            .min(1)
+            .optional()
+            .describe(
+              'Gas simulation multiplier override for this transaction. Defaults to the server-configured value (typically 1.5). Increase if a transaction fails with out-of-gas errors.',
+            ),
+        },
+        // Re-assigning a domain replaces the prior value; clearing removes it.
+        // Setting the same value twice is a no-op on the index.
+        annotations: mutatingAnnotations(
+          'Set or clear a lease item custom domain',
+          { destructive: false, idempotent: true },
+        ),
+        _meta: manifestMeta({
+          broadcasts: true,
+          estimable: false,
+        }),
+      },
+      withErrorHandling('set_item_custom_domain', async (args) => {
+        const clearing = args.clear === true;
+        const domain = args.custom_domain ?? '';
+        if (clearing && domain !== '') {
+          throw new ManifestMCPError(
+            ManifestMCPErrorCode.TX_FAILED,
+            'Pass either `custom_domain` to set, or `clear: true` to clear, not both.',
+          );
+        }
+        if (!clearing && domain === '') {
+          throw new ManifestMCPError(
+            ManifestMCPErrorCode.TX_FAILED,
+            'Provide `custom_domain` to set, or `clear: true` to remove the existing domain.',
+          );
+        }
+        const result = await setItemCustomDomain(
+          this.clientManager,
+          args.lease_uuid,
+          domain,
+          {
+            serviceName: args.service_name,
+            clear: clearing,
+          },
+          args.gas_multiplier !== undefined
+            ? { gasMultiplier: args.gas_multiplier }
+            : undefined,
+        );
+        return jsonResponse(result, bigIntReplacer);
+      }),
+    );
+
+    // -- lease_by_custom_domain --
+    this.mcpServer.registerTool(
+      'lease_by_custom_domain',
+      {
+        description:
+          'Reverse-lookup the active or pending lease that has claimed a given FQDN. Returns the lease and the `service_name` of the item holding the domain (empty string for a 1-item legacy lease).',
+        inputSchema: {
+          custom_domain: z
+            .string()
+            .min(1)
+            .describe('The FQDN to look up (e.g. "app.example.com")'),
+        },
+        annotations: readOnlyAnnotations('Look up lease by custom domain'),
+        _meta: manifestMeta({
+          broadcasts: false,
+          estimable: false,
+        }),
+      },
+      withErrorHandling('lease_by_custom_domain', async (args) => {
+        await this.clientManager.acquireRateLimit();
+        const queryClient = await this.clientManager.getQueryClient();
+        const result =
+          await queryClient.liftedinit.billing.v1.leaseByCustomDomain({
+            customDomain: args.custom_domain,
+          });
+        return jsonResponse(
+          { lease: result.lease, service_name: result.serviceName },
+          bigIntReplacer,
+        );
       }),
     );
 

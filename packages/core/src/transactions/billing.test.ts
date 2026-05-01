@@ -45,3 +45,156 @@ describe('buildBillingMessages — fund-credit', () => {
     }
   });
 });
+
+const LEASE_UUID = '11111111-2222-3333-4444-555555555555';
+
+describe('buildBillingMessages — set-item-custom-domain', () => {
+  it('builds MsgSetItemCustomDomain with custom_domain set', () => {
+    const { messages } = buildBillingMessages(
+      SENDER,
+      'set-item-custom-domain',
+      [LEASE_UUID, 'app.example.com'],
+    );
+
+    expect(messages).toHaveLength(1);
+    expect(messages[0].typeUrl).toBe(
+      '/liftedinit.billing.v1.MsgSetItemCustomDomain',
+    );
+    expect(messages[0].value).toMatchObject({
+      sender: SENDER,
+      leaseUuid: LEASE_UUID,
+      serviceName: '',
+      customDomain: 'app.example.com',
+    });
+  });
+
+  it('builds MsgSetItemCustomDomain with --service-name', () => {
+    const { messages } = buildBillingMessages(
+      SENDER,
+      'set-item-custom-domain',
+      [LEASE_UUID, 'app.example.com', '--service-name', 'web'],
+    );
+
+    expect(messages[0].value).toMatchObject({
+      leaseUuid: LEASE_UUID,
+      serviceName: 'web',
+      customDomain: 'app.example.com',
+    });
+  });
+
+  it('builds MsgSetItemCustomDomain with --clear (custom_domain becomes "")', () => {
+    const { messages } = buildBillingMessages(
+      SENDER,
+      'set-item-custom-domain',
+      [LEASE_UUID, '--clear'],
+    );
+
+    expect(messages[0].value).toMatchObject({
+      leaseUuid: LEASE_UUID,
+      customDomain: '',
+    });
+  });
+
+  it('rejects when neither <custom-domain> nor --clear is provided', () => {
+    expect(() =>
+      buildBillingMessages(SENDER, 'set-item-custom-domain', [LEASE_UUID]),
+    ).toThrow();
+  });
+
+  it('rejects --clear combined with a positional <custom-domain> instead of silently clearing', () => {
+    try {
+      buildBillingMessages(SENDER, 'set-item-custom-domain', [
+        LEASE_UUID,
+        'app.example.com',
+        '--clear',
+      ]);
+      expect.fail('should have thrown');
+    } catch (e) {
+      expect(e).toBeInstanceOf(ManifestMCPError);
+      expect((e as ManifestMCPError).code).toBe(ManifestMCPErrorCode.TX_FAILED);
+      expect((e as ManifestMCPError).message).toContain('--clear');
+      expect((e as ManifestMCPError).message).toContain('app.example.com');
+    }
+  });
+
+  it('rejects extra positional args without --clear', () => {
+    expect(() =>
+      buildBillingMessages(SENDER, 'set-item-custom-domain', [
+        LEASE_UUID,
+        'app.example.com',
+        'extra-positional',
+      ]),
+    ).toThrow(ManifestMCPError);
+  });
+
+  it('rejects --service-name that is not a valid RFC 1123 DNS label', () => {
+    try {
+      buildBillingMessages(SENDER, 'set-item-custom-domain', [
+        LEASE_UUID,
+        'app.example.com',
+        '--service-name',
+        'NotALabel',
+      ]);
+      expect.fail('should have thrown');
+    } catch (e) {
+      expect(e).toBeInstanceOf(ManifestMCPError);
+      expect((e as ManifestMCPError).code).toBe(ManifestMCPErrorCode.TX_FAILED);
+      expect((e as ManifestMCPError).message).toContain('NotALabel');
+      expect((e as ManifestMCPError).message).toContain('RFC 1123');
+    }
+  });
+
+  it('accepts an empty --service-name implicit value (omitted flag) for legacy 1-item leases', () => {
+    const { messages } = buildBillingMessages(
+      SENDER,
+      'set-item-custom-domain',
+      [LEASE_UUID, 'app.example.com'],
+    );
+    expect(messages[0].value).toMatchObject({ serviceName: '' });
+  });
+});
+
+describe('buildBillingMessages — update-params', () => {
+  it('forwards --reserved-suffix flags into params.reservedDomainSuffixes', () => {
+    const { messages } = buildBillingMessages(SENDER, 'update-params', [
+      '10',
+      '5',
+      '3600',
+      '2',
+      '300',
+      '--reserved-suffix',
+      '.barney0.manifest0.net',
+      '--reserved-suffix',
+      '.example.test',
+    ]);
+
+    expect(messages[0].typeUrl).toBe('/liftedinit.billing.v1.MsgUpdateParams');
+    expect(messages[0].value).toMatchObject({
+      authority: SENDER,
+      params: expect.objectContaining({
+        reservedDomainSuffixes: ['.barney0.manifest0.net', '.example.test'],
+        allowedList: [],
+      }),
+    });
+  });
+
+  it('keeps trailing positional args as allowedList when --reserved-suffix is mixed in', () => {
+    const { messages } = buildBillingMessages(SENDER, 'update-params', [
+      '10',
+      '5',
+      '3600',
+      '2',
+      '300',
+      TENANT,
+      '--reserved-suffix',
+      '.example.test',
+    ]);
+
+    expect(messages[0].value).toMatchObject({
+      params: expect.objectContaining({
+        allowedList: [TENANT],
+        reservedDomainSuffixes: ['.example.test'],
+      }),
+    });
+  });
+});
