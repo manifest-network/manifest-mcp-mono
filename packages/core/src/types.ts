@@ -643,6 +643,11 @@ export interface CreditEstimateResult {
   readonly estimate: QueryCreditEstimateResponse;
 }
 
+export interface LeaseByCustomDomainResult {
+  readonly lease?: Lease;
+  readonly serviceName: string;
+}
+
 // Group query results
 export interface GroupInfoResult {
   readonly info?: GroupInfo;
@@ -916,6 +921,7 @@ export type QueryResult =
   | WithdrawableAmountResult
   | ProviderWithdrawableResult
   | CreditEstimateResult
+  | LeaseByCustomDomainResult
   | SkuParamsResult
   | ProviderResult
   | ProvidersResult

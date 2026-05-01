@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+- Feat(lease): add `set_item_custom_domain` MCP tool that sets or clears the FQDN on a lease item via `MsgSetItemCustomDomain` (manifestjs 2.4.1 / manifest-ledger v2.1.0). Pass `custom_domain` to set, or `clear: true` to remove. Optional `service_name` addresses the LeaseItem inside a stack lease; omit for a 1-item legacy lease. Authorised signers are the lease tenant, the module authority, or any address in `params.allowed_list`. Annotated as non-destructive + idempotent (re-setting the same value is a no-op).
+- Feat(lease): add `lease_by_custom_domain` MCP tool — reverse-lookup the active or pending lease that has claimed a given FQDN; returns the lease and the `service_name` of the item holding the domain (empty string for legacy 1-item leases).
+- Feat(lease): `leases_by_tenant` per-item output now surfaces `serviceName` and `customDomain` so callers can see which lease item owns a domain without a second query.
+- Feat(core/billing): add `lease-by-custom-domain` query subcommand and `set-item-custom-domain` transaction subcommand to the generic `cosmos_query` / `cosmos_tx` surface. New `--service-name <name>` flag selects the LeaseItem inside a stack lease; `--clear` clears the existing domain.
+- Feat(core/billing): `update-params` now accepts a repeatable `--reserved-suffix <.example.com>` flag forwarded to `Params.reserved_domain_suffixes`. Without this, calling `update-params` against a chain that already had reserved suffixes would silently clear them, since `MsgUpdateParams` overwrites the full `Params`.
+- Feat(core): export `setItemCustomDomain` helper (mirrors `stopApp` / `fundCredits`) and `LeaseByCustomDomainResult` type.
 - Chore(deps): bump `@manifest-network/manifestjs` to 2.4.1
 
 ## [0.7.0]

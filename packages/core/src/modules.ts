@@ -390,6 +390,12 @@ const QUERY_MODULES: QueryModuleRegistry = {
         name: 'credit-estimate',
         description: 'Query credit estimate for a tenant',
       },
+      {
+        name: 'lease-by-custom-domain',
+        description:
+          'Reverse-lookup the active or pending lease that has claimed a custom_domain',
+        args: '<custom-domain>',
+      },
     ],
   },
   sku: {
@@ -784,7 +790,13 @@ const TX_MODULES: TxModuleRegistry = {
       {
         name: 'update-params',
         description: 'Update billing module parameters (governance)',
-        args: '<max-leases-per-tenant> <max-items-per-lease> <min-lease-duration> <max-pending-leases-per-tenant> <pending-timeout> [<allowed-address>...]',
+        args: '<max-leases-per-tenant> <max-items-per-lease> <min-lease-duration> <max-pending-leases-per-tenant> <pending-timeout> [<allowed-address>...] [--reserved-suffix <.example.com>...]',
+      },
+      {
+        name: 'set-item-custom-domain',
+        description:
+          'Set or clear the custom_domain on a lease item (signer must be tenant, authority, or in params.allowed_list)',
+        args: '<lease-uuid> <custom-domain> [--service-name <name>] OR <lease-uuid> --clear [--service-name <name>]',
       },
     ],
   },

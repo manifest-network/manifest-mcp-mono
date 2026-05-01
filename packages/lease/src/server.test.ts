@@ -81,6 +81,8 @@ const LEASE_TOOL_NAMES = [
   'fund_credit',
   'leases_by_tenant',
   'close_lease',
+  'set_item_custom_domain',
+  'lease_by_custom_domain',
   'get_skus',
   'get_providers',
 ];
@@ -99,7 +101,7 @@ afterEach(async () => {
 
 describe('LeaseMCPServer', () => {
   describe('listTools via protocol', () => {
-    it('should advertise exactly 6 lease tools', async () => {
+    it('should advertise exactly 8 lease tools', async () => {
       const server = new LeaseMCPServer({
         config: makeMockConfig(),
         walletProvider: makeMockWallet(),
@@ -115,7 +117,7 @@ describe('LeaseMCPServer', () => {
 
       try {
         const result = await client.listTools();
-        expect(result.tools).toHaveLength(6);
+        expect(result.tools).toHaveLength(8);
         expect(result.tools.map((t) => t.name).sort()).toEqual(
           [...LEASE_TOOL_NAMES].sort(),
         );
@@ -168,11 +170,12 @@ describe('LeaseMCPServer', () => {
       }
     });
 
-    it('read-only tools: credit_balance, leases_by_tenant, get_skus, get_providers', async () => {
+    it('read-only tools: credit_balance, leases_by_tenant, lease_by_custom_domain, get_skus, get_providers', async () => {
       const tools = await listTools();
       const readOnly = [
         'credit_balance',
         'leases_by_tenant',
+        'lease_by_custom_domain',
         'get_skus',
         'get_providers',
       ] as const;
@@ -211,6 +214,21 @@ describe('LeaseMCPServer', () => {
       expect(t?.annotations).toMatchObject({
         readOnlyHint: false,
         destructiveHint: true,
+        idempotentHint: true,
+        openWorldHint: true,
+      });
+      expect(t?._meta?.manifest).toEqual({
+        v: 1,
+        broadcasts: true,
+        estimable: false,
+      });
+    });
+
+    it('set_item_custom_domain broadcasts a non-destructive idempotent tx (re-setting same value is a no-op)', async () => {
+      const t = (await listTools()).get('set_item_custom_domain');
+      expect(t?.annotations).toMatchObject({
+        readOnlyHint: false,
+        destructiveHint: false,
         idempotentHint: true,
         openWorldHint: true,
       });

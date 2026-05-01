@@ -12,6 +12,7 @@ import {
   buildGasFee,
   buildTxResult,
   extractFlag,
+  extractRepeatedFlag,
   filterConsumedArgs,
   MAX_META_HASH_BYTES,
   parseAmount,
@@ -32,6 +33,7 @@ const {
   MsgAcknowledgeLease,
   MsgRejectLease,
   MsgCancelLease,
+  MsgSetItemCustomDomain,
   MsgUpdateParams,
 } = liftedinit.billing.v1;
 
@@ -288,8 +290,18 @@ export function buildBillingMessages(
     }
 
     case 'update-params': {
-      requireArgs(
+      const reservedSuffixFlag = extractRepeatedFlag(
         args,
+        '--reserved-suffix',
+        'billing update-params',
+      );
+      const positional = filterConsumedArgs(
+        args,
+        reservedSuffixFlag.consumedIndices,
+      );
+
+      requireArgs(
+        positional,
         5,
         [
           'max-leases-per-tenant',
@@ -308,7 +320,7 @@ export function buildBillingMessages(
         maxPendingLeasesPerTenantStr,
         pendingTimeoutStr,
         ...allowedAddresses
-      ] = args;
+      ] = positional;
 
       for (const addr of allowedAddresses) {
         validateAddress(addr, 'allowed address');
@@ -337,7 +349,45 @@ export function buildBillingMessages(
             ),
             pendingTimeout: parseBigInt(pendingTimeoutStr, 'pending-timeout'),
             allowedList: allowedAddresses,
+            reservedDomainSuffixes: reservedSuffixFlag.values,
           },
+        }),
+      };
+
+      return { messages: [msg], memo: '' };
+    }
+
+    case 'set-item-custom-domain': {
+      const serviceNameFlag = extractFlag(
+        args,
+        '--service-name',
+        'billing set-item-custom-domain',
+      );
+      const clearIndex = args.indexOf('--clear');
+      const consumed = [...serviceNameFlag.consumedIndices];
+      if (clearIndex !== -1) consumed.push(clearIndex);
+      const positional = filterConsumedArgs(args, consumed);
+
+      const expected = clearIndex !== -1 ? 1 : 2;
+      requireArgs(
+        positional,
+        expected,
+        clearIndex !== -1
+          ? ['lease-uuid']
+          : ['lease-uuid', 'custom-domain'],
+        'billing set-item-custom-domain',
+      );
+
+      const [leaseUuid, customDomainArg] = positional;
+      const customDomain = clearIndex !== -1 ? '' : customDomainArg;
+
+      const msg = {
+        typeUrl: '/liftedinit.billing.v1.MsgSetItemCustomDomain',
+        value: MsgSetItemCustomDomain.fromPartial({
+          sender: senderAddress,
+          leaseUuid,
+          serviceName: serviceNameFlag.value ?? '',
+          customDomain,
         }),
       };
 
