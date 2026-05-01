@@ -8,6 +8,7 @@ import {
   ManifestMCPErrorCode,
   type TxOptions,
 } from '../types.js';
+import { DNS_LABEL_RE } from '../validation.js';
 import {
   buildGasFee,
   buildTxResult,
@@ -379,12 +380,21 @@ export function buildBillingMessages(
       const [leaseUuid, customDomainArg] = positional;
       const customDomain = clearIndex !== -1 ? '' : customDomainArg;
 
+      const serviceName = serviceNameFlag.value ?? '';
+      if (serviceName !== '' && !DNS_LABEL_RE.test(serviceName)) {
+        throw new ManifestMCPError(
+          ManifestMCPErrorCode.TX_FAILED,
+          `Invalid service name: "${serviceName}". Must be a valid RFC 1123 DNS label: ` +
+            `1-63 lowercase alphanumeric characters or hyphens, must not start or end with a hyphen.`,
+        );
+      }
+
       const msg = {
         typeUrl: '/liftedinit.billing.v1.MsgSetItemCustomDomain',
         value: MsgSetItemCustomDomain.fromPartial({
           sender: senderAddress,
           leaseUuid,
-          serviceName: serviceNameFlag.value ?? '',
+          serviceName,
           customDomain,
         }),
       };

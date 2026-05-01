@@ -100,6 +100,32 @@ describe('buildBillingMessages — set-item-custom-domain', () => {
       buildBillingMessages(SENDER, 'set-item-custom-domain', [LEASE_UUID]),
     ).toThrow();
   });
+
+  it('rejects --service-name that is not a valid RFC 1123 DNS label', () => {
+    try {
+      buildBillingMessages(SENDER, 'set-item-custom-domain', [
+        LEASE_UUID,
+        'app.example.com',
+        '--service-name',
+        'NotALabel',
+      ]);
+      expect.fail('should have thrown');
+    } catch (e) {
+      expect(e).toBeInstanceOf(ManifestMCPError);
+      expect((e as ManifestMCPError).code).toBe(ManifestMCPErrorCode.TX_FAILED);
+      expect((e as ManifestMCPError).message).toContain('NotALabel');
+      expect((e as ManifestMCPError).message).toContain('RFC 1123');
+    }
+  });
+
+  it('accepts an empty --service-name implicit value (omitted flag) for legacy 1-item leases', () => {
+    const { messages } = buildBillingMessages(
+      SENDER,
+      'set-item-custom-domain',
+      [LEASE_UUID, 'app.example.com'],
+    );
+    expect(messages[0].value).toMatchObject({ serviceName: '' });
+  });
 });
 
 describe('buildBillingMessages — update-params', () => {
