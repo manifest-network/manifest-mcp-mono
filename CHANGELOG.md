@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+- Chore(deps): bump `@manifest-network/manifestjs` to 2.4.1
+
 ## [0.7.0]
 
 - Fix(fred): `FredLeaseProvision.last_error` is now declared optional in the public TypeScript interface, matching the runtime behavior the M1 outputSchema fix already reflects. Removes an unsafe `undefined as unknown as string` cast from the regression test (ENG-87).
