@@ -9,6 +9,8 @@ import {
   jsonResponse,
   LeaseState,
   leaseStateToJSON,
+  ManifestMCPError,
+  ManifestMCPErrorCode,
   type ManifestMCPServerOptions,
   type MnemonicServerConfig,
   manifestMeta,
@@ -387,12 +389,14 @@ export class LeaseMCPServer {
         const clearing = args.clear === true;
         const domain = args.custom_domain ?? '';
         if (clearing && domain !== '') {
-          throw new Error(
+          throw new ManifestMCPError(
+            ManifestMCPErrorCode.TX_FAILED,
             'Pass either `custom_domain` to set, or `clear: true` to clear, not both.',
           );
         }
         if (!clearing && domain === '') {
-          throw new Error(
+          throw new ManifestMCPError(
+            ManifestMCPErrorCode.TX_FAILED,
             'Provide `custom_domain` to set, or `clear: true` to remove the existing domain.',
           );
         }

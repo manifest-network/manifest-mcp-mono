@@ -365,20 +365,38 @@ export function buildBillingMessages(
         'billing set-item-custom-domain',
       );
       const clearIndex = args.indexOf('--clear');
+      const clearing = clearIndex !== -1;
       const consumed = [...serviceNameFlag.consumedIndices];
-      if (clearIndex !== -1) consumed.push(clearIndex);
+      if (clearing) consumed.push(clearIndex);
       const positional = filterConsumedArgs(args, consumed);
 
-      const expected = clearIndex !== -1 ? 1 : 2;
+      const expected = clearing ? 1 : 2;
       requireArgs(
         positional,
         expected,
-        clearIndex !== -1 ? ['lease-uuid'] : ['lease-uuid', 'custom-domain'],
+        clearing ? ['lease-uuid'] : ['lease-uuid', 'custom-domain'],
         'billing set-item-custom-domain',
       );
+      if (positional.length > expected) {
+        throw new ManifestMCPError(
+          ManifestMCPErrorCode.TX_FAILED,
+          clearing
+            ? `Cannot combine --clear with a positional <custom-domain> in billing set-item-custom-domain. ` +
+                `Pass either <lease-uuid> <custom-domain> to set, or <lease-uuid> --clear to clear. ` +
+                `Got unexpected positional arg(s): ${positional
+                  .slice(expected)
+                  .map((a) => `"${a}"`)
+                  .join(', ')}.`
+            : `billing set-item-custom-domain accepts at most 2 positional arguments. ` +
+                `Got unexpected positional arg(s): ${positional
+                  .slice(expected)
+                  .map((a) => `"${a}"`)
+                  .join(', ')}.`,
+        );
+      }
 
       const [leaseUuid, customDomainArg] = positional;
-      const customDomain = clearIndex !== -1 ? '' : customDomainArg;
+      const customDomain = clearing ? '' : customDomainArg;
 
       const serviceName = serviceNameFlag.value ?? '';
       if (serviceName !== '' && !DNS_LABEL_RE.test(serviceName)) {

@@ -101,6 +101,32 @@ describe('buildBillingMessages — set-item-custom-domain', () => {
     ).toThrow();
   });
 
+  it('rejects --clear combined with a positional <custom-domain> instead of silently clearing', () => {
+    try {
+      buildBillingMessages(SENDER, 'set-item-custom-domain', [
+        LEASE_UUID,
+        'app.example.com',
+        '--clear',
+      ]);
+      expect.fail('should have thrown');
+    } catch (e) {
+      expect(e).toBeInstanceOf(ManifestMCPError);
+      expect((e as ManifestMCPError).code).toBe(ManifestMCPErrorCode.TX_FAILED);
+      expect((e as ManifestMCPError).message).toContain('--clear');
+      expect((e as ManifestMCPError).message).toContain('app.example.com');
+    }
+  });
+
+  it('rejects extra positional args without --clear', () => {
+    expect(() =>
+      buildBillingMessages(SENDER, 'set-item-custom-domain', [
+        LEASE_UUID,
+        'app.example.com',
+        'extra-positional',
+      ]),
+    ).toThrow(ManifestMCPError);
+  });
+
   it('rejects --service-name that is not a valid RFC 1123 DNS label', () => {
     try {
       buildBillingMessages(SENDER, 'set-item-custom-domain', [

@@ -569,4 +569,38 @@ describe('LeaseMCPServer', () => {
       expect(parsed.message).toBe('credit query failed');
     });
   });
+
+  describe('set_item_custom_domain mutual-exclusion validation', () => {
+    it('rejects custom_domain + clear:true with structured TX_FAILED code', async () => {
+      const server = new LeaseMCPServer({
+        config: makeMockConfig(),
+        walletProvider: makeMockWallet(),
+      });
+      const result = await callTool(server, 'set_item_custom_domain', {
+        lease_uuid: '550e8400-e29b-41d4-a716-446655440000',
+        custom_domain: 'app.example.com',
+        clear: true,
+      });
+
+      expect(result.isError).toBe(true);
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.code).toBe('TX_FAILED');
+      expect(parsed.message).toMatch(/either.*clear/i);
+    });
+
+    it('rejects neither-set-nor-clear with structured TX_FAILED code', async () => {
+      const server = new LeaseMCPServer({
+        config: makeMockConfig(),
+        walletProvider: makeMockWallet(),
+      });
+      const result = await callTool(server, 'set_item_custom_domain', {
+        lease_uuid: '550e8400-e29b-41d4-a716-446655440000',
+      });
+
+      expect(result.isError).toBe(true);
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.code).toBe('TX_FAILED');
+      expect(parsed.message).toMatch(/Provide.*custom_domain/i);
+    });
+  });
 });
