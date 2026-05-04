@@ -658,25 +658,10 @@ describe('LeaseMCPServer', () => {
       expect(parsed.lease).toMatchObject({ uuid: 'lease-2' });
     });
 
-    it('passes through an undefined lease (not-found) and an empty service_name', async () => {
-      mockLeaseByCustomDomain.mockResolvedValue({
-        lease: undefined,
-        serviceName: '',
-      });
-
-      const server = new LeaseMCPServer({
-        config: makeMockConfig(),
-        walletProvider: makeMockWallet(),
-      });
-      const result = await callTool(server, 'lease_by_custom_domain', {
-        custom_domain: 'unclaimed.example.com',
-      });
-
-      expect(result.isError).toBeUndefined();
-      const parsed = JSON.parse(result.content[0].text);
-      expect(parsed.service_name).toBe('');
-      expect(parsed.lease).toBeUndefined();
-    });
+    // Not-found is exercised by the QUERY_FAILED wrap test below: the chain
+    // keeper raises gRPC NotFound for unclaimed FQDNs (proto declares
+    // QueryLeaseByCustomDomainResponse.lease as nullable=false), so the
+    // success path never returns {lease: undefined}.
   });
 
   describe('get_skus', () => {
