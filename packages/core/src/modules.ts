@@ -28,6 +28,7 @@ import {
 } from './transactions/bank.js';
 import {
   buildBillingMessages,
+  loadBillingUpdateParamsContext,
   routeBillingTransaction,
 } from './transactions/billing.js';
 import {
@@ -164,12 +165,28 @@ interface QueryModuleRegistry {
   };
 }
 
+/**
+ * Loader that fetches the chain state a `TxBuildContext`-aware msgBuilder
+ * needs. Receives a `ManifestQueryClient`; the dispatcher in `cosmos.ts`
+ * handles rate-limit acquisition and error wrapping around the call.
+ */
+export type TxBuildContextLoader = (
+  queryClient: ManifestQueryClient,
+) => Promise<TxBuildContext>;
+
 interface TxModuleRegistry {
   [moduleName: string]: {
     description: string;
     subcommands: SubcommandInfo[];
     handler: TxHandler;
     msgBuilder: TxMsgBuilder;
+    /**
+     * Per-subcommand `TxBuildContext` loaders, keyed by subcommand name.
+     * Subcommands without an entry receive `undefined` and pay no extra
+     * round-trip. Each loader is responsible only for its own data fetch;
+     * dispatch / rate-limit / error wrapping happens in `cosmos.ts`.
+     */
+    contextLoaders?: Record<string, TxBuildContextLoader>;
   };
 }
 
@@ -758,6 +775,9 @@ const TX_MODULES: TxModuleRegistry = {
     description: 'Manifest billing transaction subcommands',
     handler: routeBillingTransaction,
     msgBuilder: buildBillingMessages,
+    contextLoaders: {
+      'update-params': loadBillingUpdateParamsContext,
+    },
     subcommands: [
       {
         name: 'fund-credit',
@@ -1230,4 +1250,18 @@ export function getTxMsgBuilder(module: string): TxMsgBuilder {
     );
   }
   return moduleInfo.msgBuilder;
+}
+
+/**
+ * Look up the optional `TxBuildContext` loader for a (module, subcommand)
+ * pair. Returns `undefined` when the module is unknown OR when the module
+ * doesn't declare a loader for that subcommand — both are normal cases
+ * (most txs need no context). Callers are expected to short-circuit on
+ * `undefined` and skip the chain read.
+ */
+export function getTxContextLoader(
+  module: string,
+  subcommand: string,
+): TxBuildContextLoader | undefined {
+  return TX_MODULES[module]?.contextLoaders?.[subcommand];
 }

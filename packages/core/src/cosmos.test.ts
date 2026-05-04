@@ -6,6 +6,7 @@ vi.mock('./modules.js', () => ({
   getQueryHandler: vi.fn(),
   getTxHandler: vi.fn(),
   getTxMsgBuilder: vi.fn(),
+  getTxContextLoader: vi.fn(),
 }));
 
 vi.mock('./retry.js', async (importOriginal) => {
@@ -22,11 +23,17 @@ vi.mock('./retry.js', async (importOriginal) => {
 });
 
 import { cosmosEstimateFee, cosmosQuery, cosmosTx } from './cosmos.js';
-import { getQueryHandler, getTxHandler, getTxMsgBuilder } from './modules.js';
+import {
+  getQueryHandler,
+  getTxContextLoader,
+  getTxHandler,
+  getTxMsgBuilder,
+} from './modules.js';
 
 const mockGetQueryHandler = vi.mocked(getQueryHandler);
 const mockGetTxHandler = vi.mocked(getTxHandler);
 const mockGetTxMsgBuilder = vi.mocked(getTxMsgBuilder);
+const mockGetTxContextLoader = vi.mocked(getTxContextLoader);
 
 function makeMockClientManager() {
   return {
@@ -158,6 +165,10 @@ describe('cosmosTx', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    // Default to "no loader registered" — vi.clearAllMocks resets call
+    // history but not implementations, so a previous test's
+    // .mockReturnValue or .mockImplementation would otherwise leak.
+    mockGetTxContextLoader.mockReturnValue(undefined);
     clientManager = makeMockClientManager();
   });
 
@@ -399,7 +410,7 @@ describe('cosmosTx', () => {
     );
   });
 
-  it('threads currentBillingParams as TxBuildContext for billing update-params', async () => {
+  it('threads the registered TxBuildContextLoader result into the handler', async () => {
     const onChainParams = {
       maxLeasesPerTenant: 9n,
       maxItemsPerLease: 9n,
@@ -409,10 +420,14 @@ describe('cosmosTx', () => {
       allowedList: ['manifest1existing'],
       reservedDomainSuffixes: ['.preserved.test'],
     };
-    const billingParams = vi.fn().mockResolvedValue({ params: onChainParams });
-    clientManager.getQueryClient.mockResolvedValue({
-      liftedinit: { billing: { v1: { params: billingParams } } },
-    });
+    const loader = vi
+      .fn()
+      .mockResolvedValue({ currentBillingParams: onChainParams });
+    mockGetTxContextLoader.mockImplementation((module, subcommand) =>
+      module === 'billing' && subcommand === 'update-params'
+        ? loader
+        : undefined,
+    );
     const mockHandler = vi.fn().mockResolvedValue({
       module: 'billing',
       subcommand: 'update-params',
@@ -430,7 +445,7 @@ describe('cosmosTx', () => {
       '300',
     ]);
 
-    expect(billingParams).toHaveBeenCalledOnce();
+    expect(loader).toHaveBeenCalledOnce();
     expect(mockHandler).toHaveBeenCalledWith(
       expect.anything(),
       expect.anything(),
@@ -442,11 +457,8 @@ describe('cosmosTx', () => {
     );
   });
 
-  it('does not fetch billing params for non-update-params subcommands', async () => {
-    const billingParams = vi.fn();
-    clientManager.getQueryClient.mockResolvedValue({
-      liftedinit: { billing: { v1: { params: billingParams } } },
-    });
+  it('skips the loader and passes undefined context for subcommands without a registered loader', async () => {
+    mockGetTxContextLoader.mockReturnValue(undefined);
     const mockHandler = vi.fn().mockResolvedValue({
       module: 'bank',
       subcommand: 'send',
@@ -458,7 +470,6 @@ describe('cosmosTx', () => {
 
     await cosmosTx(clientManager, 'bank', 'send', ['addr', '100umfx']);
 
-    expect(billingParams).not.toHaveBeenCalled();
     expect(mockHandler).toHaveBeenCalledWith(
       expect.anything(),
       expect.anything(),
@@ -470,28 +481,72 @@ describe('cosmosTx', () => {
     );
   });
 
-  it('fails fast with QUERY_FAILED when billing params response has no params for update-params', async () => {
-    // Defensive guard: an empty params field would otherwise let the builder
-    // fall back to []/[] and silently clear the chain — exactly the bug
-    // preserve-by-default is supposed to prevent.
-    const billingParams = vi.fn().mockResolvedValue({ params: undefined });
-    clientManager.getQueryClient.mockResolvedValue({
-      liftedinit: { billing: { v1: { params: billingParams } } },
+  it('acquires a rate-limit token before invoking a context loader', async () => {
+    const callOrder: string[] = [];
+    clientManager.acquireRateLimit.mockImplementation(async () => {
+      callOrder.push('acquireRateLimit');
     });
+    const loader = vi.fn().mockImplementation(async () => {
+      callOrder.push('loader');
+      return { currentBillingParams: { allowedList: [] } as never };
+    });
+    mockGetTxContextLoader.mockReturnValue(loader);
+    mockGetTxHandler.mockReturnValue(vi.fn().mockResolvedValue({}));
+
+    await cosmosTx(clientManager, 'billing', 'update-params', []);
+
+    // Two acquires: one for the loader's RPC, one for signAndBroadcast.
+    expect(
+      callOrder.filter((step) => step === 'acquireRateLimit'),
+    ).toHaveLength(2);
+    expect(callOrder.indexOf('acquireRateLimit')).toBeLessThan(
+      callOrder.indexOf('loader'),
+    );
+  });
+
+  it('wraps non-ManifestMCPError loader failures as QUERY_FAILED with module/subcommand context', async () => {
+    const loader = vi.fn().mockRejectedValue(new Error('rpc unreachable'));
+    mockGetTxContextLoader.mockReturnValue(loader);
     const mockHandler = vi.fn();
     mockGetTxHandler.mockReturnValue(mockHandler);
 
     await expect(
-      cosmosTx(clientManager, 'billing', 'update-params', [
-        '10',
-        '5',
-        '3600',
-        '2',
-        '300',
-      ]),
+      cosmosTx(clientManager, 'billing', 'update-params', []),
     ).rejects.toSatisfy((error: unknown) => {
       if (!(error instanceof ManifestMCPError)) return false;
-      return error.code === ManifestMCPErrorCode.QUERY_FAILED;
+      return (
+        error.code === ManifestMCPErrorCode.QUERY_FAILED &&
+        error.details?.module === 'billing' &&
+        error.details?.subcommand === 'update-params' &&
+        /rpc unreachable/.test(error.message)
+      );
+    });
+    expect(mockHandler).not.toHaveBeenCalled();
+  });
+
+  it('preserves a structured ManifestMCPError thrown by the loader', async () => {
+    const loader = vi
+      .fn()
+      .mockRejectedValue(
+        new ManifestMCPError(
+          ManifestMCPErrorCode.QUERY_FAILED,
+          'response.params was empty',
+        ),
+      );
+    mockGetTxContextLoader.mockReturnValue(loader);
+    const mockHandler = vi.fn();
+    mockGetTxHandler.mockReturnValue(mockHandler);
+
+    await expect(
+      cosmosTx(clientManager, 'billing', 'update-params', []),
+    ).rejects.toSatisfy((error: unknown) => {
+      if (!(error instanceof ManifestMCPError)) return false;
+      return (
+        error.code === ManifestMCPErrorCode.QUERY_FAILED &&
+        error.message === 'response.params was empty' &&
+        error.details?.module === 'billing' &&
+        error.details?.subcommand === 'update-params'
+      );
     });
     expect(mockHandler).not.toHaveBeenCalled();
   });
@@ -531,6 +586,7 @@ describe('cosmosEstimateFee', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mockGetTxContextLoader.mockReturnValue(undefined);
     clientManager = makeMockClientManager();
   });
 
@@ -579,7 +635,7 @@ describe('cosmosEstimateFee', () => {
     );
   });
 
-  it('threads currentBillingParams as TxBuildContext for billing update-params', async () => {
+  it('threads the registered TxBuildContextLoader result into the builder', async () => {
     const onChainParams = {
       maxLeasesPerTenant: 9n,
       maxItemsPerLease: 9n,
@@ -589,10 +645,14 @@ describe('cosmosEstimateFee', () => {
       allowedList: ['manifest1existing'],
       reservedDomainSuffixes: ['.preserved.test'],
     };
-    const billingParams = vi.fn().mockResolvedValue({ params: onChainParams });
-    clientManager.getQueryClient.mockResolvedValue({
-      liftedinit: { billing: { v1: { params: billingParams } } },
-    });
+    const loader = vi
+      .fn()
+      .mockResolvedValue({ currentBillingParams: onChainParams });
+    mockGetTxContextLoader.mockImplementation((module, subcommand) =>
+      module === 'billing' && subcommand === 'update-params'
+        ? loader
+        : undefined,
+    );
     const mockBuilder = setupHappyPath();
 
     await cosmosEstimateFee(clientManager, 'billing', 'update-params', [
@@ -603,7 +663,7 @@ describe('cosmosEstimateFee', () => {
       '300',
     ]);
 
-    expect(billingParams).toHaveBeenCalledOnce();
+    expect(loader).toHaveBeenCalledOnce();
     expect(mockBuilder).toHaveBeenCalledWith(
       'manifest1sender',
       'update-params',

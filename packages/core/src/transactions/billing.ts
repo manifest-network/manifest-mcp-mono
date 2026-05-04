@@ -1,5 +1,6 @@
 import type { SigningStargateClient } from '@cosmjs/stargate';
 import { liftedinit } from '@manifest-network/manifestjs';
+import type { ManifestQueryClient } from '../client.js';
 import { getSubcommandUsage, throwUnsupportedSubcommand } from '../modules.js';
 import {
   type BuiltMessages,
@@ -535,4 +536,27 @@ export async function routeBillingTransaction(
     result,
     waitForConfirmation,
   );
+}
+
+/**
+ * Load the on-chain `Params` required to build a `MsgUpdateParams` that
+ * preserves un-overridden list fields. Registered as the `update-params`
+ * context loader on `TX_MODULES.billing`.
+ *
+ * Throws `QUERY_FAILED` when the chain returns an empty `params` field —
+ * silently falling back to defaults would let the builder send `[]` for
+ * `allowedList` / `reservedDomainSuffixes` and clear the on-chain state,
+ * which is exactly the bug preserve-by-default exists to prevent.
+ */
+export async function loadBillingUpdateParamsContext(
+  queryClient: ManifestQueryClient,
+): Promise<TxBuildContext> {
+  const result = await queryClient.liftedinit.billing.v1.params({});
+  if (!result.params) {
+    throw new ManifestMCPError(
+      ManifestMCPErrorCode.QUERY_FAILED,
+      'Failed to load current billing params: response.params was empty.',
+    );
+  }
+  return { currentBillingParams: result.params };
 }

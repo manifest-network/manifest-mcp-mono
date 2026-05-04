@@ -219,8 +219,14 @@ export interface TxOptions {
  * can preserve fields the caller did not explicitly override (e.g. governance
  * MsgUpdateParams that overwrites the full Params struct).
  *
- * Populated by `cosmosTx` / `cosmosEstimateFee` only when the target subcommand
- * needs it; left undefined otherwise to avoid unnecessary chain reads.
+ * Populated by `cosmosTx` / `cosmosEstimateFee` via the per-subcommand context
+ * loader declared on the module's `TX_MODULES` registry entry. Subcommands
+ * that don't declare a loader pay no extra round-trip and receive `undefined`.
+ *
+ * The shape is a bag of optional fields rather than a discriminated union so
+ * adding a second loader (e.g. staking `update-params`) is additive — when
+ * the third kind lands, consider switching to a discriminated union for
+ * stricter cross-module isolation.
  */
 export interface TxBuildContext {
   readonly currentBillingParams?: BillingParams;

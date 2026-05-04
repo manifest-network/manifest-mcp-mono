@@ -1,7 +1,12 @@
 import { calculateFee } from '@cosmjs/stargate';
 import type { CosmosClientManager } from './client.js';
 import { DEFAULT_GAS_MULTIPLIER } from './config.js';
-import { getQueryHandler, getTxHandler, getTxMsgBuilder } from './modules.js';
+import {
+  getQueryHandler,
+  getTxContextLoader,
+  getTxHandler,
+  getTxMsgBuilder,
+} from './modules.js';
 import { withRetry } from './retry.js';
 import {
   type CosmosQueryResult,
@@ -19,38 +24,48 @@ import {
 const VALID_NAME_PATTERN = /^[a-zA-Z0-9_][a-zA-Z0-9_-]*$/;
 
 /**
- * Subcommands that read existing chain state to preserve fields the caller
- * did not explicitly override. Listing them here keeps the cost (one extra
- * query per matching tx) opt-in instead of paid by every tx.
- */
-function needsBuildContext(module: string, subcommand: string): boolean {
-  return module === 'billing' && subcommand === 'update-params';
-}
-
-/**
- * Fetch the chain state required to build messages for `(module, subcommand)`.
- * Returns `undefined` when no state is needed.
+ * Resolve and run the `TxBuildContext` loader registered for `(module,
+ * subcommand)` in `TX_MODULES`. Returns `undefined` when no loader is
+ * registered (the common case) so the caller can short-circuit and skip the
+ * chain read.
  *
- * Fails fast with `QUERY_FAILED` when the targeted state is missing — a silent
- * fallback would let the builder fill list fields with `[]`, defeating the
- * preserve-by-default semantics this hook is meant to enable.
+ * Acquires a rate-limit token before the loader runs so each extra RPC is
+ * counted against the same budget every other RPC respects, and wraps any
+ * non-`ManifestMCPError` failure as `QUERY_FAILED` with `{module, subcommand}`
+ * details for symmetric error classification on both broadcast and estimate
+ * paths.
  */
 async function loadBuildContext(
   clientManager: CosmosClientManager,
   module: string,
   subcommand: string,
 ): Promise<TxBuildContext | undefined> {
-  if (!needsBuildContext(module, subcommand)) return undefined;
+  const loader = getTxContextLoader(module, subcommand);
+  if (!loader) return undefined;
+
+  await clientManager.acquireRateLimit();
   const queryClient = await clientManager.getQueryClient();
-  const result = await queryClient.liftedinit.billing.v1.params({});
-  if (!result.params) {
+  try {
+    return await loader(queryClient);
+  } catch (error) {
+    if (error instanceof ManifestMCPError) {
+      if (!error.details?.module) {
+        throw new ManifestMCPError(error.code, error.message, {
+          ...error.details,
+          module,
+          subcommand,
+        });
+      }
+      throw error;
+    }
     throw new ManifestMCPError(
       ManifestMCPErrorCode.QUERY_FAILED,
-      `Failed to load current billing params required for ${module} ${subcommand}: response.params was empty.`,
+      `Failed to load build context for ${module} ${subcommand}: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
       { module, subcommand },
     );
   }
-  return { currentBillingParams: result.params };
 }
 
 /**
