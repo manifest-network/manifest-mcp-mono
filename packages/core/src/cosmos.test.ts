@@ -469,6 +469,32 @@ describe('cosmosTx', () => {
       undefined,
     );
   });
+
+  it('fails fast with QUERY_FAILED when billing params response has no params for update-params', async () => {
+    // Defensive guard: an empty params field would otherwise let the builder
+    // fall back to []/[] and silently clear the chain — exactly the bug
+    // preserve-by-default is supposed to prevent.
+    const billingParams = vi.fn().mockResolvedValue({ params: undefined });
+    clientManager.getQueryClient.mockResolvedValue({
+      liftedinit: { billing: { v1: { params: billingParams } } },
+    });
+    const mockHandler = vi.fn();
+    mockGetTxHandler.mockReturnValue(mockHandler);
+
+    await expect(
+      cosmosTx(clientManager, 'billing', 'update-params', [
+        '10',
+        '5',
+        '3600',
+        '2',
+        '300',
+      ]),
+    ).rejects.toSatisfy((error: unknown) => {
+      if (!(error instanceof ManifestMCPError)) return false;
+      return error.code === ManifestMCPErrorCode.QUERY_FAILED;
+    });
+    expect(mockHandler).not.toHaveBeenCalled();
+  });
 });
 
 describe('cosmosEstimateFee', () => {
@@ -550,6 +576,39 @@ describe('cosmosEstimateFee', () => {
       'manifest1sender',
       expect.any(Array),
       'hello',
+    );
+  });
+
+  it('threads currentBillingParams as TxBuildContext for billing update-params', async () => {
+    const onChainParams = {
+      maxLeasesPerTenant: 9n,
+      maxItemsPerLease: 9n,
+      minLeaseDuration: 9n,
+      maxPendingLeasesPerTenant: 9n,
+      pendingTimeout: 9n,
+      allowedList: ['manifest1existing'],
+      reservedDomainSuffixes: ['.preserved.test'],
+    };
+    const billingParams = vi.fn().mockResolvedValue({ params: onChainParams });
+    clientManager.getQueryClient.mockResolvedValue({
+      liftedinit: { billing: { v1: { params: billingParams } } },
+    });
+    const mockBuilder = setupHappyPath();
+
+    await cosmosEstimateFee(clientManager, 'billing', 'update-params', [
+      '10',
+      '5',
+      '3600',
+      '2',
+      '300',
+    ]);
+
+    expect(billingParams).toHaveBeenCalledOnce();
+    expect(mockBuilder).toHaveBeenCalledWith(
+      'manifest1sender',
+      'update-params',
+      ['10', '5', '3600', '2', '300'],
+      { currentBillingParams: onChainParams },
     );
   });
 

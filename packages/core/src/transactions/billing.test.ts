@@ -307,4 +307,30 @@ describe('buildBillingMessages — update-params', () => {
       }),
     });
   });
+
+  it('asymmetric: setting --reserved-suffix preserves on-chain allowedList when no positional addresses are passed', () => {
+    const currentBillingParams = {
+      maxLeasesPerTenant: 9n,
+      maxItemsPerLease: 9n,
+      minLeaseDuration: 9n,
+      maxPendingLeasesPerTenant: 9n,
+      pendingTimeout: 60n,
+      allowedList: [TENANT],
+      reservedDomainSuffixes: ['.preserved.example'],
+    };
+
+    const { messages } = buildBillingMessages(
+      SENDER,
+      'update-params',
+      [...NUMERIC_ARGS, '--reserved-suffix', '.new.test'],
+      { currentBillingParams },
+    );
+
+    expect(messages[0].value).toMatchObject({
+      params: expect.objectContaining({
+        reservedDomainSuffixes: ['.new.test'],
+        allowedList: [TENANT],
+      }),
+    });
+  });
 });

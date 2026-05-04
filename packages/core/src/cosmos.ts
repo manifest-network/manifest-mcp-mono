@@ -30,6 +30,10 @@ function needsBuildContext(module: string, subcommand: string): boolean {
 /**
  * Fetch the chain state required to build messages for `(module, subcommand)`.
  * Returns `undefined` when no state is needed.
+ *
+ * Fails fast with `QUERY_FAILED` when the targeted state is missing — a silent
+ * fallback would let the builder fill list fields with `[]`, defeating the
+ * preserve-by-default semantics this hook is meant to enable.
  */
 async function loadBuildContext(
   clientManager: CosmosClientManager,
@@ -39,6 +43,13 @@ async function loadBuildContext(
   if (!needsBuildContext(module, subcommand)) return undefined;
   const queryClient = await clientManager.getQueryClient();
   const result = await queryClient.liftedinit.billing.v1.params({});
+  if (!result.params) {
+    throw new ManifestMCPError(
+      ManifestMCPErrorCode.QUERY_FAILED,
+      `Failed to load current billing params required for ${module} ${subcommand}: response.params was empty.`,
+      { module, subcommand },
+    );
+  }
   return { currentBillingParams: result.params };
 }
 

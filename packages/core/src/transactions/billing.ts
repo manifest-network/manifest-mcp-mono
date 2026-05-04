@@ -387,7 +387,15 @@ export function buildBillingMessages(
         typeUrl: '/liftedinit.billing.v1.MsgUpdateParams',
         value: MsgUpdateParams.fromPartial({
           authority: senderAddress,
+          // Spread `currentParams` first so any future Params field the
+          // codegen and chain agree on is preserved by default; explicit
+          // overrides win. Note: `fromPartial` only copies fields the
+          // codegen knows about, so this defends the version-aligned case
+          // (manifestjs upgraded ahead of new chain fields) but cannot help
+          // a stale client whose codegen lacks the new field — keep
+          // manifestjs in sync with manifest-ledger to stay safe.
           params: {
+            ...(currentParams ?? {}),
             maxLeasesPerTenant: parseBigInt(
               maxLeasesPerTenantStr,
               'max-leases-per-tenant',
