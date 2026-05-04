@@ -374,4 +374,66 @@ describe('Billing custom-domain', () => {
       );
     }
   });
+
+  // ------------------------------------------------------------------
+  // 6. Combined flow — deploy_app with `custom_domain` in one call
+  //
+  // Verifies the orchestration in `deployApp` slots the
+  // MsgSetItemCustomDomain tx between create-lease and the manifest
+  // upload, and that the resulting lease shows up in the reverse-index
+  // immediately on return. Independent setup/teardown so it doesn't
+  // entangle with the staged tests above.
+  // ------------------------------------------------------------------
+  describe('deploy_app + custom_domain (single-call orchestration)', () => {
+    const FQDN_VIA_DEPLOY = `deploy-${RUN_TAG}.e2e.test`;
+    let combinedLeaseUuid: string;
+
+    it('deploy_app accepts custom_domain and surfaces it on the result', async () => {
+      if (!chainSupportsCustomDomain) return;
+      const result = await fredClient.callTool<{
+        lease_uuid: string;
+        state: LeaseState;
+        custom_domain?: string;
+        service_name?: string;
+      }>('deploy_app', {
+        image: 'nginxinc/nginx-unprivileged:alpine',
+        port: 8080,
+        size: 'docker-micro',
+        custom_domain: FQDN_VIA_DEPLOY,
+      });
+      expect(result.state).toBe(LeaseState.LEASE_STATE_ACTIVE);
+      expect(result.custom_domain).toBe(FQDN_VIA_DEPLOY);
+      // 1-item legacy lease (image+port) — service_name not echoed.
+      expect(result.service_name).toBeUndefined();
+      combinedLeaseUuid = result.lease_uuid;
+      // Settle one block for the index update to surface through the LCD.
+      await sleep(1_000);
+    });
+
+    it('lease_by_custom_domain finds the lease set by the combined call', async () => {
+      if (!chainSupportsCustomDomain) return;
+      const result = await leaseClient.callTool<{
+        lease: { uuid: string };
+      }>('lease_by_custom_domain', { custom_domain: FQDN_VIA_DEPLOY });
+      expect(result.lease.uuid).toBe(combinedLeaseUuid);
+    });
+
+    it('cleanup: close_lease terminates the combined-flow lease', async () => {
+      if (!combinedLeaseUuid) return;
+      try {
+        const result = await leaseClient.callTool<{
+          lease_uuid: string;
+          status: string;
+        }>('close_lease', { lease_uuid: combinedLeaseUuid });
+        expect(result.lease_uuid).toBe(combinedLeaseUuid);
+        expect(result.status).toBe('stopped');
+      } catch (err) {
+        const code = parseToolErrorCode(err);
+        if (code !== 'TX_FAILED') throw err;
+        console.warn(
+          `[billing-custom-domain] combined close_lease rejected (already terminal?): ${err}`,
+        );
+      }
+    });
+  });
 });

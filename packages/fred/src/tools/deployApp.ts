@@ -13,6 +13,7 @@ import {
   ManifestMCPErrorCode,
   requireUuid,
   sanitizeForLogging,
+  setItemCustomDomain,
 } from '@manifest-network/manifest-mcp-core';
 import type { FredLeaseStatus, PollOptions } from '../http/fred.js';
 import { pollLeaseUntilReady, TerminalChainStateError } from '../http/fred.js';
@@ -130,6 +131,22 @@ export interface DeployAppInput {
   depends_on?: Record<string, { condition: string }>;
   services?: Record<string, ServiceConfig>;
   gasMultiplier?: number;
+  /**
+   * Optional FQDN to attach to the lease item once the create-lease tx
+   * confirms. The set-domain tx is submitted after `onLeaseCreated` fires
+   * and before the manifest upload, so providerd has the domain available
+   * when it provisions the container. Failures here surface as the same
+   * "Deploy partially succeeded: lease X was created..." error shape as
+   * upload/poll failures — the caller can `close_lease` to clean up or
+   * retry `set_item_custom_domain` standalone.
+   */
+  customDomain?: string;
+  /**
+   * Required when `customDomain` is set on a stack lease (i.e., `services`
+   * is provided). Must match one of the keys in `services`. Omit for an
+   * image+port single-item legacy lease.
+   */
+  serviceName?: string;
   /** Fires once after the create-lease TX confirms, before upload/poll. Awaited. Errors propagate. */
   onLeaseCreated?: (
     leaseUuid: string,
@@ -149,6 +166,10 @@ export interface DeployAppResult {
   readonly url?: string;
   readonly connection?: ConnectionDetails;
   readonly connectionError?: string;
+  /** Set when a `customDomain` was supplied AND the set-domain tx succeeded. */
+  readonly custom_domain?: string;
+  /** Set when a `serviceName` was supplied alongside a successful `customDomain` set. */
+  readonly service_name?: string;
 }
 
 export async function deployApp(
@@ -180,6 +201,48 @@ export async function deployApp(
       ManifestMCPErrorCode.INVALID_CONFIG,
       'port is required when using image',
     );
+  }
+
+  // Validate custom-domain inputs eagerly, before any chain tx, so a
+  // misconfigured deploy doesn't leave a paid-for lease behind.
+  // The chain still validates FQDN format and reserved-suffix rules
+  // (`IsValidFQDN`, `MatchesReservedSuffix`) when the set-domain tx
+  // arrives — we just catch the obvious shape mistakes up-front.
+  if (input.customDomain !== undefined) {
+    const trimmedDomain = input.customDomain.trim();
+    if (trimmedDomain === '') {
+      throw new ManifestMCPError(
+        ManifestMCPErrorCode.INVALID_CONFIG,
+        'customDomain cannot be empty or whitespace-only',
+      );
+    }
+    if (input.services) {
+      if (!input.serviceName) {
+        throw new ManifestMCPError(
+          ManifestMCPErrorCode.INVALID_CONFIG,
+          'serviceName is required when setting customDomain on a stack lease (services); pick one of the service keys',
+        );
+      }
+      // `in` checks own + inherited keys, but `services` is a zod-validated
+      // plain object literal here, so prototype keys aren't a concern. Avoids
+      // ES2022's `Object.hasOwn` (the base tsconfig targets ES2020) and
+      // biome's `noPrototypeBuiltins` warning on `hasOwnProperty.call`.
+      if (!(input.serviceName in input.services)) {
+        const available = Object.keys(input.services).join(', ');
+        throw new ManifestMCPError(
+          ManifestMCPErrorCode.INVALID_CONFIG,
+          `serviceName "${input.serviceName}" does not match any service in the deployment. Available: ${available}`,
+        );
+      }
+    } else if (input.serviceName) {
+      // image+port mode — the underlying lease has a single legacy item
+      // with service_name="". Passing a service_name here would address
+      // a non-existent item on the chain.
+      throw new ManifestMCPError(
+        ManifestMCPErrorCode.INVALID_CONFIG,
+        'serviceName must not be set on an image+port (legacy 1-item) lease — omit it or switch to services mode',
+      );
+    }
   }
 
   const address = await clientManager.getAddress();
@@ -289,7 +352,25 @@ export async function deployApp(
   try {
     input.abortSignal?.throwIfAborted();
 
-    // 7. Upload manifest with lease-data auth token
+    // 7. Optionally attach custom_domain to the freshly-created lease.
+    //    Submitted before the manifest upload so providerd has the domain
+    //    available when it provisions. Failures here flow through the
+    //    same partial-success error wrap below as upload/poll failures.
+    //    The chain accepts MsgSetItemCustomDomain in PENDING or ACTIVE
+    //    state; if providerd races and rejects the lease before this
+    //    tx lands, the chain auto-clears the index entry so no stuck
+    //    state is left behind.
+    if (input.customDomain) {
+      await setItemCustomDomain(
+        clientManager,
+        leaseUuid,
+        input.customDomain,
+        { serviceName: input.serviceName },
+        overrides,
+      );
+    }
+
+    // 8. Upload manifest with lease-data auth token
     const leaseDataToken = await getLeaseDataAuthToken(
       address,
       leaseUuid,
@@ -304,7 +385,7 @@ export async function deployApp(
       input.abortSignal,
     );
 
-    // 8. Poll until ready
+    // 9. Poll until ready
     status = await pollLeaseUntilReady(
       providerUrl,
       leaseUuid,
@@ -383,5 +464,11 @@ export async function deployApp(
     ...(url && { url }),
     ...(connection && { connection }),
     ...(connectionError && { connectionError }),
+    // Reaching this return implies the set-domain tx (if requested)
+    // succeeded — failures earlier in the try block throw and never
+    // get here.
+    ...(input.customDomain && { custom_domain: input.customDomain }),
+    ...(input.customDomain &&
+      input.serviceName && { service_name: input.serviceName }),
   };
 }
