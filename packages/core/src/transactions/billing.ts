@@ -45,9 +45,13 @@ const {
  *
  * `context.currentBillingParams` is consulted by `update-params` so omitted
  * `allowedList` and `reservedDomainSuffixes` preserve their on-chain values
- * instead of being silently cleared. When the context is unavailable (e.g.
- * estimating fees before the chain is reachable), the builder falls back to
- * the explicit-only behavior — empty when not provided.
+ * instead of being silently cleared. The public broadcast and estimate paths
+ * (`cosmosTx`, `cosmosEstimateFee`) always fetch and supply this context for
+ * `update-params` and fail fast with `QUERY_FAILED` if the params query
+ * returns nothing — so the no-context branch below is only exercised by
+ * direct callers of this builder (typically tests). Those callers see
+ * explicit-only behaviour: any list field they did not supply is sent as
+ * `[]`, which would clear the on-chain value.
  */
 export function buildBillingMessages(
   senderAddress: string,
@@ -460,6 +464,16 @@ export function buildBillingMessages(
       }
 
       const [leaseUuid, customDomainArg] = positional;
+      if (
+        !clearing &&
+        (customDomainArg === undefined || customDomainArg.trim() === '')
+      ) {
+        throw new ManifestMCPError(
+          ManifestMCPErrorCode.TX_FAILED,
+          'billing set-item-custom-domain: <custom-domain> cannot be empty. ' +
+            'Pass a non-empty FQDN to set, or use --clear to remove the existing domain.',
+        );
+      }
       const customDomain = clearing ? '' : customDomainArg;
 
       const serviceName = serviceNameFlag.value ?? '';

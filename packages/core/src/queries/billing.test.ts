@@ -132,6 +132,21 @@ describe('routeBillingQuery', () => {
       expect(result).toMatchObject({ serviceName: '' });
     });
 
+    it('rejects an empty <custom-domain> arg before querying the chain', async () => {
+      const qc = makeMockBillingClient();
+      const billingParams = (
+        qc as {
+          liftedinit: {
+            billing: { v1: { leaseByCustomDomain: ReturnType<typeof vi.fn> } };
+          };
+        }
+      ).liftedinit.billing.v1.leaseByCustomDomain;
+      await expect(
+        routeBillingQuery(qc, 'lease-by-custom-domain', ['']),
+      ).rejects.toThrow(/cannot be empty/);
+      expect(billingParams).not.toHaveBeenCalled();
+    });
+
     it('throws when custom-domain arg is missing', async () => {
       const qc = makeMockBillingClient();
       await expect(

@@ -163,4 +163,61 @@ describe('setItemCustomDomain', () => {
       setItemCustomDomain(cm as any, LEASE_UUID, 'taken.example.com'),
     ).rejects.toThrow(ManifestMCPError);
   });
+
+  it('rejects an empty customDomain when not clearing (would silently clear on chain)', async () => {
+    const cm = makeMockClientManager();
+
+    await expect(
+      setItemCustomDomain(cm as any, LEASE_UUID, ''),
+    ).rejects.toSatisfy((error: unknown) => {
+      if (!(error instanceof ManifestMCPError)) return false;
+      return (
+        error.code === ManifestMCPErrorCode.TX_FAILED &&
+        /cannot be empty/.test(error.message) &&
+        /clear/.test(error.message)
+      );
+    });
+    expect(mockCosmosTx).not.toHaveBeenCalled();
+  });
+
+  it('rejects a whitespace-only customDomain when not clearing', async () => {
+    const cm = makeMockClientManager();
+
+    await expect(
+      setItemCustomDomain(cm as any, LEASE_UUID, '   '),
+    ).rejects.toThrow(ManifestMCPError);
+    expect(mockCosmosTx).not.toHaveBeenCalled();
+  });
+
+  it('still allows clearing with an empty customDomain when options.clear is true', async () => {
+    const cm = makeMockClientManager();
+
+    await setItemCustomDomain(cm as any, LEASE_UUID, '', { clear: true });
+
+    expect(mockCosmosTx).toHaveBeenCalledWith(
+      cm,
+      'billing',
+      'set-item-custom-domain',
+      [LEASE_UUID, '--clear'],
+      true,
+      undefined,
+    );
+  });
+
+  it('rejects clear=true combined with a non-empty customDomain (mirrors the MCP tool mutual-exclusion rule)', async () => {
+    const cm = makeMockClientManager();
+
+    await expect(
+      setItemCustomDomain(cm as any, LEASE_UUID, 'app.example.com', {
+        clear: true,
+      }),
+    ).rejects.toSatisfy((error: unknown) => {
+      if (!(error instanceof ManifestMCPError)) return false;
+      return (
+        error.code === ManifestMCPErrorCode.TX_FAILED &&
+        /not both/.test(error.message)
+      );
+    });
+    expect(mockCosmosTx).not.toHaveBeenCalled();
+  });
 });

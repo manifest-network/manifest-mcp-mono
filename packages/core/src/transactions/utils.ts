@@ -76,8 +76,15 @@ export interface ExtractedRepeatedFlag {
 }
 
 /**
- * Extract every occurrence of a repeated flag from args (e.g., `--reserved-suffix .a.com --reserved-suffix .b.com`).
- * Returns an empty values list if the flag never appears.
+ * Extract every occurrence of a repeated flag from args (e.g.,
+ * `--reserved-suffix .a.com --reserved-suffix .b.com`).
+ *
+ * Returns an empty `values` list when the flag never appears. Throws
+ * `errorCode` (default `TX_FAILED`) when any occurrence is missing its value
+ * or is followed by another flag, matching the missing-value semantics of
+ * `extractFlag`. Duplicates are intentionally permitted — this is the entire
+ * point of the helper — and `consumedIndices` covers every flag-and-value
+ * pair so the caller can pass it through `filterConsumedArgs`.
  */
 export function extractRepeatedFlag(
   args: string[],

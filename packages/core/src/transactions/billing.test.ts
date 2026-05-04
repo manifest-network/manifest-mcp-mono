@@ -101,6 +101,27 @@ describe('buildBillingMessages — set-item-custom-domain', () => {
     ).toThrow();
   });
 
+  it('rejects an empty positional <custom-domain> without --clear (would silently clear on chain)', () => {
+    try {
+      buildBillingMessages(SENDER, 'set-item-custom-domain', [LEASE_UUID, '']);
+      expect.fail('should have thrown');
+    } catch (e) {
+      expect(e).toBeInstanceOf(ManifestMCPError);
+      expect((e as ManifestMCPError).code).toBe(ManifestMCPErrorCode.TX_FAILED);
+      expect((e as ManifestMCPError).message).toContain('cannot be empty');
+      expect((e as ManifestMCPError).message).toContain('--clear');
+    }
+  });
+
+  it('rejects whitespace-only <custom-domain> without --clear', () => {
+    expect(() =>
+      buildBillingMessages(SENDER, 'set-item-custom-domain', [
+        LEASE_UUID,
+        '   ',
+      ]),
+    ).toThrow(ManifestMCPError);
+  });
+
   it('rejects --clear combined with a positional <custom-domain> instead of silently clearing', () => {
     try {
       buildBillingMessages(SENDER, 'set-item-custom-domain', [
@@ -330,6 +351,32 @@ describe('buildBillingMessages — update-params', () => {
       params: expect.objectContaining({
         reservedDomainSuffixes: ['.new.test'],
         allowedList: [TENANT],
+      }),
+    });
+  });
+
+  it('asymmetric: setting positional <allowed-address> preserves on-chain reservedDomainSuffixes when --reserved-suffix is not supplied', () => {
+    const currentBillingParams = {
+      maxLeasesPerTenant: 9n,
+      maxItemsPerLease: 9n,
+      minLeaseDuration: 9n,
+      maxPendingLeasesPerTenant: 9n,
+      pendingTimeout: 60n,
+      allowedList: ['manifest1existing'],
+      reservedDomainSuffixes: ['.preserved.example'],
+    };
+
+    const { messages } = buildBillingMessages(
+      SENDER,
+      'update-params',
+      [...NUMERIC_ARGS, TENANT],
+      { currentBillingParams },
+    );
+
+    expect(messages[0].value).toMatchObject({
+      params: expect.objectContaining({
+        allowedList: [TENANT],
+        reservedDomainSuffixes: ['.preserved.example'],
       }),
     });
   });

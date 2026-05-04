@@ -290,12 +290,16 @@ export async function cosmosEstimateFee(
           ? clientMultiplier
           : DEFAULT_GAS_MULTIPLIER);
 
+      // Load chain state outside the try/catch so a params-fetch failure is
+      // not relabelled as SIMULATION_FAILED — mirrors `cosmosTx` placement
+      // and lets `loadBuildContext`'s structured `QUERY_FAILED` propagate.
+      const buildContext = await loadBuildContext(
+        clientManager,
+        module,
+        subcommand,
+      );
+
       try {
-        const buildContext = await loadBuildContext(
-          clientManager,
-          module,
-          subcommand,
-        );
         const built = builder(senderAddress, subcommand, args, buildContext);
         const gasEstimate = await signingClient.simulate(
           senderAddress,

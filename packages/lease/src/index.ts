@@ -351,7 +351,7 @@ export class LeaseMCPServer {
             .string()
             .optional()
             .describe(
-              'FQDN to assign (e.g. "app.example.com"). Mutually exclusive with `clear: true`. The chain validates format, lowercase, and reserved-suffix rules.',
+              'FQDN to assign (e.g. "app.example.com"). Mutually exclusive with `clear: true`; an empty/missing value without `clear: true` is rejected. The chain validates format, lowercase, and reserved-suffix rules.',
             ),
           service_name: z
             .string()

@@ -1,16 +1,18 @@
 import type { ManifestQueryClient } from '../client.js';
 import { throwUnsupportedSubcommand } from '../modules.js';
-import type {
-  BillingParamsResult,
-  CreditAccountResult,
-  CreditAccountsResult,
-  CreditAddressResult,
-  CreditEstimateResult,
-  LeaseByCustomDomainResult,
-  LeaseResult,
-  LeasesResult,
-  ProviderWithdrawableResult,
-  WithdrawableAmountResult,
+import {
+  type BillingParamsResult,
+  type CreditAccountResult,
+  type CreditAccountsResult,
+  type CreditAddressResult,
+  type CreditEstimateResult,
+  type LeaseByCustomDomainResult,
+  type LeaseResult,
+  type LeasesResult,
+  ManifestMCPError,
+  ManifestMCPErrorCode,
+  type ProviderWithdrawableResult,
+  type WithdrawableAmountResult,
 } from '../types.js';
 import { extractPaginationArgs, requireArgs } from './utils.js';
 
@@ -184,6 +186,12 @@ export async function routeBillingQuery(
     case 'lease-by-custom-domain': {
       requireArgs(args, 1, ['custom-domain'], 'billing lease-by-custom-domain');
       const [customDomain] = args;
+      if (!customDomain || customDomain.trim() === '') {
+        throw new ManifestMCPError(
+          ManifestMCPErrorCode.QUERY_FAILED,
+          'billing lease-by-custom-domain: <custom-domain> cannot be empty.',
+        );
+      }
       const result = await billing.leaseByCustomDomain({ customDomain });
       return { lease: result.lease, serviceName: result.serviceName };
     }

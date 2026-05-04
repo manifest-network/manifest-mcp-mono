@@ -805,13 +805,17 @@ const TX_MODULES: TxModuleRegistry = {
           'Update billing module parameters (governance). List-typed fields ' +
           '(allowed_list, reserved_domain_suffixes) preserve their on-chain ' +
           'values when not explicitly overridden; pass --clear-allowed-list ' +
-          'or --clear-reserved-suffixes to clear them.',
+          'or --clear-reserved-suffixes to clear them. Mutually exclusive: ' +
+          'positional <allowed-address> with --clear-allowed-list, and ' +
+          '--reserved-suffix with --clear-reserved-suffixes.',
         args: '<max-leases-per-tenant> <max-items-per-lease> <min-lease-duration> <max-pending-leases-per-tenant> <pending-timeout> [<allowed-address>...] [--clear-allowed-list] [--reserved-suffix <.example.com>...] [--clear-reserved-suffixes]',
       },
       {
         name: 'set-item-custom-domain',
         description:
-          'Set or clear the custom_domain on a lease item (signer must be tenant, authority, or in params.allowed_list)',
+          'Set or clear the custom_domain on a lease item (signer must be tenant, authority, or in params.allowed_list). ' +
+          '<custom-domain> must be non-empty when not using --clear; --service-name (when supplied) must be a valid RFC 1123 DNS label. ' +
+          '<custom-domain> and --clear are mutually exclusive.',
         args: '<lease-uuid> <custom-domain> [--service-name <name>] OR <lease-uuid> --clear [--service-name <name>]',
       },
     ],
