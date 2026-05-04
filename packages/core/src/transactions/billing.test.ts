@@ -143,13 +143,34 @@ describe('buildBillingMessages — set-item-custom-domain', () => {
   });
 
   it('rejects extra positional args without --clear', () => {
-    expect(() =>
+    try {
       buildBillingMessages(SENDER, 'set-item-custom-domain', [
         LEASE_UUID,
         'app.example.com',
         'extra-positional',
-      ]),
-    ).toThrow(ManifestMCPError);
+      ]);
+      expect.fail('should have thrown');
+    } catch (e) {
+      expect(e).toBeInstanceOf(ManifestMCPError);
+      expect((e as ManifestMCPError).code).toBe(
+        ManifestMCPErrorCode.INVALID_CONFIG,
+      );
+      expect((e as ManifestMCPError).message).toContain('extra-positional');
+    }
+  });
+
+  it('trims surrounding whitespace on the positional <custom-domain> before assigning to MsgSetItemCustomDomain', () => {
+    // Pinned by c9cf3e1: direct `cosmos_tx billing set-item-custom-domain`
+    // callers ship the same canonical FQDN as MCP-routed callers.
+    const { messages } = buildBillingMessages(
+      SENDER,
+      'set-item-custom-domain',
+      [LEASE_UUID, '  app.example.com  '],
+    );
+    expect(messages[0].value).toMatchObject({
+      leaseUuid: LEASE_UUID,
+      customDomain: 'app.example.com',
+    });
   });
 
   it('rejects --service-name that is not a valid RFC 1123 DNS label', () => {

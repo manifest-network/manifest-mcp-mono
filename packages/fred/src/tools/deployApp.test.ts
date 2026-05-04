@@ -772,6 +772,45 @@ describe('deployApp', () => {
       expect(result.service_name).toBe('web');
     });
 
+    it('trims surrounding whitespace before forwarding to setItemCustomDomain and echoing on the result', async () => {
+      // Pinned by c9cf3e1: a regression that drops the trim would ship
+      // " app.example.com " bytes to the chain, which IsValidFQDN
+      // rejects → orphaned paid-for lease via the partial-success wrap.
+      const qc = makeQueryClient();
+      const cm = makeMockClientManager({
+        queryClient: qc,
+        address: 'manifest1tenant',
+      });
+      mockSetItemCustomDomain.mockResolvedValueOnce({
+        lease_uuid: '550e8400-e29b-41d4-a716-446655440000',
+        service_name: '',
+        custom_domain: 'app.example.com',
+        transactionHash: 'TX2',
+        code: 0,
+      });
+
+      const result = await deployApp(
+        cm as any,
+        mockGetAuthToken,
+        mockGetLeaseDataAuthToken,
+        {
+          image: 'nginx:alpine',
+          port: 80,
+          size: 'docker-micro',
+          customDomain: '  app.example.com  ',
+        },
+      );
+
+      expect(mockSetItemCustomDomain).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.any(String),
+        'app.example.com',
+        { serviceName: undefined },
+        undefined,
+      );
+      expect(result.custom_domain).toBe('app.example.com');
+    });
+
     it('rejects empty/whitespace-only customDomain before any chain tx', async () => {
       const qc = makeQueryClient();
       const cm = makeMockClientManager({ queryClient: qc });
@@ -814,6 +853,35 @@ describe('deployApp', () => {
           serviceName: 'nope',
         }),
       ).rejects.toThrow(/does not match any service/);
+      expect(mockCosmosTx).not.toHaveBeenCalled();
+    });
+
+    it('rejects serviceName matching a prototype key (regression for the `in` operator bypass)', async () => {
+      // Pinned by c9cf3e1: `'constructor' in {}` returns true, so a
+      // refactor back to `if (serviceName in services)` would silently
+      // accept a prototype key on a stack lease whose `services` map
+      // doesn't define a same-named entry — sailing through create-lease
+      // and only failing at the set-domain tx (orphaned paid-for lease).
+      // The fix uses Object.keys(services).includes(serviceName) which
+      // checks own enumerable string keys only.
+      const qc = makeQueryClient();
+      const cm = makeMockClientManager({ queryClient: qc });
+
+      for (const protoKey of [
+        'constructor',
+        'toString',
+        'hasOwnProperty',
+        '__proto__',
+      ]) {
+        await expect(
+          deployApp(cm as any, mockGetAuthToken, mockGetLeaseDataAuthToken, {
+            size: 'docker-micro',
+            services: { web: { image: 'nginx' } },
+            customDomain: 'app.example.com',
+            serviceName: protoKey,
+          }),
+        ).rejects.toThrow(/does not match any service/);
+      }
       expect(mockCosmosTx).not.toHaveBeenCalled();
     });
 

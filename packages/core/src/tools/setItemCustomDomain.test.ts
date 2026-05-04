@@ -189,6 +189,30 @@ describe('setItemCustomDomain', () => {
     expect(mockCosmosTx).not.toHaveBeenCalled();
   });
 
+  it('trims surrounding whitespace on a non-empty customDomain before forwarding to cosmosTx and on the result echo', async () => {
+    // Direct library callers (not routed through deployApp / lease MCP
+    // which trim at their own boundaries) get the same canonicalization
+    // here, so the chain receives consistent bytes regardless of entry
+    // point. Belt-and-suspenders: the CLI builder also trims.
+    const cm = makeMockClientManager();
+
+    const result = await setItemCustomDomain(
+      cm as any,
+      LEASE_UUID,
+      '  app.example.com  ',
+    );
+
+    expect(mockCosmosTx).toHaveBeenCalledWith(
+      cm,
+      'billing',
+      'set-item-custom-domain',
+      [LEASE_UUID, 'app.example.com'],
+      true,
+      undefined,
+    );
+    expect(result.custom_domain).toBe('app.example.com');
+  });
+
   it('still allows clearing with an empty customDomain when options.clear is true', async () => {
     const cm = makeMockClientManager();
 

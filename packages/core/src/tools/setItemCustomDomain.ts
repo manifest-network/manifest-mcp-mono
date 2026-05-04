@@ -37,10 +37,14 @@ export interface SetItemCustomDomainResult {
  * input contract so library consumers and MCP clients see consistent
  * validation:
  *
- * - `customDomain` is rejected (`TX_FAILED`) when non-empty and `options.clear`
- *   is also true (mutual exclusion), or when empty/whitespace-only and
- *   `options.clear` is not true (silent on-chain clear is what
- *   preserve-by-default exists to prevent).
+ * - `customDomain` is rejected (`INVALID_CONFIG`) when non-empty and
+ *   `options.clear` is also true (mutual exclusion), or when empty/
+ *   whitespace-only and `options.clear` is not true (the chain accepts
+ *   `customDomain == ""` as the canonical clear form, so a missing
+ *   `--clear` flag would silently clear instead of rejecting).
+ * - Surrounding whitespace on a non-empty `customDomain` is trimmed
+ *   before forwarding to the chain, so both library callers and the
+ *   `cosmos_tx`-routed CLI form ship the same canonical FQDN.
  * - The chain validates FQDN format and reserved-suffix rules; the helper
  *   does not duplicate that check.
  *
@@ -69,11 +73,17 @@ export async function setItemCustomDomain(
     );
   }
 
+  // Canonicalize: forward and echo the trimmed form so direct library
+  // callers (who didn't pre-trim like the lease MCP tool / deploy_app do)
+  // ship identical bytes to the chain. The CLI builder also trims as a
+  // belt-and-suspenders for direct `cosmos_tx` callers.
+  const normalizedDomain = clearing ? '' : customDomain.trim();
+
   const args: string[] = [leaseUuid];
   if (clearing) {
     args.push('--clear');
   } else {
-    args.push(customDomain);
+    args.push(normalizedDomain);
   }
   if (options?.serviceName) {
     args.push('--service-name', options.serviceName);
@@ -91,7 +101,7 @@ export async function setItemCustomDomain(
   return {
     lease_uuid: leaseUuid,
     service_name: options?.serviceName ?? '',
-    custom_domain: clearing ? '' : customDomain,
+    custom_domain: normalizedDomain,
     transactionHash: result.transactionHash,
     code: result.code,
   };

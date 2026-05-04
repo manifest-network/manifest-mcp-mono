@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { ManifestMCPError, ManifestMCPErrorCode } from '../types.js';
 import { routeBillingQuery } from './billing.js';
 
 function makeMockBillingClient(overrides?: {
@@ -132,7 +133,7 @@ describe('routeBillingQuery', () => {
       expect(result).toMatchObject({ serviceName: '' });
     });
 
-    it('rejects an empty <custom-domain> arg before querying the chain', async () => {
+    it('rejects an empty <custom-domain> arg with INVALID_CONFIG before querying the chain', async () => {
       const qc = makeMockBillingClient();
       const billingParams = (
         qc as {
@@ -143,7 +144,13 @@ describe('routeBillingQuery', () => {
       ).liftedinit.billing.v1.leaseByCustomDomain;
       await expect(
         routeBillingQuery(qc, 'lease-by-custom-domain', ['']),
-      ).rejects.toThrow(/cannot be empty/);
+      ).rejects.toSatisfy((error: unknown) => {
+        if (!(error instanceof ManifestMCPError)) return false;
+        return (
+          error.code === ManifestMCPErrorCode.INVALID_CONFIG &&
+          /cannot be empty/.test(error.message)
+        );
+      });
       expect(billingParams).not.toHaveBeenCalled();
     });
 

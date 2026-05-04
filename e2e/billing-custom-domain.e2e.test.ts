@@ -436,6 +436,37 @@ describe('Billing custom-domain', () => {
       }
     });
 
+    it('rejects an empty custom_domain client-side without creating a lease (INVALID_CONFIG)', async () => {
+      // The eager-validation block in deployApp.ts fires before any
+      // chain tx. A regression that drops the check would be caught
+      // by the unit test, but only this e2e test verifies the real
+      // fred MCP server's argument plumbing keeps the rejection
+      // structured. Skip-if-feature-absent because we need the chain
+      // index to be queryable for the lease-count baseline.
+      if (!chainSupportsCustomDomain) return;
+
+      // Snapshot lease count before — must not change after the rejected
+      // call, since the validation runs before create-lease.
+      const before = await leaseClient.callTool<{
+        leases: Array<{ uuid: string }>;
+      }>('leases_by_tenant', {});
+      const beforeCount = before.leases.length;
+
+      const err = await fredClient.callToolExpectError('deploy_app', {
+        image: 'nginxinc/nginx-unprivileged:alpine',
+        port: 8080,
+        size: 'docker-micro',
+        custom_domain: '   ',
+      });
+      expect(err.code).toBe('INVALID_CONFIG');
+      expect(err.message).toMatch(/cannot be empty/);
+
+      const after = await leaseClient.callTool<{
+        leases: Array<{ uuid: string }>;
+      }>('leases_by_tenant', {});
+      expect(after.leases.length).toBe(beforeCount);
+    });
+
     it('rejects an invalid FQDN through the orchestrated path with a partial-success error', async () => {
       if (!chainSupportsCustomDomain) return;
       // Sanity check: the chain's `IsValidFQDN` rejects "INVALID" (uppercase

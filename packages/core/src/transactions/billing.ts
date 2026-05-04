@@ -475,7 +475,13 @@ export function buildBillingMessages(
             'Pass a non-empty FQDN to set, or use --clear to remove the existing domain.',
         );
       }
-      const customDomain = clearing ? '' : customDomainArg;
+      // Canonicalize: trim before assigning to MsgSetItemCustomDomain so a
+      // direct `cosmos_tx` caller (`<uuid> ' app.example.com '`) ships the
+      // same bytes to the chain as a caller routed through the
+      // `setItemCustomDomain` helper or the lease MCP tool. Belt-and-
+      // suspenders: the helper trims too, so going through the helper is
+      // already safe.
+      const customDomain = clearing ? '' : customDomainArg.trim();
 
       const serviceName = serviceNameFlag.value ?? '';
       if (serviceName !== '' && !DNS_LABEL_RE.test(serviceName)) {
