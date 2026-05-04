@@ -387,7 +387,11 @@ export class LeaseMCPServer {
       },
       withErrorHandling('set_item_custom_domain', async (args) => {
         const clearing = args.clear === true;
-        const domain = args.custom_domain ?? '';
+        // Trim at the tool boundary so whitespace-only input is treated the
+        // same as empty (the helper trims too, but checking here keeps the
+        // tool's own validation consistent and avoids an unnecessary helper
+        // call for the obvious empty/whitespace cases).
+        const domain = (args.custom_domain ?? '').trim();
         if (clearing && domain !== '') {
           throw new ManifestMCPError(
             ManifestMCPErrorCode.TX_FAILED,
@@ -435,11 +439,23 @@ export class LeaseMCPServer {
         }),
       },
       withErrorHandling('lease_by_custom_domain', async (args) => {
+        // The zod schema's `.min(1)` rejects empty strings but accepts
+        // whitespace-only — mirror the generic-chain query handler's
+        // trim+empty rejection at this layer too so a whitespace-only
+        // FQDN is rejected client-side with a structured QUERY_FAILED
+        // instead of being forwarded to the chain.
+        const customDomain = args.custom_domain.trim();
+        if (customDomain === '') {
+          throw new ManifestMCPError(
+            ManifestMCPErrorCode.QUERY_FAILED,
+            'lease_by_custom_domain: custom_domain cannot be empty or whitespace-only.',
+          );
+        }
         await this.clientManager.acquireRateLimit();
         const queryClient = await this.clientManager.getQueryClient();
         const result =
           await queryClient.liftedinit.billing.v1.leaseByCustomDomain({
-            customDomain: args.custom_domain,
+            customDomain,
           });
         return jsonResponse(
           { lease: result.lease, service_name: result.serviceName },

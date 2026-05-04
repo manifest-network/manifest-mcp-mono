@@ -772,5 +772,89 @@ describe('LeaseMCPServer', () => {
       expect(parsed.code).toBe('TX_FAILED');
       expect(parsed.message).toMatch(/Provide.*custom_domain/i);
     });
+
+    it('rejects whitespace-only custom_domain at the tool boundary (before reaching the helper)', async () => {
+      const server = new LeaseMCPServer({
+        config: makeMockConfig(),
+        walletProvider: makeMockWallet(),
+      });
+      const result = await callTool(server, 'set_item_custom_domain', {
+        lease_uuid: '550e8400-e29b-41d4-a716-446655440000',
+        custom_domain: '   ',
+      });
+
+      expect(result.isError).toBe(true);
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.code).toBe('TX_FAILED');
+      expect(parsed.message).toMatch(/Provide.*custom_domain/i);
+      expect(mockSetItemCustomDomain).not.toHaveBeenCalled();
+    });
+
+    it('treats whitespace-only as empty when clearing (clear:true + spaces is allowed, equivalent to clear:true alone)', async () => {
+      mockSetItemCustomDomain.mockResolvedValue({
+        lease_uuid: '550e8400-e29b-41d4-a716-446655440000',
+        service_name: '',
+        custom_domain: '',
+        transactionHash: 'X',
+        code: 0,
+      });
+      const server = new LeaseMCPServer({
+        config: makeMockConfig(),
+        walletProvider: makeMockWallet(),
+      });
+      const result = await callTool(server, 'set_item_custom_domain', {
+        lease_uuid: '550e8400-e29b-41d4-a716-446655440000',
+        custom_domain: '   ',
+        clear: true,
+      });
+
+      expect(result.isError).toBeUndefined();
+      // Trimmed value reaches the helper; empty + clear:true is the
+      // canonical "clear" form.
+      expect(mockSetItemCustomDomain).toHaveBeenCalledWith(
+        expect.anything(),
+        '550e8400-e29b-41d4-a716-446655440000',
+        '',
+        { serviceName: undefined, clear: true },
+        undefined,
+      );
+    });
+  });
+
+  describe('lease_by_custom_domain whitespace handling', () => {
+    it('rejects whitespace-only custom_domain at the tool boundary with QUERY_FAILED', async () => {
+      const server = new LeaseMCPServer({
+        config: makeMockConfig(),
+        walletProvider: makeMockWallet(),
+      });
+      const result = await callTool(server, 'lease_by_custom_domain', {
+        custom_domain: '   ',
+      });
+
+      expect(result.isError).toBe(true);
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.code).toBe('QUERY_FAILED');
+      expect(parsed.message).toMatch(/cannot be empty/);
+      expect(mockLeaseByCustomDomain).not.toHaveBeenCalled();
+    });
+
+    it('trims surrounding whitespace before sending the FQDN to the chain', async () => {
+      mockLeaseByCustomDomain.mockResolvedValue({
+        lease: { uuid: 'lease-1', tenant: 'manifest1tenant' },
+        serviceName: '',
+      });
+      const server = new LeaseMCPServer({
+        config: makeMockConfig(),
+        walletProvider: makeMockWallet(),
+      });
+      const result = await callTool(server, 'lease_by_custom_domain', {
+        custom_domain: '  app.example.com  ',
+      });
+
+      expect(result.isError).toBeUndefined();
+      expect(mockLeaseByCustomDomain).toHaveBeenCalledWith({
+        customDomain: 'app.example.com',
+      });
+    });
   });
 });
