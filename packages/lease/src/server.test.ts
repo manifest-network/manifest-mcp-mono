@@ -5,7 +5,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const mockGetBalance = vi.fn();
 const mockFundCredits = vi.fn();
 const mockStopApp = vi.fn();
+const mockSetItemCustomDomain = vi.fn();
 const mockLeasesByTenant = vi.fn();
+const mockLeaseByCustomDomain = vi.fn();
 const mockSKUs = vi.fn();
 const mockProviders = vi.fn();
 
@@ -25,6 +27,8 @@ vi.mock('@manifest-network/manifest-mcp-core', async (importOriginal) => {
               v1: {
                 leasesByTenant: (...args: unknown[]) =>
                   mockLeasesByTenant(...args),
+                leaseByCustomDomain: (...args: unknown[]) =>
+                  mockLeaseByCustomDomain(...args),
               },
             },
             sku: {
@@ -44,6 +48,8 @@ vi.mock('@manifest-network/manifest-mcp-core', async (importOriginal) => {
     getBalance: (...args: unknown[]) => mockGetBalance(...args),
     fundCredits: (...args: unknown[]) => mockFundCredits(...args),
     stopApp: (...args: unknown[]) => mockStopApp(...args),
+    setItemCustomDomain: (...args: unknown[]) =>
+      mockSetItemCustomDomain(...args),
   };
 });
 
@@ -506,6 +512,170 @@ describe('LeaseMCPServer', () => {
         '550e8400-e29b-41d4-a716-446655440000',
         { gasMultiplier: 4.0 },
       );
+    });
+  });
+
+  describe('set_item_custom_domain', () => {
+    const LEASE_UUID_FIXTURE = '550e8400-e29b-41d4-a716-446655440000';
+
+    it('routes a set call to setItemCustomDomain with the FQDN', async () => {
+      mockSetItemCustomDomain.mockResolvedValue({
+        lease_uuid: LEASE_UUID_FIXTURE,
+        service_name: '',
+        custom_domain: 'app.example.com',
+        transactionHash: 'TX_HASH',
+        code: 0,
+      });
+
+      const server = new LeaseMCPServer({
+        config: makeMockConfig(),
+        walletProvider: makeMockWallet(),
+      });
+      const result = await callTool(server, 'set_item_custom_domain', {
+        lease_uuid: LEASE_UUID_FIXTURE,
+        custom_domain: 'app.example.com',
+      });
+
+      expect(mockSetItemCustomDomain).toHaveBeenCalledWith(
+        expect.anything(),
+        LEASE_UUID_FIXTURE,
+        'app.example.com',
+        { serviceName: undefined, clear: false },
+        undefined,
+      );
+      expect(result.isError).toBeUndefined();
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed).toMatchObject({
+        lease_uuid: LEASE_UUID_FIXTURE,
+        custom_domain: 'app.example.com',
+        transactionHash: 'TX_HASH',
+        code: 0,
+      });
+    });
+
+    it('routes a clear call with clear:true and an empty domain', async () => {
+      mockSetItemCustomDomain.mockResolvedValue({
+        lease_uuid: LEASE_UUID_FIXTURE,
+        service_name: '',
+        custom_domain: '',
+        transactionHash: 'TX_HASH2',
+        code: 0,
+      });
+
+      const server = new LeaseMCPServer({
+        config: makeMockConfig(),
+        walletProvider: makeMockWallet(),
+      });
+      const result = await callTool(server, 'set_item_custom_domain', {
+        lease_uuid: LEASE_UUID_FIXTURE,
+        clear: true,
+      });
+
+      expect(mockSetItemCustomDomain).toHaveBeenCalledWith(
+        expect.anything(),
+        LEASE_UUID_FIXTURE,
+        '',
+        { serviceName: undefined, clear: true },
+        undefined,
+      );
+      expect(result.isError).toBeUndefined();
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.custom_domain).toBe('');
+    });
+
+    it('forwards service_name and gas_multiplier overrides', async () => {
+      mockSetItemCustomDomain.mockResolvedValue({
+        lease_uuid: LEASE_UUID_FIXTURE,
+        service_name: 'web',
+        custom_domain: 'app.example.com',
+        transactionHash: 'TX_HASH',
+        code: 0,
+      });
+
+      const server = new LeaseMCPServer({
+        config: makeMockConfig(),
+        walletProvider: makeMockWallet(),
+      });
+      await callTool(server, 'set_item_custom_domain', {
+        lease_uuid: LEASE_UUID_FIXTURE,
+        custom_domain: 'app.example.com',
+        service_name: 'web',
+        gas_multiplier: 4.0,
+      });
+
+      expect(mockSetItemCustomDomain).toHaveBeenCalledWith(
+        expect.anything(),
+        LEASE_UUID_FIXTURE,
+        'app.example.com',
+        { serviceName: 'web', clear: false },
+        { gasMultiplier: 4.0 },
+      );
+    });
+  });
+
+  describe('lease_by_custom_domain', () => {
+    it('returns the lease and service_name when the FQDN is claimed', async () => {
+      mockLeaseByCustomDomain.mockResolvedValue({
+        lease: { uuid: 'lease-1', tenant: 'manifest1tenant' },
+        serviceName: 'web',
+      });
+
+      const server = new LeaseMCPServer({
+        config: makeMockConfig(),
+        walletProvider: makeMockWallet(),
+      });
+      const result = await callTool(server, 'lease_by_custom_domain', {
+        custom_domain: 'app.example.com',
+      });
+
+      expect(mockLeaseByCustomDomain).toHaveBeenCalledWith({
+        customDomain: 'app.example.com',
+      });
+      expect(result.isError).toBeUndefined();
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed).toEqual({
+        lease: { uuid: 'lease-1', tenant: 'manifest1tenant' },
+        service_name: 'web',
+      });
+    });
+
+    it('returns service_name "" for legacy 1-item leases', async () => {
+      mockLeaseByCustomDomain.mockResolvedValue({
+        lease: { uuid: 'lease-2', tenant: 'manifest1tenant' },
+        serviceName: '',
+      });
+
+      const server = new LeaseMCPServer({
+        config: makeMockConfig(),
+        walletProvider: makeMockWallet(),
+      });
+      const result = await callTool(server, 'lease_by_custom_domain', {
+        custom_domain: 'legacy.example.com',
+      });
+
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.service_name).toBe('');
+      expect(parsed.lease).toMatchObject({ uuid: 'lease-2' });
+    });
+
+    it('passes through an undefined lease (not-found) and an empty service_name', async () => {
+      mockLeaseByCustomDomain.mockResolvedValue({
+        lease: undefined,
+        serviceName: '',
+      });
+
+      const server = new LeaseMCPServer({
+        config: makeMockConfig(),
+        walletProvider: makeMockWallet(),
+      });
+      const result = await callTool(server, 'lease_by_custom_domain', {
+        custom_domain: 'unclaimed.example.com',
+      });
+
+      expect(result.isError).toBeUndefined();
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.service_name).toBe('');
+      expect(parsed.lease).toBeUndefined();
     });
   });
 
