@@ -856,5 +856,32 @@ describe('LeaseMCPServer', () => {
         customDomain: 'app.example.com',
       });
     });
+
+    it('wraps a chain-side NotFound (unclaimed FQDN) as structured QUERY_FAILED', async () => {
+      // The keeper returns `status.Errorf(codes.NotFound, "no lease with
+      // custom_domain X")` for unclaimed FQDNs. cosmjs surfaces this as a
+      // plain Error; the tool wraps it so callers see the same structured
+      // shape they'd get from `cosmos_query billing lease-by-custom-domain`.
+      mockLeaseByCustomDomain.mockRejectedValue(
+        new Error(
+          'Query failed with (22): rpc error: code = NotFound desc = no lease with custom_domain unclaimed.example.com: key not found',
+        ),
+      );
+      const server = new LeaseMCPServer({
+        config: makeMockConfig(),
+        walletProvider: makeMockWallet(),
+      });
+      const result = await callTool(server, 'lease_by_custom_domain', {
+        custom_domain: 'unclaimed.example.com',
+      });
+
+      expect(result.isError).toBe(true);
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.code).toBe('QUERY_FAILED');
+      expect(parsed.message).toMatch(/no lease with custom_domain|NotFound/);
+      expect(parsed.details).toMatchObject({
+        customDomain: 'unclaimed.example.com',
+      });
+    });
   });
 });

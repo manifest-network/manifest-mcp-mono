@@ -453,9 +453,22 @@ export class LeaseMCPServer {
         }
         await this.clientManager.acquireRateLimit();
         const queryClient = await this.clientManager.getQueryClient();
-        const result =
-          await queryClient.liftedinit.billing.v1.leaseByCustomDomain({
-            customDomain,
+        // Wrap the chain call so non-`ManifestMCPError` failures (notably
+        // the keeper's `NotFound` for an unclaimed FQDN, but also any
+        // transport / decoding error) surface as structured `QUERY_FAILED`
+        // — matching the shape callers see from the generic `cosmos_query`
+        // path, which routes through `cosmosQuery`'s wrapping.
+        const result = await queryClient.liftedinit.billing.v1
+          .leaseByCustomDomain({ customDomain })
+          .catch((error: unknown) => {
+            if (error instanceof ManifestMCPError) throw error;
+            throw new ManifestMCPError(
+              ManifestMCPErrorCode.QUERY_FAILED,
+              `lease_by_custom_domain failed: ${
+                error instanceof Error ? error.message : String(error)
+              }`,
+              { customDomain },
+            );
           });
         return jsonResponse(
           { lease: result.lease, service_name: result.serviceName },
