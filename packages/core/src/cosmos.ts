@@ -43,9 +43,16 @@ async function loadBuildContext(
   const loader = getTxContextLoader(module, subcommand);
   if (!loader) return undefined;
 
-  await clientManager.acquireRateLimit();
-  const queryClient = await clientManager.getQueryClient();
+  // The full loader call sequence — rate-limit acquire, query-client
+  // construction, loader invocation — runs inside the try/catch so every
+  // failure mode gets the {module, subcommand} attribution callers expect
+  // from a structured error. Without the wrap, an INVALID_CONFIG from
+  // `getQueryClient` (or a connection failure that escapes the inner
+  // withRetry) would propagate without telling the caller which tx was
+  // being prepared.
   try {
+    await clientManager.acquireRateLimit();
+    const queryClient = await clientManager.getQueryClient();
     return await loader(queryClient);
   } catch (error) {
     if (error instanceof ManifestMCPError) {
@@ -110,12 +117,15 @@ export async function cosmosQuery(
 
   return withRetry(
     async () => {
-      // Apply rate limiting before making RPC request
-      await clientManager.acquireRateLimit();
-
-      const queryClient = await clientManager.getQueryClient();
-
+      // The rate-limit + query-client acquisition runs inside the try/catch
+      // so a failure during either step is wrapped with {module, subcommand}
+      // attribution, matching the handler-leg semantics. Otherwise an
+      // INVALID_CONFIG from `getQueryClient` (or a connection failure that
+      // escapes the inner withRetry) would propagate without telling the
+      // caller which query was being routed.
       try {
+        await clientManager.acquireRateLimit();
+        const queryClient = await clientManager.getQueryClient();
         const result = await handler(queryClient, subcommand, args);
 
         return {
@@ -125,11 +135,19 @@ export async function cosmosQuery(
         };
       } catch (error) {
         if (error instanceof ManifestMCPError) {
+          if (!error.details?.module) {
+            throw new ManifestMCPError(error.code, error.message, {
+              ...error.details,
+              module,
+              subcommand,
+            });
+          }
           throw error;
         }
         throw new ManifestMCPError(
           ManifestMCPErrorCode.QUERY_FAILED,
           `Query ${module} ${subcommand} failed: ${error instanceof Error ? error.message : String(error)}`,
+          { module, subcommand },
         );
       }
     },
@@ -199,13 +217,17 @@ export async function cosmosTx(
 
   return withRetry(
     async () => {
-      // Apply rate limiting before making RPC request
-      await clientManager.acquireRateLimit();
-
-      const signingClient = await clientManager.getSigningClient();
-      const senderAddress = await clientManager.getAddress();
-
+      // The rate-limit + signing-client + address acquisition runs inside
+      // the try/catch so a failure during any of those steps is wrapped
+      // with {module, subcommand, args} attribution, matching the
+      // handler-leg semantics. Otherwise an INVALID_CONFIG / wallet error
+      // from these calls would propagate without telling the caller which
+      // tx was being prepared.
       try {
+        await clientManager.acquireRateLimit();
+        const signingClient = await clientManager.getSigningClient();
+        const senderAddress = await clientManager.getAddress();
+
         return await handler(
           signingClient,
           senderAddress,
@@ -303,28 +325,32 @@ export async function cosmosEstimateFee(
 
   return withRetry(
     async () => {
-      // Apply rate limiting before making RPC request
-      await clientManager.acquireRateLimit();
-
-      const signingClient = await clientManager.getSigningClient();
-      const senderAddress = await clientManager.getAddress();
-
-      // Resolve gasMultiplier from the signing client when no override is provided.
-      // This guarantees parity with cosmosTx's 'auto' path: client.ts patches the
-      // signing client's defaultGasMultiplier to config.gasMultiplier; if that
-      // patch fails (rare — only when CosmJS internals change), the client
-      // falls back to CosmJS's built-in default. Reading from the client uses
-      // the same value cosmosTx would.
-      const clientMultiplier = (
-        signingClient as unknown as { defaultGasMultiplier?: unknown }
-      ).defaultGasMultiplier;
-      const gasMultiplier =
-        overrides?.gasMultiplier ??
-        (typeof clientMultiplier === 'number'
-          ? clientMultiplier
-          : DEFAULT_GAS_MULTIPLIER);
-
+      // The rate-limit + signing-client + address acquisition runs inside
+      // the try/catch so a failure during any of those steps is wrapped
+      // with {module, subcommand, args} attribution, matching the
+      // handler-leg semantics. Otherwise an INVALID_CONFIG / wallet error
+      // from these calls would propagate without telling the caller which
+      // estimate was being computed.
       try {
+        await clientManager.acquireRateLimit();
+        const signingClient = await clientManager.getSigningClient();
+        const senderAddress = await clientManager.getAddress();
+
+        // Resolve gasMultiplier from the signing client when no override is provided.
+        // This guarantees parity with cosmosTx's 'auto' path: client.ts patches the
+        // signing client's defaultGasMultiplier to config.gasMultiplier; if that
+        // patch fails (rare — only when CosmJS internals change), the client
+        // falls back to CosmJS's built-in default. Reading from the client uses
+        // the same value cosmosTx would.
+        const clientMultiplier = (
+          signingClient as unknown as { defaultGasMultiplier?: unknown }
+        ).defaultGasMultiplier;
+        const gasMultiplier =
+          overrides?.gasMultiplier ??
+          (typeof clientMultiplier === 'number'
+            ? clientMultiplier
+            : DEFAULT_GAS_MULTIPLIER);
+
         const built = builder(senderAddress, subcommand, args, buildContext);
         const gasEstimate = await signingClient.simulate(
           senderAddress,

@@ -102,10 +102,11 @@ describe('cosmosQuery', () => {
     });
   });
 
-  it('re-throws ManifestMCPError as-is', async () => {
+  it('re-throws ManifestMCPError as-is when details.module is already set', async () => {
     const original = new ManifestMCPError(
       ManifestMCPErrorCode.UNSUPPORTED_QUERY,
       'nope',
+      { module: 'preset', subcommand: 'preset-sub' },
     );
     const mockHandler = vi.fn().mockRejectedValue(original);
     mockGetQueryHandler.mockReturnValue(mockHandler);
@@ -113,6 +114,23 @@ describe('cosmosQuery', () => {
     await expect(cosmosQuery(clientManager, 'bank', 'balances')).rejects.toBe(
       original,
     );
+  });
+
+  it('augments ManifestMCPError without details.module with {module, subcommand}', async () => {
+    const original = new ManifestMCPError(
+      ManifestMCPErrorCode.UNSUPPORTED_QUERY,
+      'nope',
+    );
+    const mockHandler = vi.fn().mockRejectedValue(original);
+    mockGetQueryHandler.mockReturnValue(mockHandler);
+
+    await expect(
+      cosmosQuery(clientManager, 'bank', 'balances'),
+    ).rejects.toMatchObject({
+      code: ManifestMCPErrorCode.UNSUPPORTED_QUERY,
+      message: 'nope',
+      details: { module: 'bank', subcommand: 'balances' },
+    });
   });
 
   it('validates module name (rejects invalid chars) with UNSUPPORTED_QUERY', async () => {
@@ -157,6 +175,37 @@ describe('cosmosQuery', () => {
     await cosmosQuery(clientManager, 'my_module', 'sub-command');
 
     expect(mockGetQueryHandler).toHaveBeenCalledWith('my_module');
+  });
+
+  it('augments getQueryClient errors with {module, subcommand}', async () => {
+    mockGetQueryHandler.mockReturnValue(vi.fn());
+    clientManager.getQueryClient.mockRejectedValue(
+      new ManifestMCPError(
+        ManifestMCPErrorCode.INVALID_CONFIG,
+        'Cannot create query client: neither restUrl nor rpcUrl is configured.',
+      ),
+    );
+
+    await expect(
+      cosmosQuery(clientManager, 'bank', 'balances'),
+    ).rejects.toMatchObject({
+      code: ManifestMCPErrorCode.INVALID_CONFIG,
+      details: { module: 'bank', subcommand: 'balances' },
+    });
+  });
+
+  it('augments acquireRateLimit errors with {module, subcommand}', async () => {
+    mockGetQueryHandler.mockReturnValue(vi.fn());
+    clientManager.acquireRateLimit.mockRejectedValue(
+      new Error('rate-limit acquire failed'),
+    );
+
+    await expect(
+      cosmosQuery(clientManager, 'bank', 'balances'),
+    ).rejects.toMatchObject({
+      code: ManifestMCPErrorCode.QUERY_FAILED,
+      details: { module: 'bank', subcommand: 'balances' },
+    });
   });
 });
 
@@ -549,6 +598,45 @@ describe('cosmosTx', () => {
       );
     });
     expect(mockHandler).not.toHaveBeenCalled();
+  });
+
+  it('augments getSigningClient errors with {module, subcommand, args}', async () => {
+    mockGetTxHandler.mockReturnValue(vi.fn());
+    clientManager.getSigningClient.mockRejectedValue(
+      new ManifestMCPError(
+        ManifestMCPErrorCode.WALLET_NOT_CONNECTED,
+        'Wallet is not connected',
+      ),
+    );
+
+    await expect(
+      cosmosTx(clientManager, 'bank', 'send', ['addr', '100umfx']),
+    ).rejects.toMatchObject({
+      code: ManifestMCPErrorCode.WALLET_NOT_CONNECTED,
+      details: {
+        module: 'bank',
+        subcommand: 'send',
+        args: ['addr', '100umfx'],
+      },
+    });
+  });
+
+  it('augments acquireRateLimit errors with {module, subcommand, args}', async () => {
+    mockGetTxHandler.mockReturnValue(vi.fn());
+    clientManager.acquireRateLimit.mockRejectedValue(
+      new Error('rate-limit acquire failed'),
+    );
+
+    await expect(
+      cosmosTx(clientManager, 'bank', 'send', ['addr', '100umfx']),
+    ).rejects.toMatchObject({
+      code: ManifestMCPErrorCode.TX_FAILED,
+      details: {
+        module: 'bank',
+        subcommand: 'send',
+        args: ['addr', '100umfx'],
+      },
+    });
   });
 });
 
@@ -983,6 +1071,53 @@ describe('cosmosEstimateFee', () => {
       code: ManifestMCPErrorCode.SIMULATION_FAILED,
       message: expect.stringContaining('insufficient funds'),
       details: expect.objectContaining({ module: 'bank', subcommand: 'send' }),
+    });
+  });
+
+  it('augments getSigningClient errors with {module, subcommand, args}', async () => {
+    clientManager.getConfig.mockReturnValue({
+      retry: { maxRetries: 3 },
+      gasPrice: '1.0umfx',
+    });
+    mockGetTxMsgBuilder.mockReturnValue(vi.fn());
+    clientManager.getSigningClient.mockRejectedValue(
+      new ManifestMCPError(
+        ManifestMCPErrorCode.WALLET_NOT_CONNECTED,
+        'Wallet is not connected',
+      ),
+    );
+
+    await expect(
+      cosmosEstimateFee(clientManager, 'bank', 'send', ['addr', '100umfx']),
+    ).rejects.toMatchObject({
+      code: ManifestMCPErrorCode.WALLET_NOT_CONNECTED,
+      details: {
+        module: 'bank',
+        subcommand: 'send',
+        args: ['addr', '100umfx'],
+      },
+    });
+  });
+
+  it('augments acquireRateLimit errors with {module, subcommand, args}', async () => {
+    clientManager.getConfig.mockReturnValue({
+      retry: { maxRetries: 3 },
+      gasPrice: '1.0umfx',
+    });
+    mockGetTxMsgBuilder.mockReturnValue(vi.fn());
+    clientManager.acquireRateLimit.mockRejectedValue(
+      new Error('rate-limit acquire failed'),
+    );
+
+    await expect(
+      cosmosEstimateFee(clientManager, 'bank', 'send', ['addr', '100umfx']),
+    ).rejects.toMatchObject({
+      code: ManifestMCPErrorCode.SIMULATION_FAILED,
+      details: {
+        module: 'bank',
+        subcommand: 'send',
+        args: ['addr', '100umfx'],
+      },
     });
   });
 });
