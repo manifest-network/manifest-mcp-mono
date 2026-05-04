@@ -72,9 +72,13 @@ describe('Billing custom-domain', () => {
     testAddress = acct.address;
 
     // Feature-detect by hitting the new query with a sentinel FQDN.
-    // - Chain v2.1+ returns either an empty Lease (default-initialised)
-    //   or a hit; either way the call resolves without throwing.
-    // - Older chains throw with "unknown query path".
+    // - Chain v2.1+ supports the path; for an unclaimed FQDN the keeper
+    //   returns a structured `NotFound` ("no lease with custom_domain X"),
+    //   which the MCP layer wraps as QUERY_FAILED. Both signal the feature
+    //   is registered.
+    // - Pre-v2.1 chains return "unknown query path" (registry miss) or
+    //   "unable to resolve type URL" (proto mismatch); those mean the
+    //   feature is genuinely absent and dependent tests are skipped.
     // Any other error (network, transport, routing regression) re-throws
     // so genuine bugs still surface.
     try {
@@ -93,6 +97,10 @@ describe('Billing custom-domain', () => {
             'v2.1.0+ (or rebuild dist after a manifestjs/MCP server upgrade) ' +
             'to enable.',
         );
+      } else if (/NotFound|no lease with custom_domain|key not found/i.test(message)) {
+        // Probe FQDN isn't claimed by anyone — expected. The query path
+        // is registered, so the feature is available.
+        chainSupportsCustomDomain = true;
       } else {
         throw err;
       }
@@ -259,18 +267,18 @@ describe('Billing custom-domain', () => {
     await sleep(1_000);
   });
 
-  it('lease_by_custom_domain after clearing returns an empty lease (not-found)', async () => {
+  it('lease_by_custom_domain after clearing rejects the lookup with NotFound (no lease claims the FQDN)', async () => {
     if (!chainSupportsCustomDomain) return;
-    const result = await leaseClient.callTool<{
-      lease: { uuid?: string } | undefined;
-      service_name: string;
-    }>('lease_by_custom_domain', { custom_domain: FQDN_VIA_TOOL });
-
-    // After clearing, the reverse-index entry is freed. The chain returns
-    // an empty Lease (default-initialised) rather than an absent field, so
-    // assert the lease has no uuid rather than checking for undefined.
-    expect(result.lease?.uuid ?? '').toBe('');
-    expect(result.service_name).toBe('');
+    // The keeper returns `status.Errorf(codes.NotFound, "no lease with
+    // custom_domain X")` when the reverse index has no entry for the
+    // given domain. The MCP layer wraps this as QUERY_FAILED with the
+    // chain message preserved.
+    const err = await leaseClient.callToolExpectError(
+      'lease_by_custom_domain',
+      { custom_domain: FQDN_VIA_TOOL },
+    );
+    expect(err.code).toBe('QUERY_FAILED');
+    expect(err.message).toMatch(/no lease with custom_domain|NotFound/i);
   });
 
   // ------------------------------------------------------------------
