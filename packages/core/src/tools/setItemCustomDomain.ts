@@ -57,13 +57,13 @@ export async function setItemCustomDomain(
   const clearing = options?.clear === true;
   if (clearing && customDomain.trim() !== '') {
     throw new ManifestMCPError(
-      ManifestMCPErrorCode.TX_FAILED,
+      ManifestMCPErrorCode.INVALID_CONFIG,
       'setItemCustomDomain: pass either customDomain to set, or options.clear = true to clear, not both.',
     );
   }
   if (!clearing && customDomain.trim() === '') {
     throw new ManifestMCPError(
-      ManifestMCPErrorCode.TX_FAILED,
+      ManifestMCPErrorCode.INVALID_CONFIG,
       'setItemCustomDomain: customDomain cannot be empty when not clearing. ' +
         'Pass a non-empty FQDN, or set options.clear = true to remove the existing domain.',
     );

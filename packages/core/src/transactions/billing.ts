@@ -353,13 +353,13 @@ export function buildBillingMessages(
 
       if (reservedSuffixFlag.values.length > 0 && clearReserved.value) {
         throw new ManifestMCPError(
-          ManifestMCPErrorCode.TX_FAILED,
+          ManifestMCPErrorCode.INVALID_CONFIG,
           'billing update-params: --reserved-suffix and --clear-reserved-suffixes are mutually exclusive.',
         );
       }
       if (allowedAddresses.length > 0 && clearAllowed.value) {
         throw new ManifestMCPError(
-          ManifestMCPErrorCode.TX_FAILED,
+          ManifestMCPErrorCode.INVALID_CONFIG,
           'billing update-params: positional <allowed-address> values and --clear-allowed-list are mutually exclusive.',
         );
       }
@@ -448,7 +448,7 @@ export function buildBillingMessages(
       );
       if (positional.length > expected) {
         throw new ManifestMCPError(
-          ManifestMCPErrorCode.TX_FAILED,
+          ManifestMCPErrorCode.INVALID_CONFIG,
           clearing
             ? `Cannot combine --clear with a positional <custom-domain> in billing set-item-custom-domain. ` +
                 `Pass either <lease-uuid> <custom-domain> to set, or <lease-uuid> --clear to clear. ` +
@@ -470,7 +470,7 @@ export function buildBillingMessages(
         (customDomainArg === undefined || customDomainArg.trim() === '')
       ) {
         throw new ManifestMCPError(
-          ManifestMCPErrorCode.TX_FAILED,
+          ManifestMCPErrorCode.INVALID_CONFIG,
           'billing set-item-custom-domain: <custom-domain> cannot be empty. ' +
             'Pass a non-empty FQDN to set, or use --clear to remove the existing domain.',
         );
@@ -480,7 +480,7 @@ export function buildBillingMessages(
       const serviceName = serviceNameFlag.value ?? '';
       if (serviceName !== '' && !DNS_LABEL_RE.test(serviceName)) {
         throw new ManifestMCPError(
-          ManifestMCPErrorCode.TX_FAILED,
+          ManifestMCPErrorCode.INVALID_CONFIG,
           `Invalid service name: "${serviceName}". Must be a valid RFC 1123 DNS label: ` +
             `1-63 lowercase alphanumeric characters or hyphens, must not start or end with a hyphen.`,
         );

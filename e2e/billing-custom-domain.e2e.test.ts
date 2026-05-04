@@ -435,5 +435,44 @@ describe('Billing custom-domain', () => {
         );
       }
     });
+
+    it('rejects an invalid FQDN through the orchestrated path with a partial-success error', async () => {
+      if (!chainSupportsCustomDomain) return;
+      // Sanity check: the chain's `IsValidFQDN` rejects "INVALID" (uppercase
+      // + no dot separator). That rejection arrives on the set-domain tx,
+      // which runs *after* create-lease succeeds, so deployApp must wrap it
+      // as a partial-success error and the caller can identify the orphaned
+      // lease from the error details to clean up.
+      const err = await fredClient.callToolExpectError('deploy_app', {
+        image: 'nginxinc/nginx-unprivileged:alpine',
+        port: 8080,
+        size: 'docker-micro',
+        custom_domain: 'INVALID',
+      });
+
+      // Chain-side TX_FAILED bubbles through as part of the partial-success
+      // wrap (the wrap reuses the inner code per deployApp.ts:411-416).
+      expect(err.code).toBe('TX_FAILED');
+      expect(err.message).toMatch(/Deploy partially succeeded/);
+      expect(err.message).toMatch(/close_lease if needed/);
+
+      // Best-effort cleanup of the orphaned lease so the suite leaves clean
+      // state. The error details include `lease_uuid` per the deployApp
+      // partial-success branch.
+      const orphanedUuid = (err.details as { lease_uuid?: string } | undefined)
+        ?.lease_uuid;
+      if (orphanedUuid) {
+        try {
+          await leaseClient.callTool<{
+            lease_uuid: string;
+            status: string;
+          }>('close_lease', { lease_uuid: orphanedUuid });
+        } catch (cleanupErr) {
+          console.warn(
+            `[billing-custom-domain] orphaned-lease cleanup failed: ${cleanupErr}`,
+          );
+        }
+      }
+    });
   });
 });

@@ -172,7 +172,7 @@ describe('setItemCustomDomain', () => {
     ).rejects.toSatisfy((error: unknown) => {
       if (!(error instanceof ManifestMCPError)) return false;
       return (
-        error.code === ManifestMCPErrorCode.TX_FAILED &&
+        error.code === ManifestMCPErrorCode.INVALID_CONFIG &&
         /cannot be empty/.test(error.message) &&
         /clear/.test(error.message)
       );
@@ -214,7 +214,7 @@ describe('setItemCustomDomain', () => {
     ).rejects.toSatisfy((error: unknown) => {
       if (!(error instanceof ManifestMCPError)) return false;
       return (
-        error.code === ManifestMCPErrorCode.TX_FAILED &&
+        error.code === ManifestMCPErrorCode.INVALID_CONFIG &&
         /not both/.test(error.message)
       );
     });

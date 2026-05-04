@@ -208,9 +208,17 @@ export async function deployApp(
   // The chain still validates FQDN format and reserved-suffix rules
   // (`IsValidFQDN`, `MatchesReservedSuffix`) when the set-domain tx
   // arrives — we just catch the obvious shape mistakes up-front.
+  //
+  // The trimmed value is the canonical form used downstream (set-domain
+  // tx + result echo). Forwarding the untrimmed string would let
+  // surrounding whitespace survive to the chain, which `IsValidFQDN`
+  // rejects — orphaning a paid-for lease behind a "Deploy partially
+  // succeeded" wrap, exactly the failure mode this block is meant to
+  // prevent.
+  let normalizedCustomDomain: string | undefined;
   if (input.customDomain !== undefined) {
-    const trimmedDomain = input.customDomain.trim();
-    if (trimmedDomain === '') {
+    normalizedCustomDomain = input.customDomain.trim();
+    if (normalizedCustomDomain === '') {
       throw new ManifestMCPError(
         ManifestMCPErrorCode.INVALID_CONFIG,
         'customDomain cannot be empty or whitespace-only',
@@ -223,11 +231,15 @@ export async function deployApp(
           'serviceName is required when setting customDomain on a stack lease (services); pick one of the service keys',
         );
       }
-      // `in` checks own + inherited keys, but `services` is a zod-validated
-      // plain object literal here, so prototype keys aren't a concern. Avoids
-      // ES2022's `Object.hasOwn` (the base tsconfig targets ES2020) and
-      // biome's `noPrototypeBuiltins` warning on `hasOwnProperty.call`.
-      if (!(input.serviceName in input.services)) {
+      // Use Object.keys+includes rather than `in`: `'constructor' in {}`
+      // is true (prototype chain), so an attacker passing
+      // `service_name: 'constructor'` (or any Object.prototype key) on
+      // a stack lease that doesn't define a same-named service would
+      // pass this check, sail through create-lease, and only fail at
+      // the set-domain tx — leaving the paid-for lease behind. Avoids
+      // ES2022's `Object.hasOwn` (base tsconfig targets ES2020) and
+      // biome's `noPrototypeBuiltins` rule on `hasOwnProperty.call`.
+      if (!Object.keys(input.services).includes(input.serviceName)) {
         const available = Object.keys(input.services).join(', ');
         throw new ManifestMCPError(
           ManifestMCPErrorCode.INVALID_CONFIG,
@@ -360,11 +372,11 @@ export async function deployApp(
     //    state; if providerd races and rejects the lease before this
     //    tx lands, the chain auto-clears the index entry so no stuck
     //    state is left behind.
-    if (input.customDomain) {
+    if (normalizedCustomDomain !== undefined) {
       await setItemCustomDomain(
         clientManager,
         leaseUuid,
-        input.customDomain,
+        normalizedCustomDomain,
         { serviceName: input.serviceName },
         overrides,
       );
@@ -428,7 +440,7 @@ export async function deployApp(
     );
   }
 
-  // 9. Get connection info (best-effort)
+  // 10. Get connection info (best-effort)
   let connection: ConnectionDetails | undefined;
   let url: string | undefined;
   let connectionError: string | undefined;
@@ -466,9 +478,10 @@ export async function deployApp(
     ...(connectionError && { connectionError }),
     // Reaching this return implies the set-domain tx (if requested)
     // succeeded — failures earlier in the try block throw and never
-    // get here.
-    ...(input.customDomain && { custom_domain: input.customDomain }),
-    ...(input.customDomain &&
+    // get here. Echo the trimmed canonical form, matching what the
+    // chain stored.
+    ...(normalizedCustomDomain && { custom_domain: normalizedCustomDomain }),
+    ...(normalizedCustomDomain &&
       input.serviceName && { service_name: input.serviceName }),
   };
 }

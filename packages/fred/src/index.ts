@@ -590,7 +590,7 @@ export class FredMCPServer {
       'deploy_app',
       {
         description:
-          'Deploy a new containerized application. Requires funded credits (use fund_credit if needed). Creates a lease on-chain, uploads the container manifest to a provider, and polls until ready. Use browse_catalog first to see available SKU sizes.',
+          'Deploy a new containerized application. Requires funded credits (use fund_credit if needed). Creates a lease on-chain, optionally attaches a custom domain (FQDN) to the lease item, uploads the container manifest to a provider, and polls until ready. Use browse_catalog first to see available SKU sizes.',
         inputSchema: {
           image: z
             .string()

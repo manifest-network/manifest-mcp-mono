@@ -188,7 +188,7 @@ export async function routeBillingQuery(
       const [customDomain] = args;
       if (!customDomain || customDomain.trim() === '') {
         throw new ManifestMCPError(
-          ManifestMCPErrorCode.QUERY_FAILED,
+          ManifestMCPErrorCode.INVALID_CONFIG,
           'billing lease-by-custom-domain: <custom-domain> cannot be empty.',
         );
       }

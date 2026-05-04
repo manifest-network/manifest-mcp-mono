@@ -741,7 +741,7 @@ describe('LeaseMCPServer', () => {
   });
 
   describe('set_item_custom_domain mutual-exclusion validation', () => {
-    it('rejects custom_domain + clear:true with structured TX_FAILED code', async () => {
+    it('rejects custom_domain + clear:true with structured INVALID_CONFIG code', async () => {
       const server = new LeaseMCPServer({
         config: makeMockConfig(),
         walletProvider: makeMockWallet(),
@@ -754,11 +754,11 @@ describe('LeaseMCPServer', () => {
 
       expect(result.isError).toBe(true);
       const parsed = JSON.parse(result.content[0].text);
-      expect(parsed.code).toBe('TX_FAILED');
+      expect(parsed.code).toBe('INVALID_CONFIG');
       expect(parsed.message).toMatch(/either.*clear/i);
     });
 
-    it('rejects neither-set-nor-clear with structured TX_FAILED code', async () => {
+    it('rejects neither-set-nor-clear with structured INVALID_CONFIG code', async () => {
       const server = new LeaseMCPServer({
         config: makeMockConfig(),
         walletProvider: makeMockWallet(),
@@ -769,7 +769,7 @@ describe('LeaseMCPServer', () => {
 
       expect(result.isError).toBe(true);
       const parsed = JSON.parse(result.content[0].text);
-      expect(parsed.code).toBe('TX_FAILED');
+      expect(parsed.code).toBe('INVALID_CONFIG');
       expect(parsed.message).toMatch(/Provide.*custom_domain/i);
     });
 
@@ -785,7 +785,7 @@ describe('LeaseMCPServer', () => {
 
       expect(result.isError).toBe(true);
       const parsed = JSON.parse(result.content[0].text);
-      expect(parsed.code).toBe('TX_FAILED');
+      expect(parsed.code).toBe('INVALID_CONFIG');
       expect(parsed.message).toMatch(/Provide.*custom_domain/i);
       expect(mockSetItemCustomDomain).not.toHaveBeenCalled();
     });
@@ -822,7 +822,7 @@ describe('LeaseMCPServer', () => {
   });
 
   describe('lease_by_custom_domain whitespace handling', () => {
-    it('rejects whitespace-only custom_domain at the tool boundary with QUERY_FAILED', async () => {
+    it('rejects whitespace-only custom_domain at the tool boundary with INVALID_CONFIG', async () => {
       const server = new LeaseMCPServer({
         config: makeMockConfig(),
         walletProvider: makeMockWallet(),
@@ -833,7 +833,7 @@ describe('LeaseMCPServer', () => {
 
       expect(result.isError).toBe(true);
       const parsed = JSON.parse(result.content[0].text);
-      expect(parsed.code).toBe('QUERY_FAILED');
+      expect(parsed.code).toBe('INVALID_CONFIG');
       expect(parsed.message).toMatch(/cannot be empty/);
       expect(mockLeaseByCustomDomain).not.toHaveBeenCalled();
     });

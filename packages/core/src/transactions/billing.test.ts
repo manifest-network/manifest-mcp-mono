@@ -107,7 +107,9 @@ describe('buildBillingMessages — set-item-custom-domain', () => {
       expect.fail('should have thrown');
     } catch (e) {
       expect(e).toBeInstanceOf(ManifestMCPError);
-      expect((e as ManifestMCPError).code).toBe(ManifestMCPErrorCode.TX_FAILED);
+      expect((e as ManifestMCPError).code).toBe(
+        ManifestMCPErrorCode.INVALID_CONFIG,
+      );
       expect((e as ManifestMCPError).message).toContain('cannot be empty');
       expect((e as ManifestMCPError).message).toContain('--clear');
     }
@@ -132,7 +134,9 @@ describe('buildBillingMessages — set-item-custom-domain', () => {
       expect.fail('should have thrown');
     } catch (e) {
       expect(e).toBeInstanceOf(ManifestMCPError);
-      expect((e as ManifestMCPError).code).toBe(ManifestMCPErrorCode.TX_FAILED);
+      expect((e as ManifestMCPError).code).toBe(
+        ManifestMCPErrorCode.INVALID_CONFIG,
+      );
       expect((e as ManifestMCPError).message).toContain('--clear');
       expect((e as ManifestMCPError).message).toContain('app.example.com');
     }
@@ -159,7 +163,9 @@ describe('buildBillingMessages — set-item-custom-domain', () => {
       expect.fail('should have thrown');
     } catch (e) {
       expect(e).toBeInstanceOf(ManifestMCPError);
-      expect((e as ManifestMCPError).code).toBe(ManifestMCPErrorCode.TX_FAILED);
+      expect((e as ManifestMCPError).code).toBe(
+        ManifestMCPErrorCode.INVALID_CONFIG,
+      );
       expect((e as ManifestMCPError).message).toContain('NotALabel');
       expect((e as ManifestMCPError).message).toContain('RFC 1123');
     }

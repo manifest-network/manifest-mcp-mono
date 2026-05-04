@@ -394,13 +394,13 @@ export class LeaseMCPServer {
         const domain = (args.custom_domain ?? '').trim();
         if (clearing && domain !== '') {
           throw new ManifestMCPError(
-            ManifestMCPErrorCode.TX_FAILED,
+            ManifestMCPErrorCode.INVALID_CONFIG,
             'Pass either `custom_domain` to set, or `clear: true` to clear, not both.',
           );
         }
         if (!clearing && domain === '') {
           throw new ManifestMCPError(
-            ManifestMCPErrorCode.TX_FAILED,
+            ManifestMCPErrorCode.INVALID_CONFIG,
             'Provide `custom_domain` to set, or `clear: true` to remove the existing domain.',
           );
         }
@@ -442,12 +442,15 @@ export class LeaseMCPServer {
         // The zod schema's `.min(1)` rejects empty strings but accepts
         // whitespace-only — mirror the generic-chain query handler's
         // trim+empty rejection at this layer too so a whitespace-only
-        // FQDN is rejected client-side with a structured QUERY_FAILED
-        // instead of being forwarded to the chain.
+        // FQDN is rejected client-side with a structured INVALID_CONFIG
+        // instead of being forwarded to the chain. Chain-side failures
+        // (notably the keeper's NotFound on an unclaimed FQDN) are
+        // wrapped below as QUERY_FAILED — kept distinct so callers can
+        // tell "you sent garbage" from "the chain answered no-such-thing".
         const customDomain = args.custom_domain.trim();
         if (customDomain === '') {
           throw new ManifestMCPError(
-            ManifestMCPErrorCode.QUERY_FAILED,
+            ManifestMCPErrorCode.INVALID_CONFIG,
             'lease_by_custom_domain: custom_domain cannot be empty or whitespace-only.',
           );
         }
