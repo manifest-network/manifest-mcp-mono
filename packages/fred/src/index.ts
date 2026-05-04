@@ -708,6 +708,7 @@ export class FredMCPServer {
             ),
           custom_domain: z
             .string()
+            .max(253)
             .optional()
             .describe(
               'Optional FQDN to attach to the lease item once the create-lease tx confirms (e.g. "app.example.com"). Must be lowercase with a non-numeric TLD label and not match a reserved suffix; the chain validates the format. On a stack lease (`services`), pair with `service_name` to pick which item to attach the domain to.',

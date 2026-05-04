@@ -4,6 +4,7 @@ import {
   CosmosClientManager,
   createMnemonicServer,
   createValidatedConfig,
+  DNS_LABEL_RE,
   fundCredits,
   getBalance,
   jsonResponse,
@@ -349,12 +350,14 @@ export class LeaseMCPServer {
             .describe('The lease UUID that owns the target item'),
           custom_domain: z
             .string()
+            .max(253)
             .optional()
             .describe(
               'FQDN to assign (e.g. "app.example.com"). Mutually exclusive with `clear: true`; an empty/missing value without `clear: true` is rejected. The chain validates format, lowercase, and reserved-suffix rules.',
             ),
           service_name: z
             .string()
+            .regex(DNS_LABEL_RE)
             .optional()
             .describe(
               'DNS label addressing the LeaseItem inside a stack lease (e.g. "web"). Omit for a 1-item legacy lease.',
@@ -430,6 +433,7 @@ export class LeaseMCPServer {
           custom_domain: z
             .string()
             .min(1)
+            .max(253)
             .describe('The FQDN to look up (e.g. "app.example.com")'),
         },
         annotations: readOnlyAnnotations('Look up lease by custom domain'),

@@ -184,6 +184,9 @@ export async function cosmosTx(
 
   // Get handler from registry (throws if module not found) - do this before retry loop
   const handler = getTxHandler(module);
+  // Fetch chain context once before the retry loop: every attempt uses the same
+  // snapshot and we don't consume extra rate-limit tokens on retries.
+  const buildContext = await loadBuildContext(clientManager, module, subcommand);
 
   return withRetry(
     async () => {
@@ -192,11 +195,6 @@ export async function cosmosTx(
 
       const signingClient = await clientManager.getSigningClient();
       const senderAddress = await clientManager.getAddress();
-      const buildContext = await loadBuildContext(
-        clientManager,
-        module,
-        subcommand,
-      );
 
       try {
         return await handler(
@@ -281,6 +279,9 @@ export async function cosmosEstimateFee(
 
   // Get builder from registry (throws if module not found) - do this before retry loop
   const builder = getTxMsgBuilder(module);
+  // Fetch chain context once before the retry loop: every attempt uses the same
+  // snapshot and we don't consume extra rate-limit tokens on retries.
+  const buildContext = await loadBuildContext(clientManager, module, subcommand);
 
   return withRetry(
     async () => {
@@ -304,15 +305,6 @@ export async function cosmosEstimateFee(
         (typeof clientMultiplier === 'number'
           ? clientMultiplier
           : DEFAULT_GAS_MULTIPLIER);
-
-      // Load chain state outside the try/catch so a params-fetch failure is
-      // not relabelled as SIMULATION_FAILED — mirrors `cosmosTx` placement
-      // and lets `loadBuildContext`'s structured `QUERY_FAILED` propagate.
-      const buildContext = await loadBuildContext(
-        clientManager,
-        module,
-        subcommand,
-      );
 
       try {
         const built = builder(senderAddress, subcommand, args, buildContext);

@@ -1,6 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { ManifestMCPError, ManifestMCPErrorCode } from '../types.js';
-import { buildBillingMessages } from './billing.js';
+import { buildBillingMessages, loadBillingUpdateParamsContext } from './billing.js';
 
 const SENDER = 'manifest19rl4cm2hmr8afy4kldpxz3fka4jguq0aaz02ta';
 const TENANT = 'manifest1am058pdux3hyulcmfgj4m3hhrlfn8nzmx97smg';
@@ -406,5 +406,62 @@ describe('buildBillingMessages — update-params', () => {
         reservedDomainSuffixes: ['.preserved.example'],
       }),
     });
+  });
+});
+
+describe('loadBillingUpdateParamsContext', () => {
+  const PARAMS = {
+    maxLeasesPerTenant: 10n,
+    allowedList: ['manifest1abc'],
+    reservedDomainSuffixes: ['.example.com'],
+  };
+
+  function makeQueryClient(paramsValue: unknown) {
+    return {
+      liftedinit: {
+        billing: {
+          v1: { params: vi.fn().mockResolvedValue({ params: paramsValue }) },
+        },
+      },
+    } as unknown as Parameters<typeof loadBillingUpdateParamsContext>[0];
+  }
+
+  it('returns TxBuildContext with currentBillingParams on success', async () => {
+    const qc = makeQueryClient(PARAMS);
+    const result = await loadBillingUpdateParamsContext(qc);
+    expect(result).toEqual({ currentBillingParams: PARAMS });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    expect((qc as any).liftedinit.billing.v1.params).toHaveBeenCalledWith({});
+  });
+
+  it('throws QUERY_FAILED when response.params is undefined', async () => {
+    const qc = makeQueryClient(undefined);
+    try {
+      await loadBillingUpdateParamsContext(qc);
+      expect.fail('should have thrown');
+    } catch (e) {
+      expect(e).toBeInstanceOf(ManifestMCPError);
+      expect((e as ManifestMCPError).code).toBe(ManifestMCPErrorCode.QUERY_FAILED);
+      expect((e as ManifestMCPError).message).toMatch(/response\.params was empty/);
+    }
+  });
+
+  it('throws QUERY_FAILED when response.params is null', async () => {
+    const qc = makeQueryClient(null);
+    try {
+      await loadBillingUpdateParamsContext(qc);
+      expect.fail('should have thrown');
+    } catch (e) {
+      expect(e).toBeInstanceOf(ManifestMCPError);
+      expect((e as ManifestMCPError).code).toBe(ManifestMCPErrorCode.QUERY_FAILED);
+    }
+  });
+
+  it('propagates chain errors without wrapping', async () => {
+    const chainErr = new Error('network timeout');
+    const qc = {
+      liftedinit: { billing: { v1: { params: vi.fn().mockRejectedValue(chainErr) } } },
+    } as unknown as Parameters<typeof loadBillingUpdateParamsContext>[0];
+    await expect(loadBillingUpdateParamsContext(qc)).rejects.toThrow('network timeout');
   });
 });

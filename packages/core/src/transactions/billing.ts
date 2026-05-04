@@ -314,6 +314,7 @@ export function buildBillingMessages(
         args,
         '--reserved-suffix',
         'billing update-params',
+        ManifestMCPErrorCode.INVALID_CONFIG,
       );
       const clearReserved = extractBooleanFlag(
         filterConsumedArgs(args, reservedSuffixFlag.consumedIndices),
@@ -433,11 +434,10 @@ export function buildBillingMessages(
         '--service-name',
         'billing set-item-custom-domain',
       );
-      const clearIndex = args.indexOf('--clear');
-      const clearing = clearIndex !== -1;
-      const consumed = [...serviceNameFlag.consumedIndices];
-      if (clearing) consumed.push(clearIndex);
-      const positional = filterConsumedArgs(args, consumed);
+      const afterServiceName = filterConsumedArgs(args, serviceNameFlag.consumedIndices);
+      const clearFlag = extractBooleanFlag(afterServiceName, '--clear');
+      const clearing = clearFlag.value;
+      const positional = clearFlag.remainingArgs;
 
       const expected = clearing ? 1 : 2;
       requireArgs(

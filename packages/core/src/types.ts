@@ -662,7 +662,7 @@ export interface CreditEstimateResult {
 }
 
 export interface LeaseByCustomDomainResult {
-  readonly lease?: Lease;
+  readonly lease: Lease;
   readonly serviceName: string;
 }
 
