@@ -184,9 +184,18 @@ export async function cosmosTx(
 
   // Get handler from registry (throws if module not found) - do this before retry loop
   const handler = getTxHandler(module);
-  // Fetch chain context once before the retry loop: every attempt uses the same
-  // snapshot and we don't consume extra rate-limit tokens on retries.
-  const buildContext = await loadBuildContext(clientManager, module, subcommand);
+  // Fetch chain context once before the broadcast retry loop: every broadcast
+  // attempt uses the same snapshot and we don't consume extra rate-limit
+  // tokens per broadcast retry. The loader is independently wrapped in its
+  // own withRetry so transient LCD failures during the chain read still get
+  // retried (parity with cosmosQuery's params reads).
+  const buildContext = await withRetry(
+    () => loadBuildContext(clientManager, module, subcommand),
+    {
+      config: clientManager.getConfig().retry,
+      operationName: `load-context ${module} ${subcommand}`,
+    },
+  );
 
   return withRetry(
     async () => {
@@ -279,9 +288,18 @@ export async function cosmosEstimateFee(
 
   // Get builder from registry (throws if module not found) - do this before retry loop
   const builder = getTxMsgBuilder(module);
-  // Fetch chain context once before the retry loop: every attempt uses the same
-  // snapshot and we don't consume extra rate-limit tokens on retries.
-  const buildContext = await loadBuildContext(clientManager, module, subcommand);
+  // Fetch chain context once before the simulate retry loop: every simulate
+  // attempt uses the same snapshot and we don't consume extra rate-limit
+  // tokens per simulate retry. The loader is independently wrapped in its
+  // own withRetry so transient LCD failures during the chain read still get
+  // retried (parity with cosmosQuery's params reads).
+  const buildContext = await withRetry(
+    () => loadBuildContext(clientManager, module, subcommand),
+    {
+      config: config.retry,
+      operationName: `load-context ${module} ${subcommand}`,
+    },
+  );
 
   return withRetry(
     async () => {

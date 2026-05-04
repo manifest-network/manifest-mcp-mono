@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 import { ManifestMCPError, ManifestMCPErrorCode } from '../types.js';
-import { buildBillingMessages, loadBillingUpdateParamsContext } from './billing.js';
+import {
+  buildBillingMessages,
+  loadBillingUpdateParamsContext,
+} from './billing.js';
 
 const SENDER = 'manifest19rl4cm2hmr8afy4kldpxz3fka4jguq0aaz02ta';
 const TENANT = 'manifest1am058pdux3hyulcmfgj4m3hhrlfn8nzmx97smg';
@@ -171,6 +174,43 @@ describe('buildBillingMessages — set-item-custom-domain', () => {
       leaseUuid: LEASE_UUID,
       customDomain: 'app.example.com',
     });
+  });
+
+  it('rejects a duplicate --service-name flag with INVALID_CONFIG', () => {
+    try {
+      buildBillingMessages(SENDER, 'set-item-custom-domain', [
+        LEASE_UUID,
+        'app.example.com',
+        '--service-name',
+        'web',
+        '--service-name',
+        'api',
+      ]);
+      expect.fail('should have thrown');
+    } catch (e) {
+      expect(e).toBeInstanceOf(ManifestMCPError);
+      expect((e as ManifestMCPError).code).toBe(
+        ManifestMCPErrorCode.INVALID_CONFIG,
+      );
+      expect((e as ManifestMCPError).message).toContain('--service-name');
+    }
+  });
+
+  it('rejects --service-name with a missing value as INVALID_CONFIG', () => {
+    try {
+      buildBillingMessages(SENDER, 'set-item-custom-domain', [
+        LEASE_UUID,
+        'app.example.com',
+        '--service-name',
+      ]);
+      expect.fail('should have thrown');
+    } catch (e) {
+      expect(e).toBeInstanceOf(ManifestMCPError);
+      expect((e as ManifestMCPError).code).toBe(
+        ManifestMCPErrorCode.INVALID_CONFIG,
+      );
+      expect((e as ManifestMCPError).message).toContain('--service-name');
+    }
   });
 
   it('rejects --service-name that is not a valid RFC 1123 DNS label', () => {
@@ -441,8 +481,12 @@ describe('loadBillingUpdateParamsContext', () => {
       expect.fail('should have thrown');
     } catch (e) {
       expect(e).toBeInstanceOf(ManifestMCPError);
-      expect((e as ManifestMCPError).code).toBe(ManifestMCPErrorCode.QUERY_FAILED);
-      expect((e as ManifestMCPError).message).toMatch(/response\.params was empty/);
+      expect((e as ManifestMCPError).code).toBe(
+        ManifestMCPErrorCode.QUERY_FAILED,
+      );
+      expect((e as ManifestMCPError).message).toMatch(
+        /response\.params was empty/,
+      );
     }
   });
 
@@ -453,15 +497,21 @@ describe('loadBillingUpdateParamsContext', () => {
       expect.fail('should have thrown');
     } catch (e) {
       expect(e).toBeInstanceOf(ManifestMCPError);
-      expect((e as ManifestMCPError).code).toBe(ManifestMCPErrorCode.QUERY_FAILED);
+      expect((e as ManifestMCPError).code).toBe(
+        ManifestMCPErrorCode.QUERY_FAILED,
+      );
     }
   });
 
   it('propagates chain errors without wrapping', async () => {
     const chainErr = new Error('network timeout');
     const qc = {
-      liftedinit: { billing: { v1: { params: vi.fn().mockRejectedValue(chainErr) } } },
+      liftedinit: {
+        billing: { v1: { params: vi.fn().mockRejectedValue(chainErr) } },
+      },
     } as unknown as Parameters<typeof loadBillingUpdateParamsContext>[0];
-    await expect(loadBillingUpdateParamsContext(qc)).rejects.toThrow('network timeout');
+    await expect(loadBillingUpdateParamsContext(qc)).rejects.toThrow(
+      'network timeout',
+    );
   });
 });

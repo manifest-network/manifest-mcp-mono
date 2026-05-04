@@ -433,8 +433,12 @@ export function buildBillingMessages(
         args,
         '--service-name',
         'billing set-item-custom-domain',
+        ManifestMCPErrorCode.INVALID_CONFIG,
       );
-      const afterServiceName = filterConsumedArgs(args, serviceNameFlag.consumedIndices);
+      const afterServiceName = filterConsumedArgs(
+        args,
+        serviceNameFlag.consumedIndices,
+      );
       const clearFlag = extractBooleanFlag(afterServiceName, '--clear');
       const clearing = clearFlag.value;
       const positional = clearFlag.remainingArgs;
