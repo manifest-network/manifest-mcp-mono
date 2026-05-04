@@ -54,6 +54,13 @@ describe('Billing custom-domain', () => {
   const FQDN_VIA_TOOL = `tool-${RUN_TAG}.e2e.test`;
   const FQDN_VIA_CHAIN = `chain-${RUN_TAG}.e2e.test`;
 
+  // Custom-domain support landed in manifest-ledger v2.1.0 (proto changes
+  // for `MsgSetItemCustomDomain` and `Query/LeaseByCustomDomain`). Older
+  // devnets reject the message type as "unable to resolve type URL" and
+  // the query path as "unknown query path". Probe once in beforeAll so
+  // each test can early-return with a console.warn instead of failing.
+  let chainSupportsCustomDomain = false;
+
   beforeAll(async () => {
     await Promise.all([
       leaseClient.connect({ serverEntry: 'packages/node/dist/lease.js' }),
@@ -63,6 +70,33 @@ describe('Billing custom-domain', () => {
       'get_account_info',
     );
     testAddress = acct.address;
+
+    // Feature-detect by hitting the new query with a sentinel FQDN.
+    // - Chain v2.1+ returns either an empty Lease (default-initialised)
+    //   or a hit; either way the call resolves without throwing.
+    // - Older chains throw with "unknown query path".
+    // Any other error (network, transport, routing regression) re-throws
+    // so genuine bugs still surface.
+    try {
+      await chainClient.callTool('cosmos_query', {
+        module: 'billing',
+        subcommand: 'lease-by-custom-domain',
+        args: [`probe-${RUN_TAG}.invalid`],
+      });
+      chainSupportsCustomDomain = true;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (/unknown query path|unable to resolve type URL/i.test(message)) {
+        console.warn(
+          '[billing-custom-domain] chain does not expose v2.1 custom-domain ' +
+            'queries — skipping. Bump the chain image to manifest-ledger ' +
+            'v2.1.0+ (or rebuild dist after a manifestjs/MCP server upgrade) ' +
+            'to enable.',
+        );
+      } else {
+        throw err;
+      }
+    }
   });
 
   afterAll(async () => {
@@ -130,8 +164,14 @@ describe('Billing custom-domain', () => {
 
   // ------------------------------------------------------------------
   // 2. High-level lease MCP tools — set, look up, clear
+  //
+  // Each test that touches the chain-side custom-domain surface returns
+  // early when the probe in `beforeAll` decided the chain is too old.
+  // Client-side rejection tests in section 4 don't need the feature on
+  // chain and run unconditionally.
   // ------------------------------------------------------------------
   it('set_item_custom_domain assigns an FQDN to the lease (legacy 1-item — no service_name)', async () => {
+    if (!chainSupportsCustomDomain) return;
     const result = await leaseClient.callTool<{
       lease_uuid: string;
       service_name: string;
@@ -152,6 +192,7 @@ describe('Billing custom-domain', () => {
   });
 
   it('lease_by_custom_domain (high-level) returns the lease that claimed the FQDN', async () => {
+    if (!chainSupportsCustomDomain) return;
     const result = await leaseClient.callTool<{
       lease: { uuid: string; tenant: string };
       service_name: string;
@@ -164,6 +205,7 @@ describe('Billing custom-domain', () => {
   });
 
   it('cosmos_query billing lease-by-custom-domain (low-level) returns the same shape', async () => {
+    if (!chainSupportsCustomDomain) return;
     const result = await chainClient.callTool<{
       result: {
         lease: { uuid: string; tenant: string };
@@ -183,6 +225,7 @@ describe('Billing custom-domain', () => {
   });
 
   it('leases_by_tenant per-item output now surfaces customDomain / serviceName', async () => {
+    if (!chainSupportsCustomDomain) return;
     const result = await leaseClient.callTool<{
       leases: Array<{
         uuid: string;
@@ -203,6 +246,7 @@ describe('Billing custom-domain', () => {
   });
 
   it('set_item_custom_domain clears the FQDN with clear:true', async () => {
+    if (!chainSupportsCustomDomain) return;
     const result = await leaseClient.callTool<{
       custom_domain: string;
       code: number;
@@ -216,6 +260,7 @@ describe('Billing custom-domain', () => {
   });
 
   it('lease_by_custom_domain after clearing returns an empty lease (not-found)', async () => {
+    if (!chainSupportsCustomDomain) return;
     const result = await leaseClient.callTool<{
       lease: { uuid?: string } | undefined;
       service_name: string;
@@ -232,6 +277,7 @@ describe('Billing custom-domain', () => {
   // 3. Generic chain layer — set / clear via cosmos_tx
   // ------------------------------------------------------------------
   it('cosmos_tx billing set-item-custom-domain (low-level) assigns a different FQDN', async () => {
+    if (!chainSupportsCustomDomain) return;
     const result = await chainClient.callTool<{ code: number }>('cosmos_tx', {
       module: 'billing',
       subcommand: 'set-item-custom-domain',
@@ -243,6 +289,7 @@ describe('Billing custom-domain', () => {
   });
 
   it('lease_by_custom_domain finds the FQDN set via the chain layer', async () => {
+    if (!chainSupportsCustomDomain) return;
     const result = await leaseClient.callTool<{
       lease: { uuid: string };
     }>('lease_by_custom_domain', { custom_domain: FQDN_VIA_CHAIN });
@@ -250,6 +297,7 @@ describe('Billing custom-domain', () => {
   });
 
   it('cosmos_tx billing set-item-custom-domain --clear (low-level) clears the FQDN', async () => {
+    if (!chainSupportsCustomDomain) return;
     const result = await chainClient.callTool<{ code: number }>('cosmos_tx', {
       module: 'billing',
       subcommand: 'set-item-custom-domain',
@@ -263,6 +311,7 @@ describe('Billing custom-domain', () => {
   // 4. Negative cases — chain-side and client-side rejections
   // ------------------------------------------------------------------
   it('cosmos_tx rejects an invalid FQDN on chain (TX_FAILED with chain error)', async () => {
+    if (!chainSupportsCustomDomain) return;
     // The chain's IsValidFQDN requires lowercase, ≥1 dot separator, RFC
     // 1123 labels, and a non-numeric TLD. "INVALID" violates all three —
     // the broadcast itself succeeds (passes ValidateBasic for lease_uuid /
