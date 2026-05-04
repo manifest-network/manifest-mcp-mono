@@ -9,6 +9,7 @@ import {
   type FeeEstimateResult,
   ManifestMCPError,
   ManifestMCPErrorCode,
+  type TxBuildContext,
   type TxOptions,
   type TxOverrides,
 } from './types.js';
@@ -16,6 +17,30 @@ import {
 // Validation pattern for module/subcommand names (alphanumeric, hyphens, underscores)
 // First character must not be a hyphen to prevent potential issues
 const VALID_NAME_PATTERN = /^[a-zA-Z0-9_][a-zA-Z0-9_-]*$/;
+
+/**
+ * Subcommands that read existing chain state to preserve fields the caller
+ * did not explicitly override. Listing them here keeps the cost (one extra
+ * query per matching tx) opt-in instead of paid by every tx.
+ */
+function needsBuildContext(module: string, subcommand: string): boolean {
+  return module === 'billing' && subcommand === 'update-params';
+}
+
+/**
+ * Fetch the chain state required to build messages for `(module, subcommand)`.
+ * Returns `undefined` when no state is needed.
+ */
+async function loadBuildContext(
+  clientManager: CosmosClientManager,
+  module: string,
+  subcommand: string,
+): Promise<TxBuildContext | undefined> {
+  if (!needsBuildContext(module, subcommand)) return undefined;
+  const queryClient = await clientManager.getQueryClient();
+  const result = await queryClient.liftedinit.billing.v1.params({});
+  return { currentBillingParams: result.params };
+}
 
 /**
  * Validate that a string is safe for use as a module or subcommand name.
@@ -141,6 +166,11 @@ export async function cosmosTx(
 
       const signingClient = await clientManager.getSigningClient();
       const senderAddress = await clientManager.getAddress();
+      const buildContext = await loadBuildContext(
+        clientManager,
+        module,
+        subcommand,
+      );
 
       try {
         return await handler(
@@ -150,6 +180,7 @@ export async function cosmosTx(
           args,
           waitForConfirmation,
           txOptions,
+          buildContext,
         );
       } catch (error) {
         if (error instanceof ManifestMCPError) {
@@ -249,7 +280,12 @@ export async function cosmosEstimateFee(
           : DEFAULT_GAS_MULTIPLIER);
 
       try {
-        const built = builder(senderAddress, subcommand, args);
+        const buildContext = await loadBuildContext(
+          clientManager,
+          module,
+          subcommand,
+        );
+        const built = builder(senderAddress, subcommand, args, buildContext);
         const gasEstimate = await signingClient.simulate(
           senderAddress,
           built.messages,

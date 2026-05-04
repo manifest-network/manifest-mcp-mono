@@ -185,6 +185,7 @@ describe('cosmosTx', () => {
       ['addr', '100umfx'],
       false,
       undefined,
+      undefined,
     );
     expect(result).toEqual(txResult);
   });
@@ -207,6 +208,7 @@ describe('cosmosTx', () => {
       'send',
       [],
       true,
+      undefined,
       undefined,
     );
   });
@@ -393,6 +395,78 @@ describe('cosmosTx', () => {
       [],
       false,
       { gasMultiplier: 2.5, gasPrice: '1.0umfx' },
+      undefined,
+    );
+  });
+
+  it('threads currentBillingParams as TxBuildContext for billing update-params', async () => {
+    const onChainParams = {
+      maxLeasesPerTenant: 9n,
+      maxItemsPerLease: 9n,
+      minLeaseDuration: 9n,
+      maxPendingLeasesPerTenant: 9n,
+      pendingTimeout: 9n,
+      allowedList: ['manifest1existing'],
+      reservedDomainSuffixes: ['.preserved.test'],
+    };
+    const billingParams = vi.fn().mockResolvedValue({ params: onChainParams });
+    clientManager.getQueryClient.mockResolvedValue({
+      liftedinit: { billing: { v1: { params: billingParams } } },
+    });
+    const mockHandler = vi.fn().mockResolvedValue({
+      module: 'billing',
+      subcommand: 'update-params',
+      transactionHash: 'X',
+      code: 0,
+      height: '1',
+    });
+    mockGetTxHandler.mockReturnValue(mockHandler);
+
+    await cosmosTx(clientManager, 'billing', 'update-params', [
+      '10',
+      '5',
+      '3600',
+      '2',
+      '300',
+    ]);
+
+    expect(billingParams).toHaveBeenCalledOnce();
+    expect(mockHandler).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      'update-params',
+      ['10', '5', '3600', '2', '300'],
+      false,
+      undefined,
+      { currentBillingParams: onChainParams },
+    );
+  });
+
+  it('does not fetch billing params for non-update-params subcommands', async () => {
+    const billingParams = vi.fn();
+    clientManager.getQueryClient.mockResolvedValue({
+      liftedinit: { billing: { v1: { params: billingParams } } },
+    });
+    const mockHandler = vi.fn().mockResolvedValue({
+      module: 'bank',
+      subcommand: 'send',
+      transactionHash: 'X',
+      code: 0,
+      height: '1',
+    });
+    mockGetTxHandler.mockReturnValue(mockHandler);
+
+    await cosmosTx(clientManager, 'bank', 'send', ['addr', '100umfx']);
+
+    expect(billingParams).not.toHaveBeenCalled();
+    expect(mockHandler).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      'send',
+      ['addr', '100umfx'],
+      false,
+      undefined,
+      undefined,
     );
   });
 });
@@ -454,15 +528,17 @@ describe('cosmosEstimateFee', () => {
     });
   });
 
-  it('builder is called with (senderAddress, subcommand, args)', async () => {
+  it('builder is called with (senderAddress, subcommand, args, context)', async () => {
     const mockBuilder = setupHappyPath();
 
     await cosmosEstimateFee(clientManager, 'bank', 'send', ['addr', '100umfx']);
 
-    expect(mockBuilder).toHaveBeenCalledWith('manifest1sender', 'send', [
-      'addr',
-      '100umfx',
-    ]);
+    expect(mockBuilder).toHaveBeenCalledWith(
+      'manifest1sender',
+      'send',
+      ['addr', '100umfx'],
+      undefined,
+    );
   });
 
   it('memo from builder is forwarded to simulate', async () => {

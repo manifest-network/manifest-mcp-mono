@@ -6,12 +6,14 @@ import {
   type CosmosTxResult,
   ManifestMCPError,
   ManifestMCPErrorCode,
+  type TxBuildContext,
   type TxOptions,
 } from '../types.js';
 import { DNS_LABEL_RE } from '../validation.js';
 import {
   buildGasFee,
   buildTxResult,
+  extractBooleanFlag,
   extractFlag,
   extractRepeatedFlag,
   filterConsumedArgs,
@@ -40,11 +42,18 @@ const {
 
 /**
  * Build messages for a billing transaction subcommand (no signing/broadcasting).
+ *
+ * `context.currentBillingParams` is consulted by `update-params` so omitted
+ * `allowedList` and `reservedDomainSuffixes` preserve their on-chain values
+ * instead of being silently cleared. When the context is unavailable (e.g.
+ * estimating fees before the chain is reachable), the builder falls back to
+ * the explicit-only behavior — empty when not provided.
  */
 export function buildBillingMessages(
   senderAddress: string,
   subcommand: string,
   args: string[],
+  context?: TxBuildContext,
 ): BuiltMessages {
   validateArgsLength(args, 'billing transaction');
 
@@ -291,15 +300,25 @@ export function buildBillingMessages(
     }
 
     case 'update-params': {
+      // List-typed Params fields default to "preserve" so that callers who
+      // only want to bump the numeric fields don't accidentally wipe the
+      // on-chain allowed_list or reserved_domain_suffixes (MsgUpdateParams
+      // overwrites the full Params struct). Explicit `--clear-*` flags opt
+      // out of preservation; passing values opts in to overwrite.
       const reservedSuffixFlag = extractRepeatedFlag(
         args,
         '--reserved-suffix',
         'billing update-params',
       );
-      const positional = filterConsumedArgs(
-        args,
-        reservedSuffixFlag.consumedIndices,
+      const clearReserved = extractBooleanFlag(
+        filterConsumedArgs(args, reservedSuffixFlag.consumedIndices),
+        '--clear-reserved-suffixes',
       );
+      const clearAllowed = extractBooleanFlag(
+        clearReserved.remainingArgs,
+        '--clear-allowed-list',
+      );
+      const positional = clearAllowed.remainingArgs;
 
       requireArgs(
         positional,
@@ -327,6 +346,43 @@ export function buildBillingMessages(
         validateAddress(addr, 'allowed address');
       }
 
+      if (reservedSuffixFlag.values.length > 0 && clearReserved.value) {
+        throw new ManifestMCPError(
+          ManifestMCPErrorCode.TX_FAILED,
+          'billing update-params: --reserved-suffix and --clear-reserved-suffixes are mutually exclusive.',
+        );
+      }
+      if (allowedAddresses.length > 0 && clearAllowed.value) {
+        throw new ManifestMCPError(
+          ManifestMCPErrorCode.TX_FAILED,
+          'billing update-params: positional <allowed-address> values and --clear-allowed-list are mutually exclusive.',
+        );
+      }
+
+      // Resolve list fields with preserve-by-default semantics.
+      const currentParams = context?.currentBillingParams;
+      let reservedDomainSuffixes: string[];
+      if (reservedSuffixFlag.values.length > 0) {
+        reservedDomainSuffixes = reservedSuffixFlag.values;
+      } else if (clearReserved.value) {
+        reservedDomainSuffixes = [];
+      } else {
+        reservedDomainSuffixes = currentParams?.reservedDomainSuffixes
+          ? [...currentParams.reservedDomainSuffixes]
+          : [];
+      }
+
+      let allowedList: string[];
+      if (allowedAddresses.length > 0) {
+        allowedList = allowedAddresses;
+      } else if (clearAllowed.value) {
+        allowedList = [];
+      } else {
+        allowedList = currentParams?.allowedList
+          ? [...currentParams.allowedList]
+          : [];
+      }
+
       const msg = {
         typeUrl: '/liftedinit.billing.v1.MsgUpdateParams',
         value: MsgUpdateParams.fromPartial({
@@ -349,8 +405,8 @@ export function buildBillingMessages(
               'max-pending-leases-per-tenant',
             ),
             pendingTimeout: parseBigInt(pendingTimeoutStr, 'pending-timeout'),
-            allowedList: allowedAddresses,
-            reservedDomainSuffixes: reservedSuffixFlag.values,
+            allowedList,
+            reservedDomainSuffixes,
           },
         }),
       };
@@ -435,8 +491,9 @@ export async function routeBillingTransaction(
   args: string[],
   waitForConfirmation: boolean,
   options?: TxOptions,
+  context?: TxBuildContext,
 ): Promise<CosmosTxResult> {
-  const built = buildBillingMessages(senderAddress, subcommand, args);
+  const built = buildBillingMessages(senderAddress, subcommand, args, context);
   const fee = await buildGasFee(
     client,
     senderAddress,

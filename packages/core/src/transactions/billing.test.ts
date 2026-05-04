@@ -155,13 +155,11 @@ describe('buildBillingMessages — set-item-custom-domain', () => {
 });
 
 describe('buildBillingMessages — update-params', () => {
+  const NUMERIC_ARGS = ['10', '5', '3600', '2', '300'];
+
   it('forwards --reserved-suffix flags into params.reservedDomainSuffixes', () => {
     const { messages } = buildBillingMessages(SENDER, 'update-params', [
-      '10',
-      '5',
-      '3600',
-      '2',
-      '300',
+      ...NUMERIC_ARGS,
       '--reserved-suffix',
       '.barney0.manifest0.net',
       '--reserved-suffix',
@@ -180,11 +178,7 @@ describe('buildBillingMessages — update-params', () => {
 
   it('keeps trailing positional args as allowedList when --reserved-suffix is mixed in', () => {
     const { messages } = buildBillingMessages(SENDER, 'update-params', [
-      '10',
-      '5',
-      '3600',
-      '2',
-      '300',
+      ...NUMERIC_ARGS,
       TENANT,
       '--reserved-suffix',
       '.example.test',
@@ -194,6 +188,122 @@ describe('buildBillingMessages — update-params', () => {
       params: expect.objectContaining({
         allowedList: [TENANT],
         reservedDomainSuffixes: ['.example.test'],
+      }),
+    });
+  });
+
+  it('preserves on-chain reservedDomainSuffixes when neither --reserved-suffix nor --clear-reserved-suffixes is supplied', () => {
+    const currentBillingParams = {
+      maxLeasesPerTenant: 1n,
+      maxItemsPerLease: 1n,
+      minLeaseDuration: 1n,
+      maxPendingLeasesPerTenant: 1n,
+      pendingTimeout: 60n,
+      allowedList: [TENANT],
+      reservedDomainSuffixes: [
+        '.barney0.manifest0.net',
+        '.alice0.manifest0.net',
+      ],
+    };
+
+    const { messages } = buildBillingMessages(
+      SENDER,
+      'update-params',
+      NUMERIC_ARGS,
+      { currentBillingParams },
+    );
+
+    expect(messages[0].value).toMatchObject({
+      params: expect.objectContaining({
+        reservedDomainSuffixes: [
+          '.barney0.manifest0.net',
+          '.alice0.manifest0.net',
+        ],
+        allowedList: [TENANT],
+      }),
+    });
+  });
+
+  it('explicitly clears reservedDomainSuffixes when --clear-reserved-suffixes is set', () => {
+    const currentBillingParams = {
+      maxLeasesPerTenant: 1n,
+      maxItemsPerLease: 1n,
+      minLeaseDuration: 1n,
+      maxPendingLeasesPerTenant: 1n,
+      pendingTimeout: 60n,
+      allowedList: [],
+      reservedDomainSuffixes: ['.x.test'],
+    };
+
+    const { messages } = buildBillingMessages(
+      SENDER,
+      'update-params',
+      [...NUMERIC_ARGS, '--clear-reserved-suffixes'],
+      { currentBillingParams },
+    );
+
+    expect(messages[0].value).toMatchObject({
+      params: expect.objectContaining({ reservedDomainSuffixes: [] }),
+    });
+  });
+
+  it('explicitly clears allowedList when --clear-allowed-list is set', () => {
+    const currentBillingParams = {
+      maxLeasesPerTenant: 1n,
+      maxItemsPerLease: 1n,
+      minLeaseDuration: 1n,
+      maxPendingLeasesPerTenant: 1n,
+      pendingTimeout: 60n,
+      allowedList: [TENANT],
+      reservedDomainSuffixes: [],
+    };
+
+    const { messages } = buildBillingMessages(
+      SENDER,
+      'update-params',
+      [...NUMERIC_ARGS, '--clear-allowed-list'],
+      { currentBillingParams },
+    );
+
+    expect(messages[0].value).toMatchObject({
+      params: expect.objectContaining({ allowedList: [] }),
+    });
+  });
+
+  it('rejects --reserved-suffix combined with --clear-reserved-suffixes (mutually exclusive)', () => {
+    expect(() =>
+      buildBillingMessages(SENDER, 'update-params', [
+        ...NUMERIC_ARGS,
+        '--reserved-suffix',
+        '.x.test',
+        '--clear-reserved-suffixes',
+      ]),
+    ).toThrow(/mutually exclusive/);
+  });
+
+  it('rejects positional <allowed-address> combined with --clear-allowed-list (mutually exclusive)', () => {
+    expect(() =>
+      buildBillingMessages(SENDER, 'update-params', [
+        ...NUMERIC_ARGS,
+        TENANT,
+        '--clear-allowed-list',
+      ]),
+    ).toThrow(/mutually exclusive/);
+  });
+
+  it('without context falls back to empty list fields when nothing explicit is provided', () => {
+    // Sync builder used by cosmosEstimateFee paths cannot fetch chain state;
+    // it produces an explicit-only message with empty list fields.
+    const { messages } = buildBillingMessages(
+      SENDER,
+      'update-params',
+      NUMERIC_ARGS,
+    );
+
+    expect(messages[0].value).toMatchObject({
+      params: expect.objectContaining({
+        reservedDomainSuffixes: [],
+        allowedList: [],
       }),
     });
   });

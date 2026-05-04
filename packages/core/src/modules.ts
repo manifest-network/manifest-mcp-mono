@@ -73,6 +73,7 @@ import {
   ManifestMCPErrorCode,
   type ModuleInfo,
   type QueryResult,
+  type TxBuildContext,
   type TxOptions,
 } from './types.js';
 
@@ -86,7 +87,11 @@ export type QueryHandler = (
 ) => Promise<QueryResult>;
 
 /**
- * Handler function type for transaction modules
+ * Handler function type for transaction modules.
+ *
+ * `context` carries optional read-only chain state (currently the on-chain
+ * billing Params) for handlers that must merge against existing values to
+ * preserve fields the caller did not explicitly set. Most handlers ignore it.
  */
 export type TxHandler = (
   signingClient: SigningStargateClient,
@@ -95,16 +100,23 @@ export type TxHandler = (
   args: string[],
   waitForConfirmation: boolean,
   options?: TxOptions,
+  context?: TxBuildContext,
 ) => Promise<CosmosTxResult>;
 
 /**
  * Pure synchronous function type for building transaction messages.
  * Used by `cosmosEstimateFee` to obtain `EncodeObject[]` without signing/broadcasting.
+ *
+ * `context` carries optional chain state for builders that need it (e.g.
+ * billing `update-params` preserves on-chain `allowedList` /
+ * `reservedDomainSuffixes` when not explicitly overridden). Builders that
+ * don't need context simply ignore it.
  */
 export type TxMsgBuilder = (
   senderAddress: string,
   subcommand: string,
   args: string[],
+  context?: TxBuildContext,
 ) => BuiltMessages;
 
 /**
@@ -789,8 +801,12 @@ const TX_MODULES: TxModuleRegistry = {
       },
       {
         name: 'update-params',
-        description: 'Update billing module parameters (governance)',
-        args: '<max-leases-per-tenant> <max-items-per-lease> <min-lease-duration> <max-pending-leases-per-tenant> <pending-timeout> [<allowed-address>...] [--reserved-suffix <.example.com>...]',
+        description:
+          'Update billing module parameters (governance). List-typed fields ' +
+          '(allowed_list, reserved_domain_suffixes) preserve their on-chain ' +
+          'values when not explicitly overridden; pass --clear-allowed-list ' +
+          'or --clear-reserved-suffixes to clear them.',
+        args: '<max-leases-per-tenant> <max-items-per-lease> <min-lease-duration> <max-pending-leases-per-tenant> <pending-timeout> [<allowed-address>...] [--clear-allowed-list] [--reserved-suffix <.example.com>...] [--clear-reserved-suffixes]',
       },
       {
         name: 'set-item-custom-domain',

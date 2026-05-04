@@ -215,6 +215,18 @@ export interface TxOptions {
 }
 
 /**
+ * Optional read-only chain state passed to message builders/handlers so they
+ * can preserve fields the caller did not explicitly override (e.g. governance
+ * MsgUpdateParams that overwrites the full Params struct).
+ *
+ * Populated by `cosmosTx` / `cosmosEstimateFee` only when the target subcommand
+ * needs it; left undefined otherwise to avoid unnecessary chain reads.
+ */
+export interface TxBuildContext {
+  readonly currentBillingParams?: BillingParams;
+}
+
+/**
  * Wallet provider interface for different wallet implementations
  *
  * Any wallet that provides an OfflineSigner works (Keplr, Web3Auth, Leap, cosmos-kit, etc.)
