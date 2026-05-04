@@ -215,6 +215,18 @@ export async function deployApp(
   // rejects — orphaning a paid-for lease behind a "Deploy partially
   // succeeded" wrap, exactly the failure mode this block is meant to
   // prevent.
+  // `serviceName` is documented as only meaningful when `customDomain` is set.
+  // Reject it eagerly when the caller forgot the domain, otherwise the input
+  // is silently ignored — confusing for the caller and a foot-gun (a typo
+  // turning `customDomain` into `customdomain` would skip the domain claim
+  // and quietly drop the service routing intent on the floor).
+  if (input.customDomain === undefined && input.serviceName !== undefined) {
+    throw new ManifestMCPError(
+      ManifestMCPErrorCode.INVALID_CONFIG,
+      'serviceName is only meaningful when customDomain is set; pass customDomain or omit serviceName',
+    );
+  }
+
   let normalizedCustomDomain: string | undefined;
   if (input.customDomain !== undefined) {
     normalizedCustomDomain = input.customDomain.trim();

@@ -160,6 +160,44 @@ describe('routeBillingQuery', () => {
         routeBillingQuery(qc, 'lease-by-custom-domain', []),
       ).rejects.toThrow();
     });
+
+    it('trims surrounding whitespace before querying the chain', async () => {
+      const qc = makeMockBillingClient();
+      const billingFn = (
+        qc as {
+          liftedinit: {
+            billing: { v1: { leaseByCustomDomain: ReturnType<typeof vi.fn> } };
+          };
+        }
+      ).liftedinit.billing.v1.leaseByCustomDomain;
+      await routeBillingQuery(qc, 'lease-by-custom-domain', [
+        '  app.example.com  ',
+      ]);
+      expect(billingFn).toHaveBeenCalledWith({
+        customDomain: 'app.example.com',
+      });
+    });
+
+    it('rejects whitespace-only <custom-domain> with INVALID_CONFIG', async () => {
+      const qc = makeMockBillingClient();
+      const billingFn = (
+        qc as {
+          liftedinit: {
+            billing: { v1: { leaseByCustomDomain: ReturnType<typeof vi.fn> } };
+          };
+        }
+      ).liftedinit.billing.v1.leaseByCustomDomain;
+      await expect(
+        routeBillingQuery(qc, 'lease-by-custom-domain', ['   ']),
+      ).rejects.toSatisfy((error: unknown) => {
+        if (!(error instanceof ManifestMCPError)) return false;
+        return (
+          error.code === ManifestMCPErrorCode.INVALID_CONFIG &&
+          /cannot be empty/.test(error.message)
+        );
+      });
+      expect(billingFn).not.toHaveBeenCalled();
+    });
   });
 
   it('throws on unsupported subcommand', async () => {

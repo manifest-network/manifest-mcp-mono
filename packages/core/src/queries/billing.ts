@@ -185,8 +185,14 @@ export async function routeBillingQuery(
 
     case 'lease-by-custom-domain': {
       requireArgs(args, 1, ['custom-domain'], 'billing lease-by-custom-domain');
-      const [customDomain] = args;
-      if (!customDomain || customDomain.trim() === '') {
+      const [rawCustomDomain] = args;
+      // Trim once and reuse: the MCP tool layer (lease/index.ts) and the tx
+      // builder both canonicalize on the trimmed value, so a generic
+      // `cosmos_query billing lease-by-custom-domain "  app.example.com  "`
+      // call would otherwise reach the chain with the surrounding whitespace
+      // and fail format validation, despite passing the empty-check below.
+      const customDomain = (rawCustomDomain ?? '').trim();
+      if (customDomain === '') {
         throw new ManifestMCPError(
           ManifestMCPErrorCode.INVALID_CONFIG,
           'billing lease-by-custom-domain: <custom-domain> cannot be empty.',

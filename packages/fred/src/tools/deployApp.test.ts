@@ -885,6 +885,23 @@ describe('deployApp', () => {
       expect(mockCosmosTx).not.toHaveBeenCalled();
     });
 
+    it('rejects serviceName when customDomain is omitted (silently-ignored input is a foot-gun)', async () => {
+      const qc = makeQueryClient();
+      const cm = makeMockClientManager({ queryClient: qc });
+
+      await expect(
+        deployApp(cm as any, mockGetAuthToken, mockGetLeaseDataAuthToken, {
+          size: 'docker-micro',
+          services: { web: { image: 'nginx' } },
+          serviceName: 'web',
+        }),
+      ).rejects.toThrow(
+        /serviceName is only meaningful when customDomain is set/,
+      );
+      expect(mockCosmosTx).not.toHaveBeenCalled();
+      expect(mockSetItemCustomDomain).not.toHaveBeenCalled();
+    });
+
     it('rejects serviceName on an image+port (legacy 1-item) lease', async () => {
       const qc = makeQueryClient();
       const cm = makeMockClientManager({ queryClient: qc });
