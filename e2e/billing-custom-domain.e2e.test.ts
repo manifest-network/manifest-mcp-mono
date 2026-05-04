@@ -336,7 +336,7 @@ describe('Billing custom-domain', () => {
       lease_uuid: leaseUuid,
       custom_domain: '',
     });
-    expect(err.code).toBe('TX_FAILED');
+    expect(err.code).toBe('INVALID_CONFIG');
     expect(err.message).toMatch(/custom_domain|cannot be empty|clear/i);
   });
 
@@ -346,7 +346,7 @@ describe('Billing custom-domain', () => {
       subcommand: 'lease-by-custom-domain',
       args: [''],
     });
-    expect(err.code).toBe('QUERY_FAILED');
+    expect(err.code).toBe('INVALID_CONFIG');
     expect(err.message).toMatch(/cannot be empty/);
   });
 
