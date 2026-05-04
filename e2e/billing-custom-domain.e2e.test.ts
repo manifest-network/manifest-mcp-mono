@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { LeaseState } from '@manifest-network/manifest-mcp-core';
 import { MCPTestClient, parseToolErrorCode } from './helpers/mcp-client.js';
 
 /**
@@ -10,26 +11,25 @@ import { MCPTestClient, parseToolErrorCode } from './helpers/mcp-client.js';
  * the wire-level message encoding and chain-side validation are exercised.
  *
  * Setup:
- *   `init_billing.sh` registers the provider/SKU, and `init_chain.sh` adds
- *   the test wallet (ADDR2) to `billing.params.allowed_list`. The test
- *   wallet is therefore both the lease tenant and (independently) an
- *   `allowed_list` signer — both authorisation paths the chain accepts for
- *   `MsgSetItemCustomDomain`.
+ *   The lease is created via `deploy_app` against the provider registered
+ *   by `init_billing.sh` (ADDR1) so providerd actually acknowledges it
+ *   and the lease ends up in `LEASE_STATE_ACTIVE` — the chain only allows
+ *   `MsgSetItemCustomDomain` against PENDING or ACTIVE leases. A bare
+ *   `cosmos_tx billing create-lease` against the same provider is
+ *   auto-rejected by providerd within sub-second (no payload), which
+ *   would race the set-domain call.
  *
- *   The lease is created against the existing provider/SKU registered by
- *   `init_billing.sh`. Per `MsgSetItemCustomDomain.ValidateBasic`, the
- *   lease must be in PENDING or ACTIVE state to be addressable; we set/
- *   clear domains while the lease is PENDING (no provider acknowledgement
- *   required).
+ *   `init_chain.sh` adds the test wallet (ADDR2) to
+ *   `billing.params.allowed_list`, so the wallet is independently a valid
+ *   signer for `MsgSetItemCustomDomain` even outside the tenant role.
  *
  *   FQDN format is validated by `IsValidFQDN` on chain (lowercase, ≥1 dot,
  *   each label is RFC 1123, TLD label has ≥1 non-digit). The unique
  *   timestamp suffix here keeps re-runs against persistent state from
  *   colliding on the reverse-index entry.
  *
- *   Cleanup: cancel-lease at the end so the lease doesn't block follow-up
- *   tests (and doesn't leak chain state). cancel-lease is tenant-only and
- *   works on any non-terminal lease.
+ *   Cleanup: close-lease at the end so providerd tears down the container
+ *   and chain state doesn't leak into the lifecycle suite that runs later.
  *
  * Re-runnability: the test wallet's allowed-list seat persists across runs.
  * The unique FQDN suffix avoids reverse-index conflicts. As with the rest
@@ -44,6 +44,7 @@ const RUN_TAG = `${Date.now()}`;
 describe('Billing custom-domain', () => {
   const leaseClient = new MCPTestClient();
   const chainClient = new MCPTestClient();
+  const fredClient = new MCPTestClient();
 
   let testAddress: string;
   let skuUuid: string;
@@ -65,6 +66,7 @@ describe('Billing custom-domain', () => {
     await Promise.all([
       leaseClient.connect({ serverEntry: 'packages/node/dist/lease.js' }),
       chainClient.connect({ serverEntry: 'packages/node/dist/chain.js' }),
+      fredClient.connect({ serverEntry: 'packages/node/dist/fred.js' }),
     ]);
     const acct = await chainClient.callTool<{ address: string }>(
       'get_account_info',
@@ -108,11 +110,22 @@ describe('Billing custom-domain', () => {
   });
 
   afterAll(async () => {
-    await Promise.all([leaseClient.close(), chainClient.close()]);
+    await Promise.all([
+      leaseClient.close(),
+      chainClient.close(),
+      fredClient.close(),
+    ]);
   });
 
   // ------------------------------------------------------------------
-  // 1. Setup — discover the docker-micro SKU and fund credits
+  // 1. Setup — fund credits and deploy_app to get an ACTIVE lease
+  //
+  // Why deploy_app rather than `cosmos_tx billing create-lease`: the
+  // chain-side custom-domain edits require PENDING or ACTIVE state, and
+  // a bare create-lease against the init_billing.sh provider is
+  // auto-rejected by providerd within sub-second (no payload), which
+  // would race against the set-domain call. deploy_app produces a real
+  // acknowledged lease in ACTIVE state.
   // ------------------------------------------------------------------
   it('setup: get_skus discovers the docker-micro SKU', async () => {
     const skus = await leaseClient.callTool<{
@@ -140,34 +153,18 @@ describe('Billing custom-domain', () => {
     expect(result.code).toBe(0);
   });
 
-  it('setup: cosmos_tx billing create-lease creates a PENDING lease for the test wallet', async () => {
-    const beforeRes = await chainClient.callTool<{
-      result: { leases: Array<{ uuid: string }> };
-    }>('cosmos_query', {
-      module: 'billing',
-      subcommand: 'leases-by-tenant',
-      args: [testAddress],
+  it('setup: deploy_app provisions an ACTIVE lease via providerd', async () => {
+    const result = await fredClient.callTool<{
+      lease_uuid: string;
+      state: LeaseState;
+    }>('deploy_app', {
+      image: 'nginxinc/nginx-unprivileged:alpine',
+      port: 8080,
+      size: 'docker-micro',
     });
-    const beforeIds = new Set(beforeRes.result.leases.map((l) => l.uuid));
-
-    const tx = await chainClient.callTool<{ code: number }>('cosmos_tx', {
-      module: 'billing',
-      subcommand: 'create-lease',
-      args: [`${skuUuid}:1`],
-      wait_for_confirmation: true,
-    });
-    expect(tx.code).toBe(0);
-
-    const afterRes = await chainClient.callTool<{
-      result: { leases: Array<{ uuid: string }> };
-    }>('cosmos_query', {
-      module: 'billing',
-      subcommand: 'leases-by-tenant',
-      args: [testAddress],
-    });
-    const newLease = afterRes.result.leases.find((l) => !beforeIds.has(l.uuid));
-    expect(newLease).toBeDefined();
-    leaseUuid = newLease!.uuid;
+    expect(result.state).toBe(LeaseState.LEASE_STATE_ACTIVE);
+    expect(result.lease_uuid).toBeTruthy();
+    leaseUuid = result.lease_uuid;
   });
 
   // ------------------------------------------------------------------
@@ -354,17 +351,17 @@ describe('Billing custom-domain', () => {
   });
 
   // ------------------------------------------------------------------
-  // 5. Cleanup — cancel the lease so it doesn't leak state into other tests
+  // 5. Cleanup — close the lease so providerd tears down the container
+  //    and chain state doesn't leak into subsequent test files.
   // ------------------------------------------------------------------
-  it('cleanup: cancel-lease terminates the test lease', async () => {
+  it('cleanup: close_lease terminates the test lease', async () => {
     try {
-      const result = await chainClient.callTool<{ code: number }>('cosmos_tx', {
-        module: 'billing',
-        subcommand: 'cancel-lease',
-        args: [leaseUuid],
-        wait_for_confirmation: true,
-      });
-      expect(result.code).toBe(0);
+      const result = await leaseClient.callTool<{
+        lease_uuid: string;
+        status: string;
+      }>('close_lease', { lease_uuid: leaseUuid });
+      expect(result.lease_uuid).toBe(leaseUuid);
+      expect(result.status).toBe('stopped');
     } catch (err) {
       // If the lease somehow already terminated, swallow the chain rejection.
       // Routing-layer regressions still surface (UNSUPPORTED_TX, etc.).
@@ -373,7 +370,7 @@ describe('Billing custom-domain', () => {
         throw err;
       }
       console.warn(
-        `[billing-custom-domain] cancel-lease rejected (already terminal?): ${err}`,
+        `[billing-custom-domain] close_lease rejected (already terminal?): ${err}`,
       );
     }
   });
