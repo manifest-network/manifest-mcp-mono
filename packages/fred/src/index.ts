@@ -5,6 +5,7 @@ import {
   createMnemonicServer,
   createPagination,
   createValidatedConfig,
+  DNS_LABEL_RE,
   jsonResponse,
   LeaseState,
   leaseStateToJSON,
@@ -715,9 +716,10 @@ export class FredMCPServer {
             ),
           service_name: z
             .string()
+            .regex(DNS_LABEL_RE)
             .optional()
             .describe(
-              'Required when `custom_domain` is set on a stack lease (`services`). Must match one of the keys in `services`. Omit for image+port (single-item legacy) leases.',
+              'Required when `custom_domain` is set on a stack lease (`services`). Must match one of the keys in `services` and be a valid RFC 1123 DNS label (1-63 lowercase alphanumeric chars + hyphens, no leading/trailing hyphen). Omit for image+port (single-item legacy) leases.',
             ),
         },
         outputSchema: {

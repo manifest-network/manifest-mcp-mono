@@ -895,6 +895,26 @@ describe('FredMCPServer', () => {
       );
     });
 
+    it('rejects a service_name that is not a valid RFC 1123 DNS label at the MCP boundary', async () => {
+      // Mirrors the lease package's set_item_custom_domain regex enforcement
+      // so a malformed service_name fails fast at the tool boundary instead
+      // of slipping through to deployApp's services-membership check (which
+      // only catches mismatch, not malformedness).
+      const server = new FredMCPServer({
+        config: makeMockConfig(),
+        walletProvider: makeMockWallet({ signArbitrary: true }),
+      });
+      const result = await callTool(server, 'deploy_app', {
+        size: 'docker-micro',
+        services: { web: { image: 'nginx', ports: { '80/tcp': {} } } },
+        custom_domain: 'app.example.com',
+        service_name: 'NotALabel',
+      });
+
+      expect(result.isError).toBe(true);
+      expect(mockDeployApp).not.toHaveBeenCalled();
+    });
+
     it('does not set customDomain/serviceName on the helper input when the schema fields are omitted', async () => {
       const server = new FredMCPServer({
         config: makeMockConfig(),
