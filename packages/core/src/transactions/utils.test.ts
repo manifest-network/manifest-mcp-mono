@@ -6,6 +6,7 @@ import {
   bytesToHex,
   extractBooleanFlag,
   extractFlag,
+  extractRepeatedFlag,
   filterConsumedArgs,
   parseAmount,
   parseBigInt,
@@ -251,6 +252,86 @@ describe('extractFlag', () => {
       expect((error as ManifestMCPError).message).toContain('bank send');
       expect((error as ManifestMCPError).message).toContain('--memo');
     }
+  });
+});
+
+describe('extractRepeatedFlag', () => {
+  it('returns empty values and consumedIndices when flag is absent', () => {
+    const result = extractRepeatedFlag(['arg1', 'arg2'], '--suffix', 'test');
+    expect(result.values).toEqual([]);
+    expect(result.consumedIndices).toEqual([]);
+  });
+
+  it('collects every occurrence in order with the right consumedIndices', () => {
+    const result = extractRepeatedFlag(
+      ['--suffix', '.a.com', 'pos1', '--suffix', '.b.com', 'pos2'],
+      '--suffix',
+      'test',
+    );
+    expect(result.values).toEqual(['.a.com', '.b.com']);
+    expect(result.consumedIndices).toEqual([0, 1, 3, 4]);
+  });
+
+  it('handles a single occurrence', () => {
+    const result = extractRepeatedFlag(
+      ['pre', '--suffix', '.only.com', 'post'],
+      '--suffix',
+      'test',
+    );
+    expect(result.values).toEqual(['.only.com']);
+    expect(result.consumedIndices).toEqual([1, 2]);
+  });
+
+  it('throws when the flag is missing its value (end of args)', () => {
+    expect(() => extractRepeatedFlag(['--suffix'], '--suffix', 'test')).toThrow(
+      ManifestMCPError,
+    );
+  });
+
+  it('throws when the flag is followed by another flag instead of a value', () => {
+    expect(() =>
+      extractRepeatedFlag(['--suffix', '--other-flag'], '--suffix', 'test'),
+    ).toThrow(ManifestMCPError);
+  });
+
+  it('throws even when an earlier occurrence was valid', () => {
+    expect(() =>
+      extractRepeatedFlag(
+        ['--suffix', '.a.com', '--suffix'],
+        '--suffix',
+        'test',
+      ),
+    ).toThrow(ManifestMCPError);
+  });
+
+  it('includes the context in the error message', () => {
+    try {
+      extractRepeatedFlag(['--suffix'], '--suffix', 'billing update-params');
+      expect.fail('should have thrown');
+    } catch (error) {
+      expect((error as ManifestMCPError).message).toContain(
+        'billing update-params',
+      );
+      expect((error as ManifestMCPError).message).toContain('--suffix');
+    }
+  });
+
+  it('produces consumedIndices that filterConsumedArgs uses to drop just the flag pairs', () => {
+    const args = [
+      'pos1',
+      '--suffix',
+      '.a.com',
+      'pos2',
+      '--suffix',
+      '.b.com',
+      'pos3',
+    ];
+    const result = extractRepeatedFlag(args, '--suffix', 'test');
+    expect(filterConsumedArgs(args, result.consumedIndices)).toEqual([
+      'pos1',
+      'pos2',
+      'pos3',
+    ]);
   });
 });
 

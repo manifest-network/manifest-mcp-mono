@@ -215,6 +215,24 @@ export interface TxOptions {
 }
 
 /**
+ * Optional read-only chain state passed to message builders/handlers so they
+ * can preserve fields the caller did not explicitly override (e.g. governance
+ * MsgUpdateParams that overwrites the full Params struct).
+ *
+ * Populated by `cosmosTx` / `cosmosEstimateFee` via the per-subcommand context
+ * loader declared on the module's `TX_MODULES` registry entry. Subcommands
+ * that don't declare a loader pay no extra round-trip and receive `undefined`.
+ *
+ * The shape is a bag of optional fields rather than a discriminated union so
+ * adding a second loader (e.g. staking `update-params`) is additive — when
+ * the third kind lands, consider switching to a discriminated union for
+ * stricter cross-module isolation.
+ */
+export interface TxBuildContext {
+  readonly currentBillingParams?: BillingParams;
+}
+
+/**
  * Wallet provider interface for different wallet implementations
  *
  * Any wallet that provides an OfflineSigner works (Keplr, Web3Auth, Leap, cosmos-kit, etc.)
@@ -643,6 +661,11 @@ export interface CreditEstimateResult {
   readonly estimate: QueryCreditEstimateResponse;
 }
 
+export interface LeaseByCustomDomainResult {
+  readonly lease: Lease;
+  readonly serviceName: string;
+}
+
 // Group query results
 export interface GroupInfoResult {
   readonly info?: GroupInfo;
@@ -916,6 +939,7 @@ export type QueryResult =
   | WithdrawableAmountResult
   | ProviderWithdrawableResult
   | CreditEstimateResult
+  | LeaseByCustomDomainResult
   | SkuParamsResult
   | ProviderResult
   | ProvidersResult

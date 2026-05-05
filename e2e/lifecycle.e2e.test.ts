@@ -387,9 +387,11 @@ describe('Deploy lifecycle', () => {
     expect(tools).toContain('fund_credit');
     expect(tools).toContain('leases_by_tenant');
     expect(tools).toContain('close_lease');
+    expect(tools).toContain('set_item_custom_domain');
+    expect(tools).toContain('lease_by_custom_domain');
     expect(tools).toContain('get_skus');
     expect(tools).toContain('get_providers');
-    expect(tools).toHaveLength(6);
+    expect(tools).toHaveLength(8);
   });
 
   it('fred server lists all expected tools', async () => {

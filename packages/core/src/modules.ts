@@ -28,6 +28,7 @@ import {
 } from './transactions/bank.js';
 import {
   buildBillingMessages,
+  loadBillingUpdateParamsContext,
   routeBillingTransaction,
 } from './transactions/billing.js';
 import {
@@ -73,6 +74,7 @@ import {
   ManifestMCPErrorCode,
   type ModuleInfo,
   type QueryResult,
+  type TxBuildContext,
   type TxOptions,
 } from './types.js';
 
@@ -86,7 +88,11 @@ export type QueryHandler = (
 ) => Promise<QueryResult>;
 
 /**
- * Handler function type for transaction modules
+ * Handler function type for transaction modules.
+ *
+ * `context` carries optional read-only chain state (currently the on-chain
+ * billing Params) for handlers that must merge against existing values to
+ * preserve fields the caller did not explicitly set. Most handlers ignore it.
  */
 export type TxHandler = (
   signingClient: SigningStargateClient,
@@ -95,16 +101,23 @@ export type TxHandler = (
   args: string[],
   waitForConfirmation: boolean,
   options?: TxOptions,
+  context?: TxBuildContext,
 ) => Promise<CosmosTxResult>;
 
 /**
  * Pure synchronous function type for building transaction messages.
  * Used by `cosmosEstimateFee` to obtain `EncodeObject[]` without signing/broadcasting.
+ *
+ * `context` carries optional chain state for builders that need it (e.g.
+ * billing `update-params` preserves on-chain `allowedList` /
+ * `reservedDomainSuffixes` when not explicitly overridden). Builders that
+ * don't need context simply ignore it.
  */
 export type TxMsgBuilder = (
   senderAddress: string,
   subcommand: string,
   args: string[],
+  context?: TxBuildContext,
 ) => BuiltMessages;
 
 /**
@@ -152,12 +165,28 @@ interface QueryModuleRegistry {
   };
 }
 
+/**
+ * Loader that fetches the chain state a `TxBuildContext`-aware msgBuilder
+ * needs. Receives a `ManifestQueryClient`; the dispatcher in `cosmos.ts`
+ * handles rate-limit acquisition and error wrapping around the call.
+ */
+export type TxBuildContextLoader = (
+  queryClient: ManifestQueryClient,
+) => Promise<TxBuildContext>;
+
 interface TxModuleRegistry {
   [moduleName: string]: {
     description: string;
     subcommands: SubcommandInfo[];
     handler: TxHandler;
     msgBuilder: TxMsgBuilder;
+    /**
+     * Per-subcommand `TxBuildContext` loaders, keyed by subcommand name.
+     * Subcommands without an entry receive `undefined` and pay no extra
+     * round-trip. Each loader is responsible only for its own data fetch;
+     * dispatch / rate-limit / error wrapping happens in `cosmos.ts`.
+     */
+    contextLoaders?: Record<string, TxBuildContextLoader>;
   };
 }
 
@@ -389,6 +418,12 @@ const QUERY_MODULES: QueryModuleRegistry = {
       {
         name: 'credit-estimate',
         description: 'Query credit estimate for a tenant',
+      },
+      {
+        name: 'lease-by-custom-domain',
+        description:
+          'Reverse-lookup the active or pending lease that has claimed a custom_domain',
+        args: '<custom-domain>',
       },
     ],
   },
@@ -740,6 +775,9 @@ const TX_MODULES: TxModuleRegistry = {
     description: 'Manifest billing transaction subcommands',
     handler: routeBillingTransaction,
     msgBuilder: buildBillingMessages,
+    contextLoaders: {
+      'update-params': loadBillingUpdateParamsContext,
+    },
     subcommands: [
       {
         name: 'fund-credit',
@@ -783,8 +821,22 @@ const TX_MODULES: TxModuleRegistry = {
       },
       {
         name: 'update-params',
-        description: 'Update billing module parameters (governance)',
-        args: '<max-leases-per-tenant> <max-items-per-lease> <min-lease-duration> <max-pending-leases-per-tenant> <pending-timeout> [<allowed-address>...]',
+        description:
+          'Update billing module parameters (governance). List-typed fields ' +
+          '(allowed_list, reserved_domain_suffixes) preserve their on-chain ' +
+          'values when not explicitly overridden; pass --clear-allowed-list ' +
+          'or --clear-reserved-suffixes to clear them. Mutually exclusive: ' +
+          'positional <allowed-address> with --clear-allowed-list, and ' +
+          '--reserved-suffix with --clear-reserved-suffixes.',
+        args: '<max-leases-per-tenant> <max-items-per-lease> <min-lease-duration> <max-pending-leases-per-tenant> <pending-timeout> [<allowed-address>...] [--clear-allowed-list] [--reserved-suffix <.example.com>...] [--clear-reserved-suffixes]',
+      },
+      {
+        name: 'set-item-custom-domain',
+        description:
+          'Set or clear the custom_domain on a lease item (signer must be tenant, authority, or in params.allowed_list). ' +
+          '<custom-domain> must be non-empty when not using --clear; --service-name (when supplied) must be a valid RFC 1123 DNS label. ' +
+          '<custom-domain> and --clear are mutually exclusive.',
+        args: '<lease-uuid> <custom-domain> [--service-name <name>] OR <lease-uuid> --clear [--service-name <name>]',
       },
     ],
   },
@@ -1198,4 +1250,18 @@ export function getTxMsgBuilder(module: string): TxMsgBuilder {
     );
   }
   return moduleInfo.msgBuilder;
+}
+
+/**
+ * Look up the optional `TxBuildContext` loader for a (module, subcommand)
+ * pair. Returns `undefined` when the module is unknown OR when the module
+ * doesn't declare a loader for that subcommand — both are normal cases
+ * (most txs need no context). Callers are expected to short-circuit on
+ * `undefined` and skip the chain read.
+ */
+export function getTxContextLoader(
+  module: string,
+  subcommand: string,
+): TxBuildContextLoader | undefined {
+  return TX_MODULES[module]?.contextLoaders?.[subcommand];
 }

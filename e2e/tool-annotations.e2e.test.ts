@@ -130,6 +130,23 @@ const LEASE_MATRIX: Record<string, ExpectedAnnotations> = {
     broadcasts: true,
     estimable: false,
   },
+  set_item_custom_domain: {
+    // Re-setting the same value is a no-op; clearing then re-setting is
+    // additive on the index. Annotated as non-destructive + idempotent.
+    readOnlyHint: false,
+    destructiveHint: false,
+    idempotentHint: true,
+    openWorldHint: true,
+    broadcasts: true,
+    estimable: false,
+  },
+  lease_by_custom_domain: {
+    readOnlyHint: true,
+    idempotentHint: true,
+    openWorldHint: true,
+    broadcasts: false,
+    estimable: false,
+  },
 };
 
 const FRED_MATRIX: Record<string, ExpectedAnnotations> = {
@@ -360,7 +377,7 @@ describe('Tool annotations + _meta.manifest (live MCP transport)', () => {
 
     it('every lease tool matches the annotation matrix', async () => {
       const tools = await client.listToolsRaw();
-      expect(tools).toHaveLength(6);
+      expect(tools).toHaveLength(8);
       for (const tool of tools) {
         const expected = LEASE_MATRIX[tool.name];
         expect(expected, `unexpected tool ${tool.name}`).toBeDefined();

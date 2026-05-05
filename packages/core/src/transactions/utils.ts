@@ -66,6 +66,51 @@ export function extractFlag(
 }
 
 /**
+ * Result from extracting a repeated flag from args
+ */
+export interface ExtractedRepeatedFlag {
+  /** All values collected, in order of appearance */
+  values: string[];
+  /** Indices in args that were consumed (flag positions and their values) */
+  consumedIndices: number[];
+}
+
+/**
+ * Extract every occurrence of a repeated flag from args (e.g.,
+ * `--reserved-suffix .a.com --reserved-suffix .b.com`).
+ *
+ * Returns an empty `values` list when the flag never appears. Throws
+ * `errorCode` (default `TX_FAILED`) when any occurrence is missing its value
+ * or is followed by another flag, matching the missing-value semantics of
+ * `extractFlag`. Duplicates are intentionally permitted — this is the entire
+ * point of the helper — and `consumedIndices` covers every flag-and-value
+ * pair so the caller can pass it through `filterConsumedArgs`.
+ */
+export function extractRepeatedFlag(
+  args: string[],
+  flagName: string,
+  context: string,
+  errorCode: ManifestMCPErrorCode = ManifestMCPErrorCode.TX_FAILED,
+): ExtractedRepeatedFlag {
+  const values: string[] = [];
+  const consumedIndices: number[] = [];
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] !== flagName) continue;
+    const value = args[i + 1];
+    if (!value || value.startsWith('--')) {
+      throw new ManifestMCPError(
+        errorCode,
+        `${flagName} flag requires a value in ${context}`,
+      );
+    }
+    values.push(value);
+    consumedIndices.push(i, i + 1);
+    i += 1;
+  }
+  return { values, consumedIndices };
+}
+
+/**
  * Result from extracting a boolean (valueless) flag from args
  */
 export interface ExtractedBooleanFlag {

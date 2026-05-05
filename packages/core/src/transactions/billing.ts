@@ -1,17 +1,22 @@
 import type { SigningStargateClient } from '@cosmjs/stargate';
 import { liftedinit } from '@manifest-network/manifestjs';
+import type { ManifestQueryClient } from '../client.js';
 import { getSubcommandUsage, throwUnsupportedSubcommand } from '../modules.js';
 import {
   type BuiltMessages,
   type CosmosTxResult,
   ManifestMCPError,
   ManifestMCPErrorCode,
+  type TxBuildContext,
   type TxOptions,
 } from '../types.js';
+import { DNS_LABEL_RE } from '../validation.js';
 import {
   buildGasFee,
   buildTxResult,
+  extractBooleanFlag,
   extractFlag,
+  extractRepeatedFlag,
   filterConsumedArgs,
   MAX_META_HASH_BYTES,
   parseAmount,
@@ -32,16 +37,28 @@ const {
   MsgAcknowledgeLease,
   MsgRejectLease,
   MsgCancelLease,
+  MsgSetItemCustomDomain,
   MsgUpdateParams,
 } = liftedinit.billing.v1;
 
 /**
  * Build messages for a billing transaction subcommand (no signing/broadcasting).
+ *
+ * `context.currentBillingParams` is consulted by `update-params` so omitted
+ * `allowedList` and `reservedDomainSuffixes` preserve their on-chain values
+ * instead of being silently cleared. The public broadcast and estimate paths
+ * (`cosmosTx`, `cosmosEstimateFee`) always fetch and supply this context for
+ * `update-params` and fail fast with `QUERY_FAILED` if the params query
+ * returns nothing — so the no-context branch below is only exercised by
+ * direct callers of this builder (typically tests). Those callers see
+ * explicit-only behaviour: any list field they did not supply is sent as
+ * `[]`, which would clear the on-chain value.
  */
 export function buildBillingMessages(
   senderAddress: string,
   subcommand: string,
   args: string[],
+  context?: TxBuildContext,
 ): BuiltMessages {
   validateArgsLength(args, 'billing transaction');
 
@@ -288,8 +305,29 @@ export function buildBillingMessages(
     }
 
     case 'update-params': {
-      requireArgs(
+      // List-typed Params fields default to "preserve" so that callers who
+      // only want to bump the numeric fields don't accidentally wipe the
+      // on-chain allowed_list or reserved_domain_suffixes (MsgUpdateParams
+      // overwrites the full Params struct). Explicit `--clear-*` flags opt
+      // out of preservation; passing values opts in to overwrite.
+      const reservedSuffixFlag = extractRepeatedFlag(
         args,
+        '--reserved-suffix',
+        'billing update-params',
+        ManifestMCPErrorCode.INVALID_CONFIG,
+      );
+      const clearReserved = extractBooleanFlag(
+        filterConsumedArgs(args, reservedSuffixFlag.consumedIndices),
+        '--clear-reserved-suffixes',
+      );
+      const clearAllowed = extractBooleanFlag(
+        clearReserved.remainingArgs,
+        '--clear-allowed-list',
+      );
+      const positional = clearAllowed.remainingArgs;
+
+      requireArgs(
+        positional,
         5,
         [
           'max-leases-per-tenant',
@@ -308,17 +346,62 @@ export function buildBillingMessages(
         maxPendingLeasesPerTenantStr,
         pendingTimeoutStr,
         ...allowedAddresses
-      ] = args;
+      ] = positional;
 
       for (const addr of allowedAddresses) {
         validateAddress(addr, 'allowed address');
+      }
+
+      if (reservedSuffixFlag.values.length > 0 && clearReserved.value) {
+        throw new ManifestMCPError(
+          ManifestMCPErrorCode.INVALID_CONFIG,
+          'billing update-params: --reserved-suffix and --clear-reserved-suffixes are mutually exclusive.',
+        );
+      }
+      if (allowedAddresses.length > 0 && clearAllowed.value) {
+        throw new ManifestMCPError(
+          ManifestMCPErrorCode.INVALID_CONFIG,
+          'billing update-params: positional <allowed-address> values and --clear-allowed-list are mutually exclusive.',
+        );
+      }
+
+      // Resolve list fields with preserve-by-default semantics.
+      const currentParams = context?.currentBillingParams;
+      let reservedDomainSuffixes: string[];
+      if (reservedSuffixFlag.values.length > 0) {
+        reservedDomainSuffixes = reservedSuffixFlag.values;
+      } else if (clearReserved.value) {
+        reservedDomainSuffixes = [];
+      } else {
+        reservedDomainSuffixes = currentParams?.reservedDomainSuffixes
+          ? [...currentParams.reservedDomainSuffixes]
+          : [];
+      }
+
+      let allowedList: string[];
+      if (allowedAddresses.length > 0) {
+        allowedList = allowedAddresses;
+      } else if (clearAllowed.value) {
+        allowedList = [];
+      } else {
+        allowedList = currentParams?.allowedList
+          ? [...currentParams.allowedList]
+          : [];
       }
 
       const msg = {
         typeUrl: '/liftedinit.billing.v1.MsgUpdateParams',
         value: MsgUpdateParams.fromPartial({
           authority: senderAddress,
+          // Spread `currentParams` first so any future Params field the
+          // codegen and chain agree on is preserved by default; explicit
+          // overrides win. Note: `fromPartial` only copies fields the
+          // codegen knows about, so this defends the version-aligned case
+          // (manifestjs upgraded ahead of new chain fields) but cannot help
+          // a stale client whose codegen lacks the new field — keep
+          // manifestjs in sync with manifest-ledger to stay safe.
           params: {
+            ...(currentParams ?? {}),
             maxLeasesPerTenant: parseBigInt(
               maxLeasesPerTenantStr,
               'max-leases-per-tenant',
@@ -336,8 +419,90 @@ export function buildBillingMessages(
               'max-pending-leases-per-tenant',
             ),
             pendingTimeout: parseBigInt(pendingTimeoutStr, 'pending-timeout'),
-            allowedList: allowedAddresses,
+            allowedList,
+            reservedDomainSuffixes,
           },
+        }),
+      };
+
+      return { messages: [msg], memo: '' };
+    }
+
+    case 'set-item-custom-domain': {
+      const serviceNameFlag = extractFlag(
+        args,
+        '--service-name',
+        'billing set-item-custom-domain',
+        ManifestMCPErrorCode.INVALID_CONFIG,
+      );
+      const afterServiceName = filterConsumedArgs(
+        args,
+        serviceNameFlag.consumedIndices,
+      );
+      const clearFlag = extractBooleanFlag(afterServiceName, '--clear');
+      const clearing = clearFlag.value;
+      const positional = clearFlag.remainingArgs;
+
+      const expected = clearing ? 1 : 2;
+      requireArgs(
+        positional,
+        expected,
+        clearing ? ['lease-uuid'] : ['lease-uuid', 'custom-domain'],
+        'billing set-item-custom-domain',
+      );
+      if (positional.length > expected) {
+        throw new ManifestMCPError(
+          ManifestMCPErrorCode.INVALID_CONFIG,
+          clearing
+            ? `Cannot combine --clear with a positional <custom-domain> in billing set-item-custom-domain. ` +
+                `Pass either <lease-uuid> <custom-domain> to set, or <lease-uuid> --clear to clear. ` +
+                `Got unexpected positional arg(s): ${positional
+                  .slice(expected)
+                  .map((a) => `"${a}"`)
+                  .join(', ')}.`
+            : `billing set-item-custom-domain accepts at most 2 positional arguments. ` +
+                `Got unexpected positional arg(s): ${positional
+                  .slice(expected)
+                  .map((a) => `"${a}"`)
+                  .join(', ')}.`,
+        );
+      }
+
+      const [leaseUuid, customDomainArg] = positional;
+      if (
+        !clearing &&
+        (customDomainArg === undefined || customDomainArg.trim() === '')
+      ) {
+        throw new ManifestMCPError(
+          ManifestMCPErrorCode.INVALID_CONFIG,
+          'billing set-item-custom-domain: <custom-domain> cannot be empty. ' +
+            'Pass a non-empty FQDN to set, or use --clear to remove the existing domain.',
+        );
+      }
+      // Canonicalize: trim before assigning to MsgSetItemCustomDomain so a
+      // direct `cosmos_tx` caller (`<uuid> ' app.example.com '`) ships the
+      // same bytes to the chain as a caller routed through the
+      // `setItemCustomDomain` helper or the lease MCP tool. Belt-and-
+      // suspenders: the helper trims too, so going through the helper is
+      // already safe.
+      const customDomain = clearing ? '' : customDomainArg.trim();
+
+      const serviceName = serviceNameFlag.value ?? '';
+      if (serviceName !== '' && !DNS_LABEL_RE.test(serviceName)) {
+        throw new ManifestMCPError(
+          ManifestMCPErrorCode.INVALID_CONFIG,
+          `Invalid service name: "${serviceName}". Must be a valid RFC 1123 DNS label: ` +
+            `1-63 lowercase alphanumeric characters or hyphens, must not start or end with a hyphen.`,
+        );
+      }
+
+      const msg = {
+        typeUrl: '/liftedinit.billing.v1.MsgSetItemCustomDomain',
+        value: MsgSetItemCustomDomain.fromPartial({
+          sender: senderAddress,
+          leaseUuid,
+          serviceName,
+          customDomain,
         }),
       };
 
@@ -359,8 +524,9 @@ export async function routeBillingTransaction(
   args: string[],
   waitForConfirmation: boolean,
   options?: TxOptions,
+  context?: TxBuildContext,
 ): Promise<CosmosTxResult> {
-  const built = buildBillingMessages(senderAddress, subcommand, args);
+  const built = buildBillingMessages(senderAddress, subcommand, args, context);
   const fee = await buildGasFee(
     client,
     senderAddress,
@@ -380,4 +546,27 @@ export async function routeBillingTransaction(
     result,
     waitForConfirmation,
   );
+}
+
+/**
+ * Load the on-chain `Params` required to build a `MsgUpdateParams` that
+ * preserves un-overridden list fields. Registered as the `update-params`
+ * context loader on `TX_MODULES.billing`.
+ *
+ * Throws `QUERY_FAILED` when the chain returns an empty `params` field —
+ * silently falling back to defaults would let the builder send `[]` for
+ * `allowedList` / `reservedDomainSuffixes` and clear the on-chain state,
+ * which is exactly the bug preserve-by-default exists to prevent.
+ */
+export async function loadBillingUpdateParamsContext(
+  queryClient: ManifestQueryClient,
+): Promise<TxBuildContext> {
+  const result = await queryClient.liftedinit.billing.v1.params({});
+  if (!result.params) {
+    throw new ManifestMCPError(
+      ManifestMCPErrorCode.QUERY_FAILED,
+      'Failed to load current billing params: response.params was empty.',
+    );
+  }
+  return { currentBillingParams: result.params };
 }

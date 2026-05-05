@@ -869,6 +869,68 @@ describe('FredMCPServer', () => {
       );
     });
 
+    it('maps custom_domain and service_name (snake_case) to customDomain/serviceName (camelCase) on the helper input', async () => {
+      // The MCP-tool layer renames per project convention. A missed rename
+      // here would only surface in e2e — this test pins the mapping so a
+      // future schema change can't drift the field name silently.
+      const server = new FredMCPServer({
+        config: makeMockConfig(),
+        walletProvider: makeMockWallet({ signArbitrary: true }),
+      });
+      await callTool(server, 'deploy_app', {
+        size: 'docker-micro',
+        services: { web: { image: 'nginx', ports: { '80/tcp': {} } } },
+        custom_domain: 'app.example.com',
+        service_name: 'web',
+      });
+
+      expect(mockDeployApp).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.any(Function),
+        expect.any(Function),
+        expect.objectContaining({
+          customDomain: 'app.example.com',
+          serviceName: 'web',
+        }),
+      );
+    });
+
+    it('rejects a service_name that is not a valid RFC 1123 DNS label at the MCP boundary', async () => {
+      // Mirrors the lease package's set_item_custom_domain regex enforcement
+      // so a malformed service_name fails fast at the tool boundary instead
+      // of slipping through to deployApp's services-membership check (which
+      // only catches mismatch, not malformedness).
+      const server = new FredMCPServer({
+        config: makeMockConfig(),
+        walletProvider: makeMockWallet({ signArbitrary: true }),
+      });
+      const result = await callTool(server, 'deploy_app', {
+        size: 'docker-micro',
+        services: { web: { image: 'nginx', ports: { '80/tcp': {} } } },
+        custom_domain: 'app.example.com',
+        service_name: 'NotALabel',
+      });
+
+      expect(result.isError).toBe(true);
+      expect(mockDeployApp).not.toHaveBeenCalled();
+    });
+
+    it('does not set customDomain/serviceName on the helper input when the schema fields are omitted', async () => {
+      const server = new FredMCPServer({
+        config: makeMockConfig(),
+        walletProvider: makeMockWallet({ signArbitrary: true }),
+      });
+      await callTool(server, 'deploy_app', {
+        image: 'nginx',
+        port: 80,
+        size: 'docker-micro',
+      });
+
+      const input = mockDeployApp.mock.calls.at(-1)?.[3];
+      expect(input?.customDomain).toBeUndefined();
+      expect(input?.serviceName).toBeUndefined();
+    });
+
     it('omits progress callbacks when client does not request progress', async () => {
       const server = new FredMCPServer({
         config: makeMockConfig(),

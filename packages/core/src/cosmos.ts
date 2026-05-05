@@ -1,7 +1,12 @@
 import { calculateFee } from '@cosmjs/stargate';
 import type { CosmosClientManager } from './client.js';
 import { DEFAULT_GAS_MULTIPLIER } from './config.js';
-import { getQueryHandler, getTxHandler, getTxMsgBuilder } from './modules.js';
+import {
+  getQueryHandler,
+  getTxContextLoader,
+  getTxHandler,
+  getTxMsgBuilder,
+} from './modules.js';
 import { withRetry } from './retry.js';
 import {
   type CosmosQueryResult,
@@ -9,6 +14,7 @@ import {
   type FeeEstimateResult,
   ManifestMCPError,
   ManifestMCPErrorCode,
+  type TxBuildContext,
   type TxOptions,
   type TxOverrides,
 } from './types.js';
@@ -16,6 +22,58 @@ import {
 // Validation pattern for module/subcommand names (alphanumeric, hyphens, underscores)
 // First character must not be a hyphen to prevent potential issues
 const VALID_NAME_PATTERN = /^[a-zA-Z0-9_][a-zA-Z0-9_-]*$/;
+
+/**
+ * Resolve and run the `TxBuildContext` loader registered for `(module,
+ * subcommand)` in `TX_MODULES`. Returns `undefined` when no loader is
+ * registered (the common case) so the caller can short-circuit and skip the
+ * chain read.
+ *
+ * Acquires a rate-limit token before the loader runs so each extra RPC is
+ * counted against the same budget every other RPC respects, and wraps any
+ * non-`ManifestMCPError` failure as `QUERY_FAILED` with `{module, subcommand}`
+ * details for symmetric error classification on both broadcast and estimate
+ * paths.
+ */
+async function loadBuildContext(
+  clientManager: CosmosClientManager,
+  module: string,
+  subcommand: string,
+): Promise<TxBuildContext | undefined> {
+  const loader = getTxContextLoader(module, subcommand);
+  if (!loader) return undefined;
+
+  // The full loader call sequence — rate-limit acquire, query-client
+  // construction, loader invocation — runs inside the try/catch so every
+  // failure mode gets the {module, subcommand} attribution callers expect
+  // from a structured error. Without the wrap, an INVALID_CONFIG from
+  // `getQueryClient` (or a connection failure that escapes the inner
+  // withRetry) would propagate without telling the caller which tx was
+  // being prepared.
+  try {
+    await clientManager.acquireRateLimit();
+    const queryClient = await clientManager.getQueryClient();
+    return await loader(queryClient);
+  } catch (error) {
+    if (error instanceof ManifestMCPError) {
+      if (!error.details?.module) {
+        throw new ManifestMCPError(error.code, error.message, {
+          ...error.details,
+          module,
+          subcommand,
+        });
+      }
+      throw error;
+    }
+    throw new ManifestMCPError(
+      ManifestMCPErrorCode.QUERY_FAILED,
+      `Failed to load build context for ${module} ${subcommand}: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+      { module, subcommand },
+    );
+  }
+}
 
 /**
  * Validate that a string is safe for use as a module or subcommand name.
@@ -59,12 +117,15 @@ export async function cosmosQuery(
 
   return withRetry(
     async () => {
-      // Apply rate limiting before making RPC request
-      await clientManager.acquireRateLimit();
-
-      const queryClient = await clientManager.getQueryClient();
-
+      // The rate-limit + query-client acquisition runs inside the try/catch
+      // so a failure during either step is wrapped with {module, subcommand}
+      // attribution, matching the handler-leg semantics. Otherwise an
+      // INVALID_CONFIG from `getQueryClient` (or a connection failure that
+      // escapes the inner withRetry) would propagate without telling the
+      // caller which query was being routed.
       try {
+        await clientManager.acquireRateLimit();
+        const queryClient = await clientManager.getQueryClient();
         const result = await handler(queryClient, subcommand, args);
 
         return {
@@ -74,11 +135,19 @@ export async function cosmosQuery(
         };
       } catch (error) {
         if (error instanceof ManifestMCPError) {
+          if (!error.details?.module) {
+            throw new ManifestMCPError(error.code, error.message, {
+              ...error.details,
+              module,
+              subcommand,
+            });
+          }
           throw error;
         }
         throw new ManifestMCPError(
           ManifestMCPErrorCode.QUERY_FAILED,
           `Query ${module} ${subcommand} failed: ${error instanceof Error ? error.message : String(error)}`,
+          { module, subcommand },
         );
       }
     },
@@ -133,16 +202,32 @@ export async function cosmosTx(
 
   // Get handler from registry (throws if module not found) - do this before retry loop
   const handler = getTxHandler(module);
+  // Fetch chain context once before the broadcast retry loop: every broadcast
+  // attempt uses the same snapshot and we don't consume extra rate-limit
+  // tokens per broadcast retry. The loader is independently wrapped in its
+  // own withRetry so transient LCD failures during the chain read still get
+  // retried (parity with cosmosQuery's params reads).
+  const buildContext = await withRetry(
+    () => loadBuildContext(clientManager, module, subcommand),
+    {
+      config: clientManager.getConfig().retry,
+      operationName: `load-context ${module} ${subcommand}`,
+    },
+  );
 
   return withRetry(
     async () => {
-      // Apply rate limiting before making RPC request
-      await clientManager.acquireRateLimit();
-
-      const signingClient = await clientManager.getSigningClient();
-      const senderAddress = await clientManager.getAddress();
-
+      // The rate-limit + signing-client + address acquisition runs inside
+      // the try/catch so a failure during any of those steps is wrapped
+      // with {module, subcommand, args} attribution, matching the
+      // handler-leg semantics. Otherwise an INVALID_CONFIG / wallet error
+      // from these calls would propagate without telling the caller which
+      // tx was being prepared.
       try {
+        await clientManager.acquireRateLimit();
+        const signingClient = await clientManager.getSigningClient();
+        const senderAddress = await clientManager.getAddress();
+
         return await handler(
           signingClient,
           senderAddress,
@@ -150,6 +235,7 @@ export async function cosmosTx(
           args,
           waitForConfirmation,
           txOptions,
+          buildContext,
         );
       } catch (error) {
         if (error instanceof ManifestMCPError) {
@@ -224,32 +310,48 @@ export async function cosmosEstimateFee(
 
   // Get builder from registry (throws if module not found) - do this before retry loop
   const builder = getTxMsgBuilder(module);
+  // Fetch chain context once before the simulate retry loop: every simulate
+  // attempt uses the same snapshot and we don't consume extra rate-limit
+  // tokens per simulate retry. The loader is independently wrapped in its
+  // own withRetry so transient LCD failures during the chain read still get
+  // retried (parity with cosmosQuery's params reads).
+  const buildContext = await withRetry(
+    () => loadBuildContext(clientManager, module, subcommand),
+    {
+      config: config.retry,
+      operationName: `load-context ${module} ${subcommand}`,
+    },
+  );
 
   return withRetry(
     async () => {
-      // Apply rate limiting before making RPC request
-      await clientManager.acquireRateLimit();
-
-      const signingClient = await clientManager.getSigningClient();
-      const senderAddress = await clientManager.getAddress();
-
-      // Resolve gasMultiplier from the signing client when no override is provided.
-      // This guarantees parity with cosmosTx's 'auto' path: client.ts patches the
-      // signing client's defaultGasMultiplier to config.gasMultiplier; if that
-      // patch fails (rare — only when CosmJS internals change), the client
-      // falls back to CosmJS's built-in default. Reading from the client uses
-      // the same value cosmosTx would.
-      const clientMultiplier = (
-        signingClient as unknown as { defaultGasMultiplier?: unknown }
-      ).defaultGasMultiplier;
-      const gasMultiplier =
-        overrides?.gasMultiplier ??
-        (typeof clientMultiplier === 'number'
-          ? clientMultiplier
-          : DEFAULT_GAS_MULTIPLIER);
-
+      // The rate-limit + signing-client + address acquisition runs inside
+      // the try/catch so a failure during any of those steps is wrapped
+      // with {module, subcommand, args} attribution, matching the
+      // handler-leg semantics. Otherwise an INVALID_CONFIG / wallet error
+      // from these calls would propagate without telling the caller which
+      // estimate was being computed.
       try {
-        const built = builder(senderAddress, subcommand, args);
+        await clientManager.acquireRateLimit();
+        const signingClient = await clientManager.getSigningClient();
+        const senderAddress = await clientManager.getAddress();
+
+        // Resolve gasMultiplier from the signing client when no override is provided.
+        // This guarantees parity with cosmosTx's 'auto' path: client.ts patches the
+        // signing client's defaultGasMultiplier to config.gasMultiplier; if that
+        // patch fails (rare — only when CosmJS internals change), the client
+        // falls back to CosmJS's built-in default. Reading from the client uses
+        // the same value cosmosTx would.
+        const clientMultiplier = (
+          signingClient as unknown as { defaultGasMultiplier?: unknown }
+        ).defaultGasMultiplier;
+        const gasMultiplier =
+          overrides?.gasMultiplier ??
+          (typeof clientMultiplier === 'number'
+            ? clientMultiplier
+            : DEFAULT_GAS_MULTIPLIER);
+
+        const built = builder(senderAddress, subcommand, args, buildContext);
         const gasEstimate = await signingClient.simulate(
           senderAddress,
           built.messages,

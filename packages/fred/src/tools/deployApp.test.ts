@@ -8,6 +8,11 @@ vi.mock('@manifest-network/manifest-mcp-core', async (importOriginal) => {
   return {
     ...actual,
     cosmosTx: vi.fn(),
+    // setItemCustomDomain calls cosmosTx through an internal `'../cosmos.js'`
+    // import that the package-level mock above doesn't intercept. Mock the
+    // helper directly so its orchestration call from deployApp is observable
+    // and doesn't try to reach the (unmocked) internal cosmosTx path.
+    setItemCustomDomain: vi.fn(),
   };
 });
 
@@ -31,7 +36,9 @@ vi.mock('../http/fred.js', async (importOriginal) => {
 import {
   cosmosTx,
   LeaseState,
+  ManifestMCPError,
   ManifestMCPErrorCode,
+  setItemCustomDomain,
 } from '@manifest-network/manifest-mcp-core';
 import {
   makeMockClientManager,
@@ -42,6 +49,7 @@ import { getLeaseConnectionInfo, uploadLeaseData } from '../http/provider.js';
 import { deployApp } from './deployApp.js';
 
 const mockCosmosTx = vi.mocked(cosmosTx);
+const mockSetItemCustomDomain = vi.mocked(setItemCustomDomain);
 const mockUploadLeaseData = vi.mocked(uploadLeaseData);
 const mockGetLeaseConnectionInfo = vi.mocked(getLeaseConnectionInfo);
 const mockPollLeaseUntilReady = vi.mocked(pollLeaseUntilReady);
@@ -102,6 +110,13 @@ describe('deployApp', () => {
     mockGetAuthToken.mockResolvedValue('auth-token');
     mockGetLeaseDataAuthToken.mockResolvedValue('lease-data-token');
     mockUploadLeaseData.mockResolvedValue(undefined);
+    mockSetItemCustomDomain.mockResolvedValue({
+      lease_uuid: '550e8400-e29b-41d4-a716-446655440000',
+      service_name: '',
+      custom_domain: 'app.example.com',
+      transactionHash: 'TX2',
+      code: 0,
+    });
     mockPollLeaseUntilReady.mockResolvedValue({
       state: LeaseState.LEASE_STATE_ACTIVE,
     });
@@ -639,5 +654,297 @@ describe('deployApp', () => {
     expect(mockUploadLeaseData).toHaveBeenCalledTimes(1);
     // uploadLeaseData(url, uuid, payload, token, fetchFn?, abortSignal?)
     expect(mockUploadLeaseData.mock.calls[0][5]).toBe(controller.signal);
+  });
+
+  // ========================================================================
+  // customDomain orchestration
+  //
+  // The set-domain tx slots into the existing partial-success try/catch
+  // between createLease and the manifest upload. Failures are wrapped in
+  // the same "Deploy partially succeeded… close_lease if needed" error
+  // as upload/poll failures, so callers don't have to learn a new error
+  // shape per failure mode.
+  // ========================================================================
+  describe('customDomain', () => {
+    it('skips setItemCustomDomain when customDomain is omitted', async () => {
+      const qc = makeQueryClient();
+      const cm = makeMockClientManager({
+        queryClient: qc,
+        address: 'manifest1tenant',
+      });
+
+      const result = await deployApp(
+        cm as any,
+        mockGetAuthToken,
+        mockGetLeaseDataAuthToken,
+        { image: 'nginx:alpine', port: 80, size: 'docker-micro' },
+      );
+
+      expect(mockSetItemCustomDomain).not.toHaveBeenCalled();
+      expect(result.custom_domain).toBeUndefined();
+      expect(result.service_name).toBeUndefined();
+    });
+
+    it('calls setItemCustomDomain after createLease with the supplied FQDN', async () => {
+      const qc = makeQueryClient();
+      const cm = makeMockClientManager({
+        queryClient: qc,
+        address: 'manifest1tenant',
+      });
+
+      const result = await deployApp(
+        cm as any,
+        mockGetAuthToken,
+        mockGetLeaseDataAuthToken,
+        {
+          image: 'nginx:alpine',
+          port: 80,
+          size: 'docker-micro',
+          customDomain: 'app.example.com',
+        },
+      );
+
+      expect(mockSetItemCustomDomain).toHaveBeenCalledWith(
+        cm,
+        '550e8400-e29b-41d4-a716-446655440000',
+        'app.example.com',
+        { serviceName: undefined },
+        undefined,
+      );
+      expect(result.custom_domain).toBe('app.example.com');
+      expect(result.service_name).toBeUndefined();
+    });
+
+    it('forwards gasMultiplier to the set-domain tx (same overrides as create-lease)', async () => {
+      const qc = makeQueryClient();
+      const cm = makeMockClientManager({
+        queryClient: qc,
+        address: 'manifest1tenant',
+      });
+
+      await deployApp(cm as any, mockGetAuthToken, mockGetLeaseDataAuthToken, {
+        image: 'nginx:alpine',
+        port: 80,
+        size: 'docker-micro',
+        customDomain: 'app.example.com',
+        gasMultiplier: 4.0,
+      });
+
+      expect(mockSetItemCustomDomain).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.any(String),
+        'app.example.com',
+        { serviceName: undefined },
+        { gasMultiplier: 4.0 },
+      );
+    });
+
+    it('passes serviceName when supplied for a stack lease', async () => {
+      const qc = makeQueryClient();
+      const cm = makeMockClientManager({
+        queryClient: qc,
+        address: 'manifest1tenant',
+      });
+
+      const result = await deployApp(
+        cm as any,
+        mockGetAuthToken,
+        mockGetLeaseDataAuthToken,
+        {
+          size: 'docker-micro',
+          services: {
+            web: { image: 'nginx', ports: { '80/tcp': {} } },
+            db: { image: 'mysql:8', ports: { '3306/tcp': {} } },
+          },
+          customDomain: 'app.example.com',
+          serviceName: 'web',
+        },
+      );
+
+      expect(mockSetItemCustomDomain).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.any(String),
+        'app.example.com',
+        { serviceName: 'web' },
+        undefined,
+      );
+      expect(result.custom_domain).toBe('app.example.com');
+      expect(result.service_name).toBe('web');
+    });
+
+    it('trims surrounding whitespace before forwarding to setItemCustomDomain and echoing on the result', async () => {
+      // Pinned by c9cf3e1: a regression that drops the trim would ship
+      // " app.example.com " bytes to the chain, which IsValidFQDN
+      // rejects → orphaned paid-for lease via the partial-success wrap.
+      const qc = makeQueryClient();
+      const cm = makeMockClientManager({
+        queryClient: qc,
+        address: 'manifest1tenant',
+      });
+      mockSetItemCustomDomain.mockResolvedValueOnce({
+        lease_uuid: '550e8400-e29b-41d4-a716-446655440000',
+        service_name: '',
+        custom_domain: 'app.example.com',
+        transactionHash: 'TX2',
+        code: 0,
+      });
+
+      const result = await deployApp(
+        cm as any,
+        mockGetAuthToken,
+        mockGetLeaseDataAuthToken,
+        {
+          image: 'nginx:alpine',
+          port: 80,
+          size: 'docker-micro',
+          customDomain: '  app.example.com  ',
+        },
+      );
+
+      expect(mockSetItemCustomDomain).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.any(String),
+        'app.example.com',
+        { serviceName: undefined },
+        undefined,
+      );
+      expect(result.custom_domain).toBe('app.example.com');
+    });
+
+    it('rejects empty/whitespace-only customDomain before any chain tx', async () => {
+      const qc = makeQueryClient();
+      const cm = makeMockClientManager({ queryClient: qc });
+
+      await expect(
+        deployApp(cm as any, mockGetAuthToken, mockGetLeaseDataAuthToken, {
+          image: 'nginx',
+          port: 80,
+          size: 'docker-micro',
+          customDomain: '   ',
+        }),
+      ).rejects.toThrow(/cannot be empty/);
+      expect(mockCosmosTx).not.toHaveBeenCalled();
+      expect(mockSetItemCustomDomain).not.toHaveBeenCalled();
+    });
+
+    it('rejects customDomain on a stack lease without serviceName', async () => {
+      const qc = makeQueryClient();
+      const cm = makeMockClientManager({ queryClient: qc });
+
+      await expect(
+        deployApp(cm as any, mockGetAuthToken, mockGetLeaseDataAuthToken, {
+          size: 'docker-micro',
+          services: { web: { image: 'nginx' } },
+          customDomain: 'app.example.com',
+        }),
+      ).rejects.toThrow(/serviceName is required/);
+      expect(mockCosmosTx).not.toHaveBeenCalled();
+    });
+
+    it('rejects serviceName that does not match any service', async () => {
+      const qc = makeQueryClient();
+      const cm = makeMockClientManager({ queryClient: qc });
+
+      await expect(
+        deployApp(cm as any, mockGetAuthToken, mockGetLeaseDataAuthToken, {
+          size: 'docker-micro',
+          services: { web: { image: 'nginx' } },
+          customDomain: 'app.example.com',
+          serviceName: 'nope',
+        }),
+      ).rejects.toThrow(/does not match any service/);
+      expect(mockCosmosTx).not.toHaveBeenCalled();
+    });
+
+    it('rejects serviceName matching a prototype key (regression for the `in` operator bypass)', async () => {
+      // Pinned by c9cf3e1: `'constructor' in {}` returns true, so a
+      // refactor back to `if (serviceName in services)` would silently
+      // accept a prototype key on a stack lease whose `services` map
+      // doesn't define a same-named entry — sailing through create-lease
+      // and only failing at the set-domain tx (orphaned paid-for lease).
+      // The fix uses Object.keys(services).includes(serviceName) which
+      // checks own enumerable string keys only.
+      const qc = makeQueryClient();
+      const cm = makeMockClientManager({ queryClient: qc });
+
+      for (const protoKey of [
+        'constructor',
+        'toString',
+        'hasOwnProperty',
+        '__proto__',
+      ]) {
+        await expect(
+          deployApp(cm as any, mockGetAuthToken, mockGetLeaseDataAuthToken, {
+            size: 'docker-micro',
+            services: { web: { image: 'nginx' } },
+            customDomain: 'app.example.com',
+            serviceName: protoKey,
+          }),
+        ).rejects.toThrow(/does not match any service/);
+      }
+      expect(mockCosmosTx).not.toHaveBeenCalled();
+    });
+
+    it('rejects serviceName when customDomain is omitted (silently-ignored input is a foot-gun)', async () => {
+      const qc = makeQueryClient();
+      const cm = makeMockClientManager({ queryClient: qc });
+
+      await expect(
+        deployApp(cm as any, mockGetAuthToken, mockGetLeaseDataAuthToken, {
+          size: 'docker-micro',
+          services: { web: { image: 'nginx' } },
+          serviceName: 'web',
+        }),
+      ).rejects.toThrow(
+        /serviceName is only meaningful when customDomain is set/,
+      );
+      expect(mockCosmosTx).not.toHaveBeenCalled();
+      expect(mockSetItemCustomDomain).not.toHaveBeenCalled();
+    });
+
+    it('rejects serviceName on an image+port (legacy 1-item) lease', async () => {
+      const qc = makeQueryClient();
+      const cm = makeMockClientManager({ queryClient: qc });
+
+      await expect(
+        deployApp(cm as any, mockGetAuthToken, mockGetLeaseDataAuthToken, {
+          image: 'nginx',
+          port: 80,
+          size: 'docker-micro',
+          customDomain: 'app.example.com',
+          serviceName: 'web',
+        }),
+      ).rejects.toThrow(/serviceName must not be set/);
+      expect(mockCosmosTx).not.toHaveBeenCalled();
+    });
+
+    it('wraps a set-domain failure in the existing partial-success error (lease X created…)', async () => {
+      const qc = makeQueryClient();
+      const cm = makeMockClientManager({
+        queryClient: qc,
+        address: 'manifest1tenant',
+      });
+      mockSetItemCustomDomain.mockRejectedValueOnce(
+        new ManifestMCPError(
+          ManifestMCPErrorCode.TX_FAILED,
+          'Transaction billing set-item-custom-domain failed: domain already claimed',
+        ),
+      );
+
+      await expect(
+        deployApp(cm as any, mockGetAuthToken, mockGetLeaseDataAuthToken, {
+          image: 'nginx',
+          port: 80,
+          size: 'docker-micro',
+          customDomain: 'taken.example.com',
+        }),
+      ).rejects.toThrow(
+        /Deploy partially succeeded.*lease 550e8400.*close_lease if needed.*domain already claimed/s,
+      );
+      // Manifest upload and poll must NOT happen if the set-domain step
+      // threw — set-domain runs before them inside the same try block.
+      expect(mockUploadLeaseData).not.toHaveBeenCalled();
+      expect(mockPollLeaseUntilReady).not.toHaveBeenCalled();
+    });
   });
 });

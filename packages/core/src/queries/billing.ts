@@ -1,15 +1,18 @@
 import type { ManifestQueryClient } from '../client.js';
 import { throwUnsupportedSubcommand } from '../modules.js';
-import type {
-  BillingParamsResult,
-  CreditAccountResult,
-  CreditAccountsResult,
-  CreditAddressResult,
-  CreditEstimateResult,
-  LeaseResult,
-  LeasesResult,
-  ProviderWithdrawableResult,
-  WithdrawableAmountResult,
+import {
+  type BillingParamsResult,
+  type CreditAccountResult,
+  type CreditAccountsResult,
+  type CreditAddressResult,
+  type CreditEstimateResult,
+  type LeaseByCustomDomainResult,
+  type LeaseResult,
+  type LeasesResult,
+  ManifestMCPError,
+  ManifestMCPErrorCode,
+  type ProviderWithdrawableResult,
+  type WithdrawableAmountResult,
 } from '../types.js';
 import { extractPaginationArgs, requireArgs } from './utils.js';
 
@@ -23,7 +26,8 @@ type BillingQueryResult =
   | CreditAddressResult
   | WithdrawableAmountResult
   | ProviderWithdrawableResult
-  | CreditEstimateResult;
+  | CreditEstimateResult
+  | LeaseByCustomDomainResult;
 
 /**
  * Route billing module query to manifestjs query client
@@ -177,6 +181,25 @@ export async function routeBillingQuery(
       const [tenant] = args;
       const result = await billing.creditEstimate({ tenant });
       return { estimate: result };
+    }
+
+    case 'lease-by-custom-domain': {
+      requireArgs(args, 1, ['custom-domain'], 'billing lease-by-custom-domain');
+      const [rawCustomDomain] = args;
+      // Trim once and reuse: the MCP tool layer (lease/index.ts) and the tx
+      // builder both canonicalize on the trimmed value, so a generic
+      // `cosmos_query billing lease-by-custom-domain "  app.example.com  "`
+      // call would otherwise reach the chain with the surrounding whitespace
+      // and fail format validation, despite passing the empty-check below.
+      const customDomain = (rawCustomDomain ?? '').trim();
+      if (customDomain === '') {
+        throw new ManifestMCPError(
+          ManifestMCPErrorCode.INVALID_CONFIG,
+          'billing lease-by-custom-domain: <custom-domain> cannot be empty.',
+        );
+      }
+      const result = await billing.leaseByCustomDomain({ customDomain });
+      return { lease: result.lease, serviceName: result.serviceName };
     }
 
     default:

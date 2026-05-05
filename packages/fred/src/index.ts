@@ -5,6 +5,7 @@ import {
   createMnemonicServer,
   createPagination,
   createValidatedConfig,
+  DNS_LABEL_RE,
   jsonResponse,
   LeaseState,
   leaseStateToJSON,
@@ -590,7 +591,7 @@ export class FredMCPServer {
       'deploy_app',
       {
         description:
-          'Deploy a new containerized application. Requires funded credits (use fund_credit if needed). Creates a lease on-chain, uploads the container manifest to a provider, and polls until ready. Use browse_catalog first to see available SKU sizes.',
+          'Deploy a new containerized application. Requires funded credits (use fund_credit if needed). Creates a lease on-chain, optionally attaches a custom domain (FQDN) to the lease item, uploads the container manifest to a provider, and polls until ready. Use browse_catalog first to see available SKU sizes.',
         inputSchema: {
           image: z
             .string()
@@ -706,6 +707,20 @@ export class FredMCPServer {
             .describe(
               'Gas simulation multiplier override for this transaction. Defaults to the server-configured value (typically 1.5). Increase if a transaction fails with out-of-gas errors.',
             ),
+          custom_domain: z
+            .string()
+            .max(253)
+            .optional()
+            .describe(
+              'Optional FQDN to attach to the lease item once the create-lease tx confirms (e.g. "app.example.com"). Must be lowercase with a non-numeric TLD label and not match a reserved suffix; the chain validates the format. On a stack lease (`services`), pair with `service_name` to pick which item to attach the domain to.',
+            ),
+          service_name: z
+            .string()
+            .regex(DNS_LABEL_RE)
+            .optional()
+            .describe(
+              'Required when `custom_domain` is set on a stack lease (`services`). Must match one of the keys in `services` and be a valid RFC 1123 DNS label (1-63 lowercase alphanumeric chars + hyphens, no leading/trailing hyphen). Omit for image+port (single-item legacy) leases.',
+            ),
         },
         outputSchema: {
           lease_uuid: z.string(),
@@ -715,6 +730,8 @@ export class FredMCPServer {
           url: z.string().optional(),
           connection: z.looseObject({}).optional(),
           connectionError: z.string().optional(),
+          custom_domain: z.string().optional(),
+          service_name: z.string().optional(),
         },
         // Additive: creates a new lease and uploads a manifest. Does not
         // replace any existing app's state.
@@ -756,6 +773,8 @@ export class FredMCPServer {
               depends_on: args.depends_on,
               services: args.services,
               gasMultiplier: args.gas_multiplier,
+              customDomain: args.custom_domain,
+              serviceName: args.service_name,
               abortSignal: extra.signal,
               onLeaseCreated: emit
                 ? (leaseUuid, providerUrl) => {

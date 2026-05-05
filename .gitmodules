@@ -1,7 +1,7 @@
 [submodule "submodules/manifest-ledger"]
 	path = submodules/manifest-ledger
-	url = https://github.com/fmorency/manifest-ledger.git
-	branch = billing-v2
+	url = https://github.com/manifest-network/manifest-ledger.git
+	branch = main
 [submodule "submodules/fred"]
 	path = submodules/fred
 	url = git@github.com:manifest-network/fred.git
