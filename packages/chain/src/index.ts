@@ -256,10 +256,7 @@ export class ChainMCPServer {
             ? { gasMultiplier: args.gas_multiplier }
             : undefined,
         );
-        return structuredResponse(
-          result as unknown as Record<string, unknown>,
-          bigIntReplacer,
-        );
+        return structuredResponse(result, bigIntReplacer);
       }),
     );
 

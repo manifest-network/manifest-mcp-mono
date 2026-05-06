@@ -8,9 +8,9 @@ The servers implement the [Model Context Protocol](https://modelcontextprotocol.
 
 The 21 tools are split across four MCP servers to stay under the LLM tool-selection accuracy ceiling:
 
-- **Chain server** (5 tools) -- Generic Cosmos SDK operations: queries, transactions, module discovery
-- **Lease server** (6 tools) -- On-chain lease operations: credit balance, funding, lease queries, SKUs, providers
-- **Fred server** (8 tools) -- Provider/Fred-dependent operations: catalog browsing, app deployment, status, logs, restart, update, diagnostics, releases
+- **Chain server** (6 tools, +1 optional `request_faucet`) -- Generic Cosmos SDK operations: queries, transactions, fee estimation, module discovery
+- **Lease server** (8 tools) -- On-chain lease operations: credit balance, funding, lease queries, custom-domain claim/lookup, SKUs, providers
+- **Fred server** (11 tools + 3 resources + 3 prompts) -- Provider/Fred-dependent operations: catalog browsing, deployment readiness checks, manifest preview, app deployment, ready polling, status, logs, restart, update, diagnostics, releases
 - **CosmWasm server** (2 tools) -- MFX-to-PWR converter contract: rate queries, token conversion
 
 ```
@@ -53,7 +53,7 @@ packages/
   node/      @manifest-network/manifest-mcp-node      Four CLIs: manifest-mcp-chain, manifest-mcp-lease, manifest-mcp-fred, manifest-mcp-cosmwasm
 e2e/                                                   End-to-end tests against a live chain
 submodules/
-  manifest-ledger/                                 Cosmos SDK blockchain (billing-v2 branch)
+  manifest-ledger/                                 Cosmos SDK blockchain (main branch, v2.1.0+)
   fred/                                            Container orchestration backend (main branch)
 ```
 
@@ -110,10 +110,11 @@ src/
 │   ├── group.ts          Group governance transactions
 │   └── utils.ts          Signature and broadcast helpers
 │
-└── tools/                On-chain tool functions (used by lease package)
-    ├── getBalance.ts     On-chain + credit balance
-    ├── fundCredits.ts    Send tokens to billing account
-    └── stopApp.ts        Close lease on-chain
+└── tools/                On-chain tool functions (used by lease and fred packages)
+    ├── getBalance.ts            On-chain + credit balance
+    ├── fundCredits.ts           Send tokens to billing account
+    ├── setItemCustomDomain.ts   Claim or release a custom domain on a lease item
+    └── stopApp.ts               Close lease on-chain
 ```
 
 ### Key components
@@ -135,7 +136,9 @@ Key features:
 
 **LCD adapter** (`lcd-adapter.ts`) -- Adapts the LCD/REST client from manifestjs to match the `ManifestQueryClient` shape used by RPC, making the rest of the codebase transport-agnostic. For each LCD module method, the adapter: (1) calls the original LCD method, (2) converts the snake_case JSON response to camelCase via `snakeToCamelDeep()`, (3) runs the result through the matching protobuf `fromJSON` converter. Modules without LCD support (`cosmos.orm.query.v1alpha1`, `liftedinit.manifest.v1`) return proxy objects that throw `UNSUPPORTED_QUERY` on access.
 
-**Server utilities** (`server-utils.ts`) -- Shared by chain, lease, and fred packages: `withErrorHandling` (wraps tool handlers with error sanitization), `jsonResponse` (formats successful responses), `bigIntReplacer` (serializes BigInt), `sanitizeForLogging` (redacts sensitive fields).
+**Server utilities** (`server-utils.ts`) -- Shared by chain, lease, fred, and cosmwasm packages: `withErrorHandling` (wraps tool handlers with error sanitization), `jsonResponse` (formats successful text responses), `structuredResponse` (formats responses with `structuredContent` for tools that declare an `outputSchema`), `bigIntReplacer` (serializes BigInt), `sanitizeForLogging` (redacts sensitive fields).
+
+**Tool annotation helpers** (`tool-metadata.ts`) -- `readOnlyAnnotations()` and `mutatingAnnotations({ destructive, idempotent? })` produce the standard MCP `ToolAnnotations` (`title`, `readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`). `manifestMeta({ broadcasts, estimable })` injects a versioned `_meta.manifest` container (`v: MANIFEST_TOOL_META_VERSION = 1`) for Manifest-specific signals downstream plugins consume.
 
 ## Package: chain
 
@@ -154,7 +157,7 @@ The `ChainMCPServer` class takes a `ManifestMCPServerOptions` (config + walletPr
 
 ## Package: lease
 
-The lease package is an MCP server that registers 6 on-chain lease tools:
+The lease package is an MCP server that registers 8 on-chain lease tools:
 
 | Tool | Purpose |
 |------|---------|
@@ -162,6 +165,8 @@ The lease package is an MCP server that registers 6 on-chain lease tools:
 | `fund_credit` | Send tokens to a billing credit account (defaults to the sender; accepts `tenant`) |
 | `leases_by_tenant` | Query leases by tenant and state (defaults to the caller; accepts `tenant`) |
 | `close_lease` | Close a lease on-chain |
+| `set_item_custom_domain` | Claim or release a custom domain on a lease item |
+| `lease_by_custom_domain` | Look up the lease that owns a custom domain |
 | `get_skus` | List available SKUs |
 | `get_providers` | List available providers |
 
@@ -169,12 +174,15 @@ The lease server performs purely on-chain operations using core's tool functions
 
 ## Package: fred
 
-The fred package is an MCP server that registers 8 provider/Fred-dependent tools:
+The fred package is an MCP server that registers 11 provider/Fred-dependent tools:
 
 | Tool | Purpose |
 |------|---------|
 | `browse_catalog` | List providers + SKU pricing with health checks |
-| `deploy_app` | Create lease + deploy container |
+| `check_deployment_readiness` | Pre-flight checks (balance, SKU availability, image pull) before `deploy_app` |
+| `build_manifest_preview` | Preview the SDL/manifest that `deploy_app` would submit |
+| `deploy_app` | Create lease + deploy container (optional custom-domain claim and stack `service_name`) |
+| `wait_for_app_ready` | Poll provider until a deployed app reports ready |
 | `app_status` | Lease status + provider info |
 | `get_logs` | Fetch container logs |
 | `restart_app` | Restart via provider API |
@@ -182,27 +190,33 @@ The fred package is an MCP server that registers 8 provider/Fred-dependent tools
 | `app_diagnostics` | Provision diagnostics (status, failure count, last error) |
 | `app_releases` | List deployment release history |
 
+The fred server also registers 3 MCP resources (`manifest://leases/active`, `manifest://leases/recent`, `manifest://providers`) and 3 prompts (`deploy-containerized-app`, `diagnose-failing-app`, `shutdown-all-leases`).
+
 The fred server handles ADR-036 provider authentication internally and contains the HTTP clients for provider and Fred APIs. The package also exports all tool functions and HTTP clients for use by library consumers (e.g., Barney) without requiring the MCP protocol.
 
 ### Source layout
 
 ```
 src/
-├── index.ts              FredMCPServer (8 tools; app_diagnostics and app_releases are inline here)
+├── index.ts              FredMCPServer (11 tools, 3 resources, 3 prompts; app_diagnostics and app_releases are inline here)
 ├── manifest.ts           Manifest building, merging, and validation
 ├── http/
-│   ├── auth.ts           ADR-036 signature-based authentication
-│   ├── provider.ts       Provider API client (URL validation, health, lease info & uploads)
-│   └── fred.ts           Fred API client (lease status, logs, restart, update, releases)
+│   ├── auth.ts                 ADR-036 signature-based authentication
+│   ├── auth-token-service.ts   Cached ADR-036 token issuance with timestamp deduplication
+│   ├── provider.ts             Provider API client (URL validation, health, lease info & uploads)
+│   └── fred.ts                 Fred API client (lease status, logs, restart, update, releases)
 └── tools/
-    ├── fetchActiveLease.ts      Shared helper: resolve active lease
-    ├── resolveLeaseProvider.ts  Provider URL lookup
-    ├── browseCatalog.ts         List providers + SKU pricing with health checks
-    ├── deployApp.ts             Create lease + deploy container
-    ├── appStatus.ts             Lease status + provider info
-    ├── getLogs.ts               Fetch container logs
-    ├── restartApp.ts            Restart via provider API
-    └── updateApp.ts             Update container manifest
+    ├── fetchActiveLease.ts        Shared helper: resolve active lease
+    ├── resolveLeaseProvider.ts    Provider URL lookup
+    ├── browseCatalog.ts           List providers + SKU pricing with health checks
+    ├── checkDeploymentReadiness.ts  Pre-flight balance/SKU/image checks before deploy
+    ├── buildManifestPreview.ts    Render the SDL/manifest that deploy_app would submit
+    ├── deployApp.ts               Create lease + deploy container (+ optional set-domain)
+    ├── waitForAppReady.ts         Poll provider until lease reports ready
+    ├── appStatus.ts               Lease status + provider info
+    ├── getLogs.ts                 Fetch container logs
+    ├── restartApp.ts              Restart via provider API
+    └── updateApp.ts               Update container manifest
 ```
 
 ### HTTP clients
@@ -218,15 +232,18 @@ The fred package contains three HTTP client modules that are not in core (to kee
 The most complex operation, orchestrating on-chain and off-chain steps:
 
 ```
-1. Build manifest        buildManifest({ image, ports }) or buildStackManifest({ services })
-2. Hash manifest         SHA-256 of JSON string -> metaHashHex
-3. Find SKU              Query chain for SKU UUID and provider UUID matching requested size (e.g., "docker-micro")
-4. Resolve provider      Query chain for provider API URL from SKU's provider UUID
-5. Create lease (tx)     cosmosTx('billing', 'create-lease', ['--meta-hash', metaHashHex, ...leaseItems])
-6. Extract lease UUID    Parse from transaction events
-7. Upload manifest       POST manifest bytes to provider with ADR-036 auth + meta_hash
-8. Poll until ready      GET lease status until ACTIVE (or terminal state / timeout)
-9. Get connection info   GET connection details (host, ports) -- best-effort, non-fatal
+1.  Build manifest        buildManifest({ image, ports }) or buildStackManifest({ services })
+2.  Hash manifest         SHA-256 of JSON string -> metaHashHex
+3.  Find SKU              Query chain for SKU UUID and provider UUID matching requested size (e.g., "docker-micro")
+4.  Resolve provider      Query chain for provider API URL from SKU's provider UUID
+5.  Create lease (tx)     cosmosTx('billing', 'create-lease', ['--meta-hash', metaHashHex, ...leaseItems])
+6.  Extract lease UUID    Parse from transaction events
+6a. Set custom domain     If `custom_domain` was supplied: cosmosTx('billing', 'set-item-custom-domain', ...)
+                          Failure here is wrapped as a partial-success error with `lease_uuid` so the caller
+                          can either retry the domain claim or close the orphaned lease.
+7.  Upload manifest       POST manifest bytes to provider with ADR-036 auth + meta_hash
+8.  Poll until ready      GET lease status until ACTIVE (or terminal state / timeout)
+9.  Get connection info   GET connection details (host, ports) -- best-effort, non-fatal
 ```
 
 If steps 7-8 fail after the on-chain lease is created, the error includes `lease_uuid`, `provider_uuid`, and `provider_url` so the caller can close the orphaned lease.
@@ -333,7 +350,7 @@ This is handled by `http/auth.ts` in the fred package and used by all fred serve
 
 ## Error handling
 
-Errors use the `ManifestMCPErrorCode` enum (11 codes across 6 categories):
+Errors use the `ManifestMCPErrorCode` enum (12 codes across 6 categories):
 
 | Category | Codes |
 |----------|-------|

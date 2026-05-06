@@ -42,7 +42,7 @@ function isLocalhostHostname(hostname: string): boolean {
  * Validate URL format and check if it uses HTTPS or is localhost (HTTP allowed for local dev)
  * Returns validation result with error reason if invalid
  */
-function validateEndpointUrl(
+export function validateEndpointUrl(
   url: string,
   label: string,
 ): { valid: true } | { valid: false; reason: string } {

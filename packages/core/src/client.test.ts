@@ -557,4 +557,77 @@ describe('CosmosClientManager', () => {
       });
     });
   });
+
+  describe('rate limiting', () => {
+    it('acquireRateLimit resolves immediately while tokens are available', async () => {
+      const instance = CosmosClientManager.getInstance(
+        makeConfig({ rateLimit: { requestsPerSecond: 10 } }),
+        makeWallet(),
+      );
+      const start = Date.now();
+      // 5 acquisitions well below the 10/sec budget should not block.
+      await Promise.all([
+        instance.acquireRateLimit(),
+        instance.acquireRateLimit(),
+        instance.acquireRateLimit(),
+        instance.acquireRateLimit(),
+        instance.acquireRateLimit(),
+      ]);
+      const elapsed = Date.now() - start;
+      expect(elapsed).toBeLessThan(50);
+    });
+
+    it('acquireRateLimit throttles when budget is exhausted', async () => {
+      // 2/sec budget; 4 acquisitions should take >= ~1s for the latter pair to
+      // earn fresh tokens. Use a generous lower bound to avoid flakiness on
+      // slow CI, but tight enough that an unlimited budget would fail it.
+      const instance = CosmosClientManager.getInstance(
+        makeConfig({
+          chainId: 'rate-limit-test-2rps',
+          rateLimit: { requestsPerSecond: 2 },
+        }),
+        makeWallet(),
+      );
+      const start = Date.now();
+      await instance.acquireRateLimit();
+      await instance.acquireRateLimit();
+      await instance.acquireRateLimit();
+      await instance.acquireRateLimit();
+      const elapsed = Date.now() - start;
+      // The 3rd and 4th acquisitions need to wait for refill; expect ~1s.
+      expect(elapsed).toBeGreaterThanOrEqual(900);
+    });
+
+    it('replaces the rate limiter when requestsPerSecond changes', async () => {
+      const config1 = makeConfig({
+        chainId: 'rate-reconfig-test',
+        rateLimit: { requestsPerSecond: 10 },
+      });
+      const config2 = {
+        ...config1,
+        rateLimit: { requestsPerSecond: 50 },
+      };
+      const wallet = makeWallet();
+      const a = CosmosClientManager.getInstance(config1, wallet);
+      const before = (a as unknown as { rateLimiter: unknown }).rateLimiter;
+      const b = CosmosClientManager.getInstance(config2, wallet);
+      const after = (b as unknown as { rateLimiter: unknown }).rateLimiter;
+      expect(a).toBe(b); // same singleton
+      expect(after).not.toBe(before); // limiter object replaced
+    });
+
+    it('does not replace the rate limiter when requestsPerSecond is unchanged', async () => {
+      const config = makeConfig({
+        chainId: 'rate-stable-test',
+        rateLimit: { requestsPerSecond: 7 },
+      });
+      const wallet = makeWallet();
+      const a = CosmosClientManager.getInstance(config, wallet);
+      const before = (a as unknown as { rateLimiter: unknown }).rateLimiter;
+      const b = CosmosClientManager.getInstance({ ...config }, wallet);
+      const after = (b as unknown as { rateLimiter: unknown }).rateLimiter;
+      expect(a).toBe(b);
+      expect(after).toBe(before);
+    });
+  });
 });

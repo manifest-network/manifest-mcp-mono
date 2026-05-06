@@ -9,9 +9,9 @@ Exposes on-chain queries and transactions as [Model Context Protocol](https://mo
 ```
 packages/
   core/      @manifest-network/manifest-mcp-core      Shared library: Cosmos logic, on-chain tool functions, server utilities
-  chain/     @manifest-network/manifest-mcp-chain     MCP server for chain operations (5 tools)
-  lease/     @manifest-network/manifest-mcp-lease     MCP server for on-chain lease operations (6 tools)
-  fred/      @manifest-network/manifest-mcp-fred      MCP server for provider/Fred operations (8 tools)
+  chain/     @manifest-network/manifest-mcp-chain     MCP server for chain operations (6 tools, +1 optional faucet)
+  lease/     @manifest-network/manifest-mcp-lease     MCP server for on-chain lease operations (8 tools)
+  fred/      @manifest-network/manifest-mcp-fred      MCP server for provider/Fred operations (11 tools)
   cosmwasm/  @manifest-network/manifest-mcp-cosmwasm  MCP server for MFX-to-PWR converter (2 tools)
   node/      @manifest-network/manifest-mcp-node      CLI entry points + encrypted keyfile wallet
 ```
@@ -40,17 +40,19 @@ See [`packages/node/README.md`](packages/node/README.md) for wallet setup and MC
 
 ## MCP tools
 
-### Chain server (`manifest-mcp-chain`) -- 5 tools
+### Chain server (`manifest-mcp-chain`) -- 6 tools (+1 optional)
 
 | Tool | Description |
 |------|-------------|
 | `get_account_info` | Get the address of the configured wallet |
 | `cosmos_query` | Execute any Cosmos SDK query (bank, staking, gov, etc.) |
 | `cosmos_tx` | Sign and broadcast any Cosmos SDK transaction |
+| `cosmos_estimate_fee` | Estimate gas + fee for a transaction without broadcasting |
 | `list_modules` | List all available query and transaction modules |
 | `list_module_subcommands` | List subcommands for a specific module |
+| `request_faucet` | Request tokens from a faucet (registered only when `MANIFEST_FAUCET_URL` is set) |
 
-### Lease server (`manifest-mcp-lease`) -- 6 tools
+### Lease server (`manifest-mcp-lease`) -- 8 tools
 
 | Tool | Description |
 |------|-------------|
@@ -58,21 +60,28 @@ See [`packages/node/README.md`](packages/node/README.md) for wallet setup and MC
 | `fund_credit` | Send tokens to a billing credit account (defaults to the sender; accepts `tenant`) |
 | `leases_by_tenant` | List leases by state (defaults to the caller; accepts `tenant`) |
 | `close_lease` | Close a lease on-chain |
+| `set_item_custom_domain` | Claim or release a custom domain on a lease item |
+| `lease_by_custom_domain` | Look up the lease that owns a custom domain |
 | `get_skus` | List available SKUs |
 | `get_providers` | List available providers |
 
-### Fred server (`manifest-mcp-fred`) -- 8 tools
+### Fred server (`manifest-mcp-fred`) -- 11 tools
 
 | Tool | Description |
 |------|-------------|
 | `browse_catalog` | Browse available providers and service tiers with health checks |
-| `deploy_app` | Deploy a new application (create lease + deploy container) |
+| `check_deployment_readiness` | Pre-flight checks (balance, SKU availability, image pull) before `deploy_app` |
+| `build_manifest_preview` | Preview the SDL/manifest that `deploy_app` would submit |
+| `deploy_app` | Deploy a new application (create lease + deploy container, optional custom domain) |
+| `wait_for_app_ready` | Poll provider until a deployed app reports ready |
 | `app_status` | Get detailed status for a deployed app by lease UUID |
 | `get_logs` | Get logs for a deployed app by lease UUID |
 | `restart_app` | Restart a deployed app via the provider |
 | `update_app` | Update a deployed app with a new manifest |
 | `app_diagnostics` | Get provision diagnostics for a deployed app |
 | `app_releases` | Get release/version history for a deployed app |
+
+The Fred server also exposes 3 MCP resources (`manifest://leases/active`, `manifest://leases/recent`, `manifest://providers`) and 3 prompts (`deploy-containerized-app`, `diagnose-failing-app`, `shutdown-all-leases`).
 
 ### CosmWasm server (`manifest-mcp-cosmwasm`) -- 2 tools
 
@@ -81,7 +90,7 @@ See [`packages/node/README.md`](packages/node/README.md) for wallet setup and MC
 | `get_mfx_to_pwr_rate` | Get the current MFX-to-PWR conversion rate and preview amounts |
 | `convert_mfx_to_pwr` | Convert MFX tokens to PWR via the on-chain converter contract |
 
-Supported modules: `bank`, `staking`, `distribution`, `gov`, `billing`, `sku`, `group`, `wasm`, `poa`, `tokenfactory`, `ibc-transfer`, `auth` (query only), `manifest` (tx only).
+Supported modules: `bank`, `staking`, `distribution`, `gov`, `billing`, `sku`, `group`, `wasm`, `poa`, `tokenfactory`, `ibc-transfer`, `authz`, `feegrant`, `auth` (query only), `mint` (query only), `manifest` (tx only).
 
 ## Development
 

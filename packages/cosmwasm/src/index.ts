@@ -117,14 +117,13 @@ export class CosmwasmMCPServer {
     }
 
     const obj = parsed as Record<string, unknown>;
+    const { poa_admin, rate, source_denom, target_denom, paused } = obj;
     if (
-      typeof obj !== 'object' ||
-      obj === null ||
-      typeof obj.poa_admin !== 'string' ||
-      typeof obj.rate !== 'string' ||
-      typeof obj.source_denom !== 'string' ||
-      typeof obj.target_denom !== 'string' ||
-      typeof obj.paused !== 'boolean'
+      typeof poa_admin !== 'string' ||
+      typeof rate !== 'string' ||
+      typeof source_denom !== 'string' ||
+      typeof target_denom !== 'string' ||
+      typeof paused !== 'boolean'
     ) {
       throw new ManifestMCPError(
         ManifestMCPErrorCode.QUERY_FAILED,
@@ -133,7 +132,7 @@ export class CosmwasmMCPServer {
       );
     }
 
-    return obj as unknown as ConverterConfig;
+    return { poa_admin, rate, source_denom, target_denom, paused };
   }
 
   private registerTools(): void {

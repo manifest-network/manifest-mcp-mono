@@ -13,6 +13,7 @@ vi.mock('node:fs', () => ({
 }));
 
 import { readFileSync } from 'node:fs';
+import { DirectSecp256k1HdWallet } from '@cosmjs/proto-signing';
 import { KeyfileWalletProvider } from './keyfileWallet.js';
 
 const mockedReadFileSync = vi.mocked(readFileSync);
@@ -154,6 +155,48 @@ describe('KeyfileWalletProvider', () => {
         provider.signArbitrary('manifest1wrong', 'test-data'),
       ).rejects.toThrow(/Cannot sign for address/);
     });
+  });
+
+  describe('connect from encrypted keyfile', () => {
+    it('decrypts with correct password and derives the expected address', async () => {
+      const seedWallet = await DirectSecp256k1HdWallet.fromMnemonic(
+        TEST_MNEMONIC,
+        { prefix: 'manifest' },
+      );
+      const encrypted = await seedWallet.serialize('correct-horse-battery');
+      mockedReadFileSync.mockReturnValue(encrypted);
+
+      const provider = new KeyfileWalletProvider(
+        '/enc/key.json',
+        'manifest',
+        'correct-horse-battery',
+      );
+      await provider.connect();
+      const address = await provider.getAddress();
+      const [{ address: expected }] = await seedWallet.getAccounts();
+      expect(address).toBe(expected);
+    }, 30_000);
+
+    it('rejects with WALLET_CONNECTION_FAILED when the password is wrong', async () => {
+      const seedWallet = await DirectSecp256k1HdWallet.fromMnemonic(
+        TEST_MNEMONIC,
+        { prefix: 'manifest' },
+      );
+      const encrypted = await seedWallet.serialize('correct-horse-battery');
+      mockedReadFileSync.mockReturnValue(encrypted);
+
+      const provider = new KeyfileWalletProvider(
+        '/enc/key.json',
+        'manifest',
+        'wrong-password',
+      );
+      await expect(provider.connect()).rejects.toMatchObject({
+        code: ManifestMCPErrorCode.WALLET_CONNECTION_FAILED,
+      });
+      await expect(provider.connect()).rejects.toThrow(
+        /MANIFEST_KEY_PASSWORD is correct/,
+      );
+    }, 30_000);
   });
 
   describe('disconnect', () => {

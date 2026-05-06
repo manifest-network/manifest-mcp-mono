@@ -14,8 +14,9 @@ npm install @manifest-network/manifest-mcp-core
 - **LCD adapter** (`lcd-adapter.ts`) -- Converts LCD/REST responses to the RPC query client shape, making the codebase transport-agnostic
 - **Module registry** (`modules.ts`) -- Static maps of Cosmos SDK modules with metadata and handler functions
 - **Query/transaction routing** (`cosmos.ts`) -- Routes `(module, subcommand, args)` to per-module handlers
-- **On-chain tool functions** (`tools/`) -- `getBalance`, `fundCredits`, `stopApp` (used by the lease package)
-- **Server utilities** (`server-utils.ts`) -- `withErrorHandling`, `jsonResponse`, `bigIntReplacer`, `sanitizeForLogging`
+- **On-chain tool functions** (`tools/`) -- `getBalance`, `fundCredits`, `setItemCustomDomain`, `stopApp` (used by lease and fred packages)
+- **Server utilities** (`server-utils.ts`) -- `withErrorHandling`, `jsonResponse`, `structuredResponse`, `bigIntReplacer`, `sanitizeForLogging`
+- **Tool annotation helpers** (`tool-metadata.ts`) -- `readOnlyAnnotations`, `mutatingAnnotations`, `manifestMeta` (versioned `_meta.manifest` payload, `MANIFEST_TOOL_META_VERSION = 1`)
 - **Wallet providers** (`wallet/`) -- `MnemonicWalletProvider` (BIP-39), `signArbitraryWithAmino` (ADR-036)
 - **Logger** (`logger.ts`) -- Leveled logger (stderr output; defaults to `warn`, configurable via `logger.setLevel()`; the node package's bootstrap reads `LOG_LEVEL` and applies it)
 - **Retry** (`retry.ts`) -- Exponential backoff with transient/permanent error classification
@@ -36,7 +37,10 @@ npm install @manifest-network/manifest-mcp-core
 | poa | yes | yes |
 | tokenfactory | yes | yes |
 | ibc-transfer | yes | yes |
+| authz | yes | yes |
+| feegrant | yes | yes |
 | auth | yes | -- |
+| mint | yes | -- |
 | manifest | -- | yes |
 
 ## Usage
