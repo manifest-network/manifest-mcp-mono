@@ -163,7 +163,9 @@ export function uploadLeaseData(
 
 In a Node service or test, the same seam is how you inject a mock fetch.
 
-The functions that accept `fetchFn` are: `getLeaseStatus`, `getLeaseLogs`, `getLeaseProvision`, `getLeaseReleases`, `getLeaseInfo`, `restartLease`, `updateLease`, `pollLeaseUntilReady`, `getProviderHealth`, `getLeaseConnectionInfo`, `uploadLeaseData`. The high-level `deployApp`, `appStatus`, `browseCatalog`, `waitForAppReady`, `getAppLogs`, `restartApp`, and `updateApp` helpers all forward a `fetchFn` to the underlying calls. (`checkDeploymentReadiness` and `buildManifestPreview` don't issue HTTP — they're chain-only or pure — so they don't take `fetchFn`.)
+The named lease/provider operations that accept `fetchFn` are: `getLeaseStatus`, `getLeaseLogs`, `getLeaseProvision`, `getLeaseReleases`, `getLeaseInfo`, `restartLease`, `updateLease`, `pollLeaseUntilReady`, `getProviderHealth`, `getLeaseConnectionInfo`, `uploadLeaseData`. The high-level `deployApp`, `appStatus`, `browseCatalog`, `waitForAppReady`, `getAppLogs`, `restartApp`, and `updateApp` helpers all forward a `fetchFn` to the underlying calls. (`checkDeploymentReadiness` and `buildManifestPreview` don't issue HTTP — they're chain-only or pure — so they don't take `fetchFn`.)
+
+Underneath all of these is `checkedFetch(url, init?, timeoutMs?, fetchFn?)` — also exported from the fred package — which adds composed-AbortSignal timeout handling around any fetch call. Library consumers who hit a provider endpoint the named helpers don't cover can use `checkedFetch` directly with the same `fetchFn` injection.
 
 ## ADR-036 auth token construction
 

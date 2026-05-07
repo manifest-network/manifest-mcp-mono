@@ -209,7 +209,7 @@ src/
 │   └── register-prompts.ts     Registers the 3 MCP prompts (`deploy-containerized-app`, `diagnose-failing-app`, `shutdown-all-leases`)
 ├── http/
 │   ├── auth.ts                 ADR-036 sign-message construction, base64 token assembly, and timestamp deduplication tracker
-│   ├── auth-token-service.ts   Cached ADR-036 token issuance keyed by tenant/lease/operation
+│   ├── auth-token-service.ts   Wallet-bound ADR-036 token builder (`AuthTokenService`); serializes monotonic timestamps via `AuthTimestampTracker` so consecutive tokens never collide, and lazily requires `walletProvider.signArbitrary` (throws `INVALID_CONFIG` only on auth-gated tool calls). No token cache.
 │   ├── provider.ts             Provider API client (URL validation, health, lease info, manifest upload)
 │   └── fred.ts                 Fred API client (lease status, logs, provision diagnostics, restart, update, releases, ready polling)
 └── tools/
