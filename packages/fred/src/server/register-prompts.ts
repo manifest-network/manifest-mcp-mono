@@ -17,7 +17,7 @@ export function registerPrompts(mcpServer: McpServer): void {
           .string()
           .optional()
           .describe(
-            'TCP port the container exposes (e.g. "80"). Required for single-service deployments.',
+            'TCP port the container exposes, as a string-encoded integer (e.g. "80"). MCP prompt arguments are always strings on the wire — the agent must parse this to a number before passing it to build_manifest_preview or deploy_app, whose port fields are typed as integers (1-65535). Required for single-service deployments.',
           ),
         size: z
           .string()
@@ -43,7 +43,7 @@ export function registerPrompts(mcpServer: McpServer): void {
               ``,
               `Workflow:`,
               `1. Pre-flight: call \`check_deployment_readiness\` with { size, image }. If \`ready: false\`, surface the \`missing_steps\` list to the user and stop.`,
-              `2. Build a manifest preview: call \`build_manifest_preview\` with the same structured inputs (image + port). Show the user the resulting \`manifest_json\`, \`format\`, and \`meta_hash_hex\`. If \`validation.valid: false\`, surface every \`validation.errors\` entry verbatim and stop.`,
+              `2. Build a manifest preview: call \`build_manifest_preview\` with \`image\` and \`port\` parsed as an integer (the prompt arg is a string; the tool's port schema is z.number().int().min(1).max(65535)). Show the user the resulting \`manifest_json\`, \`format\`, and \`meta_hash_hex\`. If \`validation.valid: false\`, surface every \`validation.errors\` entry verbatim and stop.`,
               `3. Print a deployment plan: image, manifest summary, SKU, provider (from \`check_deployment_readiness.sku\`), and the meta_hash. Wait for an explicit "yes" before continuing.`,
               `4. Call \`deploy_app\` (this broadcasts a chain TX and incurs fees). Pass any progressToken the host provides so the user sees provisioning progress.`,
               `5. Call \`wait_for_app_ready\` with the returned \`lease_uuid\`. On success, print the lease UUID, provider URL, and any \`status.endpoints\`. On failure, surface diagnostics and offer \`close_lease\` to reclaim the orphaned lease.`,
