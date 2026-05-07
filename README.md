@@ -92,6 +92,21 @@ The Fred server also exposes 3 MCP resources (`manifest://leases/active`, `manif
 
 Supported modules: `bank`, `staking`, `distribution`, `gov`, `billing`, `sku`, `group`, `wasm`, `poa`, `tokenfactory`, `ibc-transfer`, `authz`, `feegrant`, `auth` (query only), `mint` (query only), `manifest` (tx only).
 
+## Documentation
+
+| | |
+|---|---|
+| Per-server CLI + integration | [`packages/node/README.md`](packages/node/README.md) |
+| Tool selection & flow guidance | [`docs/tool-selection-guide.md`](docs/tool-selection-guide.md) |
+| End-to-end usage examples | [`docs/usage-examples.md`](docs/usage-examples.md) |
+| Prompts & resources reference | [`docs/prompts-and-resources.md`](docs/prompts-and-resources.md) |
+| Troubleshooting | [`docs/troubleshooting.md`](docs/troubleshooting.md) |
+| Security model | [`docs/security.md`](docs/security.md) |
+| Library usage (non-MCP consumers) | [`docs/library-usage.md`](docs/library-usage.md) |
+| Architecture | [`ARCHITECTURE.md`](ARCHITECTURE.md) |
+| Contributing | [`CONTRIBUTING.md`](CONTRIBUTING.md) |
+| Security policy & disclosure | [`SECURITY.md`](SECURITY.md) |
+
 ## Development
 
 For a deeper look at the codebase design, see [`ARCHITECTURE.md`](ARCHITECTURE.md).
