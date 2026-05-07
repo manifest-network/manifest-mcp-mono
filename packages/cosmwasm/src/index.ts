@@ -116,8 +116,15 @@ export class CosmwasmMCPServer {
       );
     }
 
-    const obj = parsed as Record<string, unknown>;
-    const { poa_admin, rate, source_denom, target_denom, paused } = obj;
+    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      throw new ManifestMCPError(
+        ManifestMCPErrorCode.QUERY_FAILED,
+        `Unexpected converter config shape from contract ${this.converterAddress}. ` +
+          `Expected {poa_admin: string, rate: string, source_denom: string, target_denom: string, paused: boolean}.`,
+      );
+    }
+    const { poa_admin, rate, source_denom, target_denom, paused } =
+      parsed as Record<string, unknown>;
     if (
       typeof poa_admin !== 'string' ||
       typeof rate !== 'string' ||
