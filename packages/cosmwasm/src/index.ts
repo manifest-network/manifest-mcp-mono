@@ -116,7 +116,11 @@ export class CosmwasmMCPServer {
       );
     }
 
-    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    if (
+      parsed === null ||
+      typeof parsed !== 'object' ||
+      Array.isArray(parsed)
+    ) {
       throw new ManifestMCPError(
         ManifestMCPErrorCode.QUERY_FAILED,
         `Unexpected converter config shape from contract ${this.converterAddress}. ` +
