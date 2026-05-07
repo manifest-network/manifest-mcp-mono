@@ -12,6 +12,7 @@ export {
   DEFAULT_RETRY_CONFIG,
   type ValidationResult,
   validateConfig,
+  validateEndpointUrl,
 } from './config.js';
 export { cosmosEstimateFee, cosmosQuery, cosmosTx } from './cosmos.js';
 export { createLCDQueryClient } from './lcd-adapter.js';

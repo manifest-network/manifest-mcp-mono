@@ -13,6 +13,14 @@ describe('createSignMessage', () => {
       't1:uuid1:1735689600',
     );
   });
+
+  // Regression / contract test: the format is part of the wire contract with
+  // the provider's ADR-036 verifier. Changing this string (e.g. to add an
+  // operation scope) must be coordinated with a server-side change or every
+  // authenticated call will fail. See note on createSignMessage in auth.ts.
+  it('pins the wire format exactly so coordinated changes are explicit', () => {
+    expect(createSignMessage('alpha', 'beta', 42)).toBe('alpha:beta:42');
+  });
 });
 
 describe('createLeaseDataSignMessage', () => {

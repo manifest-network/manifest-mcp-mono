@@ -3,9 +3,9 @@
 Node.js CLI entry points for the Manifest MCP servers with stdio transport and encrypted keyfile wallet.
 
 Provides four binaries:
-- **`manifest-mcp-chain`** -- Chain MCP server (5 tools: queries, transactions, module discovery)
-- **`manifest-mcp-lease`** -- Lease MCP server (6 tools: credit balance, funding, lease queries, SKUs, providers)
-- **`manifest-mcp-fred`** -- Fred MCP server (8 tools: catalog, deployment, status, logs, restart, update, diagnostics, releases)
+- **`manifest-mcp-chain`** -- Chain MCP server (6 tools, +1 optional `request_faucet`: queries, transactions, fee estimation, module discovery)
+- **`manifest-mcp-lease`** -- Lease MCP server (8 tools: credit balance, funding, lease queries, custom-domain claim/lookup, SKUs, providers)
+- **`manifest-mcp-fred`** -- Fred MCP server (11 tools, plus 3 resources & 3 prompts: catalog, deployment readiness, manifest preview, deployment, ready polling, status, logs, restart, update, diagnostics, releases)
 - **`manifest-mcp-cosmwasm`** -- CosmWasm MCP server (2 tools: MFX-to-PWR rate query, token conversion)
 
 ## Setup
@@ -167,17 +167,19 @@ Set `COSMOS_RPC_URL` + `COSMOS_GAS_PRICE` for full access (queries + transaction
 
 `COSMOS_CHAIN_ID` and at least one endpoint URL are only required when starting an MCP server, not for `keygen` or `import`.
 
-## Chain server tools (5)
+## Chain server tools (6, +1 optional)
 
 | Tool | Description |
 |------|-------------|
 | `get_account_info` | Get account address for the configured key |
 | `cosmos_query` | Execute any Cosmos SDK query command |
 | `cosmos_tx` | Execute any Cosmos SDK transaction |
+| `cosmos_estimate_fee` | Estimate gas + fee for a transaction without broadcasting |
 | `list_modules` | List all available query and transaction modules |
 | `list_module_subcommands` | List available subcommands for a specific module |
+| `request_faucet` | Request tokens from a faucet (registered only when `MANIFEST_FAUCET_URL` is set) |
 
-## Lease server tools (6)
+## Lease server tools (8)
 
 | Tool | Description |
 |------|-------------|
@@ -185,21 +187,28 @@ Set `COSMOS_RPC_URL` + `COSMOS_GAS_PRICE` for full access (queries + transaction
 | `fund_credit` | Send tokens to a billing credit account (defaults to the sender; accepts `tenant`) |
 | `leases_by_tenant` | List leases by state (defaults to the caller; accepts `tenant`) |
 | `close_lease` | Close a lease on-chain |
+| `set_item_custom_domain` | Claim or release a custom domain on a lease item |
+| `lease_by_custom_domain` | Look up the lease that owns a custom domain |
 | `get_skus` | List available SKUs |
 | `get_providers` | List available providers |
 
-## Fred server tools (8)
+## Fred server tools (11)
 
 | Tool | Description |
 |------|-------------|
 | `browse_catalog` | Browse available providers and service tiers with health checks |
-| `deploy_app` | Deploy a new application (create lease + deploy container) |
+| `check_deployment_readiness` | Pre-flight checks (balance, SKU availability, image pull) before `deploy_app` |
+| `build_manifest_preview` | Preview the SDL/manifest that `deploy_app` would submit |
+| `deploy_app` | Deploy a new application (create lease + deploy container, optional custom domain) |
+| `wait_for_app_ready` | Poll provider until a deployed app reports ready |
 | `app_status` | Get detailed status for a deployed app by lease UUID |
 | `get_logs` | Get logs for a deployed app by lease UUID |
 | `restart_app` | Restart a deployed app via the provider |
 | `update_app` | Update a deployed app with a new manifest |
 | `app_diagnostics` | Get provision diagnostics for a deployed app |
 | `app_releases` | Get release/version history for a deployed app |
+
+The Fred server also exposes 3 MCP resources (`manifest://leases/active`, `manifest://leases/recent`, `manifest://providers`) and 3 prompts (`deploy-containerized-app`, `diagnose-failing-app`, `shutdown-all-leases`).
 
 ## CosmWasm server tools (2)
 

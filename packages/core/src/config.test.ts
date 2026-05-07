@@ -229,7 +229,7 @@ describe('validateConfig', () => {
     const result = validateConfig({
       chainId: 'test',
       rpcUrl: 'https://example.com',
-      gasPrice: '1.0a' + 'b'.repeat(128),
+      gasPrice: `1.0a${'b'.repeat(128)}`,
     });
 
     expect(result.valid).toBe(false);

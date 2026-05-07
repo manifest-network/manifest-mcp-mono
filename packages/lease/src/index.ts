@@ -156,10 +156,7 @@ export class LeaseMCPServer {
         await this.clientManager.acquireRateLimit();
         const queryClient = await this.clientManager.getQueryClient();
         const result = await getBalance(queryClient, address);
-        return structuredResponse(
-          result as unknown as Record<string, unknown>,
-          bigIntReplacer,
-        );
+        return structuredResponse(result, bigIntReplacer);
       }),
     );
 

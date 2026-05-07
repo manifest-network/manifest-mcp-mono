@@ -133,21 +133,24 @@ export function withErrorHandling<
         error instanceof Error ? error.message : String(error);
       const errorCode =
         error instanceof ManifestMCPError ? error.code : 'UNKNOWN';
-      if (error instanceof ManifestMCPError) {
-        logger.error(
-          `[${toolName}] Tool error [${errorCode}]: ${errorMessage}`,
-        );
-      } else {
-        const stack =
-          error instanceof Error && error.stack ? `\n${error.stack}` : '';
-        logger.error(
-          `[${toolName}] Tool error [${errorCode}]: ${errorMessage}${stack}`,
-        );
-      }
-
-      // Sanitize error messages before including in the MCP response.
+      // Sanitize error messages before including in the MCP response or logs.
       // This catches mnemonic-like strings in error messages and redacts them.
       const safeMessage = sanitizeForLogging(errorMessage) as string;
+      const messageWasRedacted = safeMessage !== errorMessage;
+      if (error instanceof ManifestMCPError) {
+        logger.error(`[${toolName}] Tool error [${errorCode}]: ${safeMessage}`);
+      } else {
+        // Stack traces embed error.message verbatim. If the message was
+        // redacted, the stack would re-leak the original — so suppress the
+        // stack in that case rather than emit a half-sanitized trace.
+        let stackSuffix = '';
+        if (!messageWasRedacted && error instanceof Error && error.stack) {
+          stackSuffix = `\n${sanitizeForLogging(error.stack) as string}`;
+        }
+        logger.error(
+          `[${toolName}] Tool error [${errorCode}]: ${safeMessage}${stackSuffix}`,
+        );
+      }
 
       let errorResponse: Record<string, unknown> = {
         error: true,
@@ -220,7 +223,9 @@ export function jsonResponse(
  * (consumed by clients that validate against the tool's outputSchema) and
  * `content` (text fallback for clients that don't). Use this for any tool
  * registered with an `outputSchema`. Per MCP spec, `structuredContent` must
- * be a JSON object — `data` is therefore typed as a record.
+ * be a JSON object — `data` is typed as `unknown` so callers don't need to
+ * widen typed result interfaces with double-casts; the runtime contract
+ * (object-shaped after JSON round-trip) is enforced below.
  *
  * The optional `replacer` is applied to BOTH `structuredContent` and the
  * text fallback by round-tripping through JSON. This keeps `structuredContent`
@@ -229,8 +234,8 @@ export function jsonResponse(
  * replacer.
  */
 export function structuredResponse(
+  data: unknown,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- matches JSON.stringify's replacer signature
-  data: Record<string, unknown>,
   replacer?: (key: string, value: any) => any,
 ): CallToolResult {
   const serialized = JSON.stringify(data, replacer);

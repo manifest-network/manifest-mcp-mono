@@ -82,6 +82,16 @@ for (const { rel, filepath, pkg } of packages) {
   console.log(`  updated ${rel}`);
 }
 
+// Keep packages/core/src/version.ts in sync so VERSION constant matches package.json
+const versionTsPath = resolve(root, "packages/core/src/version.ts");
+try {
+  writeFileSync(versionTsPath, `export const VERSION = '${version}';\n`);
+  console.log("  updated packages/core/src/version.ts");
+} catch (err) {
+  console.error(`\nFailed to write packages/core/src/version.ts: ${err.message}`);
+  process.exit(1);
+}
+
 console.log("\nSyncing package-lock.json...");
 try {
   execSync("npm install --package-lock-only --ignore-scripts", { cwd: root, stdio: "inherit" });

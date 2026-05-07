@@ -374,5 +374,27 @@ describe('CosmwasmMCPServer', () => {
       const text = (result.content[0] as { text: string }).text;
       expect(text).toContain('Failed to parse converter config');
     });
+
+    it('rejects null contract response without throwing TypeError', async () => {
+      mockSmartContractState.mockResolvedValue({
+        data: toUtf8('null'),
+      });
+      const server = makeServer();
+      const result = await callTool(server, 'get_mfx_to_pwr_rate');
+      expect(result.isError).toBe(true);
+      const text = (result.content[0] as { text: string }).text;
+      expect(text).toContain('Unexpected converter config shape');
+    });
+
+    it('rejects array contract response', async () => {
+      mockSmartContractState.mockResolvedValue({
+        data: toUtf8('[]'),
+      });
+      const server = makeServer();
+      const result = await callTool(server, 'get_mfx_to_pwr_rate');
+      expect(result.isError).toBe(true);
+      const text = (result.content[0] as { text: string }).text;
+      expect(text).toContain('Unexpected converter config shape');
+    });
   });
 });

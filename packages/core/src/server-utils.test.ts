@@ -329,6 +329,20 @@ describe('withErrorHandling', () => {
     spy.mockRestore();
   });
 
+  it('sanitizes mnemonic in error message before logging non-ManifestMCPError', async () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const mnemonic =
+      'abandon ability able about above absent absorb abstract absurd abuse access accident';
+    const handler = withErrorHandling<TestToolCb>('my_tool', async () => {
+      throw new Error(mnemonic);
+    });
+    await handler({}, {});
+    const logged = spy.mock.calls[0].map((a) => String(a)).join(' ');
+    expect(logged).not.toContain('abandon ability');
+    expect(logged).toContain('[REDACTED');
+    spy.mockRestore();
+  });
+
   it('sanitizes standalone mnemonic error messages before returning to MCP client', async () => {
     const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
     // A standalone 12-word mnemonic as the entire error message

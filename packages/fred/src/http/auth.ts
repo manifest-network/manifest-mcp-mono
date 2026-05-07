@@ -32,6 +32,18 @@ export class AuthTimestampTracker {
   }
 }
 
+/**
+ * Build the ADR-036 sign message for a generic provider/Fred call.
+ *
+ * NOTE (security): the message currently scopes a token to a tenant + lease +
+ * timestamp, but not to a specific HTTP operation. If the provider's replay
+ * tracker is per-endpoint rather than global, a token issued for a read
+ * endpoint (e.g. status) could be replayed against a mutating endpoint
+ * (e.g. restart, update) within the 30 s replay window. Tightening this
+ * requires a coordinated server change to also validate an operation scope —
+ * do not change this format unilaterally without updating the provider/Fred
+ * verifier in lockstep, or every auth call will fail.
+ */
 export function createSignMessage(
   tenant: string,
   leaseUuid: string,
