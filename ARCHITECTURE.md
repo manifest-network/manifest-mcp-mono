@@ -2,6 +2,8 @@
 
 This document describes the architecture of the Manifest MCP monorepo -- MCP servers that bridge AI assistants to Cosmos SDK blockchains, with first-class support for the Manifest Network.
 
+For user-facing guidance (tool selection, end-to-end examples, prompts/resources, troubleshooting, security model, library usage), see the [`docs/`](docs/) directory.
+
 ## Overview
 
 The servers implement the [Model Context Protocol](https://modelcontextprotocol.io/) (MCP), exposing blockchain queries, transactions, and Manifest-specific deployment tools to any MCP-compatible client (Claude Desktop, Cursor, etc.).
@@ -46,9 +48,9 @@ The 27 tools (+ 1 optional faucet) are split across four MCP servers to stay und
 ```
 packages/
   core/      @manifest-network/manifest-mcp-core      Shared library (Cosmos logic, on-chain tool functions)
-  chain/     @manifest-network/manifest-mcp-chain     MCP server: 5 chain tools
-  lease/     @manifest-network/manifest-mcp-lease     MCP server: 6 on-chain lease tools
-  fred/      @manifest-network/manifest-mcp-fred      MCP server: 8 provider/Fred tools
+  chain/     @manifest-network/manifest-mcp-chain     MCP server: 6 chain tools (+ optional request_faucet)
+  lease/     @manifest-network/manifest-mcp-lease     MCP server: 8 on-chain lease tools
+  fred/      @manifest-network/manifest-mcp-fred      MCP server: 11 provider/Fred tools, 3 resources, 3 prompts
   cosmwasm/  @manifest-network/manifest-mcp-cosmwasm  MCP server: 2 converter tools
   node/      @manifest-network/manifest-mcp-node      Four CLIs: manifest-mcp-chain, manifest-mcp-lease, manifest-mcp-fred, manifest-mcp-cosmwasm
 e2e/                                                   End-to-end tests against a live chain
@@ -119,7 +121,7 @@ src/
 
 ### Key components
 
-**CosmosClientManager** (`client.ts`) -- Keyed-instance cache that manages client lifecycle (one instance per `chainId:rpcUrl[:restUrl]` tuple). Supports two operating modes:
+**CosmosClientManager** (`client.ts`) -- Keyed-instance cache that manages client lifecycle. Instances are keyed by `chainId:rpcUrl[:restUrl]` (the `restUrl` segment is appended only when configured, so query-only mode keys as `chainId::restUrl`). Supports two operating modes:
 - **Full mode** (`rpcUrl` + `gasPrice`): queries via RPC or LCD, transactions via signing client
 - **Query-only mode** (`restUrl` only): queries via LCD/REST, `getSigningClient()` throws `INVALID_CONFIG`
 - When both `rpcUrl` and `restUrl` are configured, `restUrl` is preferred for queries
@@ -127,8 +129,8 @@ src/
 Key features:
 - Lazy initialization with promise-based concurrency control (multiple callers wait for the same init)
 - Token-bucket rate limiting (default: 10 requests/sec via `limiter`), acquired by callers before chain calls
-- Automatic retry with exponential backoff (base 1s, max 10s, 3 retries)
-- Selective invalidation on config update: signing client is recreated only when `gasPrice` or `walletProvider` changes; query client is never invalidated (stateless HTTP)
+- Automatic retry with exponential backoff (base 1s, max 10s, 3 retries) on transient failures (network errors, HTTP 5xx, 429); permanent errors (`INVALID_CONFIG`, `WALLET_NOT_CONNECTED`, `WALLET_CONNECTION_FAILED`, `INVALID_MNEMONIC`, `INVALID_ADDRESS`, `UNSUPPORTED_QUERY`, `UNSUPPORTED_TX`, `UNKNOWN_MODULE`, `TX_FAILED`) are not retried
+- Selective invalidation on config update: signing client is recreated when `gasPrice`, `gasMultiplier`, or `walletProvider` changes; the rate limiter is rebuilt independently when `requestsPerSecond` changes; the query client is never invalidated (stateless HTTP)
 
 **Module registry** (`modules.ts`) -- Static `QUERY_MODULES` and `TX_MODULES` maps that register each Cosmos module's metadata (description, subcommands) and handler functions. This powers the `list_modules` and `list_module_subcommands` discovery tools, allowing AI clients to explore available operations dynamically.
 
@@ -198,26 +200,33 @@ The fred server handles ADR-036 provider authentication internally and contains 
 
 ```
 src/
-├── index.ts              FredMCPServer (11 tools, 3 resources, 3 prompts; app_diagnostics and app_releases are inline here)
-├── manifest.ts           Manifest building, merging, and validation
+├── index.ts              FredMCPServer entry point + library exports (constructs the McpServer and wires registerTools/registerResources/registerPrompts)
+├── manifest.ts           Manifest building, merging, validation, and meta-hash derivation
+├── server/
+│   ├── progress.ts             Helper utilities for emitting `notifications/progress` and forwarding `AbortSignal`
+│   ├── register-tools.ts       Registers the 11 MCP tools (browse_catalog, deploy_app, app_status, app_diagnostics, app_releases, …)
+│   ├── register-resources.ts   Registers the 3 MCP resources (`manifest://leases/active`, `manifest://leases/recent`, `manifest://providers`)
+│   └── register-prompts.ts     Registers the 3 MCP prompts (`deploy-containerized-app`, `diagnose-failing-app`, `shutdown-all-leases`)
 ├── http/
-│   ├── auth.ts                 ADR-036 signature-based authentication
-│   ├── auth-token-service.ts   Cached ADR-036 token issuance with timestamp deduplication
-│   ├── provider.ts             Provider API client (URL validation, health, lease info & uploads)
-│   └── fred.ts                 Fred API client (lease status, logs, restart, update, releases)
+│   ├── auth.ts                 ADR-036 sign-message construction, base64 token assembly, and timestamp deduplication tracker
+│   ├── auth-token-service.ts   Wallet-bound ADR-036 token builder (`AuthTokenService`); serializes monotonic timestamps via `AuthTimestampTracker` so consecutive tokens never collide, and lazily requires `walletProvider.signArbitrary` (throws `INVALID_CONFIG` only on auth-gated tool calls). No token cache.
+│   ├── provider.ts             Provider API client (URL validation, health, lease info, manifest upload)
+│   └── fred.ts                 Fred API client (lease status, logs, provision diagnostics, restart, update, releases, ready polling)
 └── tools/
-    ├── fetchActiveLease.ts        Shared helper: resolve active lease
-    ├── resolveLeaseProvider.ts    Provider URL lookup
+    ├── fetchActiveLease.ts        Shared helper: resolve a tenant's most recent active lease
+    ├── resolveLeaseProvider.ts    Provider API URL lookup from a lease's provider UUID
     ├── browseCatalog.ts           List providers + SKU pricing with health checks
     ├── checkDeploymentReadiness.ts  Pre-flight balance/SKU/image checks before deploy
     ├── buildManifestPreview.ts    Render the SDL/manifest that deploy_app would submit
-    ├── deployApp.ts               Create lease + deploy container (+ optional set-domain)
+    ├── deployApp.ts               Create lease + deploy container (+ optional custom-domain claim)
     ├── waitForAppReady.ts         Poll provider until lease reports ready
     ├── appStatus.ts               Lease status + provider info
     ├── getLogs.ts                 Fetch container logs
     ├── restartApp.ts              Restart via provider API
     └── updateApp.ts               Update container manifest
 ```
+
+`app_diagnostics` and `app_releases` are registered inline in `server/register-tools.ts` rather than as standalone files in `tools/` because they are thin pass-throughs to the matching Fred API endpoints with no orchestration logic to extract.
 
 ### HTTP clients
 
@@ -383,19 +392,36 @@ All MCP server output goes to **stderr** because stdout is reserved for the MCP 
 
 ## E2E testing
 
-End-to-end tests live in `/e2e/` and run against a real Manifest chain via Docker Compose:
+End-to-end tests live in `/e2e/` and run against a real Manifest chain (and a real `providerd` for fred tests) via Docker Compose. Each `*.e2e.test.ts` spawns the relevant MCP server in a child process and drives it through the SDK's stdio transport (see `helpers/mcp-client.ts`). The chain image is built from the pinned `submodules/manifest-ledger` commit and the provider image is built from `submodules/fred`.
 
 ```
 e2e/
-├── docker-compose.yml          Spins up manifestd + providerd with TLS
-├── chain-tools.e2e.test.ts     Chain server tool tests (queries, transactions, modules)
-├── lifecycle.e2e.test.ts       Full lease lifecycle (deploy, status, logs, restart, update, close)
-├── vitest.config.ts            Vitest config with 5-minute timeout
-├── docker/                     Dockerfiles for chain and provider containers
-├── scripts/                    Init scripts (chain genesis, billing setup)
-└── helpers/
-    ├── global-setup.ts         Docker health checks and wallet funding
-    └── mcp-client.ts           Spawns MCP server processes and provides a callTool helper
+├── docker-compose.yml                Spins up chain + init + docker-backend + providerd + faucet (TLS)
+├── vitest.config.ts                  5-minute test timeout, single-fork pool
+├── docker/                           Dockerfiles for the chain and provider containers
+├── scripts/
+│   ├── init_chain.sh                 Genesis + key/funds bootstrap for the chain container
+│   ├── init_billing.sh               Registers the test provider, mints tokens, creates SKUs
+│   └── start_faucet.sh               Boots the CosmJS faucet against the test chain
+├── helpers/
+│   ├── global-setup.ts               Compose readiness probes + funded-wallet provisioning
+│   └── mcp-client.ts                 Spawns MCP server child processes + a `callTool` helper
+├── chain-tools.e2e.test.ts           Chain server tool surface (queries, transactions, fee estimation)
+├── chain-routing.e2e.test.ts         cosmos_query/cosmos_tx routing across modules and aliases
+├── billing-custom-domain.e2e.test.ts set/lookup/clear custom domains via lease + chain layers
+├── billing-sku-lifecycle.e2e.test.ts SKU module: create/update/deactivate provider and SKU
+├── group-lifecycle.e2e.test.ts       Group module: create-group, policies, proposals, votes
+├── deploy-roundtrip.e2e.test.ts      Fred deploy → ready → status → close happy path
+├── lifecycle.e2e.test.ts             Full deploy/status/logs/restart/update/close lifecycle
+├── cosmwasm.e2e.test.ts              MFX→PWR converter rate query and conversion tx
+├── rest-mode.e2e.test.ts             Query-only mode (`COSMOS_REST_URL`) parity coverage
+├── retry.e2e.test.ts                 Transient-error retry classification end-to-end
+├── errors.e2e.test.ts                Error-code surface for the documented MCP error contract
+├── misc-edges.e2e.test.ts            Edge cases that cross modules (pagination, denoms, …)
+├── tool-annotations.e2e.test.ts      Pins the `annotations` + `_meta.manifest` matrix per tool
+├── wallet.e2e.test.ts                Wallet bootstrap, ADR-036, dual-wallet flows
+├── wasm-mutations.e2e.test.ts        Wasm tx surface (store-code, instantiate, execute, migrate)
+└── request-faucet.e2e.test.ts        `request_faucet` tool wired against the local CosmJS faucet
 ```
 
 To run:

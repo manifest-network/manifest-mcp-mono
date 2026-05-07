@@ -217,6 +217,17 @@ The Fred server also exposes 3 MCP resources (`manifest://leases/active`, `manif
 | `get_mfx_to_pwr_rate` | Get the current MFX-to-PWR conversion rate and preview amounts |
 | `convert_mfx_to_pwr` | Convert MFX tokens to PWR via the on-chain converter contract |
 
+## See also
+
+The links below resolve from the GitHub repo. They use absolute URLs because the published npm package only ships `dist/` and the `docs/` tree isn't included, so relative paths would 404 on npmjs.com.
+
+- [Tool selection guide](https://github.com/manifest-network/manifest-mcp-mono/blob/main/docs/tool-selection-guide.md) — which server to wire up and which tool to call
+- [Usage examples](https://github.com/manifest-network/manifest-mcp-mono/blob/main/docs/usage-examples.md) — end-to-end transcripts (balances, deploys, diagnostics, conversions)
+- [Prompts and resources](https://github.com/manifest-network/manifest-mcp-mono/blob/main/docs/prompts-and-resources.md) — what the Fred server's 3 prompts and 3 resources expose
+- [Troubleshooting](https://github.com/manifest-network/manifest-mcp-mono/blob/main/docs/troubleshooting.md) — error codes, common failure modes, and how to recover
+- [Security model](https://github.com/manifest-network/manifest-mcp-mono/blob/main/docs/security.md) — wallet handling, ADR-036 auth, output redaction, trust boundaries
+- [Library usage](https://github.com/manifest-network/manifest-mcp-mono/blob/main/docs/library-usage.md) — using the packages outside an MCP host
+
 ## License
 
 MIT
