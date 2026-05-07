@@ -6,7 +6,7 @@ End-to-end transcripts of natural-language requests and the MCP tool calls they 
 
 > "What's my MFX balance?"
 
-```jsonc
+```ts
 // chain server
 get_account_info()
 // → { address: "manifest1abc..." }
@@ -21,7 +21,7 @@ The agent will typically convert `umfx` to MFX (1 MFX = 1,000,000 umfx) before r
 
 > "Send 50 MFX to manifest1xyz…"
 
-```jsonc
+```ts
 // chain server — preview the fee first
 cosmos_estimate_fee({
   module: "bank",
@@ -45,7 +45,7 @@ The `manifest-agent` plugin will gate `cosmos_tx` behind a confirmation step bec
 
 > "Top up my testnet wallet."
 
-```jsonc
+```ts
 // chain server, only when MANIFEST_FAUCET_URL is set
 request_faucet()                           // drips every available denom
 request_faucet({ denom: "umfx" })          // drips a single denom
@@ -60,7 +60,7 @@ Each denom has an independent server-side cooldown.
 
 `amount` is a plain integer string in the source denom's base unit (umfx). No denom suffix.
 
-```jsonc
+```ts
 // cosmwasm server — 100 MFX = 100_000_000 umfx
 get_mfx_to_pwr_rate({ amount: "100000000" })
 // → {
@@ -81,7 +81,7 @@ convert_mfx_to_pwr({ amount: "100000000" })
 
 The smoothest path is the `deploy-containerized-app` MCP prompt. Manually it looks like:
 
-```jsonc
+```ts
 // 1. Pre-flight (lease server is required for fund_credit if credits are missing)
 check_deployment_readiness({ size: "docker-micro", image: "nginx:1.25" })
 // → { ready: true | false, missing_steps: [...], sku: { ... }, balances: [...] }
@@ -108,7 +108,7 @@ If step 4 succeeds but a later step fails, the error returned by `deploy_app` in
 
 > "Deploy `myapp:latest`, claim `app.example.com` to it, and confirm."
 
-```jsonc
+```ts
 // fred server — the FQDN is claimed in the same call that creates the lease
 deploy_app({
   image: "myapp:latest",
@@ -125,7 +125,7 @@ If the chain rejects the domain claim (e.g. it's already taken), `deploy_app` re
 
 Per-service objects accept `image`, `ports`, `env`, `command`, `args`, `user`, `tmpfs`, `health_check`, `stop_grace_period`, `depends_on`, `expose`, and `labels` — no `port` (singular) and no `accept` field. `ports` is a `{ "<port>/<proto>": {} }` map. The FQDN-claim lives at the top level via `custom_domain` + `service_name`.
 
-```jsonc
+```ts
 // fred server
 build_manifest_preview({
   services: {
@@ -161,7 +161,7 @@ deploy_app({
 
 Run the `diagnose-failing-app` prompt. Or manually:
 
-```jsonc
+```ts
 // fred server
 app_status({ lease_uuid: "..." })          // chainState + fredStatus
 app_diagnostics({ lease_uuid: "..." })     // provision_status, fail_count, last_error
@@ -176,7 +176,7 @@ Decide on a fix (different image? change in env? close and redeploy?) and act.
 
 `update_app` takes a full manifest as a JSON string. The easiest path is to render one with `build_manifest_preview` and then feed the resulting `manifest_json` in. Pass the previous manifest as `existing_manifest` to merge over it (env, ports, labels merged; other fields carried forward).
 
-```jsonc
+```ts
 // 1. Render the new manifest
 const preview = build_manifest_preview({ image: "myapp:v2", port: 8080 });
 
@@ -190,7 +190,7 @@ update_app({
 
 ## 10. Restart a stuck app
 
-```jsonc
+```ts
 restart_app({ lease_uuid: "..." })
 ```
 
@@ -202,7 +202,7 @@ Use this when the container has crashed and you want to bounce it without redepl
 
 Either invoke the `shutdown-all-leases` prompt (which lists everything first and asks for confirmation), or close one explicitly:
 
-```jsonc
+```ts
 // lease server
 close_lease({ lease_uuid: "..." })
 // → { transactionHash, code: 0, ... }
@@ -214,7 +214,7 @@ close_lease({ lease_uuid: "..." })
 
 > "What governance subcommands are available?"
 
-```jsonc
+```ts
 // chain server
 list_modules()
 // → { queryModules: [{ name: "gov", description: ... }, ...], txModules: [...] }

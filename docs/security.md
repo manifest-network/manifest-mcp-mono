@@ -31,7 +31,7 @@ Wallets resolve in this order:
 2. `COSMOS_MNEMONIC` env var (only used when no keyfile exists).
 3. Fatal exit.
 
-The mnemonic and decrypted private key are held in memory for the lifetime of the server process. There is no equivalent of `disconnect()` exposed externally; the keyfile/mnemonic provider clears its references when the process exits. JavaScript strings are immutable, so the cleared references rely on garbage collection — there's no zeroing of the underlying memory.
+The mnemonic and decrypted private key are held in memory for the lifetime of the server process. The `WalletProvider` interface declares an optional `disconnect()` method and both providers implement it (it nulls the mnemonic/wallet refs and locks the instance against reconnection), but the bootstrap doesn't invoke it — there's no MCP tool, CLI subcommand, or signal handler that calls `disconnect()` during normal operation, so in practice references are dropped on process exit. Library consumers embedding the providers can call `disconnect()` themselves to clear earlier. JavaScript strings are immutable, so the cleared references rely on garbage collection regardless — there's no zeroing of the underlying memory.
 
 Both wallet providers maintain **two derived wallets** from the same seed:
 - A `DirectSecp256k1HdWallet` for proto signing (transactions).
@@ -72,13 +72,18 @@ The signature, public key, and metadata are base64-encoded into a `Bearer` token
 
 ## Endpoint-URL validation
 
-Every URL passed via env (`COSMOS_RPC_URL`, `COSMOS_REST_URL`, `MANIFEST_FAUCET_URL`, provider URLs returned by the chain) is run through `validateEndpointUrl` from core. The rule is:
+Two validators enforce the same HTTPS-or-localhost rule on different inputs:
+
+- **`validateEndpointUrl`** in `packages/core/src/config.ts` covers env-supplied endpoints: `COSMOS_RPC_URL` and `COSMOS_REST_URL` (validated inside `createValidatedConfig`), and `MANIFEST_FAUCET_URL` (validated in `packages/node/src/chain.ts` before the chain server starts). Failures throw `ManifestMCPError(INVALID_CONFIG)` and the server refuses to boot.
+- **`validateProviderUrl`** in `packages/fred/src/http/provider.ts` covers provider API URLs returned from chain queries (e.g. the `apiUrl` on a `Provider` row, or whatever the lease's `providerUuid` resolves to). Same HTTPS-or-localhost rule, plus trailing-slash stripping. Failures throw `ProviderApiError`.
+
+Both apply the same shape:
 
 - HTTPS is always allowed.
 - HTTP is allowed only for `localhost` / `127.0.0.1` / `::1` / `[::1]`.
-- Anything else is rejected with `INVALID_CONFIG`.
+- Anything else is rejected.
 
-This is the SSRF guard. It runs **before** any HTTP call, so a misconfigured config never produces a request to a non-HTTPS arbitrary host.
+This is the SSRF guard. It runs **before** any HTTP call, so a misconfigured config or a chain row with a malformed `apiUrl` never produces a request to a non-HTTPS arbitrary host.
 
 ## Input validation
 

@@ -130,7 +130,7 @@ Note `getBalance` takes a `queryClient` (the manifestjs RPC client), not a `clie
 
 ## Fred HTTP clients with `fetchFn` injection
 
-Every HTTP-issuing function in `packages/fred/src/http/{fred,provider}.ts` accepts an optional trailing `fetchFn?: typeof globalThis.fetch`. When omitted, the global `fetch` is used. When supplied, the function calls your fetch instead. This is the seam Barney uses to route requests through its CORS proxy in dev and through an SSRF validator in prod:
+Every HTTP-issuing function in `packages/fred/src/http/{fred,provider}.ts` accepts an optional `fetchFn?: typeof globalThis.fetch` parameter. In most signatures it's the last argument; the one exception is `uploadLeaseData(providerUrl, leaseUuid, payload, authToken, fetchFn?, abortSignal?)`, where `abortSignal` follows it. When `fetchFn` is omitted, the global `fetch` is used. When supplied, the function calls your fetch instead. This is the seam Barney uses to route requests through its CORS proxy in dev and through an SSRF validator in prod:
 
 ```ts
 // barney/src/api/providerFetchAdapter.ts (excerpt)
