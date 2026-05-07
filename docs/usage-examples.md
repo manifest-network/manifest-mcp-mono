@@ -114,7 +114,7 @@ deploy_app({
   image: "myapp:latest",
   port: 8080,
   size: "docker-small",
-  custom_domain: "app.example.com"
+  custom_domain: "app.example.com",
   // service_name is required for stack leases; omit for single-service
 })
 ```

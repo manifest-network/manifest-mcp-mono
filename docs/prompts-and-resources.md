@@ -63,7 +63,7 @@ Resources are pull-on-demand context an agent can read up-front instead of polli
 
 Snapshot of the caller wallet's leases currently in `LEASE_STATE_ACTIVE` or `LEASE_STATE_PENDING`. Useful as immutable context when an agent is about to operate on "the app I have running".
 
-```jsonc
+```text
 {
   "tenant": "manifest1abc...",
   "active":  [{ "uuid", "state", "provider_uuid", "created_at" }, ...],
@@ -76,7 +76,7 @@ Snapshot of the caller wallet's leases currently in `LEASE_STATE_ACTIVE` or `LEA
 
 The caller's leases ordered most-recent-first, up to 50, **regardless of state**. Useful for surfacing recently-closed or rejected leases the agent may want to act on.
 
-```jsonc
+```text
 {
   "tenant": "manifest1abc...",
   "leases": [
@@ -90,7 +90,7 @@ The caller's leases ordered most-recent-first, up to 50, **regardless of state**
 
 Provider catalog snapshot — chain-side data only. No live HTTP health probe. Use `browse_catalog` (a tool, not a resource) when health is needed.
 
-```jsonc
+```text
 {
   "providers": [{ "uuid", "address", "api_url", "active" }],
   "skus":      [{ "uuid", "name", "provider_uuid", "active",

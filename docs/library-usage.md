@@ -17,10 +17,10 @@ The reference consumer is **Barney**, the Manifest web frontend, which imports `
 
 ## Wallet bootstrap
 
-In Node.js, use `MnemonicWalletProvider` from core. In the browser, plug in any wallet that satisfies the `WalletProvider` interface — Barney wraps `cosmos-kit`'s offline signer in a thin custom class:
+In Node.js, use `MnemonicWalletProvider` from core. In the browser, plug in any wallet that satisfies the `WalletProvider` interface — Barney wraps `cosmos-kit`'s offline signer in a thin custom class. Note that `cosmos-kit` exposes `signArbitrary` as a *separate* hook return value (not a method on the offline signer); you'd thread it through your app independently of the `WalletProvider` and pass it into the ADR-036 helpers below.
 
 ```ts
-// barney/src/hooks/useManifestMCP.ts
+// barney/src/hooks/useManifestMCP.ts (paraphrased)
 import {
   CosmosClientManager,
   type ManifestMCPConfig,
@@ -36,10 +36,11 @@ class CosmosKitWalletProvider implements WalletProvider {
   ) {}
   async getAddress() { return this.address; }
   async getSigner() { return this.signer; }
-  // signArbitrary is delegated separately — see "ADR-036" below
+  // No signArbitrary on this class — cosmos-kit returns it separately
+  // from useChain(). See "ADR-036 auth token construction" below.
 }
 
-const { address, isWalletConnected, getOfflineSigner } = useChain('manifest');
+const { address, isWalletConnected, getOfflineSigner, signArbitrary } = useChain('manifest');
 const wallet = new CosmosKitWalletProvider(getOfflineSigner(), address);
 
 const config: ManifestMCPConfig = {
@@ -50,9 +51,13 @@ const config: ManifestMCPConfig = {
 };
 
 const clientManager = CosmosClientManager.getInstance(config, wallet);
+// Keep `signArbitrary` around (Barney stores it in a Zustand slice) and
+// pass it into the auth-token helpers wherever they're called.
 ```
 
 `CosmosClientManager.getInstance` is keyed by `chainId:rpcUrl[:restUrl]` and reused across calls. There's no advantage to caching the result yourself. When the wallet disconnects, call `clientManager.disconnect()` so the underlying signing client is torn down.
+
+> **Why `signArbitrary` is separate.** The `WalletProvider` interface declares it as `signArbitrary?(address, data)` (optional method). Some wallets (`MnemonicWalletProvider` and `KeyfileWalletProvider`) implement it on the provider directly because they own the seed; cosmos-kit doesn't, because the underlying browser wallet (Keplr/Leap/etc.) exposes the operation through a different hook surface. Both shapes work — the helpers below take a callable, not a `WalletProvider`.
 
 ## Generic Cosmos SDK queries and transactions
 
@@ -168,6 +173,8 @@ The fred package exposes two strategies — pick one.
 
 ### Strategy A: hand-roll the token (Barney's pattern)
 
+`signArbitrary` here is whatever your wallet returns for ADR-036 signing — for `MnemonicWalletProvider` and `KeyfileWalletProvider` that's `wallet.signArbitrary` (optional method on the provider); for cosmos-kit that's the standalone function returned from `useChain()`. The helpers don't care which — they just need a callable that returns `{ pub_key: { type, value }, signature }`.
+
 ```ts
 import {
   createSignMessage,
@@ -175,16 +182,22 @@ import {
   createAuthToken,
 } from '@manifest-network/manifest-mcp-fred';
 
-// Generic provider/Fred call (status, logs, restart, update, …)
-const tenant = await wallet.getAddress();
-const timestamp = Math.floor(Date.now() / 1000);
-const message = createSignMessage(tenant, leaseUuid, timestamp);
-const { pub_key, signature } = await wallet.signArbitrary(tenant, message);
-const token = createAuthToken(tenant, leaseUuid, timestamp, pub_key.value, signature);
-// pass: Authorization: Bearer ${token}
+type SignArbitraryFn = (
+  signer: string,
+  data: string,
+) => Promise<{ pub_key: { type: string; value: string }; signature: string }>;
+
+// signArbitrary comes from useChain() (cosmos-kit) or wallet.signArbitrary.bind(wallet) (mnemonic/keyfile)
+async function buildToken(signArbitrary: SignArbitraryFn, tenant: string, leaseUuid: string) {
+  const timestamp = Math.floor(Date.now() / 1000);
+  const message = createSignMessage(tenant, leaseUuid, timestamp);
+  const { pub_key, signature } = await signArbitrary(tenant, message);
+  return createAuthToken(tenant, leaseUuid, timestamp, pub_key.value, signature);
+}
+// pass: Authorization: Bearer ${await buildToken(...)}
 ```
 
-For lease-data uploads (e.g. uploading a manifest during deploy), use `createLeaseDataSignMessage(leaseUuid, metaHashHex, timestamp)` instead and pass `metaHashHex` as the last arg of `createAuthToken`. The provider rejects a generic token on the upload endpoint and vice versa.
+For lease-data uploads (e.g. uploading a manifest during deploy), call `createLeaseDataSignMessage(leaseUuid, metaHashHex, timestamp)` instead and pass `metaHashHex` as the last arg of `createAuthToken`. The provider rejects a generic token on the upload endpoint and vice versa.
 
 > **Replay protection.** The provider enforces a 30 s max token age and per-signature replay detection on protected endpoints. ADR-036 signing is deterministic: two calls that share a timestamp produce identical signatures. If you issue tokens in tight loops (Barney does, polling status during deploy), wrap timestamp generation in a small helper that waits for the wall clock to advance past the previously-issued value before returning — so two consecutive `Math.floor(Date.now() / 1000)` calls never collide.
 
@@ -195,17 +208,20 @@ For lease-data uploads (e.g. uploading a manifest during deploy), use `createLea
 ```ts
 import { createAuthToken, createSignMessage, createLeaseDataSignMessage } from '@manifest-network/manifest-mcp-fred';
 
+// `signArbitrary` is the same callable described under Strategy A —
+// `wallet.signArbitrary.bind(wallet)` for mnemonic/keyfile wallets, or
+// the standalone function returned from cosmos-kit's `useChain()`.
 const getAuthToken = async (address: string, leaseUuid: string) => {
   const ts = await nextMonotonicTimestamp(); // your wall-clock helper from the note above
   const msg = createSignMessage(address, leaseUuid, ts);
-  const { pub_key, signature } = await wallet.signArbitrary(address, msg);
+  const { pub_key, signature } = await signArbitrary(address, msg);
   return createAuthToken(address, leaseUuid, ts, pub_key.value, signature);
 };
 
 const getLeaseDataAuthToken = async (address: string, leaseUuid: string, metaHashHex: string) => {
   const ts = await nextMonotonicTimestamp();
   const msg = createLeaseDataSignMessage(leaseUuid, metaHashHex, ts);
-  const { pub_key, signature } = await wallet.signArbitrary(address, msg);
+  const { pub_key, signature } = await signArbitrary(address, msg);
   return createAuthToken(address, leaseUuid, ts, pub_key.value, signature, metaHashHex);
 };
 ```
