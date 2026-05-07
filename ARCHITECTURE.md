@@ -6,7 +6,7 @@ This document describes the architecture of the Manifest MCP monorepo -- MCP ser
 
 The servers implement the [Model Context Protocol](https://modelcontextprotocol.io/) (MCP), exposing blockchain queries, transactions, and Manifest-specific deployment tools to any MCP-compatible client (Claude Desktop, Cursor, etc.).
 
-The 21 tools are split across four MCP servers to stay under the LLM tool-selection accuracy ceiling:
+The 27 tools (+ 1 optional faucet) are split across four MCP servers to stay under the LLM tool-selection accuracy ceiling:
 
 - **Chain server** (6 tools, +1 optional `request_faucet`) -- Generic Cosmos SDK operations: queries, transactions, fee estimation, module discovery
 - **Lease server** (8 tools) -- On-chain lease operations: credit balance, funding, lease queries, custom-domain claim/lookup, SKUs, providers

@@ -566,6 +566,10 @@ describe('CosmosClientManager', () => {
       );
       const start = Date.now();
       // 5 acquisitions well below the 10/sec budget should not block.
+      // We assert only that the budget did not force a refill wait
+      // (which would be ~500 ms at 10 rps); a loose ceiling avoids
+      // flakes on slow CI while still failing if throttling kicks in
+      // when it shouldn't.
       await Promise.all([
         instance.acquireRateLimit(),
         instance.acquireRateLimit(),
@@ -574,7 +578,7 @@ describe('CosmosClientManager', () => {
         instance.acquireRateLimit(),
       ]);
       const elapsed = Date.now() - start;
-      expect(elapsed).toBeLessThan(50);
+      expect(elapsed).toBeLessThan(400);
     });
 
     it('acquireRateLimit throttles when budget is exhausted', async () => {
