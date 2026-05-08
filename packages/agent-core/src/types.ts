@@ -72,7 +72,7 @@ export interface Readiness {
 
 export interface PlanFees {
   createLease: FeeEstimate;
-  setDomain?: FeeEstimate | { not_estimated: true; reason: string };
+  setDomain?: FeeEstimate | { notEstimated: true; reason: string };
 }
 
 export interface Plan {
@@ -121,7 +121,7 @@ export type ProgressEvent =
       outcome: 'active' | 'needs_wait' | 'failed';
     }
   | { kind: 'app_ready_confirmed'; leaseUuid: string }
-  | { kind: 'manifest_saved'; leaseUuid: string; path: string }
+  | { kind: 'manifest_saved'; leaseUuid: string; manifestPath: string }
   | { kind: 'success_rendered'; result: DeployResult };
 
 // --- failure + recovery -------------------------------------------------

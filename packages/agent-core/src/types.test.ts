@@ -110,13 +110,13 @@ describe('ProgressEvent discriminant', () => {
     >().toEqualTypeOf<{ kind: 'app_ready_confirmed'; leaseUuid: string }>();
   });
 
-  it('manifest_saved carries leaseUuid + path', () => {
+  it('manifest_saved carries leaseUuid + manifestPath', () => {
     expectTypeOf<
       Extract<ProgressEvent, { kind: 'manifest_saved' }>
     >().toEqualTypeOf<{
       kind: 'manifest_saved';
       leaseUuid: string;
-      path: string;
+      manifestPath: string;
     }>();
   });
 
