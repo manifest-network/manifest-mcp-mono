@@ -2,20 +2,30 @@ import { describe, expectTypeOf, it } from 'vitest';
 import type {
   CloseLeaseCallbacks,
   CloseLeaseResult,
+  Coin,
   DeployAppCallbacks,
   DeploymentPlanBlock,
   DeployResult,
+  DeploySpec,
   FailureEnvelope,
+  FeeEstimate,
+  LeaseStateName,
   ManageDomainArgs,
   ManageDomainCallbacks,
   ManageDomainResult,
   Plan,
   PlanEdit,
+  PlanFees,
   ProgressEvent,
   Readiness,
+  ReadinessAction,
   RecoveryChoice,
   RecoveryOption,
   RecoveryOptionId,
+  ServiceDef,
+  SingleServiceSpec,
+  SpecSummary,
+  StackSpec,
   TroubleshootCallbacks,
   TroubleshootReport,
 } from './index.js';
@@ -316,5 +326,132 @@ describe('Simple-callback surfaces (manage-domain / troubleshoot / close-lease)'
     expectTypeOf<
       NonNullable<CloseLeaseCallbacks['onFailure']>
     >().returns.resolves.toEqualTypeOf<void>();
+  });
+});
+
+describe('Exported type shapes (load-bearing public surface)', () => {
+  it('Coin', () => {
+    expectTypeOf<Coin>().toEqualTypeOf<{ denom: string; amount: string }>();
+  });
+
+  it('FeeEstimate', () => {
+    expectTypeOf<FeeEstimate>().toEqualTypeOf<{
+      amount: string;
+      denom: string;
+      gas: number;
+      human: string;
+    }>();
+  });
+
+  it('ServiceDef', () => {
+    expectTypeOf<ServiceDef>().toEqualTypeOf<{
+      image: string;
+      ports?: number[];
+      env?: Record<string, string>;
+      args?: string[];
+      command?: string[];
+    }>();
+  });
+
+  it('SingleServiceSpec', () => {
+    expectTypeOf<SingleServiceSpec>().toEqualTypeOf<{
+      image: string;
+      port?: number | number[];
+      env?: Record<string, string>;
+      customDomain?: string;
+    }>();
+  });
+
+  it('StackSpec', () => {
+    expectTypeOf<StackSpec>().toEqualTypeOf<{
+      services: Record<string, ServiceDef>;
+      customDomain?: string;
+      serviceName?: string;
+    }>();
+  });
+
+  it('DeploySpec is the union of SingleServiceSpec | StackSpec', () => {
+    expectTypeOf<DeploySpec>().toEqualTypeOf<SingleServiceSpec | StackSpec>();
+  });
+
+  it('SpecSummary', () => {
+    expectTypeOf<SpecSummary>().toEqualTypeOf<{
+      format: 'single' | 'stack';
+      serviceCount: number;
+      portCount: number;
+      envCount: number;
+      envKeys: string[];
+      images: string[];
+    }>();
+  });
+
+  it('ReadinessAction literal union', () => {
+    expectTypeOf<ReadinessAction>().toEqualTypeOf<
+      'fund_credit' | 'request_faucet' | 'topup_wallet' | 'pick_different_sku'
+    >();
+  });
+
+  it('Readiness', () => {
+    expectTypeOf<Readiness>().toEqualTypeOf<{
+      status: 'ok' | 'warn' | 'block';
+      reasons: string[];
+      suggestedActions: ReadinessAction[];
+      walletBalances: Coin[];
+      credits: { availableBalances: Coin[] } | null;
+      sku: { name: string; price: Coin } | null;
+    }>();
+  });
+
+  it('PlanFees', () => {
+    expectTypeOf<PlanFees>().toEqualTypeOf<{
+      createLease: FeeEstimate;
+      setDomain?: FeeEstimate | { notEstimated: true; reason: string };
+    }>();
+  });
+
+  it('Plan', () => {
+    expectTypeOf<Plan>().toEqualTypeOf<{
+      summary: SpecSummary;
+      readiness: Readiness;
+      fees: PlanFees;
+    }>();
+  });
+
+  it('DeploymentPlanBlock', () => {
+    expectTypeOf<DeploymentPlanBlock>().toEqualTypeOf<{ text: string }>();
+  });
+
+  it('LeaseStateName literal union (matches the chain proto enum)', () => {
+    expectTypeOf<LeaseStateName>().toEqualTypeOf<
+      | 'LEASE_STATE_UNSPECIFIED'
+      | 'LEASE_STATE_PENDING'
+      | 'LEASE_STATE_ACTIVE'
+      | 'LEASE_STATE_INSUFFICIENT_FUNDS'
+      | 'LEASE_STATE_CLOSED'
+      | 'LEASE_STATE_REJECTED'
+      | 'LEASE_STATE_EXPIRED'
+    >();
+  });
+
+  it('DeployResult', () => {
+    expectTypeOf<DeployResult>().toEqualTypeOf<{
+      leaseUuid: string;
+      providerUuid: string;
+      leaseState: LeaseStateName;
+      urls: string[];
+      customDomain?: string;
+      manifestPath: string;
+    }>();
+  });
+
+  it('TroubleshootReport', () => {
+    expectTypeOf<TroubleshootReport>().toEqualTypeOf<{ markdown: string }>();
+  });
+
+  it('CloseLeaseResult', () => {
+    expectTypeOf<CloseLeaseResult>().toEqualTypeOf<{
+      leaseUuid: string;
+      finalState: LeaseStateName;
+    }>();
   });
 });

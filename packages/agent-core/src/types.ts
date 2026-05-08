@@ -96,7 +96,9 @@ export type LeaseStateName =
   | 'LEASE_STATE_PENDING'
   | 'LEASE_STATE_ACTIVE'
   | 'LEASE_STATE_INSUFFICIENT_FUNDS'
-  | 'LEASE_STATE_CLOSED';
+  | 'LEASE_STATE_CLOSED'
+  | 'LEASE_STATE_REJECTED'
+  | 'LEASE_STATE_EXPIRED';
 
 // --- deploy result ------------------------------------------------------
 
