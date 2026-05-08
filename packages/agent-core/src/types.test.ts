@@ -68,6 +68,19 @@ describe('DeployAppCallbacks contract', () => {
 });
 
 describe('ProgressEvent discriminant', () => {
+  it('kind union is exactly the eight allowed variants', () => {
+    expectTypeOf<ProgressEvent['kind']>().toEqualTypeOf<
+      | 'readiness_evaluated'
+      | 'deployment_plan_rendered'
+      | 'user_confirmed'
+      | 'deploy_app_broadcast'
+      | 'deploy_response_classified'
+      | 'app_ready_confirmed'
+      | 'manifest_saved'
+      | 'success_rendered'
+    >();
+  });
+
   it('readiness_evaluated carries Readiness', () => {
     expectTypeOf<
       Extract<ProgressEvent, { kind: 'readiness_evaluated' }>
@@ -128,6 +141,12 @@ describe('ProgressEvent discriminant', () => {
 });
 
 describe('FailureEnvelope discriminant', () => {
+  it('outcome union is exactly partially_succeeded | failed', () => {
+    expectTypeOf<FailureEnvelope['outcome']>().toEqualTypeOf<
+      'partially_succeeded' | 'failed'
+    >();
+  });
+
   it('partially_succeeded variant has lease + reason + optional requestedCustomDomain', () => {
     expectTypeOf<
       Extract<FailureEnvelope, { outcome: 'partially_succeeded' }>
@@ -160,8 +179,14 @@ describe('RecoveryOption literal id set', () => {
 });
 
 describe('ManageDomain contract', () => {
-  it('action union is set | clear | lookup', () => {
+  it('args action union is set | clear | lookup', () => {
     expectTypeOf<ManageDomainArgs['action']>().toEqualTypeOf<
+      'set' | 'clear' | 'lookup'
+    >();
+  });
+
+  it('result action union is exactly set | clear | lookup', () => {
+    expectTypeOf<ManageDomainResult['action']>().toEqualTypeOf<
       'set' | 'clear' | 'lookup'
     >();
   });

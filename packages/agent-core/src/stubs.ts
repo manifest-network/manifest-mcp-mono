@@ -17,6 +17,7 @@ export class NotImplemented extends Error {
   constructor(name: string) {
     super(`${name} is not implemented yet (ENG-129)`);
     this.name = 'NotImplemented';
+    Object.setPrototypeOf(this, NotImplemented.prototype);
   }
 }
 
