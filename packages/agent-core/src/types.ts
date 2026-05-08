@@ -44,10 +44,10 @@ export type DeploySpec = SingleServiceSpec | StackSpec;
 
 export interface SpecSummary {
   format: 'single' | 'stack';
-  service_count: number;
-  port_count: number;
-  env_count: number;
-  env_keys: string[];
+  serviceCount: number;
+  portCount: number;
+  envCount: number;
+  envKeys: string[];
   images: string[];
 }
 
@@ -62,9 +62,9 @@ export type ReadinessAction =
 export interface Readiness {
   status: 'ok' | 'warn' | 'block';
   reasons: string[];
-  suggested_actions: ReadinessAction[];
-  wallet_balances: Coin[];
-  credits: { available_balances: Coin[] } | null;
+  suggestedActions: ReadinessAction[];
+  walletBalances: Coin[];
+  credits: { availableBalances: Coin[] } | null;
   sku: { name: string; price: Coin } | null;
 }
 

@@ -217,8 +217,14 @@ describe('Simple-callback surfaces (manage-domain / troubleshoot / close-lease)'
       NonNullable<ManageDomainCallbacks['onProgress']>
     >().parameters.toEqualTypeOf<[ProgressEvent]>();
     expectTypeOf<
+      NonNullable<ManageDomainCallbacks['onProgress']>
+    >().returns.toEqualTypeOf<void>();
+    expectTypeOf<
       NonNullable<ManageDomainCallbacks['onComplete']>
     >().parameters.toEqualTypeOf<[ManageDomainResult]>();
+    expectTypeOf<
+      NonNullable<ManageDomainCallbacks['onComplete']>
+    >().returns.toEqualTypeOf<void>();
     expectTypeOf<
       NonNullable<ManageDomainCallbacks['onFailure']>
     >().parameters.toEqualTypeOf<[{ reason: string }]>();
@@ -235,11 +241,20 @@ describe('Simple-callback surfaces (manage-domain / troubleshoot / close-lease)'
       NonNullable<TroubleshootCallbacks['onConfirm']>
     >().parameters.toEqualTypeOf<[DeploymentPlanBlock]>();
     expectTypeOf<
+      NonNullable<TroubleshootCallbacks['onConfirm']>
+    >().returns.resolves.toEqualTypeOf<'yes' | 'no'>();
+    expectTypeOf<
       NonNullable<TroubleshootCallbacks['onProgress']>
     >().parameters.toEqualTypeOf<[ProgressEvent]>();
     expectTypeOf<
+      NonNullable<TroubleshootCallbacks['onProgress']>
+    >().returns.toEqualTypeOf<void>();
+    expectTypeOf<
       NonNullable<TroubleshootCallbacks['onComplete']>
     >().parameters.toEqualTypeOf<[TroubleshootReport]>();
+    expectTypeOf<
+      NonNullable<TroubleshootCallbacks['onComplete']>
+    >().returns.toEqualTypeOf<void>();
     expectTypeOf<
       NonNullable<TroubleshootCallbacks['onFailure']>
     >().parameters.toEqualTypeOf<[{ reason: string }]>();
@@ -256,11 +271,20 @@ describe('Simple-callback surfaces (manage-domain / troubleshoot / close-lease)'
       NonNullable<CloseLeaseCallbacks['onConfirm']>
     >().parameters.toEqualTypeOf<[DeploymentPlanBlock]>();
     expectTypeOf<
+      NonNullable<CloseLeaseCallbacks['onConfirm']>
+    >().returns.resolves.toEqualTypeOf<'yes' | 'no'>();
+    expectTypeOf<
       NonNullable<CloseLeaseCallbacks['onProgress']>
     >().parameters.toEqualTypeOf<[ProgressEvent]>();
     expectTypeOf<
+      NonNullable<CloseLeaseCallbacks['onProgress']>
+    >().returns.toEqualTypeOf<void>();
+    expectTypeOf<
       NonNullable<CloseLeaseCallbacks['onComplete']>
     >().parameters.toEqualTypeOf<[CloseLeaseResult]>();
+    expectTypeOf<
+      NonNullable<CloseLeaseCallbacks['onComplete']>
+    >().returns.toEqualTypeOf<void>();
     expectTypeOf<
       NonNullable<CloseLeaseCallbacks['onFailure']>
     >().parameters.toEqualTypeOf<[{ reason: string }]>();
