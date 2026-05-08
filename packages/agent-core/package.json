@@ -37,9 +37,12 @@
   "engines": {
     "node": ">=20"
   },
-  "dependencies": {
-    "@manifest-network/manifest-mcp-core": "^0.8.0"
+  "publishConfig": {
+    "access": "public"
   },
+  "files": [
+    "dist"
+  ],
   "devDependencies": {
     "@types/node": "22.15.29",
     "typescript": "5.9.3",

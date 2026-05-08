@@ -1,5 +1,7 @@
 import { describe, expectTypeOf, it } from 'vitest';
 import type {
+  CloseLeaseCallbacks,
+  CloseLeaseResult,
   DeployAppCallbacks,
   DeploymentPlanBlock,
   DeployResult,
@@ -14,6 +16,8 @@ import type {
   RecoveryChoice,
   RecoveryOption,
   RecoveryOptionId,
+  TroubleshootCallbacks,
+  TroubleshootReport,
 } from './index.js';
 
 describe('DeployAppCallbacks contract', () => {
@@ -172,9 +176,96 @@ describe('ManageDomain contract', () => {
     }>();
   });
 
+  it('set result discriminant carries leaseUuid + verified + finalCustomDomain', () => {
+    expectTypeOf<
+      Extract<ManageDomainResult, { action: 'set' }>
+    >().toEqualTypeOf<{
+      action: 'set';
+      leaseUuid: string;
+      verified: boolean;
+      finalCustomDomain: string | null;
+    }>();
+  });
+
+  it('clear result discriminant carries leaseUuid + verified + finalCustomDomain', () => {
+    expectTypeOf<
+      Extract<ManageDomainResult, { action: 'clear' }>
+    >().toEqualTypeOf<{
+      action: 'clear';
+      leaseUuid: string;
+      verified: boolean;
+      finalCustomDomain: string | null;
+    }>();
+  });
+
   it('callback surface omits onPlan (deploy-only)', () => {
     expectTypeOf<keyof ManageDomainCallbacks>().toEqualTypeOf<
       'onConfirm' | 'onProgress' | 'onComplete' | 'onFailure'
     >();
+  });
+});
+
+describe('Simple-callback surfaces (manage-domain / troubleshoot / close-lease)', () => {
+  it('ManageDomainCallbacks pins each hook signature', () => {
+    expectTypeOf<
+      NonNullable<ManageDomainCallbacks['onConfirm']>
+    >().parameters.toEqualTypeOf<[DeploymentPlanBlock]>();
+    expectTypeOf<
+      NonNullable<ManageDomainCallbacks['onConfirm']>
+    >().returns.resolves.toEqualTypeOf<'yes' | 'no'>();
+    expectTypeOf<
+      NonNullable<ManageDomainCallbacks['onProgress']>
+    >().parameters.toEqualTypeOf<[ProgressEvent]>();
+    expectTypeOf<
+      NonNullable<ManageDomainCallbacks['onComplete']>
+    >().parameters.toEqualTypeOf<[ManageDomainResult]>();
+    expectTypeOf<
+      NonNullable<ManageDomainCallbacks['onFailure']>
+    >().parameters.toEqualTypeOf<[{ reason: string }]>();
+    expectTypeOf<
+      NonNullable<ManageDomainCallbacks['onFailure']>
+    >().returns.resolves.toEqualTypeOf<void>();
+  });
+
+  it('TroubleshootCallbacks pins keys and each hook signature', () => {
+    expectTypeOf<keyof TroubleshootCallbacks>().toEqualTypeOf<
+      'onConfirm' | 'onProgress' | 'onComplete' | 'onFailure'
+    >();
+    expectTypeOf<
+      NonNullable<TroubleshootCallbacks['onConfirm']>
+    >().parameters.toEqualTypeOf<[DeploymentPlanBlock]>();
+    expectTypeOf<
+      NonNullable<TroubleshootCallbacks['onProgress']>
+    >().parameters.toEqualTypeOf<[ProgressEvent]>();
+    expectTypeOf<
+      NonNullable<TroubleshootCallbacks['onComplete']>
+    >().parameters.toEqualTypeOf<[TroubleshootReport]>();
+    expectTypeOf<
+      NonNullable<TroubleshootCallbacks['onFailure']>
+    >().parameters.toEqualTypeOf<[{ reason: string }]>();
+    expectTypeOf<
+      NonNullable<TroubleshootCallbacks['onFailure']>
+    >().returns.resolves.toEqualTypeOf<void>();
+  });
+
+  it('CloseLeaseCallbacks pins keys and each hook signature', () => {
+    expectTypeOf<keyof CloseLeaseCallbacks>().toEqualTypeOf<
+      'onConfirm' | 'onProgress' | 'onComplete' | 'onFailure'
+    >();
+    expectTypeOf<
+      NonNullable<CloseLeaseCallbacks['onConfirm']>
+    >().parameters.toEqualTypeOf<[DeploymentPlanBlock]>();
+    expectTypeOf<
+      NonNullable<CloseLeaseCallbacks['onProgress']>
+    >().parameters.toEqualTypeOf<[ProgressEvent]>();
+    expectTypeOf<
+      NonNullable<CloseLeaseCallbacks['onComplete']>
+    >().parameters.toEqualTypeOf<[CloseLeaseResult]>();
+    expectTypeOf<
+      NonNullable<CloseLeaseCallbacks['onFailure']>
+    >().parameters.toEqualTypeOf<[{ reason: string }]>();
+    expectTypeOf<
+      NonNullable<CloseLeaseCallbacks['onFailure']>
+    >().returns.resolves.toEqualTypeOf<void>();
   });
 });

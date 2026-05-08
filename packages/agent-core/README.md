@@ -29,7 +29,7 @@ import {
 } from '@manifest-network/manifest-agent-core';
 ```
 
-Each function takes a typed args object plus a callbacks object with `onPlan` / `onConfirm` / `onProgress` / `onComplete` / `onFailure` hooks (`onPlan` only on `deployApp`). All four currently throw `NotImplemented` — see the type contract in `src/types.ts` for the frozen shapes.
+Each function takes a typed args object plus a callbacks object with `onConfirm` / `onProgress` / `onComplete` / `onFailure` hooks. `deployApp` additionally accepts `onPlan` and uses an enriched `onFailure` signature — `(failure: FailureEnvelope, options: RecoveryOption[]) => Promise<RecoveryChoice>` — to drive partial-success recovery (retry-set-domain, salvage-without-domain, cancel/close lease). The other three use the simpler `(failure: { reason: string }) => Promise<void>`. All four currently throw `NotImplemented` — see `src/types.ts` for the frozen shapes.
 
 ## Where each function will live (planned in ENG-129)
 
