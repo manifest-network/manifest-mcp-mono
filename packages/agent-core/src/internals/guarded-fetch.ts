@@ -329,10 +329,16 @@ async function resolveAndCheck(
   if (netModule.isIP(hostname) !== 0) {
     ip = hostname;
   } else {
-    // `dns.lookup` follows Node's standard resolution order (hosts file,
-    // then DNS), which is the right thing for matching network semantics.
-    // Use `verbatim: true` (Node default since 18) to avoid IPv4-first
-    // reordering that could hide IPv6 issues.
+    // `dns.lookup` calls `getaddrinfo` and follows the kernel's resolution
+    // order (hosts → nsswitch → DNS, OS-defined), so the IP we check IS
+    // the IP the kernel uses at connect(2) time. `dns.resolve4`/`resolve6`
+    // would query system DNS only and miss `/etc/hosts` entries — a
+    // `/etc/hosts evil.example.com 127.0.0.1` line would slip past the
+    // SSRF check (DNS returns a clean IP) while the kernel connects to
+    // loopback. Architect-endorsed correction to the original spec.
+    //
+    // `verbatim: true` preserves OS-defined IPv4/IPv6 ordering to avoid
+    // reorder-induced check-vs-connect drift in mixed-family DNS responses.
     const result = await dnsModule.lookup(hostname, { verbatim: true });
     ip = result.address;
   }
