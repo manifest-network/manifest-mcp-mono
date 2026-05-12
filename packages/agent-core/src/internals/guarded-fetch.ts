@@ -206,8 +206,18 @@ export function createGuardedFetch(): GuardedFetch {
     // first-call construction. Two callers racing through the lazy path
     // would otherwise both call `buildSsrfDispatcher()` and end up with
     // two undici Agents (no correctness bug, just double resource).
+    //
+    // Catch-and-reset on rejection: if `buildSsrfDispatcher()` ever fails
+    // (e.g., dynamic `import('undici')` throws on a runtime that masquerades
+    // as Node but lacks the module), the rejected Promise must NOT stay
+    // cached — otherwise every subsequent `createGuardedFetch()` call would
+    // re-throw the same error permanently. Clearing `cachedP` in the catch
+    // arm lets a future caller retry construction.
     if (!cachedP) {
-      cachedP = buildSsrfDispatcher();
+      cachedP = buildSsrfDispatcher().catch((err: unknown) => {
+        cachedP = undefined;
+        throw err;
+      });
     }
     const c = await cachedP;
     // undici's fetch accepts a `dispatcher` option natively. Cast the init

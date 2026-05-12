@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   BLOCKED_RANGES_IPV4,
   BLOCKED_RANGES_IPV6,
@@ -210,6 +210,67 @@ describe('createGuardedFetch — integration SSRF rejection (slow)', () => {
     const chain = collectErrorMessages(caught);
     expect(chain).toMatch(/SSRF blocked/);
     expect(chain).toMatch(/linkLocal/);
+  }, 10_000);
+});
+
+describe('createGuardedFetch — cachedP recovery after rejection', () => {
+  afterEach(() => {
+    vi.doUnmock('undici');
+    vi.resetModules();
+  });
+
+  it('clears cachedP after a rejected buildSsrfDispatcher so the next call retries', async () => {
+    // Mock `undici` so the first `new Agent({...})` invocation inside
+    // `buildSsrfDispatcher` throws, then subsequent invocations succeed.
+    // Without the catch-and-reset, the cached rejected Promise would
+    // make EVERY subsequent createGuardedFetch() call fail permanently.
+    let constructAttempts = 0;
+    vi.doMock('undici', async () => {
+      const actual = await vi.importActual<typeof import('undici')>('undici');
+      class FlakyAgent extends actual.Agent {
+        constructor(opts: ConstructorParameters<typeof actual.Agent>[0]) {
+          constructAttempts += 1;
+          if (constructAttempts === 1) {
+            throw new Error('simulated dispatcher construction failure');
+          }
+          super(opts);
+        }
+      }
+      return { ...actual, Agent: FlakyAgent };
+    });
+
+    // Re-import the SUT so it picks up the mocked undici. Each `vi.resetModules`
+    // + dynamic import yields a fresh module instance with cachedP undefined.
+    vi.resetModules();
+    const { createGuardedFetch: freshCreate } = await import(
+      './guarded-fetch.js'
+    );
+    const guarded = freshCreate();
+
+    // First call: Agent constructor throws → buildSsrfDispatcher rejects →
+    // the catch arm clears cachedP and re-throws.
+    await expect(guarded('https://example.com/')).rejects.toThrow(
+      /simulated dispatcher construction failure/,
+    );
+    expect(constructAttempts).toBe(1);
+
+    // Second call: cachedP was reset, so buildSsrfDispatcher is invoked
+    // again. The Agent constructor succeeds this time. The fetch itself
+    // may fail for unrelated reasons (the SSRF guard blocks the test URL),
+    // but the failure mode must NOT be "simulated dispatcher construction
+    // failure" anymore — proving the cached rejected Promise was cleared.
+    let secondError: Error | undefined;
+    try {
+      // 127.0.0.1: SSRF-blocked target so we don't hit the real network.
+      await guarded('http://127.0.0.1:9999/probe');
+    } catch (err) {
+      secondError = err as Error;
+    }
+    expect(constructAttempts).toBe(2);
+    const secondMessage = secondError ? collectErrorMessages(secondError) : '';
+    expect(secondMessage).not.toMatch(
+      /simulated dispatcher construction failure/,
+    );
   }, 10_000);
 });
 

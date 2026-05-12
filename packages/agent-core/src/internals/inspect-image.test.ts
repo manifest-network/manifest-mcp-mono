@@ -3,8 +3,9 @@ import { inspectImage } from './inspect-image.js';
 
 /**
  * Build a deterministic fetch implementation from a script of canned
- * responses keyed by URL substring. Each entry is consumed in order;
- * later requests to the same URL substring re-use the most recent match.
+ * responses keyed by URL substring. Returns the first canned response
+ * whose `urlMatch` is a substring of the requested URL. Stateless —
+ * repeated calls to the same URL return the same canned response.
  */
 interface CannedResponse {
   /** Substring match against the requested URL. */
