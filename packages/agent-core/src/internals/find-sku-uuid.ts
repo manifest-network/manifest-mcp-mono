@@ -1,9 +1,9 @@
 import {
   type CosmosClientManager,
+  createPagination,
+  MAX_PAGE_LIMIT,
   ManifestMCPError,
   ManifestMCPErrorCode,
-  MAX_PAGE_LIMIT,
-  createPagination,
 } from '@manifest-network/manifest-mcp-core';
 
 /**

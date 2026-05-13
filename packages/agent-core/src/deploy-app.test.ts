@@ -25,14 +25,7 @@
 
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import {
-  beforeEach,
-  describe,
-  expect,
-  it,
-  vi,
-  type Mock,
-} from 'vitest';
+import { beforeEach, describe, expect, it, type Mock, vi } from 'vitest';
 import type {
   DeployAppCallbacks,
   DeployResult,
@@ -63,9 +56,9 @@ vi.mock('@manifest-network/manifest-mcp-fred', () => ({
 }));
 
 vi.mock('@manifest-network/manifest-mcp-core', async () => {
-  const actual = await vi.importActual<typeof import('@manifest-network/manifest-mcp-core')>(
-    '@manifest-network/manifest-mcp-core',
-  );
+  const actual = await vi.importActual<
+    typeof import('@manifest-network/manifest-mcp-core')
+  >('@manifest-network/manifest-mcp-core');
   return {
     ...actual,
     cosmosEstimateFee: vi.fn(),
@@ -97,7 +90,9 @@ interface MockClientManager {
   getConfig: Mock;
 }
 
-function makeMockClientManager(chainId = 'manifest-ledger-testnet-1'): MockClientManager {
+function makeMockClientManager(
+  chainId = 'manifest-ledger-testnet-1',
+): MockClientManager {
   return {
     getQueryClient: vi.fn().mockResolvedValue({} as unknown),
     getSigningClient: vi.fn().mockResolvedValue({} as unknown),
@@ -127,7 +122,8 @@ function captureCallbacks(): {
 } {
   const progress: ProgressEvent[] = [];
   const completed: DeployResult[] = [];
-  const failures: { envelope: FailureEnvelope; options: RecoveryOption[] }[] = [];
+  const failures: { envelope: FailureEnvelope; options: RecoveryOption[] }[] =
+    [];
   return {
     callbacks: {
       onProgress: (e) => progress.push(e),
@@ -217,7 +213,9 @@ describe('deployApp replay — 01-fast-path-active', () => {
     const walletProvider = makeMockWalletProvider();
 
     const result = await deployApp(spec, callbacks, {
-      clientManager: clientManager as unknown as Parameters<typeof deployApp>[2]['clientManager'],
+      clientManager: clientManager as unknown as Parameters<
+        typeof deployApp
+      >[2]['clientManager'],
       walletProvider,
     });
 
@@ -363,7 +361,9 @@ describe('deployApp replay — 03-partial-success-set-domain-failed', () => {
     // fred throws the partial-success error envelope.
     const partialSuccessReason =
       'Deploy partially succeeded: lease 11111111-1111-4111-8111-111111111111 was created but set-domain failed: simulation error';
-    vi.mocked(fred.deployApp).mockRejectedValue(new Error(partialSuccessReason));
+    vi.mocked(fred.deployApp).mockRejectedValue(
+      new Error(partialSuccessReason),
+    );
 
     const { callbacks, failures } = captureCallbacks();
     const { deployApp } = await import('./deploy-app.js');
@@ -377,9 +377,9 @@ describe('deployApp replay — 03-partial-success-set-domain-failed', () => {
       gasEstimate: '142000',
       fee: { amount: [{ denom: 'umfx', amount: '2300' }], gas: '142000' },
     } as Awaited<ReturnType<typeof core.cosmosEstimateFee>>);
-    vi.mocked(core.stopApp).mockResolvedValue({} as Awaited<
-      ReturnType<typeof core.stopApp>
-    >);
+    vi.mocked(core.stopApp).mockResolvedValue(
+      {} as Awaited<ReturnType<typeof core.stopApp>>,
+    );
 
     const clientManager = makeMockClientManager();
     const walletProvider = makeMockWalletProvider();

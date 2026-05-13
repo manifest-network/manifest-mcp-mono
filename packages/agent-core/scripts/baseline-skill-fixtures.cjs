@@ -39,13 +39,11 @@
 const {
   readFileSync,
   writeFileSync,
-  mkdtempSync,
   existsSync,
   mkdirSync,
 } = require('node:fs');
 const { spawnSync } = require('node:child_process');
 const { join, dirname } = require('node:path');
-const { tmpdir } = require('node:os');
 
 const PLUGIN_ROOT =
   process.env.MANIFEST_AGENT_PLUGIN_ROOT ||
@@ -176,7 +174,6 @@ function captureDeployApp(scenario, write) {
     JSON.stringify(readinessResp),
   );
   record('expected-readiness.json', readinessRaw);
-  const readiness = JSON.parse(readinessRaw.trim());
 
   // ---------------- Step D: humanize fees ----------------
   // For the happy path: single fee. For partial-success: two fees.
@@ -294,7 +291,7 @@ function captureDeployApp(scenario, write) {
         metaResp,
         readJson(join(inputDir, 'deploy-response.json')),
       );
-  record('mcp-script.json', JSON.stringify(mcpScript, null, 2) + '\n');
+  record('mcp-script.json', `${JSON.stringify(mcpScript, null, 2)}\n`);
 
   return results;
 }

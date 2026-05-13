@@ -24,9 +24,7 @@ function baseInput(
       state: 'LEASE_STATE_ACTIVE',
       provider_uuid: '22222222-2222-4222-8222-222222222222',
       connection: {
-        instances: [
-          { status: 'running', fqdn: 'app.testnet.manifest.app' },
-        ],
+        instances: [{ status: 'running', fqdn: 'app.testnet.manifest.app' }],
       },
       ...overrides,
     },
@@ -73,9 +71,7 @@ describe('formatSuccess', () => {
     });
 
     it('renders "(unknown)" provider when provider_uuid is missing', () => {
-      const out = formatSuccess(
-        baseInput({ provider_uuid: undefined }),
-      );
+      const out = formatSuccess(baseInput({ provider_uuid: undefined }));
       expect(out).toContain('  Provider:      (unknown)');
     });
   });
@@ -116,14 +112,10 @@ describe('formatSuccess', () => {
           connection: {
             services: {
               web: {
-                instances: [
-                  { status: 'running', fqdn: 'web.example.com' },
-                ],
+                instances: [{ status: 'running', fqdn: 'web.example.com' }],
               },
               api: {
-                instances: [
-                  { status: 'running', fqdn: 'api.example.com' },
-                ],
+                instances: [{ status: 'running', fqdn: 'api.example.com' }],
               },
             },
           },

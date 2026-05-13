@@ -1,8 +1,8 @@
 import type { Coin, Readiness, ReadinessAction } from '../types.js';
 import {
   type DenomMap,
-  EMPTY_DENOM_MAP,
   denomToSymbol,
+  EMPTY_DENOM_MAP,
   humanizeCoin,
 } from './humanize-denom.js';
 

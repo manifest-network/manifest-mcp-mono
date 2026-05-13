@@ -1,7 +1,7 @@
 import {
-  type RunningEndpoint,
   extractRunningEndpoints,
   formatEndpointAsIngress,
+  type RunningEndpoint,
 } from './connection.js';
 import { decode as decodeLeaseState } from './lease-state.js';
 

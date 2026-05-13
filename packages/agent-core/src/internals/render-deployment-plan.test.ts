@@ -2,10 +2,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { Plan } from '../types.js';
-import {
-  type DenomMap,
-  loadChainDenomMap,
-} from './humanize-denom.js';
+import { type DenomMap, loadChainDenomMap } from './humanize-denom.js';
 import { renderDeploymentPlan } from './render-deployment-plan.js';
 
 const FIXTURES_ROOT = join(__dirname, '..', '..', '__fixtures__');
@@ -95,7 +92,9 @@ describe('renderDeploymentPlan', () => {
         size: 'small',
         metaHash: 'abcd1234',
       });
-      expect(out.text).toContain('  Tx fee:                    0.0023 MFX (gas 142000)');
+      expect(out.text).toContain(
+        '  Tx fee:                    0.0023 MFX (gas 142000)',
+      );
       expect(out.text).not.toContain('Tx fee (create-lease)');
       expect(out.text).not.toContain('Total fee:');
     });
@@ -105,7 +104,10 @@ describe('renderDeploymentPlan', () => {
     it('renders the Custom domain line + dual fee lines + Total fee', () => {
       const plan = basePlan({
         fees: {
-          createLease: { coins: [{ denom: 'umfx', amount: '2300' }], gas: 142000 },
+          createLease: {
+            coins: [{ denom: 'umfx', amount: '2300' }],
+            gas: 142000,
+          },
           setDomain: { coins: [{ denom: 'umfx', amount: '1100' }], gas: 60000 },
         },
       });
@@ -120,8 +122,12 @@ describe('renderDeploymentPlan', () => {
       expect(out.text).toContain(
         '  Custom domain:             app.testnet.manifest.app -> single-service lease',
       );
-      expect(out.text).toContain('  Tx fee (create-lease):     0.0023 MFX (gas 142000)');
-      expect(out.text).toContain('  Tx fee (set-domain):       0.0011 MFX (gas 60000)');
+      expect(out.text).toContain(
+        '  Tx fee (create-lease):     0.0023 MFX (gas 142000)',
+      );
+      expect(out.text).toContain(
+        '  Tx fee (set-domain):       0.0011 MFX (gas 60000)',
+      );
       expect(out.text).toContain('  Total fee:                 0.0034 MFX');
     });
 
@@ -129,8 +135,14 @@ describe('renderDeploymentPlan', () => {
       const out = renderDeploymentPlan({
         plan: basePlan({
           fees: {
-            createLease: { coins: [{ denom: 'umfx', amount: '2300' }], gas: 142000 },
-            setDomain: { coins: [{ denom: 'umfx', amount: '1100' }], gas: 60000 },
+            createLease: {
+              coins: [{ denom: 'umfx', amount: '2300' }],
+              gas: 142000,
+            },
+            setDomain: {
+              coins: [{ denom: 'umfx', amount: '1100' }],
+              gas: 60000,
+            },
           },
         }),
         denomMap: knownMap,
@@ -149,7 +161,10 @@ describe('renderDeploymentPlan', () => {
       const out = renderDeploymentPlan({
         plan: basePlan({
           fees: {
-            createLease: { coins: [{ denom: 'umfx', amount: '2300' }], gas: 142000 },
+            createLease: {
+              coins: [{ denom: 'umfx', amount: '2300' }],
+              gas: 142000,
+            },
             setDomain: {
               notEstimated: true,
               reason: 'no representative lease for pre-broadcast simulation',
@@ -166,14 +181,19 @@ describe('renderDeploymentPlan', () => {
         '  Tx fee (set-domain):       (not estimated — no representative lease for pre-broadcast simulation)',
       );
       // Total falls through to the placeholder when set-domain is not numeric.
-      expect(out.text).toContain('  Total fee:                 (partial — see fee lines above)');
+      expect(out.text).toContain(
+        '  Total fee:                 (partial — see fee lines above)',
+      );
     });
 
     it('renders the policy-violation marker when setDomain is undefined despite hasDomain', () => {
       const out = renderDeploymentPlan({
         plan: basePlan({
           fees: {
-            createLease: { coins: [{ denom: 'umfx', amount: '2300' }], gas: 142000 },
+            createLease: {
+              coins: [{ denom: 'umfx', amount: '2300' }],
+              gas: 142000,
+            },
             // setDomain undefined despite hasDomain — orchestrator bug we want loud.
           },
         }),
@@ -184,7 +204,9 @@ describe('renderDeploymentPlan', () => {
         customDomain: 'app.example.com',
       });
       expect(out.text).toMatch(/Tx fee \(set-domain\):\s+\(not estimated/);
-      expect(out.text).toContain('  Total fee:                 (partial — see fee lines above)');
+      expect(out.text).toContain(
+        '  Total fee:                 (partial — see fee lines above)',
+      );
     });
   });
 
@@ -222,7 +244,9 @@ describe('renderDeploymentPlan', () => {
         size: 'small',
         metaHash: 'abcd1234',
       });
-      expect(out.text).toContain('  Tx fee:                    (empty) (gas 0)');
+      expect(out.text).toContain(
+        '  Tx fee:                    (empty) (gas 0)',
+      );
     });
 
     it('falls back to raw on-chain denoms when no denomMap supplied', () => {
@@ -233,15 +257,23 @@ describe('renderDeploymentPlan', () => {
         metaHash: 'abcd1234',
         // denomMap omitted; default EMPTY_DENOM_MAP applies.
       });
-      expect(out.text).toContain('  Tx fee:                    2300 umfx (gas 142000)');
+      expect(out.text).toContain(
+        '  Tx fee:                    2300 umfx (gas 142000)',
+      );
     });
 
     it('sums same-denom dual-fee total at max input precision', () => {
       const out = renderDeploymentPlan({
         plan: basePlan({
           fees: {
-            createLease: { coins: [{ denom: 'umfx', amount: '2300' }], gas: 142000 },
-            setDomain: { coins: [{ denom: 'umfx', amount: '1100' }], gas: 60000 },
+            createLease: {
+              coins: [{ denom: 'umfx', amount: '2300' }],
+              gas: 142000,
+            },
+            setDomain: {
+              coins: [{ denom: 'umfx', amount: '1100' }],
+              gas: 60000,
+            },
           },
         }),
         denomMap: knownMap,
@@ -258,8 +290,14 @@ describe('renderDeploymentPlan', () => {
       const out = renderDeploymentPlan({
         plan: basePlan({
           fees: {
-            createLease: { coins: [{ denom: 'umfx', amount: '2300' }], gas: 142000 },
-            setDomain: { coins: [{ denom: 'upwr', amount: '100' }], gas: 60000 },
+            createLease: {
+              coins: [{ denom: 'umfx', amount: '2300' }],
+              gas: 142000,
+            },
+            setDomain: {
+              coins: [{ denom: 'upwr', amount: '100' }],
+              gas: 60000,
+            },
           },
         }),
         denomMap: knownMap,
@@ -268,7 +306,9 @@ describe('renderDeploymentPlan', () => {
         metaHash: 'abcd1234',
         customDomain: 'app.example.com',
       });
-      expect(out.text).toContain('  Total fee:                 0.0023 MFX + 0.0001 PWR');
+      expect(out.text).toContain(
+        '  Total fee:                 0.0023 MFX + 0.0001 PWR',
+      );
     });
   });
 
@@ -281,7 +321,9 @@ describe('renderDeploymentPlan', () => {
         size: 'small',
         metaHash: 'abcd1234',
       });
-      expect(out.text).toContain('  SKU price:                 0.001 MFX / hour');
+      expect(out.text).toContain(
+        '  SKU price:                 0.001 MFX / hour',
+      );
     });
 
     it('renders SKU "(unknown — ...)" when sku is null', () => {
@@ -294,7 +336,9 @@ describe('renderDeploymentPlan', () => {
         size: 'small',
         metaHash: 'abcd1234',
       });
-      expect(out.text).toContain('  SKU price:                 (unknown — SKU has no listed price)');
+      expect(out.text).toContain(
+        '  SKU price:                 (unknown — SKU has no listed price)',
+      );
     });
 
     it('renders Credits "none" when credits is null', () => {

@@ -111,10 +111,7 @@ export class SaveManifestError extends Error {
     | 'manifest_parse_failed'
     | 'platform_unsupported';
 
-  constructor(
-    code: SaveManifestError['code'],
-    message: string,
-  ) {
+  constructor(code: SaveManifestError['code'], message: string) {
     super(message);
     this.name = 'SaveManifestError';
     this.code = code;
@@ -133,7 +130,10 @@ export class SaveManifestError extends Error {
 export async function saveManifest(
   input: SaveManifestInput,
 ): Promise<SaveManifestResult> {
-  if (typeof process === 'undefined' || typeof process.versions?.node !== 'string') {
+  if (
+    typeof process === 'undefined' ||
+    typeof process.versions?.node !== 'string'
+  ) {
     throw new SaveManifestError(
       'platform_unsupported',
       'saveManifest: requires Node.js runtime (node:fs / node:crypto / node:path)',
@@ -176,11 +176,7 @@ export async function saveManifest(
       `saveManifest: manifestJson is not valid JSON: ${reason}`,
     );
   }
-  if (
-    parsed === null ||
-    typeof parsed !== 'object' ||
-    Array.isArray(parsed)
-  ) {
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
     throw new SaveManifestError(
       'manifest_not_object',
       'saveManifest: manifestJson must encode a JSON object',
@@ -195,10 +191,11 @@ export async function saveManifest(
 
   // Dynamic imports — node-only deps deferred per the `platform: 'neutral'`
   // build target. Mirrors `guarded-fetch.ts`'s lazy-init pattern.
-  const { mkdirSync, chmodSync, writeFileSync, renameSync } =
-    await import('node:fs');
+  const { mkdirSync, chmodSync, writeFileSync, renameSync } = await import(
+    'node:fs'
+  );
   const { createHash, randomUUID } = await import('node:crypto');
-  const { join } = await import('node:path');
+  const { join, resolve: pathResolve } = await import('node:path');
 
   // SHA-256 audit: catches the most common foot-gun (passing the
   // structured spec where the canonical manifest_json was expected).
@@ -210,12 +207,20 @@ export async function saveManifest(
     );
   }
 
+  // C5 fix: resolve dataDir to absolute BEFORE constructing paths.
+  // `SaveManifestResult.manifestPath` is documented as absolute; the
+  // prior `join(input.dataDir, ...)` returned a relative path when the
+  // caller passed a relative dataDir. `path.resolve()` normalizes
+  // against the process CWD if input is relative; idempotent for
+  // already-absolute inputs.
+  const absoluteDataDir = pathResolve(input.dataDir);
+
   // Ensure dataDir + manifests/ exist with tight perms. chmod after mkdir
   // so a pre-existing looser parent gets tightened (mkdir won't chmod
   // existing dirs).
-  const manifestsDir = join(input.dataDir, 'manifests');
-  mkdirSync(input.dataDir, { recursive: true, mode: 0o700 });
-  chmodSync(input.dataDir, 0o700);
+  const manifestsDir = join(absoluteDataDir, 'manifests');
+  mkdirSync(absoluteDataDir, { recursive: true, mode: 0o700 });
+  chmodSync(absoluteDataDir, 0o700);
   mkdirSync(manifestsDir, { recursive: true, mode: 0o700 });
   chmodSync(manifestsDir, 0o700);
 

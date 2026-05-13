@@ -21,7 +21,10 @@ function makeMockClientManager(skus: MockSku[]) {
           v1: {
             sKUs: vi.fn().mockResolvedValue({
               skus,
-              pagination: { nextKey: new Uint8Array(), total: BigInt(skus.length) },
+              pagination: {
+                nextKey: new Uint8Array(),
+                total: BigInt(skus.length),
+              },
             }),
           },
         },
@@ -47,7 +50,9 @@ describe('findSkuUuid', () => {
     const clientManager = makeMockClientManager([
       { uuid: 'sku-aaa-111', providerUuid: 'prov-aaa', name: 'small' },
     ]);
-    await expect(findSkuUuid(clientManager, 'docker-mega')).rejects.toMatchObject({
+    await expect(
+      findSkuUuid(clientManager, 'docker-mega'),
+    ).rejects.toMatchObject({
       name: 'ManifestMCPError',
       code: 'QUERY_FAILED',
     });

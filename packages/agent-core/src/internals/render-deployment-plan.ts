@@ -168,7 +168,9 @@ export function renderDeploymentPlan(
     lines.push(`  Custom domain:             ${input.customDomain} ${target}`);
   }
 
-  lines.push(`  SKU price:                 ${formatSkuPrice(input.plan, denomMap)}`);
+  lines.push(
+    `  SKU price:                 ${formatSkuPrice(input.plan, denomMap)}`,
+  );
 
   if (hasDomain) {
     // Two-tx layout: labeled lines + Total fee. Honors approach-3
@@ -178,7 +180,8 @@ export function renderDeploymentPlan(
     let setDomainLine: string;
     let setDomainHuman: string | null = null;
     if (setDomain === undefined) {
-      setDomainLine = '(not estimated — agent skipped pre-broadcast simulation, policy violation)';
+      setDomainLine =
+        '(not estimated — agent skipped pre-broadcast simulation, policy violation)';
     } else if ('notEstimated' in setDomain) {
       setDomainLine = `(not estimated — ${setDomain.reason})`;
     } else {
@@ -200,8 +203,12 @@ export function renderDeploymentPlan(
     lines.push(`  Tx fee:                    ${createFeeLine}`);
   }
 
-  lines.push(`  Wallet:                    ${formatWallet(input.plan, denomMap)}`);
-  lines.push(`  Credits:                   ${formatCredits(input.plan, denomMap)}`);
+  lines.push(
+    `  Wallet:                    ${formatWallet(input.plan, denomMap)}`,
+  );
+  lines.push(
+    `  Credits:                   ${formatCredits(input.plan, denomMap)}`,
+  );
 
   return { text: lines.join('\n') };
 }

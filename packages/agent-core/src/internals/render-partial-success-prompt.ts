@@ -63,7 +63,10 @@ export function renderPartialSuccessPrompt(
       `renderPartialSuccessPrompt: leaseUuid must be a UUID; got "${input.leaseUuid}"`,
     );
   }
-  if (typeof input.decodedState !== 'string' || input.decodedState.length === 0) {
+  if (
+    typeof input.decodedState !== 'string' ||
+    input.decodedState.length === 0
+  ) {
     throw new TypeError(
       'renderPartialSuccessPrompt: decodedState must be a non-empty string',
     );

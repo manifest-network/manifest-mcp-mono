@@ -18,7 +18,9 @@ function hashOf(s: string): string {
   return createHash('sha256').update(s).digest('hex');
 }
 
-function baseInput(overrides: Partial<Parameters<typeof saveManifest>[0]> = {}) {
+function baseInput(
+  overrides: Partial<Parameters<typeof saveManifest>[0]> = {},
+) {
   const manifestJson = JSON.stringify({
     image: 'nginx:1.27',
     ports: { '80': { ingress: true } },

@@ -107,9 +107,7 @@ function projectServices(spec: DeploySpec): NormalizedService[] {
  * default. Also handles the typed `number[]` shape (frozen `ServiceDef.ports`)
  * by treating each entry as ingress=false (services-map default).
  */
-function extractPorts(
-  ports: unknown,
-): { port: string; ingress: boolean }[] {
+function extractPorts(ports: unknown): { port: string; ingress: boolean }[] {
   if (Array.isArray(ports)) {
     return ports
       .filter((p): p is number => typeof p === 'number')
@@ -132,9 +130,18 @@ function extractPorts(
 
 /**
  * Legacy single-service shape: bare `port: number`. Fred treats this as
- * ingress=true by default — that's the whole point of the simplified shape.
- * Returns `[]` for any other value (including `number[]`, which is the
- * frozen-contract array form; tests pin that branch).
+ * ingress=true by default — that's the whole point of the simplified
+ * shape.
+ *
+ * Also handles the `number[]` form (the frozen-contract array form):
+ * returns one `{ port, ingress: true }` entry per array element, each
+ * with `ingress: true` matching the single-service convention. Returns
+ * `[]` for any other value (undefined, non-number scalar, non-array
+ * object).
+ *
+ * M2 fix: prior JSDoc incorrectly stated "Returns `[]` for any other
+ * value (including `number[]`...)" — empirically wrong per the
+ * `Array.isArray(port)` branch below.
  */
 function extractPortsLegacy(
   port: number | number[] | undefined,

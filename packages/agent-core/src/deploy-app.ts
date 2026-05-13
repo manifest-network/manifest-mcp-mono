@@ -38,23 +38,23 @@
  */
 
 import {
+  cosmosEstimateFee,
   ManifestMCPError,
   ManifestMCPErrorCode,
-  cosmosEstimateFee,
   setItemCustomDomain,
   stopApp,
 } from '@manifest-network/manifest-mcp-core';
 import {
   AuthTimestampTracker,
   type BuildManifestPreviewInput,
-  type CheckDeploymentReadinessResult,
-  type DeployAppInput as FredDeployAppInput,
-  type DeployAppResult as FredDeployAppResult,
   buildManifestPreview,
+  type CheckDeploymentReadinessResult,
   checkDeploymentReadiness,
   createAuthToken,
   createLeaseDataSignMessage,
   createSignMessage,
+  type DeployAppInput as FredDeployAppInput,
+  type DeployAppResult as FredDeployAppResult,
   deployApp as fredDeployApp,
 } from '@manifest-network/manifest-mcp-fred';
 import { classifyDeployError } from './internals/classify-deploy-error.js';
@@ -63,12 +63,19 @@ import {
   formatEndpointAsUrl,
 } from './internals/connection.js';
 import { findSkuUuid } from './internals/find-sku-uuid.js';
-import { EMPTY_DENOM_MAP, loadChainDenomMap } from './internals/humanize-denom.js';
+import {
+  EMPTY_DENOM_MAP,
+  loadChainDenomMap,
+} from './internals/humanize-denom.js';
 import { decode as decodeLeaseState } from './internals/lease-state.js';
 import { renderDeploymentPlan } from './internals/render-deployment-plan.js';
 import { renderIntentRecap } from './internals/render-intent-recap.js';
 import { renderPartialSuccessPrompt } from './internals/render-partial-success-prompt.js';
-import { isStackSpec, summarizeSpec, validateSpec } from './internals/spec-normalize.js';
+import {
+  isStackSpec,
+  summarizeSpec,
+  validateSpec,
+} from './internals/spec-normalize.js';
 import type {
   DenomMap,
   DeployAppCallbacks,
@@ -77,6 +84,7 @@ import type {
   DeploySpec,
   FailureEnvelope,
   FeeEstimate,
+  LeaseStateName,
   Plan,
   Readiness,
   RecoveryChoice,
@@ -133,18 +141,23 @@ export async function deployApp(
   // warning + parts of the Plan rendering. CosmosClientManager exposes
   // the bound chainId; we map to the canonical user-facing name.
   const chainId = opts.clientManager.getConfig().chainId;
-  const activeChain: 'testnet' | 'mainnet' =
-    /mainnet|main/i.test(chainId) ? 'mainnet' : 'testnet';
+  const activeChain: 'testnet' | 'mainnet' = /mainnet|main/i.test(chainId)
+    ? 'mainnet'
+    : 'testnet';
 
   // --- Readiness evaluation -------------------------------------------
   // fred's checkDeploymentReadiness takes (queryClient, address, input).
   // Resolve both from the runtime context before invoking.
   const queryClient = await opts.clientManager.getQueryClient();
   const tenantAddress = await opts.walletProvider.getAddress();
-  const readinessRaw = await checkDeploymentReadiness(queryClient, tenantAddress, {
-    image: primaryImage(spec),
-    size: requestedSize(spec),
-  });
+  const readinessRaw = await checkDeploymentReadiness(
+    queryClient,
+    tenantAddress,
+    {
+      image: primaryImage(spec),
+      size: requestedSize(spec),
+    },
+  );
   const readiness: Readiness = evaluateReadinessFromRaw(
     readinessRaw,
     opts.clientManager.getConfig().gasPrice ?? '1umfx',
@@ -169,15 +182,21 @@ export async function deployApp(
 
   // --- Plan assembly --------------------------------------------------
   // Build manifest preview (provides meta_hash for Plan + later save).
-  const previewInput = buildManifestPreviewInput(spec, requestedSize(spec));
-  const preview = await buildManifestPreview(previewInput);
+  // These are `let`-bound because the onPlan callback may return a
+  // PlanEdit that triggers a re-plan (C2 fix below — single-iteration
+  // plan-edit must recompute preview/summary/fees/block against the
+  // edited spec; otherwise the manifest persistence at step 16 uses
+  // the stale pre-edit preview).
+  let preview = await buildManifestPreview(
+    buildManifestPreviewInput(spec, requestedSize(spec)),
+  );
 
   // Fee estimation for create-lease (always) + set-item-custom-domain
   // (when customDomain set). Lean port: cosmosEstimateFee invocation
   // details encapsulated in a helper to keep this fn focused on flow.
-  const summary = summarizeSpec(spec);
-  const fees = await estimateFees(opts, spec, preview.meta_hash_hex);
-  const plan: Plan = { summary, readiness, fees };
+  let summary = summarizeSpec(spec);
+  let fees = await estimateFees(opts, spec, preview.meta_hash_hex);
+  let plan: Plan = { summary, readiness, fees };
 
   // --- Render plan + onPlan callback ----------------------------------
   let confirmedSpec = spec;
@@ -200,9 +219,26 @@ export async function deployApp(
       );
     }
     if (verdict !== 'confirm') {
-      // PlanEdit — apply edits to the spec (single iteration for PR 3;
-      // multi-iteration plan-edit loop is a PR-3.x follow-up if needed).
+      // PlanEdit — apply edits to the spec, then re-plan against the
+      // edited spec so downstream consumers (intent recap, fred input,
+      // manifest persistence) all see the post-edit values.
+      //
+      // C2 fix (post-edit propagation gap): the prior single-iteration
+      // implementation updated `confirmedSpec` but kept `preview` /
+      // `summary` / `fees` / `plan` based on the original spec, which
+      // caused the manifest persistence at step 16 to record the stale
+      // pre-edit `meta_hash_hex` / `manifest_json` while fred's
+      // deployApp broadcast used the edited spec — a real mismatch.
+      // Re-planning closes the gap. Multi-iteration plan-edit (loop
+      // back to onPlan with the new plan) remains a PR-3.x follow-up;
+      // this fix addresses single-iteration freshness only.
       confirmedSpec = applyPlanEdit(confirmedSpec, verdict);
+      preview = await buildManifestPreview(
+        buildManifestPreviewInput(confirmedSpec, requestedSize(confirmedSpec)),
+      );
+      summary = summarizeSpec(confirmedSpec);
+      fees = await estimateFees(opts, confirmedSpec, preview.meta_hash_hex);
+      plan = { summary, readiness, fees };
     }
   }
 
@@ -221,9 +257,14 @@ export async function deployApp(
   callbacks.onProgress?.({ kind: 'user_confirmed' });
 
   // --- Compose ADR-036 auth callbacks (E-hybrid: agent-core internalizes) ---
-  const signArbitrary = opts.walletProvider.signArbitrary.bind(opts.walletProvider);
+  const signArbitrary = opts.walletProvider.signArbitrary.bind(
+    opts.walletProvider,
+  );
   const timestamps = new AuthTimestampTracker();
-  const getAuthToken = async (address: string, leaseUuid: string): Promise<string> => {
+  const getAuthToken = async (
+    address: string,
+    leaseUuid: string,
+  ): Promise<string> => {
     const ts = await timestamps.next();
     const message = createSignMessage(address, leaseUuid, ts);
     const { pub_key, signature } = await signArbitrary(address, message);
@@ -289,10 +330,30 @@ export async function deployApp(
 
   // --- Build typed DeployResult --------------------------------------
   // F1 fix: decode lease state via the canonical lease-state.decode()
-  // (handles int + LEASE_STATE_* string + undefined paths exhaustively);
-  // fall back to ACTIVE only for truly-undefined chain emissions.
-  // Closes the silent-fallback-to-ACTIVE bypass on unknown classifications.
+  // (handles int + LEASE_STATE_* string + undefined paths exhaustively).
   //
+  // C3 fix (defensive bias correction; checklist item #16): distinguish
+  // truly-absent state (undefined → default ACTIVE per fred's contract:
+  // happy-path responses without explicit state mean lease is ACTIVE)
+  // from UNRECOGNIZED state (decode returned undefined for a value that
+  // WAS provided → likely a terminal/unknown chain emission that must
+  // NOT be silently classified as ACTIVE). For the unrecognized case,
+  // throw `INVALID_CONFIG` so callers see the empirical mismatch
+  // instead of consuming a misleading ACTIVE.
+  let leaseStateDecoded: LeaseStateName;
+  if (fredResult.state === undefined) {
+    leaseStateDecoded = 'LEASE_STATE_ACTIVE';
+  } else {
+    const decoded = decodeLeaseState(fredResult.state);
+    if (decoded === undefined) {
+      throw new ManifestMCPError(
+        ManifestMCPErrorCode.INVALID_CONFIG,
+        `Unrecognized lease state from fred deployApp response: ${String(fredResult.state)}. Cannot safely classify; refusing to silently coerce to ACTIVE.`,
+      );
+    }
+    leaseStateDecoded = decoded;
+  }
+
   // F4 fix: derive `urls` from `extractRunningEndpoints(connection)` for
   // multi-FQDN dedup (matches CJS pipeline behavior). fred's
   // `result.url` is a single derived URL; the full connection payload
@@ -303,7 +364,7 @@ export async function deployApp(
   const result: DeployResult = {
     leaseUuid: fredResult.lease_uuid,
     providerUuid: fredResult.provider_uuid,
-    leaseState: decodeLeaseState(fredResult.state) ?? 'LEASE_STATE_ACTIVE',
+    leaseState: leaseStateDecoded,
     urls:
       endpointUrls.length > 0
         ? endpointUrls
@@ -337,7 +398,9 @@ function requestedSize(spec: DeploySpec): string {
   // caller normally threads it via Plan / fred input. Read from a
   // conventional `size` property if present; fall back to 'small'.
   const recorded = (spec as unknown as { size?: string }).size;
-  return typeof recorded === 'string' && recorded.length > 0 ? recorded : 'small';
+  return typeof recorded === 'string' && recorded.length > 0
+    ? recorded
+    : 'small';
 }
 
 function customDomainOf(spec: DeploySpec): string | undefined {
@@ -366,9 +429,9 @@ function evaluateReadinessFromRaw(
     status: 'ok',
     reasons: [],
     suggestedActions: [],
-    walletBalances: (rawAny.wallet_balances as Readiness['walletBalances']) ?? [],
-    credits:
-      (rawAny.credits as Readiness['credits']) ?? null,
+    walletBalances:
+      (rawAny.wallet_balances as Readiness['walletBalances']) ?? [],
+    credits: (rawAny.credits as Readiness['credits']) ?? null,
     sku: (rawAny.sku as Readiness['sku']) ?? null,
   };
 }
@@ -378,7 +441,10 @@ function buildManifestPreviewInput(
   size: string,
 ): BuildManifestPreviewInput {
   if (isStackSpec(spec)) {
-    return { size, services: spec.services } as unknown as BuildManifestPreviewInput;
+    return {
+      size,
+      services: spec.services,
+    } as unknown as BuildManifestPreviewInput;
   }
   const single = spec as SingleServiceSpec;
   return {
@@ -418,7 +484,7 @@ async function estimateFees(
       ? `${skuUuid}:1:${spec.serviceName}`
       : `${skuUuid}:1`;
 
-  let createLeaseEstimate;
+  let createLeaseEstimate: Awaited<ReturnType<typeof cosmosEstimateFee>>;
   try {
     createLeaseEstimate = await cosmosEstimateFee(
       opts.clientManager,
@@ -469,7 +535,10 @@ async function estimateFees(
   };
 }
 
-function buildFredDeployInput(spec: DeploySpec, size: string): FredDeployAppInput {
+function buildFredDeployInput(
+  spec: DeploySpec,
+  size: string,
+): FredDeployAppInput {
   // Translate typed DeploySpec → fred's DeployAppInput. See fred's
   // tools/deployApp.ts for the full input shape.
   const base: Partial<FredDeployAppInput> = { size };
@@ -497,7 +566,10 @@ function buildFredDeployInput(spec: DeploySpec, size: string): FredDeployAppInpu
 
 function applyPlanEdit(
   spec: DeploySpec,
-  edit: Exclude<Awaited<ReturnType<NonNullable<DeployAppCallbacks['onPlan']>>>, 'confirm' | 'cancel'>,
+  edit: Exclude<
+    Awaited<ReturnType<NonNullable<DeployAppCallbacks['onPlan']>>>,
+    'confirm' | 'cancel'
+  >,
 ): DeploySpec {
   // PR 3 single-iteration: replace_spec replaces; edit_env merges env keys
   // into the matching service (or single-service spec).
@@ -510,7 +582,10 @@ function applyPlanEdit(
           ...spec,
           services: {
             ...spec.services,
-            [edit.service]: { ...svc, env: { ...(svc.env ?? {}), ...edit.env } },
+            [edit.service]: {
+              ...svc,
+              env: { ...(svc.env ?? {}), ...edit.env },
+            },
           },
         };
       }
@@ -536,7 +611,9 @@ async function handleBroadcastFailure(
   // downstream rendering. Earlier inline `parsePartialSuccess` was a
   // reduced-robustness duplicate; replaced here per QA F2.
   const classified = classifyDeployError(err, {
-    ...(requestedCustomDomain ? { expectedCustomDomain: requestedCustomDomain } : {}),
+    ...(requestedCustomDomain
+      ? { expectedCustomDomain: requestedCustomDomain }
+      : {}),
   });
 
   if (classified.outcome === 'partially_succeeded' && classified.leaseUuid) {
@@ -606,7 +683,21 @@ async function dispatchRecovery(
           'retry_set_domain requires a customDomain in spec.',
         );
       }
-      await setItemCustomDomain(opts.clientManager, leaseUuid, domain);
+      // C6 fix: pass `serviceName` for stack-lease specs so the
+      // set-item-custom-domain tx targets the named service item, not
+      // the default single-item lease. setItemCustomDomain's actual
+      // signature is `(clientManager, leaseUuid, customDomain,
+      // options?: { serviceName?, clear? }, overrides?)` — verified
+      // per Discipline V against
+      // packages/core/src/tools/setItemCustomDomain.ts.
+      const serviceName = customDomainServiceOf(spec);
+      const setItemOpts = serviceName ? { serviceName } : undefined;
+      await setItemCustomDomain(
+        opts.clientManager,
+        leaseUuid,
+        domain,
+        setItemOpts,
+      );
       throw new ManifestMCPError(
         ManifestMCPErrorCode.TX_FAILED,
         `retry_set_domain completed for ${leaseUuid}; caller should re-run troubleshootDeployment to confirm app readiness.`,
@@ -671,7 +762,9 @@ interface PersistArgs {
   callbacks: DeployAppCallbacks;
 }
 
-async function tryPersistManifest(args: PersistArgs): Promise<string | undefined> {
+async function tryPersistManifest(
+  args: PersistArgs,
+): Promise<string | undefined> {
   if (!args.dataDir) return undefined;
   try {
     // Dynamic import keeps save-manifest's `node:fs` dep out of the

@@ -138,7 +138,9 @@ describe('renderIntentRecap', () => {
         env: { NGINX_PORT: '80', NGINX_HOST: 'example.com' },
       };
       const out = renderIntentRecap({ spec, activeChain: 'testnet' });
-      expect(out).toContain('  - this service: env keys [NGINX_HOST, NGINX_PORT]');
+      expect(out).toContain(
+        '  - this service: env keys [NGINX_HOST, NGINX_PORT]',
+      );
       expect(out).not.toContain('80');
       expect(out).not.toContain('example.com');
     });
@@ -237,7 +239,9 @@ describe('renderIntentRecap', () => {
         customDomain: 'app.example.com',
       };
       const out = renderIntentRecap({ spec, activeChain: 'mainnet' });
-      expect(out).toContain('Mainnet warning: this transaction permanently associates app.example.com');
+      expect(out).toContain(
+        'Mainnet warning: this transaction permanently associates app.example.com',
+      );
     });
   });
 
