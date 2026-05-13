@@ -11,10 +11,8 @@ export interface Coin {
 }
 
 export interface FeeEstimate {
-  amount: string;
-  denom: string;
+  coins: Coin[];
   gas: number;
-  human: string;
 }
 
 // --- deployment specs ---------------------------------------------------

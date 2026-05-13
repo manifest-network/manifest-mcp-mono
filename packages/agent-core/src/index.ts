@@ -1,4 +1,8 @@
 export {
+  createGuardedFetch,
+  type GuardedFetch,
+} from './internals/guarded-fetch.js';
+export {
   closeLease,
   deployApp,
   manageDomain,
