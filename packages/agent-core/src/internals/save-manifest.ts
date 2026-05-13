@@ -73,6 +73,17 @@ export interface SaveManifestInput {
    * Target data directory — the function writes
    * `<dataDir>/manifests/<lease_uuid>.json`. Per gate-1 verdict,
    * supplied by the caller (no env-var read).
+   *
+   * **MUST be a dedicated manifest-storage directory.** This function
+   * `chmod`-tightens any pre-existing `dataDir` (and its `manifests/`
+   * subdirectory) to mode `0o700`, matching the CJS source's security
+   * posture. Do NOT pass shared parents like `$HOME`, `~/.config`, or
+   * a generic data root — doing so would tighten those directories'
+   * permissions and potentially break other processes that depend on
+   * them. Plugin / Barney call sites must resolve this to a dedicated
+   * subdirectory (e.g. `$XDG_DATA_HOME/manifest-agent/` or
+   * `$MANIFEST_PLUGIN_DATA/`); the `manifests/` subdir is created
+   * inside automatically.
    */
   dataDir: string;
   /** Optional custom-domain FQDN attached to the lease item. */

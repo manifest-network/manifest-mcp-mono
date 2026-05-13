@@ -22,6 +22,7 @@ export {
 } from '@manifest-network/manifest-mcp-core';
 export {
   type AuthTokenPayload,
+  AuthTimestampTracker,
   createAuthToken,
   createLeaseDataSignMessage,
   createSignMessage,

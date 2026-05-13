@@ -38,20 +38,15 @@
  *   - `denomToSymbol(denom, denomMap)` — bare symbol or raw denom fallback.
  */
 
+import type { DenomLookup, DenomMap } from '../types.js';
+
+// Re-export the public types for convenience to existing internal consumers
+// (this file's pre-PR-3 history exported DenomLookup + DenomMap directly).
+// Public consumers should import from `@manifest-network/manifest-agent-core`
+// (which re-exports `../types.js`); internal consumers can use either path.
+export type { DenomLookup, DenomMap };
+
 const KNOWN_EXPONENT = 6;
-
-/** Lookup result for a denom in the chain registry. `null` for unknown denoms. */
-export interface DenomLookup {
-  symbol: string;
-  exponent: number;
-}
-
-/** Opaque denom map; consumers use `.lookup(denom)`. */
-export interface DenomMap {
-  lookup(denom: string): DenomLookup | null;
-  /** Raw chain registry JSON (when loaded). `null` when no file path supplied or read failed. */
-  raw: unknown;
-}
 
 /**
  * No-op `DenomMap` for callers without chain-data context. All lookups

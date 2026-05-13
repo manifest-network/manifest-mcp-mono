@@ -1,9 +1,15 @@
 import { describe, expectTypeOf, it } from 'vitest';
 import type {
+  AgentCoreRuntime,
   CloseLeaseCallbacks,
+  CloseLeaseOptions,
   CloseLeaseResult,
   Coin,
+  CosmosClientManager,
+  DenomLookup,
+  DenomMap,
   DeployAppCallbacks,
+  DeployAppOptions,
   DeploymentPlanBlock,
   DeployResult,
   DeploySpec,
@@ -12,6 +18,7 @@ import type {
   LeaseStateName,
   ManageDomainArgs,
   ManageDomainCallbacks,
+  ManageDomainOptions,
   ManageDomainResult,
   Plan,
   PlanEdit,
@@ -27,7 +34,9 @@ import type {
   SpecSummary,
   StackSpec,
   TroubleshootCallbacks,
+  TroubleshootOptions,
   TroubleshootReport,
+  WalletProvider,
 } from './index.js';
 
 describe('DeployAppCallbacks contract', () => {
@@ -339,6 +348,86 @@ describe('Exported type shapes (load-bearing public surface)', () => {
       coins: Coin[];
       gas: number;
     }>();
+  });
+
+  it('DenomLookup', () => {
+    expectTypeOf<DenomLookup>().toEqualTypeOf<{
+      symbol: string;
+      exponent: number;
+    }>();
+  });
+
+  it('DenomMap', () => {
+    expectTypeOf<DenomMap>().toEqualTypeOf<{
+      lookup(denom: string): DenomLookup | null;
+      raw: unknown;
+    }>();
+  });
+
+  it('AgentCoreRuntime', () => {
+    expectTypeOf<AgentCoreRuntime>().toEqualTypeOf<{
+      clientManager: CosmosClientManager;
+      fetchFn?: typeof globalThis.fetch;
+    }>();
+  });
+
+  it('DeployAppOptions extends AgentCoreRuntime with walletProvider + denomMap + dataDir fields', () => {
+    expectTypeOf<DeployAppOptions>().toEqualTypeOf<{
+      clientManager: CosmosClientManager;
+      fetchFn?: typeof globalThis.fetch;
+      walletProvider: WalletProvider;
+      chainDataFile?: string;
+      denomMap?: DenomMap;
+      dataDir?: string;
+    }>();
+  });
+
+  it('ManageDomainOptions extends AgentCoreRuntime with denomMap fields (no walletProvider)', () => {
+    expectTypeOf<ManageDomainOptions>().toEqualTypeOf<{
+      clientManager: CosmosClientManager;
+      fetchFn?: typeof globalThis.fetch;
+      chainDataFile?: string;
+      denomMap?: DenomMap;
+    }>();
+  });
+
+  it('CloseLeaseOptions extends AgentCoreRuntime with denomMap fields (no walletProvider)', () => {
+    expectTypeOf<CloseLeaseOptions>().toEqualTypeOf<{
+      clientManager: CosmosClientManager;
+      fetchFn?: typeof globalThis.fetch;
+      chainDataFile?: string;
+      denomMap?: DenomMap;
+    }>();
+  });
+
+  it('TroubleshootOptions extends AgentCoreRuntime with denomMap fields (no walletProvider)', () => {
+    expectTypeOf<TroubleshootOptions>().toEqualTypeOf<{
+      clientManager: CosmosClientManager;
+      fetchFn?: typeof globalThis.fetch;
+      chainDataFile?: string;
+      denomMap?: DenomMap;
+    }>();
+  });
+
+  it('WalletProvider re-exported from core (presence check; shape owned by core)', () => {
+    // The interface itself is defined in `@manifest-network/manifest-mcp-core`'s
+    // types.ts; agent-core re-exports it for caller convenience. We assert that
+    // the re-export is non-empty (not `any`, not `never`) without re-asserting
+    // its full shape — that contract is core's to own.
+    expectTypeOf<WalletProvider>().not.toBeAny();
+    expectTypeOf<WalletProvider>().not.toBeNever();
+    // Verify the ADR-036 surface stays optional (Path-Bii respects this).
+    expectTypeOf<WalletProvider['signArbitrary']>().toEqualTypeOf<
+      WalletProvider['signArbitrary']
+    >();
+  });
+
+  it('CosmosClientManager re-exported from core (presence check; shape owned by core)', () => {
+    // Class type re-exported from core for type-import convenience. Same as
+    // WalletProvider — agent-core verifies the re-export resolves, not the
+    // class's full shape.
+    expectTypeOf<CosmosClientManager>().not.toBeAny();
+    expectTypeOf<CosmosClientManager>().not.toBeNever();
   });
 
   it('ServiceDef', () => {

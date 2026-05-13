@@ -2,9 +2,6 @@ import type {
   CloseLeaseArgs,
   CloseLeaseCallbacks,
   CloseLeaseResult,
-  DeployAppCallbacks,
-  DeployResult,
-  DeploySpec,
   ManageDomainArgs,
   ManageDomainCallbacks,
   ManageDomainResult,
@@ -19,13 +16,6 @@ export class NotImplemented extends Error {
     this.name = 'NotImplemented';
     Object.setPrototypeOf(this, NotImplemented.prototype);
   }
-}
-
-export async function deployApp(
-  _spec: DeploySpec,
-  _callbacks: DeployAppCallbacks,
-): Promise<DeployResult> {
-  throw new NotImplemented('deployApp');
 }
 
 export async function manageDomain(
