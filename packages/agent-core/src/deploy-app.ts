@@ -40,6 +40,7 @@
 import {
   ManifestMCPError,
   ManifestMCPErrorCode,
+  cosmosEstimateFee,
   setItemCustomDomain,
   stopApp,
 } from '@manifest-network/manifest-mcp-core';
@@ -61,6 +62,7 @@ import {
   extractRunningEndpoints,
   formatEndpointAsUrl,
 } from './internals/connection.js';
+import { findSkuUuid } from './internals/find-sku-uuid.js';
 import { EMPTY_DENOM_MAP, loadChainDenomMap } from './internals/humanize-denom.js';
 import { decode as decodeLeaseState } from './internals/lease-state.js';
 import { renderDeploymentPlan } from './internals/render-deployment-plan.js';
@@ -74,6 +76,7 @@ import type {
   DeployResult,
   DeploySpec,
   FailureEnvelope,
+  FeeEstimate,
   Plan,
   Readiness,
   RecoveryChoice,
@@ -394,28 +397,72 @@ function buildManifestPreviewInput(
 async function estimateFees(
   opts: DeployAppOptions,
   spec: DeploySpec,
-  metaHashHex: string,
+  _metaHashHex: string, // reserved for future meta-hash threading; create-lease estimate doesn't use it
 ): Promise<Plan['fees']> {
-  // Lean placeholder: production estimation goes through cosmosEstimateFee
-  // with the create-lease msg-builder + (optional) set-item-custom-domain.
-  // For PR-3-commit-B, we surface the wire-up + return stub fees that
-  // satisfy the typed shape; replay-test fixtures supply the canonical
-  // values for assertion.
-  void opts;
-  void metaHashHex;
-  const hasDomain =
-    typeof (spec as { customDomain?: string }).customDomain === 'string' &&
-    (spec as { customDomain?: string }).customDomain!.length > 0;
+  // PR 3 fix-3 (B-narrowed-trimmed per architect ratification):
+  //   - REAL cosmosEstimateFee for create-lease (criterion-blocking).
+  //   - SET-DOMAIN emits `{notEstimated: true, reason}` sentinel (the
+  //     frozen-contract escape hatch designed for pre-broadcast lease-
+  //     UUID unavailability per ENG-128). Real set-domain pre-broadcast
+  //     estimation (approach-3 fallback) is PR-3.x scope.
+
+  const size = requestedSize(spec);
+  const { skuUuid } = await findSkuUuid(opts.clientManager, size);
+
+  // Item-arg format `sku-uuid:quantity[:service-name]` (verified per
+  // Discipline V against packages/core/src/transactions/billing.ts:L102).
+  // Quantity = '1' for typical single-lease deploys; optional service-
+  // name applies to stack leases (custom-domain attachment context).
+  const itemArg =
+    isStackSpec(spec) && spec.serviceName
+      ? `${skuUuid}:1:${spec.serviceName}`
+      : `${skuUuid}:1`;
+
+  let createLeaseEstimate;
+  try {
+    createLeaseEstimate = await cosmosEstimateFee(
+      opts.clientManager,
+      'billing',
+      'create-lease',
+      [itemArg],
+    );
+  } catch (err) {
+    // Wrap the simulation failure with an agent-core-boundary message
+    // for caller diagnostics. core's cosmosEstimateFee already surfaces
+    // SIMULATION_FAILED for simulation-time errors; rewrapping preserves
+    // the code while adding context.
+    throw new ManifestMCPError(
+      ManifestMCPErrorCode.SIMULATION_FAILED,
+      `Failed to estimate create-lease fee: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+
+  // FeeEstimateResult shape (per packages/core/src/types.ts):
+  //   { module, subcommand, gasEstimate: string, fee: { amount: Coin[] } }
+  // Map to typed `FeeEstimate { coins: Coin[], gas: number }` (Path-C
+  // revision per a62cfd1).
+  const createLease: FeeEstimate = {
+    coins: createLeaseEstimate.fee.amount.map((c) => ({
+      denom: c.denom,
+      amount: c.amount,
+    })),
+    gas: Number(createLeaseEstimate.gasEstimate),
+  };
+
+  // set-domain: emit `{notEstimated: true, reason}` sentinel per
+  // architect-ratified counter-proposal. The frozen-contract type
+  // includes this discriminated variant precisely for pre-broadcast
+  // lease-UUID unavailability ("using the contract as designed, not
+  // papering over" per architect's framing).
+  const hasDomain = typeof customDomainOf(spec) === 'string';
   return {
-    createLease: {
-      coins: [{ denom: 'umfx', amount: '2300' }],
-      gas: 142000,
-    },
+    createLease,
     ...(hasDomain
       ? {
           setDomain: {
-            coins: [{ denom: 'umfx', amount: '1100' }],
-            gas: 60000,
+            notEstimated: true,
+            reason:
+              'set-domain fee skipped — pre-broadcast lease UUID unavailable; full approach-3 fallback deferred to PR-3.x',
           },
         }
       : {}),

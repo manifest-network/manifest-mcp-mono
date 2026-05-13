@@ -68,10 +68,22 @@ vi.mock('@manifest-network/manifest-mcp-core', async () => {
   );
   return {
     ...actual,
+    cosmosEstimateFee: vi.fn(),
     setItemCustomDomain: vi.fn(),
     stopApp: vi.fn(),
   };
 });
+
+// Mock the internal find-sku-uuid helper. The orchestration replay tests
+// exercise deploy-app's shape, not the SKU-lookup integration (which has
+// its own unit tests in find-sku-uuid.test.ts). Mocking the module-level
+// import keeps test setup compact + isolates orchestration concerns.
+vi.mock('./internals/find-sku-uuid.js', () => ({
+  findSkuUuid: vi.fn().mockResolvedValue({
+    skuUuid: 'sku-uuid-fixture',
+    providerUuid: 'provider-uuid-fixture',
+  }),
+}));
 
 const FIXTURES_ROOT = join(__dirname, '..', '__fixtures__');
 
@@ -188,6 +200,17 @@ describe('deployApp replay — 01-fast-path-active', () => {
       connection: deployResp.connection,
     } as Awaited<ReturnType<typeof fred.deployApp>>);
 
+    // fix-3: real cosmosEstimateFee is now invoked. Mock returns the
+    // canonical fixture-aligned FeeEstimateResult (per scenario
+    // 01-fast-path-active's fee-response.json: 2300 umfx @ 142000 gas).
+    const core = await import('@manifest-network/manifest-mcp-core');
+    vi.mocked(core.cosmosEstimateFee).mockResolvedValue({
+      module: 'billing',
+      subcommand: 'create-lease',
+      gasEstimate: '142000',
+      fee: { amount: [{ denom: 'umfx', amount: '2300' }], gas: '142000' },
+    } as Awaited<ReturnType<typeof core.cosmosEstimateFee>>);
+
     const { callbacks, progress, completed } = captureCallbacks();
     const { deployApp } = await import('./deploy-app.js');
     const clientManager = makeMockClientManager();
@@ -273,6 +296,15 @@ describe('deployApp replay — 01-fast-path-active', () => {
       connection: { instances: [] },
     } as unknown as Awaited<ReturnType<typeof fred.deployApp>>);
 
+    // fix-3: cosmosEstimateFee mock for the F1 regression flow.
+    const core = await import('@manifest-network/manifest-mcp-core');
+    vi.mocked(core.cosmosEstimateFee).mockResolvedValue({
+      module: 'billing',
+      subcommand: 'create-lease',
+      gasEstimate: '142000',
+      fee: { amount: [{ denom: 'umfx', amount: '2300' }], gas: '142000' },
+    } as Awaited<ReturnType<typeof core.cosmosEstimateFee>>);
+
     const { callbacks } = captureCallbacks();
     const { deployApp } = await import('./deploy-app.js');
     const clientManager = makeMockClientManager();
@@ -336,6 +368,15 @@ describe('deployApp replay — 03-partial-success-set-domain-failed', () => {
     const { callbacks, failures } = captureCallbacks();
     const { deployApp } = await import('./deploy-app.js');
     const core = await import('@manifest-network/manifest-mcp-core');
+    // fix-3: cosmosEstimateFee mock — set-domain emits sentinel
+    // (per architect-ratified "as designed" framing), so only
+    // create-lease estimate is invoked.
+    vi.mocked(core.cosmosEstimateFee).mockResolvedValue({
+      module: 'billing',
+      subcommand: 'create-lease',
+      gasEstimate: '142000',
+      fee: { amount: [{ denom: 'umfx', amount: '2300' }], gas: '142000' },
+    } as Awaited<ReturnType<typeof core.cosmosEstimateFee>>);
     vi.mocked(core.stopApp).mockResolvedValue({} as Awaited<
       ReturnType<typeof core.stopApp>
     >);
