@@ -216,6 +216,77 @@ describe('deployApp replay — 01-fast-path-active', () => {
 
     // Verify result matches.
     expect(result.leaseUuid).toBe(deployResp.lease_uuid);
+    // F1 regression: leaseState from fred's response correctly decoded.
+    // Fixture has `state: 'LEASE_STATE_ACTIVE'`; decoded form is the
+    // canonical LeaseStateName (passthrough for valid LEASE_STATE_*
+    // strings via lease-state.decode()).
+    expect(result.leaseState).toBe('LEASE_STATE_ACTIVE');
+  });
+
+  it('F1 regression: terminal-state preserved, not silently coerced to ACTIVE', async () => {
+    // QA F1: prior `leaseStateAsName` helper silently returned
+    // 'LEASE_STATE_ACTIVE' for any non-LEASE_STATE_-prefixed input
+    // (including unknown numeric ints). This regression test verifies
+    // the canonical `decode()` from lease-state.ts now handles known
+    // numeric inputs and terminal-state passthrough correctly.
+    const spec = readFixture(
+      'skills',
+      'deploy-app',
+      '01-fast-path-active',
+      'input',
+      'spec.json',
+    ) as DeploySpec;
+    const readinessRaw = readFixture(
+      'skills',
+      'deploy-app',
+      '01-fast-path-active',
+      'input',
+      'readiness-response.json',
+    );
+    const metaHashResp = readFixture(
+      'skills',
+      'deploy-app',
+      '01-fast-path-active',
+      'input',
+      'meta-hash-response.json',
+    ) as { manifest_json: string; meta_hash_hex: string };
+
+    const fred = await import('@manifest-network/manifest-mcp-fred');
+    vi.mocked(fred.checkDeploymentReadiness).mockResolvedValue(
+      readinessRaw as unknown as Awaited<
+        ReturnType<typeof fred.checkDeploymentReadiness>
+      >,
+    );
+    vi.mocked(fred.buildManifestPreview).mockResolvedValue({
+      manifest_json: metaHashResp.manifest_json,
+      meta_hash_hex: metaHashResp.meta_hash_hex,
+    } as Awaited<ReturnType<typeof fred.buildManifestPreview>>);
+    // fred returns numeric integer state 4 (LEASE_STATE_REJECTED per
+    // PR-1's option-1 chain-aligned mapping). The deploy-app
+    // orchestrator must decode this as REJECTED, NOT silently coerce
+    // to ACTIVE.
+    vi.mocked(fred.deployApp).mockResolvedValue({
+      lease_uuid: '11111111-1111-4111-8111-111111111111',
+      provider_uuid: '22222222-2222-4222-8222-222222222222',
+      provider_url: 'https://provider.testnet.manifest.network',
+      state: 4 as never, // raw chain int — REJECTED per option-1 mapping
+      connection: { instances: [] },
+    } as unknown as Awaited<ReturnType<typeof fred.deployApp>>);
+
+    const { callbacks } = captureCallbacks();
+    const { deployApp } = await import('./deploy-app.js');
+    const clientManager = makeMockClientManager();
+    const walletProvider = makeMockWalletProvider();
+
+    const result = await deployApp(spec, callbacks, {
+      clientManager: clientManager as unknown as Parameters<
+        typeof deployApp
+      >[2]['clientManager'],
+      walletProvider,
+    });
+
+    // F1 verdict: REJECTED preserved, not ACTIVE.
+    expect(result.leaseState).toBe('LEASE_STATE_REJECTED');
   });
 });
 

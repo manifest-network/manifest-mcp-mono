@@ -56,7 +56,13 @@ import {
   createSignMessage,
   deployApp as fredDeployApp,
 } from '@manifest-network/manifest-mcp-fred';
+import { classifyDeployError } from './internals/classify-deploy-error.js';
+import {
+  extractRunningEndpoints,
+  formatEndpointAsUrl,
+} from './internals/connection.js';
 import { EMPTY_DENOM_MAP, loadChainDenomMap } from './internals/humanize-denom.js';
+import { decode as decodeLeaseState } from './internals/lease-state.js';
 import { renderDeploymentPlan } from './internals/render-deployment-plan.js';
 import { renderIntentRecap } from './internals/render-intent-recap.js';
 import { renderPartialSuccessPrompt } from './internals/render-partial-success-prompt.js';
@@ -68,7 +74,6 @@ import type {
   DeployResult,
   DeploySpec,
   FailureEnvelope,
-  LeaseStateName,
   Plan,
   Readiness,
   RecoveryChoice,
@@ -148,10 +153,14 @@ export async function deployApp(
       outcome: 'failed',
       reason: `Readiness check failed: ${readiness.reasons.join('; ')}`,
     };
-    await callbacks.onFailure?.(envelope, []);
+    // F3 fix: align with verify-recover's pattern — inform-only branch
+    // (no recovery choices available) throws directly without calling
+    // onFailure. Caller surfaces the error via the thrown
+    // ManifestMCPError; no choice to present.
+    void envelope;
     throw new ManifestMCPError(
       ManifestMCPErrorCode.INVALID_CONFIG,
-      envelope.reason,
+      `Readiness check failed: ${readiness.reasons.join('; ')}`,
     );
   }
 
@@ -276,11 +285,28 @@ export async function deployApp(
   });
 
   // --- Build typed DeployResult --------------------------------------
+  // F1 fix: decode lease state via the canonical lease-state.decode()
+  // (handles int + LEASE_STATE_* string + undefined paths exhaustively);
+  // fall back to ACTIVE only for truly-undefined chain emissions.
+  // Closes the silent-fallback-to-ACTIVE bypass on unknown classifications.
+  //
+  // F4 fix: derive `urls` from `extractRunningEndpoints(connection)` for
+  // multi-FQDN dedup (matches CJS pipeline behavior). fred's
+  // `result.url` is a single derived URL; the full connection payload
+  // exposes the canonical instance list.
+  const endpointUrls = extractRunningEndpoints(fredResult.connection).map(
+    formatEndpointAsUrl,
+  );
   const result: DeployResult = {
     leaseUuid: fredResult.lease_uuid,
     providerUuid: fredResult.provider_uuid,
-    leaseState: leaseStateAsName(fredResult.state),
-    urls: fredResult.url ? [fredResult.url] : [],
+    leaseState: decodeLeaseState(fredResult.state) ?? 'LEASE_STATE_ACTIVE',
+    urls:
+      endpointUrls.length > 0
+        ? endpointUrls
+        : fredResult.url
+          ? [fredResult.url]
+          : [],
     ...(fredResult.custom_domain
       ? { customDomain: fredResult.custom_domain }
       : {}),
@@ -318,13 +344,6 @@ function customDomainOf(spec: DeploySpec): string | undefined {
 function customDomainServiceOf(spec: DeploySpec): string | undefined {
   if (isStackSpec(spec)) return (spec as StackSpec).serviceName;
   return undefined;
-}
-
-function leaseStateAsName(state: unknown): LeaseStateName {
-  if (typeof state === 'string' && state.startsWith('LEASE_STATE_')) {
-    return state as LeaseStateName;
-  }
-  return 'LEASE_STATE_ACTIVE';
 }
 
 function evaluateReadinessFromRaw(
@@ -462,26 +481,32 @@ async function handleBroadcastFailure(
   callbacks: DeployAppCallbacks,
   opts: DeployAppOptions,
 ): Promise<DeployResult> {
-  const reason = err instanceof Error ? err.message : String(err);
   const requestedCustomDomain = customDomainOf(spec);
 
-  // Detect partial-success: fred throws "Deploy partially succeeded:"
-  // when create-lease succeeded but a downstream step (set-domain /
-  // upload) failed. The lease UUID is embedded in the error message.
-  const partial = parsePartialSuccess(reason);
-  if (partial !== null) {
+  // F2 fix: classify-deploy-error.ts is the canonical classifier — it
+  // anchors the `PARTIAL_PREFIX` match, supports `{ error: {...} }`
+  // SDK-wrapping envelopes, and threads `expectedCustomDomain` for
+  // downstream rendering. Earlier inline `parsePartialSuccess` was a
+  // reduced-robustness duplicate; replaced here per QA F2.
+  const classified = classifyDeployError(err, {
+    ...(requestedCustomDomain ? { expectedCustomDomain: requestedCustomDomain } : {}),
+  });
+
+  if (classified.outcome === 'partially_succeeded' && classified.leaseUuid) {
     const envelope: FailureEnvelope = {
       outcome: 'partially_succeeded',
-      leaseUuid: partial.leaseUuid,
-      ...(requestedCustomDomain
-        ? { requestedCustomDomain }
-        : {}),
-      reason: partial.reason,
+      leaseUuid: classified.leaseUuid,
+      ...(requestedCustomDomain ? { requestedCustomDomain } : {}),
+      reason: classified.reason,
     };
+    // CJS-parity: the lease was just created so it's typically PENDING.
+    // The classifier doesn't decode state from the error envelope (the
+    // chain emits state asynchronously after the create-lease tx); the
+    // user prompt's "state: <name>" line is informational.
     const promptPayload = renderPartialSuccessPrompt({
-      leaseUuid: partial.leaseUuid,
-      decodedState: partial.decodedState,
-      reason: partial.reason,
+      leaseUuid: classified.leaseUuid,
+      decodedState: 'LEASE_STATE_PENDING',
+      reason: classified.reason,
       ...(requestedCustomDomain ? { requestedCustomDomain } : {}),
     });
     const options: RecoveryOption[] = promptPayload.options.map((id) => ({
@@ -489,32 +514,31 @@ async function handleBroadcastFailure(
       label: recoveryOptionLabel(id),
       description: recoveryOptionDescription(id),
     }));
-    const choice = await callbacks.onFailure?.(envelope, options);
-    if (choice !== undefined) {
+    // F3 fix: align with verify-recover's pattern — only invoke
+    // onFailure when there's a choice to present. Empty options means
+    // inform-only path; we throw instead of prompting.
+    if (options.length > 0 && callbacks.onFailure !== undefined) {
+      const choice = await callbacks.onFailure(envelope, options);
       return await dispatchRecovery(choice, envelope, spec, opts);
     }
-    throw new ManifestMCPError(ManifestMCPErrorCode.TX_FAILED, reason);
+    throw new ManifestMCPError(
+      ManifestMCPErrorCode.TX_FAILED,
+      classified.reason,
+    );
   }
 
   // Non-partial failure: surface as `outcome: 'failed'` envelope.
-  const envelope: FailureEnvelope = { outcome: 'failed', reason };
-  await callbacks.onFailure?.(envelope, []);
-  throw new ManifestMCPError(ManifestMCPErrorCode.TX_FAILED, reason);
-}
-
-function parsePartialSuccess(
-  reason: string,
-): { leaseUuid: string; decodedState: string; reason: string } | null {
-  const uuidMatch = reason.match(
-    /lease ([0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})/i,
-  );
-  if (!uuidMatch || !uuidMatch[1]) return null;
-  if (!reason.includes('partially succeeded')) return null;
-  return {
-    leaseUuid: uuidMatch[1],
-    decodedState: 'LEASE_STATE_PENDING',
-    reason,
+  // F3 fix: skip onFailure when options is empty (inform-only path);
+  // throw directly. Caller can still surface the error via the thrown
+  // ManifestMCPError if they need to react.
+  const envelope: FailureEnvelope = {
+    outcome: 'failed',
+    reason: classified.reason,
   };
+  // Intentionally NOT invoking callbacks.onFailure?.(envelope, []) here
+  // per F3 — no recovery choice to present.
+  void envelope; // retained for future logging hook if needed
+  throw new ManifestMCPError(ManifestMCPErrorCode.TX_FAILED, classified.reason);
 }
 
 async function dispatchRecovery(
