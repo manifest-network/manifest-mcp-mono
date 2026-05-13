@@ -107,6 +107,43 @@ describe('isBlocked — IPv6 representative inputs per range', () => {
   });
 });
 
+describe('isBlocked — IPv6 bypass vectors (allow-list policy default-deny)', () => {
+  // These IPv6 categories are NOT enumerated in BLOCKED_RANGES_IPV6. Under
+  // the prior deny-list implementation they would have fallen through as
+  // "allowed" — a security-critical bias error. Under the allow-list flip,
+  // they default-deny because ipaddr.js classifies them as non-unicast.
+  // The {range} label matches ipaddr.js's classification verbatim; the
+  // {rfc} string is the default-deny audit reason (not a named RFC).
+
+  it.each<[string, string, string]>([
+    [
+      '2002:7f00:0001::',
+      '6to4',
+      '6to4 wrapping IPv4 loopback (2002::/16 → 127.0.0.1)',
+    ],
+    ['2002:a9fe:a9fe::', '6to4', '6to4 wrapping AWS metadata 169.254.169.254'],
+    ['2001:0::1', 'teredo', 'Teredo tunneling (RFC 4380, 2001::/32)'],
+    ['64:ff9b::1', 'rfc6052', 'NAT64 well-known prefix (RFC 6052)'],
+    ['100::1', 'discard', 'Discard-only prefix (RFC 6666)'],
+  ])('blocks %s as %s — %s', (ip, expectedRange, _description) => {
+    const result = isBlocked(ip);
+    expect(result).not.toBeNull();
+    expect(result?.range).toBe(expectedRange);
+    // Either a named BLOCKED_RANGES_IPV6 entry (rfc starts with "RFC")
+    // OR the default-deny fallback audit string. Both are acceptable
+    // per the allow-list policy spec.
+    expect(result?.rfc).toMatch(/(RFC\s*\d+|default-deny non-unicast)/i);
+  });
+
+  it('default-deny fallback audit string is used for unknown non-unicast labels', () => {
+    // 6to4 / teredo / rfc6052 / discard are not in BLOCKED_RANGES_IPV6
+    // (they were missed by the deny-list approach). Confirm the fallback
+    // path is what fires, not a named-list hit.
+    const result = isBlocked('2002:7f00:0001::');
+    expect(result?.rfc).toMatch(/default-deny non-unicast/);
+  });
+});
+
 describe('isBlocked — IPv4-mapped IPv6 normalization (security-critical)', () => {
   it('blocks ::ffff:127.0.0.1 (normalizes to loopback IPv4)', () => {
     // Without IPv4-mapped normalization, this would either pass (only IPv4

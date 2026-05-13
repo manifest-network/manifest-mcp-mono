@@ -112,17 +112,28 @@ export const BLOCKED_RANGES_IPV6: ReadonlyArray<{
   { range: 'reserved', rfc: 'RFC 4291 / 5156 — various reserved blocks' },
 ];
 
-const BLOCKED_IPV4_RANGES_SET = new Set(
-  BLOCKED_RANGES_IPV4.map((r) => r.range),
-);
-const BLOCKED_IPV6_RANGES_SET = new Set(
-  BLOCKED_RANGES_IPV6.map((r) => r.range),
-);
-
 /**
- * SSRF block-check for a single IP string. Returns the matched
- * `{range, rfc}` descriptor if the IP is in any blocked range, or `null`
- * if it's safe to connect to.
+ * SSRF block-check for a single IP string. **Allow-list policy:** only
+ * ipaddr.js's `'unicast'` classification is permitted; every other range
+ * label is blocked.
+ *
+ * The prior deny-list implementation iterated BLOCKED_RANGES_* and let
+ * anything not explicitly enumerated fall through as "allowed" — a
+ * security-critical bias error. IPv6 categories like `6to4` (which can
+ * wrap loopback or RFC 1918 IPs as `2002:7f00::/24` etc.), `teredo`,
+ * `rfc6052` (NAT64), and `discard` were ALL un-named and therefore
+ * allowed-by-omission. Under the allow-list policy, these all
+ * default-deny along with any future ipaddr.js classification we
+ * haven't audited.
+ *
+ * Returned `{range, rfc}` descriptor sources:
+ *   - **Named in BLOCKED_RANGES_IPV4 / BLOCKED_RANGES_IPV6** → returns
+ *     that entry verbatim (carries the audited RFC citation).
+ *   - **Unknown non-unicast label** → synthesizes
+ *     `{range: <label>, rfc: 'ipaddr.js classification (default-deny non-unicast)'}`.
+ *     The audit string is generic but the block decision is correct;
+ *     a future PR can promote frequently-seen labels into
+ *     BLOCKED_RANGES_* with proper RFC citations.
  *
  * IPv4-mapped IPv6 addresses (`::ffff:1.2.3.4`) are normalized to their
  * IPv4 form before the range check so the security verdict tracks the
@@ -147,19 +158,26 @@ export function isBlocked(ipString: string): {
   }
 
   const rangeLabel = parsed.range();
-  const set =
-    parsed.kind() === 'ipv4'
-      ? BLOCKED_IPV4_RANGES_SET
-      : BLOCKED_IPV6_RANGES_SET;
 
-  if (set.has(rangeLabel)) {
-    const list =
-      parsed.kind() === 'ipv4' ? BLOCKED_RANGES_IPV4 : BLOCKED_RANGES_IPV6;
-    // Both lists are short; linear scan is fine.
-    const found = list.find((r) => r.range === rangeLabel);
-    if (found) return found;
+  // Allow-list gate: `'unicast'` is the only category permitted.
+  // Everything else defaults to block; the lookup below is for audit info.
+  if (rangeLabel === 'unicast') {
+    return null;
   }
-  return null;
+
+  const list =
+    parsed.kind() === 'ipv4' ? BLOCKED_RANGES_IPV4 : BLOCKED_RANGES_IPV6;
+  // Both lists are short; linear scan is fine.
+  const named = list.find((r) => r.range === rangeLabel);
+  if (named) return named;
+
+  // Default-deny fallback for unknown non-unicast labels (6to4, teredo,
+  // rfc6052, discard, future categories ipaddr.js may add). The block
+  // decision is correct; the audit string is generic.
+  return {
+    range: rangeLabel,
+    rfc: 'ipaddr.js classification (default-deny non-unicast)',
+  };
 }
 
 interface DispatcherCache {
