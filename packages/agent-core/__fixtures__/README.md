@@ -43,7 +43,7 @@ __fixtures__/
         │   ├── expected-readiness.json      # evaluate-readiness.cjs output
         │   ├── expected-classify-response.json
         │   ├── expected-success.txt         # format-success.cjs output
-        │   └── expected-saved-manifest.json # save-manifest.cjs file content
+        │   └── expected-saved-manifest.json # save-manifest.cjs file content (DEFERRED — not yet baselined; tracked for PR-3.x)
         └── 03-partial-success-set-domain-failed/  # deploy-partial-success
             ├── input/                            # canonical inputs
             │   ├── spec.json                     # DeploySpec WITH customDomain
@@ -54,6 +54,7 @@ __fixtures__/
             ├── mcp-script.json
             ├── expected-intent-recap.txt
             ├── expected-plan.txt                 # dual-fee variant
+            ├── expected-readiness.json           # evaluate-readiness.cjs output
             └── expected-classify-error.json      # classify-deploy-error.cjs output
 ```
 
@@ -87,8 +88,9 @@ fix the regression.
 
 CI does NOT invoke the baseline script. Fixtures are committed
 artifacts. The replay tests in
-`packages/agent-core/src/__tests__/**` read fixtures from disk and
-compare against TS runtime output.
+`packages/agent-core/src/*.test.ts` and
+`packages/agent-core/src/internals/*.test.ts` read fixtures from disk
+and compare against TS runtime output.
 
 ## Editing fixtures
 

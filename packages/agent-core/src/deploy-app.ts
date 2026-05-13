@@ -466,7 +466,7 @@ function buildManifestPreviewInput(
 async function estimateFees(
   opts: DeployAppOptions,
   spec: DeploySpec,
-  _metaHashHex: string, // reserved for future meta-hash threading; create-lease estimate doesn't use it
+  metaHashHex: string, // SHA-256 hex digest of the canonical manifest JSON; threaded into create-lease estimate via the `--meta-hash` flag (mirrors fred's deploy path at packages/fred/src/tools/deployApp.ts:363)
 ): Promise<Plan['fees']> {
   // PR 3 fix-3 (B-narrowed-trimmed per architect ratification):
   //   - REAL cosmosEstimateFee for create-lease (criterion-blocking).
@@ -493,7 +493,7 @@ async function estimateFees(
       opts.clientManager,
       'billing',
       'create-lease',
-      [itemArg],
+      ['--meta-hash', metaHashHex, itemArg],
     );
   } catch (err) {
     // Wrap the simulation failure with an agent-core-boundary message
