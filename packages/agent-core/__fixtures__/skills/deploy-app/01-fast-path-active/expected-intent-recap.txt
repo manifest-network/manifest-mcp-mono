@@ -1,0 +1,8 @@
+Deploying 1 service on testnet:
+  - docker.io/library/nginx:1.27
+
+Connectivity:
+  - port 80: publicly reachable via the provider's HTTPS subdomain
+
+Sensitive values are redacted in this recap (keys only, never values):
+  - this service: env keys [NGINX_HOST, NGINX_PORT]

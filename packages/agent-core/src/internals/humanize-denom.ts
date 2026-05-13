@@ -1,5 +1,3 @@
-import { readFileSync } from 'node:fs';
-
 /**
  * Convert chain-side coin amounts (always in the smallest unit) into the
  * human-readable display the user actually wants to see — e.g.
@@ -19,13 +17,20 @@ import { readFileSync } from 'node:fs';
  * is rendered untouched (denom kept as-is, amount printed as integer)
  * because we can't safely guess its exponent.
  *
+ * **Dynamic node-import discipline** (mirrors `guarded-fetch.ts` +
+ * `save-manifest.ts`): the `node:fs` import is deferred to call time so
+ * module load doesn't violate the package's `platform: 'neutral'` build
+ * target. `loadChainDenomMap` is therefore async; consumers must
+ * `await` the result. The other 3 exports (`humanizeCoin`,
+ * `humanizeBalances`, `denomToSymbol`) remain pure-sync since they take
+ * a pre-loaded `DenomMap` as input.
+ *
  * Exports (all 4 preserved per qa-engineer's review pin — PR 2's internal
  * callers use a subset; PR 3 will surface the rest):
- *   - `loadChainDenomMap(chainDataFilePath?)` — returns `{ lookup, raw }`.
- *     Missing / unreadable path → no-op map (lookup always returns `null`).
- *     Read failures emit a `console.warn` matching the connection.ts
- *     precedent from PR 1 (override possible via PR-3-onward refactoring
- *     if a callsite needs custom routing).
+ *   - `loadChainDenomMap(chainDataFilePath?)` (ASYNC) — returns
+ *     `Promise<DenomMap>`. Missing / unreadable path → no-op map
+ *     (lookup always returns `null`). Read failures emit `console.warn`
+ *     matching the connection.ts precedent from PR 1.
  *   - `humanizeCoin(amount, denom, denomMap)` — `"<amount> <symbol>"` or
  *     `"<amount> <denom>"` on unknown denom.
  *   - `humanizeBalances(coins, denomMap)` — joins multiple coins with
@@ -48,12 +53,31 @@ export interface DenomMap {
   raw: unknown;
 }
 
-const EMPTY_DENOM_MAP: DenomMap = { lookup: () => null, raw: null };
+/**
+ * No-op `DenomMap` for callers without chain-data context. All lookups
+ * return `null`; `humanizeCoin` falls back to raw on-chain denoms.
+ * Exported so synchronous decision functions (e.g. `evaluateReadiness`)
+ * can default to it without needing to invoke the async loader.
+ */
+export const EMPTY_DENOM_MAP: DenomMap = { lookup: () => null, raw: null };
 
-export function loadChainDenomMap(chainDataFilePath?: string): DenomMap {
+export async function loadChainDenomMap(
+  chainDataFilePath?: string,
+): Promise<DenomMap> {
   if (!chainDataFilePath) return EMPTY_DENOM_MAP;
+  if (
+    typeof process === 'undefined' ||
+    typeof process.versions?.node !== 'string'
+  ) {
+    // Lazy node-only dep — refuse outside Node-like runtimes rather than
+    // silently no-op'ing (which would hide a misconfiguration).
+    throw new Error(
+      'loadChainDenomMap: chainDataFilePath requires a Node.js runtime (node:fs unavailable in this environment)',
+    );
+  }
   let raw: unknown;
   try {
+    const { readFileSync } = await import('node:fs');
     raw = JSON.parse(readFileSync(chainDataFilePath, 'utf8'));
   } catch (err) {
     // CJS parity: warn loudly when a path was passed but read/parse failed.

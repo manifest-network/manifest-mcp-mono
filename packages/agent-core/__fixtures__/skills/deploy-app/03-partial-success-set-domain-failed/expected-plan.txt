@@ -1,0 +1,12 @@
+DeploymentPlan
+  Image:                     docker.io/library/nginx:1.27
+  Size:                      small
+  Manifest:                  single, services=1, ports=1, env=2
+  meta_hash:                 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+  Custom domain:             app.testnet.manifest.app -> single-service lease
+  SKU price:                 0.001 MFX / hour
+  Tx fee (create-lease):     0.0023 MFX (gas 142000)
+  Tx fee (set-domain):       0.0011 MFX (gas 60000)
+  Total fee:                 0.0034 MFX
+  Wallet:                    10 MFX
+  Credits:                   50000 MFX

@@ -1,0 +1,13 @@
+{
+  "tenant": "manifest1deadbeef",
+  "image": "docker.io/library/nginx:1.27",
+  "size": "small",
+  "wallet_balances": [{ "denom": "umfx", "amount": "10000000" }],
+  "credits": {
+    "available_balances": [{ "denom": "umfx", "amount": "50000000000" }]
+  },
+  "sku": { "name": "small", "price": { "denom": "umfx", "amount": "1000" } },
+  "available_sku_names": ["small", "medium"],
+  "ready": true,
+  "missing_steps": []
+}

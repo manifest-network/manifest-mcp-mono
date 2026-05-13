@@ -1,9 +1,9 @@
 import type { Coin, Readiness, ReadinessAction } from '../types.js';
 import {
   type DenomMap,
+  EMPTY_DENOM_MAP,
   denomToSymbol,
   humanizeCoin,
-  loadChainDenomMap,
 } from './humanize-denom.js';
 
 /**
@@ -81,9 +81,16 @@ export interface EvaluateReadinessInputs {
   gasPrice: string;
   /** Override the per-denom warn floor (smallest unit). When omitted, uses the per-denom default or 50_000n fallback. */
   gasWarnFloor?: bigint;
-  /** Optional path to `$MANIFEST_PLUGIN_DATA/chains/<chain>.json` for symbol humanization. */
-  chainDataFile?: string;
-  /** Pre-loaded DenomMap. Wins over `chainDataFile` when both are supplied. */
+  /**
+   * Pre-loaded `DenomMap` for symbol humanization. The orchestrator
+   * (`deploy-app.ts` and PR-4 callers) is responsible for composing the
+   * map via `loadChainDenomMap(chainDataFile)` and passing it in. This
+   * keeps `evaluateReadiness` pure-sync — I/O lives at the orchestrator
+   * boundary, not inside the decision function (post-Q4 Bii verdict).
+   *
+   * When omitted, the no-op map is used; balances + SKU prices render
+   * with raw on-chain denoms.
+   */
   denomMap?: DenomMap;
 }
 
@@ -110,8 +117,12 @@ export function evaluateReadiness(inputs: EvaluateReadinessInputs): Readiness {
       : (GAS_BALANCE_WARN_FLOOR_DEFAULTS[gasDenom] ??
         GAS_BALANCE_WARN_FLOOR_FALLBACK);
 
-  // --- Load denom map (or use injected) ---
-  const denomMap = inputs.denomMap ?? loadChainDenomMap(inputs.chainDataFile);
+  // --- Resolve denom map ---
+  // Pure-sync decision function: callers pre-load the map via
+  // `loadChainDenomMap(chainDataFile)` and pass it in. When absent, the
+  // empty no-op map is used (raw on-chain denom rendering downstream).
+  // See Q4 Bii rationale in EvaluateReadinessInputs.denomMap docstring.
+  const denomMap = inputs.denomMap ?? EMPTY_DENOM_MAP;
 
   // --- Walk readiness rules ---
   const reasons: string[] = [];

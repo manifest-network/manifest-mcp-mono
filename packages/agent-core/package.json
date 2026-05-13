@@ -44,6 +44,8 @@
     "dist"
   ],
   "dependencies": {
+    "@manifest-network/manifest-mcp-core": "^0.8.0",
+    "@manifest-network/manifest-mcp-fred": "^0.8.0",
     "ipaddr.js": "2.4.0",
     "undici": "8.2.0"
   },

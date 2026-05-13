@@ -1,0 +1,8 @@
+{
+  "image": "docker.io/library/nginx:1.27",
+  "port": 80,
+  "env": {
+    "NGINX_HOST": "example.com",
+    "NGINX_PORT": "80"
+  }
+}
