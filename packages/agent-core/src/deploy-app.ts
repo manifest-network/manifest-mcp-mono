@@ -290,7 +290,10 @@ export async function deployApp(
 
   // --- Broadcast: fred's atomic deployApp (architect α-locked) -------
   callbacks.onProgress?.({ kind: 'deploy_app_broadcast' });
-  const fredInput = buildFredDeployInput(confirmedSpec, requestedSize(spec));
+  const fredInput = buildFredDeployInput(
+    confirmedSpec,
+    requestedSize(confirmedSpec),
+  );
   let fredResult: FredDeployAppResult;
   try {
     fredResult = await fredDeployApp(
