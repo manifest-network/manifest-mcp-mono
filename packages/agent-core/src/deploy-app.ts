@@ -98,8 +98,8 @@ import type {
  * Orchestrate a deployment. See module-level docstring for the architect-
  * locked composition + E-hybrid runtime-context contract.
  *
- * @throws `ManifestMCPError(INVALID_INPUT)` for spec / wallet validation.
- * @throws `ManifestMCPError(USER_CANCELLED)` when `onConfirm` returns
+ * @throws `ManifestMCPError(INVALID_CONFIG)` for spec / wallet validation.
+ * @throws `ManifestMCPError(INVALID_CONFIG)` when `onConfirm` returns
  *   `'no'` or `onPlan` returns `'cancel'`.
  * Errors from fred's broadcast or core's recovery primitives surface as
  * typed `ManifestMCPError`s; the orchestrator catches them and routes

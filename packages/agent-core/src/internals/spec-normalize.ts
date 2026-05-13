@@ -26,7 +26,7 @@ import type {
  * — agent-core has no workspace dep on `@manifest-network/manifest-mcp-core`
  * in PR 1/2 (per parent's REV 1), so `ManifestMCPError` isn't available
  * here. PR 3's high-level `deployApp` re-wraps `TypeError` into
- * `ManifestMCPError(INVALID_INPUT)` at the public-API boundary.
+ * `ManifestMCPError(INVALID_CONFIG)` at the public-API boundary.
  */
 
 /**

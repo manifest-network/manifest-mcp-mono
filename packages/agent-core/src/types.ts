@@ -94,7 +94,7 @@ export interface DeployAppOptions extends AgentCoreRuntime {
    * Wallet provider for ADR-036 auth-token signing.
    *
    * **MUST** implement `signArbitrary` — validated at the call boundary
-   * with `ManifestMCPError(INVALID_INPUT)` thrown if absent. agent-core
+   * with `ManifestMCPError(INVALID_CONFIG)` thrown if absent. agent-core
    * constructs the auth-token callbacks internally from this wallet
    * (using fred's `createAuthToken` + `createSignMessage` +
    * `createLeaseDataSignMessage` primitives + `AuthTimestampTracker`
