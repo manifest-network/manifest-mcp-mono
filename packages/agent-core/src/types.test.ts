@@ -336,10 +336,8 @@ describe('Exported type shapes (load-bearing public surface)', () => {
 
   it('FeeEstimate', () => {
     expectTypeOf<FeeEstimate>().toEqualTypeOf<{
-      amount: string;
-      denom: string;
+      coins: Coin[];
       gas: number;
-      human: string;
     }>();
   });
 

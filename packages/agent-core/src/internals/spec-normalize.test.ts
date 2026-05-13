@@ -213,6 +213,38 @@ describe('validateSpec', () => {
     ).toThrow(/mutually exclusive/);
   });
 
+  // Key-presence-vs-value-validity bypass vectors (Copilot PR #57 Comment 3).
+  // The mutual-exclusion gate must reject on KEY presence, not value validity.
+  // A caller that supplies a malformed `image` value alongside a valid
+  // `services` map has ambiguous intent — accepting it (as the prior
+  // value-based check did) silently coerced the spec to stack shape.
+  it('rejects {image: "", services: {...}} (empty image bypass vector)', () => {
+    expect(() =>
+      validateSpec({
+        image: '',
+        services: { web: { image: 'nginx:1.27' } },
+      } as unknown as DeploySpec),
+    ).toThrow(/mutually exclusive/);
+  });
+
+  it('rejects {image: 123, services: {...}} (non-string image bypass vector)', () => {
+    expect(() =>
+      validateSpec({
+        image: 123,
+        services: { web: { image: 'nginx:1.27' } },
+      } as unknown as DeploySpec),
+    ).toThrow(/mutually exclusive/);
+  });
+
+  it('rejects {image: null, services: {...}} (null image bypass vector)', () => {
+    expect(() =>
+      validateSpec({
+        image: null,
+        services: { web: { image: 'nginx:1.27' } },
+      } as unknown as DeploySpec),
+    ).toThrow(/mutually exclusive/);
+  });
+
   it('rejects stack spec with empty services', () => {
     expect(() => validateSpec({ services: {} } as StackSpec)).toThrow(
       /at least one entry/,

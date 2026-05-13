@@ -181,14 +181,27 @@ export function validateSpec(spec: DeploySpec | null | undefined): void {
     throw new TypeError('validateSpec: spec must be a non-null object');
   }
   const record = spec as unknown as Record<string, unknown>;
-  const hasImage = typeof record.image === 'string' && record.image.length > 0;
-  const hasServices = isStackSpec(spec);
 
-  if (hasImage && hasServices) {
+  // Mutual-exclusion gate uses KEY presence (not value validity). This
+  // closes the bypass where a caller supplies a malformed `image` value
+  // (empty string, number, null) alongside a valid `services` map: the
+  // value-based check would silently treat `image` as "absent" and accept
+  // the spec, but the caller's intent was ambiguous (which shape did they
+  // mean?). Rejecting on key-presence forces the caller to delete one key
+  // before submission and removes the ambiguity.
+  const hasImageKey = 'image' in record;
+  const hasServicesKey = 'services' in record;
+  if (hasImageKey && hasServicesKey) {
     throw new TypeError(
-      'validateSpec: spec uses both `image` and `services`; these are mutually exclusive',
+      'validateSpec: spec has both `image` and `services` keys; these are mutually exclusive (regardless of value validity)',
     );
   }
+
+  // Downstream value-validity check (after the mutual-exclusion gate has
+  // ruled out the ambiguous case). An `image` key with a non-string or
+  // empty-string value still fails here when `services` is absent.
+  const hasImage = typeof record.image === 'string' && record.image.length > 0;
+  const hasServices = isStackSpec(spec);
   if (!hasImage && !hasServices) {
     throw new TypeError(
       'validateSpec: spec must declare either `image` (SingleServiceSpec) or `services` (StackSpec)',
