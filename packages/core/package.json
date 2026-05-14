@@ -69,5 +69,13 @@
     "@types/node": "22.15.29",
     "typescript": "5.9.3",
     "vitest": "4.1.0"
+  },
+  "peerDependencies": {
+    "vitest": "^4.1.0"
+  },
+  "peerDependenciesMeta": {
+    "vitest": {
+      "optional": true
+    }
   }
 }
