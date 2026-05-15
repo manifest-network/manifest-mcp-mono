@@ -43,40 +43,36 @@ import {
  * success.ts emits it post-deploy).
  */
 
-/** Maximum decimals in a humanized fee string, for same-denom summing. */
-function decimalDigits(s: string): number {
-  const m = s.trim().match(/^[0-9]+(?:\.([0-9]+))?/);
-  return m && m[1] ? m[1].length : 0;
-}
-
 /**
- * Parse `"<amount> <denom>"` → `[number, denom]` or `null` when shape
- * doesn't match (multi-coin "<a>, <b>" form, "(empty)", etc.).
+ * Same-denom single-coin: sum as `BigInt` (the underlying on-chain
+ * unit), then humanize the total. Different denom OR multi-coin:
+ * `"<a> + <b>"` concat (mirrors the CJS's `sumHumanFees` fallback).
+ *
+ * Copilot review fix (PR #58 r3250445951): the prior `sumHumanFees`
+ * parsed humanized strings to float64, summed, and re-formatted —
+ * breaking the BigInt invariant the rest of the denom-humanization
+ * pipeline maintains (`humanize-denom.ts:_fmtScaledAmount` is
+ * BigInt-based). Realistic create-lease + set-domain fees were tiny
+ * so the hit rate was low; the inconsistency was real, and amounts
+ * above `Number.MAX_SAFE_INTEGER` (2^53-1) would silently round.
+ *
+ * Operates on the underlying `FeeEstimate.coins` arrays directly so
+ * BigInt precision is preserved through the sum. Humanization
+ * happens once, at the end.
  */
-function parseHumanFee(s: string): [number, string] | null {
-  if (typeof s !== 'string') return null;
-  // String.match avoids the alternative RegExp pattern that the CI
-  // security hook treats as a child_process token (see ENG-129 task #34).
-  const m = s.trim().match(/^([0-9]+(?:\.[0-9]+)?)\s+(\S+)$/);
-  if (!m) return null;
-  const n = Number(m[1]);
-  if (!Number.isFinite(n)) return null;
-  return [n, m[2] ?? ''];
-}
-
-/**
- * Same-denom: numeric sum, formatted at max input precision so neither
- * input's decimals are lost. Different-denom: `"<a> + <b>"` concat.
- * Mirrors the CJS's `sumHumanFees` semantics.
- */
-function sumHumanFees(a: string, b: string): string {
-  const pa = parseHumanFee(a);
-  const pb = parseHumanFee(b);
-  if (pa !== null && pb !== null && pa[1] === pb[1]) {
-    const maxDec = Math.max(decimalDigits(a), decimalDigits(b));
-    return `${(pa[0] + pb[0]).toFixed(maxDec)} ${pa[1]}`;
+function sumFees(a: FeeEstimate, b: FeeEstimate, denomMap: DenomMap): string {
+  // Same-denom single-coin: BigInt sum, then humanize.
+  if (a.coins.length === 1 && b.coins.length === 1) {
+    const ca = a.coins[0];
+    const cb = b.coins[0];
+    if (ca && cb && ca.denom === cb.denom) {
+      const sum = (BigInt(ca.amount) + BigInt(cb.amount)).toString();
+      return humanizeCoin(sum, ca.denom, denomMap);
+    }
   }
-  return `${a} + ${b}`;
+  // Different denom or multi-coin: fall back to concat, mirroring the
+  // CJS's behavior. Humanize each side independently.
+  return `${humanizeFeeAmount(a, denomMap)} + ${humanizeFeeAmount(b, denomMap)}`;
 }
 
 /**
@@ -178,15 +174,23 @@ export function renderDeploymentPlan(
     // fallback (no representative lease).
     const setDomain = input.plan.fees.setDomain;
     let setDomainLine: string;
-    let setDomainHuman: string | null = null;
+    // Capture the typed `FeeEstimate` reference (when the set-domain
+    // fee is a real estimate, not the sentinel) so the total-line
+    // BigInt sum can operate on `coins` directly via `sumFees`. The
+    // prior code parsed humanized strings to float64 — see
+    // `sumFees`'s docstring for the precision-loss rationale.
+    let setDomainReal: FeeEstimate | null = null;
     if (setDomain === undefined) {
       setDomainLine =
         '(not estimated — agent skipped pre-broadcast simulation, policy violation)';
     } else if ('notEstimated' in setDomain) {
       setDomainLine = `(not estimated — ${setDomain.reason})`;
     } else {
-      setDomainHuman = humanizeFeeAmount(setDomain, denomMap);
-      setDomainLine = formatFeeLine(setDomainHuman, setDomain.gas);
+      setDomainReal = setDomain;
+      setDomainLine = formatFeeLine(
+        humanizeFeeAmount(setDomain, denomMap),
+        setDomain.gas,
+      );
     }
 
     lines.push(`  Tx fee (create-lease):     ${createFeeLine}`);
@@ -195,8 +199,8 @@ export function renderDeploymentPlan(
     // Total only when both fees are real numbers. Sentinel set-domain
     // fees fall through to the placeholder.
     const totalLine =
-      setDomainHuman !== null
-        ? sumHumanFees(createHuman, setDomainHuman)
+      setDomainReal !== null
+        ? sumFees(createFee, setDomainReal, denomMap)
         : '(partial — see fee lines above)';
     lines.push(`  Total fee:                 ${totalLine}`);
   } else {

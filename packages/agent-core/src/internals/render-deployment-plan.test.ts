@@ -310,6 +310,48 @@ describe('renderDeploymentPlan', () => {
         '  Total fee:                 0.0023 MFX + 0.0001 PWR',
       );
     });
+
+    // Copilot review fix (PR #58 r3250445951): same-denom sums must
+    // preserve BigInt precision. The prior `sumHumanFees` parsed to
+    // float64, losing precision past `Number.MAX_SAFE_INTEGER`
+    // (2^53-1 ≈ 9.0e15). Realistic fees were tiny so the hit rate
+    // was low; the invariant inconsistency was real and could
+    // silently round. `sumFees` (the replacement) operates on the
+    // underlying `FeeEstimate.coins` arrays via BigInt.
+    it('preserves BigInt precision for same-denom amounts above 2^53', () => {
+      const out = renderDeploymentPlan({
+        plan: basePlan({
+          fees: {
+            createLease: {
+              // 2^53 + 1 in umfx — exact value Number cannot round-trip.
+              coins: [{ denom: 'umfx', amount: '9007199254740993' }],
+              gas: 142000,
+            },
+            setDomain: {
+              // 2^53 + 1 in umfx.
+              coins: [{ denom: 'umfx', amount: '9007199254740993' }],
+              gas: 60000,
+            },
+          },
+        }),
+        denomMap: knownMap,
+        image: 'nginx:1.27',
+        size: 'small',
+        metaHash: 'abcd1234',
+        customDomain: 'app.example.com',
+      });
+      // Exact BigInt sum: 9007199254740993 + 9007199254740993
+      //                = 18014398509481986 (2^54 + 2).
+      // Humanized via the umfx→MFX exponent (6):
+      //   18014398509481986 / 10^6 = 18014398509.481986 MFX (exact).
+      // Float64 sum would round to 18014398509481984 (lost the +2).
+      expect(out.text).toContain(
+        '  Total fee:                 18014398509.481986 MFX',
+      );
+      // Negative assertion: the rounded-by-float64 value must NOT
+      // appear (would surface if `sumFees` regressed to numeric).
+      expect(out.text).not.toContain('18014398509.481984');
+    });
   });
 
   describe('readiness rendering', () => {

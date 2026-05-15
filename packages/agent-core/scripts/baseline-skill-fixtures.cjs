@@ -224,6 +224,20 @@ function captureDeployApp(scenario, write) {
     if (scenario.custom_domain_service) {
       planArgs.push('--custom-domain-service', scenario.custom_domain_service);
     }
+    // Copilot review fix (PR #58 r3250445914): `expected-plan.txt` is
+    // a renderer-LEVEL byte-baseline — `render-deployment-plan.test.ts`
+    // feeds the TS renderer a REAL `setDomain: { coins, gas }` fee
+    // directly (mirroring the CJS plugin's `--set-domain-tx-fee` arg
+    // here). The orchestrator-LEVEL path (`deploy-app.ts:estimateFees`)
+    // emits the `{ notEstimated: true }` sentinel for set-domain today
+    // (tracked as ENG-185 #3 deferred). Both paths flow through the
+    // same renderer with different inputs.
+    //
+    // Per option (c) of the team-lead's brief, the CJS invocation
+    // here continues to pass `--set-domain-tx-fee` so the fixture
+    // stays renderer-test-aligned. When ENG-185 #3 lands the real
+    // set-domain estimate, the orchestrator's output will converge
+    // with this baseline; until then the two paths diverge by design.
     planArgs.push('--set-domain-tx-gas', feeResp.set_domain_fee.gas);
     planArgs.push('--set-domain-tx-fee', setDomainHumanFee);
   }
@@ -296,6 +310,95 @@ function captureDeployApp(scenario, write) {
   return results;
 }
 
+// Discipline V audit (Copilot review pass 3 — r3250445914/.../r3250446056):
+// every `expected_args` / `response` field in the two builders below
+// maps to a real call site in `packages/agent-core/src/deploy-app.ts`.
+// Source-of-truth references per call (line numbers as of `33bb567`):
+//
+//   checkDeploymentReadiness (deploy-app.ts:155-162)
+//     call: (queryClient, tenantAddress, { image, size })
+//     capture: the third positional arg only — `{ image, size }`.
+//     `queryClient` and `tenantAddress` are harness-supplied runtime
+//     context, not spec-derived; recording them here would conflate
+//     the test-boundary args with the runtime context the transcript
+//     can't replay.
+//
+//   buildManifestPreview (deploy-app.ts:191-193 + buildManifestPreviewInput
+//     at deploy-app.ts:566-588)
+//     call: buildManifestPreview(buildManifestPreviewInput(spec, size))
+//     buildManifestPreviewInput flattens single-service specs to
+//     `{ size, image, port, env }` and stack specs to `{ size, services }`.
+//     Capture the flattened input.
+//
+//   cosmosEstimateFee (deploy-app.ts:614-621)
+//     call: cosmosEstimateFee(clientManager, 'billing', 'create-lease',
+//       ['--meta-hash', metaHashHex, itemArg])
+//     itemArg = `${skuUuid}:1` for single-service or non-named stack;
+//     `${skuUuid}:1:${serviceName}` for named-stack. The test mock's
+//     `findSkuUuid` resolves to `'sku-uuid-fixture'`; the fixture
+//     reflects that.
+//     Response: full `FeeEstimateResult` shape per
+//     packages/core/src/types.ts —
+//       `{ module, subcommand, gasEstimate, fee: { amount, gas } }`.
+//     The prior fixture recorded only `feeResp.fee`, dropping
+//     `module` / `subcommand` / `gasEstimate`.
+//
+//   fredDeployApp (deploy-app.ts:299-305 + buildFredDeployInput at
+//     deploy-app.ts:681-708)
+//     call: fredDeployApp(clientManager, getAuthToken,
+//       getLeaseDataAuthToken, fredInput, fetchFn)
+//     fredInput = buildFredDeployInput(confirmedSpec, size). For
+//     single-service: `{ size, image, port, env, customDomain?,
+//     serviceName? }`. For stack: `{ size, services, customDomain?,
+//     serviceName? }`. Capture `fredInput` only (the auth callbacks
+//     and fetchFn are harness-supplied).
+
+/** Helper: derive the flattened buildManifestPreview input from a spec. */
+function previewInputFromSpec(spec, size) {
+  if (spec && typeof spec === 'object' && spec.services) {
+    return { size, services: spec.services };
+  }
+  return {
+    size,
+    image: spec?.image,
+    port: spec?.port,
+    env: spec?.env,
+  };
+}
+
+/** Helper: derive the flattened fred deployApp input from a spec. */
+function fredInputFromSpec(spec, size) {
+  const base = previewInputFromSpec(spec, size);
+  if (spec?.customDomain) base.customDomain = spec.customDomain;
+  if (spec?.serviceName) base.serviceName = spec.serviceName;
+  return base;
+}
+
+/** Helper: derive the create-lease itemArg from a spec. */
+function createLeaseItemArg(spec) {
+  if (spec?.services && spec.serviceName) {
+    return `sku-uuid-fixture:1:${spec.serviceName}`;
+  }
+  return 'sku-uuid-fixture:1';
+}
+
+/**
+ * Wrap a `{ amount, gas }` fee envelope into the canonical
+ * `FeeEstimateResult` shape with `module` / `subcommand` /
+ * `gasEstimate`. `gasEstimate` is recorded at the same value as
+ * `fee.gas` for fixture purposes; in production the two diverge by
+ * the configured `gasMultiplier` (default 1.5 per CLAUDE.md), per
+ * Copilot Fix 12 (r3250192734).
+ */
+function wrapFeeResult(feeEnvelope, subcommand) {
+  return {
+    module: 'billing',
+    subcommand,
+    gasEstimate: String(feeEnvelope.gas ?? ''),
+    fee: feeEnvelope,
+  };
+}
+
 function buildHappyMcpScript(
   spec,
   scenario,
@@ -304,44 +407,45 @@ function buildHappyMcpScript(
   metaResp,
   deployResp,
 ) {
+  const size = scenario.size;
+  const image = spec?.image;
   return {
     description: `Mocked MCP call/response transcript for ${scenario.id}`,
     calls: [
       {
         module: '@manifest-network/manifest-mcp-fred',
         function: 'checkDeploymentReadiness',
-        expected_args: { spec, size: scenario.size },
+        expected_args: { image, size },
         response: readinessResp,
       },
       {
         module: '@manifest-network/manifest-mcp-fred',
         function: 'buildManifestPreview',
-        expected_args: { spec },
+        expected_args: previewInputFromSpec(spec, size),
         response: metaResp,
       },
       {
         module: '@manifest-network/manifest-mcp-core',
         function: 'cosmosEstimateFee',
         expected_args: {
-          // Copilot review fix (PR #58 r3249294955): the orchestrator
-          // (`deploy-app.ts`'s `estimateFees`) calls cosmosEstimateFee
-          // with the short module name `'billing'` and a positional
-          // string array `['--meta-hash', metaHashHex, itemArg]` —
-          // verified against `deploy-app.ts` + `cosmosEstimateFee`'s
-          // signature. The prior fixture recorded the proto path
-          // `'liftedinit.billing'` and `args: {}`; both wrong.
+          // Copilot review fix (PR #58 r3249294955): module short-name
+          // + positional string args, not `{ args: {} }` or proto path.
           // `'sku-uuid-fixture'` matches the test mock's `findSkuUuid`
-          // return value (`packages/agent-core/src/deploy-app.test.ts`).
+          // (`packages/agent-core/src/deploy-app.test.ts`).
           module: 'billing',
           subcommand: 'create-lease',
-          args: ['--meta-hash', metaResp.meta_hash_hex, 'sku-uuid-fixture:1'],
+          args: [
+            '--meta-hash',
+            metaResp.meta_hash_hex,
+            createLeaseItemArg(spec),
+          ],
         },
-        response: feeResp.fee,
+        response: wrapFeeResult(feeResp.fee, 'create-lease'),
       },
       {
         module: '@manifest-network/manifest-mcp-fred',
         function: 'deployApp',
-        expected_args: { spec, size: scenario.size },
+        expected_args: fredInputFromSpec(spec, size),
         response: deployResp,
       },
     ],
@@ -356,32 +460,37 @@ function buildPartialMcpScript(
   metaResp,
   deployError,
 ) {
+  const size = scenario.size;
+  const image = spec?.image;
   return {
     description: `Mocked MCP call/response transcript for ${scenario.id}`,
     calls: [
       {
         module: '@manifest-network/manifest-mcp-fred',
         function: 'checkDeploymentReadiness',
-        expected_args: { spec, size: scenario.size },
+        expected_args: { image, size },
         response: readinessResp,
       },
       {
         module: '@manifest-network/manifest-mcp-fred',
         function: 'buildManifestPreview',
-        expected_args: { spec },
+        expected_args: previewInputFromSpec(spec, size),
         response: metaResp,
       },
       {
         module: '@manifest-network/manifest-mcp-core',
         function: 'cosmosEstimateFee',
         expected_args: {
-          // r3249294955 fix (see buildHappyMcpScript above for full
-          // rationale): correct module short-name + positional args.
+          // r3249294955 fix (see buildHappyMcpScript audit comment).
           module: 'billing',
           subcommand: 'create-lease',
-          args: ['--meta-hash', metaResp.meta_hash_hex, 'sku-uuid-fixture:1'],
+          args: [
+            '--meta-hash',
+            metaResp.meta_hash_hex,
+            createLeaseItemArg(spec),
+          ],
         },
-        response: feeResp.create_lease_fee,
+        response: wrapFeeResult(feeResp.create_lease_fee, 'create-lease'),
       },
       // r3249294955 (continued): the orchestrator does NOT invoke
       // `cosmosEstimateFee` for `set-item-custom-domain` today — it
@@ -395,11 +504,7 @@ function buildPartialMcpScript(
       {
         module: '@manifest-network/manifest-mcp-fred',
         function: 'deployApp',
-        expected_args: {
-          spec,
-          size: scenario.size,
-          custom_domain: scenario.custom_domain,
-        },
+        expected_args: fredInputFromSpec(spec, size),
         throws: deployError,
       },
     ],

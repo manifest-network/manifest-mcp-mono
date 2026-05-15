@@ -5,15 +5,7 @@
       "module": "@manifest-network/manifest-mcp-fred",
       "function": "checkDeploymentReadiness",
       "expected_args": {
-        "spec": {
-          "image": "docker.io/library/nginx:1.27",
-          "port": 80,
-          "env": {
-            "NGINX_HOST": "example.com",
-            "NGINX_PORT": "80"
-          },
-          "customDomain": "app.testnet.manifest.app"
-        },
+        "image": "docker.io/library/nginx:1.27",
         "size": "small"
       },
       "response": {
@@ -50,14 +42,12 @@
       "module": "@manifest-network/manifest-mcp-fred",
       "function": "buildManifestPreview",
       "expected_args": {
-        "spec": {
-          "image": "docker.io/library/nginx:1.27",
-          "port": 80,
-          "env": {
-            "NGINX_HOST": "example.com",
-            "NGINX_PORT": "80"
-          },
-          "customDomain": "app.testnet.manifest.app"
+        "size": "small",
+        "image": "docker.io/library/nginx:1.27",
+        "port": 80,
+        "env": {
+          "NGINX_HOST": "example.com",
+          "NGINX_PORT": "80"
         }
       },
       "response": {
@@ -78,30 +68,32 @@
         ]
       },
       "response": {
-        "amount": [
-          {
-            "denom": "umfx",
-            "amount": "2300"
-          }
-        ],
-        "gas": "142000"
+        "module": "billing",
+        "subcommand": "create-lease",
+        "gasEstimate": "142000",
+        "fee": {
+          "amount": [
+            {
+              "denom": "umfx",
+              "amount": "2300"
+            }
+          ],
+          "gas": "142000"
+        }
       }
     },
     {
       "module": "@manifest-network/manifest-mcp-fred",
       "function": "deployApp",
       "expected_args": {
-        "spec": {
-          "image": "docker.io/library/nginx:1.27",
-          "port": 80,
-          "env": {
-            "NGINX_HOST": "example.com",
-            "NGINX_PORT": "80"
-          },
-          "customDomain": "app.testnet.manifest.app"
-        },
         "size": "small",
-        "custom_domain": "app.testnet.manifest.app"
+        "image": "docker.io/library/nginx:1.27",
+        "port": 80,
+        "env": {
+          "NGINX_HOST": "example.com",
+          "NGINX_PORT": "80"
+        },
+        "customDomain": "app.testnet.manifest.app"
       },
       "throws": {
         "message": "Deploy partially succeeded: lease 11111111-1111-4111-8111-111111111111 was created but subsequent steps failed. Close this lease with close_lease if needed. Error: set_item_custom_domain failed: provider rejected domain claim (FQDN already bound to another lease)",
