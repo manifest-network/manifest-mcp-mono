@@ -421,4 +421,68 @@ describe('validateSpec', () => {
       });
     });
   });
+
+  // Copilot review fix (PR #58 r3249684707): stack-with-customDomain
+  // must declare serviceName + that name must be a key in services.
+  // Without this gate, set-domain failure orphan-leases the tenant.
+  describe('stack customDomain + serviceName invariant (r3249684707)', () => {
+    it('rejects stack + customDomain without serviceName', () => {
+      expect(() =>
+        validateSpec({
+          services: { web: { image: 'nginx:1.27' } },
+          customDomain: 'app.example.com',
+        } as unknown as DeploySpec),
+      ).toThrow(/customDomain.*requires.*serviceName/);
+    });
+
+    it('rejects stack + customDomain + empty-string serviceName', () => {
+      expect(() =>
+        validateSpec({
+          services: { web: { image: 'nginx:1.27' } },
+          customDomain: 'app.example.com',
+          serviceName: '',
+        } as unknown as DeploySpec),
+      ).toThrow(/customDomain.*requires.*serviceName/);
+    });
+
+    it('rejects stack + customDomain + serviceName not in services', () => {
+      expect(() =>
+        validateSpec({
+          services: { db: { image: 'postgres:16' } },
+          customDomain: 'app.example.com',
+          serviceName: 'web',
+        } as unknown as DeploySpec),
+      ).toThrow(/serviceName.*"web".*must be a key in.*services.*db/);
+    });
+
+    it('accepts stack + customDomain + serviceName matching a services key', () => {
+      expect(() =>
+        validateSpec({
+          services: { web: { image: 'nginx:1.27' } },
+          customDomain: 'app.example.com',
+          serviceName: 'web',
+        } as unknown as DeploySpec),
+      ).not.toThrow();
+    });
+
+    it('accepts stack WITHOUT customDomain (no serviceName required)', () => {
+      // Escape hatch preserved — internal-only stack deploys don't need
+      // either field.
+      expect(() =>
+        validateSpec({ services: { internal: { image: 'alpine' } } }),
+      ).not.toThrow();
+    });
+
+    it('accepts single-service + customDomain (rule is stack-only)', () => {
+      // Single-service customDomain is claimed against the implicit
+      // single lease item — no serviceName disambiguation needed.
+      expect(() =>
+        validateSpec({
+          image: 'nginx:1.27',
+          port: 80,
+          customDomain: 'app.example.com',
+        } as unknown as DeploySpec),
+      ).not.toThrow();
+    });
+  });
 });

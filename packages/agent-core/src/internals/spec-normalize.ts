@@ -228,6 +228,37 @@ export function validateSpec(spec: DeploySpec | null | undefined): void {
         );
       }
     }
+
+    // Copilot review fix (PR #58 r3249684707): a stack spec with a
+    // `customDomain` MUST declare which service receives the domain
+    // via `serviceName`, and that value must be a key in `services`.
+    // Without this guard, `customDomainServiceOf` in `deploy-app.ts`
+    // returns `undefined`, planning proceeds with no target, renderers
+    // misrepresent the claim, and fred rejects the set-domain tx
+    // ONLY after `create-lease` commits — leaving the user with an
+    // orphan lease + a failed domain claim. Catching this at
+    // validate-time is fail-fast at the boundary.
+    //
+    // Single-service specs are unaffected: their `customDomain` is
+    // claimed against the implicit single lease item — no
+    // serviceName disambiguation needed.
+    const stackDomain = (spec as Partial<StackSpec>).customDomain;
+    if (typeof stackDomain === 'string' && stackDomain.length > 0) {
+      const stackServiceName = (spec as Partial<StackSpec>).serviceName;
+      if (
+        typeof stackServiceName !== 'string' ||
+        stackServiceName.length === 0
+      ) {
+        throw new TypeError(
+          'validateSpec: stack spec with `customDomain` requires `serviceName` identifying which service receives the domain.',
+        );
+      }
+      if (!(stackServiceName in spec.services)) {
+        throw new TypeError(
+          `validateSpec: stack spec \`serviceName\` "${stackServiceName}" must be a key in \`services\` (got services: [${Object.keys(spec.services).join(', ')}]).`,
+        );
+      }
+    }
   } else {
     // Single-service spec port requirement.
     //

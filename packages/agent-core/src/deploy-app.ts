@@ -261,6 +261,28 @@ export async function deployApp(
       // back to onPlan with the new plan) remains a PR-3.x follow-up;
       // this fix addresses single-iteration freshness only.
       confirmedSpec = applyPlanEdit(confirmedSpec, verdict);
+      // Copilot review fix (PR #58 r3249684686): re-validate the post-
+      // edit spec at the agent-core boundary. `validateSpec` runs once
+      // on the original input at the top of `deployApp`; without this
+      // second invocation a `replace_spec` edit returning an invalid
+      // spec (portless single-service, out-of-range port, stack-
+      // without-services, stack-with-customDomain-missing-serviceName,
+      // etc.) flows through to `buildManifestPreview` / fred's
+      // broadcast and surfaces only as a mid-orchestration error.
+      // Placed BEFORE the recompute so we don't spend a
+      // `buildManifestPreview` round-trip on a known-bad spec. Wraps
+      // `TypeError` from `validateSpec` into `INVALID_CONFIG` to match
+      // the initial-input-validation convention at the top of this fn.
+      try {
+        validateSpec(confirmedSpec);
+      } catch (err) {
+        throw new ManifestMCPError(
+          ManifestMCPErrorCode.INVALID_CONFIG,
+          err instanceof Error
+            ? `Post-edit spec failed validation: ${err.message}`
+            : `Post-edit spec failed validation: ${String(err)}`,
+        );
+      }
       preview = await buildManifestPreview(
         buildManifestPreviewInput(confirmedSpec, requestedSize(confirmedSpec)),
       );

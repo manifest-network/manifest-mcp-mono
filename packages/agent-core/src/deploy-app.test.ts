@@ -871,6 +871,160 @@ describe('deployApp replay — Copilot review fixes (PR #58 unresolved comments)
     // Already-scheme'd url passes through unchanged.
     expect(result.urls).toEqual(['https://app.example.com/']);
   });
+
+  // Copilot review fix (PR #58 r3249684686): `applyPlanEdit` may swap
+  // in a fresh spec returned by `onPlan`. Without re-validation, an
+  // invalid `replace_spec` (portless single-service, out-of-range
+  // port, stack-without-services, etc.) flows through to
+  // `buildManifestPreview` / fred. Fail fast at the boundary.
+  describe('r3249684686: re-validate post-edit spec', () => {
+    async function buildEditScenario(replacementSpec: DeploySpec) {
+      const spec = readFixture(
+        'skills',
+        'deploy-app',
+        '01-fast-path-active',
+        'input',
+        'spec.json',
+      ) as DeploySpec;
+      const readinessRaw = readFixture(
+        'skills',
+        'deploy-app',
+        '01-fast-path-active',
+        'input',
+        'readiness-response.json',
+      );
+      const metaHashResp = readFixture(
+        'skills',
+        'deploy-app',
+        '01-fast-path-active',
+        'input',
+        'meta-hash-response.json',
+      ) as { manifest_json: string; meta_hash_hex: string };
+
+      const fred = await import('@manifest-network/manifest-mcp-fred');
+      vi.mocked(fred.checkDeploymentReadiness).mockResolvedValue(
+        readinessRaw as unknown as Awaited<
+          ReturnType<typeof fred.checkDeploymentReadiness>
+        >,
+      );
+      vi.mocked(fred.buildManifestPreview).mockResolvedValue({
+        manifest_json: metaHashResp.manifest_json,
+        meta_hash_hex: metaHashResp.meta_hash_hex,
+      } as Awaited<ReturnType<typeof fred.buildManifestPreview>>);
+      vi.mocked(fred.deployApp).mockResolvedValue(
+        {} as Awaited<ReturnType<typeof fred.deployApp>>,
+      );
+      const core = await import('@manifest-network/manifest-mcp-core');
+      vi.mocked(core.cosmosEstimateFee).mockResolvedValue({
+        module: 'billing',
+        subcommand: 'create-lease',
+        gasEstimate: '142000',
+        fee: { amount: [{ denom: 'umfx', amount: '2300' }], gas: '142000' },
+      } as Awaited<ReturnType<typeof core.cosmosEstimateFee>>);
+
+      const baseCapture = captureCallbacks();
+      const callbacks: DeployAppCallbacks = {
+        ...baseCapture.callbacks,
+        onPlan: async () => ({ kind: 'replace_spec', spec: replacementSpec }),
+      };
+
+      const { deployApp } = await import('./deploy-app.js');
+      const clientManager = makeMockClientManager();
+      const walletProvider = makeMockWalletProvider();
+
+      let caughtErr: unknown = null;
+      try {
+        await deployApp(spec, callbacks, {
+          clientManager: clientManager as unknown as Parameters<
+            typeof deployApp
+          >[2]['clientManager'],
+          walletProvider,
+        });
+      } catch (err) {
+        caughtErr = err;
+      }
+      return { caughtErr, fred, core, baseCapture };
+    }
+
+    it('rejects portless replace_spec; build/deploy not invoked after the throw', async () => {
+      const { caughtErr, fred } = await buildEditScenario({
+        image: 'alpine',
+      } as unknown as DeploySpec);
+
+      expect(caughtErr).toBeInstanceOf(Error);
+      expect((caughtErr as Error).message).toContain(
+        'Post-edit spec failed validation',
+      );
+      expect((caughtErr as Error).message).toContain(
+        'single-service specs require at least one port',
+      );
+      // The post-edit `buildManifestPreview` call MUST NOT fire.
+      // Pre-edit call: 1 invocation (initial plan render). After the
+      // re-validation throw, no second call.
+      expect(vi.mocked(fred.buildManifestPreview)).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(fred.deployApp)).not.toHaveBeenCalled();
+    });
+
+    it('rejects out-of-range port (r3249294877 + r3249684686 interplay)', async () => {
+      const { caughtErr, fred } = await buildEditScenario({
+        image: 'alpine',
+        port: -1,
+      } as unknown as DeploySpec);
+
+      expect(caughtErr).toBeInstanceOf(Error);
+      expect((caughtErr as Error).message).toContain(
+        'Post-edit spec failed validation',
+      );
+      expect((caughtErr as Error).message).toContain(
+        'finite positive integer in the TCP range',
+      );
+      expect(vi.mocked(fred.buildManifestPreview)).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(fred.deployApp)).not.toHaveBeenCalled();
+    });
+
+    it('rejects stack + customDomain missing serviceName (r3249684707 + r3249684686 interplay)', async () => {
+      const { caughtErr, fred } = await buildEditScenario({
+        services: { web: { image: 'nginx:1.27' } },
+        customDomain: 'app.example.com',
+      } as unknown as DeploySpec);
+
+      expect(caughtErr).toBeInstanceOf(Error);
+      expect((caughtErr as Error).message).toContain(
+        'Post-edit spec failed validation',
+      );
+      expect((caughtErr as Error).message).toContain('customDomain');
+      expect((caughtErr as Error).message).toContain('serviceName');
+      expect(vi.mocked(fred.buildManifestPreview)).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(fred.deployApp)).not.toHaveBeenCalled();
+    });
+
+    it('positive control: valid replace_spec proceeds through recompute + broadcast', async () => {
+      // A valid replacement should NOT throw — the re-validation passes
+      // and the orchestrator recomputes preview/summary/fees/plan
+      // against the edited spec. `buildManifestPreview` fires twice
+      // (pre-edit + post-edit), `deployApp` once.
+      const validReplacement = {
+        image: 'docker.io/library/nginx:1.27',
+        port: 8080,
+      } as DeploySpec;
+
+      const { caughtErr, fred } = await buildEditScenario(validReplacement);
+
+      // The mocked fred.deployApp returns `{}` which the classifier
+      // routes to `'failed'` → orchestrator throws INVALID_CONFIG with
+      // ENG-185 #6 reference. That's fine — we only care that the
+      // throw is NOT a post-edit-validation failure (i.e., the
+      // recompute fired and we got past validateSpec).
+      expect(caughtErr).toBeInstanceOf(Error);
+      expect((caughtErr as Error).message).not.toContain(
+        'Post-edit spec failed validation',
+      );
+      // buildManifestPreview fires twice: once before onPlan, once
+      // after applyPlanEdit + the re-validation pass.
+      expect(vi.mocked(fred.buildManifestPreview)).toHaveBeenCalledTimes(2);
+      expect(vi.mocked(fred.deployApp)).toHaveBeenCalledTimes(1);
+    });
+  });
 });
 
 describe('deployApp replay — 03-partial-success-set-domain-failed', () => {
