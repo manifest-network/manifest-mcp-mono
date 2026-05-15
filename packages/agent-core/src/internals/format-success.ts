@@ -52,6 +52,17 @@ export interface DeployResponse {
   custom_domain?: string;
   /** Provider connection payload — walked by `connection.ts`. */
   connection?: unknown;
+  /**
+   * Top-level URL — legacy fallback when provider reports
+   * `connection.host` / `connection.ports` shape rather than
+   * `connection.instances`. Used when no FQDN can be extracted from
+   * `connection`. Defensive: `classify-deploy-response.ts:43-51,76-80`
+   * already defends against the same legacy shape; mirroring here keeps
+   * the renderer consistent with the classifier so a fred response of
+   * `{ url: 'https://app.example.com/' }` renders an Ingress line
+   * rather than `(none …)`.
+   */
+  url?: string;
 }
 
 export interface FormatSuccessInput {
@@ -105,9 +116,23 @@ export function formatSuccess(input: FormatSuccessInput): string {
   }
 
   if (ingresses.length === 0) {
-    lines.push(
-      '  Ingress:       (none — service is internal or no FQDN reported)',
-    );
+    // Legacy fallback: when no FQDN can be extracted from `connection`
+    // (e.g. providers reporting the older `connection.host` / `ports`
+    // shape rather than `connection.instances`), fred may still surface
+    // the URL at the top level. Mirror `classify-deploy-response.ts:77-79`:
+    // pass through if already prefixed `http(s)://`, otherwise wrap as
+    // `https://${url}/`. The `(none …)` fallback stays for the
+    // truly-empty case.
+    if (typeof dr.url === 'string' && dr.url.length > 0) {
+      const normalizedUrl = /^https?:\/\//i.test(dr.url)
+        ? dr.url
+        : `https://${dr.url}/`;
+      lines.push(`  Ingress:       ${normalizedUrl}`);
+    } else {
+      lines.push(
+        '  Ingress:       (none — service is internal or no FQDN reported)',
+      );
+    }
   } else if (ingresses.length === 1) {
     lines.push(`  Ingress:       ${ingresses[0]}`);
   } else {

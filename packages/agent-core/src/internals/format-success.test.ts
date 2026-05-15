@@ -154,6 +154,58 @@ describe('formatSuccess', () => {
       expect(out).toContain('  Ingress:       app.example.com');
       expect(out).not.toContain('  Ingresses:');
     });
+
+    // Copilot review fix (PR #58 r3248900271): legacy top-level `url`
+    // fallback. When `connection.instances` is empty/missing but fred
+    // still surfaces `url` at the top level (older provider shape),
+    // render it as the Ingress line — mirrors the classifier's
+    // defensive fallback at `classify-deploy-response.ts:76-80`.
+    it('renders top-level `url` as Ingress when connection has no running instances', () => {
+      const out = formatSuccess(
+        baseInput({
+          connection: undefined,
+          url: 'https://app.example.com/',
+        }),
+      );
+      expect(out).toContain('  Ingress:       https://app.example.com/');
+      // `(none …)` fallback must NOT fire when `url` is present.
+      expect(out).not.toContain('(none — service is internal');
+    });
+
+    it('prefixes scheme-less `url` with `https://` and trailing slash, matching the classifier', () => {
+      const out = formatSuccess(
+        baseInput({
+          connection: undefined,
+          url: 'app.example.com',
+        }),
+      );
+      expect(out).toContain('  Ingress:       https://app.example.com/');
+    });
+
+    it('still renders `(none …)` when both `connection.instances` and `url` are empty', () => {
+      const out = formatSuccess(
+        baseInput({
+          connection: { instances: [] },
+          url: undefined,
+        }),
+      );
+      expect(out).toContain(
+        '  Ingress:       (none — service is internal or no FQDN reported)',
+      );
+    });
+
+    it('prefers `connection.instances` FQDN over top-level `url` when both are present', () => {
+      const out = formatSuccess(
+        baseInput({
+          connection: {
+            instances: [{ status: 'running', fqdn: 'preferred.example.com' }],
+          },
+          url: 'https://fallback.example.com/',
+        }),
+      );
+      expect(out).toContain('  Ingress:       preferred.example.com');
+      expect(out).not.toContain('fallback.example.com');
+    });
   });
 
   describe('custom-domain block', () => {

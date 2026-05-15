@@ -89,10 +89,12 @@ interface MockClientManager {
   getQueryClient: Mock;
   getSigningClient: Mock;
   getConfig: Mock;
+  getAddress: Mock;
 }
 
 function makeMockClientManager(
   chainId = 'manifest-ledger-testnet-1',
+  address = 'manifest1deadbeef',
 ): MockClientManager {
   return {
     getQueryClient: vi.fn().mockResolvedValue({} as unknown),
@@ -101,6 +103,12 @@ function makeMockClientManager(
       chainId,
       gasPrice: '1umfx',
     }),
+    // r3248900328: deploy-app's address-source consistency guard
+    // reads `clientManager.getAddress()` up-front and asserts it
+    // matches `walletProvider.getAddress()`. Default mock address
+    // matches the wallet's default so existing tests stay green;
+    // tests asserting the mismatch path pass an explicit address.
+    getAddress: vi.fn().mockResolvedValue(address),
   };
 }
 
@@ -582,6 +590,82 @@ describe('deployApp replay — Copilot review fixes (PR #58 unresolved comments)
     expect(progress.some((e) => e.kind === 'app_ready_confirmed')).toBe(false);
     // onComplete never fires when the orchestrator throws.
     expect(completed).toHaveLength(0);
+  });
+
+  it('r3248900328: walletProvider/clientManager address mismatch throws INVALID_CONFIG before any chain I/O', async () => {
+    // The orchestrator reads the tenant address from `walletProvider`
+    // (readiness check + ADR-036 auth) and `clientManager` (fred's
+    // create-lease broadcast). If they diverge, the orchestrator must
+    // fail-fast with INVALID_CONFIG before touching the chain —
+    // otherwise the chain tx executes for the clientManager wallet
+    // while provider auth (signed by walletProvider) fails, orphaning
+    // a lease on clientManager's wallet.
+    const spec = readFixture(
+      'skills',
+      'deploy-app',
+      '01-fast-path-active',
+      'input',
+      'spec.json',
+    ) as DeploySpec;
+
+    // Set up the mocks that would normally fire on the happy path so
+    // we can assert they're NEVER invoked. The guard must short-circuit
+    // before any chain I/O.
+    const fred = await import('@manifest-network/manifest-mcp-fred');
+    vi.mocked(fred.checkDeploymentReadiness).mockResolvedValue(
+      {} as Awaited<ReturnType<typeof fred.checkDeploymentReadiness>>,
+    );
+    vi.mocked(fred.buildManifestPreview).mockResolvedValue({
+      manifest_json: '{}',
+      meta_hash_hex: 'aa'.repeat(32),
+    } as Awaited<ReturnType<typeof fred.buildManifestPreview>>);
+    vi.mocked(fred.deployApp).mockResolvedValue(
+      {} as Awaited<ReturnType<typeof fred.deployApp>>,
+    );
+    const core = await import('@manifest-network/manifest-mcp-core');
+    vi.mocked(core.cosmosEstimateFee).mockResolvedValue(
+      {} as Awaited<ReturnType<typeof core.cosmosEstimateFee>>,
+    );
+
+    const addressA = 'manifest1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1aaaa';
+    const addressB = 'manifest1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb1bbbb';
+    const { callbacks } = captureCallbacks();
+    const { deployApp } = await import('./deploy-app.js');
+    // walletProvider returns addressA; clientManager returns addressB.
+    const walletProvider = makeMockWalletProvider();
+    vi.mocked(walletProvider.getAddress).mockResolvedValue(addressA);
+    const clientManager = makeMockClientManager(
+      'manifest-ledger-testnet-1',
+      addressB,
+    );
+
+    let caughtErr: unknown = null;
+    try {
+      await deployApp(spec, callbacks, {
+        clientManager: clientManager as unknown as Parameters<
+          typeof deployApp
+        >[2]['clientManager'],
+        walletProvider,
+      });
+    } catch (err) {
+      caughtErr = err;
+    }
+
+    // INVALID_CONFIG throw with both addresses in the message.
+    expect(caughtErr).toBeInstanceOf(Error);
+    expect((caughtErr as Error).message).toContain(addressA);
+    expect((caughtErr as Error).message).toContain(addressB);
+    expect((caughtErr as Error).message).toContain(
+      'opts.walletProvider and opts.clientManager are bound to different addresses',
+    );
+    // No chain I/O performed: every downstream workspace-dep mock must
+    // be untouched. (The guard short-circuits before
+    // `checkDeploymentReadiness` / `buildManifestPreview` /
+    // `cosmosEstimateFee` / `fredDeployApp` are reached.)
+    expect(vi.mocked(fred.checkDeploymentReadiness)).not.toHaveBeenCalled();
+    expect(vi.mocked(fred.buildManifestPreview)).not.toHaveBeenCalled();
+    expect(vi.mocked(fred.deployApp)).not.toHaveBeenCalled();
+    expect(vi.mocked(core.cosmosEstimateFee)).not.toHaveBeenCalled();
   });
 });
 

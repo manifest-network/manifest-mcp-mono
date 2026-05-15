@@ -127,6 +127,32 @@ export async function deployApp(
     );
   }
 
+  // --- Address-source consistency guard -------------------------------
+  // Copilot review fix (PR #58 r3248900328): `opts.walletProvider` and
+  // `opts.clientManager` are independently-injected runtime objects.
+  // The readiness check + ADR-036 auth-token signing read the address
+  // from `walletProvider`; fred's atomic `deployApp` (create-lease +
+  // manifest upload) reads it from `clientManager`. If the two are
+  // bound to different wallets (misconfiguration / copy-paste in
+  // plugin composition / multi-tenant test rig), readiness is
+  // evaluated for wallet A while create-lease + upload execute as
+  // wallet B — orphaning a lease on wallet B with auth tokens signed
+  // by wallet A (provider auth-fails after the chain tx confirms).
+  // Resolve both up-front, fail fast on mismatch, then reuse the
+  // single value as the canonical `tenantAddress` for the rest of
+  // the orchestration.
+  const walletAddress = await opts.walletProvider.getAddress();
+  const clientAddress = await opts.clientManager.getAddress();
+  if (walletAddress !== clientAddress) {
+    throw new ManifestMCPError(
+      ManifestMCPErrorCode.INVALID_CONFIG,
+      `opts.walletProvider and opts.clientManager are bound to different addresses ` +
+        `(walletProvider=${walletAddress}, clientManager=${clientAddress}); they must reference the same wallet ` +
+        `to avoid creating an orphaned lease on the clientManager wallet when ADR-036 auth (signed by walletProvider) fails.`,
+    );
+  }
+  const tenantAddress = walletAddress;
+
   // --- Resolve denom map for humanization -----------------------------
   // I/O at orchestrator boundary (Path-Bii principle): callers may
   // pre-load via `denomMap`, point at `chainDataFile`, or omit both
@@ -148,9 +174,9 @@ export async function deployApp(
 
   // --- Readiness evaluation -------------------------------------------
   // fred's checkDeploymentReadiness takes (queryClient, address, input).
-  // Resolve both from the runtime context before invoking.
+  // `tenantAddress` was resolved + validated as consistent across
+  // walletProvider/clientManager in the address-source guard above.
   const queryClient = await opts.clientManager.getQueryClient();
-  const tenantAddress = await opts.walletProvider.getAddress();
   const readinessRaw = await checkDeploymentReadiness(
     queryClient,
     tenantAddress,
