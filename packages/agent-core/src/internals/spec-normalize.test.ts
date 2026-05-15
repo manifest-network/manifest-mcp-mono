@@ -455,6 +455,22 @@ describe('validateSpec', () => {
       ).toThrow(/serviceName.*"web".*must be a key in.*services.*db/);
     });
 
+    // Copilot review fix (PR #58 r3250331968): the prior `in`-operator
+    // check walked the prototype chain, so `'constructor' in {}` would
+    // return true. Switched to `Object.keys(...).includes(...)` to
+    // match fred's own-key check at
+    // `packages/fred/src/tools/deployApp.ts:254`. This regression test
+    // pins the boundary.
+    it('rejects stack + customDomain + serviceName matching a prototype-chain key (own-key check)', () => {
+      expect(() =>
+        validateSpec({
+          services: { web: { image: 'nginx:1.27' } },
+          customDomain: 'app.example.com',
+          serviceName: 'constructor',
+        } as unknown as DeploySpec),
+      ).toThrow(/serviceName.*"constructor".*must be a key in.*services.*web/);
+    });
+
     it('accepts stack + customDomain + serviceName matching a services key', () => {
       expect(() =>
         validateSpec({

@@ -253,7 +253,15 @@ export function validateSpec(spec: DeploySpec | null | undefined): void {
           'validateSpec: stack spec with `customDomain` requires `serviceName` identifying which service receives the domain.',
         );
       }
-      if (!(stackServiceName in spec.services)) {
+      // Copilot review fix (PR #58 r3250331968): use an own-key check.
+      // The `in` operator walks the prototype chain, so `serviceName:
+      // 'constructor'` (or `'toString'`, `'hasOwnProperty'`, etc.)
+      // would falsely pass against a `services` map that doesn't
+      // declare those names. Mirrors fred's own choice at
+      // `packages/fred/src/tools/deployApp.ts:254` for cross-package
+      // symmetry. `Object.keys().includes()` (not `Object.hasOwn`,
+      // which is ES2022 and our `tsdown.config.ts` targets ES2020).
+      if (!Object.keys(spec.services).includes(stackServiceName)) {
         throw new TypeError(
           `validateSpec: stack spec \`serviceName\` "${stackServiceName}" must be a key in \`services\` (got services: [${Object.keys(spec.services).join(', ')}]).`,
         );
