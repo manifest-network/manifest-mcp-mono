@@ -332,34 +332,49 @@ export async function deployApp(
   // Copilot review fix (PR #58 r3237308914): use the canonical
   // `classifyDeployResponse` rather than hardcoding `'active'`. The
   // classifier inspects `state`, `connection`, and `lease_uuid` to bucket
-  // returns into `active | needs_wait | failed`. Architect's α-lock says
-  // fred's atomic deployApp returns post-success, but the chain can still
-  // emit a terminal state on the success-return path (e.g. REJECTED, when
-  // the lease was created but immediately invalidated). We harden by
-  // emitting the real classification, throwing on terminal `'failed'`,
-  // and skipping `app_ready_confirmed` for `'needs_wait'` (the lease
-  // exists but the app isn't up yet — caller can poll via wait-for-app-
-  // ready; full integration deferred to PR-3.x / ENG-185).
+  // returns into `active | needs_wait | failed`.
+  //
+  // Architect's α-lock: fred returns after tx + manifest upload succeed,
+  // NOT after the app is observably running. So `'needs_wait'` IS an
+  // expected happy-path return shape (lease created, manifest uploaded,
+  // container not yet started by the provider) — and `'failed'` covers
+  // the terminal-state-on-return edge (e.g. REJECTED, when the chain
+  // invalidated the lease between create and return).
+  //
+  // PR-3 scope (this commit) implements the **assertion form** only —
+  // call the classifier and throw INVALID_CONFIG on any non-active
+  // outcome with the classifier's `errorSummary` / `stateName`. This
+  // removes the misleading hardcoded `'active'` event and gives callers
+  // a clear, typed signal that the outcome falls outside the active
+  // happy path.
+  //
+  // Full routing is deferred to ENG-185 scope item #6
+  // ("Happy-path classifier integration — `classifyDeployResponse`
+  // + needs_wait/failed routing"):
+  //   - `'needs_wait'` → poll `wait_for_app_ready`, emit
+  //                      `polling_for_readiness` events.
+  //   - `'failed'`     → surface as `FailureEnvelope` through
+  //                      `onFailure` with recovery options.
   const classification = classifyDeployResponse(fredResult);
   callbacks.onProgress?.({
     kind: 'deploy_response_classified',
     outcome: classification.outcome,
   });
-  if (classification.outcome === 'failed') {
-    throw new ManifestMCPError(
-      ManifestMCPErrorCode.TX_FAILED,
+  if (classification.outcome !== 'active') {
+    const detail =
       classification.errorSummary ??
-        'fred deployApp returned a non-active response classified as failed',
+      (classification.stateName !== undefined
+        ? `Lease ${classification.leaseUuid ?? '<no-uuid>'} returned non-active state ${classification.stateName}`
+        : `fred deployApp returned non-active outcome '${classification.outcome}'`);
+    throw new ManifestMCPError(
+      ManifestMCPErrorCode.INVALID_CONFIG,
+      `${detail}. Full routing (needs_wait → wait_for_app_ready polling; failed → FailureEnvelope) deferred to ENG-185 scope item #6.`,
     );
   }
-  if (classification.outcome === 'active') {
-    callbacks.onProgress?.({
-      kind: 'app_ready_confirmed',
-      leaseUuid: fredResult.lease_uuid,
-    });
-  }
-  // `'needs_wait'`: continue to build DeployResult; caller observes
-  // pending state via result.leaseState and can poll wait-for-app-ready.
+  callbacks.onProgress?.({
+    kind: 'app_ready_confirmed',
+    leaseUuid: fredResult.lease_uuid,
+  });
 
   // --- Persist manifest (best-effort; save-fail still emits success) -
   const persistedPath = await tryPersistManifest({

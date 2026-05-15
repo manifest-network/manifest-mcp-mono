@@ -252,11 +252,12 @@ describe('deployApp replay — 01-fast-path-active', () => {
     // the canonical `decode()` from lease-state.ts handles known numeric
     // inputs and terminal-state passthrough correctly.
     //
-    // Updated for Copilot review fix r3237308914: the orchestrator now
-    // routes the success-return path through `classifyDeployResponse`,
-    // which buckets terminal states (e.g. REJECTED) as outcome `'failed'`.
-    // The orchestrator throws TX_FAILED with the classifier's
-    // `errorSummary` (`Lease ${uuid} reached terminal state ${name}`).
+    // Updated for Copilot review fix r3237308914 (assertion form per
+    // ENG-185 scope item #6): the orchestrator now routes the success-
+    // return path through `classifyDeployResponse`, which buckets
+    // terminal states (e.g. REJECTED) as outcome `'failed'`. PR-3
+    // throws `INVALID_CONFIG` with the classifier's `errorSummary` and
+    // an ENG-185 #6 reference (full FailureEnvelope routing deferred).
     // Asserting on the THROWN error preserves the F1 spirit (REJECTED
     // not silently coerced to ACTIVE) while honoring the new contract.
     const spec = readFixture(
@@ -329,15 +330,17 @@ describe('deployApp replay — 01-fast-path-active', () => {
       caughtErr = err;
     }
 
-    // F1 verdict: REJECTED surfaced via TX_FAILED throw with classifier's
-    // canonical `Lease ${uuid} reached terminal state ${name}` message —
-    // not silently coerced to ACTIVE and not returned as a "successful"
+    // F1 verdict: REJECTED surfaced via INVALID_CONFIG throw with the
+    // classifier's canonical `Lease ${uuid} reached terminal state
+    // ${name}` summary plus an ENG-185 #6 follow-up reference — not
+    // silently coerced to ACTIVE and not returned as a "successful"
     // DeployResult.
     expect(caughtErr).toBeInstanceOf(Error);
     expect((caughtErr as Error).message).toContain('LEASE_STATE_REJECTED');
     expect((caughtErr as Error).message).toContain(
       '11111111-1111-4111-8111-111111111111',
     );
+    expect((caughtErr as Error).message).toContain('ENG-185 scope item #6');
     // Orchestrator emitted `deploy_response_classified: 'failed'` and did
     // NOT emit `app_ready_confirmed` (the misleading event the prior
     // hardcoded-`'active'` path always fired).
@@ -483,15 +486,15 @@ describe('deployApp replay — Copilot review fixes (PR #58 unresolved comments)
     expect(preEditBlock?.text).not.toBe(postEditBlock?.text);
   });
 
-  it('r3237308914: classifier-returns-`needs_wait` skips `app_ready_confirmed` but still returns DeployResult', async () => {
+  it('r3237308914: classifier-returns-`needs_wait` throws INVALID_CONFIG with ENG-185 #6 deferral note', async () => {
     // fred returns a PENDING lease with no running instances:
-    // classifyDeployResponse → `'needs_wait'`. The orchestrator must
-    // emit `deploy_response_classified: 'needs_wait'`, skip the
-    // `app_ready_confirmed` event (it would be a lie — the app isn't
-    // up yet), and still build/return the DeployResult so callers can
-    // observe `leaseState: 'LEASE_STATE_PENDING'` and poll
-    // wait-for-app-ready themselves. Full wait integration deferred to
-    // PR-3.x (ENG-185).
+    // classifyDeployResponse → `'needs_wait'`. PR-3 assertion form
+    // (ENG-185 scope item #6) throws INVALID_CONFIG with the
+    // classifier's `stateName` plus the deferral reference. Full
+    // routing — polling `wait_for_app_ready`, emitting
+    // `polling_for_readiness` events — is the ENG-185 #6 follow-up.
+    // The classification event itself MUST fire before the throw so
+    // consumers see the intermediate state.
     const spec = readFixture(
       'skills',
       'deploy-app',
@@ -547,14 +550,19 @@ describe('deployApp replay — Copilot review fixes (PR #58 unresolved comments)
     const clientManager = makeMockClientManager();
     const walletProvider = makeMockWalletProvider();
 
-    const result = await deployApp(spec, callbacks, {
-      clientManager: clientManager as unknown as Parameters<
-        typeof deployApp
-      >[2]['clientManager'],
-      walletProvider,
-    });
+    let caughtErr: unknown = null;
+    try {
+      await deployApp(spec, callbacks, {
+        clientManager: clientManager as unknown as Parameters<
+          typeof deployApp
+        >[2]['clientManager'],
+        walletProvider,
+      });
+    } catch (err) {
+      caughtErr = err;
+    }
 
-    // Classifier outcome surfaced as `'needs_wait'`.
+    // Classifier outcome surfaced as `'needs_wait'` BEFORE the throw.
     const classifiedEvents = progress.filter(
       (e) => e.kind === 'deploy_response_classified',
     );
@@ -563,12 +571,17 @@ describe('deployApp replay — Copilot review fixes (PR #58 unresolved comments)
       classifiedEvents[0]?.kind === 'deploy_response_classified' &&
         classifiedEvents[0].outcome,
     ).toBe('needs_wait');
-    // `app_ready_confirmed` skipped — the prior hardcoded-`'active'`
+    // PR-3 assertion form: throw INVALID_CONFIG with the classifier's
+    // stateName + ENG-185 #6 deferral reference. Full routing (poll
+    // wait_for_app_ready, emit polling_for_readiness) lives in #6.
+    expect(caughtErr).toBeInstanceOf(Error);
+    expect((caughtErr as Error).message).toContain('LEASE_STATE_PENDING');
+    expect((caughtErr as Error).message).toContain('ENG-185 scope item #6');
+    // `app_ready_confirmed` MUST NOT fire — the prior hardcoded-`'active'`
     // path would have lied here.
     expect(progress.some((e) => e.kind === 'app_ready_confirmed')).toBe(false);
-    // DeployResult still returned so caller observes pending state.
-    expect(completed).toHaveLength(1);
-    expect(result.leaseState).toBe('LEASE_STATE_PENDING');
+    // onComplete never fires when the orchestrator throws.
+    expect(completed).toHaveLength(0);
   });
 });
 
