@@ -229,6 +229,58 @@ describe('formatSuccess', () => {
         '    — TLS may take a few minutes; the Ingress URL below works immediately.',
       );
     });
+
+    // Copilot review fix (PR #58 r3250192778): the TLS note's
+    // "Ingress URL below works immediately" promise must not fire
+    // when the Ingress section will render `(none …)`. Otherwise the
+    // user is told to look for a URL that doesn't exist.
+    it('renders shortened TLS note when no Ingress available (no instances, no url)', () => {
+      const out = formatSuccess(
+        baseInput({
+          custom_domain: 'x.example.com',
+          connection: { instances: [] },
+          url: undefined,
+        }),
+      );
+      // Custom-domain block still emits.
+      expect(out).toContain(
+        '  Custom domain (provisioning):  https://x.example.com/',
+      );
+      // Shortened TLS note — no false "Ingress URL below" promise.
+      expect(out).toContain('    — TLS may take a few minutes.');
+      expect(out).not.toContain('the Ingress URL below works immediately');
+      // And the Ingress section actually IS the `(none …)` fallback.
+      expect(out).toContain(
+        '  Ingress:       (none — service is internal or no FQDN reported)',
+      );
+    });
+
+    it('keeps full TLS note when running instances provide Ingress', () => {
+      const out = formatSuccess(
+        baseInput({
+          custom_domain: 'x.example.com',
+          connection: {
+            instances: [{ status: 'running', fqdn: 'app.example.com' }],
+          },
+        }),
+      );
+      expect(out).toContain(
+        '    — TLS may take a few minutes; the Ingress URL below works immediately.',
+      );
+    });
+
+    it('keeps full TLS note when top-level `url` provides Ingress fallback', () => {
+      const out = formatSuccess(
+        baseInput({
+          custom_domain: 'x.example.com',
+          connection: undefined,
+          url: 'app.example.com',
+        }),
+      );
+      expect(out).toContain(
+        '    — TLS may take a few minutes; the Ingress URL below works immediately.',
+      );
+    });
   });
 
   describe('byte-baseline parity', () => {

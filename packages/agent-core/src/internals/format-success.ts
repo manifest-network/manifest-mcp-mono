@@ -98,6 +98,13 @@ export function formatSuccess(input: FormatSuccessInput): string {
   const ingresses = endpoints
     .map(formatEndpointAsIngress)
     .filter((s): s is string => typeof s === 'string' && s.length > 0);
+  // Copilot review fix (PR #58 r3250192778): the custom-domain block's
+  // TLS note (\"the Ingress URL below works immediately\") promises a
+  // URL that may not exist when `connection.instances` is empty AND
+  // there's no top-level `url`. Compute ingress availability up-front
+  // so the custom-domain block can branch its second line accordingly.
+  const hasIngress =
+    ingresses.length > 0 || (typeof dr.url === 'string' && dr.url.length > 0);
 
   const lines: string[] = [
     'Deployed.',
@@ -108,11 +115,15 @@ export function formatSuccess(input: FormatSuccessInput): string {
 
   // Custom-domain block — chain tx confirmed, provider may still be
   // provisioning. Present BEFORE Ingress so the user sees the requested
-  // endpoint first, alongside the immediately-working provider FQDN.
+  // endpoint first, alongside the immediately-working provider FQDN (if
+  // any). The TLS note's "Ingress URL below works immediately" promise
+  // only fires when an Ingress is actually present (r3250192778).
   if (typeof dr.custom_domain === 'string' && dr.custom_domain.length > 0) {
     lines.push(`  Custom domain (provisioning):  https://${dr.custom_domain}/`);
     lines.push(
-      '    — TLS may take a few minutes; the Ingress URL below works immediately.',
+      hasIngress
+        ? '    — TLS may take a few minutes; the Ingress URL below works immediately.'
+        : '    — TLS may take a few minutes.',
     );
   }
 

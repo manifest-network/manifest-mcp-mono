@@ -103,9 +103,15 @@ import type {
  * @throws `ManifestMCPError(INVALID_CONFIG)` for spec / wallet validation.
  * @throws `ManifestMCPError(INVALID_CONFIG)` when `onConfirm` returns
  *   `'no'` or `onPlan` returns `'cancel'`.
+ *
  * Errors from fred's broadcast or core's recovery primitives surface as
- * typed `ManifestMCPError`s; the orchestrator catches them and routes
- * through `onFailure` per the recovery contract.
+ * typed `ManifestMCPError`s. Partial-success failures with applicable
+ * recovery options route through `onFailure(envelope, options)` — the
+ * callback's return value drives recovery dispatch via the inline
+ * closures in `dispatchRecovery`. Non-partial or inform-only failures
+ * (no recovery choices to present, per `handleBroadcastFailure`'s F3
+ * branch) throw directly as `ManifestMCPError(TX_FAILED)` without
+ * invoking `onFailure`.
  */
 export async function deployApp(
   spec: DeploySpec,
@@ -614,26 +620,42 @@ async function estimateFees(
       ['--meta-hash', metaHashHex, itemArg],
     );
   } catch (err) {
-    // Wrap the simulation failure with an agent-core-boundary message
-    // for caller diagnostics. core's cosmosEstimateFee already surfaces
-    // SIMULATION_FAILED for simulation-time errors; rewrapping preserves
-    // the code while adding context.
-    throw new ManifestMCPError(
-      ManifestMCPErrorCode.SIMULATION_FAILED,
-      `Failed to estimate create-lease fee: ${err instanceof Error ? err.message : String(err)}`,
-    );
+    // Wrap the underlying failure with an agent-core-boundary message
+    // for caller diagnostics. `core`'s `cosmosEstimateFee` (per
+    // `packages/core/src/cosmos.ts`) throws across multiple sites with
+    // different codes: `INVALID_CONFIG` for missing `gasPrice`,
+    // `UNSUPPORTED_TX` for invalid module/subcommand,
+    // `SIMULATION_FAILED` for actual simulation issues.
+    //
+    // Copilot review fix (PR #58 r3250192834): preserve the original
+    // code when the underlying threw a typed `ManifestMCPError`;
+    // fall back to `SIMULATION_FAILED` only for untyped failures.
+    // The prior comment claimed code-preservation but the code
+    // unconditionally cast to `SIMULATION_FAILED`.
+    const msg = `Failed to estimate create-lease fee: ${err instanceof Error ? err.message : String(err)}`;
+    if (err instanceof ManifestMCPError) {
+      throw new ManifestMCPError(err.code, msg);
+    }
+    throw new ManifestMCPError(ManifestMCPErrorCode.SIMULATION_FAILED, msg);
   }
 
   // FeeEstimateResult shape (per packages/core/src/types.ts):
-  //   { module, subcommand, gasEstimate: string, fee: { amount: Coin[] } }
+  //   { module, subcommand, gasEstimate: string, fee: { gas: string, amount: Coin[] } }
   // Map to typed `FeeEstimate { coins: Coin[], gas: number }` (Path-C
   // revision per a62cfd1).
+  //
+  // Copilot review fix (PR #58 r3250192734): use `fee.gas` (post-
+  // `gasMultiplier`), NOT `gasEstimate` (raw simulation gas). The
+  // `coins` were priced at `fee.gas`; displaying `gasEstimate` shows
+  // a number ~33% lower than the price reflects under the default
+  // 1.5x multiplier (per CLAUDE.md `COSMOS_GAS_MULTIPLIER`), creating
+  // a visible inconsistency in the rendered plan.
   const createLease: FeeEstimate = {
     coins: createLeaseEstimate.fee.amount.map((c) => ({
       denom: c.denom,
       amount: c.amount,
     })),
-    gas: Number(createLeaseEstimate.gasEstimate),
+    gas: Number(createLeaseEstimate.fee.gas),
   };
 
   // set-domain: emit `{notEstimated: true, reason}` sentinel per

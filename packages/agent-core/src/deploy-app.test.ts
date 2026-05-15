@@ -25,12 +25,17 @@
 
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import {
+  ManifestMCPError,
+  ManifestMCPErrorCode,
+} from '@manifest-network/manifest-mcp-core';
 import { beforeEach, describe, expect, it, type Mock, vi } from 'vitest';
 import type {
   DeployAppCallbacks,
   DeployResult,
   DeploySpec,
   FailureEnvelope,
+  Plan,
   ProgressEvent,
   RecoveryOption,
   SingleServiceSpec,
@@ -1023,6 +1028,204 @@ describe('deployApp replay — Copilot review fixes (PR #58 unresolved comments)
       // after applyPlanEdit + the re-validation pass.
       expect(vi.mocked(fred.buildManifestPreview)).toHaveBeenCalledTimes(2);
       expect(vi.mocked(fred.deployApp)).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  // Copilot review fix (PR #58 r3250192734): the FeeEstimate `gas` must
+  // match the gas the `coins` were priced for (post-`gasMultiplier`),
+  // not raw `gasEstimate`. Under the default 1.5x multiplier the prior
+  // code displayed a number ~33% lower than the price reflected.
+  describe('r3250192734: createLease.gas reflects post-multiplier fee.gas', () => {
+    it('surfaces fee.gas (priced), not gasEstimate (raw simulation gas)', async () => {
+      const spec = readFixture(
+        'skills',
+        'deploy-app',
+        '01-fast-path-active',
+        'input',
+        'spec.json',
+      ) as DeploySpec;
+      const readinessRaw = readFixture(
+        'skills',
+        'deploy-app',
+        '01-fast-path-active',
+        'input',
+        'readiness-response.json',
+      );
+      const metaHashResp = readFixture(
+        'skills',
+        'deploy-app',
+        '01-fast-path-active',
+        'input',
+        'meta-hash-response.json',
+      ) as { manifest_json: string; meta_hash_hex: string };
+
+      const fred = await import('@manifest-network/manifest-mcp-fred');
+      vi.mocked(fred.checkDeploymentReadiness).mockResolvedValue(
+        readinessRaw as unknown as Awaited<
+          ReturnType<typeof fred.checkDeploymentReadiness>
+        >,
+      );
+      vi.mocked(fred.buildManifestPreview).mockResolvedValue({
+        manifest_json: metaHashResp.manifest_json,
+        meta_hash_hex: metaHashResp.meta_hash_hex,
+      } as Awaited<ReturnType<typeof fred.buildManifestPreview>>);
+      vi.mocked(fred.deployApp).mockResolvedValue(
+        {} as Awaited<ReturnType<typeof fred.deployApp>>,
+      );
+      // Distinct values for gasEstimate vs. fee.gas — the bug would
+      // surface as `plan.fees.createLease.gas === 100`; the fix
+      // surfaces 150.
+      const core = await import('@manifest-network/manifest-mcp-core');
+      vi.mocked(core.cosmosEstimateFee).mockResolvedValue({
+        module: 'billing',
+        subcommand: 'create-lease',
+        gasEstimate: '100',
+        fee: {
+          gas: '150',
+          amount: [{ denom: 'umfx', amount: '2300' }],
+        },
+      } as Awaited<ReturnType<typeof core.cosmosEstimateFee>>);
+
+      // Capture the Plan passed to onPlan so we can inspect
+      // `plan.fees.createLease.gas`.
+      let capturedPlan: Plan | undefined;
+      const baseCapture = captureCallbacks();
+      const callbacks: DeployAppCallbacks = {
+        ...baseCapture.callbacks,
+        onPlan: async (plan) => {
+          capturedPlan = plan;
+          return 'confirm';
+        },
+      };
+
+      const { deployApp } = await import('./deploy-app.js');
+      const clientManager = makeMockClientManager();
+      const walletProvider = makeMockWalletProvider();
+
+      try {
+        await deployApp(spec, callbacks, {
+          clientManager: clientManager as unknown as Parameters<
+            typeof deployApp
+          >[2]['clientManager'],
+          walletProvider,
+        });
+      } catch {
+        // fredResult is `{}` → classifier `'failed'` → orchestrator
+        // throws INVALID_CONFIG. Irrelevant; we only need the
+        // captured Plan from the onPlan callback.
+      }
+
+      expect(capturedPlan).toBeDefined();
+      expect(capturedPlan?.fees.createLease.gas).toBe(150);
+      expect(capturedPlan?.fees.createLease.gas).not.toBe(100);
+    });
+  });
+
+  // Copilot review fix (PR #58 r3250192834): preserve the original
+  // ManifestMCPError code from `cosmosEstimateFee` instead of forcing
+  // every failure into SIMULATION_FAILED. Core's `cosmosEstimateFee`
+  // throws across multiple code sites — clobbering to SIMULATION_FAILED
+  // makes callers unable to distinguish, e.g., INVALID_CONFIG (missing
+  // gasPrice) from UNSUPPORTED_TX (bad module/subcommand) from an
+  // actual simulation error.
+  describe('r3250192834: cosmosEstimateFee error code preservation', () => {
+    async function runDeployWithEstimateError(thrownByEstimate: unknown) {
+      const spec = readFixture(
+        'skills',
+        'deploy-app',
+        '01-fast-path-active',
+        'input',
+        'spec.json',
+      ) as DeploySpec;
+      const readinessRaw = readFixture(
+        'skills',
+        'deploy-app',
+        '01-fast-path-active',
+        'input',
+        'readiness-response.json',
+      );
+      const metaHashResp = readFixture(
+        'skills',
+        'deploy-app',
+        '01-fast-path-active',
+        'input',
+        'meta-hash-response.json',
+      ) as { manifest_json: string; meta_hash_hex: string };
+
+      const fred = await import('@manifest-network/manifest-mcp-fred');
+      vi.mocked(fred.checkDeploymentReadiness).mockResolvedValue(
+        readinessRaw as unknown as Awaited<
+          ReturnType<typeof fred.checkDeploymentReadiness>
+        >,
+      );
+      vi.mocked(fred.buildManifestPreview).mockResolvedValue({
+        manifest_json: metaHashResp.manifest_json,
+        meta_hash_hex: metaHashResp.meta_hash_hex,
+      } as Awaited<ReturnType<typeof fred.buildManifestPreview>>);
+      const core = await import('@manifest-network/manifest-mcp-core');
+      vi.mocked(core.cosmosEstimateFee).mockRejectedValue(thrownByEstimate);
+
+      const { callbacks } = captureCallbacks();
+      const { deployApp } = await import('./deploy-app.js');
+      const clientManager = makeMockClientManager();
+      const walletProvider = makeMockWalletProvider();
+
+      let caughtErr: unknown = null;
+      try {
+        await deployApp(spec, callbacks, {
+          clientManager: clientManager as unknown as Parameters<
+            typeof deployApp
+          >[2]['clientManager'],
+          walletProvider,
+        });
+      } catch (err) {
+        caughtErr = err;
+      }
+      return caughtErr;
+    }
+
+    it('preserves INVALID_CONFIG from a typed ManifestMCPError', async () => {
+      const err = await runDeployWithEstimateError(
+        new ManifestMCPError(
+          ManifestMCPErrorCode.INVALID_CONFIG,
+          'cosmos: gasPrice not configured',
+        ),
+      );
+      expect(err).toBeInstanceOf(ManifestMCPError);
+      expect((err as ManifestMCPError).code).toBe(
+        ManifestMCPErrorCode.INVALID_CONFIG,
+      );
+      expect((err as Error).message).toContain(
+        'Failed to estimate create-lease fee',
+      );
+      expect((err as Error).message).toContain('gasPrice not configured');
+    });
+
+    it('preserves UNSUPPORTED_TX from a typed ManifestMCPError', async () => {
+      const err = await runDeployWithEstimateError(
+        new ManifestMCPError(
+          ManifestMCPErrorCode.UNSUPPORTED_TX,
+          'cosmos: module/subcommand not registered',
+        ),
+      );
+      expect(err).toBeInstanceOf(ManifestMCPError);
+      expect((err as ManifestMCPError).code).toBe(
+        ManifestMCPErrorCode.UNSUPPORTED_TX,
+      );
+    });
+
+    it('falls back to SIMULATION_FAILED for untyped failures', async () => {
+      const err = await runDeployWithEstimateError(
+        new Error('untyped failure from cosmosEstimateFee'),
+      );
+      expect(err).toBeInstanceOf(ManifestMCPError);
+      expect((err as ManifestMCPError).code).toBe(
+        ManifestMCPErrorCode.SIMULATION_FAILED,
+      );
+      expect((err as Error).message).toContain(
+        'Failed to estimate create-lease fee',
+      );
+      expect((err as Error).message).toContain('untyped failure');
     });
   });
 });
