@@ -33,6 +33,7 @@ import type {
   FailureEnvelope,
   ProgressEvent,
   RecoveryOption,
+  SingleServiceSpec,
   WalletProvider,
 } from './index.js';
 
@@ -244,12 +245,20 @@ describe('deployApp replay — 01-fast-path-active', () => {
     expect(result.leaseState).toBe('LEASE_STATE_ACTIVE');
   });
 
-  it('F1 regression: terminal-state preserved, not silently coerced to ACTIVE', async () => {
+  it('F1 regression: terminal-state surfaces via classifier throw, not silent coercion to ACTIVE', async () => {
     // QA F1: prior `leaseStateAsName` helper silently returned
     // 'LEASE_STATE_ACTIVE' for any non-LEASE_STATE_-prefixed input
     // (including unknown numeric ints). This regression test verifies
-    // the canonical `decode()` from lease-state.ts now handles known
-    // numeric inputs and terminal-state passthrough correctly.
+    // the canonical `decode()` from lease-state.ts handles known numeric
+    // inputs and terminal-state passthrough correctly.
+    //
+    // Updated for Copilot review fix r3237308914: the orchestrator now
+    // routes the success-return path through `classifyDeployResponse`,
+    // which buckets terminal states (e.g. REJECTED) as outcome `'failed'`.
+    // The orchestrator throws TX_FAILED with the classifier's
+    // `errorSummary` (`Lease ${uuid} reached terminal state ${name}`).
+    // Asserting on the THROWN error preserves the F1 spirit (REJECTED
+    // not silently coerced to ACTIVE) while honoring the new contract.
     const spec = readFixture(
       'skills',
       'deploy-app',
@@ -303,7 +312,237 @@ describe('deployApp replay — 01-fast-path-active', () => {
       fee: { amount: [{ denom: 'umfx', amount: '2300' }], gas: '142000' },
     } as Awaited<ReturnType<typeof core.cosmosEstimateFee>>);
 
-    const { callbacks } = captureCallbacks();
+    const { callbacks, progress, completed } = captureCallbacks();
+    const { deployApp } = await import('./deploy-app.js');
+    const clientManager = makeMockClientManager();
+    const walletProvider = makeMockWalletProvider();
+
+    let caughtErr: unknown = null;
+    try {
+      await deployApp(spec, callbacks, {
+        clientManager: clientManager as unknown as Parameters<
+          typeof deployApp
+        >[2]['clientManager'],
+        walletProvider,
+      });
+    } catch (err) {
+      caughtErr = err;
+    }
+
+    // F1 verdict: REJECTED surfaced via TX_FAILED throw with classifier's
+    // canonical `Lease ${uuid} reached terminal state ${name}` message —
+    // not silently coerced to ACTIVE and not returned as a "successful"
+    // DeployResult.
+    expect(caughtErr).toBeInstanceOf(Error);
+    expect((caughtErr as Error).message).toContain('LEASE_STATE_REJECTED');
+    expect((caughtErr as Error).message).toContain(
+      '11111111-1111-4111-8111-111111111111',
+    );
+    // Orchestrator emitted `deploy_response_classified: 'failed'` and did
+    // NOT emit `app_ready_confirmed` (the misleading event the prior
+    // hardcoded-`'active'` path always fired).
+    const classifiedEvents = progress.filter(
+      (e) => e.kind === 'deploy_response_classified',
+    );
+    expect(classifiedEvents).toHaveLength(1);
+    expect(
+      classifiedEvents[0]?.kind === 'deploy_response_classified' &&
+        classifiedEvents[0].outcome,
+    ).toBe('failed');
+    expect(progress.some((e) => e.kind === 'app_ready_confirmed')).toBe(false);
+    // onComplete never fires when the orchestrator throws.
+    expect(completed).toHaveLength(0);
+  });
+});
+
+describe('deployApp replay — Copilot review fixes (PR #58 unresolved comments)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('r3237308843: onPlan edit re-emits `deployment_plan_rendered` with post-edit values', async () => {
+    // After applying a PlanEdit, the orchestrator recomputes preview /
+    // summary / fees / plan against the edited spec. The plan block
+    // emitted via onProgress must also be refreshed so consumers see the
+    // post-edit block alongside the post-edit intent recap.
+    const spec = readFixture(
+      'skills',
+      'deploy-app',
+      '01-fast-path-active',
+      'input',
+      'spec.json',
+    ) as DeploySpec;
+    const readinessRaw = readFixture(
+      'skills',
+      'deploy-app',
+      '01-fast-path-active',
+      'input',
+      'readiness-response.json',
+    );
+    const metaHashResp = readFixture(
+      'skills',
+      'deploy-app',
+      '01-fast-path-active',
+      'input',
+      'meta-hash-response.json',
+    ) as { manifest_json: string; meta_hash_hex: string };
+    const deployResp = readFixture(
+      'skills',
+      'deploy-app',
+      '01-fast-path-active',
+      'input',
+      'deploy-response.json',
+    ) as Record<string, unknown>;
+
+    const fred = await import('@manifest-network/manifest-mcp-fred');
+    vi.mocked(fred.checkDeploymentReadiness).mockResolvedValue(
+      readinessRaw as unknown as Awaited<
+        ReturnType<typeof fred.checkDeploymentReadiness>
+      >,
+    );
+    // Pre-edit preview returns the original meta hash; the post-edit
+    // call returns a distinguishably different one. The orchestrator
+    // calls `buildManifestPreview` once at plan-assembly and a second
+    // time after applying the edit — sequencing the mock returns by
+    // call order verifies that flow.
+    vi.mocked(fred.buildManifestPreview)
+      .mockResolvedValueOnce({
+        manifest_json: metaHashResp.manifest_json,
+        meta_hash_hex: metaHashResp.meta_hash_hex,
+      } as Awaited<ReturnType<typeof fred.buildManifestPreview>>)
+      .mockResolvedValueOnce({
+        manifest_json: '{"edited":true}',
+        meta_hash_hex:
+          'deadbeefcafedeadbeefcafedeadbeefcafedeadbeefcafedeadbeefcafedead',
+      } as Awaited<ReturnType<typeof fred.buildManifestPreview>>);
+    vi.mocked(fred.deployApp).mockResolvedValue({
+      lease_uuid: deployResp.lease_uuid as string,
+      provider_uuid: deployResp.provider_uuid as string,
+      provider_url: deployResp.provider_url as string,
+      state: deployResp.state as never,
+      connection: deployResp.connection,
+    } as Awaited<ReturnType<typeof fred.deployApp>>);
+
+    const core = await import('@manifest-network/manifest-mcp-core');
+    vi.mocked(core.cosmosEstimateFee).mockResolvedValue({
+      module: 'billing',
+      subcommand: 'create-lease',
+      gasEstimate: '142000',
+      fee: { amount: [{ denom: 'umfx', amount: '2300' }], gas: '142000' },
+    } as Awaited<ReturnType<typeof core.cosmosEstimateFee>>);
+
+    // Construct a captureCallbacks variant that supplies an onPlan edit.
+    // Replace the spec's image to a distinct value so the pre-edit and
+    // post-edit blocks differ in a way we can assert on.
+    const editedImage = 'ghcr.io/example/edited-app:v2';
+    const editedSpec: DeploySpec = {
+      ...(spec as SingleServiceSpec),
+      image: editedImage,
+    } as DeploySpec;
+    const baseCapture = captureCallbacks();
+    const callbacks: DeployAppCallbacks = {
+      ...baseCapture.callbacks,
+      onPlan: async () => ({ kind: 'replace_spec', spec: editedSpec }),
+    };
+
+    const { deployApp } = await import('./deploy-app.js');
+    const clientManager = makeMockClientManager();
+    const walletProvider = makeMockWalletProvider();
+
+    await deployApp(spec, callbacks, {
+      clientManager: clientManager as unknown as Parameters<
+        typeof deployApp
+      >[2]['clientManager'],
+      walletProvider,
+    });
+
+    // Two `deployment_plan_rendered` events fired: the pre-edit block
+    // and a refreshed post-edit block.
+    const rendered = baseCapture.progress.filter(
+      (e) => e.kind === 'deployment_plan_rendered',
+    );
+    expect(rendered).toHaveLength(2);
+    const preEditBlock =
+      rendered[0]?.kind === 'deployment_plan_rendered'
+        ? rendered[0].block
+        : undefined;
+    const postEditBlock =
+      rendered[1]?.kind === 'deployment_plan_rendered'
+        ? rendered[1].block
+        : undefined;
+    expect(preEditBlock).toBeDefined();
+    expect(postEditBlock).toBeDefined();
+    // The post-edit block reflects the edited image; the pre-edit block
+    // reflects the original. (The original image is asserted indirectly
+    // — it isn't the edited one. The renderer embeds the image string
+    // verbatim into the block's `text`.)
+    expect(postEditBlock?.text).toContain(editedImage);
+    expect(preEditBlock?.text).not.toContain(editedImage);
+    // Both blocks must differ — minimum-floor assertion against a
+    // future regression where both events emit the same (stale) block.
+    expect(preEditBlock?.text).not.toBe(postEditBlock?.text);
+  });
+
+  it('r3237308914: classifier-returns-`needs_wait` skips `app_ready_confirmed` but still returns DeployResult', async () => {
+    // fred returns a PENDING lease with no running instances:
+    // classifyDeployResponse → `'needs_wait'`. The orchestrator must
+    // emit `deploy_response_classified: 'needs_wait'`, skip the
+    // `app_ready_confirmed` event (it would be a lie — the app isn't
+    // up yet), and still build/return the DeployResult so callers can
+    // observe `leaseState: 'LEASE_STATE_PENDING'` and poll
+    // wait-for-app-ready themselves. Full wait integration deferred to
+    // PR-3.x (ENG-185).
+    const spec = readFixture(
+      'skills',
+      'deploy-app',
+      '01-fast-path-active',
+      'input',
+      'spec.json',
+    ) as DeploySpec;
+    const readinessRaw = readFixture(
+      'skills',
+      'deploy-app',
+      '01-fast-path-active',
+      'input',
+      'readiness-response.json',
+    );
+    const metaHashResp = readFixture(
+      'skills',
+      'deploy-app',
+      '01-fast-path-active',
+      'input',
+      'meta-hash-response.json',
+    ) as { manifest_json: string; meta_hash_hex: string };
+
+    const fred = await import('@manifest-network/manifest-mcp-fred');
+    vi.mocked(fred.checkDeploymentReadiness).mockResolvedValue(
+      readinessRaw as unknown as Awaited<
+        ReturnType<typeof fred.checkDeploymentReadiness>
+      >,
+    );
+    vi.mocked(fred.buildManifestPreview).mockResolvedValue({
+      manifest_json: metaHashResp.manifest_json,
+      meta_hash_hex: metaHashResp.meta_hash_hex,
+    } as Awaited<ReturnType<typeof fred.buildManifestPreview>>);
+    // state 1 = PENDING (not terminal); empty connection. Classifier:
+    // not active, not terminal → `'needs_wait'`.
+    vi.mocked(fred.deployApp).mockResolvedValue({
+      lease_uuid: '33333333-3333-4333-8333-333333333333',
+      provider_uuid: '44444444-4444-4444-8444-444444444444',
+      provider_url: 'https://provider.testnet.manifest.network',
+      state: 1 as never,
+      connection: { instances: [] },
+    } as unknown as Awaited<ReturnType<typeof fred.deployApp>>);
+
+    const core = await import('@manifest-network/manifest-mcp-core');
+    vi.mocked(core.cosmosEstimateFee).mockResolvedValue({
+      module: 'billing',
+      subcommand: 'create-lease',
+      gasEstimate: '142000',
+      fee: { amount: [{ denom: 'umfx', amount: '2300' }], gas: '142000' },
+    } as Awaited<ReturnType<typeof core.cosmosEstimateFee>>);
+
+    const { callbacks, progress, completed } = captureCallbacks();
     const { deployApp } = await import('./deploy-app.js');
     const clientManager = makeMockClientManager();
     const walletProvider = makeMockWalletProvider();
@@ -315,8 +554,21 @@ describe('deployApp replay — 01-fast-path-active', () => {
       walletProvider,
     });
 
-    // F1 verdict: REJECTED preserved, not ACTIVE.
-    expect(result.leaseState).toBe('LEASE_STATE_REJECTED');
+    // Classifier outcome surfaced as `'needs_wait'`.
+    const classifiedEvents = progress.filter(
+      (e) => e.kind === 'deploy_response_classified',
+    );
+    expect(classifiedEvents).toHaveLength(1);
+    expect(
+      classifiedEvents[0]?.kind === 'deploy_response_classified' &&
+        classifiedEvents[0].outcome,
+    ).toBe('needs_wait');
+    // `app_ready_confirmed` skipped — the prior hardcoded-`'active'`
+    // path would have lied here.
+    expect(progress.some((e) => e.kind === 'app_ready_confirmed')).toBe(false);
+    // DeployResult still returned so caller observes pending state.
+    expect(completed).toHaveLength(1);
+    expect(result.leaseState).toBe('LEASE_STATE_PENDING');
   });
 });
 

@@ -58,6 +58,7 @@ import {
   deployApp as fredDeployApp,
 } from '@manifest-network/manifest-mcp-fred';
 import { classifyDeployError } from './internals/classify-deploy-error.js';
+import { classifyDeployResponse } from './internals/classify-deploy-response.js';
 import {
   extractRunningEndpoints,
   formatEndpointAsUrl,
@@ -239,6 +240,26 @@ export async function deployApp(
       summary = summarizeSpec(confirmedSpec);
       fees = await estimateFees(opts, confirmedSpec, preview.meta_hash_hex);
       plan = { summary, readiness, fees };
+      // Copilot review fix (PR #58 r3237308843): the pre-edit
+      // `deployment_plan_rendered` event already fired with the original
+      // spec's block. After applying the edit + recomputing preview /
+      // summary / fees / plan, re-render and emit a fresh block so
+      // consumers see the post-edit plan alongside the post-edit intent
+      // recap. Without this re-emit, the event stream is inconsistent
+      // with the user's confirmation surface and the persisted manifest.
+      const editedBlock = renderDeploymentPlan({
+        plan,
+        denomMap,
+        image: primaryImage(confirmedSpec),
+        size: requestedSize(confirmedSpec),
+        metaHash: preview.meta_hash_hex,
+        customDomain: customDomainOf(confirmedSpec),
+        customDomainService: customDomainServiceOf(confirmedSpec),
+      });
+      callbacks.onProgress?.({
+        kind: 'deployment_plan_rendered',
+        block: editedBlock,
+      });
     }
   }
 
@@ -308,14 +329,37 @@ export async function deployApp(
   }
 
   // --- Classify happy-path result ------------------------------------
+  // Copilot review fix (PR #58 r3237308914): use the canonical
+  // `classifyDeployResponse` rather than hardcoding `'active'`. The
+  // classifier inspects `state`, `connection`, and `lease_uuid` to bucket
+  // returns into `active | needs_wait | failed`. Architect's α-lock says
+  // fred's atomic deployApp returns post-success, but the chain can still
+  // emit a terminal state on the success-return path (e.g. REJECTED, when
+  // the lease was created but immediately invalidated). We harden by
+  // emitting the real classification, throwing on terminal `'failed'`,
+  // and skipping `app_ready_confirmed` for `'needs_wait'` (the lease
+  // exists but the app isn't up yet — caller can poll via wait-for-app-
+  // ready; full integration deferred to PR-3.x / ENG-185).
+  const classification = classifyDeployResponse(fredResult);
   callbacks.onProgress?.({
     kind: 'deploy_response_classified',
-    outcome: 'active',
+    outcome: classification.outcome,
   });
-  callbacks.onProgress?.({
-    kind: 'app_ready_confirmed',
-    leaseUuid: fredResult.lease_uuid,
-  });
+  if (classification.outcome === 'failed') {
+    throw new ManifestMCPError(
+      ManifestMCPErrorCode.TX_FAILED,
+      classification.errorSummary ??
+        'fred deployApp returned a non-active response classified as failed',
+    );
+  }
+  if (classification.outcome === 'active') {
+    callbacks.onProgress?.({
+      kind: 'app_ready_confirmed',
+      leaseUuid: fredResult.lease_uuid,
+    });
+  }
+  // `'needs_wait'`: continue to build DeployResult; caller observes
+  // pending state via result.leaseState and can poll wait-for-app-ready.
 
   // --- Persist manifest (best-effort; save-fail still emits success) -
   const persistedPath = await tryPersistManifest({
