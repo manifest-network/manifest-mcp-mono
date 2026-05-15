@@ -62,6 +62,7 @@ import { classifyDeployResponse } from './internals/classify-deploy-response.js'
 import {
   extractRunningEndpoints,
   formatEndpointAsUrl,
+  normalizeFredUrl,
 } from './internals/connection.js';
 import { findSkuUuid } from './internals/find-sku-uuid.js';
 import {
@@ -446,9 +447,19 @@ export async function deployApp(
   // multi-FQDN dedup (matches CJS pipeline behavior). fred's
   // `result.url` is a single derived URL; the full connection payload
   // exposes the canonical instance list.
+  //
+  // Copilot review fix (PR #58 r3249097136): when no FQDN can be
+  // extracted from `connection`, fall back to `fredResult.url` THROUGH
+  // the shared `normalizeFredUrl` helper. Raw values like
+  // `'app.example.com:443'` now surface as
+  // `'https://app.example.com:443/'`, matching the classifier's
+  // (`classify-deploy-response.ts`) and renderer's (`format-success.ts`)
+  // handling. Empty / scheme-less inputs are normalized consistently.
   const endpointUrls = extractRunningEndpoints(fredResult.connection).map(
     formatEndpointAsUrl,
   );
+  const fallbackUrl =
+    typeof fredResult.url === 'string' ? normalizeFredUrl(fredResult.url) : '';
   const result: DeployResult = {
     leaseUuid: fredResult.lease_uuid,
     providerUuid: fredResult.provider_uuid,
@@ -456,8 +467,8 @@ export async function deployApp(
     urls:
       endpointUrls.length > 0
         ? endpointUrls
-        : fredResult.url
-          ? [fredResult.url]
+        : fallbackUrl.length > 0
+          ? [fallbackUrl]
           : [],
     ...(fredResult.custom_domain
       ? { customDomain: fredResult.custom_domain }

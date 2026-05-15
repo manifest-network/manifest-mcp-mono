@@ -1,6 +1,7 @@
 import {
   extractRunningEndpoints,
   formatEndpointAsIngress,
+  normalizeFredUrl,
   type RunningEndpoint,
 } from './connection.js';
 import { decode as decodeLeaseState } from './lease-state.js';
@@ -119,15 +120,12 @@ export function formatSuccess(input: FormatSuccessInput): string {
     // Legacy fallback: when no FQDN can be extracted from `connection`
     // (e.g. providers reporting the older `connection.host` / `ports`
     // shape rather than `connection.instances`), fred may still surface
-    // the URL at the top level. Mirror `classify-deploy-response.ts:77-79`:
-    // pass through if already prefixed `http(s)://`, otherwise wrap as
-    // `https://${url}/`. The `(none …)` fallback stays for the
-    // truly-empty case.
+    // the URL at the top level. `normalizeFredUrl` is the shared helper
+    // (mirrored across `classify-deploy-response.ts`, this renderer,
+    // and `deploy-app.ts`'s `DeployResult.urls` fallback). The
+    // `(none …)` fallback stays for the truly-empty case.
     if (typeof dr.url === 'string' && dr.url.length > 0) {
-      const normalizedUrl = /^https?:\/\//i.test(dr.url)
-        ? dr.url
-        : `https://${dr.url}/`;
-      lines.push(`  Ingress:       ${normalizedUrl}`);
+      lines.push(`  Ingress:       ${normalizeFredUrl(dr.url)}`);
     } else {
       lines.push(
         '  Ingress:       (none — service is internal or no FQDN reported)',

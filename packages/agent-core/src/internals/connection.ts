@@ -107,6 +107,28 @@ export function formatEndpointAsUrl(ep: RunningEndpoint): string {
 }
 
 /**
+ * Normalize fred's top-level `url` field to a full `http(s)://...`
+ * string. Defensive fallback for the legacy `connection.host` / `ports`
+ * shape: fred surfaces a top-level `url` when no `connection.instances`
+ * FQDN is available, and the value may or may not carry a scheme.
+ *
+ * Mirrors the inline logic that lived in three call sites
+ * (`classify-deploy-response.ts:76-80`, `format-success.ts` ingress
+ * fallback, `deploy-app.ts` `DeployResult.urls` fallback) — factored
+ * here so all three share one source of truth.
+ *
+ * - Returns `''` for empty input (caller branches into a different
+ *   render path if needed).
+ * - Passes through unchanged if already prefixed `http://` or
+ *   `https://` (case-insensitive).
+ * - Otherwise wraps as `https://${raw}/`.
+ */
+export function normalizeFredUrl(raw: string): string {
+  if (raw.length === 0) return '';
+  return /^https?:\/\//i.test(raw) ? raw : `https://${raw}/`;
+}
+
+/**
  * True iff any instance anywhere in the connection payload has
  * `status === 'running'`, regardless of `fqdn`. Used by
  * `classify-deploy-response.ts` to recognize internal-only deploys

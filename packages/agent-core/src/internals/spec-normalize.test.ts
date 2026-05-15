@@ -272,4 +272,66 @@ describe('validateSpec', () => {
       } as StackSpec),
     ).toThrow(/must be a non-null object/);
   });
+
+  // Copilot review fix (PR #58 r3249097051): fred's image-mode rejects
+  // portless inputs with `port is required when using image`. Failing
+  // fast at the agent-core boundary produces a clearer error and
+  // avoids partial orchestration work (readiness check + plan render)
+  // before fred rejects mid-broadcast.
+  describe('single-service port requirement', () => {
+    it('rejects single-service spec without port (port absent)', () => {
+      expect(() =>
+        validateSpec({ image: 'alpine' } as unknown as DeploySpec),
+      ).toThrow(/single-service specs require at least one port/);
+    });
+
+    it('rejects single-service spec with explicit port: undefined', () => {
+      expect(() =>
+        validateSpec({
+          image: 'alpine',
+          port: undefined,
+        } as unknown as DeploySpec),
+      ).toThrow(/single-service specs require at least one port/);
+    });
+
+    it('rejects single-service spec with empty port array', () => {
+      expect(() =>
+        validateSpec({ image: 'alpine', port: [] } as unknown as DeploySpec),
+      ).toThrow(/single-service specs require at least one port/);
+    });
+
+    it('rejects single-service spec with non-number port', () => {
+      expect(() =>
+        validateSpec({
+          image: 'alpine',
+          port: 'eighty' as unknown as number,
+        } as unknown as DeploySpec),
+      ).toThrow(/single-service specs require at least one port/);
+    });
+
+    it('error message hints at stack-spec escape hatch for internal-only services', () => {
+      expect(() =>
+        validateSpec({ image: 'alpine' } as unknown as DeploySpec),
+      ).toThrow(/For internal-only services, use a stack spec/);
+    });
+
+    it('accepts single-service spec with port: number', () => {
+      expect(() => validateSpec({ image: 'alpine', port: 80 })).not.toThrow();
+    });
+
+    it('accepts single-service spec with port: non-empty number array', () => {
+      expect(() =>
+        validateSpec({ image: 'alpine', port: [80, 443] }),
+      ).not.toThrow();
+    });
+
+    it('accepts stack spec WITHOUT any port (internal-only escape hatch)', () => {
+      // Stack services have ports declared per-service and the
+      // single-service port check does NOT apply. This is the
+      // documented escape hatch in the error message.
+      expect(() =>
+        validateSpec({ services: { internal: { image: 'alpine' } } }),
+      ).not.toThrow();
+    });
+  });
 });

@@ -667,6 +667,210 @@ describe('deployApp replay — Copilot review fixes (PR #58 unresolved comments)
     expect(vi.mocked(fred.deployApp)).not.toHaveBeenCalled();
     expect(vi.mocked(core.cosmosEstimateFee)).not.toHaveBeenCalled();
   });
+
+  it('r3249097051: portless single-service spec rejected before any chain I/O', async () => {
+    // fred's image-mode rejects portless inputs (`port is required
+    // when using image` at packages/fred/src/tools/deployApp.ts:202 +
+    // buildManifestPreview.ts:181). The orchestrator's validateSpec
+    // gate must reject upstream so the user gets an actionable
+    // INVALID_CONFIG with a stack-spec hint, not a fred-side mid-
+    // orchestration failure.
+    const fred = await import('@manifest-network/manifest-mcp-fred');
+    const core = await import('@manifest-network/manifest-mcp-core');
+
+    const portlessSpec = {
+      image: 'docker.io/library/alpine:latest',
+      // No port intentionally.
+    } as unknown as DeploySpec;
+
+    const { callbacks } = captureCallbacks();
+    const { deployApp } = await import('./deploy-app.js');
+    const clientManager = makeMockClientManager();
+    const walletProvider = makeMockWalletProvider();
+
+    let caughtErr: unknown = null;
+    try {
+      await deployApp(portlessSpec, callbacks, {
+        clientManager: clientManager as unknown as Parameters<
+          typeof deployApp
+        >[2]['clientManager'],
+        walletProvider,
+      });
+    } catch (err) {
+      caughtErr = err;
+    }
+
+    expect(caughtErr).toBeInstanceOf(Error);
+    expect((caughtErr as Error).message).toContain(
+      'single-service specs require at least one port',
+    );
+    // Stack-spec escape hatch must be advertised in the message.
+    expect((caughtErr as Error).message).toContain(
+      'For internal-only services, use a stack spec',
+    );
+    // No chain I/O performed (validateSpec is the very first step of
+    // the orchestrator).
+    expect(vi.mocked(fred.checkDeploymentReadiness)).not.toHaveBeenCalled();
+    expect(vi.mocked(fred.buildManifestPreview)).not.toHaveBeenCalled();
+    expect(vi.mocked(fred.deployApp)).not.toHaveBeenCalled();
+    expect(vi.mocked(core.cosmosEstimateFee)).not.toHaveBeenCalled();
+  });
+
+  it('r3249097136: DeployResult.urls fallback normalizes scheme-less fredResult.url', async () => {
+    // fred's legacy top-level `url` may arrive scheme-less (e.g.
+    // `app.example.com:443` from the older `connection.host` / `ports`
+    // shape). The classifier + format-success renderer already
+    // normalize via `normalizeFredUrl`; the success-path DeployResult
+    // builder must too, otherwise consumers expecting URL strings get
+    // a non-URL.
+    const spec = readFixture(
+      'skills',
+      'deploy-app',
+      '01-fast-path-active',
+      'input',
+      'spec.json',
+    ) as DeploySpec;
+    const readinessRaw = readFixture(
+      'skills',
+      'deploy-app',
+      '01-fast-path-active',
+      'input',
+      'readiness-response.json',
+    );
+    const metaHashResp = readFixture(
+      'skills',
+      'deploy-app',
+      '01-fast-path-active',
+      'input',
+      'meta-hash-response.json',
+    ) as { manifest_json: string; meta_hash_hex: string };
+
+    const fred = await import('@manifest-network/manifest-mcp-fred');
+    vi.mocked(fred.checkDeploymentReadiness).mockResolvedValue(
+      readinessRaw as unknown as Awaited<
+        ReturnType<typeof fred.checkDeploymentReadiness>
+      >,
+    );
+    vi.mocked(fred.buildManifestPreview).mockResolvedValue({
+      manifest_json: metaHashResp.manifest_json,
+      meta_hash_hex: metaHashResp.meta_hash_hex,
+    } as Awaited<ReturnType<typeof fred.buildManifestPreview>>);
+    // Active state but `connection.instances` empty so the URL
+    // fallback fires; URL itself is scheme-less.
+    vi.mocked(fred.deployApp).mockResolvedValue({
+      lease_uuid: '55555555-5555-4555-8555-555555555555',
+      provider_uuid: '66666666-6666-4666-8666-666666666666',
+      provider_url: 'https://provider.testnet.manifest.network',
+      state: 'LEASE_STATE_ACTIVE' as never,
+      // Forces the fallback path: `extractRunningEndpoints` returns []
+      // because the connection has no `instances` array, but
+      // `hasRunningInstances` returns true via the `services` map
+      // (kept the classifier on the 'active' branch).
+      connection: {
+        services: {
+          web: {
+            instances: [{ status: 'running' }],
+          },
+        },
+      },
+      url: 'app.example.com:443',
+    } as unknown as Awaited<ReturnType<typeof fred.deployApp>>);
+
+    const core = await import('@manifest-network/manifest-mcp-core');
+    vi.mocked(core.cosmosEstimateFee).mockResolvedValue({
+      module: 'billing',
+      subcommand: 'create-lease',
+      gasEstimate: '142000',
+      fee: { amount: [{ denom: 'umfx', amount: '2300' }], gas: '142000' },
+    } as Awaited<ReturnType<typeof core.cosmosEstimateFee>>);
+
+    const { callbacks } = captureCallbacks();
+    const { deployApp } = await import('./deploy-app.js');
+    const clientManager = makeMockClientManager();
+    const walletProvider = makeMockWalletProvider();
+
+    const result = await deployApp(spec, callbacks, {
+      clientManager: clientManager as unknown as Parameters<
+        typeof deployApp
+      >[2]['clientManager'],
+      walletProvider,
+    });
+
+    // Scheme-less url → normalized to https://...:443/
+    expect(result.urls).toEqual(['https://app.example.com:443/']);
+  });
+
+  it('r3249097136: DeployResult.urls fallback passes through fredResult.url already with scheme', async () => {
+    const spec = readFixture(
+      'skills',
+      'deploy-app',
+      '01-fast-path-active',
+      'input',
+      'spec.json',
+    ) as DeploySpec;
+    const readinessRaw = readFixture(
+      'skills',
+      'deploy-app',
+      '01-fast-path-active',
+      'input',
+      'readiness-response.json',
+    );
+    const metaHashResp = readFixture(
+      'skills',
+      'deploy-app',
+      '01-fast-path-active',
+      'input',
+      'meta-hash-response.json',
+    ) as { manifest_json: string; meta_hash_hex: string };
+
+    const fred = await import('@manifest-network/manifest-mcp-fred');
+    vi.mocked(fred.checkDeploymentReadiness).mockResolvedValue(
+      readinessRaw as unknown as Awaited<
+        ReturnType<typeof fred.checkDeploymentReadiness>
+      >,
+    );
+    vi.mocked(fred.buildManifestPreview).mockResolvedValue({
+      manifest_json: metaHashResp.manifest_json,
+      meta_hash_hex: metaHashResp.meta_hash_hex,
+    } as Awaited<ReturnType<typeof fred.buildManifestPreview>>);
+    vi.mocked(fred.deployApp).mockResolvedValue({
+      lease_uuid: '77777777-7777-4777-8777-777777777777',
+      provider_uuid: '88888888-8888-4888-8888-888888888888',
+      provider_url: 'https://provider.testnet.manifest.network',
+      state: 'LEASE_STATE_ACTIVE' as never,
+      connection: {
+        services: {
+          web: {
+            instances: [{ status: 'running' }],
+          },
+        },
+      },
+      url: 'https://app.example.com/',
+    } as unknown as Awaited<ReturnType<typeof fred.deployApp>>);
+
+    const core = await import('@manifest-network/manifest-mcp-core');
+    vi.mocked(core.cosmosEstimateFee).mockResolvedValue({
+      module: 'billing',
+      subcommand: 'create-lease',
+      gasEstimate: '142000',
+      fee: { amount: [{ denom: 'umfx', amount: '2300' }], gas: '142000' },
+    } as Awaited<ReturnType<typeof core.cosmosEstimateFee>>);
+
+    const { callbacks } = captureCallbacks();
+    const { deployApp } = await import('./deploy-app.js');
+    const clientManager = makeMockClientManager();
+    const walletProvider = makeMockWalletProvider();
+
+    const result = await deployApp(spec, callbacks, {
+      clientManager: clientManager as unknown as Parameters<
+        typeof deployApp
+      >[2]['clientManager'],
+      walletProvider,
+    });
+
+    // Already-scheme'd url passes through unchanged.
+    expect(result.urls).toEqual(['https://app.example.com/']);
+  });
 });
 
 describe('deployApp replay — 03-partial-success-set-domain-failed', () => {

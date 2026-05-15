@@ -2,6 +2,7 @@ import {
   extractRunningEndpoints,
   formatEndpointAsUrl,
   hasRunningInstances,
+  normalizeFredUrl,
 } from './connection.js';
 import { decode as decodeLeaseState, isTerminal } from './lease-state.js';
 
@@ -74,10 +75,8 @@ export function classifyDeployResponse(
     formatEndpointAsUrl,
   );
   if (typeof response.url === 'string' && response.url.length > 0) {
-    const u = /^https?:\/\//i.test(response.url)
-      ? response.url
-      : `https://${response.url}/`;
-    if (!urls.includes(u)) urls.unshift(u);
+    const u = normalizeFredUrl(response.url);
+    if (u.length > 0 && !urls.includes(u)) urls.unshift(u);
   }
 
   const leaseUuid =

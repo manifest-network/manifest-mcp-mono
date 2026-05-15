@@ -228,5 +228,33 @@ export function validateSpec(spec: DeploySpec | null | undefined): void {
         );
       }
     }
+  } else {
+    // Single-service spec port requirement.
+    //
+    // Copilot review fix (PR #58 r3249097051): fred's image-mode rejects
+    // portless inputs with `port is required when using image`
+    // (`packages/fred/src/tools/deployApp.ts:202` +
+    // `packages/fred/src/tools/buildManifestPreview.ts:181`). Without
+    // an agent-core boundary check the orchestrator silently passed
+    // `port: undefined` through `buildManifestPreviewInput` /
+    // `buildFredDeployInput`, surfacing fred's error mid-orchestration
+    // (after readiness check + plan render). Failing fast at validate
+    // time produces a clearer message and avoids partial work.
+    //
+    // The escape hatch for genuinely internal-only services is the
+    // stack spec — service-level `ports` is optional, so a stack with
+    // `{ services: { mysvc: { image, env } } }` deploys without ports.
+    const port = (spec as Partial<SingleServiceSpec>).port;
+    const hasValidPort =
+      typeof port === 'number' ||
+      (Array.isArray(port) &&
+        port.length > 0 &&
+        port.every((p) => typeof p === 'number'));
+    if (!hasValidPort) {
+      throw new TypeError(
+        'validateSpec: single-service specs require at least one port (number or non-empty number[]); got ' +
+          `port=${JSON.stringify(port)}. For internal-only services, use a stack spec instead.`,
+      );
+    }
   }
 }
