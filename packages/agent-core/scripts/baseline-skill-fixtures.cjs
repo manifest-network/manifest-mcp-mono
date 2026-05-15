@@ -323,9 +323,18 @@ function buildHappyMcpScript(
         module: '@manifest-network/manifest-mcp-core',
         function: 'cosmosEstimateFee',
         expected_args: {
-          module: 'liftedinit.billing',
+          // Copilot review fix (PR #58 r3249294955): the orchestrator
+          // (`deploy-app.ts`'s `estimateFees`) calls cosmosEstimateFee
+          // with the short module name `'billing'` and a positional
+          // string array `['--meta-hash', metaHashHex, itemArg]` —
+          // verified against `deploy-app.ts` + `cosmosEstimateFee`'s
+          // signature. The prior fixture recorded the proto path
+          // `'liftedinit.billing'` and `args: {}`; both wrong.
+          // `'sku-uuid-fixture'` matches the test mock's `findSkuUuid`
+          // return value (`packages/agent-core/src/deploy-app.test.ts`).
+          module: 'billing',
           subcommand: 'create-lease',
-          args: {},
+          args: ['--meta-hash', metaResp.meta_hash_hex, 'sku-uuid-fixture:1'],
         },
         response: feeResp.fee,
       },
@@ -366,22 +375,23 @@ function buildPartialMcpScript(
         module: '@manifest-network/manifest-mcp-core',
         function: 'cosmosEstimateFee',
         expected_args: {
-          module: 'liftedinit.billing',
+          // r3249294955 fix (see buildHappyMcpScript above for full
+          // rationale): correct module short-name + positional args.
+          module: 'billing',
           subcommand: 'create-lease',
-          args: {},
+          args: ['--meta-hash', metaResp.meta_hash_hex, 'sku-uuid-fixture:1'],
         },
         response: feeResp.create_lease_fee,
       },
-      {
-        module: '@manifest-network/manifest-mcp-core',
-        function: 'cosmosEstimateFee',
-        expected_args: {
-          module: 'liftedinit.billing',
-          subcommand: 'set-item-custom-domain',
-          args: {},
-        },
-        response: feeResp.set_domain_fee,
-      },
+      // r3249294955 (continued): the orchestrator does NOT invoke
+      // `cosmosEstimateFee` for `set-item-custom-domain` today — it
+      // emits the `{ notEstimated: true, reason: 'set-domain fee
+      // skipped' }` sentinel per the deferred placeholder (tracked as
+      // ENG-185 scope item #3). The prior set-domain entry recorded a
+      // call that never fires and would create a hazard if a future
+      // replay test asserted the call happens. Removed per option (a)
+      // of the team-lead's brief: fixture reflects current behavior;
+      // re-add when ENG-185 #3's real set-domain estimate lands.
       {
         module: '@manifest-network/manifest-mcp-fred',
         function: 'deployApp',

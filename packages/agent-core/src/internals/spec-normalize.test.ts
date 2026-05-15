@@ -333,5 +333,92 @@ describe('validateSpec', () => {
         validateSpec({ services: { internal: { image: 'alpine' } } }),
       ).not.toThrow();
     });
+
+    // Copilot review fix (PR #58 r3249294877): port predicate must
+    // reject non-finite, non-integer, and out-of-range numbers — not
+    // just non-`number` typeof bypasses. TCP port range is 1-65535.
+    describe('port-number validity (r3249294877)', () => {
+      it('rejects port: 0 (TCP reserved, fred catches with !input.port)', () => {
+        expect(() =>
+          validateSpec({
+            image: 'alpine',
+            port: 0,
+          } as unknown as DeploySpec),
+        ).toThrow(/finite positive integer in the TCP range/);
+      });
+
+      it('rejects port: -1', () => {
+        expect(() =>
+          validateSpec({
+            image: 'alpine',
+            port: -1,
+          } as unknown as DeploySpec),
+        ).toThrow(/finite positive integer in the TCP range/);
+      });
+
+      it('rejects port: NaN', () => {
+        expect(() =>
+          validateSpec({
+            image: 'alpine',
+            port: Number.NaN,
+          } as unknown as DeploySpec),
+        ).toThrow(/finite positive integer in the TCP range/);
+      });
+
+      it('rejects port: Infinity', () => {
+        expect(() =>
+          validateSpec({
+            image: 'alpine',
+            port: Number.POSITIVE_INFINITY,
+          } as unknown as DeploySpec),
+        ).toThrow(/finite positive integer in the TCP range/);
+      });
+
+      it('rejects port: 1.5 (non-integer)', () => {
+        expect(() =>
+          validateSpec({
+            image: 'alpine',
+            port: 1.5,
+          } as unknown as DeploySpec),
+        ).toThrow(/finite positive integer in the TCP range/);
+      });
+
+      it('rejects port: 65536 (above TCP range)', () => {
+        expect(() =>
+          validateSpec({
+            image: 'alpine',
+            port: 65536,
+          } as unknown as DeploySpec),
+        ).toThrow(/finite positive integer in the TCP range/);
+      });
+
+      it('rejects port array with NaN entry (mixed validity)', () => {
+        expect(() =>
+          validateSpec({
+            image: 'alpine',
+            port: [80, Number.NaN],
+          } as unknown as DeploySpec),
+        ).toThrow(/finite positive integer in the TCP range/);
+      });
+
+      it('rejects port array with 0 entry (mixed validity)', () => {
+        expect(() =>
+          validateSpec({
+            image: 'alpine',
+            port: [80, 0],
+          } as unknown as DeploySpec),
+        ).toThrow(/finite positive integer in the TCP range/);
+      });
+
+      it('accepts port: 1 (lower boundary)', () => {
+        expect(() => validateSpec({ image: 'alpine', port: 1 })).not.toThrow();
+      });
+
+      it('accepts port: 65535 (upper boundary)', () => {
+        expect(() =>
+          validateSpec({ image: 'alpine', port: 65535 }),
+        ).not.toThrow();
+      });
+    });
   });
 });

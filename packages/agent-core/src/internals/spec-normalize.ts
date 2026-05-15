@@ -244,17 +244,37 @@ export function validateSpec(spec: DeploySpec | null | undefined): void {
     // The escape hatch for genuinely internal-only services is the
     // stack spec — service-level `ports` is optional, so a stack with
     // `{ services: { mysvc: { image, env } } }` deploys without ports.
+    //
+    // Copilot review fix (PR #58 r3249294877): tighten the predicate to
+    // a finite positive integer in the TCP port range. The prior
+    // `typeof p === 'number'` check accepted `0`, `NaN`, `Infinity`,
+    // negative numbers, non-integers, and out-of-range ports —
+    // partially defeating the fail-fast intent. Fred catches `port: 0`
+    // via `!input.port`, but the other shapes either flow through to a
+    // less helpful error or get coerced silently. The shared predicate
+    // `isValidPortNumber` (below) is the single source of truth.
     const port = (spec as Partial<SingleServiceSpec>).port;
     const hasValidPort =
-      typeof port === 'number' ||
-      (Array.isArray(port) &&
-        port.length > 0 &&
-        port.every((p) => typeof p === 'number'));
+      isValidPortNumber(port) ||
+      (Array.isArray(port) && port.length > 0 && port.every(isValidPortNumber));
     if (!hasValidPort) {
       throw new TypeError(
-        'validateSpec: single-service specs require at least one port (number or non-empty number[]); got ' +
+        'validateSpec: single-service specs require at least one port (port must be a finite positive integer in the TCP range (1-65535), or a non-empty array of such); got ' +
           `port=${JSON.stringify(port)}. For internal-only services, use a stack spec instead.`,
       );
     }
   }
+}
+
+/**
+ * Predicate: `p` is a finite positive integer in the TCP port range
+ * (1-65535). Used by `validateSpec` to gate single-service `port`
+ * shapes against the broad `typeof === 'number'` bypass.
+ *
+ * Co-located in this module because it's exclusive to the port-
+ * validation boundary; if a future caller needs the same check,
+ * promote it to a shared utility then.
+ */
+function isValidPortNumber(p: unknown): p is number {
+  return typeof p === 'number' && Number.isInteger(p) && p > 0 && p <= 65535;
 }

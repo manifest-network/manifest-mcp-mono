@@ -69,9 +69,13 @@
       "module": "@manifest-network/manifest-mcp-core",
       "function": "cosmosEstimateFee",
       "expected_args": {
-        "module": "liftedinit.billing",
+        "module": "billing",
         "subcommand": "create-lease",
-        "args": {}
+        "args": [
+          "--meta-hash",
+          "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+          "sku-uuid-fixture:1"
+        ]
       },
       "response": {
         "amount": [
@@ -81,24 +85,6 @@
           }
         ],
         "gas": "142000"
-      }
-    },
-    {
-      "module": "@manifest-network/manifest-mcp-core",
-      "function": "cosmosEstimateFee",
-      "expected_args": {
-        "module": "liftedinit.billing",
-        "subcommand": "set-item-custom-domain",
-        "args": {}
-      },
-      "response": {
-        "amount": [
-          {
-            "denom": "umfx",
-            "amount": "1100"
-          }
-        ],
-        "gas": "60000"
       }
     },
     {
