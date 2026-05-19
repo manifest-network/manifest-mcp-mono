@@ -6,18 +6,13 @@ import type {
 import { stripDenylist } from './secret-denylist.js';
 
 /**
- * In-process verify-and-recover driver. Port of
- * `manifest-agent-plugin/scripts/verify-recover.cjs` (the generic driver
- * ENG-123 shipped on the plugin side). The CJS shells out to a named
- * verifier script via `spawnSync`; the TS port replaces that with an
- * inline async verifier function (L7: agent-core MUST NOT spawn
- * subprocesses).
+ * In-process verify-and-recover driver. Uses an inline async verifier
+ * function (L7: agent-core MUST NOT spawn subprocesses).
  *
- * Drops (subprocess-only concerns, see ENG-129 ticket §"What ENG-123
- * actually shipped"):
- *   - `spec.verifier.script` path sanitization (no path; verifier is a function)
- *   - `spec.verifier.stdin_source` indirection (verifier receives typed context)
- *   - `spec.verifier.args` argv interpolation (verifier closes over context)
+ * Out of scope (subprocess-only concerns):
+ *   - verifier-script path sanitization (no path; verifier is a function)
+ *   - stdin-source indirection (verifier receives typed context)
+ *   - argv interpolation (verifier closes over context)
  *   - `{{var}}` template interpolation on user_message (recovery options
  *     carry their own typed-diagnostic closures via `buildRecoveryOptions`)
  *   - `timeout` / `maxBuffer` operational caps (no subprocess; an optional

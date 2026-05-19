@@ -9,9 +9,7 @@ import { decode as decodeLeaseState } from './lease-state.js';
 /**
  * Render the user-facing "Deployed." block for a successful `deployApp` run.
  *
- * Port of `manifest-agent-plugin/scripts/format-success.cjs` (plugin git-hash
- * `3a33e80`). The CJS reads `lease-uuid` as a CLI arg and `deploy_response`
- * via stdin; the TS port takes both via the typed `FormatSuccessInput`.
+ * Takes `lease-uuid` and `deploy_response` via the typed `FormatSuccessInput`.
  *
  * Output is plain text suitable for direct chat display. Designed to be
  * printed verbatim by `deployApp` (and downstream renderers) — no

@@ -2,7 +2,6 @@
  * Classify the MCP error envelope thrown by `mcp__manifest-fred__deploy_app`
  * when the call fails AFTER the create-lease tx already confirmed.
  *
- * 1:1 port of `manifest-agent-plugin/scripts/classify-deploy-error.cjs`.
  * Companion to `classify-deploy-response.ts`: that file handles the RETURN
  * path; this file handles the THROW path. The split exists because
  * `manifest-mcp-fred` 0.8.0 `deployApp` throws `ManifestMCPError` with the

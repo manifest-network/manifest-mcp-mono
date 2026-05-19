@@ -4,13 +4,11 @@
  * `1800000 factory/.../upwr` → `1.8 PWR`, `0.057738 PWR` built from
  * `57738 factory/.../upwr`, etc.
  *
- * 1:1 port of `manifest-agent-plugin/scripts/humanize-denom.cjs`. The denom
- * → symbol mapping is sourced from the chain registry data in
- * `$MANIFEST_PLUGIN_DATA/chains/<chain>.json` (the `feeTokens[]` array,
- * which carries `{ denom, symbol, ... }` for every token the chain
- * accepts as gas). Pass the chain-data file path via the caller's
- * surface (plugin, Barney) and forward to whichever helper renders
- * balances; this module just reads, parses, and looks up.
+ * The denom → symbol mapping is sourced from a chain registry JSON file
+ * (`{ feeTokens: [{ denom, symbol, ... }] }` — every token the chain
+ * accepts as gas). Callers pass the chain-data file path and forward the
+ * resulting `DenomMap` to whichever helper renders balances; this module
+ * just reads, parses, and looks up.
  *
  * Conversion factor: cosmos convention is 6 decimals for `u`-prefixed
  * tokens (umfx, upwr — including factory-wrapped variants). Anything else

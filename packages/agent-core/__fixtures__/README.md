@@ -5,16 +5,6 @@ extraction work. The fixtures here are committed artifacts — TS code in
 `packages/agent-core/src/**` must produce byte-identical output against
 the same inputs for the per-skill replay tests to pass.
 
-## Provenance
-
-Fixtures are captured by running the plugin's existing CJS pipeline
-(`/home/fmorency/dev/manifest-agent-plugin/scripts/*.cjs`) on the
-canonical inputs registered in `scenarios.json`, then recording the
-boundary outputs of each pipeline step.
-
-**Plugin git hash:** `3a33e80` (`main`, post-ENG-123 + ENG-124).
-Update this when re-capturing against a moved plugin tree.
-
 ## Layout
 
 ```
@@ -38,12 +28,12 @@ __fixtures__/
         │   │   ├── meta-hash-response.json  # mocked build_manifest_preview
         │   │   └── deploy-response.json     # mocked deploy_app success
         │   ├── mcp-script.json              # ordered MCP call/response transcript
-        │   ├── expected-intent-recap.txt    # render-intent-recap.cjs output
-        │   ├── expected-plan.txt            # render-deployment-plan.cjs output (BYTE-BASELINE)
-        │   ├── expected-readiness.json      # evaluate-readiness.cjs output
+        │   ├── expected-intent-recap.txt    # render-intent-recap output
+        │   ├── expected-plan.txt            # render-deployment-plan output (BYTE-BASELINE)
+        │   ├── expected-readiness.json      # evaluate-readiness output
         │   ├── expected-classify-response.json
-        │   ├── expected-success.txt         # format-success.cjs output
-        │   └── expected-saved-manifest.json # save-manifest.cjs file content (DEFERRED — not yet baselined; tracked for PR-3.x)
+        │   ├── expected-success.txt         # format-success output
+        │   └── expected-saved-manifest.json # save-manifest file content (deferred — see scope note)
         └── 03-partial-success-set-domain-failed/  # deploy-partial-success
             ├── input/                            # canonical inputs
             │   ├── spec.json                     # DeploySpec WITH customDomain
@@ -54,8 +44,8 @@ __fixtures__/
             ├── mcp-script.json
             ├── expected-intent-recap.txt
             ├── expected-plan.txt                 # dual-fee variant
-            ├── expected-readiness.json           # evaluate-readiness.cjs output
-            └── expected-classify-error.json      # classify-deploy-error.cjs output
+            ├── expected-readiness.json           # evaluate-readiness output
+            └── expected-classify-error.json      # classify-deploy-error output
 ```
 
 ## Initial scope (parent Q3 refinement, 2026-05-12)
@@ -66,43 +56,25 @@ front. The other six scenarios (`02-custom-domain-success`,
 `04-readiness-block`, `05-stack-spec`, `manage-domain/*`,
 `close-lease/*`, `troubleshoot/*`) land on-demand or before PR 4 closes.
 
-## Workflow
+## CI
 
-### Capture / re-capture
-
-```bash
-cd /home/fmorency/dev/manifest-mcp-mono.eng-129
-source ~/.nvm/nvm.sh && nvm use 22
-
-# Default plugin path is /home/fmorency/dev/manifest-agent-plugin.
-# Override with $MANIFEST_AGENT_PLUGIN_ROOT if needed.
-node packages/agent-core/scripts/baseline-skill-fixtures.cjs
-```
-
-Re-runs are idempotent: the script writes new outputs into a tmpdir,
-diffs against the committed fixtures, and exits 0 if identical, 1 if
-diffs are detected. Reviewers decide whether to accept (commit) or
-fix the regression.
-
-### CI
-
-CI does NOT invoke the baseline script. Fixtures are committed
-artifacts. The replay tests in
-`packages/agent-core/src/*.test.ts` and
+CI does NOT regenerate fixtures. Fixtures are committed artifacts. The
+replay tests in `packages/agent-core/src/*.test.ts` and
 `packages/agent-core/src/internals/*.test.ts` read fixtures from disk
 and compare against TS runtime output.
 
 ## Editing fixtures
 
-Do not hand-edit `expected-*` files. They are byte-baselines; if the
-plugin's expected output changes, re-run the capture script and commit
-the diff with an explanation. Hand-edits introduce parity drift that
-the test suite cannot detect.
+Do not hand-edit `expected-*` files. They are byte-baselines. If the
+expected output changes (because the TS implementation legitimately
+changed), update the baseline together with the code change and commit
+the diff with an explanation. Hand-edits without a corresponding code
+change introduce parity drift that the test suite cannot detect.
 
 `input/*` files are designer-curated and CAN be edited (carefully) to
 extend scenario coverage. Adding a new scenario:
 1. Add a new directory under `skills/<skill>/<NN>-<name>/input/`.
 2. Author the input files (canonical inputs the TS function would receive).
 3. Register the scenario in `scenarios.json`.
-4. Re-run the baseline script; commit the resulting `expected-*` files
-   alongside the inputs.
+4. Capture the resulting `expected-*` outputs and commit them alongside
+   the inputs.

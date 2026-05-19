@@ -30,11 +30,10 @@ export interface FeeEstimate {
 //
 // Promoted from `internals/humanize-denom.ts` for public consumption by
 // PR-3 `deployApp` / PR-4 `manageDomain` / `closeLease` /
-// `troubleshootDeployment`. Callers (plugin / Barney / tests) construct
-// the map via `loadChainDenomMap(chainDataFile)` or stub it directly for
-// tests; agent-core's public functions accept it as injectable input
-// alongside per-call options (per Path-Bii "I/O at orchestrator boundary"
-// principle).
+// `troubleshootDeployment`. Callers construct the map via
+// `loadChainDenomMap(chainDataFile)` or stub it directly for tests;
+// agent-core's public functions accept it as injectable input alongside
+// per-call options (per Path-Bii "I/O at orchestrator boundary" principle).
 
 export interface DenomLookup {
   symbol: string;
@@ -78,7 +77,7 @@ export interface DenomMap {
  * functions. Build once per caller-session; spread into per-call options.
  */
 export interface AgentCoreRuntime {
-  /** Cosmos chain client (signing + querying). Plugin/Barney bind their own wallet at construction. */
+  /** Cosmos chain client (signing + querying). Callers bind their own wallet at construction. */
   clientManager: CosmosClientManager;
   /** Optional fetch implementation; defaults to `globalThis.fetch` inside fred's deployApp. */
   fetchFn?: typeof globalThis.fetch;
@@ -98,8 +97,8 @@ export interface DeployAppOptions extends AgentCoreRuntime {
    * constructs the auth-token callbacks internally from this wallet
    * (using fred's `createAuthToken` + `createSignMessage` +
    * `createLeaseDataSignMessage` primitives + `AuthTimestampTracker`
-   * for monotonic replay-safe timestamps). Keeps the plugin/Barney
-   * surface clean (no ADR-036 plumbing required from callers).
+   * for monotonic replay-safe timestamps). Keeps the host-surface API
+   * clean (no ADR-036 plumbing required from callers).
    *
    * The `signArbitrary` return shape must match the cosmjs convention:
    *
@@ -113,7 +112,7 @@ export interface DeployAppOptions extends AgentCoreRuntime {
    * guard today.
    */
   walletProvider: WalletProvider;
-  /** Path to `$MANIFEST_PLUGIN_DATA/chains/<chain>.json` for denom humanization. */
+  /** Path to a chain-registry JSON file (`{ feeTokens: [...] }`) for denom humanization. */
   chainDataFile?: string;
   /** Pre-loaded `DenomMap` (wins over `chainDataFile` when both supplied). */
   denomMap?: DenomMap;

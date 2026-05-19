@@ -1,5 +1,5 @@
 {
-  "$schema": "Synthetic chain registry shape for humanize-denom.cjs. Real plugin uses `fetch-chain-registry.cjs` against cosmos/chain-registry; this committed copy keeps fixture capture self-contained and deterministic.",
+  "$schema": "Synthetic chain registry shape for humanize-denom. Real-world callers source this from cosmos/chain-registry; this committed copy keeps fixtures self-contained and deterministic.",
   "chain_name": "manifesttestnet",
   "chain_id": "manifest-ledger-testnet-1",
   "feeTokens": [

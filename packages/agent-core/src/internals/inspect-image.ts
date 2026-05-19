@@ -6,15 +6,11 @@ import { createGuardedFetch } from './guarded-fetch.js';
  * entrypoint / user / workingDir), healthcheck, labels, volumes, and a
  * heuristic `suggestedTmpfs` list for known-good Fred image families.
  *
- * 1:1 port of `manifest-agent-plugin/scripts/inspect-image.cjs`. The CJS
- * shells the request chain through `_https-json.cjs`'s `https.request` +
- * `RequestFilteringHttpsAgent` (a Node-only SSRF-blocking agent). The TS
- * port replaces that with `opts.fetch`, defaulting to `createGuardedFetch()`
+ * HTTPS requests go through `opts.fetch`, defaulting to `createGuardedFetch()`
  * (DIY undici Dispatcher + RFC-cited block ranges + IPv4-mapped IPv6
  * normalization — see `guarded-fetch.ts` for the design).
  *
- * **Fail-soft contract preserved from CJS:** returns `null` (the TS
- * analog of the CJS's stdout `{}`) on every non-fatal failure mode:
+ * **Fail-soft contract:** returns `null` on every non-fatal failure mode:
  *   - 401 / 403 (private registry / auth required)
  *   - 429 (Docker Hub rate-limit)
  *   - OCI grammar violation in the `imageRef`
@@ -22,7 +18,7 @@ import { createGuardedFetch } from './guarded-fetch.js';
  *   - Request timeout (10s)
  *   - Unparseable manifest / blob JSON
  *   - SSRF block (default fetch refuses RFC 1918 / loopback / etc.)
- * Callers treat `null` as "no info, ask the user" verbatim from the CJS.
+ * Callers treat `null` as "no info, ask the user".
  * Diagnostics flow through `opts.logger` instead of stderr.
  *
  * ## Security — SSRF (production callers MUST read)
@@ -63,15 +59,13 @@ const OCI_DIGEST = /^sha256:[0-9a-f]{64}$/;
 // or buggy registry; abort rather than risk OOM.
 const MAX_BODY_BYTES = 10 * 1024 * 1024;
 
-// Request timeout — 10s. Tighter than `_https-json.cjs`'s 15s default;
-// `inspect-image.cjs` overrides to 10s for the same reasons (registry
-// queries should be fast; longer waits indicate a hung registry).
+// Request timeout — 10s. Registry queries should be fast; longer waits
+// indicate a hung registry.
 const REQUEST_TIMEOUT_MS = 10_000;
 
 // Heuristic table: image base name or resolved Cmd/Entrypoint contains
-// one of these tokens → suggest the corresponding tmpfs paths. Sourced
-// from barney/src/config/exampleApps.ts. Order: longer/more-specific
-// tokens first when there's ambiguity.
+// one of these tokens → suggest the corresponding tmpfs paths. Order:
+// longer/more-specific tokens first when there's ambiguity.
 const TMPFS_HINTS: ReadonlyArray<{
   readonly match: string;
   readonly paths: readonly string[];

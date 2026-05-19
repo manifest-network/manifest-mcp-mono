@@ -7,12 +7,9 @@ import type {
 } from '../types.js';
 
 /**
- * Spec normalization + summarization helpers. Ports
- * `manifest-agent-plugin/scripts/_spec.cjs` (the three sibling helpers
- * `isStack`, `firstImage`, `normalizeServices`) and the
- * `summarizeSpec()` body from `_journal.cjs` (which mirrors the plugin's
- * `summarize-spec.cjs` in-process). Adds `validateSpec()` to surface
- * pre-broadcast shape violations.
+ * Spec normalization + summarization helpers. Exports `isStack`,
+ * `firstImage`, `normalizeServices`, `summarizeSpec`, and `validateSpec`
+ * (the latter surfaces pre-broadcast shape violations).
  *
  * Two spec shapes are supported (frozen in ENG-128's `types.ts`):
  *   - **services-map (StackSpec)** — `{ services: { <name>: ServiceDef }, customDomain?, serviceName? }`
@@ -102,12 +99,10 @@ export function normalizeServices(
 }
 
 /**
- * Produce the frozen `SpecSummary` shape for inclusion in the `Plan`.
- * Mirrors `_journal.cjs#summarizeSpec` (which itself mirrors plugin's
- * `summarize-spec.cjs`) with the wire-name snake_case fields renamed to
- * the frozen camelCase form (`service_count` → `serviceCount`, etc.).
+ * Produce the frozen `SpecSummary` shape for inclusion in the `Plan`
+ * (camelCase fields: `serviceCount`, etc.).
  *
- * Port count rules (from CJS):
+ * Port count rules:
  *   - SingleServiceSpec `port: number` → +1 port.
  *   - SingleServiceSpec `port: number[]` → +length ports.
  *   - ServiceDef `ports: number[]` (per type) → +length ports.

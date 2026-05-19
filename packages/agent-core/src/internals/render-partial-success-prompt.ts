@@ -2,10 +2,9 @@ import type { RecoveryOptionId } from '../types.js';
 
 /**
  * Render the prompt body + recovery-option set for `deployApp`'s
- * partial-success recovery branch. Mirrors the structural template
- * pinned in `manifest-agent-plugin/scripts/render-partial-success-prompt.cjs`
- * (plugin git-hash `3a33e80`) — wording stays consistent across runs
- * regardless of LLM paraphrase tendencies.
+ * partial-success recovery branch. Uses a fixed structural template —
+ * wording stays consistent across runs regardless of LLM paraphrase
+ * tendencies.
  *
  * **Conditional inserts:** wording differs by whether a `customDomain`
  * was requested. When absent, the failure description shifts to a

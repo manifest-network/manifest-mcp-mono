@@ -10,8 +10,7 @@ import { isStackSpec, normalizeServices } from './spec-normalize.js';
  * Render the structural portion of the intent-recap block shown to the user
  * before any chain round-trips in the deploy-app orchestrator.
  *
- * Port of `manifest-agent-plugin/scripts/render-intent-recap.cjs` (plugin
- * git-hash `3a33e80`). The 4 deterministic items the recap covers:
+ * The 4 deterministic items the recap covers:
  *
  *   1. Deployment surface (service count + per-service `name — image`)
  *   2. Connectivity (per-port ingress posture)

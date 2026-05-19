@@ -1,5 +1,5 @@
 {
-  "$schema": "Registry of canonical fixture scenarios. Each entry drives `scripts/baseline-skill-fixtures.cjs` to capture byte-baselines from the plugin's CJS pipeline. See README.md for layout + workflow.",
+  "$schema": "Registry of canonical fixture scenarios. Each entry pins a byte-baseline the per-skill replay tests in src/**/*.test.ts compare against. See README.md for layout.",
   "scenarios": [
     {
       "id": "deploy-app/01-fast-path-active",

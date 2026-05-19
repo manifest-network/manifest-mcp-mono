@@ -8,10 +8,8 @@ import {
 
 /**
  * Render the canonical `DeploymentPlan` block for `deployApp`'s
- * confirmation step. Port of
- * `manifest-agent-plugin/scripts/render-deployment-plan.cjs` (plugin git-hash
- * `3a33e80`) adapted to the typed `Plan` + new `FeeEstimate {coins, gas}`
- * shape introduced in `a62cfd1` (post-PR-2 frozen-contract revision).
+ * confirmation step. Consumes the typed `Plan` + `FeeEstimate {coins, gas}`
+ * shape.
  *
  * **Why this is a renderer, not a builder:** the function consumes a
  * fully-resolved `Plan` (summary + readiness + fees) plus orchestrator-

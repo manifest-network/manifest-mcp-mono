@@ -1,14 +1,8 @@
 /**
- * Shared decoding for `leases_by_tenant` responses. 1:1 port of
- * `manifest-agent-plugin/scripts/_lease-items.cjs`.
- *
- * The CJS docstring described `extract-lease-items.cjs` (orchestrator entry)
- * and `verify-domain-state.cjs` as the two callers that decode the same
- * lease shape: walk `leases[]`, match by UUID, normalize each item's
- * serviceName/customDomain across snake_case/camelCase variants. The
- * TS port lifts the helpers in the same shape. `verify-domain-state.ts`
- * is the in-package consumer for PR 1; PR 4's `manageDomain` / `troubleshoot`
- * will also consume.
+ * Shared decoding for `leases_by_tenant` responses. Walks `leases[]`,
+ * matches by UUID, normalizes each item's serviceName/customDomain across
+ * snake_case/camelCase variants. `verify-domain-state.ts` is the in-package
+ * consumer for PR 1; PR 4's `manageDomain` / `troubleshoot` will also consume.
  *
  * Exports:
  *   - `pickLeasesArray(payload)` — tolerate `{ leases: [...] }` (current

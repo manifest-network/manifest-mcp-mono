@@ -8,8 +8,8 @@ import {
 
 /**
  * Evaluate `check_deployment_readiness` MCP response data into the frozen
- * `Readiness` shape. Port of `manifest-agent-plugin/scripts/evaluate-readiness.cjs`
- * adapted to camelCase typed input + the `Readiness` contract from ENG-128.
+ * `Readiness` shape (camelCase typed input + the `Readiness` contract from
+ * ENG-128).
  *
  * Thresholds are encoded here (not in skill prose or caller config) so the
  * rules stay consistent across runs:

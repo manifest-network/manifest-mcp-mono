@@ -8,8 +8,7 @@ import { decode as decodeLeaseState, isTerminal } from './lease-state.js';
 
 /**
  * Classify the RETURN envelope of `mcp__manifest-fred__deploy_app` into one
- * of three outcomes for the orchestrator to branch on. 1:1 port of
- * `manifest-agent-plugin/scripts/classify-deploy-response.cjs`.
+ * of three outcomes for the orchestrator to branch on.
  *
  * Companion to `classify-deploy-error.ts` (which handles the THROW path).
  *

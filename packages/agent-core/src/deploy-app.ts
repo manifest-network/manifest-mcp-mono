@@ -22,8 +22,8 @@
  *   `walletProvider` (ADR-036 auth-token construction), optional
  *   `fetchFn` (HTTP override for fred's upload), and the chain-data /
  *   denomMap injection for humanization. agent-core composes the
- *   auth-token callbacks internally from `walletProvider` so plugin/
- *   Barney callers don't need to know about ADR-036 plumbing.
+ *   auth-token callbacks internally from `walletProvider` so callers
+ *   don't need to know about ADR-036 plumbing.
  *
  * Auth-callback construction follows fred's `AuthTokenService` pattern
  * (verified against `packages/fred/src/http/auth.ts` per TL2.1 silent-
@@ -142,7 +142,7 @@ export async function deployApp(
   // from `walletProvider`; fred's atomic `deployApp` (create-lease +
   // manifest upload) reads it from `clientManager`. If the two are
   // bound to different wallets (misconfiguration / copy-paste in
-  // plugin composition / multi-tenant test rig), readiness is
+  // host-surface composition / multi-tenant test rig), readiness is
   // evaluated for wallet A while create-lease + upload execute as
   // wallet B — orphaning a lease on wallet B with auth tokens signed
   // by wallet A (provider auth-fails after the chain tx confirms).

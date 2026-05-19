@@ -1,7 +1,6 @@
 /**
  * Helpers for walking the provider's `connection` payload returned by
  * `mcp__manifest-fred__deploy_app` / `app_status` / `wait_for_app_ready`.
- * 1:1 port of `manifest-agent-plugin/scripts/_connection.cjs`.
  *
  * The provider emits instance lists in one or both of:
  *   - top-level `connection.instances[]` (single-service / non-services-map shape)
@@ -29,10 +28,9 @@ export interface ConnectionWalkOptions {
   /**
    * Sink for warnings about unrecognized connection shapes. Defaults to
    * `console.warn` (Web Standard; platform-neutral across Node, browsers,
-   * Deno, Bun). Mirrors the CJS's unconditional-stderr posture so a future
-   * provider-shape divergence is loud rather than silent. Surfaces that
-   * want to route elsewhere (plugin → structured stderr, Barney → UI
-   * toast, daemon → log file) can override; surfaces that want to
+   * Deno, Bun) so a future provider-shape divergence is loud rather than
+   * silent. Host surfaces that want to route elsewhere (structured
+   * stderr, UI toast, log file) can override; surfaces that want to
    * suppress entirely can pass `() => {}` explicitly — silence becomes a
    * consumer-controlled opt-out instead of the easy-to-forget default.
    */

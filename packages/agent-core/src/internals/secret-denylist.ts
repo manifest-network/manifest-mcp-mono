@@ -3,29 +3,23 @@
  * `verify-recover.ts` to scrub a verifier's diagnostic payload before it
  * reaches the host callback (or the journal record in ENG-124).
  *
- * Ports two pieces of the plugin's CJS:
+ * Two exports:
  *
- * - `SECRET_KEY_DENYLIST` regex from `manifest-agent-plugin/scripts/_journal.cjs`
- *   (line 127). Case-insensitive substring match on KEY names only — values
- *   are never inspected. Narrow on purpose: covers the high-confidence
- *   sensitive shapes seen in this plugin's flows (mnemonic + keyfile
- *   password) plus credential-shaped suffixes that catch obvious skill-
- *   author mistakes (`api[_-]?key`, `private[_-]?key`, `secret[_-]?key`,
- *   `auth[_-]?token`, `bearer[_-]?token`). The blanket `token` and `secret`
- *   keywords are NOT here — this is a blockchain plugin where `gas_token`,
- *   `fee_token`, `token_id`, `token_symbol` are legitimate non-sensitive
- *   field names.
+ * - `SECRET_KEY_DENYLIST` — case-insensitive substring match on KEY names
+ *   only; values are never inspected. Narrow on purpose: covers the
+ *   high-confidence sensitive shapes (mnemonic + keyfile password) plus
+ *   credential-shaped suffixes that catch obvious caller mistakes
+ *   (`api[_-]?key`, `private[_-]?key`, `secret[_-]?key`, `auth[_-]?token`,
+ *   `bearer[_-]?token`). The blanket `token` and `secret` keywords are NOT
+ *   here — this is a blockchain context where `gas_token`, `fee_token`,
+ *   `token_id`, `token_symbol` are legitimate non-sensitive field names.
  *
- * - `stripDenylist` recursive walker from `manifest-agent-plugin/scripts/verify-recover.cjs`
- *   (lines 200-216). Walks objects + arrays; drops any key matching the
- *   denylist regex; ALSO skips the three prototype-pollution-capable keys
- *   `__proto__`, `constructor`, `prototype` because `JSON.parse`
- *   materializes them as own properties that a bare `out[k] = v`
- *   assignment would treat as a prototype mutation.
- *
- * Byte-match contract: the regex source must equal
- * `_journal.cjs`'s SECRET_KEY_DENYLIST exactly. qa-engineer's PR-1 review
- * checks this.
+ * - `stripDenylist` (in `verify-recover.ts`) — recursive walker over
+ *   objects + arrays; drops any key matching the denylist regex; ALSO
+ *   skips the three prototype-pollution-capable keys `__proto__`,
+ *   `constructor`, `prototype` because `JSON.parse` materializes them as
+ *   own properties that a bare `out[k] = v` assignment would treat as a
+ *   prototype mutation.
  */
 
 export const SECRET_KEY_DENYLIST =

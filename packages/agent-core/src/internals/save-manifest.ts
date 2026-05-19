@@ -1,13 +1,10 @@
 /**
  * Persist a deployed manifest as a schema-version-3 wrapper to disk.
  *
- * Port of `manifest-agent-plugin/scripts/save-manifest.cjs` (plugin git-hash
- * `3a33e80`) with one architectural divergence: target directory is a
- * **function argument** (`dataDir: string`) rather than an env-var read.
- * Per gate-1 verdict, agent-core's `platform: 'neutral'` build target
- * forbids env-var reads at this layer; the orchestrator (or plugin glue
- * code) is responsible for resolving the manifests dir from its own env
- * context and passing it in.
+ * Target directory is a **function argument** (`dataDir: string`) rather
+ * than an env-var read: per gate-1 verdict, agent-core's `platform: 'neutral'`
+ * build target forbids env-var reads at this layer; callers are responsible
+ * for resolving the manifests dir from their own env context and passing it in.
  *
  * **Wrapper shape (schema_version 3):**
  *
@@ -76,14 +73,12 @@ export interface SaveManifestInput {
    *
    * **MUST be a dedicated manifest-storage directory.** This function
    * `chmod`-tightens any pre-existing `dataDir` (and its `manifests/`
-   * subdirectory) to mode `0o700`, matching the CJS source's security
-   * posture. Do NOT pass shared parents like `$HOME`, `~/.config`, or
-   * a generic data root — doing so would tighten those directories'
-   * permissions and potentially break other processes that depend on
-   * them. Plugin / Barney call sites must resolve this to a dedicated
-   * subdirectory (e.g. `$XDG_DATA_HOME/manifest-agent/` or
-   * `$MANIFEST_PLUGIN_DATA/`); the `manifests/` subdir is created
-   * inside automatically.
+   * subdirectory) to mode `0o700`. Do NOT pass shared parents like
+   * `$HOME`, `~/.config`, or a generic data root — doing so would tighten
+   * those directories' permissions and potentially break other processes
+   * that depend on them. Callers must resolve this to a dedicated
+   * subdirectory (e.g. `$XDG_DATA_HOME/manifest-agent/`); the `manifests/`
+   * subdir is created inside automatically.
    */
   dataDir: string;
   /** Optional custom-domain FQDN attached to the lease item. */
