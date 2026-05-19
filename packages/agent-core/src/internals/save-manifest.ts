@@ -107,6 +107,7 @@ export class SaveManifestError extends Error {
     | 'manifest_not_object'
     | 'invalid_uuid'
     | 'invalid_meta_hash'
+    | 'invalid_data_dir'
     | 'service_name_without_domain'
     | 'manifest_parse_failed'
     | 'platform_unsupported';
@@ -137,6 +138,25 @@ export async function saveManifest(
     throw new SaveManifestError(
       'platform_unsupported',
       'saveManifest: requires Node.js runtime (node:fs / node:crypto / node:path)',
+    );
+  }
+  // Copilot review fix (PR #58 r3267373130): reject empty / whitespace-
+  // only / non-string `dataDir` BEFORE any I/O. `pathResolve('')` returns
+  // `process.cwd()`, and the later `chmodSync(absoluteDataDir, 0o700)`
+  // would then tighten the caller's working directory — a real safety
+  // hazard if a misconfigured env (`MANIFEST_DATA_DIR=""`) reaches
+  // here. Failing fast at the boundary keeps the hazard from
+  // materializing.
+  if (typeof input.dataDir !== 'string' || input.dataDir.trim().length === 0) {
+    throw new SaveManifestError(
+      'invalid_data_dir',
+      `saveManifest: dataDir must be a non-empty path; got ${
+        typeof input.dataDir === 'string'
+          ? `"${input.dataDir}"`
+          : input.dataDir === null
+            ? 'null'
+            : typeof input.dataDir
+      }.`,
     );
   }
   if (!UUID_RE.test(input.leaseUuid)) {

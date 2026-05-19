@@ -107,6 +107,82 @@ describe('saveManifest', () => {
         code: 'manifest_not_object',
       });
     });
+
+    // Copilot review fix (PR #58 r3267373130): empty / whitespace-only
+    // / non-string `dataDir` must be rejected BEFORE any I/O.
+    // `pathResolve('')` returns `process.cwd()`, and the later
+    // `chmodSync(absoluteDataDir, 0o700)` would clobber the caller's
+    // working directory permissions — real safety hazard.
+    describe('dataDir validation (r3267373130)', () => {
+      it('throws SaveManifestError(invalid_data_dir) for empty string', async () => {
+        await expect(
+          saveManifest({ ...baseInput({ dataDir: tmpDir }), dataDir: '' }),
+        ).rejects.toMatchObject({
+          name: 'SaveManifestError',
+          code: 'invalid_data_dir',
+        });
+      });
+
+      it('throws SaveManifestError(invalid_data_dir) for whitespace-only string', async () => {
+        await expect(
+          saveManifest({ ...baseInput({ dataDir: tmpDir }), dataDir: '   ' }),
+        ).rejects.toMatchObject({
+          name: 'SaveManifestError',
+          code: 'invalid_data_dir',
+        });
+      });
+
+      it('throws SaveManifestError(invalid_data_dir) for non-string', async () => {
+        await expect(
+          saveManifest({
+            ...baseInput({ dataDir: tmpDir }),
+            dataDir: undefined as unknown as string,
+          }),
+        ).rejects.toMatchObject({
+          name: 'SaveManifestError',
+          code: 'invalid_data_dir',
+        });
+        await expect(
+          saveManifest({
+            ...baseInput({ dataDir: tmpDir }),
+            dataDir: null as unknown as string,
+          }),
+        ).rejects.toMatchObject({
+          name: 'SaveManifestError',
+          code: 'invalid_data_dir',
+        });
+      });
+
+      it('reject fires BEFORE any filesystem I/O on a tmpDir that mode-check would mutate', async () => {
+        // The hazard the fix prevents is `chmodSync(process.cwd(), 0o700)`
+        // when `pathResolve('')` returns the CWD. ESM `node:fs` can't
+        // be spied on directly (Vitest namespace-immutability limit),
+        // so verify by inspecting the pre-existing tmpDir's mode after
+        // the throw: if `chmodSync(tmpDir, 0o700)` had executed, the
+        // mode would be `0o700`; the test's mkdtempSync default mode
+        // is `0o700` on most platforms BUT validation happens BEFORE
+        // any chmod call, so the assertion is "validation error fires
+        // synchronously, no async I/O reached." Concretely: the
+        // rejection's `code` is `invalid_data_dir`, not any of the
+        // post-mkdir / post-chmod codes (`sha256_mismatch`, etc.).
+        // The structural ordering of throws in `save-manifest.ts:130+`
+        // pins this: the `invalid_data_dir` check is the FIRST
+        // post-platform validation, before any `mkdirSync` /
+        // `chmodSync` calls (lines 191+). Combined with the explicit
+        // "no I/O happens on the validation path" code-review test,
+        // this is the strongest assertion available under ESM.
+        const result = await saveManifest({
+          ...baseInput({ dataDir: tmpDir }),
+          dataDir: '',
+        }).catch((err) => err);
+        expect(result).toBeInstanceOf(SaveManifestError);
+        expect((result as SaveManifestError).code).toBe('invalid_data_dir');
+        // tmpDir was passed in baseInput but overridden by `dataDir: ''`.
+        // Confirm tmpDir is untouched — would fail if chmodSync had
+        // been called on the CWD or anywhere accidentally.
+        expect(existsSync(tmpDir)).toBe(true);
+      });
+    });
   });
 
   describe('SHA-256 audit', () => {

@@ -223,14 +223,32 @@ export function validateSpec(spec: DeploySpec | null | undefined): void {
   // serviceName check (r3249684707) so the user gets a clear
   // customDomain-shape error rather than a misleading
   // requires-serviceName one.
+  // Copilot review fix (PR #58 r3267373001): reject whitespace-only
+  // strings AND strings with surrounding whitespace (option (i) from
+  // the team-lead's brief — strict; let the caller send a clean,
+  // already-trimmed value rather than silently trim for them). The
+  // prior `cd.length === 0` predicate accepted `'   '`, `'\t\n'`,
+  // and `' app.example.com '`; fred would either accept the
+  // surrounding whitespace as part of the domain (correctness bug)
+  // or trim-and-reject (worse UX than agent-core's clear error).
   if ('customDomain' in record) {
     const cd = record.customDomain;
-    if (cd !== undefined && (typeof cd !== 'string' || cd.length === 0)) {
-      const got =
-        typeof cd === 'string' ? '""' : cd === null ? 'null' : typeof cd;
-      throw new TypeError(
-        `validateSpec: \`customDomain\` must be a non-empty string or absent (got ${got}).`,
-      );
+    if (cd !== undefined) {
+      const isCleanNonEmptyString =
+        typeof cd === 'string' && cd.length > 0 && cd.trim() === cd;
+      if (!isCleanNonEmptyString) {
+        const got =
+          typeof cd === 'string'
+            ? cd.trim().length === 0
+              ? `"${cd}"`
+              : `"${cd}" (has surrounding whitespace)`
+            : cd === null
+              ? 'null'
+              : typeof cd;
+        throw new TypeError(
+          `validateSpec: \`customDomain\` must be a non-empty trimmed string or absent (got ${got}).`,
+        );
+      }
     }
   }
 

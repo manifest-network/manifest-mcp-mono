@@ -193,7 +193,10 @@ export async function deployApp(
       size: requestedSize(spec),
     },
   );
-  const readiness: Readiness = evaluateReadinessFromRaw(
+  // `readiness` is `let`-bound because the post-edit recompute branch
+  // re-evaluates it against the edited spec (Copilot r3267373084 — see
+  // the recall block inside the `onPlan` `verdict !== 'confirm'` arm).
+  let readiness: Readiness = evaluateReadinessFromRaw(
     readinessRaw,
     opts.clientManager.getConfig().gasPrice ?? '1umfx',
     denomMap,
@@ -288,6 +291,42 @@ export async function deployApp(
           err instanceof Error
             ? `Post-edit spec failed validation: ${err.message}`
             : `Post-edit spec failed validation: ${String(err)}`,
+        );
+      }
+      // Copilot review fix (PR #58 r3267373084): readiness recall.
+      // The original-spec `readiness` (captured pre-`onPlan`) gates
+      // SKU + credit-balance pre-flight; a `replace_spec` /
+      // `edit_env` edit that changes `image` or `size` can produce a
+      // different readiness outcome. Without this recall, the
+      // post-edit `plan` still carries the original-spec readiness,
+      // which mis-renders the plan and may bypass a `status: 'block'`
+      // condition specific to the edited shape.
+      //
+      // ENG-185 #1 note: `evaluateReadinessFromRaw` is still the
+      // stub returning `'ok'` for all callers today (tracked in
+      // ENG-185 scope item #1). This recall wires the STRUCTURAL
+      // path now so when #1 replaces the stub, the post-edit
+      // block-short-circuit fires correctly across both paths
+      // (original-spec readiness + edited-spec readiness).
+      const editedReadinessRaw = await checkDeploymentReadiness(
+        queryClient,
+        tenantAddress,
+        {
+          image: primaryImage(confirmedSpec),
+          size: requestedSize(confirmedSpec),
+        },
+      );
+      readiness = evaluateReadinessFromRaw(
+        editedReadinessRaw,
+        opts.clientManager.getConfig().gasPrice ?? '1umfx',
+        denomMap,
+      );
+      callbacks.onProgress?.({ kind: 'readiness_evaluated', readiness });
+      if (readiness.status === 'block') {
+        // Same fail-fast as the original-spec readiness gate above.
+        throw new ManifestMCPError(
+          ManifestMCPErrorCode.INVALID_CONFIG,
+          `Post-edit readiness check failed: ${readiness.reasons.join('; ')}`,
         );
       }
       preview = await buildManifestPreview(

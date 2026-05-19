@@ -1031,6 +1031,181 @@ describe('deployApp replay — Copilot review fixes (PR #58 unresolved comments)
     });
   });
 
+  // Copilot review fix (PR #58 r3267373084): post-edit readiness recall.
+  // After `applyPlanEdit` + `validateSpec`, the orchestrator now
+  // re-evaluates readiness against the edited spec before
+  // `buildManifestPreview` / `estimateFees`. Structural wiring is in
+  // place for ENG-185 #1 (full evaluator); today the stub returns
+  // `'ok'` for both calls. Same fail-fast block-short-circuit as the
+  // original-spec gate.
+  describe('r3267373084: readiness recall post-edit', () => {
+    it('replace_spec edit triggers a second `checkDeploymentReadiness` call', async () => {
+      const spec = readFixture(
+        'skills',
+        'deploy-app',
+        '01-fast-path-active',
+        'input',
+        'spec.json',
+      ) as DeploySpec;
+      const readinessRaw = readFixture(
+        'skills',
+        'deploy-app',
+        '01-fast-path-active',
+        'input',
+        'readiness-response.json',
+      );
+      const metaHashResp = readFixture(
+        'skills',
+        'deploy-app',
+        '01-fast-path-active',
+        'input',
+        'meta-hash-response.json',
+      ) as { manifest_json: string; meta_hash_hex: string };
+
+      const fred = await import('@manifest-network/manifest-mcp-fred');
+      vi.mocked(fred.checkDeploymentReadiness).mockResolvedValue(
+        readinessRaw as unknown as Awaited<
+          ReturnType<typeof fred.checkDeploymentReadiness>
+        >,
+      );
+      vi.mocked(fred.buildManifestPreview).mockResolvedValue({
+        manifest_json: metaHashResp.manifest_json,
+        meta_hash_hex: metaHashResp.meta_hash_hex,
+      } as Awaited<ReturnType<typeof fred.buildManifestPreview>>);
+      vi.mocked(fred.deployApp).mockResolvedValue(
+        {} as Awaited<ReturnType<typeof fred.deployApp>>,
+      );
+      const core = await import('@manifest-network/manifest-mcp-core');
+      vi.mocked(core.cosmosEstimateFee).mockResolvedValue({
+        module: 'billing',
+        subcommand: 'create-lease',
+        gasEstimate: '142000',
+        fee: { amount: [{ denom: 'umfx', amount: '2300' }], gas: '142000' },
+      } as Awaited<ReturnType<typeof core.cosmosEstimateFee>>);
+
+      // replace_spec with a different image/size to make the recall
+      // semantically meaningful (today the stub returns the same
+      // `'ok'` regardless, but the wiring fires either way).
+      const editedSpec: DeploySpec = {
+        image: 'docker.io/library/redis:7',
+        port: 6379,
+      } as DeploySpec;
+      const baseCapture = captureCallbacks();
+      const callbacks: DeployAppCallbacks = {
+        ...baseCapture.callbacks,
+        onPlan: async () => ({ kind: 'replace_spec', spec: editedSpec }),
+      };
+
+      const { deployApp } = await import('./deploy-app.js');
+      const clientManager = makeMockClientManager();
+      const walletProvider = makeMockWalletProvider();
+
+      try {
+        await deployApp(spec, callbacks, {
+          clientManager: clientManager as unknown as Parameters<
+            typeof deployApp
+          >[2]['clientManager'],
+          walletProvider,
+        });
+      } catch {
+        // fredResult `{}` → classifier `'failed'` → orchestrator throws
+        // INVALID_CONFIG. Irrelevant; we only care about the readiness
+        // call count.
+      }
+
+      // ONE call against the original spec (image: nginx, size: small),
+      // then ONE call against the edited spec (image: redis, size: small
+      // — `requestedSize` reads `spec.size` else falls back to 'small').
+      expect(vi.mocked(fred.checkDeploymentReadiness)).toHaveBeenCalledTimes(2);
+      // The post-edit call passed the edited image (regression guard).
+      const calls = vi.mocked(fred.checkDeploymentReadiness).mock.calls;
+      expect(calls[0]?.[2]).toMatchObject({
+        image: 'docker.io/library/nginx:1.27',
+      });
+      expect(calls[1]?.[2]).toMatchObject({
+        image: 'docker.io/library/redis:7',
+      });
+      // Two `readiness_evaluated` progress events: original + edited.
+      const readinessEvents = baseCapture.progress.filter(
+        (e) => e.kind === 'readiness_evaluated',
+      );
+      expect(readinessEvents).toHaveLength(2);
+    });
+
+    it('positive control: `onPlan` returns `confirm` → readiness called ONCE (no recall)', async () => {
+      const spec = readFixture(
+        'skills',
+        'deploy-app',
+        '01-fast-path-active',
+        'input',
+        'spec.json',
+      ) as DeploySpec;
+      const readinessRaw = readFixture(
+        'skills',
+        'deploy-app',
+        '01-fast-path-active',
+        'input',
+        'readiness-response.json',
+      );
+      const metaHashResp = readFixture(
+        'skills',
+        'deploy-app',
+        '01-fast-path-active',
+        'input',
+        'meta-hash-response.json',
+      ) as { manifest_json: string; meta_hash_hex: string };
+
+      const fred = await import('@manifest-network/manifest-mcp-fred');
+      vi.mocked(fred.checkDeploymentReadiness).mockResolvedValue(
+        readinessRaw as unknown as Awaited<
+          ReturnType<typeof fred.checkDeploymentReadiness>
+        >,
+      );
+      vi.mocked(fred.buildManifestPreview).mockResolvedValue({
+        manifest_json: metaHashResp.manifest_json,
+        meta_hash_hex: metaHashResp.meta_hash_hex,
+      } as Awaited<ReturnType<typeof fred.buildManifestPreview>>);
+      vi.mocked(fred.deployApp).mockResolvedValue(
+        {} as Awaited<ReturnType<typeof fred.deployApp>>,
+      );
+      const core = await import('@manifest-network/manifest-mcp-core');
+      vi.mocked(core.cosmosEstimateFee).mockResolvedValue({
+        module: 'billing',
+        subcommand: 'create-lease',
+        gasEstimate: '142000',
+        fee: { amount: [{ denom: 'umfx', amount: '2300' }], gas: '142000' },
+      } as Awaited<ReturnType<typeof core.cosmosEstimateFee>>);
+
+      const baseCapture = captureCallbacks();
+      const callbacks: DeployAppCallbacks = {
+        ...baseCapture.callbacks,
+        onPlan: async () => 'confirm',
+      };
+
+      const { deployApp } = await import('./deploy-app.js');
+      const clientManager = makeMockClientManager();
+      const walletProvider = makeMockWalletProvider();
+
+      try {
+        await deployApp(spec, callbacks, {
+          clientManager: clientManager as unknown as Parameters<
+            typeof deployApp
+          >[2]['clientManager'],
+          walletProvider,
+        });
+      } catch {
+        // Same as above — classifier throw from `{}` fredResult.
+      }
+
+      // No edit → no recall.
+      expect(vi.mocked(fred.checkDeploymentReadiness)).toHaveBeenCalledTimes(1);
+      const readinessEvents = baseCapture.progress.filter(
+        (e) => e.kind === 'readiness_evaluated',
+      );
+      expect(readinessEvents).toHaveLength(1);
+    });
+  });
+
   // Copilot review fix (PR #58 r3250192734): the FeeEstimate `gas` must
   // match the gas the `coins` were priced for (post-`gasMultiplier`),
   // not raw `gasEstimate`. Under the default 1.5x multiplier the prior

@@ -516,7 +516,9 @@ describe('validateSpec', () => {
           port: 80,
           customDomain: '',
         } as unknown as DeploySpec),
-      ).toThrow(/`customDomain` must be a non-empty string or absent.*""/);
+      ).toThrow(
+        /`customDomain` must be a non-empty trimmed string or absent.*""/,
+      );
     });
 
     it('rejects single-service + customDomain: null', () => {
@@ -526,7 +528,9 @@ describe('validateSpec', () => {
           port: 80,
           customDomain: null,
         } as unknown as DeploySpec),
-      ).toThrow(/`customDomain` must be a non-empty string or absent.*null/);
+      ).toThrow(
+        /`customDomain` must be a non-empty trimmed string or absent.*null/,
+      );
     });
 
     it('rejects single-service + customDomain: 0 (non-string)', () => {
@@ -536,7 +540,9 @@ describe('validateSpec', () => {
           port: 80,
           customDomain: 0,
         } as unknown as DeploySpec),
-      ).toThrow(/`customDomain` must be a non-empty string or absent.*number/);
+      ).toThrow(
+        /`customDomain` must be a non-empty trimmed string or absent.*number/,
+      );
     });
 
     it('accepts single-service + customDomain: undefined (key absent semantics)', () => {
@@ -576,7 +582,9 @@ describe('validateSpec', () => {
       }
       expect(caughtErr).toBeInstanceOf(TypeError);
       const msg = (caughtErr as Error).message;
-      expect(msg).toContain('`customDomain` must be a non-empty string');
+      expect(msg).toContain(
+        '`customDomain` must be a non-empty trimmed string',
+      );
       // Make sure the misleading serviceName message did NOT fire.
       expect(msg).not.toContain('requires `serviceName`');
     });
@@ -589,6 +597,67 @@ describe('validateSpec', () => {
           serviceName: 'web',
         } as unknown as DeploySpec),
       ).not.toThrow();
+    });
+
+    // Copilot review fix (PR #58 r3267373001): whitespace-strict
+    // policy — option (i) from the team-lead's brief. Reject
+    // whitespace-only strings AND strings with surrounding
+    // whitespace. Strict boundary; let the caller send a clean,
+    // already-trimmed value rather than silently trim for them.
+    describe('whitespace strictness (r3267373001)', () => {
+      it('rejects customDomain: "   " (whitespace-only spaces)', () => {
+        expect(() =>
+          validateSpec({
+            image: 'nginx:1.27',
+            port: 80,
+            customDomain: '   ',
+          } as unknown as DeploySpec),
+        ).toThrow(
+          /`customDomain` must be a non-empty trimmed string or absent.*" {3}"/,
+        );
+      });
+
+      it('rejects customDomain: "\\t\\n" (whitespace-only tab + newline)', () => {
+        expect(() =>
+          validateSpec({
+            image: 'nginx:1.27',
+            port: 80,
+            customDomain: '\t\n',
+          } as unknown as DeploySpec),
+        ).toThrow(
+          /`customDomain` must be a non-empty trimmed string or absent/,
+        );
+      });
+
+      it('rejects customDomain with leading whitespace', () => {
+        expect(() =>
+          validateSpec({
+            image: 'nginx:1.27',
+            port: 80,
+            customDomain: ' app.example.com',
+          } as unknown as DeploySpec),
+        ).toThrow(/has surrounding whitespace/);
+      });
+
+      it('rejects customDomain with trailing whitespace', () => {
+        expect(() =>
+          validateSpec({
+            image: 'nginx:1.27',
+            port: 80,
+            customDomain: 'app.example.com ',
+          } as unknown as DeploySpec),
+        ).toThrow(/has surrounding whitespace/);
+      });
+
+      it('accepts customDomain that is already-trimmed and non-empty', () => {
+        expect(() =>
+          validateSpec({
+            image: 'nginx:1.27',
+            port: 80,
+            customDomain: 'app.example.com',
+          } as unknown as DeploySpec),
+        ).not.toThrow();
+      });
     });
   });
 });
