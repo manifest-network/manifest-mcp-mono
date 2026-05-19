@@ -244,11 +244,19 @@ export async function saveManifest(
   mkdirSync(manifestsDir, { recursive: true, mode: 0o700 });
   chmodSync(manifestsDir, 0o700);
 
+  // Copilot review fix (PR #58 r3267708600): single-source the deploy
+  // timestamp. The prior code called `new Date().toISOString()` and
+  // `Math.floor(Date.now() / 1000)` separately — two distinct clock
+  // reads. If the function spans a second boundary, the iso + unix
+  // fields refer to different instants, violating the audit
+  // metadata's internal-consistency invariant (any tooling cross-
+  // checking the pair would flag the drift).
+  const deployedAt = new Date();
   const wrapper: Record<string, unknown> = {
     schema_version: 3,
     lease_uuid: input.leaseUuid,
-    deployed_at_iso: new Date().toISOString(),
-    deployed_at_unix: Math.floor(Date.now() / 1000),
+    deployed_at_iso: deployedAt.toISOString(),
+    deployed_at_unix: Math.floor(deployedAt.getTime() / 1000),
     chain_id: input.chainId,
     image: input.image,
     size: input.size,

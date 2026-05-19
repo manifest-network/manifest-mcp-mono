@@ -533,7 +533,15 @@ function main() {
     process.exit(1);
   }
 
+  // Copilot review fix (PR #58 r3267708678): separate `errorCount`
+  // from `driftCount`. Capture errors are categorically different
+  // from baseline drift — a scenario crash means the script couldn't
+  // generate the artifact at all, which `--write` mode should NOT
+  // silently swallow as a successful re-baseline. Prior code lumped
+  // both into `driftCount` and skipped exit-1 in `--write` mode,
+  // hiding scenario failures during re-baselining.
   let driftCount = 0;
+  let errorCount = 0;
   let totalCount = 0;
   for (const scenario of filtered) {
     process.stdout.write(`\n=== ${scenario.id} ===\n`);
@@ -549,7 +557,9 @@ function main() {
       }
     } catch (err) {
       process.stderr.write(`  FAIL: ${err.message}\n`);
-      driftCount++;
+      // r3267708678 fix: bump errorCount, NOT driftCount. Errors
+      // exit 1 regardless of mode; drift only in check mode.
+      errorCount++;
       continue;
     }
     for (const r of results) {
@@ -568,9 +578,15 @@ function main() {
   }
 
   process.stdout.write(
-    `\nSummary: ${totalCount} artifacts checked, ${driftCount} drifted${args.write ? ' (--write mode; baselines re-written)' : ''}\n`,
+    `\nSummary: ${totalCount} artifacts checked, ${driftCount} drifted, ${errorCount} errors${args.write ? ' (--write mode; baselines re-written)' : ''}\n`,
   );
-  process.exit(driftCount > 0 && !args.write ? 1 : 0);
+  // Exit logic (r3267708678):
+  //   - errors    → always exit 1, regardless of mode (capture failure
+  //                 cannot be silenced by --write).
+  //   - drift     → exit 1 only in check mode; `--write` succeeds by
+  //                 definition (baselines re-written).
+  //   - otherwise → exit 0.
+  process.exit(errorCount > 0 || (driftCount > 0 && !args.write) ? 1 : 0);
 }
 
 main();

@@ -227,6 +227,19 @@ describe('saveManifest', () => {
       expect(typeof wrapper.deployed_at_unix).toBe('number');
     });
 
+    // Copilot review fix (PR #58 r3267708600): the iso + unix fields
+    // must refer to the SAME instant. Prior code used two separate
+    // clock reads (`new Date().toISOString()` and `Date.now()`),
+    // which on a cross-second-boundary call would yield off-by-one
+    // pairs and violate audit metadata's internal-consistency
+    // invariant. Now single-sourced from one `Date` capture.
+    it('deployed_at_iso and deployed_at_unix refer to the same instant (r3267708600)', async () => {
+      const result = await saveManifest(baseInput({ dataDir: tmpDir }));
+      const wrapper = JSON.parse(readFileSync(result.manifestPath, 'utf8'));
+      const isoMs = new Date(wrapper.deployed_at_iso as string).getTime();
+      expect(Math.floor(isoMs / 1000)).toBe(wrapper.deployed_at_unix);
+    });
+
     it('derives format="single" for non-stack manifest_json', async () => {
       const manifestJson = JSON.stringify({ image: 'nginx:1.27' });
       const result = await saveManifest({
