@@ -2,13 +2,13 @@ import {
   extractRunningEndpoints,
   formatEndpointAsUrl,
   hasRunningInstances,
+  normalizeFredUrl,
 } from './connection.js';
 import { decode as decodeLeaseState, isTerminal } from './lease-state.js';
 
 /**
  * Classify the RETURN envelope of `mcp__manifest-fred__deploy_app` into one
- * of three outcomes for the orchestrator to branch on. 1:1 port of
- * `manifest-agent-plugin/scripts/classify-deploy-response.cjs`.
+ * of three outcomes for the orchestrator to branch on.
  *
  * Companion to `classify-deploy-error.ts` (which handles the THROW path).
  *
@@ -74,10 +74,8 @@ export function classifyDeployResponse(
     formatEndpointAsUrl,
   );
   if (typeof response.url === 'string' && response.url.length > 0) {
-    const u = /^https?:\/\//i.test(response.url)
-      ? response.url
-      : `https://${response.url}/`;
-    if (!urls.includes(u)) urls.unshift(u);
+    const u = normalizeFredUrl(response.url);
+    if (u.length > 0 && !urls.includes(u)) urls.unshift(u);
   }
 
   const leaseUuid =

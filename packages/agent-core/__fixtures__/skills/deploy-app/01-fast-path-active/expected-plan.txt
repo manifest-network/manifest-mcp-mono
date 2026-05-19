@@ -1,0 +1,9 @@
+DeploymentPlan
+  Image:                     docker.io/library/nginx:1.27
+  Size:                      small
+  Manifest:                  single, services=1, ports=1, env=2
+  meta_hash:                 6e1670ec56b86c3feea27755205c5f9972dc3e80e58a6936a17e2c63953e6baf
+  SKU price:                 0.001 MFX / hour
+  Tx fee:                    0.0023 MFX (gas 142000)
+  Wallet:                    10 MFX
+  Credits:                   50000 MFX

@@ -1,20 +1,16 @@
 import ipaddr from 'ipaddr.js';
 
 /**
- * SSRF-guarded `fetch` factory. Replaces the plugin's
- * `request-filtering-agent`-via-`https.request` approach (see
- * `_https-json.cjs`) with a Node-native undici Dispatcher that DNS-resolves
- * once at connect time and rejects any address whose `ipaddr.js` range is
- * not `'unicast'`.
+ * SSRF-guarded `fetch` factory. A Node-native undici Dispatcher that
+ * DNS-resolves once at connect time and rejects any address whose
+ * `ipaddr.js` range is not `'unicast'`.
  *
  * Why DIY rather than `request-filtering-agent`: the library only works with
  * `http`/`https`.Agent (legacy http API) and explicitly does NOT plug into
- * undici / native `fetch` per its v3.2.0 README. The plugin's CJS uses
- * `https.request` for this reason. Re-routing the same blocking semantics
- * through undici's Dispatcher hook lets agent-core's `inspectImage` (and
- * future consumers) use native `fetch` while preserving the same SSRF
- * posture. ENG-130 will rewire the plugin to consume agent-core's
- * `createGuardedFetch`, consolidating the SSRF surface in one place.
+ * undici / native `fetch` per its v3.2.0 README. Re-routing the same
+ * blocking semantics through undici's Dispatcher hook lets agent-core's
+ * `inspectImage` (and future consumers) use native `fetch` while preserving
+ * the same SSRF posture.
  *
  * Design (architect-blessed):
  * - **`ipaddr.js`'s `range()` is the source of truth.** Same approach as

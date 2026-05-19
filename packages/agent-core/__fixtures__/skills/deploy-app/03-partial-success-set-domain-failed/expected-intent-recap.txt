@@ -1,0 +1,15 @@
+Deploying 1 service on testnet:
+  - docker.io/library/nginx:1.27
+
+Connectivity:
+  - port 80: publicly reachable via the provider's HTTPS subdomain
+
+Sensitive values are redacted in this recap (keys only, never values):
+  - this service: env keys [NGINX_HOST, NGINX_PORT]
+
+Custom domain: app.testnet.manifest.app → single-service lease
+
+Note: when a custom domain is set, deploy_app broadcasts TWO billing
+transactions atomically: create-lease AND set-item-custom-domain. The
+single permission prompt that fires later covers BOTH; this textual
+recap is your per-tx review.

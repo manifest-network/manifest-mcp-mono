@@ -1,31 +1,34 @@
-import { readFileSync } from 'node:fs';
-
 /**
  * Convert chain-side coin amounts (always in the smallest unit) into the
  * human-readable display the user actually wants to see — e.g.
  * `1800000 factory/.../upwr` → `1.8 PWR`, `0.057738 PWR` built from
  * `57738 factory/.../upwr`, etc.
  *
- * 1:1 port of `manifest-agent-plugin/scripts/humanize-denom.cjs`. The denom
- * → symbol mapping is sourced from the chain registry data in
- * `$MANIFEST_PLUGIN_DATA/chains/<chain>.json` (the `feeTokens[]` array,
- * which carries `{ denom, symbol, ... }` for every token the chain
- * accepts as gas). Pass the chain-data file path via the caller's
- * surface (plugin, Barney) and forward to whichever helper renders
- * balances; this module just reads, parses, and looks up.
+ * The denom → symbol mapping is sourced from a chain registry JSON file
+ * (`{ feeTokens: [{ denom, symbol, ... }] }` — every token the chain
+ * accepts as gas). Callers pass the chain-data file path and forward the
+ * resulting `DenomMap` to whichever helper renders balances; this module
+ * just reads, parses, and looks up.
  *
  * Conversion factor: cosmos convention is 6 decimals for `u`-prefixed
  * tokens (umfx, upwr — including factory-wrapped variants). Anything else
  * is rendered untouched (denom kept as-is, amount printed as integer)
  * because we can't safely guess its exponent.
  *
+ * **Dynamic node-import discipline** (mirrors `guarded-fetch.ts` +
+ * `save-manifest.ts`): the `node:fs` import is deferred to call time so
+ * module load doesn't violate the package's `platform: 'neutral'` build
+ * target. `loadChainDenomMap` is therefore async; consumers must
+ * `await` the result. The other 3 exports (`humanizeCoin`,
+ * `humanizeBalances`, `denomToSymbol`) remain pure-sync since they take
+ * a pre-loaded `DenomMap` as input.
+ *
  * Exports (all 4 preserved per qa-engineer's review pin — PR 2's internal
  * callers use a subset; PR 3 will surface the rest):
- *   - `loadChainDenomMap(chainDataFilePath?)` — returns `{ lookup, raw }`.
- *     Missing / unreadable path → no-op map (lookup always returns `null`).
- *     Read failures emit a `console.warn` matching the connection.ts
- *     precedent from PR 1 (override possible via PR-3-onward refactoring
- *     if a callsite needs custom routing).
+ *   - `loadChainDenomMap(chainDataFilePath?)` (ASYNC) — returns
+ *     `Promise<DenomMap>`. Missing / unreadable path → no-op map
+ *     (lookup always returns `null`). Read failures emit `console.warn`
+ *     matching the connection.ts precedent from PR 1.
  *   - `humanizeCoin(amount, denom, denomMap)` — `"<amount> <symbol>"` or
  *     `"<amount> <denom>"` on unknown denom.
  *   - `humanizeBalances(coins, denomMap)` — joins multiple coins with
@@ -33,27 +36,41 @@ import { readFileSync } from 'node:fs';
  *   - `denomToSymbol(denom, denomMap)` — bare symbol or raw denom fallback.
  */
 
+import type { DenomLookup, DenomMap } from '../types.js';
+
+// Re-export the public types for convenience to existing internal consumers
+// (this file's pre-PR-3 history exported DenomLookup + DenomMap directly).
+// Public consumers should import from `@manifest-network/manifest-agent-core`
+// (which re-exports `../types.js`); internal consumers can use either path.
+export type { DenomLookup, DenomMap };
+
 const KNOWN_EXPONENT = 6;
 
-/** Lookup result for a denom in the chain registry. `null` for unknown denoms. */
-export interface DenomLookup {
-  symbol: string;
-  exponent: number;
-}
+/**
+ * No-op `DenomMap` for callers without chain-data context. All lookups
+ * return `null`; `humanizeCoin` falls back to raw on-chain denoms.
+ * Exported so synchronous decision functions (e.g. `evaluateReadiness`)
+ * can default to it without needing to invoke the async loader.
+ */
+export const EMPTY_DENOM_MAP: DenomMap = { lookup: () => null, raw: null };
 
-/** Opaque denom map; consumers use `.lookup(denom)`. */
-export interface DenomMap {
-  lookup(denom: string): DenomLookup | null;
-  /** Raw chain registry JSON (when loaded). `null` when no file path supplied or read failed. */
-  raw: unknown;
-}
-
-const EMPTY_DENOM_MAP: DenomMap = { lookup: () => null, raw: null };
-
-export function loadChainDenomMap(chainDataFilePath?: string): DenomMap {
+export async function loadChainDenomMap(
+  chainDataFilePath?: string,
+): Promise<DenomMap> {
   if (!chainDataFilePath) return EMPTY_DENOM_MAP;
+  if (
+    typeof process === 'undefined' ||
+    typeof process.versions?.node !== 'string'
+  ) {
+    // Lazy node-only dep — refuse outside Node-like runtimes rather than
+    // silently no-op'ing (which would hide a misconfiguration).
+    throw new Error(
+      'loadChainDenomMap: chainDataFilePath requires a Node.js runtime (node:fs unavailable in this environment)',
+    );
+  }
   let raw: unknown;
   try {
+    const { readFileSync } = await import('node:fs');
     raw = JSON.parse(readFileSync(chainDataFilePath, 'utf8'));
   } catch (err) {
     // CJS parity: warn loudly when a path was passed but read/parse failed.

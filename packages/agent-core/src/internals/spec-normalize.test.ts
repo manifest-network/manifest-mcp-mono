@@ -272,4 +272,392 @@ describe('validateSpec', () => {
       } as StackSpec),
     ).toThrow(/must be a non-null object/);
   });
+
+  // Copilot review fix (PR #58 r3249097051): fred's image-mode rejects
+  // portless inputs with `port is required when using image`. Failing
+  // fast at the agent-core boundary produces a clearer error and
+  // avoids partial orchestration work (readiness check + plan render)
+  // before fred rejects mid-broadcast.
+  describe('single-service port requirement', () => {
+    it('rejects single-service spec without port (port absent)', () => {
+      expect(() =>
+        validateSpec({ image: 'alpine' } as unknown as DeploySpec),
+      ).toThrow(/single-service specs require at least one port/);
+    });
+
+    it('rejects single-service spec with explicit port: undefined', () => {
+      expect(() =>
+        validateSpec({
+          image: 'alpine',
+          port: undefined,
+        } as unknown as DeploySpec),
+      ).toThrow(/single-service specs require at least one port/);
+    });
+
+    it('rejects single-service spec with empty port array', () => {
+      expect(() =>
+        validateSpec({ image: 'alpine', port: [] } as unknown as DeploySpec),
+      ).toThrow(/single-service specs require at least one port/);
+    });
+
+    it('rejects single-service spec with non-number port', () => {
+      expect(() =>
+        validateSpec({
+          image: 'alpine',
+          port: 'eighty' as unknown as number,
+        } as unknown as DeploySpec),
+      ).toThrow(/single-service specs require at least one port/);
+    });
+
+    it('error message hints at stack-spec escape hatch for internal-only services', () => {
+      expect(() =>
+        validateSpec({ image: 'alpine' } as unknown as DeploySpec),
+      ).toThrow(/For internal-only services, use a stack spec/);
+    });
+
+    it('accepts single-service spec with port: number', () => {
+      expect(() => validateSpec({ image: 'alpine', port: 80 })).not.toThrow();
+    });
+
+    it('accepts single-service spec with port: non-empty number array', () => {
+      expect(() =>
+        validateSpec({ image: 'alpine', port: [80, 443] }),
+      ).not.toThrow();
+    });
+
+    it('accepts stack spec WITHOUT any port (internal-only escape hatch)', () => {
+      // Stack services have ports declared per-service and the
+      // single-service port check does NOT apply. This is the
+      // documented escape hatch in the error message.
+      expect(() =>
+        validateSpec({ services: { internal: { image: 'alpine' } } }),
+      ).not.toThrow();
+    });
+
+    // Copilot review fix (PR #58 r3249294877): port predicate must
+    // reject non-finite, non-integer, and out-of-range numbers — not
+    // just non-`number` typeof bypasses. TCP port range is 1-65535.
+    describe('port-number validity (r3249294877)', () => {
+      it('rejects port: 0 (TCP reserved, fred catches with !input.port)', () => {
+        expect(() =>
+          validateSpec({
+            image: 'alpine',
+            port: 0,
+          } as unknown as DeploySpec),
+        ).toThrow(/finite positive integer in the TCP range/);
+      });
+
+      it('rejects port: -1', () => {
+        expect(() =>
+          validateSpec({
+            image: 'alpine',
+            port: -1,
+          } as unknown as DeploySpec),
+        ).toThrow(/finite positive integer in the TCP range/);
+      });
+
+      it('rejects port: NaN', () => {
+        expect(() =>
+          validateSpec({
+            image: 'alpine',
+            port: Number.NaN,
+          } as unknown as DeploySpec),
+        ).toThrow(/finite positive integer in the TCP range/);
+      });
+
+      it('rejects port: Infinity', () => {
+        expect(() =>
+          validateSpec({
+            image: 'alpine',
+            port: Number.POSITIVE_INFINITY,
+          } as unknown as DeploySpec),
+        ).toThrow(/finite positive integer in the TCP range/);
+      });
+
+      it('rejects port: 1.5 (non-integer)', () => {
+        expect(() =>
+          validateSpec({
+            image: 'alpine',
+            port: 1.5,
+          } as unknown as DeploySpec),
+        ).toThrow(/finite positive integer in the TCP range/);
+      });
+
+      it('rejects port: 65536 (above TCP range)', () => {
+        expect(() =>
+          validateSpec({
+            image: 'alpine',
+            port: 65536,
+          } as unknown as DeploySpec),
+        ).toThrow(/finite positive integer in the TCP range/);
+      });
+
+      it('rejects port array with NaN entry (mixed validity)', () => {
+        expect(() =>
+          validateSpec({
+            image: 'alpine',
+            port: [80, Number.NaN],
+          } as unknown as DeploySpec),
+        ).toThrow(/finite positive integer in the TCP range/);
+      });
+
+      it('rejects port array with 0 entry (mixed validity)', () => {
+        expect(() =>
+          validateSpec({
+            image: 'alpine',
+            port: [80, 0],
+          } as unknown as DeploySpec),
+        ).toThrow(/finite positive integer in the TCP range/);
+      });
+
+      it('accepts port: 1 (lower boundary)', () => {
+        expect(() => validateSpec({ image: 'alpine', port: 1 })).not.toThrow();
+      });
+
+      it('accepts port: 65535 (upper boundary)', () => {
+        expect(() =>
+          validateSpec({ image: 'alpine', port: 65535 }),
+        ).not.toThrow();
+      });
+    });
+  });
+
+  // Copilot review fix (PR #58 r3249684707): stack-with-customDomain
+  // must declare serviceName + that name must be a key in services.
+  // Without this gate, set-domain failure orphan-leases the tenant.
+  describe('stack customDomain + serviceName invariant (r3249684707)', () => {
+    it('rejects stack + customDomain without serviceName', () => {
+      expect(() =>
+        validateSpec({
+          services: { web: { image: 'nginx:1.27' } },
+          customDomain: 'app.example.com',
+        } as unknown as DeploySpec),
+      ).toThrow(/customDomain.*requires.*serviceName/);
+    });
+
+    it('rejects stack + customDomain + empty-string serviceName', () => {
+      expect(() =>
+        validateSpec({
+          services: { web: { image: 'nginx:1.27' } },
+          customDomain: 'app.example.com',
+          serviceName: '',
+        } as unknown as DeploySpec),
+      ).toThrow(/customDomain.*requires.*serviceName/);
+    });
+
+    it('rejects stack + customDomain + serviceName not in services', () => {
+      expect(() =>
+        validateSpec({
+          services: { db: { image: 'postgres:16' } },
+          customDomain: 'app.example.com',
+          serviceName: 'web',
+        } as unknown as DeploySpec),
+      ).toThrow(/serviceName.*"web".*must be a key in.*services.*db/);
+    });
+
+    // Copilot review fix (PR #58 r3250331968): the prior `in`-operator
+    // check walked the prototype chain, so `'constructor' in {}` would
+    // return true. Switched to `Object.keys(...).includes(...)` to
+    // match fred's own-key check at
+    // `packages/fred/src/tools/deployApp.ts:254`. This regression test
+    // pins the boundary.
+    it('rejects stack + customDomain + serviceName matching a prototype-chain key (own-key check)', () => {
+      expect(() =>
+        validateSpec({
+          services: { web: { image: 'nginx:1.27' } },
+          customDomain: 'app.example.com',
+          serviceName: 'constructor',
+        } as unknown as DeploySpec),
+      ).toThrow(/serviceName.*"constructor".*must be a key in.*services.*web/);
+    });
+
+    it('accepts stack + customDomain + serviceName matching a services key', () => {
+      expect(() =>
+        validateSpec({
+          services: { web: { image: 'nginx:1.27' } },
+          customDomain: 'app.example.com',
+          serviceName: 'web',
+        } as unknown as DeploySpec),
+      ).not.toThrow();
+    });
+
+    it('accepts stack WITHOUT customDomain (no serviceName required)', () => {
+      // Escape hatch preserved — internal-only stack deploys don't need
+      // either field.
+      expect(() =>
+        validateSpec({ services: { internal: { image: 'alpine' } } }),
+      ).not.toThrow();
+    });
+
+    it('accepts single-service + customDomain (rule is stack-only)', () => {
+      // Single-service customDomain is claimed against the implicit
+      // single lease item — no serviceName disambiguation needed.
+      expect(() =>
+        validateSpec({
+          image: 'nginx:1.27',
+          port: 80,
+          customDomain: 'app.example.com',
+        } as unknown as DeploySpec),
+      ).not.toThrow();
+    });
+  });
+
+  // Copilot review fix (PR #58 r3266786899): `customDomain` shape at
+  // the boundary. `buildFredDeployInput`'s `if (customDomain)`
+  // truthiness check silently dropped `''` / `null` / etc. — the
+  // user's spec passed validation, fred received `fredInput` without
+  // the domain, deploy proceeded silently. Boundary check enforces
+  // non-empty string when the key is present; `undefined` is fine.
+  describe('customDomain shape (r3266786899)', () => {
+    it('rejects single-service + customDomain: "" (empty string)', () => {
+      expect(() =>
+        validateSpec({
+          image: 'nginx:1.27',
+          port: 80,
+          customDomain: '',
+        } as unknown as DeploySpec),
+      ).toThrow(
+        /`customDomain` must be a non-empty trimmed string or absent.*""/,
+      );
+    });
+
+    it('rejects single-service + customDomain: null', () => {
+      expect(() =>
+        validateSpec({
+          image: 'nginx:1.27',
+          port: 80,
+          customDomain: null,
+        } as unknown as DeploySpec),
+      ).toThrow(
+        /`customDomain` must be a non-empty trimmed string or absent.*null/,
+      );
+    });
+
+    it('rejects single-service + customDomain: 0 (non-string)', () => {
+      expect(() =>
+        validateSpec({
+          image: 'nginx:1.27',
+          port: 80,
+          customDomain: 0,
+        } as unknown as DeploySpec),
+      ).toThrow(
+        /`customDomain` must be a non-empty trimmed string or absent.*number/,
+      );
+    });
+
+    it('accepts single-service + customDomain: undefined (key absent semantics)', () => {
+      expect(() =>
+        validateSpec({
+          image: 'nginx:1.27',
+          port: 80,
+          customDomain: undefined,
+        } as unknown as DeploySpec),
+      ).not.toThrow();
+    });
+
+    it('accepts single-service + customDomain: valid FQDN string', () => {
+      expect(() =>
+        validateSpec({
+          image: 'nginx:1.27',
+          port: 80,
+          customDomain: 'app.example.com',
+        } as unknown as DeploySpec),
+      ).not.toThrow();
+    });
+
+    // Order-dependent: the customDomain shape check fires BEFORE the
+    // stack-customDomain-serviceName check (r3249684707). A stack
+    // spec with `customDomain: ''` should surface as the shape error,
+    // not as a misleading "requires serviceName" error.
+    it('rejects stack + customDomain: "" with shape error (precedes serviceName check)', () => {
+      let caughtErr: unknown = null;
+      try {
+        validateSpec({
+          services: { web: { image: 'nginx:1.27' } },
+          customDomain: '',
+          serviceName: 'web',
+        } as unknown as DeploySpec);
+      } catch (err) {
+        caughtErr = err;
+      }
+      expect(caughtErr).toBeInstanceOf(TypeError);
+      const msg = (caughtErr as Error).message;
+      expect(msg).toContain(
+        '`customDomain` must be a non-empty trimmed string',
+      );
+      // Make sure the misleading serviceName message did NOT fire.
+      expect(msg).not.toContain('requires `serviceName`');
+    });
+
+    it('accepts stack + valid customDomain + matching serviceName (regression guard)', () => {
+      expect(() =>
+        validateSpec({
+          services: { web: { image: 'nginx:1.27' } },
+          customDomain: 'app.example.com',
+          serviceName: 'web',
+        } as unknown as DeploySpec),
+      ).not.toThrow();
+    });
+
+    // Copilot review fix (PR #58 r3267373001): whitespace-strict
+    // policy — option (i) from the team-lead's brief. Reject
+    // whitespace-only strings AND strings with surrounding
+    // whitespace. Strict boundary; let the caller send a clean,
+    // already-trimmed value rather than silently trim for them.
+    describe('whitespace strictness (r3267373001)', () => {
+      it('rejects customDomain: "   " (whitespace-only spaces)', () => {
+        expect(() =>
+          validateSpec({
+            image: 'nginx:1.27',
+            port: 80,
+            customDomain: '   ',
+          } as unknown as DeploySpec),
+        ).toThrow(
+          /`customDomain` must be a non-empty trimmed string or absent.*" {3}"/,
+        );
+      });
+
+      it('rejects customDomain: "\\t\\n" (whitespace-only tab + newline)', () => {
+        expect(() =>
+          validateSpec({
+            image: 'nginx:1.27',
+            port: 80,
+            customDomain: '\t\n',
+          } as unknown as DeploySpec),
+        ).toThrow(
+          /`customDomain` must be a non-empty trimmed string or absent/,
+        );
+      });
+
+      it('rejects customDomain with leading whitespace', () => {
+        expect(() =>
+          validateSpec({
+            image: 'nginx:1.27',
+            port: 80,
+            customDomain: ' app.example.com',
+          } as unknown as DeploySpec),
+        ).toThrow(/has surrounding whitespace/);
+      });
+
+      it('rejects customDomain with trailing whitespace', () => {
+        expect(() =>
+          validateSpec({
+            image: 'nginx:1.27',
+            port: 80,
+            customDomain: 'app.example.com ',
+          } as unknown as DeploySpec),
+        ).toThrow(/has surrounding whitespace/);
+      });
+
+      it('accepts customDomain that is already-trimmed and non-empty', () => {
+        expect(() =>
+          validateSpec({
+            image: 'nginx:1.27',
+            port: 80,
+            customDomain: 'app.example.com',
+          } as unknown as DeploySpec),
+        ).not.toThrow();
+      });
+    });
+  });
 });

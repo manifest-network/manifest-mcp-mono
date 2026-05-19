@@ -28,25 +28,25 @@ function writeChainRegistry(file: string, content: object): string {
 }
 
 describe('loadChainDenomMap', () => {
-  it('returns the no-op map when no path is supplied', () => {
-    const map = loadChainDenomMap();
+  it('returns the no-op map when no path is supplied', async () => {
+    const map = await loadChainDenomMap();
     expect(map.lookup('umfx')).toBeNull();
     expect(map.raw).toBeNull();
   });
 
-  it('returns the no-op map when path is empty string', () => {
-    const map = loadChainDenomMap('');
+  it('returns the no-op map when path is empty string', async () => {
+    const map = await loadChainDenomMap('');
     expect(map.lookup('umfx')).toBeNull();
     expect(map.raw).toBeNull();
   });
 
-  it('returns the no-op map + warns when the file is unreadable', () => {
+  it('returns the no-op map + warns when the file is unreadable', async () => {
     const warnSpy = vi
       .spyOn(console, 'warn')
       .mockImplementation(() => undefined);
     try {
       const missing = join(tmp, 'does-not-exist.json');
-      const map = loadChainDenomMap(missing);
+      const map = await loadChainDenomMap(missing);
       expect(map.lookup('umfx')).toBeNull();
       expect(map.raw).toBeNull();
       expect(warnSpy).toHaveBeenCalledOnce();
@@ -58,14 +58,14 @@ describe('loadChainDenomMap', () => {
     }
   });
 
-  it('returns the no-op map + warns when JSON is malformed', () => {
+  it('returns the no-op map + warns when JSON is malformed', async () => {
     const warnSpy = vi
       .spyOn(console, 'warn')
       .mockImplementation(() => undefined);
     try {
       const path = join(tmp, 'broken.json');
       writeFileSync(path, '{not valid json', 'utf8');
-      const map = loadChainDenomMap(path);
+      const map = await loadChainDenomMap(path);
       expect(map.lookup('umfx')).toBeNull();
       expect(warnSpy).toHaveBeenCalledOnce();
     } finally {
@@ -73,14 +73,14 @@ describe('loadChainDenomMap', () => {
     }
   });
 
-  it('parses a feeTokens[] map and resolves denom → {symbol, exponent: 6}', () => {
+  it('parses a feeTokens[] map and resolves denom → {symbol, exponent: 6}', async () => {
     const path = writeChainRegistry('testnet.json', {
       feeTokens: [
         { denom: 'umfx', symbol: 'MFX' },
         { denom: 'factory/manifest1xxx/upwr', symbol: 'PWR' },
       ],
     });
-    const map = loadChainDenomMap(path);
+    const map = await loadChainDenomMap(path);
     expect(map.lookup('umfx')).toEqual({ symbol: 'MFX', exponent: 6 });
     expect(map.lookup('factory/manifest1xxx/upwr')).toEqual({
       symbol: 'PWR',
@@ -89,7 +89,7 @@ describe('loadChainDenomMap', () => {
     expect(map.lookup('unknown_denom')).toBeNull();
   });
 
-  it('ignores malformed feeTokens entries (non-object, missing fields)', () => {
+  it('ignores malformed feeTokens entries (non-object, missing fields)', async () => {
     const path = writeChainRegistry('mixed.json', {
       feeTokens: [
         { denom: 'umfx', symbol: 'MFX' },
@@ -100,34 +100,34 @@ describe('loadChainDenomMap', () => {
         { denom: 42, symbol: 'wrong-type' },
       ],
     });
-    const map = loadChainDenomMap(path);
+    const map = await loadChainDenomMap(path);
     expect(map.lookup('umfx')).toEqual({ symbol: 'MFX', exponent: 6 });
     expect(map.lookup('no-symbol')).toBeNull();
     expect(map.lookup('no-denom')).toBeNull();
   });
 
-  it('returns the raw chain JSON for callers that need it', () => {
+  it('returns the raw chain JSON for callers that need it', async () => {
     const content = {
       feeTokens: [{ denom: 'umfx', symbol: 'MFX' }],
       extra: 'kept',
     };
     const path = writeChainRegistry('with-extra.json', content);
-    const map = loadChainDenomMap(path);
+    const map = await loadChainDenomMap(path);
     expect(map.raw).toEqual(content);
   });
 
-  it('handles JSON without feeTokens gracefully (lookup returns null)', () => {
+  it('handles JSON without feeTokens gracefully (lookup returns null)', async () => {
     const path = writeChainRegistry('no-fee-tokens.json', { other: 'data' });
-    const map = loadChainDenomMap(path);
+    const map = await loadChainDenomMap(path);
     expect(map.lookup('umfx')).toBeNull();
     expect(map.raw).toEqual({ other: 'data' });
   });
 
-  it('lookup returns null for non-string input (type guard)', () => {
+  it('lookup returns null for non-string input (type guard)', async () => {
     const path = writeChainRegistry('any.json', {
       feeTokens: [{ denom: 'umfx', symbol: 'MFX' }],
     });
-    const map = loadChainDenomMap(path);
+    const map = await loadChainDenomMap(path);
     expect(map.lookup(42 as unknown as string)).toBeNull();
     expect(map.lookup(null as unknown as string)).toBeNull();
   });

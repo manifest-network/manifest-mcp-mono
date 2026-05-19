@@ -21,6 +21,7 @@ export {
   ManifestMCPErrorCode,
 } from '@manifest-network/manifest-mcp-core';
 export {
+  AuthTimestampTracker,
   type AuthTokenPayload,
   createAuthToken,
   createLeaseDataSignMessage,

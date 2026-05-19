@@ -1,0 +1,10 @@
+{
+  "create_lease_fee": {
+    "amount": [{ "denom": "umfx", "amount": "2300" }],
+    "gas": "142000"
+  },
+  "set_domain_fee": {
+    "amount": [{ "denom": "umfx", "amount": "1100" }],
+    "gas": "60000"
+  }
+}

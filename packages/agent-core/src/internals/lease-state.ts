@@ -6,31 +6,22 @@ import type { LeaseStateName } from '../types.js';
  * `close-lease.ts` / `troubleshoot.ts` to translate integer state codes
  * the chain emits into the typed `LeaseStateName` literal union.
  *
- * **Deliberate fix-up of CJS-vs-chain mismatch.** The plugin source at
- * `manifest-agent-plugin/scripts/_lease-state.cjs` encodes a pre-v2.1.0
- * chain enum (INSUFFICIENT_FUNDS at 3, CLOSED at 4, no entry for 5). The
- * TS port aligns with the current `@manifest-network/manifestjs@2.4.1`
- * `LeaseState` proto (see
+ * Aligned with the current `@manifest-network/manifestjs@2.4.1` `LeaseState`
+ * proto (see
  * `node_modules/@manifest-network/manifestjs/dist/codegen/liftedinit/billing/v1/types.d.ts`):
  *
  * ```
  * 0 → LEASE_STATE_UNSPECIFIED
  * 1 → LEASE_STATE_PENDING   — lease awaiting provider acknowledgement; credit locked, billing not started
  * 2 → LEASE_STATE_ACTIVE    — provider acknowledged, resources provisioned, billing accruing
- * 3 → LEASE_STATE_CLOSED    — lease closed normally; final settlement occurred (CJS says INSUFFICIENT_FUNDS here — stale)
- * 4 → LEASE_STATE_REJECTED  — provider rejected the lease; credit returned to tenant (CJS says CLOSED here — stale)
- * 5 → LEASE_STATE_EXPIRED   — lease expired while in PENDING (provider did not acknowledge within the timeout); credit returned. Pre-active terminal state, NOT a post-active expiry (CJS has no entry)
+ * 3 → LEASE_STATE_CLOSED    — lease closed normally; final settlement occurred
+ * 4 → LEASE_STATE_REJECTED  — provider rejected the lease; credit returned to tenant
+ * 5 → LEASE_STATE_EXPIRED   — lease expired while in PENDING (provider did not acknowledge within the timeout); credit returned. Pre-active terminal state, NOT a post-active expiry
  * ```
  *
  * The proto's `UNRECOGNIZED = -1` enum convenience is NOT included in the
  * STATES map — that value is a TS-enum sentinel for "unknown decode," never
  * a chain emit.
- *
- * Parent-approved divergence (ENG-129). Strict 1:1 with the CJS would
- * mis-decode every lease the chain marks CLOSED, REJECTED, or EXPIRED on
- * v2.1.0+, breaking `DeployResult.leaseState`, `CloseLeaseResult.finalState`,
- * and the verify-recover `lease_terminal` branch at runtime. Plugin-side
- * `_lease-state.cjs` fix tracked as ENG-158.
  *
  * `LEASE_STATE_INSUFFICIENT_FUNDS` is retained as an unreachable variant in
  * the frozen `LeaseStateName` union and in `TERMINAL_STATES` for forward-

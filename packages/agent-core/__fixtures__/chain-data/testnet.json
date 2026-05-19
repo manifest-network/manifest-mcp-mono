@@ -1,0 +1,13 @@
+{
+  "$schema": "Synthetic chain registry shape for humanize-denom. Real-world callers source this from cosmos/chain-registry; this committed copy keeps fixtures self-contained and deterministic.",
+  "chain_name": "manifesttestnet",
+  "chain_id": "manifest-ledger-testnet-1",
+  "feeTokens": [
+    { "denom": "umfx", "symbol": "MFX", "exponent": 6 },
+    {
+      "denom": "factory/manifest1c4p5p0eajlymxak8z5ugmksfpvp5zmm3scrwdrtd5a6mwxnhsa9qnsfftk/upwr",
+      "symbol": "PWR",
+      "exponent": 6
+    }
+  ]
+}

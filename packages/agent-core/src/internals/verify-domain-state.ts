@@ -2,15 +2,14 @@ import { findLease, normalizeItem } from './lease-items.js';
 
 /**
  * Verify a lease item's `customDomain` against an expected value after a
- * `set_item_custom_domain` broadcast. 1:1 port of
- * `manifest-agent-plugin/scripts/verify-domain-state.cjs`.
+ * `set_item_custom_domain` broadcast.
  *
  * Decodes the same lease shape as `lease-items.ts`, then compares the
  * matched item's `customDomain` to the expected FQDN (or empty string for
  * clear-mode). Used by the in-process `verifyAndRecover` driver in PR 1
  * and by the high-level `manageDomain` set/clear flows in PR 4.
  *
- * Outcome semantics (preserved from CJS):
+ * Outcome semantics:
  *   - `'match'`     — actual `customDomain` equals expected
  *   - `'mismatch'`  — actual differs from expected (item carries `actual` for surfacing)
  *   - `'not_found'` — lease UUID not in tenant payload, OR multi-item lease but no `serviceName` supplied, OR `serviceName` not present in the lease's items

@@ -1,0 +1,106 @@
+{
+  "description": "Mocked MCP call/response transcript for deploy-app/03-partial-success-set-domain-failed",
+  "calls": [
+    {
+      "module": "@manifest-network/manifest-mcp-fred",
+      "function": "checkDeploymentReadiness",
+      "expected_args": {
+        "image": "docker.io/library/nginx:1.27",
+        "size": "small"
+      },
+      "response": {
+        "tenant": "manifest1deadbeef",
+        "image": "docker.io/library/nginx:1.27",
+        "size": "small",
+        "wallet_balances": [
+          {
+            "denom": "umfx",
+            "amount": "10000000"
+          }
+        ],
+        "credits": {
+          "available_balances": [
+            {
+              "denom": "umfx",
+              "amount": "50000000000"
+            }
+          ]
+        },
+        "sku": {
+          "name": "small",
+          "price": {
+            "denom": "umfx",
+            "amount": "1000"
+          }
+        },
+        "available_sku_names": ["small", "medium"],
+        "ready": true,
+        "missing_steps": []
+      }
+    },
+    {
+      "module": "@manifest-network/manifest-mcp-fred",
+      "function": "buildManifestPreview",
+      "expected_args": {
+        "size": "small",
+        "image": "docker.io/library/nginx:1.27",
+        "port": 80,
+        "env": {
+          "NGINX_HOST": "example.com",
+          "NGINX_PORT": "80"
+        }
+      },
+      "response": {
+        "meta_hash_hex": "6e1670ec56b86c3feea27755205c5f9972dc3e80e58a6936a17e2c63953e6baf",
+        "manifest_json": "{\"image\":\"docker.io/library/nginx:1.27\",\"ports\":{\"80/tcp\":{}},\"env\":{\"NGINX_HOST\":\"example.com\",\"NGINX_PORT\":\"80\"}}"
+      }
+    },
+    {
+      "module": "@manifest-network/manifest-mcp-core",
+      "function": "cosmosEstimateFee",
+      "expected_args": {
+        "module": "billing",
+        "subcommand": "create-lease",
+        "args": [
+          "--meta-hash",
+          "6e1670ec56b86c3feea27755205c5f9972dc3e80e58a6936a17e2c63953e6baf",
+          "sku-uuid-fixture:1"
+        ]
+      },
+      "response": {
+        "module": "billing",
+        "subcommand": "create-lease",
+        "gasEstimate": "142000",
+        "fee": {
+          "amount": [
+            {
+              "denom": "umfx",
+              "amount": "2300"
+            }
+          ],
+          "gas": "142000"
+        }
+      }
+    },
+    {
+      "module": "@manifest-network/manifest-mcp-fred",
+      "function": "deployApp",
+      "expected_args": {
+        "size": "small",
+        "image": "docker.io/library/nginx:1.27",
+        "port": 80,
+        "env": {
+          "NGINX_HOST": "example.com",
+          "NGINX_PORT": "80"
+        },
+        "customDomain": "app.testnet.manifest.app"
+      },
+      "throws": {
+        "message": "Deploy partially succeeded: lease 11111111-1111-4111-8111-111111111111 was created but subsequent steps failed. Close this lease with close_lease if needed. Error: set_item_custom_domain failed: provider rejected domain claim (FQDN already bound to another lease)",
+        "details": {
+          "lease_uuid": "11111111-1111-4111-8111-111111111111"
+        }
+      }
+    }
+  ]
+}

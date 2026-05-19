@@ -1,7 +1,6 @@
 /**
  * Helpers for walking the provider's `connection` payload returned by
  * `mcp__manifest-fred__deploy_app` / `app_status` / `wait_for_app_ready`.
- * 1:1 port of `manifest-agent-plugin/scripts/_connection.cjs`.
  *
  * The provider emits instance lists in one or both of:
  *   - top-level `connection.instances[]` (single-service / non-services-map shape)
@@ -29,10 +28,9 @@ export interface ConnectionWalkOptions {
   /**
    * Sink for warnings about unrecognized connection shapes. Defaults to
    * `console.warn` (Web Standard; platform-neutral across Node, browsers,
-   * Deno, Bun). Mirrors the CJS's unconditional-stderr posture so a future
-   * provider-shape divergence is loud rather than silent. Surfaces that
-   * want to route elsewhere (plugin → structured stderr, Barney → UI
-   * toast, daemon → log file) can override; surfaces that want to
+   * Deno, Bun) so a future provider-shape divergence is loud rather than
+   * silent. Host surfaces that want to route elsewhere (structured
+   * stderr, UI toast, log file) can override; surfaces that want to
    * suppress entirely can pass `() => {}` explicitly — silence becomes a
    * consumer-controlled opt-out instead of the easy-to-forget default.
    */
@@ -104,6 +102,28 @@ export function formatEndpointAsIngress(ep: RunningEndpoint): string {
 /** Render an endpoint as a full `https://<fqdn>/` URL. */
 export function formatEndpointAsUrl(ep: RunningEndpoint): string {
   return `https://${ep.fqdn}/`;
+}
+
+/**
+ * Normalize fred's top-level `url` field to a full `http(s)://...`
+ * string. Defensive fallback for the legacy `connection.host` / `ports`
+ * shape: fred surfaces a top-level `url` when no `connection.instances`
+ * FQDN is available, and the value may or may not carry a scheme.
+ *
+ * Mirrors the inline logic that lived in three call sites
+ * (`classify-deploy-response.ts:76-80`, `format-success.ts` ingress
+ * fallback, `deploy-app.ts` `DeployResult.urls` fallback) — factored
+ * here so all three share one source of truth.
+ *
+ * - Returns `''` for empty input (caller branches into a different
+ *   render path if needed).
+ * - Passes through unchanged if already prefixed `http://` or
+ *   `https://` (case-insensitive).
+ * - Otherwise wraps as `https://${raw}/`.
+ */
+export function normalizeFredUrl(raw: string): string {
+  if (raw.length === 0) return '';
+  return /^https?:\/\//i.test(raw) ? raw : `https://${raw}/`;
 }
 
 /**
