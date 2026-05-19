@@ -1341,3 +1341,163 @@ describe('deployApp replay — 03-partial-success-set-domain-failed', () => {
     expect(caughtErr).toBeInstanceOf(Error);
   });
 });
+
+// Copilot review fix (PR #58 r3266642610): `applyPlanEdit` previously
+// silently no-op'd `edit_env` on stack specs when `service` was missing
+// or unknown, returning the original spec while the callback caller
+// perceived the edit as applied. Worst case: deploy with wrong env vars
+// / secrets, no error signal. Now throws `INVALID_CONFIG` from inside
+// `applyPlanEdit`, which surfaces through `deployApp`'s onPlan branch
+// to the caller.
+describe('deployApp — applyPlanEdit edit_env validation (r3266642610)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  async function runWithEdit(
+    initialSpec: DeploySpec,
+    plannedEdit: NonNullable<DeployAppCallbacks['onPlan']> extends (
+      p: Plan,
+    ) => Promise<infer R>
+      ? Exclude<R, 'confirm' | 'cancel'>
+      : never,
+  ): Promise<unknown> {
+    const readinessRaw = readFixture(
+      'skills',
+      'deploy-app',
+      '01-fast-path-active',
+      'input',
+      'readiness-response.json',
+    );
+    const metaHashResp = readFixture(
+      'skills',
+      'deploy-app',
+      '01-fast-path-active',
+      'input',
+      'meta-hash-response.json',
+    ) as { manifest_json: string; meta_hash_hex: string };
+
+    const fred = await import('@manifest-network/manifest-mcp-fred');
+    vi.mocked(fred.checkDeploymentReadiness).mockResolvedValue(
+      readinessRaw as unknown as Awaited<
+        ReturnType<typeof fred.checkDeploymentReadiness>
+      >,
+    );
+    vi.mocked(fred.buildManifestPreview).mockResolvedValue({
+      manifest_json: metaHashResp.manifest_json,
+      meta_hash_hex: metaHashResp.meta_hash_hex,
+    } as Awaited<ReturnType<typeof fred.buildManifestPreview>>);
+    vi.mocked(fred.deployApp).mockResolvedValue(
+      {} as Awaited<ReturnType<typeof fred.deployApp>>,
+    );
+    const core = await import('@manifest-network/manifest-mcp-core');
+    vi.mocked(core.cosmosEstimateFee).mockResolvedValue({
+      module: 'billing',
+      subcommand: 'create-lease',
+      gasEstimate: '142000',
+      fee: { amount: [{ denom: 'umfx', amount: '2300' }], gas: '142000' },
+    } as Awaited<ReturnType<typeof core.cosmosEstimateFee>>);
+
+    const baseCapture = captureCallbacks();
+    const callbacks: DeployAppCallbacks = {
+      ...baseCapture.callbacks,
+      onPlan: async () => plannedEdit,
+    };
+
+    const { deployApp } = await import('./deploy-app.js');
+    const clientManager = makeMockClientManager();
+    const walletProvider = makeMockWalletProvider();
+
+    let caughtErr: unknown = null;
+    try {
+      await deployApp(initialSpec, callbacks, {
+        clientManager: clientManager as unknown as Parameters<
+          typeof deployApp
+        >[2]['clientManager'],
+        walletProvider,
+      });
+    } catch (err) {
+      caughtErr = err;
+    }
+    return caughtErr;
+  }
+
+  const STACK_SPEC: DeploySpec = {
+    services: {
+      web: { image: 'nginx:1.27', ports: [80], env: { EXISTING: 'value' } },
+    },
+  } as unknown as DeploySpec;
+
+  it('stack + edit_env without `service` → INVALID_CONFIG with "requires `service`"', async () => {
+    const err = await runWithEdit(STACK_SPEC, {
+      kind: 'edit_env',
+      env: { NEW: 'val' },
+    });
+    expect(err).toBeInstanceOf(Error);
+    expect((err as Error).message).toContain(
+      'edit_env on a stack spec requires `service`',
+    );
+  });
+
+  it('stack + edit_env with unknown service → INVALID_CONFIG with services list', async () => {
+    const err = await runWithEdit(STACK_SPEC, {
+      kind: 'edit_env',
+      service: 'unknown-svc',
+      env: { NEW: 'val' },
+    });
+    expect(err).toBeInstanceOf(Error);
+    expect((err as Error).message).toContain('"unknown-svc"');
+    expect((err as Error).message).toContain('is not a key in `services`');
+    expect((err as Error).message).toContain('web');
+  });
+
+  it("stack + edit_env with prototype-chain pollution ('constructor') → INVALID_CONFIG (Fix 16 symmetry)", async () => {
+    const err = await runWithEdit(STACK_SPEC, {
+      kind: 'edit_env',
+      service: 'constructor',
+      env: { NEW: 'val' },
+    });
+    expect(err).toBeInstanceOf(Error);
+    expect((err as Error).message).toContain('"constructor"');
+    expect((err as Error).message).toContain('is not a key in `services`');
+  });
+
+  it('stack + edit_env with valid service → merges env on that service (positive control)', async () => {
+    // A valid edit shouldn't trigger the applyPlanEdit throw. The
+    // orchestrator's downstream classifier-driven INVALID_CONFIG
+    // (fredResult `{}` → 'failed' classification) IS expected — we just
+    // care the throw is NOT the applyPlanEdit one.
+    const err = await runWithEdit(STACK_SPEC, {
+      kind: 'edit_env',
+      service: 'web',
+      env: { NEW: 'val' },
+    });
+    expect(err).toBeInstanceOf(Error);
+    expect((err as Error).message).not.toContain(
+      'edit_env on a stack spec requires',
+    );
+    expect((err as Error).message).not.toContain('is not a key in `services`');
+  });
+
+  it('single-service edit_env → merges env (regression guard, unchanged behavior)', async () => {
+    const singleSpec = readFixture(
+      'skills',
+      'deploy-app',
+      '01-fast-path-active',
+      'input',
+      'spec.json',
+    ) as DeploySpec;
+    const err = await runWithEdit(singleSpec, {
+      kind: 'edit_env',
+      env: { NEW: 'val' },
+    });
+    // Same positive-control rationale as above — applyPlanEdit must
+    // not throw; downstream classification throw is acceptable.
+    expect((err as Error | null)?.message).not.toContain(
+      'edit_env on a stack spec requires',
+    );
+    expect((err as Error | null)?.message).not.toContain(
+      'is not a key in `services`',
+    );
+  });
+});

@@ -92,6 +92,7 @@ import type {
   RecoveryChoice,
   RecoveryOption,
   RecoveryOptionId,
+  ServiceDef,
   SingleServiceSpec,
   StackSpec,
 } from './types.js';
@@ -718,24 +719,47 @@ function applyPlanEdit(
   // into the matching service (or single-service spec).
   if (edit.kind === 'replace_spec') return edit.spec;
   if (edit.kind === 'edit_env') {
-    if (isStackSpec(spec) && edit.service !== undefined) {
-      const svc = spec.services[edit.service];
-      if (svc) {
-        return {
-          ...spec,
-          services: {
-            ...spec.services,
-            [edit.service]: {
-              ...svc,
-              env: { ...(svc.env ?? {}), ...edit.env },
-            },
-          },
-        };
+    // Copilot review fix (PR #58 r3266642610): the prior implementation
+    // silently no-op'd two stack-spec cases (missing `edit.service` or
+    // unknown service name), returning the unchanged spec while the
+    // callback caller perceived the edit as applied. Worst case: deploy
+    // proceeds with wrong env vars / secrets without an error signal.
+    // Fail-fast at the boundary instead, so the user's `onPlan` callback
+    // gets a clear `INVALID_CONFIG` for misuse. Uses
+    // `Object.keys().includes()` for the membership check — matches
+    // Fix 16's cross-package symmetry with fred (avoids prototype-chain
+    // bypass via `'constructor'` / `'toString'` / etc.).
+    if (isStackSpec(spec)) {
+      if (edit.service === undefined) {
+        throw new ManifestMCPError(
+          ManifestMCPErrorCode.INVALID_CONFIG,
+          'applyPlanEdit: edit_env on a stack spec requires `service` identifying which service to edit.',
+        );
       }
-    } else if (!isStackSpec(spec)) {
-      const single = spec as SingleServiceSpec;
-      return { ...single, env: { ...(single.env ?? {}), ...edit.env } };
+      if (!Object.keys(spec.services).includes(edit.service)) {
+        throw new ManifestMCPError(
+          ManifestMCPErrorCode.INVALID_CONFIG,
+          `applyPlanEdit: edit_env \`service\` "${edit.service}" is not a key in \`services\` (got: [${Object.keys(spec.services).join(', ')}]).`,
+        );
+      }
+      const svc = spec.services[edit.service];
+      // Membership check above guarantees `svc` is defined; the
+      // non-null assertion documents that — TS narrows it after the
+      // `includes` check, but the runtime invariant is in the
+      // membership check.
+      return {
+        ...spec,
+        services: {
+          ...spec.services,
+          [edit.service]: {
+            ...(svc as ServiceDef),
+            env: { ...((svc as ServiceDef).env ?? {}), ...edit.env },
+          },
+        },
+      };
     }
+    const single = spec as SingleServiceSpec;
+    return { ...single, env: { ...(single.env ?? {}), ...edit.env } };
   }
   return spec;
 }

@@ -23,7 +23,7 @@ __fixtures__/
 ├── scenarios.json      # canonical-input registry (1 entry per scenario)
 ├── chain-data/         # synthetic chain registry JSON for humanize-denom
 │   └── testnet.json    # fee tokens map (umfx → MFX, etc.)
-├── internals/          # one JSON per scenario for unit-test ports
+├── internals/          # (DEFERRED — fixture tree for unit-test ports; tracked for PR-3.x / ENG-185)
 │   ├── verify-recover/
 │   ├── classify-deploy-error/
 │   ├── verify-domain-state/

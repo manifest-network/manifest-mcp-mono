@@ -83,7 +83,7 @@ Both are advisory hints, not enforcement. The plugin's `PreToolUse` hook regex i
 - BigInt values serialized to strings via `bigIntReplacer` JSON replacer.
 - `@cosmjs/stargate` is overridden to `@manifest-network/stargate` (custom fork). See core `package.json` overrides.
 - Code formatting, linting, and import sorting enforced by Biome (see `biome.json`). Run `npm run check` before committing.
-- Regex matching: prefer `String.prototype.match()` over `RegExp.exec()` in regex-heavy code. The CI security hook flags certain RegExp-method patterns as shell-execution tokens (false-positive but blocking). See `packages/agent-core/src/internals/render-deployment-plan.ts` (the `parseHumanFee` helper) for an in-source example with rationale comment.
+- Regex matching: prefer `String.prototype.match()` over the corresponding `RegExp` instance method in regex-heavy code. The CI security hook flags certain RegExp-method patterns as shell-execution tokens (false-positive but blocking). See `packages/agent-core/src/internals/evaluate-readiness.ts` (the gasPrice parse — `inputs.gasPrice.match(GAS_PRICE_RE)`) for an in-source example with the rationale called out inline.
 
 ## Environment variables (node package)
 
