@@ -417,9 +417,16 @@ describe('Exported type shapes (load-bearing public surface)', () => {
     expectTypeOf<WalletProvider>().not.toBeAny();
     expectTypeOf<WalletProvider>().not.toBeNever();
     // Verify the ADR-036 surface stays optional (Path-Bii respects this).
-    expectTypeOf<WalletProvider['signArbitrary']>().toEqualTypeOf<
-      WalletProvider['signArbitrary']
-    >();
+    //
+    // Copilot review fix (PR #58 r3267583201): the prior assertion was
+    // tautological (`X.toEqualTypeOf<X>()` is trivially true for any X)
+    // — it would still pass if `signArbitrary` became required. The
+    // canonical optionality probe in `expectTypeOf` is "is `undefined`
+    // a valid value of the type?", expressed via `toMatchTypeOf`.
+    // Mutation-verified: removing the `?` from `signArbitrary` in
+    // `core/src/types.ts` breaks this assertion (`undefined` no longer
+    // matches `WalletProvider['signArbitrary']`).
+    expectTypeOf<undefined>().toMatchTypeOf<WalletProvider['signArbitrary']>();
   });
 
   it('CosmosClientManager re-exported from core (presence check; shape owned by core)', () => {
