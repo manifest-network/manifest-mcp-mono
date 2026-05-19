@@ -466,7 +466,7 @@ describe('renderDeploymentPlan', () => {
         image: 'docker.io/library/nginx:1.27',
         size: 'small',
         metaHash:
-          '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+          '6e1670ec56b86c3feea27755205c5f9972dc3e80e58a6936a17e2c63953e6baf',
       });
       // Fixture has trailing newline from CJS console.log; strip for compare.
       expect(actual.text).toBe(expected.replace(/\n$/, ''));
@@ -523,7 +523,7 @@ describe('renderDeploymentPlan', () => {
         image: 'docker.io/library/nginx:1.27',
         size: 'small',
         metaHash:
-          '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+          '6e1670ec56b86c3feea27755205c5f9972dc3e80e58a6936a17e2c63953e6baf',
         customDomain: 'app.testnet.manifest.app',
       });
       expect(actual.text).toBe(expected.replace(/\n$/, ''));

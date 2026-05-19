@@ -208,6 +208,32 @@ export function validateSpec(spec: DeploySpec | null | undefined): void {
     );
   }
 
+  // Copilot review fix (PR #58 r3266786899): `customDomain` shape at
+  // the boundary. The orchestrator's `buildFredDeployInput`
+  // (`deploy-app.ts:701`) uses a `if (customDomain)` truthiness check,
+  // which silently drops `''`, `null`, `false`, `0`, `NaN` from the
+  // emitted `fredInput`. A user spec like `{ ..., customDomain: '' }`
+  // passes validation today, fred receives `fredInput` WITHOUT the
+  // domain, deploy proceeds — the user's requested domain silently
+  // not claimed, no error signal.
+  //
+  // Boundary check: when `customDomain` is present, it must be a
+  // non-empty string. `undefined` (key absent) is fine; that's the
+  // "no domain requested" case. Fires before the stack-customDomain
+  // serviceName check (r3249684707) so the user gets a clear
+  // customDomain-shape error rather than a misleading
+  // requires-serviceName one.
+  if ('customDomain' in record) {
+    const cd = record.customDomain;
+    if (cd !== undefined && (typeof cd !== 'string' || cd.length === 0)) {
+      const got =
+        typeof cd === 'string' ? '""' : cd === null ? 'null' : typeof cd;
+      throw new TypeError(
+        `validateSpec: \`customDomain\` must be a non-empty string or absent (got ${got}).`,
+      );
+    }
+  }
+
   if (hasServices) {
     const entries = Object.entries(spec.services);
     if (entries.length === 0) {

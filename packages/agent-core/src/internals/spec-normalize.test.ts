@@ -501,4 +501,94 @@ describe('validateSpec', () => {
       ).not.toThrow();
     });
   });
+
+  // Copilot review fix (PR #58 r3266786899): `customDomain` shape at
+  // the boundary. `buildFredDeployInput`'s `if (customDomain)`
+  // truthiness check silently dropped `''` / `null` / etc. — the
+  // user's spec passed validation, fred received `fredInput` without
+  // the domain, deploy proceeded silently. Boundary check enforces
+  // non-empty string when the key is present; `undefined` is fine.
+  describe('customDomain shape (r3266786899)', () => {
+    it('rejects single-service + customDomain: "" (empty string)', () => {
+      expect(() =>
+        validateSpec({
+          image: 'nginx:1.27',
+          port: 80,
+          customDomain: '',
+        } as unknown as DeploySpec),
+      ).toThrow(/`customDomain` must be a non-empty string or absent.*""/);
+    });
+
+    it('rejects single-service + customDomain: null', () => {
+      expect(() =>
+        validateSpec({
+          image: 'nginx:1.27',
+          port: 80,
+          customDomain: null,
+        } as unknown as DeploySpec),
+      ).toThrow(/`customDomain` must be a non-empty string or absent.*null/);
+    });
+
+    it('rejects single-service + customDomain: 0 (non-string)', () => {
+      expect(() =>
+        validateSpec({
+          image: 'nginx:1.27',
+          port: 80,
+          customDomain: 0,
+        } as unknown as DeploySpec),
+      ).toThrow(/`customDomain` must be a non-empty string or absent.*number/);
+    });
+
+    it('accepts single-service + customDomain: undefined (key absent semantics)', () => {
+      expect(() =>
+        validateSpec({
+          image: 'nginx:1.27',
+          port: 80,
+          customDomain: undefined,
+        } as unknown as DeploySpec),
+      ).not.toThrow();
+    });
+
+    it('accepts single-service + customDomain: valid FQDN string', () => {
+      expect(() =>
+        validateSpec({
+          image: 'nginx:1.27',
+          port: 80,
+          customDomain: 'app.example.com',
+        } as unknown as DeploySpec),
+      ).not.toThrow();
+    });
+
+    // Order-dependent: the customDomain shape check fires BEFORE the
+    // stack-customDomain-serviceName check (r3249684707). A stack
+    // spec with `customDomain: ''` should surface as the shape error,
+    // not as a misleading "requires serviceName" error.
+    it('rejects stack + customDomain: "" with shape error (precedes serviceName check)', () => {
+      let caughtErr: unknown = null;
+      try {
+        validateSpec({
+          services: { web: { image: 'nginx:1.27' } },
+          customDomain: '',
+          serviceName: 'web',
+        } as unknown as DeploySpec);
+      } catch (err) {
+        caughtErr = err;
+      }
+      expect(caughtErr).toBeInstanceOf(TypeError);
+      const msg = (caughtErr as Error).message;
+      expect(msg).toContain('`customDomain` must be a non-empty string');
+      // Make sure the misleading serviceName message did NOT fire.
+      expect(msg).not.toContain('requires `serviceName`');
+    });
+
+    it('accepts stack + valid customDomain + matching serviceName (regression guard)', () => {
+      expect(() =>
+        validateSpec({
+          services: { web: { image: 'nginx:1.27' } },
+          customDomain: 'app.example.com',
+          serviceName: 'web',
+        } as unknown as DeploySpec),
+      ).not.toThrow();
+    });
+  });
 });
