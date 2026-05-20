@@ -7,8 +7,9 @@
  *   - `set` / `clear` render a confirmation block, optionally call
  *     `onConfirm`, broadcast `setItemCustomDomain` against the agent's
  *     bound chain client, then verify the post-broadcast on-chain state
- *     via `verifyAndRecover` driving `verify-domain-state` over the
- *     tenant's `leasesByTenant` payload. Branches are inline closures
+ *     via `verifyAndRecover` driving `verify-domain-state` over a direct
+ *     `billing.v1.lease({ leaseUuid })` single-lease query (tenant-
+ *     agnostic, no pagination edge cases). Branches are inline closures
  *     bound to the per-action context; recovery options are intentionally
  *     empty so the verifier surfaces failures via the simple-form
  *     `onFailure({ reason })` adapter rather than the rich-form

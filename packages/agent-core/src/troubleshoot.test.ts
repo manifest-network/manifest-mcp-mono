@@ -331,6 +331,45 @@ describe('troubleshootDeployment — chain-query failures', () => {
     );
   });
 
+  it('chain query rejects with structured ManifestMCPError → preserves original code (does not re-wrap as QUERY_FAILED)', async () => {
+    // Copilot review PR #60 (comment 3276172289): the previous catch
+    // wrapped EVERY rejection as QUERY_FAILED, erasing structured
+    // upstream codes. Mirrors the round-1 fix for `lookupDomain` in
+    // manage-domain.ts.
+    const queryClient = makeMockQueryClient();
+    queryClient.liftedinit.billing.v1.lease.mockRejectedValue(
+      new ManifestMCPError(
+        ManifestMCPErrorCode.INVALID_CONFIG,
+        'fixture-injected upstream INVALID_CONFIG',
+      ),
+    );
+    const clientManager = makeMockClientManager(queryClient);
+    const { callbacks, failures } = captureCallbacks();
+    const { troubleshootDeployment } = await import('./troubleshoot.js');
+
+    await expect(
+      troubleshootDeployment(
+        { leaseUuid: '11111111-1111-4111-8111-111111111111' },
+        callbacks,
+        {
+          clientManager: clientManager as unknown as Parameters<
+            typeof troubleshootDeployment
+          >[2]['clientManager'],
+        },
+      ),
+    ).rejects.toMatchObject({
+      code: ManifestMCPErrorCode.INVALID_CONFIG,
+      message: 'fixture-injected upstream INVALID_CONFIG',
+    });
+    expect(failures).toHaveLength(1);
+    expect(failures[0]?.reason).toContain(
+      'fixture-injected upstream INVALID_CONFIG',
+    );
+    expect(failures[0]?.reason).toContain(
+      '11111111-1111-4111-8111-111111111111',
+    );
+  });
+
   it('chain returns lease with unknown state int → renders UNKNOWN(<raw>) placeholder', async () => {
     const queryClient = makeMockQueryClient();
     queryClient.liftedinit.billing.v1.lease.mockResolvedValue({

@@ -27,7 +27,7 @@
       "id": "manage-domain/01-set-success",
       "skill": "manage-domain",
       "kind": "happy",
-      "description": "Single-item lease; set new FQDN; setItemCustomDomain succeeds and the post-broadcast leases-by-tenant query shows the FQDN matches the expected value (verifyAndRecover outcome=match).",
+      "description": "Single-item lease; set new FQDN; setItemCustomDomain succeeds and the post-broadcast billing.v1.lease({ leaseUuid }) query shows the FQDN matches the expected value (verifyAndRecover outcome=match).",
       "active_chain": "testnet",
       "lease_uuid": "11111111-1111-4111-8111-111111111111",
       "custom_domain": "app.testnet.manifest.app",
@@ -83,7 +83,7 @@
       "id": "close-lease/01-close-success",
       "skill": "close-lease",
       "kind": "happy",
-      "description": "Active lease closed via stopApp; post-broadcast leases-by-tenant query shows state=LEASE_STATE_CLOSED (terminal). Verifier marks success; result carries finalState=LEASE_STATE_CLOSED.",
+      "description": "Active lease closed via stopApp; post-broadcast billing.v1.lease({ leaseUuid }) query shows state=LEASE_STATE_CLOSED (terminal). Verifier marks success; result carries finalState=LEASE_STATE_CLOSED.",
       "active_chain": "testnet",
       "lease_uuid": "11111111-1111-4111-8111-111111111111"
     },

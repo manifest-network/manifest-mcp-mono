@@ -8,11 +8,12 @@
  *   2. Render a confirmation block + optionally consult `onConfirm`.
  *   3. Broadcast `stopApp` (which submits `MsgCloseLease`).
  *   4. Verify the post-broadcast on-chain state via `verifyAndRecover`
- *      driving a `leasesByTenant` -> `lease-state.decode` ->
- *      `isTerminal` check. Terminal states (CLOSED / REJECTED / EXPIRED
- *      / INSUFFICIENT_FUNDS) count as success; PENDING / ACTIVE map to
- *      the `pending_drift` branch; lease not visible in the tenant
- *      payload maps to the catch-all `unclassified` branch.
+ *      driving a direct `billing.v1.lease({ leaseUuid })` query +
+ *      `lease-state.decode` + `isTerminal`. Terminal states (CLOSED /
+ *      REJECTED / EXPIRED / INSUFFICIENT_FUNDS) count as success;
+ *      PENDING / ACTIVE map to the `pending_drift` branch; a chain
+ *      response with no lease (`{ lease: null }`) maps to the catch-all
+ *      `unclassified` branch.
  *   5. On verify-failure, invoke the simple-form `onFailure({ reason })`
  *      then throw `ManifestMCPError(TX_FAILED)`. On success, emit
  *      `onComplete` with the typed `CloseLeaseResult`.

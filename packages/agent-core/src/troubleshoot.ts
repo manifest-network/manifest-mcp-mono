@@ -69,9 +69,22 @@ export async function troubleshootDeployment(
     });
     leasePayload = result.lease;
   } catch (err) {
+    // Preserve structured `ManifestMCPError`s from the chain client
+    // (Copilot review PR #60, comment 3276172289). Wrapping every
+    // failure as `QUERY_FAILED` erases upstream error codes — a real
+    // `INVALID_CONFIG` from the chain layer should surface to callers
+    // with that code, not be collapsed to a less-specific category.
+    // Mirrors the disambiguation `manage-domain.ts:lookupDomain`
+    // adopted in commit aaa5cc5. Note: chain-NotFound for
+    // `billing.v1.lease({ leaseUuid })` returns `{ lease: null }`
+    // (handled below), so errors landing here are genuinely transport
+    // or structured failures.
     const reason = `Failed to query lease ${args.leaseUuid}: ${err instanceof Error ? err.message : String(err)}`;
     if (callbacks.onFailure) {
       await callbacks.onFailure({ reason });
+    }
+    if (err instanceof ManifestMCPError) {
+      throw err;
     }
     throw new ManifestMCPError(ManifestMCPErrorCode.QUERY_FAILED, reason);
   }
