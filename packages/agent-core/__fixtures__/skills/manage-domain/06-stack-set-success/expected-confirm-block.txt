@@ -1,0 +1,5 @@
+Set custom domain on lease 11111111-1111-4111-8111-111111111111:
+  FQDN:         api.testnet.manifest.app
+  Service:      web
+
+Proceed?

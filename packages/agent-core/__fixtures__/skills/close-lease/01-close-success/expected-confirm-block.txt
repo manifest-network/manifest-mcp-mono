@@ -1,0 +1,5 @@
+Close lease 11111111-1111-4111-8111-111111111111.
+  Image: (image not recorded)
+  This is permanent — the lease cannot be reopened.
+
+Proceed?

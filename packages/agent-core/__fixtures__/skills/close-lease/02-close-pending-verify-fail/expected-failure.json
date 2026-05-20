@@ -1,0 +1,3 @@
+{
+  "reason": "close_lease tx accepted but state is still LEASE_STATE_PENDING."
+}
