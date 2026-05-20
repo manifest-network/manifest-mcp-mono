@@ -99,7 +99,7 @@
       "id": "close-lease/03-close-not-found",
       "skill": "close-lease",
       "kind": "verify-not-found",
-      "description": "stopApp accepted but the target lease is not visible in the tenant payload after broadcast (paging gap or wrong-tenant submission); inform-only failure with the not-in-tenant-leases reason; orchestrator throws TX_FAILED.",
+      "description": "stopApp accepted but the post-close billing.v1.lease query returns no lease (e.g. chain hasn't yet emitted the closed state, or the close didn't actually take effect); inform-only failure routes to the catch-all `unclassified` branch; orchestrator throws TX_FAILED.",
       "active_chain": "testnet",
       "lease_uuid": "99999999-9999-4999-8999-999999999999"
     },

@@ -465,4 +465,85 @@ describe('closeLease — args validation', () => {
       'close_lease tx accepted but state is still LEASE_STATE_ACTIVE.',
     );
   });
+
+  it('verifier chain-query rejects → onFailure invoked + throws QUERY_FAILED (not propagated raw)', async () => {
+    // Copilot review PR #60 (comment 3276419264): the verifier closure
+    // previously called `billing.v1.lease()` without try/catch. A chain
+    // rejection would propagate out of `verifyAndRecover` and bypass
+    // the post-verify `onFailure` callback. Mirror the disambiguation
+    // pattern from `lookupDomain` (round 1) + `troubleshoot` (round 3).
+    const core = await import('@manifest-network/manifest-mcp-core');
+    vi.mocked(core.stopApp).mockResolvedValue({
+      lease_uuid: '11111111-1111-4111-8111-111111111111',
+      status: 'stopped',
+      transactionHash: 'DEADBEEF',
+      code: 0,
+    } as Awaited<ReturnType<typeof core.stopApp>>);
+
+    const queryClient = makeMockQueryClient();
+    queryClient.liftedinit.billing.v1.lease.mockRejectedValue(
+      new Error('transport: ECONNREFUSED 127.0.0.1:9090'),
+    );
+    const clientManager = makeMockClientManager(queryClient);
+    const { callbacks, failures } = captureCallbacks('yes');
+    const { closeLease } = await import('./close-lease.js');
+
+    await expect(
+      closeLease(
+        { leaseUuid: '11111111-1111-4111-8111-111111111111' },
+        callbacks,
+        {
+          clientManager: clientManager as unknown as Parameters<
+            typeof closeLease
+          >[2]['clientManager'],
+        },
+      ),
+    ).rejects.toMatchObject({
+      code: ManifestMCPErrorCode.QUERY_FAILED,
+      message: expect.stringContaining('11111111-1111-4111-8111-111111111111'),
+    });
+    expect(failures).toHaveLength(1);
+    expect(failures[0]?.reason).toContain('ECONNREFUSED');
+    expect(failures[0]?.reason).toContain('close-verify');
+  });
+
+  it('verifier chain-query rejects with structured ManifestMCPError → preserves original code', async () => {
+    const core = await import('@manifest-network/manifest-mcp-core');
+    vi.mocked(core.stopApp).mockResolvedValue({
+      lease_uuid: '11111111-1111-4111-8111-111111111111',
+      status: 'stopped',
+      transactionHash: 'DEADBEEF',
+      code: 0,
+    } as Awaited<ReturnType<typeof core.stopApp>>);
+
+    const queryClient = makeMockQueryClient();
+    queryClient.liftedinit.billing.v1.lease.mockRejectedValue(
+      new ManifestMCPError(
+        ManifestMCPErrorCode.INVALID_CONFIG,
+        'fixture-injected upstream INVALID_CONFIG',
+      ),
+    );
+    const clientManager = makeMockClientManager(queryClient);
+    const { callbacks, failures } = captureCallbacks('yes');
+    const { closeLease } = await import('./close-lease.js');
+
+    await expect(
+      closeLease(
+        { leaseUuid: '11111111-1111-4111-8111-111111111111' },
+        callbacks,
+        {
+          clientManager: clientManager as unknown as Parameters<
+            typeof closeLease
+          >[2]['clientManager'],
+        },
+      ),
+    ).rejects.toMatchObject({
+      code: ManifestMCPErrorCode.INVALID_CONFIG,
+      message: 'fixture-injected upstream INVALID_CONFIG',
+    });
+    expect(failures).toHaveLength(1);
+    expect(failures[0]?.reason).toContain(
+      'fixture-injected upstream INVALID_CONFIG',
+    );
+  });
 });

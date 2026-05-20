@@ -70,7 +70,7 @@ export function verifyDomainState(
   if (lease === null) {
     return {
       outcome: 'not_found',
-      reason: 'lease UUID not in tenant leases',
+      reason: 'lease UUID not found in verification payload',
     };
   }
 

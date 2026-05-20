@@ -88,10 +88,33 @@ export async function closeLease(
   // tenant-agnostic and bounded to a single lease.
   const spec: VerificationSpec<unknown, CloseOutcome, CloseDiag> = {
     verifier: async () => {
-      const queryClient = await opts.clientManager.getQueryClient();
-      const result = await queryClient.liftedinit.billing.v1.lease({
-        leaseUuid: args.leaseUuid,
-      });
+      // Wrap the chain call in try/catch (Copilot review PR #60,
+      // comment 3276419264): if `billing.v1.lease` rejects (RPC down,
+      // transport, structured `ManifestMCPError`), the error would
+      // otherwise propagate OUT of `verifyAndRecover` and bypass the
+      // post-verify `onFailure({ reason })` callback below. Mirror
+      // the disambiguation pattern from `lookupDomain` (commit aaa5cc5)
+      // and `troubleshootDeployment` (commit f1a4737): invoke
+      // `onFailure` first, then re-throw `ManifestMCPError` as-is or
+      // wrap plain errors as `QUERY_FAILED`.
+      let result: unknown;
+      try {
+        const queryClient = await opts.clientManager.getQueryClient();
+        result = await queryClient.liftedinit.billing.v1.lease({
+          leaseUuid: args.leaseUuid,
+        });
+      } catch (err) {
+        const reason = `Failed to query lease ${args.leaseUuid} during close-verify: ${
+          err instanceof Error ? err.message : String(err)
+        }`;
+        if (callbacks.onFailure) {
+          await callbacks.onFailure({ reason });
+        }
+        if (err instanceof ManifestMCPError) {
+          throw err;
+        }
+        throw new ManifestMCPError(ManifestMCPErrorCode.QUERY_FAILED, reason);
+      }
       const lease = (result as { lease?: unknown })?.lease;
       if (lease === null || lease === undefined) {
         return {

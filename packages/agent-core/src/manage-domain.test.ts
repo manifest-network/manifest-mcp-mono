@@ -713,7 +713,100 @@ describe('manageDomain — set', () => {
     ).rejects.toThrowError(ManifestMCPError);
 
     expect(failures).toHaveLength(1);
-    expect(failures[0]?.reason).toMatch(/lease UUID not in tenant leases/);
+    expect(failures[0]?.reason).toMatch(
+      /lease UUID not found in verification payload/,
+    );
+  });
+
+  it('verifier chain-query rejects → onFailure invoked + throws QUERY_FAILED (not propagated raw)', async () => {
+    // Copilot review PR #60 (comment 3276419210): the verifier closure
+    // previously called `billing.v1.lease()` without try/catch. A chain
+    // rejection would propagate out of `verifyAndRecover` and bypass
+    // the post-verify `onFailure` callback. Mirror the disambiguation
+    // pattern from `lookupDomain` (round 1) + `troubleshoot` (round 3).
+    const core = await import('@manifest-network/manifest-mcp-core');
+    vi.mocked(core.setItemCustomDomain).mockResolvedValue({
+      lease_uuid: '11111111-1111-4111-8111-111111111111',
+      service_name: '',
+      custom_domain: 'app.example.com',
+      transactionHash: 'DEADBEEF',
+      code: 0,
+    } as Awaited<ReturnType<typeof core.setItemCustomDomain>>);
+
+    const queryClient = makeMockQueryClient();
+    queryClient.liftedinit.billing.v1.lease.mockRejectedValue(
+      new Error('transport: ECONNREFUSED 127.0.0.1:9090'),
+    );
+    const clientManager = makeMockClientManager(queryClient);
+    const { callbacks, failures } = captureCallbacks('yes');
+    const { manageDomain } = await import('./manage-domain.js');
+
+    await expect(
+      manageDomain(
+        {
+          action: 'set',
+          leaseUuid: '11111111-1111-4111-8111-111111111111',
+          fqdn: 'app.example.com',
+        },
+        callbacks,
+        {
+          clientManager: clientManager as unknown as Parameters<
+            typeof manageDomain
+          >[2]['clientManager'],
+        },
+      ),
+    ).rejects.toMatchObject({
+      code: ManifestMCPErrorCode.QUERY_FAILED,
+      message: expect.stringContaining('11111111-1111-4111-8111-111111111111'),
+    });
+    expect(failures).toHaveLength(1);
+    expect(failures[0]?.reason).toContain('ECONNREFUSED');
+    expect(failures[0]?.reason).toContain('set-verify');
+  });
+
+  it('verifier chain-query rejects with structured ManifestMCPError → preserves original code', async () => {
+    const core = await import('@manifest-network/manifest-mcp-core');
+    vi.mocked(core.setItemCustomDomain).mockResolvedValue({
+      lease_uuid: '11111111-1111-4111-8111-111111111111',
+      service_name: '',
+      custom_domain: 'app.example.com',
+      transactionHash: 'DEADBEEF',
+      code: 0,
+    } as Awaited<ReturnType<typeof core.setItemCustomDomain>>);
+
+    const queryClient = makeMockQueryClient();
+    queryClient.liftedinit.billing.v1.lease.mockRejectedValue(
+      new ManifestMCPError(
+        ManifestMCPErrorCode.INVALID_CONFIG,
+        'fixture-injected upstream INVALID_CONFIG',
+      ),
+    );
+    const clientManager = makeMockClientManager(queryClient);
+    const { callbacks, failures } = captureCallbacks('yes');
+    const { manageDomain } = await import('./manage-domain.js');
+
+    await expect(
+      manageDomain(
+        {
+          action: 'set',
+          leaseUuid: '11111111-1111-4111-8111-111111111111',
+          fqdn: 'app.example.com',
+        },
+        callbacks,
+        {
+          clientManager: clientManager as unknown as Parameters<
+            typeof manageDomain
+          >[2]['clientManager'],
+        },
+      ),
+    ).rejects.toMatchObject({
+      code: ManifestMCPErrorCode.INVALID_CONFIG,
+      message: 'fixture-injected upstream INVALID_CONFIG',
+    });
+    expect(failures).toHaveLength(1);
+    expect(failures[0]?.reason).toContain(
+      'fixture-injected upstream INVALID_CONFIG',
+    );
   });
 
   it('broadcast failure surfaces as ManifestMCPError; verify NOT called', async () => {
