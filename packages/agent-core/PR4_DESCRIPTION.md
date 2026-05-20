@@ -139,6 +139,5 @@ The shipped implementations are leaner than `packages/agent-core/PR4_BLUEPRINT.m
 
 1. **Lookup path skips `onComplete`.** `manage-domain.ts:lookupDomain` returns before reaching the broadcast-path's `callbacks.onComplete?.(result)`. The 04-lookup-found test explicitly asserts `completed === []` so the asymmetry is reviewable. No behavioral defect today (lookup callers receive the result via the function return); a future symmetry fix is a one-line callback insertion.
 2. **`BranchId` extension landed asymmetrically.** `domain_not_found` was added to the union and `manage-domain.ts`'s `not_found` branch wired to it. Close-lease's `not_found` branch retains `'unclassified'` per minimal-diff (failure reason strings are independent of branchId). A future PR may add a named `close_not_visible` member if journal-tag specificity becomes useful.
-3. **`leases-by-tenant` pagination cap.** Both verify paths page-1-only (hard-coded `limit: 100`). Tenants with >100 leases may have a verify miss the target lease (false-negative `not_found`). Documented limitation; follow-up only if it bites in production.
 
 Scope-reduction deferrals are tracked in the "Scope reductions vs blueprint" section above, not duplicated here.

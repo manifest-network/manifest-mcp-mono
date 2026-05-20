@@ -23,7 +23,6 @@ import {
   ManifestMCPErrorCode,
   stopApp,
 } from '@manifest-network/manifest-mcp-core';
-import { findLease } from './internals/lease-items.js';
 import {
   decode as decodeLeaseState,
   isTerminal,
@@ -81,27 +80,23 @@ export async function closeLease(
 
   await stopApp(opts.clientManager, args.leaseUuid);
 
-  const tenantAddress = await opts.clientManager.getAddress();
+  // Direct single-lease query (Copilot review PR #60, comment 3275999624):
+  // the previous `leasesByTenant` + page-1-only pagination would
+  // false-`not_found` for tenants with >100 leases. `billing.v1.lease`
+  // is the same query shape `troubleshoot.ts` already uses; it's
+  // tenant-agnostic and bounded to a single lease.
   const spec: VerificationSpec<unknown, CloseOutcome, CloseDiag> = {
     verifier: async () => {
       const queryClient = await opts.clientManager.getQueryClient();
-      const result = await queryClient.liftedinit.billing.v1.leasesByTenant({
-        tenant: tenantAddress,
-        stateFilter: 0,
-        pagination: {
-          key: new Uint8Array(),
-          offset: 0n,
-          limit: 100n,
-          countTotal: false,
-          reverse: false,
-        },
+      const result = await queryClient.liftedinit.billing.v1.lease({
+        leaseUuid: args.leaseUuid,
       });
-      const lease = findLease(result, args.leaseUuid);
-      if (lease === null) {
+      const lease = (result as { lease?: unknown })?.lease;
+      if (lease === null || lease === undefined) {
         return {
           outcome: 'not_found' as const,
           diagnostic: {
-            reason: `lease ${args.leaseUuid} not in tenant leases after close`,
+            reason: `lease ${args.leaseUuid} not visible on chain after close`,
           },
         };
       }
@@ -146,7 +141,7 @@ export async function closeLease(
           outcome: 'failed',
           reason:
             d.reason ??
-            `Lease ${args.leaseUuid} not visible in tenant leases after close.`,
+            `Lease ${args.leaseUuid} not visible on chain after close.`,
         }),
         buildRecoveryOptions: () => [],
       },

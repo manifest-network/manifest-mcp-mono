@@ -14,8 +14,8 @@
  *
  * Mocking: vi.mock the core package's `stopApp` (the only chain
  * broadcast). The clientManager stub's `getQueryClient` returns a
- * `liftedinit.billing.v1.leasesByTenant`-shaped object so the verifier
- * can drive `findLease` over a canonical leases payload.
+ * `liftedinit.billing.v1.lease({ leaseUuid })`-shaped object so the verifier
+ * can read the single-lease payload directly.
  */
 
 import { readFileSync } from 'node:fs';
@@ -55,7 +55,7 @@ interface MockQueryClient {
   liftedinit: {
     billing: {
       v1: {
-        leasesByTenant: Mock;
+        lease: Mock;
       };
     };
   };
@@ -66,7 +66,7 @@ function makeMockQueryClient(): MockQueryClient {
     liftedinit: {
       billing: {
         v1: {
-          leasesByTenant: vi.fn(),
+          lease: vi.fn(),
         },
       },
     },
@@ -149,7 +149,7 @@ describe('closeLease replay — 01-close-success', () => {
       'close-lease',
       '01-close-success',
       'input',
-      'leases-by-tenant-response.json',
+      'lease-response.json',
     );
     const expected = readFixture(
       'skills',
@@ -170,9 +170,7 @@ describe('closeLease replay — 01-close-success', () => {
     );
 
     const queryClient = makeMockQueryClient();
-    queryClient.liftedinit.billing.v1.leasesByTenant.mockResolvedValue(
-      leasesPayload,
-    );
+    queryClient.liftedinit.billing.v1.lease.mockResolvedValue(leasesPayload);
     const clientManager = makeMockClientManager(queryClient);
     const { callbacks, progress, completed, failures, confirms } =
       captureCallbacks('yes');
@@ -219,7 +217,7 @@ describe('closeLease replay — 02-close-pending-verify-fail', () => {
       'close-lease',
       '02-close-pending-verify-fail',
       'input',
-      'leases-by-tenant-response.json',
+      'lease-response.json',
     );
     const expectedFailure = readFixture(
       'skills',
@@ -237,9 +235,7 @@ describe('closeLease replay — 02-close-pending-verify-fail', () => {
     } as Awaited<ReturnType<typeof core.stopApp>>);
 
     const queryClient = makeMockQueryClient();
-    queryClient.liftedinit.billing.v1.leasesByTenant.mockResolvedValue(
-      leasesPayload,
-    );
+    queryClient.liftedinit.billing.v1.lease.mockResolvedValue(leasesPayload);
     const clientManager = makeMockClientManager(queryClient);
     const { callbacks, completed, failures } = captureCallbacks('yes');
 
@@ -266,7 +262,7 @@ describe('closeLease replay — 03-close-not-found', () => {
     vi.clearAllMocks();
   });
 
-  it('lease missing from leasesByTenant → onFailure invoked with "not in tenant leases" reason → throws TX_FAILED', async () => {
+  it('chain returns `{ lease: null }` → onFailure invoked with "not visible on chain" reason → throws TX_FAILED', async () => {
     const args = readFixture(
       'skills',
       'close-lease',
@@ -279,7 +275,7 @@ describe('closeLease replay — 03-close-not-found', () => {
       'close-lease',
       '03-close-not-found',
       'input',
-      'leases-by-tenant-response.json',
+      'lease-response.json',
     );
     const expectedFailure = readFixture(
       'skills',
@@ -297,9 +293,7 @@ describe('closeLease replay — 03-close-not-found', () => {
     } as Awaited<ReturnType<typeof core.stopApp>>);
 
     const queryClient = makeMockQueryClient();
-    queryClient.liftedinit.billing.v1.leasesByTenant.mockResolvedValue(
-      leasesPayload,
-    );
+    queryClient.liftedinit.billing.v1.lease.mockResolvedValue(leasesPayload);
     const clientManager = makeMockClientManager(queryClient);
     const { callbacks, failures } = captureCallbacks('yes');
 
@@ -391,9 +385,7 @@ describe('closeLease — args validation', () => {
       ),
     ).rejects.toThrow(/close-lease rejected by chain/);
 
-    expect(
-      queryClient.liftedinit.billing.v1.leasesByTenant,
-    ).not.toHaveBeenCalled();
+    expect(queryClient.liftedinit.billing.v1.lease).not.toHaveBeenCalled();
   });
 
   it('verifier returns terminal REJECTED → counts as success', async () => {
@@ -409,14 +401,12 @@ describe('closeLease — args validation', () => {
     } as Awaited<ReturnType<typeof core.stopApp>>);
 
     const queryClient = makeMockQueryClient();
-    queryClient.liftedinit.billing.v1.leasesByTenant.mockResolvedValue({
-      leases: [
-        {
-          uuid: '11111111-1111-4111-8111-111111111111',
-          state: 4, // LEASE_STATE_REJECTED
-          providerUuid: '22222222-2222-4222-8222-222222222222',
-        },
-      ],
+    queryClient.liftedinit.billing.v1.lease.mockResolvedValue({
+      lease: {
+        uuid: '11111111-1111-4111-8111-111111111111',
+        state: 4, // LEASE_STATE_REJECTED
+        providerUuid: '22222222-2222-4222-8222-222222222222',
+      },
     });
     const clientManager = makeMockClientManager(queryClient);
     const { callbacks, completed, failures } = captureCallbacks('yes');
@@ -447,14 +437,12 @@ describe('closeLease — args validation', () => {
     } as Awaited<ReturnType<typeof core.stopApp>>);
 
     const queryClient = makeMockQueryClient();
-    queryClient.liftedinit.billing.v1.leasesByTenant.mockResolvedValue({
-      leases: [
-        {
-          uuid: '11111111-1111-4111-8111-111111111111',
-          state: 2, // LEASE_STATE_ACTIVE
-          providerUuid: '22222222-2222-4222-8222-222222222222',
-        },
-      ],
+    queryClient.liftedinit.billing.v1.lease.mockResolvedValue({
+      lease: {
+        uuid: '11111111-1111-4111-8111-111111111111',
+        state: 2, // LEASE_STATE_ACTIVE
+        providerUuid: '22222222-2222-4222-8222-222222222222',
+      },
     });
     const clientManager = makeMockClientManager(queryClient);
     const { callbacks, failures } = captureCallbacks('yes');

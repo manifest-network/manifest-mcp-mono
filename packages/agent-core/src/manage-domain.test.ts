@@ -15,7 +15,7 @@
  * Mocking strategy: vi.mock the core package's `setItemCustomDomain`
  * (the only chain broadcast in manage-domain) and stub
  * `opts.clientManager` with a query client that returns canonical
- * fixture responses for `leasesByTenant` and `leaseByCustomDomain`.
+ * fixture responses for `lease({ leaseUuid })` and `leaseByCustomDomain`.
  * No real chain I/O.
  */
 
@@ -56,7 +56,7 @@ interface MockQueryClient {
   liftedinit: {
     billing: {
       v1: {
-        leasesByTenant: Mock;
+        lease: Mock;
         leaseByCustomDomain: Mock;
       };
     };
@@ -68,7 +68,7 @@ function makeMockQueryClient(): MockQueryClient {
     liftedinit: {
       billing: {
         v1: {
-          leasesByTenant: vi.fn(),
+          lease: vi.fn(),
           leaseByCustomDomain: vi.fn(),
         },
       },
@@ -347,7 +347,7 @@ describe('manageDomain — set', () => {
       'manage-domain',
       '01-set-success',
       'input',
-      'leases-by-tenant-response.json',
+      'lease-response.json',
     );
     const txResp = readFixture(
       'skills',
@@ -375,9 +375,7 @@ describe('manageDomain — set', () => {
     );
 
     const queryClient = makeMockQueryClient();
-    queryClient.liftedinit.billing.v1.leasesByTenant.mockResolvedValue(
-      leasesPayload,
-    );
+    queryClient.liftedinit.billing.v1.lease.mockResolvedValue(leasesPayload);
     const clientManager = makeMockClientManager(queryClient);
     const { callbacks, progress, completed, failures, confirms } =
       captureCallbacks('yes');
@@ -416,7 +414,7 @@ describe('manageDomain — set', () => {
       'manage-domain',
       '02-set-mismatch',
       'input',
-      'leases-by-tenant-response.json',
+      'lease-response.json',
     );
     const expectedFailure = readFixture(
       'skills',
@@ -435,9 +433,7 @@ describe('manageDomain — set', () => {
     } as Awaited<ReturnType<typeof core.setItemCustomDomain>>);
 
     const queryClient = makeMockQueryClient();
-    queryClient.liftedinit.billing.v1.leasesByTenant.mockResolvedValue(
-      leasesPayload,
-    );
+    queryClient.liftedinit.billing.v1.lease.mockResolvedValue(leasesPayload);
     const clientManager = makeMockClientManager(queryClient);
     const { callbacks, completed, failures } = captureCallbacks('yes');
 
@@ -467,7 +463,7 @@ describe('manageDomain — set', () => {
       'manage-domain',
       '06-stack-set-success',
       'input',
-      'leases-by-tenant-response.json',
+      'lease-response.json',
     );
     const expected = readFixture(
       'skills',
@@ -492,9 +488,7 @@ describe('manageDomain — set', () => {
     } as Awaited<ReturnType<typeof core.setItemCustomDomain>>);
 
     const queryClient = makeMockQueryClient();
-    queryClient.liftedinit.billing.v1.leasesByTenant.mockResolvedValue(
-      leasesPayload,
-    );
+    queryClient.liftedinit.billing.v1.lease.mockResolvedValue(leasesPayload);
     const clientManager = makeMockClientManager(queryClient);
     const { callbacks, completed, confirms } = captureCallbacks('yes');
 
@@ -693,9 +687,10 @@ describe('manageDomain — set', () => {
     } as Awaited<ReturnType<typeof core.setItemCustomDomain>>);
 
     const queryClient = makeMockQueryClient();
-    // empty leases payload — verifier's findLease returns null
-    queryClient.liftedinit.billing.v1.leasesByTenant.mockResolvedValue({
-      leases: [],
+    // Chain returns `{ lease: null }` for an unknown UUID — verifier
+    // routes to `not_found` outcome.
+    queryClient.liftedinit.billing.v1.lease.mockResolvedValue({
+      lease: null,
     });
     const clientManager = makeMockClientManager(queryClient);
     const { callbacks, failures } = captureCallbacks('yes');
@@ -751,9 +746,7 @@ describe('manageDomain — set', () => {
       ),
     ).rejects.toThrow(/set-item-custom-domain rejected by chain/);
 
-    expect(
-      queryClient.liftedinit.billing.v1.leasesByTenant,
-    ).not.toHaveBeenCalled();
+    expect(queryClient.liftedinit.billing.v1.lease).not.toHaveBeenCalled();
   });
 });
 
@@ -779,7 +772,7 @@ describe('manageDomain — clear', () => {
       'manage-domain',
       '03-clear-success',
       'input',
-      'leases-by-tenant-response.json',
+      'lease-response.json',
     );
     const expected = readFixture(
       'skills',
@@ -804,9 +797,7 @@ describe('manageDomain — clear', () => {
     } as Awaited<ReturnType<typeof core.setItemCustomDomain>>);
 
     const queryClient = makeMockQueryClient();
-    queryClient.liftedinit.billing.v1.leasesByTenant.mockResolvedValue(
-      leasesPayload,
-    );
+    queryClient.liftedinit.billing.v1.lease.mockResolvedValue(leasesPayload);
     const clientManager = makeMockClientManager(queryClient);
     const { callbacks, completed, confirms } = captureCallbacks('yes');
 
@@ -839,16 +830,14 @@ describe('manageDomain — clear', () => {
     } as Awaited<ReturnType<typeof core.setItemCustomDomain>>);
 
     const queryClient = makeMockQueryClient();
-    queryClient.liftedinit.billing.v1.leasesByTenant.mockResolvedValue({
-      leases: [
-        {
-          uuid: '11111111-1111-4111-8111-111111111111',
-          items: [
-            { serviceName: 'web', customDomain: '' },
-            { serviceName: 'db', customDomain: '' },
-          ],
-        },
-      ],
+    queryClient.liftedinit.billing.v1.lease.mockResolvedValue({
+      lease: {
+        uuid: '11111111-1111-4111-8111-111111111111',
+        items: [
+          { serviceName: 'web', customDomain: '' },
+          { serviceName: 'db', customDomain: '' },
+        ],
+      },
     });
     const clientManager = makeMockClientManager(queryClient);
     const { callbacks, completed } = captureCallbacks('yes');

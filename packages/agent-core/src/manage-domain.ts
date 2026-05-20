@@ -113,7 +113,17 @@ export async function manageDomain(
   await setItemCustomDomain(opts.clientManager, args.leaseUuid, fqdn, setOpts);
 
   // --- Verify ---------------------------------------------------------
-  const tenantAddress = await opts.clientManager.getAddress();
+  // Direct single-lease query (Copilot review PR #60, comment 3275999569):
+  // the previous `leasesByTenant` + page-1-only pagination would
+  // false-`not_found` for tenants with >100 leases. `billing.v1.lease`
+  // is the same query shape `troubleshoot.ts` already uses; it's
+  // tenant-agnostic and bounded to a single lease.
+  //
+  // We wrap the single-lease result as `{ leases: [result.lease] }`
+  // (or an empty array if the chain returns no match) so
+  // `verifyDomainState` stays untouched — its `findLease` walks the
+  // same shape, and a `not_found` outcome falls out naturally when the
+  // wrapper array is empty.
   const spec: VerificationSpec<
     unknown,
     VerifyDomainOutcome,
@@ -121,22 +131,19 @@ export async function manageDomain(
   > = {
     verifier: async () => {
       const queryClient = await opts.clientManager.getQueryClient();
-      const result = await queryClient.liftedinit.billing.v1.leasesByTenant({
-        tenant: tenantAddress,
-        stateFilter: 0,
-        pagination: {
-          key: new Uint8Array(),
-          offset: 0n,
-          limit: 100n,
-          countTotal: false,
-          reverse: false,
-        },
-      });
-      const decoded = verifyDomainState(result, {
+      const result = await queryClient.liftedinit.billing.v1.lease({
         leaseUuid: args.leaseUuid,
-        ...(serviceName ? { serviceName } : {}),
-        expected: fqdn,
       });
+      const lease = (result as { lease?: unknown })?.lease;
+      const leases = lease === null || lease === undefined ? [] : [lease];
+      const decoded = verifyDomainState(
+        { leases },
+        {
+          leaseUuid: args.leaseUuid,
+          ...(serviceName ? { serviceName } : {}),
+          expected: fqdn,
+        },
+      );
       return { outcome: decoded.outcome, diagnostic: decoded };
     },
     successValues: ['match'],
