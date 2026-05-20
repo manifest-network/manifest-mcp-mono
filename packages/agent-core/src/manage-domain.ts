@@ -87,12 +87,18 @@ const NOT_FOUND_RES: readonly RegExp[] = [
  * @throws `ManifestMCPError(TX_FAILED)` when post-broadcast verification
  *   reaches a `not_found` / `mismatch` outcome (after `onFailure` has
  *   been invoked so the caller can react).
- * @throws `ManifestMCPError(QUERY_FAILED)` when the lookup chain query
- *   raises a non-NotFound error (RPC / transport / decoding failure); the
- *   keeper's `NotFound` on an unclaimed FQDN is surfaced as a typed
- *   `{ lease: null }` result, not a throw. Structured `ManifestMCPError`s
- *   raised by the chain client are re-thrown as-is (with `onFailure`
- *   invoked first).
+ * @throws `ManifestMCPError(QUERY_FAILED)` when a chain query raises a
+ *   non-NotFound error (RPC / transport / decoding failure). Two paths
+ *   surface this:
+ *     - the `lookup` chain query (`lease_by_custom_domain`); the keeper's
+ *       `NotFound` on an unclaimed FQDN is surfaced as a typed
+ *       `{ lease: null }` result, not a throw.
+ *     - the post-broadcast verify chain query (`billing.v1.lease`) in
+ *       the `set` / `clear` paths (wrapped inside the verifier closure
+ *       so the failure flows through `onFailure({ reason })` before the
+ *       throw).
+ *   Structured `ManifestMCPError`s raised by the chain client are
+ *   re-thrown as-is (with `onFailure` invoked first).
  */
 export async function manageDomain(
   args: ManageDomainArgs,

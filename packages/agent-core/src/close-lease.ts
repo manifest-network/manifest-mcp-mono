@@ -59,6 +59,12 @@ interface CloseDiag {
  * @throws `ManifestMCPError(TX_FAILED)` when post-broadcast verification
  *   shows the lease is still non-terminal (after `onFailure` has been
  *   invoked so the caller can react).
+ * @throws `ManifestMCPError(QUERY_FAILED)` when the post-broadcast verify
+ *   chain query (`billing.v1.lease`) raises a non-NotFound error
+ *   (RPC / transport / decoding failure). Wrapped inside the verifier
+ *   closure so the failure flows through `onFailure({ reason })` before
+ *   the throw. Structured `ManifestMCPError`s raised by the chain client
+ *   are re-thrown as-is (with `onFailure` invoked first).
  */
 export async function closeLease(
   args: CloseLeaseArgs,
