@@ -106,7 +106,7 @@ export async function troubleshootDeployment(
 // --- Helpers --------------------------------------------------------
 
 function validateArgs(args: TroubleshootArgs): void {
-  if (typeof args.leaseUuid !== 'string' || !UUID_RE.test(args.leaseUuid)) {
+  if (typeof args.leaseUuid !== 'string' || !args.leaseUuid.match(UUID_RE)) {
     throw new ManifestMCPError(
       ManifestMCPErrorCode.INVALID_CONFIG,
       `troubleshootDeployment: leaseUuid must be a UUID; got "${args.leaseUuid}".`,

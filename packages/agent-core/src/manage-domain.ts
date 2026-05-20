@@ -59,6 +59,26 @@ const UUID_RE =
 const FQDN_RE =
   /^(?=.{1,253}$)(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$/;
 
+const SCHEME_PREFIX_RE = /^https?:\/\//i;
+
+/**
+ * Cosmos SDK / gRPC NotFound message patterns. Match against
+ * `Error.message` to distinguish chain-keeper NotFound (treated as
+ * "unclaimed FQDN" → typed `null` result) from real failures (treated
+ * as `QUERY_FAILED` throws). Anchored loose patterns to tolerate
+ * different keeper / transport formatting ("not found", "NotFound",
+ * "no such record", "does not exist").
+ *
+ * Per CLAUDE.md: use `String.prototype.match()` over `RegExp.test()`
+ * to avoid the CI security hook's false-positive on shell-execution
+ * tokens.
+ */
+const NOT_FOUND_RES: readonly RegExp[] = [
+  /not.?found/i,
+  /no.?such/i,
+  /does.?not.?exist/i,
+];
+
 /**
  * Set / clear / look up a lease item's custom domain.
  *
@@ -224,7 +244,7 @@ function validateArgs(args: ManageDomainArgs): void {
     }
     return;
   }
-  if (typeof args.leaseUuid !== 'string' || !UUID_RE.test(args.leaseUuid)) {
+  if (typeof args.leaseUuid !== 'string' || !args.leaseUuid.match(UUID_RE)) {
     throw new ManifestMCPError(
       ManifestMCPErrorCode.INVALID_CONFIG,
       `manageDomain ${args.action}: leaseUuid must be a UUID; got "${args.leaseUuid}".`,
@@ -244,13 +264,13 @@ function validateArgs(args: ManageDomainArgs): void {
         'manageDomain set: fqdn must not have surrounding whitespace.',
       );
     }
-    if (/^https?:\/\//i.test(candidate)) {
+    if (candidate.match(SCHEME_PREFIX_RE)) {
       throw new ManifestMCPError(
         ManifestMCPErrorCode.INVALID_CONFIG,
         `manageDomain set: fqdn must be a bare hostname (no scheme); got "${args.fqdn}".`,
       );
     }
-    if (!FQDN_RE.test(candidate)) {
+    if (!candidate.match(FQDN_RE)) {
       throw new ManifestMCPError(
         ManifestMCPErrorCode.INVALID_CONFIG,
         `manageDomain set: fqdn "${args.fqdn}" is not a valid RFC 1123 hostname (≤253 chars, ≥2 dot-separated labels of 1-63 alphanumeric/hyphen chars; no leading/trailing hyphens).`,
@@ -335,11 +355,7 @@ function isNotFoundError(err: unknown): boolean {
   if (err instanceof ManifestMCPError) return false;
   if (!(err instanceof Error)) return false;
   const msg = err.message;
-  return (
-    /not.?found/i.test(msg) ||
-    /no.?such/i.test(msg) ||
-    /does.?not.?exist/i.test(msg)
-  );
+  return NOT_FOUND_RES.some((re) => msg.match(re) !== null);
 }
 
 function readLeaseUuid(lease: unknown): string | undefined {

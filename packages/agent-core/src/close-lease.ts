@@ -173,7 +173,7 @@ export async function closeLease(
 // --- Helpers --------------------------------------------------------
 
 function validateArgs(args: CloseLeaseArgs): void {
-  if (typeof args.leaseUuid !== 'string' || !UUID_RE.test(args.leaseUuid)) {
+  if (typeof args.leaseUuid !== 'string' || !args.leaseUuid.match(UUID_RE)) {
     throw new ManifestMCPError(
       ManifestMCPErrorCode.INVALID_CONFIG,
       `closeLease: leaseUuid must be a UUID; got "${args.leaseUuid}".`,
