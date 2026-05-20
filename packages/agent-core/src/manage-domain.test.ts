@@ -323,6 +323,35 @@ describe('manageDomain — lookup', () => {
     expect(failures).toHaveLength(1);
     expect(failures[0]?.reason).toContain('fixture-injected upstream error');
   });
+
+  it('lookup: getQueryClient() rejects → onFailure invoked + throws QUERY_FAILED (init-time failure)', async () => {
+    // Copilot review PR #60 (comment 3276719558): `getQueryClient()`
+    // was outside the try/catch in `lookupDomain`. Init-time failures
+    // bypassed onFailure + the QUERY_FAILED normalization. Post-fix,
+    // they route through the same disambiguation as chain-query
+    // failures.
+    const clientManager: MockClientManager = {
+      getQueryClient: vi
+        .fn()
+        .mockRejectedValue(new Error('transport: ECONNREFUSED 127.0.0.1:9090')),
+      getAddress: vi.fn().mockResolvedValue('manifest1deadbeef'),
+    };
+    const { callbacks, failures } = captureCallbacks();
+    const { manageDomain } = await import('./manage-domain.js');
+
+    await expect(
+      manageDomain({ action: 'lookup', fqdn: 'app.example.com' }, callbacks, {
+        clientManager: clientManager as unknown as Parameters<
+          typeof manageDomain
+        >[2]['clientManager'],
+      }),
+    ).rejects.toMatchObject({
+      code: ManifestMCPErrorCode.QUERY_FAILED,
+      message: expect.stringContaining('app.example.com'),
+    });
+    expect(failures).toHaveLength(1);
+    expect(failures[0]?.reason).toContain('ECONNREFUSED');
+  });
 });
 
 // =============================================================================

@@ -60,10 +60,16 @@ export async function troubleshootDeployment(
 ): Promise<TroubleshootReport> {
   validateArgs(args);
 
-  const queryClient = await opts.clientManager.getQueryClient();
-
   let leasePayload: unknown;
   try {
+    // Pull `getQueryClient()` INSIDE the try (Copilot review PR #60,
+    // comment 3276719462). `getQueryClient()` can throw
+    // `INVALID_CONFIG` (neither rpcUrl nor restUrl set) or
+    // `RPC_CONNECTION_FAILED` (connect failure). Catching here routes
+    // those init-time failures through the same `onFailure` +
+    // QUERY_FAILED / structured-passthrough normalization the chain-
+    // query failure mode already gets — three modes, one disambiguation.
+    const queryClient = await opts.clientManager.getQueryClient();
     const result = await queryClient.liftedinit.billing.v1.lease({
       leaseUuid: args.leaseUuid,
     });

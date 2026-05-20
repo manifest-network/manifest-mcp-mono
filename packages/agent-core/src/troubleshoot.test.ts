@@ -370,6 +370,75 @@ describe('troubleshootDeployment — chain-query failures', () => {
     );
   });
 
+  it('getQueryClient() rejects → onFailure invoked + throws QUERY_FAILED (init-time failure)', async () => {
+    // Copilot review PR #60 (comment 3276719462): `getQueryClient()`
+    // can throw `INVALID_CONFIG` (no rpc/rest url) or
+    // `RPC_CONNECTION_FAILED` (connect failure). Pre-fix, that
+    // rejection happened OUTSIDE the try/catch and bypassed onFailure
+    // + the QUERY_FAILED normalization. Post-fix, init-time failures
+    // route through the same disambiguation as chain-query failures.
+    const queryClient = makeMockQueryClient();
+    const clientManager: MockClientManager = {
+      getQueryClient: vi
+        .fn()
+        .mockRejectedValue(new Error('transport: ECONNREFUSED 127.0.0.1:9090')),
+      getAddress: vi.fn().mockResolvedValue('manifest1deadbeef'),
+    };
+    void queryClient;
+    const { callbacks, failures } = captureCallbacks();
+    const { troubleshootDeployment } = await import('./troubleshoot.js');
+
+    await expect(
+      troubleshootDeployment(
+        { leaseUuid: '11111111-1111-4111-8111-111111111111' },
+        callbacks,
+        {
+          clientManager: clientManager as unknown as Parameters<
+            typeof troubleshootDeployment
+          >[2]['clientManager'],
+        },
+      ),
+    ).rejects.toMatchObject({
+      code: ManifestMCPErrorCode.QUERY_FAILED,
+      message: expect.stringContaining('11111111-1111-4111-8111-111111111111'),
+    });
+    expect(failures).toHaveLength(1);
+    expect(failures[0]?.reason).toContain('ECONNREFUSED');
+  });
+
+  it('getQueryClient() rejects with structured ManifestMCPError → preserves original code', async () => {
+    const clientManager: MockClientManager = {
+      getQueryClient: vi
+        .fn()
+        .mockRejectedValue(
+          new ManifestMCPError(
+            ManifestMCPErrorCode.INVALID_CONFIG,
+            'no rpcUrl or restUrl configured',
+          ),
+        ),
+      getAddress: vi.fn().mockResolvedValue('manifest1deadbeef'),
+    };
+    const { callbacks, failures } = captureCallbacks();
+    const { troubleshootDeployment } = await import('./troubleshoot.js');
+
+    await expect(
+      troubleshootDeployment(
+        { leaseUuid: '11111111-1111-4111-8111-111111111111' },
+        callbacks,
+        {
+          clientManager: clientManager as unknown as Parameters<
+            typeof troubleshootDeployment
+          >[2]['clientManager'],
+        },
+      ),
+    ).rejects.toMatchObject({
+      code: ManifestMCPErrorCode.INVALID_CONFIG,
+      message: 'no rpcUrl or restUrl configured',
+    });
+    expect(failures).toHaveLength(1);
+    expect(failures[0]?.reason).toContain('no rpcUrl or restUrl configured');
+  });
+
   it('chain returns lease with unknown state int → renders UNKNOWN(<raw>) placeholder', async () => {
     const queryClient = makeMockQueryClient();
     queryClient.liftedinit.billing.v1.lease.mockResolvedValue({

@@ -348,9 +348,18 @@ async function lookupDomain(
   opts: ManageDomainOptions,
 ): Promise<ManageDomainResult> {
   const customDomain = fqdn.trim();
-  const queryClient = await opts.clientManager.getQueryClient();
   let result: unknown;
   try {
+    // Pull `getQueryClient()` INSIDE the try (Copilot review PR #60,
+    // comment 3276719558). `getQueryClient()` can throw
+    // `INVALID_CONFIG` (neither rpcUrl nor restUrl set) or
+    // `RPC_CONNECTION_FAILED` (connect failure). Catching here routes
+    // those init-time failures through the same `onFailure` +
+    // QUERY_FAILED / structured-passthrough normalization the chain-
+    // query failure mode already gets. The set/clear verifier closure
+    // (in `manageDomain` body above) already wraps `getQueryClient()`
+    // since commit d9793c1; this brings `lookupDomain` to parity.
+    const queryClient = await opts.clientManager.getQueryClient();
     result = await queryClient.liftedinit.billing.v1.leaseByCustomDomain({
       customDomain,
     });

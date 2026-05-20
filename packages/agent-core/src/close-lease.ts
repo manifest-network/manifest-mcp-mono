@@ -189,8 +189,23 @@ export async function closeLease(
     throw new ManifestMCPError(ManifestMCPErrorCode.TX_FAILED, reason);
   }
 
-  const finalState: LeaseStateName =
-    verifyResult.diagnostic.stateName ?? 'LEASE_STATE_CLOSED';
+  // Invariant: when `verifyAndRecover` returns success, the matched
+  // outcome was `'terminal'`, and the verifier's `terminal` branch
+  // ALWAYS sets `diagnostic.stateName` (see the spec above). A missing
+  // `stateName` on the success path means the verifier invariant is
+  // broken — likely a future refactor regression. The previous
+  // implementation fell back to `'LEASE_STATE_CLOSED'` silently, which
+  // would lie to the caller (Copilot review PR #60, comment 3276719603).
+  // Fail loudly with a typed error instead. `TX_FAILED` is the closest
+  // available code in `ManifestMCPErrorCode` (no `INTERNAL_ERROR`
+  // variant); the message names the invariant explicitly.
+  if (!verifyResult.diagnostic.stateName) {
+    throw new ManifestMCPError(
+      ManifestMCPErrorCode.TX_FAILED,
+      `close-lease verifier invariant violated: success outcome reached without diagnostic.stateName for lease ${args.leaseUuid}`,
+    );
+  }
+  const finalState: LeaseStateName = verifyResult.diagnostic.stateName;
   const result: CloseLeaseResult = {
     leaseUuid: args.leaseUuid,
     finalState,
