@@ -268,6 +268,61 @@ describe('manageDomain — lookup', () => {
       lease: null,
     });
   });
+
+  it('lookup surfaces non-NotFound chain errors as QUERY_FAILED with onFailure', async () => {
+    // Copilot review PR #60: the bare `catch` previously masked any
+    // failure as `{ lease: null }`. Narrowed-catch now distinguishes the
+    // keeper's NotFound (unclaimed FQDN → returns null) from real
+    // failures (RPC transport, decoding, internal error → throws
+    // QUERY_FAILED and invokes onFailure first so callers can react).
+    const queryClient = makeMockQueryClient();
+    queryClient.liftedinit.billing.v1.leaseByCustomDomain.mockRejectedValue(
+      new Error('ECONNRESET: socket hang up'),
+    );
+    const clientManager = makeMockClientManager(queryClient);
+    const { callbacks, failures } = captureCallbacks();
+    const { manageDomain } = await import('./manage-domain.js');
+
+    await expect(
+      manageDomain({ action: 'lookup', fqdn: 'app.example.com' }, callbacks, {
+        clientManager: clientManager as unknown as Parameters<
+          typeof manageDomain
+        >[2]['clientManager'],
+      }),
+    ).rejects.toMatchObject({
+      code: ManifestMCPErrorCode.QUERY_FAILED,
+      message: expect.stringContaining('app.example.com'),
+    });
+    expect(failures).toHaveLength(1);
+    expect(failures[0]?.reason).toContain('ECONNRESET');
+    expect(failures[0]?.reason).toContain('app.example.com');
+  });
+
+  it('lookup preserves structured ManifestMCPError code (does not re-wrap as QUERY_FAILED)', async () => {
+    const queryClient = makeMockQueryClient();
+    queryClient.liftedinit.billing.v1.leaseByCustomDomain.mockRejectedValue(
+      new ManifestMCPError(
+        ManifestMCPErrorCode.INVALID_CONFIG,
+        'fixture-injected upstream error',
+      ),
+    );
+    const clientManager = makeMockClientManager(queryClient);
+    const { callbacks, failures } = captureCallbacks();
+    const { manageDomain } = await import('./manage-domain.js');
+
+    await expect(
+      manageDomain({ action: 'lookup', fqdn: 'app.example.com' }, callbacks, {
+        clientManager: clientManager as unknown as Parameters<
+          typeof manageDomain
+        >[2]['clientManager'],
+      }),
+    ).rejects.toMatchObject({
+      code: ManifestMCPErrorCode.INVALID_CONFIG,
+      message: 'fixture-injected upstream error',
+    });
+    expect(failures).toHaveLength(1);
+    expect(failures[0]?.reason).toContain('fixture-injected upstream error');
+  });
 });
 
 // =============================================================================

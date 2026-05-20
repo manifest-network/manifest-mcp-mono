@@ -61,10 +61,17 @@ const FQDN_RE =
 /**
  * Set / clear / look up a lease item's custom domain.
  *
- * @throws `ManifestMCPError(INVALID_CONFIG)` for args validation, an
- *   `onConfirm` returning `'no'`, or post-broadcast verification reaching
- *   a `not_found` / `mismatch` outcome (after `onFailure` has been
- *   invoked so the caller can react).
+ * @throws `ManifestMCPError(INVALID_CONFIG)` for args validation or when
+ *   `onConfirm` returns `'no'`.
+ * @throws `ManifestMCPError(TX_FAILED)` when post-broadcast verification
+ *   reaches a `not_found` / `mismatch` outcome (after `onFailure` has
+ *   been invoked so the caller can react).
+ * @throws `ManifestMCPError(QUERY_FAILED)` when the lookup chain query
+ *   raises a non-NotFound error (RPC / transport / decoding failure); the
+ *   keeper's `NotFound` on an unclaimed FQDN is surfaced as a typed
+ *   `{ lease: null }` result, not a throw. Structured `ManifestMCPError`s
+ *   raised by the chain client are re-thrown as-is (with `onFailure`
+ *   invoked first).
  */
 export async function manageDomain(
   args: ManageDomainArgs,
@@ -74,7 +81,7 @@ export async function manageDomain(
   validateArgs(args);
 
   if (args.action === 'lookup') {
-    return await lookupDomain(args.fqdn, opts);
+    return await lookupDomain(args.fqdn, callbacks, opts);
   }
 
   const serviceName = args.serviceName;
@@ -269,26 +276,62 @@ function renderConfirmationBlock(
 
 async function lookupDomain(
   fqdn: string,
+  callbacks: ManageDomainCallbacks,
   opts: ManageDomainOptions,
 ): Promise<ManageDomainResult> {
   const customDomain = fqdn.trim();
   const queryClient = await opts.clientManager.getQueryClient();
+  let result: unknown;
   try {
-    const result = await queryClient.liftedinit.billing.v1.leaseByCustomDomain({
+    result = await queryClient.liftedinit.billing.v1.leaseByCustomDomain({
       customDomain,
     });
-    const uuid = readLeaseUuid(result?.lease);
-    return {
-      action: 'lookup',
-      fqdn: customDomain,
-      lease: uuid ? { leaseUuid: uuid } : null,
-    };
-  } catch {
-    // Chain emits NotFound when the FQDN is unclaimed; surface as a
-    // null lookup result rather than re-throwing — callers distinguish
-    // "no claim" from "query failed" via the typed `null`.
-    return { action: 'lookup', fqdn: customDomain, lease: null };
+  } catch (err) {
+    // Narrowed disambiguation (Copilot review PR #60): the chain keeper
+    // raises a NotFound-shaped error when the FQDN is unclaimed (cosmjs/
+    // grpc surfaces this as a plain `Error` whose message matches
+    // `/not.?found|no.?such|does.?not.?exist/i`). Only that case is
+    // collapsed to the typed `{ lease: null }` result. Every other
+    // failure mode (RPC transport, decoding, structured
+    // `ManifestMCPError`, etc.) flows through `onFailure({ reason })`
+    // then a typed throw — matching the lease-package's
+    // `lease_by_custom_domain` handler (packages/lease/src/index.ts:442)
+    // and `getBalance`'s `catchNotFound` pattern (packages/core/src/
+    // tools/getBalance.ts:4). The bare `catch` was masking real failures.
+    if (isNotFoundError(err)) {
+      return { action: 'lookup', fqdn: customDomain, lease: null };
+    }
+    const reason = `lease_by_custom_domain lookup failed for "${customDomain}": ${
+      err instanceof Error ? err.message : String(err)
+    }`;
+    if (callbacks.onFailure) {
+      await callbacks.onFailure({ reason });
+    }
+    if (err instanceof ManifestMCPError) {
+      throw err;
+    }
+    throw new ManifestMCPError(ManifestMCPErrorCode.QUERY_FAILED, reason);
   }
+  const uuid = readLeaseUuid((result as { lease?: unknown })?.lease);
+  return {
+    action: 'lookup',
+    fqdn: customDomain,
+    lease: uuid ? { leaseUuid: uuid } : null,
+  };
+}
+
+function isNotFoundError(err: unknown): boolean {
+  // Pass-through guard for structured failures: a `ManifestMCPError` is
+  // always a real, intentional error — never silently re-classified as
+  // "FQDN unclaimed" even if its message happens to contain "not found".
+  if (err instanceof ManifestMCPError) return false;
+  if (!(err instanceof Error)) return false;
+  const msg = err.message;
+  return (
+    /not.?found/i.test(msg) ||
+    /no.?such/i.test(msg) ||
+    /does.?not.?exist/i.test(msg)
+  );
 }
 
 function readLeaseUuid(lease: unknown): string | undefined {
