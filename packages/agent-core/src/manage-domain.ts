@@ -106,7 +106,14 @@ export async function manageDomain(
   }
 
   const serviceName = args.serviceName;
-  const fqdn = args.action === 'set' ? args.fqdn : '';
+  // Trim the FQDN silently for `set` (Copilot review PR #60, comment
+  // 3276519081): align with the underlying `setItemCustomDomain`
+  // primitive (which trims at `packages/core/src/tools/setItemCustomDomain.ts:78-81`)
+  // and with `lookupDomain` (which already trims). `validateArgs`
+  // continues to reject the empty / whitespace-only case via
+  // `args.fqdn.trim() === ''`; this just normalizes the surviving
+  // input.
+  const fqdn = args.action === 'set' ? args.fqdn.trim() : '';
 
   // --- Confirmation block ---------------------------------------------
   const block = renderConfirmationBlock(args);
@@ -280,13 +287,13 @@ function validateArgs(args: ManageDomainArgs): void {
         'manageDomain set: fqdn must be a non-empty string.',
       );
     }
+    // Trim silently (Copilot review PR #60, comment 3276519081):
+    // align with `setItemCustomDomain` (which trims at
+    // `packages/core/src/tools/setItemCustomDomain.ts:78-81`) and with
+    // `lookupDomain` (which already trims). Validation gates below
+    // run against the trimmed candidate; the broadcast and confirm
+    // block (rendered in the caller) also use the trimmed form.
     const candidate = args.fqdn.trim();
-    if (candidate !== args.fqdn) {
-      throw new ManifestMCPError(
-        ManifestMCPErrorCode.INVALID_CONFIG,
-        'manageDomain set: fqdn must not have surrounding whitespace.',
-      );
-    }
     if (candidate.match(SCHEME_PREFIX_RE)) {
       throw new ManifestMCPError(
         ManifestMCPErrorCode.INVALID_CONFIG,
@@ -308,7 +315,11 @@ function renderConfirmationBlock(
   const lines: string[] = [];
   if (args.action === 'set') {
     lines.push(`Set custom domain on lease ${args.leaseUuid}:`);
-    lines.push(`  FQDN:         ${args.fqdn}`);
+    // Display the trimmed FQDN — matches the value that will be
+    // broadcast (per the silent-trim semantics aligned with
+    // setItemCustomDomain) so users don't see whitespace in the
+    // confirm prompt that won't appear on-chain.
+    lines.push(`  FQDN:         ${args.fqdn.trim()}`);
     if (args.serviceName) {
       lines.push(`  Service:      ${args.serviceName}`);
     }

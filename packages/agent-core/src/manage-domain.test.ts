@@ -595,16 +595,6 @@ describe('manageDomain — set', () => {
     const cases: Array<{ label: string; fqdn: string; expectedMatch: RegExp }> =
       [
         {
-          label: 'leading whitespace rejected with the surrounding-ws message',
-          fqdn: '  app.example.com',
-          expectedMatch: /must not have surrounding whitespace/,
-        },
-        {
-          label: 'trailing whitespace rejected with the surrounding-ws message',
-          fqdn: 'app.example.com  ',
-          expectedMatch: /must not have surrounding whitespace/,
-        },
-        {
           label:
             'http:// scheme prefix rejected with the bare-hostname message',
           fqdn: 'http://app.example.com',
@@ -620,9 +610,8 @@ describe('manageDomain — set', () => {
           label:
             "free-text 'not a domain' rejected with the FQDN-shape message",
           fqdn: 'not a domain',
-          // The surrounding-whitespace check fires first since trim() does
-          // not equal the raw input only when there IS surrounding ws; this
-          // input has interior space, so the FQDN regex catches it.
+          // Interior spaces (not surrounding) survive the silent
+          // trim and fail the anchored FQDN regex.
           expectedMatch: /is not a valid RFC 1123 hostname/,
         },
         {
@@ -674,6 +663,65 @@ describe('manageDomain — set', () => {
         expect(core.setItemCustomDomain).not.toHaveBeenCalled();
       });
     }
+  });
+
+  it('set silently trims surrounding whitespace; broadcast + confirm-block use the trimmed FQDN', async () => {
+    // Copilot review PR #60 (comment 3276519081): align with
+    // setItemCustomDomain's silent-trim semantics + lookupDomain's
+    // already-trimmed input. Whitespace at the edges no longer
+    // triggers INVALID_CONFIG.
+    const core = await import('@manifest-network/manifest-mcp-core');
+    vi.mocked(core.setItemCustomDomain).mockResolvedValue({
+      lease_uuid: '11111111-1111-4111-8111-111111111111',
+      service_name: '',
+      custom_domain: 'app.example.com',
+      transactionHash: 'DEADBEEF',
+      code: 0,
+    } as Awaited<ReturnType<typeof core.setItemCustomDomain>>);
+
+    const queryClient = makeMockQueryClient();
+    queryClient.liftedinit.billing.v1.lease.mockResolvedValue({
+      lease: {
+        uuid: '11111111-1111-4111-8111-111111111111',
+        items: [{ serviceName: '', customDomain: 'app.example.com' }],
+      },
+    });
+    const clientManager = makeMockClientManager(queryClient);
+    const { callbacks, confirms } = captureCallbacks('yes');
+    const { manageDomain } = await import('./manage-domain.js');
+
+    const result = await manageDomain(
+      {
+        action: 'set',
+        leaseUuid: '11111111-1111-4111-8111-111111111111',
+        fqdn: '  app.example.com  ',
+      },
+      callbacks,
+      {
+        clientManager: clientManager as unknown as Parameters<
+          typeof manageDomain
+        >[2]['clientManager'],
+      },
+    );
+
+    // Broadcast received the trimmed form.
+    expect(core.setItemCustomDomain).toHaveBeenCalledWith(
+      clientManager,
+      '11111111-1111-4111-8111-111111111111',
+      'app.example.com',
+      undefined,
+    );
+    // Confirm block displays the trimmed form (no leading/trailing
+    // whitespace in the FQDN line).
+    expect(confirms[0]?.text).toContain('FQDN:         app.example.com\n');
+    expect(confirms[0]?.text).not.toContain('  app.example.com  ');
+    // Result carries the verified domain.
+    expect(result).toEqual({
+      action: 'set',
+      leaseUuid: '11111111-1111-4111-8111-111111111111',
+      verified: true,
+      finalCustomDomain: 'app.example.com',
+    });
   });
 
   it('verifier sees lease not_found → onFailure invoked with reason → throws TX_FAILED', async () => {

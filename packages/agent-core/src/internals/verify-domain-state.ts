@@ -12,7 +12,7 @@ import { findLease, normalizeItem } from './lease-items.js';
  * Outcome semantics:
  *   - `'match'`     — actual `customDomain` equals expected
  *   - `'mismatch'`  — actual differs from expected (item carries `actual` for surfacing)
- *   - `'not_found'` — lease UUID not in tenant payload, OR multi-item lease but no `serviceName` supplied, OR `serviceName` not present in the lease's items
+ *   - `'not_found'` — lease UUID not present in the verification payload, OR multi-item lease but no `serviceName` supplied, OR `serviceName` not present in the lease's items
  *
  * Single-item leases (legacy 1-item lease with `serviceName === ''`) ignore
  * the `serviceName` argument and always use the only item. Multi-item
