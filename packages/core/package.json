@@ -17,6 +17,10 @@
     "./__test-utils__/callTool.js": {
       "import": "./dist/__test-utils__/callTool.js",
       "types": "./dist/__test-utils__/callTool.d.ts"
+    },
+    "./__test-utils__/callToolWithElicitation.js": {
+      "import": "./dist/__test-utils__/callToolWithElicitation.js",
+      "types": "./dist/__test-utils__/callToolWithElicitation.d.ts"
     }
   },
   "scripts": {

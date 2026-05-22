@@ -8,15 +8,17 @@ Exposes on-chain queries and transactions as [Model Context Protocol](https://mo
 
 ```
 packages/
-  core/      @manifest-network/manifest-mcp-core      Shared library: Cosmos logic, on-chain tool functions, server utilities
-  chain/     @manifest-network/manifest-mcp-chain     MCP server for chain operations (6 tools, +1 optional faucet)
-  lease/     @manifest-network/manifest-mcp-lease     MCP server for on-chain lease operations (8 tools)
-  fred/      @manifest-network/manifest-mcp-fred      MCP server for provider/Fred operations (11 tools)
-  cosmwasm/  @manifest-network/manifest-mcp-cosmwasm  MCP server for MFX-to-PWR converter (2 tools)
-  node/      @manifest-network/manifest-mcp-node      CLI entry points + encrypted keyfile wallet
+  core/        @manifest-network/manifest-mcp-core      Shared library: Cosmos logic, on-chain tool functions, server utilities
+  chain/       @manifest-network/manifest-mcp-chain     MCP server for chain operations (6 tools, +1 optional faucet)
+  lease/       @manifest-network/manifest-mcp-lease     MCP server for on-chain lease operations (8 tools)
+  fred/        @manifest-network/manifest-mcp-fred      MCP server for provider/Fred operations (11 tools)
+  cosmwasm/    @manifest-network/manifest-mcp-cosmwasm  MCP server for MFX-to-PWR converter (2 tools)
+  agent-core/  @manifest-network/manifest-agent-core    TypeScript orchestration surface (deploy / manage-domain / troubleshoot / close-lease)
+  agent/       @manifest-network/manifest-mcp-agent     MCP server wrapping agent-core via MCP elicitation (4 orchestrated tools)
+  node/        @manifest-network/manifest-mcp-node      CLI entry points + encrypted keyfile wallet
 ```
 
-Dependency direction: **node -> {chain, lease, fred, cosmwasm} -> core** (never reverse).
+Dependency direction: **node -> {chain, lease, fred, cosmwasm, agent} -> core**; **agent -> agent-core -> {core, fred}** (never reverse).
 
 ## Prerequisites
 
@@ -90,6 +92,17 @@ The Fred server also exposes 3 MCP resources (`manifest://leases/active`, `manif
 | `get_mfx_to_pwr_rate` | Get the current MFX-to-PWR conversion rate and preview amounts |
 | `convert_mfx_to_pwr` | Convert MFX tokens to PWR via the on-chain converter contract |
 
+### Agent server (`manifest-mcp-agent`) -- 4 orchestrated tools
+
+Wraps [`@manifest-network/manifest-agent-core`](packages/agent-core/README.md) orchestration via MCP **elicitation** — bidirectional plan / confirm / recovery prompts flow over standard MCP wire. Requires an elicitation-capable host (Claude Code ≥ 2.1.76).
+
+| Tool | Description |
+|------|-------------|
+| `deploy_app_orchestrated` | Plan → confirm → broadcast → persist; rich recovery picker on partial-success failures |
+| `manage_domain_orchestrated` | Set / clear / lookup a lease custom domain with confirm + verify |
+| `troubleshoot_deployment_orchestrated` | Generate a markdown chain-side diagnostic report (no broadcast) |
+| `close_lease_orchestrated` | Confirm → close → verify terminal state |
+
 Supported modules: `bank`, `staking`, `distribution`, `gov`, `billing`, `sku`, `group`, `wasm`, `poa`, `tokenfactory`, `ibc-transfer`, `authz`, `feegrant`, `auth` (query only), `mint` (query only), `manifest` (tx only).
 
 ## Documentation
@@ -141,7 +154,7 @@ The module is then automatically available through the `cosmos_query` and `cosmo
 
 ## Releasing
 
-All six packages are versioned in lockstep and published together.
+All eight packages are versioned in lockstep and published together.
 
 ### Setup (one-time)
 
@@ -166,7 +179,7 @@ Pushing a `vMAJOR.MINOR.PATCH` tag triggers the [Release workflow](.github/workf
 
 1. Validates the tag version matches all `package.json` files
 2. Builds, type-checks, runs Biome checks, and tests
-3. Publishes all packages to npm (with [provenance](https://docs.npmjs.com/generating-provenance-statements)) in dependency order: `core → chain → lease → fred → cosmwasm → node`
+3. Publishes all packages to npm (with [provenance](https://docs.npmjs.com/generating-provenance-statements)) in dependency order: `core → chain → lease → fred → cosmwasm → agent-core → agent → node`
 4. Creates a GitHub Release with auto-generated notes (best-effort — publish succeeds even if this fails)
 
 ## License
