@@ -48,7 +48,10 @@ const UUID_RE =
 
 // RFC 1123 hostname: each label 1-63 chars, alphanumeric + hyphens, no leading/
 // trailing hyphen; total ≤253 chars; ≥2 labels (FQDN, not single-label host).
-// Rejects scheme prefixes ('http://'), whitespace, trailing dots, IDN.
+// Rejects scheme prefixes ('http://'), whitespace, trailing dots, and raw
+// unicode (ASCII punycode `xn--...` is accepted — it matches the regex's
+// `[A-Za-z0-9-]` label character class, which is the standard wire form
+// for IDN labels).
 //
 // Client-side typo gate only. The chain's `MsgSetItemCustomDomain` keeper is
 // the authoritative validator (canonical lowercase, reserved-suffix rules,
@@ -84,6 +87,14 @@ const NOT_FOUND_RES: readonly RegExp[] = [
  *
  * @throws `ManifestMCPError(INVALID_CONFIG)` for args validation or when
  *   `onConfirm` returns `'no'`.
+ * @throws `ManifestMCPError` (typically `TX_FAILED`) propagated as-is
+ *   from the `setItemCustomDomain()` broadcast step in `set` / `clear`
+ *   paths. Broadcast errors do NOT invoke `onFailure` — that callback
+ *   is reserved for post-broadcast verification failures.
+ *   `setItemCustomDomain` already raises a structured `ManifestMCPError`
+ *   from the core package; wrapping it again at this layer would be
+ *   redundant. Callers wanting to react to broadcast errors should
+ *   catch them at the call site.
  * @throws `ManifestMCPError(TX_FAILED)` when post-broadcast verification
  *   reaches a `not_found` / `mismatch` outcome (after `onFailure` has
  *   been invoked so the caller can react).

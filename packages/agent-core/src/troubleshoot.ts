@@ -51,7 +51,12 @@ const UUID_RE =
  *
  * @throws `ManifestMCPError(INVALID_CONFIG)` for args validation.
  * @throws `ManifestMCPError(QUERY_FAILED)` when the chain query fails
- *   (after `onFailure` has been invoked so the caller can react).
+ *   with a plain `Error` (RPC / transport / decoding failure);
+ *   `onFailure({ reason })` is invoked first. Structured
+ *   `ManifestMCPError`s raised by the chain client (e.g.
+ *   `INVALID_CONFIG` from missing rpc/rest url config,
+ *   `RPC_CONNECTION_FAILED` from connect failure) are re-thrown
+ *   as-is with their original code, with `onFailure` invoked first.
  */
 export async function troubleshootDeployment(
   args: TroubleshootArgs,

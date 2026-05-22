@@ -47,7 +47,7 @@ export interface VerifyDomainArgs {
 }
 
 export function verifyDomainState(
-  leasesByTenantResponse: unknown,
+  leasesPayload: unknown,
   args: VerifyDomainArgs,
 ): VerifyDomainResult {
   if (typeof args.leaseUuid !== 'string') {
@@ -66,7 +66,7 @@ export function verifyDomainState(
     );
   }
 
-  const lease = findLease(leasesByTenantResponse, args.leaseUuid);
+  const lease = findLease(leasesPayload, args.leaseUuid);
   if (lease === null) {
     return {
       outcome: 'not_found',

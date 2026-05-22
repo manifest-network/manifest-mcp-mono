@@ -56,6 +56,13 @@ interface CloseDiag {
  *
  * @throws `ManifestMCPError(INVALID_CONFIG)` for args validation or when
  *   `onConfirm` returns `'no'`.
+ * @throws `ManifestMCPError` (typically `TX_FAILED`) propagated as-is
+ *   from the `stopApp()` broadcast step. Broadcast errors do NOT invoke
+ *   `onFailure` — that callback is reserved for post-broadcast
+ *   verification failures. `stopApp` already raises a structured
+ *   `ManifestMCPError` from the core package; wrapping it again at this
+ *   layer would be redundant. Callers wanting to react to broadcast
+ *   errors should catch them at the call site.
  * @throws `ManifestMCPError(TX_FAILED)` when post-broadcast verification
  *   shows the lease is still non-terminal (after `onFailure` has been
  *   invoked so the caller can react).
