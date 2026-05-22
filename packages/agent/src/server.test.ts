@@ -1019,6 +1019,62 @@ describe('AgentMCPServer', () => {
   });
 
   // ─────────────────────────────────────────────────────────────────
+  // Copilot PR review (post-Phase-2): buildManageDomainArgs missing-arg
+  // throws must surface as ManifestMCPError(INVALID_CONFIG), not a
+  // plain Error that withErrorHandling coerces to code:'UNKNOWN'.
+  // ─────────────────────────────────────────────────────────────────
+  describe('manage_domain_orchestrated input validation', () => {
+    const cases: Array<{
+      label: string;
+      input: Record<string, unknown>;
+      messageMatch: RegExp;
+    }> = [
+      {
+        label: 'action=set missing lease_uuid',
+        input: { action: 'set', fqdn: 'app.example.com' },
+        messageMatch: /action=set requires both lease_uuid and fqdn/,
+      },
+      {
+        label: 'action=set missing fqdn',
+        input: {
+          action: 'set',
+          lease_uuid: '550e8400-e29b-41d4-a716-446655440000',
+        },
+        messageMatch: /action=set requires both lease_uuid and fqdn/,
+      },
+      {
+        label: 'action=clear missing lease_uuid',
+        input: { action: 'clear' },
+        messageMatch: /action=clear requires lease_uuid/,
+      },
+      {
+        label: 'action=lookup missing fqdn',
+        input: { action: 'lookup' },
+        messageMatch: /action=lookup requires fqdn/,
+      },
+    ];
+
+    for (const c of cases) {
+      it(`${c.label} → INVALID_CONFIG (not UNKNOWN)`, async () => {
+        const server = makeServer();
+        const captured = await callToolWithCapture(
+          server,
+          'manage_domain_orchestrated',
+          c.input,
+          { respond: () => ({ action: 'cancel' }) },
+        );
+        expect(captured.toolResult.isError).toBe(true);
+        const parsed = JSON.parse(captured.toolResult.content[0].text) as {
+          code: string;
+          message: string;
+        };
+        expect(parsed.code).toBe('INVALID_CONFIG');
+        expect(parsed.message).toMatch(c.messageMatch);
+      });
+    }
+  });
+
+  // ─────────────────────────────────────────────────────────────────
   // Test #5 — troubleshoot_deployment_orchestrated happy path. Phase 2
   // (finding #11): the wrapper no longer supplies an `onConfirm`
   // callback and agent-core never invokes one — so this flow MUST run

@@ -7,10 +7,15 @@
  * because they vary by env-var visibility and per-tool relevance.
  *
  * `createGuardedFetch` is imported **dynamically** behind the
- * `MANIFEST_AGENT_FETCH_GUARDED=1` env-var gate. This keeps the
- * build platform-neutral — undici / ipaddr.js (the Node-only
- * dependencies of `createGuardedFetch`) only enter the module graph
- * when the operator opts in.
+ * `MANIFEST_AGENT_FETCH_GUARDED=1` env-var gate. Note this does NOT
+ * keep `ipaddr.js` out of the static module graph — agent-core's main
+ * entry already re-exports `createGuardedFetch` (and therefore
+ * statically imports `ipaddr.js`) the moment the wrapper imports its
+ * orchestration functions. What the dynamic gate defers is the
+ * `createGuardedFetch()` *invocation* and the `undici` + Node-builtin
+ * dynamic imports the factory does internally — so an operator who
+ * leaves the guard off pays no runtime cost from the guarded-fetch
+ * path, but the dependency itself is part of the bundle.
  */
 
 import type { AgentCoreRuntime } from '@manifest-network/manifest-agent-core';

@@ -44,6 +44,8 @@ import {
   CosmosClientManager,
   createMnemonicServer,
   createValidatedConfig,
+  ManifestMCPError,
+  ManifestMCPErrorCode,
   type ManifestMCPServerOptions,
   type MnemonicServerConfig,
   manifestMeta,
@@ -522,7 +524,8 @@ function buildManageDomainArgs(args: ManageDomainToolArgs): ManageDomainArgs {
   switch (args.action) {
     case 'set':
       if (!args.lease_uuid || !args.fqdn) {
-        throw new Error(
+        throw new ManifestMCPError(
+          ManifestMCPErrorCode.INVALID_CONFIG,
           'manage_domain_orchestrated: action=set requires both lease_uuid and fqdn.',
         );
       }
@@ -534,7 +537,8 @@ function buildManageDomainArgs(args: ManageDomainToolArgs): ManageDomainArgs {
       };
     case 'clear':
       if (!args.lease_uuid) {
-        throw new Error(
+        throw new ManifestMCPError(
+          ManifestMCPErrorCode.INVALID_CONFIG,
           'manage_domain_orchestrated: action=clear requires lease_uuid.',
         );
       }
@@ -545,7 +549,8 @@ function buildManageDomainArgs(args: ManageDomainToolArgs): ManageDomainArgs {
       };
     case 'lookup':
       if (!args.fqdn) {
-        throw new Error(
+        throw new ManifestMCPError(
+          ManifestMCPErrorCode.INVALID_CONFIG,
           'manage_domain_orchestrated: action=lookup requires fqdn.',
         );
       }
