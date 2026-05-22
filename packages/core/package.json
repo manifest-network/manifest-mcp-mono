@@ -1,6 +1,6 @@
 {
   "name": "@manifest-network/manifest-mcp-core",
-  "version": "0.9.0",
+  "version": "0.10.0",
   "description": "Shared library for Cosmos SDK blockchain logic, tool functions, and server utilities (Manifest Network)",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -17,6 +17,10 @@
     "./__test-utils__/callTool.js": {
       "import": "./dist/__test-utils__/callTool.js",
       "types": "./dist/__test-utils__/callTool.d.ts"
+    },
+    "./__test-utils__/callToolWithElicitation.js": {
+      "import": "./dist/__test-utils__/callToolWithElicitation.js",
+      "types": "./dist/__test-utils__/callToolWithElicitation.d.ts"
     }
   },
   "scripts": {

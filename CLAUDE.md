@@ -30,20 +30,23 @@ docker compose -f e2e/docker-compose.yml down -v --remove-orphans
 
 ## Architecture
 
-Four MCP servers bridging AI assistants to Cosmos SDK blockchains (Manifest Network). Six npm workspace packages with strict dependency direction: **node -> {chain, lease, fred, cosmwasm} -> core** (never reverse; node also depends on core directly).
+Five MCP servers bridging AI assistants to Cosmos SDK blockchains (Manifest Network). Eight npm workspace packages with strict dependency direction: **node -> {chain, lease, fred, cosmwasm, agent} -> core**, and **agent -> agent-core -> {core, fred}** (never reverse; node also depends on core directly).
 
 - **`packages/core`** -- Shared library. Cosmos logic, on-chain tool functions, server utilities, LCD/REST adapter (`lcd-adapter.ts`). No HTTP clients (those live in fred). Not an MCP server itself. Built with `platform: "neutral"` for browser compatibility.
 - **`packages/chain`** -- MCP server with 6 chain tools (+ optional `request_faucet` when `MANIFEST_FAUCET_URL` is set): `get_account_info`, `cosmos_query`, `cosmos_tx`, `cosmos_estimate_fee`, `list_modules`, `list_module_subcommands`.
 - **`packages/lease`** -- MCP server with 8 on-chain lease tools: `credit_balance`, `fund_credit`, `leases_by_tenant`, `close_lease`, `set_item_custom_domain`, `lease_by_custom_domain`, `get_skus`, `get_providers`.
 - **`packages/fred`** -- MCP server with 11 provider/Fred tools: `browse_catalog`, `deploy_app`, `app_status`, `get_logs`, `restart_app`, `update_app`, `app_diagnostics`, `app_releases`, `check_deployment_readiness`, `build_manifest_preview`, `wait_for_app_ready`. Contains HTTP clients (auth, provider, fred) and tool implementations. Also exports all tool functions and HTTP clients for library consumers. Stack manifests use `{ services: { ... } }` wrapper format; upload payloads are `Uint8Array`. `deploy_app` accepts optional `custom_domain` (FQDN to claim on the freshly-created lease) and `service_name` (required for stack leases).
 - **`packages/cosmwasm`** -- MCP server with 2 converter tools: `get_mfx_to_pwr_rate`, `convert_mfx_to_pwr`. Requires `MANIFEST_CONVERTER_ADDRESS` env var. Uses the on-chain MFX→PWR converter contract (CosmWasm smart contract with `{"convert":{}}` execute and `{"config":{}}` query).
-- **`packages/node`** -- Four CLI entry points (`manifest-mcp-chain`, `manifest-mcp-lease`, `manifest-mcp-fred`, `manifest-mcp-cosmwasm`) with stdio transport + keyfile wallet. Each also supports `keygen` and `import` subcommands for key management.
+- **`packages/agent-core`** -- TypeScript orchestration surface for Manifest agent flows (`deployApp`, `manageDomain`, `troubleshootDeployment`, `closeLease`). Not an MCP server itself — exposes typed callbacks (`onPlan`, `onConfirm`, `onProgress`, `onComplete`, `onFailure`). Built with `platform: "neutral"` (node-only code paths like `saveManifest` use dynamic `node:fs` imports).
+- **`packages/agent`** -- MCP server with 4 orchestrated tools wrapping each agent-core function: `deploy_app_orchestrated`, `manage_domain_orchestrated`, `troubleshoot_deployment_orchestrated`, `close_lease_orchestrated`. Translates agent-core callbacks into MCP elicitation (`server.elicitInput`) requests + progress notifications. **Requires** an elicitation-capable host (Claude Code ≥ 2.1.76). Pure adapter — no orchestration logic, no re-rendering of agent-core's `internals/render-*.ts` outputs.
+- **`packages/node`** -- Five CLI entry points (`manifest-mcp-chain`, `manifest-mcp-lease`, `manifest-mcp-fred`, `manifest-mcp-cosmwasm`, `manifest-mcp-agent`) with stdio transport + keyfile wallet. Each also supports `keygen` and `import` subcommands for key management.
 
 ### Tool layers (3 tiers)
 
 1. **Discovery** -- `list_modules`, `list_module_subcommands` -> powered by static registry in `modules.ts`
 2. **Generic chain** -- `cosmos_query`, `cosmos_tx`, `cosmos_estimate_fee`, `get_account_info` -> routed through `cosmos.ts` to per-module handlers in `queries/` and `transactions/`
 3. **High-level Manifest** -- on-chain lease tools in `packages/lease` (using core's tool functions), provider-dependent tools in `packages/fred` (composing chain operations with provider HTTP calls), and MFX→PWR converter tools in `packages/cosmwasm` (composing CosmWasm queries with contract execution)
+4. **Orchestration (elicitation-driven)** -- four high-level multi-step flows in `packages/agent` wrapping `packages/agent-core`'s `deployApp` / `manageDomain` / `troubleshootDeployment` / `closeLease`. The wrapper translates agent-core's typed callbacks into MCP `elicitation/create` requests + `notifications/progress` events; host surfaces drive the bidirectional flow over standard MCP wire.
 
 ### Key components
 
@@ -57,7 +60,7 @@ Four MCP servers bridging AI assistants to Cosmos SDK blockchains (Manifest Netw
 
 ### Wallet resolution (node package)
 
-`packages/node/src/bootstrap.ts` resolves wallet in order: keyfile (`MANIFEST_KEY_FILE`, encrypted or plaintext) -> mnemonic env var (`COSMOS_MNEMONIC`) -> fatal exit with usage instructions. All four entry points (`chain.ts`, `lease.ts`, `fred.ts`, and `cosmwasm.ts`) delegate to this shared bootstrap. All wallet providers implement `WalletProvider` interface from core including optional `signArbitrary` for ADR-036.
+`packages/node/src/bootstrap.ts` resolves wallet in order: keyfile (`MANIFEST_KEY_FILE`, encrypted or plaintext) -> mnemonic env var (`COSMOS_MNEMONIC`) -> fatal exit with usage instructions. All five entry points (`chain.ts`, `lease.ts`, `fred.ts`, `cosmwasm.ts`, and `agent.ts`) delegate to this shared bootstrap. All wallet providers implement `WalletProvider` interface from core including optional `signArbitrary` for ADR-036.
 
 ### Error handling
 
@@ -65,7 +68,7 @@ Four MCP servers bridging AI assistants to Cosmos SDK blockchains (Manifest Netw
 
 ### Tool annotations and `_meta.manifest`
 
-Every `registerTool` call across the four MCP servers must pass two extra fields beyond `description` and `inputSchema`:
+Every `registerTool` call across the five MCP servers must pass two extra fields beyond `description` and `inputSchema`:
 
 - **`annotations`** -- standard MCP `ToolAnnotations` (`title`, `readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`). Built via the helpers `readOnlyAnnotations(title)` or `mutatingAnnotations(title, { destructive, idempotent? })` exported from core (`tool-metadata.ts`). These are spec-blessed UX hints generic MCP clients consume.
 - **`_meta`** -- a `manifestMeta({ broadcasts, estimable })` container under the `manifest` namespace. The helper injects a leading `v: 1` schema version so plugin readers can branch safely as fields evolve. These flags express Manifest-specific signals the standard annotations can't (e.g., `request_faucet` is `readOnlyHint: false` because it mutates external state, but `broadcasts: false` because the agent's wallet doesn't sign). The `manifest-agent` plugin reads `_meta.manifest` to derive its broadcast policy.
@@ -75,7 +78,7 @@ Both are advisory hints, not enforcement. The plugin's `PreToolUse` hook regex i
 ## Conventions
 
 - ESM-only (`"type": "module"`). Use `.js` extensions in imports (e.g., `'./client.js'`).
-- `tsdown` builds unbundled ESM with `.d.ts` and sourcemaps. Not tsc. Core/chain/lease/fred/cosmwasm use `platform: "neutral"` (`.js` output); node uses `platform: "node"` (`.js` output, ESM via package.json type).
+- `tsdown` builds unbundled ESM with `.d.ts` and sourcemaps. Not tsc. Core/chain/lease/fred/cosmwasm/agent-core/agent use `platform: "neutral"` (`.js` output; node-only code paths use dynamic imports — e.g. `agent`'s optional `createGuardedFetch` gated on `MANIFEST_AGENT_FETCH_GUARDED=1`, `agent-core`'s `saveManifest`); node uses `platform: "node"` (`.js` output, ESM via package.json type).
 - Tests are co-located `*.test.ts` files. E2E tests live in `/e2e/`.
 - Query handlers: `routeXxxQuery(queryClient, subcommand, args)` with switch on subcommand.
 - Transaction handlers: `routeXxxTransaction(client, senderAddress, subcommand, args, waitForConfirmation)`.
@@ -100,6 +103,10 @@ Both are advisory hints, not enforcement. The plugin's `PreToolUse` hook regex i
 | `COSMOS_MNEMONIC` | No | -- |
 | `MANIFEST_FAUCET_URL` | No | -- |
 | `MANIFEST_CONVERTER_ADDRESS` | Required for cosmwasm server | -- |
+| `MANIFEST_AGENT_DATA_DIR` | No (agent server) | -- |
+| `MANIFEST_CHAIN_DATA_FILE` | No (agent server) | -- |
+| `MANIFEST_AGENT_FETCH_GUARDED` | No (agent server) | `1` (default ON; accepts `1`/`true`/`yes`/`on` and `0`/`false`/`no`/`off`, case-insensitive) |
+| `MANIFEST_AGENT_ELICIT_TIMEOUT_MS` | No (agent server) | `600000` (10 min; per-`elicitInput` timeout) |
 | `LOG_LEVEL` | No | `warn` |
 
 `LOG_LEVEL` accepts `debug`, `info`, `warn`, `error`, or `silent`. Logs go to stderr. `LOG_LEVEL` is read by the node package's `bootstrap()` once `.env` has loaded, then applied via `logger.setLevel()`; core's logger has no knowledge of env vars and defaults to `warn`.

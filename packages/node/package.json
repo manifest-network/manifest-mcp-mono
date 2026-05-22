@@ -1,13 +1,14 @@
 {
   "name": "@manifest-network/manifest-mcp-node",
-  "version": "0.9.0",
+  "version": "0.10.0",
   "description": "Node.js MCP servers for Manifest Network with stdio transport and keyfile wallet",
   "type": "module",
   "bin": {
+    "manifest-mcp-agent": "dist/agent.js",
     "manifest-mcp-chain": "dist/chain.js",
-    "manifest-mcp-lease": "dist/lease.js",
+    "manifest-mcp-cosmwasm": "dist/cosmwasm.js",
     "manifest-mcp-fred": "dist/fred.js",
-    "manifest-mcp-cosmwasm": "dist/cosmwasm.js"
+    "manifest-mcp-lease": "dist/lease.js"
   },
   "scripts": {
     "build": "tsdown",
@@ -32,7 +33,7 @@
   "homepage": "https://github.com/manifest-network/manifest-mcp-mono#readme",
   "bugs": "https://github.com/manifest-network/manifest-mcp-mono/issues",
   "engines": {
-    "node": ">=20"
+    "node": ">=22.19.0"
   },
   "publishConfig": {
     "access": "public"
@@ -44,11 +45,12 @@
     "@cosmjs/amino": "0.32.4",
     "@cosmjs/encoding": "0.32.4",
     "@cosmjs/proto-signing": "0.32.4",
-    "@manifest-network/manifest-mcp-core": "^0.9.0",
-    "@manifest-network/manifest-mcp-chain": "^0.9.0",
-    "@manifest-network/manifest-mcp-lease": "^0.9.0",
-    "@manifest-network/manifest-mcp-cosmwasm": "^0.9.0",
-    "@manifest-network/manifest-mcp-fred": "^0.9.0",
+    "@manifest-network/manifest-mcp-agent": "^0.10.0",
+    "@manifest-network/manifest-mcp-core": "^0.10.0",
+    "@manifest-network/manifest-mcp-chain": "^0.10.0",
+    "@manifest-network/manifest-mcp-lease": "^0.10.0",
+    "@manifest-network/manifest-mcp-cosmwasm": "^0.10.0",
+    "@manifest-network/manifest-mcp-fred": "^0.10.0",
     "@modelcontextprotocol/sdk": "1.27.1",
     "dotenv": "^17.2.3"
   },

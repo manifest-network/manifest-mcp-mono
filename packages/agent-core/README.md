@@ -2,7 +2,7 @@
 
 TypeScript orchestration surface for Manifest agent flows. This package owns the deploy / manage-domain / troubleshoot / close-lease orchestration that host surfaces consume in lockstep — a bug fix in the core's recovery branch fixes every host surface simultaneously.
 
-> **Status.** All four orchestration functions have real implementations as of ENG-129 (PRs 1–4). The package remains `private: true` pending a publish decision; do not depend on it from external repos yet.
+> **Status.** Publicly published on npm as `@manifest-network/manifest-agent-core` (ENG-129). Consume via `npm install @manifest-network/manifest-agent-core`. The MCP-server adapter that wraps this orchestration surface via elicitation lives at [`@manifest-network/manifest-mcp-agent`](../agent/README.md).
 
 See [ENG-127](https://linear.app/liftedinit/issue/ENG-127) for the broader initiative and [ENG-128](https://linear.app/liftedinit/issue/ENG-128) for the bootstrap PR.
 

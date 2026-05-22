@@ -64,6 +64,7 @@ jobs:
           publish packages/fred     @manifest-network/manifest-mcp-fred     "$VERSION"
           publish packages/cosmwasm  @manifest-network/manifest-mcp-cosmwasm  "$VERSION"
           publish packages/agent-core @manifest-network/manifest-agent-core   "$VERSION"
+          publish packages/agent     @manifest-network/manifest-mcp-agent     "$VERSION"
           publish packages/node      @manifest-network/manifest-mcp-node      "$VERSION"
 
       - name: Create GitHub Release
