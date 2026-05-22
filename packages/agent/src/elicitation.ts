@@ -277,7 +277,11 @@ export function parsePlanVerdict(
     let spec: DeploySpec;
     try {
       const parsed = JSON.parse(specJson) as unknown;
-      if (parsed === null || typeof parsed !== 'object') {
+      if (
+        parsed === null ||
+        typeof parsed !== 'object' ||
+        Array.isArray(parsed)
+      ) {
         throw new Error('spec_json must parse to a JSON object.');
       }
       // Structural validation is agent-core's responsibility — `applyPlanEdit`
@@ -299,21 +303,44 @@ export function parsePlanVerdict(
 }
 
 /**
- * Parse the `onFailure(env, options)` recovery picker. The chosen ID
- * must appear in the `options[]` array agent-core supplied; otherwise
- * we throw `INVALID_CONFIG` (host returned a value outside the schema's
- * enum). `decline` / `cancel` also throw — there is no neutral "no
- * choice" return on agent-core's bidirectional `onFailure`.
+ * Parse the `onFailure(env, options)` recovery picker.
+ *
+ * Phase 2 (finding #1): when the user dismisses the prompt (action =
+ * `decline` / `cancel`), default to `salvage_without_domain` rather
+ * than throwing. agent-core unconditionally includes that option in
+ * every recovery-options array (see
+ * `agent-core/src/internals/render-partial-success-prompt.ts:104`); it
+ * is the lease-preserving "do nothing destructive" branch — keeps the
+ * lease intact and skips the failing set-domain step. The previous
+ * throw left the partial-success lease orphaned on-chain and surfaced
+ * a misleading `INVALID_CONFIG` to the user.
+ *
+ * The caller (`makeDeployCallbacks` in `callbacks.ts`) re-inspects
+ * `result.action` after this returns and emits a `notifications/message`
+ * (level `warning`) so the user knows the prompt was dismissed and
+ * which default was applied.
+ *
+ * Defensive: if `salvage_without_domain` is somehow missing from
+ * `options[]` — which would mean agent-core changed its invariant —
+ * fall back to throwing `INVALID_CONFIG` so the wrapper fails loudly
+ * rather than silently inventing a different recovery action.
+ *
+ * Accept path is unchanged: a non-enum `choice` still throws.
  */
 export function parseRecoveryChoice(
   result: ElicitResult,
   options: readonly RecoveryOption[],
 ): RecoveryChoice {
   if (result.action !== 'accept') {
-    throw new ManifestMCPError(
-      ManifestMCPErrorCode.INVALID_CONFIG,
-      `User cancelled recovery selection (action=${result.action}).`,
-    );
+    const fallback = options.find((o) => o.id === 'salvage_without_domain');
+    if (fallback === undefined) {
+      throw new ManifestMCPError(
+        ManifestMCPErrorCode.INVALID_CONFIG,
+        `parseRecoveryChoice: user dismissed prompt (action=${result.action}) ` +
+          'and no safe default ("salvage_without_domain") was offered in the options array.',
+      );
+    }
+    return { id: fallback.id };
   }
   const choice = readContentString(result, 'choice');
   if (choice === undefined) {

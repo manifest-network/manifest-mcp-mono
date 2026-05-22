@@ -106,6 +106,7 @@ Both are advisory hints, not enforcement. The plugin's `PreToolUse` hook regex i
 | `MANIFEST_AGENT_DATA_DIR` | No (agent server) | -- |
 | `MANIFEST_CHAIN_DATA_FILE` | No (agent server) | -- |
 | `MANIFEST_AGENT_FETCH_GUARDED` | No (agent server) | `1` (default ON; accepts `1`/`true`/`yes`/`on` and `0`/`false`/`no`/`off`, case-insensitive) |
+| `MANIFEST_AGENT_ELICIT_TIMEOUT_MS` | No (agent server) | `600000` (10 min; per-`elicitInput` timeout) |
 | `LOG_LEVEL` | No | `warn` |
 
 `LOG_LEVEL` accepts `debug`, `info`, `warn`, `error`, or `silent`. Logs go to stderr. `LOG_LEVEL` is read by the node package's `bootstrap()` once `.env` has loaded, then applied via `logger.setLevel()`; core's logger has no knowledge of env vars and defaults to `warn`.

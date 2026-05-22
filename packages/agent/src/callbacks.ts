@@ -58,7 +58,10 @@ import type {
   TroubleshootReport,
 } from '@manifest-network/manifest-agent-core';
 import type { Server } from '@modelcontextprotocol/sdk/server/index.js';
-import type { RequestHandlerExtra } from '@modelcontextprotocol/sdk/shared/protocol.js';
+import type {
+  RequestHandlerExtra,
+  RequestOptions,
+} from '@modelcontextprotocol/sdk/shared/protocol.js';
 import type {
   ServerNotification,
   ServerRequest,
@@ -79,6 +82,41 @@ import {
 export interface CallbackFactoryArgs {
   readonly server: Server;
   readonly extra: RequestHandlerExtra<ServerRequest, ServerNotification>;
+}
+
+// ----------------------------------------------------------------------
+// Elicitation request-options
+// ----------------------------------------------------------------------
+
+/**
+ * Default elicitation timeout: 10 minutes. The SDK default
+ * (`DEFAULT_REQUEST_TIMEOUT_MSEC = 60_000` ms) is far too short for a
+ * human reading a deployment-plan recap. Operators can override via
+ * `MANIFEST_AGENT_ELICIT_TIMEOUT_MS` (positive integer, milliseconds);
+ * malformed values fall back to the default.
+ */
+const ELICIT_TIMEOUT_MS = ((): number => {
+  const raw = process.env.MANIFEST_AGENT_ELICIT_TIMEOUT_MS;
+  if (raw === undefined || raw.trim().length === 0) return 10 * 60_000;
+  const n = Number.parseInt(raw, 10);
+  return Number.isFinite(n) && n > 0 ? n : 10 * 60_000;
+})();
+
+/**
+ * Build the `RequestOptions` second-arg every `server.elicitInput()`
+ * call passes. Two roles, both critical for an interactive flow:
+ *
+ *   1. `timeout` — long enough for a human to read the plan recap,
+ *      open the partial-success prompt and pick a recovery option.
+ *   2. `signal` — host cancellation must propagate to the in-flight
+ *      `elicitation/create`. Without this, host cancel fires the abort
+ *      but the SDK keeps the elicitation pending until its own request
+ *      timeout, holding wallet / rate-limiter locks.
+ */
+function elicitOptions(
+  extra: RequestHandlerExtra<ServerRequest, ServerNotification>,
+): RequestOptions {
+  return { timeout: ELICIT_TIMEOUT_MS, signal: extra.signal };
 }
 
 // ----------------------------------------------------------------------
@@ -228,17 +266,17 @@ export function makeDeployCallbacks(
       const message =
         latestPlanBlock?.text ??
         `Deployment plan (no rendered block captured):\n${JSON.stringify(plan.summary, null, 2)}`;
-      const result = await server.elicitInput({
-        message,
-        requestedSchema: buildPlanSchema(),
-      });
+      const result = await server.elicitInput(
+        { message, requestedSchema: buildPlanSchema() },
+        elicitOptions(extra),
+      );
       return parsePlanVerdict(result);
     },
     onConfirm: async (block: DeploymentPlanBlock): Promise<'yes' | 'no'> => {
-      const result = await server.elicitInput({
-        message: block.text,
-        requestedSchema: buildConfirmSchema(),
-      });
+      const result = await server.elicitInput(
+        { message: block.text, requestedSchema: buildConfirmSchema() },
+        elicitOptions(extra),
+      );
       return parseConfirmVerdict(result);
     },
     onFailure: async (
@@ -246,11 +284,36 @@ export function makeDeployCallbacks(
       options: RecoveryOption[],
     ): Promise<RecoveryChoice> => {
       const message = renderRecoveryMessage(failure, options);
-      const result = await server.elicitInput({
-        message,
-        requestedSchema: buildRecoverySchema(options),
-      });
-      return parseRecoveryChoice(result, options);
+      const result = await server.elicitInput(
+        { message, requestedSchema: buildRecoverySchema(options) },
+        elicitOptions(extra),
+      );
+      const choice = parseRecoveryChoice(result, options);
+      // Phase 2 (finding #1): when the user dismissed the prompt,
+      // `parseRecoveryChoice` synthesized the lease-preserving default
+      // (`salvage_without_domain`). Surface that decision to the user
+      // via a `notifications/message` (warning) so they aren't
+      // surprised — the lease still exists; they can manually invoke
+      // `close_lease_orchestrated` or `manage_domain_orchestrated` if
+      // they wanted a different outcome.
+      if (result.action !== 'accept') {
+        await safeNotify(extra, {
+          method: 'notifications/message',
+          params: {
+            level: 'warning',
+            logger: '@manifest-network/manifest-mcp-agent',
+            data: {
+              kind: 'recovery_dismissed',
+              dismissed_action: result.action,
+              applied_default: choice.id,
+              reason:
+                'User dismissed the recovery prompt; applied lease-preserving default. ' +
+                'Manually invoke close_lease_orchestrated or manage_domain_orchestrated if needed.',
+            },
+          },
+        });
+      }
+      return choice;
     },
     onComplete: (_result: DeployResult): void => {
       // Tool return value carries the structured success signal.
@@ -274,10 +337,10 @@ export function makeManageDomainCallbacks(
   let progressIndex = 0;
   return {
     onConfirm: async (block: DeploymentPlanBlock): Promise<'yes' | 'no'> => {
-      const result = await server.elicitInput({
-        message: block.text,
-        requestedSchema: buildConfirmSchema(),
-      });
+      const result = await server.elicitInput(
+        { message: block.text, requestedSchema: buildConfirmSchema() },
+        elicitOptions(extra),
+      );
       return parseConfirmVerdict(result);
     },
     onProgress: (event: ProgressEvent): void => {
@@ -299,22 +362,17 @@ export function makeManageDomainCallbacks(
 
 /**
  * Build the callback object for `troubleshootDeployment`. Read-only
- * chain query; `onConfirm` is bidirectional but the result is purely
- * a diagnostic report (no broadcast).
+ * chain query — no `onConfirm` (agent-core's `troubleshoot.ts` never
+ * invokes that callback; supplying one was dead code, finding #11).
+ * The wrapper also skips `assertElicitationCapability` for this tool —
+ * see `index.ts`.
  */
 export function makeTroubleshootCallbacks(
   args: CallbackFactoryArgs,
 ): TroubleshootCallbacks {
-  const { server, extra } = args;
+  const { extra } = args;
   let progressIndex = 0;
   return {
-    onConfirm: async (block: DeploymentPlanBlock): Promise<'yes' | 'no'> => {
-      const result = await server.elicitInput({
-        message: block.text,
-        requestedSchema: buildConfirmSchema(),
-      });
-      return parseConfirmVerdict(result);
-    },
     onProgress: (event: ProgressEvent): void => {
       const idx = progressIndex++;
       void emitProgress(extra, event, idx);
@@ -344,10 +402,10 @@ export function makeCloseLeaseCallbacks(
   let progressIndex = 0;
   return {
     onConfirm: async (block: DeploymentPlanBlock): Promise<'yes' | 'no'> => {
-      const result = await server.elicitInput({
-        message: block.text,
-        requestedSchema: buildConfirmSchema(),
-      });
+      const result = await server.elicitInput(
+        { message: block.text, requestedSchema: buildConfirmSchema() },
+        elicitOptions(extra),
+      );
       return parseConfirmVerdict(result);
     },
     onProgress: (event: ProgressEvent): void => {

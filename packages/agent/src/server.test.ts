@@ -732,6 +732,142 @@ describe('AgentMCPServer', () => {
   });
 
   // ─────────────────────────────────────────────────────────────────
+  // Test #2b/c/d — Phase 2 (finding #1) — recovery-prompt dismiss.
+  //
+  // The previous behavior threw INVALID_CONFIG on `decline` / `cancel`,
+  // which unwound agent-core's `onFailure` invocation and left the
+  // partial-success lease orphaned on-chain. Phase 2 synthesizes a
+  // lease-preserving `salvage_without_domain` default and emits a
+  // warning `notifications/message` so the user knows the default was
+  // applied.
+  // ─────────────────────────────────────────────────────────────────
+  describe('#2b deploy_app_orchestrated recovery dismiss', () => {
+    const envelope: FailureEnvelope = {
+      outcome: 'partially_succeeded',
+      leaseUuid: 'lease-1',
+      requestedCustomDomain: 'app.example.com',
+      reason:
+        'Partial success: lease lease-1 created but custom_domain attach failed.',
+    };
+    const fullOptions: RecoveryOption[] = [
+      {
+        id: 'retry_set_domain',
+        label: 'Retry set-domain + upload',
+        description:
+          'Retry the set-domain transaction against the already-created lease.',
+      },
+      {
+        id: 'salvage_without_domain',
+        label: 'Salvage without domain',
+        description: 'Keep the lease without the requested custom domain.',
+      },
+      {
+        id: 'cancel_lease',
+        label: 'Cancel the lease',
+        description: 'Submit a cancel-lease transaction (pre-active terminal).',
+      },
+      {
+        id: 'close_lease',
+        label: 'Cancel or close the lease',
+        description:
+          'Submit a close-lease transaction (post-active or pre-active terminal).',
+      },
+    ];
+
+    async function runDismissCase(action: 'decline' | 'cancel'): Promise<{
+      observed: RecoveryChoice | undefined;
+      captured: CaptureResult;
+    }> {
+      let observed: RecoveryChoice | undefined;
+      const fakeDeploy: AgentOrchestrators['deployApp'] = async (
+        _spec,
+        cb,
+        _opts,
+      ) => {
+        observed = await cb.onFailure?.(envelope, fullOptions);
+        // Mimic dispatchRecovery's `salvage_without_domain` contract —
+        // it returns the lease with the domain field cleared. Resolve
+        // the orchestrator so we can inspect the warning notification.
+        const { ManifestMCPError, ManifestMCPErrorCode } = await import(
+          '@manifest-network/manifest-mcp-core'
+        );
+        throw new ManifestMCPError(
+          ManifestMCPErrorCode.TX_FAILED,
+          'salvage_without_domain applied; lease preserved.',
+        );
+      };
+      const server = makeServer({ deployApp: fakeDeploy });
+      const captured = await callToolWithCapture(
+        server,
+        'deploy_app_orchestrated',
+        { spec: { image: 'nginx', port: 80 } },
+        { respond: () => ({ action }) },
+      );
+      return { observed, captured };
+    }
+
+    it('action=cancel → synthesizes salvage_without_domain + emits warning notification', async () => {
+      const { observed, captured } = await runDismissCase('cancel');
+      expect(observed).toEqual({ id: 'salvage_without_domain' });
+      // Warning notifications/message landed on the log channel.
+      const warnings = captured.logs.filter((l) => l.level === 'warning');
+      expect(warnings).toHaveLength(1);
+      const data = warnings[0].data as {
+        kind: string;
+        dismissed_action: string;
+        applied_default: string;
+      };
+      expect(data.kind).toBe('recovery_dismissed');
+      expect(data.dismissed_action).toBe('cancel');
+      expect(data.applied_default).toBe('salvage_without_domain');
+    });
+
+    it('action=decline → synthesizes salvage_without_domain + emits warning notification', async () => {
+      const { observed, captured } = await runDismissCase('decline');
+      expect(observed).toEqual({ id: 'salvage_without_domain' });
+      const warnings = captured.logs.filter((l) => l.level === 'warning');
+      expect(warnings).toHaveLength(1);
+      expect(
+        (warnings[0].data as { dismissed_action: string }).dismissed_action,
+      ).toBe('decline');
+    });
+
+    it('defensive: empty options[] on dismiss → INVALID_CONFIG', async () => {
+      // Should be unreachable from agent-core today
+      // (render-partial-success-prompt.ts always includes salvage_without_domain),
+      // but pin the defensive branch.
+      let observedError: { code?: string; message?: string } | undefined;
+      const fakeDeploy: AgentOrchestrators['deployApp'] = async (
+        _spec,
+        cb,
+        _opts,
+      ) => {
+        try {
+          await cb.onFailure?.(envelope, []);
+        } catch (e) {
+          observedError = e as { code?: string; message?: string };
+        }
+        const { ManifestMCPError, ManifestMCPErrorCode } = await import(
+          '@manifest-network/manifest-mcp-core'
+        );
+        throw new ManifestMCPError(
+          ManifestMCPErrorCode.TX_FAILED,
+          'defensive-branch sentinel',
+        );
+      };
+      const server = makeServer({ deployApp: fakeDeploy });
+      await callToolWithCapture(
+        server,
+        'deploy_app_orchestrated',
+        { spec: { image: 'nginx', port: 80 } },
+        { respond: () => ({ action: 'cancel' }) },
+      );
+      expect(observedError?.code).toBe('INVALID_CONFIG');
+      expect(observedError?.message).toContain('salvage_without_domain');
+    });
+  });
+
+  // ─────────────────────────────────────────────────────────────────
   // Test #3 — deploy_app_orchestrated plan-edit. Client returns
   //   accept{verdict:'edit_env', env_json:'{"FOO":"bar"}'} → wrapper's
   //   `parsePlanVerdict` decodes to typed `{kind:'edit_env', env:...}`.
@@ -883,11 +1019,14 @@ describe('AgentMCPServer', () => {
   });
 
   // ─────────────────────────────────────────────────────────────────
-  // Test #5 — troubleshoot_deployment_orchestrated happy path. One
-  // elicit, a progress event, return the markdown report.
+  // Test #5 — troubleshoot_deployment_orchestrated happy path. Phase 2
+  // (finding #11): the wrapper no longer supplies an `onConfirm`
+  // callback and agent-core never invokes one — so this flow MUST run
+  // with ZERO elicitations. The progress emission + report passthrough
+  // remain the contract.
   // ─────────────────────────────────────────────────────────────────
   describe('#5 troubleshoot_deployment_orchestrated happy path', () => {
-    it('elicits confirm, emits progress, returns the TroubleshootReport', async () => {
+    it('emits progress and returns the TroubleshootReport with NO elicitation', async () => {
       const expectedLeaseUuid = '550e8400-e29b-41d4-a716-446655440000';
       const report: TroubleshootReport = {
         markdown: '# Lease diagnostic — lease-1\n\nState: ACTIVE',
@@ -901,10 +1040,7 @@ describe('AgentMCPServer', () => {
           _opts: TroubleshootOptions,
         ): Promise<TroubleshootReport> => {
           observedArgs = args;
-          const yesNo = await cb.onConfirm?.({
-            text: `Diagnose lease ${args.leaseUuid}`,
-          });
-          expect(yesNo).toBe('yes');
+          // No onConfirm — the wrapper no longer supplies one.
           cb.onProgress?.({
             kind: 'readiness_evaluated',
             readiness: {
@@ -928,15 +1064,16 @@ describe('AgentMCPServer', () => {
         'troubleshoot_deployment_orchestrated',
         { lease_uuid: expectedLeaseUuid },
         {
-          respond: () => ({
-            action: 'accept',
-            content: { verdict: 'yes' },
-          }),
+          respond: () => {
+            throw new Error(
+              'troubleshoot must not elicit; the wrapper drops onConfirm.',
+            );
+          },
         },
       );
 
       expect(observedArgs).toEqual({ leaseUuid: expectedLeaseUuid });
-      expect(captured.elicitations).toHaveLength(1);
+      expect(captured.elicitations).toHaveLength(0);
       expect(captured.progress).toHaveLength(1);
       expect(JSON.parse(captured.progress[0].message ?? '').kind).toBe(
         'readiness_evaluated',
@@ -944,6 +1081,30 @@ describe('AgentMCPServer', () => {
       expect(captured.toolResult.isError).toBeUndefined();
       const parsed = parseStructured<TroubleshootReport>(captured.toolResult);
       expect(parsed.markdown).toContain('Lease diagnostic');
+    });
+
+    // Phase 2 (finding #11): the `TroubleshootCallbacks` type still
+    // declares `onConfirm` as optional, but the wrapper's factory now
+    // omits it. Pin that the factory's return shape doesn't carry one
+    // — re-adding it would re-introduce the dead-branch elicitation.
+    it('makeTroubleshootCallbacks does not supply onConfirm', async () => {
+      let observed: TroubleshootCallbacks | undefined;
+      const fakeTroubleshoot: AgentOrchestrators['troubleshootDeployment'] =
+        async (_args, cb, _opts) => {
+          observed = cb;
+          return { markdown: '' };
+        };
+      const server = makeServer({
+        troubleshootDeployment: fakeTroubleshoot,
+      });
+      await callToolWithCapture(
+        server,
+        'troubleshoot_deployment_orchestrated',
+        { lease_uuid: '550e8400-e29b-41d4-a716-446655440000' },
+        { respond: () => ({ action: 'accept', content: {} }) },
+      );
+      expect(observed).toBeDefined();
+      expect(observed?.onConfirm).toBeUndefined();
     });
   });
 
@@ -997,77 +1158,142 @@ describe('AgentMCPServer', () => {
   // ─────────────────────────────────────────────────────────────────
   // Test #7 — elicitation capability guard.
   //
-  // Client connects WITHOUT advertising `capabilities.elicitation`.
-  // Each tool's `assertElicitationCapability` must throw `INVALID_CONFIG`
-  // BEFORE invoking the orchestrator. The fake never runs — assert via a
-  // sentinel that the orchestrator was not entered.
+  // Phase 2 (finding #10): the guard is no longer unconditional. The
+  // read-only paths run without elicitation; only the broadcast-
+  // requiring paths reject hosts that don't advertise
+  // `capabilities.elicitation`.
+  //
+  // | Tool / action                                     | Guard? |
+  // | ------------------------------------------------- | ------ |
+  // | deploy_app_orchestrated                           | yes    |
+  // | manage_domain_orchestrated  action=set            | yes    |
+  // | manage_domain_orchestrated  action=clear          | yes    |
+  // | manage_domain_orchestrated  action=lookup         | NO     |
+  // | troubleshoot_deployment_orchestrated              | NO     |
+  // | close_lease_orchestrated                          | yes    |
   // ─────────────────────────────────────────────────────────────────
   describe('#7 elicitation capability guard', () => {
-    for (const toolName of AGENT_TOOL_NAMES) {
-      it(`${toolName}: missing elicitation capability → INVALID_CONFIG`, async () => {
-        const orchestratorEntered = vi.fn();
-        // Build a fake for whichever tool we're calling, so we can assert
-        // it was never reached. The others stay default.
-        const sentinel: Partial<AgentOrchestrators> = {};
-        if (toolName === 'deploy_app_orchestrated') {
-          sentinel.deployApp = (async (..._a: unknown[]) => {
-            orchestratorEntered();
-            throw new Error('should not reach orchestrator');
-          }) as unknown as AgentOrchestrators['deployApp'];
-        }
-        if (toolName === 'manage_domain_orchestrated') {
-          sentinel.manageDomain = (async (..._a: unknown[]) => {
-            orchestratorEntered();
-            throw new Error('should not reach orchestrator');
-          }) as unknown as AgentOrchestrators['manageDomain'];
-        }
-        if (toolName === 'troubleshoot_deployment_orchestrated') {
-          sentinel.troubleshootDeployment = (async (..._a: unknown[]) => {
-            orchestratorEntered();
-            throw new Error('should not reach orchestrator');
-          }) as unknown as AgentOrchestrators['troubleshootDeployment'];
-        }
-        if (toolName === 'close_lease_orchestrated') {
-          sentinel.closeLease = (async (..._a: unknown[]) => {
-            orchestratorEntered();
-            throw new Error('should not reach orchestrator');
-          }) as unknown as AgentOrchestrators['closeLease'];
-        }
-        const server = makeServer(sentinel);
+    interface GuardCase {
+      label: string;
+      toolName: string;
+      args: Record<string, unknown>;
+      orchestratorKey: keyof AgentOrchestrators;
+      mustGuard: boolean;
+      // When `mustGuard:false`, the fake must produce a real result the
+      // tool can return — pass via this hook.
+      buildFake?: () => Partial<AgentOrchestrators>;
+    }
 
-        const args: Record<string, Record<string, unknown>> = {
-          deploy_app_orchestrated: { spec: { image: 'nginx', port: 80 } },
-          manage_domain_orchestrated: {
-            action: 'set',
-            lease_uuid: '550e8400-e29b-41d4-a716-446655440000',
+    const guardCases: GuardCase[] = [
+      {
+        label: 'deploy_app_orchestrated',
+        toolName: 'deploy_app_orchestrated',
+        args: { spec: { image: 'nginx', port: 80 } },
+        orchestratorKey: 'deployApp',
+        mustGuard: true,
+      },
+      {
+        label: 'manage_domain_orchestrated action=set',
+        toolName: 'manage_domain_orchestrated',
+        args: {
+          action: 'set',
+          lease_uuid: '550e8400-e29b-41d4-a716-446655440000',
+          fqdn: 'app.example.com',
+        },
+        orchestratorKey: 'manageDomain',
+        mustGuard: true,
+      },
+      {
+        label: 'manage_domain_orchestrated action=clear',
+        toolName: 'manage_domain_orchestrated',
+        args: {
+          action: 'clear',
+          lease_uuid: '550e8400-e29b-41d4-a716-446655440000',
+        },
+        orchestratorKey: 'manageDomain',
+        mustGuard: true,
+      },
+      {
+        label: 'close_lease_orchestrated',
+        toolName: 'close_lease_orchestrated',
+        args: { lease_uuid: '550e8400-e29b-41d4-a716-446655440000' },
+        orchestratorKey: 'closeLease',
+        mustGuard: true,
+      },
+      {
+        label: 'manage_domain_orchestrated action=lookup',
+        toolName: 'manage_domain_orchestrated',
+        args: {
+          action: 'lookup',
+          fqdn: 'app.example.com',
+        },
+        orchestratorKey: 'manageDomain',
+        mustGuard: false,
+        buildFake: () => ({
+          manageDomain: (async () => ({
+            action: 'lookup',
             fqdn: 'app.example.com',
-          },
-          troubleshoot_deployment_orchestrated: {
-            lease_uuid: '550e8400-e29b-41d4-a716-446655440000',
-          },
-          close_lease_orchestrated: {
-            lease_uuid: '550e8400-e29b-41d4-a716-446655440000',
-          },
-        };
+            leaseUuid: 'lease-1',
+            verified: true,
+          })) as unknown as AgentOrchestrators['manageDomain'],
+        }),
+      },
+      {
+        label: 'troubleshoot_deployment_orchestrated',
+        toolName: 'troubleshoot_deployment_orchestrated',
+        args: { lease_uuid: '550e8400-e29b-41d4-a716-446655440000' },
+        orchestratorKey: 'troubleshootDeployment',
+        mustGuard: false,
+        buildFake: () => ({
+          troubleshootDeployment: (async () => ({
+            markdown: '# diagnostic',
+          })) as unknown as AgentOrchestrators['troubleshootDeployment'],
+        }),
+      },
+    ];
 
-        const result = await callToolWithElicitation(
-          server.getServer(),
-          toolName,
-          args[toolName],
-          { respond: (): ElicitResult => ({ action: 'decline' }) },
-          activeTransports,
-          /* declareElicitationCapability */ false,
-        );
-
-        expect(result.isError).toBe(true);
-        const parsed = JSON.parse(result.content[0].text) as {
-          code: string;
-          message: string;
-        };
-        expect(parsed.code).toBe('INVALID_CONFIG');
-        expect(parsed.message).toMatch(/elicitation/i);
-        expect(orchestratorEntered).not.toHaveBeenCalled();
-      });
+    for (const c of guardCases) {
+      if (c.mustGuard) {
+        it(`${c.label}: missing elicitation capability → INVALID_CONFIG`, async () => {
+          const orchestratorEntered = vi.fn();
+          const sentinel: Partial<AgentOrchestrators> = {
+            [c.orchestratorKey]: (async (..._a: unknown[]) => {
+              orchestratorEntered();
+              throw new Error('should not reach orchestrator');
+            }) as unknown,
+          } as Partial<AgentOrchestrators>;
+          const server = makeServer(sentinel);
+          const result = await callToolWithElicitation(
+            server.getServer(),
+            c.toolName,
+            c.args,
+            { respond: (): ElicitResult => ({ action: 'decline' }) },
+            activeTransports,
+            /* declareElicitationCapability */ false,
+          );
+          expect(result.isError).toBe(true);
+          const parsed = JSON.parse(result.content[0].text) as {
+            code: string;
+            message: string;
+          };
+          expect(parsed.code).toBe('INVALID_CONFIG');
+          expect(parsed.message).toMatch(/elicitation/i);
+          expect(orchestratorEntered).not.toHaveBeenCalled();
+        });
+      } else {
+        it(`${c.label}: missing elicitation capability → SUCCESS (read-only path)`, async () => {
+          const server = makeServer(c.buildFake?.());
+          const result = await callToolWithElicitation(
+            server.getServer(),
+            c.toolName,
+            c.args,
+            { respond: (): ElicitResult => ({ action: 'accept' }) },
+            activeTransports,
+            /* declareElicitationCapability */ false,
+          );
+          expect(result.isError).toBeUndefined();
+        });
+      }
     }
   });
 
@@ -1119,8 +1345,8 @@ describe('AgentMCPServer', () => {
 
       const fakeTroubleshoot: AgentOrchestrators['troubleshootDeployment'] =
         async (_args, cb, _opts) => {
-          // Auto-confirm so the flow proceeds.
-          await cb.onConfirm?.({ text: 'go?' });
+          // Phase 2 (finding #11): troubleshoot has no onConfirm. Fire
+          // events directly.
           for (const ev of events) {
             cb.onProgress?.(ev);
           }
@@ -1137,10 +1363,9 @@ describe('AgentMCPServer', () => {
         'troubleshoot_deployment_orchestrated',
         { lease_uuid: '550e8400-e29b-41d4-a716-446655440000' },
         {
-          respond: () => ({
-            action: 'accept',
-            content: { verdict: 'yes' },
-          }),
+          respond: () => {
+            throw new Error('troubleshoot must not elicit');
+          },
         },
       );
 
@@ -1155,18 +1380,222 @@ describe('AgentMCPServer', () => {
         kind: 'deploy_app_broadcast',
         leaseUuid: 'lease-1',
       });
-      // Note (follow-up for ENG-204): callbacks.ts:147-152 ALSO attempts
-      // to emit `notifications/message` (level=info) per progress event
-      // — per PLAN.md §2.1 "for hosts that subscribe to logs but not
-      // progress". The wrapper's `McpServer` doesn't declare a
-      // `logging` capability, so the SDK currently swallows these
-      // outbound; `captured.logs` arrives empty. The behavior is
-      // best-effort by contract ("both emissions are best-effort —
-      // failures swallow"), so this test pins the progress channel as
-      // the load-bearing one. If we later want logs to actually flush,
-      // adding `capabilities: { tools: {}, logging: {} }` to the
-      // McpServer constructor is the surgical fix — flagged for QA
-      // wrap-up.
+      // ENG-210 (Phase 2): the wrapper now declares
+      // `capabilities: { tools: {}, logging: {} }` so the
+      // `notifications/message` (level=info) sibling emissions per
+      // progress event reach the host. Assert the log channel mirrors
+      // the progress channel — one info log per progress event,
+      // wrapping the original ProgressEvent in `data.event`.
+      expect(captured.logs).toHaveLength(events.length);
+      const decodedLogEventKinds = captured.logs.map(
+        (l) =>
+          (l.data as { kind?: string; event?: { kind?: string } } | undefined)
+            ?.event?.kind,
+      );
+      expect(decodedLogEventKinds).toEqual(events.map((e) => e.kind));
+      for (const l of captured.logs) {
+        expect(l.level).toBe('info');
+        expect((l.data as { kind?: string } | undefined)?.kind).toBe(
+          'progress',
+        );
+      }
+    });
+  });
+
+  // ─────────────────────────────────────────────────────────────────
+  // Test #12 — Phase 2 (findings #7 + #8): every elicitInput call
+  // passes a RequestOptions second-arg carrying a 10-minute timeout
+  // and the in-flight request's AbortSignal.
+  //
+  // We spy on `server.elicitInput` directly and exercise one call site
+  // per tool surface (manage_domain onConfirm, close_lease onConfirm —
+  // troubleshoot has no elicitInput call any more, see #11).
+  // ─────────────────────────────────────────────────────────────────
+  describe('#12 elicitInput RequestOptions (timeout + signal)', () => {
+    it('manage_domain set: elicitInput receives { timeout: 600000, signal: AbortSignal }', async () => {
+      const fakeManageDomain: AgentOrchestrators['manageDomain'] = async (
+        _args,
+        cb,
+        _opts,
+      ) => {
+        await cb.onConfirm?.({ text: 'set?' });
+        return {
+          action: 'set',
+          leaseUuid: 'lease-1',
+          verified: true,
+          finalCustomDomain: 'app.example.com',
+        } satisfies ManageDomainResult;
+      };
+      const server = makeServer({ manageDomain: fakeManageDomain });
+      const sdkServer = server.getServer();
+      const spy = vi.spyOn(sdkServer, 'elicitInput');
+      await callToolWithElicitation(
+        sdkServer,
+        'manage_domain_orchestrated',
+        {
+          action: 'set',
+          lease_uuid: '550e8400-e29b-41d4-a716-446655440000',
+          fqdn: 'app.example.com',
+        },
+        {
+          respond: () => ({ action: 'accept', content: { verdict: 'yes' } }),
+        },
+        activeTransports,
+      );
+      expect(spy).toHaveBeenCalledTimes(1);
+      const requestOptions = spy.mock.calls[0][1];
+      expect(requestOptions).toBeDefined();
+      expect(requestOptions?.timeout).toBe(10 * 60_000);
+      expect(requestOptions?.signal).toBeInstanceOf(AbortSignal);
+    });
+
+    it('close_lease: elicitInput receives RequestOptions with timeout + signal', async () => {
+      const fakeClose: AgentOrchestrators['closeLease'] = async (
+        _args,
+        cb,
+        _opts,
+      ) => {
+        await cb.onConfirm?.({ text: 'close?' });
+        return {
+          leaseUuid: 'lease-1',
+          finalState: 'LEASE_STATE_CLOSED',
+        } satisfies CloseLeaseResult;
+      };
+      const server = makeServer({ closeLease: fakeClose });
+      const sdkServer = server.getServer();
+      const spy = vi.spyOn(sdkServer, 'elicitInput');
+      await callToolWithElicitation(
+        sdkServer,
+        'close_lease_orchestrated',
+        { lease_uuid: '550e8400-e29b-41d4-a716-446655440000' },
+        {
+          respond: () => ({ action: 'accept', content: { verdict: 'yes' } }),
+        },
+        activeTransports,
+      );
+      expect(spy).toHaveBeenCalledTimes(1);
+      const requestOptions = spy.mock.calls[0][1];
+      expect(requestOptions?.timeout).toBe(10 * 60_000);
+      expect(requestOptions?.signal).toBeInstanceOf(AbortSignal);
+    });
+  });
+
+  // ─────────────────────────────────────────────────────────────────
+  // Test #13 — Phase 2 (finding #13): parsePlanVerdict's `replace_spec`
+  // branch rejects JSON arrays (matches the parallel `edit_env` guard).
+  // Pre-fix `typeof [] === 'object'` slipped through, letting an array
+  // get cast to `DeploySpec`.
+  // ─────────────────────────────────────────────────────────────────
+  describe('#13 parsePlanVerdict replace_spec Array.isArray guard', () => {
+    async function runWithSpecJson(specJson: string): Promise<{
+      isError?: boolean;
+      content: Array<{ type: string; text: string }>;
+    }> {
+      const fakeDeploy: AgentOrchestrators['deployApp'] = async (
+        _spec,
+        cb,
+        _opts,
+      ) => {
+        cb.onProgress?.({
+          kind: 'deployment_plan_rendered',
+          block: { text: 'plan' },
+        });
+        await cb.onPlan?.({
+          summary: {
+            format: 'single',
+            serviceCount: 1,
+            portCount: 1,
+            envCount: 0,
+            envKeys: [],
+            images: ['nginx'],
+          },
+          readiness: {
+            status: 'ok',
+            reasons: [],
+            suggestedActions: [],
+            walletBalances: [],
+            credits: null,
+            sku: null,
+          },
+          fees: {
+            createLease: {
+              coins: [{ denom: 'umfx', amount: '100' }],
+              gas: 200000,
+            },
+          },
+        });
+        // Unreachable when parsePlanVerdict throws above.
+        const { ManifestMCPError, ManifestMCPErrorCode } = await import(
+          '@manifest-network/manifest-mcp-core'
+        );
+        throw new ManifestMCPError(
+          ManifestMCPErrorCode.TX_FAILED,
+          'should-not-reach',
+        );
+      };
+      const server = makeServer({ deployApp: fakeDeploy });
+      const captured = await callToolWithCapture(
+        server,
+        'deploy_app_orchestrated',
+        { spec: { image: 'nginx', port: 80 } },
+        {
+          respond: () => ({
+            action: 'accept',
+            content: { verdict: 'replace_spec', spec_json: specJson },
+          }),
+        },
+      );
+      return captured.toolResult;
+    }
+
+    it('spec_json="[]" rejected with INVALID_CONFIG (JSON object required)', async () => {
+      const result = await runWithSpecJson('[]');
+      expect(result.isError).toBe(true);
+      const parsed = JSON.parse(result.content[0].text) as {
+        code: string;
+        message: string;
+      };
+      expect(parsed.code).toBe('INVALID_CONFIG');
+      expect(parsed.message).toMatch(/must parse to a JSON object/);
+    });
+
+    it('spec_json="[{...}]" rejected with INVALID_CONFIG (JSON object required)', async () => {
+      const result = await runWithSpecJson('[{"image":"nginx"}]');
+      expect(result.isError).toBe(true);
+      const parsed = JSON.parse(result.content[0].text) as {
+        code: string;
+        message: string;
+      };
+      expect(parsed.code).toBe('INVALID_CONFIG');
+      expect(parsed.message).toMatch(/must parse to a JSON object/);
+    });
+  });
+
+  // ─────────────────────────────────────────────────────────────────
+  // Test #14 — Phase 2 (ENG-210): the server advertises `logging: {}`
+  // capability at initialize. Without it the SDK's
+  // `assertNotificationCapability` throws and every
+  // `notifications/message` is dropped by `safeNotify`'s catch.
+  // ─────────────────────────────────────────────────────────────────
+  describe('#14 logging capability', () => {
+    it('advertises logging:{} at initialize', async () => {
+      const server = makeServer();
+      const [clientTransport, serverTransport] =
+        InMemoryTransport.createLinkedPair();
+      activeTransports.push(clientTransport, serverTransport);
+      const client = new Client(
+        { name: 'test-client', version: '1.0.0' },
+        { capabilities: {} },
+      );
+      await server.getServer().connect(serverTransport);
+      await client.connect(clientTransport);
+      try {
+        const caps = client.getServerCapabilities();
+        expect(caps?.logging).toBeDefined();
+        expect(caps?.tools).toBeDefined();
+      } finally {
+        await client.close();
+      }
     });
   });
 });

@@ -176,6 +176,13 @@ export class AgentMCPServer {
       {
         capabilities: {
           tools: {},
+          // ENG-210: `logging: {}` is required for the SDK to emit our
+          // `notifications/message` events to the host. Without it,
+          // `assertNotificationCapability` throws and `safeNotify`
+          // swallows every log emission — including the partial-success
+          // warnings that callbacks.ts surfaces on recovery dismiss
+          // (finding #1).
+          logging: {},
         },
       },
     );
@@ -354,7 +361,12 @@ export class AgentMCPServer {
       withErrorHandling(
         'manage_domain_orchestrated',
         async (args, extra: ToolExtra) => {
-          assertElicitationCapability(this.mcpServer.server);
+          // Phase 2 (finding #10): only set/clear elicits — `lookup` is
+          // a pure chain query and must not require an elicitation-
+          // capable host.
+          if (args.action !== 'lookup') {
+            assertElicitationCapability(this.mcpServer.server);
+          }
           const callbacks = makeManageDomainCallbacks({
             server: this.mcpServer.server,
             extra,
@@ -394,7 +406,11 @@ export class AgentMCPServer {
       withErrorHandling(
         'troubleshoot_deployment_orchestrated',
         async (args, extra: ToolExtra) => {
-          assertElicitationCapability(this.mcpServer.server);
+          // Phase 2 (findings #10 + #11): troubleshoot is purely
+          // read-only — agent-core never invokes `onConfirm` and the
+          // wrapper supplies no other elicitation callback. Skip the
+          // capability guard so headless / auto-approve hosts can use
+          // the diagnostic report.
           const callbacks = makeTroubleshootCallbacks({
             server: this.mcpServer.server,
             extra,
