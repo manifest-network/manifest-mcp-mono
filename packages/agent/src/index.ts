@@ -33,6 +33,7 @@ import type {
   TroubleshootOptions,
 } from '@manifest-network/manifest-agent-core';
 import {
+  loadChainDenomMap,
   closeLease as realCloseLease,
   deployApp as realDeployApp,
   manageDomain as realManageDomain,
@@ -219,14 +220,13 @@ export class AgentMCPServer {
 
   private getDenomMap(): Promise<DenomMap> {
     if (this.denomMapPromise === null) {
-      // Dynamic import keeps `node:fs` (used by `loadChainDenomMap`
-      // when `chainDataFile` is set) out of the static module graph.
-      // The agent-core public surface re-exports `loadChainDenomMap`,
-      // and the function itself returns `EMPTY_DENOM_MAP` for
-      // undefined / unreadable paths.
-      const p = import('@manifest-network/manifest-agent-core').then(
-        ({ loadChainDenomMap }) => loadChainDenomMap(this.chainDataFile),
-      );
+      // `loadChainDenomMap` returns `EMPTY_DENOM_MAP` for
+      // undefined / unreadable paths. `node:fs` is deferred to call
+      // time by agent-core's own internal `await import('node:fs')`
+      // inside `humanize-denom.ts` — no need for a wrapper-side
+      // dynamic import here (the agent-core module is already in the
+      // static graph via the orchestrator value imports above).
+      const p = loadChainDenomMap(this.chainDataFile);
       // Phase 2 (finding #12): see getRuntime — same identity-guarded
       // cache-clear so transient failures don't poison the cache.
       void p.catch(() => {
