@@ -50,11 +50,15 @@ const UUID_RE =
  * Generate a diagnostic markdown report for `args.leaseUuid`.
  *
  * @throws `ManifestMCPError(INVALID_CONFIG)` for args validation.
- * @throws `ManifestMCPError(QUERY_FAILED)` when the chain query fails
- *   with a plain `Error` (RPC / transport / decoding failure);
- *   `onFailure({ reason })` is invoked first. Structured
- *   `ManifestMCPError`s raised by the chain client (e.g.
- *   `INVALID_CONFIG` from missing rpc/rest url config,
+ * @throws `ManifestMCPError(QUERY_FAILED)` in two cases, both with
+ *   `onFailure({ reason })` invoked first:
+ *     - the chain query rejects with a plain `Error` (RPC / transport
+ *       / decoding failure); or
+ *     - the chain query succeeds but returns `{ lease: null }` /
+ *       `undefined` (lease UUID not on-chain — the `billing.v1.lease`
+ *       no-such-lease response shape).
+ *   Structured `ManifestMCPError`s raised by the chain client
+ *   (e.g. `INVALID_CONFIG` from missing rpc/rest url config,
  *   `RPC_CONNECTION_FAILED` from connect failure) are re-thrown
  *   as-is with their original code, with `onFailure` invoked first.
  */

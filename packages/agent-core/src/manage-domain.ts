@@ -387,7 +387,13 @@ async function lookupDomain(
     // and `getBalance`'s `catchNotFound` pattern (packages/core/src/
     // tools/getBalance.ts:4). The bare `catch` was masking real failures.
     if (isNotFoundError(err)) {
-      return { action: 'lookup', fqdn: customDomain, lease: null };
+      const notFoundResult: ManageDomainResult = {
+        action: 'lookup',
+        fqdn: customDomain,
+        lease: null,
+      };
+      callbacks.onComplete?.(notFoundResult);
+      return notFoundResult;
     }
     const reason = `lease_by_custom_domain lookup failed for "${customDomain}": ${
       err instanceof Error ? err.message : String(err)
@@ -401,11 +407,19 @@ async function lookupDomain(
     throw new ManifestMCPError(ManifestMCPErrorCode.QUERY_FAILED, reason);
   }
   const uuid = readLeaseUuid((result as { lease?: unknown })?.lease);
-  return {
+  const lookupResult: ManageDomainResult = {
     action: 'lookup',
     fqdn: customDomain,
     lease: uuid ? { leaseUuid: uuid } : null,
   };
+  // Symmetric `onComplete` fire (Copilot review PR #60, comment
+  // 3288656598). Pre-fix, the lookup path returned without invoking
+  // `onComplete` — asymmetric vs the set/clear paths in this same
+  // function and vs `closeLease` / `troubleshootDeployment`. Was
+  // documented as "intentional" in PR_DESCRIPTION.md Risks #1 but
+  // was really an oversight rationalized post-hoc. Now consistent.
+  callbacks.onComplete?.(lookupResult);
+  return lookupResult;
 }
 
 function isNotFoundError(err: unknown): boolean {

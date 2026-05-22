@@ -173,12 +173,10 @@ describe('manageDomain — lookup', () => {
     });
 
     expect(result).toEqual(expected);
-    // Lookup path returns the result directly WITHOUT firing
-    // `onComplete` (per the current `lookupDomain` impl, which
-    // short-circuits before reaching the broadcast-path's onComplete).
-    // Asserted explicitly here so any future change in either
-    // direction (consistent fire / consistent skip) is reviewable.
-    expect(completed).toEqual([]);
+    // Symmetric `onComplete` fires on the lookup happy path
+    // (Copilot review PR #60, comment 3288656598). Pre-fix this
+    // asserted `completed === []` — that asymmetry was retracted.
+    expect(completed).toEqual([result]);
     expect(
       queryClient.liftedinit.billing.v1.leaseByCustomDomain,
     ).toHaveBeenCalledWith({
@@ -206,7 +204,7 @@ describe('manageDomain — lookup', () => {
       new Error('NotFound: domain not claimed'),
     );
     const clientManager = makeMockClientManager(queryClient);
-    const { callbacks } = captureCallbacks();
+    const { callbacks, completed } = captureCallbacks();
 
     const { manageDomain } = await import('./manage-domain.js');
     const result = await manageDomain(args, callbacks, {
@@ -216,6 +214,9 @@ describe('manageDomain — lookup', () => {
     });
 
     expect(result).toEqual(expected);
+    // Symmetric `onComplete` also fires on the lookup-not-found
+    // path (Copilot review PR #60, comment 3288656598).
+    expect(completed).toEqual([result]);
   });
 
   it('lookup with empty fqdn throws INVALID_CONFIG before any chain call', async () => {

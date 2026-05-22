@@ -64,8 +64,12 @@ interface CloseDiag {
  *   layer would be redundant. Callers wanting to react to broadcast
  *   errors should catch them at the call site.
  * @throws `ManifestMCPError(TX_FAILED)` when post-broadcast verification
- *   shows the lease is still non-terminal (after `onFailure` has been
- *   invoked so the caller can react).
+ *   reaches one of two failure modes (both with `onFailure({ reason })`
+ *   invoked first):
+ *     - the lease is still non-terminal (`pending_drift` branch — state
+ *       decoded as PENDING / ACTIVE / similar non-terminal); or
+ *     - the chain returns `{ lease: null }` post-close, so the lease is
+ *       not visible on-chain (`unclassified` branch).
  * @throws `ManifestMCPError(QUERY_FAILED)` when the post-broadcast verify
  *   chain query (`billing.v1.lease`) raises a non-NotFound error
  *   (RPC / transport / decoding failure). Wrapped inside the verifier
