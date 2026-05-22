@@ -22,6 +22,118 @@
       "lease_uuid": "11111111-1111-4111-8111-111111111111",
       "custom_domain": "app.testnet.manifest.app",
       "custom_domain_service": null
+    },
+    {
+      "id": "manage-domain/01-set-success",
+      "skill": "manage-domain",
+      "kind": "happy",
+      "description": "Single-item lease; set new FQDN; setItemCustomDomain succeeds and the post-broadcast billing.v1.lease({ leaseUuid }) query shows the FQDN matches the expected value (verifyAndRecover outcome=match).",
+      "active_chain": "testnet",
+      "lease_uuid": "11111111-1111-4111-8111-111111111111",
+      "custom_domain": "app.testnet.manifest.app",
+      "custom_domain_service": null
+    },
+    {
+      "id": "manage-domain/02-set-mismatch",
+      "skill": "manage-domain",
+      "kind": "verify-mismatch",
+      "description": "Set FQDN broadcast accepted but post-broadcast chain shows a different actual customDomain; verifyAndRecover routes to the mismatch branch (inform-only); onFailure is invoked with the exact reason and the orchestrator throws TX_FAILED.",
+      "active_chain": "testnet",
+      "lease_uuid": "11111111-1111-4111-8111-111111111111",
+      "expected_custom_domain": "app.testnet.manifest.app",
+      "actual_custom_domain": "stale.testnet.manifest.app"
+    },
+    {
+      "id": "manage-domain/03-clear-success",
+      "skill": "manage-domain",
+      "kind": "happy",
+      "description": "Single-item lease; clear the existing customDomain; post-broadcast verify sees empty customDomain (match against expected='').",
+      "active_chain": "testnet",
+      "lease_uuid": "11111111-1111-4111-8111-111111111111",
+      "custom_domain_service": null
+    },
+    {
+      "id": "manage-domain/04-lookup-found",
+      "skill": "manage-domain",
+      "kind": "lookup-found",
+      "description": "Read-only lookup against the chain's lease_by_custom_domain query; returns the typed { leaseUuid } for the lease that owns the FQDN.",
+      "active_chain": "testnet",
+      "custom_domain": "app.testnet.manifest.app",
+      "lease_uuid": "11111111-1111-4111-8111-111111111111"
+    },
+    {
+      "id": "manage-domain/05-lookup-not-found",
+      "skill": "manage-domain",
+      "kind": "lookup-not-found",
+      "description": "Lookup for an unclaimed FQDN; chain query rejects with NotFound; orchestrator catches and returns { lease: null }.",
+      "active_chain": "testnet",
+      "custom_domain": "unclaimed.testnet.manifest.app"
+    },
+    {
+      "id": "manage-domain/06-stack-set-success",
+      "skill": "manage-domain",
+      "kind": "happy",
+      "description": "Stack lease (two items: web, db); set FQDN on the web item; serviceName threads through both the broadcast and the verify-spec; post-broadcast verify shows match on the web item.",
+      "active_chain": "testnet",
+      "lease_uuid": "11111111-1111-4111-8111-111111111111",
+      "custom_domain": "api.testnet.manifest.app",
+      "custom_domain_service": "web"
+    },
+    {
+      "id": "close-lease/01-close-success",
+      "skill": "close-lease",
+      "kind": "happy",
+      "description": "Active lease closed via stopApp; post-broadcast billing.v1.lease({ leaseUuid }) query shows state=LEASE_STATE_CLOSED (terminal). Verifier marks success; result carries finalState=LEASE_STATE_CLOSED.",
+      "active_chain": "testnet",
+      "lease_uuid": "11111111-1111-4111-8111-111111111111"
+    },
+    {
+      "id": "close-lease/02-close-pending-verify-fail",
+      "skill": "close-lease",
+      "kind": "verify-pending",
+      "description": "stopApp accepted but post-broadcast verify shows state=LEASE_STATE_PENDING (chain settlement delay); inform-only failure with the canonical pending_drift reason; orchestrator throws TX_FAILED.",
+      "active_chain": "testnet",
+      "lease_uuid": "11111111-1111-4111-8111-111111111111"
+    },
+    {
+      "id": "close-lease/03-close-not-found",
+      "skill": "close-lease",
+      "kind": "verify-not-found",
+      "description": "stopApp accepted but the post-close billing.v1.lease query returns no lease (e.g. chain hasn't yet emitted the closed state, or the close didn't actually take effect); inform-only failure routes to the catch-all `unclassified` branch; orchestrator throws TX_FAILED.",
+      "active_chain": "testnet",
+      "lease_uuid": "99999999-9999-4999-8999-999999999999"
+    },
+    {
+      "id": "troubleshoot/01-active-healthy",
+      "skill": "troubleshoot",
+      "kind": "happy",
+      "description": "ACTIVE single-item lease with a custom domain. Markdown report renders chain state, provider UUID, created timestamp, items, and ACTIVE-state guidance (chain-only — provider-side status is out of scope for PR 4).",
+      "active_chain": "testnet",
+      "lease_uuid": "11111111-1111-4111-8111-111111111111"
+    },
+    {
+      "id": "troubleshoot/02-pending",
+      "skill": "troubleshoot",
+      "kind": "degraded-chain-state",
+      "description": "PENDING lease with no items; renderer produces '_No items found_' placeholder and the pending-state guidance bullets.",
+      "active_chain": "testnet",
+      "lease_uuid": "11111111-1111-4111-8111-111111111111"
+    },
+    {
+      "id": "troubleshoot/03-closed-terminal",
+      "skill": "troubleshoot",
+      "kind": "terminal",
+      "description": "CLOSED lease with createdAt + closedAt timestamps, plus a 2-item stack body with empty custom domains; renderer emits Closed line + terminal guidance bullets.",
+      "active_chain": "testnet",
+      "lease_uuid": "11111111-1111-4111-8111-111111111111"
+    },
+    {
+      "id": "troubleshoot/04-lease-not-found",
+      "skill": "troubleshoot",
+      "kind": "lease-not-found",
+      "description": "Chain returns { lease: null } for the requested UUID; orchestrator invokes onFailure with 'Lease X not found on chain.' and throws QUERY_FAILED.",
+      "active_chain": "testnet",
+      "lease_uuid": "99999999-9999-4999-8999-999999999999"
     }
   ]
 }

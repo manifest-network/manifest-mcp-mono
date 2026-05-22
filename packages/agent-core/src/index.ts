@@ -1,3 +1,4 @@
+export { closeLease } from './close-lease.js';
 export { deployApp } from './deploy-app.js';
 export {
   createGuardedFetch,
@@ -10,10 +11,6 @@ export {
 // to be importable from `@manifest-network/manifest-agent-core`.
 // Matches the `DenomMap` + `DenomLookup` type promotions in commit B.
 export { loadChainDenomMap } from './internals/humanize-denom.js';
-export {
-  closeLease,
-  manageDomain,
-  NotImplemented,
-  troubleshootDeployment,
-} from './stubs.js';
+export { manageDomain } from './manage-domain.js';
+export { troubleshootDeployment } from './troubleshoot.js';
 export * from './types.js';

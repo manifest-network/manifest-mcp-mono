@@ -42,6 +42,7 @@ export type BranchId =
   | 'partial_success_domain'
   | 'lease_terminal'
   | 'domain_verification_mismatch'
+  | 'domain_not_found'
   | 'pending_drift'
   | 'unclassified';
 

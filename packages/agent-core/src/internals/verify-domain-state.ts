@@ -12,7 +12,7 @@ import { findLease, normalizeItem } from './lease-items.js';
  * Outcome semantics:
  *   - `'match'`     — actual `customDomain` equals expected
  *   - `'mismatch'`  — actual differs from expected (item carries `actual` for surfacing)
- *   - `'not_found'` — lease UUID not in tenant payload, OR multi-item lease but no `serviceName` supplied, OR `serviceName` not present in the lease's items
+ *   - `'not_found'` — lease UUID not present in the verification payload, OR multi-item lease but no `serviceName` supplied, OR `serviceName` not present in the lease's items
  *
  * Single-item leases (legacy 1-item lease with `serviceName === ''`) ignore
  * the `serviceName` argument and always use the only item. Multi-item
@@ -47,7 +47,7 @@ export interface VerifyDomainArgs {
 }
 
 export function verifyDomainState(
-  leasesByTenantResponse: unknown,
+  leasesPayload: unknown,
   args: VerifyDomainArgs,
 ): VerifyDomainResult {
   if (typeof args.leaseUuid !== 'string') {
@@ -66,11 +66,11 @@ export function verifyDomainState(
     );
   }
 
-  const lease = findLease(leasesByTenantResponse, args.leaseUuid);
+  const lease = findLease(leasesPayload, args.leaseUuid);
   if (lease === null) {
     return {
       outcome: 'not_found',
-      reason: 'lease UUID not in tenant leases',
+      reason: 'lease UUID not found in verification payload',
     };
   }
 

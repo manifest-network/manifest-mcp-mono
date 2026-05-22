@@ -79,7 +79,7 @@ describe('verifyDomainState — 1:1 port of verify-domain-state.cjs', () => {
       { leaseUuid: UUID, expected: 'app.example.com' },
     );
     expect(r.outcome).toBe('not_found');
-    expect(r.reason).toMatch(/lease UUID not in tenant leases/);
+    expect(r.reason).toMatch(/lease UUID not found in verification payload/);
   });
 
   it('not_found: multi-item lease but serviceName omitted', () => {
