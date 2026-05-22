@@ -63,9 +63,19 @@ export async function callToolWithElicitation(
 
   // Register BEFORE connect so the handler is in place by the time the
   // server issues its first `elicitation/create` request mid-tool.
-  client.setRequestHandler(ElicitRequestSchema, async (request) => {
-    return await script.respond(request);
-  });
+  //
+  // Skip registration when the client did NOT advertise the elicitation
+  // capability — the SDK's `setRequestHandler` enforces that the client
+  // must have declared the capability for the request type, and would
+  // throw before the tool call ever ran. The capability-guard test path
+  // (`declareElicitationCapability: false`) exercises the wrapper's
+  // `assertElicitationCapability` throw — no elicitation will arrive,
+  // so no handler is needed.
+  if (declareElicitationCapability) {
+    client.setRequestHandler(ElicitRequestSchema, async (request) => {
+      return await script.respond(request);
+    });
+  }
 
   try {
     await server.connect(serverTransport);

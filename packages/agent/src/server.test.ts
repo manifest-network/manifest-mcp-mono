@@ -1,24 +1,53 @@
-// DRAFT — depends on engineer's task #8 (`src/index.ts` w/ AgentMCPServer +
-// 4 registerTool calls + DI seam). Test #8 below (`tool annotations +
-// _meta.manifest`) is fully implemented and pins the public contract from
-// PLAN.md §6.2 — the engineer's tool-registration code MUST match this
-// matrix. The other nine tests are `it.todo(...)` placeholders that the
-// QA engineer fills in once #8 lands. Until #8 lands the import below
-// fails to resolve; that is the expected handoff signal.
+// Vitest suite for `AgentMCPServer` per PLAN.md §6.2.
 //
-// Mock strategy (per PLAN.md §6.1):
+// Mock strategy (PLAN.md §6.1):
 //   - `vi.mock('@manifest-network/manifest-mcp-core', ...)` for
-//     `CosmosClientManager.getInstance` (unavoidable; this is the chain
-//     construction path, NOT the agent-core orchestration seam).
+//     `CosmosClientManager.getInstance` (chain construction — NOT part
+//     of the orchestrator DI seam).
 //   - **No** `vi.mock('@manifest-network/manifest-agent-core', ...)`. The
 //     four orchestrator functions are injected via the constructor seam
 //     `options.orchestrators?: Partial<AgentOrchestrators>` (PLAN.md
-//     §1.1). The `listTools`-only assertions in test #8 don't need any
-//     orchestrator overrides — `listTools` walks the registered metadata
-//     and never invokes a handler.
+//     §1.1). Each test that exercises a tool handler supplies a scripted
+//     fake; tests #8 (annotations matrix) and #9 (listTools count) leave
+//     `orchestrators` undefined and exercise the real-default
+//     construction path.
 
+import type {
+  CloseLeaseArgs,
+  CloseLeaseCallbacks,
+  CloseLeaseOptions,
+  CloseLeaseResult,
+  DeployAppCallbacks,
+  DeployAppOptions,
+  DeploymentPlanBlock,
+  DeployResult,
+  DeploySpec,
+  FailureEnvelope,
+  ManageDomainArgs,
+  ManageDomainCallbacks,
+  ManageDomainOptions,
+  ManageDomainResult,
+  Plan,
+  PlanEdit,
+  ProgressEvent,
+  RecoveryChoice,
+  RecoveryOption,
+  TroubleshootArgs,
+  TroubleshootCallbacks,
+  TroubleshootOptions,
+  TroubleshootReport,
+} from '@manifest-network/manifest-agent-core';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
+import {
+  type ElicitRequestFormParams,
+  ElicitRequestSchema,
+  type ElicitResult,
+  type LoggingMessageNotification,
+  LoggingMessageNotificationSchema,
+  type ProgressNotification,
+  ProgressNotificationSchema,
+} from '@modelcontextprotocol/sdk/types.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@manifest-network/manifest-mcp-core', async (importOriginal) => {
@@ -42,11 +71,14 @@ vi.mock('@manifest-network/manifest-mcp-core', async (importOriginal) => {
 });
 
 import {
+  callToolWithElicitation,
+  type ElicitationScript,
+} from '@manifest-network/manifest-mcp-core/__test-utils__/callToolWithElicitation.js';
+import {
   makeMockConfig,
   makeMockWallet,
 } from '@manifest-network/manifest-mcp-core/__test-utils__/mocks.js';
-// NOTE: `AgentMCPServer` import resolves once engineer's #8 lands.
-import { AgentMCPServer } from './index.js';
+import { AgentMCPServer, type AgentOrchestrators } from './index.js';
 
 const AGENT_TOOL_NAMES = [
   'deploy_app_orchestrated',
@@ -69,8 +101,101 @@ afterEach(async () => {
   activeTransports = [];
 });
 
+// ---------------------------------------------------------------------
+// Test scaffolding helpers
+// ---------------------------------------------------------------------
+
+function makeServer(
+  orchestrators?: Partial<AgentOrchestrators>,
+): AgentMCPServer {
+  return new AgentMCPServer({
+    config: makeMockConfig(),
+    walletProvider: makeMockWallet({ signArbitrary: true }),
+    ...(orchestrators ? { orchestrators } : {}),
+  });
+}
+
+interface CaptureResult {
+  toolResult: {
+    content: Array<{ type: string; text: string }>;
+    isError?: boolean;
+    structuredContent?: Record<string, unknown>;
+  };
+  // The wrapper only ever sends form-mode elicitations (per the
+  // `elicitation.ts` schema builders — none pass `mode: 'url'`). Narrow
+  // the union at capture time so assertions can read `requestedSchema`
+  // directly without a cast at every site.
+  elicitations: ElicitRequestFormParams[];
+  progress: ProgressNotification['params'][];
+  logs: LoggingMessageNotification['params'][];
+}
+
+/**
+ * Wire an MCP client (advertising elicitation), register notification
+ * handlers for `notifications/progress` + `notifications/message`, and a
+ * request handler for `elicitation/create`, then invoke the tool. Returns
+ * the tool result alongside everything captured on the client side.
+ *
+ * Distinct from `callToolWithElicitation` (which intentionally omits
+ * notification capture per PLAN.md §6.3); inline because tests #1 / #5 /
+ * #10 need both elicitation responses AND notification streams.
+ */
+async function callToolWithCapture(
+  server: AgentMCPServer,
+  toolName: string,
+  toolInput: Record<string, unknown>,
+  script: ElicitationScript,
+): Promise<CaptureResult> {
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+  activeTransports.push(clientTransport, serverTransport);
+
+  const client = new Client(
+    { name: 'test-client', version: '1.0.0' },
+    { capabilities: { elicitation: {} } },
+  );
+
+  const elicitations: ElicitRequestFormParams[] = [];
+  const progress: ProgressNotification['params'][] = [];
+  const logs: LoggingMessageNotification['params'][] = [];
+
+  client.setRequestHandler(ElicitRequestSchema, async (req) => {
+    elicitations.push(req.params as ElicitRequestFormParams);
+    return await script.respond(req);
+  });
+  client.setNotificationHandler(ProgressNotificationSchema, (n) => {
+    progress.push(n.params);
+  });
+  client.setNotificationHandler(LoggingMessageNotificationSchema, (n) => {
+    logs.push(n.params);
+  });
+
+  await server.getServer().connect(serverTransport);
+  await client.connect(clientTransport);
+
+  try {
+    const toolResult = (await client.callTool({
+      name: toolName,
+      arguments: toolInput,
+    })) as CaptureResult['toolResult'];
+    return { toolResult, elicitations, progress, logs };
+  } finally {
+    await client.close().catch(() => {});
+  }
+}
+
+function parseStructured<T = Record<string, unknown>>(result: {
+  content: Array<{ type: string; text: string }>;
+  structuredContent?: Record<string, unknown>;
+}): T {
+  if (result.structuredContent) return result.structuredContent as T;
+  return JSON.parse(result.content[0].text) as T;
+}
+
+// ---------------------------------------------------------------------
+
 describe('AgentMCPServer', () => {
-  // -----------------------------------------------------------------
+  // ─────────────────────────────────────────────────────────────────
   // Test #8 — PUBLIC CONTRACT — annotations + _meta.manifest matrix.
   //
   // Per PLAN.md §6.2 and CLAUDE.md "Tool annotations and `_meta.manifest`":
@@ -84,13 +209,10 @@ describe('AgentMCPServer', () => {
   // | manage_domain_orchestrated            | false    | false       | true       | true       | false     |
   // | troubleshoot_deployment_orchestrated  | true     | —           | —          | false      | false     |
   // | close_lease_orchestrated              | false    | true        | true       | true       | false     |
-  // -----------------------------------------------------------------
+  // ─────────────────────────────────────────────────────────────────
   describe('tool annotations + _meta.manifest', () => {
     async function listTools() {
-      const server = new AgentMCPServer({
-        config: makeMockConfig(),
-        walletProvider: makeMockWallet({ signArbitrary: true }),
-      });
+      const server = makeServer();
       const [clientTransport, serverTransport] =
         InMemoryTransport.createLinkedPair();
       activeTransports.push(clientTransport, serverTransport);
@@ -106,8 +228,6 @@ describe('AgentMCPServer', () => {
     }
 
     it('every tool has annotations.title and _meta.manifest at the current version', async () => {
-      // Safety net: when a new tool is registered, this test fails until
-      // the contract metadata is added. Per-tool tests below pin values.
       const tools = await listTools();
       expect(tools.size).toBe(AGENT_TOOL_NAMES.length);
       for (const [name, tool] of tools) {
@@ -140,9 +260,6 @@ describe('AgentMCPServer', () => {
     });
 
     it('manage_domain_orchestrated broadcasts a non-destructive idempotent tx (re-setting same value is a no-op)', async () => {
-      // broadcasts: true is conservative — `lookup` doesn't broadcast,
-      // but the manage-domain action union is gated by the plugin
-      // conservatively (PLAN.md §6.2 footnote).
       const t = (await listTools()).get('manage_domain_orchestrated');
       expect(t?.annotations).toMatchObject({
         readOnlyHint: false,
@@ -187,35 +304,752 @@ describe('AgentMCPServer', () => {
     });
   });
 
-  // -----------------------------------------------------------------
-  // Tests #1-7, #9-10 — populated once engineer's #8 ships.
-  // Order follows PLAN.md §6.2 numbering for cross-reference.
-  // -----------------------------------------------------------------
-  it.todo(
-    '#1 deploy_app_orchestrated happy path: onPlan → confirm elicit; onConfirm → yes; progress in order; returns DeployResult',
-  );
-  it.todo(
-    '#2 deploy_app_orchestrated partial-success recovery: onFailure(envelope, options) → enum-of-options[].id elicit; choice flows through dispatchRecovery → TX_FAILED retry msg',
-  );
-  it.todo(
-    '#3 deploy_app_orchestrated plan-edit: client returns accept{verdict:edit_env, env_json} → fake observes typed PlanEdit',
-  );
-  it.todo(
-    '#4 manage_domain_orchestrated set happy path: one onConfirm elicit; no plan/recovery schema; result returned',
-  );
-  it.todo(
-    '#5 troubleshoot_deployment_orchestrated happy path: onConfirm + onProgress; returns TroubleshootReport',
-  );
-  it.todo(
-    '#6 close_lease_orchestrated happy path: onConfirm; returns CloseLeaseResult',
-  );
-  it.todo(
-    '#7 elicitation capability guard: client without elicitation capability → INVALID_CONFIG error envelope mentioning "elicitation"',
-  );
-  it.todo(
-    '#9 listTools via protocol: server advertises exactly 4 tools with the documented names (real-orchestrator default — no overrides)',
-  );
-  it.todo(
-    '#10 progress event serialization: mock fires each of the 8 ProgressEvent kinds → notifications/progress with `kind` reachable in `message`',
-  );
+  // ─────────────────────────────────────────────────────────────────
+  // Test #9 — listTools via protocol (smoke: real-default orchestrator
+  // construction; no overrides). Exercises that `?? realX` works at
+  // construction without invoking any orchestrator.
+  // ─────────────────────────────────────────────────────────────────
+  describe('#9 listTools via protocol', () => {
+    it('advertises exactly 4 tools with the documented names', async () => {
+      const server = makeServer();
+      const [clientTransport, serverTransport] =
+        InMemoryTransport.createLinkedPair();
+      activeTransports.push(clientTransport, serverTransport);
+      const client = new Client({ name: 'test-client', version: '1.0.0' });
+      await server.getServer().connect(serverTransport);
+      await client.connect(clientTransport);
+      try {
+        const result = await client.listTools();
+        expect(result.tools).toHaveLength(4);
+        expect(result.tools.map((t) => t.name).sort()).toEqual(
+          [...AGENT_TOOL_NAMES].sort(),
+        );
+      } finally {
+        await client.close();
+      }
+    });
+  });
+
+  // ─────────────────────────────────────────────────────────────────
+  // Test #1 — deploy_app_orchestrated happy path. Asserts:
+  //   - onPlan elicitation carries the discriminated-union schema with
+  //     enum: ['confirm','edit_env','replace_spec','cancel'].
+  //   - Client returning accept{verdict:'confirm'} flows back to the
+  //     fake as `'confirm'`.
+  //   - onConfirm elicitation carries the binary yes/no schema with
+  //     enum: ['yes','no'].
+  //   - Progress notifications arrive in scripted order with the kind
+  //     embedded in `params.message` (JSON-stringified).
+  //   - Tool returns the fake's DeployResult.
+  // ─────────────────────────────────────────────────────────────────
+  describe('#1 deploy_app_orchestrated happy path', () => {
+    it('routes plan + confirm elicitations and returns DeployResult', async () => {
+      const planBlock: DeploymentPlanBlock = {
+        text: '## Deployment plan body',
+      };
+      const recapBlock: DeploymentPlanBlock = { text: 'About to deploy nginx' };
+      const deployResult: DeployResult = {
+        leaseUuid: '550e8400-e29b-41d4-a716-446655440000',
+        providerUuid: 'prov-uuid',
+        leaseState: 'LEASE_STATE_ACTIVE',
+        urls: ['https://app.example.com/'],
+        manifestPath: '',
+      };
+      let observedPlanVerdict: PlanEdit | 'confirm' | 'cancel' | undefined;
+      let observedConfirm: 'yes' | 'no' | undefined;
+
+      const fakeDeploy: AgentOrchestrators['deployApp'] = async (
+        _spec: DeploySpec,
+        cb: DeployAppCallbacks,
+        _opts: DeployAppOptions,
+      ): Promise<DeployResult> => {
+        cb.onProgress?.({
+          kind: 'readiness_evaluated',
+          readiness: {
+            status: 'ok',
+            reasons: [],
+            suggestedActions: [],
+            walletBalances: [],
+            credits: null,
+            sku: null,
+          },
+        });
+        cb.onProgress?.({ kind: 'deployment_plan_rendered', block: planBlock });
+        observedPlanVerdict = await cb.onPlan?.({
+          summary: {
+            format: 'single',
+            serviceCount: 1,
+            portCount: 1,
+            envCount: 0,
+            envKeys: [],
+            images: ['nginx'],
+          },
+          readiness: {
+            status: 'ok',
+            reasons: [],
+            suggestedActions: [],
+            walletBalances: [],
+            credits: null,
+            sku: null,
+          },
+          fees: {
+            createLease: {
+              coins: [{ denom: 'umfx', amount: '100' }],
+              gas: 200000,
+            },
+          },
+        } satisfies Plan);
+        observedConfirm = await cb.onConfirm?.(recapBlock);
+        cb.onProgress?.({ kind: 'user_confirmed' });
+        cb.onProgress?.({ kind: 'deploy_app_broadcast' });
+        cb.onProgress?.({
+          kind: 'deploy_response_classified',
+          outcome: 'active',
+        });
+        cb.onProgress?.({
+          kind: 'app_ready_confirmed',
+          leaseUuid: deployResult.leaseUuid,
+        });
+        cb.onProgress?.({ kind: 'success_rendered', result: deployResult });
+        cb.onComplete?.(deployResult);
+        return deployResult;
+      };
+
+      const server = makeServer({ deployApp: fakeDeploy });
+      const captured = await callToolWithCapture(
+        server,
+        'deploy_app_orchestrated',
+        { spec: { image: 'nginx', port: 80 } },
+        {
+          respond: (req) => {
+            const params = req.params as ElicitRequestFormParams;
+            const schema = params.requestedSchema as unknown as {
+              properties: Record<string, { enum?: string[] }>;
+            };
+            const verdictEnum = schema.properties.verdict?.enum ?? [];
+            if (verdictEnum.length === 4) {
+              // plan schema
+              return { action: 'accept', content: { verdict: 'confirm' } };
+            }
+            // confirm schema
+            return { action: 'accept', content: { verdict: 'yes' } };
+          },
+        },
+      );
+
+      // Fake observed the typed callback returns.
+      expect(observedPlanVerdict).toBe('confirm');
+      expect(observedConfirm).toBe('yes');
+
+      // Two elicitations: plan, then confirm.
+      expect(captured.elicitations).toHaveLength(2);
+      const planReq = captured.elicitations[0];
+      expect(planReq.message).toBe(planBlock.text);
+      const planSchema = planReq.requestedSchema as unknown as {
+        properties: { verdict: { enum: string[]; enumNames?: string[] } };
+      };
+      expect(planSchema.properties.verdict.enum).toEqual([
+        'confirm',
+        'edit_env',
+        'replace_spec',
+        'cancel',
+      ]);
+      expect(planSchema.properties.verdict.enumNames).toEqual([
+        'Approve plan',
+        'Edit env vars',
+        'Replace spec',
+        'Cancel',
+      ]);
+      const confirmReq = captured.elicitations[1];
+      expect(confirmReq.message).toBe(recapBlock.text);
+      const confirmSchema = confirmReq.requestedSchema as unknown as {
+        properties: { verdict: { enum: string[] } };
+      };
+      expect(confirmSchema.properties.verdict.enum).toEqual(['yes', 'no']);
+
+      // Progress arrives in scripted order; each notification's `message`
+      // field is JSON-stringified ProgressEvent.
+      expect(
+        captured.progress.map((p) => JSON.parse(p.message ?? '').kind),
+      ).toEqual([
+        'readiness_evaluated',
+        'deployment_plan_rendered',
+        'user_confirmed',
+        'deploy_app_broadcast',
+        'deploy_response_classified',
+        'app_ready_confirmed',
+        'success_rendered',
+      ]);
+
+      // Tool result is the typed DeployResult (structured content + text).
+      expect(captured.toolResult.isError).toBeUndefined();
+      const parsed = parseStructured<DeployResult>(captured.toolResult);
+      expect(parsed).toMatchObject({
+        leaseUuid: deployResult.leaseUuid,
+        providerUuid: deployResult.providerUuid,
+        leaseState: 'LEASE_STATE_ACTIVE',
+        urls: ['https://app.example.com/'],
+      });
+    });
+  });
+
+  // ─────────────────────────────────────────────────────────────────
+  // Test #2 — deploy_app_orchestrated partial-success recovery.
+  //   - Fake fires onFailure(envelope, options) with all four
+  //     RecoveryOptions.
+  //   - Wrapper builds the elicitation with enum from `options[].id`,
+  //     enumNames from `options[].label`.
+  //   - Message body concatenates `envelope.reason` + the option
+  //     `label: description` lines (per PLAN.md §2.4 + callbacks.ts
+  //     renderRecoveryMessage; all strings agent-core-owned).
+  //   - Client returns accept{choice:'retry_set_domain'}; fake observes
+  //     the typed RecoveryChoice.
+  //   - Fake throws ManifestMCPError(TX_FAILED, "retry_set_domain
+  //     completed...") matching dispatchRecovery's contract; tool
+  //     surfaces it as the structured error envelope.
+  // ─────────────────────────────────────────────────────────────────
+  describe('#2 deploy_app_orchestrated partial-success recovery', () => {
+    it('routes RecoveryOption[] through the elicitation and returns the dispatchRecovery throw as TX_FAILED', async () => {
+      const envelope: FailureEnvelope = {
+        outcome: 'partially_succeeded',
+        leaseUuid: 'lease-1',
+        requestedCustomDomain: 'app.example.com',
+        reason:
+          'Partial success: lease lease-1 created but custom_domain attach failed.',
+      };
+      const options: RecoveryOption[] = [
+        {
+          id: 'retry_set_domain',
+          label: 'Retry set-domain + upload',
+          description:
+            'Retry the set-domain transaction against the already-created lease.',
+        },
+        {
+          id: 'salvage_without_domain',
+          label: 'Salvage without domain',
+          description: 'Keep the lease without the requested custom domain.',
+        },
+        {
+          id: 'cancel_lease',
+          label: 'Cancel the lease',
+          description:
+            'Submit a cancel-lease transaction (pre-active terminal).',
+        },
+        {
+          id: 'close_lease',
+          label: 'Cancel or close the lease',
+          description:
+            'Submit a close-lease transaction (post-active or pre-active terminal).',
+        },
+      ];
+      let observedChoice: RecoveryChoice | undefined;
+
+      const fakeDeploy: AgentOrchestrators['deployApp'] = async (
+        _spec,
+        cb,
+        _opts,
+      ) => {
+        observedChoice = await cb.onFailure?.(envelope, options);
+        // Replicate dispatchRecovery's `retry_set_domain` contract — a
+        // ManifestMCPError(TX_FAILED) carrying the retry message.
+        // (Importing the real `ManifestMCPError` via the mocked-module
+        // surface still works because `importOriginal` is spread.)
+        const { ManifestMCPError, ManifestMCPErrorCode } = await import(
+          '@manifest-network/manifest-mcp-core'
+        );
+        throw new ManifestMCPError(
+          ManifestMCPErrorCode.TX_FAILED,
+          `retry_set_domain completed for ${envelope.leaseUuid}; caller should re-run troubleshootDeployment to confirm app readiness.`,
+        );
+      };
+
+      const server = makeServer({ deployApp: fakeDeploy });
+      const captured = await callToolWithCapture(
+        server,
+        'deploy_app_orchestrated',
+        { spec: { image: 'nginx', port: 80 } },
+        {
+          respond: () => ({
+            action: 'accept',
+            content: { choice: 'retry_set_domain' },
+          }),
+        },
+      );
+
+      // Fake observed the typed RecoveryChoice.
+      expect(observedChoice).toEqual({ id: 'retry_set_domain' });
+
+      // Exactly one elicitation — the recovery picker.
+      expect(captured.elicitations).toHaveLength(1);
+      const recReq = captured.elicitations[0];
+      const recSchema = recReq.requestedSchema as unknown as {
+        properties: {
+          choice: { enum: string[]; enumNames?: string[] };
+        };
+      };
+      // Enum mirrors options[].id 1-1 (dynamic build).
+      expect(recSchema.properties.choice.enum).toEqual(
+        options.map((o) => o.id),
+      );
+      expect(recSchema.properties.choice.enumNames).toEqual(
+        options.map((o) => o.label),
+      );
+      // Message carries envelope.reason + per-option label:description
+      // lines (mechanical assembly; no wrapper-flavored prose).
+      expect(recReq.message).toContain(envelope.reason);
+      for (const o of options) {
+        expect(recReq.message).toContain(o.label);
+        expect(recReq.message).toContain(o.description);
+      }
+
+      // Tool result surfaces the structured TX_FAILED envelope.
+      expect(captured.toolResult.isError).toBe(true);
+      const parsed = JSON.parse(captured.toolResult.content[0].text) as {
+        code: string;
+        message: string;
+      };
+      expect(parsed.code).toBe('TX_FAILED');
+      expect(parsed.message).toContain('retry_set_domain completed');
+      expect(parsed.message).toContain(envelope.leaseUuid);
+    });
+  });
+
+  // ─────────────────────────────────────────────────────────────────
+  // Test #3 — deploy_app_orchestrated plan-edit. Client returns
+  //   accept{verdict:'edit_env', env_json:'{"FOO":"bar"}'} → wrapper's
+  //   `parsePlanVerdict` decodes to typed `{kind:'edit_env', env:...}`.
+  // ─────────────────────────────────────────────────────────────────
+  describe('#3 deploy_app_orchestrated plan-edit', () => {
+    it("threads accept{verdict:'edit_env', env_json} as a typed PlanEdit back to the orchestrator", async () => {
+      let observedPlanVerdict: PlanEdit | 'confirm' | 'cancel' | undefined;
+      // The fake shortcircuits after onPlan — the typed return is the
+      // only assertion this test needs.
+      const fakeDeploy: AgentOrchestrators['deployApp'] = async (
+        _spec,
+        cb,
+        _opts,
+      ) => {
+        cb.onProgress?.({
+          kind: 'deployment_plan_rendered',
+          block: { text: '## Deployment plan body' },
+        });
+        observedPlanVerdict = await cb.onPlan?.({
+          summary: {
+            format: 'single',
+            serviceCount: 1,
+            portCount: 1,
+            envCount: 0,
+            envKeys: [],
+            images: ['nginx'],
+          },
+          readiness: {
+            status: 'ok',
+            reasons: [],
+            suggestedActions: [],
+            walletBalances: [],
+            credits: null,
+            sku: null,
+          },
+          fees: {
+            createLease: {
+              coins: [{ denom: 'umfx', amount: '100' }],
+              gas: 200000,
+            },
+          },
+        });
+        // Cancel out the rest of the flow — the typed PlanEdit reaching
+        // the orchestrator is the contract under test.
+        const { ManifestMCPError, ManifestMCPErrorCode } = await import(
+          '@manifest-network/manifest-mcp-core'
+        );
+        throw new ManifestMCPError(
+          ManifestMCPErrorCode.INVALID_CONFIG,
+          'test stub: short-circuit after onPlan',
+        );
+      };
+
+      const server = makeServer({ deployApp: fakeDeploy });
+      await callToolWithCapture(
+        server,
+        'deploy_app_orchestrated',
+        { spec: { image: 'nginx', port: 80 } },
+        {
+          respond: () => ({
+            action: 'accept',
+            content: {
+              verdict: 'edit_env',
+              env_json: '{"FOO":"bar"}',
+            },
+          }),
+        },
+      );
+
+      expect(observedPlanVerdict).toEqual({
+        kind: 'edit_env',
+        env: { FOO: 'bar' },
+      });
+    });
+  });
+
+  // ─────────────────────────────────────────────────────────────────
+  // Test #4 — manage_domain_orchestrated set happy path. Exactly one
+  // elicitation (confirm); no plan / recovery schema; result returned.
+  //
+  // Uses the shared `callToolWithElicitation` helper to keep coverage of
+  // the helper alive alongside the inline-capture path tests.
+  // ─────────────────────────────────────────────────────────────────
+  describe('#4 manage_domain_orchestrated set happy path', () => {
+    it('elicits a single yes/no confirm and returns the ManageDomainResult', async () => {
+      const expectedFqdn = 'app.example.com';
+      const expectedLeaseUuid = '550e8400-e29b-41d4-a716-446655440000';
+      let observedArgs: ManageDomainArgs | undefined;
+      const elicitations: ElicitRequestFormParams[] = [];
+
+      const fakeManageDomain: AgentOrchestrators['manageDomain'] = async (
+        args: ManageDomainArgs,
+        cb: ManageDomainCallbacks,
+        _opts: ManageDomainOptions,
+      ): Promise<ManageDomainResult> => {
+        observedArgs = args;
+        const yesNo = await cb.onConfirm?.({
+          text: `Set custom domain on lease ${expectedLeaseUuid}`,
+        });
+        expect(yesNo).toBe('yes');
+        const result: ManageDomainResult = {
+          action: 'set',
+          leaseUuid: expectedLeaseUuid,
+          verified: true,
+          finalCustomDomain: expectedFqdn,
+        };
+        cb.onComplete?.(result);
+        return result;
+      };
+
+      const server = makeServer({ manageDomain: fakeManageDomain });
+      const result = await callToolWithElicitation(
+        server.getServer(),
+        'manage_domain_orchestrated',
+        {
+          action: 'set',
+          lease_uuid: expectedLeaseUuid,
+          fqdn: expectedFqdn,
+        },
+        {
+          respond: (req) => {
+            elicitations.push(req.params as ElicitRequestFormParams);
+            return { action: 'accept', content: { verdict: 'yes' } };
+          },
+        },
+        activeTransports,
+      );
+
+      expect(observedArgs).toEqual({
+        action: 'set',
+        leaseUuid: expectedLeaseUuid,
+        fqdn: expectedFqdn,
+      });
+      // Exactly one elicitation — the yes/no confirm. No plan / recovery.
+      expect(elicitations).toHaveLength(1);
+      const schema = elicitations[0].requestedSchema as unknown as {
+        properties: { verdict: { enum: string[] } };
+      };
+      expect(schema.properties.verdict.enum).toEqual(['yes', 'no']);
+      expect(result.isError).toBeUndefined();
+      const parsed = parseStructured<ManageDomainResult>(result);
+      expect(parsed).toMatchObject({
+        action: 'set',
+        leaseUuid: expectedLeaseUuid,
+        verified: true,
+        finalCustomDomain: expectedFqdn,
+      });
+    });
+  });
+
+  // ─────────────────────────────────────────────────────────────────
+  // Test #5 — troubleshoot_deployment_orchestrated happy path. One
+  // elicit, a progress event, return the markdown report.
+  // ─────────────────────────────────────────────────────────────────
+  describe('#5 troubleshoot_deployment_orchestrated happy path', () => {
+    it('elicits confirm, emits progress, returns the TroubleshootReport', async () => {
+      const expectedLeaseUuid = '550e8400-e29b-41d4-a716-446655440000';
+      const report: TroubleshootReport = {
+        markdown: '# Lease diagnostic — lease-1\n\nState: ACTIVE',
+      };
+      let observedArgs: TroubleshootArgs | undefined;
+
+      const fakeTroubleshoot: AgentOrchestrators['troubleshootDeployment'] =
+        async (
+          args: TroubleshootArgs,
+          cb: TroubleshootCallbacks,
+          _opts: TroubleshootOptions,
+        ): Promise<TroubleshootReport> => {
+          observedArgs = args;
+          const yesNo = await cb.onConfirm?.({
+            text: `Diagnose lease ${args.leaseUuid}`,
+          });
+          expect(yesNo).toBe('yes');
+          cb.onProgress?.({
+            kind: 'readiness_evaluated',
+            readiness: {
+              status: 'ok',
+              reasons: [],
+              suggestedActions: [],
+              walletBalances: [],
+              credits: null,
+              sku: null,
+            },
+          });
+          cb.onComplete?.(report);
+          return report;
+        };
+
+      const server = makeServer({
+        troubleshootDeployment: fakeTroubleshoot,
+      });
+      const captured = await callToolWithCapture(
+        server,
+        'troubleshoot_deployment_orchestrated',
+        { lease_uuid: expectedLeaseUuid },
+        {
+          respond: () => ({
+            action: 'accept',
+            content: { verdict: 'yes' },
+          }),
+        },
+      );
+
+      expect(observedArgs).toEqual({ leaseUuid: expectedLeaseUuid });
+      expect(captured.elicitations).toHaveLength(1);
+      expect(captured.progress).toHaveLength(1);
+      expect(JSON.parse(captured.progress[0].message ?? '').kind).toBe(
+        'readiness_evaluated',
+      );
+      expect(captured.toolResult.isError).toBeUndefined();
+      const parsed = parseStructured<TroubleshootReport>(captured.toolResult);
+      expect(parsed.markdown).toContain('Lease diagnostic');
+    });
+  });
+
+  // ─────────────────────────────────────────────────────────────────
+  // Test #6 — close_lease_orchestrated happy path.
+  // ─────────────────────────────────────────────────────────────────
+  describe('#6 close_lease_orchestrated happy path', () => {
+    it('elicits confirm and returns the CloseLeaseResult', async () => {
+      const expectedLeaseUuid = '550e8400-e29b-41d4-a716-446655440000';
+      const result: CloseLeaseResult = {
+        leaseUuid: expectedLeaseUuid,
+        finalState: 'LEASE_STATE_CLOSED',
+      };
+      let observedArgs: CloseLeaseArgs | undefined;
+
+      const fakeClose: AgentOrchestrators['closeLease'] = async (
+        args: CloseLeaseArgs,
+        cb: CloseLeaseCallbacks,
+        _opts: CloseLeaseOptions,
+      ): Promise<CloseLeaseResult> => {
+        observedArgs = args;
+        const yesNo = await cb.onConfirm?.({
+          text: `Close lease ${args.leaseUuid}.`,
+        });
+        expect(yesNo).toBe('yes');
+        cb.onComplete?.(result);
+        return result;
+      };
+
+      const server = makeServer({ closeLease: fakeClose });
+      const captured = await callToolWithCapture(
+        server,
+        'close_lease_orchestrated',
+        { lease_uuid: expectedLeaseUuid },
+        {
+          respond: () => ({
+            action: 'accept',
+            content: { verdict: 'yes' },
+          }),
+        },
+      );
+
+      expect(observedArgs).toEqual({ leaseUuid: expectedLeaseUuid });
+      expect(captured.elicitations).toHaveLength(1);
+      expect(captured.toolResult.isError).toBeUndefined();
+      const parsed = parseStructured<CloseLeaseResult>(captured.toolResult);
+      expect(parsed).toEqual(result);
+    });
+  });
+
+  // ─────────────────────────────────────────────────────────────────
+  // Test #7 — elicitation capability guard.
+  //
+  // Client connects WITHOUT advertising `capabilities.elicitation`.
+  // Each tool's `assertElicitationCapability` must throw `INVALID_CONFIG`
+  // BEFORE invoking the orchestrator. The fake never runs — assert via a
+  // sentinel that the orchestrator was not entered.
+  // ─────────────────────────────────────────────────────────────────
+  describe('#7 elicitation capability guard', () => {
+    for (const toolName of AGENT_TOOL_NAMES) {
+      it(`${toolName}: missing elicitation capability → INVALID_CONFIG`, async () => {
+        const orchestratorEntered = vi.fn();
+        // Build a fake for whichever tool we're calling, so we can assert
+        // it was never reached. The others stay default.
+        const sentinel: Partial<AgentOrchestrators> = {};
+        if (toolName === 'deploy_app_orchestrated') {
+          sentinel.deployApp = (async (..._a: unknown[]) => {
+            orchestratorEntered();
+            throw new Error('should not reach orchestrator');
+          }) as unknown as AgentOrchestrators['deployApp'];
+        }
+        if (toolName === 'manage_domain_orchestrated') {
+          sentinel.manageDomain = (async (..._a: unknown[]) => {
+            orchestratorEntered();
+            throw new Error('should not reach orchestrator');
+          }) as unknown as AgentOrchestrators['manageDomain'];
+        }
+        if (toolName === 'troubleshoot_deployment_orchestrated') {
+          sentinel.troubleshootDeployment = (async (..._a: unknown[]) => {
+            orchestratorEntered();
+            throw new Error('should not reach orchestrator');
+          }) as unknown as AgentOrchestrators['troubleshootDeployment'];
+        }
+        if (toolName === 'close_lease_orchestrated') {
+          sentinel.closeLease = (async (..._a: unknown[]) => {
+            orchestratorEntered();
+            throw new Error('should not reach orchestrator');
+          }) as unknown as AgentOrchestrators['closeLease'];
+        }
+        const server = makeServer(sentinel);
+
+        const args: Record<string, Record<string, unknown>> = {
+          deploy_app_orchestrated: { spec: { image: 'nginx', port: 80 } },
+          manage_domain_orchestrated: {
+            action: 'set',
+            lease_uuid: '550e8400-e29b-41d4-a716-446655440000',
+            fqdn: 'app.example.com',
+          },
+          troubleshoot_deployment_orchestrated: {
+            lease_uuid: '550e8400-e29b-41d4-a716-446655440000',
+          },
+          close_lease_orchestrated: {
+            lease_uuid: '550e8400-e29b-41d4-a716-446655440000',
+          },
+        };
+
+        const result = await callToolWithElicitation(
+          server.getServer(),
+          toolName,
+          args[toolName],
+          { respond: (): ElicitResult => ({ action: 'decline' }) },
+          activeTransports,
+          /* declareElicitationCapability */ false,
+        );
+
+        expect(result.isError).toBe(true);
+        const parsed = JSON.parse(result.content[0].text) as {
+          code: string;
+          message: string;
+        };
+        expect(parsed.code).toBe('INVALID_CONFIG');
+        expect(parsed.message).toMatch(/elicitation/i);
+        expect(orchestratorEntered).not.toHaveBeenCalled();
+      });
+    }
+  });
+
+  // ─────────────────────────────────────────────────────────────────
+  // Test #10 — progress event serialization. Fire each of the 8
+  // `ProgressEvent` kinds through a fake `troubleshootDeployment` (the
+  // simplest orchestrator that can emit progress without confirmation
+  // gating). Assert: 8 notifications/progress arrive; each `message`
+  // JSON-parses to the original event; kinds preserved in order.
+  // ─────────────────────────────────────────────────────────────────
+  describe('#10 progress event serialization', () => {
+    it('emits one notifications/progress per ProgressEvent kind with the kind reachable in the message field', async () => {
+      const events: ProgressEvent[] = [
+        {
+          kind: 'readiness_evaluated',
+          readiness: {
+            status: 'ok',
+            reasons: [],
+            suggestedActions: [],
+            walletBalances: [],
+            credits: null,
+            sku: null,
+          },
+        },
+        {
+          kind: 'deployment_plan_rendered',
+          block: { text: 'plan' },
+        },
+        { kind: 'user_confirmed' },
+        { kind: 'deploy_app_broadcast', leaseUuid: 'lease-1' },
+        { kind: 'deploy_response_classified', outcome: 'active' },
+        { kind: 'app_ready_confirmed', leaseUuid: 'lease-1' },
+        {
+          kind: 'manifest_saved',
+          leaseUuid: 'lease-1',
+          manifestPath: '/tmp/manifest.json',
+        },
+        {
+          kind: 'success_rendered',
+          result: {
+            leaseUuid: 'lease-1',
+            providerUuid: 'prov-1',
+            leaseState: 'LEASE_STATE_ACTIVE',
+            urls: [],
+            manifestPath: '',
+          },
+        },
+      ];
+
+      const fakeTroubleshoot: AgentOrchestrators['troubleshootDeployment'] =
+        async (_args, cb, _opts) => {
+          // Auto-confirm so the flow proceeds.
+          await cb.onConfirm?.({ text: 'go?' });
+          for (const ev of events) {
+            cb.onProgress?.(ev);
+          }
+          const report: TroubleshootReport = { markdown: 'done' };
+          cb.onComplete?.(report);
+          return report;
+        };
+
+      const server = makeServer({
+        troubleshootDeployment: fakeTroubleshoot,
+      });
+      const captured = await callToolWithCapture(
+        server,
+        'troubleshoot_deployment_orchestrated',
+        { lease_uuid: '550e8400-e29b-41d4-a716-446655440000' },
+        {
+          respond: () => ({
+            action: 'accept',
+            content: { verdict: 'yes' },
+          }),
+        },
+      );
+
+      expect(captured.progress).toHaveLength(events.length);
+      const decodedKinds = captured.progress.map(
+        (p) => JSON.parse(p.message ?? '').kind,
+      );
+      expect(decodedKinds).toEqual(events.map((e) => e.kind));
+      // Spot-check round-trip on a payload-bearing event.
+      const decodedThird = JSON.parse(captured.progress[3].message ?? '');
+      expect(decodedThird).toEqual({
+        kind: 'deploy_app_broadcast',
+        leaseUuid: 'lease-1',
+      });
+      // Note (follow-up for ENG-204): callbacks.ts:147-152 ALSO attempts
+      // to emit `notifications/message` (level=info) per progress event
+      // — per PLAN.md §2.1 "for hosts that subscribe to logs but not
+      // progress". The wrapper's `McpServer` doesn't declare a
+      // `logging` capability, so the SDK currently swallows these
+      // outbound; `captured.logs` arrives empty. The behavior is
+      // best-effort by contract ("both emissions are best-effort —
+      // failures swallow"), so this test pins the progress channel as
+      // the load-bearing one. If we later want logs to actually flush,
+      // adding `capabilities: { tools: {}, logging: {} }` to the
+      // McpServer constructor is the surgical fix — flagged for QA
+      // wrap-up.
+    });
+  });
 });
