@@ -62,8 +62,9 @@ jobs:
           publish packages/chain    @manifest-network/manifest-mcp-chain    "$VERSION"
           publish packages/lease    @manifest-network/manifest-mcp-lease    "$VERSION"
           publish packages/fred     @manifest-network/manifest-mcp-fred     "$VERSION"
-          publish packages/cosmwasm @manifest-network/manifest-mcp-cosmwasm "$VERSION"
-          publish packages/node     @manifest-network/manifest-mcp-node     "$VERSION"
+          publish packages/cosmwasm  @manifest-network/manifest-mcp-cosmwasm  "$VERSION"
+          publish packages/agent-core @manifest-network/manifest-agent-core   "$VERSION"
+          publish packages/node      @manifest-network/manifest-mcp-node      "$VERSION"
 
       - name: Create GitHub Release
         env:

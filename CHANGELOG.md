@@ -4,6 +4,20 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.9.0]
+
+- Feat(agent-core): new `@manifest-network/manifest-agent-core` package — TypeScript orchestration surface for Manifest agent flows (`deployApp`, `manageDomain`, `closeLease`, `troubleshootDeployment`). Composes the chain/lease/fred tool functions directly (no MCP stdio hop) and exposes a host-callback surface so non-MCP consumers (Barney, standalone Node scripts) can drive an end-to-end deploy without re-implementing classification, verification, or recovery branching. Ports the plugin's CJS scripts to typed TS internals: per-domain classifiers (`classify-deploy-error`, `classify-deploy-response`), `verify-domain-state`, the generic `verify-recover` driver, SSRF-guarded fetch, image-inspection, fee-humanization, readiness-evaluation, and renderers. Parity with `manifest-agent-plugin` HEAD is enforced via fixture-replay tests (ENG-128, ENG-129).
+- Fix(node): validate `MANIFEST_FAUCET_URL` through the same HTTPS / localhost-HTTP check used for `COSMOS_RPC_URL` / `COSMOS_REST_URL` at chain CLI startup, closing an SSRF risk. The check is guarded by `if (rawFaucetUrl)` so unset / empty values (mainnet) are unaffected. Invalid URLs that previously would have failed at the first faucet call now fail at startup with a clearer error.
+- Fix(core): `withErrorHandling` now applies `sanitizeForLogging` to both the MCP response and the log output. When the error message was redacted, the stack trace is suppressed in logs entirely so it cannot re-leak the original through `error.message`.
+- Fix(core): widen `structuredResponse`'s `data` parameter from `Record<string, unknown>` to `unknown` and drop the resulting `as unknown as Record<string, unknown>` double-casts in chain / lease / fred. `Record<string, unknown>` is assignable to `unknown`, so existing callers continue to compile; typed result interfaces no longer need a cast. Runtime contract (object-shaped after JSON round-trip) is unchanged.
+- Fix(cosmwasm): tighten converter-config parsing — explicitly reject `null` and arrays before destructuring, then narrow on each field's type. Same `QUERY_FAILED` error code; the type guard now actually narrows.
+- Fix(core): externalize `vitest` from the build graph by declaring it as an optional `peerDependency`. Previously the `__test-utils__/mocks.ts` export pulled vitest's transitive graph into rolldown's chunk graph, and on worktree paths containing `+` (characters rolldown's filename sanitizer mangles) the `[name]` substitution produced an invalid relative path and the build failed.
+- Feat(core): export `validateEndpointUrl` for downstream reuse (now consumed by `packages/node/src/chain.ts` for faucet URL validation).
+- Feat(fred): export `AuthTimestampTracker` (previously internal). Pin the ADR-036 sign-message wire format with a regression test plus an in-source security note flagging that adding an operation scope requires coordinated server-side validation.
+- Refactor(fred): split `packages/fred/src/index.ts` (1,363 lines) into `server/{progress,register-tools,register-resources,register-prompts}.ts`. `FredMCPServer` class shape and exports are unchanged.
+- Test(core): cover the rate-limiter token-bucket budget, throttling, and reconfig branches that previously had no unit test. Cover the encrypted-keyfile decrypt path and wrong-password rejection in `keyfileWallet.test.ts` (was plaintext-only at unit level).
+- Docs: add a top-level `docs/` tree (tool-selection guidance, end-to-end usage examples, Fred's prompts / resources, troubleshooting, threat model, library-usage patterns for non-MCP consumers). Add `SECURITY.md` with a coordinated-disclosure policy. Refresh tool counts (6 / 8 / 11 / 2) across `README`, `ARCHITECTURE.md`, and per-package READMEs. Extend `packages/node/.env.example` with every documented env var so a fresh `.env` doesn't silently miss an option.
+
 ## [0.8.0]
 
 - Feat(fred): `deploy_app` description now mentions the optional `custom_domain` attachment so the top-level summary an MCP host shows in `tools/list` reflects the tool's actual surface.
