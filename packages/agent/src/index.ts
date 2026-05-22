@@ -194,10 +194,23 @@ export class AgentMCPServer {
 
   private getRuntime(): Promise<AgentCoreRuntime> {
     if (this.runtimePromise === null) {
-      this.runtimePromise = buildRuntime({
+      const p = buildRuntime({
         clientManager: this.clientManager,
         fetchGuarded: this.fetchGuarded,
       });
+      // Phase 2 (finding #12): clear the cache slot on rejection so a
+      // transient failure (e.g. dynamic import of guarded-fetch hits a
+      // ENETUNREACH) doesn't latch a rejected promise that all
+      // subsequent tool calls re-throw forever. The identity guard
+      // (`runtimePromise === p`) prevents a stale handler from a
+      // previously-cleared-and-re-set slot racing in and clearing the
+      // new promise.
+      void p.catch(() => {
+        if (this.runtimePromise === p) {
+          this.runtimePromise = null;
+        }
+      });
+      this.runtimePromise = p;
     }
     return this.runtimePromise;
   }
@@ -209,9 +222,17 @@ export class AgentMCPServer {
       // The agent-core public surface re-exports `loadChainDenomMap`,
       // and the function itself returns `EMPTY_DENOM_MAP` for
       // undefined / unreadable paths.
-      this.denomMapPromise = import(
-        '@manifest-network/manifest-agent-core'
-      ).then(({ loadChainDenomMap }) => loadChainDenomMap(this.chainDataFile));
+      const p = import('@manifest-network/manifest-agent-core').then(
+        ({ loadChainDenomMap }) => loadChainDenomMap(this.chainDataFile),
+      );
+      // Phase 2 (finding #12): see getRuntime — same identity-guarded
+      // cache-clear so transient failures don't poison the cache.
+      void p.catch(() => {
+        if (this.denomMapPromise === p) {
+          this.denomMapPromise = null;
+        }
+      });
+      this.denomMapPromise = p;
     }
     return this.denomMapPromise;
   }

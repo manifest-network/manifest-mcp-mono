@@ -1571,6 +1571,12 @@ describe('AgentMCPServer', () => {
     });
   });
 
+  // Phase 2 finding #12 regression — `getRuntime` / `getDenomMap`
+  // cache-clear-on-rejection — lives in `index-cache.test.ts` (uses
+  // a file-scoped `vi.mock('./runtime.js', ...)` to inject a
+  // fail-then-succeed buildRuntime). Kept separate so the local-mock
+  // hoist doesn't bleed into this suite's tests.
+
   // ─────────────────────────────────────────────────────────────────
   // Test #14 — Phase 2 (ENG-210): the server advertises `logging: {}`
   // capability at initialize. Without it the SDK's
