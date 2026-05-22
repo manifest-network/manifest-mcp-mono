@@ -68,6 +68,7 @@ import {
   makeTroubleshootCallbacks,
 } from './callbacks.js';
 import { assertElicitationCapability } from './elicitation.js';
+import { parseBooleanEnv } from './env.js';
 import { buildRuntime } from './runtime.js';
 
 export type { ManifestMCPServerOptions } from '@manifest-network/manifest-mcp-core';
@@ -157,7 +158,15 @@ export class AgentMCPServer {
 
     this.chainDataFile = readEnv('MANIFEST_CHAIN_DATA_FILE');
     this.dataDir = readEnv('MANIFEST_AGENT_DATA_DIR');
-    this.fetchGuarded = readEnv('MANIFEST_AGENT_FETCH_GUARDED') === '1';
+    // Default ON — agent-core's documented invariant is that the SSRF
+    // guard is on; opt-out requires an explicit MANIFEST_AGENT_FETCH_GUARDED=0
+    // (or false/no/off). Mismatched values throw INVALID_CONFIG so a
+    // typo doesn't silently disable the guard.
+    this.fetchGuarded = parseBooleanEnv(
+      process.env.MANIFEST_AGENT_FETCH_GUARDED,
+      true,
+      'MANIFEST_AGENT_FETCH_GUARDED',
+    );
 
     this.mcpServer = new McpServer(
       {
@@ -202,20 +211,22 @@ export class AgentMCPServer {
 
   // --- per-call options builders -----------------------------------
 
-  private async buildDeployOptions(args: {
-    dataDir?: string;
-  }): Promise<DeployAppOptions> {
+  private async buildDeployOptions(): Promise<DeployAppOptions> {
     const [runtime, denomMap] = await Promise.all([
       this.getRuntime(),
       this.getDenomMap(),
     ]);
-    const dataDir = args.dataDir ?? this.dataDir;
+    // `dataDir` flows only from `MANIFEST_AGENT_DATA_DIR` (operator-set
+    // at server-startup time). The per-call tool argument was removed in
+    // Phase 2 (finding #4) because `saveManifest` chmods the supplied
+    // path to 0o700 — an LLM-controllable arg there is a host-fs-damage
+    // primitive.
     return {
       ...runtime,
       walletProvider: this.walletProvider,
       denomMap,
       ...(this.chainDataFile ? { chainDataFile: this.chainDataFile } : {}),
-      ...(dataDir ? { dataDir } : {}),
+      ...(this.dataDir ? { dataDir: this.dataDir } : {}),
     };
   }
 
@@ -254,14 +265,11 @@ export class AgentMCPServer {
                 'or StackSpec ({ services: { [name]: ServiceDef }, customDomain?, serviceName? }). ' +
                 'agent-core validates structure; pass the typed shape from manifest-agent-core types.',
             ),
-          data_dir: z
-            .string()
-            .optional()
-            .describe(
-              'Override MANIFEST_AGENT_DATA_DIR for this call. Passed to ' +
-                'DeployAppOptions.dataDir; when absent, manifest persistence is ' +
-                'skipped and success is still emitted.',
-            ),
+          // The `data_dir` per-call argument was removed in Phase 2
+          // (finding #4). `saveManifest` chmods the supplied path to
+          // 0o700; allowing the model / client to pick the path is a
+          // host-fs-damage primitive. Operators set the persistence
+          // location via the `MANIFEST_AGENT_DATA_DIR` env var only.
         },
         // Each deploy creates a new lease — not idempotent, not destructive.
         annotations: mutatingAnnotations('Deploy app via orchestrated flow', {
@@ -281,9 +289,7 @@ export class AgentMCPServer {
             server: this.mcpServer.server,
             extra,
           });
-          const opts = await this.buildDeployOptions({
-            dataDir: args.data_dir,
-          });
+          const opts = await this.buildDeployOptions();
           const result = await this.orchestrators.deployApp(
             args.spec as DeploySpec,
             callbacks,

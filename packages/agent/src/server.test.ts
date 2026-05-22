@@ -328,6 +328,123 @@ describe('AgentMCPServer', () => {
         await client.close();
       }
     });
+
+    // Phase 2 (finding #4): the per-call `data_dir` argument was removed
+    // from `deploy_app_orchestrated`. Pin that surface — re-adding it
+    // would reintroduce the LLM-controlled chmod-arbitrary-path
+    // primitive.
+    it('deploy_app_orchestrated input schema does NOT accept data_dir', async () => {
+      const server = makeServer();
+      const [clientTransport, serverTransport] =
+        InMemoryTransport.createLinkedPair();
+      activeTransports.push(clientTransport, serverTransport);
+      const client = new Client({ name: 'test-client', version: '1.0.0' });
+      await server.getServer().connect(serverTransport);
+      await client.connect(clientTransport);
+      try {
+        const result = await client.listTools();
+        const deploy = result.tools.find(
+          (t) => t.name === 'deploy_app_orchestrated',
+        );
+        const props = (
+          deploy?.inputSchema as { properties?: Record<string, unknown> }
+        ).properties;
+        expect(Object.keys(props ?? {})).toEqual(['spec']);
+        expect(props).not.toHaveProperty('data_dir');
+      } finally {
+        await client.close();
+      }
+    });
+  });
+
+  // ─────────────────────────────────────────────────────────────────
+  // Test #11 — MANIFEST_AGENT_DATA_DIR env flow (Phase 2 / finding #4).
+  // The per-call `data_dir` argument was removed; the env-var-only path
+  // is the public contract. Assert the env value flows through to
+  // `DeployAppOptions.dataDir` as observed by the orchestrator fake.
+  // ─────────────────────────────────────────────────────────────────
+  describe('#11 MANIFEST_AGENT_DATA_DIR env flow', () => {
+    const ENV = 'MANIFEST_AGENT_DATA_DIR';
+    let restore: string | undefined;
+    beforeEach(() => {
+      restore = process.env[ENV];
+    });
+    afterEach(() => {
+      if (restore === undefined) {
+        delete process.env[ENV];
+      } else {
+        process.env[ENV] = restore;
+      }
+    });
+
+    it('env value flows into DeployAppOptions.dataDir', async () => {
+      process.env[ENV] = '/tmp/fixture-manifest-data';
+      let observedDataDir: string | undefined;
+      const fakeDeploy: AgentOrchestrators['deployApp'] = async (
+        _spec,
+        cb,
+        opts,
+      ) => {
+        observedDataDir = opts.dataDir;
+        // Short-circuit — the env wiring is the contract under test.
+        const { ManifestMCPError, ManifestMCPErrorCode } = await import(
+          '@manifest-network/manifest-mcp-core'
+        );
+        cb.onProgress?.({ kind: 'user_confirmed' });
+        throw new ManifestMCPError(
+          ManifestMCPErrorCode.TX_FAILED,
+          'test stub: short-circuit after observing opts.dataDir',
+        );
+      };
+      const server = makeServer({ deployApp: fakeDeploy });
+      await callToolWithCapture(
+        server,
+        'deploy_app_orchestrated',
+        { spec: { image: 'nginx', port: 80 } },
+        {
+          respond: () => ({
+            action: 'accept',
+            content: { verdict: 'confirm' },
+          }),
+        },
+      );
+      expect(observedDataDir).toBe('/tmp/fixture-manifest-data');
+    });
+
+    it('unset env → DeployAppOptions.dataDir is undefined', async () => {
+      delete process.env[ENV];
+      let observedDataDir: string | undefined | symbol = Symbol('unset');
+      const fakeDeploy: AgentOrchestrators['deployApp'] = async (
+        _spec,
+        cb,
+        opts,
+      ) => {
+        observedDataDir = opts.dataDir;
+        const { ManifestMCPError, ManifestMCPErrorCode } = await import(
+          '@manifest-network/manifest-mcp-core'
+        );
+        cb.onProgress?.({ kind: 'user_confirmed' });
+        throw new ManifestMCPError(
+          ManifestMCPErrorCode.TX_FAILED,
+          'test stub: short-circuit after observing opts.dataDir',
+        );
+      };
+      const server = makeServer({ deployApp: fakeDeploy });
+      await callToolWithCapture(
+        server,
+        'deploy_app_orchestrated',
+        { spec: { image: 'nginx', port: 80 } },
+        {
+          respond: () => ({
+            action: 'accept',
+            content: { verdict: 'confirm' },
+          }),
+        },
+      );
+      // Spread omits `dataDir` when env is unset (see buildDeployOptions);
+      // orchestrator therefore receives the slot as `undefined`.
+      expect(observedDataDir).toBeUndefined();
+    });
   });
 
   // ─────────────────────────────────────────────────────────────────

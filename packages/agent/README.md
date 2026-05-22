@@ -40,9 +40,9 @@ The agent server reads the standard chain / wallet env vars (same matrix as `man
 | `MANIFEST_KEY_FILE` | No | `~/.manifest/key.json` | Encrypted keyfile path. |
 | `MANIFEST_KEY_PASSWORD` | No | — | Keyfile decrypt password. |
 | `COSMOS_MNEMONIC` | No | — | Fallback wallet (no keyfile). |
-| `MANIFEST_AGENT_DATA_DIR` | No | — | Passes to `DeployAppOptions.dataDir`. When unset, manifest persistence is skipped and success still emits. Pass a dedicated subdirectory (not `$HOME`) — `saveManifest()` may tighten its permissions. |
+| `MANIFEST_AGENT_DATA_DIR` | No | — | Passes to `DeployAppOptions.dataDir` (operator-set; the `deploy_app_orchestrated` tool no longer accepts a per-call `data_dir` override — finding #4). When unset, manifest persistence is skipped and success still emits. Pass a dedicated subdirectory (NOT `$HOME` or any shared dir) — `saveManifest()` `chmod`s this path to `0o700`. |
 | `MANIFEST_CHAIN_DATA_FILE` | No | — | Path to a chain-registry JSON (`{ feeTokens: [...] }`) for denom humanization (e.g. `umfx` → `MFX`). Loaded once at startup. |
-| `MANIFEST_AGENT_FETCH_GUARDED` | No | `0` | When `1`, swaps in agent-core's SSRF-guarded `createGuardedFetch` (Node-only — dynamic import keeps the platform-neutral build legal). |
+| `MANIFEST_AGENT_FETCH_GUARDED` | No | `1` (default ON) | Swaps in agent-core's SSRF-guarded `createGuardedFetch` (Node-only — dynamic import keeps the platform-neutral build legal). Set to `0` / `false` / `no` / `off` to disable (e.g. for local-loopback testing). Accepted truthy: `1` / `true` / `yes` / `on`; case-insensitive. Unrecognized values throw `INVALID_CONFIG` rather than silently no-op. |
 | `LOG_LEVEL` | No | `warn` | `debug` / `info` / `warn` / `error` / `silent`. |
 
 ## CLI usage
