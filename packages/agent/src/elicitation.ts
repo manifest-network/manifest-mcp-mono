@@ -208,8 +208,13 @@ export function buildReplaceSpecSchema(): RequestedSchema {
  *
  * For the binary yes/no callbacks both `decline` and `cancel` collapse
  * to `'no'`. For the plan picker both collapse to `'cancel'`. For the
- * recovery picker we throw `INVALID_CONFIG` — there is no neutral
- * "no choice" return shape on agent-core's bidirectional `onFailure`.
+ * recovery picker (post Phase-2 finding #1) we synthesize the
+ * lease-preserving `salvage_without_domain` default — guaranteed by
+ * agent-core's `render-partial-success-prompt.ts` to be present in the
+ * supplied options[] — and only throw `INVALID_CONFIG` defensively if
+ * that option is unexpectedly missing. Callers should also surface a
+ * warning notification (see `callbacks.ts`) so the user knows the
+ * prompt was dismissed and which default was applied.
  */
 
 function readContentString(

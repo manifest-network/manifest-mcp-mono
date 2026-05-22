@@ -21,10 +21,15 @@ Each tool returns the corresponding agent-core result type (`DeployResult` / `Ma
 
 ## Host requirements
 
-This server **requires** MCP elicitation support. Hosts that don't advertise `capabilities.elicitation` at `initialize` receive `ManifestMCPError(INVALID_CONFIG)` with a clear diagnostic — the wrapper does not fall back to stdin prompts or auto-confirm.
+MCP elicitation support is required **only for the tools/actions that prompt the user**: `deploy_app_orchestrated`, `close_lease_orchestrated`, and `manage_domain_orchestrated` with `action='set'` or `'clear'`. Hosts that don't advertise `capabilities.elicitation` at `initialize` receive `ManifestMCPError(INVALID_CONFIG)` with a clear diagnostic when invoking those paths — the wrapper does not fall back to stdin prompts or auto-confirm.
+
+The two read-only paths run **without** an elicitation-capable host:
+- `troubleshoot_deployment_orchestrated` — pure chain-side diagnostic report
+- `manage_domain_orchestrated` with `action='lookup'` — pure chain query for the FQDN currently bound to a lease item
 
 Verified hosts:
-- Claude Code ≥ 2.1.76
+- Claude Code ≥ 2.1.76 (full surface; elicitation-capable)
+- Any MCP host (read-only surface: troubleshoot + manage_domain lookup)
 
 ## Environment variables
 

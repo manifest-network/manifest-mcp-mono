@@ -413,8 +413,8 @@ export class AgentMCPServer {
         description:
           'Produce a markdown-formatted chain-side diagnostic report for a lease ' +
           'via @manifest-network/manifest-agent-core. Pure chain query — no ' +
-          'broadcast. Confirmation gathered via MCP elicitation; report returned ' +
-          'as structured content.',
+          'broadcast and zero elicitations (read-only path; runs on hosts without ' +
+          'MCP elicitation capability). Report returned as structured content.',
         inputSchema: {
           lease_uuid: z.string().uuid().describe('Lease UUID to diagnose.'),
         },
