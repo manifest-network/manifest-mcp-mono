@@ -158,3 +158,72 @@ describe('getRuntime cache clears on rejection (finding #12)', () => {
     expect(buildRuntimeMock).toHaveBeenCalledTimes(1);
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────
+// Phase 2 (finding #5) — `MANIFEST_AGENT_FETCH_GUARDED` default is ON.
+//
+// `env.test.ts` proves `parseBooleanEnv(undefined, true, ...)` returns
+// `true`; that's necessary but NOT sufficient. The regression we care
+// about is that the call site at `index.ts` passes `true` as the
+// `defaultValue` — flipping that one literal to `false` would silently
+// regress the SSRF guard while leaving every `parseBooleanEnv` unit
+// test green. Pin the call-site default by observing the
+// `fetchGuarded` argument `buildRuntime` is invoked with.
+// ─────────────────────────────────────────────────────────────────────
+describe('AgentMCPServer fetchGuarded default (finding #5)', () => {
+  const ENV = 'MANIFEST_AGENT_FETCH_GUARDED';
+  let restore: string | undefined;
+  beforeEach(() => {
+    restore = process.env[ENV];
+  });
+  afterEach(() => {
+    if (restore === undefined) {
+      delete process.env[ENV];
+    } else {
+      process.env[ENV] = restore;
+    }
+  });
+
+  it('unset env → buildRuntime invoked with fetchGuarded:true (default ON)', async () => {
+    delete process.env[ENV];
+    const runtime: AgentCoreRuntime = {
+      clientManager: {} as unknown as AgentCoreRuntime['clientManager'],
+    };
+    buildRuntimeMock.mockResolvedValue(runtime);
+
+    const fakeManageDomain: AgentOrchestrators['manageDomain'] = (async () => ({
+      action: 'lookup',
+      fqdn: 'app.example.com',
+      leaseUuid: 'lease-1',
+      verified: true,
+    })) as unknown as AgentOrchestrators['manageDomain'];
+
+    const server = makeServer({ manageDomain: fakeManageDomain });
+    const r = await invokeLookup(server);
+    expect(r.isError).toBeUndefined();
+    expect(buildRuntimeMock).toHaveBeenCalledTimes(1);
+    const args = buildRuntimeMock.mock.calls[0][0] as { fetchGuarded: boolean };
+    expect(args.fetchGuarded).toBe(true);
+  });
+
+  it("env='0' → buildRuntime invoked with fetchGuarded:false (explicit opt-out)", async () => {
+    process.env[ENV] = '0';
+    const runtime: AgentCoreRuntime = {
+      clientManager: {} as unknown as AgentCoreRuntime['clientManager'],
+    };
+    buildRuntimeMock.mockResolvedValue(runtime);
+
+    const fakeManageDomain: AgentOrchestrators['manageDomain'] = (async () => ({
+      action: 'lookup',
+      fqdn: 'app.example.com',
+      leaseUuid: 'lease-1',
+      verified: true,
+    })) as unknown as AgentOrchestrators['manageDomain'];
+
+    const server = makeServer({ manageDomain: fakeManageDomain });
+    const r = await invokeLookup(server);
+    expect(r.isError).toBeUndefined();
+    const args = buildRuntimeMock.mock.calls[0][0] as { fetchGuarded: boolean };
+    expect(args.fetchGuarded).toBe(false);
+  });
+});
