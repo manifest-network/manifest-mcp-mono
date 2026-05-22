@@ -382,7 +382,6 @@ describe('troubleshootDeployment — chain-query failures', () => {
       getQueryClient: vi
         .fn()
         .mockRejectedValue(new Error('transport: ECONNREFUSED 127.0.0.1:9090')),
-      getAddress: vi.fn().mockResolvedValue('manifest1deadbeef'),
     };
     void queryClient;
     const { callbacks, failures } = captureCallbacks();
@@ -416,7 +415,6 @@ describe('troubleshootDeployment — chain-query failures', () => {
             'no rpcUrl or restUrl configured',
           ),
         ),
-      getAddress: vi.fn().mockResolvedValue('manifest1deadbeef'),
     };
     const { callbacks, failures } = captureCallbacks();
     const { troubleshootDeployment } = await import('./troubleshoot.js');
