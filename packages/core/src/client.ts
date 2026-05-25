@@ -119,6 +119,12 @@ export class CosmosClientManager {
   private signingClient: SigningStargateClient | null = null;
   private rateLimiter: RateLimiter;
 
+  // Number of live holders (servers) sharing this instance. Each getInstance
+  // acquisition increments it; each disconnect() decrements it. The underlying
+  // clients are only torn down once the count reaches zero (the last holder
+  // disconnects), so one server's shutdown can't sever another's shared client.
+  private refCount = 0;
+
   // Promises to prevent concurrent client initialization (lazy init race condition)
   private queryClientPromise: Promise<ManifestQueryClient> | null = null;
   private signingClientPromise: Promise<SigningStargateClient> | null = null;
@@ -145,6 +151,10 @@ export class CosmosClientManager {
    * - Config and walletProvider references are always updated
    * - Signing client is disconnected/recreated if gasPrice, gasMultiplier, or walletProvider changed
    * - Rate limiter is updated if requestsPerSecond changed (without affecting signing client)
+   *
+   * Every call acquires a reference (increments refCount). Each caller must
+   * balance it with exactly one disconnect() so the shared clients are torn
+   * down only once the last holder releases (see disconnect()).
    */
   static getInstance(
     config: ManifestMCPConfig,
@@ -194,16 +204,23 @@ export class CosmosClientManager {
       }
     }
 
+    instance.refCount += 1;
     return instance;
   }
 
   /**
    * Clear all cached instances (useful for testing or reconnection).
-   * Disconnects signing clients and releases query client references before clearing.
+   * Force-tears-down each instance regardless of its refCount — clearing the
+   * registry is an unconditional reset, so it ignores outstanding holders,
+   * disconnects signing clients, releases query client references, and resets
+   * refCount to zero before clearing.
    */
   static clearInstances(): void {
     for (const instance of CosmosClientManager.instances.values()) {
-      instance.disconnect();
+      // Force teardown regardless of refCount — clearing the registry is an
+      // unconditional reset (used by tests/reconnection), so drop all holders.
+      instance.teardown();
+      instance.refCount = 0;
     }
     CosmosClientManager.instances.clear();
   }
@@ -439,11 +456,24 @@ export class CosmosClientManager {
   }
 
   /**
-   * Disconnect the signing client and release query client references.
+   * Release this holder's reference to the shared instance. The underlying
+   * clients are only torn down once the last holder disconnects (refCount
+   * reaches zero), so one server's shutdown cannot sever a client still in
+   * use by another server sharing the same config key. Calling disconnect()
+   * more times than getInstance() was called is safe and never drives the
+   * count negative.
+   */
+  disconnect(): void {
+    if (this.refCount > 0) this.refCount -= 1;
+    if (this.refCount === 0) this.teardown();
+  }
+
+  /**
+   * Tear down the signing client and release query client references.
    * The query client's underlying HTTP transport is stateless and does not
    * require an explicit disconnect.
    */
-  disconnect(): void {
+  private teardown(): void {
     if (this.signingClient) {
       this.signingClient.disconnect();
       this.signingClient = null;
