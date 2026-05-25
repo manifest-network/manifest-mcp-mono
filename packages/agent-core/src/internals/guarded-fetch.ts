@@ -109,6 +109,54 @@ export const BLOCKED_RANGES_IPV6: ReadonlyArray<{
 ];
 
 /**
+ * Supplemental CIDR overlay — ranges that `ipaddr.js` v1.9.1's `range()`
+ * MISCLASSIFIES as `'unicast'` (so the allow-list gate would pass them
+ * through) but that we must still block.
+ *
+ * **Why these live OUTSIDE BLOCKED_RANGES_***: those arrays are audit-only
+ * — they don't drive the verdict. `isBlocked` returns early on
+ * `range() === 'unicast'`, so appending here would be inert AND would break
+ * the `toEqual` coverage tests that pin the exact label sets (8 IPv4 / 6
+ * IPv6). The verdict for these ranges is instead an explicit CIDR
+ * `match()` performed INSIDE the unicast branch, before returning null.
+ *
+ * **Why ipaddr.js misses them**: v1.9.1's RFC-classification table predates
+ * (or omits) these assignments, mapping them to the generic `'unicast'`
+ * fallback. Verified empirically: `ipaddr.parse('198.18.0.1').range()` and
+ * `ipaddr.parse('100::1').range()` both return `'unicast'` on v1.9.1.
+ *
+ * Each `cidr` is a pre-parsed `[addr, prefixBits]` tuple (ipaddr.js's
+ * `parseCIDR` shape) so the per-request hot path does no string parsing.
+ */
+export const SUPPLEMENTAL_RANGES_IPV4: ReadonlyArray<{
+  readonly cidr: [ipaddr.IPv4, number];
+  readonly range: string;
+  readonly rfc: string;
+}> = [
+  {
+    cidr: ipaddr.IPv4.parseCIDR('198.18.0.0/15'),
+    range: 'reserved',
+    rfc: 'RFC 2544 — 198.18.0.0/15 (benchmarking)',
+  },
+];
+
+/**
+ * IPv6 counterpart to {@link SUPPLEMENTAL_RANGES_IPV4}. See that comment
+ * for why these are checked separately from BLOCKED_RANGES_IPV6.
+ */
+export const SUPPLEMENTAL_RANGES_IPV6: ReadonlyArray<{
+  readonly cidr: [ipaddr.IPv6, number];
+  readonly range: string;
+  readonly rfc: string;
+}> = [
+  {
+    cidr: ipaddr.IPv6.parseCIDR('100::/64'),
+    range: 'discard',
+    rfc: 'RFC 6666 — 100::/64 (discard-only)',
+  },
+];
+
+/**
  * SSRF block-check for a single IP string. **Allow-list policy:** only
  * ipaddr.js's `'unicast'` classification is permitted; every other range
  * label is blocked.
@@ -158,6 +206,24 @@ export function isBlocked(ipString: string): {
   // Allow-list gate: `'unicast'` is the only category permitted.
   // Everything else defaults to block; the lookup below is for audit info.
   if (rangeLabel === 'unicast') {
+    // Supplemental overlay: a handful of reserved ranges that ipaddr.js
+    // v1.9.1 misclassifies as `'unicast'`. Check explicit CIDRs before
+    // letting the address through. See SUPPLEMENTAL_RANGES_* doc-comments.
+    if (parsed.kind() === 'ipv4') {
+      const v4 = parsed as ipaddr.IPv4;
+      for (const entry of SUPPLEMENTAL_RANGES_IPV4) {
+        if (v4.match(entry.cidr)) {
+          return { range: entry.range, rfc: entry.rfc };
+        }
+      }
+    } else {
+      const v6 = parsed as ipaddr.IPv6;
+      for (const entry of SUPPLEMENTAL_RANGES_IPV6) {
+        if (v6.match(entry.cidr)) {
+          return { range: entry.range, rfc: entry.rfc };
+        }
+      }
+    }
     return null;
   }
 
