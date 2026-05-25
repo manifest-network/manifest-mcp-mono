@@ -155,6 +155,15 @@ export class CosmosClientManager {
    * Every call acquires a reference (increments refCount). Each caller must
    * balance it with exactly one disconnect() so the shared clients are torn
    * down only once the last holder releases (see disconnect()).
+   *
+   * Reference accounting counts calls, not distinct callers: a call that only
+   * updates config on an existing key (changed gasPrice/gasMultiplier/
+   * walletProvider/rate limit) still acquires a reference. A holder that
+   * re-invokes getInstance to reconfigure a key it already holds therefore
+   * takes an ADDITIONAL reference and must balance it with an additional
+   * disconnect(), or refCount never reaches zero and the clients leak. Today
+   * every server acquires once at construction and releases once at shutdown,
+   * so this caveat only applies to callers that reconfigure a live key in place.
    */
   static getInstance(
     config: ManifestMCPConfig,
