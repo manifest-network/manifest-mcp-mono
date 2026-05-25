@@ -466,6 +466,128 @@ describe('CosmosClientManager', () => {
     });
   });
 
+  describe('ref-counted disconnect', () => {
+    // We seed a cached signing client directly via the private-state cast
+    // (the same pattern the rateLimiter tests use) instead of calling
+    // getSigningClient(). In production the signing client is cached after
+    // getSigningClient() and teardown calls its disconnect(); but in this
+    // vitest harness getSigningClient()'s superseded-promise cleanup branch
+    // runs under synchronous mock resolution — it invokes the mock's
+    // disconnect() at init time and never caches the client — which would
+    // confound a spy that is meant to measure ref-counted *teardown* timing.
+    // Seeding isolates disconnect()'s ref-counting from that unrelated init
+    // artifact (see the "omitted test" notes in getQueryClient/getSigningClient).
+    const seedSigningClient = (
+      instance: CosmosClientManager,
+      client: unknown,
+    ) => {
+      (instance as unknown as { signingClient: unknown }).signingClient =
+        client;
+    };
+    const readSigningClient = (instance: CosmosClientManager) =>
+      (instance as unknown as { signingClient: unknown }).signingClient;
+
+    it('only tears down the shared signing client after the last holder disconnects', () => {
+      const mockSC = { disconnect: vi.fn() };
+
+      const config = makeConfig();
+      const wallet = makeWallet();
+      // Two simulated servers acquire the same config key.
+      const a = CosmosClientManager.getInstance(config, wallet);
+      const b = CosmosClientManager.getInstance(config, wallet);
+      expect(a).toBe(b);
+      seedSigningClient(a, mockSC);
+
+      // First holder releases — the shared client must stay live.
+      a.disconnect();
+      expect(mockSC.disconnect).not.toHaveBeenCalled();
+      // Still the same live client (no teardown, no reconnect).
+      expect(readSigningClient(b)).toBe(mockSC);
+
+      // Last holder releases — now it tears down.
+      b.disconnect();
+      expect(mockSC.disconnect).toHaveBeenCalledOnce();
+      expect(readSigningClient(b)).toBeNull();
+    });
+
+    it('single acquire still tears down on the first disconnect', () => {
+      const mockSC = { disconnect: vi.fn() };
+
+      const instance = CosmosClientManager.getInstance(
+        makeConfig(),
+        makeWallet(),
+      );
+      seedSigningClient(instance, mockSC);
+
+      instance.disconnect();
+      expect(mockSC.disconnect).toHaveBeenCalledOnce();
+    });
+
+    it('clearInstances force-tears-down even when refCount > 1', () => {
+      const mockSC = { disconnect: vi.fn() };
+
+      const config = makeConfig();
+      const wallet = makeWallet();
+      // Two holders → refCount is 2.
+      const a = CosmosClientManager.getInstance(config, wallet);
+      CosmosClientManager.getInstance(config, wallet);
+      seedSigningClient(a, mockSC);
+
+      // Force reset ignores the outstanding holders and tears down immediately.
+      CosmosClientManager.clearInstances();
+      expect(mockSC.disconnect).toHaveBeenCalledOnce();
+
+      // Registry was cleared, so a fresh getInstance yields a new instance.
+      const fresh = CosmosClientManager.getInstance(config, wallet);
+      expect(fresh).not.toBe(a);
+    });
+
+    it('over-disconnect is safe: extra disconnect() does not throw or re-tear-down', () => {
+      const mockSC = { disconnect: vi.fn() };
+
+      const instance = CosmosClientManager.getInstance(
+        makeConfig(),
+        makeWallet(),
+      );
+      seedSigningClient(instance, mockSC);
+
+      instance.disconnect();
+      expect(mockSC.disconnect).toHaveBeenCalledOnce();
+
+      // Extra disconnects beyond the acquisition count must be no-ops:
+      // they neither throw nor tear down again (refCount stays at 0).
+      expect(() => {
+        instance.disconnect();
+        instance.disconnect();
+      }).not.toThrow();
+      expect(mockSC.disconnect).toHaveBeenCalledOnce();
+    });
+
+    it('shared query client survives a non-last disconnect and re-inits only after the last (behavioral)', async () => {
+      // Defense-in-depth: a purely behavioral check (no private-state access)
+      // that exercises the query-client teardown path via re-initialization
+      // count. The query client caches across getQueryClient() calls, so a
+      // re-init signals teardown occurred.
+      const config = makeConfig({ chainId: 'refcount-query-probe' });
+      const wallet = makeWallet();
+      const a = CosmosClientManager.getInstance(config, wallet);
+      const b = CosmosClientManager.getInstance(config, wallet);
+
+      await a.getQueryClient();
+      expect(mockCreateRPCQueryClient).toHaveBeenCalledOnce();
+
+      // First holder releases — the shared query client must NOT be torn down.
+      a.disconnect();
+      await b.getQueryClient();
+      expect(mockCreateRPCQueryClient).toHaveBeenCalledOnce();
+
+      // Last holder releases — torn down, so the next query re-initializes.
+      b.disconnect();
+      await b.getQueryClient();
+      expect(mockCreateRPCQueryClient).toHaveBeenCalledTimes(2);
+    });
+  });
+
   describe('clearInstances', () => {
     it('removes all instances so new getInstance creates fresh ones', () => {
       const wallet = makeWallet();
