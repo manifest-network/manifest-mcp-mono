@@ -88,8 +88,8 @@ async function invokeLookup(server: AgentMCPServer): Promise<{
   await client.connect(clientTransport);
   try {
     return (await client.callTool({
-      name: 'manage_domain_orchestrated',
-      arguments: { action: 'lookup', fqdn: 'app.example.com' },
+      name: 'lookup_custom_domain_orchestrated',
+      arguments: { fqdn: 'app.example.com' },
     })) as {
       isError?: boolean;
       content: Array<{ type: string; text: string }>;
@@ -113,8 +113,7 @@ describe('getRuntime cache clears on rejection (finding #12)', () => {
     const fakeManageDomain: AgentOrchestrators['manageDomain'] = (async () => ({
       action: 'lookup',
       fqdn: 'app.example.com',
-      leaseUuid: 'lease-1',
-      verified: true,
+      lease: { leaseUuid: 'lease-1' },
     })) as unknown as AgentOrchestrators['manageDomain'];
 
     const server = makeServer({ manageDomain: fakeManageDomain });
@@ -144,8 +143,7 @@ describe('getRuntime cache clears on rejection (finding #12)', () => {
     const fakeManageDomain: AgentOrchestrators['manageDomain'] = (async () => ({
       action: 'lookup',
       fqdn: 'app.example.com',
-      leaseUuid: 'lease-1',
-      verified: true,
+      lease: { leaseUuid: 'lease-1' },
     })) as unknown as AgentOrchestrators['manageDomain'];
 
     const server = makeServer({ manageDomain: fakeManageDomain });
@@ -194,8 +192,7 @@ describe('AgentMCPServer fetchGuarded default (finding #5)', () => {
     const fakeManageDomain: AgentOrchestrators['manageDomain'] = (async () => ({
       action: 'lookup',
       fqdn: 'app.example.com',
-      leaseUuid: 'lease-1',
-      verified: true,
+      lease: { leaseUuid: 'lease-1' },
     })) as unknown as AgentOrchestrators['manageDomain'];
 
     const server = makeServer({ manageDomain: fakeManageDomain });
@@ -216,8 +213,7 @@ describe('AgentMCPServer fetchGuarded default (finding #5)', () => {
     const fakeManageDomain: AgentOrchestrators['manageDomain'] = (async () => ({
       action: 'lookup',
       fqdn: 'app.example.com',
-      leaseUuid: 'lease-1',
-      verified: true,
+      lease: { leaseUuid: 'lease-1' },
     })) as unknown as AgentOrchestrators['manageDomain'];
 
     const server = makeServer({ manageDomain: fakeManageDomain });

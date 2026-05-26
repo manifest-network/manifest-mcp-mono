@@ -14,7 +14,7 @@ packages/
   fred/        @manifest-network/manifest-mcp-fred      MCP server for provider/Fred operations (11 tools)
   cosmwasm/    @manifest-network/manifest-mcp-cosmwasm  MCP server for MFX-to-PWR converter (2 tools)
   agent-core/  @manifest-network/manifest-agent-core    TypeScript orchestration surface (deploy / manage-domain / troubleshoot / close-lease)
-  agent/       @manifest-network/manifest-mcp-agent     MCP server wrapping agent-core via MCP elicitation (4 orchestrated tools)
+  agent/       @manifest-network/manifest-mcp-agent     MCP server wrapping agent-core via MCP elicitation (5 orchestrated tools)
   node/        @manifest-network/manifest-mcp-node      CLI entry points + encrypted keyfile wallet
 ```
 
@@ -92,14 +92,15 @@ The Fred server also exposes 3 MCP resources (`manifest://leases/active`, `manif
 | `get_mfx_to_pwr_rate` | Get the current MFX-to-PWR conversion rate and preview amounts |
 | `convert_mfx_to_pwr` | Convert MFX tokens to PWR via the on-chain converter contract |
 
-### Agent server (`manifest-mcp-agent`) -- 4 orchestrated tools
+### Agent server (`manifest-mcp-agent`) -- 5 orchestrated tools
 
-Wraps [`@manifest-network/manifest-agent-core`](packages/agent-core/README.md) orchestration via MCP **elicitation** — bidirectional plan / confirm / recovery prompts flow over standard MCP wire. Requires an elicitation-capable host (Claude Code ≥ 2.1.76).
+Wraps [`@manifest-network/manifest-agent-core`](packages/agent-core/README.md) orchestration via MCP **elicitation** — bidirectional plan / confirm / recovery prompts flow over standard MCP wire. The broadcasting tools require an elicitation-capable host (Claude Code ≥ 2.1.76); the read-only tools (`lookup_custom_domain_orchestrated`, `troubleshoot_deployment_orchestrated`) run on any host.
 
 | Tool | Description |
 |------|-------------|
 | `deploy_app_orchestrated` | Plan → confirm → broadcast → persist; rich recovery picker on partial-success failures |
-| `manage_domain_orchestrated` | Set / clear / lookup a lease custom domain with confirm + verify |
+| `manage_domain_orchestrated` | Set / clear a lease custom domain with confirm + verify |
+| `lookup_custom_domain_orchestrated` | Reverse-resolve an FQDN to its owning lease (read-only chain query, no broadcast) |
 | `troubleshoot_deployment_orchestrated` | Generate a markdown chain-side diagnostic report (no broadcast) |
 | `close_lease_orchestrated` | Confirm → close → verify terminal state |
 

@@ -83,6 +83,7 @@ import { AgentMCPServer, type AgentOrchestrators } from './index.js';
 const AGENT_TOOL_NAMES = [
   'deploy_app_orchestrated',
   'manage_domain_orchestrated',
+  'lookup_custom_domain_orchestrated',
   'troubleshoot_deployment_orchestrated',
   'close_lease_orchestrated',
 ];
@@ -207,6 +208,7 @@ describe('AgentMCPServer', () => {
   // | ------------------------------------- | -------- | ----------- | ---------- | ---------- | --------- |
   // | deploy_app_orchestrated               | false    | false       | false      | true       | false     |
   // | manage_domain_orchestrated            | false    | false       | true       | true       | false     |
+  // | lookup_custom_domain_orchestrated     | true     | —           | —          | false      | false     |
   // | troubleshoot_deployment_orchestrated  | true     | —           | —          | false      | false     |
   // | close_lease_orchestrated              | false    | true        | true       | true       | false     |
   // ─────────────────────────────────────────────────────────────────
@@ -274,6 +276,20 @@ describe('AgentMCPServer', () => {
       });
     });
 
+    it('lookup_custom_domain_orchestrated is read-only', async () => {
+      const t = (await listTools()).get('lookup_custom_domain_orchestrated');
+      expect(t?.annotations).toMatchObject({
+        readOnlyHint: true,
+        idempotentHint: true,
+        openWorldHint: true,
+      });
+      expect(t?._meta?.manifest).toEqual({
+        v: 1,
+        broadcasts: false,
+        estimable: false,
+      });
+    });
+
     it('troubleshoot_deployment_orchestrated is read-only', async () => {
       const t = (await listTools()).get('troubleshoot_deployment_orchestrated');
       expect(t?.annotations).toMatchObject({
@@ -310,7 +326,7 @@ describe('AgentMCPServer', () => {
   // construction without invoking any orchestrator.
   // ─────────────────────────────────────────────────────────────────
   describe('#9 listTools via protocol', () => {
-    it('advertises exactly 4 tools with the documented names', async () => {
+    it('advertises exactly 5 tools with the documented names', async () => {
       const server = makeServer();
       const [clientTransport, serverTransport] =
         InMemoryTransport.createLinkedPair();
@@ -320,7 +336,7 @@ describe('AgentMCPServer', () => {
       await client.connect(clientTransport);
       try {
         const result = await client.listTools();
-        expect(result.tools).toHaveLength(4);
+        expect(result.tools).toHaveLength(5);
         expect(result.tools.map((t) => t.name).sort()).toEqual(
           [...AGENT_TOOL_NAMES].sort(),
         );
@@ -1047,11 +1063,6 @@ describe('AgentMCPServer', () => {
         input: { action: 'clear' },
         messageMatch: /action=clear requires lease_uuid/,
       },
-      {
-        label: 'action=lookup missing fqdn',
-        input: { action: 'lookup' },
-        messageMatch: /action=lookup requires fqdn/,
-      },
     ];
 
     for (const c of cases) {
@@ -1072,6 +1083,143 @@ describe('AgentMCPServer', () => {
         expect(parsed.message).toMatch(c.messageMatch);
       });
     }
+  });
+
+  // ─────────────────────────────────────────────────────────────────
+  // lookup_custom_domain_orchestrated (ENG-212) — read-only reverse
+  // lookup split out of manage_domain_orchestrated. Pure chain query:
+  // the handler builds `{ action:'lookup', fqdn }` and calls the shared
+  // `manageDomain` orchestrator. No elicitation, no broadcast.
+  // ─────────────────────────────────────────────────────────────────
+  describe('lookup_custom_domain_orchestrated', () => {
+    it('resolves an FQDN to its owning lease with ZERO elicitations', async () => {
+      const fqdn = 'app.example.com';
+      const leaseUuid = '550e8400-e29b-41d4-a716-446655440000';
+      let observedArgs: ManageDomainArgs | undefined;
+
+      const fakeManageDomain: AgentOrchestrators['manageDomain'] = async (
+        args: ManageDomainArgs,
+        _cb: ManageDomainCallbacks,
+        _opts: ManageDomainOptions,
+      ): Promise<ManageDomainResult> => {
+        observedArgs = args;
+        return { action: 'lookup', fqdn, lease: { leaseUuid } };
+      };
+
+      const server = makeServer({ manageDomain: fakeManageDomain });
+      const captured = await callToolWithCapture(
+        server,
+        'lookup_custom_domain_orchestrated',
+        { fqdn },
+        {
+          respond: () => {
+            throw new Error('lookup must not elicit');
+          },
+        },
+      );
+
+      expect(observedArgs).toEqual({ action: 'lookup', fqdn });
+      expect(captured.elicitations).toHaveLength(0);
+      expect(captured.toolResult.isError).toBeUndefined();
+      const parsed = parseStructured<ManageDomainResult>(captured.toolResult);
+      expect(parsed).toEqual({
+        action: 'lookup',
+        fqdn,
+        lease: { leaseUuid },
+      });
+    });
+
+    it('returns lease:null when the FQDN is unclaimed', async () => {
+      const fqdn = 'unclaimed.example.com';
+      const fakeManageDomain: AgentOrchestrators['manageDomain'] = async (
+        _args,
+        _cb,
+        _opts,
+      ): Promise<ManageDomainResult> => ({
+        action: 'lookup',
+        fqdn,
+        lease: null,
+      });
+
+      const server = makeServer({ manageDomain: fakeManageDomain });
+      const captured = await callToolWithCapture(
+        server,
+        'lookup_custom_domain_orchestrated',
+        { fqdn },
+        {
+          respond: () => {
+            throw new Error('lookup must not elicit');
+          },
+        },
+      );
+
+      expect(captured.toolResult.isError).toBeUndefined();
+      const parsed = parseStructured<ManageDomainResult>(captured.toolResult);
+      expect(parsed).toEqual({ action: 'lookup', fqdn, lease: null });
+    });
+
+    it('surfaces an empty-fqdn validation throw as INVALID_CONFIG', async () => {
+      // Validation lives in agent-core's `manageDomain` (validateArgs);
+      // pin that the wrapper surfaces the throw as the structured
+      // INVALID_CONFIG envelope rather than coercing to UNKNOWN.
+      const fakeManageDomain: AgentOrchestrators['manageDomain'] = async () => {
+        const { ManifestMCPError, ManifestMCPErrorCode } = await import(
+          '@manifest-network/manifest-mcp-core'
+        );
+        throw new ManifestMCPError(
+          ManifestMCPErrorCode.INVALID_CONFIG,
+          'manageDomain lookup: fqdn must be a non-empty string.',
+        );
+      };
+
+      const server = makeServer({ manageDomain: fakeManageDomain });
+      const captured = await callToolWithCapture(
+        server,
+        'lookup_custom_domain_orchestrated',
+        { fqdn: '' },
+        {
+          respond: () => {
+            throw new Error('lookup must not elicit');
+          },
+        },
+      );
+
+      expect(captured.toolResult.isError).toBe(true);
+      const parsed = JSON.parse(captured.toolResult.content[0].text) as {
+        code: string;
+        message: string;
+      };
+      expect(parsed.code).toBe('INVALID_CONFIG');
+    });
+
+    // Mirrors the troubleshoot pin (#5): the lookup factory must omit
+    // `onConfirm` — agent-core's `lookupDomain` never invokes one, and
+    // supplying it would re-introduce a dead-branch elicitation on a
+    // read-only path.
+    it('makeLookupDomainCallbacks does not supply onConfirm', async () => {
+      let observed: ManageDomainCallbacks | undefined;
+      const fakeManageDomain: AgentOrchestrators['manageDomain'] = async (
+        _args,
+        cb,
+        _opts,
+      ): Promise<ManageDomainResult> => {
+        observed = cb;
+        return {
+          action: 'lookup',
+          fqdn: 'app.example.com',
+          lease: { leaseUuid: 'lease-1' },
+        };
+      };
+      const server = makeServer({ manageDomain: fakeManageDomain });
+      await callToolWithCapture(
+        server,
+        'lookup_custom_domain_orchestrated',
+        { fqdn: 'app.example.com' },
+        { respond: () => ({ action: 'accept', content: {} }) },
+      );
+      expect(observed).toBeDefined();
+      expect(observed?.onConfirm).toBeUndefined();
+    });
   });
 
   // ─────────────────────────────────────────────────────────────────
@@ -1224,7 +1372,7 @@ describe('AgentMCPServer', () => {
   // | deploy_app_orchestrated                           | yes    |
   // | manage_domain_orchestrated  action=set            | yes    |
   // | manage_domain_orchestrated  action=clear          | yes    |
-  // | manage_domain_orchestrated  action=lookup         | NO     |
+  // | lookup_custom_domain_orchestrated                 | NO     |
   // | troubleshoot_deployment_orchestrated              | NO     |
   // | close_lease_orchestrated                          | yes    |
   // ─────────────────────────────────────────────────────────────────
@@ -1277,10 +1425,9 @@ describe('AgentMCPServer', () => {
         mustGuard: true,
       },
       {
-        label: 'manage_domain_orchestrated action=lookup',
-        toolName: 'manage_domain_orchestrated',
+        label: 'lookup_custom_domain_orchestrated',
+        toolName: 'lookup_custom_domain_orchestrated',
         args: {
-          action: 'lookup',
           fqdn: 'app.example.com',
         },
         orchestratorKey: 'manageDomain',
@@ -1289,8 +1436,7 @@ describe('AgentMCPServer', () => {
           manageDomain: (async () => ({
             action: 'lookup',
             fqdn: 'app.example.com',
-            leaseUuid: 'lease-1',
-            verified: true,
+            lease: { leaseUuid: 'lease-1' },
           })) as unknown as AgentOrchestrators['manageDomain'],
         }),
       },
