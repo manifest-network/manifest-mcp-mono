@@ -1,6 +1,6 @@
 # @manifest-network/manifest-mcp-agent
 
-MCP server wrapping [`@manifest-network/manifest-agent-core`](../agent-core/README.md) orchestration (deploy / manage-domain / troubleshoot / close-lease) via MCP **elicitation**. The four tools translate agent-core's typed `onPlan` / `onConfirm` / `onProgress` / `onFailure` callbacks into standard MCP `elicitation/create` requests and `notifications/progress` events, so any elicitation-capable host (Claude Code ≥ 2.1.76; the MCP elicitation spec was finalized in 2026) can drive the bidirectional flow over wire — no `AskUserQuestion`, no interactive stdin, no out-of-band channel.
+MCP server wrapping [`@manifest-network/manifest-agent-core`](../agent-core/README.md) orchestration (deploy / manage-domain / lookup-domain / troubleshoot / close-lease) via MCP **elicitation**. The three broadcasting tools translate agent-core's typed confirmation callbacks (`onConfirm`, plus `onPlan` for `deploy_app_orchestrated`) into standard MCP `elicitation/create` requests so any elicitation-capable host (Claude Code ≥ 2.1.76; the MCP elicitation spec was finalized in 2026) can drive the confirm flow over wire — no `AskUserQuestion`, no interactive stdin, no out-of-band channel. The read-only tools (lookup / troubleshoot) perform no elicitation — they emit only progress and failure/log notifications (`notifications/progress` + `notifications/message`) and run on any host.
 
 ## Installation
 
@@ -13,7 +13,8 @@ npm install @manifest-network/manifest-mcp-agent
 | Tool | agent-core function | Description |
 | ---- | ------------------- | ----------- |
 | `deploy_app_orchestrated` | `deployApp` | Plan → confirm → broadcast (fred atomic deploy: create-lease + manifest upload + optional set-domain) → persist manifest. Bidirectional recovery on partial-success via `onFailure(env, options)` → enum-of-`RecoveryOptionId` elicitation. |
-| `manage_domain_orchestrated` | `manageDomain` | `set` / `clear` / `lookup` a lease item's custom domain. `set` / `clear` confirm → broadcast → verify on-chain. `lookup` is a pure chain query. |
+| `manage_domain_orchestrated` | `manageDomain` | `set` / `clear` a lease item's custom domain. Confirm → broadcast → verify on-chain. |
+| `lookup_custom_domain_orchestrated` | `manageDomain` (lookup) | Reverse-resolve an FQDN to its owning lease. Pure chain query — no broadcast, zero elicitations. Returns the lease or `null` when unclaimed. |
 | `troubleshoot_deployment_orchestrated` | `troubleshootDeployment` | Markdown-formatted chain-side diagnostic report. No broadcast. |
 | `close_lease_orchestrated` | `closeLease` | Confirm → broadcast close-lease → verify terminal state on-chain. Permanent. |
 
@@ -25,11 +26,11 @@ MCP elicitation support is required **only for the tools/actions that prompt the
 
 The two read-only paths run **without** an elicitation-capable host:
 - `troubleshoot_deployment_orchestrated` — pure chain-side diagnostic report
-- `manage_domain_orchestrated` with `action='lookup'` — pure chain query for the FQDN currently bound to a lease item
+- `lookup_custom_domain_orchestrated` — pure chain query reverse-resolving an FQDN to its owning lease
 
 Verified hosts:
 - Claude Code ≥ 2.1.76 (full surface; elicitation-capable)
-- Any MCP host (read-only surface: troubleshoot + manage_domain lookup)
+- Any MCP host (read-only surface: troubleshoot + lookup_custom_domain)
 
 ## Environment variables
 

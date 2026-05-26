@@ -326,9 +326,11 @@ export function makeDeployCallbacks(
 // ----------------------------------------------------------------------
 
 /**
- * Build the callback object for `manageDomain`. Simple-form
- * `onFailure({ reason })`; one elicitation max per call (the
- * `onConfirm` block on `set` / `clear` — `lookup` skips confirmation).
+ * Build the callback object for `manageDomain` (set / clear only —
+ * the read-only lookup path now lives behind
+ * `lookup_custom_domain_orchestrated`, see ENG-212 +
+ * `makeLookupDomainCallbacks`). Simple-form `onFailure({ reason })`;
+ * exactly one elicitation per call (the `onConfirm` block).
  */
 export function makeManageDomainCallbacks(
   args: CallbackFactoryArgs,
@@ -349,6 +351,38 @@ export function makeManageDomainCallbacks(
     },
     onComplete: (_result: ManageDomainResult): void => {
       // Tool return value carries the structured success signal.
+    },
+    onFailure: async (failure: { reason: string }): Promise<void> => {
+      await emitFailure(extra, failure.reason);
+    },
+  };
+}
+
+// ----------------------------------------------------------------------
+// makeLookupDomainCallbacks
+// ----------------------------------------------------------------------
+
+/**
+ * Build the callback object for the read-only custom-domain lookup
+ * (`lookup_custom_domain_orchestrated`, ENG-212). Although it reuses
+ * agent-core's unified `manageDomain` (with `{ action: 'lookup' }`),
+ * the `lookupDomain` branch is a pure chain query — it never invokes
+ * `onConfirm`. Supplying one would be dead code, so this factory omits
+ * it entirely (mirrors `makeTroubleshootCallbacks`). The wrapper also
+ * skips `assertElicitationCapability` for this tool — see `index.ts`.
+ */
+export function makeLookupDomainCallbacks(
+  args: CallbackFactoryArgs,
+): ManageDomainCallbacks {
+  const { extra } = args;
+  let progressIndex = 0;
+  return {
+    onProgress: (event: ProgressEvent): void => {
+      const idx = progressIndex++;
+      void emitProgress(extra, event, idx);
+    },
+    onComplete: (_result: ManageDomainResult): void => {
+      // Tool return value carries the structured lookup result.
     },
     onFailure: async (failure: { reason: string }): Promise<void> => {
       await emitFailure(extra, failure.reason);

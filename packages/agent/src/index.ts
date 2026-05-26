@@ -3,12 +3,15 @@
  * `@manifest-network/manifest-agent-core` orchestration via MCP
  * elicitation + progress notifications.
  *
- * Four tools, each a thin adapter around one agent-core function:
+ * Five tools, each a thin adapter around an agent-core operation
+ * (two — `manage_domain_orchestrated` and `lookup_custom_domain_orchestrated`
+ * — wrap different branches of the same `manageDomain` function):
  *
  *   | MCP tool                             | agent-core function       |
  *   | ------------------------------------ | ------------------------- |
  *   | deploy_app_orchestrated              | deployApp                 |
- *   | manage_domain_orchestrated           | manageDomain              |
+ *   | manage_domain_orchestrated           | manageDomain (set/clear)  |
+ *   | lookup_custom_domain_orchestrated    | manageDomain (lookup)     |
  *   | troubleshoot_deployment_orchestrated | troubleshootDeployment    |
  *   | close_lease_orchestrated             | closeLease                |
  *
@@ -67,6 +70,7 @@ import { z } from 'zod';
 import {
   makeCloseLeaseCallbacks,
   makeDeployCallbacks,
+  makeLookupDomainCallbacks,
   makeManageDomainCallbacks,
   makeTroubleshootCallbacks,
 } from './callbacks.js';
@@ -335,36 +339,30 @@ export class AgentMCPServer {
       'manage_domain_orchestrated',
       {
         description:
-          'Orchestrate a lease custom-domain operation (set / clear / lookup) via ' +
-          '@manifest-network/manifest-agent-core. set/clear broadcast then verify ' +
-          'on-chain state; lookup is a pure chain query. Confirmation for ' +
-          'set/clear is gathered via MCP elicitation.',
+          'Orchestrate a lease custom-domain set/clear operation via ' +
+          '@manifest-network/manifest-agent-core. Broadcasts then verifies ' +
+          'on-chain state. Confirmation is gathered via MCP elicitation. ' +
+          '(For read-only reverse-lookup, use `lookup_custom_domain_orchestrated`.)',
         inputSchema: {
           action: z
-            .enum(['set', 'clear', 'lookup'])
-            .describe(
-              'Operation: set attaches an FQDN; clear releases it; lookup ' +
-                'reverse-resolves an FQDN to its owning lease.',
-            ),
+            .enum(['set', 'clear'])
+            .describe('Operation: set attaches an FQDN; clear releases it.'),
           lease_uuid: z
             .string()
             .optional()
-            .describe(
-              'Lease UUID. Required for action=set / action=clear. Ignored for action=lookup.',
-            ),
+            .describe('Lease UUID. Required for action=set / action=clear.'),
           fqdn: z
             .string()
             .optional()
             .describe(
-              'FQDN to attach or look up. Required for action=set and action=lookup. ' +
-                'Ignored for action=clear.',
+              'FQDN to attach. Required for action=set. Ignored for action=clear.',
             ),
           service_name: z
             .string()
             .optional()
             .describe(
               'Stack-lease service name addressing the LeaseItem. Optional for ' +
-                'set/clear on a 1-item legacy lease. Ignored for lookup.',
+                'set/clear on a 1-item legacy lease.',
             ),
         },
         // Re-setting the same value is a no-op (idempotent in the converged
@@ -374,9 +372,10 @@ export class AgentMCPServer {
           { destructive: false, idempotent: true },
         ),
         _meta: manifestMeta({
-          // Conservative: `lookup` doesn't broadcast, but the manage-domain
-          // action union is gated by the plugin's permission hook
-          // conservatively (PLAN.md §6.2 footnote).
+          // set/clear always broadcast a `MsgSetItemCustomDomain` tx.
+          // (Read-only lookup was split into
+          // `lookup_custom_domain_orchestrated` per ENG-212, so this flag
+          // is now unconditionally honest.)
           broadcasts: true,
           estimable: false,
         }),
@@ -384,18 +383,66 @@ export class AgentMCPServer {
       withErrorHandling(
         'manage_domain_orchestrated',
         async (args, extra: ToolExtra) => {
-          // Phase 2 (finding #10): only set/clear elicits — `lookup` is
-          // a pure chain query and must not require an elicitation-
-          // capable host.
-          if (args.action !== 'lookup') {
-            assertElicitationCapability(this.mcpServer.server);
-          }
+          assertElicitationCapability(this.mcpServer.server);
           const callbacks = makeManageDomainCallbacks({
             server: this.mcpServer.server,
             extra,
           });
           const opts = await this.buildChainOnlyOptions();
           const mdArgs = buildManageDomainArgs(args);
+          const result = await this.orchestrators.manageDomain(
+            mdArgs,
+            callbacks,
+            opts,
+          );
+          return structuredResponse(result, bigIntReplacer);
+        },
+      ),
+    );
+
+    // ── lookup_custom_domain_orchestrated ──
+    this.mcpServer.registerTool(
+      'lookup_custom_domain_orchestrated',
+      {
+        description:
+          'Reverse-resolve a custom-domain FQDN to its owning lease via ' +
+          '@manifest-network/manifest-agent-core (pure chain query — no broadcast, ' +
+          'zero elicitations; runs on hosts without MCP elicitation capability). ' +
+          'Returns the lease that has claimed the FQDN, or null when unclaimed.',
+        inputSchema: {
+          fqdn: z
+            .string()
+            .describe('FQDN to reverse-resolve (e.g. "app.example.com").'),
+        },
+        annotations: readOnlyAnnotations(
+          'Look up lease by custom domain (orchestrated)',
+        ),
+        _meta: manifestMeta({ broadcasts: false, estimable: false }),
+      },
+      withErrorHandling(
+        'lookup_custom_domain_orchestrated',
+        async (args, extra: ToolExtra) => {
+          // Guard at the wrapper so an empty/whitespace fqdn surfaces under
+          // the MCP tool name, not agent-core's internal `manageDomain`.
+          // agent-core trims internally, so only the non-empty check
+          // belongs here.
+          if (typeof args.fqdn !== 'string' || args.fqdn.trim() === '') {
+            throw new ManifestMCPError(
+              ManifestMCPErrorCode.INVALID_CONFIG,
+              'lookup_custom_domain_orchestrated: fqdn must be a non-empty string.',
+            );
+          }
+          // Pure chain query — no onConfirm, so skip the elicitation guard
+          // (mirrors troubleshoot_deployment_orchestrated).
+          const callbacks = makeLookupDomainCallbacks({
+            server: this.mcpServer.server,
+            extra,
+          });
+          const opts = await this.buildChainOnlyOptions();
+          const mdArgs: ManageDomainArgs = {
+            action: 'lookup',
+            fqdn: args.fqdn,
+          };
           const result = await this.orchestrators.manageDomain(
             mdArgs,
             callbacks,
@@ -514,7 +561,7 @@ export class AgentMCPServer {
 // ----------------------------------------------------------------------
 
 interface ManageDomainToolArgs {
-  action: 'set' | 'clear' | 'lookup';
+  action: 'set' | 'clear';
   lease_uuid?: string;
   fqdn?: string;
   service_name?: string;
@@ -547,14 +594,6 @@ function buildManageDomainArgs(args: ManageDomainToolArgs): ManageDomainArgs {
         leaseUuid: args.lease_uuid,
         ...(args.service_name ? { serviceName: args.service_name } : {}),
       };
-    case 'lookup':
-      if (!args.fqdn) {
-        throw new ManifestMCPError(
-          ManifestMCPErrorCode.INVALID_CONFIG,
-          'manage_domain_orchestrated: action=lookup requires fqdn.',
-        );
-      }
-      return { action: 'lookup', fqdn: args.fqdn };
   }
 }
 

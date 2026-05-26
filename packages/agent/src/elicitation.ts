@@ -80,8 +80,9 @@ export function assertElicitationCapability(server: Server): void {
 type RequestedSchema = ElicitRequestFormParams['requestedSchema'];
 
 /**
- * yes/no confirm schema (used by all four tools' `onConfirm` callback).
- * The recap block's `text` is passed verbatim as the elicitation
+ * yes/no confirm schema (used by the deploy / manage-domain / close-lease
+ * `onConfirm` callbacks — the read-only lookup + troubleshoot paths don't
+ * elicit). The recap block's `text` is passed verbatim as the elicitation
  * `message` (not part of the schema).
  */
 export function buildConfirmSchema(): RequestedSchema {
