@@ -3,7 +3,9 @@
  * `@manifest-network/manifest-agent-core` orchestration via MCP
  * elicitation + progress notifications.
  *
- * Five tools, each a thin adapter around one agent-core function:
+ * Five tools, each a thin adapter around an agent-core operation
+ * (two — `manage_domain_orchestrated` and `lookup_custom_domain_orchestrated`
+ * — wrap different branches of the same `manageDomain` function):
  *
  *   | MCP tool                             | agent-core function       |
  *   | ------------------------------------ | ------------------------- |
