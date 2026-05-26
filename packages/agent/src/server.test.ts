@@ -208,8 +208,8 @@ describe('AgentMCPServer', () => {
   // | ------------------------------------- | -------- | ----------- | ---------- | ---------- | --------- |
   // | deploy_app_orchestrated               | false    | false       | false      | true       | false     |
   // | manage_domain_orchestrated            | false    | false       | true       | true       | false     |
-  // | lookup_custom_domain_orchestrated     | true     | —           | —          | false      | false     |
-  // | troubleshoot_deployment_orchestrated  | true     | —           | —          | false      | false     |
+  // | lookup_custom_domain_orchestrated     | true     | —           | true       | false      | false     |
+  // | troubleshoot_deployment_orchestrated  | true     | —           | true       | false      | false     |
   // | close_lease_orchestrated              | false    | true        | true       | true       | false     |
   // ─────────────────────────────────────────────────────────────────
   describe('tool annotations + _meta.manifest', () => {
