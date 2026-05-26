@@ -420,10 +420,10 @@ export class AgentMCPServer {
       withErrorHandling(
         'lookup_custom_domain_orchestrated',
         async (args, extra: ToolExtra) => {
-          // Guard at the wrapper so the error surfaces under the MCP tool
-          // name (not agent-core's internal `manageDomain`); mirrors how
-          // set/clear validate via buildManageDomainArgs. agent-core trims
-          // internally, so only the non-empty check belongs here.
+          // Guard at the wrapper so an empty/whitespace fqdn surfaces under
+          // the MCP tool name, not agent-core's internal `manageDomain`.
+          // agent-core trims internally, so only the non-empty check
+          // belongs here.
           if (typeof args.fqdn !== 'string' || args.fqdn.trim() === '') {
             throw new ManifestMCPError(
               ManifestMCPErrorCode.INVALID_CONFIG,
