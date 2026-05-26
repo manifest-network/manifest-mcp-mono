@@ -1158,17 +1158,16 @@ describe('AgentMCPServer', () => {
       expect(parsed).toEqual({ action: 'lookup', fqdn, lease: null });
     });
 
-    it('surfaces an empty-fqdn validation throw as INVALID_CONFIG', async () => {
-      // Validation lives in agent-core's `manageDomain` (validateArgs);
-      // pin that the wrapper surfaces the throw as the structured
-      // INVALID_CONFIG envelope rather than coercing to UNKNOWN.
+    // The wrapper guards an empty/whitespace-only fqdn BEFORE reaching
+    // agent-core, surfacing the tool-named INVALID_CONFIG envelope rather
+    // than leaking agent-core's internal `manageDomain` function name.
+    it.each([
+      ['empty', ''],
+      ['whitespace-only', '   '],
+    ])('rejects %s fqdn with a tool-named INVALID_CONFIG before reaching agent-core', async (_label, fqdn) => {
       const fakeManageDomain: AgentOrchestrators['manageDomain'] = async () => {
-        const { ManifestMCPError, ManifestMCPErrorCode } = await import(
-          '@manifest-network/manifest-mcp-core'
-        );
-        throw new ManifestMCPError(
-          ManifestMCPErrorCode.INVALID_CONFIG,
-          'manageDomain lookup: fqdn must be a non-empty string.',
+        throw new Error(
+          'manageDomain must not be called when wrapper rejects empty fqdn',
         );
       };
 
@@ -1176,7 +1175,7 @@ describe('AgentMCPServer', () => {
       const captured = await callToolWithCapture(
         server,
         'lookup_custom_domain_orchestrated',
-        { fqdn: '' },
+        { fqdn },
         {
           respond: () => {
             throw new Error('lookup must not elicit');
@@ -1190,6 +1189,9 @@ describe('AgentMCPServer', () => {
         message: string;
       };
       expect(parsed.code).toBe('INVALID_CONFIG');
+      expect(parsed.message).toContain(
+        'lookup_custom_domain_orchestrated: fqdn must be a non-empty string.',
+      );
     });
 
     // Mirrors the troubleshoot pin (#5): the lookup factory must omit

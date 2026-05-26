@@ -1,6 +1,6 @@
 # @manifest-network/manifest-mcp-agent
 
-MCP server wrapping [`@manifest-network/manifest-agent-core`](../agent-core/README.md) orchestration (deploy / manage-domain / lookup-domain / troubleshoot / close-lease) via MCP **elicitation**. The five tools translate agent-core's typed `onPlan` / `onConfirm` / `onProgress` / `onFailure` callbacks into standard MCP `elicitation/create` requests and `notifications/progress` events, so any elicitation-capable host (Claude Code ≥ 2.1.76; the MCP elicitation spec was finalized in 2026) can drive the bidirectional flow over wire — no `AskUserQuestion`, no interactive stdin, no out-of-band channel.
+MCP server wrapping [`@manifest-network/manifest-agent-core`](../agent-core/README.md) orchestration (deploy / manage-domain / lookup-domain / troubleshoot / close-lease) via MCP **elicitation**. The three broadcasting tools translate agent-core's typed `onPlan` / `onConfirm` callbacks into standard MCP `elicitation/create` requests so any elicitation-capable host (Claude Code ≥ 2.1.76; the MCP elicitation spec was finalized in 2026) can drive the confirm flow over wire — no `AskUserQuestion`, no interactive stdin, no out-of-band channel. The read-only tools (lookup / troubleshoot) emit only `onProgress` / `notifications/progress` and run on any host.
 
 ## Installation
 
