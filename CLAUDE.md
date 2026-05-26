@@ -85,6 +85,7 @@ Both are advisory hints, not enforcement. The plugin's `PreToolUse` hook regex i
 - Input validation via helpers in `validation.ts` (`requireString`, `requireStringEnum`, `requireUuid`, `parseArgs`, `optionalBoolean`).
 - BigInt values serialized to strings via `bigIntReplacer` JSON replacer.
 - `@cosmjs/stargate` is overridden to `@manifest-network/stargate` (custom fork). See core `package.json` overrides.
+- `ipaddr.js` is force-pinned to `2.4.0` tree-wide via the root `package.json` `overrides`. The agent-core SSRF guard (`guarded-fetch.ts`) treats `ipaddr.js`'s `range()` as the sole source of truth (default-deny on any non-`'unicast'` label); proxy-addr (transitive via the MCP SDK → express) pulls `ipaddr.js@1.9.1`, whose stale RFC table misclassifies reserved ranges (e.g. `198.18.0.0/15`, `100::/64`) as `'unicast'` and would bypass the guard. Do not remove the override. (ENG-218)
 - Code formatting, linting, and import sorting enforced by Biome (see `biome.json`). Run `npm run check` before committing.
 - Regex matching: prefer `String.prototype.match()` over the corresponding `RegExp` instance method in regex-heavy code. The CI security hook flags certain RegExp-method patterns as shell-execution tokens (false-positive but blocking). See `packages/agent-core/src/internals/evaluate-readiness.ts` (the gasPrice parse — `inputs.gasPrice.match(GAS_PRICE_RE)`) for an in-source example with the rationale called out inline.
 
