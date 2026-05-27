@@ -56,9 +56,9 @@
     "dist"
   ],
   "dependencies": {
-    "@cosmjs/amino": "0.32.4",
-    "@cosmjs/encoding": "0.32.4",
-    "@cosmjs/proto-signing": "0.32.4",
+    "@cosmjs/amino": "0.39.0",
+    "@cosmjs/encoding": "0.39.0",
+    "@cosmjs/proto-signing": "0.39.0",
     "@cosmjs/stargate": "npm:@manifest-network/stargate@0.32.4-ll.3",
     "@manifest-network/manifestjs": "2.4.1",
     "@modelcontextprotocol/sdk": "1.27.1",
