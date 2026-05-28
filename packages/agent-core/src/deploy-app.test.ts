@@ -1206,6 +1206,216 @@ describe('deployApp replay — Copilot review fixes (PR #58 unresolved comments)
     });
   });
 
+  // ENG-185 sub-PR B item 1: with the real `evaluateReadiness` wired
+  // through the snake_case → camelCase translator, BOTH the initial-spec
+  // and the post-edit recall paths fire the `status === 'block'`
+  // short-circuit. Block conditions verified end-to-end:
+  //   - empty `wallet_balances` → block (rule #2 — wallet has no gas);
+  //   - requested SKU not in `available_sku_names` → block (rule #1).
+  // Tests assert: throw is INVALID_CONFIG with the expected message,
+  // fred's `deployApp` is NEVER called, and the orchestrator does NOT
+  // emit `deploy_app_broadcast`.
+  describe('ENG-185 #1: readiness block-short-circuit (initial + post-edit)', () => {
+    function readinessOk(): unknown {
+      return readFixture(
+        'skills',
+        'deploy-app',
+        '01-fast-path-active',
+        'input',
+        'readiness-response.json',
+      );
+    }
+
+    function readinessBlocking(): unknown {
+      // wallet_balances: [] is the simplest block trigger — evaluator's
+      // gas-balance rule fires `status: 'block'` with the
+      // `request_faucet` + `topup_wallet` actions.
+      const r = readinessOk() as Record<string, unknown>;
+      return { ...r, wallet_balances: [] };
+    }
+
+    it('initial-spec readiness=block → throws INVALID_CONFIG; fred.deployApp NEVER called', async () => {
+      const spec = readFixture(
+        'skills',
+        'deploy-app',
+        '01-fast-path-active',
+        'input',
+        'spec.json',
+      ) as DeploySpec;
+
+      const fred = await import('@manifest-network/manifest-mcp-fred');
+      vi.mocked(fred.checkDeploymentReadiness).mockResolvedValue(
+        readinessBlocking() as Awaited<
+          ReturnType<typeof fred.checkDeploymentReadiness>
+        >,
+      );
+
+      const baseCapture = captureCallbacks();
+      const { deployApp } = await import('./deploy-app.js');
+      const clientManager = makeMockClientManager();
+      const walletProvider = makeMockWalletProvider();
+
+      let err: unknown = null;
+      try {
+        await deployApp(spec, baseCapture.callbacks, {
+          clientManager: clientManager as unknown as Parameters<
+            typeof deployApp
+          >[2]['clientManager'],
+          walletProvider,
+        });
+      } catch (e) {
+        err = e;
+      }
+      expect(err).toBeInstanceOf(ManifestMCPError);
+      expect((err as ManifestMCPError).code).toBe(
+        ManifestMCPErrorCode.INVALID_CONFIG,
+      );
+      expect((err as Error).message).toContain('Readiness check failed');
+      // No broadcast — short-circuit fired before fred.deployApp.
+      expect(vi.mocked(fred.deployApp)).not.toHaveBeenCalled();
+      expect(
+        baseCapture.progress.some((e) => e.kind === 'deploy_app_broadcast'),
+      ).toBe(false);
+    });
+
+    it('post-edit readiness=block (initial ok) → throws INVALID_CONFIG on recall; fred.deployApp NEVER called', async () => {
+      const spec = readFixture(
+        'skills',
+        'deploy-app',
+        '01-fast-path-active',
+        'input',
+        'spec.json',
+      ) as DeploySpec;
+      const metaHashResp = readFixture(
+        'skills',
+        'deploy-app',
+        '01-fast-path-active',
+        'input',
+        'meta-hash-response.json',
+      ) as { manifest_json: string; meta_hash_hex: string };
+
+      const fred = await import('@manifest-network/manifest-mcp-fred');
+      // First call (initial spec) → ok; second call (post-edit recall) → block.
+      vi.mocked(fred.checkDeploymentReadiness)
+        .mockResolvedValueOnce(
+          readinessOk() as Awaited<
+            ReturnType<typeof fred.checkDeploymentReadiness>
+          >,
+        )
+        .mockResolvedValueOnce(
+          readinessBlocking() as Awaited<
+            ReturnType<typeof fred.checkDeploymentReadiness>
+          >,
+        );
+      vi.mocked(fred.buildManifestPreview).mockResolvedValue({
+        manifest_json: metaHashResp.manifest_json,
+        meta_hash_hex: metaHashResp.meta_hash_hex,
+      } as Awaited<ReturnType<typeof fred.buildManifestPreview>>);
+      const core = await import('@manifest-network/manifest-mcp-core');
+      vi.mocked(core.cosmosEstimateFee).mockResolvedValue({
+        module: 'billing',
+        subcommand: 'create-lease',
+        gasEstimate: '142000',
+        fee: { amount: [{ denom: 'umfx', amount: '2300' }], gas: '142000' },
+      } as Awaited<ReturnType<typeof core.cosmosEstimateFee>>);
+
+      const editedSpec: DeploySpec = {
+        image: 'docker.io/library/redis:7',
+        port: 6379,
+      } as DeploySpec;
+      const baseCapture = captureCallbacks();
+      const callbacks: DeployAppCallbacks = {
+        ...baseCapture.callbacks,
+        onPlan: async () => ({ kind: 'replace_spec', spec: editedSpec }),
+      };
+
+      const { deployApp } = await import('./deploy-app.js');
+      const clientManager = makeMockClientManager();
+      const walletProvider = makeMockWalletProvider();
+
+      let err: unknown = null;
+      try {
+        await deployApp(spec, callbacks, {
+          clientManager: clientManager as unknown as Parameters<
+            typeof deployApp
+          >[2]['clientManager'],
+          walletProvider,
+        });
+      } catch (e) {
+        err = e;
+      }
+
+      expect(err).toBeInstanceOf(ManifestMCPError);
+      expect((err as ManifestMCPError).code).toBe(
+        ManifestMCPErrorCode.INVALID_CONFIG,
+      );
+      // Post-edit message has a distinct prefix to differentiate from the
+      // initial-spec throw (deploy-app.ts L327-330 "Post-edit readiness
+      // check failed:").
+      expect((err as Error).message).toContain(
+        'Post-edit readiness check failed',
+      );
+      // Both readiness calls fired (initial ok → continue → recall block).
+      expect(vi.mocked(fred.checkDeploymentReadiness)).toHaveBeenCalledTimes(2);
+      // Two readiness_evaluated events emitted (initial + recall).
+      const readinessEvents = baseCapture.progress.filter(
+        (e) => e.kind === 'readiness_evaluated',
+      );
+      expect(readinessEvents).toHaveLength(2);
+      // No broadcast — short-circuit fired before fred.deployApp.
+      expect(vi.mocked(fred.deployApp)).not.toHaveBeenCalled();
+      expect(
+        baseCapture.progress.some((e) => e.kind === 'deploy_app_broadcast'),
+      ).toBe(false);
+    });
+
+    it('initial readiness=block → throws BEFORE the plan is rendered (no `deployment_plan_rendered` event)', async () => {
+      // Defensive: the block-short-circuit fires at L207, which sits
+      // BEFORE the plan-assembly + renderDeploymentPlan call. The
+      // orchestrator must NOT render a plan for a spec that already
+      // failed readiness — a rendered plan would suggest the deploy is
+      // actionable when it isn't.
+      const spec = readFixture(
+        'skills',
+        'deploy-app',
+        '01-fast-path-active',
+        'input',
+        'spec.json',
+      ) as DeploySpec;
+      const fred = await import('@manifest-network/manifest-mcp-fred');
+      vi.mocked(fred.checkDeploymentReadiness).mockResolvedValue(
+        readinessBlocking() as Awaited<
+          ReturnType<typeof fred.checkDeploymentReadiness>
+        >,
+      );
+
+      const baseCapture = captureCallbacks();
+      const { deployApp } = await import('./deploy-app.js');
+      const clientManager = makeMockClientManager();
+      const walletProvider = makeMockWalletProvider();
+
+      try {
+        await deployApp(spec, baseCapture.callbacks, {
+          clientManager: clientManager as unknown as Parameters<
+            typeof deployApp
+          >[2]['clientManager'],
+          walletProvider,
+        });
+      } catch {
+        // expected
+      }
+
+      expect(
+        baseCapture.progress.some((e) => e.kind === 'deployment_plan_rendered'),
+      ).toBe(false);
+      // The readiness_evaluated event DOES fire (the orchestrator emits
+      // it before the block check, so consumers see the verdict).
+      expect(
+        baseCapture.progress.some((e) => e.kind === 'readiness_evaluated'),
+      ).toBe(true);
+    });
+  });
+
   // Copilot review fix (PR #58 r3250192734): the FeeEstimate `gas` must
   // match the gas the `coins` were priced for (post-`gasMultiplier`),
   // not raw `gasEstimate`. Under the default 1.5x multiplier the prior

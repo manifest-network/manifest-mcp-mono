@@ -47,7 +47,6 @@ import {
 import {
   AuthTimestampTracker,
   buildManifestPreview,
-  type CheckDeploymentReadinessResult,
   checkDeploymentReadiness,
   createAuthToken,
   createLeaseDataSignMessage,
@@ -66,6 +65,7 @@ import {
   formatEndpointAsUrl,
   normalizeFredUrl,
 } from './internals/connection.js';
+import { evaluateReadinessFromFredResponse } from './internals/evaluate-readiness-from-fred.js';
 import { findSkuUuid } from './internals/find-sku-uuid.js';
 import {
   EMPTY_DENOM_MAP,
@@ -198,10 +198,11 @@ export async function deployApp(
   // `readiness` is `let`-bound because the post-edit recompute branch
   // re-evaluates it against the edited spec (Copilot r3267373084 — see
   // the recall block inside the `onPlan` `verdict !== 'confirm'` arm).
-  let readiness: Readiness = evaluateReadinessFromRaw(
+  let readiness: Readiness = evaluateReadinessFromFredResponse(
     readinessRaw,
     opts.clientManager.getConfig().gasPrice ?? '1umfx',
     denomMap,
+    tenantAddress,
   );
   callbacks.onProgress?.({ kind: 'readiness_evaluated', readiness });
   if (readiness.status === 'block') {
@@ -304,12 +305,12 @@ export async function deployApp(
       // which mis-renders the plan and may bypass a `status: 'block'`
       // condition specific to the edited shape.
       //
-      // ENG-185 #1 note: `evaluateReadinessFromRaw` is still the
-      // stub returning `'ok'` for all callers today (tracked in
-      // ENG-185 scope item #1). This recall wires the STRUCTURAL
-      // path now so when #1 replaces the stub, the post-edit
-      // block-short-circuit fires correctly across both paths
-      // (original-spec readiness + edited-spec readiness).
+      // ENG-185 #1 (sub-PR B): the always-`'ok'` stub
+      // `evaluateReadinessFromRaw` has been replaced by
+      // `evaluateReadinessFromFredResponse` (the canonical evaluator
+      // wired through the snake_case → camelCase translator). Both
+      // call sites now fire the `status === 'block'` short-circuit
+      // correctly (initial-spec L207 + post-edit recall below).
       const editedReadinessRaw = await checkDeploymentReadiness(
         queryClient,
         tenantAddress,
@@ -318,10 +319,11 @@ export async function deployApp(
           size: requestedSize(confirmedSpec),
         },
       );
-      readiness = evaluateReadinessFromRaw(
+      readiness = evaluateReadinessFromFredResponse(
         editedReadinessRaw,
         opts.clientManager.getConfig().gasPrice ?? '1umfx',
         denomMap,
+        tenantAddress,
       );
       callbacks.onProgress?.({ kind: 'readiness_evaluated', readiness });
       if (readiness.status === 'block') {
@@ -579,30 +581,6 @@ function customDomainOf(spec: DeploySpec): string | undefined {
 function customDomainServiceOf(spec: DeploySpec): string | undefined {
   if (isStackSpec(spec)) return (spec as StackSpec).serviceName;
   return undefined;
-}
-
-function evaluateReadinessFromRaw(
-  raw: CheckDeploymentReadinessResult,
-  gasPrice: string,
-  denomMap: DenomMap,
-): Readiness {
-  // Minimal mapping: PR-3-commit-B's evaluateReadiness consumer translates
-  // fred's raw readiness payload to the typed Readiness shape. The full
-  // mapping logic lives in `internals/evaluate-readiness.ts`; this helper
-  // wraps its invocation with the raw-shape adaption.
-  // Voidcoercion + denomMap pass-through; full evaluation in commit-A.
-  void gasPrice;
-  void denomMap;
-  const rawAny = raw as unknown as Record<string, unknown>;
-  return {
-    status: 'ok',
-    reasons: [],
-    suggestedActions: [],
-    walletBalances:
-      (rawAny.wallet_balances as Readiness['walletBalances']) ?? [],
-    credits: (rawAny.credits as Readiness['credits']) ?? null,
-    sku: (rawAny.sku as Readiness['sku']) ?? null,
-  };
 }
 
 async function estimateFees(
