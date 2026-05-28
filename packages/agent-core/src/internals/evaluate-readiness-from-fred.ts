@@ -75,6 +75,17 @@ export function evaluateReadinessFromFredResponse(
   denomMap: DenomMap,
   tenantAddress: string,
 ): Readiness {
+  // Union `raw.sku.name` into the names list (Copilot #3319670583).
+  // Fred caps `available_sku_names` at `MAX_SKU_NAMES_RETURNED = 50`
+  // (`packages/fred/src/tools/checkDeploymentReadiness.ts`); when the
+  // chain has >50 SKUs and the user's requested size falls past the
+  // slice, the evaluator's SKU-availability rule false-blocks even
+  // though fred already resolved the SKU into `raw.sku`. Folding
+  // `raw.sku.name` into the set closes the gap. Set handles dedupe
+  // (`raw.sku.name` may already be in the first-50 list).
+  const skuNames = new Set(raw.available_sku_names);
+  if (raw.sku !== null) skuNames.add(raw.sku.name);
+
   return evaluateReadiness({
     tenant: tenantAddress,
     image: raw.image,
@@ -82,7 +93,7 @@ export function evaluateReadinessFromFredResponse(
     walletBalances: toCoinArray(raw.wallet_balances),
     credits: translateCredits(raw),
     sku: translateSku(raw.sku),
-    availableSkuNames: [...raw.available_sku_names],
+    availableSkuNames: [...skuNames],
     gasPrice,
     denomMap,
   });

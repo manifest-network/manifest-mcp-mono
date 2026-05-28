@@ -270,8 +270,18 @@ describe('evaluateReadinessFromFredResponse — smoke-integrated through evaluat
     expect(out.suggestedActions).toContain('topup_wallet');
   });
 
-  it('returns status "block" when the requested SKU is not in available_sku_names', () => {
-    const raw = fredResponse({ available_sku_names: ['medium'] });
+  it('returns status "block" when the requested SKU is not in available_sku_names AND fred did not resolve it', () => {
+    // `raw.sku === null` mirrors fred's behavior when the requested
+    // `size` is genuinely not offered (no matching active SKU). With
+    // the Copilot #3319670583 sku-name union, `available_sku_names`
+    // alone no longer determines the block — `raw.sku.name` is unioned
+    // in. So this test now requires BOTH the names list to omit `size`
+    // AND fred to have failed resolution (`sku: null`) to verify the
+    // SKU-availability rule still fires when the SKU is truly absent.
+    const raw = fredResponse({
+      available_sku_names: ['medium'],
+      sku: null,
+    });
     const out = evaluateReadinessFromFredResponse(
       raw,
       '1umfx',
@@ -280,5 +290,87 @@ describe('evaluateReadinessFromFredResponse — smoke-integrated through evaluat
     );
     expect(out.status).toBe('block');
     expect(out.suggestedActions).toContain('pick_different_sku');
+  });
+});
+
+describe('evaluateReadinessFromFredResponse — sku-name union (Copilot #3319670583)', () => {
+  // Fred caps `available_sku_names` at MAX_SKU_NAMES_RETURNED = 50
+  // (`packages/fred/src/tools/checkDeploymentReadiness.ts`). When fred
+  // offers >50 SKUs and the user's requested size is past the slice
+  // boundary, the evaluator's SKU-availability rule
+  // (`evaluate-readiness.ts:133` — `!availableSkuNames.includes(size)`)
+  // false-blocks a valid deploy. Fred ALREADY resolved the user's
+  // requested SKU (it's on `raw.sku.name`), so the translator unions
+  // that name into the names set before handing off to the evaluator.
+
+  beforeEach(() => vi.clearAllMocks());
+
+  it('unions `raw.sku.name` into `availableSkuNames` so a fred-resolved SKU past the 50-name slice does not false-block', () => {
+    // Simulate the truncation: 'docker-xxlarge' is OFFERED by fred (it
+    // resolved `raw.sku` with that name), but the `available_sku_names`
+    // display list omits it (would have if real fred truncated past
+    // entry 50). Without the union the evaluator's SKU rule fires
+    // `status: 'block'` with "Requested SKU ... not currently offered";
+    // with the union the rule passes silently.
+    const raw = fredResponse({
+      size: 'docker-xxlarge',
+      sku: {
+        name: 'docker-xxlarge',
+        uuid: 'sku-uuid-xxlarge',
+        provider_uuid: 'prov-uuid-xxlarge',
+        active: true,
+        price: { denom: 'umfx', amount: '100' },
+      },
+      available_sku_names: ['docker-micro', 'docker-small'],
+    });
+    const out = evaluateReadinessFromFredResponse(
+      raw,
+      '1umfx',
+      EMPTY_DENOM_MAP,
+      'manifest1deadbeef',
+    );
+    // The SKU-availability rule must NOT have fired.
+    expect(
+      out.reasons.some((r) =>
+        /Requested SKU.*is not currently offered/i.test(r),
+      ),
+    ).toBe(false);
+    expect(out.suggestedActions).not.toContain('pick_different_sku');
+    // The rest of the canonical happy-path values are unchanged
+    // (wallet, credits, sku price), so the overall verdict is 'ok'.
+    expect(out.status).toBe('ok');
+  });
+
+  it('union via Set dedupes — when `raw.sku.name` is ALREADY in `available_sku_names`, no double-add', () => {
+    const raw = fredResponse({
+      // `'small'` appears in BOTH `available_sku_names` and `raw.sku.name`.
+      // The Set-backed union must dedupe — no double entry would mask a
+      // future bug where the size check compares lengths.
+      available_sku_names: ['small', 'medium'],
+    });
+    evaluateReadinessFromFredResponse(
+      raw,
+      '1umfx',
+      EMPTY_DENOM_MAP,
+      'manifest1deadbeef',
+    );
+    const input = vi.mocked(evalMod.evaluateReadiness).mock.calls[0]?.[0];
+    expect(input?.availableSkuNames).toEqual(['small', 'medium']);
+    expect(input?.availableSkuNames).toHaveLength(2);
+  });
+
+  it('no-op when `raw.sku === null` — does not add or crash', () => {
+    const raw = fredResponse({
+      sku: null,
+      available_sku_names: ['small', 'medium'],
+    });
+    evaluateReadinessFromFredResponse(
+      raw,
+      '1umfx',
+      EMPTY_DENOM_MAP,
+      'manifest1deadbeef',
+    );
+    const input = vi.mocked(evalMod.evaluateReadiness).mock.calls[0]?.[0];
+    expect(input?.availableSkuNames).toEqual(['small', 'medium']);
   });
 });
