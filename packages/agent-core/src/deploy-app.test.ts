@@ -1886,3 +1886,329 @@ describe('deployApp — applyPlanEdit edit_env validation (r3266642610)', () => 
     );
   });
 });
+
+// ENG-185 sub-PR C (item 3): two fee-estimation bugs in `estimateFees`.
+//
+//   Bug 1 (create-lease underestimation on stacks): the prior code always
+//   emitted a SINGLE item-arg to `cosmosEstimateFee`. fred's deploy-time
+//   logic (`packages/fred/src/tools/deployApp.ts:336-341`) creates N items
+//   for an N-service stack — one per service. Underestimating gas for an
+//   N-service stack as a 1-service lease is a real bug; the user's plan
+//   shows a fee that won't cover broadcast.
+//
+//   Bug 2 (service-mode args gated on customDomain): the prior code's
+//   gate was `isStackSpec(spec) && spec.serviceName`. But `spec.serviceName`
+//   is only present when the stack ALSO carries a customDomain (via
+//   validateSpec's coupling). A stack-without-customDomain therefore fell
+//   through to bare `${skuUuid}:1` (legacy-mode item args), which has a
+//   different gas profile from service-mode items per
+//   `x/billing/keeper/custom_domain.go`. The architect's prescription drops
+//   the gate entirely.
+//
+// Fix: mirror fred's deploy-time iteration verbatim — for a stack, one
+// `${skuUuid}:1:${name}` arg per service; for single-service, one bare
+// `${skuUuid}:1`. spec.serviceName presence is now irrelevant for fee
+// estimation (it still matters at broadcast, but fred owns that).
+//
+// Set-domain sentinel reason: the prior string referenced "approach-3
+// fallback deferred to PR-3.x" — misleading per the architect's
+// verdict-B chain analysis (chain rejects placeholder-UUID simulation
+// permanently, no TODO). Updated to the canonical short form
+// `'no representative lease for pre-broadcast simulation'`, which is
+// ALREADY pinned in `render-deployment-plan.test.ts:170` — same string
+// across producer + renderer test = no churn.
+describe('deployApp — estimateFees create-lease itemArgs (ENG-185 #3 bug 1+2)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  /**
+   * Setup helper: stub fred's readiness/preview + core's cosmosEstimateFee
+   * with the canonical happy-path values, then run `deployApp` with an
+   * `onPlan` callback that returns `'cancel'`. By the time `onPlan` fires,
+   * `estimateFees` has already invoked `cosmosEstimateFee` — we capture
+   * its 4th-positional `args` array and the rendered plan for assertion.
+   *
+   * `validateSpec` runs FIRST in `deployApp`, so the caller-supplied spec
+   * must be well-formed. Each test crafts its spec to satisfy that gate.
+   */
+  async function runUntilPlan(spec: DeploySpec): Promise<{
+    capturedPlan: Plan | null;
+    estimateFeeArgs: string[] | undefined;
+    err: unknown;
+  }> {
+    const readinessRaw = readFixture(
+      'skills',
+      'deploy-app',
+      '01-fast-path-active',
+      'input',
+      'readiness-response.json',
+    );
+    const metaHashResp = readFixture(
+      'skills',
+      'deploy-app',
+      '01-fast-path-active',
+      'input',
+      'meta-hash-response.json',
+    ) as { manifest_json: string; meta_hash_hex: string };
+
+    const fred = await import('@manifest-network/manifest-mcp-fred');
+    vi.mocked(fred.checkDeploymentReadiness).mockResolvedValue(
+      readinessRaw as unknown as Awaited<
+        ReturnType<typeof fred.checkDeploymentReadiness>
+      >,
+    );
+    vi.mocked(fred.buildManifestPreview).mockResolvedValue({
+      manifest_json: metaHashResp.manifest_json,
+      meta_hash_hex: metaHashResp.meta_hash_hex,
+    } as Awaited<ReturnType<typeof fred.buildManifestPreview>>);
+
+    const core = await import('@manifest-network/manifest-mcp-core');
+    vi.mocked(core.cosmosEstimateFee).mockResolvedValue({
+      module: 'billing',
+      subcommand: 'create-lease',
+      gasEstimate: '142000',
+      fee: { amount: [{ denom: 'umfx', amount: '2300' }], gas: '142000' },
+    } as Awaited<ReturnType<typeof core.cosmosEstimateFee>>);
+
+    let capturedPlan: Plan | null = null;
+    const baseCapture = captureCallbacks();
+    const callbacks: DeployAppCallbacks = {
+      ...baseCapture.callbacks,
+      // Capture-then-cancel: by this point estimateFees has run, plan is
+      // assembled, and the orchestrator throws INVALID_CONFIG on 'cancel'
+      // — which we swallow. Net: cheap path through the fee path only.
+      onPlan: async (p) => {
+        capturedPlan = p;
+        return 'cancel';
+      },
+    };
+
+    const { deployApp } = await import('./deploy-app.js');
+    const clientManager = makeMockClientManager();
+    const walletProvider = makeMockWalletProvider();
+
+    let err: unknown = null;
+    try {
+      await deployApp(spec, callbacks, {
+        clientManager: clientManager as unknown as Parameters<
+          typeof deployApp
+        >[2]['clientManager'],
+        walletProvider,
+      });
+    } catch (e) {
+      err = e;
+    }
+
+    // 4th positional arg to cosmosEstimateFee is the args[] array.
+    const estimateFeeArgs = vi.mocked(core.cosmosEstimateFee).mock
+      .calls[0]?.[3] as string[] | undefined;
+
+    return { capturedPlan, estimateFeeArgs, err };
+  }
+
+  it('single-service spec → 1 bare item-arg `<skuUuid>:1` (legacy mode)', async () => {
+    const spec: DeploySpec = {
+      image: 'docker.io/library/nginx:1.27',
+      port: 80,
+    } as DeploySpec;
+    const { estimateFeeArgs } = await runUntilPlan(spec);
+    expect(estimateFeeArgs).toBeDefined();
+    expect(estimateFeeArgs?.[0]).toBe('--meta-hash');
+    // Index 1 is the meta-hash hex; from index 2 onward are the item-args.
+    expect(estimateFeeArgs?.slice(2)).toEqual(['sku-uuid-fixture:1']);
+  });
+
+  it('3-service stack spec → 3 item-args, one `<skuUuid>:1:<name>` per service (bug 1)', async () => {
+    const spec: DeploySpec = {
+      services: {
+        web: { image: 'nginx:1.27', ports: [80] },
+        api: { image: 'node:20', ports: [3000] },
+        db: { image: 'postgres:16', ports: [5432] },
+      },
+    } as DeploySpec;
+    const { estimateFeeArgs } = await runUntilPlan(spec);
+    expect(estimateFeeArgs?.slice(2)).toEqual([
+      'sku-uuid-fixture:1:web',
+      'sku-uuid-fixture:1:api',
+      'sku-uuid-fixture:1:db',
+    ]);
+  });
+
+  it('1-service stack (NO customDomain) → 1 service-mode item-arg (bug 2 regression guard)', async () => {
+    // The PRIOR code did `isStackSpec(spec) && spec.serviceName` — and
+    // `spec.serviceName` is only present alongside customDomain. So a
+    // stack-without-customDomain fell through to bare `${skuUuid}:1`
+    // (legacy mode), even though fred would create service-mode items
+    // at broadcast time. THIS test is the regression guard for bug 2:
+    // the fix MUST emit `sku-uuid-fixture:1:web`, NOT `sku-uuid-fixture:1`.
+    const spec: DeploySpec = {
+      services: {
+        web: { image: 'nginx:1.27', ports: [80] },
+      },
+    } as DeploySpec;
+    const { estimateFeeArgs } = await runUntilPlan(spec);
+    expect(estimateFeeArgs?.slice(2)).toEqual(['sku-uuid-fixture:1:web']);
+    expect(estimateFeeArgs?.slice(2)).not.toEqual(['sku-uuid-fixture:1']);
+  });
+
+  it('stack WITH customDomain+serviceName → all services covered, customDomain target not privileged (bug 1+2)', async () => {
+    // Cross-check on the architect's prescription: spec.serviceName
+    // presence (here `'web'`) MUST NOT change the item-args — fred will
+    // still create one item per service at broadcast. The customDomain
+    // affects the set-domain TX, not create-lease.
+    const spec: DeploySpec = {
+      services: {
+        web: { image: 'nginx:1.27', ports: [80] },
+        api: { image: 'node:20', ports: [3000] },
+      },
+      customDomain: 'app.example.com',
+      serviceName: 'web',
+    } as DeploySpec;
+    const { estimateFeeArgs } = await runUntilPlan(spec);
+    expect(estimateFeeArgs?.slice(2)).toEqual([
+      'sku-uuid-fixture:1:web',
+      'sku-uuid-fixture:1:api',
+    ]);
+    // Defensive cross-check: BOTH service names appear; the args do NOT
+    // collapse to the single customDomain target.
+    const itemArgs = estimateFeeArgs?.slice(2) ?? [];
+    expect(itemArgs).toHaveLength(2);
+    expect(itemArgs.some((a) => a.endsWith(':web'))).toBe(true);
+    expect(itemArgs.some((a) => a.endsWith(':api'))).toBe(true);
+  });
+
+  it('cosmosEstimateFee called with `--meta-hash` prefix + the resolved hex digest', async () => {
+    // Regression guard for the meta-hash threading: must continue to pass
+    // the canonical `--meta-hash <hex>` prefix in front of the item-args
+    // (mirrors fred's create-lease tx at packages/fred/src/tools/deployApp.ts:363).
+    const spec: DeploySpec = {
+      image: 'docker.io/library/nginx:1.27',
+      port: 80,
+    } as DeploySpec;
+    const { estimateFeeArgs } = await runUntilPlan(spec);
+    expect(estimateFeeArgs?.[0]).toBe('--meta-hash');
+    expect(estimateFeeArgs?.[1]).toMatch(/^[0-9a-f]{64}$/);
+  });
+});
+
+describe('deployApp — estimateFees set-domain sentinel reason (ENG-185 #3)', () => {
+  // Architect's verdict B: chain rejects placeholder-UUID simulation of
+  // `MsgSetItemCustomDomain` (keeper calls `GetLease()` first, fails
+  // with ErrLeaseNotFound). The sentinel `{notEstimated: true, reason}`
+  // is the PERMANENT shape — not a TODO. The reason string was misleading
+  // (`'... deferred to PR-3.x'`); replaced with the canonical short form
+  // already pinned in `render-deployment-plan.test.ts:170`:
+  // `'no representative lease for pre-broadcast simulation'`.
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  async function captureFees(spec: DeploySpec): Promise<Plan['fees'] | null> {
+    const readinessRaw = readFixture(
+      'skills',
+      'deploy-app',
+      '01-fast-path-active',
+      'input',
+      'readiness-response.json',
+    );
+    const metaHashResp = readFixture(
+      'skills',
+      'deploy-app',
+      '01-fast-path-active',
+      'input',
+      'meta-hash-response.json',
+    ) as { manifest_json: string; meta_hash_hex: string };
+
+    const fred = await import('@manifest-network/manifest-mcp-fred');
+    vi.mocked(fred.checkDeploymentReadiness).mockResolvedValue(
+      readinessRaw as unknown as Awaited<
+        ReturnType<typeof fred.checkDeploymentReadiness>
+      >,
+    );
+    vi.mocked(fred.buildManifestPreview).mockResolvedValue({
+      manifest_json: metaHashResp.manifest_json,
+      meta_hash_hex: metaHashResp.meta_hash_hex,
+    } as Awaited<ReturnType<typeof fred.buildManifestPreview>>);
+
+    const core = await import('@manifest-network/manifest-mcp-core');
+    vi.mocked(core.cosmosEstimateFee).mockResolvedValue({
+      module: 'billing',
+      subcommand: 'create-lease',
+      gasEstimate: '142000',
+      fee: { amount: [{ denom: 'umfx', amount: '2300' }], gas: '142000' },
+    } as Awaited<ReturnType<typeof core.cosmosEstimateFee>>);
+
+    let capturedPlan: Plan | null = null;
+    const baseCapture = captureCallbacks();
+    const callbacks: DeployAppCallbacks = {
+      ...baseCapture.callbacks,
+      onPlan: async (p) => {
+        capturedPlan = p;
+        return 'cancel';
+      },
+    };
+
+    const { deployApp } = await import('./deploy-app.js');
+    const clientManager = makeMockClientManager();
+    const walletProvider = makeMockWalletProvider();
+    try {
+      await deployApp(spec, callbacks, {
+        clientManager: clientManager as unknown as Parameters<
+          typeof deployApp
+        >[2]['clientManager'],
+        walletProvider,
+      });
+    } catch {
+      // 'cancel' verdict throws INVALID_CONFIG; expected, swallow.
+    }
+    return capturedPlan === null ? null : (capturedPlan as Plan).fees;
+  }
+
+  it('emits the canonical short reason string when customDomain is set', async () => {
+    const spec: DeploySpec = {
+      image: 'docker.io/library/nginx:1.27',
+      port: 80,
+      customDomain: 'app.testnet.manifest.app',
+    } as DeploySpec;
+    const fees = await captureFees(spec);
+    expect(fees?.setDomain).toBeDefined();
+    expect(fees?.setDomain).toEqual({
+      notEstimated: true,
+      reason: 'no representative lease for pre-broadcast simulation',
+    });
+  });
+
+  it('does NOT emit a setDomain field when customDomain is absent', async () => {
+    const spec: DeploySpec = {
+      image: 'docker.io/library/nginx:1.27',
+      port: 80,
+    } as DeploySpec;
+    const fees = await captureFees(spec);
+    expect(fees?.setDomain).toBeUndefined();
+  });
+
+  it('reason string does NOT contain stale "approach-3" / "deferred to PR-3.x" wording', async () => {
+    // Anti-regression guard: the prior string referenced an internal
+    // tracking ID + implied a TODO. The architect's verdict B makes the
+    // sentinel permanent; future maintainers should not re-introduce
+    // misleading TODO-style language.
+    const spec: DeploySpec = {
+      image: 'docker.io/library/nginx:1.27',
+      port: 80,
+      customDomain: 'app.testnet.manifest.app',
+    } as DeploySpec;
+    const fees = await captureFees(spec);
+    const setDomain = fees?.setDomain;
+    expect(
+      setDomain !== undefined &&
+        'notEstimated' in setDomain &&
+        setDomain.notEstimated,
+    ).toBe(true);
+    if (setDomain !== undefined && 'notEstimated' in setDomain) {
+      expect(setDomain.reason).not.toMatch(/approach-3/i);
+      expect(setDomain.reason).not.toMatch(/deferred to PR-3/i);
+      expect(setDomain.reason).not.toMatch(/lease UUID unavailable/i);
+    }
+  });
+});
