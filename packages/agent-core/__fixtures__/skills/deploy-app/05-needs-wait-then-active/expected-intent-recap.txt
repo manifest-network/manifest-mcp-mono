@@ -1,0 +1,9 @@
+Deploying 1 service on testnet:
+  - docker.io/library/nginx:1.27
+
+Connectivity:
+  - 80 (ingress, default)
+
+Env:
+  - NGINX_HOST=example.com
+  - NGINX_PORT=80

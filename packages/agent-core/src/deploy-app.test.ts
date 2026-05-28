@@ -59,6 +59,7 @@ vi.mock('@manifest-network/manifest-mcp-fred', () => ({
   createLeaseDataSignMessage: vi.fn(() => 'lease-data-msg'),
   createSignMessage: vi.fn(() => 'sign-msg'),
   deployApp: vi.fn(),
+  waitForAppReady: vi.fn(),
 }));
 
 vi.mock('@manifest-network/manifest-mcp-core', async () => {
@@ -258,21 +259,14 @@ describe('deployApp replay — 01-fast-path-active', () => {
     expect(result.leaseState).toBe('LEASE_STATE_ACTIVE');
   });
 
-  it('F1 regression: terminal-state surfaces via classifier throw, not silent coercion to ACTIVE', async () => {
-    // QA F1: prior `leaseStateAsName` helper silently returned
-    // 'LEASE_STATE_ACTIVE' for any non-LEASE_STATE_-prefixed input
-    // (including unknown numeric ints). This regression test verifies
-    // the canonical `decode()` from lease-state.ts handles known numeric
-    // inputs and terminal-state passthrough correctly.
-    //
-    // Updated for Copilot review fix r3237308914 (assertion form per
-    // ENG-185 scope item #6): the orchestrator now routes the success-
-    // return path through `classifyDeployResponse`, which buckets
-    // terminal states (e.g. REJECTED) as outcome `'failed'`. PR-3
-    // throws `INVALID_CONFIG` with the classifier's `errorSummary` and
-    // an ENG-185 #6 reference (full FailureEnvelope routing deferred).
-    // Asserting on the THROWN error preserves the F1 spirit (REJECTED
-    // not silently coerced to ACTIVE) while honoring the new contract.
+  /**
+   * Shared scenario setup for the F1 regression — fred returns
+   * LEASE_STATE_REJECTED (numeric 4). Split into TWO tests per ENG-185
+   * sub-PR D architect's Q7 audit: one for the event-sequence claims
+   * (classifier event fires, app_ready_confirmed does NOT), one for the
+   * throw shape (TX_FAILED, REJECTED stateName + leaseUuid).
+   */
+  async function setupF1RejectedScenario() {
     const spec = readFixture(
       'skills',
       'deploy-app',
@@ -317,7 +311,6 @@ describe('deployApp replay — 01-fast-path-active', () => {
       connection: { instances: [] },
     } as unknown as Awaited<ReturnType<typeof fred.deployApp>>);
 
-    // fix-3: cosmosEstimateFee mock for the F1 regression flow.
     const core = await import('@manifest-network/manifest-mcp-core');
     vi.mocked(core.cosmosEstimateFee).mockResolvedValue({
       module: 'billing',
@@ -342,21 +335,18 @@ describe('deployApp replay — 01-fast-path-active', () => {
     } catch (err) {
       caughtErr = err;
     }
+    return { caughtErr, progress, completed, fred };
+  }
 
-    // F1 verdict: REJECTED surfaced via INVALID_CONFIG throw with the
-    // classifier's canonical `Lease ${uuid} reached terminal state
-    // ${name}` summary plus an ENG-185 #6 follow-up reference — not
-    // silently coerced to ACTIVE and not returned as a "successful"
-    // DeployResult.
-    expect(caughtErr).toBeInstanceOf(Error);
-    expect((caughtErr as Error).message).toContain('LEASE_STATE_REJECTED');
-    expect((caughtErr as Error).message).toContain(
-      '11111111-1111-4111-8111-111111111111',
-    );
-    expect((caughtErr as Error).message).toContain('ENG-185 scope item #6');
-    // Orchestrator emitted `deploy_response_classified: 'failed'` and did
-    // NOT emit `app_ready_confirmed` (the misleading event the prior
-    // hardcoded-`'active'` path always fired).
+  it("F1 regression: REJECTED classifier outcome fires deploy_response_classified('failed') and skips app_ready_confirmed", async () => {
+    // Preserves the original F1 spirit (REJECTED not silently coerced to
+    // ACTIVE) by asserting the event sequence: classifier outcome emitted
+    // BEFORE the throw, app_ready_confirmed NEVER fired, onComplete
+    // never invoked. Split from the throw-shape assertion per ENG-185
+    // sub-PR D architect's Q7 audit — different concerns (event surface
+    // vs error envelope) deserve separate tests.
+    const { progress, completed, fred } = await setupF1RejectedScenario();
+
     const classifiedEvents = progress.filter(
       (e) => e.kind === 'deploy_response_classified',
     );
@@ -366,8 +356,33 @@ describe('deployApp replay — 01-fast-path-active', () => {
         classifiedEvents[0].outcome,
     ).toBe('failed');
     expect(progress.some((e) => e.kind === 'app_ready_confirmed')).toBe(false);
+    // Polling MUST NOT fire for an outcome that's already 'failed'.
+    expect(progress.some((e) => e.kind === 'polling_for_readiness')).toBe(
+      false,
+    );
+    expect(vi.mocked(fred.waitForAppReady)).not.toHaveBeenCalled();
     // onComplete never fires when the orchestrator throws.
     expect(completed).toHaveLength(0);
+  });
+
+  it('F1 regression: REJECTED classifier outcome throws TX_FAILED with errorSummary', async () => {
+    // Sub-PR D upgrade: the prior assertion-form (INVALID_CONFIG + ENG-185
+    // scope item #6 deferral note) is replaced by the full routing
+    // contract — TX_FAILED with the classifier's canonical
+    // `Lease ${uuid} reached terminal state ${stateName}` errorSummary.
+    const { caughtErr } = await setupF1RejectedScenario();
+
+    expect(caughtErr).toBeInstanceOf(ManifestMCPError);
+    expect((caughtErr as ManifestMCPError).code).toBe(
+      ManifestMCPErrorCode.TX_FAILED,
+    );
+    expect((caughtErr as Error).message).toContain('LEASE_STATE_REJECTED');
+    expect((caughtErr as Error).message).toContain(
+      '11111111-1111-4111-8111-111111111111',
+    );
+    // Verdict B note: the misleading "ENG-185 scope item #6" deferral
+    // reference was removed when D landed the full routing.
+    expect((caughtErr as Error).message).not.toContain('ENG-185 scope item');
   });
 });
 
@@ -499,15 +514,16 @@ describe('deployApp replay — Copilot review fixes (PR #58 unresolved comments)
     expect(preEditBlock?.text).not.toBe(postEditBlock?.text);
   });
 
-  it('r3237308914: classifier-returns-`needs_wait` throws INVALID_CONFIG with ENG-185 #6 deferral note', async () => {
-    // fred returns a PENDING lease with no running instances:
-    // classifyDeployResponse → `'needs_wait'`. PR-3 assertion form
-    // (ENG-185 scope item #6) throws INVALID_CONFIG with the
-    // classifier's `stateName` plus the deferral reference. Full
-    // routing — polling `wait_for_app_ready`, emitting
-    // `polling_for_readiness` events — is the ENG-185 #6 follow-up.
-    // The classification event itself MUST fire before the throw so
-    // consumers see the intermediate state.
+  // ENG-185 sub-PR D: the prior `r3237308914` test asserted that
+  // needs_wait throws INVALID_CONFIG with an "ENG-185 #6 deferral" note —
+  // the textbook regression-guard inversion case once D lands the full
+  // routing. Per the MEMORY.md `regression-guard-inversion-lesson`, the
+  // architect's Q7 audit prescribed DELETE + REWRITE (not flip-in-place):
+  // the new contract is that needs_wait POLLS via waitForAppReady,
+  // emits one-or-more `polling_for_readiness` events, then fires
+  // `app_ready_confirmed` + falls through to onComplete success. This
+  // test pins that full happy path end-to-end.
+  it('needs_wait classifier outcome → waitForAppReady polls → app_ready_confirmed + onComplete', async () => {
     const spec = readFixture(
       'skills',
       'deploy-app',
@@ -540,8 +556,7 @@ describe('deployApp replay — Copilot review fixes (PR #58 unresolved comments)
       manifest_json: metaHashResp.manifest_json,
       meta_hash_hex: metaHashResp.meta_hash_hex,
     } as Awaited<ReturnType<typeof fred.buildManifestPreview>>);
-    // state 1 = PENDING (not terminal); empty connection. Classifier:
-    // not active, not terminal → `'needs_wait'`.
+    // Initial deploy returns PENDING (numeric 1, classifier → needs_wait).
     vi.mocked(fred.deployApp).mockResolvedValue({
       lease_uuid: '33333333-3333-4333-8333-333333333333',
       provider_uuid: '44444444-4444-4444-8444-444444444444',
@@ -549,6 +564,37 @@ describe('deployApp replay — Copilot review fixes (PR #58 unresolved comments)
       state: 1 as never,
       connection: { instances: [] },
     } as unknown as Awaited<ReturnType<typeof fred.deployApp>>);
+    // waitForAppReady synchronously fires onProgress twice (PENDING then
+    // ACTIVE samples) to exercise the polling_for_readiness emission,
+    // then resolves with ACTIVE + a running instance.
+    vi.mocked(fred.waitForAppReady).mockImplementation(
+      async (
+        _qc: unknown,
+        _addr: unknown,
+        leaseUuid: unknown,
+        _getAuthToken: unknown,
+        opts?: { onProgress?: (status: { state: number }) => void },
+      ) => {
+        opts?.onProgress?.({ state: 1 }); // PENDING sample
+        opts?.onProgress?.({ state: 3 }); // ACTIVE sample
+        return {
+          lease_uuid: leaseUuid as string,
+          provider_uuid: '44444444-4444-4444-8444-444444444444',
+          provider_url: 'https://provider.testnet.manifest.network',
+          state: 'LEASE_STATE_ACTIVE',
+          status: {
+            state: 3,
+            instances: [
+              {
+                status: 'running',
+                fqdn: 'app-33333333.testnet.manifest.app',
+                host_port: 30001,
+              },
+            ],
+          },
+        } as Awaited<ReturnType<typeof fred.waitForAppReady>>;
+      },
+    );
 
     const core = await import('@manifest-network/manifest-mcp-core');
     vi.mocked(core.cosmosEstimateFee).mockResolvedValue({
@@ -563,19 +609,16 @@ describe('deployApp replay — Copilot review fixes (PR #58 unresolved comments)
     const clientManager = makeMockClientManager();
     const walletProvider = makeMockWalletProvider();
 
-    let caughtErr: unknown = null;
-    try {
-      await deployApp(spec, callbacks, {
-        clientManager: clientManager as unknown as Parameters<
-          typeof deployApp
-        >[2]['clientManager'],
-        walletProvider,
-      });
-    } catch (err) {
-      caughtErr = err;
-    }
+    const result = await deployApp(spec, callbacks, {
+      clientManager: clientManager as unknown as Parameters<
+        typeof deployApp
+      >[2]['clientManager'],
+      walletProvider,
+    });
 
-    // Classifier outcome surfaced as `'needs_wait'` BEFORE the throw.
+    // Exactly ONE deploy_response_classified event (the initial bucket).
+    // Defense-in-depth #2 (post-poll re-classify) is internal — it MUST
+    // NOT emit a second deploy_response_classified event.
     const classifiedEvents = progress.filter(
       (e) => e.kind === 'deploy_response_classified',
     );
@@ -584,17 +627,50 @@ describe('deployApp replay — Copilot review fixes (PR #58 unresolved comments)
       classifiedEvents[0]?.kind === 'deploy_response_classified' &&
         classifiedEvents[0].outcome,
     ).toBe('needs_wait');
-    // PR-3 assertion form: throw INVALID_CONFIG with the classifier's
-    // stateName + ENG-185 #6 deferral reference. Full routing (poll
-    // wait_for_app_ready, emit polling_for_readiness) lives in #6.
-    expect(caughtErr).toBeInstanceOf(Error);
-    expect((caughtErr as Error).message).toContain('LEASE_STATE_PENDING');
-    expect((caughtErr as Error).message).toContain('ENG-185 scope item #6');
-    // `app_ready_confirmed` MUST NOT fire — the prior hardcoded-`'active'`
-    // path would have lied here.
-    expect(progress.some((e) => e.kind === 'app_ready_confirmed')).toBe(false);
-    // onComplete never fires when the orchestrator throws.
-    expect(completed).toHaveLength(0);
+
+    // At least one polling_for_readiness event with the expected payload
+    // shape (leaseUuid, numeric attempt, numeric elapsedMs).
+    const pollEvents = progress.filter(
+      (e) => e.kind === 'polling_for_readiness',
+    );
+    expect(pollEvents.length).toBeGreaterThanOrEqual(1);
+    const firstPoll = pollEvents[0];
+    if (firstPoll?.kind === 'polling_for_readiness') {
+      expect(firstPoll.leaseUuid).toBe('33333333-3333-4333-8333-333333333333');
+      expect(typeof firstPoll.attempt).toBe('number');
+      expect(firstPoll.attempt).toBeGreaterThanOrEqual(1);
+      expect(typeof firstPoll.elapsedMs).toBe('number');
+      expect(firstPoll.elapsedMs).toBeGreaterThanOrEqual(0);
+    }
+
+    // Strict ordering (Risk 7 from architect's report): polling MUST
+    // happen BEFORE app_ready_confirmed; classifier event MUST come
+    // before polling.
+    const pollIdx = progress.findIndex(
+      (e) => e.kind === 'polling_for_readiness',
+    );
+    const readyIdx = progress.findIndex(
+      (e) => e.kind === 'app_ready_confirmed',
+    );
+    const classifyIdx = progress.findIndex(
+      (e) => e.kind === 'deploy_response_classified',
+    );
+    expect(classifyIdx).toBeGreaterThanOrEqual(0);
+    expect(pollIdx).toBeGreaterThan(classifyIdx);
+    expect(readyIdx).toBeGreaterThan(pollIdx);
+
+    // app_ready_confirmed carries the leaseUuid from the post-poll
+    // (merged) fredResult.
+    const readyEvent = progress.find((e) => e.kind === 'app_ready_confirmed');
+    if (readyEvent?.kind === 'app_ready_confirmed') {
+      expect(readyEvent.leaseUuid).toBe('33333333-3333-4333-8333-333333333333');
+    }
+
+    // onComplete fires with the final ACTIVE result.
+    expect(completed).toHaveLength(1);
+    expect(completed[0]?.leaseState).toBe('LEASE_STATE_ACTIVE');
+    expect(result.leaseState).toBe('LEASE_STATE_ACTIVE');
+    expect(result.leaseUuid).toBe('33333333-3333-4333-8333-333333333333');
   });
 
   it('r3248900328: walletProvider/clientManager address mismatch throws INVALID_CONFIG before any chain I/O', async () => {
@@ -1016,10 +1092,12 @@ describe('deployApp replay — Copilot review fixes (PR #58 unresolved comments)
       const { caughtErr, fred } = await buildEditScenario(validReplacement);
 
       // The mocked fred.deployApp returns `{}` which the classifier
-      // routes to `'failed'` → orchestrator throws INVALID_CONFIG with
-      // ENG-185 #6 reference. That's fine — we only care that the
-      // throw is NOT a post-edit-validation failure (i.e., the
-      // recompute fired and we got past validateSpec).
+      // routes to `'failed'` (no lease_uuid → outcome failed). Per
+      // ENG-185 sub-PR D the orchestrator now throws TX_FAILED with the
+      // classifier's `deploy_app returned no lease_uuid` errorSummary.
+      // That's fine — we only care that the throw is NOT a post-edit-
+      // validation failure (i.e., the recompute fired and we got past
+      // validateSpec).
       expect(caughtErr).toBeInstanceOf(Error);
       expect((caughtErr as Error).message).not.toContain(
         'Post-edit spec failed validation',
@@ -1109,8 +1187,8 @@ describe('deployApp replay — Copilot review fixes (PR #58 unresolved comments)
         });
       } catch {
         // fredResult `{}` → classifier `'failed'` → orchestrator throws
-        // INVALID_CONFIG. Irrelevant; we only care about the readiness
-        // call count.
+        // TX_FAILED (sub-PR D full routing). Irrelevant; we only care
+        // about the readiness call count.
       }
 
       // ONE call against the original spec (image: nginx, size: small),
@@ -1194,7 +1272,7 @@ describe('deployApp replay — Copilot review fixes (PR #58 unresolved comments)
           walletProvider,
         });
       } catch {
-        // Same as above — classifier throw from `{}` fredResult.
+        // Same as above — classifier throw (TX_FAILED) from `{}` fredResult.
       }
 
       // No edit → no recall.
@@ -1496,8 +1574,8 @@ describe('deployApp replay — Copilot review fixes (PR #58 unresolved comments)
         });
       } catch {
         // fredResult is `{}` → classifier `'failed'` → orchestrator
-        // throws INVALID_CONFIG. Irrelevant; we only need the
-        // captured Plan from the onPlan callback.
+        // throws TX_FAILED (sub-PR D full routing). Irrelevant; we
+        // only need the captured Plan from the onPlan callback.
       }
 
       expect(capturedPlan).toBeDefined();
@@ -2210,5 +2288,607 @@ describe('deployApp — estimateFees set-domain sentinel reason (ENG-185 #3)', (
       expect(setDomain.reason).not.toMatch(/deferred to PR-3/i);
       expect(setDomain.reason).not.toMatch(/lease UUID unavailable/i);
     }
+  });
+});
+
+// ENG-185 sub-PR D — fixture-driven integration tests for the full
+// classifier routing. Each test loads its fixture's JSON, drives the
+// orchestrator end-to-end, and asserts the variant-specific event
+// sequence and throw shape. Mirrors the `01-fast-path-active` test
+// pattern; new fixtures live under
+// `__fixtures__/skills/deploy-app/{05,06,07}-*`.
+describe('deployApp replay — ENG-185 sub-PR D fixtures (05/06/07)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('05-needs-wait-then-active: PENDING → poll → ACTIVE; sequenced events; onComplete fires', async () => {
+    const spec = readFixture(
+      'skills',
+      'deploy-app',
+      '05-needs-wait-then-active',
+      'input',
+      'spec.json',
+    ) as DeploySpec;
+    const readinessRaw = readFixture(
+      'skills',
+      'deploy-app',
+      '05-needs-wait-then-active',
+      'input',
+      'readiness-response.json',
+    );
+    const metaHashResp = readFixture(
+      'skills',
+      'deploy-app',
+      '05-needs-wait-then-active',
+      'input',
+      'meta-hash-response.json',
+    ) as { manifest_json: string; meta_hash_hex: string };
+    const deployResp = readFixture(
+      'skills',
+      'deploy-app',
+      '05-needs-wait-then-active',
+      'input',
+      'deploy-response.json',
+    ) as Record<string, unknown>;
+    const waitResp = readFixture(
+      'skills',
+      'deploy-app',
+      '05-needs-wait-then-active',
+      'input',
+      'wait-for-app-ready-response.json',
+    ) as Record<string, unknown>;
+    const feeResp = readFixture(
+      'skills',
+      'deploy-app',
+      '05-needs-wait-then-active',
+      'input',
+      'fee-response.json',
+    ) as { fee: { amount: { denom: string; amount: string }[]; gas: string } };
+
+    const fred = await import('@manifest-network/manifest-mcp-fred');
+    vi.mocked(fred.checkDeploymentReadiness).mockResolvedValue(
+      readinessRaw as unknown as Awaited<
+        ReturnType<typeof fred.checkDeploymentReadiness>
+      >,
+    );
+    vi.mocked(fred.buildManifestPreview).mockResolvedValue({
+      manifest_json: metaHashResp.manifest_json,
+      meta_hash_hex: metaHashResp.meta_hash_hex,
+    } as Awaited<ReturnType<typeof fred.buildManifestPreview>>);
+    // Initial deploy returns PENDING string state per the fixture.
+    vi.mocked(fred.deployApp).mockResolvedValue({
+      lease_uuid: deployResp.lease_uuid as string,
+      provider_uuid: deployResp.provider_uuid as string,
+      provider_url: deployResp.provider_url as string,
+      state: deployResp.state as never,
+      connection: deployResp.connection,
+    } as unknown as Awaited<ReturnType<typeof fred.deployApp>>);
+    // waitForAppReady fires onProgress twice (PENDING + ACTIVE samples)
+    // then returns the fixture's post-poll ACTIVE result.
+    vi.mocked(fred.waitForAppReady).mockImplementation(
+      async (
+        _qc: unknown,
+        _addr: unknown,
+        _leaseUuid: unknown,
+        _getAuthToken: unknown,
+        opts?: { onProgress?: (status: { state: number }) => void },
+      ) => {
+        opts?.onProgress?.({ state: 1 });
+        opts?.onProgress?.({ state: 3 });
+        return waitResp as unknown as Awaited<
+          ReturnType<typeof fred.waitForAppReady>
+        >;
+      },
+    );
+    const core = await import('@manifest-network/manifest-mcp-core');
+    vi.mocked(core.cosmosEstimateFee).mockResolvedValue({
+      module: 'billing',
+      subcommand: 'create-lease',
+      gasEstimate: feeResp.fee.gas,
+      fee: feeResp.fee,
+    } as Awaited<ReturnType<typeof core.cosmosEstimateFee>>);
+
+    const { callbacks, progress, completed } = captureCallbacks();
+    const { deployApp } = await import('./deploy-app.js');
+    const clientManager = makeMockClientManager();
+    const walletProvider = makeMockWalletProvider();
+
+    const result = await deployApp(spec, callbacks, {
+      clientManager: clientManager as unknown as Parameters<
+        typeof deployApp
+      >[2]['clientManager'],
+      walletProvider,
+    });
+
+    // Risk-7 strict ordering: classify < poll < ready, and exactly ONE
+    // classifier event (no re-emission after the post-poll Defense #2
+    // re-classification).
+    const classifyIdxs = progress
+      .map((e, i) => (e.kind === 'deploy_response_classified' ? i : -1))
+      .filter((i) => i >= 0);
+    expect(classifyIdxs).toHaveLength(1);
+    const pollIdxs = progress
+      .map((e, i) => (e.kind === 'polling_for_readiness' ? i : -1))
+      .filter((i) => i >= 0);
+    expect(pollIdxs.length).toBeGreaterThanOrEqual(1);
+    const readyIdx = progress.findIndex(
+      (e) => e.kind === 'app_ready_confirmed',
+    );
+    expect(readyIdx).toBeGreaterThanOrEqual(0);
+    expect(pollIdxs[0]).toBeGreaterThan(classifyIdxs[0] as number);
+    expect(readyIdx).toBeGreaterThan(pollIdxs[pollIdxs.length - 1] as number);
+
+    // Classifier emitted 'needs_wait' (the initial bucket).
+    const classifyEvent = progress[classifyIdxs[0] as number];
+    if (classifyEvent?.kind === 'deploy_response_classified') {
+      expect(classifyEvent.outcome).toBe('needs_wait');
+    }
+
+    // onComplete fires with the merged post-poll ACTIVE state.
+    expect(completed).toHaveLength(1);
+    expect(result.leaseState).toBe('LEASE_STATE_ACTIVE');
+    expect(result.leaseUuid).toBe(deployResp.lease_uuid as string);
+    expect(vi.mocked(fred.waitForAppReady)).toHaveBeenCalledTimes(1);
+  });
+
+  it('06-classifier-failed-terminal: REJECTED → TX_FAILED throw; no polling; no app_ready_confirmed', async () => {
+    const spec = readFixture(
+      'skills',
+      'deploy-app',
+      '06-classifier-failed-terminal',
+      'input',
+      'spec.json',
+    ) as DeploySpec;
+    const readinessRaw = readFixture(
+      'skills',
+      'deploy-app',
+      '06-classifier-failed-terminal',
+      'input',
+      'readiness-response.json',
+    );
+    const metaHashResp = readFixture(
+      'skills',
+      'deploy-app',
+      '06-classifier-failed-terminal',
+      'input',
+      'meta-hash-response.json',
+    ) as { manifest_json: string; meta_hash_hex: string };
+    const deployResp = readFixture(
+      'skills',
+      'deploy-app',
+      '06-classifier-failed-terminal',
+      'input',
+      'deploy-response.json',
+    ) as Record<string, unknown>;
+
+    const fred = await import('@manifest-network/manifest-mcp-fred');
+    vi.mocked(fred.checkDeploymentReadiness).mockResolvedValue(
+      readinessRaw as unknown as Awaited<
+        ReturnType<typeof fred.checkDeploymentReadiness>
+      >,
+    );
+    vi.mocked(fred.buildManifestPreview).mockResolvedValue({
+      manifest_json: metaHashResp.manifest_json,
+      meta_hash_hex: metaHashResp.meta_hash_hex,
+    } as Awaited<ReturnType<typeof fred.buildManifestPreview>>);
+    vi.mocked(fred.deployApp).mockResolvedValue({
+      lease_uuid: deployResp.lease_uuid as string,
+      provider_uuid: deployResp.provider_uuid as string,
+      provider_url: deployResp.provider_url as string,
+      state: deployResp.state as never,
+      connection: deployResp.connection,
+    } as unknown as Awaited<ReturnType<typeof fred.deployApp>>);
+    const core = await import('@manifest-network/manifest-mcp-core');
+    vi.mocked(core.cosmosEstimateFee).mockResolvedValue({
+      module: 'billing',
+      subcommand: 'create-lease',
+      gasEstimate: '142000',
+      fee: { amount: [{ denom: 'umfx', amount: '2300' }], gas: '142000' },
+    } as Awaited<ReturnType<typeof core.cosmosEstimateFee>>);
+
+    const { callbacks, progress, completed } = captureCallbacks();
+    const { deployApp } = await import('./deploy-app.js');
+    const clientManager = makeMockClientManager();
+    const walletProvider = makeMockWalletProvider();
+
+    let caughtErr: unknown = null;
+    try {
+      await deployApp(spec, callbacks, {
+        clientManager: clientManager as unknown as Parameters<
+          typeof deployApp
+        >[2]['clientManager'],
+        walletProvider,
+      });
+    } catch (err) {
+      caughtErr = err;
+    }
+
+    expect(caughtErr).toBeInstanceOf(ManifestMCPError);
+    expect((caughtErr as ManifestMCPError).code).toBe(
+      ManifestMCPErrorCode.TX_FAILED,
+    );
+    expect((caughtErr as Error).message).toContain('LEASE_STATE_REJECTED');
+    expect((caughtErr as Error).message).toContain(
+      deployResp.lease_uuid as string,
+    );
+    expect(progress.some((e) => e.kind === 'polling_for_readiness')).toBe(
+      false,
+    );
+    expect(progress.some((e) => e.kind === 'app_ready_confirmed')).toBe(false);
+    expect(vi.mocked(fred.waitForAppReady)).not.toHaveBeenCalled();
+    expect(completed).toHaveLength(0);
+  });
+
+  it('07-classifier-failed-no-lease-uuid: missing lease_uuid → TX_FAILED throw with no-uuid summary', async () => {
+    const spec = readFixture(
+      'skills',
+      'deploy-app',
+      '07-classifier-failed-no-lease-uuid',
+      'input',
+      'spec.json',
+    ) as DeploySpec;
+    const readinessRaw = readFixture(
+      'skills',
+      'deploy-app',
+      '07-classifier-failed-no-lease-uuid',
+      'input',
+      'readiness-response.json',
+    );
+    const metaHashResp = readFixture(
+      'skills',
+      'deploy-app',
+      '07-classifier-failed-no-lease-uuid',
+      'input',
+      'meta-hash-response.json',
+    ) as { manifest_json: string; meta_hash_hex: string };
+    const deployResp = readFixture(
+      'skills',
+      'deploy-app',
+      '07-classifier-failed-no-lease-uuid',
+      'input',
+      'deploy-response.json',
+    ) as Record<string, unknown>;
+
+    const fred = await import('@manifest-network/manifest-mcp-fred');
+    vi.mocked(fred.checkDeploymentReadiness).mockResolvedValue(
+      readinessRaw as unknown as Awaited<
+        ReturnType<typeof fred.checkDeploymentReadiness>
+      >,
+    );
+    vi.mocked(fred.buildManifestPreview).mockResolvedValue({
+      manifest_json: metaHashResp.manifest_json,
+      meta_hash_hex: metaHashResp.meta_hash_hex,
+    } as Awaited<ReturnType<typeof fred.buildManifestPreview>>);
+    // Fixture's deploy-response.json deliberately omits `lease_uuid`.
+    vi.mocked(fred.deployApp).mockResolvedValue(
+      deployResp as unknown as Awaited<ReturnType<typeof fred.deployApp>>,
+    );
+    const core = await import('@manifest-network/manifest-mcp-core');
+    vi.mocked(core.cosmosEstimateFee).mockResolvedValue({
+      module: 'billing',
+      subcommand: 'create-lease',
+      gasEstimate: '142000',
+      fee: { amount: [{ denom: 'umfx', amount: '2300' }], gas: '142000' },
+    } as Awaited<ReturnType<typeof core.cosmosEstimateFee>>);
+
+    const { callbacks, progress, completed } = captureCallbacks();
+    const { deployApp } = await import('./deploy-app.js');
+    const clientManager = makeMockClientManager();
+    const walletProvider = makeMockWalletProvider();
+
+    let caughtErr: unknown = null;
+    try {
+      await deployApp(spec, callbacks, {
+        clientManager: clientManager as unknown as Parameters<
+          typeof deployApp
+        >[2]['clientManager'],
+        walletProvider,
+      });
+    } catch (err) {
+      caughtErr = err;
+    }
+
+    expect(caughtErr).toBeInstanceOf(ManifestMCPError);
+    expect((caughtErr as ManifestMCPError).code).toBe(
+      ManifestMCPErrorCode.TX_FAILED,
+    );
+    expect((caughtErr as Error).message).toContain(
+      'deploy_app returned no lease_uuid',
+    );
+    expect(progress.some((e) => e.kind === 'polling_for_readiness')).toBe(
+      false,
+    );
+    expect(progress.some((e) => e.kind === 'app_ready_confirmed')).toBe(false);
+    expect(vi.mocked(fred.waitForAppReady)).not.toHaveBeenCalled();
+    expect(completed).toHaveLength(0);
+  });
+});
+
+// ENG-185 sub-PR D — Defense-in-depth tests.
+describe('deployApp — sub-PR D defense-in-depth', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  // Defense #2: post-poll re-classification. waitForAppReady can exit on
+  // state === ACTIVE without verifying running instances. A rare provider-
+  // side race could leave us at ACTIVE with empty connection. The
+  // orchestrator re-classifies the post-poll response; if outcome isn't
+  // 'active', it throws TX_FAILED rather than misleadingly emitting
+  // app_ready_confirmed + onComplete on a non-running deploy.
+  it('Defense #2: waitForAppReady returns ACTIVE with no instances → re-classify → TX_FAILED', async () => {
+    const spec = readFixture(
+      'skills',
+      'deploy-app',
+      '01-fast-path-active',
+      'input',
+      'spec.json',
+    ) as DeploySpec;
+    const readinessRaw = readFixture(
+      'skills',
+      'deploy-app',
+      '01-fast-path-active',
+      'input',
+      'readiness-response.json',
+    );
+    const metaHashResp = readFixture(
+      'skills',
+      'deploy-app',
+      '01-fast-path-active',
+      'input',
+      'meta-hash-response.json',
+    ) as { manifest_json: string; meta_hash_hex: string };
+
+    const fred = await import('@manifest-network/manifest-mcp-fred');
+    vi.mocked(fred.checkDeploymentReadiness).mockResolvedValue(
+      readinessRaw as unknown as Awaited<
+        ReturnType<typeof fred.checkDeploymentReadiness>
+      >,
+    );
+    vi.mocked(fred.buildManifestPreview).mockResolvedValue({
+      manifest_json: metaHashResp.manifest_json,
+      meta_hash_hex: metaHashResp.meta_hash_hex,
+    } as Awaited<ReturnType<typeof fred.buildManifestPreview>>);
+    // Initial deploy → PENDING (classifier → needs_wait).
+    vi.mocked(fred.deployApp).mockResolvedValue({
+      lease_uuid: '99999999-9999-4999-8999-999999999999',
+      provider_uuid: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      provider_url: 'https://provider.testnet.manifest.network',
+      state: 1 as never,
+      connection: { instances: [] },
+    } as unknown as Awaited<ReturnType<typeof fred.deployApp>>);
+    // waitForAppReady returns ACTIVE state but EMPTY instances/services.
+    // Classifier sees state==ACTIVE + no running instances → needs_wait.
+    vi.mocked(fred.waitForAppReady).mockResolvedValue({
+      lease_uuid: '99999999-9999-4999-8999-999999999999',
+      provider_uuid: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      provider_url: 'https://provider.testnet.manifest.network',
+      state: 'LEASE_STATE_ACTIVE',
+      status: { state: 3, instances: [] },
+    } as Awaited<ReturnType<typeof fred.waitForAppReady>>);
+    const core = await import('@manifest-network/manifest-mcp-core');
+    vi.mocked(core.cosmosEstimateFee).mockResolvedValue({
+      module: 'billing',
+      subcommand: 'create-lease',
+      gasEstimate: '142000',
+      fee: { amount: [{ denom: 'umfx', amount: '2300' }], gas: '142000' },
+    } as Awaited<ReturnType<typeof core.cosmosEstimateFee>>);
+
+    const { callbacks, progress, completed } = captureCallbacks();
+    const { deployApp } = await import('./deploy-app.js');
+    const clientManager = makeMockClientManager();
+    const walletProvider = makeMockWalletProvider();
+
+    let caughtErr: unknown = null;
+    try {
+      await deployApp(spec, callbacks, {
+        clientManager: clientManager as unknown as Parameters<
+          typeof deployApp
+        >[2]['clientManager'],
+        walletProvider,
+      });
+    } catch (err) {
+      caughtErr = err;
+    }
+
+    expect(caughtErr).toBeInstanceOf(ManifestMCPError);
+    expect((caughtErr as ManifestMCPError).code).toBe(
+      ManifestMCPErrorCode.TX_FAILED,
+    );
+    // The re-classification emits 'needs_wait' on the post-poll response.
+    // The orchestrator throws with a message that surfaces the post-poll
+    // outcome.
+    expect((caughtErr as Error).message).toMatch(
+      /post-poll|needs_wait|wait_for_app_ready/i,
+    );
+    // app_ready_confirmed MUST NOT fire — Defense #2 caught the race.
+    expect(progress.some((e) => e.kind === 'app_ready_confirmed')).toBe(false);
+    expect(completed).toHaveLength(0);
+    // Polling did happen (at least one classifier event + waitForAppReady
+    // was called); we expect exactly ONE deploy_response_classified
+    // event (the initial; the re-classify is internal and MUST NOT emit
+    // a second event).
+    const classifyEvents = progress.filter(
+      (e) => e.kind === 'deploy_response_classified',
+    );
+    expect(classifyEvents).toHaveLength(1);
+    expect(vi.mocked(fred.waitForAppReady)).toHaveBeenCalledTimes(1);
+  });
+
+  // Defense #1 (unreachable defense): the classifier guarantees needs_wait
+  // → leaseUuid is non-empty. There's no clean way to construct an
+  // exercising input without mocking the classifier module-wide (which
+  // would invasively affect every other test). Skipping per the
+  // architect's brief allowance; documented for future-proofing.
+  it.skip('Defense #1: needs_wait without leaseUuid → INVALID_CONFIG (unreachable, skipped)', () => {});
+
+  // waitForAppReady error path: ProviderApiError / timeout / chain-
+  // terminal-state → orchestrator wraps as TX_FAILED with the lease
+  // uuid in the message.
+  it('waitForAppReady throws → TX_FAILED with leaseUuid + underlying message', async () => {
+    const spec = readFixture(
+      'skills',
+      'deploy-app',
+      '01-fast-path-active',
+      'input',
+      'spec.json',
+    ) as DeploySpec;
+    const readinessRaw = readFixture(
+      'skills',
+      'deploy-app',
+      '01-fast-path-active',
+      'input',
+      'readiness-response.json',
+    );
+    const metaHashResp = readFixture(
+      'skills',
+      'deploy-app',
+      '01-fast-path-active',
+      'input',
+      'meta-hash-response.json',
+    ) as { manifest_json: string; meta_hash_hex: string };
+
+    const fred = await import('@manifest-network/manifest-mcp-fred');
+    vi.mocked(fred.checkDeploymentReadiness).mockResolvedValue(
+      readinessRaw as unknown as Awaited<
+        ReturnType<typeof fred.checkDeploymentReadiness>
+      >,
+    );
+    vi.mocked(fred.buildManifestPreview).mockResolvedValue({
+      manifest_json: metaHashResp.manifest_json,
+      meta_hash_hex: metaHashResp.meta_hash_hex,
+    } as Awaited<ReturnType<typeof fred.buildManifestPreview>>);
+    vi.mocked(fred.deployApp).mockResolvedValue({
+      lease_uuid: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+      provider_uuid: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+      provider_url: 'https://provider.testnet.manifest.network',
+      state: 1 as never,
+      connection: { instances: [] },
+    } as unknown as Awaited<ReturnType<typeof fred.deployApp>>);
+    // Simulate a ProviderApiError / timeout.
+    vi.mocked(fred.waitForAppReady).mockRejectedValue(
+      new Error('polling timed out after 480000ms'),
+    );
+    const core = await import('@manifest-network/manifest-mcp-core');
+    vi.mocked(core.cosmosEstimateFee).mockResolvedValue({
+      module: 'billing',
+      subcommand: 'create-lease',
+      gasEstimate: '142000',
+      fee: { amount: [{ denom: 'umfx', amount: '2300' }], gas: '142000' },
+    } as Awaited<ReturnType<typeof core.cosmosEstimateFee>>);
+
+    const { callbacks, completed } = captureCallbacks();
+    const { deployApp } = await import('./deploy-app.js');
+    const clientManager = makeMockClientManager();
+    const walletProvider = makeMockWalletProvider();
+
+    let caughtErr: unknown = null;
+    try {
+      await deployApp(spec, callbacks, {
+        clientManager: clientManager as unknown as Parameters<
+          typeof deployApp
+        >[2]['clientManager'],
+        walletProvider,
+      });
+    } catch (err) {
+      caughtErr = err;
+    }
+
+    expect(caughtErr).toBeInstanceOf(ManifestMCPError);
+    expect((caughtErr as ManifestMCPError).code).toBe(
+      ManifestMCPErrorCode.TX_FAILED,
+    );
+    expect((caughtErr as Error).message).toContain(
+      'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+    );
+    expect((caughtErr as Error).message).toContain('polling timed out');
+    expect(completed).toHaveLength(0);
+  });
+
+  // waitForReadyTimeoutMs override is forwarded to waitForAppReady.
+  it('opts.waitForReadyTimeoutMs is forwarded to waitForAppReady (default = 480_000)', async () => {
+    const spec = readFixture(
+      'skills',
+      'deploy-app',
+      '01-fast-path-active',
+      'input',
+      'spec.json',
+    ) as DeploySpec;
+    const readinessRaw = readFixture(
+      'skills',
+      'deploy-app',
+      '01-fast-path-active',
+      'input',
+      'readiness-response.json',
+    );
+    const metaHashResp = readFixture(
+      'skills',
+      'deploy-app',
+      '01-fast-path-active',
+      'input',
+      'meta-hash-response.json',
+    ) as { manifest_json: string; meta_hash_hex: string };
+
+    const fred = await import('@manifest-network/manifest-mcp-fred');
+    vi.mocked(fred.checkDeploymentReadiness).mockResolvedValue(
+      readinessRaw as unknown as Awaited<
+        ReturnType<typeof fred.checkDeploymentReadiness>
+      >,
+    );
+    vi.mocked(fred.buildManifestPreview).mockResolvedValue({
+      manifest_json: metaHashResp.manifest_json,
+      meta_hash_hex: metaHashResp.meta_hash_hex,
+    } as Awaited<ReturnType<typeof fred.buildManifestPreview>>);
+    vi.mocked(fred.deployApp).mockResolvedValue({
+      lease_uuid: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
+      provider_uuid: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',
+      provider_url: 'https://provider.testnet.manifest.network',
+      state: 1 as never,
+      connection: { instances: [] },
+    } as unknown as Awaited<ReturnType<typeof fred.deployApp>>);
+    vi.mocked(fred.waitForAppReady).mockResolvedValue({
+      lease_uuid: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
+      provider_uuid: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',
+      provider_url: 'https://provider.testnet.manifest.network',
+      state: 'LEASE_STATE_ACTIVE',
+      status: {
+        state: 3,
+        instances: [
+          {
+            status: 'running',
+            fqdn: 'app-dddddddd.testnet.manifest.app',
+            host_port: 30001,
+          },
+        ],
+      },
+    } as Awaited<ReturnType<typeof fred.waitForAppReady>>);
+    const core = await import('@manifest-network/manifest-mcp-core');
+    vi.mocked(core.cosmosEstimateFee).mockResolvedValue({
+      module: 'billing',
+      subcommand: 'create-lease',
+      gasEstimate: '142000',
+      fee: { amount: [{ denom: 'umfx', amount: '2300' }], gas: '142000' },
+    } as Awaited<ReturnType<typeof core.cosmosEstimateFee>>);
+
+    const { callbacks } = captureCallbacks();
+    const { deployApp } = await import('./deploy-app.js');
+    const clientManager = makeMockClientManager();
+    const walletProvider = makeMockWalletProvider();
+
+    // Override the timeout.
+    await deployApp(spec, callbacks, {
+      clientManager: clientManager as unknown as Parameters<
+        typeof deployApp
+      >[2]['clientManager'],
+      walletProvider,
+      waitForReadyTimeoutMs: 60_000,
+    });
+
+    // Assert waitForAppReady received the override (5th positional arg is opts).
+    const callArgs = vi.mocked(fred.waitForAppReady).mock.calls[0];
+    expect(callArgs).toBeDefined();
+    const opts = callArgs?.[4] as { timeoutMs?: number } | undefined;
+    expect(opts?.timeoutMs).toBe(60_000);
   });
 });

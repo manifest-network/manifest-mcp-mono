@@ -1,0 +1,10 @@
+Deployment plan (documentation only — derived from input/* + the canonical Plan shape)
+
+Service:                docker.io/library/nginx:1.27
+Size:                   small
+Ports:                  80
+Env keys:               NGINX_HOST, NGINX_PORT
+Custom domain:          (none)
+Meta hash:              6e1670ec56b86c3feea27755205c5f9972dc3e80e58a6936a17e2c63953e6baf
+
+Tx fee (create-lease):  2300 umfx @ 142000 gas

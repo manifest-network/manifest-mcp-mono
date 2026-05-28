@@ -1,0 +1,10 @@
+{
+  "status": "ok",
+  "reasons": [],
+  "suggestedActions": [],
+  "walletBalances": [{ "denom": "umfx", "amount": "10000000" }],
+  "credits": {
+    "availableBalances": [{ "denom": "umfx", "amount": "50000000000" }]
+  },
+  "sku": { "name": "small", "price": { "denom": "umfx", "amount": "1000" } }
+}

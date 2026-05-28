@@ -127,6 +127,15 @@ export interface DeployAppOptions extends AgentCoreRuntime {
    * "save-fail still emits success" contract.
    */
   dataDir?: string;
+  /**
+   * Optional override for the `wait_for_app_ready` polling timeout (in
+   * milliseconds). Defaults to 480_000 (8 minutes) — generous for
+   * first-time provisioning (image pulls, k8s scheduling); fred's own
+   * default of 120_000 is too aggressive for cold-start providers.
+   * Set lower in tests to exercise timeout paths without slowing the
+   * suite.
+   */
+  waitForReadyTimeoutMs?: number;
 }
 
 /**
@@ -261,6 +270,13 @@ export type ProgressEvent =
   | {
       kind: 'deploy_response_classified';
       outcome: 'active' | 'needs_wait' | 'failed';
+    }
+  | {
+      kind: 'polling_for_readiness';
+      leaseUuid: string;
+      attempt: number;
+      elapsedMs: number;
+      state?: LeaseStateName;
     }
   | { kind: 'app_ready_confirmed'; leaseUuid: string }
   | { kind: 'manifest_saved'; leaseUuid: string; manifestPath: string }

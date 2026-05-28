@@ -53,13 +53,17 @@ import {
   createSignMessage,
   type DeployAppResult as FredDeployAppResult,
   deployApp as fredDeployApp,
+  waitForAppReady,
 } from '@manifest-network/manifest-mcp-fred';
 import {
   buildFredDeployInput,
   buildManifestPreviewInput,
 } from './internals/build-fred-input.js';
 import { classifyDeployError } from './internals/classify-deploy-error.js';
-import { classifyDeployResponse } from './internals/classify-deploy-response.js';
+import {
+  classifyDeployResponse,
+  type DeployResponseShape,
+} from './internals/classify-deploy-response.js';
 import {
   extractRunningEndpoints,
   formatEndpointAsUrl,
@@ -427,12 +431,7 @@ export async function deployApp(
     return await handleBroadcastFailure(err, confirmedSpec, callbacks, opts);
   }
 
-  // --- Classify happy-path result ------------------------------------
-  // Copilot review fix (PR #58 r3237308914): use the canonical
-  // `classifyDeployResponse` rather than hardcoding `'active'`. The
-  // classifier inspects `state`, `connection`, and `lease_uuid` to bucket
-  // returns into `active | needs_wait | failed`.
-  //
+  // --- Classify happy-path result + full routing (ENG-185 sub-PR D) -
   // Architect's α-lock: fred returns after tx + manifest upload succeed,
   // NOT after the app is observably running. So `'needs_wait'` IS an
   // expected happy-path return shape (lease created, manifest uploaded,
@@ -440,36 +439,127 @@ export async function deployApp(
   // the terminal-state-on-return edge (e.g. REJECTED, when the chain
   // invalidated the lease between create and return).
   //
-  // PR-3 scope (this commit) implements the **assertion form** only —
-  // call the classifier and throw INVALID_CONFIG on any non-active
-  // outcome with the classifier's `errorSummary` / `stateName`. This
-  // removes the misleading hardcoded `'active'` event and gives callers
-  // a clear, typed signal that the outcome falls outside the active
-  // happy path.
-  //
-  // Full routing is deferred to ENG-185 scope item #6
-  // ("Happy-path classifier integration — `classifyDeployResponse`
-  // + needs_wait/failed routing"):
+  // Routing (per architect's Q7 pseudocode):
+  //   - `'failed'`     → throw TX_FAILED with the classifier's
+  //                      `errorSummary` (F3 pattern, no onFailure for
+  //                      this kind of failure — there's no recovery
+  //                      choice once fred returns a terminal-state
+  //                      response from a successful broadcast).
   //   - `'needs_wait'` → poll `wait_for_app_ready`, emit
-  //                      `polling_for_readiness` events.
-  //   - `'failed'`     → surface as `FailureEnvelope` through
-  //                      `onFailure` with recovery options.
-  const classification = classifyDeployResponse(fredResult);
+  //                      `polling_for_readiness` events per onProgress
+  //                      sample, then RE-classify the post-poll result
+  //                      (Defense #2 — rare provider race where
+  //                      pollLeaseUntilReady exits on state==ACTIVE
+  //                      without a running instance). On post-poll
+  //                      success, merge the polled fields back into
+  //                      `fredResult` so downstream DeployResult
+  //                      construction sees the final state/connection.
+  //   - `'active'`     → fall through to `app_ready_confirmed` + persist.
+  let classification = classifyDeployResponse(fredResult);
   callbacks.onProgress?.({
     kind: 'deploy_response_classified',
     outcome: classification.outcome,
   });
-  if (classification.outcome !== 'active') {
-    const detail =
+
+  if (classification.outcome === 'failed') {
+    // F3 pattern (mirrors handleBroadcastFailure's empty-options path):
+    // throw TX_FAILED directly; no onFailure invocation. The envelope
+    // is constructed for a future logging hook but otherwise unused.
+    const reason =
       classification.errorSummary ??
-      (classification.stateName !== undefined
-        ? `Lease ${classification.leaseUuid ?? '<no-uuid>'} returned non-active state ${classification.stateName}`
-        : `fred deployApp returned non-active outcome '${classification.outcome}'`);
-    throw new ManifestMCPError(
-      ManifestMCPErrorCode.INVALID_CONFIG,
-      `${detail}. Full routing (needs_wait → wait_for_app_ready polling; failed → FailureEnvelope) deferred to ENG-185 scope item #6.`,
-    );
+      `fred deployApp returned failed outcome for lease ${
+        classification.leaseUuid ?? '<no-uuid>'
+      }`;
+    const envelope: FailureEnvelope = { outcome: 'failed', reason };
+    void envelope;
+    throw new ManifestMCPError(ManifestMCPErrorCode.TX_FAILED, reason);
   }
+
+  if (classification.outcome === 'needs_wait') {
+    // Defense #1: classifier guarantees leaseUuid when needs_wait
+    // (`classify-deploy-response.ts`: !leaseUuid → outcome='failed'),
+    // but the TS type doesn't narrow it. Defensive throw documents
+    // the invariant for future maintainers + catches any classifier
+    // regression that would break the assumption.
+    if (!classification.leaseUuid) {
+      throw new ManifestMCPError(
+        ManifestMCPErrorCode.INVALID_CONFIG,
+        'Internal invariant: classifier returned needs_wait without leaseUuid.',
+      );
+    }
+    const leaseUuid = classification.leaseUuid;
+    const queryClient = await opts.clientManager.getQueryClient();
+    const pollStartMs = Date.now();
+    let attempt = 0;
+
+    let pollResult: Awaited<ReturnType<typeof waitForAppReady>>;
+    try {
+      pollResult = await waitForAppReady(
+        queryClient,
+        tenantAddress,
+        leaseUuid,
+        getAuthToken,
+        {
+          timeoutMs: opts.waitForReadyTimeoutMs ?? 480_000,
+          onProgress: (status) => {
+            attempt += 1;
+            const stateName = decodeLeaseState(status.state);
+            callbacks.onProgress?.({
+              kind: 'polling_for_readiness',
+              leaseUuid,
+              attempt,
+              elapsedMs: Date.now() - pollStartMs,
+              ...(stateName !== undefined ? { state: stateName } : {}),
+            });
+          },
+        },
+        opts.fetchFn,
+      );
+    } catch (err) {
+      // ProviderApiError / timeout / TerminalChainStateError → F3 route.
+      const reason =
+        err instanceof Error
+          ? `wait_for_app_ready failed for lease ${leaseUuid}: ${err.message}`
+          : `wait_for_app_ready failed for lease ${leaseUuid}: ${String(err)}`;
+      const envelope: FailureEnvelope = { outcome: 'failed', reason };
+      void envelope;
+      throw new ManifestMCPError(ManifestMCPErrorCode.TX_FAILED, reason);
+    }
+
+    // Defense #2: re-classify post-poll. `pollLeaseUntilReady` exits on
+    // state==ACTIVE but doesn't check running-instances; a rare provider-
+    // side race could leave us at ACTIVE with no instances → outcome
+    // 'needs_wait' on the re-classify. We treat that as TX_FAILED rather
+    // than misleadingly emitting app_ready_confirmed + onComplete on a
+    // non-running deploy.
+    const postPollResponse: DeployResponseShape = {
+      lease_uuid: pollResult.lease_uuid,
+      provider_uuid: pollResult.provider_uuid,
+      provider_url: pollResult.provider_url,
+      state: pollResult.state,
+      connection: pollResult.status,
+    };
+    classification = classifyDeployResponse(postPollResponse);
+    if (classification.outcome !== 'active') {
+      const reason =
+        classification.errorSummary ??
+        `wait_for_app_ready returned but post-poll classifier outcome is ${classification.outcome}`;
+      throw new ManifestMCPError(ManifestMCPErrorCode.TX_FAILED, reason);
+    }
+
+    // Merge post-poll fields back into `fredResult` so downstream
+    // DeployResult construction sees the final state + connection.
+    fredResult = {
+      ...fredResult,
+      lease_uuid: pollResult.lease_uuid,
+      provider_uuid: pollResult.provider_uuid,
+      provider_url: pollResult.provider_url,
+      state: pollResult.state as never,
+      connection: pollResult.status as never,
+    };
+  }
+
+  // 'active' (initial OR post-poll merge): emit + fall through to persist.
   callbacks.onProgress?.({
     kind: 'app_ready_confirmed',
     leaseUuid: fredResult.lease_uuid,

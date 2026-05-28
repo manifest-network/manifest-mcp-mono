@@ -1,0 +1,6 @@
+{
+  "fee": {
+    "amount": [{ "denom": "umfx", "amount": "2300" }],
+    "gas": "142000"
+  }
+}
