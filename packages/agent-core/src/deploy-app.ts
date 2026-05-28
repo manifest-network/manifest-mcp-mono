@@ -592,20 +592,30 @@ async function estimateFees(
   //   - REAL cosmosEstimateFee for create-lease (criterion-blocking).
   //   - SET-DOMAIN emits `{notEstimated: true, reason}` sentinel (the
   //     frozen-contract escape hatch designed for pre-broadcast lease-
-  //     UUID unavailability per ENG-128). Real set-domain pre-broadcast
-  //     estimation (approach-3 fallback) is PR-3.x scope.
+  //     UUID unavailability per ENG-128). Per ENG-185 #3 sub-PR C
+  //     (architect's verdict B): the chain rejects placeholder-UUID
+  //     simulation of `MsgSetItemCustomDomain` (keeper's `GetLease()`
+  //     fails first with ErrLeaseNotFound), so the sentinel is the
+  //     PERMANENT shape — not a TODO.
 
   const size = requestedSize(spec);
   const { skuUuid } = await findSkuUuid(opts.clientManager, size);
 
-  // Item-arg format `sku-uuid:quantity[:service-name]` (verified per
-  // Discipline V against packages/core/src/transactions/billing.ts:L102).
-  // Quantity = '1' for typical single-lease deploys; optional service-
-  // name applies to stack leases (custom-domain attachment context).
-  const itemArg =
-    isStackSpec(spec) && spec.serviceName
-      ? `${skuUuid}:1:${spec.serviceName}`
-      : `${skuUuid}:1`;
+  // ENG-185 #3 sub-PR C: mirror fred's deploy-time item creation verbatim
+  // (`packages/fred/src/tools/deployApp.ts:336-341`). Stack specs create
+  // ONE lease item per service (each with `${skuUuid}:1:${name}`); legacy
+  // single-service specs create one bare `${skuUuid}:1`. The prior gate
+  // on `spec.serviceName` underestimated multi-service stacks (only the
+  // domain-target service was billed) and accidentally collapsed stacks
+  // WITHOUT customDomain to legacy-mode args (`spec.serviceName` is only
+  // set alongside customDomain — bug 2).
+  //
+  // Storage SKU items (fred's `input.storage` path) are deliberately NOT
+  // handled here — agent-core's `DeploySpec` has no `storage` field,
+  // unlike fred's input contract.
+  const itemArgs: string[] = isStackSpec(spec)
+    ? Object.keys(spec.services).map((name) => `${skuUuid}:1:${name}`)
+    : [`${skuUuid}:1`];
 
   let createLeaseEstimate: Awaited<ReturnType<typeof cosmosEstimateFee>>;
   try {
@@ -613,7 +623,7 @@ async function estimateFees(
       opts.clientManager,
       'billing',
       'create-lease',
-      ['--meta-hash', metaHashHex, itemArg],
+      ['--meta-hash', metaHashHex, ...itemArgs],
     );
   } catch (err) {
     // Wrap the underlying failure with an agent-core-boundary message
@@ -655,10 +665,15 @@ async function estimateFees(
   };
 
   // set-domain: emit `{notEstimated: true, reason}` sentinel per
-  // architect-ratified counter-proposal. The frozen-contract type
-  // includes this discriminated variant precisely for pre-broadcast
-  // lease-UUID unavailability ("using the contract as designed, not
-  // papering over" per architect's framing).
+  // architect-ratified counter-proposal + ENG-185 #3 verdict B (the
+  // chain rejects placeholder-UUID simulation of `MsgSetItemCustomDomain`
+  // — keeper's `GetLease()` runs first and fails with ErrLeaseNotFound;
+  // verified against manifest-ledger v2.1.0). The frozen-contract type
+  // includes this discriminated variant precisely for this case.
+  //
+  // Reason string mirrors the canonical form already pinned in
+  // `internals/render-deployment-plan.test.ts` so producer + renderer
+  // share the same wording.
   const hasDomain = typeof customDomainOf(spec) === 'string';
   return {
     createLease,
@@ -666,8 +681,7 @@ async function estimateFees(
       ? {
           setDomain: {
             notEstimated: true,
-            reason:
-              'set-domain fee skipped — pre-broadcast lease UUID unavailable; full approach-3 fallback deferred to PR-3.x',
+            reason: 'no representative lease for pre-broadcast simulation',
           },
         }
       : {}),
