@@ -46,17 +46,19 @@ import {
 } from '@manifest-network/manifest-mcp-core';
 import {
   AuthTimestampTracker,
-  type BuildManifestPreviewInput,
   buildManifestPreview,
   type CheckDeploymentReadinessResult,
   checkDeploymentReadiness,
   createAuthToken,
   createLeaseDataSignMessage,
   createSignMessage,
-  type DeployAppInput as FredDeployAppInput,
   type DeployAppResult as FredDeployAppResult,
   deployApp as fredDeployApp,
 } from '@manifest-network/manifest-mcp-fred';
+import {
+  buildFredDeployInput,
+  buildManifestPreviewInput,
+} from './internals/build-fred-input.js';
 import { classifyDeployError } from './internals/classify-deploy-error.js';
 import { classifyDeployResponse } from './internals/classify-deploy-response.js';
 import {
@@ -603,30 +605,6 @@ function evaluateReadinessFromRaw(
   };
 }
 
-function buildManifestPreviewInput(
-  spec: DeploySpec,
-  size: string,
-): BuildManifestPreviewInput {
-  if (isStackSpec(spec)) {
-    return {
-      size,
-      services: spec.services,
-    } as unknown as BuildManifestPreviewInput;
-  }
-  const single = spec as SingleServiceSpec;
-  return {
-    size,
-    image: single.image,
-    port:
-      typeof single.port === 'number'
-        ? single.port
-        : Array.isArray(single.port)
-          ? single.port[0]
-          : undefined,
-    env: single.env,
-  } as unknown as BuildManifestPreviewInput;
-}
-
 async function estimateFees(
   opts: DeployAppOptions,
   spec: DeploySpec,
@@ -716,35 +694,6 @@ async function estimateFees(
         }
       : {}),
   };
-}
-
-function buildFredDeployInput(
-  spec: DeploySpec,
-  size: string,
-): FredDeployAppInput {
-  // Translate typed DeploySpec → fred's DeployAppInput. See fred's
-  // tools/deployApp.ts for the full input shape.
-  const base: Partial<FredDeployAppInput> = { size };
-  if (isStackSpec(spec)) {
-    base.services = spec.services as unknown as FredDeployAppInput['services'];
-  } else {
-    const single = spec as SingleServiceSpec;
-    base.image = single.image;
-    base.port =
-      typeof single.port === 'number'
-        ? single.port
-        : Array.isArray(single.port)
-          ? single.port[0]
-          : undefined;
-    base.env = single.env;
-  }
-  const customDomain = (spec as { customDomain?: string }).customDomain;
-  if (customDomain) {
-    base.customDomain = customDomain;
-    const svcName = customDomainServiceOf(spec);
-    if (svcName) base.serviceName = svcName;
-  }
-  return base as FredDeployAppInput;
 }
 
 function applyPlanEdit(
