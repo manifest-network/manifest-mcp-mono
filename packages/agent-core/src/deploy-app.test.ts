@@ -59,6 +59,10 @@ vi.mock('@manifest-network/manifest-mcp-fred', () => ({
   createLeaseDataSignMessage: vi.fn(() => 'lease-data-msg'),
   createSignMessage: vi.fn(() => 'sign-msg'),
   deployApp: vi.fn(),
+  fetchActiveLease: vi.fn(),
+  pollLeaseUntilReady: vi.fn(),
+  resolveProviderUrl: vi.fn(),
+  uploadLeaseData: vi.fn(),
   waitForAppReady: vi.fn(),
 }));
 
@@ -2923,5 +2927,333 @@ describe('deployApp — sub-PR D defense-in-depth', () => {
     expect(callArgs).toBeDefined();
     const opts = callArgs?.[4] as { timeoutMs?: number } | undefined;
     expect(opts?.timeoutMs).toBe(60_000);
+  });
+});
+
+// ENG-185 sub-PR E (item 5): `retry_set_domain` recovery decomposition.
+//
+// Before E: the recovery branch broadcast `setItemCustomDomain` then threw
+// TX_FAILED with "caller should re-run troubleshootDeployment to confirm
+// app readiness." But per the partial-success contract
+// (`render-partial-success-prompt.ts:88-91`), the manifest was NEVER
+// uploaded — no app is running — and troubleshoot is read-only. The retry
+// left the lease in a broken state.
+//
+// After E (per architect's Q5 verdict, human-approved): the retry path
+// completes the deployment by decomposing fred's atomic deploy into its
+// primitives — `setItemCustomDomain` → `uploadLeaseData` → `pollLeaseUntilReady`
+// → re-classify (Defense #2 parity from D) → DeployResult with onComplete.
+// Polling emission reuses D's canonical pattern verbatim; the primitive
+// itself is the lower-level `pollLeaseUntilReady` (not `waitForAppReady`)
+// per Copilot fix-1 (PR #71) to skip redundant on-chain queries.
+describe('deployApp — retry_set_domain decomposition (ENG-185 sub-PR E)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  /**
+   * Shared setup for the retry path: drives the orchestrator to the
+   * partial-success branch, then the `onFailure` callback picks
+   * `retry_set_domain` so the recovery dispatch fires.
+   */
+  async function setupRetryScenario(opts: {
+    setItemCustomDomain?: ReturnType<typeof vi.fn>;
+    uploadLeaseData?: ReturnType<typeof vi.fn>;
+    pollLeaseUntilReady?: ReturnType<typeof vi.fn>;
+  }) {
+    const spec = readFixture(
+      'skills',
+      'deploy-app',
+      '03-partial-success-set-domain-failed',
+      'input',
+      'spec.json',
+    ) as DeploySpec;
+    const readinessRaw = readFixture(
+      'skills',
+      'deploy-app',
+      '03-partial-success-set-domain-failed',
+      'input',
+      'readiness-response.json',
+    );
+    const metaHashResp = readFixture(
+      'skills',
+      'deploy-app',
+      '03-partial-success-set-domain-failed',
+      'input',
+      'meta-hash-response.json',
+    ) as { manifest_json: string; meta_hash_hex: string };
+    const leaseUuid = '11111111-1111-4111-8111-111111111111';
+    const providerUuid = '22222222-2222-4222-8222-222222222222';
+    const providerApiUrl = 'https://provider.testnet.manifest.network';
+    const fqdn = 'app-11111111.testnet.manifest.app';
+
+    const fred = await import('@manifest-network/manifest-mcp-fred');
+    vi.mocked(fred.checkDeploymentReadiness).mockResolvedValue(
+      readinessRaw as unknown as Awaited<
+        ReturnType<typeof fred.checkDeploymentReadiness>
+      >,
+    );
+    vi.mocked(fred.buildManifestPreview).mockResolvedValue({
+      manifest_json: metaHashResp.manifest_json,
+      meta_hash_hex: metaHashResp.meta_hash_hex,
+    } as Awaited<ReturnType<typeof fred.buildManifestPreview>>);
+    // fred throws the partial-success error envelope (mirrors the 03 fixture).
+    vi.mocked(fred.deployApp).mockRejectedValue(
+      new Error(
+        `Deploy partially succeeded: lease ${leaseUuid} was created but set-domain failed: simulation error`,
+      ),
+    );
+    // For the retry-completion path: resolve provider URL via lease lookup,
+    // upload manifest payload, then poll. All mocks default to success;
+    // callers override the specific step they want to exercise.
+    vi.mocked(fred.fetchActiveLease).mockResolvedValue({
+      providerUuid,
+    } as unknown as Awaited<ReturnType<typeof fred.fetchActiveLease>>);
+    vi.mocked(fred.resolveProviderUrl).mockResolvedValue(providerApiUrl);
+    if (opts.uploadLeaseData) {
+      vi.mocked(fred.uploadLeaseData).mockImplementation(
+        opts.uploadLeaseData as unknown as typeof fred.uploadLeaseData,
+      );
+    } else {
+      vi.mocked(fred.uploadLeaseData).mockResolvedValue(undefined);
+    }
+    if (opts.pollLeaseUntilReady) {
+      vi.mocked(fred.pollLeaseUntilReady).mockImplementation(
+        opts.pollLeaseUntilReady as unknown as typeof fred.pollLeaseUntilReady,
+      );
+    } else {
+      vi.mocked(fred.pollLeaseUntilReady).mockImplementation(
+        async (
+          _providerUrl: unknown,
+          _leaseUuid: unknown,
+          _authToken: unknown,
+          waitOpts?: {
+            onProgress?: (status: { state: number }) => void;
+          },
+        ) => {
+          waitOpts?.onProgress?.({ state: 1 }); // PENDING
+          waitOpts?.onProgress?.({ state: 2 }); // ACTIVE
+          // Returns FredLeaseStatus directly (no WaitForAppReadyResult
+          // wrapping — that's the whole point of the refactor).
+          return {
+            state: 2,
+            instances: [
+              {
+                name: 'web-1',
+                status: 'running',
+                fqdn,
+                ports: { '80/tcp': 30001 },
+              },
+            ],
+          } as Awaited<ReturnType<typeof fred.pollLeaseUntilReady>>;
+        },
+      );
+    }
+    const core = await import('@manifest-network/manifest-mcp-core');
+    vi.mocked(core.cosmosEstimateFee).mockResolvedValue({
+      module: 'billing',
+      subcommand: 'create-lease',
+      gasEstimate: '142000',
+      fee: { amount: [{ denom: 'umfx', amount: '2300' }], gas: '142000' },
+    } as Awaited<ReturnType<typeof core.cosmosEstimateFee>>);
+    if (opts.setItemCustomDomain) {
+      vi.mocked(core.setItemCustomDomain).mockImplementation(
+        opts.setItemCustomDomain as unknown as typeof core.setItemCustomDomain,
+      );
+    } else {
+      vi.mocked(core.setItemCustomDomain).mockResolvedValue(
+        {} as unknown as Awaited<ReturnType<typeof core.setItemCustomDomain>>,
+      );
+    }
+
+    const baseCapture = captureCallbacks();
+    const callbacks: DeployAppCallbacks = {
+      ...baseCapture.callbacks,
+      // Override default `close_lease` → choose retry_set_domain so the
+      // recovery dispatch hits the new decomposition path.
+      onFailure: async (envelope, options) => {
+        baseCapture.failures.push({ envelope, options });
+        return { id: 'retry_set_domain' };
+      },
+    };
+    const { deployApp } = await import('./deploy-app.js');
+    const clientManager = makeMockClientManager();
+    const walletProvider = makeMockWalletProvider();
+
+    return {
+      spec,
+      callbacks,
+      baseCapture,
+      leaseUuid,
+      providerUuid,
+      providerApiUrl,
+      fqdn,
+      run: async () => {
+        let caughtErr: unknown = null;
+        let result: DeployResult | undefined;
+        try {
+          result = await deployApp(spec, callbacks, {
+            clientManager: clientManager as unknown as Parameters<
+              typeof deployApp
+            >[2]['clientManager'],
+            walletProvider,
+          });
+        } catch (err) {
+          caughtErr = err;
+        }
+        return { caughtErr, result };
+      },
+    };
+  }
+
+  it('happy path: setItemCustomDomain → uploadLeaseData → pollLeaseUntilReady → DeployResult with urls + customDomain', async () => {
+    const { run, baseCapture, leaseUuid, fqdn } = await setupRetryScenario({});
+
+    const { caughtErr, result } = await run();
+    expect(caughtErr).toBeNull();
+    expect(result).toBeDefined();
+
+    const fred = await import('@manifest-network/manifest-mcp-fred');
+    const core = await import('@manifest-network/manifest-mcp-core');
+
+    // setItemCustomDomain called with the right lease + domain.
+    expect(vi.mocked(core.setItemCustomDomain)).toHaveBeenCalledTimes(1);
+    const setDomainCall = vi.mocked(core.setItemCustomDomain).mock.calls[0];
+    expect(setDomainCall?.[1]).toBe(leaseUuid);
+    expect(setDomainCall?.[2]).toBe('app.testnet.manifest.app');
+
+    // uploadLeaseData called with provider URL, leaseUuid, payload, token.
+    expect(vi.mocked(fred.uploadLeaseData)).toHaveBeenCalledTimes(1);
+    const uploadCall = vi.mocked(fred.uploadLeaseData).mock.calls[0];
+    expect(uploadCall?.[0]).toBe('https://provider.testnet.manifest.network');
+    expect(uploadCall?.[1]).toBe(leaseUuid);
+    expect(uploadCall?.[2]).toBeInstanceOf(Uint8Array);
+    expect((uploadCall?.[2] as Uint8Array).byteLength).toBeGreaterThan(0);
+    expect(typeof uploadCall?.[3]).toBe('string'); // auth token
+    expect((uploadCall?.[3] as string).length).toBeGreaterThan(0);
+
+    // Copilot fix-1 (PR #71) — no-redundant-query invariant:
+    // The retry helper resolves `lease` + `providerUrl` ONCE up-front
+    // (for `uploadLeaseData`), then polls via the lower-level
+    // `pollLeaseUntilReady` passing the already-resolved values directly.
+    // It must NOT call the higher-level `waitForAppReady` (which would
+    // re-run `fetchActiveLease` + `resolveProviderUrl` internally,
+    // doubling the on-chain query cost per recovery).
+    expect(vi.mocked(fred.pollLeaseUntilReady)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(fred.waitForAppReady)).not.toHaveBeenCalled();
+    expect(vi.mocked(fred.fetchActiveLease)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(fred.resolveProviderUrl)).toHaveBeenCalledTimes(1);
+
+    // ProgressEvents: polling_for_readiness fired >=1 time; app_ready_confirmed
+    // fired AFTER polling; success_rendered + onComplete fired.
+    const progress = baseCapture.progress;
+    const pollIdxs = progress
+      .map((e, i) => (e.kind === 'polling_for_readiness' ? i : -1))
+      .filter((i) => i >= 0);
+    expect(pollIdxs.length).toBeGreaterThanOrEqual(1);
+    const readyIdx = progress.findIndex(
+      (e) => e.kind === 'app_ready_confirmed',
+    );
+    expect(readyIdx).toBeGreaterThanOrEqual(0);
+    expect(readyIdx).toBeGreaterThan(pollIdxs[pollIdxs.length - 1] as number);
+    expect(progress.some((e) => e.kind === 'success_rendered')).toBe(true);
+    expect(baseCapture.completed).toHaveLength(1);
+
+    // DeployResult shape: urls carry the post-poll FQDN (locks the
+    // extractRunningEndpoints plumbing per fixup-3 pattern); customDomain
+    // is set; leaseState reflects ACTIVE.
+    expect(result?.leaseState).toBe('LEASE_STATE_ACTIVE');
+    expect(result?.leaseUuid).toBe(leaseUuid);
+    expect((result?.urls ?? []).length).toBeGreaterThan(0);
+    expect(result?.urls).toContain(`https://${fqdn}/`);
+    expect(result?.customDomain).toBe('app.testnet.manifest.app');
+  });
+
+  it('upload fails → TX_FAILED with leaseUuid in message; onComplete NOT called', async () => {
+    const { run, baseCapture, leaseUuid } = await setupRetryScenario({
+      uploadLeaseData: vi
+        .fn()
+        .mockRejectedValue(new Error('provider responded 502 bad gateway')),
+    });
+
+    const { caughtErr } = await run();
+
+    expect(caughtErr).toBeInstanceOf(ManifestMCPError);
+    expect((caughtErr as ManifestMCPError).code).toBe(
+      ManifestMCPErrorCode.TX_FAILED,
+    );
+    expect((caughtErr as Error).message).toContain(leaseUuid);
+    expect((caughtErr as Error).message).toMatch(/upload|502 bad gateway/i);
+    expect(baseCapture.completed).toHaveLength(0);
+    // pollLeaseUntilReady MUST NOT be invoked after upload failure.
+    // Per Copilot fix-1 (PR #71): retry helper polls via the lower-level
+    // `pollLeaseUntilReady` (no redundant on-chain queries). The higher-
+    // level `waitForAppReady` is NOT called anywhere in the retry path.
+    const fred = await import('@manifest-network/manifest-mcp-fred');
+    expect(vi.mocked(fred.pollLeaseUntilReady)).not.toHaveBeenCalled();
+    expect(vi.mocked(fred.waitForAppReady)).not.toHaveBeenCalled();
+  });
+
+  it('pollLeaseUntilReady fails → TX_FAILED with leaseUuid in message; onComplete NOT called', async () => {
+    const { run, baseCapture, leaseUuid } = await setupRetryScenario({
+      pollLeaseUntilReady: vi
+        .fn()
+        .mockRejectedValue(
+          new Error('polling timed out after 480000ms for lease'),
+        ),
+    });
+
+    const { caughtErr } = await run();
+
+    expect(caughtErr).toBeInstanceOf(ManifestMCPError);
+    expect((caughtErr as ManifestMCPError).code).toBe(
+      ManifestMCPErrorCode.TX_FAILED,
+    );
+    expect((caughtErr as Error).message).toContain(leaseUuid);
+    expect((caughtErr as Error).message).toMatch(/polling timed out|wait/i);
+    expect(baseCapture.completed).toHaveLength(0);
+  });
+
+  it('setItemCustomDomain fails → TX_FAILED with retry_set_domain prefix + leaseUuid; downstream not invoked', async () => {
+    // Copilot fix-3 (PR #71) regression guard: every throw site in
+    // `retrySetDomainAndComplete` MUST surface the `retry_set_domain`
+    // prefix + leaseUuid for log/user-report correlation (sibling-parity
+    // with the fetchActiveLease/uploadLeaseData/pollLeaseUntilReady
+    // wraps in the same helper). The pre-fix `setItemCustomDomain` call
+    // was bare — chain-layer errors leaked through without the prefix.
+    const { run, baseCapture, leaseUuid } = await setupRetryScenario({
+      setItemCustomDomain: vi
+        .fn()
+        .mockRejectedValue(
+          new Error(
+            'Tx billing set-item-custom-domain failed: simulation error',
+          ),
+        ),
+    });
+
+    const { caughtErr } = await run();
+
+    expect(caughtErr).toBeInstanceOf(ManifestMCPError);
+    expect((caughtErr as ManifestMCPError).code).toBe(
+      ManifestMCPErrorCode.TX_FAILED,
+    );
+    // Sibling-parity assertions: prefix + leaseUuid + the failing
+    // primitive's name all appear in the message.
+    expect((caughtErr as Error).message).toContain('retry_set_domain');
+    expect((caughtErr as Error).message).toContain(leaseUuid);
+    expect((caughtErr as Error).message).toContain('set-item-custom-domain');
+    // The original error's body propagates verbatim (the wrap preserves
+    // the underlying chain-layer message for diagnostics).
+    expect((caughtErr as Error).message).toContain('simulation error');
+    // Short-circuit guard (structural-impossibility proof): the
+    // downstream resolve/upload/poll fns MUST NOT be invoked when the
+    // domain claim fails — otherwise we'd be running redundant on-chain
+    // queries against a lease whose retry already aborted.
+    const fred = await import('@manifest-network/manifest-mcp-fred');
+    expect(vi.mocked(fred.fetchActiveLease)).not.toHaveBeenCalled();
+    expect(vi.mocked(fred.resolveProviderUrl)).not.toHaveBeenCalled();
+    expect(vi.mocked(fred.uploadLeaseData)).not.toHaveBeenCalled();
+    expect(vi.mocked(fred.pollLeaseUntilReady)).not.toHaveBeenCalled();
+    expect(baseCapture.completed).toHaveLength(0);
   });
 });
