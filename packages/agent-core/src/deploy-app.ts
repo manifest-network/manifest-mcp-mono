@@ -54,7 +54,10 @@ import {
   createSignMessage,
   type DeployAppResult as FredDeployAppResult,
   type FredLeaseStatus,
+  fetchActiveLease,
   deployApp as fredDeployApp,
+  resolveProviderUrl,
+  uploadLeaseData,
   waitForAppReady,
 } from '@manifest-network/manifest-mcp-fred';
 import {
@@ -430,7 +433,28 @@ export async function deployApp(
       opts.fetchFn,
     );
   } catch (err) {
-    return await handleBroadcastFailure(err, confirmedSpec, callbacks, opts);
+    // ENG-185 sub-PR E: thread a `RecoveryContext` so the
+    // `retry_set_domain` branch can decompose the deploy into
+    // `setItemCustomDomain` + `uploadLeaseData` + `waitForAppReady`.
+    // Captured values mirror what fred's atomic `deployApp` had: the
+    // ADR-036 auth closures, the manifest payload + hash, and the chain
+    // identity (for downstream `tryPersistManifest`).
+    const recoveryCtx: RecoveryContext = {
+      manifestJson: preview.manifest_json,
+      metaHash: preview.meta_hash_hex,
+      getAuthToken,
+      getLeaseDataAuthToken,
+      tenantAddress,
+      chainId,
+      denomMap,
+    };
+    return await handleBroadcastFailure(
+      err,
+      confirmedSpec,
+      callbacks,
+      opts,
+      recoveryCtx,
+    );
   }
 
   // Live-state + live-connection trackers (Copilot fix-3, post-PR-D):
@@ -895,11 +919,43 @@ function applyPlanEdit(
   return spec;
 }
 
+/**
+ * Recovery-path execution context. Threaded from `deployApp`'s enclosing
+ * scope through `handleBroadcastFailure` → `dispatchRecovery` → the
+ * per-choice closures. Internal (not exported, not in `types.ts`); each
+ * field's upstream source lives in `deployApp`'s scope when the broadcast
+ * failure surfaces, so the context is just a parameter bundle, not a
+ * stateful object.
+ *
+ * Added by ENG-185 sub-PR E so the `retry_set_domain` branch can
+ * decompose the deploy: it needs the manifest payload + hash for
+ * `uploadLeaseData`, the auth closures for the upload + poll, and the
+ * tenant/chain identity for `waitForAppReady` + downstream
+ * `tryPersistManifest`. Other recovery branches (`salvage_without_domain`,
+ * `cancel_lease`, `close_lease`) currently ignore the context — they
+ * route through `stopApp` or a bare throw — but the widened signature
+ * keeps future expansions cheap.
+ */
+interface RecoveryContext {
+  manifestJson: string;
+  metaHash: string;
+  getAuthToken: (address: string, leaseUuid: string) => Promise<string>;
+  getLeaseDataAuthToken: (
+    address: string,
+    leaseUuid: string,
+    metaHashHex: string,
+  ) => Promise<string>;
+  tenantAddress: string;
+  chainId: string;
+  denomMap: DenomMap;
+}
+
 async function handleBroadcastFailure(
   err: unknown,
   spec: DeploySpec,
   callbacks: DeployAppCallbacks,
   opts: DeployAppOptions,
+  ctx: RecoveryContext,
 ): Promise<DeployResult> {
   const requestedCustomDomain = customDomainOf(spec);
 
@@ -941,7 +997,14 @@ async function handleBroadcastFailure(
     // inform-only path; we throw instead of prompting.
     if (options.length > 0 && callbacks.onFailure !== undefined) {
       const choice = await callbacks.onFailure(envelope, options);
-      return await dispatchRecovery(choice, envelope, spec, opts);
+      return await dispatchRecovery(
+        choice,
+        envelope,
+        spec,
+        opts,
+        callbacks,
+        ctx,
+      );
     }
     throw new ManifestMCPError(
       ManifestMCPErrorCode.TX_FAILED,
@@ -968,39 +1031,21 @@ async function dispatchRecovery(
   envelope: FailureEnvelope,
   spec: DeploySpec,
   opts: DeployAppOptions,
+  callbacks: DeployAppCallbacks,
+  ctx: RecoveryContext,
 ): Promise<DeployResult> {
   // Inline closures per gate-2 verdict (no separate strategy module).
   const leaseUuid =
     envelope.outcome === 'partially_succeeded' ? envelope.leaseUuid : '';
   switch (choice.id) {
-    case 'retry_set_domain': {
-      const domain = customDomainOf(spec);
-      if (!domain) {
-        throw new ManifestMCPError(
-          ManifestMCPErrorCode.INVALID_CONFIG,
-          'retry_set_domain requires a customDomain in spec.',
-        );
-      }
-      // C6 fix: pass `serviceName` for stack-lease specs so the
-      // set-item-custom-domain tx targets the named service item, not
-      // the default single-item lease. setItemCustomDomain's actual
-      // signature is `(clientManager, leaseUuid, customDomain,
-      // options?: { serviceName?, clear? }, overrides?)` — verified
-      // per Discipline V against
-      // packages/core/src/tools/setItemCustomDomain.ts.
-      const serviceName = customDomainServiceOf(spec);
-      const setItemOpts = serviceName ? { serviceName } : undefined;
-      await setItemCustomDomain(
-        opts.clientManager,
+    case 'retry_set_domain':
+      return await retrySetDomainAndComplete(
         leaseUuid,
-        domain,
-        setItemOpts,
+        spec,
+        opts,
+        callbacks,
+        ctx,
       );
-      throw new ManifestMCPError(
-        ManifestMCPErrorCode.TX_FAILED,
-        `retry_set_domain completed for ${leaseUuid}; caller should re-run troubleshootDeployment to confirm app readiness.`,
-      );
-    }
     case 'salvage_without_domain':
       throw new ManifestMCPError(
         ManifestMCPErrorCode.TX_FAILED,
@@ -1019,6 +1064,209 @@ async function dispatchRecovery(
     ManifestMCPErrorCode.TX_FAILED,
     `Unknown recovery option: ${(choice as RecoveryChoice).id}`,
   );
+}
+
+/**
+ * `retry_set_domain` recovery: decompose the deploy after the partial-
+ * success failure. ENG-185 sub-PR E.
+ *
+ * Steps (mirrors fred's atomic `deployApp` minus the create-lease tx,
+ * which already succeeded):
+ *   1. `setItemCustomDomain` — broadcast the domain claim against the
+ *      pre-existing lease. Stack specs thread `serviceName` so the
+ *      tx targets the named lease item.
+ *   2. `fetchActiveLease` + `resolveProviderUrl` — look up the provider
+ *      URL from the on-chain lease record (the partial-success error
+ *      envelope only carries `leaseUuid`).
+ *   3. `uploadLeaseData` — push the manifest payload to the provider.
+ *      Uses the ADR-036 lease-data auth token (signed against the
+ *      manifest's meta-hash).
+ *   4. `waitForAppReady` — poll until the provider reports ACTIVE +
+ *      running. Reuses D's canonical polling pattern: single call,
+ *      `onProgress` closure translates each `FredLeaseStatus` sample
+ *      into a typed `polling_for_readiness` ProgressEvent, default
+ *      480_000ms timeout overridable via `opts.waitForReadyTimeoutMs`.
+ *   5. Defense #2 parity (post-poll re-classify) — guard the
+ *      ACTIVE-with-no-instances race per D's pattern.
+ *   6. Persist manifest (best-effort) + build typed `DeployResult` +
+ *      emit `app_ready_confirmed` + `success_rendered` + onComplete.
+ *
+ * Failure paths (each → TX_FAILED with leaseUuid + diagnostic message,
+ * matching D's L548-550 sibling style):
+ *   - `setItemCustomDomain` throws → propagate (caller already saw the
+ *     partial-success failure; this is a second strike).
+ *   - `fetchActiveLease` / `resolveProviderUrl` throw → wrap with
+ *     leaseUuid context.
+ *   - `uploadLeaseData` throws → wrap with leaseUuid context.
+ *   - `waitForAppReady` throws → wrap with leaseUuid context.
+ *   - Post-poll re-classify outcome !== 'active' → throw with the
+ *     Defense #2 wording.
+ */
+async function retrySetDomainAndComplete(
+  leaseUuid: string,
+  spec: DeploySpec,
+  opts: DeployAppOptions,
+  callbacks: DeployAppCallbacks,
+  ctx: RecoveryContext,
+): Promise<DeployResult> {
+  const domain = customDomainOf(spec);
+  if (!domain) {
+    throw new ManifestMCPError(
+      ManifestMCPErrorCode.INVALID_CONFIG,
+      'retry_set_domain requires a customDomain in spec.',
+    );
+  }
+  // C6 fix (preserved from pre-E impl): pass `serviceName` for stack
+  // leases so the set-item-custom-domain tx targets the named service
+  // item, not the default single-item lease.
+  const serviceName = customDomainServiceOf(spec);
+  const setItemOpts = serviceName ? { serviceName } : undefined;
+  await setItemCustomDomain(opts.clientManager, leaseUuid, domain, setItemOpts);
+
+  // Resolve the provider URL via the on-chain lease record. The
+  // partial-success envelope only carried `leaseUuid` — fred's atomic
+  // deployApp already had providerUuid in scope, but here we recover it.
+  const queryClient = await opts.clientManager.getQueryClient();
+  let providerApiUrl: string;
+  try {
+    const lease = await fetchActiveLease(
+      queryClient,
+      leaseUuid,
+      'cannot complete retry_set_domain',
+    );
+    providerApiUrl = await resolveProviderUrl(queryClient, lease.providerUuid);
+  } catch (err) {
+    const reason =
+      err instanceof Error
+        ? `retry_set_domain failed to resolve provider for lease ${leaseUuid}: ${err.message}`
+        : `retry_set_domain failed to resolve provider for lease ${leaseUuid}: ${String(err)}`;
+    throw new ManifestMCPError(ManifestMCPErrorCode.TX_FAILED, reason);
+  }
+
+  // Upload the manifest payload via the ADR-036 lease-data auth token
+  // (signed against the manifest's meta-hash).
+  const manifestBytes = new TextEncoder().encode(ctx.manifestJson);
+  try {
+    const leaseDataAuthToken = await ctx.getLeaseDataAuthToken(
+      ctx.tenantAddress,
+      leaseUuid,
+      ctx.metaHash,
+    );
+    await uploadLeaseData(
+      providerApiUrl,
+      leaseUuid,
+      manifestBytes,
+      leaseDataAuthToken,
+      opts.fetchFn,
+    );
+  } catch (err) {
+    const reason =
+      err instanceof Error
+        ? `retry_set_domain manifest upload failed for lease ${leaseUuid}: ${err.message}`
+        : `retry_set_domain manifest upload failed for lease ${leaseUuid}: ${String(err)}`;
+    throw new ManifestMCPError(ManifestMCPErrorCode.TX_FAILED, reason);
+  }
+
+  // Poll until the provider reports ACTIVE + running. Reuses D's
+  // canonical pattern verbatim (single call, `onProgress` closure, spread
+  // for the optional `state` field).
+  const pollStartMs = Date.now();
+  let attempt = 0;
+  let pollResult: Awaited<ReturnType<typeof waitForAppReady>>;
+  try {
+    pollResult = await waitForAppReady(
+      queryClient,
+      ctx.tenantAddress,
+      leaseUuid,
+      ctx.getAuthToken,
+      {
+        timeoutMs: opts.waitForReadyTimeoutMs ?? 480_000,
+        onProgress: (status) => {
+          attempt += 1;
+          const stateName = decodeLeaseState(status.state);
+          callbacks.onProgress?.({
+            kind: 'polling_for_readiness',
+            leaseUuid,
+            attempt,
+            elapsedMs: Date.now() - pollStartMs,
+            ...(stateName !== undefined ? { state: stateName } : {}),
+          });
+        },
+      },
+      opts.fetchFn,
+    );
+  } catch (err) {
+    const reason =
+      err instanceof Error
+        ? `retry_set_domain wait_for_app_ready failed for lease ${leaseUuid}: ${err.message}`
+        : `retry_set_domain wait_for_app_ready failed for lease ${leaseUuid}: ${String(err)}`;
+    throw new ManifestMCPError(ManifestMCPErrorCode.TX_FAILED, reason);
+  }
+
+  // Defense #2 parity (from D): re-classify the post-poll response and
+  // refuse to declare success if the classifier doesn't see ACTIVE +
+  // running instances. Catches the rare provider race where
+  // `pollLeaseUntilReady` exits on state==ACTIVE but instances are empty.
+  const postPollResponse: DeployResponseShape = {
+    lease_uuid: pollResult.lease_uuid,
+    provider_uuid: pollResult.provider_uuid,
+    provider_url: pollResult.provider_url,
+    state: pollResult.state,
+    connection: pollResult.status,
+  };
+  const classification = classifyDeployResponse(postPollResponse);
+  if (classification.outcome !== 'active') {
+    const reason =
+      classification.errorSummary ??
+      `retry_set_domain: wait_for_app_ready returned for lease ${leaseUuid} but post-poll classifier outcome is ${classification.outcome}`;
+    throw new ManifestMCPError(ManifestMCPErrorCode.TX_FAILED, reason);
+  }
+
+  callbacks.onProgress?.({ kind: 'app_ready_confirmed', leaseUuid });
+
+  // Persist manifest (best-effort; save-fail still emits success — same
+  // contract as D's happy path).
+  const persistedPath = await tryPersistManifest({
+    leaseUuid,
+    image: primaryImage(spec),
+    size: requestedSize(spec),
+    metaHash: ctx.metaHash,
+    chainId: ctx.chainId,
+    manifestJson: ctx.manifestJson,
+    customDomain: domain,
+    customDomainService: serviceName,
+    dataDir: opts.dataDir,
+    callbacks,
+  });
+
+  // Build DeployResult. State decoding + urls extraction mirror the
+  // happy-path block in `deployApp` verbatim (read-path identical, so
+  // the live trackers' equivalent here are `pollResult.status.state` for
+  // the state and `pollResult.status` for the connection).
+  const liveState = pollResult.status.state;
+  let leaseStateDecoded: LeaseStateName;
+  const decoded = decodeLeaseState(liveState);
+  if (decoded === undefined) {
+    throw new ManifestMCPError(
+      ManifestMCPErrorCode.INVALID_CONFIG,
+      `Unrecognized lease state from wait_for_app_ready response: ${String(liveState)}. Cannot safely classify; refusing to silently coerce to ACTIVE.`,
+    );
+  }
+  leaseStateDecoded = decoded;
+  const endpointUrls = extractRunningEndpoints(pollResult.status).map(
+    formatEndpointAsUrl,
+  );
+  const result: DeployResult = {
+    leaseUuid: pollResult.lease_uuid,
+    providerUuid: pollResult.provider_uuid,
+    leaseState: leaseStateDecoded,
+    urls: endpointUrls,
+    customDomain: domain,
+    manifestPath: persistedPath ?? '',
+  };
+  callbacks.onProgress?.({ kind: 'success_rendered', result });
+  callbacks.onComplete?.(result);
+  return result;
 }
 
 function recoveryOptionLabel(id: RecoveryOptionId): string {
