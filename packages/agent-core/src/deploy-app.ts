@@ -617,8 +617,9 @@ export async function deployApp(
   // (handles int + LEASE_STATE_* string + undefined paths exhaustively).
   //
   // C3 fix (defensive bias correction; checklist item #16): distinguish
-  // truly-absent state (undefined → default ACTIVE per fred's contract:
-  // happy-path responses without explicit state mean lease is ACTIVE)
+  // absent state (undefined → default ACTIVE as defense-in-depth against
+  // legacy/mocked shapes that bypass fred's required-state contract —
+  // fred itself always sets `state` in `DeployAppResult`)
   // from UNRECOGNIZED state (decode returned undefined for a value that
   // WAS provided → likely a terminal/unknown chain emission that must
   // NOT be silently classified as ACTIVE). For the unrecognized case,
@@ -628,9 +629,9 @@ export async function deployApp(
   // `pollResult.status.state` (numeric `LeaseState`) when the needs_wait
   // branch fired; falls back to `fredResult.state` for the direct-active
   // path. Effective type is `LeaseState | undefined` — numeric only after
-  // the fix-3 type-tightening. The `undefined` branch handles fred's
-  // happy-path-without-explicit-state per the default-to-ACTIVE rule
-  // explained above. The numeric branch decodes the enum via
+  // the fix-3 type-tightening. The `undefined` branch handles the C3
+  // defense-in-depth case above (legacy/mocked shapes that bypass fred's
+  // required-state contract). The numeric branch decodes the enum via
   // `decodeLeaseState`; the `decoded === undefined` arm catches
   // UNRECOGNIZED enum values (defense-in-depth against future chain
   // emissions that add new states beyond the current `LeaseStateName`
