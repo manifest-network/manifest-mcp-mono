@@ -155,6 +155,16 @@ describe('formatEndpointAsUrl', () => {
       'https://app.example.com/',
     );
   });
+
+  it('does NOT include a port in the URL (Copilot fix-5 regression guard)', () => {
+    // Per the module-level comment in connection.ts L12-14: providers
+    // use subdomain-based routing, so the port is NOT part of the URL.
+    // This guard catches a future refactor that misreads
+    // `RunningEndpoint.host_port` / `ports[...]` as URL surface.
+    expect(formatEndpointAsUrl({ fqdn: 'app.example.com' })).not.toMatch(
+      /:\d+\//,
+    );
+  });
 });
 
 describe('hasRunningInstances', () => {
