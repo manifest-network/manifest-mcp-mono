@@ -1125,7 +1125,31 @@ async function retrySetDomainAndComplete(
   // item, not the default single-item lease.
   const serviceName = customDomainServiceOf(spec);
   const setItemOpts = serviceName ? { serviceName } : undefined;
-  await setItemCustomDomain(opts.clientManager, leaseUuid, domain, setItemOpts);
+  try {
+    await setItemCustomDomain(
+      opts.clientManager,
+      leaseUuid,
+      domain,
+      setItemOpts,
+    );
+  } catch (err) {
+    // Copilot fix-3 (PR #71): sibling-parity wrap. Every throw site in
+    // this helper now surfaces `retry_set_domain` + leaseUuid in the
+    // message for log/user-report correlation, matching the
+    // fetchActiveLease/uploadLeaseData/pollLeaseUntilReady wraps below.
+    // Preserve the original ManifestMCPError code when applicable
+    // (precedent at `estimateFees` — see the cosmosEstimateFee catch
+    // block); fall back to TX_FAILED for untyped errors.
+    const reason =
+      err instanceof Error
+        ? `retry_set_domain set-item-custom-domain failed for lease ${leaseUuid}: ${err.message}`
+        : `retry_set_domain set-item-custom-domain failed for lease ${leaseUuid}: ${String(err)}`;
+    const code =
+      err instanceof ManifestMCPError
+        ? err.code
+        : ManifestMCPErrorCode.TX_FAILED;
+    throw new ManifestMCPError(code, reason);
+  }
 
   // Resolve the lease + provider URL via on-chain queries. The
   // partial-success envelope only carried `leaseUuid` — fred's atomic

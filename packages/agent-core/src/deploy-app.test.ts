@@ -3213,4 +3213,47 @@ describe('deployApp — retry_set_domain decomposition (ENG-185 sub-PR E)', () =
     expect((caughtErr as Error).message).toMatch(/polling timed out|wait/i);
     expect(baseCapture.completed).toHaveLength(0);
   });
+
+  it('setItemCustomDomain fails → TX_FAILED with retry_set_domain prefix + leaseUuid; downstream not invoked', async () => {
+    // Copilot fix-3 (PR #71) regression guard: every throw site in
+    // `retrySetDomainAndComplete` MUST surface the `retry_set_domain`
+    // prefix + leaseUuid for log/user-report correlation (sibling-parity
+    // with the fetchActiveLease/uploadLeaseData/pollLeaseUntilReady
+    // wraps in the same helper). The pre-fix `setItemCustomDomain` call
+    // was bare — chain-layer errors leaked through without the prefix.
+    const { run, baseCapture, leaseUuid } = await setupRetryScenario({
+      setItemCustomDomain: vi
+        .fn()
+        .mockRejectedValue(
+          new Error(
+            'Tx billing set-item-custom-domain failed: simulation error',
+          ),
+        ),
+    });
+
+    const { caughtErr } = await run();
+
+    expect(caughtErr).toBeInstanceOf(ManifestMCPError);
+    expect((caughtErr as ManifestMCPError).code).toBe(
+      ManifestMCPErrorCode.TX_FAILED,
+    );
+    // Sibling-parity assertions: prefix + leaseUuid + the failing
+    // primitive's name all appear in the message.
+    expect((caughtErr as Error).message).toContain('retry_set_domain');
+    expect((caughtErr as Error).message).toContain(leaseUuid);
+    expect((caughtErr as Error).message).toContain('set-item-custom-domain');
+    // The original error's body propagates verbatim (the wrap preserves
+    // the underlying chain-layer message for diagnostics).
+    expect((caughtErr as Error).message).toContain('simulation error');
+    // Short-circuit guard (structural-impossibility proof): the
+    // downstream resolve/upload/poll fns MUST NOT be invoked when the
+    // domain claim fails — otherwise we'd be running redundant on-chain
+    // queries against a lease whose retry already aborted.
+    const fred = await import('@manifest-network/manifest-mcp-fred');
+    expect(vi.mocked(fred.fetchActiveLease)).not.toHaveBeenCalled();
+    expect(vi.mocked(fred.resolveProviderUrl)).not.toHaveBeenCalled();
+    expect(vi.mocked(fred.uploadLeaseData)).not.toHaveBeenCalled();
+    expect(vi.mocked(fred.pollLeaseUntilReady)).not.toHaveBeenCalled();
+    expect(baseCapture.completed).toHaveLength(0);
+  });
 });
