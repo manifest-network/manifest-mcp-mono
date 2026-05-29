@@ -60,6 +60,7 @@ vi.mock('@manifest-network/manifest-mcp-fred', () => ({
   createSignMessage: vi.fn(() => 'sign-msg'),
   deployApp: vi.fn(),
   fetchActiveLease: vi.fn(),
+  pollLeaseUntilReady: vi.fn(),
   resolveProviderUrl: vi.fn(),
   uploadLeaseData: vi.fn(),
   waitForAppReady: vi.fn(),
@@ -2956,7 +2957,7 @@ describe('deployApp — retry_set_domain decomposition (ENG-185 sub-PR E)', () =
   async function setupRetryScenario(opts: {
     setItemCustomDomain?: ReturnType<typeof vi.fn>;
     uploadLeaseData?: ReturnType<typeof vi.fn>;
-    waitForAppReady?: ReturnType<typeof vi.fn>;
+    pollLeaseUntilReady?: ReturnType<typeof vi.fn>;
   }) {
     const spec = readFixture(
       'skills',
@@ -3014,40 +3015,35 @@ describe('deployApp — retry_set_domain decomposition (ENG-185 sub-PR E)', () =
     } else {
       vi.mocked(fred.uploadLeaseData).mockResolvedValue(undefined);
     }
-    if (opts.waitForAppReady) {
-      vi.mocked(fred.waitForAppReady).mockImplementation(
-        opts.waitForAppReady as unknown as typeof fred.waitForAppReady,
+    if (opts.pollLeaseUntilReady) {
+      vi.mocked(fred.pollLeaseUntilReady).mockImplementation(
+        opts.pollLeaseUntilReady as unknown as typeof fred.pollLeaseUntilReady,
       );
     } else {
-      vi.mocked(fred.waitForAppReady).mockImplementation(
+      vi.mocked(fred.pollLeaseUntilReady).mockImplementation(
         async (
-          _qc: unknown,
-          _addr: unknown,
+          _providerUrl: unknown,
           _leaseUuid: unknown,
-          _getAuthToken: unknown,
+          _authToken: unknown,
           waitOpts?: {
             onProgress?: (status: { state: number }) => void;
           },
         ) => {
           waitOpts?.onProgress?.({ state: 1 }); // PENDING
           waitOpts?.onProgress?.({ state: 2 }); // ACTIVE
+          // Returns FredLeaseStatus directly (no WaitForAppReadyResult
+          // wrapping — that's the whole point of the refactor).
           return {
-            lease_uuid: leaseUuid,
-            provider_uuid: providerUuid,
-            provider_url: providerApiUrl,
-            state: 'LEASE_STATE_ACTIVE',
-            status: {
-              state: 2,
-              instances: [
-                {
-                  name: 'web-1',
-                  status: 'running',
-                  fqdn,
-                  ports: { '80/tcp': 30001 },
-                },
-              ],
-            },
-          } as Awaited<ReturnType<typeof fred.waitForAppReady>>;
+            state: 2,
+            instances: [
+              {
+                name: 'web-1',
+                status: 'running',
+                fqdn,
+                ports: { '80/tcp': 30001 },
+              },
+            ],
+          } as Awaited<ReturnType<typeof fred.pollLeaseUntilReady>>;
         },
       );
     }
@@ -3108,7 +3104,7 @@ describe('deployApp — retry_set_domain decomposition (ENG-185 sub-PR E)', () =
     };
   }
 
-  it('happy path: setItemCustomDomain → uploadLeaseData → waitForAppReady → DeployResult with urls + customDomain', async () => {
+  it('happy path: setItemCustomDomain → uploadLeaseData → pollLeaseUntilReady → DeployResult with urls + customDomain', async () => {
     const { run, baseCapture, leaseUuid, fqdn } = await setupRetryScenario({});
 
     const { caughtErr, result } = await run();
@@ -3134,8 +3130,17 @@ describe('deployApp — retry_set_domain decomposition (ENG-185 sub-PR E)', () =
     expect(typeof uploadCall?.[3]).toBe('string'); // auth token
     expect((uploadCall?.[3] as string).length).toBeGreaterThan(0);
 
-    // waitForAppReady called once (single canonical call per D pattern).
-    expect(vi.mocked(fred.waitForAppReady)).toHaveBeenCalledTimes(1);
+    // Copilot fix-1 (PR #71) — no-redundant-query invariant:
+    // The retry helper resolves `lease` + `providerUrl` ONCE up-front
+    // (for `uploadLeaseData`), then polls via the lower-level
+    // `pollLeaseUntilReady` passing the already-resolved values directly.
+    // It must NOT call the higher-level `waitForAppReady` (which would
+    // re-run `fetchActiveLease` + `resolveProviderUrl` internally,
+    // doubling the on-chain query cost per recovery).
+    expect(vi.mocked(fred.pollLeaseUntilReady)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(fred.waitForAppReady)).not.toHaveBeenCalled();
+    expect(vi.mocked(fred.fetchActiveLease)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(fred.resolveProviderUrl)).toHaveBeenCalledTimes(1);
 
     // ProgressEvents: polling_for_readiness fired >=1 time; app_ready_confirmed
     // fired AFTER polling; success_rendered + onComplete fired.
@@ -3178,14 +3183,18 @@ describe('deployApp — retry_set_domain decomposition (ENG-185 sub-PR E)', () =
     expect((caughtErr as Error).message).toContain(leaseUuid);
     expect((caughtErr as Error).message).toMatch(/upload|502 bad gateway/i);
     expect(baseCapture.completed).toHaveLength(0);
-    // waitForAppReady MUST NOT be invoked after upload failure.
+    // pollLeaseUntilReady MUST NOT be invoked after upload failure.
+    // Per Copilot fix-1 (PR #71): retry helper polls via the lower-level
+    // `pollLeaseUntilReady` (no redundant on-chain queries). The higher-
+    // level `waitForAppReady` is NOT called anywhere in the retry path.
     const fred = await import('@manifest-network/manifest-mcp-fred');
+    expect(vi.mocked(fred.pollLeaseUntilReady)).not.toHaveBeenCalled();
     expect(vi.mocked(fred.waitForAppReady)).not.toHaveBeenCalled();
   });
 
-  it('waitForAppReady fails → TX_FAILED with leaseUuid in message; onComplete NOT called', async () => {
+  it('pollLeaseUntilReady fails → TX_FAILED with leaseUuid in message; onComplete NOT called', async () => {
     const { run, baseCapture, leaseUuid } = await setupRetryScenario({
-      waitForAppReady: vi
+      pollLeaseUntilReady: vi
         .fn()
         .mockRejectedValue(
           new Error('polling timed out after 480000ms for lease'),

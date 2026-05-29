@@ -56,6 +56,7 @@ import {
   type FredLeaseStatus,
   fetchActiveLease,
   deployApp as fredDeployApp,
+  pollLeaseUntilReady,
   resolveProviderUrl,
   uploadLeaseData,
   waitForAppReady,
@@ -1123,13 +1124,20 @@ async function retrySetDomainAndComplete(
   const setItemOpts = serviceName ? { serviceName } : undefined;
   await setItemCustomDomain(opts.clientManager, leaseUuid, domain, setItemOpts);
 
-  // Resolve the provider URL via the on-chain lease record. The
+  // Resolve the lease + provider URL via on-chain queries. The
   // partial-success envelope only carried `leaseUuid` — fred's atomic
   // deployApp already had providerUuid in scope, but here we recover it.
+  // BOTH values are hoisted to outer scope so the poll + DeployResult
+  // build below can reuse them WITHOUT re-running the on-chain queries
+  // (Copilot fix-1, PR #71: switching from `waitForAppReady` to the
+  // lower-level `pollLeaseUntilReady` removes the 2 redundant queries
+  // that `waitForAppReady`'s internal `fetchActiveLease` +
+  // `resolveProviderUrl` calls would otherwise add per recovery).
   const queryClient = await opts.clientManager.getQueryClient();
+  let lease: Awaited<ReturnType<typeof fetchActiveLease>>;
   let providerApiUrl: string;
   try {
-    const lease = await fetchActiveLease(
+    lease = await fetchActiveLease(
       queryClient,
       leaseUuid,
       'cannot complete retry_set_domain',
@@ -1167,18 +1175,25 @@ async function retrySetDomainAndComplete(
     throw new ManifestMCPError(ManifestMCPErrorCode.TX_FAILED, reason);
   }
 
-  // Poll until the provider reports ACTIVE + running. Reuses D's
-  // canonical pattern verbatim (single call, `onProgress` closure, spread
-  // for the optional `state` field).
+  // Poll until the provider reports ACTIVE + running. Uses the LOWER-
+  // LEVEL `pollLeaseUntilReady` directly (Copilot fix-1, PR #71) — not
+  // `waitForAppReady` — so the already-resolved `providerApiUrl` and
+  // auth-token closure pass through without re-running the on-chain
+  // `fetchActiveLease` + `resolveProviderUrl` calls that
+  // `waitForAppReady` would do internally. Saves ~2 queries (and ~2-6s
+  // of avoidable latency) per recovery.
+  //
+  // The `onProgress` closure + `state?` discriminator-spread idiom +
+  // `opts.waitForReadyTimeoutMs ?? 480_000` default mirror D's
+  // canonical polling pattern verbatim.
   const pollStartMs = Date.now();
   let attempt = 0;
-  let pollResult: Awaited<ReturnType<typeof waitForAppReady>>;
+  let pollResult: Awaited<ReturnType<typeof pollLeaseUntilReady>>;
   try {
-    pollResult = await waitForAppReady(
-      queryClient,
-      ctx.tenantAddress,
+    pollResult = await pollLeaseUntilReady(
+      providerApiUrl,
       leaseUuid,
-      ctx.getAuthToken,
+      () => ctx.getAuthToken(ctx.tenantAddress, leaseUuid),
       {
         timeoutMs: opts.waitForReadyTimeoutMs ?? 480_000,
         onProgress: (status) => {
@@ -1207,12 +1222,17 @@ async function retrySetDomainAndComplete(
   // refuse to declare success if the classifier doesn't see ACTIVE +
   // running instances. Catches the rare provider race where
   // `pollLeaseUntilReady` exits on state==ACTIVE but instances are empty.
+  //
+  // pollResult IS a `FredLeaseStatus` directly (no `WaitForAppReadyResult`
+  // wrapping — that's what the refactor unlocked). The lease/provider
+  // identity fields below come from the already-resolved values, NOT
+  // from a (no-longer-existing) nested response object.
   const postPollResponse: DeployResponseShape = {
-    lease_uuid: pollResult.lease_uuid,
-    provider_uuid: pollResult.provider_uuid,
-    provider_url: pollResult.provider_url,
+    lease_uuid: leaseUuid,
+    provider_uuid: lease.providerUuid,
+    provider_url: providerApiUrl,
     state: pollResult.state,
-    connection: pollResult.status,
+    connection: pollResult,
   };
   const classification = classifyDeployResponse(postPollResponse);
   if (classification.outcome !== 'active') {
@@ -1240,10 +1260,11 @@ async function retrySetDomainAndComplete(
   });
 
   // Build DeployResult. State decoding + urls extraction mirror the
-  // happy-path block in `deployApp` verbatim (read-path identical, so
-  // the live trackers' equivalent here are `pollResult.status.state` for
-  // the state and `pollResult.status` for the connection).
-  const liveState = pollResult.status.state;
+  // happy-path block in `deployApp` verbatim. After the Copilot fix-1
+  // refactor, `pollResult` IS a `FredLeaseStatus` (no wrapping), so
+  // `liveState` reads from `pollResult.state` directly (numeric
+  // `LeaseState`) and `extractRunningEndpoints` walks `pollResult` itself.
+  const liveState = pollResult.state;
   let leaseStateDecoded: LeaseStateName;
   const decoded = decodeLeaseState(liveState);
   if (decoded === undefined) {
@@ -1253,12 +1274,13 @@ async function retrySetDomainAndComplete(
     );
   }
   leaseStateDecoded = decoded;
-  const endpointUrls = extractRunningEndpoints(pollResult.status).map(
-    formatEndpointAsUrl,
-  );
+  const endpointUrls =
+    extractRunningEndpoints(pollResult).map(formatEndpointAsUrl);
+  // Lease + provider identity come from the already-resolved values,
+  // not from a (no-longer-existing) wrapping response object.
   const result: DeployResult = {
-    leaseUuid: pollResult.lease_uuid,
-    providerUuid: pollResult.provider_uuid,
+    leaseUuid,
+    providerUuid: lease.providerUuid,
     leaseState: leaseStateDecoded,
     urls: endpointUrls,
     customDomain: domain,
