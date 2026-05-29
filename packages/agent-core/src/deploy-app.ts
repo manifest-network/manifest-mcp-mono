@@ -568,9 +568,20 @@ export async function deployApp(
     };
     classification = classifyDeployResponse(postPollResponse);
     if (classification.outcome !== 'active') {
+      // Copilot fix-6: include `leaseUuid` in the fallback message so
+      // log/user-report correlation matches the sibling
+      // `waitForAppReady` catch path at L548-550. Diagnostic consistency
+      // invariant — locked in by the Defense #2 test's
+      // `expect(...).toContain(leaseUuid)` assertion. The
+      // `errorSummary` path is unaffected; the classifier already
+      // includes leaseUuid in its terminal-state summary
+      // (`classify-deploy-response.ts:120`), but errorSummary fires only
+      // for `outcome === 'failed'`. The no-errorSummary fallback
+      // (this branch) fires when post-poll outcome is `'needs_wait'`
+      // (Defense #2's race scenario) — that's the gap we're closing.
       const reason =
         classification.errorSummary ??
-        `wait_for_app_ready returned but post-poll classifier outcome is ${classification.outcome}`;
+        `wait_for_app_ready returned for lease ${leaseUuid} but post-poll classifier outcome is ${classification.outcome}`;
       throw new ManifestMCPError(ManifestMCPErrorCode.TX_FAILED, reason);
     }
 

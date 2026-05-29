@@ -2714,6 +2714,13 @@ describe('deployApp — sub-PR D defense-in-depth', () => {
     // classifier outcome is needs_wait` per `deploy-app.ts:545-546`.
     expect((caughtErr as Error).message).toContain('post-poll classifier');
     expect((caughtErr as Error).message).toContain('needs_wait');
+    // Copilot fix-6 regression guard: the post-poll fallback message
+    // MUST include the leaseUuid so log/user-report correlation matches
+    // the sibling `waitForAppReady` catch path at L549-551. Diagnostic
+    // consistency invariant — see `deploy-app.ts:~L573`.
+    expect((caughtErr as Error).message).toContain(
+      '99999999-9999-4999-8999-999999999999',
+    );
     // The throw must NOT surface as a terminal-state error (that would
     // mean the test accidentally exercises a different path — the kind
     // of regression-guard inversion documented in MEMORY.md).
