@@ -624,10 +624,17 @@ export async function deployApp(
   // NOT be silently classified as ACTIVE). For the unrecognized case,
   // throw `INVALID_CONFIG` so callers see the empirical mismatch
   // instead of consuming a misleading ACTIVE.
-  // Reads via `liveState` (Copilot fix-3): carries the post-poll state
-  // when the needs_wait branch fired, falls back to `fredResult.state`
-  // for the direct-active path. `decodeLeaseState` accepts both numeric
-  // and string forms — `liveState`'s union covers both.
+  // Reads via `liveState` (Copilot fix-3): carries the post-poll
+  // `pollResult.status.state` (numeric `LeaseState`) when the needs_wait
+  // branch fired; falls back to `fredResult.state` for the direct-active
+  // path. Effective type is `LeaseState | undefined` — numeric only after
+  // the fix-3 type-tightening. The `undefined` branch handles fred's
+  // happy-path-without-explicit-state per the default-to-ACTIVE rule
+  // explained above. The numeric branch decodes the enum via
+  // `decodeLeaseState`; the `decoded === undefined` arm catches
+  // UNRECOGNIZED enum values (defense-in-depth against future chain
+  // emissions that add new states beyond the current `LeaseStateName`
+  // union).
   let leaseStateDecoded: LeaseStateName;
   if (liveState === undefined) {
     leaseStateDecoded = 'LEASE_STATE_ACTIVE';
