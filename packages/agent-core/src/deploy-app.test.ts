@@ -586,9 +586,10 @@ describe('deployApp replay — Copilot review fixes (PR #58 unresolved comments)
             state: 3,
             instances: [
               {
+                name: 'app',
                 status: 'running',
                 fqdn: 'app-33333333.testnet.manifest.app',
-                host_port: 30001,
+                ports: { '80/tcp': 30001 },
               },
             ],
           },
@@ -2856,9 +2857,10 @@ describe('deployApp — sub-PR D defense-in-depth', () => {
         state: 3,
         instances: [
           {
+            name: 'app',
             status: 'running',
             fqdn: 'app-dddddddd.testnet.manifest.app',
-            host_port: 30001,
+            ports: { '80/tcp': 30001 },
           },
         ],
       },

@@ -7,9 +7,10 @@
     "state": 3,
     "instances": [
       {
+        "name": "web-1",
         "status": "running",
         "fqdn": "nginx-55555555.testnet.manifest.app",
-        "host_port": 30001
+        "ports": { "80/tcp": 30001 }
       }
     ]
   }
