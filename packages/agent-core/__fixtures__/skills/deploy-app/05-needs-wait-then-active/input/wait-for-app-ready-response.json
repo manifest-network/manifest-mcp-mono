@@ -4,7 +4,7 @@
   "provider_url": "https://provider.testnet.manifest.network",
   "state": "LEASE_STATE_ACTIVE",
   "status": {
-    "state": 3,
+    "state": 2,
     "instances": [
       {
         "name": "web-1",

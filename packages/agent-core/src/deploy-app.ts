@@ -488,7 +488,10 @@ export async function deployApp(
       );
     }
     const leaseUuid = classification.leaseUuid;
-    const queryClient = await opts.clientManager.getQueryClient();
+    // queryClient is already bound at L193 (function-level); reuse it.
+    // (Copilot #1 fix: removed shadowing redeclaration. CosmosClientManager
+    // keys its query client as a singleton so there was no behavioral
+    // difference, but shadowing is a maintenance trap.)
     const pollStartMs = Date.now();
     let attempt = 0;
 

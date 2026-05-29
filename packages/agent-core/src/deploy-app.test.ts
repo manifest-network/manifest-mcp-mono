@@ -576,14 +576,14 @@ describe('deployApp replay — Copilot review fixes (PR #58 unresolved comments)
         opts?: { onProgress?: (status: { state: number }) => void },
       ) => {
         opts?.onProgress?.({ state: 1 }); // PENDING sample
-        opts?.onProgress?.({ state: 3 }); // ACTIVE sample
+        opts?.onProgress?.({ state: 2 }); // ACTIVE sample (LeaseState enum: 2 = ACTIVE; was 3 = CLOSED — Copilot #5)
         return {
           lease_uuid: leaseUuid as string,
           provider_uuid: '44444444-4444-4444-8444-444444444444',
           provider_url: 'https://provider.testnet.manifest.network',
           state: 'LEASE_STATE_ACTIVE',
           status: {
-            state: 3,
+            state: 2, // ACTIVE in LeaseState enum (was 3 = CLOSED — Copilot #5)
             instances: [
               {
                 name: 'app',
@@ -2375,8 +2375,8 @@ describe('deployApp replay — ENG-185 sub-PR D fixtures (05/06/07)', () => {
         _getAuthToken: unknown,
         opts?: { onProgress?: (status: { state: number }) => void },
       ) => {
-        opts?.onProgress?.({ state: 1 });
-        opts?.onProgress?.({ state: 3 });
+        opts?.onProgress?.({ state: 1 }); // PENDING
+        opts?.onProgress?.({ state: 2 }); // ACTIVE (was 3 = CLOSED — Copilot #5)
         return waitResp as unknown as Awaited<
           ReturnType<typeof fred.waitForAppReady>
         >;
@@ -2666,7 +2666,7 @@ describe('deployApp — sub-PR D defense-in-depth', () => {
       provider_uuid: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
       provider_url: 'https://provider.testnet.manifest.network',
       state: 'LEASE_STATE_ACTIVE',
-      status: { state: 3, instances: [] },
+      status: { state: 2, instances: [] }, // ACTIVE (was 3 = CLOSED — Copilot #5)
     } as Awaited<ReturnType<typeof fred.waitForAppReady>>);
     const core = await import('@manifest-network/manifest-mcp-core');
     vi.mocked(core.cosmosEstimateFee).mockResolvedValue({
@@ -2697,23 +2697,37 @@ describe('deployApp — sub-PR D defense-in-depth', () => {
     expect((caughtErr as ManifestMCPError).code).toBe(
       ManifestMCPErrorCode.TX_FAILED,
     );
-    // The re-classification emits 'needs_wait' on the post-poll response.
-    // The orchestrator throws with a message that surfaces the post-poll
-    // outcome.
-    expect((caughtErr as Error).message).toMatch(
-      /post-poll|needs_wait|wait_for_app_ready/i,
+    // Tightened assertion (Copilot review fix-2, post-fixup hygiene): the
+    // throw MUST be specifically the Defense #2 re-classify-and-throw
+    // path, NOT a terminal-state error from the classifier. The exact
+    // post-poll message is `wait_for_app_ready returned but post-poll
+    // classifier outcome is needs_wait` per `deploy-app.ts:545-546`.
+    expect((caughtErr as Error).message).toContain('post-poll classifier');
+    expect((caughtErr as Error).message).toContain('needs_wait');
+    // The throw must NOT surface as a terminal-state error (that would
+    // mean the test accidentally exercises a different path — the kind
+    // of regression-guard inversion documented in MEMORY.md).
+    expect((caughtErr as Error).message).not.toMatch(
+      /terminal state|LEASE_STATE_CLOSED|LEASE_STATE_REJECTED|LEASE_STATE_EXPIRED/,
     );
     // app_ready_confirmed MUST NOT fire — Defense #2 caught the race.
     expect(progress.some((e) => e.kind === 'app_ready_confirmed')).toBe(false);
     expect(completed).toHaveLength(0);
-    // Polling did happen (at least one classifier event + waitForAppReady
-    // was called); we expect exactly ONE deploy_response_classified
-    // event (the initial; the re-classify is internal and MUST NOT emit
-    // a second event).
+    // Initial classifier emits `'needs_wait'` (the orchestrator routed
+    // into the polling branch); exactly ONE deploy_response_classified
+    // event (the re-classify is internal and MUST NOT emit a second
+    // event).
     const classifyEvents = progress.filter(
       (e) => e.kind === 'deploy_response_classified',
     );
     expect(classifyEvents).toHaveLength(1);
+    const initialClassify = classifyEvents[0];
+    if (initialClassify?.kind === 'deploy_response_classified') {
+      expect(initialClassify.outcome).toBe('needs_wait');
+    }
+    // Defense #2 only fires AFTER waitForAppReady returns; verifying the
+    // call happened locks in that the throw is from the post-poll path,
+    // not from the initial classifier.
     expect(vi.mocked(fred.waitForAppReady)).toHaveBeenCalledTimes(1);
   });
 
@@ -2854,7 +2868,7 @@ describe('deployApp — sub-PR D defense-in-depth', () => {
       provider_url: 'https://provider.testnet.manifest.network',
       state: 'LEASE_STATE_ACTIVE',
       status: {
-        state: 3,
+        state: 2, // ACTIVE (was 3 = CLOSED — Copilot #5)
         instances: [
           {
             name: 'app',
