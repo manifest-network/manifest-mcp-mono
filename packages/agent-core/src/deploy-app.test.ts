@@ -2941,9 +2941,11 @@ describe('deployApp — sub-PR D defense-in-depth', () => {
 //
 // After E (per architect's Q5 verdict, human-approved): the retry path
 // completes the deployment by decomposing fred's atomic deploy into its
-// primitives — `setItemCustomDomain` → `uploadLeaseData` → `waitForAppReady`
+// primitives — `setItemCustomDomain` → `uploadLeaseData` → `pollLeaseUntilReady`
 // → re-classify (Defense #2 parity from D) → DeployResult with onComplete.
-// Polling reuses D's canonical pattern verbatim.
+// Polling emission reuses D's canonical pattern verbatim; the primitive
+// itself is the lower-level `pollLeaseUntilReady` (not `waitForAppReady`)
+// per Copilot fix-1 (PR #71) to skip redundant on-chain queries.
 describe('deployApp — retry_set_domain decomposition (ENG-185 sub-PR E)', () => {
   beforeEach(() => {
     vi.clearAllMocks();

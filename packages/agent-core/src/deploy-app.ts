@@ -436,7 +436,7 @@ export async function deployApp(
   } catch (err) {
     // ENG-185 sub-PR E: thread a `RecoveryContext` so the
     // `retry_set_domain` branch can decompose the deploy into
-    // `setItemCustomDomain` + `uploadLeaseData` + `waitForAppReady`.
+    // `setItemCustomDomain` + `uploadLeaseData` + `pollLeaseUntilReady`.
     // Captured values mirror what fred's atomic `deployApp` had: the
     // ADR-036 auth closures, the manifest payload + hash, and the chain
     // identity (for downstream `tryPersistManifest`).
@@ -931,7 +931,7 @@ function applyPlanEdit(
  * Added by ENG-185 sub-PR E so the `retry_set_domain` branch can
  * decompose the deploy: it needs the manifest payload + hash for
  * `uploadLeaseData`, the auth closures for the upload + poll, and the
- * tenant/chain identity for `waitForAppReady` + downstream
+ * tenant/chain identity for `pollLeaseUntilReady` + downstream
  * `tryPersistManifest`. Other recovery branches (`salvage_without_domain`,
  * `cancel_lease`, `close_lease`) currently ignore the context — they
  * route through `stopApp` or a bare throw — but the widened signature
@@ -1082,8 +1082,11 @@ async function dispatchRecovery(
  *   3. `uploadLeaseData` — push the manifest payload to the provider.
  *      Uses the ADR-036 lease-data auth token (signed against the
  *      manifest's meta-hash).
- *   4. `waitForAppReady` — poll until the provider reports ACTIVE +
- *      running. Reuses D's canonical polling pattern: single call,
+ *   4. `pollLeaseUntilReady` — poll until the provider reports ACTIVE +
+ *      running. Uses the LOWER-LEVEL primitive (not `waitForAppReady`)
+ *      so the already-resolved `providerApiUrl` and auth-token closure
+ *      pass through directly — no redundant on-chain queries (Copilot
+ *      fix-1, PR #71). Reuses D's canonical polling-emission pattern:
  *      `onProgress` closure translates each `FredLeaseStatus` sample
  *      into a typed `polling_for_readiness` ProgressEvent, default
  *      480_000ms timeout overridable via `opts.waitForReadyTimeoutMs`.
@@ -1099,7 +1102,7 @@ async function dispatchRecovery(
  *   - `fetchActiveLease` / `resolveProviderUrl` throw → wrap with
  *     leaseUuid context.
  *   - `uploadLeaseData` throws → wrap with leaseUuid context.
- *   - `waitForAppReady` throws → wrap with leaseUuid context.
+ *   - `pollLeaseUntilReady` throws → wrap with leaseUuid context.
  *   - Post-poll re-classify outcome !== 'active' → throw with the
  *     Defense #2 wording.
  */
