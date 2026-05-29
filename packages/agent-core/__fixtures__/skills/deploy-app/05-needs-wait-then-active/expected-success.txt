@@ -1,0 +1,6 @@
+Deployment succeeded after polling.
+
+Lease:        55555555-5555-4555-8555-555555555555
+Provider:     66666666-6666-4666-8666-666666666666
+State:        LEASE_STATE_ACTIVE
+URLs:         https://nginx-55555555.testnet.manifest.app/

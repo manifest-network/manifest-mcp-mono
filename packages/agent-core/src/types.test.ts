@@ -87,13 +87,14 @@ describe('DeployAppCallbacks contract', () => {
 });
 
 describe('ProgressEvent discriminant', () => {
-  it('kind union is exactly the eight allowed variants', () => {
+  it('kind union is exactly the nine allowed variants', () => {
     expectTypeOf<ProgressEvent['kind']>().toEqualTypeOf<
       | 'readiness_evaluated'
       | 'deployment_plan_rendered'
       | 'user_confirmed'
       | 'deploy_app_broadcast'
       | 'deploy_response_classified'
+      | 'polling_for_readiness'
       | 'app_ready_confirmed'
       | 'manifest_saved'
       | 'success_rendered'
@@ -133,6 +134,18 @@ describe('ProgressEvent discriminant', () => {
     >().toEqualTypeOf<{
       kind: 'deploy_response_classified';
       outcome: 'active' | 'needs_wait' | 'failed';
+    }>();
+  });
+
+  it('polling_for_readiness carries leaseUuid + attempt + elapsedMs + optional state', () => {
+    expectTypeOf<
+      Extract<ProgressEvent, { kind: 'polling_for_readiness' }>
+    >().toEqualTypeOf<{
+      kind: 'polling_for_readiness';
+      leaseUuid: string;
+      attempt: number;
+      elapsedMs: number;
+      state?: LeaseStateName;
     }>();
   });
 
@@ -371,7 +384,7 @@ describe('Exported type shapes (load-bearing public surface)', () => {
     }>();
   });
 
-  it('DeployAppOptions extends AgentCoreRuntime with walletProvider + denomMap + dataDir fields', () => {
+  it('DeployAppOptions extends AgentCoreRuntime with walletProvider + denomMap + dataDir + waitForReadyTimeoutMs fields', () => {
     expectTypeOf<DeployAppOptions>().toEqualTypeOf<{
       clientManager: CosmosClientManager;
       fetchFn?: typeof globalThis.fetch;
@@ -379,6 +392,7 @@ describe('Exported type shapes (load-bearing public surface)', () => {
       chainDataFile?: string;
       denomMap?: DenomMap;
       dataDir?: string;
+      waitForReadyTimeoutMs?: number;
     }>();
   });
 

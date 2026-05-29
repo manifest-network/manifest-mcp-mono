@@ -1,0 +1,17 @@
+{
+  "lease_uuid": "55555555-5555-4555-8555-555555555555",
+  "provider_uuid": "66666666-6666-4666-8666-666666666666",
+  "provider_url": "https://provider.testnet.manifest.network",
+  "state": "LEASE_STATE_ACTIVE",
+  "status": {
+    "state": 2,
+    "instances": [
+      {
+        "name": "web-1",
+        "status": "running",
+        "fqdn": "nginx-55555555.testnet.manifest.app",
+        "ports": { "80/tcp": 30001 }
+      }
+    ]
+  }
+}

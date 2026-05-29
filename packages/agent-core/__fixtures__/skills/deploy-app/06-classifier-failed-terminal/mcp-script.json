@@ -1,0 +1,62 @@
+{
+  "description": "Mocked MCP call/response transcript for deploy-app/06-classifier-failed-terminal. Deploy returns LEASE_STATE_REJECTED (terminal); classifier outcome 'failed'; orchestrator throws TX_FAILED with the classifier's errorSummary. app_ready_confirmed MUST NOT fire; waitForAppReady MUST NOT be called.",
+  "expected_progress_kinds": [
+    "readiness_evaluated",
+    "deployment_plan_rendered",
+    "user_confirmed",
+    "deploy_app_broadcast",
+    "deploy_response_classified"
+  ],
+  "expected_throw": {
+    "code": "TX_FAILED",
+    "messageContains": [
+      "Lease 66666666-6666-4666-8666-666666666666 reached terminal state LEASE_STATE_REJECTED"
+    ]
+  },
+  "calls": [
+    {
+      "module": "@manifest-network/manifest-mcp-fred",
+      "function": "checkDeploymentReadiness",
+      "expected_args": {
+        "image": "docker.io/library/nginx:1.27",
+        "size": "small"
+      },
+      "response": "see input/readiness-response.json"
+    },
+    {
+      "module": "@manifest-network/manifest-mcp-fred",
+      "function": "buildManifestPreview",
+      "expected_args": {
+        "image": "docker.io/library/nginx:1.27",
+        "port": 80,
+        "env": { "NGINX_HOST": "example.com", "NGINX_PORT": "80" }
+      },
+      "response": "see input/meta-hash-response.json"
+    },
+    {
+      "module": "@manifest-network/manifest-mcp-core",
+      "function": "cosmosEstimateFee",
+      "expected_args": {
+        "module": "billing",
+        "subcommand": "create-lease",
+        "args": [
+          "--meta-hash",
+          "6e1670ec56b86c3feea27755205c5f9972dc3e80e58a6936a17e2c63953e6baf",
+          "sku-uuid-fixture:1"
+        ]
+      },
+      "response": "see input/fee-response.json"
+    },
+    {
+      "module": "@manifest-network/manifest-mcp-fred",
+      "function": "deployApp",
+      "expected_args": {
+        "size": "small",
+        "image": "docker.io/library/nginx:1.27",
+        "port": 80,
+        "env": { "NGINX_HOST": "example.com", "NGINX_PORT": "80" }
+      },
+      "response": "see input/deploy-response.json (state: REJECTED, empty connection)"
+    }
+  ]
+}

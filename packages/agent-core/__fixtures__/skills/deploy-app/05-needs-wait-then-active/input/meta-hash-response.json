@@ -1,0 +1,4 @@
+{
+  "meta_hash_hex": "6e1670ec56b86c3feea27755205c5f9972dc3e80e58a6936a17e2c63953e6baf",
+  "manifest_json": "{\"image\":\"docker.io/library/nginx:1.27\",\"ports\":{\"80/tcp\":{}},\"env\":{\"NGINX_HOST\":\"example.com\",\"NGINX_PORT\":\"80\"}}"
+}

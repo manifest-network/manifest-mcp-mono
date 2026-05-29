@@ -1,0 +1,17 @@
+{
+  "initial": {
+    "outcome": "needs_wait",
+    "leaseUuid": "55555555-5555-4555-8555-555555555555",
+    "providerUuid": "66666666-6666-4666-8666-666666666666",
+    "providerUrl": "https://provider.testnet.manifest.network",
+    "urls": [],
+    "stateName": "LEASE_STATE_PENDING"
+  },
+  "postPoll": {
+    "outcome": "active",
+    "leaseUuid": "55555555-5555-4555-8555-555555555555",
+    "providerUuid": "66666666-6666-4666-8666-666666666666",
+    "providerUrl": "https://provider.testnet.manifest.network",
+    "stateName": "LEASE_STATE_ACTIVE"
+  }
+}
