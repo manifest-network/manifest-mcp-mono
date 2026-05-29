@@ -2431,6 +2431,16 @@ describe('deployApp replay — ENG-185 sub-PR D fixtures (05/06/07)', () => {
     expect(result.leaseState).toBe('LEASE_STATE_ACTIVE');
     expect(result.leaseUuid).toBe(deployResp.lease_uuid as string);
     expect(vi.mocked(fred.waitForAppReady)).toHaveBeenCalledTimes(1);
+    // Post-poll URL plumbing (Copilot fix-3 regression guard): the
+    // FINAL `DeployResult.urls` must reflect the POST-POLL connection's
+    // running instance fqdn (from `wait-for-app-ready-response.json`),
+    // NOT the pre-poll empty instance list (from `deploy-response.json`).
+    // Locks the `liveConnection` plumbing through
+    // `extractRunningEndpoints` → `formatEndpointAsUrl`.
+    expect(result.urls.length).toBeGreaterThan(0);
+    expect(result.urls).toContain(
+      `https://${(waitResp.status as { instances: { fqdn: string }[] }).instances[0]?.fqdn}/`,
+    );
   });
 
   it('06-classifier-failed-terminal: REJECTED → TX_FAILED throw; no polling; no app_ready_confirmed', async () => {

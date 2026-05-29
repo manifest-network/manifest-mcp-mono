@@ -47,11 +47,13 @@ import {
 import {
   AuthTimestampTracker,
   buildManifestPreview,
+  type ConnectionDetails,
   checkDeploymentReadiness,
   createAuthToken,
   createLeaseDataSignMessage,
   createSignMessage,
   type DeployAppResult as FredDeployAppResult,
+  type FredLeaseStatus,
   deployApp as fredDeployApp,
   waitForAppReady,
 } from '@manifest-network/manifest-mcp-fred';
@@ -431,6 +433,28 @@ export async function deployApp(
     return await handleBroadcastFailure(err, confirmedSpec, callbacks, opts);
   }
 
+  // Live-state + live-connection trackers (Copilot fix-3, post-PR-D):
+  // the pre-fix code merged `pollResult.state` (a JSON-encoded string from
+  // `waitForAppReady`) into `fredResult.state` (numeric `LeaseState`) via
+  // a width-erasing cast, hiding a type mismatch. Same for `pollResult.status`
+  // (`FredLeaseStatus`) → `fredResult.connection` (`ConnectionDetails`):
+  // runtime worked (duck-typed reads via `extractRunningEndpoints` /
+  // `hasRunningInstances` / `decodeLeaseState`, all of which accept the
+  // wider shape), but the type contract was violated.
+  //
+  // The fix: track the FINAL (post-poll if applicable, else initial)
+  // state + connection in two separate locals with HONEST types. Each
+  // upstream source has a typed slot:
+  //   - `fredResult.state` (`LeaseState`) when no polling fired.
+  //   - `pollResult.status.state` (`LeaseState`) when polling did fire —
+  //     NOTE: `pollResult.state` is the STRING form (JSON-encoded), wrong
+  //     source. The numeric form lives one level deeper.
+  //   - `fredResult.connection` (`ConnectionDetails | undefined`) initial.
+  //   - `pollResult.status` (`FredLeaseStatus`) post-poll.
+  let liveState: FredDeployAppResult['state'] | undefined = fredResult.state;
+  let liveConnection: ConnectionDetails | FredLeaseStatus | undefined =
+    fredResult.connection;
+
   // --- Classify happy-path result + full routing (ENG-185 sub-PR D) -
   // Architect's α-lock: fred returns after tx + manifest upload succeed,
   // NOT after the app is observably running. So `'needs_wait'` IS an
@@ -551,15 +575,21 @@ export async function deployApp(
     }
 
     // Merge post-poll fields back into `fredResult` so downstream
-    // DeployResult construction sees the final state + connection.
+    // DeployResult construction sees the final lease/provider identity.
+    // The string fields (lease_uuid / provider_uuid / provider_url) align
+    // typewise with their FredDeployAppResult counterparts. The state +
+    // connection fields are NOT merged here — they go into `liveState`
+    // and `liveConnection` so each carries the type that matches its
+    // upstream source (no width-erasing casts). See the live-tracker
+    // declarations above for the full rationale.
     fredResult = {
       ...fredResult,
       lease_uuid: pollResult.lease_uuid,
       provider_uuid: pollResult.provider_uuid,
       provider_url: pollResult.provider_url,
-      state: pollResult.state as never,
-      connection: pollResult.status as never,
     };
+    liveState = pollResult.status.state;
+    liveConnection = pollResult.status;
   }
 
   // 'active' (initial OR post-poll merge): emit + fall through to persist.
@@ -594,15 +624,19 @@ export async function deployApp(
   // NOT be silently classified as ACTIVE). For the unrecognized case,
   // throw `INVALID_CONFIG` so callers see the empirical mismatch
   // instead of consuming a misleading ACTIVE.
+  // Reads via `liveState` (Copilot fix-3): carries the post-poll state
+  // when the needs_wait branch fired, falls back to `fredResult.state`
+  // for the direct-active path. `decodeLeaseState` accepts both numeric
+  // and string forms — `liveState`'s union covers both.
   let leaseStateDecoded: LeaseStateName;
-  if (fredResult.state === undefined) {
+  if (liveState === undefined) {
     leaseStateDecoded = 'LEASE_STATE_ACTIVE';
   } else {
-    const decoded = decodeLeaseState(fredResult.state);
+    const decoded = decodeLeaseState(liveState);
     if (decoded === undefined) {
       throw new ManifestMCPError(
         ManifestMCPErrorCode.INVALID_CONFIG,
-        `Unrecognized lease state from fred deployApp response: ${String(fredResult.state)}. Cannot safely classify; refusing to silently coerce to ACTIVE.`,
+        `Unrecognized lease state from fred deployApp response: ${String(liveState)}. Cannot safely classify; refusing to silently coerce to ACTIVE.`,
       );
     }
     leaseStateDecoded = decoded;
@@ -620,9 +654,14 @@ export async function deployApp(
   // `'https://app.example.com:443/'`, matching the classifier's
   // (`classify-deploy-response.ts`) and renderer's (`format-success.ts`)
   // handling. Empty / scheme-less inputs are normalized consistently.
-  const endpointUrls = extractRunningEndpoints(fredResult.connection).map(
-    formatEndpointAsUrl,
-  );
+  // Reads via `liveConnection` (Copilot fix-3): carries
+  // `pollResult.status` (FredLeaseStatus) when the needs_wait branch
+  // fired, falls back to `fredResult.connection` (ConnectionDetails)
+  // for the direct-active path. `extractRunningEndpoints` takes
+  // `unknown` and walks `instances` / `services.*.instances` — both
+  // shapes are accepted at runtime.
+  const endpointUrls =
+    extractRunningEndpoints(liveConnection).map(formatEndpointAsUrl);
   const fallbackUrl =
     typeof fredResult.url === 'string' ? normalizeFredUrl(fredResult.url) : '';
   const result: DeployResult = {
