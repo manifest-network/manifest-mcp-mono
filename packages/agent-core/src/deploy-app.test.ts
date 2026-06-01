@@ -3341,4 +3341,112 @@ describe('deployApp — retry_set_domain decomposition (ENG-185 sub-PR E)', () =
     expect((caughtErr as Error).message).not.toMatch(/terminal state/i);
     expect(baseCapture.completed).toHaveLength(0);
   });
+
+  // Copilot fix-5 (PR #71) regression tests — uniform `ManifestMCPError`
+  // code preservation across all 4 catches in `retrySetDomainAndComplete`.
+  // Fixup-4's JSDoc rewrite claimed helper-wide code preservation, but
+  // only the `setItemCustomDomain` catch (added by fixup-3) actually
+  // honored it; the other 3 catches hardcoded TX_FAILED. The 3 tests
+  // below lock the L1147-precedent pattern at fetchActiveLease/
+  // resolveProviderUrl, uploadLeaseData, and pollLeaseUntilReady.
+  //
+  // Structural-impossibility discriminator: each test asserts
+  // `.code === <typed-non-TX_FAILED-code>` AND
+  // `.code !== ManifestMCPErrorCode.TX_FAILED`. The pre-fix code
+  // unconditionally writes TX_FAILED, so the `.not.toBe(TX_FAILED)`
+  // assertion is the RED-driver.
+
+  it('fetchActiveLease throws ManifestMCPError → preserves original code (not flattened to TX_FAILED)', async () => {
+    const { run, baseCapture, leaseUuid } = await setupRetryScenario({});
+    const fred = await import('@manifest-network/manifest-mcp-fred');
+    vi.mocked(fred.fetchActiveLease).mockRejectedValue(
+      new ManifestMCPError(
+        ManifestMCPErrorCode.QUERY_FAILED,
+        `Lease "${leaseUuid}" not found on chain`,
+      ),
+    );
+
+    const { caughtErr } = await run();
+
+    expect(caughtErr).toBeInstanceOf(ManifestMCPError);
+    expect((caughtErr as ManifestMCPError).code).toBe(
+      ManifestMCPErrorCode.QUERY_FAILED,
+    );
+    expect((caughtErr as ManifestMCPError).code).not.toBe(
+      ManifestMCPErrorCode.TX_FAILED,
+    );
+    // Sibling-parity invariants still apply: prefix + leaseUuid + the
+    // primitive group name in the wrap.
+    expect((caughtErr as Error).message).toContain('retry_set_domain');
+    expect((caughtErr as Error).message).toContain(leaseUuid);
+    expect((caughtErr as Error).message).toContain('resolve provider');
+    expect((caughtErr as Error).message).toContain('not found on chain');
+    // Short-circuit: downstream upload/poll must not be invoked.
+    expect(vi.mocked(fred.uploadLeaseData)).not.toHaveBeenCalled();
+    expect(vi.mocked(fred.pollLeaseUntilReady)).not.toHaveBeenCalled();
+    expect(baseCapture.completed).toHaveLength(0);
+  });
+
+  it('uploadLeaseData throws ManifestMCPError → preserves original code (not flattened to TX_FAILED)', async () => {
+    const { run, baseCapture, leaseUuid } = await setupRetryScenario({
+      uploadLeaseData: vi
+        .fn()
+        .mockRejectedValue(
+          new ManifestMCPError(
+            ManifestMCPErrorCode.INVALID_CONFIG,
+            'Invalid provider URL: scheme must be https',
+          ),
+        ),
+    });
+
+    const { caughtErr } = await run();
+
+    expect(caughtErr).toBeInstanceOf(ManifestMCPError);
+    expect((caughtErr as ManifestMCPError).code).toBe(
+      ManifestMCPErrorCode.INVALID_CONFIG,
+    );
+    expect((caughtErr as ManifestMCPError).code).not.toBe(
+      ManifestMCPErrorCode.TX_FAILED,
+    );
+    expect((caughtErr as Error).message).toContain('retry_set_domain');
+    expect((caughtErr as Error).message).toContain(leaseUuid);
+    expect((caughtErr as Error).message).toContain('manifest upload');
+    expect((caughtErr as Error).message).toContain(
+      'Invalid provider URL: scheme must be https',
+    );
+    // Short-circuit: poll must not run after upload failure.
+    const fred = await import('@manifest-network/manifest-mcp-fred');
+    expect(vi.mocked(fred.pollLeaseUntilReady)).not.toHaveBeenCalled();
+    expect(baseCapture.completed).toHaveLength(0);
+  });
+
+  it('pollLeaseUntilReady throws ManifestMCPError → preserves original code (not flattened to TX_FAILED)', async () => {
+    const { run, baseCapture, leaseUuid } = await setupRetryScenario({
+      pollLeaseUntilReady: vi
+        .fn()
+        .mockRejectedValue(
+          new ManifestMCPError(
+            ManifestMCPErrorCode.SIMULATION_FAILED,
+            'Provider returned 500 mid-poll',
+          ),
+        ),
+    });
+
+    const { caughtErr } = await run();
+
+    expect(caughtErr).toBeInstanceOf(ManifestMCPError);
+    expect((caughtErr as ManifestMCPError).code).toBe(
+      ManifestMCPErrorCode.SIMULATION_FAILED,
+    );
+    expect((caughtErr as ManifestMCPError).code).not.toBe(
+      ManifestMCPErrorCode.TX_FAILED,
+    );
+    expect((caughtErr as Error).message).toContain('retry_set_domain');
+    expect((caughtErr as Error).message).toContain(leaseUuid);
+    expect((caughtErr as Error).message).toContain('pollLeaseUntilReady');
+    expect((caughtErr as Error).message).toContain(
+      'Provider returned 500 mid-poll',
+    );
+    expect(baseCapture.completed).toHaveLength(0);
+  });
 });

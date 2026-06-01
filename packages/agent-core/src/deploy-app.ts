@@ -1182,11 +1182,21 @@ async function retrySetDomainAndComplete(
     );
     providerApiUrl = await resolveProviderUrl(queryClient, lease.providerUuid);
   } catch (err) {
+    // Copilot fix-5 (PR #71): preserve typed ManifestMCPError codes
+    // (matches the L1147 setItemCustomDomain precedent + the L818
+    // estimateFees precedent). fetchActiveLease throws QUERY_FAILED on
+    // chain-side lookup failures; resolveProviderUrl can throw
+    // QUERY_FAILED (missing apiUrl, etc.) or surface ProviderApiError
+    // (untyped → defaults to TX_FAILED). Honors fixup-4's JSDoc claim.
     const reason =
       err instanceof Error
         ? `retry_set_domain failed to resolve provider for lease ${leaseUuid}: ${err.message}`
         : `retry_set_domain failed to resolve provider for lease ${leaseUuid}: ${String(err)}`;
-    throw new ManifestMCPError(ManifestMCPErrorCode.TX_FAILED, reason);
+    const code =
+      err instanceof ManifestMCPError
+        ? err.code
+        : ManifestMCPErrorCode.TX_FAILED;
+    throw new ManifestMCPError(code, reason);
   }
 
   // Upload the manifest payload via the ADR-036 lease-data auth token
@@ -1206,11 +1216,19 @@ async function retrySetDomainAndComplete(
       opts.fetchFn,
     );
   } catch (err) {
+    // Copilot fix-5 (PR #71): preserve typed ManifestMCPError codes.
+    // uploadLeaseData's underlying `validateProviderUrl` throws
+    // INVALID_CONFIG for malformed URLs; the wrapped fetch surface can
+    // surface ProviderApiError (untyped → TX_FAILED fallback).
     const reason =
       err instanceof Error
         ? `retry_set_domain manifest upload failed for lease ${leaseUuid}: ${err.message}`
         : `retry_set_domain manifest upload failed for lease ${leaseUuid}: ${String(err)}`;
-    throw new ManifestMCPError(ManifestMCPErrorCode.TX_FAILED, reason);
+    const code =
+      err instanceof ManifestMCPError
+        ? err.code
+        : ManifestMCPErrorCode.TX_FAILED;
+    throw new ManifestMCPError(code, reason);
   }
 
   // Poll until the provider reports ACTIVE + running. Uses the LOWER-
@@ -1254,12 +1272,19 @@ async function retrySetDomainAndComplete(
     // `waitForAppReady`. Matches the post-poll re-classify fallback's
     // wording at L1287 + the UNRECOGNIZED-state message at L1308 — all
     // three sites consistently name the primitive that's actually
-    // running in this helper.
+    // running in this helper. Copilot fix-5 (PR #71): preserve typed
+    // ManifestMCPError codes (TerminalChainStateError from
+    // pollLeaseUntilReady's chain-state check surfaces as a typed
+    // ManifestMCPError; ProviderApiError is untyped → TX_FAILED).
     const reason =
       err instanceof Error
         ? `retry_set_domain pollLeaseUntilReady failed for lease ${leaseUuid}: ${err.message}`
         : `retry_set_domain pollLeaseUntilReady failed for lease ${leaseUuid}: ${String(err)}`;
-    throw new ManifestMCPError(ManifestMCPErrorCode.TX_FAILED, reason);
+    const code =
+      err instanceof ManifestMCPError
+        ? err.code
+        : ManifestMCPErrorCode.TX_FAILED;
+    throw new ManifestMCPError(code, reason);
   }
 
   // Defense #2 parity (from D): re-classify the post-poll response and
