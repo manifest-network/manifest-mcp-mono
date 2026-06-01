@@ -1151,6 +1151,11 @@ async function retrySetDomainAndComplete(
     // Preserve the original ManifestMCPError code when applicable
     // (precedent at `estimateFees` — see the cosmosEstimateFee catch
     // block); fall back to TX_FAILED for untyped errors.
+    // Upstream traceability (Copilot fix-6, PR #71): `setItemCustomDomain`
+    // from `core/src/tools/setItemCustomDomain.ts:63,69` genuinely throws
+    // `ManifestMCPError(INVALID_CONFIG)` for validation failures — the
+    // typed branch here is LIVE for the canonical chain-side errors
+    // (FQDN shape, reserved-suffix match, etc.).
     const reason =
       err instanceof Error
         ? `retry_set_domain set-item-custom-domain failed for lease ${leaseUuid}: ${err.message}`
@@ -1184,10 +1189,18 @@ async function retrySetDomainAndComplete(
   } catch (err) {
     // Copilot fix-5 (PR #71): preserve typed ManifestMCPError codes
     // (matches the L1147 setItemCustomDomain precedent + the L818
-    // estimateFees precedent). fetchActiveLease throws QUERY_FAILED on
-    // chain-side lookup failures; resolveProviderUrl can throw
-    // QUERY_FAILED (missing apiUrl, etc.) or surface ProviderApiError
-    // (untyped → defaults to TX_FAILED). Honors fixup-4's JSDoc claim.
+    // estimateFees precedent). Honors fixup-4's JSDoc claim.
+    // Upstream traceability (Copilot fix-6, PR #71):
+    //   - `fetchActiveLease` throws `ManifestMCPError(QUERY_FAILED)` at
+    //     `fred/src/tools/fetchActiveLease.ts:23,35` (lease not found
+    //     on chain + lease-not-active).
+    //   - `resolveProviderUrl` throws `ManifestMCPError(QUERY_FAILED)`
+    //     at `fred/src/tools/resolveLeaseProvider.ts:13,25,36` (empty
+    //     providerUuid + missing apiUrl + chain query failure).
+    //   - Either can also surface `ProviderApiError` (validateProviderUrl
+    //     path); untyped → TX_FAILED fallback.
+    // Typed branch is LIVE for the canonical chain-side errors at this
+    // catch — both upstream call sites genuinely emit ManifestMCPError.
     const reason =
       err instanceof Error
         ? `retry_set_domain failed to resolve provider for lease ${leaseUuid}: ${err.message}`
@@ -1217,9 +1230,17 @@ async function retrySetDomainAndComplete(
     );
   } catch (err) {
     // Copilot fix-5 (PR #71): preserve typed ManifestMCPError codes.
-    // uploadLeaseData's underlying `validateProviderUrl` throws
-    // INVALID_CONFIG for malformed URLs; the wrapped fetch surface can
-    // surface ProviderApiError (untyped → TX_FAILED fallback).
+    // Upstream traceability (Copilot fix-6, PR #71): fred's
+    // `uploadLeaseData` does NOT throw typed `ManifestMCPError` — both
+    // its underlying `validateProviderUrl` (`fred/src/http/provider.ts:14`)
+    // and the wrapped `checkedFetch` surface throw `ProviderApiError`,
+    // which is NOT a `ManifestMCPError`. So this `instanceof
+    // ManifestMCPError` check is effectively a no-op for the typical
+    // fred path — the typed branch is dead code today for this catch.
+    // Pattern is kept for symmetry with the L1196/L1284 sites + safety
+    // against future deps that DO throw typed errors (e.g. a hypothetical
+    // core dependency in the upload path). For the typical fred-only
+    // case, the fallback `TX_FAILED` is what surfaces.
     const reason =
       err instanceof Error
         ? `retry_set_domain manifest upload failed for lease ${leaseUuid}: ${err.message}`
@@ -1273,9 +1294,18 @@ async function retrySetDomainAndComplete(
     // wording at L1287 + the UNRECOGNIZED-state message at L1308 — all
     // three sites consistently name the primitive that's actually
     // running in this helper. Copilot fix-5 (PR #71): preserve typed
-    // ManifestMCPError codes (TerminalChainStateError from
-    // pollLeaseUntilReady's chain-state check surfaces as a typed
-    // ManifestMCPError; ProviderApiError is untyped → TX_FAILED).
+    // ManifestMCPError codes.
+    // Upstream traceability (Copilot fix-6, PR #71): fred's
+    // `pollLeaseUntilReady` does NOT throw typed `ManifestMCPError` —
+    // its terminal-state path throws `TerminalChainStateError` which
+    // `extends ProviderApiError` (`fred/src/http/fred.ts:278`), and its
+    // timeout/HTTP paths throw `ProviderApiError` directly. Neither is
+    // a `ManifestMCPError`. So this `instanceof ManifestMCPError` check
+    // is effectively a no-op for the typical fred path — typed branch
+    // is dead code today for this catch. Pattern is kept for symmetry
+    // with the L1196/L1228 sites + safety against future deps that DO
+    // throw typed errors. For the typical fred-only case, the fallback
+    // `TX_FAILED` is what surfaces.
     const reason =
       err instanceof Error
         ? `retry_set_domain pollLeaseUntilReady failed for lease ${leaseUuid}: ${err.message}`
