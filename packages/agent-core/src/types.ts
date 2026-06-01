@@ -280,7 +280,17 @@ export type ProgressEvent =
     }
   | { kind: 'app_ready_confirmed'; leaseUuid: string }
   | { kind: 'manifest_saved'; leaseUuid: string; manifestPath: string }
-  | { kind: 'success_rendered'; result: DeployResult };
+  | { kind: 'success_rendered'; result: DeployResult }
+  // Carries the rendered-for-display partial-success recovery prompt body
+  // (from `renderPartialSuccessPrompt`) on a ProgressEvent so hosts can
+  // surface the exact text. Emitted exactly once, immediately before the
+  // `onFailure(envelope, options)` recovery call, and only on the
+  // prompt-bearing path (never on the inform-only throw).
+  | {
+      kind: 'partial_success_prompt_rendered';
+      prompt: string;
+      leaseUuid: string;
+    };
 
 // --- failure + recovery -------------------------------------------------
 
