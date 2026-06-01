@@ -87,7 +87,7 @@ describe('DeployAppCallbacks contract', () => {
 });
 
 describe('ProgressEvent discriminant', () => {
-  it('kind union is exactly the nine allowed variants', () => {
+  it('kind union is exactly the ten allowed variants', () => {
     expectTypeOf<ProgressEvent['kind']>().toEqualTypeOf<
       | 'readiness_evaluated'
       | 'deployment_plan_rendered'
@@ -98,6 +98,7 @@ describe('ProgressEvent discriminant', () => {
       | 'app_ready_confirmed'
       | 'manifest_saved'
       | 'success_rendered'
+      | 'partial_success_prompt_rendered'
     >();
   });
 
@@ -169,6 +170,16 @@ describe('ProgressEvent discriminant', () => {
     expectTypeOf<
       Extract<ProgressEvent, { kind: 'success_rendered' }>
     >().toEqualTypeOf<{ kind: 'success_rendered'; result: DeployResult }>();
+  });
+
+  it('partial_success_prompt_rendered carries prompt + leaseUuid', () => {
+    expectTypeOf<
+      Extract<ProgressEvent, { kind: 'partial_success_prompt_rendered' }>
+    >().toEqualTypeOf<{
+      kind: 'partial_success_prompt_rendered';
+      prompt: string;
+      leaseUuid: string;
+    }>();
   });
 });
 

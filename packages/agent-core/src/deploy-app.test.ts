@@ -1808,6 +1808,122 @@ describe('deployApp replay — 03-partial-success-set-domain-failed', () => {
     // re-run troubleshootDeployment).
     expect(caughtErr).toBeInstanceOf(Error);
   });
+
+  // ENG-185 #7 (route β): the rendered partial-success prompt body rides a
+  // `partial_success_prompt_rendered` ProgressEvent, emitted exactly once
+  // immediately before `onFailure`. Reuses the sibling fixture + the same
+  // partial-success rejection message so the lease UUID + reason flow
+  // verbatim into the renderer for a char-exact byte-baseline assertion.
+  it('partial-success: emits one partial_success_prompt_rendered event carrying the renderer-exact prompt before onFailure', async () => {
+    const spec = readFixture(
+      'skills',
+      'deploy-app',
+      '03-partial-success-set-domain-failed',
+      'input',
+      'spec.json',
+    ) as DeploySpec;
+    const readinessRaw = readFixture(
+      'skills',
+      'deploy-app',
+      '03-partial-success-set-domain-failed',
+      'input',
+      'readiness-response.json',
+    );
+    const metaHashResp = readFixture(
+      'skills',
+      'deploy-app',
+      '03-partial-success-set-domain-failed',
+      'input',
+      'meta-hash-response.json',
+    ) as { manifest_json: string; meta_hash_hex: string };
+
+    const fred = await import('@manifest-network/manifest-mcp-fred');
+    vi.mocked(fred.checkDeploymentReadiness).mockResolvedValue(
+      readinessRaw as unknown as Awaited<
+        ReturnType<typeof fred.checkDeploymentReadiness>
+      >,
+    );
+    vi.mocked(fred.buildManifestPreview).mockResolvedValue({
+      manifest_json: metaHashResp.manifest_json,
+      meta_hash_hex: metaHashResp.meta_hash_hex,
+    } as Awaited<ReturnType<typeof fred.buildManifestPreview>>);
+    // Same partial-success rejection message as the sibling test so the
+    // lease UUID + reason are identical going into the renderer.
+    const partialSuccessReason =
+      'Deploy partially succeeded: lease 11111111-1111-4111-8111-111111111111 was created but set-domain failed: simulation error';
+    vi.mocked(fred.deployApp).mockRejectedValue(
+      new Error(partialSuccessReason),
+    );
+
+    const { callbacks, progress, failures } = captureCallbacks();
+    const { deployApp } = await import('./deploy-app.js');
+    const core = await import('@manifest-network/manifest-mcp-core');
+    vi.mocked(core.cosmosEstimateFee).mockResolvedValue({
+      module: 'billing',
+      subcommand: 'create-lease',
+      gasEstimate: '142000',
+      fee: { amount: [{ denom: 'umfx', amount: '2300' }], gas: '142000' },
+    } as Awaited<ReturnType<typeof core.cosmosEstimateFee>>);
+    vi.mocked(core.stopApp).mockResolvedValue(
+      {} as Awaited<ReturnType<typeof core.stopApp>>,
+    );
+
+    const clientManager = makeMockClientManager();
+    const walletProvider = makeMockWalletProvider();
+
+    try {
+      await deployApp(spec, callbacks, {
+        clientManager: clientManager as unknown as Parameters<
+          typeof deployApp
+        >[2]['clientManager'],
+        walletProvider,
+      });
+    } catch {
+      // The orchestrator throws after recovery dispatch; irrelevant here.
+    }
+
+    // (a) Exactly one partial_success_prompt_rendered event fired, and its
+    // leaseUuid is the expected UUID.
+    const promptEvents = progress.filter(
+      (
+        e,
+      ): e is Extract<
+        ProgressEvent,
+        { kind: 'partial_success_prompt_rendered' }
+      > => e.kind === 'partial_success_prompt_rendered',
+    );
+    expect(promptEvents).toHaveLength(1);
+    const promptEvent = promptEvents[0];
+    expect(promptEvent.leaseUuid).toBe('11111111-1111-4111-8111-111111111111');
+
+    // (b) Byte-for-byte: the event prompt equals the real renderer's output
+    // for the IDENTICAL inputs the orchestrator fed it. We pull leaseUuid,
+    // reason, and requestedCustomDomain from the captured failure envelope
+    // (== `classified.{leaseUuid,reason}` + `requestedCustomDomain`) and
+    // pair them with the orchestrator's hard-coded `decodedState`. The
+    // renderer is deterministic, so this MUST match char-for-char.
+    expect(failures).toHaveLength(1);
+    const failure = failures[0];
+    expect(failure?.envelope.outcome).toBe('partially_succeeded');
+    if (failure?.envelope.outcome !== 'partially_succeeded') {
+      throw new Error('expected partially_succeeded envelope');
+    }
+    const { renderPartialSuccessPrompt } = await import(
+      './internals/render-partial-success-prompt.js'
+    );
+    const expected = renderPartialSuccessPrompt({
+      leaseUuid: failure.envelope.leaseUuid,
+      decodedState: 'LEASE_STATE_PENDING',
+      reason: failure.envelope.reason,
+      ...(failure.envelope.requestedCustomDomain !== undefined
+        ? { requestedCustomDomain: failure.envelope.requestedCustomDomain }
+        : {}),
+    }).prompt;
+    expect(promptEvent.prompt).toBe(expected);
+
+    // (c) onFailure invoked exactly once (no double-prompt).
+    expect(failures).toHaveLength(1);
+  });
 });
 
 // Copilot review fix (PR #58 r3266642610): `applyPlanEdit` previously

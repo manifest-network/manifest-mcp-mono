@@ -997,6 +997,16 @@ async function handleBroadcastFailure(
     // onFailure when there's a choice to present. Empty options means
     // inform-only path; we throw instead of prompting.
     if (options.length > 0 && callbacks.onFailure !== undefined) {
+      // Route β (ENG-185 #7): the rendered prompt body would otherwise be
+      // dropped (only `options` flow into `onFailure`). Ride it on a
+      // ProgressEvent emitted exactly once, immediately before the
+      // (single) `onFailure` call — so it never fires on the inform-only
+      // throw path below and `onFailure` stays invoked exactly once.
+      callbacks.onProgress?.({
+        kind: 'partial_success_prompt_rendered',
+        prompt: promptPayload.prompt,
+        leaseUuid: envelope.leaseUuid,
+      });
       const choice = await callbacks.onFailure(envelope, options);
       return await dispatchRecovery(
         choice,
