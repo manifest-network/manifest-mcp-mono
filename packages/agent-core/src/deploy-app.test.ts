@@ -3450,3 +3450,311 @@ describe('deployApp — retry_set_domain decomposition (ENG-185 sub-PR E)', () =
     expect(baseCapture.completed).toHaveLength(0);
   });
 });
+
+describe('deployApp — C2 plan-edit roundtrip propagates edited size (ENG-185 #4)', () => {
+  // Regression guard for the C2 fix (post-edit propagation gap). The
+  // `r3237308843` test above already pins the plain plan-block *re-render*
+  // (it asserts the post-edit `image` and that the two emitted blocks
+  // differ). THIS block guards a DIFFERENT axis: that a `replace_spec`
+  // edit which changes ONLY `size` propagates the edited size through
+  // every post-edit consumer — the rendered `Size:` line, the post-edit
+  // `checkDeploymentReadiness` call arg, the broadcast `fredInput.size`,
+  // the post-edit `cosmosEstimateFee` meta-hash threading, and the
+  // persisted manifest wrapper's `size`. Size is the ONLY observable
+  // difference between the pre- and post-edit specs, so each positive
+  // (`medium`) + negative (`not small`) pair is non-vacuous by
+  // construction (a stale-spec regression would surface `small`).
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  // Distinguishable meta-hash digests so a post-edit consumer that reads
+  // the STALE pre-edit preview can be caught. Both are valid 64-char hex.
+  const PRE_EDIT_META =
+    '1111111111111111111111111111111111111111111111111111111111111111';
+  const POST_EDIT_META =
+    '2222222222222222222222222222222222222222222222222222222222222222';
+
+  /**
+   * Shared setup: load the 01-fast-path-active fixtures, augment the base
+   * spec with a conventional `size: 'small'` (read by `requestedSize`, not
+   * part of the frozen `DeploySpec` type), and wire an `onPlan` that
+   * returns a `replace_spec` edit identical to the base EXCEPT `size:
+   * 'medium'`. `buildManifestPreview` is sequenced PRE → POST so the
+   * post-edit fee/persist path can be proven to use the edited-spec hash.
+   * `checkDeploymentReadiness` is size-agnostic (same response both calls);
+   * the size lives in the call ARGUMENT, not the response.
+   *
+   * `previewOverride` lets Test E swap in a real `{manifest_json,
+   * meta_hash_hex}` pair (hash matches content) so `saveManifest`'s
+   * SHA-256 audit passes.
+   */
+  async function setupSizeEditScenario(previewOverride?: {
+    manifestJson: string;
+    metaHashHex: string;
+  }) {
+    const baseSpecRaw = readFixture(
+      'skills',
+      'deploy-app',
+      '01-fast-path-active',
+      'input',
+      'spec.json',
+    ) as Record<string, unknown>;
+    const readinessRaw = readFixture(
+      'skills',
+      'deploy-app',
+      '01-fast-path-active',
+      'input',
+      'readiness-response.json',
+    );
+    const metaHashResp = readFixture(
+      'skills',
+      'deploy-app',
+      '01-fast-path-active',
+      'input',
+      'meta-hash-response.json',
+    ) as { manifest_json: string; meta_hash_hex: string };
+    const deployResp = readFixture(
+      'skills',
+      'deploy-app',
+      '01-fast-path-active',
+      'input',
+      'deploy-response.json',
+    ) as Record<string, unknown>;
+
+    // `size` is read by `requestedSize` (a conventional property), NOT a
+    // typed `DeploySpec` field. Cast via `as unknown as` per the
+    // established test idiom — do NOT add `size` to the frozen type.
+    const baseSpec = {
+      ...baseSpecRaw,
+      size: 'small',
+    } as unknown as DeploySpec;
+    // Size is the ONLY difference: image/port/env are spread verbatim.
+    const editedSpec = {
+      ...baseSpecRaw,
+      size: 'medium',
+    } as unknown as DeploySpec;
+
+    const fred = await import('@manifest-network/manifest-mcp-fred');
+    // Size-agnostic readiness: identical response for both the pre-edit
+    // and post-edit calls. The edited size is encoded in the call ARG.
+    vi.mocked(fred.checkDeploymentReadiness).mockResolvedValue(
+      readinessRaw as unknown as Awaited<
+        ReturnType<typeof fred.checkDeploymentReadiness>
+      >,
+    );
+    vi.mocked(fred.buildManifestPreview)
+      .mockResolvedValueOnce({
+        manifest_json: metaHashResp.manifest_json,
+        meta_hash_hex: PRE_EDIT_META,
+      } as Awaited<ReturnType<typeof fred.buildManifestPreview>>)
+      .mockResolvedValueOnce({
+        manifest_json:
+          previewOverride?.manifestJson ?? metaHashResp.manifest_json,
+        meta_hash_hex: previewOverride?.metaHashHex ?? POST_EDIT_META,
+      } as Awaited<ReturnType<typeof fred.buildManifestPreview>>);
+    vi.mocked(fred.deployApp).mockResolvedValue({
+      lease_uuid: deployResp.lease_uuid as string,
+      provider_uuid: deployResp.provider_uuid as string,
+      provider_url: deployResp.provider_url as string,
+      state: deployResp.state as never,
+      connection: deployResp.connection,
+    } as Awaited<ReturnType<typeof fred.deployApp>>);
+
+    const core = await import('@manifest-network/manifest-mcp-core');
+    // Size-agnostic fee estimate; the edited size shows up in the
+    // create-lease ARG (item-args / meta-hash), not the response.
+    vi.mocked(core.cosmosEstimateFee).mockResolvedValue({
+      module: 'billing',
+      subcommand: 'create-lease',
+      gasEstimate: '142000',
+      fee: { amount: [{ denom: 'umfx', amount: '2300' }], gas: '142000' },
+    } as Awaited<ReturnType<typeof core.cosmosEstimateFee>>);
+
+    const baseCapture = captureCallbacks();
+    const callbacks: DeployAppCallbacks = {
+      ...baseCapture.callbacks,
+      onPlan: async () => ({ kind: 'replace_spec', spec: editedSpec }),
+    };
+
+    return { baseSpec, editedSpec, callbacks, baseCapture, fred, core };
+  }
+
+  it('A. rendered post-edit plan `Size:` line is `medium` (pre-edit block stays `small`)', async () => {
+    const { baseSpec, callbacks, baseCapture } = await setupSizeEditScenario();
+    const { deployApp } = await import('./deploy-app.js');
+    const clientManager = makeMockClientManager();
+    const walletProvider = makeMockWalletProvider();
+
+    await deployApp(baseSpec, callbacks, {
+      clientManager: clientManager as unknown as Parameters<
+        typeof deployApp
+      >[2]['clientManager'],
+      walletProvider,
+    });
+
+    const rendered = baseCapture.progress.filter(
+      (e) => e.kind === 'deployment_plan_rendered',
+    );
+    expect(rendered).toHaveLength(2);
+    const preEditBlock =
+      rendered[0]?.kind === 'deployment_plan_rendered'
+        ? rendered[0].block
+        : undefined;
+    const postEditBlock =
+      rendered[1]?.kind === 'deployment_plan_rendered'
+        ? rendered[1].block
+        : undefined;
+    // The renderer emits a literal `  Size:                      <size>`
+    // line (render-deployment-plan.ts). Assert the exact rendered line so
+    // the check can't be satisfied by `medium` appearing elsewhere.
+    expect(postEditBlock?.text).toContain('Size:                      medium');
+    expect(postEditBlock?.text).not.toContain(
+      'Size:                      small',
+    );
+    expect(preEditBlock?.text).toContain('Size:                      small');
+    expect(preEditBlock?.text).not.toContain(
+      'Size:                      medium',
+    );
+  });
+
+  it('B. post-edit `checkDeploymentReadiness` call arg `.size` is `medium` (1st call is `small`)', async () => {
+    const { baseSpec, callbacks, fred } = await setupSizeEditScenario();
+    const { deployApp } = await import('./deploy-app.js');
+    const clientManager = makeMockClientManager();
+    const walletProvider = makeMockWalletProvider();
+
+    await deployApp(baseSpec, callbacks, {
+      clientManager: clientManager as unknown as Parameters<
+        typeof deployApp
+      >[2]['clientManager'],
+      walletProvider,
+    });
+
+    // Two readiness calls: original spec, then the post-edit recall. Arg
+    // index [2] is the `{image, size}` input (mirrors the readiness-recall
+    // tests above).
+    expect(vi.mocked(fred.checkDeploymentReadiness)).toHaveBeenCalledTimes(2);
+    const calls = vi.mocked(fred.checkDeploymentReadiness).mock.calls;
+    expect(calls[0]?.[2]).toMatchObject({ size: 'small' });
+    expect(calls[1]?.[2]).toMatchObject({ size: 'medium' });
+    expect(calls[1]?.[2]).not.toMatchObject({ size: 'small' });
+  });
+
+  it('C. broadcast `fredInput.size` is `medium` (the AC requirement)', async () => {
+    const { baseSpec, callbacks, fred } = await setupSizeEditScenario();
+    const { deployApp } = await import('./deploy-app.js');
+    const clientManager = makeMockClientManager();
+    const walletProvider = makeMockWalletProvider();
+
+    await deployApp(baseSpec, callbacks, {
+      clientManager: clientManager as unknown as Parameters<
+        typeof deployApp
+      >[2]['clientManager'],
+      walletProvider,
+    });
+
+    // fredDeployApp signature: (clientManager, getAuthToken,
+    // getLeaseDataAuthToken, fredInput, fetchFn) — `fredInput` is the 4th
+    // positional arg (index [3]).
+    expect(vi.mocked(fred.deployApp)).toHaveBeenCalledTimes(1);
+    const fredInput = vi.mocked(fred.deployApp).mock.calls[0]?.[3] as
+      | { size?: string }
+      | undefined;
+    expect(fredInput?.size).toBe('medium');
+    expect(fredInput?.size).not.toBe('small');
+  });
+
+  it('D. post-edit `cosmosEstimateFee` is called with `--meta-hash <POST_EDIT hex>` (pre-edit call uses PRE_EDIT hex)', async () => {
+    const { baseSpec, callbacks, core } = await setupSizeEditScenario();
+    const { deployApp } = await import('./deploy-app.js');
+    const clientManager = makeMockClientManager();
+    const walletProvider = makeMockWalletProvider();
+
+    await deployApp(baseSpec, callbacks, {
+      clientManager: clientManager as unknown as Parameters<
+        typeof deployApp
+      >[2]['clientManager'],
+      walletProvider,
+    });
+
+    // estimateFees runs once at plan-assembly (pre-edit preview) and again
+    // after the edit (post-edit preview). cosmosEstimateFee's 4th
+    // positional arg (index [3]) is the `string[]` args array, shaped
+    // `['--meta-hash', <hex>, <itemArg>]`.
+    expect(vi.mocked(core.cosmosEstimateFee)).toHaveBeenCalledTimes(2);
+    const preEditArgs = vi.mocked(core.cosmosEstimateFee).mock.calls[0]?.[3] as
+      | string[]
+      | undefined;
+    const postEditArgs = vi.mocked(core.cosmosEstimateFee).mock.calls[1]?.[3] as
+      | string[]
+      | undefined;
+    // Pre-edit call threads the PRE_EDIT preview hash.
+    expect(preEditArgs?.[0]).toBe('--meta-hash');
+    expect(preEditArgs?.[1]).toBe(PRE_EDIT_META);
+    expect(preEditArgs?.slice(2)).toEqual(['sku-uuid-fixture:1']);
+    // Post-edit call threads the POST_EDIT preview hash — proving the
+    // recompute uses the freshly-built (edited-spec) preview, not the
+    // stale pre-edit one.
+    expect(postEditArgs?.[0]).toBe('--meta-hash');
+    expect(postEditArgs?.[1]).toBe(POST_EDIT_META);
+    expect(postEditArgs?.[1]).not.toBe(PRE_EDIT_META);
+    expect(postEditArgs?.slice(2)).toEqual(['sku-uuid-fixture:1']);
+  });
+
+  it('E. persisted manifest wrapper `size` is `medium` (real on-disk save, SHA-256 audit passes)', async () => {
+    // Real on-disk save: override the post-edit preview with a
+    // `{manifest_json, meta_hash_hex}` pair whose hash matches the
+    // content, so `saveManifest`'s SHA-256 audit passes. Read the wrapper
+    // back and assert `size` + `meta_hash_hex`.
+    const {
+      mkdtempSync,
+      readFileSync: readFs,
+      rmSync,
+    } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const { join: joinPath } = await import('node:path');
+    const { createHash } = await import('node:crypto');
+
+    const dataDir = mkdtempSync(joinPath(tmpdir(), 'eng185f-'));
+    try {
+      // A real manifest_json whose SHA-256 (after trimEnd) is the
+      // recorded meta_hash_hex — matches saveManifest's audit contract.
+      const editedManifestJson = '{"image":"docker.io/library/nginx:1.27"}';
+      const editedMetaHash = createHash('sha256')
+        .update(editedManifestJson)
+        .digest('hex');
+
+      const { baseSpec, callbacks } = await setupSizeEditScenario({
+        manifestJson: editedManifestJson,
+        metaHashHex: editedMetaHash,
+      });
+      const { deployApp } = await import('./deploy-app.js');
+      const clientManager = makeMockClientManager();
+      const walletProvider = makeMockWalletProvider();
+
+      const result = await deployApp(baseSpec, callbacks, {
+        clientManager: clientManager as unknown as Parameters<
+          typeof deployApp
+        >[2]['clientManager'],
+        walletProvider,
+        dataDir,
+      });
+
+      expect(result.manifestPath).not.toBe('');
+      const wrapper = JSON.parse(readFs(result.manifestPath, 'utf8')) as {
+        size?: string;
+        meta_hash_hex?: string;
+      };
+      // The persisted wrapper records the EDITED size + the edited-spec
+      // preview hash — proving tryPersistManifest reads the post-edit
+      // `requestedSize(confirmedSpec)` + post-edit preview, not the stale
+      // pre-edit values.
+      expect(wrapper.size).toBe('medium');
+      expect(wrapper.size).not.toBe('small');
+      expect(wrapper.meta_hash_hex).toBe(editedMetaHash);
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+});
