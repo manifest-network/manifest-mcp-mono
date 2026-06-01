@@ -3256,4 +3256,89 @@ describe('deployApp — retry_set_domain decomposition (ENG-185 sub-PR E)', () =
     expect(vi.mocked(fred.pollLeaseUntilReady)).not.toHaveBeenCalled();
     expect(baseCapture.completed).toHaveLength(0);
   });
+
+  it('post-poll re-classify with errorSummary (terminal state) → TX_FAILED with retry_set_domain prefix + leaseUuid + errorSummary content', async () => {
+    // Copilot fix-4 (PR #71) regression guard for the errorSummary
+    // branch of the `??` fallback at L1267. The pre-fix code used
+    // `classification.errorSummary ?? ...fallback...` which meant when
+    // errorSummary IS set (post-poll classifier produces 'failed' with
+    // a terminal-state errorSummary), the thrown message would be
+    // errorSummary VERBATIM — no `retry_set_domain` prefix, no leaseUuid.
+    // Inconsistent with the sibling-parity discipline that all other
+    // throw sites in this helper honor (fixup-3 wrap).
+    //
+    // To drive the errorSummary path: mock pollLeaseUntilReady to
+    // RESOLVE with a terminal-state response. The post-poll re-classify
+    // then sees state=REJECTED → outcome='failed' → classifier sets
+    // errorSummary to `Lease ${leaseUuid} reached terminal state
+    // LEASE_STATE_REJECTED` (per classify-deploy-response.ts:120).
+    const { run, baseCapture, leaseUuid } = await setupRetryScenario({
+      pollLeaseUntilReady: vi.fn().mockResolvedValue({
+        state: 4, // LEASE_STATE_REJECTED — terminal
+        instances: [],
+      }),
+    });
+
+    const { caughtErr } = await run();
+
+    expect(caughtErr).toBeInstanceOf(ManifestMCPError);
+    expect((caughtErr as ManifestMCPError).code).toBe(
+      ManifestMCPErrorCode.TX_FAILED,
+    );
+    // Sibling-parity invariant: prefix + leaseUuid in the message.
+    expect((caughtErr as Error).message).toContain('retry_set_domain');
+    expect((caughtErr as Error).message).toContain(leaseUuid);
+    // The classifier's errorSummary content is preserved (we wrap it
+    // for prefix, but the underlying terminal-state diagnostic is the
+    // information operators need).
+    expect((caughtErr as Error).message).toContain('LEASE_STATE_REJECTED');
+    expect((caughtErr as Error).message).toContain('terminal state');
+    // Wording differentiates the errorSummary path from the
+    // no-errorSummary fallback (latter says "but post-poll classifier
+    // outcome is needs_wait").
+    expect((caughtErr as Error).message).toMatch(
+      /post-poll re-classification/i,
+    );
+    expect(baseCapture.completed).toHaveLength(0);
+  });
+
+  it('post-poll re-classify without errorSummary (ACTIVE with no instances) → TX_FAILED with retry_set_domain prefix + leaseUuid + fallback wording', async () => {
+    // Copilot fix-4 (PR #71) regression guard for the no-errorSummary
+    // branch of the `??` fallback at L1268. Post-poll classifier
+    // returns 'needs_wait' (ACTIVE state but no running instances —
+    // the Defense #2 race scenario from D), errorSummary is undefined,
+    // and the fallback string fires. Pre-fix the fallback referenced
+    // the stale `wait_for_app_ready` primitive name (fixup-1 switched
+    // to pollLeaseUntilReady but fixup-2's comment-only sweep missed
+    // template literals).
+    const { run, baseCapture, leaseUuid } = await setupRetryScenario({
+      pollLeaseUntilReady: vi.fn().mockResolvedValue({
+        state: 2, // LEASE_STATE_ACTIVE — not terminal
+        instances: [], // but no running instances → re-classifier → 'needs_wait'
+      }),
+    });
+
+    const { caughtErr } = await run();
+
+    expect(caughtErr).toBeInstanceOf(ManifestMCPError);
+    expect((caughtErr as ManifestMCPError).code).toBe(
+      ManifestMCPErrorCode.TX_FAILED,
+    );
+    // Sibling-parity invariant.
+    expect((caughtErr as Error).message).toContain('retry_set_domain');
+    expect((caughtErr as Error).message).toContain(leaseUuid);
+    expect((caughtErr as Error).message).toContain('post-poll classifier');
+    expect((caughtErr as Error).message).toContain('needs_wait');
+    // Stale-string anti-regression: the post-fixup-4 fallback names
+    // the primitive that actually runs (`pollLeaseUntilReady`), not
+    // the higher-level `wait_for_app_ready` MCP-tool name.
+    expect((caughtErr as Error).message).toContain('pollLeaseUntilReady');
+    expect((caughtErr as Error).message).not.toMatch(/wait_for_app_ready/);
+    // The classifier emitted exactly the Defense #2 outcome ('needs_wait'),
+    // NOT a terminal-state outcome (which would have hit the
+    // errorSummary branch instead — verified by the message not
+    // containing "terminal state").
+    expect((caughtErr as Error).message).not.toMatch(/terminal state/i);
+    expect(baseCapture.completed).toHaveLength(0);
+  });
 });

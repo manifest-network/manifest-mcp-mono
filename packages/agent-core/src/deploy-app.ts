@@ -1095,16 +1095,27 @@ async function dispatchRecovery(
  *   6. Persist manifest (best-effort) + build typed `DeployResult` +
  *      emit `app_ready_confirmed` + `success_rendered` + onComplete.
  *
- * Failure paths (each → TX_FAILED with leaseUuid + diagnostic message,
- * matching D's L548-550 sibling style):
- *   - `setItemCustomDomain` throws → propagate (caller already saw the
- *     partial-success failure; this is a second strike).
+ * Failure paths (sibling-parity wraps — every catch site surfaces
+ * `retry_set_domain <primitive-name> failed for lease ${leaseUuid}:
+ * ${err.message}` in the thrown message, matching D's L548-550 style).
+ * Error-code policy: typed `ManifestMCPError`s flow through with their
+ * original code preserved (precedent at `estimateFees` — see the
+ * `cosmosEstimateFee` catch block); untyped errors default to
+ * `TX_FAILED`. The post-poll re-classify path likewise prefixes BOTH
+ * the errorSummary-set and the no-errorSummary branches with
+ * `retry_set_domain` + leaseUuid (Copilot fix-4, PR #71):
+ *   - `setItemCustomDomain` throws → wrap with prefix + leaseUuid +
+ *     code preservation. Most likely cause: chain rejected the
+ *     set-item-custom-domain tx (FQDN validation, reserved-suffix
+ *     match, lease not active, etc.).
  *   - `fetchActiveLease` / `resolveProviderUrl` throw → wrap with
- *     leaseUuid context.
- *   - `uploadLeaseData` throws → wrap with leaseUuid context.
- *   - `pollLeaseUntilReady` throws → wrap with leaseUuid context.
- *   - Post-poll re-classify outcome !== 'active' → throw with the
- *     Defense #2 wording.
+ *     prefix + leaseUuid.
+ *   - `uploadLeaseData` throws → wrap with prefix + leaseUuid.
+ *   - `pollLeaseUntilReady` throws → wrap with prefix + leaseUuid.
+ *   - Post-poll re-classify outcome !== 'active' → wrap both
+ *     branches: errorSummary-set (terminal-state response) AND
+ *     no-errorSummary fallback (ACTIVE-with-no-instances Defense #2
+ *     race) carry prefix + leaseUuid.
  */
 async function retrySetDomainAndComplete(
   leaseUuid: string,
@@ -1238,10 +1249,16 @@ async function retrySetDomainAndComplete(
       opts.fetchFn,
     );
   } catch (err) {
+    // Names the actual primitive being awaited (post-fixup-1 +
+    // fixup-4 consistency): `pollLeaseUntilReady`, not the higher-level
+    // `waitForAppReady`. Matches the post-poll re-classify fallback's
+    // wording at L1287 + the UNRECOGNIZED-state message at L1308 — all
+    // three sites consistently name the primitive that's actually
+    // running in this helper.
     const reason =
       err instanceof Error
-        ? `retry_set_domain wait_for_app_ready failed for lease ${leaseUuid}: ${err.message}`
-        : `retry_set_domain wait_for_app_ready failed for lease ${leaseUuid}: ${String(err)}`;
+        ? `retry_set_domain pollLeaseUntilReady failed for lease ${leaseUuid}: ${err.message}`
+        : `retry_set_domain pollLeaseUntilReady failed for lease ${leaseUuid}: ${String(err)}`;
     throw new ManifestMCPError(ManifestMCPErrorCode.TX_FAILED, reason);
   }
 
@@ -1263,9 +1280,17 @@ async function retrySetDomainAndComplete(
   };
   const classification = classifyDeployResponse(postPollResponse);
   if (classification.outcome !== 'active') {
+    // Copilot fix-4 (PR #71): sibling-parity for BOTH branches. The
+    // pre-fix `??` collapsed errorSummary (set when the post-poll
+    // classifier produces 'failed' with a terminal-state response)
+    // directly into the throw — no `retry_set_domain` prefix, no
+    // leaseUuid. Both branches now carry the prefix + leaseUuid, and
+    // the no-errorSummary fallback names the actual primitive
+    // (`pollLeaseUntilReady` post-fixup-1, not `wait_for_app_ready`).
     const reason =
-      classification.errorSummary ??
-      `retry_set_domain: wait_for_app_ready returned for lease ${leaseUuid} but post-poll classifier outcome is ${classification.outcome}`;
+      classification.errorSummary !== undefined
+        ? `retry_set_domain post-poll re-classification failed for lease ${leaseUuid}: ${classification.errorSummary}`
+        : `retry_set_domain: pollLeaseUntilReady returned for lease ${leaseUuid} but post-poll classifier outcome is ${classification.outcome}`;
     throw new ManifestMCPError(ManifestMCPErrorCode.TX_FAILED, reason);
   }
 
@@ -1297,7 +1322,7 @@ async function retrySetDomainAndComplete(
   if (decoded === undefined) {
     throw new ManifestMCPError(
       ManifestMCPErrorCode.INVALID_CONFIG,
-      `Unrecognized lease state from wait_for_app_ready response: ${String(liveState)}. Cannot safely classify; refusing to silently coerce to ACTIVE.`,
+      `Unrecognized lease state from pollLeaseUntilReady response: ${String(liveState)}. Cannot safely classify; refusing to silently coerce to ACTIVE.`,
     );
   }
   leaseStateDecoded = decoded;
