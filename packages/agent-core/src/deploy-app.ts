@@ -54,7 +54,11 @@ import {
   createSignMessage,
   type DeployAppResult as FredDeployAppResult,
   type FredLeaseStatus,
+  fetchActiveLease,
   deployApp as fredDeployApp,
+  pollLeaseUntilReady,
+  resolveProviderUrl,
+  uploadLeaseData,
   waitForAppReady,
 } from '@manifest-network/manifest-mcp-fred';
 import {
@@ -430,7 +434,28 @@ export async function deployApp(
       opts.fetchFn,
     );
   } catch (err) {
-    return await handleBroadcastFailure(err, confirmedSpec, callbacks, opts);
+    // ENG-185 sub-PR E: thread a `RecoveryContext` so the
+    // `retry_set_domain` branch can decompose the deploy into
+    // `setItemCustomDomain` + `uploadLeaseData` + `pollLeaseUntilReady`.
+    // Captured values mirror what fred's atomic `deployApp` had: the
+    // ADR-036 auth closures, the manifest payload + hash, and the chain
+    // identity (for downstream `tryPersistManifest`).
+    const recoveryCtx: RecoveryContext = {
+      manifestJson: preview.manifest_json,
+      metaHash: preview.meta_hash_hex,
+      getAuthToken,
+      getLeaseDataAuthToken,
+      tenantAddress,
+      chainId,
+      denomMap,
+    };
+    return await handleBroadcastFailure(
+      err,
+      confirmedSpec,
+      callbacks,
+      opts,
+      recoveryCtx,
+    );
   }
 
   // Live-state + live-connection trackers (Copilot fix-3, post-PR-D):
@@ -895,11 +920,43 @@ function applyPlanEdit(
   return spec;
 }
 
+/**
+ * Recovery-path execution context. Threaded from `deployApp`'s enclosing
+ * scope through `handleBroadcastFailure` → `dispatchRecovery` → the
+ * per-choice closures. Internal (not exported, not in `types.ts`); each
+ * field's upstream source lives in `deployApp`'s scope when the broadcast
+ * failure surfaces, so the context is just a parameter bundle, not a
+ * stateful object.
+ *
+ * Added by ENG-185 sub-PR E so the `retry_set_domain` branch can
+ * decompose the deploy: it needs the manifest payload + hash for
+ * `uploadLeaseData`, the auth closures for the upload + poll, and the
+ * tenant/chain identity for `pollLeaseUntilReady` + downstream
+ * `tryPersistManifest`. Other recovery branches (`salvage_without_domain`,
+ * `cancel_lease`, `close_lease`) currently ignore the context — they
+ * route through `stopApp` or a bare throw — but the widened signature
+ * keeps future expansions cheap.
+ */
+interface RecoveryContext {
+  manifestJson: string;
+  metaHash: string;
+  getAuthToken: (address: string, leaseUuid: string) => Promise<string>;
+  getLeaseDataAuthToken: (
+    address: string,
+    leaseUuid: string,
+    metaHashHex: string,
+  ) => Promise<string>;
+  tenantAddress: string;
+  chainId: string;
+  denomMap: DenomMap;
+}
+
 async function handleBroadcastFailure(
   err: unknown,
   spec: DeploySpec,
   callbacks: DeployAppCallbacks,
   opts: DeployAppOptions,
+  ctx: RecoveryContext,
 ): Promise<DeployResult> {
   const requestedCustomDomain = customDomainOf(spec);
 
@@ -941,7 +998,14 @@ async function handleBroadcastFailure(
     // inform-only path; we throw instead of prompting.
     if (options.length > 0 && callbacks.onFailure !== undefined) {
       const choice = await callbacks.onFailure(envelope, options);
-      return await dispatchRecovery(choice, envelope, spec, opts);
+      return await dispatchRecovery(
+        choice,
+        envelope,
+        spec,
+        opts,
+        callbacks,
+        ctx,
+      );
     }
     throw new ManifestMCPError(
       ManifestMCPErrorCode.TX_FAILED,
@@ -968,39 +1032,21 @@ async function dispatchRecovery(
   envelope: FailureEnvelope,
   spec: DeploySpec,
   opts: DeployAppOptions,
+  callbacks: DeployAppCallbacks,
+  ctx: RecoveryContext,
 ): Promise<DeployResult> {
   // Inline closures per gate-2 verdict (no separate strategy module).
   const leaseUuid =
     envelope.outcome === 'partially_succeeded' ? envelope.leaseUuid : '';
   switch (choice.id) {
-    case 'retry_set_domain': {
-      const domain = customDomainOf(spec);
-      if (!domain) {
-        throw new ManifestMCPError(
-          ManifestMCPErrorCode.INVALID_CONFIG,
-          'retry_set_domain requires a customDomain in spec.',
-        );
-      }
-      // C6 fix: pass `serviceName` for stack-lease specs so the
-      // set-item-custom-domain tx targets the named service item, not
-      // the default single-item lease. setItemCustomDomain's actual
-      // signature is `(clientManager, leaseUuid, customDomain,
-      // options?: { serviceName?, clear? }, overrides?)` — verified
-      // per Discipline V against
-      // packages/core/src/tools/setItemCustomDomain.ts.
-      const serviceName = customDomainServiceOf(spec);
-      const setItemOpts = serviceName ? { serviceName } : undefined;
-      await setItemCustomDomain(
-        opts.clientManager,
+    case 'retry_set_domain':
+      return await retrySetDomainAndComplete(
         leaseUuid,
-        domain,
-        setItemOpts,
+        spec,
+        opts,
+        callbacks,
+        ctx,
       );
-      throw new ManifestMCPError(
-        ManifestMCPErrorCode.TX_FAILED,
-        `retry_set_domain completed for ${leaseUuid}; caller should re-run troubleshootDeployment to confirm app readiness.`,
-      );
-    }
     case 'salvage_without_domain':
       throw new ManifestMCPError(
         ManifestMCPErrorCode.TX_FAILED,
@@ -1019,6 +1065,337 @@ async function dispatchRecovery(
     ManifestMCPErrorCode.TX_FAILED,
     `Unknown recovery option: ${(choice as RecoveryChoice).id}`,
   );
+}
+
+/**
+ * `retry_set_domain` recovery: decompose the deploy after the partial-
+ * success failure. ENG-185 sub-PR E.
+ *
+ * Steps (mirrors fred's atomic `deployApp` minus the create-lease tx,
+ * which already succeeded):
+ *   1. `setItemCustomDomain` — broadcast the domain claim against the
+ *      pre-existing lease. Stack specs thread `serviceName` so the
+ *      tx targets the named lease item.
+ *   2. `fetchActiveLease` + `resolveProviderUrl` — look up the provider
+ *      URL from the on-chain lease record (the partial-success error
+ *      envelope only carries `leaseUuid`).
+ *   3. `uploadLeaseData` — push the manifest payload to the provider.
+ *      Uses the ADR-036 lease-data auth token (signed against the
+ *      manifest's meta-hash).
+ *   4. `pollLeaseUntilReady` — poll until the provider reports ACTIVE +
+ *      running. Uses the LOWER-LEVEL primitive (not `waitForAppReady`)
+ *      so the already-resolved `providerApiUrl` and auth-token closure
+ *      pass through directly — no redundant on-chain queries (Copilot
+ *      fix-1, PR #71). Reuses D's canonical polling-emission pattern:
+ *      `onProgress` closure translates each `FredLeaseStatus` sample
+ *      into a typed `polling_for_readiness` ProgressEvent, default
+ *      480_000ms timeout overridable via `opts.waitForReadyTimeoutMs`.
+ *   5. Defense #2 parity (post-poll re-classify) — guard the
+ *      ACTIVE-with-no-instances race per D's pattern.
+ *   6. Persist manifest (best-effort) + build typed `DeployResult` +
+ *      emit `app_ready_confirmed` + `success_rendered` + onComplete.
+ *
+ * Failure paths (sibling-parity wraps — every catch site surfaces
+ * `retry_set_domain <primitive-name> failed for lease ${leaseUuid}:
+ * ${err.message}` in the thrown message, matching D's L548-550 style).
+ * Error-code policy: typed `ManifestMCPError`s flow through with their
+ * original code preserved (precedent at `estimateFees` — see the
+ * `cosmosEstimateFee` catch block); untyped errors default to
+ * `TX_FAILED`. The post-poll re-classify path likewise prefixes BOTH
+ * the errorSummary-set and the no-errorSummary branches with
+ * `retry_set_domain` + leaseUuid (Copilot fix-4, PR #71):
+ *   - `setItemCustomDomain` throws → wrap with prefix + leaseUuid +
+ *     code preservation. Most likely cause: chain rejected the
+ *     set-item-custom-domain tx (FQDN validation, reserved-suffix
+ *     match, lease not active, etc.).
+ *   - `fetchActiveLease` / `resolveProviderUrl` throw → wrap with
+ *     prefix + leaseUuid.
+ *   - `uploadLeaseData` throws → wrap with prefix + leaseUuid.
+ *   - `pollLeaseUntilReady` throws → wrap with prefix + leaseUuid.
+ *   - Post-poll re-classify outcome !== 'active' → wrap both
+ *     branches: errorSummary-set (terminal-state response) AND
+ *     no-errorSummary fallback (ACTIVE-with-no-instances Defense #2
+ *     race) carry prefix + leaseUuid.
+ */
+async function retrySetDomainAndComplete(
+  leaseUuid: string,
+  spec: DeploySpec,
+  opts: DeployAppOptions,
+  callbacks: DeployAppCallbacks,
+  ctx: RecoveryContext,
+): Promise<DeployResult> {
+  const domain = customDomainOf(spec);
+  if (!domain) {
+    throw new ManifestMCPError(
+      ManifestMCPErrorCode.INVALID_CONFIG,
+      'retry_set_domain requires a customDomain in spec.',
+    );
+  }
+  // C6 fix (preserved from pre-E impl): pass `serviceName` for stack
+  // leases so the set-item-custom-domain tx targets the named service
+  // item, not the default single-item lease.
+  const serviceName = customDomainServiceOf(spec);
+  const setItemOpts = serviceName ? { serviceName } : undefined;
+  try {
+    await setItemCustomDomain(
+      opts.clientManager,
+      leaseUuid,
+      domain,
+      setItemOpts,
+    );
+  } catch (err) {
+    // Copilot fix-3 (PR #71): sibling-parity wrap. Every throw site in
+    // this helper now surfaces `retry_set_domain` + leaseUuid in the
+    // message for log/user-report correlation, matching the
+    // fetchActiveLease/uploadLeaseData/pollLeaseUntilReady wraps below.
+    // Preserve the original ManifestMCPError code when applicable
+    // (precedent at `estimateFees` — see the cosmosEstimateFee catch
+    // block); fall back to TX_FAILED for untyped errors.
+    // Upstream traceability (Copilot fix-6, PR #71): `setItemCustomDomain`
+    // from `core/src/tools/setItemCustomDomain.ts:63,69` genuinely throws
+    // `ManifestMCPError(INVALID_CONFIG)` for validation failures — the
+    // typed branch here is LIVE for the canonical chain-side errors
+    // (FQDN shape, reserved-suffix match, etc.).
+    const reason =
+      err instanceof Error
+        ? `retry_set_domain set-item-custom-domain failed for lease ${leaseUuid}: ${err.message}`
+        : `retry_set_domain set-item-custom-domain failed for lease ${leaseUuid}: ${String(err)}`;
+    const code =
+      err instanceof ManifestMCPError
+        ? err.code
+        : ManifestMCPErrorCode.TX_FAILED;
+    throw new ManifestMCPError(code, reason);
+  }
+
+  // Resolve the lease + provider URL via on-chain queries. The
+  // partial-success envelope only carried `leaseUuid` — fred's atomic
+  // deployApp already had providerUuid in scope, but here we recover it.
+  // BOTH values are hoisted to outer scope so the poll + DeployResult
+  // build below can reuse them WITHOUT re-running the on-chain queries
+  // (Copilot fix-1, PR #71: switching from `waitForAppReady` to the
+  // lower-level `pollLeaseUntilReady` removes the 2 redundant queries
+  // that `waitForAppReady`'s internal `fetchActiveLease` +
+  // `resolveProviderUrl` calls would otherwise add per recovery).
+  const queryClient = await opts.clientManager.getQueryClient();
+  let lease: Awaited<ReturnType<typeof fetchActiveLease>>;
+  let providerApiUrl: string;
+  try {
+    lease = await fetchActiveLease(
+      queryClient,
+      leaseUuid,
+      'cannot complete retry_set_domain',
+    );
+    providerApiUrl = await resolveProviderUrl(queryClient, lease.providerUuid);
+  } catch (err) {
+    // Copilot fix-5 (PR #71): preserve typed ManifestMCPError codes
+    // (matches the L1147 setItemCustomDomain precedent + the L818
+    // estimateFees precedent). Honors fixup-4's JSDoc claim.
+    // Upstream traceability (Copilot fix-6, PR #71):
+    //   - `fetchActiveLease` throws `ManifestMCPError(QUERY_FAILED)` at
+    //     `fred/src/tools/fetchActiveLease.ts:23,35` (lease not found
+    //     on chain + lease-not-active).
+    //   - `resolveProviderUrl` throws `ManifestMCPError(QUERY_FAILED)`
+    //     at `fred/src/tools/resolveLeaseProvider.ts:13,25,36` (empty
+    //     providerUuid + missing apiUrl + chain query failure).
+    //   - Either can also surface `ProviderApiError` (validateProviderUrl
+    //     path); untyped → TX_FAILED fallback.
+    // Typed branch is LIVE for the canonical chain-side errors at this
+    // catch — both upstream call sites genuinely emit ManifestMCPError.
+    const reason =
+      err instanceof Error
+        ? `retry_set_domain failed to resolve provider for lease ${leaseUuid}: ${err.message}`
+        : `retry_set_domain failed to resolve provider for lease ${leaseUuid}: ${String(err)}`;
+    const code =
+      err instanceof ManifestMCPError
+        ? err.code
+        : ManifestMCPErrorCode.TX_FAILED;
+    throw new ManifestMCPError(code, reason);
+  }
+
+  // Upload the manifest payload via the ADR-036 lease-data auth token
+  // (signed against the manifest's meta-hash).
+  const manifestBytes = new TextEncoder().encode(ctx.manifestJson);
+  try {
+    const leaseDataAuthToken = await ctx.getLeaseDataAuthToken(
+      ctx.tenantAddress,
+      leaseUuid,
+      ctx.metaHash,
+    );
+    await uploadLeaseData(
+      providerApiUrl,
+      leaseUuid,
+      manifestBytes,
+      leaseDataAuthToken,
+      opts.fetchFn,
+    );
+  } catch (err) {
+    // Copilot fix-5 (PR #71): preserve typed ManifestMCPError codes.
+    // Upstream traceability (Copilot fix-6, PR #71): fred's
+    // `uploadLeaseData` does NOT throw typed `ManifestMCPError` — both
+    // its underlying `validateProviderUrl` (`fred/src/http/provider.ts:14`)
+    // and the wrapped `checkedFetch` surface throw `ProviderApiError`,
+    // which is NOT a `ManifestMCPError`. So this `instanceof
+    // ManifestMCPError` check is effectively a no-op for the typical
+    // fred path — the typed branch is dead code today for this catch.
+    // Pattern is kept for symmetry with the L1196/L1284 sites + safety
+    // against future deps that DO throw typed errors (e.g. a hypothetical
+    // core dependency in the upload path). For the typical fred-only
+    // case, the fallback `TX_FAILED` is what surfaces.
+    const reason =
+      err instanceof Error
+        ? `retry_set_domain manifest upload failed for lease ${leaseUuid}: ${err.message}`
+        : `retry_set_domain manifest upload failed for lease ${leaseUuid}: ${String(err)}`;
+    const code =
+      err instanceof ManifestMCPError
+        ? err.code
+        : ManifestMCPErrorCode.TX_FAILED;
+    throw new ManifestMCPError(code, reason);
+  }
+
+  // Poll until the provider reports ACTIVE + running. Uses the LOWER-
+  // LEVEL `pollLeaseUntilReady` directly (Copilot fix-1, PR #71) — not
+  // `waitForAppReady` — so the already-resolved `providerApiUrl` and
+  // auth-token closure pass through without re-running the on-chain
+  // `fetchActiveLease` + `resolveProviderUrl` calls that
+  // `waitForAppReady` would do internally. Saves ~2 queries (and ~2-6s
+  // of avoidable latency) per recovery.
+  //
+  // The `onProgress` closure + `state?` discriminator-spread idiom +
+  // `opts.waitForReadyTimeoutMs ?? 480_000` default mirror D's
+  // canonical polling pattern verbatim.
+  const pollStartMs = Date.now();
+  let attempt = 0;
+  let pollResult: Awaited<ReturnType<typeof pollLeaseUntilReady>>;
+  try {
+    pollResult = await pollLeaseUntilReady(
+      providerApiUrl,
+      leaseUuid,
+      () => ctx.getAuthToken(ctx.tenantAddress, leaseUuid),
+      {
+        timeoutMs: opts.waitForReadyTimeoutMs ?? 480_000,
+        onProgress: (status) => {
+          attempt += 1;
+          const stateName = decodeLeaseState(status.state);
+          callbacks.onProgress?.({
+            kind: 'polling_for_readiness',
+            leaseUuid,
+            attempt,
+            elapsedMs: Date.now() - pollStartMs,
+            ...(stateName !== undefined ? { state: stateName } : {}),
+          });
+        },
+      },
+      opts.fetchFn,
+    );
+  } catch (err) {
+    // Names the actual primitive being awaited (post-fixup-1 +
+    // fixup-4 consistency): `pollLeaseUntilReady`, not the higher-level
+    // `waitForAppReady`. Matches the post-poll re-classify fallback's
+    // wording at L1287 + the UNRECOGNIZED-state message at L1308 — all
+    // three sites consistently name the primitive that's actually
+    // running in this helper. Copilot fix-5 (PR #71): preserve typed
+    // ManifestMCPError codes.
+    // Upstream traceability (Copilot fix-6, PR #71): fred's
+    // `pollLeaseUntilReady` does NOT throw typed `ManifestMCPError` —
+    // its terminal-state path throws `TerminalChainStateError` which
+    // `extends ProviderApiError` (`fred/src/http/fred.ts:278`), and its
+    // timeout/HTTP paths throw `ProviderApiError` directly. Neither is
+    // a `ManifestMCPError`. So this `instanceof ManifestMCPError` check
+    // is effectively a no-op for the typical fred path — typed branch
+    // is dead code today for this catch. Pattern is kept for symmetry
+    // with the L1196/L1228 sites + safety against future deps that DO
+    // throw typed errors. For the typical fred-only case, the fallback
+    // `TX_FAILED` is what surfaces.
+    const reason =
+      err instanceof Error
+        ? `retry_set_domain pollLeaseUntilReady failed for lease ${leaseUuid}: ${err.message}`
+        : `retry_set_domain pollLeaseUntilReady failed for lease ${leaseUuid}: ${String(err)}`;
+    const code =
+      err instanceof ManifestMCPError
+        ? err.code
+        : ManifestMCPErrorCode.TX_FAILED;
+    throw new ManifestMCPError(code, reason);
+  }
+
+  // Defense #2 parity (from D): re-classify the post-poll response and
+  // refuse to declare success if the classifier doesn't see ACTIVE +
+  // running instances. Catches the rare provider race where
+  // `pollLeaseUntilReady` exits on state==ACTIVE but instances are empty.
+  //
+  // pollResult IS a `FredLeaseStatus` directly (no `WaitForAppReadyResult`
+  // wrapping — that's what the refactor unlocked). The lease/provider
+  // identity fields below come from the already-resolved values, NOT
+  // from a (no-longer-existing) nested response object.
+  const postPollResponse: DeployResponseShape = {
+    lease_uuid: leaseUuid,
+    provider_uuid: lease.providerUuid,
+    provider_url: providerApiUrl,
+    state: pollResult.state,
+    connection: pollResult,
+  };
+  const classification = classifyDeployResponse(postPollResponse);
+  if (classification.outcome !== 'active') {
+    // Copilot fix-4 (PR #71): sibling-parity for BOTH branches. The
+    // pre-fix `??` collapsed errorSummary (set when the post-poll
+    // classifier produces 'failed' with a terminal-state response)
+    // directly into the throw — no `retry_set_domain` prefix, no
+    // leaseUuid. Both branches now carry the prefix + leaseUuid, and
+    // the no-errorSummary fallback names the actual primitive
+    // (`pollLeaseUntilReady` post-fixup-1, not `wait_for_app_ready`).
+    const reason =
+      classification.errorSummary !== undefined
+        ? `retry_set_domain post-poll re-classification failed for lease ${leaseUuid}: ${classification.errorSummary}`
+        : `retry_set_domain: pollLeaseUntilReady returned for lease ${leaseUuid} but post-poll classifier outcome is ${classification.outcome}`;
+    throw new ManifestMCPError(ManifestMCPErrorCode.TX_FAILED, reason);
+  }
+
+  callbacks.onProgress?.({ kind: 'app_ready_confirmed', leaseUuid });
+
+  // Persist manifest (best-effort; save-fail still emits success — same
+  // contract as D's happy path).
+  const persistedPath = await tryPersistManifest({
+    leaseUuid,
+    image: primaryImage(spec),
+    size: requestedSize(spec),
+    metaHash: ctx.metaHash,
+    chainId: ctx.chainId,
+    manifestJson: ctx.manifestJson,
+    customDomain: domain,
+    customDomainService: serviceName,
+    dataDir: opts.dataDir,
+    callbacks,
+  });
+
+  // Build DeployResult. State decoding + urls extraction mirror the
+  // happy-path block in `deployApp` verbatim. After the Copilot fix-1
+  // refactor, `pollResult` IS a `FredLeaseStatus` (no wrapping), so
+  // `liveState` reads from `pollResult.state` directly (numeric
+  // `LeaseState`) and `extractRunningEndpoints` walks `pollResult` itself.
+  const liveState = pollResult.state;
+  let leaseStateDecoded: LeaseStateName;
+  const decoded = decodeLeaseState(liveState);
+  if (decoded === undefined) {
+    throw new ManifestMCPError(
+      ManifestMCPErrorCode.INVALID_CONFIG,
+      `Unrecognized lease state from pollLeaseUntilReady response: ${String(liveState)}. Cannot safely classify; refusing to silently coerce to ACTIVE.`,
+    );
+  }
+  leaseStateDecoded = decoded;
+  const endpointUrls =
+    extractRunningEndpoints(pollResult).map(formatEndpointAsUrl);
+  // Lease + provider identity come from the already-resolved values,
+  // not from a (no-longer-existing) wrapping response object.
+  const result: DeployResult = {
+    leaseUuid,
+    providerUuid: lease.providerUuid,
+    leaseState: leaseStateDecoded,
+    urls: endpointUrls,
+    customDomain: domain,
+    manifestPath: persistedPath ?? '',
+  };
+  callbacks.onProgress?.({ kind: 'success_rendered', result });
+  callbacks.onComplete?.(result);
+  return result;
 }
 
 function recoveryOptionLabel(id: RecoveryOptionId): string {
