@@ -3608,13 +3608,15 @@ describe('deployApp — C2 plan-edit roundtrip propagates edited size (ENG-185 #
     // The renderer emits a literal `  Size:                      <size>`
     // line (render-deployment-plan.ts). Assert the exact rendered line so
     // the check can't be satisfied by `medium` appearing elsewhere.
-    expect(postEditBlock?.text).toContain('Size:                      medium');
-    expect(postEditBlock?.text).not.toContain(
-      'Size:                      small',
+    expect(postEditBlock?.text).toContain(
+      '  Size:                      medium',
     );
-    expect(preEditBlock?.text).toContain('Size:                      small');
+    expect(postEditBlock?.text).not.toContain(
+      '  Size:                      small',
+    );
+    expect(preEditBlock?.text).toContain('  Size:                      small');
     expect(preEditBlock?.text).not.toContain(
-      'Size:                      medium',
+      '  Size:                      medium',
     );
   });
 
