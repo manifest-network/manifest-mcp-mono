@@ -47,7 +47,7 @@
   "homepage": "https://github.com/manifest-network/manifest-mcp-mono#readme",
   "bugs": "https://github.com/manifest-network/manifest-mcp-mono/issues",
   "engines": {
-    "node": ">=20"
+    "node": ">=22.19.0"
   },
   "publishConfig": {
     "access": "public"
@@ -62,8 +62,12 @@
     "@cosmjs/stargate": "npm:@manifest-network/stargate@0.32.4-ll.3",
     "@manifest-network/manifestjs": "2.4.1",
     "@modelcontextprotocol/sdk": "1.27.1",
+    "ipaddr.js": "2.4.0",
     "limiter": "3.0.0",
     "zod": "^4.3.6"
+  },
+  "optionalDependencies": {
+    "undici": "8.2.0"
   },
   "devDependencies": {
     "@types/node": "22.15.29",

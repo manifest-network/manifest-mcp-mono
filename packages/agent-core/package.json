@@ -44,9 +44,7 @@
   ],
   "dependencies": {
     "@manifest-network/manifest-mcp-core": "^0.10.0",
-    "@manifest-network/manifest-mcp-fred": "^0.10.0",
-    "ipaddr.js": "2.4.0",
-    "undici": "8.2.0"
+    "@manifest-network/manifest-mcp-fred": "^0.10.0"
   },
   "devDependencies": {
     "@types/node": "22.15.29",
