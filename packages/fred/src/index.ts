@@ -10,6 +10,7 @@ import {
 import type { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { AuthTokenService } from './http/auth-token-service.js';
+import { resolveGuardedFetch } from './server/fetch-gate.js';
 import { registerPrompts } from './server/register-prompts.js';
 import { registerResources } from './server/register-resources.js';
 import { registerTools } from './server/register-tools.js';
@@ -141,11 +142,23 @@ export class FredMCPServer {
       },
     );
 
+    // SSRF guard (ENG-268). Fred fetches provider/Fred APIs at URLs sourced
+    // from on-chain SKU records, so a malicious provider could point them at
+    // an internal host. Route all outbound HTTP through an SSRF-guarded fetch
+    // by default; operators opt out with MANIFEST_FRED_FETCH_GUARDED=0.
+    const fetchFn = resolveGuardedFetch(
+      typeof process !== 'undefined'
+        ? process.env.MANIFEST_FRED_FETCH_GUARDED
+        : undefined,
+      typeof process !== 'undefined' && !!process.versions?.node,
+    );
+
     registerTools({
       mcpServer: this.mcpServer,
       clientManager: this.clientManager,
       walletProvider: this.walletProvider,
       authTokens: this.authTokens,
+      fetchFn,
     });
     registerResources({
       mcpServer: this.mcpServer,

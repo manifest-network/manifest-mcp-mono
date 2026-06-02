@@ -97,10 +97,15 @@ import {
 } from '@manifest-network/manifest-mcp-core/__test-utils__/mocks.js';
 import { getLeaseProvision, getLeaseReleases } from './http/fred.js';
 import { FredMCPServer } from './index.js';
+import { appStatus } from './tools/appStatus.js';
+import { browseCatalog } from './tools/browseCatalog.js';
 import { checkDeploymentReadiness } from './tools/checkDeploymentReadiness.js';
 import { deployApp } from './tools/deployApp.js';
 import { fetchActiveLease } from './tools/fetchActiveLease.js';
+import { getAppLogs } from './tools/getLogs.js';
 import { resolveProviderUrl } from './tools/resolveLeaseProvider.js';
+import { restartApp } from './tools/restartApp.js';
+import { updateApp } from './tools/updateApp.js';
 import { waitForAppReady } from './tools/waitForAppReady.js';
 
 const mockDeployApp = vi.mocked(deployApp);
@@ -110,6 +115,11 @@ const mockResolveProviderUrl = vi.mocked(resolveProviderUrl);
 const mockFetchActiveLease = vi.mocked(fetchActiveLease);
 const mockWaitForAppReady = vi.mocked(waitForAppReady);
 const mockCheckDeploymentReadiness = vi.mocked(checkDeploymentReadiness);
+const mockBrowseCatalog = vi.mocked(browseCatalog);
+const mockAppStatus = vi.mocked(appStatus);
+const mockGetAppLogs = vi.mocked(getAppLogs);
+const mockRestartApp = vi.mocked(restartApp);
+const mockUpdateApp = vi.mocked(updateApp);
 
 const LEASE_UUID = '550e8400-e29b-41d4-a716-446655440000';
 
@@ -315,6 +325,10 @@ describe('FredMCPServer', () => {
         'prov-1',
       );
       expect(mockGetLeaseProvision).toHaveBeenCalledOnce();
+      // SSRF-guarded fetch threaded to this direct-HTTP call site (ENG-268).
+      expect(typeof mockGetLeaseProvision.mock.lastCall?.at(-1)).toBe(
+        'function',
+      );
     });
 
     it('accepts a provision response without last_error', async () => {
@@ -464,6 +478,10 @@ describe('FredMCPServer', () => {
         'prov-1',
       );
       expect(mockGetLeaseReleases).toHaveBeenCalledOnce();
+      // SSRF-guarded fetch threaded to this direct-HTTP call site (ENG-268).
+      expect(typeof mockGetLeaseReleases.mock.lastCall?.at(-1)).toBe(
+        'function',
+      );
     });
 
     it('returns error when lease not found on chain', async () => {
@@ -830,6 +848,8 @@ describe('FredMCPServer', () => {
           timeoutMs: 30_000,
           intervalMs: 5_000,
         }),
+        // SSRF-guarded fetch injected by FredMCPServer (ENG-268).
+        expect.any(Function),
       );
     });
 
@@ -866,6 +886,8 @@ describe('FredMCPServer', () => {
         expect.any(Function),
         expect.any(Function),
         expect.objectContaining({ gasMultiplier: 3.5 }),
+        // SSRF-guarded fetch injected by FredMCPServer (ENG-268).
+        expect.any(Function),
       );
     });
 
@@ -892,6 +914,8 @@ describe('FredMCPServer', () => {
           customDomain: 'app.example.com',
           serviceName: 'web',
         }),
+        // SSRF-guarded fetch injected by FredMCPServer (ENG-268).
+        expect.any(Function),
       );
     });
 
@@ -1014,5 +1038,89 @@ describe('FredMCPServer', () => {
       expect(messages[1]).toMatch(/image_pulling/);
       expect(messages[2]).toMatch(/ACTIVE/);
     });
+  });
+});
+
+describe('SSRF guard wiring (ENG-268)', () => {
+  // FredMCPServer injects an SSRF-guarded fetch as the FINAL positional arg of
+  // every outbound-HTTP tool call (default ON). These pin the trailing fetchFn
+  // at each tool-layer call site so a future refactor that drops the argument
+  // can't silently fall back to unguarded globalThis.fetch. (The two
+  // direct-HTTP sites, app_diagnostics/app_releases, are pinned in their own
+  // tests above; the guard's blocking behavior is covered by core's
+  // guarded-fetch.test.ts, and the gate logic by fetch-gate.test.ts.)
+  const ORIG_GUARD_ENV = process.env.MANIFEST_FRED_FETCH_GUARDED;
+  afterEach(() => {
+    if (ORIG_GUARD_ENV === undefined) {
+      delete process.env.MANIFEST_FRED_FETCH_GUARDED;
+    } else {
+      process.env.MANIFEST_FRED_FETCH_GUARDED = ORIG_GUARD_ENV;
+    }
+  });
+
+  function makeServer(): FredMCPServer {
+    return new FredMCPServer({
+      config: makeMockConfig(),
+      walletProvider: makeMockWallet({ signArbitrary: true }),
+    });
+  }
+
+  const cases: Array<{
+    tool: string;
+    input: Record<string, unknown>;
+    lastFetchArg: () => unknown;
+  }> = [
+    {
+      tool: 'browse_catalog',
+      input: {},
+      lastFetchArg: () => mockBrowseCatalog.mock.lastCall?.at(-1),
+    },
+    {
+      tool: 'app_status',
+      input: { lease_uuid: LEASE_UUID },
+      lastFetchArg: () => mockAppStatus.mock.lastCall?.at(-1),
+    },
+    {
+      tool: 'get_logs',
+      input: { lease_uuid: LEASE_UUID },
+      lastFetchArg: () => mockGetAppLogs.mock.lastCall?.at(-1),
+    },
+    {
+      tool: 'restart_app',
+      input: { lease_uuid: LEASE_UUID },
+      lastFetchArg: () => mockRestartApp.mock.lastCall?.at(-1),
+    },
+    {
+      tool: 'wait_for_app_ready',
+      input: { lease_uuid: LEASE_UUID },
+      lastFetchArg: () => mockWaitForAppReady.mock.lastCall?.at(-1),
+    },
+    {
+      tool: 'deploy_app',
+      input: { image: 'nginx:alpine', port: 80, size: 'docker-micro' },
+      lastFetchArg: () => mockDeployApp.mock.lastCall?.at(-1),
+    },
+    {
+      tool: 'update_app',
+      input: { lease_uuid: LEASE_UUID, manifest: '{"services":{}}' },
+      lastFetchArg: () => mockUpdateApp.mock.lastCall?.at(-1),
+    },
+  ];
+
+  for (const { tool, input, lastFetchArg } of cases) {
+    it(`${tool} threads a guarded fetch (not globalThis.fetch) by default`, async () => {
+      const server = makeServer();
+      await callTool(server, tool, input);
+      const fetchArg = lastFetchArg();
+      expect(typeof fetchArg).toBe('function');
+      expect(fetchArg).not.toBe(globalThis.fetch);
+    });
+  }
+
+  it('opt-out (MANIFEST_FRED_FETCH_GUARDED=0) threads no guarded fetch', async () => {
+    process.env.MANIFEST_FRED_FETCH_GUARDED = '0';
+    const server = makeServer();
+    await callTool(server, 'app_status', { lease_uuid: LEASE_UUID });
+    expect(mockAppStatus.mock.lastCall?.at(-1)).toBeUndefined();
   });
 });

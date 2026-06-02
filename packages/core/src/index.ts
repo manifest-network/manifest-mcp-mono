@@ -15,6 +15,15 @@ export {
   validateEndpointUrl,
 } from './config.js';
 export { cosmosEstimateFee, cosmosQuery, cosmosTx } from './cosmos.js';
+export { parseBooleanEnv } from './env-utils.js';
+// SSRF-guarded fetch (moved from agent-core in ENG-268 so fred can share it)
+export {
+  BLOCKED_RANGES_IPV4,
+  BLOCKED_RANGES_IPV6,
+  createGuardedFetch,
+  type GuardedFetch,
+  isBlocked,
+} from './internals/guarded-fetch.js';
 export { createLCDQueryClient } from './lcd-adapter.js';
 export { type LogLevel, logger, parseLogLevel } from './logger.js';
 export {

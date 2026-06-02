@@ -40,10 +40,19 @@ interface RegisterToolsDeps {
   clientManager: CosmosClientManager;
   walletProvider: WalletProvider;
   authTokens: AuthTokenService;
+  /**
+   * Fetch implementation for all outbound provider/Fred HTTP calls. When
+   * omitted (e.g. external library consumers), the HTTP layer falls back to
+   * `globalThis.fetch`. `FredMCPServer` injects an SSRF-guarded fetch here by
+   * default so on-chain-sourced provider URLs cannot reach internal hosts
+   * (ENG-268).
+   */
+  fetchFn?: typeof globalThis.fetch;
 }
 
 export function registerTools(deps: RegisterToolsDeps): void {
-  const { mcpServer, clientManager, walletProvider, authTokens } = deps;
+  const { mcpServer, clientManager, walletProvider, authTokens, fetchFn } =
+    deps;
 
   // -- browse_catalog --
   mcpServer.registerTool(
@@ -64,7 +73,7 @@ export function registerTools(deps: RegisterToolsDeps): void {
     withErrorHandling('browse_catalog', async () => {
       await clientManager.acquireRateLimit();
       const queryClient = await clientManager.getQueryClient();
-      const result = await browseCatalog(queryClient);
+      const result = await browseCatalog(queryClient, fetchFn);
       return structuredResponse(result, bigIntReplacer);
     }),
   );
@@ -108,6 +117,7 @@ export function registerTools(deps: RegisterToolsDeps): void {
         address,
         leaseUuid,
         (addr, uuid) => authTokens.providerToken(addr, uuid),
+        fetchFn,
       );
       return structuredResponse(result, bigIntReplacer);
     }),
@@ -198,6 +208,7 @@ export function registerTools(deps: RegisterToolsDeps): void {
                 }
               : undefined,
           },
+          fetchFn,
         );
         return structuredResponse(result, bigIntReplacer);
       },
@@ -241,6 +252,7 @@ export function registerTools(deps: RegisterToolsDeps): void {
         leaseUuid,
         (addr, uuid) => authTokens.providerToken(addr, uuid),
         tail,
+        fetchFn,
       );
       return jsonResponse(result, bigIntReplacer);
     }),
@@ -649,6 +661,7 @@ export function registerTools(deps: RegisterToolsDeps): void {
                 }
               : undefined,
           },
+          fetchFn,
         );
         return structuredResponse(result, bigIntReplacer);
       },
@@ -688,6 +701,7 @@ export function registerTools(deps: RegisterToolsDeps): void {
         address,
         leaseUuid,
         (addr, uuid) => authTokens.providerToken(addr, uuid),
+        fetchFn,
       );
       return jsonResponse(result, bigIntReplacer);
     }),
@@ -759,6 +773,7 @@ export function registerTools(deps: RegisterToolsDeps): void {
         (addr, uuid) => authTokens.providerToken(addr, uuid),
         manifest,
         args.existing_manifest,
+        fetchFn,
       );
       return structuredResponse(result, bigIntReplacer);
     }),
@@ -812,6 +827,7 @@ export function registerTools(deps: RegisterToolsDeps): void {
         providerUrl,
         leaseUuid,
         authToken,
+        fetchFn,
       );
 
       return structuredResponse(
@@ -871,7 +887,12 @@ export function registerTools(deps: RegisterToolsDeps): void {
         lease.providerUuid,
       );
       const authToken = await authTokens.providerToken(address, leaseUuid);
-      const result = await getLeaseReleases(providerUrl, leaseUuid, authToken);
+      const result = await getLeaseReleases(
+        providerUrl,
+        leaseUuid,
+        authToken,
+        fetchFn,
+      );
 
       return structuredResponse(
         {
