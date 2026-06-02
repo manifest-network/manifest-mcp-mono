@@ -540,7 +540,7 @@ describe('manageDomain — set', () => {
     );
   });
 
-  it('user declines at confirm → throws INVALID_CONFIG; broadcast NOT fired', async () => {
+  it('user declines at confirm → throws OPERATION_CANCELLED; broadcast NOT fired', async () => {
     const core = await import('@manifest-network/manifest-mcp-core');
     const queryClient = makeMockQueryClient();
     const clientManager = makeMockClientManager(queryClient);
@@ -561,7 +561,13 @@ describe('manageDomain — set', () => {
           >[2]['clientManager'],
         },
       ),
-    ).rejects.toThrow(/User declined to proceed/);
+    ).rejects.toMatchObject({
+      // ENG-272: a user decline is a deliberate cancellation, not a
+      // config fault. Pin the dedicated code so a regression to
+      // INVALID_CONFIG (or worse, UNKNOWN) is caught.
+      code: ManifestMCPErrorCode.OPERATION_CANCELLED,
+      message: expect.stringMatching(/User declined to proceed/),
+    });
 
     expect(core.setItemCustomDomain).not.toHaveBeenCalled();
   });

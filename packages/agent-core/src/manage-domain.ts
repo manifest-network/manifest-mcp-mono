@@ -85,8 +85,9 @@ const NOT_FOUND_RES: readonly RegExp[] = [
 /**
  * Set / clear / look up a lease item's custom domain.
  *
- * @throws `ManifestMCPError(INVALID_CONFIG)` for args validation or when
- *   `onConfirm` returns `'no'`.
+ * @throws `ManifestMCPError(INVALID_CONFIG)` for args validation.
+ * @throws `ManifestMCPError(OPERATION_CANCELLED)` when `onConfirm` returns
+ *   `'no'` (deliberate user cancellation — ENG-272).
  * @throws `ManifestMCPError` (typically `TX_FAILED`) propagated as-is
  *   from the `setItemCustomDomain()` broadcast step in `set` / `clear`
  *   paths. Broadcast errors do NOT invoke `onFailure` — that callback
@@ -138,7 +139,7 @@ export async function manageDomain(
     const yesNo = await callbacks.onConfirm(block);
     if (yesNo !== 'yes') {
       throw new ManifestMCPError(
-        ManifestMCPErrorCode.INVALID_CONFIG,
+        ManifestMCPErrorCode.OPERATION_CANCELLED,
         `User declined to proceed with manage-domain ${args.action}.`,
       );
     }

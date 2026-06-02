@@ -2175,8 +2175,9 @@ describe('deployApp — estimateFees create-lease itemArgs (ENG-185 #3 bug 1+2)'
     const callbacks: DeployAppCallbacks = {
       ...baseCapture.callbacks,
       // Capture-then-cancel: by this point estimateFees has run, plan is
-      // assembled, and the orchestrator throws INVALID_CONFIG on 'cancel'
-      // — which we swallow. Net: cheap path through the fee path only.
+      // assembled, and the orchestrator throws OPERATION_CANCELLED on
+      // 'cancel' — which we swallow. Net: cheap path through the fee path
+      // only.
       onPlan: async (p) => {
         capturedPlan = p;
         return 'cancel';
@@ -2291,6 +2292,106 @@ describe('deployApp — estimateFees create-lease itemArgs (ENG-185 #3 bug 1+2)'
   });
 });
 
+describe('deployApp — user cancellation throws OPERATION_CANCELLED (ENG-272)', () => {
+  // Regression guard pinning the code of the two deliberate-cancellation
+  // throw sites — symmetric with the manage-domain / close-lease decline
+  // tests (manage-domain.test.ts / close-lease.test.ts). A user decline /
+  // cancel is NOT a config fault: surfacing it as INVALID_CONFIG (the prior
+  // code) — or worse, UNKNOWN (the wrapper-rejection bug) — hid the cause.
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  // Stub fred readiness/preview + core estimateFee with the canonical
+  // happy-path fixtures, then run the REAL deployApp with caller-supplied
+  // plan/confirm verdicts and return the rejection for assertion.
+  async function runDeployExpectingThrow(
+    verdicts: Pick<DeployAppCallbacks, 'onPlan' | 'onConfirm'>,
+  ): Promise<unknown> {
+    const readinessRaw = readFixture(
+      'skills',
+      'deploy-app',
+      '01-fast-path-active',
+      'input',
+      'readiness-response.json',
+    );
+    const metaHashResp = readFixture(
+      'skills',
+      'deploy-app',
+      '01-fast-path-active',
+      'input',
+      'meta-hash-response.json',
+    ) as { manifest_json: string; meta_hash_hex: string };
+
+    const fred = await import('@manifest-network/manifest-mcp-fred');
+    vi.mocked(fred.checkDeploymentReadiness).mockResolvedValue(
+      readinessRaw as unknown as Awaited<
+        ReturnType<typeof fred.checkDeploymentReadiness>
+      >,
+    );
+    vi.mocked(fred.buildManifestPreview).mockResolvedValue({
+      manifest_json: metaHashResp.manifest_json,
+      meta_hash_hex: metaHashResp.meta_hash_hex,
+    } as Awaited<ReturnType<typeof fred.buildManifestPreview>>);
+
+    const core = await import('@manifest-network/manifest-mcp-core');
+    vi.mocked(core.cosmosEstimateFee).mockResolvedValue({
+      module: 'billing',
+      subcommand: 'create-lease',
+      gasEstimate: '142000',
+      fee: { amount: [{ denom: 'umfx', amount: '2300' }], gas: '142000' },
+    } as Awaited<ReturnType<typeof core.cosmosEstimateFee>>);
+
+    const baseCapture = captureCallbacks();
+    const callbacks: DeployAppCallbacks = {
+      ...baseCapture.callbacks,
+      ...verdicts,
+    };
+
+    const { deployApp } = await import('./deploy-app.js');
+    const clientManager = makeMockClientManager();
+    const walletProvider = makeMockWalletProvider();
+    const spec: DeploySpec = {
+      image: 'docker.io/library/nginx:1.27',
+      port: 80,
+    } as DeploySpec;
+
+    let err: unknown;
+    try {
+      await deployApp(spec, callbacks, {
+        clientManager: clientManager as unknown as Parameters<
+          typeof deployApp
+        >[2]['clientManager'],
+        walletProvider,
+      });
+    } catch (e) {
+      err = e;
+    }
+    return err;
+  }
+
+  it("onPlan returns 'cancel' → OPERATION_CANCELLED (not INVALID_CONFIG / UNKNOWN)", async () => {
+    const err = await runDeployExpectingThrow({ onPlan: async () => 'cancel' });
+    expect(err).toMatchObject({
+      code: ManifestMCPErrorCode.OPERATION_CANCELLED,
+      message: expect.stringMatching(/User cancelled deployment at plan step/),
+    });
+  });
+
+  it("onConfirm returns 'no' → OPERATION_CANCELLED (not INVALID_CONFIG / UNKNOWN)", async () => {
+    const err = await runDeployExpectingThrow({
+      onPlan: async () => 'confirm',
+      onConfirm: async () => 'no',
+    });
+    expect(err).toMatchObject({
+      code: ManifestMCPErrorCode.OPERATION_CANCELLED,
+      message: expect.stringMatching(
+        /User declined to proceed at intent-recap step/,
+      ),
+    });
+  });
+});
+
 describe('deployApp — estimateFees set-domain sentinel reason (ENG-185 #3)', () => {
   // Architect's verdict B: chain rejects placeholder-UUID simulation of
   // `MsgSetItemCustomDomain` (keeper calls `GetLease()` first, fails
@@ -2359,7 +2460,7 @@ describe('deployApp — estimateFees set-domain sentinel reason (ENG-185 #3)', (
         walletProvider,
       });
     } catch {
-      // 'cancel' verdict throws INVALID_CONFIG; expected, swallow.
+      // 'cancel' verdict throws OPERATION_CANCELLED; expected, swallow.
     }
     return capturedPlan === null ? null : (capturedPlan as Plan).fees;
   }
