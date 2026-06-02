@@ -65,10 +65,6 @@
     "limiter": "3.0.0",
     "zod": "^4.3.6"
   },
-  "overrides": {
-    "@cosmjs/stargate": "npm:@manifest-network/stargate@0.32.4-ll.3",
-    "axios": "1.13.2"
-  },
   "devDependencies": {
     "@types/node": "22.15.29",
     "typescript": "5.9.3",
