@@ -2,11 +2,12 @@
 
 Node.js CLI entry points for the Manifest MCP servers with stdio transport and encrypted keyfile wallet.
 
-Provides four binaries:
+Provides five binaries:
 - **`manifest-mcp-chain`** -- Chain MCP server (6 tools, +1 optional `request_faucet`: queries, transactions, fee estimation, module discovery)
 - **`manifest-mcp-lease`** -- Lease MCP server (8 tools: credit balance, funding, lease queries, custom-domain claim/lookup, SKUs, providers)
 - **`manifest-mcp-fred`** -- Fred MCP server (11 tools, plus 3 resources & 3 prompts: catalog, deployment readiness, manifest preview, deployment, ready polling, status, logs, restart, update, diagnostics, releases)
 - **`manifest-mcp-cosmwasm`** -- CosmWasm MCP server (2 tools: MFX-to-PWR rate query, token conversion)
+- **`manifest-mcp-agent`** -- Agent MCP server (5 orchestrated tools via MCP elicitation: deploy, manage-domain, lookup-domain, troubleshoot, close-lease)
 
 ## Setup
 
@@ -18,7 +19,7 @@ npm run build
 
 ## Wallet setup
 
-All four servers need a wallet to sign transactions. Choose one of the options below.
+All five servers need a wallet to sign transactions. Choose one of the options below.
 
 ### Option A -- Generate a new keyfile (recommended)
 
@@ -26,7 +27,7 @@ All four servers need a wallet to sign transactions. Choose one of the options b
 npx manifest-mcp-chain keygen
 ```
 
-All CLIs share the same keyfile (`~/.manifest/key.json`), so any of the four commands works for `keygen` and `import`. You will be prompted for an encryption password. The keyfile is written with mode `0600`.
+All CLIs share the same keyfile (`~/.manifest/key.json`), so any of the five commands works for `keygen` and `import`. You will be prompted for an encryption password. The keyfile is written with mode `0600`.
 
 ### Option B -- Import an existing mnemonic
 
@@ -64,6 +65,10 @@ manifest-mcp-fred import          Import a mnemonic into an encrypted keyfile
 manifest-mcp-cosmwasm             Start the cosmwasm MCP server (stdio)
 manifest-mcp-cosmwasm keygen      Generate a new encrypted keyfile
 manifest-mcp-cosmwasm import      Import a mnemonic into an encrypted keyfile
+
+manifest-mcp-agent                Start the agent MCP server (stdio)
+manifest-mcp-agent keygen         Generate a new encrypted keyfile
+manifest-mcp-agent import         Import a mnemonic into an encrypted keyfile
 ```
 
 ## MCP client integration

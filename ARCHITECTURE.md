@@ -8,7 +8,7 @@ For user-facing guidance (tool selection, end-to-end examples, prompts/resources
 
 The servers implement the [Model Context Protocol](https://modelcontextprotocol.io/) (MCP), exposing blockchain queries, transactions, and Manifest-specific deployment tools to any MCP-compatible client (Claude Desktop, Cursor, etc.).
 
-The 27 tools (+ 1 optional faucet) are split across four MCP servers to stay under the LLM tool-selection accuracy ceiling:
+The 32 tools (+ 1 optional faucet) are split across five MCP servers to stay under the LLM tool-selection accuracy ceiling:
 
 - **Chain server** (6 tools, +1 optional `request_faucet`) -- Generic Cosmos SDK operations: queries, transactions, fee estimation, module discovery
 - **Lease server** (8 tools) -- On-chain lease operations: credit balance, funding, lease queries, custom-domain claim/lookup, SKUs, providers
@@ -52,14 +52,16 @@ packages/
   lease/     @manifest-network/manifest-mcp-lease     MCP server: 8 on-chain lease tools
   fred/      @manifest-network/manifest-mcp-fred      MCP server: 11 provider/Fred tools, 3 resources, 3 prompts
   cosmwasm/  @manifest-network/manifest-mcp-cosmwasm  MCP server: 2 converter tools
-  node/      @manifest-network/manifest-mcp-node      Four CLIs: manifest-mcp-chain, manifest-mcp-lease, manifest-mcp-fred, manifest-mcp-cosmwasm
+  agent-core/ @manifest-network/manifest-agent-core   Orchestration library (deployApp/manageDomain/troubleshoot/closeLease)
+  agent/     @manifest-network/manifest-mcp-agent      MCP server: 5 orchestrated tools (elicitation-driven)
+  node/      @manifest-network/manifest-mcp-node       Five CLIs: manifest-mcp-{chain,lease,fred,cosmwasm,agent}
 e2e/                                                   End-to-end tests against a live chain
 submodules/
   manifest-ledger/                                 Cosmos SDK blockchain (main branch, v2.1.0+)
   fred/                                            Container orchestration backend (main branch)
 ```
 
-Dependency direction: **node -> {chain, lease, fred, cosmwasm} -> core** (never reverse; node also depends on core directly). Fred also uses its own HTTP clients internally. Core has no knowledge of transports or Node.js-specific APIs, though it exports MCP-typed server utilities (`withErrorHandling`, `jsonResponse`) consumed by chain, lease, fred, and cosmwasm packages.
+Dependency direction: **node -> {chain, lease, fred, cosmwasm, agent} -> core**, and **agent -> agent-core -> {core, fred}** (never reverse; node also depends on core directly). Fred also uses its own HTTP clients internally. Core has no knowledge of transports or Node.js-specific APIs, though it exports MCP-typed server utilities (`withErrorHandling`, `jsonResponse`) consumed by chain, lease, fred, and cosmwasm packages.
 
 ## Package: core
 
@@ -274,14 +276,15 @@ The `CosmwasmMCPServer` class takes a `CosmwasmMCPServerOptions` (config + walle
 
 ## Package: node
 
-The node package provides four Node.js CLI entry points:
+The node package provides five Node.js CLI entry points:
 
 - **`manifest-mcp-chain`** (`chain.ts`) -- Spawns `ChainMCPServer` with stdio transport
 - **`manifest-mcp-lease`** (`lease.ts`) -- Spawns `LeaseMCPServer` with stdio transport
 - **`manifest-mcp-fred`** (`fred.ts`) -- Spawns `FredMCPServer` with stdio transport
 - **`manifest-mcp-cosmwasm`** (`cosmwasm.ts`) -- Spawns `CosmwasmMCPServer` with stdio transport
+- **`manifest-mcp-agent`** (`agent.ts`) -- Spawns `AgentMCPServer` with stdio transport
 
-All four entry points share the same wallet resolution and subcommand handling:
+All five entry points share the same wallet resolution and subcommand handling:
 
 1. **Wallet resolution** -- Checks for a keyfile first (`KeyfileWalletProvider`, supports both encrypted and plaintext formats), falls back to a BIP-39 mnemonic env var (`MnemonicWalletProvider`)
 2. **Transport binding** -- Connects the server to a `StdioServerTransport`
