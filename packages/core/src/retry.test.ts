@@ -56,6 +56,17 @@ describe('isRetryableError', () => {
       );
       expect(isRetryableError(error)).toBe(false);
     });
+
+    it('should not retry OPERATION_CANCELLED errors', () => {
+      // A deliberate user decline / cancel / elicitation-timeout (ENG-272).
+      // The transient-looking message must NOT override the non-retryable
+      // code classification — retrying a user's cancel is nonsensical.
+      const error = new ManifestMCPError(
+        ManifestMCPErrorCode.OPERATION_CANCELLED,
+        'User cancelled (timed out)',
+      );
+      expect(isRetryableError(error)).toBe(false);
+    });
   });
 
   describe('Standard Error handling', () => {

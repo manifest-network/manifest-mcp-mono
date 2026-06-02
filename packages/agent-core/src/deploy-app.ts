@@ -114,8 +114,9 @@ import type {
  * locked composition + E-hybrid runtime-context contract.
  *
  * @throws `ManifestMCPError(INVALID_CONFIG)` for spec / wallet validation.
- * @throws `ManifestMCPError(INVALID_CONFIG)` when `onConfirm` returns
- *   `'no'` or `onPlan` returns `'cancel'`.
+ * @throws `ManifestMCPError(OPERATION_CANCELLED)` when `onConfirm` returns
+ *   `'no'` or `onPlan` returns `'cancel'` (deliberate user cancellation —
+ *   ENG-272).
  *
  * Errors from fred's broadcast or core's recovery primitives surface as
  * typed `ManifestMCPError`s. Partial-success failures with applicable
@@ -265,7 +266,7 @@ export async function deployApp(
     const verdict = await callbacks.onPlan(plan);
     if (verdict === 'cancel') {
       throw new ManifestMCPError(
-        ManifestMCPErrorCode.INVALID_CONFIG,
+        ManifestMCPErrorCode.OPERATION_CANCELLED,
         'User cancelled deployment at plan step.',
       );
     }
@@ -379,7 +380,7 @@ export async function deployApp(
     const yesNo = await callbacks.onConfirm(recapBlock);
     if (yesNo !== 'yes') {
       throw new ManifestMCPError(
-        ManifestMCPErrorCode.INVALID_CONFIG,
+        ManifestMCPErrorCode.OPERATION_CANCELLED,
         'User declined to proceed at intent-recap step.',
       );
     }

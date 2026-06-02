@@ -32,6 +32,10 @@ const NON_RETRYABLE_ERROR_CODES: ManifestMCPErrorCode[] = [
   // Transaction failures - on-chain rejection. Retrying could cause
   // double-spend for non-idempotent operations.
   ManifestMCPErrorCode.TX_FAILED,
+
+  // User-action errors - a deliberate decline / cancel / elicitation-timeout.
+  // Retrying a user's cancel is nonsensical (ENG-272).
+  ManifestMCPErrorCode.OPERATION_CANCELLED,
 ];
 
 /**

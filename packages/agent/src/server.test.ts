@@ -43,8 +43,10 @@ import {
   type ElicitRequestFormParams,
   ElicitRequestSchema,
   type ElicitResult,
+  ErrorCode,
   type LoggingMessageNotification,
   LoggingMessageNotificationSchema,
+  McpError,
   type ProgressNotification,
   ProgressNotificationSchema,
 } from '@modelcontextprotocol/sdk/types.js';
@@ -1806,6 +1808,417 @@ describe('AgentMCPServer', () => {
       } finally {
         await client.close();
       }
+    });
+  });
+
+  // ─────────────────────────────────────────────────────────────────
+  // Test #15 — ENG-272 — elicitInput REJECTION → safe defaults.
+  //
+  // PRIOR BUG: when `server.elicitInput(...)` REJECTS (10-min timeout,
+  // host abort, transport close) instead of resolving with a
+  // `decline`/`cancel` action, the thrown `McpError` propagated past the
+  // callback, past agent-core, into `withErrorHandling`, which (it is not
+  // a `ManifestMCPError`) coerced it to `code:'UNKNOWN'` — AFTER a paid
+  // lease may already exist for the deploy recovery path.
+  //
+  // FIX: each elicit site catches the rejection and applies a safe
+  // default:
+  //   - recovery (onFailure) → `salvage_without_domain` (lease preserved);
+  //     surfaces as TX_FAILED from agent-core (NOT UNKNOWN).
+  //   - confirm/plan (onPlan, onConfirm ×3) → decline; agent-core throws
+  //     OPERATION_CANCELLED (NOT UNKNOWN); no broadcast fires.
+  // A warning `notifications/message` documents the implicit decision.
+  //
+  // The spy targets `server.getServer().elicitInput` directly (the method
+  // the callback code awaits) — `mockRejectedValueOnce` short-circuits
+  // before the request reaches the client transport, exactly modelling a
+  // rejected in-flight elicitation. Mirrors the test #12 spy pattern.
+  // ─────────────────────────────────────────────────────────────────
+  describe('#15 elicitInput rejection — safe defaults', () => {
+    const envelope: FailureEnvelope = {
+      outcome: 'partially_succeeded',
+      leaseUuid: 'lease-272',
+      requestedCustomDomain: 'app.example.com',
+      reason:
+        'Partial success: lease lease-272 created but custom_domain attach failed.',
+    };
+    const fullOptions: RecoveryOption[] = [
+      {
+        id: 'retry_set_domain',
+        label: 'Retry set-domain + upload',
+        description:
+          'Retry the set-domain transaction against the already-created lease.',
+      },
+      {
+        id: 'salvage_without_domain',
+        label: 'Salvage without domain',
+        description: 'Keep the lease without the requested custom domain.',
+      },
+      {
+        id: 'cancel_lease',
+        label: 'Cancel the lease',
+        description: 'Submit a cancel-lease transaction (pre-active terminal).',
+      },
+      {
+        id: 'close_lease',
+        label: 'Cancel or close the lease',
+        description:
+          'Submit a close-lease transaction (post-active or pre-active terminal).',
+      },
+    ];
+
+    // A `respond` that must never run — when the spy rejects/resolves the
+    // call short-circuits before the request reaches the client handler.
+    const respondNever: ElicitationScript = {
+      respond: () => {
+        throw new Error('elicitInput spy should intercept before the wire');
+      },
+    };
+
+    function parseResultCode(captured: CaptureResult): {
+      code?: string;
+      message?: string;
+    } {
+      return JSON.parse(captured.toolResult.content[0].text) as {
+        code?: string;
+        message?: string;
+      };
+    }
+
+    it('#15a recovery (onFailure) rejection → salvage_without_domain, lease preserved (TX_FAILED, not UNKNOWN)', async () => {
+      let observed: RecoveryChoice | undefined;
+      const fakeDeploy: AgentOrchestrators['deployApp'] = async (
+        _spec,
+        cb,
+        _opts,
+      ) => {
+        observed = await cb.onFailure?.(envelope, fullOptions);
+        // Mimic dispatchRecovery's salvage_without_domain contract: it
+        // preserves the lease (no stopApp) and surfaces TX_FAILED.
+        const { ManifestMCPError, ManifestMCPErrorCode } = await import(
+          '@manifest-network/manifest-mcp-core'
+        );
+        throw new ManifestMCPError(
+          ManifestMCPErrorCode.TX_FAILED,
+          'salvage_without_domain applied; lease preserved.',
+        );
+      };
+      const server = makeServer({ deployApp: fakeDeploy });
+      vi.spyOn(server.getServer(), 'elicitInput').mockRejectedValueOnce(
+        new McpError(ErrorCode.RequestTimeout, 'Request timed out', {
+          timeout: 600000,
+        }),
+      );
+      const captured = await callToolWithCapture(
+        server,
+        'deploy_app_orchestrated',
+        { spec: { image: 'nginx', port: 80 } },
+        respondNever,
+      );
+
+      // Lease-preserving default returned to the orchestrator.
+      expect(observed).toEqual({ id: 'salvage_without_domain' });
+      // Tool result is the TX_FAILED salvage outcome — NOT UNKNOWN.
+      expect(captured.toolResult.isError).toBe(true);
+      const parsed = parseResultCode(captured);
+      expect(parsed.code).toBe('TX_FAILED');
+      expect(parsed.code).not.toBe('UNKNOWN');
+      // Exactly one warning notification, describing the implicit choice.
+      const warnings = captured.logs.filter((l) => l.level === 'warning');
+      expect(warnings).toHaveLength(1);
+      const data = warnings[0].data as {
+        kind: string;
+        dismissed_action: string;
+        applied_default: string;
+      };
+      expect(data.kind).toBe('recovery_dismissed');
+      expect(data.dismissed_action).toBe('timeout');
+      expect(data.applied_default).toBe('salvage_without_domain');
+    });
+
+    it('#15b recovery (onFailure) rejection via ConnectionClosed → salvage_without_domain (connection_closed tag)', async () => {
+      let observed: RecoveryChoice | undefined;
+      const fakeDeploy: AgentOrchestrators['deployApp'] = async (
+        _spec,
+        cb,
+        _opts,
+      ) => {
+        observed = await cb.onFailure?.(envelope, fullOptions);
+        const { ManifestMCPError, ManifestMCPErrorCode } = await import(
+          '@manifest-network/manifest-mcp-core'
+        );
+        throw new ManifestMCPError(
+          ManifestMCPErrorCode.TX_FAILED,
+          'salvage_without_domain applied; lease preserved.',
+        );
+      };
+      const server = makeServer({ deployApp: fakeDeploy });
+      vi.spyOn(server.getServer(), 'elicitInput').mockRejectedValueOnce(
+        new McpError(ErrorCode.ConnectionClosed, 'Connection closed'),
+      );
+      const captured = await callToolWithCapture(
+        server,
+        'deploy_app_orchestrated',
+        { spec: { image: 'nginx', port: 80 } },
+        respondNever,
+      );
+
+      expect(observed).toEqual({ id: 'salvage_without_domain' });
+      const parsed = parseResultCode(captured);
+      expect(parsed.code).toBe('TX_FAILED');
+      const warnings = captured.logs.filter((l) => l.level === 'warning');
+      expect(warnings).toHaveLength(1);
+      const data = warnings[0].data as {
+        kind: string;
+        dismissed_action: string;
+        applied_default: string;
+      };
+      expect(data.kind).toBe('recovery_dismissed');
+      expect(data.dismissed_action).toBe('connection_closed');
+      expect(data.applied_default).toBe('salvage_without_domain');
+    });
+
+    it('#15c deploy onPlan rejection → cancel (OPERATION_CANCELLED, not UNKNOWN)', async () => {
+      let observed: PlanEdit | 'confirm' | 'cancel' | undefined;
+      const fakeDeploy: AgentOrchestrators['deployApp'] = async (
+        _spec,
+        cb,
+        _opts,
+      ) => {
+        cb.onProgress?.({
+          kind: 'deployment_plan_rendered',
+          block: { text: 'plan' },
+        });
+        observed = await cb.onPlan?.({
+          summary: {
+            format: 'single',
+            serviceCount: 1,
+            portCount: 1,
+            envCount: 0,
+            envKeys: [],
+            images: ['nginx'],
+          },
+          readiness: {
+            status: 'ok',
+            reasons: [],
+            suggestedActions: [],
+            walletBalances: [],
+            credits: null,
+            sku: null,
+          },
+          fees: {
+            createLease: {
+              coins: [{ denom: 'umfx', amount: '100' }],
+              gas: 200000,
+            },
+          },
+        });
+        // Real deploy-app throws OPERATION_CANCELLED on a 'cancel' verdict.
+        const { ManifestMCPError, ManifestMCPErrorCode } = await import(
+          '@manifest-network/manifest-mcp-core'
+        );
+        throw new ManifestMCPError(
+          ManifestMCPErrorCode.OPERATION_CANCELLED,
+          'User cancelled deployment at plan step.',
+        );
+      };
+      const server = makeServer({ deployApp: fakeDeploy });
+      vi.spyOn(server.getServer(), 'elicitInput').mockRejectedValueOnce(
+        new McpError(ErrorCode.RequestTimeout, 'Request timed out'),
+      );
+      const captured = await callToolWithCapture(
+        server,
+        'deploy_app_orchestrated',
+        { spec: { image: 'nginx', port: 80 } },
+        respondNever,
+      );
+
+      expect(observed).toBe('cancel');
+      expect(captured.toolResult.isError).toBe(true);
+      const parsed = parseResultCode(captured);
+      expect(parsed.code).toBe('OPERATION_CANCELLED');
+      expect(parsed.code).not.toBe('UNKNOWN');
+      const warnings = captured.logs.filter((l) => l.level === 'warning');
+      expect(warnings).toHaveLength(1);
+      const data = warnings[0].data as {
+        kind: string;
+        callback: string;
+        applied_default: string;
+      };
+      expect(data.kind).toBe('elicit_timeout');
+      expect(data.callback).toBe('onPlan');
+      expect(data.applied_default).toBe('cancel');
+    });
+
+    it('#15d deploy onConfirm rejection → no (OPERATION_CANCELLED, not UNKNOWN)', async () => {
+      let confirmVerdict: 'yes' | 'no' | undefined;
+      const fakeDeploy: AgentOrchestrators['deployApp'] = async (
+        _spec,
+        cb,
+        _opts,
+      ) => {
+        cb.onProgress?.({
+          kind: 'deployment_plan_rendered',
+          block: { text: 'plan' },
+        });
+        const planVerdict = await cb.onPlan?.({
+          summary: {
+            format: 'single',
+            serviceCount: 1,
+            portCount: 1,
+            envCount: 0,
+            envKeys: [],
+            images: ['nginx'],
+          },
+          readiness: {
+            status: 'ok',
+            reasons: [],
+            suggestedActions: [],
+            walletBalances: [],
+            credits: null,
+            sku: null,
+          },
+          fees: {
+            createLease: {
+              coins: [{ denom: 'umfx', amount: '100' }],
+              gas: 200000,
+            },
+          },
+        });
+        expect(planVerdict).toBe('confirm');
+        confirmVerdict = await cb.onConfirm?.({ text: 'Proceed?' });
+        const { ManifestMCPError, ManifestMCPErrorCode } = await import(
+          '@manifest-network/manifest-mcp-core'
+        );
+        throw new ManifestMCPError(
+          ManifestMCPErrorCode.OPERATION_CANCELLED,
+          'User declined to proceed at intent-recap step.',
+        );
+      };
+      const server = makeServer({ deployApp: fakeDeploy });
+      // onPlan resolves (accept→confirm), then onConfirm REJECTS.
+      vi.spyOn(server.getServer(), 'elicitInput')
+        .mockResolvedValueOnce({
+          action: 'accept',
+          content: { verdict: 'confirm' },
+        } as ElicitResult)
+        .mockRejectedValueOnce(
+          new McpError(ErrorCode.RequestTimeout, 'Request timed out'),
+        );
+      const captured = await callToolWithCapture(
+        server,
+        'deploy_app_orchestrated',
+        { spec: { image: 'nginx', port: 80 } },
+        respondNever,
+      );
+
+      expect(confirmVerdict).toBe('no');
+      expect(captured.toolResult.isError).toBe(true);
+      const parsed = parseResultCode(captured);
+      expect(parsed.code).toBe('OPERATION_CANCELLED');
+      expect(parsed.code).not.toBe('UNKNOWN');
+      const warnings = captured.logs.filter((l) => l.level === 'warning');
+      expect(warnings).toHaveLength(1);
+      const data = warnings[0].data as {
+        kind: string;
+        callback: string;
+        applied_default: string;
+      };
+      expect(data.kind).toBe('elicit_timeout');
+      expect(data.callback).toBe('onConfirm');
+      expect(data.applied_default).toBe('no');
+    });
+
+    it('#15e manage_domain onConfirm rejection → no (OPERATION_CANCELLED); broadcast NOT fired', async () => {
+      let confirmVerdict: 'yes' | 'no' | undefined;
+      const fakeManageDomain: AgentOrchestrators['manageDomain'] = async (
+        _args,
+        cb,
+        _opts,
+      ) => {
+        confirmVerdict = await cb.onConfirm?.({ text: 'Set domain?' });
+        const { ManifestMCPError, ManifestMCPErrorCode } = await import(
+          '@manifest-network/manifest-mcp-core'
+        );
+        throw new ManifestMCPError(
+          ManifestMCPErrorCode.OPERATION_CANCELLED,
+          'User declined to proceed with manage-domain set.',
+        );
+      };
+      const server = makeServer({ manageDomain: fakeManageDomain });
+      vi.spyOn(server.getServer(), 'elicitInput').mockRejectedValueOnce(
+        new McpError(ErrorCode.RequestTimeout, 'Request timed out'),
+      );
+      const captured = await callToolWithCapture(
+        server,
+        'manage_domain_orchestrated',
+        {
+          action: 'set',
+          lease_uuid: '550e8400-e29b-41d4-a716-446655440000',
+          fqdn: 'app.example.com',
+        },
+        respondNever,
+      );
+
+      expect(confirmVerdict).toBe('no');
+      expect(captured.toolResult.isError).toBe(true);
+      const parsed = parseResultCode(captured);
+      expect(parsed.code).toBe('OPERATION_CANCELLED');
+      expect(parsed.code).not.toBe('UNKNOWN');
+      const warnings = captured.logs.filter((l) => l.level === 'warning');
+      expect(warnings).toHaveLength(1);
+      const data = warnings[0].data as {
+        kind: string;
+        callback: string;
+        applied_default: string;
+      };
+      expect(data.kind).toBe('elicit_timeout');
+      expect(data.callback).toBe('onConfirm');
+      expect(data.applied_default).toBe('no');
+    });
+
+    it('#15f close_lease onConfirm rejection → no (OPERATION_CANCELLED); lease left open', async () => {
+      let confirmVerdict: 'yes' | 'no' | undefined;
+      const fakeCloseLease: AgentOrchestrators['closeLease'] = async (
+        _args,
+        cb,
+        _opts,
+      ) => {
+        confirmVerdict = await cb.onConfirm?.({ text: 'Close lease?' });
+        const { ManifestMCPError, ManifestMCPErrorCode } = await import(
+          '@manifest-network/manifest-mcp-core'
+        );
+        throw new ManifestMCPError(
+          ManifestMCPErrorCode.OPERATION_CANCELLED,
+          'User declined to proceed with close-lease.',
+        );
+      };
+      const server = makeServer({ closeLease: fakeCloseLease });
+      vi.spyOn(server.getServer(), 'elicitInput').mockRejectedValueOnce(
+        new McpError(ErrorCode.RequestTimeout, 'Request timed out'),
+      );
+      const captured = await callToolWithCapture(
+        server,
+        'close_lease_orchestrated',
+        { lease_uuid: '550e8400-e29b-41d4-a716-446655440000' },
+        respondNever,
+      );
+
+      expect(confirmVerdict).toBe('no');
+      expect(captured.toolResult.isError).toBe(true);
+      const parsed = parseResultCode(captured);
+      expect(parsed.code).toBe('OPERATION_CANCELLED');
+      expect(parsed.code).not.toBe('UNKNOWN');
+      const warnings = captured.logs.filter((l) => l.level === 'warning');
+      expect(warnings).toHaveLength(1);
+      const data = warnings[0].data as {
+        kind: string;
+        callback: string;
+        applied_default: string;
+      };
+      expect(data.kind).toBe('elicit_timeout');
+      expect(data.callback).toBe('onConfirm');
+      expect(data.applied_default).toBe('no');
     });
   });
 });
