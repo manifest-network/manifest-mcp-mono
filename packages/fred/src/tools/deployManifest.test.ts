@@ -299,6 +299,28 @@ describe('deployManifest', () => {
     expect(thrown.message).toContain('Deploy partially succeeded:'); // prefix retained
   });
 
+  it('already-aborted signal → partial with no misleading failedStep', async () => {
+    const cm = makeMockClientManager({
+      queryClient: makeQueryClient(),
+      address: 'manifest1tenant',
+    });
+    let thrown: any;
+    try {
+      await deployManifest(
+        {
+          manifest: singleManifest(),
+          sku: { kind: 'byName', size: 'docker-micro' },
+          abortSignal: AbortSignal.abort(),
+        },
+        deps(cm),
+      );
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown.details?.partial).toBe(true);
+    expect(thrown.details?.failedStep).toBeUndefined();
+  });
+
   it('TerminalChainStateError surfaces lease_uuid', async () => {
     const cm = makeMockClientManager({
       queryClient: makeQueryClient(),

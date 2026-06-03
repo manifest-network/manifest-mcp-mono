@@ -4,11 +4,13 @@
  *
  * Companion to `classify-deploy-response.ts`: that file handles the RETURN
  * path; this file handles the THROW path. The split exists because
- * `manifest-mcp-fred` 0.8.0 `deployApp` throws `ManifestMCPError` with the
- * message prefix `Deploy partially succeeded: lease ${uuid} was created
- * but subsequent steps failed.` and `details.lease_uuid` populated when
- * create-lease succeeded but something downstream (set-domain, manifest
- * upload, readiness poll) fell over.
+ * `manifest-mcp-fred`'s `deployApp` throws `ManifestMCPError` with
+ * `details.lease_uuid` populated when create-lease succeeded but something
+ * downstream (set-domain, manifest upload, readiness poll) fell over. The
+ * partial-success signal is carried structurally as `details.partial === true`
+ * (ENG-280); the legacy `Deploy partially succeeded: lease ${uuid} was created
+ * but subsequent steps failed.` message prefix is retained as a cross-version
+ * fallback for fred builds that predate the structured flag.
  *
  * Recognised input envelope shapes:
  *   - `{ message, details?, code? }`
@@ -18,10 +20,12 @@
  * classified as `outcome: 'failed'` with a stable `reason`, so the
  * orchestrator can branch on the JSON without an outer try/catch.
  *
- * `outcome: 'partially_succeeded'` triggers ONLY when `err.message` starts
- * with the exact prefix `Deploy partially succeeded:`. Looser matching
- * would risk false positives on wrapper errors that happen to contain the
- * phrase nested inside other text.
+ * `outcome: 'partially_succeeded'` triggers primarily on the structured
+ * `details.partial === true` discriminant. As a fallback (for fred builds
+ * without the flag) it also triggers when `err.message` starts with the exact
+ * prefix `Deploy partially succeeded:`. The prefix match is EXACT-start only:
+ * looser matching would risk false positives on wrapper errors that happen to
+ * contain the phrase nested inside other text.
  */
 
 /** Permissive UUID pattern (RFC-4122 8-4-4-4-12, version byte lenient). */

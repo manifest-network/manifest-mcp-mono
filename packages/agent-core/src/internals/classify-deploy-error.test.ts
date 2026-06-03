@@ -3,7 +3,7 @@ import { classifyDeployError } from './classify-deploy-error.js';
 
 const VALID_UUID = '11111111-1111-4111-8111-111111111111';
 
-describe('classifyDeployError — 1:1 port of classify-deploy-error.cjs', () => {
+describe('classifyDeployError (ENG-280 discriminant + legacy prefix fallback)', () => {
   it('partial-success: extracts leaseUuid from details when present', () => {
     const r = classifyDeployError({
       message: `Deploy partially succeeded: lease ${VALID_UUID} was created but subsequent steps failed.`,

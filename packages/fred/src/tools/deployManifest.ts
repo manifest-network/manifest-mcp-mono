@@ -287,7 +287,7 @@ export async function deployManifest(
 
   await input.onLeaseCreated?.(leaseUuid, providerUrl);
 
-  let step: 'set_domain' | 'upload' | 'poll' = 'poll';
+  let step: 'set_domain' | 'upload' | 'poll' | undefined;
   let status: FredLeaseStatus;
   try {
     input.abortSignal?.throwIfAborted();
@@ -327,8 +327,9 @@ export async function deployManifest(
     logger.warn(
       `[deploy] lease ${leaseUuid} created but step '${step}' failed; close_lease to clean up`,
     );
-    // Partial-success wrap — lifted VERBATIM from deployApp.ts.
-    // (Task C2 adds the TerminalChainStateError lease_uuid context.)
+    // Wrap a post-create-lease failure as a partial-success error so callers
+    // know the lease exists and must be cleaned up. A TerminalChainStateError
+    // is re-thrown with lease context attached rather than re-wrapped.
     if (err instanceof TerminalChainStateError) {
       throw err.withContext({
         lease_uuid: leaseUuid,
@@ -348,7 +349,7 @@ export async function deployManifest(
       {
         ...base,
         partial: true,
-        failedStep: step,
+        ...(step !== undefined && { failedStep: step }),
         lease_uuid: leaseUuid,
         provider_uuid: providerUuid,
         provider_url: providerUrl,
@@ -356,8 +357,9 @@ export async function deployManifest(
     );
   }
 
-  // Connection info (best-effort) + return — lifted VERBATIM from deployApp.ts,
-  // substituting `input.manifest`/`normalizedCustomDomain`/`input.serviceName`.
+  // Fetch connection info (best-effort) and assemble the success result. A
+  // failure here is non-fatal: the lease is already active, so we surface the
+  // error in `connectionError` rather than throwing.
   let connection: ConnectionDetails | undefined;
   let url: string | undefined;
   let connectionError: string | undefined;
@@ -380,7 +382,7 @@ export async function deployManifest(
     const rawMsg = err instanceof Error ? err.message : String(err);
     // Log raw message to stderr for debugging; sanitize only the user-facing return value
     logger.error(
-      `[deploy_app] Failed to fetch connection info for lease ${leaseUuid}: ${rawMsg}`,
+      `[deploy] Failed to fetch connection info for lease ${leaseUuid}: ${rawMsg}`,
     );
     connectionError = sanitizeForLogging(rawMsg) as string;
   }
