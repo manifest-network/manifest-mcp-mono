@@ -5,14 +5,30 @@ updates:
     schedule:
       interval: weekly
     groups:
+      # Batch only patch/minor dev-dep updates. Majors (e.g. typescript 6,
+      # @types/node major bumps) stay out of the group so they arrive as
+      # isolated PRs for individual review rather than riding in with patches.
       dev-dependencies:
         dependency-type: development
+        update-types:
+          - "minor"
+          - "patch"
       cosmjs:
         patterns:
           - "@cosmjs/*"
     ignore:
+      # @cosmjs/* is pinned to the 0.32.x matched set via the
+      # @manifest-network/stargate fork override; any bump — even a 0.x
+      # "minor" like 0.32 -> 0.39 — splits the cosmjs tree away from the fork.
+      # The CosmJS uplift is the Phase-2 lift (ENG-267), blocked on a fork
+      # rebase + manifestjs release. Ignore ALL updates until then. (The prior
+      # major-only ignore let the 0.32 -> 0.39 minor through as PR #16, since
+      # 0.x minors aren't "major" in semver.)
       - dependency-name: "@cosmjs/*"
-        update-types: ["version-update:semver-major"]
+        update-types:
+          - "version-update:semver-major"
+          - "version-update:semver-minor"
+          - "version-update:semver-patch"
   - package-ecosystem: github-actions
     directory: /
     schedule:
