@@ -26,6 +26,7 @@ import {
   cosmosTx,
   isRetryableError,
   LeaseState,
+  logger,
   ManifestMCPError,
   ManifestMCPErrorCode,
 } from '@manifest-network/manifest-mcp-core';
@@ -327,6 +328,36 @@ describe('deployManifest', () => {
     expect(thrown.details?.lease_uuid).toBe(
       '550e8400-e29b-41d4-a716-446655440000',
     );
+  });
+
+  it('logs around create-lease without leaking the manifest body or tokens', async () => {
+    const cm = makeMockClientManager({
+      queryClient: makeQueryClient(),
+      address: 'manifest1tenant',
+    });
+    const lines: string[] = [];
+    const spyInfo = vi
+      .spyOn(logger, 'info')
+      .mockImplementation((m: unknown) => {
+        lines.push(String(m));
+      });
+    const spyWarn = vi
+      .spyOn(logger, 'warn')
+      .mockImplementation((m: unknown) => {
+        lines.push(String(m));
+      });
+    const secret = 'TOPSECRETIMAGE';
+    await deployManifest(
+      {
+        manifest: JSON.stringify({ image: secret, ports: { '80/tcp': {} } }),
+        sku: { kind: 'byName', size: 'docker-micro' },
+      },
+      deps(cm),
+    );
+    expect(lines.join('\n')).not.toContain(secret);
+    expect(lines.some((l) => l.includes('lease'))).toBe(true);
+    spyInfo.mockRestore();
+    spyWarn.mockRestore();
   });
 
   it('wrapper: builder output passes validateManifest (no self-built manifest is rejected)', async () => {

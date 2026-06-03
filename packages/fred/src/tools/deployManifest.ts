@@ -269,6 +269,9 @@ export async function deployManifest(
     input.gasMultiplier !== undefined
       ? { gasMultiplier: input.gasMultiplier }
       : undefined;
+  logger.info(
+    `[deploy] creating lease (meta_hash=${manifestMetaHash}, items=${leaseItems.length})`,
+  );
   const txResult = await cosmosTx(
     clientManager,
     'billing',
@@ -278,6 +281,9 @@ export async function deployManifest(
     overrides,
   );
   const leaseUuid = extractLeaseUuid(txResult);
+  logger.info(
+    `[deploy] lease ${leaseUuid} created on provider ${providerUuid}`,
+  );
 
   await input.onLeaseCreated?.(leaseUuid, providerUrl);
 
@@ -318,6 +324,9 @@ export async function deployManifest(
       fetchFn,
     );
   } catch (err) {
+    logger.warn(
+      `[deploy] lease ${leaseUuid} created but step '${step}' failed; close_lease to clean up`,
+    );
     // Partial-success wrap — lifted VERBATIM from deployApp.ts.
     // (Task C2 adds the TerminalChainStateError lease_uuid context.)
     if (err instanceof TerminalChainStateError) {
