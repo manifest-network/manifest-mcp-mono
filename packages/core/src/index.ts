@@ -16,14 +16,11 @@ export {
 } from './config.js';
 export { cosmosEstimateFee, cosmosQuery, cosmosTx } from './cosmos.js';
 export { parseBooleanEnv } from './env-utils.js';
-// SSRF-guarded fetch (moved from agent-core in ENG-268 so fred can share it)
-export {
-  BLOCKED_RANGES_IPV4,
-  BLOCKED_RANGES_IPV6,
-  createGuardedFetch,
-  type GuardedFetch,
-  isBlocked,
-} from './internals/guarded-fetch.js';
+// NOTE: the SSRF-guarded fetch (`createGuardedFetch`, `isBlocked`,
+// `BLOCKED_RANGES_*`, `GuardedFetch`) is deliberately NOT re-exported here.
+// It dynamic-imports `undici` (→ `node:async_hooks`), which breaks browser
+// bundles that import this universal barrel. It lives at the Node-only
+// `@manifest-network/manifest-mcp-core/guarded-fetch` subpath instead (ENG-281).
 export { createLCDQueryClient } from './lcd-adapter.js';
 export { type LogLevel, logger, parseLogLevel } from './logger.js';
 export {

@@ -1,8 +1,7 @@
-import {
-  createGuardedFetch,
-  logger,
-  parseBooleanEnv,
-} from '@manifest-network/manifest-mcp-core';
+import { logger, parseBooleanEnv } from '@manifest-network/manifest-mcp-core';
+// Node-only SSRF guard lives on a dedicated subpath so the core barrel stays
+// browser-bundleable (ENG-281).
+import { createGuardedFetch } from '@manifest-network/manifest-mcp-core/guarded-fetch';
 
 /**
  * Env var gating fred's SSRF-guarded fetch. Default ON; operators opt out

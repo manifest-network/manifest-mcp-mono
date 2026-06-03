@@ -6,6 +6,10 @@
  * `agent-core` — can share one guard instead of duplicating the
  * security-sensitive undici dispatcher. This module re-exports it to
  * preserve agent-core's existing import paths (e.g. `inspect-image.ts`).
+ *
+ * Imported from core's Node-only `/guarded-fetch` subpath rather than the
+ * package barrel: the barrel must stay browser-bundleable, so the
+ * undici-backed guard is no longer re-exported from it (ENG-281).
  */
 export {
   BLOCKED_RANGES_IPV4,
@@ -13,4 +17,4 @@ export {
   createGuardedFetch,
   type GuardedFetch,
   isBlocked,
-} from '@manifest-network/manifest-mcp-core';
+} from '@manifest-network/manifest-mcp-core/guarded-fetch';
