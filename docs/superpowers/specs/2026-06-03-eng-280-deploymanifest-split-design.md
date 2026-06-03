@@ -2,163 +2,172 @@
 
 - **Issue:** [ENG-280](https://linear.app/liftedinit/issue/ENG-280)
 - **Date:** 2026-06-03
-- **Status:** Design — pending approval
-- **Package:** `packages/fred`
-- **Related:** unblocks [ENG-279](https://linear.app/liftedinit/issue/ENG-279) (Barney migration); carries [ENG-258](https://linear.app/liftedinit/issue/ENG-258) fixes #1 + #2; pairs with [ENG-282](https://linear.app/liftedinit/issue/ENG-282) (typed-object overload, deferred)
+- **Status:** Design v2 — revised per whole-spec best-practices review (pending approval)
+- **Package:** `packages/fred` (+ small changes in `packages/core` and `packages/agent-core`)
+- **Scope:** **Maximal** — the split + ENG-258 #1/#2 + boundary hardening + observability + structured-error contract & consumer migration + create-lease double-broadcast mitigation. No deferred follow-ups.
+- **Related:** unblocks [ENG-279](https://linear.app/liftedinit/issue/ENG-279); pairs with [ENG-282](https://linear.app/liftedinit/issue/ENG-282) (typed-object overload, deferred)
 
 ## 1. Problem
 
-`fred`'s `deployApp(input: DeployAppInput)` couples two responsibilities in one call:
+`fred`'s `deployApp(input: DeployAppInput)` couples two responsibilities:
 
-1. **Build** — turn typed fields (`image`/`port`/`env`/… or a `{services}` map) into a manifest JSON string.
-2. **Apply** — resolve SKU → provider, create an on-chain lease (spends money, irreversible), optionally set a custom domain, upload the manifest to the provider, and poll until ready.
+1. **Build** — turn typed fields (`image`/`port`/… or a `{services}` map) into a manifest JSON string.
+2. **Apply** — resolve SKU → provider, create an on-chain lease (**spends money, irreversible**), optionally set a custom domain, upload the manifest, and poll until ready.
 
-Barney (ENG-279) needs to: build the manifest via the mono (single source of truth), let the user **edit** it in a confirmation dialog, sometimes deploy a **user-supplied** manifest, preserve full manifest fidelity (multi-port, `host_port`, `ingress`), and keep **zero** manifest-construction or orchestration logic locally. The coupling makes that impossible — there is no way to hand `fred` a pre-built manifest.
+Barney (ENG-279) needs to build the manifest via the mono, let the user **edit** it, sometimes deploy a **user-supplied** manifest, preserve full fidelity (`host_port`/`ingress`), and keep **zero** manifest/orchestration logic locally. The coupling blocks all of that — there is no way to hand `fred` a pre-built manifest. Critically, the new primitive accepts a **partly user-supplied string**, which introduces a trust boundary the typed-field path never had (see §7).
 
 ## 2. Goals / Non-goals
 
 **Goals**
 
-- Extract the apply half into a named `deployManifest` primitive that accepts a **pre-built manifest string** and validates it at the boundary before any chain tx.
-- Re-express `deployApp` as a thin wrapper over build + `deployManifest`, with its public signature and behaviour **unchanged** (backward compatible).
-- Land [ENG-258](https://linear.app/liftedinit/issue/ENG-258) **#1** (pre-resolved SKU bypass) and **#2** (storage resolved against the same provider as compute) in the same change.
+- Extract the apply half into `deployManifest`, accepting a **pre-built manifest string**, validating/hardening it at the boundary **before any chain tx**.
+- Re-express `deployApp` as a thin wrapper; its public signature, `DeployAppInput`, `DeployAppResult`, and the MCP `deploy_app` tool schema stay **unchanged**.
+- Land ENG-258 **#1** and **#2** with explicit acceptance criteria:
+  - **#1 acceptance:** given `sku.kind === 'resolved'`, `deployManifest` issues **zero** `sku.v1.sKUs` queries (asserted not-called) and uses the supplied `skuUuid`/`providerUuid` verbatim.
+  - **#2 acceptance:** given `storage`, the storage SKU is resolved with `providerUuid` **pinned to the compute provider**; a storage tier offered only by a *different* provider yields a provider-aware `INVALID_CONFIG` **before** create-lease.
+- Make the new user-supplied-string boundary safe (§7) and the irreversible money-spend observable (§6) and recoverable (§4, §5).
 
-**Non-goals (explicitly deferred)**
+**Non-goals (deferred)**
 
-- A typed-object (`Manifest`) overload for `deployManifest` — string only for now (round-trips losslessly incl. `host_port`/`ingress`). When it lands later it must be **another thin builder that serializes to a string and calls the same `deployManifest`**, so the string stays the single canonical apply interface.
-- The TS↔Go manifest type alignment (ENG-282).
-- Any change to the MCP `deploy_app` tool's wire schema.
+- A typed-object (`Manifest`) overload — string only (round-trips losslessly incl. `host_port`/`ingress`). When ENG-282's typed path lands it must be **another thin builder that serializes to a string and calls this same `deployManifest`** — *not* a `manifest: string | Manifest` union, because a typed object has no canonical bytes and a union would break the `meta_hash == uploaded-bytes` invariant (§3.1 step 4).
+- TS↔Go manifest type alignment (ENG-282).
+- A `DomainTarget` discriminated union for `customDomain`/`serviceName` — see §3.1 note (kept as validated optionals deliberately).
 
 ## 3. Design
 
 ### 3.1 New primitive: `deployManifest`
 
-```ts
-interface DeployDeps {
-  clientManager: CosmosClientManager;
-  getAuthToken: (address: string, leaseUuid: string) => Promise<string>;
-  getLeaseDataAuthToken: (
-    address: string,
-    leaseUuid: string,
-    metaHash: string,
-  ) => Promise<string>;
-  fetchFn?: typeof globalThis.fetch;
-}
+Signature is **domain-first, options-last** (matches agent-core's `deployApp(spec, …, opts)` and the "primary param, then options" idiom; the new symbol gets the idiomatic shape rather than inheriting `deployApp`'s legacy 5-positional one). The injected-dependency bag follows the tree-wide exported `*Options` naming convention.
 
+```ts
 type SkuSelector =
   | { kind: 'byName'; size: string }
   | { kind: 'resolved'; skuUuid: string; providerUuid: string };
 
 interface DeployManifestInput {
-  /** Pre-built, serialized manifest JSON. Single-service `{image,ports,…}` or
-   *  stack `{services:{…}}`. VALIDATED at the boundary before any chain tx.
-   *  The exact bytes handed in are hashed for `meta_hash` and uploaded — they
-   *  are parsed only to inspect, never re-serialized (see §3.1 step 4). */
-  manifest: string;
+  manifest: string;            // pre-built serialized JSON; hardened+validated at the boundary
   sku: SkuSelector;
-  storage?: string;          // storage SKU tier name (resolved against the SAME provider — #2)
+  storage?: string;            // storage SKU tier name (resolved against the SAME provider — #2)
   customDomain?: string;
-  serviceName?: string;
+  serviceName?: string;        // see note: kept as validated optionals, not a sub-union
   gasMultiplier?: number;
   onLeaseCreated?: (leaseUuid: string, providerUrl: string) => void | Promise<void>;
   abortSignal?: AbortSignal;
   pollOptions?: Omit<PollOptions, 'abortSignal'>;
 }
 
+interface DeployManifestOptions {
+  clientManager: CosmosClientManager;
+  getAuthToken: (address: string, leaseUuid: string) => Promise<string>;
+  getLeaseDataAuthToken: (address: string, leaseUuid: string, metaHash: string) => Promise<string>;
+  fetchFn?: typeof globalThis.fetch;
+}
+
 function deployManifest(
-  deps: DeployDeps,
   input: DeployManifestInput,
+  opts: DeployManifestOptions,
 ): Promise<DeployAppResult>; // DeployAppResult unchanged
 ```
 
-**Behaviour** (lifted from today's `deployApp.ts` orchestration half, with the manifest-build branch removed):
+> **`customDomain`/`serviceName` modeling note.** These are a data clump (serviceName requires customDomain; on a stack it must name a real service). They are deliberately **not** modeled as a sub-union mirroring `SkuSelector`, because the "must match a manifest service" rule is value-dependent (needs the parsed manifest), so a type can't fully capture it — the runtime guard in step 3 is load-bearing regardless. Kept as validated optionals to stay field-parallel with the unchanged `DeployAppInput`. The make-illegal-states lens is applied where it pays off (the SKU selector), and consciously not where it only half-pays.
 
-1. **Parse once, at the boundary, before any tx.** `JSON.parse` the manifest string a single time into `manifestObj` (reusing the object-guard pattern already in `buildManifestPreview`/`parseStackManifest`). Run the existing `validateManifest(manifestObj)`; since it **returns `{ valid, errors }` (it does not throw)**, explicitly convert `valid: false` into `throw ManifestMCPError(INVALID_CONFIG, errors.join('; '))`. Rejecting here — *before* create-lease — is the load-bearing part of the split: it gives every direct caller the same orphaned-lease protection the wrapper has today.
-2. **Derive shape from the parsed manifest, not typed fields.** `isStackManifest(manifestObj)` → `getServiceNames(manifestObj)` for stack service names. No `image`/`services` typed inputs.
-3. **`serviceName`/`customDomain` coherence (manifest-derived).** If `customDomain` set: trim/non-empty check; stack → `serviceName` required and must be one of `getServiceNames(manifestObj)`; single-service → `serviceName` must be absent. `serviceName` without `customDomain` is rejected. These live here (not only the wrapper) so direct callers are protected.
-4. **Meta-hash the ORIGINAL string.** `metaHashHex(input.manifest)` over the exact input bytes (never a re-serialized object — re-serialization would change whitespace/key order and break the `meta_hash == uploaded-body-hash` invariant).
-5. **SKU resolution.** `switch (input.sku.kind)`:
-   - `'resolved'` → use `skuUuid` + `providerUuid` directly; **skip** `findSkuUuid` (#1).
-   - `'byName'` → `{ skuUuid, providerUuid } = findSkuUuid(queryClient, sku.size)`.
-6. **Storage (same provider — #2).** If `storage`, `findSkuUuid(queryClient, storage, providerUuid)` pinned to the compute provider; append `${storageSkuUuid}:1` to lease items.
-7. **Lease items.** stack → `serviceNames.map(n => \`${skuUuid}:1:${n}\`)`; single → `[\`${skuUuid}:1\`]`; + storage item if any.
+**Behaviour:**
+
+0. **Boundary hardening (before parse).** Reject a manifest string over a fixed byte cap (DoS guard — `deployManifest` is a public unbounded-string entrypoint). Then **strict-parse**: reject duplicate keys and `__proto__`/`constructor` keys → `throw ManifestMCPError(INVALID_CONFIG, …)`. Rationale: the provider re-parses the *same bytes* in Go; `JSON.parse` is last-wins on duplicate keys, so a duplicate-key manifest could validate locally against one value and deploy another while `meta_hash` matches perfectly (cross-language parser-differential, Bishop Fox). `validateManifest` runs on the already-collapsed object and **cannot** catch this — it must be rejected at parse. Implementation: a small in-repo strict-parse helper (preferred over a new dependency, per the repo's dep-pinning discipline; a dep would need explicit approval).
+1. **Validate, before any tx.** Run `validateManifest(parsed)`. It **returns `{ valid, errors, format }`** (it does not throw) — explicitly convert `valid:false` into `throw ManifestMCPError(INVALID_CONFIG, errors.join('; '), { errors })`, carrying the **structured `errors[]` in `details`** (Barney renders field-pathed errors without string-splitting). Rejecting here — before create-lease — is the load-bearing part of the split.
+2. **Shape from the parsed manifest (thread, don't re-derive).** Use the `format` (`'stack'|'single'`) returned by step 1; for stack, `getServiceNames(parsed)` once. (Avoids the shotgun-parse of calling `isStackManifest`/`getServiceNames` as a second independent classification.)
+3. **`serviceName`/`customDomain` coherence (manifest-derived, in the primitive).** If `customDomain`: trim/non-empty; stack → `serviceName` required and ∈ `getServiceNames(parsed)`; single → `serviceName` absent; `serviceName` without `customDomain` rejected. In the primitive so **direct callers** get the same protection.
+4. **Meta-hash the ORIGINAL bytes.** `metaHashHex(input.manifest)` over the exact input string — never a re-serialized object (re-serialization changes whitespace/key order and breaks `meta_hash == uploaded-body-hash`). The same original bytes are uploaded in step 11.
+5. **SKU resolution.** `switch (input.sku.kind)` with a `default: never` exhaustiveness guard: `'resolved'` → use `skuUuid`+`providerUuid`, **skip** `findSkuUuid` (#1); `'byName'` → `findSkuUuid(queryClient, sku.size)`.
+6. **Storage (same provider — #2).** If `storage`: `findSkuUuid(queryClient, storage, providerUuid)` pinned to the compute provider; append `${storageSkuUuid}:1`.
+7. **Lease items.** stack → `serviceNames.map(n => \`${skuUuid}:1:${n}\`)`; single → `[\`${skuUuid}:1\`]`; + storage item.
 8. **Provider URL.** `resolveProviderUrl(queryClient, providerUuid)`.
-9. create-lease (`--meta-hash`, metaHash, …leaseItems) → `extractLeaseUuid`.
-10. `await onLeaseCreated?.(leaseUuid, providerUrl)`.
-11. `try { set-custom-domain (if any) → uploadLeaseData(original bytes) → pollLeaseUntilReady } catch { partial-success wrap }` — identical to today.
+9. **create-lease — the point of no return.** Submitted with the **double-broadcast mitigation** (§4): `maxRetries: 0` so a transient-looking network error after the tx commits is never transparently re-broadcast. → `extractLeaseUuid`.
+10. `await onLeaseCreated?.(leaseUuid, providerUrl)` — **outside** the abort-checked try.
+11. `try { set-custom-domain (if any) → uploadLeaseData(ORIGINAL bytes) → pollLeaseUntilReady } catch { partial-success wrap (§5) }`.
 12. connection info (best-effort) → `DeployAppResult`.
+
+> **Abort-ordering invariant (named).** `abortSignal` MUST NOT be checked between create-lease broadcast (step 9) and lease-UUID extraction; `onLeaseCreated` fires outside the abort-checked try because the lease exists on-chain regardless of abort state. Violating this can orphan a paid lease whose UUID the caller never learns. (Mirrors the rationale inline at `deployApp.ts:371-377`.)
 
 ### 3.2 `deployApp` becomes a thin wrapper
 
-`deployApp` keeps its **exact** public signature `(clientManager, getAuthToken, getLeaseDataAuthToken, input: DeployAppInput, fetchFn?)` and `DeployAppInput` (incl. `size: string`) **unchanged**. It:
+Keeps its exact public signature and `DeployAppInput` (incl. `size`). It runs the typed-input checks (`image` XOR `services`; `port` with `image`), builds the manifest string via the existing `buildManifest`/`buildStackManifest` branches, then calls `deployManifest({ manifest, sku: { kind: 'byName', size: input.size }, … }, { clientManager, getAuthToken, getLeaseDataAuthToken, fetchFn })`.
 
-1. Runs only the **typed-input** checks that can't be derived from a manifest string: `image` XOR `services`, and `port` required with `image`.
-2. Builds the manifest string via the existing `buildManifest`/`buildStackManifest` branches (moved behind it untouched).
-3. Constructs `deps = { clientManager, getAuthToken, getLeaseDataAuthToken, fetchFn }` and `input = { manifest, sku: { kind: 'byName', size: input.size }, storage, customDomain, serviceName, gasMultiplier, onLeaseCreated, abortSignal, pollOptions }`, then `return deployManifest(deps, input)`.
+> **Latent behaviour change (call out + test).** The wrapper now JSON-parses and runs `validateManifest` over its *own* built manifest, which `buildManifest`/`buildStackManifest` never validated. Add a cross-check + test that builder output **always** passes `validateManifest` (and the strict-parse hardening), so "behaviour unchanged" doesn't hide a new failure mode where a builder-allowed manifest trips the validator.
 
-Existing callers (`register-tools.ts`, `agent-core/deploy-app.ts`) and the MCP `deploy_app` tool are unaffected. `DeployAppInput` does **not** gain `skuUuid`/`providerUuid`; pre-resolution is a `deployManifest`-only (library) feature that Barney uses with `{ kind: 'resolved', … }`.
+`DeployAppInput` does **not** gain `skuUuid`/`providerUuid`; pre-resolution is a `deployManifest`-only feature (Barney uses `{ kind: 'resolved' }`). Existing callers and the MCP tool are unaffected.
 
 ### 3.3 `findSkuUuid` change (ENG-258 #2)
 
 ```ts
 function findSkuUuid(
-  queryClient: ManifestQueryClient,
-  size: string,
-  providerUuid?: string, // when set, the matched SKU MUST belong to this provider
+  queryClient, size: string, providerUuid?: string,
 ): Promise<{ skuUuid: string; providerUuid: string }>;
 ```
 
-- The not-found error must be **provider-aware**: distinguish "tier `X` is not offered by provider `<providerUuid>` (the provider selected for compute tier `<size>`); tiers from this provider: …" from "tier `X` not found on any provider". The current message lists every provider's tiers, which would be misleading once filtered.
-- This error is a **permanent / business validation** error (it is thrown *before* create-lease, so no orphaned lease) and must be classified non-transient so `retry.ts` does not retry it.
+- When `providerUuid` is set, the matched SKU must belong to it; otherwise throw **`INVALID_CONFIG`** (not `QUERY_FAILED` — `INVALID_CONFIG` is in core's `NON_RETRYABLE_ERROR_CODES`; `QUERY_FAILED` is not). Add a test asserting `isRetryableError(err) === false`.
+- **Provider-aware message:** distinguish "tier `X` is not offered by provider `<providerUuid>` (selected for compute tier `<size>`); tiers from this provider: …" from "tier `X` not found on any provider". The current message lists every provider's tiers, which would mislead once filtered.
 
 ### 3.4 Exports
 
-`deployManifest`, `DeployManifestInput`, `SkuSelector`, and `DeployDeps` are added to `packages/fred/src/index.ts` (the package **barrel**). Verified: `deployManifest`'s entire dependency surface (`manifest.ts` parse/validate/`metaHashHex`, `http/provider.ts`, `http/fred.ts`, `cosmosTx`) has **zero** `node:`/`undici` imports — it is pure isomorphic orchestration, so ENG-281's subpath rationale does **not** apply; the barrel stays browser-safe.
+Public **call-contract** types → `packages/fred/src/index.ts`: `deployManifest`, `DeployManifestInput`, `SkuSelector`, `DeployManifestOptions` (the last is exported only because Barney must type a variable of it). Verified: `deployManifest`'s dependency surface has **zero** `node:`/`undici` imports — pure isomorphic orchestration, so it belongs in the barrel (ENG-281's subpath rationale does not apply).
 
-## 4. Error handling
+## 4. Idempotency & retry semantics
 
-- All failures throw `ManifestMCPError` (the codebase convention) — never a `Result`. `DeployAppResult` stays success-only.
-- Boundary validation (manifest parse/validate, SKU/provider/serviceName checks) throws `INVALID_CONFIG`/`QUERY_FAILED` **before** create-lease.
-- The post-lease `try/catch` partial-success wrap ("Deploy partially succeeded: lease X created…") is unchanged and still classifies `TerminalChainStateError` specially.
+`deployManifest` is a **non-idempotent create** (like `kubectl create` / HTTP `POST`), **not** a convergent `apply` (`kubectl apply`/`terraform apply` reconcile to zero changes on re-run). Calling it twice creates two separately-paid leases. The verb "deploy" is chosen over "apply" precisely to avoid implying convergence.
 
-## 5. Idioms & rationale (research-grounded)
+- **Delivery model:** at-least-once over **three** irreversible writes — create-lease tx (step 9), set-item-custom-domain tx (step 11), `uploadLeaseData` (step 11). The create-lease boundary is the point of no return.
+- **No blind retry.** After step 9 a paid lease may exist even when the call throws (lost response / crash / abort between broadcast and UUID extraction). Callers MUST NOT blind-retry; recovery = query existing leases (by tenant, or by `meta_hash` — which is a deterministic dedup key over the exact manifest bytes) before re-invoking.
+- **Double-broadcast mitigation (in-scope, touches core).** `cosmosTx` wraps the broadcast in `withRetry(clientManager.getConfig().retry)`; a post-commit network error (`fetch failed`/`socket hang up`) is classified transient and would **re-broadcast → double lease**. Fix: add an optional per-call retry override to `cosmosTx`'s `TxOverrides` (e.g. `retry?: { maxRetries: number }`) threaded into the broadcast `withRetry`, and submit create-lease with `maxRetries: 0`. Tradeoff (documented): genuinely-transient *pre-broadcast* setup failures for this one tx are also not retried — acceptable; the caller retries the whole `deployManifest` after the leases-query recovery check. Add a test: a simulated transient broadcast failure on create-lease produces **no second lease**.
 
-- **Build/apply separation; the artifact is the interface; all-in-one is sugar** — the dominant idiom across kubectl create/apply, Terraform plan/apply, Nomad `POST /v1/jobs` + `/v1/jobs/parse`, and Podman `SpecGenerator` (issue #14239: "the API must be specgen… lesson learned" — convenience flags client-side, full spec canonical). Validation belongs in the **primitive**, so every caller is protected.
-- **String artifact + "parse, don't validate" at the boundary** — the string is the serialized wire/upload artifact, round-trips losslessly (incl. fields the TS types don't model yet), and is what user editors emit; parse it into a validated form *before* the data is "acted upon" (the money-spending tx). K8s dynamic/unstructured client is the precedent; a typed overload can come later without forking the apply path.
-- **`SkuSelector` discriminated union (make illegal states unrepresentable)** — `skuUuid` + `providerUuid` must travel together (they come from one SKU record; `providerUuid` drives both `resolveProviderUrl` and same-provider storage). Two bare optionals admit invalid partials (only-sku / only-provider); a tagged union makes them unrepresentable at compile time with exhaustive narrowing (*Effective TypeScript* Item 29; "make illegal states unrepresentable"). `size` folds into the `byName` arm because it is consumed **only** by `findSkuUuid` (not in lease items or the result), so the `resolved` arm needs no `size`.
-- **Same-provider storage invariant (#2)** — binding the dependent resource to the primary's topology is the established cloud invariant (AWS EBS: no cross-AZ attach; K8s topology-aware provisioning resolves the pod first, then the volume into the same topology, and leaves it unschedulable rather than violating the constraint). A separate `storageProviderUuid` would let a caller express a state the single-provider lease cannot represent — rejected. Hard-fail, not silent.
-- **`deps` object over positional params** — the two auth callbacks are structurally identical `Promise`-returning functions; positional, they are silently transposable, surfacing only as an auth failure *after* a lease exists (an orphaned lease). Named keys eliminate that. 3+ params (esp. same-typed) → options/deps object is the consistent guidance, and it matches `agent-core`'s existing `deployApp(spec, callbacks, opts)` shape.
+## 5. Error handling — structured contract
 
-## 6. Backward compatibility
+All failures throw `ManifestMCPError` (codebase convention); `DeployAppResult` stays success-only.
 
-- `deployApp` signature, `DeployAppInput`, `DeployAppResult`, and the MCP `deploy_app` tool schema are **unchanged**.
-- `findSkuUuid` gains an **optional** third parameter — existing call sites compile unchanged.
-- New public exports are additive.
+- **Boundary** (hardening, validate, SKU/provider/serviceName) throws `INVALID_CONFIG` **before** create-lease.
+- **Post-create-lease failures** carry a machine-readable contract in `details`: `{ partial: true, failedStep: 'set_domain'|'upload'|'poll', lease_uuid, provider_uuid, provider_url }`. The `'Deploy partially succeeded:'` message prefix is kept **byte-stable** (human convenience), but `details.partial` is the discriminant.
+- **`TerminalChainStateError`** path also includes `lease_uuid` in its `withContext` (today it carries only `providerUuid`/`providerUrl`), so a paid lease is always identifiable.
+- **Consumer migration (in-scope, agent-core).** `agent-core/internals/classify-deploy-error.ts` currently branches on `message.startsWith('Deploy partially succeeded:')`. Migrate it to branch on `details.partial === true` first, **falling back** to the prefix match for back-compat with older fred versions (its docstring already version-references 0.8.0). Keep the existing prefix test; add a `details.partial` test.
 
-## 7. Testing plan (TDD)
+## 6. Observability
 
-New `deployManifest` suite:
-- Boundary validation: malformed JSON, `validateManifest` failure → throws `INVALID_CONFIG` **before** any tx (assert no create-lease).
-- Shape from manifest: single vs stack derived from the parsed manifest; `serviceName` coherence (stack requires a matching service; single rejects `serviceName`; `serviceName` without `customDomain` rejected).
-- Meta-hash is over the **original** bytes (a manifest with non-canonical whitespace still hashes/uploads verbatim).
-- ENG-258 #1: `{ kind: 'resolved' }` skips `findSkuUuid` (assert no SKU query); `{ kind: 'byName' }` resolves.
-- ENG-258 #2: storage resolved against the compute provider; storage-tier-on-different-provider → provider-aware throw; classified non-transient.
-- Partial-success wrap, `onLeaseCreated`, `abortSignal` behaviour (ported from the current `deployApp` tests).
+For an irreversible money-spend, specify logging via core's `logger`, all objects run through `sanitizeForLogging` (manifest body + auth tokens must never hit logs raw; `SENSITIVE_FIELDS` already redacts token/meta fields):
 
-`deployApp.test.ts` (950 lines) stays green as the **backward-compat contract** — manifest-building assertions remain there; the wrapper delegates correctly.
+- boundary reject → `logger.warn` with code + sanitized reason (no manifest body).
+- immediately **before** create-lease → `logger.info('creating lease', { meta_hash, item_count })`.
+- immediately **after** create-lease, on **both** success and the partial-failure catch → `logger.info/warn('lease <uuid> created', { lease_uuid, provider_uuid })` — so an orphaned spend is recorded even if the process dies before return.
 
-`findSkuUuid` unit tests for the new provider filter (match / no-match-on-provider / absent-everywhere messages).
+## 7. Security — user-supplied-manifest threat model
 
-## 8. Decisions that diverge from the ENG-280 ticket (flagged for review)
+The manifest is now partly user-supplied/edited (Barney). Threats + mitigations:
 
-Both come from the design-review research; both keep `deployApp` and the MCP tool surface unchanged:
+- **Injection via service name / storage tier / domain into on-chain args.** Service names flow into lease items `${skuUuid}:1:${name}`. Mitigation: `validateManifest`'s RFC 1123 DNS-label check (`validateServiceName`) runs at step 1 **before** lease-item construction (step 7) — a name with `:`/whitespace can't reach a lease item. **Validate-before-build ordering is load-bearing**; add a regression test that a structurally-malformed service name is rejected at the boundary with **no create-lease**.
+- **Cross-language JSON parser differential / duplicate keys** — see §3.1 step 0 (rejected at strict-parse).
+- **Prototype pollution** (`__proto__`/`constructor`) — rejected at strict-parse (the parsed object is spread by `mergeManifest`; the existing object-guard doesn't strip these).
+- **DoS** — byte cap before parse.
 
-1. **SKU input: `SkuSelector` discriminated union** instead of the ticket's flat `skuUuid?`/`providerUuid?` optionals (illegal-states-unrepresentable; the flat pair admits invalid partials).
-2. **`deployManifest(deps, input)` deps object** instead of the ticket's mirrored 5-positional signature (removes the transposable-identical-callbacks footgun).
+## 8. Backward compatibility
 
-If either is rejected on review, the fallbacks are: (1) flat optionals + an eager runtime XOR guard inside `deployManifest`; (2) mirror the 5-positional signature with an order-sensitivity comment + test.
+- `deployApp` signature, `DeployAppInput`, `DeployAppResult`, and the MCP `deploy_app` schema unchanged. `findSkuUuid` gains an **optional** 3rd param (existing calls compile unchanged). New exports are additive. The `'Deploy partially succeeded:'` prefix stays byte-stable.
+- **Known illegal-states held for compat (noted, not fixed):** `DeployAppResult.connection`/`connectionError` are a mutually-exclusive runtime pair (set in disjoint try/catch branches), as are `custom_domain`/`service_name`; both kept as independent optionals for backward-compat rather than refactored into a discriminated result. The make-illegal-states lens applied to `SkuSelector` is consciously not turned on the frozen result type.
 
-## 9. Out of scope / follow-ups
+## 9. Testing plan (TDD)
+
+- **No-side-effect, per case.** *Every* boundary case (oversize, dup-key, `__proto__`, malformed JSON, `validateManifest` fail, serviceName/customDomain incoherence, storage-on-wrong-provider, abort-before-create) asserts the mocked `cosmosTx('billing','create-lease', …)` was **never called**.
+- **Hash fidelity (property + examples).** Beyond one whitespace case: reordered keys, `\u` escapes, and an assertion that the bytes passed to mocked `uploadLeaseData` equal the input manifest **verbatim** and `metaHashHex` was over those bytes. Ideally a `fast-check` property over valid-but-non-canonical JSON.
+- **Anti-over-mocking.** New `deployManifest` tests MUST NOT mock `manifest.ts` (run real parse/validate/`metaHashHex`) and assert **real effects** (lease-items content, uploaded bytes, hash), not just call-counts — to avoid the repo's documented regression-guard-inversion risk.
+- **ENG-258 #1/#2** per the §2 acceptance criteria (assert `sKUs` not-called on `resolved`; provider-pinned storage + provider-aware `INVALID_CONFIG`; `isRetryableError === false`).
+- **Structured errors / consumer.** partial failure exposes `details.{partial, failedStep, lease_uuid, provider_uuid}`; `TerminalChainStateError` carries `lease_uuid`; `classify-deploy-error.ts` branches on `details.partial` and still handles the legacy prefix; prefix byte-stability test.
+- **Double-broadcast.** simulated transient broadcast failure on create-lease → no second lease.
+- **Observability.** boundary-reject / pre- / post-create-lease log lines emitted at the stated levels and sanitized.
+- **Backward-compat.** `deployApp.test.ts` (950 lines) stays green unchanged; + a wrapper test that builder output always passes `validateManifest`.
+
+## 10. Release / CHANGELOG
+
+- `CHANGELOG.md` `[Unreleased]` → `### Changed`: new public exports (`deployManifest`, `DeployManifestInput`, `SkuSelector`, `DeployManifestOptions`), additive `findSkuUuid` provider param, `cosmosTx` `TxOverrides.retry`; `### Security`: strict-parse boundary hardening (dup-key/`__proto__`/size), create-lease double-broadcast mitigation. Upgrade note: error `details.partial` is now the partial-success discriminant (prefix retained).
+- This is the **fred mono release that unblocks ENG-279** (Barney consumes a published version). Note the version bump/publish step.
+
+## 11. Out of scope / follow-ups
 
 - ENG-282 typed-object overload (additive; serialize→string→same primitive).
 - `agent-core`'s own barrel re-exporting `createGuardedFetch` (noted in ENG-281; separate).
