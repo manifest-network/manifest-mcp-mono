@@ -272,6 +272,32 @@ describe('deployManifest', () => {
     expect(mockCosmosTx).not.toHaveBeenCalled();
   });
 
+  it('partial failure carries details.partial + failedStep + lease_uuid', async () => {
+    const cm = makeMockClientManager({
+      queryClient: makeQueryClient(),
+      address: 'manifest1tenant',
+    });
+    mockUpload.mockRejectedValueOnce(new Error('provider 503'));
+    let thrown: any;
+    try {
+      await deployManifest(
+        {
+          manifest: singleManifest(),
+          sku: { kind: 'byName', size: 'docker-micro' },
+        },
+        deps(cm),
+      );
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown.details).toMatchObject({
+      partial: true,
+      failedStep: 'upload',
+      lease_uuid: '550e8400-e29b-41d4-a716-446655440000',
+    });
+    expect(thrown.message).toContain('Deploy partially succeeded:'); // prefix retained
+  });
+
   it('wrapper: builder output passes validateManifest (no self-built manifest is rejected)', async () => {
     const cm = makeMockClientManager({
       queryClient: makeQueryClient(),

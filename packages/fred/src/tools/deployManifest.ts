@@ -281,10 +281,12 @@ export async function deployManifest(
 
   await input.onLeaseCreated?.(leaseUuid, providerUrl);
 
+  let step: 'set_domain' | 'upload' | 'poll' = 'poll';
   let status: FredLeaseStatus;
   try {
     input.abortSignal?.throwIfAborted();
     if (normalizedCustomDomain !== undefined) {
+      step = 'set_domain';
       await setItemCustomDomain(
         clientManager,
         leaseUuid,
@@ -293,6 +295,7 @@ export async function deployManifest(
         overrides,
       );
     }
+    step = 'upload';
     const leaseDataToken = await getLeaseDataAuthToken(
       address,
       leaseUuid,
@@ -306,6 +309,7 @@ export async function deployManifest(
       fetchFn,
       input.abortSignal,
     );
+    step = 'poll';
     status = await pollLeaseUntilReady(
       providerUrl,
       leaseUuid,
@@ -315,7 +319,7 @@ export async function deployManifest(
     );
   } catch (err) {
     // Partial-success wrap — lifted VERBATIM from deployApp.ts.
-    // (Task C1/C2 add details.partial/failedStep + TerminalChainStateError lease_uuid.)
+    // (Task C2 adds the TerminalChainStateError lease_uuid context.)
     if (err instanceof TerminalChainStateError) {
       throw err.withContext({ providerUuid, providerUrl });
     }
@@ -323,24 +327,19 @@ export async function deployManifest(
       err instanceof ManifestMCPError
         ? err.code
         : ManifestMCPErrorCode.QUERY_FAILED;
-    const details =
-      err instanceof ManifestMCPError
-        ? {
-            ...err.details,
-            lease_uuid: leaseUuid,
-            provider_uuid: providerUuid,
-            provider_url: providerUrl,
-          }
-        : {
-            lease_uuid: leaseUuid,
-            provider_uuid: providerUuid,
-            provider_url: providerUrl,
-          };
+    const base = err instanceof ManifestMCPError ? err.details : undefined;
     throw new ManifestMCPError(
       code,
       `Deploy partially succeeded: lease ${leaseUuid} was created but subsequent steps failed. ` +
         `Close this lease with close_lease if needed. Error: ${err instanceof Error ? err.message : String(err)}`,
-      details,
+      {
+        ...base,
+        partial: true,
+        failedStep: step,
+        lease_uuid: leaseUuid,
+        provider_uuid: providerUuid,
+        provider_url: providerUrl,
+      },
     );
   }
 
