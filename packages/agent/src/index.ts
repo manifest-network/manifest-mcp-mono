@@ -30,6 +30,7 @@ import type {
   DenomMap,
   DeployAppOptions,
   DeploySpec,
+  LeaseStateName,
   ManageDomainArgs,
   ManageDomainOptions,
   TroubleshootArgs,
@@ -79,6 +80,22 @@ import { parseBooleanEnv } from './env.js';
 import { buildRuntime } from './runtime.js';
 
 export type { ManifestMCPServerOptions } from '@manifest-network/manifest-mcp-core';
+
+/**
+ * Zod enum mirroring agent-core's `LeaseStateName` union — the value space of
+ * `DeployResult.leaseState` and `CloseLeaseResult.finalState`. The trailing
+ * `satisfies readonly LeaseStateName[]` fails the build if any literal here
+ * drifts from the union. (If `LeaseStateName` gains a state, add it here too.)
+ */
+const leaseStateSchema = z.enum([
+  'LEASE_STATE_UNSPECIFIED',
+  'LEASE_STATE_PENDING',
+  'LEASE_STATE_ACTIVE',
+  'LEASE_STATE_INSUFFICIENT_FUNDS',
+  'LEASE_STATE_CLOSED',
+  'LEASE_STATE_REJECTED',
+  'LEASE_STATE_EXPIRED',
+] as const satisfies readonly LeaseStateName[]);
 
 // ----------------------------------------------------------------------
 // Dependency-injection seam for orchestrators (PLAN.md §1.1)
@@ -305,6 +322,16 @@ export class AgentMCPServer {
           // host-fs-damage primitive. Operators set the persistence
           // location via the `MANIFEST_AGENT_DATA_DIR` env var only.
         },
+        // Mirrors agent-core's DeployResult. structuredResponse drops
+        // `undefined` over the JSON round-trip, so customDomain is optional.
+        outputSchema: {
+          leaseUuid: z.string(),
+          providerUuid: z.string(),
+          leaseState: leaseStateSchema,
+          urls: z.array(z.string()),
+          customDomain: z.string().optional(),
+          manifestPath: z.string(),
+        },
         // Each deploy creates a new lease — not idempotent, not destructive.
         annotations: mutatingAnnotations('Deploy app via orchestrated flow', {
           destructive: false,
@@ -365,6 +392,14 @@ export class AgentMCPServer {
                 'set/clear on a 1-item legacy lease.',
             ),
         },
+        // Mirrors agent-core's ManageDomainResult set/clear arms (identical
+        // shape; lookup is the separate lookup_custom_domain_orchestrated tool).
+        outputSchema: {
+          action: z.enum(['set', 'clear']),
+          leaseUuid: z.string(),
+          verified: z.boolean(),
+          finalCustomDomain: z.string().nullable(),
+        },
         // Re-setting the same value is a no-op (idempotent in the converged
         // sense). Not destructive — clearing only removes the index entry.
         annotations: mutatingAnnotations(
@@ -413,6 +448,12 @@ export class AgentMCPServer {
           fqdn: z
             .string()
             .describe('FQDN to reverse-resolve (e.g. "app.example.com").'),
+        },
+        // Mirrors agent-core's ManageDomainResult lookup arm.
+        outputSchema: {
+          action: z.literal('lookup'),
+          fqdn: z.string(),
+          lease: z.object({ leaseUuid: z.string() }).nullable(),
         },
         annotations: readOnlyAnnotations(
           'Look up lease by custom domain (orchestrated)',
@@ -465,6 +506,10 @@ export class AgentMCPServer {
         inputSchema: {
           lease_uuid: z.string().uuid().describe('Lease UUID to diagnose.'),
         },
+        // Mirrors agent-core's TroubleshootReport (a markdown blob).
+        outputSchema: {
+          markdown: z.string(),
+        },
         annotations: readOnlyAnnotations(
           'Diagnose lease via orchestrated flow',
         ),
@@ -508,6 +553,11 @@ export class AgentMCPServer {
           'Permanent — the lease cannot be reopened.',
         inputSchema: {
           lease_uuid: z.string().uuid().describe('Lease UUID to close.'),
+        },
+        // Mirrors agent-core's CloseLeaseResult.
+        outputSchema: {
+          leaseUuid: z.string(),
+          finalState: leaseStateSchema,
         },
         // Closing is permanent (destructive); closing a closed lease converges
         // to the same terminal state (idempotent in the convergence sense).
