@@ -29,6 +29,16 @@ updates:
           - "version-update:semver-major"
           - "version-update:semver-minor"
           - "version-update:semver-patch"
+      # TypeScript 6 and @types/node majors are deferred to a coordinated,
+      # reviewed migration (ENG-267) rather than a Dependabot drive-by (TS 6
+      # is a real type-surface change; both failed CI as PRs #81/#83).
+      # @types/node tracks the runtime: engines require Node >=22.19, so its
+      # types stay on the 22.x line until a Node-engine bump. TypeScript and
+      # @types/node MINOR/PATCH still flow via the dev-dependencies group.
+      - dependency-name: "typescript"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
   - package-ecosystem: github-actions
     directory: /
     schedule:
