@@ -93,3 +93,47 @@ export async function findSkuUuid(
     `SKU tier "${size}" not found on any provider. Available: ${available.join(', ')}`,
   );
 }
+
+export interface DeployAppResult {
+  readonly lease_uuid: string;
+  readonly provider_uuid: string;
+  readonly provider_url: string;
+  readonly state: LeaseState;
+  readonly url?: string;
+  readonly connection?: ConnectionDetails;
+  readonly connectionError?: string;
+  /** Set when a `customDomain` was supplied AND the set-domain tx succeeded. */
+  readonly custom_domain?: string;
+  /** Set when a `serviceName` was supplied alongside a successful `customDomain` set. */
+  readonly service_name?: string;
+}
+
+export type SkuSelector =
+  | { kind: 'byName'; size: string }
+  | { kind: 'resolved'; skuUuid: string; providerUuid: string };
+
+export interface DeployManifestInput {
+  manifest: string;
+  sku: SkuSelector;
+  storage?: string;
+  customDomain?: string;
+  serviceName?: string;
+  gasMultiplier?: number;
+  onLeaseCreated?: (
+    leaseUuid: string,
+    providerUrl: string,
+  ) => void | Promise<void>;
+  abortSignal?: AbortSignal;
+  pollOptions?: Omit<PollOptions, 'abortSignal'>;
+}
+
+export interface DeployManifestOptions {
+  clientManager: CosmosClientManager;
+  getAuthToken: (address: string, leaseUuid: string) => Promise<string>;
+  getLeaseDataAuthToken: (
+    address: string,
+    leaseUuid: string,
+    metaHash: string,
+  ) => Promise<string>;
+  fetchFn?: typeof globalThis.fetch;
+}

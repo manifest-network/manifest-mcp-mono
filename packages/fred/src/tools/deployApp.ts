@@ -1,7 +1,4 @@
-import type {
-  CosmosClientManager,
-  LeaseState,
-} from '@manifest-network/manifest-mcp-core';
+import type { CosmosClientManager } from '@manifest-network/manifest-mcp-core';
 import {
   cosmosTx,
   logger,
@@ -24,8 +21,11 @@ import {
   metaHashHex,
   validateServiceName,
 } from '../manifest.js';
+import type { DeployAppResult } from './deployManifest.js';
 import { extractLeaseUuid, findSkuUuid } from './deployManifest.js';
 import { resolveProviderUrl } from './resolveLeaseProvider.js';
+
+export type { DeployAppResult } from './deployManifest.js';
 
 export interface ServiceConfig {
   image: string;
@@ -97,20 +97,6 @@ export interface DeployAppInput {
   abortSignal?: AbortSignal;
   /** Forwarded to the internal pollLeaseUntilReady call. abortSignal is the top-level field above. */
   pollOptions?: Omit<PollOptions, 'abortSignal'>;
-}
-
-export interface DeployAppResult {
-  readonly lease_uuid: string;
-  readonly provider_uuid: string;
-  readonly provider_url: string;
-  readonly state: LeaseState;
-  readonly url?: string;
-  readonly connection?: ConnectionDetails;
-  readonly connectionError?: string;
-  /** Set when a `customDomain` was supplied AND the set-domain tx succeeded. */
-  readonly custom_domain?: string;
-  /** Set when a `serviceName` was supplied alongside a successful `customDomain` set. */
-  readonly service_name?: string;
 }
 
 export async function deployApp(
