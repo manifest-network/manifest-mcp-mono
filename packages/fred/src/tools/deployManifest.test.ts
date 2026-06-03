@@ -33,7 +33,7 @@ import {
   makeMockClientManager,
   makeMockQueryClient,
 } from '@manifest-network/manifest-mcp-core/__test-utils__/mocks.js';
-import { pollLeaseUntilReady } from '../http/fred.js';
+import { pollLeaseUntilReady, TerminalChainStateError } from '../http/fred.js';
 import { getLeaseConnectionInfo, uploadLeaseData } from '../http/provider.js';
 import { deployApp } from './deployApp.js';
 import { deployManifest, findSkuUuid } from './deployManifest.js';
@@ -296,6 +296,37 @@ describe('deployManifest', () => {
       lease_uuid: '550e8400-e29b-41d4-a716-446655440000',
     });
     expect(thrown.message).toContain('Deploy partially succeeded:'); // prefix retained
+  });
+
+  it('TerminalChainStateError surfaces lease_uuid', async () => {
+    const cm = makeMockClientManager({
+      queryClient: makeQueryClient(),
+      address: 'manifest1tenant',
+    });
+    mockPoll.mockImplementationOnce(async () => {
+      // 'closed' is the TerminalChainLeaseState for LEASE_STATE_CLOSED
+      // (the constructor takes the chain-state string union, not the enum).
+      throw new TerminalChainStateError(
+        '550e8400-e29b-41d4-a716-446655440000',
+        'closed',
+      );
+    });
+    let thrown: any;
+    try {
+      await deployManifest(
+        {
+          manifest: singleManifest(),
+          sku: { kind: 'byName', size: 'docker-micro' },
+        },
+        deps(cm),
+      );
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBeInstanceOf(TerminalChainStateError);
+    expect(thrown.details?.lease_uuid).toBe(
+      '550e8400-e29b-41d4-a716-446655440000',
+    );
   });
 
   it('wrapper: builder output passes validateManifest (no self-built manifest is rejected)', async () => {

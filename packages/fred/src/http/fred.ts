@@ -271,6 +271,7 @@ function leaseStateName(state: LeaseState): string {
  * or read `chainState` to distinguish from provider-reported terminal states.
  */
 export interface TerminalChainStateContext {
+  readonly lease_uuid?: string;
   readonly providerUuid?: string;
   readonly providerUrl?: string;
 }
@@ -280,6 +281,17 @@ export class TerminalChainStateError extends ProviderApiError {
   public readonly leaseUuid: string;
   public readonly providerUuid?: string;
   public readonly providerUrl?: string;
+  /**
+   * Structured context for downstream classifiers (e.g. agent-core's
+   * classify-deploy-error). `lease_uuid` is always present so callers can name
+   * the affected lease without re-deriving it from the message; provider keys
+   * appear once `withContext` enriches the error.
+   */
+  public readonly details: {
+    readonly lease_uuid: string;
+    readonly provider_uuid?: string;
+    readonly provider_url?: string;
+  };
 
   constructor(
     leaseUuid: string,
@@ -296,6 +308,11 @@ export class TerminalChainStateError extends ProviderApiError {
     this.leaseUuid = leaseUuid;
     this.providerUuid = context?.providerUuid;
     this.providerUrl = context?.providerUrl;
+    this.details = {
+      lease_uuid: context?.lease_uuid ?? leaseUuid,
+      provider_uuid: context?.providerUuid,
+      provider_url: context?.providerUrl,
+    };
     Object.setPrototypeOf(this, TerminalChainStateError.prototype);
   }
 

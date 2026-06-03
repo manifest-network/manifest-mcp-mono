@@ -321,7 +321,11 @@ export async function deployManifest(
     // Partial-success wrap — lifted VERBATIM from deployApp.ts.
     // (Task C2 adds the TerminalChainStateError lease_uuid context.)
     if (err instanceof TerminalChainStateError) {
-      throw err.withContext({ providerUuid, providerUrl });
+      throw err.withContext({
+        lease_uuid: leaseUuid,
+        providerUuid,
+        providerUrl,
+      });
     }
     const code =
       err instanceof ManifestMCPError
