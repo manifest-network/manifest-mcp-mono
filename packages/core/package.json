@@ -10,6 +10,11 @@
       "import": "./dist/index.js",
       "types": "./dist/index.d.ts"
     },
+    "./guarded-fetch": {
+      "types": "./dist/guarded-fetch.d.ts",
+      "node": "./dist/guarded-fetch.js",
+      "default": null
+    },
     "./__test-utils__/mocks.js": {
       "import": "./dist/__test-utils__/mocks.js",
       "types": "./dist/__test-utils__/mocks.d.ts"
