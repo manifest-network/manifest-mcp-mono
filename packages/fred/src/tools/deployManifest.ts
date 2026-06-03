@@ -138,11 +138,21 @@ export interface DeployManifestOptions {
   fetchFn?: typeof globalThis.fetch;
 }
 
+const MAX_MANIFEST_BYTES = 256 * 1024;
+
 export async function deployManifest(
   input: DeployManifestInput,
   opts: DeployManifestOptions,
 ): Promise<DeployAppResult> {
   const { clientManager, getAuthToken, getLeaseDataAuthToken, fetchFn } = opts;
+
+  const manifestBytes = new TextEncoder().encode(input.manifest);
+  if (manifestBytes.length > MAX_MANIFEST_BYTES) {
+    throw new ManifestMCPError(
+      ManifestMCPErrorCode.INVALID_CONFIG,
+      `Manifest is ${manifestBytes.length} bytes; the maximum is ${MAX_MANIFEST_BYTES}.`,
+    );
+  }
 
   // Parse (Task B hardens this) + validate at the boundary, before any tx.
   let parsed: unknown;

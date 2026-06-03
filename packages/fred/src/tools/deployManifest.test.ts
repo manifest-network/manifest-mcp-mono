@@ -203,6 +203,25 @@ describe('deployManifest', () => {
     expect(mockCosmosTx.mock.calls[0][3]).toContain('sku-x:1');
   });
 
+  it('rejects an oversized manifest before any tx', async () => {
+    const cm = makeMockClientManager({
+      queryClient: makeQueryClient(),
+      address: 'manifest1tenant',
+    });
+    const huge = JSON.stringify({
+      image: 'x',
+      ports: { '80/tcp': {} },
+      labels: { big: 'A'.repeat(300_000) },
+    });
+    await expect(
+      deployManifest(
+        { manifest: huge, sku: { kind: 'byName', size: 'docker-micro' } },
+        deps(cm),
+      ),
+    ).rejects.toMatchObject({ code: 'INVALID_CONFIG' });
+    expect(mockCosmosTx).not.toHaveBeenCalled();
+  });
+
   it('rejects an invalid manifest BEFORE create-lease', async () => {
     const cm = makeMockClientManager({
       queryClient: makeQueryClient(),
