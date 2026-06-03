@@ -1,17 +1,12 @@
 import type {
   CosmosClientManager,
-  CosmosTxResult,
   LeaseState,
-  ManifestQueryClient,
 } from '@manifest-network/manifest-mcp-core';
 import {
   cosmosTx,
-  createPagination,
   logger,
-  MAX_PAGE_LIMIT,
   ManifestMCPError,
   ManifestMCPErrorCode,
-  requireUuid,
   sanitizeForLogging,
   setItemCustomDomain,
 } from '@manifest-network/manifest-mcp-core';
@@ -29,62 +24,8 @@ import {
   metaHashHex,
   validateServiceName,
 } from '../manifest.js';
+import { extractLeaseUuid, findSkuUuid } from './deployManifest.js';
 import { resolveProviderUrl } from './resolveLeaseProvider.js';
-
-function extractLeaseUuid(txResult: CosmosTxResult): string {
-  if (!txResult.events) {
-    throw new ManifestMCPError(
-      ManifestMCPErrorCode.TX_FAILED,
-      'No events in transaction result; cannot extract lease UUID',
-    );
-  }
-
-  for (const event of txResult.events) {
-    if (!event.type.includes('lease') && !event.type.includes('Lease'))
-      continue;
-    for (const attr of event.attributes) {
-      if (attr.key === 'lease_uuid' || attr.key === 'uuid') {
-        const raw = attr.value.replace(/^"|"$/g, '');
-        // Validate the extracted value is a proper UUID
-        requireUuid(
-          { lease_uuid: raw },
-          'lease_uuid',
-          ManifestMCPErrorCode.TX_FAILED,
-        );
-        return raw;
-      }
-    }
-  }
-
-  throw new ManifestMCPError(
-    ManifestMCPErrorCode.TX_FAILED,
-    'Could not find lease UUID in transaction events',
-    { events: txResult.events as unknown as Record<string, unknown>[] },
-  );
-}
-
-async function findSkuUuid(
-  queryClient: ManifestQueryClient,
-  size: string,
-): Promise<{ skuUuid: string; providerUuid: string }> {
-  const pagination = createPagination(MAX_PAGE_LIMIT);
-  const result = await queryClient.liftedinit.sku.v1.sKUs({
-    activeOnly: true,
-    pagination,
-  });
-
-  for (const sku of result.skus) {
-    if (sku.name === size) {
-      return { skuUuid: sku.uuid, providerUuid: sku.providerUuid };
-    }
-  }
-
-  const available = result.skus.map((s) => s.name);
-  throw new ManifestMCPError(
-    ManifestMCPErrorCode.QUERY_FAILED,
-    `SKU tier "${size}" not found. Available: ${available.join(', ')}`,
-  );
-}
 
 export interface ServiceConfig {
   image: string;
