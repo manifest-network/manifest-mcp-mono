@@ -154,7 +154,8 @@ export async function deployManifest(
     );
   }
 
-  // Parse (Task B hardens this) + validate at the boundary, before any tx.
+  // Parse + validate at the boundary, before any tx (size cap above;
+  // __proto__/constructor reject below; provider re-validates server-side).
   let parsed: unknown;
   try {
     parsed = JSON.parse(input.manifest);
@@ -325,7 +326,7 @@ export async function deployManifest(
     );
   } catch (err) {
     logger.warn(
-      `[deploy] lease ${leaseUuid} created but step '${step}' failed; close_lease to clean up`,
+      `[deploy] lease ${leaseUuid} created but a subsequent step${step ? ` ('${step}')` : ''} failed; close_lease to clean up`,
     );
     // Wrap a post-create-lease failure as a partial-success error so callers
     // know the lease exists and must be cleaned up. A TerminalChainStateError

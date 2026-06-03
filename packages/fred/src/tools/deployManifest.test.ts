@@ -304,6 +304,12 @@ describe('deployManifest', () => {
       queryClient: makeQueryClient(),
       address: 'manifest1tenant',
     });
+    const warnLines: string[] = [];
+    const warnSpy = vi
+      .spyOn(logger, 'warn')
+      .mockImplementation((m: unknown) => {
+        warnLines.push(String(m));
+      });
     let thrown: any;
     try {
       await deployManifest(
@@ -317,8 +323,15 @@ describe('deployManifest', () => {
     } catch (e) {
       thrown = e;
     }
+    warnSpy.mockRestore();
     expect(thrown.details?.partial).toBe(true);
     expect(thrown.details?.failedStep).toBeUndefined();
+    // The recovery breadcrumb must never interpolate a literal 'undefined'
+    // when no post-create step had started before the abort fired.
+    expect(warnLines.join('\n')).not.toContain('undefined');
+    expect(warnLines.some((l) => l.includes(thrown.details.lease_uuid))).toBe(
+      true,
+    );
   });
 
   it('TerminalChainStateError surfaces lease_uuid', async () => {
