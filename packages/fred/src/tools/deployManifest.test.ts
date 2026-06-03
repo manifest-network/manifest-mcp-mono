@@ -255,6 +255,23 @@ describe('deployManifest', () => {
     expect(mockCosmosTx).not.toHaveBeenCalled();
   });
 
+  it('rejects a stack manifest with an injection-y service name, with no create-lease', async () => {
+    const cm = makeMockClientManager({
+      queryClient: makeQueryClient(),
+      address: 'manifest1tenant',
+    });
+    const manifest = JSON.stringify({
+      services: { 'evil:name': { image: 'nginx' } },
+    });
+    await expect(
+      deployManifest(
+        { manifest, sku: { kind: 'byName', size: 'docker-micro' } },
+        deps(cm),
+      ),
+    ).rejects.toMatchObject({ code: 'INVALID_CONFIG' });
+    expect(mockCosmosTx).not.toHaveBeenCalled();
+  });
+
   it('wrapper: builder output passes validateManifest (no self-built manifest is rejected)', async () => {
     const cm = makeMockClientManager({
       queryClient: makeQueryClient(),
