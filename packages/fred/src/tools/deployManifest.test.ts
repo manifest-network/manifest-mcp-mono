@@ -35,6 +35,7 @@ import {
 } from '@manifest-network/manifest-mcp-core/__test-utils__/mocks.js';
 import { pollLeaseUntilReady } from '../http/fred.js';
 import { getLeaseConnectionInfo, uploadLeaseData } from '../http/provider.js';
+import { deployApp } from './deployApp.js';
 import { deployManifest, findSkuUuid } from './deployManifest.js';
 
 const mockCosmosTx = vi.mocked(cosmosTx);
@@ -217,5 +218,23 @@ describe('deployManifest', () => {
       ),
     ).rejects.toMatchObject({ code: 'INVALID_CONFIG' });
     expect(mockCosmosTx).not.toHaveBeenCalled();
+  });
+
+  it('wrapper: builder output passes validateManifest (no self-built manifest is rejected)', async () => {
+    const cm = makeMockClientManager({
+      queryClient: makeQueryClient(),
+      address: 'manifest1tenant',
+    });
+    // a representative typed input that exercises many builder fields:
+    await expect(
+      deployApp(cm as any, getAuthToken, getLeaseDataAuthToken, {
+        image: 'nginx:alpine',
+        port: 80,
+        size: 'docker-micro',
+        env: { FOO: 'bar' },
+        command: ['sh'],
+        labels: { a: 'b' },
+      }),
+    ).resolves.toMatchObject({ state: LeaseState.LEASE_STATE_ACTIVE });
   });
 });
