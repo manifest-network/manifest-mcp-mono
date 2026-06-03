@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+- **fred:** new public exports `deployManifest`, `DeployManifestInput`, `SkuSelector`, `DeployManifestOptions`; `deployApp` is now a thin wrapper over `buildManifest`/`buildStackManifest` + `deployManifest` (behavior unchanged). `findSkuUuid` gains an optional `providerUuid` filter. Partial-success errors now carry `details.partial`/`details.failedStep`; the `Deploy partially succeeded:` message prefix is retained. (ENG-280)
+
+### Security
+- **fred:** `deployManifest` validates the manifest string at the boundary before any on-chain tx — manifest size cap, `__proto__`/`constructor` rejection, and a case-folded top-level-key collision check (the Go field-matching differential). (ENG-280)
+
 ## [0.11.0]
 
 ### Security
