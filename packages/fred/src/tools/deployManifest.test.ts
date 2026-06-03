@@ -347,6 +347,12 @@ describe('deployManifest', () => {
         'closed',
       );
     });
+    const warnLines: string[] = [];
+    const warnSpy = vi
+      .spyOn(logger, 'warn')
+      .mockImplementation((m: unknown) => {
+        warnLines.push(String(m));
+      });
     let thrown: any;
     try {
       await deployManifest(
@@ -359,10 +365,14 @@ describe('deployManifest', () => {
     } catch (e) {
       thrown = e;
     }
+    warnSpy.mockRestore();
     expect(thrown).toBeInstanceOf(TerminalChainStateError);
     expect(thrown.details?.lease_uuid).toBe(
       '550e8400-e29b-41d4-a716-446655440000',
     );
+    // A terminal chain state isn't remediable with close_lease (the chain
+    // already cleared the lease) — the breadcrumb must not suggest it.
+    expect(warnLines.join('\n')).not.toContain('close_lease');
   });
 
   it('logs around create-lease without leaking the manifest body or tokens', async () => {

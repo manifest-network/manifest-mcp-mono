@@ -211,7 +211,7 @@ export async function deployManifest(
     } else if (input.serviceName) {
       throw new ManifestMCPError(
         ManifestMCPErrorCode.INVALID_CONFIG,
-        'serviceName must not be set on a single-service manifest',
+        'serviceName must not be set on a single-service deployment (image+port or a single-service manifest); omit it — the custom domain attaches to the sole item',
       );
     }
   } else if (input.serviceName !== undefined) {
@@ -327,19 +327,25 @@ export async function deployManifest(
       fetchFn,
     );
   } catch (err) {
-    logger.warn(
-      `[deploy] lease ${leaseUuid} created but a subsequent step${step ? ` ('${step}')` : ''} failed; close_lease to clean up`,
-    );
-    // Wrap a post-create-lease failure as a partial-success error so callers
-    // know the lease exists and must be cleaned up. A TerminalChainStateError
-    // is re-thrown with lease context attached rather than re-wrapped.
+    // A chain-terminal state (rejected / closed / expired) is self-explanatory
+    // and the chain has already cleared the lease, so `close_lease` is NOT the
+    // remedy — re-throw with lease context and an honest breadcrumb rather than
+    // the partial-success "close_lease" advice below.
     if (err instanceof TerminalChainStateError) {
+      logger.warn(
+        `[deploy] lease ${leaseUuid} reached a terminal chain state during deploy`,
+      );
       throw err.withContext({
         lease_uuid: leaseUuid,
         providerUuid,
         providerUrl,
       });
     }
+    // Wrap a post-create-lease failure as a partial-success error so callers
+    // know the lease exists and must be cleaned up.
+    logger.warn(
+      `[deploy] lease ${leaseUuid} created but a subsequent step${step ? ` ('${step}')` : ''} failed; close_lease to clean up`,
+    );
     const code =
       err instanceof ManifestMCPError
         ? err.code

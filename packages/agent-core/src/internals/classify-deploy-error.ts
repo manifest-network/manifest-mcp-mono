@@ -102,7 +102,10 @@ export function classifyDeployError(
       {
         outcome: 'partially_succeeded',
         ...(leaseUuid !== undefined && { leaseUuid }),
-        reason: message,
+        // `details.partial` can trigger this path with an empty envelope
+        // message; fall back to a stable placeholder, matching the
+        // failed-path contract ("raw error message, or a placeholder if missing").
+        reason: message || 'deploy partially succeeded; lease was created',
       },
       expectedCustomDomain,
     );
