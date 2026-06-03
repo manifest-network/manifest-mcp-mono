@@ -110,4 +110,21 @@ describe('classifyDeployError — 1:1 port of classify-deploy-error.cjs', () => 
     expect(r.outcome).toBe('partially_succeeded');
     expect(r.leaseUuid).toBe(VALID_UUID); // recovered from message
   });
+
+  it('classifies via details.partial === true (no prefix needed)', () => {
+    const r = classifyDeployError({
+      message: 'something failed',
+      details: { partial: true, lease_uuid: 'abc' },
+    });
+    expect(r.outcome).toBe('partially_succeeded');
+    expect(r.leaseUuid).toBe('abc');
+  });
+
+  it('still classifies via the legacy prefix when details.partial is absent', () => {
+    const r = classifyDeployError({
+      message: 'Deploy partially succeeded: lease abc ...',
+      details: {},
+    });
+    expect(r.outcome).toBe('partially_succeeded');
+  });
 });

@@ -78,10 +78,15 @@ export function classifyDeployError(
       ? (envelope.details as { lease_uuid?: unknown })
       : {};
 
-  // Partial-success trigger: EXACT upstream prefix. Anything looser risks
-  // mis-classifying wrapper errors whose message merely contains the
-  // phrase as a substring (defended by case #5 in the CJS test).
-  if (message.startsWith(PARTIAL_PREFIX)) {
+  // Partial-success trigger: structured `details.partial === true`
+  // discriminant (the ENG-280 split surfaces it on the partial-success wrap),
+  // OR the EXACT legacy upstream prefix as a fallback. The prefix path stays
+  // EXACT-start: anything looser risks mis-classifying wrapper errors whose
+  // message merely contains the phrase as a substring (defended by case #5 in
+  // the CJS test). `=== true` is strict to preserve the anti-false-positive
+  // discipline (a truthy-but-non-`true` flag must not trigger cleanup).
+  const partialFlag = (details as { partial?: unknown }).partial === true;
+  if (partialFlag || message.startsWith(PARTIAL_PREFIX)) {
     let leaseUuid: string | undefined;
     if (typeof details.lease_uuid === 'string') {
       leaseUuid = details.lease_uuid;
