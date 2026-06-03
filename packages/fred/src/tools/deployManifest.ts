@@ -311,7 +311,9 @@ export async function deployManifest(
     await uploadLeaseData(
       providerUrl,
       leaseUuid,
-      new TextEncoder().encode(input.manifest),
+      // Reuse the bytes computed for the size cap — same deterministic
+      // UTF-8 encoding of the (immutable) input string, one fewer allocation.
+      manifestBytes,
       leaseDataToken,
       fetchFn,
       input.abortSignal,
