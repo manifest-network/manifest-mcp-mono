@@ -239,6 +239,22 @@ describe('deployManifest', () => {
     expect(mockCosmosTx).not.toHaveBeenCalled();
   });
 
+  it('rejects a top-level __proto__ key', async () => {
+    const cm = makeMockClientManager({
+      queryClient: makeQueryClient(),
+      address: 'manifest1tenant',
+    });
+    const manifest =
+      '{"image":"nginx","ports":{"80/tcp":{}},"__proto__":{"polluted":true}}';
+    await expect(
+      deployManifest(
+        { manifest, sku: { kind: 'byName', size: 'docker-micro' } },
+        deps(cm),
+      ),
+    ).rejects.toMatchObject({ code: 'INVALID_CONFIG' });
+    expect(mockCosmosTx).not.toHaveBeenCalled();
+  });
+
   it('wrapper: builder output passes validateManifest (no self-built manifest is rejected)', async () => {
     const cm = makeMockClientManager({
       queryClient: makeQueryClient(),

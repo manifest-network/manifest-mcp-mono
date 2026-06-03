@@ -164,6 +164,15 @@ export async function deployManifest(
       `Manifest is not valid JSON: ${err instanceof Error ? err.message : String(err)}`,
     );
   }
+  if (parsed !== null && typeof parsed === 'object') {
+    const topKeys = Object.keys(parsed as Record<string, unknown>);
+    if (topKeys.includes('__proto__') || topKeys.includes('constructor')) {
+      throw new ManifestMCPError(
+        ManifestMCPErrorCode.INVALID_CONFIG,
+        'Manifest must not contain a top-level "__proto__" or "constructor" key.',
+      );
+    }
+  }
   const result = validateManifest(parsed);
   if (!result.valid) {
     throw new ManifestMCPError(
