@@ -15,7 +15,7 @@ import {
   sanitizeForLogging,
   setItemCustomDomain,
 } from '@manifest-network/manifest-mcp-core';
-import type { PollOptions } from '../http/fred.js';
+import type { FredLeaseStatus, PollOptions } from '../http/fred.js';
 import { pollLeaseUntilReady, TerminalChainStateError } from '../http/fred.js';
 import {
   type ConnectionDetails,
@@ -136,4 +136,238 @@ export interface DeployManifestOptions {
     metaHash: string,
   ) => Promise<string>;
   fetchFn?: typeof globalThis.fetch;
+}
+
+export async function deployManifest(
+  input: DeployManifestInput,
+  opts: DeployManifestOptions,
+): Promise<DeployAppResult> {
+  const { clientManager, getAuthToken, getLeaseDataAuthToken, fetchFn } = opts;
+
+  // Parse (Task B hardens this) + validate at the boundary, before any tx.
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(input.manifest);
+  } catch (err) {
+    throw new ManifestMCPError(
+      ManifestMCPErrorCode.INVALID_CONFIG,
+      `Manifest is not valid JSON: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+  const result = validateManifest(parsed);
+  if (!result.valid) {
+    throw new ManifestMCPError(
+      ManifestMCPErrorCode.INVALID_CONFIG,
+      `Invalid manifest: ${result.errors.join('; ')}`,
+      { errors: result.errors },
+    );
+  }
+  const isStack = result.format === 'stack';
+  const serviceNames = isStack ? getServiceNames(parsed) : [];
+
+  // customDomain / serviceName coherence (manifest-derived).
+  let normalizedCustomDomain: string | undefined;
+  if (input.customDomain !== undefined) {
+    normalizedCustomDomain = input.customDomain.trim();
+    if (normalizedCustomDomain === '') {
+      throw new ManifestMCPError(
+        ManifestMCPErrorCode.INVALID_CONFIG,
+        'customDomain cannot be empty or whitespace-only',
+      );
+    }
+    if (isStack) {
+      if (!input.serviceName) {
+        throw new ManifestMCPError(
+          ManifestMCPErrorCode.INVALID_CONFIG,
+          'serviceName is required when setting customDomain on a stack lease; pick one of the service keys',
+        );
+      }
+      if (!serviceNames.includes(input.serviceName)) {
+        throw new ManifestMCPError(
+          ManifestMCPErrorCode.INVALID_CONFIG,
+          `serviceName "${input.serviceName}" does not match any service. Available: ${serviceNames.join(', ')}`,
+        );
+      }
+    } else if (input.serviceName) {
+      throw new ManifestMCPError(
+        ManifestMCPErrorCode.INVALID_CONFIG,
+        'serviceName must not be set on a single-service manifest',
+      );
+    }
+  } else if (input.serviceName !== undefined) {
+    throw new ManifestMCPError(
+      ManifestMCPErrorCode.INVALID_CONFIG,
+      'serviceName is only meaningful when customDomain is set',
+    );
+  }
+
+  const address = await clientManager.getAddress();
+  await clientManager.acquireRateLimit();
+  const queryClient = await clientManager.getQueryClient();
+
+  const manifestMetaHash = await metaHashHex(input.manifest);
+
+  // SKU resolution (ENG-258 #1).
+  let skuUuid: string;
+  let providerUuid: string;
+  switch (input.sku.kind) {
+    case 'resolved':
+      skuUuid = input.sku.skuUuid;
+      providerUuid = input.sku.providerUuid;
+      break;
+    case 'byName': {
+      const r = await findSkuUuid(queryClient, input.sku.size);
+      skuUuid = r.skuUuid;
+      providerUuid = r.providerUuid;
+      break;
+    }
+    default: {
+      const _exhaustive: never = input.sku;
+      throw new ManifestMCPError(
+        ManifestMCPErrorCode.INVALID_CONFIG,
+        `Unknown sku selector: ${JSON.stringify(_exhaustive)}`,
+      );
+    }
+  }
+
+  const leaseItems: string[] = isStack
+    ? serviceNames.map((n) => `${skuUuid}:1:${n}`)
+    : [`${skuUuid}:1`];
+
+  // Storage on the SAME provider (ENG-258 #2).
+  if (input.storage) {
+    const { skuUuid: storageSkuUuid } = await findSkuUuid(
+      queryClient,
+      input.storage,
+      providerUuid,
+    );
+    leaseItems.push(`${storageSkuUuid}:1`);
+  }
+
+  const providerUrl = await resolveProviderUrl(queryClient, providerUuid);
+
+  const overrides =
+    input.gasMultiplier !== undefined
+      ? { gasMultiplier: input.gasMultiplier }
+      : undefined;
+  const txResult = await cosmosTx(
+    clientManager,
+    'billing',
+    'create-lease',
+    ['--meta-hash', manifestMetaHash, ...leaseItems],
+    true,
+    overrides,
+  );
+  const leaseUuid = extractLeaseUuid(txResult);
+
+  await input.onLeaseCreated?.(leaseUuid, providerUrl);
+
+  let status: FredLeaseStatus;
+  try {
+    input.abortSignal?.throwIfAborted();
+    if (normalizedCustomDomain !== undefined) {
+      await setItemCustomDomain(
+        clientManager,
+        leaseUuid,
+        normalizedCustomDomain,
+        { serviceName: input.serviceName },
+        overrides,
+      );
+    }
+    const leaseDataToken = await getLeaseDataAuthToken(
+      address,
+      leaseUuid,
+      manifestMetaHash,
+    );
+    await uploadLeaseData(
+      providerUrl,
+      leaseUuid,
+      new TextEncoder().encode(input.manifest),
+      leaseDataToken,
+      fetchFn,
+      input.abortSignal,
+    );
+    status = await pollLeaseUntilReady(
+      providerUrl,
+      leaseUuid,
+      () => getAuthToken(address, leaseUuid),
+      { ...input.pollOptions, abortSignal: input.abortSignal },
+      fetchFn,
+    );
+  } catch (err) {
+    // Partial-success wrap — lifted VERBATIM from deployApp.ts.
+    // (Task C1/C2 add details.partial/failedStep + TerminalChainStateError lease_uuid.)
+    if (err instanceof TerminalChainStateError) {
+      throw err.withContext({ providerUuid, providerUrl });
+    }
+    const code =
+      err instanceof ManifestMCPError
+        ? err.code
+        : ManifestMCPErrorCode.QUERY_FAILED;
+    const details =
+      err instanceof ManifestMCPError
+        ? {
+            ...err.details,
+            lease_uuid: leaseUuid,
+            provider_uuid: providerUuid,
+            provider_url: providerUrl,
+          }
+        : {
+            lease_uuid: leaseUuid,
+            provider_uuid: providerUuid,
+            provider_url: providerUrl,
+          };
+    throw new ManifestMCPError(
+      code,
+      `Deploy partially succeeded: lease ${leaseUuid} was created but subsequent steps failed. ` +
+        `Close this lease with close_lease if needed. Error: ${err instanceof Error ? err.message : String(err)}`,
+      details,
+    );
+  }
+
+  // Connection info (best-effort) + return — lifted VERBATIM from deployApp.ts,
+  // substituting `input.manifest`/`normalizedCustomDomain`/`input.serviceName`.
+  let connection: ConnectionDetails | undefined;
+  let url: string | undefined;
+  let connectionError: string | undefined;
+  try {
+    const authToken = await getAuthToken(address, leaseUuid);
+    const connResp = await getLeaseConnectionInfo(
+      providerUrl,
+      leaseUuid,
+      authToken,
+      fetchFn,
+    );
+    connection = connResp.connection;
+    if (connection.host && connection.ports) {
+      const firstPort = Object.values(connection.ports)[0];
+      if (typeof firstPort === 'number' || typeof firstPort === 'string') {
+        url = `${connection.host}:${firstPort}`;
+      }
+    }
+  } catch (err) {
+    const rawMsg = err instanceof Error ? err.message : String(err);
+    // Log raw message to stderr for debugging; sanitize only the user-facing return value
+    logger.error(
+      `[deploy_app] Failed to fetch connection info for lease ${leaseUuid}: ${rawMsg}`,
+    );
+    connectionError = sanitizeForLogging(rawMsg) as string;
+  }
+
+  return {
+    lease_uuid: leaseUuid,
+    provider_uuid: providerUuid,
+    provider_url: providerUrl,
+    state: status.state,
+    ...(url && { url }),
+    ...(connection && { connection }),
+    ...(connectionError && { connectionError }),
+    // Reaching this return implies the set-domain tx (if requested)
+    // succeeded — failures earlier in the try block throw and never
+    // get here. Echo the trimmed canonical form, matching what the
+    // chain stored.
+    ...(normalizedCustomDomain && { custom_domain: normalizedCustomDomain }),
+    ...(normalizedCustomDomain &&
+      input.serviceName && { service_name: input.serviceName }),
+  };
 }
