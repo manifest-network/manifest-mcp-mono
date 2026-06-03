@@ -136,6 +136,16 @@ export class MCPTestClient {
     if (process.env.E2E_TLS_CERT_PATH) {
       env.NODE_EXTRA_CA_CERTS = process.env.E2E_TLS_CERT_PATH;
     }
+
+    // Disable fred's default-ON SSRF guard for the spawned server. The e2e
+    // providerd runs on loopback (https://localhost:8080), which the guard
+    // correctly classifies as a blocked (loopback) range — so a guarded fetch
+    // refuses the lease-data upload ("fetch failed", cause: "SSRF blocked").
+    // e2e talks to a *trusted* local provider, so the guard is intentionally
+    // off here; its blocking behavior is unit-tested in core
+    // (internals/guarded-fetch.test.ts) and fred (server/fetch-gate.test.ts).
+    // Set unconditionally so a stray host-env value can't re-enable it. (ENG-268)
+    env.MANIFEST_FRED_FETCH_GUARDED = '0';
     if (converterAddress) {
       env.MANIFEST_CONVERTER_ADDRESS = converterAddress;
     }
