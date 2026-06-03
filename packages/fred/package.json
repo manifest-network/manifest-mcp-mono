@@ -52,7 +52,7 @@
   },
   "devDependencies": {
     "@manifest-network/manifestjs": "2.4.1",
-    "@types/node": "22.15.29",
+    "@types/node": "22.19.19",
     "typescript": "5.9.3",
     "vitest": "4.1.8"
   }
