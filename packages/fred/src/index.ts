@@ -102,6 +102,12 @@ export {
   deployApp,
   type ServiceConfig,
 } from './tools/deployApp.js';
+export {
+  type DeployManifestInput,
+  type DeployManifestOptions,
+  deployManifest,
+  type SkuSelector,
+} from './tools/deployManifest.js';
 export { fetchActiveLease } from './tools/fetchActiveLease.js';
 export { getAppLogs } from './tools/getLogs.js';
 export { resolveProviderUrl } from './tools/resolveLeaseProvider.js';
