@@ -4,11 +4,17 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.12.0]
+
 ### Changed
-- **fred:** new public exports `deployManifest`, `DeployManifestInput`, `SkuSelector`, `DeployManifestOptions`; `deployApp` is now a thin wrapper over `buildManifest`/`buildStackManifest` + `deployManifest` (behavior unchanged). `findSkuUuid` gains an optional `providerUuid` filter. Partial-success errors now carry `details.partial`/`details.failedStep`; the `Deploy partially succeeded:` message prefix is retained. (ENG-280)
+- **core:** the SSRF-guarded fetch — `createGuardedFetch`, `isBlocked`, `BLOCKED_RANGES_IPV4` / `BLOCKED_RANGES_IPV6`, and the `GuardedFetch` type — is now exported from a Node-only `@manifest-network/manifest-mcp-core/guarded-fetch` subpath instead of the package barrel. The universal barrel (`@manifest-network/manifest-mcp-core`) no longer drags `undici` (→ `node:async_hooks`) into the module graph, so browser bundlers (rspack/webpack/vite) can import the barrel again. In-repo consumers (`fred`, `agent-core`) were updated to the subpath. (ENG-281)
+- **fred:** new public exports `deployManifest`, `DeployManifestInput`, `SkuSelector`, `DeployManifestOptions`; `deployApp` is now a thin wrapper over `buildManifest`/`buildStackManifest` + `deployManifest` (behavior unchanged). `findSkuUuid` gains an optional `providerUuid` filter. Pre-resolved `{ kind: 'resolved' }` SKU selectors skip the on-chain SKU lookup; storage SKUs resolve against the compute provider (ENG-258 #1/#2). Partial-success errors now carry `details.partial`/`details.failedStep`; a cancelled deploy is coded `OPERATION_CANCELLED` (non-retryable); the `Deploy partially succeeded:` message prefix is retained. (ENG-280)
 
 ### Security
 - **fred:** `deployManifest` validates the manifest string at the boundary before any on-chain tx — manifest size cap, `__proto__`/`constructor` rejection, and a case-folded top-level-key collision check (the Go field-matching differential). (ENG-280)
+
+### Upgrade notes
+- **BREAKING (core library consumers):** `createGuardedFetch`, `isBlocked`, `BLOCKED_RANGES_IPV4`, `BLOCKED_RANGES_IPV6`, and the `GuardedFetch` type are **no longer exported from the `@manifest-network/manifest-mcp-core` barrel** — import them from the `@manifest-network/manifest-mcp-core/guarded-fetch` subpath instead. Change `import { createGuardedFetch } from '@manifest-network/manifest-mcp-core'` to `import { createGuardedFetch } from '@manifest-network/manifest-mcp-core/guarded-fetch'`. The barrel dropped them so it stays browser-bundleable (no `undici` / `node:async_hooks` in the module graph). (ENG-281)
 
 ## [0.11.0]
 
