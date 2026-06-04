@@ -350,8 +350,21 @@ function validateService(
     errors.push(`${scope}.image: must be a non-empty string`);
   }
 
-  // unknown keys
+  // unknown keys + case-folded collisions (Go encoding/json matches fields
+  // case-insensitively; V8 keeps `image` and `IMAGE` as two keys).
+  const seenLower = new Map<string, string>();
   for (const key of Object.keys(service)) {
+    const lower = key.toLowerCase();
+    const prev = seenLower.get(lower);
+    if (prev !== undefined) {
+      // `scope` is '' for a single-service manifest; use a non-empty label so
+      // the message doesn't read with a stray leading colon.
+      errors.push(
+        `${scope || 'manifest'}: keys "${prev}" and "${key}" collide case-insensitively (the provider matches fields case-insensitively)`,
+      );
+    } else {
+      seenLower.set(lower, key);
+    }
     if (!ALLOWED_TOP_LEVEL_KEYS.has(key)) {
       errors.push(`${scope}.${key}: unknown field`);
     }

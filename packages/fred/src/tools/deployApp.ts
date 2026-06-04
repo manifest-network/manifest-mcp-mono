@@ -1,90 +1,19 @@
-import type {
-  CosmosClientManager,
-  CosmosTxResult,
-  LeaseState,
-  ManifestQueryClient,
-} from '@manifest-network/manifest-mcp-core';
+import type { CosmosClientManager } from '@manifest-network/manifest-mcp-core';
 import {
-  cosmosTx,
-  createPagination,
-  logger,
-  MAX_PAGE_LIMIT,
   ManifestMCPError,
   ManifestMCPErrorCode,
-  requireUuid,
-  sanitizeForLogging,
-  setItemCustomDomain,
 } from '@manifest-network/manifest-mcp-core';
-import type { FredLeaseStatus, PollOptions } from '../http/fred.js';
-import { pollLeaseUntilReady, TerminalChainStateError } from '../http/fred.js';
-import {
-  type ConnectionDetails,
-  getLeaseConnectionInfo,
-  uploadLeaseData,
-} from '../http/provider.js';
+import type { PollOptions } from '../http/fred.js';
 import {
   type BuildManifestOptions,
   buildManifest,
   buildStackManifest,
-  metaHashHex,
   validateServiceName,
 } from '../manifest.js';
-import { resolveProviderUrl } from './resolveLeaseProvider.js';
+import type { DeployAppResult } from './deployManifest.js';
+import { deployManifest } from './deployManifest.js';
 
-function extractLeaseUuid(txResult: CosmosTxResult): string {
-  if (!txResult.events) {
-    throw new ManifestMCPError(
-      ManifestMCPErrorCode.TX_FAILED,
-      'No events in transaction result; cannot extract lease UUID',
-    );
-  }
-
-  for (const event of txResult.events) {
-    if (!event.type.includes('lease') && !event.type.includes('Lease'))
-      continue;
-    for (const attr of event.attributes) {
-      if (attr.key === 'lease_uuid' || attr.key === 'uuid') {
-        const raw = attr.value.replace(/^"|"$/g, '');
-        // Validate the extracted value is a proper UUID
-        requireUuid(
-          { lease_uuid: raw },
-          'lease_uuid',
-          ManifestMCPErrorCode.TX_FAILED,
-        );
-        return raw;
-      }
-    }
-  }
-
-  throw new ManifestMCPError(
-    ManifestMCPErrorCode.TX_FAILED,
-    'Could not find lease UUID in transaction events',
-    { events: txResult.events as unknown as Record<string, unknown>[] },
-  );
-}
-
-async function findSkuUuid(
-  queryClient: ManifestQueryClient,
-  size: string,
-): Promise<{ skuUuid: string; providerUuid: string }> {
-  const pagination = createPagination(MAX_PAGE_LIMIT);
-  const result = await queryClient.liftedinit.sku.v1.sKUs({
-    activeOnly: true,
-    pagination,
-  });
-
-  for (const sku of result.skus) {
-    if (sku.name === size) {
-      return { skuUuid: sku.uuid, providerUuid: sku.providerUuid };
-    }
-  }
-
-  const available = result.skus.map((s) => s.name);
-  throw new ManifestMCPError(
-    ManifestMCPErrorCode.QUERY_FAILED,
-    `SKU tier "${size}" not found. Available: ${available.join(', ')}`,
-  );
-}
+export type { DeployAppResult } from './deployManifest.js';
 
 export interface ServiceConfig {
   image: string;
@@ -158,20 +87,6 @@ export interface DeployAppInput {
   pollOptions?: Omit<PollOptions, 'abortSignal'>;
 }
 
-export interface DeployAppResult {
-  readonly lease_uuid: string;
-  readonly provider_uuid: string;
-  readonly provider_url: string;
-  readonly state: LeaseState;
-  readonly url?: string;
-  readonly connection?: ConnectionDetails;
-  readonly connectionError?: string;
-  /** Set when a `customDomain` was supplied AND the set-domain tx succeeded. */
-  readonly custom_domain?: string;
-  /** Set when a `serviceName` was supplied alongside a successful `customDomain` set. */
-  readonly service_name?: string;
-}
-
 export async function deployApp(
   clientManager: CosmosClientManager,
   getAuthToken: (address: string, leaseUuid: string) => Promise<string>,
@@ -203,77 +118,10 @@ export async function deployApp(
     );
   }
 
-  // Validate custom-domain inputs eagerly, before any chain tx, so a
-  // misconfigured deploy doesn't leave a paid-for lease behind.
-  // The chain still validates FQDN format and reserved-suffix rules
-  // (`IsValidFQDN`, `MatchesReservedSuffix`) when the set-domain tx
-  // arrives — we just catch the obvious shape mistakes up-front.
-  //
-  // The trimmed value is the canonical form used downstream (set-domain
-  // tx + result echo). Forwarding the untrimmed string would let
-  // surrounding whitespace survive to the chain, which `IsValidFQDN`
-  // rejects — orphaning a paid-for lease behind a "Deploy partially
-  // succeeded" wrap, exactly the failure mode this block is meant to
-  // prevent.
-  // `serviceName` is documented as only meaningful when `customDomain` is set.
-  // Reject it eagerly when the caller forgot the domain, otherwise the input
-  // is silently ignored — confusing for the caller and a foot-gun (a typo
-  // turning `customDomain` into `customdomain` would skip the domain claim
-  // and quietly drop the service routing intent on the floor).
-  if (input.customDomain === undefined && input.serviceName !== undefined) {
-    throw new ManifestMCPError(
-      ManifestMCPErrorCode.INVALID_CONFIG,
-      'serviceName is only meaningful when customDomain is set; pass customDomain or omit serviceName',
-    );
-  }
-
-  let normalizedCustomDomain: string | undefined;
-  if (input.customDomain !== undefined) {
-    normalizedCustomDomain = input.customDomain.trim();
-    if (normalizedCustomDomain === '') {
-      throw new ManifestMCPError(
-        ManifestMCPErrorCode.INVALID_CONFIG,
-        'customDomain cannot be empty or whitespace-only',
-      );
-    }
-    if (input.services) {
-      if (!input.serviceName) {
-        throw new ManifestMCPError(
-          ManifestMCPErrorCode.INVALID_CONFIG,
-          'serviceName is required when setting customDomain on a stack lease (services); pick one of the service keys',
-        );
-      }
-      // Use Object.keys+includes rather than `in`: `'constructor' in {}`
-      // is true (prototype chain), so an attacker passing
-      // `service_name: 'constructor'` (or any Object.prototype key) on
-      // a stack lease that doesn't define a same-named service would
-      // pass this check, sail through create-lease, and only fail at
-      // the set-domain tx — leaving the paid-for lease behind. Avoids
-      // ES2022's `Object.hasOwn` (base tsconfig targets ES2020) and
-      // biome's `noPrototypeBuiltins` rule on `hasOwnProperty.call`.
-      if (!Object.keys(input.services).includes(input.serviceName)) {
-        const available = Object.keys(input.services).join(', ');
-        throw new ManifestMCPError(
-          ManifestMCPErrorCode.INVALID_CONFIG,
-          `serviceName "${input.serviceName}" does not match any service in the deployment. Available: ${available}`,
-        );
-      }
-    } else if (input.serviceName) {
-      // image+port mode — the underlying lease has a single legacy item
-      // with service_name="". Passing a service_name here would address
-      // a non-existent item on the chain.
-      throw new ManifestMCPError(
-        ManifestMCPErrorCode.INVALID_CONFIG,
-        'serviceName must not be set on an image+port (legacy 1-item) lease — omit it or switch to services mode',
-      );
-    }
-  }
-
-  const address = await clientManager.getAddress();
-  await clientManager.acquireRateLimit();
-  const queryClient = await clientManager.getQueryClient();
-
-  // 1. Build manifest
+  // Build manifest from typed input. The customDomain/serviceName
+  // coherence checks now live in deployManifest, which derives them from
+  // the manifest it receives (single-service vs stack) — so we just emit
+  // the manifest JSON here and delegate.
   let manifestJson: string;
   if (input.services) {
     for (const name of Object.keys(input.services)) {
@@ -326,174 +174,18 @@ export async function deployApp(
     );
   }
 
-  // 2. SHA-256 hash of manifest (must match `meta_hash` recorded on-chain).
-  const manifestMetaHash = await metaHashHex(manifestJson);
-
-  // 3. Find matching SKU(s)
-  const { skuUuid, providerUuid } = await findSkuUuid(queryClient, input.size);
-
-  let leaseItems: string[];
-  if (input.services) {
-    const serviceNames = Object.keys(input.services);
-    leaseItems = serviceNames.map((name) => `${skuUuid}:1:${name}`);
-  } else {
-    leaseItems = [`${skuUuid}:1`];
-  }
-
-  if (input.storage) {
-    const { skuUuid: storageSkuUuid } = await findSkuUuid(
-      queryClient,
-      input.storage,
-    );
-    leaseItems.push(`${storageSkuUuid}:1`);
-  }
-
-  // 4. Get provider URL
-  const providerUrl = await resolveProviderUrl(queryClient, providerUuid);
-
-  // 5. Create lease
-  const overrides =
-    input.gasMultiplier !== undefined
-      ? { gasMultiplier: input.gasMultiplier }
-      : undefined;
-  const txResult = await cosmosTx(
-    clientManager,
-    'billing',
-    'create-lease',
-    ['--meta-hash', manifestMetaHash, ...leaseItems],
-    true,
-    overrides,
+  return deployManifest(
+    {
+      manifest: manifestJson,
+      sku: { kind: 'byName', size: input.size },
+      storage: input.storage,
+      customDomain: input.customDomain,
+      serviceName: input.serviceName,
+      gasMultiplier: input.gasMultiplier,
+      onLeaseCreated: input.onLeaseCreated,
+      abortSignal: input.abortSignal,
+      pollOptions: input.pollOptions,
+    },
+    { clientManager, getAuthToken, getLeaseDataAuthToken, fetchFn },
   );
-
-  // 6. Extract lease UUID
-  const leaseUuid = extractLeaseUuid(txResult);
-
-  // Outside the partial-success try: callback errors surface raw, not wrapped.
-  // The lease exists on-chain regardless of abortSignal state — always notify.
-  await input.onLeaseCreated?.(leaseUuid, providerUrl);
-
-  let status: FredLeaseStatus;
-  try {
-    input.abortSignal?.throwIfAborted();
-
-    // 7. Optionally attach custom_domain to the freshly-created lease.
-    //    Submitted before the manifest upload so providerd has the domain
-    //    available when it provisions. Failures here flow through the
-    //    same partial-success error wrap below as upload/poll failures.
-    //    The chain accepts MsgSetItemCustomDomain in PENDING or ACTIVE
-    //    state; if providerd races and rejects the lease before this
-    //    tx lands, the chain auto-clears the index entry so no stuck
-    //    state is left behind.
-    if (normalizedCustomDomain !== undefined) {
-      await setItemCustomDomain(
-        clientManager,
-        leaseUuid,
-        normalizedCustomDomain,
-        { serviceName: input.serviceName },
-        overrides,
-      );
-    }
-
-    // 8. Upload manifest with lease-data auth token
-    const leaseDataToken = await getLeaseDataAuthToken(
-      address,
-      leaseUuid,
-      manifestMetaHash,
-    );
-    await uploadLeaseData(
-      providerUrl,
-      leaseUuid,
-      new TextEncoder().encode(manifestJson),
-      leaseDataToken,
-      fetchFn,
-      input.abortSignal,
-    );
-
-    // 9. Poll until ready
-    status = await pollLeaseUntilReady(
-      providerUrl,
-      leaseUuid,
-      () => getAuthToken(address, leaseUuid),
-      { ...input.pollOptions, abortSignal: input.abortSignal },
-      fetchFn,
-    );
-  } catch (err) {
-    // Chain-terminal states are self-explanatory and need no "close this lease"
-    // advice (the lease is already terminal on-chain). Let Barney & friends
-    // observe the typed error directly via `instanceof` / `err.chainState`.
-    // withContext preserves the original stack (debugging points at the poll,
-    // not at this catch) while attaching deployApp's provider context so
-    // callers don't need to re-query the chain to recover it.
-    if (err instanceof TerminalChainStateError) {
-      throw err.withContext({ providerUuid, providerUrl });
-    }
-    const code =
-      err instanceof ManifestMCPError
-        ? err.code
-        : ManifestMCPErrorCode.QUERY_FAILED;
-    const details =
-      err instanceof ManifestMCPError
-        ? {
-            ...err.details,
-            lease_uuid: leaseUuid,
-            provider_uuid: providerUuid,
-            provider_url: providerUrl,
-          }
-        : {
-            lease_uuid: leaseUuid,
-            provider_uuid: providerUuid,
-            provider_url: providerUrl,
-          };
-    throw new ManifestMCPError(
-      code,
-      `Deploy partially succeeded: lease ${leaseUuid} was created but subsequent steps failed. ` +
-        `Close this lease with close_lease if needed. Error: ${err instanceof Error ? err.message : String(err)}`,
-      details,
-    );
-  }
-
-  // 10. Get connection info (best-effort)
-  let connection: ConnectionDetails | undefined;
-  let url: string | undefined;
-  let connectionError: string | undefined;
-  try {
-    const authToken = await getAuthToken(address, leaseUuid);
-    const connResp = await getLeaseConnectionInfo(
-      providerUrl,
-      leaseUuid,
-      authToken,
-      fetchFn,
-    );
-    connection = connResp.connection;
-    if (connection.host && connection.ports) {
-      const firstPort = Object.values(connection.ports)[0];
-      if (typeof firstPort === 'number' || typeof firstPort === 'string') {
-        url = `${connection.host}:${firstPort}`;
-      }
-    }
-  } catch (err) {
-    const rawMsg = err instanceof Error ? err.message : String(err);
-    // Log raw message to stderr for debugging; sanitize only the user-facing return value
-    logger.error(
-      `[deploy_app] Failed to fetch connection info for lease ${leaseUuid}: ${rawMsg}`,
-    );
-    connectionError = sanitizeForLogging(rawMsg) as string;
-  }
-
-  return {
-    lease_uuid: leaseUuid,
-    provider_uuid: providerUuid,
-    provider_url: providerUrl,
-    state: status.state,
-    ...(url && { url }),
-    ...(connection && { connection }),
-    ...(connectionError && { connectionError }),
-    // Reaching this return implies the set-domain tx (if requested)
-    // succeeded — failures earlier in the try block throw and never
-    // get here. Echo the trimmed canonical form, matching what the
-    // chain stored.
-    ...(normalizedCustomDomain && { custom_domain: normalizedCustomDomain }),
-    ...(normalizedCustomDomain &&
-      input.serviceName && { service_name: input.serviceName }),
-  };
 }

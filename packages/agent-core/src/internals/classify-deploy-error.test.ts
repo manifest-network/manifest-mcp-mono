@@ -3,7 +3,7 @@ import { classifyDeployError } from './classify-deploy-error.js';
 
 const VALID_UUID = '11111111-1111-4111-8111-111111111111';
 
-describe('classifyDeployError — 1:1 port of classify-deploy-error.cjs', () => {
+describe('classifyDeployError (ENG-280 discriminant + legacy prefix fallback)', () => {
   it('partial-success: extracts leaseUuid from details when present', () => {
     const r = classifyDeployError({
       message: `Deploy partially succeeded: lease ${VALID_UUID} was created but subsequent steps failed.`,
@@ -109,5 +109,34 @@ describe('classifyDeployError — 1:1 port of classify-deploy-error.cjs', () => 
     });
     expect(r.outcome).toBe('partially_succeeded');
     expect(r.leaseUuid).toBe(VALID_UUID); // recovered from message
+  });
+
+  it('partial via details.partial with an empty message uses a stable reason placeholder', () => {
+    // After the ENG-280 discriminant migration, partial-success can fire on
+    // details.partial === true even when the envelope omits `message`. reason
+    // must still be a non-empty placeholder, matching the failed-path contract.
+    const r = classifyDeployError({
+      message: '',
+      details: { partial: true, lease_uuid: VALID_UUID },
+    });
+    expect(r.outcome).toBe('partially_succeeded');
+    expect(r.reason.length).toBeGreaterThan(0);
+  });
+
+  it('classifies via details.partial === true (no prefix needed)', () => {
+    const r = classifyDeployError({
+      message: 'something failed',
+      details: { partial: true, lease_uuid: 'abc' },
+    });
+    expect(r.outcome).toBe('partially_succeeded');
+    expect(r.leaseUuid).toBe('abc');
+  });
+
+  it('still classifies via the legacy prefix when details.partial is absent', () => {
+    const r = classifyDeployError({
+      message: 'Deploy partially succeeded: lease abc ...',
+      details: {},
+    });
+    expect(r.outcome).toBe('partially_succeeded');
   });
 });

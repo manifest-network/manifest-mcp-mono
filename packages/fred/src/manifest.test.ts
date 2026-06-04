@@ -713,4 +713,18 @@ describe('validateManifest', () => {
       expect(r.valid).toBe(false);
     });
   });
+
+  it('rejects keys that collide case-insensitively (Go field-matching differential)', () => {
+    const parsed = JSON.parse(
+      '{"image":"a","IMAGE":"b","ports":{"80/tcp":{}}}',
+    );
+    const r = validateManifest(parsed);
+    expect(r.valid).toBe(false);
+    expect(r.errors.join(' ')).toMatch(/case-insensitive/i);
+    // Single-service manifests have an empty scope; the collision message must
+    // use a non-empty label ("manifest:") rather than a stray leading colon.
+    const collision = r.errors.find((e) => e.includes('collide'));
+    expect(collision?.startsWith(':')).toBe(false);
+    expect(collision?.startsWith('manifest:')).toBe(true);
+  });
 });

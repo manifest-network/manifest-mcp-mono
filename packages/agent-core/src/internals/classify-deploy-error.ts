@@ -4,11 +4,13 @@
  *
  * Companion to `classify-deploy-response.ts`: that file handles the RETURN
  * path; this file handles the THROW path. The split exists because
- * `manifest-mcp-fred` 0.8.0 `deployApp` throws `ManifestMCPError` with the
- * message prefix `Deploy partially succeeded: lease ${uuid} was created
- * but subsequent steps failed.` and `details.lease_uuid` populated when
- * create-lease succeeded but something downstream (set-domain, manifest
- * upload, readiness poll) fell over.
+ * `manifest-mcp-fred`'s `deployApp` throws `ManifestMCPError` with
+ * `details.lease_uuid` populated when create-lease succeeded but something
+ * downstream (set-domain, manifest upload, readiness poll) fell over. The
+ * partial-success signal is carried structurally as `details.partial === true`
+ * (ENG-280); the legacy `Deploy partially succeeded: lease ${uuid} was created
+ * but subsequent steps failed.` message prefix is retained as a cross-version
+ * fallback for fred builds that predate the structured flag.
  *
  * Recognised input envelope shapes:
  *   - `{ message, details?, code? }`
@@ -18,10 +20,12 @@
  * classified as `outcome: 'failed'` with a stable `reason`, so the
  * orchestrator can branch on the JSON without an outer try/catch.
  *
- * `outcome: 'partially_succeeded'` triggers ONLY when `err.message` starts
- * with the exact prefix `Deploy partially succeeded:`. Looser matching
- * would risk false positives on wrapper errors that happen to contain the
- * phrase nested inside other text.
+ * `outcome: 'partially_succeeded'` triggers primarily on the structured
+ * `details.partial === true` discriminant. As a fallback (for fred builds
+ * without the flag) it also triggers when `err.message` starts with the exact
+ * prefix `Deploy partially succeeded:`. The prefix match is EXACT-start only:
+ * looser matching would risk false positives on wrapper errors that happen to
+ * contain the phrase nested inside other text.
  */
 
 /** Permissive UUID pattern (RFC-4122 8-4-4-4-12, version byte lenient). */
@@ -78,10 +82,15 @@ export function classifyDeployError(
       ? (envelope.details as { lease_uuid?: unknown })
       : {};
 
-  // Partial-success trigger: EXACT upstream prefix. Anything looser risks
-  // mis-classifying wrapper errors whose message merely contains the
-  // phrase as a substring (defended by case #5 in the CJS test).
-  if (message.startsWith(PARTIAL_PREFIX)) {
+  // Partial-success trigger: structured `details.partial === true`
+  // discriminant (the ENG-280 split surfaces it on the partial-success wrap),
+  // OR the EXACT legacy upstream prefix as a fallback. The prefix path stays
+  // EXACT-start: anything looser risks mis-classifying wrapper errors whose
+  // message merely contains the phrase as a substring (defended by case #5 in
+  // the CJS test). `=== true` is strict to preserve the anti-false-positive
+  // discipline (a truthy-but-non-`true` flag must not trigger cleanup).
+  const partialFlag = (details as { partial?: unknown }).partial === true;
+  if (partialFlag || message.startsWith(PARTIAL_PREFIX)) {
     let leaseUuid: string | undefined;
     if (typeof details.lease_uuid === 'string') {
       leaseUuid = details.lease_uuid;
@@ -93,7 +102,10 @@ export function classifyDeployError(
       {
         outcome: 'partially_succeeded',
         ...(leaseUuid !== undefined && { leaseUuid }),
-        reason: message,
+        // `details.partial` can trigger this path with an empty envelope
+        // message; fall back to a stable placeholder, matching the
+        // failed-path contract ("raw error message, or a placeholder if missing").
+        reason: message || 'deploy partially succeeded; lease was created',
       },
       expectedCustomDomain,
     );
