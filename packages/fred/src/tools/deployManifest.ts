@@ -346,8 +346,14 @@ export async function deployManifest(
     logger.warn(
       `[deploy] lease ${leaseUuid} created but a subsequent step${step ? ` ('${step}')` : ''} failed; close_lease to clean up`,
     );
-    const code =
-      err instanceof ManifestMCPError
+    // A deliberate cancellation (throwIfAborted, or an aborted upload/poll) is
+    // a user action, not an infra fault — code it OPERATION_CANCELLED (which is
+    // non-retryable by code, so a partial-success cancellation is never
+    // blind-retried into a second lease). `abortSignal.aborted` is true in both
+    // the pre-step throwIfAborted and the mid-flight-abort cases.
+    const code = input.abortSignal?.aborted
+      ? ManifestMCPErrorCode.OPERATION_CANCELLED
+      : err instanceof ManifestMCPError
         ? err.code
         : ManifestMCPErrorCode.QUERY_FAILED;
     const base = err instanceof ManifestMCPError ? err.details : undefined;

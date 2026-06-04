@@ -326,6 +326,9 @@ describe('deployManifest', () => {
     warnSpy.mockRestore();
     expect(thrown.details?.partial).toBe(true);
     expect(thrown.details?.failedStep).toBeUndefined();
+    // A deliberate cancellation is OPERATION_CANCELLED (non-retryable), not the
+    // QUERY_FAILED infra-fault fallback used for genuine downstream failures.
+    expect(thrown.code).toBe('OPERATION_CANCELLED');
     // The recovery breadcrumb must never interpolate a literal 'undefined'
     // when no post-create step had started before the abort fired.
     expect(warnLines.join('\n')).not.toContain('undefined');
