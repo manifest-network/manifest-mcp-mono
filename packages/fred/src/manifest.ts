@@ -357,8 +357,10 @@ function validateService(
     const lower = key.toLowerCase();
     const prev = seenLower.get(lower);
     if (prev !== undefined) {
+      // `scope` is '' for a single-service manifest; use a non-empty label so
+      // the message doesn't read with a stray leading colon.
       errors.push(
-        `${scope}: keys "${prev}" and "${key}" collide case-insensitively (the provider matches fields case-insensitively)`,
+        `${scope || 'manifest'}: keys "${prev}" and "${key}" collide case-insensitively (the provider matches fields case-insensitively)`,
       );
     } else {
       seenLower.set(lower, key);
