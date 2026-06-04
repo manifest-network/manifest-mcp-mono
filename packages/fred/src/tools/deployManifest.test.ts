@@ -204,6 +204,25 @@ describe('deployManifest', () => {
     expect(mockCosmosTx.mock.calls[0][3]).toContain('sku-x:1');
   });
 
+  it('rejects a resolved selector with an empty/whitespace skuUuid before any tx', async () => {
+    const cm = makeMockClientManager({
+      queryClient: makeQueryClient(),
+      address: 'manifest1tenant',
+    });
+    await expect(
+      deployManifest(
+        {
+          manifest: singleManifest(),
+          sku: { kind: 'resolved', skuUuid: '   ', providerUuid: 'prov-1' },
+        },
+        deps(cm),
+      ),
+    ).rejects.toMatchObject({ code: 'INVALID_CONFIG' });
+    // A malformed pre-resolved SKU must be caught at the boundary, never reach
+    // create-lease (an empty skuUuid would build a malformed `:1` lease item).
+    expect(mockCosmosTx).not.toHaveBeenCalled();
+  });
+
   it('rejects an oversized manifest before any tx', async () => {
     const cm = makeMockClientManager({
       queryClient: makeQueryClient(),

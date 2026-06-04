@@ -232,6 +232,19 @@ export async function deployManifest(
   let providerUuid: string;
   switch (input.sku.kind) {
     case 'resolved':
+      // Pre-resolved IDs are trusted verbatim, so validate them at the boundary:
+      // an empty skuUuid would build a malformed `:1` lease item and reach
+      // create-lease, and an empty providerUuid fails later with a misleading
+      // QUERY_FAILED. Reject early with an actionable INVALID_CONFIG instead.
+      if (
+        input.sku.skuUuid.trim() === '' ||
+        input.sku.providerUuid.trim() === ''
+      ) {
+        throw new ManifestMCPError(
+          ManifestMCPErrorCode.INVALID_CONFIG,
+          'sku.skuUuid and sku.providerUuid must both be non-empty for a pre-resolved (kind: "resolved") SKU selector',
+        );
+      }
       skuUuid = input.sku.skuUuid;
       providerUuid = input.sku.providerUuid;
       break;
