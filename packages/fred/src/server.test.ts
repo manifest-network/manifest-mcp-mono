@@ -96,7 +96,7 @@ import {
   makeMockWallet,
 } from '@manifest-network/manifest-mcp-core/__test-utils__/mocks.js';
 import { getLeaseProvision, getLeaseReleases } from './http/fred.js';
-import { FredMCPServer } from './index.js';
+import { FredMCPServer } from './server/index.js';
 import { appStatus } from './tools/appStatus.js';
 import { browseCatalog } from './tools/browseCatalog.js';
 import { checkDeploymentReadiness } from './tools/checkDeploymentReadiness.js';
