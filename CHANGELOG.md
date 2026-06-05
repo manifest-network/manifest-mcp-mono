@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.13.1]
+
+### Fixed
+- **fred:** `pollLeaseUntilReady` now waits for the provider's `provision_status` to settle before reporting a lease ready, instead of returning the moment the chain lease state reaches `ACTIVE`. Previously `deployManifest` / `waitForAppReady` could report a lease "running" while the container was still provisioning, or after it had crashed. When `ACTIVE`: keep polling while `{provisioning, restarting, updating, failing, unknown}`, throw `ProviderApiError` on `{failed, deprovisioning}`, and return otherwise — backward-compatible (providers that don't populate the field still return at `ACTIVE` as before). `provision_status` is added to the timeout diagnostic. (ENG-291)
+
 ## [0.13.0]
 
 ### Fixed
