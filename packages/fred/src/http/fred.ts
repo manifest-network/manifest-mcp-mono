@@ -265,6 +265,36 @@ function leaseStateName(state: LeaseState): string {
 }
 
 /**
+ * Provider `provision_status` values (fred backend `ProvisionStatus`) that mean
+ * the lease is not yet confirmed healthy while the chain lease is already
+ * ACTIVE — keep polling. `failing` is the pre-terminal window before `failed`
+ * (the backend state machine only ever moves `failing → failed`, never back to
+ * provisioning, so waiting is bounded). `unknown` is the backend's indeterminate
+ * signal — an unrecognized container status or a state-machine read error — and
+ * likewise is "not confirmed ready", so we wait for it to settle to
+ * `ready`/`failed` rather than reporting it as success. A status string this
+ * client does not recognize at all (a genuinely future value) is NOT listed
+ * here; the ACTIVE branch treats it as settled (see below).
+ */
+const PROVISION_IN_PROGRESS: ReadonlySet<string> = new Set([
+  'provisioning',
+  'restarting',
+  'updating',
+  'failing',
+  'unknown',
+]);
+
+/**
+ * Provider `provision_status` values that mean provisioning will not become
+ * healthy. The chain lease is ACTIVE, but the deployment has effectively failed
+ * (or is being torn down) — surface it as an error instead of a ready lease.
+ */
+const PROVISION_FAILED: ReadonlySet<string> = new Set([
+  'failed',
+  'deprovisioning',
+]);
+
+/**
  * Thrown by pollLeaseUntilReady when the caller's checkChainState callback
  * reports a terminal lease state on-chain. Extends ProviderApiError so
  * existing catchers keep working; use `instanceof TerminalChainStateError`
@@ -367,6 +397,7 @@ export async function pollLeaseUntilReady(
   } = opts;
   const deadline = Date.now() + timeoutMs;
   let lastState: LeaseState | undefined;
+  let lastProvisionStatus: string | undefined;
 
   while (Date.now() < deadline) {
     abortSignal?.throwIfAborted();
@@ -382,10 +413,33 @@ export async function pollLeaseUntilReady(
     abortSignal?.throwIfAborted();
     const status = await getLeaseStatus(providerUrl, leaseUuid, token, fetchFn);
     lastState = status.state;
+    lastProvisionStatus = status.provision_status;
     onProgress?.(status);
     switch (status.state) {
-      case LeaseState.LEASE_STATE_ACTIVE:
+      case LeaseState.LEASE_STATE_ACTIVE: {
+        // The chain lease is ACTIVE, but the provider may still be pulling the
+        // image / starting the container — or the container may have crashed.
+        // Gate readiness on provision_status so callers never observe a lease as
+        // ready mid-provision. An absent field, or a status string this client
+        // does not recognize (a future value), is treated as settled —
+        // forward-compat, and it preserves the original ACTIVE-returns behavior
+        // for providers that don't populate the field.
+        const ps = status.provision_status;
+        if (ps !== undefined) {
+          if (PROVISION_FAILED.has(ps)) {
+            throw new ProviderApiError(
+              0,
+              `Lease ${leaseUuid} is ACTIVE but provisioning ${ps}${
+                status.last_error ? `: ${status.last_error}` : ''
+              }`,
+            );
+          }
+          if (PROVISION_IN_PROGRESS.has(ps)) {
+            break; // still provisioning — keep polling
+          }
+        }
         return status;
+      }
       case LeaseState.LEASE_STATE_PENDING:
         break;
       case LeaseState.LEASE_STATE_CLOSED:
@@ -406,6 +460,6 @@ export async function pollLeaseUntilReady(
 
   throw new ProviderApiError(
     0,
-    `Lease ${leaseUuid} poll timed out after ${timeoutMs}ms (last state: ${lastState !== undefined ? leaseStateName(lastState) : 'unknown'})`,
+    `Lease ${leaseUuid} poll timed out after ${timeoutMs}ms (last state: ${lastState !== undefined ? leaseStateName(lastState) : 'unknown'}, provision_status: ${lastProvisionStatus ?? 'unknown'})`,
   );
 }
