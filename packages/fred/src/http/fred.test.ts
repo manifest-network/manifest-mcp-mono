@@ -131,6 +131,159 @@ describe('pollLeaseUntilReady', () => {
     expect(mockCheckedFetch).toHaveBeenCalledOnce();
   });
 
+  it('returns immediately when ACTIVE and provision_status is ready', async () => {
+    mockCheckedFetch.mockResolvedValue({} as Response);
+    mockParseJsonResponse.mockResolvedValue({
+      state: 'LEASE_STATE_ACTIVE',
+      provision_status: 'ready',
+    });
+
+    const result = await pollLeaseUntilReady(
+      PROVIDER_URL,
+      LEASE_UUID,
+      AUTH_TOKEN,
+      { intervalMs: 10, timeoutMs: 1000 },
+    );
+    expect(result.state).toBe(LeaseState.LEASE_STATE_ACTIVE);
+    expect(result.provision_status).toBe('ready');
+    expect(mockCheckedFetch).toHaveBeenCalledOnce();
+  });
+
+  it('keeps polling while ACTIVE but still provisioning, then returns when ready', async () => {
+    mockCheckedFetch.mockResolvedValue({} as Response);
+    let callCount = 0;
+    mockParseJsonResponse.mockImplementation(async () => {
+      callCount++;
+      return {
+        state: 'LEASE_STATE_ACTIVE',
+        provision_status: callCount < 3 ? 'provisioning' : 'ready',
+      };
+    });
+
+    const result = await pollLeaseUntilReady(
+      PROVIDER_URL,
+      LEASE_UUID,
+      AUTH_TOKEN,
+      { intervalMs: 10, timeoutMs: 5000 },
+    );
+    expect(result.state).toBe(LeaseState.LEASE_STATE_ACTIVE);
+    expect(result.provision_status).toBe('ready');
+    expect(callCount).toBe(3);
+  });
+
+  it('keeps polling through the transient failing window until ready', async () => {
+    mockCheckedFetch.mockResolvedValue({} as Response);
+    let callCount = 0;
+    mockParseJsonResponse.mockImplementation(async () => {
+      callCount++;
+      return {
+        state: 'LEASE_STATE_ACTIVE',
+        provision_status: callCount < 2 ? 'failing' : 'ready',
+      };
+    });
+
+    const result = await pollLeaseUntilReady(
+      PROVIDER_URL,
+      LEASE_UUID,
+      AUTH_TOKEN,
+      { intervalMs: 10, timeoutMs: 5000 },
+    );
+    expect(result.provision_status).toBe('ready');
+    expect(callCount).toBe(2);
+  });
+
+  it('throws when ACTIVE but provisioning failed, surfacing last_error', async () => {
+    mockCheckedFetch.mockResolvedValue({} as Response);
+    mockParseJsonResponse.mockResolvedValue({
+      state: 'LEASE_STATE_ACTIVE',
+      provision_status: 'failed',
+      last_error: 'OOMKilled',
+    });
+
+    await expect(
+      pollLeaseUntilReady(PROVIDER_URL, LEASE_UUID, AUTH_TOKEN, {
+        intervalMs: 10,
+        timeoutMs: 5000,
+      }),
+    ).rejects.toThrow(/provisioning failed: OOMKilled/);
+    expect(mockCheckedFetch).toHaveBeenCalledOnce();
+  });
+
+  it('throws when ACTIVE but the lease is being deprovisioned', async () => {
+    mockCheckedFetch.mockResolvedValue({} as Response);
+    mockParseJsonResponse.mockResolvedValue({
+      state: 'LEASE_STATE_ACTIVE',
+      provision_status: 'deprovisioning',
+    });
+
+    await expect(
+      pollLeaseUntilReady(PROVIDER_URL, LEASE_UUID, AUTH_TOKEN, {
+        intervalMs: 10,
+        timeoutMs: 5000,
+      }),
+    ).rejects.toThrow(/provisioning deprovisioning/);
+    expect(mockCheckedFetch).toHaveBeenCalledOnce();
+  });
+
+  it('treats a genuinely-unrecognized (future) provision_status as settled and returns', async () => {
+    // Forward-compat: a provision_status the client has never heard of must not
+    // hang the poll — it is treated as settled, same as an absent field. This is
+    // distinct from the known `unknown` status, which is handled below.
+    mockCheckedFetch.mockResolvedValue({} as Response);
+    mockParseJsonResponse.mockResolvedValue({
+      state: 'LEASE_STATE_ACTIVE',
+      provision_status: 'some_future_status',
+    });
+
+    const result = await pollLeaseUntilReady(
+      PROVIDER_URL,
+      LEASE_UUID,
+      AUTH_TOKEN,
+      { intervalMs: 10, timeoutMs: 1000 },
+    );
+    expect(result.state).toBe(LeaseState.LEASE_STATE_ACTIVE);
+    expect(mockCheckedFetch).toHaveBeenCalledOnce();
+  });
+
+  it('keeps polling while provision_status is the known "unknown" (indeterminate, not ready)', async () => {
+    // `unknown` is a real backend ProvisionStatus meaning "not confirmed
+    // healthy" (unrecognized container status / state-machine read error) — it
+    // must NOT be reported as ready; the poll waits for it to settle.
+    mockCheckedFetch.mockResolvedValue({} as Response);
+    let callCount = 0;
+    mockParseJsonResponse.mockImplementation(async () => {
+      callCount++;
+      return {
+        state: 'LEASE_STATE_ACTIVE',
+        provision_status: callCount < 2 ? 'unknown' : 'ready',
+      };
+    });
+
+    const result = await pollLeaseUntilReady(
+      PROVIDER_URL,
+      LEASE_UUID,
+      AUTH_TOKEN,
+      { intervalMs: 10, timeoutMs: 5000 },
+    );
+    expect(result.provision_status).toBe('ready');
+    expect(callCount).toBe(2);
+  });
+
+  it('includes provision_status in the timeout error when stuck provisioning', async () => {
+    mockCheckedFetch.mockResolvedValue({} as Response);
+    mockParseJsonResponse.mockResolvedValue({
+      state: 'LEASE_STATE_ACTIVE',
+      provision_status: 'provisioning',
+    });
+
+    await expect(
+      pollLeaseUntilReady(PROVIDER_URL, LEASE_UUID, AUTH_TOKEN, {
+        intervalMs: 10,
+        timeoutMs: 50,
+      }),
+    ).rejects.toThrow(/provision_status: provisioning/);
+  });
+
   it('throws on CLOSED state', async () => {
     mockCheckedFetch.mockResolvedValue({} as Response);
     mockParseJsonResponse.mockResolvedValue({ state: 'LEASE_STATE_CLOSED' });
