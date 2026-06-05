@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.13.0]
+
 ### Fixed
 - **fred:** the main barrel (`@manifest-network/manifest-mcp-fred`) no longer pulls in the MCP server entry. `FredMCPServer` and `createMnemonicFredServer` moved to a Node-only `@manifest-network/manifest-mcp-fred/server` subpath, so importing a capability function (`deployManifest`, `restartApp`, `deployApp`, …) from the barrel no longer drags in `server/*` / the SSRF `fetch-gate` / core's Node-only `/guarded-fetch` — browser consumers can bundle the barrel again. Completes ENG-281 (which fixed core's barrel but exposed that fred's barrel was *also* bundling its server). (ENG-287)
 
