@@ -9,6 +9,11 @@
     ".": {
       "import": "./dist/index.js",
       "types": "./dist/index.d.ts"
+    },
+    "./server": {
+      "types": "./dist/server/index.d.ts",
+      "node": "./dist/server/index.js",
+      "default": null
     }
   },
   "scripts": {

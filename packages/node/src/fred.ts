@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { FredMCPServer } from '@manifest-network/manifest-mcp-fred';
+import { FredMCPServer } from '@manifest-network/manifest-mcp-fred/server';
 import { bootstrap } from './bootstrap.js';
 
 bootstrap({
