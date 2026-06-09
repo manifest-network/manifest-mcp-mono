@@ -41,6 +41,8 @@ import {
   cosmosEstimateFee,
   ManifestMCPError,
   ManifestMCPErrorCode,
+  resolveSku,
+  type SkuCandidate,
   setItemCustomDomain,
   stopApp,
 } from '@manifest-network/manifest-mcp-core';
@@ -76,7 +78,6 @@ import {
   normalizeFredUrl,
 } from './internals/connection.js';
 import { evaluateReadinessFromFredResponse } from './internals/evaluate-readiness-from-fred.js';
-import { findSkuUuid } from './internals/find-sku-uuid.js';
 import {
   EMPTY_DENOM_MAP,
   loadChainDenomMap,
@@ -198,12 +199,53 @@ export async function deployApp(
   // `tenantAddress` was resolved + validated as consistent across
   // walletProvider/clientManager in the address-source guard above.
   const queryClient = await opts.clientManager.getQueryClient();
+
+  // --- SKU pin resolution (ENG-258) -----------------------------------
+  // Resolve the requested `size` to a single concrete (skuUuid,
+  // providerUuid) pin ONCE, BEFORE readiness/plan/fee/broadcast, so all
+  // four reference the same SKU. Ambiguity routes through `onResolveSku`
+  // (interactive) or re-throws SKU_AMBIGUOUS (headless). Defined as a
+  // closure so it captures `queryClient` + `callbacks` and can be reused
+  // by the post-edit re-plan branch (an edit can change size/provider).
+  const resolvePin = async (s: DeploySpec): Promise<SkuCandidate> => {
+    try {
+      return await resolveSku(queryClient, {
+        size: requestedSize(s),
+        ...(requestedProviderUuid(s) !== undefined
+          ? { providerUuid: requestedProviderUuid(s) }
+          : {}),
+        ...(requestedSkuUuid(s) !== undefined
+          ? { skuUuid: requestedSkuUuid(s) }
+          : {}),
+      });
+    } catch (err) {
+      if (
+        err instanceof ManifestMCPError &&
+        err.code === ManifestMCPErrorCode.SKU_AMBIGUOUS &&
+        callbacks.onResolveSku
+      ) {
+        const candidates = (err.details?.candidates as SkuCandidate[]) ?? [];
+        callbacks.onProgress?.({ kind: 'sku_ambiguous', candidates });
+        const pick = await callbacks.onResolveSku(candidates);
+        return await resolveSku(queryClient, {
+          size: requestedSize(s),
+          skuUuid: pick.skuUuid,
+          providerUuid: pick.providerUuid,
+        });
+      }
+      throw err;
+    }
+  };
+  let pinned = await resolvePin(spec);
+
   const readinessRaw = await checkDeploymentReadiness(
     queryClient,
     tenantAddress,
     {
       image: primaryImage(spec),
       size: requestedSize(spec),
+      providerUuid: pinned.providerUuid,
+      skuUuid: pinned.skuUuid,
     },
   );
   // `readiness` is `let`-bound because the post-edit recompute branch
@@ -247,7 +289,12 @@ export async function deployApp(
   // (when customDomain set). Lean port: cosmosEstimateFee invocation
   // details encapsulated in a helper to keep this fn focused on flow.
   let summary = summarizeSpec(spec);
-  let fees = await estimateFees(opts, spec, preview.meta_hash_hex);
+  let fees = await estimateFees(
+    opts,
+    spec,
+    preview.meta_hash_hex,
+    pinned.skuUuid,
+  );
   let plan: Plan = { summary, readiness, fees };
 
   // --- Render plan + onPlan callback ----------------------------------
@@ -260,6 +307,7 @@ export async function deployApp(
     metaHash: preview.meta_hash_hex,
     customDomain: customDomainOf(spec),
     customDomainService: customDomainServiceOf(spec),
+    providerUuid: pinned.providerUuid,
   });
   callbacks.onProgress?.({ kind: 'deployment_plan_rendered', block });
   if (callbacks.onPlan) {
@@ -322,12 +370,18 @@ export async function deployApp(
       // wired through the snake_case → camelCase translator). Both
       // call sites now fire the `status === 'block'` short-circuit
       // correctly (initial-spec L207 + post-edit recall below).
+      // Re-resolve the SKU pin for the edited spec (ENG-258): an edit can
+      // change `size` / `providerUuid`, so the pin threaded into the
+      // post-edit readiness/fee/plan/broadcast must reflect the edit.
+      pinned = await resolvePin(confirmedSpec);
       const editedReadinessRaw = await checkDeploymentReadiness(
         queryClient,
         tenantAddress,
         {
           image: primaryImage(confirmedSpec),
           size: requestedSize(confirmedSpec),
+          providerUuid: pinned.providerUuid,
+          skuUuid: pinned.skuUuid,
         },
       );
       readiness = evaluateReadinessFromFredResponse(
@@ -348,7 +402,12 @@ export async function deployApp(
         buildManifestPreviewInput(confirmedSpec, requestedSize(confirmedSpec)),
       );
       summary = summarizeSpec(confirmedSpec);
-      fees = await estimateFees(opts, confirmedSpec, preview.meta_hash_hex);
+      fees = await estimateFees(
+        opts,
+        confirmedSpec,
+        preview.meta_hash_hex,
+        pinned.skuUuid,
+      );
       plan = { summary, readiness, fees };
       // Copilot review fix (PR #58 r3237308843): the pre-edit
       // `deployment_plan_rendered` event already fired with the original
@@ -365,6 +424,7 @@ export async function deployApp(
         metaHash: preview.meta_hash_hex,
         customDomain: customDomainOf(confirmedSpec),
         customDomainService: customDomainServiceOf(confirmedSpec),
+        providerUuid: pinned.providerUuid,
       });
       callbacks.onProgress?.({
         kind: 'deployment_plan_rendered',
@@ -424,6 +484,7 @@ export async function deployApp(
   const fredInput = buildFredDeployInput(
     confirmedSpec,
     requestedSize(confirmedSpec),
+    { skuUuid: pinned.skuUuid, providerUuid: pinned.providerUuid },
   );
   let fredResult: FredDeployAppResult;
   try {
@@ -751,6 +812,22 @@ function requestedSize(spec: DeploySpec): string {
     : 'small';
 }
 
+/**
+ * SKU disambiguator intent helpers (ENG-258). Like `requestedSize`, the
+ * `providerUuid` / `skuUuid` disambiguators live outside the typed
+ * `DeploySpec`; callers thread them via a conventional property. Returns
+ * `undefined` for absent / empty values so `resolveSku` only narrows when
+ * a real disambiguator is supplied.
+ */
+function requestedProviderUuid(spec: DeploySpec): string | undefined {
+  const v = (spec as unknown as { providerUuid?: string }).providerUuid;
+  return typeof v === 'string' && v.length > 0 ? v : undefined;
+}
+function requestedSkuUuid(spec: DeploySpec): string | undefined {
+  const v = (spec as unknown as { skuUuid?: string }).skuUuid;
+  return typeof v === 'string' && v.length > 0 ? v : undefined;
+}
+
 function customDomainOf(spec: DeploySpec): string | undefined {
   return (spec as { customDomain?: string }).customDomain;
 }
@@ -764,6 +841,7 @@ async function estimateFees(
   opts: DeployAppOptions,
   spec: DeploySpec,
   metaHashHex: string, // SHA-256 hex digest of the canonical manifest JSON; threaded into create-lease estimate via the `--meta-hash` flag (mirrors fred's deploy path at packages/fred/src/tools/deployApp.ts:363)
+  skuUuid: string, // ENG-258: pre-resolved SKU pin from the orchestrator; no second lookup here.
 ): Promise<Plan['fees']> {
   // PR 3 fix-3 (B-narrowed-trimmed per architect ratification):
   //   - REAL cosmosEstimateFee for create-lease (criterion-blocking).
@@ -775,8 +853,9 @@ async function estimateFees(
   //     fails first with ErrLeaseNotFound), so the sentinel is the
   //     PERMANENT shape — not a TODO.
 
-  const size = requestedSize(spec);
-  const { skuUuid } = await findSkuUuid(opts.clientManager, size);
+  // ENG-258: `skuUuid` is now a pre-resolved parameter (the orchestrator
+  // resolves the pin ONCE via core's `resolveSku` so plan, fee, and
+  // broadcast share one SKU). The prior in-function second lookup is gone.
 
   // ENG-185 #3 sub-PR C: mirror fred's deploy-time item creation verbatim
   // (`packages/fred/src/tools/deployApp.ts:336-341`). Stack specs create

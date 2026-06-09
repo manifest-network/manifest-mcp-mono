@@ -39,6 +39,7 @@ import type {
   ProgressEvent,
   RecoveryOption,
   SingleServiceSpec,
+  SkuCandidate,
   WalletProvider,
 } from './index.js';
 
@@ -75,19 +76,21 @@ vi.mock('@manifest-network/manifest-mcp-core', async () => {
     cosmosEstimateFee: vi.fn(),
     setItemCustomDomain: vi.fn(),
     stopApp: vi.fn(),
+    // ENG-258: deploy-app resolves the SKU pin ONCE via core's
+    // `resolveSku` (the deleted internal SKU-lookup helper's coverage now
+    // lives in core's `sku-resolution.test.ts`). The orchestration replay
+    // tests exercise deploy-app's SHAPE, not the SKU-lookup integration,
+    // so the default mock resolves a single pinned candidate. Tests that
+    // exercise the ambiguity path override this per-scenario via
+    // `vi.mocked(core.resolveSku)`.
+    resolveSku: vi.fn().mockResolvedValue({
+      skuUuid: 'sku-uuid-fixture',
+      providerUuid: 'provider-uuid-fixture',
+      name: 'small',
+      active: true,
+    }),
   };
 });
-
-// Mock the internal find-sku-uuid helper. The orchestration replay tests
-// exercise deploy-app's shape, not the SKU-lookup integration (which has
-// its own unit tests in find-sku-uuid.test.ts). Mocking the module-level
-// import keeps test setup compact + isolates orchestration concerns.
-vi.mock('./internals/find-sku-uuid.js', () => ({
-  findSkuUuid: vi.fn().mockResolvedValue({
-    skuUuid: 'sku-uuid-fixture',
-    providerUuid: 'provider-uuid-fixture',
-  }),
-}));
 
 const FIXTURES_ROOT = join(__dirname, '..', '__fixtures__');
 
@@ -387,6 +390,197 @@ describe('deployApp replay — 01-fast-path-active', () => {
     // Verdict B note: the misleading "ENG-185 scope item #6" deferral
     // reference was removed when D landed the full routing.
     expect((caughtErr as Error).message).not.toContain('ENG-185 scope item');
+  });
+});
+
+describe('deployApp — ENG-258 SKU pin resolution + ambiguity elicitation', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  // Shared happy-path fred/preview/fee stubs. The ambiguity behavior is
+  // driven entirely by the per-test `core.resolveSku` mock; the rest of
+  // the orchestration is the canonical fast-path-active flow.
+  async function setupHappyDeps() {
+    const spec = readFixture(
+      'skills',
+      'deploy-app',
+      '01-fast-path-active',
+      'input',
+      'spec.json',
+    ) as DeploySpec;
+    const readinessRaw = readFixture(
+      'skills',
+      'deploy-app',
+      '01-fast-path-active',
+      'input',
+      'readiness-response.json',
+    );
+    const metaHashResp = readFixture(
+      'skills',
+      'deploy-app',
+      '01-fast-path-active',
+      'input',
+      'meta-hash-response.json',
+    ) as { manifest_json: string; meta_hash_hex: string };
+    const deployResp = readFixture(
+      'skills',
+      'deploy-app',
+      '01-fast-path-active',
+      'input',
+      'deploy-response.json',
+    ) as Record<string, unknown>;
+
+    const fred = await import('@manifest-network/manifest-mcp-fred');
+    vi.mocked(fred.checkDeploymentReadiness).mockResolvedValue(
+      readinessRaw as unknown as Awaited<
+        ReturnType<typeof fred.checkDeploymentReadiness>
+      >,
+    );
+    vi.mocked(fred.buildManifestPreview).mockResolvedValue({
+      manifest_json: metaHashResp.manifest_json,
+      meta_hash_hex: metaHashResp.meta_hash_hex,
+    } as Awaited<ReturnType<typeof fred.buildManifestPreview>>);
+    vi.mocked(fred.deployApp).mockResolvedValue({
+      lease_uuid: deployResp.lease_uuid as string,
+      provider_uuid: deployResp.provider_uuid as string,
+      provider_url: deployResp.provider_url as string,
+      state: deployResp.state as never,
+      connection: deployResp.connection,
+    } as Awaited<ReturnType<typeof fred.deployApp>>);
+
+    const core = await import('@manifest-network/manifest-mcp-core');
+    vi.mocked(core.cosmosEstimateFee).mockResolvedValue({
+      module: 'billing',
+      subcommand: 'create-lease',
+      gasEstimate: '142000',
+      fee: { amount: [{ denom: 'umfx', amount: '2300' }], gas: '142000' },
+    } as Awaited<ReturnType<typeof core.cosmosEstimateFee>>);
+
+    return { spec, fred, core };
+  }
+
+  it('invokes onResolveSku when resolveSku throws SKU_AMBIGUOUS, then pins the choice into the fred broadcast', async () => {
+    const { spec, fred, core } = await setupHappyDeps();
+
+    const c1: SkuCandidate = {
+      skuUuid: 'sku-p1',
+      providerUuid: 'p1',
+      name: 'small',
+      active: true,
+    };
+    const c2: SkuCandidate = {
+      skuUuid: 'sku-p2',
+      providerUuid: 'p2',
+      name: 'small',
+      active: true,
+    };
+    // First resolveSku (by name) is ambiguous; after the pick, the second
+    // resolveSku (by skuUuid+providerUuid) returns the concrete pin.
+    vi.mocked(core.resolveSku)
+      .mockRejectedValueOnce(
+        new ManifestMCPError(
+          ManifestMCPErrorCode.SKU_AMBIGUOUS,
+          'SKU name "small" matches 2 active SKUs.',
+          { reason: 'AMBIGUOUS_SKU_NAME', size: 'small', candidates: [c1, c2] },
+        ),
+      )
+      .mockResolvedValueOnce(c2);
+
+    const onResolveSku = vi.fn(async (_candidates: SkuCandidate[]) => ({
+      skuUuid: 'sku-p2',
+      providerUuid: 'p2',
+    }));
+    const baseCapture = captureCallbacks();
+    const callbacks: DeployAppCallbacks = {
+      ...baseCapture.callbacks,
+      onResolveSku,
+    };
+
+    const { deployApp } = await import('./deploy-app.js');
+    const clientManager = makeMockClientManager();
+    const walletProvider = makeMockWalletProvider();
+
+    await deployApp(spec, callbacks, {
+      clientManager: clientManager as unknown as Parameters<
+        typeof deployApp
+      >[2]['clientManager'],
+      walletProvider,
+    });
+
+    // onResolveSku invoked exactly once with the two ambiguous candidates.
+    expect(onResolveSku).toHaveBeenCalledTimes(1);
+    expect(onResolveSku.mock.calls[0]?.[0]).toEqual([c1, c2]);
+
+    // A `sku_ambiguous` progress event carried the candidates.
+    const ambiguousEvents = baseCapture.progress.filter(
+      (e) => e.kind === 'sku_ambiguous',
+    );
+    expect(ambiguousEvents).toHaveLength(1);
+    if (ambiguousEvents[0]?.kind === 'sku_ambiguous') {
+      expect(ambiguousEvents[0].candidates).toEqual([c1, c2]);
+    }
+
+    // The fred broadcast input (4th positional arg) carries the pinned
+    // skuUuid/providerUuid from the user's pick.
+    const fredInput = vi.mocked(fred.deployApp).mock.calls[0]?.[3] as
+      | { skuUuid?: string; providerUuid?: string }
+      | undefined;
+    expect(fredInput).toMatchObject({
+      skuUuid: 'sku-p2',
+      providerUuid: 'p2',
+    });
+  });
+
+  it('re-throws SKU_AMBIGUOUS when no onResolveSku callback is provided', async () => {
+    const { spec, fred, core } = await setupHappyDeps();
+
+    const c1: SkuCandidate = {
+      skuUuid: 'sku-p1',
+      providerUuid: 'p1',
+      name: 'small',
+      active: true,
+    };
+    const c2: SkuCandidate = {
+      skuUuid: 'sku-p2',
+      providerUuid: 'p2',
+      name: 'small',
+      active: true,
+    };
+    vi.mocked(core.resolveSku).mockRejectedValueOnce(
+      new ManifestMCPError(
+        ManifestMCPErrorCode.SKU_AMBIGUOUS,
+        'SKU name "small" matches 2 active SKUs.',
+        { reason: 'AMBIGUOUS_SKU_NAME', size: 'small', candidates: [c1, c2] },
+      ),
+    );
+
+    // Callbacks WITHOUT onResolveSku.
+    const baseCapture = captureCallbacks();
+    const callbacks: DeployAppCallbacks = { ...baseCapture.callbacks };
+
+    const { deployApp } = await import('./deploy-app.js');
+    const clientManager = makeMockClientManager();
+    const walletProvider = makeMockWalletProvider();
+
+    let caughtErr: unknown = null;
+    try {
+      await deployApp(spec, callbacks, {
+        clientManager: clientManager as unknown as Parameters<
+          typeof deployApp
+        >[2]['clientManager'],
+        walletProvider,
+      });
+    } catch (err) {
+      caughtErr = err;
+    }
+
+    expect(caughtErr).toBeInstanceOf(ManifestMCPError);
+    expect((caughtErr as ManifestMCPError).code).toBe(
+      ManifestMCPErrorCode.SKU_AMBIGUOUS,
+    );
+    // No broadcast on ambiguity.
+    expect(vi.mocked(fred.deployApp)).not.toHaveBeenCalled();
   });
 });
 
