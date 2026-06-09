@@ -1,4 +1,5 @@
 import type { SkuCandidate } from '@manifest-network/manifest-agent-core';
+import { ManifestMCPErrorCode } from '@manifest-network/manifest-mcp-core';
 import { describe, expect, it } from 'vitest';
 import { buildSkuPickSchema, parseSkuChoice } from './elicitation.js';
 
@@ -46,16 +47,26 @@ describe('parseSkuChoice', () => {
   });
 
   it('throws OPERATION_CANCELLED on dismiss (no on-chain state yet)', () => {
-    expect(() => parseSkuChoice({ action: 'cancel' }, cands)).toThrow();
+    expect(() => parseSkuChoice({ action: 'cancel' }, cands)).toThrow(
+      expect.objectContaining({
+        code: ManifestMCPErrorCode.OPERATION_CANCELLED,
+      }),
+    );
   });
 
   it('throws OPERATION_CANCELLED on decline', () => {
-    expect(() => parseSkuChoice({ action: 'decline' }, cands)).toThrow();
+    expect(() => parseSkuChoice({ action: 'decline' }, cands)).toThrow(
+      expect.objectContaining({
+        code: ManifestMCPErrorCode.OPERATION_CANCELLED,
+      }),
+    );
   });
 
-  it('rejects an unknown uuid', () => {
+  it('rejects an unknown uuid with INVALID_CONFIG', () => {
     expect(() =>
       parseSkuChoice({ action: 'accept', content: { sku_uuid: 'zzz' } }, cands),
-    ).toThrow();
+    ).toThrow(
+      expect.objectContaining({ code: ManifestMCPErrorCode.INVALID_CONFIG }),
+    );
   });
 });

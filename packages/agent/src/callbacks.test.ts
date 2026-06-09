@@ -7,6 +7,7 @@
  */
 
 import type { SkuCandidate } from '@manifest-network/manifest-agent-core';
+import { ManifestMCPErrorCode } from '@manifest-network/manifest-mcp-core';
 import type { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import type { RequestHandlerExtra } from '@modelcontextprotocol/sdk/shared/protocol.js';
 import type {
@@ -86,5 +87,27 @@ describe('makeDeployCallbacks', () => {
 
     const callArgs = elicitInput.mock.calls[0][0] as { message: string };
     expect(callArgs.message).toContain('2');
+  });
+
+  it('ENG-258: onResolveSku REJECTS with OPERATION_CANCELLED when the pick is dismissed', async () => {
+    // Safety-critical: a dismissed SKU prompt must NOT silently default to a
+    // pick or swallow the cancel — it must propagate OPERATION_CANCELLED so
+    // deployApp aborts before any broadcast (no on-chain state exists yet).
+    const elicitInput = vi.fn().mockResolvedValue({ action: 'cancel' });
+    const server = {
+      elicitInput,
+      getClientCapabilities: vi.fn().mockReturnValue({ elicitation: {} }),
+    } as unknown as Server;
+    const extra = makeExtra();
+    const cbs = makeDeployCallbacks({ server, extra });
+
+    const candidates: SkuCandidate[] = [
+      { skuUuid: 'a', providerUuid: 'p1', name: 'docker-micro', active: true },
+      { skuUuid: 'b', providerUuid: 'p2', name: 'docker-micro', active: true },
+    ];
+
+    await expect(cbs.onResolveSku!(candidates)).rejects.toMatchObject({
+      code: ManifestMCPErrorCode.OPERATION_CANCELLED,
+    });
   });
 });
