@@ -125,6 +125,12 @@ export interface RenderDeploymentPlanInput {
   customDomain?: string;
   /** Optional stack-service holding the custom domain. */
   customDomainService?: string;
+  /**
+   * Pinned provider UUID resolved by the SKU disambiguator (ENG-258).
+   * When non-empty, a `Provider:` line is rendered right after `Size:`
+   * so the user sees which provider they are deploying to.
+   */
+  providerUuid?: string;
 }
 
 export function renderDeploymentPlan(
@@ -145,13 +151,23 @@ export function renderDeploymentPlan(
   const createHuman = humanizeFeeAmount(createFee, denomMap);
   const createFeeLine = formatFeeLine(createHuman, createFee.gas);
 
+  const hasProvider =
+    typeof input.providerUuid === 'string' && input.providerUuid.length > 0;
+
   const lines: string[] = [
     'DeploymentPlan',
     `  Image:                     ${input.image}`,
     `  Size:                      ${input.size}`,
+  ];
+
+  if (hasProvider) {
+    lines.push(`  Provider:                  ${input.providerUuid}`);
+  }
+
+  lines.push(
     `  Manifest:                  ${manifestLine}`,
     `  meta_hash:                 ${input.metaHash}`,
-  ];
+  );
 
   if (hasDomain) {
     const target =
