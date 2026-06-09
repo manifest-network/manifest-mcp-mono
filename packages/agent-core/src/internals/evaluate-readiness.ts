@@ -169,12 +169,12 @@ export function evaluateReadiness(inputs: EvaluateReadinessInputs): Readiness {
         );
       } else {
         // Legacy message: include the available list for discoverability.
-        const available =
+        const availableDisplay =
           inputs.availableSkuNames.length > 0
             ? inputs.availableSkuNames.join(', ')
             : '(none)';
         reasons.push(
-          `Requested SKU "${inputs.size}" is not currently offered. Available: ${available}.`,
+          `Requested SKU "${inputs.size}" is not currently offered. Available: ${availableDisplay}.`,
         );
       }
       actions.add('pick_different_sku');

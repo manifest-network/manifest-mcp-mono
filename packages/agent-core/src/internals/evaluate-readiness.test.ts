@@ -305,11 +305,16 @@ describe('evaluateReadiness — multi-issue combinations', () => {
 describe('evaluateReadiness — ENG-258 skuCandidates gate', () => {
   it('ENG-258: blocks when no candidate matches the requested provider', () => {
     const r = evaluateReadiness({
-      tenant: 't', image: null, size: 'docker-micro',
+      tenant: 't',
+      image: null,
+      size: 'docker-micro',
       walletBalances: [{ denom: 'umfx', amount: '100000' }],
-      credits: null, sku: null, availableSkuNames: ['docker-micro'],
+      credits: null,
+      sku: null,
+      availableSkuNames: ['docker-micro'],
       skuCandidates: [{ name: 'docker-micro', providerUuid: 'p1' }],
-      requestedProviderUuid: 'p2', gasPrice: '1umfx',
+      requestedProviderUuid: 'p2',
+      gasPrice: '1umfx',
     });
     expect(r.status).toBe('block');
     expect(r.reasons.join(' ')).toMatch(/p2|provider/);
@@ -317,9 +322,13 @@ describe('evaluateReadiness — ENG-258 skuCandidates gate', () => {
 
   it('ENG-258: passes the SKU gate when a candidate matches', () => {
     const r = evaluateReadiness({
-      tenant: 't', image: null, size: 'docker-micro',
+      tenant: 't',
+      image: null,
+      size: 'docker-micro',
       walletBalances: [{ denom: 'umfx', amount: '100000' }],
-      credits: null, sku: null, availableSkuNames: ['docker-micro'],
+      credits: null,
+      sku: null,
+      availableSkuNames: ['docker-micro'],
       skuCandidates: [{ name: 'docker-micro', providerUuid: 'p1' }],
       gasPrice: '1umfx',
     });

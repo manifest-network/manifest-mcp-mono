@@ -34,7 +34,13 @@
           }
         },
         "sku_candidates": [
-          { "name": "small", "uuid": "sku-small", "provider_uuid": "prov-1", "price": { "denom": "umfx", "amount": "1000" }, "active": true }
+          {
+            "name": "small",
+            "uuid": "sku-small",
+            "provider_uuid": "prov-1",
+            "price": { "denom": "umfx", "amount": "1000" },
+            "active": true
+          }
         ],
         "available_skus": [
           { "name": "small", "uuid": "sku-small", "provider_uuid": "prov-1" },

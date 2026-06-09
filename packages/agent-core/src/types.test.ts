@@ -92,7 +92,10 @@ describe('DeployAppCallbacks contract', () => {
     >().parameters.toEqualTypeOf<[SkuCandidate[]]>();
     expectTypeOf<
       NonNullable<DeployAppCallbacks['onResolveSku']>
-    >().returns.resolves.toEqualTypeOf<{ skuUuid: string; providerUuid: string }>();
+    >().returns.resolves.toEqualTypeOf<{
+      skuUuid: string;
+      providerUuid: string;
+    }>();
   });
 });
 

@@ -67,8 +67,16 @@ function fredResponse(
       },
     ],
     available_skus: [
-      { name: 'small', uuid: 'sku-uuid-fixture', provider_uuid: 'prov-uuid-fixture' },
-      { name: 'medium', uuid: 'sku-uuid-medium', provider_uuid: 'prov-uuid-fixture' },
+      {
+        name: 'small',
+        uuid: 'sku-uuid-fixture',
+        provider_uuid: 'prov-uuid-fixture',
+      },
+      {
+        name: 'medium',
+        uuid: 'sku-uuid-medium',
+        provider_uuid: 'prov-uuid-fixture',
+      },
     ],
     ready: true,
     missing_steps: [],
@@ -293,7 +301,9 @@ describe('evaluateReadinessFromFredResponse — smoke-integrated through evaluat
     // when the SKU is truly absent.
     const raw = fredResponse({
       size: 'small',
-      available_skus: [{ name: 'medium', uuid: 'sku-medium', provider_uuid: 'p1' }],
+      available_skus: [
+        { name: 'medium', uuid: 'sku-medium', provider_uuid: 'p1' },
+      ],
       sku_candidates: [],
       sku: null,
     });
@@ -313,16 +323,33 @@ describe('evaluateReadinessFromFredResponse — ENG-258 sku_candidates forwardin
 
   it('ENG-258: forwards sku_candidates and derives availableSkuNames from available_skus', () => {
     const raw = {
-      tenant: 't', image: null, size: 'docker-micro',
+      tenant: 't',
+      image: null,
+      size: 'docker-micro',
       wallet_balances: [{ denom: 'umfx', amount: '100000' }],
-      credits: null, sku: null,
+      credits: null,
+      sku: null,
       sku_candidates: [
-        { name: 'docker-micro', uuid: 'a', provider_uuid: 'p1', price: { amount: '100', denom: 'umfx' }, active: true },
+        {
+          name: 'docker-micro',
+          uuid: 'a',
+          provider_uuid: 'p1',
+          price: { amount: '100', denom: 'umfx' },
+          active: true,
+        },
       ],
-      available_skus: [{ name: 'docker-micro', uuid: 'a', provider_uuid: 'p1' }],
-      ready: true, missing_steps: [],
+      available_skus: [
+        { name: 'docker-micro', uuid: 'a', provider_uuid: 'p1' },
+      ],
+      ready: true,
+      missing_steps: [],
     } as never;
-    const r = evaluateReadinessFromFredResponse(raw, '1umfx', EMPTY_DENOM_MAP, 't');
+    const r = evaluateReadinessFromFredResponse(
+      raw,
+      '1umfx',
+      EMPTY_DENOM_MAP,
+      't',
+    );
     // SKU gate passes because a candidate matches (not because of a name list).
     expect(r.reasons.join(' ')).not.toMatch(/not currently offered/);
   });
@@ -397,8 +424,16 @@ describe('evaluateReadinessFromFredResponse — sku-name union (Copilot #3319670
       // The Set-backed union must dedupe — no double entry would mask a
       // future bug where the size check compares lengths.
       available_skus: [
-        { name: 'small', uuid: 'sku-uuid-fixture', provider_uuid: 'prov-uuid-fixture' },
-        { name: 'medium', uuid: 'sku-uuid-medium', provider_uuid: 'prov-uuid-fixture' },
+        {
+          name: 'small',
+          uuid: 'sku-uuid-fixture',
+          provider_uuid: 'prov-uuid-fixture',
+        },
+        {
+          name: 'medium',
+          uuid: 'sku-uuid-medium',
+          provider_uuid: 'prov-uuid-fixture',
+        },
       ],
     });
     evaluateReadinessFromFredResponse(
@@ -417,8 +452,16 @@ describe('evaluateReadinessFromFredResponse — sku-name union (Copilot #3319670
       sku: null,
       sku_candidates: [],
       available_skus: [
-        { name: 'small', uuid: 'sku-uuid-fixture', provider_uuid: 'prov-uuid-fixture' },
-        { name: 'medium', uuid: 'sku-uuid-medium', provider_uuid: 'prov-uuid-fixture' },
+        {
+          name: 'small',
+          uuid: 'sku-uuid-fixture',
+          provider_uuid: 'prov-uuid-fixture',
+        },
+        {
+          name: 'medium',
+          uuid: 'sku-uuid-medium',
+          provider_uuid: 'prov-uuid-fixture',
+        },
       ],
     });
     evaluateReadinessFromFredResponse(
