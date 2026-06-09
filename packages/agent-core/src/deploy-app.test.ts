@@ -29,7 +29,15 @@ import {
   ManifestMCPError,
   ManifestMCPErrorCode,
 } from '@manifest-network/manifest-mcp-core';
-import { beforeEach, describe, expect, it, type Mock, vi } from 'vitest';
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  type Mock,
+  vi,
+} from 'vitest';
 import type {
   DeployAppCallbacks,
   DeployResult,
@@ -398,6 +406,23 @@ describe('deployApp — ENG-258 SKU pin resolution + ambiguity elicitation', () 
     vi.clearAllMocks();
   });
 
+  // Some tests here override `resolveSku`'s BASE implementation (via
+  // `mockImplementation`) rather than the consume-once queue. `vi.clearAllMocks`
+  // resets call history + the `*Once` queue but NOT the base implementation,
+  // so without this restore a `mockImplementation` would leak into sibling
+  // describe blocks. Re-establish the canonical single-pin default after each
+  // test in this block.
+  afterEach(async () => {
+    const core = await import('@manifest-network/manifest-mcp-core');
+    vi.mocked(core.resolveSku).mockReset();
+    vi.mocked(core.resolveSku).mockResolvedValue({
+      skuUuid: 'sku-uuid-fixture',
+      providerUuid: 'provider-uuid-fixture',
+      name: 'small',
+      active: true,
+    } as SkuCandidate);
+  });
+
   // Shared happy-path fred/preview/fee stubs. The ambiguity behavior is
   // driven entirely by the per-test `core.resolveSku` mock; the rest of
   // the orchestration is the canonical fast-path-active flow.
@@ -583,6 +608,143 @@ describe('deployApp — ENG-258 SKU pin resolution + ambiguity elicitation', () 
     );
     // No broadcast on ambiguity.
     expect(vi.mocked(fred.deployApp)).not.toHaveBeenCalled();
+  });
+
+  it('FIX 1 (regression): threads the RESOLVED pin.name (not requestedSize) into checkDeploymentReadiness', async () => {
+    // The spec fixture has no `size` → `requestedSize` defaults to 'small'.
+    // resolveSku returns a pin whose on-chain `name` is 'docker-micro'
+    // (e.g. the deploy was pinned by skuUuid to a SKU whose name != 'small').
+    // The bug: deploy-app passed `size: requestedSize(spec)` ('small') to
+    // readiness, so fred's gate `skuCandidates.some(c => c.name === size)`
+    // failed → status 'block' → INVALID_CONFIG before broadcast, rejecting
+    // a valid pin. The fix threads `pinned.name` ('docker-micro') instead.
+    const { spec, fred, core } = await setupHappyDeps();
+
+    vi.mocked(core.resolveSku).mockResolvedValue({
+      skuUuid: 'X',
+      providerUuid: 'p1',
+      name: 'docker-micro',
+      active: true,
+    } as SkuCandidate);
+
+    const baseCapture = captureCallbacks();
+    const { deployApp } = await import('./deploy-app.js');
+    const clientManager = makeMockClientManager();
+    const walletProvider = makeMockWalletProvider();
+
+    await deployApp(spec, baseCapture.callbacks, {
+      clientManager: clientManager as unknown as Parameters<
+        typeof deployApp
+      >[2]['clientManager'],
+      walletProvider,
+    });
+
+    // The readiness check was invoked with the RESOLVED SKU name, NOT the
+    // user's defaulted 'small'. This is the assertion that would have
+    // caught the high-severity bug.
+    const readinessInput = vi.mocked(fred.checkDeploymentReadiness).mock
+      .calls[0]?.[2] as { size?: string } | undefined;
+    expect(readinessInput?.size).toBe('docker-micro');
+    expect(readinessInput?.size).not.toBe('small');
+  });
+
+  it('FIX 2: stamping the resolved pin prevents a post-edit re-elicit (onResolveSku called exactly once)', async () => {
+    // First pass: ambiguous SKU → onResolveSku resolves a pin. The pin is
+    // stamped onto `confirmedSpec`. An `edit_env` PlanEdit preserves the
+    // stamped skuUuid/providerUuid, so the post-edit `resolvePin` resolves
+    // BY UUID — bypassing the name + ambiguity — without re-eliciting.
+    const { spec, fred, core } = await setupHappyDeps();
+
+    const c1: SkuCandidate = {
+      skuUuid: 'sku-p1',
+      providerUuid: 'p1',
+      name: 'small',
+      active: true,
+    };
+    const c2: SkuCandidate = {
+      skuUuid: 'sku-p2',
+      providerUuid: 'p2',
+      name: 'small',
+      active: true,
+    };
+    const pinned: SkuCandidate = {
+      skuUuid: 'sku-p2',
+      providerUuid: 'p2',
+      name: 'small',
+      active: true,
+    };
+
+    // resolveSku throws SKU_AMBIGUOUS ONLY when called WITHOUT a skuUuid;
+    // once the pin is stamped, the by-uuid call resolves the same pin with
+    // no re-elicit. This makes the once-only assertion deterministic.
+    vi.mocked(core.resolveSku).mockImplementation(
+      async (_qc: unknown, input: { skuUuid?: string }) => {
+        if (input.skuUuid === undefined) {
+          throw new ManifestMCPError(
+            ManifestMCPErrorCode.SKU_AMBIGUOUS,
+            'SKU name "small" matches 2 active SKUs.',
+            {
+              reason: 'AMBIGUOUS_SKU_NAME',
+              size: 'small',
+              candidates: [c1, c2],
+            },
+          );
+        }
+        return pinned;
+      },
+    );
+
+    const onResolveSku = vi.fn(async (_candidates: SkuCandidate[]) => ({
+      skuUuid: 'sku-p2',
+      providerUuid: 'p2',
+    }));
+
+    // onPlan returns an `edit_env` edit on the first (and only) call,
+    // triggering a single post-edit re-plan. The single-service spec gets
+    // a new env key; `resolvePin(confirmedSpec)` then runs again — and must
+    // NOT re-elicit because the stamped pin resolves by uuid.
+    let planCalls = 0;
+    const baseCapture = captureCallbacks();
+    const callbacks: DeployAppCallbacks = {
+      ...baseCapture.callbacks,
+      onResolveSku,
+      onPlan: async () => {
+        planCalls += 1;
+        if (planCalls === 1) {
+          return { kind: 'edit_env', env: { FOO: 'bar' } };
+        }
+        return 'confirm';
+      },
+    };
+
+    const { deployApp } = await import('./deploy-app.js');
+    const clientManager = makeMockClientManager();
+    const walletProvider = makeMockWalletProvider();
+
+    await deployApp(spec, callbacks, {
+      clientManager: clientManager as unknown as Parameters<
+        typeof deployApp
+      >[2]['clientManager'],
+      walletProvider,
+    });
+
+    // The whole point of FIX 2: onResolveSku fires exactly ONCE across the
+    // entire deploy, even though resolvePin ran twice (initial + post-edit).
+    expect(onResolveSku).toHaveBeenCalledTimes(1);
+    // resolveSku itself ran at least twice (initial ambiguous throw + the
+    // by-uuid resolve), and again for the post-edit re-plan by uuid.
+    expect(vi.mocked(core.resolveSku).mock.calls.length).toBeGreaterThanOrEqual(
+      3,
+    );
+    // The second pass (post-edit) resolved BY UUID — the last call carried
+    // the stamped skuUuid, proving the pin was written back to the spec.
+    const lastCall = vi.mocked(core.resolveSku).mock.calls.at(-1);
+    expect((lastCall?.[1] as { skuUuid?: string }).skuUuid).toBe('sku-p2');
+    // The broadcast still carries the pinned identity.
+    const fredInput = vi.mocked(fred.deployApp).mock.calls[0]?.[3] as
+      | { skuUuid?: string; providerUuid?: string }
+      | undefined;
+    expect(fredInput).toMatchObject({ skuUuid: 'sku-p2', providerUuid: 'p2' });
   });
 });
 
@@ -3881,6 +4043,21 @@ describe('deployApp — C2 plan-edit roundtrip propagates edited size (ENG-185 #
     vi.clearAllMocks();
   });
 
+  // `setupSizeEditScenario` overrides `resolveSku`'s BASE implementation
+  // (size-driven, for FIX 1). `vi.clearAllMocks` does not reset the base
+  // implementation, so restore the canonical single-pin default after each
+  // test to keep the override from leaking into sibling describe blocks.
+  afterEach(async () => {
+    const core = await import('@manifest-network/manifest-mcp-core');
+    vi.mocked(core.resolveSku).mockReset();
+    vi.mocked(core.resolveSku).mockResolvedValue({
+      skuUuid: 'sku-uuid-fixture',
+      providerUuid: 'provider-uuid-fixture',
+      name: 'small',
+      active: true,
+    } as SkuCandidate);
+  });
+
   // Distinguishable meta-hash digests so a post-edit consumer that reads
   // the STALE pre-edit preview can be caught. Both are valid 64-char hex.
   const PRE_EDIT_META =
@@ -3985,6 +4162,20 @@ describe('deployApp — C2 plan-edit roundtrip propagates edited size (ENG-185 #
       gasEstimate: '142000',
       fee: { amount: [{ denom: 'umfx', amount: '2300' }], gas: '142000' },
     } as Awaited<ReturnType<typeof core.cosmosEstimateFee>>);
+    // ENG-258 review FIX 1: the canonical SKU name now comes from the
+    // RESOLVED pin (`pinned.name`), not the requested `size`. Model the
+    // realistic resolve where requesting size `X` resolves a SKU named
+    // `X` — so the edited `medium` propagates through resolveSku into the
+    // downstream readiness/plan/fred/persist consumers under test here.
+    vi.mocked(core.resolveSku).mockImplementation(
+      async (_qc: unknown, input: { size: string }) =>
+        ({
+          skuUuid: `sku-${input.size}`,
+          providerUuid: 'provider-uuid-fixture',
+          name: input.size,
+          active: true,
+        }) as SkuCandidate,
+    );
 
     const baseCapture = captureCallbacks();
     const callbacks: DeployAppCallbacks = {
@@ -4106,17 +4297,19 @@ describe('deployApp — C2 plan-edit roundtrip propagates edited size (ENG-185 #
     const postEditArgs = vi.mocked(core.cosmosEstimateFee).mock.calls[1]?.[3] as
       | string[]
       | undefined;
-    // Pre-edit call threads the PRE_EDIT preview hash.
+    // Pre-edit call threads the PRE_EDIT preview hash + the pre-edit
+    // resolved skuUuid (`sku-small`, from the size-driven resolveSku mock).
     expect(preEditArgs?.[0]).toBe('--meta-hash');
     expect(preEditArgs?.[1]).toBe(PRE_EDIT_META);
-    expect(preEditArgs?.slice(2)).toEqual(['sku-uuid-fixture:1']);
-    // Post-edit call threads the POST_EDIT preview hash — proving the
-    // recompute uses the freshly-built (edited-spec) preview, not the
+    expect(preEditArgs?.slice(2)).toEqual(['sku-small:1']);
+    // Post-edit call threads the POST_EDIT preview hash + the post-edit
+    // resolved skuUuid (`sku-medium`) — proving the recompute re-resolves
+    // the pin AND uses the freshly-built (edited-spec) preview, not the
     // stale pre-edit one.
     expect(postEditArgs?.[0]).toBe('--meta-hash');
     expect(postEditArgs?.[1]).toBe(POST_EDIT_META);
     expect(postEditArgs?.[1]).not.toBe(PRE_EDIT_META);
-    expect(postEditArgs?.slice(2)).toEqual(['sku-uuid-fixture:1']);
+    expect(postEditArgs?.slice(2)).toEqual(['sku-medium:1']);
   });
 
   it('E. persisted manifest wrapper `size` is `medium` (real on-disk save, SHA-256 audit passes)', async () => {
