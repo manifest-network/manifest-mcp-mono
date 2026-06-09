@@ -31,8 +31,10 @@ export interface CheckDeploymentReadinessInput {
    */
   readonly providerUuid?: string;
   /**
-   * Pin a specific SKU by uuid, bypassing name resolution (ENG-258).
-   * Wins over size/providerUuid when combined with size.
+   * Further narrows the candidates to a specific SKU uuid WITHIN the
+   * name-filtered set (a size+sku_uuid mismatch yields no candidates) (ENG-258).
+   * Unlike core `resolveSku`, this does not bypass the name filter — readiness
+   * is a pre-flight over `size`.
    */
   readonly skuUuid?: string;
 }

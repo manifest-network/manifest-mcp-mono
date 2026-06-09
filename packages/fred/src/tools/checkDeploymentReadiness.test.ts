@@ -256,6 +256,37 @@ describe('checkDeploymentReadiness', () => {
     expect(res.sku?.uuid).toBe('b');
   });
 
+  it('ENG-258: narrows to a single candidate with sku_uuid (no provider_uuid)', async () => {
+    const qc = makeQc({
+      skus: [
+        {
+          uuid: 'a',
+          name: 'docker-micro',
+          providerUuid: 'p1',
+          basePrice: { amount: '100', denom: 'umfx' },
+        },
+        {
+          uuid: 'b',
+          name: 'docker-micro',
+          providerUuid: 'p2',
+          basePrice: { amount: '120', denom: 'umfx' },
+        },
+      ],
+      creditAccount: {
+        activeLeaseCount: 0n,
+        pendingLeaseCount: 0n,
+        reservedAmounts: [],
+      },
+      creditAccountAvailableBalances: [{ denom: 'umfx', amount: '999999' }],
+    });
+    const res = await checkDeploymentReadiness(qc, ADDRESS, {
+      size: 'docker-micro',
+      skuUuid: 'b',
+    });
+    expect(res.sku_candidates).toHaveLength(1);
+    expect(res.sku?.uuid).toBe('b');
+  });
+
   it('ENG-258: exposes available_skus with uuid + provider', async () => {
     const qc = makeQc({
       skus: [{ uuid: 'a', name: 'docker-micro', providerUuid: 'p1' }],

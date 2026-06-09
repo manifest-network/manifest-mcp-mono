@@ -281,7 +281,12 @@ export function registerTools(deps: RegisterToolsDeps): void {
           .string()
           .optional()
           .describe('Narrow a duplicate SKU `size` to one provider.'),
-        sku_uuid: z.string().optional().describe('Pin a specific SKU by uuid.'),
+        sku_uuid: z
+          .string()
+          .optional()
+          .describe(
+            'Further narrows the candidates to a specific SKU uuid within the name-filtered set (a size+sku_uuid mismatch yields no candidates). Does not bypass the `size` name filter.',
+          ),
       },
       outputSchema: {
         tenant: z.string(),
