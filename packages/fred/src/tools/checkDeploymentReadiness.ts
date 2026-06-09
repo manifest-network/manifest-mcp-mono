@@ -6,11 +6,11 @@ import {
 } from '@manifest-network/manifest-mcp-core';
 
 /**
- * `available_sku_names` is bounded so the response never bloats an LLM
- * context if a provider lists many SKUs. The chain query itself is bounded
- * by `MAX_PAGE_LIMIT` (1000), but agents only need a hint of what's
- * available — the lookup against `size` is exact. 50 mirrors the spirit of
- * the 10-name slice already used in `missing_steps`.
+ * `available_sku_names` and `available_skus` are bounded so the response
+ * never bloats an LLM context if a provider lists many SKUs. The chain
+ * query itself is bounded by `MAX_PAGE_LIMIT` (1000), but agents only need
+ * a hint of what's available — the lookup against `size` is exact. 50
+ * mirrors the spirit of the 10-name slice already used in `missing_steps`.
  */
 const MAX_SKU_NAMES_RETURNED = 50;
 
@@ -25,6 +25,16 @@ export interface CheckDeploymentReadinessInput {
    * caller can carry it through to a deployment plan.
    */
   readonly image?: string;
+  /**
+   * Narrow a duplicate SKU `size` name to one provider (ENG-258).
+   * Get candidates from `browse_catalog` or `check_deployment_readiness`.
+   */
+  readonly providerUuid?: string;
+  /**
+   * Pin a specific SKU by uuid, bypassing name resolution (ENG-258).
+   * Wins over size/providerUuid when combined with size.
+   */
+  readonly skuUuid?: string;
 }
 
 export interface SkuSummary {
@@ -49,7 +59,27 @@ export interface CheckDeploymentReadinessResult {
     readonly amount: string;
   }>;
   readonly hours_remaining?: string;
+  /** Determinate SKU pick (exactly 1 candidate) or null when ambiguous. */
   readonly sku: SkuSummary | null;
+  /** All active SKUs matching `size` after narrowing by providerUuid/skuUuid. (ENG-258) */
+  readonly sku_candidates: readonly SkuSummary[];
+  /**
+   * All active SKUs with their uuid and provider_uuid for disambiguation. (ENG-258)
+   * Capped at MAX_SKU_NAMES_RETURNED to avoid bloating LLM context.
+   */
+  readonly available_skus: ReadonlyArray<{
+    readonly name: string;
+    readonly uuid: string;
+    readonly provider_uuid: string;
+  }>;
+  /**
+   * Unique SKU names available across all active providers.
+   * @deprecated Use `available_skus` (includes uuid + provider_uuid).
+   *   Removed in Phase 4 (Task 15) in a coordinated clean-break with
+   *   agent-core's translator — see spec §9 sequencing. Kept here until
+   *   then so the monorepo build does not break before the translator is
+   *   updated.
+   */
   readonly available_sku_names: readonly string[];
   readonly ready: boolean;
   readonly missing_steps: readonly string[];
@@ -70,6 +100,10 @@ export interface CheckDeploymentReadinessResult {
  * deploy upload will reject disallowed registries at runtime; document
  * that to the user when the readiness check is "ready: true" but the
  * registry is suspect.
+ *
+ * ENG-258: When `size` matches multiple active SKUs (duplicate names across
+ * providers), `sku` is null and `sku_candidates` lists all matches.  Supply
+ * `providerUuid` or `skuUuid` to narrow to a single candidate.
  */
 export async function checkDeploymentReadiness(
   queryClient: ManifestQueryClient,
@@ -82,16 +116,50 @@ export async function checkDeploymentReadiness(
     queryClient.liftedinit.sku.v1.sKUs({ activeOnly: true, pagination }),
   ]);
 
-  const skuByName = new Map(skusResult.skus.map((s) => [s.name, s]));
-  const sku = input.size ? (skuByName.get(input.size) ?? null) : null;
+  const allActive = skusResult.skus;
+
+  // Build a SkuSummary from a raw SKU record.
+  const toSummary = (s: (typeof allActive)[number]): SkuSummary => ({
+    name: s.name,
+    uuid: s.uuid,
+    provider_uuid: s.providerUuid,
+    ...(s.basePrice
+      ? { price: { amount: s.basePrice.amount, denom: s.basePrice.denom } }
+      : {}),
+    active: s.active,
+  });
+
+  // Build candidate list: filter allActive by size, then narrow by
+  // providerUuid and skuUuid when given (ENG-258).
+  let candidates: SkuSummary[] = [];
+  if (input.size) {
+    candidates = allActive
+      .filter((s) => s.name === input.size)
+      .filter((s) =>
+        input.providerUuid ? s.providerUuid === input.providerUuid : true,
+      )
+      .filter((s) => (input.skuUuid ? s.uuid === input.skuUuid : true))
+      .map(toSummary);
+  }
+  // Determinate pick only when exactly one candidate (unambiguous).
+  const sku = candidates.length === 1 ? candidates[0] : null;
 
   const missing: string[] = [];
-  if (input.size && !sku) {
-    const available = Array.from(skuByName.keys()).slice(0, 10).join(', ');
+  if (input.size && candidates.length === 0) {
+    const available = [...new Set(allActive.map((s) => s.name))]
+      .slice(0, 10)
+      .join(', ');
     missing.push(
       `Requested SKU "${input.size}" is not available. Pick one of: ${available || '(none active)'}`,
     );
+  } else if (input.size && candidates.length > 1) {
+    // Ambiguous: >1 providers publish a SKU with this name (ENG-258).
+    missing.push(
+      `SKU "${input.size}" is offered by ${candidates.length} providers. ` +
+        `Specify provider_uuid or sku_uuid (providers: ${candidates.map((c) => c.provider_uuid).join(', ')}).`,
+    );
   }
+
   if (!balance.credits) {
     missing.push(
       'Credit account does not exist for this tenant. Call `fund_credit` (manifest-mcp-lease server) to create and fund it.',
@@ -107,17 +175,19 @@ export async function checkDeploymentReadiness(
     );
   }
 
-  const skuSummary: SkuSummary | null = sku
-    ? {
-        name: sku.name,
-        uuid: sku.uuid,
-        provider_uuid: sku.providerUuid,
-        price: sku.basePrice
-          ? { amount: sku.basePrice.amount, denom: sku.basePrice.denom }
-          : undefined,
-        active: sku.active,
-      }
-    : null;
+  // available_skus: full flat list with identity fields for disambiguation.
+  // Capped to avoid bloating LLM context.
+  const available_skus = allActive
+    .map((s) => ({ name: s.name, uuid: s.uuid, provider_uuid: s.providerUuid }))
+    .slice(0, MAX_SKU_NAMES_RETURNED);
+
+  // available_sku_names: KEPT for now; removed in Phase 4 (Task 15) together
+  // with agent-core's translator that reads it (clean-break sequencing —
+  // spec §9). Removing it here would break agent-core's build in PR3.
+  const available_sku_names = [...new Set(allActive.map((s) => s.name))].slice(
+    0,
+    MAX_SKU_NAMES_RETURNED,
+  );
 
   return {
     tenant: address,
@@ -131,11 +201,10 @@ export async function checkDeploymentReadiness(
     ...(balance.hours_remaining && {
       hours_remaining: balance.hours_remaining,
     }),
-    sku: skuSummary,
-    available_sku_names: Array.from(skuByName.keys()).slice(
-      0,
-      MAX_SKU_NAMES_RETURNED,
-    ),
+    sku,
+    sku_candidates: candidates,
+    available_skus,
+    available_sku_names,
     ready: missing.length === 0,
     missing_steps: missing,
   };

@@ -277,6 +277,11 @@ export function registerTools(deps: RegisterToolsDeps): void {
           .describe(
             'Image planned for deployment. Recorded on the result for downstream display; not validated.',
           ),
+        provider_uuid: z
+          .string()
+          .optional()
+          .describe('Narrow a duplicate SKU `size` to one provider.'),
+        sku_uuid: z.string().optional().describe('Pin a specific SKU by uuid.'),
       },
       outputSchema: {
         tenant: z.string(),
@@ -301,6 +306,24 @@ export function registerTools(deps: RegisterToolsDeps): void {
             active: z.boolean(),
           })
           .nullable(),
+        sku_candidates: z.array(
+          z.object({
+            name: z.string(),
+            uuid: z.string(),
+            provider_uuid: z.string(),
+            price: z
+              .object({ amount: z.string(), denom: z.string() })
+              .optional(),
+            active: z.boolean(),
+          }),
+        ),
+        available_skus: z.array(
+          z.object({
+            name: z.string(),
+            uuid: z.string(),
+            provider_uuid: z.string(),
+          }),
+        ),
         available_sku_names: z.array(z.string()),
         ready: z.boolean(),
         missing_steps: z.array(z.string()),
@@ -318,6 +341,8 @@ export function registerTools(deps: RegisterToolsDeps): void {
       const result = await checkDeploymentReadiness(queryClient, address, {
         size: args.size,
         image: args.image,
+        providerUuid: args.provider_uuid,
+        skuUuid: args.sku_uuid,
       });
       return structuredResponse(result, bigIntReplacer);
     }),

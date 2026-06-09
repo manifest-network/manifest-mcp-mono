@@ -65,6 +65,8 @@ vi.mock('./tools/checkDeploymentReadiness.js', () => ({
     wallet_balances: [{ denom: 'umfx', amount: '5000000' }],
     credits: null,
     sku: null,
+    sku_candidates: [],
+    available_skus: [],
     available_sku_names: [],
     ready: false,
     missing_steps: ['Credit account does not exist for this tenant.'],
@@ -771,7 +773,12 @@ describe('FredMCPServer', () => {
       expect(mockCheckDeploymentReadiness).toHaveBeenCalledWith(
         expect.anything(),
         'manifest1abc',
-        { size: 'docker-micro', image: 'nginx:alpine' },
+        {
+          size: 'docker-micro',
+          image: 'nginx:alpine',
+          providerUuid: undefined,
+          skuUuid: undefined,
+        },
       );
       expect(result.structuredContent).toMatchObject({
         ready: false,

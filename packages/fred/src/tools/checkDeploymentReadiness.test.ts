@@ -186,9 +186,85 @@ describe('checkDeploymentReadiness', () => {
     const result = await checkDeploymentReadiness(qc, ADDRESS, {
       size: 'tier-60',
     });
-    // The requested tier still resolves (uses the full Map for lookup,
-    // not the truncated list).
+    // The requested tier still resolves (unique name → single candidate).
     expect(result.sku?.name).toBe('tier-60');
+    expect(result.sku_candidates).toHaveLength(1);
     expect(result.available_sku_names.length).toBe(50);
+    expect(result.available_skus.length).toBe(50);
+  });
+
+  it('ENG-258: returns all candidates for a duplicate name with distinct provider/price', async () => {
+    const qc = makeQc({
+      skus: [
+        {
+          uuid: 'a',
+          name: 'docker-micro',
+          providerUuid: 'p1',
+          basePrice: { amount: '100', denom: 'umfx' },
+        },
+        {
+          uuid: 'b',
+          name: 'docker-micro',
+          providerUuid: 'p2',
+          basePrice: { amount: '120', denom: 'umfx' },
+        },
+      ],
+      creditAccount: {
+        activeLeaseCount: 0n,
+        pendingLeaseCount: 0n,
+        reservedAmounts: [],
+      },
+      creditAccountAvailableBalances: [{ denom: 'umfx', amount: '999999' }],
+    });
+    const res = await checkDeploymentReadiness(qc, ADDRESS, {
+      size: 'docker-micro',
+    });
+    expect(res.sku_candidates).toHaveLength(2);
+    expect(res.sku).toBeNull(); // ambiguous → no determinate single pick
+    expect(res.ready).toBe(false);
+    expect(res.missing_steps.join(' ')).toMatch(/provider_uuid|sku_uuid/);
+  });
+
+  it('ENG-258: narrows to a single candidate with provider_uuid', async () => {
+    const qc = makeQc({
+      skus: [
+        {
+          uuid: 'a',
+          name: 'docker-micro',
+          providerUuid: 'p1',
+          basePrice: { amount: '100', denom: 'umfx' },
+        },
+        {
+          uuid: 'b',
+          name: 'docker-micro',
+          providerUuid: 'p2',
+          basePrice: { amount: '120', denom: 'umfx' },
+        },
+      ],
+      creditAccount: {
+        activeLeaseCount: 0n,
+        pendingLeaseCount: 0n,
+        reservedAmounts: [],
+      },
+      creditAccountAvailableBalances: [{ denom: 'umfx', amount: '999999' }],
+    });
+    const res = await checkDeploymentReadiness(qc, ADDRESS, {
+      size: 'docker-micro',
+      providerUuid: 'p2',
+    });
+    expect(res.sku_candidates).toHaveLength(1);
+    expect(res.sku?.uuid).toBe('b');
+  });
+
+  it('ENG-258: exposes available_skus with uuid + provider', async () => {
+    const qc = makeQc({
+      skus: [{ uuid: 'a', name: 'docker-micro', providerUuid: 'p1' }],
+    });
+    const res = await checkDeploymentReadiness(qc, ADDRESS, {});
+    expect(res.available_skus).toContainEqual({
+      name: 'docker-micro',
+      uuid: 'a',
+      provider_uuid: 'p1',
+    });
   });
 });
