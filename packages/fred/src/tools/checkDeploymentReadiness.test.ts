@@ -377,6 +377,39 @@ describe('checkDeploymentReadiness', () => {
     expect(res.missing_steps.some((m) => m.includes('p2'))).toBe(true);
   });
 
+  it('ENG-258 r2: result.size echoes the resolved SKU name when skuUuid resolves a SKU with a different name', async () => {
+    // When a caller pins a skuUuid whose SKU name differs from the supplied size,
+    // the returned `size` must reflect the *resolved* SKU name so the result is
+    // internally consistent (size === sku.name). (ENG-258 r2 FIX B)
+    const qc = makeQc({
+      skus: [
+        {
+          uuid: 'sku-large-uuid',
+          name: 'docker-large',
+          providerUuid: 'prov-1',
+          basePrice: { denom: 'upwr', amount: '200' },
+          active: true,
+        },
+      ],
+      creditAccount: {
+        activeLeaseCount: 0n,
+        pendingLeaseCount: 0n,
+        reservedAmounts: [],
+      },
+      creditAccountAvailableBalances: [{ denom: 'upwr', amount: '9999999' }],
+    });
+    const res = await checkDeploymentReadiness(qc, ADDRESS, {
+      size: 'small',
+      skuUuid: 'sku-large-uuid',
+    });
+    // The resolved SKU is 'docker-large', not 'small' — size must reflect the
+    // resolved name, not the caller-supplied input.size.
+    expect(res.size).toBe('docker-large');
+    expect(res.sku?.name).toBe('docker-large');
+    expect(res.sku?.uuid).toBe('sku-large-uuid');
+    expect(res.ready).toBe(true);
+  });
+
   it('ENG-258: exposes available_skus with uuid + provider', async () => {
     const qc = makeQc({
       skus: [{ uuid: 'a', name: 'docker-micro', providerUuid: 'p1' }],

@@ -191,7 +191,11 @@ export async function checkDeploymentReadiness(
   return {
     tenant: address,
     image: input.image ?? null,
-    size: input.size ?? null,
+    // When exactly one SKU candidate resolved, echo its real name so the result
+    // is internally consistent (size === sku.name). On the name path with one
+    // candidate, sku.name === input.size anyway. Ambiguous/none → falls back to
+    // the caller-supplied input.size (ENG-258 r2).
+    size: sku?.name ?? input.size ?? null,
     wallet_balances: balance.balances,
     credits: balance.credits,
     ...(balance.current_balance && {
