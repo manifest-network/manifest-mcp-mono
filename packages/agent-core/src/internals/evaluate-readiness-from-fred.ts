@@ -86,6 +86,14 @@ export function evaluateReadinessFromFredResponse(
   if (raw.sku !== null) skuNamesSet.add(raw.sku.name);
   const availableSkuNames = [...skuNamesSet];
 
+  // Note: `requestedProviderUuid` is intentionally NOT set here. The fred
+  // readiness response is already provider-narrowed — `deploy-app.ts` calls
+  // `checkDeploymentReadiness` with the pinned `providerUuid`, so
+  // `sku_candidates` in the response already reflect only that provider.
+  // `requestedProviderUuid` is therefore only needed by direct callers of
+  // `evaluateReadiness` that have NOT pre-filtered by provider (e.g. the
+  // initial SKU-resolution pass in deploy-app.ts); it would be redundant and
+  // misleading on this translated path.
   return evaluateReadiness({
     tenant: tenantAddress,
     image: raw.image,

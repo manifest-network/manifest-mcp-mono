@@ -37,8 +37,10 @@ import {
  * representative lease...)" message preserving the CJS's user-facing
  * "skipped" semantics.
  *
- * Provider line is intentionally absent (chain selects internally; format-
- * success.ts emits it post-deploy).
+ * **`Provider:` line (ENG-258):** rendered immediately after `Size:` when a
+ * pinned `providerUuid` is supplied (resolved by the SKU disambiguator so the
+ * user sees which provider they are deploying to). Omitted when the field is
+ * absent or empty (single-provider SKU — chain selects internally).
  */
 
 /**

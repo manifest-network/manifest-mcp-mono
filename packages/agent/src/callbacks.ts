@@ -58,6 +58,10 @@ import type {
   TroubleshootCallbacks,
   TroubleshootReport,
 } from '@manifest-network/manifest-agent-core';
+import {
+  ManifestMCPError,
+  ManifestMCPErrorCode,
+} from '@manifest-network/manifest-mcp-core';
 import type { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import type {
   RequestHandlerExtra,
@@ -450,10 +454,38 @@ export function makeDeployCallbacks(
       const message =
         `The requested SKU name maps to ${candidates.length} SKUs across providers. ` +
         'Choose which to deploy to:';
-      const result = await server.elicitInput(
-        { message, requestedSchema: buildSkuPickSchema(candidates) },
-        elicitOptions(extra),
-      );
+      let result: Awaited<ReturnType<typeof server.elicitInput>>;
+      try {
+        result = await server.elicitInput(
+          { message, requestedSchema: buildSkuPickSchema(candidates) },
+          elicitOptions(extra),
+        );
+      } catch (err) {
+        // ENG-272 parity: a REJECTED SKU-disambiguation prompt (timeout /
+        // host abort / transport close) must cancel the deployment — no
+        // on-chain state exists at resolution time, so aborting is fully
+        // safe. Emit a warning notification for observability (mirrors the
+        // onConfirm / onPlan catch blocks), then throw OPERATION_CANCELLED
+        // so deployApp never broadcasts.
+        await safeNotify(extra, {
+          method: 'notifications/message',
+          params: {
+            level: 'warning',
+            logger: '@manifest-network/manifest-mcp-agent',
+            data: {
+              kind: 'elicit_timeout',
+              callback: 'onResolveSku',
+              dismissed_action: classifyElicitReject(err),
+              applied_default: 'cancel',
+              reason: elicitRejectMessage(err),
+            },
+          },
+        });
+        throw new ManifestMCPError(
+          ManifestMCPErrorCode.OPERATION_CANCELLED,
+          'SKU disambiguation prompt dismissed; deployment cancelled.',
+        );
+      }
       // Dismiss/timeout → parseSkuChoice throws OPERATION_CANCELLED (safe: no
       // on-chain state at resolution time). Let it propagate; deployApp aborts.
       return parseSkuChoice(result, candidates);
