@@ -36,6 +36,9 @@ const NON_RETRYABLE_ERROR_CODES: ManifestMCPErrorCode[] = [
   // User-action errors - a deliberate decline / cancel / elicitation-timeout.
   // Retrying a user's cancel is nonsensical (ENG-272).
   ManifestMCPErrorCode.OPERATION_CANCELLED,
+
+  // SKU resolution - ambiguous name needs caller disambiguation, not retry
+  ManifestMCPErrorCode.SKU_AMBIGUOUS,
 ];
 
 /**

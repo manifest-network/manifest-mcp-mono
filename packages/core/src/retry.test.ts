@@ -67,6 +67,14 @@ describe('isRetryableError', () => {
       );
       expect(isRetryableError(error)).toBe(false);
     });
+
+    it('treats SKU_AMBIGUOUS as non-retryable (needs caller disambiguation)', () => {
+      const err = new ManifestMCPError(
+        ManifestMCPErrorCode.SKU_AMBIGUOUS,
+        'multiple SKUs named docker-micro',
+      );
+      expect(isRetryableError(err)).toBe(false);
+    });
   });
 
   describe('Standard Error handling', () => {
