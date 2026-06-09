@@ -121,10 +121,16 @@ export async function resolveSku(
   const named = all.filter((s) => s.name === size);
   if (named.length === 0) {
     const names = [...new Set(all.map((s) => s.name))];
+    const MAX_SHOWN = 20;
+    const shown = names.slice(0, MAX_SHOWN).join(', ');
+    const more =
+      names.length > MAX_SHOWN
+        ? ` (+${names.length - MAX_SHOWN} more; ${names.length} total)`
+        : '';
     const available =
       names.length === 0
         ? 'No active SKUs exist on this chain.'
-        : `Available: ${names.join(', ')}`;
+        : `Available: ${shown}${more}`;
     throw new ManifestMCPError(
       ManifestMCPErrorCode.QUERY_FAILED,
       `SKU tier "${size}" not found on any provider. ${available}`,
@@ -137,7 +143,7 @@ export async function resolveSku(
       throw new ManifestMCPError(
         ManifestMCPErrorCode.QUERY_FAILED,
         `SKU tier "${size}" is not offered by provider ${providerUuid}. ` +
-          `Offered by: ${named.map((s) => s.providerUuid).join(', ')}.`,
+          `Offered by: ${[...new Set(named.map((s) => s.providerUuid))].join(', ')}.`,
       );
     }
     if (onProvider.length > 1) throw ambiguous(size, onProvider);

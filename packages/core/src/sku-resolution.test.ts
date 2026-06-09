@@ -126,6 +126,53 @@ describe('resolveSku', () => {
     expect(r.skuUuid).toBe('sku-p1');
   });
 
+  it('not-found message is capped when there are more than 20 distinct SKU names', async () => {
+    // Build 30 distinct SKU names on different providers
+    const manySkus = Array.from({ length: 30 }, (_, i) => ({
+      uuid: `sku-${i}`,
+      name: `tier-${i}`,
+      providerUuid: `prov-${i}`,
+    }));
+    let thrown: unknown;
+    try {
+      await resolveSku(qc(manySkus), { size: 'nonexistent' });
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBeInstanceOf(ManifestMCPError);
+    const err = thrown as ManifestMCPError;
+    expect(err.code).toBe(ManifestMCPErrorCode.QUERY_FAILED);
+    // Message must include the cap suffix
+    expect(err.message).toContain('more');
+    expect(err.message).toContain('total');
+    // All 30 individual names must NOT all appear
+    const allNamesPresent = manySkus.every((s) => err.message.includes(s.name));
+    expect(allNamesPresent).toBe(false);
+  });
+
+  it('provider-not-offering message lists each provider UUID at most once for duplicate names', async () => {
+    // Same name, same provider — provider UUID should appear only once in the error
+    const dupSameProvider = [
+      { uuid: 'sku-a', name: 'docker-micro', providerUuid: 'p1' },
+      { uuid: 'sku-b', name: 'docker-micro', providerUuid: 'p1' },
+    ];
+    let thrown: unknown;
+    try {
+      await resolveSku(qc(dupSameProvider), {
+        size: 'docker-micro',
+        providerUuid: 'p9',
+      });
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBeInstanceOf(ManifestMCPError);
+    const err = thrown as ManifestMCPError;
+    expect(err.code).toBe(ManifestMCPErrorCode.QUERY_FAILED);
+    // 'p1' appears in "Offered by: p1." — count occurrences
+    const occurrences = (err.message.match(/p1/g) ?? []).length;
+    expect(occurrences).toBe(1);
+  });
+
   it('maps basePrice to price, and omits price when basePrice is absent', async () => {
     const withPrice = await resolveSku(
       qc([
