@@ -59,7 +59,7 @@ export function registerTools(deps: RegisterToolsDeps): void {
     'browse_catalog',
     {
       description:
-        'Browse available cloud providers and service tiers with live health checks. Use this before deploy_app to see which providers are online and what SKU sizes (e.g. docker-micro, docker-small) are available with pricing.',
+        'Browse available cloud providers and SKUs with live health checks. Use this before deploy_app to see which providers are online and what SKU sizes (e.g. docker-micro, docker-small) are available with pricing.',
       outputSchema: {
         providers: z.array(z.looseObject({})),
         skus: z.array(
