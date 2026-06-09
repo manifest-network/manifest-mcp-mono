@@ -477,6 +477,21 @@ export function registerTools(deps: RegisterToolsDeps): void {
         size: z
           .string()
           .describe('SKU tier name (e.g. "docker-micro", "docker-small")'),
+        provider_uuid: z
+          .string()
+          .optional()
+          .describe(
+            'Disambiguate when multiple providers publish a SKU with the same `size` name. ' +
+              'Get candidates from browse_catalog or check_deployment_readiness. If a name ' +
+              'is ambiguous and this is omitted, deploy_app fails with a SKU_AMBIGUOUS error ' +
+              'listing the candidates.',
+          ),
+        sku_uuid: z
+          .string()
+          .optional()
+          .describe(
+            'Pin a specific SKU by its uuid, bypassing name resolution. Wins over size/provider_uuid.',
+          ),
         env: z
           .record(z.string(), z.string())
           .optional()
@@ -638,6 +653,8 @@ export function registerTools(deps: RegisterToolsDeps): void {
             storage: args.storage,
             depends_on: args.depends_on,
             services: args.services,
+            providerUuid: args.provider_uuid,
+            skuUuid: args.sku_uuid,
             gasMultiplier: args.gas_multiplier,
             customDomain: args.custom_domain,
             serviceName: args.service_name,
