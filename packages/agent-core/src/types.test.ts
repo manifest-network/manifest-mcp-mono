@@ -31,6 +31,7 @@ import type {
   RecoveryOptionId,
   ServiceDef,
   SingleServiceSpec,
+  SkuCandidate,
   SpecSummary,
   StackSpec,
   TroubleshootCallbacks,
@@ -84,10 +85,19 @@ describe('DeployAppCallbacks contract', () => {
       NonNullable<DeployAppCallbacks['onFailure']>
     >().returns.resolves.toEqualTypeOf<RecoveryChoice>();
   });
+
+  it('onResolveSku(candidates) returns Promise<{ skuUuid: string; providerUuid: string }>', () => {
+    expectTypeOf<
+      NonNullable<DeployAppCallbacks['onResolveSku']>
+    >().parameters.toEqualTypeOf<[SkuCandidate[]]>();
+    expectTypeOf<
+      NonNullable<DeployAppCallbacks['onResolveSku']>
+    >().returns.resolves.toEqualTypeOf<{ skuUuid: string; providerUuid: string }>();
+  });
 });
 
 describe('ProgressEvent discriminant', () => {
-  it('kind union is exactly the ten allowed variants', () => {
+  it('kind union is exactly the eleven allowed variants', () => {
     expectTypeOf<ProgressEvent['kind']>().toEqualTypeOf<
       | 'readiness_evaluated'
       | 'deployment_plan_rendered'
@@ -99,6 +109,7 @@ describe('ProgressEvent discriminant', () => {
       | 'manifest_saved'
       | 'success_rendered'
       | 'partial_success_prompt_rendered'
+      | 'sku_ambiguous'
     >();
   });
 
@@ -180,6 +191,12 @@ describe('ProgressEvent discriminant', () => {
       prompt: string;
       leaseUuid: string;
     }>();
+  });
+
+  it('sku_ambiguous carries SkuCandidate[]', () => {
+    expectTypeOf<
+      Extract<ProgressEvent, { kind: 'sku_ambiguous' }>
+    >().toEqualTypeOf<{ kind: 'sku_ambiguous'; candidates: SkuCandidate[] }>();
   });
 });
 

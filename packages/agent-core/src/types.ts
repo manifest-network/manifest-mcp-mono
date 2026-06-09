@@ -5,6 +5,7 @@
 
 import type {
   CosmosClientManager,
+  SkuCandidate,
   WalletProvider,
 } from '@manifest-network/manifest-mcp-core';
 
@@ -12,7 +13,7 @@ import type {
 // `@manifest-network/manifest-agent-core` directly without a separate
 // `manifest-mcp-core` dependency. These are TS-type-only re-exports; the
 // runtime bundle is unaffected (platform: 'neutral' build target preserved).
-export type { CosmosClientManager, WalletProvider };
+export type { CosmosClientManager, SkuCandidate, WalletProvider };
 
 // --- primitives ---------------------------------------------------------
 
@@ -290,6 +291,12 @@ export type ProgressEvent =
       kind: 'partial_success_prompt_rendered';
       prompt: string;
       leaseUuid: string;
+    }
+  // Emitted when `size` matches >1 active SKU and no disambiguator was
+  // given. Precedes the `onResolveSku` callback (ENG-258).
+  | {
+      kind: 'sku_ambiguous';
+      candidates: SkuCandidate[];
     };
 
 // --- failure + recovery -------------------------------------------------
@@ -330,6 +337,14 @@ export interface DeployAppCallbacks {
     failure: FailureEnvelope,
     options: RecoveryOption[],
   ) => Promise<RecoveryChoice>;
+  /**
+   * Resolve an ambiguous SKU name. Invoked when a requested `size` matches
+   * more than one active SKU and no provider_uuid/sku_uuid was supplied.
+   * Returns the user's pick; when absent, agent-core re-throws SKU_AMBIGUOUS.
+   */
+  onResolveSku?: (
+    candidates: SkuCandidate[],
+  ) => Promise<{ skuUuid: string; providerUuid: string }>;
 }
 
 // --- manage-domain ------------------------------------------------------
