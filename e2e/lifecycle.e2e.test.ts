@@ -46,17 +46,23 @@ describe('Deploy lifecycle', () => {
   // ------------------------------------------------------------------
   // 2. Browse catalog
   // ------------------------------------------------------------------
-  it('browse_catalog shows providers and SKU tiers', async () => {
+  it('browse_catalog shows providers and SKUs', async () => {
     const result = await fredClient.callTool<{
-      providers: Array<{ active: boolean }>;
-      tiers: Record<string, unknown[]>;
+      providers: unknown[];
+      skus: Array<{
+        name: string;
+        sku_uuid: string;
+        provider_uuid: string;
+        provider_url: string | null;
+        price: string | null;
+        unit: string | null;
+        active: boolean;
+      }>;
     }>('browse_catalog');
 
     expect(result.providers.length).toBeGreaterThanOrEqual(1);
-    expect(result.providers[0].active).toBe(true);
-
-    const tierNames = Object.keys(result.tiers);
-    expect(tierNames).toContain('docker-micro');
+    expect(result.skus.length).toBeGreaterThan(0);
+    expect(result.skus.map((s) => s.name)).toContain('docker-micro');
   });
 
   it('get_providers lists registered providers (default: active only)', async () => {
