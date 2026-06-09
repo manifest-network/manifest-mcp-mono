@@ -31,10 +31,9 @@ export interface CheckDeploymentReadinessInput {
    */
   readonly providerUuid?: string;
   /**
-   * Further narrows the candidates to a specific SKU uuid WITHIN the
-   * name-filtered set (a size+sku_uuid mismatch yields no candidates) (ENG-258).
-   * Unlike core `resolveSku`, this does not bypass the name filter — readiness
-   * is a pre-flight over `size`.
+   * Resolve the SKU by uuid, bypassing the `size` name filter (ENG-258).
+   * When set, `size` is ignored for candidate selection (consistent with
+   * core `resolveSku`). Narrow to one provider by also supplying `providerUuid`.
    */
   readonly skuUuid?: string;
 }
@@ -63,7 +62,7 @@ export interface CheckDeploymentReadinessResult {
   readonly hours_remaining?: string;
   /** Determinate SKU pick (exactly 1 candidate) or null when ambiguous. */
   readonly sku: SkuSummary | null;
-  /** All active SKUs matching `size` after narrowing by providerUuid/skuUuid. (ENG-258) */
+  /** Active SKU candidates: uuid-resolved (skuUuid path) or name-filtered (size path), narrowed by providerUuid if given. (ENG-258) */
   readonly sku_candidates: readonly SkuSummary[];
   /**
    * All active SKUs with their uuid and provider_uuid for disambiguation. (ENG-258)
@@ -122,30 +121,43 @@ export async function checkDeploymentReadiness(
     active: s.active,
   });
 
-  // Build candidate list: filter allActive by size, then narrow by
-  // providerUuid and skuUuid when given (ENG-258).
+  // Build candidate list (ENG-258 review: skuUuid bypasses the name filter,
+  // consistent with core resolveSku — a caller pinning skuUuid whose SKU name
+  // differs from `size` must still get that SKU as the single candidate).
   let candidates: SkuSummary[] = [];
-  if (input.size) {
+  if (input.skuUuid) {
+    // UUID path: resolve by identity; size is ignored.
+    candidates = allActive
+      .filter((s) => s.uuid === input.skuUuid)
+      .filter((s) =>
+        input.providerUuid ? s.providerUuid === input.providerUuid : true,
+      )
+      .map(toSummary);
+  } else if (input.size) {
+    // Name path: filter by name, optionally narrow by provider.
     candidates = allActive
       .filter((s) => s.name === input.size)
       .filter((s) =>
         input.providerUuid ? s.providerUuid === input.providerUuid : true,
       )
-      .filter((s) => (input.skuUuid ? s.uuid === input.skuUuid : true))
       .map(toSummary);
   }
   // Determinate pick only when exactly one candidate (unambiguous).
   const sku = candidates.length === 1 ? candidates[0] : null;
 
   const missing: string[] = [];
-  if (input.size && candidates.length === 0) {
+  if (input.skuUuid && candidates.length === 0) {
+    missing.push(
+      `SKU uuid "${input.skuUuid}" not found among active SKUs${input.providerUuid ? ` on provider ${input.providerUuid}` : ''}.`,
+    );
+  } else if (!input.skuUuid && input.size && candidates.length === 0) {
     const available = [...new Set(allActive.map((s) => s.name))]
       .slice(0, 10)
       .join(', ');
     missing.push(
       `Requested SKU "${input.size}" is not available. Pick one of: ${available || '(none active)'}`,
     );
-  } else if (input.size && candidates.length > 1) {
+  } else if (!input.skuUuid && input.size && candidates.length > 1) {
     // Ambiguous: the name matches >1 active SKU, across one or more providers
     // (a single provider can publish duplicate names too) (ENG-258).
     const providers = [...new Set(candidates.map((c) => c.provider_uuid))];

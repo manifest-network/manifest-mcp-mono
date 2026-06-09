@@ -192,11 +192,10 @@ export async function deployManifest(
   let skuUuid: string;
   let providerUuid: string;
   switch (input.sku.kind) {
-    case 'resolved':
-      // Pre-resolved IDs are trusted verbatim, so validate them at the boundary:
-      // an empty skuUuid would build a malformed `:1` lease item and reach
-      // create-lease, and an empty providerUuid fails later with a misleading
-      // QUERY_FAILED. Reject early with an actionable INVALID_CONFIG instead.
+    case 'resolved': {
+      // Pre-resolved IDs are validated at the boundary: an empty skuUuid would
+      // build a malformed `:1` lease item; an empty providerUuid fails later
+      // with a misleading QUERY_FAILED. Reject early with INVALID_CONFIG.
       if (
         input.sku.skuUuid.trim() === '' ||
         input.sku.providerUuid.trim() === ''
@@ -206,9 +205,18 @@ export async function deployManifest(
           'sku.skuUuid and sku.providerUuid must both be non-empty for a pre-resolved (kind: "resolved") SKU selector',
         );
       }
-      skuUuid = input.sku.skuUuid;
-      providerUuid = input.sku.providerUuid;
+      // ENG-258 review: validate the caller-supplied pair against the chain
+      // (existence / active / provider-match) instead of trusting it verbatim —
+      // a mismatched pair would otherwise lease on the wrong provider. One query.
+      const r = await resolveSku(queryClient, {
+        size: '',
+        skuUuid: input.sku.skuUuid,
+        providerUuid: input.sku.providerUuid,
+      });
+      skuUuid = r.skuUuid;
+      providerUuid = r.providerUuid;
       break;
+    }
     case 'byName': {
       const r = await resolveSku(queryClient, {
         size: input.sku.size,

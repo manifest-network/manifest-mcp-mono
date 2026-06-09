@@ -131,8 +131,10 @@ describe('deployManifest', () => {
     expect(uploaded).toBe(manifest); // byte-identical, not re-serialized
   });
 
-  it('ENG-258 #1: kind:resolved skips the SKU query', async () => {
-    const qc = makeQueryClient();
+  it('ENG-258 #1: kind:resolved validates the resolved pin via the chain (queries to confirm existence/provider-match)', async () => {
+    // The resolved path now queries the chain once to validate the supplied pair —
+    // a mismatched (skuUuid, providerUuid) would otherwise lease on the wrong provider.
+    const qc = makeQueryClient(); // contains sku-micro-uuid on prov-1
     const spy = vi.spyOn(qc.liftedinit.sku.v1, 'sKUs');
     const cm = makeMockClientManager({
       queryClient: qc,
@@ -141,13 +143,91 @@ describe('deployManifest', () => {
     await deployManifest(
       {
         manifest: singleManifest(),
-        sku: { kind: 'resolved', skuUuid: 'sku-x', providerUuid: 'prov-1' },
+        sku: {
+          kind: 'resolved',
+          skuUuid: 'sku-micro-uuid',
+          providerUuid: 'prov-1',
+        },
       },
       deps(cm),
     );
-    expect(spy).not.toHaveBeenCalled();
-    // create-lease used the supplied skuUuid verbatim:
-    expect(mockCosmosTx.mock.calls[0][3]).toContain('sku-x:1');
+    // The chain query must have been called to validate the pin.
+    expect(spy).toHaveBeenCalled();
+    // create-lease used the validated skuUuid:
+    expect(mockCosmosTx.mock.calls[0][3]).toContain('sku-micro-uuid:1');
+  });
+
+  it('ENG-258 review: resolved selector with mismatched pair (skuUuid on p1 but providerUuid p2) → INVALID_CONFIG, no broadcast', async () => {
+    const qc = makeMockQueryClient({
+      sku: {
+        skus: [
+          {
+            uuid: 'sku-on-p1',
+            name: 'docker-micro',
+            providerUuid: 'p1',
+            basePrice: { amount: '1', denom: 'umfx' },
+          },
+        ],
+        providerLookup: {
+          p1: { provider: { apiUrl: 'http://localhost:8081' } } as never,
+        },
+      },
+    });
+    const cm = makeMockClientManager({
+      queryClient: qc,
+      address: 'manifest1tenant',
+    });
+    // skuUuid belongs to p1, but providerUuid says p2 — mismatch must be caught.
+    await expect(
+      deployManifest(
+        {
+          manifest: singleManifest(),
+          sku: {
+            kind: 'resolved',
+            skuUuid: 'sku-on-p1',
+            providerUuid: 'p2',
+          },
+        },
+        deps(cm),
+      ),
+    ).rejects.toMatchObject({ code: ManifestMCPErrorCode.INVALID_CONFIG });
+    expect(mockCosmosTx).not.toHaveBeenCalled();
+  });
+
+  it('ENG-258 review: resolved selector with skuUuid not found → QUERY_FAILED, no broadcast', async () => {
+    const qc = makeMockQueryClient({
+      sku: {
+        skus: [
+          {
+            uuid: 'existing-sku',
+            name: 'docker-micro',
+            providerUuid: 'p1',
+            basePrice: { amount: '1', denom: 'umfx' },
+          },
+        ],
+        providerLookup: {
+          p1: { provider: { apiUrl: 'http://localhost:8081' } } as never,
+        },
+      },
+    });
+    const cm = makeMockClientManager({
+      queryClient: qc,
+      address: 'manifest1tenant',
+    });
+    await expect(
+      deployManifest(
+        {
+          manifest: singleManifest(),
+          sku: {
+            kind: 'resolved',
+            skuUuid: 'nonexistent-uuid',
+            providerUuid: 'p1',
+          },
+        },
+        deps(cm),
+      ),
+    ).rejects.toMatchObject({ code: ManifestMCPErrorCode.QUERY_FAILED });
+    expect(mockCosmosTx).not.toHaveBeenCalled();
   });
 
   it('rejects a resolved selector with an empty/whitespace skuUuid before any tx', async () => {
@@ -465,7 +545,7 @@ describe('deployManifest', () => {
     expect(mockCosmosTx.mock.calls[0][3]).toContain('b:1'); // used p2's sku
   });
 
-  it('ENG-258: deployApp with sku_uuid + provider_uuid uses the resolved selector (no chain query)', async () => {
+  it('ENG-258: deployApp with sku_uuid + provider_uuid uses the resolved selector (validates via chain query)', async () => {
     const qc = makeMockQueryClient({
       sku: {
         skus: [
@@ -499,8 +579,8 @@ describe('deployManifest', () => {
       skuUuid: 'b',
       providerUuid: 'p2',
     });
-    // Both ids present → resolved selector → fred skips the SKU lookup entirely.
-    expect(spy).not.toHaveBeenCalled();
+    // Both ids present → resolved selector → validated via one chain query.
+    expect(spy).toHaveBeenCalled();
     expect(mockCosmosTx.mock.calls[0][3]).toContain('b:1');
   });
 

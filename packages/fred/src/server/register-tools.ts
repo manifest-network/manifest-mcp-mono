@@ -295,7 +295,7 @@ export function registerTools(deps: RegisterToolsDeps): void {
           .string()
           .optional()
           .describe(
-            'Further narrows the candidates to a specific SKU uuid within the name-filtered set (a size+sku_uuid mismatch yields no candidates). Does not bypass the `size` name filter.',
+            'Resolve the SKU by uuid, bypassing the `size` name filter. When set, `size` is ignored for candidate selection. Pair with `provider_uuid` to further narrow to a specific provider.',
           ),
       },
       outputSchema: {
