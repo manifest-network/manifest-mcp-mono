@@ -64,7 +64,7 @@ describe('checkDeploymentReadiness', () => {
     expect(result.missing_steps).toHaveLength(0);
     expect(result.sku?.name).toBe('docker-micro');
     expect(result.sku?.active).toBe(true);
-    expect(result.available_sku_names).toEqual(['docker-micro']);
+    expect(result.available_skus.map((s) => s.name)).toContain('docker-micro');
   });
 
   it('reports missing SKU and offers alternatives', async () => {
@@ -166,7 +166,7 @@ describe('checkDeploymentReadiness', () => {
     expect(result.image).toBe('ghcr.io/example/web:v1');
   });
 
-  it('caps available_sku_names so a large catalog cannot bloat the response', async () => {
+  it('caps available_skus so a large catalog cannot bloat the response', async () => {
     const skus = Array.from({ length: 75 }, (_, i) => ({
       uuid: `sku-${i}`,
       name: `tier-${i}`,
@@ -189,7 +189,6 @@ describe('checkDeploymentReadiness', () => {
     // The requested tier still resolves (unique name → single candidate).
     expect(result.sku?.name).toBe('tier-60');
     expect(result.sku_candidates).toHaveLength(1);
-    expect(result.available_sku_names.length).toBe(50);
     expect(result.available_skus.length).toBe(50);
   });
 

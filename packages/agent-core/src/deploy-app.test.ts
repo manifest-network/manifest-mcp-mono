@@ -1294,7 +1294,7 @@ describe('deployApp replay — Copilot review fixes (PR #58 unresolved comments)
   // and the post-edit recall paths fire the `status === 'block'`
   // short-circuit. Block conditions verified end-to-end:
   //   - empty `wallet_balances` → block (rule #2 — wallet has no gas);
-  //   - requested SKU not in `available_sku_names` → block (rule #1).
+  //   - requested SKU not in `available_skus` / no candidate → block (rule #1).
   // Tests assert: throw is INVALID_CONFIG with the expected message,
   // fred's `deployApp` is NEVER called, and the orchestrator does NOT
   // emit `deploy_app_broadcast`.

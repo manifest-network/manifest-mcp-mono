@@ -6,11 +6,11 @@ import {
 } from '@manifest-network/manifest-mcp-core';
 
 /**
- * `available_sku_names` and `available_skus` are bounded so the response
- * never bloats an LLM context if a provider lists many SKUs. The chain
- * query itself is bounded by `MAX_PAGE_LIMIT` (1000), but agents only need
- * a hint of what's available — the lookup against `size` is exact. 50
- * mirrors the spirit of the 10-name slice already used in `missing_steps`.
+ * `available_skus` is bounded so the response never bloats an LLM context
+ * if a provider lists many SKUs. The chain query itself is bounded by
+ * `MAX_PAGE_LIMIT` (1000), but agents only need a hint of what's available —
+ * the lookup against `size` is exact. 50 mirrors the spirit of the 10-name
+ * slice already used in `missing_steps`.
  */
 const MAX_SKU_NAMES_RETURNED = 50;
 
@@ -74,15 +74,6 @@ export interface CheckDeploymentReadinessResult {
     readonly uuid: string;
     readonly provider_uuid: string;
   }>;
-  /**
-   * Unique SKU names available across all active providers.
-   * @deprecated Use `available_skus` (includes uuid + provider_uuid).
-   *   Removed in Phase 4 (Task 15) in a coordinated clean-break with
-   *   agent-core's translator — see spec §9 sequencing. Kept here until
-   *   then so the monorepo build does not break before the translator is
-   *   updated.
-   */
-  readonly available_sku_names: readonly string[];
   readonly ready: boolean;
   readonly missing_steps: readonly string[];
 }
@@ -183,14 +174,6 @@ export async function checkDeploymentReadiness(
     .map((s) => ({ name: s.name, uuid: s.uuid, provider_uuid: s.providerUuid }))
     .slice(0, MAX_SKU_NAMES_RETURNED);
 
-  // available_sku_names: KEPT for now; removed in Phase 4 (Task 15) together
-  // with agent-core's translator that reads it (clean-break sequencing —
-  // spec §9). Removing it here would break agent-core's build in PR3.
-  const available_sku_names = [...new Set(allActive.map((s) => s.name))].slice(
-    0,
-    MAX_SKU_NAMES_RETURNED,
-  );
-
   return {
     tenant: address,
     image: input.image ?? null,
@@ -206,7 +189,6 @@ export async function checkDeploymentReadiness(
     sku,
     sku_candidates: candidates,
     available_skus,
-    available_sku_names,
     ready: missing.length === 0,
     missing_steps: missing,
   };

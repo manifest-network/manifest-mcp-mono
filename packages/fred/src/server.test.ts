@@ -67,7 +67,6 @@ vi.mock('./tools/checkDeploymentReadiness.js', () => ({
     sku: null,
     sku_candidates: [],
     available_skus: [],
-    available_sku_names: [],
     ready: false,
     missing_steps: ['Credit account does not exist for this tenant.'],
   }),

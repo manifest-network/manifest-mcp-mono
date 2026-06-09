@@ -26,9 +26,11 @@ import {
  *
  * Walked-from-CJS field-rename: the MCP response uses snake_case
  * (`wallet_balances`, `available_balances`, `hours_remaining`,
- * `available_sku_names`, `current_balance`); the TS-port input is
- * camelCase, and high-level callers (PR 3's `deployApp`) translate the
- * snake_case wire shape into camelCase before passing in.
+ * `current_balance`); the TS-port input is camelCase, and high-level
+ * callers (PR 3's `deployApp`) translate the snake_case wire shape into
+ * camelCase before passing in. ENG-258 Task 15 replaced the old flat
+ * names field with `skuCandidates` / `availableSkuNames` derived from
+ * `available_skus`.
  */
 
 const HOURS_REMAINING_WARN_FLOOR = 24;

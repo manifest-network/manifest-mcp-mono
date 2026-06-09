@@ -10,8 +10,14 @@
     "balances": [{ "denom": "umfx", "amount": "50000000000" }],
     "available_balances": [{ "denom": "umfx", "amount": "50000000000" }]
   },
-  "sku": { "name": "small", "price": { "denom": "umfx", "amount": "1000" } },
-  "available_sku_names": ["small", "medium"],
+  "sku": { "name": "small", "uuid": "sku-small", "provider_uuid": "prov-1", "price": { "denom": "umfx", "amount": "1000" }, "active": true },
+  "sku_candidates": [
+    { "name": "small", "uuid": "sku-small", "provider_uuid": "prov-1", "price": { "denom": "umfx", "amount": "1000" }, "active": true }
+  ],
+  "available_skus": [
+    { "name": "small", "uuid": "sku-small", "provider_uuid": "prov-1" },
+    { "name": "medium", "uuid": "sku-medium", "provider_uuid": "prov-1" }
+  ],
   "ready": true,
   "missing_steps": []
 }

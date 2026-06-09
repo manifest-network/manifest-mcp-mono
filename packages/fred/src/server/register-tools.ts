@@ -339,7 +339,6 @@ export function registerTools(deps: RegisterToolsDeps): void {
             provider_uuid: z.string(),
           }),
         ),
-        available_sku_names: z.array(z.string()),
         ready: z.boolean(),
         missing_steps: z.array(z.string()),
       },
