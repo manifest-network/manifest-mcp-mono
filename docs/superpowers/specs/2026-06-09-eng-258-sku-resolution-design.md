@@ -71,6 +71,20 @@ core/sku-resolution.ts   ← NEW. resolveSku(queryClient, {size, providerUuid?, 
 
 **New error code.** Add `SKU_AMBIGUOUS = 'SKU_AMBIGUOUS'` to `ManifestMCPErrorCode` (`packages/core/src/types.ts`) under a new "SKU resolution" category. Classify it **non-retryable** (`retry.ts` `NON_RETRYABLE_ERROR_CODES`) — like `OPERATION_CANCELLED`, retrying without new input is pointless; it needs caller disambiguation. It is **not** an infrastructure error.
 
+*Why a dedicated code (vs. overloading `INVALID_CONFIG`):* in the repo's extensible domain-error enum, a named code is the idiomatic analog of [AIP-193](https://google.aip.dev/193)'s "differentiate by stable `reason`" rule — AIP-193 can't add gRPC canonical codes, so it discriminates via `(reason, domain)` in `ErrorInfo.details`; the repo *can* add a code, so it does. Semantically the condition is input-insufficiency (the `size` is non-unique) regardless of which SKUs exist, i.e. `INVALID_ARGUMENT`-like, hence non-retryable.
+
+**Machine-readable details.** Per AIP-193 (request-specific data belongs in structured `details`, not just the message) and the MCP tools spec (tool errors are returned as a result with `isError: true` whose content the client feeds back to the model for self-correction), the error carries:
+
+```ts
+new ManifestMCPError(ManifestMCPErrorCode.SKU_AMBIGUOUS, humanMessageEnumeratingCandidates, {
+  reason: 'AMBIGUOUS_SKU_NAME',   // stable discriminator — agent-core's catch keys off this, not the prose
+  size,
+  candidates: SkuCandidate[],     // name + sku_uuid + provider_uuid + price + active
+});
+```
+
+This is already wired end-to-end: `withErrorHandling` (`core/server-utils.ts:155-197`) returns `{ isError: true, content: [JSON of { code, message, details }] }` — **not** a JSON-RPC protocol error — so the candidate list reaches the model verbatim. agent-core's catch branches on `err.code === SKU_AMBIGUOUS` (and reads `err.details.candidates`); the agent server passes the same candidates to `onResolveSku`. *(Optional polish: also mirror `candidates` into `structuredContent` on the error result; not required since the text-JSON content already carries it and error results have no `outputSchema`.)*
+
 **New module `packages/core/src/sku-resolution.ts`** (platform-neutral; uses only `ManifestQueryClient`, `createPagination`, `MAX_PAGE_LIMIT`, `ManifestMCPError` — all already in core, no node-only deps). Exported from the core barrel (`index.ts`).
 
 ```ts
@@ -94,7 +108,7 @@ export interface ResolveSkuInput {
  *  - else by name   → collect ALL active name matches:
  *      0           → throw QUERY_FAILED (lists available names)
  *      1           → return it
- *      >1, no prov  → throw SKU_AMBIGUOUS (details.candidates = SkuCandidate[])
+ *      >1, no prov  → throw SKU_AMBIGUOUS (details = { reason: 'AMBIGUOUS_SKU_NAME', size, candidates: SkuCandidate[] })
  *      >1 + prov    → filter to provider; 1 → return; 0 → QUERY_FAILED; >1 → SKU_AMBIGUOUS (same-provider dupes → require skuUuid)
  */
 export async function resolveSku(
@@ -205,6 +219,16 @@ Plus a `ProgressEvent` `{ kind: 'sku_ambiguous'; candidates }` emitted before th
 
 **`index.ts` / `register-tools` (agent):** add `provider_uuid` + `sku_uuid` to `deploy_app_orchestrated`'s input schema and thread them into the spec intent. `assertElicitationCapability` already gates the broadcasting tools.
 
+### 4.5 Consistency: resolve-early, pin-by-UUID, commit-on-chain
+
+The SKU is resolved to a concrete UUID at plan time, but the `create-lease` tx is broadcast **later** — possibly minutes later, after the user sits in an `onResolveSku`/`onConfirm` elicitation. That is a classic time-of-check-to-time-of-use window: between pin and broadcast a provider could deactivate or re-price the SKU. The design is deliberately safe across that window:
+
+- **The pin is an immutable UUID.** Unlike the status quo (re-resolving the *name* inside fred's broadcast), a stale UUID can never silently resolve to a *different* SKU/provider/price than the plan showed. The worst case is the exact SKU disappearing.
+- **The chain is the atomic commit point.** `create-lease` re-validates the SKU UUID at execution; a deactivated/again-ambiguous pin yields a clean **tx rejection**, never a wrong or mispriced lease. This is the "make the authorization check and the state mutation it gates atomic" principle from TOCTOU guidance — here the chain provides that atomicity for free, so agent-core needs no optimistic-lock/CAS of its own.
+- **Readiness and the plan are advisory snapshots**, explicitly not a lock. The chain tx is the source of truth; a snapshot going stale degrades to a clean failure the caller can retry, not a correctness bug.
+
+Net: pinning by UUID is *strictly more* consistent than today's resolve-by-name-at-broadcast, and the existing partial-success error path already handles a `create-lease` rejection.
+
 ## 5. End-to-end data flow (duplicate `docker-micro` on providers P1, P2)
 
 **fred-direct (LLM driving the fred server):**
@@ -260,3 +284,16 @@ Final PR slicing (one PR vs. layered sub-PRs) to be decided in the implementatio
 - **`storageSkuUuid` escape hatch:** the design resolves storage by name on the compute provider and throws `SKU_AMBIGUOUS` on same-provider storage dupes. Add an explicit `storage_sku_uuid` pin now, or defer? (Leaning defer — storage dupes are unlikely.)
 - **`available_sku_names` deprecation:** keep it indefinitely as a hint, or drop once ENG-260 migrates to `available_skus`?
 - **Typed `SkuIntent`:** promote the loosely-read `{ size, providerUuid?, skuUuid? }` off the spec into a typed field now, or keep the existing `size`-smuggling convention?
+
+## 10. Industry-practice review (benchmarks)
+
+The key design choices were checked against current API / MCP guidance:
+
+| Choice | Verdict | Reference |
+|--------|---------|-----------|
+| `browse_catalog` → flat `skus[]` array of self-identified resources (not an object keyed by non-unique name) | **Idiomatic.** Collections are repeated/array fields of resources each with a stable id; never key a collection by a value. | [AIP-132](https://google.aip.dev/132), [JSON:API](https://jsonapi.org/format/), [apisyouwonthate](https://apisyouwonthate.com/blog/understanding-resources-and-collections-in-restful-apis/) |
+| Ambiguity → error with stable `reason` + structured `candidates` in `details` | **Idiomatic.** Errors carry `ErrorInfo`-style `(reason, domain)` + request-specific metadata in `details`. | [AIP-193](https://google.aip.dev/193) |
+| Surface the error as a tool result with `isError: true` (model self-corrects) rather than a JSON-RPC protocol error | **Idiomatic & already implemented** in `withErrorHandling`. Tool-execution errors are fed back to the model; protocol errors are not. | [MCP tools spec](https://modelcontextprotocol.io/specification/2025-11-25/server/tools) |
+| Agent path: elicit the pick in-band (`onResolveSku`) instead of failing the whole flow | **Idiomatic.** Elicitation gathers exactly the missing/ambiguous input mid-tool-call, minimizing round trips and avoiding a separate agent loop. | [MCP elicitation](https://modelcontextprotocol.io/specification/draft/client/elicitation), [GitHub blog](https://github.blog/ai-and-ml/github-copilot/building-smarter-interactions-with-mcp-elicitation-from-clunky-tool-calls-to-seamless-user-experiences/) |
+| One outcome-oriented `deploy_app` that resolves + broadcasts internally; `check_deployment_readiness` is an advisory pre-flight | **Idiomatic.** Design tools around the user's goal; don't force 1:1 REST→tool round-trips. | [philschmid](https://www.philschmid.de/mcp-best-practices), [The New Stack](https://thenewstack.io/15-best-practices-for-building-mcp-servers-in-production/) |
+| Resolve-early / pin-by-UUID / commit-on-chain across the elicitation window | **Sound.** The mutation and its check are made atomic at the chain (the commit point); a stale immutable pin → clean rejection, not a wrong lease. | TOCTOU guidance ([Wikipedia](https://en.wikipedia.org/wiki/Time-of-check_to_time-of-use)) — atomicity at state mutation |
