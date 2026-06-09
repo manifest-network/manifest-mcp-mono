@@ -310,13 +310,33 @@ export class AgentMCPServer {
           'Requires an elicitation-capable MCP host (Claude Code ≥ 2.1.76).',
         inputSchema: {
           spec: z
-            .looseObject({})
+            .looseObject({
+              // ENG-275: `size` is load-bearing (SKU resolution, fee
+              // estimate, readiness, persisted manifest) but used to be an
+              // undocumented escape-hatch field. Declare it as a typed,
+              // discoverable optional property so a contract-following
+              // caller can select a non-default SKU. `looseObject` still
+              // passes the rest of the spec (image/services/etc.) through.
+              size: z
+                .string()
+                .optional()
+                .describe(
+                  "Optional compute-tier / SKU name (e.g. 'small', 'medium'). " +
+                    "Defaults to 'small' when omitted. Selects the on-chain SKU " +
+                    'used for the lease item, fee estimate, and readiness check; ' +
+                    "list available tiers via the lease server's get_skus. An " +
+                    'unknown tier is rejected at the readiness check (before any ' +
+                    'broadcast), which reports the available tier names.',
+                ),
+            })
             .describe(
-              'DeploySpec — SingleServiceSpec ({ image, port?, env?, customDomain? }) or ' +
-                'StackSpec ({ services, customDomain?, serviceName? }). Also carries `size` (SKU tier name) ' +
-                'and, when a SKU name is published by multiple providers, an optional `providerUuid` or `skuUuid` ' +
-                'to disambiguate (see browse_catalog / check_deployment_readiness `sku_candidates`). If omitted ' +
-                'and the name is ambiguous, you will be prompted to pick a provider.',
+              'DeploySpec — either SingleServiceSpec ({ image, port?, env?, customDomain?, size? }) ' +
+                'or StackSpec ({ services: { [name]: ServiceDef }, customDomain?, serviceName?, size? }). ' +
+                '`size` is the declared field above; the object also passes through an optional ' +
+                '`providerUuid` or `skuUuid` to disambiguate when a SKU name is published by multiple ' +
+                'providers (see browse_catalog / check_deployment_readiness `sku_candidates`). If a name ' +
+                'is ambiguous and neither is given, you will be prompted to pick a provider. ' +
+                'agent-core validates structure.',
             ),
           // The `data_dir` per-call argument was removed in Phase 2
           // (finding #4). `saveManifest` chmods the supplied path to

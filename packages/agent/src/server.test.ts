@@ -373,6 +373,46 @@ describe('AgentMCPServer', () => {
         await client.close();
       }
     });
+
+    // ENG-275: `size` (the SKU / compute-tier selector) is load-bearing —
+    // it drives SKU resolution, fee estimation, readiness, and the
+    // persisted manifest — yet it used to be an undocumented escape-hatch
+    // field readable only via cast. Promote it to a discoverable, typed
+    // optional property on the `spec` schema so a contract-following caller
+    // can select a non-default SKU. The property stays NESTED under `spec`
+    // (not a sibling tool arg), so the top-level `['spec']` contract above
+    // is unaffected.
+    it('deploy_app_orchestrated spec schema surfaces a documented `size` property', async () => {
+      const server = makeServer();
+      const [clientTransport, serverTransport] =
+        InMemoryTransport.createLinkedPair();
+      activeTransports.push(clientTransport, serverTransport);
+      const client = new Client({ name: 'test-client', version: '1.0.0' });
+      await server.getServer().connect(serverTransport);
+      await client.connect(clientTransport);
+      try {
+        const result = await client.listTools();
+        const deploy = result.tools.find(
+          (t) => t.name === 'deploy_app_orchestrated',
+        );
+        const specSchema = (
+          deploy?.inputSchema as {
+            properties?: { spec?: unknown };
+          }
+        ).properties?.spec as {
+          properties?: { size?: { type?: string; description?: string } };
+          required?: string[];
+        };
+        const size = specSchema?.properties?.size;
+        expect(size).toBeDefined();
+        expect(size?.type).toBe('string');
+        expect(size?.description ?? '').not.toBe('');
+        // Optional: omitting `size` must remain valid (defaults to 'small').
+        expect(specSchema?.required ?? []).not.toContain('size');
+      } finally {
+        await client.close();
+      }
+    });
   });
 
   // ─────────────────────────────────────────────────────────────────

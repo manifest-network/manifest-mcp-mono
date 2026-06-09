@@ -182,12 +182,25 @@ export interface SingleServiceSpec {
   port?: number | number[];
   env?: Record<string, string>;
   customDomain?: string;
+  /**
+   * Compute-tier / SKU name selecting the lease item's resources (e.g.
+   * `'small'`, `'medium'`). Resolved to an on-chain SKU UUID by
+   * `findSkuUuid`, then threaded into SKU selection, fee estimation,
+   * readiness, fred's deploy input, and the persisted manifest. Optional;
+   * `requestedSize` (`deploy-app.ts`) falls back to `'small'` when absent
+   * or empty. ENG-275 promoted this from an undocumented cast-read
+   * escape hatch to a first-class typed field so contract-following
+   * callers can select a non-default SKU.
+   */
+  size?: string;
 }
 
 export interface StackSpec {
   services: Record<string, ServiceDef>;
   customDomain?: string;
   serviceName?: string;
+  /** SKU tier for the lease items; see {@link SingleServiceSpec.size}. */
+  size?: string;
 }
 
 export type DeploySpec = SingleServiceSpec | StackSpec;

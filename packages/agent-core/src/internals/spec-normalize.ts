@@ -11,9 +11,10 @@ import type {
  * `firstImage`, `normalizeServices`, `summarizeSpec`, and `validateSpec`
  * (the latter surfaces pre-broadcast shape violations).
  *
- * Two spec shapes are supported (frozen in ENG-128's `types.ts`):
- *   - **services-map (StackSpec)** — `{ services: { <name>: ServiceDef }, customDomain?, serviceName? }`
- *   - **legacy single-service (SingleServiceSpec)** — `{ image, port?, env?, customDomain? }`
+ * Two spec shapes are supported (defined in `types.ts`; `size?` added in
+ * ENG-275):
+ *   - **services-map (StackSpec)** — `{ services: { <name>: ServiceDef }, customDomain?, serviceName?, size? }`
+ *   - **legacy single-service (SingleServiceSpec)** — `{ image, port?, env?, customDomain?, size? }`
  *
  * `normalizeServices` collapses the two shapes into a single iterable form
  * so callers (Plan summary, manifest builder, etc.) walk one structure
