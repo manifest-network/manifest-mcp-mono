@@ -58,10 +58,12 @@ export async function listSkuCandidates(
   size: string,
   providerUuid?: string,
 ): Promise<SkuCandidate[]> {
+  const sizeTrimmed = size.trim();
+  const providerUuidTrimmed = providerUuid?.trim() || undefined;
   const all = await fetchActiveSkus(queryClient);
-  let named = all.filter((s) => s.name === size);
-  if (providerUuid !== undefined) {
-    named = named.filter((s) => s.providerUuid === providerUuid);
+  let named = all.filter((s) => s.name === sizeTrimmed);
+  if (providerUuidTrimmed !== undefined) {
+    named = named.filter((s) => s.providerUuid === providerUuidTrimmed);
   }
   return named;
 }
@@ -71,7 +73,7 @@ function ambiguous(size: string, candidates: SkuCandidate[]): ManifestMCPError {
     .map(
       (c) =>
         `  - ${c.name} (sku_uuid=${c.skuUuid}, provider_uuid=${c.providerUuid}` +
-        `${c.price ? `, price=${c.price.amount}${c.price.denom}` : ''})`,
+        `${c.price ? `, price=${c.price.amount} ${c.price.denom}` : ''})`,
     )
     .join('\n');
   return new ManifestMCPError(
@@ -93,53 +95,55 @@ export async function resolveSku(
   queryClient: ManifestQueryClient,
   input: ResolveSkuInput,
 ): Promise<SkuCandidate> {
+  const skuUuid = input.skuUuid?.trim() || undefined;
+  const providerUuid = input.providerUuid?.trim() || undefined;
+  const size = input.size.trim();
   const all = await fetchActiveSkus(queryClient);
 
-  if (input.skuUuid !== undefined && input.skuUuid.trim() !== '') {
-    const hit = all.find((s) => s.skuUuid === input.skuUuid);
+  if (skuUuid !== undefined) {
+    const hit = all.find((s) => s.skuUuid === skuUuid);
     if (!hit) {
       throw new ManifestMCPError(
         ManifestMCPErrorCode.QUERY_FAILED,
-        `SKU uuid "${input.skuUuid}" not found among active SKUs.`,
+        `SKU uuid "${skuUuid}" not found among active SKUs.`,
       );
     }
-    if (
-      input.providerUuid !== undefined &&
-      input.providerUuid !== hit.providerUuid
-    ) {
+    if (providerUuid !== undefined && providerUuid !== hit.providerUuid) {
       throw new ManifestMCPError(
         ManifestMCPErrorCode.INVALID_CONFIG,
-        `sku_uuid ${input.skuUuid} belongs to provider ${hit.providerUuid}, ` +
-          `not the requested provider_uuid ${input.providerUuid}.`,
+        `sku_uuid ${skuUuid} belongs to provider ${hit.providerUuid}, ` +
+          `not the requested provider_uuid ${providerUuid}.`,
       );
     }
     return hit;
   }
 
-  const named = all.filter((s) => s.name === input.size);
+  const named = all.filter((s) => s.name === size);
   if (named.length === 0) {
-    const available = [...new Set(all.map((s) => s.name))].join(', ');
+    const names = [...new Set(all.map((s) => s.name))];
+    const available =
+      names.length === 0
+        ? 'No active SKUs exist on this chain.'
+        : `Available: ${names.join(', ')}`;
     throw new ManifestMCPError(
       ManifestMCPErrorCode.QUERY_FAILED,
-      `SKU tier "${input.size}" not found on any provider. Available: ${available}`,
+      `SKU tier "${size}" not found on any provider. ${available}`,
     );
   }
 
-  if (input.providerUuid !== undefined) {
-    const onProvider = named.filter(
-      (s) => s.providerUuid === input.providerUuid,
-    );
+  if (providerUuid !== undefined) {
+    const onProvider = named.filter((s) => s.providerUuid === providerUuid);
     if (onProvider.length === 0) {
       throw new ManifestMCPError(
         ManifestMCPErrorCode.QUERY_FAILED,
-        `SKU tier "${input.size}" is not offered by provider ${input.providerUuid}. ` +
+        `SKU tier "${size}" is not offered by provider ${providerUuid}. ` +
           `Offered by: ${named.map((s) => s.providerUuid).join(', ')}.`,
       );
     }
-    if (onProvider.length > 1) throw ambiguous(input.size, onProvider);
+    if (onProvider.length > 1) throw ambiguous(size, onProvider);
     return onProvider[0];
   }
 
-  if (named.length > 1) throw ambiguous(input.size, named);
+  if (named.length > 1) throw ambiguous(size, named);
   return named[0];
 }

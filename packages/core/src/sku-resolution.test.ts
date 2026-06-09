@@ -117,6 +117,35 @@ describe('resolveSku', () => {
       }),
     ).rejects.toMatchObject({ code: ManifestMCPErrorCode.INVALID_CONFIG });
   });
+
+  it('empty-string skuUuid falls through to name resolution', async () => {
+    const r = await resolveSku(qc([dup[0]]), {
+      size: 'docker-micro',
+      skuUuid: '',
+    });
+    expect(r.skuUuid).toBe('sku-p1');
+  });
+
+  it('maps basePrice to price, and omits price when basePrice is absent', async () => {
+    const withPrice = await resolveSku(
+      qc([
+        {
+          uuid: 'sku-priced',
+          name: 'priced',
+          providerUuid: 'prov-1',
+          basePrice: { amount: '100', denom: 'umfx' },
+        },
+      ]),
+      { size: 'priced' },
+    );
+    expect(withPrice.price).toEqual({ amount: '100', denom: 'umfx' });
+
+    const noPrice = await resolveSku(
+      qc([{ uuid: 'sku-free', name: 'free', providerUuid: 'prov-1' }]),
+      { size: 'free' },
+    );
+    expect(noPrice.price).toBeUndefined();
+  });
 });
 
 describe('listSkuCandidates', () => {

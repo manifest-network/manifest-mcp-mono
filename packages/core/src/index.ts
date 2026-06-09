@@ -50,6 +50,7 @@ export {
   structuredResponse,
   withErrorHandling,
 } from './server-utils.js';
+// SKU resolution (shared by fred + agent-core)
 export {
   listSkuCandidates,
   type ResolveSkuInput,
