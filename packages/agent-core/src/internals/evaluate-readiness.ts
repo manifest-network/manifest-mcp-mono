@@ -77,6 +77,16 @@ export interface EvaluateReadinessInputs {
   sku: { name: string; price: Coin } | null;
   /** All active SKU names the chain currently advertises. */
   availableSkuNames: string[];
+  /**
+   * Structured candidates for `size` (name + provider). When present, this is
+   * preferred over `availableSkuNames` for the SKU-availability gate (ENG-258).
+   */
+  skuCandidates?: { name: string; providerUuid: string; price?: Coin }[];
+  /**
+   * Provider the caller pinned (if any). When `skuCandidates` is set, the
+   * gate requires at least one candidate whose `providerUuid` matches (ENG-258).
+   */
+  requestedProviderUuid?: string;
   /** Gas-price string (e.g. `'1umfx'`, `'0.37upwr'`). Required — drives the wallet-gas check denom. */
   gasPrice: string;
   /** Override the per-denom warn floor (smallest unit). When omitted, uses the per-denom default or 50_000n fallback. */
@@ -129,17 +139,44 @@ export function evaluateReadiness(inputs: EvaluateReadinessInputs): Readiness {
   const actions = new Set<ReadinessAction>();
   let status: Readiness['status'] = 'ok';
 
-  // 1. SKU availability — hard block when the user's chosen size isn't offered.
-  if (inputs.size !== null && !inputs.availableSkuNames.includes(inputs.size)) {
-    status = 'block';
-    const available =
-      inputs.availableSkuNames.length > 0
-        ? inputs.availableSkuNames.join(', ')
-        : '(none)';
-    reasons.push(
-      `Requested SKU "${inputs.size}" is not currently offered. Available: ${available}.`,
-    );
-    actions.add('pick_different_sku');
+  // 1. SKU availability — block when the chosen size (+ provider) has no candidate.
+  if (inputs.size !== null) {
+    const candidates = inputs.skuCandidates;
+    let available: boolean;
+    if (candidates !== undefined) {
+      // Candidate-based gate (ENG-258): prefer the structured list when present.
+      available = candidates.some(
+        (c) =>
+          c.name === inputs.size &&
+          (inputs.requestedProviderUuid === undefined ||
+            c.providerUuid === inputs.requestedProviderUuid),
+      );
+    } else {
+      // Legacy fallback: plain name list when no candidates supplied.
+      available = inputs.availableSkuNames.includes(inputs.size);
+    }
+    if (!available) {
+      status = 'block';
+      if (candidates !== undefined) {
+        // Candidate-based message (ENG-258): include the requested provider hint.
+        const hint = inputs.requestedProviderUuid
+          ? ` on provider ${inputs.requestedProviderUuid}`
+          : '';
+        reasons.push(
+          `Requested SKU "${inputs.size}"${hint} is not currently offered.`,
+        );
+      } else {
+        // Legacy message: include the available list for discoverability.
+        const available =
+          inputs.availableSkuNames.length > 0
+            ? inputs.availableSkuNames.join(', ')
+            : '(none)';
+        reasons.push(
+          `Requested SKU "${inputs.size}" is not currently offered. Available: ${available}.`,
+        );
+      }
+      actions.add('pick_different_sku');
+    }
   }
 
   // 2. Wallet gas balance — hard block on absent/zero, warn on below-floor.
