@@ -54,6 +54,7 @@ import type {
   ProgressEvent,
   RecoveryChoice,
   RecoveryOption,
+  SkuCandidate,
   TroubleshootCallbacks,
   TroubleshootReport,
 } from '@manifest-network/manifest-agent-core';
@@ -71,9 +72,11 @@ import {
   buildConfirmSchema,
   buildPlanSchema,
   buildRecoverySchema,
+  buildSkuPickSchema,
   parseConfirmVerdict,
   parsePlanVerdict,
   parseRecoveryChoice,
+  parseSkuChoice,
 } from './elicitation.js';
 
 // ----------------------------------------------------------------------
@@ -440,6 +443,20 @@ export function makeDeployCallbacks(
     },
     onComplete: (_result: DeployResult): void => {
       // Tool return value carries the structured success signal.
+    },
+    onResolveSku: async (
+      candidates: SkuCandidate[],
+    ): Promise<{ skuUuid: string; providerUuid: string }> => {
+      const message =
+        `The requested SKU name maps to ${candidates.length} SKUs across providers. ` +
+        'Choose which to deploy to:';
+      const result = await server.elicitInput(
+        { message, requestedSchema: buildSkuPickSchema(candidates) },
+        elicitOptions(extra),
+      );
+      // Dismiss/timeout → parseSkuChoice throws OPERATION_CANCELLED (safe: no
+      // on-chain state at resolution time). Let it propagate; deployApp aborts.
+      return parseSkuChoice(result, candidates);
     },
   };
 }

@@ -35,6 +35,7 @@ import type {
   RecoveryChoice,
   RecoveryOption,
   RecoveryOptionId,
+  SkuCandidate,
 } from '@manifest-network/manifest-agent-core';
 import {
   ManifestMCPError,
@@ -195,6 +196,58 @@ export function buildReplaceSpecSchema(): RequestedSchema {
     },
     required: ['spec_json'],
   };
+}
+
+/**
+ * Build the SKU-pick elicitation schema. `enum` is sku uuids; `enumNames`
+ * are human labels of the form "<name> @ <providerUuid> (<amount><denom>)".
+ * The price suffix is omitted when no price is available.
+ */
+export function buildSkuPickSchema(
+  candidates: readonly SkuCandidate[],
+): RequestedSchema {
+  return {
+    type: 'object',
+    properties: {
+      sku_uuid: {
+        type: 'string',
+        enum: candidates.map((c) => c.skuUuid),
+        enumNames: candidates.map(
+          (c) =>
+            `${c.name} @ ${c.providerUuid}` +
+            (c.price ? ` (${c.price.amount}${c.price.denom})` : ''),
+        ),
+        description: 'Which SKU (and therefore which provider) to deploy to.',
+      },
+    },
+    required: ['sku_uuid'],
+  };
+}
+
+/**
+ * Parse the SKU-pick elicitation result into the chosen pin. Dismiss/timeout →
+ * OPERATION_CANCELLED: no on-chain state exists at resolution time, so
+ * cancelling is the safe default (mirrors the onPlan reject path).
+ */
+export function parseSkuChoice(
+  result: ElicitResult,
+  candidates: readonly SkuCandidate[],
+): { skuUuid: string; providerUuid: string } {
+  if (result.action !== 'accept') {
+    throw new ManifestMCPError(
+      ManifestMCPErrorCode.OPERATION_CANCELLED,
+      'User dismissed the SKU disambiguation prompt; deployment cancelled.',
+    );
+  }
+  const skuUuid = readContentString(result, 'sku_uuid');
+  const hit = candidates.find((c) => c.skuUuid === skuUuid);
+  if (!hit) {
+    throw new ManifestMCPError(
+      ManifestMCPErrorCode.INVALID_CONFIG,
+      `parseSkuChoice: "${skuUuid ?? '<none>'}" is not one of the offered SKU uuids.`,
+    );
+  }
+  return { skuUuid: hit.skuUuid, providerUuid: hit.providerUuid };
 }
 
 // ----------------------------------------------------------------------
