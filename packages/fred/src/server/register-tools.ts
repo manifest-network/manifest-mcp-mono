@@ -490,7 +490,9 @@ export function registerTools(deps: RegisterToolsDeps): void {
           .string()
           .optional()
           .describe(
-            'Pin a specific SKU by its uuid, bypassing name resolution. Wins over size/provider_uuid.',
+            'Pin a specific SKU by its uuid. If provider_uuid is also given, the ' +
+              "on-chain lookup is fully bypassed; otherwise the chain is still queried to resolve the SKU's " +
+              'provider. Takes precedence over size.',
           ),
         env: z
           .record(z.string(), z.string())
