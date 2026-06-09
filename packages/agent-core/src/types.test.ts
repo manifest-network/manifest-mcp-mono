@@ -495,22 +495,29 @@ describe('Exported type shapes (load-bearing public surface)', () => {
   it('SingleServiceSpec', () => {
     // `size?` is a first-class optional field (ENG-275): the SKU / compute
     // tier, defaulting to 'small' in `requestedSize` when omitted.
+    // `providerUuid?` / `skuUuid?` are the typed SKU disambiguators
+    // (ENG-296), threaded into `resolveSku`.
     expectTypeOf<SingleServiceSpec>().toEqualTypeOf<{
       image: string;
       port?: number | number[];
       env?: Record<string, string>;
       customDomain?: string;
       size?: string;
+      providerUuid?: string;
+      skuUuid?: string;
     }>();
   });
 
   it('StackSpec', () => {
-    // `size?` mirrors SingleServiceSpec (ENG-275); see above.
+    // `size?` mirrors SingleServiceSpec (ENG-275); `providerUuid?` /
+    // `skuUuid?` mirror the ENG-296 disambiguators; see above.
     expectTypeOf<StackSpec>().toEqualTypeOf<{
       services: Record<string, ServiceDef>;
       customDomain?: string;
       serviceName?: string;
       size?: string;
+      providerUuid?: string;
+      skuUuid?: string;
     }>();
   });
 

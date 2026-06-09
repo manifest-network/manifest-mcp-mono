@@ -193,6 +193,14 @@ export interface SingleServiceSpec {
    * callers can select a non-default SKU.
    */
   size?: string;
+  /**
+   * Optional SKU disambiguator: `provider_uuid` narrows a duplicate
+   * `size` name to one provider; `sku_uuid` pins a specific SKU by uuid
+   * (bypasses the name). Threaded into `resolveSku`. ENG-296.
+   */
+  providerUuid?: string;
+  /** See {@link SingleServiceSpec.providerUuid}. Pins a specific SKU by uuid (bypasses the name). ENG-296. */
+  skuUuid?: string;
 }
 
 export interface StackSpec {
@@ -201,6 +209,14 @@ export interface StackSpec {
   serviceName?: string;
   /** SKU tier for the lease items; see {@link SingleServiceSpec.size}. */
   size?: string;
+  /**
+   * Optional SKU disambiguator: `provider_uuid` narrows a duplicate
+   * `size` name to one provider; `sku_uuid` pins a specific SKU by uuid
+   * (bypasses the name). Threaded into `resolveSku`. ENG-296.
+   */
+  providerUuid?: string;
+  /** See {@link StackSpec.providerUuid}. Pins a specific SKU by uuid (bypasses the name). ENG-296. */
+  skuUuid?: string;
 }
 
 export type DeploySpec = SingleServiceSpec | StackSpec;

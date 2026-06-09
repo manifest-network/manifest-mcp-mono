@@ -328,6 +328,25 @@ export class AgentMCPServer {
                     'unknown tier is rejected at the readiness check (before any ' +
                     'broadcast), which reports the available tier names.',
                 ),
+              // ENG-296: SKU disambiguators. Declared (like `size`) so
+              // they're discoverable + type-checked at the MCP boundary.
+              providerUuid: z
+                .string()
+                .optional()
+                .describe(
+                  'Optional SKU disambiguator: narrows an ambiguous `size` name ' +
+                    'to a single provider when the same SKU name is published by ' +
+                    'multiple providers. See browse_catalog / ' +
+                    'check_deployment_readiness `sku_candidates`.',
+                ),
+              skuUuid: z
+                .string()
+                .optional()
+                .describe(
+                  'Optional SKU disambiguator: pins a specific SKU by uuid, ' +
+                    'bypassing the `size` name lookup entirely (wins over ' +
+                    'providerUuid). Use to deploy on an exact SKU.',
+                ),
             })
             .describe(
               'DeploySpec — either SingleServiceSpec ({ image, port?, env?, customDomain?, size? }) ' +
