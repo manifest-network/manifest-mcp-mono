@@ -1,5 +1,6 @@
+import { makeMockQueryClient } from '@manifest-network/manifest-mcp-core/__test-utils__/mocks.js';
 import { describe, expect, it, vi } from 'vitest';
-import { mapWithConcurrency } from './browseCatalog.js';
+import { browseCatalog, mapWithConcurrency } from './browseCatalog.js';
 
 describe('mapWithConcurrency', () => {
   it('preserves input order even when items resolve out of order', async () => {
@@ -53,5 +54,58 @@ describe('mapWithConcurrency', () => {
         return item;
       }),
     ).rejects.toThrow('boom');
+  });
+});
+
+describe('browseCatalog', () => {
+  it('ENG-258: returns a flat skus[] with uuid + provider + split provider fields', async () => {
+    const qc = makeMockQueryClient({
+      sku: {
+        providers: [
+          { uuid: 'p1', address: 'm1', apiUrl: 'http://p1', active: true },
+        ],
+        skus: [
+          {
+            uuid: 'a',
+            name: 'docker-micro',
+            providerUuid: 'p1',
+            basePrice: { amount: '100', denom: 'umfx' },
+          },
+          {
+            uuid: 'b',
+            name: 'docker-micro',
+            providerUuid: 'p2',
+            basePrice: { amount: '120', denom: 'umfx' },
+          },
+        ],
+      },
+    });
+    const res = await browseCatalog(
+      qc as never,
+      async () => new Response('{"status":"ok"}'),
+    );
+    expect(res).not.toHaveProperty('tiers');
+    expect(res.skus).toEqual(
+      expect.arrayContaining([
+        {
+          name: 'docker-micro',
+          sku_uuid: 'a',
+          provider_uuid: 'p1',
+          provider_url: 'http://p1',
+          price: '100',
+          unit: 'umfx',
+          active: true,
+        },
+        {
+          name: 'docker-micro',
+          sku_uuid: 'b',
+          provider_uuid: 'p2',
+          provider_url: null,
+          price: '120',
+          unit: 'umfx',
+          active: true,
+        },
+      ]),
+    );
   });
 });

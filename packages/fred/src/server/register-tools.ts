@@ -62,7 +62,17 @@ export function registerTools(deps: RegisterToolsDeps): void {
         'Browse available cloud providers and service tiers with live health checks. Use this before deploy_app to see which providers are online and what SKU sizes (e.g. docker-micro, docker-small) are available with pricing.',
       outputSchema: {
         providers: z.array(z.looseObject({})),
-        tiers: z.record(z.string(), z.array(z.looseObject({}))),
+        skus: z.array(
+          z.object({
+            name: z.string(),
+            sku_uuid: z.string(),
+            provider_uuid: z.string(),
+            provider_url: z.string().nullable(),
+            price: z.string().nullable(),
+            unit: z.string().nullable(),
+            active: z.boolean(),
+          }),
+        ),
       },
       annotations: readOnlyAnnotations('Browse providers and SKUs'),
       _meta: manifestMeta({

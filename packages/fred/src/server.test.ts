@@ -40,7 +40,7 @@ vi.mock('./tools/fetchActiveLease.js', () => ({
 }));
 
 vi.mock('./tools/browseCatalog.js', () => ({
-  browseCatalog: vi.fn().mockResolvedValue({ providers: [], tiers: {} }),
+  browseCatalog: vi.fn().mockResolvedValue({ providers: [], skus: [] }),
 }));
 vi.mock('./tools/appStatus.js', () => ({
   appStatus: vi.fn().mockResolvedValue({}),
