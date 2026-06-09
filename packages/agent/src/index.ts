@@ -310,10 +310,28 @@ export class AgentMCPServer {
           'Requires an elicitation-capable MCP host (Claude Code ≥ 2.1.76).',
         inputSchema: {
           spec: z
-            .looseObject({})
+            .looseObject({
+              // ENG-275: `size` is load-bearing (SKU resolution, fee
+              // estimate, readiness, persisted manifest) but used to be an
+              // undocumented escape-hatch field. Declare it as a typed,
+              // discoverable optional property so a contract-following
+              // caller can select a non-default SKU. `looseObject` still
+              // passes the rest of the spec (image/services/etc.) through.
+              size: z
+                .string()
+                .optional()
+                .describe(
+                  "Optional compute-tier / SKU name (e.g. 'small', 'medium'). " +
+                    "Defaults to 'small' when omitted. Selects the on-chain SKU " +
+                    'used for the lease item, fee estimate, and readiness check; ' +
+                    "list available tiers via the lease server's get_skus. An " +
+                    'unknown tier is rejected at the readiness check (before any ' +
+                    'broadcast), which reports the available tier names.',
+                ),
+            })
             .describe(
-              'DeploySpec — either SingleServiceSpec ({ image, port?, env?, customDomain? }) ' +
-                'or StackSpec ({ services: { [name]: ServiceDef }, customDomain?, serviceName? }). ' +
+              'DeploySpec — either SingleServiceSpec ({ image, port?, env?, customDomain?, size? }) ' +
+                'or StackSpec ({ services: { [name]: ServiceDef }, customDomain?, serviceName?, size? }). ' +
                 'agent-core validates structure; pass the typed shape from manifest-agent-core types.',
             ),
           // The `data_dir` per-call argument was removed in Phase 2

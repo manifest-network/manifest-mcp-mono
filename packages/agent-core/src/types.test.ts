@@ -473,19 +473,24 @@ describe('Exported type shapes (load-bearing public surface)', () => {
   });
 
   it('SingleServiceSpec', () => {
+    // `size?` is a first-class optional field (ENG-275): the SKU / compute
+    // tier, defaulting to 'small' in `requestedSize` when omitted.
     expectTypeOf<SingleServiceSpec>().toEqualTypeOf<{
       image: string;
       port?: number | number[];
       env?: Record<string, string>;
       customDomain?: string;
+      size?: string;
     }>();
   });
 
   it('StackSpec', () => {
+    // `size?` mirrors SingleServiceSpec (ENG-275); see above.
     expectTypeOf<StackSpec>().toEqualTypeOf<{
       services: Record<string, ServiceDef>;
       customDomain?: string;
       serviceName?: string;
+      size?: string;
     }>();
   });
 

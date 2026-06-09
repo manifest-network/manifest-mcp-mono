@@ -3693,12 +3693,12 @@ describe('deployApp — C2 plan-edit roundtrip propagates edited size (ENG-185 #
     '2222222222222222222222222222222222222222222222222222222222222222';
 
   /**
-   * Shared setup: load the 01-fast-path-active fixtures, augment the base
-   * spec with a conventional `size: 'small'` (read by `requestedSize`, not
-   * part of the frozen `DeploySpec` type), and wire an `onPlan` that
-   * returns a `replace_spec` edit identical to the base EXCEPT `size:
-   * 'medium'`. `buildManifestPreview` is sequenced PRE → POST so the
-   * post-edit fee/persist path can be proven to use the edited-spec hash.
+   * Shared setup: load the 01-fast-path-active fixtures, set the base
+   * spec's first-class `size: 'small'` field (ENG-275; read by
+   * `requestedSize`), and wire an `onPlan` that returns a `replace_spec`
+   * edit identical to the base EXCEPT `size: 'medium'`.
+   * `buildManifestPreview` is sequenced PRE → POST so the post-edit
+   * fee/persist path can be proven to use the edited-spec hash.
    * `checkDeploymentReadiness` is size-agnostic (same response both calls);
    * the size lives in the call ARGUMENT, not the response.
    *
@@ -3739,18 +3739,20 @@ describe('deployApp — C2 plan-edit roundtrip propagates edited size (ENG-185 #
       'deploy-response.json',
     ) as Record<string, unknown>;
 
-    // `size` is read by `requestedSize` (a conventional property), NOT a
-    // typed `DeploySpec` field. Cast via `as unknown as` per the
-    // established test idiom — do NOT add `size` to the frozen type.
+    // ENG-275: `size` is now a first-class typed field on `DeploySpec`.
+    // The `as unknown as DeploySpec` here is structural only — it narrows
+    // the untyped fixture `Record<string, unknown>` to the spec union; it
+    // is NOT smuggling an off-type field.
     const baseSpec = {
       ...baseSpecRaw,
       size: 'small',
     } as unknown as DeploySpec;
-    // Size is the ONLY difference: image/port/env are spread verbatim.
-    const editedSpec = {
-      ...baseSpecRaw,
-      size: 'medium',
-    } as unknown as DeploySpec;
+    // Size is the ONLY difference. Spread the already-typed `baseSpec` and
+    // override `size` — assignable to `DeploySpec` without a further cast
+    // because `size` is on the contract. (The definitive type-contract
+    // proof is `types.test.ts`'s `toEqualTypeOf`; this block tests runtime
+    // propagation of the edited size.)
+    const editedSpec: DeploySpec = { ...baseSpec, size: 'medium' };
 
     const fred = await import('@manifest-network/manifest-mcp-fred');
     // Size-agnostic readiness: identical response for both the pre-edit

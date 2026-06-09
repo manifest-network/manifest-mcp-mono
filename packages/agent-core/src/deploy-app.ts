@@ -742,10 +742,12 @@ function primaryImage(spec: DeploySpec): string {
 }
 
 function requestedSize(spec: DeploySpec): string {
-  // PR 3: size lives outside the typed DeploySpec; the orchestrator's
-  // caller normally threads it via Plan / fred input. Read from a
-  // conventional `size` property if present; fall back to 'small'.
-  const recorded = (spec as unknown as { size?: string }).size;
+  // ENG-275: `size` is a first-class optional field on both DeploySpec
+  // variants (`types.ts`). This helper centralizes the default: a
+  // non-empty string wins; absent / empty falls back to 'small'. The
+  // `typeof` guard still degrades a non-string value smuggled in by an
+  // `unknown`-cast (e.g. JSON.parse) caller to the safe default.
+  const recorded = spec.size;
   return typeof recorded === 'string' && recorded.length > 0
     ? recorded
     : 'small';
