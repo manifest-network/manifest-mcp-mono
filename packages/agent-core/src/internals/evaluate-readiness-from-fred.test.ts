@@ -355,6 +355,119 @@ describe('evaluateReadinessFromFredResponse — ENG-258 sku_candidates forwardin
   });
 });
 
+describe('evaluateReadinessFromFredResponse — FIX-1 end-to-end gate (ENG-258 r2)', () => {
+  // Real translator + real evaluateReadiness (spy calls through to actual).
+  // No mocks of the evaluator logic — this guards the invariant that
+  // `size: pinned.name` (the RESOLVED on-chain name) passes the
+  // `skuCandidates.some(c => c.name === size)` gate, while a mismatched
+  // `size` (the old behavior: raw user request that doesn't match the
+  // resolved candidate name) would block.
+
+  beforeEach(() => vi.clearAllMocks());
+
+  it('FIX-1 POSITIVE: resolved name matches candidate → SKU gate passes (status !== block for SKU rule)', () => {
+    // Fred-shaped response where `size` equals the resolved SKU's `name`
+    // (the post-fix behavior: deploy-app threads `pinned.name`).
+    // Wallet and credits are valid so other rules don't interfere.
+    const raw = {
+      tenant: 'manifest1deadbeef',
+      image: 'docker.io/library/nginx:1.27',
+      size: 'docker-micro', // RESOLVED name — matches the candidate below
+      wallet_balances: [{ denom: 'umfx', amount: '10000000' }],
+      credits: {
+        active_leases: '0',
+        pending_leases: '0',
+        reserved_amounts: [],
+        available_balances: [{ denom: 'umfx', amount: '50000000000' }],
+      },
+      sku: {
+        name: 'docker-micro',
+        uuid: 'X',
+        provider_uuid: 'p1',
+        price: { denom: 'umfx', amount: '1' },
+        active: true,
+      },
+      sku_candidates: [
+        {
+          name: 'docker-micro',
+          uuid: 'X',
+          provider_uuid: 'p1',
+          price: { amount: '1', denom: 'umfx' },
+          active: true,
+        },
+      ],
+      available_skus: [
+        { name: 'docker-micro', uuid: 'X', provider_uuid: 'p1' },
+      ],
+      ready: true,
+      missing_steps: [],
+    } as never;
+
+    const out = evaluateReadinessFromFredResponse(
+      raw,
+      '1umfx',
+      EMPTY_DENOM_MAP,
+      'manifest1deadbeef',
+    );
+
+    // The SKU gate must NOT have fired — resolved name matches candidate.
+    expect(out.reasons.some((r) => /not currently offered/i.test(r))).toBe(
+      false,
+    );
+    expect(out.suggestedActions).not.toContain('pick_different_sku');
+    // Overall status is ok (wallet + credits are healthy).
+    expect(out.status).toBe('ok');
+  });
+
+  it('FIX-1 NEGATIVE: mismatched size does NOT match candidate → SKU gate blocks (proves gate is real and fix is load-bearing)', () => {
+    // Same sku_candidates as above, but `size: 'small'` — the raw user
+    // request that does NOT match the candidate's name ('docker-micro').
+    // This is exactly the old (pre-fix) behavior when deploy-app passed
+    // `requestedSize(spec)` instead of `pinned.name`. The gate must fire.
+    const raw = {
+      tenant: 'manifest1deadbeef',
+      image: 'docker.io/library/nginx:1.27',
+      size: 'small', // MISMATCHED — does not match 'docker-micro' candidate
+      wallet_balances: [{ denom: 'umfx', amount: '10000000' }],
+      credits: {
+        active_leases: '0',
+        pending_leases: '0',
+        reserved_amounts: [],
+        available_balances: [{ denom: 'umfx', amount: '50000000000' }],
+      },
+      sku: null, // no resolved sku for the mismatched size
+      sku_candidates: [
+        {
+          name: 'docker-micro',
+          uuid: 'X',
+          provider_uuid: 'p1',
+          price: { amount: '1', denom: 'umfx' },
+          active: true,
+        },
+      ],
+      available_skus: [
+        { name: 'docker-micro', uuid: 'X', provider_uuid: 'p1' },
+      ],
+      ready: false,
+      missing_steps: [],
+    } as never;
+
+    const out = evaluateReadinessFromFredResponse(
+      raw,
+      '1umfx',
+      EMPTY_DENOM_MAP,
+      'manifest1deadbeef',
+    );
+
+    // The SKU gate must have fired — 'small' is not in the candidate list.
+    expect(out.status).toBe('block');
+    expect(out.reasons.some((r) => /not currently offered/i.test(r))).toBe(
+      true,
+    );
+    expect(out.suggestedActions).toContain('pick_different_sku');
+  });
+});
+
 describe('evaluateReadinessFromFredResponse — sku-name union (Copilot #3319670583)', () => {
   // Fred caps `available_skus` at MAX_SKU_NAMES_RETURNED = 50
   // (`packages/fred/src/tools/checkDeploymentReadiness.ts`). When fred

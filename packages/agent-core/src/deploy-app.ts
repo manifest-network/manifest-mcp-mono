@@ -207,15 +207,27 @@ export async function deployApp(
   // (interactive) or re-throws SKU_AMBIGUOUS (headless). Defined as a
   // closure so it captures `queryClient` + `callbacks` and can be reused
   // by the post-edit re-plan branch (an edit can change size/provider).
-  const resolvePin = async (s: DeploySpec): Promise<SkuCandidate> => {
+  //
+  // Returns `{ pin, elicited }` where `elicited` is true ONLY when
+  // `onResolveSku` was actually invoked (i.e. an ambiguous-name
+  // interactivity happened). The caller uses `elicited` to decide whether
+  // to stamp the chosen pin onto `confirmedSpec` — stamping is only
+  // needed to suppress a re-elicit on the post-edit re-plan; non-elicited
+  // resolutions (unique-name or UUID-direct) don't need it and shouldn't
+  // carry a stale pin if the user later issues a `replace_spec` edit that
+  // changes the size.
+  const resolvePin = async (
+    s: DeploySpec,
+  ): Promise<{ pin: SkuCandidate; elicited: boolean }> => {
     const providerUuid = requestedProviderUuid(s);
     const skuUuid = requestedSkuUuid(s);
     try {
-      return await resolveSku(queryClient, {
+      const pin = await resolveSku(queryClient, {
         size: requestedSize(s),
         ...(providerUuid !== undefined ? { providerUuid } : {}),
         ...(skuUuid !== undefined ? { skuUuid } : {}),
       });
+      return { pin, elicited: false };
     } catch (err) {
       if (
         err instanceof ManifestMCPError &&
@@ -225,16 +237,17 @@ export async function deployApp(
         const candidates = (err.details?.candidates as SkuCandidate[]) ?? [];
         callbacks.onProgress?.({ kind: 'sku_ambiguous', candidates });
         const pick = await callbacks.onResolveSku(candidates);
-        return await resolveSku(queryClient, {
+        const pin = await resolveSku(queryClient, {
           size: requestedSize(s),
           skuUuid: pick.skuUuid,
           providerUuid: pick.providerUuid,
         });
+        return { pin, elicited: true };
       }
       throw err;
     }
   };
-  let pinned = await resolvePin(spec);
+  let { pin: pinned, elicited: pinElicited } = await resolvePin(spec);
 
   // FIX 1 (ENG-258 review): `pinned.name` is the RESOLVED SKU's on-chain
   // name. When a deploy is pinned by `skuUuid` (or by provider) whose
@@ -307,19 +320,21 @@ export async function deployApp(
 
   // --- Render plan + onPlan callback ----------------------------------
   // FIX 2 (ENG-258 review): stamp the resolved pin identity onto the
-  // working spec. After `resolvePin` resolves an ambiguous SKU via
-  // `onResolveSku`, the chosen pin must be written back so a subsequent
-  // `resolvePin` (post-edit re-plan below) resolves BY UUID — which
-  // bypasses the name + ambiguity entirely — instead of re-eliciting for
-  // the same SKU. An `edit_env` edit preserves these fields (it spreads
-  // the prior spec); a `replace_spec` edit replaces the spec wholesale
-  // (the user may drop the pin), so re-resolving — and possibly
-  // re-eliciting — is then correct.
-  let confirmedSpec: DeploySpec = {
-    ...spec,
-    skuUuid: pinned.skuUuid,
-    providerUuid: pinned.providerUuid,
-  };
+  // working spec ONLY when an ambiguous SKU was resolved interactively
+  // via `onResolveSku` (i.e. `pinElicited === true`). The stamp prevents
+  // re-eliciting on the post-edit re-plan: an `edit_env` edit spreads
+  // the prior spec and preserves the stamped skuUuid/providerUuid, so
+  // the by-UUID second resolve skips the ambiguity entirely.
+  //
+  // When the SKU was resolved by a UNIQUE name or by explicit UUID
+  // (non-elicited paths), the original `spec` already carries the right
+  // identity — stamping is unnecessary and risks locking in a stale pin
+  // if a `replace_spec` edit changes `size` (that edit replaces the
+  // spec wholesale anyway, but avoiding the stamp keeps the non-elicited
+  // path behaviorally minimal).
+  let confirmedSpec: DeploySpec = pinElicited
+    ? { ...spec, skuUuid: pinned.skuUuid, providerUuid: pinned.providerUuid }
+    : spec;
   const block = renderDeploymentPlan({
     plan,
     denomMap,
@@ -395,7 +410,18 @@ export async function deployApp(
       // Re-resolve the SKU pin for the edited spec (ENG-258): an edit can
       // change `size` / `providerUuid`, so the pin threaded into the
       // post-edit readiness/fee/plan/broadcast must reflect the edit.
-      pinned = await resolvePin(confirmedSpec);
+      // Track elicitation again: if the post-edit resolve is also
+      // interactive, stamp the new pin so a further re-plan won't
+      // re-elicit for the same choice.
+      ({ pin: pinned, elicited: pinElicited } =
+        await resolvePin(confirmedSpec));
+      if (pinElicited) {
+        confirmedSpec = {
+          ...confirmedSpec,
+          skuUuid: pinned.skuUuid,
+          providerUuid: pinned.providerUuid,
+        };
+      }
       const editedReadinessRaw = await checkDeploymentReadiness(
         queryClient,
         tenantAddress,

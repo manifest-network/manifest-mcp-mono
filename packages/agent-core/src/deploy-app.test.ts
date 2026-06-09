@@ -746,6 +746,68 @@ describe('deployApp — ENG-258 SKU pin resolution + ambiguity elicitation', () 
       | undefined;
     expect(fredInput).toMatchObject({ skuUuid: 'sku-p2', providerUuid: 'p2' });
   });
+
+  it('FIX 2 (non-elicited path): a UNIQUE-name resolution does NOT stamp confirmedSpec; post-edit re-plan re-resolves by name (no stale pin)', async () => {
+    // When the SKU resolves uniquely by name (no ambiguity, no elicitation),
+    // `confirmedSpec` must NOT be stamped with the pin. A subsequent
+    // `edit_env` re-plan therefore presents the original spec to `resolvePin`
+    // WITHOUT a pre-locked skuUuid — demonstrating the non-elicited path
+    // does not carry a stale pin identity.
+    //
+    // Verification strategy: the default `resolveSku` mock always resolves
+    // uniquely (no SKU_AMBIGUOUS throw), so `pinElicited` is always false.
+    // We observe all `resolveSku` call inputs: none of the calls issued
+    // BEFORE the broadcast should carry a skuUuid (i.e. the post-edit
+    // re-plan was NOT fed a stamped UUID by `confirmedSpec`). The broadcast
+    // input still carries the pin — set directly by `buildFredDeployInput`
+    // from the `pinned` local, not from `confirmedSpec`.
+    const { spec, fred, core } = await setupHappyDeps();
+
+    let planCalls = 0;
+    const baseCapture = captureCallbacks();
+    const callbacks: DeployAppCallbacks = {
+      ...baseCapture.callbacks,
+      onPlan: async () => {
+        planCalls += 1;
+        if (planCalls === 1) {
+          // Trigger the post-edit re-plan with an `edit_env` edit. The
+          // edit spreads `confirmedSpec` — which must NOT carry a stamped
+          // skuUuid in the non-elicited path.
+          return { kind: 'edit_env', env: { UNIQUE_NAME: 'yes' } };
+        }
+        return 'confirm';
+      },
+    };
+
+    const { deployApp } = await import('./deploy-app.js');
+    const clientManager = makeMockClientManager();
+    const walletProvider = makeMockWalletProvider();
+
+    await deployApp(spec, callbacks, {
+      clientManager: clientManager as unknown as Parameters<
+        typeof deployApp
+      >[2]['clientManager'],
+      walletProvider,
+    });
+
+    // Both `resolvePin` calls (initial + post-edit) should have gone through
+    // the default mock's unique-resolve path. Neither should have received a
+    // `skuUuid` from `confirmedSpec` (non-elicited → no stamp).
+    const allResolveCalls = vi.mocked(core.resolveSku).mock.calls;
+    // There must have been at least 2 calls: initial + post-edit.
+    expect(allResolveCalls.length).toBeGreaterThanOrEqual(2);
+    // Neither call should carry a skuUuid from a stale pin stamp.
+    for (const call of allResolveCalls) {
+      const input = call[1] as { skuUuid?: string };
+      expect(input.skuUuid).toBeUndefined();
+    }
+
+    // The broadcast still carries the resolved pin (from the `pinned` local).
+    const fredInput = vi.mocked(fred.deployApp).mock.calls[0]?.[3] as
+      | { skuUuid?: string }
+      | undefined;
+    expect(fredInput?.skuUuid).toBe('sku-uuid-fixture');
+  });
 });
 
 describe('deployApp replay — Copilot review fixes (PR #58 unresolved comments)', () => {
