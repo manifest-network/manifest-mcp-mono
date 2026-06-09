@@ -150,7 +150,7 @@ type SkuSelector =
 - `sku_candidates: SkuSummary[]` — **all** active matches for `size` after any narrowing (0/1/many), each `{ name, uuid, provider_uuid, price?, active }`.
 - `sku: SkuSummary | null` — the determinate pick when exactly one candidate remains (naturally unique or narrowed); `null` when 0 or still-ambiguous.
 - `available_skus: { name; uuid; provider_uuid }[]` — structured replacement for the flat list.
-- `available_sku_names: string[]` — **kept as a deprecated hint** (issue says "keep flat names as a hint only"; the evaluator's >50-name fold still reads it).
+- `available_sku_names: string[]` — **removed** (clean-break policy, §9). Because agent-core's `evaluate-readiness-from-fred` reads this field today, its removal is sequenced into Phase 4 *together* with the translator update — never a release where one package compiles and the other doesn't.
 - `missing_steps` / `ready`: size given & 0 candidates → "not available"; >1 candidates & no pin → "ambiguous — specify provider_uuid or sku_uuid" (`ready:false`); exactly 1 → run the existing balance/credit checks against that SKU's price.
 
 This makes readiness do **no** silent picking; it reports the candidate set honestly.
@@ -207,9 +207,9 @@ onResolveSku?: (
 
 Plus a `ProgressEvent` `{ kind: 'sku_ambiguous'; candidates }` emitted before the call (mirrors the `partial_success_prompt_rendered` pattern), and re-export `SkuCandidate` from agent-core's public types.
 
-**`evaluate-readiness.ts` (fix #4):** replace the `availableSkuNames.includes(size)` gate. New input: `skuCandidates: { name; providerUuid; price? }[]` (+ optional `requestedProviderUuid`). Block when `size` is set and no candidate matches name (and provider, if requested). Price math uses the matched/pinned candidate. Keep `availableSkuNames` as a fallback hint for the >50 case.
+**`evaluate-readiness.ts` (fix #4):** replace the `availableSkuNames.includes(size)` gate. New input: `skuCandidates: { name; providerUuid; price? }[]` (+ optional `requestedProviderUuid`). Block when `size` is set and no candidate matches name (and provider, if requested). Price math uses the matched/pinned candidate. `availableSkuNames` stays as an *optional* fallback for direct/legacy callers; the fred path always supplies `skuCandidates`, so the old ">50-name fold" is deleted.
 
-**`evaluate-readiness-from-fred.ts`:** map fred's new `sku_candidates` / `available_skus` into the evaluator's `skuCandidates` input (currently it only forwards `raw.sku` + `available_sku_names`).
+**`evaluate-readiness-from-fred.ts`:** map fred's `sku_candidates` into the evaluator's `skuCandidates` input. Derive the evaluator's `availableSkuNames` from `available_skus` (the flat `available_sku_names` field is being removed in this same Phase-4 change). This is the file that pins the clean-break sequencing: the PR that drops `available_sku_names` from fred's result + tool schema is the PR that lands this translator update.
 
 ### 4.4 `agent` — elicit on ambiguity
 
@@ -279,12 +279,18 @@ Layered to match the dependency direction; each step independently testable:
 
 Final PR slicing (one PR vs. layered sub-PRs) to be decided in the implementation plan.
 
-## 9. Open items for review
+## 9. Open items — resolved
 
-- **`storageSkuUuid` escape hatch:** the design resolves storage by name on the compute provider and throws `SKU_AMBIGUOUS` on same-provider storage dupes. Add an explicit `storage_sku_uuid` pin now, or defer? (Leaning defer — storage dupes are unlikely.)
-- **`available_sku_names` deprecation:** keep it indefinitely as a hint, or drop once ENG-260 migrates to `available_skus`?
-- **Typed `SkuIntent`:** promote the loosely-read `{ size, providerUuid?, skuUuid? }` off the spec into a typed field now, or keep the existing `size`-smuggling convention?
-- **API-evolution policy — clean break vs parallel-change (raised by the 2nd-pass review).** The read-tool output shapes change: `browse_catalog` currently **removes** `tiers` (§4.2) while `check_deployment_readiness` **keeps** `sku` + `available_sku_names` as deprecated hints — an internal inconsistency. The textbook-safe idiom is [parallel change / expand-contract](https://martinfowler.com/bliki/ParallelChange.html): add the new shape, keep the old one deprecated for one release, then remove. Counter-argument: this is pre-1.0 (`0.x` — [SemVer permits breaking changes](https://semver.org/), and this repo bumps the minor for them), the `tiers` shape *is* the bug, and the only consumers are known/internal and coordinated (ENG-257 barney, ENG-260 plugin) — so a clean break that doesn't perpetuate the anti-pattern is defensible. **Decision needed:** apply one consistent policy to both tools — (a) parallel-change (keep `tiers` + `available_sku_names` deprecated one release) or (b) clean break (remove `tiers`; drop the readiness back-compat fields too) once we confirm no other live consumers.
+- **API-evolution policy — RESOLVED: (b) clean break.** Apply one consistent policy to both read tools: `browse_catalog` removes `tiers`; `check_deployment_readiness` removes `available_sku_names`. Justified pre-1.0 (`0.x` — [SemVer permits breaking changes](https://semver.org/), repo bumps the minor for them) with known, internal, coordinated consumers (ENG-257 barney, ENG-260 plugin), and because the removed shapes *are* the anti-pattern this issue retires. `readiness.sku` **stays** — it's the determinate single pick, not a back-compat crutch. Sequencing: `tiers` removal lands in Phase 3 (no agent-core consumer); `available_sku_names` removal lands in Phase 4 with the translator update (agent-core reads it), so no release has a half-built monorepo.
+- **`storageSkuUuid` escape hatch — RESOLVED: defer.** Storage resolves by name on the compute provider; same-provider storage dupes fail safe with `SKU_AMBIGUOUS` (no wrong lease). Adding the pin later is purely additive. Tracked as a follow-up (see §11).
+- **Typed `SkuIntent` — RESOLVED: defer.** Keep the existing `size`-smuggling convention (`(spec as { size? }).size`); thread `providerUuid`/`skuUuid` the same way. Promoting to a typed `SkuIntent { size, providerUuid?, skuUuid? }` touches `validateSpec` / `spec-normalize` / the agent passthrough — an orthogonal refactor. Tracked as a follow-up (see §11).
+
+## 11. Follow-ups (deferred work)
+
+Filed against the deferred decisions above:
+
+- **[ENG-295](https://linear.app/liftedinit/issue/ENG-295) — `storage_sku_uuid` pin** — let callers disambiguate a same-provider storage-SKU name collision (the compute path is covered; storage is the remaining gap). Purely additive: one optional input + one resolver arg.
+- **[ENG-296](https://linear.app/liftedinit/issue/ENG-296) — typed `SkuIntent`** — promote `{ size, providerUuid?, skuUuid? }` off the loose spec cast into a typed field; clean up the pre-existing `size`-smuggling in `requestedSize`/`buildFredDeployInput`.
 
 ## 10. Industry-practice review (benchmarks)
 
@@ -299,4 +305,4 @@ The key design choices were checked against current API / MCP guidance:
 | One outcome-oriented `deploy_app` that resolves + broadcasts internally; `check_deployment_readiness` is an advisory pre-flight | **Idiomatic.** Design tools around the user's goal; don't force 1:1 REST→tool round-trips. | [philschmid](https://www.philschmid.de/mcp-best-practices), [The New Stack](https://thenewstack.io/15-best-practices-for-building-mcp-servers-in-production/) |
 | Resolve-early / pin-by-UUID / commit-on-chain across the elicitation window | **Sound.** The mutation and its check are made atomic at the chain (the commit point); a stale immutable pin → clean rejection, not a wrong lease. | TOCTOU guidance ([Wikipedia](https://en.wikipedia.org/wiki/Time-of-check_to_time-of-use)) — atomicity at state mutation |
 | Error on ambiguity (`SKU_AMBIGUOUS`) instead of silently picking a default (cheapest/first) | **Idiomatic & correct for a money path.** Fail-safe defaults / fail-closed: when a decision is uncertain, deny / take the safest observable action rather than continue under ambiguity. Validates rejecting the issue's alternative (B). | [OWASP secure-design principles](https://devguide.owasp.org/en/02-foundations/03-security-principles/) — fail-safe defaults |
-| API evolution of the read-tool output shapes (`tiers` removal, readiness fields) | **Needs a consistent policy** — see §9. Additive fields (`skus[]`, `sku_candidates`, `available_skus`) are non-breaking; only the `tiers` *removal* is breaking. | [Parallel Change](https://martinfowler.com/bliki/ParallelChange.html); [Speakeasy versioning](https://www.speakeasy.com/api-design/versioning) |
+| API evolution of the read-tool output shapes (`tiers` + `available_sku_names` removal) | **Resolved: clean break** (§9) — defensible pre-1.0 with known/internal/coordinated consumers; removal is sequenced so no release has a half-built monorepo. Additive fields (`skus[]`, `sku_candidates`, `available_skus`) are non-breaking. | [Parallel Change](https://martinfowler.com/bliki/ParallelChange.html); [Speakeasy versioning](https://www.speakeasy.com/api-design/versioning); [SemVer 0.x](https://semver.org/) |

@@ -840,11 +840,12 @@ export interface CheckDeploymentReadinessResult {
 - Build the outputs (replace the old `skuSummary` + `available_sku_names` block):
 
 ```ts
-  const available_skus = allActive.map((s) => ({
-    name: s.name,
-    uuid: s.uuid,
-    provider_uuid: s.providerUuid,
-  }));
+  const available_skus = allActive
+    .map((s) => ({ name: s.name, uuid: s.uuid, provider_uuid: s.providerUuid }))
+    .slice(0, MAX_SKU_NAMES_RETURNED);
+  // available_sku_names is KEPT for now and REMOVED in Phase 4 (Task 15),
+  // together with agent-core's translator that reads it (clean-break sequencing
+  // — see spec §9). Removing it here would break agent-core's build in PR3.
   const available_sku_names = [...new Set(allActive.map((s) => s.name))].slice(0, MAX_SKU_NAMES_RETURNED);
 
   return {
@@ -1431,18 +1432,24 @@ git commit -m "feat(agent-core): readiness gate on SKU candidates not bare names
 
 ---
 
-### Task 15: Map fred candidates in the readiness translator
+### Task 15: Map fred candidates in the translator + clean-break `available_sku_names`
+
+This task does the **coordinated clean-break removal**: agent-core's translator is the only consumer of `available_sku_names`, so removing the field from fred and updating the translator must land in the SAME PR (spec §9 sequencing). This task therefore touches fred files too.
 
 **Files:**
-- Modify: `packages/agent-core/src/internals/evaluate-readiness-from-fred.ts`
-- Modify: `packages/agent-core/src/internals/evaluate-readiness-from-fred.test.ts`
+- Modify: `packages/agent-core/src/internals/evaluate-readiness-from-fred.ts` (+ test)
+- Modify: `packages/fred/src/tools/checkDeploymentReadiness.ts` (remove `available_sku_names` from result interface + output)
+- Modify: `packages/fred/src/tools/checkDeploymentReadiness.test.ts` (drop any `available_sku_names` assertions)
+- Modify: `packages/fred/src/server/register-tools.ts` (remove `available_sku_names` from the `check_deployment_readiness` outputSchema, ~line 304)
 
 - [ ] **Step 1: Write the failing test**
 
-Add to `evaluate-readiness-from-fred.test.ts`:
+Add to `evaluate-readiness-from-fred.test.ts` (note: NO `available_sku_names` in the fixture — it's gone):
 
 ```ts
-it('ENG-258: forwards sku_candidates into the evaluator inputs', () => {
+import { EMPTY_DENOM_MAP } from './humanize-denom.js';
+
+it('ENG-258: forwards sku_candidates and derives availableSkuNames from available_skus', () => {
   const raw = {
     tenant: 't', image: null, size: 'docker-micro',
     wallet_balances: [{ denom: 'umfx', amount: '100000' }],
@@ -1451,25 +1458,35 @@ it('ENG-258: forwards sku_candidates into the evaluator inputs', () => {
       { name: 'docker-micro', uuid: 'a', provider_uuid: 'p1', price: { amount: '100', denom: 'umfx' }, active: true },
     ],
     available_skus: [{ name: 'docker-micro', uuid: 'a', provider_uuid: 'p1' }],
-    available_sku_names: ['docker-micro'], ready: true, missing_steps: [],
+    ready: true, missing_steps: [],
   } as never;
   const r = evaluateReadinessFromFredResponse(raw, '1umfx', EMPTY_DENOM_MAP, 't');
+  // SKU gate passes because a candidate matches (not because of a name list).
   expect(r.reasons.join(' ')).not.toMatch(/not currently offered/);
 });
 ```
 
-(Import `EMPTY_DENOM_MAP` from `./humanize-denom.js`.)
-
 - [ ] **Step 2: Run to verify it fails**
 
 Run: `npx vitest run packages/agent-core/src/internals/evaluate-readiness-from-fred.test.ts -t ENG-258`
-Expected: FAIL or pass-by-accident — make it real by also asserting the candidate is threaded (see step 3 then re-run).
+Expected: FAIL — translator still references `raw.available_sku_names` / doesn't forward `skuCandidates`.
 
-- [ ] **Step 3: Forward the candidates**
+- [ ] **Step 3: Update the translator (map candidates; derive names from available_skus)**
 
-In `evaluate-readiness-from-fred.ts`, in the `evaluateReadiness({ ... })` call, add:
+In `evaluate-readiness-from-fred.ts`, replace the `available_sku_names` fold (the `const skuNames = new Set(raw.available_sku_names); ...` block, ~lines 86-87) and the `availableSkuNames` argument with:
 
 ```ts
+  // Names are only a fallback hint now; derive them from the structured list.
+  const availableSkuNames = [...new Set((raw.available_skus ?? []).map((s) => s.name))];
+
+  return evaluateReadiness({
+    tenant: tenantAddress,
+    image: raw.image,
+    size: raw.size,
+    walletBalances: toCoinArray(raw.wallet_balances),
+    credits: translateCredits(raw),
+    sku: translateSku(raw.sku),
+    availableSkuNames,
     skuCandidates: Array.isArray(raw.sku_candidates)
       ? raw.sku_candidates.map((c) => ({
           name: c.name,
@@ -1477,20 +1494,36 @@ In `evaluate-readiness-from-fred.ts`, in the `evaluateReadiness({ ... })` call, 
           ...(c.price ? { price: { denom: c.price.denom, amount: c.price.amount } } : {}),
         }))
       : undefined,
+    gasPrice,
+    denomMap,
+  });
 ```
 
-Update the imported `CheckDeploymentReadinessResult` usage (it now has `sku_candidates` / `available_skus` from Task 6).
+- [ ] **Step 4: Remove `available_sku_names` from fred's readiness result**
 
-- [ ] **Step 4: Run to verify it passes**
+In `packages/fred/src/tools/checkDeploymentReadiness.ts`:
+- Delete the `readonly available_sku_names: readonly string[];` line from `CheckDeploymentReadinessResult`.
+- Delete the `const available_sku_names = ...` line and the `available_sku_names,` field from the returned object.
+- If `MAX_SKU_NAMES_RETURNED` is now used only by `available_skus`, keep it (it bounds `available_skus`).
 
-Run: `npx vitest run packages/agent-core/src/internals/evaluate-readiness-from-fred.test.ts`
-Expected: PASS.
+In `packages/fred/src/tools/checkDeploymentReadiness.test.ts`: remove any assertion that reads `available_sku_names`.
 
-- [ ] **Step 5: Commit**
+In `packages/fred/src/server/register-tools.ts`: delete `available_sku_names: z.array(z.string()),` from the `check_deployment_readiness` outputSchema (~line 304).
+
+- [ ] **Step 5: Run the affected suites + whole-repo build**
+
+Run:
+```bash
+npx vitest run packages/agent-core/src/internals/evaluate-readiness-from-fred.test.ts packages/fred/src/tools/checkDeploymentReadiness.test.ts
+npm run build && npm run lint
+```
+Expected: PASS — no dangling `available_sku_names` references anywhere (grep to confirm: `grep -rn "available_sku_names" packages/` → no results).
+
+- [ ] **Step 6: Commit**
 
 ```bash
-git add packages/agent-core/src/internals/evaluate-readiness-from-fred.ts packages/agent-core/src/internals/evaluate-readiness-from-fred.test.ts
-git commit -m "feat(agent-core): translate fred sku_candidates into readiness inputs (ENG-258)"
+git add packages/agent-core/src/internals/evaluate-readiness-from-fred.ts packages/agent-core/src/internals/evaluate-readiness-from-fred.test.ts packages/fred/src/tools/checkDeploymentReadiness.ts packages/fred/src/tools/checkDeploymentReadiness.test.ts packages/fred/src/server/register-tools.ts
+git commit -m "feat(agent-core,fred): translate sku_candidates; clean-break remove available_sku_names (ENG-258)"
 ```
 
 ---
