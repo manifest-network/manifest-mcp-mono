@@ -146,10 +146,12 @@ export async function checkDeploymentReadiness(
       `Requested SKU "${input.size}" is not available. Pick one of: ${available || '(none active)'}`,
     );
   } else if (input.size && candidates.length > 1) {
-    // Ambiguous: >1 providers publish a SKU with this name (ENG-258).
+    // Ambiguous: the name matches >1 active SKU, across one or more providers
+    // (a single provider can publish duplicate names too) (ENG-258).
+    const providers = [...new Set(candidates.map((c) => c.provider_uuid))];
     missing.push(
-      `SKU "${input.size}" is offered by ${candidates.length} providers. ` +
-        `Specify provider_uuid or sku_uuid (providers: ${candidates.map((c) => c.provider_uuid).join(', ')}).`,
+      `SKU "${input.size}" matches ${candidates.length} active SKUs (provider(s): ${providers.join(', ')}). ` +
+        `Specify provider_uuid or sku_uuid to disambiguate.`,
     );
   }
 

@@ -452,7 +452,7 @@ export function makeDeployCallbacks(
       candidates: SkuCandidate[],
     ): Promise<{ skuUuid: string; providerUuid: string }> => {
       const message =
-        `The requested SKU name maps to ${candidates.length} SKUs across providers. ` +
+        `The requested SKU name matches ${candidates.length} SKUs. ` +
         'Choose which to deploy to:';
       let result: Awaited<ReturnType<typeof server.elicitInput>>;
       try {
