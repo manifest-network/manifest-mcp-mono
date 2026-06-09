@@ -312,9 +312,11 @@ export class AgentMCPServer {
           spec: z
             .looseObject({})
             .describe(
-              'DeploySpec — either SingleServiceSpec ({ image, port?, env?, customDomain? }) ' +
-                'or StackSpec ({ services: { [name]: ServiceDef }, customDomain?, serviceName? }). ' +
-                'agent-core validates structure; pass the typed shape from manifest-agent-core types.',
+              'DeploySpec — SingleServiceSpec ({ image, port?, env?, customDomain? }) or ' +
+                'StackSpec ({ services, customDomain?, serviceName? }). Also carries `size` (SKU tier name) ' +
+                'and, when a SKU name is published by multiple providers, an optional `providerUuid` or `skuUuid` ' +
+                'to disambiguate (see browse_catalog / check_deployment_readiness `sku_candidates`). If omitted ' +
+                'and the name is ambiguous, you will be prompted to pick a provider.',
             ),
           // The `data_dir` per-call argument was removed in Phase 2
           // (finding #4). `saveManifest` chmods the supplied path to
