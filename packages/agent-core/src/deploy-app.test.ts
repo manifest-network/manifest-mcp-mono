@@ -512,14 +512,16 @@ describe('deployApp — ENG-258 SKU pin resolution + ambiguity elicitation', () 
     expect(onResolveSku).toHaveBeenCalledTimes(1);
     expect(onResolveSku.mock.calls[0]?.[0]).toEqual([c1, c2]);
 
-    // A `sku_ambiguous` progress event carried the candidates.
+    // A `sku_ambiguous` progress event carried the candidates. The kind
+    // assertion is the real guard; the candidates `toEqual` then runs
+    // unconditionally (no silent skip on a regression).
     const ambiguousEvents = baseCapture.progress.filter(
       (e) => e.kind === 'sku_ambiguous',
     );
     expect(ambiguousEvents).toHaveLength(1);
-    if (ambiguousEvents[0]?.kind === 'sku_ambiguous') {
-      expect(ambiguousEvents[0].candidates).toEqual([c1, c2]);
-    }
+    const ev = ambiguousEvents[0];
+    expect(ev?.kind).toBe('sku_ambiguous');
+    expect((ev as { candidates: unknown }).candidates).toEqual([c1, c2]);
 
     // The fred broadcast input (4th positional arg) carries the pinned
     // skuUuid/providerUuid from the user's pick.

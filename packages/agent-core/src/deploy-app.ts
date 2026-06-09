@@ -208,15 +208,13 @@ export async function deployApp(
   // closure so it captures `queryClient` + `callbacks` and can be reused
   // by the post-edit re-plan branch (an edit can change size/provider).
   const resolvePin = async (s: DeploySpec): Promise<SkuCandidate> => {
+    const providerUuid = requestedProviderUuid(s);
+    const skuUuid = requestedSkuUuid(s);
     try {
       return await resolveSku(queryClient, {
         size: requestedSize(s),
-        ...(requestedProviderUuid(s) !== undefined
-          ? { providerUuid: requestedProviderUuid(s) }
-          : {}),
-        ...(requestedSkuUuid(s) !== undefined
-          ? { skuUuid: requestedSkuUuid(s) }
-          : {}),
+        ...(providerUuid !== undefined ? { providerUuid } : {}),
+        ...(skuUuid !== undefined ? { skuUuid } : {}),
       });
     } catch (err) {
       if (
