@@ -8,9 +8,9 @@ import { EMPTY_DENOM_MAP } from './humanize-denom.js';
 // (`CheckDeploymentReadinessResult`) to the canonical `evaluateReadiness`'s
 // camelCase `EvaluateReadinessInputs`. The translator MUST:
 //
-//   - Rename `wallet_balances` → `walletBalances`, `available_sku_names`
-//     → `availableSkuNames`, `credits.available_balances` →
-//     `credits.availableBalances`, `credits.balances` → `credits.balances`.
+//   - Rename `wallet_balances` → `walletBalances`; derive `availableSkuNames`
+//     from `available_skus` (ENG-258 clean-break: `available_sku_names` was
+//     removed); map `sku_candidates` → `skuCandidates`.
 //   - FOLD top-level `current_balance` and `hours_remaining` INTO the
 //     `credits` sub-object as `currentBalance` / `hoursRemaining` (they
 //     live at the fred top level but are nested under `credits` in the
@@ -57,7 +57,27 @@ function fredResponse(
       price: { denom: 'umfx', amount: '1000' },
       active: true,
     },
-    available_sku_names: ['small', 'medium'],
+    sku_candidates: [
+      {
+        name: 'small',
+        uuid: 'sku-uuid-fixture',
+        provider_uuid: 'prov-uuid-fixture',
+        price: { denom: 'umfx', amount: '1000' },
+        active: true,
+      },
+    ],
+    available_skus: [
+      {
+        name: 'small',
+        uuid: 'sku-uuid-fixture',
+        provider_uuid: 'prov-uuid-fixture',
+      },
+      {
+        name: 'medium',
+        uuid: 'sku-uuid-medium',
+        provider_uuid: 'prov-uuid-fixture',
+      },
+    ],
     ready: true,
     missing_steps: [],
     ...overrides,
@@ -69,7 +89,7 @@ describe('evaluateReadinessFromFredResponse — field mapping', () => {
     vi.clearAllMocks();
   });
 
-  it('renames the top-level snake_case fields to camelCase', () => {
+  it('renames the top-level snake_case fields to camelCase; derives availableSkuNames from available_skus', () => {
     const raw = fredResponse();
     evaluateReadinessFromFredResponse(
       raw,
@@ -84,6 +104,7 @@ describe('evaluateReadinessFromFredResponse — field mapping', () => {
     expect(input?.walletBalances).toEqual([
       { denom: 'umfx', amount: '10000000' },
     ]);
+    // availableSkuNames is now derived from available_skus (ENG-258 clean-break).
     expect(input?.availableSkuNames).toEqual(['small', 'medium']);
   });
 
@@ -270,16 +291,20 @@ describe('evaluateReadinessFromFredResponse — smoke-integrated through evaluat
     expect(out.suggestedActions).toContain('topup_wallet');
   });
 
-  it('returns status "block" when the requested SKU is not in available_sku_names AND fred did not resolve it', () => {
+  it('returns status "block" when the requested SKU is not in available_skus AND fred did not resolve it', () => {
     // `raw.sku === null` mirrors fred's behavior when the requested
     // `size` is genuinely not offered (no matching active SKU). With
-    // the Copilot #3319670583 sku-name union, `available_sku_names`
-    // alone no longer determines the block — `raw.sku.name` is unioned
-    // in. So this test now requires BOTH the names list to omit `size`
-    // AND fred to have failed resolution (`sku: null`) to verify the
-    // SKU-availability rule still fires when the SKU is truly absent.
+    // the ENG-258 candidate-based gate, `available_skus` is now the
+    // source of truth. This test requires BOTH the skus list to omit
+    // `size` AND fred to have failed resolution (`sku: null`, empty
+    // `sku_candidates`) to verify the SKU-availability rule still fires
+    // when the SKU is truly absent.
     const raw = fredResponse({
-      available_sku_names: ['medium'],
+      size: 'small',
+      available_skus: [
+        { name: 'medium', uuid: 'sku-medium', provider_uuid: 'p1' },
+      ],
+      sku_candidates: [],
       sku: null,
     });
     const out = evaluateReadinessFromFredResponse(
@@ -293,21 +318,172 @@ describe('evaluateReadinessFromFredResponse — smoke-integrated through evaluat
   });
 });
 
+describe('evaluateReadinessFromFredResponse — ENG-258 sku_candidates forwarding', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('ENG-258: forwards sku_candidates and derives availableSkuNames from available_skus', () => {
+    const raw = {
+      tenant: 't',
+      image: null,
+      size: 'docker-micro',
+      wallet_balances: [{ denom: 'umfx', amount: '100000' }],
+      credits: null,
+      sku: null,
+      sku_candidates: [
+        {
+          name: 'docker-micro',
+          uuid: 'a',
+          provider_uuid: 'p1',
+          price: { amount: '100', denom: 'umfx' },
+          active: true,
+        },
+      ],
+      available_skus: [
+        { name: 'docker-micro', uuid: 'a', provider_uuid: 'p1' },
+      ],
+      ready: true,
+      missing_steps: [],
+    } as never;
+    const r = evaluateReadinessFromFredResponse(
+      raw,
+      '1umfx',
+      EMPTY_DENOM_MAP,
+      't',
+    );
+    // SKU gate passes because a candidate matches (not because of a name list).
+    expect(r.reasons.join(' ')).not.toMatch(/not currently offered/);
+  });
+});
+
+describe('evaluateReadinessFromFredResponse — FIX-1 end-to-end gate (ENG-258 r2)', () => {
+  // Real translator + real evaluateReadiness (spy calls through to actual).
+  // No mocks of the evaluator logic — this guards the invariant that
+  // `size: pinned.name` (the RESOLVED on-chain name) passes the
+  // `skuCandidates.some(c => c.name === size)` gate, while a mismatched
+  // `size` (the old behavior: raw user request that doesn't match the
+  // resolved candidate name) would block.
+
+  beforeEach(() => vi.clearAllMocks());
+
+  it('FIX-1 POSITIVE: resolved name matches candidate → SKU gate passes (status !== block for SKU rule)', () => {
+    // Fred-shaped response where `size` equals the resolved SKU's `name`
+    // (the post-fix behavior: deploy-app threads `pinned.name`).
+    // Wallet and credits are valid so other rules don't interfere.
+    const raw = {
+      tenant: 'manifest1deadbeef',
+      image: 'docker.io/library/nginx:1.27',
+      size: 'docker-micro', // RESOLVED name — matches the candidate below
+      wallet_balances: [{ denom: 'umfx', amount: '10000000' }],
+      credits: {
+        active_leases: '0',
+        pending_leases: '0',
+        reserved_amounts: [],
+        available_balances: [{ denom: 'umfx', amount: '50000000000' }],
+      },
+      sku: {
+        name: 'docker-micro',
+        uuid: 'X',
+        provider_uuid: 'p1',
+        price: { denom: 'umfx', amount: '1' },
+        active: true,
+      },
+      sku_candidates: [
+        {
+          name: 'docker-micro',
+          uuid: 'X',
+          provider_uuid: 'p1',
+          price: { amount: '1', denom: 'umfx' },
+          active: true,
+        },
+      ],
+      available_skus: [
+        { name: 'docker-micro', uuid: 'X', provider_uuid: 'p1' },
+      ],
+      ready: true,
+      missing_steps: [],
+    } as never;
+
+    const out = evaluateReadinessFromFredResponse(
+      raw,
+      '1umfx',
+      EMPTY_DENOM_MAP,
+      'manifest1deadbeef',
+    );
+
+    // The SKU gate must NOT have fired — resolved name matches candidate.
+    expect(out.reasons.some((r) => /not currently offered/i.test(r))).toBe(
+      false,
+    );
+    expect(out.suggestedActions).not.toContain('pick_different_sku');
+    // Overall status is ok (wallet + credits are healthy).
+    expect(out.status).toBe('ok');
+  });
+
+  it('FIX-1 NEGATIVE: mismatched size does NOT match candidate → SKU gate blocks (proves gate is real and fix is load-bearing)', () => {
+    // Same sku_candidates as above, but `size: 'small'` — the raw user
+    // request that does NOT match the candidate's name ('docker-micro').
+    // This is exactly the old (pre-fix) behavior when deploy-app passed
+    // `requestedSize(spec)` instead of `pinned.name`. The gate must fire.
+    const raw = {
+      tenant: 'manifest1deadbeef',
+      image: 'docker.io/library/nginx:1.27',
+      size: 'small', // MISMATCHED — does not match 'docker-micro' candidate
+      wallet_balances: [{ denom: 'umfx', amount: '10000000' }],
+      credits: {
+        active_leases: '0',
+        pending_leases: '0',
+        reserved_amounts: [],
+        available_balances: [{ denom: 'umfx', amount: '50000000000' }],
+      },
+      sku: null, // no resolved sku for the mismatched size
+      sku_candidates: [
+        {
+          name: 'docker-micro',
+          uuid: 'X',
+          provider_uuid: 'p1',
+          price: { amount: '1', denom: 'umfx' },
+          active: true,
+        },
+      ],
+      available_skus: [
+        { name: 'docker-micro', uuid: 'X', provider_uuid: 'p1' },
+      ],
+      ready: false,
+      missing_steps: [],
+    } as never;
+
+    const out = evaluateReadinessFromFredResponse(
+      raw,
+      '1umfx',
+      EMPTY_DENOM_MAP,
+      'manifest1deadbeef',
+    );
+
+    // The SKU gate must have fired — 'small' is not in the candidate list.
+    expect(out.status).toBe('block');
+    expect(out.reasons.some((r) => /not currently offered/i.test(r))).toBe(
+      true,
+    );
+    expect(out.suggestedActions).toContain('pick_different_sku');
+  });
+});
+
 describe('evaluateReadinessFromFredResponse — sku-name union (Copilot #3319670583)', () => {
-  // Fred caps `available_sku_names` at MAX_SKU_NAMES_RETURNED = 50
+  // Fred caps `available_skus` at MAX_SKU_NAMES_RETURNED = 50
   // (`packages/fred/src/tools/checkDeploymentReadiness.ts`). When fred
   // offers >50 SKUs and the user's requested size is past the slice
-  // boundary, the evaluator's SKU-availability rule
-  // (`evaluate-readiness.ts:133` — `!availableSkuNames.includes(size)`)
-  // false-blocks a valid deploy. Fred ALREADY resolved the user's
-  // requested SKU (it's on `raw.sku.name`), so the translator unions
-  // that name into the names set before handing off to the evaluator.
+  // boundary, the evaluator's SKU-availability rule could false-block a
+  // valid deploy. Fred ALREADY resolved the user's requested SKU (it's
+  // on `raw.sku.name`), so the translator unions that name into the
+  // names set before handing off to the evaluator.
+  // Note: `available_sku_names` was removed in ENG-258 Task 15
+  // (clean-break); the source of truth is now `available_skus`.
 
   beforeEach(() => vi.clearAllMocks());
 
   it('unions `raw.sku.name` into `availableSkuNames` so a fred-resolved SKU past the 50-name slice does not false-block', () => {
     // Simulate the truncation: 'docker-xxlarge' is OFFERED by fred (it
-    // resolved `raw.sku` with that name), but the `available_sku_names`
+    // resolved `raw.sku` with that name), but the `available_skus`
     // display list omits it (would have if real fred truncated past
     // entry 50). Without the union the evaluator's SKU rule fires
     // `status: 'block'` with "Requested SKU ... not currently offered";
@@ -321,7 +497,20 @@ describe('evaluateReadinessFromFredResponse — sku-name union (Copilot #3319670
         active: true,
         price: { denom: 'umfx', amount: '100' },
       },
-      available_sku_names: ['docker-micro', 'docker-small'],
+      sku_candidates: [
+        {
+          name: 'docker-xxlarge',
+          uuid: 'sku-uuid-xxlarge',
+          provider_uuid: 'prov-uuid-xxlarge',
+          active: true,
+          price: { denom: 'umfx', amount: '100' },
+        },
+      ],
+      available_skus: [
+        { name: 'docker-micro', uuid: 'sku-micro', provider_uuid: 'p1' },
+        { name: 'docker-small', uuid: 'sku-small', provider_uuid: 'p1' },
+        // 'docker-xxlarge' deliberately absent to simulate truncation
+      ],
     });
     const out = evaluateReadinessFromFredResponse(
       raw,
@@ -329,7 +518,8 @@ describe('evaluateReadinessFromFredResponse — sku-name union (Copilot #3319670
       EMPTY_DENOM_MAP,
       'manifest1deadbeef',
     );
-    // The SKU-availability rule must NOT have fired.
+    // The SKU-availability rule must NOT have fired —
+    // candidates path found a match for 'docker-xxlarge'.
     expect(
       out.reasons.some((r) =>
         /Requested SKU.*is not currently offered/i.test(r),
@@ -341,12 +531,23 @@ describe('evaluateReadinessFromFredResponse — sku-name union (Copilot #3319670
     expect(out.status).toBe('ok');
   });
 
-  it('union via Set dedupes — when `raw.sku.name` is ALREADY in `available_sku_names`, no double-add', () => {
+  it('union via Set dedupes — when `raw.sku.name` is ALREADY in `available_skus`, no double-add', () => {
     const raw = fredResponse({
-      // `'small'` appears in BOTH `available_sku_names` and `raw.sku.name`.
+      // `'small'` appears in BOTH `available_skus` and `raw.sku.name`.
       // The Set-backed union must dedupe — no double entry would mask a
       // future bug where the size check compares lengths.
-      available_sku_names: ['small', 'medium'],
+      available_skus: [
+        {
+          name: 'small',
+          uuid: 'sku-uuid-fixture',
+          provider_uuid: 'prov-uuid-fixture',
+        },
+        {
+          name: 'medium',
+          uuid: 'sku-uuid-medium',
+          provider_uuid: 'prov-uuid-fixture',
+        },
+      ],
     });
     evaluateReadinessFromFredResponse(
       raw,
@@ -362,7 +563,19 @@ describe('evaluateReadinessFromFredResponse — sku-name union (Copilot #3319670
   it('no-op when `raw.sku === null` — does not add or crash', () => {
     const raw = fredResponse({
       sku: null,
-      available_sku_names: ['small', 'medium'],
+      sku_candidates: [],
+      available_skus: [
+        {
+          name: 'small',
+          uuid: 'sku-uuid-fixture',
+          provider_uuid: 'prov-uuid-fixture',
+        },
+        {
+          name: 'medium',
+          uuid: 'sku-uuid-medium',
+          provider_uuid: 'prov-uuid-fixture',
+        },
+      ],
     });
     evaluateReadinessFromFredResponse(
       raw,

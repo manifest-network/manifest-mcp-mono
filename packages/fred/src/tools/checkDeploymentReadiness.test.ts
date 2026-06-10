@@ -64,7 +64,7 @@ describe('checkDeploymentReadiness', () => {
     expect(result.missing_steps).toHaveLength(0);
     expect(result.sku?.name).toBe('docker-micro');
     expect(result.sku?.active).toBe(true);
-    expect(result.available_sku_names).toEqual(['docker-micro']);
+    expect(result.available_skus.map((s) => s.name)).toContain('docker-micro');
   });
 
   it('reports missing SKU and offers alternatives', async () => {
@@ -166,7 +166,7 @@ describe('checkDeploymentReadiness', () => {
     expect(result.image).toBe('ghcr.io/example/web:v1');
   });
 
-  it('caps available_sku_names so a large catalog cannot bloat the response', async () => {
+  it('caps available_skus so a large catalog cannot bloat the response', async () => {
     const skus = Array.from({ length: 75 }, (_, i) => ({
       uuid: `sku-${i}`,
       name: `tier-${i}`,
@@ -186,9 +186,341 @@ describe('checkDeploymentReadiness', () => {
     const result = await checkDeploymentReadiness(qc, ADDRESS, {
       size: 'tier-60',
     });
-    // The requested tier still resolves (uses the full Map for lookup,
-    // not the truncated list).
+    // The requested tier still resolves (unique name → single candidate).
     expect(result.sku?.name).toBe('tier-60');
-    expect(result.available_sku_names.length).toBe(50);
+    expect(result.sku_candidates).toHaveLength(1);
+    expect(result.available_skus.length).toBe(50);
+  });
+
+  it('ENG-258: returns all candidates for a duplicate name with distinct provider/price', async () => {
+    const qc = makeQc({
+      skus: [
+        {
+          uuid: 'a',
+          name: 'docker-micro',
+          providerUuid: 'p1',
+          basePrice: { amount: '100', denom: 'umfx' },
+        },
+        {
+          uuid: 'b',
+          name: 'docker-micro',
+          providerUuid: 'p2',
+          basePrice: { amount: '120', denom: 'umfx' },
+        },
+      ],
+      creditAccount: {
+        activeLeaseCount: 0n,
+        pendingLeaseCount: 0n,
+        reservedAmounts: [],
+      },
+      creditAccountAvailableBalances: [{ denom: 'umfx', amount: '999999' }],
+    });
+    const res = await checkDeploymentReadiness(qc, ADDRESS, {
+      size: 'docker-micro',
+    });
+    expect(res.sku_candidates).toHaveLength(2);
+    expect(res.sku).toBeNull(); // ambiguous → no determinate single pick
+    expect(res.ready).toBe(false);
+    expect(res.missing_steps.join(' ')).toMatch(/provider_uuid|sku_uuid/);
+  });
+
+  it('ENG-258: narrows to a single candidate with provider_uuid', async () => {
+    const qc = makeQc({
+      skus: [
+        {
+          uuid: 'a',
+          name: 'docker-micro',
+          providerUuid: 'p1',
+          basePrice: { amount: '100', denom: 'umfx' },
+        },
+        {
+          uuid: 'b',
+          name: 'docker-micro',
+          providerUuid: 'p2',
+          basePrice: { amount: '120', denom: 'umfx' },
+        },
+      ],
+      creditAccount: {
+        activeLeaseCount: 0n,
+        pendingLeaseCount: 0n,
+        reservedAmounts: [],
+      },
+      creditAccountAvailableBalances: [{ denom: 'umfx', amount: '999999' }],
+    });
+    const res = await checkDeploymentReadiness(qc, ADDRESS, {
+      size: 'docker-micro',
+      providerUuid: 'p2',
+    });
+    expect(res.sku_candidates).toHaveLength(1);
+    expect(res.sku?.uuid).toBe('b');
+  });
+
+  it('ENG-258: skuUuid bypasses the name filter — SKU with a different name than size is still resolved', async () => {
+    // The key scenario: skuUuid 'b' has name 'docker-large', but the caller
+    // passes size: 'docker-micro'. Old AND-filter semantics would drop 'b' because
+    // name !== 'docker-micro'. The correct bypass semantics return 'b' regardless.
+    const qc = makeQc({
+      skus: [
+        {
+          uuid: 'a',
+          name: 'docker-micro',
+          providerUuid: 'p1',
+          basePrice: { amount: '100', denom: 'umfx' },
+        },
+        {
+          uuid: 'b',
+          name: 'docker-large',
+          providerUuid: 'p2',
+          basePrice: { amount: '120', denom: 'umfx' },
+        },
+      ],
+      creditAccount: {
+        activeLeaseCount: 0n,
+        pendingLeaseCount: 0n,
+        reservedAmounts: [],
+      },
+      creditAccountAvailableBalances: [{ denom: 'umfx', amount: '999999' }],
+    });
+    const res = await checkDeploymentReadiness(qc, ADDRESS, {
+      size: 'docker-micro', // different from the target SKU name — must be ignored
+      skuUuid: 'b',
+    });
+    expect(res.sku_candidates).toHaveLength(1);
+    expect(res.sku?.uuid).toBe('b');
+    expect(res.sku?.name).toBe('docker-large');
+    expect(res.ready).toBe(true);
+    expect(res.missing_steps).toHaveLength(0);
+  });
+
+  it('ENG-258: skuUuid-only (no size) resolves the SKU by identity', async () => {
+    const qc = makeQc({
+      skus: [
+        {
+          uuid: 'a',
+          name: 'docker-micro',
+          providerUuid: 'p1',
+          basePrice: { amount: '100', denom: 'umfx' },
+        },
+        {
+          uuid: 'b',
+          name: 'docker-micro',
+          providerUuid: 'p2',
+          basePrice: { amount: '120', denom: 'umfx' },
+        },
+      ],
+      creditAccount: {
+        activeLeaseCount: 0n,
+        pendingLeaseCount: 0n,
+        reservedAmounts: [],
+      },
+      creditAccountAvailableBalances: [{ denom: 'umfx', amount: '999999' }],
+    });
+    const res = await checkDeploymentReadiness(qc, ADDRESS, {
+      skuUuid: 'b',
+    });
+    expect(res.sku_candidates).toHaveLength(1);
+    expect(res.sku?.uuid).toBe('b');
+  });
+
+  it('ENG-258: skuUuid not found → missing_steps mentions the uuid', async () => {
+    const qc = makeQc({
+      skus: [
+        {
+          uuid: 'a',
+          name: 'docker-micro',
+          providerUuid: 'p1',
+        },
+      ],
+      creditAccount: {
+        activeLeaseCount: 0n,
+        pendingLeaseCount: 0n,
+        reservedAmounts: [],
+      },
+      creditAccountAvailableBalances: [{ denom: 'umfx', amount: '999999' }],
+    });
+    const res = await checkDeploymentReadiness(qc, ADDRESS, {
+      skuUuid: 'nonexistent-uuid',
+    });
+    expect(res.sku).toBeNull();
+    expect(res.sku_candidates).toHaveLength(0);
+    expect(res.ready).toBe(false);
+    expect(res.missing_steps.some((m) => m.includes('nonexistent-uuid'))).toBe(
+      true,
+    );
+  });
+
+  it('ENG-258: skuUuid not found on specific provider → missing_steps mentions uuid and provider', async () => {
+    const qc = makeQc({
+      skus: [
+        {
+          uuid: 'a',
+          name: 'docker-micro',
+          providerUuid: 'p1',
+        },
+      ],
+      creditAccount: {
+        activeLeaseCount: 0n,
+        pendingLeaseCount: 0n,
+        reservedAmounts: [],
+      },
+      creditAccountAvailableBalances: [{ denom: 'umfx', amount: '999999' }],
+    });
+    // SKU 'a' exists but on p1, not p2
+    const res = await checkDeploymentReadiness(qc, ADDRESS, {
+      skuUuid: 'a',
+      providerUuid: 'p2',
+    });
+    expect(res.sku).toBeNull();
+    expect(res.sku_candidates).toHaveLength(0);
+    expect(res.ready).toBe(false);
+    expect(res.missing_steps.some((m) => m.includes('a'))).toBe(true);
+    expect(res.missing_steps.some((m) => m.includes('p2'))).toBe(true);
+  });
+
+  it('ENG-258 r2: result.size echoes the resolved SKU name when skuUuid resolves a SKU with a different name', async () => {
+    // When a caller pins a skuUuid whose SKU name differs from the supplied size,
+    // the returned `size` must reflect the *resolved* SKU name so the result is
+    // internally consistent (size === sku.name). (ENG-258 r2 FIX B)
+    const qc = makeQc({
+      skus: [
+        {
+          uuid: 'sku-large-uuid',
+          name: 'docker-large',
+          providerUuid: 'prov-1',
+          basePrice: { denom: 'upwr', amount: '200' },
+          active: true,
+        },
+      ],
+      creditAccount: {
+        activeLeaseCount: 0n,
+        pendingLeaseCount: 0n,
+        reservedAmounts: [],
+      },
+      creditAccountAvailableBalances: [{ denom: 'upwr', amount: '9999999' }],
+    });
+    const res = await checkDeploymentReadiness(qc, ADDRESS, {
+      size: 'small',
+      skuUuid: 'sku-large-uuid',
+    });
+    // The resolved SKU is 'docker-large', not 'small' — size must reflect the
+    // resolved name, not the caller-supplied input.size.
+    expect(res.size).toBe('docker-large');
+    expect(res.sku?.name).toBe('docker-large');
+    expect(res.sku?.uuid).toBe('sku-large-uuid');
+    expect(res.ready).toBe(true);
+  });
+
+  it('ENG-258: exposes available_skus with uuid + provider', async () => {
+    const qc = makeQc({
+      skus: [{ uuid: 'a', name: 'docker-micro', providerUuid: 'p1' }],
+    });
+    const res = await checkDeploymentReadiness(qc, ADDRESS, {});
+    expect(res.available_skus).toContainEqual({
+      name: 'docker-micro',
+      uuid: 'a',
+      provider_uuid: 'p1',
+    });
+  });
+
+  it('trim: padded size resolves the candidate as if un-padded', async () => {
+    const qc = makeQc({
+      walletBalances: [{ denom: 'umfx', amount: '5000000' }],
+      creditAccount: {
+        activeLeaseCount: 0n,
+        pendingLeaseCount: 0n,
+        reservedAmounts: [],
+      },
+      creditAccountAvailableBalances: [{ denom: 'upwr', amount: '1000000' }],
+      skus: [
+        {
+          uuid: 'sku-trim-1',
+          name: 'docker-micro',
+          providerUuid: 'prov-1',
+          basePrice: { denom: 'upwr', amount: '100' },
+          active: true,
+        },
+      ],
+    });
+
+    const result = await checkDeploymentReadiness(qc, ADDRESS, {
+      size: '  docker-micro  ',
+    });
+    // Padded input must resolve the same as the exact name.
+    expect(result.sku?.name).toBe('docker-micro');
+    expect(result.sku_candidates).toHaveLength(1);
+    expect(result.ready).toBe(true);
+    expect(result.missing_steps).toHaveLength(0);
+  });
+
+  it('trim: whitespace-only skuUuid is treated as absent — resolves via size instead', async () => {
+    const qc = makeQc({
+      walletBalances: [{ denom: 'umfx', amount: '5000000' }],
+      creditAccount: {
+        activeLeaseCount: 0n,
+        pendingLeaseCount: 0n,
+        reservedAmounts: [],
+      },
+      creditAccountAvailableBalances: [{ denom: 'upwr', amount: '1000000' }],
+      skus: [
+        {
+          uuid: 'sku-1',
+          name: 'docker-micro',
+          providerUuid: 'prov-1',
+          basePrice: { denom: 'upwr', amount: '100' },
+          active: true,
+        },
+      ],
+    });
+
+    // skuUuid is whitespace-only — must be treated as absent and not take the
+    // UUID path (which would emit "SKU uuid '   ' not found" and return no candidates).
+    const result = await checkDeploymentReadiness(qc, ADDRESS, {
+      size: 'docker-micro',
+      skuUuid: '   ',
+    });
+    expect(result.sku?.name).toBe('docker-micro');
+    expect(result.sku_candidates).toHaveLength(1);
+    expect(result.ready).toBe(true);
+    // Must NOT contain a uuid-not-found message.
+    expect(result.missing_steps.every((m) => !m.includes('SKU uuid'))).toBe(
+      true,
+    );
+  });
+
+  it('trim: padded providerUuid narrows the candidate correctly', async () => {
+    const qc = makeQc({
+      walletBalances: [{ denom: 'umfx', amount: '5000000' }],
+      creditAccount: {
+        activeLeaseCount: 0n,
+        pendingLeaseCount: 0n,
+        reservedAmounts: [],
+      },
+      creditAccountAvailableBalances: [{ denom: 'upwr', amount: '1000000' }],
+      skus: [
+        {
+          uuid: 'a',
+          name: 'docker-micro',
+          providerUuid: 'p1',
+          basePrice: { denom: 'upwr', amount: '100' },
+          active: true,
+        },
+        {
+          uuid: 'b',
+          name: 'docker-micro',
+          providerUuid: 'p2',
+          basePrice: { denom: 'upwr', amount: '120' },
+          active: true,
+        },
+      ],
+    });
+
+    const result = await checkDeploymentReadiness(qc, ADDRESS, {
+      size: 'docker-micro',
+      providerUuid: '  p1  ',
+    });
+    // Padded providerUuid must narrow to the p1 candidate only.
+    expect(result.sku_candidates).toHaveLength(1);
+    expect(result.sku?.uuid).toBe('a');
+    expect(result.ready).toBe(true);
   });
 });

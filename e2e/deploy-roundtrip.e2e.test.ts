@@ -94,7 +94,7 @@ describe('Deploy roundtrip via M1 primitives', () => {
       ready: boolean;
       missing_steps: string[];
       sku: { name: string } | null;
-      available_sku_names: string[];
+      available_skus: Array<{ name: string; uuid: string; provider_uuid: string }>;
     }>('check_deployment_readiness', { size: 'docker-massive-imaginary' });
 
     expect(result.ready).toBe(false);
@@ -102,7 +102,7 @@ describe('Deploy roundtrip via M1 primitives', () => {
     expect(
       result.missing_steps.some((m) => m.includes('docker-massive-imaginary')),
     ).toBe(true);
-    expect(result.available_sku_names).toContain('docker-micro');
+    expect(result.available_skus.map((s) => s.name)).toContain('docker-micro');
   });
 
   // ------------------------------------------------------------------
@@ -149,6 +149,17 @@ describe('Deploy roundtrip via M1 primitives', () => {
     expect(result.size).toBe('docker-micro');
     expect(result.image).toBe(IMAGE);
     expect(result.tenant).toBeTruthy();
+  });
+
+  // ------------------------------------------------------------------
+  // SKU_AMBIGUOUS placeholder — covered by unit/integration tests only.
+  // ------------------------------------------------------------------
+
+  it.skip('SKU_AMBIGUOUS: deploy a duplicate-name SKU resolves by provider_uuid (requires multi-provider same-name seed) — ENG-258', () => {
+    // Duplicate-name resolution is covered by unit/integration tests across
+    // core/fred/agent-core/agent. A live e2e needs the chain seed to publish
+    // two SKUs with the same name on different providers (init_chain.sh /
+    // init_billing.sh) — deferred to avoid destabilizing the shared fixture.
   });
 
   // ------------------------------------------------------------------

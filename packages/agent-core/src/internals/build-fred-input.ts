@@ -179,15 +179,22 @@ export function buildManifestPreviewInput(
  * meta-hash recorded on-chain matches the manifest actually uploaded).
  * Additionally threads `customDomain` (both shapes) and `serviceName`
  * (stack only — single-service leases have no service-name to address).
+ *
+ * @param pin Optional pre-resolved SKU pin (ENG-258). When supplied, spreads
+ *   `skuUuid` and `providerUuid` into the output so fred's `deployApp` skips
+ *   the name-based lookup (uses the `resolved` selector path). Existing
+ *   2-arg callers are unaffected — the parameter is optional.
  */
 export function buildFredDeployInput(
   spec: DeploySpec,
   size: string,
+  pin?: { skuUuid: string; providerUuid: string },
 ): FredDeployAppInput {
   if (isStackSpec(spec)) {
     const out: FredDeployAppInput = {
       size,
       services: convertStackServices(spec),
+      ...(pin ? { skuUuid: pin.skuUuid, providerUuid: pin.providerUuid } : {}),
     };
     if (typeof spec.customDomain === 'string' && spec.customDomain.length > 0) {
       out.customDomain = spec.customDomain;
@@ -198,7 +205,11 @@ export function buildFredDeployInput(
     return out;
   }
   const port = narrowSingleServicePort(spec.port);
-  const out: FredDeployAppInput = { size, image: spec.image };
+  const out: FredDeployAppInput = {
+    size,
+    image: spec.image,
+    ...(pin ? { skuUuid: pin.skuUuid, providerUuid: pin.providerUuid } : {}),
+  };
   if (port !== undefined) out.port = port;
   if (spec.env !== undefined) out.env = spec.env;
   if (typeof spec.customDomain === 'string' && spec.customDomain.length > 0) {

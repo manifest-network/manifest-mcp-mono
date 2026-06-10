@@ -59,10 +59,20 @@ export function registerTools(deps: RegisterToolsDeps): void {
     'browse_catalog',
     {
       description:
-        'Browse available cloud providers and service tiers with live health checks. Use this before deploy_app to see which providers are online and what SKU sizes (e.g. docker-micro, docker-small) are available with pricing.',
+        'Browse available cloud providers and SKUs with live health checks. Use this before deploy_app to see which providers are online and what SKU sizes (e.g. docker-micro, docker-small) are available with pricing.',
       outputSchema: {
         providers: z.array(z.looseObject({})),
-        tiers: z.record(z.string(), z.array(z.looseObject({}))),
+        skus: z.array(
+          z.object({
+            name: z.string(),
+            sku_uuid: z.string(),
+            provider_uuid: z.string(),
+            provider_url: z.string().nullable(),
+            price: z.string().nullable(),
+            unit: z.string().nullable(),
+            active: z.boolean(),
+          }),
+        ),
       },
       annotations: readOnlyAnnotations('Browse providers and SKUs'),
       _meta: manifestMeta({
@@ -277,6 +287,16 @@ export function registerTools(deps: RegisterToolsDeps): void {
           .describe(
             'Image planned for deployment. Recorded on the result for downstream display; not validated.',
           ),
+        provider_uuid: z
+          .string()
+          .optional()
+          .describe('Narrow a duplicate SKU `size` to one provider.'),
+        sku_uuid: z
+          .string()
+          .optional()
+          .describe(
+            'Resolve the SKU by uuid, bypassing the `size` name filter. When set, `size` is ignored for candidate selection. Pair with `provider_uuid` to further narrow to a specific provider.',
+          ),
       },
       outputSchema: {
         tenant: z.string(),
@@ -301,7 +321,24 @@ export function registerTools(deps: RegisterToolsDeps): void {
             active: z.boolean(),
           })
           .nullable(),
-        available_sku_names: z.array(z.string()),
+        sku_candidates: z.array(
+          z.object({
+            name: z.string(),
+            uuid: z.string(),
+            provider_uuid: z.string(),
+            price: z
+              .object({ amount: z.string(), denom: z.string() })
+              .optional(),
+            active: z.boolean(),
+          }),
+        ),
+        available_skus: z.array(
+          z.object({
+            name: z.string(),
+            uuid: z.string(),
+            provider_uuid: z.string(),
+          }),
+        ),
         ready: z.boolean(),
         missing_steps: z.array(z.string()),
       },
@@ -318,6 +355,8 @@ export function registerTools(deps: RegisterToolsDeps): void {
       const result = await checkDeploymentReadiness(queryClient, address, {
         size: args.size,
         image: args.image,
+        providerUuid: args.provider_uuid,
+        skuUuid: args.sku_uuid,
       });
       return structuredResponse(result, bigIntReplacer);
     }),
@@ -477,6 +516,23 @@ export function registerTools(deps: RegisterToolsDeps): void {
         size: z
           .string()
           .describe('SKU tier name (e.g. "docker-micro", "docker-small")'),
+        provider_uuid: z
+          .string()
+          .optional()
+          .describe(
+            'Disambiguate when multiple providers publish a SKU with the same `size` name. ' +
+              'Get candidates from browse_catalog or check_deployment_readiness. If a name ' +
+              'is ambiguous and this is omitted, deploy_app fails with a SKU_AMBIGUOUS error ' +
+              'listing the candidates.',
+          ),
+        sku_uuid: z
+          .string()
+          .optional()
+          .describe(
+            'Pin a specific SKU by its uuid. If provider_uuid is also given, the ' +
+              "on-chain lookup is fully bypassed; otherwise the chain is still queried to resolve the SKU's " +
+              'provider. Takes precedence over size.',
+          ),
         env: z
           .record(z.string(), z.string())
           .optional()
@@ -638,6 +694,8 @@ export function registerTools(deps: RegisterToolsDeps): void {
             storage: args.storage,
             depends_on: args.depends_on,
             services: args.services,
+            providerUuid: args.provider_uuid,
+            skuUuid: args.sku_uuid,
             gasMultiplier: args.gas_multiplier,
             customDomain: args.custom_domain,
             serviceName: args.service_name,

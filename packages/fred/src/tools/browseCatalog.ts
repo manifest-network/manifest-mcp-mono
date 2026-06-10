@@ -87,22 +87,15 @@ export async function browseCatalog(
     providersResult.providers.map((p) => [p.uuid, p]),
   );
 
-  const tiers: Record<
-    string,
-    Array<{ provider: string; price: string | null; unit: string | null }>
-  > = {};
-  for (const s of skusResult.skus) {
-    const provider = providerByUuid.get(s.providerUuid);
-    const entry = {
-      provider: provider?.apiUrl ?? s.providerUuid,
-      price: s.basePrice?.amount ?? null,
-      unit: s.basePrice?.denom ?? null,
-    };
-    if (!tiers[s.name]) {
-      tiers[s.name] = [];
-    }
-    tiers[s.name].push(entry);
-  }
+  const skus = skusResult.skus.map((s) => ({
+    name: s.name,
+    sku_uuid: s.uuid,
+    provider_uuid: s.providerUuid,
+    provider_url: providerByUuid.get(s.providerUuid)?.apiUrl ?? null,
+    price: s.basePrice?.amount ?? null,
+    unit: s.basePrice?.denom ?? null,
+    active: s.active,
+  }));
 
-  return { providers, tiers };
+  return { providers, skus };
 }

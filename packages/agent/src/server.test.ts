@@ -413,6 +413,56 @@ describe('AgentMCPServer', () => {
         await client.close();
       }
     });
+
+    // ENG-296: `providerUuid` and `skuUuid` are SKU disambiguators declared
+    // as discoverable, typed optional properties on the `spec` schema so a
+    // contract-following caller (or LLM) can pin a specific SKU or provider.
+    // Mirrors the `size` test above — property stays NESTED under `spec`,
+    // so the top-level `['spec']` contract is unaffected.
+    it('deploy_app_orchestrated spec schema surfaces documented `providerUuid` and `skuUuid` properties', async () => {
+      const server = makeServer();
+      const [clientTransport, serverTransport] =
+        InMemoryTransport.createLinkedPair();
+      activeTransports.push(clientTransport, serverTransport);
+      const client = new Client({ name: 'test-client', version: '1.0.0' });
+      await server.getServer().connect(serverTransport);
+      await client.connect(clientTransport);
+      try {
+        const result = await client.listTools();
+        const deploy = result.tools.find(
+          (t) => t.name === 'deploy_app_orchestrated',
+        );
+        const specSchema = (
+          deploy?.inputSchema as {
+            properties?: { spec?: unknown };
+          }
+        ).properties?.spec as {
+          properties?: {
+            providerUuid?: { type?: string; description?: string };
+            skuUuid?: { type?: string; description?: string };
+          };
+          required?: string[];
+        };
+        const providerUuid = specSchema?.properties?.providerUuid;
+        expect(
+          providerUuid,
+          'providerUuid must be defined on spec schema',
+        ).toBeDefined();
+        expect(providerUuid?.type).toBe('string');
+        expect(providerUuid?.description ?? '').not.toBe('');
+        // Optional: callers may omit it.
+        expect(specSchema?.required ?? []).not.toContain('providerUuid');
+
+        const skuUuid = specSchema?.properties?.skuUuid;
+        expect(skuUuid, 'skuUuid must be defined on spec schema').toBeDefined();
+        expect(skuUuid?.type).toBe('string');
+        expect(skuUuid?.description ?? '').not.toBe('');
+        // Optional: callers may omit it.
+        expect(specSchema?.required ?? []).not.toContain('skuUuid');
+      } finally {
+        await client.close();
+      }
+    });
   });
 
   // ─────────────────────────────────────────────────────────────────
@@ -502,6 +552,112 @@ describe('AgentMCPServer', () => {
       // Spread omits `dataDir` when env is unset (see buildDeployOptions);
       // orchestrator therefore receives the slot as `undefined`.
       expect(observedDataDir).toBeUndefined();
+    });
+  });
+
+  // ─────────────────────────────────────────────────────────────────
+  // ENG-258 r2 FIX A — snake_case sku_uuid / provider_uuid normalization.
+  //
+  // browse_catalog / check_deployment_readiness emit snake_case keys
+  // (`sku_uuid`, `provider_uuid`). An LLM copying those keys into the
+  // orchestrated spec silently drops them because agent-core reads the
+  // camelCase variants. The handler normalizes snake → camel (preferring
+  // an explicit camelCase value when both are present).
+  // ─────────────────────────────────────────────────────────────────
+  describe('deploy_app_orchestrated snake_case sku_uuid / provider_uuid normalization', () => {
+    function makeShortCircuitDeploy(
+      capture: (spec: DeploySpec) => void,
+    ): AgentOrchestrators['deployApp'] {
+      return async (_spec, cb, _opts) => {
+        capture(_spec);
+        // Short-circuit after observing the spec — no broadcast needed.
+        cb.onProgress?.({ kind: 'user_confirmed' });
+        const { ManifestMCPError, ManifestMCPErrorCode } = await import(
+          '@manifest-network/manifest-mcp-core'
+        );
+        throw new ManifestMCPError(
+          ManifestMCPErrorCode.TX_FAILED,
+          'test stub: short-circuit after observing spec',
+        );
+      };
+    }
+
+    it('sku_uuid (snake) → skuUuid (camel) when skuUuid is absent', async () => {
+      let observedSpec: DeploySpec | undefined;
+      const server = makeServer({
+        deployApp: makeShortCircuitDeploy((s) => {
+          observedSpec = s;
+        }),
+      });
+      await callToolWithCapture(
+        server,
+        'deploy_app_orchestrated',
+        { spec: { image: 'nginx', port: 80, sku_uuid: 'sku-abc-123' } },
+        {
+          respond: () => ({
+            action: 'accept',
+            content: { verdict: 'confirm' },
+          }),
+        },
+      );
+      expect(
+        (observedSpec as unknown as Record<string, unknown>)?.skuUuid,
+      ).toBe('sku-abc-123');
+    });
+
+    it('provider_uuid (snake) → providerUuid (camel) when providerUuid is absent', async () => {
+      let observedSpec: DeploySpec | undefined;
+      const server = makeServer({
+        deployApp: makeShortCircuitDeploy((s) => {
+          observedSpec = s;
+        }),
+      });
+      await callToolWithCapture(
+        server,
+        'deploy_app_orchestrated',
+        {
+          spec: { image: 'nginx', port: 80, provider_uuid: 'prov-xyz-789' },
+        },
+        {
+          respond: () => ({
+            action: 'accept',
+            content: { verdict: 'confirm' },
+          }),
+        },
+      );
+      expect(
+        (observedSpec as unknown as Record<string, unknown>)?.providerUuid,
+      ).toBe('prov-xyz-789');
+    });
+
+    it('explicit camelCase skuUuid wins over snake_case sku_uuid when both are present', async () => {
+      let observedSpec: DeploySpec | undefined;
+      const server = makeServer({
+        deployApp: makeShortCircuitDeploy((s) => {
+          observedSpec = s;
+        }),
+      });
+      await callToolWithCapture(
+        server,
+        'deploy_app_orchestrated',
+        {
+          spec: {
+            image: 'nginx',
+            port: 80,
+            skuUuid: 'sku-camel-wins',
+            sku_uuid: 'sku-snake-loses',
+          },
+        },
+        {
+          respond: () => ({
+            action: 'accept',
+            content: { verdict: 'confirm' },
+          }),
+        },
+      );
+      expect(
+        (observedSpec as unknown as Record<string, unknown>)?.skuUuid,
+      ).toBe('sku-camel-wins');
     });
   });
 

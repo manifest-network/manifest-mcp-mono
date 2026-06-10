@@ -328,11 +328,37 @@ export class AgentMCPServer {
                     'unknown tier is rejected at the readiness check (before any ' +
                     'broadcast), which reports the available tier names.',
                 ),
+              // ENG-296: SKU disambiguators. Declared (like `size`) so
+              // they're discoverable + type-checked at the MCP boundary.
+              providerUuid: z
+                .string()
+                .optional()
+                .describe(
+                  'Optional SKU disambiguator: narrows an ambiguous `size` name ' +
+                    'to a single provider when the same SKU name is published by ' +
+                    'multiple providers. See browse_catalog / ' +
+                    'check_deployment_readiness `sku_candidates`.',
+                ),
+              skuUuid: z
+                .string()
+                .optional()
+                .describe(
+                  'Optional SKU disambiguator: pins a specific SKU by uuid, ' +
+                    'bypassing the `size` name lookup entirely (wins over ' +
+                    'providerUuid). Use to deploy on an exact SKU.',
+                ),
             })
             .describe(
               'DeploySpec — either SingleServiceSpec ({ image, port?, env?, customDomain?, size? }) ' +
                 'or StackSpec ({ services: { [name]: ServiceDef }, customDomain?, serviceName?, size? }). ' +
-                'agent-core validates structure; pass the typed shape from manifest-agent-core types.',
+                '`size` is the declared field above; the object also passes through an optional ' +
+                '`providerUuid`/`provider_uuid` or `skuUuid`/`sku_uuid` to disambiguate when a SKU ' +
+                'name is published by multiple providers (see browse_catalog / ' +
+                'check_deployment_readiness `sku_candidates`). Both camelCase and snake_case aliases ' +
+                'are accepted — callers copying from browse_catalog / check_deployment_readiness ' +
+                'output (which uses snake_case) can pass `sku_uuid`/`provider_uuid` directly. ' +
+                'If a name is ambiguous and neither is given, you will be prompted to pick a provider. ' +
+                'agent-core validates structure.',
             ),
           // The `data_dir` per-call argument was removed in Phase 2
           // (finding #4). `saveManifest` chmods the supplied path to
@@ -369,8 +395,25 @@ export class AgentMCPServer {
             extra,
           });
           const opts = await this.buildDeployOptions();
+          // Normalize snake_case aliases from sibling fred tools
+          // (browse_catalog / check_deployment_readiness emit snake_case
+          // `sku_uuid` / `provider_uuid`). An LLM copying those keys into
+          // the spec would get them silently dropped by agent-core which
+          // reads `skuUuid` / `providerUuid`. Prefer an explicit camelCase
+          // value if both somehow present.
+          const raw = args.spec as Record<string, unknown>;
+          const spec = {
+            ...raw,
+            ...(typeof raw.sku_uuid === 'string' && raw.skuUuid === undefined
+              ? { skuUuid: raw.sku_uuid }
+              : {}),
+            ...(typeof raw.provider_uuid === 'string' &&
+            raw.providerUuid === undefined
+              ? { providerUuid: raw.provider_uuid }
+              : {}),
+          } as DeploySpec;
           const result = await this.orchestrators.deployApp(
-            args.spec as DeploySpec,
+            spec,
             callbacks,
             opts,
           );

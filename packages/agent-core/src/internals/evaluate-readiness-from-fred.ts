@@ -11,10 +11,13 @@
  *
  * Three concerns the translator owns:
  *
- *   1. **Field renames** — snake_case → camelCase across all 9 fred
+ *   1. **Field renames** — snake_case → camelCase across all fred
  *      top-level fields the evaluator consumes (`wallet_balances` →
- *      `walletBalances`, `available_sku_names` → `availableSkuNames`,
- *      `credits.available_balances` → `credits.availableBalances`, etc.).
+ *      `walletBalances`; `credits.available_balances` →
+ *      `credits.availableBalances`, etc.). ENG-258 (Task 15) removed
+ *      the `available_sku_names` field; `availableSkuNames` is now
+ *      derived from `available_skus` and `sku_candidates` maps to
+ *      `skuCandidates` for the candidate-based gate.
  *
  *   2. **Folding top-level → nested** — fred's `getBalance` emits
  *      `current_balance` and `hours_remaining` ALONGSIDE `credits`
@@ -75,17 +78,22 @@ export function evaluateReadinessFromFredResponse(
   denomMap: DenomMap,
   tenantAddress: string,
 ): Readiness {
-  // Union `raw.sku.name` into the names list (Copilot #3319670583).
-  // Fred caps `available_sku_names` at `MAX_SKU_NAMES_RETURNED = 50`
-  // (`packages/fred/src/tools/checkDeploymentReadiness.ts`); when the
-  // chain has >50 SKUs and the user's requested size falls past the
-  // slice, the evaluator's SKU-availability rule false-blocks even
-  // though fred already resolved the SKU into `raw.sku`. Folding
-  // `raw.sku.name` into the set closes the gap. Set handles dedupe
-  // (`raw.sku.name` may already be in the first-50 list).
-  const skuNames = new Set(raw.available_sku_names);
-  if (raw.sku !== null) skuNames.add(raw.sku.name);
+  // Names are only a fallback hint now; derive them from the structured list.
+  // ENG-258 Task 15 removed the old flat names field — available_skus is
+  // the source of truth now. When raw.sku is resolved (single candidate), fold
+  // its name in too (closes the >MAX_SKU_NAMES_RETURNED gap — Copilot #3319670583).
+  const skuNamesSet = new Set((raw.available_skus ?? []).map((s) => s.name));
+  if (raw.sku !== null) skuNamesSet.add(raw.sku.name);
+  const availableSkuNames = [...skuNamesSet];
 
+  // Note: `requestedProviderUuid` is intentionally NOT set here. The fred
+  // readiness response is already provider-narrowed — `deploy-app.ts` calls
+  // `checkDeploymentReadiness` with the pinned `providerUuid`, so
+  // `sku_candidates` in the response already reflect only that provider.
+  // `requestedProviderUuid` is therefore only needed by direct callers of
+  // `evaluateReadiness` that have NOT pre-filtered by provider (e.g. the
+  // initial SKU-resolution pass in deploy-app.ts); it would be redundant and
+  // misleading on this translated path.
   return evaluateReadiness({
     tenant: tenantAddress,
     image: raw.image,
@@ -93,7 +101,16 @@ export function evaluateReadinessFromFredResponse(
     walletBalances: toCoinArray(raw.wallet_balances),
     credits: translateCredits(raw),
     sku: translateSku(raw.sku),
-    availableSkuNames: [...skuNames],
+    availableSkuNames,
+    skuCandidates: Array.isArray(raw.sku_candidates)
+      ? raw.sku_candidates.map((c) => ({
+          name: c.name,
+          providerUuid: c.provider_uuid,
+          ...(c.price
+            ? { price: { denom: c.price.denom, amount: c.price.amount } }
+            : {}),
+        }))
+      : undefined,
     gasPrice,
     denomMap,
   });

@@ -374,6 +374,13 @@ export enum ManifestMCPErrorCode {
   // NON_RETRYABLE_ERROR_CODES lists it). Retrying a user's cancel makes no
   // sense; surfacing it as UNKNOWN (the prior bug, ENG-272) hid the cause.
   OPERATION_CANCELLED = 'OPERATION_CANCELLED',
+
+  // SKU-resolution errors
+  // A user-supplied SKU `size`/`storage` name matched more than one active
+  // SKU and no disambiguator (provider_uuid / sku_uuid) was given. The error
+  // carries `details = { reason: 'AMBIGUOUS_SKU_NAME', size, candidates }`.
+  // Non-retryable: retrying without a disambiguator is pointless (ENG-258).
+  SKU_AMBIGUOUS = 'SKU_AMBIGUOUS',
 }
 
 /**

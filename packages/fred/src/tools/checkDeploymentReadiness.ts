@@ -6,11 +6,11 @@ import {
 } from '@manifest-network/manifest-mcp-core';
 
 /**
- * `available_sku_names` is bounded so the response never bloats an LLM
- * context if a provider lists many SKUs. The chain query itself is bounded
- * by `MAX_PAGE_LIMIT` (1000), but agents only need a hint of what's
- * available — the lookup against `size` is exact. 50 mirrors the spirit of
- * the 10-name slice already used in `missing_steps`.
+ * `available_skus` is bounded so the response never bloats an LLM context
+ * if a provider lists many SKUs. The chain query itself is bounded by
+ * `MAX_PAGE_LIMIT` (1000), but agents only need a hint of what's available —
+ * the lookup against `size` is exact. 50 mirrors the spirit of the 10-name
+ * slice already used in `missing_steps`.
  */
 const MAX_SKU_NAMES_RETURNED = 50;
 
@@ -25,6 +25,17 @@ export interface CheckDeploymentReadinessInput {
    * caller can carry it through to a deployment plan.
    */
   readonly image?: string;
+  /**
+   * Narrow a duplicate SKU `size` name to one provider (ENG-258).
+   * Get candidates from `browse_catalog` or `check_deployment_readiness`.
+   */
+  readonly providerUuid?: string;
+  /**
+   * Resolve the SKU by uuid, bypassing the `size` name filter (ENG-258).
+   * When set, `size` is ignored for candidate selection (consistent with
+   * core `resolveSku`). Narrow to one provider by also supplying `providerUuid`.
+   */
+  readonly skuUuid?: string;
 }
 
 export interface SkuSummary {
@@ -49,8 +60,19 @@ export interface CheckDeploymentReadinessResult {
     readonly amount: string;
   }>;
   readonly hours_remaining?: string;
+  /** Determinate SKU pick (exactly 1 candidate) or null when ambiguous. */
   readonly sku: SkuSummary | null;
-  readonly available_sku_names: readonly string[];
+  /** Active SKU candidates: uuid-resolved (skuUuid path) or name-filtered (size path), narrowed by providerUuid if given. (ENG-258) */
+  readonly sku_candidates: readonly SkuSummary[];
+  /**
+   * All active SKUs with their uuid and provider_uuid for disambiguation. (ENG-258)
+   * Capped at MAX_SKU_NAMES_RETURNED to avoid bloating LLM context.
+   */
+  readonly available_skus: ReadonlyArray<{
+    readonly name: string;
+    readonly uuid: string;
+    readonly provider_uuid: string;
+  }>;
   readonly ready: boolean;
   readonly missing_steps: readonly string[];
 }
@@ -70,6 +92,10 @@ export interface CheckDeploymentReadinessResult {
  * deploy upload will reject disallowed registries at runtime; document
  * that to the user when the readiness check is "ready: true" but the
  * registry is suspect.
+ *
+ * ENG-258: When `size` matches multiple active SKUs (duplicate names across
+ * providers), `sku` is null and `sku_candidates` lists all matches.  Supply
+ * `providerUuid` or `skuUuid` to narrow to a single candidate.
  */
 export async function checkDeploymentReadiness(
   queryClient: ManifestQueryClient,
@@ -82,16 +108,68 @@ export async function checkDeploymentReadiness(
     queryClient.liftedinit.sku.v1.sKUs({ activeOnly: true, pagination }),
   ]);
 
-  const skuByName = new Map(skusResult.skus.map((s) => [s.name, s]));
-  const sku = input.size ? (skuByName.get(input.size) ?? null) : null;
+  // Normalize selector inputs once: trim whitespace, treat whitespace-only as absent.
+  // This mirrors core resolveSku and the deploy paths — a value copied with surrounding
+  // spaces must not false-miss, and a whitespace-only value must not act like a real selector.
+  const size = input.size?.trim() || undefined;
+  const providerUuid = input.providerUuid?.trim() || undefined;
+  const skuUuid = input.skuUuid?.trim() || undefined;
+
+  const allActive = skusResult.skus;
+
+  // Build a SkuSummary from a raw SKU record.
+  const toSummary = (s: (typeof allActive)[number]): SkuSummary => ({
+    name: s.name,
+    uuid: s.uuid,
+    provider_uuid: s.providerUuid,
+    ...(s.basePrice
+      ? { price: { amount: s.basePrice.amount, denom: s.basePrice.denom } }
+      : {}),
+    active: s.active,
+  });
+
+  // Build candidate list (ENG-258 review: skuUuid bypasses the name filter,
+  // consistent with core resolveSku — a caller pinning skuUuid whose SKU name
+  // differs from `size` must still get that SKU as the single candidate).
+  let candidates: SkuSummary[] = [];
+  if (skuUuid) {
+    // UUID path: resolve by identity; size is ignored.
+    candidates = allActive
+      .filter((s) => s.uuid === skuUuid)
+      .filter((s) => (providerUuid ? s.providerUuid === providerUuid : true))
+      .map(toSummary);
+  } else if (size) {
+    // Name path: filter by name, optionally narrow by provider.
+    candidates = allActive
+      .filter((s) => s.name === size)
+      .filter((s) => (providerUuid ? s.providerUuid === providerUuid : true))
+      .map(toSummary);
+  }
+  // Determinate pick only when exactly one candidate (unambiguous).
+  const sku = candidates.length === 1 ? candidates[0] : null;
 
   const missing: string[] = [];
-  if (input.size && !sku) {
-    const available = Array.from(skuByName.keys()).slice(0, 10).join(', ');
+  if (skuUuid && candidates.length === 0) {
     missing.push(
-      `Requested SKU "${input.size}" is not available. Pick one of: ${available || '(none active)'}`,
+      `SKU uuid "${skuUuid}" not found among active SKUs${providerUuid ? ` on provider ${providerUuid}` : ''}.`,
+    );
+  } else if (!skuUuid && size && candidates.length === 0) {
+    const available = [...new Set(allActive.map((s) => s.name))]
+      .slice(0, 10)
+      .join(', ');
+    missing.push(
+      `Requested SKU "${size}" is not available. Pick one of: ${available || '(none active)'}`,
+    );
+  } else if (!skuUuid && size && candidates.length > 1) {
+    // Ambiguous: the name matches >1 active SKU, across one or more providers
+    // (a single provider can publish duplicate names too) (ENG-258).
+    const providers = [...new Set(candidates.map((c) => c.provider_uuid))];
+    missing.push(
+      `SKU "${size}" matches ${candidates.length} active SKUs (provider(s): ${providers.join(', ')}). ` +
+        `Specify provider_uuid or sku_uuid to disambiguate.`,
     );
   }
+
   if (!balance.credits) {
     missing.push(
       'Credit account does not exist for this tenant. Call `fund_credit` (manifest-mcp-lease server) to create and fund it.',
@@ -107,22 +185,20 @@ export async function checkDeploymentReadiness(
     );
   }
 
-  const skuSummary: SkuSummary | null = sku
-    ? {
-        name: sku.name,
-        uuid: sku.uuid,
-        provider_uuid: sku.providerUuid,
-        price: sku.basePrice
-          ? { amount: sku.basePrice.amount, denom: sku.basePrice.denom }
-          : undefined,
-        active: sku.active,
-      }
-    : null;
+  // available_skus: full flat list with identity fields for disambiguation.
+  // Capped to avoid bloating LLM context.
+  const available_skus = allActive
+    .map((s) => ({ name: s.name, uuid: s.uuid, provider_uuid: s.providerUuid }))
+    .slice(0, MAX_SKU_NAMES_RETURNED);
 
   return {
     tenant: address,
     image: input.image ?? null,
-    size: input.size ?? null,
+    // When exactly one SKU candidate resolved, echo its real name so the result
+    // is internally consistent (size === sku.name). On the name path with one
+    // candidate, sku.name === size anyway. Ambiguous/none → falls back to
+    // the trimmed size (ENG-258 r2).
+    size: sku?.name ?? size ?? null,
     wallet_balances: balance.balances,
     credits: balance.credits,
     ...(balance.current_balance && {
@@ -131,11 +207,9 @@ export async function checkDeploymentReadiness(
     ...(balance.hours_remaining && {
       hours_remaining: balance.hours_remaining,
     }),
-    sku: skuSummary,
-    available_sku_names: Array.from(skuByName.keys()).slice(
-      0,
-      MAX_SKU_NAMES_RETURNED,
-    ),
+    sku,
+    sku_candidates: candidates,
+    available_skus,
     ready: missing.length === 0,
     missing_steps: missing,
   };

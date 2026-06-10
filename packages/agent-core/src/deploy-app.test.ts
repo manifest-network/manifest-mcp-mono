@@ -29,7 +29,15 @@ import {
   ManifestMCPError,
   ManifestMCPErrorCode,
 } from '@manifest-network/manifest-mcp-core';
-import { beforeEach, describe, expect, it, type Mock, vi } from 'vitest';
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  type Mock,
+  vi,
+} from 'vitest';
 import type {
   DeployAppCallbacks,
   DeployResult,
@@ -39,6 +47,7 @@ import type {
   ProgressEvent,
   RecoveryOption,
   SingleServiceSpec,
+  SkuCandidate,
   WalletProvider,
 } from './index.js';
 
@@ -75,19 +84,21 @@ vi.mock('@manifest-network/manifest-mcp-core', async () => {
     cosmosEstimateFee: vi.fn(),
     setItemCustomDomain: vi.fn(),
     stopApp: vi.fn(),
+    // ENG-258: deploy-app resolves the SKU pin ONCE via core's
+    // `resolveSku` (the deleted internal SKU-lookup helper's coverage now
+    // lives in core's `sku-resolution.test.ts`). The orchestration replay
+    // tests exercise deploy-app's SHAPE, not the SKU-lookup integration,
+    // so the default mock resolves a single pinned candidate. Tests that
+    // exercise the ambiguity path override this per-scenario via
+    // `vi.mocked(core.resolveSku)`.
+    resolveSku: vi.fn().mockResolvedValue({
+      skuUuid: 'sku-uuid-fixture',
+      providerUuid: 'provider-uuid-fixture',
+      name: 'small',
+      active: true,
+    }),
   };
 });
-
-// Mock the internal find-sku-uuid helper. The orchestration replay tests
-// exercise deploy-app's shape, not the SKU-lookup integration (which has
-// its own unit tests in find-sku-uuid.test.ts). Mocking the module-level
-// import keeps test setup compact + isolates orchestration concerns.
-vi.mock('./internals/find-sku-uuid.js', () => ({
-  findSkuUuid: vi.fn().mockResolvedValue({
-    skuUuid: 'sku-uuid-fixture',
-    providerUuid: 'provider-uuid-fixture',
-  }),
-}));
 
 const FIXTURES_ROOT = join(__dirname, '..', '__fixtures__');
 
@@ -387,6 +398,415 @@ describe('deployApp replay — 01-fast-path-active', () => {
     // Verdict B note: the misleading "ENG-185 scope item #6" deferral
     // reference was removed when D landed the full routing.
     expect((caughtErr as Error).message).not.toContain('ENG-185 scope item');
+  });
+});
+
+describe('deployApp — ENG-258 SKU pin resolution + ambiguity elicitation', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  // Some tests here override `resolveSku`'s BASE implementation (via
+  // `mockImplementation`) rather than the consume-once queue. `vi.clearAllMocks`
+  // resets call history + the `*Once` queue but NOT the base implementation,
+  // so without this restore a `mockImplementation` would leak into sibling
+  // describe blocks. Re-establish the canonical single-pin default after each
+  // test in this block.
+  afterEach(async () => {
+    const core = await import('@manifest-network/manifest-mcp-core');
+    vi.mocked(core.resolveSku).mockReset();
+    vi.mocked(core.resolveSku).mockResolvedValue({
+      skuUuid: 'sku-uuid-fixture',
+      providerUuid: 'provider-uuid-fixture',
+      name: 'small',
+      active: true,
+    } as SkuCandidate);
+  });
+
+  // Shared happy-path fred/preview/fee stubs. The ambiguity behavior is
+  // driven entirely by the per-test `core.resolveSku` mock; the rest of
+  // the orchestration is the canonical fast-path-active flow.
+  async function setupHappyDeps() {
+    const spec = readFixture(
+      'skills',
+      'deploy-app',
+      '01-fast-path-active',
+      'input',
+      'spec.json',
+    ) as DeploySpec;
+    const readinessRaw = readFixture(
+      'skills',
+      'deploy-app',
+      '01-fast-path-active',
+      'input',
+      'readiness-response.json',
+    );
+    const metaHashResp = readFixture(
+      'skills',
+      'deploy-app',
+      '01-fast-path-active',
+      'input',
+      'meta-hash-response.json',
+    ) as { manifest_json: string; meta_hash_hex: string };
+    const deployResp = readFixture(
+      'skills',
+      'deploy-app',
+      '01-fast-path-active',
+      'input',
+      'deploy-response.json',
+    ) as Record<string, unknown>;
+
+    const fred = await import('@manifest-network/manifest-mcp-fred');
+    vi.mocked(fred.checkDeploymentReadiness).mockResolvedValue(
+      readinessRaw as unknown as Awaited<
+        ReturnType<typeof fred.checkDeploymentReadiness>
+      >,
+    );
+    vi.mocked(fred.buildManifestPreview).mockResolvedValue({
+      manifest_json: metaHashResp.manifest_json,
+      meta_hash_hex: metaHashResp.meta_hash_hex,
+    } as Awaited<ReturnType<typeof fred.buildManifestPreview>>);
+    vi.mocked(fred.deployApp).mockResolvedValue({
+      lease_uuid: deployResp.lease_uuid as string,
+      provider_uuid: deployResp.provider_uuid as string,
+      provider_url: deployResp.provider_url as string,
+      state: deployResp.state as never,
+      connection: deployResp.connection,
+    } as Awaited<ReturnType<typeof fred.deployApp>>);
+
+    const core = await import('@manifest-network/manifest-mcp-core');
+    vi.mocked(core.cosmosEstimateFee).mockResolvedValue({
+      module: 'billing',
+      subcommand: 'create-lease',
+      gasEstimate: '142000',
+      fee: { amount: [{ denom: 'umfx', amount: '2300' }], gas: '142000' },
+    } as Awaited<ReturnType<typeof core.cosmosEstimateFee>>);
+
+    return { spec, fred, core };
+  }
+
+  it('invokes onResolveSku when resolveSku throws SKU_AMBIGUOUS, then pins the choice into the fred broadcast', async () => {
+    const { spec, fred, core } = await setupHappyDeps();
+
+    const c1: SkuCandidate = {
+      skuUuid: 'sku-p1',
+      providerUuid: 'p1',
+      name: 'small',
+      active: true,
+    };
+    const c2: SkuCandidate = {
+      skuUuid: 'sku-p2',
+      providerUuid: 'p2',
+      name: 'small',
+      active: true,
+    };
+    // First resolveSku (by name) is ambiguous; after the pick, the second
+    // resolveSku (by skuUuid+providerUuid) returns the concrete pin.
+    vi.mocked(core.resolveSku)
+      .mockRejectedValueOnce(
+        new ManifestMCPError(
+          ManifestMCPErrorCode.SKU_AMBIGUOUS,
+          'SKU name "small" matches 2 active SKUs.',
+          { reason: 'AMBIGUOUS_SKU_NAME', size: 'small', candidates: [c1, c2] },
+        ),
+      )
+      .mockResolvedValueOnce(c2);
+
+    const onResolveSku = vi.fn(async (_candidates: SkuCandidate[]) => ({
+      skuUuid: 'sku-p2',
+      providerUuid: 'p2',
+    }));
+    const baseCapture = captureCallbacks();
+    const callbacks: DeployAppCallbacks = {
+      ...baseCapture.callbacks,
+      onResolveSku,
+    };
+
+    const { deployApp } = await import('./deploy-app.js');
+    const clientManager = makeMockClientManager();
+    const walletProvider = makeMockWalletProvider();
+
+    await deployApp(spec, callbacks, {
+      clientManager: clientManager as unknown as Parameters<
+        typeof deployApp
+      >[2]['clientManager'],
+      walletProvider,
+    });
+
+    // onResolveSku invoked exactly once with the two ambiguous candidates.
+    expect(onResolveSku).toHaveBeenCalledTimes(1);
+    expect(onResolveSku.mock.calls[0]?.[0]).toEqual([c1, c2]);
+
+    // A `sku_ambiguous` progress event carried the candidates. The kind
+    // assertion is the real guard; the candidates `toEqual` then runs
+    // unconditionally (no silent skip on a regression).
+    const ambiguousEvents = baseCapture.progress.filter(
+      (e) => e.kind === 'sku_ambiguous',
+    );
+    expect(ambiguousEvents).toHaveLength(1);
+    const ev = ambiguousEvents[0];
+    expect(ev?.kind).toBe('sku_ambiguous');
+    expect((ev as { candidates: unknown }).candidates).toEqual([c1, c2]);
+
+    // The fred broadcast input (4th positional arg) carries the pinned
+    // skuUuid/providerUuid from the user's pick.
+    const fredInput = vi.mocked(fred.deployApp).mock.calls[0]?.[3] as
+      | { skuUuid?: string; providerUuid?: string }
+      | undefined;
+    expect(fredInput).toMatchObject({
+      skuUuid: 'sku-p2',
+      providerUuid: 'p2',
+    });
+  });
+
+  it('re-throws SKU_AMBIGUOUS when no onResolveSku callback is provided', async () => {
+    const { spec, fred, core } = await setupHappyDeps();
+
+    const c1: SkuCandidate = {
+      skuUuid: 'sku-p1',
+      providerUuid: 'p1',
+      name: 'small',
+      active: true,
+    };
+    const c2: SkuCandidate = {
+      skuUuid: 'sku-p2',
+      providerUuid: 'p2',
+      name: 'small',
+      active: true,
+    };
+    vi.mocked(core.resolveSku).mockRejectedValueOnce(
+      new ManifestMCPError(
+        ManifestMCPErrorCode.SKU_AMBIGUOUS,
+        'SKU name "small" matches 2 active SKUs.',
+        { reason: 'AMBIGUOUS_SKU_NAME', size: 'small', candidates: [c1, c2] },
+      ),
+    );
+
+    // Callbacks WITHOUT onResolveSku.
+    const baseCapture = captureCallbacks();
+    const callbacks: DeployAppCallbacks = { ...baseCapture.callbacks };
+
+    const { deployApp } = await import('./deploy-app.js');
+    const clientManager = makeMockClientManager();
+    const walletProvider = makeMockWalletProvider();
+
+    let caughtErr: unknown = null;
+    try {
+      await deployApp(spec, callbacks, {
+        clientManager: clientManager as unknown as Parameters<
+          typeof deployApp
+        >[2]['clientManager'],
+        walletProvider,
+      });
+    } catch (err) {
+      caughtErr = err;
+    }
+
+    expect(caughtErr).toBeInstanceOf(ManifestMCPError);
+    expect((caughtErr as ManifestMCPError).code).toBe(
+      ManifestMCPErrorCode.SKU_AMBIGUOUS,
+    );
+    // No broadcast on ambiguity.
+    expect(vi.mocked(fred.deployApp)).not.toHaveBeenCalled();
+  });
+
+  it('FIX 1 (regression): threads the RESOLVED pin.name (not requestedSize) into checkDeploymentReadiness', async () => {
+    // The spec fixture has no `size` → `requestedSize` defaults to 'small'.
+    // resolveSku returns a pin whose on-chain `name` is 'docker-micro'
+    // (e.g. the deploy was pinned by skuUuid to a SKU whose name != 'small').
+    // The bug: deploy-app passed `size: requestedSize(spec)` ('small') to
+    // readiness, so fred's gate `skuCandidates.some(c => c.name === size)`
+    // failed → status 'block' → INVALID_CONFIG before broadcast, rejecting
+    // a valid pin. The fix threads `pinned.name` ('docker-micro') instead.
+    const { spec, fred, core } = await setupHappyDeps();
+
+    vi.mocked(core.resolveSku).mockResolvedValue({
+      skuUuid: 'X',
+      providerUuid: 'p1',
+      name: 'docker-micro',
+      active: true,
+    } as SkuCandidate);
+
+    const baseCapture = captureCallbacks();
+    const { deployApp } = await import('./deploy-app.js');
+    const clientManager = makeMockClientManager();
+    const walletProvider = makeMockWalletProvider();
+
+    await deployApp(spec, baseCapture.callbacks, {
+      clientManager: clientManager as unknown as Parameters<
+        typeof deployApp
+      >[2]['clientManager'],
+      walletProvider,
+    });
+
+    // The readiness check was invoked with the RESOLVED SKU name, NOT the
+    // user's defaulted 'small'. This is the assertion that would have
+    // caught the high-severity bug.
+    const readinessInput = vi.mocked(fred.checkDeploymentReadiness).mock
+      .calls[0]?.[2] as { size?: string } | undefined;
+    expect(readinessInput?.size).toBe('docker-micro');
+    expect(readinessInput?.size).not.toBe('small');
+  });
+
+  it('FIX 2: stamping the resolved pin prevents a post-edit re-elicit (onResolveSku called exactly once)', async () => {
+    // First pass: ambiguous SKU → onResolveSku resolves a pin. The pin is
+    // stamped onto `confirmedSpec`. An `edit_env` PlanEdit preserves the
+    // stamped skuUuid/providerUuid, so the post-edit `resolvePin` resolves
+    // BY UUID — bypassing the name + ambiguity — without re-eliciting.
+    const { spec, fred, core } = await setupHappyDeps();
+
+    const c1: SkuCandidate = {
+      skuUuid: 'sku-p1',
+      providerUuid: 'p1',
+      name: 'small',
+      active: true,
+    };
+    const c2: SkuCandidate = {
+      skuUuid: 'sku-p2',
+      providerUuid: 'p2',
+      name: 'small',
+      active: true,
+    };
+    const pinned: SkuCandidate = {
+      skuUuid: 'sku-p2',
+      providerUuid: 'p2',
+      name: 'small',
+      active: true,
+    };
+
+    // resolveSku throws SKU_AMBIGUOUS ONLY when called WITHOUT a skuUuid;
+    // once the pin is stamped, the by-uuid call resolves the same pin with
+    // no re-elicit. This makes the once-only assertion deterministic.
+    vi.mocked(core.resolveSku).mockImplementation(
+      async (_qc: unknown, input: { skuUuid?: string }) => {
+        if (input.skuUuid === undefined) {
+          throw new ManifestMCPError(
+            ManifestMCPErrorCode.SKU_AMBIGUOUS,
+            'SKU name "small" matches 2 active SKUs.',
+            {
+              reason: 'AMBIGUOUS_SKU_NAME',
+              size: 'small',
+              candidates: [c1, c2],
+            },
+          );
+        }
+        return pinned;
+      },
+    );
+
+    const onResolveSku = vi.fn(async (_candidates: SkuCandidate[]) => ({
+      skuUuid: 'sku-p2',
+      providerUuid: 'p2',
+    }));
+
+    // onPlan returns an `edit_env` edit on the first (and only) call,
+    // triggering a single post-edit re-plan. The single-service spec gets
+    // a new env key; `resolvePin(confirmedSpec)` then runs again — and must
+    // NOT re-elicit because the stamped pin resolves by uuid.
+    let planCalls = 0;
+    const baseCapture = captureCallbacks();
+    const callbacks: DeployAppCallbacks = {
+      ...baseCapture.callbacks,
+      onResolveSku,
+      onPlan: async () => {
+        planCalls += 1;
+        if (planCalls === 1) {
+          return { kind: 'edit_env', env: { FOO: 'bar' } };
+        }
+        return 'confirm';
+      },
+    };
+
+    const { deployApp } = await import('./deploy-app.js');
+    const clientManager = makeMockClientManager();
+    const walletProvider = makeMockWalletProvider();
+
+    await deployApp(spec, callbacks, {
+      clientManager: clientManager as unknown as Parameters<
+        typeof deployApp
+      >[2]['clientManager'],
+      walletProvider,
+    });
+
+    // The whole point of FIX 2: onResolveSku fires exactly ONCE across the
+    // entire deploy, even though resolvePin ran twice (initial + post-edit).
+    expect(onResolveSku).toHaveBeenCalledTimes(1);
+    // resolveSku itself ran at least twice (initial ambiguous throw + the
+    // by-uuid resolve), and again for the post-edit re-plan by uuid.
+    expect(vi.mocked(core.resolveSku).mock.calls.length).toBeGreaterThanOrEqual(
+      3,
+    );
+    // The second pass (post-edit) resolved BY UUID — the last call carried
+    // the stamped skuUuid, proving the pin was written back to the spec.
+    const lastCall = vi.mocked(core.resolveSku).mock.calls.at(-1);
+    expect((lastCall?.[1] as { skuUuid?: string }).skuUuid).toBe('sku-p2');
+    // The broadcast still carries the pinned identity.
+    const fredInput = vi.mocked(fred.deployApp).mock.calls[0]?.[3] as
+      | { skuUuid?: string; providerUuid?: string }
+      | undefined;
+    expect(fredInput).toMatchObject({ skuUuid: 'sku-p2', providerUuid: 'p2' });
+  });
+
+  it('FIX 2 (non-elicited path): a UNIQUE-name resolution does NOT stamp confirmedSpec; post-edit re-plan re-resolves by name (no stale pin)', async () => {
+    // When the SKU resolves uniquely by name (no ambiguity, no elicitation),
+    // `confirmedSpec` must NOT be stamped with the pin. A subsequent
+    // `edit_env` re-plan therefore presents the original spec to `resolvePin`
+    // WITHOUT a pre-locked skuUuid — demonstrating the non-elicited path
+    // does not carry a stale pin identity.
+    //
+    // Verification strategy: the default `resolveSku` mock always resolves
+    // uniquely (no SKU_AMBIGUOUS throw), so `pinElicited` is always false.
+    // We observe all `resolveSku` call inputs: none of the calls issued
+    // BEFORE the broadcast should carry a skuUuid (i.e. the post-edit
+    // re-plan was NOT fed a stamped UUID by `confirmedSpec`). The broadcast
+    // input still carries the pin — set directly by `buildFredDeployInput`
+    // from the `pinned` local, not from `confirmedSpec`.
+    const { spec, fred, core } = await setupHappyDeps();
+
+    let planCalls = 0;
+    const baseCapture = captureCallbacks();
+    const callbacks: DeployAppCallbacks = {
+      ...baseCapture.callbacks,
+      onPlan: async () => {
+        planCalls += 1;
+        if (planCalls === 1) {
+          // Trigger the post-edit re-plan with an `edit_env` edit. The
+          // edit spreads `confirmedSpec` — which must NOT carry a stamped
+          // skuUuid in the non-elicited path.
+          return { kind: 'edit_env', env: { UNIQUE_NAME: 'yes' } };
+        }
+        return 'confirm';
+      },
+    };
+
+    const { deployApp } = await import('./deploy-app.js');
+    const clientManager = makeMockClientManager();
+    const walletProvider = makeMockWalletProvider();
+
+    await deployApp(spec, callbacks, {
+      clientManager: clientManager as unknown as Parameters<
+        typeof deployApp
+      >[2]['clientManager'],
+      walletProvider,
+    });
+
+    // Both `resolvePin` calls (initial + post-edit) should have gone through
+    // the default mock's unique-resolve path. Neither should have received a
+    // `skuUuid` from `confirmedSpec` (non-elicited → no stamp).
+    const allResolveCalls = vi.mocked(core.resolveSku).mock.calls;
+    // There must have been at least 2 calls: initial + post-edit.
+    expect(allResolveCalls.length).toBeGreaterThanOrEqual(2);
+    // Neither call should carry a skuUuid from a stale pin stamp.
+    for (const call of allResolveCalls) {
+      const input = call[1] as { skuUuid?: string };
+      expect(input.skuUuid).toBeUndefined();
+    }
+
+    // The broadcast still carries the resolved pin (from the `pinned` local).
+    const fredInput = vi.mocked(fred.deployApp).mock.calls[0]?.[3] as
+      | { skuUuid?: string }
+      | undefined;
+    expect(fredInput?.skuUuid).toBe('sku-uuid-fixture');
   });
 });
 
@@ -1294,7 +1714,7 @@ describe('deployApp replay — Copilot review fixes (PR #58 unresolved comments)
   // and the post-edit recall paths fire the `status === 'block'`
   // short-circuit. Block conditions verified end-to-end:
   //   - empty `wallet_balances` → block (rule #2 — wallet has no gas);
-  //   - requested SKU not in `available_sku_names` → block (rule #1).
+  //   - requested SKU not in `available_skus` / no candidate → block (rule #1).
   // Tests assert: throw is INVALID_CONFIG with the expected message,
   // fred's `deployApp` is NEVER called, and the orchestrator does NOT
   // emit `deploy_app_broadcast`.
@@ -3685,6 +4105,21 @@ describe('deployApp — C2 plan-edit roundtrip propagates edited size (ENG-185 #
     vi.clearAllMocks();
   });
 
+  // `setupSizeEditScenario` overrides `resolveSku`'s BASE implementation
+  // (size-driven, for FIX 1). `vi.clearAllMocks` does not reset the base
+  // implementation, so restore the canonical single-pin default after each
+  // test to keep the override from leaking into sibling describe blocks.
+  afterEach(async () => {
+    const core = await import('@manifest-network/manifest-mcp-core');
+    vi.mocked(core.resolveSku).mockReset();
+    vi.mocked(core.resolveSku).mockResolvedValue({
+      skuUuid: 'sku-uuid-fixture',
+      providerUuid: 'provider-uuid-fixture',
+      name: 'small',
+      active: true,
+    } as SkuCandidate);
+  });
+
   // Distinguishable meta-hash digests so a post-edit consumer that reads
   // the STALE pre-edit preview can be caught. Both are valid 64-char hex.
   const PRE_EDIT_META =
@@ -3789,6 +4224,20 @@ describe('deployApp — C2 plan-edit roundtrip propagates edited size (ENG-185 #
       gasEstimate: '142000',
       fee: { amount: [{ denom: 'umfx', amount: '2300' }], gas: '142000' },
     } as Awaited<ReturnType<typeof core.cosmosEstimateFee>>);
+    // ENG-258 review FIX 1: the canonical SKU name now comes from the
+    // RESOLVED pin (`pinned.name`), not the requested `size`. Model the
+    // realistic resolve where requesting size `X` resolves a SKU named
+    // `X` — so the edited `medium` propagates through resolveSku into the
+    // downstream readiness/plan/fred/persist consumers under test here.
+    vi.mocked(core.resolveSku).mockImplementation(
+      async (_qc: unknown, input: { size: string }) =>
+        ({
+          skuUuid: `sku-${input.size}`,
+          providerUuid: 'provider-uuid-fixture',
+          name: input.size,
+          active: true,
+        }) as SkuCandidate,
+    );
 
     const baseCapture = captureCallbacks();
     const callbacks: DeployAppCallbacks = {
@@ -3910,17 +4359,19 @@ describe('deployApp — C2 plan-edit roundtrip propagates edited size (ENG-185 #
     const postEditArgs = vi.mocked(core.cosmosEstimateFee).mock.calls[1]?.[3] as
       | string[]
       | undefined;
-    // Pre-edit call threads the PRE_EDIT preview hash.
+    // Pre-edit call threads the PRE_EDIT preview hash + the pre-edit
+    // resolved skuUuid (`sku-small`, from the size-driven resolveSku mock).
     expect(preEditArgs?.[0]).toBe('--meta-hash');
     expect(preEditArgs?.[1]).toBe(PRE_EDIT_META);
-    expect(preEditArgs?.slice(2)).toEqual(['sku-uuid-fixture:1']);
-    // Post-edit call threads the POST_EDIT preview hash — proving the
-    // recompute uses the freshly-built (edited-spec) preview, not the
+    expect(preEditArgs?.slice(2)).toEqual(['sku-small:1']);
+    // Post-edit call threads the POST_EDIT preview hash + the post-edit
+    // resolved skuUuid (`sku-medium`) — proving the recompute re-resolves
+    // the pin AND uses the freshly-built (edited-spec) preview, not the
     // stale pre-edit one.
     expect(postEditArgs?.[0]).toBe('--meta-hash');
     expect(postEditArgs?.[1]).toBe(POST_EDIT_META);
     expect(postEditArgs?.[1]).not.toBe(PRE_EDIT_META);
-    expect(postEditArgs?.slice(2)).toEqual(['sku-uuid-fixture:1']);
+    expect(postEditArgs?.slice(2)).toEqual(['sku-medium:1']);
   });
 
   it('E. persisted manifest wrapper `size` is `medium` (real on-disk save, SHA-256 audit passes)', async () => {

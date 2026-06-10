@@ -302,6 +302,41 @@ describe('evaluateReadiness — multi-issue combinations', () => {
   });
 });
 
+describe('evaluateReadiness — ENG-258 skuCandidates gate', () => {
+  it('ENG-258: blocks when no candidate matches the requested provider', () => {
+    const r = evaluateReadiness({
+      tenant: 't',
+      image: null,
+      size: 'docker-micro',
+      walletBalances: [{ denom: 'umfx', amount: '100000' }],
+      credits: null,
+      sku: null,
+      availableSkuNames: ['docker-micro'],
+      skuCandidates: [{ name: 'docker-micro', providerUuid: 'p1' }],
+      requestedProviderUuid: 'p2',
+      gasPrice: '1umfx',
+    });
+    expect(r.status).toBe('block');
+    expect(r.reasons.join(' ')).toMatch(/p2|provider/);
+  });
+
+  it('ENG-258: passes the SKU gate when a candidate matches', () => {
+    const r = evaluateReadiness({
+      tenant: 't',
+      image: null,
+      size: 'docker-micro',
+      walletBalances: [{ denom: 'umfx', amount: '100000' }],
+      credits: null,
+      sku: null,
+      availableSkuNames: ['docker-micro'],
+      skuCandidates: [{ name: 'docker-micro', providerUuid: 'p1' }],
+      gasPrice: '1umfx',
+    });
+    // SKU gate not the blocker (credits-null only warns); status is not 'block' for SKU reasons.
+    expect(r.reasons.join(' ')).not.toMatch(/is not currently offered/);
+  });
+});
+
 describe('evaluateReadiness — gas-price formats', () => {
   it.each([
     '1umfx',

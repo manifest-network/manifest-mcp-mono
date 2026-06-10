@@ -50,6 +50,13 @@ export {
   structuredResponse,
   withErrorHandling,
 } from './server-utils.js';
+// SKU resolution (shared by fred + agent-core)
+export {
+  listSkuCandidates,
+  type ResolveSkuInput,
+  resolveSku,
+  type SkuCandidate,
+} from './sku-resolution.js';
 // Annotation helpers (used by chain/lease/fred/cosmwasm packages)
 export {
   MANIFEST_TOOL_META_VERSION,

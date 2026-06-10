@@ -413,6 +413,41 @@ describe('renderDeploymentPlan', () => {
     });
   });
 
+  describe('ENG-258 provider pin rendering', () => {
+    it('renders the pinned provider when supplied', () => {
+      const block = renderDeploymentPlan({
+        plan: basePlan(),
+        image: 'nginx',
+        size: 'docker-micro',
+        metaHash: 'abc',
+        providerUuid: 'prov-2',
+      });
+      expect(block.text).toContain('Provider:');
+      expect(block.text).toContain('prov-2');
+    });
+
+    it('omits the Provider line when providerUuid is not supplied', () => {
+      const block = renderDeploymentPlan({
+        plan: basePlan(),
+        image: 'nginx',
+        size: 'docker-micro',
+        metaHash: 'abc',
+      });
+      expect(block.text).not.toContain('Provider:');
+    });
+
+    it('omits the Provider line when providerUuid is an empty string', () => {
+      const block = renderDeploymentPlan({
+        plan: basePlan(),
+        image: 'nginx',
+        size: 'docker-micro',
+        metaHash: 'abc',
+        providerUuid: '',
+      });
+      expect(block.text).not.toContain('Provider:');
+    });
+  });
+
   describe('byte-baseline parity', () => {
     it('matches expected output for 01-fast-path-active fixture', async () => {
       // Load the canonical chain-data fixture to drive humanization.

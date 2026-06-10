@@ -31,6 +31,7 @@ import type {
   RecoveryOptionId,
   ServiceDef,
   SingleServiceSpec,
+  SkuCandidate,
   SpecSummary,
   StackSpec,
   TroubleshootCallbacks,
@@ -84,10 +85,22 @@ describe('DeployAppCallbacks contract', () => {
       NonNullable<DeployAppCallbacks['onFailure']>
     >().returns.resolves.toEqualTypeOf<RecoveryChoice>();
   });
+
+  it('onResolveSku(candidates) returns Promise<{ skuUuid: string; providerUuid: string }>', () => {
+    expectTypeOf<
+      NonNullable<DeployAppCallbacks['onResolveSku']>
+    >().parameters.toEqualTypeOf<[SkuCandidate[]]>();
+    expectTypeOf<
+      NonNullable<DeployAppCallbacks['onResolveSku']>
+    >().returns.resolves.toEqualTypeOf<{
+      skuUuid: string;
+      providerUuid: string;
+    }>();
+  });
 });
 
 describe('ProgressEvent discriminant', () => {
-  it('kind union is exactly the ten allowed variants', () => {
+  it('kind union is exactly the eleven allowed variants', () => {
     expectTypeOf<ProgressEvent['kind']>().toEqualTypeOf<
       | 'readiness_evaluated'
       | 'deployment_plan_rendered'
@@ -99,6 +112,7 @@ describe('ProgressEvent discriminant', () => {
       | 'manifest_saved'
       | 'success_rendered'
       | 'partial_success_prompt_rendered'
+      | 'sku_ambiguous'
     >();
   });
 
@@ -180,6 +194,12 @@ describe('ProgressEvent discriminant', () => {
       prompt: string;
       leaseUuid: string;
     }>();
+  });
+
+  it('sku_ambiguous carries SkuCandidate[]', () => {
+    expectTypeOf<
+      Extract<ProgressEvent, { kind: 'sku_ambiguous' }>
+    >().toEqualTypeOf<{ kind: 'sku_ambiguous'; candidates: SkuCandidate[] }>();
   });
 });
 
@@ -475,22 +495,29 @@ describe('Exported type shapes (load-bearing public surface)', () => {
   it('SingleServiceSpec', () => {
     // `size?` is a first-class optional field (ENG-275): the SKU / compute
     // tier, defaulting to 'small' in `requestedSize` when omitted.
+    // `providerUuid?` / `skuUuid?` are the typed SKU disambiguators
+    // (ENG-296), threaded into `resolveSku`.
     expectTypeOf<SingleServiceSpec>().toEqualTypeOf<{
       image: string;
       port?: number | number[];
       env?: Record<string, string>;
       customDomain?: string;
       size?: string;
+      providerUuid?: string;
+      skuUuid?: string;
     }>();
   });
 
   it('StackSpec', () => {
-    // `size?` mirrors SingleServiceSpec (ENG-275); see above.
+    // `size?` mirrors SingleServiceSpec (ENG-275); `providerUuid?` /
+    // `skuUuid?` mirror the ENG-296 disambiguators; see above.
     expectTypeOf<StackSpec>().toEqualTypeOf<{
       services: Record<string, ServiceDef>;
       customDomain?: string;
       serviceName?: string;
       size?: string;
+      providerUuid?: string;
+      skuUuid?: string;
     }>();
   });
 

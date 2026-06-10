@@ -86,6 +86,7 @@ interface SkuOverrides {
     name: string;
     providerUuid: string;
     basePrice?: { amount: string; denom: string };
+    active?: boolean;
   }[];
   providerLookup?: Record<string, { provider: { apiUrl: string } }>;
 }
@@ -257,7 +258,9 @@ export function makeMockQueryClient(overrides?: {
       sku: {
         v1: {
           providers: vi.fn().mockResolvedValue({ providers }),
-          sKUs: vi.fn().mockResolvedValue({ skus }),
+          sKUs: vi.fn().mockResolvedValue({
+            skus: skus.map((s) => ({ active: true, ...s })),
+          }),
           provider: vi
             .fn()
             .mockImplementation(async ({ uuid }: { uuid: string }) => {

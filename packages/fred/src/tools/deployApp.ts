@@ -10,7 +10,7 @@ import {
   buildStackManifest,
   validateServiceName,
 } from '../manifest.js';
-import type { DeployAppResult } from './deployManifest.js';
+import type { DeployAppResult, SkuSelector } from './deployManifest.js';
 import { deployManifest } from './deployManifest.js';
 
 export type { DeployAppResult } from './deployManifest.js';
@@ -40,6 +40,10 @@ export interface DeployAppInput {
   image?: string;
   port?: number;
   size: string;
+  /** Disambiguate a duplicate SKU name to one provider (ENG-258). */
+  providerUuid?: string;
+  /** Pin a specific SKU by uuid, bypassing name resolution (ENG-258). Wins over size/providerUuid. */
+  skuUuid?: string;
   env?: Record<string, string>;
   command?: string[];
   args?: string[];
@@ -85,6 +89,23 @@ export interface DeployAppInput {
   abortSignal?: AbortSignal;
   /** Forwarded to the internal pollLeaseUntilReady call. abortSignal is the top-level field above. */
   pollOptions?: Omit<PollOptions, 'abortSignal'>;
+}
+
+function skuSelectorFromInput(input: DeployAppInput): SkuSelector {
+  const skuUuid = input.skuUuid?.trim();
+  const providerUuid = input.providerUuid?.trim();
+  // `resolved` requires BOTH ids — only then can fred skip the lookup.
+  if (skuUuid && providerUuid) {
+    return { kind: 'resolved', skuUuid, providerUuid };
+  }
+  // Otherwise resolve by name, carrying whichever disambiguator we have so
+  // core.resolveSku can narrow (provider) or pin (skuUuid → learns provider).
+  return {
+    kind: 'byName',
+    size: input.size,
+    ...(providerUuid ? { providerUuid } : {}),
+    ...(skuUuid ? { skuUuid } : {}),
+  };
 }
 
 export async function deployApp(
@@ -177,7 +198,7 @@ export async function deployApp(
   return deployManifest(
     {
       manifest: manifestJson,
-      sku: { kind: 'byName', size: input.size },
+      sku: skuSelectorFromInput(input),
       storage: input.storage,
       customDomain: input.customDomain,
       serviceName: input.serviceName,

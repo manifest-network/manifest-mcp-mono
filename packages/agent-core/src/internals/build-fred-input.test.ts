@@ -263,6 +263,50 @@ describe('buildManifestPreviewInput — stack', () => {
   });
 });
 
+describe('buildFredDeployInput — ENG-258 pin passthrough', () => {
+  it('threads the pinned skuUuid/providerUuid into the fred input', () => {
+    const out = buildFredDeployInput(
+      { image: 'nginx', port: 80 } as never,
+      'docker-micro',
+      {
+        skuUuid: 'sku-p2',
+        providerUuid: 'p2',
+      },
+    );
+    expect(out).toMatchObject({
+      size: 'docker-micro',
+      skuUuid: 'sku-p2',
+      providerUuid: 'p2',
+    });
+  });
+
+  it('omits skuUuid/providerUuid when no pin provided (backward compat)', () => {
+    const out = buildFredDeployInput(
+      { image: 'nginx', port: 80 } as never,
+      'docker-micro',
+    );
+    expect(out).not.toHaveProperty('skuUuid');
+    expect(out).not.toHaveProperty('providerUuid');
+  });
+
+  it('threads the pin into the stack branch', () => {
+    const spec: StackSpec = {
+      services: { web: { image: 'nginx', ports: [80] } },
+    };
+    const out = buildFredDeployInput(spec, 'docker-micro', {
+      skuUuid: 'sku-p2',
+      providerUuid: 'p2',
+    });
+    expect(out).toMatchObject({
+      size: 'docker-micro',
+      skuUuid: 'sku-p2',
+      providerUuid: 'p2',
+    });
+    // Confirm we exercised the stack branch (single-service has no `services`).
+    expect(out.services?.web).toBeDefined();
+  });
+});
+
 describe('preview-input ports shape ≡ fred-input ports shape (core regression guarantee)', () => {
   // The preview path computes `meta_hash_hex` recorded on-chain; the fred
   // path uploads the manifest the provider runs. If their port shapes

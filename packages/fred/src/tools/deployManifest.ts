@@ -2,16 +2,14 @@ import type {
   CosmosClientManager,
   CosmosTxResult,
   LeaseState,
-  ManifestQueryClient,
 } from '@manifest-network/manifest-mcp-core';
 import {
   cosmosTx,
-  createPagination,
   logger,
-  MAX_PAGE_LIMIT,
   ManifestMCPError,
   ManifestMCPErrorCode,
   requireUuid,
+  resolveSku,
   sanitizeForLogging,
   setItemCustomDomain,
 } from '@manifest-network/manifest-mcp-core';
@@ -57,43 +55,6 @@ export function extractLeaseUuid(txResult: CosmosTxResult): string {
   );
 }
 
-export async function findSkuUuid(
-  queryClient: ManifestQueryClient,
-  size: string,
-  providerUuid?: string,
-): Promise<{ skuUuid: string; providerUuid: string }> {
-  const pagination = createPagination(MAX_PAGE_LIMIT);
-  const result = await queryClient.liftedinit.sku.v1.sKUs({
-    activeOnly: true,
-    pagination,
-  });
-
-  const named = result.skus.filter((s) => s.name === size);
-  if (named.length > 0) {
-    if (providerUuid === undefined) {
-      return { skuUuid: named[0].uuid, providerUuid: named[0].providerUuid };
-    }
-    const onProvider = named.find((s) => s.providerUuid === providerUuid);
-    if (onProvider) {
-      return {
-        skuUuid: onProvider.uuid,
-        providerUuid: onProvider.providerUuid,
-      };
-    }
-    throw new ManifestMCPError(
-      ManifestMCPErrorCode.INVALID_CONFIG,
-      `SKU tier "${size}" is not offered by provider ${providerUuid} (the provider selected for the compute tier). ` +
-        `Provider(s) offering "${size}": ${named.map((s) => s.providerUuid).join(', ')}.`,
-    );
-  }
-
-  const available = result.skus.map((s) => s.name);
-  throw new ManifestMCPError(
-    ManifestMCPErrorCode.INVALID_CONFIG,
-    `SKU tier "${size}" not found on any provider. Available: ${available.join(', ')}`,
-  );
-}
-
 export interface DeployAppResult {
   readonly lease_uuid: string;
   readonly provider_uuid: string;
@@ -109,7 +70,7 @@ export interface DeployAppResult {
 }
 
 export type SkuSelector =
-  | { kind: 'byName'; size: string }
+  | { kind: 'byName'; size: string; providerUuid?: string; skuUuid?: string }
   | { kind: 'resolved'; skuUuid: string; providerUuid: string };
 
 export interface DeployManifestInput {
@@ -232,10 +193,11 @@ export async function deployManifest(
   let providerUuid: string;
   switch (input.sku.kind) {
     case 'resolved':
-      // Pre-resolved IDs are trusted verbatim, so validate them at the boundary:
-      // an empty skuUuid would build a malformed `:1` lease item and reach
-      // create-lease, and an empty providerUuid fails later with a misleading
-      // QUERY_FAILED. Reject early with an actionable INVALID_CONFIG instead.
+      // Pre-resolved IDs are trusted verbatim: the chain's create-lease is the
+      // authoritative validation (existence/active/provider) — re-querying here
+      // would reject momentarily-inactive-but-valid pins and still not close the
+      // TOCTOU window (design §4.3 + §6). Only guard against empty strings, which
+      // would build a malformed `:1` lease item / misleading downstream error.
       if (
         input.sku.skuUuid.trim() === '' ||
         input.sku.providerUuid.trim() === ''
@@ -249,7 +211,15 @@ export async function deployManifest(
       providerUuid = input.sku.providerUuid;
       break;
     case 'byName': {
-      const r = await findSkuUuid(queryClient, input.sku.size);
+      const r = await resolveSku(queryClient, {
+        size: input.sku.size,
+        ...(input.sku.providerUuid !== undefined
+          ? { providerUuid: input.sku.providerUuid }
+          : {}),
+        ...(input.sku.skuUuid !== undefined
+          ? { skuUuid: input.sku.skuUuid }
+          : {}),
+      });
       skuUuid = r.skuUuid;
       providerUuid = r.providerUuid;
       break;
@@ -269,12 +239,11 @@ export async function deployManifest(
 
   // Storage on the SAME provider (ENG-258 #2).
   if (input.storage) {
-    const { skuUuid: storageSkuUuid } = await findSkuUuid(
-      queryClient,
-      input.storage,
+    const storage = await resolveSku(queryClient, {
+      size: input.storage,
       providerUuid,
-    );
-    leaseItems.push(`${storageSkuUuid}:1`);
+    });
+    leaseItems.push(`${storage.skuUuid}:1`);
   }
 
   const providerUrl = await resolveProviderUrl(queryClient, providerUuid);

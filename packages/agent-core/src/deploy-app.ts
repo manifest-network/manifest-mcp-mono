@@ -41,6 +41,8 @@ import {
   cosmosEstimateFee,
   ManifestMCPError,
   ManifestMCPErrorCode,
+  resolveSku,
+  type SkuCandidate,
   setItemCustomDomain,
   stopApp,
 } from '@manifest-network/manifest-mcp-core';
@@ -76,7 +78,6 @@ import {
   normalizeFredUrl,
 } from './internals/connection.js';
 import { evaluateReadinessFromFredResponse } from './internals/evaluate-readiness-from-fred.js';
-import { findSkuUuid } from './internals/find-sku-uuid.js';
 import {
   EMPTY_DENOM_MAP,
   loadChainDenomMap,
@@ -198,12 +199,74 @@ export async function deployApp(
   // `tenantAddress` was resolved + validated as consistent across
   // walletProvider/clientManager in the address-source guard above.
   const queryClient = await opts.clientManager.getQueryClient();
+
+  // --- SKU pin resolution (ENG-258) -----------------------------------
+  // Resolve the requested `size` to a single concrete (skuUuid,
+  // providerUuid) pin ONCE, BEFORE readiness/plan/fee/broadcast, so all
+  // four reference the same SKU. Ambiguity routes through `onResolveSku`
+  // (interactive) or re-throws SKU_AMBIGUOUS (headless). Defined as a
+  // closure so it captures `queryClient` + `callbacks` and can be reused
+  // by the post-edit re-plan branch (an edit can change size/provider).
+  //
+  // Returns `{ pin, elicited }` where `elicited` is true ONLY when
+  // `onResolveSku` was actually invoked (i.e. an ambiguous-name
+  // interactivity happened). The caller uses `elicited` to decide whether
+  // to stamp the chosen pin onto `confirmedSpec` — stamping is only
+  // needed to suppress a re-elicit on the post-edit re-plan; non-elicited
+  // resolutions (unique-name or UUID-direct) don't need it and shouldn't
+  // carry a stale pin if the user later issues a `replace_spec` edit that
+  // changes the size.
+  const resolvePin = async (
+    s: DeploySpec,
+  ): Promise<{ pin: SkuCandidate; elicited: boolean }> => {
+    const providerUuid = requestedProviderUuid(s);
+    const skuUuid = requestedSkuUuid(s);
+    try {
+      const pin = await resolveSku(queryClient, {
+        size: requestedSize(s),
+        ...(providerUuid !== undefined ? { providerUuid } : {}),
+        ...(skuUuid !== undefined ? { skuUuid } : {}),
+      });
+      return { pin, elicited: false };
+    } catch (err) {
+      if (
+        err instanceof ManifestMCPError &&
+        err.code === ManifestMCPErrorCode.SKU_AMBIGUOUS &&
+        callbacks.onResolveSku
+      ) {
+        const candidates = (err.details?.candidates as SkuCandidate[]) ?? [];
+        callbacks.onProgress?.({ kind: 'sku_ambiguous', candidates });
+        const pick = await callbacks.onResolveSku(candidates);
+        const pin = await resolveSku(queryClient, {
+          size: requestedSize(s),
+          skuUuid: pick.skuUuid,
+          providerUuid: pick.providerUuid,
+        });
+        return { pin, elicited: true };
+      }
+      throw err;
+    }
+  };
+  let { pin: pinned, elicited: pinElicited } = await resolvePin(spec);
+
+  // FIX 1 (ENG-258 review): `pinned.name` is the RESOLVED SKU's on-chain
+  // name. When a deploy is pinned by `skuUuid` (or by provider) whose
+  // on-chain name differs from the user's requested `size` (or size was
+  // omitted → defaulted to 'small'), `requestedSize(spec)` no longer
+  // matches the resolved SKU. fred's `evaluateReadiness` gate
+  // (`skuCandidates.some(c => c.name === inputs.size)`) would then fail
+  // and block a valid pin. Thread `pinned.name` — not `requestedSize` —
+  // as the canonical SKU name into every downstream consumer (readiness,
+  // plan render, fred input, persisted manifest). `requestedSize(spec)`
+  // survives ONLY as the input to `resolvePin` (the user's request).
   const readinessRaw = await checkDeploymentReadiness(
     queryClient,
     tenantAddress,
     {
       image: primaryImage(spec),
-      size: requestedSize(spec),
+      size: pinned.name,
+      providerUuid: pinned.providerUuid,
+      skuUuid: pinned.skuUuid,
     },
   );
   // `readiness` is `let`-bound because the post-edit recompute branch
@@ -247,19 +310,41 @@ export async function deployApp(
   // (when customDomain set). Lean port: cosmosEstimateFee invocation
   // details encapsulated in a helper to keep this fn focused on flow.
   let summary = summarizeSpec(spec);
-  let fees = await estimateFees(opts, spec, preview.meta_hash_hex);
+  let fees = await estimateFees(
+    opts,
+    spec,
+    preview.meta_hash_hex,
+    pinned.skuUuid,
+  );
   let plan: Plan = { summary, readiness, fees };
 
   // --- Render plan + onPlan callback ----------------------------------
-  let confirmedSpec = spec;
+  // FIX 2 (ENG-258 review): stamp the resolved pin identity onto the
+  // working spec ONLY when an ambiguous SKU was resolved interactively
+  // via `onResolveSku` (i.e. `pinElicited === true`). The stamp prevents
+  // re-eliciting on the post-edit re-plan: an `edit_env` edit spreads
+  // the prior spec and preserves the stamped skuUuid/providerUuid, so
+  // the by-UUID second resolve skips the ambiguity entirely.
+  //
+  // When the SKU was resolved by a UNIQUE name or by explicit UUID
+  // (non-elicited paths), the original `spec` already carries the right
+  // identity — stamping is unnecessary and risks locking in a stale pin
+  // if a `replace_spec` edit changes `size` (that edit replaces the
+  // spec wholesale anyway, but avoiding the stamp keeps the non-elicited
+  // path behaviorally minimal).
+  let confirmedSpec: DeploySpec = pinElicited
+    ? { ...spec, skuUuid: pinned.skuUuid, providerUuid: pinned.providerUuid }
+    : spec;
   const block = renderDeploymentPlan({
     plan,
     denomMap,
     image: primaryImage(spec),
-    size: requestedSize(spec),
+    // FIX 1: show the RESOLVED SKU name (honest when pinned by uuid).
+    size: pinned.name,
     metaHash: preview.meta_hash_hex,
     customDomain: customDomainOf(spec),
     customDomainService: customDomainServiceOf(spec),
+    providerUuid: pinned.providerUuid,
   });
   callbacks.onProgress?.({ kind: 'deployment_plan_rendered', block });
   if (callbacks.onPlan) {
@@ -322,12 +407,30 @@ export async function deployApp(
       // wired through the snake_case → camelCase translator). Both
       // call sites now fire the `status === 'block'` short-circuit
       // correctly (initial-spec L207 + post-edit recall below).
+      // Re-resolve the SKU pin for the edited spec (ENG-258): an edit can
+      // change `size` / `providerUuid`, so the pin threaded into the
+      // post-edit readiness/fee/plan/broadcast must reflect the edit.
+      // Track elicitation again: if the post-edit resolve is also
+      // interactive, stamp the new pin so a further re-plan won't
+      // re-elicit for the same choice.
+      ({ pin: pinned, elicited: pinElicited } =
+        await resolvePin(confirmedSpec));
+      if (pinElicited) {
+        confirmedSpec = {
+          ...confirmedSpec,
+          skuUuid: pinned.skuUuid,
+          providerUuid: pinned.providerUuid,
+        };
+      }
       const editedReadinessRaw = await checkDeploymentReadiness(
         queryClient,
         tenantAddress,
         {
           image: primaryImage(confirmedSpec),
-          size: requestedSize(confirmedSpec),
+          // FIX 1: canonical resolved SKU name, not the user's requested size.
+          size: pinned.name,
+          providerUuid: pinned.providerUuid,
+          skuUuid: pinned.skuUuid,
         },
       );
       readiness = evaluateReadinessFromFredResponse(
@@ -348,7 +451,12 @@ export async function deployApp(
         buildManifestPreviewInput(confirmedSpec, requestedSize(confirmedSpec)),
       );
       summary = summarizeSpec(confirmedSpec);
-      fees = await estimateFees(opts, confirmedSpec, preview.meta_hash_hex);
+      fees = await estimateFees(
+        opts,
+        confirmedSpec,
+        preview.meta_hash_hex,
+        pinned.skuUuid,
+      );
       plan = { summary, readiness, fees };
       // Copilot review fix (PR #58 r3237308843): the pre-edit
       // `deployment_plan_rendered` event already fired with the original
@@ -361,10 +469,12 @@ export async function deployApp(
         plan,
         denomMap,
         image: primaryImage(confirmedSpec),
-        size: requestedSize(confirmedSpec),
+        // FIX 1: canonical resolved SKU name, not the user's requested size.
+        size: pinned.name,
         metaHash: preview.meta_hash_hex,
         customDomain: customDomainOf(confirmedSpec),
         customDomainService: customDomainServiceOf(confirmedSpec),
+        providerUuid: pinned.providerUuid,
       });
       callbacks.onProgress?.({
         kind: 'deployment_plan_rendered',
@@ -421,10 +531,12 @@ export async function deployApp(
 
   // --- Broadcast: fred's atomic deployApp (architect α-locked) -------
   callbacks.onProgress?.({ kind: 'deploy_app_broadcast' });
-  const fredInput = buildFredDeployInput(
-    confirmedSpec,
-    requestedSize(confirmedSpec),
-  );
+  // FIX 1: pass the RESOLVED SKU name so fred records the lease item with
+  // the on-chain SKU's name, consistent with the readiness/plan above.
+  const fredInput = buildFredDeployInput(confirmedSpec, pinned.name, {
+    skuUuid: pinned.skuUuid,
+    providerUuid: pinned.providerUuid,
+  });
   let fredResult: FredDeployAppResult;
   try {
     fredResult = await fredDeployApp(
@@ -449,6 +561,9 @@ export async function deployApp(
       tenantAddress,
       chainId,
       denomMap,
+      // FIX 1: thread the RESOLVED SKU name so the recovery path's
+      // manifest persistence records the same name the broadcast used.
+      skuName: pinned.name,
     };
     return await handleBroadcastFailure(
       err,
@@ -639,7 +754,8 @@ export async function deployApp(
   const persistedPath = await tryPersistManifest({
     leaseUuid: fredResult.lease_uuid,
     image: primaryImage(confirmedSpec),
-    size: requestedSize(confirmedSpec),
+    // FIX 1: persist the RESOLVED SKU name (matches what was broadcast).
+    size: pinned.name,
     metaHash: preview.meta_hash_hex,
     chainId,
     manifestJson: preview.manifest_json,
@@ -753,6 +869,22 @@ function requestedSize(spec: DeploySpec): string {
     : 'small';
 }
 
+/**
+ * SKU disambiguator intent helpers. `providerUuid` / `skuUuid` are
+ * first-class optional fields on both `DeploySpec` variants (ENG-296,
+ * mirroring ENG-275's typed `size`). Returns `undefined` for absent /
+ * empty values so `resolveSku` only narrows when a real disambiguator is
+ * supplied.
+ */
+function requestedProviderUuid(spec: DeploySpec): string | undefined {
+  const v = spec.providerUuid;
+  return typeof v === 'string' && v.length > 0 ? v : undefined;
+}
+function requestedSkuUuid(spec: DeploySpec): string | undefined {
+  const v = spec.skuUuid;
+  return typeof v === 'string' && v.length > 0 ? v : undefined;
+}
+
 function customDomainOf(spec: DeploySpec): string | undefined {
   return (spec as { customDomain?: string }).customDomain;
 }
@@ -766,6 +898,7 @@ async function estimateFees(
   opts: DeployAppOptions,
   spec: DeploySpec,
   metaHashHex: string, // SHA-256 hex digest of the canonical manifest JSON; threaded into create-lease estimate via the `--meta-hash` flag (mirrors fred's deploy path at packages/fred/src/tools/deployApp.ts:363)
+  skuUuid: string, // ENG-258: pre-resolved SKU pin from the orchestrator; no second lookup here.
 ): Promise<Plan['fees']> {
   // PR 3 fix-3 (B-narrowed-trimmed per architect ratification):
   //   - REAL cosmosEstimateFee for create-lease (criterion-blocking).
@@ -777,8 +910,9 @@ async function estimateFees(
   //     fails first with ErrLeaseNotFound), so the sentinel is the
   //     PERMANENT shape — not a TODO.
 
-  const size = requestedSize(spec);
-  const { skuUuid } = await findSkuUuid(opts.clientManager, size);
+  // ENG-258: `skuUuid` is now a pre-resolved parameter (the orchestrator
+  // resolves the pin ONCE via core's `resolveSku` so plan, fee, and
+  // broadcast share one SKU). The prior in-function second lookup is gone.
 
   // ENG-185 #3 sub-PR C: mirror fred's deploy-time item creation verbatim
   // (`packages/fred/src/tools/deployApp.ts:336-341`). Stack specs create
@@ -952,6 +1086,12 @@ interface RecoveryContext {
   tenantAddress: string;
   chainId: string;
   denomMap: DenomMap;
+  /**
+   * Resolved on-chain SKU name (FIX 1, ENG-258 review). The recovery
+   * path's manifest persistence records this — not the user's requested
+   * `size` — so a deploy pinned by `skuUuid` persists the actual SKU name.
+   */
+  skuName: string;
 }
 
 async function handleBroadcastFailure(
@@ -1369,7 +1509,8 @@ async function retrySetDomainAndComplete(
   const persistedPath = await tryPersistManifest({
     leaseUuid,
     image: primaryImage(spec),
-    size: requestedSize(spec),
+    // FIX 1: persist the RESOLVED SKU name (matches what was broadcast).
+    size: ctx.skuName,
     metaHash: ctx.metaHash,
     chainId: ctx.chainId,
     manifestJson: ctx.manifestJson,

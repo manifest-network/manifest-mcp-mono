@@ -24,10 +24,8 @@ vi.mock('../http/fred.js', async (importOriginal) => {
 
 import {
   cosmosTx,
-  isRetryableError,
   LeaseState,
   logger,
-  ManifestMCPError,
   ManifestMCPErrorCode,
 } from '@manifest-network/manifest-mcp-core';
 import {
@@ -37,7 +35,7 @@ import {
 import { pollLeaseUntilReady, TerminalChainStateError } from '../http/fred.js';
 import { getLeaseConnectionInfo, uploadLeaseData } from '../http/provider.js';
 import { deployApp } from './deployApp.js';
-import { deployManifest, findSkuUuid } from './deployManifest.js';
+import { deployManifest } from './deployManifest.js';
 
 const mockCosmosTx = vi.mocked(cosmosTx);
 const mockUpload = vi.mocked(uploadLeaseData);
@@ -78,58 +76,6 @@ function makeQueryClient() {
     },
   });
 }
-
-function qcWithTwoProviders() {
-  return makeMockQueryClient({
-    sku: {
-      providers: [
-        { uuid: 'prov-1', address: 'm1', apiUrl: 'http://p1', active: true },
-        { uuid: 'prov-2', address: 'm2', apiUrl: 'http://p2', active: true },
-      ],
-      skus: [
-        {
-          uuid: 'sku-compute',
-          name: 'docker-micro',
-          providerUuid: 'prov-1',
-          basePrice: { amount: '1', denom: 'umfx' },
-        },
-        {
-          uuid: 'sku-store-p2',
-          name: 'storage-10g',
-          providerUuid: 'prov-2',
-          basePrice: { amount: '1', denom: 'umfx' },
-        },
-      ],
-      providerLookup: {
-        'prov-1': { provider: { apiUrl: 'http://p1' } } as any,
-      },
-    },
-  });
-}
-
-describe('findSkuUuid provider filter (ENG-258 #2)', () => {
-  it('rejects a tier that exists only on a different provider with non-retryable INVALID_CONFIG', async () => {
-    const qc = qcWithTwoProviders();
-    let thrown: unknown;
-    try {
-      await findSkuUuid(qc as any, 'storage-10g', 'prov-1');
-    } catch (e) {
-      thrown = e;
-    }
-    expect(thrown).toBeInstanceOf(ManifestMCPError);
-    expect((thrown as ManifestMCPError).code).toBe(
-      ManifestMCPErrorCode.INVALID_CONFIG,
-    );
-    expect((thrown as ManifestMCPError).message).toContain('prov-1');
-    expect(isRetryableError(thrown)).toBe(false);
-  });
-
-  it('resolves a tier on the named provider', async () => {
-    const qc = qcWithTwoProviders();
-    const { skuUuid } = await findSkuUuid(qc as any, 'storage-10g', 'prov-2');
-    expect(skuUuid).toBe('sku-store-p2');
-  });
-});
 
 describe('deployManifest', () => {
   beforeEach(() => {
@@ -185,8 +131,11 @@ describe('deployManifest', () => {
     expect(uploaded).toBe(manifest); // byte-identical, not re-serialized
   });
 
-  it('ENG-258 #1: kind:resolved skips the SKU query', async () => {
-    const qc = makeQueryClient();
+  it('ENG-258 #1: kind:resolved skips the SKU query — trusts the supplied pair verbatim (design §4.3 + §6)', async () => {
+    // Pre-resolved IDs must be trusted verbatim: the chain's create-lease is the
+    // authoritative validation. Re-querying here would reject momentarily-inactive
+    // but valid pins and still not close the TOCTOU window.
+    const qc = makeQueryClient(); // contains sku-micro-uuid on prov-1
     const spy = vi.spyOn(qc.liftedinit.sku.v1, 'sKUs');
     const cm = makeMockClientManager({
       queryClient: qc,
@@ -195,13 +144,60 @@ describe('deployManifest', () => {
     await deployManifest(
       {
         manifest: singleManifest(),
-        sku: { kind: 'resolved', skuUuid: 'sku-x', providerUuid: 'prov-1' },
+        sku: {
+          kind: 'resolved',
+          skuUuid: 'sku-micro-uuid',
+          providerUuid: 'prov-1',
+        },
+      },
+      deps(cm),
+    );
+    // The SKU query must NOT have been called — resolved trusts verbatim.
+    expect(spy).not.toHaveBeenCalled();
+    // create-lease used the supplied skuUuid verbatim:
+    expect(mockCosmosTx.mock.calls[0][3]).toContain('sku-micro-uuid:1');
+  });
+
+  it('ENG-258: resolved selector with non-empty ids is trusted verbatim (no SKU query, lease item built from supplied ids)', async () => {
+    // Mismatched or unexpected pairs are intentionally NOT rejected here —
+    // the chain's create-lease tx is the atomic authoritative check.
+    // Only empty strings are rejected (they'd build a malformed `:1` item).
+    // Use a SKU uuid that is NOT in the fixture's sku catalog (any-sku-uuid)
+    // to confirm that no SKU query is made — we only need prov-1 in
+    // providerLookup so resolveProviderUrl can return the provider URL.
+    const qc = makeMockQueryClient({
+      sku: {
+        skus: [
+          {
+            uuid: 'sku-micro-uuid',
+            name: 'docker-micro',
+            providerUuid: 'prov-1',
+            basePrice: { amount: '36000', denom: 'umfx' },
+          },
+        ],
+        providerLookup: {
+          'prov-1': { provider: { apiUrl: 'http://localhost:8080' } } as any,
+        },
+      },
+    });
+    const spy = vi.spyOn(qc.liftedinit.sku.v1, 'sKUs');
+    const cm = makeMockClientManager({
+      queryClient: qc,
+      address: 'manifest1tenant',
+    });
+    await deployManifest(
+      {
+        manifest: singleManifest(),
+        sku: {
+          kind: 'resolved',
+          skuUuid: 'any-sku-uuid',
+          providerUuid: 'prov-1',
+        },
       },
       deps(cm),
     );
     expect(spy).not.toHaveBeenCalled();
-    // create-lease used the supplied skuUuid verbatim:
-    expect(mockCosmosTx.mock.calls[0][3]).toContain('sku-x:1');
+    expect(mockCosmosTx.mock.calls[0][3]).toContain('any-sku-uuid:1');
   });
 
   it('rejects a resolved selector with an empty/whitespace skuUuid before any tx', async () => {
@@ -443,5 +439,160 @@ describe('deployManifest', () => {
         labels: { a: 'b' },
       }),
     ).resolves.toMatchObject({ state: LeaseState.LEASE_STATE_ACTIVE });
+  });
+
+  it('ENG-258 #1: throws SKU_AMBIGUOUS (no provider) for a duplicate name', async () => {
+    const qc = makeMockQueryClient({
+      sku: {
+        skus: [
+          {
+            uuid: 'a',
+            name: 'docker-micro',
+            providerUuid: 'p1',
+            basePrice: { amount: '1', denom: 'umfx' },
+          },
+          {
+            uuid: 'b',
+            name: 'docker-micro',
+            providerUuid: 'p2',
+            basePrice: { amount: '2', denom: 'umfx' },
+          },
+        ],
+        providerLookup: {
+          p1: { provider: { apiUrl: 'http://localhost:8081' } } as never,
+        },
+      },
+    });
+    const cm = makeMockClientManager({
+      queryClient: qc,
+      address: 'manifest1tenant',
+    });
+    await expect(
+      deployManifest(
+        {
+          manifest: singleManifest(),
+          sku: { kind: 'byName', size: 'docker-micro' },
+        },
+        deps(cm),
+      ),
+    ).rejects.toMatchObject({ code: ManifestMCPErrorCode.SKU_AMBIGUOUS });
+    expect(mockCosmosTx).not.toHaveBeenCalled(); // no broadcast on ambiguity
+  });
+
+  it('ENG-258 #1: resolves a duplicate name when providerUuid narrows it', async () => {
+    const qc = makeMockQueryClient({
+      sku: {
+        skus: [
+          {
+            uuid: 'a',
+            name: 'docker-micro',
+            providerUuid: 'p1',
+            basePrice: { amount: '1', denom: 'umfx' },
+          },
+          {
+            uuid: 'b',
+            name: 'docker-micro',
+            providerUuid: 'p2',
+            basePrice: { amount: '2', denom: 'umfx' },
+          },
+        ],
+        providerLookup: {
+          p2: { provider: { apiUrl: 'http://localhost:8082' } } as never,
+        },
+      },
+    });
+    const cm = makeMockClientManager({
+      queryClient: qc,
+      address: 'manifest1tenant',
+    });
+    await deployManifest(
+      {
+        manifest: singleManifest(),
+        sku: { kind: 'byName', size: 'docker-micro', providerUuid: 'p2' },
+      },
+      deps(cm),
+    );
+    expect(mockCosmosTx.mock.calls[0][3]).toContain('b:1'); // used p2's sku
+  });
+
+  it('ENG-258: deployApp with sku_uuid + provider_uuid uses the resolved selector (skips chain query — trusts verbatim)', async () => {
+    const qc = makeMockQueryClient({
+      sku: {
+        skus: [
+          {
+            uuid: 'a',
+            name: 'docker-micro',
+            providerUuid: 'p1',
+            basePrice: { amount: '1', denom: 'umfx' },
+          },
+          {
+            uuid: 'b',
+            name: 'docker-micro',
+            providerUuid: 'p2',
+            basePrice: { amount: '2', denom: 'umfx' },
+          },
+        ],
+        providerLookup: {
+          p2: { provider: { apiUrl: 'http://localhost:8082' } } as never,
+        },
+      },
+    });
+    const spy = vi.spyOn(qc.liftedinit.sku.v1, 'sKUs');
+    const cm = makeMockClientManager({
+      queryClient: qc,
+      address: 'manifest1tenant',
+    });
+    await deployApp(cm as never, getAuthToken, getLeaseDataAuthToken, {
+      image: 'nginx:alpine',
+      port: 80,
+      size: 'docker-micro',
+      skuUuid: 'b',
+      providerUuid: 'p2',
+    });
+    // Both ids present → resolved selector → no chain query (trusted verbatim).
+    expect(spy).not.toHaveBeenCalled();
+    expect(mockCosmosTx.mock.calls[0][3]).toContain('b:1');
+  });
+
+  it('ENG-258: deployApp with sku_uuid ALONE routes through byName (queries the chain to learn the provider)', async () => {
+    // Duplicate name: a byName-without-disambiguator would be SKU_AMBIGUOUS, so a
+    // successful broadcast of b's item proves skuUuid pinned it via resolveSku's
+    // uuid lookup (which DOES query the chain to learn b's provider).
+    const qc = makeMockQueryClient({
+      sku: {
+        skus: [
+          {
+            uuid: 'a',
+            name: 'docker-micro',
+            providerUuid: 'p1',
+            basePrice: { amount: '1', denom: 'umfx' },
+          },
+          {
+            uuid: 'b',
+            name: 'docker-micro',
+            providerUuid: 'p2',
+            basePrice: { amount: '2', denom: 'umfx' },
+          },
+        ],
+        providerLookup: {
+          p2: { provider: { apiUrl: 'http://localhost:8082' } } as never,
+        },
+      },
+    });
+    const spy = vi.spyOn(qc.liftedinit.sku.v1, 'sKUs');
+    const cm = makeMockClientManager({
+      queryClient: qc,
+      address: 'manifest1tenant',
+    });
+    await deployApp(cm as never, getAuthToken, getLeaseDataAuthToken, {
+      image: 'nginx:alpine',
+      port: 80,
+      size: 'docker-micro',
+      skuUuid: 'b',
+      // no providerUuid → byName branch, but skuUuid pins the result.
+    });
+    // skuUuid-only → byName → resolveSku queries the chain to look up b's provider.
+    expect(spy).toHaveBeenCalled();
+    expect(mockCosmosTx.mock.calls[0][3]).toContain('b:1');
   });
 });

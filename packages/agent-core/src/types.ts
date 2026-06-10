@@ -5,6 +5,7 @@
 
 import type {
   CosmosClientManager,
+  SkuCandidate,
   WalletProvider,
 } from '@manifest-network/manifest-mcp-core';
 
@@ -12,7 +13,7 @@ import type {
 // `@manifest-network/manifest-agent-core` directly without a separate
 // `manifest-mcp-core` dependency. These are TS-type-only re-exports; the
 // runtime bundle is unaffected (platform: 'neutral' build target preserved).
-export type { CosmosClientManager, WalletProvider };
+export type { CosmosClientManager, SkuCandidate, WalletProvider };
 
 // --- primitives ---------------------------------------------------------
 
@@ -192,6 +193,14 @@ export interface SingleServiceSpec {
    * callers can select a non-default SKU.
    */
   size?: string;
+  /**
+   * Optional SKU disambiguator: `provider_uuid` narrows a duplicate
+   * `size` name to one provider; `sku_uuid` pins a specific SKU by uuid
+   * (bypasses the name). Threaded into `resolveSku`. ENG-296.
+   */
+  providerUuid?: string;
+  /** See {@link SingleServiceSpec.providerUuid}. Pins a specific SKU by uuid (bypasses the name). ENG-296. */
+  skuUuid?: string;
 }
 
 export interface StackSpec {
@@ -200,6 +209,14 @@ export interface StackSpec {
   serviceName?: string;
   /** SKU tier for the lease items; see {@link SingleServiceSpec.size}. */
   size?: string;
+  /**
+   * Optional SKU disambiguator: `provider_uuid` narrows a duplicate
+   * `size` name to one provider; `sku_uuid` pins a specific SKU by uuid
+   * (bypasses the name). Threaded into `resolveSku`. ENG-296.
+   */
+  providerUuid?: string;
+  /** See {@link StackSpec.providerUuid}. Pins a specific SKU by uuid (bypasses the name). ENG-296. */
+  skuUuid?: string;
 }
 
 export type DeploySpec = SingleServiceSpec | StackSpec;
@@ -303,6 +320,12 @@ export type ProgressEvent =
       kind: 'partial_success_prompt_rendered';
       prompt: string;
       leaseUuid: string;
+    }
+  // Emitted when `size` matches >1 active SKU and no disambiguator was
+  // given. Precedes the `onResolveSku` callback (ENG-258).
+  | {
+      kind: 'sku_ambiguous';
+      candidates: SkuCandidate[];
     };
 
 // --- failure + recovery -------------------------------------------------
@@ -343,6 +366,14 @@ export interface DeployAppCallbacks {
     failure: FailureEnvelope,
     options: RecoveryOption[],
   ) => Promise<RecoveryChoice>;
+  /**
+   * Resolve an ambiguous SKU name. Invoked when a requested `size` matches
+   * more than one active SKU and no provider_uuid/sku_uuid was supplied.
+   * Returns the user's pick; when absent, agent-core re-throws SKU_AMBIGUOUS.
+   */
+  onResolveSku?: (
+    candidates: SkuCandidate[],
+  ) => Promise<{ skuUuid: string; providerUuid: string }>;
 }
 
 // --- manage-domain ------------------------------------------------------
