@@ -72,7 +72,7 @@
     "zod": "^4.3.6"
   },
   "optionalDependencies": {
-    "undici": "8.3.0"
+    "undici": "8.4.1"
   },
   "devDependencies": {
     "@types/node": "22.19.19",
