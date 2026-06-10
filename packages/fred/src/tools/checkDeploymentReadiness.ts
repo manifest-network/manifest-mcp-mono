@@ -108,6 +108,13 @@ export async function checkDeploymentReadiness(
     queryClient.liftedinit.sku.v1.sKUs({ activeOnly: true, pagination }),
   ]);
 
+  // Normalize selector inputs once: trim whitespace, treat whitespace-only as absent.
+  // This mirrors core resolveSku and the deploy paths — a value copied with surrounding
+  // spaces must not false-miss, and a whitespace-only value must not act like a real selector.
+  const size = input.size?.trim() || undefined;
+  const providerUuid = input.providerUuid?.trim() || undefined;
+  const skuUuid = input.skuUuid?.trim() || undefined;
+
   const allActive = skusResult.skus;
 
   // Build a SkuSummary from a raw SKU record.
@@ -125,44 +132,40 @@ export async function checkDeploymentReadiness(
   // consistent with core resolveSku — a caller pinning skuUuid whose SKU name
   // differs from `size` must still get that SKU as the single candidate).
   let candidates: SkuSummary[] = [];
-  if (input.skuUuid) {
+  if (skuUuid) {
     // UUID path: resolve by identity; size is ignored.
     candidates = allActive
-      .filter((s) => s.uuid === input.skuUuid)
-      .filter((s) =>
-        input.providerUuid ? s.providerUuid === input.providerUuid : true,
-      )
+      .filter((s) => s.uuid === skuUuid)
+      .filter((s) => (providerUuid ? s.providerUuid === providerUuid : true))
       .map(toSummary);
-  } else if (input.size) {
+  } else if (size) {
     // Name path: filter by name, optionally narrow by provider.
     candidates = allActive
-      .filter((s) => s.name === input.size)
-      .filter((s) =>
-        input.providerUuid ? s.providerUuid === input.providerUuid : true,
-      )
+      .filter((s) => s.name === size)
+      .filter((s) => (providerUuid ? s.providerUuid === providerUuid : true))
       .map(toSummary);
   }
   // Determinate pick only when exactly one candidate (unambiguous).
   const sku = candidates.length === 1 ? candidates[0] : null;
 
   const missing: string[] = [];
-  if (input.skuUuid && candidates.length === 0) {
+  if (skuUuid && candidates.length === 0) {
     missing.push(
-      `SKU uuid "${input.skuUuid}" not found among active SKUs${input.providerUuid ? ` on provider ${input.providerUuid}` : ''}.`,
+      `SKU uuid "${skuUuid}" not found among active SKUs${providerUuid ? ` on provider ${providerUuid}` : ''}.`,
     );
-  } else if (!input.skuUuid && input.size && candidates.length === 0) {
+  } else if (!skuUuid && size && candidates.length === 0) {
     const available = [...new Set(allActive.map((s) => s.name))]
       .slice(0, 10)
       .join(', ');
     missing.push(
-      `Requested SKU "${input.size}" is not available. Pick one of: ${available || '(none active)'}`,
+      `Requested SKU "${size}" is not available. Pick one of: ${available || '(none active)'}`,
     );
-  } else if (!input.skuUuid && input.size && candidates.length > 1) {
+  } else if (!skuUuid && size && candidates.length > 1) {
     // Ambiguous: the name matches >1 active SKU, across one or more providers
     // (a single provider can publish duplicate names too) (ENG-258).
     const providers = [...new Set(candidates.map((c) => c.provider_uuid))];
     missing.push(
-      `SKU "${input.size}" matches ${candidates.length} active SKUs (provider(s): ${providers.join(', ')}). ` +
+      `SKU "${size}" matches ${candidates.length} active SKUs (provider(s): ${providers.join(', ')}). ` +
         `Specify provider_uuid or sku_uuid to disambiguate.`,
     );
   }
@@ -193,9 +196,9 @@ export async function checkDeploymentReadiness(
     image: input.image ?? null,
     // When exactly one SKU candidate resolved, echo its real name so the result
     // is internally consistent (size === sku.name). On the name path with one
-    // candidate, sku.name === input.size anyway. Ambiguous/none → falls back to
-    // the caller-supplied input.size (ENG-258 r2).
-    size: sku?.name ?? input.size ?? null,
+    // candidate, sku.name === size anyway. Ambiguous/none → falls back to
+    // the trimmed size (ENG-258 r2).
+    size: sku?.name ?? size ?? null,
     wallet_balances: balance.balances,
     credits: balance.credits,
     ...(balance.current_balance && {

@@ -421,4 +421,106 @@ describe('checkDeploymentReadiness', () => {
       provider_uuid: 'p1',
     });
   });
+
+  it('trim: padded size resolves the candidate as if un-padded', async () => {
+    const qc = makeQc({
+      walletBalances: [{ denom: 'umfx', amount: '5000000' }],
+      creditAccount: {
+        activeLeaseCount: 0n,
+        pendingLeaseCount: 0n,
+        reservedAmounts: [],
+      },
+      creditAccountAvailableBalances: [{ denom: 'upwr', amount: '1000000' }],
+      skus: [
+        {
+          uuid: 'sku-trim-1',
+          name: 'docker-micro',
+          providerUuid: 'prov-1',
+          basePrice: { denom: 'upwr', amount: '100' },
+          active: true,
+        },
+      ],
+    });
+
+    const result = await checkDeploymentReadiness(qc, ADDRESS, {
+      size: '  docker-micro  ',
+    });
+    // Padded input must resolve the same as the exact name.
+    expect(result.sku?.name).toBe('docker-micro');
+    expect(result.sku_candidates).toHaveLength(1);
+    expect(result.ready).toBe(true);
+    expect(result.missing_steps).toHaveLength(0);
+  });
+
+  it('trim: whitespace-only skuUuid is treated as absent — resolves via size instead', async () => {
+    const qc = makeQc({
+      walletBalances: [{ denom: 'umfx', amount: '5000000' }],
+      creditAccount: {
+        activeLeaseCount: 0n,
+        pendingLeaseCount: 0n,
+        reservedAmounts: [],
+      },
+      creditAccountAvailableBalances: [{ denom: 'upwr', amount: '1000000' }],
+      skus: [
+        {
+          uuid: 'sku-1',
+          name: 'docker-micro',
+          providerUuid: 'prov-1',
+          basePrice: { denom: 'upwr', amount: '100' },
+          active: true,
+        },
+      ],
+    });
+
+    // skuUuid is whitespace-only — must be treated as absent and not take the
+    // UUID path (which would emit "SKU uuid '   ' not found" and return no candidates).
+    const result = await checkDeploymentReadiness(qc, ADDRESS, {
+      size: 'docker-micro',
+      skuUuid: '   ',
+    });
+    expect(result.sku?.name).toBe('docker-micro');
+    expect(result.sku_candidates).toHaveLength(1);
+    expect(result.ready).toBe(true);
+    // Must NOT contain a uuid-not-found message.
+    expect(result.missing_steps.every((m) => !m.includes('SKU uuid'))).toBe(
+      true,
+    );
+  });
+
+  it('trim: padded providerUuid narrows the candidate correctly', async () => {
+    const qc = makeQc({
+      walletBalances: [{ denom: 'umfx', amount: '5000000' }],
+      creditAccount: {
+        activeLeaseCount: 0n,
+        pendingLeaseCount: 0n,
+        reservedAmounts: [],
+      },
+      creditAccountAvailableBalances: [{ denom: 'upwr', amount: '1000000' }],
+      skus: [
+        {
+          uuid: 'a',
+          name: 'docker-micro',
+          providerUuid: 'p1',
+          basePrice: { denom: 'upwr', amount: '100' },
+          active: true,
+        },
+        {
+          uuid: 'b',
+          name: 'docker-micro',
+          providerUuid: 'p2',
+          basePrice: { denom: 'upwr', amount: '120' },
+          active: true,
+        },
+      ],
+    });
+
+    const result = await checkDeploymentReadiness(qc, ADDRESS, {
+      size: 'docker-micro',
+      providerUuid: '  p1  ',
+    });
+    // Padded providerUuid must narrow to the p1 candidate only.
+    expect(result.sku_candidates).toHaveLength(1);
+    expect(result.sku?.uuid).toBe('a');
+    expect(result.ready).toBe(true);
+  });
 });
