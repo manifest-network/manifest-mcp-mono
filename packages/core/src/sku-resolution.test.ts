@@ -9,6 +9,7 @@ function qc(
     name: string;
     providerUuid: string;
     basePrice?: { amount: string; denom: string };
+    unit?: number | string;
   }>,
 ) {
   return makeMockQueryClient({ sku: { skus } }) as never;
@@ -38,6 +39,22 @@ describe('resolveSku', () => {
       name: 'docker-micro',
       active: true,
     });
+  });
+
+  it('carries the billing time unit (normalized to a stable string) on the candidate', async () => {
+    const r = await resolveSku(
+      qc([
+        {
+          uuid: 'sku-h',
+          name: 'docker-micro',
+          providerUuid: 'prov-1',
+          basePrice: { amount: '100', denom: 'umfx' },
+          unit: 2, // numeric enum — the prod LCD-decoded form (UNIT_PER_DAY)
+        },
+      ]),
+      { size: 'docker-micro' },
+    );
+    expect(r.unit).toBe('UNIT_PER_DAY');
   });
 
   it('throws QUERY_FAILED listing available names when no name matches', async () => {

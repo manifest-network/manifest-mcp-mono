@@ -1,6 +1,9 @@
+import { liftedinit } from '@manifest-network/manifestjs';
 import type { ManifestQueryClient } from './client.js';
 import { createPagination, MAX_PAGE_LIMIT } from './queries/utils.js';
 import { ManifestMCPError, ManifestMCPErrorCode } from './types.js';
+
+const { unitFromJSON, unitToJSON } = liftedinit.sku.v1;
 
 /**
  * A single concrete SKU. `skuUuid` is the immutable identity; `name` is a
@@ -11,6 +14,15 @@ export interface SkuCandidate {
   readonly providerUuid: string;
   readonly name: string;
   readonly price?: { readonly amount: string; readonly denom: string };
+  /**
+   * Billing time unit as a stable string. Present whenever the source SKU
+   * carries a unit; absent only for inputs with no `unit` field at all.
+   * Values: 'UNIT_PER_HOUR', 'UNIT_PER_DAY', 'UNIT_UNSPECIFIED' (chain
+   * zero-value), or 'UNRECOGNIZED' (a value this client version can't map).
+   * Consumers normalize to per-hour/per-day for display and should treat
+   * anything other than 'UNIT_PER_DAY' as (at most) per-hour.
+   */
+  readonly unit?: string;
   readonly active: boolean;
 }
 
@@ -28,6 +40,7 @@ function toCandidate(s: {
   name: string;
   providerUuid: string;
   basePrice?: { amount: string; denom: string };
+  unit?: number | string;
   active?: boolean;
 }): SkuCandidate {
   return {
@@ -37,6 +50,8 @@ function toCandidate(s: {
     ...(s.basePrice
       ? { price: { amount: s.basePrice.amount, denom: s.basePrice.denom } }
       : {}),
+    // `unitFromJSON` tolerates both the numeric enum and the raw string form.
+    ...(s.unit !== undefined ? { unit: unitToJSON(unitFromJSON(s.unit)) } : {}),
     active: s.active ?? true,
   };
 }

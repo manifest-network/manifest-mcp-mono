@@ -70,12 +70,14 @@ describe('browseCatalog', () => {
             name: 'docker-micro',
             providerUuid: 'p1',
             basePrice: { amount: '100', denom: 'umfx' },
+            unit: 1, // numeric enum — the prod LCD-decoded form (UNIT_PER_HOUR)
           },
           {
             uuid: 'b',
             name: 'docker-micro',
             providerUuid: 'p2',
             basePrice: { amount: '120', denom: 'umfx' },
+            unit: 'UNIT_PER_DAY', // string form — tolerated for raw/mock inputs
           },
         ],
       },
@@ -93,7 +95,8 @@ describe('browseCatalog', () => {
           provider_uuid: 'p1',
           provider_url: 'http://p1',
           price: '100',
-          unit: 'umfx',
+          denom: 'umfx',
+          unit: 'UNIT_PER_HOUR',
           active: true,
         },
         {
@@ -102,10 +105,33 @@ describe('browseCatalog', () => {
           provider_uuid: 'p2',
           provider_url: null,
           price: '120',
-          unit: 'umfx',
+          denom: 'umfx',
+          unit: 'UNIT_PER_DAY',
           active: true,
         },
       ]),
     );
+  });
+
+  it('normalizes the chain zero-value and an absent unit to stable strings', async () => {
+    const qc = makeMockQueryClient({
+      sku: {
+        providers: [
+          { uuid: 'p1', address: 'm1', apiUrl: 'http://p1', active: true },
+        ],
+        skus: [
+          { uuid: 'z', name: 'unspecified', providerUuid: 'p1', unit: 0 },
+          // no `unit` field at all → UNRECOGNIZED (the codec's absent sentinel)
+          { uuid: 'm', name: 'missing', providerUuid: 'p1' },
+        ],
+      },
+    });
+    const res = await browseCatalog(
+      qc as never,
+      async () => new Response('{"status":"ok"}'),
+    );
+    const byUuid = Object.fromEntries(res.skus.map((s) => [s.sku_uuid, s]));
+    expect(byUuid.z.unit).toBe('UNIT_UNSPECIFIED');
+    expect(byUuid.m.unit).toBe('UNRECOGNIZED');
   });
 });

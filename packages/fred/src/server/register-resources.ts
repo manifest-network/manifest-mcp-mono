@@ -1,3 +1,4 @@
+import { liftedinit } from '@manifest-network/manifestjs';
 import {
   bigIntReplacer,
   type CosmosClientManager,
@@ -8,6 +9,8 @@ import {
   type WalletProvider,
 } from '@manifest-network/manifest-mcp-core';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+
+const { unitFromJSON, unitToJSON } = liftedinit.sku.v1;
 
 interface RegisterResourcesDeps {
   mcpServer: McpServer;
@@ -162,6 +165,9 @@ export function registerResources(deps: RegisterResourcesDeps): void {
         base_price: s.basePrice
           ? { amount: s.basePrice.amount, denom: s.basePrice.denom }
           : null,
+        // Billing time unit (parity with browse_catalog): 'UNIT_PER_HOUR' |
+        // 'UNIT_PER_DAY' | 'UNIT_UNSPECIFIED' | 'UNRECOGNIZED'.
+        unit: unitToJSON(unitFromJSON(s.unit)),
       }));
 
       return resourceJson(uri, {

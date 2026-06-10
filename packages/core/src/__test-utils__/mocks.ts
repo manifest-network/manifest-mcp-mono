@@ -86,6 +86,7 @@ interface SkuOverrides {
     name: string;
     providerUuid: string;
     basePrice?: { amount: string; denom: string };
+    unit?: number | string;
     active?: boolean;
   }[];
   providerLookup?: Record<string, { provider: { apiUrl: string } }>;
