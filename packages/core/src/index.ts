@@ -5,6 +5,24 @@ export {
   leaseStateFromJSON,
   leaseStateToJSON,
 } from '@manifest-network/manifestjs/dist/codegen/liftedinit/billing/v1/types.js';
+export {
+  type Address,
+  type ChainId,
+  type Denom,
+  type Fqdn,
+  type LeaseUuid,
+  type ProviderUuid,
+  parseAddress,
+  parseChainId,
+  parseDenom,
+  parseFqdn,
+  parseLeaseUuid,
+  parseProviderUuid,
+  parseSkuUuid,
+  parseTierName,
+  type SkuUuid,
+  type Tenant,
+} from './brands.js';
 export { CosmosClientManager, type ManifestQueryClient } from './client.js';
 export {
   createConfig,
