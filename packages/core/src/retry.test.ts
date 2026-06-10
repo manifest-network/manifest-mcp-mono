@@ -254,3 +254,16 @@ describe('DEFAULT_RETRY_CONFIG', () => {
     expect(DEFAULT_RETRY_CONFIG.maxDelayMs).toBe(10000);
   });
 });
+
+describe('INVALID_ARGUMENT is a non-retryable input error', () => {
+  it('exists on the enum', () => {
+    expect(ManifestMCPErrorCode.INVALID_ARGUMENT).toBe('INVALID_ARGUMENT');
+  });
+  it('is classified non-retryable', () => {
+    const err = new ManifestMCPError(
+      ManifestMCPErrorCode.INVALID_ARGUMENT,
+      'bad',
+    );
+    expect(isRetryableError(err)).toBe(false);
+  });
+});

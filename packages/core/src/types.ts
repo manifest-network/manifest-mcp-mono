@@ -357,6 +357,8 @@ export enum ManifestMCPErrorCode {
   QUERY_FAILED = 'QUERY_FAILED',
   UNSUPPORTED_QUERY = 'UNSUPPORTED_QUERY',
   INVALID_ADDRESS = 'INVALID_ADDRESS',
+  /** Caller passed a malformed argument (e.g. a non-UUID id, a bad FQDN). Non-retryable. */
+  INVALID_ARGUMENT = 'INVALID_ARGUMENT',
 
   // Transaction errors
   TX_FAILED = 'TX_FAILED',
