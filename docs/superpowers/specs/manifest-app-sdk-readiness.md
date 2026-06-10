@@ -1,9 +1,9 @@
 # Manifest App SDK — Readiness Scorecard (living tracker)
 
 - **Repo:** manifest-mcp-mono @ v0.14.0
-- **Created:** 2026-06-10 · **Revised:** 2026-06-10 (v3 — post verification + streaming-idiom research + branded-type-safety directive)
+- **Created:** 2026-06-10 · **Revised:** 2026-06-10 (v4 — final idiomatic review: boundary-policy-by-trust, signer/ctx fixes, discriminated clear)
 - **Pairs with:** `2026-06-10-manifest-app-sdk-foundation-design.md` (Phase 0 spec)
-- **Definition of done (single tracked metric):** an in-repo example app builds a deploy-and-query flow composing **only** `@manifest-network/manifest-sdk` + `manifestjs` — zero hand-rolled client, queries, auth, pricing, or orchestration.
+- **Definition of done (single tracked metric):** an in-repo example app builds a deploy-, query-, **and live-status** flow (incl. `subscribeLeaseStatus`) composing **only** `@manifest-network/manifest-sdk` + `manifestjs` — zero hand-rolled client, queries, auth, pricing, orchestration, or streaming.
 
 **Status legend:** ✅ ready (zero/trivial) · 🟡 exists, needs SDK-shaping · 🟠 partial / wrong place · 🔴 missing / net-new · ☑ done (tick as landed)
 
@@ -29,7 +29,7 @@
 | ☐ | Configured chain client (LCD/RPC) | ✅ | `core/src/client.ts` (CosmosClientManager), `core/src/lcd-adapter.ts` | Wrap in `createManifestClient()`; expose as `ctx.chain`/`ctx.query` (inherit restUrl-preferred routing) · **P0** |
 | ☐ | Retry / rate-limit / error model | ✅ | `core/src/retry.ts`, `client.ts` limiter, `types.ts` ManifestMCPError | Expose; no logic change · **P0** |
 | ☐ | `CapabilityCtx` / `QueryCtx` (single DI seam) | 🔴 | none — two positional conventions (`clientManager`-first vs `queryClient`-first) | Define `{ chain, query, signer?, fetch }`; **overloaded** factory → `QueryCtx` (no signer) vs `CapabilityCtx`; reads typed against `Pick<…,'query'\|'chain'>` (ISP) · **P0** (full convergence **P2**) |
-| ☐ | Signer port | 🟡 | `core/src/types.ts` `WalletProvider` (signArbitrary OPTIONAL) | **Type-split** `TxSigner` / `AuthSigner = TxSigner & { signArbitrary }` + `requireAuthSigner(ctx)` guard; `getSigner` returns @manifest-network/stargate `OfflineSigner` · **P0** |
+| ☐ | Signer port | 🟡 | `core/src/types.ts` `WalletProvider` (signArbitrary OPTIONAL; `getAddress(): string`) | **Type-split** `TxSigner` / `AuthSigner = TxSigner & { signArbitrary }` + `requireAuthSigner(ctx)`; `getSigner` returns **`@cosmjs/proto-signing`** `OfflineSigner` (the stargate fork overrides `@cosmjs/stargate`, not proto-signing); `Signer` is an **adapter over `WalletProvider`** that brands the address via `parseAddress` once · **P0** |
 | ☐ | ADR-036 auth-token factory | 🟡 | `fred/src/http/auth-token-service.ts`, `auth.ts` (Barney: `src/ai/toolExecutor/fredAuth.ts` `makeFredAuthTokens`) | Expose `createAuthTokens(signer: AuthSigner, { chainId })`, **lazily cached / re-sign on expiry**; kill per-call closures · **P0** |
 | ☐ | fetch port | ✅ | `fred/src/server/fetch-gate.ts`, core `…/guarded-fetch` subpath (`"default": null` guard) | Move onto ctx · **P0** |
 
@@ -99,7 +99,7 @@
 | ☐ | `publint` + `attw` (exports/.d.ts validation) | 🔴 | none | CI-only (tsdown) · **P0** |
 | ☐ | SDK author guide + manifestjs-boundary rule | 🔴 | README/ARCH describe MCP servers; SECURITY/CONTRIBUTING stale | Write SDK guide + per-block reference · **P0+** |
 | ☐ | MCP servers → thin typed-API callers | 🟡 | chain/lease/fred/cosmwasm/agent register tools directly | Refactor; gated by **behavioral `*.test.ts` + annotation matrix + JSON snapshot** (byte-equivalent) · **P0/P2** |
-| ☐ | **Live status — `subscribeLeaseStatus`** (viem `watch*`-shape: callback + sync unsubscribe + AbortSignal) | 🟡 | poll exists (`pollLeaseUntilReady`); no subscribe surface | Ship the **surface in P0, poll-backed**; `onData` emits the same `FredLeaseStatus`; typed-face only (NOT MCP/stringly); lives in `fred` · **P0** |
+| ☐ | **Live status — `subscribeLeaseStatus`** (viem `watch*`-shape: callback + idempotent sync unsubscribe + AbortSignal) | 🟡 | poll exists (`pollLeaseUntilReady`); no subscribe surface | Ship the **surface in P0, poll-backed**; ctx slice **includes `signer`** (mints the Fred lease-data auth token via `createAuthTokens(requireAuthSigner(ctx))` like `appStatus`); **parse each emit** into branded `FredLeaseStatus` before `onData`; typed-face only (NOT MCP/stringly); lives in `fred` · **P0** |
 | ☐ | Live-status **WS transport** (`ctx.events?` factory) | 🔴 | **zero WS/streaming in mono**; provider WS only in Barney (`connectLeaseEvents`) | **Deferred** to a named phase: injected WS factory (mirror fetch seam) behind `…/node` (`"default": null`); **WS-SSRF guard** (reuse `ipaddr.js` unicast check); `ws` exact-pinned optionalDep; Barney's WS becomes this transport — no surface churn · **deferred** |
 
 ---
