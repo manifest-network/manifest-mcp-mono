@@ -1,143 +1,131 @@
 # Manifest App SDK — Phase 0 Foundation Design
 
-- **Status:** Draft for review (v4 — final-review corrections: boundary policy by trust, signer/ctx fixes, discriminated clear, factual precision)
+- **Status:** Draft for review (v5 — gap-sweep folds: full read surface, options bag, e2e acceptance, layered-tier reframing, multi-msg+serialization, versioning/stability + logging policy)
 - **Date:** 2026-06-10
 - **Owner:** Felix Morency
 - **Related:** `manifest-app-sdk-readiness.md` (living scorecard, same dir); Linear epic TBD
 - **Supersedes framing of:** ENG-127 (orchestration umbrella), ENG-279 (Barney migration)
-- **Verification:** v2 (3-stream: fact-check + completeness + idiomatic audit), v3 (streaming-idiom research + type-safety directive), v4 (final online idiomatic review: branded-types / validation-boundaries / holistic). All "sound-with-tweaks", no architectural reconsideration.
+- **Verification:** v2 (3-stream), v3 (streaming research + type-safety), v4 (final idiomatic review), v5 (gap analysis + versioning/logging research). All "sound-with-tweaks", no architectural reconsideration.
 
 ---
 
 ## 1. Context & goal
 
-`manifest-mcp-mono` today is five MCP servers + a `core` library + an `agent-core` orchestration library. The chain/Fred capabilities are real and well-tested, but they are **shaped for MCP servers** (stringly tool args, server-bound DI), and `agent-core` re-declares a **narrower** deploy type than `fred`. That narrowness is why Barney abandoned `agent-core` and now maintains a near-complete **parallel** chain stack (~19 source files under `src/api/` + a 2,845-line `compositeTransactions.ts`).
+`manifest-mcp-mono` today is five MCP servers + a `core` library + an `agent-core` orchestration library. The chain/Fred capabilities are real and well-tested, but they are **shaped for MCP servers** (stringly tool args, server-bound DI), and `agent-core` re-declares a **narrower** deploy type than `fred`.
 
 **Goal:** transform the repo into a real **app-building SDK for Manifest + Fred** — building blocks any consumer (the Claude Code plugin via MCP, a browser app like Barney, a future dashboard/daemon) composes to build a full application, **reinventing nothing**.
 
-**Acceptance test (definition of done for the whole effort):** an in-repo example app builds a deploy-, query-, **and live-status** flow composing **only** `@manifest-network/manifest-sdk` + `manifestjs` — zero hand-rolled client, queries, auth, pricing, orchestration, or streaming.
+**Acceptance test (definition of done for the whole effort):** an in-repo example app builds a deploy-, query-, **and live-status** flow composing **only** `@manifest-network/manifest-sdk` + `manifestjs`, exercised end-to-end **against the live `e2e/docker-compose` chain + Fred provider** — zero hand-rolled client, queries, auth, pricing, orchestration, or streaming.
 
-This document specifies **Phase 0** — the SDK foundation. Phases 1–4 are out of scope here (§3).
+This document specifies **Phase 0** — the SDK foundation. Phases 1–4 and later phases are in §3.
 
-## 2. Architecture — the hexagon over manifestjs
+## 2. Architecture — a layered SDK over manifestjs
 
 ```
 manifestjs (codegen)   protobuf types · LCD/RPC query client · tx message composers
    ── REUSE, NEVER RE-DECLARE ──
-core (value layer)     configured client (LCD↔camelCase adapter, rate-limit, retry, error model)
-                       · CapabilityCtx + ports (signer, fetch, events?) · branded domain types
-                       · value-added typed reads/txs · catalog/SKU/pricing
+core + fred  =  CAPABILITY TIER     the shared layer every consumer builds on
+                configured client (lcd-adapter, rate-limit, retry, error model) · CapabilityCtx
+                + ports (signer, fetch, logger, events?) · branded domain types
+                · typed reads/txs (incl. multi-msg executeTx) · catalog/SKU/pricing · provider ops
    ──
-agent-core             orchestration: deploy/manage/troubleshoot/close
-                       over the IoC callback contract (onPlan/onConfirm/onProgress/onComplete/onFailure)
+agent-core   =  ORCHESTRATION TIER (OPTIONAL)   plan/confirm/progress/recover over the capability tier
+                IoC callback contract (onPlan/onConfirm/onProgress/onComplete/onFailure)
    ──
-edge adapters          manifest-mcp-agent (plugin) · React bindings (Barney) · future dashboard/daemon
+edge adapters          manifest-mcp-agent (plugin, MCP elicitation) · manifest-sdk-react (later) · daemon
    ──
 @manifest-network/manifest-sdk   aggregating barrel + scoped subpaths — the public SDK entry (Option A)
 ```
 
-**Boundary rule (first-class):** `core` *wraps* manifestjs; it never re-declares a chain type or stands up a second query client. Raw typed reads go to the configured manifestjs client (`ctx.query`); `core` adds only what manifestjs can't express — connection/DI, REST↔camelCase normalization, retry, the error model, **branded domain types**, value-added compositions, ports, orchestration. (The textbook Telescope/ts-proto idiom: re-export curated types from one module, wrap *behavior* not *declarations*. The `lcd-adapter` is a legitimate **Adapter**, not a forbidden second client.)
+**Two tiers, one SDK, pick your altitude.** The **capability tier** (`fred`+`core`) is the full-fidelity building-block layer everyone uses. The **orchestration tier** (`agent-core`) is an *optional, composable* layer on top that adds plan→confirm→recover for consumers that want managed UX. This is the established SDK shape (AWS low-level client vs high-level resource; viem actions vs higher-level helpers). The original "Barney bypassed agent-core" divergence was **not** capability-vs-orchestration — it was a **type-fidelity bug** (agent-core's narrow `DeploySpec`); P1 fixes it so the orchestration tier is **loss-free and a genuine option for every consumer**, not a fork to avoid. agent-core stops being "plugin-only."
 
-**Two faces, one implementation:**
-- **Stringly face** — `cosmosQuery` / `cosmosTx` (`args: string[]` → JSON): the MCP/LLM surface, and the **parse boundary** (§5.0).
-- **Typed face** — the configured manifestjs client (`ctx.query`) + value-added typed building blocks that take/return **branded domain types**.
+**Boundary rule (first-class):** `core` *wraps* manifestjs; it never re-declares a chain type or stands up a second query client. `core` adds only what manifestjs can't express — DI/connection, REST↔camelCase normalization, retry, error model, **branded domain types**, value-added compositions, ports, orchestration. (The `lcd-adapter` is a legitimate **Adapter**, not a forbidden second client.)
 
-Both backed by the **same** per-module handlers in `core/queries/*` and `core/transactions/*` — **the load-bearing invariant** (AWS client-vs-resource / Stripe typed-vs-`rawRequest`; idiomatic *because* logic isn't forked). Guarded by the cross-face equivalence test (§9), not just asserted; validation/normalization/error-mapping lives in the shared handler. The stringly face is **not** auto-generated from the typed one (it is necessarily dynamic — LLM-supplied args).
+**Two faces, one implementation:** the **stringly face** (`cosmosQuery`/`cosmosTx`, the MCP/LLM surface, and the parse boundary §5.0) and the **typed face** (configured `ctx.query` + value-added typed building blocks returning **branded** types) are backed by the **same** per-module handlers — guarded by the cross-face equivalence test (§9), not just asserted.
 
-## 3. Non-goals (later phases)
+## 3. Phases & scope boundaries
 
-- **P1** — widen `agent-core` `DeploySpec` to a faithful superset of `fred`'s `DeployAppInput`; delete `internals/build-fred-input.ts`.
+- **P0** — the SDK foundation (this doc).
+- **P1** — widen `agent-core` `DeploySpec` to a faithful superset of `fred`'s `DeployAppInput`; delete `internals/build-fred-input.ts` → the optional orchestration tier becomes loss-free.
 - **P2** — converge every legacy capability fn to `fn(ctx, input)`.
-- **P3** — consumer adoption (Barney deletes `src/api/` + `compositeTransactions.ts`; the plugin is already current on `manifest-mcp-node@0.14.0`).
+- **P3** — consumer adoption (Barney migrates to the SDK; deletes `src/api/` + `compositeTransactions.ts`; the plugin is already current on `manifest-mcp-node@0.14.0`).
 - **P4** — deploy-saga durability (idempotency + reconcile-on-resume).
-- **Live-status WebSocket transport** (the `ctx.events` WS port + isomorphic WS factory + WS-SSRF guard + WS frame-payload parsing) — **deferred to a named later phase.** The *streaming building-block surface* (`subscribeLeaseStatus`) **does** ship in P0, poll-backed (§5.9); only the WS transport behind it is deferred. Barney keeps `connectLeaseEvents` until then; it becomes the `ctx.events` transport with no surface churn.
-- **Chain-event subscription** (CometBFT/Tendermint WS for on-chain lease-tx watching) — out of scope; provision status is provider-side, not a chain event.
-- **Package renames** (dropping `mcp`) — a separate cosmetic pass. Phase 0 uses **Option A**.
+- **Later: `@manifest-network/manifest-sdk-react`** — a shared TanStack-Query-backed React-hooks package (`useLeases`/`useDeploy`/`useLeaseStatus`/`useCatalog`) over the framework-agnostic core, the wagmi `@wagmi/core`→`wagmi` shape, so Barney *and* a future dashboard share hooks instead of each rebuilding them. Sequenced **after** the core surface stabilizes (needs ≥1 React consumer to validate hook shapes) — not P0.
+- **Later: live-status WebSocket transport** (the `ctx.events` WS port + isomorphic WS factory + WS-SSRF guard + frame parsing). The *streaming surface* (`subscribeLeaseStatus`) ships in P0 poll-backed (§5.9); only the WS transport is deferred. Its `EventTransport` shape is `@beta`/`@experimental` (§14).
+
+**Explicit P0 scope boundaries (stated, not silent):**
+- **Admin/governance modules** — `x/group`, `x/tokenfactory`, `gov`, `poa`, `staking`, `distribution`, `authz`, `feegrant`, `mint`, `ibc-transfer` are reachable via the **stringly face only** in P0 (their `core/queries`+`core/transactions` handlers exist; typed Face-B wrappers are deferred until a typed admin/multisig consumer needs them). Documented boundary, not an omission.
+- **cosmwasm converter** (MFX→PWR, `smartContractState`+`MsgExecuteContract`) — **out of P0**; the `cosmwasm` server stays MCP-only. (Add a typed `wasmQuery`/`wasmExecute` helper in a later phase if a consumer needs it.)
+- **Chain-event subscription** (CometBFT WS) — out of scope; provision status is provider-side, not a chain event.
+- **Package renames** (dropping `mcp`) — a separate cosmetic pass.
 
 ## 4. Packaging — Option A (barrel + scoped subpaths)
 
-A new package **`@manifest-network/manifest-sdk`**: an aggregating barrel re-exporting the curated public SDK surface from `core` + `fred` + `agent-core`. Existing package names unchanged; the release pipeline gains one package (published **last**).
-
-Ship **scoped subpath entrypoints from day one** alongside the barrel (every leading SDK does — viem `.` + ~25 subpaths, wagmi `/actions`/`/query`, AWS SDK v3 modular): `@manifest-network/manifest-sdk` + `…/reads`, `…/catalog`, `…/deploy`, `…/orchestration`, with **`"sideEffects": false`** on the SDK package (verify each intermediate package keeps it). De-risks the barrel-file tree-shaking pitfall and keeps the browser example app's bundle small. Reversible-compatible with a later rename.
-
-Node-only helpers (guarded fetch, the WS factory, keyfile signer) via **one** `node`-conditioned subpath `@manifest-network/manifest-sdk/node`, replicating `core`'s guard verbatim: `{ "types": …, "node": …, "default": null }` — `"default": null` makes a browser/bundler resolution **fail loudly**. Add **`publint` + `attw`** as CI-only checks. The dual-package hazard is a non-issue (ESM-only, stateless surface).
+New package **`@manifest-network/manifest-sdk`**: an aggregating barrel re-exporting the curated surface from `core`+`fred`+`agent-core`, **+ scoped subpath entrypoints from day one** (`…/reads`, `…/catalog`, `…/deploy`, `…/orchestration`) with `"sideEffects": false`; node-only helpers (guarded fetch, WS factory, keyfile signer) via **one** `…/node` subpath with the `{ "node": …, "default": null }` browser-hard-fail guard. `publint` + `attw` in CI. Internal-only packages stay `private: true` so the public SDK can later be cut onto an independent train (§14). Released **last** on the lockstep train; the install graph must resolve **one** copy of `core`/`fred` (AWS-SDK lesson). Dual-package hazard is a non-issue (ESM-only, stateless surface).
 
 ## 5. Components
 
 ### 5.0 Type safety — branded domain types, not bare `string`
 
-**Principle:** the typed face and all canonical SDK types use **branded (opaque) domain types** for identifiers and domain-meaningful values — never bare `string`. This makes "lease uuid where a provider uuid was expected", "raw string used as an address", and unit mix-ups **compile errors**.
-
-**Why nominal brands here (and how viem actually does it):** viem encodes constraints **structurally** via template-literal types (`Hex` / `Hash` = `` `0x${string}` ``; `Address` from ABIType) plus parse/assert helpers (`getAddress`, `isAddress`) — it does **not** use `__brand`. Manifest's identifiers (bech32 `manifest1…`, RFC-4122 UUIDs, FQDNs) can't be captured by a cheap template literal, so we get the equivalent guarantee via **nominal brands + parse constructors**:
+**Principle:** the typed face and all canonical SDK types use **branded (opaque) domain types** for identifiers/domain values — never bare `string`. viem encodes constraints **structurally** via template-literal types (`Hex`/`Hash` = `` `0x${string}` ``; `Address` from ABIType) + parse/assert helpers; Manifest's bech32/UUID/FQDN ids can't be cheap template literals, so we get the equivalent guarantee via **nominal brands + parse constructors**:
 
 ```ts
-type Brand<T, B extends string> = T & { readonly __brand: B }; // never exported
-type Address     = Brand<string, 'Address'>;     // bech32 manifest1…
-type Tenant      = Address;                        // a tenant IS an address (see note)
-type LeaseUuid   = Brand<string, 'LeaseUuid'>;
-type ProviderUuid= Brand<string, 'ProviderUuid'>;
-type SkuUuid     = Brand<string, 'SkuUuid'>;
-type TierName    = Brand<string, 'TierName'>;
-type Fqdn        = Brand<string, 'Fqdn'>;
-type Denom       = Brand<string, 'Denom'>;
-type ChainId     = Brand<string, 'ChainId'>;
+type Brand<T, B extends string> = T & { readonly __brand: B }; // never exported; STRING key, not unique symbol
+type Address=Brand<string,'Address'>; type Tenant=Address; type LeaseUuid=Brand<string,'LeaseUuid'>;
+type ProviderUuid=Brand<string,'ProviderUuid'>; type SkuUuid=Brand<string,'SkuUuid'>;
+type TierName=Brand<string,'TierName'>; type Fqdn=Brand<string,'Fqdn'>; type Denom=Brand<string,'Denom'>; type ChainId=Brand<string,'ChainId'>;
 // quantities reuse manifestjs Coin { denom, amount }; never a bare string amount
 ```
 
-- **String `__brand` key, not `unique symbol`** — deliberate: a `unique symbol` brand is mutually non-assignable across *duplicated* package copies (TS sees each copy's symbol as distinct), so assignability becomes hoisting-dependent. type-fest reverted symbol→string for exactly this (PR #875); this repo is an aggregating barrel over 3 packages with documented worktree dep-drift (same hazard CLAUDE.md calls out for `ipaddr.js`), so a string key is the safer, library-correct choice.
-- **`Tenant = Address`** is an intentional transparent alias (a tenant genuinely is an address); branding therefore does **not** distinguish a tenant from any other address — the §9 negative fixture covers *distinct* brands, not this pair.
+- **String `__brand` key, not `unique symbol`** — a `unique symbol` brand is non-assignable across *duplicated* package copies (the worktree dep-drift hazard CLAUDE.md documents for `ipaddr.js`); type-fest reverted symbol→string for exactly this (PR #875).
+- **`Tenant = Address`** is an intentional transparent alias; branding does not distinguish tenant from address (the §9 fixture covers *distinct* brands).
 
-**Parse, don't validate.** The `parse*`/`as*` constructors are the **only** sanctioned brand producers (`parseAddress(s): Address`, `asLeaseUuid(s): LeaseUuid`, …), validating once and returning the brand (throwing the existing `INVALID_*` codes). The repo's existing `validateAddress` (throws/`void`) and `requireUuid` (returns `string`) are *validators*, so each constructor is a thin wrapper (existing-check + the **lone** `as Brand` cast). That cast appears **only inside `brands.ts`** (enforced by §8), so no call site can mint an unvalidated brand. Note: there is **no existing client-side FQDN validator** (FQDN is chain-validated today), so `parseFqdn` is **net-new** — scope it to a minimal structural check (non-empty, contains a dot, lowercased) and defer authoritative validation to the chain.
+**Parse, don't validate.** `parse*`/`as*` constructors are the **only** sanctioned brand producers; the lone `as Brand` cast lives **only inside `brands.ts`** (enforced by §8). Existing `validateAddress`(void)/`requireUuid`(string) are *validators*, so each constructor wraps them. `parseFqdn` is **net-new** (no existing client-side FQDN validator — FQDN is chain-validated today) — a minimal structural check (non-empty, has a dot, lowercased); the chain stays authoritative.
 
-**Branding is compile-time-only (erased at runtime) — so it must be (re)applied at every runtime boundary, with a policy set by *trust*:**
+**Boundary policy by trust** (brands are runtime-erased, so re-applied at every runtime boundary):
 
-| Boundary | Direction | Policy |
-|---|---|---|
-| Stringly / MCP face (LLM string args) | inbound | **parse + validate** → brand (the single semantic-validation site) |
-| Chain / codegen reads (manifestjs via `ctx.query`/lcd-adapter) | response → SDK | **brand by assertion (trust-cast)** at the single mapping site — **no** re-validation (the chain is the source of truth; viem likewise casts JSON-RPC outputs to `Address`/`Hash` without re-checking). Never throws `INVALID_*`. |
-| Provider-HTTP reads (Fred: `FredLeaseStatus`, deploy/catalog payloads) | response → SDK | **parse + validate** when surfacing a value as a branded id — the provider is the least-trusted source (URL from on-chain SKU data, network-SSRF-guarded but payload-untrusted) |
-| Wallet-in (`WalletProvider.getAddress(): string`) | impl → SDK | **parse once** in the Signer adapter (§5.3) |
-| Persisted-state `JSON.parse` (saveManifest / chain-data file / Barney localStorage) | load → SDK | **re-brand** on load |
+| Boundary | Policy |
+|---|---|
+| Stringly/MCP face (LLM args) | **parse + validate** → brand (single semantic-validation site) |
+| Chain/codegen reads (`ctx.query`/lcd-adapter) | **brand by trust-cast** at the mapping site — no re-validation (chain is source of truth; viem casts JSON-RPC outputs likewise); never throws `INVALID_*` |
+| Provider-HTTP reads (Fred: `FredLeaseStatus`, deploy/catalog) | **parse + validate** (provider untrusted) when surfacing as a branded id |
+| Wallet-in (`WalletProvider.getAddress(): string`) | **parse once** in the Signer adapter (§5.3) |
+| Persisted-state `JSON.parse` | **re-brand** on load |
 
-**`string` survives only:** (a) on the stringly face (immediately parsed); (b) inside manifestjs codegen types (we don't re-declare them); (c) inside provider wire types (e.g. fred's `FredLeaseStatus`) whose string fields are **opaque provider state** (`provision_status`, `phase`, `last_error`), not SDK identifiers.
+`string` survives only: (a) the stringly face (immediately parsed); (b) manifestjs codegen types; (c) provider wire types (`FredLeaseStatus`) whose string fields are opaque provider state.
 
-**Considered and rejected for P0:** Zod `.brand()` (gives runtime validation for free, but conflicts with §7's "no new error model", isn't a dependency, and adds weight to a size-budgeted browser SDK for simple checks); type-fest `Tagged` (the library-blessed primitive — `Opaque` is deprecated — but a dependency on the most foundational module for what ~8 zero-dep lines already do). Revisit if/when broader schema validation is adopted.
+**Considered & declined for P0:** Zod `.brand()` (conflicts with §7 no-new-error-model; not a dep; bundle weight) and type-fest `Tagged` (dep on the foundational module for ~8 zero-dep lines). Revisit if broader schema validation is adopted.
 
 ### 5.1 Canonical types in `core` (over manifestjs)
 
-Relocate the value types into a **single chokepoint module** `core/src/manifest-types.ts` — the *only* file permitted to import manifestjs generated type paths — re-exported by `fred`, `agent-core`, and the SDK barrel; re-exports are **type-only** (`export type { … }`). The chokepoint makes the §8 CI import-rule exact.
-
-Canonical types (domain-id fields branded per §5.0 — e.g. `DeployAppResult.leaseUuid: LeaseUuid`, `…providerUuid: ProviderUuid`, branded by trust-cast at the read/result mapping site):
-- `DeployAppInput`, `ServiceConfig`, `BuildManifestOptions`/`ManifestFormat`/`ManifestValidationResult`, `DeployManifestInput`/`DeployAppResult`, the manifest-preview input. (Per-type homes today: `ServiceConfig`+`DeployAppInput` in `fred/src/tools/deployApp.ts`; `SkuSelector`+`DeployAppResult`+`DeployManifestInput` in `deployManifest.ts`; `BuildManifestOptions`/`ManifestFormat`/`ManifestValidationResult` in `manifest.ts`; preview input in `tools/buildManifestPreview.ts`.)
-- **`SkuIntent`** = `{ kind: 'byName'; size: TierName; providerUuid?: ProviderUuid; skuUuid?: SkuUuid } | { kind: 'resolved'; skuUuid: SkuUuid; providerUuid: ProviderUuid }` — one definition, replacing `fred`'s `SkuSelector`, `core`'s `ResolveSkuInput`, and `agent-core`'s loose fields.
-- **`PortConfig`** — **net-new** (does not exist today; current shape is `ServiceConfig.ports?: Record<string, Record<string, never>>` + flat `DeployAppInput.port?: number`). Introduce it carrying the ENG-282 `{ host_port?; ingress? }` shape.
-- **`FredLeaseStatus`** — relocate fred's provider wire type here (its id fields branded; its opaque-state fields stay `string` per §5.0(c)); used by `subscribeLeaseStatus` + `pollLeaseUntilReady`.
-
-`fred` imports + re-exports the relocated declarations. **`agent-core` keeps its narrow deploy/SKU fields through P0** (converged in P1); the canonical `core` types and `agent-core`'s loose fields **coexist by design** until then — so the §8 boundary guard MUST exempt `agent-core`'s internal types until P1.
+Single chokepoint `core/src/manifest-types.ts` (only file importing manifestjs generated type paths; type-only re-exports). Canonical (id fields branded): `DeployAppInput`, `ServiceConfig`, `PortConfig` (**net-new**, ENG-282 `{ host_port?; ingress? }`), `BuildManifestOptions`/`ManifestFormat`/`ManifestValidationResult`, `DeployManifestInput`/`DeployAppResult`, manifest-preview input, **`SkuIntent`** (unified `byName | resolved`), and **`FredLeaseStatus`** (relocated; id fields branded, opaque-state fields stay `string`). `fred`/`agent-core` derive; `agent-core`'s narrow fields coexist until P1 (the §8 guard exempts them).
 
 ### 5.2 `CapabilityCtx` + `createManifestClient`
 
 ```ts
 interface CapabilityCtx {
-  chain: CosmosClientManager;     // connection, signing, rate-limit, retry
+  chain: CosmosClientManager;     // connection, signing, rate-limit, retry, per-signer broadcast serialization (§5.6)
   query: ManifestQueryClient;     // configured manifestjs LCD/RPC client (raw typed reads)
-  signer?: Signer;                // unified signer port (§5.3); ABSENT in query-only mode
-  fetch: typeof globalThis.fetch; // injected fetch (guarded on node, providerFetch in browser)
-  events?: EventTransport;        // DEFERRED streaming transport (§5.9); absent ⇒ poll fallback
+  signer?: Signer;                // §5.3; absent in query-only mode
+  fetch: typeof globalThis.fetch; // injected (guarded on node, providerFetch in browser)
+  logger: Logger;                 // §5.3; noopLogger by default (silent)
+  events?: EventTransport;        // @beta, DEFERRED (§5.9); absent ⇒ poll fallback
 }
 type QueryCtx = Omit<CapabilityCtx, 'signer'>;
 
-function createManifestClient(opts: { config; walletProvider: WalletProvider; fetch?; skuSpecs?; events? }): CapabilityCtx;
-function createManifestClient(opts: { config; fetch?; skuSpecs?; events? }): QueryCtx;
+function createManifestClient(opts: { config; walletProvider: WalletProvider; fetch?; logger?; logLevel?; skuSpecs?; events? }): CapabilityCtx;
+function createManifestClient(opts: { config; fetch?; logger?; logLevel?; skuSpecs?; events? }): QueryCtx;
+
+// Per-call option bags threaded through every typed building block:
+type CallOptions = { signal?: AbortSignal; timeout?: number };
+type TxOptions   = CallOptions & { gasMultiplier?: number; fee?: StdFee; memo?: string };
 ```
 
-`ctx.query` is `core.createLCDQueryClient(...)` / `clientManager.getQueryClient()` (manifestjs client + lcd-adapter normalization), **inheriting `CosmosClientManager`'s restUrl-preferred routing unchanged**. Idiomatic viem `createClient` + `fn(client, args)` and wagmi `createConfig` optional-wallet (read-only) model — query-only consumers get a **compile error** reaching for `signer`, with the existing `INVALID_CONFIG` throw as the runtime backstop for the stringly/MCP path. `EventTransport` is forward-declared in §5.9.
-
-**ISP:** building blocks are typed against the **narrowest slice** of `ctx` they use — a chain read takes `(ctx: Pick<CapabilityCtx, 'query' | 'chain'>, input)`, a deploy takes `(ctx: CapabilityCtx, input)`, a provider op takes the slice that includes `signer` (it needs an ADR-036 auth token). Consumers bind `ctx` once and partially-apply (viem-`.extend()`-style).
+`ctx.query` inherits `CosmosClientManager`'s restUrl-preferred routing unchanged. Overloaded factory → query-only consumers get a **compile error** reaching for `signer` (runtime `INVALID_CONFIG` backstop for the stringly path). **ISP:** reads take `(ctx: Pick<CapabilityCtx,'query'|'chain'|'logger'>, input, opts?: CallOptions)`; txs/provider ops take the slice incl. `signer`/`fetch` + `opts?: TxOptions`. `EventTransport` (§5.9) is forward-declared and `@beta`.
 
 ### 5.3 Ports
 
-**`Signer`** — one wallet-shaped port (mirrors the Keplr wallet object), **interface-segregated** so a keyfile-only-tx signer isn't forced to implement ADR-036:
+**`Signer`** (interface-segregated; `OfflineSigner` is **`@cosmjs/proto-signing`'s** — the `@manifest-network/stargate` fork overrides `@cosmjs/stargate`, not proto-signing):
 
 ```ts
 interface TxSigner   { getAddress(): Promise<Address>; getSigner(): Promise<OfflineSigner>; }
@@ -145,149 +133,130 @@ interface AuthSigner extends TxSigner { signArbitrary(address: Address, data: st
 type Signer = AuthSigner;
 ```
 
-`OfflineSigner` is **`@cosmjs/proto-signing`'s** (matching the concrete `WalletProvider.getSigner`; the `@manifest-network/stargate` fork override applies to `@cosmjs/stargate`'s signAmino path, **not** proto-signing). Query-only/pure-tx flows depend on `TxSigner`; deploy/provider/auth flows depend on `AuthSigner`; `requireAuthSigner(ctx): AuthSigner` narrows once at the boundary (throws `INVALID_CONFIG` if absent).
+`Signer` is an SDK-surface **adapter over the concrete `WalletProvider`** (whose `getAddress(): string`): the adapter `parseAddress`es the address once, so the port exposes `Address` while the edge impl keeps `string`. `requireAuthSigner(ctx)` narrows once at the boundary. Impls at the edge (node keyfile/mnemonic; browser CosmosKit); `core` never holds a key.
 
-**`Signer` is an SDK-surface adapter over the concrete `WalletProvider`** (`core/src/types.ts`, whose `getAddress(): Promise<string>` and optional `signArbitrary(address: string, …)` use bare `string`). The adapter brands the address once — `parseAddress(await wallet.getAddress())` — so the port exposes `Address` while the edge impl keeps `string`. (`WalletProvider` is **adapted to** a `Signer`, it is not itself one.) Impls at the **edge** (node keyfile/mnemonic; browser CosmosKit); `core` never holds a key (the `platform:neutral` build is the guardrail).
+**Auth-token factory** — `createAuthTokens(signer: AuthSigner, { chainId: ChainId }) → { getAuthToken, getLeaseDataAuthToken }` (lazily cached, re-signed on expiry; wraps `fred`'s `AuthTokenService`). Replaces Barney's `makeFredAuthTokens`.
 
-**Auth-token factory** — `createAuthTokens(signer: AuthSigner, { chainId: ChainId }) → { getAuthToken, getLeaseDataAuthToken }`, wrapping `fred`'s `AuthTokenService`. Tokens **lazily cached, re-signed on expiry** (mirror `AuthTokenService`'s TTL — not mint-per-call). Replaces Barney's `makeFredAuthTokens` (`src/ai/toolExecutor/fredAuth.ts`).
+**`fetch`** — on `ctx`; guarded-undici (node subpath) / `providerFetch` (browser).
 
-**`fetch`** — on `ctx`; default guarded-undici (node subpath) or `globalThis.fetch` (browser); Barney injects `providerFetch`.
+**`Logger`** — **silent by default, optional injectable, per-instance** (the AWS-SDK-v3 / smithy model; NOT the current global mutable `console.error` singleton, which stays an internal detail of the MCP servers/CLI only):
 
-### 5.4 Reads — two faces
+```ts
+interface Logger { trace?(...a: unknown[]): void; debug(...a: unknown[]): void; info(...a: unknown[]): void; warn(...a: unknown[]): void; error(...a: unknown[]): void; } // structural — compatible with console/pino/winston/smithy
+const noopLogger: Logger = Object.freeze({ debug(){}, info(){}, warn(){}, error(){} });
+```
 
-- **Stringly:** `cosmosQuery(...)` — unchanged; parses args to branded ids (§5.0).
-- **Raw typed:** `ctx.query.liftedinit.billing.v1.leases({...})` — manifestjs, **no wrapper** (returns codegen types with `string` ids).
-- **Value-added typed building blocks (`core`)** — these largely **already exist** as handlers in `core/queries/*`, surfaced today as **stringly lease-server tools** (`packages/lease/src/index.ts`: `get_skus`, `get_providers`, `leases_by_tenant`, `lease_by_custom_domain`) and **typed in Barney** (`src/api/billing.ts`, `src/api/sku.ts`). P0 work is to **unify into one typed `core` fn each** (reuse the handler + add pagination defaults/filters), **not** port net-new logic. Params take branded ids; **return types brand domain-id fields by trust-cast** at the single mapping site (the read boundary, §5.0 — no re-validation of chain-vouched data):
-  - `getBalance(ctx, address: Address)` (+runway), `getCreditAccount(ctx, tenant: Tenant)`, `getCreditEstimate`, `getCreditAddress`, `getAccountInfo(ctx, address: Address)`.
-  - `getLeasesByTenant(ctx, tenant: Tenant, { state?, pagination? })`, `getLease(ctx, leaseUuid: LeaseUuid)`, `getLeasesByProvider(ctx, providerUuid: ProviderUuid, …)`, `getLeasesBySKU(ctx, skuUuid: SkuUuid, …)`, `getWithdrawableAmount`, **`getProviderWithdrawable`** (paginated), `getAllLeases` / `getAllCredits`, `getBillingParams`.
-  - `getProviders` / `getSKUs` / `getSKUsByProvider(ctx, providerUuid: ProviderUuid)` / `getSKUParams`, `getLeaseByCustomDomain(ctx, fqdn: Fqdn)`.
-  - **`paginateAll(ctx, pageFn, { maxPages })`** — **net-new** exhaustion helper (follows `nextKey`, rate-limit-aware, capped); `getAll*` compose it.
+Resolution: `ctx.logger = opts.logger ?? noopLogger`; the SDK applies its own `logLevel` filter (default quiet) **before** dispatching, so passing raw `console` isn't flooded. Level + sink are **per-ctx, never process-global**. The neutral core must never reference `console`/`process.env`/`node:process`/`globalThis` for logging — only `ctx.logger`. The node CLI bootstrap keeps env-driven behavior by constructing each ctx with `{ logger: <adapter over the existing core singleton>, logLevel: fromEnv(LOG_LEVEL) }` (env reading stays in node bootstrap, mirroring `MANIFEST_*_FETCH_GUARDED`). `Logger`/`noopLogger`/`LogLevel` are `@public`; a future structured `onLog`/observability hook stays separate from the `@beta` `EventTransport`.
+
+### 5.4 Reads — two faces (every typed read takes `opts?: CallOptions`)
+
+- **Stringly:** `cosmosQuery(...)` — unchanged.
+- **Raw typed:** `ctx.query.liftedinit.billing.v1.leases({...})` — manifestjs, no wrapper.
+- **Value-added typed building blocks (`core`)** — unify the existing lease-server handlers + Barney typed fns; return types brand id fields by trust-cast. Inventory:
+  - **Balances/credit/account:** `getBalance` (+runway), **`getAllBalances`** (all denoms), `getCreditAccount`, `getCreditEstimate`, `getCreditAddress`, `getAccountInfo`.
+  - **Leases/withdrawables:** `getLeasesByTenant({ state?, pagination? })`, `getLease`, `getLeasesByProvider`, `getLeasesBySKU`, `getWithdrawableAmount`, `getProviderWithdrawable`, `getAllLeases`/`getAllCredits`, `getBillingParams`.
+  - **SKU/provider:** `getProviders`, **`getProvider(uuid)`**, `getSKUs`, **`getSKU(uuid)`**, `getSKUsByProvider`, `getSKUParams`.
+  - **Custom-domain reads (the read side of `setItemCustomDomain`):** `getLeaseByCustomDomain(fqdn)`, **`getLeaseItemsForLease`**, **`getDomainAssignments`**, **`getDomainForService`**, **`getDomainCount`** (pure helpers over `Lease.items`), and **`getReservedDomainSuffixes`** (the off-chain reserved-suffix projection of params, for client-side FQDN pre-validation that `parseFqdn` defers to the chain).
+  - **`paginateAll(ctx, pageFn, { maxPages })`** — net-new exhaustion helper (follows `nextKey`, rate-limit-aware). Note: `getLeasesByTenant` exposes cursor (`nextKey`) pagination; the old `lease_history` offset/limit UX maps onto it via the consumer (documented, not a separate block).
+
+Note (sizing, not a gap): `getProviderWithdrawable`/`getLeasesByProvider`/`getLeasesBySKU`/`getAllLeases`/`getAllCredits` have **no current live consumer** — anticipatory provider/dashboard surface, not load-bearing for the acceptance test.
 
 ### 5.5 Catalog / SKU / pricing + customizable spec-map
 
-- `browseCatalog` — one canonical, **stays in `fred`** (provider HTTP via `getProviderHealth`); re-exported via the SDK. Its provider-payload ids are parsed/branded at the read boundary (§5.0, provider-HTTP = untrusted).
-- `resolveSku` / `listSkuCandidates` — `core`, unchanged.
-- **New `core` helpers — PURE over already-fetched `SKU[]`/`Provider[]` + the spec-map (no HTTP/fetch), safe in `platform:neutral` core:** `selectCheapest(...)`, `normalizeHourlyPrice(price, unit)`, the tier-spec join. `browseCatalog` (in `fred`) fetches and feeds them.
-- **`SkuSpecSource` (customizable):**
-  ```ts
-  type SkuSpecMap = Record<TierName, { cores: number; ramMB: number; diskGB: number }>;
-  type SkuSpecSource = SkuSpecMap | ((ctx: CapabilityCtx) => Promise<SkuSpecMap>);
-  ```
-  **normalized to one resolver and memoized** on first resolution; the factory receives `ctx` so a remote source reuses `ctx.fetch` (SSRF guard). `core` does the join + cheapest + per-hour pricing; display formatting stays **consumer-side**.
+- `browseCatalog` — canonical, **stays in `fred`** (provider HTTP); re-exported. **`getProviderHealth`** is also re-exported standalone (a dashboard checking one provider's health needs it independently).
+- `resolveSku` / `listSkuCandidates` — `core`.
+- **New pure `core` helpers** (no HTTP — safe in neutral core): `selectCheapest`, `normalizeHourlyPrice`, the tier-spec join over `SkuSpecSource = SkuSpecMap | ((ctx) => Promise<SkuSpecMap>)` (memoized; factory gets `ctx` to reuse `ctx.fetch`).
 
-### 5.6 Transactions — two faces
+### 5.6 Transactions — two faces (every typed tx takes `opts?: TxOptions`; **fee/gas/memo are preserved**, not dropped — required for §5.8 byte-equivalence)
 
-- **Stringly:** `cosmosTx` / `cosmosEstimateFee` — unchanged (parse args to branded ids).
+- **Stringly:** `cosmosTx` / `cosmosEstimateFee` — unchanged.
 - **Typed building blocks (`core`):**
-  - `fundCredits(ctx, { amount, tenant?: Tenant })`.
-  - `setItemCustomDomain(ctx, { leaseUuid: LeaseUuid; customDomain: Fqdn; serviceName? } | { leaseUuid: LeaseUuid; clear: true; serviceName? })` — a **discriminated union**: clearing is `{ clear: true }`, **never** an empty branded string. This preserves the existing reject-empty guard (an empty/missing `customDomain` without `clear: true` is rejected) so it stays a **byte-equivalent** substitution per §5.8. Still the **only** domain write.
-  - `stopApp(ctx, { leaseUuid: LeaseUuid })` — **this IS the close-lease write** (lease server's `close_lease` wraps it). One typed fn.
-  - a **faucet** helper (drip + verify) — Barney reinvents it in `src/api/faucet.ts`.
-  - Per-module tx composers (`core/transactions/*`; 14 defined, 12 re-exported) exposed typed only where an app needs them.
+  - `fundCredits(ctx, { amount, tenant? }, opts?)`, `setItemCustomDomain(ctx, { leaseUuid; customDomain: Fqdn; serviceName? } | { leaseUuid; clear: true; serviceName? }, opts?)` (discriminated clear, never `''`; the only domain write), `stopApp(ctx, { leaseUuid }, opts?)` (**IS** close-lease — one fn).
+  - **`executeTx(ctx, msgs: EncodeObject[], opts?: TxOptions)`** — **net-new multi-message** building block. A Cosmos tx natively carries `messages[]`, so a "batch" is **one atomic tx with N messages** (single sequence, single fee; `signAndBroadcast` already takes `EncodeObject[]`). Replaces firing N separate txs.
+  - a **faucet** helper (drip + verify).
+- **Per-signer broadcast serialization** (in `CosmosClientManager`): an async mutex/queue keyed by signer address serializes `signAndBroadcast` so **one account never races two txs into the same block** (sequence-mismatch protection) — replacing Barney's hand-rolled signing mutex. Concurrent tx calls from one signer queue; different signers run in parallel.
 
-### 5.7 Fred provider ops
+### 5.7 Fred provider ops (re-exported; provider responses parsed/branded at the read boundary)
 
-`deployManifest` / `deployApp` / `buildManifest` / `restartApp` / `updateApp` / `getAppLogs` / `appStatus` / `waitForAppReady` / `uploadLeaseData` / `pollLeaseUntilReady` — built, re-exported via the SDK. Provider responses are parsed/branded at the read boundary (§5.0(provider-HTTP)). ctx-ifying the ad-hoc positional DI is **P2**.
+`deployManifest`/`deployApp`/`buildManifest`/**`validateManifest`**/**`buildManifestPreview`**/**`checkDeploymentReadiness`**/`restartApp`/`updateApp`/`getAppLogs`/`appStatus`/`waitForAppReady`/`uploadLeaseData`/`pollLeaseUntilReady`, plus the **diagnostics/connection reads** behind `app_diagnostics`/`app_releases`/`app_status`: **`getLeaseConnectionInfo`** (the live app URL — "where is my app running"), **`getLeaseProvision`**, **`getLeaseReleases`**, **`getLeaseInfo`**. (The validate/preview/readiness *functions* are now listed alongside their already-relocated result types from §5.1.) ctx-ifying the positional DI is P2.
 
 ### 5.8 MCP servers as thin callers (back-compat)
 
-Servers keep their tool surface; thin callers must be **byte-equivalent substitutions**. Gated by **BOTH** the pinned `annotations`/`_meta.manifest` matrix tests **AND** each server's behavioral `*.test.ts` suites (response shape via `bigIntReplacer`, error text, canonicalization/trims, rate-limit timing). **Snapshot each tool's JSON output before the refactor.** The MCP `inputSchema` stays a **thin structural gate** (presence/types/enums/descriptions for `tools/list` + `-32602` fast-fail); **all semantic validation (UUID/bech32/FQDN/denom) lives once in the `parse*`/`as*` constructors** invoked inside the shared handler — the Zod `inputSchema` must NOT re-encode those format rules (and can't cleanly: the MCP SDK doesn't reliably support transform/brand schemas in `inputSchema` — #816/#1308). "No behavior change" is a *tested obligation*.
+Thin callers must be **byte-equivalent substitutions** (incl. the preserved fee/gas/memo `opts`), gated by **BOTH** the annotation/`_meta` matrix tests **AND** each server's behavioral `*.test.ts` (response shape, error text, canonicalization/trims) + a pre-refactor JSON snapshot. The MCP `inputSchema` stays a thin structural gate; semantic validation lives once in the `parse*` constructors inside the shared handler. **P0 converts only enough servers to prove the pattern (the fred + lease servers that back the acceptance test); the remaining servers convert in P2** — full 5-server conversion is not gated into P0.
 
 ### 5.9 Live status — streaming building block (surface in P0, WS transport deferred)
 
-Grounded fact: Barney's `connectLeaseEvents` is a **provider (Fred) WebSocket** carrying `provision_status` — the **same data `pollLeaseUntilReady` already polls**. Polling already covers it; the WS is a latency optimization. Design (the viem `watch*` idiom — *one surface, swappable transport*):
+Barney's `connectLeaseEvents` is a **provider (Fred) WebSocket** carrying `provision_status` — the same data `pollLeaseUntilReady` polls. viem `watch*` idiom (one surface, swappable transport):
 
 ```ts
 function subscribeLeaseStatus(
-  ctx: Pick<CapabilityCtx, 'query' | 'chain' | 'fetch' | 'signer' | 'events'>,
+  ctx: Pick<CapabilityCtx, 'query'|'chain'|'fetch'|'signer'|'logger'|'events'>,
   leaseUuid: LeaseUuid,
-  opts: { onData(status: FredLeaseStatus): void; onError?(err: unknown): void; signal?: AbortSignal },
-): () => void; // returns unsubscribe
+  opts: { onData(s: FredLeaseStatus): void; onError?(e: unknown): void; signal?: AbortSignal; timeout?: number },
+): () => void; // unsubscribe
 ```
 
-- **Shape (typed face only):** callback-in, **synchronous unsubscribe-out**, plus an optional `AbortSignal` for parent-scope composition (Azure-SDK style). The returned `unsubscribe` and `signal` abort are **equivalent and idempotent**: aborting calls the same teardown as `unsubscribe`, does **not** invoke `onError` (abort is not an error), and calling `unsubscribe` twice is a no-op. Maps 1:1 to React `useEffect` cleanup; no RxJS/xstream/EventEmitter shim. (Internally an async-iterator transport with a callback adapter on top — pull-backpressure underneath — matching Barney's existing `{ events: AsyncGenerator; close() }`.)
-- **Auth:** the poll transport needs a Fred lease-data auth token (so the `ctx` slice includes `signer`); it mints it via `createAuthTokens(requireAuthSigner(ctx), { chainId })` exactly as `appStatus` does today.
-- **Transport — swappable behind that one surface.** If `ctx.events` is present → subscribe; else, or on permanent WS failure → transparently drive the existing `pollLeaseUntilReady` and re-emit via the same `onData`. (viem's WS→`getLogs` auto-fallback; Barney's `waitForLeaseReady` already does this.) **Both transports parse each frame/response into `FredLeaseStatus` (light structural parse + brand any ids) before `onData`** — "interchangeable" means "both go through the same parse gate", not "both forward raw provider JSON"; a frame that fails to parse routes to `onError` and does not crash the subscription.
-- **P0 scope:** ship the **poll-backed surface now**; the WS transport is **deferred** (§3). Barney adopts the stable surface immediately and keeps its WS as the later `ctx.events` transport — **no surface churn**.
-- **Layer:** `fred` (provider transport, like `browseCatalog`); not `core`.
-- **Not on the stringly/MCP face:** MCP has no client-driven tool-subscription primitive (progress notifications are request-scoped; resource-subscriptions are a separate capability). The LLM path keeps "long-running tool emits progress while polling, then returns".
+callback-in / **idempotent synchronous unsubscribe-out** + optional `AbortSignal` (abort ≡ unsubscribe, no `onError`; double-unsubscribe is a no-op). Needs `signer` (the poll transport mints the Fred lease-data token via `createAuthTokens(requireAuthSigner(ctx))`, like `appStatus`). Transport swappable behind the one surface: `ctx.events` if present, else `pollLeaseUntilReady`; **both parse each frame/response into branded `FredLeaseStatus` before `onData`** (a frame that fails to parse → `onError`, no crash). **P0 ships poll-backed; the WS transport is deferred** (§3) — its `EventTransport` is `@beta` (forward-declared), and swap-equivalence is a named-phase acceptance criterion, **not** proven at P0. Lives in `fred`; not on the stringly/MCP face.
 
-**Deferred WS transport** (`EventTransport` on `ctx.events`, named later phase; shape finalized then):
+## 6. Data flow
 
-```ts
-interface EventTransport { // forward declaration; finalized with the WS phase
-  subscribeLease(leaseUuid: LeaseUuid, opts: { onData(s: FredLeaseStatus): void; onError?(e: unknown): void; signal?: AbortSignal }): () => void;
-}
-```
-
-an injected **WebSocket factory mirroring the fetch seam** — node default behind the `…/node` subpath with `"default": null` (so `ws` never leaks into a browser bundle), `ws` as an **exact-pinned** `optionalDependency`. The node factory carries the **WS-SSRF guard** (undici's guarded dispatcher doesn't cover `ws`, so DNS-resolve, reuse the shared `ipaddr.js` unicast check factored out of `core/internals/guarded-fetch.ts` as `assertUnicastHost(url)`, connect to the resolved IP with a pinned `Host`; gate `MANIFEST_*_WS_GUARDED`, default ON). **The WS frame payload is an untrusted boundary requiring the same parse as the poll path** (not just the connection). Reconnection/backoff is ours (~150 lines; cosmjs curve 100ms→×2→5s cap). **Not** cosmjs's WS client (chain events — wrong source).
-
-## 6. Data flow (examples)
-
-- **Query:** `createManifestClient(...)` → `getLeasesByTenant(ctx, parseAddress(addr) as Tenant, { state })` → `Lease[]` (ids branded at the read boundary).
-- **Deploy (P0 capability path):** `resolveSku(ctx, intent)` → `buildManifest(...)` → `deployManifest(ctx, { manifest, sku, customDomain })` → `DeployAppResult`. **The acceptance test exercises this and passes at end of P0.**
-- **Live status (P0):** `const stop = subscribeLeaseStatus(ctx, leaseUuid, { onData })` → poll-backed today, WS-backed later, identical caller code.
+- **Query:** `createManifestClient(...)` → `getLeasesByTenant(ctx, asTenant(addr), { state }, { signal })` → `Lease[]`.
+- **Deploy:** `resolveSku` → `buildManifest` → `validateManifest` → `deployManifest(ctx, …)` → `DeployAppResult`; show URL via `getLeaseConnectionInfo`.
+- **Batch:** `executeTx(ctx, [msg1, msg2, …], { gasMultiplier })` — one atomic multi-message tx; concurrent calls per signer serialized.
+- **Live status:** `const stop = subscribeLeaseStatus(ctx, leaseUuid, { onData })` — poll-backed today, WS later, identical caller code.
 
 ## 7. Error handling
 
-Preserve `ManifestMCPError` + `ManifestMCPErrorCode` + `sanitizeForLogging` + retry classification. The `parse*`/`as*` constructors throw the existing `INVALID_*` codes; **chain/codegen read brands are trust-casts and never throw** (chain is source of truth), while **provider-HTTP read brands reuse the existing `INVALID_*` throws**. No new error model.
+Preserve `ManifestMCPError` + `ManifestMCPErrorCode` + `sanitizeForLogging` + retry classification. `parse*` constructors throw existing `INVALID_*`; chain/codegen read brands are trust-casts (never throw); provider-HTTP read brands reuse the `INVALID_*` throws. No new error model.
 
 ## 8. Isomorphic / build constraints + boundary enforcement
 
-- `core`, `fred`, `agent-core`, `manifest-sdk`: `platform:neutral` + dynamic-import-gated node code; `"sideEffects": false` end-to-end.
-- Node-only code (guarded fetch, **WS factory**, keyfile signer) behind the `…/node` **subpath** with `"default": null`. `publint` + `attw` in CI.
-- **Boundary enforcement — split by mechanism:**
-  - **Import-edge rules → `dependency-cruiser`** (npm workspaces, not Nx): (a) *only* `core/src/manifest-types.ts` imports manifestjs generated type paths; (a′) **branded domain types are declared *only* in `core/src/brands.ts` and re-exported — no other module declares a `Brand<…>`/`__brand` type, and the lone `as Brand` cast lives only there**; (b) *only* `core` constructs the LCD/RPC client; (c) the **whole DAG** `edge → agent-core → core → manifestjs`, never reverse, no `agent-core → edge` (subsumes ENG-281/287). The barrel re-exports **only** each package's public browser-safe entry.
-  - **Semantic "narrower re-declaration" → NOT a grep**; rely on the single-source-of-truth canonical type + `tsc`.
-  - The guard ships **meta-tests** (known-bad fixtures it must fail on): a duplicate manifest-type re-declaration **and** a duplicate `Brand` declaration outside `brands.ts`.
+`platform:neutral` + dynamic-import-gated node code; `"sideEffects": false` end-to-end; node-only behind `…/node` (`"default": null`); `publint`+`attw`. **`dependency-cruiser`:** (a) only `core/src/manifest-types.ts` imports manifestjs type paths; (a′) branded types declared only in `core/src/brands.ts` and re-exported, the lone `as Brand` cast only there; (b) only `core` constructs the LCD/RPC client; (c) the whole DAG `edge → agent-core → core → manifestjs`. Semantic "narrower re-declaration" relies on the single-source type + `tsc` (not a grep). The guard ships meta-tests (known-bad fixtures: duplicate manifest-type **and** duplicate `Brand`). Public API surface is enforced by **Microsoft API Extractor** release tags (§14).
 
 ## 9. Testing & acceptance
 
-- Unit tests per building block.
-- **Branded-type tests:** `parse*`/`as*` round-trip + reject invalid; a `tsd`/`expect-error` **negative type-fixture** covering the confusable **`LeaseUuid`/`ProviderUuid`/`SkuUuid` trio** (all UUID-backed, identical except the tag — the only thing proving the tags were wired distinctly); and a **read-boundary type-fixture** per canonical read (`ReturnType` of `getLease` exposes `.uuid: LeaseUuid`, not `string`) — forcing the read-side cast to exist (a runtime-erased gap is invisible to `tsc` otherwise; "test passes because of the bug" guard).
-- **Cross-face equivalence test:** same input through stringly + typed faces → equivalent results, **and a malformed id is rejected by BOTH faces with the same `ManifestMCPErrorCode`/message** (pins one-validation-source; catches Zod-`inputSchema`-vs-constructor drift).
-- **The acceptance test (single tracked "done" metric, a P0 deliverable):** an in-repo example app composing **only** `@manifest-network/manifest-sdk` + `manifestjs`, that (1) queries leases/credit/catalog, (2) runs the **deploy capability path**, (3) drives `subscribeLeaseStatus` (poll-backed) — **built for the browser**. CI asserts the emitted browser chunk has **no node builtins** (`node:`/`async_hooks`/`undici`/`ws`/`fs`) and stays within a **bundle-size budget** (`size-limit`/`bundlewatch`).
-- The annotation/`_meta` matrix **and** server behavioral suites stay green (§5.8).
+- Unit tests per building block; **branded-type** tests (`parse*` round-trip/reject; tsd negative fixture for the `LeaseUuid`/`ProviderUuid`/`SkuUuid` trio; a **read-boundary fixture** that `ReturnType<getLease>.uuid` is `LeaseUuid` not `string`); **cross-face equivalence** (same input → equivalent result; a malformed id rejected by BOTH faces with the same `ManifestMCPErrorCode`).
+- **The acceptance test (single tracked metric, P0):** an in-repo example app composing **only** `@manifest-network/manifest-sdk` + `manifestjs`, run **end-to-end against the existing `e2e/docker-compose.yml` (live chain + providerd + faucet)** via the `e2e/deploy-roundtrip` harness — exercising **deploy → query → getLeaseConnectionInfo → setItemCustomDomain → restart/update/getLogs → executeTx batch → subscribeLeaseStatus (poll) → stopApp**, covering single-service *and* a multi-service stack. **Additionally** build the same example **for the browser** and assert the emitted chunk has no node builtins (`node:`/`async_hooks`/`undici`/`ws`/`fs`) + a bundle-size budget. (Two distinct claims: it *deploys* — e2e; it *bundles for browser* — build.) The annotation/`_meta` matrix + converted-server behavioral suites stay green.
 
 ## 10. Migration & back-compat
 
-- **Additive:** new `manifest-sdk` package + new `core` modules; existing packages keep working.
-- `fred` re-exports the relocated types; brands are structurally `string` (assignable to `string`), so existing `string`-typed call sites keep compiling during a leaf-by-leaf migration.
-- Servers refactor to thin callers incrementally; gated by §5.8.
-- **Plugin:** already on `0.14.0`; unaffected. **Barney:** adopts in P3 (and migrates onto `subscribeLeaseStatus` immediately for live status, keeping its WS as the future transport).
+- **Additive:** new `manifest-sdk` + new `core` modules; existing packages keep working. Brands are structurally `string`, so existing `string` call sites keep compiling during incremental migration.
+- `fred` re-exports relocated types; `agent-core` narrow types coexist until P1.
+- Servers convert to thin callers incrementally (P0 proves the pattern, P2 finishes), gated by §5.8.
+- **Barney** migrates to the SDK in P3 (we accept it adopts the SDK surface directly rather than special-casing its in-flight ENG-279 work) and may opt into the orchestration tier; the **plugin** consumes the orchestration tier via the MCP adapter.
 
 ## 11. Risks & mitigations
 
-- **Browser-bundle regression** (node-only leak into the SDK barrel — now incl. `ws`) → example-app browser build (no-node-builtins assertion + size budget) + `dependency-cruiser` DAG/boundary guard + `publint`/`attw`.
-- **Branded-type friction** → brands are structurally `string` (one-way assignable), so adoption is incremental and never blocks a `string` call site; the lone cast is contained to `brands.ts` (read-side) and parse constructors (write-side).
-- **WS-SSRF + hostile frame payload** (provider WS) → the deferred `ctx.events` node factory reuses the `ipaddr.js` unicast guard *and* the same payload parse as the poll path. Not in P0.
-- **Type-relocation churn** → `fred` re-exports; `agent-core` narrow types coexist transiently until P1 (the §8 guard exempts them).
-- **Dual-face drift** → single shared handler + cross-face equivalence test (incl. identical error codes).
-- **ENG-282** → the canonical `PortConfig` IS the ENG-282 shape.
+- **Browser-bundle regression** (node leak incl. `ws`) → example browser build (no-node-builtins + size budget) + `dependency-cruiser` + `publint`/`attw`.
+- **Branded-type friction** → one-way `string`-assignable, incremental; the cast is contained.
+- **WS-SSRF + hostile frame** → deferred `ctx.events` node factory reuses the `ipaddr.js` unicast guard + the same frame parse as poll.
+- **Upstream codegen/fork coupling (public-SDK stability risk):** "reuse never re-declare" makes the public type surface a passthrough of `manifestjs` (Telescope codegen) + the `@manifest-network/stargate` CosmJS fork — a codegen bump can break public types with no insulation. Mitigate via the API-Extractor release-tag layer + staying 0.x (§14), pin manifestjs/fork exactly, track the elliptic/protobufjs CVE posture from the earlier review, and gate bumps on the acceptance e2e.
+- **Type-relocation churn**, **dual-face drift**, **ENG-282** → as before (chokepoint re-exports; cross-face equivalence test; canonical `PortConfig`).
 
-## 12. Open questions (with resolutions)
+## 12. Open questions (resolved)
 
-1. ~~`browseCatalog` in `core`?~~ Stays in `fred`; pricing helpers pure (§5.5).
-2. `SkuSpecSource` shape — memoized union, factory receives `ctx` (§5.5).
-3. SDK node-only subpath — one `…/node`.
-4. ~~Live events: defer vs scope into P0?~~ **Decouple surface from transport** — poll-backed `subscribeLeaseStatus` **surface** in P0; **defer the WS transport** (§5.9).
-5. Branding library — **hand-rolled `Brand` for P0** (zero-dep, audit-trivial); Zod `.brand()` and type-fest `Tagged` considered and declined (§5.0). Revisit if broader schema validation is adopted.
-6. File a Linear epic + per-phase issues now? **Recommend:** yes, once the spec is approved.
+1. `browseCatalog` stays in `fred`; pricing helpers pure. 2. `SkuSpecSource` memoized union w/ `ctx`. 3. One `…/node`. 4. Streaming: poll-backed surface P0, WS transport deferred (`@beta`). 5. Branding: hand-rolled `Brand` (Zod/type-fest declined). 6. **Versioning/stability:** lockstep + 0.x + API-Extractor release tags (§14). 7. **Logging:** silent-by-default injectable `Logger` port (§5.3). 8. **React bindings:** a later-phase `manifest-sdk-react` package (§3). 9. Linear epic + per-phase issues filed once approved (mind the free-tier issue cap — file the epic + per-phase issues; keep per-deliverable items as checklist entries, not issues).
 
 ## 13. Phase 0 deliverables checklist
 
-- [ ] `@manifest-network/manifest-sdk` — barrel **+ scoped subpaths** + `…/node` (`"default": null`) + `"sideEffects": false` + release wiring
-- [ ] **Branded domain types** (`core/src/brands.ts`: `Address`/`Tenant`/`LeaseUuid`/`ProviderUuid`/`SkuUuid`/`TierName`/`Fqdn`/`Denom`/`ChainId`) + `parse*`/`as*` constructors (note: `parseFqdn` is **net-new** client-side validation — no existing FQDN validator; minimal structural check, chain remains authoritative); the lone `as Brand` cast lives only here; threaded through every typed signature; boundary policy by trust (§5.0)
-- [ ] Canonical types relocated to `core/src/manifest-types.ts` (single chokepoint, type-only); `SkuIntent` unified; `PortConfig` net-new; `FredLeaseStatus` relocated
-- [ ] `CapabilityCtx` / `QueryCtx` + overloaded `createManifestClient`; `EventTransport` forward-declared
-- [ ] `TxSigner`/`AuthSigner` split (`OfflineSigner` = `@cosmjs/proto-signing`) + `requireAuthSigner` + `Signer` adapter over `WalletProvider` (brands the address once) + `createAuthTokens(signer, { chainId })` (lazy-cached) + `fetch` on `ctx`
-- [ ] Value-added typed reads (billing/lease/credit/sku/provider/account) — **unify** existing lease-server handlers + Barney typed fns; brand ids by trust-cast at the read boundary
-- [ ] `paginateAll` exhaustion helper (net-new)
-- [ ] `selectCheapest` + `normalizeHourlyPrice` + tier-spec join (pure; memoized `SkuSpecSource`)
-- [ ] faucet helper
-- [ ] **`subscribeLeaseStatus`** (viem-style callback+unsubscribe + AbortSignal; signer slice for auth; parse-each-emit), **poll-backed** via `pollLeaseUntilReady`; `ctx.events?` deferred WS upgrade
-- [ ] `dependency-cruiser` boundary + **brands.ts chokepoint** + whole-DAG guard (meta-tests for both chokepoints) + `publint`/`attw` CI
-- [ ] Cross-face equivalence test (incl. identical error codes) + branded-type negative + read-boundary fixtures
-- [ ] Example app + acceptance test (browser build; no-node-builtins assertion + size budget; deploy + query + subscribeLeaseStatus; CI)
-- [ ] Servers refactored to thin callers (behavioral suites + matrix green; JSON snapshots; `inputSchema` thin/structural-only)
-- [ ] SDK author guide (docs)
+- [ ] `@manifest-network/manifest-sdk` — barrel + scoped subpaths + `…/node` (`"default": null`) + `sideEffects:false` + release wiring; internal packages `private:true`
+- [ ] Branded domain types (`core/src/brands.ts`) + `parse*`/`as*` (`parseFqdn` net-new structural check); cast only here; boundary policy by trust
+- [ ] Canonical types → `core/src/manifest-types.ts` (chokepoint, type-only); `SkuIntent` unified; `PortConfig` net-new; `FredLeaseStatus` relocated
+- [ ] `CapabilityCtx`/`QueryCtx` + overloaded `createManifestClient`; `CallOptions`/`TxOptions` threaded through every typed read/tx/subscribe; `EventTransport` forward-declared (`@beta`)
+- [ ] `TxSigner`/`AuthSigner` (`OfflineSigner` = `@cosmjs/proto-signing`) + `requireAuthSigner` + `Signer` adapter over `WalletProvider` + `createAuthTokens(signer,{chainId})`; `fetch` on `ctx`
+- [ ] **`Logger` port** (silent `noopLogger` default, per-ctx level, injectable, isomorphic) + node-bootstrap adapter over the legacy singleton
+- [ ] Value-added typed reads incl. the **full read surface**: balances/credit/account, leases/withdrawables, sku/provider (+singles), **custom-domain reads** (`getLeaseItemsForLease`/`getDomainAssignments`/`getDomainForService`/`getDomainCount`/`getReservedDomainSuffixes`), `paginateAll`
+- [ ] Typed txs (fee/gas/memo preserved) + **`executeTx` multi-message** + **per-signer broadcast serialization** + faucet
+- [ ] `selectCheapest`/`normalizeHourlyPrice`/tier-spec join (pure; memoized `SkuSpecSource`); `getProviderHealth` standalone
+- [ ] Fred ops incl. **`validateManifest`/`buildManifestPreview`/`checkDeploymentReadiness`** + **`getLeaseConnectionInfo`/`getLeaseProvision`/`getLeaseReleases`/`getLeaseInfo`**
+- [ ] **`subscribeLeaseStatus`** (poll-backed; signer slice; parse-each-emit; `ctx.events?` deferred)
+- [ ] `dependency-cruiser` boundary + brands.ts chokepoint + DAG guard (meta-tests) + `publint`/`attw` + **API Extractor** release-tag enforcement (§14)
+- [ ] Cross-face equivalence + branded-type negative + read-boundary fixtures
+- [ ] Example app + **e2e acceptance** against `e2e/docker-compose` (deploy/query/connection/domain/restart/update/logs/batch/subscribe/stop, single + stack) + browser-build (no-node-builtins + size budget)
+- [ ] Servers refactored to thin callers — **fred + lease in P0** (rest P2); behavioral suites + matrix green; JSON snapshots; `inputSchema` thin
+- [ ] SDK author guide **+ fix the stale docs debt** (`SECURITY.md`/`docs` "four servers"; agent README `PLAN.md` 404)
+- [ ] Versioning/stability policy applied (§14): 0.x lockstep, release tags, `EventTransport` `@beta`
+
+## 14. Versioning & stability policy
+
+`manifest-sdk` ships **lockstep-versioned** with the monorepo (cosmjs/Angular model; idiomatic for a tightly-coupled facade) and remains **0.x through P0**, making **no SemVer guarantee** at the package level — exactly the cover the forward-declared `EventTransport` needs (SemVer §4). Per-symbol stability is governed by **TSDoc release tags enforced by Microsoft API Extractor** (orthogonal to the package version): **`@public`** = supported (post-1.0, no breaking change without a major bump) — the ~30 settled fns, `CapabilityCtx`, branded types, `Logger`; **`@beta`/`@experimental`** = unstable preview that may change or be removed at any minor/patch — the `EventTransport` streaming shape ships `@beta` until finalized; **`@internal`** = cross-package, never for third parties. Public symbols are removed only via a **`@deprecated` grace period of ≥1 minor release** (never deleted in the same release they're deprecated). The deferred `EventTransport` graduates `@beta`→`@public` **before** we cut a **1.0** (which turns `@public` into a binding SemVer contract). Internal-only packages stay `private:true` so the public SDK can later be cut onto an independent changesets `fixed` group without churn, and the install graph must resolve **one** copy of `core`/`fred`.

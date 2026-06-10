@@ -1,9 +1,9 @@
 # Manifest App SDK — Readiness Scorecard (living tracker)
 
 - **Repo:** manifest-mcp-mono @ v0.14.0
-- **Created:** 2026-06-10 · **Revised:** 2026-06-10 (v4 — final idiomatic review: boundary-policy-by-trust, signer/ctx fixes, discriminated clear)
+- **Created:** 2026-06-10 · **Revised:** 2026-06-10 (v5 — gap-sweep folds: full read surface, options bag, e2e acceptance, layered tiers, multi-msg+serialization, versioning + logging policy)
 - **Pairs with:** `2026-06-10-manifest-app-sdk-foundation-design.md` (Phase 0 spec)
-- **Definition of done (single tracked metric):** an in-repo example app builds a deploy-, query-, **and live-status** flow (incl. `subscribeLeaseStatus`) composing **only** `@manifest-network/manifest-sdk` + `manifestjs` — zero hand-rolled client, queries, auth, pricing, orchestration, or streaming.
+- **Definition of done (single tracked metric):** an in-repo example app builds a deploy-, query-, domain-, batch-, **and live-status** flow composing **only** `@manifest-network/manifest-sdk` + `manifestjs`, run **end-to-end against the live `e2e/docker-compose` chain + Fred provider** (single-service + stack), **and** built for the browser (no node builtins + size budget) — zero hand-rolled client, queries, auth, pricing, orchestration, or streaming.
 
 **Status legend:** ✅ ready (zero/trivial) · 🟡 exists, needs SDK-shaping · 🟠 partial / wrong place · 🔴 missing / net-new · ☑ done (tick as landed)
 
@@ -32,6 +32,8 @@
 | ☐ | Signer port | 🟡 | `core/src/types.ts` `WalletProvider` (signArbitrary OPTIONAL; `getAddress(): string`) | **Type-split** `TxSigner` / `AuthSigner = TxSigner & { signArbitrary }` + `requireAuthSigner(ctx)`; `getSigner` returns **`@cosmjs/proto-signing`** `OfflineSigner` (the stargate fork overrides `@cosmjs/stargate`, not proto-signing); `Signer` is an **adapter over `WalletProvider`** that brands the address via `parseAddress` once · **P0** |
 | ☐ | ADR-036 auth-token factory | 🟡 | `fred/src/http/auth-token-service.ts`, `auth.ts` (Barney: `src/ai/toolExecutor/fredAuth.ts` `makeFredAuthTokens`) | Expose `createAuthTokens(signer: AuthSigner, { chainId })`, **lazily cached / re-sign on expiry**; kill per-call closures · **P0** |
 | ☐ | fetch port | ✅ | `fred/src/server/fetch-gate.ts`, core `…/guarded-fetch` subpath (`"default": null` guard) | Move onto ctx · **P0** |
+| ☐ | **Logger port** (silent-by-default, injectable) | 🟠 | `core/src/logger.ts` — global mutable `console.error` singleton + process-global level | `Logger` interface + frozen `noopLogger` default on ctx (per-instance level, isomorphic, never touches console/process); node bootstrap adapts the legacy singleton via `LOG_LEVEL`; mark `@public` · **P0** |
+| ☐ | **Per-call options bag** (`CallOptions`/`TxOptions`) | 🔴 | none — reads/txs take no signal; tx `overrides?` exists but the spec'd new sigs dropped it | `{ signal?, timeout? }` on reads, `{ …, gasMultiplier?, fee?, memo? }` on txs, threaded everywhere (fixes the §5.8 byte-equivalence regression) · **P0** |
 
 ## B. Canonical types (over manifestjs, never re-declared)
 
@@ -52,6 +54,8 @@
 | ☐ | `getBalance` (+runway) / `getAccountInfo` | 🟡 | `core/src/tools/getBalance.ts`; chain server `get_account_info` | ctx-ify; add `getAccountInfo` typed wrapper · **P0** |
 | ☐ | Typed lease/credit reads (by-tenant/provider/sku, getLease, **getProviderWithdrawable**, withdrawable, credit-estimate/-address, getAllLeases/Credits, getBillingParams) | 🟡/🟠 | **exist as lease-server stringly tools** (`packages/lease/src/index.ts`: get_skus/get_providers/leases_by_tenant/lease_by_custom_domain) over `core/queries/billing.ts` handlers **+ typed in `barney/src/api/billing.ts`** | **Unify** into one typed core fn each (reuse handler + add filters/pagination); NOT port-from-Barney. Add the omitted `getProviderWithdrawable`/`getCreditEstimate`/`getCreditAddress` · **P0** |
 | ☐ | `paginateAll(ctx, pageFn, { maxPages })` | 🔴 | **none** — handlers do single-page + return `hasMore`/`nextKey` | Net-new exhaustion helper (rate-limit-aware, capped); `getAll*` compose it · **P0** |
+| ☐ | **Custom-domain reads** (read side of `setItemCustomDomain`): `getLeaseItemsForLease`/`getDomainAssignments`/`getDomainForService`/`getDomainCount` + `getReservedDomainSuffixes` | 🟠 | **only in Barney** (`leaseItems.ts`/`leaseDomains.ts`/`billingParams.ts`); live consumers | Pure helpers over `Lease.items` + the reserved-suffix param projection (for client-side FQDN pre-validation `parseFqdn` defers to chain) · **P0** |
+| ☐ | `getAllBalances` (all denoms) + `getProvider(uuid)`/`getSKU(uuid)` singles | 🟠 | only in Barney (`bank.ts`/`sku.ts`) | Trivial wrappers alongside the plurals · **P0** |
 | ☐ | `cosmosQuery` (stringly/LLM face) | ✅ | `core/src/cosmos.ts` | Keep as MCP/LLM face · **P0** |
 
 ## D. Catalog / SKU / pricing
@@ -67,7 +71,8 @@
 
 | ☐ | Block | St | Today (file) | Delta → target · Phase |
 |---|---|---|---|---|
-| ☐ | Typed tx: `fundCredits`/`setItemCustomDomain`/`stopApp` | ✅ | `core/src/tools/*.ts` | ctx-ify. **`setItemCustomDomain` with `customDomain:""` = clear** (only domain write). **`stopApp` IS close-lease** (one fn, not two) · **P0** |
+| ☐ | Typed tx: `fundCredits`/`setItemCustomDomain`/`stopApp` | ✅ | `core/src/tools/*.ts` | ctx-ify + thread `TxOptions`. `setItemCustomDomain` clear via **discriminated `{ clear: true }`** (not `""`). **`stopApp` IS close-lease** (one fn) · **P0** |
+| ☐ | **`executeTx` multi-message** + **per-signer broadcast serialization** | 🔴 | none — every handler returns `{messages:[msg]}`; zero sequence/mutex handling in core | One atomic tx with N messages (cosmjs `signAndBroadcast` takes `EncodeObject[]`); async mutex/queue keyed by signer address in `CosmosClientManager` so one account never races 2 txs in a block — replaces Barney's signing mutex · **P0** |
 | ☐ | `cosmosTx` + `cosmosEstimateFee` (stringly face) | ✅ | `core/src/cosmos.ts` | Keep · **P0** |
 | ☐ | Per-module tx composers | 🟡 | `core/src/transactions/*.ts` — stringly-only (14 defined, 12 re-exported) | Typed Face-B where value-added; else `cosmosTx`/manifestjs · **P0/P2** |
 | ☐ | Faucet helper (drip + verify) | 🟡 | chain pkg `requestFaucet`; **Barney reinvents** `src/api/faucet.ts` `faucetDripAndVerify` | Surface a faucet building block · **P0** |
@@ -76,7 +81,8 @@
 
 | ☐ | Block | St | Today (file) | Delta → target · Phase |
 |---|---|---|---|---|
-| ☐ | deploy/build/validate/restart/update/logs/status/upload/releases | ✅ | `fred/src/tools/*`, `http/*` — Barney reuses | ctx-ify the ad-hoc positional DI · **P2** (functionally done) |
+| ☐ | deploy/build/restart/update/logs/status/upload | ✅ | `fred/src/tools/*`, `http/*` — Barney reuses | re-export; ctx-ify positional DI · **P2** (functionally done) |
+| ☐ | **Diagnostics/connection reads** (gap): `getLeaseConnectionInfo` (live app URL), `getLeaseProvision`/`getLeaseReleases`/`getLeaseInfo` + `validateManifest`/`buildManifestPreview`/`checkDeploymentReadiness` | 🟡 | exist in `fred` (`http/{fred,provider}.ts`, `manifest.ts`, `tools/`) — back `app_diagnostics`/`app_releases`/`build_manifest_preview`/`check_deployment_readiness`; **were dropped from the spec** | Re-export via SDK (the read side a deploy/dashboard consumer needs; `getLeaseConnectionInfo` = "where is my app running") · **P0** |
 | ☐ | `pollLeaseUntilReady` (provision_status gating) | ✅ | `fred/src/http/fred.ts` | None · — |
 
 ## G. Orchestration (agent-core)
@@ -93,7 +99,9 @@
 | ☐ | Block | St | Today | Delta → target · Phase |
 |---|---|---|---|---|
 | ☐ | SDK package — barrel **+ scoped subpaths** + `…/node` + `sideEffects:false` | 🔴 | none | `@manifest-network/manifest-sdk` (barrel) + `/reads`,`/catalog`,`/deploy`,`/orchestration` + `/node` (`"default": null`) · **P0** |
-| ☐ | Example app + acceptance test | 🔴 | none | Browser build; **assert no node builtins** in chunk + **size budget** (size-limit/bundlewatch); CI = "done" metric (P0 capability path) · **P0** |
+| ☐ | Example app + acceptance test | 🔴 | none; **existing `e2e/docker-compose` + `deploy-roundtrip` harness unused by the spec** | **e2e against the live chain+provider** (deploy/query/connection/domain/restart/update/logs/batch/subscribe/stop, single+stack) — proves it *deploys*; **plus** a browser build asserting no node builtins + size budget — proves it *bundles*. CI = "done" metric · **P0** |
+| ☐ | **Versioning & stability policy** (§14) | 🔴 | lockstep 0.x; zero `@public`/`@beta`/`@internal` markers | Stay lockstep + 0.x; **Microsoft API Extractor** release tags (`@public`/`@beta`/`@internal`); `EventTransport` `@beta`; `@deprecated` ≥1-minor grace; defer 1.0 until `EventTransport` graduates · **P0** |
+| ☐ | **`@manifest-network/manifest-sdk-react`** (shared hooks) | 🔴 | none | TanStack-Query hooks (`useLeases`/`useDeploy`/`useLeaseStatus`/`useCatalog`) over the core (wagmi `@wagmi/core`→`wagmi` shape) so Barney + dashboards share them · **later phase** (after core surface stabilizes) |
 | ☐ | Cross-face equivalence test | 🔴 | none | Same input via stringly + typed → equivalent (pins single-handler invariant) · **P0** |
 | ☐ | Boundary + DAG guard | 🔴 | none (ENG-281/287 are ad-hoc) | `dependency-cruiser`: chokepoint-only manifestjs imports, no 2nd LCD client, whole DAG `edge→agent-core→core→manifestjs`; **meta-test**; **NOT** a grep for type re-declaration (use tsc+single-source) · **P0** |
 | ☐ | `publint` + `attw` (exports/.d.ts validation) | 🔴 | none | CI-only (tsdown) · **P0** |
