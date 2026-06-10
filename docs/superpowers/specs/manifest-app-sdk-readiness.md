@@ -1,7 +1,7 @@
 # Manifest App SDK — Readiness Scorecard (living tracker)
 
 - **Repo:** manifest-mcp-mono @ v0.14.0
-- **Created:** 2026-06-10 · **Revised:** 2026-06-10 (v2 — post verification: code fact-check + completeness critique + online idiomatic audit)
+- **Created:** 2026-06-10 · **Revised:** 2026-06-10 (v3 — post verification + streaming-idiom research + branded-type-safety directive)
 - **Pairs with:** `2026-06-10-manifest-app-sdk-foundation-design.md` (Phase 0 spec)
 - **Definition of done (single tracked metric):** an in-repo example app builds a deploy-and-query flow composing **only** `@manifest-network/manifest-sdk` + `manifestjs` — zero hand-rolled client, queries, auth, pricing, or orchestration.
 
@@ -14,7 +14,7 @@
 | Layer | Built | Needs shaping | Net-new |
 |---|---|---|---|
 | A. Client / DI / ports | high | medium | `CapabilityCtx` |
-| B. Canonical types | — | — | relocate + `SkuIntent` + `PortConfig` |
+| B. Canonical types | — | — | relocate + `SkuIntent` + `PortConfig` + **branded types** |
 | C. Reads | high (machinery + lease-server tools) | typed Face-B (unify) | `paginateAll`, account/withdrawable wrappers |
 | D. Catalog / SKU / pricing | resolve+browse ✅ | — | cheapest/pricing/spec-map |
 | E. Transactions | helpers ✅ | typed Face-B | faucet helper |
@@ -41,6 +41,7 @@
 | ☐ | `SkuIntent` (byName \| resolved) | 🟠 | modeled 3×: `core/sku-resolution.ts` `ResolveSkuInput`, `fred/deployManifest.ts:72` `SkuSelector`, agent-core loose fields | Define once in core; reuse everywhere · **P0** |
 | ☐ | `PortConfig` (`{ host_port?; ingress? }`) | 🔴 | **does not exist** (today: `ServiceConfig.ports: Record<string,Record<string,never>>` + flat `port: number`) | **Net-new** canonical type carrying the ENG-282 shape · **P0** |
 | ☐ | manifestjs protobuf types (Lease/SKU/Coin/Credit) | ✅ | re-exported in `core/src/types.ts` | Keep, **type-only**, via the chokepoint; **CI guard** against re-declaration · **P0** |
+| ☐ | **Branded domain types** (`Address`/`Tenant`/`LeaseUuid`/`ProviderUuid`/`SkuUuid`/`TierName`/`Fqdn`/`Denom`/`ChainId`) + `parse*`/`as*` | 🔴 | none — bare `string` everywhere today | New `core/src/brands.ts`; thread through every typed signature (no bare `string` on the typed face); stringly face = parse boundary; viem `Address`/`Hex` idiom · **P0** |
 
 ## C. Reads (queries)
 
@@ -98,7 +99,8 @@
 | ☐ | `publint` + `attw` (exports/.d.ts validation) | 🔴 | none | CI-only (tsdown) · **P0** |
 | ☐ | SDK author guide + manifestjs-boundary rule | 🔴 | README/ARCH describe MCP servers; SECURITY/CONTRIBUTING stale | Write SDK guide + per-block reference · **P0+** |
 | ☐ | MCP servers → thin typed-API callers | 🟡 | chain/lease/fred/cosmwasm/agent register tools directly | Refactor; gated by **behavioral `*.test.ts` + annotation matrix + JSON snapshot** (byte-equivalent) · **P0/P2** |
-| ☐ | Live lease/provision events (`connectLeaseEvents`) | 🔴 | **zero WS/streaming in mono**; only in Barney | **Deferred** streaming port `ctx.events?` (node-ws vs browser-WebSocket isomorphism hazard); Barney keeps WS until a named phase. *Owner decision: defer vs minimal `subscribeLeaseStatus` in P0* · **deferred** |
+| ☐ | **Live status — `subscribeLeaseStatus`** (viem `watch*`-shape: callback + sync unsubscribe + AbortSignal) | 🟡 | poll exists (`pollLeaseUntilReady`); no subscribe surface | Ship the **surface in P0, poll-backed**; `onData` emits the same `FredLeaseStatus`; typed-face only (NOT MCP/stringly); lives in `fred` · **P0** |
+| ☐ | Live-status **WS transport** (`ctx.events?` factory) | 🔴 | **zero WS/streaming in mono**; provider WS only in Barney (`connectLeaseEvents`) | **Deferred** to a named phase: injected WS factory (mirror fetch seam) behind `…/node` (`"default": null`); **WS-SSRF guard** (reuse `ipaddr.js` unicast check); `ws` exact-pinned optionalDep; Barney's WS becomes this transport — no surface churn · **deferred** |
 
 ---
 
