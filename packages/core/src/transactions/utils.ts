@@ -1,4 +1,4 @@
-import { fromBech32, fromHex, toHex } from '@cosmjs/encoding';
+import { fromHex, toHex } from '@cosmjs/encoding';
 import type { EncodeObject } from '@cosmjs/proto-signing';
 import type { SigningStargateClient } from '@cosmjs/stargate';
 import { calculateFee, type StdFee } from '@cosmjs/stargate';
@@ -245,39 +245,7 @@ export function requireArgs(
   );
 }
 
-/**
- * Validate a bech32 address using @cosmjs/encoding
- */
-export function validateAddress(
-  address: string,
-  fieldName: string,
-  expectedPrefix?: string,
-): void {
-  if (!address || address.trim() === '') {
-    throw new ManifestMCPError(
-      ManifestMCPErrorCode.INVALID_ADDRESS,
-      `${fieldName} is required`,
-    );
-  }
-
-  try {
-    const { prefix } = fromBech32(address);
-    if (expectedPrefix && prefix !== expectedPrefix) {
-      throw new ManifestMCPError(
-        ManifestMCPErrorCode.INVALID_ADDRESS,
-        `Invalid ${fieldName}: "${address}". Expected prefix "${expectedPrefix}", got "${prefix}"`,
-      );
-    }
-  } catch (error) {
-    if (error instanceof ManifestMCPError) {
-      throw error;
-    }
-    throw new ManifestMCPError(
-      ManifestMCPErrorCode.INVALID_ADDRESS,
-      `Invalid ${fieldName}: "${address}". Not a valid bech32 address.`,
-    );
-  }
-}
+export { validateAddress } from '../validation.js';
 
 /**
  * Validate memo length

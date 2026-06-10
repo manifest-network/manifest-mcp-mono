@@ -1,11 +1,17 @@
+import { toBech32 } from '@cosmjs/encoding';
 import { describe, expect, it } from 'vitest';
 import { ManifestMCPError, ManifestMCPErrorCode } from './types.js';
 import {
+  assertUuid,
+  DENOM_RE,
+  FQDN_RE,
   optionalBoolean,
   parseArgs,
   requireString,
   requireStringEnum,
   requireUuid,
+  SCHEME_PREFIX_RE,
+  validateAddress,
 } from './validation.js';
 
 describe('requireString', () => {
@@ -216,5 +222,54 @@ describe('parseArgs', () => {
 
   it('should return empty array for empty array', () => {
     expect(parseArgs([])).toEqual([]);
+  });
+});
+
+const UUID = '550e8400-e29b-41d4-a716-446655440000';
+const ADDR = toBech32('manifest', new Uint8Array(20));
+
+describe('assertUuid (bare string)', () => {
+  it('accepts a valid UUID', () => {
+    expect(() => assertUuid(UUID, 'leaseUuid')).not.toThrow();
+  });
+  it('throws with the label and a custom code', () => {
+    try {
+      assertUuid('nope', 'skuUuid', ManifestMCPErrorCode.INVALID_ARGUMENT);
+      throw new Error('expected throw');
+    } catch (err) {
+      expect(err).toBeInstanceOf(ManifestMCPError);
+      expect((err as ManifestMCPError).code).toBe(
+        ManifestMCPErrorCode.INVALID_ARGUMENT,
+      );
+      expect((err as ManifestMCPError).message).toContain('skuUuid');
+    }
+  });
+});
+describe('requireUuid still delegates correctly', () => {
+  it('returns a valid UUID field', () => {
+    expect(requireUuid({ leaseUuid: UUID }, 'leaseUuid')).toBe(UUID);
+  });
+});
+describe('validateAddress relocated to validation.ts', () => {
+  it('accepts a bech32 address and enforces an explicit prefix', () => {
+    expect(() => validateAddress(ADDR, 'address')).not.toThrow();
+    expect(() => validateAddress(ADDR, 'address', 'cosmos')).toThrow(
+      ManifestMCPError,
+    );
+  });
+});
+describe('canonical regexes', () => {
+  it('FQDN_RE rejects IPv4 literals and accepts a real FQDN', () => {
+    expect(FQDN_RE.test('app.example.com')).toBe(true);
+    expect(FQDN_RE.test('192.168.1.1')).toBe(false);
+  });
+  it('SCHEME_PREFIX_RE matches http(s) prefixes', () => {
+    expect(SCHEME_PREFIX_RE.test('https://x.io')).toBe(true);
+    expect(SCHEME_PREFIX_RE.test('x.io')).toBe(false);
+  });
+  it('DENOM_RE accepts umfx / ibc paths and rejects leading-digit', () => {
+    expect(DENOM_RE.test('umfx')).toBe(true);
+    expect(DENOM_RE.test('ibc/ABC123')).toBe(true);
+    expect(DENOM_RE.test('1bad')).toBe(false);
   });
 });
