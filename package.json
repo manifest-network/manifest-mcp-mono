@@ -18,7 +18,7 @@
   "devDependencies": {
     "@biomejs/biome": "2.4.16",
     "@modelcontextprotocol/sdk": "1.29.0",
-    "tsdown": "0.22.1",
+    "tsdown": "0.22.2",
     "vitest": "4.1.8"
   },
   "overrides": {
