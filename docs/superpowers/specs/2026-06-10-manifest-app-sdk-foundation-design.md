@@ -80,7 +80,7 @@ type TierName=Brand<string,'TierName'>; type Fqdn=Brand<string,'Fqdn'>; type Den
 - **String `__brand` key, not `unique symbol`** — a `unique symbol` brand is non-assignable across *duplicated* package copies (the worktree dep-drift hazard CLAUDE.md documents for `ipaddr.js`); type-fest reverted symbol→string for exactly this (PR #875).
 - **`Tenant = Address`** is an intentional transparent alias; branding does not distinguish tenant from address (the §9 fixture covers *distinct* brands).
 
-**Parse, don't validate.** `parse*`/`as*` constructors are the **only** sanctioned brand producers; the lone `as Brand` cast lives **only inside `brands.ts`** (enforced by §8). Existing `validateAddress`(void)/`requireUuid`(string) are *validators*, so each constructor wraps them. `parseFqdn` is **net-new** (no existing client-side FQDN validator — FQDN is chain-validated today) — a minimal structural check (non-empty, has a dot, lowercased); the chain stays authoritative.
+**Parse, don't validate.** **Uniform `parse*` constructors** (`parseAddress`, `parseLeaseUuid`, `parseProviderUuid`, `parseSkuUuid`, `parseTierName`, `parseFqdn`, `parseDenom`, `parseChainId`) are the **only** sanctioned brand producers — all eight are throwing, type-narrowing boundary functions, so they share one prefix (not `as*`, which overloads the unsafe-cast keyword and misleads). Each throws a dedicated **`INVALID_ARGUMENT`** code on malformed caller input (a new `ManifestMCPErrorCode` member — the AIP-193 / ENG-258 `SKU_AMBIGUOUS` precedent; "no new error model" means reusing the error *machinery* — `sanitizeForLogging`, retry classification — not forbidding a new enum member; it is consistent across entry points, unlike overloading `INVALID_CONFIG`). They reuse the repo's bare-string validators: `validateAddress` (relocated to the dependency-light `validation.ts` so the brand chokepoint doesn't reach into the tx layer), a bare-string `assertUuid` extracted from `requireUuid`, and the shared `DENOM_RE` from `parseAmount`. **`parseFqdn` consolidates the *existing* client-side FQDN validator** (the repo already has one — `agent-core`'s `FQDN_RE`; the prior "no existing validator" claim was wrong): `parseFqdn` becomes the single source of truth, **normalizing case** (RFC 4343 — DNS is case-insensitive; don't reject `APP.com`, lowercase it) and adopting `FQDN_RE`'s stronger rules (reject IPv4 literals via a letter-led top-level label, reject scheme prefixes, ≤253 chars, RFC-1123 labels); `agent-core` adopts it in P1/P3. The chain stays authoritative. The lone `as Brand` cast lives **only inside `brands.ts`** (enforced by §8).
 
 **Boundary policy by trust** (brands are runtime-erased, so re-applied at every runtime boundary):
 
@@ -211,7 +211,7 @@ callback-in / **idempotent synchronous unsubscribe-out** + optional `AbortSignal
 
 ## 7. Error handling
 
-Preserve `ManifestMCPError` + `ManifestMCPErrorCode` + `sanitizeForLogging` + retry classification. `parse*` constructors throw existing `INVALID_*`; chain/codegen read brands are trust-casts (never throw); provider-HTTP read brands reuse the `INVALID_*` throws. No new error model.
+Preserve `ManifestMCPError` + `ManifestMCPErrorCode` + `sanitizeForLogging` + retry classification. `parse*` constructors throw the **new `INVALID_ARGUMENT`** code (malformed caller input — added to the non-retryable set, mirroring the `SKU_AMBIGUOUS` precedent) or `INVALID_ADDRESS`; chain/codegen read brands are trust-casts (never throw); provider-HTTP read brands reuse the `INVALID_*` throws. The error *machinery* is unchanged (one new enum member is not a new error model).
 
 ## 8. Isomorphic / build constraints + boundary enforcement
 
@@ -244,7 +244,7 @@ Preserve `ManifestMCPError` + `ManifestMCPErrorCode` + `sanitizeForLogging` + re
 ## 13. Phase 0 deliverables checklist
 
 - [ ] `@manifest-network/manifest-sdk` — barrel + scoped subpaths + `…/node` (`"default": null`) + `sideEffects:false` + release wiring; internal packages `private:true`
-- [ ] Branded domain types (`core/src/brands.ts`) + `parse*`/`as*` (`parseFqdn` net-new structural check); cast only here; boundary policy by trust
+- [ ] Branded domain types (`core/src/brands.ts`) + **uniform `parse*`** constructors; new `INVALID_ARGUMENT` code; `validateAddress` relocated to `validation.ts`; `parseFqdn` consolidates `agent-core`'s `FQDN_RE` (normalize case, reject IPv4 literals); cast only here; type-distinctness via `expectTypeOf` in `*.test-d.ts`; boundary policy by trust
 - [ ] Canonical types → `core/src/manifest-types.ts` (chokepoint, type-only); `SkuIntent` unified; `PortConfig` net-new; `FredLeaseStatus` relocated
 - [ ] `CapabilityCtx`/`QueryCtx` + overloaded `createManifestClient`; `CallOptions`/`TxCallOptions` (fee-wins precedence; `AbortSignal.any` merge) threaded through every typed read/tx/subscribe; `EventTransport` forward-declared (`@beta`)
 - [ ] `TxSigner`/`AuthSigner` (`OfflineSigner` = `@cosmjs/proto-signing`) + `requireAuthSigner` + `Signer` adapter over `WalletProvider` + `createAuthTokens(signer,{chainId})`; `fetch` on `ctx`
