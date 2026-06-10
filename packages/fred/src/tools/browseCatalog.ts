@@ -5,7 +5,10 @@ import {
   MAX_PAGE_LIMIT,
   ManifestMCPError,
 } from '@manifest-network/manifest-mcp-core';
+import { liftedinit } from '@manifest-network/manifestjs';
 import { getProviderHealth, ProviderApiError } from '../http/provider.js';
+
+const { unitFromJSON, unitToJSON } = liftedinit.sku.v1;
 
 /** Maximum concurrent outgoing health check requests to provider APIs */
 const MAX_CONCURRENT_HEALTH_CHECKS = 5;
@@ -93,7 +96,13 @@ export async function browseCatalog(
     provider_uuid: s.providerUuid,
     provider_url: providerByUuid.get(s.providerUuid)?.apiUrl ?? null,
     price: s.basePrice?.amount ?? null,
-    unit: s.basePrice?.denom ?? null,
+    denom: s.basePrice?.denom ?? null,
+    // Billing time unit, normalized to a stable string and ALWAYS emitted (the
+    // row shape is fixed). `unitFromJSON` tolerates both the numeric enum (the
+    // LCD adapter's prod-decoded form) and the raw string. Values: 'UNIT_PER_HOUR',
+    // 'UNIT_PER_DAY', 'UNIT_UNSPECIFIED' (chain zero-value), or 'UNRECOGNIZED'
+    // (unit absent from the wire, or a value this client version can't map).
+    unit: unitToJSON(unitFromJSON(s.unit)),
     active: s.active,
   }));
 

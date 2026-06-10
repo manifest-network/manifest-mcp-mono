@@ -69,7 +69,10 @@ export function registerTools(deps: RegisterToolsDeps): void {
             provider_uuid: z.string(),
             provider_url: z.string().nullable(),
             price: z.string().nullable(),
-            unit: z.string().nullable(),
+            denom: z.string().nullable(),
+            // Always a non-null string (unitToJSON never returns null), unlike
+            // price/denom which are null when the SKU has no basePrice.
+            unit: z.string(),
             active: z.boolean(),
           }),
         ),

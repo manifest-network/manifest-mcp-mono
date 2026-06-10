@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+- **fred / core:** the catalog model now carries the SKU **billing time unit**. `browseCatalog().skus[]` exposes a correct `unit` (`'UNIT_PER_HOUR'` | `'UNIT_PER_DAY'` | `'UNIT_UNSPECIFIED'` | `'UNRECOGNIZED'`) plus a new `denom` field; `SkuCandidate` (`resolveSku` / `listSkuCandidates`) gains an optional `unit`; the `manifest://providers` resource SKU rows gain `unit`. Previously the time unit was dropped — `browseCatalog().skus[].unit` actually held the *denom*. `$/hr` normalization stays a consumer concern (the raw unit is all the catalog carries). (ENG-306)
+
+### Upgrade notes
+- **BREAKING (`browse_catalog` output consumers):** `browseCatalog().skus[].unit` changed meaning — it was the **denom** (e.g. `'umfx'`) and is now the **billing time unit** (e.g. `'UNIT_PER_HOUR'`). The denom moved to the new `denom` field. Read `denom` for the currency, `unit` for the per-hour/per-day rate. (ENG-306)
+
 ## [0.13.1]
 
 ### Fixed
