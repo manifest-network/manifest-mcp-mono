@@ -3,7 +3,7 @@
 - **Status:** Draft for review (v6 — final-review corrections: per-signer serialization invariant (await-block-inclusion), `TxOptions`→`TxCallOptions` collision rename, fee precedence, `@beta`-only tags, DoD two-claims, Logger trace convention)
 - **Date:** 2026-06-10
 - **Owner:** Felix Morency
-- **Related:** `manifest-app-sdk-readiness.md` (living scorecard, same dir); Linear epic TBD
+- **Related:** `manifest-app-sdk-readiness.md` (living scorecard, same dir); **Linear epic ENG-308** (P0 = ENG-309, P1 = ENG-310, P2 = ENG-311, P3 = ENG-312, P4 = ENG-313, later = ENG-314/ENG-315)
 - **Supersedes framing of:** ENG-127 (orchestration umbrella), ENG-279 (Barney migration)
 - **Verification:** v2 (3-stream), v3 (streaming research + type-safety), v4 (final idiomatic review), v5 (gap analysis + versioning/logging research), v6 (final v5 idiomatic review: concurrency/sequence, options/logger/versioning, holistic). All "sound-with-tweaks", no architectural reconsideration.
 
