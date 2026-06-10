@@ -1,9 +1,9 @@
 # Manifest App SDK — Readiness Scorecard (living tracker)
 
 - **Repo:** manifest-mcp-mono @ v0.14.0
-- **Created:** 2026-06-10 · **Revised:** 2026-06-10 (v5 — gap-sweep folds: full read surface, options bag, e2e acceptance, layered tiers, multi-msg+serialization, versioning + logging policy)
+- **Created:** 2026-06-10 · **Revised:** 2026-06-10 (v6 — final v5 review: per-signer serialization invariant, `TxOptions` collision rename, `@beta`-only tags, DoD two-claims)
 - **Pairs with:** `2026-06-10-manifest-app-sdk-foundation-design.md` (Phase 0 spec)
-- **Definition of done (single tracked metric):** an in-repo example app builds a deploy-, query-, domain-, batch-, **and live-status** flow composing **only** `@manifest-network/manifest-sdk` + `manifestjs`, run **end-to-end against the live `e2e/docker-compose` chain + Fred provider** (single-service + stack), **and** built for the browser (no node builtins + size budget) — zero hand-rolled client, queries, auth, pricing, orchestration, or streaming.
+- **Definition of done (single tracked metric) — two distinct claims:** **(a) it deploys** — the node example runs the full **deploy → query → connection → domain → restart/update/logs → batch → subscribe → stop** flow (single-service + stack) **end-to-end against the live `e2e/docker-compose` chain + Fred provider**; **(b) it bundles** — the *same example source* builds for the browser with **no node builtins + under the size budget**. Both compose **only** `@manifest-network/manifest-sdk` + `manifestjs` — zero hand-rolled client, queries, auth, pricing, orchestration, or streaming. (The browser bundle can't run the e2e — it hard-fails on the node-only `…/node` subpath the e2e path uses; same source, two toolchains.)
 
 **Status legend:** ✅ ready (zero/trivial) · 🟡 exists, needs SDK-shaping · 🟠 partial / wrong place · 🔴 missing / net-new · ☑ done (tick as landed)
 
@@ -33,7 +33,7 @@
 | ☐ | ADR-036 auth-token factory | 🟡 | `fred/src/http/auth-token-service.ts`, `auth.ts` (Barney: `src/ai/toolExecutor/fredAuth.ts` `makeFredAuthTokens`) | Expose `createAuthTokens(signer: AuthSigner, { chainId })`, **lazily cached / re-sign on expiry**; kill per-call closures · **P0** |
 | ☐ | fetch port | ✅ | `fred/src/server/fetch-gate.ts`, core `…/guarded-fetch` subpath (`"default": null` guard) | Move onto ctx · **P0** |
 | ☐ | **Logger port** (silent-by-default, injectable) | 🟠 | `core/src/logger.ts` — global mutable `console.error` singleton + process-global level | `Logger` interface + frozen `noopLogger` default on ctx (per-instance level, isomorphic, never touches console/process); node bootstrap adapts the legacy singleton via `LOG_LEVEL`; mark `@public` · **P0** |
-| ☐ | **Per-call options bag** (`CallOptions`/`TxOptions`) | 🔴 | none — reads/txs take no signal; tx `overrides?` exists but the spec'd new sigs dropped it | `{ signal?, timeout? }` on reads, `{ …, gasMultiplier?, fee?, memo? }` on txs, threaded everywhere (fixes the §5.8 byte-equivalence regression) · **P0** |
+| ☐ | **Per-call options bag** (`CallOptions`/`TxCallOptions` — distinct from core's existing internal `TxOptions`/`TxOverrides`) | 🔴 | none — reads/txs take no signal; tx `overrides?` exists but the spec'd new sigs dropped it | `{ signal?, timeout? }` on reads, `{ …, gasMultiplier?, fee?, memo? }` on txs (fee wins over gasMultiplier), threaded everywhere (fixes the §5.8 byte-equivalence regression) · **P0** |
 
 ## B. Canonical types (over manifestjs, never re-declared)
 
@@ -71,7 +71,7 @@
 
 | ☐ | Block | St | Today (file) | Delta → target · Phase |
 |---|---|---|---|---|
-| ☐ | Typed tx: `fundCredits`/`setItemCustomDomain`/`stopApp` | ✅ | `core/src/tools/*.ts` | ctx-ify + thread `TxOptions`. `setItemCustomDomain` clear via **discriminated `{ clear: true }`** (not `""`). **`stopApp` IS close-lease** (one fn) · **P0** |
+| ☐ | Typed tx: `fundCredits`/`setItemCustomDomain`/`stopApp` | ✅ | `core/src/tools/*.ts` | ctx-ify + thread `TxCallOptions`. `setItemCustomDomain` clear via **discriminated `{ clear: true }`** (not `""`). **`stopApp` IS close-lease** (one fn) · **P0** |
 | ☐ | **`executeTx` multi-message** + **per-signer broadcast serialization** | 🔴 | none — every handler returns `{messages:[msg]}`; zero sequence/mutex handling in core | One atomic tx with N messages (cosmjs `signAndBroadcast` takes `EncodeObject[]`); async mutex/queue keyed by signer address in `CosmosClientManager` so one account never races 2 txs in a block — replaces Barney's signing mutex · **P0** |
 | ☐ | `cosmosTx` + `cosmosEstimateFee` (stringly face) | ✅ | `core/src/cosmos.ts` | Keep · **P0** |
 | ☐ | Per-module tx composers | 🟡 | `core/src/transactions/*.ts` — stringly-only (14 defined, 12 re-exported) | Typed Face-B where value-added; else `cosmosTx`/manifestjs · **P0/P2** |

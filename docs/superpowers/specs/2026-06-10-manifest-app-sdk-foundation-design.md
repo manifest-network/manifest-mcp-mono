@@ -1,11 +1,11 @@
 # Manifest App SDK — Phase 0 Foundation Design
 
-- **Status:** Draft for review (v5 — gap-sweep folds: full read surface, options bag, e2e acceptance, layered-tier reframing, multi-msg+serialization, versioning/stability + logging policy)
+- **Status:** Draft for review (v6 — final-review corrections: per-signer serialization invariant (await-block-inclusion), `TxOptions`→`TxCallOptions` collision rename, fee precedence, `@beta`-only tags, DoD two-claims, Logger trace convention)
 - **Date:** 2026-06-10
 - **Owner:** Felix Morency
 - **Related:** `manifest-app-sdk-readiness.md` (living scorecard, same dir); Linear epic TBD
 - **Supersedes framing of:** ENG-127 (orchestration umbrella), ENG-279 (Barney migration)
-- **Verification:** v2 (3-stream), v3 (streaming research + type-safety), v4 (final idiomatic review), v5 (gap analysis + versioning/logging research). All "sound-with-tweaks", no architectural reconsideration.
+- **Verification:** v2 (3-stream), v3 (streaming research + type-safety), v4 (final idiomatic review), v5 (gap analysis + versioning/logging research), v6 (final v5 idiomatic review: concurrency/sequence, options/logger/versioning, holistic). All "sound-with-tweaks", no architectural reconsideration.
 
 ---
 
@@ -51,7 +51,7 @@ edge adapters          manifest-mcp-agent (plugin, MCP elicitation) · manifest-
 - **P3** — consumer adoption (Barney migrates to the SDK; deletes `src/api/` + `compositeTransactions.ts`; the plugin is already current on `manifest-mcp-node@0.14.0`).
 - **P4** — deploy-saga durability (idempotency + reconcile-on-resume).
 - **Later: `@manifest-network/manifest-sdk-react`** — a shared TanStack-Query-backed React-hooks package (`useLeases`/`useDeploy`/`useLeaseStatus`/`useCatalog`) over the framework-agnostic core, the wagmi `@wagmi/core`→`wagmi` shape, so Barney *and* a future dashboard share hooks instead of each rebuilding them. Sequenced **after** the core surface stabilizes (needs ≥1 React consumer to validate hook shapes) — not P0.
-- **Later: live-status WebSocket transport** (the `ctx.events` WS port + isomorphic WS factory + WS-SSRF guard + frame parsing). The *streaming surface* (`subscribeLeaseStatus`) ships in P0 poll-backed (§5.9); only the WS transport is deferred. Its `EventTransport` shape is `@beta`/`@experimental` (§14).
+- **Later: live-status WebSocket transport** (the `ctx.events` WS port + isomorphic WS factory + WS-SSRF guard + frame parsing). The *streaming surface* (`subscribeLeaseStatus`) ships in P0 poll-backed (§5.9); only the WS transport is deferred. Its `EventTransport` shape is `@beta` (§14).
 
 **Explicit P0 scope boundaries (stated, not silent):**
 - **Admin/governance modules** — `x/group`, `x/tokenfactory`, `gov`, `poa`, `staking`, `distribution`, `authz`, `feegrant`, `mint`, `ibc-transfer` are reachable via the **stringly face only** in P0 (their `core/queries`+`core/transactions` handlers exist; typed Face-B wrappers are deferred until a typed admin/multisig consumer needs them). Documented boundary, not an omission.
@@ -116,12 +116,16 @@ type QueryCtx = Omit<CapabilityCtx, 'signer'>;
 function createManifestClient(opts: { config; walletProvider: WalletProvider; fetch?; logger?; logLevel?; skuSpecs?; events? }): CapabilityCtx;
 function createManifestClient(opts: { config; fetch?; logger?; logLevel?; skuSpecs?; events? }): QueryCtx;
 
-// Per-call option bags threaded through every typed building block:
-type CallOptions = { signal?: AbortSignal; timeout?: number };
-type TxOptions   = CallOptions & { gasMultiplier?: number; fee?: StdFee; memo?: string };
+// Per-call option bags (TxCallOptions is DISTINCT from core's existing internal `TxOptions`/`TxOverrides`):
+type CallOptions   = { signal?: AbortSignal; timeout?: number };  // timeout bounds the request/confirmation wait
+type TxCallOptions = CallOptions & { gasMultiplier?: number; fee?: StdFee; memo?: string };
+// signal+timeout merge: SDK derives the effective signal via AbortSignal.any([opts.signal, AbortSignal.timeout(opts.timeout)]).
+// fee precedence: explicit `fee` WINS (skips simulate/gasMultiplier/gasPrice; the one path valid WITHOUT a configured
+// gasPrice); `gasMultiplier` applies only on the simulate path; both set = caller error. Per-call gasPrice is deferred
+// (cosmjs#1526 unresolved upstream) — use explicit `fee`.
 ```
 
-`ctx.query` inherits `CosmosClientManager`'s restUrl-preferred routing unchanged. Overloaded factory → query-only consumers get a **compile error** reaching for `signer` (runtime `INVALID_CONFIG` backstop for the stringly path). **ISP:** reads take `(ctx: Pick<CapabilityCtx,'query'|'chain'|'logger'>, input, opts?: CallOptions)`; txs/provider ops take the slice incl. `signer`/`fetch` + `opts?: TxOptions`. `EventTransport` (§5.9) is forward-declared and `@beta`.
+`ctx.query` inherits `CosmosClientManager`'s restUrl-preferred routing unchanged. Overloaded factory → query-only consumers get a **compile error** reaching for `signer` (runtime `INVALID_CONFIG` backstop for the stringly path). **ISP:** reads take `(ctx: Pick<CapabilityCtx,'query'|'chain'|'logger'>, input, opts?: CallOptions)`; txs/provider ops take the slice incl. `signer`/`fetch`/`logger` + `opts?: TxCallOptions`. `EventTransport` (§5.9) is forward-declared and `@beta`.
 
 ### 5.3 Ports
 
@@ -146,7 +150,7 @@ interface Logger { trace?(...a: unknown[]): void; debug(...a: unknown[]): void; 
 const noopLogger: Logger = Object.freeze({ debug(){}, info(){}, warn(){}, error(){} });
 ```
 
-Resolution: `ctx.logger = opts.logger ?? noopLogger`; the SDK applies its own `logLevel` filter (default quiet) **before** dispatching, so passing raw `console` isn't flooded. Level + sink are **per-ctx, never process-global**. The neutral core must never reference `console`/`process.env`/`node:process`/`globalThis` for logging — only `ctx.logger`. The node CLI bootstrap keeps env-driven behavior by constructing each ctx with `{ logger: <adapter over the existing core singleton>, logLevel: fromEnv(LOG_LEVEL) }` (env reading stays in node bootstrap, mirroring `MANIFEST_*_FETCH_GUARDED`). `Logger`/`noopLogger`/`LogLevel` are `@public`; a future structured `onLog`/observability hook stays separate from the `@beta` `EventTransport`.
+Resolution: `ctx.logger = opts.logger ?? noopLogger`; the **level gate lives in the SDK** (it never calls `logger.debug` below the configured `logLevel`, default quiet, so passing raw `console` isn't flooded) and the **sink is the injected logger** (the AWS-v3 smithy `Logger` / `ts-log` `dummyLogger` prior art). SDK code calls the optional `trace` level only via `ctx.logger.trace?.(…)` (the frozen `noopLogger` omits it). Level + sink are **per-ctx, never process-global**. The neutral core must never reference `console`/`process.env`/`node:process`/`globalThis` for logging — only `ctx.logger`. The node CLI bootstrap keeps env-driven behavior by constructing each ctx with `{ logger: <adapter over the existing core singleton>, logLevel: fromEnv(LOG_LEVEL) }` (env reading stays in node bootstrap, mirroring `MANIFEST_*_FETCH_GUARDED`). `Logger`/`noopLogger`/`LogLevel` are `@public`; a future structured `onLog`/observability hook stays separate from the `@beta` `EventTransport`.
 
 ### 5.4 Reads — two faces (every typed read takes `opts?: CallOptions`)
 
@@ -167,14 +171,14 @@ Note (sizing, not a gap): `getProviderWithdrawable`/`getLeasesByProvider`/`getLe
 - `resolveSku` / `listSkuCandidates` — `core`.
 - **New pure `core` helpers** (no HTTP — safe in neutral core): `selectCheapest`, `normalizeHourlyPrice`, the tier-spec join over `SkuSpecSource = SkuSpecMap | ((ctx) => Promise<SkuSpecMap>)` (memoized; factory gets `ctx` to reuse `ctx.fetch`).
 
-### 5.6 Transactions — two faces (every typed tx takes `opts?: TxOptions`; **fee/gas/memo are preserved**, not dropped — required for §5.8 byte-equivalence)
+### 5.6 Transactions — two faces (every typed tx takes `opts?: TxCallOptions`; **fee/gas/memo are preserved**, not dropped — required for §5.8 byte-equivalence)
 
 - **Stringly:** `cosmosTx` / `cosmosEstimateFee` — unchanged.
 - **Typed building blocks (`core`):**
   - `fundCredits(ctx, { amount, tenant? }, opts?)`, `setItemCustomDomain(ctx, { leaseUuid; customDomain: Fqdn; serviceName? } | { leaseUuid; clear: true; serviceName? }, opts?)` (discriminated clear, never `''`; the only domain write), `stopApp(ctx, { leaseUuid }, opts?)` (**IS** close-lease — one fn).
-  - **`executeTx(ctx, msgs: EncodeObject[], opts?: TxOptions)`** — **net-new multi-message** building block. A Cosmos tx natively carries `messages[]`, so a "batch" is **one atomic tx with N messages** (single sequence, single fee; `signAndBroadcast` already takes `EncodeObject[]`). Replaces firing N separate txs.
+  - **`executeTx(ctx, msgs: EncodeObject[], opts?: TxCallOptions)`** — **net-new multi-message** building block and the **PRIMARY way to batch** operations from one signer: a Cosmos tx natively carries `messages[]`, so a batch is **one atomic tx with N messages** (single sequence, single fee; **all-or-nothing** — one failing message rolls back the whole tx). `signAndBroadcast` already takes `EncodeObject[]`. The typed building blocks expose `build*Msg`/`EncodeObject` variants so callers batch **typed** messages (`executeTx(ctx, [buildFundCreditsMsg(...), buildSetDomainMsg(...)])`), not raw protobuf; it is also the sanctioned typed-face path to the deferred admin/gov/wasm messages (§3). P0 batches share a single signer set.
   - a **faucet** helper (drip + verify).
-- **Per-signer broadcast serialization** (in `CosmosClientManager`): an async mutex/queue keyed by signer address serializes `signAndBroadcast` so **one account never races two txs into the same block** (sequence-mismatch protection) — replacing Barney's hand-rolled signing mutex. Concurrent tx calls from one signer queue; different signers run in parallel.
+- **Per-signer broadcast serialization** (in `CosmosClientManager`) — for **independent** txs, when one atomic `executeTx` isn't possible: an async mutex/queue keyed by signer `Address` serializes the **whole** cycle — **simulate/estimate-fee → sign → broadcast → AWAIT BLOCK INCLUSION** (cosmjs default `signAndBroadcast`/`broadcastTx`, which polls to commit). The lock is *sufficient* precisely because cosmjs reads the **committed** account sequence (`getSequence → auth.account`) on every call with **no caching**: holding it through commit guarantees the next queued tx reads an already-incremented sequence, so **one account never races two txs into the same block** (sequence-mismatch protection). `signAndBroadcastSync`/`broadcastTxSync` (CheckTx-only, pre-commit) **MUST NOT** be used under this lock — the committed sequence hasn't advanced, so the next tx reads a stale sequence and fails "account sequence mismatch". A failed/timed-out tx still **releases the lock**; because we re-query the committed sequence each call there is **no** local counter to reset (a robustness win over the ethers/viem local-increment NonceManager). Different signers run in parallel; the mutex is orthogonal to the global rate limiter (document the acquire order). *Rationale: Cosmos uses one monotonic account sequence and proposer/priority-mempool reordering makes optimistic concurrent submission from one signer unsafe; the unordered-tx/parallel-nonce work (cosmos-sdk#13009) is not relied upon.* A **test asserts the queue awaits a committed `DeliverTxResponse` (has `height`)**, not a sync hash. Replaces Barney's hand-rolled signing mutex.
 
 ### 5.7 Fred provider ops (re-exported; provider responses parsed/branded at the read boundary)
 
@@ -242,7 +246,7 @@ Preserve `ManifestMCPError` + `ManifestMCPErrorCode` + `sanitizeForLogging` + re
 - [ ] `@manifest-network/manifest-sdk` — barrel + scoped subpaths + `…/node` (`"default": null`) + `sideEffects:false` + release wiring; internal packages `private:true`
 - [ ] Branded domain types (`core/src/brands.ts`) + `parse*`/`as*` (`parseFqdn` net-new structural check); cast only here; boundary policy by trust
 - [ ] Canonical types → `core/src/manifest-types.ts` (chokepoint, type-only); `SkuIntent` unified; `PortConfig` net-new; `FredLeaseStatus` relocated
-- [ ] `CapabilityCtx`/`QueryCtx` + overloaded `createManifestClient`; `CallOptions`/`TxOptions` threaded through every typed read/tx/subscribe; `EventTransport` forward-declared (`@beta`)
+- [ ] `CapabilityCtx`/`QueryCtx` + overloaded `createManifestClient`; `CallOptions`/`TxCallOptions` (fee-wins precedence; `AbortSignal.any` merge) threaded through every typed read/tx/subscribe; `EventTransport` forward-declared (`@beta`)
 - [ ] `TxSigner`/`AuthSigner` (`OfflineSigner` = `@cosmjs/proto-signing`) + `requireAuthSigner` + `Signer` adapter over `WalletProvider` + `createAuthTokens(signer,{chainId})`; `fetch` on `ctx`
 - [ ] **`Logger` port** (silent `noopLogger` default, per-ctx level, injectable, isomorphic) + node-bootstrap adapter over the legacy singleton
 - [ ] Value-added typed reads incl. the **full read surface**: balances/credit/account, leases/withdrawables, sku/provider (+singles), **custom-domain reads** (`getLeaseItemsForLease`/`getDomainAssignments`/`getDomainForService`/`getDomainCount`/`getReservedDomainSuffixes`), `paginateAll`
@@ -259,4 +263,4 @@ Preserve `ManifestMCPError` + `ManifestMCPErrorCode` + `sanitizeForLogging` + re
 
 ## 14. Versioning & stability policy
 
-`manifest-sdk` ships **lockstep-versioned** with the monorepo (cosmjs/Angular model; idiomatic for a tightly-coupled facade) and remains **0.x through P0**, making **no SemVer guarantee** at the package level — exactly the cover the forward-declared `EventTransport` needs (SemVer §4). Per-symbol stability is governed by **TSDoc release tags enforced by Microsoft API Extractor** (orthogonal to the package version): **`@public`** = supported (post-1.0, no breaking change without a major bump) — the ~30 settled fns, `CapabilityCtx`, branded types, `Logger`; **`@beta`/`@experimental`** = unstable preview that may change or be removed at any minor/patch — the `EventTransport` streaming shape ships `@beta` until finalized; **`@internal`** = cross-package, never for third parties. Public symbols are removed only via a **`@deprecated` grace period of ≥1 minor release** (never deleted in the same release they're deprecated). The deferred `EventTransport` graduates `@beta`→`@public` **before** we cut a **1.0** (which turns `@public` into a binding SemVer contract). Internal-only packages stay `private:true` so the public SDK can later be cut onto an independent changesets `fixed` group without churn, and the install graph must resolve **one** copy of `core`/`fred`.
+`manifest-sdk` ships **lockstep-versioned** with the monorepo (cosmjs/Angular model; idiomatic for a tightly-coupled facade) and remains **0.x through P0**, making **no SemVer guarantee** at the package level — exactly the cover the forward-declared `EventTransport` needs (SemVer §4). Per-symbol stability is governed by **TSDoc release tags enforced by Microsoft API Extractor** (orthogonal to the package version): **`@public`** = supported (post-1.0, no breaking change without a major bump) — the ~30 settled fns, `CapabilityCtx`, branded types, `Logger`; **`@beta`** = unstable preview that may change or be removed at any minor/patch — the `EventTransport` streaming shape ships `@beta` until finalized (API Extractor recognizes only `@alpha`/`@beta`/`@public`/`@internal`; `@experimental` is not a release tag and would fail the gate); **`@internal`** = cross-package, never for third parties. The real enforcement at 0.x is **API Extractor's `.api.md` API-report diff in CI** (an intentional surface change is a reviewed commit), not the package version. Public symbols are removed only via a **`@deprecated` grace period of ≥1 minor release** (never deleted in the same release they're deprecated) — a self-imposed courtesy during 0.x (SemVer compels nothing) that becomes binding at 1.0. The deferred `EventTransport` graduates `@beta`→`@public` **before** we cut a **1.0** (which turns `@public` into a binding SemVer contract). Internal-only packages stay `private:true` so the public SDK can later be cut onto an independent changesets `fixed` group without churn, and the install graph must resolve **one** copy of `core`/`fred`.
