@@ -42,6 +42,27 @@ export {
   noopLogger,
   parseLogLevel,
 } from './logger.js';
+export type {
+  BuildManifestOptions,
+  ConnectionDetails,
+  DeployResult,
+  FredActionResponse,
+  FredInstanceInfo,
+  FredLeaseInfo,
+  FredLeaseLogs,
+  FredLeaseProvision,
+  FredLeaseRelease,
+  FredLeaseReleases,
+  FredLeaseStatus,
+  FredServiceStatus,
+  InstanceInfo,
+  LeaseConnectionResponse,
+  ManifestFormat,
+  ManifestValidationResult,
+  PortConfig,
+  ServiceConfig,
+  ServiceConnectionDetails,
+} from './manifest-types.js';
 export {
   getAvailableModules,
   getModuleSubcommands,
