@@ -224,7 +224,7 @@ describe('deployApp replay — 01-fast-path-active', () => {
       provider_url: deployResp.provider_url as string,
       state: deployResp.state as never,
       connection: deployResp.connection,
-    } as Awaited<ReturnType<typeof fred.deployApp>>);
+    } as unknown as Awaited<ReturnType<typeof fred.deployApp>>);
 
     // fix-3: real cosmosEstimateFee is now invoked. Mock returns the
     // canonical fixture-aligned FeeEstimateResult (per scenario
@@ -472,7 +472,7 @@ describe('deployApp — ENG-258 SKU pin resolution + ambiguity elicitation', () 
       provider_url: deployResp.provider_url as string,
       state: deployResp.state as never,
       connection: deployResp.connection,
-    } as Awaited<ReturnType<typeof fred.deployApp>>);
+    } as unknown as Awaited<ReturnType<typeof fred.deployApp>>);
 
     const core = await import('@manifest-network/manifest-mcp-core');
     vi.mocked(core.cosmosEstimateFee).mockResolvedValue({
@@ -876,7 +876,7 @@ describe('deployApp replay — Copilot review fixes (PR #58 unresolved comments)
       provider_url: deployResp.provider_url as string,
       state: deployResp.state as never,
       connection: deployResp.connection,
-    } as Awaited<ReturnType<typeof fred.deployApp>>);
+    } as unknown as Awaited<ReturnType<typeof fred.deployApp>>);
 
     const core = await import('@manifest-network/manifest-mcp-core');
     vi.mocked(core.cosmosEstimateFee).mockResolvedValue({
@@ -4213,7 +4213,7 @@ describe('deployApp — C2 plan-edit roundtrip propagates edited size (ENG-185 #
       provider_url: deployResp.provider_url as string,
       state: deployResp.state as never,
       connection: deployResp.connection,
-    } as Awaited<ReturnType<typeof fred.deployApp>>);
+    } as unknown as Awaited<ReturnType<typeof fred.deployApp>>);
 
     const core = await import('@manifest-network/manifest-mcp-core');
     // Size-agnostic fee estimate; the edited size shows up in the
@@ -4523,7 +4523,7 @@ describe('DeployResult snake→camel projection (deliberate, not a 1:1 rename) (
       state: FRED_FIXTURE.state as never,
       connection: FRED_FIXTURE.connection,
       service_name: 'web',
-    } as Awaited<ReturnType<typeof fred.deployApp>>);
+    } as unknown as Awaited<ReturnType<typeof fred.deployApp>>);
 
     const core = await import('@manifest-network/manifest-mcp-core');
     vi.mocked(core.cosmosEstimateFee).mockResolvedValue({

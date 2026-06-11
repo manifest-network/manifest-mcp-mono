@@ -38,6 +38,8 @@
  */
 
 import {
+  asLeaseUuid,
+  asProviderUuid,
   cosmosEstimateFee,
   ManifestMCPError,
   ManifestMCPErrorCode,
@@ -728,16 +730,18 @@ export async function deployApp(
 
     // Merge post-poll fields back into `fredResult` so downstream
     // DeployResult construction sees the final lease/provider identity.
-    // The string fields (lease_uuid / provider_uuid / provider_url) align
-    // typewise with their FredDeployAppResult counterparts. The state +
-    // connection fields are NOT merged here — they go into `liveState`
-    // and `liveConnection` so each carries the type that matches its
-    // upstream source (no width-erasing casts). See the live-tracker
-    // declarations above for the full rationale.
+    // lease_uuid / provider_uuid are chain-polled, trusted ids — they are
+    // trust-cast (asLeaseUuid / asProviderUuid) to satisfy DeployResult's
+    // branded wire types (brands erase at runtime; zero behavior change).
+    // provider_url stays a plain string. The state + connection fields are
+    // NOT merged here — they go into `liveState` and `liveConnection` so
+    // each carries the type that matches its upstream source (no
+    // width-erasing casts). See the live-tracker declarations above for
+    // the full rationale.
     fredResult = {
       ...fredResult,
-      lease_uuid: pollResult.lease_uuid,
-      provider_uuid: pollResult.provider_uuid,
+      lease_uuid: asLeaseUuid(pollResult.lease_uuid),
+      provider_uuid: asProviderUuid(pollResult.provider_uuid),
       provider_url: pollResult.provider_url,
     };
     liveState = pollResult.status.state;
