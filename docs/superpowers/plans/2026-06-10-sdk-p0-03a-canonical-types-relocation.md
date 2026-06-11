@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: superpowers:subagent-driven-development (or executing-plans). Steps use `- [ ]` checkboxes.
 
-**Goal:** Create the single canonical-types chokepoint `packages/core/src/manifest-types.ts` and relocate fred's **pure-data** value/DTO types into it (snake_case wire shapes preserved), flipping fred's definition sites to **type-only re-exports** so the public fred API is byte-preserved. Brand the `DeployResult` id-fields at the producer assembly. **This is the safe, mostly type-layer half of Plan 3** — the data-vs-behavior split (stripping runtime fields, `SkuSelector`→`SkuIntent`, signature changes) is the separate **Plan 3b**.
+**Goal:** Create the single canonical-types chokepoint `packages/core/src/manifest-types.ts` and relocate fred's **pure-data** value/DTO types into it (snake_case wire shapes preserved, **including `DeployResult`'s id-fields as plain `string`** — i.e. verbatim current shapes), flipping fred's definition sites to **type-only re-exports** so the public fred API is byte-preserved. **This is the SAFE, PURE-relocation, zero-behavior-change half of Plan 3** — every type body is moved verbatim and nothing at runtime changes. The data-vs-behavior split (stripping runtime fields, `SkuSelector`→`SkuIntent`, signatures) AND the **`DeployResult` id-field branding** are the separate **Plan 3b** (branding the chain-resolved ids needs new *trust-cast* brand producers in `brands.ts` — a re-validating `parse*` at the assembly throws on the non-UUID provider sentinels the fred tests use and violates the spec §5.1/§8 "trust-cast, no re-validation" mandate; see the review note below).
 
-**Architecture:** Types erase at runtime, so a relocation is a pure type-layer move with zero behavior change — *provided* the order keeps every intermediate commit type-checking. Sequence: (1) create `core/src/manifest-types.ts` with the relocated definitions + the branded `DeployResult` + the net-new `PortConfig`, re-export from the core barrel — core now compiles standalone (it has **no** fred dependency, verified). (2) Flip each fred source module's interface bodies to `export type { … } from '@manifest-network/manifest-mcp-core'`, keeping the **same exported names** (and `DeployResult as DeployAppResult` to preserve the public fred name). (3) Brand `DeployResult.lease_uuid`/`provider_uuid` at the single assembly site in `deployManifest.ts` via the sanctioned `parseLeaseUuid`/`parseProviderUuid` constructors (the values are already chain-validated/resolved, so this is the parse-once wire boundary — no `as Brand` cast leaves `brands.ts`, honoring §8). The fred package barrel (`fred/src/index.ts`) re-exports these types *from their source modules*, so it needs **no change** once the source modules re-export the same names.
+**Architecture:** Types erase at runtime, so this relocation is a pure type-layer move with **zero behavior change** — *provided* the order keeps every intermediate commit type-checking. Sequence: (1) create `core/src/manifest-types.ts` with the relocated definitions **verbatim** (`DeployResult` included, ids kept as plain `string`) + the net-new `PortConfig`, re-export from the core barrel — core now compiles standalone (it has **no** fred dependency, verified). (2) Flip each fred source module's interface bodies to an `import type { … }` + `export type { … }` pair pointing at `@manifest-network/manifest-mcp-core`, keeping the **same exported names** (and `DeployResult as DeployAppResult` to preserve the public fred name). (3) No producer/assembly change — every relocated type is byte-identical, so `deployManifest`'s success assembly is untouched. (`DeployResult` id-field **branding** is deferred to Plan 3b — a re-validating `parse*` at the assembly throws on the fred tests' non-UUID provider sentinels and violates the spec's trust-cast/no-re-validation mandate; see the Task 3 review note.) The fred package barrel (`fred/src/index.ts`) re-exports these types *from their source modules*, so it needs **no change** once the source modules re-export the same names.
 
 **Tech Stack:** TypeScript ESM (`.js` import extensions), vitest 4 (+`--typecheck` for `*.test-d.ts`), tsdown build, `tsc --noEmit` lint, Biome. Spec: §5.1 (data-vs-behavior split — Plan 3a does the relocation; 3b does the split), §5.7, §8. Issue: ENG-309. Builds on Plans 1 (brands) + 2 (logger/options).
 
@@ -21,9 +21,9 @@
 
 | File | Responsibility |
 |---|---|
-| `packages/core/src/manifest-types.ts` (create) | The chokepoint. All relocated pure-data types (verbatim, snake_case) + branded `DeployResult` + net-new `PortConfig`. Imports `type LeaseState` (manifestjs) + `LeaseUuid`/`ProviderUuid` (`./brands.js`). |
+| `packages/core/src/manifest-types.ts` (create) | The chokepoint. All relocated pure-data types verbatim, snake_case (`DeployResult` included — ids stay plain `string`; branding is 3b) + net-new `PortConfig`. Imports only `type LeaseState` (manifestjs). |
 | `packages/core/src/manifest-types.test.ts` (create) | Runtime: the types are reachable via the barrel (smoke). |
-| `packages/core/src/manifest-types.test-d.ts` (create) | Type-level: `DeployResult['lease_uuid']` is `LeaseUuid` (not bare `string`); `FredLeaseStatus['state']` is `LeaseState`. |
+| `packages/core/src/manifest-types.test-d.ts` (create) | Type-level: `FredLeaseStatus['state']` is the `LeaseState` enum; `PortConfig` is the net-new ENG-282 shape. (`DeployResult` ids stay `string` in 3a — branding is 3b.) |
 | `packages/core/src/index.ts` (modify) | Re-export the new types from `./manifest-types.js`. |
 | `packages/fred/src/http/provider.ts` (modify) | Replace `InstanceInfo`/`ServiceConnectionDetails`/`ConnectionDetails`/`LeaseConnectionResponse` interface bodies with type-only re-exports from core. Keep all functions. |
 | `packages/fred/src/http/fred.ts` (modify) | Replace `FredInstanceInfo`/`FredServiceStatus`/`FredLeaseStatus`/`FredLeaseLogs`/`FredLeaseProvision`/`FredActionResponse`/`FredLeaseRelease`/`FredLeaseReleases`/`FredLeaseInfo` bodies with re-exports. Keep `RawLeaseStatus` (private), `PollOptions`, the Terminal* trio, `TerminalChainStateError`, all functions/consts. |
@@ -48,21 +48,18 @@
 
 ```ts
 import { describe, expectTypeOf, it } from 'vitest';
-import type { LeaseUuid, ProviderUuid } from './brands.js';
 import type { DeployResult, FredLeaseStatus, PortConfig } from './manifest-types.js';
 
-describe('manifest-types branding + shape (type-level)', () => {
-  it('DeployResult id-fields are branded, not bare string', () => {
-    expectTypeOf<DeployResult['lease_uuid']>().toEqualTypeOf<LeaseUuid>();
-    expectTypeOf<DeployResult['provider_uuid']>().toEqualTypeOf<ProviderUuid>();
-    // erasure: a branded id is still assignable TO string (non-breaking in JSON)
-    expectTypeOf<DeployResult['lease_uuid']>().toExtend<string>();
-  });
+describe('manifest-types shape (type-level)', () => {
   it('FredLeaseStatus.state keeps the manifestjs LeaseState enum (number), not string', () => {
     expectTypeOf<FredLeaseStatus['state']>().toExtend<number>();
   });
   it('PortConfig is the net-new ENG-282 shape', () => {
     expectTypeOf<PortConfig>().toEqualTypeOf<{ readonly host_port?: number; readonly ingress?: boolean }>();
+  });
+  it('DeployResult ids are plain string in 3a (branding is deferred to 3b)', () => {
+    expectTypeOf<DeployResult['lease_uuid']>().toEqualTypeOf<string>();
+    expectTypeOf<DeployResult['provider_uuid']>().toEqualTypeOf<string>();
   });
 });
 ```
@@ -86,7 +83,7 @@ describe('manifest-types are reachable + are pure types (no runtime emit)', () =
 
 - [ ] **Step 3: Run → fail.** `(cd packages/core && npx vitest run src/manifest-types.test.ts && npx vitest --run --typecheck src/manifest-types.test-d.ts)` → FAIL (`./manifest-types.js` missing). Confirm the failure reason is the missing module, not a typo.
 
-- [ ] **Step 4: Create `packages/core/src/manifest-types.ts`** with EXACTLY this content (every type is the verbatim current fred definition, snake_case preserved; `DeployResult` is the relocated `DeployAppResult` with its two id-fields branded):
+- [ ] **Step 4: Create `packages/core/src/manifest-types.ts`** with EXACTLY this content (every type is the verbatim current fred definition, snake_case preserved; `DeployResult` is the relocated `DeployAppResult` **verbatim — ids stay plain `string`**, branding is Plan 3b):
 
 ```ts
 // The SINGLE chokepoint for canonical Manifest/Fred value & wire DTO types (spec §5.1, §8).
@@ -94,8 +91,9 @@ describe('manifest-types are reachable + are pure types (no runtime emit)', () =
 // types (PollOptions, TerminalChainStateError, the deploy *Input specs) stay in fred until
 // the data-vs-behavior split (Plan 3b). Snake_case wire shapes are preserved verbatim: several
 // of these are MCP `outputSchema` DTOs validated against `structuredContent` at runtime.
+// NOTE (3a): DeployResult ids are plain `string` (verbatim). Branding them is Plan 3b — it needs
+// trust-cast brand producers in brands.ts (a re-validating parse* throws on non-UUID provider ids).
 import type { LeaseState } from '@manifest-network/manifestjs/dist/codegen/liftedinit/billing/v1/types.js';
-import type { LeaseUuid, ProviderUuid } from './brands.js';
 
 // ===== Manifest build / validation (relocated from fred/src/manifest.ts) =====
 export interface BuildManifestOptions {
@@ -260,12 +258,12 @@ export interface FredLeaseInfo {
   readonly ports?: Record<string, unknown>;
 }
 
-// ===== Deploy result wire DTO (relocated from fred/src/tools/deployManifest.ts). KEEPS
+// ===== Deploy result wire DTO (relocated VERBATIM from fred/src/tools/deployManifest.ts). KEEPS
 // snake_case (it is the `deploy_app` MCP outputSchema validated against structuredContent).
-// id-fields are BRANDED — non-breaking, since a brand erases to `string` in JSON. =====
+// ids stay plain `string` in 3a; Plan 3b brands them via trust-cast (see header NOTE). =====
 export interface DeployResult {
-  readonly lease_uuid: LeaseUuid;
-  readonly provider_uuid: ProviderUuid;
+  readonly lease_uuid: string;
+  readonly provider_uuid: string;
   readonly provider_url: string;
   readonly state: LeaseState;
   readonly url?: string;
@@ -387,11 +385,12 @@ export type {
 };
 ```
 
-Keep every function (`buildManifest`, `buildStackManifest`, `validateManifest`, `getServiceNames`, `metaHashHex`, `validateServiceName`, `normalizePorts`, etc.) and all consts. Let Biome `--write` order the import/export statements.
+Keep every function (`buildManifest`, `buildStackManifest`, `validateManifest`, `getServiceNames`, `metaHashHex`, `validateServiceName`, `normalizePorts`, etc.) and all consts. Let Biome `--write` order the import/export statements. **Critical ordering for each of the three files: DELETE the original `export interface …` body BEFORE (or in the same edit as) adding the new `import type { … }` — leaving both produces a duplicate-identifier compile error.** Grep each file after editing to confirm the old interface bodies are gone (e.g. `grep -n "interface ConnectionDetails\b" packages/fred/src/http/provider.ts` → no match).
 
 - [ ] **Step 4: Verify green (no behavior change).**
   1. `(cd packages/fred && npm run lint)` → exit 0.
   2. `npx vitest run packages/fred` → all pass (the wire shapes are byte-identical; provider/fred/manifest tests must stay green).
+  3. **Early full-graph build** (catch any cross-package project-reference regression now, not only at Task 6): `npm run build` from the worktree root → all 8 packages, exit 0.
 
 - [ ] **Step 5: Biome + commit.**
 
@@ -416,7 +415,7 @@ export type { ServiceConfig };
 
 Leave `DeployAppInput`, `skuSelectorFromInput`, and `deployApp` otherwise untouched (they are Plan 3b). The existing `export type { DeployAppResult } from './deployManifest.js';` (line 16) stays as-is.
 
-- [ ] **Step 2: `deployManifest.ts` — relocate `DeployAppResult` → `DeployResult` (aliased) and brand the assembly.**
+- [ ] **Step 2: `deployManifest.ts` — relocate `DeployAppResult` → `DeployResult` (aliased). NO branding (pure relocation; the assembly is untouched).**
   1. Delete the `DeployAppResult` interface body (lines 58-70). Import `DeployResult` for local use (the function return type) and re-export it under the public name `DeployAppResult`:
 
 ```ts
@@ -424,54 +423,22 @@ import type { DeployResult } from '@manifest-network/manifest-mcp-core';
 export type { DeployResult as DeployAppResult };
 ```
 
-  Then change the `deployManifest` return-type annotation from `Promise<DeployAppResult>` (line 107) to `Promise<DeployResult>` (the local name). `deployApp.ts` keeps importing `DeployAppResult` from `./deployManifest.js` — that alias is still exported, so `deployApp`'s `Promise<DeployAppResult>` resolves unchanged. (`ConnectionDetails` continues to come via `import { type ConnectionDetails, … } from '../http/provider.js'` — provider.js re-exports it from core now; no change needed there.)
+  2. Change the `deployManifest` return-type annotation from `Promise<DeployAppResult>` (line 107) to `Promise<DeployResult>` (the local name). `deployApp.ts` keeps importing `DeployAppResult` from `./deployManifest.js` — that alias is still exported, so `deployApp`'s `Promise<DeployAppResult>` resolves unchanged. (`ConnectionDetails` continues to come via `import { type ConnectionDetails, … } from '../http/provider.js'` — provider.js re-exports it from core now; no change needed there.)
 
-  2. Add `parseLeaseUuid` and `parseProviderUuid` to the existing value import from core (the block at lines 6-15 that already imports `cosmosTx`, `requireUuid`, etc.):
+  3. **Do NOT touch the `return { … }` success assembly** (lines 387-402), `extractLeaseUuid`, the value-import block, the `onLeaseCreated` callback, or `DeployManifestInput`/`SkuSelector`. The `DeployResult` ids are plain `string`, so `lease_uuid: leaseUuid` / `provider_uuid: providerUuid` (plain strings) satisfy the relocated type exactly — **zero runtime change**.
 
-```ts
-import {
-  cosmosTx,
-  logger,
-  ManifestMCPError,
-  ManifestMCPErrorCode,
-  parseLeaseUuid,
-  parseProviderUuid,
-  requireUuid,
-  resolveSku,
-  sanitizeForLogging,
-  setItemCustomDomain,
-} from '@manifest-network/manifest-mcp-core';
-```
-
-  3. Brand the two id-fields at the SUCCESS assembly (the `return { … }` at lines 387-402). Change ONLY these two lines:
-
-```ts
-  return {
-    lease_uuid: parseLeaseUuid(leaseUuid),
-    provider_uuid: parseProviderUuid(providerUuid),
-    provider_url: providerUrl,
-    state: status.state,
-    ...(url && { url }),
-    ...(connection && { connection }),
-    ...(connectionError && { connectionError }),
-    ...(normalizedCustomDomain && { custom_domain: normalizedCustomDomain }),
-    ...(normalizedCustomDomain &&
-      input.serviceName && { service_name: input.serviceName }),
-  };
-```
-
-  Rationale: `leaseUuid` is already validated by `extractLeaseUuid` (which keeps using `requireUuid` → preserves its `TX_FAILED` semantics on a malformed chain UUID); `providerUuid` is already chain-resolved. Branding here is the parse-once wire-DTO boundary; routing through `parse*` keeps the lone `as Brand` cast inside `brands.ts` (§8). **Do NOT** brand the partial-success error `details` object (lines 350-352) — error details are `Record<string, unknown>`; leave `lease_uuid: leaseUuid` etc. as plain strings there. **Do NOT** change `extractLeaseUuid`, the `onLeaseCreated` callback, or any `DeployManifestInput`/`SkuSelector` (Plan 3b).
+  > **Why no branding here (review finding, ENG-309):** branding the ids via the throwing `parseLeaseUuid`/`parseProviderUuid` at the assembly RE-VALIDATES them — and `parseProviderUuid` throws `INVALID_ARGUMENT` on the non-UUID provider sentinels (`'prov-1'`/`'p1'`/`'p2'`) that the fred tests use (the `kind:'resolved'` path trusts the caller's id verbatim; `kind:'byName'` returns `resolveSku`'s chain value verbatim — neither is guaranteed canonical-UUID-shaped). That turns ~15 green tests red AND violates spec §5.1/§8's "brand by trust-cast — **no re-validation** (parse-once, ENG-258)". Branding therefore moves to **Plan 3b**, which first adds sanctioned **trust-cast** brand producers to `brands.ts` (e.g. `asLeaseUuid`/`asProviderUuid` — cast without `assertUuid`, confined to `brands.ts` per §8) and reconciles the spec's "parse\* only" wording with the trust-cast boundary.
 
 - [ ] **Step 3: Verify green.**
   1. `(cd packages/fred && npm run lint)` → exit 0.
-  2. `npx vitest run packages/fred` → all pass. In particular `fred/src/server.test.ts` (the snake_case `lease_uuid`/`provider_uuid` assertions at :451-456/:309-428/etc. and the `deploy_app` outputSchema + annotation matrix at :246-259) must stay green — branding erases to string in JSON, so `structuredContent` validation and the assertions are unaffected.
+  2. `npx vitest run packages/fred` → all pass. The relocation is pure type-layer + the assembly is byte-identical, so every fred test (incl. `server.test.ts`, `deployApp.test.ts`, `deployManifest.test.ts`) stays green with zero behavior change.
 
 - [ ] **Step 4: Biome + commit.**
 
 ```bash
 npx @biomejs/biome check --write packages/fred/src/tools/deployApp.ts packages/fred/src/tools/deployManifest.ts
 git add packages/fred/src/tools/deployApp.ts packages/fred/src/tools/deployManifest.ts
-git commit -m "refactor(fred): re-export ServiceConfig/DeployResult from core + brand result id-fields (ENG-309)"
+git commit -m "refactor(fred): re-export ServiceConfig/DeployResult from the core chokepoint (ENG-309)"
 ```
 
 ---
@@ -506,7 +473,7 @@ describe('DeployResult snake→camel projection (deliberate, not a 1:1 rename)',
     if (FRED.custom_domain) expect(result.customDomain).toBe(FRED.custom_domain);
     // Deliberate transforms (NOT trivial renames) — pin so a future flatten is caught:
     expect(typeof result.leaseState).toBe('string'); // decoded LeaseStateName, not the numeric enum
-    expect(Array.isArray(result.urls)).toBe(true);    // derived endpoint list, not `url`
+    expect(Array.isArray(result.urls)).toBe(true);    // derived endpoint list, not `url` (may be [] if the fixture seeds no endpoint/url — seed at least one for a stronger assertion)
     expect(result).toHaveProperty('manifestPath');     // agent-core-only field
     // Fields intentionally dropped from the projection:
     expect((result as Record<string, unknown>).provider_url).toBeUndefined();
@@ -535,21 +502,23 @@ git commit -m "test(agent-core): pin the snake→camel DeployResult projection (
   1. `npm run build` → all 8 packages, exit 0.
   2. `npm run lint` → exit 0 (every package's `tsc --noEmit`).
   3. `npx vitest run` (whole repo unit tests) → all pass.
-  4. `(cd packages/core && npx vitest --run --typecheck src/brands.test-d.ts src/manifest-types.test-d.ts)` → all type tests pass (Plan-1 regression + the new branding fixture).
+  4. `(cd packages/core && npx vitest --run --typecheck src/brands.test-d.ts src/manifest-types.test-d.ts)` → all type tests pass (Plan-1 regression + the new manifest-types shape fixture).
   5. `npm run check` (Biome format/lint/import-sort across the repo) → exit 0.
-- [ ] If all green, the relocation is complete with zero behavior change (snake_case wire shapes + public fred API preserved; `DeployResult` id-fields now branded). No commit needed (Tasks 1-5 committed); if `npm run check` applied formatting, commit it as `style: biome formatting (ENG-309)`.
+- [ ] If all green, the relocation is complete with **zero behavior change** (snake_case wire shapes + public fred API preserved; `DeployResult` relocated verbatim, ids still plain `string` — branding is 3b). No commit needed (Tasks 1-5 committed); if `npm run check` applied formatting, commit it as `style: biome formatting (ENG-309)`.
 
 ---
 
 ## Self-Review (completed)
 
-- **Spec coverage (§5.1 relocation half):** chokepoint `manifest-types.ts` created (only file importing the manifestjs LeaseState type-path for the relocated types) ✓; all pure-data wire/DTO types relocated verbatim, snake_case preserved ✓; `DeployResult` relocated + id-fields branded via producer `parse*` (no `as Brand` outside brands.ts) ✓; `PortConfig` net-new forward-declared ✓; fred flipped to type-only re-exports, public API (incl. `DeployAppResult` name) byte-preserved ✓; agent-core projection pinned by a mapping test ✓. **Deferred to 3b:** the data-vs-behavior split (`AppDeploySpec`/`ManifestDeploySpec`, the call-options bag), `SkuSelector`→`SkuIntent`. **Deferred to the guards plan:** the dependency-cruiser chokepoint enforcement + LeaseState value-re-export reconciliation.
+- **Spec coverage (§5.1 relocation half):** chokepoint `manifest-types.ts` created (only file importing the manifestjs LeaseState type-path for the relocated types) ✓; all pure-data wire/DTO types relocated **verbatim**, snake_case preserved ✓; `DeployResult` relocated verbatim with **plain `string` ids — zero behavior change** ✓; `PortConfig` net-new forward-declared ✓; fred flipped to type-only re-exports, public API (incl. `DeployAppResult` name) byte-preserved ✓; agent-core projection pinned by a mapping test ✓. **Deferred to 3b:** the data-vs-behavior split (`AppDeploySpec`/`ManifestDeploySpec`, the call-options bag), `SkuSelector`→`SkuIntent`, **AND the `DeployResult` id-field branding** (needs trust-cast brand producers in `brands.ts` — a re-validating `parse*` at the assembly throws on the fred tests' non-UUID provider sentinels and violates §5.1/§8 parse-once; review-confirmed). **Deferred to the guards plan:** the dependency-cruiser chokepoint enforcement + LeaseState value-re-export reconciliation.
 - **Placeholders:** the Task 5 test binds `FRED`/`result` to the existing `deploy-app.test.ts` harness — flagged explicitly because the harness shape must be read at implementation time; the assertions themselves are complete.
-- **Type/name consistency:** `DeployResult` (core canonical) is re-exported as `DeployAppResult` (public fred name) everywhere; `parseLeaseUuid`/`parseProviderUuid` names match `brands.ts`/the barrel; the relocated type names are identical across core, the fred re-exports, and the fred barrel.
+- **Type/name consistency:** `DeployResult` (core canonical) is re-exported as `DeployAppResult` (public fred name) everywhere; the relocated type names are identical across core, the fred source-module re-exports, and the fred barrel; no `parse*`/brand call is introduced in 3a (branding is 3b).
 - **Order safety:** core compiles standalone after Task 1 (no fred dep); fred flips per-file after the core types exist; no intermediate commit references a not-yet-moved type.
 
 ## Next plan
 
-→ **Plan 3b (data-vs-behavior split):** strip the 4 runtime fields (`gasMultiplier`/`onLeaseCreated`/`abortSignal`/`pollOptions`) off `DeployAppInput`/`DeployManifestInput` into a fred-layer call-options bag → relocate the now-data-only `AppDeploySpec`/`ManifestDeploySpec` to core; unify `SkuSelector` → branded `SkuIntent` (`size: string`, `providerUuid: ProviderUuid`, `skuUuid: SkuUuid`); update the `deployApp`/`deployManifest` signatures + `register-tools.ts:697-723` call site in lockstep (preserve the `{ ...pollOptions, abortSignal }` merge at deployManifest.ts:308 and the `gasMultiplier→overrides` at :251-254). The riskiest step — isolated per the v7 big-picture review.
+→ **Plan 3b (data-vs-behavior split + DeployResult branding):**
+  1. **Trust-cast brand producers (do this FIRST):** add sanctioned trust-cast constructors to `core/src/brands.ts` for the chain-read boundary — they brand WITHOUT `assertUuid` (e.g. `asLeaseUuid`/`asProviderUuid`/`asSkuUuid`; the lone `as Brand` cast stays in `brands.ts` per §8). Reconcile spec §5.0 (which currently says "only `parse*` are sanctioned producers") to document the **two families**: `parse*` = validate at the *untrusted* boundary (stringly/provider input); `as*` = trust-cast at the *trusted* boundary (chain/codegen reads — "no re-validation", §5.0 boundary table). Then brand `DeployResult.lease_uuid`/`provider_uuid` (`LeaseUuid`/`ProviderUuid`) at the deployManifest assembly via the trust-casts (tests stay green — sentinels aren't validated), and make `extractLeaseUuid` return `LeaseUuid` by trust-casting the value its existing `requireUuid` already validated (parse-once).
+  2. **The split:** strip the 4 runtime fields (`gasMultiplier`/`onLeaseCreated`/`abortSignal`/`pollOptions`) off `DeployAppInput`/`DeployManifestInput` into a fred-layer call-options bag → relocate the now-data-only `AppDeploySpec`/`ManifestDeploySpec` to core; unify `SkuSelector` → branded `SkuIntent` (`size: string`, `providerUuid: ProviderUuid`, `skuUuid: SkuUuid`) branding at the `skuSelectorFromInput`/resolved boundary via the trust-casts (the resolved path trusts verbatim, so trust-cast, not parse); update the `deployApp`/`deployManifest` signatures + `register-tools.ts:697-723` call site in lockstep (preserve the `{ ...pollOptions, abortSignal }` merge at deployManifest.ts:308 and the `gasMultiplier→overrides` at :251-254). The riskiest step — isolated per the v7 big-picture review.
 
 → **Later — boundary guards plan:** author the `dependency-cruiser` config (only `manifest-types.ts` imports manifestjs type-paths; `as Brand` only in `brands.ts`; no `parse*` in `lcd-adapter`) + reconcile the LeaseState value re-export + `publint`/`attw` (spec §8/§13, all guards in one plan).
