@@ -23,6 +23,8 @@ vi.mock('../http/fred.js', async (importOriginal) => {
 });
 
 import {
+  asProviderUuid,
+  asSkuUuid,
   cosmosTx,
   LeaseState,
   logger,
@@ -146,8 +148,8 @@ describe('deployManifest', () => {
         manifest: singleManifest(),
         sku: {
           kind: 'resolved',
-          skuUuid: 'sku-micro-uuid',
-          providerUuid: 'prov-1',
+          skuUuid: asSkuUuid('sku-micro-uuid'),
+          providerUuid: asProviderUuid('prov-1'),
         },
       },
       deps(cm),
@@ -190,8 +192,8 @@ describe('deployManifest', () => {
         manifest: singleManifest(),
         sku: {
           kind: 'resolved',
-          skuUuid: 'any-sku-uuid',
-          providerUuid: 'prov-1',
+          skuUuid: asSkuUuid('any-sku-uuid'),
+          providerUuid: asProviderUuid('prov-1'),
         },
       },
       deps(cm),
@@ -209,7 +211,11 @@ describe('deployManifest', () => {
       deployManifest(
         {
           manifest: singleManifest(),
-          sku: { kind: 'resolved', skuUuid: '   ', providerUuid: 'prov-1' },
+          sku: {
+            kind: 'resolved',
+            skuUuid: asSkuUuid('   '),
+            providerUuid: asProviderUuid('prov-1'),
+          },
         },
         deps(cm),
       ),
@@ -508,7 +514,11 @@ describe('deployManifest', () => {
     await deployManifest(
       {
         manifest: singleManifest(),
-        sku: { kind: 'byName', size: 'docker-micro', providerUuid: 'p2' },
+        sku: {
+          kind: 'byName',
+          size: 'docker-micro',
+          providerUuid: asProviderUuid('p2'),
+        },
       },
       deps(cm),
     );

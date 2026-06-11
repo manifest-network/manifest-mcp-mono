@@ -8,7 +8,7 @@
 // the MCP outputSchema is unchanged.
 
 import type { LeaseState } from '@manifest-network/manifestjs/dist/codegen/liftedinit/billing/v1/types.js';
-import type { LeaseUuid, ProviderUuid } from './brands.js';
+import type { LeaseUuid, ProviderUuid, SkuUuid } from './brands.js';
 
 // ===== Manifest build / validation (relocated from fred/src/manifest.ts) =====
 export interface BuildManifestOptions {
@@ -193,3 +193,19 @@ export interface DeployResult {
   /** Set when a `serviceName` was supplied alongside a successful `customDomain` set. */
   readonly service_name?: string;
 }
+
+// Unified SKU selector (was fred's `SkuSelector`). byName = resolve/disambiguate by name;
+// resolved = caller pre-resolved both ids. uuids are branded; `size` stays plain string (post-v7 scope-down).
+// NOTE (trust-cast): the byName `providerUuid`/`skuUuid` are OPTIONAL NARROWING HINTS that `resolveSku`
+// resolves authoritatively against chain SKUs by STRING EQUALITY (not UUID-format validation, ENG-258
+// "chain is authoritative") — so they are branded via the `as*` TRUST-CAST, never `parse*`. A re-validating
+// `parse*` would reject non-canonical-but-chain-valid ids and is NOT the boundary: §5.0's "stringly/MCP face
+// → parse+validate" obligation lives at the MCP boundary (register-tools.ts), not at this downstream transform.
+export type SkuIntent =
+  | {
+      kind: 'byName';
+      size: string;
+      providerUuid?: ProviderUuid;
+      skuUuid?: SkuUuid;
+    }
+  | { kind: 'resolved'; skuUuid: SkuUuid; providerUuid: ProviderUuid };

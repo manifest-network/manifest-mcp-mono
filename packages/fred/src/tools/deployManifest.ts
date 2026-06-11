@@ -57,17 +57,19 @@ export function extractLeaseUuid(txResult: CosmosTxResult): LeaseUuid {
   );
 }
 
-import type { DeployResult } from '@manifest-network/manifest-mcp-core';
+import type {
+  DeployResult,
+  SkuIntent,
+} from '@manifest-network/manifest-mcp-core';
 
 export type { DeployResult as DeployAppResult };
 
-export type SkuSelector =
-  | { kind: 'byName'; size: string; providerUuid?: string; skuUuid?: string }
-  | { kind: 'resolved'; skuUuid: string; providerUuid: string };
+/** @deprecated Use `SkuIntent`. Kept as a byte-compatible alias for the public fred API. */
+export type SkuSelector = SkuIntent;
 
 export interface DeployManifestInput {
   manifest: string;
-  sku: SkuSelector;
+  sku: SkuIntent;
   storage?: string;
   customDomain?: string;
   serviceName?: string;

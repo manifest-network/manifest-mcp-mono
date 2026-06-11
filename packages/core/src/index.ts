@@ -65,6 +65,7 @@ export type {
   PortConfig,
   ServiceConfig,
   ServiceConnectionDetails,
+  SkuIntent,
 } from './manifest-types.js';
 export {
   getAvailableModules,

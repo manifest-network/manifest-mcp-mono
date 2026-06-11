@@ -1,5 +1,10 @@
-import type { CosmosClientManager } from '@manifest-network/manifest-mcp-core';
+import type {
+  CosmosClientManager,
+  SkuIntent,
+} from '@manifest-network/manifest-mcp-core';
 import {
+  asProviderUuid,
+  asSkuUuid,
   ManifestMCPError,
   ManifestMCPErrorCode,
 } from '@manifest-network/manifest-mcp-core';
@@ -10,7 +15,7 @@ import {
   buildStackManifest,
   validateServiceName,
 } from '../manifest.js';
-import type { DeployAppResult, SkuSelector } from './deployManifest.js';
+import type { DeployAppResult } from './deployManifest.js';
 import { deployManifest } from './deployManifest.js';
 
 export type { DeployAppResult } from './deployManifest.js';
@@ -74,20 +79,26 @@ export interface DeployAppInput {
   pollOptions?: Omit<PollOptions, 'abortSignal'>;
 }
 
-function skuSelectorFromInput(input: DeployAppInput): SkuSelector {
+function skuSelectorFromInput(input: DeployAppInput): SkuIntent {
   const skuUuid = input.skuUuid?.trim();
   const providerUuid = input.providerUuid?.trim();
   // `resolved` requires BOTH ids — only then can fred skip the lookup.
   if (skuUuid && providerUuid) {
-    return { kind: 'resolved', skuUuid, providerUuid };
+    return {
+      kind: 'resolved',
+      skuUuid: asSkuUuid(skuUuid),
+      providerUuid: asProviderUuid(providerUuid),
+    };
   }
   // Otherwise resolve by name, carrying whichever disambiguator we have so
   // core.resolveSku can narrow (provider) or pin (skuUuid → learns provider).
+  // byName disambiguators are narrowing hints (non-UUID sentinels in tests, e.g. 'p2'/'b') —
+  // chain resolves authoritatively, so trust-cast (as*), never parse*.
   return {
     kind: 'byName',
     size: input.size,
-    ...(providerUuid ? { providerUuid } : {}),
-    ...(skuUuid ? { skuUuid } : {}),
+    ...(providerUuid ? { providerUuid: asProviderUuid(providerUuid) } : {}),
+    ...(skuUuid ? { skuUuid: asSkuUuid(skuUuid) } : {}),
   };
 }
 

@@ -24,4 +24,14 @@ describe('manifest-types shape (type-level)', () => {
     >();
     expectTypeOf<DeployResult['lease_uuid']>().toExtend<string>(); // still erases to string (non-breaking)
   });
+  it('SkuIntent uuids are branded; size is plain string', () => {
+    type ByName = Extract<
+      import('./manifest-types.js').SkuIntent,
+      { kind: 'byName' }
+    >;
+    expectTypeOf<ByName['size']>().toEqualTypeOf<string>();
+    expectTypeOf<ByName['providerUuid']>().toEqualTypeOf<
+      import('./brands.js').ProviderUuid | undefined
+    >();
+  });
 });
