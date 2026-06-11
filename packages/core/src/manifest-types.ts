@@ -3,9 +3,12 @@
 // types (PollOptions, TerminalChainStateError, the deploy *Input specs) stay in fred until
 // the data-vs-behavior split (Plan 3b). Snake_case wire shapes are preserved verbatim: several
 // of these are MCP `outputSchema` DTOs validated against `structuredContent` at runtime.
-// NOTE (3a): DeployResult ids are plain `string` (verbatim). Branding them is Plan 3b — it needs
-// trust-cast brand producers in brands.ts (a re-validating parse* throws on non-UUID provider ids).
+// NOTE (3b-1): DeployResult id-fields are branded (LeaseUuid/ProviderUuid) via the as* trust-cast
+// family at the deployManifest producer. Still non-breaking: brands erase to string in JSON and
+// the MCP outputSchema is unchanged.
+
 import type { LeaseState } from '@manifest-network/manifestjs/dist/codegen/liftedinit/billing/v1/types.js';
+import type { LeaseUuid, ProviderUuid } from './brands.js';
 
 // ===== Manifest build / validation (relocated from fred/src/manifest.ts) =====
 export interface BuildManifestOptions {
@@ -172,13 +175,14 @@ export interface FredLeaseInfo {
 
 // ===== Deploy result wire DTO (relocated VERBATIM from fred/src/tools/deployManifest.ts). KEEPS
 // snake_case (it is the `deploy_app` MCP outputSchema validated against structuredContent).
-// ids stay plain `string` in 3a; Plan 3b brands them via trust-cast (see header NOTE).
+// ids are branded (3b-1) via the as* trust-cast at the deployManifest producer (non-breaking:
+// brands erase to string in JSON; MCP outputSchema unchanged; see header NOTE).
 // NOTE: agent-core has an UNRELATED public 'DeployResult' (camelCase orchestration projection,
 // agent-core/src/types.ts) — a deliberate DTO-vs-domain boundary per spec §5.1, NOT a
 // re-declaration. Do not conflate; the snake→camel mapping is pinned by a mapping test. =====
 export interface DeployResult {
-  readonly lease_uuid: string;
-  readonly provider_uuid: string;
+  readonly lease_uuid: LeaseUuid; // was: string (3a). Branded via as* trust-cast at the producer.
+  readonly provider_uuid: ProviderUuid; // was: string (3a). Branded via as* trust-cast at the producer.
   readonly provider_url: string;
   readonly state: LeaseState;
   readonly url?: string;

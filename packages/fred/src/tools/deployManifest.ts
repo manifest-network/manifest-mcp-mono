@@ -1,8 +1,11 @@
 import type {
   CosmosClientManager,
   CosmosTxResult,
+  LeaseUuid,
 } from '@manifest-network/manifest-mcp-core';
 import {
+  asLeaseUuid,
+  asProviderUuid,
   cosmosTx,
   logger,
   ManifestMCPError,
@@ -22,7 +25,7 @@ import {
 import { getServiceNames, metaHashHex, validateManifest } from '../manifest.js';
 import { resolveProviderUrl } from './resolveLeaseProvider.js';
 
-export function extractLeaseUuid(txResult: CosmosTxResult): string {
+export function extractLeaseUuid(txResult: CosmosTxResult): LeaseUuid {
   if (!txResult.events) {
     throw new ManifestMCPError(
       ManifestMCPErrorCode.TX_FAILED,
@@ -42,7 +45,7 @@ export function extractLeaseUuid(txResult: CosmosTxResult): string {
           'lease_uuid',
           ManifestMCPErrorCode.TX_FAILED,
         );
-        return raw;
+        return asLeaseUuid(raw);
       }
     }
   }
@@ -374,8 +377,8 @@ export async function deployManifest(
   }
 
   return {
-    lease_uuid: leaseUuid,
-    provider_uuid: providerUuid,
+    lease_uuid: leaseUuid, // already LeaseUuid — extractLeaseUuid brands it (requireUuid + asLeaseUuid)
+    provider_uuid: asProviderUuid(providerUuid),
     provider_url: providerUrl,
     state: status.state,
     ...(url && { url }),

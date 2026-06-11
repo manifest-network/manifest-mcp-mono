@@ -15,8 +15,13 @@ describe('manifest-types shape (type-level)', () => {
       readonly ingress?: boolean;
     }>();
   });
-  it('DeployResult ids are plain string in 3a (branding is deferred to 3b)', () => {
-    expectTypeOf<DeployResult['lease_uuid']>().toEqualTypeOf<string>();
-    expectTypeOf<DeployResult['provider_uuid']>().toEqualTypeOf<string>();
+  it('DeployResult id-fields are branded (3b-1)', () => {
+    expectTypeOf<DeployResult['lease_uuid']>().toEqualTypeOf<
+      import('./brands.js').LeaseUuid
+    >();
+    expectTypeOf<DeployResult['provider_uuid']>().toEqualTypeOf<
+      import('./brands.js').ProviderUuid
+    >();
+    expectTypeOf<DeployResult['lease_uuid']>().toExtend<string>(); // still erases to string (non-breaking)
   });
 });
