@@ -35,7 +35,13 @@ export { parseBooleanEnv } from './env-utils.js';
 // bundles that import this universal barrel. It lives at the Node-only
 // `@manifest-network/manifest-mcp-core/guarded-fetch` subpath instead (ENG-281).
 export { createLCDQueryClient } from './lcd-adapter.js';
-export { type LogLevel, logger, parseLogLevel } from './logger.js';
+export {
+  type Logger,
+  type LogLevel,
+  logger,
+  noopLogger,
+  parseLogLevel,
+} from './logger.js';
 export {
   getAvailableModules,
   getModuleSubcommands,
@@ -43,6 +49,11 @@ export {
   getSupportedModules,
   isSubcommandSupported,
 } from './modules.js';
+export {
+  type CallOptions,
+  resolveCallSignal,
+  type TxCallOptions,
+} from './options.js';
 export { createPagination, MAX_PAGE_LIMIT } from './queries/utils.js';
 export {
   calculateBackoff,
