@@ -1,4 +1,15 @@
 import { toBase64 } from '@cosmjs/encoding';
+import type {
+  FredActionResponse,
+  FredInstanceInfo,
+  FredLeaseInfo,
+  FredLeaseLogs,
+  FredLeaseProvision,
+  FredLeaseRelease,
+  FredLeaseReleases,
+  FredLeaseStatus,
+  FredServiceStatus,
+} from '@manifest-network/manifest-mcp-core';
 import {
   LeaseState,
   leaseStateFromJSON,
@@ -11,31 +22,19 @@ import {
   validateProviderUrl,
 } from './provider.js';
 
+export type {
+  FredActionResponse,
+  FredInstanceInfo,
+  FredLeaseInfo,
+  FredLeaseLogs,
+  FredLeaseProvision,
+  FredLeaseRelease,
+  FredLeaseReleases,
+  FredLeaseStatus,
+  FredServiceStatus,
+};
+
 export const MAX_TAIL = 1000;
-
-export interface FredInstanceInfo {
-  readonly name: string;
-  readonly status: string;
-  readonly ports?: Record<string, number>;
-  readonly fqdn?: string;
-}
-
-export interface FredServiceStatus {
-  readonly instances: readonly FredInstanceInfo[];
-}
-
-export interface FredLeaseStatus {
-  readonly state: LeaseState;
-  readonly provision_status?: string;
-  readonly phase?: string;
-  readonly steps?: Record<string, string>;
-  readonly instances?: readonly FredInstanceInfo[];
-  readonly endpoints?: Record<string, string>;
-  readonly last_error?: string;
-  readonly fail_count?: number;
-  readonly created_at?: string;
-  readonly services?: Record<string, FredServiceStatus>;
-}
 
 /** Raw wire shape before LeaseState conversion */
 interface RawLeaseStatus extends Omit<FredLeaseStatus, 'state'> {
@@ -69,13 +68,6 @@ export async function getLeaseStatus(
   return { ...raw, state };
 }
 
-export interface FredLeaseLogs {
-  readonly lease_uuid: string;
-  readonly tenant: string;
-  readonly provider_uuid: string;
-  readonly logs: Record<string, string>;
-}
-
 export async function getLeaseLogs(
   providerUrl: string,
   leaseUuid: string,
@@ -98,17 +90,6 @@ export async function getLeaseLogs(
   return await parseJsonResponse<FredLeaseLogs>(res, url);
 }
 
-export interface FredLeaseProvision {
-  readonly status: string;
-  readonly fail_count: number;
-  /**
-   * Set only when the most recent provisioning attempt failed. The Fred
-   * provider omits the field on success, so the optional marker matches
-   * the wire shape (and matches the same field on FredLeaseStatus above).
-   */
-  readonly last_error?: string;
-}
-
 export async function getLeaseProvision(
   providerUrl: string,
   leaseUuid: string,
@@ -126,10 +107,6 @@ export async function getLeaseProvision(
     fetchFn,
   );
   return await parseJsonResponse<FredLeaseProvision>(res, url);
-}
-
-export interface FredActionResponse {
-  readonly status: string;
 }
 
 export async function restartLease(
@@ -179,22 +156,6 @@ export async function updateLease(
   return await parseJsonResponse<FredActionResponse>(res, url);
 }
 
-export interface FredLeaseRelease {
-  readonly version: number;
-  readonly image: string;
-  readonly status: string;
-  readonly created_at: string;
-  readonly error?: string;
-  readonly manifest?: string;
-}
-
-export interface FredLeaseReleases {
-  readonly lease_uuid: string;
-  readonly tenant: string;
-  readonly provider_uuid: string;
-  readonly releases: readonly FredLeaseRelease[];
-}
-
 export async function getLeaseReleases(
   providerUrl: string,
   leaseUuid: string,
@@ -212,11 +173,6 @@ export async function getLeaseReleases(
     fetchFn,
   );
   return await parseJsonResponse<FredLeaseReleases>(res, url);
-}
-
-export interface FredLeaseInfo {
-  readonly host: string;
-  readonly ports?: Record<string, unknown>;
 }
 
 export async function getLeaseInfo(

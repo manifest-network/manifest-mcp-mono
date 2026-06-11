@@ -149,38 +149,19 @@ export async function getProviderHealth(
   return await parseJsonResponse<ProviderHealthResponse>(res, url);
 }
 
-export interface InstanceInfo {
-  readonly instance_index: number;
-  readonly container_id: string;
-  readonly image: string;
-  readonly status: string;
-  readonly ports?: Record<string, unknown>;
-  readonly fqdn?: string;
-}
+import type {
+  ConnectionDetails,
+  InstanceInfo,
+  LeaseConnectionResponse,
+  ServiceConnectionDetails,
+} from '@manifest-network/manifest-mcp-core';
 
-export interface ServiceConnectionDetails {
-  readonly host?: string;
-  readonly fqdn?: string;
-  readonly ports?: Record<string, unknown>;
-  readonly instances?: readonly InstanceInfo[];
-}
-
-export interface ConnectionDetails {
-  readonly host: string;
-  readonly fqdn?: string;
-  readonly ports?: Record<string, unknown>;
-  readonly instances?: readonly InstanceInfo[];
-  readonly protocol?: string;
-  readonly metadata?: Record<string, string>;
-  readonly services?: Record<string, ServiceConnectionDetails>;
-}
-
-export interface LeaseConnectionResponse {
-  readonly lease_uuid: string;
-  readonly tenant: string;
-  readonly provider_uuid: string;
-  readonly connection: ConnectionDetails;
-}
+export type {
+  ConnectionDetails,
+  InstanceInfo,
+  LeaseConnectionResponse,
+  ServiceConnectionDetails,
+};
 
 export async function getLeaseConnectionInfo(
   providerApiUrl: string,
