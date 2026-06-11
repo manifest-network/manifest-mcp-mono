@@ -1,7 +1,6 @@
 import type {
   CosmosClientManager,
   CosmosTxResult,
-  LeaseState,
 } from '@manifest-network/manifest-mcp-core';
 import {
   cosmosTx,
@@ -55,19 +54,9 @@ export function extractLeaseUuid(txResult: CosmosTxResult): string {
   );
 }
 
-export interface DeployAppResult {
-  readonly lease_uuid: string;
-  readonly provider_uuid: string;
-  readonly provider_url: string;
-  readonly state: LeaseState;
-  readonly url?: string;
-  readonly connection?: ConnectionDetails;
-  readonly connectionError?: string;
-  /** Set when a `customDomain` was supplied AND the set-domain tx succeeded. */
-  readonly custom_domain?: string;
-  /** Set when a `serviceName` was supplied alongside a successful `customDomain` set. */
-  readonly service_name?: string;
-}
+import type { DeployResult } from '@manifest-network/manifest-mcp-core';
+
+export type { DeployResult as DeployAppResult };
 
 export type SkuSelector =
   | { kind: 'byName'; size: string; providerUuid?: string; skuUuid?: string }
@@ -104,7 +93,7 @@ const MAX_MANIFEST_BYTES = 256 * 1024;
 export async function deployManifest(
   input: DeployManifestInput,
   opts: DeployManifestOptions,
-): Promise<DeployAppResult> {
+): Promise<DeployResult> {
   const { clientManager, getAuthToken, getLeaseDataAuthToken, fetchFn } = opts;
 
   const manifestBytes = new TextEncoder().encode(input.manifest);

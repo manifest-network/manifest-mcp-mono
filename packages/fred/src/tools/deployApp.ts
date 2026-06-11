@@ -15,26 +15,9 @@ import { deployManifest } from './deployManifest.js';
 
 export type { DeployAppResult } from './deployManifest.js';
 
-export interface ServiceConfig {
-  image: string;
-  ports?: Record<string, Record<string, never>>;
-  env?: Record<string, string>;
-  command?: string[];
-  args?: string[];
-  user?: string;
-  tmpfs?: string[];
-  health_check?: {
-    test: string[];
-    interval?: string;
-    timeout?: string;
-    retries?: number;
-    start_period?: string;
-  };
-  stop_grace_period?: string;
-  depends_on?: Record<string, { condition: string }>;
-  expose?: string[];
-  labels?: Record<string, string>;
-}
+import type { ServiceConfig } from '@manifest-network/manifest-mcp-core';
+
+export type { ServiceConfig };
 
 export interface DeployAppInput {
   image?: string;
