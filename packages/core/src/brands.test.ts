@@ -1,6 +1,9 @@
 import { toBech32 } from '@cosmjs/encoding';
 import { describe, expect, it } from 'vitest';
 import {
+  asLeaseUuid,
+  asProviderUuid,
+  asSkuUuid,
   parseAddress,
   parseFqdn,
   parseLeaseUuid,
@@ -93,5 +96,21 @@ describe('parseFqdn', () => {
     ['-bad.com'],
   ])('rejects %s', (bad) => {
     expect(() => parseFqdn(bad)).toThrow(ManifestMCPError);
+  });
+});
+
+describe('trust-cast as* family (no validation, never throws)', () => {
+  it('round-trips the value unchanged', () => {
+    expect(asLeaseUuid('550e8400-e29b-41d4-a716-446655440000')).toBe(
+      '550e8400-e29b-41d4-a716-446655440000',
+    );
+    expect(asProviderUuid('prov-1')).toBe('prov-1');
+    expect(asSkuUuid('any-sku-uuid')).toBe('any-sku-uuid');
+  });
+  it('NEVER throws — even on a non-UUID string (it is a trust-cast for already-trusted chain values)', () => {
+    expect(() => asLeaseUuid('not-a-uuid')).not.toThrow();
+    expect(() => asProviderUuid('p2')).not.toThrow();
+    expect(() => asSkuUuid('b')).not.toThrow();
+    expect(asProviderUuid('')).toBe(''); // even empty — caller guarantees trust
   });
 });

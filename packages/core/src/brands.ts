@@ -11,7 +11,15 @@ import {
  * non-assignable across DUPLICATED package copies (each copy mints a distinct symbol), breaking
  * the incremental cross-copy adoption this monorepo needs (the worktree/dep-drift hazard in
  * CLAUDE.md). Never exported. A brand is structurally `string`: assignable TO string, not FROM it.
- * INVARIANT: every `as Brand` cast below is preceded by a throwing validator on all paths.
+ *
+ * TWO sanctioned producer families, one per boundary trust-model (spec §5.0):
+ *   - parse*  — VALIDATE + brand at the UNTRUSTED boundary (stringly/MCP input, provider HTTP,
+ *               wallet-in). Throwing, type-narrowing. Each `as Brand` cast here is preceded by a
+ *               throwing validator on all paths.
+ *   - as*     — TRUST-CAST at the TRUSTED boundary (chain/codegen reads, already-resolved ids).
+ *               Brands WITHOUT validation and NEVER throws — the chain is the source of truth, and
+ *               re-validating would both waste work and throw on non-canonical ids (ENG-258 parse-once).
+ * BOTH families confine the lone `as Brand` cast to this file (§8).
  */
 type Brand<T, B extends string> = T & { readonly __brand: B };
 
@@ -51,6 +59,17 @@ export function parseProviderUuid(value: string): ProviderUuid {
 }
 export function parseSkuUuid(value: string): SkuUuid {
   assertUuid(value, 'skuUuid', ARG);
+  return value as SkuUuid;
+}
+
+// ===== as* — trust-cast family (no validation, never throws); see the two-family note above. =====
+export function asLeaseUuid(value: string): LeaseUuid {
+  return value as LeaseUuid;
+}
+export function asProviderUuid(value: string): ProviderUuid {
+  return value as ProviderUuid;
+}
+export function asSkuUuid(value: string): SkuUuid {
   return value as SkuUuid;
 }
 
