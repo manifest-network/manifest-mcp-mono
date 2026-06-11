@@ -64,7 +64,7 @@ import type {
 
 export type { DeployResult as DeployAppResult };
 
-/** @deprecated Use `SkuIntent`. Kept as a byte-compatible alias for the public fred API. */
+/** @deprecated Use `SkuIntent` from `@manifest-network/manifest-mcp-core`. Byte-compatible alias kept for the public fred API. */
 export type SkuSelector = SkuIntent;
 
 export interface DeployManifestInput {

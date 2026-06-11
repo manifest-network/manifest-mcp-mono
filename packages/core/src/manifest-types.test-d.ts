@@ -33,5 +33,15 @@ describe('manifest-types shape (type-level)', () => {
     expectTypeOf<ByName['providerUuid']>().toEqualTypeOf<
       import('./brands.js').ProviderUuid | undefined
     >();
+    type Resolved = Extract<
+      import('./manifest-types.js').SkuIntent,
+      { kind: 'resolved' }
+    >;
+    expectTypeOf<Resolved['skuUuid']>().toEqualTypeOf<
+      import('./brands.js').SkuUuid
+    >();
+    expectTypeOf<Resolved['providerUuid']>().toEqualTypeOf<
+      import('./brands.js').ProviderUuid
+    >();
   });
 });
