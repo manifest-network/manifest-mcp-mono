@@ -1,7 +1,6 @@
 import { ManifestMCPError, ManifestMCPErrorCode } from './types.js';
 import {
   assertUuid,
-  DENOM_RE,
   FQDN_RE,
   SCHEME_PREFIX_RE,
   validateAddress,
@@ -22,10 +21,13 @@ export type Tenant = Address;
 export type LeaseUuid = Brand<string, 'LeaseUuid'>;
 export type ProviderUuid = Brand<string, 'ProviderUuid'>;
 export type SkuUuid = Brand<string, 'SkuUuid'>;
-export type TierName = Brand<string, 'TierName'>;
 export type Fqdn = Brand<string, 'Fqdn'>;
-export type Denom = Brand<string, 'Denom'>;
-export type ChainId = Brand<string, 'ChainId'>;
+
+// NOTE (v7 scope-down): `tierName`/`denom`/`chainId` are intentionally PLAIN `string`, not branded.
+// They are single-role-per-call-site with low confusion risk, and the whole Cosmos stack
+// (cosmjs/Telescope/InterchainJS) uses bare `string` for them — branding them would tax every
+// interop boundary for little safety. Brands are kept only where a mix-up is plausible AND costly:
+// the same-shaped Lease/Provider/Sku UUID trio, Address, and Fqdn (which also normalizes).
 
 const ARG = ManifestMCPErrorCode.INVALID_ARGUMENT;
 
@@ -50,28 +52,6 @@ export function parseProviderUuid(value: string): ProviderUuid {
 export function parseSkuUuid(value: string): SkuUuid {
   assertUuid(value, 'skuUuid', ARG);
   return value as SkuUuid;
-}
-
-/** Reject whitespace-only (stricter than requireString's length check) — a blank tier/chainId is never meaningful. */
-function assertNonEmpty(value: string, label: string): void {
-  if (value.trim().length === 0) {
-    throw new ManifestMCPError(ARG, `${label} must be a non-empty string`);
-  }
-}
-
-export function parseTierName(value: string): TierName {
-  assertNonEmpty(value, 'size');
-  return value as TierName;
-}
-export function parseChainId(value: string): ChainId {
-  assertNonEmpty(value, 'chainId');
-  return value as ChainId;
-}
-export function parseDenom(value: string): Denom {
-  if (!DENOM_RE.test(value)) {
-    throw new ManifestMCPError(ARG, `denom "${value}" is not a valid denom`);
-  }
-  return value as Denom;
 }
 
 /**

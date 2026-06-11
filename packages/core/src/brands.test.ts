@@ -2,13 +2,10 @@ import { toBech32 } from '@cosmjs/encoding';
 import { describe, expect, it } from 'vitest';
 import {
   parseAddress,
-  parseChainId,
-  parseDenom,
   parseFqdn,
   parseLeaseUuid,
   parseProviderUuid,
   parseSkuUuid,
-  parseTierName,
 } from './brands.js';
 import { ManifestMCPError, ManifestMCPErrorCode } from './types.js';
 import { assertUuid } from './validation.js';
@@ -96,19 +93,5 @@ describe('parseFqdn', () => {
     ['-bad.com'],
   ])('rejects %s', (bad) => {
     expect(() => parseFqdn(bad)).toThrow(ManifestMCPError);
-  });
-});
-
-describe('trim + denom brands', () => {
-  it('parseTierName/parseChainId accept non-empty, reject whitespace-only', () => {
-    expect(parseTierName('docker-small')).toBe('docker-small');
-    expect(parseChainId('manifest-1')).toBe('manifest-1');
-    expect(() => parseTierName('   ')).toThrow(ManifestMCPError);
-  });
-  it('parseDenom enforces the denom grammar', () => {
-    expect(parseDenom('umfx')).toBe('umfx');
-    expect(parseDenom('ibc/ABC')).toBe('ibc/ABC');
-    expect(() => parseDenom('1bad')).toThrow(ManifestMCPError);
-    expect(() => parseDenom('')).toThrow(ManifestMCPError);
   });
 });

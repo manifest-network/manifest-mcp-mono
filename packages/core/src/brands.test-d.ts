@@ -1,10 +1,10 @@
 import { describe, expectTypeOf, it } from 'vitest';
 import type {
-  Denom,
+  Address,
+  Fqdn,
   LeaseUuid,
   ProviderUuid,
   SkuUuid,
-  TierName,
 } from './brands.js';
 
 // NOTE: never use expectTypeOf(...).branded here — `.branded` normalizes away the
@@ -16,7 +16,7 @@ describe('brand distinctness (type-level)', () => {
     expectTypeOf<LeaseUuid>().not.toEqualTypeOf<SkuUuid>();
   });
   it('a non-UUID pair is also distinct', () => {
-    expectTypeOf<Denom>().not.toEqualTypeOf<TierName>();
+    expectTypeOf<Address>().not.toEqualTypeOf<Fqdn>();
   });
   it('brands are one-way assignable: TO string, not FROM string', () => {
     expectTypeOf<LeaseUuid>().toExtend<string>();
