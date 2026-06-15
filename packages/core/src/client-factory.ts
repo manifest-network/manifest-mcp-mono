@@ -71,6 +71,7 @@ async function buildClient(
     // The node/fred edge injects the guarded fetch via opts.fetch; default to the platform global.
     const fetch = opts.fetch ?? globalThis.fetch;
     const logger = opts.logger ?? noopLogger;
+    chain.setLogger(logger); // route the manager's 2 init diagnostics to the per-ctx logger (OI-LOG)
     // Await the query client ONCE so ctx.query is concrete (the await-once-then-read Cosmos idiom).
     const query = await chain.getQueryClient();
 

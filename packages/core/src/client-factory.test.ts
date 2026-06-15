@@ -31,6 +31,7 @@ function fakeManager(
     getQueryClient: vi.fn(async () => SENTINEL_QUERY),
     getSigningClient: vi.fn(),
     disconnect: vi.fn(),
+    setLogger: vi.fn(),
     ...over,
   } as unknown as CosmosClientManager;
 }
@@ -116,6 +117,21 @@ describe('createManifestReadClient / createManifestClient', () => {
     });
     expect(injected.fetch).toBe(myFetch);
     expect(injected.logger).toBe(myLogger);
+  });
+
+  it('injects the resolved logger into the manager via setLogger', async () => {
+    const mgr = fakeManager();
+    vi.spyOn(CosmosClientManager, 'getInstance').mockReturnValue(mgr);
+    const myLogger = { debug() {}, info() {}, warn() {}, error() {} };
+    await createManifestReadClient({ config: READ_CONFIG, logger: myLogger });
+    expect(mgr.setLogger).toHaveBeenCalledWith(myLogger);
+  });
+
+  it('injects noopLogger by default', async () => {
+    const mgr = fakeManager();
+    vi.spyOn(CosmosClientManager, 'getInstance').mockReturnValue(mgr);
+    await createManifestReadClient({ config: READ_CONFIG });
+    expect(mgr.setLogger).toHaveBeenCalledWith(noopLogger);
   });
 
   it('dispose() calls chain.disconnect() exactly once (idempotent)', async () => {
