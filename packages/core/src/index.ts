@@ -23,6 +23,14 @@ export {
 } from './brands.js';
 export { CosmosClientManager, type ManifestQueryClient } from './client.js';
 export {
+  createManifestClient,
+  createManifestReadClient,
+  type FullClientOptions,
+  type ManifestClient,
+  type ManifestReadClient,
+  type ReadClientOptions,
+} from './client-factory.js';
+export {
   createConfig,
   createValidatedConfig,
   DEFAULT_RETRY_CONFIG,
@@ -31,6 +39,11 @@ export {
   validateEndpointUrl,
 } from './config.js';
 export { cosmosEstimateFee, cosmosQuery, cosmosTx } from './cosmos.js';
+export type {
+  CapabilityCtx,
+  EventTransport,
+  QueryCtx,
+} from './ctx.js';
 export { parseBooleanEnv } from './env-utils.js';
 // NOTE: the SSRF-guarded fetch (`createGuardedFetch`, `isBlocked`,
 // `BLOCKED_RANGES_*`, `GuardedFetch`) is deliberately NOT re-exported here.
