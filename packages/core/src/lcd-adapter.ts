@@ -8,7 +8,7 @@ import {
   strangelove_ventures as strangeloveVenturesNs,
 } from '@manifest-network/manifestjs';
 import type { ManifestQueryClient } from './client.js';
-import { logger } from './logger.js';
+import { type Logger, noopLogger } from './logger.js';
 import { ManifestMCPError, ManifestMCPErrorCode } from './types.js';
 
 function snakeToCamel(s: string): string {
@@ -128,7 +128,10 @@ function unsupportedModule(modulePath: string): unknown {
  * (e.g. `smart/123,34,99,...`) instead of base64. The REST API expects base64.
  * Patch the methods to convert queryData before the URL is constructed.
  */
-function patchWasmQueryData(wasmLcd: unknown): Record<string, unknown> {
+function patchWasmQueryData(
+  wasmLcd: unknown,
+  logger: Logger = noopLogger,
+): Record<string, unknown> {
   const mod = wasmLcd as Record<string, unknown>;
   const patched: Record<string, unknown> = { ...mod };
   for (const method of ['smartContractState', 'rawContractState']) {
@@ -167,6 +170,7 @@ function patchWasmQueryData(wasmLcd: unknown): Record<string, unknown> {
 
 export async function createLCDQueryClient(
   restEndpoint: string,
+  logger: Logger = noopLogger,
 ): Promise<ManifestQueryClient> {
   let lcd: Awaited<ReturnType<typeof liftedinit.ClientFactory.createLCDClient>>;
   let cosmwasmLcd: Awaited<
@@ -271,7 +275,7 @@ export async function createLCDQueryClient(
       cosmwasm: {
         wasm: {
           v1: adaptModule(
-            patchWasmQueryData(cosmwasmLcd.cosmwasm.wasm.v1),
+            patchWasmQueryData(cosmwasmLcd.cosmwasm.wasm.v1, logger),
             cosmwasmNs.wasm.v1,
           ),
         },

@@ -81,6 +81,7 @@ import {
 } from '@manifest-network/manifestjs';
 import { CosmosClientManager } from './client.js';
 import { createLCDQueryClient } from './lcd-adapter.js';
+import { noopLogger } from './logger.js';
 import type { ManifestMCPConfig, WalletProvider } from './types.js';
 
 const mockCreateLCDQueryClient = vi.mocked(createLCDQueryClient);
@@ -654,6 +655,7 @@ describe('CosmosClientManager', () => {
       const client = await instance.getQueryClient();
       expect(mockCreateLCDQueryClient).toHaveBeenCalledWith(
         'https://rest.example.com',
+        noopLogger,
       );
       expect(mockCreateRPCQueryClient).not.toHaveBeenCalled();
       expect(client).toEqual({ mock: 'lcdClient' });
@@ -667,6 +669,7 @@ describe('CosmosClientManager', () => {
       await instance.getQueryClient();
       expect(mockCreateLCDQueryClient).toHaveBeenCalledWith(
         'https://rest.example.com',
+        noopLogger,
       );
       expect(mockCreateRPCQueryClient).not.toHaveBeenCalled();
     });

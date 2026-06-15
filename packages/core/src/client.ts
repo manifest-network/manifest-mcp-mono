@@ -262,7 +262,7 @@ export class CosmosClientManager {
         if (this.config.restUrl) {
           // Use LCD/REST for queries when restUrl is configured
           client = await withRetry(
-            () => createLCDQueryClient(this.config.restUrl!),
+            () => createLCDQueryClient(this.config.restUrl!, this.logger),
             {
               config: this.config.retry,
               operationName: 'connect LCD query client',
