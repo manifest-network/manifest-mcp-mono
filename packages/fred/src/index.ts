@@ -18,6 +18,7 @@ export {
   createLeaseDataSignMessage,
   createSignMessage,
 } from './http/auth.js';
+export { createAuthTokens } from './http/auth-tokens-factory.js';
 export {
   type FredActionResponse,
   type FredInstanceInfo,
