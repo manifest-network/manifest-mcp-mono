@@ -101,6 +101,13 @@ export {
   structuredResponse,
   withErrorHandling,
 } from './server-utils.js';
+export {
+  type AuthSigner,
+  createSignerAdapter,
+  requireAuthSigner,
+  type Signer,
+  type TxSigner,
+} from './signer.js';
 // SKU resolution (shared by fred + agent-core)
 export {
   listSkuCandidates,
