@@ -82,6 +82,17 @@ export interface DeployManifestInput {
   pollOptions?: Omit<PollOptions, 'abortSignal'>;
 }
 
+/** Per-call runtime orchestration for a deploy (fred layer). Split off the data specs per §5.1. */
+export interface DeployCallOptions {
+  gasMultiplier?: number;
+  onLeaseCreated?: (
+    leaseUuid: string,
+    providerUrl: string,
+  ) => void | Promise<void>;
+  abortSignal?: AbortSignal;
+  pollOptions?: Omit<PollOptions, 'abortSignal'>;
+}
+
 export interface DeployManifestOptions {
   clientManager: CosmosClientManager;
   getAuthToken: (address: string, leaseUuid: string) => Promise<string>;

@@ -24,6 +24,21 @@ describe('manifest-types shape (type-level)', () => {
     >();
     expectTypeOf<DeployResult['lease_uuid']>().toExtend<string>(); // still erases to string (non-breaking)
   });
+  it('AppDeploySpec / ManifestDeploySpec are data-only (no runtime fields)', () => {
+    type App = import('./manifest-types.js').AppDeploySpec;
+    type Man = import('./manifest-types.js').ManifestDeploySpec;
+    expectTypeOf<App>().not.toHaveProperty('gasMultiplier');
+    expectTypeOf<App>().not.toHaveProperty('onLeaseCreated');
+    expectTypeOf<App>().not.toHaveProperty('abortSignal');
+    expectTypeOf<App>().not.toHaveProperty('pollOptions');
+    expectTypeOf<Man>().not.toHaveProperty('gasMultiplier');
+    expectTypeOf<Man>().not.toHaveProperty('onLeaseCreated');
+    expectTypeOf<Man>().not.toHaveProperty('abortSignal');
+    expectTypeOf<Man>().not.toHaveProperty('pollOptions');
+    expectTypeOf<Man['sku']>().toEqualTypeOf<
+      import('./manifest-types.js').SkuIntent
+    >();
+  });
   it('SkuIntent uuids are branded; size is plain string', () => {
     type ByName = Extract<
       import('./manifest-types.js').SkuIntent,

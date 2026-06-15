@@ -46,6 +46,7 @@ export {
   parseLogLevel,
 } from './logger.js';
 export type {
+  AppDeploySpec,
   BuildManifestOptions,
   ConnectionDetails,
   DeployResult,
@@ -60,6 +61,7 @@ export type {
   FredServiceStatus,
   InstanceInfo,
   LeaseConnectionResponse,
+  ManifestDeploySpec,
   ManifestFormat,
   ManifestValidationResult,
   PortConfig,

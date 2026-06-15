@@ -194,6 +194,51 @@ export interface DeployResult {
   readonly service_name?: string;
 }
 
+// Data-only deploy specs (spec §5.1). The 4 runtime-orchestration fields (gasMultiplier/
+// onLeaseCreated/abortSignal/pollOptions) are NOT here — they live on fred's DeployCallOptions
+// (PollOptions carries an AbortSignal + callbacks, so keeping it here would invert the core→fred DAG).
+// Transitional: Plan 3b-2 Task 2 makes DeployAppInput = AppDeploySpec / DeployManifestInput = ManifestDeploySpec (the fred Deploy*Input names stay as aliases). The overlap with the still-active fred Deploy*Input interfaces is deliberate + temporary until that flip.
+/** Data-only deploy spec; runtime orchestration lives on DeployCallOptions. */
+export interface AppDeploySpec {
+  image?: string;
+  port?: number;
+  size: string;
+  /** Disambiguate a duplicate SKU name to one provider (ENG-258). Caller-stringly; branded in skuSelectorFromInput. */
+  providerUuid?: string;
+  /** Pin a specific SKU by uuid (ENG-258). Wins over size/providerUuid. */
+  skuUuid?: string;
+  env?: Record<string, string>;
+  command?: string[];
+  args?: string[];
+  user?: string;
+  tmpfs?: string[];
+  health_check?: {
+    test: string[];
+    interval?: string;
+    timeout?: string;
+    retries?: number;
+    start_period?: string;
+  };
+  stop_grace_period?: string;
+  init?: boolean;
+  expose?: string[];
+  labels?: Record<string, string>;
+  storage?: string;
+  depends_on?: Record<string, { condition: string }>;
+  services?: Record<string, ServiceConfig>;
+  customDomain?: string;
+  serviceName?: string;
+}
+
+/** Data-only deploy spec; runtime orchestration lives on DeployCallOptions. */
+export interface ManifestDeploySpec {
+  manifest: string;
+  sku: SkuIntent;
+  storage?: string;
+  customDomain?: string;
+  serviceName?: string;
+}
+
 // Unified SKU selector (was fred's `SkuSelector`). byName = resolve/disambiguate by name;
 // resolved = caller pre-resolved both ids. uuids are branded; `size` stays plain string (post-v7 scope-down).
 // NOTE (trust-cast): the byName `providerUuid`/`skuUuid` are OPTIONAL NARROWING HINTS that `resolveSku`

@@ -93,6 +93,7 @@ export {
   type ServiceConfig,
 } from './tools/deployApp.js';
 export {
+  type DeployCallOptions,
   type DeployManifestInput,
   type DeployManifestOptions,
   deployManifest,
