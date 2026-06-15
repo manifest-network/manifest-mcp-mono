@@ -1,6 +1,10 @@
+import { CosmosClientManager } from './client.js';
+import { createValidatedConfig } from './config.js';
 import type { CapabilityCtx, EventTransport, QueryCtx } from './ctx.js';
 import type { Logger, LogLevel } from './logger.js';
+import { noopLogger } from './logger.js';
 import type { Signer } from './signer.js';
+import { createSignerAdapter } from './signer.js';
 import type { ManifestMCPConfig, WalletProvider } from './types.js';
 import { ManifestMCPError, ManifestMCPErrorCode } from './types.js';
 
@@ -28,32 +32,84 @@ export interface FullClientOptions extends BaseClientOptions {
 export type ReadClientOptions = BaseClientOptions;
 
 /**
- * @public — construct a FULL (signing) Manifest client. ASYNC: awaits the underlying query client once
- * so `client.query` is concrete (the Cosmos await-once-then-read idiom). Throws `INVALID_CONFIG` on bad
- * config or a wallet lacking `signArbitrary` (the latter at first auth use).
+ * A `WalletProvider` for query-only clients. `getInstance` requires a wallet even in query-only mode, but
+ * queries never sign — so this stub is stored and never invoked. Every signing accessor REJECTS with
+ * `INVALID_CONFIG` (a rejected promise, NOT a sync throw — the methods are `Promise`-returning, so a
+ * consumer's `await wallet.getSigner()` must see a rejection) as a hard backstop. `signArbitrary` is
+ * included (optional on `WalletProvider`) so the stub fails closed there too.
  */
-export async function createManifestClient(
-  opts: FullClientOptions,
-): Promise<ManifestClient> {
-  // Body lands in Task 4. Temporary throw keeps the signature honest under tsc.
-  void opts;
-  throw new ManifestMCPError(
-    ManifestMCPErrorCode.INVALID_CONFIG,
-    'not implemented',
-  );
+function queryOnlyWalletStub(): WalletProvider {
+  const fail = (): Promise<never> =>
+    Promise.reject(
+      new ManifestMCPError(
+        ManifestMCPErrorCode.INVALID_CONFIG,
+        'This client was created in query-only mode (createManifestReadClient) and cannot sign or broadcast. Use createManifestClient with a walletProvider for transactions.',
+      ),
+    );
+  return { getAddress: fail, getSigner: fail, signArbitrary: fail };
 }
 
 /**
- * @public — construct a QUERY-ONLY Manifest client (no signer/tx/subscribe at the type level). ASYNC.
+ * Shared ctx builder. Returns the base `ManifestReadClient` (ctx fields + `dispose`); the full factory
+ * up-casts to `ManifestClient` (sound — `withSigner=true` ⇒ a defined signer). NOTE (cross-ctx hazard,
+ * OI-DISPOSE): `getInstance` mutates the shared instance for a given config key, so do not construct a
+ * read client (wallet stub) against a key a full client already holds — the common case is safe because
+ * read configs omit `rpcUrl` → a different key.
  */
+async function buildClient(
+  opts: BaseClientOptions,
+  walletProvider: WalletProvider,
+  withSigner: boolean,
+): Promise<ManifestReadClient> {
+  const config = createValidatedConfig(opts.config); // throws INVALID_CONFIG before any instance is keyed
+  const chain = CosmosClientManager.getInstance(config, walletProvider); // ONCE; acquires one refCount
+  try {
+    const signer = withSigner
+      ? createSignerAdapter(walletProvider, config.addressPrefix) // config.addressPrefix defaulted in createConfig
+      : undefined;
+    // NEUTRAL fetch resolution — never import the node-only guarded fetch (ENG-281 browser-bundle hazard).
+    // The node/fred edge injects the guarded fetch via opts.fetch; default to the platform global.
+    const fetch = opts.fetch ?? globalThis.fetch;
+    const logger = opts.logger ?? noopLogger;
+    // Await the query client ONCE so ctx.query is concrete (the await-once-then-read Cosmos idiom).
+    const query = await chain.getQueryClient();
+
+    // dispose: balance the single getInstance refCount; idempotent so a double-dispose is safe.
+    let disposed = false;
+    const dispose = (): void => {
+      if (disposed) return;
+      disposed = true;
+      chain.disconnect();
+    };
+
+    // In query-only mode OMIT the signer key entirely (so `'signer' in client` is false — the runtime
+    // matches the read type) rather than carrying `signer: undefined`. 4d binds the read/tx action
+    // methods over this ctx; 4b returns the ctx + dispose shell. Structurally a ManifestReadClient; the
+    // full factory up-casts to ManifestClient.
+    const base = { chain, query, fetch, logger, dispose };
+    const client = signer ? { ...base, signer } : base;
+    return client as ManifestReadClient;
+  } catch (err) {
+    // getQueryClient (or signer construction) failed AFTER getInstance acquired the refCount, and the
+    // caller never received a `dispose()` handle. Release the acquire once so a construction failure does
+    // not leak a phantom holder (OI-DISPOSE failure path), then re-throw.
+    chain.disconnect();
+    throw err;
+  }
+}
+
+export async function createManifestClient(
+  opts: FullClientOptions,
+): Promise<ManifestClient> {
+  // withSigner=true → the returned client always has a defined signer, so the up-cast to the
+  // required-signer ManifestClient is sound (mirrors SigningStargateClient.connectWithSigner's subtype).
+  return (await buildClient(opts, opts.walletProvider, true)) as ManifestClient;
+}
+
 export async function createManifestReadClient(
   opts: ReadClientOptions,
 ): Promise<ManifestReadClient> {
-  void opts;
-  throw new ManifestMCPError(
-    ManifestMCPErrorCode.INVALID_CONFIG,
-    'not implemented',
-  );
+  return buildClient(opts, queryOnlyWalletStub(), false);
 }
 
 /**
