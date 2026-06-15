@@ -139,4 +139,33 @@ describe('createManifestReadClient / createManifestClient', () => {
     ).rejects.toThrow('RPC_CONNECTION_FAILED');
     expect(mgr.disconnect).toHaveBeenCalledTimes(1); // construction-failure release balances the acquire
   });
+
+  it('full mode: releases the refCount once if getQueryClient rejects during construction', async () => {
+    const mgr = fakeManager({
+      getQueryClient: vi.fn(async () => {
+        throw new Error('RPC_CONNECTION_FAILED');
+      }),
+    });
+    vi.spyOn(CosmosClientManager, 'getInstance').mockReturnValue(mgr);
+    await expect(
+      createManifestClient({
+        config: FULL_CONFIG,
+        walletProvider: fakeWallet(),
+      }),
+    ).rejects.toThrow('RPC_CONNECTION_FAILED');
+    // signer is constructed BEFORE the await; the construction-failure release must still disconnect once.
+    expect(mgr.disconnect).toHaveBeenCalledTimes(1);
+  });
+
+  it('full mode: dispose() calls chain.disconnect() exactly once (idempotent)', async () => {
+    const mgr = fakeManager();
+    vi.spyOn(CosmosClientManager, 'getInstance').mockReturnValue(mgr);
+    const full = await createManifestClient({
+      config: FULL_CONFIG,
+      walletProvider: fakeWallet(),
+    });
+    full.dispose();
+    full.dispose();
+    expect(mgr.disconnect).toHaveBeenCalledTimes(1);
+  });
 });
