@@ -1,4 +1,5 @@
 import type {
+  AppDeploySpec,
   CosmosClientManager,
   SkuIntent,
 } from '@manifest-network/manifest-mcp-core';
@@ -8,7 +9,6 @@ import {
   ManifestMCPError,
   ManifestMCPErrorCode,
 } from '@manifest-network/manifest-mcp-core';
-import type { PollOptions } from '../http/fred.js';
 import {
   type BuildManifestOptions,
   buildManifest,
@@ -16,70 +16,18 @@ import {
   validateServiceName,
 } from '../manifest.js';
 import type { DeployAppResult } from './deployManifest.js';
-import { deployManifest } from './deployManifest.js';
+import { type DeployCallOptions, deployManifest } from './deployManifest.js';
 
-export type { DeployAppResult } from './deployManifest.js';
+export type { DeployAppResult, DeployCallOptions } from './deployManifest.js';
 
 import type { ServiceConfig } from '@manifest-network/manifest-mcp-core';
 
 export type { ServiceConfig };
 
-export interface DeployAppInput {
-  image?: string;
-  port?: number;
-  size: string;
-  /** Disambiguate a duplicate SKU name to one provider (ENG-258). */
-  providerUuid?: string;
-  /** Pin a specific SKU by uuid, bypassing name resolution (ENG-258). Wins over size/providerUuid. */
-  skuUuid?: string;
-  env?: Record<string, string>;
-  command?: string[];
-  args?: string[];
-  user?: string;
-  tmpfs?: string[];
-  health_check?: {
-    test: string[];
-    interval?: string;
-    timeout?: string;
-    retries?: number;
-    start_period?: string;
-  };
-  stop_grace_period?: string;
-  init?: boolean;
-  expose?: string[];
-  labels?: Record<string, string>;
-  storage?: string;
-  depends_on?: Record<string, { condition: string }>;
-  services?: Record<string, ServiceConfig>;
-  gasMultiplier?: number;
-  /**
-   * Optional FQDN to attach to the lease item once the create-lease tx
-   * confirms. The set-domain tx is submitted after `onLeaseCreated` fires
-   * and before the manifest upload, so providerd has the domain available
-   * when it provisions the container. Failures here surface as the same
-   * "Deploy partially succeeded: lease X was created..." error shape as
-   * upload/poll failures — the caller can `close_lease` to clean up or
-   * retry `set_item_custom_domain` standalone.
-   */
-  customDomain?: string;
-  /**
-   * Required when `customDomain` is set on a stack lease (i.e., `services`
-   * is provided). Must match one of the keys in `services`. Omit for an
-   * image+port single-item legacy lease.
-   */
-  serviceName?: string;
-  /** Fires once after the create-lease TX confirms, before upload/poll. Awaited. Errors propagate. */
-  onLeaseCreated?: (
-    leaseUuid: string,
-    providerUrl: string,
-  ) => void | Promise<void>;
-  /** Aborts upload and poll (not the already-submitted chain TX). */
-  abortSignal?: AbortSignal;
-  /** Forwarded to the internal pollLeaseUntilReady call. abortSignal is the top-level field above. */
-  pollOptions?: Omit<PollOptions, 'abortSignal'>;
-}
+/** Data-only deploy spec for a high-level app deployment (spec §5.1). Public name kept for compatibility. */
+export type DeployAppInput = AppDeploySpec;
 
-function skuSelectorFromInput(input: DeployAppInput): SkuIntent {
+function skuSelectorFromInput(input: AppDeploySpec): SkuIntent {
   const skuUuid = input.skuUuid?.trim();
   const providerUuid = input.providerUuid?.trim();
   // `resolved` requires BOTH ids — only then can fred skip the lookup.
@@ -110,23 +58,24 @@ export async function deployApp(
     leaseUuid: string,
     metaHashHex: string,
   ) => Promise<string>,
-  input: DeployAppInput,
+  spec: AppDeploySpec,
+  callOptions: DeployCallOptions,
   fetchFn?: typeof globalThis.fetch,
 ): Promise<DeployAppResult> {
   // Validate mutually exclusive inputs
-  if (input.image && input.services) {
+  if (spec.image && spec.services) {
     throw new ManifestMCPError(
       ManifestMCPErrorCode.INVALID_CONFIG,
       'image and services are mutually exclusive',
     );
   }
-  if (!input.image && !input.services) {
+  if (!spec.image && !spec.services) {
     throw new ManifestMCPError(
       ManifestMCPErrorCode.INVALID_CONFIG,
       'either image or services is required',
     );
   }
-  if (input.image && !input.port) {
+  if (spec.image && !spec.port) {
     throw new ManifestMCPError(
       ManifestMCPErrorCode.INVALID_CONFIG,
       'port is required when using image',
@@ -138,8 +87,8 @@ export async function deployApp(
   // the manifest it receives (single-service vs stack) — so we just emit
   // the manifest JSON here and delegate.
   let manifestJson: string;
-  if (input.services) {
-    for (const name of Object.keys(input.services)) {
+  if (spec.services) {
+    for (const name of Object.keys(spec.services)) {
       if (!validateServiceName(name)) {
         throw new ManifestMCPError(
           ManifestMCPErrorCode.INVALID_CONFIG,
@@ -149,7 +98,7 @@ export async function deployApp(
     }
 
     const services: Record<string, BuildManifestOptions> = {};
-    for (const [name, svc] of Object.entries(input.services)) {
+    for (const [name, svc] of Object.entries(spec.services)) {
       services[name] = {
         image: svc.image,
         ports: svc.ports ?? {},
@@ -169,22 +118,22 @@ export async function deployApp(
   } else {
     // image is guaranteed defined here: the guard above ensures !image && !services is false,
     // and the if-branch handles the services case. TypeScript can't narrow across if/else.
-    const image = input.image as string;
+    const image = spec.image as string;
     manifestJson = JSON.stringify(
       buildManifest({
         image,
-        ports: { [`${input.port}/tcp`]: {} },
-        env: input.env,
-        command: input.command,
-        args: input.args,
-        user: input.user,
-        tmpfs: input.tmpfs,
-        health_check: input.health_check,
-        stop_grace_period: input.stop_grace_period,
-        init: input.init,
-        expose: input.expose,
-        labels: input.labels,
-        depends_on: input.depends_on,
+        ports: { [`${spec.port}/tcp`]: {} },
+        env: spec.env,
+        command: spec.command,
+        args: spec.args,
+        user: spec.user,
+        tmpfs: spec.tmpfs,
+        health_check: spec.health_check,
+        stop_grace_period: spec.stop_grace_period,
+        init: spec.init,
+        expose: spec.expose,
+        labels: spec.labels,
+        depends_on: spec.depends_on,
       }),
     );
   }
@@ -192,15 +141,12 @@ export async function deployApp(
   return deployManifest(
     {
       manifest: manifestJson,
-      sku: skuSelectorFromInput(input),
-      storage: input.storage,
-      customDomain: input.customDomain,
-      serviceName: input.serviceName,
-      gasMultiplier: input.gasMultiplier,
-      onLeaseCreated: input.onLeaseCreated,
-      abortSignal: input.abortSignal,
-      pollOptions: input.pollOptions,
+      sku: skuSelectorFromInput(spec),
+      storage: spec.storage,
+      customDomain: spec.customDomain,
+      serviceName: spec.serviceName,
     },
+    callOptions,
     { clientManager, getAuthToken, getLeaseDataAuthToken, fetchFn },
   );
 }

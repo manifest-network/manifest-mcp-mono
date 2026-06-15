@@ -696,9 +696,11 @@ export function registerTools(deps: RegisterToolsDeps): void {
             services: args.services,
             providerUuid: args.provider_uuid,
             skuUuid: args.sku_uuid,
-            gasMultiplier: args.gas_multiplier,
             customDomain: args.custom_domain,
             serviceName: args.service_name,
+          },
+          {
+            gasMultiplier: args.gas_multiplier,
             abortSignal: extra.signal,
             onLeaseCreated: emit
               ? (leaseUuid, providerUrl) => {

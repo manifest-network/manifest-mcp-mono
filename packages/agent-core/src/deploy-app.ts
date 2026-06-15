@@ -546,6 +546,7 @@ export async function deployApp(
       getAuthToken,
       getLeaseDataAuthToken,
       fredInput,
+      {},
       opts.fetchFn,
     );
   } catch (err) {

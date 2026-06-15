@@ -197,7 +197,8 @@ export interface DeployResult {
 // Data-only deploy specs (spec §5.1). The 4 runtime-orchestration fields (gasMultiplier/
 // onLeaseCreated/abortSignal/pollOptions) are NOT here — they live on fred's DeployCallOptions
 // (PollOptions carries an AbortSignal + callbacks, so keeping it here would invert the core→fred DAG).
-// Transitional: Plan 3b-2 Task 2 makes DeployAppInput = AppDeploySpec / DeployManifestInput = ManifestDeploySpec (the fred Deploy*Input names stay as aliases). The overlap with the still-active fred Deploy*Input interfaces is deliberate + temporary until that flip.
+// The fred-layer Deploy*Input names are permanent compatibility aliases (DeployAppInput = AppDeploySpec,
+// DeployManifestInput = ManifestDeploySpec) kept so existing callers keep working; the canonical home is here.
 /** Data-only deploy spec; runtime orchestration lives on DeployCallOptions. */
 export interface AppDeploySpec {
   image?: string;

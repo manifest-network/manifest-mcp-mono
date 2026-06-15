@@ -148,6 +148,7 @@ describe('deployApp', () => {
         size: 'docker-micro',
         env: { FOO: 'bar' },
       },
+      {},
     );
 
     expect(result.lease_uuid).toBe('550e8400-e29b-41d4-a716-446655440000');
@@ -179,12 +180,17 @@ describe('deployApp', () => {
       address: 'manifest1tenant',
     });
 
-    await deployApp(cm as any, mockGetAuthToken, mockGetLeaseDataAuthToken, {
-      image: 'nginx:alpine',
-      port: 80,
-      size: 'docker-micro',
-      gasMultiplier: 5.0,
-    });
+    await deployApp(
+      cm as any,
+      mockGetAuthToken,
+      mockGetLeaseDataAuthToken,
+      {
+        image: 'nginx:alpine',
+        port: 80,
+        size: 'docker-micro',
+      },
+      { gasMultiplier: 5.0 },
+    );
 
     expect(mockCosmosTx).toHaveBeenCalledWith(
       expect.anything(),
@@ -203,17 +209,23 @@ describe('deployApp', () => {
       address: 'manifest1tenant',
     });
 
-    await deployApp(cm as any, mockGetAuthToken, mockGetLeaseDataAuthToken, {
-      size: 'docker-micro',
-      services: {
-        web: { image: 'nginx', ports: { '80/tcp': {} } },
-        db: {
-          image: 'mysql:8',
-          ports: { '3306/tcp': {} },
-          env: { MYSQL_ROOT_PASSWORD: 'secret' },
+    await deployApp(
+      cm as any,
+      mockGetAuthToken,
+      mockGetLeaseDataAuthToken,
+      {
+        size: 'docker-micro',
+        services: {
+          web: { image: 'nginx', ports: { '80/tcp': {} } },
+          db: {
+            image: 'mysql:8',
+            ports: { '3306/tcp': {} },
+            env: { MYSQL_ROOT_PASSWORD: 'secret' },
+          },
         },
       },
-    });
+      {},
+    );
 
     const payload = new TextDecoder().decode(
       mockUploadLeaseData.mock.calls[0][2],
@@ -239,13 +251,19 @@ describe('deployApp', () => {
       address: 'manifest1tenant',
     });
 
-    await deployApp(cm as any, mockGetAuthToken, mockGetLeaseDataAuthToken, {
-      size: 'docker-micro',
-      services: {
-        web: { image: 'nginx' },
-        db: { image: 'mysql:8' },
+    await deployApp(
+      cm as any,
+      mockGetAuthToken,
+      mockGetLeaseDataAuthToken,
+      {
+        size: 'docker-micro',
+        services: {
+          web: { image: 'nginx' },
+          db: { image: 'mysql:8' },
+        },
       },
-    });
+      {},
+    );
 
     const txArgs = mockCosmosTx.mock.calls[0][3] as string[];
     expect(txArgs).toContain('sku-micro-uuid:1:web');
@@ -259,12 +277,18 @@ describe('deployApp', () => {
     const cm = makeMockClientManager({ queryClient: qc });
 
     await expect(
-      deployApp(cm as any, mockGetAuthToken, mockGetLeaseDataAuthToken, {
-        image: 'nginx',
-        port: 80,
-        size: 'docker-micro',
-        services: { web: { image: 'nginx' } },
-      }),
+      deployApp(
+        cm as any,
+        mockGetAuthToken,
+        mockGetLeaseDataAuthToken,
+        {
+          image: 'nginx',
+          port: 80,
+          size: 'docker-micro',
+          services: { web: { image: 'nginx' } },
+        },
+        {},
+      ),
     ).rejects.toMatchObject({
       code: ManifestMCPErrorCode.INVALID_CONFIG,
       message: expect.stringContaining('mutually exclusive'),
@@ -276,9 +300,15 @@ describe('deployApp', () => {
     const cm = makeMockClientManager({ queryClient: qc });
 
     await expect(
-      deployApp(cm as any, mockGetAuthToken, mockGetLeaseDataAuthToken, {
-        size: 'docker-micro',
-      }),
+      deployApp(
+        cm as any,
+        mockGetAuthToken,
+        mockGetLeaseDataAuthToken,
+        {
+          size: 'docker-micro',
+        },
+        {},
+      ),
     ).rejects.toMatchObject({
       code: ManifestMCPErrorCode.INVALID_CONFIG,
       message: expect.stringContaining('either image or services is required'),
@@ -290,10 +320,16 @@ describe('deployApp', () => {
     const cm = makeMockClientManager({ queryClient: qc });
 
     await expect(
-      deployApp(cm as any, mockGetAuthToken, mockGetLeaseDataAuthToken, {
-        image: 'nginx',
-        size: 'docker-micro',
-      }),
+      deployApp(
+        cm as any,
+        mockGetAuthToken,
+        mockGetLeaseDataAuthToken,
+        {
+          image: 'nginx',
+          size: 'docker-micro',
+        },
+        {},
+      ),
     ).rejects.toMatchObject({
       code: ManifestMCPErrorCode.INVALID_CONFIG,
       message: expect.stringContaining('port is required'),
@@ -323,11 +359,17 @@ describe('deployApp', () => {
     });
 
     await expect(
-      deployApp(cm as any, mockGetAuthToken, mockGetLeaseDataAuthToken, {
-        image: 'nginx:alpine',
-        port: 80,
-        size: 'docker-micro',
-      }),
+      deployApp(
+        cm as any,
+        mockGetAuthToken,
+        mockGetLeaseDataAuthToken,
+        {
+          image: 'nginx:alpine',
+          port: 80,
+          size: 'docker-micro',
+        },
+        {},
+      ),
     ).rejects.toMatchObject({
       code: ManifestMCPErrorCode.TX_FAILED,
       message: expect.stringContaining('must be a valid UUID'),
@@ -343,10 +385,16 @@ describe('deployApp', () => {
     const cm = makeMockClientManager({ queryClient: qc });
 
     await expect(
-      deployApp(cm as any, mockGetAuthToken, mockGetLeaseDataAuthToken, {
-        size: 'docker-micro',
-        services: { [name]: { image: 'nginx' } },
-      }),
+      deployApp(
+        cm as any,
+        mockGetAuthToken,
+        mockGetLeaseDataAuthToken,
+        {
+          size: 'docker-micro',
+          services: { [name]: { image: 'nginx' } },
+        },
+        {},
+      ),
     ).rejects.toMatchObject({
       code: ManifestMCPErrorCode.INVALID_CONFIG,
       message: expect.stringContaining('Invalid service name'),
@@ -373,12 +421,17 @@ describe('deployApp', () => {
       order.push('onLeaseCreated');
     });
 
-    await deployApp(cm as any, mockGetAuthToken, mockGetLeaseDataAuthToken, {
-      image: 'nginx:alpine',
-      port: 80,
-      size: 'docker-micro',
-      onLeaseCreated,
-    });
+    await deployApp(
+      cm as any,
+      mockGetAuthToken,
+      mockGetLeaseDataAuthToken,
+      {
+        image: 'nginx:alpine',
+        port: 80,
+        size: 'docker-micro',
+      },
+      { onLeaseCreated },
+    );
 
     expect(onLeaseCreated).toHaveBeenCalledTimes(1);
     expect(onLeaseCreated).toHaveBeenCalledWith(
@@ -400,12 +453,17 @@ describe('deployApp', () => {
     });
 
     await expect(
-      deployApp(cm as any, mockGetAuthToken, mockGetLeaseDataAuthToken, {
-        image: 'nginx:alpine',
-        port: 80,
-        size: 'docker-micro',
-        onLeaseCreated,
-      }),
+      deployApp(
+        cm as any,
+        mockGetAuthToken,
+        mockGetLeaseDataAuthToken,
+        {
+          image: 'nginx:alpine',
+          port: 80,
+          size: 'docker-micro',
+        },
+        { onLeaseCreated },
+      ),
     ).rejects.toThrow(/registry write failed/);
 
     // Upload and poll never run when the callback throws.
@@ -430,12 +488,17 @@ describe('deployApp', () => {
       order.push('onLeaseCreated-done');
     });
 
-    await deployApp(cm as any, mockGetAuthToken, mockGetLeaseDataAuthToken, {
-      image: 'nginx:alpine',
-      port: 80,
-      size: 'docker-micro',
-      onLeaseCreated,
-    });
+    await deployApp(
+      cm as any,
+      mockGetAuthToken,
+      mockGetLeaseDataAuthToken,
+      {
+        image: 'nginx:alpine',
+        port: 80,
+        size: 'docker-micro',
+      },
+      { onLeaseCreated },
+    );
 
     expect(order).toEqual(['onLeaseCreated-done', 'upload']);
   });
@@ -452,12 +515,17 @@ describe('deployApp', () => {
     });
 
     await expect(
-      deployApp(cm as any, mockGetAuthToken, mockGetLeaseDataAuthToken, {
-        image: 'nginx:alpine',
-        port: 80,
-        size: 'docker-micro',
-        onLeaseCreated,
-      }),
+      deployApp(
+        cm as any,
+        mockGetAuthToken,
+        mockGetLeaseDataAuthToken,
+        {
+          image: 'nginx:alpine',
+          port: 80,
+          size: 'docker-micro',
+        },
+        { onLeaseCreated },
+      ),
     ).rejects.toThrow(/async registry write failed/);
 
     expect(mockUploadLeaseData).not.toHaveBeenCalled();
@@ -475,18 +543,25 @@ describe('deployApp', () => {
     const onProgress = vi.fn();
     const checkChainState = vi.fn().mockResolvedValue(null);
 
-    await deployApp(cm as any, mockGetAuthToken, mockGetLeaseDataAuthToken, {
-      image: 'nginx:alpine',
-      port: 80,
-      size: 'docker-micro',
-      abortSignal: controller.signal,
-      pollOptions: {
-        intervalMs: 123,
-        timeoutMs: 45_678,
-        onProgress,
-        checkChainState,
+    await deployApp(
+      cm as any,
+      mockGetAuthToken,
+      mockGetLeaseDataAuthToken,
+      {
+        image: 'nginx:alpine',
+        port: 80,
+        size: 'docker-micro',
       },
-    });
+      {
+        abortSignal: controller.signal,
+        pollOptions: {
+          intervalMs: 123,
+          timeoutMs: 45_678,
+          onProgress,
+          checkChainState,
+        },
+      },
+    );
 
     expect(mockPollLeaseUntilReady).toHaveBeenCalledTimes(1);
     const forwarded = mockPollLeaseUntilReady.mock.calls[0][3];
@@ -506,11 +581,17 @@ describe('deployApp', () => {
       address: 'manifest1tenant',
     });
 
-    await deployApp(cm as any, mockGetAuthToken, mockGetLeaseDataAuthToken, {
-      image: 'nginx:alpine',
-      port: 80,
-      size: 'docker-micro',
-    });
+    await deployApp(
+      cm as any,
+      mockGetAuthToken,
+      mockGetLeaseDataAuthToken,
+      {
+        image: 'nginx:alpine',
+        port: 80,
+        size: 'docker-micro',
+      },
+      {},
+    );
 
     expect(mockPollLeaseUntilReady).toHaveBeenCalledTimes(1);
     const forwarded = mockPollLeaseUntilReady.mock.calls[0][3];
@@ -530,13 +611,17 @@ describe('deployApp', () => {
     const onLeaseCreated = vi.fn();
 
     await expect(
-      deployApp(cm as any, mockGetAuthToken, mockGetLeaseDataAuthToken, {
-        image: 'nginx:alpine',
-        port: 80,
-        size: 'docker-micro',
-        abortSignal: controller.signal,
-        onLeaseCreated,
-      }),
+      deployApp(
+        cm as any,
+        mockGetAuthToken,
+        mockGetLeaseDataAuthToken,
+        {
+          image: 'nginx:alpine',
+          port: 80,
+          size: 'docker-micro',
+        },
+        { abortSignal: controller.signal, onLeaseCreated },
+      ),
     ).rejects.toThrow();
 
     // The lease was created on-chain — caller MUST be notified regardless of abort state.
@@ -561,12 +646,17 @@ describe('deployApp', () => {
     controller.abort(new Error('user cancelled'));
 
     await expect(
-      deployApp(cm as any, mockGetAuthToken, mockGetLeaseDataAuthToken, {
-        image: 'nginx:alpine',
-        port: 80,
-        size: 'docker-micro',
-        abortSignal: controller.signal,
-      }),
+      deployApp(
+        cm as any,
+        mockGetAuthToken,
+        mockGetLeaseDataAuthToken,
+        {
+          image: 'nginx:alpine',
+          port: 80,
+          size: 'docker-micro',
+        },
+        { abortSignal: controller.signal },
+      ),
     ).rejects.toThrow(/user cancelled|partially succeeded/);
 
     expect(mockUploadLeaseData).not.toHaveBeenCalled();
@@ -589,11 +679,17 @@ describe('deployApp', () => {
 
     let caught: unknown;
     try {
-      await deployApp(cm as any, mockGetAuthToken, mockGetLeaseDataAuthToken, {
-        image: 'nginx:alpine',
-        port: 80,
-        size: 'docker-micro',
-      });
+      await deployApp(
+        cm as any,
+        mockGetAuthToken,
+        mockGetLeaseDataAuthToken,
+        {
+          image: 'nginx:alpine',
+          port: 80,
+          size: 'docker-micro',
+        },
+        {},
+      );
     } catch (err) {
       caught = err;
     }
@@ -627,11 +723,17 @@ describe('deployApp', () => {
     );
 
     await expect(
-      deployApp(cm as any, mockGetAuthToken, mockGetLeaseDataAuthToken, {
-        image: 'nginx:alpine',
-        port: 80,
-        size: 'docker-micro',
-      }),
+      deployApp(
+        cm as any,
+        mockGetAuthToken,
+        mockGetLeaseDataAuthToken,
+        {
+          image: 'nginx:alpine',
+          port: 80,
+          size: 'docker-micro',
+        },
+        {},
+      ),
     ).rejects.toThrow(/Deploy partially succeeded/);
   });
 
@@ -644,12 +746,17 @@ describe('deployApp', () => {
 
     const controller = new AbortController();
 
-    await deployApp(cm as any, mockGetAuthToken, mockGetLeaseDataAuthToken, {
-      image: 'nginx:alpine',
-      port: 80,
-      size: 'docker-micro',
-      abortSignal: controller.signal,
-    });
+    await deployApp(
+      cm as any,
+      mockGetAuthToken,
+      mockGetLeaseDataAuthToken,
+      {
+        image: 'nginx:alpine',
+        port: 80,
+        size: 'docker-micro',
+      },
+      { abortSignal: controller.signal },
+    );
 
     expect(mockUploadLeaseData).toHaveBeenCalledTimes(1);
     // uploadLeaseData(url, uuid, payload, token, fetchFn?, abortSignal?)
@@ -678,6 +785,7 @@ describe('deployApp', () => {
         mockGetAuthToken,
         mockGetLeaseDataAuthToken,
         { image: 'nginx:alpine', port: 80, size: 'docker-micro' },
+        {},
       );
 
       expect(mockSetItemCustomDomain).not.toHaveBeenCalled();
@@ -702,6 +810,7 @@ describe('deployApp', () => {
           size: 'docker-micro',
           customDomain: 'app.example.com',
         },
+        {},
       );
 
       expect(mockSetItemCustomDomain).toHaveBeenCalledWith(
@@ -722,13 +831,18 @@ describe('deployApp', () => {
         address: 'manifest1tenant',
       });
 
-      await deployApp(cm as any, mockGetAuthToken, mockGetLeaseDataAuthToken, {
-        image: 'nginx:alpine',
-        port: 80,
-        size: 'docker-micro',
-        customDomain: 'app.example.com',
-        gasMultiplier: 4.0,
-      });
+      await deployApp(
+        cm as any,
+        mockGetAuthToken,
+        mockGetLeaseDataAuthToken,
+        {
+          image: 'nginx:alpine',
+          port: 80,
+          size: 'docker-micro',
+          customDomain: 'app.example.com',
+        },
+        { gasMultiplier: 4.0 },
+      );
 
       expect(mockSetItemCustomDomain).toHaveBeenCalledWith(
         expect.anything(),
@@ -759,6 +873,7 @@ describe('deployApp', () => {
           customDomain: 'app.example.com',
           serviceName: 'web',
         },
+        {},
       );
 
       expect(mockSetItemCustomDomain).toHaveBeenCalledWith(
@@ -799,6 +914,7 @@ describe('deployApp', () => {
           size: 'docker-micro',
           customDomain: '  app.example.com  ',
         },
+        {},
       );
 
       expect(mockSetItemCustomDomain).toHaveBeenCalledWith(
@@ -816,12 +932,18 @@ describe('deployApp', () => {
       const cm = makeMockClientManager({ queryClient: qc });
 
       await expect(
-        deployApp(cm as any, mockGetAuthToken, mockGetLeaseDataAuthToken, {
-          image: 'nginx',
-          port: 80,
-          size: 'docker-micro',
-          customDomain: '   ',
-        }),
+        deployApp(
+          cm as any,
+          mockGetAuthToken,
+          mockGetLeaseDataAuthToken,
+          {
+            image: 'nginx',
+            port: 80,
+            size: 'docker-micro',
+            customDomain: '   ',
+          },
+          {},
+        ),
       ).rejects.toThrow(/cannot be empty/);
       expect(mockCosmosTx).not.toHaveBeenCalled();
       expect(mockSetItemCustomDomain).not.toHaveBeenCalled();
@@ -832,11 +954,17 @@ describe('deployApp', () => {
       const cm = makeMockClientManager({ queryClient: qc });
 
       await expect(
-        deployApp(cm as any, mockGetAuthToken, mockGetLeaseDataAuthToken, {
-          size: 'docker-micro',
-          services: { web: { image: 'nginx' } },
-          customDomain: 'app.example.com',
-        }),
+        deployApp(
+          cm as any,
+          mockGetAuthToken,
+          mockGetLeaseDataAuthToken,
+          {
+            size: 'docker-micro',
+            services: { web: { image: 'nginx' } },
+            customDomain: 'app.example.com',
+          },
+          {},
+        ),
       ).rejects.toThrow(/serviceName is required/);
       expect(mockCosmosTx).not.toHaveBeenCalled();
     });
@@ -846,12 +974,18 @@ describe('deployApp', () => {
       const cm = makeMockClientManager({ queryClient: qc });
 
       await expect(
-        deployApp(cm as any, mockGetAuthToken, mockGetLeaseDataAuthToken, {
-          size: 'docker-micro',
-          services: { web: { image: 'nginx' } },
-          customDomain: 'app.example.com',
-          serviceName: 'nope',
-        }),
+        deployApp(
+          cm as any,
+          mockGetAuthToken,
+          mockGetLeaseDataAuthToken,
+          {
+            size: 'docker-micro',
+            services: { web: { image: 'nginx' } },
+            customDomain: 'app.example.com',
+            serviceName: 'nope',
+          },
+          {},
+        ),
       ).rejects.toThrow(/does not match any service/);
       expect(mockCosmosTx).not.toHaveBeenCalled();
     });
@@ -874,12 +1008,18 @@ describe('deployApp', () => {
         '__proto__',
       ]) {
         await expect(
-          deployApp(cm as any, mockGetAuthToken, mockGetLeaseDataAuthToken, {
-            size: 'docker-micro',
-            services: { web: { image: 'nginx' } },
-            customDomain: 'app.example.com',
-            serviceName: protoKey,
-          }),
+          deployApp(
+            cm as any,
+            mockGetAuthToken,
+            mockGetLeaseDataAuthToken,
+            {
+              size: 'docker-micro',
+              services: { web: { image: 'nginx' } },
+              customDomain: 'app.example.com',
+              serviceName: protoKey,
+            },
+            {},
+          ),
         ).rejects.toThrow(/does not match any service/);
       }
       expect(mockCosmosTx).not.toHaveBeenCalled();
@@ -890,11 +1030,17 @@ describe('deployApp', () => {
       const cm = makeMockClientManager({ queryClient: qc });
 
       await expect(
-        deployApp(cm as any, mockGetAuthToken, mockGetLeaseDataAuthToken, {
-          size: 'docker-micro',
-          services: { web: { image: 'nginx' } },
-          serviceName: 'web',
-        }),
+        deployApp(
+          cm as any,
+          mockGetAuthToken,
+          mockGetLeaseDataAuthToken,
+          {
+            size: 'docker-micro',
+            services: { web: { image: 'nginx' } },
+            serviceName: 'web',
+          },
+          {},
+        ),
       ).rejects.toThrow(
         /serviceName is only meaningful when customDomain is set/,
       );
@@ -907,13 +1053,19 @@ describe('deployApp', () => {
       const cm = makeMockClientManager({ queryClient: qc });
 
       await expect(
-        deployApp(cm as any, mockGetAuthToken, mockGetLeaseDataAuthToken, {
-          image: 'nginx',
-          port: 80,
-          size: 'docker-micro',
-          customDomain: 'app.example.com',
-          serviceName: 'web',
-        }),
+        deployApp(
+          cm as any,
+          mockGetAuthToken,
+          mockGetLeaseDataAuthToken,
+          {
+            image: 'nginx',
+            port: 80,
+            size: 'docker-micro',
+            customDomain: 'app.example.com',
+            serviceName: 'web',
+          },
+          {},
+        ),
       ).rejects.toThrow(/serviceName must not be set/);
       expect(mockCosmosTx).not.toHaveBeenCalled();
     });
@@ -932,12 +1084,18 @@ describe('deployApp', () => {
       );
 
       await expect(
-        deployApp(cm as any, mockGetAuthToken, mockGetLeaseDataAuthToken, {
-          image: 'nginx',
-          port: 80,
-          size: 'docker-micro',
-          customDomain: 'taken.example.com',
-        }),
+        deployApp(
+          cm as any,
+          mockGetAuthToken,
+          mockGetLeaseDataAuthToken,
+          {
+            image: 'nginx',
+            port: 80,
+            size: 'docker-micro',
+            customDomain: 'taken.example.com',
+          },
+          {},
+        ),
       ).rejects.toThrow(
         /Deploy partially succeeded.*lease 550e8400.*close_lease if needed.*domain already claimed/s,
       );
