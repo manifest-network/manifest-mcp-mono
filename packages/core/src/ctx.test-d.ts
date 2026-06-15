@@ -23,3 +23,23 @@ describe('CapabilityCtx / QueryCtx (type-level)', () => {
     expectTypeOf<CapabilityCtx>().toExtend<QueryCtx>(); // full ctx assignable to query ctx
   });
 });
+
+import type { ManifestClient, ManifestReadClient } from './client-factory.js';
+
+// (Signer is already imported at the top of this file from Task 1.)
+
+describe('ManifestClient / ManifestReadClient (type-level)', () => {
+  it('ManifestReadClient extends QueryCtx — no signer, plus a dispose()', () => {
+    expectTypeOf<ManifestReadClient>().toExtend<QueryCtx>();
+    expectTypeOf<ManifestReadClient>().not.toHaveProperty('signer');
+    expectTypeOf<ManifestReadClient['dispose']>().toEqualTypeOf<() => void>();
+  });
+  it('ManifestClient is a strict superset (extends read + ctx) with a REQUIRED signer', () => {
+    expectTypeOf<ManifestClient>().toExtend<ManifestReadClient>();
+    expectTypeOf<ManifestClient>().toExtend<CapabilityCtx>();
+    expectTypeOf<ManifestClient['signer']>().toEqualTypeOf<Signer>(); // required — NOT Signer | undefined
+  });
+  it('a read client is NOT a full client (the read-vs-full guarantee holds because signer is required on the full client)', () => {
+    expectTypeOf<ManifestReadClient>().not.toExtend<ManifestClient>();
+  });
+});
