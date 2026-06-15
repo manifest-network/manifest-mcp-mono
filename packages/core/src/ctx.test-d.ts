@@ -43,3 +43,28 @@ describe('ManifestClient / ManifestReadClient (type-level)', () => {
     expectTypeOf<ManifestReadClient>().not.toExtend<ManifestClient>();
   });
 });
+
+import {
+  createManifestClient,
+  createManifestReadClient,
+  type FullClientOptions,
+  type ReadClientOptions,
+} from './client-factory.js';
+import type { WalletProvider } from './types.js';
+
+describe('createManifestClient / createManifestReadClient (type-level)', () => {
+  it('both factories are async and resolve to the precise client type', () => {
+    expectTypeOf(
+      createManifestClient,
+    ).returns.resolves.toEqualTypeOf<ManifestClient>();
+    expectTypeOf(
+      createManifestReadClient,
+    ).returns.resolves.toEqualTypeOf<ManifestReadClient>();
+  });
+  it('full opts REQUIRE a walletProvider; read opts carry none', () => {
+    expectTypeOf<
+      FullClientOptions['walletProvider']
+    >().toEqualTypeOf<WalletProvider>();
+    expectTypeOf<ReadClientOptions>().not.toHaveProperty('walletProvider');
+  });
+});

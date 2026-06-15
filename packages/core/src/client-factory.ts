@@ -1,5 +1,60 @@
-import type { CapabilityCtx, QueryCtx } from './ctx.js';
+import type { CapabilityCtx, EventTransport, QueryCtx } from './ctx.js';
+import type { Logger, LogLevel } from './logger.js';
 import type { Signer } from './signer.js';
+import type { ManifestMCPConfig, WalletProvider } from './types.js';
+import { ManifestMCPError, ManifestMCPErrorCode } from './types.js';
+
+/** Shared factory inputs. `skuSpecs`/`events`/`logLevel` are accepted but NOT threaded in 4b (see plan OI-BETA). */
+interface BaseClientOptions {
+  config: ManifestMCPConfig;
+  /** Injected at the edge (node: guarded-undici; browser: providerFetch). Defaults to `globalThis.fetch`. */
+  fetch?: typeof globalThis.fetch;
+  /** Per-instance logging sink; defaults to the silent `noopLogger`. */
+  logger?: Logger;
+  /** @beta — carried for the later SDK-side level gate; the gate is NOT built in 4b. */
+  logLevel?: LogLevel;
+  /** @beta — §5.5 placeholder; not a real core type yet, not threaded in 4b. */
+  skuSpecs?: unknown;
+  /** @beta — §5.9 forward-declared transport stub; not threaded in 4b. */
+  events?: EventTransport;
+}
+
+/** @public — inputs to {@link createManifestClient} (full/signing). A `walletProvider` is REQUIRED. */
+export interface FullClientOptions extends BaseClientOptions {
+  walletProvider: WalletProvider;
+}
+
+/** @public — inputs to {@link createManifestReadClient} (query-only). No `walletProvider`. */
+export type ReadClientOptions = BaseClientOptions;
+
+/**
+ * @public — construct a FULL (signing) Manifest client. ASYNC: awaits the underlying query client once
+ * so `client.query` is concrete (the Cosmos await-once-then-read idiom). Throws `INVALID_CONFIG` on bad
+ * config or a wallet lacking `signArbitrary` (the latter at first auth use).
+ */
+export async function createManifestClient(
+  opts: FullClientOptions,
+): Promise<ManifestClient> {
+  // Body lands in Task 4. Temporary throw keeps the signature honest under tsc.
+  void opts;
+  throw new ManifestMCPError(
+    ManifestMCPErrorCode.INVALID_CONFIG,
+    'not implemented',
+  );
+}
+
+/**
+ * @public — construct a QUERY-ONLY Manifest client (no signer/tx/subscribe at the type level). ASYNC.
+ */
+export async function createManifestReadClient(
+  opts: ReadClientOptions,
+): Promise<ManifestReadClient> {
+  void opts;
+  throw new ManifestMCPError(
+    ManifestMCPErrorCode.INVALID_CONFIG,
+    'not implemented',
+  );
+}
 
 /**
  * @public — query-only bound client. EXTENDS `QueryCtx`, so NO `signer`/tx/subscribe at the TYPE level
