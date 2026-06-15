@@ -62,15 +62,6 @@ vi.mock('./lcd-adapter.js', () => ({
   createLCDQueryClient: vi.fn().mockResolvedValue({ mock: 'lcdClient' }),
 }));
 
-vi.mock('./logger.js', () => ({
-  logger: {
-    warn: vi.fn(),
-    debug: vi.fn(),
-    info: vi.fn(),
-    error: vi.fn(),
-  },
-}));
-
 vi.mock('./retry.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./retry.js')>();
   return {
@@ -90,7 +81,6 @@ import {
 } from '@manifest-network/manifestjs';
 import { CosmosClientManager } from './client.js';
 import { createLCDQueryClient } from './lcd-adapter.js';
-import { logger } from './logger.js';
 import type { ManifestMCPConfig, WalletProvider } from './types.js';
 
 const mockCreateLCDQueryClient = vi.mocked(createLCDQueryClient);
@@ -120,6 +110,10 @@ function makeWallet(overrides?: Partial<WalletProvider>): WalletProvider {
     getSigner: vi.fn().mockResolvedValue({}),
     ...overrides,
   };
+}
+
+function makeSpyLogger() {
+  return { warn: vi.fn(), debug: vi.fn(), info: vi.fn(), error: vi.fn() };
 }
 
 describe('CosmosClientManager', () => {
@@ -358,15 +352,15 @@ describe('CosmosClientManager', () => {
     it('warns when defaultGasMultiplier is absent', async () => {
       const mockSC = { disconnect: vi.fn() };
       mockConnectWithSigner.mockResolvedValue(mockSC as any);
-
+      const spyLogger = makeSpyLogger();
       const instance = CosmosClientManager.getInstance(
         makeConfig(),
         makeWallet(),
       );
+      instance.setLogger(spyLogger);
       await instance.getSigningClient();
-
       expect((mockSC as any).defaultGasMultiplier).toBeUndefined();
-      expect(logger.warn).toHaveBeenCalledWith(
+      expect(spyLogger.warn).toHaveBeenCalledWith(
         expect.stringContaining('could not be applied'),
       );
     });
@@ -374,16 +368,44 @@ describe('CosmosClientManager', () => {
     it('warns with custom multiplier when defaultGasMultiplier is absent', async () => {
       const mockSC = { disconnect: vi.fn() };
       mockConnectWithSigner.mockResolvedValue(mockSC as any);
-
+      const spyLogger = makeSpyLogger();
       const instance = CosmosClientManager.getInstance(
         makeConfig({ gasMultiplier: 2.0 }),
         makeWallet(),
       );
+      instance.setLogger(spyLogger);
       await instance.getSigningClient();
-
-      expect(logger.warn).toHaveBeenCalledWith(
+      expect(spyLogger.warn).toHaveBeenCalledWith(
         expect.stringContaining('gasMultiplier 2 could not be applied'),
       );
+    });
+
+    it('setLogger is non-key: re-getInstance with the same config/wallet returns the SAME instance', () => {
+      // setLogger is a pure field assignment, NOT part of the getInstance key — so calling it between
+      // two same-key getInstance calls must NOT fragment the singleton (the load-bearing non-key proof).
+      // SAME wallet reference both calls — a fresh makeWallet() would trip the reference-equality
+      // wallet-invalidation gate (client.ts:182-185). Non-invalidation is INHERENT (setLogger only does
+      // `this.logger = logger`); the cached-signing-client / disconnect path is deliberately NOT asserted
+      // here because a single getSigningClient() in this MOCKED harness always hits the supersede-promise
+      // disconnect and never caches `this.signingClient` (a pre-existing timing quirk, documented in the
+      // getSigningClient describe block's omission note ~client.test.ts:444-446) — so a disconnect/caching
+      // assertion would fail for reasons unrelated to setLogger.
+      const w = makeWallet();
+      const a = CosmosClientManager.getInstance(makeConfig(), w);
+      a.setLogger(makeSpyLogger());
+      const b = CosmosClientManager.getInstance(makeConfig(), w);
+      expect(b).toBe(a);
+    });
+
+    it('is SILENT by default when setLogger is never called (the warn goes to the frozen noopLogger)', async () => {
+      const mockSC = { disconnect: vi.fn() }; // no defaultGasMultiplier → triggers the warn branch
+      mockConnectWithSigner.mockResolvedValue(mockSC as any);
+      const instance = CosmosClientManager.getInstance(
+        makeConfig(),
+        makeWallet(),
+      );
+      // No setLogger → this.logger is the real frozen noopLogger; the warn must be swallowed, no throw.
+      await expect(instance.getSigningClient()).resolves.toBeDefined();
     });
 
     it('creates and returns signing client', async () => {

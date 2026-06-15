@@ -30,7 +30,7 @@ import {
   DEFAULT_REQUESTS_PER_SECOND,
 } from './config.js';
 import { createLCDQueryClient } from './lcd-adapter.js';
-import { logger } from './logger.js';
+import { type Logger, noopLogger } from './logger.js';
 import { withRetry } from './retry.js';
 import {
   type ManifestMCPConfig,
@@ -118,6 +118,9 @@ export class CosmosClientManager {
   private queryClient: ManifestQueryClient | null = null;
   private signingClient: SigningStargateClient | null = null;
   private rateLimiter: RateLimiter;
+
+  /** Per-instance logger for the 2 init-time diagnostics. Defaults to noopLogger (silent); see setLogger. */
+  private logger: Logger = noopLogger;
 
   // Number of live holders (servers) sharing this instance. Each getInstance
   // acquisition increments it; each disconnect() decrements it. The underlying
@@ -401,7 +404,7 @@ export class CosmosClientManager {
             } else {
               const effective =
                 this.config.gasMultiplier ?? DEFAULT_GAS_MULTIPLIER;
-              logger.warn(
+              this.logger.warn(
                 `gasMultiplier ${effective} could not be applied: ` +
                   `signing client defaultGasMultiplier is ${typeof record.defaultGasMultiplier}, expected number. ` +
                   `Transactions will use the CosmJS built-in gas multiplier instead.`,
@@ -454,6 +457,18 @@ export class CosmosClientManager {
    */
   getConfig(): ManifestMCPConfig {
     return this.config;
+  }
+
+  /**
+   * Inject a per-instance Logger for the 2 init-time diagnostics (signing-client gasMultiplier
+   * fallback; LCD wasm-patch missing-method). NON-KEY + non-invalidating: NOT part of the getInstance
+   * key (chainId:rpcUrl[:restUrl]) and NOT in the signing/query-client invalidation gate — a pure
+   * reference mutation, mirroring the existing config/walletProvider mutation. Defaults to noopLogger
+   * (silent, per spec §5.3). Shared-key last-writer-wins: if two ctxs share a config key the later
+   * setLogger wins; acceptable because both diagnostics are one-time, init-cached, never re-firing.
+   */
+  setLogger(logger: Logger): void {
+    this.logger = logger;
   }
 
   /**
