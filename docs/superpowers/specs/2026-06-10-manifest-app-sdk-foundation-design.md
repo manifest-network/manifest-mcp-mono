@@ -165,7 +165,7 @@ type Signer = AuthSigner;
 
 *Forward-looking (migration seam):* the ecosystem is mid-migration from cosmjs to **InterchainJS** (Telescope 2.0's default; "CosmJS 2.0"), which replaces `OfflineSigner`/`SigningStargateClient` with a unified `IUniSigner`. The `Signer` port is the planned seam for that swap — keep it **shallow** (`getSigner(): OfflineSigner` confines the cosmjs coupling to **one method**; `signArbitrary` (ADR-036) is Manifest-specific and bespoke regardless), and treat the cosmjs signer shape as **migration-risk / `@beta`**, not a permanent contract. `manifestjs` + the `@manifest-network/stargate` fork must move first (§11).
 
-**Auth-token factory** — `createAuthTokens(signer: AuthSigner, { chainId: string }) → { getAuthToken, getLeaseDataAuthToken }` (lazily cached, re-signed on expiry; wraps `fred`'s `AuthTokenService`). Replaces Barney's `makeFredAuthTokens`.
+**Auth-token factory** — `createAuthTokens(signer: AuthSigner, { chainId: string }) → { getAuthToken, getLeaseDataAuthToken }` (binds the address once — lazily, on first mint — then mints a **fresh** token per call; tokens are **never cached** — caching is unsafe vs the provider's ADR-036 replay tracker, which rejects duplicate signatures on protected endpoints; reuses `fred`'s stateless `AuthTokenService` builders). `chainId` is **reserved** for a future chain-scoped token format — accepted for API symmetry but not yet embedded in the ADR-036 message. Replaces Barney's `makeFredAuthTokens`.
 
 **`fetch`** — on `ctx`; guarded-undici (node subpath) / `providerFetch` (browser).
 
