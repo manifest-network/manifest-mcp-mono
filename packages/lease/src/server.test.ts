@@ -343,9 +343,11 @@ describe('LeaseMCPServer', () => {
       });
 
       expect(mockFundCredits).toHaveBeenCalledWith(
-        expect.anything(),
-        '10000000umfx',
-        undefined,
+        expect.objectContaining({
+          chain: expect.anything(),
+          logger: expect.anything(),
+        }),
+        { amount: '10000000umfx', tenant: undefined },
         undefined,
       );
       expect(result.isError).toBeUndefined();
@@ -364,10 +366,12 @@ describe('LeaseMCPServer', () => {
       });
 
       expect(mockFundCredits).toHaveBeenCalledWith(
-        expect.anything(),
-        '10000000umfx',
+        expect.objectContaining({
+          chain: expect.anything(),
+          logger: expect.anything(),
+        }),
+        { amount: '10000000umfx', tenant: undefined },
         { gasMultiplier: 2.5 },
-        undefined,
       );
     });
 
@@ -387,10 +391,16 @@ describe('LeaseMCPServer', () => {
       });
 
       expect(mockFundCredits).toHaveBeenCalledWith(
-        expect.anything(),
-        '10000000umfx',
+        expect.objectContaining({
+          chain: expect.anything(),
+          logger: expect.anything(),
+        }),
+        {
+          amount: '10000000umfx',
+          // parseAddress brands the raw tenant; at runtime it's the same string.
+          tenant: 'manifest1am058pdux3hyulcmfgj4m3hhrlfn8nzmx97smg',
+        },
         undefined,
-        'manifest1am058pdux3hyulcmfgj4m3hhrlfn8nzmx97smg',
       );
     });
   });
@@ -527,8 +537,11 @@ describe('LeaseMCPServer', () => {
       });
 
       expect(mockStopApp).toHaveBeenCalledWith(
-        expect.anything(),
-        '550e8400-e29b-41d4-a716-446655440000',
+        expect.objectContaining({
+          chain: expect.anything(),
+          logger: expect.anything(),
+        }),
+        { leaseUuid: '550e8400-e29b-41d4-a716-446655440000' },
         { gasMultiplier: 4.0 },
       );
     });
@@ -556,10 +569,15 @@ describe('LeaseMCPServer', () => {
       });
 
       expect(mockSetItemCustomDomain).toHaveBeenCalledWith(
-        expect.anything(),
-        LEASE_UUID_FIXTURE,
-        'app.example.com',
-        { serviceName: undefined, clear: false },
+        expect.objectContaining({
+          chain: expect.anything(),
+          logger: expect.anything(),
+        }),
+        {
+          leaseUuid: LEASE_UUID_FIXTURE,
+          customDomain: 'app.example.com',
+          serviceName: undefined,
+        },
         undefined,
       );
       expect(result.isError).toBeUndefined();
@@ -591,10 +609,11 @@ describe('LeaseMCPServer', () => {
       });
 
       expect(mockSetItemCustomDomain).toHaveBeenCalledWith(
-        expect.anything(),
-        LEASE_UUID_FIXTURE,
-        '',
-        { serviceName: undefined, clear: true },
+        expect.objectContaining({
+          chain: expect.anything(),
+          logger: expect.anything(),
+        }),
+        { leaseUuid: LEASE_UUID_FIXTURE, clear: true, serviceName: undefined },
         undefined,
       );
       expect(result.isError).toBeUndefined();
@@ -623,10 +642,15 @@ describe('LeaseMCPServer', () => {
       });
 
       expect(mockSetItemCustomDomain).toHaveBeenCalledWith(
-        expect.anything(),
-        LEASE_UUID_FIXTURE,
-        'app.example.com',
-        { serviceName: 'web', clear: false },
+        expect.objectContaining({
+          chain: expect.anything(),
+          logger: expect.anything(),
+        }),
+        {
+          leaseUuid: LEASE_UUID_FIXTURE,
+          customDomain: 'app.example.com',
+          serviceName: 'web',
+        },
         { gasMultiplier: 4.0 },
       );
     });
@@ -893,10 +917,15 @@ describe('LeaseMCPServer', () => {
       // Trimmed value reaches the helper; empty + clear:true is the
       // canonical "clear" form.
       expect(mockSetItemCustomDomain).toHaveBeenCalledWith(
-        expect.anything(),
-        '550e8400-e29b-41d4-a716-446655440000',
-        '',
-        { serviceName: undefined, clear: true },
+        expect.objectContaining({
+          chain: expect.anything(),
+          logger: expect.anything(),
+        }),
+        {
+          leaseUuid: '550e8400-e29b-41d4-a716-446655440000',
+          clear: true,
+          serviceName: undefined,
+        },
         undefined,
       );
     });

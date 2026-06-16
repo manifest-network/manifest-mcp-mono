@@ -11,6 +11,7 @@ import {
   logger,
   ManifestMCPError,
   ManifestMCPErrorCode,
+  parseFqdn,
   requireUuid,
   resolveSku,
   sanitizeForLogging,
@@ -277,10 +278,15 @@ export async function deployManifest(
     if (normalizedCustomDomain !== undefined) {
       step = 'set_domain';
       await setItemCustomDomain(
-        clientManager,
-        leaseUuid,
-        normalizedCustomDomain,
-        { serviceName: spec.serviceName },
+        { chain: clientManager, logger },
+        // leaseUuid is already a branded LeaseUuid (extractLeaseUuid → asLeaseUuid);
+        // do NOT re-parse (parse-once, ENG-258). normalizedCustomDomain is trim-only
+        // (genuinely unbranded), so parseFqdn brands + validates it here.
+        {
+          leaseUuid,
+          customDomain: parseFqdn(normalizedCustomDomain),
+          serviceName: spec.serviceName,
+        },
         overrides,
       );
     }

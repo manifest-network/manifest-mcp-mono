@@ -424,10 +424,15 @@ describe('manageDomain — set', () => {
     expect(confirms).toHaveLength(1);
     expect(confirms[0]?.text).toBe(expectedBlock);
     expect(core.setItemCustomDomain).toHaveBeenCalledWith(
-      clientManager,
-      '11111111-1111-4111-8111-111111111111',
-      'app.testnet.manifest.app',
-      undefined, // no serviceName on legacy single-item lease
+      expect.objectContaining({
+        chain: expect.anything(),
+        logger: expect.anything(),
+      }),
+      {
+        leaseUuid: '11111111-1111-4111-8111-111111111111',
+        customDomain: 'app.testnet.manifest.app',
+        serviceName: undefined, // no serviceName on legacy single-item lease
+      },
     );
   });
 
@@ -533,10 +538,15 @@ describe('manageDomain — set', () => {
     expect(completed).toEqual([expected]);
     expect(confirms[0]?.text).toBe(expectedBlock);
     expect(core.setItemCustomDomain).toHaveBeenCalledWith(
-      clientManager,
-      '11111111-1111-4111-8111-111111111111',
-      'api.testnet.manifest.app',
-      { serviceName: 'web' },
+      expect.objectContaining({
+        chain: expect.anything(),
+        logger: expect.anything(),
+      }),
+      {
+        leaseUuid: '11111111-1111-4111-8111-111111111111',
+        customDomain: 'api.testnet.manifest.app',
+        serviceName: 'web',
+      },
     );
   });
 
@@ -742,10 +752,15 @@ describe('manageDomain — set', () => {
 
     // Broadcast received the trimmed form.
     expect(core.setItemCustomDomain).toHaveBeenCalledWith(
-      clientManager,
-      '11111111-1111-4111-8111-111111111111',
-      'app.example.com',
-      undefined,
+      expect.objectContaining({
+        chain: expect.anything(),
+        logger: expect.anything(),
+      }),
+      {
+        leaseUuid: '11111111-1111-4111-8111-111111111111',
+        customDomain: 'app.example.com',
+        serviceName: undefined,
+      },
     );
     // Confirm block displays the trimmed form (no leading/trailing
     // whitespace in the FQDN line).
@@ -989,10 +1004,15 @@ describe('manageDomain — clear', () => {
     expect(completed).toEqual([expected]);
     expect(confirms[0]?.text).toBe(expectedBlock);
     expect(core.setItemCustomDomain).toHaveBeenCalledWith(
-      clientManager,
-      '11111111-1111-4111-8111-111111111111',
-      '',
-      { clear: true },
+      expect.objectContaining({
+        chain: expect.anything(),
+        logger: expect.anything(),
+      }),
+      {
+        leaseUuid: '11111111-1111-4111-8111-111111111111',
+        clear: true,
+        serviceName: undefined,
+      },
     );
   });
 
@@ -1043,10 +1063,15 @@ describe('manageDomain — clear', () => {
     expect(result.finalCustomDomain).toBeNull();
     expect(completed).toHaveLength(1);
     expect(core.setItemCustomDomain).toHaveBeenCalledWith(
-      clientManager,
-      '11111111-1111-4111-8111-111111111111',
-      '',
-      { clear: true, serviceName: 'web' },
+      expect.objectContaining({
+        chain: expect.anything(),
+        logger: expect.anything(),
+      }),
+      {
+        leaseUuid: '11111111-1111-4111-8111-111111111111',
+        clear: true,
+        serviceName: 'web',
+      },
     );
   });
 });

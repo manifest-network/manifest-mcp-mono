@@ -44,6 +44,8 @@ import {
   ManifestMCPError,
   ManifestMCPErrorCode,
   noopLogger,
+  parseFqdn,
+  parseLeaseUuid,
   type ReadCtx,
   resolveSku,
   type SkuCandidate,
@@ -1218,7 +1220,10 @@ async function dispatchRecovery(
       );
     case 'cancel_lease':
     case 'close_lease': {
-      await stopApp(opts.clientManager, leaseUuid);
+      await stopApp(
+        { chain: opts.clientManager, logger: noopLogger },
+        { leaseUuid: parseLeaseUuid(leaseUuid) },
+      );
       throw new ManifestMCPError(
         ManifestMCPErrorCode.TX_FAILED,
         `${choice.id}: lease ${leaseUuid} closed.`,
@@ -1299,13 +1304,14 @@ async function retrySetDomainAndComplete(
   // leases so the set-item-custom-domain tx targets the named service
   // item, not the default single-item lease.
   const serviceName = customDomainServiceOf(spec);
-  const setItemOpts = serviceName ? { serviceName } : undefined;
   try {
     await setItemCustomDomain(
-      opts.clientManager,
-      leaseUuid,
-      domain,
-      setItemOpts,
+      { chain: opts.clientManager, logger: noopLogger },
+      {
+        leaseUuid: parseLeaseUuid(leaseUuid),
+        customDomain: parseFqdn(domain),
+        serviceName,
+      },
     );
   } catch (err) {
     // Copilot fix-3 (PR #71): sibling-parity wrap. Every throw site in

@@ -34,6 +34,8 @@ vi.mock('../http/fred.js', async (importOriginal) => {
 });
 
 import {
+  asFqdn,
+  asLeaseUuid,
   cosmosTx,
   LeaseState,
   ManifestMCPError,
@@ -111,9 +113,9 @@ describe('deployApp', () => {
     mockGetLeaseDataAuthToken.mockResolvedValue('lease-data-token');
     mockUploadLeaseData.mockResolvedValue(undefined);
     mockSetItemCustomDomain.mockResolvedValue({
-      lease_uuid: '550e8400-e29b-41d4-a716-446655440000',
+      lease_uuid: asLeaseUuid('550e8400-e29b-41d4-a716-446655440000'),
       service_name: '',
-      custom_domain: 'app.example.com',
+      custom_domain: asFqdn('app.example.com'),
       transactionHash: 'TX2',
       code: 0,
     });
@@ -814,10 +816,15 @@ describe('deployApp', () => {
       );
 
       expect(mockSetItemCustomDomain).toHaveBeenCalledWith(
-        cm,
-        '550e8400-e29b-41d4-a716-446655440000',
-        'app.example.com',
-        { serviceName: undefined },
+        expect.objectContaining({
+          chain: cm,
+          logger: expect.anything(),
+        }),
+        {
+          leaseUuid: '550e8400-e29b-41d4-a716-446655440000',
+          customDomain: 'app.example.com',
+          serviceName: undefined,
+        },
         undefined,
       );
       expect(result.custom_domain).toBe('app.example.com');
@@ -845,10 +852,15 @@ describe('deployApp', () => {
       );
 
       expect(mockSetItemCustomDomain).toHaveBeenCalledWith(
-        expect.anything(),
-        expect.any(String),
-        'app.example.com',
-        { serviceName: undefined },
+        expect.objectContaining({
+          chain: expect.anything(),
+          logger: expect.anything(),
+        }),
+        {
+          leaseUuid: expect.any(String),
+          customDomain: 'app.example.com',
+          serviceName: undefined,
+        },
         { gasMultiplier: 4.0 },
       );
     });
@@ -877,10 +889,15 @@ describe('deployApp', () => {
       );
 
       expect(mockSetItemCustomDomain).toHaveBeenCalledWith(
-        expect.anything(),
-        expect.any(String),
-        'app.example.com',
-        { serviceName: 'web' },
+        expect.objectContaining({
+          chain: expect.anything(),
+          logger: expect.anything(),
+        }),
+        {
+          leaseUuid: expect.any(String),
+          customDomain: 'app.example.com',
+          serviceName: 'web',
+        },
         undefined,
       );
       expect(result.custom_domain).toBe('app.example.com');
@@ -897,9 +914,9 @@ describe('deployApp', () => {
         address: 'manifest1tenant',
       });
       mockSetItemCustomDomain.mockResolvedValueOnce({
-        lease_uuid: '550e8400-e29b-41d4-a716-446655440000',
+        lease_uuid: asLeaseUuid('550e8400-e29b-41d4-a716-446655440000'),
         service_name: '',
-        custom_domain: 'app.example.com',
+        custom_domain: asFqdn('app.example.com'),
         transactionHash: 'TX2',
         code: 0,
       });
@@ -918,10 +935,15 @@ describe('deployApp', () => {
       );
 
       expect(mockSetItemCustomDomain).toHaveBeenCalledWith(
-        expect.anything(),
-        expect.any(String),
-        'app.example.com',
-        { serviceName: undefined },
+        expect.objectContaining({
+          chain: expect.anything(),
+          logger: expect.anything(),
+        }),
+        {
+          leaseUuid: expect.any(String),
+          customDomain: 'app.example.com',
+          serviceName: undefined,
+        },
         undefined,
       );
       expect(result.custom_domain).toBe('app.example.com');

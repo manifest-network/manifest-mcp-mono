@@ -21,6 +21,9 @@ import {
   manifestMeta,
   mutatingAnnotations,
   noopLogger,
+  parseAddress,
+  parseFqdn,
+  parseLeaseUuid,
   readOnlyAnnotations,
   setItemCustomDomain,
   stopApp,
@@ -193,13 +196,16 @@ export class LeaseMCPServer {
         }),
       },
       withErrorHandling('fund_credit', async (args) => {
+        const txCtx = { chain: this.clientManager, logger: noopLogger };
         const result = await fundCredits(
-          this.clientManager,
-          args.amount,
+          txCtx,
+          {
+            amount: args.amount,
+            tenant: args.tenant ? parseAddress(args.tenant) : undefined,
+          },
           args.gas_multiplier !== undefined
             ? { gasMultiplier: args.gas_multiplier }
             : undefined,
-          args.tenant,
         );
         return jsonResponse(result, bigIntReplacer);
       }),
@@ -314,9 +320,10 @@ export class LeaseMCPServer {
         }),
       },
       withErrorHandling('close_lease', async (args) => {
+        const txCtx = { chain: this.clientManager, logger: noopLogger };
         const result = await stopApp(
-          this.clientManager,
-          args.lease_uuid,
+          txCtx,
+          { leaseUuid: parseLeaseUuid(args.lease_uuid) },
           args.gas_multiplier !== undefined
             ? { gasMultiplier: args.gas_multiplier }
             : undefined,
@@ -395,14 +402,17 @@ export class LeaseMCPServer {
             'Provide `custom_domain` to set, or `clear: true` to remove the existing domain.',
           );
         }
+        const txCtx = { chain: this.clientManager, logger: noopLogger };
+        const leaseUuid = parseLeaseUuid(args.lease_uuid);
         const result = await setItemCustomDomain(
-          this.clientManager,
-          args.lease_uuid,
-          domain,
-          {
-            serviceName: args.service_name,
-            clear: clearing,
-          },
+          txCtx,
+          clearing
+            ? { leaseUuid, clear: true, serviceName: args.service_name }
+            : {
+                leaseUuid,
+                customDomain: parseFqdn(domain),
+                serviceName: args.service_name,
+              },
           args.gas_multiplier !== undefined
             ? { gasMultiplier: args.gas_multiplier }
             : undefined,

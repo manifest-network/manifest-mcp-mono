@@ -189,8 +189,11 @@ describe('closeLease replay — 01-close-success', () => {
     expect(confirms).toHaveLength(1);
     expect(confirms[0]?.text).toBe(expectedBlock);
     expect(core.stopApp).toHaveBeenCalledWith(
-      clientManager,
-      '11111111-1111-4111-8111-111111111111',
+      expect.objectContaining({
+        chain: expect.anything(),
+        logger: expect.anything(),
+      }),
+      { leaseUuid: '11111111-1111-4111-8111-111111111111' },
     );
   });
 });

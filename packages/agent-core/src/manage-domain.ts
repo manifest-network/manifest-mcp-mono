@@ -24,6 +24,9 @@
 import {
   ManifestMCPError,
   ManifestMCPErrorCode,
+  noopLogger,
+  parseFqdn,
+  parseLeaseUuid,
   setItemCustomDomain,
 } from '@manifest-network/manifest-mcp-core';
 import {
@@ -147,16 +150,16 @@ export async function manageDomain(
   callbacks.onProgress?.({ kind: 'user_confirmed' });
 
   // --- Broadcast ------------------------------------------------------
-  const setOpts =
+  // txCtx has no signer (ManageDomainOptions carries no walletProvider); the
+  // sender resolves from ctx.chain (the CosmosClientManager wallet). See OI-SENDER.
+  // The raw MCP `leaseUuid`/`fqdn` strings are unbranded → parse at the boundary.
+  const leaseUuid = parseLeaseUuid(args.leaseUuid);
+  await setItemCustomDomain(
+    { chain: opts.clientManager, logger: noopLogger },
     args.action === 'set'
-      ? serviceName
-        ? { serviceName }
-        : undefined
-      : {
-          clear: true as const,
-          ...(serviceName ? { serviceName } : {}),
-        };
-  await setItemCustomDomain(opts.clientManager, args.leaseUuid, fqdn, setOpts);
+      ? { leaseUuid, customDomain: parseFqdn(fqdn), serviceName }
+      : { leaseUuid, clear: true, serviceName },
+  );
 
   // --- Verify ---------------------------------------------------------
   // Direct single-lease query (Copilot review PR #60, comment 3275999569):

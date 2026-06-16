@@ -2222,8 +2222,11 @@ describe('deployApp replay — 03-partial-success-set-domain-failed', () => {
     // Verify the close_lease dispatch (captureCallbacks default choice)
     // invoked core's stopApp.
     expect(vi.mocked(core.stopApp)).toHaveBeenCalledWith(
-      expect.anything(),
-      '11111111-1111-4111-8111-111111111111',
+      expect.objectContaining({
+        chain: expect.anything(),
+        logger: expect.anything(),
+      }),
+      { leaseUuid: '11111111-1111-4111-8111-111111111111' },
     );
 
     // Verify the orchestrator threw after recovery (caller expected to
@@ -3755,11 +3758,15 @@ describe('deployApp — retry_set_domain decomposition (ENG-185 sub-PR E)', () =
     const fred = await import('@manifest-network/manifest-mcp-fred');
     const core = await import('@manifest-network/manifest-mcp-core');
 
-    // setItemCustomDomain called with the right lease + domain.
+    // setItemCustomDomain called with the right lease + domain (ctx-shaped:
+    // arg[0] is the TxCtx, arg[1] is the branded SET-arm input object).
     expect(vi.mocked(core.setItemCustomDomain)).toHaveBeenCalledTimes(1);
     const setDomainCall = vi.mocked(core.setItemCustomDomain).mock.calls[0];
-    expect(setDomainCall?.[1]).toBe(leaseUuid);
-    expect(setDomainCall?.[2]).toBe('app.testnet.manifest.app');
+    expect(setDomainCall?.[1]).toEqual({
+      leaseUuid,
+      customDomain: 'app.testnet.manifest.app',
+      serviceName: undefined,
+    });
 
     // uploadLeaseData called with provider URL, leaseUuid, payload, token.
     expect(vi.mocked(fred.uploadLeaseData)).toHaveBeenCalledTimes(1);
