@@ -1,19 +1,23 @@
 import type { SkuCandidate } from '@manifest-network/manifest-agent-core';
-import { ManifestMCPErrorCode } from '@manifest-network/manifest-mcp-core';
+import {
+  asProviderUuid,
+  asSkuUuid,
+  ManifestMCPErrorCode,
+} from '@manifest-network/manifest-mcp-core';
 import { describe, expect, it } from 'vitest';
 import { buildSkuPickSchema, parseSkuChoice } from './elicitation.js';
 
 const cands: SkuCandidate[] = [
   {
-    skuUuid: 'a',
-    providerUuid: 'p1',
+    skuUuid: asSkuUuid('a'),
+    providerUuid: asProviderUuid('p1'),
     name: 'docker-micro',
     price: { amount: '100', denom: 'umfx' },
     active: true,
   },
   {
-    skuUuid: 'b',
-    providerUuid: 'p2',
+    skuUuid: asSkuUuid('b'),
+    providerUuid: asProviderUuid('p2'),
     name: 'docker-micro',
     price: { amount: '120', denom: 'umfx' },
     active: true,

@@ -26,6 +26,8 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
+  asProviderUuid,
+  asSkuUuid,
   ManifestMCPError,
   ManifestMCPErrorCode,
 } from '@manifest-network/manifest-mcp-core';
@@ -489,14 +491,14 @@ describe('deployApp — ENG-258 SKU pin resolution + ambiguity elicitation', () 
     const { spec, fred, core } = await setupHappyDeps();
 
     const c1: SkuCandidate = {
-      skuUuid: 'sku-p1',
-      providerUuid: 'p1',
+      skuUuid: asSkuUuid('sku-p1'),
+      providerUuid: asProviderUuid('p1'),
       name: 'small',
       active: true,
     };
     const c2: SkuCandidate = {
-      skuUuid: 'sku-p2',
-      providerUuid: 'p2',
+      skuUuid: asSkuUuid('sku-p2'),
+      providerUuid: asProviderUuid('p2'),
       name: 'small',
       active: true,
     };
@@ -513,8 +515,8 @@ describe('deployApp — ENG-258 SKU pin resolution + ambiguity elicitation', () 
       .mockResolvedValueOnce(c2);
 
     const onResolveSku = vi.fn(async (_candidates: SkuCandidate[]) => ({
-      skuUuid: 'sku-p2',
-      providerUuid: 'p2',
+      skuUuid: asSkuUuid('sku-p2'),
+      providerUuid: asProviderUuid('p2'),
     }));
     const baseCapture = captureCallbacks();
     const callbacks: DeployAppCallbacks = {
@@ -554,8 +556,8 @@ describe('deployApp — ENG-258 SKU pin resolution + ambiguity elicitation', () 
       | { skuUuid?: string; providerUuid?: string }
       | undefined;
     expect(fredInput).toMatchObject({
-      skuUuid: 'sku-p2',
-      providerUuid: 'p2',
+      skuUuid: asSkuUuid('sku-p2'),
+      providerUuid: asProviderUuid('p2'),
     });
   });
 
@@ -563,14 +565,14 @@ describe('deployApp — ENG-258 SKU pin resolution + ambiguity elicitation', () 
     const { spec, fred, core } = await setupHappyDeps();
 
     const c1: SkuCandidate = {
-      skuUuid: 'sku-p1',
-      providerUuid: 'p1',
+      skuUuid: asSkuUuid('sku-p1'),
+      providerUuid: asProviderUuid('p1'),
       name: 'small',
       active: true,
     };
     const c2: SkuCandidate = {
-      skuUuid: 'sku-p2',
-      providerUuid: 'p2',
+      skuUuid: asSkuUuid('sku-p2'),
+      providerUuid: asProviderUuid('p2'),
       name: 'small',
       active: true,
     };
@@ -656,20 +658,20 @@ describe('deployApp — ENG-258 SKU pin resolution + ambiguity elicitation', () 
     const { spec, fred, core } = await setupHappyDeps();
 
     const c1: SkuCandidate = {
-      skuUuid: 'sku-p1',
-      providerUuid: 'p1',
+      skuUuid: asSkuUuid('sku-p1'),
+      providerUuid: asProviderUuid('p1'),
       name: 'small',
       active: true,
     };
     const c2: SkuCandidate = {
-      skuUuid: 'sku-p2',
-      providerUuid: 'p2',
+      skuUuid: asSkuUuid('sku-p2'),
+      providerUuid: asProviderUuid('p2'),
       name: 'small',
       active: true,
     };
     const pinned: SkuCandidate = {
-      skuUuid: 'sku-p2',
-      providerUuid: 'p2',
+      skuUuid: asSkuUuid('sku-p2'),
+      providerUuid: asProviderUuid('p2'),
       name: 'small',
       active: true,
     };
@@ -695,8 +697,8 @@ describe('deployApp — ENG-258 SKU pin resolution + ambiguity elicitation', () 
     );
 
     const onResolveSku = vi.fn(async (_candidates: SkuCandidate[]) => ({
-      skuUuid: 'sku-p2',
-      providerUuid: 'p2',
+      skuUuid: asSkuUuid('sku-p2'),
+      providerUuid: asProviderUuid('p2'),
     }));
 
     // onPlan returns an `edit_env` edit on the first (and only) call,

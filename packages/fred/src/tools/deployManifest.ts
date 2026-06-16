@@ -2,6 +2,7 @@ import type {
   CosmosClientManager,
   CosmosTxResult,
   LeaseUuid,
+  ReadCtx,
 } from '@manifest-network/manifest-mcp-core';
 import {
   asLeaseUuid,
@@ -180,6 +181,10 @@ export async function deployManifest(
   const address = await clientManager.getAddress();
   await clientManager.acquireRateLimit();
   const queryClient = await clientManager.getQueryClient();
+  // Use the REAL core logger (not noopLogger) so the deploy path keeps logging
+  // when 4c-reads-B adds read diagnostics. The explicit acquireRateLimit above
+  // is RETAINED for the still-positional resolveProviderUrl + LCD reads (P2).
+  const ctx: ReadCtx = { query: queryClient, chain: clientManager, logger };
 
   const manifestMetaHash = await metaHashHex(spec.manifest);
 
@@ -206,7 +211,7 @@ export async function deployManifest(
       providerUuid = spec.sku.providerUuid;
       break;
     case 'byName': {
-      const r = await resolveSku(queryClient, {
+      const r = await resolveSku(ctx, {
         size: spec.sku.size,
         ...(spec.sku.providerUuid !== undefined
           ? { providerUuid: spec.sku.providerUuid }
@@ -234,7 +239,7 @@ export async function deployManifest(
 
   // Storage on the SAME provider (ENG-258 #2).
   if (spec.storage) {
-    const storage = await resolveSku(queryClient, {
+    const storage = await resolveSku(ctx, {
       size: spec.storage,
       providerUuid,
     });

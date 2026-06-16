@@ -217,7 +217,7 @@ export async function deployApp(
   // providerUuid) pin ONCE, BEFORE readiness/plan/fee/broadcast, so all
   // four reference the same SKU. Ambiguity routes through `onResolveSku`
   // (interactive) or re-throws SKU_AMBIGUOUS (headless). Defined as a
-  // closure so it captures `queryClient` + `callbacks` and can be reused
+  // closure so it captures `readCtx` + `callbacks` and can be reused
   // by the post-edit re-plan branch (an edit can change size/provider).
   //
   // Returns `{ pin, elicited }` where `elicited` is true ONLY when
@@ -234,7 +234,7 @@ export async function deployApp(
     const providerUuid = requestedProviderUuid(s);
     const skuUuid = requestedSkuUuid(s);
     try {
-      const pin = await resolveSku(queryClient, {
+      const pin = await resolveSku(readCtx, {
         size: requestedSize(s),
         ...(providerUuid !== undefined ? { providerUuid } : {}),
         ...(skuUuid !== undefined ? { skuUuid } : {}),
@@ -249,7 +249,7 @@ export async function deployApp(
         const candidates = (err.details?.candidates as SkuCandidate[]) ?? [];
         callbacks.onProgress?.({ kind: 'sku_ambiguous', candidates });
         const pick = await callbacks.onResolveSku(candidates);
-        const pin = await resolveSku(queryClient, {
+        const pin = await resolveSku(readCtx, {
           size: requestedSize(s),
           skuUuid: pick.skuUuid,
           providerUuid: pick.providerUuid,

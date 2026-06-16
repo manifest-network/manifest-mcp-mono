@@ -264,6 +264,13 @@ describe('LeaseMCPServer', () => {
       const result = await callTool(server, 'credit_balance');
 
       expect(mockGetBalance).toHaveBeenCalledOnce();
+      expect(mockGetBalance.mock.calls[0][0]).toEqual(
+        expect.objectContaining({
+          query: expect.anything(),
+          chain: expect.anything(),
+          logger: expect.anything(),
+        }),
+      );
       expect(mockGetBalance.mock.calls[0][1]).toBe('manifest1abc');
       expect(result.isError).toBeUndefined();
       const parsed = JSON.parse(result.content[0].text);
