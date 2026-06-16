@@ -5,6 +5,7 @@ import type {
   EventTransport,
   QueryCtx,
   ReadCtx,
+  TxCtx,
 } from './ctx.js';
 import type { Logger } from './logger.js';
 import type { Signer } from './signer.js';
@@ -37,5 +38,16 @@ describe('ReadCtx (type-level)', () => {
     expectTypeOf<ReadCtx>().not.toHaveProperty('signer');
     expectTypeOf<ReadCtx>().not.toHaveProperty('fetch');
     expectTypeOf<CapabilityCtx>().toExtend<ReadCtx>(); // a full ctx satisfies the read slice
+  });
+});
+
+describe('TxCtx (type-level)', () => {
+  it('TxCtx is the tx ISP slice: chain+signer+logger, NO query/fetch', () => {
+    expectTypeOf<TxCtx>().toHaveProperty('chain');
+    expectTypeOf<TxCtx>().toHaveProperty('signer');
+    expectTypeOf<TxCtx>().toHaveProperty('logger');
+    expectTypeOf<TxCtx>().not.toHaveProperty('query');
+    expectTypeOf<TxCtx>().not.toHaveProperty('fetch');
+    expectTypeOf<CapabilityCtx>().toExtend<TxCtx>();
   });
 });

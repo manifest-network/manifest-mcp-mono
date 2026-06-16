@@ -1,8 +1,9 @@
 import { LeaseState } from '@manifest-network/manifestjs/dist/codegen/liftedinit/billing/v1/types.js';
 import { vi } from 'vitest';
 import type { CosmosClientManager, ManifestQueryClient } from '../client.js';
-import type { ReadCtx } from '../ctx.js';
+import type { ReadCtx, TxCtx } from '../ctx.js';
 import { noopLogger } from '../logger.js';
+import type { Signer } from '../signer.js';
 import type {
   ManifestMCPConfig,
   SignArbitraryResult,
@@ -364,4 +365,21 @@ export function makeReadCtx(overrides?: {
       } as unknown as CosmosClientManager)) as CosmosClientManager,
     logger: overrides?.logger ?? noopLogger,
   } as ReadCtx;
+}
+
+/**
+ * A TxCtx for unit tests: a mock client manager whose getAddress/getSigningClient/acquireRateLimit
+ * back the tx path, noopLogger. `signer` defaults to undefined — 4c sender comes from `ctx.chain` and
+ * never reads `ctx.signer` (the field is plumbed so 4d's per-signer-mutex tests can populate it).
+ */
+export function makeTxCtx(overrides?: {
+  chain?: Partial<CosmosClientManager>;
+  signer?: Signer;
+  logger?: typeof noopLogger;
+}): TxCtx {
+  return {
+    chain: (overrides?.chain ?? makeMockClientManager()) as CosmosClientManager,
+    signer: overrides?.signer,
+    logger: overrides?.logger ?? noopLogger,
+  } as TxCtx;
 }
