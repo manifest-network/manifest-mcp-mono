@@ -43,6 +43,7 @@ export type {
   CapabilityCtx,
   EventTransport,
   QueryCtx,
+  ReadCtx,
 } from './ctx.js';
 export { parseBooleanEnv } from './env-utils.js';
 // NOTE: the SSRF-guarded fetch (`createGuardedFetch`, `isBlocked`,

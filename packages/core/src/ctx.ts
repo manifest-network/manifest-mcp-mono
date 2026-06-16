@@ -35,3 +35,6 @@ export interface CapabilityCtx {
 
 /** @public — query-only capability subset; only `signer` drops (spec §5.2). */
 export type QueryCtx = Omit<CapabilityCtx, 'signer'>;
+
+/** @public — the read-path ISP slice (spec §5.4): the typed reads take only query+chain+logger (no signer/fetch). */
+export type ReadCtx = Pick<CapabilityCtx, 'query' | 'chain' | 'logger'>;
