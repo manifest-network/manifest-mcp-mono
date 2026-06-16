@@ -7,6 +7,10 @@ import {
   DNS_LABEL_RE,
   fundCredits,
   getBalance,
+  getLeaseByCustomDomain,
+  getLeasesByTenant,
+  getProviders,
+  getSKUs,
   jsonResponse,
   LeaseState,
   leaseStateToJSON,
@@ -67,22 +71,6 @@ function leaseStateLabel(state: LeaseState): string {
     default:
       return leaseStateToJSON(state).toLowerCase();
   }
-}
-
-interface LeaseItemRecord {
-  skuUuid: string;
-  quantity: bigint;
-  serviceName?: string;
-  customDomain?: string;
-}
-
-interface LeaseRecord {
-  uuid: string;
-  state: LeaseState;
-  providerUuid: string;
-  createdAt?: Date;
-  closedAt?: Date;
-  items?: LeaseItemRecord[];
 }
 
 export class LeaseMCPServer {
@@ -260,43 +248,37 @@ export class LeaseMCPServer {
           validateAddress(args.tenant, 'tenant');
         }
         const address = args.tenant ?? (await this.walletProvider.getAddress());
-        await this.clientManager.acquireRateLimit();
-        const queryClient = await this.clientManager.getQueryClient();
+        // getLeasesByTenant acquires its own rate-limit token via withReadSignal,
+        // so we do NOT pre-acquire here — that would double-consume on the same
+        // logical read.
+        const ctx = {
+          query: await this.clientManager.getQueryClient(),
+          chain: this.clientManager,
+          logger: noopLogger,
+        };
 
-        const limit = BigInt(args.limit ?? 50);
-        const offset = BigInt(args.offset ?? 0);
         const stateKey = (args.state ?? 'all') as keyof typeof STATE_FILTER_MAP;
-        const stateFilter = STATE_FILTER_MAP[stateKey];
-
-        const billing = queryClient.liftedinit.billing.v1;
-        const result = await billing.leasesByTenant({
+        const { leases: raw, total } = await getLeasesByTenant(ctx, {
           tenant: address,
-          stateFilter,
-          pagination: {
-            key: new Uint8Array(),
-            offset,
-            limit,
-            countTotal: true,
-            reverse: false,
-          },
+          stateFilter: STATE_FILTER_MAP[stateKey],
+          limit: BigInt(args.limit ?? 50),
+          offset: BigInt(args.offset ?? 0),
         });
 
-        const leases = result.leases.map((l: LeaseRecord) => ({
+        const leases = raw.map((l) => ({
           uuid: l.uuid,
           state: l.state,
           stateLabel: leaseStateLabel(l.state),
           providerUuid: l.providerUuid,
           createdAt: l.createdAt?.toISOString(),
           closedAt: l.closedAt?.toISOString(),
-          items: l.items?.map((item: LeaseItemRecord) => ({
+          items: l.items?.map((item) => ({
             skuUuid: item.skuUuid,
             quantity: item.quantity,
             serviceName: item.serviceName,
             customDomain: item.customDomain,
           })),
         }));
-
-        const total = result.pagination?.total ?? BigInt(0);
 
         return jsonResponse({ leases, total }, bigIntReplacer);
       }),
@@ -464,27 +446,22 @@ export class LeaseMCPServer {
             'lease_by_custom_domain: custom_domain cannot be empty or whitespace-only.',
           );
         }
-        await this.clientManager.acquireRateLimit();
-        const queryClient = await this.clientManager.getQueryClient();
-        // Wrap the chain call so non-`ManifestMCPError` failures (notably
-        // the keeper's `NotFound` for an unclaimed FQDN, but also any
-        // transport / decoding error) surface as structured `QUERY_FAILED`
-        // — matching the shape callers see from the generic `cosmos_query`
-        // path, which routes through `cosmosQuery`'s wrapping.
-        const result = await queryClient.liftedinit.billing.v1
-          .leaseByCustomDomain({ customDomain })
-          .catch((error: unknown) => {
-            if (error instanceof ManifestMCPError) throw error;
-            throw new ManifestMCPError(
-              ManifestMCPErrorCode.QUERY_FAILED,
-              `lease_by_custom_domain failed: ${
-                error instanceof Error ? error.message : String(error)
-              }`,
-              { customDomain },
-            );
-          });
+        // getLeaseByCustomDomain acquires its own rate-limit token via
+        // withReadSignal, so we do NOT pre-acquire here — that would
+        // double-consume on the same logical read. The QUERY_FAILED wrap
+        // for non-`ManifestMCPError` chain failures (notably the keeper's
+        // `NotFound` for an unclaimed FQDN) now lives inside the core fn.
+        const ctx = {
+          query: await this.clientManager.getQueryClient(),
+          chain: this.clientManager,
+          logger: noopLogger,
+        };
+        const { lease, serviceName } = await getLeaseByCustomDomain(
+          ctx,
+          customDomain,
+        );
         return jsonResponse(
-          { lease: result.lease, service_name: result.serviceName },
+          { lease, service_name: serviceName },
           bigIntReplacer,
         );
       }),
@@ -509,11 +486,18 @@ export class LeaseMCPServer {
         }),
       },
       withErrorHandling('get_skus', async (args) => {
-        await this.clientManager.acquireRateLimit();
-        const queryClient = await this.clientManager.getQueryClient();
-        const activeOnly = args.active_only ?? true;
-        const result = await queryClient.liftedinit.sku.v1.sKUs({ activeOnly });
-        return jsonResponse({ skus: result.skus }, bigIntReplacer);
+        // getSKUs acquires its own rate-limit token via withReadSignal, so we
+        // do NOT pre-acquire here — that would double-consume on the same
+        // logical read.
+        const ctx = {
+          query: await this.clientManager.getQueryClient(),
+          chain: this.clientManager,
+          logger: noopLogger,
+        };
+        const skus = await getSKUs(ctx, {
+          activeOnly: args.active_only ?? true,
+        });
+        return jsonResponse({ skus }, bigIntReplacer);
       }),
     );
 
@@ -536,13 +520,18 @@ export class LeaseMCPServer {
         }),
       },
       withErrorHandling('get_providers', async (args) => {
-        await this.clientManager.acquireRateLimit();
-        const queryClient = await this.clientManager.getQueryClient();
-        const activeOnly = args.active_only ?? true;
-        const result = await queryClient.liftedinit.sku.v1.providers({
-          activeOnly,
+        // getProviders acquires its own rate-limit token via withReadSignal, so
+        // we do NOT pre-acquire here — that would double-consume on the same
+        // logical read.
+        const ctx = {
+          query: await this.clientManager.getQueryClient(),
+          chain: this.clientManager,
+          logger: noopLogger,
+        };
+        const providers = await getProviders(ctx, {
+          activeOnly: args.active_only ?? true,
         });
-        return jsonResponse({ providers: result.providers }, bigIntReplacer);
+        return jsonResponse({ providers }, bigIntReplacer);
       }),
     );
   }

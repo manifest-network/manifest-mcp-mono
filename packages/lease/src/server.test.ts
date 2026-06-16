@@ -11,6 +11,18 @@ const mockLeaseByCustomDomain = vi.fn();
 const mockSKUs = vi.fn();
 const mockProviders = vi.fn();
 
+// Shared rate-limit spy on the single mocked CosmosClientManager instance.
+// Hoisted so the `vi.mock` factory below can wire it into `getInstance`'s
+// return value AND the test body can assert against it. This is the SAME
+// token bucket the real core read fns reach through `ctx.chain` (the read
+// handlers are thin callers — the core fns are NOT mocked here), so it pins
+// "acquire exactly once per logical read" at the handler layer: re-adding a
+// handler-level pre-acquire on top of the core fn's own acquire would make
+// these assertions fail. (ENG-309)
+const { mockAcquireRateLimit } = vi.hoisted(() => ({
+  mockAcquireRateLimit: vi.fn().mockResolvedValue(undefined),
+}));
+
 vi.mock('@manifest-network/manifest-mcp-core', async (importOriginal) => {
   const actual =
     await importOriginal<
@@ -42,7 +54,7 @@ vi.mock('@manifest-network/manifest-mcp-core', async (importOriginal) => {
         getSigningClient: vi.fn().mockResolvedValue({}),
         getAddress: vi.fn().mockResolvedValue('manifest1abc'),
         getConfig: vi.fn().mockReturnValue({}),
-        acquireRateLimit: vi.fn().mockResolvedValue(undefined),
+        acquireRateLimit: mockAcquireRateLimit,
       }),
     },
     getBalance: (...args: unknown[]) => mockGetBalance(...args),
@@ -623,7 +635,16 @@ describe('LeaseMCPServer', () => {
   describe('lease_by_custom_domain', () => {
     it('returns the lease and service_name when the FQDN is claimed', async () => {
       mockLeaseByCustomDomain.mockResolvedValue({
-        lease: { uuid: 'lease-1', tenant: 'manifest1tenant' },
+        // A real lease always carries `items` (and `providerUuid`); the
+        // full-passthrough BrandedLease materializes `items: []` for an
+        // items-less fixture, so keep the mock realistic. Production output
+        // is byte-identical — brands erase in JSON.
+        lease: {
+          uuid: 'lease-1',
+          tenant: 'manifest1tenant',
+          providerUuid: 'provider-1',
+          items: [],
+        },
         serviceName: 'web',
       });
 
@@ -641,7 +662,12 @@ describe('LeaseMCPServer', () => {
       expect(result.isError).toBeUndefined();
       const parsed = JSON.parse(result.content[0].text);
       expect(parsed).toEqual({
-        lease: { uuid: 'lease-1', tenant: 'manifest1tenant' },
+        lease: {
+          uuid: 'lease-1',
+          tenant: 'manifest1tenant',
+          providerUuid: 'provider-1',
+          items: [],
+        },
         service_name: 'web',
       });
     });
@@ -707,6 +733,69 @@ describe('LeaseMCPServer', () => {
       const parsed = JSON.parse(result.content[0].text);
       expect(parsed.providers).toHaveLength(1);
     });
+  });
+
+  // Regression guard for ENG-309: the read handlers were converted to thin
+  // ReadCtx callers and the handler-level `await this.clientManager
+  // .acquireRateLimit()` pre-acquire was removed, because the core read fn
+  // already acquires one token via `withReadSignal`. Re-adding the
+  // pre-acquire would DOUBLE-consume a token on the same logical read. The
+  // core fns are NOT mocked here, so a real read drives one acquire through
+  // the shared `mockAcquireRateLimit` spy on the single mocked client
+  // manager. Asserting "exactly once per invocation" at the protocol layer
+  // makes the handler's abstinence test-provable, not merely review-provable
+  // — re-adding any pre-acquire line turns these red.
+  describe('read handlers acquire exactly one rate-limit token per call', () => {
+    const cases: ReadonlyArray<{
+      tool: string;
+      input: Record<string, unknown>;
+      arm: () => void;
+    }> = [
+      {
+        tool: 'leases_by_tenant',
+        input: { state: 'all' },
+        arm: () =>
+          mockLeasesByTenant.mockResolvedValue({
+            leases: [],
+            pagination: { total: BigInt(0) },
+          }),
+      },
+      {
+        tool: 'lease_by_custom_domain',
+        input: { custom_domain: 'app.example.com' },
+        arm: () =>
+          mockLeaseByCustomDomain.mockResolvedValue({
+            lease: { uuid: 'lease-1', tenant: 'manifest1tenant', items: [] },
+            serviceName: 'web',
+          }),
+      },
+      {
+        tool: 'get_skus',
+        input: {},
+        arm: () => mockSKUs.mockResolvedValue({ skus: [] }),
+      },
+      {
+        tool: 'get_providers',
+        input: {},
+        arm: () => mockProviders.mockResolvedValue({ providers: [] }),
+      },
+    ];
+
+    for (const { tool, input, arm } of cases) {
+      it(`${tool} acquires the rate-limit token exactly once`, async () => {
+        arm();
+        const server = new LeaseMCPServer({
+          config: makeMockConfig(),
+          walletProvider: makeMockWallet(),
+        });
+        const result = await callTool(server, tool, input);
+
+        expect(result.isError).toBeUndefined();
+        // Exactly one acquire: the core read fn's own (via withReadSignal),
+        // with NO handler-level pre-acquire stacked on top.
+        expect(mockAcquireRateLimit).toHaveBeenCalledTimes(1);
+      });
+    }
   });
 
   describe('error handling', () => {
