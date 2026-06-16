@@ -12,8 +12,14 @@ import {
 } from '../brands.js';
 import type { ReadCtx } from '../ctx.js';
 import { withReadSignal } from '../internals/read-signal.js';
-import type { BrandedLease, BrandedLeaseItem } from '../manifest-types.js';
+import type {
+  BrandedLease,
+  BrandedLeaseItem,
+  BrandedProvider,
+  BrandedSKU,
+} from '../manifest-types.js';
 import type { CallOptions } from '../options.js';
+import { ManifestMCPError, ManifestMCPErrorCode } from '../types.js';
 
 // ===== Module-private branded-view producers (OI-PRODUCERS: mirror sku-resolution.ts's toCandidate;
 // the view types stay pure-data in manifest-types.ts). Brand-on-extraction via the as* trust-cast
@@ -87,4 +93,69 @@ export async function getLease(
   // catchNotFound idiom + the mocks.ts {lease:null} shape; future P2 consumers disambiguate null. Do NOT
   // "simplify" to a non-null return — it breaks the mock-backed null test.
   return r.lease ? toBrandedLease(r.lease) : null;
+}
+
+export async function getLeaseByCustomDomain(
+  ctx: ReadCtx,
+  customDomain: string,
+  opts?: CallOptions,
+): Promise<{ lease: BrandedLease; serviceName: string }> {
+  const r = await withReadSignal(
+    ctx,
+    () =>
+      ctx.query.liftedinit.billing.v1
+        .leaseByCustomDomain({ customDomain })
+        .catch((error: unknown) => {
+          // .catch scoped to the INNER read so AbortError/TimeoutError propagate (OI-CATCH)
+          if (error instanceof ManifestMCPError) throw error;
+          throw new ManifestMCPError(
+            ManifestMCPErrorCode.QUERY_FAILED,
+            `lease_by_custom_domain failed: ${error instanceof Error ? error.message : String(error)}`,
+            { customDomain },
+          );
+        }),
+    opts,
+  );
+  return { lease: toBrandedLease(r.lease), serviceName: r.serviceName };
+}
+
+export async function getSKUs(
+  ctx: ReadCtx,
+  input: { activeOnly?: boolean },
+  opts?: CallOptions,
+): Promise<BrandedSKU[]> {
+  const r = await withReadSignal(
+    ctx,
+    () =>
+      ctx.query.liftedinit.sku.v1.sKUs({
+        activeOnly: input.activeOnly ?? true,
+      }),
+    opts,
+  );
+  return r.skus.map((s) => ({
+    ...s,
+    uuid: asSkuUuid(s.uuid),
+    providerUuid: asProviderUuid(s.providerUuid),
+  }));
+}
+
+export async function getProviders(
+  ctx: ReadCtx,
+  input: { activeOnly?: boolean },
+  opts?: CallOptions,
+): Promise<BrandedProvider[]> {
+  const r = await withReadSignal(
+    ctx,
+    () =>
+      ctx.query.liftedinit.sku.v1.providers({
+        activeOnly: input.activeOnly ?? true,
+      }),
+    opts,
+  );
+  return r.providers.map((p) => ({
+    ...p,
+    uuid: asProviderUuid(p.uuid),
+    address: asAddress(p.address),
+    payoutAddress: asAddress(p.payoutAddress),
+  }));
 }
