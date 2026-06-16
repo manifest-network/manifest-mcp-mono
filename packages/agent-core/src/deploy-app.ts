@@ -43,6 +43,8 @@ import {
   cosmosEstimateFee,
   ManifestMCPError,
   ManifestMCPErrorCode,
+  noopLogger,
+  type ReadCtx,
   resolveSku,
   type SkuCandidate,
   setItemCustomDomain,
@@ -197,10 +199,18 @@ export async function deployApp(
     : 'testnet';
 
   // --- Readiness evaluation -------------------------------------------
-  // fred's checkDeploymentReadiness takes (queryClient, address, input).
-  // `tenantAddress` was resolved + validated as consistent across
-  // walletProvider/clientManager in the address-source guard above.
+  // fred's checkDeploymentReadiness takes (ctx: ReadCtx, address, input),
+  // where ReadCtx = { query, chain, logger } (spec §5.4). It forwards the
+  // ctx to core's getBalance → withReadSignal → ctx.chain.acquireRateLimit,
+  // so the ctx MUST carry the clientManager as `chain` (a bare queryClient
+  // would crash). `tenantAddress` was resolved + validated as consistent
+  // across walletProvider/clientManager in the address-source guard above.
   const queryClient = await opts.clientManager.getQueryClient();
+  const readCtx: ReadCtx = {
+    query: queryClient,
+    chain: opts.clientManager,
+    logger: noopLogger,
+  };
 
   // --- SKU pin resolution (ENG-258) -----------------------------------
   // Resolve the requested `size` to a single concrete (skuUuid,
@@ -261,16 +271,12 @@ export async function deployApp(
   // as the canonical SKU name into every downstream consumer (readiness,
   // plan render, fred input, persisted manifest). `requestedSize(spec)`
   // survives ONLY as the input to `resolvePin` (the user's request).
-  const readinessRaw = await checkDeploymentReadiness(
-    queryClient,
-    tenantAddress,
-    {
-      image: primaryImage(spec),
-      size: pinned.name,
-      providerUuid: pinned.providerUuid,
-      skuUuid: pinned.skuUuid,
-    },
-  );
+  const readinessRaw = await checkDeploymentReadiness(readCtx, tenantAddress, {
+    image: primaryImage(spec),
+    size: pinned.name,
+    providerUuid: pinned.providerUuid,
+    skuUuid: pinned.skuUuid,
+  });
   // `readiness` is `let`-bound because the post-edit recompute branch
   // re-evaluates it against the edited spec (Copilot r3267373084 — see
   // the recall block inside the `onPlan` `verdict !== 'confirm'` arm).
@@ -425,7 +431,7 @@ export async function deployApp(
         };
       }
       const editedReadinessRaw = await checkDeploymentReadiness(
-        queryClient,
+        readCtx,
         tenantAddress,
         {
           image: primaryImage(confirmedSpec),

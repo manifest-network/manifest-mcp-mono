@@ -8,6 +8,8 @@ import {
   ManifestMCPErrorCode,
   manifestMeta,
   mutatingAnnotations,
+  noopLogger,
+  type ReadCtx,
   readOnlyAnnotations,
   structuredResponse,
   type WalletProvider,
@@ -350,9 +352,15 @@ export function registerTools(deps: RegisterToolsDeps): void {
     },
     withErrorHandling('check_deployment_readiness', async (args) => {
       const address = await walletProvider.getAddress();
-      await clientManager.acquireRateLimit();
+      // getBalance acquires its own rate-limit token via withReadSignal, so we do
+      // NOT pre-acquire here — that would double-consume on the same logical read.
       const queryClient = await clientManager.getQueryClient();
-      const result = await checkDeploymentReadiness(queryClient, address, {
+      const ctx: ReadCtx = {
+        query: queryClient,
+        chain: clientManager,
+        logger: noopLogger,
+      };
+      const result = await checkDeploymentReadiness(ctx, address, {
         size: args.size,
         image: args.image,
         providerUuid: args.provider_uuid,

@@ -1,4 +1,6 @@
-import type { ManifestQueryClient } from '../client.js';
+import type { ReadCtx } from '../ctx.js';
+import { withReadSignal } from '../internals/read-signal.js';
+import type { CallOptions } from '../options.js';
 import { ManifestMCPError } from '../types.js';
 
 function catchNotFound<T>(promise: Promise<T>): Promise<T | null> {
@@ -20,17 +22,23 @@ function catchNotFound<T>(promise: Promise<T>): Promise<T | null> {
 }
 
 export async function getBalance(
-  queryClient: ManifestQueryClient,
+  ctx: ReadCtx,
   address: string,
+  opts?: CallOptions,
 ) {
-  const bank = queryClient.cosmos.bank.v1beta1;
-  const billing = queryClient.liftedinit.billing.v1;
+  const bank = ctx.query.cosmos.bank.v1beta1;
+  const billing = ctx.query.liftedinit.billing.v1;
 
-  const [balancesResult, creditResult, estimateResult] = await Promise.all([
-    bank.allBalances({ address, resolveDenom: false }),
-    catchNotFound(billing.creditAccount({ tenant: address })),
-    catchNotFound(billing.creditEstimate({ tenant: address })),
-  ]);
+  const [balancesResult, creditResult, estimateResult] = await withReadSignal(
+    ctx,
+    () =>
+      Promise.all([
+        bank.allBalances({ address, resolveDenom: false }),
+        catchNotFound(billing.creditAccount({ tenant: address })),
+        catchNotFound(billing.creditEstimate({ tenant: address })),
+      ]),
+    opts,
+  );
 
   const credits = creditResult?.creditAccount
     ? {

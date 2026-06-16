@@ -16,6 +16,7 @@ import {
   type MnemonicServerConfig,
   manifestMeta,
   mutatingAnnotations,
+  noopLogger,
   readOnlyAnnotations,
   setItemCustomDomain,
   stopApp,
@@ -153,9 +154,17 @@ export class LeaseMCPServer {
           validateAddress(args.tenant, 'tenant');
         }
         const address = args.tenant ?? (await this.walletProvider.getAddress());
-        await this.clientManager.acquireRateLimit();
+        // getBalance acquires its own rate-limit token via withReadSignal, so we do
+        // NOT pre-acquire here — that would double-consume on the same logical read.
         const queryClient = await this.clientManager.getQueryClient();
-        const result = await getBalance(queryClient, address);
+        const result = await getBalance(
+          {
+            query: queryClient,
+            chain: this.clientManager,
+            logger: noopLogger,
+          },
+          address,
+        );
         return structuredResponse(result, bigIntReplacer);
       }),
     );
