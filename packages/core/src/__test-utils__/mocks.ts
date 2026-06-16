@@ -1,6 +1,8 @@
 import { LeaseState } from '@manifest-network/manifestjs/dist/codegen/liftedinit/billing/v1/types.js';
 import { vi } from 'vitest';
-import type { ManifestQueryClient } from '../client.js';
+import type { CosmosClientManager, ManifestQueryClient } from '../client.js';
+import type { ReadCtx } from '../ctx.js';
+import { noopLogger } from '../logger.js';
 import type {
   ManifestMCPConfig,
   SignArbitraryResult,
@@ -293,4 +295,20 @@ export function makeMockClientManager(overrides?: {
     acquireRateLimit: vi.fn().mockResolvedValue(undefined),
     disconnect: vi.fn(),
   };
+}
+
+/** A ReadCtx for unit tests: a mock query client, a chain stub whose acquireRateLimit resolves, noopLogger. */
+export function makeReadCtx(overrides?: {
+  query?: ReturnType<typeof makeMockQueryClient>;
+  chain?: Partial<CosmosClientManager>;
+  logger?: typeof noopLogger;
+}): ReadCtx {
+  return {
+    query: overrides?.query ?? makeMockQueryClient(),
+    chain: (overrides?.chain ??
+      ({
+        acquireRateLimit: async () => {},
+      } as unknown as CosmosClientManager)) as CosmosClientManager,
+    logger: overrides?.logger ?? noopLogger,
+  } as ReadCtx;
 }
