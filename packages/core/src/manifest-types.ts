@@ -7,8 +7,22 @@
 // family at the deployManifest producer. Still non-breaking: brands erase to string in JSON and
 // the MCP outputSchema is unchanged.
 
-import type { LeaseState } from '@manifest-network/manifestjs/dist/codegen/liftedinit/billing/v1/types.js';
-import type { LeaseUuid, ProviderUuid, SkuUuid } from './brands.js';
+import type {
+  Lease,
+  LeaseItem,
+  LeaseState,
+} from '@manifest-network/manifestjs/dist/codegen/liftedinit/billing/v1/types.js';
+import type {
+  Provider,
+  SKU,
+} from '@manifest-network/manifestjs/dist/codegen/liftedinit/sku/v1/types.js';
+import type {
+  Address,
+  Fqdn,
+  LeaseUuid,
+  ProviderUuid,
+  SkuUuid,
+} from './brands.js';
 
 // ===== Manifest build / validation (relocated from fred/src/manifest.ts) =====
 export interface BuildManifestOptions {
@@ -192,6 +206,39 @@ export interface DeployResult {
   readonly custom_domain?: string;
   /** Set when a `serviceName` was supplied alongside a successful `customDomain` set. */
   readonly service_name?: string;
+}
+
+// ===== Branded read-view types (spec §5.4/§8). Full-passthrough Omit-override over the REAL
+// manifestjs camelCase value types: carry EVERY field, brand only the id-bearing ones via the
+// as* trust-cast at the producer (tools/reads.ts). Non-breaking — brands erase to string in JSON,
+// so MCP outputSchema / wire shape are unchanged. Full-set branding (ENG-309): every scoped id on
+// a read return is branded (UUID trio + Address incl. payoutAddress + Fqdn). =====
+
+/** @public — manifestjs LeaseItem with its scoped ids branded. customDomain is a REQUIRED string ('' when unset); asFqdn does NOT reject '' — do NOT change to parseFqdn. */
+export interface BrandedLeaseItem
+  extends Omit<LeaseItem, 'skuUuid' | 'customDomain'> {
+  readonly skuUuid: SkuUuid;
+  readonly customDomain: Fqdn;
+}
+/** @public — full-passthrough branded Lease view: carries EVERY manifestjs Lease field; brands only the 4 id-bearing ones. */
+export interface BrandedLease
+  extends Omit<Lease, 'uuid' | 'tenant' | 'providerUuid' | 'items'> {
+  readonly uuid: LeaseUuid;
+  readonly tenant: Address; // Tenant = Address (transparent alias)
+  readonly providerUuid: ProviderUuid;
+  readonly items: BrandedLeaseItem[];
+}
+/** @public — branded SKU view. */
+export interface BrandedSKU extends Omit<SKU, 'uuid' | 'providerUuid'> {
+  readonly uuid: SkuUuid;
+  readonly providerUuid: ProviderUuid;
+}
+/** @public — branded Provider view (address AND payoutAddress are bech32 → Address). */
+export interface BrandedProvider
+  extends Omit<Provider, 'uuid' | 'address' | 'payoutAddress'> {
+  readonly uuid: ProviderUuid;
+  readonly address: Address;
+  readonly payoutAddress: Address;
 }
 
 // Data-only deploy specs (spec §5.1). The 4 runtime-orchestration fields (gasMultiplier/

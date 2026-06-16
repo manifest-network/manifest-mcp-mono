@@ -1,5 +1,15 @@
 import { describe, expectTypeOf, it } from 'vitest';
 import type {
+  Address,
+  Fqdn,
+  LeaseUuid,
+  ProviderUuid,
+  SkuUuid,
+} from './brands.js';
+import type {
+  BrandedLease,
+  BrandedProvider,
+  BrandedSKU,
   DeployResult,
   FredLeaseStatus,
   PortConfig,
@@ -23,6 +33,39 @@ describe('manifest-types shape (type-level)', () => {
       import('./brands.js').ProviderUuid
     >();
     expectTypeOf<DeployResult['lease_uuid']>().toExtend<string>(); // still erases to string (non-breaking)
+  });
+  it('BrandedLease brands the full scoped-id set (uuid/tenant/providerUuid + item ids)', () => {
+    expectTypeOf<BrandedLease['uuid']>().toEqualTypeOf<LeaseUuid>();
+    expectTypeOf<BrandedLease['tenant']>().toEqualTypeOf<Address>();
+    expectTypeOf<BrandedLease['providerUuid']>().toEqualTypeOf<ProviderUuid>();
+    expectTypeOf<
+      BrandedLease['items'][number]['skuUuid']
+    >().toEqualTypeOf<SkuUuid>();
+    expectTypeOf<
+      BrandedLease['items'][number]['customDomain']
+    >().toEqualTypeOf<Fqdn>();
+    // brands still erase to string (non-breaking)
+    expectTypeOf<BrandedLease['uuid']>().toExtend<string>();
+    expectTypeOf<BrandedLease['tenant']>().toExtend<string>();
+    expectTypeOf<BrandedLease['providerUuid']>().toExtend<string>();
+    expectTypeOf<BrandedLease['items'][number]['skuUuid']>().toExtend<string>();
+    expectTypeOf<
+      BrandedLease['items'][number]['customDomain']
+    >().toExtend<string>();
+  });
+  it('BrandedSKU brands uuid + providerUuid', () => {
+    expectTypeOf<BrandedSKU['uuid']>().toEqualTypeOf<SkuUuid>();
+    expectTypeOf<BrandedSKU['providerUuid']>().toEqualTypeOf<ProviderUuid>();
+    expectTypeOf<BrandedSKU['uuid']>().toExtend<string>();
+    expectTypeOf<BrandedSKU['providerUuid']>().toExtend<string>();
+  });
+  it('BrandedProvider brands uuid + address + payoutAddress', () => {
+    expectTypeOf<BrandedProvider['uuid']>().toEqualTypeOf<ProviderUuid>();
+    expectTypeOf<BrandedProvider['address']>().toEqualTypeOf<Address>();
+    expectTypeOf<BrandedProvider['payoutAddress']>().toEqualTypeOf<Address>();
+    expectTypeOf<BrandedProvider['uuid']>().toExtend<string>();
+    expectTypeOf<BrandedProvider['address']>().toExtend<string>();
+    expectTypeOf<BrandedProvider['payoutAddress']>().toExtend<string>();
   });
   it('AppDeploySpec / ManifestDeploySpec are data-only (no runtime fields)', () => {
     type App = import('./manifest-types.js').AppDeploySpec;

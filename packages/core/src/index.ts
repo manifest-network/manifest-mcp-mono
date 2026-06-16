@@ -63,6 +63,10 @@ export {
 } from './logger.js';
 export type {
   AppDeploySpec,
+  BrandedLease,
+  BrandedLeaseItem,
+  BrandedProvider,
+  BrandedSKU,
   BuildManifestOptions,
   ConnectionDetails,
   DeployResult,
