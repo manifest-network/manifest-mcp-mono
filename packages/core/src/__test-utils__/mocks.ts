@@ -69,6 +69,27 @@ interface BillingOverrides {
     createdAt?: Date;
     closedAt?: Date;
   } | null;
+  billingParams?: {
+    maxLeasesPerTenant: bigint;
+    allowedList: string[];
+    maxItemsPerLease: bigint;
+    minLeaseDuration: bigint;
+    maxPendingLeasesPerTenant: bigint;
+    pendingTimeout: bigint;
+    reservedDomainSuffixes: string[];
+  };
+  withdrawableAmount?: { denom: string; amount: string }[];
+  leaseByCustomDomain?: {
+    lease: {
+      uuid: string;
+      tenant: string;
+      providerUuid: string;
+      items: unknown[];
+      state: LeaseState;
+      createdAt: Date;
+    };
+    serviceName: string;
+  };
   activeLeases?: { uuid: string; providerUuid: string; createdAt?: Date }[];
   pendingLeases?: { uuid: string; providerUuid: string; createdAt?: Date }[];
   closedLeases?: { uuid: string; providerUuid: string; createdAt?: Date }[];
@@ -80,6 +101,7 @@ interface SkuOverrides {
   providers?: {
     uuid: string;
     address: string;
+    payoutAddress?: string;
     apiUrl: string;
     active: boolean;
   }[];
@@ -110,6 +132,27 @@ export function makeMockQueryClient(overrides?: {
     billing.creditAccountAvailableBalances ?? [];
   const creditEstimate = billing.creditEstimate ?? null;
   const lease = billing.lease ?? null;
+  const billingParams = billing.billingParams ?? {
+    maxLeasesPerTenant: 10n,
+    allowedList: [],
+    maxItemsPerLease: 5n,
+    minLeaseDuration: 3600n,
+    maxPendingLeasesPerTenant: 10n,
+    pendingTimeout: 1800n,
+    reservedDomainSuffixes: [],
+  };
+  const withdrawableAmount = billing.withdrawableAmount ?? [];
+  const leaseByCustomDomain = billing.leaseByCustomDomain ?? {
+    lease: {
+      uuid: 'lease-uuid-1',
+      tenant: 'manifest1tenant',
+      providerUuid: 'provider-uuid-1',
+      items: [],
+      state: LeaseState.LEASE_STATE_ACTIVE,
+      createdAt: new Date(0),
+    },
+    serviceName: 'web',
+  };
   const activeLeases = billing.activeLeases ?? [];
   const pendingLeases = billing.pendingLeases ?? [];
   const closedLeases = billing.closedLeases ?? [];
@@ -255,11 +298,21 @@ export function makeMockQueryClient(overrides?: {
                 return { leases: [] };
               },
             ),
+          params: vi.fn().mockResolvedValue({ params: billingParams }),
+          withdrawableAmount: vi
+            .fn()
+            .mockResolvedValue({ amounts: withdrawableAmount }),
+          leaseByCustomDomain: vi.fn().mockResolvedValue(leaseByCustomDomain),
         },
       },
       sku: {
         v1: {
-          providers: vi.fn().mockResolvedValue({ providers }),
+          providers: vi.fn().mockResolvedValue({
+            providers: providers.map((p) => ({
+              payoutAddress: 'manifest1payout',
+              ...p,
+            })),
+          }),
           sKUs: vi.fn().mockResolvedValue({
             skus: skus.map((s) => ({ active: true, ...s })),
           }),
