@@ -159,7 +159,7 @@ export {
   getWithdrawableAmount,
 } from './tools/reads.js';
 export {
-  type SetItemCustomDomainOptions,
+  type SetItemCustomDomainInput,
   type SetItemCustomDomainResult,
   setItemCustomDomain,
 } from './tools/setItemCustomDomain.js';
