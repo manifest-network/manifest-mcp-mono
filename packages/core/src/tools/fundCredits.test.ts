@@ -4,7 +4,8 @@ vi.mock('../cosmos.js', () => ({
   cosmosTx: vi.fn(),
 }));
 
-import { makeMockClientManager } from '../__test-utils__/mocks.js';
+import { makeMockClientManager, makeTxCtx } from '../__test-utils__/mocks.js';
+import { asAddress } from '../brands.js';
 import { cosmosTx } from '../cosmos.js';
 import { ManifestMCPError, ManifestMCPErrorCode } from '../types.js';
 import { fundCredits } from './fundCredits.js';
@@ -27,7 +28,9 @@ describe('fundCredits', () => {
       confirmed: true,
     });
 
-    const result = await fundCredits(cm as any, '10000000umfx');
+    const result = await fundCredits(makeTxCtx({ chain: cm }), {
+      amount: '10000000umfx',
+    });
 
     expect(mockCosmosTx).toHaveBeenCalledWith(
       cm,
@@ -35,6 +38,7 @@ describe('fundCredits', () => {
       'fund-credit',
       ['manifest1sender', '10000000umfx'],
       true,
+      undefined,
       undefined,
     );
     expect(result).toEqual({
@@ -61,12 +65,10 @@ describe('fundCredits', () => {
       confirmed: true,
     });
 
-    const result = await fundCredits(
-      cm as any,
-      '10000000umfx',
-      undefined,
-      'manifest1am058pdux3hyulcmfgj4m3hhrlfn8nzmx97smg',
-    );
+    const result = await fundCredits(makeTxCtx({ chain: cm }), {
+      amount: '10000000umfx',
+      tenant: asAddress('manifest1am058pdux3hyulcmfgj4m3hhrlfn8nzmx97smg'),
+    });
 
     expect(mockCosmosTx).toHaveBeenCalledWith(
       cm,
@@ -74,6 +76,7 @@ describe('fundCredits', () => {
       'fund-credit',
       ['manifest1am058pdux3hyulcmfgj4m3hhrlfn8nzmx97smg', '10000000umfx'],
       true,
+      undefined,
       undefined,
     );
     expect(result).toEqual({
@@ -98,17 +101,17 @@ describe('fundCredits', () => {
       ),
     );
 
-    await expect(fundCredits(cm as any, '10000000umfx')).rejects.toThrow(
-      ManifestMCPError,
-    );
+    await expect(
+      fundCredits(makeTxCtx({ chain: cm }), { amount: '10000000umfx' }),
+    ).rejects.toThrow(ManifestMCPError);
   });
 
   it('propagates errors from cosmosTx', async () => {
     const cm = makeMockClientManager();
     mockCosmosTx.mockRejectedValue(new Error('insufficient funds'));
 
-    await expect(fundCredits(cm as any, '999umfx')).rejects.toThrow(
-      'insufficient funds',
-    );
+    await expect(
+      fundCredits(makeTxCtx({ chain: cm }), { amount: '999umfx' }),
+    ).rejects.toThrow('insufficient funds');
   });
 });
