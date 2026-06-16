@@ -1,4 +1,12 @@
-import type { ManifestQueryClient } from './client.js';
+import {
+  asProviderUuid,
+  asSkuUuid,
+  type ProviderUuid,
+  type SkuUuid,
+} from './brands.js';
+import type { ReadCtx } from './ctx.js';
+import { withReadSignal } from './internals/read-signal.js';
+import type { CallOptions } from './options.js';
 import { createPagination, MAX_PAGE_LIMIT } from './queries/utils.js';
 import { ManifestMCPError, ManifestMCPErrorCode } from './types.js';
 
@@ -7,8 +15,8 @@ import { ManifestMCPError, ManifestMCPErrorCode } from './types.js';
  * free-form, NON-unique label (the chain enforces no name uniqueness).
  */
 export interface SkuCandidate {
-  readonly skuUuid: string;
-  readonly providerUuid: string;
+  readonly skuUuid: SkuUuid;
+  readonly providerUuid: ProviderUuid;
   readonly name: string;
   readonly price?: { readonly amount: string; readonly denom: string };
   readonly active: boolean;
@@ -31,8 +39,8 @@ function toCandidate(s: {
   active?: boolean;
 }): SkuCandidate {
   return {
-    skuUuid: s.uuid,
-    providerUuid: s.providerUuid,
+    skuUuid: asSkuUuid(s.uuid),
+    providerUuid: asProviderUuid(s.providerUuid),
     name: s.name,
     ...(s.basePrice
       ? { price: { amount: s.basePrice.amount, denom: s.basePrice.denom } }
@@ -42,25 +50,27 @@ function toCandidate(s: {
 }
 
 async function fetchActiveSkus(
-  queryClient: ManifestQueryClient,
+  ctx: ReadCtx,
+  opts?: CallOptions,
 ): Promise<SkuCandidate[]> {
   const pagination = createPagination(MAX_PAGE_LIMIT);
-  const result = await queryClient.liftedinit.sku.v1.sKUs({
-    activeOnly: true,
-    pagination,
-  });
+  const result = await withReadSignal(
+    ctx,
+    () => ctx.query.liftedinit.sku.v1.sKUs({ activeOnly: true, pagination }),
+    opts,
+  );
   return result.skus.map(toCandidate);
 }
 
 /** List every active SKU matching `size` (optionally narrowed by provider). No throw on >1. */
 export async function listSkuCandidates(
-  queryClient: ManifestQueryClient,
-  size: string,
-  providerUuid?: string,
+  ctx: ReadCtx,
+  input: { size: string; providerUuid?: string },
+  opts?: CallOptions,
 ): Promise<SkuCandidate[]> {
-  const sizeTrimmed = size.trim();
-  const providerUuidTrimmed = providerUuid?.trim() || undefined;
-  const all = await fetchActiveSkus(queryClient);
+  const sizeTrimmed = input.size.trim();
+  const providerUuidTrimmed = input.providerUuid?.trim() || undefined;
+  const all = await fetchActiveSkus(ctx, opts);
   let named = all.filter((s) => s.name === sizeTrimmed);
   if (providerUuidTrimmed !== undefined) {
     named = named.filter((s) => s.providerUuid === providerUuidTrimmed);
@@ -92,13 +102,14 @@ function ambiguous(size: string, candidates: SkuCandidate[]): ManifestMCPError {
  *   With `providerUuid`, narrow first; same-provider duplicates → SKU_AMBIGUOUS (require sku_uuid).
  */
 export async function resolveSku(
-  queryClient: ManifestQueryClient,
+  ctx: ReadCtx,
   input: ResolveSkuInput,
+  opts?: CallOptions,
 ): Promise<SkuCandidate> {
   const skuUuid = input.skuUuid?.trim() || undefined;
   const providerUuid = input.providerUuid?.trim() || undefined;
   const size = input.size.trim();
-  const all = await fetchActiveSkus(queryClient);
+  const all = await fetchActiveSkus(ctx, opts);
 
   if (skuUuid !== undefined) {
     const hit = all.find((s) => s.skuUuid === skuUuid);
