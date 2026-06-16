@@ -4,11 +4,13 @@ import { makeMockQueryClient, makeReadCtx } from '../__test-utils__/mocks.js';
 import type { CosmosClientManager } from '../client.js';
 import { ManifestMCPError, ManifestMCPErrorCode } from '../types.js';
 import {
+  getBillingParams,
   getLease,
   getLeaseByCustomDomain,
   getLeasesByTenant,
   getProviders,
   getSKUs,
+  getWithdrawableAmount,
 } from './reads.js';
 
 describe('getLeasesByTenant', () => {
@@ -281,6 +283,57 @@ describe('getProviders', () => {
       chain: { acquireRateLimit } as unknown as CosmosClientManager,
     });
     await getProviders(ctx, { activeOnly: true });
+    expect(acquireRateLimit).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('getBillingParams', () => {
+  it('returns the unbranded billing Params', async () => {
+    const client = makeMockQueryClient();
+    const result = await getBillingParams(makeReadCtx({ query: client }));
+    expect(result.maxLeasesPerTenant).toBe(10n);
+    expect(vi.mocked(client.liftedinit.billing.v1.params)).toHaveBeenCalledWith(
+      {},
+    );
+  });
+
+  it('acquires the rate-limit token exactly once', async () => {
+    const client = makeMockQueryClient();
+    const acquireRateLimit = vi.fn();
+    const ctx = makeReadCtx({
+      query: client,
+      chain: { acquireRateLimit } as unknown as CosmosClientManager,
+    });
+    await getBillingParams(ctx);
+    expect(acquireRateLimit).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('getWithdrawableAmount', () => {
+  it('returns the unbranded Coin[] amounts', async () => {
+    const client = makeMockQueryClient({
+      billing: {
+        withdrawableAmount: [{ denom: 'upwr', amount: '100' }],
+      },
+    });
+    const result = await getWithdrawableAmount(
+      makeReadCtx({ query: client }),
+      'lease-uuid-1',
+    );
+    expect(result).toEqual([{ denom: 'upwr', amount: '100' }]);
+    expect(
+      vi.mocked(client.liftedinit.billing.v1.withdrawableAmount),
+    ).toHaveBeenCalledWith({ leaseUuid: 'lease-uuid-1' });
+  });
+
+  it('acquires the rate-limit token exactly once', async () => {
+    const client = makeMockQueryClient();
+    const acquireRateLimit = vi.fn();
+    const ctx = makeReadCtx({
+      query: client,
+      chain: { acquireRateLimit } as unknown as CosmosClientManager,
+    });
+    await getWithdrawableAmount(ctx, 'lease-uuid-1');
     expect(acquireRateLimit).toHaveBeenCalledTimes(1);
   });
 });

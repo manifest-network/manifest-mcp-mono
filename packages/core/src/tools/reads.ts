@@ -19,7 +19,12 @@ import type {
   BrandedSKU,
 } from '../manifest-types.js';
 import type { CallOptions } from '../options.js';
-import { ManifestMCPError, ManifestMCPErrorCode } from '../types.js';
+import {
+  type BillingParams,
+  type Coin,
+  ManifestMCPError,
+  ManifestMCPErrorCode,
+} from '../types.js';
 
 // ===== Module-private branded-view producers (OI-PRODUCERS: mirror sku-resolution.ts's toCandidate;
 // the view types stay pure-data in manifest-types.ts). Brand-on-extraction via the as* trust-cast
@@ -158,4 +163,29 @@ export async function getProviders(
     address: asAddress(p.address),
     payoutAddress: asAddress(p.payoutAddress),
   }));
+}
+
+export async function getBillingParams(
+  ctx: ReadCtx,
+  opts?: CallOptions,
+): Promise<BillingParams> {
+  const r = await withReadSignal(
+    ctx,
+    () => ctx.query.liftedinit.billing.v1.params({}),
+    opts,
+  );
+  return r.params;
+}
+
+export async function getWithdrawableAmount(
+  ctx: ReadCtx,
+  leaseUuid: string,
+  opts?: CallOptions,
+): Promise<Coin[]> {
+  const r = await withReadSignal(
+    ctx,
+    () => ctx.query.liftedinit.billing.v1.withdrawableAmount({ leaseUuid }),
+    opts,
+  );
+  return r.amounts;
 }
