@@ -246,6 +246,7 @@ describe('cosmosTx', () => {
       false,
       undefined,
       undefined,
+      undefined,
     );
     expect(result).toEqual(txResult);
   });
@@ -268,6 +269,7 @@ describe('cosmosTx', () => {
       'send',
       [],
       true,
+      undefined,
       undefined,
       undefined,
     );
@@ -456,6 +458,69 @@ describe('cosmosTx', () => {
       false,
       { gasMultiplier: 2.5, gasPrice: '1.0umfx' },
       undefined,
+      undefined,
+    );
+  });
+
+  it('rejects fee + gasMultiplier together with INVALID_CONFIG (mutual exclusion)', async () => {
+    mockGetTxHandler.mockReturnValue(vi.fn());
+    // gasPrice present so the failure is the mutual-exclusion guard, not the
+    // gasMultiplier-needs-gasPrice guard.
+    clientManager.getConfig.mockReturnValue({
+      retry: { maxRetries: 3 },
+      gasPrice: '1.0umfx',
+    });
+
+    await expect(
+      cosmosTx(
+        clientManager,
+        'billing',
+        'fund-credit',
+        ['manifest1tenant', '100umfx'],
+        false,
+        { gasMultiplier: 2.0 },
+        { fee: { amount: [{ denom: 'umfx', amount: '5' }], gas: '200000' } },
+      ),
+    ).rejects.toMatchObject({
+      code: ManifestMCPErrorCode.INVALID_CONFIG,
+      message: expect.stringContaining('fee'),
+    });
+  });
+
+  it('threads txExtras to the handler as the 8th argument', async () => {
+    const mockHandler = vi.fn().mockResolvedValue({
+      module: 'billing',
+      subcommand: 'fund-credit',
+      transactionHash: 'X',
+      code: 0,
+      height: '1',
+    });
+    mockGetTxHandler.mockReturnValue(mockHandler);
+
+    const txExtras = {
+      fee: { amount: [{ denom: 'umfx', amount: '9' }], gas: '300000' },
+      memo: 'hello',
+    };
+
+    await cosmosTx(
+      clientManager,
+      'billing',
+      'fund-credit',
+      ['manifest1tenant', '100umfx'],
+      false,
+      undefined,
+      txExtras,
+    );
+
+    expect(mockHandler).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      'fund-credit',
+      ['manifest1tenant', '100umfx'],
+      false,
+      undefined,
+      undefined,
+      txExtras,
     );
   });
 
@@ -503,6 +568,7 @@ describe('cosmosTx', () => {
       false,
       undefined,
       { currentBillingParams: onChainParams },
+      undefined,
     );
   });
 
@@ -525,6 +591,7 @@ describe('cosmosTx', () => {
       'send',
       ['addr', '100umfx'],
       false,
+      undefined,
       undefined,
       undefined,
     );

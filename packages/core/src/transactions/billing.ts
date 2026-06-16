@@ -1,4 +1,4 @@
-import type { SigningStargateClient } from '@cosmjs/stargate';
+import type { SigningStargateClient, StdFee } from '@cosmjs/stargate';
 import { liftedinit } from '@manifest-network/manifestjs';
 import type { ManifestQueryClient } from '../client.js';
 import { getSubcommandUsage, throwUnsupportedSubcommand } from '../modules.js';
@@ -26,6 +26,7 @@ import {
   requireArgs,
   validateAddress,
   validateArgsLength,
+  validateMemo,
 } from './utils.js';
 
 const {
@@ -525,20 +526,27 @@ export async function routeBillingTransaction(
   waitForConfirmation: boolean,
   options?: TxOptions,
   context?: TxBuildContext,
+  txExtras?: { readonly fee?: StdFee; readonly memo?: string },
 ): Promise<CosmosTxResult> {
   const built = buildBillingMessages(senderAddress, subcommand, args, context);
-  const fee = await buildGasFee(
-    client,
-    senderAddress,
-    built.messages,
-    options,
-    built.memo,
-  );
+  const effectiveMemo = txExtras?.memo ?? built.memo;
+  validateMemo(effectiveMemo); // utils.ts (MAX_MEMO_LENGTH=256 → TX_FAILED)
+  // FEE-WINS: an explicit fee skips buildGasFee/simulate entirely (the only no-gasPrice-valid path).
+  const fee =
+    txExtras?.fee !== undefined
+      ? txExtras.fee
+      : await buildGasFee(
+          client,
+          senderAddress,
+          built.messages,
+          options,
+          effectiveMemo,
+        );
   const result = await client.signAndBroadcast(
     senderAddress,
     built.messages,
     fee,
-    built.memo,
+    effectiveMemo, // SAME memo bytes the simulate leg used
   );
   return buildTxResult(
     'billing',

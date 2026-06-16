@@ -1,4 +1,4 @@
-import { calculateFee } from '@cosmjs/stargate';
+import { calculateFee, type StdFee } from '@cosmjs/stargate';
 import type { CosmosClientManager } from './client.js';
 import { DEFAULT_GAS_MULTIPLIER } from './config.js';
 import {
@@ -174,9 +174,19 @@ export async function cosmosTx(
   args: string[] = [],
   waitForConfirmation: boolean = false,
   overrides?: TxOverrides,
+  txExtras?: { readonly fee?: StdFee; readonly memo?: string },
 ): Promise<CosmosTxResult> {
   validateName(module, 'module', ManifestMCPErrorCode.UNSUPPORTED_TX);
   validateName(subcommand, 'subcommand', ManifestMCPErrorCode.UNSUPPORTED_TX);
+
+  // NET-NEW: explicit fee and gasMultiplier are mutually exclusive (fee wins; gasMultiplier
+  // applies only on the simulate path). Co-located with the gas validations below.
+  if (txExtras?.fee !== undefined && overrides?.gasMultiplier !== undefined) {
+    throw new ManifestMCPError(
+      ManifestMCPErrorCode.INVALID_CONFIG,
+      'passing both fee and gasMultiplier is a caller error; fee wins (it skips simulation), gasMultiplier applies only on the simulate path',
+    );
+  }
 
   // Build fully-resolved gas options from caller overrides + server config
   let txOptions: TxOptions | undefined;
@@ -236,6 +246,7 @@ export async function cosmosTx(
           waitForConfirmation,
           txOptions,
           buildContext,
+          txExtras,
         );
       } catch (error) {
         if (error instanceof ManifestMCPError) {

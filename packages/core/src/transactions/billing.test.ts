@@ -1,8 +1,10 @@
+import type { StdFee } from '@cosmjs/stargate';
 import { describe, expect, it, vi } from 'vitest';
 import { ManifestMCPError, ManifestMCPErrorCode } from '../types.js';
 import {
   buildBillingMessages,
   loadBillingUpdateParamsContext,
+  routeBillingTransaction,
 } from './billing.js';
 
 const SENDER = 'manifest19rl4cm2hmr8afy4kldpxz3fka4jguq0aaz02ta';
@@ -513,5 +515,99 @@ describe('loadBillingUpdateParamsContext', () => {
     await expect(loadBillingUpdateParamsContext(qc)).rejects.toThrow(
       'network timeout',
     );
+  });
+});
+
+describe('routeBillingTransaction — fee/memo channel', () => {
+  const BROADCAST_RESULT = {
+    transactionHash: 'DEADBEEF',
+    code: 0,
+    height: 42,
+    rawLog: '',
+    gasUsed: 1n,
+    gasWanted: 1n,
+    events: [],
+  };
+
+  function makeSigningClient(opts?: { gasEstimate?: number }) {
+    const simulate = vi.fn().mockResolvedValue(opts?.gasEstimate ?? 100000);
+    const signAndBroadcast = vi.fn().mockResolvedValue(BROADCAST_RESULT);
+    const client = {
+      simulate,
+      signAndBroadcast,
+    } as unknown as Parameters<typeof routeBillingTransaction>[0];
+    return { client, simulate, signAndBroadcast };
+  }
+
+  const EXPLICIT_FEE: StdFee = {
+    amount: [{ denom: 'umfx', amount: '777' }],
+    gas: '424242',
+  };
+
+  it('fee-wins: an explicit txExtras.fee is broadcast verbatim and skips simulate/buildGasFee (no gasPrice needed)', async () => {
+    const { client, simulate, signAndBroadcast } = makeSigningClient();
+
+    // No `options` (TxOptions) at all — there is no configured gasPrice. The
+    // only reason this succeeds is because the explicit fee bypasses buildGasFee.
+    await routeBillingTransaction(
+      client,
+      SENDER,
+      'fund-credit',
+      [TENANT, '1000umfx'],
+      false,
+      undefined,
+      undefined,
+      { fee: EXPLICIT_FEE },
+    );
+
+    expect(simulate).not.toHaveBeenCalled();
+    expect(signAndBroadcast).toHaveBeenCalledOnce();
+    // The exact StdFee object the caller passed reaches the broadcast leg.
+    expect(signAndBroadcast.mock.calls[0][2]).toBe(EXPLICIT_FEE);
+  });
+
+  it('memo: txExtras.memo is the memo seen by BOTH the simulate (buildGasFee) and broadcast legs', async () => {
+    const { client, simulate, signAndBroadcast } = makeSigningClient();
+    const CUSTOM_MEMO = 'pay invoice #42';
+
+    // Supply `options` so buildGasFee takes the simulate path (gasMultiplier set).
+    await routeBillingTransaction(
+      client,
+      SENDER,
+      'fund-credit',
+      [TENANT, '1000umfx'],
+      false,
+      { gasMultiplier: 1.5, gasPrice: '0.025umfx' },
+      undefined,
+      { memo: CUSTOM_MEMO },
+    );
+
+    // buildGasFee → client.simulate(sender, messages, memo)
+    expect(simulate).toHaveBeenCalledOnce();
+    expect(simulate.mock.calls[0][2]).toBe(CUSTOM_MEMO);
+    // client.signAndBroadcast(sender, messages, fee, memo)
+    expect(signAndBroadcast).toHaveBeenCalledOnce();
+    expect(signAndBroadcast.mock.calls[0][3]).toBe(CUSTOM_MEMO);
+  });
+
+  it('gasMultiplier path unchanged: without txExtras, buildGasFee simulates and the built memo flows to both legs', async () => {
+    const { client, simulate, signAndBroadcast } = makeSigningClient();
+
+    await routeBillingTransaction(
+      client,
+      SENDER,
+      'fund-credit',
+      [TENANT, '1000umfx'],
+      false,
+      { gasMultiplier: 1.5, gasPrice: '0.025umfx' },
+    );
+
+    expect(simulate).toHaveBeenCalledOnce();
+    // The billing builder emits an empty memo; both legs see it.
+    expect(simulate.mock.calls[0][2]).toBe('');
+    expect(signAndBroadcast).toHaveBeenCalledOnce();
+    expect(signAndBroadcast.mock.calls[0][3]).toBe('');
+    // No explicit fee → buildGasFee computed a StdFee from the simulate result.
+    expect(signAndBroadcast.mock.calls[0][2]).not.toBe(EXPLICIT_FEE);
   });
 });
