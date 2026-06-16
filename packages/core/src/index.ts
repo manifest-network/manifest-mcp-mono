@@ -7,6 +7,8 @@ export {
 } from '@manifest-network/manifestjs/dist/codegen/liftedinit/billing/v1/types.js';
 export {
   type Address,
+  asAddress,
+  asFqdn,
   asLeaseUuid,
   asProviderUuid,
   asSkuUuid,

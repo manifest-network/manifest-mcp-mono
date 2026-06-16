@@ -1,6 +1,8 @@
 import { toBech32 } from '@cosmjs/encoding';
 import { describe, expect, it } from 'vitest';
 import {
+  asAddress,
+  asFqdn,
   asLeaseUuid,
   asProviderUuid,
   asSkuUuid,
@@ -112,5 +114,18 @@ describe('trust-cast as* family (no validation, never throws)', () => {
     expect(() => asProviderUuid('p2')).not.toThrow();
     expect(() => asSkuUuid('b')).not.toThrow();
     expect(asProviderUuid('')).toBe(''); // even empty — caller guarantees trust
+  });
+  it('asAddress round-trips and never throws (trust-cast)', () => {
+    expect(asAddress(ADDR)).toBe(ADDR);
+    expect(() => asAddress('not-an-address')).not.toThrow();
+    expect(asAddress('')).toBe('');
+  });
+  it('asFqdn round-trips, never throws, does NOT lowercase, and does NOT reject empty', () => {
+    expect(asFqdn('app.example.com')).toBe('app.example.com');
+    expect(() => asFqdn('not-a-fqdn')).not.toThrow();
+    // unlike parseFqdn: NO normalization (chain reads are already canonical) ...
+    expect(asFqdn('NOT-LOWERED.com')).toBe('NOT-LOWERED.com');
+    // ... and NO empty-string rejection (LeaseItem.customDomain is '' when unset)
+    expect(asFqdn('')).toBe('');
   });
 });

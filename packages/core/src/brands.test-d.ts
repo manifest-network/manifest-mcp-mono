@@ -6,7 +6,13 @@ import type {
   ProviderUuid,
   SkuUuid,
 } from './brands.js';
-import { asLeaseUuid, asProviderUuid, asSkuUuid } from './brands.js';
+import {
+  asAddress,
+  asFqdn,
+  asLeaseUuid,
+  asProviderUuid,
+  asSkuUuid,
+} from './brands.js';
 
 // NOTE: never use expectTypeOf(...).branded here — `.branded` normalizes away the
 // `& { __brand }` intersection that DEFINES a brand and would defeat these checks.
@@ -31,5 +37,7 @@ describe('as* return the correct branded type (type-level)', () => {
     expectTypeOf(asLeaseUuid('x')).toEqualTypeOf<LeaseUuid>();
     expectTypeOf(asSkuUuid('x')).toEqualTypeOf<SkuUuid>();
     expectTypeOf(asProviderUuid('x')).not.toEqualTypeOf<LeaseUuid>();
+    expectTypeOf(asAddress('x')).toEqualTypeOf<Address>();
+    expectTypeOf(asFqdn('x')).toEqualTypeOf<Fqdn>();
   });
 });

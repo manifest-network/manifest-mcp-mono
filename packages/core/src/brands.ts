@@ -72,6 +72,14 @@ export function asProviderUuid(value: string): ProviderUuid {
 export function asSkuUuid(value: string): SkuUuid {
   return value as SkuUuid;
 }
+export function asAddress(value: string): Address {
+  return value as Address;
+}
+// NOTE: unlike parseFqdn, asFqdn does NOT lowercase — chain reads are already canonical
+// (re-normalizing would break parse-once, ENG-258) — and does NOT reject '' (trust-cast).
+export function asFqdn(value: string): Fqdn {
+  return value as Fqdn;
+}
 
 /**
  * Normalize (RFC 4343: DNS is case-insensitive) and validate a custom domain. Rejects scheme
