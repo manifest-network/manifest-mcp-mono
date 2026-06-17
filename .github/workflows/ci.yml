@@ -34,3 +34,10 @@ jobs:
       # transitively; this names it as a visible, standalone CI gate. (ENG-309)
       - run: npm run build -w @manifest-network/sdk-acceptance
       - run: npx vitest run examples/sdk-acceptance/scripts/browser-build.test.ts
+      # Per-subpath tree-shake size budget (gzip, TIGHT ~2-3KB headroom) over the public SDK
+      # subpaths. HONEST CAVEAT: the ~1MB cosmjs/manifestjs codegen floor dominates the
+      # deploy/root chunks, so the gzip budget has only ~3% discriminating power — this is a
+      # COARSE floor-regression tripwire, not the real tree-shake guard. The leak guard is the
+      # /reads symbol-absence assertion in the browser-build test above (asserts executeTx /
+      # signArbitraryWithAmino / MsgFundCredit are ABSENT from the /reads chunk). (ENG-309)
+      - run: npm run size

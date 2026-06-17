@@ -16,12 +16,15 @@
     "test": "npm run test --workspaces --if-present",
     "pretest:e2e": "npm run build -w @manifest-network/sdk-acceptance",
     "test:e2e": "vitest run --config e2e/vitest.config.ts",
+    "size": "size-limit",
     "release:version": "node scripts/version.mjs"
   },
   "devDependencies": {
     "@biomejs/biome": "2.4.16",
     "@modelcontextprotocol/sdk": "1.29.0",
+    "@size-limit/preset-small-lib": "12.1.0",
     "dependency-cruiser": "17.4.3",
+    "size-limit": "12.1.0",
     "tsdown": "0.22.1",
     "vitest": "4.1.8"
   },
