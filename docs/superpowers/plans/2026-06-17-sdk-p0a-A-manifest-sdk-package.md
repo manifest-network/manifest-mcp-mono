@@ -387,10 +387,7 @@ module.exports = {
 
   Commit (gh-token caveat — commit locally, flag for the user to merge). `git commit -m "ci(sdk): publish @manifest-network/manifest-sdk last on the release train (ENG-309)"`.
 
-- [ ] **Step 2: `private:true` flip — PROPOSAL ONLY, do NOT execute (M3).** Privatizing the 7 internal `@manifest-network/manifest-mcp-*` packages to make the SDK the sole public entry is **out of scope for P0a and has two concrete breakages** the user must weigh before any flip:
-  - (a) `release.yml:61-67` runs `npm publish --workspace` UNCONDITIONALLY per package; `npm publish` **errors on a `private:true` package** — so a flip without also removing that package's publish line breaks the release job.
-  - (b) The published `manifest-sdk@0.14.0` has **caret deps** on `@manifest-network/manifest-mcp-{core,fred}` + `manifest-agent-core`; if those are privatized (unpublished), the SDK is **uninstallable** for external consumers. Privatization CANNOT coexist with publishing an SDK that depends on the privatized packages (would require bundling/inlining them).
-  - **RECOMMENDATION: do NOT privatize.** Ship the SDK ADDITIVELY (the 7 packages stay public). Present this as a decision for the user; if they want a single public entry later, it needs a separate plan (bundle the deps, or republish the SDK with inlined sources).
+- [x] **Step 2: `private:true` flip — DECIDED (2026-06-17): do NOT privatize.** The user confirmed: keep all 7 `@manifest-network/manifest-mcp-*` packages PUBLIC, ship the SDK ADDITIVELY. (Rationale, now recorded in spec §4/§14: `npm publish` errors on a `private:true` package so a flip would break the unconditional release job; and the published `manifest-sdk` depends on those packages via caret ranges, so privatizing them makes the SDK uninstallable. A single-public-entry posture would need a separate bundling/inlining plan.) **No code change — the executor correctly left them public.**
 
 - [ ] **Step 3: Full gate** — `npm run build` (9 pkgs, exit 0), `npm run lint` (exit 0), `npx vitest run packages/` (green), `npm run check` (exit 0), SDK publint+attw green, the browser-resolution test green, `npm run depcruise` green (+ fixtures fail). All green ⇒ Plan A done.
 
