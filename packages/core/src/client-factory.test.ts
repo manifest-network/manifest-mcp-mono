@@ -1,10 +1,8 @@
 import { toBech32 } from '@cosmjs/encoding';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { CosmosClientManager, type ManifestQueryClient } from './client.js';
-import {
-  createManifestClient,
-  createManifestReadClient,
-} from './client-factory.js';
+import { createManifestReadClient } from './client-factory.js';
+import { createManifestClient } from './client-full.js';
 import { noopLogger } from './logger.js';
 import { type ManifestMCPConfig, ManifestMCPErrorCode } from './types.js';
 
@@ -216,5 +214,22 @@ describe('createManifestReadClient / createManifestClient', () => {
     // forwarding: a bound read drops ctx and forwards the rest to the free fn, which reads ctx.query.
     await expect(client.getLease('lease-uuid')).resolves.toBeNull();
     expect(lease).toHaveBeenCalledWith({ leaseUuid: 'lease-uuid' });
+  });
+
+  it('full client has tx methods; read client does not (runtime)', async () => {
+    vi.spyOn(CosmosClientManager, 'getInstance').mockReturnValue(fakeManager());
+    const full = await createManifestClient({
+      config: FULL_CONFIG,
+      walletProvider: fakeWallet(),
+    });
+    vi.spyOn(CosmosClientManager, 'getInstance').mockReturnValue(fakeManager());
+    const read = await createManifestReadClient({ config: READ_CONFIG });
+    expect(typeof full.fundCredits).toBe('function');
+    expect(typeof full.setItemCustomDomain).toBe('function');
+    expect(typeof full.stopApp).toBe('function');
+    expect(typeof full.executeTx).toBe('function');
+    expect('fundCredits' in read).toBe(false);
+    expect('executeTx' in read).toBe(false);
+    expect('signer' in read).toBe(false); // query-only omits the signer key (4b invariant)
   });
 });

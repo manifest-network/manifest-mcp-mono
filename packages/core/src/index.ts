@@ -25,13 +25,15 @@ export {
 } from './brands.js';
 export { CosmosClientManager, type ManifestQueryClient } from './client.js';
 export {
-  createManifestClient,
   createManifestReadClient,
   type FullClientOptions,
-  type ManifestClient,
   type ManifestReadClient,
   type ReadClientOptions,
 } from './client-factory.js';
+export {
+  createManifestClient,
+  type ManifestClient,
+} from './client-full.js';
 export {
   createConfig,
   createValidatedConfig,

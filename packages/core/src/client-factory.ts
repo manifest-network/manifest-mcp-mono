@@ -1,10 +1,9 @@
 import { CosmosClientManager } from './client.js';
 import { createValidatedConfig } from './config.js';
-import type { CapabilityCtx, EventTransport, QueryCtx } from './ctx.js';
+import type { EventTransport, QueryCtx } from './ctx.js';
 import type { Logger, LogLevel } from './logger.js';
 import { noopLogger } from './logger.js';
 import type { CallOptions } from './options.js';
-import type { Signer } from './signer.js';
 import { createSignerAdapter } from './signer.js';
 import { listSkuCandidates, resolveSku } from './sku-resolution.js';
 // VALUE imports (used both for typeof in the interface and for runtime binding). READS ONLY — never
@@ -88,7 +87,7 @@ function queryOnlyWalletStub(): WalletProvider {
  * read client (wallet stub) against a key a full client already holds — the common case is safe because
  * read configs omit `rpcUrl` → a different key.
  */
-async function buildClient(
+export async function buildClient(
   opts: BaseClientOptions,
   walletProvider: WalletProvider,
   withSigner: boolean,
@@ -154,14 +153,6 @@ async function buildClient(
   }
 }
 
-export async function createManifestClient(
-  opts: FullClientOptions,
-): Promise<ManifestClient> {
-  // withSigner=true → the returned client always has a defined signer, so the up-cast to the
-  // required-signer ManifestClient is sound (mirrors SigningStargateClient.connectWithSigner's subtype).
-  return (await buildClient(opts, opts.walletProvider, true)) as ManifestClient;
-}
-
 export async function createManifestReadClient(
   opts: ReadClientOptions,
 ): Promise<ManifestReadClient> {
@@ -191,21 +182,4 @@ export interface ManifestReadClient extends QueryCtx {
   getProviders: BoundFn<typeof getProviders>;
   getBillingParams: BoundFn<typeof getBillingParams>;
   getWithdrawableAmount: BoundFn<typeof getWithdrawableAmount>;
-}
-
-/**
- * @public — full bound client. Strict SUPERSET of `ManifestReadClient` (mirrors cosmjs
- * `SigningStargateClient extends StargateClient`) AND a `CapabilityCtx`, so a full client is usable
- * anywhere a read client OR a ctx is expected. The bound TX/provider action methods + `executeTx` +
- * `subscribeLeaseStatus` + the per-signer broadcast mutex are added in Plan 4d.
- */
-export interface ManifestClient extends ManifestReadClient, CapabilityCtx {
-  /**
-   * Full clients ALWAYS carry a signer (`createManifestClient` requires a `walletProvider`) — NARROWED
-   * from `CapabilityCtx`'s optional `signer?` to REQUIRED. This is what makes a `ManifestReadClient`
-   * NOT assignable to a `ManifestClient` at the type level (the read-vs-full guarantee; mirrors viem's
-   * required write surface). `CapabilityCtx.signer` itself stays optional — the spine fns take a ctx and
-   * narrow via `requireAuthSigner`.
-   */
-  readonly signer: Signer;
 }

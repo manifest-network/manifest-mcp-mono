@@ -1,15 +1,18 @@
 import { describe, expectTypeOf, it } from 'vitest';
 import {
-  createManifestClient,
   createManifestReadClient,
   type FullClientOptions,
-  type ManifestClient,
   type ManifestReadClient,
   type ReadClientOptions,
 } from './client-factory.js';
+import { createManifestClient, type ManifestClient } from './client-full.js';
 import type { CapabilityCtx, QueryCtx } from './ctx.js';
 import type { Signer } from './signer.js';
+import type { executeTx } from './tools/executeTx.js';
+import type { fundCredits } from './tools/fundCredits.js';
 import type { getLease } from './tools/reads.js';
+import type { setItemCustomDomain } from './tools/setItemCustomDomain.js';
+import type { stopApp } from './tools/stopApp.js';
 import type { WalletProvider } from './types.js';
 
 describe('ManifestClient / ManifestReadClient (type-level)', () => {
@@ -25,6 +28,31 @@ describe('ManifestClient / ManifestReadClient (type-level)', () => {
   });
   it('a read client is NOT a full client (the read-vs-full guarantee holds because signer is required on the full client)', () => {
     expectTypeOf<ManifestReadClient>().not.toExtend<ManifestClient>();
+  });
+});
+
+describe('ManifestClient bound tx + executeTx methods (type-level)', () => {
+  it('exposes the 3 tx methods + executeTx with the free-fn tail (ctx dropped)', () => {
+    expectTypeOf<ManifestClient['fundCredits']>().parameters.toEqualTypeOf<
+      Parameters<typeof fundCredits> extends [unknown, ...infer R] ? R : never
+    >();
+    expectTypeOf<
+      ManifestClient['setItemCustomDomain']
+    >().parameters.toEqualTypeOf<
+      Parameters<typeof setItemCustomDomain> extends [unknown, ...infer R]
+        ? R
+        : never
+    >();
+    expectTypeOf<ManifestClient['stopApp']>().parameters.toEqualTypeOf<
+      Parameters<typeof stopApp> extends [unknown, ...infer R] ? R : never
+    >();
+    expectTypeOf<ManifestClient['executeTx']>().parameters.toEqualTypeOf<
+      Parameters<typeof executeTx> extends [unknown, ...infer R] ? R : never
+    >();
+  });
+  it('the tx methods are absent from ManifestReadClient at the type level', () => {
+    expectTypeOf<ManifestReadClient>().not.toHaveProperty('fundCredits');
+    expectTypeOf<ManifestReadClient>().not.toHaveProperty('executeTx');
   });
 });
 
