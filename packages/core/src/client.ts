@@ -119,6 +119,12 @@ export class CosmosClientManager {
   private signingClient: SigningStargateClient | null = null;
   private rateLimiter: RateLimiter;
 
+  // Per-signer broadcast serialization. A promise-chain lock keyed by signer ADDRESS so concurrent
+  // signAndBroadcast calls from one account can't both read the same committed sequence (cosmjs
+  // re-queries the sequence per broadcast — account-sequence-mismatch). Pure-JS (NO node:async_hooks
+  // — browser-safe). One entry per distinct address (today one wallet ⇒ one entry).
+  private broadcastLocks: Map<string, Promise<unknown>> = new Map();
+
   /** Per-instance logger for the 2 init-time diagnostics. Defaults to noopLogger (silent); see setLogger. */
   private logger: Logger = noopLogger;
 
@@ -477,6 +483,32 @@ export class CosmosClientManager {
    */
   async acquireRateLimit(): Promise<void> {
     await this.rateLimiter.removeTokens(1);
+  }
+
+  /**
+   * Serialize an async fn against all other broadcasts for `address`, holding the lock until `fn`
+   * settles (success OR failure). The next waiter chains off the prior settlement regardless of
+   * outcome, so a rejected broadcast neither wedges the queue nor leaks an unhandledRejection.
+   * Orthogonal to the rate limiter: callers acquire THIS (outer), then acquireRateLimit (inner).
+   * Acquire ONCE per logical broadcast — NOT inside a withRetry attempt (re-acquiring the same key
+   * deadlocks); a transient retry re-broadcasts under the same held lock, which is correct for
+   * sequence safety.
+   */
+  async withBroadcastLock<T>(
+    address: string,
+    fn: () => Promise<T>,
+  ): Promise<T> {
+    const prev = this.broadcastLocks.get(address) ?? Promise.resolve();
+    const run = prev.then(fn, fn); // run regardless of the prior task's outcome
+    // Store a swallowed tail so the next waiter chains cleanly and no unhandledRejection escapes.
+    this.broadcastLocks.set(
+      address,
+      run.then(
+        () => undefined,
+        () => undefined,
+      ),
+    );
+    return run;
   }
 
   /**

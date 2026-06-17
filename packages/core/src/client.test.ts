@@ -781,4 +781,66 @@ describe('CosmosClientManager', () => {
       expect(after).toBe(before);
     });
   });
+
+  describe('withBroadcastLock', () => {
+    it('serializes same-address fns', async () => {
+      const mgr = CosmosClientManager.getInstance(
+        makeConfig({ chainId: 'lock-serialize' }),
+        makeWallet(),
+      );
+      const order: string[] = [];
+      const slow = () =>
+        new Promise<void>((r) =>
+          setTimeout(() => {
+            order.push('a-end');
+            r();
+          }, 30),
+        );
+      const fast = () => {
+        order.push('b-run');
+        return Promise.resolve();
+      };
+      const p1 = mgr.withBroadcastLock('addr1', async () => {
+        order.push('a-start');
+        await slow();
+      });
+      const p2 = mgr.withBroadcastLock('addr1', fast);
+      await Promise.all([p1, p2]);
+      expect(order).toEqual(['a-start', 'a-end', 'b-run']); // b waited for a
+      mgr.disconnect();
+    });
+
+    it('runs different addresses concurrently', async () => {
+      const mgr = CosmosClientManager.getInstance(
+        makeConfig({ chainId: 'lock-concurrent' }),
+        makeWallet(),
+      );
+      let bStarted = false;
+      const p1 = mgr.withBroadcastLock(
+        'addr1',
+        () => new Promise<void>((r) => setTimeout(r, 30)),
+      );
+      const p2 = mgr.withBroadcastLock('addr2', async () => {
+        bStarted = true;
+      });
+      await p2;
+      expect(bStarted).toBe(true); // did not wait for addr1
+      await p1;
+      mgr.disconnect();
+    });
+
+    it('releases the lock on throw (next waiter still runs)', async () => {
+      const mgr = CosmosClientManager.getInstance(
+        makeConfig({ chainId: 'lock-release' }),
+        makeWallet(),
+      );
+      await expect(
+        mgr.withBroadcastLock('a', () => Promise.reject(new Error('boom'))),
+      ).rejects.toThrow('boom');
+      await expect(
+        mgr.withBroadcastLock('a', () => Promise.resolve('ok')),
+      ).resolves.toBe('ok');
+      mgr.disconnect();
+    });
+  });
 });

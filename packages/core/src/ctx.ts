@@ -41,8 +41,10 @@ export type ReadCtx = Pick<CapabilityCtx, 'query' | 'chain' | 'logger'>;
 
 /**
  * @public — the tx-path ISP slice (spec §5.5): txs take chain+signer+logger (no query/fetch).
- * NOTE: 4c-txs does NOT consume `ctx.signer` — the wallet AND the query-only INVALID_CONFIG guard
- * come from `ctx.chain` (via getSigningClient). `signer?` (optional) is reserved for 4d's per-signer
- * broadcast mutex; do not call requireAuthSigner here (it would throw on the signer-less ctx the call sites build).
+ * NOTE: 4c/4d do NOT consume `ctx.signer` for on-chain txs — the wallet AND the query-only
+ * INVALID_CONFIG guard come from `ctx.chain` (via getSigningClient), and 4d's per-signer broadcast
+ * mutex keys off the resolved CHAIN ADDRESS (ctx.chain.getAddress()), NOT ctx.signer. `signer?` is
+ * carried for the full client's required-signer narrowing + provider ops (subscribeLeaseStatus); do
+ * not call requireAuthSigner on the signer-less ctx the on-chain tx call sites build.
  */
 export type TxCtx = Pick<CapabilityCtx, 'chain' | 'signer' | 'logger'>;
