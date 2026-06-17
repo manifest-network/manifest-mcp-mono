@@ -1,0 +1,64 @@
+{
+  "name": "@manifest-network/manifest-sdk",
+  "version": "0.14.0",
+  "description": "Aggregating SDK for building apps on Manifest + Fred (composes @manifest-network/* over manifestjs).",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "sideEffects": false,
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./reads": {
+      "types": "./dist/reads.d.ts",
+      "import": "./dist/reads.js"
+    },
+    "./catalog": {
+      "types": "./dist/catalog.d.ts",
+      "import": "./dist/catalog.js"
+    },
+    "./deploy": {
+      "types": "./dist/deploy.d.ts",
+      "import": "./dist/deploy.js"
+    },
+    "./orchestration": {
+      "types": "./dist/orchestration.d.ts",
+      "import": "./dist/orchestration.js"
+    },
+    "./node": {
+      "types": "./dist/node.d.ts",
+      "node": "./dist/node.js",
+      "default": null
+    },
+    "./package.json": "./package.json"
+  },
+  "scripts": {
+    "build": "tsdown",
+    "lint": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@manifest-network/manifest-mcp-core": "^0.14.0",
+    "@manifest-network/manifest-mcp-fred": "^0.14.0",
+    "@manifest-network/manifest-agent-core": "^0.14.0"
+  },
+  "devDependencies": {
+    "typescript": "5.9.3",
+    "vitest": "4.1.8",
+    "@types/node": "22.19.19",
+    "publint": "0.3.21",
+    "@arethetypeswrong/core": "0.18.3"
+  }
+}
