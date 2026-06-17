@@ -106,6 +106,7 @@ describe('dependency-cruiser import-edge rules bite (fixtures fail, real tree cl
           'depcruise',
           'pkg-src',
           'browser-src',
+          'example-src',
           '--config',
           '.dependency-cruiser.fixtures.cjs',
         ],
@@ -122,7 +123,13 @@ describe('dependency-cruiser import-edge rules bite (fixtures fail, real tree cl
     expect(() =>
       execFileSync(
         'npx',
-        ['depcruise', 'packages', '--config', '.dependency-cruiser.cjs'],
+        [
+          'depcruise',
+          'packages',
+          'examples',
+          '--config',
+          '.dependency-cruiser.cjs',
+        ],
         {
           cwd: ROOT,
           stdio: 'pipe',
@@ -150,7 +157,13 @@ describe('dependency-cruiser import-edge rules bite (fixtures fail, real tree cl
     try {
       output = execFileSync(
         'npx',
-        ['depcruise', 'packages', '--config', '.dependency-cruiser.cjs'],
+        [
+          'depcruise',
+          'packages',
+          'examples',
+          '--config',
+          '.dependency-cruiser.cjs',
+        ],
         { cwd: ROOT, encoding: 'utf8' },
       );
     } catch (err) {
@@ -162,5 +175,46 @@ describe('dependency-cruiser import-edge rules bite (fixtures fail, real tree cl
     }
     expect(exitCode).toBeGreaterThan(0);
     expect(output).toContain('manifestjs-types-chokepoint');
+  });
+
+  // POSITIVE CONTROL (Task B1 / MF-1 / MF-3): the fixtures step above cruises the re-anchored
+  // `.dependency-cruiser.fixtures.cjs`, so it proves the ALLOWLIST `to` matcher but NOT the live
+  // PRODUCTION config (the `from: ^examples/[^/]+/src` anchor + the `^examples/[^/]+/dist/` exclude).
+  // This injects a known-bad downstream import (@cosmjs/proto-signing — outside the SDK+manifestjs
+  // allowlist) into a REAL example source file, cruises the PRODUCTION config (`packages examples`),
+  // and asserts `example-composes-only-sdk` actually fires — so a future re-broadening of `exclude`
+  // or a mis-anchored `from` cannot revive a silent no-op.
+  it('example-composes-only-sdk FIRES on a stray non-allowlisted import (PRODUCTION config)', () => {
+    const probe = join(
+      ROOT,
+      'examples/sdk-acceptance/src/__dcprobe_compose.ts',
+    );
+    writeFileSync(
+      probe,
+      "import '@cosmjs/proto-signing';\nexport const _probe = 1;\n",
+    );
+    let exitCode = 0;
+    let output = '';
+    try {
+      output = execFileSync(
+        'npx',
+        [
+          'depcruise',
+          'packages',
+          'examples',
+          '--config',
+          '.dependency-cruiser.cjs',
+        ],
+        { cwd: ROOT, encoding: 'utf8' },
+      );
+    } catch (err) {
+      const e = err as { status?: number; stdout?: string; stderr?: string };
+      exitCode = e.status ?? -1;
+      output = `${e.stdout ?? ''}${e.stderr ?? ''}`;
+    } finally {
+      rmSync(probe, { force: true });
+    }
+    expect(exitCode).toBeGreaterThan(0);
+    expect(output).toContain('example-composes-only-sdk');
   });
 });

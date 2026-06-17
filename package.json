@@ -3,13 +3,14 @@
   "version": "0.14.0",
   "private": true,
   "workspaces": [
-    "packages/*"
+    "packages/*",
+    "examples/*"
   ],
   "scripts": {
     "build": "npm run build --workspaces",
     "lint": "npm run lint --workspaces --if-present",
-    "depcruise": "depcruise packages --config .dependency-cruiser.cjs",
-    "check": "biome check packages/",
+    "depcruise": "depcruise packages examples --config .dependency-cruiser.cjs",
+    "check": "biome check packages/ examples/",
     "check:fix": "biome check --write packages/",
     "format": "biome format --write packages/",
     "test": "npm run test --workspaces --if-present",

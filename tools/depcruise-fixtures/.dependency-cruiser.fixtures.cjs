@@ -22,6 +22,7 @@ const byName = (name) => {
 const chokepoint = byName('manifestjs-types-chokepoint');
 const staticNode = byName('no-static-node-in-browser-src');
 const staticUndiciWs = byName('no-static-undici-ws-in-browser-src');
+const exampleComposeOnly = byName('example-composes-only-sdk');
 
 module.exports = {
   forbidden: [
@@ -43,6 +44,14 @@ module.exports = {
       severity: 'error',
       from: { path: '^browser-src/' },
       to: staticUndiciWs.to,
+    },
+    {
+      name: 'example-composes-only-sdk',
+      severity: 'error',
+      // Re-anchor `from` to the fixtures dir (the production `from: ^examples/[^/]+/src` would never
+      // match here); reuse the production `to` ALLOWLIST matcher verbatim — that is what proves it bites.
+      from: { path: '^example-src/' },
+      to: exampleComposeOnly.to,
     },
   ],
   options: {

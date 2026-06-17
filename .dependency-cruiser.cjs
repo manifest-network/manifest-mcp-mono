@@ -118,6 +118,20 @@ module.exports = {
         dependencyTypesNot: ['dynamic-import'],
       },
     },
+    // The acceptance example composes ONLY the public SDK + manifestjs (spec §8 (d) / §9). ALLOWLIST,
+    // not denylist: forbid ANY node_modules import except those two, so a stray @cosmjs/* / undici / ws
+    // is caught too (test files exempt — they may use manifestjs codecs). Tune the path regex to
+    // dependency-cruiser's emitted module paths.
+    {
+      name: 'example-composes-only-sdk',
+      comment: 'examples/**/src may import only @manifest-network/manifest-sdk + @manifest-network/manifestjs (spec §9).',
+      severity: 'error',
+      from: { path: '^examples/[^/]+/src', pathNot: '\\.test\\.ts$' },
+      to: {
+        dependencyTypes: ['npm', 'npm-dev', 'npm-no-pkg', 'npm-unknown'],
+        pathNot: 'node_modules/@manifest-network/(manifest-sdk|manifestjs)(/|$)',
+      },
+    },
   ],
   options: {
     tsConfig: { fileName: 'tsconfig.base.json' },
@@ -130,6 +144,6 @@ module.exports = {
     // (exclude DROPS modules, unlike doNotFollow), which removed the manifestjs-types-chokepoint rule's
     // ONLY `to` target and made it a silent no-op. node_modules codegen stays a matchable-but-not-followed
     // target (doNotFollow above prevents crawling into it).
-    exclude: { path: '^packages/[^/]+/dist/' },
+    exclude: { path: '^(packages|examples)/[^/]+/dist/' },
   },
 };
