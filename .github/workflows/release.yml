@@ -66,6 +66,7 @@ jobs:
           publish packages/agent-core @manifest-network/manifest-agent-core   "$VERSION"
           publish packages/agent     @manifest-network/manifest-mcp-agent     "$VERSION"
           publish packages/node      @manifest-network/manifest-mcp-node      "$VERSION"
+          publish packages/sdk       @manifest-network/manifest-sdk          "$VERSION"
 
       - name: Create GitHub Release
         env:
