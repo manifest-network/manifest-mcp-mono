@@ -324,7 +324,10 @@ describe('sdk-acceptance browser build (fail-closed; no UNGUARDED node-only)', (
     // the browserify SHIM names. NOTE: bare `crypto` is intentionally NOT scanned — the allowlisted
     // @cosmjs/crypto guarded `require("crypto")` legitimately appears in the chunk and is handled
     // BY SOURCE by the PRIMARY warning-capture above; scanning `crypto` here would false-fail.
-    const leak = code.match(/(?:from|require\(|import\()\s*['"](?:node:|fs|path|http|https|net|tls|stream|os|async_hooks|undici|ws|crypto-browserify|process\/browser|stream-browserify)['"]/);
+    // NOTE: the `node:` prefix is COMBINED with the builtin name (`node:[a-z_/]+`) — a bare `node:`
+    // alternative matches `node:` of `node:fs` but then demands the closing quote (`f`, not `"`) and
+    // MISSES the project's `node:`-prefixed imports (the dominant leak shape). Keep them combined.
+    const leak = code.match(/(?:from|require\(|import\()\s*['"](?:node:[a-z_/]+|fs|path|http|https|net|tls|stream|os|async_hooks|undici|ws|crypto-browserify|process\/browser|stream-browserify)['"]/);
     expect(leak, leak?.[0]).toBeNull();
     // POSITIVE: prove the Web-Crypto path shipped (not a node-shim) — the cosmjs guarded crypto degrades here.
     expect(/globalThis\.crypto|crypto\.subtle|getRandomValues/.test(code)).toBe(true);

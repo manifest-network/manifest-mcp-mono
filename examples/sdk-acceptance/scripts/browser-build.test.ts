@@ -29,36 +29,53 @@ import { describe, expect, it } from 'vitest';
 // @cosmjs/crypto's guarded optional require("crypto") — degrades to pure-JS in browsers (B0 allowlist).
 const ALLOWLISTED = [/@cosmjs\/crypto/];
 
+/**
+ * Bundle `input` for the browser and return the joined chunk code (+ captured rolldown warnings).
+ *
+ * Centralizes the rolldown API surface the plan flags as version-sensitive (the `onLog` signature,
+ * `generate({ format: 'esm' })`, `close()`, chunk-filtering) so both tests share one call site. When
+ * `onLog` is supplied it is forwarded to rolldown; the helper itself never inspects warnings — callers
+ * filter the returned set.
+ */
+async function bundleChunk(
+  input: string,
+  onLog?: (level: string, log: { code?: string; message?: string }) => void,
+): Promise<{ code: string }> {
+  const bundle = await rolldown({ input, platform: 'browser', onLog });
+  const { output } = await bundle.generate({ format: 'esm' });
+  await bundle.close();
+  const code = output
+    .filter((o) => o.type === 'chunk')
+    .map((o) => (o as { code: string }).code)
+    .join('\n');
+  return { code };
+}
+
 describe('sdk-acceptance browser build (fail-closed; no UNGUARDED node-only)', () => {
   it('bundles for the browser with no unallowed node-only resolution + clean chunk', async () => {
     const warnings: string[] = [];
-    const bundle = await rolldown({
-      input: new URL('../dist/main.js', import.meta.url).pathname,
-      platform: 'browser',
-      onLog: (_level, log) => {
+    const { code } = await bundleChunk(
+      new URL('../dist/main.js', import.meta.url).pathname,
+      (_level, log) => {
         if (log.code === 'UNRESOLVED_IMPORT')
           warnings.push(log.message ?? String(log));
       },
-    });
-    const { output } = await bundle.generate({ format: 'esm' });
-    await bundle.close();
+    );
 
     const unallowed = warnings.filter(
       (w) => !ALLOWLISTED.some((re) => re.test(w)),
     );
     expect(unallowed).toEqual([]); // PRIMARY: fail-closed — any NEW unresolved node builtin fails here.
 
-    const code = output
-      .filter((o) => o.type === 'chunk')
-      .map((o) => (o as { code: string }).code)
-      .join('\n');
-
     // SECONDARY: import-specifier-anchored scan (NOT a bare substring) for a node-only import/require
-    // + the browserify SHIM names. Bare `crypto` is intentionally NOT scanned — the allowlisted
+    // + the browserify SHIM names. The `node:` prefix is COMBINED with the builtin name (`node:[a-z_/]+`)
+    // rather than standing alone — a bare `node:` alternative matches the `node:` of `node:fs` but then
+    // demands the closing quote (which is `f`, not `"`), so it would MISS the project's `node:`-prefixed
+    // imports (the dominant leak shape). Bare `crypto` is intentionally NOT scanned — the allowlisted
     // @cosmjs/crypto guarded `require("crypto")` legitimately appears and is handled BY SOURCE by the
     // PRIMARY warning-capture; scanning `crypto` here would false-fail.
     const leak = code.match(
-      /(?:from|require\(|import\()\s*['"](?:node:|fs|path|http|https|net|tls|stream|os|async_hooks|undici|ws|crypto-browserify|process\/browser|stream-browserify)['"]/,
+      /(?:from|require\(|import\()\s*['"](?:node:[a-z_/]+|fs|path|http|https|net|tls|stream|os|async_hooks|undici|ws|crypto-browserify|process\/browser|stream-browserify)['"]/,
     );
     expect(leak, leak?.[0]).toBeNull();
 
@@ -75,13 +92,7 @@ describe('sdk-acceptance browser build (fail-closed; no UNGUARDED node-only)', (
     const readsPath = fileURLToPath(
       import.meta.resolve('@manifest-network/manifest-sdk/reads'),
     );
-    const bundle = await rolldown({ input: readsPath, platform: 'browser' });
-    const { output } = await bundle.generate({ format: 'esm' });
-    await bundle.close();
-    const code = output
-      .filter((o) => o.type === 'chunk')
-      .map((o) => (o as { code: string }).code)
-      .join('\n');
+    const { code } = await bundleChunk(readsPath);
     for (const sym of [
       'executeTx',
       'signArbitraryWithAmino',
