@@ -15,6 +15,10 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run build
+      # The SDK build runs publint + attw (esm-only, level=error) as part of tsdown.
+      # Run it explicitly so the package-export / type-resolution gate is a named,
+      # visible CI step (the root build above covers it transitively). (ENG-309)
+      - run: npm run build -w @manifest-network/manifest-sdk
       - run: npm run lint
       - run: npm run check
       - run: npm test
