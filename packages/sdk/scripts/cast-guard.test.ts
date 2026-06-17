@@ -1,5 +1,11 @@
 import { execFileSync } from 'node:child_process';
-import { readdirSync, readFileSync, statSync } from 'node:fs';
+import {
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
@@ -123,5 +129,38 @@ describe('dependency-cruiser import-edge rules bite (fixtures fail, real tree cl
         },
       ),
     ).not.toThrow();
+  });
+
+  // POSITIVE CONTROL (BLOCKER-2): the fixtures step above cruises `.dependency-cruiser.fixtures.cjs`
+  // (no `exclude`), so it proves the regex but NOT the live PRODUCTION config — under which an
+  // unanchored `exclude:/dist/` once made `manifestjs-types-chokepoint` a silent no-op (the rule's
+  // only `to` target, the node_modules codegen `.../dist/.../types.js`, was dropped from the graph).
+  // This injects a known-bad downstream codegen-TYPE import into a production source file, cruises the
+  // REAL config, and asserts the chokepoint rule actually fires — so a future re-broadening of
+  // `exclude` cannot revive the no-op silently.
+  it('manifestjs-types-chokepoint FIRES on a downstream codegen-type import (PRODUCTION config)', () => {
+    const probe = join(ROOT, 'packages/lease/src/__dcprobe_chokepoint.ts');
+    writeFileSync(
+      probe,
+      "import type { Lease } from '@manifest-network/manifestjs/dist/codegen/liftedinit/billing/v1/types.js';\n" +
+        'export type _Probe = Lease;\n',
+    );
+    let exitCode = 0;
+    let output = '';
+    try {
+      output = execFileSync(
+        'npx',
+        ['depcruise', 'packages', '--config', '.dependency-cruiser.cjs'],
+        { cwd: ROOT, encoding: 'utf8' },
+      );
+    } catch (err) {
+      const e = err as { status?: number; stdout?: string; stderr?: string };
+      exitCode = e.status ?? -1;
+      output = `${e.stdout ?? ''}${e.stderr ?? ''}`;
+    } finally {
+      rmSync(probe, { force: true });
+    }
+    expect(exitCode).toBeGreaterThan(0);
+    expect(output).toContain('manifestjs-types-chokepoint');
   });
 });

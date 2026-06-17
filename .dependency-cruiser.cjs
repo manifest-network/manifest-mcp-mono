@@ -17,8 +17,11 @@
  * compiled into any package).
  *
  * `tsPreCompilationDeps: true` (spec B3) makes the `import type` edges visible so the chokepoint rule
- * sees a type-only `import type { Lease } from '…/types.js'`. `dist` + `node_modules` are not followed
- * (we cruise SOURCE, not built artifacts).
+ * sees a type-only `import type { Lease } from '…/types.js'`. We cruise first-party SOURCE: `exclude`
+ * drops ONLY workspace build output (`^packages/<pkg>/dist/`) — crucially NOT node_modules codegen
+ * `dist/`, which must stay a matchable `to` target for the chokepoint — and `doNotFollow:node_modules`
+ * keeps deps from being crawled (matchable-but-not-followed). The chokepoint positive-control in
+ * cast-guard.test.ts cruises THIS production config (not a clone) to prove the rule actually bites.
  *
  * @type {import('dependency-cruiser').IConfiguration}
  */
@@ -122,6 +125,11 @@ module.exports = {
     tsPreCompilationDeps: true,
     // Cruise SOURCE, not built artifacts or deps.
     doNotFollow: { path: 'node_modules' },
-    exclude: { path: '(^|/)dist/' },
+    // Exclude FIRST-PARTY build output ONLY (`packages/<pkg>/dist/`). It must NOT be the unanchored
+    // `(^|/)dist/` — that also swallowed `node_modules/@manifest-network/manifestjs/dist/codegen/.../types.js`
+    // (exclude DROPS modules, unlike doNotFollow), which removed the manifestjs-types-chokepoint rule's
+    // ONLY `to` target and made it a silent no-op. node_modules codegen stays a matchable-but-not-followed
+    // target (doNotFollow above prevents crawling into it).
+    exclude: { path: '^packages/[^/]+/dist/' },
   },
 };

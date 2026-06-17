@@ -43,4 +43,25 @@ describe('manifest-sdk browser resolution (no default:null chain)', () => {
       await bundle.close();
     });
   }
+
+  // POSITIVE CONTROL (MAJOR-3): the whole guard rests on rolldown HARD-FAILING a `default:null`
+  // browser resolution. `/node` IS such an entry (it re-exports core's `{node,default:null}`
+  // /guarded-fetch). Bundling it under browser conditions MUST reject — if a future rolldown/tsdown
+  // bump ever demotes that to a soft warning, this fails LOUDLY instead of letting the 5 positive
+  // assertions above pass vacuously.
+  it('/node REJECTS under browser conditions (proves the default:null guard still bites)', async () => {
+    await expect(
+      (async () => {
+        const bundle = await rolldown({
+          input: new URL('../dist/node.js', import.meta.url).pathname,
+          platform: 'browser',
+        });
+        try {
+          await bundle.generate({ format: 'esm' });
+        } finally {
+          await bundle.close();
+        }
+      })(),
+    ).rejects.toThrow();
+  });
 });

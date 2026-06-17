@@ -125,4 +125,63 @@ describe('manifest-sdk barrels', () => {
       for (const k of GUARDED_FETCH_EXPORTS) expect(b).not.toHaveProperty(k);
     for (const k of GUARDED_FETCH_EXPORTS) expect(node).toHaveProperty(k);
   });
+
+  // EXACT-KEYSET pins (not just toHaveProperty): catch ADDITIVE drift — a new value silently leaking
+  // onto a thin/small barrel (e.g. the `fredActions` over-export). Scoped to the barrels where the
+  // exact surface is load-bearing + low-churn (thin ROOT; the small /reads, /orchestration, /node).
+  // /catalog + /deploy are intentional growth surfaces — kept on toHaveProperty above.
+  // (`Object.keys` sees only VALUE exports; `export type *`/`export type {}` erase at build.)
+  const keys = (m: object) => Object.keys(m).sort();
+
+  it('ROOT runtime exports are EXACTLY the curated value set (thin barrel, no drift)', () => {
+    expect(keys(root)).toEqual(
+      [
+        ...ROOT_FACTORIES,
+        'CosmosClientManager',
+        'parseAddress',
+        'parseFqdn',
+        'parseLeaseUuid',
+        'parseProviderUuid',
+        'parseSkuUuid',
+        'asAddress',
+        'asFqdn',
+        'asLeaseUuid',
+        'asProviderUuid',
+        'asSkuUuid',
+        'createSignerAdapter',
+        'requireAuthSigner',
+        'MnemonicWalletProvider',
+        'signArbitraryWithAmino',
+        'ManifestMCPError',
+        'ManifestMCPErrorCode',
+        'INFRASTRUCTURE_ERROR_CODES',
+        'sanitizeForLogging',
+        'createConfig',
+        'validateConfig',
+        'createValidatedConfig',
+        'resolveCallSignal',
+        'VERSION',
+      ].sort(),
+    );
+  });
+
+  it('/reads runtime exports are EXACTLY the 8 reads', () => {
+    expect(keys(reads)).toEqual([...READS].sort());
+  });
+
+  it('/orchestration runtime exports are EXACTLY the 5 orchestration fns', () => {
+    expect(keys(orchestration)).toEqual(
+      [
+        'deployApp',
+        'manageDomain',
+        'troubleshootDeployment',
+        'closeLease',
+        'loadChainDenomMap',
+      ].sort(),
+    );
+  });
+
+  it('/node runtime exports are EXACTLY the guarded-fetch values', () => {
+    expect(keys(node)).toEqual([...GUARDED_FETCH_EXPORTS].sort());
+  });
 });

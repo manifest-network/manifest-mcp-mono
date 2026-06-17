@@ -59,6 +59,7 @@
     "vitest": "4.1.8",
     "@types/node": "22.19.19",
     "publint": "0.3.21",
-    "@arethetypeswrong/core": "0.18.3"
+    "@arethetypeswrong/core": "0.18.3",
+    "rolldown": "1.0.3"
   }
 }

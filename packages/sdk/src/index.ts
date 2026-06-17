@@ -42,7 +42,6 @@ export type {
   FredActions,
   FredClient,
 } from '@manifest-network/manifest-mcp-fred';
-export {
-  createFredClient,
-  fredActions,
-} from '@manifest-network/manifest-mcp-fred';
+// Only the factory on ROOT — `fredActions` is the low-level client-mixin builder (off the §9 narrative);
+// a consumer composing the SDK uses `createFredClient`. (It remains available from the fred package.)
+export { createFredClient } from '@manifest-network/manifest-mcp-fred';
