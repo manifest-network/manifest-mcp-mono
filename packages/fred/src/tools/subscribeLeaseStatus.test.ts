@@ -113,8 +113,20 @@ describe('subscribeLeaseStatus', () => {
       onComplete,
       intervalMs: 10,
     });
-    await vi.advanceTimersByTimeAsync(35); // ~3 polls
-    expect(onData).toHaveBeenCalledTimes(1); // deduped
+    // Step across second boundaries so MULTIPLE polls actually fire: the
+    // ADR-036 AuthTimestampTracker mints one token per wall-clock SECOND (it
+    // sleeps until the next second), so sub-second intervalMs only advances a
+    // poll when the wall clock crosses a second. A single advance(35) would
+    // complete just ONE poll, making the dedup assertion pass for the wrong
+    // reason (one emit because one poll, not because dedup suppressed a second
+    // identical emit). 3x ~1.1s advances drive several identical polls — the
+    // fetch count below documents they collapse to a single onData via dedup.
+    for (let k = 0; k < 3; k++) {
+      await vi.advanceTimersByTimeAsync(1_100);
+    }
+    const fetchMock = ctx.fetch as unknown as ReturnType<typeof vi.fn>;
+    expect(fetchMock.mock.calls.length).toBeGreaterThan(1); // several identical polls...
+    expect(onData).toHaveBeenCalledTimes(1); // ...collapsed to one emit by the (state, provision_status) dedup
     expect(onData).toHaveBeenCalledWith(
       expect.objectContaining({ state: LeaseState.LEASE_STATE_PENDING }),
     );

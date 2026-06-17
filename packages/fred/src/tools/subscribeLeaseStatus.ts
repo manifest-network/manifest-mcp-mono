@@ -16,7 +16,9 @@ import {
 import { resolveProviderUrl } from './resolveLeaseProvider.js';
 
 /** The capability slice subscribeLeaseStatus needs: query (provider lookup) + chain (rate limit +
- *  chainId) + fetch (provider HTTP) + signer (ADR-036 status token) + logger. */
+ *  chainId) + fetch (provider HTTP) + signer (ADR-036 status token). `logger` and `events` are NOT
+ *  used by the current poll-backed body — both are carried as forward-compat for the deferred WS
+ *  transport (`events` = the eventual subscription source; `logger` = per-poll/terminal diagnostics). */
 export type SubscribeCtx = Pick<
   CapabilityCtx,
   'query' | 'chain' | 'fetch' | 'signer' | 'logger' | 'events'
@@ -39,7 +41,13 @@ export interface SubscribeLeaseStatusOptions {
   emitEvery?: boolean;
 }
 
-/** Local abortable sleep — rejects when `signal` aborts (so an abort during the interval unsubscribes). */
+/**
+ * Local abortable sleep — rejects when `signal` aborts (so an abort during the interval unsubscribes).
+ * Intentionally a private copy, NOT the `abortableSleep` in `http/fred.ts` (which is also file-local and
+ * unexported): that sibling takes an OPTIONAL signal (plain sleep when absent) for `pollLeaseUntilReady`;
+ * this watch's signal is always present and is the canonical helper for `subscribeLeaseStatus`. Keeping
+ * them separate avoids a cross-file signature reconciliation that could perturb `pollLeaseUntilReady`.
+ */
 function abortableSleep(ms: number, signal: AbortSignal): Promise<void> {
   if (signal.aborted) return Promise.reject(signal.reason);
   return new Promise<void>((resolve, reject) => {
