@@ -12,6 +12,12 @@ export {
   ManifestMCPErrorCode,
 } from '@manifest-network/manifest-mcp-core';
 export {
+  createFredClient,
+  type FredActions,
+  type FredClient,
+  fredActions,
+} from './client.js';
+export {
   AuthTimestampTracker,
   type AuthTokenPayload,
   createAuthToken,
