@@ -226,6 +226,7 @@ export {
   createSignerAdapter, requireAuthSigner,
   MnemonicWalletProvider, signArbitraryWithAmino,
   ManifestMCPError, ManifestMCPErrorCode, INFRASTRUCTURE_ERROR_CODES,
+  sanitizeForLogging, // @public — spec §7 M5: consumer-reachable redaction for ManifestMCPError.details before logging
   createConfig, validateConfig, createValidatedConfig, resolveCallSignal,
   VERSION,
 } from '@manifest-network/manifest-mcp-core';
