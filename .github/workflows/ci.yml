@@ -26,6 +26,12 @@ jobs:
       # part of `npm test` (packages/sdk/scripts/cast-guard.test.ts).
       - run: npm run depcruise
       - run: npm test
+      # SDK type tripwire: re-run the SDK package's `vitest --typecheck` as a NAMED,
+      # visible gate (the root `npm test` above covers it transitively). `*.test-d.ts`
+      # pins the re-emitted public type surface (factory return types, the ManifestClient
+      # bound methods, the brand families + ports, the read-vs-full guarantee) so an
+      # upstream codegen/type-shape drift that survives a value-only test fails CI here. (ENG-309)
+      - run: npm run test:types -w @manifest-network/manifest-sdk
       # Fail-closed browser build of the compose-only acceptance example: a rolldown
       # platform:browser bundle of dist/main.js with UNRESOLVED_IMPORT capture (asserts the
       # set is empty minus the documented @cosmjs/crypto allowlist) + an import-specifier-

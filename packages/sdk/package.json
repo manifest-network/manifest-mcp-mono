@@ -46,7 +46,8 @@
   "scripts": {
     "build": "tsdown",
     "lint": "tsc --noEmit",
-    "test": "vitest run",
+    "test": "vitest run --typecheck",
+    "test:types": "vitest run --typecheck",
     "test:watch": "vitest"
   },
   "dependencies": {

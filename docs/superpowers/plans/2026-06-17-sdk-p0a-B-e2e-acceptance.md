@@ -379,9 +379,9 @@ describe('sdk-acceptance browser build (fail-closed; no UNGUARDED node-only)', (
 
 **Files:** `packages/sdk/src/sdk.test-d.ts`, `packages/sdk/vitest.config.ts`, `packages/sdk/package.json` (test script → `--typecheck`).
 
-- [ ] **Step 1: `vitest.config.ts`** for the sdk package mirroring core's (`typecheck` enabled, `include:['src/**/*.test-d.ts']`); wire `vitest --typecheck` into the sdk `test`/`test:types` script + CI.
-- [ ] **Step 2: `sdk.test-d.ts`** — pin the re-emitted type surface (codegen-passthrough tripwire, spec §14): `createManifestClient`/`createManifestReadClient`/`createFredClient` return the expected client types; `ManifestClient` has the bound read+tx+executeTx methods; the brand families + ports export as types; `ManifestReadClient` NOT assignable to `ManifestClient`. Use `expectTypeOf` (`toExtend`/`toEqualTypeOf`, not the deprecated `toMatchTypeOf`).
-- [ ] **Step 3: Run `vitest --typecheck` → pass; confirm a deliberately-wrong assertion FAILS under `--typecheck` (then revert).** Add the CI step (local; flag). Commit. `git commit -m "test(sdk): type tripwire (*.test-d.ts under vitest --typecheck) (ENG-309)"`.
+- [x] **Step 1: `vitest.config.ts`** for the sdk package mirroring core's (`typecheck` enabled, `include:['src/**/*.test-d.ts']`); wire `vitest --typecheck` into the sdk `test`/`test:types` script + CI.
+- [x] **Step 2: `sdk.test-d.ts`** — pin the re-emitted type surface (codegen-passthrough tripwire, spec §14): `createManifestClient`/`createManifestReadClient`/`createFredClient` return the expected client types; `ManifestClient` has the bound read+tx+executeTx methods; the brand families + ports export as types; `ManifestReadClient` NOT assignable to `ManifestClient`. Use `expectTypeOf` (`toExtend`/`toEqualTypeOf`, not the deprecated `toMatchTypeOf`).
+- [x] **Step 3: Run `vitest --typecheck` → pass; confirm a deliberately-wrong assertion FAILS under `--typecheck` (then revert).** Add the CI step (local; flag). Commit. `git commit -m "test(sdk): type tripwire (*.test-d.ts under vitest --typecheck) (ENG-309)"`. — DONE: 32 tests pass under `--typecheck` (9 in `sdk.test-d.ts`); negative control (`ManifestReadClient extends ManifestClient`) fails with `signer: AuthSigner` not assignable to `never` + vitest exits non-zero; reverted. Named CI step `npm run test:types -w @manifest-network/manifest-sdk` added (after `npm test`).
 
 ---
 
