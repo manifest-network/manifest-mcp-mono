@@ -21,4 +21,8 @@ jobs:
       - run: npm run build -w @manifest-network/manifest-sdk
       - run: npm run lint
       - run: npm run check
+      # dependency-cruiser DAG + manifestjs-type chokepoint + no-static-node/undici guards (ENG-309).
+      # The brand-cast / no-parse*-in-lcd-adapter grep guards + the known-bad fixtures' proof run as
+      # part of `npm test` (packages/sdk/scripts/cast-guard.test.ts).
+      - run: npm run depcruise
       - run: npm test

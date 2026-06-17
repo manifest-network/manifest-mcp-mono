@@ -8,6 +8,7 @@
   "scripts": {
     "build": "npm run build --workspaces",
     "lint": "npm run lint --workspaces --if-present",
+    "depcruise": "depcruise packages --config .dependency-cruiser.cjs",
     "check": "biome check packages/",
     "check:fix": "biome check --write packages/",
     "format": "biome format --write packages/",
@@ -18,6 +19,7 @@
   "devDependencies": {
     "@biomejs/biome": "2.4.16",
     "@modelcontextprotocol/sdk": "1.29.0",
+    "dependency-cruiser": "17.4.3",
     "tsdown": "0.22.1",
     "vitest": "4.1.8"
   },
