@@ -232,7 +232,7 @@ function leaseStateName(state: LeaseState): string {
  * client does not recognize at all (a genuinely future value) is NOT listed
  * here; the ACTIVE branch treats it as settled (see below).
  */
-const PROVISION_IN_PROGRESS: ReadonlySet<string> = new Set([
+export const PROVISION_IN_PROGRESS: ReadonlySet<string> = new Set([
   'provisioning',
   'restarting',
   'updating',
@@ -245,7 +245,7 @@ const PROVISION_IN_PROGRESS: ReadonlySet<string> = new Set([
  * healthy. The chain lease is ACTIVE, but the deployment has effectively failed
  * (or is being torn down) — surface it as an error instead of a ready lease.
  */
-const PROVISION_FAILED: ReadonlySet<string> = new Set([
+export const PROVISION_FAILED: ReadonlySet<string> = new Set([
   'failed',
   'deprovisioning',
 ]);

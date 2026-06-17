@@ -36,6 +36,8 @@ export {
   getLeaseStatus,
   MAX_TAIL,
   type PollOptions,
+  PROVISION_FAILED,
+  PROVISION_IN_PROGRESS,
   pollLeaseUntilReady,
   restartLease,
   type TerminalChainLeaseState,
@@ -104,6 +106,11 @@ export { fetchActiveLease } from './tools/fetchActiveLease.js';
 export { getAppLogs } from './tools/getLogs.js';
 export { resolveProviderUrl } from './tools/resolveLeaseProvider.js';
 export { restartApp } from './tools/restartApp.js';
+export {
+  type SubscribeCtx,
+  type SubscribeLeaseStatusOptions,
+  subscribeLeaseStatus,
+} from './tools/subscribeLeaseStatus.js';
 export { updateApp } from './tools/updateApp.js';
 export {
   type WaitForAppReadyOptions,
