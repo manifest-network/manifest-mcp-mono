@@ -35,6 +35,13 @@ export interface AcceptanceOpts {
   /** Injected fetch (cert-trusting undici in e2e; globalThis.fetch in browser). */
   fetch: typeof globalThis.fetch;
   variant: 'single' | 'stack';
+  /**
+   * Skip step 4 (setItemCustomDomain) when the chain image is too old to support the
+   * custom-domain feature (manifest-ledger v2.1.0+ / manifestjs 2.4.1+). The e2e node harness
+   * feature-detects support against the live chain and sets this (B3 MF-6 probe-skip). Defaults to
+   * running the step — so the browser build + the mocked unit test exercise the full 8-step graph.
+   */
+  skipCustomDomain?: boolean;
 }
 
 // onComplete fires for FAILURE terminals too — the flow MUST reject on these (else a failed deploy
@@ -121,12 +128,15 @@ export async function runAcceptanceFlow(opts: AcceptanceOpts): Promise<void> {
       client.fetch,
     );
 
-    // 4) setItemCustomDomain (bound; serviceName required for the stack item) — feature-gated (B3 MF-6).
-    await client.setItemCustomDomain({
-      leaseUuid: asLeaseUuid(leaseUuid),
-      customDomain: parseFqdn('app.example.com'),
-      serviceName,
-    });
+    // 4) setItemCustomDomain (bound; serviceName required for the stack item) — feature-gated (B3 MF-6:
+    // the e2e harness probes the chain and sets opts.skipCustomDomain when the image predates v2.1.0).
+    if (!opts.skipCustomDomain) {
+      await client.setItemCustomDomain({
+        leaseUuid: asLeaseUuid(leaseUuid),
+        customDomain: parseFqdn('app.example.com'),
+        serviceName,
+      });
+    }
 
     // 5) restart / update / getLogs (positional; poll-on-409). The update manifest is variant-shaped:
     await retryOn409(() =>
