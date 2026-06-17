@@ -9,6 +9,7 @@ import {
 } from './client-factory.js';
 import type { CapabilityCtx, QueryCtx } from './ctx.js';
 import type { Signer } from './signer.js';
+import type { getLease } from './tools/reads.js';
 import type { WalletProvider } from './types.js';
 
 describe('ManifestClient / ManifestReadClient (type-level)', () => {
@@ -41,5 +42,21 @@ describe('createManifestClient / createManifestReadClient (type-level)', () => {
       FullClientOptions['walletProvider']
     >().toEqualTypeOf<WalletProvider>();
     expectTypeOf<ReadClientOptions>().not.toHaveProperty('walletProvider');
+  });
+});
+
+describe('ManifestReadClient bound reads', () => {
+  it('exposes getLease with the free-fn tail (ctx dropped)', () => {
+    expectTypeOf<ManifestReadClient['getLease']>().toEqualTypeOf<
+      (
+        leaseUuid: string,
+        opts?: import('./options.js').CallOptions,
+      ) => ReturnType<typeof getLease>
+    >();
+  });
+  it('getBalance return matches the free fn (drift guard)', () => {
+    expectTypeOf<ReturnType<ManifestReadClient['getBalance']>>().toEqualTypeOf<
+      ReturnType<typeof import('./tools/getBalance.js').getBalance>
+    >();
   });
 });

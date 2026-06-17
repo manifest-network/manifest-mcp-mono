@@ -184,4 +184,37 @@ describe('createManifestReadClient / createManifestClient', () => {
     full.dispose();
     expect(mgr.disconnect).toHaveBeenCalledTimes(1);
   });
+
+  it('read client exposes bound read methods that forward ctx (client) to the free fn', async () => {
+    // A query client that records the lease() arg + lets getLease's read path resolve.
+    const lease = vi.fn(async () => ({ lease: null }));
+    const queryClient = {
+      liftedinit: { billing: { v1: { lease } } },
+    } as unknown as ManifestQueryClient;
+    const mgr = fakeManager({
+      getQueryClient: vi.fn(async () => queryClient),
+      acquireRateLimit: vi.fn(async () => {}),
+    });
+    vi.spyOn(CosmosClientManager, 'getInstance').mockReturnValue(mgr);
+
+    const client = await createManifestReadClient({ config: READ_CONFIG });
+    // All 10 bound reads exist as functions.
+    for (const name of [
+      'getBalance',
+      'resolveSku',
+      'listSkuCandidates',
+      'getLeasesByTenant',
+      'getLease',
+      'getLeaseByCustomDomain',
+      'getSKUs',
+      'getProviders',
+      'getBillingParams',
+      'getWithdrawableAmount',
+    ] as const) {
+      expect(typeof client[name]).toBe('function');
+    }
+    // forwarding: a bound read drops ctx and forwards the rest to the free fn, which reads ctx.query.
+    await expect(client.getLease('lease-uuid')).resolves.toBeNull();
+    expect(lease).toHaveBeenCalledWith({ leaseUuid: 'lease-uuid' });
+  });
 });

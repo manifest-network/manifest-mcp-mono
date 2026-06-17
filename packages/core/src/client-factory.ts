@@ -3,10 +3,42 @@ import { createValidatedConfig } from './config.js';
 import type { CapabilityCtx, EventTransport, QueryCtx } from './ctx.js';
 import type { Logger, LogLevel } from './logger.js';
 import { noopLogger } from './logger.js';
+import type { CallOptions } from './options.js';
 import type { Signer } from './signer.js';
 import { createSignerAdapter } from './signer.js';
+import { listSkuCandidates, resolveSku } from './sku-resolution.js';
+// VALUE imports (used both for typeof in the interface and for runtime binding). READS ONLY — never
+// import a tx fn here, so a reads-only browser bundle importing createManifestReadClient stays tx-free.
+import { getBalance } from './tools/getBalance.js';
+import {
+  getBillingParams,
+  getLease,
+  getLeaseByCustomDomain,
+  getLeasesByTenant,
+  getProviders,
+  getSKUs,
+  getWithdrawableAmount,
+} from './tools/reads.js';
 import type { ManifestMCPConfig, WalletProvider } from './types.js';
 import { ManifestMCPError, ManifestMCPErrorCode } from './types.js';
+
+/**
+ * Strip the leading ctx parameter: a free fn `(ctx, ...rest) => R` becomes the bound method
+ * `(...rest) => R`. Keeps the bound-method interface signatures DERIVED from (never drifting from)
+ * the free fns — including getBalance's inferred return.
+ */
+export type BoundFn<F> = F extends (
+  ctx: infer _C,
+  ...rest: infer R
+) => infer Ret
+  ? (...rest: R) => Ret
+  : never;
+
+/** The trailing (post-ctx) parameter tuple of a free fn — the value-level companion of BoundFn,
+ *  used to type the bound-method closures. Exported so client-full.ts single-sources it (N7). */
+export type TailOf<F> = F extends (ctx: infer _C, ...rest: infer R) => unknown
+  ? R
+  : never;
 
 /** Shared factory inputs. `skuSpecs`/`events`/`logLevel` are accepted but NOT threaded in 4b (see plan OI-BETA). */
 interface BaseClientOptions {
@@ -88,8 +120,31 @@ async function buildClient(
     // methods over this ctx; 4b returns the ctx + dispose shell. Structurally a ManifestReadClient; the
     // full factory up-casts to ManifestClient.
     const base = { chain, query, fetch, logger, dispose };
-    const client = signer ? { ...base, signer } : base;
-    return client as ManifestReadClient;
+    const ctxShell = signer ? { ...base, signer } : base;
+    // Bind the read methods as per-instance arrow-closures over the FINAL object (it IS the ctx).
+    // The bound methods close over `client`; `dispose` closes over the buildClient-local `disposed`
+    // flag — both end up on the single returned object (no soundness issue, N9).
+    const client = ctxShell as ManifestReadClient;
+    Object.assign(client, {
+      getBalance: (address: string, opts?: CallOptions) =>
+        getBalance(client, address, opts),
+      resolveSku: (...a: TailOf<typeof resolveSku>) => resolveSku(client, ...a),
+      listSkuCandidates: (...a: TailOf<typeof listSkuCandidates>) =>
+        listSkuCandidates(client, ...a),
+      getLeasesByTenant: (...a: TailOf<typeof getLeasesByTenant>) =>
+        getLeasesByTenant(client, ...a),
+      getLease: (...a: TailOf<typeof getLease>) => getLease(client, ...a),
+      getLeaseByCustomDomain: (...a: TailOf<typeof getLeaseByCustomDomain>) =>
+        getLeaseByCustomDomain(client, ...a),
+      getSKUs: (...a: TailOf<typeof getSKUs>) => getSKUs(client, ...a),
+      getProviders: (...a: TailOf<typeof getProviders>) =>
+        getProviders(client, ...a),
+      getBillingParams: (...a: TailOf<typeof getBillingParams>) =>
+        getBillingParams(client, ...a),
+      getWithdrawableAmount: (...a: TailOf<typeof getWithdrawableAmount>) =>
+        getWithdrawableAmount(client, ...a),
+    });
+    return client;
   } catch (err) {
     // getQueryClient (or signer construction) failed AFTER getInstance acquired the refCount, and the
     // caller never received a `dispose()` handle. Release the acquire once so a construction failure does
@@ -126,6 +181,16 @@ export interface ManifestReadClient extends QueryCtx {
    * shared clients down only once the last holder disposes.
    */
   dispose(): void;
+  getBalance: BoundFn<typeof getBalance>;
+  resolveSku: BoundFn<typeof resolveSku>;
+  listSkuCandidates: BoundFn<typeof listSkuCandidates>;
+  getLeasesByTenant: BoundFn<typeof getLeasesByTenant>;
+  getLease: BoundFn<typeof getLease>;
+  getLeaseByCustomDomain: BoundFn<typeof getLeaseByCustomDomain>;
+  getSKUs: BoundFn<typeof getSKUs>;
+  getProviders: BoundFn<typeof getProviders>;
+  getBillingParams: BoundFn<typeof getBillingParams>;
+  getWithdrawableAmount: BoundFn<typeof getWithdrawableAmount>;
 }
 
 /**
