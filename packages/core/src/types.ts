@@ -322,6 +322,16 @@ export interface CosmosTxResult {
 }
 
 /**
+ * Result of a multi-message `executeTx` broadcast. A heterogeneous batch has no single
+ * (module, subcommand), so this is the tx-level subset of CosmosTxResult plus the per-message
+ * protobuf typeUrls (the only honest per-message identity cosmjs carries). A CosmosTxResult is
+ * assignable to this for any consumer reading only tx-level fields.
+ */
+export type ExecuteTxResult = Omit<CosmosTxResult, 'module' | 'subcommand'> & {
+  readonly msgTypeUrls?: readonly string[];
+};
+
+/**
  * Module information for discovery
  */
 export interface ModuleInfo {

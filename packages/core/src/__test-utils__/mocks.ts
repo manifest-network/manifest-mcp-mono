@@ -347,6 +347,12 @@ export function makeMockClientManager(overrides?: {
     getAddress: vi.fn().mockResolvedValue(address),
     getConfig: vi.fn().mockReturnValue(config),
     acquireRateLimit: vi.fn().mockResolvedValue(undefined),
+    // Passthrough is enough for the non-concurrency tests; the serialization test overrides this with
+    // the REAL promise-chain (or uses a real CosmosClientManager) to genuinely prove serialization.
+    withBroadcastLock: <T>(
+      _address: string,
+      fn: () => Promise<T>,
+    ): Promise<T> => fn(),
     disconnect: vi.fn(),
   };
 }

@@ -4,6 +4,7 @@ import type { SigningStargateClient } from '@cosmjs/stargate';
 import { calculateFee, type StdFee } from '@cosmjs/stargate';
 import {
   type CosmosTxResult,
+  type ExecuteTxResult,
   ManifestMCPError,
   ManifestMCPErrorCode,
   type TxOptions,
@@ -568,6 +569,42 @@ export function buildTxResult(
       confirmed: true,
       confirmationHeight: String(result.height),
     }),
+  };
+}
+
+/**
+ * Build an ExecuteTxResult from a multi-message DeliverTxResponse. Mirrors buildTxResult but carries
+ * no (module, subcommand) — a multi-msg tx has neither; failure messages name the message typeUrls.
+ * executeTx always confirms (signAndBroadcast waits for inclusion).
+ */
+export function buildExecuteTxResult(
+  result: Awaited<ReturnType<SigningStargateClient['signAndBroadcast']>>,
+  msgTypeUrls: readonly string[],
+): ExecuteTxResult {
+  if (result.code !== 0) {
+    throw new ManifestMCPError(
+      ManifestMCPErrorCode.TX_FAILED,
+      `executeTx (${msgTypeUrls.join(', ') || 'no messages'}) failed with code ${result.code}: ${result.rawLog || 'no details'}`,
+      {
+        code: result.code,
+        transactionHash: result.transactionHash,
+        rawLog: result.rawLog,
+        height: String(result.height),
+        msgTypeUrls,
+      },
+    );
+  }
+  return {
+    transactionHash: result.transactionHash,
+    code: result.code,
+    height: String(result.height),
+    rawLog: result.rawLog || undefined,
+    gasUsed: String(result.gasUsed),
+    gasWanted: String(result.gasWanted),
+    events: result.events,
+    msgTypeUrls,
+    confirmed: true,
+    confirmationHeight: String(result.height),
   };
 }
 

@@ -146,6 +146,7 @@ export {
   mutatingAnnotations,
   readOnlyAnnotations,
 } from './tool-metadata.js';
+export { executeTx } from './tools/executeTx.js';
 export { type FundCreditsResult, fundCredits } from './tools/fundCredits.js';
 // Tool functions (used by lease package)
 export { getBalance } from './tools/getBalance.js';
