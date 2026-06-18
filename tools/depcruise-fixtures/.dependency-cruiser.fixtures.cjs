@@ -6,7 +6,7 @@
  * rule it proves) and re-anchors `from` to this fixtures directory — the fixtures are NOT under
  * `packages/`, so the production `from: ^packages…` anchors would never match them. The fixtures
  * step (packages/sdk/scripts/cast-guard.test.ts) cruises THIS directory with THIS config and
- * asserts both rules fire; the real tree is cruised separately with the production config and MUST
+ * asserts all four rules fire; the real tree is cruised separately with the production config and MUST
  * pass clean.
  *
  * @type {import('dependency-cruiser').IConfiguration}

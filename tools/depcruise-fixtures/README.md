@@ -8,7 +8,7 @@ PROVE that the production
 `packages/sdk/scripts/cast-guard.test.ts` cruises this directory with
 `.dependency-cruiser.fixtures.cjs` and asserts each rule fires.
 
-The two fixtures mirror the two import-edge rules that the production config enforces (spec §8):
+The three fixtures cover the import-edge rules that the production config enforces (spec §8):
 
 - `pkg-src/bad-manifestjs-type-import.ts` — a (simulated) downstream-package `src` file importing a
   manifestjs **generated TYPE path** (`…/codegen/.../types.js`) from OUTSIDE the

@@ -8,7 +8,8 @@ import { ManifestMCPError, ManifestMCPErrorCode } from '../types.js';
  * `instanceof ManifestMCPError` / `code` uniformly — and OPERATION_CANCELLED is non-retryable, so a retry
  * layer never blindly re-broadcasts (code-review PR #102). The original reason is preserved in `details`.
  * `sent` distinguishes the unambiguous pre-broadcast case (nothing sent) from the post-broadcast race
- * (the tx MAY have committed → re-query, do not blindly retry).
+ * (the tx MAY have committed → re-query, do not blindly retry). It is also surfaced in `details.sent` so a
+ * consumer can branch on it programmatically (`sent === false` ⇒ safe to retry) without parsing the message.
  */
 function cancelledTxError(reason: unknown, sent: boolean): ManifestMCPError {
   const detail = reason instanceof Error ? reason.message : String(reason);
@@ -17,7 +18,7 @@ function cancelledTxError(reason: unknown, sent: boolean): ManifestMCPError {
     sent
       ? `Transaction await was cancelled (${detail}); the broadcast may still commit on-chain — re-query the chain before retrying (do NOT blindly retry).`
       : `Transaction was cancelled before broadcast (${detail}); no transaction was sent.`,
-    { reason },
+    { reason, sent },
   );
 }
 

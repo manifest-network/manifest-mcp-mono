@@ -25,6 +25,7 @@ describe('withTxConfirmation', () => {
     expect(err.code).toBe(ManifestMCPErrorCode.OPERATION_CANCELLED);
     expect(err.message).toContain('cancelled'); // original reason embedded
     expect(err.message).toMatch(/no transaction was sent/i);
+    expect((err.details as { sent?: boolean }).sent).toBe(false); // programmatic: nothing was sent
     expect(broadcast).not.toHaveBeenCalled();
   });
 
@@ -39,6 +40,7 @@ describe('withTxConfirmation', () => {
     expect(err.message).toContain('user cancelled');
     expect(err.message).toMatch(/re-query/i); // conservative post-send contract surfaced
     expect((err.details as { reason?: unknown }).reason).toBeInstanceOf(Error); // original reason preserved
+    expect((err.details as { sent?: boolean }).sent).toBe(true); // programmatic: tx may have committed
     expect(broadcast).toHaveBeenCalledTimes(1);
   });
 
