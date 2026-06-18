@@ -501,13 +501,20 @@ export class CosmosClientManager {
     const prev = this.broadcastLocks.get(address) ?? Promise.resolve();
     const run = prev.then(fn, fn); // run regardless of the prior task's outcome
     // Store a swallowed tail so the next waiter chains cleanly and no unhandledRejection escapes.
-    this.broadcastLocks.set(
-      address,
-      run.then(
-        () => undefined,
-        () => undefined,
-      ),
+    const tail = run.then(
+      () => undefined,
+      () => undefined,
     );
+    this.broadcastLocks.set(address, tail);
+    // Release the entry once this chain drains, so the map stays bounded to
+    // in-flight chains — a long-lived manager broadcasting from many distinct
+    // addresses would otherwise grow it without bound (code-review PR #102 +
+    // Copilot). Delete only if no newer broadcast has replaced this tail.
+    void tail.then(() => {
+      if (this.broadcastLocks.get(address) === tail) {
+        this.broadcastLocks.delete(address);
+      }
+    });
     return run;
   }
 
@@ -537,5 +544,9 @@ export class CosmosClientManager {
     this.signingClientPromise = null;
     this.queryClient = null;
     this.queryClientPromise = null;
+    // Reset the per-signer broadcast-lock chain so a reused config key
+    // (disconnect → getInstance) starts clean and the map does not retain
+    // stale settled tails (code-review PR #102).
+    this.broadcastLocks.clear();
   }
 }

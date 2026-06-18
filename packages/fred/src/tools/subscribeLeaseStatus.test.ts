@@ -364,6 +364,58 @@ describe('subscribeLeaseStatus', () => {
     expect(fetchMock.mock.calls.length).toBe(calls);
   });
 
+  it('contains a throwing onData callback: the watch still converges (onComplete fires) and the fault is not re-routed to onError', async () => {
+    // Code-review PR #102: a consumer callback that throws synchronously must
+    // not escape the void-ed poll loop (unhandled rejection) nor abort the
+    // converging watch. With a terminal-success frame, a throwing onData is
+    // contained so the terminal onComplete still fires. (Without containment,
+    // the throw skips onComplete and rejects the IIFE.)
+    vi.useFakeTimers();
+    const ctx = makeSubscribeCtx({
+      providerUuid: 'prov-1',
+      statusFrames: [
+        { state: 'LEASE_STATE_ACTIVE', provision_status: 'running' },
+      ],
+    });
+    const onComplete = vi.fn();
+    const onError = vi.fn();
+    subscribeLeaseStatus(ctx, LEASE_UUID, {
+      onData: () => {
+        throw new Error('consumer onData blew up');
+      },
+      onComplete,
+      onError,
+      intervalMs: 10,
+    });
+    await vi.advanceTimersByTimeAsync(1);
+    expect(onComplete).toHaveBeenCalledTimes(1); // converged despite the throw
+    expect(onError).not.toHaveBeenCalled(); // a callback fault is NOT a watch error
+  });
+
+  it('self-termination does not abort a caller-provided signal (cleanup flows source→composite only)', async () => {
+    // Code-review PR #102: on self-termination the watch aborts its INTERNAL
+    // controller (which detaches the AbortSignal.any listener from opts.signal).
+    // That cleanup must never propagate back to the CALLER's signal.
+    vi.useFakeTimers();
+    const ctx = makeSubscribeCtx({
+      providerUuid: 'prov-1',
+      statusFrames: [
+        { state: 'LEASE_STATE_ACTIVE', provision_status: 'running' },
+      ],
+    });
+    const controller = new AbortController();
+    const onComplete = vi.fn();
+    subscribeLeaseStatus(ctx, LEASE_UUID, {
+      onData: vi.fn(),
+      onComplete,
+      intervalMs: 10,
+      signal: controller.signal,
+    });
+    await vi.advanceTimersByTimeAsync(1);
+    expect(onComplete).toHaveBeenCalledTimes(1);
+    expect(controller.signal.aborted).toBe(false);
+  });
+
   it('§5.9 contract: a Fred status wire frame parses to the emitted FredLeaseStatus shape', async () => {
     vi.useFakeTimers();
     const frame = {

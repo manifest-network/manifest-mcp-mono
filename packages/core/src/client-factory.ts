@@ -153,6 +153,16 @@ export async function buildClient(
   }
 }
 
+/**
+ * @public — construct a query-only {@link ManifestReadClient} (no signer; reads/queries only).
+ *
+ * @remarks
+ * Each client acquires one reference on a `CosmosClientManager` instance keyed by config
+ * (`chainId:rpcUrl[:restUrl]`). Clients sharing a config key share that one underlying instance, and
+ * `getInstance` mutates it — so do NOT construct a read client against a config key a full (signing)
+ * client already holds (the common case is safe: a query-only config omits `rpcUrl` → a different key).
+ * Always `dispose()` each client; the shared clients tear down only once the last holder disposes.
+ */
 export async function createManifestReadClient(
   opts: ReadClientOptions,
 ): Promise<ManifestReadClient> {

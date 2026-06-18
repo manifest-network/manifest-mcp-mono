@@ -32,6 +32,13 @@ export function fredActions(ctx: ManifestClient): FredActions {
  * Create a full app client: core's chain-backed ManifestClient plus the Fred provider methods. The
  * fully-decorated factory lives in fred (not core) because subscribeLeaseStatus hits the Fred backend,
  * not the chain ctx wraps (viem one-client-one-backend rule, #2535). Requires a walletProvider.
+ *
+ * @remarks
+ * Wraps {@link createManifestClient}, so the same shared-config-key caveat applies: each client acquires
+ * one reference on a `CosmosClientManager` instance keyed by config (`chainId:rpcUrl[:restUrl]`), and
+ * `getInstance` mutates the shared instance — do NOT construct a separate read/full client against a key
+ * this client already holds. Always `dispose()` each client; the shared clients tear down only once the
+ * last holder disposes.
  */
 export async function createFredClient(
   opts: FullClientOptions,

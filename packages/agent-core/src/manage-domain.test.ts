@@ -775,6 +775,70 @@ describe('manageDomain — set', () => {
     });
   });
 
+  it('set lowercases a mixed-case FQDN so broadcast and verify use the same normalized value', async () => {
+    // Regression (code-review PR #102): `parseFqdn` lowercases the
+    // broadcast value (RFC 4343), so the post-broadcast verification must
+    // compare against the SAME lowercased value. Previously `expected`
+    // used the un-lowercased input, so a mixed-case FQDN produced a false
+    // `mismatch` (spurious TX_FAILED) after a successful on-chain set.
+    const core = await import('@manifest-network/manifest-mcp-core');
+    vi.mocked(core.setItemCustomDomain).mockResolvedValue({
+      lease_uuid: '11111111-1111-4111-8111-111111111111',
+      service_name: '',
+      custom_domain: 'app.example.com',
+      transactionHash: 'DEADBEEF',
+      code: 0,
+    } as Awaited<ReturnType<typeof core.setItemCustomDomain>>);
+
+    const queryClient = makeMockQueryClient();
+    // The chain stores what was broadcast — the lowercased domain.
+    queryClient.liftedinit.billing.v1.lease.mockResolvedValue({
+      lease: {
+        uuid: '11111111-1111-4111-8111-111111111111',
+        items: [{ serviceName: '', customDomain: 'app.example.com' }],
+      },
+    });
+    const clientManager = makeMockClientManager(queryClient);
+    const { callbacks, failures } = captureCallbacks('yes');
+    const { manageDomain } = await import('./manage-domain.js');
+
+    const result = await manageDomain(
+      {
+        action: 'set',
+        leaseUuid: '11111111-1111-4111-8111-111111111111',
+        fqdn: 'App.Example.COM',
+      },
+      callbacks,
+      {
+        clientManager: clientManager as unknown as Parameters<
+          typeof manageDomain
+        >[2]['clientManager'],
+      },
+    );
+
+    // Broadcast received the lowercased form.
+    expect(core.setItemCustomDomain).toHaveBeenCalledWith(
+      expect.objectContaining({
+        chain: expect.anything(),
+        logger: expect.anything(),
+      }),
+      {
+        leaseUuid: '11111111-1111-4111-8111-111111111111',
+        customDomain: 'app.example.com',
+        serviceName: undefined,
+      },
+    );
+    // Verification matched the lowercased chain value → success, not a
+    // spurious mismatch.
+    expect(failures).toEqual([]);
+    expect(result).toEqual({
+      action: 'set',
+      leaseUuid: '11111111-1111-4111-8111-111111111111',
+      verified: true,
+      finalCustomDomain: 'app.example.com',
+    });
+  });
+
   it('verifier sees lease not_found → onFailure invoked with reason → throws TX_FAILED', async () => {
     const core = await import('@manifest-network/manifest-mcp-core');
     vi.mocked(core.setItemCustomDomain).mockResolvedValue({

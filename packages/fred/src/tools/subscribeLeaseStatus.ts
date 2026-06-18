@@ -116,13 +116,37 @@ export function subscribeLeaseStatus(
     controller.abort();
   };
 
+  // A consumer callback (onData/onComplete/onError) that throws synchronously
+  // must NOT escape the void-ed poll IIFE as an unhandled rejection, nor break
+  // the converging watch (code-review PR #102). Contain the fault as a logger
+  // diagnostic — it is the consumer's bug, not a watch error, so it is NOT
+  // re-routed to onError/onComplete.
+  const containCallbackFault = (which: string, err: unknown): void => {
+    ctx.logger.warn(
+      `subscribeLeaseStatus: ${which} callback threw and was contained: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    );
+  };
+  const callOnError = (err: unknown): void => {
+    try {
+      opts.onError?.(err);
+    } catch (cbErr) {
+      containCallbackFault('onError', cbErr);
+    }
+  };
+
   // Dedup over (state, provision_status); the terminal status always emits (force) even if unchanged.
   let lastKey: string | undefined;
   const emit = (status: FredLeaseStatus, force = false): void => {
     const key = `${status.state}|${status.provision_status ?? ''}`;
     if (force || opts.emitEvery || key !== lastKey) {
       lastKey = key;
-      opts.onData(status);
+      try {
+        opts.onData(status);
+      } catch (cbErr) {
+        containCallbackFault('onData', cbErr);
+      }
     }
   };
 
@@ -153,7 +177,7 @@ export function subscribeLeaseStatus(
         leaseRes.lease.providerUuid,
       );
     } catch (err) {
-      if (!stopped && !abortSignal.aborted) opts.onError?.(err);
+      if (!stopped && !abortSignal.aborted) callOnError(err);
       return; // setup failure — cannot poll without a provider URL (abnormal → onError)
     }
 
@@ -165,7 +189,7 @@ export function subscribeLeaseStatus(
         status = await getLeaseStatus(providerUrl, leaseUuid, token, ctx.fetch);
       } catch (err) {
         if (stopped || abortSignal.aborted) return; // abort during the await ≡ silent unsubscribe
-        opts.onError?.(err); // abnormal (network/parse) → onError + STOP
+        callOnError(err); // abnormal (network/parse) → onError + STOP
         return;
       }
       if (stopped || abortSignal.aborted) return;
@@ -174,12 +198,16 @@ export function subscribeLeaseStatus(
       if (terminal !== 'pending') {
         emit(status, true); // ALWAYS emit the terminal status (bypass dedup)
         stopped = true;
-        opts.onComplete?.(status); // success OR observed failure — both complete (failure is a value)
+        try {
+          opts.onComplete?.(status); // success OR observed failure — both complete (failure is a value)
+        } catch (cbErr) {
+          containCallbackFault('onComplete', cbErr);
+        }
         return;
       }
       emit(status); // non-terminal: dedup-aware
       if (Date.now() >= deadlineAt) {
-        opts.onError?.(
+        callOnError(
           new ManifestMCPError(
             ManifestMCPErrorCode.QUERY_FAILED,
             `subscribeLeaseStatus timed out after ${timeoutMs}ms; lease ${leaseUuid} still non-terminal`,
@@ -193,7 +221,15 @@ export function subscribeLeaseStatus(
         return; // abort during the interval ≡ silent unsubscribe (no onError/onComplete)
       }
     }
-  })();
+  })().finally(() => {
+    // CONVERGING cleanup on EVERY exit (terminal, onError, deadline, abort, or
+    // a contained callback fault): stop the watch and abort the internal
+    // controller. Aborting it also detaches the `AbortSignal.any` listener from
+    // a caller-provided `opts.signal`, so a self-terminated watch leaves no
+    // dangling registration on a long-lived caller signal (code-review PR #102).
+    stopped = true;
+    controller.abort();
+  });
 
   return unsubscribe;
 }

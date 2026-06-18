@@ -842,5 +842,46 @@ describe('CosmosClientManager', () => {
       ).resolves.toBe('ok');
       mgr.disconnect();
     });
+
+    it('releases broadcast-lock entries as their chains drain (bounded map growth)', async () => {
+      // Code-review PR #102 + Copilot: withBroadcastLock must release a
+      // per-address entry once its queued chain drains, so a long-lived manager
+      // broadcasting from many distinct addresses does not grow the map without
+      // bound (the common single-signer case sits at size 0 between broadcasts).
+      const mgr = CosmosClientManager.getInstance(
+        makeConfig({ chainId: 'lock-bounded' }),
+        makeWallet(),
+      );
+      const locks = (mgr as unknown as { broadcastLocks: Map<string, unknown> })
+        .broadcastLocks;
+      await mgr.withBroadcastLock('addr1', () => Promise.resolve());
+      await mgr.withBroadcastLock('addr2', () => Promise.resolve());
+      // delete-on-settle runs a microtask after each tail settles — flush them.
+      for (let i = 0; i < 5; i++) await Promise.resolve();
+      expect(locks.size).toBe(0); // drained entries released, not retained
+      mgr.disconnect();
+    });
+
+    it('teardown clears an in-flight broadcast-lock entry', async () => {
+      // Belt-and-suspenders for the delete-on-settle above: a broadcast still
+      // in flight at disconnect time has a live map entry; teardown() clears it
+      // immediately so a reused config key starts clean (code-review PR #102).
+      const mgr = CosmosClientManager.getInstance(
+        makeConfig({ chainId: 'lock-teardown' }),
+        makeWallet(),
+      );
+      const locks = (mgr as unknown as { broadcastLocks: Map<string, unknown> })
+        .broadcastLocks;
+      let release!: () => void;
+      const pending = new Promise<void>((r) => {
+        release = r;
+      });
+      const inflight = mgr.withBroadcastLock('addr1', () => pending);
+      expect(locks.size).toBe(1); // entry present while the broadcast is in flight
+      mgr.disconnect(); // refCount 0 → teardown clears the map immediately
+      expect(locks.size).toBe(0);
+      release();
+      await inflight;
+    });
   });
 });

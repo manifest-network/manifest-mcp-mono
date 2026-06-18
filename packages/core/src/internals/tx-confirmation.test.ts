@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { ManifestMCPError, ManifestMCPErrorCode } from '../types.js';
 import { withTxConfirmation } from './tx-confirmation.js';
 
 describe('withTxConfirmation', () => {
@@ -9,32 +10,46 @@ describe('withTxConfirmation', () => {
     expect(broadcast).toHaveBeenCalledTimes(1);
   });
 
-  it('already-aborted signal: throws the reason and broadcast is NEVER called (no tx sent)', async () => {
+  it('already-aborted signal: rejects OPERATION_CANCELLED (no tx sent) and broadcast is NEVER called', async () => {
+    // Code-review PR #102: abort/timeout surfaces as a structured
+    // ManifestMCPError(OPERATION_CANCELLED) — consistent with the rest of the
+    // SDK error model — not a raw DOMException. The pre-broadcast case is
+    // unambiguous: nothing was sent.
     const broadcast = vi.fn(async () => 'txhash');
     const ac = new AbortController();
     ac.abort(new Error('cancelled'));
-    await expect(
-      withTxConfirmation(broadcast, { signal: ac.signal }),
-    ).rejects.toThrow('cancelled');
+    const err = await withTxConfirmation(broadcast, {
+      signal: ac.signal,
+    }).catch((e) => e);
+    expect(err).toBeInstanceOf(ManifestMCPError);
+    expect(err.code).toBe(ManifestMCPErrorCode.OPERATION_CANCELLED);
+    expect(err.message).toContain('cancelled'); // original reason embedded
+    expect(err.message).toMatch(/no transaction was sent/i);
     expect(broadcast).not.toHaveBeenCalled();
   });
 
-  it('abort DURING the await: rejects the caller reason AND broadcast was called exactly once (no re-broadcast)', async () => {
+  it('abort DURING the await: rejects OPERATION_CANCELLED (outcome unknown — re-query) and broadcast called exactly once', async () => {
     const ac = new AbortController();
     const broadcast = vi.fn(() => new Promise<string>(() => {})); // never resolves
     const p = withTxConfirmation(broadcast, { signal: ac.signal });
     ac.abort(new Error('user cancelled'));
-    await expect(p).rejects.toThrow('user cancelled');
+    const err = await p.catch((e) => e);
+    expect(err).toBeInstanceOf(ManifestMCPError);
+    expect(err.code).toBe(ManifestMCPErrorCode.OPERATION_CANCELLED);
+    expect(err.message).toContain('user cancelled');
+    expect(err.message).toMatch(/re-query/i); // conservative post-send contract surfaced
+    expect((err.details as { reason?: unknown }).reason).toBeInstanceOf(Error); // original reason preserved
     expect(broadcast).toHaveBeenCalledTimes(1);
   });
 
-  it('timeout: rejects with a TimeoutError and broadcast was called exactly once', async () => {
+  it('timeout: rejects OPERATION_CANCELLED wrapping the TimeoutError and broadcast called exactly once', async () => {
     vi.useFakeTimers();
     try {
       const broadcast = vi.fn(() => new Promise<string>(() => {})); // never resolves
       const p = withTxConfirmation(broadcast, { timeout: 1000 });
       const assertion = expect(p).rejects.toMatchObject({
-        name: 'TimeoutError',
+        name: 'ManifestMCPError',
+        code: ManifestMCPErrorCode.OPERATION_CANCELLED,
       });
       await vi.advanceTimersByTimeAsync(1000);
       await assertion;

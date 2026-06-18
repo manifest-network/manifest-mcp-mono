@@ -481,11 +481,12 @@ export function buildBillingMessages(
         );
       }
       // Canonicalize: trim before assigning to MsgSetItemCustomDomain so a
-      // direct `cosmos_tx` caller (`<uuid> ' app.example.com '`) ships the
-      // same bytes to the chain as a caller routed through the
-      // `setItemCustomDomain` helper or the lease MCP tool. Belt-and-
-      // suspenders: the helper trims too, so going through the helper is
-      // already safe.
+      // direct `cosmos_tx` caller (`<uuid> ' app.example.com '`) ships
+      // trimmed bytes to the chain. This stringly transport path is its own
+      // validation boundary, so it normalizes here. The typed
+      // `setItemCustomDomain` helper does NOT re-trim — it receives an
+      // already-normalized branded `Fqdn` (parse-once via `parseFqdn` at the
+      // typed boundary).
       const customDomain = clearing ? '' : customDomainArg.trim();
 
       const serviceName = serviceNameFlag.value ?? '';

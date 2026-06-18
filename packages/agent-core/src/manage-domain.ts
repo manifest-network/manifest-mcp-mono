@@ -127,14 +127,16 @@ export async function manageDomain(
   }
 
   const serviceName = args.serviceName;
-  // Trim the FQDN silently for `set` (Copilot review PR #60, comment
-  // 3276519081): align with the underlying `setItemCustomDomain`
-  // primitive (which trims at `packages/core/src/tools/setItemCustomDomain.ts:78-81`)
-  // and with `lookupDomain` (which already trims). `validateArgs`
-  // continues to reject the empty / whitespace-only case via
-  // `args.fqdn.trim() === ''`; this just normalizes the surviving
-  // input.
-  const fqdn = args.action === 'set' ? args.fqdn.trim() : '';
+  // Normalize the FQDN once for `set`: trim surrounding whitespace
+  // (Copilot review PR #60, comment 3276519081) AND lowercase (RFC 4343),
+  // matching what `parseFqdn` does to the broadcast value below. Both the
+  // broadcast (`parseFqdn(fqdn)`) and the post-broadcast verification
+  // (`expected: fqdn`) must compare the SAME normalized value — otherwise a
+  // mixed-case input broadcasts lowercased but verifies against the raw
+  // casing, producing a spurious mismatch (code-review PR #102).
+  // `validateArgs` still rejects the empty / whitespace-only case via
+  // `args.fqdn.trim() === ''`.
+  const fqdn = args.action === 'set' ? args.fqdn.trim().toLowerCase() : '';
 
   // --- Confirmation block ---------------------------------------------
   const block = renderConfirmationBlock(args);
@@ -308,12 +310,12 @@ function validateArgs(args: ManageDomainArgs): void {
         'manageDomain set: fqdn must be a non-empty string.',
       );
     }
-    // Trim silently (Copilot review PR #60, comment 3276519081):
-    // align with `setItemCustomDomain` (which trims at
-    // `packages/core/src/tools/setItemCustomDomain.ts:78-81`) and with
-    // `lookupDomain` (which already trims). Validation gates below
-    // run against the trimmed candidate; the broadcast and confirm
-    // block (rendered in the caller) also use the trimmed form.
+    // Validate against the trimmed candidate (Copilot review PR #60,
+    // comment 3276519081): surrounding whitespace is silently stripped
+    // (like `lookupDomain`) rather than rejected. Note `setItemCustomDomain`
+    // does NOT re-trim — it takes an already-normalized branded `Fqdn`
+    // (parse-once at the boundary) — so the normalization lives here and at
+    // the `fqdn` assignment above, not in the primitive.
     const candidate = args.fqdn.trim();
     if (candidate.match(SCHEME_PREFIX_RE)) {
       throw new ManifestMCPError(

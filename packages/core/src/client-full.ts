@@ -32,6 +32,16 @@ export interface ManifestClient extends ManifestReadClient, CapabilityCtx {
   executeTx: BoundFn<typeof executeTx>;
 }
 
+/**
+ * @public — construct a full (signing) {@link ManifestClient}. Requires a `walletProvider`.
+ *
+ * @remarks
+ * Each client acquires one reference on a `CosmosClientManager` instance keyed by config
+ * (`chainId:rpcUrl[:restUrl]`). Clients sharing a config key share that one underlying instance, and
+ * `getInstance` mutates it — so do NOT construct a separate read/full client against a config key this
+ * client already holds. Always `dispose()` each client; the shared clients tear down only once the last
+ * holder disposes.
+ */
 export async function createManifestClient(
   opts: FullClientOptions,
 ): Promise<ManifestClient> {
