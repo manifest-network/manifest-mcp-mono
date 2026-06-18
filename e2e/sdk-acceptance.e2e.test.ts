@@ -99,13 +99,17 @@ describe('SDK acceptance (compose-only, live chain)', () => {
   const run = async (variant: 'single' | 'stack') => {
     const walletProvider = new MnemonicWalletProvider(config, DEFAULT_MNEMONIC);
     await walletProvider.connect();
-    await runAcceptanceFlow({
-      config,
-      walletProvider,
-      fetch: certTrustingFetch(),
-      variant,
-      skipCustomDomain,
-    });
+    try {
+      await runAcceptanceFlow({
+        config,
+        walletProvider,
+        fetch: certTrustingFetch(),
+        variant,
+        skipCustomDomain,
+      });
+    } finally {
+      await walletProvider.disconnect(); // clears the mnemonic; matches probeCustomDomainSupported
+    }
   };
 
   it('single-service: deploy → … → stopApp', () => run('single'), 300_000);

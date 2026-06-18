@@ -39,8 +39,11 @@ describe('manifest-sdk browser resolution (no default:null chain)', () => {
         // that ever pulls a `{node,default:null}` subpath throws a resolution error here.
         platform: 'browser',
       });
-      await expect(bundle.generate({ format: 'esm' })).resolves.toBeDefined();
-      await bundle.close();
+      try {
+        await expect(bundle.generate({ format: 'esm' })).resolves.toBeDefined();
+      } finally {
+        await bundle.close(); // always close, even if generate() rejects (matches the /node control)
+      }
     });
   }
 
