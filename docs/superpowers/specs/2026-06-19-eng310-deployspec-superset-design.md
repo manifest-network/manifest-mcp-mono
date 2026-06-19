@@ -103,12 +103,20 @@ Add cancellation to **`DeployAppOptions`** (and the sibling options types), forw
    timeout = the agent server's `MANIFEST_AGENT_ELICIT_TIMEOUT_MS`. Folding (b)+(c) into one wall-clock budget
    would bill human deliberation against provisioning (MCP idle-vs-wall-clock guidance). The caller's (a)
    composes with the resolved signal; it does not replace (b) or (c).
-3. **Callback-abort mechanism = the orchestrator races each pending callback against the signal** (a
-   `Promise.race` / abort-event listener), so a pending interactive prompt rejects promptly on abort.
-   **Callback signatures are unchanged** (`onConfirm?: (block) => Promise<…>`, etc.) — this is the
-   non-breaking choice: no signature ripple to callback implementers or the `packages/agent` elicitation
-   adapter. A losing (dangling) elicitation promise resolves/times out later and is ignored; its rejection is
-   swallowed, never leaked as an unhandled rejection.
+3. **Callback-abort mechanism = race each pending callback against the signal, with explicit loser-cleanup.**
+   Mirror the proven in-repo seam at `core/src/internals/tx-confirmation.ts:46-54` (do NOT write a bare
+   `Promise.race`, which leaves the loser uncaught): a single `new Promise` executor settles on the first of
+   {callback resolves, abort listener rejects}; the **losing/dangling** callback promise gets a no-op
+   `.catch(() => {})` so a *late* rejection (host timeout / transport / dismiss) is consumed — never an
+   unhandled rejection; the abort listener is `{ once: true }` + removed in `.finally` (no long-lived
+   `AbortController` listener leak). **Callback signatures stay unchanged** — the non-breaking choice (no ripple
+   to callback implementers or the `packages/agent` adapter). For host UX, on abort the `packages/agent`
+   elicitation adapter SHOULD also send an MCP `notifications/cancelled` for the in-flight elicitation
+   `requestId` so the open human prompt is dismissed and its listeners/timer freed (MCP cancellation spec:
+   "Application UIs SHOULD indicate when cancellation is requested" + free resources) — not left open until
+   manual dismiss or `MANIFEST_AGENT_ELICIT_TIMEOUT_MS`. The adapter has no `requestId`-level cancel plumbing
+   today; the agent-core race + loser-cleanup ships in ENG-310, and if wiring elicitation-`requestId`
+   cancellation proves non-trivial it is a coupled follow-up (tracked in §7), not silently assumed handled.
 4. **One cancellation outcome.** Both signal-abort and callback-decline (`onConfirm:'no'`/`onPlan:'cancel'`)
    map to the **existing** `ManifestMCPErrorCode.OPERATION_CANCELLED`. Caller-abort vs deadline is
    distinguishable via `signal.reason` (`AbortError` vs `TimeoutError`, as `resolveCallSignal` already yields).
@@ -133,10 +141,11 @@ via a single `validateSpec(spec)`. Tightening the **canonical type** with a real
 *wider, breaking* change to `core`, **deferred to a separate issue** — tracked (§7), not hidden.
 
 *Requirements:*
-- `validateSpec` is the **mandatory single structural gate on every independently-callable entry path** (the
-  initial call **and** the post-edit `replace_spec` re-plan — verified at `deploy-app.ts:144` and `:396`). The
-  type is shared verbatim, so no layer may assume an upstream layer validated — each action validates at its
-  entry (defense-in-depth).
+- `validateSpec` is the **agent-core-layer structural gate — one mandatory call per independently-callable
+  entry path** (the initial call **and** the post-edit `replace_spec` re-plan — verified at `deploy-app.ts:144`
+  and `:396`). It is the *downstream* layer of the same defense-in-depth stack whose *upstream* layer is the
+  D6 MCP-boundary Zod — not the only gate. The type is shared verbatim, so no layer may assume an upstream
+  layer validated; each action validates at its entry.
 - **Hard invariant:** the D3 spread is unreachable except *downstream of* a `validateSpec` call in the same
   function. The validateSpec matrix (§6) asserts the before-the-spread ordering on both paths — because the
   spread can now *construct* an invalid `AppDeploySpec` internally, not only accept one at the boundary.
@@ -159,6 +168,15 @@ mirror of `AppDeploySpec`, which would drift from the canonical type and duplica
 work); agent-core's `validateSpec` remains the downstream defense-in-depth gate. The `size`-missing error
 points the caller at `get_skus`/`list_skus`.
 
+*Scope honesty:* the `size`-required half of D6 is **in-scope by coupling to D2** — dropping the `'small'`
+default makes the current tool's `describe` text ("Defaults to `small` when omitted") actively wrong, so it
+must change. The image-xor-services half is **opportunistic edge-hardening** adjacent to ENG-310's stated
+criteria. And the boundary rejects malformed-*invariant* JSON (the two load-bearing combos) — **not** every
+structurally-malformed spec: the other fields pass through to the *void* `validateSpec` and then the D3 spread
+(which D5 notes can construct an invalid `AppDeploySpec`). **Full** structural parsing at the edge is the
+natural follow-up that lands **with** the deferred literal discriminant (§7), at which point `validateSpec`
+becomes a refining parser and a boundary Zod can mirror the canonical type without drift.
+
 ## 3. Type surface (after)
 
 - **Deploy input:** `AppDeploySpec` (core), re-exported from fred and agent-core **by name**.
@@ -172,7 +190,9 @@ points the caller at `get_skus`/`list_skus`.
   and keeps `waitForReadyTimeoutMs?`. The same `signal?`/`timeout?` is added to
   `ManageDomainOptions`/`CloseLeaseOptions`/`TroubleshootOptions` for parity.
 - **Callback contract** (`DeployAppCallbacks` and siblings): **signatures unchanged** (D4.3); documented
-  cancellation semantics per D4; add the `'cancelled'` `ProgressEvent` kind.
+  cancellation semantics per D4; add the `'cancelled'` `ProgressEvent` kind (and update the
+  `ProgressEvent['kind']` exhaustiveness assertion in `types.test.ts` to include it — it will become a hard
+  error once agent-core typecheck is enabled per §6).
 - **`DeployResult`** is **unchanged** — it stays a deliberate camelCase *domain projection*, distinct from
   fred's snake_case `DeployResult` DTO (pinned by a mapping test). **Only the INPUT spec is unified**; do not
   collapse the output DTO-vs-domain boundary.
@@ -261,6 +281,9 @@ agent-boundary Zod rejects `size`-missing and both/neither with `-32602`. Full-r
   remaining internal casts. File as a separate issue.
 - `PortConfig` (ENG-282) wiring into `ServiceConfig.ports` — forward-declared, not part of ENG-310.
 - ctx-ification of the remaining positional fred functions (a later phase).
+- **Elicitation-`requestId`-level cancellation** in the `packages/agent` adapter (on abort, send MCP
+  `notifications/cancelled` to dismiss the open host prompt — D4.3): the agent-core race + loser-cleanup is
+  in ENG-310; the adapter `requestId` plumbing ships here if light, else a fast follow-up.
 
 ## 8. Open questions
 
