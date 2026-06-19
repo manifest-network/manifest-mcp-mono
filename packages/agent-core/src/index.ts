@@ -1,9 +1,5 @@
 export { closeLease } from './close-lease.js';
 export { deployApp } from './deploy-app.js';
-export {
-  createGuardedFetch,
-  type GuardedFetch,
-} from './internals/guarded-fetch.js';
 // M1 fix: re-export `loadChainDenomMap` for public consumption. The
 // `DeployAppOptions.chainDataFile` JSDoc (types.ts) instructs callers
 // to pre-load via `await loadChainDenomMap(chainDataFile)` and pass

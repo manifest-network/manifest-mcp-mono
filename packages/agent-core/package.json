@@ -5,10 +5,16 @@
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "type": "module",
+  "sideEffects": false,
   "exports": {
     ".": {
-      "import": "./dist/index.js",
-      "types": "./dist/index.d.ts"
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./guarded-fetch": {
+      "types": "./dist/guarded-fetch.d.ts",
+      "node": "./dist/guarded-fetch.js",
+      "default": null
     }
   },
   "scripts": {

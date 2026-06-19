@@ -1,4 +1,4 @@
-import { calculateFee } from '@cosmjs/stargate';
+import { calculateFee, type StdFee } from '@cosmjs/stargate';
 import type { CosmosClientManager } from './client.js';
 import { DEFAULT_GAS_MULTIPLIER } from './config.js';
 import {
@@ -159,6 +159,37 @@ export async function cosmosQuery(
 }
 
 /**
+ * Attribute a tx-leg failure with `{module, subcommand, args}`. A `ManifestMCPError`
+ * that already carries a `module` is returned untouched (no double-enrichment);
+ * one without is re-wrapped preserving its code + details; any other thrown value
+ * is wrapped as `TX_FAILED` (a NON_RETRYABLE code — so `withRetry` cannot re-broadcast
+ * a submitted tx on a raw transient error, guarding against double-spend).
+ */
+function enrichTxError(
+  error: unknown,
+  module: string,
+  subcommand: string,
+  args: string[],
+): ManifestMCPError {
+  if (error instanceof ManifestMCPError) {
+    if (!error.details?.module) {
+      return new ManifestMCPError(error.code, error.message, {
+        ...error.details,
+        module,
+        subcommand,
+        args,
+      });
+    }
+    return error;
+  }
+  return new ManifestMCPError(
+    ManifestMCPErrorCode.TX_FAILED,
+    `Tx ${module} ${subcommand} failed: ${error instanceof Error ? error.message : String(error)}`,
+    { module, subcommand, args },
+  );
+}
+
+/**
  * Execute a Cosmos transaction via manifestjs signing client
  *
  * Automatically retries on transient failures (network errors, timeouts, 5xx)
@@ -174,9 +205,19 @@ export async function cosmosTx(
   args: string[] = [],
   waitForConfirmation: boolean = false,
   overrides?: TxOverrides,
+  txExtras?: { readonly fee?: StdFee; readonly memo?: string },
 ): Promise<CosmosTxResult> {
   validateName(module, 'module', ManifestMCPErrorCode.UNSUPPORTED_TX);
   validateName(subcommand, 'subcommand', ManifestMCPErrorCode.UNSUPPORTED_TX);
+
+  // NET-NEW: explicit fee and gasMultiplier are mutually exclusive (fee wins; gasMultiplier
+  // applies only on the simulate path). Co-located with the gas validations below.
+  if (txExtras?.fee !== undefined && overrides?.gasMultiplier !== undefined) {
+    throw new ManifestMCPError(
+      ManifestMCPErrorCode.INVALID_CONFIG,
+      'passing both fee and gasMultiplier is a caller error; fee wins (it skips simulation), gasMultiplier applies only on the simulate path',
+    );
+  }
 
   // Build fully-resolved gas options from caller overrides + server config
   let txOptions: TxOptions | undefined;
@@ -215,52 +256,49 @@ export async function cosmosTx(
     },
   );
 
-  return withRetry(
-    async () => {
-      // The rate-limit + signing-client + address acquisition runs inside
-      // the try/catch so a failure during any of those steps is wrapped
-      // with {module, subcommand, args} attribution, matching the
-      // handler-leg semantics. Otherwise an INVALID_CONFIG / wallet error
-      // from these calls would propagate without telling the caller which
-      // tx was being prepared.
-      try {
-        await clientManager.acquireRateLimit();
-        const signingClient = await clientManager.getSigningClient();
-        const senderAddress = await clientManager.getAddress();
+  // Resolve the sender ONCE — it is both the broadcast-lock key and the signAndBroadcast sender.
+  // Resolve BEFORE the lock so the per-signer mutex can key on it; enrich a wallet failure with the
+  // same {module,subcommand,args} attribution the broadcast leg uses.
+  let senderAddress: string;
+  try {
+    senderAddress = await clientManager.getAddress();
+  } catch (error) {
+    throw enrichTxError(error, module, subcommand, args);
+  }
 
-        return await handler(
-          signingClient,
-          senderAddress,
-          subcommand,
-          args,
-          waitForConfirmation,
-          txOptions,
-          buildContext,
-        );
-      } catch (error) {
-        if (error instanceof ManifestMCPError) {
-          // Re-throw with enriched context if not already present
-          if (!error.details?.module) {
-            throw new ManifestMCPError(error.code, error.message, {
-              ...error.details,
-              module,
-              subcommand,
-              args,
-            });
-          }
-          throw error;
+  // Per-signer broadcast mutex (OUTER) serializes the whole simulate→sign→broadcast→commit cycle
+  // for this address; acquireRateLimit stays INNER. Acquired ONCE around withRetry.
+  return clientManager.withBroadcastLock(senderAddress, () =>
+    withRetry(
+      async () => {
+        // The rate-limit + signing-client acquisition runs inside the
+        // try/catch so a failure during any of those steps is wrapped with
+        // {module, subcommand, args} attribution, matching the handler-leg
+        // semantics. Otherwise an INVALID_CONFIG / wallet error from these
+        // calls would propagate without telling the caller which tx was being
+        // prepared.
+        try {
+          await clientManager.acquireRateLimit();
+          const signingClient = await clientManager.getSigningClient();
+          return await handler(
+            signingClient,
+            senderAddress,
+            subcommand,
+            args,
+            waitForConfirmation,
+            txOptions,
+            buildContext,
+            txExtras,
+          );
+        } catch (error) {
+          throw enrichTxError(error, module, subcommand, args);
         }
-        throw new ManifestMCPError(
-          ManifestMCPErrorCode.TX_FAILED,
-          `Tx ${module} ${subcommand} failed: ${error instanceof Error ? error.message : String(error)}`,
-          { module, subcommand, args },
-        );
-      }
-    },
-    {
-      config: clientManager.getConfig().retry,
-      operationName: `tx ${module} ${subcommand}`,
-    },
+      },
+      {
+        config: clientManager.getConfig().retry,
+        operationName: `tx ${module} ${subcommand}`,
+      },
+    ),
   );
 }
 

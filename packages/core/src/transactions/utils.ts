@@ -1,9 +1,10 @@
-import { fromBech32, fromHex, toHex } from '@cosmjs/encoding';
+import { fromHex, toHex } from '@cosmjs/encoding';
 import type { EncodeObject } from '@cosmjs/proto-signing';
 import type { SigningStargateClient } from '@cosmjs/stargate';
 import { calculateFee, type StdFee } from '@cosmjs/stargate';
 import {
   type CosmosTxResult,
+  type ExecuteTxResult,
   ManifestMCPError,
   ManifestMCPErrorCode,
   type TxOptions,
@@ -245,39 +246,7 @@ export function requireArgs(
   );
 }
 
-/**
- * Validate a bech32 address using @cosmjs/encoding
- */
-export function validateAddress(
-  address: string,
-  fieldName: string,
-  expectedPrefix?: string,
-): void {
-  if (!address || address.trim() === '') {
-    throw new ManifestMCPError(
-      ManifestMCPErrorCode.INVALID_ADDRESS,
-      `${fieldName} is required`,
-    );
-  }
-
-  try {
-    const { prefix } = fromBech32(address);
-    if (expectedPrefix && prefix !== expectedPrefix) {
-      throw new ManifestMCPError(
-        ManifestMCPErrorCode.INVALID_ADDRESS,
-        `Invalid ${fieldName}: "${address}". Expected prefix "${expectedPrefix}", got "${prefix}"`,
-      );
-    }
-  } catch (error) {
-    if (error instanceof ManifestMCPError) {
-      throw error;
-    }
-    throw new ManifestMCPError(
-      ManifestMCPErrorCode.INVALID_ADDRESS,
-      `Invalid ${fieldName}: "${address}". Not a valid bech32 address.`,
-    );
-  }
-}
+export { validateAddress } from '../validation.js';
 
 /**
  * Validate memo length
@@ -600,6 +569,42 @@ export function buildTxResult(
       confirmed: true,
       confirmationHeight: String(result.height),
     }),
+  };
+}
+
+/**
+ * Build an ExecuteTxResult from a multi-message DeliverTxResponse. Mirrors buildTxResult but carries
+ * no (module, subcommand) — a multi-msg tx has neither; failure messages name the message typeUrls.
+ * executeTx always confirms (signAndBroadcast waits for inclusion).
+ */
+export function buildExecuteTxResult(
+  result: Awaited<ReturnType<SigningStargateClient['signAndBroadcast']>>,
+  msgTypeUrls: readonly string[],
+): ExecuteTxResult {
+  if (result.code !== 0) {
+    throw new ManifestMCPError(
+      ManifestMCPErrorCode.TX_FAILED,
+      `executeTx (${msgTypeUrls.join(', ') || 'no messages'}) failed with code ${result.code}: ${result.rawLog || 'no details'}`,
+      {
+        code: result.code,
+        transactionHash: result.transactionHash,
+        rawLog: result.rawLog,
+        height: String(result.height),
+        msgTypeUrls,
+      },
+    );
+  }
+  return {
+    transactionHash: result.transactionHash,
+    code: result.code,
+    height: String(result.height),
+    rawLog: result.rawLog || undefined,
+    gasUsed: String(result.gasUsed),
+    gasWanted: String(result.gasWanted),
+    events: result.events,
+    msgTypeUrls,
+    confirmed: true,
+    confirmationHeight: String(result.height),
   };
 }
 

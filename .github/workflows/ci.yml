@@ -15,6 +15,35 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run build
+      # The SDK build runs publint + attw (esm-only, level=error) as part of tsdown.
+      # Run it explicitly so the package-export / type-resolution gate is a named,
+      # visible CI step (the root build above covers it transitively). (ENG-309)
+      - run: npm run build -w @manifest-network/manifest-sdk
       - run: npm run lint
       - run: npm run check
+      # dependency-cruiser DAG + manifestjs-type chokepoint + no-static-node/undici guards (ENG-309).
+      # The brand-cast / no-parse*-in-lcd-adapter grep guards + the known-bad fixtures' proof run as
+      # part of `npm test` (packages/sdk/scripts/cast-guard.test.ts).
+      - run: npm run depcruise
       - run: npm test
+      # SDK type tripwire: re-run the SDK package's `vitest --typecheck` as a NAMED,
+      # visible gate (the root `npm test` above covers it transitively). `*.test-d.ts`
+      # pins the re-emitted public type surface (factory return types, the ManifestClient
+      # bound methods, the brand families + ports, the read-vs-full guarantee) so an
+      # upstream codegen/type-shape drift that survives a value-only test fails CI here. (ENG-309)
+      - run: npm run test:types -w @manifest-network/manifest-sdk
+      # Fail-closed browser build of the compose-only acceptance example: a rolldown
+      # platform:browser bundle of dist/main.js with UNRESOLVED_IMPORT capture (asserts the
+      # set is empty minus the documented @cosmjs/crypto allowlist) + an import-specifier-
+      # anchored node-only scan + a positive Web-Crypto assertion, plus the /reads tree-shake
+      # symbol-absence belt. No live chain — pure bundle. The root `npm test` above covers it
+      # transitively; this names it as a visible, standalone CI gate. (ENG-309)
+      - run: npm run build -w @manifest-network/sdk-acceptance
+      - run: npx vitest run examples/sdk-acceptance/scripts/browser-build.test.ts
+      # Per-subpath tree-shake size budget (gzip, TIGHT ~2-3KB headroom) over the public SDK
+      # subpaths. HONEST CAVEAT: the ~1MB cosmjs/manifestjs codegen floor dominates the
+      # deploy/root chunks, so the gzip budget has only ~3% discriminating power — this is a
+      # COARSE floor-regression tripwire, not the real tree-shake guard. The leak guard is the
+      # /reads symbol-absence assertion in the browser-build test above (asserts executeTx /
+      # signArbitraryWithAmino / MsgFundCredit are ABSENT from the /reads chunk). (ENG-309)
+      - run: npm run size

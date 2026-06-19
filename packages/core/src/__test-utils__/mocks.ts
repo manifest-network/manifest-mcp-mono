@@ -1,6 +1,9 @@
 import { LeaseState } from '@manifest-network/manifestjs/dist/codegen/liftedinit/billing/v1/types.js';
 import { vi } from 'vitest';
-import type { ManifestQueryClient } from '../client.js';
+import type { CosmosClientManager, ManifestQueryClient } from '../client.js';
+import type { ReadCtx, TxCtx } from '../ctx.js';
+import { noopLogger } from '../logger.js';
+import type { Signer } from '../signer.js';
 import type {
   ManifestMCPConfig,
   SignArbitraryResult,
@@ -67,6 +70,27 @@ interface BillingOverrides {
     createdAt?: Date;
     closedAt?: Date;
   } | null;
+  billingParams?: {
+    maxLeasesPerTenant: bigint;
+    allowedList: string[];
+    maxItemsPerLease: bigint;
+    minLeaseDuration: bigint;
+    maxPendingLeasesPerTenant: bigint;
+    pendingTimeout: bigint;
+    reservedDomainSuffixes: string[];
+  };
+  withdrawableAmount?: { denom: string; amount: string }[];
+  leaseByCustomDomain?: {
+    lease: {
+      uuid: string;
+      tenant: string;
+      providerUuid: string;
+      items: unknown[];
+      state: LeaseState;
+      createdAt: Date;
+    };
+    serviceName: string;
+  };
   activeLeases?: { uuid: string; providerUuid: string; createdAt?: Date }[];
   pendingLeases?: { uuid: string; providerUuid: string; createdAt?: Date }[];
   closedLeases?: { uuid: string; providerUuid: string; createdAt?: Date }[];
@@ -78,6 +102,7 @@ interface SkuOverrides {
   providers?: {
     uuid: string;
     address: string;
+    payoutAddress?: string;
     apiUrl: string;
     active: boolean;
   }[];
@@ -108,6 +133,27 @@ export function makeMockQueryClient(overrides?: {
     billing.creditAccountAvailableBalances ?? [];
   const creditEstimate = billing.creditEstimate ?? null;
   const lease = billing.lease ?? null;
+  const billingParams = billing.billingParams ?? {
+    maxLeasesPerTenant: 10n,
+    allowedList: [],
+    maxItemsPerLease: 5n,
+    minLeaseDuration: 3600n,
+    maxPendingLeasesPerTenant: 10n,
+    pendingTimeout: 1800n,
+    reservedDomainSuffixes: [],
+  };
+  const withdrawableAmount = billing.withdrawableAmount ?? [];
+  const leaseByCustomDomain = billing.leaseByCustomDomain ?? {
+    lease: {
+      uuid: 'lease-uuid-1',
+      tenant: 'manifest1tenant',
+      providerUuid: 'provider-uuid-1',
+      items: [],
+      state: LeaseState.LEASE_STATE_ACTIVE,
+      createdAt: new Date(0),
+    },
+    serviceName: 'web',
+  };
   const activeLeases = billing.activeLeases ?? [];
   const pendingLeases = billing.pendingLeases ?? [];
   const closedLeases = billing.closedLeases ?? [];
@@ -253,11 +299,21 @@ export function makeMockQueryClient(overrides?: {
                 return { leases: [] };
               },
             ),
+          params: vi.fn().mockResolvedValue({ params: billingParams }),
+          withdrawableAmount: vi
+            .fn()
+            .mockResolvedValue({ amounts: withdrawableAmount }),
+          leaseByCustomDomain: vi.fn().mockResolvedValue(leaseByCustomDomain),
         },
       },
       sku: {
         v1: {
-          providers: vi.fn().mockResolvedValue({ providers }),
+          providers: vi.fn().mockResolvedValue({
+            providers: providers.map((p) => ({
+              payoutAddress: 'manifest1payout',
+              ...p,
+            })),
+          }),
           sKUs: vi.fn().mockResolvedValue({
             skus: skus.map((s) => ({ active: true, ...s })),
           }),
@@ -291,6 +347,45 @@ export function makeMockClientManager(overrides?: {
     getAddress: vi.fn().mockResolvedValue(address),
     getConfig: vi.fn().mockReturnValue(config),
     acquireRateLimit: vi.fn().mockResolvedValue(undefined),
+    // Passthrough is enough for the non-concurrency tests; the serialization test overrides this with
+    // the REAL promise-chain (or uses a real CosmosClientManager) to genuinely prove serialization.
+    withBroadcastLock: <T>(
+      _address: string,
+      fn: () => Promise<T>,
+    ): Promise<T> => fn(),
     disconnect: vi.fn(),
   };
+}
+
+/** A ReadCtx for unit tests: a mock query client, a chain stub whose acquireRateLimit resolves, noopLogger. */
+export function makeReadCtx(overrides?: {
+  query?: ReturnType<typeof makeMockQueryClient>;
+  chain?: Partial<CosmosClientManager>;
+  logger?: typeof noopLogger;
+}): ReadCtx {
+  return {
+    query: overrides?.query ?? makeMockQueryClient(),
+    chain: (overrides?.chain ??
+      ({
+        acquireRateLimit: async () => {},
+      } as unknown as CosmosClientManager)) as CosmosClientManager,
+    logger: overrides?.logger ?? noopLogger,
+  } as ReadCtx;
+}
+
+/**
+ * A TxCtx for unit tests: a mock client manager whose getAddress/getSigningClient/acquireRateLimit
+ * back the tx path, noopLogger. `signer` defaults to undefined — 4c sender comes from `ctx.chain` and
+ * never reads `ctx.signer` (the field is plumbed so 4d's per-signer-mutex tests can populate it).
+ */
+export function makeTxCtx(overrides?: {
+  chain?: Partial<CosmosClientManager>;
+  signer?: Signer;
+  logger?: typeof noopLogger;
+}): TxCtx {
+  return {
+    chain: (overrides?.chain ?? makeMockClientManager()) as CosmosClientManager,
+    signer: overrides?.signer,
+    logger: overrides?.logger ?? noopLogger,
+  } as TxCtx;
 }

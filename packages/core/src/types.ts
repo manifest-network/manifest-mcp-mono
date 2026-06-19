@@ -322,6 +322,16 @@ export interface CosmosTxResult {
 }
 
 /**
+ * Result of a multi-message `executeTx` broadcast. A heterogeneous batch has no single
+ * (module, subcommand), so this is the tx-level subset of CosmosTxResult plus the per-message
+ * protobuf typeUrls (the only honest per-message identity cosmjs carries). A CosmosTxResult is
+ * assignable to this for any consumer reading only tx-level fields.
+ */
+export type ExecuteTxResult = Omit<CosmosTxResult, 'module' | 'subcommand'> & {
+  readonly msgTypeUrls?: readonly string[];
+};
+
+/**
  * Module information for discovery
  */
 export interface ModuleInfo {
@@ -357,6 +367,8 @@ export enum ManifestMCPErrorCode {
   QUERY_FAILED = 'QUERY_FAILED',
   UNSUPPORTED_QUERY = 'UNSUPPORTED_QUERY',
   INVALID_ADDRESS = 'INVALID_ADDRESS',
+  /** Caller passed a malformed argument (e.g. a non-UUID id, a bad FQDN). Non-retryable. */
+  INVALID_ARGUMENT = 'INVALID_ARGUMENT',
 
   // Transaction errors
   TX_FAILED = 'TX_FAILED',

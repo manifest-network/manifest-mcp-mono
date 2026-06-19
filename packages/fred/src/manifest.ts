@@ -1,24 +1,10 @@
-export interface BuildManifestOptions {
-  image: string;
-  ports: Record<string, Record<string, never>>;
-  env?: Record<string, string>;
-  command?: string[];
-  args?: string[];
-  user?: string;
-  tmpfs?: string[];
-  health_check?: {
-    test: string[];
-    interval?: string;
-    timeout?: string;
-    retries?: number;
-    start_period?: string;
-  };
-  stop_grace_period?: string;
-  init?: boolean;
-  expose?: string[];
-  labels?: Record<string, string>;
-  depends_on?: Record<string, { condition: string }>;
-}
+import type {
+  BuildManifestOptions,
+  ManifestFormat,
+  ManifestValidationResult,
+} from '@manifest-network/manifest-mcp-core';
+
+export type { BuildManifestOptions, ManifestFormat, ManifestValidationResult };
 
 import {
   DNS_LABEL_RE,
@@ -278,14 +264,6 @@ export async function metaHashHex(manifestJson: string): Promise<string> {
   const hashBuffer = await crypto.subtle.digest('SHA-256', encoded);
   const bytes = new Uint8Array(hashBuffer);
   return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
-}
-
-export type ManifestFormat = 'single' | 'stack';
-
-export interface ManifestValidationResult {
-  readonly valid: boolean;
-  readonly errors: readonly string[];
-  readonly format: ManifestFormat | null;
 }
 
 const ALLOWED_TOP_LEVEL_KEYS = new Set<string>([

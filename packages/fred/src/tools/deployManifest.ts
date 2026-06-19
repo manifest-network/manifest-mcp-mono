@@ -1,13 +1,17 @@
 import type {
   CosmosClientManager,
   CosmosTxResult,
-  LeaseState,
+  LeaseUuid,
+  ReadCtx,
 } from '@manifest-network/manifest-mcp-core';
 import {
+  asLeaseUuid,
+  asProviderUuid,
   cosmosTx,
   logger,
   ManifestMCPError,
   ManifestMCPErrorCode,
+  parseFqdn,
   requireUuid,
   resolveSku,
   sanitizeForLogging,
@@ -23,7 +27,7 @@ import {
 import { getServiceNames, metaHashHex, validateManifest } from '../manifest.js';
 import { resolveProviderUrl } from './resolveLeaseProvider.js';
 
-export function extractLeaseUuid(txResult: CosmosTxResult): string {
+export function extractLeaseUuid(txResult: CosmosTxResult): LeaseUuid {
   if (!txResult.events) {
     throw new ManifestMCPError(
       ManifestMCPErrorCode.TX_FAILED,
@@ -43,7 +47,7 @@ export function extractLeaseUuid(txResult: CosmosTxResult): string {
           'lease_uuid',
           ManifestMCPErrorCode.TX_FAILED,
         );
-        return raw;
+        return asLeaseUuid(raw);
       }
     }
   }
@@ -55,30 +59,22 @@ export function extractLeaseUuid(txResult: CosmosTxResult): string {
   );
 }
 
-export interface DeployAppResult {
-  readonly lease_uuid: string;
-  readonly provider_uuid: string;
-  readonly provider_url: string;
-  readonly state: LeaseState;
-  readonly url?: string;
-  readonly connection?: ConnectionDetails;
-  readonly connectionError?: string;
-  /** Set when a `customDomain` was supplied AND the set-domain tx succeeded. */
-  readonly custom_domain?: string;
-  /** Set when a `serviceName` was supplied alongside a successful `customDomain` set. */
-  readonly service_name?: string;
-}
+import type {
+  DeployResult,
+  ManifestDeploySpec,
+  SkuIntent,
+} from '@manifest-network/manifest-mcp-core';
 
-export type SkuSelector =
-  | { kind: 'byName'; size: string; providerUuid?: string; skuUuid?: string }
-  | { kind: 'resolved'; skuUuid: string; providerUuid: string };
+export type { DeployResult as DeployAppResult };
 
-export interface DeployManifestInput {
-  manifest: string;
-  sku: SkuSelector;
-  storage?: string;
-  customDomain?: string;
-  serviceName?: string;
+/** @deprecated Use `SkuIntent` from `@manifest-network/manifest-mcp-core`. Byte-compatible alias kept for the public fred API. */
+export type SkuSelector = SkuIntent;
+
+/** Data-only deploy spec for a raw manifest string (spec §5.1). Public name kept for compatibility. */
+export type DeployManifestInput = ManifestDeploySpec;
+
+/** Per-call runtime orchestration for a deploy (fred layer). Split off the data specs per §5.1. */
+export interface DeployCallOptions {
   gasMultiplier?: number;
   onLeaseCreated?: (
     leaseUuid: string,
@@ -102,12 +98,13 @@ export interface DeployManifestOptions {
 const MAX_MANIFEST_BYTES = 256 * 1024;
 
 export async function deployManifest(
-  input: DeployManifestInput,
+  spec: ManifestDeploySpec,
+  callOptions: DeployCallOptions,
   opts: DeployManifestOptions,
-): Promise<DeployAppResult> {
+): Promise<DeployResult> {
   const { clientManager, getAuthToken, getLeaseDataAuthToken, fetchFn } = opts;
 
-  const manifestBytes = new TextEncoder().encode(input.manifest);
+  const manifestBytes = new TextEncoder().encode(spec.manifest);
   if (manifestBytes.length > MAX_MANIFEST_BYTES) {
     throw new ManifestMCPError(
       ManifestMCPErrorCode.INVALID_CONFIG,
@@ -119,7 +116,7 @@ export async function deployManifest(
   // __proto__/constructor reject below; provider re-validates server-side).
   let parsed: unknown;
   try {
-    parsed = JSON.parse(input.manifest);
+    parsed = JSON.parse(spec.manifest);
   } catch (err) {
     throw new ManifestMCPError(
       ManifestMCPErrorCode.INVALID_CONFIG,
@@ -148,8 +145,8 @@ export async function deployManifest(
 
   // customDomain / serviceName coherence (manifest-derived).
   let normalizedCustomDomain: string | undefined;
-  if (input.customDomain !== undefined) {
-    normalizedCustomDomain = input.customDomain.trim();
+  if (spec.customDomain !== undefined) {
+    normalizedCustomDomain = spec.customDomain.trim();
     if (normalizedCustomDomain === '') {
       throw new ManifestMCPError(
         ManifestMCPErrorCode.INVALID_CONFIG,
@@ -157,25 +154,25 @@ export async function deployManifest(
       );
     }
     if (isStack) {
-      if (!input.serviceName) {
+      if (!spec.serviceName) {
         throw new ManifestMCPError(
           ManifestMCPErrorCode.INVALID_CONFIG,
           'serviceName is required when setting customDomain on a stack lease; pick one of the service keys',
         );
       }
-      if (!serviceNames.includes(input.serviceName)) {
+      if (!serviceNames.includes(spec.serviceName)) {
         throw new ManifestMCPError(
           ManifestMCPErrorCode.INVALID_CONFIG,
-          `serviceName "${input.serviceName}" does not match any service. Available: ${serviceNames.join(', ')}`,
+          `serviceName "${spec.serviceName}" does not match any service. Available: ${serviceNames.join(', ')}`,
         );
       }
-    } else if (input.serviceName) {
+    } else if (spec.serviceName) {
       throw new ManifestMCPError(
         ManifestMCPErrorCode.INVALID_CONFIG,
         'serviceName must not be set on a single-service deployment (image+port or a single-service manifest); omit it — the custom domain attaches to the sole item',
       );
     }
-  } else if (input.serviceName !== undefined) {
+  } else if (spec.serviceName !== undefined) {
     throw new ManifestMCPError(
       ManifestMCPErrorCode.INVALID_CONFIG,
       'serviceName is only meaningful when customDomain is set',
@@ -185,13 +182,17 @@ export async function deployManifest(
   const address = await clientManager.getAddress();
   await clientManager.acquireRateLimit();
   const queryClient = await clientManager.getQueryClient();
+  // Use the REAL core logger (not noopLogger) so the deploy path keeps logging
+  // when 4c-reads-B adds read diagnostics. The explicit acquireRateLimit above
+  // is RETAINED for the still-positional resolveProviderUrl + LCD reads (P2).
+  const ctx: ReadCtx = { query: queryClient, chain: clientManager, logger };
 
-  const manifestMetaHash = await metaHashHex(input.manifest);
+  const manifestMetaHash = await metaHashHex(spec.manifest);
 
   // SKU resolution (ENG-258 #1).
   let skuUuid: string;
   let providerUuid: string;
-  switch (input.sku.kind) {
+  switch (spec.sku.kind) {
     case 'resolved':
       // Pre-resolved IDs are trusted verbatim: the chain's create-lease is the
       // authoritative validation (existence/active/provider) — re-querying here
@@ -199,25 +200,25 @@ export async function deployManifest(
       // TOCTOU window (design §4.3 + §6). Only guard against empty strings, which
       // would build a malformed `:1` lease item / misleading downstream error.
       if (
-        input.sku.skuUuid.trim() === '' ||
-        input.sku.providerUuid.trim() === ''
+        spec.sku.skuUuid.trim() === '' ||
+        spec.sku.providerUuid.trim() === ''
       ) {
         throw new ManifestMCPError(
           ManifestMCPErrorCode.INVALID_CONFIG,
           'sku.skuUuid and sku.providerUuid must both be non-empty for a pre-resolved (kind: "resolved") SKU selector',
         );
       }
-      skuUuid = input.sku.skuUuid;
-      providerUuid = input.sku.providerUuid;
+      skuUuid = spec.sku.skuUuid;
+      providerUuid = spec.sku.providerUuid;
       break;
     case 'byName': {
-      const r = await resolveSku(queryClient, {
-        size: input.sku.size,
-        ...(input.sku.providerUuid !== undefined
-          ? { providerUuid: input.sku.providerUuid }
+      const r = await resolveSku(ctx, {
+        size: spec.sku.size,
+        ...(spec.sku.providerUuid !== undefined
+          ? { providerUuid: spec.sku.providerUuid }
           : {}),
-        ...(input.sku.skuUuid !== undefined
-          ? { skuUuid: input.sku.skuUuid }
+        ...(spec.sku.skuUuid !== undefined
+          ? { skuUuid: spec.sku.skuUuid }
           : {}),
       });
       skuUuid = r.skuUuid;
@@ -225,7 +226,7 @@ export async function deployManifest(
       break;
     }
     default: {
-      const _exhaustive: never = input.sku;
+      const _exhaustive: never = spec.sku;
       throw new ManifestMCPError(
         ManifestMCPErrorCode.INVALID_CONFIG,
         `Unknown sku selector: ${JSON.stringify(_exhaustive)}`,
@@ -238,9 +239,9 @@ export async function deployManifest(
     : [`${skuUuid}:1`];
 
   // Storage on the SAME provider (ENG-258 #2).
-  if (input.storage) {
-    const storage = await resolveSku(queryClient, {
-      size: input.storage,
+  if (spec.storage) {
+    const storage = await resolveSku(ctx, {
+      size: spec.storage,
       providerUuid,
     });
     leaseItems.push(`${storage.skuUuid}:1`);
@@ -249,8 +250,8 @@ export async function deployManifest(
   const providerUrl = await resolveProviderUrl(queryClient, providerUuid);
 
   const overrides =
-    input.gasMultiplier !== undefined
-      ? { gasMultiplier: input.gasMultiplier }
+    callOptions.gasMultiplier !== undefined
+      ? { gasMultiplier: callOptions.gasMultiplier }
       : undefined;
   logger.info(
     `[deploy] creating lease (meta_hash=${manifestMetaHash}, items=${leaseItems.length})`,
@@ -268,19 +269,24 @@ export async function deployManifest(
     `[deploy] lease ${leaseUuid} created on provider ${providerUuid}`,
   );
 
-  await input.onLeaseCreated?.(leaseUuid, providerUrl);
+  await callOptions.onLeaseCreated?.(leaseUuid, providerUrl);
 
   let step: 'set_domain' | 'upload' | 'poll' | undefined;
   let status: FredLeaseStatus;
   try {
-    input.abortSignal?.throwIfAborted();
+    callOptions.abortSignal?.throwIfAborted();
     if (normalizedCustomDomain !== undefined) {
       step = 'set_domain';
       await setItemCustomDomain(
-        clientManager,
-        leaseUuid,
-        normalizedCustomDomain,
-        { serviceName: input.serviceName },
+        { chain: clientManager, logger },
+        // leaseUuid is already a branded LeaseUuid (extractLeaseUuid → asLeaseUuid);
+        // do NOT re-parse (parse-once, ENG-258). normalizedCustomDomain is trim-only
+        // (genuinely unbranded), so parseFqdn brands + validates it here.
+        {
+          leaseUuid,
+          customDomain: parseFqdn(normalizedCustomDomain),
+          serviceName: spec.serviceName,
+        },
         overrides,
       );
     }
@@ -298,14 +304,14 @@ export async function deployManifest(
       manifestBytes,
       leaseDataToken,
       fetchFn,
-      input.abortSignal,
+      callOptions.abortSignal,
     );
     step = 'poll';
     status = await pollLeaseUntilReady(
       providerUrl,
       leaseUuid,
       () => getAuthToken(address, leaseUuid),
-      { ...input.pollOptions, abortSignal: input.abortSignal },
+      { ...callOptions.pollOptions, abortSignal: callOptions.abortSignal },
       fetchFn,
     );
   } catch (err) {
@@ -333,7 +339,7 @@ export async function deployManifest(
     // non-retryable by code, so a partial-success cancellation is never
     // blind-retried into a second lease). `abortSignal.aborted` is true in both
     // the pre-step throwIfAborted and the mid-flight-abort cases.
-    const code = input.abortSignal?.aborted
+    const code = callOptions.abortSignal?.aborted
       ? ManifestMCPErrorCode.OPERATION_CANCELLED
       : err instanceof ManifestMCPError
         ? err.code
@@ -385,8 +391,8 @@ export async function deployManifest(
   }
 
   return {
-    lease_uuid: leaseUuid,
-    provider_uuid: providerUuid,
+    lease_uuid: leaseUuid, // already LeaseUuid — extractLeaseUuid brands it (requireUuid + asLeaseUuid)
+    provider_uuid: asProviderUuid(providerUuid),
     provider_url: providerUrl,
     state: status.state,
     ...(url && { url }),
@@ -398,6 +404,6 @@ export async function deployManifest(
     // chain stored.
     ...(normalizedCustomDomain && { custom_domain: normalizedCustomDomain }),
     ...(normalizedCustomDomain &&
-      input.serviceName && { service_name: input.serviceName }),
+      spec.serviceName && { service_name: spec.serviceName }),
   };
 }

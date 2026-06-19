@@ -1,4 +1,4 @@
-import type { SigningStargateClient } from '@cosmjs/stargate';
+import type { SigningStargateClient, StdFee } from '@cosmjs/stargate';
 import type { ManifestQueryClient } from './client.js';
 import { routeAuthQuery } from './queries/auth.js';
 import { routeAuthzQuery } from './queries/authz.js';
@@ -93,6 +93,11 @@ export type QueryHandler = (
  * `context` carries optional read-only chain state (currently the on-chain
  * billing Params) for handlers that must merge against existing values to
  * preserve fields the caller did not explicitly set. Most handlers ignore it.
+ *
+ * `txExtras` carries optional caller-supplied broadcast overrides — an explicit
+ * `fee` (skips simulation; mutually exclusive with `options.gasMultiplier`) and
+ * a `memo` fed to both the simulate and broadcast legs. The trailing param is
+ * optional so the ~13 handlers that don't consume it stay assignable.
  */
 export type TxHandler = (
   signingClient: SigningStargateClient,
@@ -102,6 +107,7 @@ export type TxHandler = (
   waitForConfirmation: boolean,
   options?: TxOptions,
   context?: TxBuildContext,
+  txExtras?: { readonly fee?: StdFee; readonly memo?: string },
 ) => Promise<CosmosTxResult>;
 
 /**

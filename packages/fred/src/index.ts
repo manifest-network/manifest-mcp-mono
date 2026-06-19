@@ -12,12 +12,19 @@ export {
   ManifestMCPErrorCode,
 } from '@manifest-network/manifest-mcp-core';
 export {
+  createFredClient,
+  type FredActions,
+  type FredClient,
+  fredActions,
+} from './client.js';
+export {
   AuthTimestampTracker,
   type AuthTokenPayload,
   createAuthToken,
   createLeaseDataSignMessage,
   createSignMessage,
 } from './http/auth.js';
+export { createAuthTokens } from './http/auth-tokens-factory.js';
 export {
   type FredActionResponse,
   type FredInstanceInfo,
@@ -35,6 +42,8 @@ export {
   getLeaseStatus,
   MAX_TAIL,
   type PollOptions,
+  PROVISION_FAILED,
+  PROVISION_IN_PROGRESS,
   pollLeaseUntilReady,
   restartLease,
   type TerminalChainLeaseState,
@@ -93,6 +102,7 @@ export {
   type ServiceConfig,
 } from './tools/deployApp.js';
 export {
+  type DeployCallOptions,
   type DeployManifestInput,
   type DeployManifestOptions,
   deployManifest,
@@ -102,6 +112,11 @@ export { fetchActiveLease } from './tools/fetchActiveLease.js';
 export { getAppLogs } from './tools/getLogs.js';
 export { resolveProviderUrl } from './tools/resolveLeaseProvider.js';
 export { restartApp } from './tools/restartApp.js';
+export {
+  type SubscribeCtx,
+  type SubscribeLeaseStatusOptions,
+  subscribeLeaseStatus,
+} from './tools/subscribeLeaseStatus.js';
 export { updateApp } from './tools/updateApp.js';
 export {
   type WaitForAppReadyOptions,

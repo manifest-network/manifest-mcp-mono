@@ -30,7 +30,7 @@ import {
   DEFAULT_REQUESTS_PER_SECOND,
 } from './config.js';
 import { createLCDQueryClient } from './lcd-adapter.js';
-import { logger } from './logger.js';
+import { type Logger, noopLogger } from './logger.js';
 import { withRetry } from './retry.js';
 import {
   type ManifestMCPConfig,
@@ -118,6 +118,15 @@ export class CosmosClientManager {
   private queryClient: ManifestQueryClient | null = null;
   private signingClient: SigningStargateClient | null = null;
   private rateLimiter: RateLimiter;
+
+  // Per-signer broadcast serialization. A promise-chain lock keyed by signer ADDRESS so concurrent
+  // signAndBroadcast calls from one account can't both read the same committed sequence (cosmjs
+  // re-queries the sequence per broadcast — account-sequence-mismatch). Pure-JS (NO node:async_hooks
+  // — browser-safe). One entry per distinct address (today one wallet ⇒ one entry).
+  private broadcastLocks: Map<string, Promise<unknown>> = new Map();
+
+  /** Per-instance logger for the 2 init-time diagnostics. Defaults to noopLogger (silent); see setLogger. */
+  private logger: Logger = noopLogger;
 
   // Number of live holders (servers) sharing this instance. Each getInstance
   // acquisition increments it; each disconnect() decrements it. The underlying
@@ -259,7 +268,7 @@ export class CosmosClientManager {
         if (this.config.restUrl) {
           // Use LCD/REST for queries when restUrl is configured
           client = await withRetry(
-            () => createLCDQueryClient(this.config.restUrl!),
+            () => createLCDQueryClient(this.config.restUrl!, this.logger),
             {
               config: this.config.retry,
               operationName: 'connect LCD query client',
@@ -401,7 +410,7 @@ export class CosmosClientManager {
             } else {
               const effective =
                 this.config.gasMultiplier ?? DEFAULT_GAS_MULTIPLIER;
-              logger.warn(
+              this.logger.warn(
                 `gasMultiplier ${effective} could not be applied: ` +
                   `signing client defaultGasMultiplier is ${typeof record.defaultGasMultiplier}, expected number. ` +
                   `Transactions will use the CosmJS built-in gas multiplier instead.`,
@@ -457,11 +466,56 @@ export class CosmosClientManager {
   }
 
   /**
+   * Inject a per-instance Logger for the 2 init-time diagnostics (signing-client gasMultiplier
+   * fallback; LCD wasm-patch missing-method). NON-KEY + non-invalidating: NOT part of the getInstance
+   * key (chainId:rpcUrl[:restUrl]) and NOT in the signing/query-client invalidation gate — a pure
+   * reference mutation, mirroring the existing config/walletProvider mutation. Defaults to noopLogger
+   * (silent, per spec §5.3). Shared-key last-writer-wins: if two ctxs share a config key the later
+   * setLogger wins; acceptable because both diagnostics are one-time, init-cached, never re-firing.
+   */
+  setLogger(logger: Logger): void {
+    this.logger = logger;
+  }
+
+  /**
    * Acquire a rate limit token before making an RPC request.
    * This will wait if the rate limit has been exceeded.
    */
   async acquireRateLimit(): Promise<void> {
     await this.rateLimiter.removeTokens(1);
+  }
+
+  /**
+   * Serialize an async fn against all other broadcasts for `address`, holding the lock until `fn`
+   * settles (success OR failure). The next waiter chains off the prior settlement regardless of
+   * outcome, so a rejected broadcast neither wedges the queue nor leaks an unhandledRejection.
+   * Orthogonal to the rate limiter: callers acquire THIS (outer), then acquireRateLimit (inner).
+   * Acquire ONCE per logical broadcast — NOT inside a withRetry attempt (re-acquiring the same key
+   * deadlocks); a transient retry re-broadcasts under the same held lock, which is correct for
+   * sequence safety.
+   */
+  async withBroadcastLock<T>(
+    address: string,
+    fn: () => Promise<T>,
+  ): Promise<T> {
+    const prev = this.broadcastLocks.get(address) ?? Promise.resolve();
+    const run = prev.then(fn, fn); // run regardless of the prior task's outcome
+    // Store a swallowed tail so the next waiter chains cleanly and no unhandledRejection escapes.
+    const tail = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    this.broadcastLocks.set(address, tail);
+    // Release the entry once this chain drains, so the map stays bounded to
+    // in-flight chains — a long-lived manager broadcasting from many distinct
+    // addresses would otherwise grow it without bound (code-review PR #102 +
+    // Copilot). Delete only if no newer broadcast has replaced this tail.
+    void tail.then(() => {
+      if (this.broadcastLocks.get(address) === tail) {
+        this.broadcastLocks.delete(address);
+      }
+    });
+    return run;
   }
 
   /**
@@ -490,5 +544,9 @@ export class CosmosClientManager {
     this.signingClientPromise = null;
     this.queryClient = null;
     this.queryClientPromise = null;
+    // Reset the per-signer broadcast-lock chain so a reused config key
+    // (disconnect → getInstance) starts clean and the map does not retain
+    // stale settled tails (code-review PR #102).
+    this.broadcastLocks.clear();
   }
 }

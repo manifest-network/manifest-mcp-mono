@@ -3,21 +3,28 @@
   "version": "0.14.0",
   "private": true,
   "workspaces": [
-    "packages/*"
+    "packages/*",
+    "examples/*"
   ],
   "scripts": {
     "build": "npm run build --workspaces",
     "lint": "npm run lint --workspaces --if-present",
-    "check": "biome check packages/",
-    "check:fix": "biome check --write packages/",
-    "format": "biome format --write packages/",
+    "depcruise": "depcruise packages examples --config .dependency-cruiser.cjs",
+    "check": "biome check packages/ examples/",
+    "check:fix": "biome check --write packages/ examples/",
+    "format": "biome format --write packages/ examples/",
     "test": "npm run test --workspaces --if-present",
+    "pretest:e2e": "npm run build -w @manifest-network/sdk-acceptance",
     "test:e2e": "vitest run --config e2e/vitest.config.ts",
+    "size": "size-limit",
     "release:version": "node scripts/version.mjs"
   },
   "devDependencies": {
     "@biomejs/biome": "2.4.16",
     "@modelcontextprotocol/sdk": "1.29.0",
+    "@size-limit/preset-small-lib": "12.1.0",
+    "dependency-cruiser": "17.4.3",
+    "size-limit": "12.1.0",
     "tsdown": "0.22.1",
     "vitest": "4.1.8"
   },

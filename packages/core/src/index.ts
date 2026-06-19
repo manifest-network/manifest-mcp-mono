@@ -5,7 +5,35 @@ export {
   leaseStateFromJSON,
   leaseStateToJSON,
 } from '@manifest-network/manifestjs/dist/codegen/liftedinit/billing/v1/types.js';
+export {
+  type Address,
+  asAddress,
+  asFqdn,
+  asLeaseUuid,
+  asProviderUuid,
+  asSkuUuid,
+  type Fqdn,
+  type LeaseUuid,
+  type ProviderUuid,
+  parseAddress,
+  parseFqdn,
+  parseLeaseUuid,
+  parseProviderUuid,
+  parseSkuUuid,
+  type SkuUuid,
+  type Tenant,
+} from './brands.js';
 export { CosmosClientManager, type ManifestQueryClient } from './client.js';
+export {
+  createManifestReadClient,
+  type FullClientOptions,
+  type ManifestReadClient,
+  type ReadClientOptions,
+} from './client-factory.js';
+export {
+  createManifestClient,
+  type ManifestClient,
+} from './client-full.js';
 export {
   createConfig,
   createValidatedConfig,
@@ -15,6 +43,13 @@ export {
   validateEndpointUrl,
 } from './config.js';
 export { cosmosEstimateFee, cosmosQuery, cosmosTx } from './cosmos.js';
+export type {
+  CapabilityCtx,
+  EventTransport,
+  QueryCtx,
+  ReadCtx,
+  TxCtx,
+} from './ctx.js';
 export { parseBooleanEnv } from './env-utils.js';
 // NOTE: the SSRF-guarded fetch (`createGuardedFetch`, `isBlocked`,
 // `BLOCKED_RANGES_*`, `GuardedFetch`) is deliberately NOT re-exported here.
@@ -22,7 +57,41 @@ export { parseBooleanEnv } from './env-utils.js';
 // bundles that import this universal barrel. It lives at the Node-only
 // `@manifest-network/manifest-mcp-core/guarded-fetch` subpath instead (ENG-281).
 export { createLCDQueryClient } from './lcd-adapter.js';
-export { type LogLevel, logger, parseLogLevel } from './logger.js';
+export {
+  type Logger,
+  type LogLevel,
+  logger,
+  noopLogger,
+  parseLogLevel,
+} from './logger.js';
+export type {
+  AppDeploySpec,
+  BrandedLease,
+  BrandedLeaseItem,
+  BrandedProvider,
+  BrandedSKU,
+  BuildManifestOptions,
+  ConnectionDetails,
+  DeployResult,
+  FredActionResponse,
+  FredInstanceInfo,
+  FredLeaseInfo,
+  FredLeaseLogs,
+  FredLeaseProvision,
+  FredLeaseRelease,
+  FredLeaseReleases,
+  FredLeaseStatus,
+  FredServiceStatus,
+  InstanceInfo,
+  LeaseConnectionResponse,
+  ManifestDeploySpec,
+  ManifestFormat,
+  ManifestValidationResult,
+  PortConfig,
+  ServiceConfig,
+  ServiceConnectionDetails,
+  SkuIntent,
+} from './manifest-types.js';
 export {
   getAvailableModules,
   getModuleSubcommands,
@@ -30,6 +99,11 @@ export {
   getSupportedModules,
   isSubcommandSupported,
 } from './modules.js';
+export {
+  type CallOptions,
+  resolveCallSignal,
+  type TxCallOptions,
+} from './options.js';
 export { createPagination, MAX_PAGE_LIMIT } from './queries/utils.js';
 export {
   calculateBackoff,
@@ -50,6 +124,13 @@ export {
   structuredResponse,
   withErrorHandling,
 } from './server-utils.js';
+export {
+  type AuthSigner,
+  createSignerAdapter,
+  requireAuthSigner,
+  type Signer,
+  type TxSigner,
+} from './signer.js';
 // SKU resolution (shared by fred + agent-core)
 export {
   listSkuCandidates,
@@ -67,11 +148,21 @@ export {
   mutatingAnnotations,
   readOnlyAnnotations,
 } from './tool-metadata.js';
+export { executeTx } from './tools/executeTx.js';
 export { type FundCreditsResult, fundCredits } from './tools/fundCredits.js';
 // Tool functions (used by lease package)
 export { getBalance } from './tools/getBalance.js';
 export {
-  type SetItemCustomDomainOptions,
+  getBillingParams,
+  getLease,
+  getLeaseByCustomDomain,
+  getLeasesByTenant,
+  getProviders,
+  getSKUs,
+  getWithdrawableAmount,
+} from './tools/reads.js';
+export {
+  type SetItemCustomDomainInput,
   type SetItemCustomDomainResult,
   setItemCustomDomain,
 } from './tools/setItemCustomDomain.js';

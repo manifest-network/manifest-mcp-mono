@@ -4,7 +4,8 @@ vi.mock('../cosmos.js', () => ({
   cosmosTx: vi.fn(),
 }));
 
-import { makeMockClientManager } from '../__test-utils__/mocks.js';
+import { makeMockClientManager, makeTxCtx } from '../__test-utils__/mocks.js';
+import { asLeaseUuid } from '../brands.js';
 import { cosmosTx } from '../cosmos.js';
 import { ManifestMCPError, ManifestMCPErrorCode } from '../types.js';
 import { stopApp } from './stopApp.js';
@@ -27,7 +28,9 @@ describe('stopApp', () => {
       confirmed: true,
     });
 
-    const result = await stopApp(cm as any, 'lease-1');
+    const result = await stopApp(makeTxCtx({ chain: cm }), {
+      leaseUuid: asLeaseUuid('lease-1'),
+    });
 
     expect(mockCosmosTx).toHaveBeenCalledWith(
       cm,
@@ -35,6 +38,7 @@ describe('stopApp', () => {
       'close-lease',
       ['lease-1'],
       true,
+      undefined,
       undefined,
     );
     expect(result).toEqual({
@@ -54,15 +58,17 @@ describe('stopApp', () => {
       ),
     );
 
-    await expect(stopApp(cm as any, 'lease-1')).rejects.toThrow(
-      ManifestMCPError,
-    );
+    await expect(
+      stopApp(makeTxCtx({ chain: cm }), { leaseUuid: asLeaseUuid('lease-1') }),
+    ).rejects.toThrow(ManifestMCPError);
   });
 
   it('propagates tx errors', async () => {
     const cm = makeMockClientManager();
     mockCosmosTx.mockRejectedValue(new Error('tx failed'));
 
-    await expect(stopApp(cm as any, 'lease-1')).rejects.toThrow('tx failed');
+    await expect(
+      stopApp(makeTxCtx({ chain: cm }), { leaseUuid: asLeaseUuid('lease-1') }),
+    ).rejects.toThrow('tx failed');
   });
 });

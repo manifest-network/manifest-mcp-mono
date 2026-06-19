@@ -38,9 +38,15 @@
  */
 
 import {
+  asLeaseUuid,
+  asProviderUuid,
   cosmosEstimateFee,
   ManifestMCPError,
   ManifestMCPErrorCode,
+  noopLogger,
+  parseFqdn,
+  parseLeaseUuid,
+  type ReadCtx,
   resolveSku,
   type SkuCandidate,
   setItemCustomDomain,
@@ -195,17 +201,25 @@ export async function deployApp(
     : 'testnet';
 
   // --- Readiness evaluation -------------------------------------------
-  // fred's checkDeploymentReadiness takes (queryClient, address, input).
-  // `tenantAddress` was resolved + validated as consistent across
-  // walletProvider/clientManager in the address-source guard above.
+  // fred's checkDeploymentReadiness takes (ctx: ReadCtx, address, input),
+  // where ReadCtx = { query, chain, logger } (spec §5.4). It forwards the
+  // ctx to core's getBalance → withReadSignal → ctx.chain.acquireRateLimit,
+  // so the ctx MUST carry the clientManager as `chain` (a bare queryClient
+  // would crash). `tenantAddress` was resolved + validated as consistent
+  // across walletProvider/clientManager in the address-source guard above.
   const queryClient = await opts.clientManager.getQueryClient();
+  const readCtx: ReadCtx = {
+    query: queryClient,
+    chain: opts.clientManager,
+    logger: noopLogger,
+  };
 
   // --- SKU pin resolution (ENG-258) -----------------------------------
   // Resolve the requested `size` to a single concrete (skuUuid,
   // providerUuid) pin ONCE, BEFORE readiness/plan/fee/broadcast, so all
   // four reference the same SKU. Ambiguity routes through `onResolveSku`
   // (interactive) or re-throws SKU_AMBIGUOUS (headless). Defined as a
-  // closure so it captures `queryClient` + `callbacks` and can be reused
+  // closure so it captures `readCtx` + `callbacks` and can be reused
   // by the post-edit re-plan branch (an edit can change size/provider).
   //
   // Returns `{ pin, elicited }` where `elicited` is true ONLY when
@@ -222,7 +236,7 @@ export async function deployApp(
     const providerUuid = requestedProviderUuid(s);
     const skuUuid = requestedSkuUuid(s);
     try {
-      const pin = await resolveSku(queryClient, {
+      const pin = await resolveSku(readCtx, {
         size: requestedSize(s),
         ...(providerUuid !== undefined ? { providerUuid } : {}),
         ...(skuUuid !== undefined ? { skuUuid } : {}),
@@ -237,7 +251,7 @@ export async function deployApp(
         const candidates = (err.details?.candidates as SkuCandidate[]) ?? [];
         callbacks.onProgress?.({ kind: 'sku_ambiguous', candidates });
         const pick = await callbacks.onResolveSku(candidates);
-        const pin = await resolveSku(queryClient, {
+        const pin = await resolveSku(readCtx, {
           size: requestedSize(s),
           skuUuid: pick.skuUuid,
           providerUuid: pick.providerUuid,
@@ -259,16 +273,12 @@ export async function deployApp(
   // as the canonical SKU name into every downstream consumer (readiness,
   // plan render, fred input, persisted manifest). `requestedSize(spec)`
   // survives ONLY as the input to `resolvePin` (the user's request).
-  const readinessRaw = await checkDeploymentReadiness(
-    queryClient,
-    tenantAddress,
-    {
-      image: primaryImage(spec),
-      size: pinned.name,
-      providerUuid: pinned.providerUuid,
-      skuUuid: pinned.skuUuid,
-    },
-  );
+  const readinessRaw = await checkDeploymentReadiness(readCtx, tenantAddress, {
+    image: primaryImage(spec),
+    size: pinned.name,
+    providerUuid: pinned.providerUuid,
+    skuUuid: pinned.skuUuid,
+  });
   // `readiness` is `let`-bound because the post-edit recompute branch
   // re-evaluates it against the edited spec (Copilot r3267373084 — see
   // the recall block inside the `onPlan` `verdict !== 'confirm'` arm).
@@ -423,7 +433,7 @@ export async function deployApp(
         };
       }
       const editedReadinessRaw = await checkDeploymentReadiness(
-        queryClient,
+        readCtx,
         tenantAddress,
         {
           image: primaryImage(confirmedSpec),
@@ -544,6 +554,7 @@ export async function deployApp(
       getAuthToken,
       getLeaseDataAuthToken,
       fredInput,
+      {},
       opts.fetchFn,
     );
   } catch (err) {
@@ -728,16 +739,18 @@ export async function deployApp(
 
     // Merge post-poll fields back into `fredResult` so downstream
     // DeployResult construction sees the final lease/provider identity.
-    // The string fields (lease_uuid / provider_uuid / provider_url) align
-    // typewise with their FredDeployAppResult counterparts. The state +
-    // connection fields are NOT merged here — they go into `liveState`
-    // and `liveConnection` so each carries the type that matches its
-    // upstream source (no width-erasing casts). See the live-tracker
-    // declarations above for the full rationale.
+    // lease_uuid / provider_uuid are chain-polled, trusted ids — they are
+    // trust-cast (asLeaseUuid / asProviderUuid) to satisfy DeployResult's
+    // branded wire types (brands erase at runtime; zero behavior change).
+    // provider_url stays a plain string. The state + connection fields are
+    // NOT merged here — they go into `liveState` and `liveConnection` so
+    // each carries the type that matches its upstream source (no
+    // width-erasing casts). See the live-tracker declarations above for
+    // the full rationale.
     fredResult = {
       ...fredResult,
-      lease_uuid: pollResult.lease_uuid,
-      provider_uuid: pollResult.provider_uuid,
+      lease_uuid: asLeaseUuid(pollResult.lease_uuid),
+      provider_uuid: asProviderUuid(pollResult.provider_uuid),
       provider_url: pollResult.provider_url,
     };
     liveState = pollResult.status.state;
@@ -1207,7 +1220,10 @@ async function dispatchRecovery(
       );
     case 'cancel_lease':
     case 'close_lease': {
-      await stopApp(opts.clientManager, leaseUuid);
+      await stopApp(
+        { chain: opts.clientManager, logger: noopLogger },
+        { leaseUuid: parseLeaseUuid(leaseUuid) },
+      );
       throw new ManifestMCPError(
         ManifestMCPErrorCode.TX_FAILED,
         `${choice.id}: lease ${leaseUuid} closed.`,
@@ -1288,13 +1304,14 @@ async function retrySetDomainAndComplete(
   // leases so the set-item-custom-domain tx targets the named service
   // item, not the default single-item lease.
   const serviceName = customDomainServiceOf(spec);
-  const setItemOpts = serviceName ? { serviceName } : undefined;
   try {
     await setItemCustomDomain(
-      opts.clientManager,
-      leaseUuid,
-      domain,
-      setItemOpts,
+      { chain: opts.clientManager, logger: noopLogger },
+      {
+        leaseUuid: parseLeaseUuid(leaseUuid),
+        customDomain: parseFqdn(domain),
+        serviceName,
+      },
     );
   } catch (err) {
     // Copilot fix-3 (PR #71): sibling-parity wrap. Every throw site in

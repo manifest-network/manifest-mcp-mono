@@ -7,7 +7,11 @@
  */
 
 import type { SkuCandidate } from '@manifest-network/manifest-agent-core';
-import { ManifestMCPErrorCode } from '@manifest-network/manifest-mcp-core';
+import {
+  asProviderUuid,
+  asSkuUuid,
+  ManifestMCPErrorCode,
+} from '@manifest-network/manifest-mcp-core';
 import type { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import type { RequestHandlerExtra } from '@modelcontextprotocol/sdk/shared/protocol.js';
 import type {
@@ -49,14 +53,14 @@ describe('makeDeployCallbacks', () => {
 
     const candidates: SkuCandidate[] = [
       {
-        skuUuid: 'a',
-        providerUuid: 'p1',
+        skuUuid: asSkuUuid('a'),
+        providerUuid: asProviderUuid('p1'),
         name: 'docker-micro',
         active: true,
       },
       {
-        skuUuid: 'b',
-        providerUuid: 'p2',
+        skuUuid: asSkuUuid('b'),
+        providerUuid: asProviderUuid('p2'),
         name: 'docker-micro',
         active: true,
       },
@@ -79,8 +83,18 @@ describe('makeDeployCallbacks', () => {
     const cbs = makeDeployCallbacks({ server, extra });
 
     const candidates: SkuCandidate[] = [
-      { skuUuid: 'a', providerUuid: 'p1', name: 'docker-micro', active: true },
-      { skuUuid: 'b', providerUuid: 'p2', name: 'docker-micro', active: true },
+      {
+        skuUuid: asSkuUuid('a'),
+        providerUuid: asProviderUuid('p1'),
+        name: 'docker-micro',
+        active: true,
+      },
+      {
+        skuUuid: asSkuUuid('b'),
+        providerUuid: asProviderUuid('p2'),
+        name: 'docker-micro',
+        active: true,
+      },
     ];
 
     await cbs.onResolveSku!(candidates);
@@ -102,8 +116,18 @@ describe('makeDeployCallbacks', () => {
     const cbs = makeDeployCallbacks({ server, extra });
 
     const candidates: SkuCandidate[] = [
-      { skuUuid: 'a', providerUuid: 'p1', name: 'docker-micro', active: true },
-      { skuUuid: 'b', providerUuid: 'p2', name: 'docker-micro', active: true },
+      {
+        skuUuid: asSkuUuid('a'),
+        providerUuid: asProviderUuid('p1'),
+        name: 'docker-micro',
+        active: true,
+      },
+      {
+        skuUuid: asSkuUuid('b'),
+        providerUuid: asProviderUuid('p2'),
+        name: 'docker-micro',
+        active: true,
+      },
     ];
 
     await expect(cbs.onResolveSku!(candidates)).rejects.toMatchObject({
@@ -128,8 +152,18 @@ describe('makeDeployCallbacks', () => {
     const cbs = makeDeployCallbacks({ server, extra });
 
     const candidates: SkuCandidate[] = [
-      { skuUuid: 'a', providerUuid: 'p1', name: 'docker-micro', active: true },
-      { skuUuid: 'b', providerUuid: 'p2', name: 'docker-micro', active: true },
+      {
+        skuUuid: asSkuUuid('a'),
+        providerUuid: asProviderUuid('p1'),
+        name: 'docker-micro',
+        active: true,
+      },
+      {
+        skuUuid: asSkuUuid('b'),
+        providerUuid: asProviderUuid('p2'),
+        name: 'docker-micro',
+        active: true,
+      },
     ];
 
     await expect(cbs.onResolveSku!(candidates)).rejects.toMatchObject({

@@ -23,6 +23,8 @@ vi.mock('../http/fred.js', async (importOriginal) => {
 });
 
 import {
+  asProviderUuid,
+  asSkuUuid,
   cosmosTx,
   LeaseState,
   logger,
@@ -124,6 +126,7 @@ describe('deployManifest', () => {
     const manifest = singleManifest();
     const res = await deployManifest(
       { manifest, sku: { kind: 'byName', size: 'docker-micro' } },
+      {},
       deps(cm),
     );
     expect(res.state).toBe(LeaseState.LEASE_STATE_ACTIVE);
@@ -146,10 +149,11 @@ describe('deployManifest', () => {
         manifest: singleManifest(),
         sku: {
           kind: 'resolved',
-          skuUuid: 'sku-micro-uuid',
-          providerUuid: 'prov-1',
+          skuUuid: asSkuUuid('sku-micro-uuid'),
+          providerUuid: asProviderUuid('prov-1'),
         },
       },
+      {},
       deps(cm),
     );
     // The SKU query must NOT have been called — resolved trusts verbatim.
@@ -190,10 +194,11 @@ describe('deployManifest', () => {
         manifest: singleManifest(),
         sku: {
           kind: 'resolved',
-          skuUuid: 'any-sku-uuid',
-          providerUuid: 'prov-1',
+          skuUuid: asSkuUuid('any-sku-uuid'),
+          providerUuid: asProviderUuid('prov-1'),
         },
       },
+      {},
       deps(cm),
     );
     expect(spy).not.toHaveBeenCalled();
@@ -209,8 +214,13 @@ describe('deployManifest', () => {
       deployManifest(
         {
           manifest: singleManifest(),
-          sku: { kind: 'resolved', skuUuid: '   ', providerUuid: 'prov-1' },
+          sku: {
+            kind: 'resolved',
+            skuUuid: asSkuUuid('   '),
+            providerUuid: asProviderUuid('prov-1'),
+          },
         },
+        {},
         deps(cm),
       ),
     ).rejects.toMatchObject({ code: 'INVALID_CONFIG' });
@@ -232,6 +242,7 @@ describe('deployManifest', () => {
     await expect(
       deployManifest(
         { manifest: huge, sku: { kind: 'byName', size: 'docker-micro' } },
+        {},
         deps(cm),
       ),
     ).rejects.toMatchObject({ code: 'INVALID_CONFIG' });
@@ -249,6 +260,7 @@ describe('deployManifest', () => {
           manifest: '{"image":""}',
           sku: { kind: 'byName', size: 'docker-micro' },
         },
+        {},
         deps(cm),
       ),
     ).rejects.toMatchObject({ code: 'INVALID_CONFIG' });
@@ -265,6 +277,7 @@ describe('deployManifest', () => {
     await expect(
       deployManifest(
         { manifest, sku: { kind: 'byName', size: 'docker-micro' } },
+        {},
         deps(cm),
       ),
     ).rejects.toMatchObject({ code: 'INVALID_CONFIG' });
@@ -282,6 +295,7 @@ describe('deployManifest', () => {
     await expect(
       deployManifest(
         { manifest, sku: { kind: 'byName', size: 'docker-micro' } },
+        {},
         deps(cm),
       ),
     ).rejects.toMatchObject({ code: 'INVALID_CONFIG' });
@@ -301,6 +315,7 @@ describe('deployManifest', () => {
           manifest: singleManifest(),
           sku: { kind: 'byName', size: 'docker-micro' },
         },
+        {},
         deps(cm),
       );
     } catch (e) {
@@ -331,8 +346,8 @@ describe('deployManifest', () => {
         {
           manifest: singleManifest(),
           sku: { kind: 'byName', size: 'docker-micro' },
-          abortSignal: AbortSignal.abort(),
         },
+        { abortSignal: AbortSignal.abort() },
         deps(cm),
       );
     } catch (e) {
@@ -378,6 +393,7 @@ describe('deployManifest', () => {
           manifest: singleManifest(),
           sku: { kind: 'byName', size: 'docker-micro' },
         },
+        {},
         deps(cm),
       );
     } catch (e) {
@@ -415,6 +431,7 @@ describe('deployManifest', () => {
         manifest: JSON.stringify({ image: secret, ports: { '80/tcp': {} } }),
         sku: { kind: 'byName', size: 'docker-micro' },
       },
+      {},
       deps(cm),
     );
     expect(lines.join('\n')).not.toContain(secret);
@@ -430,14 +447,20 @@ describe('deployManifest', () => {
     });
     // a representative typed input that exercises many builder fields:
     await expect(
-      deployApp(cm as any, getAuthToken, getLeaseDataAuthToken, {
-        image: 'nginx:alpine',
-        port: 80,
-        size: 'docker-micro',
-        env: { FOO: 'bar' },
-        command: ['sh'],
-        labels: { a: 'b' },
-      }),
+      deployApp(
+        cm as any,
+        getAuthToken,
+        getLeaseDataAuthToken,
+        {
+          image: 'nginx:alpine',
+          port: 80,
+          size: 'docker-micro',
+          env: { FOO: 'bar' },
+          command: ['sh'],
+          labels: { a: 'b' },
+        },
+        {},
+      ),
     ).resolves.toMatchObject({ state: LeaseState.LEASE_STATE_ACTIVE });
   });
 
@@ -473,6 +496,7 @@ describe('deployManifest', () => {
           manifest: singleManifest(),
           sku: { kind: 'byName', size: 'docker-micro' },
         },
+        {},
         deps(cm),
       ),
     ).rejects.toMatchObject({ code: ManifestMCPErrorCode.SKU_AMBIGUOUS });
@@ -508,8 +532,13 @@ describe('deployManifest', () => {
     await deployManifest(
       {
         manifest: singleManifest(),
-        sku: { kind: 'byName', size: 'docker-micro', providerUuid: 'p2' },
+        sku: {
+          kind: 'byName',
+          size: 'docker-micro',
+          providerUuid: asProviderUuid('p2'),
+        },
       },
+      {},
       deps(cm),
     );
     expect(mockCosmosTx.mock.calls[0][3]).toContain('b:1'); // used p2's sku
@@ -542,13 +571,19 @@ describe('deployManifest', () => {
       queryClient: qc,
       address: 'manifest1tenant',
     });
-    await deployApp(cm as never, getAuthToken, getLeaseDataAuthToken, {
-      image: 'nginx:alpine',
-      port: 80,
-      size: 'docker-micro',
-      skuUuid: 'b',
-      providerUuid: 'p2',
-    });
+    await deployApp(
+      cm as never,
+      getAuthToken,
+      getLeaseDataAuthToken,
+      {
+        image: 'nginx:alpine',
+        port: 80,
+        size: 'docker-micro',
+        skuUuid: 'b',
+        providerUuid: 'p2',
+      },
+      {},
+    );
     // Both ids present → resolved selector → no chain query (trusted verbatim).
     expect(spy).not.toHaveBeenCalled();
     expect(mockCosmosTx.mock.calls[0][3]).toContain('b:1');
@@ -584,13 +619,19 @@ describe('deployManifest', () => {
       queryClient: qc,
       address: 'manifest1tenant',
     });
-    await deployApp(cm as never, getAuthToken, getLeaseDataAuthToken, {
-      image: 'nginx:alpine',
-      port: 80,
-      size: 'docker-micro',
-      skuUuid: 'b',
-      // no providerUuid → byName branch, but skuUuid pins the result.
-    });
+    await deployApp(
+      cm as never,
+      getAuthToken,
+      getLeaseDataAuthToken,
+      {
+        image: 'nginx:alpine',
+        port: 80,
+        size: 'docker-micro',
+        skuUuid: 'b',
+        // no providerUuid → byName branch, but skuUuid pins the result.
+      },
+      {},
+    );
     // skuUuid-only → byName → resolveSku queries the chain to look up b's provider.
     expect(spy).toHaveBeenCalled();
     expect(mockCosmosTx.mock.calls[0][3]).toContain('b:1');

@@ -57,3 +57,26 @@ export const logger = {
     return currentLevel;
   },
 };
+
+/**
+ * Public, injectable logging port for SDK consumers. STRUCTURAL — compatible with
+ * `console`, pino, winston, tslog, and `@smithy/types` Logger. `trace` is optional;
+ * SDK code calls it only via `ctx.logger.trace?.(…)`. The SDK applies its own level
+ * gate before dispatching; the sink is this injected logger. Per-instance, never
+ * process-global (unlike the internal `logger` singleton above).
+ */
+export interface Logger {
+  trace?(...args: unknown[]): void;
+  debug(...args: unknown[]): void;
+  info(...args: unknown[]): void;
+  warn(...args: unknown[]): void;
+  error(...args: unknown[]): void;
+}
+
+/** Silent default: emits nothing, allocation-free, frozen, isomorphic (no console/process). */
+export const noopLogger: Logger = Object.freeze({
+  debug() {},
+  info() {},
+  warn() {},
+  error() {},
+});

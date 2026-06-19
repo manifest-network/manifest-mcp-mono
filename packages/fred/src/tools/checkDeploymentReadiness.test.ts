@@ -1,4 +1,7 @@
-import { makeMockQueryClient } from '@manifest-network/manifest-mcp-core/__test-utils__/mocks.js';
+import {
+  makeMockQueryClient,
+  makeReadCtx,
+} from '@manifest-network/manifest-mcp-core/__test-utils__/mocks.js';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { checkDeploymentReadiness } from './checkDeploymentReadiness.js';
 
@@ -20,7 +23,7 @@ function makeQc(opts: {
     active?: boolean;
   }>;
 }) {
-  return makeMockQueryClient({
+  const query = makeMockQueryClient({
     billing: {
       balances: opts.walletBalances ?? [{ denom: 'umfx', amount: '5000000' }],
       creditAccount: opts.creditAccount ?? null,
@@ -30,6 +33,7 @@ function makeQc(opts: {
       skus: opts.skus,
     },
   });
+  return makeReadCtx({ query });
 }
 
 describe('checkDeploymentReadiness', () => {

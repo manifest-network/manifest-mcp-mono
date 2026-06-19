@@ -22,6 +22,8 @@
 import {
   ManifestMCPError,
   ManifestMCPErrorCode,
+  noopLogger,
+  parseLeaseUuid,
   stopApp,
 } from '@manifest-network/manifest-mcp-core';
 import {
@@ -97,7 +99,12 @@ export async function closeLease(
   }
   callbacks.onProgress?.({ kind: 'user_confirmed' });
 
-  await stopApp(opts.clientManager, args.leaseUuid);
+  // txCtx has no signer (ManageDomain/CloseLease flows carry no walletProvider);
+  // the sender resolves from ctx.chain (the CosmosClientManager wallet). See OI-SENDER.
+  await stopApp(
+    { chain: opts.clientManager, logger: noopLogger },
+    { leaseUuid: parseLeaseUuid(args.leaseUuid) },
+  );
 
   // Direct single-lease query (Copilot review PR #60, comment 3275999624):
   // the previous `leasesByTenant` + page-1-only pagination would

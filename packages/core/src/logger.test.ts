@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { logger, parseLogLevel } from './logger.js';
+import { type Logger, logger, noopLogger, parseLogLevel } from './logger.js';
 
 describe('logger', () => {
   afterEach(() => {
@@ -85,5 +85,28 @@ describe('parseLogLevel', () => {
     expect(parseLogLevel('spam')).toBe('warn');
     expect(spy).toHaveBeenCalledOnce();
     expect(spy.mock.calls[0]?.[0]).toContain('Invalid LOG_LEVEL "spam"');
+  });
+});
+
+describe('noopLogger', () => {
+  it('emits nothing (silent by default) and never throws', () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    noopLogger.debug('x');
+    noopLogger.info('x');
+    noopLogger.warn('x');
+    noopLogger.error('x');
+    expect(spy).not.toHaveBeenCalled();
+    spy.mockRestore();
+  });
+  it('is frozen', () => {
+    expect(Object.isFrozen(noopLogger)).toBe(true);
+  });
+  it('satisfies the Logger interface structurally', () => {
+    const l: Logger = noopLogger; // compile-time: noopLogger IS a Logger
+    expect(typeof l.debug).toBe('function');
+  });
+  it('the existing logger singleton is assignable to Logger (adapter-free)', () => {
+    const l: Logger = logger; // compile-time: the singleton has debug/info/warn/error
+    expect(typeof l.warn).toBe('function');
   });
 });

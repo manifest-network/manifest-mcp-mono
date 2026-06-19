@@ -875,7 +875,7 @@ describe('FredMCPServer', () => {
   });
 
   describe('deploy_app', () => {
-    it('passes gas_multiplier to deployApp input', async () => {
+    it('routes gas_multiplier to deployApp callOptions', async () => {
       const server = new FredMCPServer({
         config: makeMockConfig(),
         walletProvider: makeMockWallet({ signArbitrary: true }),
@@ -891,6 +891,10 @@ describe('FredMCPServer', () => {
         expect.anything(),
         expect.any(Function),
         expect.any(Function),
+        expect.objectContaining({
+          image: 'nginx:alpine',
+          size: 'docker-micro',
+        }),
         expect.objectContaining({ gasMultiplier: 3.5 }),
         // SSRF-guarded fetch injected by FredMCPServer (ENG-268).
         expect.any(Function),
@@ -920,6 +924,8 @@ describe('FredMCPServer', () => {
           customDomain: 'app.example.com',
           serviceName: 'web',
         }),
+        // callOptions content is asserted in the gas_multiplier test above; here we only pin the spec mapping
+        expect.any(Object),
         // SSRF-guarded fetch injected by FredMCPServer (ENG-268).
         expect.any(Function),
       );
@@ -972,38 +978,40 @@ describe('FredMCPServer', () => {
         size: 'docker-micro',
       });
 
-      const input = mockDeployApp.mock.calls.at(-1)?.[3];
-      expect(input?.onLeaseCreated).toBeUndefined();
-      expect(input?.pollOptions).toBeUndefined();
+      const callOptions = mockDeployApp.mock.calls.at(-1)?.[4];
+      expect(callOptions?.onLeaseCreated).toBeUndefined();
+      expect(callOptions?.pollOptions).toBeUndefined();
     });
 
     it('fans deployApp lifecycle callbacks out as MCP progress notifications', async () => {
       // Drive the deployApp mock through onLeaseCreated and two onProgress
       // ticks so we can assert the server-side wiring forwards them as
       // notifications/progress messages over the wire.
-      mockDeployApp.mockImplementationOnce(async (_cm, _a, _b, input) => {
-        await input.onLeaseCreated?.(
-          'lease-uuid-1',
-          'https://provider.example.com',
-        );
-        input.pollOptions?.onProgress?.({
-          state: LeaseState.LEASE_STATE_PENDING,
-          provision_status: 'image_pulling',
-        } as unknown as Parameters<
-          NonNullable<typeof input.pollOptions.onProgress>
-        >[0]);
-        input.pollOptions?.onProgress?.({
-          state: LeaseState.LEASE_STATE_ACTIVE,
-        } as unknown as Parameters<
-          NonNullable<typeof input.pollOptions.onProgress>
-        >[0]);
-        return {
-          lease_uuid: 'lease-uuid-1',
-          provider_uuid: 'p1',
-          provider_url: 'https://provider.example.com',
-          state: LeaseState.LEASE_STATE_ACTIVE,
-        } as unknown as Awaited<ReturnType<typeof deployApp>>;
-      });
+      mockDeployApp.mockImplementationOnce(
+        async (_cm, _a, _b, _spec, callOptions) => {
+          await callOptions.onLeaseCreated?.(
+            'lease-uuid-1',
+            'https://provider.example.com',
+          );
+          callOptions.pollOptions?.onProgress?.({
+            state: LeaseState.LEASE_STATE_PENDING,
+            provision_status: 'image_pulling',
+          } as unknown as Parameters<
+            NonNullable<typeof callOptions.pollOptions.onProgress>
+          >[0]);
+          callOptions.pollOptions?.onProgress?.({
+            state: LeaseState.LEASE_STATE_ACTIVE,
+          } as unknown as Parameters<
+            NonNullable<typeof callOptions.pollOptions.onProgress>
+          >[0]);
+          return {
+            lease_uuid: 'lease-uuid-1',
+            provider_uuid: 'p1',
+            provider_url: 'https://provider.example.com',
+            state: LeaseState.LEASE_STATE_ACTIVE,
+          } as unknown as Awaited<ReturnType<typeof deployApp>>;
+        },
+      );
 
       const server = new FredMCPServer({
         config: makeMockConfig(),

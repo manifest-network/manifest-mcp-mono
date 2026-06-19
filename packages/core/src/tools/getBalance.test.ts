@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { makeMockQueryClient } from '../__test-utils__/mocks.js';
+import { makeMockQueryClient, makeReadCtx } from '../__test-utils__/mocks.js';
 import { ManifestMCPError, ManifestMCPErrorCode } from '../types.js';
 import { getBalance } from './getBalance.js';
 
@@ -8,7 +8,7 @@ describe('getBalance', () => {
 
   it('should return balances when no credit account exists', async () => {
     const client = makeMockQueryClient();
-    const result = await getBalance(client, address);
+    const result = await getBalance(makeReadCtx({ query: client }), address);
     expect(result.balances).toEqual([{ denom: 'umfx', amount: '1000000' }]);
     expect(result.credits).toBeNull();
   });
@@ -25,7 +25,7 @@ describe('getBalance', () => {
         creditAccountAvailableBalances: [{ denom: 'upwr', amount: '9500' }],
       },
     });
-    const result = await getBalance(client, address);
+    const result = await getBalance(makeReadCtx({ query: client }), address);
     expect(result.credits).toEqual({
       active_leases: '2',
       pending_leases: '1',
@@ -46,7 +46,7 @@ describe('getBalance', () => {
         },
       },
     });
-    const result = await getBalance(client, address);
+    const result = await getBalance(makeReadCtx({ query: client }), address);
     expect(result.current_balance).toEqual([
       { denom: 'umfx', amount: '100000' },
     ]);
@@ -68,7 +68,7 @@ describe('getBalance', () => {
         },
       },
     });
-    const result = await getBalance(client, address);
+    const result = await getBalance(makeReadCtx({ query: client }), address);
     expect(result.hours_remaining).toBe('0');
   });
 
@@ -82,8 +82,18 @@ describe('getBalance', () => {
       ),
     );
 
-    await expect(getBalance(client, address)).rejects.toMatchObject({
+    await expect(
+      getBalance(makeReadCtx({ query: client }), address),
+    ).rejects.toMatchObject({
       code: ManifestMCPErrorCode.RPC_CONNECTION_FAILED,
     });
+  });
+
+  it('aborts via opts.signal before doing any read', async () => {
+    const ac = new AbortController();
+    ac.abort(new Error('cancelled'));
+    await expect(
+      getBalance(makeReadCtx(), 'manifest1abc', { signal: ac.signal }),
+    ).rejects.toThrow('cancelled');
   });
 });

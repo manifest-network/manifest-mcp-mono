@@ -2,7 +2,7 @@ import {
   createPagination,
   getBalance,
   MAX_PAGE_LIMIT,
-  type ManifestQueryClient,
+  type ReadCtx,
 } from '@manifest-network/manifest-mcp-core';
 
 /**
@@ -98,14 +98,14 @@ export interface CheckDeploymentReadinessResult {
  * `providerUuid` or `skuUuid` to narrow to a single candidate.
  */
 export async function checkDeploymentReadiness(
-  queryClient: ManifestQueryClient,
+  ctx: ReadCtx,
   address: string,
   input: CheckDeploymentReadinessInput = {},
 ): Promise<CheckDeploymentReadinessResult> {
   const pagination = createPagination(MAX_PAGE_LIMIT);
   const [balance, skusResult] = await Promise.all([
-    getBalance(queryClient, address),
-    queryClient.liftedinit.sku.v1.sKUs({ activeOnly: true, pagination }),
+    getBalance(ctx, address),
+    ctx.query.liftedinit.sku.v1.sKUs({ activeOnly: true, pagination }),
   ]);
 
   // Normalize selector inputs once: trim whitespace, treat whitespace-only as absent.

@@ -26,6 +26,8 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
+  asProviderUuid,
+  asSkuUuid,
   ManifestMCPError,
   ManifestMCPErrorCode,
 } from '@manifest-network/manifest-mcp-core';
@@ -224,7 +226,7 @@ describe('deployApp replay — 01-fast-path-active', () => {
       provider_url: deployResp.provider_url as string,
       state: deployResp.state as never,
       connection: deployResp.connection,
-    } as Awaited<ReturnType<typeof fred.deployApp>>);
+    } as unknown as Awaited<ReturnType<typeof fred.deployApp>>);
 
     // fix-3: real cosmosEstimateFee is now invoked. Mock returns the
     // canonical fixture-aligned FeeEstimateResult (per scenario
@@ -472,7 +474,7 @@ describe('deployApp — ENG-258 SKU pin resolution + ambiguity elicitation', () 
       provider_url: deployResp.provider_url as string,
       state: deployResp.state as never,
       connection: deployResp.connection,
-    } as Awaited<ReturnType<typeof fred.deployApp>>);
+    } as unknown as Awaited<ReturnType<typeof fred.deployApp>>);
 
     const core = await import('@manifest-network/manifest-mcp-core');
     vi.mocked(core.cosmosEstimateFee).mockResolvedValue({
@@ -489,14 +491,14 @@ describe('deployApp — ENG-258 SKU pin resolution + ambiguity elicitation', () 
     const { spec, fred, core } = await setupHappyDeps();
 
     const c1: SkuCandidate = {
-      skuUuid: 'sku-p1',
-      providerUuid: 'p1',
+      skuUuid: asSkuUuid('sku-p1'),
+      providerUuid: asProviderUuid('p1'),
       name: 'small',
       active: true,
     };
     const c2: SkuCandidate = {
-      skuUuid: 'sku-p2',
-      providerUuid: 'p2',
+      skuUuid: asSkuUuid('sku-p2'),
+      providerUuid: asProviderUuid('p2'),
       name: 'small',
       active: true,
     };
@@ -513,8 +515,8 @@ describe('deployApp — ENG-258 SKU pin resolution + ambiguity elicitation', () 
       .mockResolvedValueOnce(c2);
 
     const onResolveSku = vi.fn(async (_candidates: SkuCandidate[]) => ({
-      skuUuid: 'sku-p2',
-      providerUuid: 'p2',
+      skuUuid: asSkuUuid('sku-p2'),
+      providerUuid: asProviderUuid('p2'),
     }));
     const baseCapture = captureCallbacks();
     const callbacks: DeployAppCallbacks = {
@@ -554,8 +556,8 @@ describe('deployApp — ENG-258 SKU pin resolution + ambiguity elicitation', () 
       | { skuUuid?: string; providerUuid?: string }
       | undefined;
     expect(fredInput).toMatchObject({
-      skuUuid: 'sku-p2',
-      providerUuid: 'p2',
+      skuUuid: asSkuUuid('sku-p2'),
+      providerUuid: asProviderUuid('p2'),
     });
   });
 
@@ -563,14 +565,14 @@ describe('deployApp — ENG-258 SKU pin resolution + ambiguity elicitation', () 
     const { spec, fred, core } = await setupHappyDeps();
 
     const c1: SkuCandidate = {
-      skuUuid: 'sku-p1',
-      providerUuid: 'p1',
+      skuUuid: asSkuUuid('sku-p1'),
+      providerUuid: asProviderUuid('p1'),
       name: 'small',
       active: true,
     };
     const c2: SkuCandidate = {
-      skuUuid: 'sku-p2',
-      providerUuid: 'p2',
+      skuUuid: asSkuUuid('sku-p2'),
+      providerUuid: asProviderUuid('p2'),
       name: 'small',
       active: true,
     };
@@ -656,20 +658,20 @@ describe('deployApp — ENG-258 SKU pin resolution + ambiguity elicitation', () 
     const { spec, fred, core } = await setupHappyDeps();
 
     const c1: SkuCandidate = {
-      skuUuid: 'sku-p1',
-      providerUuid: 'p1',
+      skuUuid: asSkuUuid('sku-p1'),
+      providerUuid: asProviderUuid('p1'),
       name: 'small',
       active: true,
     };
     const c2: SkuCandidate = {
-      skuUuid: 'sku-p2',
-      providerUuid: 'p2',
+      skuUuid: asSkuUuid('sku-p2'),
+      providerUuid: asProviderUuid('p2'),
       name: 'small',
       active: true,
     };
     const pinned: SkuCandidate = {
-      skuUuid: 'sku-p2',
-      providerUuid: 'p2',
+      skuUuid: asSkuUuid('sku-p2'),
+      providerUuid: asProviderUuid('p2'),
       name: 'small',
       active: true,
     };
@@ -695,8 +697,8 @@ describe('deployApp — ENG-258 SKU pin resolution + ambiguity elicitation', () 
     );
 
     const onResolveSku = vi.fn(async (_candidates: SkuCandidate[]) => ({
-      skuUuid: 'sku-p2',
-      providerUuid: 'p2',
+      skuUuid: asSkuUuid('sku-p2'),
+      providerUuid: asProviderUuid('p2'),
     }));
 
     // onPlan returns an `edit_env` edit on the first (and only) call,
@@ -876,7 +878,7 @@ describe('deployApp replay — Copilot review fixes (PR #58 unresolved comments)
       provider_url: deployResp.provider_url as string,
       state: deployResp.state as never,
       connection: deployResp.connection,
-    } as Awaited<ReturnType<typeof fred.deployApp>>);
+    } as unknown as Awaited<ReturnType<typeof fred.deployApp>>);
 
     const core = await import('@manifest-network/manifest-mcp-core');
     vi.mocked(core.cosmosEstimateFee).mockResolvedValue({
@@ -2220,8 +2222,11 @@ describe('deployApp replay — 03-partial-success-set-domain-failed', () => {
     // Verify the close_lease dispatch (captureCallbacks default choice)
     // invoked core's stopApp.
     expect(vi.mocked(core.stopApp)).toHaveBeenCalledWith(
-      expect.anything(),
-      '11111111-1111-4111-8111-111111111111',
+      expect.objectContaining({
+        chain: expect.anything(),
+        logger: expect.anything(),
+      }),
+      { leaseUuid: '11111111-1111-4111-8111-111111111111' },
     );
 
     // Verify the orchestrator threw after recovery (caller expected to
@@ -3753,11 +3758,15 @@ describe('deployApp — retry_set_domain decomposition (ENG-185 sub-PR E)', () =
     const fred = await import('@manifest-network/manifest-mcp-fred');
     const core = await import('@manifest-network/manifest-mcp-core');
 
-    // setItemCustomDomain called with the right lease + domain.
+    // setItemCustomDomain called with the right lease + domain (ctx-shaped:
+    // arg[0] is the TxCtx, arg[1] is the branded SET-arm input object).
     expect(vi.mocked(core.setItemCustomDomain)).toHaveBeenCalledTimes(1);
     const setDomainCall = vi.mocked(core.setItemCustomDomain).mock.calls[0];
-    expect(setDomainCall?.[1]).toBe(leaseUuid);
-    expect(setDomainCall?.[2]).toBe('app.testnet.manifest.app');
+    expect(setDomainCall?.[1]).toEqual({
+      leaseUuid,
+      customDomain: 'app.testnet.manifest.app',
+      serviceName: undefined,
+    });
 
     // uploadLeaseData called with provider URL, leaseUuid, payload, token.
     expect(vi.mocked(fred.uploadLeaseData)).toHaveBeenCalledTimes(1);
@@ -4213,7 +4222,7 @@ describe('deployApp — C2 plan-edit roundtrip propagates edited size (ENG-185 #
       provider_url: deployResp.provider_url as string,
       state: deployResp.state as never,
       connection: deployResp.connection,
-    } as Awaited<ReturnType<typeof fred.deployApp>>);
+    } as unknown as Awaited<ReturnType<typeof fred.deployApp>>);
 
     const core = await import('@manifest-network/manifest-mcp-core');
     // Size-agnostic fee estimate; the edited size shows up in the
@@ -4428,5 +4437,162 @@ describe('deployApp — C2 plan-edit roundtrip propagates edited size (ENG-185 #
     } finally {
       rmSync(dataDir, { recursive: true, force: true });
     }
+  });
+});
+
+// ---- ENG-309: Task 5 ------------------------------------------------
+// Pin the deliberate snake→camel DeployResult projection so a future
+// canonical-type adoption (Plan 3b) can't silently flatten it. The test
+// binds to the same 01-fast-path-active fixture + vi.mocked harness that
+// the surrounding tests use — no new mock framework; no production change.
+//
+// Wire DTO (fred DeployAppResult / core DeployResult, snake_case):
+//   lease_uuid, provider_uuid, provider_url, state (LeaseState numeric/enum),
+//   url?, connection?, connectionError?, custom_domain?, service_name?
+//
+// agent-core projection (camelCase, deploy-app.ts:828-842):
+//   leaseUuid    ← lease_uuid            (direct rename)
+//   providerUuid ← provider_uuid         (direct rename)
+//   leaseState   ← decode(state)         (TRANSFORMED: string union, not the enum value)
+//   urls         ← extractRunningEndpoints(connection).map(formatEndpointAsUrl) w/ url fallback
+//                                        (DERIVED list, not a 1:1 of `url`)
+//   customDomain ← custom_domain?        (conditional spread)
+//   manifestPath ← persistedPath ?? ''   (AGENT-CORE ONLY: no wire counterpart)
+//   DROPPED:     provider_url, connectionError, service_name
+describe('DeployResult snake→camel projection (deliberate, not a 1:1 rename) (ENG-309)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('maps direct wire id/domain fields and transforms state/urls; drops provider_url and service_name', async () => {
+    // Use the 01-fast-path-active fixture — the canonical happy-path
+    // fixture whose deploy-response.json seeds a running FQDN instance,
+    // so `urls` is non-empty and the assertion is strong.
+    const FRED_FIXTURE = readFixture(
+      'skills',
+      'deploy-app',
+      '01-fast-path-active',
+      'input',
+      'deploy-response.json',
+    ) as Record<string, unknown>;
+
+    // The fixture has:
+    //   lease_uuid:   "11111111-1111-4111-8111-111111111111"
+    //   provider_uuid: "22222222-2222-4222-8222-222222222222"
+    //   provider_url:  "https://provider.testnet.manifest.network"
+    //   state:         "LEASE_STATE_ACTIVE"
+    //   connection.instances[0]: { status: "running", fqdn: "nginx-11111111.testnet.manifest.app" }
+    // Expected projection:
+    //   leaseUuid:    "11111111-1111-4111-8111-111111111111"   (direct rename)
+    //   providerUuid: "22222222-2222-4222-8222-222222222222"   (direct rename)
+    //   leaseState:   "LEASE_STATE_ACTIVE"                     (string, decoded)
+    //   urls:         ["https://nginx-11111111.testnet.manifest.app/"]  (derived)
+    //   manifestPath: ""  (no dataDir → persistedPath is undefined)
+    //   provider_url: ABSENT                                   (dropped)
+    //   service_name: ABSENT                                   (dropped)
+
+    const spec = readFixture(
+      'skills',
+      'deploy-app',
+      '01-fast-path-active',
+      'input',
+      'spec.json',
+    ) as DeploySpec;
+    const readinessRaw = readFixture(
+      'skills',
+      'deploy-app',
+      '01-fast-path-active',
+      'input',
+      'readiness-response.json',
+    );
+    const metaHashResp = readFixture(
+      'skills',
+      'deploy-app',
+      '01-fast-path-active',
+      'input',
+      'meta-hash-response.json',
+    ) as { manifest_json: string; meta_hash_hex: string };
+
+    const fred = await import('@manifest-network/manifest-mcp-fred');
+    vi.mocked(fred.checkDeploymentReadiness).mockResolvedValue(
+      readinessRaw as unknown as Awaited<
+        ReturnType<typeof fred.checkDeploymentReadiness>
+      >,
+    );
+    vi.mocked(fred.buildManifestPreview).mockResolvedValue({
+      manifest_json: metaHashResp.manifest_json,
+      meta_hash_hex: metaHashResp.meta_hash_hex,
+    } as Awaited<ReturnType<typeof fred.buildManifestPreview>>);
+    // Seed the fred wire response from the known fixture + add an
+    // explicit service_name to confirm it is NOT projected.
+    vi.mocked(fred.deployApp).mockResolvedValue({
+      lease_uuid: FRED_FIXTURE.lease_uuid as string,
+      provider_uuid: FRED_FIXTURE.provider_uuid as string,
+      provider_url: FRED_FIXTURE.provider_url as string,
+      state: FRED_FIXTURE.state as never,
+      connection: FRED_FIXTURE.connection,
+      service_name: 'web',
+    } as unknown as Awaited<ReturnType<typeof fred.deployApp>>);
+
+    const core = await import('@manifest-network/manifest-mcp-core');
+    vi.mocked(core.cosmosEstimateFee).mockResolvedValue({
+      module: 'billing',
+      subcommand: 'create-lease',
+      gasEstimate: '142000',
+      fee: { amount: [{ denom: 'umfx', amount: '2300' }], gas: '142000' },
+    } as Awaited<ReturnType<typeof core.cosmosEstimateFee>>);
+
+    const { callbacks } = captureCallbacks();
+    const { deployApp } = await import('./deploy-app.js');
+    const clientManager = makeMockClientManager();
+    const walletProvider = makeMockWalletProvider();
+
+    const result = await deployApp(spec, callbacks, {
+      clientManager: clientManager as unknown as Parameters<
+        typeof deployApp
+      >[2]['clientManager'],
+      walletProvider,
+      // No dataDir: manifestPath is persisted to '' (no-op path).
+    });
+
+    // ── Direct renames ──────────────────────────────────────────────────
+    expect(result.leaseUuid).toBe(FRED_FIXTURE.lease_uuid);
+    expect(result.providerUuid).toBe(FRED_FIXTURE.provider_uuid);
+    // No custom_domain in the fixture → the conditional spread omits the
+    // customDomain key entirely from the result.
+    expect('customDomain' in result).toBe(false);
+
+    // ── Deliberate transforms (NOT trivial renames) ─────────────────────
+    // leaseState is a STRING (decoded LeaseStateName union), NOT the raw
+    // numeric enum value that arrives on the wire. If this ever becomes a
+    // number the Plan 3b canonical-type adoption broke the decoder.
+    expect(typeof result.leaseState).toBe('string');
+    expect(result.leaseState).toBe('LEASE_STATE_ACTIVE');
+
+    // urls is a DERIVED array from extractRunningEndpoints(connection),
+    // not a 1:1 copy of the wire `url` field. The fixture seeds one
+    // running FQDN instance, so the list is non-empty and fully formed.
+    expect(Array.isArray(result.urls)).toBe(true);
+    expect(result.urls.length).toBeGreaterThan(0);
+    expect(result.urls[0]).toBe('https://nginx-11111111.testnet.manifest.app/');
+
+    // manifestPath is agent-core-only (no wire counterpart). The
+    // projection is `persistedPath ?? ''`; with NO dataDir supplied to
+    // this deploy, tryPersistManifest short-circuits to `undefined`
+    // (deploy-app.ts:1597), so manifestPath is the empty string. Pinning
+    // the exact value (not just `typeof === 'string'`, which the type
+    // already guarantees) catches a refactor that drops the `?? ''`
+    // fallback or wires persistence on by default.
+    expect(result.manifestPath).toBe('');
+
+    // ── Fields intentionally DROPPED from the projection ───────────────
+    // provider_url is a fred wire field that agent-core deliberately
+    // omits from its typed DeployResult (it is internal fred routing
+    // data, not consumer-facing).
+    expect('provider_url' in result).toBe(false);
+    // service_name is a fred wire field (set when customDomain + serviceName
+    // are supplied together). agent-core exposes customDomain but not
+    // service_name in its projection.
+    expect('service_name' in result).toBe(false);
   });
 });

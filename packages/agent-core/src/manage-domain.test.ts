@@ -424,10 +424,15 @@ describe('manageDomain — set', () => {
     expect(confirms).toHaveLength(1);
     expect(confirms[0]?.text).toBe(expectedBlock);
     expect(core.setItemCustomDomain).toHaveBeenCalledWith(
-      clientManager,
-      '11111111-1111-4111-8111-111111111111',
-      'app.testnet.manifest.app',
-      undefined, // no serviceName on legacy single-item lease
+      expect.objectContaining({
+        chain: expect.anything(),
+        logger: expect.anything(),
+      }),
+      {
+        leaseUuid: '11111111-1111-4111-8111-111111111111',
+        customDomain: 'app.testnet.manifest.app',
+        serviceName: undefined, // no serviceName on legacy single-item lease
+      },
     );
   });
 
@@ -533,10 +538,15 @@ describe('manageDomain — set', () => {
     expect(completed).toEqual([expected]);
     expect(confirms[0]?.text).toBe(expectedBlock);
     expect(core.setItemCustomDomain).toHaveBeenCalledWith(
-      clientManager,
-      '11111111-1111-4111-8111-111111111111',
-      'api.testnet.manifest.app',
-      { serviceName: 'web' },
+      expect.objectContaining({
+        chain: expect.anything(),
+        logger: expect.anything(),
+      }),
+      {
+        leaseUuid: '11111111-1111-4111-8111-111111111111',
+        customDomain: 'api.testnet.manifest.app',
+        serviceName: 'web',
+      },
     );
   });
 
@@ -742,16 +752,85 @@ describe('manageDomain — set', () => {
 
     // Broadcast received the trimmed form.
     expect(core.setItemCustomDomain).toHaveBeenCalledWith(
-      clientManager,
-      '11111111-1111-4111-8111-111111111111',
-      'app.example.com',
-      undefined,
+      expect.objectContaining({
+        chain: expect.anything(),
+        logger: expect.anything(),
+      }),
+      {
+        leaseUuid: '11111111-1111-4111-8111-111111111111',
+        customDomain: 'app.example.com',
+        serviceName: undefined,
+      },
     );
     // Confirm block displays the trimmed form (no leading/trailing
     // whitespace in the FQDN line).
     expect(confirms[0]?.text).toContain('FQDN:         app.example.com\n');
     expect(confirms[0]?.text).not.toContain('  app.example.com  ');
     // Result carries the verified domain.
+    expect(result).toEqual({
+      action: 'set',
+      leaseUuid: '11111111-1111-4111-8111-111111111111',
+      verified: true,
+      finalCustomDomain: 'app.example.com',
+    });
+  });
+
+  it('set lowercases a mixed-case FQDN so broadcast and verify use the same normalized value', async () => {
+    // Regression (code-review PR #102): `parseFqdn` lowercases the
+    // broadcast value (RFC 4343), so the post-broadcast verification must
+    // compare against the SAME lowercased value. Previously `expected`
+    // used the un-lowercased input, so a mixed-case FQDN produced a false
+    // `mismatch` (spurious TX_FAILED) after a successful on-chain set.
+    const core = await import('@manifest-network/manifest-mcp-core');
+    vi.mocked(core.setItemCustomDomain).mockResolvedValue({
+      lease_uuid: '11111111-1111-4111-8111-111111111111',
+      service_name: '',
+      custom_domain: 'app.example.com',
+      transactionHash: 'DEADBEEF',
+      code: 0,
+    } as Awaited<ReturnType<typeof core.setItemCustomDomain>>);
+
+    const queryClient = makeMockQueryClient();
+    // The chain stores what was broadcast — the lowercased domain.
+    queryClient.liftedinit.billing.v1.lease.mockResolvedValue({
+      lease: {
+        uuid: '11111111-1111-4111-8111-111111111111',
+        items: [{ serviceName: '', customDomain: 'app.example.com' }],
+      },
+    });
+    const clientManager = makeMockClientManager(queryClient);
+    const { callbacks, failures } = captureCallbacks('yes');
+    const { manageDomain } = await import('./manage-domain.js');
+
+    const result = await manageDomain(
+      {
+        action: 'set',
+        leaseUuid: '11111111-1111-4111-8111-111111111111',
+        fqdn: 'App.Example.COM',
+      },
+      callbacks,
+      {
+        clientManager: clientManager as unknown as Parameters<
+          typeof manageDomain
+        >[2]['clientManager'],
+      },
+    );
+
+    // Broadcast received the lowercased form.
+    expect(core.setItemCustomDomain).toHaveBeenCalledWith(
+      expect.objectContaining({
+        chain: expect.anything(),
+        logger: expect.anything(),
+      }),
+      {
+        leaseUuid: '11111111-1111-4111-8111-111111111111',
+        customDomain: 'app.example.com',
+        serviceName: undefined,
+      },
+    );
+    // Verification matched the lowercased chain value → success, not a
+    // spurious mismatch.
+    expect(failures).toEqual([]);
     expect(result).toEqual({
       action: 'set',
       leaseUuid: '11111111-1111-4111-8111-111111111111',
@@ -989,10 +1068,15 @@ describe('manageDomain — clear', () => {
     expect(completed).toEqual([expected]);
     expect(confirms[0]?.text).toBe(expectedBlock);
     expect(core.setItemCustomDomain).toHaveBeenCalledWith(
-      clientManager,
-      '11111111-1111-4111-8111-111111111111',
-      '',
-      { clear: true },
+      expect.objectContaining({
+        chain: expect.anything(),
+        logger: expect.anything(),
+      }),
+      {
+        leaseUuid: '11111111-1111-4111-8111-111111111111',
+        clear: true,
+        serviceName: undefined,
+      },
     );
   });
 
@@ -1043,10 +1127,15 @@ describe('manageDomain — clear', () => {
     expect(result.finalCustomDomain).toBeNull();
     expect(completed).toHaveLength(1);
     expect(core.setItemCustomDomain).toHaveBeenCalledWith(
-      clientManager,
-      '11111111-1111-4111-8111-111111111111',
-      '',
-      { clear: true, serviceName: 'web' },
+      expect.objectContaining({
+        chain: expect.anything(),
+        logger: expect.anything(),
+      }),
+      {
+        leaseUuid: '11111111-1111-4111-8111-111111111111',
+        clear: true,
+        serviceName: 'web',
+      },
     );
   });
 });

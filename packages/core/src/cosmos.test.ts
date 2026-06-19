@@ -42,8 +42,32 @@ function makeMockClientManager() {
     getSigningClient: vi.fn().mockResolvedValue({ mock: 'signingClient' }),
     getAddress: vi.fn().mockResolvedValue('manifest1sender'),
     getConfig: vi.fn().mockReturnValue({ retry: { maxRetries: 3 } }),
+    // Passthrough lock — sufficient for the single-cosmosTx tests. The
+    // concurrency test below supplies the REAL serializing promise-chain.
+    withBroadcastLock: vi
+      .fn()
+      .mockImplementation(<T>(_addr: string, fn: () => Promise<T>) => fn()),
     disconnect: vi.fn(),
   } as any;
+}
+
+// Real per-signer serializing lock — a faithful copy of CosmosClientManager's
+// promise-chain (run = prev.then(fn, fn); store a swallowed tail). Used by the
+// concurrency test, where a passthrough would not prove serialization.
+function makeRealBroadcastLock() {
+  const locks = new Map<string, Promise<unknown>>();
+  return <T>(address: string, fn: () => Promise<T>): Promise<T> => {
+    const prev = locks.get(address) ?? Promise.resolve();
+    const run = prev.then(fn, fn);
+    locks.set(
+      address,
+      run.then(
+        () => undefined,
+        () => undefined,
+      ),
+    );
+    return run;
+  };
 }
 
 describe('cosmosQuery', () => {
@@ -246,6 +270,7 @@ describe('cosmosTx', () => {
       false,
       undefined,
       undefined,
+      undefined,
     );
     expect(result).toEqual(txResult);
   });
@@ -268,6 +293,7 @@ describe('cosmosTx', () => {
       'send',
       [],
       true,
+      undefined,
       undefined,
       undefined,
     );
@@ -368,11 +394,54 @@ describe('cosmosTx', () => {
     await cosmosTx(clientManager, 'bank', 'send', []);
 
     expect(callOrder).toEqual([
+      'getAddress',
       'rateLimit',
       'getClient',
-      'getAddress',
       'handler',
     ]);
+  });
+
+  it('serializes concurrent cosmosTx calls for the same sender', async () => {
+    // Real serializing lock: two concurrent broadcasts for the same address
+    // must run sequentially (the 2nd handler starts only after the 1st settles).
+    clientManager.withBroadcastLock.mockImplementation(makeRealBroadcastLock());
+    const order: string[] = [];
+    const mockHandler = vi
+      .fn()
+      .mockImplementationOnce(async () => {
+        order.push('h1-start');
+        await new Promise<void>((r) =>
+          setTimeout(() => {
+            order.push('h1-end');
+            r();
+          }, 30),
+        );
+        return {
+          module: 'bank',
+          subcommand: 'send',
+          transactionHash: 'A',
+          code: 0,
+          height: '1',
+        };
+      })
+      .mockImplementationOnce(async () => {
+        order.push('h2-start');
+        return {
+          module: 'bank',
+          subcommand: 'send',
+          transactionHash: 'B',
+          code: 0,
+          height: '2',
+        };
+      });
+    mockGetTxHandler.mockReturnValue(mockHandler);
+
+    const p1 = cosmosTx(clientManager, 'bank', 'send', ['1']);
+    const p2 = cosmosTx(clientManager, 'bank', 'send', ['2']);
+    await Promise.all([p1, p2]);
+
+    // h2 did not start until h1 fully settled.
+    expect(order).toEqual(['h1-start', 'h1-end', 'h2-start']);
   });
 
   it('rejects gasMultiplier < 1', async () => {
@@ -456,6 +525,69 @@ describe('cosmosTx', () => {
       false,
       { gasMultiplier: 2.5, gasPrice: '1.0umfx' },
       undefined,
+      undefined,
+    );
+  });
+
+  it('rejects fee + gasMultiplier together with INVALID_CONFIG (mutual exclusion)', async () => {
+    mockGetTxHandler.mockReturnValue(vi.fn());
+    // gasPrice present so the failure is the mutual-exclusion guard, not the
+    // gasMultiplier-needs-gasPrice guard.
+    clientManager.getConfig.mockReturnValue({
+      retry: { maxRetries: 3 },
+      gasPrice: '1.0umfx',
+    });
+
+    await expect(
+      cosmosTx(
+        clientManager,
+        'billing',
+        'fund-credit',
+        ['manifest1tenant', '100umfx'],
+        false,
+        { gasMultiplier: 2.0 },
+        { fee: { amount: [{ denom: 'umfx', amount: '5' }], gas: '200000' } },
+      ),
+    ).rejects.toMatchObject({
+      code: ManifestMCPErrorCode.INVALID_CONFIG,
+      message: expect.stringContaining('fee'),
+    });
+  });
+
+  it('threads txExtras to the handler as the 8th argument', async () => {
+    const mockHandler = vi.fn().mockResolvedValue({
+      module: 'billing',
+      subcommand: 'fund-credit',
+      transactionHash: 'X',
+      code: 0,
+      height: '1',
+    });
+    mockGetTxHandler.mockReturnValue(mockHandler);
+
+    const txExtras = {
+      fee: { amount: [{ denom: 'umfx', amount: '9' }], gas: '300000' },
+      memo: 'hello',
+    };
+
+    await cosmosTx(
+      clientManager,
+      'billing',
+      'fund-credit',
+      ['manifest1tenant', '100umfx'],
+      false,
+      undefined,
+      txExtras,
+    );
+
+    expect(mockHandler).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      'fund-credit',
+      ['manifest1tenant', '100umfx'],
+      false,
+      undefined,
+      undefined,
+      txExtras,
     );
   });
 
@@ -503,6 +635,7 @@ describe('cosmosTx', () => {
       false,
       undefined,
       { currentBillingParams: onChainParams },
+      undefined,
     );
   });
 
@@ -525,6 +658,7 @@ describe('cosmosTx', () => {
       'send',
       ['addr', '100umfx'],
       false,
+      undefined,
       undefined,
       undefined,
     );

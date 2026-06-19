@@ -279,22 +279,23 @@ describe('patchWasmQueryData', () => {
     expect(result.data).toBe('already-base64-encoded');
   });
 
-  it('warns and skips methods that do not exist on the module', async () => {
-    const { logger } = await import('./logger.js');
-    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
-
+  it('warns and skips methods that do not exist on the module', () => {
+    const spy = {
+      warn: vi.fn(),
+      debug: vi.fn(),
+      info: vi.fn(),
+      error: vi.fn(),
+    };
     expect(() =>
-      patchWasmQueryData({ otherMethod: vi.fn(), req: {} }),
+      patchWasmQueryData({ otherMethod: vi.fn(), req: {} }, spy),
     ).not.toThrow();
-
-    expect(warnSpy).toHaveBeenCalledTimes(2);
-    expect(warnSpy).toHaveBeenCalledWith(
+    expect(spy.warn).toHaveBeenCalledTimes(2);
+    expect(spy.warn).toHaveBeenCalledWith(
       expect.stringContaining('smartContractState'),
     );
-    expect(warnSpy).toHaveBeenCalledWith(
+    expect(spy.warn).toHaveBeenCalledWith(
       expect.stringContaining('rawContractState'),
     );
-    warnSpy.mockRestore();
   });
 
   it('returns a new object without mutating the original', () => {

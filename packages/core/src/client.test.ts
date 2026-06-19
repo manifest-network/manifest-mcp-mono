@@ -62,15 +62,6 @@ vi.mock('./lcd-adapter.js', () => ({
   createLCDQueryClient: vi.fn().mockResolvedValue({ mock: 'lcdClient' }),
 }));
 
-vi.mock('./logger.js', () => ({
-  logger: {
-    warn: vi.fn(),
-    debug: vi.fn(),
-    info: vi.fn(),
-    error: vi.fn(),
-  },
-}));
-
 vi.mock('./retry.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./retry.js')>();
   return {
@@ -90,7 +81,7 @@ import {
 } from '@manifest-network/manifestjs';
 import { CosmosClientManager } from './client.js';
 import { createLCDQueryClient } from './lcd-adapter.js';
-import { logger } from './logger.js';
+import { noopLogger } from './logger.js';
 import type { ManifestMCPConfig, WalletProvider } from './types.js';
 
 const mockCreateLCDQueryClient = vi.mocked(createLCDQueryClient);
@@ -120,6 +111,10 @@ function makeWallet(overrides?: Partial<WalletProvider>): WalletProvider {
     getSigner: vi.fn().mockResolvedValue({}),
     ...overrides,
   };
+}
+
+function makeSpyLogger() {
+  return { warn: vi.fn(), debug: vi.fn(), info: vi.fn(), error: vi.fn() };
 }
 
 describe('CosmosClientManager', () => {
@@ -358,15 +353,15 @@ describe('CosmosClientManager', () => {
     it('warns when defaultGasMultiplier is absent', async () => {
       const mockSC = { disconnect: vi.fn() };
       mockConnectWithSigner.mockResolvedValue(mockSC as any);
-
+      const spyLogger = makeSpyLogger();
       const instance = CosmosClientManager.getInstance(
         makeConfig(),
         makeWallet(),
       );
+      instance.setLogger(spyLogger);
       await instance.getSigningClient();
-
       expect((mockSC as any).defaultGasMultiplier).toBeUndefined();
-      expect(logger.warn).toHaveBeenCalledWith(
+      expect(spyLogger.warn).toHaveBeenCalledWith(
         expect.stringContaining('could not be applied'),
       );
     });
@@ -374,16 +369,44 @@ describe('CosmosClientManager', () => {
     it('warns with custom multiplier when defaultGasMultiplier is absent', async () => {
       const mockSC = { disconnect: vi.fn() };
       mockConnectWithSigner.mockResolvedValue(mockSC as any);
-
+      const spyLogger = makeSpyLogger();
       const instance = CosmosClientManager.getInstance(
         makeConfig({ gasMultiplier: 2.0 }),
         makeWallet(),
       );
+      instance.setLogger(spyLogger);
       await instance.getSigningClient();
-
-      expect(logger.warn).toHaveBeenCalledWith(
+      expect(spyLogger.warn).toHaveBeenCalledWith(
         expect.stringContaining('gasMultiplier 2 could not be applied'),
       );
+    });
+
+    it('setLogger is non-key: re-getInstance with the same config/wallet returns the SAME instance', () => {
+      // setLogger is a pure field assignment, NOT part of the getInstance key — so calling it between
+      // two same-key getInstance calls must NOT fragment the singleton (the load-bearing non-key proof).
+      // SAME wallet reference both calls — a fresh makeWallet() would trip the reference-equality
+      // wallet-invalidation gate (client.ts:182-185). Non-invalidation is INHERENT (setLogger only does
+      // `this.logger = logger`); the cached-signing-client / disconnect path is deliberately NOT asserted
+      // here because a single getSigningClient() in this MOCKED harness always hits the supersede-promise
+      // disconnect and never caches `this.signingClient` (a pre-existing timing quirk, documented in the
+      // getSigningClient describe block's omission note ~client.test.ts:444-446) — so a disconnect/caching
+      // assertion would fail for reasons unrelated to setLogger.
+      const w = makeWallet();
+      const a = CosmosClientManager.getInstance(makeConfig(), w);
+      a.setLogger(makeSpyLogger());
+      const b = CosmosClientManager.getInstance(makeConfig(), w);
+      expect(b).toBe(a);
+    });
+
+    it('is SILENT by default when setLogger is never called (the warn goes to the frozen noopLogger)', async () => {
+      const mockSC = { disconnect: vi.fn() }; // no defaultGasMultiplier → triggers the warn branch
+      mockConnectWithSigner.mockResolvedValue(mockSC as any);
+      const instance = CosmosClientManager.getInstance(
+        makeConfig(),
+        makeWallet(),
+      );
+      // No setLogger → this.logger is the real frozen noopLogger; the warn must be swallowed, no throw.
+      await expect(instance.getSigningClient()).resolves.toBeDefined();
     });
 
     it('creates and returns signing client', async () => {
@@ -632,6 +655,7 @@ describe('CosmosClientManager', () => {
       const client = await instance.getQueryClient();
       expect(mockCreateLCDQueryClient).toHaveBeenCalledWith(
         'https://rest.example.com',
+        noopLogger,
       );
       expect(mockCreateRPCQueryClient).not.toHaveBeenCalled();
       expect(client).toEqual({ mock: 'lcdClient' });
@@ -645,6 +669,7 @@ describe('CosmosClientManager', () => {
       await instance.getQueryClient();
       expect(mockCreateLCDQueryClient).toHaveBeenCalledWith(
         'https://rest.example.com',
+        noopLogger,
       );
       expect(mockCreateRPCQueryClient).not.toHaveBeenCalled();
     });
@@ -754,6 +779,109 @@ describe('CosmosClientManager', () => {
       const after = (b as unknown as { rateLimiter: unknown }).rateLimiter;
       expect(a).toBe(b);
       expect(after).toBe(before);
+    });
+  });
+
+  describe('withBroadcastLock', () => {
+    it('serializes same-address fns', async () => {
+      const mgr = CosmosClientManager.getInstance(
+        makeConfig({ chainId: 'lock-serialize' }),
+        makeWallet(),
+      );
+      const order: string[] = [];
+      const slow = () =>
+        new Promise<void>((r) =>
+          setTimeout(() => {
+            order.push('a-end');
+            r();
+          }, 30),
+        );
+      const fast = () => {
+        order.push('b-run');
+        return Promise.resolve();
+      };
+      const p1 = mgr.withBroadcastLock('addr1', async () => {
+        order.push('a-start');
+        await slow();
+      });
+      const p2 = mgr.withBroadcastLock('addr1', fast);
+      await Promise.all([p1, p2]);
+      expect(order).toEqual(['a-start', 'a-end', 'b-run']); // b waited for a
+      mgr.disconnect();
+    });
+
+    it('runs different addresses concurrently', async () => {
+      const mgr = CosmosClientManager.getInstance(
+        makeConfig({ chainId: 'lock-concurrent' }),
+        makeWallet(),
+      );
+      let bStarted = false;
+      const p1 = mgr.withBroadcastLock(
+        'addr1',
+        () => new Promise<void>((r) => setTimeout(r, 30)),
+      );
+      const p2 = mgr.withBroadcastLock('addr2', async () => {
+        bStarted = true;
+      });
+      await p2;
+      expect(bStarted).toBe(true); // did not wait for addr1
+      await p1;
+      mgr.disconnect();
+    });
+
+    it('releases the lock on throw (next waiter still runs)', async () => {
+      const mgr = CosmosClientManager.getInstance(
+        makeConfig({ chainId: 'lock-release' }),
+        makeWallet(),
+      );
+      await expect(
+        mgr.withBroadcastLock('a', () => Promise.reject(new Error('boom'))),
+      ).rejects.toThrow('boom');
+      await expect(
+        mgr.withBroadcastLock('a', () => Promise.resolve('ok')),
+      ).resolves.toBe('ok');
+      mgr.disconnect();
+    });
+
+    it('releases broadcast-lock entries as their chains drain (bounded map growth)', async () => {
+      // Code-review PR #102 + Copilot: withBroadcastLock must release a
+      // per-address entry once its queued chain drains, so a long-lived manager
+      // broadcasting from many distinct addresses does not grow the map without
+      // bound (the common single-signer case sits at size 0 between broadcasts).
+      const mgr = CosmosClientManager.getInstance(
+        makeConfig({ chainId: 'lock-bounded' }),
+        makeWallet(),
+      );
+      const locks = (mgr as unknown as { broadcastLocks: Map<string, unknown> })
+        .broadcastLocks;
+      await mgr.withBroadcastLock('addr1', () => Promise.resolve());
+      await mgr.withBroadcastLock('addr2', () => Promise.resolve());
+      // delete-on-settle runs a microtask after each tail settles — flush them.
+      for (let i = 0; i < 5; i++) await Promise.resolve();
+      expect(locks.size).toBe(0); // drained entries released, not retained
+      mgr.disconnect();
+    });
+
+    it('teardown clears an in-flight broadcast-lock entry', async () => {
+      // Belt-and-suspenders for the delete-on-settle above: a broadcast still
+      // in flight at disconnect time has a live map entry; teardown() clears it
+      // immediately so a reused config key starts clean (code-review PR #102).
+      const mgr = CosmosClientManager.getInstance(
+        makeConfig({ chainId: 'lock-teardown' }),
+        makeWallet(),
+      );
+      const locks = (mgr as unknown as { broadcastLocks: Map<string, unknown> })
+        .broadcastLocks;
+      let release!: () => void;
+      const pending = new Promise<void>((r) => {
+        release = r;
+      });
+      const inflight = mgr.withBroadcastLock('addr1', () => pending);
+      expect(locks.size).toBe(1); // entry present while the broadcast is in flight
+      mgr.disconnect(); // refCount 0 → teardown clears the map immediately
+      expect(locks.size).toBe(0);
+      release();
+      await inflight;
     });
   });
 });

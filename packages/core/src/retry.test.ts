@@ -108,6 +108,16 @@ describe('isRetryableError', () => {
       expect(isRetryableError(new Error('429 Too Many Requests'))).toBe(true);
     });
 
+    it('does NOT retry a cosmjs broadcast-confirmation timeout (submitted-but-not-found ⇒ no re-broadcast)', () => {
+      // Verbatim @cosmjs/stargate TimeoutError message — must NOT match any transient pattern in retry.ts
+      // (notably it contains NO "timed out"/"timeout"/"etimedout" substring, unlike a network ETIMEDOUT).
+      const err = new Error(
+        'Transaction with ID ABCDEF was submitted but was not yet found on the chain. ' +
+          'You might want to check later. There was a wait of 30 seconds.',
+      );
+      expect(isRetryableError(err)).toBe(false);
+    });
+
     it('should not retry generic errors without transient indicators', () => {
       expect(isRetryableError(new Error('Something went wrong'))).toBe(false);
       expect(isRetryableError(new Error('Invalid input'))).toBe(false);
@@ -252,5 +262,18 @@ describe('DEFAULT_RETRY_CONFIG', () => {
     expect(DEFAULT_RETRY_CONFIG.maxRetries).toBe(3);
     expect(DEFAULT_RETRY_CONFIG.baseDelayMs).toBe(1000);
     expect(DEFAULT_RETRY_CONFIG.maxDelayMs).toBe(10000);
+  });
+});
+
+describe('INVALID_ARGUMENT is a non-retryable input error', () => {
+  it('exists on the enum', () => {
+    expect(ManifestMCPErrorCode.INVALID_ARGUMENT).toBe('INVALID_ARGUMENT');
+  });
+  it('is classified non-retryable', () => {
+    const err = new ManifestMCPError(
+      ManifestMCPErrorCode.INVALID_ARGUMENT,
+      'bad',
+    );
+    expect(isRetryableError(err)).toBe(false);
   });
 });

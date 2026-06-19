@@ -1,107 +1,89 @@
-import type { CosmosClientManager } from '../client.js';
+import { asFqdn, type Fqdn, type LeaseUuid } from '../brands.js';
 import { cosmosTx } from '../cosmos.js';
-import {
-  ManifestMCPError,
-  ManifestMCPErrorCode,
-  type TxOverrides,
-} from '../types.js';
+import type { TxCtx } from '../ctx.js';
+import { withTxConfirmation } from '../internals/tx-confirmation.js';
+import { txExtrasFrom, txOverridesFrom } from '../internals/tx-opts.js';
+import type { TxCallOptions } from '../options.js';
 
 /**
- * Options accepted by `setItemCustomDomain`.
+ * Discriminated-union input for {@link setItemCustomDomain}. The two arms are
+ * structurally mutually exclusive — you CANNOT construct a set arm without a
+ * `customDomain`, nor a clear arm carrying one — so the old runtime
+ * mutual-exclusion / empty-domain guards are gone (unreachable). The set arm
+ * carries an already-branded, boundary-validated `Fqdn` (validated/normalized
+ * once at the MCP boundary via `parseFqdn`); this fn does NOT re-trim or
+ * re-validate (parse-once, ENG-258).
  *
- * - `serviceName` addresses a specific item inside a stack lease (RFC 1123
- *   DNS label). Omit for a 1-item legacy lease. The chain validates the
- *   label; the underlying CLI builder also rejects malformed values
- *   client-side before broadcast.
- * - `clear` is mutually exclusive with a non-empty `customDomain`. Setting
- *   it to `true` instructs the helper to broadcast a clear of the existing
- *   domain; passing `false` (or omitting it) instructs a set, which then
- *   requires `customDomain` to be non-empty.
+ * - `serviceName` addresses a specific item inside a stack lease; omit for a
+ *   1-item legacy lease. The chain validates the label.
  */
-export interface SetItemCustomDomainOptions {
-  readonly serviceName?: string;
-  readonly clear?: boolean;
-}
+export type SetItemCustomDomainInput =
+  | { leaseUuid: LeaseUuid; customDomain: Fqdn; serviceName?: string }
+  | { leaseUuid: LeaseUuid; clear: true; serviceName?: string };
 
 export interface SetItemCustomDomainResult {
-  readonly lease_uuid: string;
+  readonly lease_uuid: LeaseUuid;
   readonly service_name: string;
-  readonly custom_domain: string;
+  readonly custom_domain: Fqdn;
   readonly transactionHash: string;
   readonly code: number;
 }
 
 /**
  * Set or clear the `custom_domain` on a billing lease item via
- * `MsgSetItemCustomDomain`. Mirrors the `set_item_custom_domain` MCP tool's
- * input contract so library consumers and MCP clients see consistent
- * validation:
+ * `MsgSetItemCustomDomain`.
  *
- * - `customDomain` is rejected (`INVALID_CONFIG`) when non-empty and
- *   `options.clear` is also true (mutual exclusion), or when empty/
- *   whitespace-only and `options.clear` is not true (the chain accepts
- *   `customDomain == ""` as the canonical clear form, so a missing
- *   `--clear` flag would silently clear instead of rejecting).
- * - Surrounding whitespace on a non-empty `customDomain` is trimmed
- *   before forwarding to the chain, so both library callers and the
- *   `cosmos_tx`-routed CLI form ship the same canonical FQDN.
- * - The chain validates FQDN format and reserved-suffix rules; the helper
- *   does not duplicate that check.
+ * - The SET arm forwards the already-branded `Fqdn` verbatim (no re-trim /
+ *   re-validate). The chain remains the authoritative validator (FQDN format,
+ *   reserved-suffix rules).
+ * - The CLEAR arm passes `--clear` and echoes `asFqdn('')` (a trust-cast: it
+ *   does NOT throw or lowercase — see 4c-reads-B OI-ASFQDN), since the chain
+ *   accepts `custom_domain == ""` as the canonical clear form.
+ * - NO `requireAuthSigner`: the wallet is on `ctx.chain` (not `ctx.signer`,
+ *   which is intentionally unset here); the query-only `INVALID_CONFIG` guard
+ *   comes downstream from `cosmosTx → ctx.chain.getSigningClient()`. See
+ *   OI-SENDER.
+ * - `opts.signal` bounds the AWAIT of the confirmation only — a submitted tx
+ *   cannot be un-broadcast; on abort the tx may still commit (re-query the
+ *   chain). See {@link withTxConfirmation}.
  *
  * Authorised signers per `MsgSetItemCustomDomain.ValidateBasic`: the lease
  * tenant, the module authority, or any address in `params.allowed_list`.
  */
 export async function setItemCustomDomain(
-  clientManager: CosmosClientManager,
-  leaseUuid: string,
-  customDomain: string,
-  options?: SetItemCustomDomainOptions,
-  overrides?: TxOverrides,
+  ctx: TxCtx,
+  input: SetItemCustomDomainInput,
+  opts?: TxCallOptions,
 ): Promise<SetItemCustomDomainResult> {
-  const clearing = options?.clear === true;
-  if (clearing && customDomain.trim() !== '') {
-    throw new ManifestMCPError(
-      ManifestMCPErrorCode.INVALID_CONFIG,
-      'setItemCustomDomain: pass either customDomain to set, or options.clear = true to clear, not both.',
-    );
-  }
-  if (!clearing && customDomain.trim() === '') {
-    throw new ManifestMCPError(
-      ManifestMCPErrorCode.INVALID_CONFIG,
-      'setItemCustomDomain: customDomain cannot be empty when not clearing. ' +
-        'Pass a non-empty FQDN, or set options.clear = true to remove the existing domain.',
-    );
-  }
-
-  // Canonicalize: forward and echo the trimmed form so direct library
-  // callers (who didn't pre-trim like the lease MCP tool / deploy_app do)
-  // ship identical bytes to the chain. The CLI builder also trims as a
-  // belt-and-suspenders for direct `cosmos_tx` callers.
-  const normalizedDomain = clearing ? '' : customDomain.trim();
-
-  const args: string[] = [leaseUuid];
+  const clearing = 'clear' in input;
+  const args: string[] = [input.leaseUuid];
   if (clearing) {
     args.push('--clear');
   } else {
-    args.push(normalizedDomain);
+    args.push(input.customDomain); // already a branded, boundary-validated Fqdn — no re-trim
   }
-  if (options?.serviceName) {
-    args.push('--service-name', options.serviceName);
+  if (input.serviceName) {
+    args.push('--service-name', input.serviceName);
   }
 
-  const result = await cosmosTx(
-    clientManager,
-    'billing',
-    'set-item-custom-domain',
-    args,
-    true,
-    overrides,
+  const result = await withTxConfirmation(
+    () =>
+      cosmosTx(
+        ctx.chain,
+        'billing',
+        'set-item-custom-domain',
+        args,
+        true,
+        txOverridesFrom(opts),
+        txExtrasFrom(opts),
+      ),
+    opts,
   );
 
   return {
-    lease_uuid: leaseUuid,
-    service_name: options?.serviceName ?? '',
-    custom_domain: normalizedDomain,
+    lease_uuid: input.leaseUuid,
+    service_name: input.serviceName ?? '',
+    custom_domain: clearing ? asFqdn('') : input.customDomain, // clear echoes asFqdn('') (trust-cast, no throw)
     transactionHash: result.transactionHash,
     code: result.code,
   };

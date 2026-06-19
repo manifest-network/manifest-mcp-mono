@@ -25,6 +25,7 @@ const NON_RETRYABLE_ERROR_CODES: ManifestMCPErrorCode[] = [
 
   // Validation errors - input is invalid
   ManifestMCPErrorCode.INVALID_ADDRESS,
+  ManifestMCPErrorCode.INVALID_ARGUMENT,
   ManifestMCPErrorCode.UNSUPPORTED_TX,
   ManifestMCPErrorCode.UNSUPPORTED_QUERY,
   ManifestMCPErrorCode.UNKNOWN_MODULE,
