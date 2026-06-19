@@ -42,12 +42,16 @@ async function bundleChunk(
   onLog?: (level: string, log: { code?: string; message?: string }) => void,
 ): Promise<{ code: string }> {
   const bundle = await rolldown({ input, platform: 'browser', onLog });
-  const { output } = await bundle.generate({ format: 'esm' });
-  await bundle.close();
-  const code = output
-    .filter((o) => o.type === 'chunk')
-    .map((o) => (o as { code: string }).code)
-    .join('\n');
+  let code: string;
+  try {
+    const { output } = await bundle.generate({ format: 'esm' });
+    code = output
+      .filter((o) => o.type === 'chunk')
+      .map((o) => (o as { code: string }).code)
+      .join('\n');
+  } finally {
+    await bundle.close(); // always close, even if generate() rejects (matches browser-resolve.test.ts)
+  }
   return { code };
 }
 
