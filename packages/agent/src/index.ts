@@ -358,8 +358,8 @@ export class AgentMCPServer {
                 'Provide exactly one of `image` (single service) or `services` (stack), not both or neither.',
             })
             .describe(
-              'AppDeploySpec — either SingleServiceSpec ({ image, port?, env?, customDomain?, size }) ' +
-                'or StackSpec ({ services: { [name]: ServiceDef }, customDomain?, serviceName?, size }). ' +
+              'AppDeploySpec — either a single service ({ image, port?, env?, customDomain?, size }) ' +
+                'or a stack ({ services: { [name]: ServiceConfig }, customDomain?, serviceName?, size }). ' +
                 '`size` is the declared field above and is REQUIRED. Exactly one of `image` or ' +
                 '`services` must be provided (not both, not neither). The object also passes through ' +
                 'an optional `providerUuid`/`provider_uuid` or `skuUuid`/`sku_uuid` to disambiguate ' +

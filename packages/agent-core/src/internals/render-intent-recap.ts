@@ -98,10 +98,11 @@ function projectServices(spec: AppDeploySpec): NormalizedService[] {
 }
 
 /**
- * Services-map shape: `{ "80": { ingress?: boolean }, "9090": { ... } }`.
- * Ingress flag may be absent — default `false` matches Fred's cluster-private
- * default. Also handles the typed `number[]` shape (frozen `ServiceDef.ports`)
- * by treating each entry as ingress=false (services-map default).
+ * Services-map shape: `{ "80/tcp": { ingress?: boolean }, "9090": { ... } }`
+ * (`ServiceConfig.ports` is a `Record<string, …>` port map). Ingress flag may
+ * be absent — default `false` matches Fred's cluster-private default. Also
+ * tolerates a legacy `number[]` shape defensively by treating each entry as
+ * ingress=false (services-map default).
  */
 function extractPorts(ports: unknown): { port: string; ingress: boolean }[] {
   if (Array.isArray(ports)) {
