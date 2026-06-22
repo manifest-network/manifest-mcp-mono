@@ -10,7 +10,7 @@
 
 **Spec:** `docs/superpowers/specs/2026-06-19-eng310-deployspec-superset-design.md` (decisions D1–D6). Read it first.
 
-**Read before starting (current code):** `packages/agent-core/src/types.ts` (the `DeploySpec` union @172-222, `DeployAppOptions` @92-140, `ProgressEvent` @295-…, `PlanEdit` @263-265), `packages/agent-core/src/deploy-app.ts` (`deployApp` @137, `validateSpec` wrappers @144-150 + @395-404, the `buildFredDeployInput` broadcast site @546-559, the `buildManifestPreviewInput` preview sites @316 + @461, `requestedSize` @873-883, the `spec as …` casts @870/906/1067, the stale `estimateFees` storage comment @939-941), `packages/agent-core/src/internals/spec-normalize.ts` (`validateSpec` throws **TypeError** today; header comment @23-27), `packages/agent-core/src/internals/build-fred-input.ts` (+ `.test.ts` — note the preview-omits-fields pin @180/251-263 and the meta-hash regression @310-343), `packages/agent-core/src/internals/render-intent-recap.ts` (@82/91/92 cast `SingleServiceSpec`/`ServiceDef`), `packages/core/src/manifest-types.ts` (`AppDeploySpec` @250-279; `storage?` @274), `packages/core/src/internals/buildManifestPreview.ts` (`BuildManifestPreviewInput` omits size/customDomain/serviceName/pin — only manifest `STRUCTURED_FIELDS`), `packages/core/src/options.ts` (`resolveCallSignal`), `packages/agent/src/index.ts` (`deploy_app_orchestrated` Zod @300-369; the `as DeploySpec` cast @414), `packages/agent/src/elicitation.ts` (@33/336/349), `packages/agent/src/server.test.ts` (the `size`-not-required pin @409-411; size-less deploy fixtures).
+**Read before starting (current code):** `packages/agent-core/src/types.ts` (the `DeploySpec` union @172-222, `DeployAppOptions` @92-140, `ProgressEvent` @295-…, `PlanEdit` @263-265), `packages/agent-core/src/deploy-app.ts` (`deployApp` @137, `validateSpec` wrappers @144-150 + @395-404, the `buildFredDeployInput` broadcast site @546-559, the `buildManifestPreviewInput` preview sites @316 + @461, `requestedSize` @873-883, the `spec as …` casts @870/906/1067, the stale `estimateFees` storage comment @939-941), `packages/agent-core/src/internals/spec-normalize.ts` (`validateSpec` throws **TypeError** today; header comment @23-27), `packages/agent-core/src/internals/build-fred-input.ts` (+ `.test.ts` — note the preview-omits-fields pin @180/251-263 and the meta-hash regression @310-343), `packages/agent-core/src/internals/render-intent-recap.ts` (@82/91/92 cast `SingleServiceSpec`/`ServiceDef`), `packages/core/src/manifest-types.ts` (`AppDeploySpec` @250-279; `storage?` @274), `packages/fred/src/tools/buildManifestPreview.ts` (`BuildManifestPreviewInput` / `STRUCTURED_FIELDS` @62-77 omits size/customDomain/serviceName/pin), `packages/core/src/options.ts` (`resolveCallSignal`), `packages/agent/src/index.ts` (`deploy_app_orchestrated` Zod @300-369; the `as DeploySpec` cast @414), `packages/agent/src/elicitation.ts` (@33/336/349), `packages/agent/src/server.test.ts` (the `size`-not-required pin @409-411; size-less deploy fixtures).
 
 ---
 
@@ -140,7 +140,7 @@ Preview sites (@316, @461): build `BuildManifestPreviewInput` from the spec. **`
 
 - [ ] **Step 7: Add the preview-vs-deploy meta-hash parity test** (replaces the deleted `build-fred-input.test.ts:310-343` regression). In `deploy-app.test.ts`, for both `SINGLE` and `STACK`, assert the `meta_hash_hex` the preview computes equals the meta-hash the deploy path commits (capture both via the existing mocks). This keeps the anti-drift guarantee the deleted mapper enforced.
 
-- [ ] **Step 8: Update the frozen-surface type test + add the `tsc`-enforced equivalence.** In `types.test.ts`: delete the `SingleServiceSpec`/`StackSpec`/`ServiceDef`/`DeploySpec` shape pins (@485-526); add `'cancelled'` to the `ProgressEvent['kind']` exhaustiveness assertion. Create `packages/agent-core/src/deploy-app.test-d.ts`:
+- [ ] **Step 8: Update the frozen-surface type test + add the `tsc`-enforced equivalence.** In `types.test.ts`: delete the `SingleServiceSpec`/`StackSpec`/`ServiceDef`/`DeploySpec` shape pins (@485-526); add `'cancelled'` to the `ProgressEvent['kind']` exhaustiveness assertion **and bump the stale `it('…eleven allowed variants')` title at `types.test.ts:103` to "twelve"**. Create `packages/agent-core/src/deploy-app.test-d.ts`:
 
 ```ts
 import type { AppDeploySpec } from '@manifest-network/manifest-mcp-core';
@@ -207,20 +207,20 @@ it('pre-broadcast abort → OPERATION_CANCELLED, no lease created', async () => 
   expect(vi.mocked(fred.deployApp)).not.toHaveBeenCalled();
 });
 
-it('abort during a pending onConfirm rejects promptly; the late callback rejection is swallowed (no unhandled rejection)', async () => {
-  const rejections: unknown[] = [];
-  const onRej = (e: unknown) => rejections.push(e);
-  process.on('unhandledRejection', onRej);
-  onTestFinished(() => process.off('unhandledRejection', onRej));
-  const ac = new AbortController();
-  const onConfirm = () => new Promise<'yes' | 'no'>((_, reject) =>
-    setTimeout(() => reject(new Error('host timeout')), 0)); // rejects AFTER the abort wins
-  const p = runDeploy({ signal: ac.signal, onConfirm });
-  ac.abort();
-  const err = await p.catch((e) => e);
-  expect(err.code).toBe(ManifestMCPErrorCode.OPERATION_CANCELLED);
-  await new Promise((r) => setImmediate(r)); // flush a full turn so a leaked rejection would surface
-  await expect.poll(() => rejections.length).toBe(0);
+it('abort during a pending onConfirm rejects promptly; the late callback rejection is swallowed', async () => {
+  vi.useFakeTimers();
+  try {
+    const ac = new AbortController();
+    // onConfirm rejects AFTER the abort has already won the race. raceAbort MUST swallow this late
+    // rejection — if it does not, vitest's global unhandledRejection handler fails the whole run.
+    const onConfirm = () => new Promise<'yes' | 'no'>((_, reject) =>
+      setTimeout(() => reject(new Error('host timeout')), 5));
+    const p = runDeploy({ signal: ac.signal, onConfirm });
+    ac.abort();
+    const err = await p.catch((e) => e);
+    expect(err.code).toBe(ManifestMCPErrorCode.OPERATION_CANCELLED);
+    await vi.advanceTimersByTimeAsync(10); // deterministically fire the late rejection; a leak here fails the run
+  } finally { vi.useRealTimers(); }
 });
 
 it('composed signal: caller timeout aborts with TimeoutError → OPERATION_CANCELLED', async () => {
