@@ -175,10 +175,10 @@ describe('deployApp input type (ENG-310)', () => {
 - `size` is now **required** (it was silently defaulted to `'small'`). Pass an explicit tier (or pin `skuUuid`); discover tiers via the lease server's `get_skus`.
 ```
 
-- [ ] **Step 12: Lint + depcruise, then commit.** `npm run lint && npm run depcruise` (exit 0; the §8 chokepoint stays green — agent-core still routes manifestjs types through core; no exemption existed, so none to remove).
+- [ ] **Step 12: Retarget the `packages/agent` consumers (so the repo compiles), then lint + depcruise, then commit.** Deleting the agent-core types breaks `packages/agent` (it imports them), so the **full-repo lint cannot compile until they are retargeted** — do it in this same change (compilation coupling): swap `import type { DeploySpec }` → `AppDeploySpec` and the `as DeploySpec` casts → `as AppDeploySpec` in `packages/agent/src/index.ts` (@32, @414) and `packages/agent/src/elicitation.ts` (@33, @336, @349). (The deploy-boundary **Zod tightening** and the **`server.test.ts` fixes** stay in Task 4 — only the mechanical type-name retarget moves here.) Then `npm run lint && npm run depcruise` (exit 0; the §8 chokepoint stays green — agent-core still routes manifestjs types through core; no exemption existed, so none to remove).
 
 ```bash
-git add packages/agent-core CHANGELOG.md
+git add packages/agent-core packages/agent/src/index.ts packages/agent/src/elicitation.ts CHANGELOG.md
 git rm packages/agent-core/src/internals/build-fred-input.ts packages/agent-core/src/internals/build-fred-input.test.ts
 git commit -F - <<'MSG'
 feat(agent-core): deployApp input = canonical AppDeploySpec; delete the lossy build-fred-input (ENG-310)
@@ -186,6 +186,8 @@ feat(agent-core): deployApp input = canonical AppDeploySpec; delete the lossy bu
 Loss-free (single + stack): all formerly-dropped rich fields survive to the broadcast
 via a resolved-identity shallow spread; size required (no surprise 'small'); validateSpec
 gates image-xor-services at each entry path; preview/deploy meta-hash parity pinned.
+Retarget the packages/agent consumers (index.ts/elicitation.ts) to AppDeploySpec so the
+full-repo lint compiles (the Zod boundary tightening lands in the follow-up).
 MSG
 ```
 
@@ -258,7 +260,7 @@ it('composed signal: caller timeout aborts with TimeoutError → OPERATION_CANCE
 
 **Files:** Modify `packages/agent/src/index.ts` (Zod @312-362 + the `as DeploySpec` cast @414), `packages/agent/src/elicitation.ts` (@33/336/349), `packages/agent/src/server.test.ts`.
 
-- [ ] **Step 1: Retarget the deleted-type consumers in `packages/agent`.** Swap `import type { DeploySpec }` → `AppDeploySpec` and the `as DeploySpec` casts → `as AppDeploySpec` in `index.ts` (@32, @414) and `elicitation.ts` (@33, @336, @349). (Required for the agent package to compile after Task 2.)
+- [ ] **Step 1: Verify the `packages/agent` deleted-type consumers were already retargeted in Task 2** (`index.ts:32/414` + `elicitation.ts:33/336/349` → `AppDeploySpec` — moved into Task 2 §12 because of compilation coupling). Confirm none remain: `grep -rn '\bDeploySpec\b' packages/agent/src` returns nothing. If any slipped through, fix it now. This task's substance is the boundary Zod + the test fixes below.
 
 - [ ] **Step 2: Write the failing boundary tests (RED).** A Zod input-schema failure is thrown by the MCP SDK as `McpError(InvalidParams, …)`, so `client.callTool` **REJECTS** — it does **not** resolve with `{ isError: true }` (that shape is only for *handler*-returned errors on a valid schema). Assert the rejection:
 
