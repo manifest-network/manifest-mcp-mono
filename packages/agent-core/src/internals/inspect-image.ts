@@ -23,7 +23,7 @@ import { createGuardedFetch } from './guarded-fetch.js';
  *
  * ## Security — SSRF (production callers MUST read)
  *
- * `imageRef` is user-controlled (it comes from `DeploySpec.image`).
+ * `imageRef` is user-controlled (it comes from `AppDeploySpec.image`).
  * Without an SSRF guard, an image ref like `169.254.169.254:80/foo:bar`
  * (cloud-metadata) or `127.0.0.1:6379/foo:bar` (local Redis) would
  * cause this function to probe internal services on the host. The CJS
@@ -306,7 +306,7 @@ function parseRef(ref: string): ParsedRef {
 
   // Validate URL-interpolated fields against OCI Distribution Spec grammar
   // BEFORE the URL is constructed. The ref strings reach the user via
-  // `DeploySpec.image`, so malformed input must be rejected here.
+  // `AppDeploySpec.image`, so malformed input must be rejected here.
   for (const component of name.split('/')) {
     if (!OCI_NAME_COMPONENT.test(component)) {
       throw new Error(`invalid name component "${component}" in image ref`);

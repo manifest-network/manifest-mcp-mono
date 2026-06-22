@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Upgrade notes
+
+**BREAKING (agent-core / headless `deployApp` callers):**
+- `deployApp`'s input is now the canonical `AppDeploySpec` (from `@manifest-network/manifest-mcp-core`); the `SingleServiceSpec | StackSpec` union (and `ServiceDef`) is removed. Migrate by importing `AppDeploySpec`; `services` is `Record<string, ServiceConfig>` with map-shaped `ports`.
+- `size` is now **required** (it was silently defaulted to `'small'`). Pass an explicit tier (or pin `skuUuid`); discover tiers via the lease server's `get_skus`.
+
 ## [0.13.1]
 
 ### Fixed

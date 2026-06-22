@@ -1,6 +1,6 @@
 /**
  * Public entry point: orchestrate a Manifest-Network app deployment from
- * a typed `DeploySpec` through the plan/confirm/broadcast/save flow.
+ * a typed `AppDeploySpec` through the plan/confirm/broadcast/save flow.
  *
  * Architect's α-locked composition (post-PR-3 sub-plan Q1):
  *
@@ -47,6 +47,7 @@ import {
   parseFqdn,
   parseLeaseUuid,
   type ReadCtx,
+  resolveCallSignal,
   resolveSku,
   type SkuCandidate,
   setItemCustomDomain,
@@ -54,6 +55,7 @@ import {
 } from '@manifest-network/manifest-mcp-core';
 import {
   AuthTimestampTracker,
+  type BuildManifestPreviewInput,
   buildManifestPreview,
   type ConnectionDetails,
   checkDeploymentReadiness,
@@ -69,10 +71,6 @@ import {
   uploadLeaseData,
   waitForAppReady,
 } from '@manifest-network/manifest-mcp-fred';
-import {
-  buildFredDeployInput,
-  buildManifestPreviewInput,
-} from './internals/build-fred-input.js';
 import { classifyDeployError } from './internals/classify-deploy-error.js';
 import {
   classifyDeployResponse,
@@ -98,11 +96,11 @@ import {
   validateSpec,
 } from './internals/spec-normalize.js';
 import type {
+  AppDeploySpec,
   DenomMap,
   DeployAppCallbacks,
   DeployAppOptions,
   DeployResult,
-  DeploySpec,
   FailureEnvelope,
   FeeEstimate,
   LeaseStateName,
@@ -111,9 +109,7 @@ import type {
   RecoveryChoice,
   RecoveryOption,
   RecoveryOptionId,
-  ServiceDef,
-  SingleServiceSpec,
-  StackSpec,
+  ServiceConfig,
 } from './types.js';
 
 /**
@@ -135,7 +131,7 @@ import type {
  * invoking `onFailure`.
  */
 export async function deployApp(
-  spec: DeploySpec,
+  spec: AppDeploySpec,
   callbacks: DeployAppCallbacks,
   opts: DeployAppOptions,
 ): Promise<DeployResult> {
@@ -154,6 +150,53 @@ export async function deployApp(
       'opts.walletProvider must implement signArbitrary for ADR-036 auth tokens.',
     );
   }
+
+  // --- Cancellation contract (ENG-310 / D4) ---------------------------
+  // Resolve the caller's {signal?,timeout?} into ONE effective AbortSignal
+  // (core's `CallOptions` convention). It is (a) checked at each PRE-broadcast
+  // step boundary, (b) raced against the pre-broadcast interactive callbacks
+  // (onPlan/onConfirm/onResolveSku) so an unresponsive host can't pin the
+  // await, and (c) forwarded into fred's `DeployCallOptions.abortSignal`.
+  // Per D4.6 it is NOT raced against `onFailure` or any POST-broadcast await:
+  // once fred is called the tx MAY commit on-chain, so a late abort must route
+  // into recovery, not cancel it.
+  //
+  // `cancelOnAbort` centralizes the single emit-then-throw contract: the
+  // `cancelled` progress event fires exactly once, immediately before the
+  // OPERATION_CANCELLED throw, on ANY signal-driven cancellation path
+  // (boundary check OR a raced callback). The deliberate-decline paths
+  // (`onConfirm:'no'` / `onPlan:'cancel'`) throw OPERATION_CANCELLED too but
+  // do NOT route through here, so they don't emit `cancelled` (they aren't an
+  // abort). `race` wraps a pre-broadcast callback in `raceAbort` when a signal
+  // is present, then maps the bare cancelledError into the emit-then-throw.
+  const signal = resolveCallSignal(opts);
+  let cancelledEmitted = false;
+  const cancelOnAbort = (reason: unknown): never => {
+    if (!cancelledEmitted) {
+      cancelledEmitted = true;
+      callbacks.onProgress?.({ kind: 'cancelled' });
+    }
+    throw cancelledError(reason);
+  };
+  const throwIfCancelled = (): void => {
+    if (signal?.aborted) cancelOnAbort(signal.reason);
+  };
+  const race = async <T>(p: Promise<T>): Promise<T> => {
+    if (signal === undefined) return p;
+    try {
+      return await raceAbort(p, signal);
+    } catch (err) {
+      if (
+        err instanceof ManifestMCPError &&
+        err.code === ManifestMCPErrorCode.OPERATION_CANCELLED &&
+        signal.aborted
+      ) {
+        cancelOnAbort(signal.reason);
+      }
+      throw err;
+    }
+  };
+  throwIfCancelled();
 
   // --- Address-source consistency guard -------------------------------
   // Copilot review fix (PR #58 r3248900328): `opts.walletProvider` and
@@ -231,7 +274,7 @@ export async function deployApp(
   // carry a stale pin if the user later issues a `replace_spec` edit that
   // changes the size.
   const resolvePin = async (
-    s: DeploySpec,
+    s: AppDeploySpec,
   ): Promise<{ pin: SkuCandidate; elicited: boolean }> => {
     const providerUuid = requestedProviderUuid(s);
     const skuUuid = requestedSkuUuid(s);
@@ -250,7 +293,7 @@ export async function deployApp(
       ) {
         const candidates = (err.details?.candidates as SkuCandidate[]) ?? [];
         callbacks.onProgress?.({ kind: 'sku_ambiguous', candidates });
-        const pick = await callbacks.onResolveSku(candidates);
+        const pick = await race(callbacks.onResolveSku(candidates));
         const pin = await resolveSku(readCtx, {
           size: requestedSize(s),
           skuUuid: pick.skuUuid,
@@ -312,9 +355,13 @@ export async function deployApp(
   // plan-edit must recompute preview/summary/fees/block against the
   // edited spec; otherwise the manifest persistence at step 16 uses
   // the stale pre-edit preview).
-  let preview = await buildManifestPreview(
-    buildManifestPreviewInput(spec, requestedSize(spec)),
-  );
+  // `buildManifestPreview` reads ONLY the manifest STRUCTURED_FIELDS and
+  // ignores size/customDomain/serviceName/skuUuid/providerUuid — so passing
+  // the spec (via a variable, not a fresh literal, to dodge excess-property
+  // checks) is meta-hash-safe and keeps preview ≡ deploy by construction
+  // (both build the manifest from the same STRUCTURED_FIELDS). D3 / ENG-310.
+  const previewInput: BuildManifestPreviewInput = spec;
+  let preview = await buildManifestPreview(previewInput);
 
   // Fee estimation for create-lease (always) + set-item-custom-domain
   // (when customDomain set). Lean port: cosmosEstimateFee invocation
@@ -342,7 +389,7 @@ export async function deployApp(
   // if a `replace_spec` edit changes `size` (that edit replaces the
   // spec wholesale anyway, but avoiding the stamp keeps the non-elicited
   // path behaviorally minimal).
-  let confirmedSpec: DeploySpec = pinElicited
+  let confirmedSpec: AppDeploySpec = pinElicited
     ? { ...spec, skuUuid: pinned.skuUuid, providerUuid: pinned.providerUuid }
     : spec;
   const block = renderDeploymentPlan({
@@ -358,7 +405,7 @@ export async function deployApp(
   });
   callbacks.onProgress?.({ kind: 'deployment_plan_rendered', block });
   if (callbacks.onPlan) {
-    const verdict = await callbacks.onPlan(plan);
+    const verdict = await race(callbacks.onPlan(plan));
     if (verdict === 'cancel') {
       throw new ManifestMCPError(
         ManifestMCPErrorCode.OPERATION_CANCELLED,
@@ -457,9 +504,8 @@ export async function deployApp(
           `Post-edit readiness check failed: ${readiness.reasons.join('; ')}`,
         );
       }
-      preview = await buildManifestPreview(
-        buildManifestPreviewInput(confirmedSpec, requestedSize(confirmedSpec)),
-      );
+      const editedPreviewInput: BuildManifestPreviewInput = confirmedSpec;
+      preview = await buildManifestPreview(editedPreviewInput);
       summary = summarizeSpec(confirmedSpec);
       fees = await estimateFees(
         opts,
@@ -497,7 +543,7 @@ export async function deployApp(
   const recapText = renderIntentRecap({ spec: confirmedSpec, activeChain });
   const recapBlock = { text: recapText };
   if (callbacks.onConfirm) {
-    const yesNo = await callbacks.onConfirm(recapBlock);
+    const yesNo = await race(callbacks.onConfirm(recapBlock));
     if (yesNo !== 'yes') {
       throw new ManifestMCPError(
         ManifestMCPErrorCode.OPERATION_CANCELLED,
@@ -540,13 +586,27 @@ export async function deployApp(
   };
 
   // --- Broadcast: fred's atomic deployApp (architect α-locked) -------
+  // Last pre-broadcast cancellation boundary: once `fredDeployApp` is called
+  // the tx may commit on-chain, so this is the final point an abort can cancel
+  // cleanly (no lease created). After this, the signal only bounds fred's own
+  // await (via `abortSignal`) — a post-broadcast abort routes into recovery
+  // (tx MAY STILL COMMIT → re-query; see core's withTxConfirmation contract).
+  throwIfCancelled();
   callbacks.onProgress?.({ kind: 'deploy_app_broadcast' });
-  // FIX 1: pass the RESOLVED SKU name so fred records the lease item with
-  // the on-chain SKU's name, consistent with the readiness/plan above.
-  const fredInput = buildFredDeployInput(confirmedSpec, pinned.name, {
+  // D3 / ENG-310: loss-free broadcast. A SHALLOW spread of `confirmedSpec`
+  // forwards every rich AppDeploySpec field (user/tmpfs/health_check/
+  // stop_grace_period/init/expose/labels/storage/depends_on, plus the stack
+  // services map verbatim) — the old build-fred-input mapper silently
+  // dropped them. We then stamp the RESOLVED SKU identity (thread resolved
+  // identity, not raw hints): `size` becomes the on-chain SKU name (so fred
+  // records the lease item consistently with the readiness/plan above), and
+  // skuUuid/providerUuid become the authoritative pin.
+  const fredInput: AppDeploySpec = {
+    ...confirmedSpec,
+    size: pinned.name,
     skuUuid: pinned.skuUuid,
     providerUuid: pinned.providerUuid,
-  });
+  };
   let fredResult: FredDeployAppResult;
   try {
     fredResult = await fredDeployApp(
@@ -554,7 +614,10 @@ export async function deployApp(
       getAuthToken,
       getLeaseDataAuthToken,
       fredInput,
-      {},
+      // Forward the effective signal so fred's own await is abort-bounded
+      // (it surfaces OPERATION_CANCELLED with the tx-MAY-have-committed
+      // semantics; agent-core does NOT race this — D4.6).
+      signal ? { abortSignal: signal } : {},
       opts.fetchFn,
     );
   } catch (err) {
@@ -860,56 +923,98 @@ export async function deployApp(
 
 // --- Helpers ---------------------------------------------------------
 
-function primaryImage(spec: DeploySpec): string {
+/**
+ * Race a PRE-broadcast interactive callback against the effective abort
+ * signal, so a caller cancellation / timeout rejects the await promptly
+ * instead of blocking on an unresponsive host. Settles on the first of
+ * {callback resolves/rejects, signal aborts}; the LOSING branch's eventual
+ * settlement is swallowed (`.catch(() => {})`) so a late callback rejection
+ * never escapes to vitest's / Node's global `unhandledRejection` handler.
+ * The abort listener is `{ once: true }` and removed in `.finally`.
+ *
+ * Copies the executor + swallow shape from core's
+ * `internals/tx-confirmation.ts:withTxConfirmation` — but scoped to the
+ * pre-broadcast window per D4.6: a post-broadcast abort must route INTO
+ * recovery (the tx MAY have committed → re-query), never cancel it, so
+ * `deployApp` does NOT wrap any post-broadcast await with this.
+ */
+function raceAbort<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) {
+    promise.catch(() => {}); // swallow the loser even on the already-aborted path
+    return Promise.reject(cancelledError(signal.reason));
+  }
+  promise.catch(() => {}); // swallow the losing branch's eventual rejection
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = (): void => reject(cancelledError(signal.reason));
+    signal.addEventListener('abort', onAbort, { once: true });
+    promise
+      .then(resolve, reject)
+      .finally(() => signal.removeEventListener('abort', onAbort));
+  });
+}
+
+/**
+ * Build the structured cancellation error for an aborted/timed-out
+ * PRE-broadcast await. Mirrors core's `cancelledTxError(reason, sent=false)`
+ * (nothing was broadcast) — `OPERATION_CANCELLED` keeps the abort path
+ * consistent with the SDK error model and is non-retryable. The original
+ * `AbortError`/`TimeoutError` reason is preserved in the message + details.
+ */
+function cancelledError(reason: unknown): ManifestMCPError {
+  const detail = reason instanceof Error ? reason.message : String(reason);
+  return new ManifestMCPError(
+    ManifestMCPErrorCode.OPERATION_CANCELLED,
+    `Deployment was cancelled before broadcast (${detail}); no transaction was sent.`,
+    { reason },
+  );
+}
+
+function primaryImage(spec: AppDeploySpec): string {
   if (isStackSpec(spec)) {
     for (const svc of Object.values(spec.services)) {
       if (svc?.image) return svc.image;
     }
     return '';
   }
-  return (spec as SingleServiceSpec).image ?? '';
+  return spec.image ?? '';
 }
 
-function requestedSize(spec: DeploySpec): string {
-  // ENG-275: `size` is a first-class optional field on both DeploySpec
-  // variants (`types.ts`). This helper centralizes the default: a
-  // non-empty string wins; absent / empty falls back to 'small'. The
-  // `typeof` guard still degrades a non-string value smuggled in by an
-  // `unknown`-cast (e.g. JSON.parse) caller to the safe default.
-  const recorded = spec.size;
-  return typeof recorded === 'string' && recorded.length > 0
-    ? recorded
-    : 'small';
+function requestedSize(spec: AppDeploySpec): string {
+  // ENG-310: `size` is a REQUIRED field on the canonical AppDeploySpec —
+  // the prior silent `'small'` default is gone (callers must pass an
+  // explicit tier or pin `skuUuid`). This helper returns the user's
+  // requested size verbatim; it feeds ONLY `resolvePin` (the SKU lookup
+  // input). Downstream consumers use `pinned.name` (the RESOLVED SKU name).
+  return spec.size;
 }
 
 /**
  * SKU disambiguator intent helpers. `providerUuid` / `skuUuid` are
- * first-class optional fields on both `DeploySpec` variants (ENG-296,
- * mirroring ENG-275's typed `size`). Returns `undefined` for absent /
- * empty values so `resolveSku` only narrows when a real disambiguator is
- * supplied.
+ * first-class optional fields on `AppDeploySpec` (ENG-296, mirroring
+ * ENG-275's typed `size`). Returns `undefined` for absent / empty values
+ * so `resolveSku` only narrows when a real disambiguator is supplied.
  */
-function requestedProviderUuid(spec: DeploySpec): string | undefined {
+function requestedProviderUuid(spec: AppDeploySpec): string | undefined {
   const v = spec.providerUuid;
   return typeof v === 'string' && v.length > 0 ? v : undefined;
 }
-function requestedSkuUuid(spec: DeploySpec): string | undefined {
+function requestedSkuUuid(spec: AppDeploySpec): string | undefined {
   const v = spec.skuUuid;
   return typeof v === 'string' && v.length > 0 ? v : undefined;
 }
 
-function customDomainOf(spec: DeploySpec): string | undefined {
-  return (spec as { customDomain?: string }).customDomain;
+function customDomainOf(spec: AppDeploySpec): string | undefined {
+  return spec.customDomain;
 }
 
-function customDomainServiceOf(spec: DeploySpec): string | undefined {
-  if (isStackSpec(spec)) return (spec as StackSpec).serviceName;
+function customDomainServiceOf(spec: AppDeploySpec): string | undefined {
+  if (isStackSpec(spec)) return spec.serviceName;
   return undefined;
 }
 
 async function estimateFees(
   opts: DeployAppOptions,
-  spec: DeploySpec,
+  spec: AppDeploySpec,
   metaHashHex: string, // SHA-256 hex digest of the canonical manifest JSON; threaded into create-lease estimate via the `--meta-hash` flag (mirrors fred's deploy path at packages/fred/src/tools/deployApp.ts:363)
   skuUuid: string, // ENG-258: pre-resolved SKU pin from the orchestrator; no second lookup here.
 ): Promise<Plan['fees']> {
@@ -936,9 +1041,11 @@ async function estimateFees(
   // WITHOUT customDomain to legacy-mode args (`spec.serviceName` is only
   // set alongside customDomain — bug 2).
   //
-  // Storage SKU items (fred's `input.storage` path) are deliberately NOT
-  // handled here — agent-core's `DeploySpec` has no `storage` field,
-  // unlike fred's input contract.
+  // Storage-SKU fee estimation is OUT OF SCOPE for ENG-310 (tracked
+  // separately). The canonical `AppDeploySpec` now HAS a `storage?` field,
+  // and the loss-free broadcast spread DOES forward it to fred — but this
+  // agent-core fee estimate still bills only the compute SKU item(s); it
+  // does not add a storage item. A pre-existing gap, now visible.
   const itemArgs: string[] = isStackSpec(spec)
     ? Object.keys(spec.services).map((name) => `${skuUuid}:1:${name}`)
     : [`${skuUuid}:1`];
@@ -1015,12 +1122,12 @@ async function estimateFees(
 }
 
 function applyPlanEdit(
-  spec: DeploySpec,
+  spec: AppDeploySpec,
   edit: Exclude<
     Awaited<ReturnType<NonNullable<DeployAppCallbacks['onPlan']>>>,
     'confirm' | 'cancel'
   >,
-): DeploySpec {
+): AppDeploySpec {
   // PR 3 single-iteration: replace_spec replaces; edit_env merges env keys
   // into the matching service (or single-service spec).
   if (edit.kind === 'replace_spec') return edit.spec;
@@ -1058,14 +1165,13 @@ function applyPlanEdit(
         services: {
           ...spec.services,
           [edit.service]: {
-            ...(svc as ServiceDef),
-            env: { ...((svc as ServiceDef).env ?? {}), ...edit.env },
+            ...(svc as ServiceConfig),
+            env: { ...((svc as ServiceConfig).env ?? {}), ...edit.env },
           },
         },
       };
     }
-    const single = spec as SingleServiceSpec;
-    return { ...single, env: { ...(single.env ?? {}), ...edit.env } };
+    return { ...spec, env: { ...(spec.env ?? {}), ...edit.env } };
   }
   return spec;
 }
@@ -1109,7 +1215,7 @@ interface RecoveryContext {
 
 async function handleBroadcastFailure(
   err: unknown,
-  spec: DeploySpec,
+  spec: AppDeploySpec,
   callbacks: DeployAppCallbacks,
   opts: DeployAppOptions,
   ctx: RecoveryContext,
@@ -1196,7 +1302,7 @@ async function handleBroadcastFailure(
 async function dispatchRecovery(
   choice: RecoveryChoice,
   envelope: FailureEnvelope,
-  spec: DeploySpec,
+  spec: AppDeploySpec,
   opts: DeployAppOptions,
   callbacks: DeployAppCallbacks,
   ctx: RecoveryContext,
@@ -1288,7 +1394,7 @@ async function dispatchRecovery(
  */
 async function retrySetDomainAndComplete(
   leaseUuid: string,
-  spec: DeploySpec,
+  spec: AppDeploySpec,
   opts: DeployAppOptions,
   callbacks: DeployAppCallbacks,
   ctx: RecoveryContext,

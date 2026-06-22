@@ -1,9 +1,4 @@
-import type {
-  DeploySpec,
-  ServiceDef,
-  SingleServiceSpec,
-  StackSpec,
-} from '../types.js';
+import type { AppDeploySpec, ServiceConfig } from '../types.js';
 import { isStackSpec, normalizeServices } from './spec-normalize.js';
 
 /**
@@ -25,21 +20,23 @@ import { isStackSpec, normalizeServices } from './spec-normalize.js';
  * surfaced; only keys appear. Mirrors `summarizeSpec`'s contract. FQDNs are
  * not secrets so `customDomain` is surfaced verbatim.
  *
- * **Port-shape handling:** the CJS supports two runtime shapes for ports:
- *   - Legacy single-service: `port: number` → renders one ingress=true entry.
- *   - Services-map: `ports: Record<portKey, { ingress?: boolean }>` → one
- *     entry per port-key with the declared ingress flag (default false).
+ * **Port-shape handling:** two runtime shapes for ports:
+ *   - Single-service: `port: number` → renders one ingress=true entry.
+ *   - Stack service: `ServiceConfig.ports: Record<portKey, {}>` (canonical
+ *     map, e.g. `{ '80/tcp': {} }`) → one entry per port-key (ingress
+ *     default false). The recap renders the map KEY string (`'80/tcp'`),
+ *     not a bare number.
  *
- * The frozen TS contract narrows `ServiceDef.ports` to `number[]` for the
- * common case; this port also handles the historical Record shape at runtime
- * (matching `summarizeSpec`'s defensive widening) so callers passing
- * unknown-typed input from JSON.parse don't silently drop ports.
+ * `extractPorts` also handles the historical `number[]` Record-or-array
+ * shapes at runtime (matching `summarizeSpec`'s defensive widening) so
+ * callers passing unknown-typed input from JSON.parse don't silently drop
+ * ports.
  */
 
 /** Render output is a multi-paragraph plain-text block, ready to print verbatim. */
 export interface RenderIntentRecapInput {
-  /** The structured deploy spec (frozen `DeploySpec` shape). */
-  spec: DeploySpec;
+  /** The structured deploy spec (canonical `AppDeploySpec` shape). */
+  spec: AppDeploySpec;
   /** Active chain — drives the mainnet permanence warning. */
   activeChain: 'testnet' | 'mainnet';
 }
@@ -79,7 +76,7 @@ export function renderIntentRecap(input: RenderIntentRecapInput): string {
   return blocks.join('\n\n');
 }
 
-function projectServices(spec: DeploySpec): NormalizedService[] {
+function projectServices(spec: AppDeploySpec): NormalizedService[] {
   return normalizeServices(spec).map(({ name, raw }): NormalizedService => {
     const rawRecord = raw as unknown as Record<string, unknown>;
     const image =
@@ -88,8 +85,8 @@ function projectServices(spec: DeploySpec): NormalizedService[] {
         : '(unknown image)';
     const ports =
       name === null
-        ? extractPortsLegacy((raw as SingleServiceSpec).port)
-        : extractPorts((raw as ServiceDef).ports);
+        ? extractPortsLegacy((raw as AppDeploySpec).port)
+        : extractPorts((raw as ServiceConfig).ports);
     return {
       name,
       image,
@@ -101,10 +98,11 @@ function projectServices(spec: DeploySpec): NormalizedService[] {
 }
 
 /**
- * Services-map shape: `{ "80": { ingress?: boolean }, "9090": { ... } }`.
- * Ingress flag may be absent — default `false` matches Fred's cluster-private
- * default. Also handles the typed `number[]` shape (frozen `ServiceDef.ports`)
- * by treating each entry as ingress=false (services-map default).
+ * Services-map shape: `{ "80/tcp": { ingress?: boolean }, "9090": { ... } }`
+ * (`ServiceConfig.ports` is a `Record<string, …>` port map). Ingress flag may
+ * be absent — default `false` matches Fred's cluster-private default. Also
+ * tolerates a legacy `number[]` shape defensively by treating each entry as
+ * ingress=false (services-map default).
  */
 function extractPorts(ports: unknown): { port: string; ingress: boolean }[] {
   if (Array.isArray(ports)) {
@@ -232,18 +230,16 @@ function renderRedactedInventory(services: NormalizedService[]): string {
 }
 
 function renderCustomDomain(
-  spec: DeploySpec,
+  spec: AppDeploySpec,
   activeChain: 'testnet' | 'mainnet',
 ): string | null {
-  const customDomain = (spec as { customDomain?: unknown }).customDomain;
+  const customDomain = spec.customDomain;
   if (typeof customDomain !== 'string' || customDomain.length === 0) {
     return null;
   }
-  // `serviceName` is only legal on StackSpec; for SingleServiceSpec the
-  // single service implicitly receives the domain.
-  const serviceName = isStackSpec(spec)
-    ? (spec as StackSpec).serviceName
-    : undefined;
+  // `serviceName` only disambiguates a stack service; a single-service
+  // spec's single service implicitly receives the domain.
+  const serviceName = isStackSpec(spec) ? spec.serviceName : undefined;
   const target =
     typeof serviceName === 'string' && serviceName.length > 0
       ? `service ${serviceName}`

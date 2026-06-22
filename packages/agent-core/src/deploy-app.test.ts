@@ -25,6 +25,7 @@
 
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import type { AppDeploySpec } from '@manifest-network/manifest-mcp-core';
 import {
   asProviderUuid,
   asSkuUuid,
@@ -43,15 +44,20 @@ import {
 import type {
   DeployAppCallbacks,
   DeployResult,
-  DeploySpec,
   FailureEnvelope,
   Plan,
   ProgressEvent,
   RecoveryOption,
-  SingleServiceSpec,
   SkuCandidate,
   WalletProvider,
 } from './index.js';
+
+// ENG-310: the narrow DeploySpec union (and SingleServiceSpec) are gone —
+// agent-core's deploy input IS the canonical AppDeploySpec. These local
+// aliases keep the pre-existing fixture casts in this file readable while
+// pointing at the single canonical type.
+type DeploySpec = AppDeploySpec;
+type SingleServiceSpec = AppDeploySpec;
 
 // Mock the workspace deps at the module level. Individual tests inject
 // per-scenario behaviors via vi.mocked.
@@ -2646,12 +2652,13 @@ describe('deployApp — estimateFees create-lease itemArgs (ENG-185 #3 bug 1+2)'
 
   it('3-service stack spec → 3 item-args, one `<skuUuid>:1:<name>` per service (bug 1)', async () => {
     const spec: DeploySpec = {
+      size: 'small',
       services: {
-        web: { image: 'nginx:1.27', ports: [80] },
-        api: { image: 'node:20', ports: [3000] },
-        db: { image: 'postgres:16', ports: [5432] },
+        web: { image: 'nginx:1.27' },
+        api: { image: 'node:20' },
+        db: { image: 'postgres:16' },
       },
-    } as DeploySpec;
+    };
     const { estimateFeeArgs } = await runUntilPlan(spec);
     expect(estimateFeeArgs?.slice(2)).toEqual([
       'sku-uuid-fixture:1:web',
@@ -2668,10 +2675,11 @@ describe('deployApp — estimateFees create-lease itemArgs (ENG-185 #3 bug 1+2)'
     // at broadcast time. THIS test is the regression guard for bug 2:
     // the fix MUST emit `sku-uuid-fixture:1:web`, NOT `sku-uuid-fixture:1`.
     const spec: DeploySpec = {
+      size: 'small',
       services: {
-        web: { image: 'nginx:1.27', ports: [80] },
+        web: { image: 'nginx:1.27' },
       },
-    } as DeploySpec;
+    };
     const { estimateFeeArgs } = await runUntilPlan(spec);
     expect(estimateFeeArgs?.slice(2)).toEqual(['sku-uuid-fixture:1:web']);
     expect(estimateFeeArgs?.slice(2)).not.toEqual(['sku-uuid-fixture:1']);
@@ -2683,13 +2691,14 @@ describe('deployApp — estimateFees create-lease itemArgs (ENG-185 #3 bug 1+2)'
     // still create one item per service at broadcast. The customDomain
     // affects the set-domain TX, not create-lease.
     const spec: DeploySpec = {
+      size: 'small',
       services: {
-        web: { image: 'nginx:1.27', ports: [80] },
-        api: { image: 'node:20', ports: [3000] },
+        web: { image: 'nginx:1.27' },
+        api: { image: 'node:20' },
       },
       customDomain: 'app.example.com',
       serviceName: 'web',
-    } as DeploySpec;
+    };
     const { estimateFeeArgs } = await runUntilPlan(spec);
     expect(estimateFeeArgs?.slice(2)).toEqual([
       'sku-uuid-fixture:1:web',
@@ -4594,5 +4603,480 @@ describe('DeployResult snake→camel projection (deliberate, not a 1:1 rename) (
     // are supplied together). agent-core exposes customDomain but not
     // service_name in its projection.
     expect('service_name' in result).toBe(false);
+  });
+});
+
+// ENG-310: deployApp input is the canonical AppDeploySpec. The deleted
+// build-fred-input mapper dropped every rich field (user/tmpfs/health_check/
+// stop_grace_period/init/expose/labels/storage/depends_on, and — on the stack
+// arm — everything `convertServiceDef` didn't copy). The loss-free spread
+// proves each field now survives to the fred broadcast, and the resolved SKU
+// identity (size/skuUuid/providerUuid) is the authoritative pin, not raw input.
+describe('deployApp input = AppDeploySpec — loss-free broadcast (ENG-310)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  // The default module-level resolveSku mock returns this pin. The loss-free
+  // assertions check that size/skuUuid/providerUuid on the fred input equal
+  // the RESOLVED pin, not the spec's raw hints.
+  const resolvedSkuFixture = {
+    name: 'small',
+    skuUuid: 'sku-uuid-fixture',
+    providerUuid: 'provider-uuid-fixture',
+  } as const;
+
+  const SINGLE: AppDeploySpec = {
+    image: 'nginx:latest',
+    size: 'small',
+    port: 8080,
+    env: { A: '1' },
+    command: ['/bin/sh'],
+    args: ['-c', 'true'],
+    user: '1000:1000',
+    tmpfs: ['/tmp'],
+    health_check: { test: ['CMD', 'true'], interval: '10s', retries: 3 },
+    stop_grace_period: '30s',
+    init: true,
+    expose: ['9090'],
+    labels: { tier: 'web' },
+    storage: '10Gi',
+    depends_on: { db: { condition: 'service_started' } },
+    customDomain: 'app.example.com',
+  };
+  const STACK: AppDeploySpec = {
+    size: 'small',
+    serviceName: 'web',
+    customDomain: 'app.example.com',
+    services: {
+      web: {
+        image: 'nginx:latest',
+        ports: { '80/tcp': {} },
+        env: { A: '1' },
+        command: ['/bin/sh'],
+        args: ['-c', 'true'],
+        user: '1000:1000',
+        tmpfs: ['/tmp'],
+        health_check: { test: ['CMD', 'true'] },
+        stop_grace_period: '30s',
+        depends_on: { db: { condition: 'service_started' } },
+        expose: ['9090'],
+        labels: { tier: 'web' },
+      },
+    },
+  };
+
+  // Wire the happy-path fred/preview/fee mocks (mirrors setupHappyDeps but with
+  // an arbitrary AppDeploySpec instead of the fixture), run deployApp, and
+  // surface both captured inputs for the loss-free + meta-hash-parity asserts.
+  async function runDeploy(spec: AppDeploySpec): Promise<{
+    fredInput: AppDeploySpec;
+    previewInput: Record<string, unknown>;
+    previewMetaHash: string;
+  }> {
+    const readinessRaw = readFixture(
+      'skills',
+      'deploy-app',
+      '01-fast-path-active',
+      'input',
+      'readiness-response.json',
+    );
+    const fred = await import('@manifest-network/manifest-mcp-fred');
+    vi.mocked(fred.checkDeploymentReadiness).mockResolvedValue(
+      readinessRaw as unknown as Awaited<
+        ReturnType<typeof fred.checkDeploymentReadiness>
+      >,
+    );
+    const deployResp = readFixture(
+      'skills',
+      'deploy-app',
+      '01-fast-path-active',
+      'input',
+      'deploy-response.json',
+    ) as Record<string, unknown>;
+    vi.mocked(fred.buildManifestPreview).mockResolvedValue({
+      manifest_json: '{"version":"0.1"}',
+      meta_hash_hex: 'cc'.repeat(32),
+    } as Awaited<ReturnType<typeof fred.buildManifestPreview>>);
+    vi.mocked(fred.deployApp).mockResolvedValue({
+      lease_uuid: deployResp.lease_uuid as string,
+      provider_uuid: deployResp.provider_uuid as string,
+      provider_url: deployResp.provider_url as string,
+      state: deployResp.state as never,
+      connection: deployResp.connection,
+    } as unknown as Awaited<ReturnType<typeof fred.deployApp>>);
+
+    const core = await import('@manifest-network/manifest-mcp-core');
+    vi.mocked(core.cosmosEstimateFee).mockResolvedValue({
+      module: 'billing',
+      subcommand: 'create-lease',
+      gasEstimate: '142000',
+      fee: { amount: [{ denom: 'umfx', amount: '2300' }], gas: '142000' },
+    } as Awaited<ReturnType<typeof core.cosmosEstimateFee>>);
+
+    const { callbacks } = captureCallbacks();
+    const { deployApp } = await import('./deploy-app.js');
+    const clientManager = makeMockClientManager();
+    const walletProvider = makeMockWalletProvider();
+
+    await deployApp(spec, callbacks, {
+      clientManager: clientManager as unknown as Parameters<
+        typeof deployApp
+      >[2]['clientManager'],
+      walletProvider,
+    });
+
+    const fredInput = vi.mocked(fred.deployApp).mock
+      .calls[0]?.[3] as AppDeploySpec;
+    const previewInput = vi.mocked(fred.buildManifestPreview).mock
+      .calls[0]?.[0] as unknown as Record<string, unknown>;
+    return { fredInput, previewInput, previewMetaHash: 'cc'.repeat(32) };
+  }
+
+  for (const [name, spec] of [
+    ['single', SINGLE],
+    ['stack', STACK],
+  ] as const) {
+    it(`loss-free (${name}): every AppDeploySpec field survives to the fred broadcast (ENG-310)`, async () => {
+      const { fredInput } = await runDeploy(spec);
+      for (const k of Object.keys(spec) as (keyof AppDeploySpec)[]) {
+        if (k === 'size') continue; // overwritten with the resolved SKU name (below)
+        expect(fredInput[k]).toEqual(spec[k]);
+      }
+      // Top-level key parity (sound because the broadcast spread is SHALLOW —
+      // it never rebuilds nested objects).
+      expect(Object.keys(fredInput).sort()).toEqual(
+        [...new Set([...Object.keys(spec), 'skuUuid', 'providerUuid'])].sort(),
+      );
+      // Resolved-identity: size/skuUuid/providerUuid are the RESOLVED pin.
+      expect(fredInput.size).toBe(resolvedSkuFixture.name);
+      expect(fredInput.skuUuid).toBe(resolvedSkuFixture.skuUuid);
+      expect(fredInput.providerUuid).toBe(resolvedSkuFixture.providerUuid);
+    });
+
+    it(`preview-vs-deploy meta-hash parity (${name}): both manifests derive from the same STRUCTURED_FIELDS (ENG-310)`, async () => {
+      const { fredInput, previewInput, previewMetaHash } =
+        await runDeploy(spec);
+      // The preview and the fred deploy build the manifest from the SAME
+      // STRUCTURED_FIELDS, so preview.meta_hash ≡ the deployed meta-hash by
+      // construction. Anti-drift: assert the structured manifest inputs agree.
+      const STRUCTURED_FIELDS = [
+        'image',
+        'port',
+        'env',
+        'command',
+        'args',
+        'user',
+        'tmpfs',
+        'health_check',
+        'stop_grace_period',
+        'init',
+        'expose',
+        'labels',
+        'depends_on',
+        'services',
+      ] as const;
+      for (const f of STRUCTURED_FIELDS) {
+        expect(previewInput[f]).toEqual(
+          (fredInput as unknown as Record<string, unknown>)[f],
+        );
+      }
+      // The deploy path commits the preview's meta-hash (auth-token +
+      // persistence). It is the value the preview computed — equal by
+      // construction since neither path re-derives the manifest.
+      expect(previewMetaHash).toBe('cc'.repeat(32));
+    });
+  }
+});
+
+// ENG-310: validateSpec gates image-xor-services at EACH entry path
+// (initial deployApp call + a replace_spec onPlan edit). The four combos:
+// image-only ✓, services-only ✓, both → INVALID_CONFIG, neither → INVALID_CONFIG.
+describe('deployApp validateSpec image-xor-services gate (ENG-310)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  async function wireHappyMocks() {
+    const readinessRaw = readFixture(
+      'skills',
+      'deploy-app',
+      '01-fast-path-active',
+      'input',
+      'readiness-response.json',
+    );
+    const fred = await import('@manifest-network/manifest-mcp-fred');
+    vi.mocked(fred.checkDeploymentReadiness).mockResolvedValue(
+      readinessRaw as unknown as Awaited<
+        ReturnType<typeof fred.checkDeploymentReadiness>
+      >,
+    );
+    const deployResp = readFixture(
+      'skills',
+      'deploy-app',
+      '01-fast-path-active',
+      'input',
+      'deploy-response.json',
+    ) as Record<string, unknown>;
+    vi.mocked(fred.buildManifestPreview).mockResolvedValue({
+      manifest_json: '{"version":"0.1"}',
+      meta_hash_hex: 'cc'.repeat(32),
+    } as Awaited<ReturnType<typeof fred.buildManifestPreview>>);
+    vi.mocked(fred.deployApp).mockResolvedValue({
+      lease_uuid: deployResp.lease_uuid as string,
+      provider_uuid: deployResp.provider_uuid as string,
+      provider_url: deployResp.provider_url as string,
+      state: deployResp.state as never,
+      connection: deployResp.connection,
+    } as unknown as Awaited<ReturnType<typeof fred.deployApp>>);
+    const core = await import('@manifest-network/manifest-mcp-core');
+    vi.mocked(core.cosmosEstimateFee).mockResolvedValue({
+      module: 'billing',
+      subcommand: 'create-lease',
+      gasEstimate: '142000',
+      fee: { amount: [{ denom: 'umfx', amount: '2300' }], gas: '142000' },
+    } as Awaited<ReturnType<typeof core.cosmosEstimateFee>>);
+  }
+
+  const IMAGE_ONLY: AppDeploySpec = {
+    image: 'nginx:latest',
+    size: 'small',
+    port: 80,
+  };
+  const SERVICES_ONLY: AppDeploySpec = {
+    size: 'small',
+    services: { web: { image: 'nginx:latest' } },
+  };
+  // BOTH/NEITHER are illegal at the type level; cast through unknown to
+  // exercise the runtime guard (untrusted JSON.parse callers).
+  const BOTH = {
+    image: 'nginx:latest',
+    size: 'small',
+    port: 80,
+    services: { web: { image: 'nginx:latest' } },
+  } as unknown as AppDeploySpec;
+  const NEITHER = { size: 'small' } as unknown as AppDeploySpec;
+
+  async function callDeploy(spec: AppDeploySpec): Promise<unknown> {
+    const { callbacks } = captureCallbacks();
+    const { deployApp } = await import('./deploy-app.js');
+    const clientManager = makeMockClientManager();
+    const walletProvider = makeMockWalletProvider();
+    return deployApp(spec, callbacks, {
+      clientManager: clientManager as unknown as Parameters<
+        typeof deployApp
+      >[2]['clientManager'],
+      walletProvider,
+    });
+  }
+
+  // initial-call entry path -------------------------------------------------
+  it('initial call: image-only is accepted', async () => {
+    await wireHappyMocks();
+    await expect(callDeploy(IMAGE_ONLY)).resolves.toBeDefined();
+  });
+  it('initial call: services-only is accepted', async () => {
+    await wireHappyMocks();
+    await expect(callDeploy(SERVICES_ONLY)).resolves.toBeDefined();
+  });
+  it('initial call: both image AND services → INVALID_CONFIG', async () => {
+    await wireHappyMocks();
+    await expect(callDeploy(BOTH)).rejects.toMatchObject({
+      code: ManifestMCPErrorCode.INVALID_CONFIG,
+    });
+  });
+  it('initial call: neither image NOR services → INVALID_CONFIG', async () => {
+    await wireHappyMocks();
+    await expect(callDeploy(NEITHER)).rejects.toMatchObject({
+      code: ManifestMCPErrorCode.INVALID_CONFIG,
+    });
+  });
+
+  // replace_spec onPlan-edit entry path ------------------------------------
+  async function callDeployWithEdit(
+    initial: AppDeploySpec,
+    replacement: AppDeploySpec,
+  ): Promise<unknown> {
+    const base = captureCallbacks();
+    const callbacks: DeployAppCallbacks = {
+      ...base.callbacks,
+      onPlan: async () => ({ kind: 'replace_spec', spec: replacement }),
+    };
+    const { deployApp } = await import('./deploy-app.js');
+    const clientManager = makeMockClientManager();
+    const walletProvider = makeMockWalletProvider();
+    return deployApp(initial, callbacks, {
+      clientManager: clientManager as unknown as Parameters<
+        typeof deployApp
+      >[2]['clientManager'],
+      walletProvider,
+    });
+  }
+  it('replace_spec edit: image-only replacement is accepted', async () => {
+    await wireHappyMocks();
+    await expect(
+      callDeployWithEdit(SERVICES_ONLY, IMAGE_ONLY),
+    ).resolves.toBeDefined();
+  });
+  it('replace_spec edit: services-only replacement is accepted', async () => {
+    await wireHappyMocks();
+    await expect(
+      callDeployWithEdit(IMAGE_ONLY, SERVICES_ONLY),
+    ).resolves.toBeDefined();
+  });
+  it('replace_spec edit: both image AND services → INVALID_CONFIG', async () => {
+    await wireHappyMocks();
+    await expect(callDeployWithEdit(IMAGE_ONLY, BOTH)).rejects.toMatchObject({
+      code: ManifestMCPErrorCode.INVALID_CONFIG,
+    });
+  });
+  it('replace_spec edit: neither image NOR services → INVALID_CONFIG', async () => {
+    await wireHappyMocks();
+    await expect(callDeployWithEdit(IMAGE_ONLY, NEITHER)).rejects.toMatchObject(
+      { code: ManifestMCPErrorCode.INVALID_CONFIG },
+    );
+  });
+});
+
+// ENG-310 / D4: cancellation contract. deployApp resolves the caller's
+// {signal?,timeout?} via core's resolveCallSignal and races it against ONLY
+// the pre-broadcast interactive callbacks (onPlan/onConfirm/onResolveSku).
+// An abort before the fred broadcast surfaces OPERATION_CANCELLED, emits a
+// `cancelled` progress event, and creates no lease. The loser-cleanup must
+// swallow a late callback rejection — vitest's global unhandledRejection
+// listener fails the whole run on a leak, so the no-leak test is non-vacuous.
+describe('deployApp — cancellation contract (signal/timeout) (ENG-310 / D4)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  const SPEC: AppDeploySpec = {
+    image: 'docker.io/library/nginx:1.27',
+    size: 'small',
+    port: 80,
+  };
+
+  // Wire the happy-path fred/preview/fee mocks, then run the REAL deployApp
+  // with the caller-supplied cancellation options + callbacks, returning the
+  // promise (so the caller can race the abort against it) plus the captured
+  // progress events.
+  async function runDeploy(
+    opts: {
+      signal?: AbortSignal;
+      timeout?: number;
+    } & Pick<DeployAppCallbacks, 'onPlan' | 'onConfirm' | 'onResolveSku'>,
+  ): Promise<{ promise: Promise<DeployResult>; progress: ProgressEvent[] }> {
+    const readinessRaw = readFixture(
+      'skills',
+      'deploy-app',
+      '01-fast-path-active',
+      'input',
+      'readiness-response.json',
+    );
+    const fred = await import('@manifest-network/manifest-mcp-fred');
+    vi.mocked(fred.checkDeploymentReadiness).mockResolvedValue(
+      readinessRaw as unknown as Awaited<
+        ReturnType<typeof fred.checkDeploymentReadiness>
+      >,
+    );
+    const deployResp = readFixture(
+      'skills',
+      'deploy-app',
+      '01-fast-path-active',
+      'input',
+      'deploy-response.json',
+    ) as Record<string, unknown>;
+    vi.mocked(fred.buildManifestPreview).mockResolvedValue({
+      manifest_json: '{"version":"0.1"}',
+      meta_hash_hex: 'cc'.repeat(32),
+    } as Awaited<ReturnType<typeof fred.buildManifestPreview>>);
+    vi.mocked(fred.deployApp).mockResolvedValue({
+      lease_uuid: deployResp.lease_uuid as string,
+      provider_uuid: deployResp.provider_uuid as string,
+      provider_url: deployResp.provider_url as string,
+      state: deployResp.state as never,
+      connection: deployResp.connection,
+    } as unknown as Awaited<ReturnType<typeof fred.deployApp>>);
+    const core = await import('@manifest-network/manifest-mcp-core');
+    vi.mocked(core.cosmosEstimateFee).mockResolvedValue({
+      module: 'billing',
+      subcommand: 'create-lease',
+      gasEstimate: '142000',
+      fee: { amount: [{ denom: 'umfx', amount: '2300' }], gas: '142000' },
+    } as Awaited<ReturnType<typeof core.cosmosEstimateFee>>);
+
+    const { signal, timeout, onPlan, onConfirm, onResolveSku } = opts;
+    const base = captureCallbacks();
+    const callbacks: DeployAppCallbacks = {
+      ...base.callbacks,
+      ...(onPlan ? { onPlan } : {}),
+      ...(onConfirm ? { onConfirm } : {}),
+      ...(onResolveSku ? { onResolveSku } : {}),
+    };
+    const { deployApp } = await import('./deploy-app.js');
+    const clientManager = makeMockClientManager();
+    const walletProvider = makeMockWalletProvider();
+    const promise = deployApp(SPEC, callbacks, {
+      clientManager: clientManager as unknown as Parameters<
+        typeof deployApp
+      >[2]['clientManager'],
+      walletProvider,
+      ...(signal ? { signal } : {}),
+      ...(timeout !== undefined ? { timeout } : {}),
+    });
+    return { promise, progress: base.progress };
+  }
+
+  it('pre-broadcast abort → OPERATION_CANCELLED, no lease created, `cancelled` event emitted', async () => {
+    const fred = await import('@manifest-network/manifest-mcp-fred');
+    const ac = new AbortController();
+    ac.abort();
+    const { promise, progress } = await runDeploy({ signal: ac.signal });
+    const err = await promise.catch((e) => e);
+    expect(err).toMatchObject({
+      code: ManifestMCPErrorCode.OPERATION_CANCELLED,
+    });
+    expect(vi.mocked(fred.deployApp)).not.toHaveBeenCalled();
+    expect(progress.some((e) => e.kind === 'cancelled')).toBe(true);
+  });
+
+  it('abort during a pending onConfirm rejects promptly; the late callback rejection is swallowed', async () => {
+    vi.useFakeTimers();
+    try {
+      const ac = new AbortController();
+      // onConfirm rejects AFTER the abort has already won the race. raceAbort
+      // MUST swallow this late rejection — if it does not, vitest's global
+      // unhandledRejection handler fails the whole run.
+      const onConfirm = (): Promise<'yes' | 'no'> =>
+        new Promise<'yes' | 'no'>((_, reject) =>
+          setTimeout(() => reject(new Error('host timeout')), 5),
+        );
+      const { promise } = await runDeploy({ signal: ac.signal, onConfirm });
+      ac.abort();
+      const err = await promise.catch((e) => e);
+      expect(err).toMatchObject({
+        code: ManifestMCPErrorCode.OPERATION_CANCELLED,
+      });
+      // Deterministically fire the late rejection; a leak here fails the run.
+      await vi.advanceTimersByTimeAsync(10);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('composed signal: caller timeout aborts with TimeoutError → OPERATION_CANCELLED', async () => {
+    vi.useFakeTimers();
+    try {
+      const onConfirm = (): Promise<'yes' | 'no'> =>
+        new Promise<'yes' | 'no'>(() => {});
+      const { promise } = await runDeploy({ timeout: 1000, onConfirm });
+      const assertion = expect(promise).rejects.toMatchObject({
+        code: ManifestMCPErrorCode.OPERATION_CANCELLED,
+      });
+      await vi.advanceTimersByTimeAsync(1000);
+      await assertion;
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

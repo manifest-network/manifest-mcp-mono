@@ -13,6 +13,7 @@
 //     construction path.
 
 import type {
+  AppDeploySpec,
   CloseLeaseArgs,
   CloseLeaseCallbacks,
   CloseLeaseOptions,
@@ -21,7 +22,6 @@ import type {
   DeployAppOptions,
   DeploymentPlanBlock,
   DeployResult,
-  DeploySpec,
   FailureEnvelope,
   ManageDomainArgs,
   ManageDomainCallbacks,
@@ -374,14 +374,13 @@ describe('AgentMCPServer', () => {
       }
     });
 
-    // ENG-275: `size` (the SKU / compute-tier selector) is load-bearing —
-    // it drives SKU resolution, fee estimation, readiness, and the
-    // persisted manifest — yet it used to be an undocumented escape-hatch
-    // field readable only via cast. Promote it to a discoverable, typed
-    // optional property on the `spec` schema so a contract-following caller
-    // can select a non-default SKU. The property stays NESTED under `spec`
-    // (not a sibling tool arg), so the top-level `['spec']` contract above
-    // is unaffected.
+    // ENG-275 / ENG-310 (D6): `size` (the SKU / compute-tier selector) is
+    // load-bearing — it drives SKU resolution, fee estimation, readiness,
+    // and the persisted manifest. It is a discoverable, typed, REQUIRED
+    // property on the `spec` schema so a contract-following caller selects
+    // the SKU explicitly (no silent default at the boundary). The property
+    // stays NESTED under `spec` (not a sibling tool arg), so the top-level
+    // `['spec']` contract above is unaffected.
     it('deploy_app_orchestrated spec schema surfaces a documented `size` property', async () => {
       const server = makeServer();
       const [clientTransport, serverTransport] =
@@ -407,8 +406,10 @@ describe('AgentMCPServer', () => {
         expect(size).toBeDefined();
         expect(size?.type).toBe('string');
         expect(size?.description ?? '').not.toBe('');
-        // Optional: omitting `size` must remain valid (defaults to 'small').
-        expect(specSchema?.required ?? []).not.toContain('size');
+        // ENG-310 (D6): `size` is REQUIRED — parse-and-validate at the
+        // untrusted MCP boundary rather than silently defaulting a
+        // load-bearing SKU selector downstream.
+        expect(specSchema?.required ?? []).toContain('size');
       } finally {
         await client.close();
       }
@@ -466,6 +467,72 @@ describe('AgentMCPServer', () => {
   });
 
   // ─────────────────────────────────────────────────────────────────
+  // ENG-310 (D6): parse-and-validate the deploy spec at the untrusted
+  // MCP boundary. The `deploy_app_orchestrated` Zod schema requires
+  // `size` and enforces exactly-one-of(image, services) via `.refine`,
+  // so a malformed spec is rejected by the SDK's input-schema validation
+  // BEFORE the orchestrator (or any elicitation) runs.
+  //
+  // Surfacing note (SDK @modelcontextprotocol/sdk@1.29.0): a Zod input
+  // failure throws `McpError(InvalidParams)` inside the tool handler,
+  // which the SDK CATCHES and converts to a tool result with
+  // `isError: true` and text `"… Input validation error: Invalid
+  // arguments for tool …"` — `client.callTool` resolves (does not
+  // reject). The `Invalid arguments` marker distinguishes a SCHEMA
+  // (boundary) rejection from a HANDLER-returned error (which carries a
+  // Manifest error code like INVALID_CONFIG and never that phrase).
+  // ─────────────────────────────────────────────────────────────────
+  describe('deploy_app_orchestrated MCP-boundary validation (D6)', () => {
+    async function callBoundary(toolInput: Record<string, unknown>): Promise<{
+      isError?: boolean;
+      content: Array<{ type: string; text: string }>;
+    }> {
+      const server = makeServer();
+      const [clientTransport, serverTransport] =
+        InMemoryTransport.createLinkedPair();
+      activeTransports.push(clientTransport, serverTransport);
+      const client = new Client(
+        { name: 'test-client', version: '1.0.0' },
+        { capabilities: { elicitation: {} } },
+      );
+      await server.getServer().connect(serverTransport);
+      await client.connect(clientTransport);
+      try {
+        return (await client.callTool({
+          name: 'deploy_app_orchestrated',
+          arguments: toolInput,
+        })) as {
+          isError?: boolean;
+          content: Array<{ type: string; text: string }>;
+        };
+      } finally {
+        await client.close().catch(() => {});
+      }
+    }
+
+    it('REJECTS a spec with both image and services at the schema boundary (not the handler)', async () => {
+      const r = await callBoundary({
+        spec: { image: 'x', services: {}, size: 'small' },
+      });
+      expect(r.isError).toBe(true);
+      // Boundary (schema) rejection — NOT a handler-returned error.
+      expect(r.content[0].text).toMatch(/Invalid arguments/i);
+    });
+
+    it('REJECTS a spec missing the required `size`', async () => {
+      const r = await callBoundary({ spec: { image: 'x' } });
+      expect(r.isError).toBe(true);
+      expect(r.content[0].text).toMatch(/Invalid arguments/i);
+    });
+
+    it('REJECTS a spec with neither image nor services at the schema boundary', async () => {
+      const r = await callBoundary({ spec: { size: 'small' } });
+      expect(r.isError).toBe(true);
+      expect(r.content[0].text).toMatch(/Invalid arguments/i);
+    });
+  });
+
+  // ─────────────────────────────────────────────────────────────────
   // Test #11 — MANIFEST_AGENT_DATA_DIR env flow (Phase 2 / finding #4).
   // The per-call `data_dir` argument was removed; the env-var-only path
   // is the public contract. Assert the env value flows through to
@@ -508,7 +575,7 @@ describe('AgentMCPServer', () => {
       await callToolWithCapture(
         server,
         'deploy_app_orchestrated',
-        { spec: { image: 'nginx', port: 80 } },
+        { spec: { image: 'nginx', port: 80, size: 'small' } },
         {
           respond: () => ({
             action: 'accept',
@@ -541,7 +608,7 @@ describe('AgentMCPServer', () => {
       await callToolWithCapture(
         server,
         'deploy_app_orchestrated',
-        { spec: { image: 'nginx', port: 80 } },
+        { spec: { image: 'nginx', port: 80, size: 'small' } },
         {
           respond: () => ({
             action: 'accept',
@@ -566,7 +633,7 @@ describe('AgentMCPServer', () => {
   // ─────────────────────────────────────────────────────────────────
   describe('deploy_app_orchestrated snake_case sku_uuid / provider_uuid normalization', () => {
     function makeShortCircuitDeploy(
-      capture: (spec: DeploySpec) => void,
+      capture: (spec: AppDeploySpec) => void,
     ): AgentOrchestrators['deployApp'] {
       return async (_spec, cb, _opts) => {
         capture(_spec);
@@ -583,7 +650,7 @@ describe('AgentMCPServer', () => {
     }
 
     it('sku_uuid (snake) → skuUuid (camel) when skuUuid is absent', async () => {
-      let observedSpec: DeploySpec | undefined;
+      let observedSpec: AppDeploySpec | undefined;
       const server = makeServer({
         deployApp: makeShortCircuitDeploy((s) => {
           observedSpec = s;
@@ -592,7 +659,14 @@ describe('AgentMCPServer', () => {
       await callToolWithCapture(
         server,
         'deploy_app_orchestrated',
-        { spec: { image: 'nginx', port: 80, sku_uuid: 'sku-abc-123' } },
+        {
+          spec: {
+            image: 'nginx',
+            port: 80,
+            size: 'small',
+            sku_uuid: 'sku-abc-123',
+          },
+        },
         {
           respond: () => ({
             action: 'accept',
@@ -606,7 +680,7 @@ describe('AgentMCPServer', () => {
     });
 
     it('provider_uuid (snake) → providerUuid (camel) when providerUuid is absent', async () => {
-      let observedSpec: DeploySpec | undefined;
+      let observedSpec: AppDeploySpec | undefined;
       const server = makeServer({
         deployApp: makeShortCircuitDeploy((s) => {
           observedSpec = s;
@@ -616,7 +690,12 @@ describe('AgentMCPServer', () => {
         server,
         'deploy_app_orchestrated',
         {
-          spec: { image: 'nginx', port: 80, provider_uuid: 'prov-xyz-789' },
+          spec: {
+            image: 'nginx',
+            port: 80,
+            size: 'small',
+            provider_uuid: 'prov-xyz-789',
+          },
         },
         {
           respond: () => ({
@@ -631,7 +710,7 @@ describe('AgentMCPServer', () => {
     });
 
     it('explicit camelCase skuUuid wins over snake_case sku_uuid when both are present', async () => {
-      let observedSpec: DeploySpec | undefined;
+      let observedSpec: AppDeploySpec | undefined;
       const server = makeServer({
         deployApp: makeShortCircuitDeploy((s) => {
           observedSpec = s;
@@ -644,6 +723,7 @@ describe('AgentMCPServer', () => {
           spec: {
             image: 'nginx',
             port: 80,
+            size: 'small',
             skuUuid: 'sku-camel-wins',
             sku_uuid: 'sku-snake-loses',
           },
@@ -690,7 +770,7 @@ describe('AgentMCPServer', () => {
       let observedConfirm: 'yes' | 'no' | undefined;
 
       const fakeDeploy: AgentOrchestrators['deployApp'] = async (
-        _spec: DeploySpec,
+        _spec: AppDeploySpec,
         cb: DeployAppCallbacks,
         _opts: DeployAppOptions,
       ): Promise<DeployResult> => {
@@ -750,7 +830,7 @@ describe('AgentMCPServer', () => {
       const captured = await callToolWithCapture(
         server,
         'deploy_app_orchestrated',
-        { spec: { image: 'nginx', port: 80 } },
+        { spec: { image: 'nginx', port: 80, size: 'small' } },
         {
           respond: (req) => {
             const params = req.params as ElicitRequestFormParams;
@@ -898,7 +978,7 @@ describe('AgentMCPServer', () => {
       const captured = await callToolWithCapture(
         server,
         'deploy_app_orchestrated',
-        { spec: { image: 'nginx', port: 80 } },
+        { spec: { image: 'nginx', port: 80, size: 'small' } },
         {
           respond: () => ({
             action: 'accept',
@@ -1014,7 +1094,7 @@ describe('AgentMCPServer', () => {
       const captured = await callToolWithCapture(
         server,
         'deploy_app_orchestrated',
-        { spec: { image: 'nginx', port: 80 } },
+        { spec: { image: 'nginx', port: 80, size: 'small' } },
         { respond: () => ({ action }) },
       );
       return { observed, captured };
@@ -1073,7 +1153,7 @@ describe('AgentMCPServer', () => {
       await callToolWithCapture(
         server,
         'deploy_app_orchestrated',
-        { spec: { image: 'nginx', port: 80 } },
+        { spec: { image: 'nginx', port: 80, size: 'small' } },
         { respond: () => ({ action: 'cancel' }) },
       );
       expect(observedError?.code).toBe('INVALID_CONFIG');
@@ -1139,7 +1219,7 @@ describe('AgentMCPServer', () => {
       await callToolWithCapture(
         server,
         'deploy_app_orchestrated',
-        { spec: { image: 'nginx', port: 80 } },
+        { spec: { image: 'nginx', port: 80, size: 'small' } },
         {
           respond: () => ({
             action: 'accept',
@@ -1592,7 +1672,7 @@ describe('AgentMCPServer', () => {
       {
         label: 'deploy_app_orchestrated',
         toolName: 'deploy_app_orchestrated',
-        args: { spec: { image: 'nginx', port: 80 } },
+        args: { spec: { image: 'nginx', port: 80, size: 'small' } },
         orchestratorKey: 'deployApp',
         mustGuard: true,
       },
@@ -1886,7 +1966,7 @@ describe('AgentMCPServer', () => {
   // Test #13 — Phase 2 (finding #13): parsePlanVerdict's `replace_spec`
   // branch rejects JSON arrays (matches the parallel `edit_env` guard).
   // Pre-fix `typeof [] === 'object'` slipped through, letting an array
-  // get cast to `DeploySpec`.
+  // get cast to `AppDeploySpec`.
   // ─────────────────────────────────────────────────────────────────
   describe('#13 parsePlanVerdict replace_spec Array.isArray guard', () => {
     async function runWithSpecJson(specJson: string): Promise<{
@@ -1939,7 +2019,7 @@ describe('AgentMCPServer', () => {
       const captured = await callToolWithCapture(
         server,
         'deploy_app_orchestrated',
-        { spec: { image: 'nginx', port: 80 } },
+        { spec: { image: 'nginx', port: 80, size: 'small' } },
         {
           respond: () => ({
             action: 'accept',
@@ -2108,7 +2188,7 @@ describe('AgentMCPServer', () => {
       const captured = await callToolWithCapture(
         server,
         'deploy_app_orchestrated',
-        { spec: { image: 'nginx', port: 80 } },
+        { spec: { image: 'nginx', port: 80, size: 'small' } },
         respondNever,
       );
 
@@ -2155,7 +2235,7 @@ describe('AgentMCPServer', () => {
       const captured = await callToolWithCapture(
         server,
         'deploy_app_orchestrated',
-        { spec: { image: 'nginx', port: 80 } },
+        { spec: { image: 'nginx', port: 80, size: 'small' } },
         respondNever,
       );
 
@@ -2225,7 +2305,7 @@ describe('AgentMCPServer', () => {
       const captured = await callToolWithCapture(
         server,
         'deploy_app_orchestrated',
-        { spec: { image: 'nginx', port: 80 } },
+        { spec: { image: 'nginx', port: 80, size: 'small' } },
         respondNever,
       );
 
@@ -2304,7 +2384,7 @@ describe('AgentMCPServer', () => {
       const captured = await callToolWithCapture(
         server,
         'deploy_app_orchestrated',
-        { spec: { image: 'nginx', port: 80 } },
+        { spec: { image: 'nginx', port: 80, size: 'small' } },
         respondNever,
       );
 

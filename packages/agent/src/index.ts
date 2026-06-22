@@ -25,11 +25,11 @@
 
 import type {
   AgentCoreRuntime,
+  AppDeploySpec,
   CloseLeaseArgs,
   CloseLeaseOptions,
   DenomMap,
   DeployAppOptions,
-  DeploySpec,
   LeaseStateName,
   ManageDomainArgs,
   ManageDomainOptions,
@@ -311,22 +311,23 @@ export class AgentMCPServer {
         inputSchema: {
           spec: z
             .looseObject({
-              // ENG-275: `size` is load-bearing (SKU resolution, fee
-              // estimate, readiness, persisted manifest) but used to be an
-              // undocumented escape-hatch field. Declare it as a typed,
-              // discoverable optional property so a contract-following
-              // caller can select a non-default SKU. `looseObject` still
-              // passes the rest of the spec (image/services/etc.) through.
+              // ENG-310 (D6): `size` is load-bearing (SKU resolution, fee
+              // estimate, readiness, persisted manifest) and is now
+              // REQUIRED — parse-and-validate at the untrusted MCP
+              // boundary rather than letting an omitted tier silently
+              // default downstream. Declared as a typed, discoverable
+              // property so a contract-following caller selects the SKU
+              // explicitly. `looseObject` still passes the rest of the
+              // spec (image/services/etc.) through.
               size: z
                 .string()
-                .optional()
                 .describe(
-                  "Optional compute-tier / SKU name (e.g. 'small', 'medium'). " +
-                    "Defaults to 'small' when omitted. Selects the on-chain SKU " +
-                    'used for the lease item, fee estimate, and readiness check; ' +
-                    "list available tiers via the lease server's get_skus. An " +
-                    'unknown tier is rejected at the readiness check (before any ' +
-                    'broadcast), which reports the available tier names.',
+                  "Compute-tier / SKU name (e.g. 'small', 'medium') — REQUIRED. " +
+                    'Selects the on-chain SKU used for the lease item, fee ' +
+                    'estimate, and readiness check; list available tiers via ' +
+                    "the lease server's get_skus. An unknown tier is rejected " +
+                    'at the readiness check (before any broadcast), which ' +
+                    'reports the available tier names.',
                 ),
               // ENG-296: SKU disambiguators. Declared (like `size`) so
               // they're discoverable + type-checked at the MCP boundary.
@@ -348,12 +349,21 @@ export class AgentMCPServer {
                     'providerUuid). Use to deploy on an exact SKU.',
                 ),
             })
+            // ENG-310 (D6): enforce exactly-one-of(image, services) at the
+            // boundary. `looseObject(...).refine(...)` preserves unknown-key
+            // passthrough (Zod 4), so the snake_case `provider_uuid` /
+            // `sku_uuid` aliases the handler normalizes still flow through.
+            .refine((s) => 'image' in s !== 'services' in s, {
+              message:
+                'Provide exactly one of `image` (single service) or `services` (stack), not both or neither.',
+            })
             .describe(
-              'DeploySpec — either SingleServiceSpec ({ image, port?, env?, customDomain?, size? }) ' +
-                'or StackSpec ({ services: { [name]: ServiceDef }, customDomain?, serviceName?, size? }). ' +
-                '`size` is the declared field above; the object also passes through an optional ' +
-                '`providerUuid`/`provider_uuid` or `skuUuid`/`sku_uuid` to disambiguate when a SKU ' +
-                'name is published by multiple providers (see browse_catalog / ' +
+              'AppDeploySpec — either a single service ({ image, port?, env?, customDomain?, size }) ' +
+                'or a stack ({ services: { [name]: ServiceConfig }, customDomain?, serviceName?, size }). ' +
+                '`size` is the declared field above and is REQUIRED. Exactly one of `image` or ' +
+                '`services` must be provided (not both, not neither). The object also passes through ' +
+                'an optional `providerUuid`/`provider_uuid` or `skuUuid`/`sku_uuid` to disambiguate ' +
+                'when a SKU name is published by multiple providers (see browse_catalog / ' +
                 'check_deployment_readiness `sku_candidates`). Both camelCase and snake_case aliases ' +
                 'are accepted — callers copying from browse_catalog / check_deployment_readiness ' +
                 'output (which uses snake_case) can pass `sku_uuid`/`provider_uuid` directly. ' +
@@ -411,7 +421,7 @@ export class AgentMCPServer {
             raw.providerUuid === undefined
               ? { providerUuid: raw.provider_uuid }
               : {}),
-          } as DeploySpec;
+          } as AppDeploySpec;
           const result = await this.orchestrators.deployApp(
             spec,
             callbacks,
