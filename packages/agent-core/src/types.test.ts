@@ -414,10 +414,12 @@ describe('Exported type shapes (load-bearing public surface)', () => {
     }>();
   });
 
-  it('DeployAppOptions extends AgentCoreRuntime with walletProvider + denomMap + dataDir + waitForReadyTimeoutMs fields', () => {
+  it('DeployAppOptions extends AgentCoreRuntime with signal/timeout + walletProvider + denomMap + dataDir + waitForReadyTimeoutMs fields', () => {
     expectTypeOf<DeployAppOptions>().toEqualTypeOf<{
       clientManager: CosmosClientManager;
       fetchFn?: typeof globalThis.fetch;
+      signal?: AbortSignal;
+      timeout?: number;
       walletProvider: WalletProvider;
       chainDataFile?: string;
       denomMap?: DenomMap;
@@ -426,28 +428,34 @@ describe('Exported type shapes (load-bearing public surface)', () => {
     }>();
   });
 
-  it('ManageDomainOptions extends AgentCoreRuntime with denomMap fields (no walletProvider)', () => {
+  it('ManageDomainOptions extends AgentCoreRuntime with signal/timeout + denomMap fields (no walletProvider)', () => {
     expectTypeOf<ManageDomainOptions>().toEqualTypeOf<{
       clientManager: CosmosClientManager;
       fetchFn?: typeof globalThis.fetch;
+      signal?: AbortSignal;
+      timeout?: number;
       chainDataFile?: string;
       denomMap?: DenomMap;
     }>();
   });
 
-  it('CloseLeaseOptions extends AgentCoreRuntime with denomMap fields (no walletProvider)', () => {
+  it('CloseLeaseOptions extends AgentCoreRuntime with signal/timeout + denomMap fields (no walletProvider)', () => {
     expectTypeOf<CloseLeaseOptions>().toEqualTypeOf<{
       clientManager: CosmosClientManager;
       fetchFn?: typeof globalThis.fetch;
+      signal?: AbortSignal;
+      timeout?: number;
       chainDataFile?: string;
       denomMap?: DenomMap;
     }>();
   });
 
-  it('TroubleshootOptions extends AgentCoreRuntime with denomMap fields (no walletProvider)', () => {
+  it('TroubleshootOptions extends AgentCoreRuntime with signal/timeout + denomMap fields (no walletProvider)', () => {
     expectTypeOf<TroubleshootOptions>().toEqualTypeOf<{
       clientManager: CosmosClientManager;
       fetchFn?: typeof globalThis.fetch;
+      signal?: AbortSignal;
+      timeout?: number;
       chainDataFile?: string;
       denomMap?: DenomMap;
     }>();

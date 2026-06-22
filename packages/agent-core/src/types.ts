@@ -99,6 +99,19 @@ export interface AgentCoreRuntime {
  */
 export interface DeployAppOptions extends AgentCoreRuntime {
   /**
+   * Caller cancellation. Composed with `timeout` via `resolveCallSignal`
+   * (core's `CallOptions` convention). Races ONLY the pre-broadcast
+   * interactive callbacks (onPlan/onConfirm/onResolveSku) + forwards into
+   * fred's `DeployCallOptions.abortSignal`; a post-broadcast abort routes
+   * INTO recovery, it never cancels it (ENG-310 / D4).
+   */
+  signal?: AbortSignal;
+  /**
+   * Per-call deadline in ms. Surfaces as a `TimeoutError` (distinct from the
+   * caller's `AbortError`), mapped to `OPERATION_CANCELLED` (ENG-310 / D4).
+   */
+  timeout?: number;
+  /**
    * Wallet provider for ADR-036 auth-token signing.
    *
    * **MUST** implement `signArbitrary` — validated at the call boundary
@@ -153,6 +166,10 @@ export interface DeployAppOptions extends AgentCoreRuntime {
  * humanization injection.
  */
 export interface ManageDomainOptions extends AgentCoreRuntime {
+  /** Caller cancellation (core `CallOptions` convention; ENG-310 / D4). */
+  signal?: AbortSignal;
+  /** Per-call deadline in ms (ENG-310 / D4). */
+  timeout?: number;
   chainDataFile?: string;
   denomMap?: DenomMap;
 }
@@ -162,6 +179,10 @@ export interface ManageDomainOptions extends AgentCoreRuntime {
  * fred → no `walletProvider` required.
  */
 export interface CloseLeaseOptions extends AgentCoreRuntime {
+  /** Caller cancellation (core `CallOptions` convention; ENG-310 / D4). */
+  signal?: AbortSignal;
+  /** Per-call deadline in ms (ENG-310 / D4). */
+  timeout?: number;
   chainDataFile?: string;
   denomMap?: DenomMap;
 }
@@ -171,6 +192,10 @@ export interface CloseLeaseOptions extends AgentCoreRuntime {
  * broadcast through fred → no `walletProvider` required.
  */
 export interface TroubleshootOptions extends AgentCoreRuntime {
+  /** Caller cancellation (core `CallOptions` convention; ENG-310 / D4). */
+  signal?: AbortSignal;
+  /** Per-call deadline in ms (ENG-310 / D4). */
+  timeout?: number;
   chainDataFile?: string;
   denomMap?: DenomMap;
 }

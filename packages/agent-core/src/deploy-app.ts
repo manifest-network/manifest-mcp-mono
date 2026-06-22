@@ -47,6 +47,7 @@ import {
   parseFqdn,
   parseLeaseUuid,
   type ReadCtx,
+  resolveCallSignal,
   resolveSku,
   type SkuCandidate,
   setItemCustomDomain,
@@ -150,6 +151,53 @@ export async function deployApp(
     );
   }
 
+  // --- Cancellation contract (ENG-310 / D4) ---------------------------
+  // Resolve the caller's {signal?,timeout?} into ONE effective AbortSignal
+  // (core's `CallOptions` convention). It is (a) checked at each PRE-broadcast
+  // step boundary, (b) raced against the pre-broadcast interactive callbacks
+  // (onPlan/onConfirm/onResolveSku) so an unresponsive host can't pin the
+  // await, and (c) forwarded into fred's `DeployCallOptions.abortSignal`.
+  // Per D4.6 it is NOT raced against `onFailure` or any POST-broadcast await:
+  // once fred is called the tx MAY commit on-chain, so a late abort must route
+  // into recovery, not cancel it.
+  //
+  // `cancelOnAbort` centralizes the single emit-then-throw contract: the
+  // `cancelled` progress event fires exactly once, immediately before the
+  // OPERATION_CANCELLED throw, on ANY signal-driven cancellation path
+  // (boundary check OR a raced callback). The deliberate-decline paths
+  // (`onConfirm:'no'` / `onPlan:'cancel'`) throw OPERATION_CANCELLED too but
+  // do NOT route through here, so they don't emit `cancelled` (they aren't an
+  // abort). `race` wraps a pre-broadcast callback in `raceAbort` when a signal
+  // is present, then maps the bare cancelledError into the emit-then-throw.
+  const signal = resolveCallSignal(opts);
+  let cancelledEmitted = false;
+  const cancelOnAbort = (reason: unknown): never => {
+    if (!cancelledEmitted) {
+      cancelledEmitted = true;
+      callbacks.onProgress?.({ kind: 'cancelled' });
+    }
+    throw cancelledError(reason);
+  };
+  const throwIfCancelled = (): void => {
+    if (signal?.aborted) cancelOnAbort(signal.reason);
+  };
+  const race = async <T>(p: Promise<T>): Promise<T> => {
+    if (signal === undefined) return p;
+    try {
+      return await raceAbort(p, signal);
+    } catch (err) {
+      if (
+        err instanceof ManifestMCPError &&
+        err.code === ManifestMCPErrorCode.OPERATION_CANCELLED &&
+        signal.aborted
+      ) {
+        cancelOnAbort(signal.reason);
+      }
+      throw err;
+    }
+  };
+  throwIfCancelled();
+
   // --- Address-source consistency guard -------------------------------
   // Copilot review fix (PR #58 r3248900328): `opts.walletProvider` and
   // `opts.clientManager` are independently-injected runtime objects.
@@ -245,7 +293,7 @@ export async function deployApp(
       ) {
         const candidates = (err.details?.candidates as SkuCandidate[]) ?? [];
         callbacks.onProgress?.({ kind: 'sku_ambiguous', candidates });
-        const pick = await callbacks.onResolveSku(candidates);
+        const pick = await race(callbacks.onResolveSku(candidates));
         const pin = await resolveSku(readCtx, {
           size: requestedSize(s),
           skuUuid: pick.skuUuid,
@@ -357,7 +405,7 @@ export async function deployApp(
   });
   callbacks.onProgress?.({ kind: 'deployment_plan_rendered', block });
   if (callbacks.onPlan) {
-    const verdict = await callbacks.onPlan(plan);
+    const verdict = await race(callbacks.onPlan(plan));
     if (verdict === 'cancel') {
       throw new ManifestMCPError(
         ManifestMCPErrorCode.OPERATION_CANCELLED,
@@ -495,7 +543,7 @@ export async function deployApp(
   const recapText = renderIntentRecap({ spec: confirmedSpec, activeChain });
   const recapBlock = { text: recapText };
   if (callbacks.onConfirm) {
-    const yesNo = await callbacks.onConfirm(recapBlock);
+    const yesNo = await race(callbacks.onConfirm(recapBlock));
     if (yesNo !== 'yes') {
       throw new ManifestMCPError(
         ManifestMCPErrorCode.OPERATION_CANCELLED,
@@ -538,6 +586,12 @@ export async function deployApp(
   };
 
   // --- Broadcast: fred's atomic deployApp (architect α-locked) -------
+  // Last pre-broadcast cancellation boundary: once `fredDeployApp` is called
+  // the tx may commit on-chain, so this is the final point an abort can cancel
+  // cleanly (no lease created). After this, the signal only bounds fred's own
+  // await (via `abortSignal`) — a post-broadcast abort routes into recovery
+  // (tx MAY STILL COMMIT → re-query; see core's withTxConfirmation contract).
+  throwIfCancelled();
   callbacks.onProgress?.({ kind: 'deploy_app_broadcast' });
   // D3 / ENG-310: loss-free broadcast. A SHALLOW spread of `confirmedSpec`
   // forwards every rich AppDeploySpec field (user/tmpfs/health_check/
@@ -560,7 +614,10 @@ export async function deployApp(
       getAuthToken,
       getLeaseDataAuthToken,
       fredInput,
-      {},
+      // Forward the effective signal so fred's own await is abort-bounded
+      // (it surfaces OPERATION_CANCELLED with the tx-MAY-have-committed
+      // semantics; agent-core does NOT race this — D4.6).
+      signal ? { abortSignal: signal } : {},
       opts.fetchFn,
     );
   } catch (err) {
@@ -865,6 +922,52 @@ export async function deployApp(
 }
 
 // --- Helpers ---------------------------------------------------------
+
+/**
+ * Race a PRE-broadcast interactive callback against the effective abort
+ * signal, so a caller cancellation / timeout rejects the await promptly
+ * instead of blocking on an unresponsive host. Settles on the first of
+ * {callback resolves/rejects, signal aborts}; the LOSING branch's eventual
+ * settlement is swallowed (`.catch(() => {})`) so a late callback rejection
+ * never escapes to vitest's / Node's global `unhandledRejection` handler.
+ * The abort listener is `{ once: true }` and removed in `.finally`.
+ *
+ * Copies the executor + swallow shape from core's
+ * `internals/tx-confirmation.ts:withTxConfirmation` — but scoped to the
+ * pre-broadcast window per D4.6: a post-broadcast abort must route INTO
+ * recovery (the tx MAY have committed → re-query), never cancel it, so
+ * `deployApp` does NOT wrap any post-broadcast await with this.
+ */
+function raceAbort<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) {
+    promise.catch(() => {}); // swallow the loser even on the already-aborted path
+    return Promise.reject(cancelledError(signal.reason));
+  }
+  promise.catch(() => {}); // swallow the losing branch's eventual rejection
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = (): void => reject(cancelledError(signal.reason));
+    signal.addEventListener('abort', onAbort, { once: true });
+    promise
+      .then(resolve, reject)
+      .finally(() => signal.removeEventListener('abort', onAbort));
+  });
+}
+
+/**
+ * Build the structured cancellation error for an aborted/timed-out
+ * PRE-broadcast await. Mirrors core's `cancelledTxError(reason, sent=false)`
+ * (nothing was broadcast) — `OPERATION_CANCELLED` keeps the abort path
+ * consistent with the SDK error model and is non-retryable. The original
+ * `AbortError`/`TimeoutError` reason is preserved in the message + details.
+ */
+function cancelledError(reason: unknown): ManifestMCPError {
+  const detail = reason instanceof Error ? reason.message : String(reason);
+  return new ManifestMCPError(
+    ManifestMCPErrorCode.OPERATION_CANCELLED,
+    `Deployment was cancelled before broadcast (${detail}); no transaction was sent.`,
+    { reason },
+  );
+}
 
 function primaryImage(spec: AppDeploySpec): string {
   if (isStackSpec(spec)) {

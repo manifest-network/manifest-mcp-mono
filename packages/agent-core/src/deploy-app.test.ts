@@ -4937,3 +4937,146 @@ describe('deployApp validateSpec image-xor-services gate (ENG-310)', () => {
     );
   });
 });
+
+// ENG-310 / D4: cancellation contract. deployApp resolves the caller's
+// {signal?,timeout?} via core's resolveCallSignal and races it against ONLY
+// the pre-broadcast interactive callbacks (onPlan/onConfirm/onResolveSku).
+// An abort before the fred broadcast surfaces OPERATION_CANCELLED, emits a
+// `cancelled` progress event, and creates no lease. The loser-cleanup must
+// swallow a late callback rejection — vitest's global unhandledRejection
+// listener fails the whole run on a leak, so the no-leak test is non-vacuous.
+describe('deployApp — cancellation contract (signal/timeout) (ENG-310 / D4)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  const SPEC: AppDeploySpec = {
+    image: 'docker.io/library/nginx:1.27',
+    size: 'small',
+    port: 80,
+  };
+
+  // Wire the happy-path fred/preview/fee mocks, then run the REAL deployApp
+  // with the caller-supplied cancellation options + callbacks, returning the
+  // promise (so the caller can race the abort against it) plus the captured
+  // progress events.
+  async function runDeploy(
+    opts: {
+      signal?: AbortSignal;
+      timeout?: number;
+    } & Pick<DeployAppCallbacks, 'onPlan' | 'onConfirm' | 'onResolveSku'>,
+  ): Promise<{ promise: Promise<DeployResult>; progress: ProgressEvent[] }> {
+    const readinessRaw = readFixture(
+      'skills',
+      'deploy-app',
+      '01-fast-path-active',
+      'input',
+      'readiness-response.json',
+    );
+    const fred = await import('@manifest-network/manifest-mcp-fred');
+    vi.mocked(fred.checkDeploymentReadiness).mockResolvedValue(
+      readinessRaw as unknown as Awaited<
+        ReturnType<typeof fred.checkDeploymentReadiness>
+      >,
+    );
+    const deployResp = readFixture(
+      'skills',
+      'deploy-app',
+      '01-fast-path-active',
+      'input',
+      'deploy-response.json',
+    ) as Record<string, unknown>;
+    vi.mocked(fred.buildManifestPreview).mockResolvedValue({
+      manifest_json: '{"version":"0.1"}',
+      meta_hash_hex: 'cc'.repeat(32),
+    } as Awaited<ReturnType<typeof fred.buildManifestPreview>>);
+    vi.mocked(fred.deployApp).mockResolvedValue({
+      lease_uuid: deployResp.lease_uuid as string,
+      provider_uuid: deployResp.provider_uuid as string,
+      provider_url: deployResp.provider_url as string,
+      state: deployResp.state as never,
+      connection: deployResp.connection,
+    } as unknown as Awaited<ReturnType<typeof fred.deployApp>>);
+    const core = await import('@manifest-network/manifest-mcp-core');
+    vi.mocked(core.cosmosEstimateFee).mockResolvedValue({
+      module: 'billing',
+      subcommand: 'create-lease',
+      gasEstimate: '142000',
+      fee: { amount: [{ denom: 'umfx', amount: '2300' }], gas: '142000' },
+    } as Awaited<ReturnType<typeof core.cosmosEstimateFee>>);
+
+    const { signal, timeout, onPlan, onConfirm, onResolveSku } = opts;
+    const base = captureCallbacks();
+    const callbacks: DeployAppCallbacks = {
+      ...base.callbacks,
+      ...(onPlan ? { onPlan } : {}),
+      ...(onConfirm ? { onConfirm } : {}),
+      ...(onResolveSku ? { onResolveSku } : {}),
+    };
+    const { deployApp } = await import('./deploy-app.js');
+    const clientManager = makeMockClientManager();
+    const walletProvider = makeMockWalletProvider();
+    const promise = deployApp(SPEC, callbacks, {
+      clientManager: clientManager as unknown as Parameters<
+        typeof deployApp
+      >[2]['clientManager'],
+      walletProvider,
+      ...(signal ? { signal } : {}),
+      ...(timeout !== undefined ? { timeout } : {}),
+    });
+    return { promise, progress: base.progress };
+  }
+
+  it('pre-broadcast abort → OPERATION_CANCELLED, no lease created, `cancelled` event emitted', async () => {
+    const fred = await import('@manifest-network/manifest-mcp-fred');
+    const ac = new AbortController();
+    ac.abort();
+    const { promise, progress } = await runDeploy({ signal: ac.signal });
+    const err = await promise.catch((e) => e);
+    expect(err).toMatchObject({
+      code: ManifestMCPErrorCode.OPERATION_CANCELLED,
+    });
+    expect(vi.mocked(fred.deployApp)).not.toHaveBeenCalled();
+    expect(progress.some((e) => e.kind === 'cancelled')).toBe(true);
+  });
+
+  it('abort during a pending onConfirm rejects promptly; the late callback rejection is swallowed', async () => {
+    vi.useFakeTimers();
+    try {
+      const ac = new AbortController();
+      // onConfirm rejects AFTER the abort has already won the race. raceAbort
+      // MUST swallow this late rejection — if it does not, vitest's global
+      // unhandledRejection handler fails the whole run.
+      const onConfirm = (): Promise<'yes' | 'no'> =>
+        new Promise<'yes' | 'no'>((_, reject) =>
+          setTimeout(() => reject(new Error('host timeout')), 5),
+        );
+      const { promise } = await runDeploy({ signal: ac.signal, onConfirm });
+      ac.abort();
+      const err = await promise.catch((e) => e);
+      expect(err).toMatchObject({
+        code: ManifestMCPErrorCode.OPERATION_CANCELLED,
+      });
+      // Deterministically fire the late rejection; a leak here fails the run.
+      await vi.advanceTimersByTimeAsync(10);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('composed signal: caller timeout aborts with TimeoutError → OPERATION_CANCELLED', async () => {
+    vi.useFakeTimers();
+    try {
+      const onConfirm = (): Promise<'yes' | 'no'> =>
+        new Promise<'yes' | 'no'>(() => {});
+      const { promise } = await runDeploy({ timeout: 1000, onConfirm });
+      const assertion = expect(promise).rejects.toMatchObject({
+        code: ManifestMCPErrorCode.OPERATION_CANCELLED,
+      });
+      await vi.advanceTimersByTimeAsync(1000);
+      await assertion;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
