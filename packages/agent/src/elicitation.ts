@@ -131,7 +131,7 @@ export function buildPlanSchema(): RequestedSchema {
       spec_json: {
         type: 'string',
         description:
-          'Replacement DeploySpec as JSON. Used when verdict=replace_spec.',
+          'Replacement AppDeploySpec as JSON. Used when verdict=replace_spec.',
       },
     },
     required: ['verdict'],
@@ -191,7 +191,7 @@ export function buildReplaceSpecSchema(): RequestedSchema {
     properties: {
       spec_json: {
         type: 'string',
-        description: 'Replacement DeploySpec as JSON.',
+        description: 'Replacement AppDeploySpec as JSON.',
       },
     },
     required: ['spec_json'],
