@@ -103,7 +103,11 @@ Add cancellation to **`DeployAppOptions`** (and the sibling options types), forw
    timeout = the agent server's `MANIFEST_AGENT_ELICIT_TIMEOUT_MS`. Folding (b)+(c) into one wall-clock budget
    would bill human deliberation against provisioning (MCP idle-vs-wall-clock guidance). The caller's (a)
    composes with the resolved signal; it does not replace (b) or (c).
-3. **Callback-abort mechanism = race each pending callback against the signal, with explicit loser-cleanup.**
+3. **Callback-abort mechanism = race each pending PRE-broadcast interactive callback against the signal, with
+   explicit loser-cleanup.** Scope: `onPlan` / `onConfirm` / `onResolveSku` (the pre-broadcast prompts).
+   Post-broadcast awaits — notably `onFailure` (the partial-success/`close_lease` recovery prompt) — are **NOT**
+   raced against the abort: per D4.6 a post-broadcast abort routes *into* recovery, it must not cancel it. The
+   fred broadcast is the cutover point after which the signal no longer cancels.
    Mirror the proven in-repo seam at `core/src/internals/tx-confirmation.ts:46-54` (do NOT write a bare
    `Promise.race`, which leaves the loser uncaught): a single `new Promise` executor settles on the first of
    {callback resolves, abort listener rejects}; the **losing/dangling** callback promise gets a no-op
