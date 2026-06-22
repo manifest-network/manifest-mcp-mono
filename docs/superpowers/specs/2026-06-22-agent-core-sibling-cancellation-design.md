@@ -1,6 +1,7 @@
 # agent-core sibling-orchestrator cancellation — design
 
 **Status:** approved (2026-06-22)
+**Linear:** [ENG-374](https://linear.app/liftedinit/issue/ENG-374) (sub-issue of ENG-308; follow-up bugfix to ENG-310 — does **not** reopen it)
 **Branch:** `agent-core-sibling-cancellation` (off `main` @ 5fe7a0e)
 
 ## Goal
@@ -26,7 +27,7 @@ The single source of truth, holding what is inline in `deploy-app.ts` today (mov
 - **`cancelledError(reason, opLabel, broadcasts): ManifestMCPError`** — moved from `deploy-app.ts:963`, message parameterized:
   - `broadcasts === true` → `` `${opLabel} was cancelled before broadcast (${detail}); no transaction was sent.` ``
   - `broadcasts === false` → `` `${opLabel} was cancelled (${detail}).` `` (read-only flows — there is no broadcast to reference).
-  - `detail = reason instanceof Error ? reason.message : String(reason)`. Code is `OPERATION_CANCELLED` (non-retryable), `details: { reason }`. **Invariant:** `cancelledError(r, 'Deployment', true)` is byte-identical to today's deployApp message, so the ENG-310 message assertions stay green.
+  - `detail = reason instanceof Error ? reason.message : String(reason)`. Code is `OPERATION_CANCELLED` (non-retryable), `details: { reason }`. **Invariant:** `cancelledError(r, 'Deployment', true)` is byte-identical to today's deployApp message (`deploy-app.ts:967`). The existing ENG-310 abort tests assert only `code` + the `cancelled` event — **not** the message string — so this invariant is newly pinned by exact-string assertions in `cancellation.test.ts` (both `broadcasts` variants), not by the ENG-310 suite.
 - **`makeCancellationScope({ opts, onProgress, opLabel, broadcasts }): CancellationScope`** — captures the per-call seam:
   - `signal = resolveCallSignal(opts)` (core's `CallOptions` composition of `signal` + `timeout`).
   - a `cancelledEmitted` once-guard + `cancelOnAbort(reason)` that fires `onProgress?.({ kind: 'cancelled' })` exactly once, then `throw makeError(reason)` where `makeError = (r) => cancelledError(r, opLabel, broadcasts)`.
@@ -46,13 +47,13 @@ export interface CancellationScope {
 ### Consumers — D4.6 discipline preserved (race only PRE-broadcast, never post-broadcast)
 
 - **`deployApp`** (`deploy-app.ts`) — replace the inline seam (`172-198`) with `const { signal, throwIfCancelled, race } = makeCancellationScope({ opts, onProgress: callbacks.onProgress, opLabel: 'Deployment', broadcasts: true })`; delete the standalone `raceAbort`/`cancelledError` (`941`/`963`) and import them from `./internals/cancellation.js`. Every other line — the `race(...)` callback wraps, the `throwIfCancelled()` at entry/`:594`, the `signal` forwarded into fred at `:620` — is unchanged. Behavior-identical; the ENG-310 suite is the regression proof.
-- **`closeLease`** (`close-lease.ts`) — scope `opLabel: 'Lease close', broadcasts: true`; `throwIfCancelled()` at entry; `const yesNo = await race(callbacks.onConfirm(block))` (`:92`); `throwIfCancelled()` immediately before `stopApp` (`:105`). Post-broadcast `verifyAndRecover` not raced.
+- **`closeLease`** (`close-lease.ts`) — scope `opLabel: 'Lease close', broadcasts: true`; `throwIfCancelled()` at entry; `const yesNo = await race(callbacks.onConfirm(block))` (`:92`); `throwIfCancelled()` immediately before `stopApp` (`:104`). Post-broadcast `verifyAndRecover` not raced.
 - **`manageDomain`** (`manage-domain.ts`) — branch-scoped:
-  - set/clear (broadcasting): scope `opLabel: 'Domain update', broadcasts: true`; `throwIfCancelled()` at entry; `await race(callbacks.onConfirm(block))` (`:144`); `throwIfCancelled()` before `setItemCustomDomain` (`:159`). Post-broadcast verify (`:195`) not raced.
-  - lookup (read-only): scope `opLabel: 'Domain lookup', broadcasts: false`; `throwIfCancelled()` at entry + before the query (`:379`). No `onConfirm` to race.
-- **`troubleshootDeployment`** (`troubleshoot.ts`) — read-only scope `opLabel: 'Troubleshoot', broadcasts: false`; `throwIfCancelled()` at entry + before the diagnostic query (`:81`).
+  - set/clear (broadcasting): scope `opLabel: 'Domain update', broadcasts: true`; `throwIfCancelled()` at entry; `await race(callbacks.onConfirm(block))` (`:144`); `throwIfCancelled()` before `setItemCustomDomain` (`:159`). Post-broadcast verify (`:251`) not raced.
+  - lookup (read-only): scope `opLabel: 'Domain lookup', broadcasts: false`; `throwIfCancelled()` at entry; the FQDN resolve query (`:379`) is wrapped in `await race(...)`. No `onConfirm`.
+- **`troubleshootDeployment`** (`troubleshoot.ts`) — read-only scope `opLabel: 'Troubleshoot', broadcasts: false`; `throwIfCancelled()` at entry; the diagnostic query (`:81`) is wrapped in `await race(...)`.
 
-Read-only flows cannot interrupt an in-flight manifestjs query (it takes no `AbortSignal` — the same fire-and-forget honesty as core's `withReadSignal`); they check the signal at each async boundary instead.
+**Read-only flows race the query (true `withReadSignal` parity).** The single manifestjs query in each read-only flow is wrapped in the scope's `race(...)`, not merely preceded by a boundary check. This matches core's `withReadSignal` (`read-signal.ts`): manifestjs queries take no `AbortSignal`, so the RPC is not truly cancelled — but on abort/timeout we **stop awaiting** it (the in-flight query keeps running; its eventual result/rejection is swallowed by `raceAbort`'s no-op `.catch`) and surface `OPERATION_CANCELLED`. Without this, a `timeout` arriving mid-query would be inert until the query settled — defeating the deadline the option exists to enforce. `throwIfCancelled()` at entry is the already-aborted short-circuit before any work starts.
 
 ## Error handling
 
@@ -60,14 +61,20 @@ One terminal cancellation outcome per flow: `ManifestMCPError(OPERATION_CANCELLE
 
 ## Testing (TDD, RED first)
 
-- **`internals/cancellation.test.ts`** (new) — units: `throwIfCancelled` on a pre-aborted signal throws `OPERATION_CANCELLED` and emits `cancelled` exactly once; `race` rejects on abort and swallows the loser (fake timers; vitest's global unhandled-rejection guard proves no leak); `timeout` composes (TimeoutError → OPERATION_CANCELLED); both `broadcasts` message variants; `makeError` injection wired through `raceAbort`.
-- **`manage-domain.test.ts` / `close-lease.test.ts` / `troubleshoot.test.ts`** (new cases) — abort pre-`onConfirm` → `OPERATION_CANCELLED` + **broadcast fn never called** + `cancelled` event; abort during a pending `onConfirm` (late rejection swallowed) for the two broadcasting siblings; abort before the query for the read-only flows (troubleshoot, manage-domain lookup). These fail today (signal ignored), pass after wiring.
+- **`internals/cancellation.test.ts`** (new) — units:
+  - `throwIfCancelled` on a pre-aborted signal throws `OPERATION_CANCELLED` and emits `cancelled` **exactly once**; a second `throwIfCancelled`/`race` on the same scope does **not** re-emit (the `cancelledEmitted` once-guard, including the `race(...)` → `cancelOnAbort` re-map path).
+  - `race` rejects on abort and swallows the loser (fake timers; vitest's global unhandled-rejection guard proves no leak); `timeout` composes (`TimeoutError` → `OPERATION_CANCELLED`).
+  - `cancelledError` **exact strings** — assert `broadcasts: true` is byte-identical to `` `${opLabel} was cancelled before broadcast (${detail}); no transaction was sent.` `` and `broadcasts: false` is `` `${opLabel} was cancelled (${detail}).` `` (this is the pin that protects the deployApp message extraction).
+  - `makeError` injection is honored — `raceAbort` rejects with the factory's error (code + message), not a hard-coded one.
+- **`manage-domain.test.ts` / `close-lease.test.ts` / `troubleshoot.test.ts`** (new cases). These fail today (signal ignored), pass after wiring:
+  - **Broadcasting flows** (closeLease, manageDomain set/clear): abort pre-`onConfirm` → `OPERATION_CANCELLED` + **broadcast fn (`stopApp`/`setItemCustomDomain`) never called** + `cancelled` event; abort during a pending `onConfirm` (late rejection swallowed, fake timers).
+  - **Read-only flows** (troubleshoot, manageDomain lookup) — non-vacuous, because the wiring is a `race(...)` placement: assert **(a) positive control** — with no signal the query mock (`billing.v1.lease` / `leaseByCustomDomain`) **IS** invoked and the flow returns normally; **(b) negative** — a pre-aborted signal → `OPERATION_CANCELLED` AND the query mock is **NOT** called (proves the gate/race sits before the await, not after).
 - **`deploy-app.test.ts`** — the existing ENG-310 cancellation tests must stay green unchanged: the regression proof that the extraction preserved behavior.
 
 ## Out of scope (stays deferred)
 
 - The ~790-line `deployApp` decomposition (review minor finding #1) — separate P2 work.
-- Threading `TxCallOptions.signal` *into* the broadcast tx (`setItemCustomDomain`/`stopApp`). The pre-broadcast `throwIfCancelled()` gate is the honest cancellation point; once a tx is submitted, D4.6 forbids cancelling it. Forwarding a signal into the on-chain broadcast is a P2 concern coupled to the tx-options threading.
+- Threading `TxCallOptions.signal` *into* the broadcast tx. `setItemCustomDomain`/`stopApp` already accept `opts?: TxCallOptions` and honor `signal` via core's `withTxConfirmation` — but the siblings deliberately do **not** pass it. The pre-broadcast `throwIfCancelled()` gate is the honest cancellation point; once a tx is submitted, D4.6 routes a late abort into recovery, never cancels it. Forwarding the signal into the broadcast (mirroring deployApp's fred `abortSignal` forward at `:620`) is a deliberately deferred, separately-reviewable change.
 - Elicitation-requestId-level cancellation in `packages/agent` (the only thing spec §7 actually defers).
 
 ## Gate
