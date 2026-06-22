@@ -30,7 +30,7 @@
  */
 
 import type {
-  DeploySpec,
+  AppDeploySpec,
   PlanEdit,
   RecoveryChoice,
   RecoveryOption,
@@ -333,7 +333,7 @@ export function parsePlanVerdict(
   }
   if (verdict === 'replace_spec') {
     const specJson = readContentString(result, 'spec_json') ?? '';
-    let spec: DeploySpec;
+    let spec: AppDeploySpec;
     try {
       const parsed = JSON.parse(specJson) as unknown;
       if (
@@ -346,11 +346,11 @@ export function parsePlanVerdict(
       // Structural validation is agent-core's responsibility — `applyPlanEdit`
       // re-runs `validateSpec` on the post-edit spec (deploy-app.ts:286-295).
       // We only assert the JSON-shape minimum here.
-      spec = parsed as DeploySpec;
+      spec = parsed as AppDeploySpec;
     } catch (err) {
       throw new ManifestMCPError(
         ManifestMCPErrorCode.INVALID_CONFIG,
-        `parsePlanVerdict: failed to parse spec_json as DeploySpec: ${
+        `parsePlanVerdict: failed to parse spec_json as AppDeploySpec: ${
           err instanceof Error ? err.message : String(err)
         }`,
       );

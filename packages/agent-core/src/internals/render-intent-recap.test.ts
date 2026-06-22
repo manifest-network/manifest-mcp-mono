@@ -1,8 +1,29 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import type { DeploySpec, SingleServiceSpec, StackSpec } from '../types.js';
-import { renderIntentRecap } from './render-intent-recap.js';
+import type { AppDeploySpec } from '../types.js';
+import { renderIntentRecap as renderIntentRecapImpl } from './render-intent-recap.js';
+
+// ENG-310: the renderer's input is the canonical AppDeploySpec (which the
+// renderer reads duck-typed at runtime, ignoring `size`). These local aliases
+// keep the structural-fixture literals in this file terse — `size` is left
+// OPTIONAL here (the renderer never reads it) so the existing port/env/domain
+// shapes still type-check without a churny `size:` on every literal.
+type DeploySpec = Omit<AppDeploySpec, 'size'> & { size?: string };
+type SingleServiceSpec = Omit<AppDeploySpec, 'size'> & { size?: string };
+type StackSpec = Omit<AppDeploySpec, 'size'> & { size?: string };
+
+// Thin wrapper that accepts the size-optional test specs and forwards to the
+// real renderer (which never reads `size`). Keeps the ~20 call sites terse.
+function renderIntentRecap(input: {
+  spec: DeploySpec;
+  activeChain: 'testnet' | 'mainnet';
+}): string {
+  return renderIntentRecapImpl({
+    spec: input.spec as AppDeploySpec,
+    activeChain: input.activeChain,
+  });
+}
 
 const FIXTURES_ROOT = join(__dirname, '..', '..', '__fixtures__');
 
@@ -120,14 +141,18 @@ describe('renderIntentRecap', () => {
       );
     });
 
-    it('renders typed `ports: number[]` on ServiceDef as ingress=false (services-map default)', () => {
+    it('renders canonical `ports` map on a ServiceConfig as ingress=false (services-map default), keyed by the map string (ENG-310)', () => {
       const spec: StackSpec = {
         services: {
-          web: { image: 'nginx:1.27', ports: [80] },
+          web: { image: 'nginx:1.27', ports: { '80/tcp': {} } },
         },
       };
       const out = renderIntentRecap({ spec, activeChain: 'testnet' });
-      expect(out).toContain('  - web port 80: internal only (cluster-private)');
+      // The canonical port map key (`'80/tcp'`) is rendered verbatim — not a
+      // bare `80` — because `ServiceConfig.ports` is now a map (ENG-310).
+      expect(out).toContain(
+        '  - web port 80/tcp: internal only (cluster-private)',
+      );
     });
   });
 

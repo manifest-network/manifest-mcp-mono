@@ -25,11 +25,11 @@
 
 import type {
   AgentCoreRuntime,
+  AppDeploySpec,
   CloseLeaseArgs,
   CloseLeaseOptions,
   DenomMap,
   DeployAppOptions,
-  DeploySpec,
   LeaseStateName,
   ManageDomainArgs,
   ManageDomainOptions,
@@ -411,7 +411,7 @@ export class AgentMCPServer {
             raw.providerUuid === undefined
               ? { providerUuid: raw.provider_uuid }
               : {}),
-          } as DeploySpec;
+          } as AppDeploySpec;
           const result = await this.orchestrators.deployApp(
             spec,
             callbacks,

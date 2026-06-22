@@ -13,6 +13,7 @@
 //     construction path.
 
 import type {
+  AppDeploySpec,
   CloseLeaseArgs,
   CloseLeaseCallbacks,
   CloseLeaseOptions,
@@ -21,7 +22,6 @@ import type {
   DeployAppOptions,
   DeploymentPlanBlock,
   DeployResult,
-  DeploySpec,
   FailureEnvelope,
   ManageDomainArgs,
   ManageDomainCallbacks,
@@ -566,7 +566,7 @@ describe('AgentMCPServer', () => {
   // ─────────────────────────────────────────────────────────────────
   describe('deploy_app_orchestrated snake_case sku_uuid / provider_uuid normalization', () => {
     function makeShortCircuitDeploy(
-      capture: (spec: DeploySpec) => void,
+      capture: (spec: AppDeploySpec) => void,
     ): AgentOrchestrators['deployApp'] {
       return async (_spec, cb, _opts) => {
         capture(_spec);
@@ -583,7 +583,7 @@ describe('AgentMCPServer', () => {
     }
 
     it('sku_uuid (snake) → skuUuid (camel) when skuUuid is absent', async () => {
-      let observedSpec: DeploySpec | undefined;
+      let observedSpec: AppDeploySpec | undefined;
       const server = makeServer({
         deployApp: makeShortCircuitDeploy((s) => {
           observedSpec = s;
@@ -606,7 +606,7 @@ describe('AgentMCPServer', () => {
     });
 
     it('provider_uuid (snake) → providerUuid (camel) when providerUuid is absent', async () => {
-      let observedSpec: DeploySpec | undefined;
+      let observedSpec: AppDeploySpec | undefined;
       const server = makeServer({
         deployApp: makeShortCircuitDeploy((s) => {
           observedSpec = s;
@@ -631,7 +631,7 @@ describe('AgentMCPServer', () => {
     });
 
     it('explicit camelCase skuUuid wins over snake_case sku_uuid when both are present', async () => {
-      let observedSpec: DeploySpec | undefined;
+      let observedSpec: AppDeploySpec | undefined;
       const server = makeServer({
         deployApp: makeShortCircuitDeploy((s) => {
           observedSpec = s;
@@ -690,7 +690,7 @@ describe('AgentMCPServer', () => {
       let observedConfirm: 'yes' | 'no' | undefined;
 
       const fakeDeploy: AgentOrchestrators['deployApp'] = async (
-        _spec: DeploySpec,
+        _spec: AppDeploySpec,
         cb: DeployAppCallbacks,
         _opts: DeployAppOptions,
       ): Promise<DeployResult> => {

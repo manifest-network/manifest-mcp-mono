@@ -1,42 +1,41 @@
-import type {
-  DeploySpec,
-  ServiceDef,
-  SingleServiceSpec,
-  SpecSummary,
-  StackSpec,
-} from '../types.js';
+import type { AppDeploySpec, ServiceConfig, SpecSummary } from '../types.js';
 
 /**
  * Spec normalization + summarization helpers. Exports `isStack`,
  * `firstImage`, `normalizeServices`, `summarizeSpec`, and `validateSpec`
  * (the latter surfaces pre-broadcast shape violations).
  *
- * Two spec shapes are supported (defined in `types.ts`; `size?` added in
- * ENG-275):
- *   - **services-map (StackSpec)** — `{ services: { <name>: ServiceDef }, customDomain?, serviceName?, size? }`
- *   - **legacy single-service (SingleServiceSpec)** — `{ image, port?, env?, customDomain?, size? }`
+ * The single canonical spec type (`AppDeploySpec`, ENG-310) covers two
+ * shapes, discriminated by the presence of `services`:
+ *   - **stack** — `{ services: { <name>: ServiceConfig }, customDomain?, serviceName?, size, ... }`
+ *   - **single-service** — `{ image, port?, env?, customDomain?, size, ... }`
  *
  * `normalizeServices` collapses the two shapes into a single iterable form
  * so callers (Plan summary, manifest builder, etc.) walk one structure
  * regardless of which form the user passed.
  *
- * Validation: `validateSpec` throws a plain `TypeError` on shape violations
- * — agent-core has no workspace dep on `@manifest-network/manifest-mcp-core`
- * in PR 1/2 (per parent's REV 1), so `ManifestMCPError` isn't available
- * here. PR 3's high-level `deployApp` re-wraps `TypeError` into
- * `ManifestMCPError(INVALID_CONFIG)` at the public-API boundary.
+ * Validation: `validateSpec` stays a `void` `TypeError`-thrower on shape
+ * violations. The high-level `deployApp` entry wrappers
+ * (`deploy-app.ts`) map that `TypeError` to
+ * `ManifestMCPError(INVALID_CONFIG)` at the public-API boundary, so this
+ * helper does not depend on core's error type directly.
  */
 
 /**
- * True when `spec` uses the services-map shape (StackSpec). Mirrors
- * `_spec.cjs#isStack`: `services` is a non-null, non-array object.
+ * True when `spec` uses the services-map (stack) shape. Discriminates on
+ * the canonical `services` key being present and defined (ENG-310). The
+ * non-null-object / non-array guard is retained as defense-in-depth so an
+ * `unknown`-cast caller smuggling `services: null` / `[]` / `'str'` is NOT
+ * mistaken for a stack (which would crash `Object.entries` downstream).
  */
 export function isStackSpec(
-  spec: DeploySpec | null | undefined,
-): spec is StackSpec {
+  spec: unknown,
+): spec is AppDeploySpec & { services: Record<string, ServiceConfig> } {
   if (spec === null || spec === undefined || typeof spec !== 'object')
     return false;
-  const services = (spec as { services?: unknown }).services;
+  const record = spec as { services?: unknown };
+  if (!('services' in record) || record.services === undefined) return false;
+  const services = record.services;
   return (
     services !== null &&
     typeof services === 'object' &&
@@ -50,17 +49,17 @@ export function isStackSpec(
  * `Object.values(spec.services)`. Returns `null` when neither shape
  * carries an image (or `spec` is malformed).
  */
-export function firstImage(spec: DeploySpec | null | undefined): string | null {
+export function firstImage(spec: unknown): string | null {
   if (spec === null || spec === undefined || typeof spec !== 'object')
     return null;
-  const single = spec as Partial<SingleServiceSpec>;
+  const single = spec as Partial<AppDeploySpec>;
   if (typeof single.image === 'string' && single.image.length > 0) {
     return single.image;
   }
   if (isStackSpec(spec)) {
     for (const svc of Object.values(spec.services)) {
       if (svc !== null && typeof svc === 'object') {
-        const image = (svc as Partial<ServiceDef>).image;
+        const image = (svc as Partial<ServiceConfig>).image;
         if (typeof image === 'string' && image.length > 0) return image;
       }
     }
@@ -71,7 +70,7 @@ export function firstImage(spec: DeploySpec | null | undefined): string | null {
 /**
  * Walk a spec as `[{name, raw}]` where:
  *   - `name === null` for legacy single-service (only one entry, raw is the spec itself).
- *   - `name === <key>` for each services-map entry; `raw` is the per-service ServiceDef.
+ *   - `name === <key>` for each services-map entry; `raw` is the per-service ServiceConfig.
  *
  * Stable iteration order matches `Object.entries` (insertion order in v8/modern engines).
  */
@@ -79,22 +78,20 @@ export interface NormalizedService {
   /** `null` for legacy single-service; the services-map key for stack leases. */
   name: string | null;
   /** The per-service object exactly as the spec stores it. No field projection. */
-  raw: ServiceDef | SingleServiceSpec;
+  raw: ServiceConfig | AppDeploySpec;
 }
 
-export function normalizeServices(
-  spec: DeploySpec | null | undefined,
-): NormalizedService[] {
+export function normalizeServices(spec: unknown): NormalizedService[] {
   if (isStackSpec(spec)) {
     return Object.entries(spec.services).map(([name, raw]) => ({
       name,
-      raw: (raw ?? {}) as ServiceDef,
+      raw: (raw ?? {}) as ServiceConfig,
     }));
   }
   return [
     {
       name: null,
-      raw: (spec ?? {}) as SingleServiceSpec,
+      raw: (spec ?? {}) as AppDeploySpec,
     },
   ];
 }
@@ -104,16 +101,17 @@ export function normalizeServices(
  * (camelCase fields: `serviceCount`, etc.).
  *
  * Port count rules:
- *   - SingleServiceSpec `port: number` → +1 port.
- *   - SingleServiceSpec `port: number[]` → +length ports.
- *   - ServiceDef `ports: number[]` (per type) → +length ports.
- *   - ServiceDef `ports` shaped as a Record (older codepath) → +key count.
+ *   - single-service `port: number` → +1 port.
+ *   - `ServiceConfig.ports` map (canonical `{ '<port>/<proto>': {} }`) →
+ *     +key count.
+ *   - A bare `port`/`ports` array smuggled in by an `unknown`-cast caller
+ *     is still counted defensively (+1 / +length) below.
  *
  * Env key uniqueness is computed across services (one `env_keys` set
  * spans the whole spec); `envCount` is the size of that set; `envKeys`
  * is sorted ascending.
  */
-export function summarizeSpec(spec: DeploySpec): SpecSummary {
+export function summarizeSpec(spec: unknown): SpecSummary {
   const format: 'single' | 'stack' = isStackSpec(spec) ? 'stack' : 'single';
   const services = normalizeServices(spec);
 
@@ -156,11 +154,11 @@ export function summarizeSpec(spec: DeploySpec): SpecSummary {
 }
 
 /**
- * Validate a `DeploySpec` shape pre-broadcast. Throws `TypeError` on the
- * first violation. The frozen type union (`SingleServiceSpec | StackSpec`)
- * already enforces most structural rules at compile time; this runtime
- * check defends against `unknown`-cast callers and `JSON.parse`-decoded
- * inputs.
+ * Validate an `AppDeploySpec` shape pre-broadcast. Throws `TypeError` on
+ * the first violation. The canonical type already enforces most
+ * structural rules at compile time; this runtime check defends against
+ * `unknown`-cast callers and `JSON.parse`-decoded inputs (and the
+ * image-XOR-services invariant the type cannot express).
  *
  * Rules (mirror fred's `deployApp.ts` input validation):
  *   - `spec` must be a non-null object.
@@ -172,7 +170,7 @@ export function summarizeSpec(spec: DeploySpec): SpecSummary {
  * The high-level `deployApp` in PR 3 layers domain checks on top
  * (`customDomain` shape, `serviceName` membership, etc.).
  */
-export function validateSpec(spec: DeploySpec | null | undefined): void {
+export function validateSpec(spec: unknown): void {
   if (spec === null || spec === undefined || typeof spec !== 'object') {
     throw new TypeError('validateSpec: spec must be a non-null object');
   }
@@ -200,7 +198,7 @@ export function validateSpec(spec: DeploySpec | null | undefined): void {
   const hasServices = isStackSpec(spec);
   if (!hasImage && !hasServices) {
     throw new TypeError(
-      'validateSpec: spec must declare either `image` (SingleServiceSpec) or `services` (StackSpec)',
+      'validateSpec: spec must declare either `image` (single-service) or `services` (stack)',
     );
   }
 
@@ -261,7 +259,7 @@ export function validateSpec(spec: DeploySpec | null | undefined): void {
           `validateSpec: stack service "${name}" must be a non-null object`,
         );
       }
-      const image = (svc as Partial<ServiceDef>).image;
+      const image = (svc as Partial<ServiceConfig>).image;
       if (typeof image !== 'string' || image.length === 0) {
         throw new TypeError(
           `validateSpec: stack service "${name}" must declare a non-empty \`image\` string`,
@@ -282,9 +280,9 @@ export function validateSpec(spec: DeploySpec | null | undefined): void {
     // Single-service specs are unaffected: their `customDomain` is
     // claimed against the implicit single lease item — no
     // serviceName disambiguation needed.
-    const stackDomain = (spec as Partial<StackSpec>).customDomain;
+    const stackDomain = (spec as Partial<AppDeploySpec>).customDomain;
     if (typeof stackDomain === 'string' && stackDomain.length > 0) {
-      const stackServiceName = (spec as Partial<StackSpec>).serviceName;
+      const stackServiceName = (spec as Partial<AppDeploySpec>).serviceName;
       if (
         typeof stackServiceName !== 'string' ||
         stackServiceName.length === 0
@@ -332,7 +330,11 @@ export function validateSpec(spec: DeploySpec | null | undefined): void {
     // via `!input.port`, but the other shapes either flow through to a
     // less helpful error or get coerced silently. The shared predicate
     // `isValidPortNumber` (below) is the single source of truth.
-    const port = (spec as Partial<SingleServiceSpec>).port;
+    // Read as `unknown`: the canonical AppDeploySpec.port is `number`, but
+    // this runtime guard also accepts a legacy `number[]` smuggled in by an
+    // `unknown`-cast / JSON.parse caller (the array branch below) — typing it
+    // `unknown` keeps `Array.isArray` from narrowing to `never` (ENG-310).
+    const port: unknown = (spec as { port?: unknown }).port;
     const hasValidPort =
       isValidPortNumber(port) ||
       (Array.isArray(port) && port.length > 0 && port.every(isValidPortNumber));

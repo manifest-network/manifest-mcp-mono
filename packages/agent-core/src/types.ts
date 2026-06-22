@@ -4,7 +4,9 @@
 // See ENG-127 for the broader initiative.
 
 import type {
+  AppDeploySpec,
   CosmosClientManager,
+  ServiceConfig,
   SkuCandidate,
   WalletProvider,
 } from '@manifest-network/manifest-mcp-core';
@@ -13,7 +15,13 @@ import type {
 // `@manifest-network/manifest-agent-core` directly without a separate
 // `manifest-mcp-core` dependency. These are TS-type-only re-exports; the
 // runtime bundle is unaffected (platform: 'neutral' build target preserved).
-export type { CosmosClientManager, SkuCandidate, WalletProvider };
+export type {
+  AppDeploySpec,
+  CosmosClientManager,
+  ServiceConfig,
+  SkuCandidate,
+  WalletProvider,
+};
 
 // --- primitives ---------------------------------------------------------
 
@@ -169,57 +177,12 @@ export interface TroubleshootOptions extends AgentCoreRuntime {
 
 // --- deployment specs ---------------------------------------------------
 
-export interface ServiceDef {
-  image: string;
-  ports?: number[];
-  env?: Record<string, string>;
-  args?: string[];
-  command?: string[];
-}
-
-export interface SingleServiceSpec {
-  image: string;
-  port?: number | number[];
-  env?: Record<string, string>;
-  customDomain?: string;
-  /**
-   * Compute-tier / SKU name selecting the lease item's resources (e.g.
-   * `'small'`, `'medium'`). Resolved to an on-chain SKU UUID by
-   * `findSkuUuid`, then threaded into SKU selection, fee estimation,
-   * readiness, fred's deploy input, and the persisted manifest. Optional;
-   * `requestedSize` (`deploy-app.ts`) falls back to `'small'` when absent
-   * or empty. ENG-275 promoted this from an undocumented cast-read
-   * escape hatch to a first-class typed field so contract-following
-   * callers can select a non-default SKU.
-   */
-  size?: string;
-  /**
-   * Optional SKU disambiguator: `provider_uuid` narrows a duplicate
-   * `size` name to one provider; `sku_uuid` pins a specific SKU by uuid
-   * (bypasses the name). Threaded into `resolveSku`. ENG-296.
-   */
-  providerUuid?: string;
-  /** See {@link SingleServiceSpec.providerUuid}. Pins a specific SKU by uuid (bypasses the name). ENG-296. */
-  skuUuid?: string;
-}
-
-export interface StackSpec {
-  services: Record<string, ServiceDef>;
-  customDomain?: string;
-  serviceName?: string;
-  /** SKU tier for the lease items; see {@link SingleServiceSpec.size}. */
-  size?: string;
-  /**
-   * Optional SKU disambiguator: `provider_uuid` narrows a duplicate
-   * `size` name to one provider; `sku_uuid` pins a specific SKU by uuid
-   * (bypasses the name). Threaded into `resolveSku`. ENG-296.
-   */
-  providerUuid?: string;
-  /** See {@link StackSpec.providerUuid}. Pins a specific SKU by uuid (bypasses the name). ENG-296. */
-  skuUuid?: string;
-}
-
-export type DeploySpec = SingleServiceSpec | StackSpec;
+// agent-core's deploy input IS the canonical core type — verbatim reuse (ENG-310 / D1).
+// `AppDeploySpec` (+ `ServiceConfig`) is imported and re-exported at the top of this
+// module alongside the other core re-exports.
+// Precondition: agent-core adds NO data field to the deploy spec (its only additions are runtime
+// concerns on DeployAppOptions). If a future change needs an orchestration-only DATA field, DERIVE it
+// (`AppDeploySpec & { newField }`) — never fork a parallel type (the divergence ENG-310 removes).
 
 export interface SpecSummary {
   format: 'single' | 'stack';
@@ -262,7 +225,7 @@ export interface Plan {
 
 export type PlanEdit =
   | { kind: 'edit_env'; service?: string; env: Record<string, string> }
-  | { kind: 'replace_spec'; spec: DeploySpec };
+  | { kind: 'replace_spec'; spec: AppDeploySpec };
 
 export interface DeploymentPlanBlock {
   text: string;
@@ -326,7 +289,10 @@ export type ProgressEvent =
   | {
       kind: 'sku_ambiguous';
       candidates: SkuCandidate[];
-    };
+    }
+  // Emitted when the deploy is aborted via the per-call AbortSignal before
+  // the fred broadcast (Task 3 / D4).
+  | { kind: 'cancelled' };
 
 // --- failure + recovery -------------------------------------------------
 

@@ -1,6 +1,8 @@
+import type { AppDeploySpec as CoreAppDeploySpec } from '@manifest-network/manifest-mcp-core';
 import { describe, expectTypeOf, it } from 'vitest';
 import type {
   AgentCoreRuntime,
+  AppDeploySpec,
   CloseLeaseCallbacks,
   CloseLeaseOptions,
   CloseLeaseResult,
@@ -12,7 +14,6 @@ import type {
   DeployAppOptions,
   DeploymentPlanBlock,
   DeployResult,
-  DeploySpec,
   FailureEnvelope,
   FeeEstimate,
   LeaseStateName,
@@ -29,11 +30,8 @@ import type {
   RecoveryChoice,
   RecoveryOption,
   RecoveryOptionId,
-  ServiceDef,
-  SingleServiceSpec,
   SkuCandidate,
   SpecSummary,
-  StackSpec,
   TroubleshootCallbacks,
   TroubleshootOptions,
   TroubleshootReport,
@@ -100,7 +98,7 @@ describe('DeployAppCallbacks contract', () => {
 });
 
 describe('ProgressEvent discriminant', () => {
-  it('kind union is exactly the eleven allowed variants', () => {
+  it('kind union is exactly the twelve allowed variants', () => {
     expectTypeOf<ProgressEvent['kind']>().toEqualTypeOf<
       | 'readiness_evaluated'
       | 'deployment_plan_rendered'
@@ -113,6 +111,7 @@ describe('ProgressEvent discriminant', () => {
       | 'success_rendered'
       | 'partial_success_prompt_rendered'
       | 'sku_ambiguous'
+      | 'cancelled'
     >();
   });
 
@@ -482,47 +481,14 @@ describe('Exported type shapes (load-bearing public surface)', () => {
     expectTypeOf<CosmosClientManager>().not.toBeNever();
   });
 
-  it('ServiceDef', () => {
-    expectTypeOf<ServiceDef>().toEqualTypeOf<{
-      image: string;
-      ports?: number[];
-      env?: Record<string, string>;
-      args?: string[];
-      command?: string[];
-    }>();
-  });
-
-  it('SingleServiceSpec', () => {
-    // `size?` is a first-class optional field (ENG-275): the SKU / compute
-    // tier, defaulting to 'small' in `requestedSize` when omitted.
-    // `providerUuid?` / `skuUuid?` are the typed SKU disambiguators
-    // (ENG-296), threaded into `resolveSku`.
-    expectTypeOf<SingleServiceSpec>().toEqualTypeOf<{
-      image: string;
-      port?: number | number[];
-      env?: Record<string, string>;
-      customDomain?: string;
-      size?: string;
-      providerUuid?: string;
-      skuUuid?: string;
-    }>();
-  });
-
-  it('StackSpec', () => {
-    // `size?` mirrors SingleServiceSpec (ENG-275); `providerUuid?` /
-    // `skuUuid?` mirror the ENG-296 disambiguators; see above.
-    expectTypeOf<StackSpec>().toEqualTypeOf<{
-      services: Record<string, ServiceDef>;
-      customDomain?: string;
-      serviceName?: string;
-      size?: string;
-      providerUuid?: string;
-      skuUuid?: string;
-    }>();
-  });
-
-  it('DeploySpec is the union of SingleServiceSpec | StackSpec', () => {
-    expectTypeOf<DeploySpec>().toEqualTypeOf<SingleServiceSpec | StackSpec>();
+  it('AppDeploySpec re-export is exactly the canonical core type (ENG-310)', () => {
+    // The narrow SingleServiceSpec | StackSpec union (and ServiceDef) is
+    // gone — agent-core's deploy input IS core's canonical AppDeploySpec
+    // (verbatim reuse, D1). The `deployApp`-input equivalence proof lives
+    // in `deploy-app.test-d.ts`; here we pin the re-export resolves to the
+    // canonical type (not `any`/`never`, and the same shape core exports).
+    expectTypeOf<AppDeploySpec>().toEqualTypeOf<CoreAppDeploySpec>();
+    expectTypeOf<AppDeploySpec>().not.toBeAny();
   });
 
   it('SpecSummary', () => {

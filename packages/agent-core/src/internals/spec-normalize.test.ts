@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { DeploySpec, SingleServiceSpec, StackSpec } from '../types.js';
+import type { AppDeploySpec } from '../types.js';
 import {
   firstImage,
   isStackSpec,
@@ -7,6 +7,15 @@ import {
   summarizeSpec,
   validateSpec,
 } from './spec-normalize.js';
+
+// ENG-310: the helpers' input is the canonical AppDeploySpec. These local
+// aliases keep the structural test literals terse — `size` is left OPTIONAL
+// (the helpers never read it). Tests that deliberately exercise the runtime
+// DEFENSIVE widening (legacy `number[]` ports, which the canonical type
+// forbids) go through an explicit `as unknown as` cast at the call site.
+type DeploySpec = Omit<AppDeploySpec, 'size'> & { size?: string };
+type SingleServiceSpec = Omit<AppDeploySpec, 'size'> & { size?: string };
+type StackSpec = Omit<AppDeploySpec, 'size'> & { size?: string };
 
 describe('isStackSpec', () => {
   it('returns true for valid stack spec', () => {
@@ -120,16 +129,20 @@ describe('summarizeSpec', () => {
     });
   });
 
-  it('summarizes a single-service spec with port: number[]', () => {
+  it('summarizes a single-service spec with legacy port: number[] (defensive widening)', () => {
+    // The canonical AppDeploySpec.port is `number`; this exercises the
+    // runtime defensive count for an unknown-cast array (ENG-310).
     const spec = {
       image: 'app:latest',
       port: [80, 443, 8080],
-    } as SingleServiceSpec;
+    } as unknown as AppDeploySpec;
     expect(summarizeSpec(spec).portCount).toBe(3);
   });
 
   it('summarizes a stack spec; envKeys are union across services, sorted', () => {
-    const spec: StackSpec = {
+    // Legacy `ports: number[]` per service exercises the defensive count;
+    // the canonical ServiceConfig.ports is a map (ENG-310).
+    const spec = {
       services: {
         web: {
           image: 'nginx:1.27',
@@ -142,7 +155,7 @@ describe('summarizeSpec', () => {
           env: { POSTGRES_PASSWORD: 'secret', A: 'a' /* duplicate */ },
         },
       },
-    };
+    } as unknown as AppDeploySpec;
     const summary = summarizeSpec(spec);
     expect(summary).toEqual({
       format: 'stack',
