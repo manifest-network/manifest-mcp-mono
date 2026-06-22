@@ -203,13 +203,15 @@ export function validateSpec(spec: unknown): void {
   }
 
   // Copilot review fix (PR #58 r3266786899): `customDomain` shape at
-  // the boundary. The orchestrator's `buildFredDeployInput`
-  // (`deploy-app.ts:701`) uses a `if (customDomain)` truthiness check,
-  // which silently drops `''`, `null`, `false`, `0`, `NaN` from the
-  // emitted `fredInput`. A user spec like `{ ..., customDomain: '' }`
-  // passes validation today, fred receives `fredInput` WITHOUT the
-  // domain, deploy proceeds — the user's requested domain silently
-  // not claimed, no error signal.
+  // the boundary. Historically the orchestrator's `buildFredDeployInput`
+  // mapper used an `if (customDomain)` truthiness check that silently
+  // dropped `''`, `null`, `false`, `0`, `NaN` from the emitted
+  // `fredInput`, so a spec like `{ ..., customDomain: '' }` deployed with
+  // the domain silently not claimed. ENG-310 deleted that mapper: the
+  // loss-free broadcast spread now forwards `customDomain` to fred
+  // verbatim, so an empty/whitespace value would instead reach fred as a
+  // claim for an invalid domain. Either way the fix is the same — reject
+  // a malformed `customDomain` here, at the boundary, before it can do harm.
   //
   // Boundary check: when `customDomain` is present, it must be a
   // non-empty string. `undefined` (key absent) is fine; that's the
@@ -312,11 +314,11 @@ export function validateSpec(spec: unknown): void {
     // portless inputs with `port is required when using image`
     // (`packages/fred/src/tools/deployApp.ts:202` +
     // `packages/fred/src/tools/buildManifestPreview.ts:181`). Without
-    // an agent-core boundary check the orchestrator silently passed
-    // `port: undefined` through `buildManifestPreviewInput` /
-    // `buildFredDeployInput`, surfacing fred's error mid-orchestration
-    // (after readiness check + plan render). Failing fast at validate
-    // time produces a clearer message and avoids partial work.
+    // an agent-core boundary check the orchestrator would pass
+    // `port: undefined` straight through the loss-free broadcast spread
+    // to fred, surfacing fred's error mid-orchestration (after readiness
+    // check + plan render). Failing fast at validate time produces a
+    // clearer message and avoids partial work.
     //
     // The escape hatch for genuinely internal-only services is the
     // stack spec — service-level `ports` is optional, so a stack with
