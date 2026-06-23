@@ -282,7 +282,7 @@ Expected: PASS (all cases green).
 
 - [ ] **Step 5: Add a composed-timeout case mirroring the existing deployApp test**
 
-`deploy-app.test.ts` already has a composed `timeout` cancellation test that drives `resolveCallSignal`'s `AbortSignal.timeout` path under fake timers. Open it, search for `timeout` / `TimeoutError`, and mirror its fake-timer setup in a new `cancellation.test.ts` case asserting that `makeCancellationScope({ opts: { timeout: N } }).race(neverSettlingPromise)` rejects with `code: OPERATION_CANCELLED` after the timer advances. (Mirroring the existing, known-working setup avoids fake-timer/`AbortSignal.timeout` flakiness.)
+`deploy-app.test.ts` already has a composed `timeout` cancellation test that drives `resolveCallSignal`'s `AbortSignal.timeout` path under fake timers (around `deploy-app.test.ts:5067-5081` — read it for the exact `vi.useFakeTimers()` / `advanceTimersByTimeAsync` setup; it passes on the repo's vitest, so the `AbortSignal.timeout` fake-timer landmine does not apply here). Mirror that setup in a new `cancellation.test.ts` case asserting `makeCancellationScope({ opts: { timeout: N } }).race(neverSettlingPromise)` rejects with `code: OPERATION_CANCELLED` after the timer advances.
 
 Run: `npx vitest run packages/agent-core/src/internals/cancellation.test.ts`
 Expected: PASS.
@@ -312,7 +312,7 @@ import { makeCancellationScope } from './internals/cancellation.js';
 
 - [ ] **Step 2: Replace the inline seam**
 
-Replace the inline seam block at `deploy-app.ts:160-199` (the long `// Per D4.6 …` comment through `const signal = resolveCallSignal(opts);` … the `race` closure … ending at `throwIfCancelled();`) with:
+Replace the inline seam block at `deploy-app.ts:154-199` — this INCLUDES the stale section header + paragraph at `154-159` that describes the now-deleted inline logic (replacing only `160-199` would orphan them). The block runs from the `// Cancellation contract …` header at 154 through `const signal = resolveCallSignal(opts);` … the `race` closure … ending at `throwIfCancelled();` at 199. Replace it all with:
 
 ```ts
   // Cancellation seam (ENG-310 / D4, shared via internals/cancellation.ts — ENG-374).
@@ -353,6 +353,22 @@ git commit -m "refactor(agent-core): deployApp adopts the shared cancellation se
 
 ---
 
+## Test-harness conventions (Tasks 3–5 — READ FIRST)
+
+The three sibling test files share one harness; the new `describe('cancellation (ENG-374)', ...)` cases MUST follow it or they will not compile (the package runs `vitest --typecheck`):
+
+1. **Per-test dynamic imports** (the files have NO top-level import of the orchestrator or of core). Inside each `it(...)` body, open with:
+   - the orchestrator — `const { closeLease } = await import('./close-lease.js');` (resp. `const { manageDomain } = await import('./manage-domain.js');`, `const { troubleshootDeployment } = await import('./troubleshoot.js');`).
+   - core, ONLY where a core mock is asserted (Tasks 3 & 4 — NOT Task 5) — `const core = await import('@manifest-network/manifest-mcp-core');`, then `vi.mocked(core.stopApp)` / `vi.mocked(core.setItemCustomDomain)`.
+2. **Helpers already exist** in each file: `makeMockQueryClient()` (manage-domain's already exposes both `lease` and `leaseByCustomDomain`; close-lease/troubleshoot expose `lease`) and `makeMockClientManager(queryClient)`. The top-of-file `vi.mock('@manifest-network/manifest-mcp-core', …)` already stubs `stopApp` (close-lease) / `setItemCustomDomain` (manage-domain).
+3. **opts cast** — pass `{ clientManager: clientManager as unknown as Parameters<typeof closeLease>[2]['clientManager'], signal: ac.signal }`. `CloseLeaseOptions`/`ManageDomainOptions`/`TroubleshootOptions` require only `clientManager` (`signal`/`timeout`/the rest are optional), so the object type-checks.
+4. **Valid UUID** — no shared constant exists; declare one at the top of the new describe block: `const CANCEL_LEASE_UUID = 'a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d';` (matches the UUID regex / `parseLeaseUuid`). Lookups key off `fqdn`, not `leaseUuid`.
+5. **Progress events** — type a local capture array inline as `const events: Array<{ kind: string }> = [];` with `onProgress: (e) => events.push(e)`. Do NOT reference a `ProgressEvent` type (it is not imported in these files).
+
+`ManifestMCPErrorCode` is already imported in all three files. The snippets below use `CANCEL_LEASE_UUID` and these conventions.
+
+---
+
 ## Task 3: Wire `closeLease`
 
 **Files:**
@@ -361,49 +377,55 @@ git commit -m "refactor(agent-core): deployApp adopts the shared cancellation se
 
 - [ ] **Step 1: Write the failing tests**
 
-Add to `close-lease.test.ts` (reuse the file's existing helpers: the `vi.mock(...core...)` with `stopApp: vi.fn()`, `makeMockClientManager`, `makeMockQueryClient`, and `import * as core` or `vi.mocked(core.stopApp)`). Add a `describe('cancellation (ENG-374)', ...)`:
+Add a new `describe('cancellation (ENG-374)', ...)` to `close-lease.test.ts`, following the Test-harness conventions above (per-test dynamic imports of `core` + `closeLease`; `CANCEL_LEASE_UUID`; inline event typing):
 
 ```ts
-it('a pre-aborted signal throws OPERATION_CANCELLED and never broadcasts', async () => {
-  const ac = new AbortController();
-  ac.abort(new Error('user aborted'));
-  const events: ProgressEvent[] = [];
-  const onConfirm = vi.fn(async () => 'yes' as const);
-  const clientManager = makeMockClientManager(makeMockQueryClient());
-  await expect(
-    closeLease(
-      { leaseUuid: VALID_LEASE_UUID },
-      { onConfirm, onProgress: (e) => events.push(e) },
-      { clientManager: clientManager as never, signal: ac.signal },
-    ),
-  ).rejects.toMatchObject({ code: ManifestMCPErrorCode.OPERATION_CANCELLED });
-  expect(core.stopApp).not.toHaveBeenCalled();
-  expect(onConfirm).not.toHaveBeenCalled();
-  expect(events.filter((e) => e.kind === 'cancelled')).toHaveLength(1);
-});
+describe('cancellation (ENG-374)', () => {
+  const CANCEL_LEASE_UUID = 'a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d';
 
-it('aborting while onConfirm is pending rejects with OPERATION_CANCELLED and never broadcasts', async () => {
-  const ac = new AbortController();
-  let rejectConfirm: (e: unknown) => void = () => {};
-  const onConfirm = vi.fn(
-    () => new Promise<'yes' | 'no'>((_res, rej) => {
-      rejectConfirm = rej;
-    }),
-  );
-  const clientManager = makeMockClientManager(makeMockQueryClient());
-  const p = closeLease(
-    { leaseUuid: VALID_LEASE_UUID },
-    { onConfirm },
-    { clientManager: clientManager as never, signal: ac.signal },
-  );
-  ac.abort(new Error('mid-confirm'));
-  await expect(p).rejects.toMatchObject({ code: ManifestMCPErrorCode.OPERATION_CANCELLED });
-  rejectConfirm(new Error('late-decline')); // swallowed, no unhandled rejection
-  expect(core.stopApp).not.toHaveBeenCalled();
+  it('a pre-aborted signal throws OPERATION_CANCELLED and never broadcasts', async () => {
+    const core = await import('@manifest-network/manifest-mcp-core');
+    const { closeLease } = await import('./close-lease.js');
+    const ac = new AbortController();
+    ac.abort(new Error('user aborted'));
+    const events: Array<{ kind: string }> = [];
+    const onConfirm = vi.fn(async () => 'yes' as const);
+    const clientManager = makeMockClientManager(makeMockQueryClient());
+    await expect(
+      closeLease(
+        { leaseUuid: CANCEL_LEASE_UUID },
+        { onConfirm, onProgress: (e) => events.push(e) },
+        { clientManager: clientManager as never, signal: ac.signal },
+      ),
+    ).rejects.toMatchObject({ code: ManifestMCPErrorCode.OPERATION_CANCELLED });
+    expect(core.stopApp).not.toHaveBeenCalled();
+    expect(onConfirm).not.toHaveBeenCalled();
+    expect(events.filter((e) => e.kind === 'cancelled')).toHaveLength(1);
+  });
+
+  it('aborting while onConfirm is pending rejects with OPERATION_CANCELLED and never broadcasts', async () => {
+    const core = await import('@manifest-network/manifest-mcp-core');
+    const { closeLease } = await import('./close-lease.js');
+    const ac = new AbortController();
+    let rejectConfirm: (e: unknown) => void = () => {};
+    const onConfirm = vi.fn(
+      () => new Promise<'yes' | 'no'>((_res, rej) => {
+        rejectConfirm = rej;
+      }),
+    );
+    const clientManager = makeMockClientManager(makeMockQueryClient());
+    const p = closeLease(
+      { leaseUuid: CANCEL_LEASE_UUID },
+      { onConfirm },
+      { clientManager: clientManager as never, signal: ac.signal },
+    );
+    ac.abort(new Error('mid-confirm'));
+    await expect(p).rejects.toMatchObject({ code: ManifestMCPErrorCode.OPERATION_CANCELLED });
+    rejectConfirm(new Error('late-decline')); // swallowed, no unhandled rejection
+    expect(core.stopApp).not.toHaveBeenCalled();
+  });
 });
 ```
-
-(If the file lacks a `VALID_LEASE_UUID` constant or a bare `import * as core`, add them next to the existing imports; reuse the file's own UUID fixture string if one exists.)
 
 - [ ] **Step 2: Run to verify they fail**
 
@@ -466,57 +488,63 @@ git commit -m "feat(agent-core): closeLease honors signal/timeout (race pre-broa
 
 - [ ] **Step 1: Write the failing tests**
 
-Add a `describe('cancellation (ENG-374)', ...)` to `manage-domain.test.ts` (reuse the file's existing mock harness — `setItemCustomDomain: vi.fn()` in the core `vi.mock`, the mock clientManager/queryClient helpers, and `vi.mocked(core.setItemCustomDomain)`). The query mock for lookup is `queryClient.liftedinit.billing.v1.leaseByCustomDomain`:
+Add a new `describe('cancellation (ENG-374)', ...)` to `manage-domain.test.ts`, following the Test-harness conventions above. `manage-domain.test.ts`'s `makeMockQueryClient()` already exposes `leaseByCustomDomain`; only the `set` test asserts a core mock (so only it imports `core`):
 
 ```ts
-it('set: a pre-aborted signal throws OPERATION_CANCELLED and never broadcasts', async () => {
-  const ac = new AbortController();
-  ac.abort(new Error('user aborted'));
-  const onConfirm = vi.fn(async () => 'yes' as const);
-  const clientManager = makeMockClientManager(makeMockQueryClient());
-  await expect(
-    manageDomain(
-      { action: 'set', leaseUuid: VALID_LEASE_UUID, fqdn: 'app.example.com', serviceName: 'web' },
-      { onConfirm },
-      { clientManager: clientManager as never, signal: ac.signal },
-    ),
-  ).rejects.toMatchObject({ code: ManifestMCPErrorCode.OPERATION_CANCELLED });
-  expect(core.setItemCustomDomain).not.toHaveBeenCalled();
-  expect(onConfirm).not.toHaveBeenCalled();
-});
+describe('cancellation (ENG-374)', () => {
+  const CANCEL_LEASE_UUID = 'a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d';
 
-it('lookup positive control: with no signal the query IS invoked and the result returns', async () => {
-  const queryClient = makeMockQueryClient();
-  queryClient.liftedinit.billing.v1.leaseByCustomDomain.mockResolvedValue({ lease: null });
-  const clientManager = makeMockClientManager(queryClient);
-  const res = await manageDomain(
-    { action: 'lookup', fqdn: 'app.example.com' },
-    {},
-    { clientManager: clientManager as never },
-  );
-  expect(queryClient.liftedinit.billing.v1.leaseByCustomDomain).toHaveBeenCalledTimes(1);
-  expect(res).toMatchObject({ action: 'lookup', lease: null });
-});
+  it('set: a pre-aborted signal throws OPERATION_CANCELLED and never broadcasts', async () => {
+    const core = await import('@manifest-network/manifest-mcp-core');
+    const { manageDomain } = await import('./manage-domain.js');
+    const ac = new AbortController();
+    ac.abort(new Error('user aborted'));
+    const onConfirm = vi.fn(async () => 'yes' as const);
+    const clientManager = makeMockClientManager(makeMockQueryClient());
+    await expect(
+      manageDomain(
+        { action: 'set', leaseUuid: CANCEL_LEASE_UUID, fqdn: 'app.example.com', serviceName: 'web' },
+        { onConfirm },
+        { clientManager: clientManager as never, signal: ac.signal },
+      ),
+    ).rejects.toMatchObject({ code: ManifestMCPErrorCode.OPERATION_CANCELLED });
+    expect(core.setItemCustomDomain).not.toHaveBeenCalled();
+    expect(onConfirm).not.toHaveBeenCalled();
+  });
 
-it('lookup: a pre-aborted signal throws OPERATION_CANCELLED and the query is NOT called', async () => {
-  const ac = new AbortController();
-  ac.abort(new Error('user aborted'));
-  const queryClient = makeMockQueryClient();
-  const onFailure = vi.fn(async () => {});
-  const clientManager = makeMockClientManager(queryClient);
-  await expect(
-    manageDomain(
+  it('lookup positive control: with no signal the query IS invoked and the result returns', async () => {
+    const { manageDomain } = await import('./manage-domain.js');
+    const queryClient = makeMockQueryClient();
+    queryClient.liftedinit.billing.v1.leaseByCustomDomain.mockResolvedValue({ lease: null });
+    const clientManager = makeMockClientManager(queryClient);
+    const res = await manageDomain(
       { action: 'lookup', fqdn: 'app.example.com' },
-      { onFailure },
-      { clientManager: clientManager as never, signal: ac.signal },
-    ),
-  ).rejects.toMatchObject({ code: ManifestMCPErrorCode.OPERATION_CANCELLED });
-  expect(queryClient.liftedinit.billing.v1.leaseByCustomDomain).not.toHaveBeenCalled();
-  expect(onFailure).not.toHaveBeenCalled(); // cancellation is NOT a query failure
+      {},
+      { clientManager: clientManager as never },
+    );
+    expect(queryClient.liftedinit.billing.v1.leaseByCustomDomain).toHaveBeenCalledTimes(1);
+    expect(res).toMatchObject({ action: 'lookup', lease: null });
+  });
+
+  it('lookup: a pre-aborted signal throws OPERATION_CANCELLED and the query is NOT called', async () => {
+    const { manageDomain } = await import('./manage-domain.js');
+    const ac = new AbortController();
+    ac.abort(new Error('user aborted'));
+    const queryClient = makeMockQueryClient();
+    const onFailure = vi.fn(async () => {});
+    const clientManager = makeMockClientManager(queryClient);
+    await expect(
+      manageDomain(
+        { action: 'lookup', fqdn: 'app.example.com' },
+        { onFailure },
+        { clientManager: clientManager as never, signal: ac.signal },
+      ),
+    ).rejects.toMatchObject({ code: ManifestMCPErrorCode.OPERATION_CANCELLED });
+    expect(queryClient.liftedinit.billing.v1.leaseByCustomDomain).not.toHaveBeenCalled();
+    expect(onFailure).not.toHaveBeenCalled(); // cancellation is NOT a query failure
+  });
 });
 ```
-
-(Use the file's existing valid-UUID fixture and `makeMockQueryClient` shape; if the mock query client lacks `leaseByCustomDomain`, add it as a `vi.fn()` alongside `lease`.)
 
 - [ ] **Step 2: Run to verify they fail**
 
@@ -614,41 +642,45 @@ git commit -m "feat(agent-core): manageDomain honors signal/timeout (race onConf
 
 - [ ] **Step 1: Write the failing tests**
 
-Add a `describe('cancellation (ENG-374)', ...)` to `troubleshoot.test.ts` (reuse its mock harness — the mock clientManager/queryClient; the diagnostic query mock is `queryClient.liftedinit.billing.v1.lease`):
+Add a new `describe('cancellation (ENG-374)', ...)` to `troubleshoot.test.ts`, following the Test-harness conventions above. Task 5 never asserts a core mock, so the tests import only `troubleshootDeployment`. A minimal `{ lease: {} }` payload suffices for the positive control — `troubleshootDeployment` only null-checks `result.lease`, and `renderReport` embeds the `leaseUuid` in its markdown:
 
 ```ts
-it('positive control: with no signal the diagnostic query IS invoked and a report returns', async () => {
-  const queryClient = makeMockQueryClient();
-  queryClient.liftedinit.billing.v1.lease.mockResolvedValue({ lease: SOME_LEASE_PAYLOAD });
-  const clientManager = makeMockClientManager(queryClient);
-  const report = await troubleshootDeployment(
-    { leaseUuid: VALID_LEASE_UUID },
-    {},
-    { clientManager: clientManager as never },
-  );
-  expect(queryClient.liftedinit.billing.v1.lease).toHaveBeenCalledTimes(1);
-  expect(report.markdown).toContain(VALID_LEASE_UUID);
-});
+describe('cancellation (ENG-374)', () => {
+  const CANCEL_LEASE_UUID = 'a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d';
 
-it('a pre-aborted signal throws OPERATION_CANCELLED and the query is NOT called', async () => {
-  const ac = new AbortController();
-  ac.abort(new Error('user aborted'));
-  const queryClient = makeMockQueryClient();
-  const onFailure = vi.fn(async () => {});
-  const clientManager = makeMockClientManager(queryClient);
-  await expect(
-    troubleshootDeployment(
-      { leaseUuid: VALID_LEASE_UUID },
-      { onFailure },
-      { clientManager: clientManager as never, signal: ac.signal },
-    ),
-  ).rejects.toMatchObject({ code: ManifestMCPErrorCode.OPERATION_CANCELLED });
-  expect(queryClient.liftedinit.billing.v1.lease).not.toHaveBeenCalled();
-  expect(onFailure).not.toHaveBeenCalled(); // cancellation is NOT a query failure
+  it('positive control: with no signal the diagnostic query IS invoked and a report returns', async () => {
+    const { troubleshootDeployment } = await import('./troubleshoot.js');
+    const queryClient = makeMockQueryClient();
+    queryClient.liftedinit.billing.v1.lease.mockResolvedValue({ lease: {} });
+    const clientManager = makeMockClientManager(queryClient);
+    const report = await troubleshootDeployment(
+      { leaseUuid: CANCEL_LEASE_UUID },
+      {},
+      { clientManager: clientManager as never },
+    );
+    expect(queryClient.liftedinit.billing.v1.lease).toHaveBeenCalledTimes(1);
+    expect(report.markdown).toContain(CANCEL_LEASE_UUID);
+  });
+
+  it('a pre-aborted signal throws OPERATION_CANCELLED and the query is NOT called', async () => {
+    const { troubleshootDeployment } = await import('./troubleshoot.js');
+    const ac = new AbortController();
+    ac.abort(new Error('user aborted'));
+    const queryClient = makeMockQueryClient();
+    const onFailure = vi.fn(async () => {});
+    const clientManager = makeMockClientManager(queryClient);
+    await expect(
+      troubleshootDeployment(
+        { leaseUuid: CANCEL_LEASE_UUID },
+        { onFailure },
+        { clientManager: clientManager as never, signal: ac.signal },
+      ),
+    ).rejects.toMatchObject({ code: ManifestMCPErrorCode.OPERATION_CANCELLED });
+    expect(queryClient.liftedinit.billing.v1.lease).not.toHaveBeenCalled();
+    expect(onFailure).not.toHaveBeenCalled(); // cancellation is NOT a query failure
+  });
 });
 ```
-
-(Use the file's existing valid-UUID fixture and a realistic `lease` payload fixture for the positive control — reuse whatever the existing success-path test already uses.)
 
 - [ ] **Step 2: Run to verify they fail**
 
