@@ -556,3 +556,60 @@ describe('closeLease — args validation', () => {
     );
   });
 });
+
+// =============================================================================
+// Cancellation (ENG-374)
+// =============================================================================
+
+describe('cancellation (ENG-374)', () => {
+  const CANCEL_LEASE_UUID = 'a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d';
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('a pre-aborted signal throws OPERATION_CANCELLED and never broadcasts', async () => {
+    const core = await import('@manifest-network/manifest-mcp-core');
+    const { closeLease } = await import('./close-lease.js');
+    const ac = new AbortController();
+    ac.abort(new Error('user aborted'));
+    const events: Array<{ kind: string }> = [];
+    const onConfirm = vi.fn(async () => 'yes' as const);
+    const clientManager = makeMockClientManager(makeMockQueryClient());
+    await expect(
+      closeLease(
+        { leaseUuid: CANCEL_LEASE_UUID },
+        { onConfirm, onProgress: (e) => events.push(e) },
+        { clientManager: clientManager as never, signal: ac.signal },
+      ),
+    ).rejects.toMatchObject({ code: ManifestMCPErrorCode.OPERATION_CANCELLED });
+    expect(core.stopApp).not.toHaveBeenCalled();
+    expect(onConfirm).not.toHaveBeenCalled();
+    expect(events.filter((e) => e.kind === 'cancelled')).toHaveLength(1);
+  });
+
+  it('aborting while onConfirm is pending rejects with OPERATION_CANCELLED and never broadcasts', async () => {
+    const core = await import('@manifest-network/manifest-mcp-core');
+    const { closeLease } = await import('./close-lease.js');
+    const ac = new AbortController();
+    let rejectConfirm: (e: unknown) => void = () => {};
+    const onConfirm = vi.fn(
+      () =>
+        new Promise<'yes' | 'no'>((_res, rej) => {
+          rejectConfirm = rej;
+        }),
+    );
+    const clientManager = makeMockClientManager(makeMockQueryClient());
+    const p = closeLease(
+      { leaseUuid: CANCEL_LEASE_UUID },
+      { onConfirm },
+      { clientManager: clientManager as never, signal: ac.signal },
+    );
+    ac.abort(new Error('mid-confirm'));
+    await expect(p).rejects.toMatchObject({
+      code: ManifestMCPErrorCode.OPERATION_CANCELLED,
+    });
+    rejectConfirm(new Error('late-decline')); // swallowed, no unhandled rejection
+    expect(core.stopApp).not.toHaveBeenCalled();
+  });
+});

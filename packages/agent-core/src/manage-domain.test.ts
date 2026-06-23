@@ -1164,3 +1164,76 @@ describe('manageDomain — args validation', () => {
     ).rejects.toThrow(/unknown action "whoops"/);
   });
 });
+
+describe('cancellation (ENG-374)', () => {
+  const CANCEL_LEASE_UUID = 'a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d';
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('set: a pre-aborted signal throws OPERATION_CANCELLED and never broadcasts', async () => {
+    const core = await import('@manifest-network/manifest-mcp-core');
+    const { manageDomain } = await import('./manage-domain.js');
+    const ac = new AbortController();
+    ac.abort(new Error('user aborted'));
+    const onConfirm = vi.fn(async () => 'yes' as const);
+    const clientManager = makeMockClientManager(makeMockQueryClient());
+    await expect(
+      manageDomain(
+        {
+          action: 'set',
+          leaseUuid: CANCEL_LEASE_UUID,
+          fqdn: 'app.example.com',
+          serviceName: 'web',
+        },
+        { onConfirm },
+        { clientManager: clientManager as never, signal: ac.signal },
+      ),
+    ).rejects.toMatchObject({
+      code: ManifestMCPErrorCode.OPERATION_CANCELLED,
+    });
+    expect(core.setItemCustomDomain).not.toHaveBeenCalled();
+    expect(onConfirm).not.toHaveBeenCalled();
+  });
+
+  it('lookup positive control: with no signal the query IS invoked and the result returns', async () => {
+    const { manageDomain } = await import('./manage-domain.js');
+    const queryClient = makeMockQueryClient();
+    queryClient.liftedinit.billing.v1.leaseByCustomDomain.mockResolvedValue({
+      lease: null,
+    });
+    const clientManager = makeMockClientManager(queryClient);
+    const res = await manageDomain(
+      { action: 'lookup', fqdn: 'app.example.com' },
+      {},
+      { clientManager: clientManager as never },
+    );
+    expect(
+      queryClient.liftedinit.billing.v1.leaseByCustomDomain,
+    ).toHaveBeenCalledTimes(1);
+    expect(res).toMatchObject({ action: 'lookup', lease: null });
+  });
+
+  it('lookup: a pre-aborted signal throws OPERATION_CANCELLED and the query is NOT called', async () => {
+    const { manageDomain } = await import('./manage-domain.js');
+    const ac = new AbortController();
+    ac.abort(new Error('user aborted'));
+    const queryClient = makeMockQueryClient();
+    const onFailure = vi.fn(async () => {});
+    const clientManager = makeMockClientManager(queryClient);
+    await expect(
+      manageDomain(
+        { action: 'lookup', fqdn: 'app.example.com' },
+        { onFailure },
+        { clientManager: clientManager as never, signal: ac.signal },
+      ),
+    ).rejects.toMatchObject({
+      code: ManifestMCPErrorCode.OPERATION_CANCELLED,
+    });
+    expect(
+      queryClient.liftedinit.billing.v1.leaseByCustomDomain,
+    ).not.toHaveBeenCalled();
+    expect(onFailure).not.toHaveBeenCalled(); // cancellation is NOT a query failure
+  });
+});

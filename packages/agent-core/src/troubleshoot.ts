@@ -30,6 +30,7 @@ import {
   ManifestMCPError,
   ManifestMCPErrorCode,
 } from '@manifest-network/manifest-mcp-core';
+import { makeCancellationScope } from './internals/cancellation.js';
 import { normalizeItem } from './internals/lease-items.js';
 import {
   decode as decodeLeaseState,
@@ -69,6 +70,14 @@ export async function troubleshootDeployment(
 ): Promise<TroubleshootReport> {
   validateArgs(args);
 
+  const cx = makeCancellationScope({
+    opts,
+    onProgress: callbacks.onProgress,
+    opLabel: 'Troubleshoot',
+    broadcasts: false,
+  });
+  cx.throwIfCancelled();
+
   let leasePayload: unknown;
   try {
     // Pull `getQueryClient()` INSIDE the try (Copilot review PR #60,
@@ -79,11 +88,19 @@ export async function troubleshootDeployment(
     // QUERY_FAILED / structured-passthrough normalization the chain-
     // query failure mode already gets — three modes, one disambiguation.
     const queryClient = await opts.clientManager.getQueryClient();
-    const result = await queryClient.liftedinit.billing.v1.lease({
-      leaseUuid: args.leaseUuid,
-    });
+    const result = await cx.race(
+      queryClient.liftedinit.billing.v1.lease({
+        leaseUuid: args.leaseUuid,
+      }),
+    );
     leasePayload = result.lease;
   } catch (err) {
+    if (
+      err instanceof ManifestMCPError &&
+      err.code === ManifestMCPErrorCode.OPERATION_CANCELLED
+    ) {
+      throw err;
+    }
     // Preserve structured `ManifestMCPError`s from the chain client
     // (Copilot review PR #60, comment 3276172289). Wrapping every
     // failure as `QUERY_FAILED` erases upstream error codes — a real

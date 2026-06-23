@@ -29,6 +29,7 @@ import {
   parseLeaseUuid,
   setItemCustomDomain,
 } from '@manifest-network/manifest-mcp-core';
+import { makeCancellationScope } from './internals/cancellation.js';
 import {
   type VerifyDomainOutcome,
   type VerifyDomainResult,
@@ -138,10 +139,21 @@ export async function manageDomain(
   // `args.fqdn.trim() === ''`.
   const fqdn = args.action === 'set' ? args.fqdn.trim().toLowerCase() : '';
 
+  // Cancellation seam (ENG-374, shared via internals/cancellation.ts). Race ONLY
+  // the pre-broadcast `onConfirm`; the post-broadcast verifier routes into
+  // recovery (D4.6) and is never cancelled.
+  const cx = makeCancellationScope({
+    opts,
+    onProgress: callbacks.onProgress,
+    opLabel: 'Domain update',
+    broadcasts: true,
+  });
+  cx.throwIfCancelled();
+
   // --- Confirmation block ---------------------------------------------
   const block = renderConfirmationBlock(args);
   if (callbacks.onConfirm) {
-    const yesNo = await callbacks.onConfirm(block);
+    const yesNo = await cx.race(callbacks.onConfirm(block));
     if (yesNo !== 'yes') {
       throw new ManifestMCPError(
         ManifestMCPErrorCode.OPERATION_CANCELLED,
@@ -156,6 +168,7 @@ export async function manageDomain(
   // sender resolves from ctx.chain (the CosmosClientManager wallet). See OI-SENDER.
   // The raw MCP `leaseUuid`/`fqdn` strings are unbranded → parse at the boundary.
   const leaseUuid = parseLeaseUuid(args.leaseUuid);
+  cx.throwIfCancelled();
   await setItemCustomDomain(
     { chain: opts.clientManager, logger: noopLogger },
     args.action === 'set'
@@ -365,6 +378,16 @@ async function lookupDomain(
   opts: ManageDomainOptions,
 ): Promise<ManageDomainResult> {
   const customDomain = fqdn.trim();
+  // Cancellation seam (ENG-374): read-only flow races the single query for
+  // withReadSignal parity. Manifestjs queries take no AbortSignal, so on abort
+  // we stop awaiting (the RPC is not actually cancelled).
+  const cx = makeCancellationScope({
+    opts,
+    onProgress: callbacks.onProgress,
+    opLabel: 'Domain lookup',
+    broadcasts: false,
+  });
+  cx.throwIfCancelled();
   let result: unknown;
   try {
     // Pull `getQueryClient()` INSIDE the try (Copilot review PR #60,
@@ -377,10 +400,21 @@ async function lookupDomain(
     // (in `manageDomain` body above) already wraps `getQueryClient()`
     // since commit d9793c1; this brings `lookupDomain` to parity.
     const queryClient = await opts.clientManager.getQueryClient();
-    result = await queryClient.liftedinit.billing.v1.leaseByCustomDomain({
-      customDomain,
-    });
+    result = await cx.race(
+      queryClient.liftedinit.billing.v1.leaseByCustomDomain({
+        customDomain,
+      }),
+    );
   } catch (err) {
+    // Cancellation short-circuit (ENG-374): an aborted read is neither a
+    // "not found" nor a query failure — re-throw BEFORE the not-found /
+    // onFailure handling so it never invokes `onFailure`.
+    if (
+      err instanceof ManifestMCPError &&
+      err.code === ManifestMCPErrorCode.OPERATION_CANCELLED
+    ) {
+      throw err;
+    }
     // Narrowed disambiguation (Copilot review PR #60): the chain keeper
     // raises a NotFound-shaped error when the FQDN is unclaimed (cosmjs/
     // grpc surfaces this as a plain `Error` whose message matches

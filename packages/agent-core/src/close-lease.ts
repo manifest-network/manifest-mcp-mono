@@ -26,6 +26,7 @@ import {
   parseLeaseUuid,
   stopApp,
 } from '@manifest-network/manifest-mcp-core';
+import { makeCancellationScope } from './internals/cancellation.js';
 import {
   decode as decodeLeaseState,
   isTerminal,
@@ -87,9 +88,17 @@ export async function closeLease(
 ): Promise<CloseLeaseResult> {
   validateArgs(args);
 
+  const cx = makeCancellationScope({
+    opts,
+    onProgress: callbacks.onProgress,
+    opLabel: 'Lease close',
+    broadcasts: true,
+  });
+  cx.throwIfCancelled();
+
   const block = renderConfirmationBlock(args);
   if (callbacks.onConfirm) {
-    const yesNo = await callbacks.onConfirm(block);
+    const yesNo = await cx.race(callbacks.onConfirm(block));
     if (yesNo !== 'yes') {
       throw new ManifestMCPError(
         ManifestMCPErrorCode.OPERATION_CANCELLED,
@@ -98,6 +107,8 @@ export async function closeLease(
     }
   }
   callbacks.onProgress?.({ kind: 'user_confirmed' });
+
+  cx.throwIfCancelled();
 
   // txCtx has no signer (ManageDomain/CloseLease flows carry no walletProvider);
   // the sender resolves from ctx.chain (the CosmosClientManager wallet). See OI-SENDER.
