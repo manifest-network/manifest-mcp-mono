@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- **agent-core:** `manageDomain`, `closeLease`, and `troubleshootDeployment` now honor the `signal`/`timeout` options they already declared (previously silently ignored). Cancellation races the pre-broadcast `onConfirm` for the mutating flows and the single read query for the read-only flows; post-broadcast awaits are never cancelled (D4.6). (ENG-374)
+
 ### Upgrade notes
 
 **BREAKING (agent-core / headless `deployApp` callers):**
