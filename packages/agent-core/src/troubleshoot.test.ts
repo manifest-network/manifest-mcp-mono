@@ -529,6 +529,42 @@ describe('troubleshootDeployment — chain-query failures', () => {
   });
 });
 
+describe('cancellation (ENG-374)', () => {
+  const CANCEL_LEASE_UUID = 'a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d';
+
+  it('positive control: with no signal the diagnostic query IS invoked and a report returns', async () => {
+    const { troubleshootDeployment } = await import('./troubleshoot.js');
+    const queryClient = makeMockQueryClient();
+    queryClient.liftedinit.billing.v1.lease.mockResolvedValue({ lease: {} });
+    const clientManager = makeMockClientManager(queryClient);
+    const report = await troubleshootDeployment(
+      { leaseUuid: CANCEL_LEASE_UUID },
+      {},
+      { clientManager: clientManager as never },
+    );
+    expect(queryClient.liftedinit.billing.v1.lease).toHaveBeenCalledTimes(1);
+    expect(report.markdown).toContain(CANCEL_LEASE_UUID);
+  });
+
+  it('a pre-aborted signal throws OPERATION_CANCELLED and the query is NOT called', async () => {
+    const { troubleshootDeployment } = await import('./troubleshoot.js');
+    const ac = new AbortController();
+    ac.abort(new Error('user aborted'));
+    const queryClient = makeMockQueryClient();
+    const onFailure = vi.fn(async () => {});
+    const clientManager = makeMockClientManager(queryClient);
+    await expect(
+      troubleshootDeployment(
+        { leaseUuid: CANCEL_LEASE_UUID },
+        { onFailure },
+        { clientManager: clientManager as never, signal: ac.signal },
+      ),
+    ).rejects.toMatchObject({ code: ManifestMCPErrorCode.OPERATION_CANCELLED });
+    expect(queryClient.liftedinit.billing.v1.lease).not.toHaveBeenCalled();
+    expect(onFailure).not.toHaveBeenCalled(); // cancellation is NOT a query failure
+  });
+});
+
 // Confirm the import surface — `ManifestMCPErrorCode` reference proves
 // the test file actually consumes the value when expectations run.
 void ManifestMCPErrorCode.QUERY_FAILED;
