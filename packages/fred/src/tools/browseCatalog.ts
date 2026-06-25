@@ -1,10 +1,10 @@
-import type { ManifestQueryClient } from '@manifest-network/manifest-mcp-core';
 import {
   createPagination,
   INFRASTRUCTURE_ERROR_CODES,
   MAX_PAGE_LIMIT,
   ManifestMCPError,
 } from '@manifest-network/manifest-mcp-core';
+import type { FredReadCtx } from '../ctx.js';
 import { getProviderHealth, ProviderApiError } from '../http/provider.js';
 
 /** Maximum concurrent outgoing health check requests to provider APIs */
@@ -35,11 +35,8 @@ export async function mapWithConcurrency<T, R>(
   return results;
 }
 
-export async function browseCatalog(
-  queryClient: ManifestQueryClient,
-  fetchFn?: typeof globalThis.fetch,
-) {
-  const sku = queryClient.liftedinit.sku.v1;
+export async function browseCatalog(ctx: FredReadCtx) {
+  const sku = ctx.query.liftedinit.sku.v1;
 
   const pagination = createPagination(MAX_PAGE_LIMIT);
 
@@ -56,7 +53,7 @@ export async function browseCatalog(
       let providerUuid: string | undefined;
       let healthError: string | undefined;
       try {
-        const health = await getProviderHealth(p.apiUrl, undefined, fetchFn);
+        const health = await getProviderHealth(p.apiUrl, undefined, ctx.fetch);
         healthy = health.status === 'ok' || health.status === 'healthy';
         providerUuid = health.provider_uuid;
       } catch (err) {
