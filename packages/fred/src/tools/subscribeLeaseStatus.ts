@@ -5,24 +5,26 @@ import {
   type LeaseUuid,
   ManifestMCPError,
   ManifestMCPErrorCode,
-  requireAuthSigner,
 } from '@manifest-network/manifest-mcp-core';
-import { createAuthTokens } from '../http/auth-tokens-factory.js';
 import {
   getLeaseStatus,
   PROVISION_FAILED,
   PROVISION_IN_PROGRESS,
 } from '../http/fred.js';
+import type { ProviderAuthPort } from '../http/provider-auth.js';
 import { resolveProviderUrl } from './resolveLeaseProvider.js';
 
 /** The capability slice subscribeLeaseStatus needs: query (provider lookup) + chain (rate limit +
- *  chainId) + fetch (provider HTTP) + signer (ADR-036 status token). `logger` and `events` are NOT
- *  used by the current poll-backed body — both are carried as forward-compat for the deferred WS
- *  transport (`events` = the eventual subscription source; `logger` = per-poll/terminal diagnostics). */
+ *  chainId + broadcast address) + fetch (provider HTTP) + providerAuth (the single fred auth
+ *  convention — mints the per-poll ADR-036 status token). `signer` is NOT exposed directly: it is
+ *  encapsulated inside `providerAuth` (built once at the composition root), matching `FredAuthCtx`.
+ *  `logger` and `events` are NOT used by the current poll-backed body — both are carried as
+ *  forward-compat for the deferred WS transport (`events` = the eventual subscription source;
+ *  `logger` = per-poll/terminal diagnostics). */
 export type SubscribeCtx = Pick<
   CapabilityCtx,
-  'query' | 'chain' | 'fetch' | 'signer' | 'logger' | 'events'
->;
+  'query' | 'chain' | 'fetch' | 'logger' | 'events'
+> & { providerAuth: ProviderAuthPort };
 
 export interface SubscribeLeaseStatusOptions {
   /** Each (deduped) observed status, branded. */
@@ -152,17 +154,16 @@ export function subscribeLeaseStatus(
 
   void (async () => {
     let providerUrl: string;
-    // ADR-036 status token (getAuthToken, the appStatus pattern — NOT getLeaseDataAuthToken). Built
-    // INSIDE the setup try (N1): requireAuthSigner throws synchronously on a signer-less ctx, and the
-    // contract is a synchronous, never-throwing unsubscribe return — so a signer-less ctx must surface
-    // via onError, not by throwing out of subscribeLeaseStatus. signer is present on the full fred
-    // client; re-minted per poll (replay-tracker safe; fresh-per-call).
-    let tokens: ReturnType<typeof createAuthTokens>;
+    // ADR-036 status token via providerAuth (the appStatus/providerToken pattern — NOT leaseDataToken),
+    // the single fred auth convention. The port is address-PARAM and FredAuthCtx hides `signer`, so the
+    // broadcast address is resolved here via ctx.chain.getAddress(). Resolved INSIDE the setup try (N1):
+    // a signer-less manager rejects getAddress, and the contract is a synchronous, never-throwing
+    // unsubscribe return — so that failure must surface via onError, not by throwing out of
+    // subscribeLeaseStatus. The token is re-minted per poll (replay-tracker safe; fresh-per-call).
+    let address: string;
     try {
-      tokens = createAuthTokens(requireAuthSigner(ctx), {
-        chainId: ctx.chain.getConfig().chainId,
-      });
       await ctx.chain.acquireRateLimit();
+      address = await ctx.chain.getAddress();
       const leaseRes = await ctx.query.liftedinit.billing.v1.lease({
         leaseUuid,
       });
@@ -185,7 +186,10 @@ export function subscribeLeaseStatus(
     while (!stopped && !abortSignal.aborted) {
       let status: FredLeaseStatus;
       try {
-        const token = await tokens.getAuthToken(leaseUuid);
+        const token = await ctx.providerAuth.providerToken({
+          address,
+          leaseUuid,
+        });
         status = await getLeaseStatus(providerUrl, leaseUuid, token, ctx.fetch);
       } catch (err) {
         if (stopped || abortSignal.aborted) return; // abort during the await ≡ silent unsubscribe

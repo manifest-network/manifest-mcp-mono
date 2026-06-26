@@ -45,6 +45,7 @@ function fakeManager(
     setLogger: vi.fn(),
     acquireRateLimit: vi.fn(async () => {}),
     getConfig: vi.fn(() => ({ chainId: 'test-1' })),
+    getAddress: vi.fn(async () => ADDR), // subscribeLeaseStatus resolves the broadcast address per poll-setup
     ...over,
   } as unknown as CosmosClientManager;
 }
