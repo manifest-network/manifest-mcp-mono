@@ -60,13 +60,25 @@ export function registerTools(deps: RegisterToolsDeps): void {
 
   // ProviderAuthPort adapter over the server's AuthTokenService. The capability
   // fns take an address-param port on `FredAuthCtx`; here we adapt the existing
-  // address-param AuthTokenService methods. (Task 8 wires this from a shared
-  // root; for now each auth'd handler builds its FredAuthCtx with this port.)
+  // address-param AuthTokenService methods. Built once for every handler.
   const providerAuth: ProviderAuthPort = {
     providerToken: (i) => authTokens.providerToken(i.address, i.leaseUuid),
     leaseDataToken: (i) =>
       authTokens.leaseDataToken(i.address, i.leaseUuid, i.metaHashHex),
   };
+
+  // Build the single FredAuthCtx every converted handler passes to its capability
+  // fn. `fetch: fetchFn ?? globalThis.fetch` is the ONE concrete-fetch resolution
+  // site (the SSRF-wiring tests pin it). Each handler: acquire rate limit, build
+  // ctx, call fn(ctx, input). browseCatalog takes only the FredReadCtx subset, so
+  // the same ctx serves the read handlers too.
+  const buildCtx = async (): Promise<FredAuthCtx> => ({
+    query: await clientManager.getQueryClient(),
+    chain: clientManager,
+    fetch: fetchFn ?? globalThis.fetch,
+    logger: noopLogger,
+    providerAuth,
+  });
 
   // -- browse_catalog --
   mcpServer.registerTool(
@@ -96,12 +108,7 @@ export function registerTools(deps: RegisterToolsDeps): void {
     },
     withErrorHandling('browse_catalog', async () => {
       await clientManager.acquireRateLimit();
-      const ctx = {
-        query: await clientManager.getQueryClient(),
-        chain: clientManager,
-        fetch: fetchFn ?? globalThis.fetch,
-        logger: noopLogger,
-      };
+      const ctx = await buildCtx();
       const result = await browseCatalog(ctx);
       return structuredResponse(result, bigIntReplacer);
     }),
@@ -140,13 +147,7 @@ export function registerTools(deps: RegisterToolsDeps): void {
       const leaseUuid = args.lease_uuid;
       const address = await walletProvider.getAddress();
       await clientManager.acquireRateLimit();
-      const ctx: FredAuthCtx = {
-        query: await clientManager.getQueryClient(),
-        chain: clientManager,
-        fetch: fetchFn ?? globalThis.fetch,
-        logger: noopLogger,
-        providerAuth,
-      };
+      const ctx = await buildCtx();
       const result = await appStatus(ctx, { address, leaseUuid });
       return structuredResponse(result, bigIntReplacer);
     }),
@@ -211,13 +212,7 @@ export function registerTools(deps: RegisterToolsDeps): void {
         const leaseUuid = args.lease_uuid;
         const address = await walletProvider.getAddress();
         await clientManager.acquireRateLimit();
-        const ctx: FredAuthCtx = {
-          query: await clientManager.getQueryClient(),
-          chain: clientManager,
-          fetch: fetchFn ?? globalThis.fetch,
-          logger: noopLogger,
-          providerAuth,
-        };
+        const ctx = await buildCtx();
         const result = await waitForAppReady(
           ctx,
           { address, leaseUuid },
@@ -277,13 +272,7 @@ export function registerTools(deps: RegisterToolsDeps): void {
       const tail = args.tail;
       const address = await walletProvider.getAddress();
       await clientManager.acquireRateLimit();
-      const ctx: FredAuthCtx = {
-        query: await clientManager.getQueryClient(),
-        chain: clientManager,
-        fetch: fetchFn ?? globalThis.fetch,
-        logger: noopLogger,
-        providerAuth,
-      };
+      const ctx = await buildCtx();
       const result = await getAppLogs(ctx, { address, leaseUuid, tail });
       return jsonResponse(result, bigIntReplacer);
     }),
@@ -702,13 +691,7 @@ export function registerTools(deps: RegisterToolsDeps): void {
         // deployManifest acquires its own rate-limit token internally (it owns
         // the create-lease tx + reads), so unlike the read handlers we do NOT
         // pre-acquire here — that would double-consume on the same logical op.
-        const ctx: FredAuthCtx = {
-          query: await clientManager.getQueryClient(),
-          chain: clientManager,
-          fetch: fetchFn ?? globalThis.fetch,
-          logger: noopLogger,
-          providerAuth,
-        };
+        const ctx = await buildCtx();
         const result = await deployApp(
           ctx,
           {
@@ -788,13 +771,7 @@ export function registerTools(deps: RegisterToolsDeps): void {
       const leaseUuid = args.lease_uuid;
       const address = await walletProvider.getAddress();
       await clientManager.acquireRateLimit();
-      const ctx: FredAuthCtx = {
-        query: await clientManager.getQueryClient(),
-        chain: clientManager,
-        fetch: fetchFn ?? globalThis.fetch,
-        logger: noopLogger,
-        providerAuth,
-      };
+      const ctx = await buildCtx();
       const result = await restartApp(ctx, { address, leaseUuid });
       return jsonResponse(result, bigIntReplacer);
     }),
@@ -857,13 +834,7 @@ export function registerTools(deps: RegisterToolsDeps): void {
       const leaseUuid = args.lease_uuid;
       const address = await walletProvider.getAddress();
       await clientManager.acquireRateLimit();
-      const ctx: FredAuthCtx = {
-        query: await clientManager.getQueryClient(),
-        chain: clientManager,
-        fetch: fetchFn ?? globalThis.fetch,
-        logger: noopLogger,
-        providerAuth,
-      };
+      const ctx = await buildCtx();
 
       const result = await updateApp(ctx, {
         address,
@@ -907,13 +878,7 @@ export function registerTools(deps: RegisterToolsDeps): void {
       const leaseUuid = args.lease_uuid;
       const address = await walletProvider.getAddress();
       await clientManager.acquireRateLimit();
-      const ctx: FredAuthCtx = {
-        query: await clientManager.getQueryClient(),
-        chain: clientManager,
-        fetch: fetchFn ?? globalThis.fetch,
-        logger: noopLogger,
-        providerAuth,
-      };
+      const ctx = await buildCtx();
 
       const lease = await fetchActiveLease(
         ctx.query,
@@ -980,13 +945,7 @@ export function registerTools(deps: RegisterToolsDeps): void {
       const leaseUuid = args.lease_uuid;
       const address = await walletProvider.getAddress();
       await clientManager.acquireRateLimit();
-      const ctx: FredAuthCtx = {
-        query: await clientManager.getQueryClient(),
-        chain: clientManager,
-        fetch: fetchFn ?? globalThis.fetch,
-        logger: noopLogger,
-        providerAuth,
-      };
+      const ctx = await buildCtx();
 
       const lease = await fetchActiveLease(
         ctx.query,
