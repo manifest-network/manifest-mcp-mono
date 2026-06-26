@@ -3,6 +3,7 @@ import {
   LeaseState,
   ManifestMCPError,
   ManifestMCPErrorCode,
+  noopLogger,
 } from '@manifest-network/manifest-mcp-core';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -30,6 +31,7 @@ const mockResolveProviderUrl = vi.mocked(resolveProviderUrl);
 
 const LEASE_UUID = '550e8400-e29b-41d4-a716-446655440000';
 const mockGetAuthToken = vi.fn().mockResolvedValue('auth-token');
+const fetchSpy = vi.fn(globalThis.fetch);
 
 function makeActiveQc() {
   return makeMockQueryClient({
@@ -41,6 +43,25 @@ function makeActiveQc() {
       },
     },
   });
+}
+
+// Build a FredAuthCtx whose providerAuth.providerToken delegates to the
+// supplied `getAuthToken` thunk (so the existing token-flow assertions hold).
+function makeCtx(
+  qc: ReturnType<typeof makeMockQueryClient>,
+  getAuthToken: (address: string, leaseUuid: string) => Promise<string>,
+) {
+  return {
+    query: qc,
+    chain: {} as never,
+    fetch: fetchSpy,
+    logger: noopLogger,
+    providerAuth: {
+      providerToken: (i: { address: string; leaseUuid: string }) =>
+        getAuthToken(i.address, i.leaseUuid),
+      leaseDataToken: vi.fn(),
+    },
+  };
 }
 
 describe('appStatus', () => {
@@ -64,12 +85,10 @@ describe('appStatus', () => {
 
   it('returns combined chain state and provider status for active lease', async () => {
     const qc = makeActiveQc();
-    const result = await appStatus(
-      qc,
-      'manifest1abc',
-      LEASE_UUID,
-      mockGetAuthToken,
-    );
+    const result = await appStatus(makeCtx(qc, mockGetAuthToken), {
+      address: 'manifest1abc',
+      leaseUuid: LEASE_UUID,
+    });
 
     expect(result.lease_uuid).toBe(LEASE_UUID);
     expect(result.chainState.state).toBe(LeaseState.LEASE_STATE_ACTIVE);
@@ -88,12 +107,10 @@ describe('appStatus', () => {
       },
     });
 
-    const result = await appStatus(
-      qc,
-      'manifest1abc',
-      LEASE_UUID,
-      mockGetAuthToken,
-    );
+    const result = await appStatus(makeCtx(qc, mockGetAuthToken), {
+      address: 'manifest1abc',
+      leaseUuid: LEASE_UUID,
+    });
 
     expect(result.chainState.state).toBe(LeaseState.LEASE_STATE_CLOSED);
     expect(result.fredStatus).toBeUndefined();
@@ -104,7 +121,10 @@ describe('appStatus', () => {
     const qc = makeMockQueryClient({ billing: { lease: null } });
 
     await expect(
-      appStatus(qc, 'manifest1abc', LEASE_UUID, mockGetAuthToken),
+      appStatus(makeCtx(qc, mockGetAuthToken), {
+        address: 'manifest1abc',
+        leaseUuid: LEASE_UUID,
+      }),
     ).rejects.toThrow('not found on chain');
   });
 
@@ -112,12 +132,10 @@ describe('appStatus', () => {
     const qc = makeActiveQc();
     mockResolveProviderUrl.mockRejectedValue(new Error('bad url'));
 
-    const result = await appStatus(
-      qc,
-      'manifest1abc',
-      LEASE_UUID,
-      mockGetAuthToken,
-    );
+    const result = await appStatus(makeCtx(qc, mockGetAuthToken), {
+      address: 'manifest1abc',
+      leaseUuid: LEASE_UUID,
+    });
 
     expect(result.providerError).toContain('Could not resolve provider');
     expect(result.fredStatus).toBeUndefined();
@@ -133,7 +151,10 @@ describe('appStatus', () => {
     mockResolveProviderUrl.mockRejectedValue(infraErr);
 
     await expect(
-      appStatus(qc, 'manifest1abc', LEASE_UUID, mockGetAuthToken),
+      appStatus(makeCtx(qc, mockGetAuthToken), {
+        address: 'manifest1abc',
+        leaseUuid: LEASE_UUID,
+      }),
     ).rejects.toBe(infraErr);
   });
 
@@ -142,12 +163,10 @@ describe('appStatus', () => {
     mockGetLeaseStatus.mockRejectedValue(new Error('status failed'));
     // connection succeeds
 
-    const result = await appStatus(
-      qc,
-      'manifest1abc',
-      LEASE_UUID,
-      mockGetAuthToken,
-    );
+    const result = await appStatus(makeCtx(qc, mockGetAuthToken), {
+      address: 'manifest1abc',
+      leaseUuid: LEASE_UUID,
+    });
 
     expect(result.providerError).toBe('status failed');
     expect(result.connection?.host).toBe('app.example.com');
@@ -157,12 +176,10 @@ describe('appStatus', () => {
     const qc = makeActiveQc();
     mockGetAuthToken.mockRejectedValueOnce(new Error('signing failed'));
 
-    const result = await appStatus(
-      qc,
-      'manifest1abc',
-      LEASE_UUID,
-      mockGetAuthToken,
-    );
+    const result = await appStatus(makeCtx(qc, mockGetAuthToken), {
+      address: 'manifest1abc',
+      leaseUuid: LEASE_UUID,
+    });
 
     expect(result.providerError).toContain('Auth token error');
     expect(result.fredStatus).toBeUndefined();
@@ -175,20 +192,23 @@ describe('appStatus', () => {
       .mockResolvedValueOnce('status-token')
       .mockResolvedValueOnce('conn-token');
 
-    await appStatus(qc, 'manifest1abc', LEASE_UUID, distinctTokenFn);
+    await appStatus(makeCtx(qc, distinctTokenFn), {
+      address: 'manifest1abc',
+      leaseUuid: LEASE_UUID,
+    });
 
     expect(distinctTokenFn).toHaveBeenCalledTimes(2);
     expect(mockGetLeaseStatus).toHaveBeenCalledWith(
       expect.any(String),
       LEASE_UUID,
       'status-token',
-      undefined,
+      fetchSpy,
     );
     expect(mockGetLeaseConnectionInfo).toHaveBeenCalledWith(
       expect.any(String),
       LEASE_UUID,
       'conn-token',
-      undefined,
+      fetchSpy,
     );
   });
 
@@ -199,12 +219,10 @@ describe('appStatus', () => {
     );
     // status succeeds
 
-    const result = await appStatus(
-      qc,
-      'manifest1abc',
-      LEASE_UUID,
-      mockGetAuthToken,
-    );
+    const result = await appStatus(makeCtx(qc, mockGetAuthToken), {
+      address: 'manifest1abc',
+      leaseUuid: LEASE_UUID,
+    });
 
     expect(result.fredStatus?.state).toBe(LeaseState.LEASE_STATE_ACTIVE);
     expect(result.connectionError).toBe('connection failed');

@@ -1001,16 +1001,14 @@ describe('deployApp replay — Copilot review fixes (PR #58 unresolved comments)
     // then resolves with ACTIVE + a running instance.
     vi.mocked(fred.waitForAppReady).mockImplementation(
       async (
-        _qc: unknown,
-        _addr: unknown,
-        leaseUuid: unknown,
-        _getAuthToken: unknown,
+        _ctx: unknown,
+        input: { leaseUuid: string },
         opts?: { onProgress?: (status: { state: number }) => void },
       ) => {
         opts?.onProgress?.({ state: 1 }); // PENDING sample
         opts?.onProgress?.({ state: 2 }); // ACTIVE sample (LeaseState enum: 2 = ACTIVE; was 3 = CLOSED — Copilot #5)
         return {
-          lease_uuid: leaseUuid as string,
+          lease_uuid: input.leaseUuid,
           provider_uuid: '44444444-4444-4444-8444-444444444444',
           provider_url: 'https://provider.testnet.manifest.network',
           state: 'LEASE_STATE_ACTIVE',
@@ -3024,10 +3022,8 @@ describe('deployApp replay — ENG-185 sub-PR D fixtures (05/06/07)', () => {
     // then returns the fixture's post-poll ACTIVE result.
     vi.mocked(fred.waitForAppReady).mockImplementation(
       async (
-        _qc: unknown,
-        _addr: unknown,
-        _leaseUuid: unknown,
-        _getAuthToken: unknown,
+        _ctx: unknown,
+        _input: unknown,
         opts?: { onProgress?: (status: { state: number }) => void },
       ) => {
         opts?.onProgress?.({ state: 1 }); // PENDING
@@ -3573,10 +3569,10 @@ describe('deployApp — sub-PR D defense-in-depth', () => {
       waitForReadyTimeoutMs: 60_000,
     });
 
-    // Assert waitForAppReady received the override (5th positional arg is opts).
+    // Assert waitForAppReady received the override (3rd positional arg is opts).
     const callArgs = vi.mocked(fred.waitForAppReady).mock.calls[0];
     expect(callArgs).toBeDefined();
-    const opts = callArgs?.[4] as { timeoutMs?: number } | undefined;
+    const opts = callArgs?.[2] as { timeoutMs?: number } | undefined;
     expect(opts?.timeoutMs).toBe(60_000);
   });
 });

@@ -1,24 +1,30 @@
-import type { ManifestQueryClient } from '@manifest-network/manifest-mcp-core';
+import type { FredAuthCtx } from '../ctx.js';
 import { restartLease } from '../http/fred.js';
 import { fetchActiveLease } from './fetchActiveLease.js';
 import { resolveProviderUrl } from './resolveLeaseProvider.js';
 
 export async function restartApp(
-  queryClient: ManifestQueryClient,
-  address: string,
-  leaseUuid: string,
-  getAuthToken: (address: string, leaseUuid: string) => Promise<string>,
-  fetchFn?: typeof globalThis.fetch,
+  ctx: FredAuthCtx,
+  input: { address: string; leaseUuid: string },
 ) {
+  const { address, leaseUuid } = input;
   const lease = await fetchActiveLease(
-    queryClient,
+    ctx.query,
     leaseUuid,
     'cannot be restarted',
   );
 
-  const providerUrl = await resolveProviderUrl(queryClient, lease.providerUuid);
-  const authToken = await getAuthToken(address, leaseUuid);
-  const result = await restartLease(providerUrl, leaseUuid, authToken, fetchFn);
+  const providerUrl = await resolveProviderUrl(ctx.query, lease.providerUuid);
+  const authToken = await ctx.providerAuth.providerToken({
+    address,
+    leaseUuid,
+  });
+  const result = await restartLease(
+    providerUrl,
+    leaseUuid,
+    authToken,
+    ctx.fetch,
+  );
 
   return {
     lease_uuid: leaseUuid,

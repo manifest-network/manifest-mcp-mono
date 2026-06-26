@@ -1,7 +1,5 @@
-import {
-  leaseStateToJSON,
-  type ManifestQueryClient,
-} from '@manifest-network/manifest-mcp-core';
+import { leaseStateToJSON } from '@manifest-network/manifest-mcp-core';
+import type { FredAuthCtx } from '../ctx.js';
 import { type FredLeaseStatus, pollLeaseUntilReady } from '../http/fred.js';
 import { fetchActiveLease } from './fetchActiveLease.js';
 import { resolveProviderUrl } from './resolveLeaseProvider.js';
@@ -30,31 +28,29 @@ export interface WaitForAppReadyResult {
  * no point waiting on a closed/rejected/expired lease.
  */
 export async function waitForAppReady(
-  queryClient: ManifestQueryClient,
-  address: string,
-  leaseUuid: string,
-  getAuthToken: (address: string, leaseUuid: string) => Promise<string>,
+  ctx: FredAuthCtx,
+  input: { address: string; leaseUuid: string },
   opts: WaitForAppReadyOptions = {},
-  fetchFn?: typeof globalThis.fetch,
 ): Promise<WaitForAppReadyResult> {
+  const { address, leaseUuid } = input;
   const lease = await fetchActiveLease(
-    queryClient,
+    ctx.query,
     leaseUuid,
     'cannot wait for readiness',
   );
-  const providerUrl = await resolveProviderUrl(queryClient, lease.providerUuid);
+  const providerUrl = await resolveProviderUrl(ctx.query, lease.providerUuid);
 
   const status = await pollLeaseUntilReady(
     providerUrl,
     leaseUuid,
-    () => getAuthToken(address, leaseUuid),
+    () => ctx.providerAuth.providerToken({ address, leaseUuid }),
     {
       intervalMs: opts.intervalMs,
       timeoutMs: opts.timeoutMs,
       abortSignal: opts.abortSignal,
       onProgress: opts.onProgress,
     },
-    fetchFn,
+    ctx.fetch,
   );
 
   return {

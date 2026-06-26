@@ -702,10 +702,18 @@ export async function deployApp(
     let pollResult: Awaited<ReturnType<typeof waitForAppReady>>;
     try {
       pollResult = await waitForAppReady(
-        queryClient,
-        tenantAddress,
-        leaseUuid,
-        getAuthToken,
+        {
+          query: queryClient,
+          chain: opts.clientManager,
+          fetch: opts.fetchFn ?? globalThis.fetch,
+          logger: noopLogger,
+          providerAuth: {
+            providerToken: (i) => getAuthToken(i.address, i.leaseUuid),
+            leaseDataToken: (i) =>
+              getLeaseDataAuthToken(i.address, i.leaseUuid, i.metaHashHex),
+          },
+        },
+        { address: tenantAddress, leaseUuid },
         {
           timeoutMs: opts.waitForReadyTimeoutMs ?? 480_000,
           onProgress: (status) => {
@@ -720,7 +728,6 @@ export async function deployApp(
             });
           },
         },
-        opts.fetchFn,
       );
     } catch (err) {
       // ProviderApiError / timeout / TerminalChainStateError → F3 route.

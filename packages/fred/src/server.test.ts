@@ -846,16 +846,22 @@ describe('FredMCPServer', () => {
       });
 
       expect(mockWaitForAppReady).toHaveBeenCalledWith(
-        expect.anything(),
-        'manifest1abc',
-        LEASE_UUID,
-        expect.any(Function),
+        // ctx — the SSRF-guarded fetch lives on ctx.fetch (ENG-268/311).
+        expect.objectContaining({
+          query: expect.anything(),
+          chain: expect.anything(),
+          fetch: expect.any(Function),
+          logger: expect.anything(),
+          providerAuth: expect.anything(),
+        }),
+        expect.objectContaining({
+          address: 'manifest1abc',
+          leaseUuid: LEASE_UUID,
+        }),
         expect.objectContaining({
           timeoutMs: 30_000,
           intervalMs: 5_000,
         }),
-        // SSRF-guarded fetch injected by FredMCPServer (ENG-268).
-        expect.any(Function),
       );
     });
 
@@ -866,7 +872,7 @@ describe('FredMCPServer', () => {
       });
       await callTool(server, 'wait_for_app_ready', { lease_uuid: LEASE_UUID });
 
-      const opts = mockWaitForAppReady.mock.calls.at(-1)?.[4];
+      const opts = mockWaitForAppReady.mock.calls.at(-1)?.[2];
       expect(opts).toMatchObject({
         timeoutMs: undefined,
         intervalMs: undefined,
@@ -1092,22 +1098,22 @@ describe('SSRF guard wiring (ENG-268)', () => {
     {
       tool: 'app_status',
       input: { lease_uuid: LEASE_UUID },
-      lastFetchArg: () => mockAppStatus.mock.lastCall?.at(-1),
+      lastFetchArg: () => mockAppStatus.mock.lastCall?.[0]?.fetch,
     },
     {
       tool: 'get_logs',
       input: { lease_uuid: LEASE_UUID },
-      lastFetchArg: () => mockGetAppLogs.mock.lastCall?.at(-1),
+      lastFetchArg: () => mockGetAppLogs.mock.lastCall?.[0]?.fetch,
     },
     {
       tool: 'restart_app',
       input: { lease_uuid: LEASE_UUID },
-      lastFetchArg: () => mockRestartApp.mock.lastCall?.at(-1),
+      lastFetchArg: () => mockRestartApp.mock.lastCall?.[0]?.fetch,
     },
     {
       tool: 'wait_for_app_ready',
       input: { lease_uuid: LEASE_UUID },
-      lastFetchArg: () => mockWaitForAppReady.mock.lastCall?.at(-1),
+      lastFetchArg: () => mockWaitForAppReady.mock.lastCall?.[0]?.fetch,
     },
     {
       tool: 'deploy_app',
@@ -1117,7 +1123,7 @@ describe('SSRF guard wiring (ENG-268)', () => {
     {
       tool: 'update_app',
       input: { lease_uuid: LEASE_UUID, manifest: '{"services":{}}' },
-      lastFetchArg: () => mockUpdateApp.mock.lastCall?.at(-1),
+      lastFetchArg: () => mockUpdateApp.mock.lastCall?.[0]?.fetch,
     },
   ];
 
@@ -1135,6 +1141,6 @@ describe('SSRF guard wiring (ENG-268)', () => {
     process.env.MANIFEST_FRED_FETCH_GUARDED = '0';
     const server = makeServer();
     await callTool(server, 'app_status', { lease_uuid: LEASE_UUID });
-    expect(mockAppStatus.mock.lastCall?.at(-1)).toBeUndefined();
+    expect(mockAppStatus.mock.lastCall?.[0]?.fetch).toBe(globalThis.fetch);
   });
 });

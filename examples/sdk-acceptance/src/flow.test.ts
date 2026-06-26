@@ -48,6 +48,7 @@ vi.mock('@manifest-network/manifest-sdk', () => ({
   createFredClient: h.createFredClient,
   parseFqdn: h.parseFqdn,
   asLeaseUuid: h.asLeaseUuid,
+  noopLogger: { debug() {}, info() {}, warn() {}, error() {} },
 }));
 
 vi.mock('@manifest-network/manifest-sdk/deploy', () => ({

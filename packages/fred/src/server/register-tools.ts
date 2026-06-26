@@ -22,8 +22,10 @@ import type {
   ServerRequest,
 } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
+import type { FredAuthCtx } from '../ctx.js';
 import type { AuthTokenService } from '../http/auth-token-service.js';
 import { getLeaseProvision, getLeaseReleases, MAX_TAIL } from '../http/fred.js';
+import type { ProviderAuthPort } from '../http/provider-auth.js';
 import { appStatus } from '../tools/appStatus.js';
 import { browseCatalog } from '../tools/browseCatalog.js';
 import { buildManifestPreview } from '../tools/buildManifestPreview.js';
@@ -55,6 +57,16 @@ interface RegisterToolsDeps {
 export function registerTools(deps: RegisterToolsDeps): void {
   const { mcpServer, clientManager, walletProvider, authTokens, fetchFn } =
     deps;
+
+  // ProviderAuthPort adapter over the server's AuthTokenService. The capability
+  // fns take an address-param port on `FredAuthCtx`; here we adapt the existing
+  // address-param AuthTokenService methods. (Task 8 wires this from a shared
+  // root; for now each auth'd handler builds its FredAuthCtx with this port.)
+  const providerAuth: ProviderAuthPort = {
+    providerToken: (i) => authTokens.providerToken(i.address, i.leaseUuid),
+    leaseDataToken: (i) =>
+      authTokens.leaseDataToken(i.address, i.leaseUuid, i.metaHashHex),
+  };
 
   // -- browse_catalog --
   mcpServer.registerTool(
@@ -128,14 +140,14 @@ export function registerTools(deps: RegisterToolsDeps): void {
       const leaseUuid = args.lease_uuid;
       const address = await walletProvider.getAddress();
       await clientManager.acquireRateLimit();
-      const queryClient = await clientManager.getQueryClient();
-      const result = await appStatus(
-        queryClient,
-        address,
-        leaseUuid,
-        (addr, uuid) => authTokens.providerToken(addr, uuid),
-        fetchFn,
-      );
+      const ctx: FredAuthCtx = {
+        query: await clientManager.getQueryClient(),
+        chain: clientManager,
+        fetch: fetchFn ?? globalThis.fetch,
+        logger: noopLogger,
+        providerAuth,
+      };
+      const result = await appStatus(ctx, { address, leaseUuid });
       return structuredResponse(result, bigIntReplacer);
     }),
   );
@@ -199,12 +211,16 @@ export function registerTools(deps: RegisterToolsDeps): void {
         const leaseUuid = args.lease_uuid;
         const address = await walletProvider.getAddress();
         await clientManager.acquireRateLimit();
-        const queryClient = await clientManager.getQueryClient();
+        const ctx: FredAuthCtx = {
+          query: await clientManager.getQueryClient(),
+          chain: clientManager,
+          fetch: fetchFn ?? globalThis.fetch,
+          logger: noopLogger,
+          providerAuth,
+        };
         const result = await waitForAppReady(
-          queryClient,
-          address,
-          leaseUuid,
-          (addr, uuid) => authTokens.providerToken(addr, uuid),
+          ctx,
+          { address, leaseUuid },
           {
             timeoutMs:
               args.timeout_seconds !== undefined
@@ -225,7 +241,6 @@ export function registerTools(deps: RegisterToolsDeps): void {
                 }
               : undefined,
           },
-          fetchFn,
         );
         return structuredResponse(result, bigIntReplacer);
       },
@@ -262,15 +277,14 @@ export function registerTools(deps: RegisterToolsDeps): void {
       const tail = args.tail;
       const address = await walletProvider.getAddress();
       await clientManager.acquireRateLimit();
-      const queryClient = await clientManager.getQueryClient();
-      const result = await getAppLogs(
-        queryClient,
-        address,
-        leaseUuid,
-        (addr, uuid) => authTokens.providerToken(addr, uuid),
-        tail,
-        fetchFn,
-      );
+      const ctx: FredAuthCtx = {
+        query: await clientManager.getQueryClient(),
+        chain: clientManager,
+        fetch: fetchFn ?? globalThis.fetch,
+        logger: noopLogger,
+        providerAuth,
+      };
+      const result = await getAppLogs(ctx, { address, leaseUuid, tail });
       return jsonResponse(result, bigIntReplacer);
     }),
   );
@@ -768,14 +782,14 @@ export function registerTools(deps: RegisterToolsDeps): void {
       const leaseUuid = args.lease_uuid;
       const address = await walletProvider.getAddress();
       await clientManager.acquireRateLimit();
-      const queryClient = await clientManager.getQueryClient();
-      const result = await restartApp(
-        queryClient,
-        address,
-        leaseUuid,
-        (addr, uuid) => authTokens.providerToken(addr, uuid),
-        fetchFn,
-      );
+      const ctx: FredAuthCtx = {
+        query: await clientManager.getQueryClient(),
+        chain: clientManager,
+        fetch: fetchFn ?? globalThis.fetch,
+        logger: noopLogger,
+        providerAuth,
+      };
+      const result = await restartApp(ctx, { address, leaseUuid });
       return jsonResponse(result, bigIntReplacer);
     }),
   );
@@ -837,17 +851,20 @@ export function registerTools(deps: RegisterToolsDeps): void {
       const leaseUuid = args.lease_uuid;
       const address = await walletProvider.getAddress();
       await clientManager.acquireRateLimit();
-      const queryClient = await clientManager.getQueryClient();
+      const ctx: FredAuthCtx = {
+        query: await clientManager.getQueryClient(),
+        chain: clientManager,
+        fetch: fetchFn ?? globalThis.fetch,
+        logger: noopLogger,
+        providerAuth,
+      };
 
-      const result = await updateApp(
-        queryClient,
+      const result = await updateApp(ctx, {
         address,
         leaseUuid,
-        (addr, uuid) => authTokens.providerToken(addr, uuid),
         manifest,
-        args.existing_manifest,
-        fetchFn,
-      );
+        existingManifest: args.existing_manifest,
+      });
       return structuredResponse(result, bigIntReplacer);
     }),
   );
@@ -884,23 +901,32 @@ export function registerTools(deps: RegisterToolsDeps): void {
       const leaseUuid = args.lease_uuid;
       const address = await walletProvider.getAddress();
       await clientManager.acquireRateLimit();
-      const queryClient = await clientManager.getQueryClient();
+      const ctx: FredAuthCtx = {
+        query: await clientManager.getQueryClient(),
+        chain: clientManager,
+        fetch: fetchFn ?? globalThis.fetch,
+        logger: noopLogger,
+        providerAuth,
+      };
 
       const lease = await fetchActiveLease(
-        queryClient,
+        ctx.query,
         leaseUuid,
         'cannot be diagnosed',
       );
       const providerUrl = await resolveProviderUrl(
-        queryClient,
+        ctx.query,
         lease.providerUuid,
       );
-      const authToken = await authTokens.providerToken(address, leaseUuid);
+      const authToken = await ctx.providerAuth.providerToken({
+        address,
+        leaseUuid,
+      });
       const provision = await getLeaseProvision(
         providerUrl,
         leaseUuid,
         authToken,
-        fetchFn,
+        ctx.fetch,
       );
 
       return structuredResponse(
@@ -948,23 +974,32 @@ export function registerTools(deps: RegisterToolsDeps): void {
       const leaseUuid = args.lease_uuid;
       const address = await walletProvider.getAddress();
       await clientManager.acquireRateLimit();
-      const queryClient = await clientManager.getQueryClient();
+      const ctx: FredAuthCtx = {
+        query: await clientManager.getQueryClient(),
+        chain: clientManager,
+        fetch: fetchFn ?? globalThis.fetch,
+        logger: noopLogger,
+        providerAuth,
+      };
 
       const lease = await fetchActiveLease(
-        queryClient,
+        ctx.query,
         leaseUuid,
         'releases are not available',
       );
       const providerUrl = await resolveProviderUrl(
-        queryClient,
+        ctx.query,
         lease.providerUuid,
       );
-      const authToken = await authTokens.providerToken(address, leaseUuid);
+      const authToken = await ctx.providerAuth.providerToken({
+        address,
+        leaseUuid,
+      });
       const result = await getLeaseReleases(
         providerUrl,
         leaseUuid,
         authToken,
-        fetchFn,
+        ctx.fetch,
       );
 
       return structuredResponse(

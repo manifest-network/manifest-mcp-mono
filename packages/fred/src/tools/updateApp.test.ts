@@ -1,4 +1,4 @@
-import { LeaseState } from '@manifest-network/manifest-mcp-core';
+import { LeaseState, noopLogger } from '@manifest-network/manifest-mcp-core';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../http/fred.js', () => ({
@@ -20,6 +20,21 @@ const mockResolveProviderUrl = vi.mocked(resolveProviderUrl);
 
 const LEASE_UUID = '550e8400-e29b-41d4-a716-446655440000';
 const mockGetAuthToken = vi.fn().mockResolvedValue('auth-token');
+const fetchSpy = vi.fn(globalThis.fetch);
+
+function makeCtx(qc: ReturnType<typeof makeMockQueryClient>) {
+  return {
+    query: qc,
+    chain: {} as never,
+    fetch: fetchSpy,
+    logger: noopLogger,
+    providerAuth: {
+      providerToken: (i: { address: string; leaseUuid: string }) =>
+        mockGetAuthToken(i.address, i.leaseUuid),
+      leaseDataToken: vi.fn(),
+    },
+  };
+}
 
 describe('updateApp', () => {
   beforeEach(() => {
@@ -43,7 +58,11 @@ describe('updateApp', () => {
       image: 'nginx:2',
       ports: { '80/tcp': {} },
     });
-    await updateApp(qc, 'manifest1abc', LEASE_UUID, mockGetAuthToken, manifest);
+    await updateApp(makeCtx(qc), {
+      address: 'manifest1abc',
+      leaseUuid: LEASE_UUID,
+      manifest,
+    });
 
     // Should pass manifest through unchanged (encoded as Uint8Array)
     const rawPayload = mockUpdateLease.mock.calls[0][2] as Uint8Array;
@@ -73,14 +92,12 @@ describe('updateApp', () => {
       user: '1000:1000',
     });
 
-    await updateApp(
-      qc,
-      'manifest1abc',
-      LEASE_UUID,
-      mockGetAuthToken,
-      newManifest,
+    await updateApp(makeCtx(qc), {
+      address: 'manifest1abc',
+      leaseUuid: LEASE_UUID,
+      manifest: newManifest,
       existingManifest,
-    );
+    });
 
     const sentManifest = JSON.parse(
       new TextDecoder().decode(mockUpdateLease.mock.calls[0][2] as Uint8Array),
@@ -119,14 +136,12 @@ describe('updateApp', () => {
       },
     });
 
-    await updateApp(
-      qc,
-      'manifest1abc',
-      LEASE_UUID,
-      mockGetAuthToken,
-      newManifest,
+    await updateApp(makeCtx(qc), {
+      address: 'manifest1abc',
+      leaseUuid: LEASE_UUID,
+      manifest: newManifest,
       existingManifest,
-    );
+    });
 
     const sent = JSON.parse(
       new TextDecoder().decode(mockUpdateLease.mock.calls[0][2] as Uint8Array),
@@ -162,14 +177,12 @@ describe('updateApp', () => {
       },
     });
 
-    await updateApp(
-      qc,
-      'manifest1abc',
-      LEASE_UUID,
-      mockGetAuthToken,
-      newManifest,
+    await updateApp(makeCtx(qc), {
+      address: 'manifest1abc',
+      leaseUuid: LEASE_UUID,
+      manifest: newManifest,
       existingManifest,
-    );
+    });
 
     const sent = JSON.parse(
       new TextDecoder().decode(mockUpdateLease.mock.calls[0][2] as Uint8Array),
@@ -190,14 +203,12 @@ describe('updateApp', () => {
     });
 
     await expect(
-      updateApp(
-        qc,
-        'manifest1abc',
-        LEASE_UUID,
-        mockGetAuthToken,
-        'not-valid-json',
-        '{"image":"nginx"}',
-      ),
+      updateApp(makeCtx(qc), {
+        address: 'manifest1abc',
+        leaseUuid: LEASE_UUID,
+        manifest: 'not-valid-json',
+        existingManifest: '{"image":"nginx"}',
+      }),
     ).rejects.toMatchObject({
       code: ManifestMCPErrorCode.INVALID_CONFIG,
       message: expect.stringContaining('Invalid manifest JSON'),
@@ -220,14 +231,12 @@ describe('updateApp', () => {
     });
 
     await expect(
-      updateApp(
-        qc,
-        'manifest1abc',
-        LEASE_UUID,
-        mockGetAuthToken,
-        newManifest,
-        'not-valid-json',
-      ),
+      updateApp(makeCtx(qc), {
+        address: 'manifest1abc',
+        leaseUuid: LEASE_UUID,
+        manifest: newManifest,
+        existingManifest: 'not-valid-json',
+      }),
     ).rejects.toMatchObject({
       code: ManifestMCPErrorCode.INVALID_CONFIG,
       message: expect.stringContaining('Invalid existing_manifest'),
@@ -250,14 +259,12 @@ describe('updateApp', () => {
     });
 
     await expect(
-      updateApp(
-        qc,
-        'manifest1abc',
-        LEASE_UUID,
-        mockGetAuthToken,
-        newManifest,
-        '{"services":{"web":{"image":"old"}}}',
-      ),
+      updateApp(makeCtx(qc), {
+        address: 'manifest1abc',
+        leaseUuid: LEASE_UUID,
+        manifest: newManifest,
+        existingManifest: '{"services":{"web":{"image":"old"}}}',
+      }),
     ).rejects.toMatchObject({
       code: ManifestMCPErrorCode.INVALID_CONFIG,
       message: expect.stringContaining('Invalid service name'),
@@ -284,14 +291,12 @@ describe('updateApp', () => {
     });
 
     await expect(
-      updateApp(
-        qc,
-        'manifest1abc',
-        LEASE_UUID,
-        mockGetAuthToken,
-        newManifest,
+      updateApp(makeCtx(qc), {
+        address: 'manifest1abc',
+        leaseUuid: LEASE_UUID,
+        manifest: newManifest,
         existingManifest,
-      ),
+      }),
     ).rejects.toMatchObject({
       code: ManifestMCPErrorCode.INVALID_CONFIG,
       message: expect.stringContaining('Cannot merge'),

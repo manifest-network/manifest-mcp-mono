@@ -1,4 +1,4 @@
-import { LeaseState } from '@manifest-network/manifest-mcp-core';
+import { LeaseState, noopLogger } from '@manifest-network/manifest-mcp-core';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../http/fred.js', () => ({
@@ -19,6 +19,21 @@ const mockResolveProviderUrl = vi.mocked(resolveProviderUrl);
 
 const LEASE_UUID = '550e8400-e29b-41d4-a716-446655440000';
 const mockGetAuthToken = vi.fn().mockResolvedValue('auth-token');
+const fetchSpy = vi.fn(globalThis.fetch);
+
+function makeCtx(qc: ReturnType<typeof makeMockQueryClient>) {
+  return {
+    query: qc,
+    chain: {} as never,
+    fetch: fetchSpy,
+    logger: noopLogger,
+    providerAuth: {
+      providerToken: (i: { address: string; leaseUuid: string }) =>
+        mockGetAuthToken(i.address, i.leaseUuid),
+      leaseDataToken: vi.fn(),
+    },
+  };
+}
 
 describe('getAppLogs', () => {
   beforeEach(() => {
@@ -43,12 +58,10 @@ describe('getAppLogs', () => {
       logs: { web: 'line1\nline2' },
     });
 
-    const result = await getAppLogs(
-      qc,
-      'manifest1abc',
-      LEASE_UUID,
-      mockGetAuthToken,
-    );
+    const result = await getAppLogs(makeCtx(qc), {
+      address: 'manifest1abc',
+      leaseUuid: LEASE_UUID,
+    });
 
     expect(result.lease_uuid).toBe(LEASE_UUID);
     expect(result.logs).toEqual({ web: 'line1\nline2' });
@@ -74,12 +87,10 @@ describe('getAppLogs', () => {
       logs: { web: longLog },
     });
 
-    const result = await getAppLogs(
-      qc,
-      'manifest1abc',
-      LEASE_UUID,
-      mockGetAuthToken,
-    );
+    const result = await getAppLogs(makeCtx(qc), {
+      address: 'manifest1abc',
+      leaseUuid: LEASE_UUID,
+    });
 
     expect(result.truncated).toBe(true);
     expect(result.logs.web.length).toBe(4000);
@@ -106,12 +117,10 @@ describe('getAppLogs', () => {
       },
     });
 
-    const result = await getAppLogs(
-      qc,
-      'manifest1abc',
-      LEASE_UUID,
-      mockGetAuthToken,
-    );
+    const result = await getAppLogs(makeCtx(qc), {
+      address: 'manifest1abc',
+      leaseUuid: LEASE_UUID,
+    });
 
     expect(result.truncated).toBe(true);
     expect(result.logs.web).toBeDefined();
@@ -130,7 +139,10 @@ describe('getAppLogs', () => {
     });
 
     await expect(
-      getAppLogs(qc, 'manifest1abc', LEASE_UUID, mockGetAuthToken),
+      getAppLogs(makeCtx(qc), {
+        address: 'manifest1abc',
+        leaseUuid: LEASE_UUID,
+      }),
     ).rejects.toThrow('logs are not available');
   });
 
@@ -151,14 +163,18 @@ describe('getAppLogs', () => {
       logs: {},
     });
 
-    await getAppLogs(qc, 'manifest1abc', LEASE_UUID, mockGetAuthToken, 50);
+    await getAppLogs(makeCtx(qc), {
+      address: 'manifest1abc',
+      leaseUuid: LEASE_UUID,
+      tail: 50,
+    });
 
     expect(mockGetLeaseLogs).toHaveBeenCalledWith(
       'https://provider.example.com',
       LEASE_UUID,
       'auth-token',
       50,
-      undefined,
+      fetchSpy,
     );
   });
 });

@@ -3,6 +3,7 @@ import {
   createFredClient,
   type FredClient,
   type ManifestMCPConfig,
+  noopLogger,
   parseFqdn,
   type WalletProvider,
 } from '@manifest-network/manifest-sdk';
@@ -138,10 +139,24 @@ export async function runAcceptanceFlow(opts: AcceptanceOpts): Promise<void> {
       });
     }
 
-    // 5) restart / update / getLogs (positional; poll-on-409). The update manifest is variant-shaped:
-    await retryOn409(() =>
-      restartApp(client.query, addr, leaseUuid, getAuthToken, client.fetch),
-    );
+    // 5) restart / update / getLogs (ctx; poll-on-409). The update manifest is variant-shaped.
+    // Build a FredAuthCtx whose providerAuth bridges the example's address-adapting token thunks.
+    const authCtx = {
+      query: client.query,
+      chain: client.chain,
+      fetch: client.fetch,
+      logger: noopLogger,
+      providerAuth: {
+        providerToken: (i: { address: string; leaseUuid: string }) =>
+          getAuthToken(i.address, i.leaseUuid),
+        leaseDataToken: (i: {
+          address: string;
+          leaseUuid: string;
+          metaHashHex: string;
+        }) => getLeaseDataAuthToken(i.address, i.leaseUuid, i.metaHashHex),
+      },
+    };
+    await retryOn409(() => restartApp(authCtx, { address: addr, leaseUuid }));
     const updateManifest =
       opts.variant === 'stack'
         ? buildStackManifest({
@@ -162,24 +177,13 @@ export async function runAcceptanceFlow(opts: AcceptanceOpts): Promise<void> {
             ports: { '8080/tcp': {} },
           });
     await retryOn409(() =>
-      updateApp(
-        client.query,
-        addr,
+      updateApp(authCtx, {
+        address: addr,
         leaseUuid,
-        getAuthToken,
-        JSON.stringify(updateManifest),
-        undefined,
-        client.fetch,
-      ),
+        manifest: JSON.stringify(updateManifest),
+      }),
     );
-    await getAppLogs(
-      client.query,
-      addr,
-      leaseUuid,
-      getAuthToken,
-      100,
-      client.fetch,
-    );
+    await getAppLogs(authCtx, { address: addr, leaseUuid, tail: 100 });
 
     // 6) executeTx BATCH — two MsgFundCredit (atomic double-fund); caller sets sender/tenant.
     const fundMsg = (): EncodeObject => ({
