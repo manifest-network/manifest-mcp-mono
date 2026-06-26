@@ -17,6 +17,7 @@ export {
   type FredClient,
   fredActions,
 } from './client.js';
+export type { FredAuthCtx, FredReadCtx } from './ctx.js';
 export {
   AuthTimestampTracker,
   type AuthTokenPayload,
@@ -65,6 +66,10 @@ export {
   uploadLeaseData,
   validateProviderUrl,
 } from './http/provider.js';
+export {
+  createProviderAuth,
+  type ProviderAuthPort,
+} from './http/provider-auth.js';
 export {
   type BuildManifestOptions,
   buildManifest,

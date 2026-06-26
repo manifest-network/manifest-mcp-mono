@@ -84,8 +84,13 @@ export function registerTools(deps: RegisterToolsDeps): void {
     },
     withErrorHandling('browse_catalog', async () => {
       await clientManager.acquireRateLimit();
-      const queryClient = await clientManager.getQueryClient();
-      const result = await browseCatalog(queryClient, fetchFn);
+      const ctx = {
+        query: await clientManager.getQueryClient(),
+        chain: clientManager,
+        fetch: fetchFn ?? globalThis.fetch,
+        logger: noopLogger,
+      };
+      const result = await browseCatalog(ctx);
       return structuredResponse(result, bigIntReplacer);
     }),
   );

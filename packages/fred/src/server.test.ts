@@ -1087,7 +1087,7 @@ describe('SSRF guard wiring (ENG-268)', () => {
     {
       tool: 'browse_catalog',
       input: {},
-      lastFetchArg: () => mockBrowseCatalog.mock.lastCall?.at(-1),
+      lastFetchArg: () => mockBrowseCatalog.mock.lastCall?.[0]?.fetch,
     },
     {
       tool: 'app_status',

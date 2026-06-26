@@ -25,10 +25,12 @@ export {
 } from './brands.js';
 export { CosmosClientManager, type ManifestQueryClient } from './client.js';
 export {
+  type BoundFn,
   createManifestReadClient,
   type FullClientOptions,
   type ManifestReadClient,
   type ReadClientOptions,
+  type TailOf,
 } from './client-factory.js';
 export {
   createManifestClient,
