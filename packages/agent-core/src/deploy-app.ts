@@ -575,15 +575,22 @@ export async function deployApp(
   let fredResult: FredDeployAppResult;
   try {
     fredResult = await fredDeployApp(
-      opts.clientManager,
-      getAuthToken,
-      getLeaseDataAuthToken,
+      {
+        query: queryClient,
+        chain: opts.clientManager,
+        fetch: opts.fetchFn ?? globalThis.fetch,
+        logger: noopLogger,
+        providerAuth: {
+          providerToken: (i) => getAuthToken(i.address, i.leaseUuid),
+          leaseDataToken: (i) =>
+            getLeaseDataAuthToken(i.address, i.leaseUuid, i.metaHashHex),
+        },
+      },
       fredInput,
       // Forward the effective signal so fred's own await is abort-bounded
       // (it surfaces OPERATION_CANCELLED with the tx-MAY-have-committed
       // semantics; agent-core does NOT race this — D4.6).
       signal ? { abortSignal: signal } : {},
-      opts.fetchFn,
     );
   } catch (err) {
     // ENG-185 sub-PR E: thread a `RecoveryContext` so the

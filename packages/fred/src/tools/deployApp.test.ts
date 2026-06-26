@@ -40,15 +40,38 @@ import {
   LeaseState,
   ManifestMCPError,
   ManifestMCPErrorCode,
+  noopLogger,
   setItemCustomDomain,
 } from '@manifest-network/manifest-mcp-core';
 import {
   makeMockClientManager,
   makeMockQueryClient,
 } from '@manifest-network/manifest-mcp-core/__test-utils__/mocks.js';
+import type { FredAuthCtx } from '../ctx.js';
 import { pollLeaseUntilReady, TerminalChainStateError } from '../http/fred.js';
 import { getLeaseConnectionInfo, uploadLeaseData } from '../http/provider.js';
 import { deployApp } from './deployApp.js';
+
+/**
+ * Build a FredAuthCtx for the converted `deployApp(ctx, spec, callOptions?)`
+ * signature: `chain` is the mock client manager, `query` its query client, and
+ * `providerAuth` adapts the address-param port onto the legacy token thunks.
+ */
+async function ctx(cm: unknown): Promise<FredAuthCtx> {
+  const manager = cm as any;
+  return {
+    query: await manager.getQueryClient(),
+    chain: manager,
+    fetch: vi.fn(globalThis.fetch),
+    logger: noopLogger,
+    providerAuth: {
+      providerToken: ({ address, leaseUuid }) =>
+        mockGetAuthToken(address, leaseUuid),
+      leaseDataToken: ({ address, leaseUuid, metaHashHex }) =>
+        mockGetLeaseDataAuthToken(address, leaseUuid, metaHashHex),
+    },
+  };
+}
 
 const mockCosmosTx = vi.mocked(cosmosTx);
 const mockSetItemCustomDomain = vi.mocked(setItemCustomDomain);
@@ -141,9 +164,7 @@ describe('deployApp', () => {
     });
 
     const result = await deployApp(
-      cm as any,
-      mockGetAuthToken,
-      mockGetLeaseDataAuthToken,
+      await ctx(cm as any),
       {
         image: 'nginx:alpine',
         port: 80,
@@ -183,9 +204,7 @@ describe('deployApp', () => {
     });
 
     await deployApp(
-      cm as any,
-      mockGetAuthToken,
-      mockGetLeaseDataAuthToken,
+      await ctx(cm as any),
       {
         image: 'nginx:alpine',
         port: 80,
@@ -212,9 +231,7 @@ describe('deployApp', () => {
     });
 
     await deployApp(
-      cm as any,
-      mockGetAuthToken,
-      mockGetLeaseDataAuthToken,
+      await ctx(cm as any),
       {
         size: 'docker-micro',
         services: {
@@ -254,9 +271,7 @@ describe('deployApp', () => {
     });
 
     await deployApp(
-      cm as any,
-      mockGetAuthToken,
-      mockGetLeaseDataAuthToken,
+      await ctx(cm as any),
       {
         size: 'docker-micro',
         services: {
@@ -280,9 +295,7 @@ describe('deployApp', () => {
 
     await expect(
       deployApp(
-        cm as any,
-        mockGetAuthToken,
-        mockGetLeaseDataAuthToken,
+        await ctx(cm as any),
         {
           image: 'nginx',
           port: 80,
@@ -303,9 +316,7 @@ describe('deployApp', () => {
 
     await expect(
       deployApp(
-        cm as any,
-        mockGetAuthToken,
-        mockGetLeaseDataAuthToken,
+        await ctx(cm as any),
         {
           size: 'docker-micro',
         },
@@ -323,9 +334,7 @@ describe('deployApp', () => {
 
     await expect(
       deployApp(
-        cm as any,
-        mockGetAuthToken,
-        mockGetLeaseDataAuthToken,
+        await ctx(cm as any),
         {
           image: 'nginx',
           size: 'docker-micro',
@@ -362,9 +371,7 @@ describe('deployApp', () => {
 
     await expect(
       deployApp(
-        cm as any,
-        mockGetAuthToken,
-        mockGetLeaseDataAuthToken,
+        await ctx(cm as any),
         {
           image: 'nginx:alpine',
           port: 80,
@@ -388,9 +395,7 @@ describe('deployApp', () => {
 
     await expect(
       deployApp(
-        cm as any,
-        mockGetAuthToken,
-        mockGetLeaseDataAuthToken,
+        await ctx(cm as any),
         {
           size: 'docker-micro',
           services: { [name]: { image: 'nginx' } },
@@ -424,9 +429,7 @@ describe('deployApp', () => {
     });
 
     await deployApp(
-      cm as any,
-      mockGetAuthToken,
-      mockGetLeaseDataAuthToken,
+      await ctx(cm as any),
       {
         image: 'nginx:alpine',
         port: 80,
@@ -456,9 +459,7 @@ describe('deployApp', () => {
 
     await expect(
       deployApp(
-        cm as any,
-        mockGetAuthToken,
-        mockGetLeaseDataAuthToken,
+        await ctx(cm as any),
         {
           image: 'nginx:alpine',
           port: 80,
@@ -491,9 +492,7 @@ describe('deployApp', () => {
     });
 
     await deployApp(
-      cm as any,
-      mockGetAuthToken,
-      mockGetLeaseDataAuthToken,
+      await ctx(cm as any),
       {
         image: 'nginx:alpine',
         port: 80,
@@ -518,9 +517,7 @@ describe('deployApp', () => {
 
     await expect(
       deployApp(
-        cm as any,
-        mockGetAuthToken,
-        mockGetLeaseDataAuthToken,
+        await ctx(cm as any),
         {
           image: 'nginx:alpine',
           port: 80,
@@ -546,9 +543,7 @@ describe('deployApp', () => {
     const checkChainState = vi.fn().mockResolvedValue(null);
 
     await deployApp(
-      cm as any,
-      mockGetAuthToken,
-      mockGetLeaseDataAuthToken,
+      await ctx(cm as any),
       {
         image: 'nginx:alpine',
         port: 80,
@@ -584,9 +579,7 @@ describe('deployApp', () => {
     });
 
     await deployApp(
-      cm as any,
-      mockGetAuthToken,
-      mockGetLeaseDataAuthToken,
+      await ctx(cm as any),
       {
         image: 'nginx:alpine',
         port: 80,
@@ -614,9 +607,7 @@ describe('deployApp', () => {
 
     await expect(
       deployApp(
-        cm as any,
-        mockGetAuthToken,
-        mockGetLeaseDataAuthToken,
+        await ctx(cm as any),
         {
           image: 'nginx:alpine',
           port: 80,
@@ -649,9 +640,7 @@ describe('deployApp', () => {
 
     await expect(
       deployApp(
-        cm as any,
-        mockGetAuthToken,
-        mockGetLeaseDataAuthToken,
+        await ctx(cm as any),
         {
           image: 'nginx:alpine',
           port: 80,
@@ -682,9 +671,7 @@ describe('deployApp', () => {
     let caught: unknown;
     try {
       await deployApp(
-        cm as any,
-        mockGetAuthToken,
-        mockGetLeaseDataAuthToken,
+        await ctx(cm as any),
         {
           image: 'nginx:alpine',
           port: 80,
@@ -726,9 +713,7 @@ describe('deployApp', () => {
 
     await expect(
       deployApp(
-        cm as any,
-        mockGetAuthToken,
-        mockGetLeaseDataAuthToken,
+        await ctx(cm as any),
         {
           image: 'nginx:alpine',
           port: 80,
@@ -749,9 +734,7 @@ describe('deployApp', () => {
     const controller = new AbortController();
 
     await deployApp(
-      cm as any,
-      mockGetAuthToken,
-      mockGetLeaseDataAuthToken,
+      await ctx(cm as any),
       {
         image: 'nginx:alpine',
         port: 80,
@@ -783,9 +766,7 @@ describe('deployApp', () => {
       });
 
       const result = await deployApp(
-        cm as any,
-        mockGetAuthToken,
-        mockGetLeaseDataAuthToken,
+        await ctx(cm as any),
         { image: 'nginx:alpine', port: 80, size: 'docker-micro' },
         {},
       );
@@ -803,9 +784,7 @@ describe('deployApp', () => {
       });
 
       const result = await deployApp(
-        cm as any,
-        mockGetAuthToken,
-        mockGetLeaseDataAuthToken,
+        await ctx(cm as any),
         {
           image: 'nginx:alpine',
           port: 80,
@@ -839,9 +818,7 @@ describe('deployApp', () => {
       });
 
       await deployApp(
-        cm as any,
-        mockGetAuthToken,
-        mockGetLeaseDataAuthToken,
+        await ctx(cm as any),
         {
           image: 'nginx:alpine',
           port: 80,
@@ -873,9 +850,7 @@ describe('deployApp', () => {
       });
 
       const result = await deployApp(
-        cm as any,
-        mockGetAuthToken,
-        mockGetLeaseDataAuthToken,
+        await ctx(cm as any),
         {
           size: 'docker-micro',
           services: {
@@ -922,9 +897,7 @@ describe('deployApp', () => {
       });
 
       const result = await deployApp(
-        cm as any,
-        mockGetAuthToken,
-        mockGetLeaseDataAuthToken,
+        await ctx(cm as any),
         {
           image: 'nginx:alpine',
           port: 80,
@@ -955,9 +928,7 @@ describe('deployApp', () => {
 
       await expect(
         deployApp(
-          cm as any,
-          mockGetAuthToken,
-          mockGetLeaseDataAuthToken,
+          await ctx(cm as any),
           {
             image: 'nginx',
             port: 80,
@@ -977,9 +948,7 @@ describe('deployApp', () => {
 
       await expect(
         deployApp(
-          cm as any,
-          mockGetAuthToken,
-          mockGetLeaseDataAuthToken,
+          await ctx(cm as any),
           {
             size: 'docker-micro',
             services: { web: { image: 'nginx' } },
@@ -997,9 +966,7 @@ describe('deployApp', () => {
 
       await expect(
         deployApp(
-          cm as any,
-          mockGetAuthToken,
-          mockGetLeaseDataAuthToken,
+          await ctx(cm as any),
           {
             size: 'docker-micro',
             services: { web: { image: 'nginx' } },
@@ -1031,9 +998,7 @@ describe('deployApp', () => {
       ]) {
         await expect(
           deployApp(
-            cm as any,
-            mockGetAuthToken,
-            mockGetLeaseDataAuthToken,
+            await ctx(cm as any),
             {
               size: 'docker-micro',
               services: { web: { image: 'nginx' } },
@@ -1053,9 +1018,7 @@ describe('deployApp', () => {
 
       await expect(
         deployApp(
-          cm as any,
-          mockGetAuthToken,
-          mockGetLeaseDataAuthToken,
+          await ctx(cm as any),
           {
             size: 'docker-micro',
             services: { web: { image: 'nginx' } },
@@ -1076,9 +1039,7 @@ describe('deployApp', () => {
 
       await expect(
         deployApp(
-          cm as any,
-          mockGetAuthToken,
-          mockGetLeaseDataAuthToken,
+          await ctx(cm as any),
           {
             image: 'nginx',
             port: 80,
@@ -1107,9 +1068,7 @@ describe('deployApp', () => {
 
       await expect(
         deployApp(
-          cm as any,
-          mockGetAuthToken,
-          mockGetLeaseDataAuthToken,
+          await ctx(cm as any),
           {
             image: 'nginx',
             port: 80,

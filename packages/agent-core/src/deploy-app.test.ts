@@ -558,7 +558,7 @@ describe('deployApp — ENG-258 SKU pin resolution + ambiguity elicitation', () 
 
     // The fred broadcast input (4th positional arg) carries the pinned
     // skuUuid/providerUuid from the user's pick.
-    const fredInput = vi.mocked(fred.deployApp).mock.calls[0]?.[3] as
+    const fredInput = vi.mocked(fred.deployApp).mock.calls[0]?.[1] as
       | { skuUuid?: string; providerUuid?: string }
       | undefined;
     expect(fredInput).toMatchObject({
@@ -749,7 +749,7 @@ describe('deployApp — ENG-258 SKU pin resolution + ambiguity elicitation', () 
     const lastCall = vi.mocked(core.resolveSku).mock.calls.at(-1);
     expect((lastCall?.[1] as { skuUuid?: string }).skuUuid).toBe('sku-p2');
     // The broadcast still carries the pinned identity.
-    const fredInput = vi.mocked(fred.deployApp).mock.calls[0]?.[3] as
+    const fredInput = vi.mocked(fred.deployApp).mock.calls[0]?.[1] as
       | { skuUuid?: string; providerUuid?: string }
       | undefined;
     expect(fredInput).toMatchObject({ skuUuid: 'sku-p2', providerUuid: 'p2' });
@@ -811,7 +811,7 @@ describe('deployApp — ENG-258 SKU pin resolution + ambiguity elicitation', () 
     }
 
     // The broadcast still carries the resolved pin (from the `pinned` local).
-    const fredInput = vi.mocked(fred.deployApp).mock.calls[0]?.[3] as
+    const fredInput = vi.mocked(fred.deployApp).mock.calls[0]?.[1] as
       | { skuUuid?: string }
       | undefined;
     expect(fredInput?.skuUuid).toBe('sku-uuid-fixture');
@@ -4342,7 +4342,7 @@ describe('deployApp — C2 plan-edit roundtrip propagates edited size (ENG-185 #
     // getLeaseDataAuthToken, fredInput, fetchFn) — `fredInput` is the 4th
     // positional arg (index [3]).
     expect(vi.mocked(fred.deployApp)).toHaveBeenCalledTimes(1);
-    const fredInput = vi.mocked(fred.deployApp).mock.calls[0]?.[3] as
+    const fredInput = vi.mocked(fred.deployApp).mock.calls[0]?.[1] as
       | { size?: string }
       | undefined;
     expect(fredInput?.size).toBe('medium');
@@ -4723,7 +4723,7 @@ describe('deployApp input = AppDeploySpec — loss-free broadcast (ENG-310)', ()
     });
 
     const fredInput = vi.mocked(fred.deployApp).mock
-      .calls[0]?.[3] as AppDeploySpec;
+      .calls[0]?.[1] as AppDeploySpec;
     const previewInput = vi.mocked(fred.buildManifestPreview).mock
       .calls[0]?.[0] as unknown as Record<string, unknown>;
     return { fredInput, previewInput, previewMetaHash: 'cc'.repeat(32) };

@@ -278,8 +278,8 @@ describe('runAcceptanceFlow (mocked SDK)', () => {
 
     await runAcceptanceFlow({ ...baseOpts(), variant: 'single' });
 
-    // deployApp positional args: (chain, getAuthToken, getLeaseDataAuthToken, spec, opts, fetch)
-    const spec = h.deployApp.mock.calls[0][3] as {
+    // deployApp args: (ctx, spec, callOptions) — spec is the 2nd positional.
+    const spec = h.deployApp.mock.calls[0][1] as {
       image?: string;
       port?: number;
       services?: unknown;
@@ -302,7 +302,7 @@ describe('runAcceptanceFlow (mocked SDK)', () => {
 
     await runAcceptanceFlow({ ...baseOpts(), variant: 'stack' });
 
-    const spec = h.deployApp.mock.calls[0][3] as {
+    const spec = h.deployApp.mock.calls[0][1] as {
       services?: Record<string, unknown>;
       image?: string;
     };

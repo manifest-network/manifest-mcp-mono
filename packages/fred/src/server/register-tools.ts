@@ -699,11 +699,18 @@ export function registerTools(deps: RegisterToolsDeps): void {
         extra: RequestHandlerExtra<ServerRequest, ServerNotification>,
       ) => {
         const emit = createProgressEmitter('deploy_app', extra);
+        // deployManifest acquires its own rate-limit token internally (it owns
+        // the create-lease tx + reads), so unlike the read handlers we do NOT
+        // pre-acquire here — that would double-consume on the same logical op.
+        const ctx: FredAuthCtx = {
+          query: await clientManager.getQueryClient(),
+          chain: clientManager,
+          fetch: fetchFn ?? globalThis.fetch,
+          logger: noopLogger,
+          providerAuth,
+        };
         const result = await deployApp(
-          clientManager,
-          (addr, uuid) => authTokens.providerToken(addr, uuid),
-          (addr, uuid, metaHashHex) =>
-            authTokens.leaseDataToken(addr, uuid, metaHashHex),
+          ctx,
           {
             image: args.image,
             port: args.port,
@@ -748,7 +755,6 @@ export function registerTools(deps: RegisterToolsDeps): void {
                 }
               : undefined,
           },
-          fetchFn,
         );
         return structuredResponse(result, bigIntReplacer);
       },
