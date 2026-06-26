@@ -87,11 +87,17 @@ describe('browseCatalog', () => {
         ],
       },
     });
-    const fetchSpy = vi.fn(async () => new Response('{"status":"ok"}'));
+    const fetchSpy = vi.fn<typeof globalThis.fetch>(
+      async () => new Response('{"status":"ok"}'),
+    );
     const ctx: FredReadCtx = {
+      // `query`/`chain` keep `as never` deliberately — `qc` is a partial
+      // makeMockQueryClient (not assignable to ManifestQueryClient) and `chain`
+      // is `{}`; neither is cleanly typeable. `fetch` IS, so type the spy so a
+      // wrong fetch shape/return-type is caught instead of swallowed by a cast.
       query: qc as never,
       chain: {} as never,
-      fetch: fetchSpy as never,
+      fetch: fetchSpy,
       logger: noopLogger,
     };
     const res = await browseCatalog(ctx);
