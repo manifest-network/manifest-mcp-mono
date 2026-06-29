@@ -2,6 +2,7 @@ import {
   LeaseState,
   ManifestMCPError,
   ManifestMCPErrorCode,
+  noopLogger,
 } from '@manifest-network/manifest-mcp-core';
 import { makeMockQueryClient } from '@manifest-network/manifest-mcp-core/__test-utils__/mocks.js';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -23,6 +24,21 @@ const mockResolveProviderUrl = vi.mocked(resolveProviderUrl);
 
 const LEASE_UUID = '550e8400-e29b-41d4-a716-446655440000';
 const mockGetAuthToken = vi.fn().mockResolvedValue('auth-token');
+const fetchSpy = vi.fn(globalThis.fetch);
+
+function makeCtx(qc: ReturnType<typeof makeMockQueryClient>) {
+  return {
+    query: qc,
+    chain: {} as never,
+    fetch: fetchSpy,
+    logger: noopLogger,
+    providerAuth: {
+      providerToken: (i: { address: string; leaseUuid: string }) =>
+        mockGetAuthToken(i.address, i.leaseUuid),
+      leaseDataToken: vi.fn(),
+    },
+  };
+}
 
 function makeActiveQc() {
   return makeMockQueryClient({
@@ -48,12 +64,10 @@ describe('waitForAppReady', () => {
 
   it('returns identifiers + ACTIVE state when poll resolves', async () => {
     const qc = makeActiveQc();
-    const result = await waitForAppReady(
-      qc,
-      'manifest1abc',
-      LEASE_UUID,
-      mockGetAuthToken,
-    );
+    const result = await waitForAppReady(makeCtx(qc), {
+      address: 'manifest1abc',
+      leaseUuid: LEASE_UUID,
+    });
 
     expect(result.lease_uuid).toBe(LEASE_UUID);
     expect(result.provider_uuid).toBe('prov-1');
@@ -74,12 +88,16 @@ describe('waitForAppReady', () => {
     const onProgress = vi.fn();
     const ac = new AbortController();
 
-    await waitForAppReady(qc, 'manifest1abc', LEASE_UUID, mockGetAuthToken, {
-      intervalMs: 1500,
-      timeoutMs: 60_000,
-      onProgress,
-      abortSignal: ac.signal,
-    });
+    await waitForAppReady(
+      makeCtx(qc),
+      { address: 'manifest1abc', leaseUuid: LEASE_UUID },
+      {
+        intervalMs: 1500,
+        timeoutMs: 60_000,
+        onProgress,
+        abortSignal: ac.signal,
+      },
+    );
 
     expect(mockPoll).toHaveBeenCalledOnce();
     const [, , , pollOpts] = mockPoll.mock.calls[0];
@@ -103,7 +121,10 @@ describe('waitForAppReady', () => {
     });
 
     await expect(
-      waitForAppReady(qc, 'manifest1abc', LEASE_UUID, mockGetAuthToken),
+      waitForAppReady(makeCtx(qc), {
+        address: 'manifest1abc',
+        leaseUuid: LEASE_UUID,
+      }),
     ).rejects.toMatchObject({
       code: ManifestMCPErrorCode.QUERY_FAILED,
     });
@@ -114,7 +135,10 @@ describe('waitForAppReady', () => {
     const qc = makeMockQueryClient({ billing: { lease: null } });
 
     await expect(
-      waitForAppReady(qc, 'manifest1abc', LEASE_UUID, mockGetAuthToken),
+      waitForAppReady(makeCtx(qc), {
+        address: 'manifest1abc',
+        leaseUuid: LEASE_UUID,
+      }),
     ).rejects.toBeInstanceOf(ManifestMCPError);
     expect(mockResolveProviderUrl).not.toHaveBeenCalled();
     expect(mockPoll).not.toHaveBeenCalled();

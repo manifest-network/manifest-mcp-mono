@@ -45,6 +45,7 @@ function fakeManager(
     setLogger: vi.fn(),
     acquireRateLimit: vi.fn(async () => {}),
     getConfig: vi.fn(() => ({ chainId: 'test-1' })),
+    getAddress: vi.fn(async () => ADDR), // subscribeLeaseStatus resolves the broadcast address per poll-setup
     ...over,
   } as unknown as CosmosClientManager;
 }
@@ -61,6 +62,32 @@ describe('createFredClient', () => {
     expect(typeof client.subscribeLeaseStatus).toBe('function');
     expect(typeof client.fundCredits).toBe('function'); // inherited from ManifestClient
     expect(typeof client.getLease).toBe('function');
+    // The full provider lifecycle is bound onto the client (Task 5).
+    expect(typeof client.browseCatalog).toBe('function');
+    expect(typeof client.appStatus).toBe('function');
+    expect(typeof client.getAppLogs).toBe('function');
+    expect(typeof client.restartApp).toBe('function');
+    expect(typeof client.updateApp).toBe('function');
+    expect(typeof client.waitForAppReady).toBe('function');
+    expect(typeof client.getLeaseConnectionInfo).toBe('function');
+    expect(typeof client.deployApp).toBe('function');
+    // providerAuth is attached at the composition root so the client satisfies FredAuthCtx.
+    expect(typeof client.providerAuth.providerToken).toBe('function');
+    expect(typeof client.providerAuth.leaseDataToken).toBe('function');
+  });
+
+  it('a bound provider method threads the client as ctx (browseCatalog reads via ctx.query)', async () => {
+    // browseCatalog walks ctx.query.liftedinit.sku.v1; an empty mock query client yields empty lists.
+    const query = makeMockQueryClient() as unknown as ManifestQueryClient;
+    vi.spyOn(CosmosClientManager, 'getInstance').mockReturnValue(
+      fakeManager({ getQueryClient: vi.fn(async () => query) }),
+    );
+    const client = await createFredClient({
+      config: FULL_CONFIG,
+      walletProvider: fakeWallet(),
+    });
+    const result = await client.browseCatalog();
+    expect(result).toEqual({ providers: [], skus: [] });
   });
 
   it('subscribeLeaseStatus forwards the client itself as ctx (a poll emits via onData)', async () => {

@@ -2,7 +2,6 @@ import type {
   CosmosClientManager,
   CosmosTxResult,
   LeaseUuid,
-  ReadCtx,
 } from '@manifest-network/manifest-mcp-core';
 import {
   asLeaseUuid,
@@ -17,6 +16,7 @@ import {
   sanitizeForLogging,
   setItemCustomDomain,
 } from '@manifest-network/manifest-mcp-core';
+import type { FredAuthCtx } from '../ctx.js';
 import type { FredLeaseStatus, PollOptions } from '../http/fred.js';
 import { pollLeaseUntilReady, TerminalChainStateError } from '../http/fred.js';
 import {
@@ -84,6 +84,12 @@ export interface DeployCallOptions {
   pollOptions?: Omit<PollOptions, 'abortSignal'>;
 }
 
+/**
+ * @deprecated Legacy positional-DI options. `deployManifest` now takes a
+ * `FredAuthCtx` as its first argument; this interface is no longer the param
+ * type but is kept exported as published sdk surface (`@manifest-network/manifest-sdk`'s
+ * `deploy.ts` re-exports it).
+ */
 export interface DeployManifestOptions {
   clientManager: CosmosClientManager;
   getAuthToken: (address: string, leaseUuid: string) => Promise<string>;
@@ -98,12 +104,10 @@ export interface DeployManifestOptions {
 const MAX_MANIFEST_BYTES = 256 * 1024;
 
 export async function deployManifest(
+  ctx: FredAuthCtx,
   spec: ManifestDeploySpec,
-  callOptions: DeployCallOptions,
-  opts: DeployManifestOptions,
+  callOptions: DeployCallOptions = {},
 ): Promise<DeployResult> {
-  const { clientManager, getAuthToken, getLeaseDataAuthToken, fetchFn } = opts;
-
   const manifestBytes = new TextEncoder().encode(spec.manifest);
   if (manifestBytes.length > MAX_MANIFEST_BYTES) {
     throw new ManifestMCPError(
@@ -179,13 +183,11 @@ export async function deployManifest(
     );
   }
 
-  const address = await clientManager.getAddress();
-  await clientManager.acquireRateLimit();
-  const queryClient = await clientManager.getQueryClient();
-  // Use the REAL core logger (not noopLogger) so the deploy path keeps logging
-  // when 4c-reads-B adds read diagnostics. The explicit acquireRateLimit above
-  // is RETAINED for the still-positional resolveProviderUrl + LCD reads (P2).
-  const ctx: ReadCtx = { query: queryClient, chain: clientManager, logger };
+  const address = await ctx.chain.getAddress();
+  await ctx.chain.acquireRateLimit();
+  // The passed `ctx` already satisfies ReadCtx (query/chain/logger), so the SKU
+  // reads below consume it directly. The explicit acquireRateLimit above is
+  // RETAINED for the still-positional resolveProviderUrl + LCD reads (P2).
 
   const manifestMetaHash = await metaHashHex(spec.manifest);
 
@@ -247,7 +249,7 @@ export async function deployManifest(
     leaseItems.push(`${storage.skuUuid}:1`);
   }
 
-  const providerUrl = await resolveProviderUrl(queryClient, providerUuid);
+  const providerUrl = await resolveProviderUrl(ctx.query, providerUuid);
 
   const overrides =
     callOptions.gasMultiplier !== undefined
@@ -257,7 +259,7 @@ export async function deployManifest(
     `[deploy] creating lease (meta_hash=${manifestMetaHash}, items=${leaseItems.length})`,
   );
   const txResult = await cosmosTx(
-    clientManager,
+    ctx.chain,
     'billing',
     'create-lease',
     ['--meta-hash', manifestMetaHash, ...leaseItems],
@@ -278,7 +280,7 @@ export async function deployManifest(
     if (normalizedCustomDomain !== undefined) {
       step = 'set_domain';
       await setItemCustomDomain(
-        { chain: clientManager, logger },
+        { chain: ctx.chain, logger: ctx.logger },
         // leaseUuid is already a branded LeaseUuid (extractLeaseUuid → asLeaseUuid);
         // do NOT re-parse (parse-once, ENG-258). normalizedCustomDomain is trim-only
         // (genuinely unbranded), so parseFqdn brands + validates it here.
@@ -291,11 +293,11 @@ export async function deployManifest(
       );
     }
     step = 'upload';
-    const leaseDataToken = await getLeaseDataAuthToken(
+    const leaseDataToken = await ctx.providerAuth.leaseDataToken({
       address,
       leaseUuid,
-      manifestMetaHash,
-    );
+      metaHashHex: manifestMetaHash,
+    });
     await uploadLeaseData(
       providerUrl,
       leaseUuid,
@@ -303,16 +305,16 @@ export async function deployManifest(
       // UTF-8 encoding of the (immutable) input string, one fewer allocation.
       manifestBytes,
       leaseDataToken,
-      fetchFn,
+      ctx.fetch,
       callOptions.abortSignal,
     );
     step = 'poll';
     status = await pollLeaseUntilReady(
       providerUrl,
       leaseUuid,
-      () => getAuthToken(address, leaseUuid),
+      () => ctx.providerAuth.providerToken({ address, leaseUuid }),
       { ...callOptions.pollOptions, abortSignal: callOptions.abortSignal },
-      fetchFn,
+      ctx.fetch,
     );
   } catch (err) {
     // A chain-terminal state (rejected / closed / expired) is self-explanatory
@@ -367,12 +369,15 @@ export async function deployManifest(
   let url: string | undefined;
   let connectionError: string | undefined;
   try {
-    const authToken = await getAuthToken(address, leaseUuid);
+    const authToken = await ctx.providerAuth.providerToken({
+      address,
+      leaseUuid,
+    });
     const connResp = await getLeaseConnectionInfo(
       providerUrl,
       leaseUuid,
       authToken,
-      fetchFn,
+      ctx.fetch,
     );
     connection = connResp.connection;
     if (connection.host && connection.ports) {

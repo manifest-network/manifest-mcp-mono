@@ -1,6 +1,5 @@
 import type {
   AppDeploySpec,
-  CosmosClientManager,
   SkuIntent,
 } from '@manifest-network/manifest-mcp-core';
 import {
@@ -9,6 +8,7 @@ import {
   ManifestMCPError,
   ManifestMCPErrorCode,
 } from '@manifest-network/manifest-mcp-core';
+import type { FredAuthCtx } from '../ctx.js';
 import {
   type BuildManifestOptions,
   buildManifest,
@@ -51,16 +51,9 @@ function skuSelectorFromInput(input: AppDeploySpec): SkuIntent {
 }
 
 export async function deployApp(
-  clientManager: CosmosClientManager,
-  getAuthToken: (address: string, leaseUuid: string) => Promise<string>,
-  getLeaseDataAuthToken: (
-    address: string,
-    leaseUuid: string,
-    metaHashHex: string,
-  ) => Promise<string>,
+  ctx: FredAuthCtx,
   spec: AppDeploySpec,
-  callOptions: DeployCallOptions,
-  fetchFn?: typeof globalThis.fetch,
+  callOptions: DeployCallOptions = {},
 ): Promise<DeployAppResult> {
   // Validate mutually exclusive inputs
   if (spec.image && spec.services) {
@@ -139,6 +132,7 @@ export async function deployApp(
   }
 
   return deployManifest(
+    ctx,
     {
       manifest: manifestJson,
       sku: skuSelectorFromInput(spec),
@@ -147,6 +141,5 @@ export async function deployApp(
       serviceName: spec.serviceName,
     },
     callOptions,
-    { clientManager, getAuthToken, getLeaseDataAuthToken, fetchFn },
   );
 }

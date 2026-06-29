@@ -846,16 +846,22 @@ describe('FredMCPServer', () => {
       });
 
       expect(mockWaitForAppReady).toHaveBeenCalledWith(
-        expect.anything(),
-        'manifest1abc',
-        LEASE_UUID,
-        expect.any(Function),
+        // ctx — the SSRF-guarded fetch lives on ctx.fetch (ENG-268/311).
+        expect.objectContaining({
+          query: expect.anything(),
+          chain: expect.anything(),
+          fetch: expect.any(Function),
+          logger: expect.anything(),
+          providerAuth: expect.anything(),
+        }),
+        expect.objectContaining({
+          address: 'manifest1abc',
+          leaseUuid: LEASE_UUID,
+        }),
         expect.objectContaining({
           timeoutMs: 30_000,
           intervalMs: 5_000,
         }),
-        // SSRF-guarded fetch injected by FredMCPServer (ENG-268).
-        expect.any(Function),
       );
     });
 
@@ -866,7 +872,7 @@ describe('FredMCPServer', () => {
       });
       await callTool(server, 'wait_for_app_ready', { lease_uuid: LEASE_UUID });
 
-      const opts = mockWaitForAppReady.mock.calls.at(-1)?.[4];
+      const opts = mockWaitForAppReady.mock.calls.at(-1)?.[2];
       expect(opts).toMatchObject({
         timeoutMs: undefined,
         intervalMs: undefined,
@@ -888,16 +894,20 @@ describe('FredMCPServer', () => {
       });
 
       expect(mockDeployApp).toHaveBeenCalledWith(
-        expect.anything(),
-        expect.any(Function),
-        expect.any(Function),
+        // The FredAuthCtx — carries the SSRF-guarded fetch injected by
+        // FredMCPServer (ENG-268) plus the providerAuth port.
+        expect.objectContaining({
+          query: expect.anything(),
+          chain: expect.anything(),
+          fetch: expect.any(Function),
+          logger: expect.anything(),
+          providerAuth: expect.anything(),
+        }),
         expect.objectContaining({
           image: 'nginx:alpine',
           size: 'docker-micro',
         }),
         expect.objectContaining({ gasMultiplier: 3.5 }),
-        // SSRF-guarded fetch injected by FredMCPServer (ENG-268).
-        expect.any(Function),
       );
     });
 
@@ -917,17 +927,19 @@ describe('FredMCPServer', () => {
       });
 
       expect(mockDeployApp).toHaveBeenCalledWith(
-        expect.anything(),
-        expect.any(Function),
-        expect.any(Function),
+        expect.objectContaining({
+          query: expect.anything(),
+          chain: expect.anything(),
+          fetch: expect.any(Function),
+          logger: expect.anything(),
+          providerAuth: expect.anything(),
+        }),
         expect.objectContaining({
           customDomain: 'app.example.com',
           serviceName: 'web',
         }),
         // callOptions content is asserted in the gas_multiplier test above; here we only pin the spec mapping
         expect.any(Object),
-        // SSRF-guarded fetch injected by FredMCPServer (ENG-268).
-        expect.any(Function),
       );
     });
 
@@ -962,7 +974,7 @@ describe('FredMCPServer', () => {
         size: 'docker-micro',
       });
 
-      const input = mockDeployApp.mock.calls.at(-1)?.[3];
+      const input = mockDeployApp.mock.calls.at(-1)?.[1];
       expect(input?.customDomain).toBeUndefined();
       expect(input?.serviceName).toBeUndefined();
     });
@@ -978,7 +990,7 @@ describe('FredMCPServer', () => {
         size: 'docker-micro',
       });
 
-      const callOptions = mockDeployApp.mock.calls.at(-1)?.[4];
+      const callOptions = mockDeployApp.mock.calls.at(-1)?.[2];
       expect(callOptions?.onLeaseCreated).toBeUndefined();
       expect(callOptions?.pollOptions).toBeUndefined();
     });
@@ -987,31 +999,37 @@ describe('FredMCPServer', () => {
       // Drive the deployApp mock through onLeaseCreated and two onProgress
       // ticks so we can assert the server-side wiring forwards them as
       // notifications/progress messages over the wire.
-      mockDeployApp.mockImplementationOnce(
-        async (_cm, _a, _b, _spec, callOptions) => {
-          await callOptions.onLeaseCreated?.(
-            'lease-uuid-1',
-            'https://provider.example.com',
-          );
-          callOptions.pollOptions?.onProgress?.({
-            state: LeaseState.LEASE_STATE_PENDING,
-            provision_status: 'image_pulling',
-          } as unknown as Parameters<
-            NonNullable<typeof callOptions.pollOptions.onProgress>
-          >[0]);
-          callOptions.pollOptions?.onProgress?.({
-            state: LeaseState.LEASE_STATE_ACTIVE,
-          } as unknown as Parameters<
-            NonNullable<typeof callOptions.pollOptions.onProgress>
-          >[0]);
-          return {
-            lease_uuid: 'lease-uuid-1',
-            provider_uuid: 'p1',
-            provider_url: 'https://provider.example.com',
-            state: LeaseState.LEASE_STATE_ACTIVE,
-          } as unknown as Awaited<ReturnType<typeof deployApp>>;
-        },
-      );
+      mockDeployApp.mockImplementationOnce(async (_ctx, _spec, callOptions) => {
+        await callOptions?.onLeaseCreated?.(
+          'lease-uuid-1',
+          'https://provider.example.com',
+        );
+        callOptions?.pollOptions?.onProgress?.({
+          state: LeaseState.LEASE_STATE_PENDING,
+          provision_status: 'image_pulling',
+        } as unknown as Parameters<
+          NonNullable<
+            NonNullable<
+              NonNullable<typeof callOptions>['pollOptions']
+            >['onProgress']
+          >
+        >[0]);
+        callOptions?.pollOptions?.onProgress?.({
+          state: LeaseState.LEASE_STATE_ACTIVE,
+        } as unknown as Parameters<
+          NonNullable<
+            NonNullable<
+              NonNullable<typeof callOptions>['pollOptions']
+            >['onProgress']
+          >
+        >[0]);
+        return {
+          lease_uuid: 'lease-uuid-1',
+          provider_uuid: 'p1',
+          provider_url: 'https://provider.example.com',
+          state: LeaseState.LEASE_STATE_ACTIVE,
+        } as unknown as Awaited<ReturnType<typeof deployApp>>;
+      });
 
       const server = new FredMCPServer({
         config: makeMockConfig(),
@@ -1092,32 +1110,32 @@ describe('SSRF guard wiring (ENG-268)', () => {
     {
       tool: 'app_status',
       input: { lease_uuid: LEASE_UUID },
-      lastFetchArg: () => mockAppStatus.mock.lastCall?.at(-1),
+      lastFetchArg: () => mockAppStatus.mock.lastCall?.[0]?.fetch,
     },
     {
       tool: 'get_logs',
       input: { lease_uuid: LEASE_UUID },
-      lastFetchArg: () => mockGetAppLogs.mock.lastCall?.at(-1),
+      lastFetchArg: () => mockGetAppLogs.mock.lastCall?.[0]?.fetch,
     },
     {
       tool: 'restart_app',
       input: { lease_uuid: LEASE_UUID },
-      lastFetchArg: () => mockRestartApp.mock.lastCall?.at(-1),
+      lastFetchArg: () => mockRestartApp.mock.lastCall?.[0]?.fetch,
     },
     {
       tool: 'wait_for_app_ready',
       input: { lease_uuid: LEASE_UUID },
-      lastFetchArg: () => mockWaitForAppReady.mock.lastCall?.at(-1),
+      lastFetchArg: () => mockWaitForAppReady.mock.lastCall?.[0]?.fetch,
     },
     {
       tool: 'deploy_app',
       input: { image: 'nginx:alpine', port: 80, size: 'docker-micro' },
-      lastFetchArg: () => mockDeployApp.mock.lastCall?.at(-1),
+      lastFetchArg: () => mockDeployApp.mock.lastCall?.[0]?.fetch,
     },
     {
       tool: 'update_app',
       input: { lease_uuid: LEASE_UUID, manifest: '{"services":{}}' },
-      lastFetchArg: () => mockUpdateApp.mock.lastCall?.at(-1),
+      lastFetchArg: () => mockUpdateApp.mock.lastCall?.[0]?.fetch,
     },
   ];
 
@@ -1135,6 +1153,6 @@ describe('SSRF guard wiring (ENG-268)', () => {
     process.env.MANIFEST_FRED_FETCH_GUARDED = '0';
     const server = makeServer();
     await callTool(server, 'app_status', { lease_uuid: LEASE_UUID });
-    expect(mockAppStatus.mock.lastCall?.at(-1)).toBeUndefined();
+    expect(mockAppStatus.mock.lastCall?.[0]?.fetch).toBe(globalThis.fetch);
   });
 });

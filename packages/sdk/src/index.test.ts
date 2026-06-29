@@ -151,6 +151,7 @@ describe('manifest-sdk barrels', () => {
         'createSignerAdapter',
         'requireAuthSigner',
         'MnemonicWalletProvider',
+        'noopLogger',
         'signArbitraryWithAmino',
         'ManifestMCPError',
         'ManifestMCPErrorCode',

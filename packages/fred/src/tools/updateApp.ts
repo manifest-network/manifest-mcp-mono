@@ -1,8 +1,8 @@
-import type { ManifestQueryClient } from '@manifest-network/manifest-mcp-core';
 import {
   ManifestMCPError,
   ManifestMCPErrorCode,
 } from '@manifest-network/manifest-mcp-core';
+import type { FredAuthCtx } from '../ctx.js';
 import { updateLease } from '../http/fred.js';
 import {
   isStackManifest,
@@ -13,16 +13,17 @@ import { fetchActiveLease } from './fetchActiveLease.js';
 import { resolveProviderUrl } from './resolveLeaseProvider.js';
 
 export async function updateApp(
-  queryClient: ManifestQueryClient,
-  address: string,
-  leaseUuid: string,
-  getAuthToken: (address: string, leaseUuid: string) => Promise<string>,
-  manifest: string,
-  existingManifest?: string,
-  fetchFn?: typeof globalThis.fetch,
+  ctx: FredAuthCtx,
+  input: {
+    address: string;
+    leaseUuid: string;
+    manifest: string;
+    existingManifest?: string;
+  },
 ) {
+  const { address, leaseUuid, manifest, existingManifest } = input;
   const lease = await fetchActiveLease(
-    queryClient,
+    ctx.query,
     leaseUuid,
     'cannot be updated',
   );
@@ -88,14 +89,17 @@ export async function updateApp(
     }
   }
 
-  const providerUrl = await resolveProviderUrl(queryClient, lease.providerUuid);
-  const authToken = await getAuthToken(address, leaseUuid);
+  const providerUrl = await resolveProviderUrl(ctx.query, lease.providerUuid);
+  const authToken = await ctx.providerAuth.providerToken({
+    address,
+    leaseUuid,
+  });
   const result = await updateLease(
     providerUrl,
     leaseUuid,
     new TextEncoder().encode(finalManifest),
     authToken,
-    fetchFn,
+    ctx.fetch,
   );
 
   return {

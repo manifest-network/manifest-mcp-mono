@@ -25,6 +25,10 @@ export {
   ManifestMCPError,
   ManifestMCPErrorCode,
   MnemonicWalletProvider,
+  // @public — compose-only consumers build a FredAuthCtx for the ctx-shaped
+  // lifecycle fns (restartApp/updateApp/getAppLogs); they need the silent
+  // default logger as the `logger` slot.
+  noopLogger,
   parseAddress,
   parseFqdn,
   parseLeaseUuid,

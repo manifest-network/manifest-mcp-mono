@@ -3,6 +3,7 @@ import {
   createFredClient,
   type FredClient,
   type ManifestMCPConfig,
+  noopLogger,
   parseFqdn,
   type WalletProvider,
 } from '@manifest-network/manifest-sdk';
@@ -23,11 +24,12 @@ import {
 import { MsgFundCredit } from '@manifest-network/manifestjs/dist/codegen/liftedinit/billing/v1/tx.js'; // sanctioned
 
 /**
- * Drift-proof deploy-spec type: derived from `deployApp`'s 4th positional param so the example never
- * needs `AppDeploySpec` re-exported (and never resorts to `as never`). The inner `as {…}` narrowings on
- * `spec.services`/`spec.image` below are the variant projections (single vs stack), not type escapes.
+ * Drift-proof deploy-spec type: derived from `deployApp`'s spec param (2nd positional, after the
+ * `FredAuthCtx`) so the example never needs `AppDeploySpec` re-exported (and never resorts to
+ * `as never`). The inner `as {…}` narrowings on `spec.services`/`spec.image` below are the variant
+ * projections (single vs stack), not type escapes.
  */
-type DeploySpec = Parameters<typeof deployApp>[3];
+type DeploySpec = Parameters<typeof deployApp>[1];
 
 export interface AcceptanceOpts {
   config: ManifestMCPConfig;
@@ -70,11 +72,29 @@ export async function runAcceptanceFlow(opts: AcceptanceOpts): Promise<void> {
     const tokens = createAuthTokens(client.signer, {
       chainId: client.chain.getConfig().chainId,
     });
-    // §2c bridge: address-closing + arity-adapting the address-bound thunks for the positional fred fns.
+    // §2c bridge: address-closing + arity-adapting the address-bound thunks for the fred fns.
     const getAuthToken = (_a: string, uuid: string) =>
       tokens.getAuthToken(asLeaseUuid(uuid));
     const getLeaseDataAuthToken = (_a: string, uuid: string, mh: string) =>
       tokens.getLeaseDataAuthToken(asLeaseUuid(uuid), mh);
+
+    // The FredAuthCtx for the ctx-shaped fred capability fns (deployApp, restart/update/getLogs).
+    // Its providerAuth bridges the example's address-adapting token thunks onto the address-param port.
+    const authCtx = {
+      query: client.query,
+      chain: client.chain,
+      fetch: client.fetch,
+      logger: noopLogger,
+      providerAuth: {
+        providerToken: (i: { address: string; leaseUuid: string }) =>
+          getAuthToken(i.address, i.leaseUuid),
+        leaseDataToken: (i: {
+          address: string;
+          leaseUuid: string;
+          metaHashHex: string;
+        }) => getLeaseDataAuthToken(i.address, i.leaseUuid, i.metaHashHex),
+      },
+    };
 
     // 0) BILLING CREDIT — resolve the SKU price denom (NOT gas/umfx) and self-fund.
     const skus = await client.getSKUs({});
@@ -101,14 +121,7 @@ export async function runAcceptanceFlow(opts: AcceptanceOpts): Promise<void> {
             size: 'docker-micro',
           }
     ) as DeploySpec;
-    const deployed = await deployApp(
-      client.chain,
-      getAuthToken,
-      getLeaseDataAuthToken,
-      spec,
-      {},
-      client.fetch,
-    );
+    const deployed = await deployApp(authCtx, spec, {});
     const leaseUuid = deployed.lease_uuid;
     const serviceName = opts.variant === 'stack' ? 'web' : undefined;
 
@@ -138,10 +151,9 @@ export async function runAcceptanceFlow(opts: AcceptanceOpts): Promise<void> {
       });
     }
 
-    // 5) restart / update / getLogs (positional; poll-on-409). The update manifest is variant-shaped:
-    await retryOn409(() =>
-      restartApp(client.query, addr, leaseUuid, getAuthToken, client.fetch),
-    );
+    // 5) restart / update / getLogs (ctx; poll-on-409). The update manifest is variant-shaped.
+    // Reuses the `authCtx` built above for the deploy.
+    await retryOn409(() => restartApp(authCtx, { address: addr, leaseUuid }));
     const updateManifest =
       opts.variant === 'stack'
         ? buildStackManifest({
@@ -162,24 +174,13 @@ export async function runAcceptanceFlow(opts: AcceptanceOpts): Promise<void> {
             ports: { '8080/tcp': {} },
           });
     await retryOn409(() =>
-      updateApp(
-        client.query,
-        addr,
+      updateApp(authCtx, {
+        address: addr,
         leaseUuid,
-        getAuthToken,
-        JSON.stringify(updateManifest),
-        undefined,
-        client.fetch,
-      ),
+        manifest: JSON.stringify(updateManifest),
+      }),
     );
-    await getAppLogs(
-      client.query,
-      addr,
-      leaseUuid,
-      getAuthToken,
-      100,
-      client.fetch,
-    );
+    await getAppLogs(authCtx, { address: addr, leaseUuid, tail: 100 });
 
     // 6) executeTx BATCH — two MsgFundCredit (atomic double-fund); caller sets sender/tenant.
     const fundMsg = (): EncodeObject => ({

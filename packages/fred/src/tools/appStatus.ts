@@ -4,9 +4,9 @@ import {
   logger,
   ManifestMCPError,
   ManifestMCPErrorCode,
-  type ManifestQueryClient,
   sanitizeForLogging,
 } from '@manifest-network/manifest-mcp-core';
+import type { FredAuthCtx } from '../ctx.js';
 import { type FredLeaseStatus, getLeaseStatus } from '../http/fred.js';
 import {
   type ConnectionDetails,
@@ -15,13 +15,11 @@ import {
 import { resolveProviderUrl } from './resolveLeaseProvider.js';
 
 export async function appStatus(
-  queryClient: ManifestQueryClient,
-  address: string,
-  leaseUuid: string,
-  getAuthToken: (address: string, leaseUuid: string) => Promise<string>,
-  fetchFn?: typeof globalThis.fetch,
+  ctx: FredAuthCtx,
+  input: { address: string; leaseUuid: string },
 ) {
-  const leaseResult = await queryClient.liftedinit.billing.v1.lease({
+  const { address, leaseUuid } = input;
+  const leaseResult = await ctx.query.liftedinit.billing.v1.lease({
     leaseUuid,
   });
 
@@ -51,7 +49,7 @@ export async function appStatus(
   ) {
     let providerUrl: string;
     try {
-      providerUrl = await resolveProviderUrl(queryClient, lease.providerUuid);
+      providerUrl = await resolveProviderUrl(ctx.query, lease.providerUuid);
     } catch (err) {
       if (
         err instanceof ManifestMCPError &&
@@ -73,8 +71,11 @@ export async function appStatus(
       // The connection endpoint enforces replay protection (status does not),
       // but we generate separate tokens for both to keep each request
       // independently authenticated.
-      statusToken = await getAuthToken(address, leaseUuid);
-      connToken = await getAuthToken(address, leaseUuid);
+      statusToken = await ctx.providerAuth.providerToken({
+        address,
+        leaseUuid,
+      });
+      connToken = await ctx.providerAuth.providerToken({ address, leaseUuid });
     } catch (err) {
       if (
         err instanceof ManifestMCPError &&
@@ -91,8 +92,8 @@ export async function appStatus(
     }
 
     const [statusResult, connResult] = await Promise.allSettled([
-      getLeaseStatus(providerUrl, leaseUuid, statusToken, fetchFn),
-      getLeaseConnectionInfo(providerUrl, leaseUuid, connToken, fetchFn),
+      getLeaseStatus(providerUrl, leaseUuid, statusToken, ctx.fetch),
+      getLeaseConnectionInfo(providerUrl, leaseUuid, connToken, ctx.fetch),
     ]);
 
     function handleRejection(label: string, reason: unknown): string {

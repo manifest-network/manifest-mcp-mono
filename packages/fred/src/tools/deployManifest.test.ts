@@ -29,11 +29,13 @@ import {
   LeaseState,
   logger,
   ManifestMCPErrorCode,
+  noopLogger,
 } from '@manifest-network/manifest-mcp-core';
 import {
   makeMockClientManager,
   makeMockQueryClient,
 } from '@manifest-network/manifest-mcp-core/__test-utils__/mocks.js';
+import type { FredAuthCtx } from '../ctx.js';
 import { pollLeaseUntilReady, TerminalChainStateError } from '../http/fred.js';
 import { getLeaseConnectionInfo, uploadLeaseData } from '../http/provider.js';
 import { deployApp } from './deployApp.js';
@@ -43,11 +45,34 @@ const mockCosmosTx = vi.mocked(cosmosTx);
 const mockUpload = vi.mocked(uploadLeaseData);
 const mockPoll = vi.mocked(pollLeaseUntilReady);
 const mockGetLeaseConnectionInfo = vi.mocked(getLeaseConnectionInfo);
-const getAuthToken = vi.fn(async () => 'auth');
-const getLeaseDataAuthToken = vi.fn(async () => 'lease-data');
+const getAuthToken = vi.fn(
+  async (_address: string, _leaseUuid: string) => 'auth',
+);
+const getLeaseDataAuthToken = vi.fn(
+  async (_address: string, _leaseUuid: string, _metaHashHex: string) =>
+    'lease-data',
+);
 
-function deps(cm: unknown) {
-  return { clientManager: cm as any, getAuthToken, getLeaseDataAuthToken };
+/**
+ * Build a FredAuthCtx for the converted `(ctx, spec, callOptions?)` signature.
+ * `chain` is the mock client manager (deploy reads getAddress/acquireRateLimit/
+ * getQueryClient/cosmosTx off it); `query` is its query client; `providerAuth`
+ * adapts the address-param port onto the legacy address-bound token thunks.
+ */
+async function ctx(cm: unknown): Promise<FredAuthCtx> {
+  const manager = cm as any;
+  return {
+    query: await manager.getQueryClient(),
+    chain: manager,
+    fetch: vi.fn(globalThis.fetch),
+    logger: noopLogger,
+    providerAuth: {
+      providerToken: ({ address, leaseUuid }) =>
+        getAuthToken(address, leaseUuid),
+      leaseDataToken: ({ address, leaseUuid, metaHashHex }) =>
+        getLeaseDataAuthToken(address, leaseUuid, metaHashHex),
+    },
+  };
 }
 function singleManifest() {
   return JSON.stringify({ image: 'nginx:alpine', ports: { '80/tcp': {} } });
@@ -125,9 +150,9 @@ describe('deployManifest', () => {
     });
     const manifest = singleManifest();
     const res = await deployManifest(
+      await ctx(cm),
       { manifest, sku: { kind: 'byName', size: 'docker-micro' } },
       {},
-      deps(cm),
     );
     expect(res.state).toBe(LeaseState.LEASE_STATE_ACTIVE);
     const uploaded = new TextDecoder().decode(mockUpload.mock.calls[0][2]);
@@ -145,6 +170,7 @@ describe('deployManifest', () => {
       address: 'manifest1tenant',
     });
     await deployManifest(
+      await ctx(cm),
       {
         manifest: singleManifest(),
         sku: {
@@ -154,7 +180,6 @@ describe('deployManifest', () => {
         },
       },
       {},
-      deps(cm),
     );
     // The SKU query must NOT have been called — resolved trusts verbatim.
     expect(spy).not.toHaveBeenCalled();
@@ -190,6 +215,7 @@ describe('deployManifest', () => {
       address: 'manifest1tenant',
     });
     await deployManifest(
+      await ctx(cm),
       {
         manifest: singleManifest(),
         sku: {
@@ -199,7 +225,6 @@ describe('deployManifest', () => {
         },
       },
       {},
-      deps(cm),
     );
     expect(spy).not.toHaveBeenCalled();
     expect(mockCosmosTx.mock.calls[0][3]).toContain('any-sku-uuid:1');
@@ -212,6 +237,7 @@ describe('deployManifest', () => {
     });
     await expect(
       deployManifest(
+        await ctx(cm),
         {
           manifest: singleManifest(),
           sku: {
@@ -221,7 +247,6 @@ describe('deployManifest', () => {
           },
         },
         {},
-        deps(cm),
       ),
     ).rejects.toMatchObject({ code: 'INVALID_CONFIG' });
     // A malformed pre-resolved SKU must be caught at the boundary, never reach
@@ -241,9 +266,9 @@ describe('deployManifest', () => {
     });
     await expect(
       deployManifest(
+        await ctx(cm),
         { manifest: huge, sku: { kind: 'byName', size: 'docker-micro' } },
         {},
-        deps(cm),
       ),
     ).rejects.toMatchObject({ code: 'INVALID_CONFIG' });
     expect(mockCosmosTx).not.toHaveBeenCalled();
@@ -256,12 +281,12 @@ describe('deployManifest', () => {
     });
     await expect(
       deployManifest(
+        await ctx(cm),
         {
           manifest: '{"image":""}',
           sku: { kind: 'byName', size: 'docker-micro' },
         },
         {},
-        deps(cm),
       ),
     ).rejects.toMatchObject({ code: 'INVALID_CONFIG' });
     expect(mockCosmosTx).not.toHaveBeenCalled();
@@ -276,9 +301,9 @@ describe('deployManifest', () => {
       '{"image":"nginx","ports":{"80/tcp":{}},"__proto__":{"polluted":true}}';
     await expect(
       deployManifest(
+        await ctx(cm),
         { manifest, sku: { kind: 'byName', size: 'docker-micro' } },
         {},
-        deps(cm),
       ),
     ).rejects.toMatchObject({ code: 'INVALID_CONFIG' });
     expect(mockCosmosTx).not.toHaveBeenCalled();
@@ -294,9 +319,9 @@ describe('deployManifest', () => {
     });
     await expect(
       deployManifest(
+        await ctx(cm),
         { manifest, sku: { kind: 'byName', size: 'docker-micro' } },
         {},
-        deps(cm),
       ),
     ).rejects.toMatchObject({ code: 'INVALID_CONFIG' });
     expect(mockCosmosTx).not.toHaveBeenCalled();
@@ -311,12 +336,12 @@ describe('deployManifest', () => {
     let thrown: any;
     try {
       await deployManifest(
+        await ctx(cm),
         {
           manifest: singleManifest(),
           sku: { kind: 'byName', size: 'docker-micro' },
         },
         {},
-        deps(cm),
       );
     } catch (e) {
       thrown = e;
@@ -343,12 +368,12 @@ describe('deployManifest', () => {
     let thrown: any;
     try {
       await deployManifest(
+        await ctx(cm),
         {
           manifest: singleManifest(),
           sku: { kind: 'byName', size: 'docker-micro' },
         },
         { abortSignal: AbortSignal.abort() },
-        deps(cm),
       );
     } catch (e) {
       thrown = e;
@@ -389,12 +414,12 @@ describe('deployManifest', () => {
     let thrown: any;
     try {
       await deployManifest(
+        await ctx(cm),
         {
           manifest: singleManifest(),
           sku: { kind: 'byName', size: 'docker-micro' },
         },
         {},
-        deps(cm),
       );
     } catch (e) {
       thrown = e;
@@ -427,12 +452,12 @@ describe('deployManifest', () => {
       });
     const secret = 'TOPSECRETIMAGE';
     await deployManifest(
+      await ctx(cm),
       {
         manifest: JSON.stringify({ image: secret, ports: { '80/tcp': {} } }),
         sku: { kind: 'byName', size: 'docker-micro' },
       },
       {},
-      deps(cm),
     );
     expect(lines.join('\n')).not.toContain(secret);
     expect(lines.some((l) => l.includes('lease'))).toBe(true);
@@ -448,9 +473,7 @@ describe('deployManifest', () => {
     // a representative typed input that exercises many builder fields:
     await expect(
       deployApp(
-        cm as any,
-        getAuthToken,
-        getLeaseDataAuthToken,
+        await ctx(cm as any),
         {
           image: 'nginx:alpine',
           port: 80,
@@ -492,12 +515,12 @@ describe('deployManifest', () => {
     });
     await expect(
       deployManifest(
+        await ctx(cm),
         {
           manifest: singleManifest(),
           sku: { kind: 'byName', size: 'docker-micro' },
         },
         {},
-        deps(cm),
       ),
     ).rejects.toMatchObject({ code: ManifestMCPErrorCode.SKU_AMBIGUOUS });
     expect(mockCosmosTx).not.toHaveBeenCalled(); // no broadcast on ambiguity
@@ -530,6 +553,7 @@ describe('deployManifest', () => {
       address: 'manifest1tenant',
     });
     await deployManifest(
+      await ctx(cm),
       {
         manifest: singleManifest(),
         sku: {
@@ -539,7 +563,6 @@ describe('deployManifest', () => {
         },
       },
       {},
-      deps(cm),
     );
     expect(mockCosmosTx.mock.calls[0][3]).toContain('b:1'); // used p2's sku
   });
@@ -572,9 +595,7 @@ describe('deployManifest', () => {
       address: 'manifest1tenant',
     });
     await deployApp(
-      cm as never,
-      getAuthToken,
-      getLeaseDataAuthToken,
+      await ctx(cm as never),
       {
         image: 'nginx:alpine',
         port: 80,
@@ -620,9 +641,7 @@ describe('deployManifest', () => {
       address: 'manifest1tenant',
     });
     await deployApp(
-      cm as never,
-      getAuthToken,
-      getLeaseDataAuthToken,
+      await ctx(cm as never),
       {
         image: 'nginx:alpine',
         port: 80,

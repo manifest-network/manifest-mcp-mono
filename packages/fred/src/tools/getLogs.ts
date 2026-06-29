@@ -1,4 +1,4 @@
-import type { ManifestQueryClient } from '@manifest-network/manifest-mcp-core';
+import type { FredAuthCtx } from '../ctx.js';
 import { getLeaseLogs } from '../http/fred.js';
 import { fetchActiveLease } from './fetchActiveLease.js';
 import { resolveProviderUrl } from './resolveLeaseProvider.js';
@@ -6,27 +6,27 @@ import { resolveProviderUrl } from './resolveLeaseProvider.js';
 const MAX_LOG_CHARS = 4000;
 
 export async function getAppLogs(
-  queryClient: ManifestQueryClient,
-  address: string,
-  leaseUuid: string,
-  getAuthToken: (address: string, leaseUuid: string) => Promise<string>,
-  tail?: number,
-  fetchFn?: typeof globalThis.fetch,
+  ctx: FredAuthCtx,
+  input: { address: string; leaseUuid: string; tail?: number },
 ) {
+  const { address, leaseUuid, tail } = input;
   const lease = await fetchActiveLease(
-    queryClient,
+    ctx.query,
     leaseUuid,
     'logs are not available',
   );
 
-  const providerUrl = await resolveProviderUrl(queryClient, lease.providerUuid);
-  const authToken = await getAuthToken(address, leaseUuid);
+  const providerUrl = await resolveProviderUrl(ctx.query, lease.providerUuid);
+  const authToken = await ctx.providerAuth.providerToken({
+    address,
+    leaseUuid,
+  });
   const result = await getLeaseLogs(
     providerUrl,
     leaseUuid,
     authToken,
     tail,
-    fetchFn,
+    ctx.fetch,
   );
 
   let truncated = false;

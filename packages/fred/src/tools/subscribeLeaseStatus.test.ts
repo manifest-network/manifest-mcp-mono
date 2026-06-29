@@ -1,12 +1,11 @@
 import type {
-  Address,
   CosmosClientManager,
   LeaseUuid,
-  Signer,
 } from '@manifest-network/manifest-mcp-core';
 import { LeaseState, noopLogger } from '@manifest-network/manifest-mcp-core';
 import { makeMockQueryClient } from '@manifest-network/manifest-mcp-core/__test-utils__/mocks.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { ProviderAuthPort } from '../http/provider-auth.js';
 import type { SubscribeCtx } from './subscribeLeaseStatus.js';
 import { subscribeLeaseStatus } from './subscribeLeaseStatus.js';
 
@@ -22,12 +21,15 @@ interface RawFrame {
 /**
  * Build a SubscribeCtx whose `ctx.fetch` returns the given raw status frames (cycling once exhausted)
  * as Response-shaped objects, driving the REAL getLeaseStatus parse path (validateProviderUrl +
- * leaseStateFromJSON) — NOT a vi.mock of getLeaseStatus.
+ * leaseStateFromJSON) — NOT a vi.mock of getLeaseStatus. The per-poll status token is minted off the
+ * injected `providerAuth` port (the single fred auth convention); the address is resolved per setup via
+ * `ctx.chain.getAddress()`. Pass `getAddressRejects` to exercise the signer-less/address-failure path
+ * (which now surfaces via the `getAddress` resolve, not a `requireAuthSigner` throw).
  */
 function makeSubscribeCtx(opts: {
   providerUuid: string;
   statusFrames: RawFrame[];
-  signer?: Signer | null;
+  getAddressRejects?: boolean;
   fetch?: typeof globalThis.fetch;
 }): SubscribeCtx {
   const query = makeMockQueryClient({
@@ -63,28 +65,21 @@ function makeSubscribeCtx(opts: {
   const chain = {
     acquireRateLimit: vi.fn().mockResolvedValue(undefined),
     getConfig: vi.fn().mockReturnValue({ chainId: 'test-chain' }),
+    getAddress: opts.getAddressRejects
+      ? vi.fn().mockRejectedValue(new Error('no signer configured'))
+      : vi.fn().mockResolvedValue('manifest1abc'),
   } as unknown as CosmosClientManager;
 
-  const signer: Signer | undefined =
-    opts.signer === null
-      ? undefined
-      : (opts.signer ?? {
-          getAddress: vi.fn().mockResolvedValue('manifest1abc' as Address),
-          getSigner: vi.fn().mockResolvedValue({}),
-          signArbitrary: vi.fn().mockResolvedValue({
-            pub_key: {
-              type: 'tendermint/PubKeySecp256k1',
-              value: 'mockPubKey',
-            },
-            signature: 'mockSignature',
-          }),
-        });
+  const providerAuth: ProviderAuthPort = {
+    providerToken: vi.fn().mockResolvedValue('mock-provider-token'),
+    leaseDataToken: vi.fn().mockResolvedValue('mock-lease-data-token'),
+  };
 
   return {
     query,
     chain,
     fetch,
-    signer,
+    providerAuth,
     logger: noopLogger,
   } as SubscribeCtx;
 }
@@ -113,14 +108,10 @@ describe('subscribeLeaseStatus', () => {
       onComplete,
       intervalMs: 10,
     });
-    // Step across second boundaries so MULTIPLE polls actually fire: the
-    // ADR-036 AuthTimestampTracker mints one token per wall-clock SECOND (it
-    // sleeps until the next second), so sub-second intervalMs only advances a
-    // poll when the wall clock crosses a second. A single advance(35) would
-    // complete just ONE poll, making the dedup assertion pass for the wrong
-    // reason (one emit because one poll, not because dedup suppressed a second
-    // identical emit). 3x ~1.1s advances drive several identical polls — the
-    // fetch count below documents they collapse to a single onData via dedup.
+    // Advance well past several intervalMs (10ms) ticks so MULTIPLE polls fire — the per-poll
+    // token now comes from the injected providerAuth fake (no wall-clock-second gating), so polls
+    // are paced purely by intervalMs. 3x ~1.1s advances drive many identical polls — the fetch
+    // count below documents they collapse to a single onData via dedup.
     for (let k = 0; k < 3; k++) {
       await vi.advanceTimersByTimeAsync(1_100);
     }
@@ -149,9 +140,8 @@ describe('subscribeLeaseStatus', () => {
       intervalMs: 1_000,
       emitEvery: true,
     });
-    // Step in ~1.1s ticks: the ADR-036 AuthTimestampTracker mints one token per
-    // wall-clock SECOND (it sleeps until the next second), so multiple polls only
-    // progress across second boundaries — sub-second intervalMs is gated by it.
+    // Advance across several intervalMs (1000ms) ticks so multiple polls fire — paced purely by
+    // intervalMs now that the per-poll token comes from the providerAuth fake (no second-gating).
     for (let k = 0; k < 3; k++) {
       await vi.advanceTimersByTimeAsync(1_100);
     }
@@ -248,9 +238,9 @@ describe('subscribeLeaseStatus', () => {
       intervalMs: 1_000,
       timeout: 1_500,
     });
-    // Each poll mints a fresh ADR-036 token (one per wall-clock second). After a
-    // couple of second-boundary advances the still-PENDING lease passes the
-    // deadline → loud onError (a stuck lease is not a quiet done).
+    // Each poll mints a fresh token via providerAuth.providerToken. After a couple of
+    // intervalMs advances the still-PENDING lease passes the deadline → loud onError
+    // (a stuck lease is not a quiet done).
     for (let k = 0; k < 3; k++) {
       await vi.advanceTimersByTimeAsync(1_100);
     }
@@ -308,14 +298,17 @@ describe('subscribeLeaseStatus', () => {
     expect(onComplete).not.toHaveBeenCalled();
   });
 
-  it('signer-less ctx surfaces via onError (no sync throw)', async () => {
+  it('address-resolve failure (signer-less ctx) surfaces via onError (no sync throw)', async () => {
     vi.useFakeTimers();
+    // With providerAuth as the single auth convention, signer is no longer on the ctx; the
+    // setup path resolves the broadcast address via ctx.chain.getAddress(). A rejecting
+    // getAddress (the signer-less manager) must surface via onError, never a sync throw.
     const ctx = makeSubscribeCtx({
       providerUuid: 'prov-1',
       statusFrames: [
         { state: 'LEASE_STATE_ACTIVE', provision_status: 'running' },
       ],
-      signer: null,
+      getAddressRejects: true,
     });
     const onError = vi.fn();
     const onComplete = vi.fn();
