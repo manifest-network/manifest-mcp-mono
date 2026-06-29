@@ -173,10 +173,7 @@ export function subscribeLeaseStatus(
           `Lease "${leaseUuid}" not found on chain`,
         );
       }
-      providerUrl = await resolveProviderUrl(
-        ctx.query,
-        leaseRes.lease.providerUuid,
-      );
+      providerUrl = await resolveProviderUrl(ctx, leaseRes.lease.providerUuid);
     } catch (err) {
       if (!stopped && !abortSignal.aborted) callOnError(err);
       return; // setup failure — cannot poll without a provider URL (abnormal → onError)

@@ -75,7 +75,10 @@ describe('waitForAppReady', () => {
     expect(result.state).toBe('LEASE_STATE_ACTIVE');
     expect(result.status.provision_status).toBe('provisioned');
 
-    expect(mockResolveProviderUrl).toHaveBeenCalledWith(qc, 'prov-1');
+    expect(mockResolveProviderUrl).toHaveBeenCalledWith(
+      expect.objectContaining({ query: qc }),
+      'prov-1',
+    );
     expect(mockPoll).toHaveBeenCalledOnce();
     const [, leaseUuid, , pollOpts] = mockPoll.mock.calls[0];
     expect(leaseUuid).toBe(LEASE_UUID);

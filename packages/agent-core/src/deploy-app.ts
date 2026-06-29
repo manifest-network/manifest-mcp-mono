@@ -63,6 +63,7 @@ import {
   createSignMessage,
   type DeployAppResult as FredDeployAppResult,
   type FredLeaseStatus,
+  type FredReadCtx,
   fetchActiveLease,
   deployApp as fredDeployApp,
   pollLeaseUntilReady,
@@ -1386,15 +1387,21 @@ async function retrySetDomainAndComplete(
   // that `waitForAppReady`'s internal `fetchActiveLease` +
   // `resolveProviderUrl` calls would otherwise add per recovery).
   const queryClient = await opts.clientManager.getQueryClient();
+  const readCtx: FredReadCtx = {
+    query: queryClient,
+    chain: opts.clientManager,
+    fetch: opts.fetchFn ?? globalThis.fetch,
+    logger: noopLogger,
+  };
   let lease: Awaited<ReturnType<typeof fetchActiveLease>>;
   let providerApiUrl: string;
   try {
     lease = await fetchActiveLease(
-      queryClient,
+      readCtx,
       leaseUuid,
       'cannot complete retry_set_domain',
     );
-    providerApiUrl = await resolveProviderUrl(queryClient, lease.providerUuid);
+    providerApiUrl = await resolveProviderUrl(readCtx, lease.providerUuid);
   } catch (err) {
     // Copilot fix-5 (PR #71): preserve typed ManifestMCPError codes
     // (matches the L1147 setItemCustomDomain precedent + the L818

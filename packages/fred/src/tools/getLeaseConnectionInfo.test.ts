@@ -61,7 +61,10 @@ describe('getLeaseConnectionInfo (capability)', () => {
     });
 
     expect(result).toEqual(GOLDEN);
-    expect(mockResolveProviderUrl).toHaveBeenCalledWith(qc, 'prov-1');
+    expect(mockResolveProviderUrl).toHaveBeenCalledWith(
+      expect.objectContaining({ query: qc }),
+      'prov-1',
+    );
     expect(mockGetAuthToken).toHaveBeenCalledWith('manifest1abc', LEASE_UUID);
     // Threads the resolved URL, minted token, and ctx.fetch into the transport.
     expect(mockTransport).toHaveBeenCalledWith(

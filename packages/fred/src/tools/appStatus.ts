@@ -49,7 +49,7 @@ export async function appStatus(
   ) {
     let providerUrl: string;
     try {
-      providerUrl = await resolveProviderUrl(ctx.query, lease.providerUuid);
+      providerUrl = await resolveProviderUrl(ctx, lease.providerUuid);
     } catch (err) {
       if (
         err instanceof ManifestMCPError &&

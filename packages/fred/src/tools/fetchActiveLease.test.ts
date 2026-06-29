@@ -1,9 +1,23 @@
-import { LeaseState } from '@manifest-network/manifest-mcp-core';
+import {
+  LeaseState,
+  type ManifestQueryClient,
+  noopLogger,
+} from '@manifest-network/manifest-mcp-core';
 import { makeMockQueryClient } from '@manifest-network/manifest-mcp-core/__test-utils__/mocks.js';
 import { describe, expect, it } from 'vitest';
+import type { FredReadCtx } from '../ctx.js';
 import { fetchActiveLease } from './fetchActiveLease.js';
 
 const LEASE_UUID = '550e8400-e29b-41d4-a716-446655440000';
+
+function makeCtx(query: ManifestQueryClient): FredReadCtx {
+  return {
+    query,
+    chain: {} as never,
+    fetch: globalThis.fetch,
+    logger: noopLogger,
+  };
+}
 
 describe('fetchActiveLease', () => {
   it('returns lease when active', async () => {
@@ -17,7 +31,11 @@ describe('fetchActiveLease', () => {
       },
     });
 
-    const lease = await fetchActiveLease(qc, LEASE_UUID, 'test action');
+    const lease = await fetchActiveLease(
+      makeCtx(qc),
+      LEASE_UUID,
+      'test action',
+    );
     expect(lease.state).toBe(LeaseState.LEASE_STATE_ACTIVE);
   });
 
@@ -32,7 +50,11 @@ describe('fetchActiveLease', () => {
       },
     });
 
-    const lease = await fetchActiveLease(qc, LEASE_UUID, 'test action');
+    const lease = await fetchActiveLease(
+      makeCtx(qc),
+      LEASE_UUID,
+      'test action',
+    );
     expect(lease.state).toBe(LeaseState.LEASE_STATE_PENDING);
   });
 
@@ -40,7 +62,7 @@ describe('fetchActiveLease', () => {
     const qc = makeMockQueryClient({ billing: { lease: null } });
 
     await expect(
-      fetchActiveLease(qc, LEASE_UUID, 'test action'),
+      fetchActiveLease(makeCtx(qc), LEASE_UUID, 'test action'),
     ).rejects.toThrow(`Lease "${LEASE_UUID}" not found on chain`);
   });
 
@@ -56,7 +78,7 @@ describe('fetchActiveLease', () => {
     });
 
     await expect(
-      fetchActiveLease(qc, LEASE_UUID, 'cannot be restarted'),
+      fetchActiveLease(makeCtx(qc), LEASE_UUID, 'cannot be restarted'),
     ).rejects.toThrow('cannot be restarted');
   });
 });

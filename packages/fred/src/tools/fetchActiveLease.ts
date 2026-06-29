@@ -3,19 +3,19 @@ import {
   leaseStateToJSON,
   ManifestMCPError,
   ManifestMCPErrorCode,
-  type ManifestQueryClient,
 } from '@manifest-network/manifest-mcp-core';
+import type { FredReadCtx } from '../ctx.js';
 
 /**
  * Fetches a lease by UUID, validates it exists and is in active/pending state.
  * Throws ManifestMCPError if the lease is not found or not in an active state.
  */
 export async function fetchActiveLease(
-  queryClient: ManifestQueryClient,
+  ctx: FredReadCtx,
   leaseUuid: string,
   action: string,
 ) {
-  const leaseResult = await queryClient.liftedinit.billing.v1.lease({
+  const leaseResult = await ctx.query.liftedinit.billing.v1.lease({
     leaseUuid,
   });
 

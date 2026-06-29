@@ -881,14 +881,11 @@ export function registerTools(deps: RegisterToolsDeps): void {
       const ctx = await buildCtx();
 
       const lease = await fetchActiveLease(
-        ctx.query,
+        ctx,
         leaseUuid,
         'cannot be diagnosed',
       );
-      const providerUrl = await resolveProviderUrl(
-        ctx.query,
-        lease.providerUuid,
-      );
+      const providerUrl = await resolveProviderUrl(ctx, lease.providerUuid);
       const authToken = await ctx.providerAuth.providerToken({
         address,
         leaseUuid,
@@ -948,14 +945,11 @@ export function registerTools(deps: RegisterToolsDeps): void {
       const ctx = await buildCtx();
 
       const lease = await fetchActiveLease(
-        ctx.query,
+        ctx,
         leaseUuid,
         'releases are not available',
       );
-      const providerUrl = await resolveProviderUrl(
-        ctx.query,
-        lease.providerUuid,
-      );
+      const providerUrl = await resolveProviderUrl(ctx, lease.providerUuid);
       const authToken = await ctx.providerAuth.providerToken({
         address,
         leaseUuid,

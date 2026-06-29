@@ -34,11 +34,11 @@ export async function waitForAppReady(
 ): Promise<WaitForAppReadyResult> {
   const { address, leaseUuid } = input;
   const lease = await fetchActiveLease(
-    ctx.query,
+    ctx,
     leaseUuid,
     'cannot wait for readiness',
   );
-  const providerUrl = await resolveProviderUrl(ctx.query, lease.providerUuid);
+  const providerUrl = await resolveProviderUrl(ctx, lease.providerUuid);
 
   const status = await pollLeaseUntilReady(
     providerUrl,
