@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- **fred:** the Fred capability functions now take a single context object as their first argument — `fn(ctx, input)` over the shared `CapabilityCtx` — instead of the positional `queryClient` / `getAuthToken` / `getLeaseDataAuthToken` / `fetchFn` parameters. `ctx` carries `query`/`chain`/`fetch`/`logger` (the `FredReadCtx` slice) and, for provider-authenticated fns, a `providerAuth` token provider (the `FredAuthCtx` slice). The reads `browseCatalog`, `appStatus`, `getAppLogs`, `restartApp`, `updateApp`, `waitForAppReady`, `getLeaseConnectionInfo`, `deployApp`, `deployManifest`, `subscribeLeaseStatus`, and the shared leaves `resolveProviderUrl` / `fetchActiveLease` all moved to the ctx shape. `createFredClient` now exposes the full provider lifecycle (`browseCatalog`/`appStatus`/`getAppLogs`/`restartApp`/`updateApp`/`waitForAppReady`/`getLeaseConnectionInfo`/`deployApp`/`subscribeLeaseStatus`) as bound methods that thread the ctx for you. New `ProviderAuthPort` interface + `createProviderAuth(signer, { chainId })` factory (the AWS credential-provider idiom) mint ADR-036 provider/lease-data auth tokens over core's `Signer`. (ENG-311)
+
 ### Fixed
 
 - **agent-core:** `manageDomain`, `closeLease`, and `troubleshootDeployment` now honor the `signal`/`timeout` options they already declared (previously silently ignored). Cancellation races the pre-broadcast `onConfirm` for the mutating flows and the single read query for the read-only flows; post-broadcast awaits are never cancelled (D4.6). (ENG-374)
@@ -13,6 +17,9 @@ All notable changes to this project will be documented in this file.
 **BREAKING (agent-core / headless `deployApp` callers):**
 - `deployApp`'s input is now the canonical `AppDeploySpec` (from `@manifest-network/manifest-mcp-core`); the `SingleServiceSpec | StackSpec` union (and `ServiceDef`) is removed. Migrate by importing `AppDeploySpec`; `services` is `Record<string, ServiceConfig>` with map-shaped `ports`.
 - `size` is now **required** (it was silently defaulted to `'small'`). Pass an explicit tier (or pin `skuUuid`); discover tiers via the lease server's `get_skus`.
+
+**BREAKING (fred capability-fn callers):**
+- The Fred capability functions changed from positional DI to `fn(ctx, input[, opts])`. Direct callers must migrate: either build a ctx (`{ query, chain, fetch, logger }` for reads; add `providerAuth` for the authenticated fns) and pass it as the first argument, or — simpler — call the bound methods on a `createFredClient(...)` instance, which threads the ctx for you. `getAuthToken(addr, uuid)` / `getLeaseDataAuthToken(addr, uuid, metaHash)` closures are replaced by `ctx.providerAuth.providerToken({ address, leaseUuid })` / `ctx.providerAuth.leaseDataToken({ address, leaseUuid, metaHashHex })`; the positional `fetchFn` override is now `ctx.fetch`. The legacy `DeployManifestOptions` type stays exported but is no longer a parameter type. (ENG-311)
 
 ## [0.13.1]
 
