@@ -145,13 +145,14 @@ The result carries the branded `lease_uuid`, the `provider_uuid` / `provider_url
 **Partial-success errors.** If the create-lease tx succeeds but a later step fails (set-domain, upload, or the readiness poll), `deployApp` throws a `ManifestMCPError` whose message is prefixed `Deploy partially succeeded:` and whose `details.lease_uuid` is the orphaned lease — close it with `client.stopApp({ leaseUuid })`:
 
 ```ts
-import { ManifestMCPError, type LeaseUuid } from '@manifest-network/manifest-sdk';
+import { asLeaseUuid, ManifestMCPError } from '@manifest-network/manifest-sdk';
 
 try {
   await client.deployApp(spec);
 } catch (err) {
   if (err instanceof ManifestMCPError && typeof err.details?.lease_uuid === 'string') {
-    await client.stopApp({ leaseUuid: err.details.lease_uuid as LeaseUuid });
+    // the id came from the SDK's own error → trusted, so `as*` (not `parse*`)
+    await client.stopApp({ leaseUuid: asLeaseUuid(err.details.lease_uuid) });
   }
   throw err;
 }
@@ -209,7 +210,7 @@ import { createGuardedFetch } from '@manifest-network/manifest-sdk/node'; // nod
 const client = await createFredClient({ config, walletProvider, fetch: createGuardedFetch() });
 ```
 
-Provider URLs come from on-chain SKU records, so a **Node** consumer should guard provider HTTP (the browser sandbox/CORS already does). Omitting `fetch` in Node leaves it unguarded; a node-default convenience factory is tracked in [ENG-444](https://linear.app/liftedinit/issue/ENG-444).
+Provider URLs come from on-chain SKU records, so a **Node** consumer should guard provider HTTP — the SSRF guard blocks requests to internal hosts before they leave the process. (A browser still *sends* such a request; same-origin/CORS only governs whether your app can read the response, so the request-blocking guard is specifically a Node concern.) Omitting `fetch` in Node leaves it unguarded; a node-default convenience factory is tracked in [ENG-444](https://linear.app/liftedinit/issue/ENG-444).
 
 ## Errors
 

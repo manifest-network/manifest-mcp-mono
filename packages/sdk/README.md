@@ -87,7 +87,7 @@ await client.setItemCustomDomain({
 
 ## Node consumers: keep the SSRF guard on
 
-Provider URLs come from on-chain SKU records, so provider HTTP should run through an SSRF-guarded `fetch`. In the browser the sandbox/CORS protects you; in **Node**, inject the guarded fetch from the `/node` subpath:
+Provider URLs come from on-chain SKU records, so **Node** consumers should route provider HTTP through an SSRF-guarded `fetch` — it blocks requests to internal hosts *before they're sent*. (Browsers don't get this for free, but the threat model differs: same-origin/CORS limits whether your app can *read* a cross-origin response, not whether the request is sent — so the request-level guard is specifically a Node concern.) Inject it from the `/node` subpath:
 
 ```ts
 import { createGuardedFetch } from '@manifest-network/manifest-sdk/node';
