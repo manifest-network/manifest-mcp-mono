@@ -232,7 +232,7 @@ Funding a brand-new wallet's gas is out of SDK scope today; the faucet client li
 ## Browser quirks
 
 - Don't import `@manifest-network/manifest-sdk/node` (or `…/manifest-mcp-node`) in a browser bundle — `/node` is mapped so a browser bundler fails fast rather than pulling Node builtins.
-- Many chain fields (heights, gas, supply) round-trip as `bigint`; `bigIntReplacer` (from the root) is a safe `JSON.stringify` replacer.
+- Many chain fields (heights, gas, supply) round-trip as `bigint`, which `JSON.stringify` rejects — supply a small replacer that coerces `bigint` to a string when serializing chain responses.
 - The browser blocks cross-origin `fetch` by default — run a CORS proxy in dev or push provider calls server-side, and pass your CORS-aware `fetch` to the client so URL validation stays intact.
 
 ## Stable vs internal exports
