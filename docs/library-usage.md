@@ -78,7 +78,7 @@ const leases = await client.getLeasesByTenant({ tenant: address, stateFilter: Le
 const lease = await client.getLease(leaseUuid); // leaseUuid: string | LeaseUuid
 ```
 
-The full set — `getBalance`, `getLease`, `getLeasesByTenant`, `getSKUs`, `getProviders`, `getLeaseByCustomDomain`, `getBillingParams`, `getWithdrawableAmount`, `resolveSku`, `listSkuCandidates` — is also exported as free `fn(ctx, input)` functions from `@manifest-network/manifest-sdk/reads` for when you want to tree-shake a single read without the client.
+The full set — `getBalance`, `getLease`, `getLeasesByTenant`, `getSKUs`, `getProviders`, `getLeaseByCustomDomain`, `getBillingParams`, `getWithdrawableAmount` — is also exported as free `fn(ctx, input)` functions from `@manifest-network/manifest-sdk/reads` for when you want to tree-shake a single read without the client. (`resolveSku` / `listSkuCandidates` are bound on the client too, but as free fns they live on `/catalog` — see *Catalog and SKU resolution* below.)
 
 ## Transactions
 
@@ -176,11 +176,16 @@ const unsubscribe = client.subscribeLeaseStatus(leaseUuid, {
 ## Catalog and SKU resolution
 
 ```ts
-const catalog = await client.browseCatalog();           // providers + SKUs + health, one call
-const ready = await client.checkDeploymentReadiness({ size: 'docker-micro', image: 'nginx:1.25' });
+import { checkDeploymentReadiness } from '@manifest-network/manifest-sdk/catalog';
+
+const catalog = await client.browseCatalog(); // bound — providers + SKUs + health, one call
+const ready = await checkDeploymentReadiness(client, await client.chain.getAddress(), {
+  size: 'docker-micro',
+  image: 'nginx:1.25',
+});
 ```
 
-When a tier name maps to more than one provider's SKU, `resolveSku` throws `ManifestMCPErrorCode.SKU_AMBIGUOUS` with `details.candidates` — render a picker, then re-deploy pinning `skuUuid` + `providerUuid` on the spec. `client.listSkuCandidates(...)` is the no-throw listing. These also live as free fns on `@manifest-network/manifest-sdk/catalog`.
+`browseCatalog` is a bound client method; `checkDeploymentReadiness` is a free `fn(ctx, address, input)` on `/catalog` (the client itself is a valid `ctx`). When a tier name maps to more than one provider's SKU, `resolveSku` throws `ManifestMCPErrorCode.SKU_AMBIGUOUS` with `details.candidates` — render a picker, then re-deploy pinning `skuUuid` + `providerUuid` on the spec. `client.resolveSku(...)` / `client.listSkuCandidates(...)` are bound; they're also free fns on `@manifest-network/manifest-sdk/catalog`.
 
 ## Building manifests
 
