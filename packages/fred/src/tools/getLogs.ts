@@ -11,12 +11,12 @@ export async function getAppLogs(
 ) {
   const { address, leaseUuid, tail } = input;
   const lease = await fetchActiveLease(
-    ctx.query,
+    ctx,
     leaseUuid,
     'logs are not available',
   );
 
-  const providerUrl = await resolveProviderUrl(ctx.query, lease.providerUuid);
+  const providerUrl = await resolveProviderUrl(ctx, lease.providerUuid);
   const authToken = await ctx.providerAuth.providerToken({
     address,
     leaseUuid,

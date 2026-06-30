@@ -1,12 +1,12 @@
-import type { ManifestQueryClient } from '@manifest-network/manifest-mcp-core';
 import {
   ManifestMCPError,
   ManifestMCPErrorCode,
 } from '@manifest-network/manifest-mcp-core';
+import type { FredReadCtx } from '../ctx.js';
 import { ProviderApiError, validateProviderUrl } from '../http/provider.js';
 
 export async function resolveProviderUrl(
-  queryClient: ManifestQueryClient,
+  ctx: FredReadCtx,
   providerUuid: string,
 ): Promise<string> {
   if (!providerUuid) {
@@ -17,7 +17,7 @@ export async function resolveProviderUrl(
   }
 
   try {
-    const providerResult = await queryClient.liftedinit.sku.v1.provider({
+    const providerResult = await ctx.query.liftedinit.sku.v1.provider({
       uuid: providerUuid,
     });
 

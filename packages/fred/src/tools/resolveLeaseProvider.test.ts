@@ -1,8 +1,22 @@
-import { ManifestMCPError } from '@manifest-network/manifest-mcp-core';
+import {
+  ManifestMCPError,
+  type ManifestQueryClient,
+  noopLogger,
+} from '@manifest-network/manifest-mcp-core';
 import { makeMockQueryClient } from '@manifest-network/manifest-mcp-core/__test-utils__/mocks.js';
 import { describe, expect, it } from 'vitest';
+import type { FredReadCtx } from '../ctx.js';
 import { ProviderApiError } from '../http/provider.js';
 import { resolveProviderUrl } from './resolveLeaseProvider.js';
+
+function makeCtx(query: ManifestQueryClient): FredReadCtx {
+  return {
+    query,
+    chain: {} as never,
+    fetch: globalThis.fetch,
+    logger: noopLogger,
+  };
+}
 
 describe('resolveProviderUrl', () => {
   it('returns validated URL when provider has apiUrl', async () => {
@@ -14,14 +28,14 @@ describe('resolveProviderUrl', () => {
       },
     });
 
-    const url = await resolveProviderUrl(qc, 'prov-1');
+    const url = await resolveProviderUrl(makeCtx(qc), 'prov-1');
     expect(url).toBe('https://provider.example.com');
   });
 
   it('throws when providerUuid is empty', async () => {
     const qc = makeMockQueryClient();
 
-    await expect(resolveProviderUrl(qc, '')).rejects.toThrow(
+    await expect(resolveProviderUrl(makeCtx(qc), '')).rejects.toThrow(
       'Provider UUID is empty',
     );
   });
@@ -35,7 +49,7 @@ describe('resolveProviderUrl', () => {
       },
     });
 
-    await expect(resolveProviderUrl(qc, 'prov-1')).rejects.toThrow(
+    await expect(resolveProviderUrl(makeCtx(qc), 'prov-1')).rejects.toThrow(
       'has no API URL',
     );
   });
@@ -43,9 +57,9 @@ describe('resolveProviderUrl', () => {
   it('throws when provider query fails', async () => {
     const qc = makeMockQueryClient();
 
-    await expect(resolveProviderUrl(qc, 'nonexistent')).rejects.toThrow(
-      'Failed to resolve provider',
-    );
+    await expect(
+      resolveProviderUrl(makeCtx(qc), 'nonexistent'),
+    ).rejects.toThrow('Failed to resolve provider');
   });
 
   it('re-throws ManifestMCPError from query client', async () => {
@@ -53,7 +67,7 @@ describe('resolveProviderUrl', () => {
     const err = new ManifestMCPError('QUERY_FAILED' as any, 'custom error');
     (qc.liftedinit.sku.v1.provider as any).mockRejectedValue(err);
 
-    await expect(resolveProviderUrl(qc, 'prov-1')).rejects.toBe(err);
+    await expect(resolveProviderUrl(makeCtx(qc), 'prov-1')).rejects.toBe(err);
   });
 
   it('re-throws ProviderApiError from validateProviderUrl without wrapping', async () => {
@@ -65,9 +79,11 @@ describe('resolveProviderUrl', () => {
       },
     });
 
-    await expect(resolveProviderUrl(qc, 'prov-1')).rejects.toThrow(
+    await expect(resolveProviderUrl(makeCtx(qc), 'prov-1')).rejects.toThrow(
       ProviderApiError,
     );
-    await expect(resolveProviderUrl(qc, 'prov-1')).rejects.toThrow('HTTPS');
+    await expect(resolveProviderUrl(makeCtx(qc), 'prov-1')).rejects.toThrow(
+      'HTTPS',
+    );
   });
 });

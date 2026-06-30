@@ -249,7 +249,7 @@ export async function deployManifest(
     leaseItems.push(`${storage.skuUuid}:1`);
   }
 
-  const providerUrl = await resolveProviderUrl(ctx.query, providerUuid);
+  const providerUrl = await resolveProviderUrl(ctx, providerUuid);
 
   const overrides =
     callOptions.gasMultiplier !== undefined

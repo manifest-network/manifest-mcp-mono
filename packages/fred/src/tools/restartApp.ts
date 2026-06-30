@@ -8,13 +8,9 @@ export async function restartApp(
   input: { address: string; leaseUuid: string },
 ) {
   const { address, leaseUuid } = input;
-  const lease = await fetchActiveLease(
-    ctx.query,
-    leaseUuid,
-    'cannot be restarted',
-  );
+  const lease = await fetchActiveLease(ctx, leaseUuid, 'cannot be restarted');
 
-  const providerUrl = await resolveProviderUrl(ctx.query, lease.providerUuid);
+  const providerUrl = await resolveProviderUrl(ctx, lease.providerUuid);
   const authToken = await ctx.providerAuth.providerToken({
     address,
     leaseUuid,

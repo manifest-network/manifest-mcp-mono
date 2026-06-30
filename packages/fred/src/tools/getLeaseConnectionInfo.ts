@@ -7,7 +7,7 @@ export async function getLeaseConnectionInfo(
   ctx: FredAuthCtx,
   input: { address: string; leaseUuid: string; providerUuid: string },
 ) {
-  const providerUrl = await resolveProviderUrl(ctx.query, input.providerUuid);
+  const providerUrl = await resolveProviderUrl(ctx, input.providerUuid);
   const token = await ctx.providerAuth.providerToken({
     address: input.address,
     leaseUuid: input.leaseUuid,

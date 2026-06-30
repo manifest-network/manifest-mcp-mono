@@ -22,11 +22,7 @@ export async function updateApp(
   },
 ) {
   const { address, leaseUuid, manifest, existingManifest } = input;
-  const lease = await fetchActiveLease(
-    ctx.query,
-    leaseUuid,
-    'cannot be updated',
-  );
+  const lease = await fetchActiveLease(ctx, leaseUuid, 'cannot be updated');
 
   let finalManifest = manifest;
   if (existingManifest) {
@@ -89,7 +85,7 @@ export async function updateApp(
     }
   }
 
-  const providerUrl = await resolveProviderUrl(ctx.query, lease.providerUuid);
+  const providerUrl = await resolveProviderUrl(ctx, lease.providerUuid);
   const authToken = await ctx.providerAuth.providerToken({
     address,
     leaseUuid,
