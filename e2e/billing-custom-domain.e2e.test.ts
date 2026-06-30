@@ -472,10 +472,10 @@ describe('Billing custom-domain', () => {
       // Sanity check: "INVALID" (uppercase + no dot separator) is an invalid
       // FQDN. Since the branded-Fqdn / parse-don't-validate work, parseFqdn
       // rejects it CLIENT-SIDE with INVALID_ARGUMENT at the set-domain step —
-      // which runs *after* create-lease succeeds and *before* its broadcast
-      // (deployManifest.ts) — so deployApp still wraps it as a partial-success
-      // error (the lease is already created) and the caller can identify the
-      // orphaned lease from the error details to clean up.
+      // which runs *after* create-lease succeeds and *before* its broadcast —
+      // so deployManifest still wraps it as a partial-success error (the lease
+      // is already created; deployApp just delegates here) and the caller can
+      // identify the orphaned lease from the error details to clean up.
       const err = await fredClient.callToolExpectError('deploy_app', {
         image: 'nginxinc/nginx-unprivileged:alpine',
         port: 8080,
@@ -490,7 +490,7 @@ describe('Billing custom-domain', () => {
       expect(err.message).toMatch(/close_lease if needed/);
 
       // Best-effort cleanup of the orphaned lease so the suite leaves clean
-      // state. The error details include `lease_uuid` per the deployApp
+      // state. The error details include `lease_uuid` per the deployManifest
       // partial-success branch.
       const orphanedUuid = (err.details as { lease_uuid?: string } | undefined)
         ?.lease_uuid;
