@@ -6,8 +6,27 @@
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "sideEffects": false,
+  "keywords": [
+    "manifest",
+    "cosmos",
+    "cosmjs",
+    "blockchain",
+    "sdk",
+    "fred",
+    "deploy"
+  ],
+  "author": "Felix C. Morency",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/manifest-network/manifest-mcp-mono.git",
+    "directory": "packages/sdk"
+  },
+  "homepage": "https://github.com/manifest-network/manifest-mcp-mono#readme",
+  "bugs": "https://github.com/manifest-network/manifest-mcp-mono/issues",
   "files": [
-    "dist"
+    "dist",
+    "README.md"
   ],
   "engines": {
     "node": ">=22.19.0"

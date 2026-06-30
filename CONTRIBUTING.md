@@ -59,10 +59,12 @@ docker compose -f e2e/docker-compose.yml down -v --remove-orphans
 See [`ARCHITECTURE.md`](ARCHITECTURE.md) for a detailed design overview. The short version:
 
 - `packages/core` — shared library, no MCP server code here.
-- `packages/{chain,lease,fred,cosmwasm}` — one MCP server each, depend on core.
-- `packages/node` — CLI entry points + keyfile wallet, depends on core + the four servers.
+- `packages/{chain,lease,fred,cosmwasm,agent}` — one MCP server each.
+- `packages/agent-core` — TypeScript orchestration library (consumed by `agent`).
+- `packages/node` — CLI entry points + keyfile wallet, depends on core + the servers.
+- `packages/sdk` — `@manifest-network/manifest-sdk`, the aggregating app-building SDK (composes core + fred + agent-core).
 
-Dependency direction is **node → {chain, lease, fred, cosmwasm} → core**. Never reverse it. Core stays browser-compatible (`platform: "neutral"`); only `node` may use Node.js-specific APIs.
+Dependency direction is **node → {chain, lease, fred, cosmwasm, agent} → core** and **agent → agent-core → {core, fred}**. Never reverse it. Core stays browser-compatible (`platform: "neutral"`); only `node` may use Node.js-specific APIs.
 
 ## Adding a new Cosmos SDK module
 
@@ -98,7 +100,7 @@ git tag v0.9.0
 git push origin main --tags
 ```
 
-Pushing a `vMAJOR.MINOR.PATCH` tag triggers `.github/workflows/release.yml`, which validates that the tag matches every `package.json`, runs the full check + test suite, then publishes all six packages to npm with provenance via OIDC trusted publishing (no `NPM_TOKEN` secret needed). Publish order is `core → chain → lease → fred → cosmwasm → node`.
+Pushing a `vMAJOR.MINOR.PATCH` tag triggers `.github/workflows/release.yml`, which validates that the tag matches every `package.json`, runs the full check + test suite, then publishes all nine packages to npm with provenance via OIDC trusted publishing (no `NPM_TOKEN` secret needed). Publish order is `core → chain → lease → fred → cosmwasm → agent-core → agent → node → sdk`; `.github/workflows/release.yml` is the authoritative list.
 
 The workflow also creates a GitHub Release with auto-generated notes; that step is best-effort — publish succeeds even if the Release creation fails.
 

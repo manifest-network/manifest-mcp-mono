@@ -55,6 +55,7 @@ packages/
   agent-core/ @manifest-network/manifest-agent-core   Orchestration library (deployApp/manageDomain/troubleshoot/closeLease)
   agent/     @manifest-network/manifest-mcp-agent      MCP server: 5 orchestrated tools (elicitation-driven)
   node/      @manifest-network/manifest-mcp-node       Five CLIs: manifest-mcp-{chain,lease,fred,cosmwasm,agent}
+  sdk/       @manifest-network/manifest-sdk            App-building SDK: aggregating barrel + scoped subpaths over core/fred/agent-core
 e2e/                                                   End-to-end tests against a live chain
 submodules/
   manifest-ledger/                                 Cosmos SDK blockchain (main branch, v2.1.0+)
@@ -196,7 +197,7 @@ The fred package is an MCP server that registers 11 provider/Fred-dependent tool
 
 The fred server also registers 3 MCP resources (`manifest://leases/active`, `manifest://leases/recent`, `manifest://providers`) and 3 prompts (`deploy-containerized-app`, `diagnose-failing-app`, `shutdown-all-leases`).
 
-The fred server handles ADR-036 provider authentication internally and contains the HTTP clients for provider and Fred APIs. The package also exports all tool functions and HTTP clients for use by library consumers (e.g., Barney) without requiring the MCP protocol.
+The fred server handles ADR-036 provider authentication internally and contains the HTTP clients for provider and Fred APIs. The package also exports all tool functions and HTTP clients without requiring the MCP protocol — but the **supported library entry point** for building an app is the aggregating [`@manifest-network/manifest-sdk`](packages/sdk/README.md) package (`packages/sdk`), which composes `core` + `fred` + `agent-core` behind one typed surface (the bound `createFredClient` + scoped `/reads`, `/catalog`, `/deploy`, `/orchestration`, `/node` subpaths). Barney is its reference consumer.
 
 ### Source layout
 

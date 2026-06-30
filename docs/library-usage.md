@@ -1,340 +1,241 @@
-# Library usage
+# SDK cookbook
 
-Most users wire the MCP servers up through the four CLI binaries (see [`packages/node/README.md`](../packages/node/README.md)). But every package also exports its public API for consumers that want to call the same logic from inside their own application — typically a TypeScript app that doesn't speak the MCP protocol but still needs to talk to the Manifest chain or a Fred provider.
+[`@manifest-network/manifest-sdk`](../packages/sdk/README.md) is the supported way to build a TypeScript app on Manifest + Fred without speaking the MCP protocol. It aggregates `core` + `fred` + `agent-core` behind one typed surface, so an app composes **only** the SDK and [`manifestjs`](https://www.npmjs.com/package/@manifest-network/manifestjs). The reference consumer is **Barney**, the Manifest web frontend.
 
-The reference consumer is **Barney**, the Manifest web frontend, which imports `@manifest-network/manifest-mcp-core`, `…-chain`, and `…-fred` to drive the chain and providers directly without an MCP host. The patterns below are the ones Barney actually uses.
+This is the deep dive. For a 60-second start, see the [SDK README](../packages/sdk/README.md).
 
-> **Browser compatibility.** `core`, `chain`, `lease`, `fred`, and `cosmwasm` are all built with `tsdown`'s `platform: "neutral"` target and avoid Node-specific APIs. The exception is the `node` package itself (CLI bootstrap, keyfile decryption, `dotenv`) — that one is `platform: "node"` and won't bundle for the browser. Use `core` + a wallet from `cosmos-kit` / Keplr / Leap / Web3Auth for browser apps.
+```bash
+npm install @manifest-network/manifest-sdk @manifest-network/manifestjs
+```
 
-## When to use the library form
+> **Browser compatibility.** The SDK barrel and every subpath except `/node` are browser-safe (built `platform: "neutral"`, no Node builtins). `/node` is the one node-only entry (the SSRF-guarded fetch). Use a `cosmos-kit` / Keplr / Leap wallet for browser apps.
 
-| Goal | Library form is right when… |
-|------|----------------------------|
-| Run a chain query/transaction inside a custom app | You don't need MCP framing. Use `cosmosQuery` / `cosmosTx` from core directly. |
-| Drive a deployment from a web UI | You want the same orchestration `deploy_app` performs but inside your own UI. Compose `cosmosTx('billing', 'create-lease', …)` with `uploadLeaseData` (provider) and `pollLeaseUntilReady` (fred) yourself, the way Barney does, or call the high-level `deployApp` helper. |
-| Talk to a Fred provider from a service | Import the `http/*` exports from the fred package. They take an optional `fetchFn` so you can inject a CORS proxy / SSRF-validating fetch. |
-| Build a custom MCP server with extra tools | Compose `core` (Cosmos logic) + your own `McpServer` instance from `@modelcontextprotocol/sdk`. |
+## Choosing a client
 
-## Wallet bootstrap
+Three factories, all returning a bound client whose methods close over the ports for you. Pick by what you need to do:
 
-In Node.js, use `MnemonicWalletProvider` from core. In the browser, plug in any wallet that satisfies the `WalletProvider` interface — Barney wraps `cosmos-kit`'s offline signer in a thin custom class. Note that `cosmos-kit` exposes `signArbitrary` as a *separate* hook return value (not a method on the offline signer); you'd thread it through your app independently of the `WalletProvider` and pass it into the ADR-036 helpers below.
+| Factory | Needs a wallet? | Gives you |
+|---------|-----------------|-----------|
+| `createManifestReadClient` | No | Chain **reads** only (`getBalance`, `getLease`, `getSKUs`, …) |
+| `createManifestClient` | Yes | Reads **+ on-chain transactions** (`fundCredits`, `setItemCustomDomain`, `stopApp`, `executeTx`) |
+| `createFredClient` | Yes | Everything above **+ the Fred provider lifecycle** (`deployApp`, `appStatus`, `getAppLogs`, `restartApp`, `updateApp`, `subscribeLeaseStatus`, …) |
+
+All three share the same options (`{ config, fetch?, logger? }` — plus a required `walletProvider` for the two signing factories, and a few not-yet-active `@beta` fields) and the same lifecycle rule: **`dispose()` every client** when you're done. Clients keyed by the same config share one underlying `CosmosClientManager` connection (torn down when the last holder disposes), and `getInstance` *mutates* that shared instance — so don't hold two clients against the **same config key** at once (e.g. a read client and a signing client). In practice a query-only config omits `rpcUrl`, so it keys differently from a signing client and the common case is safe.
 
 ```ts
-// barney/src/hooks/useManifestMCP.ts (paraphrased)
-import {
-  CosmosClientManager,
-  type ManifestMCPConfig,
-  type WalletProvider,
-} from '@manifest-network/manifest-mcp-core';
-import type { OfflineSigner } from '@cosmjs/proto-signing';
+import { createConfig, createManifestReadClient } from '@manifest-network/manifest-sdk';
+
+const config = createConfig({
+  chainId: 'manifest-1',
+  rpcUrl: 'https://rpc.manifest.example/',
+  gasPrice: '0.01umfx', // required when rpcUrl is set
+});
+
+const read = await createManifestReadClient({ config });
+const balance = await read.getBalance('manifest1abc…');
+read.dispose();
+```
+
+## Wallets — the `WalletProvider` port
+
+Signing happens at the edge: you pass a `WalletProvider`, and the SDK never sees key material. The interface is small — `getAddress`, `getSigner`, and (for provider auth) an optional `signArbitrary`.
+
+**Node** — use the bundled `MnemonicWalletProvider` (two-arg: config, then mnemonic):
+
+```ts
+import { MnemonicWalletProvider } from '@manifest-network/manifest-sdk';
+
+const walletProvider = new MnemonicWalletProvider(config, process.env.MANIFEST_MNEMONIC!);
+```
+
+**Browser** — wrap your wallet adapter's offline signer. `cosmos-kit` exposes `signArbitrary` as a *separate* hook value (not a method on the signer), so thread it in directly:
+
+```ts
+import type { WalletProvider } from '@manifest-network/manifest-sdk';
 import { useChain } from '@cosmos-kit/react';
 
-class CosmosKitWalletProvider implements WalletProvider {
-  constructor(
-    private signer: OfflineSigner,
-    private address: string,
-  ) {}
-  async getAddress() { return this.address; }
-  async getSigner() { return this.signer; }
-  // No signArbitrary on this class — cosmos-kit returns it separately
-  // from useChain(). See "ADR-036 auth token construction" below.
-}
+const { address, getOfflineSigner, signArbitrary } = useChain('manifest');
 
-const { address, isWalletConnected, getOfflineSigner, signArbitrary } = useChain('manifest');
-const wallet = new CosmosKitWalletProvider(getOfflineSigner(), address);
-
-const config: ManifestMCPConfig = {
-  chainId: 'manifest-1',
-  rpcUrl: 'https://your-rpc-endpoint/',
-  gasPrice: '0.01umfx',
-  addressPrefix: 'manifest',
-};
-
-const clientManager = CosmosClientManager.getInstance(config, wallet);
-// Keep `signArbitrary` around (Barney stores it in a Zustand slice) and
-// pass it into the auth-token helpers wherever they're called.
-```
-
-`CosmosClientManager.getInstance` is keyed by `chainId:rpcUrl[:restUrl]` and reused across calls. There's no advantage to caching the result yourself. When the wallet disconnects, call `clientManager.disconnect()` so the underlying signing client is torn down.
-
-> **Why `signArbitrary` is separate.** The `WalletProvider` interface declares it as `signArbitrary?(address, data)` (optional method). Some wallets (`MnemonicWalletProvider` and `KeyfileWalletProvider`) implement it on the provider directly because they own the seed; cosmos-kit doesn't, because the underlying browser wallet (Keplr/Leap/etc.) exposes the operation through a different hook surface. Both shapes work — the helpers below take a callable, not a `WalletProvider`.
-
-## Generic Cosmos SDK queries and transactions
-
-Both functions take **positional args** (not an options object):
-
-```ts
-import {
-  cosmosQuery,
-  cosmosTx,
-  cosmosEstimateFee,
-} from '@manifest-network/manifest-mcp-core';
-
-// Read — args[] mirrors the CLI args for the (module, subcommand) pair
-const balances = await cosmosQuery(
-  clientManager,
-  'bank',
-  'balances',
-  [tenantAddress],
-);
-
-// Estimate fee before broadcasting
-const estimate = await cosmosEstimateFee(
-  clientManager,
-  'bank',
-  'send',
-  ['manifest1xyz...', '50000000umfx'],
-  // optional: { gasMultiplier: 1.8 }
-);
-
-// Write — set waitForConfirmation=true to wait for inclusion past the broadcast ack
-const result = await cosmosTx(
-  clientManager,
-  'billing',
-  'close-lease',
-  [leaseUuid],
-  /* waitForConfirmation */ true,
-  // optional: { gasMultiplier: 1.8 }
-);
-```
-
-Errors thrown from these are `ManifestMCPError` instances; check `error.code` against `ManifestMCPErrorCode`. Transient failures (network, 5xx, 429) are auto-retried; permanent failures bubble up immediately.
-
-## On-chain helpers
-
-Each of these wraps a `cosmosTx` with the right module + subcommand and a normalized result shape. Signatures are positional with optional trailing parameters:
-
-```ts
-import {
-  fundCredits,         // fundCredits(clientManager, amount, overrides?, tenant?)
-  getBalance,          // getBalance(queryClient, address)
-  setItemCustomDomain, // setItemCustomDomain(clientManager, leaseUuid, customDomain, options?, overrides?)
-  stopApp,             // stopApp(clientManager, leaseUuid, overrides?)
-} from '@manifest-network/manifest-mcp-core';
-
-// On-chain wallet balance + credit-account balance + credit estimate, in one call
-const queryClient = await clientManager.getQueryClient();
-const balance = await getBalance(queryClient, address);
-
-// Send tokens to a billing credit account (defaults to your own; pass tenant to fund someone else's)
-await fundCredits(clientManager, '10000000umfx');
-
-// Claim an FQDN on an existing lease item
-await setItemCustomDomain(
-  clientManager,
-  leaseUuid,
-  'app.example.com',
-  { serviceName: 'web' }, // omit for legacy single-item leases; pass { clear: true } to clear
-);
-
-// Close a lease
-await stopApp(clientManager, leaseUuid);
-```
-
-Note `getBalance` takes a `queryClient` (the manifestjs RPC client), not a `clientManager`. Get one with `await clientManager.getQueryClient()`.
-
-## Fred HTTP clients with `fetchFn` injection
-
-Every HTTP-issuing function in `packages/fred/src/http/{fred,provider}.ts` accepts an optional `fetchFn?: typeof globalThis.fetch` parameter. In most signatures it's the last argument; the one exception is `uploadLeaseData(providerUrl, leaseUuid, payload, authToken, fetchFn?, abortSignal?)`, where `abortSignal` follows it. When `fetchFn` is omitted, the global `fetch` is used. When supplied, the function calls your fetch instead. This is the seam Barney uses to route requests through its CORS proxy in dev and through an SSRF validator in prod:
-
-```ts
-// barney/src/api/providerFetchAdapter.ts (excerpt)
-export const providerFetch = createProviderFetch();
-
-// barney/src/api/fred.ts (excerpt)
-import {
-  getLeaseStatus as fredGetLeaseStatus,
-  uploadLeaseData as fredUploadLeaseData,
-} from '@manifest-network/manifest-mcp-fred';
-import { providerFetch } from './providerFetchAdapter';
-
-export function getLeaseStatus(providerUrl: string, leaseUuid: string, authToken: string) {
-  return fredGetLeaseStatus(providerUrl, leaseUuid, authToken, providerFetch);
-}
-export function uploadLeaseData(
-  providerUrl: string,
-  leaseUuid: string,
-  payload: Uint8Array,
-  authToken: string,
-) {
-  return fredUploadLeaseData(providerUrl, leaseUuid, payload, authToken, providerFetch);
-}
-```
-
-In a Node service or test, the same seam is how you inject a mock fetch.
-
-The named lease/provider operations that accept `fetchFn` are: `getLeaseStatus`, `getLeaseLogs`, `getLeaseProvision`, `getLeaseReleases`, `getLeaseInfo`, `restartLease`, `updateLease`, `pollLeaseUntilReady`, `getProviderHealth`, `getLeaseConnectionInfo`, `uploadLeaseData`. The high-level `deployApp`, `appStatus`, `browseCatalog`, `waitForAppReady`, `getAppLogs`, `restartApp`, and `updateApp` helpers all forward a `fetchFn` to the underlying calls. (`checkDeploymentReadiness` and `buildManifestPreview` don't issue HTTP — they're chain-only or pure — so they don't take `fetchFn`.)
-
-Underneath all of these is `checkedFetch(url, init?, timeoutMs?, fetchFn?)` — also exported from the fred package — which adds composed-AbortSignal timeout handling around any fetch call. Library consumers who hit a provider endpoint the named helpers don't cover can use `checkedFetch` directly with the same `fetchFn` injection.
-
-## ADR-036 auth token construction
-
-Every fred HTTP call to a *protected* provider endpoint expects a `Bearer <token>` header. Tokens are constructed entirely client-side; there's no auth-endpoint round-trip.
-
-The fred package exposes two strategies — pick one.
-
-### Strategy A: hand-roll the token (Barney's pattern)
-
-`signArbitrary` here is whatever your wallet returns for ADR-036 signing — for `MnemonicWalletProvider` and `KeyfileWalletProvider` that's `wallet.signArbitrary` (optional method on the provider); for cosmos-kit that's the standalone function returned from `useChain()`. The helpers don't care which — they just need a callable that returns `{ pub_key: { type, value }, signature }`.
-
-```ts
-import {
-  createSignMessage,
-  createLeaseDataSignMessage,
-  createAuthToken,
-} from '@manifest-network/manifest-mcp-fred';
-
-type SignArbitraryFn = (
-  signer: string,
-  data: string,
-) => Promise<{ pub_key: { type: string; value: string }; signature: string }>;
-
-// signArbitrary comes from useChain() (cosmos-kit) or wallet.signArbitrary.bind(wallet) (mnemonic/keyfile)
-async function buildToken(signArbitrary: SignArbitraryFn, tenant: string, leaseUuid: string) {
-  const timestamp = Math.floor(Date.now() / 1000);
-  const message = createSignMessage(tenant, leaseUuid, timestamp);
-  const { pub_key, signature } = await signArbitrary(tenant, message);
-  return createAuthToken(tenant, leaseUuid, timestamp, pub_key.value, signature);
-}
-// pass: Authorization: Bearer ${await buildToken(...)}
-```
-
-For lease-data uploads (e.g. uploading a manifest during deploy), call `createLeaseDataSignMessage(leaseUuid, metaHashHex, timestamp)` instead and pass `metaHashHex` as the last arg of `createAuthToken`. The provider rejects a generic token on the upload endpoint and vice versa.
-
-> **Replay protection.** The provider enforces a 30 s max token age and per-signature replay detection on protected endpoints. ADR-036 signing is deterministic: two calls that share a timestamp produce identical signatures. If you issue tokens in tight loops (Barney does, polling status during deploy), wrap timestamp generation in a small helper that waits for the wall clock to advance past the previously-issued value before returning — so two consecutive `Math.floor(Date.now() / 1000)` calls never collide.
-
-### Strategy B: pass a `getAuthToken` callback to the high-level helpers
-
-`deployApp`, `appStatus`, `getAppLogs`, `restartApp`, `updateApp`, `waitForAppReady` take a `getAuthToken: (address, leaseUuid) => Promise<string>` callback (and `deployApp` additionally takes `getLeaseDataAuthToken: (address, leaseUuid, metaHashHex) => Promise<string>` for the upload step). Build the callback once and reuse it:
-
-```ts
-import { createAuthToken, createSignMessage, createLeaseDataSignMessage } from '@manifest-network/manifest-mcp-fred';
-
-// `signArbitrary` is the same callable described under Strategy A —
-// `wallet.signArbitrary.bind(wallet)` for mnemonic/keyfile wallets, or
-// the standalone function returned from cosmos-kit's `useChain()`.
-const getAuthToken = async (address: string, leaseUuid: string) => {
-  const ts = await nextMonotonicTimestamp(); // your wall-clock helper from the note above
-  const msg = createSignMessage(address, leaseUuid, ts);
-  const { pub_key, signature } = await signArbitrary(address, msg);
-  return createAuthToken(address, leaseUuid, ts, pub_key.value, signature);
-};
-
-const getLeaseDataAuthToken = async (address: string, leaseUuid: string, metaHashHex: string) => {
-  const ts = await nextMonotonicTimestamp();
-  const msg = createLeaseDataSignMessage(leaseUuid, metaHashHex, ts);
-  const { pub_key, signature } = await signArbitrary(address, msg);
-  return createAuthToken(address, leaseUuid, ts, pub_key.value, signature, metaHashHex);
+const walletProvider: WalletProvider = {
+  getAddress: async () => address,
+  getSigner: async () => getOfflineSigner(),
+  signArbitrary, // ADR-036 — required for the Fred provider lifecycle
 };
 ```
 
-## Fred high-level helpers
+`signArbitrary` is optional on the interface because not every flow needs it: chain reads and transactions don't, but the Fred provider endpoints (`deployApp`, `appStatus`, …) authenticate with ADR-036 tokens minted from it.
 
-These mirror the MCP `deploy_app` / `app_status` / `update_app` / etc. tools. Signatures use a mix of positional args and a final options object — exactly as exported, **not** the named-options shape the MCP tool inputs use:
+## Reads
+
+Every read is a bound method on all three clients. Branded ids the SDK returns are already typed; you only `parse*` ids that arrive from outside.
 
 ```ts
-import {
-  appStatus,           // (queryClient, address, leaseUuid, getAuthToken, fetchFn?)
-  browseCatalog,       // (queryClient, fetchFn?)
-  buildManifestPreview, // (input)  -- pure, no chain access
-  checkDeploymentReadiness, // (queryClient, address, input?)
-  deployApp,           // (clientManager, getAuthToken, getLeaseDataAuthToken, input, fetchFn?)
-  getAppLogs,          // (queryClient, address, leaseUuid, getAuthToken, tail?, fetchFn?)
-  restartApp,          // (queryClient, address, leaseUuid, getAuthToken, fetchFn?)
-  updateApp,           // (queryClient, address, leaseUuid, getAuthToken, manifest, existingManifest?, fetchFn?)
-  waitForAppReady,     // (queryClient, address, leaseUuid, getAuthToken, opts?, fetchFn?)
-} from '@manifest-network/manifest-mcp-fred';
+import { LeaseState } from '@manifest-network/manifest-sdk/deploy';
 
-const queryClient = await clientManager.getQueryClient();
-const address = await wallet.getAddress();
+const balance = await client.getBalance(address);
+const skus = await client.getSKUs({});
+const leases = await client.getLeasesByTenant({ tenant: address, stateFilter: LeaseState.LEASE_STATE_ACTIVE });
+const lease = await client.getLease(leaseUuid); // leaseUuid: string | LeaseUuid
+```
 
-// 1. Pre-flight (no signing)
-const readiness = await checkDeploymentReadiness(queryClient, address, {
+The full set — `getBalance`, `getLease`, `getLeasesByTenant`, `getSKUs`, `getProviders`, `getLeaseByCustomDomain`, `getBillingParams`, `getWithdrawableAmount` — is also exported as free `fn(ctx, input)` functions from `@manifest-network/manifest-sdk/reads` for when you want to tree-shake a single read without the client. (`resolveSku` / `listSkuCandidates` are bound on the client too, but as free fns they live on `/catalog` — see *Catalog and SKU resolution* below.)
+
+## Transactions
+
+The on-chain tx methods live on the signing clients. `parse*` untrusted input at the boundary:
+
+```ts
+import { parseFqdn } from '@manifest-network/manifest-sdk';
+
+await client.fundCredits({ amount: '5000000upwr' });
+
+await client.setItemCustomDomain({
+  leaseUuid,                          // already branded (from deployApp) — no cast
+  customDomain: parseFqdn(userInput), // throws INVALID_ARGUMENT on a bad FQDN
+  serviceName: 'web',                 // omit for single-service leases; pass { clear: true } to release
+});
+
+await client.stopApp({ leaseUuid });
+```
+
+### Batching: `executeTx`
+
+`executeTx` puts multiple messages in **one atomic transaction** (all-or-nothing), and serializes broadcasts per signer so sequences can't nonce-clash. Messages are standard `EncodeObject`s built from `manifestjs` codecs:
+
+```ts
+import type { EncodeObject } from '@manifest-network/manifest-sdk/deploy';
+import { MsgFundCredit } from '@manifest-network/manifestjs/dist/codegen/liftedinit/billing/v1/tx.js';
+
+const fund = (amount: string): EncodeObject => ({
+  typeUrl: '/liftedinit.billing.v1.MsgFundCredit',
+  value: MsgFundCredit.fromPartial({ sender: address, tenant: address, amount: { denom: 'upwr', amount } }),
+});
+
+await client.executeTx([fund('1000'), fund('2000')]); // one tx, two messages
+```
+
+## Deploying an app
+
+`client.deployApp` is the canonical path — one call creates the lease, uploads the manifest, and waits until the provider reports ready. Pass `image` + `port` for a single service, or `services` for a stack (never both):
+
+```ts
+// Single service
+const { lease_uuid, provider_url, state } = await client.deployApp({
+  image: 'nginxinc/nginx-unprivileged:alpine',
+  port: 8080,
+  size: 'docker-micro',          // an SKU tier — discover via client.getSKUs({})
+  env: { LOG_LEVEL: 'info' },     // optional
+  customDomain: 'app.example.com', // optional — claims the FQDN on the new lease
+});
+
+// Multi-service stack
+await client.deployApp({
+  services: {
+    web: { image: 'nginxinc/nginx-unprivileged:alpine', ports: { '8080/tcp': {} } },
+    db: { image: 'postgres:16', ports: { '5432/tcp': {} }, env: { POSTGRES_PASSWORD: '…' } },
+  },
+  size: 'docker-micro',
+  customDomain: 'app.example.com',
+  serviceName: 'web', // which service the domain points at (required for stacks)
+});
+```
+
+The result carries the branded `lease_uuid`, the `provider_uuid` / `provider_url`, the `state`, and (best-effort) `connection` info.
+
+**Partial-success errors.** If the create-lease tx succeeds but a later step fails (set-domain, upload, or the readiness poll), `deployApp` throws a `ManifestMCPError` whose message is prefixed `Deploy partially succeeded:` and whose `details.lease_uuid` is the orphaned lease — close it with `client.stopApp({ leaseUuid })`:
+
+```ts
+import { asLeaseUuid, ManifestMCPError } from '@manifest-network/manifest-sdk';
+
+try {
+  await client.deployApp(spec);
+} catch (err) {
+  if (err instanceof ManifestMCPError && typeof err.details?.lease_uuid === 'string') {
+    // the id came from the SDK's own error → trusted, so `as*` (not `parse*`)
+    await client.stopApp({ leaseUuid: asLeaseUuid(err.details.lease_uuid) });
+  }
+  throw err;
+}
+```
+
+> **Escape hatch.** The same `deployApp` is also exported as a free `fn(ctx, spec, opts)` from `/deploy` for advanced composition, but it requires you to assemble a `FredAuthCtx` (with a `providerAuth` token provider) by hand. Prefer the bound `client.deployApp` — it reuses the client's own `providerAuth`. Smoother re-exports for the free-fn path are tracked in [ENG-446](https://linear.app/liftedinit/issue/ENG-446).
+
+## Watching live status
+
+`subscribeLeaseStatus` is a poll-backed **converging watch**: it always ends in exactly one of `onComplete` (a terminal state) or `onError`, and returns a synchronous unsubscribe. The options object is required.
+
+```ts
+const unsubscribe = client.subscribeLeaseStatus(leaseUuid, {
+  onData: (status) => console.log(status.state),
+  onComplete: (final) => console.log('settled:', final.state),
+  onError: (err) => console.error(err),
+  timeout: 120_000,
+});
+// later: unsubscribe();
+```
+
+## Catalog and SKU resolution
+
+```ts
+import { checkDeploymentReadiness } from '@manifest-network/manifest-sdk/catalog';
+
+const catalog = await client.browseCatalog(); // bound — providers + SKUs + health, one call
+const ready = await checkDeploymentReadiness(client, await client.chain.getAddress(), {
   size: 'docker-micro',
   image: 'nginx:1.25',
 });
-
-// 2. Preview (no chain access)
-const preview = await buildManifestPreview({ image: 'nginx:1.25', port: 80 });
-if (!preview.validation.valid) throw new Error(preview.validation.errors.join('; '));
-
-// 3. Deploy (broadcasts a TX, takes a paid lease)
-const result = await deployApp(
-  clientManager,
-  getAuthToken,
-  getLeaseDataAuthToken,
-  {
-    image: 'nginx:1.25',
-    port: 80,
-    size: 'docker-micro',
-    // optional hooks: abortSignal, onLeaseCreated, onProgress, checkChainState, pollOptions
-  },
-  providerFetch, // optional fetchFn override
-);
-
-// 4. Wait until ready
-await waitForAppReady(
-  queryClient,
-  address,
-  result.lease_uuid,
-  getAuthToken,
-  { timeoutMs: 300_000, intervalMs: 3_000 },
-  providerFetch,
-);
 ```
 
-If steps 4-5 fail after a successful `create-lease`, the error from `deployApp` is a `TerminalChainStateError` (when chain state went terminal) or wraps the live `lease_uuid` so you can either retry the upload or close the orphaned lease with `stopApp(clientManager, leaseUuid)`.
+`browseCatalog` is a bound client method; `checkDeploymentReadiness` is a free `fn(ctx, address, input)` on `/catalog` (the client itself is a valid `ctx`). When a tier name maps to more than one provider's SKU, `resolveSku` throws `ManifestMCPErrorCode.SKU_AMBIGUOUS` with `details.candidates` — render a picker, then re-deploy pinning `skuUuid` + `providerUuid` on the spec. `client.resolveSku(...)` / `client.listSkuCandidates(...)` are bound; they're also free fns on `@manifest-network/manifest-sdk/catalog`.
 
-## Manifest construction (from outside fred)
+## Building manifests
 
-If you're rolling your own deploy flow rather than calling `deployApp`, you'll want the manifest builders directly:
+If you build the manifest yourself (e.g. a UI editor) rather than letting `deployApp` derive it, the builders are on `/deploy`:
 
 ```ts
-// barney/src/ai/manifest.ts pattern
-import {
-  buildManifest,
-  mergeManifest,
-  validateServiceName,
-  metaHashHex,
-  type BuildManifestOptions,
-} from '@manifest-network/manifest-mcp-fred';
+import { buildManifest, buildStackManifest, mergeManifest, validateManifest } from '@manifest-network/manifest-sdk/deploy';
 
-const manifest = buildManifest({
-  image: 'nginx:1.25',
-  ports: { '80/tcp': {} },          // Record<"<port>/<proto>", {}>
-  env: { FOO: 'bar' },               // Record<string, string>
-});
-
-const json = JSON.stringify(manifest);
-const meta = await metaHashHex(json);  // takes the JSON string directly
-
-// Hand the bytes + meta_hash to your create-lease tx, then upload with uploadLeaseData
+const manifest = buildManifest({ image: 'nginx:1.25', ports: { '80/tcp': {} }, env: { FOO: 'bar' } });
 ```
 
-For multi-service stacks use `buildStackManifest` instead, and `mergeManifest` to apply UI-shaped edits onto an existing manifest while preserving fields the editor doesn't touch. `parseStackManifest`, `isStackManifest`, `getServiceNames`, `validateServiceName`, and `validateManifest` are also exported for editor / preview UIs.
+`mergeManifest` applies UI-shaped edits onto an existing manifest while preserving fields the editor doesn't touch; `validateManifest` / `parseStackManifest` / `getServiceNames` support preview UIs.
 
-## Faucet from the chain package
+## `fetch` injection, CORS, and the SSRF guard
+
+Every client takes an optional `fetch`. It defaults to `globalThis.fetch`; inject your own to add a CORS proxy (browser dev) or the SSRF guard (Node):
 
 ```ts
-import {
-  requestFaucet,
-  requestFaucetCredit,
-  fetchFaucetStatus,
-} from '@manifest-network/manifest-mcp-chain';
+import { createGuardedFetch } from '@manifest-network/manifest-sdk/node'; // node-only subpath
 
-const status = await fetchFaucetStatus(faucetBaseUrl);
-const result = await requestFaucet(faucetBaseUrl, address /* , denom? */);
+const client = await createFredClient({ config, walletProvider, fetch: createGuardedFetch() });
 ```
 
-`requestFaucetCredit` is the lower-level call against `/credit`; `requestFaucet` wraps it for the "give me everything" common case. Both are exported so a custom UI can render its own "top up" affordance without going through the MCP `request_faucet` tool.
+Provider URLs come from on-chain SKU records, so a **Node** consumer should guard provider HTTP — the SSRF guard blocks requests to internal hosts before they leave the process. (A browser still *sends* such a request; same-origin/CORS only governs whether your app can read the response, so the request-blocking guard is specifically a Node concern.) Omitting `fetch` in Node leaves it unguarded; a node-default convenience factory is tracked in [ENG-444](https://linear.app/liftedinit/issue/ENG-444).
 
-## Stable vs internal exports
+## Errors
 
-What's exported from each package's `index.ts` is the public surface and is versioned semver-style. Internal layouts (the split into `server/register-*.ts` and `tools/*.ts` inside fred, the per-module files inside core's `queries/` and `transactions/`) are not stable — don't reach in via deep paths. If you need something that isn't re-exported from the package entry, file an issue.
+Everything throws `ManifestMCPError` with a `code` from `ManifestMCPErrorCode` (e.g. `INVALID_ARGUMENT`, `SKU_AMBIGUOUS`, `TX_FAILED`, `OPERATION_CANCELLED`). Transient failures (network, 5xx, 429) are auto-retried; permanent ones bubble up. Branch on `code`, not message text. Before logging an error's `details`, pass it through `sanitizeForLogging` (exported from the root) to redact sensitive fields.
+
+## Orchestration tier (optional)
+
+`@manifest-network/manifest-sdk/orchestration` adds plan → confirm → recover flows on top of the capability tier (`deployApp`, `manageDomain`, `closeLease`, `troubleshootDeployment`). These are **callback-driven** — `fn(input, callbacks, opts)` with `onPlan` / `onConfirm` / `onProgress` — a different shape from the capability tier's `fn(ctx, input)`, so the host can drive a human-in-the-loop UI. Most apps compose the capability tier directly and don't need this.
+
+## Low-level escape hatch
+
+For raw chain access beyond the typed surface, the root re-exports `CosmosClientManager` (the keyed connection manager) — though for raw on-chain message broadcasting, prefer `executeTx`, which is typed and handles atomicity/serialization.
+
+> The stringly, JSON-shaped `cosmos_query` / `cosmos_tx` operations are **not** part of this SDK — they're the MCP-server face in the separate `@manifest-network/manifest-mcp-{chain,lease,fred}` packages, for LLM/agent hosts.
+
+## Faucet
+
+Funding a brand-new wallet's gas is out of SDK scope today; the faucet client lives in the `@manifest-network/manifest-mcp-chain` package (`requestFaucet`, `requestFaucetCredit`, `fetchFaucetStatus`) if you need an in-app top-up affordance.
 
 ## Browser quirks
 
-- `platform: "neutral"` keeps these packages off `node:fs`, `node:os`, `node:crypto`'s sync APIs, etc. The keyfile wallet (`KeyfileWalletProvider`) is in the `node` package precisely because it touches `fs` — don't import from `@manifest-network/manifest-mcp-node` in a browser bundle.
-- `dotenv` is also node-only; load env config however your bundler does it (Vite's `import.meta.env`, rsbuild's environment plugin, etc.).
-- `bigIntReplacer` is exported from core; use it when stringifying chain responses, since many fields (heights, gas, supply totals) round-trip as `bigint`.
-- The browser's `fetch` blocks cross-origin requests by default. If your frontend talks to providers directly, either run a CORS proxy in dev (Barney's pattern), set up CORS allowlists on the provider, or push the calls server-side. Pass your CORS-aware fetch as `fetchFn` to keep the package's URL validation intact.
+- Don't import `@manifest-network/manifest-sdk/node` (or `…/manifest-mcp-node`) in a browser bundle — `/node` is mapped so a browser bundler fails fast rather than pulling Node builtins.
+- Many chain fields (heights, gas, supply) round-trip as `bigint`, which `JSON.stringify` rejects — supply a small replacer that coerces `bigint` to a string when serializing chain responses.
+- The browser blocks cross-origin `fetch` by default — run a CORS proxy in dev or push provider calls server-side, and pass your CORS-aware `fetch` to the client so URL validation stays intact.
+
+## Stable vs internal exports
+
+The SDK barrel and its documented subpaths are the public, semver-versioned surface. Don't reach into `dist/` deep paths or the underlying `manifest-mcp-*` packages' internals — if something you need isn't re-exported, [open an issue](https://github.com/manifest-network/manifest-mcp-mono/issues).
