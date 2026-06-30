@@ -20,7 +20,7 @@ Three factories, all returning a bound client whose methods close over the ports
 | `createManifestClient` | Yes | Reads **+ on-chain transactions** (`fundCredits`, `setItemCustomDomain`, `stopApp`, `executeTx`) |
 | `createFredClient` | Yes | Everything above **+ the Fred provider lifecycle** (`deployApp`, `appStatus`, `getAppLogs`, `restartApp`, `updateApp`, `subscribeLeaseStatus`, …) |
 
-All three share the same options (`{ config, fetch?, logger? }`, plus a required `walletProvider` for the two signing factories) and the same lifecycle rule: **`dispose()` every client** when you're done — clients keyed by the same config share one underlying connection, torn down when the last holder disposes.
+All three share the same options (`{ config, fetch?, logger? }` — plus a required `walletProvider` for the two signing factories, and a few not-yet-active `@beta` fields) and the same lifecycle rule: **`dispose()` every client** when you're done. Clients keyed by the same config share one underlying `CosmosClientManager` connection (torn down when the last holder disposes), and `getInstance` *mutates* that shared instance — so don't hold two clients against the **same config key** at once (e.g. a read client and a signing client). In practice a query-only config omits `rpcUrl`, so it keys differently from a signing client and the common case is safe.
 
 ```ts
 import { createConfig, createManifestReadClient } from '@manifest-network/manifest-sdk';

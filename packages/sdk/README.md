@@ -42,7 +42,8 @@ try {
   // Read it back
   const lease = await client.getLease(lease_uuid);
 } finally {
-  // Always dispose — clients keyed by the same config share one underlying connection.
+  // Always dispose — clients with the same config share (and mutate) one underlying
+  // connection; don't hold two against one config key at once (see the cookbook).
   client.dispose();
 }
 ```
