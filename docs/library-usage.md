@@ -145,11 +145,14 @@ The result carries the branded `lease_uuid`, the `provider_uuid` / `provider_url
 **Partial-success errors.** If the create-lease tx succeeds but a later step fails (set-domain, upload, or the readiness poll), `deployApp` throws a `ManifestMCPError` whose message is prefixed `Deploy partially succeeded:` and whose `details.lease_uuid` is the orphaned lease — close it with `client.stopApp({ leaseUuid })`:
 
 ```ts
+import { ManifestMCPError, type LeaseUuid } from '@manifest-network/manifest-sdk';
+
 try {
   await client.deployApp(spec);
 } catch (err) {
-  const orphan = (err as ManifestMCPError).details?.lease_uuid;
-  if (orphan) await client.stopApp({ leaseUuid: orphan as LeaseUuid });
+  if (err instanceof ManifestMCPError && typeof err.details?.lease_uuid === 'string') {
+    await client.stopApp({ leaseUuid: err.details.lease_uuid as LeaseUuid });
+  }
   throw err;
 }
 ```

@@ -1,6 +1,6 @@
 # @manifest-network/manifest-sdk
 
-The app-building SDK for [Manifest Network](https://www.manifestai.com/) + the Fred deployment platform. Build a full application — query the chain, deploy and manage containerized apps, claim custom domains, batch transactions, watch live status — by composing **only** this package and [`manifestjs`](https://www.npmjs.com/package/@manifest-network/manifestjs). It aggregates `@manifest-network/manifest-mcp-core`, `…-fred`, and `…-agent-core` behind one typed surface.
+The app-building SDK for [Manifest Network](https://www.manifestai.com/) + the Fred deployment platform. Build a full application — query the chain, deploy and manage containerized apps, claim custom domains, batch transactions, watch live status — by composing **only** this package and [`manifestjs`](https://www.npmjs.com/package/@manifest-network/manifestjs). It aggregates `@manifest-network/manifest-mcp-core`, `@manifest-network/manifest-mcp-fred`, and `@manifest-network/manifest-agent-core` behind one typed surface.
 
 ```bash
 npm install @manifest-network/manifest-sdk @manifest-network/manifestjs
