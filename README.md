@@ -4,6 +4,8 @@ MCP servers for [Manifest Network](https://www.manifestai.com/) and Cosmos SDK c
 
 Exposes on-chain queries and transactions as [Model Context Protocol](https://modelcontextprotocol.io/) tools, so any MCP-compatible client (Claude Desktop, Cursor, etc.) can interact with the blockchain through natural language.
 
+**Building a TypeScript app** (not an MCP integration)? Use [`@manifest-network/manifest-sdk`](packages/sdk/README.md) — the app-building SDK that composes the chain + Fred behind one typed client. See its [README](packages/sdk/README.md) and the [SDK cookbook](docs/library-usage.md).
+
 ## Monorepo structure
 
 ```
@@ -16,6 +18,7 @@ packages/
   agent-core/  @manifest-network/manifest-agent-core    TypeScript orchestration surface (deploy / manage-domain / troubleshoot / close-lease)
   agent/       @manifest-network/manifest-mcp-agent     MCP server wrapping agent-core via MCP elicitation (5 orchestrated tools)
   node/        @manifest-network/manifest-mcp-node      CLI entry points + encrypted keyfile wallet
+  sdk/         @manifest-network/manifest-sdk           App-building SDK: aggregates core + fred + agent-core behind one typed surface (for TS apps, not MCP)
 ```
 
 Dependency direction: **node -> {chain, lease, fred, cosmwasm, agent} -> core**; **agent -> agent-core -> {core, fred}** (never reverse).
@@ -116,7 +119,8 @@ Supported modules: `bank`, `staking`, `distribution`, `gov`, `billing`, `sku`, `
 | Prompts & resources reference | [`docs/prompts-and-resources.md`](docs/prompts-and-resources.md) |
 | Troubleshooting | [`docs/troubleshooting.md`](docs/troubleshooting.md) |
 | Security model | [`docs/security.md`](docs/security.md) |
-| Library usage (non-MCP consumers) | [`docs/library-usage.md`](docs/library-usage.md) |
+| **Build a TypeScript app (SDK)** | [`packages/sdk/README.md`](packages/sdk/README.md) |
+| SDK cookbook (library deep dive) | [`docs/library-usage.md`](docs/library-usage.md) |
 | Architecture | [`ARCHITECTURE.md`](ARCHITECTURE.md) |
 | Contributing | [`CONTRIBUTING.md`](CONTRIBUTING.md) |
 | Security policy & disclosure | [`SECURITY.md`](SECURITY.md) |
@@ -155,7 +159,7 @@ The module is then automatically available through the `cosmos_query` and `cosmo
 
 ## Releasing
 
-All eight packages are versioned in lockstep and published together.
+All nine packages are versioned in lockstep and published together.
 
 ### Setup (one-time)
 
@@ -180,7 +184,7 @@ Pushing a `vMAJOR.MINOR.PATCH` tag triggers the [Release workflow](.github/workf
 
 1. Validates the tag version matches all `package.json` files
 2. Builds, type-checks, runs Biome checks, and tests
-3. Publishes all packages to npm (with [provenance](https://docs.npmjs.com/generating-provenance-statements)) in dependency order: `core → chain → lease → fred → cosmwasm → agent-core → agent → node`
+3. Publishes all packages to npm (with [provenance](https://docs.npmjs.com/generating-provenance-statements)) in dependency order: `core → chain → lease → fred → cosmwasm → agent-core → agent → node → sdk` (the [release workflow](.github/workflows/release.yml) is the source of truth for the list and order)
 4. Creates a GitHub Release with auto-generated notes (best-effort — publish succeeds even if this fails)
 
 ## License
