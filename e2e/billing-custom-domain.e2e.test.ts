@@ -469,11 +469,13 @@ describe('Billing custom-domain', () => {
 
     it('rejects an invalid FQDN through the orchestrated path with a partial-success error', async () => {
       if (!chainSupportsCustomDomain) return;
-      // Sanity check: the chain's `IsValidFQDN` rejects "INVALID" (uppercase
-      // + no dot separator). That rejection arrives on the set-domain tx,
-      // which runs *after* create-lease succeeds, so deployApp must wrap it
-      // as a partial-success error and the caller can identify the orphaned
-      // lease from the error details to clean up.
+      // Sanity check: "INVALID" (uppercase + no dot separator) is an invalid
+      // FQDN. Since the branded-Fqdn / parse-don't-validate work, parseFqdn
+      // rejects it CLIENT-SIDE with INVALID_ARGUMENT at the set-domain step —
+      // which runs *after* create-lease succeeds and *before* its broadcast
+      // (deployManifest.ts) — so deployApp still wraps it as a partial-success
+      // error (the lease is already created) and the caller can identify the
+      // orphaned lease from the error details to clean up.
       const err = await fredClient.callToolExpectError('deploy_app', {
         image: 'nginxinc/nginx-unprivileged:alpine',
         port: 8080,
@@ -481,9 +483,9 @@ describe('Billing custom-domain', () => {
         custom_domain: 'INVALID',
       });
 
-      // Chain-side TX_FAILED bubbles through as part of the partial-success
-      // wrap (the wrap reuses the inner code per deployApp.ts:411-416).
-      expect(err.code).toBe('TX_FAILED');
+      // The client-side INVALID_ARGUMENT (from parseFqdn) bubbles through as
+      // part of the partial-success wrap (the wrap reuses the inner code).
+      expect(err.code).toBe('INVALID_ARGUMENT');
       expect(err.message).toMatch(/Deploy partially succeeded/);
       expect(err.message).toMatch(/close_lease if needed/);
 
