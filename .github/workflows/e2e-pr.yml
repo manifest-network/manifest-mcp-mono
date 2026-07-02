@@ -1,0 +1,84 @@
+name: E2E (PR)
+on:
+  pull_request:
+    # RUNTIME deploy-dependency closure of the acceptance flow — not just the TS import graph.
+    #   TS graph: the acceptance app imports ONLY @manifest-network/manifest-sdk + manifestjs
+    #     → core + fred + agent-core + sdk (lease / chain / node are NOT in it).
+    #   LIVE graph: the compose devnet builds the chain from submodules/manifest-ledger and the
+    #     provider from submodules/fred — a submodule-pointer bump (submodules/**) OR a submodule
+    #     URL/branch switch (.gitmodules) alters the devnet build, a prime source of the provider/
+    #     chain deploy rot (#112 class) this gate exists to catch.
+    # Update if the graph gains a dependency.
+    paths:
+      - 'packages/core/**'
+      - 'packages/fred/**'
+      - 'packages/agent-core/**'
+      - 'packages/sdk/**'
+      - 'examples/sdk-acceptance/**'
+      - 'e2e/**'
+      - 'submodules/**'
+      - '.gitmodules'
+      - 'package.json' # root only; nested workspace manifests are covered by packages/**
+      - 'package-lock.json'
+      - '.github/workflows/e2e-pr.yml'
+
+# Cancel superseded runs on the same PR (bound cost).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# Least-privilege GITHUB_TOKEN (the main checkout needs read; the submodule fetch uses the ssh-key).
+permissions:
+  contents: read
+
+jobs:
+  acceptance-single:
+    # Same-repo branch PRs get secrets; FORK PRs get empty secrets → skip. Dependabot PRs are
+    # same-repo but ALSO get no Actions secrets, so FRED_DEPLOY_KEY would be empty and the SSH
+    # submodule checkout would hard-fail — exclude it too (else every weekly dep/actions bump reds
+    # this check). `github.actor` (not `triggering_actor`) is deliberate: it stays 'dependabot[bot]'
+    # on a human re-run, so the skip holds. A false `if` renders as SKIPPED, not failed.
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.actor != 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+          ssh-key: ${{ secrets.FRED_DEPLOY_KEY }}
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Build Docker images
+        run: docker compose -f e2e/docker-compose.yml build
+
+      - name: Start devnet
+        run: docker compose -f e2e/docker-compose.yml up -d --wait --wait-timeout 180
+
+      - name: Install and build
+        run: npm ci && npm run build
+
+      # Single variant only (stack + full matrix stay nightly, e2e.yml). The pretest:e2e hook builds
+      # @manifest-network/sdk-acceptance; the trailing ':' pins the single-service it, not a substring.
+      - name: Run the single-variant SDK acceptance flow
+        run: npm run test:e2e -- e2e/sdk-acceptance.e2e.test.ts -t "single-service:"
+
+      - name: Collect logs on failure
+        if: failure()
+        run: docker compose -f e2e/docker-compose.yml logs > e2e-logs.txt
+
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: e2e-pr-logs
+          path: e2e-logs.txt
+
+      - name: Teardown
+        if: always()
+        run: docker compose -f e2e/docker-compose.yml down -v --remove-orphans

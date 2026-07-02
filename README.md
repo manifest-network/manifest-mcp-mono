@@ -1,5 +1,7 @@
 # Manifest MCP
 
+[![E2E](https://github.com/manifest-network/manifest-mcp-mono/actions/workflows/e2e.yml/badge.svg)](https://github.com/manifest-network/manifest-mcp-mono/actions/workflows/e2e.yml)
+
 MCP servers for [Manifest Network](https://www.manifestai.com/) and Cosmos SDK chains.
 
 Exposes on-chain queries and transactions as [Model Context Protocol](https://modelcontextprotocol.io/) tools, so any MCP-compatible client (Claude Desktop, Cursor, etc.) can interact with the blockchain through natural language.
