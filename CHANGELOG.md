@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-06-30
+
 ### Added
 
 - **sdk:** new `@manifest-network/manifest-sdk` package — the aggregating, app-building SDK for Manifest + Fred. A consumer (e.g. Barney, the Manifest web frontend) can now build a full app composing **only** this package + `manifestjs`. It exposes an aggregating root barrel plus scoped, tree-shakable subpaths (`/reads`, `/catalog`, `/deploy`, `/orchestration`, and a Node-only `/node`). Includes: the bound client factories `createFredClient` / `createManifestClient` / `createManifestReadClient` (viem `.extend`-style — methods thread the ctx for you); branded domain types (`Address`, `LeaseUuid`, `ProviderUuid`, `SkuUuid`, `Fqdn`) with throwing `parse*` (trust-boundary) and `as*` (trusted-read) constructors; the `WalletProvider` / `Signer` and `ProviderAuthPort` ports (signing at the edge — no key material in the SDK); `executeTx` atomic multi-message batching; `subscribeLeaseStatus` poll-backed live-status watch; and `/node`'s SSRF-guarded `createGuardedFetch`. See [`packages/sdk/README.md`](packages/sdk/README.md) and the [SDK cookbook](docs/library-usage.md). (ENG-442)
