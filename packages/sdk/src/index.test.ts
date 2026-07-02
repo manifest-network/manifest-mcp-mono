@@ -120,10 +120,11 @@ describe('manifest-sdk barrels', () => {
       expect(orchestration).toHaveProperty(k);
   });
 
-  it('node-only guarded fetch is ONLY on /node (browser-safety; ENG-281/287)', () => {
+  it('node-only exports are ONLY on /node (browser-safety; ENG-281/287)', () => {
+    const NODE_ONLY = [...GUARDED_FETCH_EXPORTS, 'createFredClientNode'];
     for (const b of [root, reads, catalog, deploy, orchestration])
-      for (const k of GUARDED_FETCH_EXPORTS) expect(b).not.toHaveProperty(k);
-    for (const k of GUARDED_FETCH_EXPORTS) expect(node).toHaveProperty(k);
+      for (const k of NODE_ONLY) expect(b).not.toHaveProperty(k);
+    for (const k of NODE_ONLY) expect(node).toHaveProperty(k);
   });
 
   // EXACT-KEYSET pins (not just toHaveProperty): catch ADDITIVE drift — a new value silently leaking
@@ -182,7 +183,9 @@ describe('manifest-sdk barrels', () => {
     );
   });
 
-  it('/node runtime exports are EXACTLY the guarded-fetch values', () => {
-    expect(keys(node)).toEqual([...GUARDED_FETCH_EXPORTS].sort());
+  it('/node runtime exports are EXACTLY guarded-fetch + createFredClientNode', () => {
+    expect(keys(node)).toEqual(
+      ['createFredClientNode', ...GUARDED_FETCH_EXPORTS].sort(),
+    );
   });
 });
