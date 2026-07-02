@@ -40,7 +40,11 @@ jobs:
           set -euo pipefail
           # Capture in a STANDALONE command so a git diff error FAILS this job (→ e2e-gate reds),
           # rather than silently routing to the else branch (deploy=false) and false-greening the gate.
-          files="$(git diff --name-only "$BASE_SHA" "$HEAD_SHA")"
+          # Triple-dot (merge-base...head) so we see ONLY this PR's own changes — matching GitHub's
+          # native pull_request.paths semantics — not commits that landed on base after divergence
+          # (which a two-arg `diff base head` would include, over-triggering the live job). fetch-depth:0
+          # above makes the merge-base available.
+          files="$(git diff --name-only "$BASE_SHA...$HEAD_SHA")"
           if printf '%s\n' "$files" | grep -Eq \
             '^(packages/(core|fred|agent-core|sdk)/|examples/sdk-acceptance/|e2e/|submodules/|\.gitmodules$|package\.json$|package-lock\.json$|\.github/workflows/e2e-pr\.yml$)'; then
             echo 'deploy=true' >> "$GITHUB_OUTPUT"
