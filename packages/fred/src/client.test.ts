@@ -11,8 +11,20 @@ import {
   LeaseState,
 } from '@manifest-network/manifest-mcp-core';
 import { makeMockQueryClient } from '@manifest-network/manifest-mcp-core/__test-utils__/mocks.js';
-import { afterEach, describe, expect, expectTypeOf, it, vi } from 'vitest';
-import { createFredClient, type FredClient } from './client.js';
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  expectTypeOf,
+  it,
+  vi,
+} from 'vitest';
+import {
+  createFredClient,
+  type FredClient,
+  shouldWarnUnguarded,
+} from './client.js';
 
 const FULL_CONFIG: ManifestMCPConfig = {
   chainId: 'test-1',
@@ -145,5 +157,57 @@ describe('createFredClient', () => {
     // A read client (no required signer) is NOT a FredClient.
     type ReadShape = Omit<ManifestClient, 'signer'>;
     expectTypeOf<ReadShape>().not.toMatchTypeOf<FredClient>();
+  });
+});
+
+describe('shouldWarnUnguarded', () => {
+  it('is true only on Node with no injected fetch', () => {
+    expect(shouldWarnUnguarded(false, true)).toBe(true); // node, no fetch
+    expect(shouldWarnUnguarded(true, true)).toBe(false); // node, fetch injected
+    expect(shouldWarnUnguarded(false, false)).toBe(false); // browser, no fetch
+    expect(shouldWarnUnguarded(true, false)).toBe(false); // browser, fetch injected
+  });
+});
+
+describe('createFredClient unguarded-fetch warning', () => {
+  beforeEach(() => vi.resetModules());
+  afterEach(() => vi.restoreAllMocks());
+
+  it('warns once (naming createFredClientNode) on Node with no injected fetch', async () => {
+    const core = await import('@manifest-network/manifest-mcp-core');
+    const { createFredClient } = await import('./client.js');
+    vi.spyOn(core.CosmosClientManager, 'getInstance').mockReturnValue(
+      fakeManager(),
+    );
+    const warn = vi.spyOn(core.logger, 'warn').mockImplementation(() => {});
+
+    await createFredClient({
+      config: FULL_CONFIG,
+      walletProvider: fakeWallet(),
+    });
+    await createFredClient({
+      config: FULL_CONFIG,
+      walletProvider: fakeWallet(),
+    });
+
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(String(warn.mock.calls[0]?.[0])).toContain('createFredClientNode');
+  });
+
+  it('does not warn when a fetch is injected (even a plain globalThis.fetch)', async () => {
+    const core = await import('@manifest-network/manifest-mcp-core');
+    const { createFredClient } = await import('./client.js');
+    vi.spyOn(core.CosmosClientManager, 'getInstance').mockReturnValue(
+      fakeManager(),
+    );
+    const warn = vi.spyOn(core.logger, 'warn').mockImplementation(() => {});
+
+    await createFredClient({
+      config: FULL_CONFIG,
+      walletProvider: fakeWallet(),
+      fetch: globalThis.fetch,
+    });
+
+    expect(warn).not.toHaveBeenCalled();
   });
 });

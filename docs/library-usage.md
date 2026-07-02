@@ -202,15 +202,15 @@ const manifest = buildManifest({ image: 'nginx:1.25', ports: { '80/tcp': {} }, e
 
 ## `fetch` injection, CORS, and the SSRF guard
 
-Every client takes an optional `fetch`. It defaults to `globalThis.fetch`; inject your own to add a CORS proxy (browser dev) or the SSRF guard (Node):
+On **Node**, prefer `createFredClientNode` from the `/node` subpath — it injects an SSRF-guarded `fetch` by default (provider URLs come from on-chain SKU records, an SSRF surface):
 
 ```ts
-import { createGuardedFetch } from '@manifest-network/manifest-sdk/node'; // node-only subpath
+import { createFredClientNode } from '@manifest-network/manifest-sdk/node';
 
-const client = await createFredClient({ config, walletProvider, fetch: createGuardedFetch() });
+const client = await createFredClientNode({ config, walletProvider });
 ```
 
-Provider URLs come from on-chain SKU records, so a **Node** consumer should guard provider HTTP — the SSRF guard blocks requests to internal hosts before they leave the process. (A browser still *sends* such a request; same-origin/CORS only governs whether your app can read the response, so the request-blocking guard is specifically a Node concern.) Omitting `fetch` in Node leaves it unguarded; a node-default convenience factory is tracked in [ENG-444](https://linear.app/liftedinit/issue/ENG-444).
+The base `createFredClient` does not guard by default and warns once on Node. Injecting your own `fetch` opts **out** of the guard (a plain `globalThis.fetch` stays unguarded); wrap `createGuardedFetch()` from `/node` to compose. In the browser, inject a CORS-aware `fetch`; the request-blocking guard is a Node concern. (`MANIFEST_FRED_FETCH_GUARDED` is MCP-server-only — the library escape hatch is `opts.fetch`.)
 
 ## Errors
 

@@ -87,19 +87,15 @@ await client.setItemCustomDomain({
 
 ## Node consumers: keep the SSRF guard on
 
-Provider URLs come from on-chain SKU records, so **Node** consumers should route provider HTTP through an SSRF-guarded `fetch` — it blocks requests to internal hosts *before they're sent*. (Browsers don't get this for free, but the threat model differs: same-origin/CORS limits whether your app can *read* a cross-origin response, not whether the request is sent — so the request-level guard is specifically a Node concern.) Inject it from the `/node` subpath:
+Provider URLs come from on-chain SKU records, so provider HTTP on **Node** should run through an SSRF-guarded `fetch` — it blocks requests to internal hosts *before they're sent*. The base `createFredClient` does **not** guard by default (it can't — the barrel stays browser-safe), so on Node it emits a one-time warning. Use **`createFredClientNode`** from the `/node` subpath, which is SSRF-safe by default:
 
 ```ts
-import { createGuardedFetch } from '@manifest-network/manifest-sdk/node';
+import { createFredClientNode } from '@manifest-network/manifest-sdk/node';
 
-const client = await createFredClient({
-  config,
-  walletProvider,
-  fetch: createGuardedFetch(),
-});
+const client = await createFredClientNode({ config, walletProvider }); // provider HTTP is guarded
 ```
 
-When `fetch` is omitted it defaults to `globalThis.fetch` (unguarded). A node-default convenience factory is tracked in [ENG-444](https://linear.app/liftedinit/issue/ENG-444).
+Injecting your own `fetch` opts **out** of the guard (a plain `globalThis.fetch` is still unguarded) — wrap `createGuardedFetch()` from `/node` if you need to compose behavior. (Browsers don't need this: same-origin/CORS limits reading a cross-origin *response*, so the request-level guard is a Node concern. The `MANIFEST_FRED_FETCH_GUARDED` env knob is MCP-server-only; the library escape hatch is `opts.fetch`.)
 
 ## Subpath map
 
@@ -107,12 +103,12 @@ The root barrel carries the client factories, branded types (`parse*` / `as*`), 
 
 | Import | What's there |
 |--------|--------------|
-| `@manifest-network/manifest-sdk` | Client factories (`createFredClient`, `createManifestClient`, `createManifestReadClient`), brands + `parse*`/`as*`, ports (`WalletProvider`, `Signer` adapters), `ManifestMCPError`/`ManifestMCPErrorCode`, `createConfig`, and the wholesale type surface |
+| `@manifest-network/manifest-sdk` | Client factories (`createFredClient`, `createManifestClient`, `createManifestReadClient`), brands + `parse*`/`as*`, ports (`WalletProvider`, `Signer` adapters), `ManifestMCPError`/`ManifestMCPErrorCode`, `createConfig`, and the wholesale type surface (barrel `createFredClient` is unguarded on Node — prefer `createFredClientNode` from `/node`) |
 | `…/reads` | Branded read fns: `getBalance`, `getLease`, `getLeasesByTenant`, `getSKUs`, `getProviders`, `getLeaseByCustomDomain`, `getBillingParams`, `getWithdrawableAmount` |
 | `…/catalog` | `browseCatalog`, `resolveSku`, `listSkuCandidates`, `checkDeploymentReadiness`, `buildManifestPreview` |
 | `…/deploy` | `deployApp`, `restartApp`, `updateApp`, `getAppLogs`, `appStatus`, `waitForAppReady`, `subscribeLeaseStatus`, `executeTx`, `fundCredits`, `setItemCustomDomain`, `stopApp`, `LeaseState`, manifest builders, ADR-036 auth helpers |
 | `…/orchestration` | Optional plan/confirm/recover flows: `deployApp`, `manageDomain`, `closeLease`, `troubleshootDeployment` (callback-driven) |
-| `…/node` | Node-only: `createGuardedFetch`, `isBlocked` (SSRF guard) |
+| `…/node` | Node-only: `createFredClientNode` (SSRF-safe fred client), `createGuardedFetch`, `isBlocked` |
 
 ## Full worked example
 
