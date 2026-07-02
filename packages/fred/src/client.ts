@@ -78,8 +78,9 @@ export function shouldWarnUnguarded(
 const UNGUARDED_FETCH_WARNING =
   'createFredClient: provider HTTP is running through an unguarded fetch on Node. ' +
   'Provider URLs come from on-chain SKU records, so this is an SSRF surface. ' +
-  "Use createFredClientNode from '@manifest-network/manifest-sdk/node' (SSRF-safe by default), " +
-  "or inject an SSRF-guarded fetch via createGuardedFetch from '@manifest-network/manifest-sdk/node'. " +
+  "Use createFredClientNode from '@manifest-network/manifest-mcp-fred/node' " +
+  "(re-exported by the SDK as '@manifest-network/manifest-sdk/node'; SSRF-safe by default), " +
+  "or inject an SSRF-guarded fetch via createGuardedFetch from that '/node' subpath. " +
   'Note: injecting your own fetch opts OUT of the SSRF guard.';
 
 // Module-level once-latch: warn at most once per process (isolated in tests via vi.resetModules()).
@@ -103,8 +104,9 @@ let warnedUnguarded = false;
  *
  * @remarks
  * On Node, this base factory does NOT guard provider HTTP by default — prefer
- * {@link createFredClientNode} (`@manifest-network/manifest-sdk/node`), which injects an
- * SSRF-guarded fetch. Injecting your own `opts.fetch` opts out of the guard.
+ * `createFredClientNode` from `@manifest-network/manifest-mcp-fred/node` (re-exported by the
+ * SDK as `@manifest-network/manifest-sdk/node`), which injects an SSRF-guarded fetch.
+ * Injecting your own `opts.fetch` opts out of the guard.
  */
 export async function createFredClient(
   opts: FullClientOptions,
