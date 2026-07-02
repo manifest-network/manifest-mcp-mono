@@ -3,6 +3,7 @@ import {
   createManifestClient,
   type FullClientOptions,
   type LeaseUuid,
+  logger,
   type ManifestClient,
 } from '@manifest-network/manifest-mcp-core';
 import {
@@ -63,6 +64,28 @@ export function fredActions(ctx: FredClient): FredActions {
 }
 
 /**
+ * Pure predicate: should `createFredClient` warn that provider HTTP is unguarded? True only on
+ * Node (`isNode`) when the caller injected no `fetch`. `isNode` is a parameter so the browser-negative
+ * case is unit-testable. Not part of the public SDK surface (not re-exported from the fred barrel).
+ */
+export function shouldWarnUnguarded(
+  hasInjectedFetch: boolean,
+  isNode: boolean,
+): boolean {
+  return !hasInjectedFetch && isNode;
+}
+
+const UNGUARDED_FETCH_WARNING =
+  'createFredClient: provider HTTP is running through an unguarded fetch on Node. ' +
+  'Provider URLs come from on-chain SKU records, so this is an SSRF surface. ' +
+  "Use createFredClientNode from '@manifest-network/manifest-sdk/node' (SSRF-safe by default), " +
+  "or inject an SSRF-guarded fetch via createGuardedFetch from '@manifest-network/manifest-sdk/node'. " +
+  'Note: injecting your own fetch opts OUT of the SSRF guard.';
+
+// Module-level once-latch: warn at most once per process (isolated in tests via vi.resetModules()).
+let warnedUnguarded = false;
+
+/**
  * Create a full app client: core's chain-backed ManifestClient plus the Fred provider methods. The
  * fully-decorated factory lives in fred (not core) because the provider methods hit the Fred backend,
  * not the chain ctx wraps (viem one-client-one-backend rule, #2535). Requires a walletProvider.
@@ -77,10 +100,25 @@ export function fredActions(ctx: FredClient): FredActions {
  * `getInstance` mutates the shared instance — do NOT construct a separate read/full client against a key
  * this client already holds. Always `dispose()` each client; the shared clients tear down only once the
  * last holder disposes.
+ *
+ * @remarks
+ * On Node, this base factory does NOT guard provider HTTP by default — prefer
+ * {@link createFredClientNode} (`@manifest-network/manifest-sdk/node`), which injects an
+ * SSRF-guarded fetch. Injecting your own `opts.fetch` opts out of the guard.
  */
 export async function createFredClient(
   opts: FullClientOptions,
 ): Promise<FredClient> {
+  if (
+    !warnedUnguarded &&
+    shouldWarnUnguarded(
+      opts.fetch !== undefined,
+      typeof process !== 'undefined' && !!process.versions?.node,
+    )
+  ) {
+    warnedUnguarded = true;
+    logger.warn(UNGUARDED_FETCH_WARNING);
+  }
   const client = await createManifestClient(opts);
   const providerAuth = createProviderAuth(client.signer, {
     chainId: client.chain.getConfig().chainId,
