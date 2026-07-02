@@ -37,7 +37,11 @@ jobs:
         #     provider from submodules/fred — a submodule-pointer bump (submodules/**) OR a submodule
         #     URL/branch switch (.gitmodules) alters the devnet build. Both are in the closure.
         run: |
-          if git diff --name-only "$BASE_SHA" "$HEAD_SHA" | grep -Eq \
+          set -euo pipefail
+          # Capture in a STANDALONE command so a git diff error FAILS this job (→ e2e-gate reds),
+          # rather than silently routing to the else branch (deploy=false) and false-greening the gate.
+          files="$(git diff --name-only "$BASE_SHA" "$HEAD_SHA")"
+          if printf '%s\n' "$files" | grep -Eq \
             '^(packages/(core|fred|agent-core|sdk)/|examples/sdk-acceptance/|e2e/|submodules/|\.gitmodules$|package\.json$|package-lock\.json$|\.github/workflows/e2e-pr\.yml$)'; then
             echo 'deploy=true' >> "$GITHUB_OUTPUT"
           else
@@ -98,19 +102,26 @@ jobs:
 
   e2e-gate:
     # THE REQUIRED CHECK. Runs on EVERY PR (if: always(), so it runs even when acceptance-single was
-    # skipped) → it always posts a status, so requiring it never deadlocks a merge. Green when the live
-    # job succeeded OR was correctly skipped (docs-only / fork / Dependabot); red ONLY when it failed.
-    needs: acceptance-single
+    # skipped) → it always posts a status, so requiring it never deadlocks a merge. RED when the
+    # change-detection job did not succeed (a broken filter would falsely skip the live job) OR the
+    # live job failed/cancelled. GREEN when the live job passed OR was correctly skipped as
+    # not-applicable (docs-only / fork / Dependabot).
+    needs: [changes, acceptance-single]
     if: always()
     runs-on: ubuntu-latest
     steps:
-      - name: Gate on the acceptance-single result
+      - name: Gate on change-detection + the acceptance result
         env:
-          RESULT: ${{ needs.acceptance-single.result }}
+          CHANGES: ${{ needs.changes.result }}
+          ACCEPTANCE: ${{ needs.acceptance-single.result }}
         run: |
-          echo "acceptance-single result: $RESULT"
-          if [ "$RESULT" = 'failure' ] || [ "$RESULT" = 'cancelled' ]; then
+          echo "changes: $CHANGES | acceptance-single: $ACCEPTANCE"
+          if [ "$CHANGES" != 'success' ]; then
+            echo "::error::change-detection job did not succeed ($CHANGES) — cannot trust the gate"
+            exit 1
+          fi
+          if [ "$ACCEPTANCE" = 'failure' ] || [ "$ACCEPTANCE" = 'cancelled' ]; then
             echo '::error::live single-variant acceptance e2e failed'
             exit 1
           fi
-          echo 'OK (passed or not applicable to this PR)'
+          echo 'OK (acceptance passed or not applicable to this PR)'
