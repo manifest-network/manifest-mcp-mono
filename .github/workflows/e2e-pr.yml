@@ -5,8 +5,9 @@ on:
     #   TS graph: the acceptance app imports ONLY @manifest-network/manifest-sdk + manifestjs
     #     → core + fred + agent-core + sdk (lease / chain / node are NOT in it).
     #   LIVE graph: the compose devnet builds the chain from submodules/manifest-ledger and the
-    #     provider from submodules/fred — a submodule-pointer bump is a prime source of the
-    #     provider/chain deploy rot (#112 class) this gate exists to catch, so submodules/** is in.
+    #     provider from submodules/fred — a submodule-pointer bump (submodules/**) OR a submodule
+    #     URL/branch switch (.gitmodules) alters the devnet build, a prime source of the provider/
+    #     chain deploy rot (#112 class) this gate exists to catch.
     # Update if the graph gains a dependency.
     paths:
       - 'packages/core/**'
@@ -16,6 +17,7 @@ on:
       - 'examples/sdk-acceptance/**'
       - 'e2e/**'
       - 'submodules/**'
+      - '.gitmodules'
       - 'package.json' # root only; nested workspace manifests are covered by packages/**
       - 'package-lock.json'
       - '.github/workflows/e2e-pr.yml'
