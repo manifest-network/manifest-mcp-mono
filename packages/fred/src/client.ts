@@ -80,7 +80,7 @@ const UNGUARDED_FETCH_WARNING =
   'Provider URLs come from on-chain SKU records, so this is an SSRF surface. ' +
   "Use createFredClientNode from '@manifest-network/manifest-mcp-fred/node' " +
   "(re-exported by the SDK as '@manifest-network/manifest-sdk/node'; SSRF-safe by default), " +
-  "or inject an SSRF-guarded fetch via createGuardedFetch from that '/node' subpath. " +
+  "or inject an SSRF-guarded fetch via createGuardedFetch from '@manifest-network/manifest-mcp-core/guarded-fetch'. " +
   'Note: injecting your own fetch opts OUT of the SSRF guard.';
 
 // Module-level once-latch: warn at most once per process (isolated in tests via vi.resetModules()).
