@@ -1,44 +1,57 @@
 name: E2E (PR)
+
+# Runs on EVERY PR (no `on.paths` filter) so the required `e2e-gate` job below always posts a
+# status. A path-filtered REQUIRED check would never report on a docs-only PR → merge deadlock.
+# The expensive live job is instead gated by the `changes` job + a job-level `if`.
 on:
   pull_request:
-    # RUNTIME deploy-dependency closure of the acceptance flow — not just the TS import graph.
-    #   TS graph: the acceptance app imports ONLY @manifest-network/manifest-sdk + manifestjs
-    #     → core + fred + agent-core + sdk (lease / chain / node are NOT in it).
-    #   LIVE graph: the compose devnet builds the chain from submodules/manifest-ledger and the
-    #     provider from submodules/fred — a submodule-pointer bump (submodules/**) OR a submodule
-    #     URL/branch switch (.gitmodules) alters the devnet build, a prime source of the provider/
-    #     chain deploy rot (#112 class) this gate exists to catch.
-    # Update if the graph gains a dependency.
-    paths:
-      - 'packages/core/**'
-      - 'packages/fred/**'
-      - 'packages/agent-core/**'
-      - 'packages/sdk/**'
-      - 'examples/sdk-acceptance/**'
-      - 'e2e/**'
-      - 'submodules/**'
-      - '.gitmodules'
-      - 'package.json' # root only; nested workspace manifests are covered by packages/**
-      - 'package-lock.json'
-      - '.github/workflows/e2e-pr.yml'
 
 # Cancel superseded runs on the same PR (bound cost).
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-# Least-privilege GITHUB_TOKEN (the main checkout needs read; the submodule fetch uses the ssh-key).
+# Least-privilege GITHUB_TOKEN (checkout needs read; the live job's submodule fetch uses the ssh-key).
 permissions:
   contents: read
 
 jobs:
+  changes:
+    # Native change detection (replaces the old on.pull_request.paths). Cheap: a checkout + one git
+    # diff. Outputs whether a deploy-relevant path changed.
+    runs-on: ubuntu-latest
+    outputs:
+      deploy: ${{ steps.filter.outputs.deploy }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0 # need the base commit to diff against
+      - id: filter
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        # RUNTIME deploy-dependency closure of the acceptance flow — not just the TS import graph.
+        #   TS graph:  the acceptance app imports ONLY @manifest-network/manifest-sdk + manifestjs
+        #     → core + fred + agent-core + sdk (lease / chain / node are NOT in it).
+        #   LIVE graph: the compose devnet builds the chain from submodules/manifest-ledger and the
+        #     provider from submodules/fred — a submodule-pointer bump (submodules/**) OR a submodule
+        #     URL/branch switch (.gitmodules) alters the devnet build. Both are in the closure.
+        run: |
+          if git diff --name-only "$BASE_SHA" "$HEAD_SHA" | grep -Eq \
+            '^(packages/(core|fred|agent-core|sdk)/|examples/sdk-acceptance/|e2e/|submodules/|\.gitmodules$|package\.json$|package-lock\.json$|\.github/workflows/e2e-pr\.yml$)'; then
+            echo 'deploy=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'deploy=false' >> "$GITHUB_OUTPUT"
+          fi
+
   acceptance-single:
-    # Same-repo branch PRs get secrets; FORK PRs get empty secrets → skip. Dependabot PRs are
-    # same-repo but ALSO get no Actions secrets, so FRED_DEPLOY_KEY would be empty and the SSH
-    # submodule checkout would hard-fail — exclude it too (else every weekly dep/actions bump reds
-    # this check). `github.actor` (not `triggering_actor`) is deliberate: it stays 'dependabot[bot]'
-    # on a human re-run, so the skip holds. A false `if` renders as SKIPPED, not failed.
+    needs: changes
+    # Run the live variant ONLY when a deploy-relevant path changed, on a same-repo non-Dependabot PR.
+    # FORK PRs get empty secrets → skip. Dependabot PRs are same-repo but ALSO get no secrets, so the
+    # SSH submodule checkout would hard-fail — exclude them too. `github.actor` (not `triggering_actor`)
+    # is deliberate: it stays 'dependabot[bot]' on a human re-run, so the skip holds.
     if: >-
+      needs.changes.outputs.deploy == 'true' &&
       github.event.pull_request.head.repo.full_name == github.repository &&
       github.actor != 'dependabot[bot]'
     runs-on: ubuntu-latest
@@ -82,3 +95,22 @@ jobs:
       - name: Teardown
         if: always()
         run: docker compose -f e2e/docker-compose.yml down -v --remove-orphans
+
+  e2e-gate:
+    # THE REQUIRED CHECK. Runs on EVERY PR (if: always(), so it runs even when acceptance-single was
+    # skipped) → it always posts a status, so requiring it never deadlocks a merge. Green when the live
+    # job succeeded OR was correctly skipped (docs-only / fork / Dependabot); red ONLY when it failed.
+    needs: acceptance-single
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Gate on the acceptance-single result
+        env:
+          RESULT: ${{ needs.acceptance-single.result }}
+        run: |
+          echo "acceptance-single result: $RESULT"
+          if [ "$RESULT" = 'failure' ] || [ "$RESULT" = 'cancelled' ]; then
+            echo '::error::live single-variant acceptance e2e failed'
+            exit 1
+          fi
+          echo 'OK (passed or not applicable to this PR)'
