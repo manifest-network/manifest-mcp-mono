@@ -2,10 +2,13 @@ import type { Signer } from '@manifest-network/manifest-mcp-core';
 import { AuthTokenService } from './auth-token-service.js';
 
 /**
- * Fred-owned driven port: mints ADR-036 provider/lease-data auth tokens. The AWS
- * credential-provider idiom (an injected token provider), backed by core's `Signer`
- * at the `createFredClient` root and by an `AuthTokenService` instance at the server.
- * Address-PARAM (not address-bound) so it composes onto `FredAuthCtx`.
+ * Fred-owned driven port: mints ADR-036 provider/lease-data auth tokens. Borrows the
+ * AWS credential-provider idiom (an injected token provider) but deliberately INVERTS
+ * AWS's cache-until-expiry: tokens are minted fresh per call (see `createProviderAuth`
+ * below — ADR-036 deterministic signing makes a reused token a replay-rejected
+ * duplicate). Backed by core's `Signer` at the `createFredClient` root and by an
+ * `AuthTokenService` instance at the server. Address-PARAM (not address-bound) so it
+ * composes onto `FredAuthCtx`.
  */
 export interface ProviderAuthPort {
   providerToken(input: { address: string; leaseUuid: string }): Promise<string>;
