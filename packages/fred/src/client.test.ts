@@ -57,7 +57,7 @@ function fakeManager(
     setLogger: vi.fn(),
     acquireRateLimit: vi.fn(async () => {}),
     getConfig: vi.fn(() => ({ chainId: 'test-1' })),
-    getAddress: vi.fn(async () => ADDR), // subscribeLeaseStatus resolves the broadcast address per poll-setup
+    getAddress: vi.fn(async () => ADDR), // waitForLeaseStatus resolves the broadcast address per poll-setup
     ...over,
   } as unknown as CosmosClientManager;
 }
@@ -65,13 +65,13 @@ function fakeManager(
 afterEach(() => vi.restoreAllMocks());
 
 describe('createFredClient', () => {
-  it('createFredClient layers subscribeLeaseStatus over the core client', async () => {
+  it('createFredClient layers waitForLeaseStatus over the core client', async () => {
     vi.spyOn(CosmosClientManager, 'getInstance').mockReturnValue(fakeManager());
     const client = await createFredClient({
       config: FULL_CONFIG,
       walletProvider: fakeWallet(),
     });
-    expect(typeof client.subscribeLeaseStatus).toBe('function');
+    expect(typeof client.waitForLeaseStatus).toBe('function');
     expect(typeof client.fundCredits).toBe('function'); // inherited from ManifestClient
     expect(typeof client.getLease).toBe('function');
     // The full provider lifecycle is bound onto the client (Task 5).
@@ -102,9 +102,9 @@ describe('createFredClient', () => {
     expect(result).toEqual({ providers: [], skus: [] });
   });
 
-  it('subscribeLeaseStatus forwards the client itself as ctx (a poll emits via onData)', async () => {
+  it('waitForLeaseStatus forwards the client itself as ctx (resolves with the terminal status)', async () => {
     // A query client that resolves the lease + provider, and a fetch returning a terminal status frame —
-    // so the watch (over the client-as-ctx) emits onData + completes, proving forwarding.
+    // so the wait (over the client-as-ctx) resolves with that status, proving forwarding.
     const query = makeMockQueryClient({
       billing: {
         lease: {
@@ -137,23 +137,14 @@ describe('createFredClient', () => {
       fetch: statusFetch,
     });
 
-    const onData = vi.fn();
-    await new Promise<void>((resolve, reject) => {
-      client.subscribeLeaseStatus(LEASE_UUID, {
-        onData,
-        onComplete: () => resolve(),
-        onError: (e) => reject(e),
-        intervalMs: 1,
-        timeout: 5_000,
-      });
-    });
-    expect(onData).toHaveBeenCalled();
-    expect(statusFetch).toHaveBeenCalled(); // the watch used the client's injected fetch (ctx forwarded)
+    const final = await client.waitForLeaseStatus(LEASE_UUID);
+    expect(final.state).toBe(LeaseState.LEASE_STATE_ACTIVE);
+    expect(statusFetch).toHaveBeenCalled(); // the wait used the client's injected fetch (ctx forwarded)
   });
 
   it('FredClient is ManifestClient & FredActions; a query-only client is not assignable', async () => {
     expectTypeOf<FredClient>().toMatchTypeOf<ManifestClient>();
-    expectTypeOf<FredClient>().toHaveProperty('subscribeLeaseStatus');
+    expectTypeOf<FredClient>().toHaveProperty('waitForLeaseStatus');
     // A read client (no required signer) is NOT a FredClient.
     type ReadShape = Omit<ManifestClient, 'signer'>;
     expectTypeOf<ReadShape>().not.toMatchTypeOf<FredClient>();
