@@ -158,7 +158,7 @@ try {
 }
 ```
 
-> **Escape hatch.** The same `deployApp` is also exported as a free `fn(ctx, spec, opts)` from `/deploy` for advanced composition. A consumer that already holds a `FredClient` can pass it directly (the client *is* a `FredAuthCtx`); a client-less consumer builds the ctx from a bare `Signer` via `createProviderAuth(signer, { chainId })` — re-exported from `/deploy` alongside the `FredAuthCtx` / `FredReadCtx` / `ProviderAuthPort` types. Prefer the bound `client.deployApp` for everyday use.
+> **Escape hatch.** The same `deployApp` is also exported as a free `fn(ctx, spec, opts)` from `/deploy` for advanced composition. A consumer that already holds a `FredClient` can pass it directly (the client *is* a `FredAuthCtx`); a client-less consumer builds the `providerAuth` port from a bare `Signer` via `createProviderAuth(signer, { chainId })`, then assembles a `FredAuthCtx` from it plus `query`/`chain`/`fetch`/`logger`. `createProviderAuth` and the `FredAuthCtx` / `FredReadCtx` / `ProviderAuthPort` types are all re-exported from `/deploy`. Prefer the bound `client.deployApp` for everyday use.
 
 ## Watching live status
 

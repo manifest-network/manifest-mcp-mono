@@ -62,8 +62,9 @@ const FAILURE_TERMINALS = [
  * NOTE: this flow deliberately MIXES the bound-client methods (the canonical everyday
  * surface) with the free ctx-shaped `/deploy` fns called with the CLIENT AS THE CTX
  * (a FredClient structurally IS a FredAuthCtx) — a coverage flow exercising both, not a
- * recommended style. A client-LESS consumer would instead build the ctx via
- * `createProviderAuth(signer, { chainId })` (re-exported from `/deploy`).
+ * recommended style. A client-LESS consumer would instead build the `providerAuth` port via
+ * `createProviderAuth(signer, { chainId })` (re-exported from `/deploy`) and slot it into a
+ * `FredAuthCtx` alongside `query`/`chain`/`fetch`/`logger`.
  */
 export async function runAcceptanceFlow(opts: AcceptanceOpts): Promise<void> {
   const client: FredClient = await createFredClient({
