@@ -46,6 +46,7 @@ export async function getLeaseStatus(
   leaseUuid: string,
   authToken: string,
   fetchFn?: typeof globalThis.fetch,
+  signal?: AbortSignal,
 ): Promise<FredLeaseStatus> {
   const validated = validateProviderUrl(providerUrl);
   const url = `${validated}/v1/leases/${encodeURIComponent(leaseUuid)}/status`;
@@ -53,6 +54,7 @@ export async function getLeaseStatus(
     url,
     {
       headers: { Authorization: `Bearer ${authToken}` },
+      signal,
     },
     undefined,
     fetchFn,
@@ -318,7 +320,16 @@ export class TerminalChainStateError extends ProviderApiError {
   }
 }
 
-function abortableSleep(ms: number, signal?: AbortSignal): Promise<void> {
+/**
+ * Sleep for `ms`, abort-aware. With no `signal` it is a plain `setTimeout` sleep; with one it clears
+ * the timer and rejects with `signal.reason ?? AbortError` if the signal aborts before the sleep ends
+ * (pre-aborted signals reject synchronously via `throwIfAborted`). Exported for the lease-status
+ * watchers (`waitForLeaseStatus`) so the interval wait cancels on caller abort.
+ */
+export function abortableSleep(
+  ms: number,
+  signal?: AbortSignal,
+): Promise<void> {
   if (!signal) return new Promise((resolve) => setTimeout(resolve, ms));
   signal.throwIfAborted();
   return new Promise<void>((resolve, reject) => {
