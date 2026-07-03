@@ -158,7 +158,7 @@ try {
 }
 ```
 
-> **Escape hatch.** The same `deployApp` is also exported as a free `fn(ctx, spec, opts)` from `/deploy` for advanced composition, but it requires you to assemble a `FredAuthCtx` (with a `providerAuth` token provider) by hand. Prefer the bound `client.deployApp` — it reuses the client's own `providerAuth`. Smoother re-exports for the free-fn path are tracked in [ENG-446](https://linear.app/liftedinit/issue/ENG-446).
+> **Escape hatch.** The same `deployApp` is also exported as a free `fn(ctx, spec, opts)` from `/deploy` for advanced composition. A consumer that already holds a `FredClient` can pass it directly (the client *is* a `FredAuthCtx`); a client-less consumer builds the ctx from a bare `Signer` via `createProviderAuth(signer, { chainId })` — re-exported from `/deploy` alongside the `FredAuthCtx` / `FredReadCtx` / `ProviderAuthPort` types. Prefer the bound `client.deployApp` for everyday use.
 
 ## Watching live status
 

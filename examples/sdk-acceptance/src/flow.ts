@@ -1,16 +1,13 @@
 import {
-  asLeaseUuid,
   createFredClient,
   type FredClient,
   type ManifestMCPConfig,
-  noopLogger,
   parseFqdn,
   type WalletProvider,
 } from '@manifest-network/manifest-sdk';
 import {
   buildManifest,
   buildStackManifest,
-  createAuthTokens,
   deployApp,
   type EncodeObject,
   type FredLeaseStatus,
@@ -60,6 +57,12 @@ const FAILURE_TERMINALS = [
  * Browser-buildable — `fetch`/`walletProvider`/`config` are INJECTED (the cert-trusting undici fetch +
  * the funded wallet + docker live in the `e2e/` node harness, never here). The credit denom is resolved
  * at runtime from `getSKUs()` (NOT the gas/`umfx` faucet denom).
+ *
+ * NOTE: this flow deliberately MIXES the bound-client methods (the canonical everyday
+ * surface) with the free ctx-shaped `/deploy` fns called with the CLIENT AS THE CTX
+ * (a FredClient structurally IS a FredAuthCtx) — a coverage flow exercising both, not a
+ * recommended style. A client-LESS consumer would instead build the ctx via
+ * `createProviderAuth(signer, { chainId })` (re-exported from `/deploy`).
  */
 export async function runAcceptanceFlow(opts: AcceptanceOpts): Promise<void> {
   const client: FredClient = await createFredClient({
@@ -69,32 +72,6 @@ export async function runAcceptanceFlow(opts: AcceptanceOpts): Promise<void> {
   });
   try {
     const addr = await client.chain.getAddress();
-    const tokens = createAuthTokens(client.signer, {
-      chainId: client.chain.getConfig().chainId,
-    });
-    // §2c bridge: address-closing + arity-adapting the address-bound thunks for the fred fns.
-    const getAuthToken = (_a: string, uuid: string) =>
-      tokens.getAuthToken(asLeaseUuid(uuid));
-    const getLeaseDataAuthToken = (_a: string, uuid: string, mh: string) =>
-      tokens.getLeaseDataAuthToken(asLeaseUuid(uuid), mh);
-
-    // The FredAuthCtx for the ctx-shaped fred capability fns (deployApp, restart/update/getLogs).
-    // Its providerAuth bridges the example's address-adapting token thunks onto the address-param port.
-    const authCtx = {
-      query: client.query,
-      chain: client.chain,
-      fetch: client.fetch,
-      logger: noopLogger,
-      providerAuth: {
-        providerToken: (i: { address: string; leaseUuid: string }) =>
-          getAuthToken(i.address, i.leaseUuid),
-        leaseDataToken: (i: {
-          address: string;
-          leaseUuid: string;
-          metaHashHex: string;
-        }) => getLeaseDataAuthToken(i.address, i.leaseUuid, i.metaHashHex),
-      },
-    };
 
     // 0) BILLING CREDIT — resolve the SKU price denom (NOT gas/umfx) and self-fund.
     const skus = await client.getSKUs({});
@@ -121,7 +98,7 @@ export async function runAcceptanceFlow(opts: AcceptanceOpts): Promise<void> {
             size: 'docker-micro',
           }
     ) as DeploySpec;
-    const deployed = await deployApp(authCtx, spec, {});
+    const deployed = await deployApp(client, spec, {});
     const leaseUuid = deployed.lease_uuid;
     const serviceName = opts.variant === 'stack' ? 'web' : undefined;
 
@@ -137,7 +114,7 @@ export async function runAcceptanceFlow(opts: AcceptanceOpts): Promise<void> {
     await getLeaseConnectionInfo(
       deployed.provider_url,
       leaseUuid,
-      await tokens.getAuthToken(asLeaseUuid(leaseUuid)),
+      await client.providerAuth.providerToken({ address: addr, leaseUuid }),
       client.fetch,
     );
 
@@ -145,15 +122,15 @@ export async function runAcceptanceFlow(opts: AcceptanceOpts): Promise<void> {
     // the e2e harness probes the chain and sets opts.skipCustomDomain when the image predates v2.1.0).
     if (!opts.skipCustomDomain) {
       await client.setItemCustomDomain({
-        leaseUuid: asLeaseUuid(leaseUuid),
+        leaseUuid,
         customDomain: parseFqdn('app.example.com'),
         serviceName,
       });
     }
 
     // 5) restart / update / getLogs (ctx; poll-on-409). The update manifest is variant-shaped.
-    // Reuses the `authCtx` built above for the deploy.
-    await retryOn409(() => restartApp(authCtx, { address: addr, leaseUuid }));
+    // Pass the client directly as the ctx (it IS a FredAuthCtx).
+    await retryOn409(() => restartApp(client, { address: addr, leaseUuid }));
     const updateManifest =
       opts.variant === 'stack'
         ? buildStackManifest({
@@ -174,13 +151,13 @@ export async function runAcceptanceFlow(opts: AcceptanceOpts): Promise<void> {
             ports: { '8080/tcp': {} },
           });
     await retryOn409(() =>
-      updateApp(authCtx, {
+      updateApp(client, {
         address: addr,
         leaseUuid,
         manifest: JSON.stringify(updateManifest),
       }),
     );
-    await getAppLogs(authCtx, { address: addr, leaseUuid, tail: 100 });
+    await getAppLogs(client, { address: addr, leaseUuid, tail: 100 });
 
     // 6) executeTx BATCH — two MsgFundCredit (atomic double-fund); caller sets sender/tenant.
     const fundMsg = (): EncodeObject => ({
@@ -195,7 +172,7 @@ export async function runAcceptanceFlow(opts: AcceptanceOpts): Promise<void> {
 
     // 7) subscribeLeaseStatus (poll) — resolve on SUCCESS terminal, REJECT on FAILURE terminal.
     await new Promise<FredLeaseStatus>((resolve, reject) => {
-      const stop = client.subscribeLeaseStatus(asLeaseUuid(leaseUuid), {
+      const stop = client.subscribeLeaseStatus(leaseUuid, {
         onData: () => {},
         onComplete: (final) => {
           const failed =
@@ -219,7 +196,7 @@ export async function runAcceptanceFlow(opts: AcceptanceOpts): Promise<void> {
     });
 
     // 8) stopApp (bound)
-    await client.stopApp({ leaseUuid: asLeaseUuid(leaseUuid) });
+    await client.stopApp({ leaseUuid });
   } finally {
     client.dispose();
   }

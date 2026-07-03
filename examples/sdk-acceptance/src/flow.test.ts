@@ -18,9 +18,7 @@ const h = vi.hoisted(() => {
     // ROOT
     createFredClient: vi.fn(),
     parseFqdn: vi.fn((s: string) => s),
-    asLeaseUuid: vi.fn((s: string) => s),
     // /deploy positional fred fns + helpers
-    createAuthTokens: vi.fn(),
     deployApp: vi.fn(),
     getLeaseConnectionInfo: vi.fn(),
     restartApp: vi.fn(),
@@ -47,12 +45,9 @@ const LeaseState = h.LeaseState;
 vi.mock('@manifest-network/manifest-sdk', () => ({
   createFredClient: h.createFredClient,
   parseFqdn: h.parseFqdn,
-  asLeaseUuid: h.asLeaseUuid,
-  noopLogger: { debug() {}, info() {}, warn() {}, error() {} },
 }));
 
 vi.mock('@manifest-network/manifest-sdk/deploy', () => ({
-  createAuthTokens: h.createAuthTokens,
   deployApp: h.deployApp,
   getLeaseConnectionInfo: h.getLeaseConnectionInfo,
   restartApp: h.restartApp,
@@ -92,8 +87,11 @@ function buildFakeClient(opts: { onSubscribeComplete?: 'active' | 'failure' }) {
       getConfig: vi.fn(() => ({ chainId: 'manifest-devnet' })),
     },
     query: { __query: true },
-    signer: { __signer: true },
     fetch: vi.fn(),
+    providerAuth: {
+      providerToken: vi.fn(async () => 'auth-token'),
+      leaseDataToken: vi.fn(async () => 'lease-data-token'),
+    },
     // bound reads
     getSKUs: vi.fn(async () => {
       callLog.push('getSKUs');
@@ -166,13 +164,6 @@ function buildFakeClient(opts: { onSubscribeComplete?: 'active' | 'failure' }) {
   return client;
 }
 
-function wireAuthTokens() {
-  h.createAuthTokens.mockReturnValue({
-    getAuthToken: vi.fn(async () => 'auth-token'),
-    getLeaseDataAuthToken: vi.fn(async () => 'lease-data-token'),
-  });
-}
-
 // The flow only forwards config/walletProvider/fetch into the (mocked) createFredClient, so the test
 // passes plain stand-ins cast to the real param types — never `as never` (that erases the spread shape).
 const baseOpts = (): Pick<
@@ -189,7 +180,6 @@ const baseOpts = (): Pick<
 beforeEach(() => {
   vi.clearAllMocks();
   callLog = [];
-  wireAuthTokens();
   h.deployApp.mockResolvedValue({
     lease_uuid: LEASE_UUID,
     provider_url: PROVIDER_URL,
