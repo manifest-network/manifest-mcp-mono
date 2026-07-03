@@ -22,9 +22,10 @@ import { MsgFundCredit } from '@manifest-network/manifestjs/dist/codegen/liftedi
 
 /**
  * Drift-proof deploy-spec type: derived from `deployApp`'s spec param (2nd positional, after the
- * `FredAuthCtx`) so the example never needs `AppDeploySpec` re-exported (and never resorts to
- * `as never`). The inner `as {…}` narrowings on `spec.services`/`spec.image` below are the variant
- * projections (single vs stack), not type escapes.
+ * `FredAuthCtx`) so the example stays pinned to the fn's real input even if it drifts (and never
+ * resorts to `as never`). `AppDeploySpec` is now re-exported from `/deploy` for other consumers;
+ * the example keeps this derivation deliberately. The inner `as {…}` narrowings on
+ * `spec.services`/`spec.image` below are the variant projections (single vs stack), not type escapes.
  */
 type DeploySpec = Parameters<typeof deployApp>[1];
 
