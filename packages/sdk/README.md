@@ -106,7 +106,7 @@ The root barrel carries the client factories, branded types (`parse*` / `as*`), 
 | `@manifest-network/manifest-sdk` | Client factories (`createFredClient`, `createManifestClient`, `createManifestReadClient`), brands + `parse*`/`as*`, ports (`WalletProvider`, `Signer` adapters), `ManifestMCPError`/`ManifestMCPErrorCode`, `createConfig`, and the wholesale type surface (barrel `createFredClient` is unguarded on Node — prefer `createFredClientNode` from `/node`) |
 | `…/reads` | Branded read fns: `getBalance`, `getLease`, `getLeasesByTenant`, `getSKUs`, `getProviders`, `getLeaseByCustomDomain`, `getBillingParams`, `getWithdrawableAmount` |
 | `…/catalog` | `browseCatalog`, `resolveSku`, `listSkuCandidates`, `checkDeploymentReadiness`, `buildManifestPreview` |
-| `…/deploy` | `deployApp`, `restartApp`, `updateApp`, `getAppLogs`, `appStatus`, `waitForAppReady`, `subscribeLeaseStatus`, `executeTx`, `fundCredits`, `setItemCustomDomain`, `stopApp`, `LeaseState`, manifest builders, ADR-036 auth helpers |
+| `…/deploy` | `deployApp`, `restartApp`, `updateApp`, `getAppLogs`, `appStatus`, `waitForAppReady`, `waitForLeaseStatus`, `executeTx`, `fundCredits`, `setItemCustomDomain`, `stopApp`, `LeaseState`, manifest builders, ADR-036 auth helpers |
 | `…/orchestration` | Optional plan/confirm/recover flows: `deployApp`, `manageDomain`, `closeLease`, `troubleshootDeployment` (callback-driven) |
 | `…/node` | Node-only: `createFredClientNode` (SSRF-safe fred client), `createGuardedFetch`, `isBlocked` |
 
