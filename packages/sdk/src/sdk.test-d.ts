@@ -52,7 +52,7 @@ describe('SDK factory return types (re-emitted; codegen-passthrough tripwire)', 
 
   it('FredClient is a strict superset of ManifestClient (full client + the provider method)', () => {
     expectTypeOf<FredClient>().toExtend<ManifestClient>();
-    expectTypeOf<FredClient>().toHaveProperty('subscribeLeaseStatus');
+    expectTypeOf<FredClient>().toHaveProperty('waitForLeaseStatus');
   });
 });
 

@@ -63,6 +63,7 @@ export {
   getProviderHealth,
   getServiceNames,
   type InstanceInfo,
+  isLeaseFailureTerminal,
   isStackManifest,
   type LeaseConnectionResponse,
   MAX_TAIL,
@@ -83,9 +84,6 @@ export {
   type ServiceConfig,
   type ServiceConnectionDetails,
   type SkuSelector,
-  type SubscribeCtx,
-  type SubscribeLeaseStatusOptions,
-  subscribeLeaseStatus,
   type TerminalChainLeaseState,
   type TerminalChainState,
   type TerminalChainStateContext,
@@ -98,6 +96,9 @@ export {
   validateServiceName,
   type WaitForAppReadyOptions,
   type WaitForAppReadyResult,
+  type WaitForLeaseStatusCtx,
+  type WaitForLeaseStatusOptions,
   waitForAppReady,
+  waitForLeaseStatus,
 } from '@manifest-network/manifest-mcp-fred';
 export type { EncodeObject };
