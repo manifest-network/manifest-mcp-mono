@@ -1,11 +1,16 @@
 import { describe, expectTypeOf, it } from 'vitest';
 // The tx/lifecycle value surface re-emitted on the `/deploy` subpath.
 import type {
+  AppDeploySpec,
   executeTx,
+  FredAuthCtx,
+  FredReadCtx,
   fundCredits,
+  ProviderAuthPort,
   setItemCustomDomain,
   stopApp,
 } from './deploy.js';
+import { createProviderAuth } from './deploy.js';
 // Brand families re-emitted via the ROOT `export type *`.
 import type {
   Address,
@@ -119,5 +124,19 @@ describe('brand families + ports re-emit as types', () => {
     expectTypeOf<ReadCtx>().toHaveProperty('query');
     expectTypeOf<TxCtx>().toHaveProperty('signer');
     expectTypeOf<EventTransport>().not.toBeNever();
+  });
+});
+
+describe('/deploy re-exports the provider-auth compose surface (ENG-446 D1/D3)', () => {
+  it('createProviderAuth builds a ProviderAuthPort from a Signer', () => {
+    expectTypeOf(createProviderAuth).returns.toEqualTypeOf<ProviderAuthPort>();
+    expectTypeOf<ProviderAuthPort>().toHaveProperty('providerToken');
+    expectTypeOf<ProviderAuthPort>().toHaveProperty('leaseDataToken');
+  });
+
+  it('FredAuthCtx / FredReadCtx / AppDeploySpec re-emit as types', () => {
+    expectTypeOf<FredAuthCtx>().toHaveProperty('providerAuth');
+    expectTypeOf<FredReadCtx>().toHaveProperty('query');
+    expectTypeOf<AppDeploySpec>().not.toBeNever();
   });
 });

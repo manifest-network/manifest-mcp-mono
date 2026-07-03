@@ -6,6 +6,7 @@
 import type { EncodeObject } from '@cosmjs/proto-signing';
 
 export {
+  type AppDeploySpec,
   type ExecuteTxResult,
   executeTx,
   type FundCreditsResult,
@@ -30,6 +31,7 @@ export {
   createAuthToken,
   createAuthTokens,
   createLeaseDataSignMessage,
+  createProviderAuth,
   createSignMessage,
   type DeployAppInput,
   type DeployAppResult,
@@ -40,6 +42,7 @@ export {
   deployManifest,
   deriveAppNameFromImage,
   type FredActionResponse,
+  type FredAuthCtx,
   type FredInstanceInfo,
   type FredLeaseInfo,
   type FredLeaseLogs,
@@ -47,6 +50,7 @@ export {
   type FredLeaseRelease,
   type FredLeaseReleases,
   type FredLeaseStatus,
+  type FredReadCtx,
   type FredServiceStatus,
   fetchActiveLease,
   getAppLogs,
@@ -69,6 +73,7 @@ export {
   PROVISION_FAILED,
   PROVISION_IN_PROGRESS,
   ProviderApiError,
+  type ProviderAuthPort,
   type ProviderHealthResponse,
   parseStackManifest,
   pollLeaseUntilReady,
