@@ -57,6 +57,12 @@ vi.mock('@manifest-network/manifest-sdk/deploy', () => ({
   buildStackManifest: h.buildStackManifest,
   LeaseState: h.LeaseState,
   PROVISION_FAILED: h.PROVISION_FAILED,
+  isLeaseFailureTerminal: (s: { state: number; provision_status?: string }) =>
+    s.state === h.LeaseState.LEASE_STATE_CLOSED ||
+    s.state === h.LeaseState.LEASE_STATE_REJECTED ||
+    s.state === h.LeaseState.LEASE_STATE_EXPIRED ||
+    (s.provision_status !== undefined &&
+      h.PROVISION_FAILED.has(s.provision_status)),
 }));
 
 vi.mock(
@@ -76,7 +82,6 @@ const PROVIDER_URL = 'https://provider.example:8443';
 let callLog: string[];
 
 function buildFakeClient(opts: { onSubscribeComplete?: 'active' | 'failure' }) {
-  const subscribeStop = vi.fn();
   const client = {
     // ctx fields
     chain: {
@@ -134,27 +139,14 @@ function buildFakeClient(opts: { onSubscribeComplete?: 'active' | 'failure' }) {
       callLog.push('stopApp');
       return {};
     }),
-    subscribeLeaseStatus: vi.fn(
-      (
-        _uuid: string,
-        subOpts: {
-          onComplete?: (final: {
-            state: number;
-            provision_status?: string;
-          }) => void;
-          onError?: (e: unknown) => void;
-        },
-      ) => {
-        callLog.push('subscribeLeaseStatus');
-        // Fire onComplete asynchronously to mirror the real poll terminal.
-        queueMicrotask(() => {
-          if (opts.onSubscribeComplete === 'failure') {
-            subOpts.onComplete?.({ state: LeaseState.LEASE_STATE_CLOSED });
-          } else {
-            subOpts.onComplete?.({ state: LeaseState.LEASE_STATE_ACTIVE });
-          }
-        });
-        return subscribeStop;
+    waitForLeaseStatus: vi.fn(
+      async (
+        _uuid: unknown,
+      ): Promise<{ state: number; provision_status?: string }> => {
+        callLog.push('waitForLeaseStatus');
+        return opts.onSubscribeComplete === 'failure'
+          ? { state: LeaseState.LEASE_STATE_CLOSED }
+          : { state: LeaseState.LEASE_STATE_ACTIVE };
       },
     ),
     dispose: vi.fn(() => {
@@ -250,7 +242,7 @@ describe('runAcceptanceFlow (mocked SDK)', () => {
       'getLease',
       'setItemCustomDomain:none',
       'executeTx:2',
-      'subscribeLeaseStatus',
+      'waitForLeaseStatus',
       'stopApp',
       'dispose',
     ]);
@@ -371,26 +363,10 @@ describe('runAcceptanceFlow (mocked SDK)', () => {
 
   it('(f′) subscribe REJECTS on a PROVISION_FAILED provision_status even when state is ACTIVE', async () => {
     const client = buildFakeClient({ onSubscribeComplete: 'active' });
-    client.subscribeLeaseStatus.mockImplementationOnce(
-      (
-        _uuid: string,
-        subOpts: {
-          onComplete?: (final: {
-            state: number;
-            provision_status?: string;
-          }) => void;
-        },
-      ) => {
-        callLog.push('subscribeLeaseStatus');
-        queueMicrotask(() => {
-          subOpts.onComplete?.({
-            state: LeaseState.LEASE_STATE_ACTIVE,
-            provision_status: 'PROVISION_STATUS_FAILED',
-          });
-        });
-        return vi.fn();
-      },
-    );
+    client.waitForLeaseStatus.mockResolvedValueOnce({
+      state: LeaseState.LEASE_STATE_ACTIVE,
+      provision_status: 'PROVISION_STATUS_FAILED',
+    });
     h.createFredClient.mockResolvedValue(client);
 
     await expect(

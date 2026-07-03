@@ -10,11 +10,10 @@ import {
   buildStackManifest,
   deployApp,
   type EncodeObject,
-  type FredLeaseStatus,
   getAppLogs,
   getLeaseConnectionInfo,
+  isLeaseFailureTerminal,
   LeaseState,
-  PROVISION_FAILED,
   restartApp,
   updateApp,
 } from '@manifest-network/manifest-sdk/deploy';
@@ -43,14 +42,6 @@ export interface AcceptanceOpts {
    */
   skipCustomDomain?: boolean;
 }
-
-// onComplete fires for FAILURE terminals too — the flow MUST reject on these (else a failed deploy
-// false-greens the metric). PROVISION_FAILED (a Set) covers the ACTIVE-but-provision-failed case.
-const FAILURE_TERMINALS = [
-  LeaseState.LEASE_STATE_CLOSED,
-  LeaseState.LEASE_STATE_REJECTED,
-  LeaseState.LEASE_STATE_EXPIRED,
-];
 
 /**
  * The compose-only acceptance flow: deploy → … → stopApp, composed from ONLY the public SDK
@@ -172,30 +163,16 @@ export async function runAcceptanceFlow(opts: AcceptanceOpts): Promise<void> {
     });
     await client.executeTx([fundMsg(), fundMsg()]);
 
-    // 7) subscribeLeaseStatus (poll) — resolve on SUCCESS terminal, REJECT on FAILURE terminal.
-    await new Promise<FredLeaseStatus>((resolve, reject) => {
-      const stop = client.subscribeLeaseStatus(leaseUuid, {
-        onData: () => {},
-        onComplete: (final) => {
-          const failed =
-            FAILURE_TERMINALS.includes(final.state) ||
-            (final.provision_status !== undefined &&
-              PROVISION_FAILED.has(final.provision_status));
-          if (failed)
-            reject(
-              new Error(
-                `lease reached a FAILURE terminal: ${final.state}/${final.provision_status}`,
-              ),
-            );
-          else resolve(final);
-        },
-        onError: (e) => {
-          stop();
-          reject(e);
-        },
-        timeout: 120_000,
-      });
+    // 7) waitForLeaseStatus — resolve at any terminal; a FAILURE terminal must reject the flow
+    // (else a failed deploy false-greens the metric).
+    const finalStatus = await client.waitForLeaseStatus(leaseUuid, {
+      timeout: 120_000,
     });
+    if (isLeaseFailureTerminal(finalStatus)) {
+      throw new Error(
+        `lease reached a FAILURE terminal: ${finalStatus.state}/${finalStatus.provision_status}`,
+      );
+    }
 
     // 8) stopApp (bound)
     await client.stopApp({ leaseUuid });
