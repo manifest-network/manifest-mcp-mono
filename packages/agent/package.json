@@ -46,12 +46,15 @@
     "dist"
   ],
   "dependencies": {
-    "@manifest-network/manifest-agent-core": "^0.15.0",
-    "@manifest-network/manifest-mcp-core": "^0.15.0",
+    "@manifest-network/manifest-agent-core": "0.15.0",
     "@modelcontextprotocol/sdk": "1.29.0",
     "zod": "^4.3.6"
   },
+  "peerDependencies": {
+    "@manifest-network/manifest-mcp-core": "^0.15.0"
+  },
   "devDependencies": {
+    "@manifest-network/manifest-mcp-core": "0.15.0",
     "@types/node": "22.19.19",
     "typescript": "5.9.3",
     "vitest": "4.1.8"
