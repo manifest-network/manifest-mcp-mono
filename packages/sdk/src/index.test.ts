@@ -30,7 +30,7 @@ const ROOT_FORBIDDEN_FREE_FNS = [
   'getBalance',
   'deployApp',
   'executeTx',
-  'subscribeLeaseStatus',
+  'waitForLeaseStatus',
 ] as const;
 
 const READS = [
@@ -102,7 +102,8 @@ describe('manifest-sdk barrels', () => {
       'deployApp',
       'deployManifest',
       'buildManifest',
-      'subscribeLeaseStatus',
+      'waitForLeaseStatus',
+      'isLeaseFailureTerminal',
       'waitForAppReady',
       'createAuthTokens',
       'createProviderAuth',

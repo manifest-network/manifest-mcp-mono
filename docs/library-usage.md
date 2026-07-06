@@ -18,7 +18,7 @@ Three factories, all returning a bound client whose methods close over the ports
 |---------|-----------------|-----------|
 | `createManifestReadClient` | No | Chain **reads** only (`getBalance`, `getLease`, `getSKUs`, …) |
 | `createManifestClient` | Yes | Reads **+ on-chain transactions** (`fundCredits`, `setItemCustomDomain`, `stopApp`, `executeTx`) |
-| `createFredClient` | Yes | Everything above **+ the Fred provider lifecycle** (`deployApp`, `appStatus`, `getAppLogs`, `restartApp`, `updateApp`, `subscribeLeaseStatus`, …) |
+| `createFredClient` | Yes | Everything above **+ the Fred provider lifecycle** (`deployApp`, `appStatus`, `getAppLogs`, `restartApp`, `updateApp`, `waitForLeaseStatus`, …) |
 
 All three share the same options (`{ config, fetch?, logger? }` — plus a required `walletProvider` for the two signing factories, and a few not-yet-active `@beta` fields) and the same lifecycle rule: **`dispose()` every client** when you're done. Clients keyed by the same config share one underlying `CosmosClientManager` connection (torn down when the last holder disposes), and `getInstance` *mutates* that shared instance — so don't hold two clients against the **same config key** at once (e.g. a read client and a signing client). In practice a query-only config omits `rpcUrl`, so it keys differently from a signing client and the common case is safe.
 
@@ -162,16 +162,18 @@ try {
 
 ## Watching live status
 
-`subscribeLeaseStatus` is a poll-backed **converging watch**: it always ends in exactly one of `onComplete` (a terminal state) or `onError`, and returns a synchronous unsubscribe. The options object is required.
+`waitForLeaseStatus` polls the provider until the lease reaches a **terminal** state, then resolves with the final status (a converging wait — the viem `waitFor*` / cosmjs `signAndBroadcast` shape). It resolves for a *failure* terminal too; check with `isLeaseFailureTerminal`, and reject/observe as you wish. Aborting the `signal` rejects the promise.
 
 ```ts
-const unsubscribe = client.subscribeLeaseStatus(leaseUuid, {
-  onData: (status) => console.log(status.state),
-  onComplete: (final) => console.log('settled:', final.state),
-  onError: (err) => console.error(err),
+import { isLeaseFailureTerminal } from '@manifest-network/manifest-sdk/deploy';
+
+const controller = new AbortController();
+const final = await client.waitForLeaseStatus(leaseUuid, {
+  onStatus: (s) => console.log('progress:', s.state), // intermediate polls only
   timeout: 120_000,
+  signal: controller.signal, // optional; abort rejects with signal.reason
 });
-// later: unsubscribe();
+if (isLeaseFailureTerminal(final)) throw new Error(`deploy failed: ${final.state}`);
 ```
 
 ## Catalog and SKU resolution

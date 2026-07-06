@@ -117,14 +117,15 @@ export { fetchActiveLease } from './tools/fetchActiveLease.js';
 export { getAppLogs } from './tools/getLogs.js';
 export { resolveProviderUrl } from './tools/resolveLeaseProvider.js';
 export { restartApp } from './tools/restartApp.js';
-export {
-  type SubscribeCtx,
-  type SubscribeLeaseStatusOptions,
-  subscribeLeaseStatus,
-} from './tools/subscribeLeaseStatus.js';
 export { updateApp } from './tools/updateApp.js';
 export {
   type WaitForAppReadyOptions,
   type WaitForAppReadyResult,
   waitForAppReady,
 } from './tools/waitForAppReady.js';
+export {
+  isLeaseFailureTerminal,
+  type WaitForLeaseStatusCtx,
+  type WaitForLeaseStatusOptions,
+  waitForLeaseStatus,
+} from './tools/waitForLeaseStatus.js';

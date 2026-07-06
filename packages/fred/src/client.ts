@@ -1,6 +1,7 @@
 import {
   type BoundFn,
   createManifestClient,
+  type FredLeaseStatus,
   type FullClientOptions,
   type LeaseUuid,
   logger,
@@ -16,19 +17,19 @@ import { deployApp } from './tools/deployApp.js';
 import { getLeaseConnectionInfo } from './tools/getLeaseConnectionInfo.js';
 import { getAppLogs } from './tools/getLogs.js';
 import { restartApp } from './tools/restartApp.js';
-import {
-  type SubscribeLeaseStatusOptions,
-  subscribeLeaseStatus,
-} from './tools/subscribeLeaseStatus.js';
 import { updateApp } from './tools/updateApp.js';
 import { waitForAppReady } from './tools/waitForAppReady.js';
+import {
+  type WaitForLeaseStatusOptions,
+  waitForLeaseStatus,
+} from './tools/waitForLeaseStatus.js';
 
 /** Provider-backed methods layered onto a core ManifestClient by createFredClient. */
 export interface FredActions {
-  subscribeLeaseStatus(
+  waitForLeaseStatus(
     leaseUuid: LeaseUuid,
-    opts: SubscribeLeaseStatusOptions,
-  ): () => void;
+    opts?: WaitForLeaseStatusOptions,
+  ): Promise<FredLeaseStatus>;
   browseCatalog: BoundFn<typeof browseCatalog>;
   appStatus: BoundFn<typeof appStatus>;
   getAppLogs: BoundFn<typeof getAppLogs>;
@@ -50,8 +51,8 @@ export type FredClient = ManifestClient & {
 /** The fred-action decorator: thin .bind(ctx) closures over the free fns (viem-style; ctx = the client). */
 export function fredActions(ctx: FredClient): FredActions {
   return {
-    subscribeLeaseStatus: (leaseUuid, opts) =>
-      subscribeLeaseStatus(ctx, leaseUuid, opts),
+    waitForLeaseStatus: (leaseUuid, opts) =>
+      waitForLeaseStatus(ctx, leaseUuid, opts),
     browseCatalog: (...a) => browseCatalog(ctx, ...a),
     appStatus: (...a) => appStatus(ctx, ...a),
     getAppLogs: (...a) => getAppLogs(ctx, ...a),

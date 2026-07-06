@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+- **fred/sdk:** `subscribeLeaseStatus` is now **`waitForLeaseStatus`** — a converging watch that returns a `Promise<FredLeaseStatus>` (resolve at any terminal) instead of a callback bag + `unsubscribe()`. New `isLeaseFailureTerminal(status)` predicate. (ENG-461)
+
+### Upgrade notes
+- **BREAKING (fred/sdk lease-status callers):** replace
+  `const unsub = client.subscribeLeaseStatus(id, { onData, onComplete, onError }); // ... unsub()`
+  with `const final = await client.waitForLeaseStatus(id, { onStatus, signal }); if (isLeaseFailureTerminal(final)) { /* handle failure */ }`.
+  Cancellation moves from the returned `unsubscribe()` to `opts.signal` (abort rejects with `signal.reason`); a lease-failure terminal now **resolves** (inspect via `isLeaseFailureTerminal`) rather than firing `onComplete`. (ENG-461)
+
 ## [0.15.0] - 2026-06-30
 
 ### Added

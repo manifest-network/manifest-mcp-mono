@@ -3,7 +3,7 @@ import type { Logger } from './logger.js';
 import type { Signer } from './signer.js';
 
 /**
- * @beta — DEFERRED (§5.9). The WS transport + `subscribeLeaseStatus`'s push path land in a later
+ * @beta — DEFERRED (§5.9). The WS transport + `waitForLeaseStatus`'s push path land in a later
  * phase (poll-backed in P0). Forward-declared as an opaque stub so `CapabilityCtx` compiles without
  * the transport; absent `events` ⇒ poll fallback.
  */
@@ -44,7 +44,7 @@ export type ReadCtx = Pick<CapabilityCtx, 'query' | 'chain' | 'logger'>;
  * NOTE: 4c/4d do NOT consume `ctx.signer` for on-chain txs — the wallet AND the query-only
  * INVALID_CONFIG guard come from `ctx.chain` (via getSigningClient), and 4d's per-signer broadcast
  * mutex keys off the resolved CHAIN ADDRESS (ctx.chain.getAddress()), NOT ctx.signer. `signer?` is
- * carried for the full client's required-signer narrowing + provider ops (subscribeLeaseStatus); do
+ * carried for the full client's required-signer narrowing + provider ops (waitForLeaseStatus); do
  * not call requireAuthSigner on the signer-less ctx the on-chain tx call sites build.
  */
 export type TxCtx = Pick<CapabilityCtx, 'chain' | 'signer' | 'logger'>;

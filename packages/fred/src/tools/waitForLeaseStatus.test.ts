@@ -1,0 +1,316 @@
+import type {
+  CosmosClientManager,
+  LeaseUuid,
+} from '@manifest-network/manifest-mcp-core';
+import { LeaseState, noopLogger } from '@manifest-network/manifest-mcp-core';
+import { makeMockQueryClient } from '@manifest-network/manifest-mcp-core/__test-utils__/mocks.js';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { ProviderAuthPort } from '../http/provider-auth.js';
+import type { WaitForLeaseStatusCtx } from './waitForLeaseStatus.js';
+import {
+  isLeaseFailureTerminal,
+  waitForLeaseStatus,
+} from './waitForLeaseStatus.js';
+
+const LEASE_UUID = '550e8400-e29b-41d4-a716-446655440000' as LeaseUuid;
+const PROVIDER_URL = 'https://provider.example.com';
+
+interface RawFrame {
+  state: string;
+  provision_status?: string;
+  [k: string]: unknown;
+}
+
+function makeWaitCtx(opts: {
+  providerUuid: string;
+  statusFrames: RawFrame[];
+  getAddressRejects?: boolean;
+  fetch?: typeof globalThis.fetch;
+}): WaitForLeaseStatusCtx {
+  const query = makeMockQueryClient({
+    billing: {
+      lease: {
+        uuid: LEASE_UUID,
+        state: LeaseState.LEASE_STATE_PENDING,
+        providerUuid: opts.providerUuid,
+      },
+    },
+    sku: {
+      providerLookup: {
+        [opts.providerUuid]: { provider: { apiUrl: PROVIDER_URL } },
+      },
+    },
+  });
+  let i = 0;
+  const fetch =
+    opts.fetch ??
+    (vi.fn(async () => {
+      const frame =
+        opts.statusFrames[Math.min(i, opts.statusFrames.length - 1)];
+      i += 1;
+      const body = JSON.stringify(frame);
+      return {
+        ok: true,
+        status: 200,
+        text: async () => body,
+      } as unknown as Response;
+    }) as unknown as typeof globalThis.fetch);
+  const chain = {
+    acquireRateLimit: vi.fn().mockResolvedValue(undefined),
+    getConfig: vi.fn().mockReturnValue({ chainId: 'test-chain' }),
+    getAddress: opts.getAddressRejects
+      ? vi.fn().mockRejectedValue(new Error('no signer configured'))
+      : vi.fn().mockResolvedValue('manifest1abc'),
+  } as unknown as CosmosClientManager;
+  const providerAuth: ProviderAuthPort = {
+    providerToken: vi.fn().mockResolvedValue('mock-provider-token'),
+    leaseDataToken: vi.fn().mockResolvedValue('mock-lease-data-token'),
+  };
+  return {
+    query,
+    chain,
+    fetch,
+    providerAuth,
+    logger: noopLogger,
+  } as WaitForLeaseStatusCtx;
+}
+
+beforeEach(() => vi.clearAllMocks());
+afterEach(() => vi.useRealTimers());
+
+describe('waitForLeaseStatus', () => {
+  it('resolves with the final status on a success terminal', async () => {
+    const ctx = makeWaitCtx({
+      providerUuid: 'p1',
+      statusFrames: [{ state: 'LEASE_STATE_ACTIVE' }],
+    });
+    const final = await waitForLeaseStatus(ctx, LEASE_UUID, { intervalMs: 1 });
+    expect(final.state).toBe(LeaseState.LEASE_STATE_ACTIVE);
+    expect(isLeaseFailureTerminal(final)).toBe(false);
+  });
+
+  it('resolves (does NOT reject) on a CLOSED failure terminal — caller inspects', async () => {
+    const ctx = makeWaitCtx({
+      providerUuid: 'p1',
+      statusFrames: [{ state: 'LEASE_STATE_CLOSED' }],
+    });
+    const final = await waitForLeaseStatus(ctx, LEASE_UUID, { intervalMs: 1 });
+    expect(final.state).toBe(LeaseState.LEASE_STATE_CLOSED);
+    expect(isLeaseFailureTerminal(final)).toBe(true);
+  });
+
+  it('resolves on ACTIVE + PROVISION_FAILED and isLeaseFailureTerminal is true', async () => {
+    const ctx = makeWaitCtx({
+      providerUuid: 'p1',
+      statusFrames: [
+        { state: 'LEASE_STATE_ACTIVE', provision_status: 'failed' },
+      ],
+    });
+    const final = await waitForLeaseStatus(ctx, LEASE_UUID, { intervalMs: 1 });
+    expect(isLeaseFailureTerminal(final)).toBe(true);
+  });
+
+  it('onStatus fires for INTERMEDIATE polls only, deduped — NOT for the terminal', async () => {
+    vi.useFakeTimers();
+    const ctx = makeWaitCtx({
+      providerUuid: 'p1',
+      statusFrames: [
+        { state: 'LEASE_STATE_PENDING', provision_status: 'provisioning' },
+        { state: 'LEASE_STATE_PENDING', provision_status: 'provisioning' },
+        { state: 'LEASE_STATE_ACTIVE' },
+      ],
+    });
+    const onStatus = vi.fn();
+    const p = waitForLeaseStatus(ctx, LEASE_UUID, { onStatus, intervalMs: 10 });
+    await vi.advanceTimersByTimeAsync(50);
+    const final = await p;
+    expect(final.state).toBe(LeaseState.LEASE_STATE_ACTIVE);
+    // the two identical PENDING polls dedup to ONE onStatus; the terminal ACTIVE is NOT emitted.
+    expect(onStatus).toHaveBeenCalledTimes(1);
+    expect(onStatus).toHaveBeenCalledWith(
+      expect.objectContaining({ state: LeaseState.LEASE_STATE_PENDING }),
+    );
+  });
+
+  it('emitEvery: true emits onStatus raw per intermediate poll', async () => {
+    vi.useFakeTimers();
+    const ctx = makeWaitCtx({
+      providerUuid: 'p1',
+      statusFrames: [
+        { state: 'LEASE_STATE_PENDING' },
+        { state: 'LEASE_STATE_PENDING' },
+        { state: 'LEASE_STATE_ACTIVE' },
+      ],
+    });
+    const onStatus = vi.fn();
+    const p = waitForLeaseStatus(ctx, LEASE_UUID, {
+      onStatus,
+      emitEvery: true,
+      intervalMs: 10,
+    });
+    await vi.advanceTimersByTimeAsync(50);
+    await p;
+    expect(onStatus).toHaveBeenCalledTimes(2); // both PENDING polls, terminal excluded
+  });
+
+  it('a throwing onStatus is contained — the promise still resolves', async () => {
+    vi.useFakeTimers();
+    const ctx = makeWaitCtx({
+      providerUuid: 'p1',
+      statusFrames: [
+        { state: 'LEASE_STATE_PENDING' },
+        { state: 'LEASE_STATE_ACTIVE' },
+      ],
+    });
+    const p = waitForLeaseStatus(ctx, LEASE_UUID, {
+      onStatus: () => {
+        throw new Error('consumer bug');
+      },
+      intervalMs: 10,
+    });
+    await vi.advanceTimersByTimeAsync(30);
+    await expect(p).resolves.toEqual(
+      expect.objectContaining({ state: LeaseState.LEASE_STATE_ACTIVE }),
+    );
+  });
+
+  it('rejects on setup failure (lease not found on chain)', async () => {
+    const ctx = makeWaitCtx({
+      providerUuid: 'p1',
+      statusFrames: [{ state: 'LEASE_STATE_ACTIVE' }],
+    });
+    // Override the chain lease query to return no lease.
+    (ctx.query.liftedinit.billing.v1.lease as unknown as ReturnType<
+      typeof vi.fn
+    >) = vi.fn().mockResolvedValue({ lease: undefined });
+    await expect(
+      waitForLeaseStatus(ctx, LEASE_UUID, { intervalMs: 1 }),
+    ).rejects.toThrow(/not found/);
+  });
+
+  it('rejects on a network/parse error from the poll', async () => {
+    const ctx = makeWaitCtx({
+      providerUuid: 'p1',
+      statusFrames: [],
+      fetch: vi
+        .fn()
+        .mockRejectedValue(
+          new Error('boom'),
+        ) as unknown as typeof globalThis.fetch,
+    });
+    await expect(
+      waitForLeaseStatus(ctx, LEASE_UUID, { intervalMs: 1 }),
+    ).rejects.toThrow(/boom/);
+  });
+
+  it('rejects on the poll deadline for a stuck non-terminal lease', async () => {
+    vi.useFakeTimers();
+    const ctx = makeWaitCtx({
+      providerUuid: 'p1',
+      statusFrames: [{ state: 'LEASE_STATE_PENDING' }],
+    });
+    const p = waitForLeaseStatus(ctx, LEASE_UUID, {
+      intervalMs: 10,
+      timeout: 25,
+    });
+    const assertion = expect(p).rejects.toThrow(/timed out/);
+    await vi.advanceTimersByTimeAsync(60);
+    await assertion;
+  });
+
+  it('a PRE-ABORTED signal rejects with signal.reason and does NO poll', async () => {
+    const ctx = makeWaitCtx({
+      providerUuid: 'p1',
+      statusFrames: [{ state: 'LEASE_STATE_ACTIVE' }],
+    });
+    const reason = new DOMException('cancelled', 'AbortError');
+    const p = waitForLeaseStatus(ctx, LEASE_UUID, {
+      signal: AbortSignal.abort(reason),
+      intervalMs: 1,
+    });
+    await expect(p).rejects.toBe(reason);
+    expect(ctx.chain.getAddress).not.toHaveBeenCalled(); // setup did not run
+  });
+
+  it('aborting while a poll is pending rejects with signal.reason (never resolves undefined)', async () => {
+    vi.useFakeTimers();
+    const controller = new AbortController();
+    const ctx = makeWaitCtx({
+      providerUuid: 'p1',
+      statusFrames: [{ state: 'LEASE_STATE_PENDING' }],
+    });
+    const reason = new DOMException('stop', 'AbortError');
+    const p = waitForLeaseStatus(ctx, LEASE_UUID, {
+      signal: controller.signal,
+      intervalMs: 1000,
+    });
+    await vi.advanceTimersByTimeAsync(5); // let the first poll complete, land in the interval sleep
+    controller.abort(reason);
+    await expect(p).rejects.toBe(reason);
+  });
+
+  it('aborting while a poll FETCH is in flight rejects with signal.reason (exercises the catch abort-first branch)', async () => {
+    const controller = new AbortController();
+    const reason = new DOMException('stop', 'AbortError');
+    // A fetch that stays pending until the signal aborts, then rejects with a DIFFERENT raw error than
+    // signal.reason — mimics an in-flight provider request being cancelled. The tool's catch must
+    // normalize to signal.reason (abort-first), so if that branch were deleted the caller would see
+    // 'raw fetch failure' and this assertion would fail.
+    const fetch = vi.fn(
+      () =>
+        new Promise((_res, rej) => {
+          controller.signal.addEventListener(
+            'abort',
+            () => rej(new Error('raw fetch failure')),
+            { once: true },
+          );
+        }),
+    ) as unknown as typeof globalThis.fetch;
+    const ctx = makeWaitCtx({ providerUuid: 'p1', statusFrames: [], fetch });
+    const p = waitForLeaseStatus(ctx, LEASE_UUID, {
+      signal: controller.signal,
+      intervalMs: 1,
+    });
+    await vi.waitFor(() => expect(fetch).toHaveBeenCalled()); // the poll fetch is now in flight
+    controller.abort(reason);
+    await expect(p).rejects.toBe(reason);
+  });
+
+  it('waits with no opts', async () => {
+    const ctx = makeWaitCtx({
+      providerUuid: 'p1',
+      statusFrames: [{ state: 'LEASE_STATE_ACTIVE' }],
+    });
+    await expect(waitForLeaseStatus(ctx, LEASE_UUID)).resolves.toBeDefined();
+  });
+});
+
+describe('isLeaseFailureTerminal', () => {
+  const mk = (state: LeaseState, provision_status?: string) =>
+    ({
+      state,
+      provision_status,
+    }) as unknown as import('@manifest-network/manifest-mcp-core').FredLeaseStatus;
+  it('true for CLOSED/REJECTED/EXPIRED and ACTIVE+PROVISION_FAILED', () => {
+    expect(isLeaseFailureTerminal(mk(LeaseState.LEASE_STATE_CLOSED))).toBe(
+      true,
+    );
+    expect(isLeaseFailureTerminal(mk(LeaseState.LEASE_STATE_REJECTED))).toBe(
+      true,
+    );
+    expect(isLeaseFailureTerminal(mk(LeaseState.LEASE_STATE_EXPIRED))).toBe(
+      true,
+    );
+    expect(
+      isLeaseFailureTerminal(mk(LeaseState.LEASE_STATE_ACTIVE, 'failed')),
+    ).toBe(true);
+  });
+  it('false for a success terminal and for pending', () => {
+    expect(isLeaseFailureTerminal(mk(LeaseState.LEASE_STATE_ACTIVE))).toBe(
+      false,
+    );
+    expect(isLeaseFailureTerminal(mk(LeaseState.LEASE_STATE_PENDING))).toBe(
+      false,
+    );
+  });
+});

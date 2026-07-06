@@ -14,7 +14,7 @@ import { stopApp } from './tools/stopApp.js';
 
 /**
  * @public — full bound client: ManifestReadClient + the on-chain tx methods + executeTx, with a
- * REQUIRED signer (the read-vs-full type guarantee). Provider methods (subscribeLeaseStatus) are NOT
+ * REQUIRED signer (the read-vs-full type guarantee). Provider methods (waitForLeaseStatus) are NOT
  * here — they hit the Fred backend; see fred's createFredClient (viem one-client-one-backend rule).
  */
 export interface ManifestClient extends ManifestReadClient, CapabilityCtx {
