@@ -70,9 +70,9 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@manifest-network/manifest-mcp-core": "^0.15.0",
-    "@manifest-network/manifest-mcp-fred": "^0.15.0",
-    "@manifest-network/manifest-agent-core": "^0.15.0"
+    "@manifest-network/manifest-mcp-core": "0.15.0",
+    "@manifest-network/manifest-mcp-fred": "0.15.0",
+    "@manifest-network/manifest-agent-core": "0.15.0"
   },
   "devDependencies": {
     "typescript": "5.9.3",
