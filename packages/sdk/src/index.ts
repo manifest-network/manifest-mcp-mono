@@ -3,7 +3,8 @@
 // Carries the WHOLESALE type surface (query-result types, ports, contracts) via
 // `export type *` plus a curated set of VALUE re-exports: the client factories,
 // brand parsers/casts, the signer/wallet ports, the error vocabulary, and config.
-// NO free fns — those live on the scoped subpaths (`/reads`, `/catalog`, `/deploy`,
+// NO free fns EXCEPT error-vocabulary helpers over ManifestMCPError (sanitizeForLogging,
+// isSkuAmbiguousError) — domain-operation fns live on the scoped subpaths (`/reads`, `/catalog`, `/deploy`,
 // `/orchestration`), which also structurally resolves the fred-vs-agent-core
 // `deployApp` name clash. `export type * from core` + the named VALUE re-exports of
 // the same symbols compile clean (no TS2300/TS2308) and emit only the curated
@@ -22,6 +23,7 @@ export {
   createSignerAdapter,
   createValidatedConfig,
   INFRASTRUCTURE_ERROR_CODES,
+  isSkuAmbiguousError,
   ManifestMCPError,
   ManifestMCPErrorCode,
   MnemonicWalletProvider,
@@ -48,4 +50,7 @@ export type {
 } from '@manifest-network/manifest-mcp-fred';
 // Only the factory on ROOT — `fredActions` is the low-level client-mixin builder (off the §9 narrative);
 // a consumer composing the SDK uses `createFredClient`. (It remains available from the fred package.)
-export { createFredClient } from '@manifest-network/manifest-mcp-fred';
+export {
+  createFredClient,
+  ProviderApiError,
+} from '@manifest-network/manifest-mcp-fred';
