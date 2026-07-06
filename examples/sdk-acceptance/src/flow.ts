@@ -14,6 +14,7 @@ import {
   getLeaseConnectionInfo,
   isLeaseFailureTerminal,
   LeaseState,
+  ProviderApiError,
   restartApp,
   updateApp,
 } from '@manifest-network/manifest-sdk/deploy';
@@ -191,8 +192,13 @@ async function retryOn409(
       await fn();
       return;
     } catch (e) {
-      const status = (e as { status?: number }).status; // ProviderApiError carries .status
-      if (status !== 409 || i === tries - 1) throw e;
+      if (
+        !ProviderApiError.isProviderApiError(e) ||
+        e.status !== 409 ||
+        i === tries - 1
+      ) {
+        throw e;
+      }
       await new Promise((r) => setTimeout(r, 3000));
     }
   }

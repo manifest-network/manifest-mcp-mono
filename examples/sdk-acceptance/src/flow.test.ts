@@ -18,6 +18,31 @@ const h = vi.hoisted(() => {
     // ROOT
     createFredClient: vi.fn(),
     parseFqdn: vi.fn((s: string) => s),
+    // Local branded ProviderApiError (dual-package-safe by design — the guard accepts any object
+    // carrying the registered Symbol.for brand). Kept in vi.hoisted so the /deploy factory (hoisted
+    // above module consts) can reference it. NOT vi.importActual (that would need a built dist).
+    ProviderApiError: class ProviderApiError extends Error {
+      status: number;
+      constructor(status: number, message: string) {
+        super(message);
+        this.name = 'ProviderApiError';
+        this.status = status;
+        Object.defineProperty(
+          this,
+          Symbol.for('@manifest-network/manifest-mcp-fred.ProviderApiError'),
+          { value: true },
+        );
+      }
+      static isProviderApiError(v: unknown): v is ProviderApiError {
+        return (
+          typeof v === 'object' &&
+          v !== null &&
+          (v as Record<symbol, unknown>)[
+            Symbol.for('@manifest-network/manifest-mcp-fred.ProviderApiError')
+          ] === true
+        );
+      }
+    },
     // /deploy positional fred fns + helpers
     deployApp: vi.fn(),
     getLeaseConnectionInfo: vi.fn(),
@@ -53,6 +78,7 @@ vi.mock('@manifest-network/manifest-sdk/deploy', () => ({
   restartApp: h.restartApp,
   updateApp: h.updateApp,
   getAppLogs: h.getAppLogs,
+  ProviderApiError: h.ProviderApiError,
   buildManifest: h.buildManifest,
   buildStackManifest: h.buildStackManifest,
   LeaseState: h.LeaseState,
@@ -378,7 +404,7 @@ describe('runAcceptanceFlow (mocked SDK)', () => {
   it('(h) a 409 from restart is retried, then succeeds', async () => {
     const client = buildFakeClient({ onSubscribeComplete: 'active' });
     h.createFredClient.mockResolvedValue(client);
-    const err409 = Object.assign(new Error('invalid state'), { status: 409 });
+    const err409 = new h.ProviderApiError(409, 'invalid state');
     h.restartApp.mockRejectedValueOnce(err409).mockResolvedValueOnce({});
 
     await runAcceptanceFlow({ ...baseOpts(), variant: 'single' });
@@ -389,7 +415,7 @@ describe('runAcceptanceFlow (mocked SDK)', () => {
   it('(h) a non-409 from restart is NOT retried (propagates)', async () => {
     const client = buildFakeClient({ onSubscribeComplete: 'active' });
     h.createFredClient.mockResolvedValue(client);
-    const err500 = Object.assign(new Error('boom'), { status: 500 });
+    const err500 = new h.ProviderApiError(500, 'boom');
     h.restartApp.mockRejectedValue(err500);
 
     await expect(
