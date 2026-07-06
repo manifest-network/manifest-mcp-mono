@@ -36,7 +36,7 @@ const h = vi.hoisted(() => {
       LEASE_STATE_REJECTED: 3,
       LEASE_STATE_EXPIRED: 4,
     } as const,
-    PROVISION_FAILED: new Set(['PROVISION_STATUS_FAILED']),
+    PROVISION_FAILED: new Set(['failed', 'deprovisioning']),
   };
 });
 
@@ -365,7 +365,7 @@ describe('runAcceptanceFlow (mocked SDK)', () => {
     const client = buildFakeClient({ onSubscribeComplete: 'active' });
     client.waitForLeaseStatus.mockResolvedValueOnce({
       state: LeaseState.LEASE_STATE_ACTIVE,
-      provision_status: 'PROVISION_STATUS_FAILED',
+      provision_status: 'failed',
     });
     h.createFredClient.mockResolvedValue(client);
 
