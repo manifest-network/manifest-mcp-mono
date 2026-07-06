@@ -58,15 +58,17 @@ for (const p of workspacePackages) {
 }
 const internalPackages = new Set(workspacePackages.map((p) => p.pkg.name));
 
-const caretVersion = `^${version}`;
+const exactVersion = version; // internal siblings pinned EXACT (lockstep supply-chain determinism)
+const peerVersion = `^${version}`; // internal peers stay caret, tracked to the release minor
 
 // Phase 2: Update versions and internal dependency ranges, then write
 const written = [];
 for (const { rel, filepath, pkg } of packages) {
   pkg.version = version;
   for (const dep of internalPackages) {
-    if (pkg.dependencies?.[dep]) pkg.dependencies[dep] = caretVersion;
-    if (pkg.devDependencies?.[dep]) pkg.devDependencies[dep] = caretVersion;
+    if (pkg.dependencies?.[dep]) pkg.dependencies[dep] = exactVersion;
+    if (pkg.devDependencies?.[dep]) pkg.devDependencies[dep] = exactVersion;
+    if (pkg.peerDependencies?.[dep]) pkg.peerDependencies[dep] = peerVersion;
   }
   try {
     writeFileSync(filepath, JSON.stringify(pkg, null, 2) + "\n");
