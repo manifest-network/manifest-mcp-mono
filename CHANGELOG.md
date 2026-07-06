@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- **sdk:** typed error surface on the root barrel — `ProviderApiError.isProviderApiError(e)` (a dual-package-safe brand guard, robust where `instanceof` fails across duplicate copies) and `isSkuAmbiguousError(e)` + the `SkuAmbiguousDetails` type (a `code`-discriminated narrowing of `ManifestMCPError.details` for `SKU_AMBIGUOUS`, so consumers read `err.details.candidates` typed, no cast). `ManifestMCPError` stays non-generic. (ENG-462)
+
 ### Changed
 - **fred/sdk:** `subscribeLeaseStatus` is now **`waitForLeaseStatus`** — a converging watch that returns a `Promise<FredLeaseStatus>` (resolve at any terminal) instead of a callback bag + `unsubscribe()`. New `isLeaseFailureTerminal(status)` predicate. (ENG-461)
 - **packaging (all `@manifest-network/*`):** internal sibling dependencies are now **exact-pinned**, and the identity-bearing packages `core` and `fred` are declared as `peerDependencies` on the non-terminal libraries (`sdk`/`node` provide them as direct deps). No API or runtime change — this hardens installs against a dual-package hazard (two physical copies of `core`/`fred`, which would break `instanceof` on branded errors and split the `CosmosClientManager` singleton) for consumers installing multiple `@manifest-network/*` packages. (ENG-463)
