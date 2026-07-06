@@ -1,3 +1,10 @@
+/** Global-registry brand so `isProviderApiError` survives duplicate physical copies of this
+ *  package (the dual-package hazard) — the React `$$typeof` idiom. Symbol.for resolves to the
+ *  same symbol across copies; a bare `instanceof` does not. */
+const PROVIDER_API_ERROR_BRAND = Symbol.for(
+  '@manifest-network/manifest-mcp-fred.ProviderApiError',
+);
+
 export class ProviderApiError extends Error {
   public readonly status: number;
 
@@ -6,6 +13,20 @@ export class ProviderApiError extends Error {
     this.name = 'ProviderApiError';
     this.status = status;
     Object.setPrototypeOf(this, ProviderApiError.prototype);
+    // Dual-package-safe brand. Defined NON-enumerably (default descriptor) so it never appears
+    // in JSON.stringify / Object.entries / spread / sanitizeForLogging. Inherited by subclasses
+    // (TerminalChainStateError) via this super() call.
+    Object.defineProperty(this, PROVIDER_API_ERROR_BRAND, { value: true });
+  }
+
+  /** Dual-package-safe guard — robust where cross-copy `instanceof` fails. Also matches
+   *  subclasses (e.g. TerminalChainStateError, which inherits the brand). */
+  static isProviderApiError(value: unknown): value is ProviderApiError {
+    return (
+      typeof value === 'object' &&
+      value !== null &&
+      (value as Record<symbol, unknown>)[PROVIDER_API_ERROR_BRAND] === true
+    );
   }
 }
 

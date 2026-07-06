@@ -239,3 +239,40 @@ describe('parseJsonResponse', () => {
     );
   });
 });
+
+describe('ProviderApiError.isProviderApiError (dual-package-safe brand guard)', () => {
+  const BRAND = Symbol.for(
+    '@manifest-network/manifest-mcp-fred.ProviderApiError',
+  );
+
+  it('returns true for a real instance', () => {
+    expect(
+      ProviderApiError.isProviderApiError(new ProviderApiError(500, 'x')),
+    ).toBe(true);
+  });
+
+  it('returns true for a subclass instance (inherited brand)', () => {
+    class Sub extends ProviderApiError {}
+    expect(ProviderApiError.isProviderApiError(new Sub(500, 'x'))).toBe(true);
+  });
+
+  it('returns true for a foreign copy carrying the same registry brand', () => {
+    const foreign = Object.defineProperty(new Error('x'), BRAND, {
+      value: true,
+    });
+    expect(ProviderApiError.isProviderApiError(foreign)).toBe(true);
+  });
+
+  it('returns false for a plain Error, a { status } fake, and nullish', () => {
+    expect(ProviderApiError.isProviderApiError(new Error('x'))).toBe(false);
+    expect(ProviderApiError.isProviderApiError({ status: 500 })).toBe(false);
+    expect(ProviderApiError.isProviderApiError(null)).toBe(false);
+    expect(ProviderApiError.isProviderApiError(undefined)).toBe(false);
+  });
+
+  it('brands non-enumerably (not an own enumerable symbol, not copied by spread)', () => {
+    const e = new ProviderApiError(500, 'boom');
+    expect(Object.getOwnPropertyDescriptor(e, BRAND)?.enumerable).toBe(false);
+    expect(Object.getOwnPropertySymbols({ ...e })).not.toContain(BRAND);
+  });
+});
