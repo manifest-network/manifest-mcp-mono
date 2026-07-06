@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { makeMockQueryClient, makeReadCtx } from './__test-utils__/mocks.js';
-import { listSkuCandidates, resolveSku } from './sku-resolution.js';
+import {
+  isSkuAmbiguousError,
+  listSkuCandidates,
+  resolveSku,
+} from './sku-resolution.js';
 import { ManifestMCPError, ManifestMCPErrorCode } from './types.js';
 
 function qc(
@@ -216,5 +220,40 @@ describe('listSkuCandidates', () => {
     });
     expect(list).toHaveLength(1);
     expect(list[0].skuUuid).toBe('sku-p1');
+  });
+});
+
+describe('isSkuAmbiguousError', () => {
+  const cand = {
+    skuUuid: 's1',
+    providerUuid: 'p1',
+    name: 'micro',
+    active: true,
+  };
+  const err = new ManifestMCPError(
+    ManifestMCPErrorCode.SKU_AMBIGUOUS,
+    'ambiguous',
+    { reason: 'AMBIGUOUS_SKU_NAME', size: 'micro', candidates: [cand] },
+  );
+
+  it('narrows a real SKU_AMBIGUOUS error and exposes typed candidates', () => {
+    expect(isSkuAmbiguousError(err)).toBe(true);
+    if (isSkuAmbiguousError(err)) {
+      expect(err.details.candidates).toHaveLength(1);
+      expect(err.details.candidates[0].name).toBe('micro');
+    }
+  });
+
+  it('returns false for a different code, a code-only object, and non-objects', () => {
+    expect(
+      isSkuAmbiguousError(
+        new ManifestMCPError(ManifestMCPErrorCode.QUERY_FAILED, 'x'),
+      ),
+    ).toBe(false);
+    expect(
+      isSkuAmbiguousError({ code: ManifestMCPErrorCode.SKU_AMBIGUOUS }),
+    ).toBe(false);
+    expect(isSkuAmbiguousError(null)).toBe(false);
+    expect(isSkuAmbiguousError('nope')).toBe(false);
   });
 });
