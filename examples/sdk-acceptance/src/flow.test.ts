@@ -349,7 +349,7 @@ describe('runAcceptanceFlow (mocked SDK)', () => {
     expect(client.dispose).toHaveBeenCalledTimes(1);
   });
 
-  it('(f′) subscribe REJECTS on a FAILURE terminal (CLOSED) — a failed deploy must NOT false-green', async () => {
+  it('(f′) waitForLeaseStatus REJECTS on a FAILURE terminal (CLOSED) — a failed deploy must NOT false-green', async () => {
     const client = buildFakeClient({ onSubscribeComplete: 'failure' });
     h.createFredClient.mockResolvedValue(client);
 
@@ -361,7 +361,7 @@ describe('runAcceptanceFlow (mocked SDK)', () => {
     expect(client.dispose).toHaveBeenCalledTimes(1);
   });
 
-  it('(f′) subscribe REJECTS on a PROVISION_FAILED provision_status even when state is ACTIVE', async () => {
+  it('(f′) waitForLeaseStatus REJECTS on a PROVISION_FAILED provision_status even when state is ACTIVE', async () => {
     const client = buildFakeClient({ onSubscribeComplete: 'active' });
     client.waitForLeaseStatus.mockResolvedValueOnce({
       state: LeaseState.LEASE_STATE_ACTIVE,

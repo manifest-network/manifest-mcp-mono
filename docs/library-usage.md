@@ -167,6 +167,7 @@ try {
 ```ts
 import { isLeaseFailureTerminal } from '@manifest-network/manifest-sdk/deploy';
 
+const controller = new AbortController();
 const final = await client.waitForLeaseStatus(leaseUuid, {
   onStatus: (s) => console.log('progress:', s.state), // intermediate polls only
   timeout: 120_000,

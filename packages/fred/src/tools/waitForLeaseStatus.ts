@@ -38,7 +38,7 @@ export interface WaitForLeaseStatusOptions {
   emitEvery?: boolean;
 }
 
-/** Terminal classification, mirroring pollLeaseUntilReady (fred.ts:374-409) but returning a verdict
+/** Terminal classification, mirroring `pollLeaseUntilReady` in http/fred.ts but returning a verdict
  *  instead of resolve/throw. Reuses the EXPORTED PROVISION_* sets so it never drifts. */
 type Terminal = 'success' | 'failure' | 'pending';
 function classifyTerminal(s: FredLeaseStatus): Terminal {
