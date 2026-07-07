@@ -41,6 +41,7 @@ import {
   asLeaseUuid,
   asProviderUuid,
   cosmosEstimateFee,
+  isSkuAmbiguousError,
   ManifestMCPError,
   ManifestMCPErrorCode,
   noopLogger,
@@ -252,12 +253,8 @@ export async function deployApp(
       });
       return { pin, elicited: false };
     } catch (err) {
-      if (
-        err instanceof ManifestMCPError &&
-        err.code === ManifestMCPErrorCode.SKU_AMBIGUOUS &&
-        callbacks.onResolveSku
-      ) {
-        const candidates = (err.details?.candidates as SkuCandidate[]) ?? [];
+      if (isSkuAmbiguousError(err) && callbacks.onResolveSku) {
+        const candidates = [...err.details.candidates];
         callbacks.onProgress?.({ kind: 'sku_ambiguous', candidates });
         const pick = await race(callbacks.onResolveSku(candidates));
         const pin = await resolveSku(readCtx, {

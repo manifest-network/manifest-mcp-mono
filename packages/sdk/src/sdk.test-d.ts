@@ -19,6 +19,8 @@ import type {
   LeaseUuid,
   ProviderUuid,
   ReadCtx,
+  SkuAmbiguousDetails,
+  SkuCandidate,
   SkuUuid,
   TxCtx,
 } from './index.js';
@@ -33,8 +35,10 @@ import {
   createManifestReadClient,
   type FredClient,
   type FullClientOptions,
+  isSkuAmbiguousError,
   type ManifestClient,
   type ManifestReadClient,
+  ProviderApiError,
   type QueryCtx,
   type ReadClientOptions,
 } from './index.js';
@@ -138,5 +142,25 @@ describe('/deploy re-exports the provider-auth compose surface (ENG-446 D1/D3)',
     expectTypeOf<FredAuthCtx>().toHaveProperty('providerAuth');
     expectTypeOf<FredReadCtx>().toHaveProperty('query');
     expectTypeOf<AppDeploySpec>().not.toBeNever();
+  });
+});
+
+describe('error-narrowing guards (ENG-462)', () => {
+  it('ProviderApiError.isProviderApiError narrows to ProviderApiError', () => {
+    const e: unknown = null;
+    if (ProviderApiError.isProviderApiError(e)) {
+      expectTypeOf(e).toEqualTypeOf<ProviderApiError>();
+      expectTypeOf(e.status).toEqualTypeOf<number>();
+    }
+  });
+
+  it('isSkuAmbiguousError narrows details.candidates to readonly SkuCandidate[]', () => {
+    const e: unknown = null;
+    if (isSkuAmbiguousError(e)) {
+      expectTypeOf(e.details.candidates).toEqualTypeOf<
+        readonly SkuCandidate[]
+      >();
+      expectTypeOf(e.details).toExtend<SkuAmbiguousDetails>();
+    }
   });
 });

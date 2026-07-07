@@ -22,6 +22,28 @@ export interface SkuCandidate {
   readonly active: boolean;
 }
 
+/** The `details` shape of a `SKU_AMBIGUOUS` `ManifestMCPError` (produced by `ambiguous()` below). */
+export interface SkuAmbiguousDetails {
+  readonly reason: 'AMBIGUOUS_SKU_NAME';
+  readonly size: string;
+  readonly candidates: readonly SkuCandidate[];
+}
+
+/** Narrow an unknown error to the SKU_AMBIGUOUS shape. Discriminates on the `code` VALUE (+ the
+ *  `details.reason` tag) — no `instanceof`, so it is dual-package-safe. cosmjs `isDeliverTxFailure`
+ *  idiom. */
+export function isSkuAmbiguousError(
+  value: unknown,
+): value is ManifestMCPError & { readonly details: SkuAmbiguousDetails } {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    (value as { code?: unknown }).code === ManifestMCPErrorCode.SKU_AMBIGUOUS &&
+    (value as { details?: { reason?: unknown } }).details?.reason ===
+      'AMBIGUOUS_SKU_NAME'
+  );
+}
+
 export interface ResolveSkuInput {
   /** User-facing tier name. Always supplied; used for matching + error messages. */
   readonly size: string;
@@ -90,7 +112,11 @@ function ambiguous(size: string, candidates: SkuCandidate[]): ManifestMCPError {
     ManifestMCPErrorCode.SKU_AMBIGUOUS,
     `SKU name "${size}" matches ${candidates.length} active SKUs. ` +
       `Specify provider_uuid (or sku_uuid) to disambiguate:\n${lines}`,
-    { reason: 'AMBIGUOUS_SKU_NAME', size, candidates },
+    {
+      reason: 'AMBIGUOUS_SKU_NAME',
+      size,
+      candidates,
+    } satisfies SkuAmbiguousDetails,
   );
 }
 

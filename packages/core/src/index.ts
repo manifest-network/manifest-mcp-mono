@@ -135,9 +135,11 @@ export {
 } from './signer.js';
 // SKU resolution (shared by fred + agent-core)
 export {
+  isSkuAmbiguousError,
   listSkuCandidates,
   type ResolveSkuInput,
   resolveSku,
+  type SkuAmbiguousDetails,
   type SkuCandidate,
 } from './sku-resolution.js';
 // Annotation helpers (used by chain/lease/fred/cosmwasm packages)
