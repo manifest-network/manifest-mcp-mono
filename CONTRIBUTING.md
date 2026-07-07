@@ -12,7 +12,7 @@ npm install
 npm run build
 ```
 
-Node.js 20+ and npm 9+ are required. `nvm use` will pick up `.nvmrc`.
+Node.js 22.19+ (enforced via `engines` on every package) and npm 10+ (ships with Node 22) are required. `nvm use` will pick up `.nvmrc`.
 
 ## Development workflow
 
@@ -64,7 +64,7 @@ See [`ARCHITECTURE.md`](ARCHITECTURE.md) for a detailed design overview. The sho
 - `packages/node` — CLI entry points + keyfile wallet, depends on core + the servers.
 - `packages/sdk` — `@manifest-network/manifest-sdk`, the aggregating app-building SDK (composes core + fred + agent-core).
 
-Dependency direction is **node → {chain, lease, fred, cosmwasm, agent} → core** and **agent → agent-core → {core, fred}**. Never reverse it. Core stays browser-compatible (`platform: "neutral"`); only `node` may use Node.js-specific APIs.
+Dependency direction is **node → {chain, lease, fred, cosmwasm, agent} → core** and **agent → agent-core → {core, fred}**. Never reverse it. Core's static import graph stays browser-compatible (`platform: "neutral"`). Any Node.js-specific code in the `neutral` packages (e.g. the SSRF guarded-fetch in core/fred/agent-core, which uses undici + `node:dns`) must be isolated behind a dynamic `import()` and exposed only via a `node`-gated subpath export, never the package barrel; the `node` package is free to use Node.js APIs directly.
 
 ## Adding a new Cosmos SDK module
 
@@ -79,7 +79,7 @@ Once the module is registered, it's automatically reachable through `cosmos_quer
 
 ## Adding a new MCP tool, resource, or prompt
 
-- **Tool**: pick the right server (chain / lease / fred / cosmwasm). Register via `mcpServer.registerTool(name, { description, inputSchema, annotations, _meta }, handler)`. Required: pass `annotations` built via `readOnlyAnnotations()` or `mutatingAnnotations()`, and `_meta` built via `manifestMeta({ broadcasts, estimable })`. Wrap the handler in `withErrorHandling(toolName, fn)`. The annotation matrix is pinned by `tool-annotations.e2e.test.ts` — update that file when adding or changing a tool.
+- **Tool**: pick the right server (chain / lease / fred / cosmwasm / agent). Register via `mcpServer.registerTool(name, { description, inputSchema, annotations, _meta }, handler)`. Required: pass `annotations` built via `readOnlyAnnotations()` or `mutatingAnnotations()`, and `_meta` built via `manifestMeta({ broadcasts, estimable })`. Wrap the handler in `withErrorHandling(toolName, fn)`. The annotation matrix is pinned by both the per-server `describe('tool annotations + _meta.manifest', ...)` blocks in each `server.test.ts` and the cross-server `e2e/tool-annotations.e2e.test.ts` — update both when adding or changing a tool.
 - **Resource** (fred only today): `mcpServer.registerResource(name, uri, { title, description, mimeType }, handler)`. Acquire a rate-limit token before any chain read.
 - **Prompt** (fred only today): `mcpServer.registerPrompt(name, { title, description, argsSchema? }, handler)`. The handler returns a single user-role message that walks the agent through the workflow.
 
@@ -104,7 +104,7 @@ Pushing a `vMAJOR.MINOR.PATCH` tag triggers `.github/workflows/release.yml`, whi
 
 The workflow also creates a GitHub Release with auto-generated notes; that step is best-effort — publish succeeds even if the Release creation fails.
 
-The `[Unreleased]` section of `CHANGELOG.md` becomes the body of the release entry; keep it current.
+The release body is auto-generated from merged PRs via `gh release create --generate-notes` — the workflow does not read `CHANGELOG.md`. Keep the `[Unreleased]` section of `CHANGELOG.md` current anyway: it is the human-authored changelog of record.
 
 ## Reporting issues
 

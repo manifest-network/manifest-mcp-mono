@@ -29,6 +29,8 @@ const config = createConfig({
   chainId: 'manifest-1',
   rpcUrl: 'https://rpc.manifest.example/',
   gasPrice: '0.01umfx', // required when rpcUrl is set
+  // A read-only client can instead take a query-only config — `restUrl` alone, no
+  // rpcUrl/gasPrice — which keys separately from any signing client on the same chain.
 });
 
 const read = await createManifestReadClient({ config });
@@ -217,6 +219,26 @@ The base `createFredClient` does not guard by default and warns once on Node. In
 ## Errors
 
 Everything throws `ManifestMCPError` with a `code` from `ManifestMCPErrorCode` (e.g. `INVALID_ARGUMENT`, `SKU_AMBIGUOUS`, `TX_FAILED`, `OPERATION_CANCELLED`). Transient failures (network, 5xx, 429) are auto-retried; permanent ones bubble up. Branch on `code`, not message text. Before logging an error's `details`, pass it through `sanitizeForLogging` (exported from the root) to redact sensitive fields.
+
+For the two error shapes that carry typed detail, prefer the exported guards over `instanceof` (unreliable across duplicate package copies) or hand-rolled `code` checks:
+
+```ts
+import { isSkuAmbiguousError, ProviderApiError } from '@manifest-network/manifest-sdk';
+
+try {
+  await client.deployApp(spec);
+} catch (err) {
+  if (isSkuAmbiguousError(err)) {
+    // err.details is narrowed to { reason: 'AMBIGUOUS_SKU_NAME', size, candidates }
+    renderSkuPicker(err.details.candidates);
+  } else if (ProviderApiError.isProviderApiError(err) && err.status === 409) {
+    // typed provider HTTP error — dual-package-safe brand guard, exposes err.status
+    handleConflict(err);
+  } else {
+    throw err;
+  }
+}
+```
 
 ## Orchestration tier (optional)
 

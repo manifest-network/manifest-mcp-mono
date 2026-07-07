@@ -70,7 +70,7 @@ get_mfx_to_pwr_rate({ amount: "100000000" })
 
 // confirm with the user
 convert_mfx_to_pwr({ amount: "100000000" })
-// → { transactionHash, code: 0, height, events }
+// → { transactionHash, code: 0, height, input, expected_output, rate }
 ```
 
 `MANIFEST_CONVERTER_ADDRESS` must be set or the cosmwasm server refuses to start.
@@ -84,7 +84,7 @@ The smoothest path is the `deploy-containerized-app` MCP prompt. Manually it loo
 ```ts
 // 1. Pre-flight (lease server is required for fund_credit if credits are missing)
 check_deployment_readiness({ size: "docker-micro", image: "nginx:1.25" })
-// → { ready: true | false, missing_steps: [...], sku: { ... }, balances: [...] }
+// → { ready: true | false, missing_steps: [...], sku: { ... }, wallet_balances: [...], ... }
 
 // 2. If credits are needed, fund them first (lease server)
 fund_credit({ amount: "10000000umfx" })
@@ -95,7 +95,7 @@ build_manifest_preview({ image: "nginx:1.25", port: 80 })
 
 // 4. Deploy (broadcasts a TX, takes a paid lease)
 deploy_app({ image: "nginx:1.25", port: 80, size: "docker-micro" })
-// → { lease_uuid, provider_uuid, provider_url, transaction_hash, ... }
+// → { lease_uuid, provider_uuid, provider_url, state, ... }
 
 // 5. Wait until ready
 wait_for_app_ready({ lease_uuid: "..." })

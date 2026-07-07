@@ -1,6 +1,6 @@
 # @manifest-network/manifest-mcp-agent
 
-MCP server wrapping [`@manifest-network/manifest-agent-core`](../agent-core/README.md) orchestration (deploy / manage-domain / lookup-domain / troubleshoot / close-lease) via MCP **elicitation**. The three broadcasting tools translate agent-core's typed confirmation callbacks (`onConfirm`, plus `onPlan` for `deploy_app_orchestrated`) into standard MCP `elicitation/create` requests so any elicitation-capable host (Claude Code ≥ 2.1.76; the MCP elicitation spec was finalized in 2026) can drive the confirm flow over wire — no `AskUserQuestion`, no interactive stdin, no out-of-band channel. The read-only tools (lookup / troubleshoot) perform no elicitation — they emit only progress and failure/log notifications (`notifications/progress` + `notifications/message`) and run on any host.
+MCP server wrapping [`@manifest-network/manifest-agent-core`](../agent-core/README.md) orchestration (deploy / manage-domain / lookup-domain / troubleshoot / close-lease) via MCP **elicitation**. The three broadcasting tools translate agent-core's typed confirmation callbacks (`onConfirm`, plus `onPlan` for `deploy_app_orchestrated`) into standard MCP `elicitation/create` requests so any elicitation-capable host (Claude Code ≥ 2.1.76; the MCP elicitation capability was standardized in the 2025-06-18 spec revision) can drive the confirm flow over wire — no `AskUserQuestion`, no interactive stdin, no out-of-band channel. The read-only tools (lookup / troubleshoot) perform no elicitation — they emit only progress and failure/log notifications (`notifications/progress` + `notifications/message`) and run on any host.
 
 ## Installation
 
@@ -34,7 +34,7 @@ Verified hosts:
 
 ## Environment variables
 
-The agent server reads the standard chain / wallet env vars (same matrix as `manifest-mcp-chain` / `manifest-mcp-lease` / `manifest-mcp-fred`) plus three agent-only additions.
+The agent server reads the standard chain / wallet env vars (same matrix as `manifest-mcp-chain` / `manifest-mcp-lease` / `manifest-mcp-fred`) plus four agent-only additions.
 
 | Variable | Required | Default | Notes |
 | -------- | -------- | ------- | ----- |
@@ -46,10 +46,10 @@ The agent server reads the standard chain / wallet env vars (same matrix as `man
 | `MANIFEST_KEY_FILE` | No | `~/.manifest/key.json` | Encrypted keyfile path. |
 | `MANIFEST_KEY_PASSWORD` | No | — | Keyfile decrypt password. |
 | `COSMOS_MNEMONIC` | No | — | Fallback wallet (no keyfile). |
-| `MANIFEST_AGENT_DATA_DIR` | No | — | Passes to `DeployAppOptions.dataDir` (operator-set; the `deploy_app_orchestrated` tool no longer accepts a per-call `data_dir` override — finding #4). When unset, manifest persistence is skipped and success still emits. Pass a dedicated subdirectory (NOT `$HOME` or any shared dir) — `saveManifest()` `chmod`s this path to `0o700`. |
-| `MANIFEST_CHAIN_DATA_FILE` | No | — | Path to a chain-registry JSON (`{ feeTokens: [...] }`) for denom humanization (e.g. `umfx` → `MFX`). Loaded once at startup. |
+| `MANIFEST_AGENT_DATA_DIR` | No | — | Passes to `DeployAppOptions.dataDir` (operator-set; the `deploy_app_orchestrated` tool no longer accepts a per-call `data_dir` override). When unset, manifest persistence is skipped and success still emits. Pass a dedicated subdirectory (NOT `$HOME` or any shared dir) — `saveManifest()` `chmod`s this path to `0o700`. |
+| `MANIFEST_CHAIN_DATA_FILE` | No | — | Path to a chain-registry JSON (`{ feeTokens: [...] }`) for denom humanization (e.g. `umfx` → `MFX`). Loaded once (lazily, on first tool call) and cached. |
 | `MANIFEST_AGENT_FETCH_GUARDED` | No | `1` (default ON) | Swaps in agent-core's SSRF-guarded `createGuardedFetch` (Node-only — dynamic import keeps the platform-neutral build legal). Set to `0` / `false` / `no` / `off` to disable (e.g. for local-loopback testing). Accepted truthy: `1` / `true` / `yes` / `on`; case-insensitive. Unrecognized values throw `INVALID_CONFIG` rather than silently no-op. |
-| `MANIFEST_AGENT_ELICIT_TIMEOUT_MS` | No | `600000` (10 min) | Per-`elicitInput` timeout in milliseconds. The MCP SDK default of 60s is far too short for a human reading a deployment-plan recap — Phase 2 default is 10 minutes. Positive integer; malformed values fall back to the default. |
+| `MANIFEST_AGENT_ELICIT_TIMEOUT_MS` | No | `600000` (10 min) | Per-`elicitInput` timeout in milliseconds. The MCP SDK default of 60s is far too short for a human reading a deployment-plan recap — so this server defaults to 10 minutes. Positive integer; malformed values fall back to the default. |
 | `LOG_LEVEL` | No | `warn` | `debug` / `info` / `warn` / `error` / `silent`. |
 
 ## CLI usage
@@ -130,7 +130,7 @@ npm run test     # vitest
 
 ## Architecture notes
 
-The wrapper is **pure adapter** — no orchestration logic, no re-rendering of the human-prose blocks that agent-core's `internals/render-*.ts` modules produce. All elicitation `message` bodies are passed through verbatim. See [PLAN.md §2](../../PLAN.md) for the full callback → elicitation translation contract and the downstream `_meta.manifest` matrix consumed by the manifest-agent plugin's PreToolUse hook.
+The wrapper is **pure adapter** — no orchestration logic, no re-rendering of the human-prose blocks that agent-core's `internals/render-*.ts` modules produce. All elicitation `message` bodies are passed through verbatim. See [`../agent-core/README.md`](../agent-core/README.md) for the callback contract and [`../../ARCHITECTURE.md`](../../ARCHITECTURE.md) for the full callback → elicitation translation and the downstream `_meta.manifest` matrix consumed by the manifest-agent plugin's PreToolUse hook.
 
 ## License
 

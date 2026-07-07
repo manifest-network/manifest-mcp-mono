@@ -2,6 +2,9 @@
 
 All notable changes to this project will be documented in this file.
 
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
 ## [Unreleased]
 
 ## [0.16.0] - 2026-07-07
@@ -19,7 +22,7 @@ All notable changes to this project will be documented in this file.
   with `const final = await client.waitForLeaseStatus(id, { onStatus, signal }); if (isLeaseFailureTerminal(final)) { /* handle failure */ }`.
   Cancellation moves from the returned `unsubscribe()` to `opts.signal` (abort rejects with `signal.reason`); a lease-failure terminal now **resolves** (inspect via `isLeaseFailureTerminal`) rather than firing `onComplete`. (ENG-461)
 
-## [0.15.0] - 2026-06-30
+## [0.15.0] - 2026-07-02
 
 ### Added
 
@@ -42,12 +45,20 @@ All notable changes to this project will be documented in this file.
 **BREAKING (fred capability-fn callers):**
 - The Fred capability functions changed from positional DI to `fn(ctx, input[, opts])`. Direct callers must migrate: either build a ctx (`{ query, chain, fetch, logger }` for reads; add `providerAuth` for the authenticated fns) and pass it as the first argument, or — simpler — call the bound methods on a `createFredClient(...)` instance, which threads the ctx for you. `getAuthToken(addr, uuid)` / `getLeaseDataAuthToken(addr, uuid, metaHash)` closures are replaced by `ctx.providerAuth.providerToken({ address, leaseUuid })` / `ctx.providerAuth.leaseDataToken({ address, leaseUuid, metaHashHex })`; the positional `fetchFn` override is now `ctx.fetch`. The legacy `DeployManifestOptions` type stays exported but is no longer a parameter type. (ENG-311)
 
-## [0.13.1]
+## [0.14.0] - 2026-06-10
+
+### Added
+- **fred/core:** SKUs can now be resolved by **name + provider**, with duplicate SKU names supported across providers. A single shared `resolveSku` in `core` raises `SKU_AMBIGUOUS` when a name matches more than one active SKU; `fred` consumes it via `provider_uuid` / `sku_uuid` inputs with candidate-based readiness and a flat `browse_catalog` `skus[]` shape; `agent-core` pins the SKU once and elicits on ambiguity via the agent server. (ENG-258)
+
+### Changed
+- **agent-core:** `size` (the SKU / compute-tier selector) is now a first-class typed field on the deploy spec and the `deploy_app_orchestrated` schema, replacing an `as unknown` cast + silent `'small'` fallback. Non-string values are rejected at the MCP boundary instead of being coerced, so a contract-following caller can select a non-default tier. (ENG-275)
+
+## [0.13.1] - 2026-06-05
 
 ### Fixed
 - **fred:** `pollLeaseUntilReady` now waits for the provider's `provision_status` to settle before reporting a lease ready, instead of returning the moment the chain lease state reaches `ACTIVE`. Previously `deployManifest` / `waitForAppReady` could report a lease "running" while the container was still provisioning, or after it had crashed. When `ACTIVE`: keep polling while `{provisioning, restarting, updating, failing, unknown}`, throw `ProviderApiError` on `{failed, deprovisioning}`, and return otherwise — backward-compatible (providers that don't populate the field still return at `ACTIVE` as before). `provision_status` is added to the timeout diagnostic. (ENG-291)
 
-## [0.13.0]
+## [0.13.0] - 2026-06-05
 
 ### Fixed
 - **fred:** the main barrel (`@manifest-network/manifest-mcp-fred`) no longer pulls in the MCP server entry. `FredMCPServer` and `createMnemonicFredServer` moved to a Node-only `@manifest-network/manifest-mcp-fred/server` subpath, so importing a capability function (`deployManifest`, `restartApp`, `deployApp`, …) from the barrel no longer drags in `server/*` / the SSRF `fetch-gate` / core's Node-only `/guarded-fetch` — browser consumers can bundle the barrel again. Completes ENG-281 (which fixed core's barrel but exposed that fred's barrel was *also* bundling its server). (ENG-287)
@@ -55,7 +66,7 @@ All notable changes to this project will be documented in this file.
 ### Upgrade notes
 - **BREAKING (fred server consumers):** `FredMCPServer` and `createMnemonicFredServer` are **no longer exported from the `@manifest-network/manifest-mcp-fred` barrel** — import them from the `@manifest-network/manifest-mcp-fred/server` subpath instead. Change `import { FredMCPServer } from '@manifest-network/manifest-mcp-fred'` to `import { FredMCPServer } from '@manifest-network/manifest-mcp-fred/server'`. The browser-safe capability functions (`deployApp`, `deployManifest`, `restartApp`, `updateApp`, `appStatus`, `browseCatalog`, manifest helpers, HTTP wrappers, types) stay on the barrel. (ENG-287)
 
-## [0.12.0]
+## [0.12.0] - 2026-06-04
 
 ### Changed
 - **core:** the SSRF-guarded fetch — `createGuardedFetch`, `isBlocked`, `BLOCKED_RANGES_IPV4` / `BLOCKED_RANGES_IPV6`, and the `GuardedFetch` type — is now exported from a Node-only `@manifest-network/manifest-mcp-core/guarded-fetch` subpath instead of the package barrel. The universal barrel (`@manifest-network/manifest-mcp-core`) no longer drags `undici` (→ `node:async_hooks`) into the module graph, so browser bundlers (rspack/webpack/vite) can import the barrel again. In-repo consumers (`fred`, `agent-core`) were updated to the subpath. (ENG-281)
@@ -67,7 +78,7 @@ All notable changes to this project will be documented in this file.
 ### Upgrade notes
 - **BREAKING (core library consumers):** `createGuardedFetch`, `isBlocked`, `BLOCKED_RANGES_IPV4`, `BLOCKED_RANGES_IPV6`, and the `GuardedFetch` type are **no longer exported from the `@manifest-network/manifest-mcp-core` barrel** — import them from the `@manifest-network/manifest-mcp-core/guarded-fetch` subpath instead. Change `import { createGuardedFetch } from '@manifest-network/manifest-mcp-core'` to `import { createGuardedFetch } from '@manifest-network/manifest-mcp-core/guarded-fetch'`. The barrel dropped them so it stays browser-bundleable (no `undici` / `node:async_hooks` in the module graph). (ENG-281)
 
-## [0.11.0]
+## [0.11.0] - 2026-06-02
 
 ### Security
 
@@ -89,13 +100,13 @@ All notable changes to this project will be documented in this file.
 - **New env var:** `MANIFEST_FRED_FETCH_GUARDED` (fred server; default ON). See `packages/node/.env.example`.
 - **Downstream follow-up (not a v0.11.0 blocker):** the manifest-agent plugin (manifest-network side) will be updated in a future release cut against this version — its `PreToolUse` hook matcher needs to recognize `lookup_custom_domain_orchestrated` as read-only (ENG-212) **and** the new `OPERATION_CANCELLED` error code.
 
-## [0.10.0]
+## [0.10.0] - 2026-05-22
 
 - Feat(agent): new `@manifest-network/manifest-mcp-agent` package — MCP server wrapping `@manifest-network/manifest-agent-core` orchestration (`deployApp` / `manageDomain` / `troubleshootDeployment` / `closeLease`) via MCP **elicitation**. Translates agent-core's typed `onPlan` / `onConfirm` / `onProgress` / `onFailure` callbacks into standard `elicitation/create` requests and `notifications/progress` events, so any elicitation-capable host (Claude Code ≥ 2.1.76; any other MCP host advertising `capabilities.elicitation`) can drive the bidirectional plan / confirm / recovery flow over wire — no `AskUserQuestion`, no interactive stdin, no out-of-band channel. Four tools: `deploy_app_orchestrated`, `manage_domain_orchestrated`, `troubleshoot_deployment_orchestrated`, `close_lease_orchestrated`. The annotation + `_meta.manifest` matrix is a downstream-visible contract consumed by the manifest-agent plugin's `PreToolUse` hook. The wrapper is pure adapter — no orchestration logic, no re-rendering of agent-core's `internals/render-*.ts` outputs. Distributed as the `manifest-mcp-agent` binary alongside the four existing servers in `packages/node`'s `bin` block. Three new env-var contracts: `MANIFEST_AGENT_DATA_DIR` (deploy-only manifest persistence), `MANIFEST_CHAIN_DATA_FILE` (denom-map humanization, loaded once at startup), `MANIFEST_AGENT_FETCH_GUARDED=1` (gated dynamic import of agent-core's SSRF-guarded `createGuardedFetch`; `platform: 'neutral'` build preserved). Constructor exposes an `orchestrators?: Partial<AgentOrchestrators>` DI seam typed via `typeof realDeployApp` etc., so agent-core signature drift fails at compile time in the wrapper. Unblocks ENG-130 (plugin rewire). (ENG-204)
 - Feat(core): export `__test-utils__/callToolWithElicitation` helper — scripted `ElicitRequest` responder paired with `InMemoryTransport` for unit-testing servers that mid-execute `server.elicitInput(...)`. Mirrors the existing `__test-utils__/callTool` shape; first consumed by `packages/agent`'s server tests.
 - Docs(agent-core): the `private: true` stale-note has been replaced — `@manifest-network/manifest-agent-core` is publicly published on npm as of ENG-129.
 
-## [0.9.0]
+## [0.9.0] - 2026-05-22
 
 - Feat(agent-core): new `@manifest-network/manifest-agent-core` package — TypeScript orchestration surface for Manifest agent flows (`deployApp`, `manageDomain`, `closeLease`, `troubleshootDeployment`). Composes the chain/lease/fred tool functions directly (no MCP stdio hop) and exposes a host-callback surface so non-MCP consumers (Barney, standalone Node scripts) can drive an end-to-end deploy without re-implementing classification, verification, or recovery branching. Ports the plugin's CJS scripts to typed TS internals: per-domain classifiers (`classify-deploy-error`, `classify-deploy-response`), `verify-domain-state`, the generic `verify-recover` driver, SSRF-guarded fetch, image-inspection, fee-humanization, readiness-evaluation, and renderers. Parity with `manifest-agent-plugin` HEAD is enforced via fixture-replay tests (ENG-128, ENG-129).
 - Fix(node): validate `MANIFEST_FAUCET_URL` through the same HTTPS / localhost-HTTP check used for `COSMOS_RPC_URL` / `COSMOS_REST_URL` at chain CLI startup, closing an SSRF risk. The check is guarded by `if (rawFaucetUrl)` so unset / empty values (mainnet) are unaffected. Invalid URLs that previously would have failed at the first faucet call now fail at startup with a clearer error.
@@ -109,7 +120,7 @@ All notable changes to this project will be documented in this file.
 - Test(core): cover the rate-limiter token-bucket budget, throttling, and reconfig branches that previously had no unit test. Cover the encrypted-keyfile decrypt path and wrong-password rejection in `keyfileWallet.test.ts` (was plaintext-only at unit level).
 - Docs: add a top-level `docs/` tree (tool-selection guidance, end-to-end usage examples, Fred's prompts / resources, troubleshooting, threat model, library-usage patterns for non-MCP consumers). Add `SECURITY.md` with a coordinated-disclosure policy. Refresh tool counts (6 / 8 / 11 / 2) across `README`, `ARCHITECTURE.md`, and per-package READMEs. Extend `packages/node/.env.example` with every documented env var so a fresh `.env` doesn't silently miss an option.
 
-## [0.8.0]
+## [0.8.0] - 2026-05-05
 
 - Feat(fred): `deploy_app` description now mentions the optional `custom_domain` attachment so the top-level summary an MCP host shows in `tools/list` reflects the tool's actual surface.
 - Refactor(billing): align all custom-domain input-validation throws on `INVALID_CONFIG` so the same logical issue (empty / whitespace `custom_domain`, mutual exclusion, malformed `service_name`, mutually-exclusive `--clear-*` + values) produces the same error code regardless of whether the input arrives via `set_item_custom_domain`, `lease_by_custom_domain`, `cosmos_tx billing set-item-custom-domain`, `cosmos_query billing lease-by-custom-domain`, the `setItemCustomDomain` core helper, or `deploy_app`'s eager pre-flight. Both `INVALID_CONFIG` and the previously-used `TX_FAILED` are non-retryable, so retry behaviour is unchanged. Chain-side rejections (the actual `MsgSetItemCustomDomain` / `Query/LeaseByCustomDomain` failures, including the keeper's `NotFound` for an unclaimed FQDN) keep their existing codes (`TX_FAILED` / `QUERY_FAILED`) — those classify "the chain answered no", not "your input was bad".
@@ -125,7 +136,7 @@ All notable changes to this project will be documented in this file.
 - Chore(e2e): bump the `submodules/manifest-ledger` pin from the `fmorency/manifest-ledger` fork (`billing-v2` @ `0031210`) to upstream `manifest-network/manifest-ledger` (`v2.1.0` / `0319a7c`). Required to ship the chain image with `MsgSetItemCustomDomain` and `Query/LeaseByCustomDomain` registered — manifestjs 2.4.1 was generated from upstream v2.1.0, so the chain proto types must match. `e2e/billing-custom-domain.e2e.test.ts` probes for the new query in `beforeAll` and skips gracefully on older chains.
 - Chore(deps): bump `@manifest-network/manifestjs` to 2.4.1
 
-## [0.7.0]
+## [0.7.0] - 2026-04-30
 
 - Fix(fred): `FredLeaseProvision.last_error` is now declared optional in the public TypeScript interface, matching the runtime behavior the M1 outputSchema fix already reflects. Removes an unsafe `undefined as unknown as string` cast from the regression test (ENG-87).
 - Fix(fred): `app_diagnostics` outputSchema declares `last_error` as optional. The Fred provider omits the field when there's no recent failure, so the M1 schema (`last_error: z.string()`) was rejecting valid responses with `Output validation error: expected string, received undefined`. Caught by nightly e2e (ENG-87 fixup of ENG-84).
@@ -149,74 +160,74 @@ All notable changes to this project will be documented in this file.
 - Fix(core): validate `poa create-validator` JSON input with a strict zod schema; reject unknown keys, validate validator address valoper prefix, and base64-decode the `pubkey.value` so `Any.encode` produces correct wire bytes.
 - Fix(core): require non-empty `source-port` and `source-channel` on `ibc-transfer transfer` instead of forwarding blank strings to the chain.
 
-## [0.6.2]
+## [0.6.2] - 2026-04-22
 
 - Fix(core): surface dropped proto fields in query handlers and `getBalance` (#41)
 
-## [0.6.1]
+## [0.6.1] - 2026-04-21
 
 - Feat(fred): add `checkChainState`, `onLeaseCreated`, `abortSignal`, and `pollOptions` hooks to `deployApp` and `pollLeaseUntilReady`; introduce `TerminalChainStateError` for chain-reported terminal lease states (#40)
 
-## [0.6.0]
+## [0.6.0] - 2026-04-21
 
 - Feat(lease): `fund_credit`, `credit_balance`, and `leases_by_tenant` accept optional `tenant` to operate on a third-party account (#38)
 - Feat(lease): support optional `tenant` on more methods (#39)
 - Chore(deps): bump `@manifest-network/manifestjs` to 2.3.0
 
-## [0.5.0]
+## [0.5.0] - 2026-04-07
 
 - Feat(chain): add `cosmos_estimate_fee` MCP tool (#35)
 
-## [0.4.7]
+## [0.4.7] - 2026-04-02
 
 - Fix(core): re-encode wasm LCD response data for fromJSON compatibility (#34)
 
-## [0.4.6]
+## [0.4.6] - 2026-04-02
 
 - Fix(core): base64-encode wasm `queryData` in LCD adapter (#33)
 
-## [0.4.5]
+## [0.4.5] - 2026-04-02
 
 - Fix(ci): re-release v0.4.4 which failed to publish all packages due to npm registry propagation delay
 
-## [0.4.4]
+## [0.4.4] - 2026-04-02
 
 - Fix(ci): pin npm to 11.5.1 for OIDC trusted publishing (10.9.2 was too old, lacked OIDC auth support)
 
-## [0.4.3]
+## [0.4.3] - 2026-04-02
 
 - Fix(ci): use `npx npm@10.9.2` to bootstrap npm upgrade, bypassing broken bundled npm on GitHub Actions runners
 
-## [0.4.2]
+## [0.4.2] - 2026-04-02
 
 - Fix(ci): use `--ignore-scripts` for npm self-upgrade in release workflow (insufficient — see 0.4.3)
 
-## [0.4.1]
+## [0.4.1] - 2026-04-02
 
 - Docs: add cosmwasm package across all documentation, fix stale tool/server/CLI counts, add missing env vars
 - Fix(ci): add cosmwasm package to npm publish list in release workflow
 - Fix(ci): update setup instructions from NPM_TOKEN to OIDC trusted publishing
 - Fix(ci): remove npm self-upgrade step from release workflow (broke OIDC publishing — see 0.4.2)
 
-## [0.4.0]
+## [0.4.0] - 2026-04-02
 
 - Feat(cosmwasm): add new `packages/cosmwasm` MCP server with `get_mfx_to_pwr_rate` and `convert_mfx_to_pwr` tools for the on-chain MFX-to-PWR converter contract
 - Feat(core): add CosmWasm query and transaction routing to the module registry
 - Feat(core): per-transaction `gas_multiplier` override on `cosmos_tx`, allowing callers to adjust gas simulation per call
 - Feat(node): add `manifest-mcp-cosmwasm` CLI entry point
 
-## [0.3.5]
+## [0.3.5] - 2026-04-01
 
 - Feat(core): configurable gas multiplier via `COSMOS_GAS_MULTIPLIER` env var (default `1.5`, must be >= 1)
 - Fix(core): support factory and IBC denoms in gas price validation (e.g. `factory/manifest1.../umfx`, `ibc/...`)
 
-## [0.3.4]
+## [0.3.4] - 2026-03-26
 
 - Fix(chain): handle plain-text faucet `/credit` responses from CosmJS faucet (was crashing on `res.json()`)
 - **Breaking**: remove `transactionHash` from `FaucetDripResult` (the CosmJS faucet never returns one)
 - Test(chain): add faucet tests for all faucet HTTP status codes (200, 400, 405, 422, 500)
 
-## [0.3.3]
+## [0.3.3] - 2026-03-26
 
 - Fix(chain): align `FaucetStatusResponse` with real faucet API (`availableTokens` string[] instead of `tokens` Coin[])
 - Fix(chain): handle plain-text `/credit` responses from CosmJS faucet (was crashing on `res.json()`)
@@ -225,7 +236,7 @@ All notable changes to this project will be documented in this file.
 - **Breaking**: remove `transactionHash` from `FaucetDripResult` (the CosmJS faucet never returns one)
 - Test(chain): add faucet tests for all faucet HTTP status codes (200, 400, 405, 422, 500)
 
-## [0.3.2]
+## [0.3.2] - 2026-03-26
 
 - Fix(core): bump gas simulation multiplier to 1.5 to match CLI `--gas-adjustment`
 - Fix(fred): add `AuthTimestampTracker` to guarantee unique auth token timestamps, preventing replay rejection on protected endpoints
@@ -233,33 +244,33 @@ All notable changes to this project will be documented in this file.
 - Fix(fred): generate separate auth tokens for status and connection requests in `appStatus`
 - Fix(e2e): use unprivileged nginx image, discover SKU denom dynamically, disable file parallelism
 
-## [0.3.1]
+## [0.3.1] - 2026-03-26
 
 - Fix: re-export faucet functions and types (`requestFaucet`, `requestFaucetCredit`, `fetchFaucetStatus`) from chain package entry
 
-## [0.3.0]
+## [0.3.0] - 2026-03-26
 
 - Feat: add `request_faucet` tool for chain server (enabled when `MANIFEST_FAUCET_URL` is set)
 - Docs: fix inaccuracies and fill gaps across all documentation
 
-## [0.2.3]
+## [0.2.3] - 2026-03-25
 
 - Fix: include `--ignore-scripts` in lockfile sync recovery instructions
 - Fix: make GitHub Release step idempotent on workflow re-runs
 
-## [0.2.2]
+## [0.2.2] - 2026-03-25
 
 - Fix: improve README accuracy and validate workspace package names
 - Fix: add `--ignore-scripts` to lockfile sync, use `fileURLToPath` for Node 20.0 compatibility
 - Docs: clarify GitHub Release creation is best-effort
 
-## [0.2.1]
+## [0.2.1] - 2026-03-25
 
 - Fix: set vitest root so E2E global setup and tests resolve correctly
 - Fix: validate all workspace versions match tag, improve error message
 - Feat: add tag-triggered npm release workflow and version script
 
-## [0.2.0]
+## [0.2.0] - 2026-03-25
 
 Initial public release.
 
@@ -271,3 +282,38 @@ Initial public release.
 - E2E test infrastructure with Docker Compose
 - Biome for formatting, linting, and import sorting
 - Tag-triggered npm publish workflow with provenance
+
+[Unreleased]: https://github.com/manifest-network/manifest-mcp-mono/compare/v0.16.0...HEAD
+[0.16.0]: https://github.com/manifest-network/manifest-mcp-mono/compare/v0.15.0...v0.16.0
+[0.15.0]: https://github.com/manifest-network/manifest-mcp-mono/compare/v0.14.0...v0.15.0
+[0.14.0]: https://github.com/manifest-network/manifest-mcp-mono/compare/v0.13.1...v0.14.0
+[0.13.1]: https://github.com/manifest-network/manifest-mcp-mono/compare/v0.13.0...v0.13.1
+[0.13.0]: https://github.com/manifest-network/manifest-mcp-mono/compare/v0.12.0...v0.13.0
+[0.12.0]: https://github.com/manifest-network/manifest-mcp-mono/compare/v0.11.0...v0.12.0
+[0.11.0]: https://github.com/manifest-network/manifest-mcp-mono/compare/v0.10.0...v0.11.0
+[0.10.0]: https://github.com/manifest-network/manifest-mcp-mono/compare/v0.9.0...v0.10.0
+[0.9.0]: https://github.com/manifest-network/manifest-mcp-mono/compare/v0.8.0...v0.9.0
+[0.8.0]: https://github.com/manifest-network/manifest-mcp-mono/compare/v0.7.0...v0.8.0
+[0.7.0]: https://github.com/manifest-network/manifest-mcp-mono/compare/v0.6.2...v0.7.0
+[0.6.2]: https://github.com/manifest-network/manifest-mcp-mono/compare/v0.6.1...v0.6.2
+[0.6.1]: https://github.com/manifest-network/manifest-mcp-mono/compare/v0.6.0...v0.6.1
+[0.6.0]: https://github.com/manifest-network/manifest-mcp-mono/compare/v0.5.0...v0.6.0
+[0.5.0]: https://github.com/manifest-network/manifest-mcp-mono/compare/v0.4.7...v0.5.0
+[0.4.7]: https://github.com/manifest-network/manifest-mcp-mono/compare/v0.4.6...v0.4.7
+[0.4.6]: https://github.com/manifest-network/manifest-mcp-mono/compare/v0.4.5...v0.4.6
+[0.4.5]: https://github.com/manifest-network/manifest-mcp-mono/compare/v0.4.4...v0.4.5
+[0.4.4]: https://github.com/manifest-network/manifest-mcp-mono/compare/v0.4.3...v0.4.4
+[0.4.3]: https://github.com/manifest-network/manifest-mcp-mono/compare/v0.4.2...v0.4.3
+[0.4.2]: https://github.com/manifest-network/manifest-mcp-mono/compare/v0.4.1...v0.4.2
+[0.4.1]: https://github.com/manifest-network/manifest-mcp-mono/compare/v0.4.0...v0.4.1
+[0.4.0]: https://github.com/manifest-network/manifest-mcp-mono/compare/v0.3.5...v0.4.0
+[0.3.5]: https://github.com/manifest-network/manifest-mcp-mono/compare/v0.3.4...v0.3.5
+[0.3.4]: https://github.com/manifest-network/manifest-mcp-mono/compare/v0.3.3...v0.3.4
+[0.3.3]: https://github.com/manifest-network/manifest-mcp-mono/compare/v0.3.2...v0.3.3
+[0.3.2]: https://github.com/manifest-network/manifest-mcp-mono/compare/v0.3.1...v0.3.2
+[0.3.1]: https://github.com/manifest-network/manifest-mcp-mono/compare/v0.3.0...v0.3.1
+[0.3.0]: https://github.com/manifest-network/manifest-mcp-mono/compare/v0.2.3...v0.3.0
+[0.2.3]: https://github.com/manifest-network/manifest-mcp-mono/compare/v0.2.2...v0.2.3
+[0.2.2]: https://github.com/manifest-network/manifest-mcp-mono/compare/v0.2.1...v0.2.2
+[0.2.1]: https://github.com/manifest-network/manifest-mcp-mono/compare/v0.2.0...v0.2.1
+[0.2.0]: https://github.com/manifest-network/manifest-mcp-mono/releases/tag/v0.2.0

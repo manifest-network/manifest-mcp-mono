@@ -12,6 +12,7 @@ Wire up the smallest set of servers that covers your workflow. Each runs as a se
 | `manifest-mcp-lease` | You need on-chain lease primitives without dragging in provider HTTP calls: balances on the billing credit account, funding credits, listing leases, claiming a custom domain, looking up a lease by domain, listing SKUs and providers. Pure on-chain reads/writes; no off-chain HTTP. |
 | `manifest-mcp-fred` | You're operating a *deployed app*: catalog browsing with health checks, pre-flight readiness, manifest preview, deploying, polling-until-ready, status, logs, restart, update, diagnostics, releases. This server is the only one that talks to provider/Fred HTTP APIs. |
 | `manifest-mcp-cosmwasm` | You're converting MFX to PWR through the on-chain converter contract (`get_mfx_to_pwr_rate`, `convert_mfx_to_pwr`). Requires `MANIFEST_CONVERTER_ADDRESS`. |
+| `manifest-mcp-agent` | You want confirmation-gated *orchestration* of a whole flow instead of sequencing raw tool calls yourself: it wraps the fred/lease deploy, domain, troubleshoot, and close-lease flows behind a plan → confirm → broadcast → verify loop driven by MCP elicitation (with `notifications/progress` throughout). The broadcasting tools require an elicitation-capable host (Claude Code ≥ 2.1.76); the read-only tools run on any host. |
 
 If your workflow spans more than one server (e.g. funding credits *and* deploying), wire up multiple servers — they share the same wallet via the keyfile.
 
@@ -72,6 +73,20 @@ Prefer the `diagnose-failing-app` MCP prompt — it bundles `app_status`, `app_d
 | Inspect domains across all your leases | `leases_by_tenant` (lease) — per-item output now surfaces `serviceName` and `customDomain` |
 
 `service_name` is required for stack leases (multi-service) to address a specific item. Omit it for legacy single-item leases.
+
+### Orchestrated (elicitation-driven) flows
+
+The **agent server** wraps the raw fred/lease flows in confirmation-gated orchestrators (via `@manifest-network/manifest-agent-core`): each renders a plan, asks the host to confirm through MCP elicitation, broadcasts, then verifies on-chain state — emitting `notifications/progress` throughout. Prefer these over the raw tools when you want a single call to drive an entire flow with a human-in-the-loop confirmation instead of sequencing (and separately confirming) the underlying fred/lease tools yourself.
+
+| Tool | Orchestrates | Host requirement |
+|------|--------------|------------------|
+| `deploy_app_orchestrated` | create-lease + manifest upload (+ optional set-domain) atomically, with partial-success recovery | elicitation-capable (broadcasts) |
+| `manage_domain_orchestrated` | set/clear a lease custom domain, then verify on-chain | elicitation-capable (broadcasts) |
+| `lookup_custom_domain_orchestrated` | reverse-resolve an FQDN to its owning lease | any host (read-only, no broadcast) |
+| `troubleshoot_deployment_orchestrated` | render a chain-side diagnostic report for a lease | any host (read-only, no broadcast) |
+| `close_lease_orchestrated` | close a lease, then verify it reached a terminal state | elicitation-capable (broadcasts, destructive) |
+
+The three broadcasting tools require an elicitation-capable MCP host (Claude Code ≥ 2.1.76) because confirmation is gathered through `server.elicitInput`; the two read-only tools issue zero elicitations and run anywhere.
 
 ## Annotations and `_meta.manifest`
 

@@ -15,8 +15,8 @@ npm install @manifest-network/manifest-mcp-fred
 | Tool | Description |
 |------|-------------|
 | `browse_catalog` | Browse available providers and service tiers with health checks |
-| `check_deployment_readiness` | Pre-flight checks (balance, SKU availability, image pull) before `deploy_app` |
-| `build_manifest_preview` | Preview the SDL/manifest that `deploy_app` would submit |
+| `check_deployment_readiness` | Pre-flight checks (balance, credit account, SKU availability) before `deploy_app` |
+| `build_manifest_preview` | Preview the manifest and its `meta_hash` that `deploy_app` would submit |
 | `deploy_app` | Deploy a new application (create lease + deploy container, optional custom domain) |
 | `wait_for_app_ready` | Poll provider until a deployed app reports ready |
 | `app_status` | Get detailed status for a deployed app by lease UUID |
@@ -39,18 +39,21 @@ See [`packages/node/README.md`](https://github.com/manifest-network/manifest-mcp
 ### As a library
 
 ```typescript
-// Use the MCP server class
-import { FredMCPServer } from '@manifest-network/manifest-mcp-fred';
+// Use the MCP server class — Node-only, from the `/server` subpath (NOT the barrel;
+// the barrel stays browser-bundleable, see ENG-287)
+import { FredMCPServer } from '@manifest-network/manifest-mcp-fred/server';
 
 const server = new FredMCPServer({
   config,          // ManifestMCPConfig from core
   walletProvider,  // WalletProvider from core
 });
 
-// Or use individual tool functions and HTTP clients directly
+// Or use individual tool functions and HTTP clients directly (browser-safe barrel)
 import { deployApp, browseCatalog } from '@manifest-network/manifest-mcp-fred';
 import { createAuthToken } from '@manifest-network/manifest-mcp-fred';
 ```
+
+> **SSRF guard.** When run as an MCP server, all provider/Fred HTTP is routed through core's SSRF-guarded fetch by default. Toggle it with `MANIFEST_FRED_FETCH_GUARDED` (default on; set `0`/`false`/`no`/`off` to disable — only in trusted local setups).
 
 ### HTTP clients
 

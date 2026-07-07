@@ -28,7 +28,7 @@ Cosmwasm server only. Set it to the bech32 address of the MFX→PWR converter co
 
 ### `No wallet found. Either: 1. Run "manifest-mcp-chain keygen" … 2. Set COSMOS_MNEMONIC`
 
-Wallet resolution order is keyfile (`MANIFEST_KEY_FILE`, default `~/.manifest/key.json`) → mnemonic env var (`COSMOS_MNEMONIC`) → fail. Generate or import a key via `npx manifest-mcp-chain keygen` / `import` (any of the four CLIs works — they all share the same keyfile).
+Wallet resolution order is keyfile (`MANIFEST_KEY_FILE`, default `~/.manifest/key.json`) → mnemonic env var (`COSMOS_MNEMONIC`) → fail. Generate or import a key via `npx manifest-mcp-chain keygen` / `import` (any of the five CLIs works — they all share the same keyfile).
 
 ### `Failed to decrypt keyfile at <path>. Verify that MANIFEST_KEY_PASSWORD is correct.`
 
@@ -36,16 +36,18 @@ The password in `MANIFEST_KEY_PASSWORD` doesn't match the keyfile. The decrypt p
 
 ## Errors at tool call time
 
-Every error returned to the MCP client is a JSON object with a `code` field drawn from `ManifestMCPErrorCode`. The 12 codes group into 6 categories:
+Every error returned to the MCP client is a JSON object with a `code` field drawn from `ManifestMCPErrorCode`. The 15 codes group into 8 categories:
 
 | Category | Codes | Meaning |
 |----------|-------|---------|
 | Configuration | `INVALID_CONFIG` | Missing/invalid env, query-only mode invoked for a tx, malformed input that's a static rule violation |
 | Wallet | `WALLET_NOT_CONNECTED`, `WALLET_CONNECTION_FAILED`, `INVALID_MNEMONIC` | Wallet bootstrap failed or a wallet operation was attempted post-disconnect |
 | Client / RPC | `RPC_CONNECTION_FAILED` | Couldn't reach the configured `rpcUrl` / `restUrl` |
-| Query | `QUERY_FAILED`, `UNSUPPORTED_QUERY`, `INVALID_ADDRESS` | Chain-side rejection of a read, unsupported subcommand, malformed bech32 |
+| Query | `QUERY_FAILED`, `UNSUPPORTED_QUERY`, `INVALID_ADDRESS`, `INVALID_ARGUMENT` | Chain-side rejection of a read, unsupported subcommand, malformed bech32, or a malformed argument (non-UUID id, bad FQDN) |
 | Transaction | `TX_FAILED`, `UNSUPPORTED_TX`, `SIMULATION_FAILED` | Chain-side rejection of a write, unsupported subcommand, simulation step failed |
 | Module | `UNKNOWN_MODULE` | Module name not in the registry |
+| User action | `OPERATION_CANCELLED` | A deliberate user decline / cancel / elicitation-timeout — treated as neither a fault nor retryable |
+| SKU resolution | `SKU_AMBIGUOUS` | A SKU `size`/`storage` name matched more than one active SKU; `details` carries `{ reason: 'AMBIGUOUS_SKU_NAME', size, candidates }` — disambiguate with `provider_uuid` / `sku_uuid` |
 
 ### `INVALID_CONFIG` from a transaction tool
 
@@ -104,6 +106,12 @@ Common causes:
 ## Auth token rejected by the provider
 
 The provider enforces a 30-second max token age and 10-second max-future skew. If your machine clock drifts (especially in containers with a stale clock at startup), token construction will succeed but the provider will reject. Sync NTP. Replay attacks within the 30-second window are rejected by signature deduplication; the `AuthTimestampTracker` makes sure two consecutive calls don't share a timestamp.
+
+## `SSRF blocked: … resolves to … which is in blocked range 'loopback'`
+
+The provider/Fred fetch guard (`MANIFEST_FRED_FETCH_GUARDED`, on by default) resolves the target host at connect time and blocks any non-`unicast` IP. A provider or lease URL that passes the HTTPS-or-localhost scheme check but points at `localhost` / `127.0.0.1` / `::1` — common in local development against a provider on your own machine — is allowed by the URL validator but then **blocked at connect time** by the guard, surfacing as `SSRF blocked: <host> resolves to <ip> which is in blocked range 'loopback' (…)`.
+
+To reach a localhost provider in development, disable the guard: `MANIFEST_FRED_FETCH_GUARDED=0` (fred) or `MANIFEST_AGENT_FETCH_GUARDED=0` (agent). Only do this in trusted local setups — the guard is what stops a malicious on-chain provider URL from reaching your internal network.
 
 ## "Tool returned a structured response that doesn't match its outputSchema"
 

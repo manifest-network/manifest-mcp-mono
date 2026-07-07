@@ -14,6 +14,7 @@ The 32 tools (+ 1 optional faucet) are split across five MCP servers to stay und
 - **Lease server** (8 tools) -- On-chain lease operations: credit balance, funding, lease queries, custom-domain claim/lookup, SKUs, providers
 - **Fred server** (11 tools + 3 resources + 3 prompts) -- Provider/Fred-dependent operations: catalog browsing, deployment readiness checks, manifest preview, app deployment, ready polling, status, logs, restart, update, diagnostics, releases
 - **CosmWasm server** (2 tools) -- MFX-to-PWR converter contract: rate queries, token conversion
+- **Agent server** (5 tools, elicitation-driven) -- Orchestrated deploy / manage-domain / lookup-domain / troubleshoot / close-lease flows over `agent-core`, driving plan → confirm → recover via MCP elicitation (6 + 8 + 11 + 2 + 5 = 32)
 
 ```
 ┌──────────────────────────────────────┐
@@ -43,6 +44,8 @@ The 32 tools (+ 1 optional faucet) are split across five MCP servers to stay und
         └─────────┘  └─────────┘  └─────────┘
 ```
 
+> The diagram shows the four protocol servers that resolve directly through `core`. The **agent server** (5 orchestrated tools) is the fifth: it sits above **`agent-core`** — which composes `core` + `fred` and drives MCP elicitation — rather than calling `core` directly. See *Package: agent-core* and *Package: agent* below. The **`sdk`** package is a library (not a server), aggregating `core` + `fred` + `agent-core` for external app builders.
+
 ## Monorepo structure
 
 ```
@@ -57,12 +60,14 @@ packages/
   node/      @manifest-network/manifest-mcp-node       Five CLIs: manifest-mcp-{chain,lease,fred,cosmwasm,agent}
   sdk/       @manifest-network/manifest-sdk            App-building SDK: aggregating barrel + scoped subpaths over core/fred/agent-core
 e2e/                                                   End-to-end tests against a live chain
+examples/
+  sdk-acceptance/  @manifest-network/sdk-acceptance      Private SDK acceptance harness (external-install smoke test)
 submodules/
   manifest-ledger/                                 Cosmos SDK blockchain (main branch, v2.1.0+)
   fred/                                            Container orchestration backend (main branch)
 ```
 
-Dependency direction: **node -> {chain, lease, fred, cosmwasm, agent} -> core**, and **agent -> agent-core -> {core, fred}** (never reverse; node also depends on core directly). Fred also uses its own HTTP clients internally. Core has no knowledge of transports or Node.js-specific APIs, though it exports MCP-typed server utilities (`withErrorHandling`, `jsonResponse`) consumed by chain, lease, fred, and cosmwasm packages.
+Dependency direction: **node -> {chain, lease, fred, cosmwasm, agent} -> core**, **agent -> agent-core -> {core, fred}**, and **sdk -> {core, fred, agent-core}** (never reverse; node also depends on core directly). Fred also uses its own HTTP clients internally. Core has no knowledge of transports or Node.js-specific APIs, though it exports MCP-typed server utilities (`withErrorHandling`, `jsonResponse`) consumed by chain, lease, fred, and cosmwasm packages.
 
 ## Package: core
 
@@ -70,56 +75,60 @@ The core package is a shared library containing Cosmos logic, on-chain tool func
 
 ### Source layout
 
+Representative layout (non-exhaustive — see the package for the full file set):
+
 ```
 src/
-├── index.ts              Re-exports all public API
+├── index.ts              Public API barrel. NOTE: createGuardedFetch / isBlocked / BLOCKED_RANGES_* are deliberately NOT here — they ship only via the Node-only /guarded-fetch subpath (ENG-281)
+├── guarded-fetch.ts      Node-only subpath entry: @manifest-network/manifest-mcp-core/guarded-fetch
 ├── logger.ts             Leveled logger (stderr output; level set via logger.setLevel(), defaults to warn)
 ├── server-utils.ts       Server utilities (error handling, sanitization, response helpers)
-├── __test-utils__/
-│   ├── callTool.ts       MCP tool invocation helper for unit tests (in-memory transport)
-│   └── mocks.ts          Shared test mocks (imported cross-package by chain/lease/fred tests)
+├── tool-metadata.ts      Tool annotation + _meta.manifest helpers
 ├── client.ts             CosmosClientManager -- keyed-instance client lifecycle (RPC + LCD)
+├── client-factory.ts     Bound read-client factory (createManifestReadClient)
+├── client-full.ts        Full (signing) client surface (createManifestClient; executeTx, setItemCustomDomain, …)
+├── ctx.ts                Shared capability-context types
 ├── lcd-adapter.ts        LCD/REST adapter -- converts LCD responses to RPC query client shape
 ├── config.ts             Configuration validation and defaults
+├── env-utils.ts          Env-var parsing (incl. the *_FETCH_GUARDED boolean parser)
 ├── cosmos.ts             cosmosQuery / cosmosTx routing to module handlers
 ├── modules.ts            Module registry with metadata and discovery
-├── types.ts              Shared type definitions
+├── types.ts              Shared types + ManifestMCPError / ManifestMCPErrorCode
+├── manifest-types.ts     AppDeploySpec / ServiceConfig and related deploy types
+├── brands.ts             Branded domain types (Address/LeaseUuid/…) with parse*/as* constructors
+├── signer.ts             Signer port + createSignerAdapter
+├── options.ts            Shared option types
+├── sku-resolution.ts     Shared resolveSku (raises SKU_AMBIGUOUS); used by fred + agent-core
 ├── validation.ts         Input validation helpers
 ├── retry.ts              Retry with exponential backoff
 ├── version.ts            Package version constant
+│
+├── internals/            Internal / Node-only helpers
+│   ├── guarded-fetch.ts  SSRF-guarded fetch factory (createGuardedFetch, isBlocked, BLOCKED_RANGES_*)
+│   ├── read-signal.ts    AbortSignal plumbing for reads
+│   ├── tx-confirmation.ts  Tx confirmation / await helpers
+│   └── tx-opts.ts        Tx option normalization
 │
 ├── wallet/               Wallet provider implementations
 │   ├── index.ts          Barrel re-exports
 │   ├── mnemonic.ts       MnemonicWalletProvider (BIP-39)
 │   └── sign-arbitrary.ts ADR-036 signArbitrary with amino wallet
 │
-├── queries/              Cosmos SDK query handlers (one file per module)
-│   ├── bank.ts           Balance, supply, denom metadata
-│   ├── staking.ts        Validators, delegations
-│   ├── distribution.ts   Rewards, commission
-│   ├── gov.ts            Proposals, votes, deposits
-│   ├── auth.ts           Account info
-│   ├── billing.ts        Leases, credit accounts (Manifest-specific)
-│   ├── sku.ts            Providers, SKUs (Manifest-specific)
-│   ├── group.ts          Group governance
-│   └── utils.ts          Pagination helpers
+├── queries/              Cosmos SDK query handlers -- one file per module (bank, staking,
+│                         distribution, gov, auth, mint, billing, sku, group, wasm, poa,
+│                         tokenfactory, authz, feegrant, ibc-transfer, …); see modules.ts
 │
-├── transactions/         Cosmos SDK transaction handlers (one file per module)
-│   ├── bank.ts           Send
-│   ├── staking.ts        Delegate, undelegate, redelegate
-│   ├── distribution.ts   Withdraw rewards/commission
-│   ├── gov.ts            Submit proposal, vote, deposit
-│   ├── billing.ts        Lease operations, credit management
-│   ├── manifest.ts       Manifest-specific transactions
-│   ├── sku.ts            SKU management
-│   ├── group.ts          Group governance transactions
-│   └── utils.ts          Signature and broadcast helpers
+├── transactions/         Cosmos SDK transaction handlers -- one file per module (bank, staking,
+│                         distribution, gov, billing, manifest, sku, group, wasm, poa,
+│                         tokenfactory, authz, feegrant, ibc-transfer, …); see modules.ts
 │
-└── tools/                On-chain tool functions (used by lease and fred packages)
+└── tools/                On-chain tool functions (used by lease, fred, and sdk packages)
     ├── getBalance.ts            On-chain + credit balance
     ├── fundCredits.ts           Send tokens to billing account
     ├── setItemCustomDomain.ts   Claim or release a custom domain on a lease item
-    └── stopApp.ts               Close lease on-chain
+    ├── stopApp.ts               Close lease on-chain
+    ├── executeTx.ts             Atomic multi-message tx batching
+    └── reads.ts                 Typed read helpers (the SDK read surface)
 ```
 
 ### Key components
@@ -132,7 +141,7 @@ src/
 Key features:
 - Lazy initialization with promise-based concurrency control (multiple callers wait for the same init)
 - Token-bucket rate limiting (default: 10 requests/sec via `limiter`), acquired by callers before chain calls
-- Automatic retry with exponential backoff (base 1s, max 10s, 3 retries) on transient failures (network errors, HTTP 5xx, 429); permanent errors (`INVALID_CONFIG`, `WALLET_NOT_CONNECTED`, `WALLET_CONNECTION_FAILED`, `INVALID_MNEMONIC`, `INVALID_ADDRESS`, `UNSUPPORTED_QUERY`, `UNSUPPORTED_TX`, `UNKNOWN_MODULE`, `TX_FAILED`) are not retried
+- Automatic retry with exponential backoff (base 1s, max 10s, 3 retries) on transient failures (network errors, HTTP 5xx, 429); permanent errors (`INVALID_CONFIG`, `WALLET_NOT_CONNECTED`, `WALLET_CONNECTION_FAILED`, `INVALID_MNEMONIC`, `INVALID_ADDRESS`, `INVALID_ARGUMENT`, `UNSUPPORTED_QUERY`, `UNSUPPORTED_TX`, `UNKNOWN_MODULE`, `TX_FAILED`, `OPERATION_CANCELLED`, `SKU_AMBIGUOUS`) are not retried
 - Selective invalidation on config update: signing client is recreated when `gasPrice`, `gasMultiplier`, or `walletProvider` changes; the rate limiter is rebuilt independently when `requestsPerSecond` changes; the query client is never invalidated (stateless HTTP)
 
 **Module registry** (`modules.ts`) -- Static `QUERY_MODULES` and `TX_MODULES` maps that register each Cosmos module's metadata (description, subcommands) and handler functions. This powers the `list_modules` and `list_module_subcommands` discovery tools, allowing AI clients to explore available operations dynamically.
@@ -144,6 +153,8 @@ Key features:
 **Server utilities** (`server-utils.ts`) -- Shared by chain, lease, fred, and cosmwasm packages: `withErrorHandling` (wraps tool handlers with error sanitization), `jsonResponse` (formats successful text responses), `structuredResponse` (formats responses with `structuredContent` for tools that declare an `outputSchema`), `bigIntReplacer` (serializes BigInt), `sanitizeForLogging` (redacts sensitive fields).
 
 **Tool annotation helpers** (`tool-metadata.ts`) -- `readOnlyAnnotations()` and `mutatingAnnotations({ destructive, idempotent? })` produce the standard MCP `ToolAnnotations` (`title`, `readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`). `manifestMeta({ broadcasts, estimable })` injects a versioned `_meta.manifest` container (`v: MANIFEST_TOOL_META_VERSION = 1`) for Manifest-specific signals downstream plugins consume.
+
+**SSRF-guarded fetch** (`internals/guarded-fetch.ts`, exposed via the Node-only `@manifest-network/manifest-mcp-core/guarded-fetch` subpath — **not** the barrel) -- `createGuardedFetch()` builds a native `undici` Dispatcher that DNS-resolves the target **inside the connect hook** (substituting the resolved IP) and default-denies any address whose `ipaddr.js` `range()` is not `'unicast'` (loopback, link-local, private, reserved/benchmarking, etc.), closing the DNS-rebinding / TOCTOU gap a hostname-only check leaves open; the hook re-fires on cross-origin redirects. It is consumed by fred (gated `MANIFEST_FRED_FETCH_GUARDED`, default on) and agent-core (gated `MANIFEST_AGENT_FETCH_GUARDED`, default on), so a malicious on-chain provider URL can't point a server at an internal host. Kept off the package barrel for browser-bundle hygiene (no `undici` / `node:async_hooks` in the universal graph); `ipaddr.js` is force-pinned to `2.4.0` tree-wide so a stale transitive copy (e.g. `1.9.1` via `proxy-addr`) can't silently weaken the classification. See [`docs/security.md`](docs/security.md).
 
 ## Package: chain
 
@@ -203,9 +214,14 @@ The fred server handles ADR-036 provider authentication internally and contains 
 
 ```
 src/
-├── index.ts              FredMCPServer entry point + library exports (constructs the McpServer and wires registerTools/registerResources/registerPrompts)
+├── index.ts              Browser-safe library barrel (capability fns, HTTP wrappers, types) -- NOT the server (ENG-287)
 ├── manifest.ts           Manifest building, merging, validation, and meta-hash derivation
-├── server/
+├── client.ts             createFredClient — core ManifestClient decorated with bound FredActions (viem-style)
+├── ctx.ts                FredReadCtx / FredAuthCtx capability-context types
+├── node.ts               Node-only /node subpath: createFredClientNode (SSRF-safe-by-default fred client)
+├── server/               Node-only MCP server (@manifest-network/manifest-mcp-fred/server subpath)
+│   ├── index.ts                FredMCPServer entry point (constructs the McpServer, wires registerTools/registerResources/registerPrompts)
+│   ├── fetch-gate.ts           Injects core's SSRF-guarded fetch (gated MANIFEST_FRED_FETCH_GUARDED, default on)
 │   ├── progress.ts             Helper utilities for emitting `notifications/progress` and forwarding `AbortSignal`
 │   ├── register-tools.ts       Registers the 11 MCP tools (browse_catalog, deploy_app, app_status, app_diagnostics, app_releases, …)
 │   ├── register-resources.ts   Registers the 3 MCP resources (`manifest://leases/active`, `manifest://leases/recent`, `manifest://providers`)
@@ -213,6 +229,8 @@ src/
 ├── http/
 │   ├── auth.ts                 ADR-036 sign-message construction, base64 token assembly, and timestamp deduplication tracker
 │   ├── auth-token-service.ts   Wallet-bound ADR-036 token builder (`AuthTokenService`); serializes monotonic timestamps via `AuthTimestampTracker` so consecutive tokens never collide, and lazily requires `walletProvider.signArbitrary` (throws `INVALID_CONFIG` only on auth-gated tool calls). No token cache.
+│   ├── auth-tokens-factory.ts  Factory wiring the token service to a signer
+│   ├── provider-auth.ts        ProviderAuthPort implementation (`createProviderAuth`) minting provider/lease-data tokens
 │   ├── provider.ts             Provider API client (URL validation, health, lease info, manifest upload)
 │   └── fred.ts                 Fred API client (lease status, logs, provision diagnostics, restart, update, releases, ready polling)
 └── tools/
@@ -221,8 +239,11 @@ src/
     ├── browseCatalog.ts           List providers + SKU pricing with health checks
     ├── checkDeploymentReadiness.ts  Pre-flight balance/SKU/image checks before deploy
     ├── buildManifestPreview.ts    Render the SDL/manifest that deploy_app would submit
-    ├── deployApp.ts               Create lease + deploy container (+ optional custom-domain claim)
+    ├── deployApp.ts               Thin wrapper: buildManifest/buildStackManifest + deployManifest
+    ├── deployManifest.ts          Core deploy: SKU resolve -> create lease -> upload -> ready poll
     ├── waitForAppReady.ts         Poll provider until lease reports ready
+    ├── waitForLeaseStatus.ts      Converging lease-status watch -> Promise<FredLeaseStatus> (ENG-461)
+    ├── getLeaseConnectionInfo.ts  Fetch a lease's connection details (host, ports)
     ├── appStatus.ts               Lease status + provider info
     ├── getLogs.ts                 Fetch container logs
     ├── restartApp.ts              Restart via provider API
@@ -275,6 +296,20 @@ The cosmwasm package is an MCP server that registers 2 MFX-to-PWR converter tool
 
 The `CosmwasmMCPServer` class takes a `CosmwasmMCPServerOptions` (config + walletProvider + converterAddress), creates an `McpServer`, and registers the 2 tools. It queries the converter contract's `{"config":{}}` smart query for rate and denom info, and executes conversions via `MsgExecuteContract` with `{"convert":{}}`. Requires the `MANIFEST_CONVERTER_ADDRESS` environment variable.
 
+## Package: agent-core
+
+The agent-core package is the TypeScript orchestration surface for Manifest agent flows -- `deployApp`, `manageDomain`, `troubleshootDeployment`, `closeLease`. It is **not** an MCP server; it exposes typed, callback-driven functions so different host surfaces (chat, conversational UI, autonomous daemon) can drive the same plan → confirm → progress → recover lifecycle in lockstep -- a fix in its recovery branch fixes every host surface at once.
+
+Each function takes a typed args object plus a callbacks object. The mutating flows expose `onConfirm` / `onProgress` / `onComplete` / `onFailure`; only `deployApp` adds `onPlan` and an enriched `onFailure(FailureEnvelope, RecoveryOption[]) => Promise<RecoveryChoice>` that drives partial-success recovery (retry the set-domain step, salvage the lease without the domain, cancel a pending lease, or close an active one -- see `RecoveryOptionId` in `src/types.ts`). Node-only paths (e.g. `saveManifest`) use dynamic `node:fs` imports so the build stays `platform: "neutral"`. The SSRF-guarded fetch is re-exported from a Node-only `@manifest-network/manifest-agent-core/guarded-fetch` subpath (mirrors core's split). Depends on `core` + `fred`.
+
+Source: `deploy-app.ts`, `manage-domain.ts`, `troubleshoot.ts`, `close-lease.ts` (one per flow), `types.ts` (frozen callback/recovery shapes), `guarded-fetch.ts` (subpath entry), plus `internals/` render + denom-humanize helpers.
+
+## Package: agent
+
+The agent package is an MCP server that wraps each agent-core function as an orchestrated tool: `deploy_app_orchestrated`, `manage_domain_orchestrated`, `lookup_custom_domain_orchestrated`, `troubleshoot_deployment_orchestrated`, `close_lease_orchestrated`. It is a **pure adapter** -- no orchestration logic of its own -- translating agent-core's typed callbacks into MCP `elicitation/create` requests (via `server.elicitInput`) for the broadcasting tools and `notifications/progress` events for all tools. `lookup_custom_domain_orchestrated` is the read-only reverse-lookup sibling of `manage_domain_orchestrated` (both wrap `manageDomain`; split for honest tool annotations -- ENG-212).
+
+The broadcasting tools **require** an elicitation-capable host (Claude Code ≥ 2.1.76); the read-only tools (`lookup_custom_domain_orchestrated`, `troubleshoot_deployment_orchestrated`) run on any host. Env: `MANIFEST_AGENT_DATA_DIR`, `MANIFEST_CHAIN_DATA_FILE`, `MANIFEST_AGENT_FETCH_GUARDED` (default on), `MANIFEST_AGENT_ELICIT_TIMEOUT_MS` (default `600000`). Source: `index.ts` (AgentMCPServer + tool registration), `callbacks.ts` (callback → elicitation translation), `elicitation.ts`, `runtime.ts`, `env.ts`. Depends on `agent-core`.
+
 ## Package: node
 
 The node package provides five Node.js CLI entry points:
@@ -298,8 +333,9 @@ src/
 ├── lease.ts              Lease CLI entry point
 ├── fred.ts               Fred CLI entry point
 ├── cosmwasm.ts           CosmWasm CLI entry point
+├── agent.ts              Agent CLI entry point
 ├── config.ts             Environment variable loading
-├── keyfileWallet.ts      Encrypted keyfile wallet provider
+├── keyfileWallet.ts      Keyfile wallet provider (encrypted or plaintext mnemonic)
 └── keygen.ts             Interactive key generation and import
 ```
 
@@ -319,6 +355,23 @@ interface WalletProvider {
 
 The optional `signArbitrary` method enables ADR-036 authentication for provider HTTP APIs (used by fred). Both `MnemonicWalletProvider` (core) and `KeyfileWalletProvider` (node) implement it using dual wallets: a `DirectSecp256k1HdWallet` for proto-signing (transactions) and a `Secp256k1HdWallet` for amino-signing (ADR-036 auth tokens). Both providers use promise deduplication to prevent redundant initialization from concurrent calls.
 
+## Package: sdk
+
+The sdk package (`@manifest-network/manifest-sdk`) is the **supported external entry point** for building an app on Manifest + Fred. It is a library, not an MCP server, aggregating `core` + `fred` + `agent-core` over `manifestjs` behind one typed surface. Barney (the Manifest web frontend) is its reference consumer. Added in v0.15.0 (ENG-442); built `platform: "neutral"`.
+
+It exposes an aggregating root barrel plus scoped, tree-shakable subpaths — each backed by one `src/` entry file:
+
+| Import | `src/` entry | Contents |
+| --- | --- | --- |
+| `@manifest-network/manifest-sdk` | `index.ts` | Client factories (`createFredClient` / `createManifestClient` / `createManifestReadClient`), branded types (`parse*`/`as*`), ports (`WalletProvider`, `Signer`), the error vocabulary (`ManifestMCPError`/`ManifestMCPErrorCode` + `ProviderApiError`/`isSkuAmbiguousError`), and `createConfig` |
+| `…/reads` | `reads.ts` | Branded read functions (`getBalance`, `getLease`, `getSKUs`, …) |
+| `…/catalog` | `catalog.ts` | Catalog / readiness helpers (`checkDeploymentReadiness`, …) |
+| `…/deploy` | `deploy.ts` | Deploy lifecycle (`buildManifest`, `deployApp`, `waitForLeaseStatus`, `isLeaseFailureTerminal`, …) |
+| `…/orchestration` | `orchestration.ts` | agent-core's callback-driven flows (`deployApp`, `manageDomain`, …) |
+| `…/node` | `node.ts` | Node-only: `createFredClientNode`, the SSRF-guarded `createGuardedFetch`, `isBlocked` |
+
+The public API surface is guarded by `publint` + `@arethetypeswrong/core` (run in the tsdown build), not api-extractor (ENG-446). See [`packages/sdk/README.md`](packages/sdk/README.md) and the cookbook [`docs/library-usage.md`](docs/library-usage.md).
+
 ## Request flow
 
 A typical tool call follows this path:
@@ -328,7 +381,7 @@ MCP Client
   -> JSON-RPC over stdio
     -> StdioServerTransport (node)
       -> Server.handleRequest (MCP SDK)
-        -> Tool handler (chain, lease, or fred server)
+        -> Tool handler (chain, lease, fred, cosmwasm, or agent server)
           -> Core function (e.g., cosmosQuery -> cosmos.ts -> queries/bank.ts)
             -> acquireRateLimit()
             -> CosmosClientManager.getQueryClient()
@@ -363,16 +416,18 @@ This is handled by `http/auth.ts` in the fred package and used by all fred serve
 
 ## Error handling
 
-Errors use the `ManifestMCPErrorCode` enum (12 codes across 6 categories):
+Errors use the `ManifestMCPErrorCode` enum (15 codes across 8 categories):
 
 | Category | Codes |
 |----------|-------|
 | Configuration | `INVALID_CONFIG` |
 | Wallet | `WALLET_NOT_CONNECTED`, `WALLET_CONNECTION_FAILED`, `INVALID_MNEMONIC` |
 | Client/RPC | `RPC_CONNECTION_FAILED` |
-| Query | `QUERY_FAILED`, `UNSUPPORTED_QUERY`, `INVALID_ADDRESS` |
+| Query | `QUERY_FAILED`, `UNSUPPORTED_QUERY`, `INVALID_ADDRESS`, `INVALID_ARGUMENT` |
 | Transaction | `TX_FAILED`, `UNSUPPORTED_TX`, `SIMULATION_FAILED` |
 | Module | `UNKNOWN_MODULE` |
+| User action | `OPERATION_CANCELLED` (user decline / cancel / elicitation timeout — neither a fault nor retryable) |
+| SKU resolution | `SKU_AMBIGUOUS` (a SKU name matched more than one active SKU; disambiguate with `provider_uuid` / `sku_uuid`) |
 
 Error responses returned to MCP clients sanitize structured fields (such as `input` and `details`) via a redaction helper so that sensitive values (mnemonics, passwords, keys, tokens) are not exposed; the top-level `error.message` string is passed through verbatim and should not contain secrets.
 
@@ -401,7 +456,7 @@ End-to-end tests live in `/e2e/` and run against a real Manifest chain (and a re
 ```
 e2e/
 ├── docker-compose.yml                Spins up chain + init + docker-backend + providerd + faucet (TLS)
-├── vitest.config.ts                  5-minute test timeout, single-fork pool
+├── vitest.config.ts                  5-min test timeout; serial execution (fileParallelism:false + sequence.concurrent:false) so files share one on-chain wallet
 ├── docker/                           Dockerfiles for the chain and provider containers
 ├── scripts/
 │   ├── init_chain.sh                 Genesis + key/funds bootstrap for the chain container
@@ -425,7 +480,8 @@ e2e/
 ├── tool-annotations.e2e.test.ts      Pins the `annotations` + `_meta.manifest` matrix per tool
 ├── wallet.e2e.test.ts                Wallet bootstrap, ADR-036, dual-wallet flows
 ├── wasm-mutations.e2e.test.ts        Wasm tx surface (store-code, instantiate, execute, migrate)
-└── request-faucet.e2e.test.ts        `request_faucet` tool wired against the local CosmJS faucet
+├── request-faucet.e2e.test.ts        `request_faucet` tool wired against the local CosmJS faucet
+└── sdk-acceptance.e2e.test.ts        SDK-direct acceptance — drives runAcceptanceFlow (SDK + manifestjs only) for single-service + stack leases
 ```
 
 To run:
@@ -438,7 +494,7 @@ docker compose -f e2e/docker-compose.yml down -v --remove-orphans
 
 ## Build and test
 
-- **Build**: `tsdown` (unbundled ESM output with sourcemaps and `.d.ts` declarations). Core, chain, lease, fred, and cosmwasm use `platform: "neutral"` for browser compatibility; node uses `platform: "node"`.
+- **Build**: `tsdown` (unbundled ESM output with sourcemaps and `.d.ts` declarations). Core, chain, lease, fred, cosmwasm, agent-core, agent, and sdk use `platform: "neutral"` for browser compatibility (Node-only code paths go through dynamic imports); node uses `platform: "node"`.
 - **Unit tests**: Vitest, co-located `*.test.ts` files
 - **E2E tests**: See [E2E testing](#e2e-testing) above
 - **Type checking**: `tsc --noEmit`
