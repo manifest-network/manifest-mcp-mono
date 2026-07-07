@@ -18,21 +18,32 @@ if (
   process.exit(1);
 }
 
-// Discover workspace packages dynamically
-const pkgDir = resolve(root, "packages");
-let entries;
-try {
-  entries = readdirSync(pkgDir, { withFileTypes: true });
-} catch (err) {
-  console.error(`Cannot read packages directory: ${err.message}`);
-  console.error(`Expected packages directory at: ${pkgDir}`);
-  process.exit(1);
+// Discover workspace members dynamically: packages/* (required) + examples/* (optional).
+// Both get their version bumped and their internal dep ranges normalized; only packages/*
+// names become normalize targets (see internalPackages below).
+function discoverPkgJsons(dirName, { required }) {
+  const dir = resolve(root, dirName);
+  let entries;
+  try {
+    entries = readdirSync(dir, { withFileTypes: true });
+  } catch (err) {
+    if (required) {
+      console.error(`Cannot read ${dirName} directory: ${err.message}`);
+      console.error(`Expected ${dirName} directory at: ${dir}`);
+      process.exit(1);
+    }
+    return []; // optional dir absent — nothing to normalize
+  }
+  return entries
+    .filter((d) => d.isDirectory())
+    .map((d) => `${dirName}/${d.name}/package.json`);
 }
-const workspacePkgJsons = entries
-  .filter((d) => d.isDirectory())
-  .map((d) => `packages/${d.name}/package.json`);
 
-const packageJsonPaths = ["package.json", ...workspacePkgJsons];
+const packageJsonPaths = [
+  "package.json",
+  ...discoverPkgJsons("packages", { required: true }),
+  ...discoverPkgJsons("examples", { required: false }),
+];
 
 // Phase 1: Read and validate all package.json files
 const packages = [];
@@ -48,7 +59,7 @@ for (const rel of packageJsonPaths) {
   }
 }
 
-// Collect internal package names from workspace packages (skip root)
+// Validate every non-root member has a name.
 const workspacePackages = packages.filter((p) => p.rel !== "package.json");
 for (const p of workspacePackages) {
   if (!p.pkg.name) {
@@ -56,7 +67,14 @@ for (const p of workspacePackages) {
     process.exit(1);
   }
 }
-const internalPackages = new Set(workspacePackages.map((p) => p.pkg.name));
+// Internal packages = the names whose ranges get normalized wherever they appear. examples/*
+// are private consumers (bumped + their internal ranges normalized) but never a normalize
+// target, so build the set from packages/ only.
+const internalPackages = new Set(
+  packages
+    .filter((p) => p.rel.startsWith("packages/"))
+    .map((p) => p.pkg.name),
+);
 
 const exactVersion = version; // internal siblings pinned EXACT (lockstep supply-chain determinism)
 const peerVersion = `^${version}`; // internal peers stay caret, tracked to the release minor
