@@ -10,51 +10,72 @@ the same inputs for the per-skill replay tests to pass.
 ```
 __fixtures__/
 ├── README.md           # this file
-├── scenarios.json      # canonical-input registry (1 entry per scenario)
+├── scenarios.json      # canonical scenario registry (skill, kind, chain, UUIDs)
 ├── chain-data/         # synthetic chain registry JSON for humanize-denom
 │   └── testnet.json    # fee tokens map (umfx → MFX, etc.)
-├── internals/          # (DEFERRED — fixture tree for unit-test ports; tracked for PR-3.x / ENG-185)
-│   ├── verify-recover/
-│   ├── classify-deploy-error/
-│   ├── verify-domain-state/
-│   └── evaluate-readiness/
 └── skills/
-    └── deploy-app/
-        ├── 01-fast-path-active/             # deploy-happy
-        │   ├── input/                       # canonical inputs
-        │   │   ├── spec.json                # DeploySpec (single-service)
-        │   │   ├── readiness-response.json  # mocked check_deployment_readiness
-        │   │   ├── fee-response.json        # mocked cosmos_estimate_fee
-        │   │   ├── meta-hash-response.json  # mocked build_manifest_preview
-        │   │   └── deploy-response.json     # mocked deploy_app success
-        │   ├── mcp-script.json              # ordered MCP call/response transcript
-        │   ├── expected-intent-recap.txt    # render-intent-recap output
-        │   ├── expected-plan.txt            # render-deployment-plan output (BYTE-BASELINE)
-        │   ├── expected-readiness.json      # evaluate-readiness output
-        │   ├── expected-classify-response.json
-        │   ├── expected-success.txt         # format-success output
-        │   └── expected-saved-manifest.json # save-manifest file content (deferred — see scope note)
-        └── 03-partial-success-set-domain-failed/  # deploy-partial-success
-            ├── input/                            # canonical inputs
-            │   ├── spec.json                     # DeploySpec WITH customDomain
-            │   ├── readiness-response.json
-            │   ├── fee-response.json             # both create-lease + set-domain fees
-            │   ├── meta-hash-response.json
-            │   └── deploy-error.json             # MCP error envelope ("Deploy partially succeeded:")
-            ├── mcp-script.json
-            ├── expected-intent-recap.txt
-            ├── expected-plan.txt                 # dual-fee variant
-            ├── expected-readiness.json           # evaluate-readiness output
-            └── expected-classify-error.json      # classify-deploy-error output
+    ├── deploy-app/
+    │   ├── 01-fast-path-active/
+    │   ├── 03-partial-success-set-domain-failed/
+    │   ├── 05-needs-wait-then-active/
+    │   ├── 06-classifier-failed-terminal/
+    │   └── 07-classifier-failed-no-lease-uuid/
+    ├── manage-domain/
+    │   ├── 01-set-success/
+    │   ├── 02-set-mismatch/
+    │   ├── 03-clear-success/
+    │   ├── 04-lookup-found/
+    │   ├── 05-lookup-not-found/
+    │   └── 06-stack-set-success/
+    ├── close-lease/
+    │   ├── 01-close-success/
+    │   ├── 02-close-pending-verify-fail/
+    │   └── 03-close-not-found/
+    └── troubleshoot/
+        ├── 01-active-healthy/
+        ├── 02-pending/
+        ├── 03-closed-terminal/
+        └── 04-lease-not-found/
 ```
 
-## Initial scope (parent Q3 refinement, 2026-05-12)
+Each scenario directory holds an `input/` subtree (canonical inputs the TS
+function receives) plus committed `expected-*` baselines; the exact files
+vary by scenario kind — see `scenarios.json` for the full set. A
+representative deploy-app scenario:
 
-Only **`deploy-app/01-fast-path-active`** and
-**`deploy-app/03-partial-success-set-domain-failed`** are baselined up
-front. The other six scenarios (`02-custom-domain-success`,
-`04-readiness-block`, `05-stack-spec`, `manage-domain/*`,
-`close-lease/*`, `troubleshoot/*`) land on-demand or before PR 4 closes.
+```
+01-fast-path-active/
+├── input/
+│   ├── spec.json                # AppDeploySpec (single-service)
+│   ├── readiness-response.json  # mocked check_deployment_readiness
+│   ├── fee-response.json        # mocked cosmos_estimate_fee
+│   ├── meta-hash-response.json  # mocked build_manifest_preview
+│   └── deploy-response.json     # mocked deploy_app success
+├── mcp-script.json              # ordered MCP call/response transcript
+├── expected-intent-recap.txt    # render-intent-recap output
+├── expected-plan.txt            # render-deployment-plan output (BYTE-BASELINE)
+├── expected-readiness.json      # evaluate-readiness output
+├── expected-classify-response.json
+└── expected-success.txt         # format-success output
+```
+
+## Baselined scenarios
+
+All four skills have committed scenario baselines on disk:
+
+- **`deploy-app/`** — `01-fast-path-active`,
+  `03-partial-success-set-domain-failed`, `05-needs-wait-then-active`,
+  `06-classifier-failed-terminal`, `07-classifier-failed-no-lease-uuid`
+- **`manage-domain/`** — `01-set-success`, `02-set-mismatch`,
+  `03-clear-success`, `04-lookup-found`, `05-lookup-not-found`,
+  `06-stack-set-success`
+- **`close-lease/`** — `01-close-success`, `02-close-pending-verify-fail`,
+  `03-close-not-found`
+- **`troubleshoot/`** — `01-active-healthy`, `02-pending`,
+  `03-closed-terminal`, `04-lease-not-found`
+
+See `scenarios.json` for the canonical per-scenario metadata (skill, kind,
+active chain, and UUIDs).
 
 ## CI
 

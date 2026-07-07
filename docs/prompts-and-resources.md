@@ -1,6 +1,6 @@
 # Prompts and resources
 
-The Fred server (`manifest-mcp-fred`) declares the `prompts: {}` and `resources: {}` capabilities in its server-info handshake and exposes the items below. The other three servers (chain, lease, cosmwasm) currently expose only tools.
+The Fred server (`manifest-mcp-fred`) declares the `prompts: {}` and `resources: {}` capabilities in its server-info handshake and exposes the items below. The other four servers (chain, lease, cosmwasm, agent) currently expose only tools.
 
 Prompts and resources are part of the MCP spec; the host UI surfaces them differently from tools. Hosts that don't speak prompts/resources simply ignore these — the tools are still available.
 
@@ -88,7 +88,7 @@ The caller's leases ordered most-recent-first, up to 50, **regardless of state**
 
 ### `manifest://providers`
 
-Provider catalog snapshot — chain-side data only. No live HTTP health probe. Use `browse_catalog` (a tool, not a resource) when health is needed.
+Provider catalog snapshot — chain-side data only. No live HTTP health probe. Use `browse_catalog` (a tool, not a resource) when health is needed. Only **active** providers and **active** SKUs are returned (the query passes `activeOnly: true`), so the `active` field is always `true`.
 
 ```text
 {

@@ -7,9 +7,11 @@ Provides five binaries:
 - **`manifest-mcp-lease`** -- Lease MCP server (8 tools: credit balance, funding, lease queries, custom-domain claim/lookup, SKUs, providers)
 - **`manifest-mcp-fred`** -- Fred MCP server (11 tools, plus 3 resources & 3 prompts: catalog, deployment readiness, manifest preview, deployment, ready polling, status, logs, restart, update, diagnostics, releases)
 - **`manifest-mcp-cosmwasm`** -- CosmWasm MCP server (2 tools: MFX-to-PWR rate query, token conversion)
-- **`manifest-mcp-agent`** -- Agent MCP server (5 orchestrated tools via MCP elicitation: deploy, manage-domain, lookup-domain, troubleshoot, close-lease)
+- **`manifest-mcp-agent`** -- Agent MCP server (5 orchestrated tools: 3 broadcasting tools — deploy, manage-domain, close-lease — drive MCP elicitation and require an elicitation-capable host; 2 read-only tools — lookup-domain, troubleshoot — run on any host)
 
 ## Setup
+
+Requires **Node.js >= 22.19.0** (declared via `engines`).
 
 ```bash
 # From the monorepo root
@@ -161,11 +163,16 @@ A wallet is still required at startup even in query-only mode. Transaction tools
 | `COSMOS_REST_URL` | One of `COSMOS_RPC_URL` or `COSMOS_REST_URL` required | -- | LCD/REST endpoint URL for query-only mode |
 | `COSMOS_GAS_MULTIPLIER` | No | `1.5` | Gas simulation multiplier (must be >= 1) |
 | `COSMOS_ADDRESS_PREFIX` | No | `manifest` | Bech32 address prefix |
-| `MANIFEST_KEY_FILE` | No | `~/.manifest/key.json` | Path to the encrypted keyfile |
+| `MANIFEST_KEY_FILE` | No | `~/.manifest/key.json` | Path to the keyfile (encrypted, or a plaintext mnemonic loaded with a warning) |
 | `MANIFEST_KEY_PASSWORD` | No | -- | Password to decrypt the keyfile |
 | `COSMOS_MNEMONIC` | No | -- | BIP-39 mnemonic (fallback when no keyfile exists) |
 | `MANIFEST_FAUCET_URL` | No | -- | Faucet URL (enables `request_faucet` tool on chain server) |
 | `MANIFEST_CONVERTER_ADDRESS` | Required for cosmwasm server | -- | CosmWasm converter contract address |
+| `MANIFEST_FRED_FETCH_GUARDED` | No (fred server) | `1` (default ON) | SSRF guard for provider/Fred HTTP. Accepts `1`/`true`/`yes`/`on` and `0`/`false`/`no`/`off` (case-insensitive) |
+| `MANIFEST_AGENT_FETCH_GUARDED` | No (agent server) | `1` (default ON) | SSRF guard for agent-core provider HTTP. Same parser as `MANIFEST_FRED_FETCH_GUARDED` |
+| `MANIFEST_AGENT_DATA_DIR` | No (agent server) | -- | Directory for persisted deploy manifests (`chmod`ed to `0o700`); when unset, persistence is skipped |
+| `MANIFEST_CHAIN_DATA_FILE` | No (agent server) | -- | Path to a chain-registry JSON (`{ feeTokens: [...] }`) for denom humanization (`umfx` → `MFX`) |
+| `MANIFEST_AGENT_ELICIT_TIMEOUT_MS` | No (agent server) | `600000` (10 min) | Per-`elicitInput` timeout in milliseconds |
 | `LOG_LEVEL` | No | `warn` | Log level: `debug`, `info`, `warn`, `error`, or `silent` |
 
 Set `COSMOS_RPC_URL` + `COSMOS_GAS_PRICE` for full access (queries + transactions). Set `COSMOS_REST_URL` alone for query-only mode (LCD/REST). When both are set, `COSMOS_REST_URL` is preferred for queries.
@@ -202,8 +209,8 @@ Set `COSMOS_RPC_URL` + `COSMOS_GAS_PRICE` for full access (queries + transaction
 | Tool | Description |
 |------|-------------|
 | `browse_catalog` | Browse available providers and service tiers with health checks |
-| `check_deployment_readiness` | Pre-flight checks (balance, SKU availability, image pull) before `deploy_app` |
-| `build_manifest_preview` | Preview the SDL/manifest that `deploy_app` would submit |
+| `check_deployment_readiness` | Pre-flight checks (wallet balances, credit account, SKU availability) before `deploy_app` |
+| `build_manifest_preview` | Preview the manifest (and its `meta_hash_hex`) that `deploy_app` would submit |
 | `deploy_app` | Deploy a new application (create lease + deploy container, optional custom domain) |
 | `wait_for_app_ready` | Poll provider until a deployed app reports ready |
 | `app_status` | Get detailed status for a deployed app by lease UUID |

@@ -2,7 +2,7 @@
 
 [![E2E](https://github.com/manifest-network/manifest-mcp-mono/actions/workflows/e2e.yml/badge.svg)](https://github.com/manifest-network/manifest-mcp-mono/actions/workflows/e2e.yml)
 
-MCP servers for [Manifest Network](https://www.manifestai.com/) and Cosmos SDK chains.
+MCP servers for [Manifest Network](https://manifest.network/) and Cosmos SDK chains.
 
 Exposes on-chain queries and transactions as [Model Context Protocol](https://modelcontextprotocol.io/) tools, so any MCP-compatible client (Claude Desktop, Cursor, etc.) can interact with the blockchain through natural language.
 
@@ -27,8 +27,8 @@ Dependency direction: **node -> {chain, lease, fred, cosmwasm, agent} -> core**;
 
 ## Prerequisites
 
-- Node.js >= 20
-- npm >= 9 (ships with Node 20+)
+- Node.js >= 22.19.0 (declared via `engines` on every package)
+- npm >= 10 (ships with Node 22+)
 
 ## Quick start
 
@@ -77,8 +77,8 @@ See [`packages/node/README.md`](packages/node/README.md) for wallet setup and MC
 | Tool | Description |
 |------|-------------|
 | `browse_catalog` | Browse available providers and service tiers with health checks |
-| `check_deployment_readiness` | Pre-flight checks (balance, SKU availability, image pull) before `deploy_app` |
-| `build_manifest_preview` | Preview the SDL/manifest that `deploy_app` would submit |
+| `check_deployment_readiness` | Pre-flight checks (wallet balances, credit account, SKU availability) before `deploy_app` |
+| `build_manifest_preview` | Preview the manifest that `deploy_app` would submit |
 | `deploy_app` | Deploy a new application (create lease + deploy container, optional custom domain) |
 | `wait_for_app_ready` | Poll provider until a deployed app reports ready |
 | `app_status` | Get detailed status for a deployed app by lease UUID |
@@ -109,7 +109,7 @@ Wraps [`@manifest-network/manifest-agent-core`](packages/agent-core/README.md) o
 | `troubleshoot_deployment_orchestrated` | Generate a markdown chain-side diagnostic report (no broadcast) |
 | `close_lease_orchestrated` | Confirm → close → verify terminal state |
 
-Supported modules: `bank`, `staking`, `distribution`, `gov`, `billing`, `sku`, `group`, `wasm`, `poa`, `tokenfactory`, `ibc-transfer`, `authz`, `feegrant`, `auth` (query only), `mint` (query only), `manifest` (tx only).
+Modules reachable via the chain server's `cosmos_query` / `cosmos_tx` (enumerate with `list_modules`): `bank`, `staking`, `distribution`, `gov`, `billing`, `sku`, `group`, `wasm`, `poa`, `tokenfactory`, `ibc-transfer`, `authz`, `feegrant`, `auth` (query only), `mint` (query only), `manifest` (tx only).
 
 ## Documentation
 

@@ -14,7 +14,7 @@ This page describes the trust boundaries and assumptions that the Manifest MCP s
 └─────────────────────────────────┬────────────────────────────────────┘
                                   │ stdio JSON-RPC, full tool surface
 ┌─────────────────────────────────▼────────────────────────────────────┐
-│         Manifest MCP server process (chain / lease / fred / cw)      │  Holds the wallet in memory, builds + signs txs, validates input
+│         Manifest MCP server process (chain/lease/fred/cw/agent)      │  Holds the wallet in memory, builds + signs txs, validates input
 └─────────────────────────────────┬────────────────────────────────────┘
                                   │ HTTPS to chain endpoints / providers
 ┌─────────────────────────────────▼────────────────────────────────────┐
@@ -27,7 +27,7 @@ The MCP server process is **inside** the human's trust boundary — it holds the
 ## Wallet handling
 
 Wallets resolve in this order:
-1. Encrypted keyfile at `MANIFEST_KEY_FILE` (default `~/.manifest/key.json`). The `keygen` and `import` subcommands write the file with mode `0600`.
+1. Keyfile at `MANIFEST_KEY_FILE` (default `~/.manifest/key.json`) — encrypted, or a plaintext mnemonic (loaded with a startup warning). The `keygen` and `import` subcommands write the file with mode `0600`.
 2. `COSMOS_MNEMONIC` env var (only used when no keyfile exists).
 3. Fatal exit.
 
@@ -70,11 +70,15 @@ The signature, public key, and metadata are base64-encoded into a `Bearer` token
 
 > **Known scope limitation.** The current sign-message format binds a token to `(tenant, leaseUuid, timestamp)` but **not** to a specific HTTP operation. If the provider's replay tracker is per-endpoint rather than global, a token issued for a read endpoint could in principle be replayed against a mutating endpoint within the 30-second window. Tightening this requires a coordinated server change to add an operation scope; doing it unilaterally on the client breaks every auth call. There's an in-source security note flagging this in `auth.ts` and a regression test pinning the wire format.
 
-## Endpoint-URL validation
+## SSRF protections
+
+Two complementary layers protect against server-side request forgery: a URL-scheme check at the boundary, and a runtime IP-level guard on the actual connection. Neither alone is sufficient — the scheme check can't see where a hostname resolves, and the IP guard can't reject a plain-HTTP downgrade — so both run.
+
+### 1. Endpoint-URL validation (scheme check)
 
 Two validators enforce the same HTTPS-or-localhost rule on different inputs:
 
-- **`validateEndpointUrl`** in `packages/core/src/config.ts` covers env-supplied endpoints: `COSMOS_RPC_URL` and `COSMOS_REST_URL` (validated inside `createValidatedConfig`), and `MANIFEST_FAUCET_URL` (validated in `packages/node/src/chain.ts` before the chain server starts). Failures throw `ManifestMCPError(INVALID_CONFIG)` and the server refuses to boot.
+- **`validateEndpointUrl`** in `packages/core/src/config.ts` covers env-supplied endpoints: `COSMOS_RPC_URL` and `COSMOS_REST_URL` (validated inside `createValidatedConfig`), and `MANIFEST_FAUCET_URL` (validated in `packages/node/src/chain.ts` before the chain server starts). The failure outcomes differ but both prevent boot: an invalid `COSMOS_RPC_URL`/`COSMOS_REST_URL` throws `ManifestMCPError(INVALID_CONFIG)` from `createValidatedConfig`, while an invalid `MANIFEST_FAUCET_URL` logs the reason to stderr and calls `process.exit(1)`.
 - **`validateProviderUrl`** in `packages/fred/src/http/provider.ts` covers provider API URLs returned from chain queries (e.g. the `apiUrl` on a `Provider` row, or whatever the lease's `providerUuid` resolves to). Same HTTPS-or-localhost rule, plus trailing-slash stripping. Failures throw `ProviderApiError`.
 
 Both apply the same shape:
@@ -83,11 +87,25 @@ Both apply the same shape:
 - HTTP is allowed only for `localhost` / `127.0.0.1` / `::1` / `[::1]`.
 - Anything else is rejected.
 
-This is the SSRF guard. It runs **before** any HTTP call, so a misconfigured config or a chain row with a malformed `apiUrl` never produces a request to a non-HTTPS arbitrary host.
+This runs **before** any HTTP call, so a misconfigured config or a chain row with a malformed `apiUrl` never produces a request to a non-HTTPS arbitrary host. On its own, though, a scheme check does **not** stop an `https://` URL — or a hostname that DNS-resolves — to an internal IP (e.g. `https://169.254.169.254/` or a hostname pointing at `10.0.0.1`). That is what the second layer handles.
+
+### 2. Runtime IP-level fetch guard (`createGuardedFetch`)
+
+All provider/Fred HTTP is routed through an SSRF-guarded `fetch` — `createGuardedFetch` in `packages/core/src/internals/guarded-fetch.ts`, a native `undici` Dispatcher. It:
+
+- **Resolves the target host inside the connect hook** and substitutes the resolved IP as the connect address, so it inspects the *actual* IP the request reaches and closes the DNS-rebinding / TOCTOU window a hostname-only check leaves open. The hook re-fires on every cross-origin redirect, so a redirect to an internal host is caught too.
+- **Default-denies** any address whose `ipaddr.js` `range()` is not `'unicast'` — loopback, link-local, private (RFC 1918), carrier-grade NAT, reserved / benchmarking (`198.18.0.0/15`), and any unrecognised label all block. It is an allow-list of exactly one category (`'unicast'`), so a range the table doesn't know about fails **closed** rather than falling through as allowed.
+- Is gated per server and **on by default**: `MANIFEST_FRED_FETCH_GUARDED` (fred) and `MANIFEST_AGENT_FETCH_GUARDED` (agent). Both accept `1`/`true`/`yes`/`on` and `0`/`false`/`no`/`off` (case-insensitive); an unrecognised value throws `INVALID_CONFIG`. `fred`'s `FredMCPServer` constructor injects the guarded fetch via `server/fetch-gate.ts`.
+
+Provider URLs come from on-chain SKU/provider records, so this guard is what stops a malicious provider from pointing a server at an internal host even over HTTPS.
+
+`ipaddr.js` is force-pinned to `2.4.0` tree-wide (root `package.json` `overrides`): an older copy (e.g. `1.9.1`, pulled transitively by `proxy-addr`) carries a stale RFC table that misclassifies reserved ranges as `'unicast'` and would silently weaken the guard.
+
+The guard ships from a **Node-only** subpath — `@manifest-network/manifest-mcp-core/guarded-fetch` (and, mirrored, `@manifest-network/manifest-agent-core/guarded-fetch`) — deliberately kept off the package barrel so browser bundles of `core` don't drag in `undici` / `node:async_hooks`. Import it from that subpath, never the barrel.
 
 ## Input validation
 
-The MCP server parses input through Zod schemas (registered alongside each tool) before it reaches a handler. Then `validation.ts` helpers (`requireString`, `requireUuid`, `requireStringEnum`, `parseArgs`, `optionalBoolean`, …) check semantic shape before the handler builds chain messages. A static rule violation is `INVALID_CONFIG`; a chain-side rejection is `QUERY_FAILED` / `TX_FAILED`.
+The MCP server parses input through Zod schemas (registered alongside each tool) before it reaches a handler. Then `validation.ts` helpers (`requireString`, `requireUuid`, `requireStringEnum`, `parseArgs`, `optionalBoolean`, …) check semantic shape before the handler builds chain messages. A static-shape violation from these helpers surfaces as `QUERY_FAILED` (query tools) or `TX_FAILED` (tx tools) — the helpers default to `QUERY_FAILED` and take an explicit error-code argument that tx handlers pass as `TX_FAILED` — with `INVALID_ADDRESS` for a wrong bech32 prefix. `INVALID_CONFIG` is reserved for server/config validation (`createValidatedConfig`) plus structural tool-boundary checks (e.g. mutually-exclusive `fee`/`gasMultiplier` overrides), not routine input shape.
 
 Address validation enforces the configured bech32 prefix (default `manifest`). Cross-prefix addresses (`cosmos1…` against a `manifest`-prefix server) raise `INVALID_ADDRESS` before any chain round-trip.
 

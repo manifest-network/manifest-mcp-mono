@@ -85,6 +85,15 @@ await client.setItemCustomDomain({
 });
 ```
 
+## Typed errors
+
+Most failures throw `ManifestMCPError` (with a `code` from `ManifestMCPErrorCode`); the exception is provider HTTP failures, which throw a separate `ProviderApiError` that carries `status`, **not** a `code`. Both error shapes carry typed detail — prefer the exported guards over `instanceof` (unreliable across duplicate package copies):
+
+- **`isSkuAmbiguousError(err)`** narrows `err.details` to `{ reason: 'AMBIGUOUS_SKU_NAME', size, candidates }` when a SKU name matched more than one active SKU — render a picker from `candidates`.
+- **`ProviderApiError.isProviderApiError(err)`** is a dual-package-safe brand guard for provider HTTP errors (exposes `err.status`).
+
+See the [cookbook](../../docs/library-usage.md#errors) for a worked example.
+
 ## Node consumers: keep the SSRF guard on
 
 Provider URLs come from on-chain SKU records, so provider HTTP on **Node** should run through an SSRF-guarded `fetch` — it blocks requests to internal hosts *before they're sent*. The base `createFredClient` does **not** guard by default (it can't — the barrel stays browser-safe), so on Node it emits a one-time warning. Use **`createFredClientNode`** from the `/node` subpath, which is SSRF-safe by default:
@@ -103,7 +112,7 @@ The root barrel carries the client factories, branded types (`parse*` / `as*`), 
 
 | Import | What's there |
 |--------|--------------|
-| `@manifest-network/manifest-sdk` | Client factories (`createFredClient`, `createManifestClient`, `createManifestReadClient`), brands + `parse*`/`as*`, ports (`WalletProvider`, `Signer` adapters), `ManifestMCPError`/`ManifestMCPErrorCode`, `createConfig`, and the wholesale type surface (barrel `createFredClient` is unguarded on Node — prefer `createFredClientNode` from `/node`) |
+| `@manifest-network/manifest-sdk` | Client factories (`createFredClient`, `createManifestClient`, `createManifestReadClient`), brands + `parse*`/`as*`, ports (`WalletProvider`, `Signer` adapters), the error vocabulary (`ManifestMCPError`/`ManifestMCPErrorCode` + the typed guards `ProviderApiError`/`isSkuAmbiguousError`), `createConfig`, and the wholesale type surface (barrel `createFredClient` is unguarded on Node — prefer `createFredClientNode` from `/node`) |
 | `…/reads` | Branded read fns: `getBalance`, `getLease`, `getLeasesByTenant`, `getSKUs`, `getProviders`, `getLeaseByCustomDomain`, `getBillingParams`, `getWithdrawableAmount` |
 | `…/catalog` | `browseCatalog`, `resolveSku`, `listSkuCandidates`, `checkDeploymentReadiness`, `buildManifestPreview` |
 | `…/deploy` | `deployApp`, `restartApp`, `updateApp`, `getAppLogs`, `appStatus`, `waitForAppReady`, `waitForLeaseStatus`, `isLeaseFailureTerminal`, `executeTx`, `fundCredits`, `setItemCustomDomain`, `stopApp`, `LeaseState`, manifest builders, ADR-036 auth helpers |

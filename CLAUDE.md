@@ -30,7 +30,7 @@ docker compose -f e2e/docker-compose.yml down -v --remove-orphans
 
 ## Architecture
 
-Five MCP servers bridging AI assistants to Cosmos SDK blockchains (Manifest Network). Eight npm workspace packages with strict dependency direction: **node -> {chain, lease, fred, cosmwasm, agent} -> core**, and **agent -> agent-core -> {core, fred}** (never reverse; node also depends on core directly).
+Five MCP servers bridging AI assistants to Cosmos SDK blockchains (Manifest Network). Nine npm workspace packages with strict dependency direction: **node -> {chain, lease, fred, cosmwasm, agent} -> core**, **agent -> agent-core -> {core, fred}**, and **sdk -> {core, fred, agent-core}** (never reverse; node also depends on core directly).
 
 - **`packages/core`** -- Shared library. Cosmos logic, on-chain tool functions, server utilities, LCD/REST adapter (`lcd-adapter.ts`). No provider HTTP clients (those live in fred), but core does host the shared SSRF-guarded fetch factory `createGuardedFetch` (`internals/guarded-fetch.ts`; `undici` + `node:dns` behind dynamic imports so the static graph stays isomorphic) used by fred + agent-core. It is exposed via the Node-only `@manifest-network/manifest-mcp-core/guarded-fetch` subpath export (entry `src/guarded-fetch.ts`, gated behind the `node` exports condition), **not** the package barrel (`src/index.ts`): a bundler that walks the universal barrel would otherwise statically resolve the dynamic `import("undici")` target and drag `node:async_hooks` into the graph, breaking browser builds (`createGuardedFetch`/`isBlocked`/`BLOCKED_RANGES_*` were removed from the barrel in ENG-281; `@manifest-network/manifest-mcp-core/guarded-fetch` is the only public import path). Not an MCP server itself. Built with `platform: "neutral"` for browser compatibility.
 - **`packages/chain`** -- MCP server with 6 chain tools (+ optional `request_faucet` when `MANIFEST_FAUCET_URL` is set): `get_account_info`, `cosmos_query`, `cosmos_tx`, `cosmos_estimate_fee`, `list_modules`, `list_module_subcommands`.
@@ -40,6 +40,7 @@ Five MCP servers bridging AI assistants to Cosmos SDK blockchains (Manifest Netw
 - **`packages/agent-core`** -- TypeScript orchestration surface for Manifest agent flows (`deployApp`, `manageDomain`, `troubleshootDeployment`, `closeLease`). Not an MCP server itself — exposes typed callbacks (`onPlan`, `onConfirm`, `onProgress`, `onComplete`, `onFailure`). Built with `platform: "neutral"` (node-only code paths like `saveManifest` use dynamic `node:fs` imports).
 - **`packages/agent`** -- MCP server with 5 orchestrated tools wrapping each agent-core function: `deploy_app_orchestrated`, `manage_domain_orchestrated`, `lookup_custom_domain_orchestrated`, `troubleshoot_deployment_orchestrated`, `close_lease_orchestrated`. `lookup_custom_domain_orchestrated` is the read-only reverse-lookup sibling of `manage_domain_orchestrated` (both wrap agent-core's unified `manageDomain`; split for honest tool-level annotations — ENG-212). Translates agent-core callbacks into MCP elicitation (`server.elicitInput`) requests for the broadcasting tools and `notifications/progress` events for all tools. **Requires** an elicitation-capable host (Claude Code ≥ 2.1.76) for the broadcasting tools; the read-only tools (`lookup_custom_domain_orchestrated`, `troubleshoot_deployment_orchestrated`) run on any host. Pure adapter — no orchestration logic, no re-rendering of agent-core's `internals/render-*.ts` outputs.
 - **`packages/node`** -- Five CLI entry points (`manifest-mcp-chain`, `manifest-mcp-lease`, `manifest-mcp-fred`, `manifest-mcp-cosmwasm`, `manifest-mcp-agent`) with stdio transport + keyfile wallet. Each also supports `keygen` and `import` subcommands for key management.
+- **`packages/sdk`** -- Aggregating, app-building SDK for Manifest + Fred (`@manifest-network/manifest-sdk`), composing `core` + `fred` + `agent-core` over manifestjs. Not an MCP server itself — it is the supported external app-building entry point (the reference consumer is Barney, the Manifest web frontend). Exposes an aggregating root barrel plus scoped, tree-shakable subpaths: `/reads`, `/catalog`, `/deploy`, `/orchestration`, and a Node-only `/node` (the SSRF-guarded `createGuardedFetch`). Built with `platform: "neutral"`. Added in v0.15.0 (ENG-442); see `packages/sdk/README.md` and the cookbook `docs/library-usage.md`.
 
 ### Tool layers (3 tiers)
 
@@ -64,7 +65,7 @@ Five MCP servers bridging AI assistants to Cosmos SDK blockchains (Manifest Netw
 
 ### Error handling
 
-`ManifestMCPError` with `ManifestMCPErrorCode` enum (12 codes, 6 categories). Error responses are sanitized via `sanitizeForLogging()` which redacts sensitive fields (mnemonics, passwords, keys, tokens). Retry logic (`retry.ts`) classifies errors as transient vs permanent -- only transient errors (connection, 5xx, 429) are retried.
+`ManifestMCPError` with `ManifestMCPErrorCode` enum (15 codes, 8 categories). Error responses are sanitized via `sanitizeForLogging()` which redacts sensitive fields (mnemonics, passwords, keys, tokens). Retry logic (`retry.ts`) classifies errors as transient vs permanent -- only transient errors (connection, 5xx, 429) are retried.
 
 ### Tool annotations and `_meta.manifest`
 
@@ -78,7 +79,7 @@ Both are advisory hints, not enforcement. The plugin's `PreToolUse` hook regex i
 ## Conventions
 
 - ESM-only (`"type": "module"`). Use `.js` extensions in imports (e.g., `'./client.js'`).
-- `tsdown` builds unbundled ESM with `.d.ts` and sourcemaps. Not tsc. Core/chain/lease/fred/cosmwasm/agent-core/agent use `platform: "neutral"` (`.js` output; node-only code paths use dynamic imports — e.g. `core`'s `createGuardedFetch` (undici + `node:dns` behind dynamic imports; `undici` is an `optionalDependency`), consumed by `agent` (gated `MANIFEST_AGENT_FETCH_GUARDED`) and `fred` (gated `MANIFEST_FRED_FETCH_GUARDED`), and `agent-core`'s `saveManifest`); node uses `platform: "node"` (`.js` output, ESM via package.json type).
+- `tsdown` builds unbundled ESM with `.d.ts` and sourcemaps. Not tsc. Core/chain/lease/fred/cosmwasm/agent-core/agent/sdk use `platform: "neutral"` (`.js` output; node-only code paths use dynamic imports — e.g. `core`'s `createGuardedFetch` (undici + `node:dns` behind dynamic imports; `undici` is an `optionalDependency`), consumed by `agent` (gated `MANIFEST_AGENT_FETCH_GUARDED`) and `fred` (gated `MANIFEST_FRED_FETCH_GUARDED`), and `agent-core`'s `saveManifest`); node uses `platform: "node"` (`.js` output, ESM via package.json type).
 - Tests are co-located `*.test.ts` files. E2E tests live in `/e2e/`.
 - Query handlers: `routeXxxQuery(queryClient, subcommand, args)` with switch on subcommand.
 - Transaction handlers: `routeXxxTransaction(client, senderAddress, subcommand, args, waitForConfirmation)`.

@@ -1,6 +1,6 @@
 # @manifest-network/manifest-mcp-chain
 
-MCP server for generic Cosmos SDK chain operations. Registers 6 tools for queries, transactions, fee estimation, and module discovery.
+MCP server for generic Cosmos SDK chain operations. Registers 6 tools for queries, transactions, fee estimation, and module discovery — plus an optional `request_faucet` tool when `MANIFEST_FAUCET_URL` is set.
 
 ## Installation
 
@@ -18,6 +18,7 @@ npm install @manifest-network/manifest-mcp-chain
 | `cosmos_estimate_fee` | Estimate gas and fee for a transaction without broadcasting |
 | `list_modules` | List all available query and transaction modules |
 | `list_module_subcommands` | List subcommands for a specific module |
+| `request_faucet` | Request testnet tokens from the faucet — **only registered when a faucet URL is configured** (CLI: set `MANIFEST_FAUCET_URL`; library: pass the `faucetUrl` constructor option) |
 
 ## Usage
 
@@ -33,6 +34,7 @@ import { ChainMCPServer } from '@manifest-network/manifest-mcp-chain';
 const server = new ChainMCPServer({
   config,          // ManifestMCPConfig from core
   walletProvider,  // WalletProvider from core
+  faucetUrl,       // optional; registers request_faucet when provided
 });
 ```
 
