@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-07-07
+
 ### Added
 - **sdk:** typed error surface on the root barrel — `ProviderApiError.isProviderApiError(e)` (a dual-package-safe brand guard, robust where `instanceof` fails across duplicate copies) and `isSkuAmbiguousError(e)` + the `SkuAmbiguousDetails` type (a `code`-discriminated narrowing of `ManifestMCPError.details` for `SKU_AMBIGUOUS`, so consumers read `err.details.candidates` typed, no cast). `ManifestMCPError` stays non-generic. (ENG-462)
 
