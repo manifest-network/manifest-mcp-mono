@@ -46,7 +46,7 @@ representative deploy-app scenario:
 ```
 01-fast-path-active/
 ├── input/
-│   ├── spec.json                # DeploySpec (single-service)
+│   ├── spec.json                # AppDeploySpec (single-service)
 │   ├── readiness-response.json  # mocked check_deployment_readiness
 │   ├── fee-response.json        # mocked cosmos_estimate_fee
 │   ├── meta-hash-response.json  # mocked build_manifest_preview

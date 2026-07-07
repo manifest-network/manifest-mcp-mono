@@ -11,7 +11,7 @@ Provides five binaries:
 
 ## Setup
 
-Requires **Node.js >= 22.19.0** (enforced via `engines`).
+Requires **Node.js >= 22.19.0** (declared via `engines`).
 
 ```bash
 # From the monorepo root
@@ -210,7 +210,7 @@ Set `COSMOS_RPC_URL` + `COSMOS_GAS_PRICE` for full access (queries + transaction
 |------|-------------|
 | `browse_catalog` | Browse available providers and service tiers with health checks |
 | `check_deployment_readiness` | Pre-flight checks (wallet balances, credit account, SKU availability) before `deploy_app` |
-| `build_manifest_preview` | Preview the manifest (and its on-chain meta_hash) that `deploy_app` would submit |
+| `build_manifest_preview` | Preview the manifest (and its `meta_hash_hex`) that `deploy_app` would submit |
 | `deploy_app` | Deploy a new application (create lease + deploy container, optional custom domain) |
 | `wait_for_app_ready` | Poll provider until a deployed app reports ready |
 | `app_status` | Get detailed status for a deployed app by lease UUID |

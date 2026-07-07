@@ -12,7 +12,7 @@ npm install
 npm run build
 ```
 
-Node.js 22.19+ (enforced via `engines` on every package) and npm 10+ (ships with Node 22) are required. `nvm use` will pick up `.nvmrc`.
+Node.js 22.19+ (declared via `engines` on every package) and npm 10+ (ships with Node 22) are required. `nvm use` will pick up `.nvmrc`.
 
 ## Development workflow
 

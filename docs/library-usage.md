@@ -218,7 +218,7 @@ The base `createFredClient` does not guard by default and warns once on Node. In
 
 ## Errors
 
-Everything throws `ManifestMCPError` with a `code` from `ManifestMCPErrorCode` (e.g. `INVALID_ARGUMENT`, `SKU_AMBIGUOUS`, `TX_FAILED`, `OPERATION_CANCELLED`). Transient failures (network, 5xx, 429) are auto-retried; permanent ones bubble up. Branch on `code`, not message text. Before logging an error's `details`, pass it through `sanitizeForLogging` (exported from the root) to redact sensitive fields.
+Most failures throw `ManifestMCPError` with a `code` from `ManifestMCPErrorCode` (e.g. `INVALID_ARGUMENT`, `SKU_AMBIGUOUS`, `TX_FAILED`, `OPERATION_CANCELLED`); provider HTTP failures throw a separate `ProviderApiError` that carries `status`, not a `code` (see the guard below). Transient failures (network, 5xx, 429) are auto-retried; permanent ones bubble up. Branch on `code` (or the typed guards), not message text. Before logging an error's `details`, pass it through `sanitizeForLogging` (exported from the root) to redact sensitive fields.
 
 For the two error shapes that carry typed detail, prefer the exported guards over `instanceof` (unreliable across duplicate package copies) or hand-rolled `code` checks:
 

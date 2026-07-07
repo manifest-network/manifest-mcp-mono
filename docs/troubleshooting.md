@@ -36,7 +36,7 @@ The password in `MANIFEST_KEY_PASSWORD` doesn't match the keyfile. The decrypt p
 
 ## Errors at tool call time
 
-Every error returned to the MCP client is a JSON object with a `code` field drawn from `ManifestMCPErrorCode`. The 15 codes group into 8 categories:
+Most errors returned to the MCP client are JSON objects with a `code` field drawn from `ManifestMCPErrorCode`. (An error raised outside the Manifest error path — e.g. a `ProviderApiError` from a provider HTTP call — reaches the client without a `ManifestMCPErrorCode` and is logged as `UNKNOWN`.) The 15 codes group into 8 categories:
 
 | Category | Codes | Meaning |
 |----------|-------|---------|

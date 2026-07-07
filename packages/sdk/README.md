@@ -87,7 +87,7 @@ await client.setItemCustomDomain({
 
 ## Typed errors
 
-Everything throws `ManifestMCPError` (with a `code` from `ManifestMCPErrorCode`). Two error shapes carry typed detail — prefer the exported guards over `instanceof` (unreliable across duplicate package copies):
+Most failures throw `ManifestMCPError` (with a `code` from `ManifestMCPErrorCode`); the exception is provider HTTP failures, which throw a separate `ProviderApiError` that carries `status`, **not** a `code`. Both error shapes carry typed detail — prefer the exported guards over `instanceof` (unreliable across duplicate package copies):
 
 - **`isSkuAmbiguousError(err)`** narrows `err.details` to `{ reason: 'AMBIGUOUS_SKU_NAME', size, candidates }` when a SKU name matched more than one active SKU — render a picker from `candidates`.
 - **`ProviderApiError.isProviderApiError(err)`** is a dual-package-safe brand guard for provider HTTP errors (exposes `err.status`).

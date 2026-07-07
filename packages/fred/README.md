@@ -16,7 +16,7 @@ npm install @manifest-network/manifest-mcp-fred
 |------|-------------|
 | `browse_catalog` | Browse available providers and service tiers with health checks |
 | `check_deployment_readiness` | Pre-flight checks (balance, credit account, SKU availability) before `deploy_app` |
-| `build_manifest_preview` | Preview the manifest and its `meta_hash` that `deploy_app` would submit |
+| `build_manifest_preview` | Preview the manifest and its `meta_hash_hex` that `deploy_app` would submit |
 | `deploy_app` | Deploy a new application (create lease + deploy container, optional custom domain) |
 | `wait_for_app_ready` | Poll provider until a deployed app reports ready |
 | `app_status` | Get detailed status for a deployed app by lease UUID |

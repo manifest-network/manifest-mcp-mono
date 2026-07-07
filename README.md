@@ -27,7 +27,7 @@ Dependency direction: **node -> {chain, lease, fred, cosmwasm, agent} -> core**;
 
 ## Prerequisites
 
-- Node.js >= 22.19.0 (enforced via `engines` on every package)
+- Node.js >= 22.19.0 (declared via `engines` on every package)
 - npm >= 10 (ships with Node 22+)
 
 ## Quick start
