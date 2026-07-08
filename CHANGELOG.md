@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **fred/sdk:** `appStatus` now returns `chainState.items` — the raw `LeaseItem[]` (per-service `skuUuid`/`serviceName`/`customDomain`) already fetched from the on-chain lease. Consumers computing per-service custom-domain assignments no longer need a second `getLease`. Additive (new field on an existing return; consistent with the raw `state`/`providerUuid` `chainState` already carries). (ENG-489)
+
 ## [0.16.0] - 2026-07-07
 
 ### Added

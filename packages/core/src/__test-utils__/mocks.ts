@@ -69,6 +69,7 @@ interface BillingOverrides {
     providerUuid: string;
     createdAt?: Date;
     closedAt?: Date;
+    items?: unknown[];
   } | null;
   billingParams?: {
     maxLeasesPerTenant: bigint;

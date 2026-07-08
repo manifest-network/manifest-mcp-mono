@@ -36,6 +36,13 @@ export async function appStatus(
     providerUuid: lease.providerUuid,
     createdAt: lease.createdAt?.toISOString(),
     closedAt: lease.closedAt?.toISOString(),
+    // Raw LeaseItem[] (per-service skuUuid/serviceName/customDomain), surfaced so
+    // consumers can compute custom-domain assignments without a second getLease.
+    // Consistent with the raw `state`/`providerUuid` above (ENG-489).
+    // `?? []` runtime guard: a real lease always has items (protobuf repeated),
+    // but partial fixtures may omit it — mirrors core `toBrandedLease` (tools/reads.ts)
+    // + the handler's defensive `l.items?.map`. Guarantees consumers a real array.
+    items: lease.items ?? [],
   };
 
   let fredStatus: FredLeaseStatus | null = null;
