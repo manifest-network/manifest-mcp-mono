@@ -146,6 +146,26 @@ describe('appStatus', () => {
     expect(result.chainState.items).toEqual(items);
   });
 
+  it('returns chainState.items as [] when the lease has no items (never undefined)', async () => {
+    const qc = makeMockQueryClient({
+      billing: {
+        lease: {
+          uuid: LEASE_UUID,
+          state: LeaseState.LEASE_STATE_CLOSED,
+          providerUuid: 'prov-1',
+          // items intentionally omitted (partial fixture)
+        },
+      },
+    });
+
+    const result = await appStatus(makeCtx(qc, mockGetAuthToken), {
+      address: 'manifest1abc',
+      leaseUuid: LEASE_UUID,
+    });
+
+    expect(result.chainState.items).toEqual([]);
+  });
+
   it('throws when lease not found', async () => {
     const qc = makeMockQueryClient({ billing: { lease: null } });
 

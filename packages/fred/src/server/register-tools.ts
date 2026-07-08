@@ -131,6 +131,12 @@ export function registerTools(deps: RegisterToolsDeps): void {
         chainState: z.looseObject({
           state: z.number(),
           providerUuid: z.string(),
+          // Raw LeaseItem[] (per-service skuUuid/serviceName/customDomain), always
+          // an array. createdAt/closedAt are ISO strings, absent when the underlying
+          // Date is unset. (Documented here so schema-introspecting clients see them.)
+          items: z.array(z.looseObject({})),
+          createdAt: z.string().optional(),
+          closedAt: z.string().optional(),
         }),
         connection: z.looseObject({}).optional(),
         fredStatus: z.looseObject({}).optional(),
