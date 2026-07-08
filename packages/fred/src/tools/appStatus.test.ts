@@ -117,6 +117,35 @@ describe('appStatus', () => {
     expect(result.connection).toBeUndefined();
   });
 
+  it('includes lease.items in chainState (so consumers skip a second getLease)', async () => {
+    const items = [
+      {
+        skuUuid: 'sku-1',
+        quantity: 1n,
+        lockedPrice: { denom: 'upwr', amount: '100' },
+        serviceName: 'web',
+        customDomain: 'app.example.com',
+      },
+    ];
+    const qc = makeMockQueryClient({
+      billing: {
+        lease: {
+          uuid: LEASE_UUID,
+          state: LeaseState.LEASE_STATE_ACTIVE,
+          providerUuid: 'prov-1',
+          items,
+        },
+      },
+    });
+
+    const result = await appStatus(makeCtx(qc, mockGetAuthToken), {
+      address: 'manifest1abc',
+      leaseUuid: LEASE_UUID,
+    });
+
+    expect(result.chainState.items).toEqual(items);
+  });
+
   it('throws when lease not found', async () => {
     const qc = makeMockQueryClient({ billing: { lease: null } });
 
