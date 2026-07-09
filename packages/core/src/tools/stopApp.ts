@@ -87,7 +87,8 @@ export async function stopApp(
 ): Promise<StopAppResult> {
   const { leaseUuid } = input;
 
-  // Query the lease; a thrown query (transport/decoding) is wrapped QUERY_FAILED.
+  // Query the lease. A raw thrown query (transport/decode) is wrapped as QUERY_FAILED;
+  // an existing ManifestMCPError (e.g. RPC_CONNECTION_FAILED from getQueryClient) passes through unchanged.
   const queryLease = async (): Promise<Lease | null> => {
     try {
       const queryClient = await ctx.chain.getQueryClient();
@@ -188,10 +189,13 @@ export async function stopApp(
       fresh.state === LeaseState.LEASE_STATE_ACTIVE
     ) {
       // A provider AcknowledgeLease raced our cancel. Refuse to auto-escalate cancel->close
-      // (settlement differs); tell the caller to retry.
+      // (settlement differs). "re-invoke" here means the CALLER calls stopApp again (which
+      // re-queries, sees ACTIVE, and dispatches to close) — NOT an automated retry: TX_FAILED
+      // is intentionally non-retryable (retry.ts) so cosmosTx's inner withRetry can never
+      // re-broadcast the submitted cancel-lease (double-spend guard).
       throw new ManifestMCPError(
         ManifestMCPErrorCode.TX_FAILED,
-        `Lease "${leaseUuid}" state changed during teardown (now ACTIVE); retry.`,
+        `Lease "${leaseUuid}" state changed during teardown (now ACTIVE); re-invoke stopApp to close it.`,
       );
     }
     throw err; // unchanged actionable state (incl. a plain ACTIVE close failure) / null -> original
