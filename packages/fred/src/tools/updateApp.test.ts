@@ -457,6 +457,26 @@ describe('updateApp', () => {
     expect(mockUpdateLease).not.toHaveBeenCalled();
   });
 
+  it('abort DURING providerUrl resolution → throws before the mutate POST (not fired)', async () => {
+    const ac = new AbortController();
+    mockResolveProviderUrl.mockImplementation(async () => {
+      ac.abort();
+      return 'https://provider.example.com';
+    });
+    await expect(
+      updateApp(
+        makeCtx(activeQc()),
+        {
+          address: ADDR,
+          leaseUuid: LEASE_UUID,
+          manifest: '{"image":"nginx","ports":{}}',
+        },
+        { abortSignal: ac.signal },
+      ),
+    ).rejects.toThrow();
+    expect(mockUpdateLease).not.toHaveBeenCalled();
+  });
+
   it('default path throws when lease is not active', async () => {
     const qc = makeMockQueryClient({
       billing: {

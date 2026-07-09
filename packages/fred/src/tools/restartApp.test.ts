@@ -165,6 +165,23 @@ describe('restartApp', () => {
     expect(mockRestartLease).not.toHaveBeenCalled();
   });
 
+  it('abort DURING providerUrl resolution → throws before the mutate POST (not fired)', async () => {
+    const ac = new AbortController();
+    // Top guard passes (not yet aborted); the signal aborts mid-resolution, after the top check.
+    mockResolveProviderUrl.mockImplementation(async () => {
+      ac.abort();
+      return 'https://provider.example.com';
+    });
+    await expect(
+      restartApp(
+        makeCtx(activeQc()),
+        { address: ADDR, leaseUuid: LEASE_UUID },
+        { abortSignal: ac.signal },
+      ),
+    ).rejects.toThrow();
+    expect(mockRestartLease).not.toHaveBeenCalled();
+  });
+
   it('default path still throws when lease is not active', async () => {
     const qc = makeMockQueryClient({
       billing: {

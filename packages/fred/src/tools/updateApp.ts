@@ -104,6 +104,9 @@ export async function updateApp(
     address,
     leaseUuid,
   });
+  // Final check immediately before the non-idempotent mutate POST: an abort during the
+  // (slow-path) providerUrl resolution / token mint must not still fire the update.
+  opts.abortSignal?.throwIfAborted();
   const result = await updateLease(
     providerUrl,
     leaseUuid,

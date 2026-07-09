@@ -29,6 +29,9 @@ export async function restartApp(
     address,
     leaseUuid,
   });
+  // Final check immediately before the non-idempotent mutate POST: an abort during the
+  // (slow-path) providerUrl resolution / token mint must not still fire the restart.
+  opts.abortSignal?.throwIfAborted();
   const result = await restartLease(
     providerUrl,
     leaseUuid,
