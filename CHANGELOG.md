@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - **fred/sdk:** `appStatus` now returns `chainState.items` — the raw `LeaseItem[]` (per-service `skuUuid`/`serviceName`/`customDomain`) already fetched from the on-chain lease. Consumers computing per-service custom-domain assignments no longer need a second `getLease`. Additive (new field on an existing return; consistent with the raw `state`/`providerUuid` `chainState` already carries). (ENG-489)
 
+### Changed
+- **core/sdk:** `stopApp` is now a polymorphic, idempotent lease teardown — it pre-queries state and dispatches `close-lease` (ACTIVE) / `cancel-lease` (PENDING) / no-op (already terminal), returning a `StopAppResult` **discriminated union** on `outcome` (`'stopped' | 'cancelled' | 'already_inactive'`) with `lease_state` on every variant and a free-form `rejection_reason` on the already-`REJECTED` branch. (ENG-487A)
+
+### Upgrade notes
+- **BREAKING (sdk `stopApp` / lease `close_lease` callers):** the old `StopAppResult` `{ lease_uuid, status: 'stopped', transactionHash, code }` is replaced by the `outcome`-discriminated union. Branch on `result.outcome`; `transactionHash`/`code` exist only on the `'stopped'`/`'cancelled'` broadcasting branches (absent on `'already_inactive'`). `stopApp` no longer throws on an already-inactive lease — it resolves `'already_inactive'`. (ENG-487A)
+
 ## [0.16.0] - 2026-07-07
 
 ### Added
