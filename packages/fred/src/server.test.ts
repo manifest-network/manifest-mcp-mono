@@ -1156,3 +1156,40 @@ describe('SSRF guard wiring (ENG-268)', () => {
     expect(mockAppStatus.mock.lastCall?.[0]?.fetch).toBe(globalThis.fetch);
   });
 });
+
+// The restart_app/update_app MCP tools must stay fire-and-return: they pass
+// { pollOptions: false } so adopting restartApp/updateApp's new default-poll
+// does not make the tools block ~2 min. These invoke the handler (the
+// annotation-matrix tests above only read tool metadata), pinning the call
+// shape so a silent default-poll regression is caught. (ENG-488)
+describe('restart_app / update_app opt out of default-poll (ENG-488)', () => {
+  function makeServer(): FredMCPServer {
+    return new FredMCPServer({
+      config: makeMockConfig(),
+      walletProvider: makeMockWallet({ signArbitrary: true }),
+    });
+  }
+
+  it('restart_app passes { pollOptions: false }', async () => {
+    const server = makeServer();
+    await callTool(server, 'restart_app', { lease_uuid: LEASE_UUID });
+    expect(mockRestartApp).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ leaseUuid: LEASE_UUID }),
+      { pollOptions: false },
+    );
+  });
+
+  it('update_app passes { pollOptions: false }', async () => {
+    const server = makeServer();
+    await callTool(server, 'update_app', {
+      lease_uuid: LEASE_UUID,
+      manifest: '{"services":{}}',
+    });
+    expect(mockUpdateApp).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ leaseUuid: LEASE_UUID }),
+      { pollOptions: false },
+    );
+  });
+});

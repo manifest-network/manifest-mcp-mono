@@ -124,7 +124,9 @@ export async function runAcceptanceFlow(opts: AcceptanceOpts): Promise<void> {
 
     // 5) restart / update / getLogs (ctx; poll-on-409). The update manifest is variant-shaped.
     // Pass the client directly as the ctx (it IS a FredAuthCtx).
-    await retryOn409(() => restartApp(client, { address: addr, leaseUuid }));
+    await retryOn409(() =>
+      restartApp(client, { address: addr, leaseUuid }, { pollOptions: false }),
+    );
     const updateManifest =
       opts.variant === 'stack'
         ? buildStackManifest({
@@ -145,11 +147,15 @@ export async function runAcceptanceFlow(opts: AcceptanceOpts): Promise<void> {
             ports: { '8080/tcp': {} },
           });
     await retryOn409(() =>
-      updateApp(client, {
-        address: addr,
-        leaseUuid,
-        manifest: JSON.stringify(updateManifest),
-      }),
+      updateApp(
+        client,
+        {
+          address: addr,
+          leaseUuid,
+          manifest: JSON.stringify(updateManifest),
+        },
+        { pollOptions: false },
+      ),
     );
     await getAppLogs(client, { address: addr, leaseUuid, tail: 100 });
 
