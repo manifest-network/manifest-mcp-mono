@@ -57,7 +57,11 @@ function inactive(leaseUuid: LeaseUuid, lease: Lease): StopAppResult {
       outcome: 'already_inactive',
       lease_state: 'LEASE_STATE_REJECTED',
       // Free-form, provider- or tenant-set. UNTRUSTED passthrough (do not interpret).
-      rejection_reason: lease.rejectionReason,
+      // `?? ''` keeps the `string` contract honest: the RPC/LCD decode paths default
+      // this to '' and a REJECTED lease always carries a reason on-chain, but guard
+      // against a decode path that omits it (e.g. fromAmino) — mirrors the repo's
+      // defensive `l.items ?? []` convention (reads.ts toBrandedLease).
+      rejection_reason: lease.rejectionReason ?? '',
     };
   }
   return {

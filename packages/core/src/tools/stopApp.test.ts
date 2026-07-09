@@ -133,6 +133,24 @@ describe('stopApp', () => {
     });
   });
 
+  it('already REJECTED with a missing rejectionReason → rejection_reason coerced to "" (never undefined)', async () => {
+    const cm = cmWithLease({
+      uuid: 'lease-1',
+      state: LeaseState.LEASE_STATE_REJECTED,
+      providerUuid: 'p1',
+      // rejectionReason intentionally omitted (guards a decode path that drops it)
+    });
+
+    const result = await stopApp(makeTxCtx({ chain: cm }), { leaseUuid: UUID });
+
+    expect(result).toEqual({
+      lease_uuid: 'lease-1',
+      outcome: 'already_inactive',
+      lease_state: 'LEASE_STATE_REJECTED',
+      rejection_reason: '',
+    });
+  });
+
   it('lease not found → QUERY_FAILED', async () => {
     const cm = cmWithLease(null);
     await expect(
