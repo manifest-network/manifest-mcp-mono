@@ -33,4 +33,36 @@ describe('tx-result fn return types (type-level)', () => {
     expectTypeOf<StopAppResult['lease_uuid']>().toEqualTypeOf<LeaseUuid>();
     expectTypeOf<StopAppResult['lease_uuid']>().toExtend<string>();
   });
+
+  it('StopAppResult discriminates on outcome and ties rejection_reason to REJECTED', () => {
+    type R = StopAppResult;
+    // outcome narrows the tx fields:
+    type Stopped = Extract<R, { outcome: 'stopped' }>;
+    expectTypeOf<Stopped['transactionHash']>().toEqualTypeOf<string>();
+    expectTypeOf<
+      Stopped['lease_state']
+    >().toEqualTypeOf<'LEASE_STATE_CLOSED'>();
+
+    // already_inactive has NO transactionHash on any sub-arm:
+    type Inactive = Extract<R, { outcome: 'already_inactive' }>;
+    expectTypeOf<Inactive>().not.toHaveProperty('transactionHash');
+
+    // rejection_reason is REQUIRED on the REJECTED sub-arm, ABSENT on the others:
+    type InactiveRejected = Extract<
+      Inactive,
+      { lease_state: 'LEASE_STATE_REJECTED' }
+    >;
+    expectTypeOf<
+      InactiveRejected['rejection_reason']
+    >().toEqualTypeOf<string>();
+    // Extract on BOTH non-rejected literals — a single literal would Extract to `never`
+    // (the arm's lease_state is the union), and expectTypeOf<never>().not.toHaveProperty(..)
+    // fails to typecheck. Guard that regression, then assert the property absence.
+    type InactiveClosed = Extract<
+      Inactive,
+      { lease_state: 'LEASE_STATE_CLOSED' | 'LEASE_STATE_EXPIRED' }
+    >;
+    expectTypeOf<InactiveClosed>().not.toEqualTypeOf<never>();
+    expectTypeOf<InactiveClosed>().not.toHaveProperty('rejection_reason');
+  });
 });

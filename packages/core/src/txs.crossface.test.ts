@@ -4,7 +4,12 @@ vi.mock('./cosmos.js', () => ({
   cosmosTx: vi.fn(),
 }));
 
-import { makeMockClientManager, makeTxCtx } from './__test-utils__/mocks.js';
+import { LeaseState } from '@manifest-network/manifestjs/dist/codegen/liftedinit/billing/v1/types.js';
+import {
+  makeMockClientManager,
+  makeMockQueryClient,
+  makeTxCtx,
+} from './__test-utils__/mocks.js';
 import { asAddress, asFqdn, asLeaseUuid } from './brands.js';
 import { cosmosTx } from './cosmos.js';
 import { fundCredits } from './tools/fundCredits.js';
@@ -141,7 +146,18 @@ describe('§9 cross-face equivalence (typed tx vs cosmos_tx stringly face)', () 
   });
 
   it('stopApp passes the SAME (module, subcommand, args) tuple as stringly billing close-lease', async () => {
-    const cm = makeMockClientManager({ address: SENDER });
+    const cm = makeMockClientManager({
+      address: SENDER,
+      queryClient: makeMockQueryClient({
+        billing: {
+          lease: {
+            uuid: LEASE_UUID,
+            state: LeaseState.LEASE_STATE_ACTIVE,
+            providerUuid: 'p1',
+          },
+        },
+      }),
+    });
     mockCosmosTx.mockResolvedValue(txResult('close-lease'));
 
     const typed = await stopApp(makeTxCtx({ chain: cm }), {
@@ -157,14 +173,26 @@ describe('§9 cross-face equivalence (typed tx vs cosmos_tx stringly face)', () 
 
     expect({ ...typed }).toEqual({
       lease_uuid: LEASE_UUID,
-      status: 'stopped',
+      outcome: 'stopped',
+      lease_state: 'LEASE_STATE_CLOSED',
       transactionHash: 'HASH',
       code: 0,
     });
   });
 
   it('the typed face surfaces the SAME ManifestMCPErrorCode the stringly face would (TX_FAILED)', async () => {
-    const cm = makeMockClientManager({ address: SENDER });
+    const cm = makeMockClientManager({
+      address: SENDER,
+      queryClient: makeMockQueryClient({
+        billing: {
+          lease: {
+            uuid: LEASE_UUID,
+            state: LeaseState.LEASE_STATE_ACTIVE,
+            providerUuid: 'p1',
+          },
+        },
+      }),
+    });
     // The single `cosmosTx` chokepoint is shared by both faces; a chain-leg TX_FAILED propagates
     // identically through the typed fn and a direct stringly `cosmosTx` call.
     mockCosmosTx.mockRejectedValue(
