@@ -66,6 +66,7 @@ export {
   isLeaseFailureTerminal,
   isStackManifest,
   type LeaseConnectionResponse,
+  type LifecycleCallOptions,
   MAX_TAIL,
   mergeManifest,
   metaHashHex,

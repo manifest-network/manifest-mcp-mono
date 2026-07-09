@@ -1,16 +1,30 @@
 import type { FredAuthCtx } from '../ctx.js';
-import { restartLease } from '../http/fred.js';
+import {
+  type FredLeaseStatus,
+  pollLeaseUntilReady,
+  restartLease,
+} from '../http/fred.js';
 import { fetchActiveLease } from './fetchActiveLease.js';
+import type { LifecycleCallOptions } from './lifecycle-options.js';
 import { resolveProviderUrl } from './resolveLeaseProvider.js';
 
 export async function restartApp(
   ctx: FredAuthCtx,
   input: { address: string; leaseUuid: string },
-) {
+  opts: LifecycleCallOptions = {},
+): Promise<{ lease_uuid: string; status: string; ready?: FredLeaseStatus }> {
   const { address, leaseUuid } = input;
-  const lease = await fetchActiveLease(ctx, leaseUuid, 'cannot be restarted');
+  opts.abortSignal?.throwIfAborted();
 
-  const providerUrl = await resolveProviderUrl(ctx, lease.providerUuid);
+  // Fast path: a supplied providerUrl skips both on-chain queries (fetchActiveLease + resolveProviderUrl).
+  let providerUrl: string;
+  if (opts.providerUrl) {
+    providerUrl = opts.providerUrl;
+  } else {
+    const lease = await fetchActiveLease(ctx, leaseUuid, 'cannot be restarted');
+    providerUrl = await resolveProviderUrl(ctx, lease.providerUuid);
+  }
+
   const authToken = await ctx.providerAuth.providerToken({
     address,
     leaseUuid,
@@ -21,9 +35,15 @@ export async function restartApp(
     authToken,
     ctx.fetch,
   );
+  const base = { lease_uuid: leaseUuid, status: result.status };
 
-  return {
-    lease_uuid: leaseUuid,
-    status: result.status,
-  };
+  if (opts.pollOptions === false) return base;
+  const ready = await pollLeaseUntilReady(
+    providerUrl,
+    leaseUuid,
+    () => ctx.providerAuth.providerToken({ address, leaseUuid }),
+    { ...opts.pollOptions, abortSignal: opts.abortSignal },
+    ctx.fetch,
+  );
+  return { ...base, ready };
 }
