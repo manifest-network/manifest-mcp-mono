@@ -21,6 +21,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
+  asLeaseUuid,
   ManifestMCPError,
   ManifestMCPErrorCode,
 } from '@manifest-network/manifest-mcp-core';
@@ -230,12 +231,15 @@ describe('closeLease replay — 02-close-pending-verify-fail', () => {
     ) as { reason: string };
 
     const core = await import('@manifest-network/manifest-mcp-core');
+    // A PENDING lease teardown yields `cancelled` (never `stopped`); the
+    // verifier query (mocked to still-PENDING below) still fires pending_drift.
     vi.mocked(core.stopApp).mockResolvedValue({
-      lease_uuid: '11111111-1111-4111-8111-111111111111',
-      status: 'stopped',
+      lease_uuid: asLeaseUuid('11111111-1111-4111-8111-111111111111'),
+      outcome: 'cancelled',
+      lease_state: 'LEASE_STATE_REJECTED',
       transactionHash: 'DEADBEEF',
       code: 0,
-    } as Awaited<ReturnType<typeof core.stopApp>>);
+    });
 
     const queryClient = makeMockQueryClient();
     queryClient.liftedinit.billing.v1.lease.mockResolvedValue(leasesPayload);
@@ -289,11 +293,12 @@ describe('closeLease replay — 03-close-not-found', () => {
 
     const core = await import('@manifest-network/manifest-mcp-core');
     vi.mocked(core.stopApp).mockResolvedValue({
-      lease_uuid: '99999999-9999-4999-8999-999999999999',
-      status: 'stopped',
+      lease_uuid: asLeaseUuid('99999999-9999-4999-8999-999999999999'),
+      outcome: 'stopped',
+      lease_state: 'LEASE_STATE_CLOSED',
       transactionHash: 'DEADBEEF',
       code: 0,
-    } as Awaited<ReturnType<typeof core.stopApp>>);
+    });
 
     const queryClient = makeMockQueryClient();
     queryClient.liftedinit.billing.v1.lease.mockResolvedValue(leasesPayload);
@@ -402,12 +407,15 @@ describe('closeLease — args validation', () => {
     // INSUFFICIENT_FUNDS per lease-state.TERMINAL_STATES) maps to the
     // `terminal` outcome which is in successValues.
     const core = await import('@manifest-network/manifest-mcp-core');
+    // A REJECTED terminal state is reached via cancel (PENDING teardown),
+    // so the coherent stopApp outcome here is `cancelled`.
     vi.mocked(core.stopApp).mockResolvedValue({
-      lease_uuid: '11111111-1111-4111-8111-111111111111',
-      status: 'stopped',
+      lease_uuid: asLeaseUuid('11111111-1111-4111-8111-111111111111'),
+      outcome: 'cancelled',
+      lease_state: 'LEASE_STATE_REJECTED',
       transactionHash: 'DEADBEEF',
       code: 0,
-    } as Awaited<ReturnType<typeof core.stopApp>>);
+    });
 
     const queryClient = makeMockQueryClient();
     queryClient.liftedinit.billing.v1.lease.mockResolvedValue({
@@ -439,11 +447,12 @@ describe('closeLease — args validation', () => {
   it('verifier returns ACTIVE → non-terminal → pending_drift inform-only failure', async () => {
     const core = await import('@manifest-network/manifest-mcp-core');
     vi.mocked(core.stopApp).mockResolvedValue({
-      lease_uuid: '11111111-1111-4111-8111-111111111111',
-      status: 'stopped',
+      lease_uuid: asLeaseUuid('11111111-1111-4111-8111-111111111111'),
+      outcome: 'stopped',
+      lease_state: 'LEASE_STATE_CLOSED',
       transactionHash: 'DEADBEEF',
       code: 0,
-    } as Awaited<ReturnType<typeof core.stopApp>>);
+    });
 
     const queryClient = makeMockQueryClient();
     queryClient.liftedinit.billing.v1.lease.mockResolvedValue({
@@ -483,11 +492,12 @@ describe('closeLease — args validation', () => {
     // pattern from `lookupDomain` (round 1) + `troubleshoot` (round 3).
     const core = await import('@manifest-network/manifest-mcp-core');
     vi.mocked(core.stopApp).mockResolvedValue({
-      lease_uuid: '11111111-1111-4111-8111-111111111111',
-      status: 'stopped',
+      lease_uuid: asLeaseUuid('11111111-1111-4111-8111-111111111111'),
+      outcome: 'stopped',
+      lease_state: 'LEASE_STATE_CLOSED',
       transactionHash: 'DEADBEEF',
       code: 0,
-    } as Awaited<ReturnType<typeof core.stopApp>>);
+    });
 
     const queryClient = makeMockQueryClient();
     queryClient.liftedinit.billing.v1.lease.mockRejectedValue(
@@ -519,11 +529,12 @@ describe('closeLease — args validation', () => {
   it('verifier chain-query rejects with structured ManifestMCPError → preserves original code', async () => {
     const core = await import('@manifest-network/manifest-mcp-core');
     vi.mocked(core.stopApp).mockResolvedValue({
-      lease_uuid: '11111111-1111-4111-8111-111111111111',
-      status: 'stopped',
+      lease_uuid: asLeaseUuid('11111111-1111-4111-8111-111111111111'),
+      outcome: 'stopped',
+      lease_state: 'LEASE_STATE_CLOSED',
       transactionHash: 'DEADBEEF',
       code: 0,
-    } as Awaited<ReturnType<typeof core.stopApp>>);
+    });
 
     const queryClient = makeMockQueryClient();
     queryClient.liftedinit.billing.v1.lease.mockRejectedValue(

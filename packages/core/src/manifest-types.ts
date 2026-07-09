@@ -16,6 +16,18 @@ import type {
   Provider,
   SKU,
 } from '@manifest-network/manifestjs/dist/codegen/liftedinit/sku/v1/types.js';
+
+// Canonical value re-exports routed through this chokepoint (spec §8): the
+// runtime `LeaseState` enum + its JSON converter, plus the `Lease` wire type.
+// Core code that needs these (e.g. tools/stopApp.ts) imports them from here so
+// only this file touches the manifestjs codegen path directly (dependency-cruiser
+// manifestjs-types-chokepoint), rather than joining the grandfathered baseline.
+export type { Lease } from '@manifest-network/manifestjs/dist/codegen/liftedinit/billing/v1/types.js';
+export {
+  LeaseState,
+  leaseStateToJSON,
+} from '@manifest-network/manifestjs/dist/codegen/liftedinit/billing/v1/types.js';
+
 import type {
   Address,
   Fqdn,

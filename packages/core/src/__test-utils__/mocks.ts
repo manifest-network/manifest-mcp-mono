@@ -70,6 +70,7 @@ interface BillingOverrides {
     createdAt?: Date;
     closedAt?: Date;
     items?: unknown[];
+    rejectionReason?: string;
   } | null;
   billingParams?: {
     maxLeasesPerTenant: bigint;

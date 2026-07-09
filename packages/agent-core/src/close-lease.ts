@@ -1,12 +1,15 @@
 /**
- * Public entry point: orchestrate closing an existing lease via the
- * `close-lease` billing tx.
+ * Public entry point: orchestrate tearing down an existing lease via the
+ * polymorphic `stopApp` (close for ACTIVE, cancel for PENDING, no-op if
+ * already terminal).
  *
  * Composition (mirrors `deploy-app.ts` / `manage-domain.ts`):
  *
  *   1. Validate args.
  *   2. Render a confirmation block + optionally consult `onConfirm`.
- *   3. Broadcast `stopApp` (which submits `MsgCloseLease`).
+ *   3. Broadcast `stopApp` (submits `MsgCloseLease` for an ACTIVE lease,
+ *      `MsgCancelLease` for a PENDING one; no-op if the lease is already
+ *      terminal).
  *   4. Verify the post-broadcast on-chain state via `verifyAndRecover`
  *      driving a direct `billing.v1.lease({ leaseUuid })` query +
  *      `lease-state.decode` + `isTerminal`. Terminal states (CLOSED /
@@ -61,12 +64,16 @@ interface CloseDiag {
  * @throws `ManifestMCPError(OPERATION_CANCELLED)` when `onConfirm` returns
  *   `'no'` (deliberate user cancellation — ENG-272).
  * @throws `ManifestMCPError` (typically `TX_FAILED`) propagated as-is
- *   from the `stopApp()` broadcast step. Broadcast errors do NOT invoke
- *   `onFailure` — that callback is reserved for post-broadcast
- *   verification failures. `stopApp` already raises a structured
- *   `ManifestMCPError` from the core package; wrapping it again at this
- *   layer would be redundant. Callers wanting to react to broadcast
- *   errors should catch them at the call site.
+ *   from the `stopApp()` teardown step. `stopApp` is now polymorphic and
+ *   idempotent: an already-terminal lease resolves as a no-op success and
+ *   a PENDING lease is CANCELLED (→ REJECTED, which the verifier accepts
+ *   as terminal), so neither raises here anymore. Only a genuine broadcast
+ *   error on an ACTIVE close (or the rare `PENDING→ACTIVE` mid-call race)
+ *   still propagates as-is. Broadcast errors do NOT invoke `onFailure` —
+ *   that callback is reserved for post-broadcast verification failures.
+ *   `stopApp` already raises a structured `ManifestMCPError` from the core
+ *   package; wrapping it again at this layer would be redundant. Callers
+ *   wanting to react to broadcast errors should catch them at the call site.
  * @throws `ManifestMCPError(TX_FAILED)` when post-broadcast verification
  *   reaches one of two failure modes (both with `onFailure({ reason })`
  *   invoked first):
