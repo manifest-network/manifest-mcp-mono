@@ -3,7 +3,7 @@ import type { PollOptions } from '../http/fred.js';
 /**
  * Runtime options for the provider-lifecycle ops (restartApp / updateApp).
  * Mirrors deployManifest's DeployCallOptions, minus the chain-tx-only fields
- * (these ops do no chain transaction).
+ * (these ops perform no chain transactions).
  */
 export interface LifecycleCallOptions {
   /**
