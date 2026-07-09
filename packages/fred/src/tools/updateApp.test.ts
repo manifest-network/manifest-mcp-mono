@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../http/fred.js', () => ({
   updateLease: vi.fn(),
+  pollLeaseUntilReady: vi.fn(),
 }));
 
 vi.mock('./resolveLeaseProvider.js', () => ({
@@ -11,16 +12,34 @@ vi.mock('./resolveLeaseProvider.js', () => ({
 
 import { ManifestMCPErrorCode } from '@manifest-network/manifest-mcp-core';
 import { makeMockQueryClient } from '@manifest-network/manifest-mcp-core/__test-utils__/mocks.js';
-import { updateLease } from '../http/fred.js';
+import { pollLeaseUntilReady, updateLease } from '../http/fred.js';
 import { resolveProviderUrl } from './resolveLeaseProvider.js';
 import { updateApp } from './updateApp.js';
 
 const mockUpdateLease = vi.mocked(updateLease);
 const mockResolveProviderUrl = vi.mocked(resolveProviderUrl);
+const mockPoll = vi.mocked(pollLeaseUntilReady);
 
 const LEASE_UUID = '550e8400-e29b-41d4-a716-446655440000';
+const ADDR = 'manifest1abc';
+const READY = {
+  state: LeaseState.LEASE_STATE_ACTIVE,
+  provision_status: 'ready',
+} as never;
 const mockGetAuthToken = vi.fn().mockResolvedValue('auth-token');
 const fetchSpy = vi.fn(globalThis.fetch);
+
+function activeQc() {
+  return makeMockQueryClient({
+    billing: {
+      lease: {
+        uuid: LEASE_UUID,
+        state: LeaseState.LEASE_STATE_ACTIVE,
+        providerUuid: 'prov-1',
+      },
+    },
+  });
+}
 
 function makeCtx(qc: ReturnType<typeof makeMockQueryClient>) {
   return {
@@ -41,6 +60,8 @@ describe('updateApp', () => {
     vi.clearAllMocks();
     mockResolveProviderUrl.mockResolvedValue('https://provider.example.com');
     mockUpdateLease.mockResolvedValue({ status: 'updated' });
+    mockPoll.mockResolvedValue(READY);
+    mockGetAuthToken.mockResolvedValue('auth-token');
   });
 
   it('without existingManifest: full replacement', async () => {
@@ -58,11 +79,15 @@ describe('updateApp', () => {
       image: 'nginx:2',
       ports: { '80/tcp': {} },
     });
-    await updateApp(makeCtx(qc), {
-      address: 'manifest1abc',
-      leaseUuid: LEASE_UUID,
-      manifest,
-    });
+    await updateApp(
+      makeCtx(qc),
+      {
+        address: 'manifest1abc',
+        leaseUuid: LEASE_UUID,
+        manifest,
+      },
+      { pollOptions: false },
+    );
 
     // Should pass manifest through unchanged (encoded as Uint8Array)
     const rawPayload = mockUpdateLease.mock.calls[0][2] as Uint8Array;
@@ -92,12 +117,16 @@ describe('updateApp', () => {
       user: '1000:1000',
     });
 
-    await updateApp(makeCtx(qc), {
-      address: 'manifest1abc',
-      leaseUuid: LEASE_UUID,
-      manifest: newManifest,
-      existingManifest,
-    });
+    await updateApp(
+      makeCtx(qc),
+      {
+        address: 'manifest1abc',
+        leaseUuid: LEASE_UUID,
+        manifest: newManifest,
+        existingManifest,
+      },
+      { pollOptions: false },
+    );
 
     const sentManifest = JSON.parse(
       new TextDecoder().decode(mockUpdateLease.mock.calls[0][2] as Uint8Array),
@@ -136,12 +165,16 @@ describe('updateApp', () => {
       },
     });
 
-    await updateApp(makeCtx(qc), {
-      address: 'manifest1abc',
-      leaseUuid: LEASE_UUID,
-      manifest: newManifest,
-      existingManifest,
-    });
+    await updateApp(
+      makeCtx(qc),
+      {
+        address: 'manifest1abc',
+        leaseUuid: LEASE_UUID,
+        manifest: newManifest,
+        existingManifest,
+      },
+      { pollOptions: false },
+    );
 
     const sent = JSON.parse(
       new TextDecoder().decode(mockUpdateLease.mock.calls[0][2] as Uint8Array),
@@ -177,12 +210,16 @@ describe('updateApp', () => {
       },
     });
 
-    await updateApp(makeCtx(qc), {
-      address: 'manifest1abc',
-      leaseUuid: LEASE_UUID,
-      manifest: newManifest,
-      existingManifest,
-    });
+    await updateApp(
+      makeCtx(qc),
+      {
+        address: 'manifest1abc',
+        leaseUuid: LEASE_UUID,
+        manifest: newManifest,
+        existingManifest,
+      },
+      { pollOptions: false },
+    );
 
     const sent = JSON.parse(
       new TextDecoder().decode(mockUpdateLease.mock.calls[0][2] as Uint8Array),
@@ -301,5 +338,141 @@ describe('updateApp', () => {
       code: ManifestMCPErrorCode.INVALID_CONFIG,
       message: expect.stringContaining('Cannot merge'),
     });
+  });
+
+  // ── ENG-488 lifecycle options (fast-path + default-poll) ──
+
+  it('default: resolves lease + provider, updates, then polls to ready', async () => {
+    mockUpdateLease.mockResolvedValue({ status: 'updating' });
+    const result = await updateApp(makeCtx(activeQc()), {
+      address: ADDR,
+      leaseUuid: LEASE_UUID,
+      manifest: '{"image":"nginx","ports":{}}',
+    });
+
+    expect(mockResolveProviderUrl).toHaveBeenCalledTimes(1);
+    expect(mockPoll).toHaveBeenCalledTimes(1);
+    expect(result).toEqual({
+      lease_uuid: LEASE_UUID,
+      status: 'updating',
+      ready: READY,
+    });
+  });
+
+  it('pollOptions:false → fire-and-return, no poll, no ready field', async () => {
+    mockUpdateLease.mockResolvedValue({ status: 'updating' });
+    const result = await updateApp(
+      makeCtx(activeQc()),
+      {
+        address: ADDR,
+        leaseUuid: LEASE_UUID,
+        manifest: '{"image":"nginx","ports":{}}',
+      },
+      { pollOptions: false },
+    );
+    expect(mockPoll).not.toHaveBeenCalled();
+    expect(result).toEqual({ lease_uuid: LEASE_UUID, status: 'updating' });
+  });
+
+  it('fast path: supplied providerUrl skips fetchActiveLease + resolveProviderUrl', async () => {
+    const qc = makeMockQueryClient({ billing: { lease: null } });
+    const leaseFn = qc.liftedinit.billing.v1.lease;
+    await updateApp(
+      makeCtx(qc),
+      {
+        address: ADDR,
+        leaseUuid: LEASE_UUID,
+        manifest: '{"image":"nginx","ports":{}}',
+      },
+      { providerUrl: 'https://cached.example.com' },
+    );
+
+    expect(mockResolveProviderUrl).not.toHaveBeenCalled();
+    expect(leaseFn).not.toHaveBeenCalled(); // fetchActiveLease not run
+    expect(mockUpdateLease).toHaveBeenCalledWith(
+      'https://cached.example.com',
+      LEASE_UUID,
+      expect.any(Uint8Array),
+      'auth-token',
+      fetchSpy,
+    );
+    expect(mockPoll).toHaveBeenCalledWith(
+      'https://cached.example.com',
+      LEASE_UUID,
+      expect.any(Function),
+      expect.anything(),
+      fetchSpy,
+    );
+  });
+
+  it('fast path WITH existingManifest: merge still runs and zero chain queries', async () => {
+    const qc = makeMockQueryClient({ billing: { lease: null } });
+    const leaseFn = qc.liftedinit.billing.v1.lease;
+    await updateApp(
+      makeCtx(qc),
+      {
+        address: ADDR,
+        leaseUuid: LEASE_UUID,
+        manifest: '{"image":"nginx","env":{"A":"1"}}',
+        existingManifest: '{"image":"old","env":{"B":"2"}}',
+      },
+      { providerUrl: 'https://cached.example.com' },
+    );
+
+    expect(mockResolveProviderUrl).not.toHaveBeenCalled();
+    expect(leaseFn).not.toHaveBeenCalled();
+    const sent = JSON.parse(
+      new TextDecoder().decode(mockUpdateLease.mock.calls[0][2] as Uint8Array),
+    );
+    expect(sent.env).toEqual({ A: '1', B: '2' });
+  });
+
+  it('poll receives a token FUNCTION (re-minted per iteration), not a pre-awaited string', async () => {
+    await updateApp(makeCtx(activeQc()), {
+      address: ADDR,
+      leaseUuid: LEASE_UUID,
+      manifest: '{"image":"nginx","ports":{}}',
+    });
+    const tokenArg = mockPoll.mock.calls[0][2];
+    expect(typeof tokenArg).toBe('function');
+    mockGetAuthToken.mockClear();
+    await (tokenArg as () => Promise<string>)();
+    expect(mockGetAuthToken).toHaveBeenCalledWith(ADDR, LEASE_UUID);
+  });
+
+  it('pre-aborted signal → throws before the mutate POST', async () => {
+    const ac = new AbortController();
+    ac.abort();
+    await expect(
+      updateApp(
+        makeCtx(activeQc()),
+        {
+          address: ADDR,
+          leaseUuid: LEASE_UUID,
+          manifest: '{"image":"nginx","ports":{}}',
+        },
+        { abortSignal: ac.signal },
+      ),
+    ).rejects.toThrow();
+    expect(mockUpdateLease).not.toHaveBeenCalled();
+  });
+
+  it('default path throws when lease is not active', async () => {
+    const qc = makeMockQueryClient({
+      billing: {
+        lease: {
+          uuid: LEASE_UUID,
+          state: LeaseState.LEASE_STATE_CLOSED,
+          providerUuid: 'prov-1',
+        },
+      },
+    });
+    await expect(
+      updateApp(makeCtx(qc), {
+        address: ADDR,
+        leaseUuid: LEASE_UUID,
+        manifest: '{"image":"nginx","ports":{}}',
+      }),
+    ).rejects.toThrow('cannot be updated');
   });
 });
