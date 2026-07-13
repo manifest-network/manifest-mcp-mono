@@ -363,11 +363,13 @@ describe('Deploy lifecycle', () => {
   it('close_lease closes the lease', async () => {
     const result = await leaseClient.callTool<{
       lease_uuid: string;
-      status: string;
+      outcome: string;
+      lease_state: string;
     }>('close_lease', { lease_uuid: leaseUuid });
 
     expect(result.lease_uuid).toBe(leaseUuid);
-    expect(result.status).toBe('stopped');
+    expect(result.outcome).toBe('stopped');
+    expect(result.lease_state).toBe('LEASE_STATE_CLOSED');
   });
 
   // ------------------------------------------------------------------

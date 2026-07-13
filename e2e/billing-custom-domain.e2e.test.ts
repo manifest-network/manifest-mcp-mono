@@ -358,10 +358,21 @@ describe('Billing custom-domain', () => {
     try {
       const result = await leaseClient.callTool<{
         lease_uuid: string;
-        status: string;
+        outcome: string;
+        lease_state: string;
       }>('close_lease', { lease_uuid: leaseUuid });
       expect(result.lease_uuid).toBe(leaseUuid);
-      expect(result.status).toBe('stopped');
+      // Best-effort cleanup: assert the outcome<->lease_state correlation, not
+      // independent sets. The lease is ACTIVE here (deploy_app waits for it), so
+      // close-lease yields (stopped, CLOSED); stopApp is idempotent (ENG-487A), so
+      // an already-terminal lease returns (already_inactive, CLOSED) or, on credit
+      // runout, (already_inactive, EXPIRED) WITHOUT throwing. It is never PENDING,
+      // so cancelled/REJECTED cannot occur, and (stopped, EXPIRED) is impossible.
+      expect([
+        'stopped/LEASE_STATE_CLOSED',
+        'already_inactive/LEASE_STATE_CLOSED',
+        'already_inactive/LEASE_STATE_EXPIRED',
+      ]).toContain(`${result.outcome}/${result.lease_state}`);
     } catch (err) {
       // If the lease somehow already terminated, swallow the chain rejection.
       // Routing-layer regressions still surface (UNSUPPORTED_TX, etc.).
@@ -423,10 +434,18 @@ describe('Billing custom-domain', () => {
       try {
         const result = await leaseClient.callTool<{
           lease_uuid: string;
-          status: string;
+          outcome: string;
+          lease_state: string;
         }>('close_lease', { lease_uuid: combinedLeaseUuid });
         expect(result.lease_uuid).toBe(combinedLeaseUuid);
-        expect(result.status).toBe('stopped');
+        // Best-effort cleanup — assert the outcome<->lease_state correlation, see
+        // the earlier block. This ACTIVE-created lease's only reachable pairs are
+        // (stopped, CLOSED), (already_inactive, CLOSED), (already_inactive, EXPIRED).
+        expect([
+          'stopped/LEASE_STATE_CLOSED',
+          'already_inactive/LEASE_STATE_CLOSED',
+          'already_inactive/LEASE_STATE_EXPIRED',
+        ]).toContain(`${result.outcome}/${result.lease_state}`);
       } catch (err) {
         const code = parseToolErrorCode(err);
         if (code !== 'TX_FAILED') throw err;
@@ -498,7 +517,8 @@ describe('Billing custom-domain', () => {
         try {
           await leaseClient.callTool<{
             lease_uuid: string;
-            status: string;
+            outcome: string;
+            lease_state: string;
           }>('close_lease', { lease_uuid: orphanedUuid });
         } catch (cleanupErr) {
           console.warn(
