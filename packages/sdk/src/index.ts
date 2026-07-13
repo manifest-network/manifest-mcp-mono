@@ -45,6 +45,7 @@ export {
   validateConfig,
 } from '@manifest-network/manifest-mcp-core';
 export type {
+  CreateFredClientOptions,
   FredActions,
   FredClient,
 } from '@manifest-network/manifest-mcp-fred';

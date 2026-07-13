@@ -12,6 +12,7 @@ export {
   ManifestMCPErrorCode,
 } from '@manifest-network/manifest-mcp-core';
 export {
+  type CreateFredClientOptions,
   createFredClient,
   type FredActions,
   type FredClient,

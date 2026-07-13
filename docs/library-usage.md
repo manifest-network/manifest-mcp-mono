@@ -226,6 +226,8 @@ if (!isUrlSsrfSafe(wsUrl)) throw new Error('unsafe provider WebSocket URL');
 
 It fails open on DNS hostnames (defense-in-depth; only the Node connect guard / the browser's Private Network Access catches a hostname that resolves internally), so pair it with the connect guard on Node.
 
+Deploying against a **local/dev provider** on `localhost`? The default-deny would reject it — pass `createFredClient({ allowLoopback: true })` (also on `createFredClientNode`), a narrow opt-in that permits loopback only, never RFC1918/metadata. Leave it off (the default) in production.
+
 ## Errors
 
 Most failures throw `ManifestMCPError` with a `code` from `ManifestMCPErrorCode` (e.g. `INVALID_ARGUMENT`, `SKU_AMBIGUOUS`, `TX_FAILED`, `OPERATION_CANCELLED`); provider HTTP failures throw a separate `ProviderApiError` that carries `status`, not a `code` (see the guard below). Transient failures (network, 5xx, 429) are auto-retried; permanent ones bubble up. Branch on `code` (or the typed guards), not message text. Before logging an error's `details`, pass it through `sanitizeForLogging` (exported from the root) to redact sensitive fields.

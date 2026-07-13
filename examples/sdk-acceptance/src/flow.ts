@@ -63,6 +63,9 @@ export async function runAcceptanceFlow(opts: AcceptanceOpts): Promise<void> {
     config: opts.config,
     walletProvider: opts.walletProvider,
     fetch: opts.fetch,
+    // The compose devnet's providerd registers a loopback apiUrl (https://localhost:8080),
+    // so this dev/e2e flow opts into the narrow loopback SSRF allowance (never RFC1918/metadata).
+    allowLoopback: true,
   });
   try {
     const addr = await client.chain.getAddress();
