@@ -214,7 +214,17 @@ import { createFredClientNode } from '@manifest-network/manifest-sdk/node';
 const client = await createFredClientNode({ config, walletProvider });
 ```
 
-The base `createFredClient` does not guard by default and warns once on Node. Injecting your own `fetch` opts **out** of the guard (a plain `globalThis.fetch` stays unguarded); wrap `createGuardedFetch()` from `/node` to compose. In the browser, inject a CORS-aware `fetch`; the request-blocking guard is a Node concern. (`MANIFEST_FRED_FETCH_GUARDED` is MCP-server-only — the library escape hatch is `opts.fetch`.)
+The base `createFredClient` does not guard *at connect time* by default and warns once on Node. Injecting your own `fetch` opts **out** of the connect guard (a plain `globalThis.fetch` stays unguarded); wrap `createGuardedFetch()` from `/node` to compose. In the browser, inject a CORS-aware `fetch`; the connect-time request-blocking guard is a Node concern. (`MANIFEST_FRED_FETCH_GUARDED` is MCP-server-only — the library escape hatch is `opts.fetch`.)
+
+Separately, provider-URL **string** SSRF classification is always on (browser included): `validateProviderUrl` default-denies a provider `apiUrl` that is a literal private/internal/loopback/metadata IP. For URLs you validate yourself — e.g. a provider **WebSocket** URL the connect guard never sees — use the exported predicate:
+
+```ts
+import { isUrlSsrfSafe } from '@manifest-network/manifest-sdk/deploy';
+
+if (!isUrlSsrfSafe(wsUrl)) throw new Error('unsafe provider WebSocket URL');
+```
+
+It fails open on DNS hostnames (defense-in-depth; only the Node connect guard / the browser's Private Network Access catches a hostname that resolves internally), so pair it with the connect guard on Node.
 
 ## Errors
 

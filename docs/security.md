@@ -72,36 +72,36 @@ The signature, public key, and metadata are base64-encoded into a `Bearer` token
 
 ## SSRF protections
 
-Two complementary layers protect against server-side request forgery: a URL-scheme check at the boundary, and a runtime IP-level guard on the actual connection. Neither alone is sufficient — the scheme check can't see where a hostname resolves, and the IP guard can't reject a plain-HTTP downgrade — so both run.
+Two complementary layers protect against server-side request forgery: URL validation at the boundary, and a runtime IP-level guard on the actual connection. Neither alone is sufficient — the string check can't see where a *hostname* resolves (and, in a browser, no connect guard is available), while the connect guard can't reject a plain-HTTP downgrade and is Node-only — so both run.
 
-### 1. Endpoint-URL validation (scheme check)
+### 1. Endpoint-URL validation (boundary check)
 
-Two validators enforce the same HTTPS-or-localhost rule on different inputs:
+The two validators enforce **different** rules, matched to their trust level:
 
-- **`validateEndpointUrl`** in `packages/core/src/config.ts` covers env-supplied endpoints: `COSMOS_RPC_URL` and `COSMOS_REST_URL` (validated inside `createValidatedConfig`), and `MANIFEST_FAUCET_URL` (validated in `packages/node/src/chain.ts` before the chain server starts). The failure outcomes differ but both prevent boot: an invalid `COSMOS_RPC_URL`/`COSMOS_REST_URL` throws `ManifestMCPError(INVALID_CONFIG)` from `createValidatedConfig`, while an invalid `MANIFEST_FAUCET_URL` logs the reason to stderr and calls `process.exit(1)`.
-- **`validateProviderUrl`** in `packages/fred/src/http/provider.ts` covers provider API URLs returned from chain queries (e.g. the `apiUrl` on a `Provider` row, or whatever the lease's `providerUuid` resolves to). Same HTTPS-or-localhost rule, plus trailing-slash stripping. Failures throw `ProviderApiError`.
+- **`validateEndpointUrl`** in `packages/core/src/config.ts` covers **operator-supplied** env endpoints: `COSMOS_RPC_URL` and `COSMOS_REST_URL` (validated inside `createValidatedConfig`), and `MANIFEST_FAUCET_URL` (validated in `packages/node/src/chain.ts` before the chain server starts). These are operator-trusted, so it is a **scheme check only** — HTTPS always allowed, HTTP only for `localhost` / `127.0.0.1` / `::1` / `[::1]`, anything else rejected. The failure outcomes differ but both prevent boot: an invalid `COSMOS_RPC_URL`/`COSMOS_REST_URL` throws `ManifestMCPError(INVALID_CONFIG)`, while an invalid `MANIFEST_FAUCET_URL` logs to stderr and calls `process.exit(1)`.
+- **`validateProviderUrl`** in `packages/fred/src/http/provider.ts` covers **untrusted** provider API URLs returned from chain queries (the `apiUrl` on a `Provider` row, or whatever a lease's `providerUuid` resolves to). Because a malicious provider controls this value, it does the scheme check **plus SSRF IP classification** (ENG-490), delegating to the pure predicate `isUrlSsrfSafe`, and strips trailing slashes. Failures throw `ProviderApiError`.
 
-Both apply the same shape:
+`isUrlSsrfSafe(url, opts?)` (pure, protocol-agnostic — it also covers the provider **WebSocket** URL, `wss://…`; exported on the fred barrel and `@manifest-network/manifest-sdk/deploy`) classifies the WHATWG-parsed host:
 
-- HTTPS is always allowed.
-- HTTP is allowed only for `localhost` / `127.0.0.1` / `::1` / `[::1]`.
-- Anything else is rejected.
+- A **literal IP** is default-denied unless its `ipaddr.js` range is `'unicast'` — so loopback, RFC 1918 private, link-local / cloud-metadata (`169.254.169.254`), CGNAT, and reserved ranges are all rejected, **including over HTTPS**. Obfuscated encodings (decimal `2130706433`, hex `0x7f000001`, octal, short-form, IPv4-mapped IPv6) are caught because `new URL()` normalizes them to canonical form before classification, and userinfo (`https://169.254.169.254@evil.com/`) is a non-issue — the classified host is the real connect target (`evil.com`).
+- **Loopback** (`localhost` / `127.0.0.1` / `::1`) is default-denied. The fred MCP server re-allows it **only** when its fetch guard is disabled (`MANIFEST_FRED_FETCH_GUARDED=0`), by threading `ctx.allowLoopback = !guarded` into the validation — so both SSRF layers share one switch. This `allowLoopback` opt-in is narrow: it never re-allows RFC 1918 or metadata. Library and browser consumers get the strict default (no relaxation).
+- A **DNS hostname** classifies as safe (**fails open**) — the string layer cannot resolve it without `node:dns`, and *resolve-then-validate* is the TOCTOU anti-pattern that DNS-rebinding defeats. This is deliberate defense-in-depth: on Node the connect guard (layer 2) does the authoritative post-resolution check; in a browser, the platform's Private Network Access / CORS backstops it. So the string layer's job is to block the literal-IP case (the realistic attack from an on-chain `apiUrl`), not to be rebinding-proof.
 
-This runs **before** any HTTP call, so a misconfigured config or a chain row with a malformed `apiUrl` never produces a request to a non-HTTPS arbitrary host. On its own, though, a scheme check does **not** stop an `https://` URL — or a hostname that DNS-resolves — to an internal IP (e.g. `https://169.254.169.254/` or a hostname pointing at `10.0.0.1`). That is what the second layer handles.
+This runs **before** any HTTP call, so a chain row with a hostile `apiUrl` — literal private/metadata IP, obfuscated or not, over HTTP or HTTPS — never produces a request. What layer 1 cannot stop by itself is a *hostname* that DNS-resolves to an internal IP; that is what the second layer handles.
 
 ### 2. Runtime IP-level fetch guard (`createGuardedFetch`)
 
 All provider/Fred HTTP is routed through an SSRF-guarded `fetch` — `createGuardedFetch` in `packages/core/src/internals/guarded-fetch.ts`, a native `undici` Dispatcher. It:
 
 - **Resolves the target host inside the connect hook** and substitutes the resolved IP as the connect address, so it inspects the *actual* IP the request reaches and closes the DNS-rebinding / TOCTOU window a hostname-only check leaves open. The hook re-fires on every cross-origin redirect, so a redirect to an internal host is caught too.
-- **Default-denies** any address whose `ipaddr.js` `range()` is not `'unicast'` — loopback, link-local, private (RFC 1918), carrier-grade NAT, reserved / benchmarking (`198.18.0.0/15`), and any unrecognised label all block. It is an allow-list of exactly one category (`'unicast'`), so a range the table doesn't know about fails **closed** rather than falling through as allowed.
+- **Default-denies** any address whose `ipaddr.js` `range()` is not `'unicast'` — loopback, link-local, private (RFC 1918), carrier-grade NAT, reserved / benchmarking (`198.18.0.0/15`), and any unrecognised label all block. It is an allow-list of exactly one category (`'unicast'`), so a range the table doesn't know about fails **closed** rather than falling through as allowed. The classifier itself (`isBlocked` + `BLOCKED_RANGES_*`) lives in the pure, `ipaddr.js`-only `packages/core/src/internals/ssrf-classify.ts` (ENG-490), shared by *both* SSRF layers — layer 1's `isUrlSsrfSafe` imports it browser-safely.
 - Is gated per server and **on by default**: `MANIFEST_FRED_FETCH_GUARDED` (fred) and `MANIFEST_AGENT_FETCH_GUARDED` (agent). Both accept `1`/`true`/`yes`/`on` and `0`/`false`/`no`/`off` (case-insensitive); an unrecognised value throws `INVALID_CONFIG`. `fred`'s `FredMCPServer` constructor injects the guarded fetch via `server/fetch-gate.ts`.
 
-Provider URLs come from on-chain SKU/provider records, so this guard is what stops a malicious provider from pointing a server at an internal host even over HTTPS.
+Provider URLs come from on-chain SKU/provider records, so this guard is what stops a malicious provider whose `apiUrl` is a *hostname* that DNS-resolves to an internal host — the case layer 1's string check cannot see — even over HTTPS. (A literal internal IP is already rejected at layer 1.)
 
 `ipaddr.js` is force-pinned to `2.4.0` tree-wide (root `package.json` `overrides`): an older copy (e.g. `1.9.1`, pulled transitively by `proxy-addr`) carries a stale RFC table that misclassifies reserved ranges as `'unicast'` and would silently weaken the guard.
 
-The guard ships from a **Node-only** subpath — `@manifest-network/manifest-mcp-core/guarded-fetch` (and, mirrored, `@manifest-network/manifest-agent-core/guarded-fetch`) — deliberately kept off the package barrel so browser bundles of `core` don't drag in `undici` / `node:async_hooks`. Import it from that subpath, never the barrel.
+The guard ships from a **Node-only** subpath — `@manifest-network/manifest-mcp-core/guarded-fetch` (and, mirrored, `@manifest-network/manifest-agent-core/guarded-fetch`) — deliberately kept off the package barrel so browser bundles of `core` don't drag in `undici` / `node:async_hooks`. Import it from that subpath, never the barrel. The *pure* classifier (no `undici`) is exposed separately on the **universal** `@manifest-network/manifest-mcp-core/ssrf` subpath (also off the barrel, to keep that low-level primitive out of the public surface), which is what fred's browser-safe `isUrlSsrfSafe` imports.
 
 ## Input validation
 
