@@ -307,6 +307,7 @@ export async function deployManifest(
       leaseDataToken,
       ctx.fetch,
       callOptions.abortSignal,
+      ctx.allowLoopback,
     );
     step = 'poll';
     status = await pollLeaseUntilReady(
@@ -315,6 +316,7 @@ export async function deployManifest(
       () => ctx.providerAuth.providerToken({ address, leaseUuid }),
       { ...callOptions.pollOptions, abortSignal: callOptions.abortSignal },
       ctx.fetch,
+      ctx.allowLoopback,
     );
   } catch (err) {
     // A chain-terminal state (rejected / closed / expired) is self-explanatory
@@ -378,6 +380,7 @@ export async function deployManifest(
       leaseUuid,
       authToken,
       ctx.fetch,
+      ctx.allowLoopback,
     );
     connection = connResp.connection;
     if (connection.host && connection.ports) {

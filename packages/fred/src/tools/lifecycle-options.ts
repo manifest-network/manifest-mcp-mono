@@ -10,7 +10,8 @@ export interface LifecycleCallOptions {
    * Fast path. Caller asserts an already-resolved, ACTIVE lease reachable at this
    * provider URL. When set, skip BOTH on-chain round-trips (fetchActiveLease +
    * resolveProviderUrl) and call the provider directly. The SSRF/format guard is NOT
-   * bypassed — validateProviderUrl is already unconditional inside restartLease/updateLease.
+   * bypassed — restartLease/updateLease still run validateProviderUrl (honoring the
+   * server's allowLoopback) on this URL.
    * The ACTIVE precondition is delegated to the provider (authoritative) + the default poll.
    */
   readonly providerUrl?: string;

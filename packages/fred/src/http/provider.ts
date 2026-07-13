@@ -227,8 +227,9 @@ export async function getProviderHealth(
   providerApiUrl: string,
   timeoutMs = 5_000,
   fetchFn?: typeof globalThis.fetch,
+  allowLoopback = false,
 ): Promise<ProviderHealthResponse> {
-  const validated = validateProviderUrl(providerApiUrl);
+  const validated = validateProviderUrl(providerApiUrl, { allowLoopback });
   const url = `${validated}/health`;
   const res = await checkedFetch(url, undefined, timeoutMs, fetchFn);
   return await parseJsonResponse<ProviderHealthResponse>(res, url);
@@ -253,8 +254,9 @@ export async function getLeaseConnectionInfo(
   leaseUuid: string,
   authToken: string,
   fetchFn?: typeof globalThis.fetch,
+  allowLoopback = false,
 ): Promise<LeaseConnectionResponse> {
-  const validated = validateProviderUrl(providerApiUrl);
+  const validated = validateProviderUrl(providerApiUrl, { allowLoopback });
   const url = `${validated}/v1/leases/${encodeURIComponent(leaseUuid)}/connection`;
   const res = await checkedFetch(
     url,
@@ -274,8 +276,9 @@ export async function uploadLeaseData(
   authToken: string,
   fetchFn?: typeof globalThis.fetch,
   abortSignal?: AbortSignal,
+  allowLoopback = false,
 ): Promise<void> {
-  const validated = validateProviderUrl(providerApiUrl);
+  const validated = validateProviderUrl(providerApiUrl, { allowLoopback });
   const init: RequestInit = {
     method: 'POST',
     headers: {

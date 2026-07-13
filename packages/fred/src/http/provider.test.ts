@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   checkedFetch,
+  getProviderHealth,
   isUrlSsrfSafe,
   ProviderApiError,
   parseJsonResponse,
@@ -370,5 +371,57 @@ describe('ProviderApiError.isProviderApiError (dual-package-safe brand guard)', 
     const e = new ProviderApiError(500, 'boom');
     expect(Object.getOwnPropertyDescriptor(e, BRAND)?.enumerable).toBe(false);
     expect(Object.getOwnPropertySymbols({ ...e })).not.toContain(BRAND);
+  });
+});
+
+// The low-level provider HTTP fns forward an `allowLoopback` flag to
+// validateProviderUrl so the fred server can share ONE switch with its
+// connect-guard (MANIFEST_FRED_FETCH_GUARDED). getProviderHealth is a
+// representative site (ENG-490).
+describe('low-level fn honors allowLoopback (validate gate)', () => {
+  it('getProviderHealth allows a loopback provider URL when allowLoopback=true', async () => {
+    const mockFetch = vi
+      .fn()
+      .mockResolvedValue(
+        new Response(JSON.stringify({ status: 'ok', provider_uuid: 'prov-1' })),
+      );
+
+    const result = await getProviderHealth(
+      'http://localhost:8080',
+      undefined,
+      mockFetch as unknown as typeof globalThis.fetch,
+      true,
+    );
+
+    expect(result.status).toBe('ok');
+    expect(mockFetch).toHaveBeenCalledOnce();
+  });
+
+  it('getProviderHealth rejects a loopback provider URL by default (allowLoopback omitted)', async () => {
+    const mockFetch = vi.fn();
+
+    await expect(
+      getProviderHealth(
+        'http://localhost:8080',
+        undefined,
+        mockFetch as unknown as typeof globalThis.fetch,
+      ),
+    ).rejects.toThrow(ProviderApiError);
+    // Validation throws before any network call.
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it('getProviderHealth rejects a loopback provider URL when allowLoopback=false', async () => {
+    const mockFetch = vi.fn();
+
+    await expect(
+      getProviderHealth(
+        'http://localhost:8080',
+        undefined,
+        mockFetch as unknown as typeof globalThis.fetch,
+        false,
+      ),
+    ).rejects.toThrow(ProviderApiError);
+    expect(mockFetch).not.toHaveBeenCalled();
   });
 });

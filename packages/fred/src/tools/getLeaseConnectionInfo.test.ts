@@ -72,6 +72,7 @@ describe('getLeaseConnectionInfo (capability)', () => {
       LEASE_UUID,
       'conn-token',
       fetchSpy,
+      undefined,
     );
   });
 });

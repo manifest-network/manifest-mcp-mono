@@ -28,7 +28,9 @@ export async function resolveProviderUrl(
       );
     }
 
-    return validateProviderUrl(providerResult.provider.apiUrl);
+    return validateProviderUrl(providerResult.provider.apiUrl, {
+      allowLoopback: ctx.allowLoopback,
+    });
   } catch (error) {
     if (error instanceof ManifestMCPError) throw error;
     if (error instanceof ProviderApiError) throw error;

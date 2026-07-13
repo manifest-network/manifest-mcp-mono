@@ -9,12 +9,16 @@ import type { FredReadCtx } from '../ctx.js';
 import { ProviderApiError } from '../http/provider.js';
 import { resolveProviderUrl } from './resolveLeaseProvider.js';
 
-function makeCtx(query: ManifestQueryClient): FredReadCtx {
+function makeCtx(
+  query: ManifestQueryClient,
+  allowLoopback?: boolean,
+): FredReadCtx {
   return {
     query,
     chain: {} as never,
     fetch: globalThis.fetch,
     logger: noopLogger,
+    ...(allowLoopback !== undefined && { allowLoopback }),
   };
 }
 
@@ -85,5 +89,35 @@ describe('resolveProviderUrl', () => {
     await expect(resolveProviderUrl(makeCtx(qc), 'prov-1')).rejects.toThrow(
       'HTTPS',
     );
+  });
+
+  it('resolves a loopback provider apiUrl when ctx.allowLoopback is true (guard off)', async () => {
+    const qc = makeMockQueryClient({
+      sku: {
+        providerLookup: {
+          'prov-1': { provider: { apiUrl: 'http://localhost:8080' } },
+        },
+      },
+    });
+
+    const url = await resolveProviderUrl(makeCtx(qc, true), 'prov-1');
+    expect(url).toBe('http://localhost:8080');
+  });
+
+  it('rejects a loopback provider apiUrl by default (allowLoopback unset → strict)', async () => {
+    const qc = makeMockQueryClient({
+      sku: {
+        providerLookup: {
+          'prov-1': { provider: { apiUrl: 'http://localhost:8080' } },
+        },
+      },
+    });
+
+    await expect(resolveProviderUrl(makeCtx(qc), 'prov-1')).rejects.toThrow(
+      ProviderApiError,
+    );
+    await expect(
+      resolveProviderUrl(makeCtx(qc, false), 'prov-1'),
+    ).rejects.toThrow(ProviderApiError);
   });
 });

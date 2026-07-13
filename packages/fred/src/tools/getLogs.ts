@@ -27,6 +27,7 @@ export async function getAppLogs(
     authToken,
     tail,
     ctx.fetch,
+    ctx.allowLoopback,
   );
 
   let truncated = false;

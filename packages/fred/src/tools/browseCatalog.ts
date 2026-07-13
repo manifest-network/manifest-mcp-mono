@@ -53,7 +53,12 @@ export async function browseCatalog(ctx: FredReadCtx) {
       let providerUuid: string | undefined;
       let healthError: string | undefined;
       try {
-        const health = await getProviderHealth(p.apiUrl, undefined, ctx.fetch);
+        const health = await getProviderHealth(
+          p.apiUrl,
+          undefined,
+          ctx.fetch,
+          ctx.allowLoopback,
+        );
         healthy = health.status === 'ok' || health.status === 'healthy';
         providerUuid = health.provider_uuid;
       } catch (err) {

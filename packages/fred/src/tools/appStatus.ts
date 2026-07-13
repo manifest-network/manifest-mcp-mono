@@ -99,8 +99,21 @@ export async function appStatus(
     }
 
     const [statusResult, connResult] = await Promise.allSettled([
-      getLeaseStatus(providerUrl, leaseUuid, statusToken, ctx.fetch),
-      getLeaseConnectionInfo(providerUrl, leaseUuid, connToken, ctx.fetch),
+      getLeaseStatus(
+        providerUrl,
+        leaseUuid,
+        statusToken,
+        ctx.fetch,
+        undefined,
+        ctx.allowLoopback,
+      ),
+      getLeaseConnectionInfo(
+        providerUrl,
+        leaseUuid,
+        connToken,
+        ctx.fetch,
+        ctx.allowLoopback,
+      ),
     ]);
 
     function handleRejection(label: string, reason: unknown): string {

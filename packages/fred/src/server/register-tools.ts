@@ -52,11 +52,24 @@ interface RegisterToolsDeps {
    * (ENG-268).
    */
   fetchFn?: typeof globalThis.fetch;
+  /**
+   * Relax the provider-URL SSRF string check to allow loopback hosts. Set by
+   * `FredMCPServer` to `!guarded` so both SSRF layers share one switch: when the
+   * connect-guard is off (MANIFEST_FRED_FETCH_GUARDED=0) loopback provider URLs
+   * are permitted (dev/e2e). Default false → strict (ENG-490).
+   */
+  allowLoopback?: boolean;
 }
 
 export function registerTools(deps: RegisterToolsDeps): void {
-  const { mcpServer, clientManager, walletProvider, authTokens, fetchFn } =
-    deps;
+  const {
+    mcpServer,
+    clientManager,
+    walletProvider,
+    authTokens,
+    fetchFn,
+    allowLoopback,
+  } = deps;
 
   // ProviderAuthPort adapter over the server's AuthTokenService. The capability
   // fns take an address-param port on `FredAuthCtx`; here we adapt the existing
@@ -78,6 +91,7 @@ export function registerTools(deps: RegisterToolsDeps): void {
     fetch: fetchFn ?? globalThis.fetch,
     logger: noopLogger,
     providerAuth,
+    allowLoopback,
   });
 
   // -- browse_catalog --
@@ -909,6 +923,7 @@ export function registerTools(deps: RegisterToolsDeps): void {
         leaseUuid,
         authToken,
         ctx.fetch,
+        ctx.allowLoopback,
       );
 
       return structuredResponse(
@@ -973,6 +988,7 @@ export function registerTools(deps: RegisterToolsDeps): void {
         leaseUuid,
         authToken,
         ctx.fetch,
+        ctx.allowLoopback,
       );
 
       return structuredResponse(

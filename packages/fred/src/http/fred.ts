@@ -47,8 +47,9 @@ export async function getLeaseStatus(
   authToken: string,
   fetchFn?: typeof globalThis.fetch,
   signal?: AbortSignal,
+  allowLoopback = false,
 ): Promise<FredLeaseStatus> {
-  const validated = validateProviderUrl(providerUrl);
+  const validated = validateProviderUrl(providerUrl, { allowLoopback });
   const url = `${validated}/v1/leases/${encodeURIComponent(leaseUuid)}/status`;
   const res = await checkedFetch(
     url,
@@ -76,8 +77,9 @@ export async function getLeaseLogs(
   authToken: string,
   tail?: number,
   fetchFn?: typeof globalThis.fetch,
+  allowLoopback = false,
 ): Promise<FredLeaseLogs> {
-  const validated = validateProviderUrl(providerUrl);
+  const validated = validateProviderUrl(providerUrl, { allowLoopback });
   const cappedTail = tail !== undefined ? Math.min(tail, MAX_TAIL) : undefined;
   const qs = cappedTail !== undefined ? `?tail=${cappedTail}` : '';
   const url = `${validated}/v1/leases/${encodeURIComponent(leaseUuid)}/logs${qs}`;
@@ -97,8 +99,9 @@ export async function getLeaseProvision(
   leaseUuid: string,
   authToken: string,
   fetchFn?: typeof globalThis.fetch,
+  allowLoopback = false,
 ): Promise<FredLeaseProvision> {
-  const validated = validateProviderUrl(providerUrl);
+  const validated = validateProviderUrl(providerUrl, { allowLoopback });
   const url = `${validated}/v1/leases/${encodeURIComponent(leaseUuid)}/provision`;
   const res = await checkedFetch(
     url,
@@ -116,8 +119,9 @@ export async function restartLease(
   leaseUuid: string,
   authToken: string,
   fetchFn?: typeof globalThis.fetch,
+  allowLoopback = false,
 ): Promise<FredActionResponse> {
-  const validated = validateProviderUrl(providerUrl);
+  const validated = validateProviderUrl(providerUrl, { allowLoopback });
   const url = `${validated}/v1/leases/${encodeURIComponent(leaseUuid)}/restart`;
   const res = await checkedFetch(
     url,
@@ -137,8 +141,9 @@ export async function updateLease(
   payload: Uint8Array,
   authToken: string,
   fetchFn?: typeof globalThis.fetch,
+  allowLoopback = false,
 ): Promise<FredActionResponse> {
-  const validated = validateProviderUrl(providerUrl);
+  const validated = validateProviderUrl(providerUrl, { allowLoopback });
   const url = `${validated}/v1/leases/${encodeURIComponent(leaseUuid)}/update`;
   // The provider expects JSON with a base64-encoded payload (Go []byte field).
   const b64 = toBase64(payload);
@@ -163,8 +168,9 @@ export async function getLeaseReleases(
   leaseUuid: string,
   authToken: string,
   fetchFn?: typeof globalThis.fetch,
+  allowLoopback = false,
 ): Promise<FredLeaseReleases> {
-  const validated = validateProviderUrl(providerUrl);
+  const validated = validateProviderUrl(providerUrl, { allowLoopback });
   const url = `${validated}/v1/leases/${encodeURIComponent(leaseUuid)}/releases`;
   const res = await checkedFetch(
     url,
@@ -182,8 +188,9 @@ export async function getLeaseInfo(
   leaseUuid: string,
   authToken: string,
   fetchFn?: typeof globalThis.fetch,
+  allowLoopback = false,
 ): Promise<FredLeaseInfo> {
-  const validated = validateProviderUrl(providerUrl);
+  const validated = validateProviderUrl(providerUrl, { allowLoopback });
   const url = `${validated}/v1/leases/${encodeURIComponent(leaseUuid)}/info`;
   const res = await checkedFetch(
     url,
@@ -354,6 +361,7 @@ export async function pollLeaseUntilReady(
   authToken: string | (() => Promise<string>),
   opts: PollOptions = {},
   fetchFn?: typeof globalThis.fetch,
+  allowLoopback = false,
 ): Promise<FredLeaseStatus> {
   const {
     intervalMs = 3_000,
@@ -378,7 +386,14 @@ export async function pollLeaseUntilReady(
     const token =
       typeof authToken === 'function' ? await authToken() : authToken;
     abortSignal?.throwIfAborted();
-    const status = await getLeaseStatus(providerUrl, leaseUuid, token, fetchFn);
+    const status = await getLeaseStatus(
+      providerUrl,
+      leaseUuid,
+      token,
+      fetchFn,
+      undefined,
+      allowLoopback,
+    );
     lastState = status.state;
     lastProvisionStatus = status.provision_status;
     onProgress?.(status);

@@ -175,6 +175,7 @@ describe('getAppLogs', () => {
       'auth-token',
       50,
       fetchSpy,
+      undefined,
     );
   });
 });

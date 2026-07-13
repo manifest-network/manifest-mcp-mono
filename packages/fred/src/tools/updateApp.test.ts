@@ -395,6 +395,7 @@ describe('updateApp', () => {
       expect.any(Uint8Array),
       'auth-token',
       fetchSpy,
+      undefined,
     );
     expect(mockPoll).toHaveBeenCalledWith(
       'https://cached.example.com',
@@ -402,6 +403,7 @@ describe('updateApp', () => {
       expect.any(Function),
       expect.anything(),
       fetchSpy,
+      undefined,
     );
   });
 

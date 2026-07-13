@@ -252,12 +252,15 @@ describe('appStatus', () => {
       LEASE_UUID,
       'status-token',
       fetchSpy,
+      undefined,
+      undefined,
     );
     expect(mockGetLeaseConnectionInfo).toHaveBeenCalledWith(
       expect.any(String),
       LEASE_UUID,
       'conn-token',
       fetchSpy,
+      undefined,
     );
   });
 
