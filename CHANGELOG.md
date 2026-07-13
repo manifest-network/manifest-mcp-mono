@@ -12,9 +12,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - **core/sdk:** `stopApp` is now a polymorphic, idempotent lease teardown — it pre-queries state and dispatches `close-lease` (ACTIVE) / `cancel-lease` (PENDING) / no-op (already terminal), returning a `StopAppResult` **discriminated union** on `outcome` (`'stopped' | 'cancelled' | 'already_inactive'`) with `lease_state` on every variant and a free-form `rejection_reason` on the already-`REJECTED` branch. (ENG-487A)
+- **fred/sdk:** `restartApp`/`updateApp` gain an optional `LifecycleCallOptions` third arg — a pre-resolved `providerUrl` (skips two on-chain round-trips) and `pollOptions`. They now **poll-to-ready by default** (`deployManifest` parity). (ENG-488)
 
 ### Upgrade notes
 - **BREAKING (sdk `stopApp` / lease `close_lease` callers):** the old `StopAppResult` `{ lease_uuid, status: 'stopped', transactionHash, code }` is replaced by the `outcome`-discriminated union. Branch on `result.outcome`; `transactionHash`/`code` exist only on the `'stopped'`/`'cancelled'` broadcasting branches (absent on `'already_inactive'`). `stopApp` no longer throws on an already-inactive lease — it resolves `'already_inactive'`. (ENG-487A)
+- **BREAKING (fred/sdk `restartApp`/`updateApp` callers, incl. the bound `client.restartApp`/`client.updateApp`):** these now poll-to-ready by default — a call that previously returned in ~1s and never threw now blocks until ready and can throw on poll timeout / provision failure. Pass `{ pollOptions: false }` to restore fire-and-return. The `restart_app`/`update_app` MCP tools and the sdk-acceptance flow already opt out, so their behavior is unchanged. (ENG-488)
 
 ## [0.16.0] - 2026-07-07
 

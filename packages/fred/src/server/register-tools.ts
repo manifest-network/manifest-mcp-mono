@@ -778,7 +778,11 @@ export function registerTools(deps: RegisterToolsDeps): void {
       const address = await walletProvider.getAddress();
       await clientManager.acquireRateLimit();
       const ctx = await buildCtx();
-      const result = await restartApp(ctx, { address, leaseUuid });
+      const result = await restartApp(
+        ctx,
+        { address, leaseUuid },
+        { pollOptions: false },
+      );
       return jsonResponse(result, bigIntReplacer);
     }),
   );
@@ -842,12 +846,16 @@ export function registerTools(deps: RegisterToolsDeps): void {
       await clientManager.acquireRateLimit();
       const ctx = await buildCtx();
 
-      const result = await updateApp(ctx, {
-        address,
-        leaseUuid,
-        manifest,
-        existingManifest: args.existing_manifest,
-      });
+      const result = await updateApp(
+        ctx,
+        {
+          address,
+          leaseUuid,
+          manifest,
+          existingManifest: args.existing_manifest,
+        },
+        { pollOptions: false },
+      );
       return structuredResponse(result, bigIntReplacer);
     }),
   );

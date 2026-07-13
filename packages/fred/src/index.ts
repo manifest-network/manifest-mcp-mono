@@ -115,6 +115,7 @@ export {
 } from './tools/deployManifest.js';
 export { fetchActiveLease } from './tools/fetchActiveLease.js';
 export { getAppLogs } from './tools/getLogs.js';
+export type { LifecycleCallOptions } from './tools/lifecycle-options.js';
 export { resolveProviderUrl } from './tools/resolveLeaseProvider.js';
 export { restartApp } from './tools/restartApp.js';
 export { updateApp } from './tools/updateApp.js';

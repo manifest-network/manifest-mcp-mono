@@ -278,6 +278,18 @@ describe('runAcceptanceFlow (mocked SDK)', () => {
     expect(h.restartApp).toHaveBeenCalledTimes(1);
     expect(h.updateApp).toHaveBeenCalledTimes(1);
     expect(h.getAppLogs).toHaveBeenCalledTimes(1);
+    // The flow stays fire-and-return (single authoritative waitForLeaseStatus at
+    // step 7), so both lifecycle ops must opt out of the new default-poll. (ENG-488)
+    expect(h.restartApp).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ leaseUuid: LEASE_UUID }),
+      { pollOptions: false },
+    );
+    expect(h.updateApp).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ leaseUuid: LEASE_UUID }),
+      { pollOptions: false },
+    );
   });
 
   it('(c/single) single uses buildManifest and a port-shaped spec (no services, no serviceName)', async () => {
