@@ -36,10 +36,13 @@ const mockGetTxMsgBuilder = vi.mocked(getTxMsgBuilder);
 const mockGetTxContextLoader = vi.mocked(getTxContextLoader);
 
 function makeMockClientManager() {
-  return {
+  const cm = {
     acquireRateLimit: vi.fn().mockResolvedValue(undefined),
     getQueryClient: vi.fn().mockResolvedValue({ mock: 'queryClient' }),
     getSigningClient: vi.fn().mockResolvedValue({ mock: 'signingClient' }),
+    // Broadcast client delegates to getSigningClient at call time (the sequence wrapper is unit-tested
+    // in internals/tx-sequence.test.ts); the handler is mocked here, so no real broadcast runs.
+    getBroadcastClient: vi.fn(() => cm.getSigningClient()),
     getAddress: vi.fn().mockResolvedValue('manifest1sender'),
     getConfig: vi.fn().mockReturnValue({ retry: { maxRetries: 3 } }),
     // Passthrough lock — sufficient for the single-cosmosTx tests. The
@@ -49,6 +52,7 @@ function makeMockClientManager() {
       .mockImplementation(<T>(_addr: string, fn: () => Promise<T>) => fn()),
     disconnect: vi.fn(),
   } as any;
+  return cm;
 }
 
 // Real per-signer serializing lock — a faithful copy of CosmosClientManager's

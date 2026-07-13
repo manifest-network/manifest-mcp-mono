@@ -283,7 +283,10 @@ export async function cosmosTx(
         // prepared.
         try {
           await clientManager.acquireRateLimit();
-          const signingClient = await clientManager.getSigningClient();
+          // Broadcast client — manages the signer's sequence for non-blocking (SYNC) broadcasts so a
+          // burst of waitForConfirmation:false txs from one signer doesn't collide on the committed
+          // sequence. Serialized per signer by the surrounding withBroadcastLock. See getBroadcastClient.
+          const signingClient = await clientManager.getBroadcastClient();
           return await handler(
             signingClient,
             senderAddress,

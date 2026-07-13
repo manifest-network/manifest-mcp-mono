@@ -22,8 +22,12 @@ export interface TxCallOptions extends CallOptions {
   /**
    * Broadcast mode. `true`/absent (default) waits for block inclusion (cosmjs `signAndBroadcast`) and
    * returns the confirmed result. `false` broadcasts at Cosmos SYNC/CheckTx level (`signAndBroadcastSync`)
-   * and returns immediately with the tx hash only — no block-inclusion wait, no DeliverTx code/height.
-   * Use `false` to fire many txs without serializing on N block confirmations; reconcile via the hash.
+   * and returns as soon as the tx is accepted into the mempool — no block-inclusion wait. The result
+   * still carries `transactionHash`, but `code`/`height` are PLACEHOLDERS (`0`/`''`) — NOT the DeliverTx
+   * values, which do not exist yet — and `confirmed` is `false`. Use `false` to fire many txs without
+   * serializing on N block confirmations; reconcile the on-chain outcome via the hash. (Consecutive
+   * `false` broadcasts from one signer get consecutive sequences automatically — see `getBroadcastClient`
+   * — so they do not collide.)
    */
   waitForConfirmation?: boolean;
 }

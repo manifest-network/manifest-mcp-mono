@@ -343,9 +343,13 @@ export function makeMockClientManager(overrides?: {
   const address = overrides?.address ?? 'manifest1abc';
   const config = overrides?.config ?? makeMockConfig();
 
-  return {
+  const cm = {
     getQueryClient: vi.fn().mockResolvedValue(queryClient),
     getSigningClient: vi.fn().mockResolvedValue({}),
+    // The broadcast client delegates to getSigningClient at CALL time so a test that overrides
+    // getSigningClient (its signing mock) is transparently used for broadcasts too. Real sequence
+    // management (sequencedSigningClient) is unit-tested separately in internals/tx-sequence.test.ts.
+    getBroadcastClient: vi.fn(() => cm.getSigningClient()),
     getAddress: vi.fn().mockResolvedValue(address),
     getConfig: vi.fn().mockReturnValue(config),
     acquireRateLimit: vi.fn().mockResolvedValue(undefined),
@@ -357,6 +361,7 @@ export function makeMockClientManager(overrides?: {
     ): Promise<T> => fn(),
     disconnect: vi.fn(),
   };
+  return cm;
 }
 
 /** A ReadCtx for unit tests: a mock query client, a chain stub whose acquireRateLimit resolves, noopLogger. */

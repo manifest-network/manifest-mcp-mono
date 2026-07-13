@@ -67,7 +67,9 @@ export async function executeTx(
           async () => {
             try {
               await ctx.chain.acquireRateLimit();
-              const client = await ctx.chain.getSigningClient();
+              // Broadcast client — manages the signer's sequence for non-blocking (SYNC) broadcasts
+              // (serialized per signer by the surrounding withBroadcastLock). See getBroadcastClient.
+              const client = await ctx.chain.getBroadcastClient();
               const effectiveMemo = opts?.memo ?? '';
               validateMemo(effectiveMemo);
               const fee =
