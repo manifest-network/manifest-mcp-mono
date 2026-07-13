@@ -362,16 +362,15 @@ describe('Billing custom-domain', () => {
         lease_state: string;
       }>('close_lease', { lease_uuid: leaseUuid });
       expect(result.lease_uuid).toBe(leaseUuid);
-      // Best-effort cleanup: the lease is normally ACTIVE here, so close-lease
-      // yields outcome 'stopped'. But stopApp is idempotent (ENG-487A) — an
-      // already-terminal lease returns 'already_inactive' WITHOUT throwing, so
-      // accept either and just require a terminal end state.
+      // Best-effort cleanup: the lease is ACTIVE here (deploy_app waits for it),
+      // so close-lease yields 'stopped'/CLOSED. stopApp is idempotent (ENG-487A):
+      // an already-terminal lease returns 'already_inactive' WITHOUT throwing.
+      // It is never PENDING here, so 'cancelled'/REJECTED cannot occur — the only
+      // reachable terminal states are CLOSED or (on credit runout) EXPIRED.
       expect(['stopped', 'already_inactive']).toContain(result.outcome);
-      expect([
-        'LEASE_STATE_CLOSED',
-        'LEASE_STATE_REJECTED',
-        'LEASE_STATE_EXPIRED',
-      ]).toContain(result.lease_state);
+      expect(['LEASE_STATE_CLOSED', 'LEASE_STATE_EXPIRED']).toContain(
+        result.lease_state,
+      );
     } catch (err) {
       // If the lease somehow already terminated, swallow the chain rejection.
       // Routing-layer regressions still surface (UNSUPPORTED_TX, etc.).
@@ -437,14 +436,14 @@ describe('Billing custom-domain', () => {
           lease_state: string;
         }>('close_lease', { lease_uuid: combinedLeaseUuid });
         expect(result.lease_uuid).toBe(combinedLeaseUuid);
-        // Best-effort cleanup — accept the idempotent no-op outcome too (see the
-        // earlier cleanup block); require only that the lease ends terminal.
+        // Best-effort cleanup — see the earlier block. The lease is ACTIVE here,
+        // so accept 'stopped' or the idempotent 'already_inactive'; it is never
+        // PENDING, so 'cancelled'/REJECTED cannot occur. Reachable terminal
+        // states: CLOSED or EXPIRED.
         expect(['stopped', 'already_inactive']).toContain(result.outcome);
-        expect([
-          'LEASE_STATE_CLOSED',
-          'LEASE_STATE_REJECTED',
-          'LEASE_STATE_EXPIRED',
-        ]).toContain(result.lease_state);
+        expect(['LEASE_STATE_CLOSED', 'LEASE_STATE_EXPIRED']).toContain(
+          result.lease_state,
+        );
       } catch (err) {
         const code = parseToolErrorCode(err);
         if (code !== 'TX_FAILED') throw err;
