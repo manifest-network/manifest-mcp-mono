@@ -19,6 +19,13 @@ export interface TxCallOptions extends CallOptions {
   gasMultiplier?: number;
   fee?: StdFee;
   memo?: string;
+  /**
+   * Broadcast mode. `true`/absent (default) waits for block inclusion (cosmjs `signAndBroadcast`) and
+   * returns the confirmed result. `false` broadcasts at Cosmos SYNC/CheckTx level (`signAndBroadcastSync`)
+   * and returns immediately with the tx hash only — no block-inclusion wait, no DeliverTx code/height.
+   * Use `false` to fire many txs without serializing on N block confirmations; reconcile via the hash.
+   */
+  waitForConfirmation?: boolean;
 }
 
 /**

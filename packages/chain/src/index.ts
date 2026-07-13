@@ -161,7 +161,7 @@ export class ChainMCPServer {
             .boolean()
             .optional()
             .describe(
-              'If true, wait for the transaction to be included in a block before returning. Defaults to false (broadcast only).',
+              'If true (default), wait for the transaction to be included in a block and return the full result (code, height, events). If false, broadcast at the Cosmos SYNC/CheckTx level and return immediately with the transaction hash only — no block-inclusion wait, no DeliverTx result.',
             ),
           gas_multiplier: z
             .number()
@@ -188,7 +188,7 @@ export class ChainMCPServer {
           args.module,
           args.subcommand,
           args.args,
-          args.wait_for_confirmation ?? false,
+          args.wait_for_confirmation ?? true,
           args.gas_multiplier !== undefined
             ? { gasMultiplier: args.gas_multiplier }
             : undefined,

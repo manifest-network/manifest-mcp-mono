@@ -5,8 +5,8 @@ import { throwUnsupportedSubcommand } from '../modules.js';
 import type { BuiltMessages, CosmosTxResult, TxOptions } from '../types.js';
 import { ManifestMCPError, ManifestMCPErrorCode } from '../types.js';
 import {
+  broadcastAndBuildTxResult,
   buildGasFee,
-  buildTxResult,
   extractFlag,
   filterConsumedArgs,
   parseAmount,
@@ -366,16 +366,14 @@ export async function routeWasmTransaction(
     options,
     built.memo,
   );
-  const result = await client.signAndBroadcast(
+  return broadcastAndBuildTxResult(
+    client,
+    'wasm',
+    built.canonicalSubcommand ?? subcommand,
     senderAddress,
     built.messages,
     fee,
     built.memo,
-  );
-  return buildTxResult(
-    'wasm',
-    built.canonicalSubcommand ?? subcommand,
-    result,
     waitForConfirmation,
   );
 }

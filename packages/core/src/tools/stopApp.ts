@@ -15,6 +15,13 @@ import { ManifestMCPError, ManifestMCPErrorCode } from '../types.js';
  * `already_inactive` (no broadcast — the lease was already terminal).
  * `outcome` — not `lease_state` — is the discriminant, because `stopped` and a
  * no-op `already_inactive` can both land on `LEASE_STATE_CLOSED`.
+ *
+ * The `stopped`/`cancelled` outcomes carry `confirmed`: `true` after a blocking broadcast
+ * (`waitForConfirmation` default) — with the DeliverTx `code`; `false` after a non-blocking
+ * (`waitForConfirmation: false`) broadcast — hash only, no `code` (no DeliverTx result). On the async
+ * path there is no *post-broadcast* `already_inactive` reconciliation (no DeliverTx to inspect) — the
+ * caller reconciles via the hash. A pre-query terminal short-circuit still returns `already_inactive`
+ * on both paths (a mode-independent read; firing a doomed tx would be worse).
  */
 export type StopAppResult =
   | {
@@ -23,6 +30,7 @@ export type StopAppResult =
       readonly lease_state: 'LEASE_STATE_CLOSED';
       readonly transactionHash: string;
       readonly code: number;
+      readonly confirmed: true;
     }
   | {
       readonly lease_uuid: LeaseUuid;
@@ -30,6 +38,21 @@ export type StopAppResult =
       readonly lease_state: 'LEASE_STATE_REJECTED';
       readonly transactionHash: string;
       readonly code: number;
+      readonly confirmed: true;
+    }
+  | {
+      readonly lease_uuid: LeaseUuid;
+      readonly outcome: 'stopped';
+      readonly lease_state: 'LEASE_STATE_CLOSED';
+      readonly transactionHash: string;
+      readonly confirmed: false;
+    }
+  | {
+      readonly lease_uuid: LeaseUuid;
+      readonly outcome: 'cancelled';
+      readonly lease_state: 'LEASE_STATE_REJECTED';
+      readonly transactionHash: string;
+      readonly confirmed: false;
     }
   | {
       readonly lease_uuid: LeaseUuid;
@@ -133,6 +156,9 @@ export async function stopApp(
     );
   }
 
+  // Broadcast mode: default true (wait for block inclusion). `false` → non-blocking (SYNC/CheckTx,
+  // hash only) so a bulk caller doesn't serialize on N block confirmations.
+  const wait = opts?.waitForConfirmation ?? true;
   try {
     const result = await withTxConfirmation(
       () =>
@@ -141,26 +167,45 @@ export async function stopApp(
           'billing',
           subcommand,
           [leaseUuid],
-          true,
+          wait,
           txOverridesFrom(opts),
           txExtrasFrom(opts),
         ),
       opts,
     );
-    return subcommand === 'close-lease'
+    if (subcommand === 'close-lease') {
+      return wait
+        ? {
+            lease_uuid: leaseUuid,
+            outcome: 'stopped',
+            lease_state: 'LEASE_STATE_CLOSED',
+            transactionHash: result.transactionHash,
+            code: result.code,
+            confirmed: true,
+          }
+        : {
+            lease_uuid: leaseUuid,
+            outcome: 'stopped',
+            lease_state: 'LEASE_STATE_CLOSED',
+            transactionHash: result.transactionHash,
+            confirmed: false,
+          };
+    }
+    return wait
       ? {
           lease_uuid: leaseUuid,
-          outcome: 'stopped',
-          lease_state: 'LEASE_STATE_CLOSED',
+          outcome: 'cancelled',
+          lease_state: 'LEASE_STATE_REJECTED',
           transactionHash: result.transactionHash,
           code: result.code,
+          confirmed: true,
         }
       : {
           lease_uuid: leaseUuid,
           outcome: 'cancelled',
           lease_state: 'LEASE_STATE_REJECTED',
           transactionHash: result.transactionHash,
-          code: result.code,
+          confirmed: false,
         };
   } catch (err) {
     // Preserve a deliberate cancellation (aborted withTxConfirmation) — never reclassify it.
@@ -168,6 +213,12 @@ export async function stopApp(
       err instanceof ManifestMCPError &&
       err.code === ManifestMCPErrorCode.OPERATION_CANCELLED
     ) {
+      throw err;
+    }
+    // Async (non-blocking) broadcast returns no DeliverTx result, so there is nothing to reconcile
+    // against here — a CheckTx rejection surfaces as-is and the caller reconciles via re-query. The
+    // TOCTOU convergence below is a blocking-path affordance only.
+    if (!wait) {
       throw err;
     }
     // TOCTOU: state may have flipped between pre-query and broadcast. Re-query ONCE.

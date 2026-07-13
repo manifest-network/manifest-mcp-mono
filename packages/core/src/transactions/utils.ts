@@ -573,6 +573,65 @@ export function buildTxResult(
 }
 
 /**
+ * Build the result of a SYNC (CheckTx-level) broadcast — a `signAndBroadcastSync` that returns only
+ * the tx hash, without waiting for block inclusion. There is no DeliverTx yet, so:
+ *   - `code` is `0` — `signAndBroadcastSync` THROWS (`BroadcastTxError`) on a non-zero CheckTx code, so
+ *     a returned hash means CheckTx accepted the tx into the mempool. This is NOT the DeliverTx code;
+ *     the tx may still fail in a block. Callers reconcile via `transactionHash`.
+ *   - `height` is `''` — not yet in a block.
+ *   - `confirmed` is `false` — the honest signal that this result is pre-inclusion.
+ */
+export function buildSyncTxResult(
+  module: string,
+  subcommand: string,
+  transactionHash: string,
+): CosmosTxResult {
+  return {
+    module,
+    subcommand,
+    transactionHash,
+    code: 0,
+    height: '',
+    confirmed: false,
+  };
+}
+
+/**
+ * Broadcast built messages and build the `CosmosTxResult`, choosing the broadcast MODE from
+ * `waitForConfirmation` (a message-agnostic, client-level concern — cosmjs precedent):
+ *   - `true`  → `signAndBroadcast` (waits for block inclusion) → full confirmed `buildTxResult`.
+ *   - `false` → `signAndBroadcastSync` (fire-and-forget) → hash-only `buildSyncTxResult`.
+ * The single seam every module handler funnels through so the sync/async branch lives in ONE place.
+ */
+export async function broadcastAndBuildTxResult(
+  client: SigningStargateClient,
+  module: string,
+  subcommand: string,
+  senderAddress: string,
+  messages: readonly EncodeObject[],
+  fee: StdFee | 'auto',
+  memo: string,
+  waitForConfirmation: boolean,
+): Promise<CosmosTxResult> {
+  if (!waitForConfirmation) {
+    const transactionHash = await client.signAndBroadcastSync(
+      senderAddress,
+      messages,
+      fee,
+      memo,
+    );
+    return buildSyncTxResult(module, subcommand, transactionHash);
+  }
+  const result = await client.signAndBroadcast(
+    senderAddress,
+    messages,
+    fee,
+    memo,
+  );
+  return buildTxResult(module, subcommand, result, true);
+}
+
+/**
  * Build an ExecuteTxResult from a multi-message DeliverTxResponse. Mirrors buildTxResult but carries
  * no (module, subcommand) — a multi-msg tx has neither; failure messages name the message typeUrls.
  * executeTx always confirms (signAndBroadcast waits for inclusion).
@@ -605,6 +664,25 @@ export function buildExecuteTxResult(
     msgTypeUrls,
     confirmed: true,
     confirmationHeight: String(result.height),
+  };
+}
+
+/**
+ * Build the ExecuteTxResult of a SYNC (CheckTx-level) `signAndBroadcastSync` — hash only, unconfirmed.
+ * Mirrors {@link buildSyncTxResult} for the multi-message path: `code` is the CheckTx acceptance (0 —
+ * `signAndBroadcastSync` throws on a non-zero CheckTx), `height` is `''` (not yet in a block),
+ * `confirmed` is `false`. The caller reconciles the DeliverTx outcome via `transactionHash`.
+ */
+export function buildExecuteSyncTxResult(
+  transactionHash: string,
+  msgTypeUrls: readonly string[],
+): ExecuteTxResult {
+  return {
+    transactionHash,
+    code: 0,
+    height: '',
+    confirmed: false,
+    msgTypeUrls,
   };
 }
 

@@ -337,6 +337,39 @@ describe('ChainMCPServer', () => {
       expect(result.isError).toBeUndefined();
     });
 
+    it('threads an explicit wait_for_confirmation=false through to cosmosTx (non-blocking broadcast)', async () => {
+      mockCosmosTx.mockResolvedValue({
+        module: 'bank',
+        subcommand: 'send',
+        transactionHash: 'HASH',
+        code: 0,
+        height: '',
+        confirmed: false,
+      });
+
+      const server = new ChainMCPServer({
+        config: makeMockConfig(),
+        walletProvider: makeMockWallet(),
+      });
+      await callTool(server, 'cosmos_tx', {
+        module: 'bank',
+        subcommand: 'send',
+        args: ['addr', '100umfx'],
+        wait_for_confirmation: false,
+      });
+
+      // The explicit false MUST reach cosmosTx's 5th positional arg (else async broadcast is
+      // unreachable via the tool); the default (omitted) is covered by the gas_multiplier test above.
+      expect(mockCosmosTx).toHaveBeenCalledWith(
+        expect.anything(),
+        'bank',
+        'send',
+        ['addr', '100umfx'],
+        false,
+        undefined,
+      );
+    });
+
     it('passes gas_multiplier override to cosmosTx', async () => {
       mockCosmosTx.mockResolvedValue({
         module: 'bank',
@@ -362,7 +395,8 @@ describe('ChainMCPServer', () => {
         'bank',
         'send',
         ['addr', '100umfx'],
-        false,
+        // Default is now wait-for-confirmation (preserves the tool's historical always-waited behavior).
+        true,
         { gasMultiplier: 3.0 },
       );
     });

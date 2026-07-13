@@ -12,8 +12,8 @@ import {
 } from '../types.js';
 import { DNS_LABEL_RE } from '../validation.js';
 import {
+  broadcastAndBuildTxResult,
   buildGasFee,
-  buildTxResult,
   extractBooleanFlag,
   extractFlag,
   extractRepeatedFlag,
@@ -543,16 +543,14 @@ export async function routeBillingTransaction(
           options,
           effectiveMemo,
         );
-  const result = await client.signAndBroadcast(
+  return broadcastAndBuildTxResult(
+    client,
+    'billing',
+    built.canonicalSubcommand ?? subcommand,
     senderAddress,
     built.messages,
     fee,
     effectiveMemo, // SAME memo bytes the simulate leg used
-  );
-  return buildTxResult(
-    'billing',
-    built.canonicalSubcommand ?? subcommand,
-    result,
     waitForConfirmation,
   );
 }

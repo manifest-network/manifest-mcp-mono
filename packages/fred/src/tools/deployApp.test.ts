@@ -143,6 +143,7 @@ describe('deployApp', () => {
       custom_domain: asFqdn('app.example.com'),
       transactionHash: 'TX2',
       code: 0,
+      confirmed: true,
     });
     mockPollLeaseUntilReady.mockResolvedValue({
       state: LeaseState.LEASE_STATE_ACTIVE,
@@ -896,6 +897,7 @@ describe('deployApp', () => {
         custom_domain: asFqdn('app.example.com'),
         transactionHash: 'TX2',
         code: 0,
+        confirmed: true,
       });
 
       const result = await deployApp(

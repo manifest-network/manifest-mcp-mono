@@ -532,11 +532,13 @@ describe('routeBillingTransaction — fee/memo channel', () => {
   function makeSigningClient(opts?: { gasEstimate?: number }) {
     const simulate = vi.fn().mockResolvedValue(opts?.gasEstimate ?? 100000);
     const signAndBroadcast = vi.fn().mockResolvedValue(BROADCAST_RESULT);
+    const signAndBroadcastSync = vi.fn().mockResolvedValue('SYNCHASH');
     const client = {
       simulate,
       signAndBroadcast,
+      signAndBroadcastSync,
     } as unknown as Parameters<typeof routeBillingTransaction>[0];
-    return { client, simulate, signAndBroadcast };
+    return { client, simulate, signAndBroadcast, signAndBroadcastSync };
   }
 
   const EXPLICIT_FEE: StdFee = {
@@ -554,7 +556,7 @@ describe('routeBillingTransaction — fee/memo channel', () => {
       SENDER,
       'fund-credit',
       [TENANT, '1000umfx'],
-      false,
+      true,
       undefined,
       undefined,
       { fee: EXPLICIT_FEE },
@@ -576,7 +578,7 @@ describe('routeBillingTransaction — fee/memo channel', () => {
       SENDER,
       'fund-credit',
       [TENANT, '1000umfx'],
-      false,
+      true,
       { gasMultiplier: 1.5, gasPrice: '0.025umfx' },
       undefined,
       { memo: CUSTOM_MEMO },
@@ -598,7 +600,7 @@ describe('routeBillingTransaction — fee/memo channel', () => {
       SENDER,
       'fund-credit',
       [TENANT, '1000umfx'],
-      false,
+      true,
       { gasMultiplier: 1.5, gasPrice: '0.025umfx' },
     );
 
@@ -609,5 +611,30 @@ describe('routeBillingTransaction — fee/memo channel', () => {
     expect(signAndBroadcast.mock.calls[0][3]).toBe('');
     // No explicit fee → buildGasFee computed a StdFee from the simulate result.
     expect(signAndBroadcast.mock.calls[0][2]).not.toBe(EXPLICIT_FEE);
+  });
+
+  it('waitForConfirmation=false → SYNC broadcast (signAndBroadcastSync), hash-only unconfirmed result', async () => {
+    const { client, signAndBroadcast, signAndBroadcastSync } =
+      makeSigningClient();
+
+    const result = await routeBillingTransaction(
+      client,
+      SENDER,
+      'close-lease',
+      ['lease-1'],
+      false,
+      { gasMultiplier: 1.5, gasPrice: '0.025umfx' },
+    );
+
+    expect(signAndBroadcastSync).toHaveBeenCalledOnce();
+    expect(signAndBroadcast).not.toHaveBeenCalled();
+    expect(result).toEqual({
+      module: 'billing',
+      subcommand: 'close-lease',
+      transactionHash: 'SYNCHASH',
+      code: 0,
+      height: '',
+      confirmed: false,
+    });
   });
 });

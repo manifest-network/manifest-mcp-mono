@@ -26,7 +26,14 @@ export interface SetItemCustomDomainResult {
   readonly service_name: string;
   readonly custom_domain: Fqdn;
   readonly transactionHash: string;
+  /**
+   * DeliverTx code when `confirmed` (block-inclusion wait, the default). On a non-blocking
+   * (`waitForConfirmation: false`) broadcast this is `0` = CheckTx/mempool acceptance only — NOT the
+   * DeliverTx code (which does not exist yet). Read `confirmed` to disambiguate.
+   */
   readonly code: number;
+  /** `true` when the broadcast waited for block inclusion; `false` for a non-blocking (hash-only) broadcast. */
+  readonly confirmed: boolean;
 }
 
 /**
@@ -73,7 +80,7 @@ export async function setItemCustomDomain(
         'billing',
         'set-item-custom-domain',
         args,
-        true,
+        opts?.waitForConfirmation ?? true,
         txOverridesFrom(opts),
         txExtrasFrom(opts),
       ),
@@ -86,5 +93,6 @@ export async function setItemCustomDomain(
     custom_domain: clearing ? asFqdn('') : input.customDomain, // clear echoes asFqdn('') (trust-cast, no throw)
     transactionHash: result.transactionHash,
     code: result.code,
+    confirmed: result.confirmed ?? true,
   };
 }

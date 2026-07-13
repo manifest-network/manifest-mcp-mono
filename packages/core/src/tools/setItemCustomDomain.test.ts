@@ -52,7 +52,41 @@ describe('setItemCustomDomain', () => {
       custom_domain: 'app.example.com',
       transactionHash: 'TX_HASH',
       code: 0,
+      confirmed: true,
     });
+  });
+
+  it('waitForConfirmation:false → threads false to cosmosTx and surfaces confirmed:false (hash only)', async () => {
+    const cm = makeMockClientManager();
+    mockCosmosTx.mockResolvedValue({
+      module: 'billing',
+      subcommand: 'set-item-custom-domain',
+      transactionHash: 'SYNC_HASH',
+      code: 0,
+      height: '',
+      confirmed: false,
+    });
+
+    const result = await setItemCustomDomain(
+      makeTxCtx({ chain: cm }),
+      {
+        leaseUuid: asLeaseUuid(LEASE_UUID),
+        customDomain: asFqdn('app.example.com'),
+      },
+      { waitForConfirmation: false },
+    );
+
+    expect(mockCosmosTx).toHaveBeenCalledWith(
+      cm,
+      'billing',
+      'set-item-custom-domain',
+      [LEASE_UUID, 'app.example.com'],
+      false,
+      undefined,
+      undefined,
+    );
+    expect(result.confirmed).toBe(false);
+    expect(result.transactionHash).toBe('SYNC_HASH');
   });
 
   it('clears the custom domain by passing --clear instead of the customDomain arg', async () => {

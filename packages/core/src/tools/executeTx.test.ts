@@ -62,6 +62,38 @@ describe('executeTx', () => {
     );
   });
 
+  it('waitForConfirmation=false → SYNC broadcast (signAndBroadcastSync), hash-only unconfirmed result', async () => {
+    const signAndBroadcast = vi.fn();
+    const signAndBroadcastSync = vi.fn().mockResolvedValue('SYNCHASH');
+    const chain = makeMockClientManager();
+    chain.getSigningClient = vi.fn().mockResolvedValue({
+      signAndBroadcast,
+      signAndBroadcastSync,
+      simulate: vi.fn().mockResolvedValue(100_000),
+    });
+
+    const res = await executeTx(makeTxCtx({ chain }), msgs, {
+      waitForConfirmation: false,
+    });
+
+    expect(signAndBroadcastSync).toHaveBeenCalledOnce();
+    // Same (sender, messages, fee, memo) threading as the blocking path (no fee/memo swap on sync).
+    expect(signAndBroadcastSync).toHaveBeenCalledWith(
+      expect.any(String),
+      msgs,
+      'auto',
+      '',
+    );
+    expect(signAndBroadcast).not.toHaveBeenCalled();
+    expect(res).toEqual({
+      transactionHash: 'SYNCHASH',
+      code: 0,
+      height: '',
+      confirmed: false,
+      msgTypeUrls: ['/cosmos.bank.v1beta1.MsgSend'],
+    });
+  });
+
   it('passes opts.fee straight to signAndBroadcast and never simulates (fee-wins)', async () => {
     const signAndBroadcast = vi.fn().mockResolvedValue(okResult());
     const simulate = vi.fn().mockResolvedValue(100_000);

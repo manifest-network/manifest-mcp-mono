@@ -2,7 +2,9 @@ import { toBech32 } from '@cosmjs/encoding';
 import { describe, expect, it, type Mock, vi } from 'vitest';
 import { ManifestMCPError, ManifestMCPErrorCode } from '../types.js';
 import {
+  broadcastAndBuildTxResult,
   buildGasFee,
+  buildSyncTxResult,
   bytesToHex,
   extractBooleanFlag,
   extractFlag,
@@ -948,6 +950,98 @@ describe('parseVoteOption', () => {
     } catch (error) {
       expect((error as ManifestMCPError).message).toContain('badvalue');
     }
+  });
+});
+
+describe('buildSyncTxResult', () => {
+  it('builds a hash-only, unconfirmed result (no DeliverTx code/height)', () => {
+    expect(buildSyncTxResult('billing', 'close-lease', 'SYNCHASH')).toEqual({
+      module: 'billing',
+      subcommand: 'close-lease',
+      transactionHash: 'SYNCHASH',
+      code: 0,
+      height: '',
+      confirmed: false,
+    });
+  });
+});
+
+describe('broadcastAndBuildTxResult', () => {
+  const sender = 'manifest1sender';
+  const messages = [
+    { typeUrl: '/cosmos.bank.v1beta1.MsgSend', value: {} },
+  ] as Parameters<typeof broadcastAndBuildTxResult>[4];
+  const fee = 'auto' as const;
+
+  function makeClient() {
+    return {
+      signAndBroadcast: vi.fn().mockResolvedValue({
+        code: 0,
+        transactionHash: 'FULLHASH',
+        height: 200,
+        gasUsed: 1000n,
+        gasWanted: 2000n,
+        events: [],
+      }),
+      signAndBroadcastSync: vi.fn().mockResolvedValue('SYNCHASH'),
+    } as any;
+  }
+
+  it('waitForConfirmation=true → signAndBroadcast, full confirmed result', async () => {
+    const client = makeClient();
+    const result = await broadcastAndBuildTxResult(
+      client,
+      'bank',
+      'send',
+      sender,
+      messages,
+      fee,
+      '',
+      true,
+    );
+    expect(client.signAndBroadcast).toHaveBeenCalledOnce();
+    expect(client.signAndBroadcastSync).not.toHaveBeenCalled();
+    expect(result).toMatchObject({
+      module: 'bank',
+      subcommand: 'send',
+      transactionHash: 'FULLHASH',
+      code: 0,
+      height: '200',
+      confirmed: true,
+      confirmationHeight: '200',
+    });
+  });
+
+  it('waitForConfirmation=false → signAndBroadcastSync, hash-only unconfirmed result', async () => {
+    const client = makeClient();
+    const result = await broadcastAndBuildTxResult(
+      client,
+      'bank',
+      'send',
+      sender,
+      messages,
+      fee,
+      'the-memo',
+      false,
+    );
+    expect(client.signAndBroadcastSync).toHaveBeenCalledOnce();
+    // The sync broadcast must receive the SAME (sender, messages, fee, memo) as the blocking path —
+    // a fee/memo swap or arg reorder on this branch would otherwise ship undetected.
+    expect(client.signAndBroadcastSync).toHaveBeenCalledWith(
+      sender,
+      messages,
+      fee,
+      'the-memo',
+    );
+    expect(client.signAndBroadcast).not.toHaveBeenCalled();
+    expect(result).toEqual({
+      module: 'bank',
+      subcommand: 'send',
+      transactionHash: 'SYNCHASH',
+      code: 0,
+      height: '',
+      confirmed: false,
+    });
   });
 });
 

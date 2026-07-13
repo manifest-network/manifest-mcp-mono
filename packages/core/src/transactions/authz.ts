@@ -10,8 +10,8 @@ import {
   type TxOptions,
 } from '../types.js';
 import {
+  broadcastAndBuildTxResult,
   buildGasFee,
-  buildTxResult,
   extractFlag,
   filterConsumedArgs,
   parseUnixSecondsToDate,
@@ -202,16 +202,14 @@ export async function routeAuthzTransaction(
     options,
     built.memo,
   );
-  const result = await client.signAndBroadcast(
+  return broadcastAndBuildTxResult(
+    client,
+    'authz',
+    built.canonicalSubcommand ?? subcommand,
     senderAddress,
     built.messages,
     fee,
     built.memo,
-  );
-  return buildTxResult(
-    'authz',
-    built.canonicalSubcommand ?? subcommand,
-    result,
     waitForConfirmation,
   );
 }
