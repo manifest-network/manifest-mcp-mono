@@ -358,10 +358,12 @@ describe('Billing custom-domain', () => {
     try {
       const result = await leaseClient.callTool<{
         lease_uuid: string;
-        status: string;
+        outcome: string;
+        lease_state: string;
       }>('close_lease', { lease_uuid: leaseUuid });
       expect(result.lease_uuid).toBe(leaseUuid);
-      expect(result.status).toBe('stopped');
+      expect(result.outcome).toBe('stopped');
+      expect(result.lease_state).toBe('LEASE_STATE_CLOSED');
     } catch (err) {
       // If the lease somehow already terminated, swallow the chain rejection.
       // Routing-layer regressions still surface (UNSUPPORTED_TX, etc.).
@@ -423,10 +425,12 @@ describe('Billing custom-domain', () => {
       try {
         const result = await leaseClient.callTool<{
           lease_uuid: string;
-          status: string;
+          outcome: string;
+          lease_state: string;
         }>('close_lease', { lease_uuid: combinedLeaseUuid });
         expect(result.lease_uuid).toBe(combinedLeaseUuid);
-        expect(result.status).toBe('stopped');
+        expect(result.outcome).toBe('stopped');
+        expect(result.lease_state).toBe('LEASE_STATE_CLOSED');
       } catch (err) {
         const code = parseToolErrorCode(err);
         if (code !== 'TX_FAILED') throw err;
@@ -498,7 +502,8 @@ describe('Billing custom-domain', () => {
         try {
           await leaseClient.callTool<{
             lease_uuid: string;
-            status: string;
+            outcome: string;
+            lease_state: string;
           }>('close_lease', { lease_uuid: orphanedUuid });
         } catch (cleanupErr) {
           console.warn(
