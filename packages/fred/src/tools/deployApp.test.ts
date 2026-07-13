@@ -89,7 +89,7 @@ function makeQueryClient() {
         {
           uuid: 'prov-1',
           address: 'manifest1prov',
-          apiUrl: 'http://localhost:8080',
+          apiUrl: 'https://provider.example.com',
           active: true,
         },
       ],
@@ -102,7 +102,9 @@ function makeQueryClient() {
         },
       ],
       providerLookup: {
-        'prov-1': { provider: { apiUrl: 'http://localhost:8080' } } as any,
+        'prov-1': {
+          provider: { apiUrl: 'https://provider.example.com' },
+        } as any,
       },
     },
   });
@@ -441,7 +443,7 @@ describe('deployApp', () => {
     expect(onLeaseCreated).toHaveBeenCalledTimes(1);
     expect(onLeaseCreated).toHaveBeenCalledWith(
       '550e8400-e29b-41d4-a716-446655440000',
-      'http://localhost:8080',
+      'https://provider.example.com',
     );
     expect(order).toEqual(['onLeaseCreated', 'upload', 'poll']);
   });
@@ -621,7 +623,7 @@ describe('deployApp', () => {
     expect(onLeaseCreated).toHaveBeenCalledTimes(1);
     expect(onLeaseCreated).toHaveBeenCalledWith(
       '550e8400-e29b-41d4-a716-446655440000',
-      'http://localhost:8080',
+      'https://provider.example.com',
     );
     // Downstream work (upload, poll) must NOT run after the aborted signal is observed.
     expect(mockUploadLeaseData).not.toHaveBeenCalled();
@@ -691,7 +693,7 @@ describe('deployApp', () => {
     // deployApp enriches the thrown error with provider context so Barney doesn't re-query.
     expect((caught as TerminalChainStateError).providerUuid).toBe('prov-1');
     expect((caught as TerminalChainStateError).providerUrl).toBe(
-      'http://localhost:8080',
+      'https://provider.example.com',
     );
     // Stack trace must point at the origin (poll), not at the deployApp catch.
     expect((caught as Error).stack).toBe(originalStack);

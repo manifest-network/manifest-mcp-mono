@@ -85,7 +85,7 @@ function makeQueryClient() {
         {
           uuid: 'prov-1',
           address: 'manifest1prov',
-          apiUrl: 'http://localhost:8080',
+          apiUrl: 'https://provider.example.com',
           active: true,
         },
       ],
@@ -98,7 +98,9 @@ function makeQueryClient() {
         },
       ],
       providerLookup: {
-        'prov-1': { provider: { apiUrl: 'http://localhost:8080' } } as any,
+        'prov-1': {
+          provider: { apiUrl: 'https://provider.example.com' },
+        } as any,
       },
     },
   });
@@ -205,7 +207,9 @@ describe('deployManifest', () => {
           },
         ],
         providerLookup: {
-          'prov-1': { provider: { apiUrl: 'http://localhost:8080' } } as any,
+          'prov-1': {
+            provider: { apiUrl: 'https://provider.example.com' },
+          } as any,
         },
       },
     });
@@ -505,7 +509,7 @@ describe('deployManifest', () => {
           },
         ],
         providerLookup: {
-          p1: { provider: { apiUrl: 'http://localhost:8081' } } as never,
+          p1: { provider: { apiUrl: 'https://p1.example.com' } } as never,
         },
       },
     });
@@ -544,7 +548,7 @@ describe('deployManifest', () => {
           },
         ],
         providerLookup: {
-          p2: { provider: { apiUrl: 'http://localhost:8082' } } as never,
+          p2: { provider: { apiUrl: 'https://p2.example.com' } } as never,
         },
       },
     });
@@ -585,7 +589,7 @@ describe('deployManifest', () => {
           },
         ],
         providerLookup: {
-          p2: { provider: { apiUrl: 'http://localhost:8082' } } as never,
+          p2: { provider: { apiUrl: 'https://p2.example.com' } } as never,
         },
       },
     });
@@ -631,7 +635,7 @@ describe('deployManifest', () => {
           },
         ],
         providerLookup: {
-          p2: { provider: { apiUrl: 'http://localhost:8082' } } as never,
+          p2: { provider: { apiUrl: 'https://p2.example.com' } } as never,
         },
       },
     });
