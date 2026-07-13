@@ -96,7 +96,9 @@ See the [cookbook](../../docs/library-usage.md#errors) for a worked example.
 
 ## Node consumers: keep the SSRF guard on
 
-Provider URLs come from on-chain SKU records, so provider HTTP on **Node** should run through an SSRF-guarded `fetch` — it blocks requests to internal hosts *before they're sent*. The base `createFredClient` does **not** guard by default (it can't — the barrel stays browser-safe), so on Node it emits a one-time warning. Use **`createFredClientNode`** from the `/node` subpath, which is SSRF-safe by default:
+Provider URLs come from on-chain SKU records, so provider HTTP on **Node** should run through an SSRF-guarded `fetch` — it blocks requests to internal hosts *before they're sent*. The base `createFredClient` does **not** guard *at connect time* by default (it can't — the barrel stays browser-safe), so on Node it emits a one-time warning.
+
+Independently of that connect-time guard, provider-URL **string** validation is always on and works in the browser too: `validateProviderUrl` default-denies a provider `apiUrl` that is a literal private/internal/loopback/metadata IP (ENG-490). Use the exported `isUrlSsrfSafe` for URLs you validate yourself — notably the provider **WebSocket** URL (`wss://…`), which the connect guard never sees. The string layer fails open on DNS *hostnames* (only the Node connect guard / the browser's Private Network Access can catch a hostname that resolves internally), so it is defense-in-depth, not a rebinding-proof guard. Use **`createFredClientNode`** from the `/node` subpath, which is SSRF-safe by default:
 
 ```ts
 import { createFredClientNode } from '@manifest-network/manifest-sdk/node';
@@ -115,7 +117,7 @@ The root barrel carries the client factories, branded types (`parse*` / `as*`), 
 | `@manifest-network/manifest-sdk` | Client factories (`createFredClient`, `createManifestClient`, `createManifestReadClient`), brands + `parse*`/`as*`, ports (`WalletProvider`, `Signer` adapters), the error vocabulary (`ManifestMCPError`/`ManifestMCPErrorCode` + the typed guards `ProviderApiError`/`isSkuAmbiguousError`), `createConfig`, and the wholesale type surface (barrel `createFredClient` is unguarded on Node — prefer `createFredClientNode` from `/node`) |
 | `…/reads` | Branded read fns: `getBalance`, `getLease`, `getLeasesByTenant`, `getSKUs`, `getProviders`, `getLeaseByCustomDomain`, `getBillingParams`, `getWithdrawableAmount` |
 | `…/catalog` | `browseCatalog`, `resolveSku`, `listSkuCandidates`, `checkDeploymentReadiness`, `buildManifestPreview` |
-| `…/deploy` | `deployApp`, `restartApp`, `updateApp`, `getAppLogs`, `appStatus`, `waitForAppReady`, `waitForLeaseStatus`, `isLeaseFailureTerminal`, `executeTx`, `fundCredits`, `setItemCustomDomain`, `stopApp`, `LeaseState`, manifest builders, ADR-036 auth helpers |
+| `…/deploy` | `deployApp`, `restartApp`, `updateApp`, `getAppLogs`, `appStatus`, `waitForAppReady`, `waitForLeaseStatus`, `isLeaseFailureTerminal`, `executeTx`, `fundCredits`, `setItemCustomDomain`, `stopApp`, `LeaseState`, `validateProviderUrl` + `isUrlSsrfSafe` (SSRF-classify a provider URL / WebSocket URL), manifest builders, ADR-036 auth helpers |
 | `…/orchestration` | Optional plan/confirm/recover flows: `deployApp`, `manageDomain`, `closeLease`, `troubleshootDeployment` (callback-driven) |
 | `…/node` | Node-only: `createFredClientNode` (SSRF-safe fred client), `createGuardedFetch`, `isBlocked` |
 

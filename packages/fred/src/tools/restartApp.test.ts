@@ -77,6 +77,7 @@ describe('restartApp', () => {
       LEASE_UUID,
       'auth-token',
       fetchSpy,
+      undefined,
     );
     expect(mockPoll).toHaveBeenCalledTimes(1);
     expect(result).toEqual({
@@ -112,6 +113,7 @@ describe('restartApp', () => {
       LEASE_UUID,
       'auth-token',
       fetchSpy,
+      undefined,
     );
     expect(mockPoll).toHaveBeenCalledWith(
       'https://cached.example.com',
@@ -119,6 +121,7 @@ describe('restartApp', () => {
       expect.any(Function),
       expect.anything(),
       fetchSpy,
+      undefined,
     );
     expect(result.ready).toEqual(READY);
   });
@@ -149,6 +152,7 @@ describe('restartApp', () => {
       expect.any(Function),
       { onProgress, abortSignal: ac.signal },
       fetchSpy,
+      undefined,
     );
   });
 

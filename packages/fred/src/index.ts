@@ -12,6 +12,7 @@ export {
   ManifestMCPErrorCode,
 } from '@manifest-network/manifest-mcp-core';
 export {
+  type CreateFredClientOptions,
   createFredClient,
   type FredActions,
   type FredClient,
@@ -59,9 +60,11 @@ export {
   getLeaseConnectionInfo,
   getProviderHealth,
   type InstanceInfo,
+  isUrlSsrfSafe,
   type LeaseConnectionResponse,
   ProviderApiError,
   type ProviderHealthResponse,
+  type ProviderUrlOptions,
   type ServiceConnectionDetails,
   uploadLeaseData,
   validateProviderUrl,

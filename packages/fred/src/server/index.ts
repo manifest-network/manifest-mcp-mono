@@ -11,12 +11,13 @@ import {
   createValidatedConfig,
   type ManifestMCPServerOptions,
   type MnemonicServerConfig,
+  parseBooleanEnv,
   VERSION,
 } from '@manifest-network/manifest-mcp-core';
 import type { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { AuthTokenService } from '../http/auth-token-service.js';
-import { resolveGuardedFetch } from './fetch-gate.js';
+import { FRED_FETCH_GUARDED_ENV, resolveGuardedFetch } from './fetch-gate.js';
 import { registerPrompts } from './register-prompts.js';
 import { registerResources } from './register-resources.js';
 import { registerTools } from './register-tools.js';
@@ -56,11 +57,27 @@ export class FredMCPServer {
     // from on-chain SKU records, so a malicious provider could point them at
     // an internal host. Route all outbound HTTP through an SSRF-guarded fetch
     // by default; operators opt out with MANIFEST_FRED_FETCH_GUARDED=0.
-    const fetchFn = resolveGuardedFetch(
+    const guardEnvValue =
       typeof process !== 'undefined'
         ? process.env.MANIFEST_FRED_FETCH_GUARDED
-        : undefined,
+        : undefined;
+    const fetchFn = resolveGuardedFetch(
+      guardEnvValue,
       typeof process !== 'undefined' && !!process.versions?.node,
+    );
+    // Same switch drives the provider-URL SSRF string check: when the guard is
+    // disabled the server relaxes loopback so both SSRF layers stay in sync
+    // (needed for e2e's loopback providerd). Parses the SAME env value with the
+    // SAME parser as resolveGuardedFetch, so the two layers never diverge.
+    // resolveGuardedFetch already threw on an unrecognized value above.
+    // Note: when disabled the string check relaxes ONLY loopback (not RFC1918 /
+    // metadata), so it stays intentionally stricter than the fully-off connect
+    // guard — e2e needs only loopback, and relaxing the full private range adds
+    // risk for no benefit.
+    const guarded = parseBooleanEnv(
+      guardEnvValue,
+      true,
+      FRED_FETCH_GUARDED_ENV,
     );
 
     registerTools({
@@ -69,6 +86,7 @@ export class FredMCPServer {
       walletProvider: this.walletProvider,
       authTokens: this.authTokens,
       fetchFn,
+      allowLoopback: !guarded,
     });
     registerResources({
       mcpServer: this.mcpServer,

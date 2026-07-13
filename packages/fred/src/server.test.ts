@@ -327,9 +327,11 @@ describe('FredMCPServer', () => {
       );
       expect(mockGetLeaseProvision).toHaveBeenCalledOnce();
       // SSRF-guarded fetch threaded to this direct-HTTP call site (ENG-268).
-      expect(typeof mockGetLeaseProvision.mock.lastCall?.at(-1)).toBe(
+      // fetchFn is now second-to-last; allowLoopback is the trailing arg (ENG-490).
+      expect(typeof mockGetLeaseProvision.mock.lastCall?.at(-2)).toBe(
         'function',
       );
+      expect(mockGetLeaseProvision.mock.lastCall?.at(-1)).toBe(false);
     });
 
     it('accepts a provision response without last_error', async () => {
@@ -480,9 +482,11 @@ describe('FredMCPServer', () => {
       );
       expect(mockGetLeaseReleases).toHaveBeenCalledOnce();
       // SSRF-guarded fetch threaded to this direct-HTTP call site (ENG-268).
-      expect(typeof mockGetLeaseReleases.mock.lastCall?.at(-1)).toBe(
+      // fetchFn is now second-to-last; allowLoopback is the trailing arg (ENG-490).
+      expect(typeof mockGetLeaseReleases.mock.lastCall?.at(-2)).toBe(
         'function',
       );
+      expect(mockGetLeaseReleases.mock.lastCall?.at(-1)).toBe(false);
     });
 
     it('returns error when lease not found on chain', async () => {
@@ -1154,6 +1158,31 @@ describe('SSRF guard wiring (ENG-268)', () => {
     const server = makeServer();
     await callTool(server, 'app_status', { lease_uuid: LEASE_UUID });
     expect(mockAppStatus.mock.lastCall?.[0]?.fetch).toBe(globalThis.fetch);
+  });
+
+  // Both SSRF layers (connect-guard + provider-URL string check) share one
+  // switch: with the guard OFF, the server relaxes the provider-URL SSRF check
+  // to allow loopback via ctx.allowLoopback (needed for e2e's loopback
+  // providerd). Default/ON stays strict. (ENG-490)
+  it('opt-out (MANIFEST_FRED_FETCH_GUARDED=0) sets ctx.allowLoopback=true', async () => {
+    process.env.MANIFEST_FRED_FETCH_GUARDED = '0';
+    const server = makeServer();
+    await callTool(server, 'browse_catalog', {});
+    expect(mockBrowseCatalog.mock.lastCall?.[0]?.allowLoopback).toBe(true);
+  });
+
+  it('default (guard ON) keeps ctx.allowLoopback=false (strict)', async () => {
+    delete process.env.MANIFEST_FRED_FETCH_GUARDED;
+    const server = makeServer();
+    await callTool(server, 'browse_catalog', {});
+    expect(mockBrowseCatalog.mock.lastCall?.[0]?.allowLoopback).toBe(false);
+  });
+
+  it('explicit ON (MANIFEST_FRED_FETCH_GUARDED=1) keeps ctx.allowLoopback=false', async () => {
+    process.env.MANIFEST_FRED_FETCH_GUARDED = '1';
+    const server = makeServer();
+    await callTool(server, 'browse_catalog', {});
+    expect(mockBrowseCatalog.mock.lastCall?.[0]?.allowLoopback).toBe(false);
   });
 });
 

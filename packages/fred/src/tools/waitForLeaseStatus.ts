@@ -22,7 +22,7 @@ import { resolveProviderUrl } from './resolveLeaseProvider.js';
 export type WaitForLeaseStatusCtx = Pick<
   CapabilityCtx,
   'query' | 'chain' | 'fetch' | 'logger' | 'events'
-> & { providerAuth: ProviderAuthPort };
+> & { providerAuth: ProviderAuthPort; readonly allowLoopback?: boolean };
 
 export interface WaitForLeaseStatusOptions {
   /** Optional INTERMEDIATE-poll progress. Deduped on (state, provision_status) unless emitEvery.
@@ -133,6 +133,7 @@ export async function waitForLeaseStatus(
         token,
         ctx.fetch,
         signal,
+        ctx.allowLoopback,
       );
     } catch (err) {
       if (signal?.aborted) throw signal.reason; // abort-during-fetch: reject with the abort reason FIRST

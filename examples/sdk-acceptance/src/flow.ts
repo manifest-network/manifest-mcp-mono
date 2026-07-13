@@ -63,6 +63,9 @@ export async function runAcceptanceFlow(opts: AcceptanceOpts): Promise<void> {
     config: opts.config,
     walletProvider: opts.walletProvider,
     fetch: opts.fetch,
+    // The compose devnet's providerd registers a loopback apiUrl (https://localhost:8080),
+    // so this dev/e2e flow opts into the narrow loopback SSRF allowance (never RFC1918/metadata).
+    allowLoopback: true,
   });
   try {
     const addr = await client.chain.getAddress();
@@ -104,12 +107,15 @@ export async function runAcceptanceFlow(opts: AcceptanceOpts): Promise<void> {
     const lease = await client.getLease(leaseUuid);
     if (!lease) throw new Error(`lease ${leaseUuid} not found after deploy`);
 
-    // 3) getLeaseConnectionInfo (positional; reuse deployed.provider_url)
+    // 3) getLeaseConnectionInfo (positional; reuse deployed.provider_url). This calls the low-level
+    // provider fn directly (bypassing the client ctx), so thread the client's own allowLoopback for
+    // the loopback devnet provider — a consumer using the low-level fns must pass it explicitly.
     await getLeaseConnectionInfo(
       deployed.provider_url,
       leaseUuid,
       await client.providerAuth.providerToken({ address: addr, leaseUuid }),
       client.fetch,
+      client.allowLoopback,
     );
 
     // 4) setItemCustomDomain (bound; serviceName required for the stack item) — feature-gated (B3 MF-6:

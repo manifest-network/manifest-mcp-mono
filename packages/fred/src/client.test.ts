@@ -88,6 +88,22 @@ describe('createFredClient', () => {
     expect(typeof client.providerAuth.leaseDataToken).toBe('function');
   });
 
+  it('sets ctx.allowLoopback from the option (default false) — the loopback SSRF opt-in (ENG-490)', async () => {
+    vi.spyOn(CosmosClientManager, 'getInstance').mockReturnValue(fakeManager());
+    const strict = await createFredClient({
+      config: FULL_CONFIG,
+      walletProvider: fakeWallet(),
+    });
+    expect(strict.allowLoopback).toBe(false);
+
+    const relaxed = await createFredClient({
+      config: FULL_CONFIG,
+      walletProvider: fakeWallet(),
+      allowLoopback: true,
+    });
+    expect(relaxed.allowLoopback).toBe(true);
+  });
+
   it('a bound provider method threads the client as ctx (browseCatalog reads via ctx.query)', async () => {
     // browseCatalog walks ctx.query.liftedinit.sku.v1; an empty mock query client yields empty lists.
     const query = makeMockQueryClient() as unknown as ManifestQueryClient;

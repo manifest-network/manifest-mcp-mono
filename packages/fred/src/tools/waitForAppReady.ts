@@ -51,6 +51,7 @@ export async function waitForAppReady(
       onProgress: opts.onProgress,
     },
     ctx.fetch,
+    ctx.allowLoopback,
   );
 
   return {

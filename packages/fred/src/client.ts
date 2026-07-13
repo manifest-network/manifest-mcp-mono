@@ -46,7 +46,22 @@ export interface FredActions {
  */
 export type FredClient = ManifestClient & {
   providerAuth: ProviderAuthPort;
+  /**
+   * Loopback SSRF opt-in (ENG-490). When true, provider-URL validation on this client's
+   * ops allows `localhost`/`127.0.0.1`/`::1` — for local dev / e2e against a loopback
+   * provider. NEVER re-allows RFC1918 or metadata. Default false; do not enable in production.
+   */
+  allowLoopback?: boolean;
 } & FredActions;
+
+/**
+ * Options for {@link createFredClient} — the core client options plus the narrow loopback
+ * SSRF opt-in. `allowLoopback` defaults false; enabling it lets provider-URL validation
+ * accept a loopback provider `apiUrl` (dev/e2e only), never RFC1918/metadata.
+ */
+export type CreateFredClientOptions = FullClientOptions & {
+  readonly allowLoopback?: boolean;
+};
 
 /** The fred-action decorator: thin .bind(ctx) closures over the free fns (viem-style; ctx = the client). */
 export function fredActions(ctx: FredClient): FredActions {
@@ -110,7 +125,7 @@ let warnedUnguarded = false;
  * Injecting your own `opts.fetch` opts out of the guard.
  */
 export async function createFredClient(
-  opts: FullClientOptions,
+  opts: CreateFredClientOptions,
 ): Promise<FredClient> {
   if (
     !warnedUnguarded &&
@@ -122,12 +137,17 @@ export async function createFredClient(
     warnedUnguarded = true;
     logger.warn(UNGUARDED_FETCH_WARNING);
   }
-  const client = await createManifestClient(opts);
+  const { allowLoopback = false, ...coreOpts } = opts;
+  const client = await createManifestClient(coreOpts);
   const providerAuth = createProviderAuth(client.signer, {
     chainId: client.chain.getConfig().chainId,
   });
-  // Attach providerAuth FIRST so the client object satisfies FredAuthCtx, then layer the bound
-  // provider methods over that SAME object (it IS the ctx the actions close over).
-  const withAuth = Object.assign(client, { providerAuth }) as FredClient;
+  // Attach providerAuth + the loopback opt-in FIRST so the client object satisfies FredAuthCtx
+  // (the actions read `ctx.allowLoopback`), then layer the bound provider methods over that SAME
+  // object (it IS the ctx the actions close over).
+  const withAuth = Object.assign(client, {
+    providerAuth,
+    allowLoopback,
+  }) as FredClient;
   return Object.assign(withAuth, fredActions(withAuth));
 }

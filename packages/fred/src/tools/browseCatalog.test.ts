@@ -67,7 +67,7 @@ describe('browseCatalog', () => {
           {
             uuid: 'p1',
             address: 'm1',
-            apiUrl: 'http://localhost:8080',
+            apiUrl: 'https://provider.example.com',
             active: true,
           },
         ],
@@ -108,7 +108,7 @@ describe('browseCatalog', () => {
         {
           uuid: 'p1',
           address: 'm1',
-          apiUrl: 'http://localhost:8080',
+          apiUrl: 'https://provider.example.com',
           active: true,
           healthy: true,
           providerUuid: undefined,
@@ -119,7 +119,7 @@ describe('browseCatalog', () => {
           name: 'docker-micro',
           sku_uuid: 'a',
           provider_uuid: 'p1',
-          provider_url: 'http://localhost:8080',
+          provider_url: 'https://provider.example.com',
           price: '100',
           unit: 'umfx',
           active: true,

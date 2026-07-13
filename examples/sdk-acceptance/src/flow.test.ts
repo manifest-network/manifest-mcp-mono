@@ -182,8 +182,9 @@ function buildFakeClient(opts: { onSubscribeComplete?: 'active' | 'failure' }) {
   return client;
 }
 
-// The flow only forwards config/walletProvider/fetch into the (mocked) createFredClient, so the test
-// passes plain stand-ins cast to the real param types — never `as never` (that erases the spread shape).
+// The flow forwards config/walletProvider/fetch into the (mocked) createFredClient (plus a fixed
+// allowLoopback:true for the loopback devnet provider), so the test passes plain stand-ins cast to the
+// real param types — never `as never` (that erases the spread shape).
 const baseOpts = (): Pick<
   AcceptanceOpts,
   'config' | 'walletProvider' | 'fetch'
@@ -209,7 +210,7 @@ beforeEach(() => {
 });
 
 describe('runAcceptanceFlow (mocked SDK)', () => {
-  it('(a) builds createFredClient from {config, walletProvider, fetch}', async () => {
+  it('(a) builds createFredClient from {config, walletProvider, fetch, allowLoopback}', async () => {
     const client = buildFakeClient({ onSubscribeComplete: 'active' });
     h.createFredClient.mockResolvedValue(client);
     const opts = baseOpts();
@@ -221,6 +222,8 @@ describe('runAcceptanceFlow (mocked SDK)', () => {
       config: opts.config,
       walletProvider: opts.walletProvider,
       fetch: opts.fetch,
+      // The compose devnet's providerd is on loopback, so the flow opts in.
+      allowLoopback: true,
     });
   });
 

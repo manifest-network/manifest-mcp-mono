@@ -17,5 +17,6 @@ export async function getLeaseConnectionInfo(
     input.leaseUuid,
     token,
     ctx.fetch,
+    ctx.allowLoopback,
   );
 }

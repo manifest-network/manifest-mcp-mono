@@ -37,6 +37,7 @@ export async function restartApp(
     leaseUuid,
     authToken,
     ctx.fetch,
+    ctx.allowLoopback,
   );
   const base = { lease_uuid: leaseUuid, status: result.status };
 
@@ -47,6 +48,7 @@ export async function restartApp(
     () => ctx.providerAuth.providerToken({ address, leaseUuid }),
     { ...opts.pollOptions, abortSignal: opts.abortSignal },
     ctx.fetch,
+    ctx.allowLoopback,
   );
   return { ...base, ready };
 }

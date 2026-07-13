@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   checkedFetch,
+  getProviderHealth,
+  isUrlSsrfSafe,
   ProviderApiError,
   parseJsonResponse,
   validateProviderUrl,
@@ -19,13 +21,39 @@ describe('validateProviderUrl', () => {
     );
   });
 
-  it('accepts HTTP localhost', () => {
-    expect(validateProviderUrl('http://localhost:8080')).toBe(
-      'http://localhost:8080',
+  it('accepts HTTP localhost ONLY with allowLoopback opt-in', () => {
+    expect(
+      validateProviderUrl('http://localhost:8080', { allowLoopback: true }),
+    ).toBe('http://localhost:8080');
+    expect(
+      validateProviderUrl('http://127.0.0.1:8080', { allowLoopback: true }),
+    ).toBe('http://127.0.0.1:8080');
+  });
+
+  it('rejects loopback by default (SSRF)', () => {
+    expect(() => validateProviderUrl('http://localhost:8080')).toThrow(
+      ProviderApiError,
     );
-    expect(validateProviderUrl('http://127.0.0.1:8080')).toBe(
-      'http://127.0.0.1:8080',
+    expect(() => validateProviderUrl('https://127.0.0.1')).toThrow(
+      ProviderApiError,
     );
+    expect(() => validateProviderUrl('https://[::1]')).toThrow(
+      ProviderApiError,
+    );
+  });
+
+  it('rejects private / metadata IPs regardless of allowLoopback', () => {
+    for (const u of [
+      'https://10.0.0.1',
+      'https://192.168.1.1',
+      'https://172.16.0.1',
+      'https://169.254.169.254',
+    ]) {
+      expect(() => validateProviderUrl(u)).toThrow(ProviderApiError);
+      expect(() => validateProviderUrl(u, { allowLoopback: true })).toThrow(
+        ProviderApiError,
+      );
+    }
   });
 
   it('rejects HTTP non-localhost', () => {
@@ -36,6 +64,75 @@ describe('validateProviderUrl', () => {
 
   it('rejects invalid URLs', () => {
     expect(() => validateProviderUrl('not-a-url')).toThrow(ProviderApiError);
+  });
+});
+
+describe('isUrlSsrfSafe', () => {
+  it('blocks metadata, RFC1918, loopback, v4-mapped by default', () => {
+    for (const u of [
+      'https://169.254.169.254',
+      'https://10.0.0.1',
+      'https://192.168.1.1',
+      'https://172.16.0.1',
+      'https://127.0.0.1',
+      'https://[::1]',
+      'https://[::ffff:10.0.0.1]',
+      'https://0.0.0.0', // unspecified range
+      'https://[::ffff:169.254.169.254]', // v4-mapped metadata in URL form
+    ]) {
+      expect(isUrlSsrfSafe(u)).toBe(false);
+    }
+  });
+
+  it('allows public IPs and DNS names (DNS fails open — defense in depth)', () => {
+    expect(isUrlSsrfSafe('https://8.8.8.8')).toBe(true);
+    expect(isUrlSsrfSafe('https://provider.example.com')).toBe(true);
+  });
+
+  it('is protocol-agnostic (covers wss:// for the provider WebSocket)', () => {
+    expect(isUrlSsrfSafe('wss://169.254.169.254')).toBe(false);
+    expect(isUrlSsrfSafe('wss://provider.example.com')).toBe(true);
+  });
+
+  it('allowLoopback re-allows ONLY loopback, never RFC1918/metadata', () => {
+    expect(isUrlSsrfSafe('http://localhost', { allowLoopback: true })).toBe(
+      true,
+    );
+    expect(isUrlSsrfSafe('https://127.0.0.1', { allowLoopback: true })).toBe(
+      true,
+    );
+    expect(isUrlSsrfSafe('https://[::1]', { allowLoopback: true })).toBe(true);
+    expect(isUrlSsrfSafe('https://10.0.0.1', { allowLoopback: true })).toBe(
+      false,
+    );
+    expect(
+      isUrlSsrfSafe('https://169.254.169.254', { allowLoopback: true }),
+    ).toBe(false);
+    expect(isUrlSsrfSafe('https://0.0.0.0', { allowLoopback: true })).toBe(
+      false,
+    );
+  });
+
+  it('normalizes obfuscated IPv4 encodings via new URL() (bypass regression)', () => {
+    // decimal / hex / octal / short-form all resolve to 127.0.0.1
+    expect(isUrlSsrfSafe('http://2130706433/')).toBe(false);
+    expect(isUrlSsrfSafe('http://0x7f000001/')).toBe(false);
+    expect(isUrlSsrfSafe('http://0177.0.0.1/')).toBe(false);
+    expect(isUrlSsrfSafe('http://127.1/')).toBe(false);
+    // uppercase host is lower-cased by WHATWG
+    expect(isUrlSsrfSafe('http://LOCALHOST')).toBe(false);
+    expect(isUrlSsrfSafe('http://LOCALHOST', { allowLoopback: true })).toBe(
+      true,
+    );
+  });
+
+  it('userinfo does not smuggle a blocked host (real target is after @)', () => {
+    // hostname is evil.com (a DNS name) — that is where the request goes
+    expect(isUrlSsrfSafe('https://169.254.169.254@evil.com/')).toBe(true);
+  });
+
+  it('returns false for unparseable URLs', () => {
+    expect(isUrlSsrfSafe('not-a-url')).toBe(false);
   });
 });
 
@@ -274,5 +371,57 @@ describe('ProviderApiError.isProviderApiError (dual-package-safe brand guard)', 
     const e = new ProviderApiError(500, 'boom');
     expect(Object.getOwnPropertyDescriptor(e, BRAND)?.enumerable).toBe(false);
     expect(Object.getOwnPropertySymbols({ ...e })).not.toContain(BRAND);
+  });
+});
+
+// The low-level provider HTTP fns forward an `allowLoopback` flag to
+// validateProviderUrl so the fred server can share ONE switch with its
+// connect-guard (MANIFEST_FRED_FETCH_GUARDED). getProviderHealth is a
+// representative site (ENG-490).
+describe('low-level fn honors allowLoopback (validate gate)', () => {
+  it('getProviderHealth allows a loopback provider URL when allowLoopback=true', async () => {
+    const mockFetch = vi
+      .fn()
+      .mockResolvedValue(
+        new Response(JSON.stringify({ status: 'ok', provider_uuid: 'prov-1' })),
+      );
+
+    const result = await getProviderHealth(
+      'http://localhost:8080',
+      undefined,
+      mockFetch as unknown as typeof globalThis.fetch,
+      true,
+    );
+
+    expect(result.status).toBe('ok');
+    expect(mockFetch).toHaveBeenCalledOnce();
+  });
+
+  it('getProviderHealth rejects a loopback provider URL by default (allowLoopback omitted)', async () => {
+    const mockFetch = vi.fn();
+
+    await expect(
+      getProviderHealth(
+        'http://localhost:8080',
+        undefined,
+        mockFetch as unknown as typeof globalThis.fetch,
+      ),
+    ).rejects.toThrow(ProviderApiError);
+    // Validation throws before any network call.
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it('getProviderHealth rejects a loopback provider URL when allowLoopback=false', async () => {
+    const mockFetch = vi.fn();
+
+    await expect(
+      getProviderHealth(
+        'http://localhost:8080',
+        undefined,
+        mockFetch as unknown as typeof globalThis.fetch,
+        false,
+      ),
+    ).rejects.toThrow(ProviderApiError);
+    expect(mockFetch).not.toHaveBeenCalled();
   });
 });

@@ -1,3 +1,8 @@
+import {
+  isBlocked,
+  isIpLiteral,
+} from '@manifest-network/manifest-mcp-core/ssrf';
+
 /** Global-registry brand so `isProviderApiError` survives duplicate physical copies of this
  *  package (the dual-package hazard) — the React `$$typeof` idiom. Symbol.for resolves to the
  *  same symbol across copies; a bare `instanceof` does not. */
@@ -32,7 +37,57 @@ export class ProviderApiError extends Error {
 
 const LOCALHOST_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]']);
 
-export function validateProviderUrl(url: string): string {
+export interface ProviderUrlOptions {
+  /**
+   * Re-allow loopback hosts (localhost / 127.0.0.1 / ::1) for local dev + e2e.
+   * Default false. NARROW by design — never re-allows RFC1918 or the
+   * 169.254.169.254 metadata endpoint.
+   */
+  readonly allowLoopback?: boolean;
+}
+
+/**
+ * Pure, protocol-agnostic SSRF predicate for a provider URL (works for
+ * https:// AND wss://). Classifies the WHATWG-parsed host: literal IPs +
+ * `localhost` only.
+ *
+ * DEFENSE-IN-DEPTH, NOT a rebinding-proof guard: a DNS hostname cannot be
+ * resolved here, so hostnames FAIL OPEN (return true). The authoritative
+ * post-resolution check is the node connect-time guard (createGuardedFetch,
+ * ENG-444); browsers additionally enforce Private Network Access / CORS.
+ * Resolving DNS here would need node:dns (breaks browser-purity) and
+ * reintroduce the resolve-then-validate TOCTOU that gets bypassed.
+ * Obfuscated literal IPs (decimal/hex/octal/short-form, v4-mapped v6) ARE
+ * caught — `new URL()` normalizes them first. Residual hostname tricks that
+ * RESOLVE to internal IPs (trailing-dot `localhost.`, wildcard-DNS like
+ * `*.nip.io`, DNS rebinding) are intentionally NOT handled here.
+ */
+export function isUrlSsrfSafe(
+  url: string,
+  opts: ProviderUrlOptions = {},
+): boolean {
+  const { allowLoopback = false } = opts;
+  let hostname: string;
+  try {
+    hostname = new URL(url).hostname;
+  } catch {
+    return false; // unparseable URL → unsafe
+  }
+  const bare =
+    hostname.startsWith('[') && hostname.endsWith(']')
+      ? hostname.slice(1, -1)
+      : hostname;
+  if (bare === 'localhost') return allowLoopback; // DNS name treated as loopback
+  if (!isIpLiteral(bare)) return true; // other DNS name → fail open (see doc)
+  const blocked = isBlocked(bare); // safe: bare is an IP literal
+  if (!blocked) return true; // unicast / public
+  return blocked.range === 'loopback' && allowLoopback; // narrow re-allow
+}
+
+export function validateProviderUrl(
+  url: string,
+  opts: ProviderUrlOptions = {},
+): string {
   let parsed: URL;
   try {
     parsed = new URL(url);
@@ -40,17 +95,26 @@ export function validateProviderUrl(url: string): string {
     throw new ProviderApiError(0, `Invalid provider URL: ${url}`);
   }
 
+  if (!isUrlSsrfSafe(url, opts)) {
+    throw new ProviderApiError(
+      0,
+      `Provider URL is not allowed: its host is localhost or a non-public IP literal (loopback, private, link-local/metadata, CGNAT, or reserved): ${url}`,
+    );
+  }
+
   if (parsed.protocol === 'https:') {
     return url.replace(/\/+$/, '');
   }
-
-  if (parsed.protocol === 'http:' && LOCALHOST_HOSTS.has(parsed.hostname)) {
+  if (
+    parsed.protocol === 'http:' &&
+    LOCALHOST_HOSTS.has(parsed.hostname) &&
+    opts.allowLoopback
+  ) {
     return url.replace(/\/+$/, '');
   }
-
   throw new ProviderApiError(
     0,
-    `Provider URL must use HTTPS (or HTTP for localhost): ${url}`,
+    `Provider URL must use HTTPS (or HTTP for localhost with allowLoopback): ${url}`,
   );
 }
 
@@ -163,8 +227,9 @@ export async function getProviderHealth(
   providerApiUrl: string,
   timeoutMs = 5_000,
   fetchFn?: typeof globalThis.fetch,
+  allowLoopback = false,
 ): Promise<ProviderHealthResponse> {
-  const validated = validateProviderUrl(providerApiUrl);
+  const validated = validateProviderUrl(providerApiUrl, { allowLoopback });
   const url = `${validated}/health`;
   const res = await checkedFetch(url, undefined, timeoutMs, fetchFn);
   return await parseJsonResponse<ProviderHealthResponse>(res, url);
@@ -189,8 +254,9 @@ export async function getLeaseConnectionInfo(
   leaseUuid: string,
   authToken: string,
   fetchFn?: typeof globalThis.fetch,
+  allowLoopback = false,
 ): Promise<LeaseConnectionResponse> {
-  const validated = validateProviderUrl(providerApiUrl);
+  const validated = validateProviderUrl(providerApiUrl, { allowLoopback });
   const url = `${validated}/v1/leases/${encodeURIComponent(leaseUuid)}/connection`;
   const res = await checkedFetch(
     url,
@@ -210,8 +276,9 @@ export async function uploadLeaseData(
   authToken: string,
   fetchFn?: typeof globalThis.fetch,
   abortSignal?: AbortSignal,
+  allowLoopback = false,
 ): Promise<void> {
-  const validated = validateProviderUrl(providerApiUrl);
+  const validated = validateProviderUrl(providerApiUrl, { allowLoopback });
   const init: RequestInit = {
     method: 'POST',
     headers: {

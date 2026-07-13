@@ -56,3 +56,28 @@ describe('package.json exports — guarded-fetch subpath (ENG-281)', () => {
     expect(pkg.exports?.['.'].import).toBe('./dist/index.js');
   });
 });
+
+describe('core/ssrf subpath entry (ENG-490)', () => {
+  it('exposes the universal (browser-safe) classifier surface', async () => {
+    const entry = await import('./ssrf.js');
+    expect(typeof entry.isBlocked).toBe('function');
+    expect(typeof entry.isIpLiteral).toBe('function');
+    expect(Array.isArray(entry.BLOCKED_RANGES_IPV4)).toBe(true);
+    expect(Array.isArray(entry.BLOCKED_RANGES_IPV6)).toBe(true);
+  });
+});
+
+describe('package.json exports — ssrf subpath (ENG-490)', () => {
+  it('maps ./ssrf to a UNIVERSAL entry (no node gate)', () => {
+    const pkgPath = fileURLToPath(new URL('../package.json', import.meta.url));
+    const pkg = JSON.parse(readFileSync(pkgPath, 'utf8'));
+    const subpath = pkg.exports?.['./ssrf'];
+    expect(subpath).toBeDefined();
+    expect(subpath.import).toBe('./dist/ssrf.js');
+    expect(subpath.types).toBe('./dist/ssrf.d.ts');
+    // Universal — must NOT be node-gated (contrast ./guarded-fetch, which has
+    // `node` + `default: null` to block non-node consumers).
+    expect(subpath.node).toBeUndefined();
+    expect(subpath.default).not.toBe(null);
+  });
+});
