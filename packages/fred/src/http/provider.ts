@@ -98,7 +98,7 @@ export function validateProviderUrl(
   if (!isUrlSsrfSafe(url, opts)) {
     throw new ProviderApiError(
       0,
-      `Provider URL is not allowed (resolves to a private/internal/loopback address): ${url}`,
+      `Provider URL is not allowed: its host is localhost or a non-public IP literal (loopback, private, link-local/metadata, CGNAT, or reserved): ${url}`,
     );
   }
 
