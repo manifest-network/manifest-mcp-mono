@@ -11,8 +11,9 @@ import { MCPTestClient } from './helpers/mcp-client.js';
  * Edge cases that don't fit any single ENG-* ticket:
  *
  *   1. cosmos_tx with wait_for_confirmation: false — proves the
- *      response shape difference (no `confirmed` / `confirmationHeight`
- *      fields) versus the default true path.
+ *      hash-only SYNC/CheckTx response shape (transactionHash + code +
+ *      confirmed:false, but NO gasUsed/gasWanted/events/confirmationHeight
+ *      and an empty height) versus the block-confirmed default true path.
  *   2. deploy_app with the explicit `services` variant — every other
  *      test in the suite uses the high-level image/port/size form.
  *   3. ADR-036 client-side auth-token shape — pins the wire format
@@ -38,7 +39,7 @@ describe('cosmos_tx async broadcast (wait_for_confirmation: false)', () => {
     await client.close();
   });
 
-  it('returns code/transactionHash without confirmed/confirmationHeight', async () => {
+  it('returns hash-only (code/transactionHash/confirmed:false, no gas/events)', async () => {
     const { address } = await client.callTool<{ address: string }>(
       'get_account_info',
     );
@@ -46,11 +47,12 @@ describe('cosmos_tx async broadcast (wait_for_confirmation: false)', () => {
     const result = await client.callTool<{
       transactionHash: string;
       code: number;
-      gasUsed: string;
-      gasWanted: string;
-      events: unknown[];
+      height: string;
       confirmed?: boolean;
       confirmationHeight?: string;
+      gasUsed?: string;
+      gasWanted?: string;
+      events?: unknown[];
     }>('cosmos_tx', {
       module: 'bank',
       subcommand: 'send',
@@ -58,17 +60,20 @@ describe('cosmos_tx async broadcast (wait_for_confirmation: false)', () => {
       wait_for_confirmation: false,
     });
 
-    // signAndBroadcast in cosmjs always waits for inclusion, so code/
-    // transactionHash/gasUsed are populated either way. The only
-    // observable difference vs. the true path is the absence of the
-    // two `confirmed*` fields.
+    // wait_for_confirmation: false broadcasts at the Cosmos SYNC/CheckTx level
+    // (signAndBroadcastSync) and returns the tx hash ONLY — no block-inclusion
+    // wait, so there is no DeliverTx result. `code` is the CheckTx acceptance
+    // (0; signAndBroadcastSync throws on a non-zero CheckTx), `height` is empty
+    // (not yet in a block), and `confirmed` is the honest pre-inclusion `false`.
     expect(result.code).toBe(0);
     expect(result.transactionHash).toBeTruthy();
-    expect(BigInt(result.gasUsed)).toBeGreaterThan(0n);
-    expect(BigInt(result.gasWanted)).toBeGreaterThan(0n);
-    expect(Array.isArray(result.events)).toBe(true);
+    expect(result.confirmed).toBe(false);
+    expect(result.height).toBe('');
 
-    expect(result.confirmed).toBeUndefined();
+    // DeliverTx-only fields are absent on the hash-only path.
+    expect(result.gasUsed).toBeUndefined();
+    expect(result.gasWanted).toBeUndefined();
+    expect(result.events).toBeUndefined();
     expect(result.confirmationHeight).toBeUndefined();
   });
 
