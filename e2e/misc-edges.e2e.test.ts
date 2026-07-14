@@ -10,10 +10,10 @@ import { MCPTestClient } from './helpers/mcp-client.js';
 /**
  * Edge cases that don't fit any single ENG-* ticket:
  *
- *   1. cosmos_tx with wait_for_confirmation: false — proves the
- *      hash-only SYNC/CheckTx response shape (transactionHash + code +
- *      confirmed:false, but NO gasUsed/gasWanted/events/confirmationHeight
- *      and an empty height) versus the block-confirmed default true path.
+ *   1. cosmos_tx with wait_for_confirmation: false — proves the SYNC/CheckTx
+ *      response shape (transactionHash + code + confirmed:false + empty height,
+ *      but NO DeliverTx fields: gasUsed/gasWanted/events/confirmationHeight)
+ *      versus the block-confirmed default true path.
  *   2. deploy_app with the explicit `services` variant — every other
  *      test in the suite uses the high-level image/port/size form.
  *   3. ADR-036 client-side auth-token shape — pins the wire format
@@ -61,10 +61,12 @@ describe('cosmos_tx async broadcast (wait_for_confirmation: false)', () => {
     });
 
     // wait_for_confirmation: false broadcasts at the Cosmos SYNC/CheckTx level
-    // (signAndBroadcastSync) and returns the tx hash ONLY — no block-inclusion
-    // wait, so there is no DeliverTx result. `code` is the CheckTx acceptance
-    // (0; signAndBroadcastSync throws on a non-zero CheckTx), `height` is empty
-    // (not yet in a block), and `confirmed` is the honest pre-inclusion `false`.
+    // (signAndBroadcastSync), which does NOT wait for block inclusion — so the
+    // result carries no DeliverTx fields (gasUsed/gasWanted/events/
+    // confirmationHeight). What it DOES return: the real transactionHash plus
+    // synthesized markers — `code` 0 (the CheckTx acceptance; signAndBroadcastSync
+    // throws on a non-zero CheckTx), `height` '' (not yet in a block), and
+    // `confirmed` false (the honest pre-inclusion signal).
     expect(result.code).toBe(0);
     expect(result.transactionHash).toBeTruthy();
     expect(result.confirmed).toBe(false);
