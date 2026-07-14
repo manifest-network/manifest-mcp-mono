@@ -227,8 +227,9 @@ function runWsConnection(
       : undefined;
 
     // Overall-deadline backstop: bounds THIS connection by the caller's `timeout`, independent of
-    // liveness — a chatty-but-never-terminal stream keeps resetting liveness, and a hung socket never
-    // arms it, so neither would otherwise be caught until (or beyond) the between-attempts deadline check.
+    // liveness. Liveness (armed at connection start below) bounds a silent/hung socket to ~45s per
+    // attempt, but a chatty-but-never-terminal stream keeps RESETTING liveness forever — so without this
+    // absolute-deadline timer such a stream would run until (or beyond) the between-attempts deadline check.
     const deadlineTimer = setTimeout(
       () => finish({ kind: 'deadline' }),
       Math.max(0, deadlineAt - Date.now()),

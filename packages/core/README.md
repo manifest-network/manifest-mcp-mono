@@ -79,6 +79,20 @@ const guardedFetch = createGuardedFetch();
 - **`isBlocked(ip)`** exposes the same single-IP verdict for audit / test use -- returns `{ range, rfc }` when blocked, `null` when allowed.
 - **Browser / Deno:** `createGuardedFetch()` throws by construction on non-Node runtimes. Pass your own `opts.fetch` to the consuming code path instead.
 
+## SSRF-guarded WebSocket transport
+
+Core also hosts the Node WebSocket transport for `ctx.events` (`@beta`) -- the live-status seam that `waitForLeaseStatus` transparently upgrades to. Like the guarded fetch, it is **Node-only** and exposed via a dedicated subpath, `@manifest-network/manifest-mcp-core/events-node` -- **not** the package barrel -- because it dynamic-imports the optional `ws` dependency; keeping it off the root barrel keeps the barrel isomorphic (a browser injects its own native-`WebSocket`-backed `EventTransport` instead).
+
+```typescript
+import { createNodeEventTransport } from '@manifest-network/manifest-mcp-core/events-node';
+
+const events = createNodeEventTransport(); // guarded: true by default
+```
+
+- **`createNodeEventTransport(opts?)`** returns an `EventTransport` whose `open(url)` connects via `ws`, applying the same connect-time SSRF guard as the fetch path: it DNS-resolves the host (shared `assertUnicastHost`), rejects any non-`'unicast'` address, and pins the connection to the resolved IP while keeping the hostname for the `Host` header + TLS SNI (DNS-rebinding-safe). `{ guarded: false }` opts out for loopback dev / e2e.
+- **`ws`** is an exact-pinned **`optionalDependency`**, dynamic-imported; if it is absent, `open()` surfaces a clear error (via `onError` + a synthetic `onClose`).
+- **Browser / Deno:** `createNodeEventTransport()` throws by construction on non-Node runtimes. Inject your own `EventTransport` backed by the native `WebSocket` instead (or omit `ctx.events` to fall back to polling).
+
 ## Build
 
 ```bash
