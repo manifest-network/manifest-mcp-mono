@@ -189,9 +189,13 @@ describe('manifest-sdk barrels', () => {
     );
   });
 
-  it('/node runtime exports are EXACTLY guarded-fetch + createFredClientNode', () => {
+  it('/node runtime exports are EXACTLY guarded-fetch + WS transport + createFredClientNode', () => {
     expect(keys(node)).toEqual(
-      ['createFredClientNode', ...GUARDED_FETCH_EXPORTS].sort(),
+      [
+        'createFredClientNode',
+        'createNodeEventTransport',
+        ...GUARDED_FETCH_EXPORTS,
+      ].sort(),
     );
   });
 });

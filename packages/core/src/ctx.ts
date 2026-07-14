@@ -3,13 +3,36 @@ import type { Logger } from './logger.js';
 import type { Signer } from './signer.js';
 
 /**
- * @beta — DEFERRED (§5.9). The WS transport + `waitForLeaseStatus`'s push path land in a later
- * phase (poll-backed in P0). Forward-declared as an opaque stub so `CapabilityCtx` compiles without
- * the transport; absent `events` ⇒ poll fallback.
+ * @beta — the injected WebSocket seam, mirroring the `fetch` seam. `ctx.events` (optional) lets a
+ * push-based surface (`waitForLeaseStatus`) transparently upgrade from polling to a provider WebSocket;
+ * absent ⇒ poll fallback. The SSRF-guarded, `ws`-backed NODE default lives behind
+ * `@manifest-network/manifest-mcp-core/events-node` (`createNodeEventTransport`); a browser consumer
+ * injects a native-`WebSocket`-backed transport. `open()` establishes ONE connection — reconnection,
+ * backoff, liveness and poll-fallback live in the consumer (fred's lease-status driver), NOT here.
  */
 export interface EventTransport {
-  /** @beta — intentionally-empty placeholder; the real shape is defined when the §5.9 transport lands. */
-  readonly __beta?: never;
+  /**
+   * Open a WebSocket to `url` and return a live socket handle. Auth is carried IN the URL (Fred uses a
+   * `?token=` query param — WebSocket clients cannot set request headers). @beta
+   */
+  open(url: string): EventSocket;
+}
+
+/**
+ * @beta — a minimal, normalized WebSocket handle that adapts both the node `ws` client and the browser
+ * `WebSocket`. Listeners are registered once, before or right after `open()`.
+ */
+export interface EventSocket {
+  /** Handler for each inbound text frame (raw UTF-8 string, typically JSON). */
+  onMessage(listener: (data: string) => void): void;
+  /** Handler for the connection becoming open. */
+  onOpen(listener: () => void): void;
+  /** Handler for the connection closing — WS close `code` + `reason`. Fires at most once. */
+  onClose(listener: (code: number, reason: string) => void): void;
+  /** Handler for a connection/transport error. */
+  onError(listener: (err: Error) => void): void;
+  /** Close the connection (optional WS close `code`). Idempotent. */
+  close(code?: number): void;
 }
 
 /**
