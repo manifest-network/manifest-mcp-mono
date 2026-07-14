@@ -544,6 +544,39 @@ describe('waitForLeaseStatus — WebSocket transport (ctx.events)', () => {
     expect(sockets[0].closed).toBe(true); // the abort path closes the socket
   });
 
+  it('enforces the overall timeout on a chatty-but-never-terminal stream (rejects, no run past deadline)', async () => {
+    vi.useFakeTimers();
+    const ctx = makeWaitCtx({
+      providerUuid: 'p1',
+      statusFrames: [
+        { state: 'LEASE_STATE_PENDING', provision_status: 'provisioning' },
+      ],
+    });
+    const { transport, sockets } = makeFakeEvents();
+    (ctx as { events?: EventTransport }).events = transport;
+
+    const p = waitForLeaseStatus(ctx, LEASE_UUID, { timeout: 5_000 });
+    // Attach the rejection assertion up front so the eventual reject isn't an unhandled rejection.
+    const assertion = expect(p).rejects.toThrow(/timed out after 5000ms/);
+    for (let i = 0; i < 25 && sockets.length < 1; i++) {
+      await vi.advanceTimersByTimeAsync(0);
+    }
+    expect(sockets.length).toBe(1);
+    sockets[0].openCb?.();
+
+    // Stay "chatty" with non-terminal frames (each resets the 45s liveness) but never terminalize,
+    // across the 5s overall deadline. The deadline backstop must still fire and reject.
+    await vi.advanceTimersByTimeAsync(2_000);
+    sockets[0].msgCb?.(wsFrame('provisioning'));
+    await vi.advanceTimersByTimeAsync(2_000);
+    sockets[0].msgCb?.(wsFrame('provisioning'));
+    await vi.advanceTimersByTimeAsync(2_000); // crosses 5s
+
+    await assertion;
+    expect(sockets[0].closed).toBe(true); // deadline tore the socket down (no leak)
+    expect(sockets.length).toBe(1); // did NOT reconnect on a deadline
+  });
+
   it('a silent socket hits the 45s liveness timeout and reconnects', async () => {
     vi.useFakeTimers();
     const ctx = makeWaitCtx({

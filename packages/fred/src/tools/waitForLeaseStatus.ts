@@ -146,8 +146,20 @@ interface DriverArgs {
   readonly address: string;
   readonly signal: AbortSignal | undefined;
   readonly intervalMs: number;
+  readonly timeoutMs: number;
   readonly deadlineAt: number;
   readonly emit: (status: FredLeaseStatus) => void;
+}
+
+/** The overall-deadline rejection, shared by the poll and WS paths so the message stays consistent. */
+function timedOutError(
+  leaseUuid: LeaseUuid,
+  timeoutMs: number,
+): ManifestMCPError {
+  return new ManifestMCPError(
+    ManifestMCPErrorCode.QUERY_FAILED,
+    `waitForLeaseStatus timed out after ${timeoutMs}ms; lease ${leaseUuid} still non-terminal`,
+  );
 }
 
 /** Poll `/v1/leases/{uuid}/status` until terminal (the fallback and the no-`ctx.events` default). */
@@ -183,12 +195,7 @@ async function waitViaPoll(a: DriverArgs): Promise<FredLeaseStatus> {
     }
     if (classifyTerminal(status) !== 'pending') return status; // resolve (terminal NOT emitted via onStatus)
     a.emit(status);
-    if (Date.now() >= deadlineAt) {
-      throw new ManifestMCPError(
-        ManifestMCPErrorCode.QUERY_FAILED,
-        `waitForLeaseStatus timed out after reaching the deadline; lease ${leaseUuid} still non-terminal`,
-      );
-    }
+    if (Date.now() >= deadlineAt) throw timedOutError(leaseUuid, a.timeoutMs);
     await abortableSleep(intervalMs, signal); // rejects with signal.reason on abort during the interval
   }
 }
@@ -197,6 +204,9 @@ type ConnOutcome =
   | { readonly kind: 'terminal'; readonly status: FredLeaseStatus }
   | { readonly kind: 'reconnect' }
   | { readonly kind: 'permanent'; readonly error: Error }
+  // The overall `timeout` deadline elapsed while THIS connection was in-flight (hung open, or a
+  // chatty-but-never-terminal stream). Bounds the wait even when liveness keeps getting reset.
+  | { readonly kind: 'deadline' }
   | { readonly kind: 'aborted'; readonly reason: unknown };
 
 /** Drive ONE WS connection: snapshot-on-open, stream events, liveness, abort. Resolves an outcome. */
@@ -207,7 +217,7 @@ function runWsConnection(
   token: string,
   a: DriverArgs,
 ): Promise<ConnOutcome> {
-  const { ctx, leaseUuid, signal, emit } = a;
+  const { ctx, leaseUuid, signal, emit, deadlineAt } = a;
   return new Promise<ConnOutcome>((resolve) => {
     const sock = events.open(wsUrl);
     let settled = false;
@@ -216,10 +226,19 @@ function runWsConnection(
       ? () => finish({ kind: 'aborted', reason: signal.reason })
       : undefined;
 
+    // Overall-deadline backstop: bounds THIS connection by the caller's `timeout`, independent of
+    // liveness — a chatty-but-never-terminal stream keeps resetting liveness, and a hung socket never
+    // arms it, so neither would otherwise be caught until (or beyond) the between-attempts deadline check.
+    const deadlineTimer = setTimeout(
+      () => finish({ kind: 'deadline' }),
+      Math.max(0, deadlineAt - Date.now()),
+    );
+
     const finish = (outcome: ConnOutcome): void => {
       if (settled) return;
       settled = true;
       if (livenessTimer) clearTimeout(livenessTimer);
+      clearTimeout(deadlineTimer);
       if (onAbort) signal?.removeEventListener('abort', onAbort);
       sock.close();
       resolve(outcome);
@@ -250,6 +269,10 @@ function runWsConnection(
       finish({ kind: 'aborted', reason: signal.reason });
       return;
     }
+
+    // Arm liveness immediately (not just on open) so a socket that never opens (e.g. a silently dropped
+    // handshake) is torn down + retried within the window instead of hanging until the overall deadline.
+    resetLiveness();
 
     sock.onOpen(() => {
       resetLiveness();
@@ -324,6 +347,10 @@ async function waitViaWs(a: DriverArgs): Promise<FredLeaseStatus> {
     if (outcome.kind === 'terminal') return outcome.status;
     if (outcome.kind === 'aborted') throw outcome.reason;
     if (outcome.kind === 'permanent') throw outcome.error;
+    // The overall deadline elapsed mid-connection — reject with the timeout (do NOT reconnect or poll;
+    // a fall-through to polling could otherwise resolve AFTER the documented deadline).
+    if (outcome.kind === 'deadline')
+      throw timedOutError(leaseUuid, a.timeoutMs);
     // reconnect: short delay before the next attempt (if any budget remains).
     if (attempt < WS_MAX_RECONNECT_ATTEMPTS - 1 && Date.now() < deadlineAt) {
       await abortableSleep(WS_RECONNECT_DELAY_MS, signal);
@@ -396,6 +423,7 @@ export async function waitForLeaseStatus(
     address,
     signal,
     intervalMs,
+    timeoutMs,
     deadlineAt: Date.now() + timeoutMs,
     emit,
   };
@@ -406,6 +434,10 @@ export async function waitForLeaseStatus(
     } catch (err) {
       // A deliberate abort is never downgraded to a poll — surface it.
       if (signal?.aborted) throw signal.reason;
+      // If the overall deadline already elapsed, reject with the timeout — do NOT fall back to polling
+      // (a poll could resolve AFTER the documented deadline).
+      if (Date.now() >= args.deadlineAt)
+        throw timedOutError(leaseUuid, timeoutMs);
       ctx.logger.warn(
         `waitForLeaseStatus: WebSocket transport failed, falling back to polling: ${
           err instanceof Error ? err.message : String(err)
