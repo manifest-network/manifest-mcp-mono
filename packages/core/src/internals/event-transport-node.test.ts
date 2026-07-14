@@ -42,6 +42,20 @@ describe('createNodeEventTransport — SSRF guard', () => {
     expect(await closeP).toBe(1006);
     sock.close();
   });
+
+  it('a malformed URL surfaces as onError + onClose(1006) AFTER open() returns (no lost synthetic close)', async () => {
+    // `new URL()` throws synchronously in the connect body; the transport must DEFER that so listeners
+    // registered right after open() still receive it (otherwise the close fires into undefined listeners).
+    const t = createNodeEventTransport({ guarded: false });
+    const sock = t.open('not a valid url');
+    const errP = new Promise<Error>((resolve) => sock.onError(resolve));
+    const closeP = new Promise<number>((resolve) =>
+      sock.onClose((c) => resolve(c)),
+    );
+    expect(await errP).toBeInstanceOf(Error);
+    expect(await closeP).toBe(1006);
+    sock.close();
+  });
 });
 
 describe('createNodeEventTransport — adapter over a real ws server (guard off)', () => {

@@ -78,8 +78,11 @@ function openNodeSocket(url: string, guarded: boolean): EventSocket {
   };
 
   // Connect asynchronously so the caller registers its on*() listeners (synchronously, right after
-  // open()) BEFORE any event fires.
+  // open()) BEFORE any event fires. Yield a microtask FIRST so even a synchronous throw in the prefix
+  // (e.g. `new URL(url)` on a malformed url) surfaces as onError/onClose AFTER open() returns and the
+  // listeners are set — otherwise the synthetic close would fire into undefined listeners and be lost.
   void (async () => {
+    await Promise.resolve();
     try {
       const wsUrl = new URL(url);
       const connectOptions: Record<string, unknown> = {};
