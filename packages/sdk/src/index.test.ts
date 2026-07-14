@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import * as catalog from './catalog.js';
+import * as chain from './chain.js';
 import * as deploy from './deploy.js';
 import * as root from './index.js';
 import * as node from './node.js';
@@ -126,7 +127,7 @@ describe('manifest-sdk barrels', () => {
 
   it('node-only exports are ONLY on /node (browser-safety; ENG-281/287)', () => {
     const NODE_ONLY = [...GUARDED_FETCH_EXPORTS, 'createFredClientNode'];
-    for (const b of [root, reads, catalog, deploy, orchestration])
+    for (const b of [root, reads, catalog, deploy, orchestration, chain])
       for (const k of NODE_ONLY) expect(b).not.toHaveProperty(k);
     for (const k of NODE_ONLY) expect(node).toHaveProperty(k);
   });
@@ -175,6 +176,10 @@ describe('manifest-sdk barrels', () => {
 
   it('/reads runtime exports are EXACTLY the 8 reads', () => {
     expect(keys(reads)).toEqual([...READS].sort());
+  });
+
+  it('/chain runtime exports are EXACTLY the 2 generic escape hatches', () => {
+    expect(keys(chain)).toEqual(['cosmosQuery', 'cosmosTx'].sort());
   });
 
   it('/orchestration runtime exports are EXACTLY the 5 orchestration fns', () => {
