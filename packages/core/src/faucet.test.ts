@@ -1,10 +1,10 @@
-import { ManifestMCPError } from '@manifest-network/manifest-mcp-core';
 import { describe, expect, it, vi } from 'vitest';
 import {
   fetchFaucetStatus,
   requestFaucet,
   requestFaucetCredit,
 } from './faucet.js';
+import { ManifestMCPError } from './types.js';
 
 function mockFetch(
   responses: Array<{ status: number; body: string | Record<string, unknown> }>,

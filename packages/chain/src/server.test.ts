@@ -2,7 +2,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-vi.mock('./faucet.js', () => ({
+vi.mock('@manifest-network/manifest-mcp-core/faucet', () => ({
   requestFaucet: vi.fn(),
 }));
 
@@ -44,7 +44,7 @@ import {
   makeMockConfig,
   makeMockWallet,
 } from '@manifest-network/manifest-mcp-core/__test-utils__/mocks.js';
-import { requestFaucet } from './faucet.js';
+import { requestFaucet } from '@manifest-network/manifest-mcp-core/faucet';
 import { ChainMCPServer } from './index.js';
 
 const mockRequestFaucet = vi.mocked(requestFaucet);

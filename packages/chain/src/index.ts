@@ -20,10 +20,10 @@ import {
   VERSION,
   withErrorHandling,
 } from '@manifest-network/manifest-mcp-core';
+import { requestFaucet } from '@manifest-network/manifest-mcp-core/faucet';
 import type { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
-import { requestFaucet } from './faucet.js';
 
 export type { ManifestMCPServerOptions } from '@manifest-network/manifest-mcp-core';
 export type {
@@ -31,12 +31,12 @@ export type {
   FaucetDripResult,
   FaucetStatusResponse,
   RequestFaucetResult,
-} from './faucet.js';
+} from '@manifest-network/manifest-mcp-core/faucet';
 export {
   fetchFaucetStatus,
   requestFaucet,
   requestFaucetCredit,
-} from './faucet.js';
+} from '@manifest-network/manifest-mcp-core/faucet';
 
 export interface ChainMCPServerOptions extends ManifestMCPServerOptions {
   /** Faucet base URL. When set, the `request_faucet` tool is registered. */

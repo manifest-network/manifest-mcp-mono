@@ -1,9 +1,6 @@
-import {
-  logger,
-  ManifestMCPError,
-  ManifestMCPErrorCode,
-} from '@manifest-network/manifest-mcp-core';
 import { z } from 'zod';
+import { logger } from './logger.js';
+import { ManifestMCPError, ManifestMCPErrorCode } from './types.js';
 
 const CoinSchema = z.object({
   denom: z.string(),
