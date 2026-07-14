@@ -1,5 +1,7 @@
 import type {
   CosmosClientManager,
+  EventSocket,
+  EventTransport,
   LeaseUuid,
 } from '@manifest-network/manifest-mcp-core';
 import { LeaseState, noopLogger } from '@manifest-network/manifest-mcp-core';
@@ -282,6 +284,190 @@ describe('waitForLeaseStatus', () => {
       statusFrames: [{ state: 'LEASE_STATE_ACTIVE' }],
     });
     await expect(waitForLeaseStatus(ctx, LEASE_UUID)).resolves.toBeDefined();
+  });
+});
+
+// ── WS transport (ctx.events) ────────────────────────────────────────────────────────────────────
+class FakeSocket implements EventSocket {
+  msgCb?: (d: string) => void;
+  openCb?: () => void;
+  closeCb?: (c: number, r: string) => void;
+  errCb?: (e: Error) => void;
+  closed = false;
+  constructor(readonly url: string) {}
+  onMessage(cb: (d: string) => void) {
+    this.msgCb = cb;
+  }
+  onOpen(cb: () => void) {
+    this.openCb = cb;
+  }
+  onClose(cb: (c: number, r: string) => void) {
+    this.closeCb = cb;
+  }
+  onError(cb: (e: Error) => void) {
+    this.errCb = cb;
+  }
+  close() {
+    this.closed = true;
+  }
+}
+
+function makeFakeEvents() {
+  const sockets: FakeSocket[] = [];
+  const transport: EventTransport = {
+    open: (url) => {
+      const s = new FakeSocket(url);
+      sockets.push(s);
+      return s;
+    },
+  };
+  return { transport, sockets };
+}
+
+const wsFrame = (status: string, error?: string) =>
+  JSON.stringify({
+    lease_uuid: LEASE_UUID,
+    status,
+    ...(error ? { error } : {}),
+    timestamp: '2026-07-14T00:00:00Z',
+  });
+
+describe('waitForLeaseStatus — WebSocket transport (ctx.events)', () => {
+  it('appends /events + ?token and resolves on a ready event (no polling)', async () => {
+    const ctx = makeWaitCtx({
+      providerUuid: 'p1',
+      statusFrames: [
+        { state: 'LEASE_STATE_PENDING', provision_status: 'provisioning' },
+      ],
+    });
+    const { transport, sockets } = makeFakeEvents();
+    (ctx as { events?: EventTransport }).events = transport;
+
+    const p = waitForLeaseStatus(ctx, LEASE_UUID);
+    await vi.waitFor(() => expect(sockets.length).toBe(1));
+    expect(sockets[0].url).toBe(
+      `wss://provider.example.com/v1/leases/${LEASE_UUID}/events?token=mock-provider-token`,
+    );
+    sockets[0].openCb?.(); // snapshot poll → PENDING → keep streaming
+    await Promise.resolve();
+    sockets[0].msgCb?.(wsFrame('ready'));
+
+    const final = await p;
+    expect(final.state).toBe(LeaseState.LEASE_STATE_ACTIVE);
+    expect(final.provision_status).toBe('ready');
+    expect(isLeaseFailureTerminal(final)).toBe(false);
+    expect(sockets[0].closed).toBe(true); // socket closed on resolve
+  });
+
+  it('maps a failed event (error field) to a failure terminal', async () => {
+    const ctx = makeWaitCtx({
+      providerUuid: 'p1',
+      statusFrames: [
+        { state: 'LEASE_STATE_PENDING', provision_status: 'provisioning' },
+      ],
+    });
+    const { transport, sockets } = makeFakeEvents();
+    (ctx as { events?: EventTransport }).events = transport;
+
+    const p = waitForLeaseStatus(ctx, LEASE_UUID);
+    await vi.waitFor(() => expect(sockets.length).toBe(1));
+    sockets[0].openCb?.();
+    await Promise.resolve();
+    sockets[0].msgCb?.(wsFrame('failed', 'image pull error'));
+
+    const final = await p;
+    expect(isLeaseFailureTerminal(final)).toBe(true);
+    expect(final.last_error).toBe('image pull error'); // Fred wire field is `error` → last_error
+  });
+
+  it('snapshot-on-open resolves an already-terminal lease before any event', async () => {
+    const ctx = makeWaitCtx({
+      providerUuid: 'p1',
+      statusFrames: [{ state: 'LEASE_STATE_ACTIVE' }], // snapshot = ready
+    });
+    const { transport, sockets } = makeFakeEvents();
+    (ctx as { events?: EventTransport }).events = transport;
+
+    const p = waitForLeaseStatus(ctx, LEASE_UUID);
+    await vi.waitFor(() => expect(sockets.length).toBe(1));
+    sockets[0].openCb?.(); // snapshot alone resolves
+
+    const final = await p;
+    expect(final.state).toBe(LeaseState.LEASE_STATE_ACTIVE);
+  });
+
+  it('reconnects after a non-permanent close, then resolves', async () => {
+    const ctx = makeWaitCtx({
+      providerUuid: 'p1',
+      statusFrames: [
+        { state: 'LEASE_STATE_PENDING', provision_status: 'provisioning' },
+      ],
+    });
+    const { transport, sockets } = makeFakeEvents();
+    (ctx as { events?: EventTransport }).events = transport;
+
+    const p = waitForLeaseStatus(ctx, LEASE_UUID);
+    await vi.waitFor(() => expect(sockets.length).toBe(1));
+    sockets[0].closeCb?.(1006, 'drop'); // non-permanent → reconnect (after ~1s)
+    await vi.waitFor(() => expect(sockets.length).toBe(2), { timeout: 3000 });
+    sockets[1].openCb?.();
+    await Promise.resolve();
+    sockets[1].msgCb?.(wsFrame('ready'));
+
+    const final = await p;
+    expect(final.provision_status).toBe('ready');
+  }, 8000);
+
+  it('a permanent close (1008) falls back to polling', async () => {
+    const ctx = makeWaitCtx({
+      providerUuid: 'p1',
+      statusFrames: [{ state: 'LEASE_STATE_ACTIVE' }], // poll resolves
+    });
+    const { transport, sockets } = makeFakeEvents();
+    (ctx as { events?: EventTransport }).events = transport;
+
+    const p = waitForLeaseStatus(ctx, LEASE_UUID, { intervalMs: 1 });
+    await vi.waitFor(() => expect(sockets.length).toBe(1));
+    sockets[0].closeCb?.(1008, 'auth'); // permanent → no reconnect → poll fallback
+
+    const final = await p;
+    expect(final.state).toBe(LeaseState.LEASE_STATE_ACTIVE);
+    expect(sockets.length).toBe(1); // did NOT reconnect on a permanent close
+  });
+
+  it('falls back to polling after exhausting reconnect attempts', async () => {
+    const ctx = makeWaitCtx({
+      providerUuid: 'p1',
+      statusFrames: [{ state: 'LEASE_STATE_ACTIVE' }],
+    });
+    const { transport, sockets } = makeFakeEvents();
+    (ctx as { events?: EventTransport }).events = transport;
+
+    const p = waitForLeaseStatus(ctx, LEASE_UUID, { intervalMs: 1 });
+    await vi.waitFor(() => expect(sockets.length).toBe(1));
+    sockets[0].errCb?.(new Error('drop 1')); // reconnect
+    await vi.waitFor(() => expect(sockets.length).toBe(2), { timeout: 3000 });
+    sockets[1].closeCb?.(1006, 'drop 2'); // exhausted → poll fallback
+
+    const final = await p;
+    expect(final.state).toBe(LeaseState.LEASE_STATE_ACTIVE);
+  }, 8000);
+
+  it('a pre-aborted signal rejects before opening any socket', async () => {
+    const ctx = makeWaitCtx({
+      providerUuid: 'p1',
+      statusFrames: [{ state: 'LEASE_STATE_ACTIVE' }],
+    });
+    const { transport, sockets } = makeFakeEvents();
+    (ctx as { events?: EventTransport }).events = transport;
+    const reason = new DOMException('cancelled', 'AbortError');
+
+    await expect(
+      waitForLeaseStatus(ctx, LEASE_UUID, {
+        signal: AbortSignal.abort(reason),
+      }),
+    ).rejects.toBe(reason);
+    expect(sockets.length).toBe(0);
   });
 });
 

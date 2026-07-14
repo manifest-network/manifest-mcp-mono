@@ -2,6 +2,7 @@ import { describe, expectTypeOf, it } from 'vitest';
 import type { CosmosClientManager, ManifestQueryClient } from './client.js';
 import type {
   CapabilityCtx,
+  EventSocket,
   EventTransport,
   QueryCtx,
   ReadCtx,
@@ -38,6 +39,21 @@ describe('ReadCtx (type-level)', () => {
     expectTypeOf<ReadCtx>().not.toHaveProperty('signer');
     expectTypeOf<ReadCtx>().not.toHaveProperty('fetch');
     expectTypeOf<CapabilityCtx>().toExtend<ReadCtx>(); // a full ctx satisfies the read slice
+  });
+});
+
+describe('EventTransport / EventSocket (type-level)', () => {
+  it('EventTransport is an injected WS factory: open(url) => EventSocket', () => {
+    expectTypeOf<EventTransport>().toHaveProperty('open');
+    expectTypeOf<EventTransport['open']>().parameter(0).toEqualTypeOf<string>();
+    expectTypeOf<EventTransport['open']>().returns.toEqualTypeOf<EventSocket>();
+  });
+  it('EventSocket exposes the normalized on*/close handle', () => {
+    expectTypeOf<EventSocket>().toHaveProperty('onMessage');
+    expectTypeOf<EventSocket>().toHaveProperty('onOpen');
+    expectTypeOf<EventSocket>().toHaveProperty('onClose');
+    expectTypeOf<EventSocket>().toHaveProperty('onError');
+    expectTypeOf<EventSocket>().toHaveProperty('close');
   });
 });
 

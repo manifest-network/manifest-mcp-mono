@@ -50,7 +50,11 @@ interface BaseClientOptions {
   logLevel?: LogLevel;
   /** @beta — §5.5 placeholder; not a real core type yet, not threaded in 4b. */
   skuSpecs?: unknown;
-  /** @beta — §5.9 forward-declared transport stub; not threaded in 4b. */
+  /**
+   * @beta — injected WebSocket transport for `ctx.events` (ENG-315). When provided, push-based surfaces
+   * (waitForLeaseStatus) transparently upgrade poll→WS. Node: `createNodeEventTransport` from
+   * `@manifest-network/manifest-mcp-core/events-node` (auto-injected by `createFredClientNode`).
+   */
   events?: EventTransport;
 }
 
@@ -118,7 +122,17 @@ export async function buildClient(
     // matches the read type) rather than carrying `signer: undefined`. 4d binds the read/tx action
     // methods over this ctx; 4b returns the ctx + dispose shell. Structurally a ManifestReadClient; the
     // full factory up-casts to ManifestClient.
-    const base = { chain, query, fetch, logger, dispose };
+    // OMIT `events` when absent (so `'events' in client` is false — poll fallback), mirroring the
+    // signer-omit pattern. When injected (node: createNodeEventTransport; browser: a native-WS transport)
+    // push-based surfaces (waitForLeaseStatus) transparently upgrade from polling to a WebSocket.
+    const base = {
+      chain,
+      query,
+      fetch,
+      logger,
+      dispose,
+      ...(opts.events ? { events: opts.events } : {}),
+    };
     const ctxShell = signer ? { ...base, signer } : base;
     // Bind the read methods as per-instance arrow-closures over the FINAL object (it IS the ctx).
     // The bound methods close over `client`; `dispose` closes over the buildClient-local `disposed`

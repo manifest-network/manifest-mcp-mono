@@ -47,6 +47,7 @@ export {
 export { cosmosEstimateFee, cosmosQuery, cosmosTx } from './cosmos.js';
 export type {
   CapabilityCtx,
+  EventSocket,
   EventTransport,
   QueryCtx,
   ReadCtx,
