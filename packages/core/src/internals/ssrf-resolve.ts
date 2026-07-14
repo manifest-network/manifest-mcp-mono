@@ -12,6 +12,28 @@
 import { isBlocked } from './ssrf-classify.js';
 
 /**
+ * The two host-resolution primitives `assertUnicastHost` needs, injectable for tests. Defaults to
+ * `node:net`.isIP + `node:dns/promises`.lookup (dynamic-imported so this module stays browser-importable).
+ */
+export interface ResolveDeps {
+  /** `node:net.isIP` — 0 for a DNS name, 4/6 for an IP literal. */
+  isIP(host: string): number;
+  /** `node:dns/promises.lookup(host, { verbatim: true })` — kernel-order (hosts→nsswitch→DNS) resolution. */
+  lookup(host: string): Promise<{ address: string }>;
+}
+
+async function loadNodeResolveDeps(): Promise<ResolveDeps> {
+  const [dnsModule, netModule] = await Promise.all([
+    import('node:dns/promises'),
+    import('node:net'),
+  ]);
+  return {
+    isIP: netModule.isIP,
+    lookup: (host) => dnsModule.lookup(host, { verbatim: true }),
+  };
+}
+
+/**
  * Resolve `hostname` and assert it is a public unicast address; returns the resolved IP to connect to.
  *
  * - An IP literal is classified directly (no DNS).
@@ -25,18 +47,18 @@ import { isBlocked } from './ssrf-classify.js';
  * The caller should connect to the returned IP with the ORIGINAL hostname pinned as the `Host` header /
  * TLS SNI so the resolved IP is not re-resolved.
  */
-export async function assertUnicastHost(hostname: string): Promise<string> {
-  const [dnsModule, netModule] = await Promise.all([
-    import('node:dns/promises'),
-    import('node:net'),
-  ]);
+export async function assertUnicastHost(
+  hostname: string,
+  deps?: ResolveDeps,
+): Promise<string> {
+  const { isIP, lookup } = deps ?? (await loadNodeResolveDeps());
 
   let ip: string;
   try {
-    if (netModule.isIP(hostname) !== 0) {
+    if (isIP(hostname) !== 0) {
       ip = hostname;
     } else {
-      const result = await dnsModule.lookup(hostname, { verbatim: true });
+      const result = await lookup(hostname);
       ip = result.address;
     }
   } catch (err) {

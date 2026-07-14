@@ -42,4 +42,39 @@ describe('assertUnicastHost', () => {
       /SSRF blocked.*refused to connect/,
     );
   });
+
+  // Injected deps make the DNS-resolve branch (name → resolved IP) deterministic — a real DNS name
+  // resolving to a stable public IP can't be relied on in CI.
+  it('returns the RESOLVED IP for a hostname that maps to a public unicast address', async () => {
+    const deps = {
+      isIP: () => 0, // force the DNS branch
+      lookup: async () => ({ address: '93.184.216.34' }),
+    };
+    // Must return the RESOLVED IP (not the hostname) — this is the DNS-rebinding-mitigation contract.
+    await expect(assertUnicastHost('example.com', deps)).resolves.toBe(
+      '93.184.216.34',
+    );
+  });
+
+  it('blocks a hostname that RESOLVES to a private address (DNS rebinding)', async () => {
+    const deps = {
+      isIP: () => 0,
+      lookup: async () => ({ address: '10.1.2.3' }), // public name → private IP
+    };
+    await expect(assertUnicastHost('evil.example.com', deps)).rejects.toThrow(
+      /SSRF blocked.*private/,
+    );
+  });
+
+  it('fails closed when the injected lookup rejects', async () => {
+    const deps = {
+      isIP: () => 0,
+      lookup: async () => {
+        throw new Error('ENOTFOUND');
+      },
+    };
+    await expect(assertUnicastHost('nope.example', deps)).rejects.toThrow(
+      /SSRF blocked.*refused to connect/,
+    );
+  });
 });

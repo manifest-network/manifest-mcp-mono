@@ -26,14 +26,20 @@ describe('createNodeEventTransport — runtime check', () => {
 });
 
 describe('createNodeEventTransport — SSRF guard', () => {
-  it('guarded (default): refuses to connect to a loopback host, emitting an SSRF error', async () => {
+  it('guarded (default): refuses a loopback host, emitting an SSRF error AND a synthetic close', async () => {
     const t = createNodeEventTransport();
     const sock = t.open('ws://127.0.0.1:9/does-not-matter');
-    const err = await new Promise<Error>((resolve) => {
-      sock.onError(resolve);
-    });
+    // Register BOTH listeners synchronously — the transport fires error then close back-to-back in its
+    // async catch, so a late onClose registration would miss the (already-emitted) synthetic close.
+    const errP = new Promise<Error>((resolve) => sock.onError(resolve));
+    const closeP = new Promise<number>((resolve) =>
+      sock.onClose((c) => resolve(c)),
+    );
+    const err = await errP;
     expect(err.message).toMatch(/SSRF blocked/);
     expect(err.message).toMatch(/loopback/);
+    // A synthetic close (1006) must follow so a consumer waiting on onClose can fall back (not hang).
+    expect(await closeP).toBe(1006);
     sock.close();
   });
 });

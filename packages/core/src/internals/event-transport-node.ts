@@ -8,8 +8,11 @@
  * guard as the fetch path — `assertUnicastHost` DNS-resolves the target and rejects any non-`'unicast'`
  * address, then connects to the RESOLVED IP (via a pinned `lookup`) while the `ws` client keeps the
  * original hostname for the `Host` header + TLS SNI. This closes the DNS-rebinding window (the IP checked
- * IS the IP connected to). Guarded by default; a consumer opts out (loopback dev / e2e, or its own guard)
- * via `{ guarded: false }` — the MCP-server layer wires that from `MANIFEST_*_WS_GUARDED` (default ON).
+ * IS the IP connected to). Guarded by default (like `createGuardedFetch`, the library reads no env); a
+ * consumer opts out for loopback dev / e2e — or when it guards the URL another way — via `{ guarded: false }`,
+ * or by injecting its own `EventTransport`. (If the Fred MCP server later injects this transport it should
+ * gate the opt-out behind an env knob alongside `MANIFEST_FRED_FETCH_GUARDED`, mirroring the fetch path;
+ * today the server uses the poll fallback and does not open a WebSocket.)
  */
 import type { EventSocket, EventTransport } from '../ctx.js';
 import { assertUnicastHost } from './ssrf-resolve.js';
@@ -120,6 +123,10 @@ function openNodeSocket(url: string, guarded: boolean): EventSocket {
       )(wsUrl.toString(), undefined, connectOptions);
       ws = socket;
 
+      // Forward raw ws events. NOTE: a `ws` close only initiates the closing handshake, so a frame
+      // buffered in the receive window can still arrive after the consumer calls close(); the DRIVER
+      // guards against acting on a post-settle frame (runWsConnection's `settled` checks). We do NOT
+      // suppress onClose here — a consumer that called close() still expects the close notification.
       socket.on('open', () => onOpen?.());
       socket.on('message', (data: unknown) => onMessage?.(frameToString(data)));
       socket.on('close', (code: number, reason: unknown) =>

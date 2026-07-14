@@ -70,12 +70,18 @@ export function isLeaseFailureTerminal(status: FredLeaseStatus): boolean {
 }
 
 // ── WebSocket transport tunables (matched to Fred + the barney connectLeaseEvents this replaces) ──
-// Fred pings every 30s; 45s liveness gives headroom before we treat the socket as dead and reconnect.
+// Reset only on DATA frames (onOpen/onMessage), like barney — the WS ping/pong that keeps the TCP
+// connection alive is handled inside the transport and is NOT surfaced as activity. So a healthy but
+// silent socket (a slow provisioning step emitting no transitions for >45s) is treated as dead and
+// reconnects; that is a bounded, self-healing reconnect (re-snapshots current state), not a failure.
+// Fred pings every 30s, so 45s gives headroom over a normal transition cadence.
 const WS_LIVENESS_TIMEOUT_MS = 45_000;
 // A dropped socket is retried a couple of times (short fixed delay) before falling back to polling.
 const WS_RECONNECT_DELAY_MS = 1_000;
 const WS_MAX_RECONNECT_ATTEMPTS = 2;
-// Close codes that mean "do not reconnect" — auth/policy failures (Fred sends 1008; 4001/4003 reserved).
+// Close codes that mean "do not reconnect": a policy/protocol violation (Fred sends 1008 if a client
+// sends data on this push-only stream) or reserved app-level auth-reject codes (4001/4003). Matches
+// barney's PERMANENT_WS_CLOSE_CODES. (Fred auth failures occur pre-upgrade as HTTP errors — never a WS close.)
 const PERMANENT_WS_CLOSE_CODES: ReadonlySet<number> = new Set([
   1008, 4001, 4003,
 ]);
@@ -220,6 +226,7 @@ function runWsConnection(
     };
 
     const resetLiveness = (): void => {
+      if (settled) return; // never re-arm after the attempt has resolved (a late frame must not leak a timer)
       if (livenessTimer) clearTimeout(livenessTimer);
       // No frame (incl. Fred's 30s pings mediated by the transport) within the window ⇒ treat as dead.
       livenessTimer = setTimeout(
@@ -229,6 +236,7 @@ function runWsConnection(
     };
 
     const consider = (status: FredLeaseStatus): void => {
+      if (settled) return; // never emit / resolve twice from a frame that lands after finish()
       if (classifyTerminal(status) !== 'pending') {
         finish({ kind: 'terminal', status });
         return;
@@ -265,6 +273,7 @@ function runWsConnection(
     });
 
     sock.onMessage((data) => {
+      if (settled) return; // ignore frames delivered during/after the close handshake
       resetLiveness();
       const ev = parseFredWsEvent(data);
       if (ev) consider(mapWsEventToStatus(ev));

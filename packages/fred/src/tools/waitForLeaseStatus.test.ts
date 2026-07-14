@@ -469,6 +469,118 @@ describe('waitForLeaseStatus — WebSocket transport (ctx.events)', () => {
     ).rejects.toBe(reason);
     expect(sockets.length).toBe(0);
   });
+
+  it('onStatus fires for intermediate WS events, never for the terminal', async () => {
+    const ctx = makeWaitCtx({
+      providerUuid: 'p1',
+      statusFrames: [
+        { state: 'LEASE_STATE_PENDING', provision_status: 'provisioning' },
+      ],
+    });
+    const { transport, sockets } = makeFakeEvents();
+    (ctx as { events?: EventTransport }).events = transport;
+    const onStatus = vi.fn();
+
+    const p = waitForLeaseStatus(ctx, LEASE_UUID, { onStatus });
+    await vi.waitFor(() => expect(sockets.length).toBe(1));
+    sockets[0].openCb?.();
+    sockets[0].msgCb?.(wsFrame('provisioning')); // intermediate → emitted
+    sockets[0].msgCb?.(wsFrame('ready')); // terminal → resolves, NOT emitted
+
+    const final = await p;
+    expect(final.provision_status).toBe('ready');
+    expect(onStatus).toHaveBeenCalledWith(
+      expect.objectContaining({ provision_status: 'provisioning' }),
+    );
+    expect(onStatus).not.toHaveBeenCalledWith(
+      expect.objectContaining({ provision_status: 'ready' }),
+    );
+  });
+
+  it('ignores a frame delivered after the wait already resolved (no late onStatus / timer leak)', async () => {
+    const ctx = makeWaitCtx({
+      providerUuid: 'p1',
+      statusFrames: [
+        { state: 'LEASE_STATE_PENDING', provision_status: 'provisioning' },
+      ],
+    });
+    const { transport, sockets } = makeFakeEvents();
+    (ctx as { events?: EventTransport }).events = transport;
+    const onStatus = vi.fn();
+
+    const p = waitForLeaseStatus(ctx, LEASE_UUID, { onStatus });
+    await vi.waitFor(() => expect(sockets.length).toBe(1));
+    sockets[0].openCb?.();
+    sockets[0].msgCb?.(wsFrame('ready')); // terminal → resolve
+    await p;
+    onStatus.mockClear();
+
+    // A frame buffered during the close handshake arrives AFTER settle — must be a no-op.
+    sockets[0].msgCb?.(wsFrame('provisioning'));
+    await Promise.resolve();
+    expect(onStatus).not.toHaveBeenCalled();
+  });
+
+  it('aborting mid-stream rejects with signal.reason and closes the socket', async () => {
+    const controller = new AbortController();
+    const ctx = makeWaitCtx({
+      providerUuid: 'p1',
+      statusFrames: [
+        { state: 'LEASE_STATE_PENDING', provision_status: 'provisioning' },
+      ],
+    });
+    const { transport, sockets } = makeFakeEvents();
+    (ctx as { events?: EventTransport }).events = transport;
+    const reason = new DOMException('stop', 'AbortError');
+
+    const p = waitForLeaseStatus(ctx, LEASE_UUID, {
+      signal: controller.signal,
+    });
+    await vi.waitFor(() => expect(sockets.length).toBe(1));
+    sockets[0].openCb?.(); // streaming; nothing terminal yet
+    controller.abort(reason);
+
+    await expect(p).rejects.toBe(reason);
+    expect(sockets[0].closed).toBe(true); // the abort path closes the socket
+  });
+
+  it('a silent socket hits the 45s liveness timeout and reconnects', async () => {
+    vi.useFakeTimers();
+    const ctx = makeWaitCtx({
+      providerUuid: 'p1',
+      statusFrames: [
+        { state: 'LEASE_STATE_PENDING', provision_status: 'provisioning' },
+      ],
+    });
+    const { transport, sockets } = makeFakeEvents();
+    (ctx as { events?: EventTransport }).events = transport;
+
+    // vi.waitFor polls via (faked) timers and would deadlock — flush the pure-microtask setup manually.
+    const flush = async () => {
+      for (let i = 0; i < 25 && sockets.length < 1; i++) {
+        await vi.advanceTimersByTimeAsync(0);
+      }
+    };
+
+    const p = waitForLeaseStatus(ctx, LEASE_UUID);
+    await flush();
+    expect(sockets.length).toBe(1);
+    sockets[0].openCb?.(); // arms the 45s liveness timer; then goes silent
+
+    // 45s liveness fires → finish(reconnect); the ~1s reconnect delay → a second socket opens.
+    await vi.advanceTimersByTimeAsync(45_000 + 1_000);
+    for (let i = 0; i < 25 && sockets.length < 2; i++) {
+      await vi.advanceTimersByTimeAsync(0);
+    }
+    expect(sockets.length).toBe(2);
+    expect(sockets[0].closed).toBe(true); // the silent socket was torn down
+
+    sockets[1].openCb?.();
+    sockets[1].msgCb?.(wsFrame('ready'));
+    await expect(p).resolves.toEqual(
+      expect.objectContaining({ provision_status: 'ready' }),
+    );
+  });
 });
 
 describe('isLeaseFailureTerminal', () => {
