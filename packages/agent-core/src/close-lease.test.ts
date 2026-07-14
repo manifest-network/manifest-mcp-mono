@@ -239,6 +239,7 @@ describe('closeLease replay — 02-close-pending-verify-fail', () => {
       lease_state: 'LEASE_STATE_REJECTED',
       transactionHash: 'DEADBEEF',
       code: 0,
+      confirmed: true,
     });
 
     const queryClient = makeMockQueryClient();
@@ -298,6 +299,7 @@ describe('closeLease replay — 03-close-not-found', () => {
       lease_state: 'LEASE_STATE_CLOSED',
       transactionHash: 'DEADBEEF',
       code: 0,
+      confirmed: true,
     });
 
     const queryClient = makeMockQueryClient();
@@ -415,6 +417,7 @@ describe('closeLease — args validation', () => {
       lease_state: 'LEASE_STATE_REJECTED',
       transactionHash: 'DEADBEEF',
       code: 0,
+      confirmed: true,
     });
 
     const queryClient = makeMockQueryClient();
@@ -452,6 +455,7 @@ describe('closeLease — args validation', () => {
       lease_state: 'LEASE_STATE_CLOSED',
       transactionHash: 'DEADBEEF',
       code: 0,
+      confirmed: true,
     });
 
     const queryClient = makeMockQueryClient();
@@ -497,6 +501,7 @@ describe('closeLease — args validation', () => {
       lease_state: 'LEASE_STATE_CLOSED',
       transactionHash: 'DEADBEEF',
       code: 0,
+      confirmed: true,
     });
 
     const queryClient = makeMockQueryClient();
@@ -534,6 +539,7 @@ describe('closeLease — args validation', () => {
       lease_state: 'LEASE_STATE_CLOSED',
       transactionHash: 'DEADBEEF',
       code: 0,
+      confirmed: true,
     });
 
     const queryClient = makeMockQueryClient();

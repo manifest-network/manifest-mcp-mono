@@ -4,8 +4,8 @@ import { throwUnsupportedSubcommand } from '../modules.js';
 import type { BuiltMessages, CosmosTxResult, TxOptions } from '../types.js';
 import { BankMetadataSchema, parseJsonWithSchema } from './json-schemas.js';
 import {
+  broadcastAndBuildTxResult,
   buildGasFee,
-  buildTxResult,
   parseAmount,
   requireArgs,
   validateAddress,
@@ -172,16 +172,14 @@ export async function routeTokenfactoryTransaction(
     options,
     built.memo,
   );
-  const result = await client.signAndBroadcast(
+  return broadcastAndBuildTxResult(
+    client,
+    'tokenfactory',
+    built.canonicalSubcommand ?? subcommand,
     senderAddress,
     built.messages,
     fee,
     built.memo,
-  );
-  return buildTxResult(
-    'tokenfactory',
-    built.canonicalSubcommand ?? subcommand,
-    result,
     waitForConfirmation,
   );
 }

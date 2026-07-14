@@ -38,6 +38,18 @@ function txOk(subcommand: string) {
   };
 }
 
+/** A SYNC (non-blocking) cosmosTx result: hash only, unconfirmed, no DeliverTx code/height. */
+function txSync(subcommand: string) {
+  return {
+    module: 'billing',
+    subcommand,
+    transactionHash: 'SYNC_HASH',
+    code: 0,
+    height: '',
+    confirmed: false,
+  };
+}
+
 describe('stopApp', () => {
   beforeEach(() => vi.clearAllMocks());
 
@@ -66,6 +78,7 @@ describe('stopApp', () => {
       lease_state: 'LEASE_STATE_CLOSED',
       transactionHash: 'TX_HASH',
       code: 0,
+      confirmed: true,
     });
   });
 
@@ -94,7 +107,125 @@ describe('stopApp', () => {
       lease_state: 'LEASE_STATE_REJECTED',
       transactionHash: 'TX_HASH',
       code: 0,
+      confirmed: true,
     });
+  });
+
+  it('async (waitForConfirmation:false): ACTIVE → close-lease broadcast-and-return, hash only, no code', async () => {
+    const cm = cmWithLease({
+      uuid: 'lease-1',
+      state: LeaseState.LEASE_STATE_ACTIVE,
+      providerUuid: 'p1',
+    });
+    mockCosmosTx.mockResolvedValue(txSync('close-lease'));
+
+    const result = await stopApp(
+      makeTxCtx({ chain: cm }),
+      { leaseUuid: UUID },
+      { waitForConfirmation: false },
+    );
+
+    // The false flows to cosmosTx (5th positional) → signAndBroadcastSync downstream.
+    expect(mockCosmosTx).toHaveBeenCalledWith(
+      cm,
+      'billing',
+      'close-lease',
+      ['lease-1'],
+      false,
+      undefined,
+      undefined,
+    );
+    expect(result).toEqual({
+      lease_uuid: 'lease-1',
+      outcome: 'stopped',
+      lease_state: 'LEASE_STATE_CLOSED',
+      transactionHash: 'SYNC_HASH',
+      confirmed: false,
+    });
+  });
+
+  it('async (waitForConfirmation:false): PENDING → cancel-lease broadcast-and-return, hash only, no code', async () => {
+    const cm = cmWithLease({
+      uuid: 'lease-1',
+      state: LeaseState.LEASE_STATE_PENDING,
+      providerUuid: 'p1',
+    });
+    mockCosmosTx.mockResolvedValue(txSync('cancel-lease'));
+
+    const result = await stopApp(
+      makeTxCtx({ chain: cm }),
+      { leaseUuid: UUID },
+      { waitForConfirmation: false },
+    );
+
+    expect(mockCosmosTx).toHaveBeenCalledWith(
+      cm,
+      'billing',
+      'cancel-lease',
+      ['lease-1'],
+      false,
+      undefined,
+      undefined,
+    );
+    expect(result).toEqual({
+      lease_uuid: 'lease-1',
+      outcome: 'cancelled',
+      lease_state: 'LEASE_STATE_REJECTED',
+      transactionHash: 'SYNC_HASH',
+      confirmed: false,
+    });
+  });
+
+  it('async pre-query still short-circuits an already-terminal lease (already_inactive, no broadcast)', async () => {
+    const cm = cmWithLease({
+      uuid: 'lease-1',
+      state: LeaseState.LEASE_STATE_CLOSED,
+      providerUuid: 'p1',
+    });
+
+    const result = await stopApp(
+      makeTxCtx({ chain: cm }),
+      { leaseUuid: UUID },
+      { waitForConfirmation: false },
+    );
+
+    expect(mockCosmosTx).not.toHaveBeenCalled();
+    expect(result).toEqual({
+      lease_uuid: 'lease-1',
+      outcome: 'already_inactive',
+      lease_state: 'LEASE_STATE_CLOSED',
+    });
+  });
+
+  it('async (waitForConfirmation:false): broadcast rejects → original error rethrows, NO reconciliation re-query', async () => {
+    const qc = makeMockQueryClient({ billing: { lease: null } });
+    qc.liftedinit.billing.v1.lease = vi.fn().mockResolvedValue({
+      lease: {
+        uuid: 'lease-1',
+        state: LeaseState.LEASE_STATE_ACTIVE,
+        providerUuid: 'p1',
+      },
+    });
+    const cm = makeMockClientManager({ queryClient: qc });
+    const boom = new ManifestMCPError(
+      ManifestMCPErrorCode.TX_FAILED,
+      'checktx rejected',
+    );
+    mockCosmosTx.mockRejectedValue(boom);
+
+    await expect(
+      stopApp(
+        makeTxCtx({ chain: cm }),
+        { leaseUuid: UUID },
+        { waitForConfirmation: false },
+      ),
+    ).rejects.toBe(boom);
+
+    // The async path has no DeliverTx to reconcile against — the `if (!wait) throw err` guard rethrows
+    // immediately, so the lease is queried EXACTLY ONCE (pre-query only, no post-broadcast re-query).
+    // Removing the guard would fall through to the blocking TOCTOU re-query (2 calls) and could swallow
+    // the rejection as `already_inactive`.
+    expect(qc.liftedinit.billing.v1.lease).toHaveBeenCalledTimes(1);
   });
 
   it('already CLOSED → no broadcast → already_inactive', async () => {

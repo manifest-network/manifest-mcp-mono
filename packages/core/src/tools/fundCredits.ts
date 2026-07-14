@@ -28,7 +28,7 @@ export async function fundCredits(
         'billing',
         'fund-credit',
         [recipient, input.amount],
-        true,
+        opts?.waitForConfirmation ?? true,
         txOverridesFrom(opts),
         txExtrasFrom(opts),
       ),

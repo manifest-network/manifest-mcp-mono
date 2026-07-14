@@ -15,8 +15,8 @@ import {
   parseJsonWithSchema,
 } from './json-schemas.js';
 import {
+  broadcastAndBuildTxResult,
   buildGasFee,
-  buildTxResult,
   extractBooleanFlag,
   parseBigInt,
   requireArgs,
@@ -211,16 +211,14 @@ export async function routePoATransaction(
     options,
     built.memo,
   );
-  const result = await client.signAndBroadcast(
+  return broadcastAndBuildTxResult(
+    client,
+    'poa',
+    built.canonicalSubcommand ?? subcommand,
     senderAddress,
     built.messages,
     fee,
     built.memo,
-  );
-  return buildTxResult(
-    'poa',
-    built.canonicalSubcommand ?? subcommand,
-    result,
     waitForConfirmation,
   );
 }

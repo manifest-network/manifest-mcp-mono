@@ -203,7 +203,11 @@ export async function cosmosTx(
   module: string,
   subcommand: string,
   args: string[] = [],
-  waitForConfirmation: boolean = false,
+  // Default true = wait for block inclusion (`signAndBroadcast`). `false` broadcasts at the SYNC/CheckTx
+  // level (`signAndBroadcastSync`): hash only, no block wait, and NO throw on a DeliverTx failure — so the
+  // safe default matches the documented `TxCallOptions` contract and never silently swallows on-chain
+  // failures for a caller that omits this argument.
+  waitForConfirmation: boolean = true,
   overrides?: TxOverrides,
   txExtras?: { readonly fee?: StdFee; readonly memo?: string },
 ): Promise<CosmosTxResult> {
@@ -279,7 +283,10 @@ export async function cosmosTx(
         // prepared.
         try {
           await clientManager.acquireRateLimit();
-          const signingClient = await clientManager.getSigningClient();
+          // Broadcast client — manages the signer's sequence for non-blocking (SYNC) broadcasts so a
+          // burst of waitForConfirmation:false txs from one signer doesn't collide on the committed
+          // sequence. Serialized per signer by the surrounding withBroadcastLock. See getBroadcastClient.
+          const signingClient = await clientManager.getBroadcastClient();
           return await handler(
             signingClient,
             senderAddress,

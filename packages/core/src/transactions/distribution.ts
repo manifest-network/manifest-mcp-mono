@@ -3,8 +3,8 @@ import { cosmos } from '@manifest-network/manifestjs';
 import { throwUnsupportedSubcommand } from '../modules.js';
 import type { BuiltMessages, CosmosTxResult, TxOptions } from '../types.js';
 import {
+  broadcastAndBuildTxResult,
   buildGasFee,
-  buildTxResult,
   parseAmount,
   requireArgs,
   validateAddress,
@@ -110,16 +110,14 @@ export async function routeDistributionTransaction(
     options,
     built.memo,
   );
-  const result = await client.signAndBroadcast(
+  return broadcastAndBuildTxResult(
+    client,
+    'distribution',
+    built.canonicalSubcommand ?? subcommand,
     senderAddress,
     built.messages,
     fee,
     built.memo,
-  );
-  return buildTxResult(
-    'distribution',
-    built.canonicalSubcommand ?? subcommand,
-    result,
     waitForConfirmation,
   );
 }

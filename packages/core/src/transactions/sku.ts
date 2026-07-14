@@ -9,8 +9,8 @@ import {
   type TxOptions,
 } from '../types.js';
 import {
+  broadcastAndBuildTxResult,
   buildGasFee,
-  buildTxResult,
   extractFlag,
   filterConsumedArgs,
   MAX_META_HASH_BYTES,
@@ -312,16 +312,14 @@ export async function routeSkuTransaction(
     options,
     built.memo,
   );
-  const result = await client.signAndBroadcast(
+  return broadcastAndBuildTxResult(
+    client,
+    'sku',
+    built.canonicalSubcommand ?? subcommand,
     senderAddress,
     built.messages,
     fee,
     built.memo,
-  );
-  return buildTxResult(
-    'sku',
-    built.canonicalSubcommand ?? subcommand,
-    result,
     waitForConfirmation,
   );
 }

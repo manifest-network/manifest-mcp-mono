@@ -29,6 +29,10 @@ import {
   DEFAULT_GAS_MULTIPLIER,
   DEFAULT_REQUESTS_PER_SECOND,
 } from './config.js';
+import {
+  type SequenceCache,
+  sequencedSigningClient,
+} from './internals/tx-sequence.js';
 import { createLCDQueryClient } from './lcd-adapter.js';
 import { type Logger, noopLogger } from './logger.js';
 import { withRetry } from './retry.js';
@@ -125,6 +129,11 @@ export class CosmosClientManager {
   // — browser-safe). One entry per distinct address (today one wallet ⇒ one entry).
   private broadcastLocks: Map<string, Promise<unknown>> = new Map();
 
+  // Per-signer local sequence tracking for non-blocking (SYNC) broadcasts (see internals/tx-sequence.ts).
+  // Only populated while a signer has an unconfirmed sync tx in flight; self-heals on error. Cleared
+  // whenever the signing client is replaced (config change / disconnect) since the account/chain may differ.
+  private txSequenceCache: SequenceCache = new Map();
+
   /** Per-instance logger for the 2 init-time diagnostics. Defaults to noopLogger (silent); see setLogger. */
   private logger: Logger = noopLogger;
 
@@ -209,6 +218,8 @@ export class CosmosClientManager {
         }
         // Also clear the promise to allow re-initialization with new config
         instance.signingClientPromise = null;
+        // Drop local sequence tracking — the account/chain the counters were seeded from may differ.
+        instance.txSequenceCache.clear();
       }
 
       // Update rate limiter independently (doesn't affect signing client)
@@ -452,6 +463,21 @@ export class CosmosClientManager {
   }
 
   /**
+   * Get a signing client for BROADCASTING that manages the signer's sequence locally for non-blocking
+   * (SYNC) broadcasts, so a burst of `waitForConfirmation:false` txs from one signer uses consecutive
+   * sequences instead of all re-reading the pre-inclusion committed sequence and colliding
+   * (`account sequence mismatch`). The blocking path is unchanged for the common case (no in-flight sync
+   * tx). Callers MUST hold {@link withBroadcastLock} for the signer around the broadcast (cosmosTx does),
+   * so the per-signer counter is only touched serially. Non-broadcast methods delegate to the raw client.
+   */
+  async getBroadcastClient(): Promise<SigningStargateClient> {
+    return sequencedSigningClient(
+      await this.getSigningClient(),
+      this.txSequenceCache,
+    );
+  }
+
+  /**
    * Get the wallet address
    */
   async getAddress(): Promise<string> {
@@ -548,5 +574,7 @@ export class CosmosClientManager {
     // (disconnect → getInstance) starts clean and the map does not retain
     // stale settled tails (code-review PR #102).
     this.broadcastLocks.clear();
+    // Drop local sequence tracking too — a reused config key must re-seed from committed state.
+    this.txSequenceCache.clear();
   }
 }

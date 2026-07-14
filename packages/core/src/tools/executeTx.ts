@@ -4,6 +4,7 @@ import { withTxConfirmation } from '../internals/tx-confirmation.js';
 import type { TxCallOptions } from '../options.js';
 import { withRetry } from '../retry.js';
 import {
+  buildExecuteSyncTxResult,
   buildExecuteTxResult,
   buildGasFee,
   validateMemo,
@@ -66,7 +67,9 @@ export async function executeTx(
           async () => {
             try {
               await ctx.chain.acquireRateLimit();
-              const client = await ctx.chain.getSigningClient();
+              // Broadcast client — manages the signer's sequence for non-blocking (SYNC) broadcasts
+              // (serialized per signer by the surrounding withBroadcastLock). See getBroadcastClient.
+              const client = await ctx.chain.getBroadcastClient();
               const effectiveMemo = opts?.memo ?? '';
               validateMemo(effectiveMemo);
               const fee =
@@ -79,6 +82,17 @@ export async function executeTx(
                       txOptions,
                       effectiveMemo,
                     );
+              // Broadcast mode (default true = wait for inclusion). `false` → SYNC/CheckTx broadcast,
+              // hash only (no DeliverTx) — the caller reconciles via the tx hash.
+              if (opts?.waitForConfirmation === false) {
+                const transactionHash = await client.signAndBroadcastSync(
+                  sender,
+                  messages,
+                  fee,
+                  effectiveMemo,
+                );
+                return buildExecuteSyncTxResult(transactionHash, typeUrls);
+              }
               const result = await client.signAndBroadcast(
                 sender,
                 messages,

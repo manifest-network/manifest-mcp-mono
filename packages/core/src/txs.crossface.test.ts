@@ -119,6 +119,7 @@ describe('§9 cross-face equivalence (typed tx vs cosmos_tx stringly face)', () 
       custom_domain: FQDN,
       transactionHash: 'HASH',
       code: 0,
+      confirmed: true,
     });
   });
 
@@ -177,6 +178,7 @@ describe('§9 cross-face equivalence (typed tx vs cosmos_tx stringly face)', () 
       lease_state: 'LEASE_STATE_CLOSED',
       transactionHash: 'HASH',
       code: 0,
+      confirmed: true,
     });
   });
 
