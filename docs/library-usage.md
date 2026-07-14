@@ -260,11 +260,21 @@ try {
 
 For raw chain access beyond the typed surface, the root re-exports `CosmosClientManager` (the keyed connection manager) — though for raw on-chain message broadcasting, prefer `executeTx`, which is typed and handles atomicity/serialization.
 
-> The stringly, JSON-shaped `cosmos_query` / `cosmos_tx` operations are **not** part of this SDK — they're the MCP-server face in the separate `@manifest-network/manifest-mcp-{chain,lease,fred}` packages, for LLM/agent hosts.
+When you need the generic tier-2 query/tx primitives themselves, the `@manifest-network/manifest-sdk/chain` subpath re-exports `cosmosQuery` and `cosmosTx` (from **core**) — the raw `(module, subcommand, args)` primitives behind the `cosmos_query` / `cosmos_tx` tools, for when a read or message isn't covered by the branded `/reads` + `/deploy` surface:
+
+```ts
+import { cosmosQuery, cosmosTx } from '@manifest-network/manifest-sdk/chain';
+```
+
+> The stringly, JSON-shaped `cosmos_query` / `cosmos_tx` **tools** are the MCP-server face in the separate `@manifest-network/manifest-mcp-{chain,lease,fred}` packages, for LLM/agent hosts; the `/chain` subpath above exposes their typed primitives directly, not that JSON tool wrapper.
 
 ## Faucet
 
-Funding a brand-new wallet's gas is out of SDK scope today; the faucet client lives in the `@manifest-network/manifest-mcp-chain` package (`requestFaucet`, `requestFaucetCredit`, `fetchFaucetStatus`) if you need an in-app top-up affordance.
+Funding a brand-new wallet's gas is a testnet/operator concern, so the faucet ops live on the dedicated `@manifest-network/manifest-sdk/faucet` subpath — deliberately **off the root barrel**, so a production app never picks them up by accident. It's browser-safe and carries `requestFaucet`, `requestFaucetCredit`, and `fetchFaucetStatus` (plus the `FaucetAccount` / `FaucetDripResult` / `FaucetStatusResponse` / `RequestFaucetResult` types) for an in-app top-up affordance:
+
+```ts
+import { requestFaucet, fetchFaucetStatus } from '@manifest-network/manifest-sdk/faucet';
+```
 
 ## Browser quirks
 

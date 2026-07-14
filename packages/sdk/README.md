@@ -68,7 +68,7 @@ The SDK is the **single typed library face** for building on Manifest. You reach
 - **The bound client** (`createFredClient` / `createManifestClient` / `createManifestReadClient`) — the everyday surface. Methods like `client.deployApp(...)`, `client.getSKUs(...)`, `client.executeTx(...)` close over the ports for you.
 - **Scoped free functions** on subpaths (`/reads`, `/catalog`, `/deploy`, `/orchestration`) — `fn(ctx, input)` building blocks for when you want to compose or tree-shake a single capability without the whole client.
 
-> The stringly, JSON-shaped `cosmos_query` / `cosmos_tx` tools you may have seen are the **MCP-server** face — they live in the separate `@manifest-network/manifest-mcp-{chain,lease,fred}` packages for LLM/agent hosts and are **not** part of this SDK. For a low-level on-chain escape hatch *from the SDK*, use `executeTx` (multi-message atomic tx, from `/deploy`) or drop down to `CosmosClientManager` (re-exported from the root).
+> The stringly, JSON-shaped `cosmos_query` / `cosmos_tx` tools you may have seen are the **MCP-server** face — they live in the separate `@manifest-network/manifest-mcp-{chain,lease,fred}` packages for LLM/agent hosts and are **not** part of this SDK. For a low-level on-chain escape hatch *from the SDK*, use `executeTx` (multi-message atomic tx, from `/deploy`) or drop down to `CosmosClientManager` (re-exported from the root); the typed `cosmosQuery` / `cosmosTx` primitives behind those tools are on `…/chain` as raw query/tx escape hatches.
 
 ## Parse at the edges
 
@@ -117,8 +117,10 @@ The root barrel carries the client factories, branded types (`parse*` / `as*`), 
 | `@manifest-network/manifest-sdk` | Client factories (`createFredClient`, `createManifestClient`, `createManifestReadClient`), brands + `parse*`/`as*`, ports (`WalletProvider`, `Signer` adapters), the error vocabulary (`ManifestMCPError`/`ManifestMCPErrorCode` + the typed guards `ProviderApiError`/`isSkuAmbiguousError`), `createConfig`, and the wholesale type surface (barrel `createFredClient` is unguarded on Node — prefer `createFredClientNode` from `/node`) |
 | `…/reads` | Branded read fns: `getBalance`, `getLease`, `getLeasesByTenant`, `getSKUs`, `getProviders`, `getLeaseByCustomDomain`, `getBillingParams`, `getWithdrawableAmount` |
 | `…/catalog` | `browseCatalog`, `resolveSku`, `listSkuCandidates`, `checkDeploymentReadiness`, `buildManifestPreview` |
-| `…/deploy` | `deployApp`, `restartApp`, `updateApp`, `getAppLogs`, `appStatus`, `waitForAppReady`, `waitForLeaseStatus`, `isLeaseFailureTerminal`, `executeTx`, `fundCredits`, `setItemCustomDomain`, `stopApp`, `LeaseState`, `validateProviderUrl` + `isUrlSsrfSafe` (SSRF-classify a provider URL / WebSocket URL), manifest builders, ADR-036 auth helpers |
+| `…/deploy` | `deployApp`, `restartApp`, `updateApp`, `getAppLogs`, `appStatus`, `waitForAppReady`, `waitForLeaseStatus`, `isLeaseFailureTerminal`, `executeTx`, `fundCredits`, `setItemCustomDomain`, `stopApp`, `LeaseState`, `validateProviderUrl` + `isUrlSsrfSafe` (SSRF-classify a provider URL / WebSocket URL), manifest builders, ADR-036 auth helpers + the deploy-family types (`BuildManifestOptions`, `DeployResult`, `ManifestDeploySpec`, `TxCallOptions`) |
 | `…/orchestration` | Optional plan/confirm/recover flows: `deployApp`, `manageDomain`, `closeLease`, `troubleshootDeployment` (callback-driven) |
+| `…/chain` | Generic tier-2 chain escape hatches (from **core**, not the `manifest-mcp-chain` server): `cosmosQuery`, `cosmosTx` — the raw query/tx primitives behind the `cosmos_query`/`cosmos_tx` tools |
+| `…/faucet` | Testnet faucet ops (browser-safe): `requestFaucet`, `requestFaucetCredit`, `fetchFaucetStatus` (+ `FaucetAccount`/`FaucetDripResult`/`FaucetStatusResponse`/`RequestFaucetResult`). Testnet/operator concern — deliberately off the root barrel |
 | `…/node` | Node-only: `createFredClientNode` (SSRF-safe fred client), `createGuardedFetch`, `isBlocked` |
 
 ## Full worked example
