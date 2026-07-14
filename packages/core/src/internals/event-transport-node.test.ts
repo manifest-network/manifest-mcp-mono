@@ -43,6 +43,18 @@ describe('createNodeEventTransport — SSRF guard', () => {
     sock.close();
   });
 
+  it('close() during async connect setup still fires onClose (no hang)', async () => {
+    // close() before the underlying ws is constructed: the connect task early-returns on userClosed,
+    // so close() must emit a synthetic onClose or a consumer awaiting it would hang.
+    const t = createNodeEventTransport({ guarded: false });
+    const sock = t.open('ws://127.0.0.1:9/x');
+    const closeP = new Promise<number>((resolve) =>
+      sock.onClose((c) => resolve(c)),
+    );
+    sock.close(1000); // synchronously, during the async setup (ws not yet constructed)
+    expect(await closeP).toBe(1000);
+  });
+
   it('a malformed URL surfaces as onError + onClose(1006) AFTER open() returns (no lost synthetic close)', async () => {
     // `new URL()` throws synchronously in the connect body; the transport must DEFER that so listeners
     // registered right after open() still receive it (otherwise the close fires into undefined listeners).

@@ -166,6 +166,11 @@ function openNodeSocket(url: string, guarded: boolean): EventSocket {
         } catch {
           ws.terminate();
         }
+      } else {
+        // Closed DURING the async connect setup, before the `ws` instance existed: the connect task will
+        // early-return on `userClosed` and never wire the real close event, so emit a synthetic one here
+        // — otherwise a consumer awaiting onClose after calling close() would hang. Idempotent via emitClose.
+        emitClose(code ?? 1000, 'closed before connect');
       }
     },
   };
