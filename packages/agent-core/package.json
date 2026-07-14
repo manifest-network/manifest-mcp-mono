@@ -1,6 +1,6 @@
 {
   "name": "@manifest-network/manifest-agent-core",
-  "version": "0.16.0",
+  "version": "0.17.0",
   "description": "TypeScript orchestration surface for Manifest agent flows (deploy / manage-domain / troubleshoot / close-lease). Type contract only — see ENG-127.",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -49,12 +49,12 @@
     "dist"
   ],
   "peerDependencies": {
-    "@manifest-network/manifest-mcp-core": "^0.16.0",
-    "@manifest-network/manifest-mcp-fred": "^0.16.0"
+    "@manifest-network/manifest-mcp-core": "^0.17.0",
+    "@manifest-network/manifest-mcp-fred": "^0.17.0"
   },
   "devDependencies": {
-    "@manifest-network/manifest-mcp-core": "0.16.0",
-    "@manifest-network/manifest-mcp-fred": "0.16.0",
+    "@manifest-network/manifest-mcp-core": "0.17.0",
+    "@manifest-network/manifest-mcp-fred": "0.17.0",
     "@types/node": "22.19.19",
     "typescript": "5.9.3",
     "vitest": "4.1.8"

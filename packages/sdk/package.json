@@ -1,6 +1,6 @@
 {
   "name": "@manifest-network/manifest-sdk",
-  "version": "0.16.0",
+  "version": "0.17.0",
   "description": "Aggregating SDK for building apps on Manifest + Fred (composes @manifest-network/* over manifestjs).",
   "type": "module",
   "main": "dist/index.js",
@@ -70,9 +70,9 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@manifest-network/manifest-mcp-core": "0.16.0",
-    "@manifest-network/manifest-mcp-fred": "0.16.0",
-    "@manifest-network/manifest-agent-core": "0.16.0"
+    "@manifest-network/manifest-mcp-core": "0.17.0",
+    "@manifest-network/manifest-mcp-fred": "0.17.0",
+    "@manifest-network/manifest-agent-core": "0.17.0"
   },
   "devDependencies": {
     "typescript": "5.9.3",
