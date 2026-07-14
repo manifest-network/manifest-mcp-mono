@@ -7,12 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-07-14
+
 ### Added
+- **core (`/events-node`) + fred/sdk:** live-status **WebSocket transport** on `ctx.events` (`@beta`). `waitForLeaseStatus` transparently upgrades from polling to the provider `/events` WebSocket when `ctx.events` is present (snapshot-on-connect, streamed status frames, bounded reconnect + 45s liveness, transparent poll fallback) — no surface churn. The Node default `createNodeEventTransport` (SSRF-guarded `ws`: DNS-resolve + connect to the resolved IP with a pinned Host/SNI, rebinding-safe) lives behind the `@manifest-network/manifest-mcp-core/events-node` subpath; `createFredClientNode` auto-injects it and the SDK `/node` re-exports it. `ws` is an exact-pinned `optionalDependency` (dynamic-imported; never pulled into browser bundles). Absent `ctx.events` ⇒ unchanged polling. (ENG-315)
 - **fred/sdk:** `appStatus` now returns `chainState.items` — the raw `LeaseItem[]` (per-service `skuUuid`/`serviceName`/`customDomain`) already fetched from the on-chain lease. Consumers computing per-service custom-domain assignments no longer need a second `getLease`. Additive (new field on an existing return; consistent with the raw `state`/`providerUuid` `chainState` already carries). (ENG-489)
 
 ### Changed
 - **core/sdk:** `stopApp` is now a polymorphic, idempotent lease teardown — it pre-queries state and dispatches `close-lease` (ACTIVE) / `cancel-lease` (PENDING) / no-op (already terminal), returning a `StopAppResult` **discriminated union** on `outcome` (`'stopped' | 'cancelled' | 'already_inactive'`) with `lease_state` on every variant and a free-form `rejection_reason` on the already-`REJECTED` branch. (ENG-487A)
 - **fred/sdk:** `restartApp`/`updateApp` gain an optional `LifecycleCallOptions` third arg — a pre-resolved `providerUrl` (skips two on-chain round-trips) and `pollOptions`. They now **poll-to-ready by default** (`deployManifest` parity). (ENG-488)
+- **core/chain/sdk:** `TxCallOptions.waitForConfirmation?: boolean` — a non-blocking (Cosmos SYNC / CheckTx) broadcast mode. `false` broadcasts via `signAndBroadcastSync` and returns the tx hash immediately with no block-inclusion wait; the default stays block-confirming (`signAndBroadcast`). `stopApp` gains async result variants (a `confirmed` discriminant; no `code` on the async path). Consecutive `false` broadcasts from one signer are given consecutive sequences automatically (per-signer sequence management), so a bulk fire-and-reconcile flow no longer collides on `account sequence mismatch`. The MCP `cosmos_tx` tool keeps its historical block-confirming default. (ENG-494)
+- **core/fred/sdk:** provider-URL **SSRF classification** is now default-on (browser + production). `validateProviderUrl` default-denies a provider `apiUrl` that is a literal private/internal/loopback/metadata IP, and the pure `isUrlSsrfSafe` predicate is exported for URLs you validate yourself (e.g. a provider WebSocket URL the browser connect path never guards). (ENG-490)
 
 ### Upgrade notes
 - **BREAKING (sdk `stopApp` / lease `close_lease` callers):** the old `StopAppResult` `{ lease_uuid, status: 'stopped', transactionHash, code }` is replaced by the `outcome`-discriminated union. Branch on `result.outcome`; `transactionHash`/`code` exist only on the `'stopped'`/`'cancelled'` broadcasting branches (absent on `'already_inactive'`). `stopApp` no longer throws on an already-inactive lease — it resolves `'already_inactive'`. (ENG-487A)
