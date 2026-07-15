@@ -121,17 +121,24 @@ Typed reads return null, so most consumers never touch the error. `NOT_FOUND` is
 - `retry.ts` must classify it as permanently non-retryable.
 - It matches the established convention: `SKU_AMBIGUOUS` sets the precedent that a distinct semantic outcome gets a distinct code plus typed `details`.
 
-### Decision 4 — ship the semantic as a primitive; do not mirror manifestjs
+### Decision 4 — one client; the SDK is sufficient, not exhaustive
 
 **The separation of concerns this design commits to:**
 
-> **manifestjs owns transport and 1:1 wire queries. The SDK owns what the wire does not give you** — branding, ctx composition (rate limiting, abort, retry), not-found semantics, and multi-call orchestration. A read earns SDK surface when it adds at least one of those. A passthrough that adds none does not.
+> **The SDK is the foundation. Foundation means _sufficient, not exhaustive_ — a consumer never needs to reach around it.** Everything is reachable through **one** client. What the SDK *adds* — branding, ctx composition (rate limiting, abort, retry), not-found semantics, multi-call orchestration, transport lifecycle — it owns. What manifestjs already defines (the wire API) it **carries** rather than copies.
 
-The line is self-consistent with the surface we already ship: `getBalance` earns its place (three-call composition + humanized shape); `getLease` / `getLeaseByCustomDomain` earn theirs (branding + not-found semantics). `creditAddress` (1:1, 200-always, no semantic to add) and single-denom `bank.balance` (1:1, cosmos-standard) earn nothing and are **explicitly not SDK concerns**.
+`client.query` is that seam and **already exists**: `ManifestReadClient extends QueryCtx` (`client-factory.ts:192`), `QueryCtx.query` is `@public` (`ctx.ts:59-63`), and `client-factory.ts:188-191` already documents it as an "honest Telescope/cosmjs drop-down". Proved live: `client.query.liftedinit.billing.v1.creditAddress({tenant})` and `client.query.cosmos.bank.v1beta1.balance({address, denom})` both work, `snakeToCamelDeep` + `fromJSON`-converted. It is mentioned **zero times** in `packages/sdk/README.md` and `docs/library-usage.md` — which is why the reference consumer built a parallel LCD client. **The defect is docs, not surface** (ENG-537).
 
-This reframes the Barney "gap" list. Those reads are not missing from the SDK; they do not belong in it. Barney's charter is "compose only `manifest-sdk` **+ manifestjs**" — manifestjs is a sanctioned dependency, so a passthrough read should call it directly. Barney's "delete `queryClient.ts` entirely" goal conflates *delete the hand-rolled duplication* (right) with *delete all direct manifestjs usage* (would force us to reinvent manifestjs).
+This is the mainstream shape, not an invention: of 9 SDKs surveyed, **7 expose a same-instance escape hatch** (`viem.request`, `ethers.send()`, Prisma `$queryRaw`, `octokit.request`, Stripe `rawRequest`, Supabase `rpc()`, Apollo `link`/`cache`); the 2 that split the object (AWS SDK v3, cosmjs) still share the transport. **Zero expect a second, independently-constructed client.** (Note: cosmjs's `forceGetQueryClient()` is `protected` — it is *not* a consumer escape hatch, and an earlier draft of this spec wrongly cited it as our precedent.)
 
-**Consequence for this design:** the genuine SDK concern is the *classification semantic*, not per-endpoint wrappers. So `isNotFoundError` is exported as a **public primitive that also accepts a raw LCD (axios) error**, letting a consumer keep manifestjs as its transport while borrowing our semantics. One exported function replaces four wrappers. Under this, Barney's `queryClient.ts` shrinks to a legitimate thin manifestjs usage (client construction + LCD-shape helpers) and only its buggy `status === 404` check dies — the correct outcome, not a compromise.
+So a passthrough read is served by `client.query.<ns>.<method>()` — same client, our transport, our lifecycle, our error semantics. `creditAddress` (1:1, 200-always) and single-denom `bank.balance` (1:1, cosmos-standard) get **no wrapper**: wrapping them would reinvent manifestjs, and they need no wrapper to be reachable. Two consequences worth stating plainly:
+
+- **Coverage is complete for real consumers.** Only `cosmos.orm.query.v1alpha1` and `liftedinit.manifest.v1` are `unsupportedModule` proxies (throwing on property *access*). The former is ORM introspection; the latter **exposes no queries at all** (its generated `Query` service is an empty stub). Neither has an app-facing read.
+- **Migrating to `client.query` deletes consumer code, not just duplicates it.** Barney's `lcdConvert` uses `fromAmino`, which yields `state = "LEASE_STATE_ACTIVE"` (a *string*, violating the declared `Lease.state: LeaseState`); our adapter's `fromJSON` yields `state = 2`. Barney's `fixEnumField`/`fixLeaseEnums` exists solely to patch that — and its own `readClient.ts` already credits the SDK path as "the reason `fixSKUEnums` is deletable".
+
+**Honest caveat:** `client.query` bypasses the token-bucket rate limiter — only typed reads acquire tokens via `withReadSignal`. Moving a passthrough from a consumer's own client to `client.query` therefore recovers no rate budget (it recovers correctness, one lifecycle, and deleted conversion code). Only moving to a *typed* read recovers budget. Document this rather than implying otherwise.
+
+**Consequence for this design:** the genuine SDK concern here is the *classification semantic*, not per-endpoint wrappers. `isNotFoundError` is exported as a public primitive; it also accepts a raw LCD (axios) error, which keeps the predicate total over "errors from a Manifest chain read" for anyone using manifestjs without our read client. That branch is defence-in-depth, **not** an endorsement of a second client — the recommended path is `client.query`.
 
 ### Components
 
@@ -162,8 +169,9 @@ export interface QueryErrorDetails {
  *  2. a RAW LCD error from a caller's own manifestjs client (grpc-gateway envelope);
  *  3. a plain RPC `Error` (message text only — see below).
  *
- * Shape 2 is deliberate: manifestjs owns transport, we own the semantic. A consumer
- * keeps its own LCD client and still gets correct `code:5` classification.
+ * Shape 2 is defence-in-depth, so the predicate is TOTAL over "errors from a Manifest
+ * chain read". It is NOT an endorsement of a second client: the recommended path is
+ * `client.query` (Decision 4), whose errors arrive as shape 1.
  *
  * Deliberately NOT keyed on HTTP 404 — a proxy/route 404 carries no grpc envelope
  * and must NOT read as "absent" (see Decision 1).
@@ -214,7 +222,7 @@ CONSUMER's own manifestjs client ──> raw axios err {response:{data:{code:5}}
              credits: null                                  NOT_FOUND          manifestjs call → null
 ```
 
-The third input row is Decision 4 in one line: a consumer keeps manifestjs as its transport and still gets our semantic.
+The third input row is defence-in-depth, not the recommended path: a consumer using `client.query` (Decision 4) produces row 1, since the adapter has already classified. It exists so the predicate stays total for anyone holding a manifestjs client without our read client.
 
 A proxy 404 (no envelope) yields `QUERY_FAILED` and **throws** — the fail-safe direction: an app stays RUNNING rather than being wrongly reconciled to stopped.
 
@@ -250,7 +258,8 @@ Full-repo `npm run lint` is required, not per-package: `getLeaseByCustomDomain`'
 **In:** the new `classify-query-error.ts` module (including the **public `isNotFoundError` primitive**, Decision 4), the source edits above (`types.ts`, `lcd-adapter.ts`, `retry.ts`, `getBalance.ts`, `reads.ts`, `manage-domain.ts`, `cosmos.ts`, `lease/index.ts`), the core-barrel + SDK-**root** export, the `assertUuid` addition, and tests.
 
 **Blast radius — larger than a "billing reads" fix.** An adversarial review of the plan (2026-07-15) reproduced these; the implementation plan carries the details:
-- `adaptModule` is applied to **~25 namespaces** (`lcd-adapter.ts:205-322`), and `cosmos.ts` re-codes the RPC leg — so **every** `cosmos_query` not-found (auth, wasm, gov, group, IBC) moves `QUERY_FAILED` → `NOT_FOUND`, on **both transports**. Two existing e2e files pin the old code: `billing-custom-domain.e2e.test.ts:277-278` and `chain-routing.e2e.test.ts:1064-1080` (an IBC denom-trace — confirmed live to 404 with `{"code":5}`).
+- `adaptModule` is applied to **~25 namespaces** (`lcd-adapter.ts:205-322`), and `cosmos.ts` re-codes the RPC leg — so this reaches far beyond billing, on **both transports**. But it follows the **keeper's own code, not the HTTP status**, and Cosmos keepers are not uniform (verified live): `status.Error(codes.NotFound)` modules give 404 `{"code":5}` → `NOT_FOUND` (billing lease, gov proposal, IBC denom-trace), while `sdkerrors`-wrapped keepers collapse to `codes.Unknown` → **HTTP 500 `{"code":2}`** and keep `QUERY_FAILED` (`cosmwasm.wasm` "no such code", `cosmos.group` "not found: group"). An earlier draft claimed wasm/group become `NOT_FOUND` — false, and it had reached user-facing CHANGELOG text. Two existing e2e files pin the old code on paths that *do* change: `billing-custom-domain.e2e.test.ts:277-278` and `chain-routing.e2e.test.ts:1064-1080`.
+- That same keeper variance makes a blanket `httpStatus >= 500 → retry` a **regression**: a deterministic wasm/group not-found would burn N attempts + backoff + N rate-limiter tokens where it costs one round trip today. Retry keys on the **envelope** (an envelope means the chain answered), not the status.
 - Ten pre-existing test files across five packages go red and must be migrated, notably the shared fixtures at `__test-utils__/mocks.ts:222,230` (which reject with a plain `Error('key not found')` the new predicate correctly does not recognise — that forgiving fixture is itself part of why the bug shipped), and the uuid placeholders (`'lease-uuid-1'`) that `assertUuid` rejects across `reads.test.ts`, `reads.crossface.test.ts`, `client-factory.test.ts`.
 - Every task touching `core/src` must `npm run build` before any cross-package gate: core resolves via `dist/` and `lint` is `tsc --noEmit`, so an unbuilt change greens falsely while asserting nothing.
 
@@ -265,10 +274,17 @@ Full-repo `npm run lint` is required, not per-package: `getLeaseByCustomDomain`'
 | `billing.getBillingParams` | — | ✓ already migrated |
 | `billing.getCreditAccount` | `billing.creditAccount` | ✗ bundled in `getBalance` — **undecided**, see below |
 | `billing.getCreditEstimate` | `billing.creditEstimate` | ✗ bundled in `getBalance` — **undecided**, see below |
-| `billing.getCreditAddress` | `billing.creditAddress` | ✗ **and never should** — 1:1, 200-always, no semantic to add → manifestjs |
-| `bank.getBalance(addr, denom)` | `cosmos.bank.balance` | ✗ **and never should** — 1:1, cosmos-standard → manifestjs |
+| `billing.getCreditAddress` | `billing.creditAddress` | ✗ no wrapper — reach it via `client.query` |
+| `bank.getBalance(addr, denom)` | `cosmos.bank.balance` | ✗ no wrapper — reach it via `client.query` |
 
-Applying Decision 4: `creditAddress` and single-denom `bank.balance` are pure passthroughs that add no branding, no composition, and no semantic (`creditAddress` returns 200 always — there is no not-found to classify). Wrapping them would be reinventing manifestjs. **Barney should call manifestjs directly for both**, and with the exported `isNotFoundError` it needs nothing from us to do so correctly.
+Applying Decision 4: `creditAddress` and single-denom `bank.balance` are pure passthroughs that add no branding, no composition, and no semantic (`creditAddress` returns 200 always — there is no not-found to classify). Wrapping them would reinvent manifestjs; they need no wrapper because **`client.query` already reaches them on the same client**:
+
+```ts
+client.query.liftedinit.billing.v1.creditAddress({ tenant })
+client.query.cosmos.bank.v1beta1.balance({ address, denom })
+```
+
+So they are not "missing from the SDK" — they are *offered by* the SDK, without a bespoke fn. A consumer needs **one** client, not two.
 
 Genuinely undecided → **ENG-537**: standalone `creditAccount` / `creditEstimate`. They would carry branded types, so they clear the branding bar — but `getBalance` already composes them, and Barney only wants them split to dodge the `bank.allBalances` over-fetch. That smells like `getBalance` being too coarse rather than a missing read; it deserves its own decision, not a reflex add. Also there: `reverse` on `getLeasesByTenant` pagination (a defect in our existing composition, not new surface).
 

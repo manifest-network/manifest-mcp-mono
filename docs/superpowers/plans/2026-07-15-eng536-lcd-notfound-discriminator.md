@@ -19,8 +19,17 @@ This plan was adversarially reviewed (53 agents) after a first draft shipped 12 
 **1. `npm run build` after EVERY `core/src` edit — or your gates are false green.**
 `packages/core`'s `exports["."]` maps to `./dist/*`, and `lint` is `tsc --noEmit` (not `tsc -b`), so nothing rebuilds implicitly. Siblings resolve core through **stale `dist/`**. Proven: a symbol added to `core/src` yields `TS2305` in lease/agent-core, and `ManifestMCPErrorCode.NOT_FOUND` is `undefined` at runtime — **tests pass while asserting nothing.** Every task that touches `core/src` ends with a build.
 
-**2. This is NOT a billing-read change. It is module-wide, on BOTH transports.**
-`adaptModule` is applied to **~25 namespaces** (`lcd-adapter.ts:205-322`). Task 2 rewires its shared catch, so *every* not-found across `cosmos_query` — auth accounts, wasm, gov, group, IBC — moves `QUERY_FAILED` → `NOT_FOUND`. Task 8 does the same on the RPC leg. Two e2e files already pin the old code (Tasks 6/8).
+**2. This is NOT a billing-read change — but it is narrower than "every module".**
+`adaptModule` is applied to **~25 namespaces** (`lcd-adapter.ts:205-322`), so Task 2 rewires the shared catch for all of them, and Task 8 does the same on the RPC leg. But **only keepers that use `status.Error(codes.NotFound)` produce `code:5`**. Verified live against `api.manifest.network`:
+
+```
+billing lease  404 {"code":5,"message":"lease not found"}                       -> NOT_FOUND
+gov proposal   404 {"code":5,"message":"proposal 999999 doesn't exist"}         -> NOT_FOUND
+wasm code      500 {"code":2,"message":"codespace wasm code 28: no such code"}  -> stays QUERY_FAILED
+group_info     500 {"code":2,"message":"codespace sdk code 38: not found: group"} -> stays QUERY_FAILED
+```
+
+sdkerrors-wrapped keeper errors collapse to `codes.Unknown` (2) → HTTP 500. Those keep `QUERY_FAILED` — the fail-safe direction, and correct. **Do not claim wasm/group not-founds become `NOT_FOUND`** (an earlier draft did, in user-facing CHANGELOG text). Two e2e files pin the old code on paths that *do* change (Tasks 6/8): `billing-custom-domain` and `chain-routing`'s IBC denom-trace.
 
 **3. The new predicate is NARROWER than the old regexes, deliberately.**
 Old `NOT_FOUND_RES` was `/not.?found/i` — it matched the *proxy* 404 `"Endpoint not found"` (a false positive) and MISSED the real keeper message `"no lease with custom_domain …"`. Two existing fixtures depend on the old looseness and must be retargeted (Tasks 4, 7). **Do not "fix" a red fixture by re-widening the predicate.** Re-widening the plain-`Error` leg specifically would slip past *both* new proxy-404 tests (one uses a `ManifestMCPError`, one an axios envelope; neither covers that leg).
@@ -143,6 +152,10 @@ describe('classifyLcdError', () => {
     expect(err.code).toBe(ManifestMCPErrorCode.QUERY_FAILED);
     expect(err.details).toMatchObject({ httpStatus: 404 });
     expect(err.details?.grpcCode).toBeUndefined();
+    // The proxy body HAS a `message` ("Endpoint not found"). grpcMessage is a
+    // @public field documented as KEEPER text — it must not carry proxy text.
+    // toMatchObject cannot catch an extra key, so assert absence explicitly.
+    expect(err.details?.grpcMessage).toBeUndefined();
   });
 
   it('preserves httpStatus on a 500 so retry can branch on the number', () => {
@@ -255,14 +268,18 @@ function readResponse(err: unknown): { status?: unknown; data?: unknown } | unde
 function readDetails(err: unknown): QueryErrorDetails {
   const resp = readResponse(err);
   const data = resp?.data;
-  const envelope =
+  const body =
     typeof data === 'object' && data !== null ? (data as { code?: unknown; message?: unknown }) : undefined;
+  // A body is a grpc envelope ONLY when `code` is a NUMBER. That single test is
+  // what separates a keeper NotFound from a proxy's {"error":"not_found"} — and
+  // BOTH fields must be gated on it. The proxy body also has a `message`
+  // ("Endpoint not found"), so gating grpcMessage separately would publish proxy
+  // text on a @public field documented as keeper text.
+  const isEnvelope = typeof body?.code === 'number';
   return {
     httpStatus: typeof resp?.status === 'number' ? resp.status : undefined,
-    // A body is only a grpc envelope when `code` is a NUMBER. That is exactly what
-    // separates a keeper NotFound from a proxy's {"error":"not_found"}.
-    grpcCode: typeof envelope?.code === 'number' ? envelope.code : undefined,
-    grpcMessage: typeof envelope?.message === 'string' ? envelope.message : undefined,
+    grpcCode: isEnvelope ? (body?.code as number) : undefined,
+    grpcMessage: isEnvelope && typeof body?.message === 'string' ? body.message : undefined,
   };
 }
 
@@ -454,6 +471,17 @@ git commit -m "fix(core): classify LCD errors instead of discarding status+body 
 
 Adjacent bug: `retry.ts:70`'s `/\b(?:http|status)\s*5\d{2}\b/` never matches axios's `Request failed with status code 500` — "code" sits between "status" and the number. **LCD 5xx is never retried today.**
 
+> **TRAP — a naive `httpStatus >= 500 → retry` is a REGRESSION.** Cosmos keepers are **not uniform**: those using `status.Error(codes.NotFound)` give 404 + `code:5`, but those using `sdkerrors` wrappers collapse to `codes.Unknown` → **HTTP 500 + `code:2`**. Verified live against `api.manifest.network`:
+>
+> ```
+> billing lease  404 {"code":5,"message":"lease not found"}
+> gov proposal   404 {"code":5,"message":"proposal 999999 doesn't exist"}
+> wasm code      500 {"code":2,"message":"codespace wasm code 28: no such code: code id 999999"}
+> group_info     500 {"code":2,"message":"codespace sdk code 38: not found: group"}
+> ```
+>
+> A blanket 5xx retry would burn N attempts + backoff + N rate-limiter tokens on `no such code: 999999` — a deterministic answer that costs ONE round trip today. **The discriminator is the envelope, not the status:** a grpc envelope means *the application answered*; a real infra 5xx (proxy down, gateway error) carries **no** envelope.
+
 - [ ] **Step 1: Write the failing test**
 
 ```ts
@@ -466,8 +494,9 @@ describe('isRetryableError — structured details (ENG-536)', () => {
     ).toBe(false);
   });
 
-  // Pins the bug: axios's real message template defeats the 5xx pattern.
-  it('retries a 5xx via details.httpStatus despite the "status code 500" message', () => {
+  // Pins the original bug: axios's real message template defeats the 5xx pattern.
+  // No envelope => a genuine transport/proxy 5xx => retry.
+  it('retries an UNENVELOPED 5xx despite the "status code 500" message', () => {
     expect(
       isRetryableError(
         new ManifestMCPError(
@@ -479,19 +508,46 @@ describe('isRetryableError — structured details (ENG-536)', () => {
     ).toBe(true);
   });
 
+  // THE regression guard. wasm/group not-founds arrive as 500 + code:2 (verified
+  // live). The chain ANSWERED — retrying cannot change "no such code".
+  it('does NOT retry an ENVELOPED 5xx (deterministic keeper answer)', () => {
+    expect(
+      isRetryableError(
+        new ManifestMCPError(
+          ManifestMCPErrorCode.QUERY_FAILED,
+          'LCD query "code" failed: Request failed with status code 500',
+          { httpStatus: 500, grpcCode: 2, grpcMessage: 'codespace wasm code 28: no such code: code id 999999' },
+        ),
+      ),
+    ).toBe(false);
+  });
+
+  // An enveloped code the chain itself marks transient.
+  it('retries an enveloped UNAVAILABLE (grpc 14)', () => {
+    expect(
+      isRetryableError(
+        new ManifestMCPError(ManifestMCPErrorCode.QUERY_FAILED, 'node catching up', {
+          httpStatus: 503,
+          grpcCode: 14,
+        }),
+      ),
+    ).toBe(true);
+  });
+
   it('does not retry a 4xx carrying details', () => {
     expect(
       isRetryableError(new ManifestMCPError(ManifestMCPErrorCode.QUERY_FAILED, 'bad request', { httpStatus: 400 })),
     ).toBe(false);
   });
 
-  it('still retries 429 via details.httpStatus', () => {
+  it('still retries an unenveloped 429', () => {
     expect(
       isRetryableError(new ManifestMCPError(ManifestMCPErrorCode.QUERY_FAILED, 'rate limited', { httpStatus: 429 })),
     ).toBe(true);
   });
 });
 ```
+
 
 - [ ] **Step 2: Run — expect FAIL**
 
@@ -508,25 +564,50 @@ Add to `NON_RETRYABLE_ERROR_CODES` (after `INVALID_ARGUMENT`):
   ManifestMCPErrorCode.NOT_FOUND,
 ```
 
-Replace `isRetryableError`'s `ManifestMCPError` branch (lines 100-105):
+Add near the other constants:
+
+```ts
+/**
+ * gRPC codes the CHAIN ITSELF marks transient. Everything else that arrives WITH
+ * an envelope is a deterministic application answer — retrying cannot change it.
+ * (4 DEADLINE_EXCEEDED, 8 RESOURCE_EXHAUSTED, 14 UNAVAILABLE.)
+ */
+const RETRYABLE_GRPC_CODES = [4, 8, 14];
+```
+
+Replace `isRetryableError`'s `ManifestMCPError` branch — it spans **lines 99-106** (the branch closes at :106; a literal 100-105 replace orphans a brace, TS1128):
 
 ```ts
   if (error instanceof ManifestMCPError) {
     if (NON_RETRYABLE_ERROR_CODES.includes(error.code)) {
       return false;
     }
-    // Prefer the structured status when the transport supplied one: axios's
-    // template is "Request failed with status code 500", which the message
-    // patterns below CANNOT match (the word "code" sits between "status" and the
-    // number) — so LCD 5xx went unretried before ENG-536.
-    const httpStatus = error.details?.httpStatus;
+    const { httpStatus, grpcCode } = (error.details ?? {}) as QueryErrorDetails;
+
+    // An envelope means the APPLICATION answered — deterministic unless the chain
+    // itself says otherwise. Cosmos keepers are not uniform: sdkerrors-wrapped
+    // errors collapse to codes.Unknown -> HTTP 500 + code:2 (verified live: wasm
+    // "no such code", group "not found: group"). Retrying those burns attempts,
+    // backoff and rate-limiter tokens on a fixed answer, so status ALONE must not
+    // drive the decision (ENG-536).
+    if (typeof grpcCode === 'number') {
+      return RETRYABLE_GRPC_CODES.includes(grpcCode);
+    }
+
+    // No envelope: a genuine transport/proxy failure. This is the leg the old
+    // message pattern missed — axios's template is "Request failed with status
+    // code 500", and /\b(?:http|status)\s*5\d{2}\b/ cannot match it because the
+    // word "code" sits between "status" and the number.
     if (typeof httpStatus === 'number') {
       return httpStatus >= 500 || httpStatus === 429;
     }
+
     // Fall back to message sniffing for the RPC leg, which has no status.
     return isTransientErrorMessage(error.message);
   }
 ```
+
+Import the type: `import { ... , type QueryErrorDetails } from './internals/classify-query-error.js';` (or from `./types.js` if re-exported there — match whatever Task 1 chose).
 
 - [ ] **Step 4: Run**
 
@@ -652,7 +733,7 @@ Remove the now-unused `ManifestMCPError` import if nothing else in the file uses
 - [ ] **Step 5: Run — the WHOLE file**
 
 Run: `npx vitest run packages/core/src/tools/getBalance.test.ts`
-Expected: **all 6 PASS**, including the retained `RPC_CONNECTION_FAILED` test (that code is not NOT_FOUND, so it still propagates) and the 4 that the fixture fix repairs.
+Expected: **all 8 PASS** (6 pre-existing + the 2 added above), including the retained `RPC_CONNECTION_FAILED` test (that code is not NOT_FOUND, so it still propagates) and the 4 that the fixture fix repairs.
 
 - [ ] **Step 6: Commit**
 
@@ -677,13 +758,15 @@ Why validation is required: the keeper returns `code:5 "lease not found"` for a 
 
 Define once in each file: `const VALID_UUID = '550e8400-e29b-41d4-a716-446655440000';`
 
-| file | lines | note |
-|---|---|---|
-| `packages/core/src/tools/reads.test.ts` | `:22, :35, :100, :109, :112, :128, :319, :336` | `:112` and `:326` assert the uuid **round-trips**, so the `makeMockQueryClient` lease fixture must change in lockstep |
-| `packages/core/src/reads.crossface.test.ts` | `:60, :93, :101, :103` | not named in the first draft |
-| `packages/core/src/client-factory.test.ts` | `:215, :216` | not named in the first draft; the first draft wrongly declared this file untouched |
+**Scope this by BEHAVIOUR, not by literal.** Replace **every non-UUID string passed as a lease-uuid argument (or asserted as one)** with `VALID_UUID`. Do NOT grep only for `'lease-uuid-1'` — `reads.test.ts:120` passes `'missing'`, which matches no such literal and is the **only** mock-backed guard on the `{lease: null}` → null branch. Leave `'sku-uuid-1'` / `'provider-uuid-1'` alone; those reads gain no validation.
 
-Replace every `'lease-uuid-1'` / `'lease-uuid'` used as a **lease uuid argument or asserted value** with `VALID_UUID`. Leave `'sku-uuid-1'`/`'provider-uuid-1'` alone — those reads gain no validation.
+Per file, run: `grep -n "lease-uuid\|'missing'\|leaseUuid" <file>` and fix every hit that is a lease-uuid argument or an assertion on one.
+
+| file | known hits | note |
+|---|---|---|
+| `packages/core/src/tools/reads.test.ts` | `:22, :35, :100, :109, :112, :120, :128, :140, :321, :326` | `:120` is `getLease(ctx, 'missing')`. `:112` and `:326` assert the uuid **round-trips**, so the `makeMockQueryClient` lease fixture must change in lockstep. `:140` is the rate-limit test. |
+| `packages/core/src/reads.crossface.test.ts` | `:60, :93, :101, :103, :189, :194` | `:189`/`:194` are the `getWithdrawableAmount` cross-face pair — **both legs must migrate together**: `:189` is the typed face (gains `assertUuid`) and `:194` passes the same literal to `cosmosQuery`'s stringly face (which does not). Leaving either behind makes the two faces disagree. |
+| `packages/core/src/client-factory.test.ts` | `:215, :216` | `client.getLease('lease-uuid')` |
 
 - [ ] **Step 2: Write the failing test**
 
@@ -1013,26 +1096,49 @@ agent-core calls `queryClient.liftedinit.billing.v1.leaseByCustomDomain` **direc
     );
 ```
 
-Add the false-positive guard + the callback-contract pin (today an unclaimed FQDN fires `onFailure` at `:441-443` before throwing; post-fix it must fire `onComplete` and never `onFailure`):
+Add the false-positive guard + the callback-contract pin (today an unclaimed FQDN fires `onFailure` at `:441-443` before throwing; post-fix it must fire `onComplete` and never `onFailure`).
+
+> **TRAP:** `captureCallbacks` (`manage-domain.test.ts:113-121`) makes **only `onConfirm`** a `vi.fn()`. `onFailure` is a plain async arrow, so `expect(callbacks.onFailure).toHaveBeenCalled()` throws *"received value must be a mock or spy function"*. Assert via the harness's exposed **`failures` array** instead — `manage-domain.test.ts:284` already does exactly this.
+
+Write it in full (copy the setup from `manage-domain.test.ts:273-291`; the `clientManager` cast at `:169-172` is mandatory):
 
 ```ts
 it('THROWS for a proxy 404 whose message merely contains "not found" (ENG-536)', async () => {
-  // A node that doesn't serve billing must NOT read as "FQDN unclaimed".
+  // A node that doesn't serve the billing module returns HTTP 404
+  // {"error":"not_found","message":"Endpoint not found"} with NO grpc envelope.
+  // That must NOT read as "FQDN unclaimed" — it is a real failure.
+  const args = { action: 'lookup', fqdn: 'unclaimed.example.com' };
+
   const queryClient = makeMockQueryClient();
   queryClient.liftedinit.billing.v1.leaseByCustomDomain.mockRejectedValue(
     new ManifestMCPError(ManifestMCPErrorCode.QUERY_FAILED, 'Endpoint not found', { httpStatus: 404 }),
   );
-  // ...mirror the 05-lookup-not-found setup...
-  await expect(manageDomain(args, callbacks, { clientManager })).rejects.toThrow();
-  expect(callbacks.onFailure).toHaveBeenCalled();
+  const clientManager = makeMockClientManager(queryClient);
+  const { callbacks, completed, failures } = captureCallbacks();
+
+  const { manageDomain } = await import('./manage-domain.js');
+  await expect(
+    manageDomain(args, callbacks, {
+      clientManager: clientManager as unknown as Parameters<
+        typeof manageDomain
+      >[2]['clientManager'],
+    }),
+  ).rejects.toThrow();
+
+  expect(failures.length).toBe(1);
+  expect(completed).toEqual([]);
 });
 ```
 
-And in the retargeted `05-lookup-not-found` test, assert the contract flip:
+And in the retargeted `05-lookup-not-found` test, assert the contract flip using the same harness array:
 
 ```ts
-    expect(callbacks.onFailure).not.toHaveBeenCalled();
+    // Post-ENG-536 an unclaimed FQDN is an EXPECTED outcome: onComplete fires,
+    // onFailure must not. Pre-fix it fired onFailure (manage-domain.ts:441-443).
+    expect(failures).toEqual([]);
 ```
+
+Destructure `failures` from `captureCallbacks()` in that test if it does not already.
 
 - [ ] **Step 2: Run — expect FAIL**
 
@@ -1045,6 +1151,9 @@ In `packages/agent-core/src/manage-domain.ts`:
 - Delete the `NOT_FOUND_RES` constant (`:83-87`).
 - Delete the local `isNotFoundError` (`:465-473`).
 - Add to imports: `import { isNotFoundError } from '@manifest-network/manifest-mcp-core';`
+- **Rewrite the block comment at `:418-428`.** It documents the exact semantics this task inverts and cites the now-deleted `NOT_FOUND_RES` regex ("cosmjs/grpc surfaces this as a plain `Error` whose message matches `/not.?found|no.?such|does.?not.?exist/i`"). Leaving it is a lie in the file an implementer reads first. Replace with: the keeper's NotFound now arrives as a structured `NOT_FOUND` (classified from the grpc envelope in core's LCD adapter, or from cosmjs's `rpc error: code = NotFound` text over RPC); only that collapses to `{ lease: null }`; every other failure — including a proxy 404 whose message merely contains "not found" — flows through `onFailure` then a typed throw.
+
+Mirror what Task 6 Step 5 does for `lease/index.ts:459-463` — the same class of stale-rationale comment.
 
 The call site at `:429` is unchanged. Core's predicate is strictly more correct: it accepts the raw LCD shape and never false-positives on message text.
 
@@ -1192,9 +1301,21 @@ git commit -m "feat(sdk): export isNotFoundError on the root error-vocabulary su
 
 - [ ] **Step 1: Create the new e2e file**
 
-Mirror `e2e/sdk-acceptance.e2e.test.ts`'s client construction (the one file already in the library-import style). Use `createManifestReadClient` against the devnet REST endpoint, and generate a fresh wallet for the guaranteed-no-credit address (`DirectSecp256k1HdWallet.generate(24, { prefix: 'manifest' })`, cf. `e2e/wallet.e2e.test.ts:12,69`).
+Mirror `e2e/sdk-acceptance.e2e.test.ts`'s client construction (the one file already in the library-import style).
+
+> **`CHAIN_ID` / `REST_URL` are NOT exported by any e2e module** — an earlier draft invented them. Declare them locally, as `e2e/rest-mode.e2e.test.ts:29` does. `LeaseState` is **not** an SDK value export (`sdk/src/index.ts:12` is `export type *`) — import it from core, as `e2e/deploy-roundtrip.e2e.test.ts:1` does. Local e2e cannot run here, so a wrong import costs a full CI round-trip.
 
 ```ts
+import { DirectSecp256k1HdWallet } from '@cosmjs/proto-signing'; // cf. e2e/wallet.e2e.test.ts:12
+import {
+  createManifestReadClient,
+  LeaseState,
+} from '@manifest-network/manifest-mcp-core'; // cf. e2e/deploy-roundtrip.e2e.test.ts:1
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+
+const CHAIN_ID = 'manifest-localnet';
+const REST_URL = 'http://localhost:1317'; // cf. e2e/rest-mode.e2e.test.ts:29
+
 describe('not-found contract over LCD (ENG-536)', () => {
   const ABSENT_UUID = '00000000-0000-4000-8000-000000000000';
   let client: Awaited<ReturnType<typeof createManifestReadClient>>;
@@ -1238,7 +1359,8 @@ describe('not-found contract over LCD (ENG-536)', () => {
 Both assert the pre-ENG-536 code on paths this change re-codes.
 
 - `e2e/billing-custom-domain.e2e.test.ts:277-278` — `expect(err.code).toBe('QUERY_FAILED')` → `'NOT_FOUND'`. Keep the `/no lease with custom_domain/` message assertion (Task 6's re-raise preserves the keeper text). Update the `:269-272` comment.
-- `e2e/chain-routing.e2e.test.ts:1064-1080` — `expectChainSide(err, ['QUERY_FAILED'])` → `['NOT_FOUND']` for `ibc-transfer denom-trace` on an unknown hash. **This is not billing** — it is the module-wide blast radius (trap 2) surfacing. Confirmed live: `GET api.manifest.network/ibc/apps/transfer/v1/denom_traces/000…0` → 404 + `{"code":5,…}`.
+- `e2e/chain-routing.e2e.test.ts:1064-1080` — `expectChainSide(err, ['QUERY_FAILED'])` → `['NOT_FOUND']` for `ibc-transfer denom-trace` on an unknown hash, **and rename the test at `:1064`** to state the new contract (Task 6 Step 6 does the same for its analogue). **This is not billing** — it is the blast radius (trap 2) surfacing. Confirmed live: `GET api.manifest.network/ibc/apps/transfer/v1/denom_traces/000…0` → 404 + `{"code":5,…}`.
+- `e2e/sdk-acceptance.e2e.test.ts:70-74,84` — **comments only.** Their feature-detect rationale assumes the unclaimed-domain sentinel *throws*. The behaviour stays correct (that path still throws), but the stated reasoning becomes false. Update the prose; do not change the assertions.
 
 - [ ] **Step 3: Run in CI**
 
@@ -1265,7 +1387,7 @@ House style (see 0.17.0) uses `### Upgrade notes` + `**BREAKING (…callers):**`
 ### Fixed
 
 - **core:** the LCD/REST adapter discarded the not-found signal, so every declared `| null` read threw instead of returning null over REST. `getBalance` threw for any address with no credit account (every new user); `getLease`'s `BrandedLease | null` could never return null; agent-core's domain lookup could not report an unclaimed FQDN. LCD errors are now classified from the grpc-gateway envelope (`code: 5` → `NOT_FOUND`) and carry `details: {httpStatus, grpcCode, grpcMessage}`. Classification keys on the grpc code, never HTTP 404 — a proxy/route 404 from a node that doesn't serve the module still throws. (ENG-536)
-- **core:** `isRetryableError` now branches on `details.httpStatus`. LCD 5xx failures were never retried, because axios's `Request failed with status code 500` does not match the 5xx message pattern. (ENG-536)
+- **core:** `isRetryableError` now branches on structured `details` rather than the error message. LCD 5xx failures were never retried, because axios's `Request failed with status code 500` does not match the 5xx message pattern. An **unenveloped** 5xx/429 (a real transport or proxy failure) is now retried; an **enveloped** 5xx is not, because a grpc envelope means the chain answered deterministically — retrying `codespace wasm code 28: no such code` cannot change it. Enveloped `UNAVAILABLE`/`DEADLINE_EXCEEDED`/`RESOURCE_EXHAUSTED` remain retryable. (ENG-536)
 
 ### Added
 
@@ -1274,7 +1396,7 @@ House style (see 0.17.0) uses `### Upgrade notes` + `**BREAKING (…callers):**`
 
 ### Changed
 
-- **core:** not-found errors now surface as `NOT_FOUND` instead of `QUERY_FAILED` across **all LCD modules and both transports** — not just billing. `adaptModule` is applied to ~25 namespaces, and the generic `cosmos_query` path is re-coded on the RPC leg too, so an absent auth account, wasm contract, gov/group entity or IBC denom-trace now yields `NOT_FOUND`. (ENG-536)
+- **core:** not-found errors now surface as `NOT_FOUND` instead of `QUERY_FAILED` across **all LCD modules and both transports** — not just billing. `adaptModule` is applied to ~25 namespaces and the generic `cosmos_query` path is re-coded on the RPC leg too, so e.g. an absent lease, gov proposal or IBC denom-trace now yields `NOT_FOUND`. Note this follows the **keeper's own error code**, not the HTTP status: modules that raise `codes.NotFound` (billing, gov, IBC, …) yield `NOT_FOUND`, while modules whose keepers wrap with `sdkerrors` collapse to `codes.Unknown` and keep `QUERY_FAILED` (verified: `cosmwasm.wasm` "no such code" and `cosmos.group` "not found: group" both arrive as HTTP 500 `code:2`). (ENG-536)
 
 ### Upgrade notes
 
