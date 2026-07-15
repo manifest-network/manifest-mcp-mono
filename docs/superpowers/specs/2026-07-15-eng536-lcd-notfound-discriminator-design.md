@@ -20,13 +20,12 @@
 | `getBalance` (`tools/getBalance.ts:24`) | `credits: {…} \| null` | throws |
 | `manageDomain` lookup (agent-core) | `{ lease: null }` on unclaimed | throws |
 
-The mechanism is a single line. `catchNotFound` (`tools/getBalance.ts:6-22`) and agent-core's `isNotFoundError` (`manage-domain.ts:465-473`) both open with:
+Both guards dead-end on a `ManifestMCPError`, though by different routes — the adapter has already wrapped the 404 into exactly that, so **the regexes below them never execute**. They can only fire over RPC, where cosmjs throws a plain `Error`.
 
-```ts
-if (err instanceof ManifestMCPError) throw err;   // "never suppress structured infrastructure errors"
-```
+- `catchNotFound` (`tools/getBalance.ts:9`) opens with `if (err instanceof ManifestMCPError) throw err;` — comment: *"never suppress structured infrastructure errors."*
+- agent-core's `isNotFoundError` (`manage-domain.ts:469`) opens with `if (err instanceof ManifestMCPError) return false;` — the rethrow lands 24 lines later at `:444`.
 
-The adapter has already wrapped the 404 into exactly that `ManifestMCPError`, so the guard rethrows unconditionally and **the regexes below it never execute**. They can only fire over RPC, where cosmjs throws a plain `Error`.
+(An earlier revision of this spec presented a single fenced quote as if both sites shared it. They do not; only `getBalance.ts` rethrows inline. The conclusion is unaffected — the `T | null` branch is dead code either way — but the misquote is corrected here because Task 7 sends an implementer to read exactly that line range.)
 
 ### Proof — real read path, live chain
 
@@ -170,9 +169,17 @@ export interface QueryErrorDetails {
  * and must NOT read as "absent" (see Decision 1).
  */
 export function isNotFoundError(err: unknown): boolean {
-  if (err instanceof ManifestMCPError) return err.code === ManifestMCPErrorCode.NOT_FOUND;
-  const grpcCode = readGrpcEnvelopeCode(err); // duck-typed err.response.data.code
-  if (grpcCode !== undefined) return grpcCode === GRPC_NOT_FOUND;
+  // NO `instanceof` (ENG-462): ManifestMCPError carries no brand, so `instanceof`
+  // is false across duplicate package copies — silently reproducing the exact
+  // pre-ENG-536 symptom, uncatchable by tests (vitest loads one copy). Value-check
+  // `.code`, as isSkuAmbiguousError does (cosmjs isDeliverTxFailure idiom).
+  // Safe against the AxiosError `.code` landmine: axios's own codes are
+  // 'ERR_BAD_REQUEST'/'ERR_NETWORK', never 'NOT_FOUND'.
+  if (typeof err === 'object' && err !== null) {
+    if ((err as { code?: unknown }).code === ManifestMCPErrorCode.NOT_FOUND) return true;
+    const grpcCode = readGrpcEnvelopeCode(err); // duck-typed err.response.data.code
+    if (grpcCode !== undefined) return grpcCode === GRPC_NOT_FOUND;
+  }
   // RPC leg: cosmjs/gRPC surfaces NotFound only as message text. Same concession
   // cosmjs makes in StargateClient.getAccount — no structured code exists over RPC.
   if (err instanceof Error) return /rpc error: code = NotFound/i.test(err.message);
@@ -180,7 +187,7 @@ export function isNotFoundError(err: unknown): boolean {
 }
 ```
 
-Exported from core's barrel (browser-safe, no node builtins) and re-exported on the SDK root + `/reads`.
+Exported from core's barrel (browser-safe, no node builtins) and re-exported on the **SDK root**, beside `isSkuAmbiguousError` — the root docstring already carves out this symbol class (*"NO free fns EXCEPT error-vocabulary helpers over ManifestMCPError"*). **Not** on `/reads`, which is pinned to exactly the 8 reads (`sdk/src/index.test.ts:186-188`) and is architecturally backwards for it: post-fix, `/reads` consumers get `T | null` and never touch the predicate — it serves `/chain` and raw-manifestjs consumers.
 
 **Edits:**
 
@@ -240,7 +247,12 @@ Full-repo `npm run lint` is required, not per-package: `getLeaseByCustomDomain`'
 
 ## Scope
 
-**In:** the new `classify-query-error.ts` module (including the **public `isNotFoundError` primitive**, Decision 4), the seven edits above (`types.ts`, `lcd-adapter.ts`, `retry.ts`, `getBalance.ts`, `reads.ts`, `manage-domain.ts`, `cosmos.ts`), barrel + SDK re-exports for the primitive, the `requireUuid` addition, plus tests.
+**In:** the new `classify-query-error.ts` module (including the **public `isNotFoundError` primitive**, Decision 4), the source edits above (`types.ts`, `lcd-adapter.ts`, `retry.ts`, `getBalance.ts`, `reads.ts`, `manage-domain.ts`, `cosmos.ts`, `lease/index.ts`), the core-barrel + SDK-**root** export, the `assertUuid` addition, and tests.
+
+**Blast radius — larger than a "billing reads" fix.** An adversarial review of the plan (2026-07-15) reproduced these; the implementation plan carries the details:
+- `adaptModule` is applied to **~25 namespaces** (`lcd-adapter.ts:205-322`), and `cosmos.ts` re-codes the RPC leg — so **every** `cosmos_query` not-found (auth, wasm, gov, group, IBC) moves `QUERY_FAILED` → `NOT_FOUND`, on **both transports**. Two existing e2e files pin the old code: `billing-custom-domain.e2e.test.ts:277-278` and `chain-routing.e2e.test.ts:1064-1080` (an IBC denom-trace — confirmed live to 404 with `{"code":5}`).
+- Ten pre-existing test files across five packages go red and must be migrated, notably the shared fixtures at `__test-utils__/mocks.ts:222,230` (which reject with a plain `Error('key not found')` the new predicate correctly does not recognise — that forgiving fixture is itself part of why the bug shipped), and the uuid placeholders (`'lease-uuid-1'`) that `assertUuid` rejects across `reads.test.ts`, `reads.crossface.test.ts`, `client-factory.test.ts`.
+- Every task touching `core/src` must `npm run build` before any cross-package gate: core resolves via `dist/` and `lint` is `tsc --noEmit`, so an unbuilt change greens falsely while asserting nothing.
 
 **Out — and mostly out permanently, per Decision 4.** Verified against barney@main: ENG-536 alone does not let Barney delete `src/api/queryClient.ts` — but that goal is itself partly wrong. Four reads have no SDK equivalent, and **three of them should never get one**:
 
