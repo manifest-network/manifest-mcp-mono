@@ -188,9 +188,9 @@ Exported from core's barrel (browser-safe, no node builtins) and re-exported on 
 - `lcd-adapter.ts:82-102` — `adaptModule`'s catch calls `classifyLcdError`. The `if (error instanceof ManifestMCPError) throw error` passthrough stays.
 - `retry.ts` — add `NOT_FOUND` to `NON_RETRYABLE_ERROR_CODES`; rewrite the 5xx check to prefer `details.httpStatus >= 500`, keeping the string patterns as the RPC-leg fallback.
 - `tools/getBalance.ts` — `catchNotFound` delegates to `isNotFoundError`; delete its three regexes.
-- `tools/reads.ts` — `getLease` and `getWithdrawableAmount` catch not-found → null; `getLeaseByCustomDomain` → `| null`; **add `requireUuid`** in front of `getLease` / `getWithdrawableAmount` (see invariant 4).
+- `tools/reads.ts` — `getLease` and `getWithdrawableAmount` catch not-found → null (`getWithdrawableAmount` goes `Coin[]` → `Coin[] | null`, **also breaking**); `getLeaseByCustomDomain` → `| null`; **add `assertUuid`** in front of `getLease` / `getWithdrawableAmount` (see invariant 4). Note the primitive is `assertUuid(value, label, errorCode)` from `../validation.js` — **not** `requireUuid`, whose signature is `(input: Record<string, unknown>, field, errorCode)` and does not fit a bare-string argument.
 - `agent-core/manage-domain.ts` — `isNotFoundError` re-keys onto core's predicate; delete `NOT_FOUND_RES`.
-- `cosmos.ts:57-70` — the tier-2 catch classifies via the predicate so the generic path yields `NOT_FOUND` on **both** transports.
+- `cosmos.ts` `cosmosQuery` (catch at :136-152) — **the LCD leg needs no change**: the `error instanceof ManifestMCPError` branch already re-wraps preserving `error.code`, so an adapter-minted `NOT_FOUND` propagates with `{module, subcommand}` merged in for free. Only the plain-`Error` branch (:147, the RPC leg) needs the predicate so the generic path yields `NOT_FOUND` on **both** transports. (Note `loadBuildContext` at :38-75 is the **tx**-build path and is out of scope.)
 
 ### Data flow
 
@@ -264,15 +264,24 @@ Note also that Barney's `getCreditAccount` synthesizes a zero-account on not-fou
 
 **Explicit non-goals:** wrapping `creditAddress` or single-denom `bank.balance` (Decision 4 — permanently out); standalone credit reads and `reverse` pagination (deferred to ENG-537); deep-proxying the RPC client to mint `NOT_FOUND` there (the shared predicate covers the contract surface at a fraction of the complexity).
 
-## Breaking change
+## Breaking changes
 
-`getLeaseByCustomDomain`: `Promise<{lease, serviceName}>` → `Promise<{lease, serviceName} | null>`.
+**Two type-level breaks**, both loud (TypeScript flags every call site):
 
-TypeScript flags every call site, so the break is loud, not silent. The SDK is 0.x, so it rides **0.19.0**. ENG-436 is *not* a breaking train (it is ctx convergence, still backlog) — 0.18.0 shipped without it, so there is no batch to wait for.
+1. `getLeaseByCustomDomain`: `Promise<{lease, serviceName}>` → `Promise<{lease, serviceName} | null>`.
+2. `getWithdrawableAmount`: `Promise<Coin[]>` → `Promise<Coin[] | null>`.
 
-Barney's own `queryLeaseByCustomDomain` is **already** `Promise<… | null>` with the comment *"Returns null when no lease holds that domain (chain 404)"*. This aligns the SDK to a contract the reference consumer already ships and proves in production.
+Plus one **behaviour** change that is not type-visible: `getLease` / `getWithdrawableAmount` now throw `INVALID_ARGUMENT` rather than `QUERY_FAILED` for a malformed uuid (invariant 4).
 
-Internal call sites to update: `packages/lease/src/index.ts` (`lease_by_custom_domain` — deliberately throws on not-found; it should now throw a `NOT_FOUND`-derived error rather than a generic `QUERY_FAILED`, which finally delivers the distinction its own comment claims) and agent-core's `manageDomain`.
+The SDK is 0.x, so these ride **0.19.0**. ENG-436 is *not* a breaking train (it is ctx convergence, still backlog) — 0.18.0 shipped without it, so there is no batch to wait for.
+
+Barney's own `queryLeaseByCustomDomain` is **already** `Promise<… | null>` with the comment *"Returns null when no lease holds that domain (chain 404)"*. Break 1 aligns the SDK to a contract the reference consumer already ships and proves in production.
+
+**Internal call sites — verified, not assumed:**
+
+- `packages/lease/src/index.ts:469` — **must change**: it destructures (`const { lease, serviceName } = await getLeaseByCustomDomain(...)`), which does not compile against `| null`. The tool deliberately throws on not-found; it should now raise a `NOT_FOUND`-derived error rather than a generic `QUERY_FAILED`, which finally delivers the distinction its own comment claims.
+- `packages/core/src/client-factory.ts` — **no change needed**: it binds via `BoundFn<typeof getLeaseByCustomDomain>`, so the nullability propagates through the type automatically.
+- agent-core's `manageDomain` — **not affected by the signature change**: it calls `queryClient.liftedinit.billing.v1.leaseByCustomDomain` **directly** (`manage-domain.ts:404`), not core's read. It changes only because its `isNotFoundError` re-keys onto the shared predicate.
 
 ## Open questions
 
