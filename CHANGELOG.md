@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.18.0] - 2026-07-15
+
+### Added
+- **sdk `/chain`:** new subpath exposing the generic tier-2 chain escape hatches `cosmosQuery` / `cosmosTx` (re-exported from core — the raw query/tx primitives behind the `cosmos_query` / `cosmos_tx` MCP tools). Lets a consumer reach the low-level chain ops through the SDK facade without a direct `@manifest-network/manifest-mcp-core` dependency. (ENG-531)
+- **sdk `/faucet` + core `/faucet`:** new subpath exposing the faucet ops `requestFaucet` / `requestFaucetCredit` / `fetchFaucetStatus` (+ the `FaucetAccount` / `FaucetDripResult` / `FaucetStatusResponse` / `RequestFaucetResult` types), sourced from a new **universal** `@manifest-network/manifest-mcp-core/faucet` subpath (browser-safe: pure `fetch` + `zod`). Deliberately off the SDK root barrel — a testnet/operator concern reachable only via `/faucet`. (ENG-531)
+- **sdk `/deploy`:** the deploy-family types `BuildManifestOptions`, `DeployResult`, `ManifestDeploySpec`, `TxCallOptions` are now re-exported on `/deploy` (also reachable from the root via `export type *`), so consumers can type the deploy/tx option + result bags without a direct core dependency. (ENG-531)
+
+### Changed
+- **core/chain:** the faucet module was hoisted from `@manifest-network/manifest-mcp-chain` **down** into `@manifest-network/manifest-mcp-core` (on the universal `/faucet` subpath). `manifest-mcp-chain` re-exports it, so its public API is unchanged — **non-breaking**. This keeps the SDK dependency graph unchanged (`core` + `fred` + `agent-core`) instead of pulling an MCP-server package into it. (ENG-531)
+
 ## [0.17.0] - 2026-07-14
 
 ### Added
