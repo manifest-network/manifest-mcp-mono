@@ -122,6 +122,18 @@ Typed reads return null, so most consumers never touch the error. `NOT_FOUND` is
 - `retry.ts` must classify it as permanently non-retryable.
 - It matches the established convention: `SKU_AMBIGUOUS` sets the precedent that a distinct semantic outcome gets a distinct code plus typed `details`.
 
+### Decision 4 — ship the semantic as a primitive; do not mirror manifestjs
+
+**The separation of concerns this design commits to:**
+
+> **manifestjs owns transport and 1:1 wire queries. The SDK owns what the wire does not give you** — branding, ctx composition (rate limiting, abort, retry), not-found semantics, and multi-call orchestration. A read earns SDK surface when it adds at least one of those. A passthrough that adds none does not.
+
+The line is self-consistent with the surface we already ship: `getBalance` earns its place (three-call composition + humanized shape); `getLease` / `getLeaseByCustomDomain` earn theirs (branding + not-found semantics). `creditAddress` (1:1, 200-always, no semantic to add) and single-denom `bank.balance` (1:1, cosmos-standard) earn nothing and are **explicitly not SDK concerns**.
+
+This reframes the Barney "gap" list. Those reads are not missing from the SDK; they do not belong in it. Barney's charter is "compose only `manifest-sdk` **+ manifestjs**" — manifestjs is a sanctioned dependency, so a passthrough read should call it directly. Barney's "delete `queryClient.ts` entirely" goal conflates *delete the hand-rolled duplication* (right) with *delete all direct manifestjs usage* (would force us to reinvent manifestjs).
+
+**Consequence for this design:** the genuine SDK concern is the *classification semantic*, not per-endpoint wrappers. So `isNotFoundError` is exported as a **public primitive that also accepts a raw LCD (axios) error**, letting a consumer keep manifestjs as its transport while borrowing our semantics. One exported function replaces four wrappers. Under this, Barney's `queryClient.ts` shrinks to a legitimate thin manifestjs usage (client construction + LCD-shape helpers) and only its buggy `status === 404` check dies — the correct outcome, not a compromise.
+
 ### Components
 
 **`internals/classify-query-error.ts` (new, core)** — the single classifier.
@@ -140,17 +152,35 @@ export interface QueryErrorDetails {
 
 `classifyLcdError(key, error)` duck-types `error.response.status` / `.data` (no axios type dependency — axios arrives transitively via `@cosmology/lcd`), treats the body as an envelope **only** when `typeof body.code === 'number'`, and returns `NOT_FOUND` when `grpcCode === 5`, else `QUERY_FAILED`. `details` is attached to **both** — preserving status on non-404s is what lets `retry.ts` branch on a number instead of a string.
 
-`isNotFoundError(err)` — the shared predicate, handling both transports:
+`isNotFoundError(err)` — **the public primitive** (Decision 4). Accepts all three error shapes a Manifest read can produce, so a consumer using manifestjs as its own transport can borrow the semantic without importing a wrapper per endpoint:
 
 ```ts
+/**
+ * @public — true when `err` means "the chain answered: no such entity".
+ *
+ * Accepts three shapes:
+ *  1. a `ManifestMCPError` from our own reads (structured `code`);
+ *  2. a RAW LCD error from a caller's own manifestjs client (grpc-gateway envelope);
+ *  3. a plain RPC `Error` (message text only — see below).
+ *
+ * Shape 2 is deliberate: manifestjs owns transport, we own the semantic. A consumer
+ * keeps its own LCD client and still gets correct `code:5` classification.
+ *
+ * Deliberately NOT keyed on HTTP 404 — a proxy/route 404 carries no grpc envelope
+ * and must NOT read as "absent" (see Decision 1).
+ */
 export function isNotFoundError(err: unknown): boolean {
   if (err instanceof ManifestMCPError) return err.code === ManifestMCPErrorCode.NOT_FOUND;
+  const grpcCode = readGrpcEnvelopeCode(err); // duck-typed err.response.data.code
+  if (grpcCode !== undefined) return grpcCode === GRPC_NOT_FOUND;
   // RPC leg: cosmjs/gRPC surfaces NotFound only as message text. Same concession
   // cosmjs makes in StargateClient.getAccount — no structured code exists over RPC.
   if (err instanceof Error) return /rpc error: code = NotFound/i.test(err.message);
   return false;
 }
 ```
+
+Exported from core's barrel (browser-safe, no node builtins) and re-exported on the SDK root + `/reads`.
 
 **Edits:**
 
@@ -165,16 +195,19 @@ export function isNotFoundError(err: unknown): boolean {
 ### Data flow
 
 ```
-LCD 404 {"code":5}  ──> adaptModule catch ──> classifyLcdError ──> NOT_FOUND + details
-                                                                        │
-RPC "rpc error: code = NotFound" ──> plain Error ───────────────────────┤
-                                                                        v
-                                                              isNotFoundError(err)
-                                                                        │
-                              ┌─────────────────────────────────────────┼──────────────────┐
-                              v                                         v                  v
-                    catchNotFound → credits: null            getLease → null      cosmos.ts → NOT_FOUND
+OUR reads (LCD)   404 {"code":5} ──> adaptModule ──> classifyLcdError ──> NOT_FOUND + details ─┐
+OUR reads (RPC)   "rpc error: code = NotFound" ──> plain Error ────────────────────────────────┤
+CONSUMER's own manifestjs client ──> raw axios err {response:{data:{code:5}}} ─────────────────┤
+                                                                                              v
+                                                                                   isNotFoundError(err)
+                                                                                              │
+                        ┌──────────────────────┬────────────────────┬──────────────────────┬──┘
+                        v                      v                    v                      v
+             catchNotFound →           getLease → null      cosmos.ts →        consumer maps its OWN
+             credits: null                                  NOT_FOUND          manifestjs call → null
 ```
+
+The third input row is Decision 4 in one line: a consumer keeps manifestjs as its transport and still gets our semantic.
 
 A proxy 404 (no envelope) yields `QUERY_FAILED` and **throws** — the fail-safe direction: an app stays RUNNING rather than being wrongly reconciled to stopped.
 
@@ -195,6 +228,7 @@ A proxy 404 (no envelope) yields `QUERY_FAILED` and **throws** — the fail-safe
 The bug survived because mocks were more forgiving than reality. Tests must therefore assert against the **real wire shape**, captured from the live chain.
 
 - **Unit — `classify-query-error.test.ts`:** table-driven over captured shapes — grpc envelope 404 `code:5` → NOT_FOUND; proxy 404 `{"error":"not_found"}` → QUERY_FAILED (**the regression guard for the false-positive**); 500 → QUERY_FAILED + `httpStatus: 500`; non-object body; missing `response`.
+- **Unit — `isNotFoundError` (the public primitive, Decision 4):** must be proven on **all three** shapes, since the contract promises all three — a `ManifestMCPError(NOT_FOUND)`; a **raw axios-shaped error** `{response:{status:404,data:{code:5,message:'lease not found'}}}` (the consumer-with-own-manifestjs case — if this regresses, the "don't reinvent manifestjs" story silently dies); a plain RPC `Error('rpc error: code = NotFound …')`. Negatives: raw axios proxy 404 `{response:{status:404,data:{error:'not_found'}}}` → **false**; `ManifestMCPError(QUERY_FAILED)` → false; `undefined`/`null`/string → false.
 - **Unit — `lcd-adapter.test.ts`:** `adaptModule` mocks reject with an **axios-shaped** error (`{response: {status, data}}`), not a bare `Error`. This is the shape no existing test uses.
 - **Unit — `getBalance.test.ts`:** keep the `RPC_CONNECTION_FAILED` rethrow test (still correct); **add** a sibling asserting a `NOT_FOUND` from `creditAccount` yields `credits: null` rather than throwing.
 - **Unit — `reads.test.ts`:** `getLease` / `getWithdrawableAmount` → null on NOT_FOUND, rethrow on QUERY_FAILED; `getLeaseByCustomDomain` → null; a **malformed uuid throws `INVALID_ARGUMENT` without issuing a read** (guards invariant 4 — otherwise the keeper's `code:5` would silently render it as `null`).
@@ -206,9 +240,9 @@ Full-repo `npm run lint` is required, not per-package: `getLeaseByCustomDomain`'
 
 ## Scope
 
-**In:** the new `classify-query-error.ts` module, the seven edits above (`types.ts`, `lcd-adapter.ts`, `retry.ts`, `getBalance.ts`, `reads.ts`, `manage-domain.ts`, `cosmos.ts`), the `requireUuid` addition, plus tests.
+**In:** the new `classify-query-error.ts` module (including the **public `isNotFoundError` primitive**, Decision 4), the seven edits above (`types.ts`, `lcd-adapter.ts`, `retry.ts`, `getBalance.ts`, `reads.ts`, `manage-domain.ts`, `cosmos.ts`), barrel + SDK re-exports for the primitive, the `requireUuid` addition, plus tests.
 
-**Out — needs a separate additive-surface issue.** Verified against barney@main: **ENG-536 alone does not let Barney delete `src/api/queryClient.ts`.** Four of its reads have no SDK equivalent:
+**Out — and mostly out permanently, per Decision 4.** Verified against barney@main: ENG-536 alone does not let Barney delete `src/api/queryClient.ts` — but that goal is itself partly wrong. Four reads have no SDK equivalent, and **three of them should never get one**:
 
 | Barney fn | chain read | SDK equivalent after this? |
 | --- | --- | --- |
@@ -217,14 +251,18 @@ Full-repo `npm run lint` is required, not per-package: `getLeaseByCustomDomain`'
 | `billing.getLeasesByTenant` | `billing.leasesByTenant` | ✓ |
 | `billing.getLeasesByTenantPaginated` | `leasesByTenant` + pagination | ~ SDK hardcodes `reverse:false` |
 | `billing.getBillingParams` | — | ✓ already migrated |
-| `billing.getCreditAccount` | `billing.creditAccount` | ✗ only bundled in `getBalance` |
-| `billing.getCreditEstimate` | `billing.creditEstimate` | ✗ only bundled in `getBalance` |
-| `billing.getCreditAddress` | `billing.creditAddress` | ✗ **not exposed at all** |
-| `bank.getBalance(addr, denom)` | `cosmos.bank.balance` | ✗ SDK's is allBalances+credits |
+| `billing.getCreditAccount` | `billing.creditAccount` | ✗ bundled in `getBalance` — **undecided**, see below |
+| `billing.getCreditEstimate` | `billing.creditEstimate` | ✗ bundled in `getBalance` — **undecided**, see below |
+| `billing.getCreditAddress` | `billing.creditAddress` | ✗ **and never should** — 1:1, 200-always, no semantic to add → manifestjs |
+| `bank.getBalance(addr, denom)` | `cosmos.bank.balance` | ✗ **and never should** — 1:1, cosmos-standard → manifestjs |
 
-`creditAddress` is the hardest: unexposed, 200-always (derived address), and Barney's `getCreditAccount` depends on it. Barney's `getCreditAccount` also synthesizes a zero-account on not-found rather than returning null, so its contract differs from `credits: null` even once fixed.
+Applying Decision 4: `creditAddress` and single-denom `bank.balance` are pure passthroughs that add no branding, no composition, and no semantic (`creditAddress` returns 200 always — there is no not-found to classify). Wrapping them would be reinventing manifestjs. **Barney should call manifestjs directly for both**, and with the exported `isNotFoundError` it needs nothing from us to do so correctly.
 
-**Explicit non-goals:** exposing standalone credit reads; a single-denom bank balance; `reverse` pagination; deep-proxying the RPC client to mint `NOT_FOUND` there (the shared predicate covers the contract surface at a fraction of the complexity).
+Genuinely undecided → **ENG-537**: standalone `creditAccount` / `creditEstimate`. They would carry branded types, so they clear the branding bar — but `getBalance` already composes them, and Barney only wants them split to dodge the `bank.allBalances` over-fetch. That smells like `getBalance` being too coarse rather than a missing read; it deserves its own decision, not a reflex add. Also there: `reverse` on `getLeasesByTenant` pagination (a defect in our existing composition, not new surface).
+
+Note also that Barney's `getCreditAccount` synthesizes a zero-account on not-found rather than returning null, so its contract differs from `credits: null` even once fixed — a product decision that correctly stays in Barney.
+
+**Explicit non-goals:** wrapping `creditAddress` or single-denom `bank.balance` (Decision 4 — permanently out); standalone credit reads and `reverse` pagination (deferred to ENG-537); deep-proxying the RPC client to mint `NOT_FOUND` there (the shared predicate covers the contract surface at a fraction of the complexity).
 
 ## Breaking change
 
