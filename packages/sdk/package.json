@@ -55,6 +55,14 @@
       "types": "./dist/orchestration.d.ts",
       "import": "./dist/orchestration.js"
     },
+    "./chain": {
+      "types": "./dist/chain.d.ts",
+      "import": "./dist/chain.js"
+    },
+    "./faucet": {
+      "types": "./dist/faucet.d.ts",
+      "import": "./dist/faucet.js"
+    },
     "./node": {
       "types": "./dist/node.d.ts",
       "node": "./dist/node.js",

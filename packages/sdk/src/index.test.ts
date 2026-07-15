@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import * as catalog from './catalog.js';
+import * as chain from './chain.js';
 import * as deploy from './deploy.js';
+import * as faucet from './faucet.js';
 import * as root from './index.js';
 import * as node from './node.js';
 import * as orchestration from './orchestration.js';
@@ -126,14 +128,22 @@ describe('manifest-sdk barrels', () => {
 
   it('node-only exports are ONLY on /node (browser-safety; ENG-281/287)', () => {
     const NODE_ONLY = [...GUARDED_FETCH_EXPORTS, 'createFredClientNode'];
-    for (const b of [root, reads, catalog, deploy, orchestration])
+    for (const b of [
+      root,
+      reads,
+      catalog,
+      deploy,
+      orchestration,
+      chain,
+      faucet,
+    ])
       for (const k of NODE_ONLY) expect(b).not.toHaveProperty(k);
     for (const k of NODE_ONLY) expect(node).toHaveProperty(k);
   });
 
   // EXACT-KEYSET pins (not just toHaveProperty): catch ADDITIVE drift — a new value silently leaking
   // onto a thin/small barrel (e.g. the `fredActions` over-export). Scoped to the barrels where the
-  // exact surface is load-bearing + low-churn (thin ROOT; the small /reads, /orchestration, /node).
+  // exact surface is load-bearing + low-churn (thin ROOT; the small /reads, /chain, /faucet, /orchestration, /node).
   // /catalog + /deploy are intentional growth surfaces — kept on toHaveProperty above.
   // (`Object.keys` sees only VALUE exports; `export type *`/`export type {}` erase at build.)
   const keys = (m: object) => Object.keys(m).sort();
@@ -175,6 +185,16 @@ describe('manifest-sdk barrels', () => {
 
   it('/reads runtime exports are EXACTLY the 8 reads', () => {
     expect(keys(reads)).toEqual([...READS].sort());
+  });
+
+  it('/chain runtime exports are EXACTLY the 2 generic escape hatches', () => {
+    expect(keys(chain)).toEqual(['cosmosQuery', 'cosmosTx'].sort());
+  });
+
+  it('/faucet runtime exports are EXACTLY the 3 faucet fns', () => {
+    expect(keys(faucet)).toEqual(
+      ['fetchFaucetStatus', 'requestFaucet', 'requestFaucetCredit'].sort(),
+    );
   });
 
   it('/orchestration runtime exports are EXACTLY the 5 orchestration fns', () => {

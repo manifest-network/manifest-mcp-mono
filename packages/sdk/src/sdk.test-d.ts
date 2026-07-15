@@ -1,4 +1,5 @@
 import { describe, expectTypeOf, it } from 'vitest';
+import { cosmosQuery, cosmosTx } from './chain.js';
 // The tx/lifecycle value surface re-emitted on the `/deploy` subpath.
 import type {
   AppDeploySpec,
@@ -10,10 +11,24 @@ import type {
   setItemCustomDomain,
   stopApp,
 } from './deploy.js';
-import { createProviderAuth } from './deploy.js';
+import {
+  type BuildManifestOptions,
+  createProviderAuth,
+  type DeployResult,
+  type ManifestDeploySpec,
+  type TxCallOptions,
+} from './deploy.js';
+import {
+  type FaucetStatusResponse,
+  fetchFaucetStatus,
+  type RequestFaucetResult,
+  requestFaucet,
+  requestFaucetCredit,
+} from './faucet.js';
 // Brand families re-emitted via the ROOT `export type *`.
 import type {
   Address,
+  EventSocket,
   EventTransport,
   Fqdn,
   LeaseUuid,
@@ -162,5 +177,42 @@ describe('error-narrowing guards (ENG-462)', () => {
       >();
       expectTypeOf(e.details).toExtend<SkuAmbiguousDetails>();
     }
+  });
+});
+
+describe('ENG-531 facade completeness (re-emitted through the SDK)', () => {
+  it('/deploy re-emits the deploy-family option/result types', () => {
+    expectTypeOf<BuildManifestOptions>().not.toBeNever();
+    expectTypeOf<DeployResult>().not.toBeNever();
+    expectTypeOf<ManifestDeploySpec>().not.toBeNever();
+    expectTypeOf<TxCallOptions>().not.toBeNever();
+  });
+
+  it('the root `.` re-emits EventSocket alongside the ctx/transport ports', () => {
+    expectTypeOf<EventSocket>().not.toBeNever();
+  });
+
+  it('/chain exposes the two generic escape-hatch values', () => {
+    expectTypeOf(cosmosQuery).toBeFunction();
+    expectTypeOf(cosmosTx).toBeFunction();
+  });
+
+  it('/faucet exposes the faucet value + type surface', () => {
+    expectTypeOf(requestFaucet).toBeFunction();
+    expectTypeOf(requestFaucetCredit).toBeFunction();
+    expectTypeOf(fetchFaucetStatus).toBeFunction();
+    expectTypeOf<FaucetStatusResponse>().not.toBeNever();
+    expectTypeOf<RequestFaucetResult>().not.toBeNever();
+  });
+
+  it('faucet types do NOT leak onto the SDK root (never-the-main-barrel invariant)', () => {
+    // A used local (not an exported/unused alias): needs no `export` (so it doesn't trip
+    // biome's noExportsInTest) and no unused-var suppression. If a future edit adds faucet
+    // to core's barrel, `export type *` surfaces FaucetStatusResponse on `./index.js`, the
+    // type annotation resolves, the @ts-expect-error goes unused → TS2578 → RED. (An
+    // *unused* alias would be masked by TS6196 and go inert — see plan review.)
+    // @ts-expect-error — FaucetStatusResponse must NOT be reachable from the root barrel.
+    const _leak: import('./index.js').FaucetStatusResponse = undefined as never;
+    void _leak;
   });
 });

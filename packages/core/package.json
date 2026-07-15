@@ -25,6 +25,10 @@
       "types": "./dist/ssrf.d.ts",
       "import": "./dist/ssrf.js"
     },
+    "./faucet": {
+      "types": "./dist/faucet.d.ts",
+      "import": "./dist/faucet.js"
+    },
     "./__test-utils__/mocks.js": {
       "types": "./dist/__test-utils__/mocks.d.ts",
       "import": "./dist/__test-utils__/mocks.js"

@@ -7,6 +7,8 @@ import type { EncodeObject } from '@cosmjs/proto-signing';
 
 export {
   type AppDeploySpec,
+  type BuildManifestOptions,
+  type DeployResult,
   type ExecuteTxResult,
   executeTx,
   type FundCreditsResult,
@@ -14,11 +16,13 @@ export {
   LeaseState,
   leaseStateFromJSON,
   leaseStateToJSON,
+  type ManifestDeploySpec,
   type SetItemCustomDomainInput,
   type SetItemCustomDomainResult,
   type StopAppResult,
   setItemCustomDomain,
   stopApp,
+  type TxCallOptions,
 } from '@manifest-network/manifest-mcp-core';
 export {
   AuthTimestampTracker,
