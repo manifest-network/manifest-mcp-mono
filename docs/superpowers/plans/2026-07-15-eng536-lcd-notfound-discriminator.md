@@ -94,7 +94,8 @@ Verified raw shape: `constructor: AxiosError`, `response.status: 404` (number), 
 | **Modify** `packages/sdk/src/index.test.ts` | ROOT keyset. **Leave `READS` at 8.** |
 | **Create** `e2e/rest-mode-notfound.e2e.test.ts` | New file — `rest-mode.e2e.test.ts` is MCP-stdio and cannot host these. |
 | **Modify** `e2e/billing-custom-domain.e2e.test.ts` | `:277-278` `QUERY_FAILED` → `NOT_FOUND`. |
-| **Modify** `e2e/chain-routing.e2e.test.ts` | `:1064-1080` IBC denom-trace pin. |
+| **Modify** `e2e/chain-routing.e2e.test.ts` | `:1064-1080` IBC denom-trace pin + rename the test. |
+| **Modify** `e2e/sdk-acceptance.e2e.test.ts` | `:70-74,:84` stale feature-detect rationale (comments only). |
 | **Modify** `CHANGELOG.md` | Module-wide + both-transport framing. |
 
 **Verified as NOT needing edits:** `client-factory.ts` (binds via `BoundFn<typeof fn>` — nullability propagates through the type). agent-core's `manageDomain` call site (calls `queryClient.liftedinit.billing.v1.leaseByCustomDomain` **directly** at `:404`, not core's read).
@@ -480,7 +481,11 @@ Adjacent bug: `retry.ts:70`'s `/\b(?:http|status)\s*5\d{2}\b/` never matches axi
 > group_info     500 {"code":2,"message":"codespace sdk code 38: not found: group"}
 > ```
 >
-> A blanket 5xx retry would burn N attempts + backoff + N rate-limiter tokens on `no such code: 999999` — a deterministic answer that costs ONE round trip today. **The discriminator is the envelope, not the status:** a grpc envelope means *the application answered*; a real infra 5xx (proxy down, gateway error) carries **no** envelope.
+> A blanket 5xx retry would burn N attempts + backoff + N rate-limiter tokens on `no such code: 999999` — a deterministic answer that costs ONE round trip today.
+>
+> **The discriminator is the grpc code, not the HTTP status.** An envelope means the request reached grpc-gateway and carries a **gRPC status** — it does **not** mean a keeper ran. grpc-gateway envelopes its *own* failures too (`runtime/errors.go`'s `DefaultHTTPErrorHandler` `status.Convert()`s every error "regardless of error origin — whether from backend application logic or transport layer failures"). Proven live: `/liftedinit/nonexistent/v1/foo` → 501 `{"code":12}` (no keeper exists) and `/cosmos/gov/v1/proposals/not_an_int` → 400 `{"code":3,"message":"…strconv.ParseUint…"}` (the gateway's own path-param decoder — the application was never invoked).
+>
+> So retry on an explicit transient set — `RETRYABLE_GRPC_CODES = [4, 8, 14]` — rather than on "did the app answer". Those are transport-level codes precisely *because* an envelope can originate below the application. Everything else enveloped is a fixed answer. Note `code:2` is ambiguous (an sdkerrors-wrapped keeper answer, *or* a gateway-side non-status coerced by `status.Convert`); we deliberately do not retry it. An unenveloped 5xx/429 is a raw transport failure and **is** retried.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -584,12 +589,17 @@ Replace `isRetryableError`'s `ManifestMCPError` branch — it spans **lines 99-1
     }
     const { httpStatus, grpcCode } = (error.details ?? {}) as QueryErrorDetails;
 
-    // An envelope means the APPLICATION answered — deterministic unless the chain
-    // itself says otherwise. Cosmos keepers are not uniform: sdkerrors-wrapped
-    // errors collapse to codes.Unknown -> HTTP 500 + code:2 (verified live: wasm
-    // "no such code", group "not found: group"). Retrying those burns attempts,
-    // backoff and rate-limiter tokens on a fixed answer, so status ALONE must not
-    // drive the decision (ENG-536).
+    // An envelope means the request reached grpc-gateway and carries a gRPC
+    // status. It does NOT mean a keeper ran — the gateway status.Convert()s its
+    // OWN failures too (routing 501/code:12, path-decode 400/code:3). So do not
+    // infer "the app answered"; retry only the explicitly transient codes.
+    //
+    // Why status alone must not drive this: Cosmos keepers are not uniform —
+    // sdkerrors-wrapped errors collapse to codes.Unknown -> HTTP 500 + code:2
+    // (verified live: wasm "no such code", group "not found: group"). Retrying
+    // those burns attempts, backoff and rate-limiter tokens on a fixed answer.
+    // code:2 is ambiguous (keeper answer, or a gateway-side non-status coerced by
+    // status.Convert) — we deliberately do not retry it. (ENG-536)
     if (typeof grpcCode === 'number') {
       return RETRYABLE_GRPC_CODES.includes(grpcCode);
     }
@@ -1107,7 +1117,11 @@ it('THROWS for a proxy 404 whose message merely contains "not found" (ENG-536)',
   // A node that doesn't serve the billing module returns HTTP 404
   // {"error":"not_found","message":"Endpoint not found"} with NO grpc envelope.
   // That must NOT read as "FQDN unclaimed" — it is a real failure.
-  const args = { action: 'lookup', fqdn: 'unclaimed.example.com' };
+  // MUST be annotated (or inlined at the call site, as the :273-291 neighbour
+  // does): a bare object literal widens `action` to `string` and the union
+  // rejects it — TS2345. vitest would not catch this; the full-repo lint would,
+  // several tasks later. `ManageDomainArgs` is already imported at :30.
+  const args: ManageDomainArgs = { action: 'lookup', fqdn: 'unclaimed.example.com' };
 
   const queryClient = makeMockQueryClient();
   queryClient.liftedinit.billing.v1.leaseByCustomDomain.mockRejectedValue(
@@ -1354,7 +1368,7 @@ describe('not-found contract over LCD (ENG-536)', () => {
 });
 ```
 
-- [ ] **Step 2: Update the two existing pins**
+- [ ] **Step 2: Update the pre-existing pins + stale rationale**
 
 Both assert the pre-ENG-536 code on paths this change re-codes.
 
@@ -1365,8 +1379,8 @@ Both assert the pre-ENG-536 code on paths this change re-codes.
 - [ ] **Step 3: Run in CI**
 
 ```bash
-git add e2e/rest-mode-notfound.e2e.test.ts e2e/billing-custom-domain.e2e.test.ts e2e/chain-routing.e2e.test.ts
-git commit -m "test(e2e): pin the LCD not-found contract; update two pre-existing code pins (ENG-536)"
+git add e2e/rest-mode-notfound.e2e.test.ts e2e/billing-custom-domain.e2e.test.ts e2e/chain-routing.e2e.test.ts e2e/sdk-acceptance.e2e.test.ts
+git commit -m "test(e2e): pin the LCD not-found contract; update pre-existing code pins + stale rationale (ENG-536)"
 git push -u origin worktree-eng-lcd-notfound-discriminator
 gh workflow run e2e.yml --ref worktree-eng-lcd-notfound-discriminator
 ```
@@ -1387,7 +1401,7 @@ House style (see 0.17.0) uses `### Upgrade notes` + `**BREAKING (…callers):**`
 ### Fixed
 
 - **core:** the LCD/REST adapter discarded the not-found signal, so every declared `| null` read threw instead of returning null over REST. `getBalance` threw for any address with no credit account (every new user); `getLease`'s `BrandedLease | null` could never return null; agent-core's domain lookup could not report an unclaimed FQDN. LCD errors are now classified from the grpc-gateway envelope (`code: 5` → `NOT_FOUND`) and carry `details: {httpStatus, grpcCode, grpcMessage}`. Classification keys on the grpc code, never HTTP 404 — a proxy/route 404 from a node that doesn't serve the module still throws. (ENG-536)
-- **core:** `isRetryableError` now branches on structured `details` rather than the error message. LCD 5xx failures were never retried, because axios's `Request failed with status code 500` does not match the 5xx message pattern. An **unenveloped** 5xx/429 (a real transport or proxy failure) is now retried; an **enveloped** 5xx is not, because a grpc envelope means the chain answered deterministically — retrying `codespace wasm code 28: no such code` cannot change it. Enveloped `UNAVAILABLE`/`DEADLINE_EXCEEDED`/`RESOURCE_EXHAUSTED` remain retryable. (ENG-536)
+- **core:** `isRetryableError` now branches on structured `details` rather than the error message. LCD 5xx failures were never retried, because axios's `Request failed with status code 500` does not match the 5xx message pattern. An error carrying a **gRPC status** is now retried only for the transient codes (`UNAVAILABLE`, `DEADLINE_EXCEEDED`, `RESOURCE_EXHAUSTED`); any other enveloped status is a fixed answer and is not retried — retrying `codespace wasm code 28: no such code` (which arrives as HTTP 500 `code:2`) cannot change it. An error with **no** gRPC status is a raw transport failure and is retried on 5xx/429. (ENG-536)
 
 ### Added
 
