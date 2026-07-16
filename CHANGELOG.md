@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **core:** the LCD/REST adapter discarded the not-found signal, so every declared `| null` read threw instead of returning null over REST. `getBalance` threw for any address with no credit account (every new user); `getLease`'s `BrandedLease | null` could never return null; agent-core's domain lookup could not report an unclaimed FQDN. LCD errors are now classified from the grpc-gateway envelope (`code: 5` → `NOT_FOUND`) and carry `details: {httpStatus, grpcCode, grpcMessage}`. Classification keys on the grpc code, never HTTP 404 — a proxy/route 404 from a node that doesn't serve the module still throws. (ENG-536)
+- **core:** `isRetryableError` now branches on structured `details` rather than the error message. LCD 5xx failures were never retried, because axios's `Request failed with status code 500` does not match the 5xx message pattern. An error carrying a **gRPC status** is now retried only for the transient codes (`UNAVAILABLE`, `DEADLINE_EXCEEDED`, `RESOURCE_EXHAUSTED`); any other enveloped status is a fixed answer and is not retried — retrying `codespace wasm code 28: no such code` (which arrives as HTTP 500 `code:2`) cannot change it. An error with **no** gRPC status is a raw transport failure and is retried on 5xx/429. (ENG-536)
+
+### Added
+
+- **core, sdk:** `isNotFoundError(err)` — a public predicate accepting a `ManifestMCPError`, a **raw LCD/axios error from your own manifestjs client**, or a plain RPC `Error`. Lets a consumer keep manifestjs as its transport and still classify not-found correctly. Value-checks `.code` (no `instanceof`) so it is dual-package-safe, matching `isSkuAmbiguousError`. (ENG-536)
+- **core:** `ManifestMCPErrorCode.NOT_FOUND` + the `QueryErrorDetails` type. (ENG-536)
+
+### Changed
+
+- **core:** not-found errors now surface as `NOT_FOUND` instead of `QUERY_FAILED` across **all LCD modules and both transports** — not just billing. `adaptModule` is applied to ~25 namespaces and the generic `cosmos_query` path is re-coded on the RPC leg too, so e.g. an absent lease, gov proposal or IBC denom-trace now yields `NOT_FOUND`. Note this follows the **keeper's own error code**, not the HTTP status: modules that raise `codes.NotFound` (billing, gov, IBC, …) yield `NOT_FOUND`, while modules whose keepers wrap with `sdkerrors` collapse to `codes.Unknown` and keep `QUERY_FAILED` (verified: `cosmwasm.wasm` "no such code" and `cosmos.group` "not found: group" both arrive as HTTP 500 `code:2`). (ENG-536)
+
+### Upgrade notes
+
+**BREAKING (SDK callers):** `getLeaseByCustomDomain` returns `{lease, serviceName} | null` instead of throwing for an unclaimed FQDN; `getWithdrawableAmount` returns `Coin[] | null`. Handle `null`. The `lease_by_custom_domain` MCP tool keeps its throw contract, now raising `NOT_FOUND` rather than an opaque `QUERY_FAILED`.
+
+**BREAKING (error-code consumers):** code that matched `QUERY_FAILED` for a not-found outcome must now match `NOT_FOUND`. This applies to `cosmos_query` on any module, not only billing.
+
+**Changed:** `getLease` / `getWithdrawableAmount` now validate the lease uuid up-front, throwing `INVALID_ARGUMENT` for a malformed value (previously `QUERY_FAILED`) — required because the keeper answers `code:5 "lease not found"` for a malformed uuid too, which would otherwise render as `null`.
+
 ## [0.18.0] - 2026-07-15
 
 ### Added
