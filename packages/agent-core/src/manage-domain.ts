@@ -22,6 +22,7 @@
  */
 
 import {
+  isNotFoundError,
   ManifestMCPError,
   ManifestMCPErrorCode,
   noopLogger,
@@ -67,24 +68,6 @@ const FQDN_RE =
   /^(?=.{1,253}$)(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$/;
 
 const SCHEME_PREFIX_RE = /^https?:\/\//i;
-
-/**
- * Cosmos SDK / gRPC NotFound message patterns. Match against
- * `Error.message` to distinguish chain-keeper NotFound (treated as
- * "unclaimed FQDN" → typed `null` result) from real failures (treated
- * as `QUERY_FAILED` throws). Anchored loose patterns to tolerate
- * different keeper / transport formatting ("not found", "NotFound",
- * "no such record", "does not exist").
- *
- * Per CLAUDE.md: use `String.prototype.match()` over `RegExp.test()`
- * to avoid the CI security hook's false-positive on shell-execution
- * tokens.
- */
-const NOT_FOUND_RES: readonly RegExp[] = [
-  /not.?found/i,
-  /no.?such/i,
-  /does.?not.?exist/i,
-];
 
 /**
  * Set / clear / look up a lease item's custom domain.
@@ -415,17 +398,16 @@ async function lookupDomain(
     ) {
       throw err;
     }
-    // Narrowed disambiguation (Copilot review PR #60): the chain keeper
-    // raises a NotFound-shaped error when the FQDN is unclaimed (cosmjs/
-    // grpc surfaces this as a plain `Error` whose message matches
-    // `/not.?found|no.?such|does.?not.?exist/i`). Only that case is
-    // collapsed to the typed `{ lease: null }` result. Every other
-    // failure mode (RPC transport, decoding, structured
-    // `ManifestMCPError`, etc.) flows through `onFailure({ reason })`
-    // then a typed throw — matching the lease-package's
-    // `lease_by_custom_domain` handler (packages/lease/src/index.ts:442)
-    // and `getBalance`'s `catchNotFound` pattern (packages/core/src/
-    // tools/getBalance.ts:4). The bare `catch` was masking real failures.
+    // Narrowed disambiguation (ENG-536): the keeper's NotFound now arrives as
+    // a structured `NOT_FOUND` — classified from the grpc envelope in core's
+    // LCD adapter, or from cosmjs's `rpc error: code = NotFound` text over
+    // RPC (see core's `internals/classify-query-error.ts`). Only that case
+    // is collapsed to the typed `{ lease: null }` result (via `onComplete`).
+    // Every other failure — including a proxy 404 whose message merely
+    // contains "not found" — flows through `onFailure({ reason })` then a
+    // typed throw. `isNotFoundError` used to be a local loose-regex helper
+    // here; it is now core's shared predicate (imported above) so all
+    // callers agree on what "not found" means.
     if (isNotFoundError(err)) {
       const notFoundResult: ManageDomainResult = {
         action: 'lookup',
@@ -460,16 +442,6 @@ async function lookupDomain(
   // was really an oversight rationalized post-hoc. Now consistent.
   callbacks.onComplete?.(lookupResult);
   return lookupResult;
-}
-
-function isNotFoundError(err: unknown): boolean {
-  // Pass-through guard for structured failures: a `ManifestMCPError` is
-  // always a real, intentional error — never silently re-classified as
-  // "FQDN unclaimed" even if its message happens to contain "not found".
-  if (err instanceof ManifestMCPError) return false;
-  if (!(err instanceof Error)) return false;
-  const msg = err.message;
-  return NOT_FOUND_RES.some((re) => msg.match(re) !== null);
 }
 
 function readLeaseUuid(lease: unknown): string | undefined {
