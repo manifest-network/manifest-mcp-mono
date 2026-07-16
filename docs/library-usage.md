@@ -283,7 +283,7 @@ const { creditAddress } = await client.query.liftedinit.billing.v1.creditAddress
 const { balance } = await client.query.cosmos.bank.v1beta1.balance({ address, denom: 'umfx' });
 ```
 
-- **Already converted.** Responses come back `snakeToCamelDeep` + protobuf `fromJSON`-decoded, so enum fields are **numeric** (`lease.state === 2`), not the LCD strings (`"LEASE_STATE_ACTIVE"`) — no hand-rolled `lcdConvert` / enum-fixup needed.
+- **Already decoded.** `client.query` responses are typed objects with **numeric** enum fields (a lease's `state` is `2`, not the LCD string `"LEASE_STATE_ACTIVE"`) — no hand-rolled `lcdConvert` / enum-fixup needed. This is transport-agnostic: over REST the adapter runs `snakeToCamelDeep` + protobuf `fromJSON`; over RPC the Telescope client returns already-decoded objects. Either way the shape is the same.
 - **`client.query` bypasses the rate limiter.** Only the typed reads (`getLease`, `getBalance`, …) acquire a token from the client's token bucket. Prefer a typed read where one exists; reach for `client.query` for the 1:1 passthroughs (`creditAccount`, `creditAddress`, single-denom `bank.balance`, …) that have no branded wrapper — wrapping those would just re-implement manifestjs.
 - **Unsupported over REST.** `cosmos.orm.query.v1alpha1` and `liftedinit.manifest.v1` throw `UNSUPPORTED_QUERY` on property access (no LCD support / no query service). Neither has an app-facing read; everything else routes.
 

@@ -70,7 +70,7 @@ The SDK is the **single typed library face** for building on Manifest. You reach
 
 > The stringly, JSON-shaped `cosmos_query` / `cosmos_tx` tools you may have seen are the **MCP-server** face — they live in the separate `@manifest-network/manifest-mcp-{chain,lease,fred}` packages for LLM/agent hosts and are **not** part of this SDK. For a low-level on-chain escape hatch *from the SDK*, use `executeTx` (multi-message atomic tx, from `/deploy`) or drop down to `CosmosClientManager` (re-exported from the root); the typed `cosmosQuery` / `cosmosTx` primitives behind those tools are on `…/chain` as raw query/tx escape hatches.
 
-For a **read** the SDK doesn't wrap, you don't need a second manifestjs client — the read client exposes manifestjs's own typed query tree at **`client.query`** (`fromJSON`-converted, so enums are numeric; note it bypasses the rate limiter, so prefer a typed read where one exists). Use it for 1:1 passthroughs like `client.query.liftedinit.billing.v1.creditAddress({ tenant })` or `client.query.cosmos.bank.v1beta1.balance({ address, denom })`. See the [cookbook](../../docs/library-usage.md#raw-manifestjs-queries--clientquery).
+For a **read** the SDK doesn't wrap, you don't need a second manifestjs client — the read client exposes manifestjs's own typed query tree at **`client.query`** (responses are decoded typed objects with numeric enums, not LCD strings; note it bypasses the rate limiter, so prefer a typed read where one exists). Use it for 1:1 passthroughs like `client.query.liftedinit.billing.v1.creditAddress({ tenant })` or `client.query.cosmos.bank.v1beta1.balance({ address, denom })`. See the [cookbook](../../docs/library-usage.md#raw-manifestjs-queries--clientquery).
 
 ## Parse at the edges
 
