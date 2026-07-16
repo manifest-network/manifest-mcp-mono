@@ -36,11 +36,12 @@ describe('adaptModule error classification (ENG-536)', () => {
 
   it('keeps a proxy 404 as QUERY_FAILED', async () => {
     const lcdMod = {
-      lease: vi
-        .fn()
-        .mockRejectedValue(
-          axiosError(404, { error: 'not_found', message: 'Endpoint not found' }),
-        ),
+      lease: vi.fn().mockRejectedValue(
+        axiosError(404, {
+          error: 'not_found',
+          message: 'Endpoint not found',
+        }),
+      ),
     };
     const converterNs = { QueryLeaseResponse: { fromJSON: (o: unknown) => o } };
     const adapted = adaptModule(lcdMod, converterNs);
