@@ -277,3 +277,92 @@ describe('INVALID_ARGUMENT is a non-retryable input error', () => {
     expect(isRetryableError(err)).toBe(false);
   });
 });
+
+describe('isRetryableError — structured details (ENG-536)', () => {
+  it('never retries NOT_FOUND', () => {
+    expect(
+      isRetryableError(
+        new ManifestMCPError(
+          ManifestMCPErrorCode.NOT_FOUND,
+          'lease not found',
+          {
+            httpStatus: 404,
+            grpcCode: 5,
+          },
+        ),
+      ),
+    ).toBe(false);
+  });
+
+  // Pins the original bug: axios's real message template defeats the 5xx pattern.
+  // No envelope => a genuine transport/proxy 5xx => retry.
+  it('retries an UNENVELOPED 5xx despite the "status code 500" message', () => {
+    expect(
+      isRetryableError(
+        new ManifestMCPError(
+          ManifestMCPErrorCode.QUERY_FAILED,
+          'LCD query "lease" failed: Request failed with status code 500',
+          { httpStatus: 500 },
+        ),
+      ),
+    ).toBe(true);
+  });
+
+  // THE regression guard. wasm/group not-founds arrive as 500 + code:2 (verified
+  // live). The chain ANSWERED — retrying cannot change "no such code".
+  it('does NOT retry an ENVELOPED 5xx (deterministic keeper answer)', () => {
+    expect(
+      isRetryableError(
+        new ManifestMCPError(
+          ManifestMCPErrorCode.QUERY_FAILED,
+          'LCD query "code" failed: Request failed with status code 500',
+          {
+            httpStatus: 500,
+            grpcCode: 2,
+            grpcMessage: 'codespace wasm code 28: no such code: code id 999999',
+          },
+        ),
+      ),
+    ).toBe(false);
+  });
+
+  // An enveloped code the chain itself marks transient.
+  it('retries an enveloped UNAVAILABLE (grpc 14)', () => {
+    expect(
+      isRetryableError(
+        new ManifestMCPError(
+          ManifestMCPErrorCode.QUERY_FAILED,
+          'node catching up',
+          {
+            httpStatus: 503,
+            grpcCode: 14,
+          },
+        ),
+      ),
+    ).toBe(true);
+  });
+
+  it('does not retry a 4xx carrying details', () => {
+    expect(
+      isRetryableError(
+        new ManifestMCPError(ManifestMCPErrorCode.QUERY_FAILED, 'bad request', {
+          httpStatus: 400,
+        }),
+      ),
+    ).toBe(false);
+  });
+
+  it('still retries an unenveloped 429', () => {
+    expect(
+      isRetryableError(
+        new ManifestMCPError(
+          ManifestMCPErrorCode.QUERY_FAILED,
+          'rate limited',
+          {
+            httpStatus: 429,
+          },
+        ),
+      ),
+    ).toBe(true);
+  });
+});
