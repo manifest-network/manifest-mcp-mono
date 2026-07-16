@@ -67,9 +67,10 @@ async function probeCustomDomainSupported(
   await walletProvider.connect();
   const client = await createFredClient({ config, walletProvider, fetch });
   try {
-    // An unclaimed sentinel FQDN: a v2.1+ chain answers with a structured NotFound ("no lease with
-    // custom_domain X") → the path is registered → feature present. Pre-v2.1 chains return
-    // "unknown query path" / "unable to resolve type URL" → feature genuinely absent.
+    // An unclaimed sentinel FQDN: a v2.1+ chain resolves the query path and
+    // getLeaseByCustomDomain now returns null for the not-found lease (ENG-536 — it no
+    // longer throws) → the path is registered → feature present. Pre-v2.1 chains still
+    // throw "unknown query path" / "unable to resolve type URL" → feature genuinely absent.
     await client.getLeaseByCustomDomain(parseFqdn('probe-unclaimed.e2e.test'));
     return true; // a claimed sentinel (unlikely) still proves the path is registered
   } catch (err) {
@@ -81,7 +82,9 @@ async function probeCustomDomainSupported(
       );
       return false;
     }
-    // NotFound / no lease with custom_domain / key not found → the feature IS registered.
+    // Any other message (e.g. a raw "NotFound" / "no lease with custom_domain" / "key not
+    // found" string surfacing from some other chain-side path) still implies the query
+    // resolved rather than being unrecognized → the feature IS registered.
     return true;
   } finally {
     client.dispose();
