@@ -396,12 +396,17 @@ describe('getWithdrawableAmount not-found (ENG-536)', () => {
     ).resolves.toBeNull();
   });
 
-  it('rejects a malformed uuid with INVALID_ARGUMENT', async () => {
+  it('rejects a malformed uuid with INVALID_ARGUMENT without issuing a read', async () => {
     const client = makeMockQueryClient();
     await expect(
       getWithdrawableAmount(makeReadCtx({ query: client }), 'not-a-uuid'),
     ).rejects.toMatchObject({
       code: ManifestMCPErrorCode.INVALID_ARGUMENT,
     });
+    // Pins the "assertUuid precedes the read" ordering (parity with getLease):
+    // a regression that moved validation after withReadSignal would issue a read.
+    expect(
+      client.liftedinit.billing.v1.withdrawableAmount,
+    ).not.toHaveBeenCalled();
   });
 });
