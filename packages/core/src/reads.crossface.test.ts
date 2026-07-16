@@ -51,6 +51,8 @@ function makeCrossfaceCtx(client: ReturnType<typeof makeMockQueryClient>) {
   };
 }
 
+const VALID_UUID = '550e8400-e29b-41d4-a716-446655440000';
+
 describe('§9 cross-face equivalence (typed read vs cosmos_query stringly face)', () => {
   it('getLeasesByTenant equals billing leases-by-tenant', async () => {
     const client = makeMockQueryClient({
@@ -98,10 +100,8 @@ describe('§9 cross-face equivalence (typed read vs cosmos_query stringly face)'
       },
     });
     const { ctx, chain } = makeCrossfaceCtx(client);
-    const typed = await getLease(ctx, 'lease-uuid-1');
-    const stringly = await cosmosQuery(chain, 'billing', 'lease', [
-      'lease-uuid-1',
-    ]);
+    const typed = await getLease(ctx, VALID_UUID);
+    const stringly = await cosmosQuery(chain, 'billing', 'lease', [VALID_UUID]);
     // toMatchObject (not toEqual): same `items: []` materialization rationale as getLeasesByTenant —
     // the raw chain lease is a brand-erased subset of the typed BrandedLease.
     expect(norm(typed)).toMatchObject(norm(field(stringly, 'lease')) as object);
@@ -186,12 +186,12 @@ describe('§9 cross-face equivalence (typed read vs cosmos_query stringly face)'
       billing: { withdrawableAmount: [{ denom: 'upwr', amount: '100' }] },
     });
     const { ctx, chain } = makeCrossfaceCtx(client);
-    const typed = await getWithdrawableAmount(ctx, 'lease-uuid-1');
+    const typed = await getWithdrawableAmount(ctx, VALID_UUID);
     const stringly = await cosmosQuery(
       chain,
       'billing',
       'withdrawable-amount',
-      ['lease-uuid-1'],
+      [VALID_UUID],
     );
     expect(norm(typed)).toEqual(norm(field(stringly, 'amounts')));
   });

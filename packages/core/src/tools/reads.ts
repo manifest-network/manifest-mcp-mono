@@ -11,6 +11,7 @@ import {
   asSkuUuid,
 } from '../brands.js';
 import type { ReadCtx } from '../ctx.js';
+import { isNotFoundError } from '../internals/classify-query-error.js';
 import { withReadSignal } from '../internals/read-signal.js';
 import type {
   BrandedLease,
@@ -25,6 +26,7 @@ import {
   ManifestMCPError,
   ManifestMCPErrorCode,
 } from '../types.js';
+import { assertUuid } from '../validation.js';
 
 // ===== Module-private branded-view producers (OI-PRODUCERS: mirror sku-resolution.ts's toCandidate;
 // the view types stay pure-data in manifest-types.ts). Brand-on-extraction via the as* trust-cast
@@ -89,11 +91,24 @@ export async function getLease(
   leaseUuid: string,
   opts?: CallOptions,
 ): Promise<BrandedLease | null> {
+  // MUST precede the read: the keeper answers `code:5 "lease not found"` for a
+  // malformed uuid too, so without this a typo would return null — making null
+  // mean both "absent" and "you sent garbage" (ENG-536).
+  assertUuid(leaseUuid, 'lease_uuid', ManifestMCPErrorCode.INVALID_ARGUMENT);
+
   const r = await withReadSignal(
     ctx,
-    () => ctx.query.liftedinit.billing.v1.lease({ leaseUuid }),
+    () =>
+      ctx.query.liftedinit.billing.v1
+        .lease({ leaseUuid })
+        .catch((error: unknown) => {
+          // .catch scoped to the INNER read so AbortError/TimeoutError propagate (OI-CATCH)
+          if (isNotFoundError(error)) return null;
+          throw error;
+        }),
     opts,
   );
+  if (r === null) return null;
   // QueryLeaseResponse.lease is statically non-optional, but we guard null for parity with getBalance's
   // catchNotFound idiom + the mocks.ts {lease:null} shape; future P2 consumers disambiguate null. Do NOT
   // "simplify" to a non-null return — it breaks the mock-backed null test.
@@ -181,11 +196,20 @@ export async function getWithdrawableAmount(
   ctx: ReadCtx,
   leaseUuid: string,
   opts?: CallOptions,
-): Promise<Coin[]> {
+): Promise<Coin[] | null> {
+  assertUuid(leaseUuid, 'lease_uuid', ManifestMCPErrorCode.INVALID_ARGUMENT);
+
   const r = await withReadSignal(
     ctx,
-    () => ctx.query.liftedinit.billing.v1.withdrawableAmount({ leaseUuid }),
+    () =>
+      ctx.query.liftedinit.billing.v1
+        .withdrawableAmount({ leaseUuid })
+        .catch((error: unknown) => {
+          // .catch scoped to the INNER read so AbortError/TimeoutError propagate (OI-CATCH)
+          if (isNotFoundError(error)) return null;
+          throw error;
+        }),
     opts,
   );
-  return r.amounts;
+  return r === null ? null : r.amounts;
 }

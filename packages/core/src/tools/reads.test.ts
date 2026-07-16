@@ -13,6 +13,8 @@ import {
   getWithdrawableAmount,
 } from './reads.js';
 
+const VALID_UUID = '550e8400-e29b-41d4-a716-446655440000';
+
 describe('getLeasesByTenant', () => {
   it('returns branded leases + total and assembles the PageRequest (countTotal)', async () => {
     const client = makeMockQueryClient({
@@ -104,10 +106,7 @@ describe('getLease', () => {
         },
       },
     });
-    const result = await getLease(
-      makeReadCtx({ query: client }),
-      'lease-uuid-1',
-    );
+    const result = await getLease(makeReadCtx({ query: client }), VALID_UUID);
     expect(result).not.toBeNull();
     expect(result?.uuid).toBe('lease-uuid-1');
     expect(result?.providerUuid).toBe('provider-uuid-1');
@@ -117,7 +116,7 @@ describe('getLease', () => {
 
   it('returns null when the chain returns {lease: null}', async () => {
     const client = makeMockQueryClient();
-    const result = await getLease(makeReadCtx({ query: client }), 'missing');
+    const result = await getLease(makeReadCtx({ query: client }), VALID_UUID);
     expect(result).toBeNull();
   });
 
@@ -137,7 +136,7 @@ describe('getLease', () => {
       query: client,
       chain: { acquireRateLimit } as unknown as CosmosClientManager,
     });
-    await getLease(ctx, 'lease-uuid-1');
+    await getLease(ctx, VALID_UUID);
     expect(acquireRateLimit).toHaveBeenCalledTimes(1);
   });
 });
@@ -318,12 +317,12 @@ describe('getWithdrawableAmount', () => {
     });
     const result = await getWithdrawableAmount(
       makeReadCtx({ query: client }),
-      'lease-uuid-1',
+      VALID_UUID,
     );
     expect(result).toEqual([{ denom: 'upwr', amount: '100' }]);
     expect(
       vi.mocked(client.liftedinit.billing.v1.withdrawableAmount),
-    ).toHaveBeenCalledWith({ leaseUuid: 'lease-uuid-1' });
+    ).toHaveBeenCalledWith({ leaseUuid: VALID_UUID });
   });
 
   it('acquires the rate-limit token exactly once', async () => {
@@ -333,7 +332,76 @@ describe('getWithdrawableAmount', () => {
       query: client,
       chain: { acquireRateLimit } as unknown as CosmosClientManager,
     });
-    await getWithdrawableAmount(ctx, 'lease-uuid-1');
+    await getWithdrawableAmount(ctx, VALID_UUID);
     expect(acquireRateLimit).toHaveBeenCalledTimes(1);
+  });
+});
+
+const NOT_FOUND_ERR = new ManifestMCPError(
+  ManifestMCPErrorCode.NOT_FOUND,
+  'lease not found',
+  {
+    httpStatus: 404,
+    grpcCode: 5,
+    grpcMessage: 'lease not found',
+  },
+);
+
+describe('getLease not-found (ENG-536)', () => {
+  it('returns null when the chain says the lease is absent', async () => {
+    const client = makeMockQueryClient();
+    vi.mocked(client.liftedinit.billing.v1.lease).mockRejectedValue(
+      NOT_FOUND_ERR,
+    );
+    await expect(
+      getLease(makeReadCtx({ query: client }), VALID_UUID),
+    ).resolves.toBeNull();
+  });
+
+  it('rethrows a transient failure rather than reporting absence', async () => {
+    const client = makeMockQueryClient();
+    vi.mocked(client.liftedinit.billing.v1.lease).mockRejectedValue(
+      new ManifestMCPError(ManifestMCPErrorCode.QUERY_FAILED, 'boom', {
+        httpStatus: 500,
+      }),
+    );
+    await expect(
+      getLease(makeReadCtx({ query: client }), VALID_UUID),
+    ).rejects.toMatchObject({
+      code: ManifestMCPErrorCode.QUERY_FAILED,
+    });
+  });
+
+  // The keeper returns code:5 for a MALFORMED uuid too, so without this guard a
+  // typo would silently read as "absent".
+  it('rejects a malformed uuid with INVALID_ARGUMENT without issuing a read', async () => {
+    const client = makeMockQueryClient();
+    await expect(
+      getLease(makeReadCtx({ query: client }), 'not-a-uuid'),
+    ).rejects.toMatchObject({
+      code: ManifestMCPErrorCode.INVALID_ARGUMENT,
+    });
+    expect(client.liftedinit.billing.v1.lease).not.toHaveBeenCalled();
+  });
+});
+
+describe('getWithdrawableAmount not-found (ENG-536)', () => {
+  it('returns null when the lease is absent', async () => {
+    const client = makeMockQueryClient();
+    vi.mocked(
+      client.liftedinit.billing.v1.withdrawableAmount,
+    ).mockRejectedValue(NOT_FOUND_ERR);
+    await expect(
+      getWithdrawableAmount(makeReadCtx({ query: client }), VALID_UUID),
+    ).resolves.toBeNull();
+  });
+
+  it('rejects a malformed uuid with INVALID_ARGUMENT', async () => {
+    const client = makeMockQueryClient();
+    await expect(
+      getWithdrawableAmount(makeReadCtx({ query: client }), 'not-a-uuid'),
+    ).rejects.toMatchObject({
+      code: ManifestMCPErrorCode.INVALID_ARGUMENT,
+    });
   });
 });
