@@ -242,6 +242,12 @@ export class LeaseMCPServer {
             .min(0)
             .optional()
             .describe('Number of results to skip for pagination (default: 0)'),
+          reverse: z
+            .boolean()
+            .optional()
+            .describe(
+              'Return newest-first (reverse chronological) when true (default: false)',
+            ),
         },
         annotations: readOnlyAnnotations('List leases for a tenant'),
         _meta: manifestMeta({
@@ -269,6 +275,7 @@ export class LeaseMCPServer {
           stateFilter: STATE_FILTER_MAP[stateKey],
           limit: BigInt(args.limit ?? 50),
           offset: BigInt(args.offset ?? 0),
+          reverse: args.reverse,
         });
 
         const leases = raw.map((l) => ({
