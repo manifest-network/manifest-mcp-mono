@@ -16,10 +16,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **core, sdk:** `isNotFoundError(err)` — a public predicate accepting a `ManifestMCPError`, a **raw LCD/axios error from your own manifestjs client**, or a plain RPC `Error`. Lets a consumer keep manifestjs as its transport and still classify not-found correctly. Value-checks `.code` (no `instanceof`) so it is dual-package-safe, matching `isSkuAmbiguousError`. (ENG-536)
 - **core:** `ManifestMCPErrorCode.NOT_FOUND` + the `QueryErrorDetails` type. (ENG-536)
+- **core, lease:** `getLeasesByTenant` accepts an optional `reverse?: boolean` for reverse-ordered (newest-first) pagination; the `leases_by_tenant` MCP tool exposes it too. Additive, non-breaking. (ENG-537)
+- **docs:** `client.query` — the read client's `@public` typed manifestjs query tree — is documented as the tier-2 passthrough seam for reads without a branded wrapper (`packages/sdk/README.md`, `docs/library-usage.md`); one client, no second LCD client needed. The SDK read-surface principle is recorded in `CLAUDE.md`. (ENG-537)
 
 ### Changed
 
 - **core:** not-found errors now surface as `NOT_FOUND` instead of `QUERY_FAILED` across **all LCD modules and both transports** — not just billing. `adaptModule` is applied to ~25 namespaces and the generic `cosmos_query` path is re-coded on the RPC leg too, so e.g. an absent lease, gov proposal or IBC denom-trace now yields `NOT_FOUND`. Note this follows the **keeper's own error code**, not the HTTP status: modules that raise `codes.NotFound` (billing, gov, IBC, …) yield `NOT_FOUND`, while modules whose keepers wrap with `sdkerrors` collapse to `codes.Unknown` and keep `QUERY_FAILED` (verified: `cosmwasm.wasm` "no such code" and `cosmos.group` "not found: group" both arrive as HTTP 500 `code:2`). (ENG-536)
+
+- **core, cosmwasm, sdk:** `@manifest-network/manifestjs` is now declared as a caret range (`^2.4.1`) instead of an exact pin, and `sdk` declares it directly for the first time. A published library should declare a compatibility range so a consumer's own manifestjs pin dedupes to a single copy — an exact pin forced a nested second copy on version skew. Build reproducibility is unchanged (lockfile + `npm ci` + root `overrides` still pin exactly). (ENG-538)
 
 ### Upgrade notes
 
