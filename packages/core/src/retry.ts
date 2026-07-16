@@ -1,3 +1,4 @@
+import type { QueryErrorDetails } from './internals/classify-query-error.js';
 import {
   ManifestMCPError,
   ManifestMCPErrorCode,
@@ -26,6 +27,11 @@ const NON_RETRYABLE_ERROR_CODES: ManifestMCPErrorCode[] = [
   // Validation errors - input is invalid
   ManifestMCPErrorCode.INVALID_ADDRESS,
   ManifestMCPErrorCode.INVALID_ARGUMENT,
+
+  // The chain answered "no such entity" — an expected, permanent answer.
+  // Retrying cannot change it (ENG-536).
+  ManifestMCPErrorCode.NOT_FOUND,
+
   ManifestMCPErrorCode.UNSUPPORTED_TX,
   ManifestMCPErrorCode.UNSUPPORTED_QUERY,
   ManifestMCPErrorCode.UNKNOWN_MODULE,
@@ -41,6 +47,22 @@ const NON_RETRYABLE_ERROR_CODES: ManifestMCPErrorCode[] = [
   // SKU resolution - ambiguous name needs caller disambiguation, not retry
   ManifestMCPErrorCode.SKU_AMBIGUOUS,
 ];
+
+/**
+ * The transient gRPC status codes: 4 DEADLINE_EXCEEDED, 8 RESOURCE_EXHAUSTED
+ * (the 429 analogue), 14 UNAVAILABLE. Every other enveloped status is a fixed
+ * answer. Per the gRPC retry design (grpc/proposal A6), retryability is the
+ * service owner's call and hinges on IDEMPOTENCE — DEADLINE_EXCEEDED in
+ * particular is retry-safe only for idempotent operations.
+ *
+ * That precondition holds by construction: `details.grpcCode` is set ONLY by
+ * `classifyLcdError` (the LCD *query* adapter), so this branch is reachable only
+ * from idempotent reads. A tx broadcast never populates grpcCode — its failures
+ * wrap to `TX_FAILED`, which is in NON_RETRYABLE_ERROR_CODES and short-circuits
+ * above. DO NOT set `details.grpcCode` on a tx/broadcast path without revisiting
+ * this: it would make DEADLINE_EXCEEDED retry a double-broadcast hazard.
+ */
+const RETRYABLE_GRPC_CODES = [4, 8, 14];
 
 /**
  * Check if an error message indicates a transient failure that should be retried.
@@ -101,7 +123,32 @@ export function isRetryableError(error: unknown): boolean {
     if (NON_RETRYABLE_ERROR_CODES.includes(error.code)) {
       return false;
     }
-    // Check message for transient indicators
+    const { httpStatus, grpcCode } = (error.details ?? {}) as QueryErrorDetails;
+
+    // An envelope means the request reached grpc-gateway and carries a gRPC
+    // status. It does NOT mean a keeper ran — the gateway status.Convert()s its
+    // OWN failures too (routing 501/code:12, path-decode 400/code:3). So do not
+    // infer "the app answered"; retry only the explicitly transient codes.
+    //
+    // Why status alone must not drive this: Cosmos keepers are not uniform —
+    // sdkerrors-wrapped errors collapse to codes.Unknown -> HTTP 500 + code:2
+    // (verified live: wasm "no such code", group "not found: group"). Retrying
+    // those burns attempts, backoff and rate-limiter tokens on a fixed answer.
+    // code:2 is ambiguous (keeper answer, or a gateway-side non-status coerced by
+    // status.Convert) — we deliberately do not retry it. (ENG-536)
+    if (typeof grpcCode === 'number') {
+      return RETRYABLE_GRPC_CODES.includes(grpcCode);
+    }
+
+    // No envelope: a genuine transport/proxy failure. This is the leg the old
+    // message pattern missed — axios's template is "Request failed with status
+    // code 500", and /\b(?:http|status)\s*5\d{2}\b/ cannot match it because the
+    // word "code" sits between "status" and the number.
+    if (typeof httpStatus === 'number') {
+      return httpStatus >= 500 || httpStatus === 429;
+    }
+
+    // Fall back to message sniffing for the RPC leg, which has no status.
     return isTransientErrorMessage(error.message);
   }
 

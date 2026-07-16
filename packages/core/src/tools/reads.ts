@@ -11,7 +11,9 @@ import {
   asSkuUuid,
 } from '../brands.js';
 import type { ReadCtx } from '../ctx.js';
+import { isNotFoundError } from '../internals/classify-query-error.js';
 import { withReadSignal } from '../internals/read-signal.js';
+import { assertUuid } from '../internals/uuid.js';
 import type {
   BrandedLease,
   BrandedLeaseItem,
@@ -89,22 +91,42 @@ export async function getLease(
   leaseUuid: string,
   opts?: CallOptions,
 ): Promise<BrandedLease | null> {
+  // MUST precede the read: the keeper answers `code:5 "lease not found"` for a
+  // malformed uuid too, so without this a typo would return null — making null
+  // mean both "absent" and "you sent garbage" (ENG-536).
+  assertUuid(leaseUuid, 'lease_uuid', ManifestMCPErrorCode.INVALID_ARGUMENT);
+
   const r = await withReadSignal(
     ctx,
-    () => ctx.query.liftedinit.billing.v1.lease({ leaseUuid }),
+    () =>
+      ctx.query.liftedinit.billing.v1
+        .lease({ leaseUuid })
+        .catch((error: unknown) => {
+          // .catch scoped to the INNER read so AbortError/TimeoutError propagate (OI-CATCH)
+          if (isNotFoundError(error)) return null;
+          throw error;
+        }),
     opts,
   );
+  if (r === null) return null;
   // QueryLeaseResponse.lease is statically non-optional, but we guard null for parity with getBalance's
   // catchNotFound idiom + the mocks.ts {lease:null} shape; future P2 consumers disambiguate null. Do NOT
   // "simplify" to a non-null return — it breaks the mock-backed null test.
   return r.lease ? toBrandedLease(r.lease) : null;
 }
 
+/**
+ * Reverse-look up the lease holding `customDomain`.
+ *
+ * Returns `null` when no lease claims the FQDN — an EXPECTED outcome (this is the
+ * conflict-check every domain claim runs). A transport/decode failure still throws,
+ * so `null` unambiguously means "unclaimed" (ENG-536).
+ */
 export async function getLeaseByCustomDomain(
   ctx: ReadCtx,
   customDomain: string,
   opts?: CallOptions,
-): Promise<{ lease: BrandedLease; serviceName: string }> {
+): Promise<{ lease: BrandedLease; serviceName: string } | null> {
   const r = await withReadSignal(
     ctx,
     () =>
@@ -112,6 +134,7 @@ export async function getLeaseByCustomDomain(
         .leaseByCustomDomain({ customDomain })
         .catch((error: unknown) => {
           // .catch scoped to the INNER read so AbortError/TimeoutError propagate (OI-CATCH)
+          if (isNotFoundError(error)) return null;
           if (error instanceof ManifestMCPError) throw error;
           throw new ManifestMCPError(
             ManifestMCPErrorCode.QUERY_FAILED,
@@ -121,6 +144,7 @@ export async function getLeaseByCustomDomain(
         }),
     opts,
   );
+  if (r === null) return null;
   return { lease: toBrandedLease(r.lease), serviceName: r.serviceName };
 }
 
@@ -181,11 +205,20 @@ export async function getWithdrawableAmount(
   ctx: ReadCtx,
   leaseUuid: string,
   opts?: CallOptions,
-): Promise<Coin[]> {
+): Promise<Coin[] | null> {
+  assertUuid(leaseUuid, 'lease_uuid', ManifestMCPErrorCode.INVALID_ARGUMENT);
+
   const r = await withReadSignal(
     ctx,
-    () => ctx.query.liftedinit.billing.v1.withdrawableAmount({ leaseUuid }),
+    () =>
+      ctx.query.liftedinit.billing.v1
+        .withdrawableAmount({ leaseUuid })
+        .catch((error: unknown) => {
+          // .catch scoped to the INNER read so AbortError/TimeoutError propagate (OI-CATCH)
+          if (isNotFoundError(error)) return null;
+          throw error;
+        }),
     opts,
   );
-  return r.amounts;
+  return r === null ? null : r.amounts;
 }

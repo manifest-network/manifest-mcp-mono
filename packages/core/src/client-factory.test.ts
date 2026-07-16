@@ -21,6 +21,7 @@ const ADDR = toBech32('manifest', new Uint8Array(20)); // checksum-valid (mirror
 const SENTINEL_QUERY = {
   __sentinel: 'query',
 } as unknown as ManifestQueryClient;
+const VALID_UUID = '550e8400-e29b-41d4-a716-446655440000';
 
 function fakeManager(
   over: Partial<CosmosClientManager> = {},
@@ -212,8 +213,8 @@ describe('createManifestReadClient / createManifestClient', () => {
       expect(typeof client[name]).toBe('function');
     }
     // forwarding: a bound read drops ctx and forwards the rest to the free fn, which reads ctx.query.
-    await expect(client.getLease('lease-uuid')).resolves.toBeNull();
-    expect(lease).toHaveBeenCalledWith({ leaseUuid: 'lease-uuid' });
+    await expect(client.getLease(VALID_UUID)).resolves.toBeNull();
+    expect(lease).toHaveBeenCalledWith({ leaseUuid: VALID_UUID });
   });
 
   it('full client has tx methods; read client does not (runtime)', async () => {

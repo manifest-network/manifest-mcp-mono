@@ -9,6 +9,49 @@ import {
 } from './lcd-adapter.js';
 import { ManifestMCPError, ManifestMCPErrorCode } from './types.js';
 
+describe('adaptModule error classification (ENG-536)', () => {
+  function axiosError(status: number, data: unknown): Error {
+    const err = new Error(`Request failed with status code ${status}`);
+    Object.assign(err, { response: { status, data } });
+    return err;
+  }
+
+  // The shape no pre-ENG-536 test used — which is exactly why the bug shipped.
+  it('mints NOT_FOUND from a real LCD 404 grpc envelope', async () => {
+    const lcdMod = {
+      lease: vi
+        .fn()
+        .mockRejectedValue(
+          axiosError(404, { code: 5, message: 'lease not found', details: [] }),
+        ),
+    };
+    const converterNs = { QueryLeaseResponse: { fromJSON: (o: unknown) => o } };
+    const adapted = adaptModule(lcdMod, converterNs);
+
+    await expect(adapted.lease({})).rejects.toMatchObject({
+      code: ManifestMCPErrorCode.NOT_FOUND,
+      details: { httpStatus: 404, grpcCode: 5, grpcMessage: 'lease not found' },
+    });
+  });
+
+  it('keeps a proxy 404 as QUERY_FAILED', async () => {
+    const lcdMod = {
+      lease: vi.fn().mockRejectedValue(
+        axiosError(404, {
+          error: 'not_found',
+          message: 'Endpoint not found',
+        }),
+      ),
+    };
+    const converterNs = { QueryLeaseResponse: { fromJSON: (o: unknown) => o } };
+    const adapted = adaptModule(lcdMod, converterNs);
+
+    await expect(adapted.lease({})).rejects.toMatchObject({
+      code: ManifestMCPErrorCode.QUERY_FAILED,
+    });
+  });
+});
+
 describe('snakeToCamelDeep', () => {
   it('converts simple snake_case keys', () => {
     expect(

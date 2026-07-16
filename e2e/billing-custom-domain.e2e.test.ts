@@ -268,13 +268,13 @@ describe('Billing custom-domain', () => {
     if (!chainSupportsCustomDomain) return;
     // The keeper returns `status.Errorf(codes.NotFound, "no lease with
     // custom_domain X")` when the reverse index has no entry for the
-    // given domain. The MCP layer wraps this as QUERY_FAILED with the
+    // given domain. The MCP layer now raises NOT_FOUND, with the
     // chain message preserved.
     const err = await leaseClient.callToolExpectError(
       'lease_by_custom_domain',
       { custom_domain: FQDN_VIA_TOOL },
     );
-    expect(err.code).toBe('QUERY_FAILED');
+    expect(err.code).toBe('NOT_FOUND');
     expect(err.message).toMatch(/no lease with custom_domain|NotFound/i);
   });
 

@@ -369,6 +369,16 @@ export enum ManifestMCPErrorCode {
   INVALID_ADDRESS = 'INVALID_ADDRESS',
   /** Caller passed a malformed argument (e.g. a non-UUID id, a bad FQDN). Non-retryable. */
   INVALID_ARGUMENT = 'INVALID_ARGUMENT',
+  /**
+   * The chain answered "no such entity" — an EXPECTED absence, not a fault.
+   * Minted from the grpc-gateway envelope's `code: 5` over LCD, or from cosmjs's
+   * `rpc error: code = NotFound` text over RPC. Carries `QueryErrorDetails`.
+   * Non-retryable: the answer will not change on retry.
+   *
+   * Deliberately NOT derived from HTTP 404 — a proxy/route 404 (a node that does
+   * not serve the module) is a real failure and must stay QUERY_FAILED.
+   */
+  NOT_FOUND = 'NOT_FOUND',
 
   // Transaction errors
   TX_FAILED = 'TX_FAILED',

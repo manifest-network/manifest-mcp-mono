@@ -59,6 +59,10 @@ export { parseBooleanEnv } from './env-utils.js';
 // It dynamic-imports `undici` (→ `node:async_hooks`), which breaks browser
 // bundles that import this universal barrel. It lives at the Node-only
 // `@manifest-network/manifest-mcp-core/guarded-fetch` subpath instead (ENG-281).
+export {
+  isNotFoundError,
+  type QueryErrorDetails,
+} from './internals/classify-query-error.js';
 export { createLCDQueryClient } from './lcd-adapter.js';
 export {
   type Logger,

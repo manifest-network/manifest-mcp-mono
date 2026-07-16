@@ -1,6 +1,7 @@
 import { calculateFee, type StdFee } from '@cosmjs/stargate';
 import type { CosmosClientManager } from './client.js';
 import { DEFAULT_GAS_MULTIPLIER } from './config.js';
+import { isNotFoundError } from './internals/classify-query-error.js';
 import {
   getQueryHandler,
   getTxContextLoader,
@@ -144,8 +145,13 @@ export async function cosmosQuery(
           }
           throw error;
         }
+        // The RPC leg throws plain Errors — classify so the generic query path
+        // yields NOT_FOUND on BOTH transports (the LCD leg already arrives as a
+        // structured ManifestMCPError and is preserved above). ENG-536.
         throw new ManifestMCPError(
-          ManifestMCPErrorCode.QUERY_FAILED,
+          isNotFoundError(error)
+            ? ManifestMCPErrorCode.NOT_FOUND
+            : ManifestMCPErrorCode.QUERY_FAILED,
           `Query ${module} ${subcommand} failed: ${error instanceof Error ? error.message : String(error)}`,
           { module, subcommand },
         );

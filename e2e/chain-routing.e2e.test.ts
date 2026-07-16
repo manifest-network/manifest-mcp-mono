@@ -1061,7 +1061,7 @@ describe('Chain routing coverage', () => {
       expect(Array.isArray(result.result.denomTraces)).toBe(true);
     });
 
-    it('denom-trace fails QUERY_FAILED for an unknown hash', async () => {
+    it('denom-trace fails NOT_FOUND for an unknown hash', async () => {
       // Sentinel `threw` so a future regression where the LCD adapter
       // synthesizes empty success responses for 404s gets caught — without
       // it, the empty try block would silently pass.
@@ -1074,7 +1074,7 @@ describe('Chain routing coverage', () => {
         });
       } catch (err) {
         threw = true;
-        expectChainSide(err, ['QUERY_FAILED']);
+        expectChainSide(err, ['NOT_FOUND']);
       }
       expect(threw).toBe(true);
     });

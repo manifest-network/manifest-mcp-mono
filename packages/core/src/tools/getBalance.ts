@@ -1,22 +1,16 @@
 import type { ReadCtx } from '../ctx.js';
+import { isNotFoundError } from '../internals/classify-query-error.js';
 import { withReadSignal } from '../internals/read-signal.js';
 import type { CallOptions } from '../options.js';
-import { ManifestMCPError } from '../types.js';
 
 function catchNotFound<T>(promise: Promise<T>): Promise<T | null> {
   return promise.catch((err: unknown) => {
-    // Never suppress structured infrastructure errors
-    if (err instanceof ManifestMCPError) throw err;
-    if (!(err instanceof Error)) throw err;
-    const msg = err.message;
-    // Match Cosmos SDK / gRPC NOT_FOUND patterns (key not found, account not found, etc.)
-    if (
-      /key not found/i.test(msg) ||
-      /account.*not found/i.test(msg) ||
-      /credit.*not found/i.test(msg)
-    ) {
-      return null;
-    }
+    // Keyed on the structured code, NOT message text. Pre-ENG-536 this rethrew
+    // EVERY ManifestMCPError, and the LCD adapter wraps 404s into exactly that —
+    // so this guard was dead code over REST and the regexes below never ran.
+    // Real not-found messages also vary by keeper ("no lease with custom_domain X"
+    // contains no "not found" at all).
+    if (isNotFoundError(err)) return null;
     throw err;
   });
 }

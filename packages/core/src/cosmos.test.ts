@@ -235,6 +235,37 @@ describe('cosmosQuery', () => {
       details: { module: 'bank', subcommand: 'balances' },
     });
   });
+
+  it('surfaces an RPC NotFound as NOT_FOUND, not QUERY_FAILED (ENG-536)', async () => {
+    // cosmjs/gRPC gives only message text on this transport.
+    const mockHandler = vi
+      .fn()
+      .mockRejectedValue(
+        new Error('rpc error: code = NotFound desc = lease not found'),
+      );
+    mockGetQueryHandler.mockReturnValue(mockHandler);
+    await expect(
+      cosmosQuery(clientManager, 'billing', 'lease', ['some-uuid']),
+    ).rejects.toMatchObject({
+      code: ManifestMCPErrorCode.NOT_FOUND,
+    });
+  });
+
+  it('preserves an adapter-minted NOT_FOUND through the LCD leg with attribution (ENG-536)', async () => {
+    const mockHandler = vi.fn().mockRejectedValue(
+      new ManifestMCPError(ManifestMCPErrorCode.NOT_FOUND, 'lease not found', {
+        httpStatus: 404,
+        grpcCode: 5,
+      }),
+    );
+    mockGetQueryHandler.mockReturnValue(mockHandler);
+    await expect(
+      cosmosQuery(clientManager, 'billing', 'lease', ['some-uuid']),
+    ).rejects.toMatchObject({
+      code: ManifestMCPErrorCode.NOT_FOUND,
+      details: { module: 'billing', subcommand: 'lease', grpcCode: 5 },
+    });
+  });
 });
 
 describe('cosmosTx', () => {

@@ -4,10 +4,12 @@ import type { CosmosClientManager, ManifestQueryClient } from '../client.js';
 import type { ReadCtx, TxCtx } from '../ctx.js';
 import { noopLogger } from '../logger.js';
 import type { Signer } from '../signer.js';
-import type {
-  ManifestMCPConfig,
-  SignArbitraryResult,
-  WalletProvider,
+import {
+  type ManifestMCPConfig,
+  ManifestMCPError,
+  ManifestMCPErrorCode,
+  type SignArbitraryResult,
+  type WalletProvider,
 } from '../types.js';
 
 /**
@@ -219,7 +221,16 @@ export function makeMockQueryClient(overrides?: {
       billing: {
         v1: {
           creditAccount: vi.fn().mockImplementation(async () => {
-            if (creditAccount === null) throw new Error('key not found');
+            if (creditAccount === null)
+              throw new ManifestMCPError(
+                ManifestMCPErrorCode.NOT_FOUND,
+                'credit account not found',
+                {
+                  httpStatus: 404,
+                  grpcCode: 5,
+                  grpcMessage: 'credit account not found',
+                },
+              );
             return {
               creditAccount,
               balances: creditAccountBalances,
@@ -227,7 +238,16 @@ export function makeMockQueryClient(overrides?: {
             };
           }),
           creditEstimate: vi.fn().mockImplementation(async () => {
-            if (creditEstimate === null) throw new Error('credit not found');
+            if (creditEstimate === null)
+              throw new ManifestMCPError(
+                ManifestMCPErrorCode.NOT_FOUND,
+                'credit account not found',
+                {
+                  httpStatus: 404,
+                  grpcCode: 5,
+                  grpcMessage: 'credit account not found',
+                },
+              );
             return creditEstimate;
           }),
           lease: vi.fn().mockImplementation(async () => {

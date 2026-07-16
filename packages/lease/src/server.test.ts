@@ -715,7 +715,7 @@ describe('LeaseMCPServer', () => {
       expect(parsed.lease).toMatchObject({ uuid: 'lease-2' });
     });
 
-    // Not-found is exercised by the QUERY_FAILED wrap test below: the chain
+    // Not-found is exercised by the NOT_FOUND test below: the chain
     // keeper raises gRPC NotFound for unclaimed FQDNs (proto declares
     // QueryLeaseByCustomDomainResponse.lease as nullable=false), so the
     // success path never returns {lease: undefined}.
@@ -967,11 +967,13 @@ describe('LeaseMCPServer', () => {
       });
     });
 
-    it('wraps a chain-side NotFound (unclaimed FQDN) as structured QUERY_FAILED', async () => {
+    it('raises an unclaimed FQDN as structured NOT_FOUND', async () => {
       // The keeper returns `status.Errorf(codes.NotFound, "no lease with
       // custom_domain X")` for unclaimed FQDNs. cosmjs surfaces this as a
-      // plain Error; the tool wraps it so callers see the same structured
-      // shape they'd get from `cosmos_query billing lease-by-custom-domain`.
+      // plain Error; core's classifier now recognizes it and getLeaseByCustomDomain
+      // (NOT mocked here — the real core fn runs over the mocked query client)
+      // returns null, which this tool re-raises as NOT_FOUND rather than
+      // wrapping as an opaque QUERY_FAILED (ENG-536).
       mockLeaseByCustomDomain.mockRejectedValue(
         new Error(
           'Query failed with (22): rpc error: code = NotFound desc = no lease with custom_domain unclaimed.example.com: key not found',
@@ -987,8 +989,8 @@ describe('LeaseMCPServer', () => {
 
       expect(result.isError).toBe(true);
       const parsed = JSON.parse(result.content[0].text);
-      expect(parsed.code).toBe('QUERY_FAILED');
-      expect(parsed.message).toMatch(/no lease with custom_domain|NotFound/);
+      expect(parsed.code).toBe('NOT_FOUND');
+      expect(parsed.message).toMatch(/no lease with custom_domain/);
       expect(parsed.details).toMatchObject({
         customDomain: 'unclaimed.example.com',
       });

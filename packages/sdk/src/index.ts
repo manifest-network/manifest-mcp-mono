@@ -23,6 +23,7 @@ export {
   createSignerAdapter,
   createValidatedConfig,
   INFRASTRUCTURE_ERROR_CODES,
+  isNotFoundError,
   isSkuAmbiguousError,
   ManifestMCPError,
   ManifestMCPErrorCode,

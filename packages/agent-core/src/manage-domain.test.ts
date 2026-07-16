@@ -201,10 +201,18 @@ describe('manageDomain — lookup', () => {
 
     const queryClient = makeMockQueryClient();
     queryClient.liftedinit.billing.v1.leaseByCustomDomain.mockRejectedValue(
-      new Error('NotFound: domain not claimed'),
+      new ManifestMCPError(
+        ManifestMCPErrorCode.NOT_FOUND,
+        'no lease with custom_domain unclaimed.example.com',
+        {
+          httpStatus: 404,
+          grpcCode: 5,
+          grpcMessage: 'no lease with custom_domain unclaimed.example.com',
+        },
+      ),
     );
     const clientManager = makeMockClientManager(queryClient);
-    const { callbacks, completed } = captureCallbacks();
+    const { callbacks, completed, failures } = captureCallbacks();
 
     const { manageDomain } = await import('./manage-domain.js');
     const result = await manageDomain(args, callbacks, {
@@ -217,6 +225,44 @@ describe('manageDomain — lookup', () => {
     // Symmetric `onComplete` also fires on the lookup-not-found
     // path (Copilot review PR #60, comment 3288656598).
     expect(completed).toEqual([result]);
+    // Post-ENG-536 an unclaimed FQDN is an EXPECTED outcome: onComplete fires,
+    // onFailure must not. Pre-fix it fired onFailure (manage-domain.ts:441-443).
+    expect(failures).toEqual([]);
+  });
+
+  it('THROWS for a proxy 404 whose message merely contains "not found" (ENG-536)', async () => {
+    // A node that doesn't serve the billing module returns HTTP 404
+    // {"error":"not_found","message":"Endpoint not found"} with NO grpc envelope.
+    // That must NOT read as "FQDN unclaimed" — it is a real failure.
+    const args: ManageDomainArgs = {
+      action: 'lookup',
+      fqdn: 'unclaimed.example.com',
+    };
+
+    const queryClient = makeMockQueryClient();
+    queryClient.liftedinit.billing.v1.leaseByCustomDomain.mockRejectedValue(
+      new ManifestMCPError(
+        ManifestMCPErrorCode.QUERY_FAILED,
+        'Endpoint not found',
+        {
+          httpStatus: 404,
+        },
+      ),
+    );
+    const clientManager = makeMockClientManager(queryClient);
+    const { callbacks, completed, failures } = captureCallbacks();
+
+    const { manageDomain } = await import('./manage-domain.js');
+    await expect(
+      manageDomain(args, callbacks, {
+        clientManager: clientManager as unknown as Parameters<
+          typeof manageDomain
+        >[2]['clientManager'],
+      }),
+    ).rejects.toThrow();
+
+    expect(failures.length).toBe(1);
+    expect(completed).toEqual([]);
   });
 
   it('lookup with empty fqdn throws INVALID_CONFIG before any chain call', async () => {
