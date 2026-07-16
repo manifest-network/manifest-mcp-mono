@@ -1,6 +1,6 @@
 {
   "name": "@manifest-network/manifest-mcp-chain",
-  "version": "0.18.0",
+  "version": "0.19.0",
   "description": "MCP server for Cosmos SDK chain operations (queries, transactions, module discovery)",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -47,10 +47,10 @@
     "zod": "^4.3.6"
   },
   "peerDependencies": {
-    "@manifest-network/manifest-mcp-core": "^0.18.0"
+    "@manifest-network/manifest-mcp-core": "^0.19.0"
   },
   "devDependencies": {
-    "@manifest-network/manifest-mcp-core": "0.18.0",
+    "@manifest-network/manifest-mcp-core": "0.19.0",
     "@types/node": "22.19.19",
     "typescript": "5.9.3",
     "vitest": "4.1.8"
