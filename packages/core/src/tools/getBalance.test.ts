@@ -89,6 +89,52 @@ describe('getBalance', () => {
     });
   });
 
+  it('returns credits: null when the chain says the credit account is absent', async () => {
+    const client = makeMockQueryClient();
+    vi.mocked(client.liftedinit.billing.v1.creditAccount).mockRejectedValue(
+      new ManifestMCPError(
+        ManifestMCPErrorCode.NOT_FOUND,
+        'credit account not found',
+        {
+          httpStatus: 404,
+          grpcCode: 5,
+          grpcMessage: 'credit account not found',
+        },
+      ),
+    );
+    vi.mocked(client.liftedinit.billing.v1.creditEstimate).mockRejectedValue(
+      new ManifestMCPError(
+        ManifestMCPErrorCode.NOT_FOUND,
+        'credit account not found',
+        {
+          httpStatus: 404,
+          grpcCode: 5,
+          grpcMessage: 'credit account not found',
+        },
+      ),
+    );
+
+    const result = await getBalance(makeReadCtx({ query: client }), address);
+    expect(result.credits).toBeNull();
+    expect(result.balances).toBeDefined();
+  });
+
+  it('still throws when the credit read fails for a non-not-found reason', async () => {
+    const client = makeMockQueryClient();
+    vi.mocked(client.liftedinit.billing.v1.creditAccount).mockRejectedValue(
+      new ManifestMCPError(
+        ManifestMCPErrorCode.QUERY_FAILED,
+        'LCD query "creditAccount" failed',
+        { httpStatus: 500 },
+      ),
+    );
+    await expect(
+      getBalance(makeReadCtx({ query: client }), address),
+    ).rejects.toMatchObject({
+      code: ManifestMCPErrorCode.QUERY_FAILED,
+    });
+  });
+
   it('aborts via opts.signal before doing any read', async () => {
     const ac = new AbortController();
     ac.abort(new Error('cancelled'));
