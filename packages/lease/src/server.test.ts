@@ -456,6 +456,23 @@ describe('LeaseMCPServer', () => {
       expect(call.pagination.offset).toBe(BigInt(5));
     });
 
+    it('passes reverse into the PageRequest', async () => {
+      mockLeasesByTenant.mockResolvedValue({
+        leases: [],
+        pagination: { total: BigInt(0) },
+      });
+
+      const server = new LeaseMCPServer({
+        config: makeMockConfig(),
+        walletProvider: makeMockWallet(),
+      });
+      await callTool(server, 'leases_by_tenant', { reverse: true });
+
+      expect(mockLeasesByTenant).toHaveBeenCalledOnce();
+      const call = mockLeasesByTenant.mock.calls[0][0];
+      expect(call.pagination.reverse).toBe(true);
+    });
+
     it('uses caller address as tenant by default', async () => {
       mockLeasesByTenant.mockResolvedValue({
         leases: [],

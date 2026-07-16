@@ -92,6 +92,22 @@ describe('getLeasesByTenant', () => {
     });
     expect(acquireRateLimit).toHaveBeenCalledTimes(1);
   });
+
+  it('passes reverse:true into the PageRequest when requested', async () => {
+    const client = makeMockQueryClient();
+    await getLeasesByTenant(makeReadCtx({ query: client }), {
+      tenant: 'manifest1tenant',
+      stateFilter: LeaseState.LEASE_STATE_ACTIVE,
+      reverse: true,
+    });
+    expect(
+      vi.mocked(client.liftedinit.billing.v1.leasesByTenant),
+    ).toHaveBeenCalledWith(
+      expect.objectContaining({
+        pagination: expect.objectContaining({ reverse: true }),
+      }),
+    );
+  });
 });
 
 describe('getLease', () => {

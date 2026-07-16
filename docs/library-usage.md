@@ -268,6 +268,25 @@ import { cosmosQuery, cosmosTx } from '@manifest-network/manifest-sdk/chain';
 
 > The stringly, JSON-shaped `cosmos_query` / `cosmos_tx` **tools** are the MCP-server face in the separate `@manifest-network/manifest-mcp-{chain,lease,fred}` packages, for LLM/agent hosts; the `/chain` subpath above exposes their typed primitives directly, not that JSON tool wrapper.
 
+### Raw manifestjs queries — `client.query`
+
+You do **not** need a second manifestjs LCD/RPC client for reads the SDK doesn't wrap. The read client already exposes manifestjs's own **typed** query tree at `client.query` — one client, two layers:
+
+```ts
+const client = await createManifestReadClient({ config: { chainId, restUrl } });
+
+// Typed SDK read — branded, rate-limited, not-found-aware:
+const lease = await client.getLease(leaseUuid);          // BrandedLease | null
+
+// Raw manifestjs passthrough for a 1:1 read with no typed wrapper:
+const { creditAddress } = await client.query.liftedinit.billing.v1.creditAddress({ tenant });
+const { balance } = await client.query.cosmos.bank.v1beta1.balance({ address, denom: 'umfx' });
+```
+
+- **Already decoded.** `client.query` responses are typed objects with **numeric** enum fields (a lease's `state` is `2`, not the LCD string `"LEASE_STATE_ACTIVE"`) — no hand-rolled `lcdConvert` / enum-fixup needed. This is transport-agnostic: over REST the adapter runs `snakeToCamelDeep` + protobuf `fromJSON`; over RPC the Telescope client returns already-decoded objects. Either way the shape is the same.
+- **`client.query` bypasses the rate limiter.** Only the typed reads (`getLease`, `getBalance`, …) acquire a token from the client's token bucket. Prefer a typed read where one exists; reach for `client.query` for the 1:1 passthroughs (`creditAccount`, `creditAddress`, single-denom `bank.balance`, …) that have no branded wrapper — wrapping those would just re-implement manifestjs.
+- **Unsupported over REST.** `cosmos.orm.query.v1alpha1` and `liftedinit.manifest.v1` throw `UNSUPPORTED_QUERY` on property access (no LCD support / no query service). Neither has an app-facing read; everything else routes.
+
 ## Faucet
 
 Funding a brand-new wallet's gas is a testnet/operator concern, so the faucet ops live on the dedicated `@manifest-network/manifest-sdk/faucet` subpath — deliberately **off the root barrel**, so a production app never picks them up by accident. It's browser-safe and carries `requestFaucet`, `requestFaucetCredit`, and `fetchFaucetStatus` (plus the `FaucetAccount` / `FaucetDripResult` / `FaucetStatusResponse` / `RequestFaucetResult` types) for an in-app top-up affordance:

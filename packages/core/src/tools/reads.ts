@@ -61,6 +61,7 @@ export async function getLeasesByTenant(
     stateFilter: LeaseState;
     limit?: bigint;
     offset?: bigint;
+    reverse?: boolean;
   },
   opts?: CallOptions,
 ): Promise<{ leases: BrandedLease[]; total: bigint }> {
@@ -75,7 +76,7 @@ export async function getLeasesByTenant(
           offset: input.offset ?? 0n,
           limit: input.limit ?? 50n,
           countTotal: true,
-          reverse: false,
+          reverse: input.reverse ?? false,
         },
       }),
     opts,

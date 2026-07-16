@@ -44,7 +44,7 @@
   ],
   "dependencies": {
     "@cosmjs/encoding": "0.32.4",
-    "@manifest-network/manifestjs": "2.4.1",
+    "@manifest-network/manifestjs": "^2.4.1",
     "@modelcontextprotocol/sdk": "1.29.0",
     "zod": "^4.3.6"
   },
