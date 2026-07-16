@@ -13,6 +13,7 @@ import {
 import type { ReadCtx } from '../ctx.js';
 import { isNotFoundError } from '../internals/classify-query-error.js';
 import { withReadSignal } from '../internals/read-signal.js';
+import { assertUuid } from '../internals/uuid.js';
 import type {
   BrandedLease,
   BrandedLeaseItem,
@@ -26,7 +27,6 @@ import {
   ManifestMCPError,
   ManifestMCPErrorCode,
 } from '../types.js';
-import { assertUuid } from '../validation.js';
 
 // ===== Module-private branded-view producers (OI-PRODUCERS: mirror sku-resolution.ts's toCandidate;
 // the view types stay pure-data in manifest-types.ts). Brand-on-extraction via the as* trust-cast

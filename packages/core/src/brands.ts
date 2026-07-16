@@ -1,10 +1,6 @@
+import { assertUuid } from './internals/uuid.js';
 import { ManifestMCPError, ManifestMCPErrorCode } from './types.js';
-import {
-  assertUuid,
-  FQDN_RE,
-  SCHEME_PREFIX_RE,
-  validateAddress,
-} from './validation.js';
+import { FQDN_RE, SCHEME_PREFIX_RE, validateAddress } from './validation.js';
 
 /**
  * Nominal brand. STRING tag key (not a `unique symbol`) ON PURPOSE: a unique-symbol brand is
