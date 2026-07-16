@@ -573,9 +573,18 @@ Add near the other constants:
 
 ```ts
 /**
- * gRPC codes the CHAIN ITSELF marks transient. Everything else that arrives WITH
- * an envelope is a deterministic application answer — retrying cannot change it.
- * (4 DEADLINE_EXCEEDED, 8 RESOURCE_EXHAUSTED, 14 UNAVAILABLE.)
+ * The transient gRPC status codes: 4 DEADLINE_EXCEEDED, 8 RESOURCE_EXHAUSTED
+ * (the 429 analogue), 14 UNAVAILABLE. Every other enveloped status is a fixed
+ * answer. Per the gRPC retry design (grpc/proposal A6), retryability is the
+ * service owner's call and hinges on IDEMPOTENCE — DEADLINE_EXCEEDED in
+ * particular is retry-safe only for idempotent operations.
+ *
+ * That precondition holds by construction: `details.grpcCode` is set ONLY by
+ * `classifyLcdError` (the LCD *query* adapter), so this branch is reachable only
+ * from idempotent reads. A tx broadcast never populates grpcCode — its failures
+ * wrap to `TX_FAILED`, which is in NON_RETRYABLE_ERROR_CODES and short-circuits
+ * above. DO NOT set `details.grpcCode` on a tx/broadcast path without revisiting
+ * this: it would make DEADLINE_EXCEEDED retry a double-broadcast hazard.
  */
 const RETRYABLE_GRPC_CODES = [4, 8, 14];
 ```
