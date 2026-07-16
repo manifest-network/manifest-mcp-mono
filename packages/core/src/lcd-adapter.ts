@@ -8,6 +8,7 @@ import {
   strangelove_ventures as strangeloveVenturesNs,
 } from '@manifest-network/manifestjs';
 import type { ManifestQueryClient } from './client.js';
+import { classifyLcdError } from './internals/classify-query-error.js';
 import { type Logger, noopLogger } from './logger.js';
 import { ManifestMCPError, ManifestMCPErrorCode } from './types.js';
 
@@ -85,10 +86,10 @@ function adaptModule(
         sdkResult = await originalFn.call(lcdModule, ...args);
       } catch (error) {
         if (error instanceof ManifestMCPError) throw error;
-        throw new ManifestMCPError(
-          ManifestMCPErrorCode.QUERY_FAILED,
-          `LCD query "${key}" failed: ${error instanceof Error ? error.message : String(error)}`,
-        );
+        // Classify BEFORE wrapping: this is the only place the grpc envelope
+        // (response.status/data) still exists. Discarding it here is what made
+        // every downstream `T | null` branch unreachable (ENG-536).
+        throw classifyLcdError(key, error);
       }
       const camelCased = snakeToCamelDeep(sdkResult);
       try {
