@@ -115,11 +115,18 @@ export async function getLease(
   return r.lease ? toBrandedLease(r.lease) : null;
 }
 
+/**
+ * Reverse-look up the lease holding `customDomain`.
+ *
+ * Returns `null` when no lease claims the FQDN — an EXPECTED outcome (this is the
+ * conflict-check every domain claim runs). A transport/decode failure still throws,
+ * so `null` unambiguously means "unclaimed" (ENG-536).
+ */
 export async function getLeaseByCustomDomain(
   ctx: ReadCtx,
   customDomain: string,
   opts?: CallOptions,
-): Promise<{ lease: BrandedLease; serviceName: string }> {
+): Promise<{ lease: BrandedLease; serviceName: string } | null> {
   const r = await withReadSignal(
     ctx,
     () =>
@@ -127,6 +134,7 @@ export async function getLeaseByCustomDomain(
         .leaseByCustomDomain({ customDomain })
         .catch((error: unknown) => {
           // .catch scoped to the INNER read so AbortError/TimeoutError propagate (OI-CATCH)
+          if (isNotFoundError(error)) return null;
           if (error instanceof ManifestMCPError) throw error;
           throw new ManifestMCPError(
             ManifestMCPErrorCode.QUERY_FAILED,
@@ -136,6 +144,7 @@ export async function getLeaseByCustomDomain(
         }),
     opts,
   );
+  if (r === null) return null;
   return { lease: toBrandedLease(r.lease), serviceName: r.serviceName };
 }
 

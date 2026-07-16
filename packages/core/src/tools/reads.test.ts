@@ -148,6 +148,8 @@ describe('getLeaseByCustomDomain', () => {
       makeReadCtx({ query: client }),
       'app.example.com',
     );
+    expect(result).not.toBeNull();
+    if (result === null) throw new Error('unreachable — guarded above');
     // brands erase at runtime — values pass through unchanged
     expect(result.lease.uuid).toBe('lease-uuid-1');
     expect(result.lease.tenant).toBe('manifest1tenant');
@@ -194,6 +196,44 @@ describe('getLeaseByCustomDomain', () => {
     });
     await getLeaseByCustomDomain(ctx, 'app.example.com');
     expect(acquireRateLimit).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('getLeaseByCustomDomain not-found (ENG-536)', () => {
+  it('returns null for an unclaimed FQDN', async () => {
+    const client = makeMockQueryClient();
+    vi.mocked(
+      client.liftedinit.billing.v1.leaseByCustomDomain,
+    ).mockRejectedValue(
+      new ManifestMCPError(
+        ManifestMCPErrorCode.NOT_FOUND,
+        'no lease with custom_domain app.example.com',
+        {
+          httpStatus: 404,
+          grpcCode: 5,
+          grpcMessage: 'no lease with custom_domain app.example.com',
+        },
+      ),
+    );
+    await expect(
+      getLeaseByCustomDomain(makeReadCtx({ query: client }), 'app.example.com'),
+    ).resolves.toBeNull();
+  });
+
+  it('rethrows a transient failure', async () => {
+    const client = makeMockQueryClient();
+    vi.mocked(
+      client.liftedinit.billing.v1.leaseByCustomDomain,
+    ).mockRejectedValue(
+      new ManifestMCPError(ManifestMCPErrorCode.QUERY_FAILED, 'boom', {
+        httpStatus: 503,
+      }),
+    );
+    await expect(
+      getLeaseByCustomDomain(makeReadCtx({ query: client }), 'app.example.com'),
+    ).rejects.toMatchObject({
+      code: ManifestMCPErrorCode.QUERY_FAILED,
+    });
   });
 });
 

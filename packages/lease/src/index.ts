@@ -447,7 +447,7 @@ export class LeaseMCPServer {
         // FQDN is rejected client-side with a structured INVALID_CONFIG
         // instead of being forwarded to the chain. Chain-side failures
         // (notably the keeper's NotFound on an unclaimed FQDN) are
-        // wrapped below as QUERY_FAILED — kept distinct so callers can
+        // raised below as NOT_FOUND — kept distinct so callers can
         // tell "you sent garbage" from "the chain answered no-such-thing".
         const customDomain = args.custom_domain.trim();
         if (customDomain === '') {
@@ -458,20 +458,29 @@ export class LeaseMCPServer {
         }
         // getLeaseByCustomDomain acquires its own rate-limit token via
         // withReadSignal, so we do NOT pre-acquire here — that would
-        // double-consume on the same logical read. The QUERY_FAILED wrap
-        // for non-`ManifestMCPError` chain failures (notably the keeper's
-        // `NotFound` for an unclaimed FQDN) now lives inside the core fn.
+        // double-consume on the same logical read. The core fn returns null for
+        // an unclaimed FQDN (ENG-536); this tool re-raises it as NOT_FOUND to
+        // keep its throw-on-absence contract.
         const ctx = {
           query: await this.clientManager.getQueryClient(),
           chain: this.clientManager,
           logger: noopLogger,
         };
-        const { lease, serviceName } = await getLeaseByCustomDomain(
-          ctx,
-          customDomain,
-        );
+        const found = await getLeaseByCustomDomain(ctx, customDomain);
+        if (found === null) {
+          // The tool contract THROWS on an unclaimed FQDN (callers expect a
+          // structured error, not an empty result). Pre-ENG-536 this surfaced as
+          // an opaque QUERY_FAILED; NOT_FOUND finally delivers the "you sent
+          // garbage" vs "the chain answered no-such-thing" distinction this
+          // handler's own comment promises.
+          throw new ManifestMCPError(
+            ManifestMCPErrorCode.NOT_FOUND,
+            `lease_by_custom_domain: no lease with custom_domain ${customDomain}`,
+            { customDomain },
+          );
+        }
         return jsonResponse(
-          { lease, service_name: serviceName },
+          { lease: found.lease, service_name: found.serviceName },
           bigIntReplacer,
         );
       }),
