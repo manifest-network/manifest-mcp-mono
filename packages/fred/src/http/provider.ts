@@ -120,6 +120,80 @@ export function validateProviderUrl(
 
 const DEFAULT_FETCH_TIMEOUT_MS = 30_000;
 
+/**
+ * Hard ceiling on a provider HTTP response body (10 MiB). Provider payloads
+ * are small — status/health/connection are a few KB, and logs are already
+ * bounded upstream (`MAX_TAIL` requested lines, `MAX_LOG_CHARS` on display).
+ * A body over 10 MiB indicates a hostile or buggy provider; abort rather than
+ * risk OOM. This is a TRANSPORT-layer cap, distinct from the AI-context caps:
+ * provider `apiUrl`s come from on-chain SKU records, so a malicious provider
+ * could otherwise stream an unbounded body into the local server's heap.
+ */
+export const MAX_RESPONSE_BYTES = 10 * 1024 * 1024;
+
+/**
+ * Read a response body to a string while enforcing a hard byte ceiling.
+ *
+ * Streams `res.body` and counts bytes, cancelling the stream and throwing a
+ * `ProviderApiError` the moment the running total exceeds `maxBytes` — so an
+ * oversized body never fully materializes in memory. A declared
+ * `Content-Length` over the cap is rejected up front. Replaces the unbounded
+ * `await res.text()` that every provider read previously funnelled through.
+ */
+export async function readBodyCapped(
+  res: Response,
+  url: string,
+  maxBytes: number = MAX_RESPONSE_BYTES,
+): Promise<string> {
+  // Optional chaining: a real `Response` always has `.headers`, but keep the
+  // fast-path tolerant of minimal test/mock objects — the streaming cap below
+  // is the authoritative guard, this header check is just an early reject.
+  const declared = Number(res.headers?.get?.('content-length'));
+  if (Number.isFinite(declared) && declared > maxBytes) {
+    // Tear the body down before bailing so undici can release the socket back
+    // to the pool immediately, rather than holding it until GC finalization.
+    // Mirrors the `reader.cancel()` on the streamed-overflow path below.
+    await res.body?.cancel().catch(() => {});
+    throw new ProviderApiError(
+      0,
+      `Response from ${url} declares Content-Length ${declared} which exceeds the ${maxBytes}-byte cap; refusing to read.`,
+    );
+  }
+
+  const reader = res.body?.getReader();
+  if (!reader) {
+    // No readable stream (empty body or a non-stream mock). Nothing to buffer.
+    return await res.text();
+  }
+
+  const decoder = new TextDecoder();
+  let text = '';
+  let total = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (value) {
+        total += value.byteLength;
+        if (total > maxBytes) {
+          // Swallow a rejecting cancel() so the meaningful cap error is the one
+          // surfaced, not a teardown error — matches the Content-Length path.
+          await reader.cancel().catch(() => {});
+          throw new ProviderApiError(
+            0,
+            `Response body from ${url} exceeded the ${maxBytes}-byte cap; aborting to avoid memory exhaustion.`,
+          );
+        }
+        text += decoder.decode(value, { stream: true });
+      }
+    }
+    text += decoder.decode(); // flush any trailing multi-byte sequence
+  } finally {
+    reader.releaseLock();
+  }
+  return text;
+}
+
 export async function checkedFetch(
   url: string,
   init?: RequestInit,
@@ -187,12 +261,10 @@ export async function checkedFetch(
     }
   }
   if (!res.ok) {
-    const body = await res
-      .text()
-      .catch(
-        (readErr: unknown) =>
-          `[body read failed: ${readErr instanceof Error ? readErr.message : String(readErr)}]`,
-      );
+    const body = await readBodyCapped(res, url).catch(
+      (readErr: unknown) =>
+        `[body read failed: ${readErr instanceof Error ? readErr.message : String(readErr)}]`,
+    );
     throw new ProviderApiError(res.status, body || `HTTP ${res.status}`);
   }
   return res;
@@ -201,8 +273,9 @@ export async function checkedFetch(
 export async function parseJsonResponse<T>(
   res: Response,
   url: string,
+  maxBytes: number = MAX_RESPONSE_BYTES,
 ): Promise<T> {
-  const text = await res.text();
+  const text = await readBodyCapped(res, url, maxBytes);
   try {
     return JSON.parse(text) as T;
   } catch (parseErr) {

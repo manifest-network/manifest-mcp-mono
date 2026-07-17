@@ -3,8 +3,10 @@ import {
   checkedFetch,
   getProviderHealth,
   isUrlSsrfSafe,
+  MAX_RESPONSE_BYTES,
   ProviderApiError,
   parseJsonResponse,
+  readBodyCapped,
   validateProviderUrl,
 } from './provider.js';
 
@@ -334,6 +336,113 @@ describe('parseJsonResponse', () => {
     await expect(parseJsonResponse(res, 'https://example.com')).rejects.toThrow(
       ProviderApiError,
     );
+  });
+
+  it('aborts a body that exceeds the cap instead of buffering it whole', async () => {
+    // VALID JSON, but larger than the cap. This matters: a pre-cap implementation
+    // (`await res.text()` + `JSON.parse`) would parse it successfully and return —
+    // so the only way this rejects is the cap abort, not an incidental parse error.
+    const body = JSON.stringify({ data: 'x'.repeat(100) }); // valid, > 10 bytes
+    const res = new Response(body, { status: 200 });
+    await expect(
+      parseJsonResponse(res, 'https://example.com', 10),
+    ).rejects.toThrow(/10-byte cap/); // the cap-abort message, not "Invalid JSON"
+  });
+});
+
+describe('readBodyCapped (response-size ceiling)', () => {
+  it('exposes a sane default cap', () => {
+    expect(MAX_RESPONSE_BYTES).toBe(10 * 1024 * 1024);
+  });
+
+  it('returns the full body when under the cap, across multiple chunks', async () => {
+    const enc = new TextEncoder();
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(enc.encode('{"a":'));
+        controller.enqueue(enc.encode('1}'));
+        controller.close();
+      },
+    });
+    const res = new Response(stream, { status: 200 });
+    expect(await readBodyCapped(res, 'https://p.example', 1000)).toBe(
+      '{"a":1}',
+    );
+  });
+
+  it('throws ProviderApiError once the streamed byte count exceeds the cap', async () => {
+    const enc = new TextEncoder();
+    let cancelled = false;
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        // Emit 1 KiB chunks forever until the reader cancels.
+        controller.enqueue(enc.encode('x'.repeat(1024)));
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
+    const res = new Response(stream, { status: 200 });
+    await expect(
+      readBodyCapped(res, 'https://p.example', 4096),
+    ).rejects.toBeInstanceOf(ProviderApiError);
+    expect(cancelled).toBe(true); // stream was cancelled, not drained
+  });
+
+  it('tolerates a minimal Response mock without headers or a body stream', async () => {
+    const fakeRes = {
+      ok: true,
+      status: 200,
+      text: async () => '{"state":"ok"}',
+    } as unknown as Response;
+    expect(await readBodyCapped(fakeRes, 'https://p.example')).toBe(
+      '{"state":"ok"}',
+    );
+  });
+
+  it('still surfaces ProviderApiError when cancelling the overflowed stream itself rejects', async () => {
+    const enc = new TextEncoder();
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        controller.enqueue(enc.encode('x'.repeat(1024)));
+      },
+      cancel() {
+        // Underlying source throws during cancellation — reader.cancel() rejects.
+        throw new Error('cancel boom');
+      },
+    });
+    const res = new Response(stream, { status: 200 });
+    await expect(
+      readBodyCapped(res, 'https://p.example', 2048),
+    ).rejects.toBeInstanceOf(ProviderApiError); // not the raw 'cancel boom'
+  });
+
+  it('fast-rejects when a declared Content-Length already exceeds the cap', async () => {
+    const fakeRes = {
+      headers: new Headers({ 'content-length': String(50 * 1024 * 1024) }),
+      body: null,
+      text: async () => '',
+    } as unknown as Response;
+    await expect(
+      readBodyCapped(fakeRes, 'https://p.example', MAX_RESPONSE_BYTES),
+    ).rejects.toBeInstanceOf(ProviderApiError);
+  });
+
+  it('cancels the response body on the Content-Length fast-reject so the socket is released', async () => {
+    let cancelled = false;
+    const body = new ReadableStream<Uint8Array>({
+      cancel() {
+        cancelled = true;
+      },
+    });
+    const fakeRes = {
+      headers: new Headers({ 'content-length': String(50 * 1024 * 1024) }),
+      body,
+    } as unknown as Response;
+    await expect(
+      readBodyCapped(fakeRes, 'https://p.example', 10),
+    ).rejects.toBeInstanceOf(ProviderApiError);
+    expect(cancelled).toBe(true); // stream torn down, not left dangling
   });
 });
 
