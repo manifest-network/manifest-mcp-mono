@@ -176,7 +176,9 @@ export async function readBodyCapped(
       if (value) {
         total += value.byteLength;
         if (total > maxBytes) {
-          await reader.cancel();
+          // Swallow a rejecting cancel() so the meaningful cap error is the one
+          // surfaced, not a teardown error — matches the Content-Length path.
+          await reader.cancel().catch(() => {});
           throw new ProviderApiError(
             0,
             `Response body from ${url} exceeded the ${maxBytes}-byte cap; aborting to avoid memory exhaustion.`,

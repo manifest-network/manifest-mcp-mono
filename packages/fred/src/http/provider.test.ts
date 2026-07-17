@@ -396,6 +396,23 @@ describe('readBodyCapped (response-size ceiling)', () => {
     );
   });
 
+  it('still surfaces ProviderApiError when cancelling the overflowed stream itself rejects', async () => {
+    const enc = new TextEncoder();
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        controller.enqueue(enc.encode('x'.repeat(1024)));
+      },
+      cancel() {
+        // Underlying source throws during cancellation — reader.cancel() rejects.
+        throw new Error('cancel boom');
+      },
+    });
+    const res = new Response(stream, { status: 200 });
+    await expect(
+      readBodyCapped(res, 'https://p.example', 2048),
+    ).rejects.toBeInstanceOf(ProviderApiError); // not the raw 'cancel boom'
+  });
+
   it('fast-rejects when a declared Content-Length already exceeds the cap', async () => {
     const fakeRes = {
       headers: new Headers({ 'content-length': String(50 * 1024 * 1024) }),
