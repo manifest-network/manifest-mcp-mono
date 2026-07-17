@@ -8,6 +8,7 @@ import type { ReadCtx } from './ctx.js';
 import { withReadSignal } from './internals/read-signal.js';
 import type { CallOptions } from './options.js';
 import { createPagination, MAX_PAGE_LIMIT } from './queries/utils.js';
+import { sanitizeForDisplay } from './server-utils.js';
 import { ManifestMCPError, ManifestMCPErrorCode } from './types.js';
 
 /**
@@ -101,16 +102,20 @@ export async function listSkuCandidates(
 }
 
 function ambiguous(size: string, candidates: SkuCandidate[]): ManifestMCPError {
+  // Candidate fields are provider-controlled on-chain strings interpolated into
+  // this newline-joined bullet list; sanitize each so a hostile name/id cannot
+  // forge an extra bullet or spoof another candidate's line (ENG-555). The raw
+  // values are preserved in `details.candidates` below (data stays byte-faithful).
   const lines = candidates
     .map(
       (c) =>
-        `  - ${c.name} (sku_uuid=${c.skuUuid}, provider_uuid=${c.providerUuid}` +
-        `${c.price ? `, price=${c.price.amount} ${c.price.denom}` : ''})`,
+        `  - ${sanitizeForDisplay(c.name, 64, '(unnamed SKU)')} (sku_uuid=${sanitizeForDisplay(c.skuUuid, 64)}, provider_uuid=${sanitizeForDisplay(c.providerUuid, 64)}` +
+        `${c.price ? `, price=${sanitizeForDisplay(`${c.price.amount} ${c.price.denom}`, 48)}` : ''})`,
     )
     .join('\n');
   return new ManifestMCPError(
     ManifestMCPErrorCode.SKU_AMBIGUOUS,
-    `SKU name "${size}" matches ${candidates.length} active SKUs. ` +
+    `SKU name "${sanitizeForDisplay(size, 64)}" matches ${candidates.length} active SKUs. ` +
       `Specify provider_uuid (or sku_uuid) to disambiguate:\n${lines}`,
     {
       reason: 'AMBIGUOUS_SKU_NAME',

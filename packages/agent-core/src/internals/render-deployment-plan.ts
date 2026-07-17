@@ -1,3 +1,4 @@
+import { sanitizeForDisplay } from '@manifest-network/manifest-mcp-core';
 import type { DeploymentPlanBlock, FeeEstimate, Plan } from '../types.js';
 import {
   type DenomMap,
@@ -97,7 +98,12 @@ function formatFeeLine(humanFee: string, gas: number): string {
 function formatSkuPrice(plan: Plan, denomMap: DenomMap): string {
   const sku = plan.readiness.sku;
   if (sku === null) return '(unknown — SKU has no listed price)';
-  return `${humanizeCoin(sku.price.amount, sku.price.denom, denomMap)} / hour`;
+  // SKU price amount + denom are provider-controlled on-chain strings, and
+  // humanizeCoin renders an unknown denom (and a non-numeric amount) verbatim —
+  // sanitize the composed value so it cannot forge a plan line (ENG-555).
+  return `${sanitizeForDisplay(
+    humanizeCoin(sku.price.amount, sku.price.denom, denomMap),
+  )} / hour`;
 }
 
 function formatWallet(plan: Plan, denomMap: DenomMap): string {
@@ -159,11 +165,22 @@ export function renderDeploymentPlan(
   const lines: string[] = [
     'DeploymentPlan',
     `  Image:                     ${input.image}`,
-    `  Size:                      ${input.size}`,
+    // SKU tier name is a provider-controlled on-chain string — sanitize so an
+    // embedded newline/control char cannot forge a plan line (ENG-555).
+    `  Size:                      ${sanitizeForDisplay(input.size, 64, '(unnamed SKU)')}`,
   ];
 
   if (hasProvider) {
-    lines.push(`  Provider:                  ${input.providerUuid}`);
+    // providerUuid is a provider-controlled, unchecked trust-cast (NOT validated
+    // to UUID grammar — real ids may be arbitrary short strings), so strip
+    // control/format bytes rather than allowlist a grammar it may not follow.
+    lines.push(
+      `  Provider:                  ${sanitizeForDisplay(
+        input.providerUuid as string,
+        64,
+        '(unknown provider)',
+      )}`,
+    );
   }
 
   lines.push(
