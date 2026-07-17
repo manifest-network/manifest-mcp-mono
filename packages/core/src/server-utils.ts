@@ -124,8 +124,10 @@ export function sanitizeForLogging(obj: unknown, depth = 0): unknown {
  * @param raw         untrusted value; typed `unknown` because this is a defensive
  *                    boundary helper — any nullish/non-string input is coerced
  *                    (`String(raw ?? '')`) rather than rejected
- * @param maxLength   visible-length cap in CODE POINTS (default 64), applied
- *                    AFTER stripping so a surrogate pair is never bisected
+ * @param maxLength   cap on RETAINED CODE POINTS (default 64), applied AFTER
+ *                    stripping so a surrogate pair is never bisected. When the
+ *                    value is truncated a single-code-point ellipsis is
+ *                    appended, so a truncated result is `maxLength + 1` long.
  * @param placeholder returned when nothing survives stripping
  */
 export function sanitizeForDisplay(
@@ -147,11 +149,12 @@ export function sanitizeForDisplay(
 }
 
 /**
- * Truncate to `maxCodePoints` code points, appending an ellipsis when truncated.
- * Iterates by CODE POINT via spread (not `String.prototype.slice`, which indexes
- * by UTF-16 code unit and can split a surrogate pair into a lone-surrogate
- * `U+FFFD`). Control/format chars — including the ZWJ that binds emoji
- * sequences — are already stripped upstream, so code-point capping is
+ * Truncate to `maxCodePoints` retained code points, appending a single-code-point
+ * ellipsis when truncated (so a truncated result is `maxCodePoints + 1` long).
+ * Iterates by CODE POINT via `Array.from` (not `String.prototype.slice`, which
+ * indexes by UTF-16 code unit and can split a surrogate pair into a
+ * lone-surrogate `U+FFFD`). Control/format chars — including the ZWJ that binds
+ * emoji sequences — are already stripped upstream, so code-point capping is
  * sufficient and avoids an `Intl.Segmenter` (grapheme) dependency.
  */
 function capLength(s: string, maxCodePoints: number): string {
