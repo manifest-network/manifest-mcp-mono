@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { createInterface } from 'node:readline';
 import { DirectSecp256k1HdWallet } from '@cosmjs/proto-signing';
@@ -80,7 +80,8 @@ function promptPassword(question: string): Promise<string> {
   });
 }
 
-async function writeKeyfile(
+// Exported for unit testing of the on-disk permission enforcement.
+export async function writeKeyfile(
   wallet: DirectSecp256k1HdWallet,
   keyfilePath: string,
   password: string,
@@ -96,6 +97,13 @@ async function writeKeyfile(
   try {
     mkdirSync(dirname(keyfilePath), { recursive: true, mode: 0o700 });
     writeFileSync(keyfilePath, serialized, { mode: 0o600 });
+    // writeFileSync's `mode` applies ONLY when the file is newly created (flag
+    // 'w' = O_CREAT|O_WRONLY|O_TRUNC); for an already-existing path the OS
+    // ignores it and the file keeps its current (possibly loose, e.g. 0644)
+    // permissions. chmodSync unconditionally enforces 0600 so re-running
+    // keygen/import over a pre-existing keyfile can never leave it
+    // group/world-readable.
+    chmodSync(keyfilePath, 0o600);
   } catch (err: unknown) {
     throw new Error(
       `Failed to write keyfile to ${keyfilePath}: ${err instanceof Error ? err.message : String(err)}`,
