@@ -339,10 +339,14 @@ describe('parseJsonResponse', () => {
   });
 
   it('aborts a body that exceeds the cap instead of buffering it whole', async () => {
-    const res = new Response('x'.repeat(100), { status: 200 });
+    // VALID JSON, but larger than the cap. This matters: a pre-cap implementation
+    // (`await res.text()` + `JSON.parse`) would parse it successfully and return —
+    // so the only way this rejects is the cap abort, not an incidental parse error.
+    const body = JSON.stringify({ data: 'x'.repeat(100) }); // valid, > 10 bytes
+    const res = new Response(body, { status: 200 });
     await expect(
       parseJsonResponse(res, 'https://example.com', 10),
-    ).rejects.toBeInstanceOf(ProviderApiError);
+    ).rejects.toThrow(/10-byte cap/); // the cap-abort message, not "Invalid JSON"
   });
 });
 
