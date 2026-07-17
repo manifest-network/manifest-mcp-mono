@@ -158,6 +158,11 @@ export function sanitizeForDisplay(
  * sufficient and avoids an `Intl.Segmenter` (grapheme) dependency.
  */
 function capLength(s: string, maxCodePoints: number): string {
+  // Defensive: a non-negative integer cap is the only meaningful input. A bad
+  // cap (NaN / Infinity / negative / fractional) means "no truncation" rather
+  // than the surprising `slice` behavior it would otherwise produce — consistent
+  // with this helper's defensive treatment of its other inputs.
+  if (!Number.isInteger(maxCodePoints) || maxCodePoints < 0) return s;
   const codePoints = Array.from(s);
   if (codePoints.length <= maxCodePoints) return s;
   return `${codePoints.slice(0, maxCodePoints).join('')}…`;

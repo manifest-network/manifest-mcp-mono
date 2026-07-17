@@ -84,6 +84,15 @@ describe('sanitizeForDisplay', () => {
     expect([...out].length).toBeLessThanOrEqual(9); // 8 code points + ellipsis
     expect(out.endsWith('…')).toBe(true); // ellipsis appended
   });
+
+  it('treats a non-finite / negative maxLength as no-cap rather than misbehaving', () => {
+    const long = 'a'.repeat(100);
+    // NaN would slice(0, NaN)=>'…'; -1 would drop the last char; both are wrong.
+    expect(sanitizeForDisplay(long, Number.NaN)).toBe(long);
+    expect(sanitizeForDisplay(long, -1)).toBe(long);
+    expect(sanitizeForDisplay(long, Number.POSITIVE_INFINITY)).toBe(long);
+    expect(sanitizeForDisplay(long, 2.5)).toBe(long); // non-integer → no cap
+  });
 });
 
 /** Extract the text string from the first content item of a CallToolResult */
