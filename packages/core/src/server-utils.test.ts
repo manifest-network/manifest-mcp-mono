@@ -67,8 +67,10 @@ describe('sanitizeForDisplay', () => {
   });
 
   it('coerces nullish/non-string input to the placeholder rather than throwing', () => {
-    expect(sanitizeForDisplay(undefined as unknown as string)).toBe('(hidden)');
-    expect(sanitizeForDisplay(null as unknown as string)).toBe('(hidden)');
+    expect(sanitizeForDisplay(undefined)).toBe('(hidden)');
+    expect(sanitizeForDisplay(null)).toBe('(hidden)');
+    // a non-string object coerces (String(...)) instead of throwing
+    expect(sanitizeForDisplay(42)).toBe('42');
   });
 
   it('length-caps an over-long value without bisecting a surrogate pair', () => {

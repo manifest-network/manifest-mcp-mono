@@ -121,13 +121,15 @@ export function sanitizeForLogging(obj: unknown, depth = 0): unknown {
  * value for logic/matching — the chain is authoritative by string equality — and
  * pass it through here only where a human reads it.
  *
- * @param raw         untrusted string (coerced defensively if nullish/non-string)
+ * @param raw         untrusted value; typed `unknown` because this is a defensive
+ *                    boundary helper — any nullish/non-string input is coerced
+ *                    (`String(raw ?? '')`) rather than rejected
  * @param maxLength   visible-length cap in CODE POINTS (default 64), applied
  *                    AFTER stripping so a surrogate pair is never bisected
  * @param placeholder returned when nothing survives stripping
  */
 export function sanitizeForDisplay(
-  raw: string,
+  raw: unknown,
   maxLength = 64,
   placeholder = '(hidden)',
 ): string {

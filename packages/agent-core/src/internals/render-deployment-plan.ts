@@ -176,7 +176,7 @@ export function renderDeploymentPlan(
     // control/format bytes rather than allowlist a grammar it may not follow.
     lines.push(
       `  Provider:                  ${sanitizeForDisplay(
-        input.providerUuid as string,
+        input.providerUuid,
         64,
         '(unknown provider)',
       )}`,
