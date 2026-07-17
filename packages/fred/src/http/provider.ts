@@ -150,6 +150,10 @@ export async function readBodyCapped(
   // is the authoritative guard, this header check is just an early reject.
   const declared = Number(res.headers?.get?.('content-length'));
   if (Number.isFinite(declared) && declared > maxBytes) {
+    // Tear the body down before bailing so undici can release the socket back
+    // to the pool immediately, rather than holding it until GC finalization.
+    // Mirrors the `reader.cancel()` on the streamed-overflow path below.
+    await res.body?.cancel().catch(() => {});
     throw new ProviderApiError(
       0,
       `Response from ${url} declares Content-Length ${declared} which exceeds the ${maxBytes}-byte cap; refusing to read.`,

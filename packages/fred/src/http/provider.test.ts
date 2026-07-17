@@ -406,6 +406,23 @@ describe('readBodyCapped (response-size ceiling)', () => {
       readBodyCapped(fakeRes, 'https://p.example', MAX_RESPONSE_BYTES),
     ).rejects.toBeInstanceOf(ProviderApiError);
   });
+
+  it('cancels the response body on the Content-Length fast-reject so the socket is released', async () => {
+    let cancelled = false;
+    const body = new ReadableStream<Uint8Array>({
+      cancel() {
+        cancelled = true;
+      },
+    });
+    const fakeRes = {
+      headers: new Headers({ 'content-length': String(50 * 1024 * 1024) }),
+      body,
+    } as unknown as Response;
+    await expect(
+      readBodyCapped(fakeRes, 'https://p.example', 10),
+    ).rejects.toBeInstanceOf(ProviderApiError);
+    expect(cancelled).toBe(true); // stream torn down, not left dangling
+  });
 });
 
 describe('ProviderApiError.isProviderApiError (dual-package-safe brand guard)', () => {
