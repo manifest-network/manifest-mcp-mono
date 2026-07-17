@@ -103,6 +103,72 @@ export function sanitizeForLogging(obj: unknown, depth = 0): unknown {
 }
 
 /**
+ * Neutralize an UNTRUSTED string before it is placed on a HUMAN-FACING approval
+ * surface (a confirmation block the user approves, an elicitation label). This
+ * is the display-boundary defense for provider-controlled on-chain strings
+ * (SKU name, denom) that would otherwise forge plan lines (an embedded newline
+ * fakes a "Total fee" line — CWE-117/CWE-451), repaint the terminal
+ * (ANSI/ESC — CWE-150), or hide/reorder text (bidi override / zero-width —
+ * Trojan Source, CVE-2021-42574).
+ *
+ * Strip — not escape — is idiomatic for identifier-shaped values on a disposable
+ * approval surface (CWE-150 "restrict to printable", Unicode UTR#36, git-annex).
+ * Control/format chars become a space (so words don't fuse), whitespace is
+ * collapsed, and an all-hostile value returns a conspicuous placeholder so
+ * tampering never silently vanishes.
+ *
+ * Distinct from `sanitizeForLogging` (secret redaction). Callers keep the RAW
+ * value for logic/matching — the chain is authoritative by string equality — and
+ * pass it through here only where a human reads it.
+ *
+ * @param raw         untrusted value; typed `unknown` because this is a defensive
+ *                    boundary helper — any nullish/non-string input is coerced
+ *                    (`String(raw ?? '')`) rather than rejected
+ * @param maxLength   cap on RETAINED CODE POINTS (default 64), applied AFTER
+ *                    stripping so a surrogate pair is never bisected. When the
+ *                    value is truncated a single-code-point ellipsis is
+ *                    appended, so a truncated result is `maxLength + 1` long.
+ * @param placeholder returned when nothing survives stripping
+ */
+export function sanitizeForDisplay(
+  raw: unknown,
+  maxLength = 64,
+  placeholder = '(hidden)',
+): string {
+  const cleaned = String(raw ?? '')
+    .normalize('NFC')
+    // Cc (C0 + DEL + C1, incl. ESC and all newlines), Cf (bidi overrides,
+    // zero-width, BOM, TAG block), Zl/Zp (U+2028 / U+2029). The `u` flag is
+    // SAFETY-CRITICAL: without it `\p{Cc}` silently matches a literal 'p' and
+    // the filter fails OPEN.
+    .replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (cleaned === '') return placeholder;
+  return capLength(cleaned, maxLength);
+}
+
+/**
+ * Truncate to `maxCodePoints` retained code points, appending a single-code-point
+ * ellipsis when truncated (so a truncated result is `maxCodePoints + 1` long).
+ * Iterates by CODE POINT via `Array.from` (not `String.prototype.slice`, which
+ * indexes by UTF-16 code unit and can split a surrogate pair into a
+ * lone-surrogate `U+FFFD`). Control/format chars — including the ZWJ that binds
+ * emoji sequences — are already stripped upstream, so code-point capping is
+ * sufficient and avoids an `Intl.Segmenter` (grapheme) dependency.
+ */
+function capLength(s: string, maxCodePoints: number): string {
+  // Defensive: a non-negative integer cap is the only meaningful input. A bad
+  // cap (NaN / Infinity / negative / fractional) means "no truncation" rather
+  // than the surprising `slice` behavior it would otherwise produce — consistent
+  // with this helper's defensive treatment of its other inputs.
+  if (!Number.isInteger(maxCodePoints) || maxCodePoints < 0) return s;
+  const codePoints = Array.from(s);
+  if (codePoints.length <= maxCodePoints) return s;
+  return `${codePoints.slice(0, maxCodePoints).join('')}…`;
+}
+
+/**
  * Options for creating a chain, lease, or fred MCP server
  */
 export interface ManifestMCPServerOptions {

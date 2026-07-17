@@ -39,6 +39,23 @@ describe('buildSkuPickSchema', () => {
     };
     expect(s.properties.sku_uuid.enumNames[0]).toContain('100umfx');
   });
+
+  it('sanitizes control chars so a hostile SKU cannot inject into the label (ENG-555)', () => {
+    const hostile: SkuCandidate[] = [
+      {
+        skuUuid: asSkuUuid('x'),
+        providerUuid: asProviderUuid('p\n1'),
+        name: 'docker-micro\n  FREE TIER',
+        price: { amount: '1\n0', denom: 'umfx\nx' },
+        active: true,
+      },
+    ];
+    const s = buildSkuPickSchema(hostile) as unknown as {
+      properties: { sku_uuid: { enumNames: string[] } };
+    };
+    // the host renders these labels — a newline would let the SKU forge extra lines
+    expect(s.properties.sku_uuid.enumNames[0]).not.toMatch(/[\n\r]/);
+  });
 });
 
 describe('parseSkuChoice', () => {

@@ -127,6 +127,7 @@ export {
   type ManifestMCPServerOptions,
   type MnemonicServerConfig,
   SENSITIVE_FIELDS,
+  sanitizeForDisplay,
   sanitizeForLogging,
   structuredResponse,
   withErrorHandling,

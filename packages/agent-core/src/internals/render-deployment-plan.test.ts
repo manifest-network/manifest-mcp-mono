@@ -54,6 +54,101 @@ function basePlan(overrides: Partial<Plan> = {}): Plan {
   };
 }
 
+describe('renderDeploymentPlan — hostile provider-controlled fields (ENG-555)', () => {
+  const lineCount = (text: string) => text.split('\n').length;
+
+  it('collapses a SKU name with an embedded newline so it cannot forge a plan line', () => {
+    const benign = renderDeploymentPlan({
+      plan: basePlan(),
+      denomMap: knownMap,
+      image: 'nginx:1.27',
+      size: 'small',
+      metaHash: 'abcd1234',
+    });
+    const hostile = renderDeploymentPlan({
+      plan: basePlan(),
+      denomMap: knownMap,
+      image: 'nginx:1.27',
+      size: 'small\n  Total fee:                 0 MFX',
+      metaHash: 'abcd1234',
+    });
+    // No injected line: the hostile name adds no extra plan line...
+    expect(lineCount(hostile.text)).toBe(lineCount(benign.text));
+    // ...it is collapsed onto the single Size line instead.
+    expect(hostile.text).toContain(
+      '  Size:                      small Total fee: 0 MFX',
+    );
+  });
+
+  it('sanitizes a hostile price denom so it cannot forge a plan line', () => {
+    const benign = renderDeploymentPlan({
+      plan: basePlan(),
+      denomMap: knownMap,
+      image: 'nginx:1.27',
+      size: 'small',
+      metaHash: 'abcd1234',
+    });
+    const hostile = renderDeploymentPlan({
+      plan: basePlan({
+        readiness: {
+          ...basePlan().readiness,
+          sku: {
+            name: 'small',
+            price: {
+              denom: 'x\n  Wallet:                    999 MFX',
+              amount: '1000',
+            },
+          },
+        },
+      }),
+      denomMap: knownMap, // hostile denom is unknown -> humanizeCoin renders it raw
+      image: 'nginx:1.27',
+      size: 'small',
+      metaHash: 'abcd1234',
+    });
+    expect(lineCount(hostile.text)).toBe(lineCount(benign.text)); // no forged line
+  });
+
+  it('sanitizes a providerUuid with an embedded newline so it cannot forge a line', () => {
+    const benign = renderDeploymentPlan({
+      plan: basePlan(),
+      denomMap: knownMap,
+      image: 'nginx:1.27',
+      size: 'small',
+      metaHash: 'abcd1234',
+      providerUuid: 'prov-2',
+    });
+    const hostile = renderDeploymentPlan({
+      plan: basePlan(),
+      denomMap: knownMap,
+      image: 'nginx:1.27',
+      size: 'small',
+      metaHash: 'abcd1234',
+      providerUuid: 'prov-2\n  Total fee:                 0 MFX',
+    });
+    expect(lineCount(hostile.text)).toBe(lineCount(benign.text)); // no forged line
+    // the injected text is collapsed onto the single Provider line
+    expect(hostile.text).toContain(
+      '  Provider:                  prov-2 Total fee: 0 MFX',
+    );
+  });
+
+  it('passes a legitimate provider id through unchanged (UUID or short form)', () => {
+    const uuid = '11111111-1111-4111-8111-111111111111';
+    for (const id of [uuid, 'prov-2']) {
+      const out = renderDeploymentPlan({
+        plan: basePlan(),
+        denomMap: knownMap,
+        image: 'nginx:1.27',
+        size: 'small',
+        metaHash: 'abcd1234',
+        providerUuid: id,
+      });
+      expect(out.text).toContain(`  Provider:                  ${id}`);
+    }
+  });
+});
+
 describe('renderDeploymentPlan', () => {
   describe('basic single-service rendering (no domain)', () => {
     it('renders the standard 5-line header (Image / Size / Manifest / meta_hash + SKU)', () => {

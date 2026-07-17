@@ -6,11 +6,94 @@ import {
   jsonResponse,
   type ManifestMCPServerOptions,
   SENSITIVE_FIELDS,
+  sanitizeForDisplay,
   sanitizeForLogging,
   structuredResponse,
   withErrorHandling,
 } from './server-utils.js';
 import { ManifestMCPError, ManifestMCPErrorCode } from './types.js';
+
+describe('sanitizeForDisplay', () => {
+  // Every control/format code point is an escape-based constant so the source
+  // has NO literal invisible characters (which do not survive editing reliably)
+  // and each case is unambiguous. Pipeline: control/format -> space, collapse, trim.
+  const ESC = '\x1b'; // C0 escape introducer (ANSI/CSI)
+  const LS = '\u2028'; // Zl line separator (missed by an ASCII-only filter)
+  const NEL = '\u0085'; // C1 next-line control (missed by [\x00-\x1F])
+  const RLO = '\u202e'; // Cf bidi right-to-left override (Trojan Source)
+  const ZWSP = '\u200b'; // Cf zero-width space
+
+  it('leaves a legitimate ASCII value unchanged', () => {
+    expect(sanitizeForDisplay('docker-micro')).toBe('docker-micro');
+  });
+
+  it('strips an embedded newline so a hostile name cannot forge a plan line', () => {
+    const out = sanitizeForDisplay('docker-micro\n  Total fee:  0 MFX');
+    expect(out).not.toMatch(/[\n\r]/);
+    expect(out).toBe('docker-micro Total fee: 0 MFX');
+  });
+
+  it('strips CR as well as LF', () => {
+    expect(sanitizeForDisplay('a\r\nb')).toBe('a b');
+  });
+
+  it('strips ANSI/CSI escape sequences (bare ESC U+001B is C0/Cc)', () => {
+    const out = sanitizeForDisplay(`${ESC}[31mtext${ESC}[0m`);
+    expect(out).not.toContain(ESC);
+    expect(out).toContain('text');
+  });
+
+  it('strips the Unicode line separator U+2028', () => {
+    expect(sanitizeForDisplay(`a${LS}b`)).toBe('a b');
+  });
+
+  it('strips the C1 control NEL U+0085', () => {
+    expect(sanitizeForDisplay(`a${NEL}b`)).toBe('a b');
+  });
+
+  it('strips a bidi override (Trojan Source, U+202E)', () => {
+    const out = sanitizeForDisplay(`admin${RLO}gnp.txt`);
+    expect(out).not.toContain(RLO);
+  });
+
+  it('strips zero-width pad chars (U+200B)', () => {
+    expect(sanitizeForDisplay(`a${ZWSP}${ZWSP}${ZWSP}b`)).toBe('a b');
+  });
+
+  it('returns the placeholder when the value is entirely control/format chars', () => {
+    expect(sanitizeForDisplay(`${RLO}${ZWSP}\n`, 64, '(hidden)')).toBe(
+      '(hidden)',
+    );
+  });
+
+  it('coerces nullish/non-string input to the placeholder rather than throwing', () => {
+    expect(sanitizeForDisplay(undefined)).toBe('(hidden)');
+    expect(sanitizeForDisplay(null)).toBe('(hidden)');
+    // a non-string primitive coerces via String(...) instead of throwing
+    expect(sanitizeForDisplay(42)).toBe('42');
+    // a symbol must NOT throw: String() is the safe coercion (SymbolDescriptiveString)
+    // — unlike `+`/template-literal coercion. Guards a future refactor that would
+    // reintroduce a throw for symbols.
+    expect(() => sanitizeForDisplay(Symbol('x'))).not.toThrow();
+    expect(sanitizeForDisplay(Symbol('x'))).toBe('Symbol(x)');
+  });
+
+  it('length-caps an over-long value without bisecting a surrogate pair', () => {
+    const out = sanitizeForDisplay('\u{1F600}'.repeat(50), 8);
+    expect(out).not.toContain('�'); // never a lone-surrogate replacement char
+    expect([...out].length).toBeLessThanOrEqual(9); // 8 code points + ellipsis
+    expect(out.endsWith('…')).toBe(true); // ellipsis appended
+  });
+
+  it('treats a non-finite / negative maxLength as no-cap rather than misbehaving', () => {
+    const long = 'a'.repeat(100);
+    // NaN would slice(0, NaN)=>'…'; -1 would drop the last char; both are wrong.
+    expect(sanitizeForDisplay(long, Number.NaN)).toBe(long);
+    expect(sanitizeForDisplay(long, -1)).toBe(long);
+    expect(sanitizeForDisplay(long, Number.POSITIVE_INFINITY)).toBe(long);
+    expect(sanitizeForDisplay(long, 2.5)).toBe(long); // non-integer → no cap
+  });
+});
 
 /** Extract the text string from the first content item of a CallToolResult */
 function textOf(result: CallToolResult): string {

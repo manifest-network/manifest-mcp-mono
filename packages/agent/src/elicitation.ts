@@ -40,6 +40,7 @@ import type {
 import {
   ManifestMCPError,
   ManifestMCPErrorCode,
+  sanitizeForDisplay,
 } from '@manifest-network/manifest-mcp-core';
 import type { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import type {
@@ -212,11 +213,22 @@ export function buildSkuPickSchema(
       sku_uuid: {
         type: 'string',
         enum: candidates.map((c) => c.skuUuid),
-        enumNames: candidates.map(
-          (c) =>
-            `${c.name} @ ${c.providerUuid}` +
-            (c.price ? ` (${c.price.amount}${c.price.denom})` : ''),
-        ),
+        // name / providerUuid / price are provider-controlled on-chain strings
+        // rendered as labels by the host — sanitize each component so a hostile
+        // SKU cannot inject newlines/control chars into the pick list (ENG-555).
+        // Structure chars (@, parens) stay literal so the label shape is intact.
+        enumNames: candidates.map((c) => {
+          const name = sanitizeForDisplay(c.name, 64, '(unnamed SKU)');
+          const provider = sanitizeForDisplay(
+            c.providerUuid,
+            64,
+            '(unknown provider)',
+          );
+          const price = c.price
+            ? ` (${sanitizeForDisplay(`${c.price.amount}${c.price.denom}`, 48)})`
+            : '';
+          return `${name} @ ${provider}${price}`;
+        }),
         description: 'Which SKU (and therefore which provider) to deploy to.',
       },
     },
