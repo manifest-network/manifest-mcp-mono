@@ -102,6 +102,7 @@ describe('resolveSku', () => {
     } catch (e) {
       thrown = e;
     }
+    expect(thrown).toBeInstanceOf(ManifestMCPError);
     const err = thrown as ManifestMCPError;
     expect(err.code).toBe(ManifestMCPErrorCode.SKU_AMBIGUOUS);
     // exactly one bullet line per real candidate — no forged bullets injected
