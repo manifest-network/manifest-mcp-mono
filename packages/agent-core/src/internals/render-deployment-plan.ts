@@ -171,9 +171,12 @@ export function renderDeploymentPlan(
   ];
 
   if (hasProvider) {
-    // providerUuid is a provider-controlled, unchecked trust-cast (NOT validated
-    // to UUID grammar — real ids may be arbitrary short strings), so strip
-    // control/format bytes rather than allowlist a grammar it may not follow.
+    // `ProviderUuid` is UUID-shaped by design (`parseProviderUuid` validates via
+    // assertUuid), but it reaches THIS display path via the UNCHECKED
+    // `asProviderUuid` trust-cast (sku-resolution / deploy-app), so this path
+    // cannot assume it is well-formed. Strip control/format bytes defensively
+    // rather than allowlist a UUID grammar this path has not re-validated — a
+    // legit-but-unvalidated id must still render (see the pinned-provider test).
     lines.push(
       `  Provider:                  ${sanitizeForDisplay(
         input.providerUuid,
