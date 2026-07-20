@@ -4,7 +4,7 @@
 
 **Goal:** Add an absolute gas-limit ceiling (`COSMOS_MAX_GAS`, default 50,000,000, `-1` = disabled) that aborts a transaction *before* broadcast when the node's `simulate()` estimate × the gas multiplier exceeds the ceiling — bounding the fee a compromised/hostile RPC (or an injected `gas_multiplier`) can make the wallet pay.
 
-**Architecture:** The ceiling is enforced in `buildGasFee` (the single fee-computation funnel every tx handler routes through). To cover the default `cosmos_tx` path — which today returns `'auto'` and lets cosmjs compute the fee internally, out of reach of any clamp — `cosmosTx` and `executeTx` are changed to **always resolve** `TxOptions` (with `maxGas` from config) on the non-explicit-fee path, so `buildGasFee` always computes an explicit `StdFee` and the ceiling always bites. Same `ceil(simulate × multiplier)` + `calculateFee` math cosmjs's `'auto'` runs — relocated so the ceiling can fire (cosmjs's own documented pattern, [#1134](https://github.com/cosmos/cosmjs/issues/1134); mirrors Hermes' `max_gas`). Config plumbs through `ManifestMCPConfig.maxGas` → `createConfig`/`validateConfig` → node `COSMOS_MAX_GAS`.
+**Architecture:** The ceiling is enforced in `buildGasFee` (the single fee-computation funnel every tx handler routes through). To cover the default `cosmos_tx` path — which today returns `'auto'` and lets cosmjs compute the fee internally, out of reach of any clamp — `cosmosTx` and `executeTx` are changed to **always resolve** `TxOptions` (with `maxGas` from config) on the non-explicit-fee path, so `buildGasFee` always computes an explicit `StdFee` and the ceiling always bites — the cosmjs-documented "compute your own `StdFee`" pattern ([#1134](https://github.com/cosmos/cosmjs/issues/1134); mirrors Hermes' `max_gas`). Fee math is behavior-preserving up to a **≤1-gas-unit** rounding difference: `buildGasFee` uses `Math.ceil(simulate × multiplier)` (its existing behavior), while cosmjs's `'auto'` uses `Math.round` (verified in the installed fork `@manifest-network/stargate@0.32.4-ll.3`, `signingstargateclient.js:176,197`). `ceil ≥ round`, so the resolved default-path fee is at most one gas unit higher — negligible and strictly safer (never under-provisions); the override path already used `ceil` and is unchanged. Config plumbs through `ManifestMCPConfig.maxGas` → `createConfig`/`validateConfig` → node `COSMOS_MAX_GAS`.
 
 **Tech Stack:** TypeScript (ESM, `.js` import extensions), `@cosmjs/stargate` (overridden to `@manifest-network/stargate`), vitest, biome, tsdown. Monorepo: `packages/core` + `packages/node`. Spec: `docs/superpowers/specs/2026-07-17-eng556-gas-ceiling-design.md`.
 
@@ -369,8 +369,23 @@ Add inside the existing `describe('buildGasFee', ...)` block in `packages/core/s
     expect((fee as { gas: string }).gas).toBe('60000000');
   });
 
-  it('throws GAS_LIMIT_EXCEEDED on a non-finite gas estimate when a ceiling is set', async () => {
+  it('throws GAS_LIMIT_EXCEEDED on a non-finite (Infinity) gas estimate when a ceiling is set', async () => {
     const client = makeMockClient(Number.POSITIVE_INFINITY);
+    const options = {
+      gasMultiplier: 1.5,
+      gasPrice: '0.025umfx',
+      maxGas: 50_000_000,
+    };
+
+    await expect(
+      buildGasFee(client, senderAddress, messages, options),
+    ).rejects.toMatchObject({
+      code: ManifestMCPErrorCode.GAS_LIMIT_EXCEEDED,
+    });
+  });
+
+  it('throws GAS_LIMIT_EXCEEDED on a NaN gas estimate when a ceiling is set', async () => {
+    const client = makeMockClient(Number.NaN);
     const options = {
       gasMultiplier: 1.5,
       gasPrice: '0.025umfx',
@@ -426,8 +441,10 @@ export async function buildGasFee(
   const gasLimit = Math.ceil(gasEstimate * options.gasMultiplier);
   // Absolute ceiling (ENG-556): a hostile/compromised RPC can inflate simulate();
   // fail closed before signing rather than pay an unbounded fee. maxGas === -1 or
-  // undefined disables the check. Runs BEFORE calculateFee, so it also pre-empts the
-  // cosmjs #1134 max-safe-integer crash on an astronomically inflated estimate.
+  // undefined disables the check. Running BEFORE calculateFee also pre-empts the
+  // generic `new Uint53(gasLimit)` int53-range / non-finite throw inside calculateFee
+  // on an astronomically inflated or NaN estimate — replacing an unclassified Error
+  // with a clean GAS_LIMIT_EXCEEDED.
   if (
     options.maxGas !== undefined &&
     options.maxGas > 0 &&
@@ -482,13 +499,13 @@ EOF
 
 - [ ] **Step 1: Add the import**
 
-In `packages/core/src/cosmos.ts`, ensure `DEFAULT_GAS_MULTIPLIER` and `DEFAULT_MAX_GAS` are imported from `./config.js`. Check the existing imports; add or extend:
+`packages/core/src/cosmos.ts:3` **already** imports `DEFAULT_GAS_MULTIPLIER` from `./config.js`. Extend that exact line to add `DEFAULT_MAX_GAS`:
 
 ```typescript
 import { DEFAULT_GAS_MULTIPLIER, DEFAULT_MAX_GAS } from './config.js';
 ```
 
-(If a `./config.js` import already exists, add the two names to it. `calculateFee` is already imported at line 1.)
+(`calculateFee` is already imported at line 1. This is a one-line edit — no new import statement.)
 
 - [ ] **Step 2: Write the failing tests**
 
@@ -750,12 +767,37 @@ In `packages/core/src/tools/executeTx.ts`, replace lines 42-58 (the `let txOptio
   }
 ```
 
-- [ ] **Step 5: Run the tests to verify they pass**
+- [ ] **Step 5: Update the two existing tests broken by the default-path change**
+
+Two pre-existing tests exercise the default (no-opts) path, which now computes an explicit `StdFee` instead of `'auto'`. Both MUST be updated (these are exact edits, not a "review"):
+
+**(a) The SYNC-broadcast test** (`executeTx.test.ts`, ~lines 79-86) hard-codes `'auto'` as the fee arg to `signAndBroadcastSync`. Change it to a computed-fee matcher:
+
+```typescript
+    expect(signAndBroadcastSync).toHaveBeenCalledWith(
+      expect.any(String),
+      msgs,
+      expect.objectContaining({ gas: expect.any(String) }),
+      '',
+    );
+```
+
+**(b) The concurrent-serialization test** (`executeTx.test.ts`, ~line 173) mocks `simulate: vi.fn()` (returns `undefined`). With the default path now simulating, `undefined` → `Math.ceil(undefined * 1.5)` = `NaN` → the clamp throws `GAS_LIMIT_EXCEEDED` before `signAndBroadcast` ever runs, breaking the `order` assertion. Give `simulate` a resolved value under the ceiling:
+
+```typescript
+    chain.getSigningClient = vi
+      .fn()
+      .mockResolvedValue({ signAndBroadcast, simulate: vi.fn().mockResolvedValue(100_000) });
+```
+
+(No other existing `executeTx.test.ts` case breaks: the multi-msg and TX_FAILED/no-double-broadcast tests assert `expect.anything()` for the fee or don't assert it; the `gasMultiplier`-set and fee-wins tests are unaffected.)
+
+- [ ] **Step 6: Run the tests to verify they pass**
 
 Run: `npx vitest run packages/core/src/tools/executeTx.test.ts`
-Expected: PASS. Review any pre-existing test that asserted the default (no-opts) `executeTx` call passes `'auto'` to `signAndBroadcast` — with the always-resolve change it now passes a computed `StdFee`. Update such an assertion to expect a computed fee (`not.toBe('auto')` + `{ gas: expect.any(String) }`), matching the new default-path test above.
+Expected: PASS (all 9 existing cases as updated + the 2 new cases).
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
 git add packages/core/src/tools/executeTx.ts packages/core/src/tools/executeTx.test.ts
@@ -937,10 +979,17 @@ EOF
 
 ---
 
-### Task 7: Documentation — CLAUDE.md env row, architecture note, enum count
+### Task 7: Documentation — CLAUDE.md, package READMEs, `.env.example`, CHANGELOG, security doc
 
 **Files:**
 - Modify: `CLAUDE.md` (env table ~line 107; CosmosClientManager bullet ~line 54; error-handling count ~line 94)
+- Modify: `packages/node/README.md` (published env table, ~line 164)
+- Modify: `packages/node/.env.example` (commented sample, ~line 23)
+- Modify: `packages/agent/README.md` (agent env matrix, ~line 44)
+- Modify: `CHANGELOG.md` (`## [Unreleased]`, ~line 8)
+- Modify: `docs/security.md` (config/tx validation section, ~line 108)
+
+**Why these:** every surface that documents `COSMOS_GAS_MULTIPLIER` must also list `COSMOS_MAX_GAS` or it goes stale. The agent server enforces the ceiling too — all its broadcasts (`deployApp` → `deployManifest.ts:261`, `manageDomain` → `setItemCustomDomain.ts:78`, `closeLease`) route through the now-capped `cosmosTx`. ENG-556 is a security control, so it belongs in `docs/security.md`; and the repo convention populates `CHANGELOG.md [Unreleased]` per ENG.
 
 - [ ] **Step 1: Add the env-var table row**
 
@@ -970,17 +1019,67 @@ Run: `grep -cE "^\s+[A-Z_]+ = '" packages/core/src/types.ts`
 `ManifestMCPError` with `ManifestMCPErrorCode` enum (17 codes, 8 categories).
 ```
 
-- [ ] **Step 4: Verify the docs build clean (biome)**
+- [ ] **Step 4: Add the row to `packages/node/README.md`**
 
-Run: `npm run check`
-Expected: PASS (no markdown/format drift).
+Insert after the `COSMOS_GAS_MULTIPLIER` row (~line 164), matching the 4-column format (`| Variable | Required | Default | Description |`):
 
-- [ ] **Step 5: Commit**
+```markdown
+| `COSMOS_MAX_GAS` | No | `50000000` | Absolute per-tx gas-limit ceiling; a broadcast whose `ceil(simulate × multiplier)` exceeds it aborts with `GAS_LIMIT_EXCEEDED`; `-1` disables |
+```
+
+- [ ] **Step 5: Add the commented sample to `packages/node/.env.example`**
+
+Insert after the `COSMOS_GAS_MULTIPLIER` sample (~line 23):
 
 ```bash
-git add CLAUDE.md
+# Optional — absolute per-transaction gas-limit ceiling (default: 50000000; -1 disables).
+# A broadcast whose ceil(simulate × multiplier) exceeds it aborts with GAS_LIMIT_EXCEEDED.
+# COSMOS_MAX_GAS=50000000
+```
+
+- [ ] **Step 6: Add the row to `packages/agent/README.md`**
+
+Insert after the `COSMOS_GAS_MULTIPLIER` row (~line 44), matching the 4-column `| Variable | Required | Default | Notes |` format:
+
+```markdown
+| `COSMOS_MAX_GAS` | No | `50000000` | Absolute per-tx gas ceiling; a broadcast aborts with `GAS_LIMIT_EXCEEDED` when `ceil(simulate × multiplier)` exceeds it; `-1` disables. Enforced on deploy / manage-domain / close-lease. |
+```
+
+- [ ] **Step 7: Add the CHANGELOG entry**
+
+In `CHANGELOG.md`, populate the `## [Unreleased]` section (~line 8):
+
+```markdown
+## [Unreleased]
+
+### Added
+
+- **core, node:** an absolute gas-limit ceiling — `COSMOS_MAX_GAS` / `config.maxGas` (default `50000000`, `-1` disables) + `ManifestMCPErrorCode.GAS_LIMIT_EXCEEDED` (non-retryable). A broadcast whose `ceil(simulate × multiplier)` exceeds the ceiling aborts before signing, bounding the fee a hostile/compromised RPC can force via an inflated `simulate()`. (ENG-556)
+
+### Changed
+
+- **core:** `cosmosTx` / `executeTx` now always resolve `TxOptions` on the non-explicit-fee path, so the default broadcast computes an explicit fee instead of delegating `'auto'` to cosmjs. Behavior-preserving fee math (`ceil` vs cosmjs's `round`, ≤1 gas unit, strictly safer). (ENG-556)
+```
+
+- [ ] **Step 8: Add the security-doc note**
+
+In `docs/security.md`, append to the Input-validation section (after the `INVALID_CONFIG` paragraph, ~line 108) a sentence describing the control:
+
+```markdown
+The tx-broadcast path enforces an absolute gas-limit ceiling (`COSMOS_MAX_GAS` / `config.maxGas`, default `50_000_000`; `-1` disables). `cosmosTx` / `executeTx` resolve an explicit fee rather than delegating `'auto'` to cosmjs, and `buildGasFee` aborts with `GAS_LIMIT_EXCEEDED` (non-retryable) before signing when `ceil(simulate() × gasMultiplier)` exceeds the ceiling — bounding the fee a hostile or compromised `COSMOS_RPC_URL` can force by inflating the simulated gas. `gasPrice` is operator config (trusted); `simulate()` is the untrusted input the ceiling constrains.
+```
+
+- [ ] **Step 9: Verify the docs build clean (biome)**
+
+Run: `npm run check`
+Expected: PASS (no markdown/format drift). If biome reports import/format drift on any file, run `npm run check:fix` (`check` is read-only; `check:fix` writes).
+
+- [ ] **Step 10: Commit**
+
+```bash
+git add CLAUDE.md packages/node/README.md packages/node/.env.example packages/agent/README.md CHANGELOG.md docs/security.md
 git commit -F - <<'EOF'
-docs: document COSMOS_MAX_GAS gas ceiling + fix enum count (ENG-556)
+docs: document COSMOS_MAX_GAS ceiling across READMEs/env/CHANGELOG/security (ENG-556)
 
 Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
 EOF
@@ -1148,7 +1247,7 @@ gh pr create --fill --title "feat(core): absolute gas-limit ceiling on generic t
 ## Verification Notes / Gotchas
 
 - **Full-repo lint is mandatory.** `TxOptions` and `ManifestMCPErrorCode` reach the SDK root barrel via `export type *` (types) and an explicit value re-export (the enum). `publint`/`attw` do NOT diff the API surface, so a surface regression is caught only by `tsc` (`npm run lint`) + hand review. No api-report snapshot exists.
-- **Behavior-preservation of the `'auto'` → explicit-fee move:** the resolved `gasMultiplier` (`override ?? config ?? DEFAULT_GAS_MULTIPLIER`) and `gasPrice` reproduce the exact fee cosmjs computed for `'auto'` (its `defaultGasMultiplier` is set to `config.gasMultiplier ?? DEFAULT_GAS_MULTIPLIER`). The only new outcome is the abort.
+- **Behavior-preservation of the `'auto'` → explicit-fee move:** the resolved `gasMultiplier` (`override ?? config ?? DEFAULT_GAS_MULTIPLIER`) and `gasPrice` reproduce the fee cosmjs computed for `'auto'` (its `defaultGasMultiplier` is set to `config.gasMultiplier ?? DEFAULT_GAS_MULTIPLIER` in `client.ts:420`) **up to rounding**: `buildGasFee` uses `Math.ceil`, cosmjs's `'auto'` uses `Math.round` (`@manifest-network/stargate` `signingstargateclient.js:176,197`). The default-path gas limit is therefore at most **1 gas unit** higher than before — negligible, strictly safer (never under-provisions), and it aligns the default path with the override path (which already used `ceil`). The only material new outcome is the abort. No unit test asserts an exact default-path fee value (the handler is mocked), so nothing regresses on this.
 - **Do NOT modify** the explicit-fee (FEE-WINS) path or `cosmosEstimateFee`'s inline gas math (`cosmos.ts:405-412`). The estimate path stays uncapped (read-only preview) — a documented asymmetry, not a bug.
 - **Query-only mode unchanged:** when `gasPrice` is unset, `cosmosTx`/`executeTx` leave `txOptions` undefined (no override) → `buildGasFee` returns `'auto'` → the broadcast still fails downstream at `getBroadcastClient` exactly as today.
 - Run `npm install` + `npm run build` in this fresh worktree before cross-package tsc/vitest (memory: *worktree-needs-build-before-cross-package-tests*).
