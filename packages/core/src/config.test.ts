@@ -52,6 +52,38 @@ describe('createConfig', () => {
     expect(config.gasMultiplier).toBe(2.0);
   });
 
+  it('should apply default maxGas', () => {
+    const config = createConfig({
+      chainId: 'test-chain',
+      rpcUrl: 'https://example.com',
+      gasPrice: '1.0umfx',
+    });
+
+    expect(config.maxGas).toBe(50_000_000);
+  });
+
+  it('should preserve provided maxGas', () => {
+    const config = createConfig({
+      chainId: 'test-chain',
+      rpcUrl: 'https://example.com',
+      gasPrice: '1.0umfx',
+      maxGas: 10_000_000,
+    });
+
+    expect(config.maxGas).toBe(10_000_000);
+  });
+
+  it('should preserve maxGas of -1 (disabled sentinel)', () => {
+    const config = createConfig({
+      chainId: 'test-chain',
+      rpcUrl: 'https://example.com',
+      gasPrice: '1.0umfx',
+      maxGas: -1,
+    });
+
+    expect(config.maxGas).toBe(-1);
+  });
+
   it('should apply default rateLimit', () => {
     const config = createConfig({
       chainId: 'test-chain',
@@ -659,6 +691,65 @@ describe('validateConfig gasMultiplier', () => {
 
     expect(result.valid).toBe(false);
     expect(result.errors.some((e) => e.includes('gasMultiplier'))).toBe(true);
+  });
+});
+
+describe('validateConfig maxGas', () => {
+  const base = {
+    chainId: 'test',
+    rpcUrl: 'https://example.com',
+    gasPrice: '1.0umfx',
+  } as const;
+
+  it('accepts a positive integer', () => {
+    expect(validateConfig({ ...base, maxGas: 50_000_000 }).valid).toBe(true);
+  });
+
+  it('accepts -1 (disabled sentinel)', () => {
+    expect(validateConfig({ ...base, maxGas: -1 }).valid).toBe(true);
+  });
+
+  it('accepts undefined (unset)', () => {
+    expect(validateConfig({ ...base, maxGas: undefined }).valid).toBe(true);
+  });
+
+  it('rejects 0', () => {
+    const result = validateConfig({ ...base, maxGas: 0 });
+    expect(result.valid).toBe(false);
+    expect(result.errors.some((e) => e.includes('maxGas'))).toBe(true);
+  });
+
+  it('rejects negative values other than -1', () => {
+    const result = validateConfig({ ...base, maxGas: -5 });
+    expect(result.valid).toBe(false);
+    expect(result.errors.some((e) => e.includes('maxGas'))).toBe(true);
+  });
+
+  it('rejects non-integer values', () => {
+    const result = validateConfig({ ...base, maxGas: 1.5 });
+    expect(result.valid).toBe(false);
+    expect(result.errors.some((e) => e.includes('maxGas'))).toBe(true);
+  });
+
+  it('rejects NaN', () => {
+    const result = validateConfig({ ...base, maxGas: Number.NaN });
+    expect(result.valid).toBe(false);
+    expect(result.errors.some((e) => e.includes('maxGas'))).toBe(true);
+  });
+
+  it('rejects Infinity', () => {
+    const result = validateConfig({
+      ...base,
+      maxGas: Number.POSITIVE_INFINITY,
+    });
+    expect(result.valid).toBe(false);
+    expect(result.errors.some((e) => e.includes('maxGas'))).toBe(true);
+  });
+
+  it('rejects a non-number maxGas via createValidatedConfig', () => {
+    expect(() =>
+      createValidatedConfig({ ...base, maxGas: 'high' as unknown as number }),
+    ).toThrow(ManifestMCPError);
   });
 });
 

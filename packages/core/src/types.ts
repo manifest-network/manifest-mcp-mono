@@ -196,6 +196,14 @@ export interface ManifestMCPConfig {
   readonly retry?: RetryConfig;
   /** Gas simulation multiplier (default: 1.5, minimum: 1). A value of 1.0 uses the exact simulation result with no safety margin. Increase if transactions fail with out-of-gas errors. */
   readonly gasMultiplier?: number;
+  /**
+   * Absolute per-transaction gas-limit ceiling (default: 50_000_000). A broadcast
+   * whose `ceil(simulate() * gasMultiplier)` exceeds this is aborted with
+   * `GAS_LIMIT_EXCEEDED` before signing — defense-in-depth against a hostile RPC
+   * inflating the simulated gas. Must be a positive integer, or `-1` to disable
+   * the ceiling (mirrors the chain's `block.max_gas = -1` "unlimited" convention).
+   */
+  readonly maxGas?: number;
 }
 
 /**
