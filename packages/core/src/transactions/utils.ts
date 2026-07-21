@@ -700,5 +700,29 @@ export async function buildGasFee(
   if (!options) return 'auto';
   const gasEstimate = await client.simulate(signerAddress, messages, memo);
   const gasLimit = Math.ceil(gasEstimate * options.gasMultiplier);
+  // Absolute ceiling (ENG-556): a hostile/compromised RPC can inflate simulate();
+  // fail closed before signing rather than pay an unbounded fee. maxGas === -1 or
+  // undefined disables the check. Running BEFORE calculateFee also pre-empts the
+  // generic `new Uint53(gasLimit)` int53-range / non-finite throw inside calculateFee
+  // on an astronomically inflated or NaN estimate — replacing an unclassified Error
+  // with a clean GAS_LIMIT_EXCEEDED.
+  if (
+    options.maxGas !== undefined &&
+    options.maxGas > 0 &&
+    (!Number.isFinite(gasLimit) || gasLimit > options.maxGas)
+  ) {
+    throw new ManifestMCPError(
+      ManifestMCPErrorCode.GAS_LIMIT_EXCEEDED,
+      `Estimated gas limit ${gasLimit} exceeds the configured ceiling ${options.maxGas} ` +
+        `(COSMOS_MAX_GAS). A hostile or misconfigured RPC can inflate the simulated gas. ` +
+        `Raise COSMOS_MAX_GAS if this transaction is legitimate, or set it to -1 to disable the ceiling.`,
+      {
+        simulatedGas: gasEstimate,
+        gasMultiplier: options.gasMultiplier,
+        estimatedGas: gasLimit,
+        maxGas: options.maxGas,
+      },
+    );
+  }
   return calculateFee(gasLimit, options.gasPrice);
 }

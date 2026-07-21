@@ -220,6 +220,14 @@ export interface TxOverrides {
 export interface TxOptions {
   readonly gasMultiplier: number;
   readonly gasPrice: string;
+  /**
+   * Absolute gas-limit ceiling resolved from `config.maxGas` (default 50_000_000;
+   * `-1` disables). `buildGasFee` throws `GAS_LIMIT_EXCEEDED` when
+   * `ceil(simulate * gasMultiplier)` exceeds it. Optional so the additive change
+   * does not break existing `TxOptions` literals; the resolvers (`cosmosTx`,
+   * `executeTx`) always populate it. (ENG-556)
+   */
+  readonly maxGas?: number;
 }
 
 /**
