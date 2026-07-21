@@ -15,6 +15,7 @@ beforeEach(() => {
   delete process.env.COSMOS_REST_URL;
   delete process.env.COSMOS_ADDRESS_PREFIX;
   delete process.env.COSMOS_GAS_MULTIPLIER;
+  delete process.env.COSMOS_MAX_GAS;
   delete process.env.COSMOS_MNEMONIC;
   delete process.env.MANIFEST_KEY_FILE;
   delete process.env.MANIFEST_KEY_PASSWORD;
@@ -196,6 +197,85 @@ describe('loadConfig', () => {
 
     const { loadConfig } = await importConfig();
     expect(() => loadConfig()).toThrow(/COSMOS_GAS_MULTIPLIER/);
+  });
+
+  it('should parse COSMOS_MAX_GAS as a number', async () => {
+    process.env.COSMOS_CHAIN_ID = 'test-chain';
+    process.env.COSMOS_RPC_URL = 'https://rpc.test.com';
+    process.env.COSMOS_GAS_PRICE = '0.025umfx';
+    process.env.COSMOS_MAX_GAS = '10000000';
+
+    const { loadConfig } = await importConfig();
+    expect(loadConfig().maxGas).toBe(10_000_000);
+  });
+
+  it('should parse COSMOS_MAX_GAS of -1 (disabled)', async () => {
+    process.env.COSMOS_CHAIN_ID = 'test-chain';
+    process.env.COSMOS_RPC_URL = 'https://rpc.test.com';
+    process.env.COSMOS_GAS_PRICE = '0.025umfx';
+    process.env.COSMOS_MAX_GAS = '-1';
+
+    const { loadConfig } = await importConfig();
+    expect(loadConfig().maxGas).toBe(-1);
+  });
+
+  it('should leave maxGas undefined when COSMOS_MAX_GAS is not set', async () => {
+    process.env.COSMOS_CHAIN_ID = 'test-chain';
+    process.env.COSMOS_RPC_URL = 'https://rpc.test.com';
+    process.env.COSMOS_GAS_PRICE = '0.025umfx';
+
+    const { loadConfig } = await importConfig();
+    expect(loadConfig().maxGas).toBeUndefined();
+  });
+
+  it('should leave maxGas undefined when COSMOS_MAX_GAS is empty string', async () => {
+    process.env.COSMOS_CHAIN_ID = 'test-chain';
+    process.env.COSMOS_RPC_URL = 'https://rpc.test.com';
+    process.env.COSMOS_GAS_PRICE = '0.025umfx';
+    process.env.COSMOS_MAX_GAS = '';
+
+    const { loadConfig } = await importConfig();
+    expect(loadConfig().maxGas).toBeUndefined();
+  });
+
+  it('should throw for non-numeric COSMOS_MAX_GAS', async () => {
+    process.env.COSMOS_CHAIN_ID = 'test-chain';
+    process.env.COSMOS_RPC_URL = 'https://rpc.test.com';
+    process.env.COSMOS_GAS_PRICE = '0.025umfx';
+    process.env.COSMOS_MAX_GAS = 'abc';
+
+    const { loadConfig } = await importConfig();
+    expect(() => loadConfig()).toThrow(/COSMOS_MAX_GAS/);
+  });
+
+  it('should throw for zero COSMOS_MAX_GAS', async () => {
+    process.env.COSMOS_CHAIN_ID = 'test-chain';
+    process.env.COSMOS_RPC_URL = 'https://rpc.test.com';
+    process.env.COSMOS_GAS_PRICE = '0.025umfx';
+    process.env.COSMOS_MAX_GAS = '0';
+
+    const { loadConfig } = await importConfig();
+    expect(() => loadConfig()).toThrow(/COSMOS_MAX_GAS/);
+  });
+
+  it('should throw for a non-integer COSMOS_MAX_GAS', async () => {
+    process.env.COSMOS_CHAIN_ID = 'test-chain';
+    process.env.COSMOS_RPC_URL = 'https://rpc.test.com';
+    process.env.COSMOS_GAS_PRICE = '0.025umfx';
+    process.env.COSMOS_MAX_GAS = '1.5';
+
+    const { loadConfig } = await importConfig();
+    expect(() => loadConfig()).toThrow(/COSMOS_MAX_GAS/);
+  });
+
+  it('should throw for a negative COSMOS_MAX_GAS other than -1', async () => {
+    process.env.COSMOS_CHAIN_ID = 'test-chain';
+    process.env.COSMOS_RPC_URL = 'https://rpc.test.com';
+    process.env.COSMOS_GAS_PRICE = '0.025umfx';
+    process.env.COSMOS_MAX_GAS = '-5';
+
+    const { loadConfig } = await importConfig();
+    expect(() => loadConfig()).toThrow(/COSMOS_MAX_GAS/);
   });
 
   it('should fall back to default when env var is empty string', async () => {

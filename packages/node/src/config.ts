@@ -12,6 +12,8 @@ export interface NodeMCPConfig {
   readonly addressPrefix: string;
   /** Gas simulation multiplier parsed from COSMOS_GAS_MULTIPLIER (minimum: 1). When undefined, a default of 1.5 is applied downstream by createConfig. */
   readonly gasMultiplier?: number;
+  /** Absolute gas-limit ceiling parsed from COSMOS_MAX_GAS (positive integer, or -1 to disable). When undefined, a default of 50_000_000 is applied downstream by createConfig. */
+  readonly maxGas?: number;
   readonly mnemonic?: string;
   readonly keyfilePath: string;
   readonly keyPassword?: string;
@@ -70,6 +72,17 @@ export function loadConfig(): NodeMCPConfig {
     }
   }
 
+  const maxGasRaw = process.env.COSMOS_MAX_GAS;
+  let maxGas: number | undefined;
+  if (maxGasRaw !== undefined && maxGasRaw !== '') {
+    maxGas = Number(maxGasRaw);
+    if (!Number.isInteger(maxGas) || (maxGas <= 0 && maxGas !== -1)) {
+      throw new Error(
+        `COSMOS_MAX_GAS must be a positive integer, or -1 to disable, got "${maxGasRaw}"`,
+      );
+    }
+  }
+
   // At least one endpoint is required
   if (!rpcUrl && !restUrl) {
     throw new Error(
@@ -98,6 +111,7 @@ export function loadConfig(): NodeMCPConfig {
       ),
     ),
     gasMultiplier,
+    maxGas,
     keyPassword: process.env.MANIFEST_KEY_PASSWORD,
   };
 }

@@ -115,6 +115,7 @@ export function bootstrap(cfg: BootstrapConfig): void {
       restUrl: env.restUrl,
       addressPrefix: env.addressPrefix,
       gasMultiplier: env.gasMultiplier,
+      maxGas: env.maxGas,
     });
 
     const walletProvider = resolveWallet(env, config, cfg.cliName);
