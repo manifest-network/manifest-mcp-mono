@@ -559,10 +559,66 @@ describe('cosmosTx', () => {
       'send',
       [],
       false,
-      { gasMultiplier: 2.5, gasPrice: '1.0umfx' },
+      { gasMultiplier: 2.5, gasPrice: '1.0umfx', maxGas: 50_000_000 },
       undefined,
       undefined,
     );
+  });
+
+  it('resolves TxOptions on the default path (no override) when gasPrice is configured', async () => {
+    const mockHandler = vi.fn().mockResolvedValue({
+      module: 'bank',
+      subcommand: 'send',
+      transactionHash: 'X',
+      code: 0,
+      height: '1',
+    });
+    mockGetTxHandler.mockReturnValue(mockHandler);
+    clientManager.getConfig.mockReturnValue({
+      retry: { maxRetries: 3 },
+      gasPrice: '1.0umfx',
+      gasMultiplier: 1.5,
+      maxGas: 50_000_000,
+    });
+
+    await cosmosTx(clientManager, 'bank', 'send', ['addr', '1umfx']);
+
+    expect(mockHandler).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      'send',
+      ['addr', '1umfx'],
+      true,
+      { gasMultiplier: 1.5, gasPrice: '1.0umfx', maxGas: 50_000_000 },
+      undefined,
+      undefined,
+    );
+  });
+
+  it('threads config.maxGas into the resolved TxOptions', async () => {
+    const mockHandler = vi.fn().mockResolvedValue({
+      module: 'bank',
+      subcommand: 'send',
+      transactionHash: 'X',
+      code: 0,
+      height: '1',
+    });
+    mockGetTxHandler.mockReturnValue(mockHandler);
+    clientManager.getConfig.mockReturnValue({
+      retry: { maxRetries: 3 },
+      gasPrice: '1.0umfx',
+      gasMultiplier: 1.5,
+      maxGas: 7_000_000,
+    });
+
+    await cosmosTx(clientManager, 'bank', 'send', ['addr', '1umfx']);
+
+    const passedOptions = mockHandler.mock.calls[0][5];
+    expect(passedOptions).toEqual({
+      gasMultiplier: 1.5,
+      gasPrice: '1.0umfx',
+      maxGas: 7_000_000,
+    });
   });
 
   it('rejects fee + gasMultiplier together with INVALID_CONFIG (mutual exclusion)', async () => {

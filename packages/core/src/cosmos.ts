@@ -1,6 +1,6 @@
 import { calculateFee, type StdFee } from '@cosmjs/stargate';
 import type { CosmosClientManager } from './client.js';
-import { DEFAULT_GAS_MULTIPLIER } from './config.js';
+import { DEFAULT_GAS_MULTIPLIER, DEFAULT_MAX_GAS } from './config.js';
 import { isNotFoundError } from './internals/classify-query-error.js';
 import {
   getQueryHandler,
@@ -229,8 +229,7 @@ export async function cosmosTx(
     );
   }
 
-  // Build fully-resolved gas options from caller overrides + server config
-  let txOptions: TxOptions | undefined;
+  // Validate an explicit gasMultiplier override eagerly (unchanged semantics).
   if (overrides?.gasMultiplier !== undefined) {
     if (
       !Number.isFinite(overrides.gasMultiplier) ||
@@ -241,14 +240,35 @@ export async function cosmosTx(
         `gasMultiplier must be a finite number >= 1, got ${overrides.gasMultiplier}`,
       );
     }
-    const gasPrice = clientManager.getConfig().gasPrice;
+  }
+
+  // Resolve fully-resolved gas options for the SIMULATE path. Always build them on
+  // the non-explicit-fee path (not just when an override is present) so the maxGas
+  // ceiling in buildGasFee covers the default cosmos_tx path too (ENG-556). Skipped
+  // when an explicit fee wins (FEE-WINS bypasses simulate). When gasPrice is not
+  // configured this stays undefined -> buildGasFee returns 'auto' -> the broadcast
+  // still fails downstream at getBroadcastClient (query-only mode), exactly as before.
+  let txOptions: TxOptions | undefined;
+  if (txExtras?.fee === undefined) {
+    const config = clientManager.getConfig();
+    const gasPrice = config.gasPrice;
     if (!gasPrice) {
-      throw new ManifestMCPError(
-        ManifestMCPErrorCode.INVALID_CONFIG,
-        'gasMultiplier override requires gasPrice configuration',
-      );
+      if (overrides?.gasMultiplier !== undefined) {
+        throw new ManifestMCPError(
+          ManifestMCPErrorCode.INVALID_CONFIG,
+          'gasMultiplier override requires gasPrice configuration',
+        );
+      }
+    } else {
+      txOptions = {
+        gasMultiplier:
+          overrides?.gasMultiplier ??
+          config.gasMultiplier ??
+          DEFAULT_GAS_MULTIPLIER,
+        gasPrice,
+        maxGas: config.maxGas ?? DEFAULT_MAX_GAS,
+      };
     }
-    txOptions = { gasMultiplier: overrides.gasMultiplier, gasPrice };
   }
 
   // Get handler from registry (throws if module not found) - do this before retry loop
