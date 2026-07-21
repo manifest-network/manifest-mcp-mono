@@ -698,6 +698,22 @@ export async function buildGasFee(
   memo?: string,
 ): Promise<StdFee | 'auto'> {
   if (!options) return 'auto';
+  // Fail closed on a malformed ceiling (ENG-556): buildGasFee is a public primitive
+  // (@manifest-network/manifest-mcp-core/gas), so reject an out-of-contract maxGas
+  // — present, not the -1 disable sentinel, and not a positive safe integer — rather
+  // than silently proceeding WITHOUT the clamp. Config-resolved maxGas is always valid
+  // (validateConfig/loadConfig reject 0 / negatives / unsafe ints), so this only guards
+  // a hand-built TxOptions from an external /gas consumer.
+  if (
+    options.maxGas !== undefined &&
+    options.maxGas !== -1 &&
+    !(Number.isSafeInteger(options.maxGas) && options.maxGas > 0)
+  ) {
+    throw new ManifestMCPError(
+      ManifestMCPErrorCode.INVALID_CONFIG,
+      `maxGas must be a positive integer, or -1 to disable the ceiling, got ${options.maxGas}`,
+    );
+  }
   const gasEstimate = await client.simulate(signerAddress, messages, memo);
   const gasLimit = Math.ceil(gasEstimate * options.gasMultiplier);
   // Absolute ceiling (ENG-556): a hostile/compromised RPC can inflate simulate();

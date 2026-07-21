@@ -1184,6 +1184,35 @@ describe('buildGasFee', () => {
     expect((fee as { gas: string }).gas).toBe('60000000');
   });
 
+  it('fails closed with INVALID_CONFIG for a malformed maxGas (0) instead of silently disabling the ceiling', async () => {
+    const client = makeMockClient(40_000_000);
+    const options = { gasMultiplier: 1.5, gasPrice: '0.025umfx', maxGas: 0 };
+
+    await expect(
+      buildGasFee(client, senderAddress, messages, options),
+    ).rejects.toMatchObject({ code: ManifestMCPErrorCode.INVALID_CONFIG });
+    // fails fast, before the simulate round-trip
+    expect(client.simulate).not.toHaveBeenCalled();
+  });
+
+  it('fails closed with INVALID_CONFIG for a negative maxGas other than -1', async () => {
+    const client = makeMockClient(40_000_000);
+    const options = { gasMultiplier: 1.5, gasPrice: '0.025umfx', maxGas: -5 };
+
+    await expect(
+      buildGasFee(client, senderAddress, messages, options),
+    ).rejects.toMatchObject({ code: ManifestMCPErrorCode.INVALID_CONFIG });
+  });
+
+  it('fails closed with INVALID_CONFIG for a non-integer maxGas', async () => {
+    const client = makeMockClient(40_000_000);
+    const options = { gasMultiplier: 1.5, gasPrice: '0.025umfx', maxGas: 1.5 };
+
+    await expect(
+      buildGasFee(client, senderAddress, messages, options),
+    ).rejects.toMatchObject({ code: ManifestMCPErrorCode.INVALID_CONFIG });
+  });
+
   it('throws GAS_LIMIT_EXCEEDED on a non-finite (Infinity) gas estimate when a ceiling is set', async () => {
     const client = makeMockClient(Number.POSITIVE_INFINITY);
     const options = {
