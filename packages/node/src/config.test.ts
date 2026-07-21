@@ -278,6 +278,18 @@ describe('loadConfig', () => {
     expect(() => loadConfig()).toThrow(/COSMOS_MAX_GAS/);
   });
 
+  it('should throw for a COSMOS_MAX_GAS above the safe-integer range', async () => {
+    // Number('9007199254740993') rounds lossily to 9007199254740992; isSafeInteger
+    // rejects it rather than silently accepting a mis-parsed ceiling (ENG-556, Copilot review).
+    process.env.COSMOS_CHAIN_ID = 'test-chain';
+    process.env.COSMOS_RPC_URL = 'https://rpc.test.com';
+    process.env.COSMOS_GAS_PRICE = '0.025umfx';
+    process.env.COSMOS_MAX_GAS = '9007199254740993';
+
+    const { loadConfig } = await importConfig();
+    expect(() => loadConfig()).toThrow(/COSMOS_MAX_GAS/);
+  });
+
   it('should fall back to default when env var is empty string', async () => {
     process.env.COSMOS_CHAIN_ID = 'test-chain';
     process.env.COSMOS_RPC_URL = 'https://rpc.test.com';

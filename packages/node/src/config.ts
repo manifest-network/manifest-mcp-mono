@@ -76,7 +76,7 @@ export function loadConfig(): NodeMCPConfig {
   let maxGas: number | undefined;
   if (maxGasRaw !== undefined && maxGasRaw !== '') {
     maxGas = Number(maxGasRaw);
-    if (!Number.isInteger(maxGas) || (maxGas <= 0 && maxGas !== -1)) {
+    if (!Number.isSafeInteger(maxGas) || (maxGas <= 0 && maxGas !== -1)) {
       throw new Error(
         `COSMOS_MAX_GAS must be a positive integer, or -1 to disable, got "${maxGasRaw}"`,
       );

@@ -265,7 +265,7 @@ export function validateConfig(
   if (config.maxGas !== undefined) {
     if (
       typeof config.maxGas !== 'number' ||
-      !Number.isInteger(config.maxGas) ||
+      !Number.isSafeInteger(config.maxGas) ||
       (config.maxGas <= 0 && config.maxGas !== -1)
     ) {
       errors.push(

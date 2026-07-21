@@ -746,6 +746,17 @@ describe('validateConfig maxGas', () => {
     expect(result.errors.some((e) => e.includes('maxGas'))).toBe(true);
   });
 
+  it('rejects an unsafe integer above Number.MAX_SAFE_INTEGER', () => {
+    // A value > 2^53 is an integer but not representable exactly, so Number()
+    // would round it lossily. isSafeInteger rejects it (ENG-556, Copilot review).
+    const result = validateConfig({
+      ...base,
+      maxGas: Number.MAX_SAFE_INTEGER + 1,
+    });
+    expect(result.valid).toBe(false);
+    expect(result.errors.some((e) => e.includes('maxGas'))).toBe(true);
+  });
+
   it('rejects a non-number maxGas via createValidatedConfig', () => {
     expect(() =>
       createValidatedConfig({ ...base, maxGas: 'high' as unknown as number }),
