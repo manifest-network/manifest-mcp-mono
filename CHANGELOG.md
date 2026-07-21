@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **core, node:** an absolute gas-limit ceiling — `COSMOS_MAX_GAS` / `config.maxGas` (default `50000000`, `-1` disables) + `ManifestMCPErrorCode.GAS_LIMIT_EXCEEDED` (non-retryable). A broadcast whose `ceil(simulate × multiplier)` exceeds the ceiling aborts before signing, bounding the fee a hostile/compromised RPC can force via an inflated `simulate()`. (ENG-556)
+
+### Changed
+
+- **core:** `cosmosTx` / `executeTx` now always resolve `TxOptions` on the non-explicit-fee path, so the default broadcast computes an explicit fee instead of delegating `'auto'` to cosmjs. Behavior-preserving fee math (`ceil` vs cosmjs's `round`, ≤1 gas unit, strictly safer). (ENG-556)
+
 ## [0.19.0] - 2026-07-16
 
 ### Fixed

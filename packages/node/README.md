@@ -162,6 +162,7 @@ A wallet is still required at startup even in query-only mode. Transaction tools
 | `COSMOS_GAS_PRICE` | Required when `COSMOS_RPC_URL` is set | -- | Gas price with denom (e.g. `0.01umfx`) |
 | `COSMOS_REST_URL` | One of `COSMOS_RPC_URL` or `COSMOS_REST_URL` required | -- | LCD/REST endpoint URL for query-only mode |
 | `COSMOS_GAS_MULTIPLIER` | No | `1.5` | Gas simulation multiplier (must be >= 1) |
+| `COSMOS_MAX_GAS` | No | `50000000` | Absolute per-tx gas-limit ceiling; a broadcast whose `ceil(simulate × multiplier)` exceeds it aborts with `GAS_LIMIT_EXCEEDED`; `-1` disables |
 | `COSMOS_ADDRESS_PREFIX` | No | `manifest` | Bech32 address prefix |
 | `MANIFEST_KEY_FILE` | No | `~/.manifest/key.json` | Path to the keyfile (encrypted, or a plaintext mnemonic loaded with a warning) |
 | `MANIFEST_KEY_PASSWORD` | No | -- | Password to decrypt the keyfile |

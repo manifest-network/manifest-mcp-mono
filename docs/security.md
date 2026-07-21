@@ -107,6 +107,8 @@ The guard ships from a **Node-only** subpath — `@manifest-network/manifest-mcp
 
 The MCP server parses input through Zod schemas (registered alongside each tool) before it reaches a handler. Then `validation.ts` helpers (`requireString`, `requireUuid`, `requireStringEnum`, `parseArgs`, `optionalBoolean`, …) check semantic shape before the handler builds chain messages. A static-shape violation from these helpers surfaces as `QUERY_FAILED` (query tools) or `TX_FAILED` (tx tools) — the helpers default to `QUERY_FAILED` and take an explicit error-code argument that tx handlers pass as `TX_FAILED` — with `INVALID_ADDRESS` for a wrong bech32 prefix. `INVALID_CONFIG` is reserved for server/config validation (`createValidatedConfig`) plus structural tool-boundary checks (e.g. mutually-exclusive `fee`/`gasMultiplier` overrides), not routine input shape.
 
+The tx-broadcast path enforces an absolute gas-limit ceiling (`COSMOS_MAX_GAS` / `config.maxGas`, default `50000000`; `-1` disables). `cosmosTx` / `executeTx` resolve an explicit fee rather than delegating `'auto'` to cosmjs, and `buildGasFee` aborts with `GAS_LIMIT_EXCEEDED` (non-retryable) before signing when `ceil(simulate() × gasMultiplier)` exceeds the ceiling — bounding the fee a hostile or compromised `COSMOS_RPC_URL` can force by inflating the simulated gas. `gasPrice` is operator config (trusted); `simulate()` is the untrusted input the ceiling constrains.
+
 Address validation enforces the configured bech32 prefix (default `manifest`). Cross-prefix addresses (`cosmos1…` against a `manifest`-prefix server) raise `INVALID_ADDRESS` before any chain round-trip.
 
 ## Output redaction

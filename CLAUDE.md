@@ -51,7 +51,7 @@ Five MCP servers bridging AI assistants to Cosmos SDK blockchains (Manifest Netw
 
 ### Key components
 
-- **`CosmosClientManager`** (`client.ts`) -- Keyed singleton (per `chainId:rpcUrl[:restUrl]`), lazy init with promise dedup, token-bucket rate limiting via `limiter`, callers call `acquireRateLimit()` before RPC. Supports two modes: full mode (rpcUrl + gasPrice for queries + transactions) and query-only mode (restUrl only, signing throws `INVALID_CONFIG`). When `restUrl` is configured it is preferred for queries even if `rpcUrl` is also present. On config update via `getInstance`, the signing client is invalidated when `gasPrice`, `gasMultiplier`, or `walletProvider` changes; the query client is never invalidated (stateless HTTP); the rate limiter is rebuilt independently when `requestsPerSecond` changes. `disconnect()` is reference-counted per config key (each `getInstance` acquires, each `disconnect` releases), so sibling MCP servers sharing a key tear the shared clients down only when the last holder releases; `clearInstances()` force-tears-down regardless of refCount.
+- **`CosmosClientManager`** (`client.ts`) -- Keyed singleton (per `chainId:rpcUrl[:restUrl]`), lazy init with promise dedup, token-bucket rate limiting via `limiter`, callers call `acquireRateLimit()` before RPC. Supports two modes: full mode (rpcUrl + gasPrice for queries + transactions) and query-only mode (restUrl only, signing throws `INVALID_CONFIG`). When `restUrl` is configured it is preferred for queries even if `rpcUrl` is also present. On config update via `getInstance`, the signing client is invalidated when `gasPrice`, `gasMultiplier`, or `walletProvider` changes; the query client is never invalidated (stateless HTTP); the rate limiter is rebuilt independently when `requestsPerSecond` changes. `disconnect()` is reference-counted per config key (each `getInstance` acquires, each `disconnect` releases), so sibling MCP servers sharing a key tear the shared clients down only when the last holder releases; `clearInstances()` force-tears-down regardless of refCount. The tx-broadcast path enforces an absolute gas-limit ceiling (`COSMOS_MAX_GAS` / `config.maxGas`, default 50M, `-1` disables): `cosmosTx`/`executeTx` always resolve `TxOptions` on the non-explicit-fee path so `buildGasFee` computes an explicit fee instead of delegating `'auto'` to cosmjs, then aborts with `GAS_LIMIT_EXCEEDED` before signing when `ceil(simulate × multiplier)` exceeds the ceiling — bounding the fee a hostile/compromised RPC can make the wallet pay (ENG-556).
 - **`lcd-adapter.ts`** (core) -- Adapts the LCD/REST client from manifestjs to match the `ManifestQueryClient` shape used by RPC. Converts snake_case LCD responses to camelCase via `snakeToCamelDeep`, then runs them through protobuf `fromJSON` converters. Modules without LCD support (e.g., `cosmos.orm`, `liftedinit.manifest`) return `unsupportedModule` proxies that throw `UNSUPPORTED_QUERY` on access.
 - **Module registry** (`modules.ts`) -- `QUERY_MODULES` / `TX_MODULES` maps: metadata + handler function per module. Adding a module = add handler file + register in map.
 - **`cosmos.ts`** -- Routes `(module, subcommand, args)` -> handler. Wraps in `withRetry()` and rate limiting.
@@ -65,7 +65,7 @@ Five MCP servers bridging AI assistants to Cosmos SDK blockchains (Manifest Netw
 
 ### Error handling
 
-`ManifestMCPError` with `ManifestMCPErrorCode` enum (15 codes, 8 categories). Error responses are sanitized via `sanitizeForLogging()` which redacts sensitive fields (mnemonics, passwords, keys, tokens). Retry logic (`retry.ts`) classifies errors as transient vs permanent -- only transient errors (connection, 5xx, 429) are retried.
+`ManifestMCPError` with `ManifestMCPErrorCode` enum (17 codes, 8 categories). Error responses are sanitized via `sanitizeForLogging()` which redacts sensitive fields (mnemonics, passwords, keys, tokens). Retry logic (`retry.ts`) classifies errors as transient vs permanent -- only transient errors (connection, 5xx, 429) are retried.
 
 ### Tool annotations and `_meta.manifest`
 
@@ -105,6 +105,7 @@ Both are advisory hints, not enforcement. The plugin's `PreToolUse` hook regex i
 | `COSMOS_GAS_PRICE` | Required when `COSMOS_RPC_URL` is set | -- |
 | `COSMOS_REST_URL` | One of `COSMOS_RPC_URL` or `COSMOS_REST_URL` required | -- |
 | `COSMOS_GAS_MULTIPLIER` | No | `1.5` (must be >= 1) |
+| `COSMOS_MAX_GAS` | No | `50000000` (absolute gas-limit ceiling; a broadcast whose `ceil(simulate × multiplier)` exceeds it aborts with `GAS_LIMIT_EXCEEDED`; `-1` disables) |
 | `COSMOS_ADDRESS_PREFIX` | No | `manifest` |
 | `MANIFEST_KEY_FILE` | No | `~/.manifest/key.json` |
 | `MANIFEST_KEY_PASSWORD` | No | -- |
