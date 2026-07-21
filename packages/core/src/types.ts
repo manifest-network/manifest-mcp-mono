@@ -196,6 +196,14 @@ export interface ManifestMCPConfig {
   readonly retry?: RetryConfig;
   /** Gas simulation multiplier (default: 1.5, minimum: 1). A value of 1.0 uses the exact simulation result with no safety margin. Increase if transactions fail with out-of-gas errors. */
   readonly gasMultiplier?: number;
+  /**
+   * Absolute per-transaction gas-limit ceiling (default: 50_000_000). A broadcast
+   * whose `ceil(simulate() * gasMultiplier)` exceeds this is aborted with
+   * `GAS_LIMIT_EXCEEDED` before signing — defense-in-depth against a hostile RPC
+   * inflating the simulated gas. Must be a positive integer, or `-1` to disable
+   * the ceiling (mirrors the chain's `block.max_gas = -1` "unlimited" convention).
+   */
+  readonly maxGas?: number;
 }
 
 /**
@@ -212,6 +220,14 @@ export interface TxOverrides {
 export interface TxOptions {
   readonly gasMultiplier: number;
   readonly gasPrice: string;
+  /**
+   * Absolute gas-limit ceiling resolved from `config.maxGas` (default 50_000_000;
+   * `-1` disables). `buildGasFee` throws `GAS_LIMIT_EXCEEDED` when
+   * `ceil(simulate * gasMultiplier)` exceeds it. Optional so the additive change
+   * does not break existing `TxOptions` literals; the resolvers (`cosmosTx`,
+   * `executeTx`) always populate it. (ENG-556)
+   */
+  readonly maxGas?: number;
 }
 
 /**
@@ -384,6 +400,14 @@ export enum ManifestMCPErrorCode {
   TX_FAILED = 'TX_FAILED',
   UNSUPPORTED_TX = 'UNSUPPORTED_TX',
   SIMULATION_FAILED = 'SIMULATION_FAILED',
+  /**
+   * A pre-broadcast safety abort: `ceil(simulate() * gasMultiplier)` exceeded the
+   * configured absolute ceiling (`COSMOS_MAX_GAS` / `config.maxGas`). Bounds the fee
+   * a hostile/compromised RPC (or an injected gas_multiplier) can make the wallet pay.
+   * Carries `{ simulatedGas, gasMultiplier, estimatedGas, maxGas }`. Non-retryable —
+   * a deterministic estimate will not shrink on retry (ENG-556).
+   */
+  GAS_LIMIT_EXCEEDED = 'GAS_LIMIT_EXCEEDED',
 
   // Module errors
   UNKNOWN_MODULE = 'UNKNOWN_MODULE',

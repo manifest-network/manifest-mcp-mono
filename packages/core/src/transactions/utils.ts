@@ -698,7 +698,47 @@ export async function buildGasFee(
   memo?: string,
 ): Promise<StdFee | 'auto'> {
   if (!options) return 'auto';
+  // Fail closed on a malformed ceiling (ENG-556): buildGasFee is a public primitive
+  // (@manifest-network/manifest-mcp-core/gas), so reject an out-of-contract maxGas
+  // — present, not the -1 disable sentinel, and not a positive safe integer — rather
+  // than silently proceeding WITHOUT the clamp. Config-resolved maxGas is always valid
+  // (validateConfig/loadConfig reject 0 / negatives / unsafe ints), so this only guards
+  // a hand-built TxOptions from an external /gas consumer.
+  if (
+    options.maxGas !== undefined &&
+    options.maxGas !== -1 &&
+    !(Number.isSafeInteger(options.maxGas) && options.maxGas > 0)
+  ) {
+    throw new ManifestMCPError(
+      ManifestMCPErrorCode.INVALID_CONFIG,
+      `maxGas must be a positive integer, or -1 to disable the ceiling, got ${options.maxGas}`,
+    );
+  }
   const gasEstimate = await client.simulate(signerAddress, messages, memo);
   const gasLimit = Math.ceil(gasEstimate * options.gasMultiplier);
+  // Absolute ceiling (ENG-556): a hostile/compromised RPC can inflate simulate();
+  // fail closed before signing rather than pay an unbounded fee. maxGas === -1 or
+  // undefined disables the check. Running BEFORE calculateFee also pre-empts the
+  // generic `new Uint53(gasLimit)` int53-range / non-finite throw inside calculateFee
+  // on an astronomically inflated or NaN estimate — replacing an unclassified Error
+  // with a clean GAS_LIMIT_EXCEEDED.
+  if (
+    options.maxGas !== undefined &&
+    options.maxGas > 0 &&
+    (!Number.isFinite(gasLimit) || gasLimit > options.maxGas)
+  ) {
+    throw new ManifestMCPError(
+      ManifestMCPErrorCode.GAS_LIMIT_EXCEEDED,
+      `Estimated gas limit ${gasLimit} exceeds the configured ceiling ${options.maxGas} ` +
+        `(COSMOS_MAX_GAS). A hostile or misconfigured RPC can inflate the simulated gas. ` +
+        `Raise COSMOS_MAX_GAS if this transaction is legitimate, or set it to -1 to disable the ceiling.`,
+      {
+        simulatedGas: gasEstimate,
+        gasMultiplier: options.gasMultiplier,
+        estimatedGas: gasLimit,
+        maxGas: options.maxGas,
+      },
+    );
+  }
   return calculateFee(gasLimit, options.gasPrice);
 }

@@ -1114,4 +1114,132 @@ describe('buildGasFee', () => {
 
     expect((fee as { gas: string }).gas).toBe('200000');
   });
+
+  it('throws GAS_LIMIT_EXCEEDED when ceil(estimate * multiplier) exceeds maxGas', async () => {
+    const client = makeMockClient(40_000_000); // 40M * 1.5 = 60M > 50M
+    const options = {
+      gasMultiplier: 1.5,
+      gasPrice: '0.025umfx',
+      maxGas: 50_000_000,
+    };
+
+    await expect(
+      buildGasFee(client, senderAddress, messages, options),
+    ).rejects.toMatchObject({
+      code: ManifestMCPErrorCode.GAS_LIMIT_EXCEEDED,
+      details: {
+        estimatedGas: 60_000_000,
+        maxGas: 50_000_000,
+        gasMultiplier: 1.5,
+        simulatedGas: 40_000_000,
+      },
+    });
+  });
+
+  it('computes the fee normally when the limit is below maxGas', async () => {
+    const client = makeMockClient(100_000); // 100k * 1.5 = 150k <= 50M
+    const options = {
+      gasMultiplier: 1.5,
+      gasPrice: '0.025umfx',
+      maxGas: 50_000_000,
+    };
+
+    const fee = await buildGasFee(client, senderAddress, messages, options);
+
+    expect((fee as { gas: string }).gas).toBe('150000');
+  });
+
+  it('does not throw when the gas limit is exactly maxGas (inclusive ceiling)', async () => {
+    const client = makeMockClient(40_000_000); // 40M * 1.5 = 60M === maxGas
+    const options = {
+      gasMultiplier: 1.5,
+      gasPrice: '0.025umfx',
+      maxGas: 60_000_000,
+    };
+
+    const fee = await buildGasFee(client, senderAddress, messages, options);
+
+    expect((fee as { gas: string }).gas).toBe('60000000');
+  });
+
+  it('does not clamp when maxGas is -1 (disabled)', async () => {
+    const client = makeMockClient(40_000_000);
+    const options = {
+      gasMultiplier: 1.5,
+      gasPrice: '0.025umfx',
+      maxGas: -1,
+    };
+
+    const fee = await buildGasFee(client, senderAddress, messages, options);
+
+    expect((fee as { gas: string }).gas).toBe('60000000');
+  });
+
+  it('does not clamp when maxGas is undefined (unset on TxOptions)', async () => {
+    const client = makeMockClient(40_000_000);
+    const options = { gasMultiplier: 1.5, gasPrice: '0.025umfx' };
+
+    const fee = await buildGasFee(client, senderAddress, messages, options);
+
+    expect((fee as { gas: string }).gas).toBe('60000000');
+  });
+
+  it('fails closed with INVALID_CONFIG for a malformed maxGas (0) instead of silently disabling the ceiling', async () => {
+    const client = makeMockClient(40_000_000);
+    const options = { gasMultiplier: 1.5, gasPrice: '0.025umfx', maxGas: 0 };
+
+    await expect(
+      buildGasFee(client, senderAddress, messages, options),
+    ).rejects.toMatchObject({ code: ManifestMCPErrorCode.INVALID_CONFIG });
+    // fails fast, before the simulate round-trip
+    expect(client.simulate).not.toHaveBeenCalled();
+  });
+
+  it('fails closed with INVALID_CONFIG for a negative maxGas other than -1', async () => {
+    const client = makeMockClient(40_000_000);
+    const options = { gasMultiplier: 1.5, gasPrice: '0.025umfx', maxGas: -5 };
+
+    await expect(
+      buildGasFee(client, senderAddress, messages, options),
+    ).rejects.toMatchObject({ code: ManifestMCPErrorCode.INVALID_CONFIG });
+  });
+
+  it('fails closed with INVALID_CONFIG for a non-integer maxGas', async () => {
+    const client = makeMockClient(40_000_000);
+    const options = { gasMultiplier: 1.5, gasPrice: '0.025umfx', maxGas: 1.5 };
+
+    await expect(
+      buildGasFee(client, senderAddress, messages, options),
+    ).rejects.toMatchObject({ code: ManifestMCPErrorCode.INVALID_CONFIG });
+  });
+
+  it('throws GAS_LIMIT_EXCEEDED on a non-finite (Infinity) gas estimate when a ceiling is set', async () => {
+    const client = makeMockClient(Number.POSITIVE_INFINITY);
+    const options = {
+      gasMultiplier: 1.5,
+      gasPrice: '0.025umfx',
+      maxGas: 50_000_000,
+    };
+
+    await expect(
+      buildGasFee(client, senderAddress, messages, options),
+    ).rejects.toMatchObject({
+      code: ManifestMCPErrorCode.GAS_LIMIT_EXCEEDED,
+    });
+  });
+
+  it('throws GAS_LIMIT_EXCEEDED on a NaN gas estimate when a ceiling is set', async () => {
+    const client = makeMockClient(Number.NaN);
+    const options = {
+      gasMultiplier: 1.5,
+      gasPrice: '0.025umfx',
+      maxGas: 50_000_000,
+    };
+
+    await expect(
+      buildGasFee(client, senderAddress, messages, options),
+    ).rejects.toMatchObject({
+      code: ManifestMCPErrorCode.GAS_LIMIT_EXCEEDED,
+    });
+  });
 });

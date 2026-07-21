@@ -42,6 +42,7 @@ The agent server reads the standard chain / wallet env vars (same matrix as `man
 | `COSMOS_RPC_URL` + `COSMOS_GAS_PRICE` | One of RPC/REST | — | RPC required for broadcast operations (deploy / manage / close). |
 | `COSMOS_REST_URL` | One of RPC/REST | — | When both are set, REST is preferred for queries. |
 | `COSMOS_GAS_MULTIPLIER` | No | `1.5` | Must be ≥ 1. |
+| `COSMOS_MAX_GAS` | No | `50000000` | Absolute per-tx gas ceiling; a broadcast aborts with `GAS_LIMIT_EXCEEDED` when `ceil(simulate × multiplier)` exceeds it; `-1` disables. Enforced on deploy / manage-domain / close-lease. |
 | `COSMOS_ADDRESS_PREFIX` | No | `manifest` | |
 | `MANIFEST_KEY_FILE` | No | `~/.manifest/key.json` | Encrypted keyfile path. |
 | `MANIFEST_KEY_PASSWORD` | No | — | Keyfile decrypt password. |

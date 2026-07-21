@@ -81,7 +81,7 @@ describe('executeTx', () => {
     expect(signAndBroadcastSync).toHaveBeenCalledWith(
       expect.any(String),
       msgs,
-      'auto',
+      expect.objectContaining({ gas: expect.any(String) }),
       '',
     );
     expect(signAndBroadcast).not.toHaveBeenCalled();
@@ -116,6 +116,30 @@ describe('executeTx', () => {
     });
     expect(simulate).toHaveBeenCalledTimes(1);
     // computed fee (not 'auto') reaches signAndBroadcast
+    const feeArg = signAndBroadcast.mock.calls[0][2];
+    expect(feeArg).not.toBe('auto');
+    expect(feeArg).toMatchObject({ gas: expect.any(String) });
+  });
+
+  it('aborts with GAS_LIMIT_EXCEEDED when the simulated gas exceeds config.maxGas', async () => {
+    const signAndBroadcast = vi.fn().mockResolvedValue(okResult());
+    const simulate = vi.fn().mockResolvedValue(40_000_000); // * 1.5 default = 60M > 50M
+    const ctx = ctxWith(signAndBroadcast, simulate);
+
+    await expect(executeTx(ctx, msgs)).rejects.toMatchObject({
+      code: ManifestMCPErrorCode.GAS_LIMIT_EXCEEDED,
+    });
+    expect(signAndBroadcast).not.toHaveBeenCalled();
+  });
+
+  it('drives the simulate path on the default call (no opts) and stays under the ceiling', async () => {
+    const signAndBroadcast = vi.fn().mockResolvedValue(okResult());
+    const simulate = vi.fn().mockResolvedValue(100_000);
+    const ctx = ctxWith(signAndBroadcast, simulate);
+
+    await executeTx(ctx, msgs);
+
+    expect(simulate).toHaveBeenCalledTimes(1);
     const feeArg = signAndBroadcast.mock.calls[0][2];
     expect(feeArg).not.toBe('auto');
     expect(feeArg).toMatchObject({ gas: expect.any(String) });
@@ -169,9 +193,10 @@ describe('executeTx', () => {
       });
 
     const chain = makeMockClientManager();
-    chain.getSigningClient = vi
-      .fn()
-      .mockResolvedValue({ signAndBroadcast, simulate: vi.fn() });
+    chain.getSigningClient = vi.fn().mockResolvedValue({
+      signAndBroadcast,
+      simulate: vi.fn().mockResolvedValue(100_000),
+    });
     // REAL serializing lock (the passthrough mock would NOT prove serialization).
     const locks = new Map<string, Promise<unknown>>();
     chain.withBroadcastLock = (<T>(

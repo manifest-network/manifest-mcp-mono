@@ -1,4 +1,5 @@
 import type { EncodeObject } from '@cosmjs/proto-signing';
+import { DEFAULT_GAS_MULTIPLIER, DEFAULT_MAX_GAS } from '../config.js';
 import type { TxCtx } from '../ctx.js';
 import { withTxConfirmation } from '../internals/tx-confirmation.js';
 import type { TxCallOptions } from '../options.js';
@@ -39,7 +40,7 @@ export async function executeTx(
       'passing both fee and gasMultiplier is a caller error; fee wins (it skips simulation), gasMultiplier applies only on the simulate path',
     );
   }
-  let txOptions: TxOptions | undefined;
+  // Validate an explicit gasMultiplier override eagerly (unchanged semantics).
   if (opts?.gasMultiplier !== undefined) {
     if (!Number.isFinite(opts.gasMultiplier) || opts.gasMultiplier < 1) {
       throw new ManifestMCPError(
@@ -47,14 +48,31 @@ export async function executeTx(
         `gasMultiplier must be a finite number >= 1, got ${opts.gasMultiplier}`,
       );
     }
-    const gasPrice = ctx.chain.getConfig().gasPrice;
+  }
+
+  // Always resolve gas options on the non-explicit-fee path so the maxGas ceiling
+  // (ENG-556) covers executeTx's default call, not only when a gasMultiplier override
+  // is supplied. Skipped when opts.fee wins. Undefined gasPrice -> 'auto' -> downstream
+  // INVALID_CONFIG at broadcast time, exactly as before.
+  let txOptions: TxOptions | undefined;
+  if (opts?.fee === undefined) {
+    const config = ctx.chain.getConfig();
+    const gasPrice = config.gasPrice;
     if (!gasPrice) {
-      throw new ManifestMCPError(
-        ManifestMCPErrorCode.INVALID_CONFIG,
-        'gasMultiplier override requires gasPrice configuration',
-      );
+      if (opts?.gasMultiplier !== undefined) {
+        throw new ManifestMCPError(
+          ManifestMCPErrorCode.INVALID_CONFIG,
+          'gasMultiplier override requires gasPrice configuration',
+        );
+      }
+    } else {
+      txOptions = {
+        gasMultiplier:
+          opts?.gasMultiplier ?? config.gasMultiplier ?? DEFAULT_GAS_MULTIPLIER,
+        gasPrice,
+        maxGas: config.maxGas ?? DEFAULT_MAX_GAS,
+      };
     }
-    txOptions = { gasMultiplier: opts.gasMultiplier, gasPrice };
   }
 
   const typeUrls = messages.map((m) => m.typeUrl);

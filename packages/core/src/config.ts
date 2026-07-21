@@ -22,6 +22,13 @@ export const DEFAULT_REQUESTS_PER_SECOND = 10;
  */
 export const DEFAULT_GAS_MULTIPLIER = 1.5;
 
+/**
+ * Default absolute gas-limit ceiling (~4x the observed all-time mainnet
+ * high-water gasLimit of ~12.5M). A broadcast whose ceil(simulate * multiplier)
+ * exceeds this aborts with GAS_LIMIT_EXCEEDED. `-1` disables the ceiling. (ENG-556)
+ */
+export const DEFAULT_MAX_GAS = 50_000_000;
+
 // Re-export for consumers
 export { DEFAULT_RETRY_CONFIG };
 
@@ -115,6 +122,7 @@ export function createConfig(input: ManifestMCPConfig): ManifestMCPConfig {
       maxDelayMs: input.retry?.maxDelayMs ?? DEFAULT_RETRY_CONFIG.maxDelayMs,
     },
     gasMultiplier: input.gasMultiplier ?? DEFAULT_GAS_MULTIPLIER,
+    maxGas: input.maxGas ?? DEFAULT_MAX_GAS,
   };
 }
 
@@ -251,6 +259,18 @@ export function validateConfig(
       config.gasMultiplier < 1
     ) {
       errors.push('gasMultiplier must be a finite number >= 1');
+    }
+  }
+
+  if (config.maxGas !== undefined) {
+    if (
+      typeof config.maxGas !== 'number' ||
+      !Number.isSafeInteger(config.maxGas) ||
+      (config.maxGas <= 0 && config.maxGas !== -1)
+    ) {
+      errors.push(
+        'maxGas must be a positive integer, or -1 to disable the ceiling',
+      );
     }
   }
 

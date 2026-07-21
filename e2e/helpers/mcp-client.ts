@@ -11,6 +11,7 @@ export interface MCPTestClientOptions {
   chainId?: string;
   rpcUrl?: string;
   gasPrice?: string;
+  maxGas?: string;
   serverEntry?: string;
   /**
    * Converter contract address. Required for the cosmwasm server. Defaults
@@ -96,6 +97,7 @@ export class MCPTestClient {
 
     delete env.COSMOS_RPC_URL;
     delete env.COSMOS_GAS_PRICE;
+    delete env.COSMOS_MAX_GAS;
     delete env.COSMOS_REST_URL;
     delete env.COSMOS_MNEMONIC;
     delete env.MANIFEST_FAUCET_URL;
@@ -129,6 +131,9 @@ export class MCPTestClient {
     if (!options.disableRpc) {
       env.COSMOS_RPC_URL = options.rpcUrl ?? 'http://localhost:26657';
       env.COSMOS_GAS_PRICE = options.gasPrice ?? '0.01umfx';
+    }
+    if (options.maxGas !== undefined) {
+      env.COSMOS_MAX_GAS = options.maxGas;
     }
     if (options.restUrl) {
       env.COSMOS_REST_URL = options.restUrl;

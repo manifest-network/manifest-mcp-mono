@@ -29,6 +29,10 @@
       "types": "./dist/faucet.d.ts",
       "import": "./dist/faucet.js"
     },
+    "./gas": {
+      "types": "./dist/gas.d.ts",
+      "import": "./dist/gas.js"
+    },
     "./__test-utils__/mocks.js": {
       "types": "./dist/__test-utils__/mocks.d.ts",
       "import": "./dist/__test-utils__/mocks.js"
