@@ -4,7 +4,7 @@
 
 **Goal:** Add an absolute gas-limit ceiling (`COSMOS_MAX_GAS`, default 50,000,000, `-1` = disabled) that aborts a transaction *before* broadcast when the node's `simulate()` estimate × the gas multiplier exceeds the ceiling — bounding the fee a compromised/hostile RPC (or an injected `gas_multiplier`) can make the wallet pay.
 
-**Architecture:** The ceiling is enforced in `buildGasFee` (the single fee-computation funnel every tx handler routes through). To cover the default `cosmos_tx` path — which today returns `'auto'` and lets cosmjs compute the fee internally, out of reach of any clamp — `cosmosTx` and `executeTx` are changed to **always resolve** `TxOptions` (with `maxGas` from config) on the non-explicit-fee path, so `buildGasFee` always computes an explicit `StdFee` and the ceiling always bites — the cosmjs-documented "compute your own `StdFee`" pattern ([#1134](https://github.com/cosmos/cosmjs/issues/1134); mirrors Hermes' `max_gas`). Fee math is behavior-preserving up to a **≤1-gas-unit** rounding difference: `buildGasFee` uses `Math.ceil(simulate × multiplier)` (its existing behavior), while cosmjs's `'auto'` uses `Math.round` (verified in the installed fork `@manifest-network/stargate@0.32.4-ll.3`, `signingstargateclient.js:176,197`). `ceil ≥ round`, so the resolved default-path fee is at most one gas unit higher — negligible and strictly safer (never under-provisions); the override path already used `ceil` and is unchanged. Config plumbs through `ManifestMCPConfig.maxGas` → `createConfig`/`validateConfig` → node `COSMOS_MAX_GAS`.
+**Architecture:** The ceiling is enforced in `buildGasFee` (the single fee-computation funnel every tx handler routes through). To cover the default `cosmos_tx` path — which today returns `'auto'` and lets cosmjs compute the fee internally, out of reach of any clamp — `cosmosTx` and `executeTx` are changed to **always resolve** `TxOptions` (with `maxGas` from config) on the non-explicit-fee path, so `buildGasFee` always computes an explicit `StdFee` and the ceiling always bites — the cosmjs-documented "compute your own `StdFee`" pattern ([#1134](https://github.com/cosmos/cosmjs/issues/1134); mirrors Hermes' `max_gas`). Fee math is behavior-preserving up to a **≤1-gas-unit** rounding difference: `buildGasFee` uses `Math.ceil(simulate × multiplier)` (its existing behavior), while the *installed* fork's `'auto'` uses `Math.round` (verified on disk: `@manifest-network/stargate@0.32.4-ll.3`, `signingstargateclient.js:176,197`). `ceil ≥ round`, so the resolved default-path fee is at most one gas unit higher — negligible and strictly safer (never under-provisions); the override path already used `ceil` and is unchanged. `Math.ceil` is also what **current upstream cosmjs `main`** uses (verified: raw `signingstargateclient.ts`, `Math.ceil(gasEstimation * multiplier)`) — the fork is pinned to an older `0.32.x` that predates cosmjs's `round`→`ceil` switch — so this aligns the default path with the *newer* cosmjs idiom rather than diverging from it. Config plumbs through `ManifestMCPConfig.maxGas` → `createConfig`/`validateConfig` → node `COSMOS_MAX_GAS`.
 
 **Tech Stack:** TypeScript (ESM, `.js` import extensions), `@cosmjs/stargate` (overridden to `@manifest-network/stargate`), vitest, biome, tsdown. Monorepo: `packages/core` + `packages/node`. Spec: `docs/superpowers/specs/2026-07-17-eng556-gas-ceiling-design.md`.
 
@@ -14,6 +14,7 @@
 - Default: `DEFAULT_MAX_GAS = 50_000_000` (~4× the observed all-time mainnet high-water gasLimit of ~12.5M).
 - Enforcement is **fail-closed** (throw `GAS_LIMIT_EXCEEDED`), never clamp-down. `GAS_LIMIT_EXCEEDED` is **non-retryable**.
 - **Out of scope (do NOT touch):** the explicit-fee (`txExtras.fee` / FEE-WINS) path; `cosmosEstimateFee`'s inline gas math at `cosmos.ts:405-412` (read-only preview, stays uncapped — documented asymmetry).
+- **No `isGasLimitExceededError` predicate (deliberate).** Two of the 16 existing codes ship a typed `*Details` interface + an exported `is*Error` type-guard (`isNotFoundError`, `isSkuAmbiguousError`) on the core + SDK barrels. `GAS_LIMIT_EXCEEDED` does **not** need one: unlike `NOT_FOUND` — whose predicate normalizes 3 *raw* non-`ManifestMCPError` shapes from manifestjs/axios — `GAS_LIMIT_EXCEEDED` is always self-minted by `buildGasFee` as a `ManifestMCPError`, so a consumer catch is a plain `err.code === ManifestMCPErrorCode.GAS_LIMIT_EXCEEDED`. Predicates are the exception (2/16), not a blanket rule, and the SDK root/deploy bundles have thin size headroom. If a consumer (Barney) later wants typed narrowing, add `GasLimitExceededDetails` (type-only, 0 runtime) + `isGasLimitExceededError` (value-checks `.code`, no `instanceof`) then — additive, non-breaking. *(This is a settled decision, not a TODO.)*
 
 **Before you start:** this is a fresh worktree. Run `npm install` (done) and `npm run build` once so cross-package tsc resolves siblings via `dist`. Run the FULL-repo `npm run lint` (not just core) after type changes — a `TxOptions`/enum change ripples into consumer packages and vitest passes while tsc fails (memory: *branded-type-changes-ripple-run-full-lint*).
 
@@ -1066,13 +1067,17 @@ In `CHANGELOG.md`, populate the `## [Unreleased]` section (~line 8):
 In `docs/security.md`, append to the Input-validation section (after the `INVALID_CONFIG` paragraph, ~line 108) a sentence describing the control:
 
 ```markdown
-The tx-broadcast path enforces an absolute gas-limit ceiling (`COSMOS_MAX_GAS` / `config.maxGas`, default `50_000_000`; `-1` disables). `cosmosTx` / `executeTx` resolve an explicit fee rather than delegating `'auto'` to cosmjs, and `buildGasFee` aborts with `GAS_LIMIT_EXCEEDED` (non-retryable) before signing when `ceil(simulate() × gasMultiplier)` exceeds the ceiling — bounding the fee a hostile or compromised `COSMOS_RPC_URL` can force by inflating the simulated gas. `gasPrice` is operator config (trusted); `simulate()` is the untrusted input the ceiling constrains.
+The tx-broadcast path enforces an absolute gas-limit ceiling (`COSMOS_MAX_GAS` / `config.maxGas`, default `50000000`; `-1` disables). `cosmosTx` / `executeTx` resolve an explicit fee rather than delegating `'auto'` to cosmjs, and `buildGasFee` aborts with `GAS_LIMIT_EXCEEDED` (non-retryable) before signing when `ceil(simulate() × gasMultiplier)` exceeds the ceiling — bounding the fee a hostile or compromised `COSMOS_RPC_URL` can force by inflating the simulated gas. `gasPrice` is operator config (trusted); `simulate()` is the untrusted input the ceiling constrains.
 ```
 
-- [ ] **Step 9: Verify the docs build clean (biome)**
+- [ ] **Step 9: Visually verify the doc edits (biome does NOT lint these)**
 
-Run: `npm run check`
-Expected: PASS (no markdown/format drift). If biome reports import/format drift on any file, run `npm run check:fix` (`check` is read-only; `check:fix` writes).
+Note: biome's `check` uses `ignoreUnknown: true` and does not lint Markdown or `.env` files, and `CLAUDE.md` / `CHANGELOG.md` / `docs/security.md` sit outside the `packages/`+`examples/` biome scope. So there is **no automated gate** for these doc edits — verify by eye:
+- Each new table row has the correct column count (node README = 4 cols `| Variable | Required | Default | Description |`; agent README = 4 cols `| … | Notes |`; CLAUDE.md = 3 cols) and matches the surrounding backtick/`--` style.
+- `CHANGELOG.md` `## [Unreleased]` now has `### Added` / `### Changed` bullets in Keep-a-Changelog style.
+- `.env.example` block is `# Optional — …` + a commented `# COSMOS_MAX_GAS=50000000`.
+
+Optionally render the tables (`glow`/preview) to confirm alignment. Running `npm run check` here is harmless but only covers the *code* — it will not flag a malformed doc table.
 
 - [ ] **Step 10: Commit**
 
@@ -1195,7 +1200,7 @@ npm test && \
 npm run test:types -w @manifest-network/manifest-sdk && \
 npm run size
 ```
-Expected: ALL green. `lint` is the load-bearing one for the `TxOptions`/enum change — it must pass across ALL packages (a type ripple into a consumer package fails tsc while vitest passes). `size` and `depcruise` are CI-gating too (memory: *match-local-gate-to-full-CI-job*).
+Expected: ALL green. `lint` is the load-bearing one for the `TxOptions`/enum change — it must pass across ALL packages (a type ripple into a consumer package fails tsc while vitest passes). `size` and `depcruise` are CI-gating too (memory: *match-local-gate-to-full-CI-job*). **`size` margin is thin** — the SDK `/deploy` and root bundles have ~0.09% committed headroom, and this change consumes ~250-280 B gzipped (measured); it passes, but if `size` ever reds, the ~240-char `GAS_LIMIT_EXCEEDED` runtime error string (the only sizeable new *runtime* string; comments/JSDoc are minified away) is the first thing to shorten. Do NOT bump the budget without cause.
 
 - [ ] **Step 2: Verify against built `dist` (not just src)**
 
