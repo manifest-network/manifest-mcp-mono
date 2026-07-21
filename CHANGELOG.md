@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **core, node:** an absolute gas-limit ceiling — `COSMOS_MAX_GAS` / `config.maxGas` (default `50000000`, `-1` disables) + `ManifestMCPErrorCode.GAS_LIMIT_EXCEEDED` (non-retryable). A broadcast whose `ceil(simulate × multiplier)` exceeds the ceiling aborts before signing, bounding the fee a hostile/compromised RPC can force via an inflated `simulate()`. (ENG-556)
+- **core, node, cosmwasm:** an absolute gas-limit ceiling — `COSMOS_MAX_GAS` / `config.maxGas` (default `50000000`, `-1` disables) + `ManifestMCPErrorCode.GAS_LIMIT_EXCEEDED` (non-retryable). A broadcast whose `ceil(simulate × multiplier)` exceeds the ceiling aborts before signing, bounding the fee a hostile/compromised RPC can force via an inflated `simulate()`. Enforced across `cosmos_tx`/`executeTx`, the on-chain lease/fred/agent broadcasts (all via `cosmosTx`), and the cosmwasm `convert_mfx_to_pwr` converter. `buildGasFee` + the gas defaults are exposed on a new `@manifest-network/manifest-mcp-core/gas` subpath. (ENG-556)
 
 ### Changed
 
