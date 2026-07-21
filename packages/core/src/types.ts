@@ -392,6 +392,14 @@ export enum ManifestMCPErrorCode {
   TX_FAILED = 'TX_FAILED',
   UNSUPPORTED_TX = 'UNSUPPORTED_TX',
   SIMULATION_FAILED = 'SIMULATION_FAILED',
+  /**
+   * A pre-broadcast safety abort: `ceil(simulate() * gasMultiplier)` exceeded the
+   * configured absolute ceiling (`COSMOS_MAX_GAS` / `config.maxGas`). Bounds the fee
+   * a hostile/compromised RPC (or an injected gas_multiplier) can make the wallet pay.
+   * Carries `{ simulatedGas, gasMultiplier, estimatedGas, maxGas }`. Non-retryable —
+   * a deterministic estimate will not shrink on retry (ENG-556).
+   */
+  GAS_LIMIT_EXCEEDED = 'GAS_LIMIT_EXCEEDED',
 
   // Module errors
   UNKNOWN_MODULE = 'UNKNOWN_MODULE',

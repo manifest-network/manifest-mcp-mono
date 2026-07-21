@@ -57,6 +57,23 @@ describe('isRetryableError', () => {
       expect(isRetryableError(error)).toBe(false);
     });
 
+    it('should not retry GAS_LIMIT_EXCEEDED errors', () => {
+      // Transient-looking message on purpose: the ONLY reason this returns false
+      // is the NON_RETRYABLE_ERROR_CODES short-circuit (ENG-556). If the code were
+      // dropped from that set, isTransientErrorMessage('...503...') would make it retry.
+      const error = new ManifestMCPError(
+        ManifestMCPErrorCode.GAS_LIMIT_EXCEEDED,
+        'Service unavailable (503)',
+      );
+      expect(isRetryableError(error)).toBe(false);
+    });
+
+    it('exposes GAS_LIMIT_EXCEEDED as a stable enum value', () => {
+      expect(ManifestMCPErrorCode.GAS_LIMIT_EXCEEDED).toBe(
+        'GAS_LIMIT_EXCEEDED',
+      );
+    });
+
     it('should not retry OPERATION_CANCELLED errors', () => {
       // A deliberate user decline / cancel / elicitation-timeout (ENG-272).
       // The transient-looking message must NOT override the non-retryable

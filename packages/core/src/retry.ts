@@ -40,6 +40,11 @@ const NON_RETRYABLE_ERROR_CODES: ManifestMCPErrorCode[] = [
   // double-spend for non-idempotent operations.
   ManifestMCPErrorCode.TX_FAILED,
 
+  // Gas-ceiling breach - a deterministic pre-broadcast safety abort (ENG-556).
+  // Retrying cannot lower the simulated gas; keep it envelope-free so it
+  // short-circuits here and never reaches the grpcCode/httpStatus branches.
+  ManifestMCPErrorCode.GAS_LIMIT_EXCEEDED,
+
   // User-action errors - a deliberate decline / cancel / elicitation-timeout.
   // Retrying a user's cancel is nonsensical (ENG-272).
   ManifestMCPErrorCode.OPERATION_CANCELLED,
