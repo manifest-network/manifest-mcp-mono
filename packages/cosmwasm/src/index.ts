@@ -16,6 +16,11 @@ import {
   VERSION,
   withErrorHandling,
 } from '@manifest-network/manifest-mcp-core';
+import {
+  buildGasFee,
+  DEFAULT_GAS_MULTIPLIER,
+  DEFAULT_MAX_GAS,
+} from '@manifest-network/manifest-mcp-core/gas';
 import { cosmwasm } from '@manifest-network/manifestjs';
 import type { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
@@ -250,10 +255,27 @@ export class CosmwasmMCPServer {
           }),
         };
 
+        const cfg = this.clientManager.getConfig();
+        // getSigningClient() above already requires gasPrice; this guard is defensive.
+        if (!cfg.gasPrice) {
+          throw new ManifestMCPError(
+            ManifestMCPErrorCode.INVALID_CONFIG,
+            'gasPrice configuration is required for MFX-to-PWR conversion',
+          );
+        }
+        // Route the fee through buildGasFee so the COSMOS_MAX_GAS ceiling (ENG-556)
+        // bounds this headless broadcast too — a hostile/compromised RPC cannot inflate
+        // the simulated gas without being aborted with GAS_LIMIT_EXCEEDED before signing.
+        const fee = await buildGasFee(signingClient, senderAddress, [msg], {
+          gasMultiplier: cfg.gasMultiplier ?? DEFAULT_GAS_MULTIPLIER,
+          gasPrice: cfg.gasPrice,
+          maxGas: cfg.maxGas ?? DEFAULT_MAX_GAS,
+        });
+
         const result = await signingClient.signAndBroadcast(
           senderAddress,
           [msg],
-          'auto',
+          fee,
         );
 
         if (result.code !== 0) {

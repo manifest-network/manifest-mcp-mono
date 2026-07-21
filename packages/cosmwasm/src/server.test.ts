@@ -5,6 +5,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mockSmartContractState = vi.fn();
 const mockSignAndBroadcast = vi.fn();
+const mockSimulate = vi.fn();
+const mockGetConfig = vi.fn();
 
 vi.mock('@manifest-network/manifest-mcp-core', async (importOriginal) => {
   const actual =
@@ -29,9 +31,10 @@ vi.mock('@manifest-network/manifest-mcp-core', async (importOriginal) => {
         getSigningClient: vi.fn().mockResolvedValue({
           signAndBroadcast: (...args: unknown[]) =>
             mockSignAndBroadcast(...args),
+          simulate: (...args: unknown[]) => mockSimulate(...args),
         }),
         getAddress: vi.fn().mockResolvedValue('manifest1abc'),
-        getConfig: vi.fn().mockReturnValue({}),
+        getConfig: (...args: unknown[]) => mockGetConfig(...args),
         acquireRateLimit: vi.fn().mockResolvedValue(undefined),
       }),
     },
@@ -93,6 +96,11 @@ const TOOL_NAMES = ['get_mfx_to_pwr_rate', 'convert_mfx_to_pwr'];
 beforeEach(() => {
   vi.clearAllMocks();
   activeTransports = [];
+  // Safe defaults: gasPrice configured (getSigningClient requires it) and a
+  // simulated gas well under the default 50M ceiling so buildGasFee returns a
+  // real fee. Per-test overrides tighten maxGas / inflate simulate.
+  mockGetConfig.mockReturnValue({ gasPrice: '1.0umfx' });
+  mockSimulate.mockResolvedValue(100_000);
 });
 
 afterEach(async () => {
@@ -297,6 +305,24 @@ describe('CosmwasmMCPServer', () => {
       expect(result.isError).toBe(true);
       const text = (result.content[0] as { text: string }).text;
       expect(text).toContain('failed with code 5');
+    });
+
+    it('aborts with GAS_LIMIT_EXCEEDED when the simulated gas exceeds config.maxGas', async () => {
+      // ENG-556: the converter's headless broadcast is routed through buildGasFee
+      // so COSMOS_MAX_GAS bounds it too. A hostile/compromised RPC that inflates
+      // simulate() must be aborted before signing, never charged an unbounded fee.
+      mockConfigResponse();
+      mockGetConfig.mockReturnValue({ gasPrice: '1.0umfx', maxGas: 1000 });
+      // ceil(1_000_000 * 1.5 default) = 1_500_000 > 1000 ceiling.
+      mockSimulate.mockResolvedValue(1_000_000);
+      const server = makeServer();
+      const result = await callTool(server, 'convert_mfx_to_pwr', {
+        amount: '1000000',
+      });
+      expect(result.isError).toBe(true);
+      const text = (result.content[0] as { text: string }).text;
+      expect(text).toContain('GAS_LIMIT_EXCEEDED');
+      expect(mockSignAndBroadcast).not.toHaveBeenCalled();
     });
 
     it('executes conversion and returns result', async () => {
