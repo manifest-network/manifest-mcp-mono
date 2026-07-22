@@ -20,6 +20,13 @@ import type {
  * broadcasts use consecutive sequences. It reuses cosmjs's real broadcast pipeline (fee/`'auto'`
  * resolution, `simulate`, `sign`, `broadcastTx`/`broadcastTxSync`) and only shadows `getSequence` via an
  * `Object.create` view — no reimplementation of signing/fee logic.
+ *
+ * The same shadow is applied to `simulate` (see {@link managedSimulate}). A gas simulation
+ * (`buildGasFee`, ENG-556) runs the node's ante handler against the **check state**, which an in-flight
+ * sync tx has already advanced — so a `simulate` that reads the committed sequence is rejected
+ * `account sequence mismatch`. Sequencing `simulate` too keeps the estimate on the SAME next sequence the
+ * broadcast will sign (ENG-586): required both for the sync-then-auto-gas path AND for a burst of
+ * `'auto'`-gas sync broadcasts, whose per-tx pre-broadcast simulate would otherwise read a stale sequence.
  */
 export interface CachedSequence {
   accountNumber: number;
@@ -91,9 +98,39 @@ async function managedBroadcast(
 }
 
 /**
- * Wrap a `SigningStargateClient` so its `signAndBroadcast`/`signAndBroadcastSync` use per-signer local
- * sequence tracking (see module doc). Every other method delegates unchanged to the real client. The
- * caller must serialize broadcasts per signer (the SDK does, via `withBroadcastLock`).
+ * Gas-simulation counterpart of {@link managedBroadcast}. `simulate` runs the chain's ante handler
+ * against the CHECK state, which a signer's in-flight (SYNC-broadcast) tx has already advanced. cosmjs
+ * `simulate` reads the *committed* sequence via `getSequence`, so when a sync tx is in flight the simulate
+ * would use a stale (too-low) sequence and the node rejects it with `account sequence mismatch`. When we
+ * have a tracked sequence for the signer, shadow `getSequence` on a per-call view exactly like the
+ * broadcast path so the simulate uses the SAME next sequence the following broadcast will. Read-only:
+ * simulate consumes no sequence, so it neither seeds, advances, nor clears the cache.
+ */
+async function managedSimulate(
+  real: SigningStargateClient,
+  cache: SequenceCache,
+  signerAddress: string,
+  messages: readonly EncodeObject[],
+  memo: string | undefined,
+): Promise<number> {
+  const cached = cache.get(signerAddress);
+  // No in-flight tracking → cosmjs default (committed sequence). Identical to the pre-existing behavior.
+  if (!cached) return real.simulate(signerAddress, messages, memo);
+  const view = Object.create(real) as SigningStargateClient & {
+    getSequence: SigningStargateClient['getSequence'];
+  };
+  view.getSequence = async () => ({
+    accountNumber: cached.accountNumber,
+    sequence: cached.sequence,
+  });
+  return real.simulate.call(view, signerAddress, messages, memo);
+}
+
+/**
+ * Wrap a `SigningStargateClient` so its `signAndBroadcast`/`signAndBroadcastSync` — and `simulate`, for the
+ * gas-ceiling preflight (see {@link managedSimulate}) — use per-signer local sequence tracking (see module
+ * doc). Every OTHER method delegates unchanged to the real client. The caller must serialize broadcasts per
+ * signer (the SDK does, via `withBroadcastLock`).
  */
 export function sequencedSigningClient(
   real: SigningStargateClient,
@@ -124,6 +161,13 @@ export function sequencedSigningClient(
             args[2],
             args[3] ?? '',
           );
+      }
+      if (prop === 'simulate') {
+        return (
+          signerAddress: string,
+          messages: readonly EncodeObject[],
+          memo?: string,
+        ) => managedSimulate(target, cache, signerAddress, messages, memo);
       }
       const value = Reflect.get(target, prop, receiver);
       // Bind functions to the real client so their internal `this` is intact.

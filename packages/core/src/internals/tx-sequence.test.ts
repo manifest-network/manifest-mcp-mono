@@ -7,12 +7,14 @@ const MSGS = [{ typeUrl: '/cosmos.bank.v1beta1.MsgSend', value: {} }] as never;
 const FEE = 'auto' as never;
 
 /**
- * A stand-in SigningStargateClient. Its broadcast methods read `this.getSequence()` exactly like the
- * real cosmjs ones do (via `sign`), so the sequence a broadcast actually SIGNS with is observable in
- * `used`. `getSequence` returns the committed sequence starting at `committed`.
+ * A stand-in SigningStargateClient. Its broadcast AND simulate methods read `this.getSequence()` exactly
+ * like the real cosmjs ones do (broadcast via `sign`, simulate directly), so the sequence a broadcast
+ * SIGNS with is observable in `used` and the sequence a simulate USES is observable in `simulated`.
+ * `getSequence` returns the committed sequence starting at `committed`.
  */
 function makeMockClient(committed = 5) {
   const used: number[] = [];
+  const simulated: number[] = [];
   const getSequence = vi.fn(async () => ({
     accountNumber: 1,
     sequence: committed,
@@ -25,7 +27,13 @@ function makeMockClient(committed = 5) {
   const client = {
     getSequence,
     getChainId: vi.fn(async () => 'test-chain'),
-    simulate: vi.fn(async () => 100_000),
+    // Real cosmjs `simulate` reads `this.getSequence()` to build the SignerInfo the node's ante checks
+    // against the CHECK state — so which sequence simulate uses is observable and matters.
+    simulate: vi.fn(async function (this: SigningStargateClient) {
+      const { sequence } = await this.getSequence(SENDER);
+      simulated.push(sequence);
+      return 100_000;
+    }),
     signAndBroadcast: vi.fn(async function (this: SigningStargateClient) {
       const { sequence } = await this.getSequence(SENDER);
       used.push(sequence);
@@ -33,7 +41,7 @@ function makeMockClient(committed = 5) {
     }),
     signAndBroadcastSync: vi.fn(record),
   } as unknown as SigningStargateClient;
-  return { client, getSequence, used };
+  return { client, getSequence, used, simulated };
 }
 
 describe('sequencedSigningClient', () => {
@@ -97,14 +105,31 @@ describe('sequencedSigningClient', () => {
     expect(used[used.length - 1]).toBe(5); // re-read committed 5
   });
 
-  it('delegates non-broadcast methods (simulate) straight to the real client', async () => {
+  it('simulate with no in-flight sync tx uses the committed sequence (cosmjs default)', async () => {
     const cache: SequenceCache = new Map();
-    const { client } = makeMockClient(5);
+    const { client, simulated } = makeMockClient(5);
     const wrapped = sequencedSigningClient(client, cache);
 
     const gas = await wrapped.simulate(SENDER, MSGS, '');
     expect(gas).toBe(100_000);
     expect(client.simulate).toHaveBeenCalledOnce();
+    expect(simulated).toEqual([5]); // committed sequence, cosmjs default
+  });
+
+  it('simulate after a sync broadcast uses the tracked in-flight sequence, NOT committed', async () => {
+    // Regression (ENG-556): the gas-ceiling `buildGasFee` runs its own `simulate` before broadcasting.
+    // The chain simulates against the CHECK state, which the just-broadcast SYNC tx already advanced, so
+    // a simulate that reads the COMMITTED sequence is rejected `account sequence mismatch`. The sequenced
+    // client must shadow `getSequence` on `simulate` too — using the same next sequence the broadcast will.
+    const cache: SequenceCache = new Map();
+    const { client, used, simulated } = makeMockClient(5);
+    const wrapped = sequencedSigningClient(client, cache);
+
+    await wrapped.signAndBroadcastSync(SENDER, MSGS, FEE, ''); // sync → signs 5, cache {6}
+    await wrapped.simulate(SENDER, MSGS, ''); // must simulate with 6 (in-flight next), not committed 5
+
+    expect(used).toEqual([5]);
+    expect(simulated).toEqual([6]); // tracked in-flight sequence, not the stale committed 5
   });
 
   it('tracks sequences per-signer independently', async () => {
