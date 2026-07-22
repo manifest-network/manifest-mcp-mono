@@ -144,36 +144,42 @@ describe('buildPoAMessages', () => {
     ['scientific notation', '1e10'],
     ['decimal', '1.5'],
     ['negative', '-1'],
-  ])('rejects update-staking-params when unbondingTime.seconds is %s', (_label, seconds) => {
-    const badJson = JSON.stringify({
-      unbondingTime: { seconds, nanos: 0 },
-      maxValidators: 100,
-      maxEntries: 7,
-      historicalEntries: 10000,
-      bondDenom: 'umfx',
-      minCommissionRate: '0',
-    });
-    expect(() =>
-      buildPoAMessages(SENDER, 'update-staking-params', [badJson]),
-    ).toThrow(/unbondingTime\.seconds/);
-  });
+  ])(
+    'rejects update-staking-params when unbondingTime.seconds is %s',
+    (_label, seconds) => {
+      const badJson = JSON.stringify({
+        unbondingTime: { seconds, nanos: 0 },
+        maxValidators: 100,
+        maxEntries: 7,
+        historicalEntries: 10000,
+        bondDenom: 'umfx',
+        minCommissionRate: '0',
+      });
+      expect(() =>
+        buildPoAMessages(SENDER, 'update-staking-params', [badJson]),
+      ).toThrow(/unbondingTime\.seconds/);
+    },
+  );
 
   it.each([
     ['negative', -1],
     ['too large', 1_000_000_000],
-  ])('rejects update-staking-params when unbondingTime.nanos is %s', (_label, nanos) => {
-    const badJson = JSON.stringify({
-      unbondingTime: { seconds: '1209600', nanos },
-      maxValidators: 100,
-      maxEntries: 7,
-      historicalEntries: 10000,
-      bondDenom: 'umfx',
-      minCommissionRate: '0',
-    });
-    expect(() =>
-      buildPoAMessages(SENDER, 'update-staking-params', [badJson]),
-    ).toThrow(/unbondingTime\.nanos/);
-  });
+  ])(
+    'rejects update-staking-params when unbondingTime.nanos is %s',
+    (_label, nanos) => {
+      const badJson = JSON.stringify({
+        unbondingTime: { seconds: '1209600', nanos },
+        maxValidators: 100,
+        maxEntries: 7,
+        historicalEntries: 10000,
+        bondDenom: 'umfx',
+        minCommissionRate: '0',
+      });
+      expect(() =>
+        buildPoAMessages(SENDER, 'update-staking-params', [badJson]),
+      ).toThrow(/unbondingTime\.nanos/);
+    },
+  );
 
   it('accepts update-staking-params when unbondingTime.nanos is omitted (defaults to 0)', () => {
     // Whole-second durations are common; the schema defaults nanos to 0 so

@@ -62,15 +62,12 @@ describe('parseLogLevel', () => {
     vi.restoreAllMocks();
   });
 
-  it.each([
-    'debug',
-    'info',
-    'warn',
-    'error',
-    'silent',
-  ] as const)('round-trips valid level %s', (level) => {
-    expect(parseLogLevel(level)).toBe(level);
-  });
+  it.each(['debug', 'info', 'warn', 'error', 'silent'] as const)(
+    'round-trips valid level %s',
+    (level) => {
+      expect(parseLogLevel(level)).toBe(level);
+    },
+  );
 
   it('returns warn for undefined', () => {
     expect(parseLogLevel(undefined)).toBe('warn');

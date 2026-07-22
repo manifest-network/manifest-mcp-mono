@@ -366,7 +366,7 @@ describe('AgentMCPServer', () => {
         );
         const props = (
           deploy?.inputSchema as { properties?: Record<string, unknown> }
-        ).properties;
+        )?.properties;
         expect(Object.keys(props ?? {})).toEqual(['spec']);
         expect(props).not.toHaveProperty('data_dir');
       } finally {
@@ -398,7 +398,7 @@ describe('AgentMCPServer', () => {
           deploy?.inputSchema as {
             properties?: { spec?: unknown };
           }
-        ).properties?.spec as {
+        )?.properties?.spec as {
           properties?: { size?: { type?: string; description?: string } };
           required?: string[];
         };
@@ -437,7 +437,7 @@ describe('AgentMCPServer', () => {
           deploy?.inputSchema as {
             properties?: { spec?: unknown };
           }
-        ).properties?.spec as {
+        )?.properties?.spec as {
           properties?: {
             providerUuid?: { type?: string; description?: string };
             skuUuid?: { type?: string; description?: string };
@@ -1442,35 +1442,39 @@ describe('AgentMCPServer', () => {
     it.each([
       ['empty', ''],
       ['whitespace-only', '   '],
-    ])('rejects %s fqdn with a tool-named INVALID_CONFIG before reaching agent-core', async (_label, fqdn) => {
-      const fakeManageDomain: AgentOrchestrators['manageDomain'] = async () => {
-        throw new Error(
-          'manageDomain must not be called when wrapper rejects empty fqdn',
-        );
-      };
+    ])(
+      'rejects %s fqdn with a tool-named INVALID_CONFIG before reaching agent-core',
+      async (_label, fqdn) => {
+        const fakeManageDomain: AgentOrchestrators['manageDomain'] =
+          async () => {
+            throw new Error(
+              'manageDomain must not be called when wrapper rejects empty fqdn',
+            );
+          };
 
-      const server = makeServer({ manageDomain: fakeManageDomain });
-      const captured = await callToolWithCapture(
-        server,
-        'lookup_custom_domain_orchestrated',
-        { fqdn },
-        {
-          respond: () => {
-            throw new Error('lookup must not elicit');
+        const server = makeServer({ manageDomain: fakeManageDomain });
+        const captured = await callToolWithCapture(
+          server,
+          'lookup_custom_domain_orchestrated',
+          { fqdn },
+          {
+            respond: () => {
+              throw new Error('lookup must not elicit');
+            },
           },
-        },
-      );
+        );
 
-      expect(captured.toolResult.isError).toBe(true);
-      const parsed = JSON.parse(captured.toolResult.content[0].text) as {
-        code: string;
-        message: string;
-      };
-      expect(parsed.code).toBe('INVALID_CONFIG');
-      expect(parsed.message).toContain(
-        'lookup_custom_domain_orchestrated: fqdn must be a non-empty string.',
-      );
-    });
+        expect(captured.toolResult.isError).toBe(true);
+        const parsed = JSON.parse(captured.toolResult.content[0].text) as {
+          code: string;
+          message: string;
+        };
+        expect(parsed.code).toBe('INVALID_CONFIG');
+        expect(parsed.message).toContain(
+          'lookup_custom_domain_orchestrated: fqdn must be a non-empty string.',
+        );
+      },
+    );
 
     // Mirrors the troubleshoot pin (#5): the lookup factory must omit
     // `onConfirm` — agent-core's `lookupDomain` never invokes one, and

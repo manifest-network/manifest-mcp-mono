@@ -76,13 +76,12 @@ describe('isBlocked — IPv4 representative inputs per range', () => {
     expect(result?.range).toBe(expectedRange);
   });
 
-  it.each([
-    '8.8.8.8',
-    '1.1.1.1',
-    '93.184.216.34' /* example.com */,
-  ])('allows public IPv4 %s', (ip) => {
-    expect(isBlocked(ip)).toBeNull();
-  });
+  it.each(['8.8.8.8', '1.1.1.1', '93.184.216.34' /* example.com */])(
+    'allows public IPv4 %s',
+    (ip) => {
+      expect(isBlocked(ip)).toBeNull();
+    },
+  );
 });
 
 describe('isBlocked — IPv6 representative inputs per range', () => {

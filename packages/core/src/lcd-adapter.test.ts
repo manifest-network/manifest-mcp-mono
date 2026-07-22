@@ -254,24 +254,24 @@ describe('adaptModule', () => {
 });
 
 describe('patchWasmQueryData', () => {
-  it.each([
-    'smartContractState',
-    'rawContractState',
-  ] as const)('converts Uint8Array queryData to base64 for %s', async (method) => {
-    const queryBytes = toUtf8(JSON.stringify({ config: {} }));
-    const mockFn = vi.fn().mockResolvedValue({ data: 'result' });
-    const patched = patchWasmQueryData({ [method]: mockFn, req: {} });
+  it.each(['smartContractState', 'rawContractState'] as const)(
+    'converts Uint8Array queryData to base64 for %s',
+    async (method) => {
+      const queryBytes = toUtf8(JSON.stringify({ config: {} }));
+      const mockFn = vi.fn().mockResolvedValue({ data: 'result' });
+      const patched = patchWasmQueryData({ [method]: mockFn, req: {} });
 
-    await (patched[method] as (...args: unknown[]) => unknown)({
-      address: 'manifest1abc',
-      queryData: queryBytes,
-    });
+      await (patched[method] as (...args: unknown[]) => unknown)({
+        address: 'manifest1abc',
+        queryData: queryBytes,
+      });
 
-    expect(mockFn).toHaveBeenCalledWith({
-      address: 'manifest1abc',
-      queryData: toBase64(queryBytes),
-    });
-  });
+      expect(mockFn).toHaveBeenCalledWith({
+        address: 'manifest1abc',
+        queryData: toBase64(queryBytes),
+      });
+    },
+  );
 
   it('passes through non-Uint8Array queryData unchanged', async () => {
     const mockFn = vi.fn().mockResolvedValue({ data: 'result' });

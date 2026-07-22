@@ -747,7 +747,7 @@ describe('deployApp — ENG-258 SKU pin resolution + ambiguity elicitation', () 
     // The second pass (post-edit) resolved BY UUID — the last call carried
     // the stamped skuUuid, proving the pin was written back to the spec.
     const lastCall = vi.mocked(core.resolveSku).mock.calls.at(-1);
-    expect((lastCall?.[1] as { skuUuid?: string }).skuUuid).toBe('sku-p2');
+    expect((lastCall?.[1] as { skuUuid?: string })?.skuUuid).toBe('sku-p2');
     // The broadcast still carries the pinned identity.
     const fredInput = vi.mocked(fred.deployApp).mock.calls[0]?.[1] as
       | { skuUuid?: string; providerUuid?: string }
@@ -3779,9 +3779,9 @@ describe('deployApp — retry_set_domain decomposition (ENG-185 sub-PR E)', () =
     expect(uploadCall?.[0]).toBe('https://provider.testnet.manifest.network');
     expect(uploadCall?.[1]).toBe(leaseUuid);
     expect(uploadCall?.[2]).toBeInstanceOf(Uint8Array);
-    expect((uploadCall?.[2] as Uint8Array).byteLength).toBeGreaterThan(0);
+    expect((uploadCall?.[2] as Uint8Array)?.byteLength).toBeGreaterThan(0);
     expect(typeof uploadCall?.[3]).toBe('string'); // auth token
-    expect((uploadCall?.[3] as string).length).toBeGreaterThan(0);
+    expect((uploadCall?.[3] as string)?.length).toBeGreaterThan(0);
 
     // Copilot fix-1 (PR #71) — no-redundant-query invariant:
     // The retry helper resolves `lease` + `providerUrl` ONCE up-front

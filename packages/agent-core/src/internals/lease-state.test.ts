@@ -35,20 +35,19 @@ describe('decode — chain-aligned (manifestjs 2.4.1 proto)', () => {
     expect(decode(input)).toBe(input);
   });
 
-  it.each([
-    6, 7, 99, -1, -2,
-  ])('returns undefined for out-of-range integer %i', (input) => {
-    expect(decode(input)).toBeUndefined();
-  });
+  it.each([6, 7, 99, -1, -2])(
+    'returns undefined for out-of-range integer %i',
+    (input) => {
+      expect(decode(input)).toBeUndefined();
+    },
+  );
 
-  it.each([
-    'unknown',
-    'STATE_CLOSED',
-    'pending',
-    'closed',
-  ])('returns undefined for non-canonical string %s', (input) => {
-    expect(decode(input)).toBeUndefined();
-  });
+  it.each(['unknown', 'STATE_CLOSED', 'pending', 'closed'])(
+    'returns undefined for non-canonical string %s',
+    (input) => {
+      expect(decode(input)).toBeUndefined();
+    },
+  );
 
   it('decodes empty string to UNSPECIFIED (CJS-parity Number("") === 0 coercion)', () => {
     // CJS _lease-state.cjs decode("") path: Number("") === 0; Number.isInteger(0)

@@ -85,10 +85,10 @@
   },
   "devDependencies": {
     "typescript": "5.9.3",
-    "vitest": "4.1.8",
-    "@types/node": "22.19.19",
+    "vitest": "4.1.10",
+    "@types/node": "22.20.1",
     "publint": "0.3.21",
-    "@arethetypeswrong/core": "0.18.3",
-    "rolldown": "1.0.3"
+    "@arethetypeswrong/core": "0.18.5",
+    "rolldown": "1.2.0"
   }
 }

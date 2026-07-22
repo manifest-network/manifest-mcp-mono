@@ -20,11 +20,12 @@ const GUARDED_FETCH_EXPORTS = [
 ] as const;
 
 describe('core barrel — guarded-fetch kept out (browser bundle safety, ENG-281)', () => {
-  it.each(
-    GUARDED_FETCH_EXPORTS,
-  )('does not re-export %s from the main barrel', (name) => {
-    expect(name in barrel).toBe(false);
-  });
+  it.each(GUARDED_FETCH_EXPORTS)(
+    'does not re-export %s from the main barrel',
+    (name) => {
+      expect(name in barrel).toBe(false);
+    },
+  );
 });
 
 describe('core/guarded-fetch subpath entry (ENG-281)', () => {
