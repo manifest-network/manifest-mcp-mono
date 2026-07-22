@@ -338,14 +338,14 @@ describe('evaluateReadiness — ENG-258 skuCandidates gate', () => {
 });
 
 describe('evaluateReadiness — gas-price formats', () => {
-  it.each([
-    '1umfx',
-    '0.37upwr',
-    '100umfx',
-    '10.5umfx',
-  ])('accepts gasPrice "%s"', (gp) => {
-    expect(() => evaluateReadiness(makeInputs({ gasPrice: gp }))).not.toThrow();
-  });
+  it.each(['1umfx', '0.37upwr', '100umfx', '10.5umfx'])(
+    'accepts gasPrice "%s"',
+    (gp) => {
+      expect(() =>
+        evaluateReadiness(makeInputs({ gasPrice: gp })),
+      ).not.toThrow();
+    },
+  );
 
   it('uses the gasPrice denom to find the wallet entry', () => {
     // gas in upwr, but wallet only has umfx → block (no upwr balance)

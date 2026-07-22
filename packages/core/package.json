@@ -94,10 +94,10 @@
     "ws": "8.21.1"
   },
   "devDependencies": {
-    "@types/node": "22.19.19",
+    "@types/node": "22.20.1",
     "@types/ws": "8.18.1",
     "typescript": "5.9.3",
-    "vitest": "4.1.8"
+    "vitest": "4.1.10"
   },
   "peerDependencies": {
     "vitest": "^4.1.0"
