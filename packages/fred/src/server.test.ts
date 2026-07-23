@@ -39,6 +39,10 @@ vi.mock('./tools/fetchActiveLease.js', () => ({
   fetchActiveLease: vi.fn(),
 }));
 
+vi.mock('./tools/fetchLease.js', () => ({
+  fetchLease: vi.fn(),
+}));
+
 vi.mock('./tools/browseCatalog.js', () => ({
   browseCatalog: vi.fn().mockResolvedValue({ providers: [], skus: [] }),
 }));
@@ -103,6 +107,7 @@ import { browseCatalog } from './tools/browseCatalog.js';
 import { checkDeploymentReadiness } from './tools/checkDeploymentReadiness.js';
 import { deployApp } from './tools/deployApp.js';
 import { fetchActiveLease } from './tools/fetchActiveLease.js';
+import { fetchLease } from './tools/fetchLease.js';
 import { getAppLogs } from './tools/getLogs.js';
 import { resolveProviderUrl } from './tools/resolveLeaseProvider.js';
 import { restartApp } from './tools/restartApp.js';
@@ -114,6 +119,7 @@ const mockGetLeaseProvision = vi.mocked(getLeaseProvision);
 const mockGetLeaseReleases = vi.mocked(getLeaseReleases);
 const mockResolveProviderUrl = vi.mocked(resolveProviderUrl);
 const mockFetchActiveLease = vi.mocked(fetchActiveLease);
+const mockFetchLease = vi.mocked(fetchLease);
 const mockWaitForAppReady = vi.mocked(waitForAppReady);
 const mockCheckDeploymentReadiness = vi.mocked(checkDeploymentReadiness);
 const mockBrowseCatalog = vi.mocked(browseCatalog);
@@ -291,9 +297,10 @@ describe('FredMCPServer', () => {
 
   describe('app_diagnostics', () => {
     it('returns provision diagnostics for a valid lease', async () => {
-      mockFetchActiveLease.mockResolvedValue({
+      mockFetchLease.mockResolvedValue({
         providerUuid: 'prov-1',
-      } as Awaited<ReturnType<typeof fetchActiveLease>>);
+        state: LeaseState.LEASE_STATE_ACTIVE,
+      } as Awaited<ReturnType<typeof fetchLease>>);
       mockResolveProviderUrl.mockResolvedValue('https://provider.example.com');
       mockGetLeaseProvision.mockResolvedValue({
         status: 'provisioned',
@@ -316,11 +323,7 @@ describe('FredMCPServer', () => {
       expect(parsed.fail_count).toBe(2);
       expect(parsed.last_error).toBe('image pull timeout');
 
-      expect(mockFetchActiveLease).toHaveBeenCalledWith(
-        expect.anything(),
-        LEASE_UUID,
-        'cannot be diagnosed',
-      );
+      expect(mockFetchLease).toHaveBeenCalledWith(expect.anything(), LEASE_UUID);
       expect(mockResolveProviderUrl).toHaveBeenCalledWith(
         expect.anything(),
         'prov-1',
@@ -332,6 +335,39 @@ describe('FredMCPServer', () => {
         'function',
       );
       expect(mockGetLeaseProvision.mock.lastCall?.at(-1)).toBe(false);
+    });
+
+    it('surfaces sanitized retention fields for a retained CLOSED lease (ENG-600)', async () => {
+      mockFetchLease.mockResolvedValue({
+        providerUuid: 'prov-1',
+        state: LeaseState.LEASE_STATE_CLOSED,
+      } as Awaited<ReturnType<typeof fetchLease>>);
+      mockResolveProviderUrl.mockResolvedValue('https://provider.example.com');
+      mockGetLeaseProvision.mockResolvedValue({
+        status: 'retained',
+        fail_count: 0,
+        retained_until: '2026-08-01T00:00:00Z',
+        items: [{ sku: 's1', quantity: 1 }],
+        restore_hint: 'restore me',
+        partition: 'p',
+      });
+
+      const server = new FredMCPServer({
+        config: makeMockConfig(),
+        walletProvider: makeMockWallet({ signArbitrary: true }),
+      });
+      const result = await callTool(server, 'app_diagnostics', {
+        lease_uuid: LEASE_UUID,
+      });
+
+      expect(result.isError).toBeUndefined();
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.provision_status).toBe('retained');
+      expect(parsed.retained_until).toBe('2026-08-01T00:00:00Z');
+      expect(parsed.restore_hint).toBe('restore me');
+      expect(parsed.items?.[0]?.sku).toBe('s1');
+      // partition is omitted from the AI-facing projection (Decision 6).
+      expect(parsed.partition).toBeUndefined();
     });
 
     it('accepts a provision response without last_error', async () => {
@@ -369,7 +405,7 @@ describe('FredMCPServer', () => {
     });
 
     it('returns error when lease not found on chain', async () => {
-      mockFetchActiveLease.mockRejectedValue(
+      mockFetchLease.mockRejectedValue(
         new ManifestMCPError(
           ManifestMCPErrorCode.QUERY_FAILED,
           `Lease "${LEASE_UUID}" not found on chain`,
@@ -392,9 +428,10 @@ describe('FredMCPServer', () => {
     });
 
     it('returns error when provider URL resolution fails', async () => {
-      mockFetchActiveLease.mockResolvedValue({
+      mockFetchLease.mockResolvedValue({
         providerUuid: 'prov-1',
-      } as Awaited<ReturnType<typeof fetchActiveLease>>);
+        state: LeaseState.LEASE_STATE_ACTIVE,
+      } as Awaited<ReturnType<typeof fetchLease>>);
       mockResolveProviderUrl.mockRejectedValue(
         new ManifestMCPError(
           ManifestMCPErrorCode.QUERY_FAILED,
@@ -541,9 +578,10 @@ describe('FredMCPServer', () => {
 
   describe('missing signArbitrary', () => {
     it('returns INVALID_CONFIG when wallet lacks signArbitrary', async () => {
-      mockFetchActiveLease.mockResolvedValue({
+      mockFetchLease.mockResolvedValue({
         providerUuid: 'prov-1',
-      } as Awaited<ReturnType<typeof fetchActiveLease>>);
+        state: LeaseState.LEASE_STATE_ACTIVE,
+      } as Awaited<ReturnType<typeof fetchLease>>);
       mockResolveProviderUrl.mockResolvedValue('https://provider.example.com');
 
       const server = new FredMCPServer({

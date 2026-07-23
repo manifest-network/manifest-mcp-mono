@@ -3,6 +3,7 @@ import {
   type CosmosClientManager,
   DNS_LABEL_RE,
   jsonResponse,
+  LeaseState,
   leaseStateToJSON,
   ManifestMCPError,
   ManifestMCPErrorCode,
@@ -32,6 +33,8 @@ import { buildManifestPreview } from '../tools/buildManifestPreview.js';
 import { checkDeploymentReadiness } from '../tools/checkDeploymentReadiness.js';
 import { deployApp } from '../tools/deployApp.js';
 import { fetchActiveLease } from '../tools/fetchActiveLease.js';
+import { fetchLease } from '../tools/fetchLease.js';
+import { sanitizeRetentionFields } from '../tools/sanitizeRetention.js';
 import { getAppLogs } from '../tools/getLogs.js';
 import { resolveProviderUrl } from '../tools/resolveLeaseProvider.js';
 import { restartApp } from '../tools/restartApp.js';
@@ -902,6 +905,10 @@ export function registerTools(deps: RegisterToolsDeps): void {
         // keys, so the parsed structuredContent has no `last_error` at
         // all in the success case — declare optional to match.
         last_error: z.string().optional(),
+        // Retention (ENG-600): present only when provision_status == "retained".
+        retained_until: z.string().optional(),
+        items: z.array(z.looseObject({})).optional(),
+        restore_hint: z.string().optional(),
       },
       annotations: readOnlyAnnotations('Get app provision diagnostics'),
       _meta: manifestMeta({
@@ -915,11 +922,25 @@ export function registerTools(deps: RegisterToolsDeps): void {
       await clientManager.acquireRateLimit();
       const ctx = await buildCtx();
 
-      const lease = await fetchActiveLease(
-        ctx,
-        leaseUuid,
-        'cannot be diagnosed',
-      );
+      // ENG-600: diagnose CLOSED (retained) leases too, not just ACTIVE/PENDING.
+      // State-agnostic fetch; the provider is only queried for states that can
+      // carry a provision record (PENDING/ACTIVE/CLOSED).
+      const lease = await fetchLease(ctx, leaseUuid);
+      const st = lease.state;
+      if (
+        st !== LeaseState.LEASE_STATE_PENDING &&
+        st !== LeaseState.LEASE_STATE_ACTIVE &&
+        st !== LeaseState.LEASE_STATE_CLOSED
+      ) {
+        return structuredResponse(
+          {
+            lease_uuid: leaseUuid,
+            provision_status: leaseStateToJSON(st),
+            fail_count: 0,
+          },
+          bigIntReplacer,
+        );
+      }
       const providerUrl = await resolveProviderUrl(ctx, lease.providerUuid);
       const authToken = await ctx.providerAuth.providerToken({
         address,
@@ -939,6 +960,7 @@ export function registerTools(deps: RegisterToolsDeps): void {
           provision_status: provision.status,
           fail_count: provision.fail_count,
           last_error: provision.last_error,
+          ...sanitizeRetentionFields(provision),
         },
         bigIntReplacer,
       );
