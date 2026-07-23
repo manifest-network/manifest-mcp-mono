@@ -23,6 +23,7 @@ npm install @manifest-network/manifest-mcp-fred
 | `get_logs` | Get logs for a deployed app by lease UUID |
 | `restart_app` | Restart a deployed app via the provider |
 | `update_app` | Update a deployed app with a new manifest |
+| `restore_app` | Restore a closed/retained app onto a fresh lease within the grace window |
 | `app_diagnostics` | Get provision diagnostics for a deployed app |
 | `app_releases` | Get release/version history for a deployed app |
 
@@ -61,7 +62,7 @@ The package contains three HTTP client modules:
 
 - **`http/auth.ts`** -- ADR-036 token construction. Pure functions that build sign messages and assemble base64 bearer tokens. No network calls.
 - **`http/provider.ts`** -- Provider API client: `uploadLeaseData()`, `getLeaseConnectionInfo()`, `getProviderHealth()`, plus `validateProviderUrl()` / `isUrlSsrfSafe()`. Provider URLs (from untrusted on-chain records) are SSRF-classified by default: HTTPS required, and literal private/internal/loopback/metadata IPs are rejected (ENG-490). Loopback is opt-in via `{ allowLoopback }` — the fred server enables it only when `MANIFEST_FRED_FETCH_GUARDED=0`.
-- **`http/fred.ts`** -- Fred API client: `getLeaseStatus()`, `getLeaseLogs()`, `getLeaseProvision()`, `restartLease()`, `updateLease()`, `getLeaseReleases()`, and `pollLeaseUntilReady()`.
+- **`http/fred.ts`** -- Fred API client: `getLeaseStatus()`, `getLeaseLogs()`, `getLeaseProvision()`, `restartLease()`, `updateLease()`, `restoreLease()`, `getLeaseReleases()`, and `pollLeaseUntilReady()`.
 
 ## Build
 
