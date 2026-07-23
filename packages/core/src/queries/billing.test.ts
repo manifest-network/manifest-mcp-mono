@@ -1,6 +1,18 @@
+import { toBase64 } from '@cosmjs/encoding';
 import { describe, expect, it, vi } from 'vitest';
 import { ManifestMCPError, ManifestMCPErrorCode } from '../types.js';
 import { routeBillingQuery } from './billing.js';
+
+/** Reach a mocked query method on the `as never`-typed mock client. */
+function mockMethod(qc: unknown, method: string): ReturnType<typeof vi.fn> {
+  return (
+    qc as {
+      liftedinit: {
+        billing: { v1: Record<string, ReturnType<typeof vi.fn>> };
+      };
+    }
+  ).liftedinit.billing.v1[method];
+}
 
 function makeMockBillingClient(overrides?: {
   creditAccount?: {
@@ -11,7 +23,7 @@ function makeMockBillingClient(overrides?: {
   providerWithdrawable?: {
     amounts?: unknown;
     leaseCount?: bigint;
-    hasMore?: boolean;
+    pagination?: { nextKey?: Uint8Array };
   };
   leaseByCustomDomain?: {
     lease?: unknown;
@@ -31,7 +43,7 @@ function makeMockBillingClient(overrides?: {
   const providerWithdrawable = overrides?.providerWithdrawable ?? {
     amounts: [{ denom: 'upwr', amount: '500' }],
     leaseCount: 3n,
-    hasMore: false,
+    pagination: { nextKey: new Uint8Array() },
   };
   const leaseByCustomDomain = overrides?.leaseByCustomDomain ?? {
     lease: { uuid: 'lease-1', tenant: 'manifest1abc' },
@@ -74,7 +86,7 @@ describe('routeBillingQuery', () => {
   });
 
   describe('provider-withdrawable', () => {
-    it('surfaces amounts, leaseCount, and hasMore from the response', async () => {
+    it('surfaces amounts and leaseCount; omits nextKey when the response cursor is empty (last page)', async () => {
       const qc = makeMockBillingClient();
       const result = await routeBillingQuery(qc, 'provider-withdrawable', [
         'provider-uuid-1',
@@ -82,22 +94,68 @@ describe('routeBillingQuery', () => {
       expect(result).toEqual({
         amounts: [{ denom: 'upwr', amount: '500' }],
         leaseCount: 3n,
-        hasMore: false,
       });
+      expect(result).not.toHaveProperty('nextKey');
     });
 
-    it('passes hasMore=true through unchanged', async () => {
+    it('surfaces nextKey as base64 when more pages remain', async () => {
+      const cursor = new Uint8Array([1, 2, 3, 4]);
       const qc = makeMockBillingClient({
         providerWithdrawable: {
           amounts: [{ denom: 'upwr', amount: '100' }],
           leaseCount: 100n,
-          hasMore: true,
+          pagination: { nextKey: cursor },
         },
       });
       const result = await routeBillingQuery(qc, 'provider-withdrawable', [
         'provider-uuid-1',
       ]);
-      expect(result).toMatchObject({ leaseCount: 100n, hasMore: true });
+      expect(result).toEqual({
+        amounts: [{ denom: 'upwr', amount: '100' }],
+        leaseCount: 100n,
+        nextKey: toBase64(cursor),
+      });
+    });
+
+    it('forwards --limit to the query as pagination.limit', async () => {
+      const qc = makeMockBillingClient();
+      await routeBillingQuery(qc, 'provider-withdrawable', [
+        '--limit',
+        '5',
+        'provider-uuid-1',
+      ]);
+      const fn = mockMethod(qc, 'providerWithdrawable');
+      expect(fn).toHaveBeenCalledOnce();
+      const req = fn.mock.calls[0][0];
+      expect(req.providerUuid).toBe('provider-uuid-1');
+      expect(req.pagination?.limit).toBe(5n);
+    });
+
+    it('forwards --key (base64 cursor) to the query as pagination.key', async () => {
+      const cursor = new Uint8Array([9, 8, 7]);
+      const qc = makeMockBillingClient();
+      await routeBillingQuery(qc, 'provider-withdrawable', [
+        '--key',
+        toBase64(cursor),
+        'provider-uuid-1',
+      ]);
+      const fn = mockMethod(qc, 'providerWithdrawable');
+      expect(fn).toHaveBeenCalledOnce();
+      const req = fn.mock.calls[0][0];
+      expect(req.providerUuid).toBe('provider-uuid-1');
+      expect(req.pagination?.key).toBeInstanceOf(Uint8Array);
+      expect(req.pagination?.key).toEqual(cursor);
+    });
+
+    it('rejects a non-base64 --key with QUERY_FAILED', async () => {
+      const qc = makeMockBillingClient();
+      await expect(
+        routeBillingQuery(qc, 'provider-withdrawable', [
+          '--key',
+          'not!base64!',
+          'provider-uuid-1',
+        ]),
+      ).rejects.toMatchObject({ code: ManifestMCPErrorCode.QUERY_FAILED });
     });
 
     it('throws when provider uuid is missing', async () => {

@@ -1,4 +1,6 @@
+import { toBase64 } from '@cosmjs/encoding';
 import type { StdFee } from '@cosmjs/stargate';
+import { liftedinit } from '@manifest-network/manifestjs';
 import { describe, expect, it, vi } from 'vitest';
 import { ManifestMCPError, ManifestMCPErrorCode } from '../types.js';
 import {
@@ -636,5 +638,151 @@ describe('routeBillingTransaction — fee/memo channel', () => {
       height: '',
       confirmed: false,
     });
+  });
+});
+
+const PROVIDER_UUID = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+
+describe('buildBillingMessages — withdraw', () => {
+  it('builds lease-specific MsgWithdraw from positional lease UUIDs', () => {
+    const { messages } = buildBillingMessages(SENDER, 'withdraw', [LEASE_UUID]);
+    expect(messages).toHaveLength(1);
+    expect(messages[0].typeUrl).toBe('/liftedinit.billing.v1.MsgWithdraw');
+    expect(messages[0].value).toMatchObject({
+      sender: SENDER,
+      leaseUuids: [LEASE_UUID],
+      providerUuid: '',
+    });
+  });
+
+  it('builds provider-wide MsgWithdraw with --provider and --limit', () => {
+    const { messages } = buildBillingMessages(SENDER, 'withdraw', [
+      '--provider',
+      PROVIDER_UUID,
+      '--limit',
+      '10',
+    ]);
+    expect(messages[0].value).toMatchObject({
+      sender: SENDER,
+      leaseUuids: [],
+      providerUuid: PROVIDER_UUID,
+      limit: 10n,
+    });
+  });
+
+  it('threads --key as the MsgWithdraw.key opaque cursor in provider-wide mode', () => {
+    const cursor = new Uint8Array([1, 2, 3, 4]);
+    const { messages } = buildBillingMessages(SENDER, 'withdraw', [
+      '--provider',
+      PROVIDER_UUID,
+      '--key',
+      toBase64(cursor),
+    ]);
+    expect(messages[0].value).toMatchObject({ providerUuid: PROVIDER_UUID });
+    expect((messages[0].value as { key: Uint8Array }).key).toEqual(cursor);
+  });
+
+  it('rejects --key in lease-specific mode with TX_FAILED', () => {
+    try {
+      buildBillingMessages(SENDER, 'withdraw', [
+        LEASE_UUID,
+        '--key',
+        toBase64(new Uint8Array([1])),
+      ]);
+      expect.fail('should have thrown');
+    } catch (e) {
+      expect(e).toBeInstanceOf(ManifestMCPError);
+      expect((e as ManifestMCPError).code).toBe(ManifestMCPErrorCode.TX_FAILED);
+    }
+  });
+
+  it('rejects a non-base64 --key with TX_FAILED', () => {
+    try {
+      buildBillingMessages(SENDER, 'withdraw', [
+        '--provider',
+        PROVIDER_UUID,
+        '--key',
+        'not!base64!',
+      ]);
+      expect.fail('should have thrown');
+    } catch (e) {
+      expect(e).toBeInstanceOf(ManifestMCPError);
+      expect((e as ManifestMCPError).code).toBe(ManifestMCPErrorCode.TX_FAILED);
+    }
+  });
+});
+
+describe('routeBillingTransaction — withdraw cursor output', () => {
+  const FEE: StdFee = {
+    amount: [{ denom: 'umfx', amount: '1' }],
+    gas: '100000',
+  };
+
+  function makeWithdrawClient(resp: { hasMore: boolean; nextKey: Uint8Array }) {
+    const value = liftedinit.billing.v1.MsgWithdrawResponse.encode(
+      liftedinit.billing.v1.MsgWithdrawResponse.fromPartial({
+        totalAmounts: [],
+        payoutAddress: SENDER,
+        withdrawalCount: 1n,
+        hasMore: resp.hasMore,
+        nextKey: resp.nextKey,
+      }),
+    ).finish();
+    const signAndBroadcast = vi.fn().mockResolvedValue({
+      transactionHash: 'DEADBEEF',
+      code: 0,
+      height: 42,
+      rawLog: '',
+      gasUsed: 1n,
+      gasWanted: 1n,
+      events: [],
+      msgResponses: [
+        { typeUrl: '/liftedinit.billing.v1.MsgWithdrawResponse', value },
+      ],
+    });
+    const client = {
+      simulate: vi.fn().mockResolvedValue(100000),
+      signAndBroadcast,
+      signAndBroadcastSync: vi.fn(),
+    } as unknown as Parameters<typeof routeBillingTransaction>[0];
+    return { client, signAndBroadcast };
+  }
+
+  it('surfaces pagination.nextKey (base64) + hasMore from the decoded MsgWithdrawResponse', async () => {
+    const cursor = new Uint8Array([5, 6, 7]);
+    const { client } = makeWithdrawClient({ hasMore: true, nextKey: cursor });
+    const result = await routeBillingTransaction(
+      client,
+      SENDER,
+      'withdraw',
+      ['--provider', PROVIDER_UUID],
+      true,
+      undefined,
+      undefined,
+      { fee: FEE },
+    );
+    expect(result.pagination).toEqual({
+      hasMore: true,
+      nextKey: toBase64(cursor),
+    });
+  });
+
+  it('omits nextKey when the withdrawal has no more pages', async () => {
+    const { client } = makeWithdrawClient({
+      hasMore: false,
+      nextKey: new Uint8Array(),
+    });
+    const result = await routeBillingTransaction(
+      client,
+      SENDER,
+      'withdraw',
+      ['--provider', PROVIDER_UUID],
+      true,
+      undefined,
+      undefined,
+      { fee: FEE },
+    );
+    expect(result.pagination).toEqual({ hasMore: false });
+    expect(result.pagination).not.toHaveProperty('nextKey');
   });
 });

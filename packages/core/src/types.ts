@@ -335,6 +335,18 @@ export interface CosmosTxResult {
       readonly value: string;
     }[];
   }[];
+  /**
+   * Cursor pagination decoded from the transaction's message response, for txs
+   * that page (currently billing provider-wide `withdraw`). `nextKey` is an
+   * opaque base64 cursor present only when more pages remain — echo it back as
+   * `--key` to continue. Populated only on the confirmed-broadcast path
+   * (`waitForConfirmation: true`); a fire-and-forget sync broadcast returns
+   * only the hash, so there is no response to decode.
+   */
+  readonly pagination?: {
+    readonly hasMore?: boolean;
+    readonly nextKey?: string;
+  };
 }
 
 /**
@@ -716,7 +728,14 @@ export interface WithdrawableAmountResult {
 export interface ProviderWithdrawableResult {
   readonly amounts: readonly Coin[];
   readonly leaseCount: bigint;
-  readonly hasMore: boolean;
+  /**
+   * Opaque base64 continuation cursor. Present only when more ACTIVE leases
+   * remain beyond this page; pass it back as `--key` to fetch the next page and
+   * sum the amounts for the provider's full withdrawable total. Absent on the
+   * final page. Replaces the pre-ENG-475 `hasMore` boolean (removed in the
+   * chain's opaque-cursor pagination migration; manifestjs >= 3.0.0).
+   */
+  readonly nextKey?: string;
 }
 
 export interface CreditEstimateResult {

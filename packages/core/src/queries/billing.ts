@@ -1,3 +1,4 @@
+import { fromBase64, toBase64 } from '@cosmjs/encoding';
 import type { ManifestQueryClient } from '../client.js';
 import { throwUnsupportedSubcommand } from '../modules.js';
 import {
@@ -14,7 +15,11 @@ import {
   type ProviderWithdrawableResult,
   type WithdrawableAmountResult,
 } from '../types.js';
-import { extractPaginationArgs, requireArgs } from './utils.js';
+import {
+  extractCursorArg,
+  extractPaginationArgs,
+  requireArgs,
+} from './utils.js';
 
 /** Billing query result union type */
 type BillingQueryResult =
@@ -154,8 +159,17 @@ export async function routeBillingQuery(
     }
 
     case 'provider-withdrawable': {
-      const { pagination, remainingArgs } = extractPaginationArgs(
+      // ENG-475 (manifestjs >= 3.0.0): the chain paginates provider-withdrawable
+      // with an opaque cursor. Forward `--limit`/`--key` as the request's
+      // `pagination` and surface the response cursor as `nextKey` — one wire call
+      // per invocation; the caller loops on `nextKey` and sums the amounts for
+      // the provider's full withdrawable total.
+      const { pagination, remainingArgs: afterLimit } = extractPaginationArgs(
         args,
+        'billing provider-withdrawable',
+      );
+      const { keyBase64, remainingArgs } = extractCursorArg(
+        afterLimit,
         'billing provider-withdrawable',
       );
       requireArgs(
@@ -165,14 +179,28 @@ export async function routeBillingQuery(
         'billing provider-withdrawable',
       );
       const [providerUuid] = remainingArgs;
+      let key: Uint8Array | undefined;
+      if (keyBase64) {
+        try {
+          key = fromBase64(keyBase64);
+        } catch {
+          throw new ManifestMCPError(
+            ManifestMCPErrorCode.QUERY_FAILED,
+            `Invalid --key: "${keyBase64}". Expected a base64-encoded pagination cursor from a previous provider-withdrawable response.`,
+          );
+        }
+      }
       const result = await billing.providerWithdrawable({
         providerUuid,
-        limit: pagination.limit,
+        pagination: key ? { ...pagination, key } : pagination,
       });
+      const nextKey = result.pagination?.nextKey;
       return {
         amounts: result.amounts,
         leaseCount: result.leaseCount,
-        hasMore: result.hasMore,
+        ...(nextKey && nextKey.length > 0
+          ? { nextKey: toBase64(nextKey) }
+          : {}),
       };
     }
 
