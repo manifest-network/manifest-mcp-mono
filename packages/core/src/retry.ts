@@ -51,6 +51,14 @@ const NON_RETRYABLE_ERROR_CODES: ManifestMCPErrorCode[] = [
 
   // SKU resolution - ambiguous name needs caller disambiguation, not retry
   ManifestMCPErrorCode.SKU_AMBIGUOUS,
+
+  // Restore terminal outcomes (ENG-599). These must NOT auto-retry: the message
+  // can embed the underlying "HTTP 500" cause, which the 5xx message-sniff would
+  // otherwise mis-classify retryable — dangerous for a lease-creating tool.
+  // RESTORE_RETRYABLE is intentionally omitted (agent-driven re-invoke is safe).
+  ManifestMCPErrorCode.RESTORE_NOT_RETAINED,
+  ManifestMCPErrorCode.RESTORE_REJECTED,
+  ManifestMCPErrorCode.RESTORE_ORPHAN_COMPENSATION_FAILED,
 ];
 
 /**

@@ -33,6 +33,23 @@ describe('isRetryableError', () => {
       expect(isRetryableError(error)).toBe(false);
     });
 
+    it('should not retry RESTORE_ORPHAN_COMPENSATION_FAILED even when the message embeds "HTTP 500" (ENG-599)', () => {
+      const error = new ManifestMCPError(
+        ManifestMCPErrorCode.RESTORE_ORPHAN_COMPENSATION_FAILED,
+        'Restore left an orphaned lease; cause: request failed HTTP 500',
+      );
+      expect(isRetryableError(error)).toBe(false);
+    });
+
+    it('should not retry RESTORE_NOT_RETAINED / RESTORE_REJECTED (terminal)', () => {
+      for (const code of [
+        ManifestMCPErrorCode.RESTORE_NOT_RETAINED,
+        ManifestMCPErrorCode.RESTORE_REJECTED,
+      ]) {
+        expect(isRetryableError(new ManifestMCPError(code, 'x'))).toBe(false);
+      }
+    });
+
     it('should retry RPC_CONNECTION_FAILED with network error message', () => {
       const error = new ManifestMCPError(
         ManifestMCPErrorCode.RPC_CONNECTION_FAILED,
