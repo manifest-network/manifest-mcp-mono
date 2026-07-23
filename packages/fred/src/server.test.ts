@@ -293,6 +293,21 @@ describe('FredMCPServer', () => {
         estimable: false,
       });
     });
+
+    it('restore_app broadcasts an additive (non-destructive), non-idempotent recovery tx (ENG-599)', async () => {
+      const t = (await listTools()).get('restore_app');
+      expect(t?.annotations).toMatchObject({
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: true,
+      });
+      expect(t?._meta?.manifest).toEqual({
+        v: 1,
+        broadcasts: true,
+        estimable: false,
+      });
+    });
   });
 
   describe('app_diagnostics', () => {

@@ -38,6 +38,7 @@ import { sanitizeRetentionFields } from '../tools/sanitizeRetention.js';
 import { getAppLogs } from '../tools/getLogs.js';
 import { resolveProviderUrl } from '../tools/resolveLeaseProvider.js';
 import { restartApp } from '../tools/restartApp.js';
+import { restoreApp } from '../tools/restoreApp.js';
 import { updateApp } from '../tools/updateApp.js';
 import { waitForAppReady } from '../tools/waitForAppReady.js';
 import { createProgressEmitter } from './progress.js';
@@ -808,6 +809,46 @@ export function registerTools(deps: RegisterToolsDeps): void {
         { pollOptions: false },
       );
       return jsonResponse(result, bigIntReplacer);
+    }),
+  );
+
+  // -- restore_app --
+  mcpServer.registerTool(
+    'restore_app',
+    {
+      description:
+        'Restore a CLOSED/credit-exhausted app from its retained volumes within the grace window. PRECONDITION: the source lease must be in the "retained" state — check app_status/app_diagnostics (retained_until/restore_hint) first. This BROADCASTS: it CREATES A NEW lease (reserving credit) and adopts the retained data onto it. NON-IDEMPOTENT — each call creates a new lease; do not blind-retry. (Contrast restart_app, which bounces an already-RUNNING app in place with no new lease.)',
+      inputSchema: {
+        source_lease_uuid: z
+          .string()
+          .uuid()
+          .describe(
+            'UUID of the CLOSED/credit-exhausted lease whose retained volumes to restore (find it via app_status when its state is retained). A fresh lease is created for you.',
+          ),
+      },
+      outputSchema: {
+        lease_uuid: z.string(),
+        source_lease_uuid: z.string(),
+        status: z.string(),
+        ready: z.looseObject({}).optional(),
+        custom_domain_not_restored: z.array(z.string()).optional(),
+      },
+      annotations: mutatingAnnotations('Restore a retained app', {
+        destructive: false,
+      }),
+      _meta: manifestMeta({ broadcasts: true, estimable: false }),
+    },
+    withErrorHandling('restore_app', async (args) => {
+      const sourceLeaseUuid = args.source_lease_uuid;
+      const address = await walletProvider.getAddress();
+      // No outer acquireRateLimit — createLease acquires internally (mirror deploy_app).
+      const ctx = await buildCtx();
+      const result = await restoreApp(
+        ctx,
+        { address, sourceLeaseUuid },
+        { pollOptions: false },
+      );
+      return structuredResponse(result, bigIntReplacer);
     }),
   );
 
