@@ -539,6 +539,15 @@ export function buildTxResult(
   subcommand: string,
   result: Awaited<ReturnType<SigningStargateClient['signAndBroadcast']>>,
   waitForConfirmation: boolean,
+  /**
+   * Optional per-subcommand hook to surface fields decoded from the tx's
+   * message responses (e.g. billing withdraw's pagination cursor). Runs only on
+   * the confirmed path, where `result.msgResponses` is available. Its output is
+   * merged into the returned `CosmosTxResult`.
+   */
+  decodeExtra?: (
+    result: Awaited<ReturnType<SigningStargateClient['signAndBroadcast']>>,
+  ) => Partial<CosmosTxResult>,
 ): CosmosTxResult {
   if (result.code !== 0) {
     throw new ManifestMCPError(
@@ -569,6 +578,7 @@ export function buildTxResult(
       confirmed: true,
       confirmationHeight: String(result.height),
     }),
+    ...(decodeExtra ? decodeExtra(result) : {}),
   };
 }
 
@@ -612,6 +622,10 @@ export async function broadcastAndBuildTxResult(
   fee: StdFee | 'auto',
   memo: string,
   waitForConfirmation: boolean,
+  /** Optional per-subcommand response decoder — see {@link buildTxResult}. */
+  decodeExtra?: (
+    result: Awaited<ReturnType<SigningStargateClient['signAndBroadcast']>>,
+  ) => Partial<CosmosTxResult>,
 ): Promise<CosmosTxResult> {
   if (!waitForConfirmation) {
     const transactionHash = await client.signAndBroadcastSync(
@@ -628,7 +642,7 @@ export async function broadcastAndBuildTxResult(
     fee,
     memo,
   );
-  return buildTxResult(module, subcommand, result, true);
+  return buildTxResult(module, subcommand, result, true, decodeExtra);
 }
 
 /**

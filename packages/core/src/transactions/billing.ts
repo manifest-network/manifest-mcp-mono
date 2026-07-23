@@ -1,3 +1,4 @@
+import { fromBase64, toBase64 } from '@cosmjs/encoding';
 import type { SigningStargateClient, StdFee } from '@cosmjs/stargate';
 import { liftedinit } from '@manifest-network/manifestjs';
 import type { ManifestQueryClient } from '../client.js';
@@ -34,6 +35,7 @@ const {
   MsgCreateLease,
   MsgCloseLease,
   MsgWithdraw,
+  MsgWithdrawResponse,
   MsgCreateLeaseForTenant,
   MsgAcknowledgeLease,
   MsgRejectLease,
@@ -41,6 +43,33 @@ const {
   MsgSetItemCustomDomain,
   MsgUpdateParams,
 } = liftedinit.billing.v1;
+
+const MSG_WITHDRAW_RESPONSE_TYPE_URL =
+  '/liftedinit.billing.v1.MsgWithdrawResponse';
+
+/**
+ * Decode the opaque pagination cursor from a provider-wide withdraw's message
+ * response so callers can resume via `--key`. Confirmed-path only (the sync
+ * broadcast returns just a hash). Returns `{}` when the response is absent or
+ * not a MsgWithdrawResponse (e.g. lease-specific mode carries no cursor).
+ */
+function decodeWithdrawPagination(
+  result: Awaited<ReturnType<SigningStargateClient['signAndBroadcast']>>,
+): Partial<CosmosTxResult> {
+  const raw = result.msgResponses?.[0];
+  if (!raw || raw.typeUrl !== MSG_WITHDRAW_RESPONSE_TYPE_URL) {
+    return {};
+  }
+  const decoded = MsgWithdrawResponse.decode(raw.value);
+  return {
+    pagination: {
+      hasMore: decoded.hasMore,
+      ...(decoded.nextKey && decoded.nextKey.length > 0
+        ? { nextKey: toBase64(decoded.nextKey) }
+        : {}),
+    },
+  };
+}
 
 /**
  * Build messages for a billing transaction subcommand (no signing/broadcasting).
@@ -148,10 +177,16 @@ export function buildBillingMessages(
       // Extract flags
       const providerFlag = extractFlag(args, '--provider', 'billing withdraw');
       const limitFlag = extractFlag(args, '--limit', 'billing withdraw');
+      const keyFlag = extractFlag(args, '--key', 'billing withdraw');
 
       let leaseUuids: string[] = [];
       let providerUuid = '';
       let limit = BigInt(0); // 0 means use default (50)
+      // ENG-475: opaque continuation cursor for provider-wide mode. Echo the
+      // previous MsgWithdrawResponse.next_key here to resume paging. Empty =
+      // start from the beginning. Rejected by the chain's ValidateBasic when
+      // lease_uuids is set (guarded below via the lease-mode flag check).
+      let key: Uint8Array = new Uint8Array();
 
       if (providerFlag.value) {
         // Provider-wide withdrawal mode
@@ -168,10 +203,23 @@ export function buildBillingMessages(
           }
         }
 
+        // Parse optional --key cursor flag (only valid with --provider)
+        if (keyFlag.value) {
+          try {
+            key = fromBase64(keyFlag.value);
+          } catch {
+            throw new ManifestMCPError(
+              ManifestMCPErrorCode.TX_FAILED,
+              `Invalid --key: "${keyFlag.value}". Expected a base64-encoded pagination cursor from a previous withdraw response.`,
+            );
+          }
+        }
+
         // Check for any extra arguments that weren't consumed
         const allConsumed = [
           ...providerFlag.consumedIndices,
           ...limitFlag.consumedIndices,
+          ...keyFlag.consumedIndices,
         ];
         const extraArgs = filterConsumedArgs(args, allConsumed);
         if (extraArgs.length > 0) {
@@ -206,6 +254,7 @@ export function buildBillingMessages(
           leaseUuids,
           providerUuid,
           limit,
+          key,
         }),
       };
 
@@ -543,15 +592,18 @@ export async function routeBillingTransaction(
           options,
           effectiveMemo,
         );
+  const canonicalSubcommand = built.canonicalSubcommand ?? subcommand;
   return broadcastAndBuildTxResult(
     client,
     'billing',
-    built.canonicalSubcommand ?? subcommand,
+    canonicalSubcommand,
     senderAddress,
     built.messages,
     fee,
     effectiveMemo, // SAME memo bytes the simulate leg used
     waitForConfirmation,
+    // Surface the provider-wide withdraw continuation cursor (ENG-475).
+    canonicalSubcommand === 'withdraw' ? decodeWithdrawPagination : undefined,
   );
 }
 

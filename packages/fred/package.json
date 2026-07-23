@@ -65,7 +65,7 @@
   },
   "devDependencies": {
     "@manifest-network/manifest-mcp-core": "0.19.0",
-    "@manifest-network/manifestjs": "2.4.1",
+    "@manifest-network/manifestjs": "3.0.0",
     "@types/node": "22.20.1",
     "typescript": "5.9.3",
     "vitest": "4.1.10"

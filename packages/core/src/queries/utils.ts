@@ -92,6 +92,36 @@ export function extractPaginationArgs(
 }
 
 /**
+ * Extract an optional `--key` opaque continuation cursor from args.
+ *
+ * Cosmos SDK cursor pagination echoes a response's `next_key` back as the next
+ * request's `pagination.key`. Returns the raw base64 string (the caller decodes
+ * to bytes) so this shared, widely-imported module stays free of
+ * `@cosmjs/encoding` — importing the base64 codec here would drag it into every
+ * tree-shaken consumer of the pagination helpers (e.g. the SDK `/catalog`
+ * surface via `sku-resolution`). Scoped to callers that surface a usable cursor
+ * (today: billing `provider-withdrawable`) rather than folded into
+ * `extractPaginationArgs`, so the 1:1 list queries keep their `--limit`-only
+ * surface.
+ *
+ * @returns the raw base64 cursor (undefined when `--key` is absent) and the
+ *   remaining args with the flag consumed.
+ */
+export function extractCursorArg(
+  args: string[],
+  context: string,
+): { keyBase64?: string; remainingArgs: string[] } {
+  const { value, consumedIndices } = extractFlag(
+    args,
+    '--key',
+    context,
+    ManifestMCPErrorCode.QUERY_FAILED,
+  );
+  const remainingArgs = filterConsumedArgs(args, consumedIndices);
+  return value ? { keyBase64: value, remainingArgs } : { remainingArgs };
+}
+
+/**
  * Safely parse a string to BigInt with proper error handling (for queries)
  */
 export function parseBigInt(value: string, fieldName: string): bigint {
