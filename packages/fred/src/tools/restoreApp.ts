@@ -122,7 +122,8 @@ export async function restoreApp(
     const ready = await pollLeaseUntilReady(
       providerUrl,
       newLeaseUuid,
-      () => ctx.providerAuth.providerToken({ address, leaseUuid: newLeaseUuid }),
+      () =>
+        ctx.providerAuth.providerToken({ address, leaseUuid: newLeaseUuid }),
       { ...opts.pollOptions, abortSignal: opts.abortSignal },
       ctx.fetch,
       ctx.allowLoopback,
@@ -154,10 +155,21 @@ async function handleRestoreFailure(
     // Uncommitted → nothing adopted → cancel the empty PENDING shell (single
     // best-effort; the orphan surface below is the safety net if it fails).
     try {
-      await cosmosTx(ctx.chain, 'billing', 'cancel-lease', [ids.newLeaseUuid], true);
+      await cosmosTx(
+        ctx.chain,
+        'billing',
+        'cancel-lease',
+        [ids.newLeaseUuid],
+        true,
+      );
     } catch (cancelErr) {
-      const cx = cancelErr instanceof Error ? cancelErr.message : String(cancelErr);
-      return orphan(ids, 'compensating-cancel', `${cause}; cancel failed: ${cx}`);
+      const cx =
+        cancelErr instanceof Error ? cancelErr.message : String(cancelErr);
+      return orphan(
+        ids,
+        'compensating-cancel',
+        `${cause}; cancel failed: ${cx}`,
+      );
     }
     const code =
       status === 503

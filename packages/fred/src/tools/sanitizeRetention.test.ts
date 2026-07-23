@@ -20,7 +20,9 @@ describe('sanitizeRetentionFields', () => {
   });
 
   it('passes retained_until through unchanged (validated, not stripped)', () => {
-    const out = sanitizeRetentionFields({ retained_until: '2026-08-01T00:00:00Z' });
+    const out = sanitizeRetentionFields({
+      retained_until: '2026-08-01T00:00:00Z',
+    });
     expect(out.retained_until).toBe('2026-08-01T00:00:00Z');
   });
 

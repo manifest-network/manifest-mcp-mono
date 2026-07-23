@@ -338,7 +338,10 @@ describe('FredMCPServer', () => {
       expect(parsed.fail_count).toBe(2);
       expect(parsed.last_error).toBe('image pull timeout');
 
-      expect(mockFetchLease).toHaveBeenCalledWith(expect.anything(), LEASE_UUID);
+      expect(mockFetchLease).toHaveBeenCalledWith(
+        expect.anything(),
+        LEASE_UUID,
+      );
       expect(mockResolveProviderUrl).toHaveBeenCalledWith(
         expect.anything(),
         'prov-1',

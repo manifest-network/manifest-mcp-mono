@@ -17,7 +17,11 @@ export function sanitizeRetentionFields(src: {
   retained_until?: string;
   items?: readonly FredLeaseItem[];
   restore_hint?: string;
-}): { retained_until?: string; items?: FredLeaseItem[]; restore_hint?: string } {
+}): {
+  retained_until?: string;
+  items?: FredLeaseItem[];
+  restore_hint?: string;
+} {
   const s = (v?: string) =>
     v === undefined ? undefined : (sanitizeForDisplay(v) as string);
   const out: {
@@ -31,8 +35,12 @@ export function sanitizeRetentionFields(src: {
     out.items = src.items.map((i) => ({
       sku: s(i.sku) ?? '',
       ...(i.quantity !== undefined ? { quantity: i.quantity } : {}),
-      ...(i.service_name !== undefined ? { service_name: s(i.service_name) } : {}),
-      ...(i.custom_domain !== undefined ? { custom_domain: s(i.custom_domain) } : {}),
+      ...(i.service_name !== undefined
+        ? { service_name: s(i.service_name) }
+        : {}),
+      ...(i.custom_domain !== undefined
+        ? { custom_domain: s(i.custom_domain) }
+        : {}),
     }));
   }
   return out;

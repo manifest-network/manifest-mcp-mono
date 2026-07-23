@@ -2,7 +2,9 @@ import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('@manifest-network/manifest-mcp-core', async (importOriginal) => {
   const actual =
-    await importOriginal<typeof import('@manifest-network/manifest-mcp-core')>();
+    await importOriginal<
+      typeof import('@manifest-network/manifest-mcp-core')
+    >();
   return { ...actual, cosmosTx: vi.fn() };
 });
 
@@ -25,7 +27,9 @@ describe('extractLeaseUuid', () => {
 
   it('throws TX_FAILED when no lease uuid is present', () => {
     expect(() =>
-      extractLeaseUuid({ events: [{ type: 'other', attributes: [] }] } as never),
+      extractLeaseUuid({
+        events: [{ type: 'other', attributes: [] }],
+      } as never),
     ).toThrow(/lease UUID/i);
   });
 });

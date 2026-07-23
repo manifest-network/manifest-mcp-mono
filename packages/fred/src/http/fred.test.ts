@@ -689,7 +689,10 @@ describe('restoreLease', () => {
 
   it('propagates a non-2xx ProviderApiError with its status (e.g. 422 demote)', async () => {
     mockCheckedFetch.mockRejectedValue(
-      new ProviderApiError(422, 'retained data exceeds the requested smaller tier'),
+      new ProviderApiError(
+        422,
+        'retained data exceeds the requested smaller tier',
+      ),
     );
     await expect(
       restoreLease(PROVIDER_URL, LEASE_UUID, FROM, AUTH_TOKEN),

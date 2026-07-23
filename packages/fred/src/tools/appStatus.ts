@@ -92,7 +92,10 @@ export async function appStatus(
         leaseUuid,
       });
       if (wantsConnection) {
-        connToken = await ctx.providerAuth.providerToken({ address, leaseUuid });
+        connToken = await ctx.providerAuth.providerToken({
+          address,
+          leaseUuid,
+        });
       }
     } catch (err) {
       if (

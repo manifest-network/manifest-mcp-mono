@@ -1,4 +1,9 @@
-import type { CosmosClientManager } from '@manifest-network/manifest-mcp-core';
+import type {
+  CosmosClientManager,
+  DeployResult,
+  ManifestDeploySpec,
+  SkuIntent,
+} from '@manifest-network/manifest-mcp-core';
 import {
   asProviderUuid,
   logger,
@@ -9,7 +14,6 @@ import {
   sanitizeForLogging,
   setItemCustomDomain,
 } from '@manifest-network/manifest-mcp-core';
-import { createLease } from './createLease.js';
 import type { FredAuthCtx } from '../ctx.js';
 import type { FredLeaseStatus, PollOptions } from '../http/fred.js';
 import { pollLeaseUntilReady, TerminalChainStateError } from '../http/fred.js';
@@ -19,13 +23,8 @@ import {
   uploadLeaseData,
 } from '../http/provider.js';
 import { getServiceNames, metaHashHex, validateManifest } from '../manifest.js';
+import { createLease } from './createLease.js';
 import { resolveProviderUrl } from './resolveLeaseProvider.js';
-
-import type {
-  DeployResult,
-  ManifestDeploySpec,
-  SkuIntent,
-} from '@manifest-network/manifest-mcp-core';
 
 export type { DeployResult as DeployAppResult };
 
