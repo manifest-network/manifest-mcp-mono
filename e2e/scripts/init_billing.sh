@@ -190,8 +190,6 @@ bech32_prefix: "manifest"
 
 token_tracker_db_path: "/data/tokens.db"
 payload_store_db_path: "/data/payloads.db"
-payload_store_ttl: "1h"
-payload_store_cleanup_freq: "10m"
 
 gas_limit: 1500000
 gas_price: 0
