@@ -161,6 +161,39 @@ export async function updateLease(
   return await parseJsonResponse<FredActionResponse>(res, url);
 }
 
+/**
+ * Restore a closed lease's retained volumes onto a fresh PENDING lease (ENG-599).
+ * `leaseUuid` is the NEW (fresh PENDING) lease; the body names the SOURCE retained
+ * lease. Token must be scoped to the NEW lease. Returns 202 {status:"provisioning"};
+ * checkedFetch throws ProviderApiError for any non-2xx (404 not-retained, 409 not
+ * PENDING, 422 demote, 503 placement, …) — the tool layer classifies by `.status`.
+ */
+export async function restoreLease(
+  providerUrl: string,
+  leaseUuid: string,
+  fromLeaseUuid: string,
+  authToken: string,
+  fetchFn?: typeof globalThis.fetch,
+  allowLoopback = false,
+): Promise<FredActionResponse> {
+  const validated = validateProviderUrl(providerUrl, { allowLoopback });
+  const url = `${validated}/v1/leases/${encodeURIComponent(leaseUuid)}/restore`;
+  const res = await checkedFetch(
+    url,
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${authToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ from_lease_uuid: fromLeaseUuid }),
+    },
+    undefined,
+    fetchFn,
+  );
+  return await parseJsonResponse<FredActionResponse>(res, url);
+}
+
 export async function getLeaseReleases(
   providerUrl: string,
   leaseUuid: string,

@@ -46,6 +46,7 @@ export {
   PROVISION_IN_PROGRESS,
   pollLeaseUntilReady,
   restartLease,
+  restoreLease,
   type TerminalChainLeaseState,
   type TerminalChainState,
   type TerminalChainStateContext,

@@ -16,6 +16,7 @@ import {
   getLeaseStatus,
   MAX_TAIL,
   pollLeaseUntilReady,
+  restoreLease,
   TerminalChainStateError,
   updateLease,
 } from './fred.js';
@@ -654,6 +655,45 @@ describe('pollLeaseUntilReady', () => {
     expect(onProgress).toHaveBeenNthCalledWith(3, {
       state: LeaseState.LEASE_STATE_ACTIVE,
     });
+  });
+});
+
+describe('restoreLease', () => {
+  beforeEach(() => vi.clearAllMocks());
+  const FROM = '11111111-2222-3333-4444-555555555555';
+
+  it('POSTs {from_lease_uuid} JSON to /restore with Bearer auth and returns status', async () => {
+    mockCheckedFetch.mockResolvedValue({} as Response);
+    mockParseJsonResponse.mockResolvedValue({ status: 'provisioning' });
+
+    const res = await restoreLease(PROVIDER_URL, LEASE_UUID, FROM, AUTH_TOKEN);
+
+    expect(res.status).toBe('provisioning');
+    expect(mockCheckedFetch).toHaveBeenCalledWith(
+      expect.stringContaining(`/v1/leases/${LEASE_UUID}/restore`),
+      expect.objectContaining({
+        method: 'POST',
+        headers: expect.objectContaining({
+          Authorization: `Bearer ${AUTH_TOKEN}`,
+          'Content-Type': 'application/json',
+        }),
+      }),
+      undefined,
+      undefined,
+    );
+    const body = JSON.parse(
+      mockCheckedFetch.mock.calls[0][1]?.body as string,
+    ) as { from_lease_uuid: string };
+    expect(body).toEqual({ from_lease_uuid: FROM });
+  });
+
+  it('propagates a non-2xx ProviderApiError with its status (e.g. 422 demote)', async () => {
+    mockCheckedFetch.mockRejectedValue(
+      new ProviderApiError(422, 'retained data exceeds the requested smaller tier'),
+    );
+    await expect(
+      restoreLease(PROVIDER_URL, LEASE_UUID, FROM, AUTH_TOKEN),
+    ).rejects.toMatchObject({ status: 422 });
   });
 });
 
