@@ -5,6 +5,7 @@ import {
   broadcastAndBuildTxResult,
   buildGasFee,
   buildSyncTxResult,
+  buildTxResult,
   bytesToHex,
   extractBooleanFlag,
   extractFlag,
@@ -963,6 +964,49 @@ describe('buildSyncTxResult', () => {
       height: '',
       confirmed: false,
     });
+  });
+});
+
+describe('buildTxResult — decodeExtra gating', () => {
+  const deliverTx = {
+    transactionHash: 'HASH',
+    code: 0,
+    height: 7,
+    rawLog: '',
+    gasUsed: 1n,
+    gasWanted: 1n,
+    events: [],
+    msgResponses: [],
+  } as unknown as Parameters<typeof buildTxResult>[2];
+
+  it('invokes decodeExtra and merges its output on the confirmed path', () => {
+    const decodeExtra = vi.fn().mockReturnValue({
+      pagination: { hasMore: true, nextKey: 'Zm9v' },
+    });
+    const result = buildTxResult(
+      'billing',
+      'withdraw',
+      deliverTx,
+      true,
+      decodeExtra,
+    );
+    expect(decodeExtra).toHaveBeenCalledOnce();
+    expect(result.pagination).toEqual({ hasMore: true, nextKey: 'Zm9v' });
+  });
+
+  it('does NOT invoke decodeExtra when waitForConfirmation is false (matches the documented contract)', () => {
+    const decodeExtra = vi.fn().mockReturnValue({
+      pagination: { hasMore: true },
+    });
+    const result = buildTxResult(
+      'billing',
+      'withdraw',
+      deliverTx,
+      false,
+      decodeExtra,
+    );
+    expect(decodeExtra).not.toHaveBeenCalled();
+    expect(result).not.toHaveProperty('pagination');
   });
 });
 

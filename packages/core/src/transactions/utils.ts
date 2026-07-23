@@ -578,7 +578,9 @@ export function buildTxResult(
       confirmed: true,
       confirmationHeight: String(result.height),
     }),
-    ...(decodeExtra ? decodeExtra(result) : {}),
+    // Confirmed-path only: pagination et al. are decoded from the DeliverTx
+    // message responses, which a fire-and-forget sync broadcast never returns.
+    ...(waitForConfirmation && decodeExtra ? decodeExtra(result) : {}),
   };
 }
 
