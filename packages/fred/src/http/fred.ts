@@ -2,7 +2,6 @@ import { toBase64 } from '@cosmjs/encoding';
 import type {
   FredActionResponse,
   FredInstanceInfo,
-  FredLeaseInfo,
   FredLeaseLogs,
   FredLeaseProvision,
   FredLeaseRelease,
@@ -25,7 +24,6 @@ import {
 export type {
   FredActionResponse,
   FredInstanceInfo,
-  FredLeaseInfo,
   FredLeaseLogs,
   FredLeaseProvision,
   FredLeaseRelease,
@@ -181,26 +179,6 @@ export async function getLeaseReleases(
     fetchFn,
   );
   return await parseJsonResponse<FredLeaseReleases>(res, url);
-}
-
-export async function getLeaseInfo(
-  providerUrl: string,
-  leaseUuid: string,
-  authToken: string,
-  fetchFn?: typeof globalThis.fetch,
-  allowLoopback = false,
-): Promise<FredLeaseInfo> {
-  const validated = validateProviderUrl(providerUrl, { allowLoopback });
-  const url = `${validated}/v1/leases/${encodeURIComponent(leaseUuid)}/info`;
-  const res = await checkedFetch(
-    url,
-    {
-      headers: { Authorization: `Bearer ${authToken}` },
-    },
-    undefined,
-    fetchFn,
-  );
-  return await parseJsonResponse<FredLeaseInfo>(res, url);
 }
 
 export type TerminalChainLeaseState = 'closed' | 'rejected' | 'expired';

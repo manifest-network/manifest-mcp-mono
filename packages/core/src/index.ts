@@ -82,7 +82,6 @@ export type {
   DeployResult,
   FredActionResponse,
   FredInstanceInfo,
-  FredLeaseInfo,
   FredLeaseLogs,
   FredLeaseProvision,
   FredLeaseRelease,
