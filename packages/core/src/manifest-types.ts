@@ -194,11 +194,6 @@ export interface FredLeaseReleases {
   readonly releases: readonly FredLeaseRelease[];
 }
 
-export interface FredLeaseInfo {
-  readonly host: string;
-  readonly ports?: Record<string, unknown>;
-}
-
 // ===== Deploy result wire DTO (relocated VERBATIM from fred/src/tools/deployManifest.ts). KEEPS
 // snake_case (it is the `deploy_app` MCP outputSchema validated against structuredContent).
 // ids are branded (3b-1) via the as* trust-cast at the deployManifest producer (non-breaking:

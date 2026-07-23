@@ -61,7 +61,7 @@ The package contains three HTTP client modules:
 
 - **`http/auth.ts`** -- ADR-036 token construction. Pure functions that build sign messages and assemble base64 bearer tokens. No network calls.
 - **`http/provider.ts`** -- Provider API client: `uploadLeaseData()`, `getLeaseConnectionInfo()`, `getProviderHealth()`, plus `validateProviderUrl()` / `isUrlSsrfSafe()`. Provider URLs (from untrusted on-chain records) are SSRF-classified by default: HTTPS required, and literal private/internal/loopback/metadata IPs are rejected (ENG-490). Loopback is opt-in via `{ allowLoopback }` — the fred server enables it only when `MANIFEST_FRED_FETCH_GUARDED=0`.
-- **`http/fred.ts`** -- Fred API client: `getLeaseStatus()`, `getLeaseLogs()`, `getLeaseProvision()`, `restartLease()`, `updateLease()`, `getLeaseReleases()`, `getLeaseInfo()`, and `pollLeaseUntilReady()`.
+- **`http/fred.ts`** -- Fred API client: `getLeaseStatus()`, `getLeaseLogs()`, `getLeaseProvision()`, `restartLease()`, `updateLease()`, `getLeaseReleases()`, and `pollLeaseUntilReady()`.
 
 ## Build
 
