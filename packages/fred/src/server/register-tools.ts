@@ -841,7 +841,8 @@ export function registerTools(deps: RegisterToolsDeps): void {
     withErrorHandling('restore_app', async (args) => {
       const sourceLeaseUuid = args.source_lease_uuid;
       const address = await walletProvider.getAddress();
-      // No outer acquireRateLimit — createLease acquires internally (mirror deploy_app).
+      // No outer acquireRateLimit here — restoreApp acquires once internally
+      // (via ctx.chain) before its reads, mirroring deployManifest.
       const ctx = await buildCtx();
       const result = await restoreApp(
         ctx,

@@ -4,6 +4,7 @@ import {
   logger,
   ManifestMCPError,
   ManifestMCPErrorCode,
+  sanitizeForDisplay,
 } from '@manifest-network/manifest-mcp-core';
 import type { FredAuthCtx } from '../ctx.js';
 import {
@@ -44,6 +45,11 @@ export async function restoreApp(
 ): Promise<RestoreResult> {
   const { address, sourceLeaseUuid } = input;
   opts.abortSignal?.throwIfAborted();
+
+  // Rate-limit the whole op once up front (mirrors deployManifest): the pre-tx
+  // reads below — fetchLease, resolveProviderUrl, getLeaseProvision — must not
+  // bypass the limiter. createLease's cosmosTx acquires again for the tx leg.
+  await ctx.chain.acquireRateLimit();
 
   // 1. Source lease on-chain (any state; must exist) + provider URL (same-backend).
   const source = await fetchLease(ctx, sourceLeaseUuid);
@@ -161,7 +167,13 @@ async function handleRestoreFailure(
   const status = ProviderApiError.isProviderApiError(err)
     ? err.status
     : undefined;
-  const cause = err instanceof Error ? err.message : String(err);
+  // The cause can be a ProviderApiError whose message is provider-controlled
+  // response-body text (untrusted on-chain SKU origin). Sanitize before it is
+  // interpolated into a model/human-facing error message (ENG-555).
+  const cause = sanitizeForDisplay(
+    err instanceof Error ? err.message : String(err),
+    256,
+  ) as string;
 
   if (status !== undefined && UNCOMMITTED_TERMINAL.has(status)) {
     // Uncommitted → nothing adopted → cancel the empty PENDING shell (single

@@ -48,7 +48,8 @@ export function extractLeaseUuid(txResult: CosmosTxResult): LeaseUuid {
 
 /**
  * Broadcast a `billing create-lease` tx and return the new lease's branded UUID.
- * The single create-lease path shared by deployManifest (ENG-599) and restoreApp.
+ * Factored out of deployManifest for restore (ENG-599); the single create-lease
+ * path now shared by both deployManifest and restoreApp.
  * `leaseItems` are `skuUuid:quantity[:serviceName]` args; `metaHashHex` is the
  * hex-encoded manifest meta hash (a fresh hash for deploy, the source lease's
  * on-chain metaHash for restore).

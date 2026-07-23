@@ -47,7 +47,7 @@ const META = new Uint8Array([1, 2]);
 
 function makeCtx() {
   return {
-    chain: {} as never,
+    chain: { acquireRateLimit: vi.fn().mockResolvedValue(undefined) } as never,
     query: {} as never,
     fetch: vi.fn() as never,
     allowLoopback: false,
@@ -244,5 +244,39 @@ describe('restoreApp', () => {
       { pollOptions: false },
     );
     expect(result.custom_domain_not_restored).toEqual(['app.x.com']);
+  });
+
+  it('acquires the rate limit once before the pre-tx reads (Copilot #2)', async () => {
+    mockSource();
+    const ctx = makeCtx();
+    await restoreApp(
+      ctx,
+      { address: 'a', sourceLeaseUuid: SOURCE },
+      { pollOptions: false },
+    );
+    expect(
+      (
+        ctx as unknown as {
+          chain: { acquireRateLimit: ReturnType<typeof vi.fn> };
+        }
+      ).chain.acquireRateLimit,
+    ).toHaveBeenCalledTimes(1);
+  });
+
+  it('sanitizes provider-controlled text out of the failure message (Copilot #1)', async () => {
+    mockSource();
+    const bidi = String.fromCharCode(0x202e);
+    mockRestoreLease.mockRejectedValue(
+      new ProviderApiError(422, `demote${bidi}evil`),
+    );
+    await expect(
+      restoreApp(
+        makeCtx(),
+        { address: 'a', sourceLeaseUuid: SOURCE },
+        { pollOptions: false },
+      ),
+    ).rejects.toSatisfy(
+      (e: unknown) => e instanceof Error && !e.message.includes(bidi),
+    );
   });
 });
