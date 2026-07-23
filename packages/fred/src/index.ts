@@ -46,6 +46,7 @@ export {
   PROVISION_IN_PROGRESS,
   pollLeaseUntilReady,
   restartLease,
+  restoreLease,
   type TerminalChainLeaseState,
   type TerminalChainState,
   type TerminalChainStateContext,
@@ -119,6 +120,7 @@ export { getAppLogs } from './tools/getLogs.js';
 export type { LifecycleCallOptions } from './tools/lifecycle-options.js';
 export { resolveProviderUrl } from './tools/resolveLeaseProvider.js';
 export { restartApp } from './tools/restartApp.js';
+export { type RestoreResult, restoreApp } from './tools/restoreApp.js';
 export { updateApp } from './tools/updateApp.js';
 export {
   type WaitForAppReadyOptions,

@@ -33,6 +33,30 @@ describe('isRetryableError', () => {
       expect(isRetryableError(error)).toBe(false);
     });
 
+    it('should not retry RESTORE_ORPHAN_COMPENSATION_FAILED even when the message embeds "HTTP 500" (ENG-599)', () => {
+      const error = new ManifestMCPError(
+        ManifestMCPErrorCode.RESTORE_ORPHAN_COMPENSATION_FAILED,
+        'Restore left an orphaned lease; cause: request failed HTTP 500',
+      );
+      expect(isRetryableError(error)).toBe(false);
+    });
+
+    it('should not auto-retry any RESTORE_* code (restore_app is non-idempotent)', () => {
+      // RESTORE_RETRYABLE included: "retryable" means the AGENT may re-invoke,
+      // NOT that withRetry should auto-re-broadcast (that would re-create a lease).
+      // Its "HTTP 503" message must not slip through the 5xx sniff either.
+      for (const err of [
+        new ManifestMCPError(ManifestMCPErrorCode.RESTORE_NOT_RETAINED, 'x'),
+        new ManifestMCPError(ManifestMCPErrorCode.RESTORE_REJECTED, 'x'),
+        new ManifestMCPError(
+          ManifestMCPErrorCode.RESTORE_RETRYABLE,
+          'Restore rejected (HTTP 503); rolled back',
+        ),
+      ]) {
+        expect(isRetryableError(err)).toBe(false);
+      }
+    });
+
     it('should retry RPC_CONNECTION_FAILED with network error message', () => {
       const error = new ManifestMCPError(
         ManifestMCPErrorCode.RPC_CONNECTION_FAILED,

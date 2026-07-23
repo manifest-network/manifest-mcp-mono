@@ -1,17 +1,15 @@
 import type {
   CosmosClientManager,
-  CosmosTxResult,
-  LeaseUuid,
+  DeployResult,
+  ManifestDeploySpec,
+  SkuIntent,
 } from '@manifest-network/manifest-mcp-core';
 import {
-  asLeaseUuid,
   asProviderUuid,
-  cosmosTx,
   logger,
   ManifestMCPError,
   ManifestMCPErrorCode,
   parseFqdn,
-  requireUuid,
   resolveSku,
   sanitizeForLogging,
   setItemCustomDomain,
@@ -25,45 +23,8 @@ import {
   uploadLeaseData,
 } from '../http/provider.js';
 import { getServiceNames, metaHashHex, validateManifest } from '../manifest.js';
+import { createLease } from './createLease.js';
 import { resolveProviderUrl } from './resolveLeaseProvider.js';
-
-export function extractLeaseUuid(txResult: CosmosTxResult): LeaseUuid {
-  if (!txResult.events) {
-    throw new ManifestMCPError(
-      ManifestMCPErrorCode.TX_FAILED,
-      'No events in transaction result; cannot extract lease UUID',
-    );
-  }
-
-  for (const event of txResult.events) {
-    if (!event.type.includes('lease') && !event.type.includes('Lease'))
-      continue;
-    for (const attr of event.attributes) {
-      if (attr.key === 'lease_uuid' || attr.key === 'uuid') {
-        const raw = attr.value.replace(/^"|"$/g, '');
-        // Validate the extracted value is a proper UUID
-        requireUuid(
-          { lease_uuid: raw },
-          'lease_uuid',
-          ManifestMCPErrorCode.TX_FAILED,
-        );
-        return asLeaseUuid(raw);
-      }
-    }
-  }
-
-  throw new ManifestMCPError(
-    ManifestMCPErrorCode.TX_FAILED,
-    'Could not find lease UUID in transaction events',
-    { events: txResult.events as unknown as Record<string, unknown>[] },
-  );
-}
-
-import type {
-  DeployResult,
-  ManifestDeploySpec,
-  SkuIntent,
-} from '@manifest-network/manifest-mcp-core';
 
 export type { DeployResult as DeployAppResult };
 
@@ -258,15 +219,11 @@ export async function deployManifest(
   logger.info(
     `[deploy] creating lease (meta_hash=${manifestMetaHash}, items=${leaseItems.length})`,
   );
-  const txResult = await cosmosTx(
-    ctx.chain,
-    'billing',
-    'create-lease',
-    ['--meta-hash', manifestMetaHash, ...leaseItems],
-    true,
+  const leaseUuid = await createLease(
+    ctx,
+    { metaHashHex: manifestMetaHash, leaseItems },
     overrides,
   );
-  const leaseUuid = extractLeaseUuid(txResult);
   logger.info(
     `[deploy] lease ${leaseUuid} created on provider ${providerUuid}`,
   );

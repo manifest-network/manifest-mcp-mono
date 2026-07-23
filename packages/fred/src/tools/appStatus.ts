@@ -13,6 +13,7 @@ import {
   getLeaseConnectionInfo,
 } from '../http/provider.js';
 import { resolveProviderUrl } from './resolveLeaseProvider.js';
+import { sanitizeRetentionFields } from './sanitizeRetention.js';
 
 export async function appStatus(
   ctx: FredAuthCtx,
@@ -50,10 +51,19 @@ export async function appStatus(
   let providerError: string | undefined;
   let connectionError: string | undefined;
 
-  if (
-    lease.state === LeaseState.LEASE_STATE_PENDING ||
-    lease.state === LeaseState.LEASE_STATE_ACTIVE
-  ) {
+  // ENG-600: query the provider for retention on CLOSED leases too (retained
+  // volumes live only there). Connection info is meaningless for a non-running
+  // lease, so it stays PENDING/ACTIVE-only.
+  const st = lease.state;
+  const wantsStatus =
+    st === LeaseState.LEASE_STATE_PENDING ||
+    st === LeaseState.LEASE_STATE_ACTIVE ||
+    st === LeaseState.LEASE_STATE_CLOSED;
+  const wantsConnection =
+    st === LeaseState.LEASE_STATE_PENDING ||
+    st === LeaseState.LEASE_STATE_ACTIVE;
+
+  if (wantsStatus) {
     let providerUrl: string;
     try {
       providerUrl = await resolveProviderUrl(ctx, lease.providerUuid);
@@ -73,16 +83,20 @@ export async function appStatus(
     }
 
     let statusToken: string;
-    let connToken: string;
+    let connToken: string | undefined;
     try {
-      // The connection endpoint enforces replay protection (status does not),
-      // but we generate separate tokens for both to keep each request
-      // independently authenticated.
+      // Separate per-request tokens so each is independently authenticated. The
+      // connection token is minted only when we actually query the connection.
       statusToken = await ctx.providerAuth.providerToken({
         address,
         leaseUuid,
       });
-      connToken = await ctx.providerAuth.providerToken({ address, leaseUuid });
+      if (wantsConnection) {
+        connToken = await ctx.providerAuth.providerToken({
+          address,
+          leaseUuid,
+        });
+      }
     } catch (err) {
       if (
         err instanceof ManifestMCPError &&
@@ -107,14 +121,16 @@ export async function appStatus(
         undefined,
         ctx.allowLoopback,
       ),
-      getLeaseConnectionInfo(
-        providerUrl,
-        leaseUuid,
-        connToken,
-        ctx.fetch,
-        ctx.allowLoopback,
-      ),
-    ]);
+      wantsConnection
+        ? getLeaseConnectionInfo(
+            providerUrl,
+            leaseUuid,
+            connToken as string,
+            ctx.fetch,
+            ctx.allowLoopback,
+          )
+        : Promise.resolve(null),
+    ] as const);
 
     function handleRejection(label: string, reason: unknown): string {
       const rawMsg = reason instanceof Error ? reason.message : String(reason);
@@ -125,15 +141,31 @@ export async function appStatus(
     }
 
     if (statusResult.status === 'fulfilled') {
-      fredStatus = statusResult.value;
+      // Strip `partition` (Decision 6) AND the sanitized retention subset OUT
+      // of `rest` before the spread. fredStatus is a looseObject, so a wholesale
+      // `...raw` would forward `partition` to the model; and because
+      // sanitizeRetentionFields OMITS an invalid `retained_until` from its
+      // return, leaving the raw key in `rest` would let a non-RFC3339/injected
+      // value survive the spread (the sanitized keys can't overwrite a key they
+      // don't emit). Drop all four, then re-add only the sanitized values.
+      const {
+        partition: _partitionOmitted,
+        retained_until: _retainedUntilRaw,
+        items: _itemsRaw,
+        restore_hint: _restoreHintRaw,
+        ...rest
+      } = statusResult.value;
+      fredStatus = { ...rest, ...sanitizeRetentionFields(statusResult.value) };
     } else {
       providerError = handleRejection('lease status', statusResult.reason);
     }
 
-    if (connResult.status === 'fulfilled') {
-      connection = connResult.value.connection;
-    } else {
-      connectionError = handleRejection('connection info', connResult.reason);
+    if (wantsConnection) {
+      if (connResult.status === 'fulfilled') {
+        connection = connResult.value?.connection ?? null;
+      } else {
+        connectionError = handleRejection('connection info', connResult.reason);
+      }
     }
   }
 

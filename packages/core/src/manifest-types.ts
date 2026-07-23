@@ -143,6 +143,18 @@ export interface FredServiceStatus {
   readonly instances: readonly FredInstanceInfo[];
 }
 
+/**
+ * Retained-lease item shape Fred emits on /status + /provision when
+ * provision_status == "retained" (ENG-329). Snake_case wire DTO — distinct from
+ * the chain's camelCase LeaseItem. Consumed by restore_app (ENG-599).
+ */
+export interface FredLeaseItem {
+  readonly sku: string;
+  readonly quantity?: number;
+  readonly service_name?: string;
+  readonly custom_domain?: string;
+}
+
 export interface FredLeaseStatus {
   readonly state: LeaseState;
   readonly provision_status?: string;
@@ -154,6 +166,11 @@ export interface FredLeaseStatus {
   readonly fail_count?: number;
   readonly created_at?: string;
   readonly services?: Record<string, FredServiceStatus>;
+  // Retention (present only when provision_status == "retained", ENG-329/ENG-600).
+  readonly retained_until?: string; // RFC3339 grace-window deadline
+  readonly items?: readonly FredLeaseItem[];
+  readonly restore_hint?: string; // server-rendered
+  readonly partition?: string; // owner-only sub-tenant grouping key
 }
 
 export interface FredLeaseLogs {
@@ -172,6 +189,11 @@ export interface FredLeaseProvision {
    * the wire shape (and matches the same field on FredLeaseStatus above).
    */
   readonly last_error?: string;
+  // Retention (present only when status == "retained", ENG-329/ENG-600).
+  readonly retained_until?: string;
+  readonly items?: readonly FredLeaseItem[];
+  readonly restore_hint?: string;
+  readonly partition?: string;
 }
 
 export interface FredActionResponse {

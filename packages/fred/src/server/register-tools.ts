@@ -3,6 +3,7 @@ import {
   type CosmosClientManager,
   DNS_LABEL_RE,
   jsonResponse,
+  LeaseState,
   leaseStateToJSON,
   ManifestMCPError,
   ManifestMCPErrorCode,
@@ -32,9 +33,12 @@ import { buildManifestPreview } from '../tools/buildManifestPreview.js';
 import { checkDeploymentReadiness } from '../tools/checkDeploymentReadiness.js';
 import { deployApp } from '../tools/deployApp.js';
 import { fetchActiveLease } from '../tools/fetchActiveLease.js';
+import { fetchLease } from '../tools/fetchLease.js';
 import { getAppLogs } from '../tools/getLogs.js';
 import { resolveProviderUrl } from '../tools/resolveLeaseProvider.js';
 import { restartApp } from '../tools/restartApp.js';
+import { restoreApp } from '../tools/restoreApp.js';
+import { sanitizeRetentionFields } from '../tools/sanitizeRetention.js';
 import { updateApp } from '../tools/updateApp.js';
 import { waitForAppReady } from '../tools/waitForAppReady.js';
 import { createProgressEmitter } from './progress.js';
@@ -133,7 +137,7 @@ export function registerTools(deps: RegisterToolsDeps): void {
     'app_status',
     {
       description:
-        'Get detailed status and connection info for a deployed app. Use this after deploy_app to check if an app is running and get its URL.',
+        'Get detailed status and connection info for a deployed app. Use this after deploy_app to check if an app is running and get its URL. For a CLOSED lease within its retention grace window it also returns retained_until/items/restore_hint — pass that lease to restore_app to recover it.',
       inputSchema: {
         lease_uuid: z
           .string()
@@ -153,7 +157,14 @@ export function registerTools(deps: RegisterToolsDeps): void {
           closedAt: z.string().optional(),
         }),
         connection: z.looseObject({}).optional(),
-        fredStatus: z.looseObject({}).optional(),
+        fredStatus: z
+          .looseObject({
+            provision_status: z.string().optional(),
+            retained_until: z.string().optional(),
+            items: z.array(z.looseObject({})).optional(),
+            restore_hint: z.string().optional(),
+          })
+          .optional(),
         providerError: z.string().optional(),
         connectionError: z.string().optional(),
       },
@@ -801,6 +812,47 @@ export function registerTools(deps: RegisterToolsDeps): void {
     }),
   );
 
+  // -- restore_app --
+  mcpServer.registerTool(
+    'restore_app',
+    {
+      description:
+        'Restore a CLOSED/credit-exhausted app from its retained volumes within the grace window. PRECONDITION: the source lease must be in the "retained" state — check app_status/app_diagnostics (retained_until/restore_hint) first. This BROADCASTS: it CREATES A NEW lease (reserving credit) and adopts the retained data onto it. NON-IDEMPOTENT — each call creates a new lease; do not blind-retry. (Contrast restart_app, which bounces an already-RUNNING app in place with no new lease.)',
+      inputSchema: {
+        source_lease_uuid: z
+          .string()
+          .uuid()
+          .describe(
+            'UUID of the CLOSED/credit-exhausted lease whose retained volumes to restore (find it via app_status when its state is retained). A fresh lease is created for you.',
+          ),
+      },
+      outputSchema: {
+        lease_uuid: z.string(),
+        source_lease_uuid: z.string(),
+        status: z.string(),
+        ready: z.looseObject({}).optional(),
+        custom_domain_not_restored: z.array(z.string()).optional(),
+      },
+      annotations: mutatingAnnotations('Restore a retained app', {
+        destructive: false,
+      }),
+      _meta: manifestMeta({ broadcasts: true, estimable: false }),
+    },
+    withErrorHandling('restore_app', async (args) => {
+      const sourceLeaseUuid = args.source_lease_uuid;
+      const address = await walletProvider.getAddress();
+      // No outer acquireRateLimit here — restoreApp acquires once internally
+      // (via ctx.chain) before its reads, mirroring deployManifest.
+      const ctx = await buildCtx();
+      const result = await restoreApp(
+        ctx,
+        { address, sourceLeaseUuid },
+        { pollOptions: false },
+      );
+      return structuredResponse(result, bigIntReplacer);
+    }),
+  );
+
   // -- update_app --
   mcpServer.registerTool(
     'update_app',
@@ -895,6 +947,10 @@ export function registerTools(deps: RegisterToolsDeps): void {
         // keys, so the parsed structuredContent has no `last_error` at
         // all in the success case — declare optional to match.
         last_error: z.string().optional(),
+        // Retention (ENG-600): present only when provision_status == "retained".
+        retained_until: z.string().optional(),
+        items: z.array(z.looseObject({})).optional(),
+        restore_hint: z.string().optional(),
       },
       annotations: readOnlyAnnotations('Get app provision diagnostics'),
       _meta: manifestMeta({
@@ -908,11 +964,25 @@ export function registerTools(deps: RegisterToolsDeps): void {
       await clientManager.acquireRateLimit();
       const ctx = await buildCtx();
 
-      const lease = await fetchActiveLease(
-        ctx,
-        leaseUuid,
-        'cannot be diagnosed',
-      );
+      // ENG-600: diagnose CLOSED (retained) leases too, not just ACTIVE/PENDING.
+      // State-agnostic fetch; the provider is only queried for states that can
+      // carry a provision record (PENDING/ACTIVE/CLOSED).
+      const lease = await fetchLease(ctx, leaseUuid);
+      const st = lease.state;
+      if (
+        st !== LeaseState.LEASE_STATE_PENDING &&
+        st !== LeaseState.LEASE_STATE_ACTIVE &&
+        st !== LeaseState.LEASE_STATE_CLOSED
+      ) {
+        return structuredResponse(
+          {
+            lease_uuid: leaseUuid,
+            provision_status: leaseStateToJSON(st),
+            fail_count: 0,
+          },
+          bigIntReplacer,
+        );
+      }
       const providerUrl = await resolveProviderUrl(ctx, lease.providerUuid);
       const authToken = await ctx.providerAuth.providerToken({
         address,
@@ -932,6 +1002,7 @@ export function registerTools(deps: RegisterToolsDeps): void {
           provision_status: provision.status,
           fail_count: provision.fail_count,
           last_error: provision.last_error,
+          ...sanitizeRetentionFields(provision),
         },
         bigIntReplacer,
       );

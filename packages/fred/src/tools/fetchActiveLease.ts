@@ -5,28 +5,19 @@ import {
   ManifestMCPErrorCode,
 } from '@manifest-network/manifest-mcp-core';
 import type { FredReadCtx } from '../ctx.js';
+import { fetchLease } from './fetchLease.js';
 
 /**
  * Fetches a lease by UUID, validates it exists and is in active/pending state.
- * Throws ManifestMCPError if the lease is not found or not in an active state.
+ * Delegates existence to fetchLease (single not-found contract) and adds the
+ * ACTIVE/PENDING gate. Throws ManifestMCPError if not found or not active.
  */
 export async function fetchActiveLease(
   ctx: FredReadCtx,
   leaseUuid: string,
   action: string,
 ) {
-  const leaseResult = await ctx.query.liftedinit.billing.v1.lease({
-    leaseUuid,
-  });
-
-  if (!leaseResult.lease) {
-    throw new ManifestMCPError(
-      ManifestMCPErrorCode.QUERY_FAILED,
-      `Lease "${leaseUuid}" not found on chain`,
-    );
-  }
-
-  const lease = leaseResult.lease;
+  const lease = await fetchLease(ctx, leaseUuid);
 
   if (
     lease.state !== LeaseState.LEASE_STATE_ACTIVE &&
