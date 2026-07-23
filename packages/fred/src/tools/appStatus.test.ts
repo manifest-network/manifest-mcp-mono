@@ -96,7 +96,7 @@ describe('appStatus', () => {
     expect(result.connection?.host).toBe('app.example.com');
   });
 
-  it('returns only chain state for closed lease', async () => {
+  it('queries provider status (but NOT connection) for a closed lease (ENG-600)', async () => {
     const qc = makeMockQueryClient({
       billing: {
         lease: {
@@ -113,8 +113,42 @@ describe('appStatus', () => {
     });
 
     expect(result.chainState.state).toBe(LeaseState.LEASE_STATE_CLOSED);
-    expect(result.fredStatus).toBeUndefined();
+    expect(mockGetLeaseStatus).toHaveBeenCalledTimes(1);
+    expect(result.fredStatus).toBeDefined();
+    // Connection is meaningless for a non-running lease — not fetched.
+    expect(mockGetLeaseConnectionInfo).not.toHaveBeenCalled();
     expect(result.connection).toBeUndefined();
+  });
+
+  it('surfaces sanitized retention fields for a retained closed lease and omits partition (ENG-600)', async () => {
+    mockGetLeaseStatus.mockResolvedValueOnce({
+      state: LeaseState.LEASE_STATE_CLOSED,
+      provision_status: 'retained',
+      retained_until: '2026-08-01T00:00:00Z',
+      items: [{ sku: 's1', quantity: 1 }],
+      restore_hint: 'restore me',
+      partition: 'p',
+    });
+    const qc = makeMockQueryClient({
+      billing: {
+        lease: {
+          uuid: LEASE_UUID,
+          state: LeaseState.LEASE_STATE_CLOSED,
+          providerUuid: 'prov-1',
+        },
+      },
+    });
+
+    const result = await appStatus(makeCtx(qc, mockGetAuthToken), {
+      address: 'manifest1abc',
+      leaseUuid: LEASE_UUID,
+    });
+
+    expect(result.fredStatus?.retained_until).toBe('2026-08-01T00:00:00Z');
+    expect(result.fredStatus?.restore_hint).toBe('restore me');
+    expect(result.fredStatus?.items?.[0]?.sku).toBe('s1');
+    // Decision 6: partition is omitted from the AI-facing projection.
+    expect(result.fredStatus?.partition).toBeUndefined();
   });
 
   it('includes lease.items in chainState (so consumers skip a second getLease)', async () => {

@@ -133,7 +133,7 @@ export function registerTools(deps: RegisterToolsDeps): void {
     'app_status',
     {
       description:
-        'Get detailed status and connection info for a deployed app. Use this after deploy_app to check if an app is running and get its URL.',
+        'Get detailed status and connection info for a deployed app. Use this after deploy_app to check if an app is running and get its URL. For a CLOSED lease within its retention grace window it also returns retained_until/items/restore_hint — pass that lease to restore_app to recover it.',
       inputSchema: {
         lease_uuid: z
           .string()
@@ -153,7 +153,14 @@ export function registerTools(deps: RegisterToolsDeps): void {
           closedAt: z.string().optional(),
         }),
         connection: z.looseObject({}).optional(),
-        fredStatus: z.looseObject({}).optional(),
+        fredStatus: z
+          .looseObject({
+            provision_status: z.string().optional(),
+            retained_until: z.string().optional(),
+            items: z.array(z.looseObject({})).optional(),
+            restore_hint: z.string().optional(),
+          })
+          .optional(),
         providerError: z.string().optional(),
         connectionError: z.string().optional(),
       },
