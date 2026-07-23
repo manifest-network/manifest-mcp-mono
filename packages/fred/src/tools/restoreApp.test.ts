@@ -279,4 +279,43 @@ describe('restoreApp', () => {
       (e: unknown) => e instanceof Error && !e.message.includes(bidi),
     );
   });
+
+  it('aborts before createLease when the signal fires during pre-flight reads — no broadcast, no orphan (ENG-488)', async () => {
+    mockSource();
+    const ac = new AbortController();
+    // Abort lands during the pre-flight provision read — before createLease.
+    mockGetProvision.mockImplementation(async () => {
+      ac.abort();
+      return { status: 'retained', fail_count: 0 };
+    });
+    await expect(
+      restoreApp(
+        makeCtx(),
+        { address: 'a', sourceLeaseUuid: SOURCE },
+        { pollOptions: false, abortSignal: ac.signal },
+      ),
+    ).rejects.toSatisfy((e: unknown) => (e as Error)?.name === 'AbortError');
+    // The on-chain create-lease broadcast must NOT fire after an abort.
+    expect(mockCreateLease).not.toHaveBeenCalled();
+  });
+
+  it('re-throws the abort instead of orphaning when the signal fires between createLease and the restore POST (ENG-488)', async () => {
+    mockSource();
+    const ac = new AbortController();
+    // Abort lands right after the lease is created, before the restore POST.
+    mockCreateLease.mockImplementation(async () => {
+      ac.abort();
+      return NEW as never;
+    });
+    await expect(
+      restoreApp(
+        makeCtx(),
+        { address: 'a', sourceLeaseUuid: SOURCE },
+        { pollOptions: false, abortSignal: ac.signal },
+      ),
+    ).rejects.toSatisfy((e: unknown) => (e as Error)?.name === 'AbortError');
+    // The restore POST never fired, and no compensating cancel was attempted.
+    expect(mockRestoreLease).not.toHaveBeenCalled();
+    expect(mockCosmosTx).not.toHaveBeenCalled();
+  });
 });

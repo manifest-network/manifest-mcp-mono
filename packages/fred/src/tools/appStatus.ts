@@ -141,10 +141,20 @@ export async function appStatus(
     }
 
     if (statusResult.status === 'fulfilled') {
-      // Destructure `partition` OUT before the spread — fredStatus is a
-      // looseObject, so a wholesale `...raw` would forward it to the model,
-      // violating Decision 6. Sanitize the retention subset.
-      const { partition: _partitionOmitted, ...rest } = statusResult.value;
+      // Strip `partition` (Decision 6) AND the sanitized retention subset OUT
+      // of `rest` before the spread. fredStatus is a looseObject, so a wholesale
+      // `...raw` would forward `partition` to the model; and because
+      // sanitizeRetentionFields OMITS an invalid `retained_until` from its
+      // return, leaving the raw key in `rest` would let a non-RFC3339/injected
+      // value survive the spread (the sanitized keys can't overwrite a key they
+      // don't emit). Drop all four, then re-add only the sanitized values.
+      const {
+        partition: _partitionOmitted,
+        retained_until: _retainedUntilRaw,
+        items: _itemsRaw,
+        restore_hint: _restoreHintRaw,
+        ...rest
+      } = statusResult.value;
       fredStatus = { ...rest, ...sanitizeRetentionFields(statusResult.value) };
     } else {
       providerError = handleRejection('lease status', statusResult.reason);

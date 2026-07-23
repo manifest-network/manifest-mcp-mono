@@ -153,6 +153,38 @@ describe('appStatus', () => {
     expect(result.fredStatus?.partition).toBeUndefined();
   });
 
+  it('DROPS a malformed/injected retained_until instead of leaking it raw past the sanitizer (ENG-555)', async () => {
+    const injected = `not-a-timestamp${String.fromCharCode(0x202e)}evil`;
+    mockGetLeaseStatus.mockResolvedValueOnce({
+      state: LeaseState.LEASE_STATE_CLOSED,
+      provision_status: 'retained',
+      // Non-RFC3339 + bidi-override payload: sanitizeRetentionFields omits it,
+      // so the raw value must NOT survive via the `...rest` spread.
+      retained_until: injected,
+      partition: 'p',
+    });
+    const qc = makeMockQueryClient({
+      billing: {
+        lease: {
+          uuid: LEASE_UUID,
+          state: LeaseState.LEASE_STATE_CLOSED,
+          providerUuid: 'prov-1',
+        },
+      },
+    });
+
+    const result = await appStatus(makeCtx(qc, mockGetAuthToken), {
+      address: 'manifest1abc',
+      leaseUuid: LEASE_UUID,
+    });
+
+    expect(result.fredStatus?.retained_until).toBeUndefined();
+    // The raw bidi payload must not appear anywhere in the AI-facing projection.
+    expect(JSON.stringify(result.fredStatus)).not.toContain(
+      String.fromCharCode(0x202e),
+    );
+  });
+
   it('includes lease.items in chainState (so consumers skip a second getLease)', async () => {
     const items = [
       {

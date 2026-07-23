@@ -86,6 +86,10 @@ export async function restoreApp(
   const customDomains = source.items
     .map((i) => i.customDomain)
     .filter((d): d is string => !!d);
+  // Final check immediately before the non-idempotent create-lease broadcast: an
+  // abort during the (slow-path) reads above must not still reserve credit on a
+  // fresh lease (ENG-488). Throwing here — before any tx — leaves zero side effects.
+  opts.abortSignal?.throwIfAborted();
   const newLeaseUuid = await createLease(ctx, { metaHashHex, leaseItems });
 
   // 4. Pivot: restore POST. ONLY the POST is inside the try — a post-202 poll
@@ -107,6 +111,9 @@ export async function restoreApp(
     );
     restoreStatus = result.status;
   } catch (err) {
+    // A caller abort (e.g. the throwIfAborted above) is not a restore failure —
+    // propagate it rather than misclassifying it as an in-doubt orphan (ENG-488).
+    if (opts.abortSignal?.aborted) throw err;
     // A ProviderApiError with a 2xx status means the restore COMMITTED but the
     // (202) body was empty/non-JSON and parseJsonResponse threw. Treat it as
     // committed — routing it to failure handling would advise cancelling a
