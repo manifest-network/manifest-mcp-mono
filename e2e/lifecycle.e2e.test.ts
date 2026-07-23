@@ -416,6 +416,7 @@ describe('Deploy lifecycle', () => {
     expect(tools).toContain('wait_for_app_ready');
     expect(tools).toContain('build_manifest_preview');
     expect(tools).toContain('check_deployment_readiness');
-    expect(tools).toHaveLength(11);
+    expect(tools).toContain('restore_app');
+    expect(tools).toHaveLength(12);
   });
 });

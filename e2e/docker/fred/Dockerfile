@@ -1,5 +1,5 @@
 # Multi-stage build for fred (providerd + docker-backend)
-FROM golang:1.25-alpine AS builder
+FROM golang:1.26.5-alpine AS builder
 
 RUN apk add --no-cache ca-certificates build-base git
 

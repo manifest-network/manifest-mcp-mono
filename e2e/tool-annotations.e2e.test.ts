@@ -230,6 +230,14 @@ const FRED_MATRIX: Record<string, ExpectedAnnotations> = {
     broadcasts: true,
     estimable: false,
   },
+  restore_app: {
+    readOnlyHint: false,
+    destructiveHint: false,
+    idempotentHint: false,
+    openWorldHint: true,
+    broadcasts: true,
+    estimable: false,
+  },
 };
 
 const COSMWASM_MATRIX: Record<string, ExpectedAnnotations> = {
@@ -399,7 +407,7 @@ describe('Tool annotations + _meta.manifest (live MCP transport)', () => {
 
     it('every fred tool matches the annotation matrix', async () => {
       const tools = await client.listToolsRaw();
-      expect(tools).toHaveLength(11);
+      expect(tools).toHaveLength(12);
       for (const tool of tools) {
         const expected = FRED_MATRIX[tool.name];
         expect(expected, `unexpected tool ${tool.name}`).toBeDefined();
