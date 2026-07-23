@@ -440,12 +440,12 @@ export enum ManifestMCPErrorCode {
   // Non-retryable: retrying without a disambiguator is pointless (ENG-258).
   SKU_AMBIGUOUS = 'SKU_AMBIGUOUS',
 
-  // Restore (ENG-599). Terminal codes below are enrolled in retry.ts
-  // NON_RETRYABLE_ERROR_CODES; RESTORE_RETRYABLE intentionally is NOT (the agent
-  // may re-invoke restore_app, which cleanly re-creates a fresh lease).
+  // Restore (ENG-599). ALL are enrolled in retry.ts NON_RETRYABLE_ERROR_CODES
+  // (restore_app is non-idempotent, so withRetry must never auto-re-broadcast).
+  // RESTORE_RETRYABLE signals the AGENT may deliberately re-invoke — not auto-retry.
   RESTORE_NOT_RETAINED = 'RESTORE_NOT_RETAINED', // pre-flight: source not restorable
   RESTORE_REJECTED = 'RESTORE_REJECTED', // terminal 4xx; the created lease was rolled back
-  RESTORE_RETRYABLE = 'RESTORE_RETRYABLE', // 503; rolled back, safe to re-invoke
+  RESTORE_RETRYABLE = 'RESTORE_RETRYABLE', // 503; rolled back, agent may re-invoke
   RESTORE_ORPHAN_COMPENSATION_FAILED = 'RESTORE_ORPHAN_COMPENSATION_FAILED', // orphan lease exists
 }
 

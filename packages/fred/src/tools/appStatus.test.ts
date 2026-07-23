@@ -125,8 +125,9 @@ describe('appStatus', () => {
       state: LeaseState.LEASE_STATE_CLOSED,
       provision_status: 'retained',
       retained_until: '2026-08-01T00:00:00Z',
-      items: [{ sku: 's1', quantity: 1 }],
-      restore_hint: 'restore me',
+      // Control char in sku proves the sanitize spread is WIRED (not just clean-string pass-through).
+      items: [{ sku: `s1${String.fromCharCode(0x202e)}`, quantity: 1 }],
+      restore_hint: `restore${String.fromCharCode(0x202e)}me`,
       partition: 'p',
     });
     const qc = makeMockQueryClient({
@@ -145,6 +146,7 @@ describe('appStatus', () => {
     });
 
     expect(result.fredStatus?.retained_until).toBe('2026-08-01T00:00:00Z');
+    // Sanitized: the bidi char is replaced with a space.
     expect(result.fredStatus?.restore_hint).toBe('restore me');
     expect(result.fredStatus?.items?.[0]?.sku).toBe('s1');
     // Decision 6: partition is omitted from the AI-facing projection.

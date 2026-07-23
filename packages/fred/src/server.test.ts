@@ -365,8 +365,9 @@ describe('FredMCPServer', () => {
         status: 'retained',
         fail_count: 0,
         retained_until: '2026-08-01T00:00:00Z',
-        items: [{ sku: 's1', quantity: 1 }],
-        restore_hint: 'restore me',
+        // Control char proves the sanitize projection is WIRED, not clean-string pass-through.
+        items: [{ sku: `s1${String.fromCharCode(0x202e)}`, quantity: 1 }],
+        restore_hint: `restore${String.fromCharCode(0x202e)}me`,
         partition: 'p',
       });
 
@@ -382,10 +383,33 @@ describe('FredMCPServer', () => {
       const parsed = JSON.parse(result.content[0].text);
       expect(parsed.provision_status).toBe('retained');
       expect(parsed.retained_until).toBe('2026-08-01T00:00:00Z');
-      expect(parsed.restore_hint).toBe('restore me');
+      expect(parsed.restore_hint).toBe('restore me'); // sanitized (bidi → space)
       expect(parsed.items?.[0]?.sku).toBe('s1');
       // partition is omitted from the AI-facing projection (Decision 6).
       expect(parsed.partition).toBeUndefined();
+    });
+
+    it('returns a benign early result for a non-provisionable (REJECTED) lease without querying the provider (ENG-600)', async () => {
+      mockFetchLease.mockResolvedValue({
+        providerUuid: 'prov-1',
+        state: LeaseState.LEASE_STATE_REJECTED,
+      } as Awaited<ReturnType<typeof fetchLease>>);
+
+      const server = new FredMCPServer({
+        config: makeMockConfig(),
+        walletProvider: makeMockWallet({ signArbitrary: true }),
+      });
+      const result = await callTool(server, 'app_diagnostics', {
+        lease_uuid: LEASE_UUID,
+      });
+
+      expect(result.isError).toBeUndefined();
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.provision_status).toBe('LEASE_STATE_REJECTED');
+      expect(parsed.fail_count).toBe(0);
+      // Never provisioned → the provider is not queried.
+      expect(mockResolveProviderUrl).not.toHaveBeenCalled();
+      expect(mockGetLeaseProvision).not.toHaveBeenCalled();
     });
 
     it('accepts a provision response without last_error', async () => {
@@ -395,9 +419,10 @@ describe('FredMCPServer', () => {
       // round-trip drops the undefined key entirely; the resulting
       // structuredContent has no `last_error` property and the SDK's
       // output validation must still accept it.
-      mockFetchActiveLease.mockResolvedValue({
+      mockFetchLease.mockResolvedValue({
         providerUuid: 'prov-1',
-      } as Awaited<ReturnType<typeof fetchActiveLease>>);
+        state: LeaseState.LEASE_STATE_ACTIVE,
+      } as Awaited<ReturnType<typeof fetchLease>>);
       mockResolveProviderUrl.mockResolvedValue('https://provider.example.com');
       mockGetLeaseProvision.mockResolvedValue({
         status: 'provisioned',

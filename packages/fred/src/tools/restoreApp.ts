@@ -101,11 +101,23 @@ export async function restoreApp(
     );
     restoreStatus = result.status;
   } catch (err) {
-    return await handleRestoreFailure(ctx, err, {
-      newLeaseUuid,
-      sourceLeaseUuid,
-      sourceProviderUuid: source.providerUuid,
-    });
+    // A ProviderApiError with a 2xx status means the restore COMMITTED but the
+    // (202) body was empty/non-JSON and parseJsonResponse threw. Treat it as
+    // committed — routing it to failure handling would advise cancelling a
+    // lease with adopted volumes (data loss). Only non-2xx is a real failure.
+    if (
+      ProviderApiError.isProviderApiError(err) &&
+      err.status >= 200 &&
+      err.status < 300
+    ) {
+      restoreStatus = 'provisioning';
+    } else {
+      return await handleRestoreFailure(ctx, err, {
+        newLeaseUuid,
+        sourceLeaseUuid,
+        sourceProviderUuid: source.providerUuid,
+      });
+    }
   }
 
   // Committed (202). Post-pivot: never compensate from here on.

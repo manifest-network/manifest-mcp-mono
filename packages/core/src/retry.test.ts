@@ -41,12 +41,19 @@ describe('isRetryableError', () => {
       expect(isRetryableError(error)).toBe(false);
     });
 
-    it('should not retry RESTORE_NOT_RETAINED / RESTORE_REJECTED (terminal)', () => {
-      for (const code of [
-        ManifestMCPErrorCode.RESTORE_NOT_RETAINED,
-        ManifestMCPErrorCode.RESTORE_REJECTED,
+    it('should not auto-retry any RESTORE_* code (restore_app is non-idempotent)', () => {
+      // RESTORE_RETRYABLE included: "retryable" means the AGENT may re-invoke,
+      // NOT that withRetry should auto-re-broadcast (that would re-create a lease).
+      // Its "HTTP 503" message must not slip through the 5xx sniff either.
+      for (const err of [
+        new ManifestMCPError(ManifestMCPErrorCode.RESTORE_NOT_RETAINED, 'x'),
+        new ManifestMCPError(ManifestMCPErrorCode.RESTORE_REJECTED, 'x'),
+        new ManifestMCPError(
+          ManifestMCPErrorCode.RESTORE_RETRYABLE,
+          'Restore rejected (HTTP 503); rolled back',
+        ),
       ]) {
-        expect(isRetryableError(new ManifestMCPError(code, 'x'))).toBe(false);
+        expect(isRetryableError(err)).toBe(false);
       }
     });
 

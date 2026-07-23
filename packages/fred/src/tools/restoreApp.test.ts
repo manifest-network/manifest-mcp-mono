@@ -200,6 +200,35 @@ describe('restoreApp', () => {
     expect(mockCosmosTx).not.toHaveBeenCalled();
   });
 
+  it('post-pivot poll SUCCESS: returns the polled ready status', async () => {
+    mockSource();
+    mockPoll.mockResolvedValue({
+      state: 2,
+      provision_status: 'running',
+    } as never);
+    const result = await restoreApp(
+      makeCtx(),
+      { address: 'a', sourceLeaseUuid: SOURCE },
+      { pollOptions: {} },
+    );
+    expect(result.lease_uuid).toBe(NEW);
+    expect(result.ready).toMatchObject({ provision_status: 'running' });
+    expect(mockCosmosTx).not.toHaveBeenCalled();
+  });
+
+  it('committed-but-empty-body (2xx ProviderApiError): treated as committed, NOT orphaned', async () => {
+    mockSource();
+    // parseJsonResponse throws ProviderApiError with the 2xx status on an empty body.
+    mockRestoreLease.mockRejectedValue(new ProviderApiError(202, 'empty body'));
+    const result = await restoreApp(
+      makeCtx(),
+      { address: 'a', sourceLeaseUuid: SOURCE },
+      { pollOptions: false },
+    );
+    expect(result).toMatchObject({ lease_uuid: NEW, status: 'provisioning' });
+    expect(mockCosmosTx).not.toHaveBeenCalled();
+  });
+
   it('surfaces custom_domain_not_restored when the source items carry a custom domain', async () => {
     mockSource([
       {

@@ -52,12 +52,15 @@ const NON_RETRYABLE_ERROR_CODES: ManifestMCPErrorCode[] = [
   // SKU resolution - ambiguous name needs caller disambiguation, not retry
   ManifestMCPErrorCode.SKU_AMBIGUOUS,
 
-  // Restore terminal outcomes (ENG-599). These must NOT auto-retry: the message
-  // can embed the underlying "HTTP 500" cause, which the 5xx message-sniff would
-  // otherwise mis-classify retryable — dangerous for a lease-creating tool.
-  // RESTORE_RETRYABLE is intentionally omitted (agent-driven re-invoke is safe).
+  // Restore outcomes (ENG-599). ALL are non-auto-retryable: restore_app is
+  // non-idempotent (each call creates a fresh lease), so withRetry must never
+  // re-broadcast it. RESTORE_RETRYABLE means "the AGENT may re-invoke" — a
+  // deliberate, human/agent-driven decision — NOT that withRetry should auto-
+  // retry. (Its message can also embed "HTTP 503", which the 5xx message-sniff
+  // would otherwise mis-read as retryable.)
   ManifestMCPErrorCode.RESTORE_NOT_RETAINED,
   ManifestMCPErrorCode.RESTORE_REJECTED,
+  ManifestMCPErrorCode.RESTORE_RETRYABLE,
   ManifestMCPErrorCode.RESTORE_ORPHAN_COMPENSATION_FAILED,
 ];
 
