@@ -112,6 +112,8 @@ describe('manifest-sdk barrels', () => {
       'waitForAppReady',
       'createAuthTokens',
       'createProviderAuth',
+      'restoreApp',
+      'restoreLease',
     ])
       expect(deploy).toHaveProperty(k);
   });
