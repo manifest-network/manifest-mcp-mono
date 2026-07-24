@@ -21,6 +21,17 @@ jobs:
           node-version: 22
           cache: npm
 
+      - name: Provision loopback XFS (project quotas) for retention volumes
+        run: |
+          set -euo pipefail
+          sudo apt-get install -y xfsprogs          # explicit: don't rely on the ubuntu-latest preinstalled set for mkfs.xfs/xfs_quota
+          sudo mkdir -p /mnt/fred-xfs
+          truncate -s 2G /tmp/fred-xfs.img          # > mkfs.xfs 300MB floor
+          sudo mkfs.xfs -f /tmp/fred-xfs.img
+          sudo mount -o loop,prjquota /tmp/fred-xfs.img /mnt/fred-xfs
+          sudo chmod 0777 /mnt/fred-xfs
+          xfs_quota -x -c 'state -p' /mnt/fred-xfs   # fail loudly if project quota isn't active
+
       - name: Build Docker images
         run: docker compose -f e2e/docker-compose.yml build
 

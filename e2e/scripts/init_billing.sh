@@ -190,6 +190,11 @@ bech32_prefix: "manifest"
 
 token_tracker_db_path: "/data/tokens.db"
 payload_store_db_path: "/data/payloads.db"
+# Placement store: records which backend serves each lease. restore_app (ENG-604)
+# REQUIRES it — RestoreLease 503s ("service not configured") when placementLookup
+# is nil, because it must discover the SOURCE lease's backend to adopt its retained
+# volume. Unset = disabled (fine for stateless deploys; fatal for restore).
+placement_store_db_path: "/data/placements.db"
 
 gas_limit: 1500000
 gas_price: 0
@@ -211,6 +216,14 @@ callback_insecure_skip_verify: true
 container_readonly_rootfs: false
 network_isolation: false
 
+# Retention (ENG-604 phase 2): the stateful docker-small volume is soft-deleted on
+# close and adoptable via restore_app. XFS pquota mount is bind-mounted at the
+# identical host path (docker-compose.yml) + the CI host loopback XFS (e2e.yml).
+volume_data_path: "/mnt/fred-xfs"
+volume_filesystem: "xfs"
+retain_on_close: true
+container_stop_timeout: "1s"   # governs compose.Down's stop; a sleep-PID-1 container else forces a 30s SIGKILL grace that delays the retain record
+
 # Map on-chain SKU UUIDs to local profile names
 sku_mapping:
   "${MICRO_UUID}": "docker-micro"
@@ -218,7 +231,9 @@ sku_mapping:
   "${MEDIUM_UUID}": "docker-medium"
   "${LARGE_UUID}": "docker-large"
 
-# Override default profiles with disk_mb=0 (avoids filesystem quota requirement)
+# Override default profiles: disk_mb=0 (ephemeral, no filesystem-quota requirement)
+# for every tier EXCEPT docker-small, which is stateful (disk_mb>0) for the ENG-604
+# restore test — its volume is XFS-quota'd and retained on close.
 sku_profiles:
   docker-micro:
     cpu_cores: 0.25
@@ -227,7 +242,7 @@ sku_profiles:
   docker-small:
     cpu_cores: 0.5
     memory_mb: 512
-    disk_mb: 0
+    disk_mb: 512     # ENG-604 phase 2: stateful/quota'd volume tier (retainable on close)
   docker-medium:
     cpu_cores: 1.0
     memory_mb: 1024
