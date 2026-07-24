@@ -49,10 +49,14 @@ describe('Restore roundtrip (ENG-604)', () => {
   });
 
   afterAll(async () => {
-    // The golden source is already closed; clean up the still-ACTIVE negative lease.
-    if (negativeUuid) {
+    // Best-effort cleanup of leases left ACTIVE (the golden source is already
+    // closed on-chain; the restored lease and the negative-path lease are not).
+    // The suite shares one wallet + devnet, so a leaked reservation/container
+    // could perturb later e2e files.
+    for (const uuid of [restoredUuid, negativeUuid]) {
+      if (!uuid) continue;
       try {
-        await leaseClient.callTool('close_lease', { lease_uuid: negativeUuid });
+        await leaseClient.callTool('close_lease', { lease_uuid: uuid });
       } catch {
         /* best-effort */
       }
