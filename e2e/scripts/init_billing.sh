@@ -231,7 +231,9 @@ sku_mapping:
   "${MEDIUM_UUID}": "docker-medium"
   "${LARGE_UUID}": "docker-large"
 
-# Override default profiles with disk_mb=0 (avoids filesystem quota requirement)
+# Override default profiles: disk_mb=0 (ephemeral, no filesystem-quota requirement)
+# for every tier EXCEPT docker-small, which is stateful (disk_mb>0) for the ENG-604
+# restore test — its volume is XFS-quota'd and retained on close.
 sku_profiles:
   docker-micro:
     cpu_cores: 0.25
