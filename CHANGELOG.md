@@ -7,13 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.20.0] - 2026-07-24
+
 ### Added
 
+- **fred:** `restore_app` MCP tool + the `restoreApp` saga — recover a CLOSED / credit-exhausted lease's retained volumes onto a fresh lease within the retention grace window (pre-flight retained-check → create-lease → `POST /restore` → cancel-lease compensation on terminal failure). Adds the `restoreLease` HTTP client and the `RestoreResult` type on the fred barrel, plus four `RESTORE_*` error codes (all non-auto-retryable, since restore is non-idempotent). (ENG-599)
+- **fred, core:** Fred retention metadata — `app_status` / `app_diagnostics` now surface `retained_until` / `items` / `restore_hint` for CLOSED-retained leases (provider-controlled strings sanitized, `retained_until` RFC3339-validated, `partition` omitted from the AI projection), and query the provider for CLOSED leases (previously PENDING/ACTIVE only). Adds the `FredLeaseItem` wire type. (ENG-600)
 - **core, node, cosmwasm:** an absolute gas-limit ceiling — `COSMOS_MAX_GAS` / `config.maxGas` (default `50000000`, `-1` disables) + `ManifestMCPErrorCode.GAS_LIMIT_EXCEEDED` (non-retryable). A broadcast whose `ceil(simulate × multiplier)` exceeds the ceiling aborts before signing, bounding the fee a hostile/compromised RPC can force via an inflated `simulate()`. Enforced across `cosmos_tx`/`executeTx`, the on-chain lease/fred/agent broadcasts (all via `cosmosTx`), and the cosmwasm `convert_mfx_to_pwr` converter. `buildGasFee` + the gas defaults are exposed on a new `@manifest-network/manifest-mcp-core/gas` subpath. (ENG-556)
 
 ### Changed
 
+- **core:** bumped `@manifest-network/manifestjs` to **3.0.0** (regenerated from manifest-ledger v2.3.1 protos) and migrated the billing withdrawal path to opaque cursor pagination — `cosmos_query billing provider-withdrawable` now takes `--limit`/`--key` and returns a base64 `nextKey` (the `hasMore` field is gone); `cosmos_tx billing withdraw` threads `--key` → `MsgWithdraw.key` and surfaces `next_key` via an opt-in decoder. Fixes a silent truncation of a provider's withdrawable total at the first ~100 active leases. (ENG-598)
 - **core:** `cosmosTx` / `executeTx` now always resolve `TxOptions` on the non-explicit-fee path, so the default broadcast computes an explicit fee instead of delegating `'auto'` to cosmjs. Behavior-preserving fee math (`ceil` vs cosmjs's `round`, ≤1 gas unit, strictly safer). (ENG-556)
+- **deps:** `undici` 8.3.0 → 8.8.0; `ws` 8.21.0 → 8.21.1. (ENG-554 + Dependabot)
+
+### Fixed
+
+- **core:** the in-flight sequence cache now shadows `simulate()` as well as the broadcast, so the gas-ceiling estimate uses the pending sequence — fixes a spurious sequence-mismatch on back-to-back generic-tx broadcasts. (ENG-586)
+- **fred:** capped the provider HTTP response-body size, so a malicious or misbehaving provider can no longer OOM the client via an unbounded response. (ENG-552)
+
+### Security
+
+- **fred, agent-core:** provider-controlled strings (which originate from untrusted on-chain SKU records) are sanitized — NFC-normalize, strip control/format/bidi/zero-width characters, collapse whitespace, length-cap — before they reach the deploy approval / model-facing surface, closing a newline/bidi-injection spoofing vector. (ENG-555)
+- **node:** enforce `0600` permissions when overwriting an existing keyfile. (ENG-553)
+
+### Removed
+
+- **BREAKING (fred, core, sdk):** removed the dead `getLeaseInfo` / `FredLeaseInfo` — they targeted `GET /v1/leases/{uuid}/info`, a route Fred serves at neither the pinned commit nor `origin/main` (always 404). Use `getLeaseConnectionInfo` / `ConnectionDetails` instead. Removed from the fred and core barrels and the SDK `/deploy` subpath. (ENG-602)
 
 ## [0.19.0] - 2026-07-16
 
