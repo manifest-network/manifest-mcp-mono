@@ -190,6 +190,11 @@ bech32_prefix: "manifest"
 
 token_tracker_db_path: "/data/tokens.db"
 payload_store_db_path: "/data/payloads.db"
+# Placement store: records which backend serves each lease. restore_app (ENG-604)
+# REQUIRES it — RestoreLease 503s ("service not configured") when placementLookup
+# is nil, because it must discover the SOURCE lease's backend to adopt its retained
+# volume. Unset = disabled (fine for stateless deploys; fatal for restore).
+placement_store_db_path: "/data/placements.db"
 
 gas_limit: 1500000
 gas_price: 0
