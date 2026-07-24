@@ -211,6 +211,14 @@ callback_insecure_skip_verify: true
 container_readonly_rootfs: false
 network_isolation: false
 
+# Retention (ENG-604 phase 2): the stateful docker-small volume is soft-deleted on
+# close and adoptable via restore_app. XFS pquota mount is bind-mounted at the
+# identical host path (docker-compose.yml) + the CI host loopback XFS (e2e.yml).
+volume_data_path: "/mnt/fred-xfs"
+volume_filesystem: "xfs"
+retain_on_close: true
+container_stop_timeout: "1s"   # governs compose.Down's stop; a sleep-PID-1 container else forces a 30s SIGKILL grace that delays the retain record
+
 # Map on-chain SKU UUIDs to local profile names
 sku_mapping:
   "${MICRO_UUID}": "docker-micro"
@@ -227,7 +235,7 @@ sku_profiles:
   docker-small:
     cpu_cores: 0.5
     memory_mb: 512
-    disk_mb: 0
+    disk_mb: 512     # ENG-604 phase 2: stateful/quota'd volume tier (retainable on close)
   docker-medium:
     cpu_cores: 1.0
     memory_mb: 1024

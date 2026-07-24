@@ -36,7 +36,7 @@ CMD ["/usr/bin/providerd"]
 # ============================================================================
 FROM alpine:3.22 AS docker-backend
 
-RUN apk add --no-cache ca-certificates curl
+RUN apk add --no-cache ca-certificates curl xfsprogs-extra
 
 COPY --from=builder /build/docker-backend /usr/bin/docker-backend
 
