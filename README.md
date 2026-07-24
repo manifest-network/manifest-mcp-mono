@@ -15,7 +15,7 @@ packages/
   core/        @manifest-network/manifest-mcp-core      Shared library: Cosmos logic, on-chain tool functions, server utilities
   chain/       @manifest-network/manifest-mcp-chain     MCP server for chain operations (6 tools, +1 optional faucet)
   lease/       @manifest-network/manifest-mcp-lease     MCP server for on-chain lease operations (8 tools)
-  fred/        @manifest-network/manifest-mcp-fred      MCP server for provider/Fred operations (11 tools)
+  fred/        @manifest-network/manifest-mcp-fred      MCP server for provider/Fred operations (12 tools)
   cosmwasm/    @manifest-network/manifest-mcp-cosmwasm  MCP server for MFX-to-PWR converter (2 tools)
   agent-core/  @manifest-network/manifest-agent-core    TypeScript orchestration surface (deploy / manage-domain / troubleshoot / close-lease)
   agent/       @manifest-network/manifest-mcp-agent     MCP server wrapping agent-core via MCP elicitation (5 orchestrated tools)
@@ -72,7 +72,7 @@ See [`packages/node/README.md`](packages/node/README.md) for wallet setup and MC
 | `get_skus` | List available SKUs |
 | `get_providers` | List available providers |
 
-### Fred server (`manifest-mcp-fred`) -- 11 tools
+### Fred server (`manifest-mcp-fred`) -- 12 tools
 
 | Tool | Description |
 |------|-------------|
@@ -85,6 +85,7 @@ See [`packages/node/README.md`](packages/node/README.md) for wallet setup and MC
 | `get_logs` | Get logs for a deployed app by lease UUID |
 | `restart_app` | Restart a deployed app via the provider |
 | `update_app` | Update a deployed app with a new manifest |
+| `restore_app` | Restore a closed/retained app onto a fresh lease within the grace window |
 | `app_diagnostics` | Get provision diagnostics for a deployed app |
 | `app_releases` | Get release/version history for a deployed app |
 

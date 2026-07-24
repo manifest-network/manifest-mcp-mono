@@ -8,13 +8,13 @@ For user-facing guidance (tool selection, end-to-end examples, prompts/resources
 
 The servers implement the [Model Context Protocol](https://modelcontextprotocol.io/) (MCP), exposing blockchain queries, transactions, and Manifest-specific deployment tools to any MCP-compatible client (Claude Desktop, Cursor, etc.).
 
-The 32 tools (+ 1 optional faucet) are split across five MCP servers to stay under the LLM tool-selection accuracy ceiling:
+The 33 tools (+ 1 optional faucet) are split across five MCP servers to stay under the LLM tool-selection accuracy ceiling:
 
 - **Chain server** (6 tools, +1 optional `request_faucet`) -- Generic Cosmos SDK operations: queries, transactions, fee estimation, module discovery
 - **Lease server** (8 tools) -- On-chain lease operations: credit balance, funding, lease queries, custom-domain claim/lookup, SKUs, providers
-- **Fred server** (11 tools + 3 resources + 3 prompts) -- Provider/Fred-dependent operations: catalog browsing, deployment readiness checks, manifest preview, app deployment, ready polling, status, logs, restart, update, diagnostics, releases
+- **Fred server** (12 tools + 3 resources + 3 prompts) -- Provider/Fred-dependent operations: catalog browsing, deployment readiness checks, manifest preview, app deployment, ready polling, status, logs, restart, update, restore, diagnostics, releases
 - **CosmWasm server** (2 tools) -- MFX-to-PWR converter contract: rate queries, token conversion
-- **Agent server** (5 tools, elicitation-driven) -- Orchestrated deploy / manage-domain / lookup-domain / troubleshoot / close-lease flows over `agent-core`, driving plan → confirm → recover via MCP elicitation (6 + 8 + 11 + 2 + 5 = 32)
+- **Agent server** (5 tools, elicitation-driven) -- Orchestrated deploy / manage-domain / lookup-domain / troubleshoot / close-lease flows over `agent-core`, driving plan → confirm → recover via MCP elicitation (6 + 8 + 12 + 2 + 5 = 33)
 
 ```
 ┌──────────────────────────────────────┐
@@ -53,7 +53,7 @@ packages/
   core/      @manifest-network/manifest-mcp-core      Shared library (Cosmos logic, on-chain tool functions)
   chain/     @manifest-network/manifest-mcp-chain     MCP server: 6 chain tools (+ optional request_faucet)
   lease/     @manifest-network/manifest-mcp-lease     MCP server: 8 on-chain lease tools
-  fred/      @manifest-network/manifest-mcp-fred      MCP server: 11 provider/Fred tools, 3 resources, 3 prompts
+  fred/      @manifest-network/manifest-mcp-fred      MCP server: 12 provider/Fred tools, 3 resources, 3 prompts
   cosmwasm/  @manifest-network/manifest-mcp-cosmwasm  MCP server: 2 converter tools
   agent-core/ @manifest-network/manifest-agent-core   Orchestration library (deployApp/manageDomain/troubleshoot/closeLease)
   agent/     @manifest-network/manifest-mcp-agent      MCP server: 5 orchestrated tools (elicitation-driven)
@@ -190,7 +190,7 @@ The lease server performs purely on-chain operations using core's tool functions
 
 ## Package: fred
 
-The fred package is an MCP server that registers 11 provider/Fred-dependent tools:
+The fred package is an MCP server that registers 12 provider/Fred-dependent tools:
 
 | Tool | Purpose |
 |------|---------|
@@ -203,6 +203,7 @@ The fred package is an MCP server that registers 11 provider/Fred-dependent tool
 | `get_logs` | Fetch container logs |
 | `restart_app` | Restart via provider API |
 | `update_app` | Update container manifest |
+| `restore_app` | Recover a CLOSED/credit-exhausted lease's retained volumes onto a fresh lease within the grace window (saga: pre-flight retained-check → create-lease → `POST /restore` → cancel-lease compensation) |
 | `app_diagnostics` | Provision diagnostics (status, failure count, last error) |
 | `app_releases` | List deployment release history |
 
@@ -223,7 +224,7 @@ src/
 │   ├── index.ts                FredMCPServer entry point (constructs the McpServer, wires registerTools/registerResources/registerPrompts)
 │   ├── fetch-gate.ts           Injects core's SSRF-guarded fetch (gated MANIFEST_FRED_FETCH_GUARDED, default on)
 │   ├── progress.ts             Helper utilities for emitting `notifications/progress` and forwarding `AbortSignal`
-│   ├── register-tools.ts       Registers the 11 MCP tools (browse_catalog, deploy_app, app_status, app_diagnostics, app_releases, …)
+│   ├── register-tools.ts       Registers the 12 MCP tools (browse_catalog, deploy_app, app_status, restore_app, app_diagnostics, app_releases, …)
 │   ├── register-resources.ts   Registers the 3 MCP resources (`manifest://leases/active`, `manifest://leases/recent`, `manifest://providers`)
 │   └── register-prompts.ts     Registers the 3 MCP prompts (`deploy-containerized-app`, `diagnose-failing-app`, `shutdown-all-leases`)
 ├── http/
@@ -247,7 +248,8 @@ src/
     ├── appStatus.ts               Lease status + provider info
     ├── getLogs.ts                 Fetch container logs
     ├── restartApp.ts              Restart via provider API
-    └── updateApp.ts               Update container manifest
+    ├── updateApp.ts               Update container manifest
+    └── restoreApp.ts              Restore a CLOSED/retained lease's volumes onto a fresh lease (ENG-599 saga)
 ```
 
 `app_diagnostics` and `app_releases` are registered inline in `server/register-tools.ts` rather than as standalone files in `tools/` because they are thin pass-throughs to the matching Fred API endpoints with no orchestration logic to extract.
@@ -416,18 +418,19 @@ This is handled by `http/auth.ts` in the fred package and used by all fred serve
 
 ## Error handling
 
-Errors use the `ManifestMCPErrorCode` enum (15 codes across 8 categories):
+Errors use the `ManifestMCPErrorCode` enum (21 codes across 9 categories):
 
 | Category | Codes |
 |----------|-------|
 | Configuration | `INVALID_CONFIG` |
 | Wallet | `WALLET_NOT_CONNECTED`, `WALLET_CONNECTION_FAILED`, `INVALID_MNEMONIC` |
 | Client/RPC | `RPC_CONNECTION_FAILED` |
-| Query | `QUERY_FAILED`, `UNSUPPORTED_QUERY`, `INVALID_ADDRESS`, `INVALID_ARGUMENT` |
-| Transaction | `TX_FAILED`, `UNSUPPORTED_TX`, `SIMULATION_FAILED` |
+| Query | `QUERY_FAILED`, `UNSUPPORTED_QUERY`, `INVALID_ADDRESS`, `INVALID_ARGUMENT`, `NOT_FOUND` (an expected "no such entity" absence, not a fault; non-retryable) |
+| Transaction | `TX_FAILED`, `UNSUPPORTED_TX`, `SIMULATION_FAILED`, `GAS_LIMIT_EXCEEDED` (pre-broadcast abort: `ceil(simulate × multiplier)` exceeded `COSMOS_MAX_GAS`; ENG-556) |
 | Module | `UNKNOWN_MODULE` |
 | User action | `OPERATION_CANCELLED` (user decline / cancel / elicitation timeout — neither a fault nor retryable) |
 | SKU resolution | `SKU_AMBIGUOUS` (a SKU name matched more than one active SKU; disambiguate with `provider_uuid` / `sku_uuid`) |
+| Restore | `RESTORE_NOT_RETAINED`, `RESTORE_REJECTED`, `RESTORE_RETRYABLE`, `RESTORE_ORPHAN_COMPENSATION_FAILED` (`restore_app` saga outcomes; all non-auto-retryable since restore is non-idempotent; ENG-599) |
 
 Error responses returned to MCP clients sanitize structured fields (such as `input` and `details`) via a redaction helper so that sensitive values (mnemonics, passwords, keys, tokens) are not exposed; the top-level `error.message` string is passed through verbatim and should not contain secrets.
 

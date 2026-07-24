@@ -93,6 +93,14 @@ const events = createNodeEventTransport(); // guarded: true by default
 - **`ws`** is an exact-pinned **`optionalDependency`**, dynamic-imported; if it is absent, `open()` surfaces a clear error (via `onError` + a synthetic `onClose`).
 - **Browser / Deno:** `createNodeEventTransport()` throws by construction on non-Node runtimes. Inject your own `EventTransport` backed by the native `WebSocket` instead (or omit `ctx.events` to fall back to polling).
 
+## Universal off-barrel subpaths
+
+Three low-level surfaces are **browser-safe** (no Node builtins) but kept **off** the package barrel (`index.ts`) to keep the public surface small — each has its own subpath export:
+
+- **`@manifest-network/manifest-mcp-core/ssrf`** — the pure IP classifier `isBlocked` / `isIpLiteral` / `BLOCKED_RANGES_IPV4` / `BLOCKED_RANGES_IPV6` (`ipaddr.js` only, no `node:` builtins). This is the browser-safe half of the SSRF guard — what fred's URL-string check (`isUrlSsrfSafe` / `validateProviderUrl`) imports. The connect-time `createGuardedFetch` (undici) stays Node-only on `/guarded-fetch`. (ENG-490)
+- **`@manifest-network/manifest-mcp-core/faucet`** — the faucet ops `requestFaucet` / `requestFaucetCredit` / `fetchFaucetStatus` (+ their types), pure `fetch` + `zod`. A testnet/operator concern — deliberately off the barrel so `export type *` consumers don't inherit the testnet-only surface. (ENG-531)
+- **`@manifest-network/manifest-mcp-core/gas`** — `buildGasFee` + the gas-default constants `DEFAULT_GAS_MULTIPLIER` / `DEFAULT_MAX_GAS`, so a first-party sibling that broadcasts on its own can enforce the `COSMOS_MAX_GAS` gas-limit ceiling instead of passing `'auto'`. (ENG-556)
+
 ## Build
 
 ```bash
