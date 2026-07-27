@@ -168,15 +168,17 @@ When a lease is CLOSED (e.g. credit-exhausted) but its volumes are still within 
 
 ```ts
 import { restoreApp } from '@manifest-network/manifest-sdk/deploy';
-import { asLeaseUuid } from '@manifest-network/manifest-sdk';
+import { parseLeaseUuid } from '@manifest-network/manifest-sdk';
 
 const { lease_uuid, status, ready, custom_domain_not_restored } = await restoreApp(
-  client,                                        // the FredClient doubles as the FredAuthCtx
-  { address, sourceLeaseUuid: asLeaseUuid(closedLeaseUuid) },
+  client,                                          // the FredClient doubles as the FredAuthCtx
+  { address, sourceLeaseUuid: parseLeaseUuid(closedLeaseUuid) }, // validate at the boundary
 );
 ```
 
-It runs as a saga — pre-flight retained-check → create a new lease → `POST /restore` → cancel-lease compensation on terminal failure — and returns the new `lease_uuid`, the `source_lease_uuid`, a `status`, the final `ready` status (when the poll converges), and any `custom_domain_not_restored` FQDNs. Whether a source is restorable (and until when) is surfaced by `appStatus` / `app_diagnostics` on a CLOSED lease via `retained_until` / `items` / `restore_hint`. Failures throw a `ManifestMCPError` with a `RESTORE_*` code — all non-auto-retryable, since restore is non-idempotent (`RESTORE_RETRYABLE` signals *you* may deliberately re-invoke).
+> **Branding the source id.** `parseLeaseUuid` validates at the trust boundary — use it when `closedLeaseUuid` comes from user input or an external source (a bad id fails fast with `INVALID_ARGUMENT`). If it's already a branded `LeaseUuid` from a prior SDK call (e.g. `client.getLeasesByTenant(...)`), pass it as-is with no cast; reserve the unchecked `asLeaseUuid` for values you already trust (as in the partial-success example above).
+
+It runs as a saga — pre-flight retained-check → create a new lease → `POST /restore` → cancel-lease compensation on terminal failure — and returns the new `lease_uuid`, the `source_lease_uuid`, a `status`, the final `ready` status (when the poll converges), and any `custom_domain_not_restored` FQDNs. Whether a source is restorable (and until when) is surfaced by `appStatus` on a CLOSED lease — its result's `fredStatus` object carries `retained_until` / `items` / `restore_hint` (`restoreApp` also fails fast with `RESTORE_NOT_RETAINED` if the source isn't retained). Failures throw a `ManifestMCPError` with a `RESTORE_*` code — all non-auto-retryable, since restore is non-idempotent (`RESTORE_RETRYABLE` signals *you* may deliberately re-invoke).
 
 ## Watching live status
 
