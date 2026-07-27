@@ -36,18 +36,19 @@ The password in `MANIFEST_KEY_PASSWORD` doesn't match the keyfile. The decrypt p
 
 ## Errors at tool call time
 
-Most errors returned to the MCP client are JSON objects with a `code` field drawn from `ManifestMCPErrorCode`. (An error raised outside the Manifest error path — e.g. a `ProviderApiError` from a provider HTTP call — reaches the client without a `ManifestMCPErrorCode` and is logged as `UNKNOWN`.) The 15 codes group into 8 categories:
+Most errors returned to the MCP client are JSON objects with a `code` field drawn from `ManifestMCPErrorCode`. (An error raised outside the Manifest error path — e.g. a `ProviderApiError` from a provider HTTP call — reaches the client without a `ManifestMCPErrorCode` and is logged as `UNKNOWN`.) The 21 codes group into 9 categories:
 
 | Category | Codes | Meaning |
 |----------|-------|---------|
 | Configuration | `INVALID_CONFIG` | Missing/invalid env, query-only mode invoked for a tx, malformed input that's a static rule violation |
 | Wallet | `WALLET_NOT_CONNECTED`, `WALLET_CONNECTION_FAILED`, `INVALID_MNEMONIC` | Wallet bootstrap failed or a wallet operation was attempted post-disconnect |
 | Client / RPC | `RPC_CONNECTION_FAILED` | Couldn't reach the configured `rpcUrl` / `restUrl` |
-| Query | `QUERY_FAILED`, `UNSUPPORTED_QUERY`, `INVALID_ADDRESS`, `INVALID_ARGUMENT` | Chain-side rejection of a read, unsupported subcommand, malformed bech32, or a malformed argument (non-UUID id, bad FQDN) |
-| Transaction | `TX_FAILED`, `UNSUPPORTED_TX`, `SIMULATION_FAILED` | Chain-side rejection of a write, unsupported subcommand, simulation step failed |
+| Query | `QUERY_FAILED`, `UNSUPPORTED_QUERY`, `INVALID_ADDRESS`, `INVALID_ARGUMENT`, `NOT_FOUND` | Chain-side rejection of a read, unsupported subcommand, malformed bech32, a malformed argument (non-UUID id, bad FQDN), or an expected "no such entity" absence (`NOT_FOUND` — the chain answered no such entity; non-retryable, distinct from an HTTP/route 404 which stays `QUERY_FAILED`) |
+| Transaction | `TX_FAILED`, `UNSUPPORTED_TX`, `SIMULATION_FAILED`, `GAS_LIMIT_EXCEEDED` | Chain-side rejection of a write, unsupported subcommand, simulation step failed, or a pre-broadcast safety abort (`GAS_LIMIT_EXCEEDED` — `ceil(simulate × gasMultiplier)` exceeded the `COSMOS_MAX_GAS` ceiling; non-retryable) |
 | Module | `UNKNOWN_MODULE` | Module name not in the registry |
 | User action | `OPERATION_CANCELLED` | A deliberate user decline / cancel / elicitation-timeout — treated as neither a fault nor retryable |
 | SKU resolution | `SKU_AMBIGUOUS` | A SKU `size`/`storage` name matched more than one active SKU; `details` carries `{ reason: 'AMBIGUOUS_SKU_NAME', size, candidates }` — disambiguate with `provider_uuid` / `sku_uuid` |
+| Restore | `RESTORE_NOT_RETAINED`, `RESTORE_REJECTED`, `RESTORE_RETRYABLE`, `RESTORE_ORPHAN_COMPENSATION_FAILED` | `restore_app` saga outcomes: source not restorable (pre-flight, zero side effects), a terminal 4xx rejection (created lease rolled back), a 503 the agent may deliberately re-invoke (rolled back), or a compensation failure that left an orphan lease. All non-auto-retryable — restore is non-idempotent |
 
 ### `INVALID_CONFIG` from a transaction tool
 

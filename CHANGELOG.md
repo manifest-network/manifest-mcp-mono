@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **sdk:** re-export the Fred lease-restore surface on the `/deploy` subpath — `restoreApp` / `restoreLease` / `RestoreResult` (from `@manifest-network/manifest-mcp-fred`) + the `FredLeaseItem` type (from `@manifest-network/manifest-mcp-core`) — so an SDK consumer reaches restore via `@manifest-network/manifest-sdk/deploy` instead of the raw fred package. Mirrors the same-PR precedent of ENG-490 / ENG-602. Additive, non-breaking. (ENG-621)
+
 ## [0.20.0] - 2026-07-24
 
 ### Added

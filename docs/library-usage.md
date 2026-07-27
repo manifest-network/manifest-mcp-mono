@@ -162,6 +162,24 @@ try {
 
 > **Escape hatch.** The same `deployApp` is also exported as a free `fn(ctx, spec, opts)` from `/deploy` for advanced composition. A consumer that already holds a `FredClient` can pass it directly (the client *is* a `FredAuthCtx`); a client-less consumer builds the `providerAuth` port from a bare `Signer` via `createProviderAuth(signer, { chainId })`, then assembles a `FredAuthCtx` from it plus `query`/`chain`/`fetch`/`logger`. `createProviderAuth` and the `FredAuthCtx` / `FredReadCtx` / `ProviderAuthPort` types are all re-exported from `/deploy`. Prefer the bound `client.deployApp` for everyday use.
 
+## Restoring a closed lease
+
+When a lease is CLOSED (e.g. credit-exhausted) but its volumes are still within the provider's retention grace window, `restoreApp` recovers them onto a **fresh** lease. It is a free function on `/deploy` — **not** a bound `client.*` method — but the `FredClient` *is* a `FredAuthCtx`, so pass the client directly as the first arg:
+
+```ts
+import { restoreApp } from '@manifest-network/manifest-sdk/deploy';
+import { parseLeaseUuid } from '@manifest-network/manifest-sdk';
+
+const { lease_uuid, status, ready, custom_domain_not_restored } = await restoreApp(
+  client,                                          // the FredClient doubles as the FredAuthCtx
+  { address, sourceLeaseUuid: parseLeaseUuid(closedLeaseUuid) }, // validate at the boundary
+);
+```
+
+> **Branding the source id.** `parseLeaseUuid` validates at the trust boundary — use it when `closedLeaseUuid` comes from user input or an external source (a bad id fails fast with `INVALID_ARGUMENT`). If it's already a branded `LeaseUuid` from a prior SDK call (e.g. `client.getLeasesByTenant(...)`), pass it as-is with no cast; reserve the unchecked `asLeaseUuid` for values you already trust (as in the partial-success example above).
+
+It runs as a saga — pre-flight retained-check → create a new lease → `POST /restore` → cancel-lease compensation on terminal failure — and returns the new `lease_uuid`, the `source_lease_uuid`, a `status`, the final `ready` status (when the poll converges), and any `custom_domain_not_restored` FQDNs. Whether a source is restorable (and until when) is surfaced by `appStatus` on a CLOSED lease — its result's `fredStatus` object carries `retained_until` / `items` / `restore_hint` (`restoreApp` also fails fast with `RESTORE_NOT_RETAINED` if the source isn't retained). Failures throw a `ManifestMCPError` with a `RESTORE_*` code — all non-auto-retryable, since restore is non-idempotent (`RESTORE_RETRYABLE` signals *you* may deliberately re-invoke).
+
 ## Watching live status
 
 `waitForLeaseStatus` polls the provider until the lease reaches a **terminal** state, then resolves with the final status (a converging wait — the viem `waitFor*` / cosmjs `signAndBroadcast` shape). It resolves for a *failure* terminal too; check with `isLeaseFailureTerminal`, and reject/observe as you wish. Aborting the `signal` rejects the promise.

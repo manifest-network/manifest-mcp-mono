@@ -1,6 +1,6 @@
 # @manifest-network/manifest-mcp-fred
 
-MCP server for Manifest provider (Fred) operations. Registers 11 tools (plus 3 MCP resources and 3 prompts) for catalog browsing, deployment readiness, manifest preview, app deployment, status, logs, restart, update, diagnostics, releases, and ready-state polling. Composes on-chain operations with off-chain provider HTTP calls using ADR-036 authentication.
+MCP server for Manifest provider (Fred) operations. Registers 12 tools (plus 3 MCP resources and 3 prompts) for catalog browsing, deployment readiness, manifest preview, app deployment, status, logs, restart, update, restore, diagnostics, releases, and ready-state polling. Composes on-chain operations with off-chain provider HTTP calls using ADR-036 authentication.
 
 This package also **exports all tool functions and HTTP clients** for use by library consumers without requiring the MCP protocol.
 

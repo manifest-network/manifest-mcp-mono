@@ -10,7 +10,7 @@ Wire up the smallest set of servers that covers your workflow. Each runs as a se
 |--------|--------------|
 | `manifest-mcp-chain` | You need generic Cosmos SDK access: balance/account queries, sending tokens, voting, delegating, governance, IBC, wasm contracts, anything routed through `cosmos_query` / `cosmos_tx`. Also exposes module discovery (`list_modules`, `list_module_subcommands`) and fee estimation (`cosmos_estimate_fee`). |
 | `manifest-mcp-lease` | You need on-chain lease primitives without dragging in provider HTTP calls: balances on the billing credit account, funding credits, listing leases, claiming a custom domain, looking up a lease by domain, listing SKUs and providers. Pure on-chain reads/writes; no off-chain HTTP. |
-| `manifest-mcp-fred` | You're operating a *deployed app*: catalog browsing with health checks, pre-flight readiness, manifest preview, deploying, polling-until-ready, status, logs, restart, update, diagnostics, releases. This server is the only one that talks to provider/Fred HTTP APIs. |
+| `manifest-mcp-fred` | You're operating a *deployed app*: catalog browsing with health checks, pre-flight readiness, manifest preview, deploying, polling-until-ready, status, logs, restart, update, restore (recover a CLOSED/retained lease), diagnostics, releases. This server is the only one that talks to provider/Fred HTTP APIs. |
 | `manifest-mcp-cosmwasm` | You're converting MFX to PWR through the on-chain converter contract (`get_mfx_to_pwr_rate`, `convert_mfx_to_pwr`). Requires `MANIFEST_CONVERTER_ADDRESS`. |
 | `manifest-mcp-agent` | You want confirmation-gated *orchestration* of a whole flow instead of sequencing raw tool calls yourself: it wraps the fred/lease deploy, domain, troubleshoot, and close-lease flows behind a plan → confirm → broadcast → verify loop driven by MCP elicitation (with `notifications/progress` throughout). The broadcasting tools require an elicitation-capable host (Claude Code ≥ 2.1.76); the read-only tools run on any host. |
 
@@ -54,6 +54,13 @@ The Fred server is sequenced; follow this order:
 6. `app_status` / `get_logs` / `app_diagnostics` / `app_releases` — for inspection after deploy.
 7. `restart_app` / `update_app` — for in-place changes that don't close the lease.
 8. `close_lease` (lease server) — to terminate a lease. Destructive; use with care.
+
+### Recovering a closed lease
+
+A lease that was CLOSED (e.g. credit-exhausted) can be recovered **while its volumes are still within the provider's retention grace window**:
+
+1. `app_status` / `app_diagnostics` — on a CLOSED lease these surface the retention metadata (`retained_until`, `items`, `restore_hint`). Use them to confirm the source is still restorable and until when.
+2. `restore_app` — broadcasts a chain TX to create a *fresh* lease and restore the retained volumes onto it (a saga that rolls the new lease back on terminal failure). Restore is non-idempotent, so its errors (`RESTORE_*`) are never auto-retried. Returns the new `lease_uuid`.
 
 ### Diagnosing a stuck or failing app
 

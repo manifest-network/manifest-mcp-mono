@@ -5,7 +5,7 @@ Node.js CLI entry points for the Manifest MCP servers with stdio transport and e
 Provides five binaries:
 - **`manifest-mcp-chain`** -- Chain MCP server (6 tools, +1 optional `request_faucet`: queries, transactions, fee estimation, module discovery)
 - **`manifest-mcp-lease`** -- Lease MCP server (8 tools: credit balance, funding, lease queries, custom-domain claim/lookup, SKUs, providers)
-- **`manifest-mcp-fred`** -- Fred MCP server (11 tools, plus 3 resources & 3 prompts: catalog, deployment readiness, manifest preview, deployment, ready polling, status, logs, restart, update, diagnostics, releases)
+- **`manifest-mcp-fred`** -- Fred MCP server (12 tools, plus 3 resources & 3 prompts: catalog, deployment readiness, manifest preview, deployment, ready polling, status, logs, restart, update, restore, diagnostics, releases)
 - **`manifest-mcp-cosmwasm`** -- CosmWasm MCP server (2 tools: MFX-to-PWR rate query, token conversion)
 - **`manifest-mcp-agent`** -- Agent MCP server (5 orchestrated tools: 3 broadcasting tools — deploy, manage-domain, close-lease — drive MCP elicitation and require an elicitation-capable host; 2 read-only tools — lookup-domain, troubleshoot — run on any host)
 
