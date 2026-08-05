@@ -24,7 +24,7 @@
     "@modelcontextprotocol/sdk": "1.29.0",
     "@size-limit/preset-small-lib": "12.1.0",
     "dependency-cruiser": "18.1.0",
-    "size-limit": "12.1.0",
+    "size-limit": "13.0.3",
     "tsdown": "0.22.13",
     "vitest": "4.1.10"
   },
