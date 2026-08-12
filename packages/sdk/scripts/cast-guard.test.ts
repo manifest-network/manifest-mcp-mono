@@ -6,6 +6,7 @@ import {
   statSync,
   writeFileSync,
 } from 'node:fs';
+import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
@@ -23,6 +24,9 @@ import { describe, expect, it } from 'vitest';
  *     truth; re-validation costs perf and throws on non-canonical ids — spec §8 / §5.1).
  * (3) The dependency-cruiser known-bad fixtures (tools/depcruise-fixtures/) MUST be flagged, and the
  *     real tree MUST cruise clean — pinning that the import-edge rules are live, not vacuous.
+ * (4) Every rule in the PRODUCTION config fires on a probe written into a real package (ENG-641).
+ *     A rule that has never been proven to bite is not a guard; both DAG rules shipped unfireable
+ *     because they were the only two with neither a fixture nor a positive control.
  *
  * Scoped to PRODUCTION source (`*.ts` excluding `*.test.ts`/`*.test-d.ts`): test fixtures that
  * construct branded values for mocks are not the shipped trust-cast producer, exactly as the
@@ -94,127 +98,172 @@ describe('§8 brand-cast + lcd-adapter chokepoint (grep meta-test; ENG-309)', ()
   });
 });
 
-describe('dependency-cruiser import-edge rules bite (fixtures fail, real tree clean; ENG-309)', () => {
-  const fixturesDir = join(ROOT, 'tools/depcruise-fixtures');
+/** Run depcruise from the repo root, capturing its exit code and combined output. */
+function cruise(args: string[]): { exitCode: number; output: string } {
+  try {
+    const output = execFileSync('npx', ['depcruise', ...args], {
+      cwd: ROOT,
+      encoding: 'utf8',
+    });
+    return { exitCode: 0, output };
+  } catch (err) {
+    // depcruise's exit code is its count of error-severity violations.
+    const e = err as { status?: number; stdout?: string; stderr?: string };
+    return {
+      exitCode: e.status ?? -1,
+      output: `${e.stdout ?? ''}${e.stderr ?? ''}`,
+    };
+  }
+}
 
-  it('flags every known-bad fixture (non-zero exit)', () => {
-    let exitCode = 0;
-    try {
-      execFileSync(
-        'npx',
-        [
-          'depcruise',
-          'pkg-src',
-          'browser-src',
-          'example-src',
-          '--config',
-          '.dependency-cruiser.fixtures.cjs',
-        ],
-        { cwd: fixturesDir, stdio: 'pipe' },
-      );
-    } catch (err) {
-      exitCode = (err as { status?: number }).status ?? -1;
-    }
-    // depcruise's exit code is the number of error-severity violations (here: 3 fixtures).
+const PRODUCTION_CRUISE = [
+  'packages',
+  'examples',
+  '--config',
+  '.dependency-cruiser.cjs',
+];
+
+// Cruised from the REPO ROOT, not from the fixtures dir: the DAG rules' `to` matchers are anchored
+// `^packages/…`, and depcruise reports module paths relative to cwd (ENG-641).
+const FIXTURES_CRUISE = [
+  'tools/depcruise-fixtures/pkg-src',
+  'tools/depcruise-fixtures/browser-src',
+  'tools/depcruise-fixtures/example-src',
+  'tools/depcruise-fixtures/core-src',
+  'tools/depcruise-fixtures/fred-src',
+  '--config',
+  'tools/depcruise-fixtures/.dependency-cruiser.fixtures.cjs',
+];
+
+/**
+ * POSITIVE CONTROL: write a known-bad probe into a REAL package's source, cruise the PRODUCTION
+ * config (not a re-anchored clone), and hand back the result. The probe is always removed.
+ *
+ * This is the only proof that survives a resolution change. The fixtures step cruises a clone whose
+ * `from` anchors are rewritten, so it can prove a `to` matcher's regex while the production config
+ * quietly resolves real cross-package imports somewhere that matcher can never reach — which is
+ * exactly how both DAG rules stayed green while gating nothing (ENG-641), and how an unanchored
+ * `exclude:/dist/` once no-op'd `manifestjs-types-chokepoint` before that.
+ */
+function cruiseWithProbe(
+  relativeProbePath: string,
+  source: string,
+): { exitCode: number; output: string } {
+  const probe = join(ROOT, relativeProbePath);
+  writeFileSync(probe, source);
+  try {
+    return cruise(PRODUCTION_CRUISE);
+  } finally {
+    rmSync(probe, { force: true });
+  }
+}
+
+/** A type-only probe import — `tsPreCompilationDeps: true` keeps the edge visible. */
+function typeProbe(specifier: string, exported: string): string {
+  return (
+    `import type { ${exported} } from '${specifier}';\n` +
+    `export type _Probe = ${exported};\n`
+  );
+}
+
+const productionRuleNames: string[] = createRequire(import.meta.url)(
+  join(ROOT, '.dependency-cruiser.cjs'),
+).forbidden.map((rule: { name: string }) => rule.name);
+
+describe('dependency-cruiser import-edge rules bite (fixtures fail, real tree clean; ENG-309)', () => {
+  it('flags a known-bad fixture for EVERY production rule (non-zero exit)', () => {
+    const { exitCode, output } = cruise(FIXTURES_CRUISE);
     expect(exitCode).toBeGreaterThan(0);
+    // Completeness, not just "something failed": a production rule with no fixture is how a rule
+    // that could never fire stayed green for its whole life (ENG-641). Adding a rule without a
+    // fixture must fail here.
+    const unproven = productionRuleNames.filter(
+      (name) => !output.includes(name),
+    );
+    expect(unproven, output).toEqual([]);
   });
 
   it('cruises the real tree clean (zero violations, exit 0)', () => {
-    expect(() =>
-      execFileSync(
-        'npx',
-        [
-          'depcruise',
-          'packages',
-          'examples',
-          '--config',
-          '.dependency-cruiser.cjs',
-        ],
-        {
-          cwd: ROOT,
-          stdio: 'pipe',
-        },
-      ),
-    ).not.toThrow();
+    const { exitCode, output } = cruise(PRODUCTION_CRUISE);
+    expect(exitCode, output).toBe(0);
   });
 
   // POSITIVE CONTROL (BLOCKER-2): the fixtures step above cruises `.dependency-cruiser.fixtures.cjs`
-  // (no `exclude`), so it proves the regex but NOT the live PRODUCTION config — under which an
-  // unanchored `exclude:/dist/` once made `manifestjs-types-chokepoint` a silent no-op (the rule's
+  // with re-anchored `from`s, so it proves the regex but NOT the live PRODUCTION config — under which
+  // an unanchored `exclude:/dist/` once made `manifestjs-types-chokepoint` a silent no-op (the rule's
   // only `to` target, the node_modules codegen `.../dist/.../types.js`, was dropped from the graph).
   // This injects a known-bad downstream codegen-TYPE import into a production source file, cruises the
   // REAL config, and asserts the chokepoint rule actually fires — so a future re-broadening of
   // `exclude` cannot revive the no-op silently.
   it('manifestjs-types-chokepoint FIRES on a downstream codegen-type import (PRODUCTION config)', () => {
-    const probe = join(ROOT, 'packages/lease/src/__dcprobe_chokepoint.ts');
-    writeFileSync(
-      probe,
-      "import type { Lease } from '@manifest-network/manifestjs/dist/codegen/liftedinit/billing/v1/types.js';\n" +
-        'export type _Probe = Lease;\n',
+    const { exitCode, output } = cruiseWithProbe(
+      'packages/lease/src/__dcprobe_chokepoint.ts',
+      typeProbe(
+        '@manifest-network/manifestjs/dist/codegen/liftedinit/billing/v1/types.js',
+        'Lease',
+      ),
     );
-    let exitCode = 0;
-    let output = '';
-    try {
-      output = execFileSync(
-        'npx',
-        [
-          'depcruise',
-          'packages',
-          'examples',
-          '--config',
-          '.dependency-cruiser.cjs',
-        ],
-        { cwd: ROOT, encoding: 'utf8' },
-      );
-    } catch (err) {
-      const e = err as { status?: number; stdout?: string; stderr?: string };
-      exitCode = e.status ?? -1;
-      output = `${e.stdout ?? ''}${e.stderr ?? ''}`;
-    } finally {
-      rmSync(probe, { force: true });
-    }
     expect(exitCode).toBeGreaterThan(0);
     expect(output).toContain('manifestjs-types-chokepoint');
   });
 
-  // POSITIVE CONTROL (Task B1 / MF-1 / MF-3): the fixtures step above cruises the re-anchored
-  // `.dependency-cruiser.fixtures.cjs`, so it proves the ALLOWLIST `to` matcher but NOT the live
-  // PRODUCTION config (the `from: ^examples/[^/]+/src` anchor + the `^examples/[^/]+/dist/` exclude).
-  // This injects a known-bad downstream import (@cosmjs/proto-signing — outside the SDK+manifestjs
-  // allowlist) into a REAL example source file, cruises the PRODUCTION config (`packages examples`),
-  // and asserts `example-composes-only-sdk` actually fires — so a future re-broadening of `exclude`
-  // or a mis-anchored `from` cannot revive a silent no-op.
+  // POSITIVE CONTROL (Task B1 / MF-1 / MF-3): as above, but for the compose-only ALLOWLIST — the
+  // fixtures step proves its `to` matcher, not the live `from: ^examples/[^/]+/src` anchor. Injects a
+  // stray dep outside the SDK+manifestjs allowlist into a REAL example source file.
   it('example-composes-only-sdk FIRES on a stray non-allowlisted import (PRODUCTION config)', () => {
-    const probe = join(
-      ROOT,
+    const { exitCode, output } = cruiseWithProbe(
       'examples/sdk-acceptance/src/__dcprobe_compose.ts',
-    );
-    writeFileSync(
-      probe,
       "import '@cosmjs/proto-signing';\nexport const _probe = 1;\n",
     );
-    let exitCode = 0;
-    let output = '';
-    try {
-      output = execFileSync(
-        'npx',
-        [
-          'depcruise',
-          'packages',
-          'examples',
-          '--config',
-          '.dependency-cruiser.cjs',
-        ],
-        { cwd: ROOT, encoding: 'utf8' },
-      );
-    } catch (err) {
-      const e = err as { status?: number; stdout?: string; stderr?: string };
-      exitCode = e.status ?? -1;
-      output = `${e.stdout ?? ''}${e.stderr ?? ''}`;
-    } finally {
-      rmSync(probe, { force: true });
-    }
     expect(exitCode).toBeGreaterThan(0);
     expect(output).toContain('example-composes-only-sdk');
+  });
+
+  // POSITIVE CONTROLS for the package DAG (ENG-641). These two rules encode the repo's central
+  // architectural invariant and were the ONLY rules here with neither a fixture nor a positive
+  // control — which is exactly how they shipped unfireable: a package-name import resolved into
+  // `packages/<pkg>/dist/` (deleted by `exclude`) or, for a subpath, did not resolve at all, so
+  // `to: ^packages/(fred|agent-core)/src` had no reachable target and `npm run depcruise` reported
+  // `no dependency violations found` on a tree containing the exact violation it forbids.
+  //
+  // Each probe imports BY PACKAGE NAME — the only form anyone writes, and the form that was blind.
+  // A relative `../../fred/src/x.js` probe would have passed all along and proven nothing.
+  it('no-core-to-fred-or-agentcore FIRES on core -> fred (PRODUCTION config)', () => {
+    const { exitCode, output } = cruiseWithProbe(
+      'packages/core/src/__dcprobe_dag_fred.ts',
+      typeProbe('@manifest-network/manifest-mcp-fred', 'ProviderApiError'),
+    );
+    expect(exitCode).toBeGreaterThan(0);
+    expect(output).toContain('no-core-to-fred-or-agentcore');
+  });
+
+  // Second arm of the same rule's `to` matcher — a fred-only probe would leave it unproven.
+  it('no-core-to-fred-or-agentcore FIRES on core -> agent-core (PRODUCTION config)', () => {
+    const { exitCode, output } = cruiseWithProbe(
+      'packages/core/src/__dcprobe_dag_agent_core.ts',
+      typeProbe('@manifest-network/manifest-agent-core', 'AgentCoreRuntime'),
+    );
+    expect(exitCode).toBeGreaterThan(0);
+    expect(output).toContain('no-core-to-fred-or-agentcore');
+  });
+
+  it('no-fred-to-agentcore FIRES on fred -> agent-core (PRODUCTION config)', () => {
+    const { exitCode, output } = cruiseWithProbe(
+      'packages/fred/src/__dcprobe_dag_agent_core.ts',
+      typeProbe('@manifest-network/manifest-agent-core', 'AgentCoreRuntime'),
+    );
+    expect(exitCode).toBeGreaterThan(0);
+    expect(output).toContain('no-fred-to-agentcore');
+  });
+
+  // The §9 example guard from the first-party side: once package names resolve to `src`, a workspace
+  // sibling is a `local` edge, invisible to `example-composes-only-sdk`'s `dependencyTypes: npm…`.
+  it('no-example-to-non-sdk-package FIRES on example -> fred (PRODUCTION config)', () => {
+    const { exitCode, output } = cruiseWithProbe(
+      'examples/sdk-acceptance/src/__dcprobe_workspace.ts',
+      typeProbe('@manifest-network/manifest-mcp-fred', 'ProviderApiError'),
+    );
+    expect(exitCode).toBeGreaterThan(0);
+    expect(output).toContain('no-example-to-non-sdk-package');
   });
 });

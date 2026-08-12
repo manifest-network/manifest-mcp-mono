@@ -7,6 +7,12 @@ packages/*/src/**/*.js
 packages/*/src/**/*.js.map
 packages/*/src/**/*.d.ts
 packages/*/src/**/*.d.ts.map
+
+# Known-bad probes written into real sources by the depcruise positive controls
+# (packages/sdk/scripts/cast-guard.test.ts). Removed in a `finally`, but a killed run leaves one
+# behind and it must never be committable.
+packages/*/src/__dcprobe_*.ts
+examples/*/src/__dcprobe_*.ts
 .env
 !e2e/.env
 .env.local

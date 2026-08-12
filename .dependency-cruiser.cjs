@@ -8,13 +8,16 @@
  *     `@manifest-network/manifestjs/dist/codegen/.../types.js` generated paths directly;
  *   - no STATIC `node:`/`undici`/`ws` import in a browser-safe `src` barrel (a runtime-gated dynamic
  *     `import('node:fs')` is browser-safe and ALLOWED — only the static top-level edge fails the browser
- *     build, the load-bearing ENG-281/287 invariant a Node-run vitest cannot catch).
+ *     build, the load-bearing ENG-281/287 invariant a Node-run vitest cannot catch);
+ *   - the acceptance example composes ONLY the public SDK (spec §8 (d) / §9), from either side: no
+ *     non-allowlisted node_modules dep, and no reach into a non-`sdk` workspace package's source.
  *
  * The brand-cast-only-in-`brands.ts` + no-`parse*`-in-`lcd-adapter.ts` guards (spec §8) are NOT
  * expressible as import-edge rules (a type assertion produces no import edge) — they ship as a
  * grep/biome meta-test (packages/sdk/scripts/cast-guard.test.ts). The known-bad fixtures that PROVE
  * these rules bite live in tools/depcruise-fixtures/ (cruised explicitly by the fixtures step, not
- * compiled into any package).
+ * compiled into any package). EVERY rule here has both a fixture and a production-config positive
+ * control — a rule with no proof it bites is what produced ENG-641.
  *
  * `tsPreCompilationDeps: true` (spec B3) makes the `import type` edges visible so the chokepoint rule
  * sees a type-only `import type { Lease } from '…/types.js'`. We cruise first-party SOURCE: `exclude`
@@ -23,11 +26,23 @@
  * keeps deps from being crawled (matchable-but-not-followed). The chokepoint positive-control in
  * cast-guard.test.ts cruises THIS production config (not a clone) to prove the rule actually bites.
  *
+ * RESOLUTION (ENG-641, load-bearing for the DAG rules): `webpackConfig` points at
+ * tools/depcruise/resolve.cjs, which aliases every first-party package NAME to that package's `src`.
+ * Without it a cross-package import written the only way anyone writes it — by package name —
+ * resolves into `packages/<pkg>/dist/` (which `exclude` then DROPS) or, for a subpath import, does
+ * not resolve at all (depcruise hard-defaults `exportsFields: []`, and these packages publish only
+ * via `exports`). Both DAG rules below were therefore silently unfireable from the day they were
+ * written, and `npm run depcruise` reported green on a tree containing the exact violation they
+ * forbid. The alias is also what keeps their `to` matchers `src`-only and the guard independent of
+ * whether the tree happens to be built. See that file's header for the full mechanism.
+ *
  * @type {import('dependency-cruiser').IConfiguration}
  */
 module.exports = {
   forbidden: [
     // DAG direction: core is the sink; it must never reach up into fred/agent-core.
+    // The `src`-only `to` matcher here is live ONLY because `options.webpackConfig` aliases package
+    // names to `src` (ENG-641) — drop that and this rule goes back to matching nothing, silently.
     {
       name: 'no-core-to-fred-or-agentcore',
       comment: 'core is the dependency sink — it must not import from fred or agent-core (DAG; spec §13).',
@@ -132,11 +147,31 @@ module.exports = {
         pathNot: 'node_modules/@manifest-network/(manifest-sdk|manifestjs)(/|$)',
       },
     },
+    // Sibling of the rule above, guarding the SAME §9 invariant from the other side (ENG-641). Once
+    // package names alias to `src`, a workspace-sibling import from the example is a FIRST-PARTY
+    // edge, not an `npm` one — so the allowlist above, which is keyed on `dependencyTypes: npm…`,
+    // stops seeing it. This catches `examples/**/src` reaching into any package that is not `sdk`:
+    // the example is the proof that the published SDK surface is sufficient on its own, and it stops
+    // being that the moment it reaches past the SDK into core/fred/agent-core.
+    {
+      name: 'no-example-to-non-sdk-package',
+      comment: 'examples/**/src may reach into packages/sdk/src ONLY — never another workspace package (spec §9).',
+      severity: 'error',
+      from: { path: '^examples/[^/]+/src', pathNot: '\\.test\\.ts$' },
+      to: { path: '^packages/', pathNot: '^packages/sdk/src' },
+    },
   ],
   options: {
     tsConfig: { fileName: 'tsconfig.base.json' },
     // B3: makes the `import type` edge in manifest-types.ts (and the stringly-face types.ts) visible.
     tsPreCompilationDeps: true,
+    // ENG-641: alias every first-party package NAME to that package's `src`, so a cross-package
+    // import lands on SOURCE (`packages/fred/src/index.ts`) instead of on build output or on
+    // nothing at all. This is what makes the two DAG rules above able to fire, and it is why they
+    // can keep `src`-only `to` matchers. `webpackConfig` is the only place depcruise's config schema
+    // accepts a resolver alias — `enhancedResolveOptions` is `additionalProperties: false` and has
+    // no `alias` key. Full rationale in the aliased file's header.
+    webpackConfig: { fileName: 'tools/depcruise/resolve.cjs' },
     // Cruise SOURCE, not built artifacts or deps.
     doNotFollow: { path: 'node_modules' },
     // Exclude FIRST-PARTY build output ONLY (`packages/<pkg>/dist/`). It must NOT be the unanchored
@@ -144,6 +179,12 @@ module.exports = {
     // (exclude DROPS modules, unlike doNotFollow), which removed the manifestjs-types-chokepoint rule's
     // ONLY `to` target and made it a silent no-op. node_modules codegen stays a matchable-but-not-followed
     // target (doNotFollow above prevents crawling into it).
+    //
+    // Still load-bearing after ENG-641, for a DIFFERENT reason than it was written for: `packages` is
+    // an entry dir, so the walker enumerates `packages/*/dist/**` directly whether or not anything
+    // resolves there (unexcluded: 767 modules and 12 chokepoint violations out of built output). What
+    // it must never again do is delete something a rule needs as a `to` target — the first-party
+    // cross-package edge is safe from it now only because the alias above lands it in `src`.
     exclude: { path: '^(packages|examples)/[^/]+/dist/' },
   },
 };
