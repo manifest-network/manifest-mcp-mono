@@ -182,6 +182,9 @@ describe('CosmosClientManager', () => {
       );
       const sc1 = await instance.getSigningClient();
       expect(sc1).toBe(client1);
+      // Pin the pair: a live client is NOT disconnected at init (pre-ENG-636 the always-taken
+      // supersede branch disconnected it here), and IS disconnected when eviction evicts it.
+      expect(client1.disconnect).not.toHaveBeenCalled();
 
       // Re-get with different gasPrice — should create new signing client
       CosmosClientManager.getInstance(
@@ -191,6 +194,9 @@ describe('CosmosClientManager', () => {
       const sc2 = await instance.getSigningClient();
       expect(sc2).toBe(client2);
       expect(mockConnectWithSigner).toHaveBeenCalledTimes(2);
+      // The invalidation path disconnects the client it evicts. Dead code before ENG-636
+      // (`signingClient` was never populated, so the guard never fired).
+      expect(client1.disconnect).toHaveBeenCalledOnce();
     });
 
     it('invalidates signing client when gasMultiplier changes', async () => {
@@ -317,10 +323,134 @@ describe('CosmosClientManager', () => {
       await expect(instance.getQueryClient()).rejects.toBe(original);
     });
 
-    // Note: Tests for retry-after-failure and disconnect-during-init are omitted
-    // because the IIFE's thisInitPromise capture interacts subtly with vitest's
-    // synchronous mock resolution. These code paths are covered by the e2e tests
-    // against a live chain where async timing behaves naturally.
+    it('does not latch a rejected init — a transient failure recovers on the next call (ENG-636)', async () => {
+      mockCreateRPCQueryClient
+        .mockRejectedValueOnce(new Error('ECONNREFUSED'))
+        .mockResolvedValueOnce({ mock: 'qc-recovered' } as any);
+
+      const instance = CosmosClientManager.getInstance(
+        makeConfig(),
+        makeWallet(),
+      );
+
+      await expect(instance.getQueryClient()).rejects.toMatchObject({
+        code: ManifestMCPErrorCode.RPC_CONNECTION_FAILED,
+      });
+      // Before ENG-636 the rejected promise stayed in queryClientPromise and every later
+      // caller re-awaited it: one transient RPC blip was a permanent outage until restart.
+      await expect(instance.getQueryClient()).resolves.toMatchObject({
+        mock: 'qc-recovered',
+      });
+      expect(mockCreateRPCQueryClient).toHaveBeenCalledTimes(2);
+    });
+
+    it('does not latch a rejected LCD init either (ENG-636)', async () => {
+      mockCreateLCDQueryClient
+        .mockRejectedValueOnce(new Error('ECONNREFUSED'))
+        .mockResolvedValueOnce({ mock: 'lcd-recovered' } as any);
+
+      const instance = CosmosClientManager.getInstance(
+        makeConfig({ rpcUrl: undefined, restUrl: 'https://lcd.example.com' }),
+        makeWallet(),
+      );
+
+      await expect(instance.getQueryClient()).rejects.toMatchObject({
+        code: ManifestMCPErrorCode.RPC_CONNECTION_FAILED,
+        message: expect.stringContaining('REST'),
+      });
+      await expect(instance.getQueryClient()).resolves.toEqual({
+        mock: 'lcd-recovered',
+      });
+      expect(mockCreateLCDQueryClient).toHaveBeenCalledTimes(2);
+    });
+
+    it('promotes the resolved client to the object cache and releases the slot (ENG-636)', async () => {
+      const instance = CosmosClientManager.getInstance(
+        makeConfig(),
+        makeWallet(),
+      );
+      const client = await instance.getQueryClient();
+
+      // From the outside a latched resolved promise and a real object cache are
+      // indistinguishable, so probe the private slots directly (the same private-state cast
+      // the rateLimiter tests use). Before ENG-636 `queryClient` was never populated and the
+      // promise slot was never released — the documented caching layer was dead code.
+      const priv = instance as unknown as {
+        queryClient: unknown;
+        queryClientPromise: unknown;
+      };
+      expect(priv.queryClient).toBe(client);
+      expect(priv.queryClientPromise).toBeNull();
+    });
+
+    it('supersedes an in-flight init when teardown lands mid-flight (ENG-636)', async () => {
+      let resolveInit!: (value: any) => void;
+      mockCreateRPCQueryClient.mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveInit = resolve;
+          }) as any,
+      );
+
+      const instance = CosmosClientManager.getInstance(
+        makeConfig(),
+        makeWallet(),
+      );
+      const p1 = instance.getQueryClient(); // init #1 owns the slot
+      instance.disconnect(); // refCount 1 -> 0 -> teardown() nulls the slot
+
+      resolveInit({ mock: 'qc1' });
+      // The caller that asked for it is still served: a query client is stateless HTTP with
+      // nothing to release, so being superseded only means "not cached".
+      await expect(p1).resolves.toMatchObject({ mock: 'qc1' });
+
+      mockCreateRPCQueryClient.mockResolvedValueOnce({ mock: 'qc2' } as any);
+      await expect(instance.getQueryClient()).resolves.toMatchObject({
+        mock: 'qc2',
+      });
+      expect(mockCreateRPCQueryClient).toHaveBeenCalledTimes(2);
+    });
+
+    it('identity guard is load-bearing: a stale init must not clobber a newer one (ENG-636)', async () => {
+      let resolve1!: (value: any) => void;
+      let resolve2!: (value: any) => void;
+      mockCreateRPCQueryClient
+        .mockImplementationOnce(
+          () =>
+            new Promise((resolve) => {
+              resolve1 = resolve;
+            }) as any,
+        )
+        .mockImplementationOnce(
+          () =>
+            new Promise((resolve) => {
+              resolve2 = resolve;
+            }) as any,
+        );
+
+      const instance = CosmosClientManager.getInstance(
+        makeConfig(),
+        makeWallet(),
+      );
+      const p1 = instance.getQueryClient(); // init #1 owns the slot
+      instance.disconnect(); // teardown nulls the slot
+      const p2 = instance.getQueryClient(); // init #2 owns the slot
+
+      // Settle the NEWER init first, then the stale one. That order is what makes this test
+      // discriminating: if #1 settled first, #2's own handler would repair the damage and the
+      // test would still pass with the guard deleted.
+      resolve2({ mock: 'qc2' });
+      await expect(p2).resolves.toMatchObject({ mock: 'qc2' });
+      resolve1({ mock: 'qc1' });
+      await expect(p1).resolves.toMatchObject({ mock: 'qc1' });
+
+      // With the guard, #1's stale handler sees `slot !== p` and changes nothing. Without it,
+      // the cache now holds qc1 and this assertion fails.
+      await expect(instance.getQueryClient()).resolves.toMatchObject({
+        mock: 'qc2',
+      });
+      expect(mockCreateRPCQueryClient).toHaveBeenCalledTimes(2);
+    });
   });
 
   describe('getSigningClient', () => {
@@ -381,21 +511,26 @@ describe('CosmosClientManager', () => {
       );
     });
 
-    it('setLogger is non-key: re-getInstance with the same config/wallet returns the SAME instance', () => {
-      // setLogger is a pure field assignment, NOT part of the getInstance key — so calling it between
-      // two same-key getInstance calls must NOT fragment the singleton (the load-bearing non-key proof).
-      // SAME wallet reference both calls — a fresh makeWallet() would trip the reference-equality
-      // wallet-invalidation gate (client.ts:182-185). Non-invalidation is INHERENT (setLogger only does
-      // `this.logger = logger`); the cached-signing-client / disconnect path is deliberately NOT asserted
-      // here because a single getSigningClient() in this MOCKED harness always hits the supersede-promise
-      // disconnect and never caches `this.signingClient` (a pre-existing timing quirk, documented in the
-      // getSigningClient describe block's omission note ~client.test.ts:444-446) — so a disconnect/caching
-      // assertion would fail for reasons unrelated to setLogger.
+    it('setLogger is non-key and non-invalidating: same instance AND same cached signing client', async () => {
+      // setLogger is a pure field assignment, NOT part of the getInstance key and NOT in the
+      // invalidation gate — so calling it between two same-key getInstance calls must neither
+      // fragment the singleton nor drop the cached signing client. SAME wallet reference both
+      // calls: a fresh makeWallet() would trip the reference-equality wallet-invalidation gate
+      // (client.ts getInstance). The caching half of this proof used to be unassertable because
+      // getSigningClient() never populated `this.signingClient` (ENG-636); it is asserted now.
+      const mockSC = { disconnect: vi.fn() };
+      mockConnectWithSigner.mockResolvedValue(mockSC as any);
+
       const w = makeWallet();
       const a = CosmosClientManager.getInstance(makeConfig(), w);
+      const sc1 = await a.getSigningClient();
       a.setLogger(makeSpyLogger());
       const b = CosmosClientManager.getInstance(makeConfig(), w);
+
       expect(b).toBe(a);
+      expect(await b.getSigningClient()).toBe(sc1);
+      expect(mockConnectWithSigner).toHaveBeenCalledOnce();
+      expect(mockSC.disconnect).not.toHaveBeenCalled();
     });
 
     it('is SILENT by default when setLogger is never called (the warn goes to the frozen noopLogger)', async () => {
@@ -426,8 +561,10 @@ describe('CosmosClientManager', () => {
     });
 
     it('deduplicates concurrent init calls', async () => {
-      // Defer at the getSigner level so the signingClientPromise assignment
-      // completes before the async body continues
+      // Defer at the getSigner level to keep init #1 in flight while both calls are made.
+      // (Post-ENG-636 the slot assignment is unconditionally synchronous inside the accessor,
+      // so the deferral is no longer needed to win a race against it — it just holds the
+      // window open long enough for the second call to observe the in-flight promise.)
       let resolveSigner!: (value: any) => void;
       const wallet = makeWallet({
         getSigner: vi.fn().mockImplementation(
@@ -449,9 +586,119 @@ describe('CosmosClientManager', () => {
       expect(mockConnectWithSigner).toHaveBeenCalledOnce();
     });
 
-    // Note: The superseded-promise disconnect test is omitted because the
-    // IIFE's thisInitPromise capture requires real async timing to work
-    // correctly. This is covered by the e2e tests against a live chain.
+    it('does not latch a rejected init — a transient failure recovers on the next call (ENG-636)', async () => {
+      const mockSC = { disconnect: vi.fn() };
+      mockConnectWithSigner
+        .mockRejectedValueOnce(new Error('ECONNREFUSED'))
+        .mockResolvedValueOnce(mockSC as any);
+
+      const instance = CosmosClientManager.getInstance(
+        makeConfig(),
+        makeWallet(),
+      );
+
+      await expect(instance.getSigningClient()).rejects.toMatchObject({
+        code: ManifestMCPErrorCode.RPC_CONNECTION_FAILED,
+      });
+      await expect(instance.getSigningClient()).resolves.toBe(mockSC);
+      expect(mockConnectWithSigner).toHaveBeenCalledTimes(2);
+    });
+
+    it('a successful init does NOT disconnect the client it returns, and caches it (ENG-636)', async () => {
+      // Two assertions that cannot both hold on the pre-fix code: the supersede `else` branch
+      // fired on EVERY successful init, disconnecting the client it was about to return, and
+      // `this.signingClient` was never populated so teardown had nothing to disconnect. The
+      // spurious init-time disconnect was inert only by accident — @cosmjs/tendermint-rpc's
+      // HttpClient.disconnect() is a no-op — so a WebSocket endpoint would have been closed
+      // the instant it was created.
+      const mockSC = { disconnect: vi.fn() };
+      mockConnectWithSigner.mockResolvedValue(mockSC as any);
+
+      const instance = CosmosClientManager.getInstance(
+        makeConfig(),
+        makeWallet(),
+      );
+      const client = await instance.getSigningClient();
+
+      expect(client).toBe(mockSC);
+      expect(mockSC.disconnect).not.toHaveBeenCalled();
+
+      instance.disconnect(); // refCount 1 -> 0 -> teardown()
+      // Only reachable if `this.signingClient` was actually populated.
+      expect(mockSC.disconnect).toHaveBeenCalledOnce();
+    });
+
+    it('supersede: teardown mid-init releases the orphan and fails the caller (ENG-636)', async () => {
+      let resolveSigner!: (value: any) => void;
+      const wallet = makeWallet({
+        getSigner: vi.fn().mockImplementation(
+          () =>
+            new Promise((resolve) => {
+              resolveSigner = resolve;
+            }),
+        ),
+      });
+      const mockSC = { disconnect: vi.fn() };
+      mockConnectWithSigner.mockResolvedValue(mockSC as any);
+
+      const instance = CosmosClientManager.getInstance(makeConfig(), wallet);
+      const p1 = instance.getSigningClient(); // init in flight
+      instance.disconnect(); // refCount 1 -> 0 -> teardown() nulls the slot
+
+      resolveSigner({});
+
+      // Unlike the query client this one owns a live transport, so the orphan must be released
+      // and must NOT be handed back — the caller is told to retry for the current config.
+      await expect(p1).rejects.toMatchObject({
+        code: ManifestMCPErrorCode.RPC_CONNECTION_FAILED,
+        details: { reason: 'superseded' },
+      });
+      expect(mockSC.disconnect).toHaveBeenCalledOnce();
+      expect(mockConnectWithSigner).toHaveBeenCalledOnce();
+    });
+
+    it('supersede: a getInstance config change mid-init releases the orphan; the retry gets a fresh client (ENG-636)', async () => {
+      let resolveSigner!: (value: any) => void;
+      const wallet = makeWallet({
+        // Defer only the FIRST getSigner so the retry below can complete.
+        getSigner: vi
+          .fn()
+          .mockImplementationOnce(
+            () =>
+              new Promise((resolve) => {
+                resolveSigner = resolve;
+              }),
+          )
+          .mockResolvedValue({}),
+      });
+      const client1 = { disconnect: vi.fn() };
+      const client2 = { disconnect: vi.fn() };
+      mockConnectWithSigner
+        .mockResolvedValueOnce(client1 as any)
+        .mockResolvedValueOnce(client2 as any);
+
+      const instance = CosmosClientManager.getInstance(
+        makeConfig({ gasPrice: '1.0umfx' }),
+        wallet,
+      );
+      const p1 = instance.getSigningClient(); // init in flight on the OLD gasPrice
+      // Nulls signingClientPromise (the signingClient slot is still null mid-flight).
+      CosmosClientManager.getInstance(
+        makeConfig({ gasPrice: '2.0umfx' }),
+        wallet,
+      );
+
+      resolveSigner({});
+
+      await expect(p1).rejects.toMatchObject({
+        details: { reason: 'superseded' },
+      });
+      expect(client1.disconnect).toHaveBeenCalledOnce();
+
+      // The retry the error tells the caller to make yields a freshly-built client.
+      await expect(instance.getSigningClient()).resolves.toBe(client2);
+      expect(mockConnectWithSigner).toHaveBeenCalledTimes(2);
+    });
 
     it('wraps non-ManifestMCPError into RPC_CONNECTION_FAILED', async () => {
       mockConnectWithSigner.mockRejectedValue(new Error('timeout'));
@@ -490,28 +737,18 @@ describe('CosmosClientManager', () => {
   });
 
   describe('ref-counted disconnect', () => {
-    // We seed a cached signing client directly via the private-state cast
-    // (the same pattern the rateLimiter tests use) instead of calling
-    // getSigningClient(). In production the signing client is cached after
-    // getSigningClient() and teardown calls its disconnect(); but in this
-    // vitest harness getSigningClient()'s superseded-promise cleanup branch
-    // runs under synchronous mock resolution — it invokes the mock's
-    // disconnect() at init time and never caches the client — which would
-    // confound a spy that is meant to measure ref-counted *teardown* timing.
-    // Seeding isolates disconnect()'s ref-counting from that unrelated init
-    // artifact (see the "omitted test" notes in getQueryClient/getSigningClient).
-    const seedSigningClient = (
-      instance: CosmosClientManager,
-      client: unknown,
-    ) => {
-      (instance as unknown as { signingClient: unknown }).signingClient =
-        client;
-    };
+    // These tests drive the REAL getSigningClient() path. They used to seed `signingClient`
+    // through a private-state cast, because the pre-ENG-636 init never cached the client and
+    // disconnected it at init time — an artifact that would have confounded a spy measuring
+    // ref-counted teardown. Now that the cache works, seeding would only hide a regression:
+    // if caching broke again, these would still pass. `readSigningClient` stays as a read-only
+    // probe of the slot teardown is supposed to null.
     const readSigningClient = (instance: CosmosClientManager) =>
       (instance as unknown as { signingClient: unknown }).signingClient;
 
-    it('only tears down the shared signing client after the last holder disconnects', () => {
+    it('only tears down the shared signing client after the last holder disconnects', async () => {
       const mockSC = { disconnect: vi.fn() };
+      mockConnectWithSigner.mockResolvedValue(mockSC as any);
 
       const config = makeConfig();
       const wallet = makeWallet();
@@ -519,7 +756,7 @@ describe('CosmosClientManager', () => {
       const a = CosmosClientManager.getInstance(config, wallet);
       const b = CosmosClientManager.getInstance(config, wallet);
       expect(a).toBe(b);
-      seedSigningClient(a, mockSC);
+      expect(await a.getSigningClient()).toBe(mockSC);
 
       // First holder releases — the shared client must stay live.
       a.disconnect();
@@ -533,28 +770,30 @@ describe('CosmosClientManager', () => {
       expect(readSigningClient(b)).toBeNull();
     });
 
-    it('single acquire still tears down on the first disconnect', () => {
+    it('single acquire still tears down on the first disconnect', async () => {
       const mockSC = { disconnect: vi.fn() };
+      mockConnectWithSigner.mockResolvedValue(mockSC as any);
 
       const instance = CosmosClientManager.getInstance(
         makeConfig(),
         makeWallet(),
       );
-      seedSigningClient(instance, mockSC);
+      await instance.getSigningClient();
 
       instance.disconnect();
       expect(mockSC.disconnect).toHaveBeenCalledOnce();
     });
 
-    it('clearInstances force-tears-down even when refCount > 1', () => {
+    it('clearInstances force-tears-down even when refCount > 1', async () => {
       const mockSC = { disconnect: vi.fn() };
+      mockConnectWithSigner.mockResolvedValue(mockSC as any);
 
       const config = makeConfig();
       const wallet = makeWallet();
       // Two holders → refCount is 2.
       const a = CosmosClientManager.getInstance(config, wallet);
       CosmosClientManager.getInstance(config, wallet);
-      seedSigningClient(a, mockSC);
+      await a.getSigningClient();
 
       // Force reset ignores the outstanding holders and tears down immediately.
       CosmosClientManager.clearInstances();
@@ -565,14 +804,15 @@ describe('CosmosClientManager', () => {
       expect(fresh).not.toBe(a);
     });
 
-    it('over-disconnect is safe: extra disconnect() does not throw or re-tear-down', () => {
+    it('over-disconnect is safe: extra disconnect() does not throw or re-tear-down', async () => {
       const mockSC = { disconnect: vi.fn() };
+      mockConnectWithSigner.mockResolvedValue(mockSC as any);
 
       const instance = CosmosClientManager.getInstance(
         makeConfig(),
         makeWallet(),
       );
-      seedSigningClient(instance, mockSC);
+      await instance.getSigningClient();
 
       instance.disconnect();
       expect(mockSC.disconnect).toHaveBeenCalledOnce();
