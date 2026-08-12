@@ -2,6 +2,7 @@ import {
   isBlocked,
   isIpLiteral,
 } from '@manifest-network/manifest-mcp-core/ssrf';
+import { warnUnguardedOnce } from './unguarded-warning.js';
 
 /** Global-registry brand so `isProviderApiError` survives duplicate physical copies of this
  *  package (the dual-package hazard) — the React `$$typeof` idiom. Symbol.for resolves to the
@@ -198,8 +199,18 @@ export async function checkedFetch(
   url: string,
   init?: RequestInit,
   timeoutMs: number = DEFAULT_FETCH_TIMEOUT_MS,
-  fetchFn: typeof globalThis.fetch = globalThis.fetch,
+  fetchFn?: typeof globalThis.fetch,
 ): Promise<Response> {
+  // `fetchFn` is the SSRF connect-guard seam (layer 2). Omitting it falls back to unguarded
+  // `globalThis.fetch` — fine in a browser, an SSRF surface on Node, since provider URLs come from
+  // on-chain records. The MCP servers and `createFredClientNode` always inject a guarded fetch; the
+  // raw HTTP functions on the fred barrel / SDK `/deploy` used to take this fallback SILENTLY, so
+  // warn once here. Declared optional (rather than defaulted) precisely so "omitted" stays
+  // distinguishable from "explicitly passed `globalThis.fetch`" — the latter is a deliberate opt-out
+  // and must not warn. Externally the signature is unchanged (`fetchFn?`), so callers are unaffected.
+  warnUnguardedOnce(fetchFn !== undefined);
+  const doFetch = fetchFn ?? globalThis.fetch;
+
   const callerSignal = init?.signal ?? undefined;
 
   // Compose the caller's signal with an internal timeout so callers cannot
@@ -236,7 +247,7 @@ export async function checkedFetch(
   try {
     // Don't even dispatch fetch if the caller's signal is already aborted.
     composed.signal.throwIfAborted();
-    res = await fetchFn(url, { ...init, signal: composed.signal });
+    res = await doFetch(url, { ...init, signal: composed.signal });
   } catch (err) {
     if (err instanceof DOMException && err.name === 'AbortError') {
       if (timedOut) {

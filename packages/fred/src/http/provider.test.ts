@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   checkedFetch,
   getProviderHealth,
@@ -532,5 +532,86 @@ describe('low-level fn honors allowLoopback (validate gate)', () => {
       ),
     ).rejects.toThrow(ProviderApiError);
     expect(mockFetch).not.toHaveBeenCalled();
+  });
+});
+
+// The raw HTTP functions (exported on the fred barrel and SDK `/deploy`) fall back to unguarded
+// `globalThis.fetch` when `fetchFn` is omitted. That fallback used to be SILENT — these pin the
+// warning, and pin that a deliberately-injected fetch stays quiet.
+describe('checkedFetch unguarded-fetch warning (raw HTTP path)', () => {
+  beforeEach(() => vi.resetModules());
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  it('warns once (naming createFredClientNode) when fetchFn is omitted on Node', async () => {
+    const core = await import('@manifest-network/manifest-mcp-core');
+    const { checkedFetch: cf } = await import('./provider.js');
+    const warn = vi.spyOn(core.logger, 'warn').mockImplementation(() => {});
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(new Response('ok', { status: 200 })),
+    );
+
+    await cf('https://example.com', undefined, 5000);
+    await cf('https://example.com', undefined, 5000);
+
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(String(warn.mock.calls[0]?.[0])).toContain('createFredClientNode');
+  });
+
+  it('does not warn when a fetchFn is injected (even a plain globalThis.fetch)', async () => {
+    const core = await import('@manifest-network/manifest-mcp-core');
+    const { checkedFetch: cf } = await import('./provider.js');
+    const warn = vi.spyOn(core.logger, 'warn').mockImplementation(() => {});
+    const injected = vi
+      .fn()
+      .mockResolvedValue(new Response('ok', { status: 200 }));
+
+    await cf('https://example.com', undefined, 5000, injected);
+
+    expect(injected).toHaveBeenCalledTimes(1);
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it('still dispatches through the injected fetch after the signature change', async () => {
+    const { checkedFetch: cf } = await import('./provider.js');
+    const injected = vi
+      .fn()
+      .mockResolvedValue(new Response('ok', { status: 200 }));
+
+    const res = await cf('https://example.com', undefined, 5000, injected);
+
+    expect(res.ok).toBe(true);
+    // The omitted-fetchFn fallback must not shadow an explicitly-passed impl.
+    expect(injected).toHaveBeenCalledTimes(1);
+    expect(injected.mock.calls[0]?.[0]).toBe('https://example.com');
+  });
+});
+
+describe('warnUnguardedOnce', () => {
+  beforeEach(() => vi.resetModules());
+  afterEach(() => vi.restoreAllMocks());
+
+  it('stays silent in a browser runtime (no connect guard to be missing)', async () => {
+    const core = await import('@manifest-network/manifest-mcp-core');
+    const { warnUnguardedOnce } = await import('./unguarded-warning.js');
+    const warn = vi.spyOn(core.logger, 'warn').mockImplementation(() => {});
+
+    warnUnguardedOnce(false, false);
+
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it('warns on Node with no injected fetch, and only once', async () => {
+    const core = await import('@manifest-network/manifest-mcp-core');
+    const { warnUnguardedOnce } = await import('./unguarded-warning.js');
+    const warn = vi.spyOn(core.logger, 'warn').mockImplementation(() => {});
+
+    warnUnguardedOnce(false, true);
+    warnUnguardedOnce(false, true);
+
+    expect(warn).toHaveBeenCalledTimes(1);
   });
 });
