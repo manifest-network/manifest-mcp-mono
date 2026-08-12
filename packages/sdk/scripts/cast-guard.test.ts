@@ -75,16 +75,47 @@ function productionSources(): string[] {
   return out;
 }
 
-const BRAND_CAST_RE = /\bas (?:Address|LeaseUuid|ProviderUuid|SkuUuid|Fqdn)\b/;
+const BRANDS_FILE = 'packages/core/src/brands.ts';
+
+/**
+ * Brand type names, read from `brands.ts` itself (ENG-644). DERIVED, never hand-listed: the
+ * previous literal alternation had drifted — it omitted `Tenant` (`= Address`), so `x as Tenant`
+ * was a trust-cast the guard could not see. Same drift that made the dependency-cruiser DAG rules
+ * vacuous (ENG-641), and a sixth brand would have been silently unguarded the day it landed.
+ *
+ * Matches both forms `brands.ts` uses: `export type X = Brand<...>` and the transparent alias
+ * `export type Tenant = Address`.
+ */
+function brandTypeNames(): string[] {
+  const source = readFileSync(join(ROOT, BRANDS_FILE), 'utf8');
+  return [...source.matchAll(/^export type ([A-Z][A-Za-z0-9]*)\s*=/gm)].map(
+    (m) => m[1],
+  );
+}
+
+const BRAND_NAMES = brandTypeNames();
+const BRAND_CAST_RE = new RegExp(`\\bas (?:${BRAND_NAMES.join('|')})\\b`);
 const PARSE_CALL_RE = /\bparse[A-Z][A-Za-z]*\s*\(/;
 
 describe('§8 brand-cast + lcd-adapter chokepoint (grep meta-test; ENG-309)', () => {
+  // The derivation is now load-bearing, so prove it produced something and that the regex it built
+  // actually matches a cast of EVERY brand it claims to cover. (Total vacuity is already caught by
+  // the next test — a regex matching nothing would fail to find brands.ts itself — but this fails
+  // with a far clearer message, and catches one name silently dropping out of the alternation.)
+  it('derives the brand list from brands.ts and matches a cast of each', () => {
+    expect(BRAND_NAMES.length).toBeGreaterThan(0);
+    const unmatched = BRAND_NAMES.filter(
+      (name) => !BRAND_CAST_RE.test(`const x = y as ${name};`),
+    );
+    expect(unmatched).toEqual([]);
+  });
+
   it('the `as Brand` trust-cast appears ONLY in core/src/brands.ts', () => {
     const offenders = productionSources().filter((file) =>
       BRAND_CAST_RE.test(readFileSync(file, 'utf8')),
     );
     const relative = offenders.map((f) => f.slice(ROOT.length + 1)).sort();
-    expect(relative).toEqual(['packages/core/src/brands.ts']);
+    expect(relative).toEqual([BRANDS_FILE]);
   });
 
   it('the lcd-adapter read path never calls a `parse*` constructor (as* trust-cast only)', () => {
