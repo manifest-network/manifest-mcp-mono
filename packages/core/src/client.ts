@@ -134,7 +134,7 @@ export class CosmosClientManager {
   // whenever the signing client is replaced (config change / disconnect) since the account/chain may differ.
   private txSequenceCache: SequenceCache = new Map();
 
-  /** Per-instance logger for the 2 init-time diagnostics. Defaults to noopLogger (silent); see setLogger. */
+  /** Per-instance logger for the 3 init-time diagnostics. Defaults to noopLogger (silent); see setLogger. */
   private logger: Logger = noopLogger;
 
   // Number of live holders (servers) sharing this instance. Each getInstance
@@ -270,91 +270,125 @@ export class CosmosClientManager {
       return this.queryClientPromise;
     }
 
-    // Start initialization and cache the promise to prevent concurrent init
-    this.queryClientPromise = (async () => {
-      // Capture reference to detect if superseded by disconnect/config change
-      const thisInitPromise = this.queryClientPromise;
-      try {
-        let client: ManifestQueryClient;
-        if (this.config.restUrl) {
-          // Use LCD/REST for queries when restUrl is configured
-          client = await withRetry(
-            () => createLCDQueryClient(this.config.restUrl!, this.logger),
-            {
-              config: this.config.retry,
-              operationName: 'connect LCD query client',
-            },
-          );
-        } else if (this.config.rpcUrl) {
-          // Use RPC: merge liftedinit + cosmwasm + strangelove_ventures + osmosis + ibc namespaces
-          client = await withRetry(
-            async () => {
-              const [
-                liftedinitClient,
-                cosmwasmClient,
-                strangeloveClient,
-                osmosisClient,
-                ibcClient,
-              ] = await Promise.all([
-                liftedinit.ClientFactory.createRPCQueryClient({
-                  rpcEndpoint: this.config.rpcUrl!,
-                }),
-                cosmwasmNs.ClientFactory.createRPCQueryClient({
-                  rpcEndpoint: this.config.rpcUrl!,
-                }),
-                strangeloveVenturesNs.ClientFactory.createRPCQueryClient({
-                  rpcEndpoint: this.config.rpcUrl!,
-                }),
-                osmosisNs.ClientFactory.createRPCQueryClient({
-                  rpcEndpoint: this.config.rpcUrl!,
-                }),
-                ibcNs.ClientFactory.createRPCQueryClient({
-                  rpcEndpoint: this.config.rpcUrl!,
-                }),
-              ]);
-              return {
-                ...liftedinitClient,
-                cosmwasm: cosmwasmClient.cosmwasm,
-                strangelove_ventures: strangeloveClient.strangelove_ventures,
-                osmosis: osmosisClient.osmosis,
-                ibc: ibcClient.ibc,
-              } as ManifestQueryClient;
-            },
-            {
-              config: this.config.retry,
-              operationName: 'connect query client',
-            },
-          );
-        } else {
-          throw new ManifestMCPError(
-            ManifestMCPErrorCode.INVALID_CONFIG,
-            'Cannot create query client: neither restUrl nor rpcUrl is configured.',
-          );
-        }
-        // Only store if this is still the active promise
-        if (this.queryClientPromise === thisInitPromise) {
+    // ENG-636: build the init promise from a SEPARATE call and do the cache bookkeeping in
+    // `.then` handlers, so the identity guard compares against the promise that is actually
+    // stored. The previous self-referencing async IIFE captured `this.queryClientPromise` in
+    // its SYNCHRONOUS prologue — i.e. before the assignment landed, and the early return above
+    // proves the field is null at that instant — so the capture was always null, every guard
+    // was permanently false, and one transient failure latched a rejected promise for the
+    // process lifetime.
+    //
+    // Do NOT "simplify" this back to an IIFE that references a `const p`: that body's prologue
+    // — and, on the neither-restUrl-nor-rpcUrl branch, its catch — runs in the SAME tick as the
+    // `const p` initializer, so the reference hits the temporal dead zone and throws
+    // `ReferenceError: Cannot access 'p' before initialization` instead of the INVALID_CONFIG
+    // this method promises. `.then` callbacks can only run in a later microtask, so they are
+    // TDZ-safe by construction.
+    //
+    // The explicit annotation on `p` is required: a `const` referenced inside its own
+    // initializer is otherwise implicitly `any` (TS7022).
+    const p: Promise<ManifestQueryClient> = this.initQueryClient().then(
+      (client) => {
+        // Promote to the object cache only while this init is still the active one. A
+        // teardown/disconnect that landed mid-flight already nulled the slot, and a newer init
+        // may already own it — a stale handler must never clobber that newer state.
+        if (this.queryClientPromise === p) {
           this.queryClient = client;
           this.queryClientPromise = null;
         }
+        // A superseded query client is still handed to its caller: the query transport is
+        // stateless HTTP with nothing to release (see teardown), so being superseded only means
+        // "not cached". The signing path differs — it owns a live transport.
         return client;
-      } catch (error) {
-        // Clear promise on failure so retry is possible (only if still active)
-        if (this.queryClientPromise === thisInitPromise) {
+      },
+      (error: unknown) => {
+        // Clear the slot on failure so the next caller retries instead of re-awaiting a latched
+        // rejection (the ENG-636 headline defect) — again only while still active.
+        if (this.queryClientPromise === p) {
           this.queryClientPromise = null;
         }
-        if (error instanceof ManifestMCPError) {
-          throw error;
-        }
-        const endpoint = this.config.restUrl ?? this.config.rpcUrl;
+        throw error;
+      },
+    );
+    this.queryClientPromise = p;
+    return p;
+  }
+
+  /**
+   * Construct a query client. Pure construction + error normalization — caching, dedup and
+   * supersede bookkeeping belong to {@link getQueryClient}. Kept as a separate method (NOT an
+   * IIFE) so nothing in here can reference the promise being cached (ENG-636).
+   */
+  private async initQueryClient(): Promise<ManifestQueryClient> {
+    try {
+      let client: ManifestQueryClient;
+      if (this.config.restUrl) {
+        // Use LCD/REST for queries when restUrl is configured
+        client = await withRetry(
+          () => createLCDQueryClient(this.config.restUrl!, this.logger),
+          {
+            config: this.config.retry,
+            operationName: 'connect LCD query client',
+          },
+        );
+      } else if (this.config.rpcUrl) {
+        // Use RPC: merge liftedinit + cosmwasm + strangelove_ventures + osmosis + ibc namespaces
+        client = await withRetry(
+          async () => {
+            const [
+              liftedinitClient,
+              cosmwasmClient,
+              strangeloveClient,
+              osmosisClient,
+              ibcClient,
+            ] = await Promise.all([
+              liftedinit.ClientFactory.createRPCQueryClient({
+                rpcEndpoint: this.config.rpcUrl!,
+              }),
+              cosmwasmNs.ClientFactory.createRPCQueryClient({
+                rpcEndpoint: this.config.rpcUrl!,
+              }),
+              strangeloveVenturesNs.ClientFactory.createRPCQueryClient({
+                rpcEndpoint: this.config.rpcUrl!,
+              }),
+              osmosisNs.ClientFactory.createRPCQueryClient({
+                rpcEndpoint: this.config.rpcUrl!,
+              }),
+              ibcNs.ClientFactory.createRPCQueryClient({
+                rpcEndpoint: this.config.rpcUrl!,
+              }),
+            ]);
+            return {
+              ...liftedinitClient,
+              cosmwasm: cosmwasmClient.cosmwasm,
+              strangelove_ventures: strangeloveClient.strangelove_ventures,
+              osmosis: osmosisClient.osmosis,
+              ibc: ibcClient.ibc,
+            } as ManifestQueryClient;
+          },
+          {
+            config: this.config.retry,
+            operationName: 'connect query client',
+          },
+        );
+      } else {
         throw new ManifestMCPError(
-          ManifestMCPErrorCode.RPC_CONNECTION_FAILED,
-          `Failed to connect to ${this.config.restUrl ? 'REST' : 'RPC'} endpoint: ${error instanceof Error ? error.message : String(error)}`,
-          { url: endpoint },
+          ManifestMCPErrorCode.INVALID_CONFIG,
+          'Cannot create query client: neither restUrl nor rpcUrl is configured.',
         );
       }
-    })();
-
-    return this.queryClientPromise;
+      return client;
+    } catch (error) {
+      if (error instanceof ManifestMCPError) {
+        throw error;
+      }
+      const endpoint = this.config.restUrl ?? this.config.rpcUrl;
+      throw new ManifestMCPError(
+        ManifestMCPErrorCode.RPC_CONNECTION_FAILED,
+        `Failed to connect to ${this.config.restUrl ? 'REST' : 'RPC'} endpoint: ${error instanceof Error ? error.message : String(error)}`,
+        { url: endpoint },
+      );
+    }
   }
 
   /**
@@ -380,86 +414,114 @@ export class CosmosClientManager {
       return this.signingClientPromise;
     }
 
-    // Start initialization and cache the promise to prevent concurrent init
-    this.signingClientPromise = (async () => {
-      // Capture reference to detect if superseded by disconnect/config change
-      const thisInitPromise = this.signingClientPromise;
-      try {
-        const signer = await this.walletProvider.getSigner();
-        const gasPrice = GasPrice.fromString(this.config.gasPrice!);
-        const { registry, aminoTypes } = getSigningManifestClientOptions();
-
-        // Configure endpoint as HttpEndpoint object (required for custom options)
-        const endpoint: HttpEndpoint = {
-          url: this.config.rpcUrl!,
-          headers: {},
-        };
-
-        // Note: Registry type from @cosmjs/proto-signing doesn't perfectly match
-        // SigningStargateClientOptions due to telescope-generated proto types.
-        // This is a known limitation with custom cosmos-sdk module registries.
-        // Wrap with retry for transient connection failures
-        const client = await withRetry(
-          async () => {
-            const c = await SigningStargateClient.connectWithSigner(
-              endpoint,
-              signer,
-              {
-                registry: registry as SigningClientRegistry,
-                aminoTypes,
-                gasPrice,
-                broadcastTimeoutMs: DEFAULT_BROADCAST_TIMEOUT_MS,
-                broadcastPollIntervalMs: DEFAULT_BROADCAST_POLL_INTERVAL_MS,
-              },
-            );
-            // The property is private readonly with no constructor option,
-            // so we must bypass TypeScript's access control to override it.
-            const record = c as unknown as Record<string, unknown>;
-            if (typeof record.defaultGasMultiplier === 'number') {
-              record.defaultGasMultiplier =
-                this.config.gasMultiplier ?? DEFAULT_GAS_MULTIPLIER;
-            } else {
-              const effective =
-                this.config.gasMultiplier ?? DEFAULT_GAS_MULTIPLIER;
-              this.logger.warn(
-                `gasMultiplier ${effective} could not be applied: ` +
-                  `signing client defaultGasMultiplier is ${typeof record.defaultGasMultiplier}, expected number. ` +
-                  `Transactions will use the CosmJS built-in gas multiplier instead.`,
-              );
-            }
-            return c;
-          },
-          {
-            config: this.config.retry,
-            operationName: 'connect signing client',
-          },
-        );
-        // Only store if this is still the active promise
-        if (this.signingClientPromise === thisInitPromise) {
+    // ENG-636 — see getQueryClient for why the bookkeeping lives in `.then` handlers over a
+    // separately-called init method rather than in a self-referencing async IIFE.
+    const p: Promise<SigningStargateClient> = this.initSigningClient().then(
+      (client) => {
+        if (this.signingClientPromise === p) {
           this.signingClient = client;
           this.signingClientPromise = null;
-        } else {
-          // Promise was superseded, clean up the client we just created
+          return client;
+        }
+        // Superseded mid-flight by teardown()/disconnect() or a getInstance config change.
+        // Unlike the query client this one owns a live transport, so the orphan MUST be
+        // released — and it must NOT be handed back. Over a WebSocket endpoint a disconnected
+        // client is dead (the old always-superseded code only appeared to work because
+        // @cosmjs/tendermint-rpc's HttpClient.disconnect() is a no-op), and after a config
+        // change it was built from the superseded gasPrice/wallet. Fail loudly; the caller
+        // re-invokes and gets a client built from the CURRENT configuration.
+        try {
           client.disconnect();
-        }
-        return client;
-      } catch (error) {
-        // Clear promise on failure so retry is possible (only if still active)
-        if (this.signingClientPromise === thisInitPromise) {
-          this.signingClientPromise = null;
-        }
-        if (error instanceof ManifestMCPError) {
-          throw error;
+        } catch (err) {
+          // A failing orphan cleanup must never mask the supersede error below.
+          this.logger.debug(
+            `orphaned signing client disconnect failed: ${err instanceof Error ? err.message : String(err)}`,
+          );
         }
         throw new ManifestMCPError(
           ManifestMCPErrorCode.RPC_CONNECTION_FAILED,
-          `Failed to connect signing client: ${error instanceof Error ? error.message : String(error)}`,
-          { rpcUrl: this.config.rpcUrl },
+          'Signing client initialization was superseded by a disconnect or configuration change before it completed. Retry to obtain a client for the current configuration.',
+          { rpcUrl: this.config.rpcUrl, reason: 'superseded' },
         );
-      }
-    })();
+      },
+      (error: unknown) => {
+        if (this.signingClientPromise === p) {
+          this.signingClientPromise = null;
+        }
+        throw error;
+      },
+    );
+    this.signingClientPromise = p;
+    return p;
+  }
 
-    return this.signingClientPromise;
+  /**
+   * Construct a signing client. Pure construction + error normalization — caching, dedup and
+   * supersede bookkeeping belong to {@link getSigningClient}. In particular the supersede error
+   * is thrown from the accessor, NOT here, so it cannot be re-wrapped by the catch below.
+   */
+  private async initSigningClient(): Promise<SigningStargateClient> {
+    try {
+      const signer = await this.walletProvider.getSigner();
+      const gasPrice = GasPrice.fromString(this.config.gasPrice!);
+      const { registry, aminoTypes } = getSigningManifestClientOptions();
+
+      // Configure endpoint as HttpEndpoint object (required for custom options)
+      const endpoint: HttpEndpoint = {
+        url: this.config.rpcUrl!,
+        headers: {},
+      };
+
+      // Note: Registry type from @cosmjs/proto-signing doesn't perfectly match
+      // SigningStargateClientOptions due to telescope-generated proto types.
+      // This is a known limitation with custom cosmos-sdk module registries.
+      // Wrap with retry for transient connection failures
+      const client = await withRetry(
+        async () => {
+          const c = await SigningStargateClient.connectWithSigner(
+            endpoint,
+            signer,
+            {
+              registry: registry as SigningClientRegistry,
+              aminoTypes,
+              gasPrice,
+              broadcastTimeoutMs: DEFAULT_BROADCAST_TIMEOUT_MS,
+              broadcastPollIntervalMs: DEFAULT_BROADCAST_POLL_INTERVAL_MS,
+            },
+          );
+          // The property is private readonly with no constructor option,
+          // so we must bypass TypeScript's access control to override it.
+          const record = c as unknown as Record<string, unknown>;
+          if (typeof record.defaultGasMultiplier === 'number') {
+            record.defaultGasMultiplier =
+              this.config.gasMultiplier ?? DEFAULT_GAS_MULTIPLIER;
+          } else {
+            const effective =
+              this.config.gasMultiplier ?? DEFAULT_GAS_MULTIPLIER;
+            this.logger.warn(
+              `gasMultiplier ${effective} could not be applied: ` +
+                `signing client defaultGasMultiplier is ${typeof record.defaultGasMultiplier}, expected number. ` +
+                `Transactions will use the CosmJS built-in gas multiplier instead.`,
+            );
+          }
+          return c;
+        },
+        {
+          config: this.config.retry,
+          operationName: 'connect signing client',
+        },
+      );
+      return client;
+    } catch (error) {
+      if (error instanceof ManifestMCPError) {
+        throw error;
+      }
+      throw new ManifestMCPError(
+        ManifestMCPErrorCode.RPC_CONNECTION_FAILED,
+        `Failed to connect signing client: ${error instanceof Error ? error.message : String(error)}`,
+        { rpcUrl: this.config.rpcUrl },
+      );
+    }
   }
 
   /**
@@ -492,12 +554,15 @@ export class CosmosClientManager {
   }
 
   /**
-   * Inject a per-instance Logger for the 2 init-time diagnostics (signing-client gasMultiplier
-   * fallback; LCD wasm-patch missing-method). NON-KEY + non-invalidating: NOT part of the getInstance
+   * Inject a per-instance Logger for the 3 init-time diagnostics (signing-client gasMultiplier
+   * fallback; LCD wasm-patch missing-method; orphaned-signing-client disconnect failure on a
+   * superseded init — ENG-636). NON-KEY + non-invalidating: NOT part of the getInstance
    * key (chainId:rpcUrl[:restUrl]) and NOT in the signing/query-client invalidation gate — a pure
    * reference mutation, mirroring the existing config/walletProvider mutation. Defaults to noopLogger
    * (silent, per spec §5.3). Shared-key last-writer-wins: if two ctxs share a config key the later
-   * setLogger wins; acceptable because both diagnostics are one-time, init-cached, never re-firing.
+   * setLogger wins; acceptable because the two gasMultiplier/LCD diagnostics are one-time,
+   * init-cached and never re-fire, and the supersede diagnostic only fires on a shutdown or
+   * reconfiguration race, where "whichever holder's logger is current" is the right answer anyway.
    */
   setLogger(logger: Logger): void {
     this.logger = logger;

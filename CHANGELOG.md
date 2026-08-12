@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **core:** `CosmosClientManager` no longer caches a rejected init promise forever. Both lazy-init paths captured their own promise inside an `async` IIFE's *synchronous* prologue — i.e. before the assignment landed — so the capture was always `null` and every identity guard was permanently false. One transient RPC failure latched a rejected promise that every later caller re-awaited: a permanent outage for a long-running MCP server until process restart. The init bodies now live in separate `initQueryClient`/`initSigningClient` methods with the cache bookkeeping in chained `.then` handlers, so the guard compares against the promise actually stored. Three consequences come alive with it: the resolved client is promoted to the object cache (`getInstance`'s config-change eviction and `teardown`'s disconnect were both unreachable before, so the manager never disconnected a signing client), a successful signing init no longer calls `disconnect()` on the client it returns (inert only because `@cosmjs/tendermint-rpc`'s `HttpClient.disconnect()` is a no-op — a WebSocket endpoint would have been closed the instant it was created), and an init genuinely superseded mid-flight by a disconnect or config change now releases the orphaned signing client and fails its caller with `RPC_CONNECTION_FAILED` + `details.reason: 'superseded'` instead of handing back a disconnected client. Adds the retry-after-failure and supersede tests that were previously omitted with an incorrect rationale. (ENG-636)
+
 ## [0.20.1] - 2026-07-27
 
 ### Added
