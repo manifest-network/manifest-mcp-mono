@@ -11,6 +11,8 @@ npm run test           # Unit tests all packages (vitest)
 npm run check          # Lint, format, and import sorting check via biome
 npm run check:fix      # Auto-fix biome issues
 npm run format         # Format all packages via biome
+npm run depcruise      # Architecture boundary + package-DAG guard (dependency-cruiser); CI runs it
+npm run size           # Bundle-size budgets for the SDK subpaths (size-limit); CI runs it
 npm run test:e2e       # E2E tests against live chain (requires docker-compose up)
 
 # Per-package (run from packages/core, packages/chain, packages/lease, packages/fred, packages/cosmwasm, or packages/node)
