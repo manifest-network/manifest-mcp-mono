@@ -266,4 +266,27 @@ describe('dependency-cruiser import-edge rules bite (fixtures fail, real tree cl
     expect(exitCode).toBeGreaterThan(0);
     expect(output).toContain('no-example-to-non-sdk-package');
   });
+
+  // POSITIVE CONTROLS for the browser-safety rules. These are VALUE imports, not `import type`: the
+  // rules turn on `dependencyTypesNot: ['dynamic-import']`, i.e. it is the STATIC edge that breaks
+  // the browser build (a runtime-gated `import('node:fs')` is allowed and must stay allowed).
+  // The probe path must also dodge the rules' `pathNot` exemptions (guarded-fetch, /node.ts,
+  // /server/, *.test.ts) — `__dcprobe_browser_*.ts` in `core/src` does.
+  it('no-static-node-in-browser-src FIRES on a static node: import (PRODUCTION config)', () => {
+    const { exitCode, output } = cruiseWithProbe(
+      'packages/core/src/__dcprobe_browser_node.ts',
+      "import { readFileSync } from 'node:fs';\nexport const _probe = readFileSync;\n",
+    );
+    expect(exitCode).toBeGreaterThan(0);
+    expect(output).toContain('no-static-node-in-browser-src');
+  });
+
+  it('no-static-undici-ws-in-browser-src FIRES on a static undici import (PRODUCTION config)', () => {
+    const { exitCode, output } = cruiseWithProbe(
+      'packages/core/src/__dcprobe_browser_undici.ts',
+      "import { fetch } from 'undici';\nexport const _probe = fetch;\n",
+    );
+    expect(exitCode).toBeGreaterThan(0);
+    expect(output).toContain('no-static-undici-ws-in-browser-src');
+  });
 });
