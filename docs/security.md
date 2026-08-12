@@ -72,7 +72,14 @@ The signature, public key, and metadata are base64-encoded into a `Bearer` token
 
 ## SSRF protections
 
-Two complementary layers protect against server-side request forgery: URL validation at the boundary, and a runtime IP-level guard on the actual connection. Neither alone is sufficient — the string check can't see where a *hostname* resolves (and, in a browser, no connect guard is available), while the connect guard can't reject a plain-HTTP downgrade and is Node-only — so both run.
+Two complementary layers protect against server-side request forgery: URL validation at the boundary, and a runtime IP-level guard on the actual connection. Neither alone is sufficient — the string check can't see where a *hostname* resolves (and, in a browser, no connect guard is available), while the connect guard can't reject a plain-HTTP downgrade and is Node-only.
+
+The two layers have **different activation scopes**, and this distinction is load-bearing:
+
+- **Layer 1 (URL validation) is unconditional.** It runs on every provider HTTP and WebSocket call, from every entry point — MCP server or library — with no flag to turn it off.
+- **Layer 2 (the connect-time fetch guard) is opt-in per entry point.** It is on by default in the MCP servers and in `createFredClientNode`, and **off by default for other library entry points on Node**. See [Layer 2 activation](#layer-2-activation) for the exact matrix.
+
+So on the MCP-server path both layers run; on an unguarded library path only layer 1 does, which leaves the DNS-hostname case (below) uncovered.
 
 ### 1. Endpoint-URL validation (boundary check)
 
@@ -91,17 +98,38 @@ This runs **before** any HTTP call, so a chain row with a hostile `apiUrl` — l
 
 ### 2. Runtime IP-level fetch guard (`createGuardedFetch`)
 
-All provider/Fred HTTP is routed through an SSRF-guarded `fetch` — `createGuardedFetch` in `packages/core/src/internals/guarded-fetch.ts`, a native `undici` Dispatcher. It:
+Where it is active (see [Layer 2 activation](#layer-2-activation) — the MCP servers and `createFredClientNode` by default, **not** every library entry point), provider/Fred HTTP is routed through an SSRF-guarded `fetch` — `createGuardedFetch` in `packages/core/src/internals/guarded-fetch.ts`, a native `undici` Dispatcher. It:
 
 - **Resolves the target host inside the connect hook** and substitutes the resolved IP as the connect address, so it inspects the *actual* IP the request reaches and closes the DNS-rebinding / TOCTOU window a hostname-only check leaves open. The hook re-fires on every cross-origin redirect, so a redirect to an internal host is caught too.
 - **Default-denies** any address whose `ipaddr.js` `range()` is not `'unicast'` — loopback, link-local, private (RFC 1918), carrier-grade NAT, reserved / benchmarking (`198.18.0.0/15`), and any unrecognised label all block. It is an allow-list of exactly one category (`'unicast'`), so a range the table doesn't know about fails **closed** rather than falling through as allowed. The classifier itself (`isBlocked` + `BLOCKED_RANGES_*`) lives in the pure, `ipaddr.js`-only `packages/core/src/internals/ssrf-classify.ts` (ENG-490), shared by *both* SSRF layers — layer 1's `isUrlSsrfSafe` imports it browser-safely.
-- Is gated per server and **on by default**: `MANIFEST_FRED_FETCH_GUARDED` (fred) and `MANIFEST_AGENT_FETCH_GUARDED` (agent). Both accept `1`/`true`/`yes`/`on` and `0`/`false`/`no`/`off` (case-insensitive); an unrecognised value throws `INVALID_CONFIG`. `fred`'s `FredMCPServer` constructor injects the guarded fetch via `server/fetch-gate.ts`.
+- Is gated per server and **on by default**: `MANIFEST_FRED_FETCH_GUARDED` (fred) and `MANIFEST_AGENT_FETCH_GUARDED` (agent). Both accept `1`/`true`/`yes`/`on` and `0`/`false`/`no`/`off` (case-insensitive); an unrecognised value throws `INVALID_CONFIG` — an unparseable flag never silently disables the guard. `fred`'s `FredMCPServer` constructor injects the guarded fetch via `server/fetch-gate.ts`.
+- **Fails closed on a missing dependency.** `undici` is an `optionalDependency` of `core`. If it is absent, the dispatcher build rejects and `createGuardedFetch` re-throws (clearing its cached promise) rather than falling back to an unguarded `fetch` — so an install without `undici` makes guarded provider calls error out instead of silently losing the guard. Note the dispatcher is built lazily, so this surfaces on the first provider call rather than at startup.
 
-Provider URLs come from on-chain SKU/provider records, so this guard is what stops a malicious provider whose `apiUrl` is a *hostname* that DNS-resolves to an internal host — the case layer 1's string check cannot see — even over HTTPS. (A literal internal IP is already rejected at layer 1.)
+Provider URLs come from on-chain SKU/provider records, so **where this guard is active** it is what stops a malicious provider whose `apiUrl` is a *hostname* that DNS-resolves to an internal host — the case layer 1's string check cannot see — even over HTTPS. (A literal internal IP is already rejected at layer 1, on every path.) On an entry point where layer 2 is **not** active, that hostname case is not covered: see below.
 
 `ipaddr.js` is force-pinned to `2.4.0` tree-wide (root `package.json` `overrides`): an older copy (e.g. `1.9.1`, pulled transitively by `proxy-addr`) carries a stale RFC table that misclassifies reserved ranges as `'unicast'` and would silently weaken the guard.
 
 The guard ships from a **Node-only** subpath — `@manifest-network/manifest-mcp-core/guarded-fetch` (and, mirrored, `@manifest-network/manifest-agent-core/guarded-fetch`) — deliberately kept off the package barrel so browser bundles of `core` don't drag in `undici` / `node:async_hooks`. Import it from that subpath, never the barrel. The *pure* classifier (no `undici`) is exposed separately on the **universal** `@manifest-network/manifest-mcp-core/ssrf` subpath (also off the barrel, to keep that low-level primitive out of the public surface), which is what fred's browser-safe `isUrlSsrfSafe` imports.
+
+#### Layer 2 activation
+
+The single resolution point for provider/Fred HTTP is `checkedFetch` in `packages/fred/src/http/provider.ts`, whose `fetchFn` parameter is **optional and falls back to `globalThis.fetch`** when no fetch is supplied. Every provider/Fred call funnels through it, so layer 2 applies exactly where a caller threads a guarded fetch down:
+
+| Entry point | Layer 2 | Mechanism |
+|---|---|---|
+| `manifest-mcp-fred` MCP server | **on by default** | `MANIFEST_FRED_FETCH_GUARDED`; `FredMCPServer` → `server/fetch-gate.ts` → `ctx.fetch`, threaded into every tool |
+| `manifest-mcp-agent` MCP server | **on by default** | `MANIFEST_AGENT_FETCH_GUARDED` |
+| `createFredClientNode` (`@manifest-network/manifest-sdk/node`) | **always on** | injects `createGuardedFetch()`; deliberately does *not* read the env knobs — the library escape hatch is `opts.fetch` |
+| `createFredClient` on Node, no `opts.fetch` | **off** | warns once (see below); proceeds unguarded |
+| Raw HTTP fns on `@manifest-network/manifest-sdk/deploy` (`getLeaseStatus`, `getLeaseProvision`, `getLeaseReleases`, `getLeaseLogs`, `getAppLogs`, `getLeaseConnectionInfo`, `getProviderHealth`, `restartApp`, `updateApp`, `restoreApp`, …) called without `fetchFn` | **off** | warns once (see below); pass a guarded `fetchFn` to opt in |
+| `agent-core` used as a library without `runtime.fetchFn` | **off** | warns once via the same path; pass `fetchFn` on the runtime |
+| Any browser runtime | **n/a** | layer 2 is Node-only; layer 1 plus the platform's Private Network Access / CORS apply |
+
+**If you are building a Node application against this SDK, use `createFredClientNode`** (or inject `createGuardedFetch()` from `@manifest-network/manifest-mcp-core/guarded-fetch` yourself). The base `createFredClient` and the raw HTTP functions are unguarded on Node by design — they are the compose-it-yourself surface — and injecting your own `fetch` always opts out of the guard.
+
+**Every unguarded-on-Node path warns.** `warnUnguardedOnce` in `packages/fred/src/http/unguarded-warning.ts` emits a single `logger.warn` — naming `createFredClientNode` and `createGuardedFetch` as the two fixes — from `createFredClient` (at construction) and from `checkedFetch` (on the first raw HTTP call made with no `fetchFn`). The once-latch is **shared** by both, so a process that builds a client *and* calls raw functions still warns exactly once. Two cases deliberately stay silent: a browser runtime (no connect guard exists to be missing) and an explicitly-injected `fetch` (a deliberate opt-out, including a plain `globalThis.fetch`). This is why `checkedFetch`'s `fetchFn` is declared optional rather than defaulted — "omitted" has to stay distinguishable from "explicitly passed".
+
+Residual risk on an unguarded path: a provider `apiUrl` that is a *hostname* resolving to an internal address. Literal internal IPs are still blocked by layer 1 everywhere.
 
 ## Input validation
 

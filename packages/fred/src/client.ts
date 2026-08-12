@@ -4,13 +4,16 @@ import {
   type FredLeaseStatus,
   type FullClientOptions,
   type LeaseUuid,
-  logger,
   type ManifestClient,
 } from '@manifest-network/manifest-mcp-core';
 import {
   createProviderAuth,
   type ProviderAuthPort,
 } from './http/provider-auth.js';
+import {
+  hasInjectedFetch,
+  warnUnguardedOnce,
+} from './http/unguarded-warning.js';
 import { appStatus } from './tools/appStatus.js';
 import { browseCatalog } from './tools/browseCatalog.js';
 import { deployApp } from './tools/deployApp.js';
@@ -79,28 +82,12 @@ export function fredActions(ctx: FredClient): FredActions {
   };
 }
 
-/**
- * Pure predicate: should `createFredClient` warn that provider HTTP is unguarded? True only on
- * Node (`isNode`) when the caller injected no `fetch`. `isNode` is a parameter so the browser-negative
- * case is unit-testable. Not part of the public SDK surface (not re-exported from the fred barrel).
- */
-export function shouldWarnUnguarded(
-  hasInjectedFetch: boolean,
-  isNode: boolean,
-): boolean {
-  return !hasInjectedFetch && isNode;
-}
-
-const UNGUARDED_FETCH_WARNING =
-  'createFredClient: provider HTTP is running through an unguarded fetch on Node. ' +
-  'Provider URLs come from on-chain SKU records, so this is an SSRF surface. ' +
-  "Use createFredClientNode from '@manifest-network/manifest-mcp-fred/node' " +
-  "(re-exported by the SDK as '@manifest-network/manifest-sdk/node'; SSRF-safe by default), " +
-  "or inject an SSRF-guarded fetch via createGuardedFetch from '@manifest-network/manifest-mcp-core/guarded-fetch'. " +
-  'Note: injecting your own fetch opts OUT of the SSRF guard.';
-
-// Module-level once-latch: warn at most once per process (isolated in tests via vi.resetModules()).
-let warnedUnguarded = false;
+// The unguarded-fetch warning moved to `http/unguarded-warning.ts` so `http/provider.ts`'s
+// `checkedFetch` can share the SAME once-latch — the raw HTTP functions fell back to
+// `globalThis.fetch` silently before, and a second independent latch would double-warn a consumer
+// who builds a client and then also calls a raw function. Re-exported here because it was already
+// reachable from this module.
+export { shouldWarnUnguarded } from './http/unguarded-warning.js';
 
 /**
  * Create a full app client: core's chain-backed ManifestClient plus the Fred provider methods. The
@@ -127,16 +114,7 @@ let warnedUnguarded = false;
 export async function createFredClient(
   opts: CreateFredClientOptions,
 ): Promise<FredClient> {
-  if (
-    !warnedUnguarded &&
-    shouldWarnUnguarded(
-      opts.fetch !== undefined,
-      typeof process !== 'undefined' && !!process.versions?.node,
-    )
-  ) {
-    warnedUnguarded = true;
-    logger.warn(UNGUARDED_FETCH_WARNING);
-  }
+  warnUnguardedOnce(hasInjectedFetch(opts.fetch));
   const { allowLoopback = false, ...coreOpts } = opts;
   const client = await createManifestClient(coreOpts);
   const providerAuth = createProviderAuth(client.signer, {
