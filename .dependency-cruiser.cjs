@@ -17,7 +17,9 @@
  * grep/biome meta-test (packages/sdk/scripts/cast-guard.test.ts). The known-bad fixtures that PROVE
  * these rules bite live in tools/depcruise-fixtures/ (cruised explicitly by the fixtures step, not
  * compiled into any package). EVERY rule here has both a fixture and a production-config positive
- * control — a rule with no proof it bites is what produced ENG-641.
+ * control — a rule with no proof it bites is what produced ENG-641. Both halves are ENFORCED by
+ * cast-guard.test.ts (two completeness meta-tests), not merely asserted in this comment; adding a
+ * rule without either one fails the build.
  *
  * `tsPreCompilationDeps: true` (spec B3) makes the `import type` edges visible so the chokepoint rule
  * sees a type-only `import type { Lease } from '…/types.js'`. We cruise first-party SOURCE: `exclude`

@@ -50,3 +50,8 @@ as the grep/biome meta-test in `cast-guard.test.ts` instead.
 Fixtures alone are not sufficient — they cruise a re-anchored clone of the rules. Each rule ALSO has
 a positive control in `cast-guard.test.ts` that writes a probe into a real package and cruises the
 **production** config, so a resolution or `exclude` change cannot quietly revive a no-op.
+
+Neither half is left to prose. `cast-guard.test.ts` carries two completeness meta-tests — one
+asserting every production rule name appears in this directory's cruise output, one asserting every
+rule name is claimed by a probe test. Add a rule without a fixture, or with a fixture but no
+production control, and the build fails naming it.

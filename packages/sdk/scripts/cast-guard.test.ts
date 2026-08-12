@@ -183,6 +183,23 @@ describe('dependency-cruiser import-edge rules bite (fixtures fail, real tree cl
     expect(unproven, output).toEqual([]);
   });
 
+  // The fixture-completeness guard above has a twin: a rule can have a fixture and still lack a
+  // PRODUCTION positive control, which is the weaker half of the proof (a fixture only ever exercises
+  // a re-anchored clone of the matcher). That gap is not hypothetical — it shipped in this very PR,
+  // where 5 of 7 rules had probes while a comment claimed all of them did. Enforce it mechanically
+  // instead of in prose: every rule must be named by a `toContain(...)` in one of the probe tests
+  // below. Matched against whitespace-stripped source so a reformat that wraps the call still counts.
+  it('has a PRODUCTION-config positive control for EVERY production rule', () => {
+    const self = readFileSync(fileURLToPath(import.meta.url), 'utf8').replace(
+      /\s+/g,
+      '',
+    );
+    const unproven = productionRuleNames.filter(
+      (name) => !self.includes(`toContain('${name}'`),
+    );
+    expect(unproven).toEqual([]);
+  });
+
   it('cruises the real tree clean (zero violations, exit 0)', () => {
     const { exitCode, output } = cruise(PRODUCTION_CRUISE);
     expect(exitCode, output).toBe(0);
