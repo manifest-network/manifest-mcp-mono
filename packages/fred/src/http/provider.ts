@@ -2,7 +2,7 @@ import {
   isBlocked,
   isIpLiteral,
 } from '@manifest-network/manifest-mcp-core/ssrf';
-import { warnUnguardedOnce } from './unguarded-warning.js';
+import { hasInjectedFetch, warnUnguardedOnce } from './unguarded-warning.js';
 
 /** Global-registry brand so `isProviderApiError` survives duplicate physical copies of this
  *  package (the dual-package hazard) — the React `$$typeof` idiom. Symbol.for resolves to the
@@ -208,7 +208,7 @@ export async function checkedFetch(
   // warn once here. Declared optional (rather than defaulted) precisely so "omitted" stays
   // distinguishable from "explicitly passed `globalThis.fetch`" — the latter is a deliberate opt-out
   // and must not warn. Externally the signature is unchanged (`fetchFn?`), so callers are unaffected.
-  warnUnguardedOnce(fetchFn !== undefined);
+  warnUnguardedOnce(hasInjectedFetch(fetchFn));
   const doFetch = fetchFn ?? globalThis.fetch;
 
   const callerSignal = init?.signal ?? undefined;

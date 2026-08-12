@@ -34,6 +34,22 @@ export function isNodeRuntime(): boolean {
   return typeof process !== 'undefined' && !!process.versions?.node;
 }
 
+/**
+ * Did the caller supply a usable fetch? Deliberately **nullish**-aware so it agrees with the
+ * `fetchFn ?? globalThis.fetch` fallback at every call site.
+ *
+ * A bare `!== undefined` check would disagree on `null`: `null` would count as "injected" (no
+ * warning) while `??` would still fall back to unguarded `globalThis.fetch` — a silent unguarded
+ * path, which is the exact thing this module exists to prevent. `strict: true` stops a TypeScript
+ * caller from passing `null`, but this package is published and plain-JS callers (or an
+ * `any`-typed config value) can.
+ */
+export function hasInjectedFetch(
+  fetchFn: typeof globalThis.fetch | null | undefined,
+): boolean {
+  return fetchFn !== undefined && fetchFn !== null;
+}
+
 export const UNGUARDED_FETCH_WARNING =
   'manifest-mcp-fred: provider HTTP is running through an unguarded fetch on Node. ' +
   'Provider URLs come from on-chain SKU records, so this is an SSRF surface — without the ' +

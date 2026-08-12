@@ -113,7 +113,7 @@ The guard ships from a **Node-only** subpath — `@manifest-network/manifest-mcp
 
 #### Layer 2 activation
 
-The single resolution point for provider/Fred HTTP is `checkedFetch` in `packages/fred/src/http/provider.ts`, whose `fetchFn` parameter **defaults to `globalThis.fetch`**. Every provider/Fred call funnels through it, so layer 2 applies exactly where a caller threads a guarded fetch down:
+The single resolution point for provider/Fred HTTP is `checkedFetch` in `packages/fred/src/http/provider.ts`, whose `fetchFn` parameter is **optional and falls back to `globalThis.fetch`** when no fetch is supplied. Every provider/Fred call funnels through it, so layer 2 applies exactly where a caller threads a guarded fetch down:
 
 | Entry point | Layer 2 | Mechanism |
 |---|---|---|

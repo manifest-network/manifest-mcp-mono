@@ -575,6 +575,30 @@ describe('checkedFetch unguarded-fetch warning (raw HTTP path)', () => {
     expect(warn).not.toHaveBeenCalled();
   });
 
+  // A plain-JS caller can pass `null` (TypeScript's `strict` blocks it, but this package ships to
+  // JS consumers). `null` must count as NOT injected: the `?? globalThis.fetch` fallback runs
+  // unguarded either way, so treating it as "injected" would recreate the silent path this warning
+  // exists to close.
+  it('warns when fetchFn is explicitly null (nullish, not just undefined)', async () => {
+    const core = await import('@manifest-network/manifest-mcp-core');
+    const { checkedFetch: cf } = await import('./provider.js');
+    const warn = vi.spyOn(core.logger, 'warn').mockImplementation(() => {});
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(new Response('ok', { status: 200 })),
+    );
+
+    await cf(
+      'https://example.com',
+      undefined,
+      5000,
+      null as unknown as typeof globalThis.fetch,
+    );
+
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(String(warn.mock.calls[0]?.[0])).toContain('createFredClientNode');
+  });
+
   it('still dispatches through the injected fetch after the signature change', async () => {
     const { checkedFetch: cf } = await import('./provider.js');
     const injected = vi
@@ -587,6 +611,18 @@ describe('checkedFetch unguarded-fetch warning (raw HTTP path)', () => {
     // The omitted-fetchFn fallback must not shadow an explicitly-passed impl.
     expect(injected).toHaveBeenCalledTimes(1);
     expect(injected.mock.calls[0]?.[0]).toBe('https://example.com');
+  });
+});
+
+describe('hasInjectedFetch', () => {
+  it('is nullish-aware so it agrees with the `?? globalThis.fetch` fallback', async () => {
+    const { hasInjectedFetch } = await import('./unguarded-warning.js');
+    const fn = (() => {}) as unknown as typeof globalThis.fetch;
+
+    expect(hasInjectedFetch(fn)).toBe(true);
+    expect(hasInjectedFetch(globalThis.fetch)).toBe(true);
+    expect(hasInjectedFetch(undefined)).toBe(false);
+    expect(hasInjectedFetch(null)).toBe(false);
   });
 });
 

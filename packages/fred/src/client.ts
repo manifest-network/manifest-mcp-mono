@@ -10,7 +10,10 @@ import {
   createProviderAuth,
   type ProviderAuthPort,
 } from './http/provider-auth.js';
-import { warnUnguardedOnce } from './http/unguarded-warning.js';
+import {
+  hasInjectedFetch,
+  warnUnguardedOnce,
+} from './http/unguarded-warning.js';
 import { appStatus } from './tools/appStatus.js';
 import { browseCatalog } from './tools/browseCatalog.js';
 import { deployApp } from './tools/deployApp.js';
@@ -111,7 +114,7 @@ export { shouldWarnUnguarded } from './http/unguarded-warning.js';
 export async function createFredClient(
   opts: CreateFredClientOptions,
 ): Promise<FredClient> {
-  warnUnguardedOnce(opts.fetch !== undefined);
+  warnUnguardedOnce(hasInjectedFetch(opts.fetch));
   const { allowLoopback = false, ...coreOpts } = opts;
   const client = await createManifestClient(coreOpts);
   const providerAuth = createProviderAuth(client.signer, {
