@@ -14,6 +14,7 @@ import {
   leaseStateFromJSON,
   logger,
 } from '@manifest-network/manifest-mcp-core';
+import { failureDetail } from '../failure-reason.js';
 import {
   checkedFetch,
   ProviderApiError,
@@ -417,13 +418,24 @@ export async function pollLeaseUntilReady(
         // does not recognize (a future value), is treated as settled —
         // forward-compat, and it preserves the original ACTIVE-returns behavior
         // for providers that don't populate the field.
+        //
+        // Readiness is decided by state + provision_status ONLY, never by the
+        // presence of `reason`: Fred retains the failure attribution on a
+        // healthy `ready` lease whose last update rolled back, so treating a
+        // non-empty reason as a failure would strand every such lease (ENG-638).
         const ps = status.provision_status;
         if (ps !== undefined) {
           if (PROVISION_FAILED.has(ps)) {
+            // ENG-638: prefer ENG-508's reason/message, fall back to the
+            // deprecated last_error a pre-ENG-508 provider still sends. This
+            // message is the only wire carrying Fred failure detail into
+            // agent-core (deploy-app.ts stringifies err.message), so it has to
+            // stay informative for BOTH shapes.
+            const detail = failureDetail(status);
             throw new ProviderApiError(
               0,
               `Lease ${leaseUuid} is ACTIVE but provisioning ${ps}${
-                status.last_error ? `: ${status.last_error}` : ''
+                detail ? `: ${detail}` : ''
               }`,
             );
           }
