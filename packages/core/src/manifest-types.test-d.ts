@@ -11,6 +11,8 @@ import type {
   BrandedProvider,
   BrandedSKU,
   DeployResult,
+  FredLeaseProvision,
+  FredLeaseRelease,
   FredLeaseStatus,
   PortConfig,
 } from './manifest-types.js';
@@ -18,6 +20,52 @@ import type {
 describe('manifest-types shape (type-level)', () => {
   it('FredLeaseStatus.state keeps the manifestjs LeaseState enum (number), not string', () => {
     expectTypeOf<FredLeaseStatus['state']>().toExtend<number>();
+  });
+  it('the ENG-508 failure pair is modelled on all three Fred wire types', () => {
+    // The three carry the pair identically (shared FredFailureFields base), so
+    // one cannot silently drift from the others.
+    expectTypeOf<FredLeaseStatus['reason']>().toEqualTypeOf<
+      string | undefined
+    >();
+    expectTypeOf<FredLeaseStatus['message']>().toEqualTypeOf<
+      string | undefined
+    >();
+    expectTypeOf<FredLeaseProvision['reason']>().toEqualTypeOf<
+      string | undefined
+    >();
+    expectTypeOf<FredLeaseProvision['message']>().toEqualTypeOf<
+      string | undefined
+    >();
+    expectTypeOf<FredLeaseRelease['reason']>().toEqualTypeOf<
+      string | undefined
+    >();
+    expectTypeOf<FredLeaseRelease['message']>().toEqualTypeOf<
+      string | undefined
+    >();
+  });
+  it('`reason` stays an OPEN string, never a closed union (ENG-638)', () => {
+    // Fred documents the set as open and add-only. A closed union here would
+    // start lying the moment the provider ships a tenth value, and would break
+    // any consumer assigning a plain string — the forward-compatibility trap
+    // that made Kubernetes strip enums from its OpenAPI snapshot.
+    expectTypeOf<string>().toExtend<NonNullable<FredLeaseStatus['reason']>>();
+    expectTypeOf<'AnyFutureReasonFredMightShip'>().toExtend<
+      NonNullable<FredLeaseStatus['reason']>
+    >();
+  });
+  it('the pre-ENG-508 failure fields are RETAINED as optional (non-breaking)', () => {
+    // Removing these would be a breaking change on the published
+    // @manifest-network/manifest-sdk/deploy surface while the provider fleet is
+    // still mid-upgrade. They are @deprecated, not gone.
+    expectTypeOf<FredLeaseStatus['last_error']>().toEqualTypeOf<
+      string | undefined
+    >();
+    expectTypeOf<FredLeaseProvision['last_error']>().toEqualTypeOf<
+      string | undefined
+    >();
+    expectTypeOf<FredLeaseRelease['error']>().toEqualTypeOf<
+      string | undefined
+    >();
   });
   it('PortConfig is the net-new ENG-282 shape', () => {
     expectTypeOf<PortConfig>().toEqualTypeOf<{

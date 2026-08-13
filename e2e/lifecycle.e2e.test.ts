@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { LeaseState } from '@manifest-network/manifest-mcp-core';
 import { MCPTestClient, parseToolErrorCode } from './helpers/mcp-client.js';
+import { assertWireKeys } from './helpers/fred-wire-golden.js';
 
 /**
  * Full deploy lifecycle E2E test.
@@ -200,18 +201,26 @@ describe('Deploy lifecycle', () => {
     const result = await fredClient.callTool<{
       lease_uuid: string;
       chainState: unknown;
+      fredStatus?: Record<string, unknown>;
     }>('app_status', { lease_uuid: leaseUuid });
 
     expect(result.lease_uuid).toBe(leaseUuid);
     expect(result.chainState).toBeDefined();
+    // fredStatus is a looseObject fed from the raw provider response, so these
+    // are Fred's own keys — the closest thing this suite has to a direct
+    // observation of the wire contract (ENG-638).
+    expect(result.fredStatus).toBeDefined();
+    assertWireKeys('status', Object.keys(result.fredStatus ?? {}));
   });
 
   it('app_diagnostics returns provision diagnostics for the active lease', async () => {
-    const result = await fredClient.callTool<{
-      lease_uuid: string;
-    }>('app_diagnostics', { lease_uuid: leaseUuid });
+    const result = await fredClient.callTool<Record<string, unknown>>(
+      'app_diagnostics',
+      { lease_uuid: leaseUuid },
+    );
 
     expect(result.lease_uuid).toBe(leaseUuid);
+    assertWireKeys('diagnostics_projection', Object.keys(result));
   });
 
   // ------------------------------------------------------------------
@@ -312,9 +321,16 @@ describe('Deploy lifecycle', () => {
   it('app_releases lists at least one release after update_app', async () => {
     const result = await fredClient.callTool<{
       lease_uuid: string;
+      releases: Array<Record<string, unknown>>;
     }>('app_releases', { lease_uuid: leaseUuid });
 
     expect(result.lease_uuid).toBe(leaseUuid);
+    expect(result.releases.length).toBeGreaterThan(0);
+    // Release elements are forwarded through a looseObject, so these are
+    // Fred's own keys — a real observation of the wire (ENG-638).
+    for (const release of result.releases) {
+      assertWireKeys('release', Object.keys(release));
+    }
   });
 
   // restart_app last — it briefly puts the app in a non-stable state that

@@ -44,6 +44,10 @@
     "./__test-utils__/callToolWithElicitation.js": {
       "types": "./dist/__test-utils__/callToolWithElicitation.d.ts",
       "import": "./dist/__test-utils__/callToolWithElicitation.js"
+    },
+    "./__test-utils__/fred-wire.js": {
+      "types": "./dist/__test-utils__/fred-wire.d.ts",
+      "import": "./dist/__test-utils__/fred-wire.js"
     }
   },
   "scripts": {
