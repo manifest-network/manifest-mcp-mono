@@ -1292,7 +1292,52 @@ describe('FredMCPServer', () => {
 
       const callOptions = mockDeployApp.mock.calls.at(-1)?.[2];
       expect(callOptions?.onLeaseCreated).toBeUndefined();
+      // Left ENTIRELY undefined, not `{}`: that is the contract that lets
+      // fred's own poll defaults apply (ENG-661).
       expect(callOptions?.pollOptions).toBeUndefined();
+    });
+
+    /**
+     * ENG-661. `deploy_app` exposed no timeout knob at all, so an MCP caller
+     * could not raise the readiness deadline — while the sibling
+     * `wait_for_app_ready` had one all along.
+     */
+    describe('timeout_seconds', () => {
+      it('converts seconds to milliseconds on the poll options', async () => {
+        const server = new FredMCPServer({
+          config: makeMockConfig(),
+          walletProvider: makeMockWallet({ signArbitrary: true }),
+        });
+        await callTool(server, 'deploy_app', {
+          image: 'nginx',
+          port: 80,
+          size: 'docker-micro',
+          timeout_seconds: 45,
+        });
+
+        const callOptions = mockDeployApp.mock.calls.at(-1)?.[2];
+        expect(callOptions?.pollOptions?.timeoutMs).toBe(45_000);
+        // No progress token in this call, so nothing else rides along.
+        expect(callOptions?.pollOptions?.onProgress).toBeUndefined();
+      });
+
+      it('rejects an out-of-range value before deployApp is reached', async () => {
+        const server = new FredMCPServer({
+          config: makeMockConfig(),
+          walletProvider: makeMockWallet({ signArbitrary: true }),
+        });
+        mockDeployApp.mockClear();
+        const result = await callTool(server, 'deploy_app', {
+          image: 'nginx',
+          port: 80,
+          size: 'docker-micro',
+          timeout_seconds: 0,
+        });
+
+        expect(result.isError).toBe(true);
+        expect(JSON.stringify(result.content)).toContain('timeout_seconds');
+        expect(mockDeployApp).not.toHaveBeenCalled();
+      });
     });
 
     it('fans deployApp lifecycle callbacks out as MCP progress notifications', async () => {

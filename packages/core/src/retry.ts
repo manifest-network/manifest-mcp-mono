@@ -62,6 +62,11 @@ const NON_RETRYABLE_ERROR_CODES: ManifestMCPErrorCode[] = [
   ManifestMCPErrorCode.RESTORE_REJECTED,
   ManifestMCPErrorCode.RESTORE_RETRYABLE,
   ManifestMCPErrorCode.RESTORE_ORPHAN_COMPENSATION_FAILED,
+
+  // Readiness never confirmed (ENG-661). The lease EXISTS and is paid for, so a
+  // blind retry of the deploy that produced this would create a second one. The
+  // remedy is to look (app_status / wait_for_app_ready), not to re-broadcast.
+  ManifestMCPErrorCode.DEPLOY_READINESS_UNCONFIRMED,
 ];
 
 /**
@@ -139,6 +144,20 @@ export function isRetryableError(error: unknown): boolean {
     if (NON_RETRYABLE_ERROR_CODES.includes(error.code)) {
       return false;
     }
+
+    // A partial success is never auto-retryable, whatever its code says. The
+    // ENG-280 contract is that `details.partial === true` means "a lease was
+    // already created on-chain and paid for"; the deploy that produced it is
+    // non-idempotent, so re-running it buys a SECOND lease. This matters
+    // because the wrap preserves the inner error's code — a readiness timeout
+    // used to arrive as QUERY_FAILED whose message contains "timed out", which
+    // the transient-message sniff below would happily retry (ENG-661).
+    if (
+      (error.details as { partial?: unknown } | undefined)?.partial === true
+    ) {
+      return false;
+    }
+
     const { httpStatus, grpcCode } = (error.details ?? {}) as QueryErrorDetails;
 
     // An envelope means the request reached grpc-gateway and carries a gRPC

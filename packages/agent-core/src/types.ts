@@ -150,12 +150,18 @@ export interface DeployAppOptions extends AgentCoreRuntime {
    */
   dataDir?: string;
   /**
-   * Optional override for the `wait_for_app_ready` polling timeout (in
-   * milliseconds). Defaults to 480_000 (8 minutes) — generous for
-   * first-time provisioning (image pulls, k8s scheduling); fred's own
-   * default of 120_000 is too aggressive for cold-start providers.
-   * Set lower in tests to exercise timeout paths without slowing the
-   * suite.
+   * Optional override for the readiness-poll timeout (in milliseconds).
+   * Governs BOTH waits a deploy can perform: fred's own poll inside
+   * `deployApp`, and the follow-up `wait_for_app_ready` on the `needs_wait`
+   * branch. Left unset, both inherit fred's `DEFAULT_POLL_TIMEOUT_MS`
+   * (10 minutes — what the provider is actually allowed to take, including a
+   * 5-minute image pull).
+   *
+   * This used to default to 480_000 here, to compensate for fred's old 120s
+   * default being too aggressive for cold-start providers. That compensation
+   * is gone: fred's default is now derived from the provider's own
+   * provisioning ceiling, so there is one number rather than two (ENG-661).
+   * Set it lower in tests to exercise timeout paths without slowing the suite.
    */
   waitForReadyTimeoutMs?: number;
 }

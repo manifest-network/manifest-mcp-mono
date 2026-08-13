@@ -12,8 +12,10 @@ vi.mock('./provider.js', async (importOriginal) => {
 });
 
 import {
+  DEFAULT_POLL_TIMEOUT_MS,
   getLeaseLogs,
   getLeaseStatus,
+  LeaseReadinessUnconfirmedError,
   MAX_TAIL,
   pollLeaseUntilReady,
   restoreLease,
@@ -731,6 +733,430 @@ describe('pollLeaseUntilReady', () => {
     expect(onProgress).toHaveBeenNthCalledWith(3, {
       state: LeaseState.LEASE_STATE_ACTIVE,
     });
+  });
+});
+
+/**
+ * ENG-661 / ENG-479. Before this, the in-loop status read had no try/catch at
+ * all: a single 502 from a provider's ingress, one DNS blip, or the 404 window
+ * right after create-lease while the provider ingests the new lease aborted the
+ * whole deploy — ~40 chances to fail per deploy against a third-party endpoint.
+ *
+ * The budget covers the status READ and nothing else. The "never swallowed"
+ * block below is the load-bearing half: if a future edit widens the try to
+ * include the state switch, a genuinely failed deployment would be polled
+ * silently until the deadline instead of failing fast, and every other test in
+ * this file would still pass.
+ */
+describe('pollLeaseUntilReady — transient-failure budget', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  /** Drive the poll from a script of per-iteration outcomes. */
+  function scriptReads(steps: Array<{ throw?: unknown; state?: string }>) {
+    let i = 0;
+    mockCheckedFetch.mockImplementation(async () => {
+      const step = steps[Math.min(i, steps.length - 1)];
+      i += 1;
+      if (step?.throw !== undefined) throw step.throw;
+      return {} as Response;
+    });
+    mockParseJsonResponse.mockImplementation(async () => {
+      const step = steps[Math.min(i - 1, steps.length - 1)];
+      return { state: step?.state ?? 'LEASE_STATE_PENDING' };
+    });
+  }
+
+  const transient = (status = 502) =>
+    new ProviderApiError(status, 'bad gateway', { kind: 'http' });
+
+  it('tolerates failures up to the budget and then succeeds', async () => {
+    scriptReads([
+      { throw: transient() },
+      { throw: transient() },
+      { state: 'LEASE_STATE_ACTIVE' },
+    ]);
+
+    const result = await pollLeaseUntilReady(
+      PROVIDER_URL,
+      LEASE_UUID,
+      AUTH_TOKEN,
+      { intervalMs: 1, timeoutMs: 5000, maxConsecutiveFailures: 3 },
+    );
+
+    expect(result.state).toBe(LeaseState.LEASE_STATE_ACTIVE);
+    expect(mockCheckedFetch).toHaveBeenCalledTimes(3);
+  });
+
+  it('resets the counter on a successful read, so the budget is a BURST tolerance', async () => {
+    // 5 failures total, never 4 in a row: with a cumulative counter this would
+    // throw; with a consecutive one it resolves.
+    scriptReads([
+      { throw: transient() },
+      { throw: transient() },
+      { state: 'LEASE_STATE_PENDING' },
+      { throw: transient() },
+      { throw: transient() },
+      { throw: transient() },
+      { state: 'LEASE_STATE_ACTIVE' },
+    ]);
+
+    const result = await pollLeaseUntilReady(
+      PROVIDER_URL,
+      LEASE_UUID,
+      AUTH_TOKEN,
+      { intervalMs: 1, timeoutMs: 5000, maxConsecutiveFailures: 3 },
+    );
+
+    expect(result.state).toBe(LeaseState.LEASE_STATE_ACTIVE);
+    expect(mockCheckedFetch).toHaveBeenCalledTimes(7);
+  });
+
+  it('gives up past the budget with reason "provider_unreachable", naming the last error', async () => {
+    scriptReads([{ throw: transient(503) }]);
+
+    const err = await pollLeaseUntilReady(
+      PROVIDER_URL,
+      LEASE_UUID,
+      AUTH_TOKEN,
+      { intervalMs: 1, timeoutMs: 5000, maxConsecutiveFailures: 2 },
+    ).catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(LeaseReadinessUnconfirmedError);
+    const unconfirmed = err as LeaseReadinessUnconfirmedError;
+    expect(unconfirmed.reason).toBe('provider_unreachable');
+    expect(unconfirmed.consecutiveFailures).toBe(3);
+    expect(unconfirmed.message).toContain('bad gateway');
+    // The honest verdict: we never learned anything, so the caller must not
+    // read this as "the deployment failed".
+    expect(unconfirmed.message).toContain('NOT a reported failure');
+    expect(unconfirmed.cause).toBeInstanceOf(ProviderApiError);
+    expect(mockCheckedFetch).toHaveBeenCalledTimes(3);
+  });
+
+  it('maxConsecutiveFailures: 0 restores the pre-ENG-661 fail-on-first-blip behaviour', async () => {
+    scriptReads([{ throw: transient() }]);
+
+    await expect(
+      pollLeaseUntilReady(PROVIDER_URL, LEASE_UUID, AUTH_TOKEN, {
+        intervalMs: 1,
+        timeoutMs: 5000,
+        maxConsecutiveFailures: 0,
+      }),
+    ).rejects.toBeInstanceOf(LeaseReadinessUnconfirmedError);
+    expect(mockCheckedFetch).toHaveBeenCalledOnce();
+  });
+
+  it('defaults to tolerating 3 consecutive failures', async () => {
+    scriptReads([
+      { throw: transient() },
+      { throw: transient() },
+      { throw: transient() },
+      { state: 'LEASE_STATE_ACTIVE' },
+    ]);
+
+    const result = await pollLeaseUntilReady(
+      PROVIDER_URL,
+      LEASE_UUID,
+      AUTH_TOKEN,
+      { intervalMs: 1, timeoutMs: 5000 },
+    );
+    expect(result.state).toBe(LeaseState.LEASE_STATE_ACTIVE);
+  });
+
+  describe('never swallowed', () => {
+    it.each([
+      ['a 404 (stable answer, and post-upload it is a real anomaly)', 404],
+      ['a 401 (auth is not a blip)', 401],
+      ['a 403', 403],
+    ])('propagates %s on the FIRST iteration', async (_label, status) => {
+      scriptReads([
+        { throw: new ProviderApiError(status, 'nope', { kind: 'http' }) },
+      ]);
+
+      const err = await pollLeaseUntilReady(
+        PROVIDER_URL,
+        LEASE_UUID,
+        AUTH_TOKEN,
+        { intervalMs: 1, timeoutMs: 5000, maxConsecutiveFailures: 5 },
+      ).catch((e: unknown) => e);
+
+      expect(err).toBeInstanceOf(ProviderApiError);
+      expect(err).not.toBeInstanceOf(LeaseReadinessUnconfirmedError);
+      expect((err as ProviderApiError).status).toBe(status);
+      expect(mockCheckedFetch).toHaveBeenCalledOnce();
+    });
+
+    it('propagates an SSRF/URL rejection immediately (it will never change)', async () => {
+      scriptReads([
+        {
+          throw: new ProviderApiError(0, 'Provider URL is not allowed: …', {
+            kind: 'invalid_url',
+          }),
+        },
+      ]);
+
+      await expect(
+        pollLeaseUntilReady(PROVIDER_URL, LEASE_UUID, AUTH_TOKEN, {
+          intervalMs: 1,
+          timeoutMs: 5000,
+          maxConsecutiveFailures: 5,
+        }),
+      ).rejects.toThrow(/not allowed/);
+      expect(mockCheckedFetch).toHaveBeenCalledOnce();
+    });
+
+    it('propagates a non-ProviderApiError (a bug is not a blip)', async () => {
+      scriptReads([{ throw: new TypeError('reading of undefined') }]);
+
+      await expect(
+        pollLeaseUntilReady(PROVIDER_URL, LEASE_UUID, AUTH_TOKEN, {
+          intervalMs: 1,
+          timeoutMs: 5000,
+          maxConsecutiveFailures: 5,
+        }),
+      ).rejects.toThrow(TypeError);
+      expect(mockCheckedFetch).toHaveBeenCalledOnce();
+    });
+
+    it('a PROVISION_FAILED verdict still fails fast, however large the budget', async () => {
+      mockCheckedFetch.mockResolvedValue({} as Response);
+      mockParseJsonResponse.mockResolvedValue({
+        state: 'LEASE_STATE_ACTIVE',
+        provision_status: 'failed',
+      });
+
+      await expect(
+        pollLeaseUntilReady(PROVIDER_URL, LEASE_UUID, AUTH_TOKEN, {
+          intervalMs: 1,
+          timeoutMs: 5000,
+          maxConsecutiveFailures: 99,
+        }),
+      ).rejects.toThrow(/provisioning failed/);
+      expect(mockCheckedFetch).toHaveBeenCalledOnce();
+    });
+
+    it('a terminal lease state still fails fast, however large the budget', async () => {
+      mockCheckedFetch.mockResolvedValue({} as Response);
+      mockParseJsonResponse.mockResolvedValue({
+        state: 'LEASE_STATE_CLOSED',
+      });
+
+      await expect(
+        pollLeaseUntilReady(PROVIDER_URL, LEASE_UUID, AUTH_TOKEN, {
+          intervalMs: 1,
+          timeoutMs: 5000,
+          maxConsecutiveFailures: 99,
+        }),
+      ).rejects.toThrow(/terminal state/);
+      expect(mockCheckedFetch).toHaveBeenCalledOnce();
+    });
+
+    it('an abort racing a transient failure surfaces the abort, not the tolerance', async () => {
+      const controller = new AbortController();
+      let calls = 0;
+      mockCheckedFetch.mockImplementation(async () => {
+        calls += 1;
+        controller.abort(new Error('user cancelled'));
+        throw transient();
+      });
+
+      const startedAt = Date.now();
+      // A 5s interval means a "tolerate first, notice the abort later" bug
+      // blows vitest's 5s test timeout — the failure mode we want.
+      await expect(
+        pollLeaseUntilReady(PROVIDER_URL, LEASE_UUID, AUTH_TOKEN, {
+          intervalMs: 5_000,
+          timeoutMs: 60_000,
+          maxConsecutiveFailures: 5,
+          abortSignal: controller.signal,
+        }),
+      ).rejects.toThrow(/user cancelled/);
+
+      expect(calls).toBe(1);
+      expect(Date.now() - startedAt).toBeLessThan(1_000);
+    });
+
+    it('an abort DURING the post-failure backoff cancels the wait', async () => {
+      const controller = new AbortController();
+      mockCheckedFetch.mockImplementation(async () => {
+        throw transient();
+      });
+      setTimeout(
+        () => controller.abort(new Error('cancelled mid-backoff')),
+        20,
+      );
+
+      const startedAt = Date.now();
+      await expect(
+        pollLeaseUntilReady(PROVIDER_URL, LEASE_UUID, AUTH_TOKEN, {
+          intervalMs: 5_000,
+          timeoutMs: 60_000,
+          maxConsecutiveFailures: 5,
+          abortSignal: controller.signal,
+        }),
+      ).rejects.toThrow(/cancelled mid-backoff/);
+      expect(Date.now() - startedAt).toBeLessThan(1_000);
+    });
+  });
+
+  it('honours a provider Retry-After instead of the poll interval', async () => {
+    scriptReads([
+      {
+        throw: new ProviderApiError(429, 'rate limited', {
+          kind: 'http',
+          retryAfterMs: 60,
+        }),
+      },
+      { state: 'LEASE_STATE_ACTIVE' },
+    ]);
+
+    const startedAt = Date.now();
+    await pollLeaseUntilReady(PROVIDER_URL, LEASE_UUID, AUTH_TOKEN, {
+      intervalMs: 1,
+      timeoutMs: 5_000,
+    });
+
+    // Waited the header's 60ms rather than the 1ms interval.
+    expect(Date.now() - startedAt).toBeGreaterThanOrEqual(50);
+  });
+
+  it('never sleeps a Retry-After past the deadline', async () => {
+    scriptReads([
+      {
+        throw: new ProviderApiError(503, 'unavailable', {
+          kind: 'http',
+          // Fred caps its own header at 86400s; honouring that literally would
+          // park the poll for a day.
+          retryAfterMs: 86_400_000,
+        }),
+      },
+    ]);
+
+    const startedAt = Date.now();
+    await expect(
+      pollLeaseUntilReady(PROVIDER_URL, LEASE_UUID, AUTH_TOKEN, {
+        intervalMs: 1,
+        timeoutMs: 40,
+        maxConsecutiveFailures: 99,
+      }),
+    ).rejects.toBeInstanceOf(LeaseReadinessUnconfirmedError);
+    expect(Date.now() - startedAt).toBeLessThan(2_000);
+  });
+});
+
+describe('pollLeaseUntilReady — deadline (ENG-661)', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("defaults to the provider's own 10-minute provisioning allowance", () => {
+    // Fred's docker backend: ProvisionTimeout 10m, of which ImagePullTimeout is
+    // 5m. The old 120s default gave up ~5x early on a healthy cold start.
+    expect(DEFAULT_POLL_TIMEOUT_MS).toBe(10 * 60 * 1_000);
+  });
+
+  it('applies DEFAULT_POLL_TIMEOUT_MS when no timeoutMs is given', async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(0);
+      mockCheckedFetch.mockResolvedValue({} as Response);
+      mockParseJsonResponse.mockResolvedValue({ state: 'LEASE_STATE_PENDING' });
+
+      const settled = pollLeaseUntilReady(
+        PROVIDER_URL,
+        LEASE_UUID,
+        AUTH_TOKEN,
+        {
+          // Explicit, large interval: only the DEADLINE is under test, and the
+          // 3s default would mean ~200 mock reads.
+          intervalMs: 60_000,
+        },
+      );
+      const assertion = expect(settled).rejects.toThrow(
+        /poll timed out after 600000ms/,
+      );
+
+      await vi.advanceTimersByTimeAsync(599_000);
+      await vi.advanceTimersByTimeAsync(61_000);
+      await assertion;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('reports the deadline as unconfirmed, not failed, with the last state seen', async () => {
+    mockCheckedFetch.mockResolvedValue({} as Response);
+    mockParseJsonResponse.mockResolvedValue({
+      state: 'LEASE_STATE_ACTIVE',
+      provision_status: 'provisioning',
+    });
+
+    const err = await pollLeaseUntilReady(
+      PROVIDER_URL,
+      LEASE_UUID,
+      AUTH_TOKEN,
+      {
+        intervalMs: 10,
+        timeoutMs: 50,
+      },
+    ).catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(LeaseReadinessUnconfirmedError);
+    const unconfirmed = err as LeaseReadinessUnconfirmedError;
+    expect(unconfirmed.reason).toBe('deadline');
+    expect(unconfirmed.message).toContain('NOT a reported failure');
+    expect(unconfirmed.message).toContain('app_status');
+    expect(unconfirmed.details).toMatchObject({
+      lease_uuid: LEASE_UUID,
+      reason: 'deadline',
+      last_state: 'LEASE_STATE_ACTIVE',
+      last_provision_status: 'provisioning',
+      timeout_ms: 50,
+    });
+  });
+
+  it('is a ProviderApiError, brand included, so existing catchers keep working', async () => {
+    mockCheckedFetch.mockResolvedValue({} as Response);
+    mockParseJsonResponse.mockResolvedValue({ state: 'LEASE_STATE_PENDING' });
+
+    const err = await pollLeaseUntilReady(
+      PROVIDER_URL,
+      LEASE_UUID,
+      AUTH_TOKEN,
+      {
+        intervalMs: 10,
+        timeoutMs: 30,
+      },
+    ).catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(ProviderApiError);
+    expect(ProviderApiError.isProviderApiError(err)).toBe(true);
+    expect((err as ProviderApiError).status).toBe(0);
+    expect((err as ProviderApiError).kind).toBe('poll');
+    expect((err as Error).name).toBe('LeaseReadinessUnconfirmedError');
+  });
+
+  it('withContext preserves the stack and adds provider identity', async () => {
+    mockCheckedFetch.mockResolvedValue({} as Response);
+    mockParseJsonResponse.mockResolvedValue({ state: 'LEASE_STATE_PENDING' });
+
+    const err = (await pollLeaseUntilReady(
+      PROVIDER_URL,
+      LEASE_UUID,
+      AUTH_TOKEN,
+      {
+        intervalMs: 10,
+        timeoutMs: 30,
+      },
+    ).catch((e: unknown) => e)) as LeaseReadinessUnconfirmedError;
+
+    const enriched = err.withContext({
+      lease_uuid: LEASE_UUID,
+      providerUuid: 'provider-1',
+      providerUrl: PROVIDER_URL,
+    });
+    expect(enriched.details.provider_uuid).toBe('provider-1');
+    expect(enriched.details.provider_url).toBe(PROVIDER_URL);
+    expect(enriched.reason).toBe('deadline');
+    expect(enriched.stack).toBe(err.stack);
   });
 });
 

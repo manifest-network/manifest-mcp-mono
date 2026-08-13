@@ -139,4 +139,60 @@ describe('classifyDeployError (ENG-280 discriminant + legacy prefix fallback)', 
     });
     expect(r.outcome).toBe('partially_succeeded');
   });
+
+  /**
+   * ENG-661. fred now distinguishes "readiness was never confirmed" (the lease
+   * is live and may be healthy) from "a step failed" (nothing is running).
+   * Carrying that through is what stops the recovery prompt from telling a
+   * user their working deployment failed.
+   */
+  describe('readiness-unconfirmed discriminant', () => {
+    it('propagates details.readiness_unconfirmed and failedStep', () => {
+      const r = classifyDeployError({
+        message: 'Deploy partially succeeded: …',
+        details: {
+          partial: true,
+          readiness_unconfirmed: true,
+          failedStep: 'poll',
+          lease_uuid: VALID_UUID,
+        },
+      });
+      expect(r.outcome).toBe('partially_succeeded');
+      expect(r.readinessUnconfirmed).toBe(true);
+      expect(r.failedStep).toBe('poll');
+    });
+
+    it('is strict: a truthy non-true flag does not soften the advice', () => {
+      const r = classifyDeployError({
+        message: 'Deploy partially succeeded: …',
+        details: {
+          partial: true,
+          readiness_unconfirmed: 'yes',
+          lease_uuid: VALID_UUID,
+        },
+      });
+      expect(r.readinessUnconfirmed).toBeUndefined();
+    });
+
+    it('ignores an unknown failedStep rather than passing it through', () => {
+      const r = classifyDeployError({
+        message: 'Deploy partially succeeded: …',
+        details: {
+          partial: true,
+          failedStep: 'teleport',
+          lease_uuid: VALID_UUID,
+        },
+      });
+      expect(r.failedStep).toBeUndefined();
+    });
+
+    it('leaves both absent for a fred build that predates the flags', () => {
+      const r = classifyDeployError({
+        message: 'Deploy partially succeeded: lease abc ...',
+        details: { partial: true, lease_uuid: VALID_UUID },
+      });
+      expect(r.readinessUnconfirmed).toBeUndefined();
+      expect(r.failedStep).toBeUndefined();
+    });
+  });
 });

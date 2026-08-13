@@ -34,6 +34,15 @@ const UUID_PATTERN =
 
 const PARTIAL_PREFIX = 'Deploy partially succeeded:';
 
+/** The `deployManifest` step that failed, as reported in `details.failedStep`. */
+export type DeployFailedStep = 'set_domain' | 'upload' | 'poll';
+
+const FAILED_STEPS: readonly DeployFailedStep[] = [
+  'set_domain',
+  'upload',
+  'poll',
+];
+
 export interface DeployErrorClassification {
   outcome: 'partially_succeeded' | 'failed';
   /** Present when create-lease confirmed (outcome partially_succeeded), or when a UUID was extractable from a non-partial error. */
@@ -42,6 +51,15 @@ export interface DeployErrorClassification {
   requestedCustomDomain?: string;
   /** Human-readable summary — the raw error message (or a stable placeholder if missing). */
   reason: string;
+  /**
+   * `details.readiness_unconfirmed === true`: the lease exists AND the manifest
+   * was uploaded, but the readiness poll never got a verdict. NOT a reported
+   * failure — the app may be starting (ENG-661). Absent on fred builds that
+   * predate the flag, which then fall back to today's behaviour.
+   */
+  readinessUnconfirmed?: boolean;
+  /** `details.failedStep`, when it is one of the known steps. */
+  failedStep?: DeployFailedStep;
 }
 
 /**
@@ -98,10 +116,21 @@ export function classifyDeployError(
       const m = message.match(UUID_PATTERN);
       if (m) leaseUuid = m[0];
     }
+    // Structural only — no message sniffing. A fred build that sends neither
+    // flag classifies exactly as it did before (ENG-661). `=== true` is strict
+    // for the same anti-false-positive reason as `partial` above: a
+    // truthy-but-not-`true` value must not soften destructive advice.
+    const readinessUnconfirmed =
+      (details as { readiness_unconfirmed?: unknown }).readiness_unconfirmed ===
+      true;
+    const rawStep = (details as { failedStep?: unknown }).failedStep;
+    const failedStep = FAILED_STEPS.find((s) => s === rawStep);
     return finalize(
       {
         outcome: 'partially_succeeded',
         ...(leaseUuid !== undefined && { leaseUuid }),
+        ...(readinessUnconfirmed && { readinessUnconfirmed: true }),
+        ...(failedStep !== undefined && { failedStep }),
         // `details.partial` can trigger this path with an empty envelope
         // message; fall back to a stable placeholder, matching the
         // failed-path contract ("raw error message, or a placeholder if missing").

@@ -17,6 +17,7 @@ import {
 import { failureDetail } from '../failure-reason.js';
 import {
   checkedFetch,
+  isTransientProviderError,
   ProviderApiError,
   parseJsonResponse,
   validateProviderUrl,
@@ -223,11 +224,25 @@ export interface TerminalChainState {
 
 export interface PollOptions {
   readonly intervalMs?: number;
+  /** Overall deadline. Defaults to {@link DEFAULT_POLL_TIMEOUT_MS}. */
   readonly timeoutMs?: number;
   readonly abortSignal?: AbortSignal;
   readonly onProgress?: (status: FredLeaseStatus) => void;
   /** Runs once per iteration before the provider is queried. Non-null return throws; errors propagate. */
   readonly checkChainState?: () => Promise<TerminalChainState | null>;
+  /**
+   * How many CONSECUTIVE provider status-read failures to tolerate before
+   * giving up. Default 3; `0` restores the pre-ENG-661 behaviour of failing on
+   * the first blip. The counter resets to 0 on every successful read, so this
+   * is a burst tolerance, not a lifetime allowance.
+   *
+   * It can never extend the poll past `timeoutMs` — the deadline still bounds
+   * the whole loop. Only the status READ is covered: a terminal lease state, a
+   * failed `provision_status`, a `checkChainState` verdict, an auth-token
+   * failure and a caller abort all propagate immediately and are never counted.
+   * (ENG-479, ENG-661)
+   */
+  readonly maxConsecutiveFailures?: number;
 }
 
 const CHAIN_STATE_TO_LEASE_STATE: Record<TerminalChainLeaseState, LeaseState> =
@@ -412,6 +427,138 @@ export class TerminalChainStateError extends ProviderApiError {
   }
 }
 
+/** Why the poll stopped without ever learning whether the deployment is healthy. */
+export type ReadinessUnconfirmedReason = 'deadline' | 'provider_unreachable';
+
+export interface LeaseReadinessUnconfirmedInput {
+  readonly leaseUuid: string;
+  readonly reason: ReadinessUnconfirmedReason;
+  readonly timeoutMs: number;
+  readonly elapsedMs: number;
+  readonly lastState?: LeaseState;
+  readonly lastProvisionStatus?: string;
+  readonly consecutiveFailures?: number;
+  readonly lastPollError?: unknown;
+  readonly context?: TerminalChainStateContext;
+}
+
+function errorText(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+function readinessUnconfirmedMessage(
+  input: LeaseReadinessUnconfirmedInput,
+): string {
+  const where = `last state: ${
+    input.lastState !== undefined ? leaseStateName(input.lastState) : 'unknown'
+  }, provision_status: ${input.lastProvisionStatus ?? 'unknown'}`;
+  // "NOT a reported failure" is the load-bearing sentence: this message reaches
+  // an agent verbatim through wait_for_app_ready / restart_app / update_app,
+  // because withErrorHandling only attaches code+details for ManifestMCPError.
+  if (input.reason === 'provider_unreachable') {
+    return (
+      `Lease ${input.leaseUuid} poll gave up after ${input.consecutiveFailures ?? 0} consecutive ` +
+      `failed status reads over ${input.elapsedMs}ms (${where}; last error: ${errorText(input.lastPollError)}). ` +
+      'This is NOT a reported failure: the provider never returned a failed provision_status — its ' +
+      'status endpoint was unreachable from here. The deployment may be healthy; re-check with ' +
+      'app_status before treating it as failed.'
+    );
+  }
+  return (
+    `Lease ${input.leaseUuid} poll timed out after ${input.timeoutMs}ms without a verdict from the ` +
+    `provider (${where}). This is NOT a reported failure: the provider never returned a failed ` +
+    'provision_status, and a cold image pull alone can take 5 minutes. The deployment may still be ' +
+    'coming up — re-check with app_status, or wait again with a longer timeout, before treating it ' +
+    'as failed.' +
+    (input.lastPollError !== undefined
+      ? ` The last status read also failed with: ${errorText(input.lastPollError)}.`
+      : '')
+  );
+}
+
+/**
+ * The poll ended WITHOUT a verdict from the provider — the deadline expired, or
+ * its status endpoint stayed unreachable past the consecutive-failure budget.
+ *
+ * This is the ENG-661 discriminant, and the distinction it draws is the whole
+ * point: "we never found out" is not "it failed". The provider never reported a
+ * failed `provision_status` and the chain never cleared the lease, so the lease
+ * is LIVE and may well be healthy — a caller must not treat this as licence to
+ * close it. `PROVISION_FAILED` and terminal lease states keep throwing a plain
+ * `ProviderApiError`; only genuine silence lands here.
+ *
+ * Extends `ProviderApiError` (as `TerminalChainStateError` does) so existing
+ * catchers keep working and the dual-package `Symbol.for` brand is inherited;
+ * use `instanceof` or read `reason` to discriminate.
+ */
+export class LeaseReadinessUnconfirmedError extends ProviderApiError {
+  public readonly reason: ReadinessUnconfirmedReason;
+  public readonly leaseUuid: string;
+  public readonly lastState?: LeaseState;
+  public readonly lastProvisionStatus?: string;
+  public readonly timeoutMs: number;
+  public readonly elapsedMs: number;
+  public readonly consecutiveFailures?: number;
+  /** Structured context for downstream classifiers (agent-core's classify-deploy-error). */
+  public readonly details: {
+    readonly lease_uuid: string;
+    readonly provider_uuid?: string;
+    readonly provider_url?: string;
+    readonly reason: ReadinessUnconfirmedReason;
+    readonly last_state?: string;
+    readonly last_provision_status?: string;
+    readonly timeout_ms: number;
+    readonly elapsed_ms: number;
+  };
+  private readonly input: LeaseReadinessUnconfirmedInput;
+
+  constructor(input: LeaseReadinessUnconfirmedInput) {
+    super(0, readinessUnconfirmedMessage(input), {
+      kind: 'poll',
+      ...(input.lastPollError !== undefined && { cause: input.lastPollError }),
+    });
+    this.name = 'LeaseReadinessUnconfirmedError';
+    this.input = input;
+    this.reason = input.reason;
+    this.leaseUuid = input.leaseUuid;
+    this.lastState = input.lastState;
+    this.lastProvisionStatus = input.lastProvisionStatus;
+    this.timeoutMs = input.timeoutMs;
+    this.elapsedMs = input.elapsedMs;
+    this.consecutiveFailures = input.consecutiveFailures;
+    this.details = {
+      lease_uuid: input.context?.lease_uuid ?? input.leaseUuid,
+      provider_uuid: input.context?.providerUuid,
+      provider_url: input.context?.providerUrl,
+      reason: input.reason,
+      last_state:
+        input.lastState !== undefined
+          ? leaseStateName(input.lastState)
+          : undefined,
+      last_provision_status: input.lastProvisionStatus,
+      timeout_ms: input.timeoutMs,
+      elapsed_ms: input.elapsedMs,
+    };
+    Object.setPrototypeOf(this, LeaseReadinessUnconfirmedError.prototype);
+  }
+
+  /**
+   * Returns a new instance carrying the supplied provider context, preserving
+   * the original stack so debugging points at the poll, not the enricher.
+   * Mirrors `TerminalChainStateError.withContext`.
+   */
+  withContext(
+    context: TerminalChainStateContext,
+  ): LeaseReadinessUnconfirmedError {
+    const enriched = new LeaseReadinessUnconfirmedError({
+      ...this.input,
+      context,
+    });
+    if (this.stack) enriched.stack = this.stack;
+    return enriched;
+  }
+}
+
 /**
  * Sleep for `ms`, abort-aware. With no `signal` it is a plain `setTimeout` sleep; with one it clears
  * the timer and rejects with `signal.reason ?? AbortError` if the signal aborts before the sleep ends
@@ -440,6 +587,29 @@ export function abortableSleep(
   });
 }
 
+/**
+ * How long a provider may take to make a deployment ready before we stop
+ * waiting. 10 minutes, because that is what Fred's docker backend actually
+ * allows itself: `ProvisionTimeout: 10 * time.Minute`, of which
+ * `ImagePullTimeout` alone is `5 * time.Minute`
+ * (submodules/fred/internal/backend/docker/config.go).
+ *
+ * The previous 120s default was ~5x short of that, so any cold image pull past
+ * ~2 minutes tripped the deadline on a perfectly healthy lease — and the deploy
+ * path then reported that as a failure and recommended closing the lease
+ * (ENG-661). A client deadline shorter than the server's own means the client
+ * gives up before the server has a verdict to give.
+ */
+export const DEFAULT_POLL_TIMEOUT_MS = 600_000;
+
+/** Default consecutive-failure tolerance for the status read (ENG-479). */
+export const DEFAULT_MAX_CONSECUTIVE_FAILURES = 3;
+
+/** Ceiling on how long a provider-supplied `Retry-After` may park the poll. Fred
+ *  caps its own header at 86400s; honouring that literally would hand a single
+ *  response the entire budget, so we honour the hint but bound it. */
+const MAX_RETRY_AFTER_HONOURED_MS = 30_000;
+
 export async function pollLeaseUntilReady(
   providerUrl: string,
   leaseUuid: string,
@@ -450,14 +620,21 @@ export async function pollLeaseUntilReady(
 ): Promise<FredLeaseStatus> {
   const {
     intervalMs = 3_000,
-    timeoutMs = 120_000,
+    timeoutMs = DEFAULT_POLL_TIMEOUT_MS,
     abortSignal,
     onProgress,
     checkChainState,
+    maxConsecutiveFailures = DEFAULT_MAX_CONSECUTIVE_FAILURES,
   } = opts;
-  const deadline = Date.now() + timeoutMs;
+  // Clamp rather than throw: a nonsensical knob should not abort a deploy that
+  // is otherwise fine.
+  const failureBudget = Math.max(0, Math.floor(maxConsecutiveFailures));
+  const startedAt = Date.now();
+  const deadline = startedAt + timeoutMs;
   let lastState: LeaseState | undefined;
   let lastProvisionStatus: string | undefined;
+  let consecutiveFailures = 0;
+  let lastPollError: unknown;
 
   while (Date.now() < deadline) {
     abortSignal?.throwIfAborted();
@@ -471,14 +648,65 @@ export async function pollLeaseUntilReady(
     const token =
       typeof authToken === 'function' ? await authToken() : authToken;
     abortSignal?.throwIfAborted();
-    const status = await getLeaseStatus(
-      providerUrl,
-      leaseUuid,
-      token,
-      fetchFn,
-      undefined,
-      allowLoopback,
-    );
+    // ONLY the status read is inside this try (ENG-479/ENG-661). Everything that
+    // constitutes a VERDICT — the chain-state check above, the token mint, and
+    // the whole state switch below (PROVISION_FAILED, terminal lease states, an
+    // unexpected state) — is deliberately outside it, so no future edit can make
+    // the failure budget swallow a real answer. A blip is worth another look; a
+    // verdict is not.
+    let status: FredLeaseStatus;
+    try {
+      status = await getLeaseStatus(
+        providerUrl,
+        leaseUuid,
+        token,
+        fetchFn,
+        abortSignal,
+        allowLoopback,
+      );
+    } catch (err) {
+      // Cancellation first, and keyed on the SIGNAL rather than the error shape:
+      // checkedFetch rethrows the caller's own abort reason verbatim, which can
+      // be any value. A user's cancel is never a transient fault.
+      abortSignal?.throwIfAborted();
+      if (!isTransientProviderError(err)) throw err;
+      consecutiveFailures += 1;
+      lastPollError = err;
+      if (consecutiveFailures > failureBudget) {
+        throw new LeaseReadinessUnconfirmedError({
+          leaseUuid,
+          reason: 'provider_unreachable',
+          timeoutMs,
+          elapsedMs: Date.now() - startedAt,
+          lastState,
+          lastProvisionStatus,
+          consecutiveFailures,
+          lastPollError: err,
+        });
+      }
+      logger.warn(
+        `[fred] lease ${leaseUuid} status read failed (${consecutiveFailures}/${failureBudget} tolerated): ${errorText(err)}`,
+      );
+      // Honour the provider's own Retry-After when it sent one, bounded by our
+      // ceiling and by the remaining deadline. A wait clamped to 0 means the
+      // deadline has passed, and the loop guard turns that into the deadline
+      // error on the next pass rather than a hot retry loop.
+      const retryAfterMs = ProviderApiError.isProviderApiError(err)
+        ? err.retryAfterMs
+        : undefined;
+      const wait = Math.max(
+        0,
+        Math.min(
+          retryAfterMs ?? intervalMs,
+          MAX_RETRY_AFTER_HONOURED_MS,
+          deadline - Date.now(),
+        ),
+      );
+      await abortableSleep(wait, abortSignal);
+      continue;
+    }
+    consecutiveFailures = 0;
+    lastPollError = undefined;
     lastState = status.state;
     lastProvisionStatus = status.provision_status;
     onProgress?.(status);
@@ -544,8 +772,13 @@ export async function pollLeaseUntilReady(
     await abortableSleep(intervalMs, abortSignal);
   }
 
-  throw new ProviderApiError(
-    0,
-    `Lease ${leaseUuid} poll timed out after ${timeoutMs}ms (last state: ${lastState !== undefined ? leaseStateName(lastState) : 'unknown'}, provision_status: ${lastProvisionStatus ?? 'unknown'})`,
-  );
+  throw new LeaseReadinessUnconfirmedError({
+    leaseUuid,
+    reason: 'deadline',
+    timeoutMs,
+    elapsedMs: Date.now() - startedAt,
+    lastState,
+    lastProvisionStatus,
+    ...(lastPollError !== undefined && { lastPollError }),
+  });
 }

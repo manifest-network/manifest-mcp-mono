@@ -11,17 +11,55 @@ const PROVIDER_API_ERROR_BRAND = Symbol.for(
   '@manifest-network/manifest-mcp-fred.ProviderApiError',
 );
 
+/**
+ * What kind of fault produced a `ProviderApiError`. Exists because `status` is
+ * `0` for every non-HTTP failure — invalid URL, SSRF reject, connect error,
+ * timeout, body-cap breach, malformed JSON, poll outcome — so `status` alone
+ * cannot tell a retryable blip from a permanent rejection (ENG-661).
+ *
+ * OPTIONAL by design: an error constructed without one (a third-party or older
+ * call site) is treated as unclassified, and `isTransientProviderError` falls
+ * back to the HTTP status. Adding a tag must never make an untagged error
+ * *more* retryable than it is today.
+ */
+export type ProviderErrorKind =
+  | 'http'
+  | 'network'
+  | 'timeout'
+  | 'invalid_url'
+  | 'invalid_json'
+  | 'body_cap'
+  | 'poll';
+
+export interface ProviderApiErrorOptions {
+  readonly kind?: ProviderErrorKind;
+  /** Parsed `Retry-After` in ms, when the provider sent one (see `parseRetryAfterMs`). */
+  readonly retryAfterMs?: number;
+  readonly cause?: unknown;
+}
+
 export class ProviderApiError extends Error {
   public readonly status: number;
+  public readonly kind?: ProviderErrorKind;
+  public readonly retryAfterMs?: number;
+  /**
+   * The underlying error, when this one wraps another. Declared here rather
+   * than passed to `super(message, { cause })` because the repo compiles
+   * against `lib: ES2020`, where `ErrorOptions` does not exist yet.
+   */
+  public readonly cause?: unknown;
 
-  constructor(status: number, message: string) {
+  constructor(status: number, message: string, opts?: ProviderApiErrorOptions) {
     super(message);
     this.name = 'ProviderApiError';
     this.status = status;
+    this.kind = opts?.kind;
+    this.retryAfterMs = opts?.retryAfterMs;
+    this.cause = opts?.cause;
     Object.setPrototypeOf(this, ProviderApiError.prototype);
     // Dual-package-safe brand. Defined NON-enumerably (default descriptor) so it never appears
     // in JSON.stringify / Object.entries / spread / sanitizeForLogging. Inherited by subclasses
-    // (TerminalChainStateError) via this super() call.
+    // (TerminalChainStateError, LeaseReadinessUnconfirmedError) via this super() call.
     Object.defineProperty(this, PROVIDER_API_ERROR_BRAND, { value: true });
   }
 
@@ -33,6 +71,81 @@ export class ProviderApiError extends Error {
       value !== null &&
       (value as Record<symbol, unknown>)[PROVIDER_API_ERROR_BRAND] === true
     );
+  }
+}
+
+/** Upper bound on a parsed `Retry-After`, matching Fred's own cap on the value it
+ *  emits (`maxRetryAfterSeconds = 86400`, internal/api/ratelimit.go). A hostile or
+ *  buggy intermediary can send anything; callers additionally clamp to their own
+ *  deadline before sleeping. */
+const MAX_RETRY_AFTER_MS = 86_400_000;
+
+/**
+ * Parse an RFC 9110 `Retry-After` header value into milliseconds.
+ *
+ * Both wire forms are accepted: delta-seconds (`"1"` — what Fred emits, see
+ * `calcRetryAfterSeconds` in internal/api/ratelimit.go) and an HTTP-date, which
+ * an intermediary proxy may substitute. A date already in the past yields `0`
+ * ("retry now"), not a negative sleep. Anything unparseable — including a
+ * negative delta — yields `undefined`, meaning "no guidance", so the caller
+ * keeps its own interval rather than trusting garbage.
+ */
+export function parseRetryAfterMs(
+  value: string | null | undefined,
+  now: number = Date.now(),
+): number | undefined {
+  if (value === null || value === undefined) return undefined;
+  const trimmed = value.trim();
+  if (trimmed === '') return undefined;
+  if (/^\d+$/.test(trimmed)) {
+    const seconds = Number(trimmed);
+    if (!Number.isFinite(seconds)) return undefined;
+    return Math.min(seconds * 1_000, MAX_RETRY_AFTER_MS);
+  }
+  // Every RFC 9110 HTTP-date form carries a weekday/month NAME and spaces
+  // ("Sun, 06 Nov 1994 08:49:37 GMT"). Requiring both before handing the value
+  // to Date.parse keeps its very loose grammar from turning junk into a date —
+  // V8 reads a bare "-5" as a year and yields a valid timestamp.
+  if (!/[A-Za-z]/.test(trimmed) || !trimmed.includes(' ')) return undefined;
+  const at = Date.parse(trimmed);
+  if (Number.isNaN(at)) return undefined;
+  return Math.min(Math.max(0, at - now), MAX_RETRY_AFTER_MS);
+}
+
+/**
+ * Is this provider-HTTP failure worth another attempt?
+ *
+ * The single source of truth for "tolerable" on the provider path — the
+ * readiness poll's consecutive-failure budget consumes it (ENG-661/ENG-479).
+ * Deliberately NOT core's `isRetryableError`: that classifier reaches a
+ * `ProviderApiError` only through its generic `Error` branch, where the message
+ * is a raw provider response body, so a Fred 5xx (`{"error":"…","code":500}`)
+ * fails its `/\b(?:http|status)\s*5\d{2}\b/` sniff while a 429 matches only by
+ * the accident of Fred echoing the status into the JSON body.
+ *
+ * Two rows are non-obvious. `invalid_json` IS transient: a truncated body or an
+ * intermediary's HTML error page is a classic blip. `body_cap` is NOT: a
+ * provider streaming past the 10 MiB ceiling will do it again, and re-reading
+ * burns bandwidth. Anything that is not a `ProviderApiError` (a `TypeError`
+ * from a bug, say) is never tolerated — swallowing it for N iterations and then
+ * blaming the provider is a debugging trap.
+ */
+export function isTransientProviderError(err: unknown): boolean {
+  if (!ProviderApiError.isProviderApiError(err)) return false;
+  switch (err.kind) {
+    case 'network':
+    case 'timeout':
+    case 'invalid_json':
+      return true;
+    case 'invalid_url':
+    case 'body_cap':
+    case 'poll':
+      return false;
+    default:
+      // 'http', and errors from a call site that predates `kind`: fall back to
+      // the status. 5xx = the provider is unwell; 429 = it asked us to wait.
+      // Every other 4xx is a stable answer that will not change on retry.
+      return err.status >= 500 || err.status === 429;
   }
 }
 
@@ -93,13 +206,16 @@ export function validateProviderUrl(
   try {
     parsed = new URL(url);
   } catch {
-    throw new ProviderApiError(0, `Invalid provider URL: ${url}`);
+    throw new ProviderApiError(0, `Invalid provider URL: ${url}`, {
+      kind: 'invalid_url',
+    });
   }
 
   if (!isUrlSsrfSafe(url, opts)) {
     throw new ProviderApiError(
       0,
       `Provider URL is not allowed: its host is localhost or a non-public IP literal (loopback, private, link-local/metadata, CGNAT, or reserved): ${url}`,
+      { kind: 'invalid_url' },
     );
   }
 
@@ -116,6 +232,7 @@ export function validateProviderUrl(
   throw new ProviderApiError(
     0,
     `Provider URL must use HTTPS (or HTTP for localhost with allowLoopback): ${url}`,
+    { kind: 'invalid_url' },
   );
 }
 
@@ -158,6 +275,7 @@ export async function readBodyCapped(
     throw new ProviderApiError(
       0,
       `Response from ${url} declares Content-Length ${declared} which exceeds the ${maxBytes}-byte cap; refusing to read.`,
+      { kind: 'body_cap' },
     );
   }
 
@@ -183,6 +301,7 @@ export async function readBodyCapped(
           throw new ProviderApiError(
             0,
             `Response body from ${url} exceeded the ${maxBytes}-byte cap; aborting to avoid memory exhaustion.`,
+            { kind: 'body_cap' },
           );
         }
         text += decoder.decode(value, { stream: true });
@@ -254,6 +373,7 @@ export async function checkedFetch(
         throw new ProviderApiError(
           0,
           `Request to ${url} timed out after ${timeoutMs}ms`,
+          { kind: 'timeout' },
         );
       }
       // Surface the caller's original abort reason (e.g. `new Error('cancelled')`)
@@ -264,6 +384,7 @@ export async function checkedFetch(
     throw new ProviderApiError(
       0,
       `Network request to ${url} failed: ${err instanceof Error ? err.message : String(err)}`,
+      { kind: 'network', cause: err },
     );
   } finally {
     if (timer !== undefined) clearTimeout(timer);
@@ -272,11 +393,20 @@ export async function checkedFetch(
     }
   }
   if (!res.ok) {
+    // Read `Retry-After` BEFORE the body: it is the provider's own guidance on
+    // when a retry is welcome, and discarding it (as this did) meant the poll
+    // could only guess (ENG-661). Valid on 503 as well as 429, so it is read for
+    // any non-2xx. Optional chaining mirrors `readBodyCapped`'s defensive header
+    // read so minimal test/mock Response objects keep working.
+    const retryAfterMs = parseRetryAfterMs(res.headers?.get?.('retry-after'));
     const body = await readBodyCapped(res, url).catch(
       (readErr: unknown) =>
         `[body read failed: ${readErr instanceof Error ? readErr.message : String(readErr)}]`,
     );
-    throw new ProviderApiError(res.status, body || `HTTP ${res.status}`);
+    throw new ProviderApiError(res.status, body || `HTTP ${res.status}`, {
+      kind: 'http',
+      ...(retryAfterMs !== undefined && { retryAfterMs }),
+    });
   }
   return res;
 }
@@ -295,6 +425,7 @@ export async function parseJsonResponse<T>(
     throw new ProviderApiError(
       res.status,
       `Invalid JSON from ${url} (${reason}): ${text.slice(0, 200)}`,
+      { kind: 'invalid_json', cause: parseErr },
     );
   }
 }

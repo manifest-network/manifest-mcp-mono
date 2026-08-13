@@ -447,6 +447,20 @@ export enum ManifestMCPErrorCode {
   RESTORE_REJECTED = 'RESTORE_REJECTED', // terminal 4xx; the created lease was rolled back
   RESTORE_RETRYABLE = 'RESTORE_RETRYABLE', // 503; rolled back, agent may re-invoke
   RESTORE_ORPHAN_COMPENSATION_FAILED = 'RESTORE_ORPHAN_COMPENSATION_FAILED', // orphan lease exists
+
+  /**
+   * A deploy created its lease and uploaded the manifest, but readiness was
+   * never CONFIRMED — the poll deadline expired, or the provider's status
+   * endpoint stayed unreachable. This is NOT a reported failure: the provider
+   * never returned a failed `provision_status`, so the lease is live and the
+   * app may well be starting. Carries `details.readiness_unconfirmed === true`
+   * plus the last state / provision_status seen. Callers must diagnose
+   * (`app_status`, `wait_for_app_ready`) before closing anything.
+   *
+   * Non-retryable: `deploy_app` is non-idempotent, so an auto-retry would
+   * create a SECOND paid lease (ENG-661).
+   */
+  DEPLOY_READINESS_UNCONFIRMED = 'DEPLOY_READINESS_UNCONFIRMED',
 }
 
 /**

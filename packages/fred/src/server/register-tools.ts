@@ -27,6 +27,7 @@ import type { FredAuthCtx } from '../ctx.js';
 import { guidanceFor } from '../failure-guidance.js';
 import { sanitizeFailureFields } from '../failure-reason.js';
 import type { AuthTokenService } from '../http/auth-token-service.js';
+import type { FredLeaseStatus } from '../http/fred.js';
 import { getLeaseProvision, getLeaseReleases, MAX_TAIL } from '../http/fred.js';
 import type { ProviderAuthPort } from '../http/provider-auth.js';
 import { appStatus } from '../tools/appStatus.js';
@@ -207,10 +208,12 @@ export function registerTools(deps: RegisterToolsDeps): void {
           .number()
           .int()
           .min(1)
-          .max(600)
+          .max(1800)
           .optional()
           .describe(
-            'Maximum seconds to wait before throwing. Defaults to 120s.',
+            'Maximum seconds to wait before throwing. Defaults to 600s — the provider is allowed ' +
+              'up to 10 minutes to provision, and a cold image pull alone can take 5. Reaching the ' +
+              'limit does NOT mean the deployment failed.',
           ),
         interval_seconds: z
           .number()
@@ -698,6 +701,18 @@ export function registerTools(deps: RegisterToolsDeps): void {
           .describe(
             'Required when `custom_domain` is set on a stack lease (`services`). Must match one of the keys in `services` and be a valid RFC 1123 DNS label (1-63 lowercase alphanumeric chars + hyphens, no leading/trailing hyphen). Omit for image+port (single-item legacy) leases.',
           ),
+        timeout_seconds: z
+          .number()
+          .int()
+          .min(1)
+          .max(1800)
+          .optional()
+          .describe(
+            'Maximum seconds to wait for the app to report ready after the manifest upload. ' +
+              "Defaults to 600s, matching the provider's own 10-minute provisioning allowance (5 of " +
+              'those minutes for the image pull alone). Lower it for fast feedback; the lease is ' +
+              'created and billed either way, and hitting the limit does NOT mean the deploy failed.',
+          ),
       },
       outputSchema: {
         lease_uuid: z.string(),
@@ -765,17 +780,27 @@ export function registerTools(deps: RegisterToolsDeps): void {
                   );
                 }
               : undefined,
-            pollOptions: emit
-              ? {
-                  onProgress: (status) => {
-                    const state = leaseStateToJSON(status.state);
-                    const provision = status.provision_status
-                      ? `, provision=${status.provision_status}`
-                      : '';
-                    emit(`Polling lease: state=${state}${provision}`);
-                  },
-                }
-              : undefined,
+            // Built conditionally: `pollOptions === undefined` is the contract
+            // that lets fred's own defaults apply, and it is asserted by the
+            // server tests. Only materialize the object when the caller gave us
+            // something to put in it.
+            pollOptions:
+              emit || args.timeout_seconds !== undefined
+                ? {
+                    ...(args.timeout_seconds !== undefined && {
+                      timeoutMs: args.timeout_seconds * 1_000,
+                    }),
+                    ...(emit && {
+                      onProgress: (status: FredLeaseStatus) => {
+                        const state = leaseStateToJSON(status.state);
+                        const provision = status.provision_status
+                          ? `, provision=${status.provision_status}`
+                          : '';
+                        emit(`Polling lease: state=${state}${provision}`);
+                      },
+                    }),
+                  }
+                : undefined,
           },
         );
         return structuredResponse(result, bigIntReplacer);

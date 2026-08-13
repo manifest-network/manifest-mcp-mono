@@ -121,4 +121,77 @@ describe('renderPartialSuccessPrompt', () => {
       expect(out.options).not.toContain('cancel_lease');
     });
   });
+
+  /**
+   * ENG-661. `hasDomain` was only ever a PROXY for "the set-domain step
+   * failed", and a wrong one whenever the deploy got past that step: set-domain
+   * runs FIRST, so a domain-carrying deploy whose readiness poll timed out was
+   * told the domain never landed and the manifest was never uploaded — both
+   * false — and offered retry_set_domain for a domain already claimed.
+   */
+  describe('step-aware body selection', () => {
+    it('a readiness timeout does not claim the set-domain step failed, even with a domain requested', () => {
+      const out = renderPartialSuccessPrompt(
+        base({
+          requestedCustomDomain: 'app.example.com',
+          failedStep: 'poll',
+          readinessUnconfirmed: true,
+        }),
+      );
+
+      expect(out.prompt).not.toContain('set-domain step');
+      expect(out.prompt).not.toContain('NEVER uploaded');
+      expect(out.prompt).toContain('NOT a reported failure');
+      expect(out.prompt).toContain('The manifest was uploaded');
+      // Retrying a domain that is already claimed is not a recovery.
+      expect(out.options).not.toContain('retry_set_domain');
+      expect(out.options).toEqual(['salvage_without_domain', 'close_lease']);
+    });
+
+    it('warns that closing the lease now would tear down a working deployment', () => {
+      const out = renderPartialSuccessPrompt(
+        base({ readinessUnconfirmed: true }),
+      );
+      expect(out.prompt).toContain('closing the lease');
+      expect(out.prompt).toContain('working');
+    });
+
+    it('an explicit set_domain step keeps the original wording and retry option', () => {
+      const out = renderPartialSuccessPrompt(
+        base({
+          requestedCustomDomain: 'app.example.com',
+          failedStep: 'set_domain',
+        }),
+      );
+      expect(out.prompt).toContain('The set-domain step for app.example.com');
+      expect(out.prompt).toContain('NEVER uploaded');
+      expect(out.options).toEqual([
+        'retry_set_domain',
+        'salvage_without_domain',
+        'close_lease',
+      ]);
+    });
+
+    it('an upload failure says plainly that no app is running', () => {
+      const out = renderPartialSuccessPrompt(base({ failedStep: 'upload' }));
+      expect(out.prompt).toContain('The manifest upload failed');
+      expect(out.prompt).toContain('No app is running on this lease.');
+      expect(out.options).not.toContain('retry_set_domain');
+    });
+
+    it('falls back to the legacy inference when fred reported no step', () => {
+      // Cross-version safety: an older fred sends neither flag, and must
+      // render exactly as it did before.
+      const withDomain = renderPartialSuccessPrompt(
+        base({ requestedCustomDomain: 'app.example.com' }),
+      );
+      expect(withDomain.prompt).toContain('The set-domain step for');
+      expect(withDomain.options).toContain('retry_set_domain');
+
+      const withoutDomain = renderPartialSuccessPrompt(base());
+      expect(withoutDomain.prompt).toContain(
+        'The manifest upload or readiness poll failed',
+      );
+    });
+  });
 });

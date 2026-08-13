@@ -61,27 +61,37 @@ type SingleServiceSpec = AppDeploySpec;
 
 // Mock the workspace deps at the module level. Individual tests inject
 // per-scenario behaviors via vi.mocked.
-vi.mock('@manifest-network/manifest-mcp-fred', () => ({
-  AuthTimestampTracker: class {
-    private last = 0;
-    async next(): Promise<number> {
-      const now = Math.max(this.last + 1, Math.floor(Date.now() / 1000));
-      this.last = now;
-      return now;
-    }
-  },
-  buildManifestPreview: vi.fn(),
-  checkDeploymentReadiness: vi.fn(),
-  createAuthToken: vi.fn(() => 'mock-token'),
-  createLeaseDataSignMessage: vi.fn(() => 'lease-data-msg'),
-  createSignMessage: vi.fn(() => 'sign-msg'),
-  deployApp: vi.fn(),
-  fetchActiveLease: vi.fn(),
-  pollLeaseUntilReady: vi.fn(),
-  resolveProviderUrl: vi.fn(),
-  uploadLeaseData: vi.fn(),
-  waitForAppReady: vi.fn(),
-}));
+vi.mock('@manifest-network/manifest-mcp-fred', async () => {
+  const actual = await vi.importActual<
+    typeof import('@manifest-network/manifest-mcp-fred')
+  >('@manifest-network/manifest-mcp-fred');
+  return {
+    // Real error class, not a stub: the SUT branches on
+    // `err instanceof LeaseReadinessUnconfirmedError` to tell "readiness never
+    // confirmed" from "the deploy failed" (ENG-661). A stubbed class would
+    // never match and the branch would be silently untested.
+    LeaseReadinessUnconfirmedError: actual.LeaseReadinessUnconfirmedError,
+    AuthTimestampTracker: class {
+      private last = 0;
+      async next(): Promise<number> {
+        const now = Math.max(this.last + 1, Math.floor(Date.now() / 1000));
+        this.last = now;
+        return now;
+      }
+    },
+    buildManifestPreview: vi.fn(),
+    checkDeploymentReadiness: vi.fn(),
+    createAuthToken: vi.fn(() => 'mock-token'),
+    createLeaseDataSignMessage: vi.fn(() => 'lease-data-msg'),
+    createSignMessage: vi.fn(() => 'sign-msg'),
+    deployApp: vi.fn(),
+    fetchActiveLease: vi.fn(),
+    pollLeaseUntilReady: vi.fn(),
+    resolveProviderUrl: vi.fn(),
+    uploadLeaseData: vi.fn(),
+    waitForAppReady: vi.fn(),
+  };
+});
 
 vi.mock('@manifest-network/manifest-mcp-core', async () => {
   const actual = await vi.importActual<
@@ -3574,6 +3584,92 @@ describe('deployApp — sub-PR D defense-in-depth', () => {
     expect(callArgs).toBeDefined();
     const opts = callArgs?.[2] as { timeoutMs?: number } | undefined;
     expect(opts?.timeoutMs).toBe(60_000);
+
+    // ENG-661: it must also reach fred's OWN readiness poll inside deployApp.
+    // Before this, the option governed only the follow-up wait above, while
+    // the cold-start poll — where the minutes actually go — ran on fred's
+    // default and was unreachable from this API.
+    const deployArgs = vi.mocked(fred.deployApp).mock.calls[0];
+    const deployOpts = deployArgs?.[2] as
+      | { pollOptions?: { timeoutMs?: number } }
+      | undefined;
+    expect(deployOpts?.pollOptions?.timeoutMs).toBe(60_000);
+  });
+
+  it('leaves fred to its own defaults when waitForReadyTimeoutMs is unset', async () => {
+    const spec = readFixture(
+      'skills',
+      'deploy-app',
+      '01-fast-path-active',
+      'input',
+      'spec.json',
+    ) as DeploySpec;
+    const readinessRaw = readFixture(
+      'skills',
+      'deploy-app',
+      '01-fast-path-active',
+      'input',
+      'readiness-response.json',
+    );
+    const metaHashResp = readFixture(
+      'skills',
+      'deploy-app',
+      '01-fast-path-active',
+      'input',
+      'meta-hash-response.json',
+    ) as { manifest_json: string; meta_hash_hex: string };
+
+    const fred = await import('@manifest-network/manifest-mcp-fred');
+    vi.mocked(fred.checkDeploymentReadiness).mockResolvedValue(
+      readinessRaw as unknown as Awaited<
+        ReturnType<typeof fred.checkDeploymentReadiness>
+      >,
+    );
+    vi.mocked(fred.buildManifestPreview).mockResolvedValue(
+      metaHashResp as unknown as Awaited<
+        ReturnType<typeof fred.buildManifestPreview>
+      >,
+    );
+    vi.mocked(fred.deployApp).mockResolvedValue({
+      lease_uuid: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      provider_uuid: 'provider-uuid-fixture',
+      provider_url: 'https://provider.example.com',
+      state: 2, // ACTIVE
+      connection: {
+        instances: [
+          {
+            name: 'app',
+            status: 'running',
+            fqdn: 'app.testnet.manifest.app',
+            ports: { '80/tcp': 30001 },
+          },
+        ],
+      },
+    } as unknown as Awaited<ReturnType<typeof fred.deployApp>>);
+
+    const core = await import('@manifest-network/manifest-mcp-core');
+    vi.mocked(core.cosmosEstimateFee).mockResolvedValue({
+      module: 'billing',
+      subcommand: 'create-lease',
+      gasEstimate: '142000',
+      fee: { amount: [{ denom: 'umfx', amount: '2300' }], gas: '142000' },
+    } as Awaited<ReturnType<typeof core.cosmosEstimateFee>>);
+
+    const { callbacks } = captureCallbacks();
+    const clientManager = makeMockClientManager();
+    const walletProvider = makeMockWalletProvider();
+    const { deployApp } = await import('./deploy-app.js');
+    await deployApp(spec, callbacks, {
+      clientManager: clientManager as unknown as Parameters<
+        typeof deployApp
+      >[2]['clientManager'],
+      walletProvider,
+    });
+
+    const deployOpts = vi.mocked(fred.deployApp).mock.calls[0]?.[2] as
+      | { pollOptions?: unknown }
+      | undefined;
+    expect(deployOpts?.pollOptions).toBeUndefined();
   });
 });
 

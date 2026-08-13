@@ -2,10 +2,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   checkedFetch,
   getProviderHealth,
+  isTransientProviderError,
   isUrlSsrfSafe,
   MAX_RESPONSE_BYTES,
   ProviderApiError,
   parseJsonResponse,
+  parseRetryAfterMs,
   readBodyCapped,
   validateProviderUrl,
 } from './provider.js';
@@ -649,5 +651,218 @@ describe('warnUnguardedOnce', () => {
     warnUnguardedOnce(false, true);
 
     expect(warn).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * ENG-661. `checkedFetch` used to throw a bare `ProviderApiError(status, body)`
+ * and drop the `Retry-After` header entirely — even though Fred emits one with
+ * every 429 (internal/api/ratelimit.go). And with `status === 0` standing in
+ * for seven unrelated non-HTTP causes, nothing downstream could tell a blip
+ * from a permanent rejection without sniffing message text.
+ */
+describe('parseRetryAfterMs', () => {
+  it('parses delta-seconds, the form Fred sends', () => {
+    expect(parseRetryAfterMs('1')).toBe(1_000);
+    expect(parseRetryAfterMs('30')).toBe(30_000);
+    expect(parseRetryAfterMs(' 2 ')).toBe(2_000);
+  });
+
+  it('parses an HTTP-date, which an intermediary proxy may substitute', () => {
+    const now = Date.UTC(2026, 0, 1, 0, 0, 0);
+    const at = new Date(now + 5_000).toUTCString();
+    // toUTCString() drops sub-second precision, so allow the rounding.
+    expect(parseRetryAfterMs(at, now)).toBeGreaterThanOrEqual(4_000);
+    expect(parseRetryAfterMs(at, now)).toBeLessThanOrEqual(5_000);
+  });
+
+  it('floors a past HTTP-date at 0 rather than returning a negative sleep', () => {
+    const now = Date.UTC(2026, 0, 1, 0, 0, 0);
+    expect(parseRetryAfterMs(new Date(now - 60_000).toUTCString(), now)).toBe(
+      0,
+    );
+  });
+
+  it("clamps an absurd delta to Fred's own 86400s ceiling", () => {
+    expect(parseRetryAfterMs('999999999')).toBe(86_400_000);
+  });
+
+  it('returns undefined for absent or unparseable values — no guidance beats bad guidance', () => {
+    expect(parseRetryAfterMs(null)).toBeUndefined();
+    expect(parseRetryAfterMs(undefined)).toBeUndefined();
+    expect(parseRetryAfterMs('')).toBeUndefined();
+    expect(parseRetryAfterMs('   ')).toBeUndefined();
+    expect(parseRetryAfterMs('soon')).toBeUndefined();
+    expect(parseRetryAfterMs('-5')).toBeUndefined();
+  });
+});
+
+describe('checkedFetch error classification', () => {
+  it('tags a non-2xx as kind "http" and carries its Retry-After', async () => {
+    const mockFetch = vi.fn().mockResolvedValue(
+      new Response('rate limited', {
+        status: 429,
+        headers: { 'Retry-After': '1' },
+      }),
+    );
+
+    const err = await checkedFetch(
+      'https://example.com',
+      undefined,
+      5_000,
+      mockFetch,
+    ).catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(ProviderApiError);
+    expect((err as ProviderApiError).status).toBe(429);
+    expect((err as ProviderApiError).kind).toBe('http');
+    expect((err as ProviderApiError).retryAfterMs).toBe(1_000);
+  });
+
+  it('reads Retry-After on a 503 too, not only on 429', async () => {
+    const mockFetch = vi.fn().mockResolvedValue(
+      new Response('unavailable', {
+        status: 503,
+        headers: { 'Retry-After': '5' },
+      }),
+    );
+
+    const err = (await checkedFetch(
+      'https://example.com',
+      undefined,
+      5_000,
+      mockFetch,
+    ).catch((e: unknown) => e)) as ProviderApiError;
+
+    expect(err.retryAfterMs).toBe(5_000);
+  });
+
+  it('leaves retryAfterMs undefined when the provider sent no header', async () => {
+    const mockFetch = vi
+      .fn()
+      .mockResolvedValue(new Response('bad', { status: 500 }));
+
+    const err = (await checkedFetch(
+      'https://example.com',
+      undefined,
+      5_000,
+      mockFetch,
+    ).catch((e: unknown) => e)) as ProviderApiError;
+
+    expect(err.kind).toBe('http');
+    expect(err.retryAfterMs).toBeUndefined();
+  });
+
+  it('tags a connect failure as kind "network" and keeps the cause', async () => {
+    const underlying = new Error('fetch failed');
+    const mockFetch = vi.fn().mockRejectedValue(underlying);
+
+    const err = (await checkedFetch(
+      'https://example.com',
+      undefined,
+      5_000,
+      mockFetch,
+    ).catch((e: unknown) => e)) as ProviderApiError;
+
+    expect(err.kind).toBe('network');
+    expect(err.cause).toBe(underlying);
+  });
+
+  it('tags an internal timeout as kind "timeout"', async () => {
+    const mockFetch = vi.fn(
+      (_url: string, init?: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () => {
+            reject(new DOMException('aborted', 'AbortError'));
+          });
+        }),
+    );
+
+    const err = (await checkedFetch(
+      'https://example.com',
+      undefined,
+      5,
+      mockFetch as unknown as typeof globalThis.fetch,
+    ).catch((e: unknown) => e)) as ProviderApiError;
+
+    expect(err.kind).toBe('timeout');
+  });
+
+  it('tags an SSRF/format rejection as kind "invalid_url"', () => {
+    const err = (() => {
+      try {
+        validateProviderUrl('https://169.254.169.254/latest/meta-data');
+      } catch (e) {
+        return e;
+      }
+    })() as ProviderApiError;
+
+    expect(err.kind).toBe('invalid_url');
+  });
+
+  it('tags a malformed body as kind "invalid_json"', async () => {
+    const err = (await parseJsonResponse(
+      new Response('<html>502 Bad Gateway</html>', { status: 200 }),
+      'https://example.com',
+    ).catch((e: unknown) => e)) as ProviderApiError;
+
+    expect(err.kind).toBe('invalid_json');
+  });
+});
+
+describe('isTransientProviderError', () => {
+  it.each([
+    ['a 500', new ProviderApiError(500, 'boom', { kind: 'http' }), true],
+    ['a 503', new ProviderApiError(503, 'boom', { kind: 'http' }), true],
+    ['a 429', new ProviderApiError(429, 'slow down', { kind: 'http' }), true],
+    ['a 404', new ProviderApiError(404, 'nope', { kind: 'http' }), false],
+    ['a 401', new ProviderApiError(401, 'nope', { kind: 'http' }), false],
+    ['a 409', new ProviderApiError(409, 'conflict', { kind: 'http' }), false],
+    [
+      'a connect failure',
+      new ProviderApiError(0, 'x', { kind: 'network' }),
+      true,
+    ],
+    ['a timeout', new ProviderApiError(0, 'x', { kind: 'timeout' }), true],
+    // A truncated body or an intermediary's HTML error page is a classic blip.
+    [
+      'a malformed body',
+      new ProviderApiError(0, 'x', { kind: 'invalid_json' }),
+      true,
+    ],
+    // These will not change on retry.
+    [
+      'an SSRF rejection',
+      new ProviderApiError(0, 'x', { kind: 'invalid_url' }),
+      false,
+    ],
+    [
+      'a body-cap breach',
+      new ProviderApiError(0, 'x', { kind: 'body_cap' }),
+      false,
+    ],
+    ['a poll outcome', new ProviderApiError(0, 'x', { kind: 'poll' }), false],
+  ])('%s → %s', (_label, err, expected) => {
+    expect(isTransientProviderError(err)).toBe(expected);
+  });
+
+  it('falls back to the status for an untagged error, so old call sites are unchanged', () => {
+    expect(isTransientProviderError(new ProviderApiError(500, 'boom'))).toBe(
+      true,
+    );
+    expect(isTransientProviderError(new ProviderApiError(404, 'nope'))).toBe(
+      false,
+    );
+    // status 0 with no kind: not an HTTP answer and not classified — do not
+    // guess that it is retryable.
+    expect(isTransientProviderError(new ProviderApiError(0, 'mystery'))).toBe(
+      false,
+    );
+  });
+
+  it('never tolerates something that is not a ProviderApiError', () => {
+    expect(isTransientProviderError(new TypeError('bug'))).toBe(false);
+    expect(isTransientProviderError({ status: 503 })).toBe(false);
+    expect(isTransientProviderError(undefined)).toBe(false);
   });
 });

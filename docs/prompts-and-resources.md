@@ -24,7 +24,7 @@ End-to-end deploy lifecycle for a single containerized app: pre-flight check, ma
 2. `build_manifest_preview({ image, port })` — stop if `validation.valid: false` and surface every error verbatim.
 3. Print a deployment plan (image, manifest summary, SKU, provider, `meta_hash`) and wait for an explicit "yes".
 4. `deploy_app(...)` — broadcast. Forward any `progressToken` the host provides.
-5. `wait_for_app_ready({ lease_uuid })` — on success, print lease UUID, provider URL, and endpoints. On failure, surface diagnostics and offer `close_lease`.
+5. `wait_for_app_ready({ lease_uuid })` — on success, print lease UUID, provider URL, and endpoints. On a timeout, diagnose first (`app_status`, `app_diagnostics`) and offer to keep waiting; `close_lease` only once a failed `provision_status` is confirmed or the user abandons the deploy.
 
 ### `diagnose-failing-app`
 
