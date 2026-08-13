@@ -1,4 +1,4 @@
-import { LeaseState } from '@manifest-network/manifest-mcp-core';
+import { LeaseState, logger } from '@manifest-network/manifest-mcp-core';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('./provider.js', async (importOriginal) => {
@@ -231,15 +231,86 @@ describe('pollLeaseUntilReady', () => {
     expect(mockCheckedFetch).toHaveBeenCalledOnce();
   });
 
-  it('treats a genuinely-unrecognized (future) provision_status as settled and returns', async () => {
-    // Forward-compat: a provision_status the client has never heard of must not
-    // hang the poll — it is treated as settled, same as an absent field. This is
-    // distinct from the known `unknown` status, which is handled below.
+  it('keeps polling on a genuinely-unrecognized (future) provision_status — readiness is an allowlist', async () => {
+    // ENG-651 REVERSES the previous expectation here, which was that an unrecognized status is
+    // "settled" and returns as ready. Two arguments retired it.
+    //
+    // First, it was internally inconsistent with the test immediately below: the backend's OWN
+    // `unknown` ("I cannot tell") correctly keeps polling, while a status the CLIENT cannot
+    // recognize was luckier and got reported as a healthy deploy. There is no reading of
+    // forward-compatibility under which the client's ignorance is better evidence of health than
+    // the server's own admission of doubt.
+    //
+    // Second, it cost us a real bug: Fred's `retained` — the backend tore the deployment down but
+    // kept its volumes — is in neither set, so a closed, soft-deleted, billing-dead lease returned
+    // here as ready. Forward-compat means never FAILING on an unknown value (we still carry it
+    // through untouched); it never meant treating one as success.
+    //
+    // Not hanging the poll is still satisfied: the caller's deadline bounds it, and the timeout
+    // message names the status, so an unmodelled value is diagnosable instead of silent.
     mockCheckedFetch.mockResolvedValue({} as Response);
     mockParseJsonResponse.mockResolvedValue({
       state: 'LEASE_STATE_ACTIVE',
       provision_status: 'some_future_status',
     });
+
+    await expect(
+      pollLeaseUntilReady(PROVIDER_URL, LEASE_UUID, AUTH_TOKEN, {
+        intervalMs: 10,
+        timeoutMs: 50,
+      }),
+    ).rejects.toThrow(/provision_status: some_future_status/);
+  });
+
+  it('warns about a status it does not model, but NOT about `retained`, which it does', async () => {
+    // The audit signal for the fail-closed default has to stay meaningful: it must fire for a value
+    // the client has no model of, and stay silent for one it handles deliberately. If `retained`
+    // warned, "unrecognized provision_status" would be a lie about the single most likely value to
+    // reach this branch, and the log would train operators to ignore it. (ENG-651)
+    const warnLines: string[] = [];
+    const warnSpy = vi
+      .spyOn(logger, 'warn')
+      .mockImplementation((m: unknown) => {
+        warnLines.push(String(m));
+      });
+    mockCheckedFetch.mockResolvedValue({} as Response);
+
+    try {
+      mockParseJsonResponse.mockResolvedValue({
+        state: 'LEASE_STATE_ACTIVE',
+        provision_status: 'retained',
+      });
+      await expect(
+        pollLeaseUntilReady(PROVIDER_URL, LEASE_UUID, AUTH_TOKEN, {
+          intervalMs: 10,
+          timeoutMs: 50,
+        }),
+      ).rejects.toThrow(/provision_status: retained/);
+      expect(warnLines.filter((l) => l.includes('Unrecognized'))).toEqual([]);
+
+      mockParseJsonResponse.mockResolvedValue({
+        state: 'LEASE_STATE_ACTIVE',
+        provision_status: 'some_unmodelled_status',
+      });
+      await expect(
+        pollLeaseUntilReady(PROVIDER_URL, LEASE_UUID, AUTH_TOKEN, {
+          intervalMs: 10,
+          timeoutMs: 50,
+        }),
+      ).rejects.toThrow(/timed out/);
+      const unrecognized = warnLines.filter((l) => l.includes('Unrecognized'));
+      expect(unrecognized).toHaveLength(1); // warn-once, despite several polls
+      expect(unrecognized[0]).toContain('some_unmodelled_status');
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it('still returns immediately when provision_status is ABSENT (a provider that never populates it)', async () => {
+    // The absent field is NOT an unrecognized value — it is a provider that does not report
+    // provisioning at all, and gating on it would strand every such lease. Unchanged by ENG-651.
+    mockCheckedFetch.mockResolvedValue({} as Response);
+    mockParseJsonResponse.mockResolvedValue({ state: 'LEASE_STATE_ACTIVE' });
 
     const result = await pollLeaseUntilReady(
       PROVIDER_URL,

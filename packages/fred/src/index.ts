@@ -61,6 +61,7 @@ export {
   type PollOptions,
   PROVISION_FAILED,
   PROVISION_IN_PROGRESS,
+  PROVISION_SUCCESS,
   pollLeaseUntilReady,
   restartLease,
   restoreLease,

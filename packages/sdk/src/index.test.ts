@@ -109,6 +109,11 @@ describe('manifest-sdk barrels', () => {
       'buildManifest',
       'waitForLeaseStatus',
       'isLeaseFailureTerminal',
+      // The three provision-status sets travel together: a consumer replicating the readiness
+      // verdict needs the success allowlist, not just the two negative sets (ENG-651).
+      'PROVISION_SUCCESS',
+      'PROVISION_FAILED',
+      'PROVISION_IN_PROGRESS',
       'waitForAppReady',
       'createAuthTokens',
       'createProviderAuth',

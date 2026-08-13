@@ -89,6 +89,7 @@ export {
   type PollOptions,
   PROVISION_FAILED,
   PROVISION_IN_PROGRESS,
+  PROVISION_SUCCESS,
   ProviderApiError,
   type ProviderAuthPort,
   type ProviderHealthResponse,
