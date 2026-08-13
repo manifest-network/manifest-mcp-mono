@@ -30,6 +30,13 @@ npm run test:e2e
 docker compose -f e2e/docker-compose.yml down -v --remove-orphans
 ```
 
+**Submodule pins:** `e2e/docker-compose.yml` builds the devnet Fred from `submodules/fred`
+**source** (there is no `fred:vX.Y` image tag), so the recorded gitlink *is* the e2e Fred version.
+That pin deliberately tracks Fred's unreleased `main`, not a release tag — mono has to be ready for
+a Fred wire change before providers run it (ENG-638). Do not assume a pin is a release. Run
+`git submodule update --init --recursive` in a fresh worktree and after pulling a gitlink change: a
+stale on-disk checkout silently makes e2e build a different Fred than the one recorded.
+
 ## Architecture
 
 Five MCP servers bridging AI assistants to Cosmos SDK blockchains (Manifest Network). Nine npm workspace packages with strict dependency direction: **node -> {chain, lease, fred, cosmwasm, agent} -> core**, **agent -> agent-core -> {core, fred}**, and **sdk -> {core, fred, agent-core}** (never reverse; node also depends on core directly).
