@@ -155,13 +155,55 @@ export interface FredLeaseItem {
   readonly custom_domain?: string;
 }
 
-export interface FredLeaseStatus {
+/**
+ * Curated, tenant-safe failure signal Fred emits on /status, /provision and
+ * /releases (ENG-508). Declared here once and referenced from all three wire
+ * types below, which carry it identically.
+ *
+ * `reason` is deliberately typed `string`, NOT a closed union. Fred documents
+ * the set as OPEN and add-only ("consumers MUST tolerate an unrecognized value
+ * and fall back to the human message"), and a closed enum on a wire DTO lies
+ * the moment the provider ships a tenth value — the same forward-compatibility
+ * trap that made Kubernetes strip enums from its OpenAPI snapshot. For the
+ * known values, the narrowing helper, and the guidance table, see
+ * `@manifest-network/manifest-mcp-fred`'s `failure-reason.ts` /
+ * `failure-guidance.ts`; interpretation is provider policy and does not belong
+ * on a wire type.
+ *
+ * TRAP: a non-empty `reason` does NOT mean the lease is failing *now*. Fred
+ * retains it on a healthy `ready` lease whose last update failed and rolled
+ * back to the previous version. Decide liveness from `state` +
+ * `provision_status`, never from the presence of `reason`.
+ */
+interface FredFailureFields {
+  /**
+   * Machine-readable failure category (e.g. "ImagePullFailed"). Always present
+   * when the provision status is `failed` — Fred defaults it to "Unknown" at
+   * its read boundary — and omitted when no failure has been recorded. Open
+   * set: pass unrecognized values through, never reject them.
+   */
+  readonly reason?: string;
+  /**
+   * Short human-readable failure summary, free of host paths and raw command
+   * output. MAY be empty/absent even alongside a `reason`.
+   */
+  readonly message?: string;
+}
+
+export interface FredLeaseStatus extends FredFailureFields {
   readonly state: LeaseState;
   readonly provision_status?: string;
   readonly phase?: string;
   readonly steps?: Record<string, string>;
   readonly instances?: readonly FredInstanceInfo[];
   readonly endpoints?: Record<string, string>;
+  /**
+   * @deprecated Pre-ENG-508 providers only. Fred ≤ v0.12.0 sent a verbose
+   * `last_error` (it leaked host paths and raw exec output); ENG-508 redacts it
+   * in favour of `reason` + `message`. Retained — not removed — so the
+   * published type stays additive while the provider fleet upgrades
+   * independently of this client. Read `message` and fall back to this.
+   */
   readonly last_error?: string;
   readonly fail_count?: number;
   readonly created_at?: string;
@@ -180,13 +222,16 @@ export interface FredLeaseLogs {
   readonly logs: Record<string, string>;
 }
 
-export interface FredLeaseProvision {
+export interface FredLeaseProvision extends FredFailureFields {
   readonly status: string;
   readonly fail_count: number;
   /**
    * Set only when the most recent provisioning attempt failed. The Fred
    * provider omits the field on success, so the optional marker matches
    * the wire shape (and matches the same field on FredLeaseStatus above).
+   *
+   * @deprecated Pre-ENG-508 providers only — see `FredLeaseStatus.last_error`.
+   * Read `message` and fall back to this.
    */
   readonly last_error?: string;
   // Retention (present only when status == "retained", ENG-329/ENG-600).
@@ -200,11 +245,16 @@ export interface FredActionResponse {
   readonly status: string;
 }
 
-export interface FredLeaseRelease {
+export interface FredLeaseRelease extends FredFailureFields {
   readonly version: number;
   readonly image: string;
   readonly status: string;
   readonly created_at: string;
+  /**
+   * @deprecated Pre-ENG-508 providers only — the /releases spelling of the
+   * verbose failure detail (`last_error` on /status and /provision). ENG-508
+   * replaces it with `reason` + `message`. Read `message` and fall back to this.
+   */
   readonly error?: string;
   readonly manifest?: string;
 }
