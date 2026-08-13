@@ -979,6 +979,19 @@ describe('FredMCPServer', () => {
       expect(text).toContain('app_status');
       expect(text).toContain('app_diagnostics');
       expect(text).toContain('get_logs');
+      // ENG-638: this prompt is a shipped runtime artifact, so the fields it
+      // tells the model to read are part of the contract. Before this, the test
+      // asserted only the tool names — the prompt could have gone on naming a
+      // field Fred no longer sends without anything failing.
+      expect(text).toContain('reason');
+      expect(text).toContain('message');
+      expect(text).toContain('next_step');
+      // The two facts a model cannot infer from the enum name.
+      expect(text).toContain('may EXTEND');
+      expect(text).toContain('UpdateFailed');
+      expect(text).not.toContain(
+        'record provision_status, fail_count, and last_error',
+      );
     });
 
     it('renders shutdown-all-leases without arguments', async () => {
