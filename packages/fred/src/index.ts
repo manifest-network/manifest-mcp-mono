@@ -20,6 +20,23 @@ export {
 } from './client.js';
 export type { FredAuthCtx, FredReadCtx } from './ctx.js';
 export {
+  FRED_REASON_GUIDANCE,
+  type FredFailureActor,
+  type FredReasonGuidance,
+  guidanceFor,
+} from './failure-guidance.js';
+export {
+  describeFredFailure,
+  FRED_FAILURE_REASONS,
+  type FredFailure,
+  type FredFailureReason,
+  type FredFailureSource,
+  failureDetail,
+  isKnownFailureReason,
+  // sanitizeFailureFields is deliberately NOT exported: it is the AI-facing
+  // projection for this package's own MCP tools, matching sanitizeRetentionFields.
+} from './failure-reason.js';
+export {
   AuthTimestampTracker,
   type AuthTokenPayload,
   createAuthToken,
