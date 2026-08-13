@@ -5,6 +5,7 @@ import type {
   LeaseUuid,
 } from '@manifest-network/manifest-mcp-core';
 import { LeaseState, noopLogger } from '@manifest-network/manifest-mcp-core';
+import { leaseStatusWire } from '@manifest-network/manifest-mcp-core/__test-utils__/fred-wire.js';
 import { makeMockQueryClient } from '@manifest-network/manifest-mcp-core/__test-utils__/mocks.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ProviderAuthPort } from '../http/provider-auth.js';
@@ -324,6 +325,11 @@ function makeFakeEvents() {
   return { transport, sockets };
 }
 
+/** Verbatim from Fred's non-in-flight deprovision callback (provisioner/handler_set.go:222-225).
+ *  Note it arrives in the frame's `error` slot but is a RESTORE INSTRUCTION, not a failure cause. */
+const RETAINED_HINT =
+  'your lease data was retained and can be restored within the grace window: create a fresh PENDING lease of matching shape, then POST /v1/leases/{new_lease_uuid}/restore with from_lease_uuid set to this lease’s UUID';
+
 const wsFrame = (status: string, error?: string) =>
   JSON.stringify({
     lease_uuid: LEASE_UUID,
@@ -333,11 +339,14 @@ const wsFrame = (status: string, error?: string) =>
   });
 
 describe('waitForLeaseStatus — WebSocket transport (ctx.events)', () => {
-  it('appends /events + ?token and resolves on a ready event (no polling)', async () => {
+  it('appends /events + ?token and resolves on a ready event confirmed against /status (no poll fallback)', async () => {
     const ctx = makeWaitCtx({
       providerUuid: 'p1',
+      // ENG-651: a terminal-candidate frame is CONFIRMED against /status, so the fixture must supply
+      // the document the provider would serve. Frame 0 is the snapshot-on-open, frame 1 the confirm.
       statusFrames: [
         { state: 'LEASE_STATE_PENDING', provision_status: 'provisioning' },
+        { state: 'LEASE_STATE_ACTIVE', provision_status: 'ready' },
       ],
     });
     const { transport, sockets } = makeFakeEvents();
@@ -359,11 +368,16 @@ describe('waitForLeaseStatus — WebSocket transport (ctx.events)', () => {
     expect(sockets[0].closed).toBe(true); // socket closed on resolve
   });
 
-  it('maps a failed event (error field) to a failure terminal', async () => {
+  it('a failed event resolves from the AUTHORITATIVE /status document, not the frame', async () => {
     const ctx = makeWaitCtx({
       providerUuid: 'p1',
       statusFrames: [
         { state: 'LEASE_STATE_PENDING', provision_status: 'provisioning' },
+        leaseStatusWire({
+          era: 'post-eng508',
+          outcome: 'failed',
+          leaseUuid: LEASE_UUID,
+        }) as unknown as RawFrame,
       ],
     });
     const { transport, sockets } = makeFakeEvents();
@@ -377,14 +391,67 @@ describe('waitForLeaseStatus — WebSocket transport (ctx.events)', () => {
 
     const final = await p;
     expect(isLeaseFailureTerminal(final)).toBe(true);
+    // The provider's own document wins: post-ENG-508 it carries the curated reason/message pair,
+    // which the three-field frame cannot. This is the transport-parity property — a WS-resolved
+    // terminal is the same document a poll-resolved one would be.
+    expect(final.reason).toBe('ContainerExited');
+    expect(final.message).toBe('container exited unexpectedly');
+    expect(final.fail_count).toBe(3);
+  });
+
+  it('falls back to the frame for a FAILED event when the confirm read fails (asymmetric policy)', async () => {
+    // A terminal-negative frame is self-sufficient: it carries its own failure detail and a re-read
+    // could only confirm it. So an unreachable provider must not strand a failure the client was
+    // already told about — and the ENG-638 `error` → `message`/`last_error` mapping is preserved.
+    const ctx = makeWaitCtx({
+      providerUuid: 'p1',
+      statusFrames: [],
+      fetch: vi
+        .fn()
+        .mockRejectedValue(
+          new Error('provider unreachable'),
+        ) as unknown as typeof globalThis.fetch,
+    });
+    const { transport, sockets } = makeFakeEvents();
+    (ctx as { events?: EventTransport }).events = transport;
+
+    const p = waitForLeaseStatus(ctx, LEASE_UUID);
+    await vi.waitFor(() => expect(sockets.length).toBe(1));
+    // No openCb: the confirm read is the only fetch, and it rejects.
+    sockets[0].msgCb?.(wsFrame('failed', 'image pull error'));
+
+    const final = await p;
+    expect(isLeaseFailureTerminal(final)).toBe(true);
     // ENG-638: the frame's `error` is Fred's callback.Error — the same value it
-    // assigns to ProvisionState.Message — so it maps to the canonical `message`,
-    // making a WS-derived status shape-identical to a post-ENG-508 poll snapshot.
+    // assigns to ProvisionState.Message — so it maps to the canonical `message`.
     expect(final.message).toBe('image pull error');
     // Deprecated mirror, kept one release for SDK consumers reading the old key.
     expect(final.last_error).toBe('image pull error');
     // Never fabricated: the frame carries no reason.
     expect(final.reason).toBeUndefined();
+  });
+
+  it('does NOT resolve a success-shaped event when the confirm read fails (the other half of the asymmetry)', async () => {
+    // The mirror of the test above, and the heart of ENG-651: a `ready` frame is NOT self-sufficient.
+    // It cannot distinguish a live lease from one that has been closed and soft-deleted, so an
+    // unverifiable success must never settle the wait. Timing out is the honest outcome.
+    const ctx = makeWaitCtx({
+      providerUuid: 'p1',
+      statusFrames: [],
+      fetch: vi
+        .fn()
+        .mockRejectedValue(
+          new Error('provider unreachable'),
+        ) as unknown as typeof globalThis.fetch,
+    });
+    const { transport, sockets } = makeFakeEvents();
+    (ctx as { events?: EventTransport }).events = transport;
+
+    const p = waitForLeaseStatus(ctx, LEASE_UUID, { timeout: 60 });
+    const assertion = expect(p).rejects.toThrow(/timed out/);
+    await vi.waitFor(() => expect(sockets.length).toBe(1));
+    sockets[0].msgCb?.(wsFrame('ready'));
+    await assertion;
   });
 
   it('snapshot-on-open resolves an already-terminal lease before any event', async () => {
@@ -408,6 +475,7 @@ describe('waitForLeaseStatus — WebSocket transport (ctx.events)', () => {
       providerUuid: 'p1',
       statusFrames: [
         { state: 'LEASE_STATE_PENDING', provision_status: 'provisioning' },
+        { state: 'LEASE_STATE_ACTIVE', provision_status: 'ready' }, // the confirm read
       ],
     });
     const { transport, sockets } = makeFakeEvents();
@@ -482,6 +550,7 @@ describe('waitForLeaseStatus — WebSocket transport (ctx.events)', () => {
       providerUuid: 'p1',
       statusFrames: [
         { state: 'LEASE_STATE_PENDING', provision_status: 'provisioning' },
+        { state: 'LEASE_STATE_ACTIVE', provision_status: 'ready' }, // the confirm read
       ],
     });
     const { transport, sockets } = makeFakeEvents();
@@ -509,6 +578,7 @@ describe('waitForLeaseStatus — WebSocket transport (ctx.events)', () => {
       providerUuid: 'p1',
       statusFrames: [
         { state: 'LEASE_STATE_PENDING', provision_status: 'provisioning' },
+        { state: 'LEASE_STATE_ACTIVE', provision_status: 'ready' }, // the confirm read
       ],
     });
     const { transport, sockets } = makeFakeEvents();
@@ -588,8 +658,12 @@ describe('waitForLeaseStatus — WebSocket transport (ctx.events)', () => {
     vi.useFakeTimers();
     const ctx = makeWaitCtx({
       providerUuid: 'p1',
+      // Two non-terminal snapshots (one per socket's onOpen) so neither connection resolves from its
+      // snapshot; the third fetch is the confirm read for the `ready` frame on the SECOND socket.
       statusFrames: [
         { state: 'LEASE_STATE_PENDING', provision_status: 'provisioning' },
+        { state: 'LEASE_STATE_PENDING', provision_status: 'provisioning' },
+        { state: 'LEASE_STATE_ACTIVE', provision_status: 'ready' },
       ],
     });
     const { transport, sockets } = makeFakeEvents();
@@ -617,9 +691,103 @@ describe('waitForLeaseStatus — WebSocket transport (ctx.events)', () => {
 
     sockets[1].openCb?.();
     sockets[1].msgCb?.(wsFrame('ready'));
+    // The confirm read is a promise chain; flush it under fake timers before awaiting.
+    await vi.advanceTimersByTimeAsync(0);
     await expect(p).resolves.toEqual(
       expect.objectContaining({ provision_status: 'ready' }),
     );
+  });
+});
+
+// ── ENG-651: a RETAINED lease must never resolve as a successful deploy ─────────────────────────
+//
+// Fred publishes `provision_status: "retained"` when a backend tears a lease down but KEEPS its
+// volumes (provisioner/handler_set.go:215-225). The value is in neither PROVISION_IN_PROGRESS nor
+// PROVISION_FAILED, so the ACTIVE branch's fall-through called it `success`.
+//
+// The verdict depends on the CHAIN state, which is why the WS frame — carrying a provision status
+// and no state (backend/events.go:5-12) — cannot decide on its own:
+//
+//   ACTIVE + retained    the backend tore it down out-of-band and the chain state is unchanged;
+//                        the reconciler re-provisions on its next sweep (reconciler.go:991,
+//                        README state matrix "ACTIVE | Not provisioned | Anomaly: provision")
+//                        ⇒ NOT terminal. Keep waiting.
+//   CLOSED + retained    orphan; deprovision. Strictly terminal, restorable onto a FRESH lease.
+//
+// A frame therefore decides only WHEN to classify, never WHAT the state is.
+const RETAINED_WIRE_CLOSED = leaseStatusWire({
+  era: 'post-eng508',
+  outcome: 'retained',
+  leaseUuid: LEASE_UUID,
+}) as unknown as RawFrame;
+
+// The same retained record while the chain lease is still ACTIVE — reachable because Fred emits the
+// retained notice from its NON-in-flight deprovision branch ("Chain state is unchanged") and ENG-329
+// surfaces provision_status for any lease state.
+const RETAINED_WIRE_ACTIVE = {
+  ...RETAINED_WIRE_CLOSED,
+  state: 'LEASE_STATE_ACTIVE',
+} as RawFrame;
+
+describe('waitForLeaseStatus — retained (ENG-651)', () => {
+  it('WS: a retained frame on a CLOSED lease resolves as a failure terminal, carrying the retention metadata', async () => {
+    const ctx = makeWaitCtx({
+      providerUuid: 'p1',
+      statusFrames: [RETAINED_WIRE_CLOSED],
+    });
+    const { transport, sockets } = makeFakeEvents();
+    (ctx as { events?: EventTransport }).events = transport;
+
+    const p = waitForLeaseStatus(ctx, LEASE_UUID, { timeout: 5_000 });
+    await vi.waitFor(() => expect(sockets.length).toBe(1));
+    // Deliberately NO openCb(): skip snapshot-on-open so the frame path alone is under test.
+    sockets[0].msgCb?.(wsFrame('retained', RETAINED_HINT));
+
+    const final = await p;
+    expect(isLeaseFailureTerminal(final)).toBe(true);
+    expect(final.state).toBe(LeaseState.LEASE_STATE_CLOSED);
+    expect(final.provision_status).toBe('retained');
+    // Enough for the caller to reach restore_app and judge whether the window is still open.
+    expect(final.retained_until).toBe('2026-09-01T00:00:00Z');
+  });
+
+  it('WS: a retained frame on a still-ACTIVE lease does NOT settle — the reconciler re-provisions', async () => {
+    const ctx = makeWaitCtx({
+      providerUuid: 'p1',
+      statusFrames: [RETAINED_WIRE_ACTIVE],
+    });
+    const { transport, sockets } = makeFakeEvents();
+    (ctx as { events?: EventTransport }).events = transport;
+
+    const p = waitForLeaseStatus(ctx, LEASE_UUID, { timeout: 60 });
+    const assertion = expect(p).rejects.toThrow(/timed out/);
+    await vi.waitFor(() => expect(sockets.length).toBe(1));
+    sockets[0].msgCb?.(wsFrame('retained', RETAINED_HINT));
+    await assertion;
+  });
+
+  it('poll: ACTIVE + retained keeps polling instead of reporting a ready deploy', async () => {
+    const ctx = makeWaitCtx({
+      providerUuid: 'p1',
+      statusFrames: [RETAINED_WIRE_ACTIVE],
+    });
+    await expect(
+      waitForLeaseStatus(ctx, LEASE_UUID, { intervalMs: 5, timeout: 60 }),
+    ).rejects.toThrow(/timed out/);
+  });
+
+  // GREEN ORACLE — passes before AND after the fix. The poll path already classifies a CLOSED
+  // retained lease correctly via the chain-state branch; this pins that the WS work did not move it.
+  it('poll: CLOSED + retained is a failure terminal (unchanged by the WS fix)', async () => {
+    const ctx = makeWaitCtx({
+      providerUuid: 'p1',
+      statusFrames: [RETAINED_WIRE_CLOSED],
+    });
+    const final = await waitForLeaseStatus(ctx, LEASE_UUID, { intervalMs: 5 });
+    expect(isLeaseFailureTerminal(final)).toBe(true);
+    expect(final.state).toBe(LeaseState.LEASE_STATE_CLOSED);
+    expect(final.provision_status).toBe('retained');
+    expect(final.retained_until).toBe('2026-09-01T00:00:00Z');
   });
 });
 

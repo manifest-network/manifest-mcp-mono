@@ -182,18 +182,29 @@ It runs as a saga — pre-flight retained-check → create a new lease → `POST
 
 ## Watching live status
 
-`waitForLeaseStatus` polls the provider until the lease reaches a **terminal** state, then resolves with the final status (a converging wait — the viem `waitFor*` / cosmjs `signAndBroadcast` shape). It resolves for a *failure* terminal too; check with `isLeaseFailureTerminal`, and reject/observe as you wish. Aborting the `signal` rejects the promise.
+`waitForLeaseStatus` watches the provider until the lease reaches a **terminal** state, then resolves with the final status (a converging wait — the viem `waitFor*` / cosmjs `signAndBroadcast` shape). It resolves for a *failure* terminal too; check with `isLeaseFailureTerminal`, and reject/observe as you wish. Aborting the `signal` rejects the promise.
+
+Readiness is an **allowlist**: only a provider-reported `ready` (or a provider that reports no provision status at all) resolves as success. A status this client does not recognize — including one added by a newer provider — keeps the wait running rather than being reported as a healthy deploy, and the deadline rejection names the last status seen.
+
+One terminal deserves a different response from the rest. A **retained** lease has been torn down with its volumes kept: the deployment is gone and the lease is closed, but the data can be recovered — onto a *fresh* lease, never this one — until `retained_until` passes.
 
 ```ts
-import { isLeaseFailureTerminal } from '@manifest-network/manifest-sdk/deploy';
+import { isLeaseFailureTerminal, restoreApp } from '@manifest-network/manifest-sdk/deploy';
 
 const controller = new AbortController();
 const final = await client.waitForLeaseStatus(leaseUuid, {
-  onStatus: (s) => console.log('progress:', s.state), // intermediate polls only
+  onStatus: (s) => console.log('progress:', s.state), // intermediate updates only
   timeout: 120_000,
   signal: controller.signal, // optional; abort rejects with signal.reason
 });
-if (isLeaseFailureTerminal(final)) throw new Error(`deploy failed: ${final.state}`);
+if (isLeaseFailureTerminal(final)) {
+  if (final.provision_status === 'retained') {
+    // Recoverable until final.retained_until — restoreApp creates a NEW lease (see above).
+    await restoreApp(client, { address, sourceLeaseUuid: leaseUuid });
+  } else {
+    throw new Error(`deploy failed: ${final.state}/${final.provision_status}`);
+  }
+}
 ```
 
 ## Catalog and SKU resolution

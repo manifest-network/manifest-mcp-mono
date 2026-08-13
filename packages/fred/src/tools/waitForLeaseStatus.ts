@@ -12,6 +12,8 @@ import {
   getLeaseStatus,
   PROVISION_FAILED,
   PROVISION_IN_PROGRESS,
+  PROVISION_SUCCESS,
+  warnIfUnrecognizedProvisionStatus,
 } from '../http/fred.js';
 import { validateProviderUrl } from '../http/provider.js';
 import type { ProviderAuthPort } from '../http/provider-auth.js';
@@ -41,17 +43,29 @@ export interface WaitForLeaseStatusOptions {
 }
 
 /** Terminal classification, mirroring `pollLeaseUntilReady` in http/fred.ts but returning a verdict
- *  instead of resolve/throw. Reuses the EXPORTED PROVISION_* sets so it never drifts. */
+ *  instead of resolve/throw. Reuses the EXPORTED PROVISION_* sets so it never drifts.
+ *
+ *  PRECONDITION: `s` must be a status the PROVIDER authored — a `/status` document. Never hand this
+ *  a status synthesized from a `/events` frame with a guessed `state`: the frame carries no chain
+ *  state, and the same provision_status means opposite things at different states (ENG-651). */
 type Terminal = 'success' | 'failure' | 'pending';
-function classifyTerminal(s: FredLeaseStatus): Terminal {
+function classifyTerminal(s: FredLeaseStatus, leaseUuid?: string): Terminal {
   switch (s.state) {
     case LeaseState.LEASE_STATE_ACTIVE: {
       const ps = s.provision_status;
       if (ps !== undefined) {
         if (PROVISION_FAILED.has(ps)) return 'failure';
-        if (PROVISION_IN_PROGRESS.has(ps)) return 'pending';
+        if (!PROVISION_SUCCESS.has(ps)) {
+          // In-progress, retained, or unrecognized. Not CONFIRMED healthy in any of those cases, so
+          // keep watching — success is an allowlist, never a fall-through (ENG-651; see
+          // PROVISION_SUCCESS). `retained` lands here when the chain lease is still ACTIVE, which is
+          // correct: Fred's reconciler re-provisions an ACTIVE lease it finds unprovisioned, so the
+          // lease is coming back rather than gone.
+          warnIfUnrecognizedProvisionStatus(ps, leaseUuid);
+          return 'pending';
+        }
       }
-      return 'success'; // ACTIVE + settled/absent/unrecognized provision_status (forward-compat, like pollLeaseUntilReady)
+      return 'success'; // ACTIVE + `ready`, or an absent field (a provider that never populates it)
     }
     case LeaseState.LEASE_STATE_CLOSED:
     case LeaseState.LEASE_STATE_REJECTED:
@@ -112,10 +126,18 @@ function parseFredWsEvent(data: string): FredWsEvent | null {
 }
 
 /**
- * Map a Fred WS event to a `FredLeaseStatus`. The `/events` stream only fires while the chain lease is
- * ACTIVE and carries the provider `provision_status` (not the chain state), so we pin `state: ACTIVE`
- * and let `classifyTerminal` decide ready/failed/pending from `provision_status` — the same logic the
- * poll path applies. (Fred's wire field is `error`; barney historically mis-read `last_error`.)
+ * Map a Fred WS event to a `FredLeaseStatus` for the two cases where the frame is self-sufficient:
+ * a KNOWN in-progress status (pure progress reporting) and a PROVISION_FAILED frame whose
+ * authoritative re-read failed. In both, the lease demonstrably still exists as a live chain lease,
+ * so pinning `state: ACTIVE` states something true. (Fred's wire field is `error`; barney
+ * historically mis-read `last_error`.)
+ *
+ * ENG-651: it is NOT true in general, and this function used to be called for every frame. The
+ * `/events` frame carries a provision status and no chain state, so ACTIVE was a guess — and for
+ * `retained` (published when a backend tore the deployment down but kept its volumes) the guess put
+ * a closed, soft-deleted lease into `classifyTerminal`'s ACTIVE branch, where the settled-status
+ * fall-through called it a successful deploy. Terminal-candidate frames now trigger a `/status` read
+ * and the provider's own document is classified instead; see `confirmViaStatus`.
  *
  * ENG-638: ENG-508 did NOT change this frame — `LeaseStatusEvent` still carries `error`. But that
  * value is Fred's `callback.Error`, which is the SAME string Fred assigns to `ProvisionState.Message`
@@ -163,16 +185,25 @@ interface DriverArgs {
   readonly timeoutMs: number;
   readonly deadlineAt: number;
   readonly emit: (status: FredLeaseStatus) => void;
+  /** Mutable scratch shared by both drivers: the last provision_status actually observed, so the
+   *  deadline rejection can name it. Held in an object because DriverArgs itself is readonly. */
+  readonly observed: { lastProvisionStatus?: string };
 }
 
-/** The overall-deadline rejection, shared by the poll and WS paths so the message stays consistent. */
+/** The overall-deadline rejection, shared by the poll and WS paths so the message stays consistent.
+ *  Names the last provision_status observed: since an unrecognized status now keeps the wait running
+ *  rather than reporting success (ENG-651), a timeout is the honest "could not determine" outcome and
+ *  has to say what it last saw — otherwise the diagnosis is invisible. Mirrors the detail
+ *  `pollLeaseUntilReady`'s own timeout already carries. */
 function timedOutError(
   leaseUuid: LeaseUuid,
   timeoutMs: number,
+  lastProvisionStatus?: string,
 ): ManifestMCPError {
   return new ManifestMCPError(
     ManifestMCPErrorCode.QUERY_FAILED,
-    `waitForLeaseStatus timed out after ${timeoutMs}ms; lease ${leaseUuid} still non-terminal`,
+    `waitForLeaseStatus timed out after ${timeoutMs}ms; lease ${leaseUuid} still non-terminal ` +
+      `(last provision_status: ${lastProvisionStatus ?? 'unknown'})`,
   );
 }
 
@@ -207,9 +238,15 @@ async function waitViaPoll(a: DriverArgs): Promise<FredLeaseStatus> {
       if (signal?.aborted) throw signal.reason; // abort-during-fetch: reject with the abort reason FIRST
       throw err; // network/parse → reject
     }
-    if (classifyTerminal(status) !== 'pending') return status; // resolve (terminal NOT emitted via onStatus)
+    a.observed.lastProvisionStatus = status.provision_status;
+    if (classifyTerminal(status, leaseUuid) !== 'pending') return status; // resolve (terminal NOT emitted via onStatus)
     a.emit(status);
-    if (Date.now() >= deadlineAt) throw timedOutError(leaseUuid, a.timeoutMs);
+    if (Date.now() >= deadlineAt)
+      throw timedOutError(
+        leaseUuid,
+        a.timeoutMs,
+        a.observed.lastProvisionStatus,
+      );
     await abortableSleep(intervalMs, signal); // rejects with signal.reason on abort during the interval
   }
 }
@@ -269,13 +306,58 @@ function runWsConnection(
       );
     };
 
+    /** Classify a PROVIDER-AUTHORED status: resolve the attempt if terminal, else report progress. */
     const consider = (status: FredLeaseStatus): void => {
       if (settled) return; // never emit / resolve twice from a frame that lands after finish()
-      if (classifyTerminal(status) !== 'pending') {
+      a.observed.lastProvisionStatus = status.provision_status;
+      if (classifyTerminal(status, leaseUuid) !== 'pending') {
         finish({ kind: 'terminal', status });
         return;
       }
       emit(status);
+    };
+
+    // One confirm-read in flight at a time: a burst of terminal-candidate frames must not fan out
+    // into a burst of GETs. A later frame is not lost — the read it would have triggered reflects
+    // the same `/status` document, and liveness/reconnect re-snapshots if the socket then goes quiet.
+    let confirming = false;
+
+    /**
+     * A terminal-candidate frame decides only WHEN to classify, never WHAT the state is. Read the
+     * authoritative `/status` and classify THAT, so both transports feed the one classifier from the
+     * one input type and cannot diverge (ENG-651).
+     *
+     * FALLBACK ON READ FAILURE IS ASYMMETRIC, deliberately:
+     *  - a PROVISION_FAILED frame is self-sufficient. It is a terminal-negative signal carrying its
+     *    own failure detail, a re-read could only confirm it, and honouring it preserves the ENG-638
+     *    `error` → `message`/`last_error` mapping exactly.
+     *  - anything else (`ready`, `retained`, or a status this client does not recognize) is NOT
+     *    self-sufficient: the frame cannot distinguish a live lease from a closed one, which is the
+     *    whole defect. Do not resolve. Keep streaming — liveness → reconnect → snapshot-on-open →
+     *    poll fallback is already the retry ladder, so no inner retry loop is needed here.
+     */
+    const confirmViaStatus = (ev: FredWsEvent): void => {
+      if (confirming) return;
+      confirming = true;
+      void (async () => {
+        try {
+          const snap = await getLeaseStatus(
+            validatedBase,
+            leaseUuid,
+            token,
+            ctx.fetch,
+            signal,
+            ctx.allowLoopback,
+          );
+          if (!settled) consider(snap);
+        } catch {
+          if (!settled && PROVISION_FAILED.has(ev.status)) {
+            consider(mapWsEventToStatus(ev));
+          }
+        } finally {
+          confirming = false;
+        }
+      })();
     };
 
     if (signal)
@@ -314,7 +396,16 @@ function runWsConnection(
       if (settled) return; // ignore frames delivered during/after the close handshake
       resetLiveness();
       const ev = parseFredWsEvent(data);
-      if (ev) consider(mapWsEventToStatus(ev));
+      if (!ev) return;
+      // A KNOWN in-progress status can only mean "still working on a live lease", so the frame is
+      // sufficient on its own and stays a pure progress event — no round trip on the hot path.
+      // Everything else could settle the wait, and the frame carries no chain state, so it triggers
+      // an authoritative read instead of being trusted (ENG-651).
+      if (PROVISION_IN_PROGRESS.has(ev.status)) {
+        consider(mapWsEventToStatus(ev));
+        return;
+      }
+      confirmViaStatus(ev);
     });
 
     sock.onClose((code) => {
@@ -365,7 +456,11 @@ async function waitViaWs(a: DriverArgs): Promise<FredLeaseStatus> {
     // The overall deadline elapsed mid-connection — reject with the timeout (do NOT reconnect or poll;
     // a fall-through to polling could otherwise resolve AFTER the documented deadline).
     if (outcome.kind === 'deadline')
-      throw timedOutError(leaseUuid, a.timeoutMs);
+      throw timedOutError(
+        leaseUuid,
+        a.timeoutMs,
+        a.observed.lastProvisionStatus,
+      );
     // reconnect: short delay before the next attempt (if any budget remains).
     if (attempt < WS_MAX_RECONNECT_ATTEMPTS - 1 && Date.now() < deadlineAt) {
       await abortableSleep(WS_RECONNECT_DELAY_MS, signal);
@@ -386,7 +481,14 @@ async function waitViaWs(a: DriverArgs): Promise<FredLeaseStatus> {
  * Transport: when `ctx.events` is present, transparently uses the provider `/events` WebSocket
  * (snapshot-on-connect + streamed transitions, bounded reconnect, liveness), falling back to polling
  * `/status` on any WS failure. Without `ctx.events` it polls. `onStatus` reports INTERMEDIATE updates
- * only, deduped unless `emitEvery`; the transport choice does not change the observable contract.
+ * only, deduped unless `emitEvery`.
+ *
+ * The transport changes LATENCY, never the VERDICT. A WS frame carries a provision status and no
+ * chain state, so it is treated as a trigger: a frame that could settle the wait causes an
+ * authoritative `/status` read, and that provider-authored document is what gets classified. Both
+ * transports therefore reach `classifyTerminal` with the same kind of input. The one exception is a
+ * PROVISION_FAILED frame whose read failed, which resolves from the frame — a terminal-negative
+ * signal is self-sufficient, while a success-shaped one is not (ENG-651).
  */
 export async function waitForLeaseStatus(
   ctx: WaitForLeaseStatusCtx,
@@ -441,6 +543,7 @@ export async function waitForLeaseStatus(
     timeoutMs,
     deadlineAt: Date.now() + timeoutMs,
     emit,
+    observed: {},
   };
 
   if (ctx.events) {
@@ -452,7 +555,11 @@ export async function waitForLeaseStatus(
       // If the overall deadline already elapsed, reject with the timeout — do NOT fall back to polling
       // (a poll could resolve AFTER the documented deadline).
       if (Date.now() >= args.deadlineAt)
-        throw timedOutError(leaseUuid, timeoutMs);
+        throw timedOutError(
+          leaseUuid,
+          timeoutMs,
+          args.observed.lastProvisionStatus,
+        );
       ctx.logger.warn(
         `waitForLeaseStatus: WebSocket transport failed, falling back to polling: ${
           err instanceof Error ? err.message : String(err)

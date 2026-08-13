@@ -272,6 +272,79 @@ export const PROVISION_FAILED: ReadonlySet<string> = new Set([
 ]);
 
 /**
+ * The provider `provision_status` values that mean the deployment is CONFIRMED
+ * HEALTHY. Success is an allowlist, not a fall-through: a status this client
+ * does not recognize is "not confirmed ready", never "ready".
+ *
+ * WHY THIS EXISTS (ENG-651). The ACTIVE branch used to answer `ready` for any
+ * status outside the two sets above, documented as forward-compat. That reads
+ * one ecosystem rule — never *fail* on an unknown enum value (Smithy: clients
+ * "MUST NOT fail when they encounter an unknown enum value") — as licence for a
+ * different one: never *distrust* an unknown value. Nothing supports the second.
+ * Google's AIP-216 describes this exact defect in its breaking-changes section,
+ * and states plainly that adding a new state is not a breaking change, so new
+ * values WILL arrive. Kubernetes says "nothing should be assumed about Pods that
+ * have a given phase value"; Argo CD sorts Unknown BELOW Degraded; Nagios has
+ * reserved exit-3 for UNKNOWN for 25 years.
+ *
+ * It cost us a real bug. Fred's `retained` — the backend tore the deployment
+ * down but kept its volumes — was in neither set, so a closed, soft-deleted,
+ * billing-dead lease resolved as a successful deploy. Note the inconsistency it
+ * created: the backend's own `unknown` ("I cannot tell") is in
+ * PROVISION_IN_PROGRESS and correctly keeps polling, while a status the CLIENT
+ * cannot recognize was luckier and got reported as healthy.
+ *
+ * An absent `provision_status` still means success — that is a legacy provider
+ * which never populates the field, not an unrecognized value.
+ */
+export const PROVISION_SUCCESS: ReadonlySet<string> = new Set(['ready']);
+
+/**
+ * Statuses this client KNOWS about that are none of ready / in-progress /
+ * failed. `retained` is the only one: the backend tore the deployment down but
+ * kept its volumes. On a CLOSED lease the chain-state branch has already decided
+ * it is terminal; on an ACTIVE one it is an anomaly the provider's reconciler
+ * re-provisions, so the wait continues. Either way it is NOT unrecognized — it
+ * is listed here so the "your provider may be newer than this client" warning
+ * below stays true, and does not fire for the one value we model deliberately.
+ */
+const PROVISION_KNOWN_NOT_READY: ReadonlySet<string> = new Set(['retained']);
+
+/** Values already reported, so a 3s poll loop reports a novel status once per
+ *  process rather than on every tick. */
+const warnedProvisionStatuses = new Set<string>();
+
+/**
+ * Report a `provision_status` that appears in NONE of this client's sets. That
+ * is the audit signal for the fail-closed default: the value is carried through
+ * unchanged and treated as not-yet-ready, and an operator gets told which
+ * unmodelled value the fleet is emitting so the sets can be updated
+ * deliberately. A status we do model is not reported — silence here means
+ * "handled", not "unnoticed".
+ */
+export function warnIfUnrecognizedProvisionStatus(
+  provisionStatus: string,
+  leaseUuid?: string,
+): void {
+  if (
+    PROVISION_SUCCESS.has(provisionStatus) ||
+    PROVISION_FAILED.has(provisionStatus) ||
+    PROVISION_IN_PROGRESS.has(provisionStatus) ||
+    PROVISION_KNOWN_NOT_READY.has(provisionStatus)
+  ) {
+    return;
+  }
+  if (warnedProvisionStatuses.has(provisionStatus)) return;
+  warnedProvisionStatuses.add(provisionStatus);
+  logger.warn(
+    `[fred] Unrecognized provision_status "${provisionStatus}"${
+      leaseUuid !== undefined ? ` (first seen on lease ${leaseUuid})` : ''
+    }. Treating it as not-yet-ready rather than ready — the provider may be running a newer ` +
+      'version than this client supports.',
+  );
+}
+
+/**
  * Thrown by pollLeaseUntilReady when the caller's checkChainState callback
  * reports a terminal lease state on-chain. Extends ProviderApiError so
  * existing catchers keep working; use `instanceof TerminalChainStateError`
@@ -414,10 +487,12 @@ export async function pollLeaseUntilReady(
         // The chain lease is ACTIVE, but the provider may still be pulling the
         // image / starting the container — or the container may have crashed.
         // Gate readiness on provision_status so callers never observe a lease as
-        // ready mid-provision. An absent field, or a status string this client
-        // does not recognize (a future value), is treated as settled —
-        // forward-compat, and it preserves the original ACTIVE-returns behavior
-        // for providers that don't populate the field.
+        // ready mid-provision. Readiness is an ALLOWLIST (PROVISION_SUCCESS):
+        // an unrecognized status keeps polling rather than reporting ready, so a
+        // value added by a newer provider cannot be mistaken for health
+        // (ENG-651 — see PROVISION_SUCCESS for why the default inverted). An
+        // ABSENT field still returns, preserving the original ACTIVE-returns
+        // behavior for providers that don't populate it at all.
         //
         // Readiness is decided by state + provision_status ONLY, never by the
         // presence of `reason`: Fred retains the failure attribution on a
@@ -439,8 +514,14 @@ export async function pollLeaseUntilReady(
               }`,
             );
           }
-          if (PROVISION_IN_PROGRESS.has(ps)) {
-            break; // still provisioning — keep polling
+          if (!PROVISION_SUCCESS.has(ps)) {
+            // In-progress, retained, or a value this client has never heard of.
+            // None is CONFIRMED healthy, so keep polling: it either settles into
+            // a status we do recognize, or the caller's deadline expires with an
+            // error naming the last status seen. Both are honest; reporting it
+            // as a ready deploy is not. (ENG-651)
+            warnIfUnrecognizedProvisionStatus(ps, leaseUuid);
+            break;
           }
         }
         return status;
