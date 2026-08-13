@@ -24,6 +24,8 @@ import type {
 } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import type { FredAuthCtx } from '../ctx.js';
+import { guidanceFor } from '../failure-guidance.js';
+import { sanitizeFailureFields } from '../failure-reason.js';
 import type { AuthTokenService } from '../http/auth-token-service.js';
 import { getLeaseProvision, getLeaseReleases, MAX_TAIL } from '../http/fred.js';
 import type { ProviderAuthPort } from '../http/provider-auth.js';
@@ -160,6 +162,12 @@ export function registerTools(deps: RegisterToolsDeps): void {
         fredStatus: z
           .looseObject({
             provision_status: z.string().optional(),
+            // Failure attribution (ENG-508/ENG-638). NOTE: a non-empty `reason`
+            // does NOT mean the app is failing now — Fred retains it on a
+            // healthy `ready` lease whose last update rolled back. Read
+            // liveness from provision_status. Open set, so never z.enum(...).
+            reason: z.string().optional(),
+            message: z.string().optional(),
             retained_until: z.string().optional(),
             items: z.array(z.looseObject({})).optional(),
             restore_hint: z.string().optional(),
@@ -931,7 +939,7 @@ export function registerTools(deps: RegisterToolsDeps): void {
     'app_diagnostics',
     {
       description:
-        'Get provision diagnostics for a deployed app. Use this to debug apps stuck in provisioning or that failed to start. Returns provision status, failure count, and last error message.',
+        'Get provision diagnostics for a deployed app. Use this to debug apps stuck in provisioning or that failed to start. Returns provision status, failure count, and the failure attribution: a machine-readable reason, a human message, and a suggested next step. Older providers report last_error instead of reason/message.',
       inputSchema: {
         lease_uuid: z
           .string()
@@ -942,10 +950,21 @@ export function registerTools(deps: RegisterToolsDeps): void {
         lease_uuid: z.string(),
         provision_status: z.string(),
         fail_count: z.number(),
-        // The provider omits last_error when there's no recent failure.
-        // structuredResponse's JSON.stringify round-trip drops undefined
-        // keys, so the parsed structuredContent has no `last_error` at
-        // all in the success case — declare optional to match.
+        // Failure attribution (ENG-508/ENG-638). The provider omits these when
+        // no failure has been recorded, and structuredResponse's JSON.stringify
+        // round-trip drops undefined keys, so every one is optional.
+        //
+        // `reason` is z.string(), NEVER z.enum(...): Fred's set is open and
+        // add-only, so an enum here would turn the next reason Fred ships into
+        // a hard output-validation failure for this tool.
+        reason: z.string().optional(),
+        message: z.string().optional(),
+        // Derived by this server from `reason` — present only for a reason it
+        // recognizes, so an unrecognized value visibly carries no guidance and
+        // the caller falls back to `message`, as Fred's contract requires.
+        next_step: z.string().optional(),
+        // Pre-ENG-508 providers only; superseded by reason/message. Kept
+        // declared because the schema is downstream-visible.
         last_error: z.string().optional(),
         // Retention (ENG-600): present only when provision_status == "retained".
         retained_until: z.string().optional(),
@@ -996,12 +1015,18 @@ export function registerTools(deps: RegisterToolsDeps): void {
         ctx.allowLoopback,
       );
 
+      // ENG-638: `next_step` is derived, not from the wire — guidanceFor
+      // returns undefined for a reason this client does not recognize, which is
+      // the expected result for a newer Fred, not an error.
+      const nextStep = guidanceFor(provision.reason)?.nextStep;
+
       return structuredResponse(
         {
           lease_uuid: leaseUuid,
           provision_status: provision.status,
           fail_count: provision.fail_count,
-          last_error: provision.last_error,
+          ...sanitizeFailureFields(provision),
+          ...(nextStep !== undefined ? { next_step: nextStep } : {}),
           ...sanitizeRetentionFields(provision),
         },
         bigIntReplacer,
@@ -1029,6 +1054,12 @@ export function registerTools(deps: RegisterToolsDeps): void {
             image: z.string(),
             status: z.string(),
             created_at: z.string(),
+            // Failure attribution on a failed release (ENG-508/ENG-638).
+            // Declared for schema-introspecting clients; `reason` is an open
+            // set, so never z.enum(...). The pre-ENG-508 `error` spelling still
+            // flows through the looseObject.
+            reason: z.string().optional(),
+            message: z.string().optional(),
           }),
         ),
       },
@@ -1065,7 +1096,25 @@ export function registerTools(deps: RegisterToolsDeps): void {
       return structuredResponse(
         {
           lease_uuid: leaseUuid,
-          releases: result.releases,
+          // ENG-638: a release element is a looseObject forwarded wholesale, so
+          // provider-controlled failure text would otherwise reach model
+          // context raw. Strip the raw failure keys BEFORE re-adding the
+          // sanitized projection — the same order appStatus uses, and for the
+          // same reason: sanitizeFailureFields drops empty and non-string
+          // values (provider JSON is type-asserted, never validated), so a
+          // spread cannot overwrite a key the sanitizer chose to omit. Leaving
+          // the raw key would forward e.g. `reason: 12345` into
+          // structuredContent, where the declared z.string() then REJECTS it
+          // and fails the whole tool call.
+          releases: result.releases.map((r) => {
+            const {
+              reason: _reasonRaw,
+              message: _messageRaw,
+              error: _errorRaw,
+              ...rest
+            } = r;
+            return { ...rest, ...sanitizeFailureFields(r) };
+          }),
         },
         bigIntReplacer,
       );

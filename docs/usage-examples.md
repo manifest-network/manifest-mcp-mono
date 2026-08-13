@@ -164,7 +164,7 @@ Run the `diagnose-failing-app` prompt. Or manually:
 ```ts
 // fred server
 app_status({ lease_uuid: "..." })          // chainState + fredStatus
-app_diagnostics({ lease_uuid: "..." })     // provision_status, fail_count, last_error
+app_diagnostics({ lease_uuid: "..." })     // provision_status, fail_count, reason, message, next_step
 get_logs({ lease_uuid: "...", tail: 200 }) // recent container output
 ```
 

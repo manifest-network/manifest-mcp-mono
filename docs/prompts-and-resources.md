@@ -37,7 +37,7 @@ Triage flow for a misbehaving lease. Bundles `app_status`, `app_diagnostics`, an
 **Workflow the prompt enforces:**
 
 1. `app_status({ lease_uuid })` — record chain state and (if present) `fredStatus`.
-2. `app_diagnostics({ lease_uuid })` — record `provision_status`, `fail_count`, `last_error`.
+2. `app_diagnostics({ lease_uuid })` — record `provision_status`, `fail_count`, and the failure attribution `reason` / `message` / `next_step` (older providers send `last_error` instead).
 3. `get_logs({ lease_uuid, tail: 200 })` — capture the most recent logs.
 4. Summarize lease state, provider state, the most relevant log lines, and one concrete next step.
 

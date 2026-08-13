@@ -67,7 +67,7 @@ A lease that was CLOSED (e.g. credit-exhausted) can be recovered **while its vol
 Prefer the `diagnose-failing-app` MCP prompt — it bundles `app_status`, `app_diagnostics`, and `get_logs` into a single triage workflow. See the [prompts reference](prompts-and-resources.md). Manually:
 
 - `app_status({ lease_uuid })` — chain state + provider state.
-- `app_diagnostics({ lease_uuid })` — `provision_status`, `fail_count`, `last_error`.
+- `app_diagnostics({ lease_uuid })` — `provision_status`, `fail_count`, `reason`, `message`, `next_step`.
 - `get_logs({ lease_uuid, tail: 200 })` — recent container output.
 
 ### Custom domains

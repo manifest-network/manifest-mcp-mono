@@ -377,7 +377,14 @@ describe('waitForLeaseStatus — WebSocket transport (ctx.events)', () => {
 
     const final = await p;
     expect(isLeaseFailureTerminal(final)).toBe(true);
-    expect(final.last_error).toBe('image pull error'); // Fred wire field is `error` → last_error
+    // ENG-638: the frame's `error` is Fred's callback.Error — the same value it
+    // assigns to ProvisionState.Message — so it maps to the canonical `message`,
+    // making a WS-derived status shape-identical to a post-ENG-508 poll snapshot.
+    expect(final.message).toBe('image pull error');
+    // Deprecated mirror, kept one release for SDK consumers reading the old key.
+    expect(final.last_error).toBe('image pull error');
+    // Never fabricated: the frame carries no reason.
+    expect(final.reason).toBeUndefined();
   });
 
   it('snapshot-on-open resolves an already-terminal lease before any event', async () => {

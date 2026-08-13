@@ -94,7 +94,7 @@ The error message starts with `Deploy partially succeeded:` so an agent can bran
 
 Check the provider:
 
-1. `app_diagnostics({ lease_uuid })` — `provision_status`, `fail_count`, `last_error`.
+1. `app_diagnostics({ lease_uuid })` — `provision_status`, `fail_count`, and the failure attribution `reason` / `message` / `next_step`.
 2. `get_logs({ lease_uuid, tail: 200 })` — container output (will be empty if the image hasn't pulled yet).
 3. `app_status({ lease_uuid })` — chain state vs provider state may differ when something failed during provisioning.
 
@@ -102,7 +102,35 @@ Common causes:
 - Image registry is allowlisted differently than you expected (the `allowed_registries` list isn't on-chain — it's provider config, only checked at upload time).
 - Image is private and the provider doesn't have credentials.
 - Tags don't exist (e.g. `myapp:lates` typo).
-- Resource limits in the SKU don't fit the container (rare; usually surfaces as `last_error`).
+- Resource limits in the SKU don't fit the container (rare; usually surfaces as a `ContainerExited` reason).
+
+### Reading `reason`
+
+`reason` is a stable, machine-readable failure category; `message` is a short human summary with no
+host paths or raw command output. Both are omitted when no failure has been recorded. Providers
+older than Fred v0.13.0 send a verbose `last_error` instead — the tools fall back to it and also
+surface it on `message`, so either provider generation gives you a usable diagnosis.
+
+| `reason` | Meaning | Who can act |
+|---|---|---|
+| `ContainerExited` | Container exited unexpectedly (crash, non-zero exit, OOM kill) | you |
+| `ImagePullFailed` | The image could not be pulled | you |
+| `Internal` | Internal provider error, not your workload | provider |
+| `RestartFailed` | A restart you requested did not complete | you |
+| `UpdateFailed` | An update failed and rolled back — **the app is still running the previous version** | you |
+| `RestoreFailed` | A restore from retained data did not complete | you |
+| `VolumeCleanupExhausted` | Volume cleanup failed after every retry | provider |
+| `CleanupFailed` | Container/volume cleanup on deprovision failed | provider |
+| `Unknown` | Marked failed with no specific cause recorded | you |
+
+Two things to keep in mind:
+
+- **The set is open and add-only.** A provider running a newer Fred may return a `reason` not listed
+  here. That is expected, not an error: treat it as a generic failure and read `message`. The tools
+  pass unknown values through untouched and simply omit `next_step`.
+- **A non-empty `reason` does not mean the app is down.** Fred keeps the attribution on a healthy
+  lease whose last update rolled back, so a `ready` app can legitimately report
+  `reason: UpdateFailed`. Decide liveness from `provision_status`, not from the presence of `reason`.
 
 ## Auth token rejected by the provider
 
@@ -117,6 +145,8 @@ To reach a localhost provider in development, disable the guard: `MANIFEST_FRED_
 ## "Tool returned a structured response that doesn't match its outputSchema"
 
 This came up during the v0.7.0 rollout — `app_diagnostics` declared `last_error` as required when the provider can omit it. If you see something similar now, file an issue with the tool name and the response payload; the schemas are pinned by tests and shouldn't drift silently.
+
+Note that `last_error` is now a deprecated alias kept only for providers older than Fred v0.13.0; the current failure fields are `reason` and `message` (see [Reading `reason`](#reading-reason) above).
 
 ## Logs aren't showing up
 

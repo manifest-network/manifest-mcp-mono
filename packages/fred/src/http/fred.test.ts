@@ -193,6 +193,11 @@ describe('pollLeaseUntilReady', () => {
     expect(callCount).toBe(2);
   });
 
+  // PRE-ENG-508 fallback. Keep this fixture on the deprecated `last_error`
+  // shape and this assertion byte-identical: it is the proof that a provider
+  // which has not yet upgraded still yields a useful diagnosis (ENG-638). The
+  // post-ENG-508 reason/message cases live in fred-failure-wire.test.ts, which
+  // runs through the real parse path instead of the mocks above.
   it('throws when ACTIVE but provisioning failed, surfacing last_error', async () => {
     mockCheckedFetch.mockResolvedValue({} as Response);
     mockParseJsonResponse.mockResolvedValue({
