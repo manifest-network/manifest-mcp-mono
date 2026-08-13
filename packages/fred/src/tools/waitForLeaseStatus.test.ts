@@ -729,6 +729,108 @@ const RETAINED_WIRE_ACTIVE = {
   state: 'LEASE_STATE_ACTIVE',
 } as RawFrame;
 
+/** A fetch whose responses are released by the test, so a frame can be delivered while a `/status`
+ *  read is genuinely in flight. Returns the deferred queue plus the fetch to inject. */
+function makeDeferredFetch(bodies: RawFrame[]) {
+  const releases: Array<() => void> = [];
+  let i = 0;
+  const fetch = vi.fn(async () => {
+    const body = JSON.stringify(bodies[Math.min(i, bodies.length - 1)]);
+    i += 1;
+    await new Promise<void>((resolve) => releases.push(resolve));
+    return {
+      ok: true,
+      status: 200,
+      text: async () => body,
+    } as unknown as Response;
+  }) as unknown as typeof globalThis.fetch;
+  return {
+    fetch,
+    /** Release the Nth outstanding read (0-based) and let its microtasks drain. */
+    release: async (n = 0) => {
+      releases[n]?.();
+      await new Promise((r) => setTimeout(r, 0));
+    },
+    pending: () => releases.length,
+  };
+}
+
+describe('waitForLeaseStatus — stale-read supersession (ENG-651, PR #172 review)', () => {
+  it('a newer frame arriving mid-read prevents the stale document from resolving success', async () => {
+    // The read for the `ready` frame is issued, then the lease FAILS and Fred pushes a `failed`
+    // frame while that GET is still in flight. The in-flight read can only answer for the state at
+    // issue time, so honouring it would resolve a successful deploy for a lease we have already been
+    // told failed — the ticket's defect wearing a different hat. The newest frame must win, and the
+    // superseded read must be discarded and re-issued rather than dropped.
+    const deferred = makeDeferredFetch([
+      { state: 'LEASE_STATE_ACTIVE', provision_status: 'ready' }, // stale: pre-failure
+      leaseStatusWire({
+        era: 'post-eng508',
+        outcome: 'failed',
+        leaseUuid: LEASE_UUID,
+      }) as unknown as RawFrame, // the re-read, post-failure
+    ]);
+    const ctx = makeWaitCtx({
+      providerUuid: 'p1',
+      statusFrames: [],
+      fetch: deferred.fetch,
+    });
+    const { transport, sockets } = makeFakeEvents();
+    (ctx as { events?: EventTransport }).events = transport;
+
+    const p = waitForLeaseStatus(ctx, LEASE_UUID, { timeout: 5_000 });
+    await vi.waitFor(() => expect(sockets.length).toBe(1));
+
+    sockets[0].msgCb?.(wsFrame('ready')); // → issues read #1 (the stale one)
+    await vi.waitFor(() => expect(deferred.pending()).toBe(1));
+    sockets[0].msgCb?.(wsFrame('failed', 'OOMKilled')); // lands while read #1 is in flight
+    await deferred.release(0); // read #1 answers with the pre-failure document
+
+    // Read #1 was superseded, so it must not have settled anything; the loop re-reads.
+    await vi.waitFor(() => expect(deferred.pending()).toBe(2));
+    await deferred.release(1);
+
+    const final = await p;
+    expect(isLeaseFailureTerminal(final)).toBe(true);
+    expect(final.provision_status).toBe('failed');
+  });
+
+  it('a candidate frame supersedes an in-flight snapshot-on-open', async () => {
+    // Same rule for the earliest read in the connection, which is the likeliest to be stale.
+    const deferred = makeDeferredFetch([
+      { state: 'LEASE_STATE_ACTIVE', provision_status: 'ready' }, // stale snapshot-on-open
+      leaseStatusWire({
+        era: 'post-eng508',
+        outcome: 'retained',
+        leaseUuid: LEASE_UUID,
+      }) as unknown as RawFrame, // the confirm-read: CLOSED + retained
+    ]);
+    const ctx = makeWaitCtx({
+      providerUuid: 'p1',
+      statusFrames: [],
+      fetch: deferred.fetch,
+    });
+    const { transport, sockets } = makeFakeEvents();
+    (ctx as { events?: EventTransport }).events = transport;
+
+    const p = waitForLeaseStatus(ctx, LEASE_UUID, { timeout: 5_000 });
+    await vi.waitFor(() => expect(sockets.length).toBe(1));
+
+    sockets[0].openCb?.(); // → issues the snapshot read
+    await vi.waitFor(() => expect(deferred.pending()).toBe(1));
+    sockets[0].msgCb?.(wsFrame('retained', RETAINED_HINT)); // lands while the snapshot is in flight
+    await deferred.release(0); // the snapshot answers "ready" — but it is now stale
+
+    await vi.waitFor(() => expect(deferred.pending()).toBe(2));
+    await deferred.release(1);
+
+    const final = await p;
+    expect(isLeaseFailureTerminal(final)).toBe(true);
+    expect(final.provision_status).toBe('retained');
+    expect(final.state).toBe(LeaseState.LEASE_STATE_CLOSED);
+  });
+});
+
 describe('waitForLeaseStatus — retained (ENG-651)', () => {
   it('WS: a retained frame on a CLOSED lease resolves as a failure terminal, carrying the retention metadata', async () => {
     const ctx = makeWaitCtx({

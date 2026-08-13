@@ -317,10 +317,20 @@ function runWsConnection(
       emit(status);
     };
 
-    // One confirm-read in flight at a time: a burst of terminal-candidate frames must not fan out
-    // into a burst of GETs. A later frame is not lost — the read it would have triggered reflects
-    // the same `/status` document, and liveness/reconnect re-snapshots if the socket then goes quiet.
+    // COALESCE, DON'T DROP (the workqueue rule). One confirm-read in flight at a time, so a burst of
+    // terminal-candidate frames cannot fan out into a burst of GETs — but the newest candidate is
+    // KEPT and processed when that read finishes, never discarded.
+    //
+    // `candidateSeq` bumps on every candidate frame. A status read captures it before issuing and
+    // refuses to settle the wait if it changed while the read was in flight: its evidence has been
+    // superseded by a frame the provider sent later. Without that, a `ready` read issued at t0 could
+    // return the pre-transition document at t2 and resolve SUCCESS even though a `failed`/`retained`
+    // frame arrived at t1 — resolving success on stale evidence, which is this ticket's whole defect
+    // wearing a different hat. The rule covers snapshot-on-open too, which is the read most likely to
+    // be stale because it is issued earliest.
     let confirming = false;
+    let candidateSeq = 0;
+    let pendingCandidate: FredWsEvent | undefined;
 
     /**
      * A terminal-candidate frame decides only WHEN to classify, never WHAT the state is. Read the
@@ -337,22 +347,41 @@ function runWsConnection(
      *    poll fallback is already the retry ladder, so no inner retry loop is needed here.
      */
     const confirmViaStatus = (ev: FredWsEvent): void => {
-      if (confirming) return;
+      candidateSeq += 1;
+      pendingCandidate = ev; // newest wins; an older unprocessed candidate is worthless
+      if (confirming) return; // the in-flight loop will pick it up
       confirming = true;
       void (async () => {
         try {
-          const snap = await getLeaseStatus(
-            validatedBase,
-            leaseUuid,
-            token,
-            ctx.fetch,
-            signal,
-            ctx.allowLoopback,
-          );
-          if (!settled) consider(snap);
-        } catch {
-          if (!settled && PROVISION_FAILED.has(ev.status)) {
-            consider(mapWsEventToStatus(ev));
+          while (!settled && pendingCandidate !== undefined) {
+            const candidate = pendingCandidate;
+            const seq = candidateSeq;
+            pendingCandidate = undefined; // claimed
+            let snap: FredLeaseStatus | undefined;
+            try {
+              snap = await getLeaseStatus(
+                validatedBase,
+                leaseUuid,
+                token,
+                ctx.fetch,
+                signal,
+                ctx.allowLoopback,
+              );
+            } catch {
+              // Read failed. Honour the frame only if it is self-sufficient AND still the newest
+              // thing we know; otherwise loop and let the newer candidate drive its own read.
+              if (
+                !settled &&
+                candidateSeq === seq &&
+                PROVISION_FAILED.has(candidate.status)
+              ) {
+                consider(mapWsEventToStatus(candidate));
+              }
+              continue;
+            }
+            if (settled) return;
+            if (candidateSeq !== seq) continue; // superseded mid-read → discard, re-read
+            consider(snap);
           }
         } finally {
           confirming = false;
@@ -376,6 +405,7 @@ function runWsConnection(
       // The WS stream only carries FUTURE transitions; snapshot the current state once so an
       // already-terminal / already-ready lease resolves immediately (best-effort — keep streaming on error).
       void (async () => {
+        const seq = candidateSeq;
         try {
           const snap = await getLeaseStatus(
             validatedBase,
@@ -385,7 +415,10 @@ function runWsConnection(
             signal,
             ctx.allowLoopback,
           );
-          if (!settled) consider(snap);
+          // Same supersession rule as the confirm-read: a candidate frame that arrived while this
+          // snapshot was in flight describes a LATER state, so this document must not settle the
+          // wait. Its own confirm-read is authoritative; drop this one.
+          if (!settled && candidateSeq === seq) consider(snap);
         } catch {
           /* snapshot best-effort */
         }
