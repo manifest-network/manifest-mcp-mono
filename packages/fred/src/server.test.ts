@@ -336,7 +336,13 @@ describe('FredMCPServer', () => {
       expect(parsed.lease_uuid).toBe(LEASE_UUID);
       expect(parsed.provision_status).toBe('provisioned');
       expect(parsed.fail_count).toBe(2);
+      // Pre-ENG-508 provider: the deprecated key is echoed AND surfaced on the
+      // canonical `message`, so a caller reading either works (ENG-638).
       expect(parsed.last_error).toBe('image pull timeout');
+      expect(parsed.message).toBe('image pull timeout');
+      // No reason on the wire => no fabricated one, and no derived guidance.
+      expect(parsed.reason).toBeUndefined();
+      expect(parsed.next_step).toBeUndefined();
 
       expect(mockFetchLease).toHaveBeenCalledWith(
         expect.anything(),
@@ -412,13 +418,18 @@ describe('FredMCPServer', () => {
       expect(mockGetLeaseProvision).not.toHaveBeenCalled();
     });
 
-    it('accepts a provision response without last_error', async () => {
-      // Pins the regression caught by nightly e2e: the Fred provider omits
-      // last_error when there's no recent failure, so the outputSchema
-      // must declare it optional. structuredResponse's JSON.stringify
-      // round-trip drops the undefined key entirely; the resulting
-      // structuredContent has no `last_error` property and the SDK's
-      // output validation must still accept it.
+    it('accepts a provision response with no failure fields at all', async () => {
+      // Pins the regression caught by nightly e2e: the Fred provider omits the
+      // failure fields when there's no recent failure, so every one must be
+      // declared optional. structuredResponse's JSON.stringify round-trip drops
+      // the undefined keys entirely; the SDK's output validation must accept
+      // the result anyway.
+      //
+      // ENG-638 NOTE: this test used to assert only that an absent `last_error`
+      // was accepted — which post-ENG-508 is true for EVERY response, since Fred
+      // no longer sends the field at all. It therefore passed *because of* the
+      // break it was meant to guard. It now pins the healthy case explicitly:
+      // no reason, no message, no derived guidance, and no legacy key.
       mockFetchLease.mockResolvedValue({
         providerUuid: 'prov-1',
         state: LeaseState.LEASE_STATE_ACTIVE,
@@ -427,8 +438,8 @@ describe('FredMCPServer', () => {
       mockGetLeaseProvision.mockResolvedValue({
         status: 'provisioned',
         fail_count: 0,
-        // FredLeaseProvision.last_error is optional; omit it to model the
-        // success-case provider response.
+        // All of reason/message/last_error are optional; omit them to model a
+        // healthy provider response from EITHER wire era.
       });
 
       const server = new FredMCPServer({
@@ -445,6 +456,104 @@ describe('FredMCPServer', () => {
       expect(sc.provision_status).toBe('provisioned');
       expect(sc.fail_count).toBe(0);
       expect(sc.last_error).toBeUndefined();
+      expect(sc.reason).toBeUndefined();
+      expect(sc.message).toBeUndefined();
+      expect(sc.next_step).toBeUndefined();
+    });
+
+    it('surfaces reason/message/next_step from a post-ENG-508 provider', async () => {
+      mockFetchLease.mockResolvedValue({
+        providerUuid: 'prov-1',
+        state: LeaseState.LEASE_STATE_ACTIVE,
+      } as Awaited<ReturnType<typeof fetchLease>>);
+      mockResolveProviderUrl.mockResolvedValue('https://provider.example.com');
+      mockGetLeaseProvision.mockResolvedValue({
+        status: 'failed',
+        fail_count: 3,
+        reason: 'ImagePullFailed',
+        message: 'image pull failed',
+      });
+
+      const server = new FredMCPServer({
+        config: makeMockConfig(),
+        walletProvider: makeMockWallet({ signArbitrary: true }),
+      });
+      const result = await callTool(server, 'app_diagnostics', {
+        lease_uuid: LEASE_UUID,
+      });
+
+      // isError undefined also proves the outputSchema ACCEPTS the new keys.
+      expect(result.isError).toBeUndefined();
+      const sc = result.structuredContent as Record<string, unknown>;
+      expect(sc.reason).toBe('ImagePullFailed');
+      expect(sc.message).toBe('image pull failed');
+      // Derived by this server from the reason — the actionable half the enum
+      // name alone does not carry.
+      expect(sc.next_step).toContain('update_app');
+      // Nothing fabricates the removed legacy key.
+      expect(sc.last_error).toBeUndefined();
+    });
+
+    it('passes an UNRECOGNIZED reason through with NO next_step', async () => {
+      // Fred's reason set is open and add-only. A newer provider's value must
+      // reach the model verbatim (never rejected by the schema — which is why
+      // `reason` is z.string() and not z.enum), and the absence of guidance is
+      // what tells the caller to fall back to `message`.
+      mockFetchLease.mockResolvedValue({
+        providerUuid: 'prov-1',
+        state: LeaseState.LEASE_STATE_ACTIVE,
+      } as Awaited<ReturnType<typeof fetchLease>>);
+      mockResolveProviderUrl.mockResolvedValue('https://provider.example.com');
+      mockGetLeaseProvision.mockResolvedValue({
+        status: 'failed',
+        fail_count: 1,
+        reason: 'SomeFutureReason',
+        message: 'a cause this client has never heard of',
+      });
+
+      const server = new FredMCPServer({
+        config: makeMockConfig(),
+        walletProvider: makeMockWallet({ signArbitrary: true }),
+      });
+      const result = await callTool(server, 'app_diagnostics', {
+        lease_uuid: LEASE_UUID,
+      });
+
+      expect(result.isError).toBeUndefined();
+      const sc = result.structuredContent as Record<string, unknown>;
+      expect(sc.reason).toBe('SomeFutureReason');
+      expect(sc.message).toBe('a cause this client has never heard of');
+      expect(sc.next_step).toBeUndefined();
+    });
+
+    it('sanitizes a provider-injected control char in message (ENG-555)', async () => {
+      // Proves sanitizeFailureFields is actually WIRED here, not merely correct
+      // in its own unit test — the ENG-600 bidi-injection pattern.
+      mockFetchLease.mockResolvedValue({
+        providerUuid: 'prov-1',
+        state: LeaseState.LEASE_STATE_ACTIVE,
+      } as Awaited<ReturnType<typeof fetchLease>>);
+      mockResolveProviderUrl.mockResolvedValue('https://provider.example.com');
+      mockGetLeaseProvision.mockResolvedValue({
+        status: 'failed',
+        fail_count: 1,
+        reason: 'ContainerExited',
+        // RIGHT-TO-LEFT OVERRIDE (U+202E), written as an escape.
+        message: `exit 1${String.fromCharCode(0x202e)}gnitseuqer`,
+      });
+
+      const server = new FredMCPServer({
+        config: makeMockConfig(),
+        walletProvider: makeMockWallet({ signArbitrary: true }),
+      });
+      const result = await callTool(server, 'app_diagnostics', {
+        lease_uuid: LEASE_UUID,
+      });
+
+      expect(result.isError).toBeUndefined();
+      expect(JSON.stringify(result.structuredContent)).not.toContain(
+        String.fromCharCode(0x202e),
+      );
     });
 
     it('returns error when lease not found on chain', async () => {
@@ -499,6 +608,47 @@ describe('FredMCPServer', () => {
   });
 
   describe('app_releases', () => {
+    it('surfaces + sanitizes a post-ENG-508 failed release (ENG-638)', async () => {
+      mockFetchActiveLease.mockResolvedValue({
+        providerUuid: 'prov-1',
+      } as Awaited<ReturnType<typeof fetchActiveLease>>);
+      mockResolveProviderUrl.mockResolvedValue('https://provider.example.com');
+      mockGetLeaseReleases.mockResolvedValue({
+        lease_uuid: LEASE_UUID,
+        tenant: 'manifest1tenant',
+        provider_uuid: 'prov-1',
+        releases: [
+          {
+            version: 3,
+            image: 'nginx:3.0',
+            status: 'failed',
+            created_at: '2025-01-03T00:00:00Z',
+            reason: 'UpdateFailed',
+            // RIGHT-TO-LEFT OVERRIDE (U+202E) — the raw element is forwarded
+            // wholesale through a looseObject, so this proves the per-element
+            // sanitize is wired and the raw key cannot survive the spread.
+            message: `update failed${String.fromCharCode(0x202e)}kcab dellor`,
+          },
+        ],
+      });
+
+      const server = new FredMCPServer({
+        config: makeMockConfig(),
+        walletProvider: makeMockWallet({ signArbitrary: true }),
+      });
+      const result = await callTool(server, 'app_releases', {
+        lease_uuid: LEASE_UUID,
+      });
+
+      expect(result.isError).toBeUndefined();
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.releases[0].reason).toBe('UpdateFailed');
+      expect(parsed.releases[0].message).toContain('update failed');
+      expect(JSON.stringify(parsed.releases)).not.toContain(
+        String.fromCharCode(0x202e),
+      );
+    });
+
     it('returns release history for a valid lease', async () => {
       mockFetchActiveLease.mockResolvedValue({
         providerUuid: 'prov-1',
@@ -543,12 +693,17 @@ describe('FredMCPServer', () => {
         status: 'active',
         created_at: '2025-01-01T00:00:00Z',
       });
+      // Pre-ENG-508 release: the deprecated `error` is echoed AND surfaced on
+      // the canonical `message` key, so a caller reading either keeps working
+      // across the provider fleet's upgrade (ENG-638). Deliberately still
+      // toEqual, not toMatchObject — the projection stays exactly pinned.
       expect(parsed.releases[1]).toEqual({
         version: 2,
         image: 'nginx:2.0',
         status: 'deploying',
         created_at: '2025-01-02T00:00:00Z',
         error: 'timeout',
+        message: 'timeout',
       });
 
       expect(mockFetchActiveLease).toHaveBeenCalledWith(

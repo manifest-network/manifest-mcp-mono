@@ -185,6 +185,94 @@ describe('appStatus', () => {
     );
   });
 
+  it('surfaces the post-ENG-508 failure pair on fredStatus (ENG-638)', async () => {
+    // A `ready` lease carrying a rolled-back UpdateFailed: Fred deliberately
+    // retains the attribution on a HEALTHY lease, so this doubles as the case
+    // documenting that a non-empty `reason` does not mean the app is down.
+    mockGetLeaseStatus.mockResolvedValueOnce({
+      state: LeaseState.LEASE_STATE_ACTIVE,
+      provision_status: 'ready',
+      reason: 'UpdateFailed',
+      message: 'update failed; rolled back to the previous version',
+    });
+    const qc = makeMockQueryClient({
+      billing: {
+        lease: {
+          uuid: LEASE_UUID,
+          state: LeaseState.LEASE_STATE_ACTIVE,
+          providerUuid: 'prov-1',
+        },
+      },
+    });
+
+    const result = await appStatus(makeCtx(qc, mockGetAuthToken), {
+      address: 'manifest1abc',
+      leaseUuid: LEASE_UUID,
+    });
+
+    expect(result.fredStatus?.provision_status).toBe('ready');
+    expect(result.fredStatus?.reason).toBe('UpdateFailed');
+    expect(result.fredStatus?.message).toBe(
+      'update failed; rolled back to the previous version',
+    );
+  });
+
+  it('SANITIZES provider failure text instead of leaking it raw past the spread (ENG-638)', async () => {
+    // fredStatus is a looseObject, so any raw key left in `...rest` reaches
+    // model context unsanitized. This is the guard that fails if someone drops
+    // reason/message/last_error from the destructure-strip in appStatus.ts.
+    mockGetLeaseStatus.mockResolvedValueOnce({
+      state: LeaseState.LEASE_STATE_ACTIVE,
+      provision_status: 'failed',
+      reason: `Container${String.fromCharCode(0x202e)}Exited`,
+      message: `crash${String.fromCharCode(0x202e)}loop`,
+    });
+    const qc = makeMockQueryClient({
+      billing: {
+        lease: {
+          uuid: LEASE_UUID,
+          state: LeaseState.LEASE_STATE_ACTIVE,
+          providerUuid: 'prov-1',
+        },
+      },
+    });
+
+    const result = await appStatus(makeCtx(qc, mockGetAuthToken), {
+      address: 'manifest1abc',
+      leaseUuid: LEASE_UUID,
+    });
+
+    expect(result.fredStatus?.message).toBe('crash loop');
+    expect(JSON.stringify(result.fredStatus)).not.toContain(
+      String.fromCharCode(0x202e),
+    );
+  });
+
+  it('surfaces a pre-ENG-508 last_error on the canonical message key (ENG-638)', async () => {
+    mockGetLeaseStatus.mockResolvedValueOnce({
+      state: LeaseState.LEASE_STATE_ACTIVE,
+      provision_status: 'failed',
+      last_error: 'OOMKilled',
+    });
+    const qc = makeMockQueryClient({
+      billing: {
+        lease: {
+          uuid: LEASE_UUID,
+          state: LeaseState.LEASE_STATE_ACTIVE,
+          providerUuid: 'prov-1',
+        },
+      },
+    });
+
+    const result = await appStatus(makeCtx(qc, mockGetAuthToken), {
+      address: 'manifest1abc',
+      leaseUuid: LEASE_UUID,
+    });
+
+    expect(result.fredStatus?.last_error).toBe('OOMKilled');
+    expect(result.fredStatus?.message).toBe('OOMKilled');
+  });
+
   it('includes lease.items in chainState (so consumers skip a second getLease)', async () => {
     const items = [
       {

@@ -7,6 +7,7 @@ import {
   sanitizeForLogging,
 } from '@manifest-network/manifest-mcp-core';
 import type { FredAuthCtx } from '../ctx.js';
+import { sanitizeFailureFields } from '../failure-reason.js';
 import { type FredLeaseStatus, getLeaseStatus } from '../http/fred.js';
 import {
   type ConnectionDetails,
@@ -141,21 +142,35 @@ export async function appStatus(
     }
 
     if (statusResult.status === 'fulfilled') {
-      // Strip `partition` (Decision 6) AND the sanitized retention subset OUT
-      // of `rest` before the spread. fredStatus is a looseObject, so a wholesale
-      // `...raw` would forward `partition` to the model; and because
-      // sanitizeRetentionFields OMITS an invalid `retained_until` from its
-      // return, leaving the raw key in `rest` would let a non-RFC3339/injected
-      // value survive the spread (the sanitized keys can't overwrite a key they
-      // don't emit). Drop all four, then re-add only the sanitized values.
+      // Strip `partition` (Decision 6), the sanitized retention subset, AND the
+      // failure subset (ENG-638) OUT of `rest` before the spread. fredStatus is
+      // a looseObject, so a wholesale `...raw` would forward `partition` to the
+      // model; and because sanitizeRetentionFields OMITS an invalid
+      // `retained_until` from its return, leaving the raw key in `rest` would
+      // let a non-RFC3339/injected value survive the spread (the sanitized keys
+      // can't overwrite a key they don't emit). Drop them all, then re-add only
+      // the sanitized values.
+      //
+      // `reason`/`message`/`last_error` are provider-controlled failure text on
+      // the same footing as `restore_hint`. sanitizeFailureFields re-emits every
+      // key it saw, so stripping them here is belt-and-braces rather than
+      // load-bearing — but it keeps one uniform rule for every raw key, and the
+      // empty-string case genuinely IS omitted from the sanitized return.
       const {
         partition: _partitionOmitted,
         retained_until: _retainedUntilRaw,
         items: _itemsRaw,
         restore_hint: _restoreHintRaw,
+        reason: _reasonRaw,
+        message: _messageRaw,
+        last_error: _lastErrorRaw,
         ...rest
       } = statusResult.value;
-      fredStatus = { ...rest, ...sanitizeRetentionFields(statusResult.value) };
+      fredStatus = {
+        ...rest,
+        ...sanitizeFailureFields(statusResult.value),
+        ...sanitizeRetentionFields(statusResult.value),
+      };
     } else {
       providerError = handleRejection('lease status', statusResult.reason);
     }
