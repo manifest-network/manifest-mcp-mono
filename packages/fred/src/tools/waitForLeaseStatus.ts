@@ -116,13 +116,27 @@ function parseFredWsEvent(data: string): FredWsEvent | null {
  * ACTIVE and carries the provider `provision_status` (not the chain state), so we pin `state: ACTIVE`
  * and let `classifyTerminal` decide ready/failed/pending from `provision_status` — the same logic the
  * poll path applies. (Fred's wire field is `error`; barney historically mis-read `last_error`.)
+ *
+ * ENG-638: ENG-508 did NOT change this frame — `LeaseStatusEvent` still carries `error`. But that
+ * value is Fred's `callback.Error`, which is the SAME string Fred assigns to `ProvisionState.Message`
+ * (`p.Message = info.CallbackErr`), so it is semantically the curated `message`, not the verbose
+ * `last_error` ENG-508 redacted. Populate `message` — which makes a WS-derived status shape-identical
+ * to a post-ENG-508 poll snapshot, and `waitForLeaseStatus` resolves the same type from both
+ * transports. `last_error` is kept as a deprecated mirror for one release because the resolved status
+ * is published on the SDK `/deploy` subpath and an existing consumer may still read that key.
+ *
+ * No `reason` is synthesized: the frame carries none, and defaulting it to `Unknown` would fabricate
+ * machine-readable data. If Fred ever adds `reason` to the frame, whitelist it in `parseFredWsEvent`
+ * and pass it through here — that is the whole change.
  */
 function mapWsEventToStatus(event: FredWsEvent): FredLeaseStatus {
   return {
     state: LeaseState.LEASE_STATE_ACTIVE,
     provision_status: event.status,
     phase: event.status,
-    ...(event.error !== undefined ? { last_error: event.error } : {}),
+    ...(event.error !== undefined
+      ? { message: event.error, last_error: event.error }
+      : {}),
   };
 }
 
