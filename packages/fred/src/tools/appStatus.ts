@@ -152,10 +152,11 @@ export async function appStatus(
       // the sanitized values.
       //
       // `reason`/`message`/`last_error` are provider-controlled failure text on
-      // the same footing as `restore_hint`. sanitizeFailureFields re-emits every
-      // key it saw, so stripping them here is belt-and-braces rather than
-      // load-bearing — but it keeps one uniform rule for every raw key, and the
-      // empty-string case genuinely IS omitted from the sanitized return.
+      // the same footing as `restore_hint`, and stripping them is LOAD-BEARING:
+      // sanitizeFailureFields drops empty and non-string values (provider JSON
+      // is type-asserted, never validated), so a spread cannot overwrite a key
+      // it chose to omit. Leaving the raw key would forward a malformed value
+      // straight through the looseObject.
       const {
         partition: _partitionOmitted,
         retained_until: _retainedUntilRaw,

@@ -5,11 +5,18 @@ import {
 } from './failure-reason.js';
 
 /**
- * Who can act on a failure.
+ * Who can ACT on a failure — deliberately not "who caused it".
  *
  * The single most valuable cell in the table: an assistant handed only
  * `reason: "VolumeCleanupExhausted"` will cheerfully tell the tenant to retry a
  * deployment they cannot possibly fix.
+ *
+ * The two axes come apart, and conflating them produced a real contradiction
+ * (a table row advising `restart_app` while the prompt said the reason was
+ * unactionable). `Internal` is provider-CAUSED — nothing about the tenant's
+ * workload is at fault — but tenant-ACTIONABLE, because retrying a transient
+ * internal error is exactly the right move. It is `actor: 'tenant'`. Blame
+ * belongs in `explanation`; this field is only ever about who can do something.
  */
 export type FredFailureActor = 'tenant' | 'provider';
 
@@ -55,10 +62,12 @@ export const FRED_REASON_GUIDANCE: Readonly<
   },
   Internal: {
     explanation:
-      'An internal provider error. This is not attributable to the deployed workload.',
+      'An internal provider error. Nothing about the deployed workload is at fault — but a retry is still worth making, because these are often transient.',
+    // Provider-CAUSED, tenant-ACTIONABLE. See FredFailureActor: `actor` is about
+    // who can do something, not who is to blame.
     nextStep:
       'Retry with restart_app. If it recurs, the provider is unhealthy: pick a different one via browse_catalog, or escalate to the operator with the lease UUID.',
-    actor: 'provider',
+    actor: 'tenant',
   },
   RestartFailed: {
     explanation: 'A requested restart did not complete.',

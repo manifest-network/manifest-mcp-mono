@@ -52,9 +52,27 @@ describe('FRED_REASON_GUIDANCE', () => {
   it('marks the provider-side failures a tenant cannot act on', () => {
     // The cell an assistant cannot infer from the enum name — without it a model
     // will tell the tenant to retry a storage failure they have no access to.
-    expect(FRED_REASON_GUIDANCE.Internal.actor).toBe('provider');
     expect(FRED_REASON_GUIDANCE.CleanupFailed.actor).toBe('provider');
     expect(FRED_REASON_GUIDANCE.VolumeCleanupExhausted.actor).toBe('provider');
+  });
+
+  it('classifies Internal as tenant-ACTIONABLE despite being provider-caused', () => {
+    // `actor` is who can DO something, not who is to blame. Conflating the two
+    // produced a live contradiction: the row advised restart_app while the
+    // prompt listed Internal among the reasons not to retry.
+    expect(FRED_REASON_GUIDANCE.Internal.actor).toBe('tenant');
+    expect(FRED_REASON_GUIDANCE.Internal.nextStep).toContain('restart_app');
+  });
+
+  it('a provider-actor row never advises a retry it just said is impossible', () => {
+    // The guard for the contradiction itself, not just its one instance.
+    for (const [reason, g] of Object.entries(FRED_REASON_GUIDANCE)) {
+      if (g.actor === 'provider') {
+        expect(g.nextStep, `${reason} claims no tenant action`).toContain(
+          'No tenant action exists',
+        );
+      }
+    }
   });
 
   it('flags UpdateFailed as possibly historical (the app is still running)', () => {

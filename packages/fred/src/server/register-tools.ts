@@ -1098,14 +1098,23 @@ export function registerTools(deps: RegisterToolsDeps): void {
           lease_uuid: leaseUuid,
           // ENG-638: a release element is a looseObject forwarded wholesale, so
           // provider-controlled failure text would otherwise reach model
-          // context raw. sanitizeFailureFields is sanitize-ALWAYS — it re-emits
-          // every key it saw — so the spread reliably OVERWRITES the raw ones.
-          // (A validate-or-drop sanitizer could not: it cannot overwrite a key
-          // it omits. That is the appStatus `...rest` hazard.)
-          releases: result.releases.map((r) => ({
-            ...r,
-            ...sanitizeFailureFields(r),
-          })),
+          // context raw. Strip the raw failure keys BEFORE re-adding the
+          // sanitized projection — the same order appStatus uses, and for the
+          // same reason: sanitizeFailureFields drops empty and non-string
+          // values (provider JSON is type-asserted, never validated), so a
+          // spread cannot overwrite a key the sanitizer chose to omit. Leaving
+          // the raw key would forward e.g. `reason: 12345` into
+          // structuredContent, where the declared z.string() then REJECTS it
+          // and fails the whole tool call.
+          releases: result.releases.map((r) => {
+            const {
+              reason: _reasonRaw,
+              message: _messageRaw,
+              error: _errorRaw,
+              ...rest
+            } = r;
+            return { ...rest, ...sanitizeFailureFields(r) };
+          }),
         },
         bigIntReplacer,
       );

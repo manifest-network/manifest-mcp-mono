@@ -649,6 +649,53 @@ describe('FredMCPServer', () => {
       );
     });
 
+    it('does not let a MALFORMED provider reason break the tool', async () => {
+      // Provider JSON is type-asserted, never validated, so a non-string
+      // `reason` is reachable. sanitizeFailureFields DROPS it (rather than
+      // re-emitting it), so a `{...raw, ...sanitized}` spread would leave the
+      // raw value in place — and because the element schema now declares
+      // `reason: z.string()`, that raw value fails output validation and takes
+      // the whole call down. Declaring the field turned a previously harmless
+      // passthrough into a hard failure; stripping first is what prevents it.
+      mockFetchActiveLease.mockResolvedValue({
+        providerUuid: 'prov-1',
+      } as Awaited<ReturnType<typeof fetchActiveLease>>);
+      mockResolveProviderUrl.mockResolvedValue('https://provider.example.com');
+      mockGetLeaseReleases.mockResolvedValue({
+        lease_uuid: LEASE_UUID,
+        tenant: 'manifest1tenant',
+        provider_uuid: 'prov-1',
+        releases: [
+          {
+            version: 4,
+            image: 'nginx:4.0',
+            status: 'failed',
+            created_at: '2025-01-04T00:00:00Z',
+            // Neither is a non-empty string: both are dropped by the sanitizer.
+            reason: 12345,
+            message: '',
+          },
+        ],
+      } as never);
+
+      const server = new FredMCPServer({
+        config: makeMockConfig(),
+        walletProvider: makeMockWallet({ signArbitrary: true }),
+      });
+      const result = await callTool(server, 'app_releases', {
+        lease_uuid: LEASE_UUID,
+      });
+
+      expect(result.isError).toBeUndefined();
+      const parsed = JSON.parse(result.content[0].text);
+      // The malformed values are gone, not forwarded.
+      expect(parsed.releases[0].reason).toBeUndefined();
+      expect(parsed.releases[0].message).toBeUndefined();
+      // The rest of the element still comes through.
+      expect(parsed.releases[0].version).toBe(4);
+      expect(parsed.releases[0].status).toBe('failed');
+    });
+
     it('returns release history for a valid lease', async () => {
       mockFetchActiveLease.mockResolvedValue({
         providerUuid: 'prov-1',

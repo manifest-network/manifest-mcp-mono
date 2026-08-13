@@ -13,6 +13,12 @@
 // Every case runs against BOTH provider eras from one call site: the fleet
 // upgrades independently of this client, so a fix that reads only `reason` or
 // only `last_error` must fail here.
+import {
+  FRED_WIRE_ERAS,
+  type FredWireEra,
+  leaseProvisionWire,
+  leaseStatusWire,
+} from '@manifest-network/manifest-mcp-core/__test-utils__/fred-wire.js';
 import { describe, expect, it } from 'vitest';
 import {
   getLeaseProvision,
@@ -44,35 +50,29 @@ const poll = (body: unknown) =>
   );
 
 /**
- * The same failed-provisioning event as each provider era spells it. `expected`
- * is the detail the thrown message must carry.
+ * The failure detail each era's fixture must produce in the thrown message.
+ * Keyed by era so the table below stays driven by FRED_WIRE_ERAS — the shared
+ * fixture module owns the wire SHAPE, this owns only the expectation.
  */
-const ERAS = [
-  {
-    era: 'pre-ENG-508',
-    failure: { last_error: 'OOMKilled' },
-    expected: 'OOMKilled',
-  },
-  {
-    era: 'post-ENG-508',
-    failure: { reason: 'ImagePullFailed', message: 'image pull failed' },
-    expected: 'ImagePullFailed: image pull failed',
-  },
-] as const;
+const EXPECTED_DETAIL: Record<FredWireEra, RegExp> = {
+  // The verbose value ENG-508 redacted, surfaced verbatim by the fallback path.
+  'pre-eng508': /provisioning failed: container 0 exited during startup/,
+  'post-eng508':
+    /provisioning failed: ContainerExited: container exited unexpectedly/,
+};
 
 describe('pollLeaseUntilReady surfaces the failure cause (both wire eras)', () => {
-  it.each(ERAS)(
-    'reports the cause from a $era provider',
-    async ({ failure, expected }) => {
+  it.each(FRED_WIRE_ERAS)(
+    'reports the cause from a %s provider',
+    async (era) => {
+      // One call site, both provider generations, wire shape from the shared
+      // fixture module: a fix that reads only `reason` or only `last_error`
+      // fails exactly one of these.
       await expect(
-        poll({
-          state: 'LEASE_STATE_ACTIVE',
-          provision_status: 'failed',
-          ...failure,
-        }),
-      ).rejects.toThrow(
-        `Lease ${LEASE_UUID} is ACTIVE but provisioning failed: ${expected}`,
-      );
+        poll(
+          leaseStatusWire({ era, outcome: 'failed', leaseUuid: LEASE_UUID }),
+        ),
+      ).rejects.toThrow(EXPECTED_DETAIL[era]);
     },
   );
 
@@ -184,9 +184,33 @@ describe('the failure pair survives the real parse path', () => {
       PROVIDER_URL,
       LEASE_UUID,
       AUTH_TOKEN,
-      jsonFetch({ status: 'failed', fail_count: 1, last_error: 'OOMKilled' }),
+      jsonFetch(
+        leaseProvisionWire({
+          era: 'pre-eng508',
+          outcome: 'failed',
+          leaseUuid: LEASE_UUID,
+        }),
+      ),
     );
-    expect(provision.last_error).toBe('OOMKilled');
+    expect(provision.last_error).toContain('container 0 exited during startup');
     expect(provision.reason).toBeUndefined();
+  });
+
+  it('carries the shared fixture through for a post-ENG-508 provider', async () => {
+    const provision = await getLeaseProvision(
+      PROVIDER_URL,
+      LEASE_UUID,
+      AUTH_TOKEN,
+      jsonFetch(
+        leaseProvisionWire({
+          era: 'post-eng508',
+          outcome: 'failed',
+          leaseUuid: LEASE_UUID,
+        }),
+      ),
+    );
+    expect(provision.reason).toBe('ContainerExited');
+    expect(provision.message).toBe('container exited unexpectedly');
+    expect(provision.last_error).toBeUndefined();
   });
 });
