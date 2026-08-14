@@ -513,9 +513,11 @@ export async function checkedFetch(
     return await checkedFetchWithin(url, init, deadline, timeoutMs, doFetch);
   } finally {
     // The SUCCESS path deliberately disarms here: `checkedFetch` returns before the
-    // body is read, so it has nothing coherent to hand forward. That body is bounded
-    // instead by `readBodyCapped`'s own default deadline. Prefer `fetchJsonChecked`
-    // when you want ONE budget across both phases.
+    // body is read, so it has nothing coherent to hand forward. Reading that body
+    // through `readBodyCapped` / `parseJsonResponse` re-arms a fresh deadline;
+    // calling `res.text()` on it directly is bounded by NEITHER cap, which is why
+    // `fetchJsonChecked` — one budget across both phases — is the entry point every
+    // provider read in this repo uses.
     deadline.dispose();
   }
 }

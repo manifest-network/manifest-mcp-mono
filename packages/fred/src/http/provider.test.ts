@@ -1000,7 +1000,8 @@ describe('body-read deadline (ENG-662)', () => {
     expect((caught.current as ProviderApiError).kind).toBe('timeout');
   });
 
-  it('T4: a normal body completes and leaves no timer armed', async () => {
+  it('T4: a normal body completes and disposes its own deadline', async () => {
+    vi.useFakeTimers();
     const enc = new TextEncoder();
     const res = new Response(
       new ReadableStream<Uint8Array>({
@@ -1012,6 +1013,10 @@ describe('body-read deadline (ENG-662)', () => {
       }),
     );
     expect(await readBodyCapped(res, 'https://p.example')).toBe('{"a":1}');
+    // The body assertion alone would still pass with `local?.dispose()` removed,
+    // while every successful read leaked a live 30s timer. This is the half that
+    // actually pins the cleanup.
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it('T5: times out the !res.ok error-body read — the opposite side of the old finally', async () => {
