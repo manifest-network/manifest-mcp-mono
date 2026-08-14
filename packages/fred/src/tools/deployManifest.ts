@@ -16,10 +16,15 @@ import {
 } from '@manifest-network/manifest-mcp-core';
 import type { FredAuthCtx } from '../ctx.js';
 import type { FredLeaseStatus, PollOptions } from '../http/fred.js';
-import { pollLeaseUntilReady, TerminalChainStateError } from '../http/fred.js';
+import {
+  LeaseReadinessUnconfirmedError,
+  pollLeaseUntilReady,
+  TerminalChainStateError,
+} from '../http/fred.js';
 import {
   type ConnectionDetails,
   getLeaseConnectionInfo,
+  ProviderApiError,
   uploadLeaseData,
 } from '../http/provider.js';
 import { getServiceNames, metaHashHex, validateManifest } from '../manifest.js';
@@ -42,6 +47,11 @@ export interface DeployCallOptions {
     providerUrl: string,
   ) => void | Promise<void>;
   abortSignal?: AbortSignal;
+  /**
+   * Readiness-poll tuning. Omitted entirely, the poll uses its own defaults —
+   * `DEFAULT_POLL_TIMEOUT_MS` (10 min, matching what the provider is allowed to
+   * take) and a 3-read consecutive-failure tolerance.
+   */
   pollOptions?: Omit<PollOptions, 'abortSignal'>;
 }
 
@@ -290,8 +300,74 @@ export async function deployManifest(
         providerUrl,
       });
     }
+    const cancelled = callOptions.abortSignal?.aborted === true;
+    // Once the poll has started, the lease exists AND the manifest is uploaded.
+    // From here the ONLY thing that justifies "the deployment failed" is the
+    // provider actually saying so — a `PROVISION_FAILED` status, a terminal
+    // lease state, or a state this client cannot interpret. Those arrive tagged
+    // `poll_verdict`.
+    //
+    // Everything else at this step is silence, not a verdict: the deadline
+    // expired, the status endpoint returned 401/404, it streamed an oversized
+    // body, the auth-token mint failed, or the caller cancelled. The app may be
+    // starting right now, so reporting a failed deploy and pointing the agent at
+    // close_lease would tear down working deployments (ENG-661).
+    //
+    // Default to unconfirmed and carve out the verdict, rather than the reverse:
+    // a fault nobody anticipated should read as "we do not know", which is
+    // recoverable, not as "it failed", which invites destruction.
+    const pollVerdict =
+      ProviderApiError.isProviderApiError(err) && err.kind === 'poll_verdict';
+    const readinessUnconfirmed =
+      err instanceof LeaseReadinessUnconfirmedError ||
+      (step === 'poll' && !pollVerdict);
+    if (readinessUnconfirmed) {
+      logger.warn(
+        `[deploy] lease ${leaseUuid} created but readiness was not confirmed${step ? ` (stopped at '${step}')` : ''}; ` +
+          'it may still be provisioning — do NOT close it on this signal alone',
+      );
+      const pollDetails =
+        err instanceof LeaseReadinessUnconfirmedError
+          ? {
+              poll_reason: err.reason,
+              ...(err.details.last_state !== undefined && {
+                last_state: err.details.last_state,
+              }),
+              ...(err.details.last_provision_status !== undefined && {
+                last_provision_status: err.details.last_provision_status,
+              }),
+            }
+          : {};
+      throw new ManifestMCPError(
+        cancelled
+          ? ManifestMCPErrorCode.OPERATION_CANCELLED
+          : ManifestMCPErrorCode.DEPLOY_READINESS_UNCONFIRMED,
+        `Deploy partially succeeded: lease ${leaseUuid} was created but ${
+          cancelled
+            ? 'the deploy was cancelled before readiness could be confirmed'
+            : 'its readiness could not be confirmed'
+        }. This is NOT a confirmed failure — the provider never reported the deployment as failed, ` +
+          `so the app may still be starting. Re-check with app_status({ lease_uuid: "${leaseUuid}" }), ` +
+          `or keep waiting with wait_for_app_ready({ lease_uuid: "${leaseUuid}", timeout_seconds: 600 }). ` +
+          'Close this lease with close_lease ONLY if the provider reports a failed provision_status, ' +
+          `or you have decided to abandon the deploy. Error: ${err instanceof Error ? err.message : String(err)}`,
+        {
+          ...(err instanceof ManifestMCPError ? err.details : undefined),
+          partial: true,
+          readiness_unconfirmed: true,
+          ...pollDetails,
+          ...(step !== undefined && { failedStep: step }),
+          lease_uuid: leaseUuid,
+          provider_uuid: providerUuid,
+          provider_url: providerUrl,
+        },
+      );
+    }
     // Wrap a post-create-lease failure as a partial-success error so callers
-    // know the lease exists and must be cleaned up.
+    // know the lease exists and must be cleaned up. Reaching here means one of
+    // two things, and nothing healthy is running in either: set-domain or the
+    // manifest upload fell over, or the provider returned an explicit failure
+    // verdict during the poll. close_lease is genuinely the remedy.
     logger.warn(
       `[deploy] lease ${leaseUuid} created but a subsequent step${step ? ` ('${step}')` : ''} failed; close_lease to clean up`,
     );
@@ -300,7 +376,7 @@ export async function deployManifest(
     // non-retryable by code, so a partial-success cancellation is never
     // blind-retried into a second lease). `abortSignal.aborted` is true in both
     // the pre-step throwIfAborted and the mid-flight-abort cases.
-    const code = callOptions.abortSignal?.aborted
+    const code = cancelled
       ? ManifestMCPErrorCode.OPERATION_CANCELLED
       : err instanceof ManifestMCPError
         ? err.code

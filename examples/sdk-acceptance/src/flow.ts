@@ -95,7 +95,14 @@ export async function runAcceptanceFlow(opts: AcceptanceOpts): Promise<void> {
             size: 'docker-micro',
           }
     ) as DeploySpec;
-    const deployed = await deployApp(client, spec, {});
+    // Bound the readiness poll inside the e2e per-test timeout (300s). fred's
+    // default is the provider's own 10-minute provisioning ceiling, which is
+    // right for production but would let a stalled devnet blow the vitest
+    // timeout — an opaque kill instead of a diagnosable error. Also exercises
+    // the pollOptions pass-through the SDK publishes (ENG-661).
+    const deployed = await deployApp(client, spec, {
+      pollOptions: { timeoutMs: 240_000 },
+    });
     const leaseUuid = deployed.lease_uuid;
     const serviceName = opts.variant === 'stack' ? 'web' : undefined;
 

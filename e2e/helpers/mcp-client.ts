@@ -170,12 +170,24 @@ export class MCPTestClient {
   /**
    * Call an MCP tool and return the parsed JSON response.
    * Throws if the tool returns isError: true.
+   *
+   * `timeoutMs` raises the MCP SDK's per-request timeout, which defaults to
+   * 60s. That default is BELOW the readiness deadline of a long tool like
+   * `deploy_app`, so without it a slow deploy dies as an opaque
+   * `McpError -32001 Request timed out` and the server's own — informative —
+   * message never surfaces. Keep the ordering `tool deadline < request timeout
+   * < vitest testTimeout` at every call site (ENG-661).
    */
   async callTool<T = unknown>(
     name: string,
     args: Record<string, unknown> = {},
+    opts: { timeoutMs?: number } = {},
   ): Promise<T> {
-    const result = await this.client.callTool({ name, arguments: args });
+    const result = await this.client.callTool(
+      { name, arguments: args },
+      undefined,
+      opts.timeoutMs !== undefined ? { timeout: opts.timeoutMs } : undefined,
+    );
 
     const content = result.content as Array<{ type: string; text?: string }>;
     const text = content?.[0]?.text;

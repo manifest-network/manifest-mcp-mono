@@ -48,6 +48,7 @@ Most errors returned to the MCP client are JSON objects with a `code` field draw
 | Module | `UNKNOWN_MODULE` | Module name not in the registry |
 | User action | `OPERATION_CANCELLED` | A deliberate user decline / cancel / elicitation-timeout — treated as neither a fault nor retryable |
 | SKU resolution | `SKU_AMBIGUOUS` | A SKU `size`/`storage` name matched more than one active SKU; `details` carries `{ reason: 'AMBIGUOUS_SKU_NAME', size, candidates }` — disambiguate with `provider_uuid` / `sku_uuid` |
+| Deploy | `DEPLOY_READINESS_UNCONFIRMED` | The lease was created and the manifest uploaded, but readiness was never confirmed — the poll deadline expired, or the provider's status endpoint was unreachable. **NOT a reported failure**: the app may still be starting. Carries `details.readiness_unconfirmed`, `poll_reason`, `last_state`, `last_provision_status`. Diagnose before closing anything — see below |
 | Restore | `RESTORE_NOT_RETAINED`, `RESTORE_REJECTED`, `RESTORE_RETRYABLE`, `RESTORE_ORPHAN_COMPENSATION_FAILED` | `restore_app` saga outcomes: source not restorable (pre-flight, zero side effects), a terminal 4xx rejection (created lease rolled back), a 503 the agent may deliberately re-invoke (rolled back), or a compensation failure that left an orphan lease. All non-auto-retryable — restore is non-idempotent |
 
 ### `INVALID_CONFIG` from a transaction tool
@@ -83,12 +84,24 @@ Bech32 prefix doesn't match `COSMOS_ADDRESS_PREFIX` (default `manifest`), or the
 
 ## Deploy partial-success errors
 
-If `deploy_app` creates the lease but fails on a later step (custom domain claim, manifest upload, ready polling), it returns an error with the live `lease_uuid`, `provider_uuid`, and `provider_url`. The lease still exists and you're paying for it. Either:
+If `deploy_app` creates the lease but fails on a later step, it returns an error with the live `lease_uuid`, `provider_uuid`, and `provider_url`. The message starts with `Deploy partially succeeded:` and `details.partial` is `true`, so an agent can branch structurally. **Which step failed decides what to do — the two cases call for opposite responses.**
 
-- Retry the failing step (often the upload — providers can be transiently unhealthy), or
-- Close the orphaned lease with `close_lease({ lease_uuid })`.
+### `DEPLOY_READINESS_UNCONFIRMED` — readiness was never confirmed
 
-The error message starts with `Deploy partially succeeded:` so an agent can branch on the prefix.
+`details.readiness_unconfirmed === true`, `details.failedStep === 'poll'`. The lease exists, the manifest is uploaded, and **the provider never reported the deployment as failed** — the poll simply hit its deadline (`poll_reason: 'deadline'`) or the provider's status endpoint was unreachable (`poll_reason: 'provider_unreachable'`). A cold image pull alone can take 5 minutes, and the provider is allowed 10.
+
+This is not a failed deploy, and closing the lease here can tear down a deployment that is working. In order:
+
+1. `app_status({ lease_uuid })` — is it ACTIVE with running instances?
+2. `app_diagnostics({ lease_uuid })` — the `provision_status` and failure attribution. `details.last_provision_status` on the error tells you what the poll last saw.
+3. `wait_for_app_ready({ lease_uuid, timeout_seconds: 600 })` — keep waiting.
+4. Only once the provider reports a **failed** `provision_status`, or you've decided to abandon the deploy: `close_lease({ lease_uuid })`.
+
+Raise the deadline up front with `deploy_app({ …, timeout_seconds })` if your images are large.
+
+### Set-domain or manifest-upload failure
+
+`details.failedStep` is `set_domain` or `upload`. Nothing is running on the lease and you're paying for it. Either retry the failing step (providers can be transiently unhealthy), or close the orphaned lease with `close_lease({ lease_uuid })`.
 
 ## App is stuck in `LEASE_STATE_PENDING`
 

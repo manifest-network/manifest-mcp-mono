@@ -36,8 +36,16 @@ import {
   makeMockQueryClient,
 } from '@manifest-network/manifest-mcp-core/__test-utils__/mocks.js';
 import type { FredAuthCtx } from '../ctx.js';
-import { pollLeaseUntilReady, TerminalChainStateError } from '../http/fred.js';
-import { getLeaseConnectionInfo, uploadLeaseData } from '../http/provider.js';
+import {
+  LeaseReadinessUnconfirmedError,
+  pollLeaseUntilReady,
+  TerminalChainStateError,
+} from '../http/fred.js';
+import {
+  getLeaseConnectionInfo,
+  ProviderApiError,
+  uploadLeaseData,
+} from '../http/provider.js';
 import { deployApp } from './deployApp.js';
 import { deployManifest } from './deployManifest.js';
 
@@ -356,6 +364,242 @@ describe('deployManifest', () => {
       lease_uuid: '550e8400-e29b-41d4-a716-446655440000',
     });
     expect(thrown.message).toContain('Deploy partially succeeded:'); // prefix retained
+    // ENG-661 regression guard, the OTHER direction: an upload failure means
+    // nothing is running, so close_lease IS the honest advice here and this
+    // wording must survive the readiness-branch rewording verbatim.
+    expect(thrown.message).toContain(
+      'Close this lease with close_lease if needed.',
+    );
+    expect(thrown.details.readiness_unconfirmed).toBeUndefined();
+  });
+
+  /**
+   * ENG-661. Every post-create-lease failure used to be rewritten as
+   * "Deploy partially succeeded: … Close this lease with close_lease if
+   * needed" — including a readiness poll that simply ran out of time on a
+   * healthy, still-provisioning, already-paid-for lease. That reported a live
+   * deployment as failed AND pointed the agent at a destructive tool.
+   */
+  describe('readiness unconfirmed is NOT a failed deploy', () => {
+    const readinessTimedOut = () =>
+      new LeaseReadinessUnconfirmedError({
+        leaseUuid: '550e8400-e29b-41d4-a716-446655440000',
+        reason: 'deadline',
+        timeoutMs: 600_000,
+        elapsedMs: 600_001,
+        lastState: LeaseState.LEASE_STATE_ACTIVE,
+        lastProvisionStatus: 'provisioning',
+      });
+
+    it('does not recommend close_lease, and says the app may still be starting', async () => {
+      const cm = makeMockClientManager({
+        queryClient: makeQueryClient(),
+        address: 'manifest1tenant',
+      });
+      mockPoll.mockRejectedValueOnce(readinessTimedOut());
+
+      const thrown = await deployManifest(
+        await ctx(cm),
+        {
+          manifest: singleManifest(),
+          sku: { kind: 'byName', size: 'docker-micro' },
+        },
+        {},
+      ).catch((e: unknown) => e as any);
+
+      expect(thrown.message).not.toContain(
+        'Close this lease with close_lease if needed.',
+      );
+      expect(thrown.message).toContain('NOT a confirmed failure');
+      expect(thrown.message).toContain('app_status');
+      expect(thrown.message).toContain('wait_for_app_ready');
+      expect(thrown.code).toBe('DEPLOY_READINESS_UNCONFIRMED');
+      // The ENG-280 cross-version contract survives: agent-core's classifier
+      // keys on the prefix and on details.partial.
+      expect(thrown.message).toContain('Deploy partially succeeded:');
+      expect(thrown.details).toMatchObject({
+        partial: true,
+        readiness_unconfirmed: true,
+        failedStep: 'poll',
+        poll_reason: 'deadline',
+        last_state: 'LEASE_STATE_ACTIVE',
+        last_provision_status: 'provisioning',
+        lease_uuid: '550e8400-e29b-41d4-a716-446655440000',
+      });
+    });
+
+    it('keeps close_lease out of the operator breadcrumb too', async () => {
+      const cm = makeMockClientManager({
+        queryClient: makeQueryClient(),
+        address: 'manifest1tenant',
+      });
+      const warnLines: string[] = [];
+      const warnSpy = vi
+        .spyOn(logger, 'warn')
+        .mockImplementation((m: unknown) => {
+          warnLines.push(String(m));
+        });
+      mockPoll.mockRejectedValueOnce(readinessTimedOut());
+
+      const thrown = await deployManifest(
+        await ctx(cm),
+        {
+          manifest: singleManifest(),
+          sku: { kind: 'byName', size: 'docker-micro' },
+        },
+        {},
+      ).catch((e: unknown) => e as any);
+      warnSpy.mockRestore();
+
+      const warned = warnLines.join('\n');
+      expect(warned).not.toContain('close_lease');
+      expect(warned).toContain('do NOT close it');
+      expect(warned).not.toContain('undefined');
+      expect(warned).toContain(thrown.details.lease_uuid);
+    });
+
+    it('a cancel DURING the poll is inconclusive too, and stays OPERATION_CANCELLED', async () => {
+      const cm = makeMockClientManager({
+        queryClient: makeQueryClient(),
+        address: 'manifest1tenant',
+      });
+      const controller = new AbortController();
+      mockPoll.mockImplementationOnce(async () => {
+        controller.abort(new Error('user cancelled'));
+        throw new Error('user cancelled');
+      });
+
+      const thrown = await deployManifest(
+        await ctx(cm),
+        {
+          manifest: singleManifest(),
+          sku: { kind: 'byName', size: 'docker-micro' },
+        },
+        { abortSignal: controller.signal },
+      ).catch((e: unknown) => e as any);
+
+      expect(thrown.code).toBe('OPERATION_CANCELLED');
+      expect(thrown.details).toMatchObject({
+        partial: true,
+        readiness_unconfirmed: true,
+        failedStep: 'poll',
+      });
+      expect(thrown.message).toContain('cancelled before readiness');
+      expect(thrown.message).not.toContain(
+        'Close this lease with close_lease if needed.',
+      );
+    });
+
+    it('a provider VERDICT keeps the original destructive-cleanup advice', async () => {
+      const cm = makeMockClientManager({
+        queryClient: makeQueryClient(),
+        address: 'manifest1tenant',
+      });
+      // The provider answered PROVISION_FAILED — an actual verdict, tagged as
+      // such by the poll. This is the one poll-step outcome where nothing
+      // healthy is running and close_lease is the honest advice.
+      mockPoll.mockRejectedValueOnce(
+        new ProviderApiError(
+          0,
+          'Lease … is ACTIVE but provisioning failed: image not found',
+          { kind: 'poll_verdict' },
+        ),
+      );
+
+      const thrown = await deployManifest(
+        await ctx(cm),
+        {
+          manifest: singleManifest(),
+          sku: { kind: 'byName', size: 'docker-micro' },
+        },
+        {},
+      ).catch((e: unknown) => e as any);
+
+      expect(thrown.message).toContain(
+        'Close this lease with close_lease if needed.',
+      );
+      expect(thrown.details.readiness_unconfirmed).toBeUndefined();
+      expect(thrown.details.failedStep).toBe('poll');
+      expect(thrown.code).toBe('QUERY_FAILED');
+    });
+
+    /**
+     * The rule is "only a provider VERDICT justifies close_lease", not "only a
+     * deadline is forgivable". These reach the poll after the manifest is
+     * already uploaded, and none of them is the provider saying the deployment
+     * failed — so none may recommend tearing the lease down.
+     */
+    it.each([
+      [
+        'a 404 that outlives the tolerance',
+        new ProviderApiError(404, 'lease not found', { kind: 'http' }),
+      ],
+      [
+        'an auth rejection',
+        new ProviderApiError(401, 'bad token', { kind: 'http' }),
+      ],
+      [
+        'an oversized status body',
+        new ProviderApiError(500, 'huge', { kind: 'body_cap' }),
+      ],
+      ['a token-mint failure', new Error('wallet locked')],
+    ])(
+      'reports %s as unconfirmed, never as a failure to clean up',
+      async (_label, pollError) => {
+        const cm = makeMockClientManager({
+          queryClient: makeQueryClient(),
+          address: 'manifest1tenant',
+        });
+        mockPoll.mockRejectedValueOnce(pollError);
+
+        const thrown = await deployManifest(
+          await ctx(cm),
+          {
+            manifest: singleManifest(),
+            sku: { kind: 'byName', size: 'docker-micro' },
+          },
+          {},
+        ).catch((e: unknown) => e as any);
+
+        expect(thrown.message).not.toContain(
+          'Close this lease with close_lease if needed.',
+        );
+        expect(thrown.message).toContain('NOT a confirmed failure');
+        expect(thrown.code).toBe('DEPLOY_READINESS_UNCONFIRMED');
+        expect(thrown.details).toMatchObject({
+          partial: true,
+          readiness_unconfirmed: true,
+          failedStep: 'poll',
+        });
+      },
+    );
+
+    it('a set-domain or upload failure is still a cleanup case', async () => {
+      const cm = makeMockClientManager({
+        queryClient: makeQueryClient(),
+        address: 'manifest1tenant',
+      });
+      // Same 401 as above, but at the UPLOAD step: nothing was ever uploaded,
+      // so there is no app to protect and close_lease is right.
+      mockUpload.mockRejectedValueOnce(
+        new ProviderApiError(401, 'bad token', { kind: 'http' }),
+      );
+
+      const thrown = await deployManifest(
+        await ctx(cm),
+        {
+          manifest: singleManifest(),
+          sku: { kind: 'byName', size: 'docker-micro' },
+        },
+        {},
+      ).catch((e: unknown) => e as any);
+
+      expect(thrown.message).toContain(
+        'Close this lease with close_lease if needed.',
+      );
+      expect(thrown.details.failedStep).toBe('upload');
+      expect(thrown.details.readiness_unconfirmed).toBeUndefined();
+    });
   });
 
   it('already-aborted signal → partial with no misleading failedStep', async () => {

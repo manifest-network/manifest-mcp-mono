@@ -407,3 +407,47 @@ describe('isRetryableError — structured details (ENG-536)', () => {
     ).toBe(true);
   });
 });
+
+/**
+ * ENG-661. A partial success means a lease already exists on-chain and is
+ * being billed. `deploy_app` is non-idempotent, so a blind retry buys a SECOND
+ * paid lease — the failure mode `withRetry` must never cause.
+ */
+describe('isRetryableError — partial success is never auto-retried (ENG-661)', () => {
+  it('does not retry a partial success, even though its message says "timed out"', () => {
+    // This exact shape used to slip through: the wrap preserves the inner code
+    // (QUERY_FAILED, not on the non-retryable list), carries no
+    // grpcCode/httpStatus envelope, and its message contains "timed out",
+    // which isTransientErrorMessage matches.
+    expect(
+      isRetryableError(
+        new ManifestMCPError(
+          ManifestMCPErrorCode.QUERY_FAILED,
+          'Deploy partially succeeded: lease 550e8400-e29b-41d4-a716-446655440000 was created but its readiness could not be confirmed. Error: poll timed out after 600000ms',
+          { partial: true, lease_uuid: '550e8400-e29b-41d4-a716-446655440000' },
+        ),
+      ),
+    ).toBe(false);
+  });
+
+  it('is strict about the flag — a truthy non-true value does not suppress retry', () => {
+    expect(
+      isRetryableError(
+        new ManifestMCPError(ManifestMCPErrorCode.QUERY_FAILED, 'timed out', {
+          partial: 'yes',
+        }),
+      ),
+    ).toBe(true);
+  });
+
+  it('does not retry DEPLOY_READINESS_UNCONFIRMED', () => {
+    expect(
+      isRetryableError(
+        new ManifestMCPError(
+          ManifestMCPErrorCode.DEPLOY_READINESS_UNCONFIRMED,
+          'readiness could not be confirmed: poll timed out after 600000ms',
+        ),
+      ),
+    ).toBe(false);
+  });
+});

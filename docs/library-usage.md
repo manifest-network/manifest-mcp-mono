@@ -144,7 +144,10 @@ await client.deployApp({
 
 The result carries the branded `lease_uuid`, the `provider_uuid` / `provider_url`, the `state`, and (best-effort) `connection` info.
 
-**Partial-success errors.** If the create-lease tx succeeds but a later step fails (set-domain, upload, or the readiness poll), `deployApp` throws a `ManifestMCPError` whose message is prefixed `Deploy partially succeeded:` and whose `details.lease_uuid` is the orphaned lease — close it with `client.stopApp({ leaseUuid })`:
+**Partial-success errors.** If the create-lease tx succeeds but a later step fails, `deployApp` throws a `ManifestMCPError` whose message is prefixed `Deploy partially succeeded:` and whose `details.lease_uuid` names the lease. Two cases, and they call for opposite responses:
+
+- **`details.readiness_unconfirmed === true`** (code `DEPLOY_READINESS_UNCONFIRMED`) — the lease exists, the manifest is uploaded, and the provider never reported a failure; readiness just wasn't confirmed before the poll's deadline, or its status endpoint went dark. The app may be starting right now. **Do not close it**: re-check with `client.appStatus` or wait longer with `waitForAppReady({ timeoutMs })`.
+- **Anything else** (set-domain or upload failed) — nothing is running on the lease, so closing it is the cleanup.
 
 ```ts
 import { asLeaseUuid, ManifestMCPError } from '@manifest-network/manifest-sdk';
@@ -154,11 +157,19 @@ try {
 } catch (err) {
   if (err instanceof ManifestMCPError && typeof err.details?.lease_uuid === 'string') {
     // the id came from the SDK's own error → trusted, so `as*` (not `parse*`)
-    await client.stopApp({ leaseUuid: asLeaseUuid(err.details.lease_uuid) });
+    const leaseUuid = asLeaseUuid(err.details.lease_uuid);
+    if (err.details.readiness_unconfirmed === true) {
+      // Still provisioning as far as anyone knows — look before you tear down.
+      await waitForAppReady(client, { address, leaseUuid }, { timeoutMs: 600_000 });
+    } else {
+      await client.stopApp({ leaseUuid });
+    }
   }
   throw err;
 }
 ```
+
+> **Readiness deadlines.** `pollLeaseUntilReady` defaults to `DEFAULT_POLL_TIMEOUT_MS` (10 minutes) — what the provider is actually allowed to take, including a 5-minute cold image pull. Override per call with `pollOptions.timeoutMs` (`deployApp`) or `timeoutMs` (`waitForAppReady`). Reaching the deadline throws `LeaseReadinessUnconfirmedError` (a `ProviderApiError` subclass, `reason: 'deadline' | 'provider_unreachable'`) — which means *readiness was never confirmed*, not that the deployment failed.
 
 > **Escape hatch.** The same `deployApp` is also exported as a free `fn(ctx, spec, opts)` from `/deploy` for advanced composition. A consumer that already holds a `FredClient` can pass it directly (the client *is* a `FredAuthCtx`); a client-less consumer builds the `providerAuth` port from a bare `Signer` via `createProviderAuth(signer, { chainId })`, then assembles a `FredAuthCtx` from it plus `query`/`chain`/`fetch`/`logger`. `createProviderAuth` and the `FredAuthCtx` / `FredReadCtx` / `ProviderAuthPort` types are all re-exported from `/deploy`. Prefer the bound `client.deployApp` for everyday use.
 
@@ -259,7 +270,9 @@ Deploying against a **local/dev provider** on `localhost`? The default-deny woul
 
 ## Errors
 
-Most failures throw `ManifestMCPError` with a `code` from `ManifestMCPErrorCode` (e.g. `INVALID_ARGUMENT`, `SKU_AMBIGUOUS`, `TX_FAILED`, `OPERATION_CANCELLED`); provider HTTP failures throw a separate `ProviderApiError` that carries `status`, not a `code` (see the guard below). Transient failures (network, 5xx, 429) are auto-retried; permanent ones bubble up. Branch on `code` (or the typed guards), not message text. Before logging an error's `details`, pass it through `sanitizeForLogging` (exported from the root) to redact sensitive fields.
+Most failures throw `ManifestMCPError` with a `code` from `ManifestMCPErrorCode` (e.g. `INVALID_ARGUMENT`, `SKU_AMBIGUOUS`, `TX_FAILED`, `OPERATION_CANCELLED`); provider HTTP failures throw a separate `ProviderApiError` that carries `status`, `kind` and — when the provider sent one — `retryAfterMs`, not a `code` (see the guard below). Branch on `code` (or the typed guards), not message text. Before logging an error's `details`, pass it through `sanitizeForLogging` (exported from the root) to redact sensitive fields.
+
+**What retries, and what doesn't.** Chain reads and broadcasts auto-retry transient failures (network, 5xx, 429) with exponential backoff — 3 retries, 1s base, 10s cap. **Provider HTTP calls do not**: several of them (`uploadLeaseData`, `restoreApp`, `updateApp`) are non-idempotent, so a transport-level retry could duplicate a side effect; `ProviderApiError` surfaces the provider's answer on the first failure. The one exception is the readiness poll (`pollLeaseUntilReady`, and therefore `waitForAppReady` / `deployApp`), which tolerates `PollOptions.maxConsecutiveFailures` consecutive status-read failures (default 3, reset on every successful read) and honours a `Retry-After` header before its next attempt. If you want retries around an idempotent provider read of your own, wrap it yourself — `isTransientProviderError` (`/deploy`) is the same classifier the poll uses.
 
 For the two error shapes that carry typed detail, prefer the exported guards over `instanceof` (unreliable across duplicate package copies) or hand-rolled `code` checks:
 

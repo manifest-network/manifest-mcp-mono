@@ -180,11 +180,23 @@ describe('Deploy roundtrip via M1 primitives', () => {
       provider_uuid: string;
       provider_url: string;
       state: LeaseState;
-    }>('deploy_app', {
-      image: IMAGE,
-      port: PORT,
-      size: 'docker-micro',
-    });
+    }>(
+      'deploy_app',
+      {
+        image: IMAGE,
+        port: PORT,
+        size: 'docker-micro',
+        // Bound the readiness poll well inside vitest's 300s per-test timeout,
+        // so a stalled devnet surfaces fred's diagnostic message rather than an
+        // opaque "test timed out". Devnet images are pre-pulled, so a healthy
+        // deploy finishes in seconds. Doubles as MCP-level coverage that the
+        // knob is wired (ENG-661).
+        timeout_seconds: 90,
+      },
+      // …and keep the MCP request timeout above the tool's own deadline; its
+      // 60s default would otherwise fire first.
+      { timeoutMs: 120_000 },
+    );
 
     expect(result.lease_uuid).toBeTruthy();
     expect(result.provider_uuid).toBeTruthy();
@@ -206,7 +218,7 @@ describe('Deploy roundtrip via M1 primitives', () => {
       status: { state: number };
     }>('wait_for_app_ready', {
       lease_uuid: leaseUuid,
-      // Tighten the timeout from the default 120s — we expect this to
+      // Tighten the timeout well below the default — we expect this to
       // return on the first iteration.
       timeout_seconds: 30,
       interval_seconds: 2,

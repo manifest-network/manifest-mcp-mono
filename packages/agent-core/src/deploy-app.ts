@@ -67,6 +67,7 @@ import {
   type FredReadCtx,
   fetchActiveLease,
   deployApp as fredDeployApp,
+  LeaseReadinessUnconfirmedError,
   pollLeaseUntilReady,
   resolveProviderUrl,
   uploadLeaseData,
@@ -588,7 +589,19 @@ export async function deployApp(
       // Forward the effective signal so fred's own await is abort-bounded
       // (it surfaces OPERATION_CANCELLED with the tx-MAY-have-committed
       // semantics; agent-core does NOT race this — D4.6).
-      signal ? { abortSignal: signal } : {},
+      //
+      // `waitForReadyTimeoutMs` also reaches fred's INTERNAL readiness poll
+      // here. Without this, the option governed only the follow-up
+      // `waitForAppReady` on the needs_wait branch, while the cold-start wait
+      // — the one that actually takes minutes — ran on fred's default and was
+      // unreachable from this API (ENG-661). Left unset, fred's own default
+      // applies to both.
+      {
+        ...(signal ? { abortSignal: signal } : {}),
+        ...(opts.waitForReadyTimeoutMs !== undefined && {
+          pollOptions: { timeoutMs: opts.waitForReadyTimeoutMs },
+        }),
+      },
     );
   } catch (err) {
     // ENG-185 sub-PR E: thread a `RecoveryContext` so the
@@ -720,7 +733,9 @@ export async function deployApp(
         },
         { address: tenantAddress, leaseUuid },
         {
-          timeoutMs: opts.waitForReadyTimeoutMs ?? 480_000,
+          // Unset ⇒ inherit fred's DEFAULT_POLL_TIMEOUT_MS, which is derived
+          // from the provider's own provisioning ceiling (ENG-661).
+          timeoutMs: opts.waitForReadyTimeoutMs,
           onProgress: (status) => {
             attempt += 1;
             const stateName = decodeLeaseState(status.state);
@@ -735,7 +750,28 @@ export async function deployApp(
         },
       );
     } catch (err) {
-      // ProviderApiError / timeout / TerminalChainStateError → F3 route.
+      // The poll ending without a verdict is NOT a failed deploy: the lease is
+      // live, the manifest is uploaded, and the provider never reported the
+      // deployment as failed. Reporting it as TX_FAILED told the user their
+      // transaction failed when nothing of the sort had happened (ENG-661).
+      if (err instanceof LeaseReadinessUnconfirmedError) {
+        throw new ManifestMCPError(
+          ManifestMCPErrorCode.DEPLOY_READINESS_UNCONFIRMED,
+          `Lease ${leaseUuid} was deployed but its readiness could not be confirmed: ${err.message}`,
+          {
+            readiness_unconfirmed: true,
+            lease_uuid: leaseUuid,
+            poll_reason: err.reason,
+            ...(err.details.last_state !== undefined && {
+              last_state: err.details.last_state,
+            }),
+            ...(err.details.last_provision_status !== undefined && {
+              last_provision_status: err.details.last_provision_status,
+            }),
+          },
+        );
+      }
+      // ProviderApiError / TerminalChainStateError → F3 route.
       const reason =
         err instanceof Error
           ? `wait_for_app_ready failed for lease ${leaseUuid}: ${err.message}`
@@ -1180,6 +1216,14 @@ async function handleBroadcastFailure(
       decodedState: 'LEASE_STATE_PENDING',
       reason: classified.reason,
       ...(requestedCustomDomain ? { requestedCustomDomain } : {}),
+      // Which step failed, when fred reported it, so the prompt stops
+      // attributing a readiness timeout to the set-domain step (ENG-661).
+      ...(classified.failedStep !== undefined && {
+        failedStep: classified.failedStep,
+      }),
+      ...(classified.readinessUnconfirmed === true && {
+        readinessUnconfirmed: true,
+      }),
     });
     const options: RecoveryOption[] = promptPayload.options.map((id) => ({
       id,
@@ -1294,8 +1338,8 @@ async function dispatchRecovery(
  *      pass through directly — no redundant on-chain queries (Copilot
  *      fix-1, PR #71). Reuses D's canonical polling-emission pattern:
  *      `onProgress` closure translates each `FredLeaseStatus` sample
- *      into a typed `polling_for_readiness` ProgressEvent, default
- *      480_000ms timeout overridable via `opts.waitForReadyTimeoutMs`.
+ *      into a typed `polling_for_readiness` ProgressEvent, fred's
+ *      `DEFAULT_POLL_TIMEOUT_MS` overridable via `opts.waitForReadyTimeoutMs`.
  *   5. Defense #2 parity (post-poll re-classify) — guard the
  *      ACTIVE-with-no-instances race per D's pattern.
  *   6. Persist manifest (best-effort) + build typed `DeployResult` +
@@ -1474,8 +1518,8 @@ async function retrySetDomainAndComplete(
   // of avoidable latency) per recovery.
   //
   // The `onProgress` closure + `state?` discriminator-spread idiom +
-  // `opts.waitForReadyTimeoutMs ?? 480_000` default mirror D's
-  // canonical polling pattern verbatim.
+  // `opts.waitForReadyTimeoutMs` pass-through mirror D's canonical polling
+  // pattern verbatim.
   const pollStartMs = Date.now();
   let attempt = 0;
   let pollResult: Awaited<ReturnType<typeof pollLeaseUntilReady>>;
@@ -1485,7 +1529,7 @@ async function retrySetDomainAndComplete(
       leaseUuid,
       () => ctx.getAuthToken(ctx.tenantAddress, leaseUuid),
       {
-        timeoutMs: opts.waitForReadyTimeoutMs ?? 480_000,
+        timeoutMs: opts.waitForReadyTimeoutMs,
         onProgress: (status) => {
           attempt += 1;
           const stateName = decodeLeaseState(status.state);
@@ -1519,6 +1563,28 @@ async function retrySetDomainAndComplete(
     // with the L1196/L1228 sites + safety against future deps that DO
     // throw typed errors. For the typical fred-only case, the fallback
     // `TX_FAILED` is what surfaces.
+    //
+    // ENG-661: a poll that ends without a verdict is the one shape here that
+    // is NOT a failure — the domain was claimed and the manifest uploaded, so
+    // the lease is live and may be starting. It gets its own code so a caller
+    // never reads "transaction failed" for a deployment that is merely slow.
+    if (err instanceof LeaseReadinessUnconfirmedError) {
+      throw new ManifestMCPError(
+        ManifestMCPErrorCode.DEPLOY_READINESS_UNCONFIRMED,
+        `retry_set_domain completed for lease ${leaseUuid}, but its readiness could not be confirmed: ${err.message}`,
+        {
+          readiness_unconfirmed: true,
+          lease_uuid: leaseUuid,
+          poll_reason: err.reason,
+          ...(err.details.last_state !== undefined && {
+            last_state: err.details.last_state,
+          }),
+          ...(err.details.last_provision_status !== undefined && {
+            last_provision_status: err.details.last_provision_status,
+          }),
+        },
+      );
+    }
     const reason =
       err instanceof Error
         ? `retry_set_domain pollLeaseUntilReady failed for lease ${leaseUuid}: ${err.message}`

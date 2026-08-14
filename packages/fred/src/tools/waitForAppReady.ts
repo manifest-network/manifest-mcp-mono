@@ -9,6 +9,8 @@ export interface WaitForAppReadyOptions {
   readonly intervalMs?: number;
   readonly onProgress?: (status: FredLeaseStatus) => void;
   readonly abortSignal?: AbortSignal;
+  /** Consecutive provider status-read failures to tolerate. See `PollOptions`. */
+  readonly maxConsecutiveFailures?: number;
 }
 
 export interface WaitForAppReadyResult {
@@ -49,6 +51,7 @@ export async function waitForAppReady(
       timeoutMs: opts.timeoutMs,
       abortSignal: opts.abortSignal,
       onProgress: opts.onProgress,
+      maxConsecutiveFailures: opts.maxConsecutiveFailures,
     },
     ctx.fetch,
     ctx.allowLoopback,
