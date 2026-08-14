@@ -40,7 +40,15 @@ npm install
 npm run build
 
 # Generate an encrypted wallet keyfile (interactive)
-npx manifest-mcp-chain keygen
+node packages/node/dist/chain.js keygen
+```
+
+The five CLI binaries (`manifest-mcp-chain`, …) are *bin names* shipped by
+`@manifest-network/manifest-mcp-node`, not package names. To run one without a clone, name the package
+and select the bin — `npx <bin-name>` on its own resolves the bin name as a package and fails:
+
+```bash
+npx -y -p @manifest-network/manifest-mcp-node manifest-mcp-chain keygen
 ```
 
 See [`packages/node/README.md`](packages/node/README.md) for wallet setup and MCP client integration.

@@ -26,7 +26,7 @@ All five servers need a wallet to sign transactions. Choose one of the options b
 ### Option A -- Generate a new keyfile (recommended)
 
 ```bash
-npx manifest-mcp-chain keygen
+npx -y -p @manifest-network/manifest-mcp-node manifest-mcp-chain keygen
 ```
 
 All CLIs share the same keyfile (`~/.manifest/key.json`), so any of the five commands works for `keygen` and `import`. You will be prompted for an encryption password. The keyfile is written with mode `0600`.
@@ -34,7 +34,7 @@ All CLIs share the same keyfile (`~/.manifest/key.json`), so any of the five com
 ### Option B -- Import an existing mnemonic
 
 ```bash
-npx manifest-mcp-chain import
+npx -y -p @manifest-network/manifest-mcp-node manifest-mcp-chain import
 ```
 
 You will be prompted for your mnemonic (any valid BIP-39 length: 12, 15, 18, 21, or 24 words) and an encryption password. The wallet is derived from the mnemonic, encrypted, and stored in the same keyfile location. The raw mnemonic is not retained.
@@ -50,6 +50,19 @@ Set `COSMOS_MNEMONIC` in your `.env` or shell environment. This is used only whe
 3. Exit with an error if neither is available
 
 ## CLI reference
+
+The five binaries below are shipped by the **`@manifest-network/manifest-mcp-node`** package. They are
+*unscoped bin names*, not package names: they are on `PATH` after a global or local install of that
+package, but `npx <bin-name>` alone would resolve the bin name as a package and fail. To run one
+without installing, name the package explicitly and select the bin:
+
+```bash
+npx -y -p @manifest-network/manifest-mcp-node <bin-name> [subcommand]
+```
+
+`<bin-name>` is any of the five listed below. The subcommand is optional and takes the same values as
+the PATH-installed form: **omit it to start that MCP server on stdio** (this is the form the
+[Claude Desktop config](#claude-desktop) below uses), or pass `keygen` / `import` for key management.
 
 ```
 manifest-mcp-chain                Start the chain MCP server (stdio)
@@ -86,7 +99,7 @@ Replace the placeholder values below with your actual chain ID, RPC/REST endpoin
   "mcpServers": {
     "manifest-chain": {
       "command": "npx",
-      "args": ["manifest-mcp-chain"],
+      "args": ["-y", "-p", "@manifest-network/manifest-mcp-node", "manifest-mcp-chain"],
       "env": {
         "COSMOS_CHAIN_ID": "your-chain-id",
         "COSMOS_RPC_URL": "https://your-rpc-endpoint/",
@@ -96,7 +109,7 @@ Replace the placeholder values below with your actual chain ID, RPC/REST endpoin
     },
     "manifest-lease": {
       "command": "npx",
-      "args": ["manifest-mcp-lease"],
+      "args": ["-y", "-p", "@manifest-network/manifest-mcp-node", "manifest-mcp-lease"],
       "env": {
         "COSMOS_CHAIN_ID": "your-chain-id",
         "COSMOS_RPC_URL": "https://your-rpc-endpoint/",
@@ -106,7 +119,7 @@ Replace the placeholder values below with your actual chain ID, RPC/REST endpoin
     },
     "manifest-fred": {
       "command": "npx",
-      "args": ["manifest-mcp-fred"],
+      "args": ["-y", "-p", "@manifest-network/manifest-mcp-node", "manifest-mcp-fred"],
       "env": {
         "COSMOS_CHAIN_ID": "your-chain-id",
         "COSMOS_RPC_URL": "https://your-rpc-endpoint/",
@@ -116,7 +129,7 @@ Replace the placeholder values below with your actual chain ID, RPC/REST endpoin
     },
     "manifest-cosmwasm": {
       "command": "npx",
-      "args": ["manifest-mcp-cosmwasm"],
+      "args": ["-y", "-p", "@manifest-network/manifest-mcp-node", "manifest-mcp-cosmwasm"],
       "env": {
         "COSMOS_CHAIN_ID": "your-chain-id",
         "COSMOS_RPC_URL": "https://your-rpc-endpoint/",
@@ -140,7 +153,7 @@ To use query-only mode without transaction signing, replace `COSMOS_RPC_URL` and
   "mcpServers": {
     "manifest-chain": {
       "command": "npx",
-      "args": ["manifest-mcp-chain"],
+      "args": ["-y", "-p", "@manifest-network/manifest-mcp-node", "manifest-mcp-chain"],
       "env": {
         "COSMOS_CHAIN_ID": "your-chain-id",
         "COSMOS_REST_URL": "https://your-rest-endpoint/",

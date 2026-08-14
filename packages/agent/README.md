@@ -63,8 +63,12 @@ COSMOS_RPC_URL=https://nodes.liftedinit.tech:443 \
 COSMOS_GAS_PRICE=0.025umfx \
 MANIFEST_KEY_FILE=~/.manifest/key.json \
 MANIFEST_KEY_PASSWORD=... \
-manifest-mcp-agent
+npx -y -p @manifest-network/manifest-mcp-node manifest-mcp-agent
 ```
+
+`manifest-mcp-agent` is a *bin name*, not a package name — it is on `PATH` after installing
+`@manifest-network/manifest-mcp-node`, but `npx manifest-mcp-agent` alone would try to resolve it as a
+package and fail. Drop the `npx -y -p …` prefix once the package is installed.
 
 ## MCP-client config
 
@@ -74,7 +78,8 @@ Minimal `claude_desktop_config.json` (equivalent for any elicitation-capable MCP
 {
   "mcpServers": {
     "manifest-agent": {
-      "command": "manifest-mcp-agent",
+      "command": "npx",
+      "args": ["-y", "-p", "@manifest-network/manifest-mcp-node", "manifest-mcp-agent"],
       "env": {
         "COSMOS_CHAIN_ID": "manifest-2",
         "COSMOS_RPC_URL": "https://nodes.liftedinit.tech:443",
