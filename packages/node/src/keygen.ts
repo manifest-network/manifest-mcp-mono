@@ -1,8 +1,15 @@
-import { chmodSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  writeFileSync,
+} from 'node:fs';
 import { dirname } from 'node:path';
 import { createInterface } from 'node:readline';
 import { DirectSecp256k1HdWallet } from '@cosmjs/proto-signing';
 import { loadKeyfileConfig } from './config.js';
+import { promptHidden } from './hidden-input.js';
 
 function prompt(question: string): Promise<string> {
   if (!process.stdin.isTTY) {
@@ -29,55 +36,79 @@ function prompt(question: string): Promise<string> {
   });
 }
 
+/**
+ * Read a secret without echoing it.
+ *
+ * The chunk handling that makes this correct lives in `hidden-input.ts` and is
+ * unit-tested there. It used to be an inline listener that treated each stdin
+ * `'data'` event as one keystroke, which silently folded a pasted password's
+ * trailing CR/LF into the key material (ENG-668).
+ */
 function promptPassword(question: string): Promise<string> {
-  if (!process.stdin.isTTY) {
+  return promptHidden(question);
+}
+
+/**
+ * The mnemonic is the only recoverable form of the wallet: the keyfile is
+ * useless without its password, and nothing else on the machine holds the seed.
+ * Print it the way every Cosmos CLI does, so the user is told to write it down
+ * at the one moment they can (ENG-668 Q-4).
+ */
+function displayMnemonic(mnemonic: string): void {
+  const rule = '='.repeat(79);
+  console.error('');
+  console.error(rule);
+  console.error('  RECOVERY PHRASE - WRITE THIS DOWN NOW');
+  console.error(rule);
+  console.error('');
+  console.error(`  ${mnemonic}`);
+  console.error('');
+  console.error(
+    '  These words are the ONLY way to recover this wallet if the keyfile is',
+  );
+  console.error(
+    '  lost or its password is forgotten. Store them offline. Anyone who reads',
+  );
+  console.error(
+    '  them controls the funds at this address. They are not stored anywhere in',
+  );
+  console.error('  plaintext and will not be shown again.');
+  console.error(rule);
+  console.error('');
+}
+
+/**
+ * Recover the mnemonic from an existing encrypted keyfile, behind its password.
+ *
+ * Exists because every keyfile generated before ENG-668 was written without its
+ * owner ever seeing the mnemonic; for those wallets this is the only route to a
+ * backup. Exported for unit testing.
+ */
+export async function exportMnemonic(
+  keyfilePath: string,
+  password: string,
+): Promise<string> {
+  let serialized: string;
+  try {
+    serialized = readFileSync(keyfilePath, 'utf8');
+  } catch (err: unknown) {
     throw new Error(
-      'Interactive terminal required for key management commands. Cannot prompt for input in non-interactive mode.',
+      `Failed to read keyfile at ${keyfilePath}: ${err instanceof Error ? err.message : String(err)}`,
     );
   }
-  return new Promise((resolve, reject) => {
-    let password = '';
-    process.stderr.write(question);
-    process.stdin.setRawMode(true);
-    process.stdin.resume();
-    process.stdin.setEncoding('utf8');
 
-    const cleanup = (): void => {
-      process.stdin.setRawMode(false);
-      process.stdin.pause();
-      process.stdin.removeListener('data', onData);
-      process.stdin.removeListener('error', onError);
-      process.stderr.write('\n');
-    };
+  let wallet: DirectSecp256k1HdWallet;
+  try {
+    wallet = await DirectSecp256k1HdWallet.deserialize(serialized, password);
+  } catch {
+    // Deliberately does not forward the underlying message: it can echo
+    // password-derived detail, and the actionable cause is always the same.
+    throw new Error(
+      `Failed to decrypt keyfile at ${keyfilePath}. Verify the password is correct.`,
+    );
+  }
 
-    const onError = (err: Error): void => {
-      cleanup();
-      reject(new Error(`stdin error during password prompt: ${err.message}`));
-    };
-
-    const onData = (ch: string): void => {
-      if (ch === '\r' || ch === '\n') {
-        cleanup();
-        resolve(password);
-      } else if (ch === '\u0004') {
-        // Ctrl+D (EOF) — reject instead of resolving with partial input
-        cleanup();
-        reject(new Error('Input stream closed before password was entered.'));
-      } else if (ch === '\u0003') {
-        cleanup();
-        process.exit(130);
-      } else if (ch === '\u007f' || ch === '\b') {
-        if (password.length > 0) {
-          password = [...password].slice(0, -1).join('');
-        }
-      } else if (ch >= ' ') {
-        password += ch;
-      }
-    };
-
-    process.stdin.on('data', onData);
-    process.stdin.on('error', onError);
-  });
+  return wallet.mnemonic;
 }
 
 // Exported for unit testing of the on-disk permission enforcement.
@@ -170,6 +201,47 @@ export async function runKeygen(): Promise<void> {
       `Note: could not derive address for display (${err instanceof Error ? err.message : String(err)}), but the keyfile was written successfully.`,
     );
   }
+
+  // Last, so it is what remains on screen. Before ENG-668 this wallet's seed
+  // existed in exactly one place -- an encrypted file the user could lock
+  // themselves out of -- and was never shown.
+  displayMnemonic(wallet.mnemonic);
+}
+
+/**
+ * `<cli> export` — print the mnemonic for the configured keyfile.
+ *
+ * The password gate is the keyfile's own: a reader who cannot decrypt it learns
+ * nothing. Output goes to stderr, alongside every other prompt on this path, so
+ * it is not captured by a naive `>` redirect into a file.
+ */
+export async function runExport(): Promise<void> {
+  const config = loadKeyfileConfig();
+  const keyfilePath = config.keyfilePath;
+
+  if (!existsSync(keyfilePath)) {
+    console.error(
+      `No keyfile found at ${keyfilePath}. Nothing to export.\n` +
+        'Generate one with `keygen`, or point MANIFEST_KEY_FILE at an existing keyfile.',
+    );
+    process.exit(1);
+  }
+
+  const password = await promptPassword('Enter keyfile password: ');
+  if (!password) {
+    console.error('Error: password cannot be empty.');
+    process.exit(1);
+  }
+
+  let mnemonic: string;
+  try {
+    mnemonic = await exportMnemonic(keyfilePath, password);
+  } catch (err: unknown) {
+    console.error(err instanceof Error ? err.message : String(err));
+    process.exit(1);
+  }
+
+  displayMnemonic(mnemonic);
 }
 
 export async function runImport(): Promise<void> {
