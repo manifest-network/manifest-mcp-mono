@@ -339,6 +339,39 @@ describe('restoreApp', () => {
     });
   });
 
+  it('rolls back when the cancel lands during the token mint, the one await before the POST (ENG-666)', async () => {
+    mockSource();
+    const ac = new AbortController();
+    const ctx = makeCtx();
+    // Two tokens are minted: the SOURCE one during pre-flight, then the NEW-lease one
+    // just before the POST. Only the latter sits in the window under test — aborting
+    // on the former would trip the earlier pre-broadcast guard instead.
+    (
+      ctx.providerAuth.providerToken as ReturnType<typeof vi.fn>
+    ).mockImplementation(async ({ leaseUuid }: { leaseUuid: string }) => {
+      if (leaseUuid === NEW) ac.abort();
+      return 'tok';
+    });
+
+    const err = await restoreApp(
+      ctx,
+      { address: 'a', sourceLeaseUuid: SOURCE },
+      { pollOptions: false, signal: ac.signal },
+    ).catch((e: unknown) => e);
+
+    expect(mockRestoreLease).not.toHaveBeenCalled();
+    expect(mockCosmosTx).toHaveBeenCalledWith(
+      expect.anything(),
+      'billing',
+      'cancel-lease',
+      [NEW],
+      true,
+    );
+    expect((err as ManifestMCPError).code).toBe(
+      ManifestMCPErrorCode.OPERATION_CANCELLED,
+    );
+  });
+
   it('falls back to the orphan surface when the compensating cancel itself fails (ENG-666)', async () => {
     mockSource();
     const ac = new AbortController();

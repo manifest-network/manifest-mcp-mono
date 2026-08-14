@@ -775,6 +775,19 @@ export async function deployApp(
           },
         );
       }
+      // A caller cancel is not a failed transaction. Now that the signal actually
+      // reaches this wait (ENG-666), an abort would otherwise fall through to
+      // TX_FAILED and tell the user their deploy transaction failed — when the
+      // lease exists, is billing, and the manifest is already uploaded. Same
+      // reasoning as the readiness branch above, and it mirrors how fred's own
+      // deployManifest codes a post-broadcast cancel (ENG-661).
+      if (signal?.aborted) {
+        throw new ManifestMCPError(
+          ManifestMCPErrorCode.OPERATION_CANCELLED,
+          `Deploy partially succeeded: lease ${leaseUuid} was created and its manifest uploaded, but the readiness wait was cancelled. The app may still be starting — check with app_status.`,
+          { partial: true, lease_uuid: leaseUuid, readiness_unconfirmed: true },
+        );
+      }
       // ProviderApiError / TerminalChainStateError → F3 route.
       const reason =
         err instanceof Error

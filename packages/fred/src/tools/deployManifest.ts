@@ -236,6 +236,12 @@ export async function deployManifest(
   logger.info(
     `[deploy] creating lease (meta_hash=${manifestMetaHash}, items=${leaseItems.length})`,
   );
+  // Final check immediately before the non-idempotent, credit-reserving broadcast,
+  // mirroring restoreApp's ENG-488 guard. The SKU/provider resolution above is
+  // several network round-trips, so a cancel — or the newly-supported per-call
+  // `timeout` — can expire during it; without this the deadline would be observed
+  // only AFTER the lease was already paid for (ENG-666).
+  signal?.throwIfAborted();
   const leaseUuid = await createLease(
     ctx,
     { metaHashHex: manifestMetaHash, leaseItems },

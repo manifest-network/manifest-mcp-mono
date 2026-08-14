@@ -110,14 +110,37 @@ export async function restoreApp(
     });
   }
 
+  // Mint the token OUTSIDE the try. It is an await, so a cancel can land inside it,
+  // and it is not the POST — a failure here provably means nothing was sent. Keeping
+  // it out lets the abort re-check below run before the POST without its own error
+  // falling into the POST's catch, which would misfile a rollback-safe state as an
+  // in-doubt orphan. A mint FAILURE keeps its original routing.
+  let newToken: string;
+  try {
+    newToken = await ctx.providerAuth.providerToken({
+      address,
+      leaseUuid: newLeaseUuid,
+    });
+  } catch (err) {
+    return await handleRestoreFailure(ctx, err, {
+      newLeaseUuid,
+      sourceLeaseUuid,
+      sourceProviderUuid: source.providerUuid,
+    });
+  }
+  // Re-check: the mint above is the one await between the guard and the POST.
+  if (signal?.aborted) {
+    return await handleRestoreAbort(ctx, {
+      newLeaseUuid,
+      sourceLeaseUuid,
+      sourceProviderUuid: source.providerUuid,
+    });
+  }
+
   // 4. Pivot: restore POST. ONLY the POST is inside the try — a post-202 poll
   //    timeout must NOT be misread as the in-doubt restore-POST timeout.
   let restoreStatus: string;
   try {
-    const newToken = await ctx.providerAuth.providerToken({
-      address,
-      leaseUuid: newLeaseUuid,
-    });
     const result = await restoreLease(
       providerUrl,
       newLeaseUuid,
@@ -128,12 +151,12 @@ export async function restoreApp(
     );
     restoreStatus = result.status;
   } catch (err) {
-    // NOTE: no `if (signal?.aborted) throw err` bypass here. The abort case is
-    // handled explicitly above, before the POST; what reaches this catch is a real
-    // token-mint or POST failure that may merely COINCIDE with a cancel. Letting a
-    // coincident cancel short-circuit would suppress both the compensation and the
-    // orphan record, so side-effect classification depends on the provider's answer
-    // alone — never on whether the caller also cancelled (ENG-666).
+    // NOTE: no `if (signal?.aborted) throw err` bypass here. Every abort that can
+    // still be acted on is handled above, before the POST; what reaches this catch is
+    // a real POST failure that may merely COINCIDE with a cancel. Letting a coincident
+    // cancel short-circuit would suppress both the compensation and the orphan record,
+    // so side-effect classification depends on the provider's answer alone — never on
+    // whether the caller also cancelled (ENG-666).
     // A ProviderApiError with a 2xx status means the restore COMMITTED but the
     // (202) body was empty/non-JSON and parseJsonResponse threw. Treat it as
     // committed — routing it to failure handling would advise cancelling a

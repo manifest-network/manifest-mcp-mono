@@ -3112,6 +3112,83 @@ describe('deployApp replay — ENG-185 sub-PR D fixtures (05/06/07)', () => {
     );
   });
 
+  // Now that the signal actually reaches this wait (ENG-666), an abort would
+  // otherwise fall through to the TX_FAILED fallback and tell the user their deploy
+  // transaction failed — when the lease exists, is billing, and the manifest is
+  // already uploaded. Same reasoning as the readiness-unconfirmed branch beside it.
+  it('a cancelled needs_wait poll reports OPERATION_CANCELLED, not TX_FAILED', async () => {
+    const base = ['skills', 'deploy-app', '05-needs-wait-then-active', 'input'];
+    const spec = readFixture(...base, 'spec.json') as DeploySpec;
+    const readinessRaw = readFixture(...base, 'readiness-response.json');
+    const metaHashResp = readFixture(...base, 'meta-hash-response.json') as {
+      manifest_json: string;
+      meta_hash_hex: string;
+    };
+    const deployResp = readFixture(...base, 'deploy-response.json') as Record<
+      string,
+      unknown
+    >;
+    const feeResp = readFixture(...base, 'fee-response.json') as {
+      fee: { amount: { denom: string; amount: string }[]; gas: string };
+    };
+
+    const fred = await import('@manifest-network/manifest-mcp-fred');
+    vi.mocked(fred.checkDeploymentReadiness).mockResolvedValue(
+      readinessRaw as unknown as Awaited<
+        ReturnType<typeof fred.checkDeploymentReadiness>
+      >,
+    );
+    vi.mocked(fred.buildManifestPreview).mockResolvedValue({
+      manifest_json: metaHashResp.manifest_json,
+      meta_hash_hex: metaHashResp.meta_hash_hex,
+    } as Awaited<ReturnType<typeof fred.buildManifestPreview>>);
+    vi.mocked(fred.deployApp).mockResolvedValue({
+      lease_uuid: deployResp.lease_uuid as string,
+      provider_uuid: deployResp.provider_uuid as string,
+      provider_url: deployResp.provider_url as string,
+      state: deployResp.state as never,
+      connection: deployResp.connection,
+    } as unknown as Awaited<ReturnType<typeof fred.deployApp>>);
+
+    const ac = new AbortController();
+    // The host cancels mid-wait; the poll surfaces the abort, as it now can.
+    vi.mocked(fred.waitForAppReady).mockImplementation(async () => {
+      ac.abort();
+      throw new DOMException('The operation was aborted', 'AbortError');
+    });
+
+    const core = await import('@manifest-network/manifest-mcp-core');
+    vi.mocked(core.cosmosEstimateFee).mockResolvedValue({
+      module: 'billing',
+      subcommand: 'create-lease',
+      gasEstimate: feeResp.fee.gas,
+      fee: feeResp.fee,
+    } as Awaited<ReturnType<typeof core.cosmosEstimateFee>>);
+
+    const { callbacks } = captureCallbacks();
+    const { deployApp } = await import('./deploy-app.js');
+    const clientManager = makeMockClientManager();
+
+    const thrown = await deployApp(spec, callbacks, {
+      clientManager: clientManager as unknown as Parameters<
+        typeof deployApp
+      >[2]['clientManager'],
+      walletProvider: makeMockWalletProvider(),
+      signal: ac.signal,
+    }).then(
+      () => undefined,
+      (e: unknown) => e as ManifestMCPError,
+    );
+
+    // Must have rejected — a resolve here would make the assertions below vacuous.
+    expect(thrown).toBeDefined();
+    // TX_FAILED would claim the deploy TRANSACTION failed, which it did not.
+    expect(thrown?.code).toBe('OPERATION_CANCELLED');
+    // The lease exists and is billing — the caller must be told which one.
+    expect(thrown?.details?.partial).toBe(true);
+    expect(thrown?.details?.lease_uuid).toBe(deployResp.lease_uuid);
+  });
+
   it('06-classifier-failed-terminal: REJECTED → TX_FAILED throw; no polling; no app_ready_confirmed', async () => {
     const spec = readFixture(
       'skills',
