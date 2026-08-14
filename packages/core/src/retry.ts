@@ -223,6 +223,13 @@ export interface RetryOptions {
 /**
  * Execute an async operation with retry logic for transient failures
  *
+ * DO NOT NEST. Ladders multiply (attempts^depth): an operation that already
+ * retries internally — notably `CosmosClientManager.getQueryClient` /
+ * `getSigningClient`, whose RPC branch also builds five namespace clients per
+ * attempt — must be invoked OUTSIDE any enclosing `withRetry`, not from inside
+ * the operation body. Nesting the two turned a dead-RPC query into 4 x 4 x 5 =
+ * 77 connects / ~35s (ENG-679). Retry policy belongs to exactly one layer.
+ *
  * @param operation - Async function to execute
  * @param options - Retry options
  * @returns Result of the operation

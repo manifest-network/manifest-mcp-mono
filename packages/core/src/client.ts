@@ -257,7 +257,9 @@ export class CosmosClientManager {
   /**
    * Get the manifestjs RPC query client with all module extensions
    *
-   * Automatically retries on transient connection failures with exponential backoff.
+   * Automatically retries on transient connection failures with exponential backoff —
+   * so callers MUST NOT wrap this call in another `withRetry`. The ladders multiply,
+   * and the RPC branch builds five namespace clients per attempt (ENG-679).
    */
   async getQueryClient(): Promise<ManifestQueryClient> {
     // Return cached client if available
@@ -394,7 +396,9 @@ export class CosmosClientManager {
   /**
    * Get a signing client with all Manifest registries (for transactions)
    *
-   * Automatically retries on transient connection failures with exponential backoff.
+   * Automatically retries on transient connection failures with exponential backoff —
+   * so callers MUST NOT wrap this call in another `withRetry` (ENG-679; see
+   * {@link getQueryClient}).
    */
   async getSigningClient(): Promise<SigningStargateClient> {
     if (!this.config.rpcUrl || !this.config.gasPrice) {

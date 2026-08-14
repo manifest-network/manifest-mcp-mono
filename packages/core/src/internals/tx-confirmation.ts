@@ -31,8 +31,9 @@ function cancelledTxError(reason: unknown, sent: boolean): ManifestMCPError {
  * losing broadcast() runs to completion in the background, its result discarded) — the signal bounds your wait,
  * NOT the broadcast; a caller who aborts must re-query the chain. Does NOT acquireRateLimit (cosmosTx does that).
  * A timeout rejects TimeoutError; a caller abort propagates the caller's reason.
- * NOTE: `broadcast` here is the WHOLE cosmosTx call (acquireRateLimit → getSigningClient → simulate → signAndBroadcast),
- * so an abort racing the early window (acquire/getSigningClient/simulate, BEFORE the wire send) ALSO surfaces
+ * NOTE: `broadcast` here is the WHOLE cosmosTx call (getBroadcastClient → per attempt: acquireRateLimit →
+ * simulate → signAndBroadcast; the client is acquired once, outside the retry ladder — ENG-679),
+ * so an abort racing the early window (client acquisition/acquire/simulate, BEFORE the wire send) ALSO surfaces
  * AbortError even though NO tx was sent. The caller cannot distinguish "aborted pre-send" from "aborted post-send,
  * still committing" from this seam — hence the conservative contract: on abort, treat the outcome as UNKNOWN and re-query.
  */

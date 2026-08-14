@@ -1,5 +1,5 @@
 import { calculateFee, type StdFee } from '@cosmjs/stargate';
-import type { CosmosClientManager } from './client.js';
+import type { CosmosClientManager, ManifestQueryClient } from './client.js';
 import { DEFAULT_GAS_MULTIPLIER, DEFAULT_MAX_GAS } from './config.js';
 import { isNotFoundError } from './internals/classify-query-error.js';
 import {
@@ -28,13 +28,17 @@ const VALID_NAME_PATTERN = /^[a-zA-Z0-9_][a-zA-Z0-9_-]*$/;
  * Resolve and run the `TxBuildContext` loader registered for `(module,
  * subcommand)` in `TX_MODULES`. Returns `undefined` when no loader is
  * registered (the common case) so the caller can short-circuit and skip the
- * chain read.
+ * chain read — and, importantly, skip building a query client it never uses.
  *
- * Acquires a rate-limit token before the loader runs so each extra RPC is
- * counted against the same budget every other RPC respects, and wraps any
- * non-`ManifestMCPError` failure as `QUERY_FAILED` with `{module, subcommand}`
- * details for symmetric error classification on both broadcast and estimate
- * paths.
+ * Owns its own retry ladder over the loader call (parity with `cosmosQuery`'s
+ * params reads) and acquires a rate-limit token per attempt so each extra RPC
+ * is counted against the same budget every other RPC respects. Any
+ * non-`ManifestMCPError` failure is wrapped as `QUERY_FAILED` with
+ * `{module, subcommand}` details for symmetric error classification on both
+ * broadcast and estimate paths.
+ *
+ * The query client is acquired ONCE, above that ladder — see
+ * {@link cosmosQuery} for why (ENG-679).
  */
 async function loadBuildContext(
   clientManager: CosmosClientManager,
@@ -44,36 +48,30 @@ async function loadBuildContext(
   const loader = getTxContextLoader(module, subcommand);
   if (!loader) return undefined;
 
-  // The full loader call sequence — rate-limit acquire, query-client
-  // construction, loader invocation — runs inside the try/catch so every
-  // failure mode gets the {module, subcommand} attribution callers expect
-  // from a structured error. Without the wrap, an INVALID_CONFIG from
-  // `getQueryClient` (or a connection failure that escapes the inner
-  // withRetry) would propagate without telling the caller which tx was
-  // being prepared.
+  let queryClient: ManifestQueryClient;
   try {
-    await clientManager.acquireRateLimit();
-    const queryClient = await clientManager.getQueryClient();
-    return await loader(queryClient);
+    queryClient = await clientManager.getQueryClient();
   } catch (error) {
-    if (error instanceof ManifestMCPError) {
-      if (!error.details?.module) {
-        throw new ManifestMCPError(error.code, error.message, {
-          ...error.details,
-          module,
-          subcommand,
-        });
-      }
-      throw error;
-    }
-    throw new ManifestMCPError(
-      ManifestMCPErrorCode.QUERY_FAILED,
-      `Failed to load build context for ${module} ${subcommand}: ${
-        error instanceof Error ? error.message : String(error)
-      }`,
-      { module, subcommand },
-    );
+    throw enrichBuildContextError(error, module, subcommand);
   }
+
+  return withRetry(
+    async () => {
+      // The loader call runs inside the try/catch so every failure mode gets
+      // the {module, subcommand} attribution callers expect from a structured
+      // error, matching the acquisition leg above.
+      try {
+        await clientManager.acquireRateLimit();
+        return await loader(queryClient);
+      } catch (error) {
+        throw enrichBuildContextError(error, module, subcommand);
+      }
+    },
+    {
+      config: clientManager.getConfig().retry,
+      operationName: `load-context ${module} ${subcommand}`,
+    },
+  );
 }
 
 /**
@@ -95,10 +93,71 @@ function validateName(
 }
 
 /**
+ * The branch every `enrich*` below duplicates: a `ManifestMCPError` that already
+ * carries a `module` is final (no double-enrichment); one without is re-wrapped
+ * preserving its code + details. Returns `null` when the thrown value is not ours,
+ * so each caller can apply its own fallback classification.
+ */
+function attributeManifestError(
+  error: unknown,
+  details: Record<string, unknown>,
+): ManifestMCPError | null {
+  if (!(error instanceof ManifestMCPError)) return null;
+  if (error.details?.module) return error;
+  return new ManifestMCPError(error.code, error.message, {
+    ...error.details,
+    ...details,
+  });
+}
+
+/** Attribute a query-leg failure. Raw throws classify as NOT_FOUND or QUERY_FAILED. */
+function enrichQueryError(
+  error: unknown,
+  module: string,
+  subcommand: string,
+): ManifestMCPError {
+  return (
+    attributeManifestError(error, { module, subcommand }) ??
+    // The RPC leg throws plain Errors — classify so the generic query path
+    // yields NOT_FOUND on BOTH transports (the LCD leg already arrives as a
+    // structured ManifestMCPError and is preserved above). ENG-536.
+    new ManifestMCPError(
+      isNotFoundError(error)
+        ? ManifestMCPErrorCode.NOT_FOUND
+        : ManifestMCPErrorCode.QUERY_FAILED,
+      `Query ${module} ${subcommand} failed: ${error instanceof Error ? error.message : String(error)}`,
+      { module, subcommand },
+    )
+  );
+}
+
+/** Attribute a build-context failure. Raw throws classify as QUERY_FAILED. */
+function enrichBuildContextError(
+  error: unknown,
+  module: string,
+  subcommand: string,
+): ManifestMCPError {
+  return (
+    attributeManifestError(error, { module, subcommand }) ??
+    new ManifestMCPError(
+      ManifestMCPErrorCode.QUERY_FAILED,
+      `Failed to load build context for ${module} ${subcommand}: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+      { module, subcommand },
+    )
+  );
+}
+
+/**
  * Execute a Cosmos query via manifestjs RPC client
  *
- * Automatically retries on transient failures (network errors, timeouts, 5xx)
- * with exponential backoff. Configure retry behavior via `config.retry`.
+ * Automatically retries the QUERY LEG on transient failures (network errors,
+ * timeouts, 5xx) with exponential backoff. Configure retry behavior via
+ * `config.retry`. The query client is acquired once, outside that ladder —
+ * `getQueryClient` owns connect-retry itself, and nesting the two multiplied
+ * attempts (4 outer x 4 inner x 5 namespace clients = 77 connects on a dead
+ * endpoint). ENG-679.
  */
 export async function cosmosQuery(
   clientManager: CosmosClientManager,
@@ -116,17 +175,25 @@ export async function cosmosQuery(
   // Get handler from registry (throws if module not found) - do this before retry loop
   const handler = getQueryHandler(module);
 
+  // Acquired ONCE, outside the ladder below: `getQueryClient` retries the connect
+  // internally, so wrapping it in a second ladder multiplies attempts (ENG-679).
+  // Its own try/catch preserves the {module, subcommand} attribution that put the
+  // acquisition inside the retry block in the first place — an INVALID_CONFIG or an
+  // exhausted connect would otherwise propagate without telling the caller which
+  // query was being routed.
+  let queryClient: ManifestQueryClient;
+  try {
+    queryClient = await clientManager.getQueryClient();
+  } catch (error) {
+    throw enrichQueryError(error, module, subcommand);
+  }
+
   return withRetry(
     async () => {
-      // The rate-limit + query-client acquisition runs inside the try/catch
-      // so a failure during either step is wrapped with {module, subcommand}
-      // attribution, matching the handler-leg semantics. Otherwise an
-      // INVALID_CONFIG from `getQueryClient` (or a connection failure that
-      // escapes the inner withRetry) would propagate without telling the
-      // caller which query was being routed.
       try {
+        // One rate-limit token per attempt: the token is a request budget, not a
+        // connection budget, so it stays inside the ladder.
         await clientManager.acquireRateLimit();
-        const queryClient = await clientManager.getQueryClient();
         const result = await handler(queryClient, subcommand, args);
 
         return {
@@ -135,26 +202,7 @@ export async function cosmosQuery(
           result,
         };
       } catch (error) {
-        if (error instanceof ManifestMCPError) {
-          if (!error.details?.module) {
-            throw new ManifestMCPError(error.code, error.message, {
-              ...error.details,
-              module,
-              subcommand,
-            });
-          }
-          throw error;
-        }
-        // The RPC leg throws plain Errors — classify so the generic query path
-        // yields NOT_FOUND on BOTH transports (the LCD leg already arrives as a
-        // structured ManifestMCPError and is preserved above). ENG-536.
-        throw new ManifestMCPError(
-          isNotFoundError(error)
-            ? ManifestMCPErrorCode.NOT_FOUND
-            : ManifestMCPErrorCode.QUERY_FAILED,
-          `Query ${module} ${subcommand} failed: ${error instanceof Error ? error.message : String(error)}`,
-          { module, subcommand },
-        );
+        throw enrichQueryError(error, module, subcommand);
       }
     },
     {
@@ -177,21 +225,34 @@ function enrichTxError(
   subcommand: string,
   args: string[],
 ): ManifestMCPError {
-  if (error instanceof ManifestMCPError) {
-    if (!error.details?.module) {
-      return new ManifestMCPError(error.code, error.message, {
-        ...error.details,
-        module,
-        subcommand,
-        args,
-      });
-    }
-    return error;
-  }
-  return new ManifestMCPError(
-    ManifestMCPErrorCode.TX_FAILED,
-    `Tx ${module} ${subcommand} failed: ${error instanceof Error ? error.message : String(error)}`,
-    { module, subcommand, args },
+  return (
+    attributeManifestError(error, { module, subcommand, args }) ??
+    new ManifestMCPError(
+      ManifestMCPErrorCode.TX_FAILED,
+      `Tx ${module} ${subcommand} failed: ${error instanceof Error ? error.message : String(error)}`,
+      { module, subcommand, args },
+    )
+  );
+}
+
+/** Attribute an estimate-leg failure. Raw throws classify as SIMULATION_FAILED. */
+function enrichEstimateError(
+  error: unknown,
+  module: string,
+  subcommand: string,
+  args: string[],
+): ManifestMCPError {
+  return (
+    attributeManifestError(error, { module, subcommand, args }) ??
+    // SIMULATION_FAILED is NOT in NON_RETRYABLE_ERROR_CODES, so withRetry
+    // will fall through to isTransientErrorMessage for message-based
+    // classification. Transient errors (network/5xx) get retried; real
+    // simulation failures (insufficient funds, etc) fail fast.
+    new ManifestMCPError(
+      ManifestMCPErrorCode.SIMULATION_FAILED,
+      `Fee estimation for ${module} ${subcommand} failed: ${error instanceof Error ? error.message : String(error)}`,
+      { module, subcommand, args },
+    )
   );
 }
 
@@ -275,15 +336,14 @@ export async function cosmosTx(
   const handler = getTxHandler(module);
   // Fetch chain context once before the broadcast retry loop: every broadcast
   // attempt uses the same snapshot and we don't consume extra rate-limit
-  // tokens per broadcast retry. The loader is independently wrapped in its
-  // own withRetry so transient LCD failures during the chain read still get
-  // retried (parity with cosmosQuery's params reads).
-  const buildContext = await withRetry(
-    () => loadBuildContext(clientManager, module, subcommand),
-    {
-      config: clientManager.getConfig().retry,
-      operationName: `load-context ${module} ${subcommand}`,
-    },
+  // tokens per broadcast retry. loadBuildContext owns its own withRetry over
+  // the loader call, so transient LCD failures during the chain read still get
+  // retried (parity with cosmosQuery's params reads) without nesting a second
+  // ladder around its client acquisition (ENG-679).
+  const buildContext = await loadBuildContext(
+    clientManager,
+    module,
+    subcommand,
   );
 
   // Resolve the sender ONCE — it is both the broadcast-lock key and the signAndBroadcast sender.
@@ -298,21 +358,30 @@ export async function cosmosTx(
 
   // Per-signer broadcast mutex (OUTER) serializes the whole simulate→sign→broadcast→commit cycle
   // for this address; acquireRateLimit stays INNER. Acquired ONCE around withRetry.
-  return clientManager.withBroadcastLock(senderAddress, () =>
-    withRetry(
+  return clientManager.withBroadcastLock(senderAddress, async () => {
+    // Broadcast client — manages the signer's sequence for non-blocking (SYNC) broadcasts so a
+    // burst of waitForConfirmation:false txs from one signer doesn't collide on the committed
+    // sequence. Serialized per signer by the surrounding withBroadcastLock. See getBroadcastClient.
+    //
+    // Acquired INSIDE the lock (serialization must cover the whole cycle) but OUTSIDE the ladder
+    // below: getSigningClient owns connect-retry, and nesting the two multiplied attempts
+    // (ENG-679). The sequenced client is a stateless proxy — all sequence-cache access happens
+    // per broadcast call — so reusing it across attempts is safe.
+    let signingClient: Awaited<
+      ReturnType<CosmosClientManager['getBroadcastClient']>
+    >;
+    try {
+      signingClient = await clientManager.getBroadcastClient();
+    } catch (error) {
+      throw enrichTxError(error, module, subcommand, args);
+    }
+
+    return withRetry(
       async () => {
-        // The rate-limit + signing-client acquisition runs inside the
-        // try/catch so a failure during any of those steps is wrapped with
-        // {module, subcommand, args} attribution, matching the handler-leg
-        // semantics. Otherwise an INVALID_CONFIG / wallet error from these
-        // calls would propagate without telling the caller which tx was being
-        // prepared.
+        // The handler leg runs inside the try/catch so a failure is wrapped with
+        // {module, subcommand, args} attribution, matching the acquisition leg above.
         try {
           await clientManager.acquireRateLimit();
-          // Broadcast client — manages the signer's sequence for non-blocking (SYNC) broadcasts so a
-          // burst of waitForConfirmation:false txs from one signer doesn't collide on the committed
-          // sequence. Serialized per signer by the surrounding withBroadcastLock. See getBroadcastClient.
-          const signingClient = await clientManager.getBroadcastClient();
           return await handler(
             signingClient,
             senderAddress,
@@ -331,8 +400,8 @@ export async function cosmosTx(
         config: clientManager.getConfig().retry,
         operationName: `tx ${module} ${subcommand}`,
       },
-    ),
-  );
+    );
+  });
 }
 
 /**
@@ -383,28 +452,37 @@ export async function cosmosEstimateFee(
   const builder = getTxMsgBuilder(module);
   // Fetch chain context once before the simulate retry loop: every simulate
   // attempt uses the same snapshot and we don't consume extra rate-limit
-  // tokens per simulate retry. The loader is independently wrapped in its
-  // own withRetry so transient LCD failures during the chain read still get
-  // retried (parity with cosmosQuery's params reads).
-  const buildContext = await withRetry(
-    () => loadBuildContext(clientManager, module, subcommand),
-    {
-      config: config.retry,
-      operationName: `load-context ${module} ${subcommand}`,
-    },
+  // tokens per simulate retry. loadBuildContext owns its own withRetry over
+  // the loader call, so transient LCD failures during the chain read still get
+  // retried (parity with cosmosQuery's params reads) without nesting a second
+  // ladder around its client acquisition (ENG-679).
+  const buildContext = await loadBuildContext(
+    clientManager,
+    module,
+    subcommand,
   );
+
+  // Acquired ONCE, outside the ladder below — getSigningClient owns connect-retry
+  // (ENG-679). `getAddress` stays inside: it is a wallet call whose failures are
+  // non-retryable WALLET_* codes, so it cannot amplify.
+  let signingClient: Awaited<
+    ReturnType<CosmosClientManager['getSigningClient']>
+  >;
+  try {
+    signingClient = await clientManager.getSigningClient();
+  } catch (error) {
+    throw enrichEstimateError(error, module, subcommand, args);
+  }
 
   return withRetry(
     async () => {
-      // The rate-limit + signing-client + address acquisition runs inside
-      // the try/catch so a failure during any of those steps is wrapped
-      // with {module, subcommand, args} attribution, matching the
-      // handler-leg semantics. Otherwise an INVALID_CONFIG / wallet error
-      // from these calls would propagate without telling the caller which
-      // estimate was being computed.
+      // The rate-limit + address acquisition runs inside the try/catch so a
+      // failure during any of those steps is wrapped with {module, subcommand,
+      // args} attribution, matching the acquisition leg above. Otherwise a
+      // wallet error would propagate without telling the caller which estimate
+      // was being computed.
       try {
         await clientManager.acquireRateLimit();
-        const signingClient = await clientManager.getSigningClient();
         const senderAddress = await clientManager.getAddress();
 
         // Resolve gasMultiplier from the signing client when no override is provided.
@@ -438,27 +516,7 @@ export async function cosmosEstimateFee(
           fee: { amount: fee.amount, gas: fee.gas },
         };
       } catch (error) {
-        if (error instanceof ManifestMCPError) {
-          // Re-throw with enriched context if not already present (mirrors cosmosTx)
-          if (!error.details?.module) {
-            throw new ManifestMCPError(error.code, error.message, {
-              ...error.details,
-              module,
-              subcommand,
-              args,
-            });
-          }
-          throw error;
-        }
-        // SIMULATION_FAILED is NOT in NON_RETRYABLE_ERROR_CODES, so withRetry
-        // will fall through to isTransientErrorMessage for message-based
-        // classification. Transient errors (network/5xx) get retried; real
-        // simulation failures (insufficient funds, etc) fail fast.
-        throw new ManifestMCPError(
-          ManifestMCPErrorCode.SIMULATION_FAILED,
-          `Fee estimation for ${module} ${subcommand} failed: ${error instanceof Error ? error.message : String(error)}`,
-          { module, subcommand, args },
-        );
+        throw enrichEstimateError(error, module, subcommand, args);
       }
     },
     {

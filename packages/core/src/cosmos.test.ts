@@ -98,7 +98,9 @@ describe('cosmosQuery', () => {
     });
   });
 
-  it('acquires rate limit before RPC call', async () => {
+  // The client is acquired FIRST, outside the retry ladder (ENG-679); the token is
+  // then taken per handler attempt, still before the RPC it pays for.
+  it('acquires the client once, then a rate-limit token before the RPC call', async () => {
     const callOrder: string[] = [];
     clientManager.acquireRateLimit.mockImplementation(async () => {
       callOrder.push('rateLimit');
@@ -115,7 +117,7 @@ describe('cosmosQuery', () => {
 
     await cosmosQuery(clientManager, 'bank', 'balances');
 
-    expect(callOrder).toEqual(['rateLimit', 'getClient', 'handler']);
+    expect(callOrder).toEqual(['getClient', 'rateLimit', 'handler']);
   });
 
   it('wraps non-ManifestMCPError into QUERY_FAILED', async () => {
@@ -402,7 +404,9 @@ describe('cosmosTx', () => {
     });
   });
 
-  it('acquires rate limit before RPC call', async () => {
+  // Sender first (it is the lock key), then the broadcast client — acquired inside
+  // the lock but outside the retry ladder (ENG-679) — then a token per attempt.
+  it('acquires the client once, then a rate-limit token before the RPC call', async () => {
     const callOrder: string[] = [];
     clientManager.acquireRateLimit.mockImplementation(async () => {
       callOrder.push('rateLimit');
@@ -431,8 +435,8 @@ describe('cosmosTx', () => {
 
     expect(callOrder).toEqual([
       'getAddress',
-      'rateLimit',
       'getClient',
+      'rateLimit',
       'handler',
     ]);
   });
@@ -1185,7 +1189,9 @@ describe('cosmosEstimateFee', () => {
     expect(clientManager.getSigningClient).not.toHaveBeenCalled();
   });
 
-  it('acquires rate limit before RPC call', async () => {
+  // The signing client is acquired once, outside the retry ladder (ENG-679);
+  // getAddress stays inside it (non-retryable WALLET_* failures cannot amplify).
+  it('acquires the client once, then a rate-limit token before the RPC call', async () => {
     const callOrder: string[] = [];
     clientManager.acquireRateLimit.mockImplementation(async () => {
       callOrder.push('rateLimit');
@@ -1215,8 +1221,8 @@ describe('cosmosEstimateFee', () => {
     await cosmosEstimateFee(clientManager, 'bank', 'send', []);
 
     expect(callOrder).toEqual([
-      'rateLimit',
       'getClient',
+      'rateLimit',
       'getAddress',
       'simulate',
     ]);
