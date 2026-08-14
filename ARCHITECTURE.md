@@ -260,7 +260,7 @@ src/
 The fred package contains three HTTP client modules that are not in core (to keep core browser-compatible without HTTP client dependencies):
 
 - **`http/auth.ts`** -- ADR-036 token construction. No network calls; pure functions that build sign messages and assemble base64 bearer tokens.
-- **`http/provider.ts`** -- Provider API client: `checkedFetch()` (fetch wrapper with timeout and error normalization), `uploadLeaseData()`, `getLeaseConnectionInfo()`, `getProviderHealth()`. All provider URLs are validated to require HTTPS (localhost HTTP allowed for development).
+- **`http/provider.ts`** -- Provider API client: `fetchJsonChecked()` (fetch + bounded body read under ONE deadline — the entry point every provider read uses), `checkedFetch()` (the transport half: fetch, timeout, non-2xx normalization; it returns before the body is read, so a caller that reads the body itself relies on `readBodyCapped`'s own default deadline), `uploadLeaseData()`, `getLeaseConnectionInfo()`, `getProviderHealth()`. Every response body is bounded twice — by bytes (`MAX_RESPONSE_BYTES`, 10 MiB) and by time (`DEFAULT_FETCH_TIMEOUT_MS`, 30s) — because the byte cap alone bounds memory, not a provider that trickles a body forever (ENG-662). All provider URLs are validated to require HTTPS (localhost HTTP allowed for development).
 - **`http/fred.ts`** -- Fred API client: `getLeaseStatus()`, `getLeaseLogs()`, `getLeaseProvision()`, `restartLease()`, `updateLease()`, `getLeaseReleases()`, and `pollLeaseUntilReady()` (polls status at 3-second intervals with 120-second timeout, AbortSignal support, and progress callbacks).
 
 ### Deployment flow (`deploy_app`)

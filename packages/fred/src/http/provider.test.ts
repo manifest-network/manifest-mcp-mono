@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   checkedFetch,
+  DEFAULT_FETCH_TIMEOUT_MS,
+  fetchJsonChecked,
   getProviderHealth,
   isTransientProviderError,
   isUrlSsrfSafe,
@@ -887,5 +889,305 @@ describe('isTransientProviderError', () => {
     expect(isTransientProviderError(new TypeError('bug'))).toBe(false);
     expect(isTransientProviderError({ status: 503 })).toBe(false);
     expect(isTransientProviderError(undefined)).toBe(false);
+  });
+});
+
+/**
+ * The byte cap bounds MEMORY, not TIME. Before ENG-662 `checkedFetch` cleared its
+ * timer and detached the caller's abort listener in a `finally` that ran BEFORE any
+ * body was read, so a provider that returned headers promptly and then trickled the
+ * body produced a call neither the timeout nor a host cancel could terminate.
+ *
+ * Every case here hangs forever against the pre-fix source.
+ */
+describe('body-read deadline (ENG-662)', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  /**
+   * Headers arrive at once, then one byte every `gapMs`, forever. `pull` returns a
+   * promise so the stream genuinely stalls between chunks rather than spinning —
+   * under fake timers `setTimeout` is patched, so `advanceTimersByTimeAsync` drives it.
+   */
+  function tricklingStream(gapMs: number, onCancel?: () => void) {
+    const enc = new TextEncoder();
+    return new ReadableStream<Uint8Array>({
+      pull: (controller) =>
+        new Promise<void>((resolve) => {
+          setTimeout(() => {
+            controller.enqueue(enc.encode('x'));
+            resolve();
+          }, gapMs);
+        }),
+      cancel: () => onCancel?.(),
+    });
+  }
+
+  /** Capture settlement eagerly so advancing timers never trips an unhandled rejection. */
+  function capture<T>(p: Promise<T>): { readonly current: unknown } {
+    const box: { current: unknown } = { current: undefined };
+    p.then(
+      (v) => {
+        box.current = v;
+      },
+      (e: unknown) => {
+        box.current = e;
+      },
+    );
+    return box;
+  }
+
+  it('T1: times out a trickling body when it owns the deadline', async () => {
+    vi.useFakeTimers();
+    let cancelled = false;
+    const res = new Response(
+      tricklingStream(60_000, () => {
+        cancelled = true;
+      }),
+    );
+    const caught = capture(readBodyCapped(res, 'https://p.example'));
+
+    await vi.advanceTimersByTimeAsync(DEFAULT_FETCH_TIMEOUT_MS - 1_000);
+    // Proves the deadline fired, rather than some incidental rejection.
+    expect(caught.current).toBeUndefined();
+
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(caught.current).toBeInstanceOf(ProviderApiError);
+    expect((caught.current as ProviderApiError).kind).toBe('timeout');
+    expect((caught.current as ProviderApiError).message).toMatch(/timed out/);
+    expect(cancelled).toBe(true);
+  });
+
+  it('T2: surfaces the caller reason verbatim when a supplied signal aborts mid-body', async () => {
+    vi.useFakeTimers();
+    let cancelled = false;
+    const res = new Response(
+      tricklingStream(60_000, () => {
+        cancelled = true;
+      }),
+    );
+    const ac = new AbortController();
+    const reason = new Error('user cancelled');
+    const caught = capture(
+      readBodyCapped(res, 'https://p.example', MAX_RESPONSE_BYTES, {
+        signal: ac.signal,
+      }),
+    );
+
+    await vi.advanceTimersByTimeAsync(10);
+    expect(caught.current).toBeUndefined();
+
+    ac.abort(reason);
+    await vi.advanceTimersByTimeAsync(10);
+    // The caller's own reason, NOT a ProviderApiError: pollLeaseUntilReady keys
+    // cancellation off identity here.
+    expect(caught.current).toBe(reason);
+    expect(cancelled).toBe(true);
+  });
+
+  it('T3: bounds the no-stream res.text() fallback, which has no reader to cancel', async () => {
+    vi.useFakeTimers();
+    const fakeRes = {
+      ok: true,
+      status: 200,
+      text: () => new Promise<string>(() => {}), // never settles
+    } as unknown as Response;
+    const caught = capture(readBodyCapped(fakeRes, 'https://p.example'));
+
+    await vi.advanceTimersByTimeAsync(DEFAULT_FETCH_TIMEOUT_MS + 1_000);
+    expect(caught.current).toBeInstanceOf(ProviderApiError);
+    expect((caught.current as ProviderApiError).kind).toBe('timeout');
+  });
+
+  it('T4: a normal body completes and leaves no timer armed', async () => {
+    const enc = new TextEncoder();
+    const res = new Response(
+      new ReadableStream<Uint8Array>({
+        start(c) {
+          c.enqueue(enc.encode('{"a":'));
+          c.enqueue(enc.encode('1}'));
+          c.close();
+        },
+      }),
+    );
+    expect(await readBodyCapped(res, 'https://p.example')).toBe('{"a":1}');
+  });
+
+  it('T5: times out the !res.ok error-body read — the opposite side of the old finally', async () => {
+    vi.useFakeTimers();
+    const mockFetch = vi.fn(
+      async () =>
+        new Response(tricklingStream(60_000), {
+          status: 503,
+          headers: { 'retry-after': '5' },
+        }),
+    );
+    const caught = capture(
+      checkedFetch(
+        'https://p.example',
+        undefined,
+        20_000,
+        mockFetch as unknown as typeof globalThis.fetch,
+      ),
+    );
+
+    await vi.advanceTimersByTimeAsync(19_000);
+    expect(caught.current).toBeUndefined();
+
+    await vi.advanceTimersByTimeAsync(2_000);
+    const err = caught.current as ProviderApiError;
+    expect(err).toBeInstanceOf(ProviderApiError);
+    // Status and Retry-After survive the body timeout; only the kind changes.
+    expect(err.status).toBe(503);
+    expect(err.retryAfterMs).toBe(5_000);
+    expect(err.kind).toBe('timeout');
+  });
+
+  it('T6: a host cancel mid-error-body surfaces the caller reason, not a 503', async () => {
+    vi.useFakeTimers();
+    const ac = new AbortController();
+    const reason = new Error('user cancelled');
+    const mockFetch = vi.fn(
+      async () => new Response(tricklingStream(60_000), { status: 503 }),
+    );
+    const caught = capture(
+      checkedFetch(
+        'https://p.example',
+        { signal: ac.signal },
+        20_000,
+        mockFetch as unknown as typeof globalThis.fetch,
+      ),
+    );
+
+    await vi.advanceTimersByTimeAsync(10);
+    expect(caught.current).toBeUndefined();
+
+    ac.abort(reason);
+    await vi.advanceTimersByTimeAsync(10);
+    // Must NOT be laundered into placeholder body text on a ProviderApiError.
+    expect(caught.current).toBe(reason);
+  });
+
+  it('T7: bounds the SUCCESS-path body a bare checkedFetch hands back', async () => {
+    vi.useFakeTimers();
+    const mockFetch = vi.fn(
+      async () => new Response(tricklingStream(60_000), { status: 200 }),
+    );
+    const res = await checkedFetch(
+      'https://p.example',
+      undefined,
+      20_000,
+      mockFetch as unknown as typeof globalThis.fetch,
+    );
+    // checkedFetch returned, so its own deadline is disposed — readBodyCapped's
+    // default deadline is what stops this.
+    const caught = capture(parseJsonResponse(res, 'https://p.example'));
+
+    await vi.advanceTimersByTimeAsync(DEFAULT_FETCH_TIMEOUT_MS + 1_000);
+    expect(caught.current).toBeInstanceOf(ProviderApiError);
+    expect((caught.current as ProviderApiError).kind).toBe('timeout');
+  });
+
+  it('T8: parseJsonResponse forwards the options bag', async () => {
+    vi.useFakeTimers();
+    const ac = new AbortController();
+    const reason = new Error('user cancelled');
+    const res = new Response(tricklingStream(60_000));
+    const caught = capture(
+      parseJsonResponse(res, 'https://p.example', MAX_RESPONSE_BYTES, {
+        signal: ac.signal,
+      }),
+    );
+
+    await vi.advanceTimersByTimeAsync(10);
+    ac.abort(reason);
+    await vi.advanceTimersByTimeAsync(10);
+    expect(caught.current).toBe(reason);
+  });
+
+  it('T9: fetchJsonChecked spends ONE budget across headers and body, not one each', async () => {
+    vi.useFakeTimers();
+    const mockFetch = vi.fn(
+      async () =>
+        new Promise<Response>((resolve) => {
+          // Headers land 6s in, leaving 4s of the 10s budget for the body.
+          setTimeout(
+            () =>
+              resolve(new Response(tricklingStream(60_000), { status: 200 })),
+            6_000,
+          );
+        }),
+    );
+    const caught = capture(
+      fetchJsonChecked(
+        'https://p.example',
+        undefined,
+        10_000,
+        mockFetch as unknown as typeof globalThis.fetch,
+      ),
+    );
+
+    await vi.advanceTimersByTimeAsync(9_000);
+    expect(caught.current).toBeUndefined();
+
+    // A fresh body-phase deadline would not fire until 6s + 30s. A total budget
+    // fires at 10s.
+    await vi.advanceTimersByTimeAsync(1_500);
+    expect(caught.current).toBeInstanceOf(ProviderApiError);
+    expect((caught.current as ProviderApiError).kind).toBe('timeout');
+  });
+
+  it('T10: fetchJsonChecked keeps res.status on an invalid-JSON body', async () => {
+    // Load-bearing for restoreApp, which tells "restore COMMITTED but the 202 body
+    // was empty" from a real failure by branching on a 2xx status here. A 0 would
+    // route a lease with adopted volumes into cleanup advice — data loss.
+    const mockFetch = vi.fn(async () => new Response('', { status: 202 }));
+    const err: unknown = await fetchJsonChecked(
+      'https://p.example',
+      undefined,
+      undefined,
+      mockFetch as unknown as typeof globalThis.fetch,
+    ).catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(ProviderApiError);
+    expect((err as ProviderApiError).status).toBe(202);
+    expect((err as ProviderApiError).kind).toBe('invalid_json');
+  });
+
+  it('T11: getProviderHealth times out at its own 5s, not 5s + 30s', async () => {
+    vi.useFakeTimers();
+    const mockFetch = vi.fn(
+      async () => new Response(tricklingStream(60_000), { status: 200 }),
+    );
+    const caught = capture(
+      getProviderHealth(
+        'https://p.example',
+        5_000,
+        mockFetch as unknown as typeof globalThis.fetch,
+      ),
+    );
+
+    await vi.advanceTimersByTimeAsync(6_000);
+    expect(caught.current).toBeInstanceOf(ProviderApiError);
+    expect((caught.current as ProviderApiError).kind).toBe('timeout');
+  });
+
+  it('T12: checkedFetch leaves no timer armed for a caller that never reads the body', async () => {
+    vi.useFakeTimers();
+    // A plain body, deliberately NOT a tricklingStream: that mock schedules its own
+    // pull timer, which would be counted below and mask what this asserts.
+    const mockFetch = vi.fn(
+      async () => new Response('never read', { status: 200 }),
+    );
+    await checkedFetch(
+      'https://p.example',
+      undefined,
+      20_000,
+      mockFetch as unknown as typeof globalThis.fetch,
+    );
+    // uploadLeaseData is exactly this caller. A design that kept the deadline armed
+    // for the returned Response would leave a live timer here with nobody to fire at.
+    expect(vi.getTimerCount()).toBe(0);
   });
 });

@@ -6,8 +6,7 @@ vi.mock('./provider.js', async (importOriginal) => {
   return {
     ...actual,
     validateProviderUrl: vi.fn((url: string) => url),
-    checkedFetch: vi.fn(),
-    parseJsonResponse: vi.fn(),
+    fetchJsonChecked: vi.fn(),
   };
 });
 
@@ -22,14 +21,11 @@ import {
   TerminalChainStateError,
   updateLease,
 } from './fred.js';
-import {
-  checkedFetch,
-  ProviderApiError,
-  parseJsonResponse,
-} from './provider.js';
+import { fetchJsonChecked, ProviderApiError } from './provider.js';
 
-const mockCheckedFetch = vi.mocked(checkedFetch);
-const mockParseJsonResponse = vi.mocked(parseJsonResponse);
+// One mock now: fetchJsonChecked performs the fetch AND the body read under a single
+// deadline, so the old checkedFetch + parseJsonResponse pair collapsed (ENG-662).
+const mockFetchJson = vi.mocked(fetchJsonChecked);
 
 const PROVIDER_URL = 'https://provider.example.com';
 const LEASE_UUID = '550e8400-e29b-41d4-a716-446655440000';
@@ -39,13 +35,11 @@ describe('getLeaseStatus', () => {
   beforeEach(() => vi.clearAllMocks());
 
   it('fetches status with auth header and converts state to LeaseState', async () => {
-    const mockRes = {} as Response;
-    mockCheckedFetch.mockResolvedValue(mockRes);
-    mockParseJsonResponse.mockResolvedValue({ state: 'LEASE_STATE_ACTIVE' });
+    mockFetchJson.mockResolvedValue({ state: 'LEASE_STATE_ACTIVE' });
 
     const result = await getLeaseStatus(PROVIDER_URL, LEASE_UUID, AUTH_TOKEN);
     expect(result.state).toBe(LeaseState.LEASE_STATE_ACTIVE);
-    expect(mockCheckedFetch).toHaveBeenCalledWith(
+    expect(mockFetchJson).toHaveBeenCalledWith(
       expect.stringContaining(`/v1/leases/${LEASE_UUID}/status`),
       expect.objectContaining({
         headers: { Authorization: `Bearer ${AUTH_TOKEN}` },
@@ -56,16 +50,14 @@ describe('getLeaseStatus', () => {
   });
 
   it('returns UNRECOGNIZED for unknown state strings', async () => {
-    mockCheckedFetch.mockResolvedValue({} as Response);
-    mockParseJsonResponse.mockResolvedValue({ state: 'something_unknown' });
+    mockFetchJson.mockResolvedValue({ state: 'something_unknown' });
 
     const result = await getLeaseStatus(PROVIDER_URL, LEASE_UUID, AUTH_TOKEN);
     expect(result.state).toBe(LeaseState.UNRECOGNIZED);
   });
 
   it('preserves all wire fields through conversion', async () => {
-    mockCheckedFetch.mockResolvedValue({} as Response);
-    mockParseJsonResponse.mockResolvedValue({
+    mockFetchJson.mockResolvedValue({
       state: 'LEASE_STATE_ACTIVE',
       provision_status: 'provisioned',
       last_error: 'timeout',
@@ -86,30 +78,26 @@ describe('getLeaseLogs', () => {
   beforeEach(() => vi.clearAllMocks());
 
   it('caps tail at MAX_TAIL', async () => {
-    const mockRes = {} as Response;
-    mockCheckedFetch.mockResolvedValue(mockRes);
-    mockParseJsonResponse.mockResolvedValue({ logs: {} });
+    mockFetchJson.mockResolvedValue({ logs: {} });
 
     await getLeaseLogs(PROVIDER_URL, LEASE_UUID, AUTH_TOKEN, 5000);
-    const url = mockCheckedFetch.mock.calls[0][0];
+    const url = mockFetchJson.mock.calls[0][0];
     expect(url).toContain(`?tail=${MAX_TAIL}`);
   });
 
   it('passes tail directly when within limit', async () => {
-    mockCheckedFetch.mockResolvedValue({} as Response);
-    mockParseJsonResponse.mockResolvedValue({ logs: {} });
+    mockFetchJson.mockResolvedValue({ logs: {} });
 
     await getLeaseLogs(PROVIDER_URL, LEASE_UUID, AUTH_TOKEN, 50);
-    const url = mockCheckedFetch.mock.calls[0][0];
+    const url = mockFetchJson.mock.calls[0][0];
     expect(url).toContain('?tail=50');
   });
 
   it('omits tail query param when not provided', async () => {
-    mockCheckedFetch.mockResolvedValue({} as Response);
-    mockParseJsonResponse.mockResolvedValue({ logs: {} });
+    mockFetchJson.mockResolvedValue({ logs: {} });
 
     await getLeaseLogs(PROVIDER_URL, LEASE_UUID, AUTH_TOKEN);
-    const url = mockCheckedFetch.mock.calls[0][0];
+    const url = mockFetchJson.mock.calls[0][0];
     expect(url).not.toContain('?tail');
   });
 });
@@ -118,8 +106,7 @@ describe('pollLeaseUntilReady', () => {
   beforeEach(() => vi.clearAllMocks());
 
   it('returns immediately when state is ACTIVE', async () => {
-    mockCheckedFetch.mockResolvedValue({} as Response);
-    mockParseJsonResponse.mockResolvedValue({ state: 'LEASE_STATE_ACTIVE' });
+    mockFetchJson.mockResolvedValue({ state: 'LEASE_STATE_ACTIVE' });
 
     const result = await pollLeaseUntilReady(
       PROVIDER_URL,
@@ -131,12 +118,11 @@ describe('pollLeaseUntilReady', () => {
       },
     );
     expect(result.state).toBe(LeaseState.LEASE_STATE_ACTIVE);
-    expect(mockCheckedFetch).toHaveBeenCalledOnce();
+    expect(mockFetchJson).toHaveBeenCalledOnce();
   });
 
   it('returns immediately when ACTIVE and provision_status is ready', async () => {
-    mockCheckedFetch.mockResolvedValue({} as Response);
-    mockParseJsonResponse.mockResolvedValue({
+    mockFetchJson.mockResolvedValue({
       state: 'LEASE_STATE_ACTIVE',
       provision_status: 'ready',
     });
@@ -149,13 +135,12 @@ describe('pollLeaseUntilReady', () => {
     );
     expect(result.state).toBe(LeaseState.LEASE_STATE_ACTIVE);
     expect(result.provision_status).toBe('ready');
-    expect(mockCheckedFetch).toHaveBeenCalledOnce();
+    expect(mockFetchJson).toHaveBeenCalledOnce();
   });
 
   it('keeps polling while ACTIVE but still provisioning, then returns when ready', async () => {
-    mockCheckedFetch.mockResolvedValue({} as Response);
     let callCount = 0;
-    mockParseJsonResponse.mockImplementation(async () => {
+    mockFetchJson.mockImplementation(async () => {
       callCount++;
       return {
         state: 'LEASE_STATE_ACTIVE',
@@ -175,9 +160,8 @@ describe('pollLeaseUntilReady', () => {
   });
 
   it('keeps polling through the transient failing window until ready', async () => {
-    mockCheckedFetch.mockResolvedValue({} as Response);
     let callCount = 0;
-    mockParseJsonResponse.mockImplementation(async () => {
+    mockFetchJson.mockImplementation(async () => {
       callCount++;
       return {
         state: 'LEASE_STATE_ACTIVE',
@@ -201,8 +185,7 @@ describe('pollLeaseUntilReady', () => {
   // post-ENG-508 reason/message cases live in fred-failure-wire.test.ts, which
   // runs through the real parse path instead of the mocks above.
   it('throws when ACTIVE but provisioning failed, surfacing last_error', async () => {
-    mockCheckedFetch.mockResolvedValue({} as Response);
-    mockParseJsonResponse.mockResolvedValue({
+    mockFetchJson.mockResolvedValue({
       state: 'LEASE_STATE_ACTIVE',
       provision_status: 'failed',
       last_error: 'OOMKilled',
@@ -214,12 +197,11 @@ describe('pollLeaseUntilReady', () => {
         timeoutMs: 5000,
       }),
     ).rejects.toThrow(/provisioning failed: OOMKilled/);
-    expect(mockCheckedFetch).toHaveBeenCalledOnce();
+    expect(mockFetchJson).toHaveBeenCalledOnce();
   });
 
   it('throws when ACTIVE but the lease is being deprovisioned', async () => {
-    mockCheckedFetch.mockResolvedValue({} as Response);
-    mockParseJsonResponse.mockResolvedValue({
+    mockFetchJson.mockResolvedValue({
       state: 'LEASE_STATE_ACTIVE',
       provision_status: 'deprovisioning',
     });
@@ -230,7 +212,7 @@ describe('pollLeaseUntilReady', () => {
         timeoutMs: 5000,
       }),
     ).rejects.toThrow(/provisioning deprovisioning/);
-    expect(mockCheckedFetch).toHaveBeenCalledOnce();
+    expect(mockFetchJson).toHaveBeenCalledOnce();
   });
 
   it('keeps polling on a genuinely-unrecognized (future) provision_status — readiness is an allowlist', async () => {
@@ -250,8 +232,7 @@ describe('pollLeaseUntilReady', () => {
     //
     // Not hanging the poll is still satisfied: the caller's deadline bounds it, and the timeout
     // message names the status, so an unmodelled value is diagnosable instead of silent.
-    mockCheckedFetch.mockResolvedValue({} as Response);
-    mockParseJsonResponse.mockResolvedValue({
+    mockFetchJson.mockResolvedValue({
       state: 'LEASE_STATE_ACTIVE',
       provision_status: 'some_future_status',
     });
@@ -275,10 +256,9 @@ describe('pollLeaseUntilReady', () => {
       .mockImplementation((m: unknown) => {
         warnLines.push(String(m));
       });
-    mockCheckedFetch.mockResolvedValue({} as Response);
 
     try {
-      mockParseJsonResponse.mockResolvedValue({
+      mockFetchJson.mockResolvedValue({
         state: 'LEASE_STATE_ACTIVE',
         provision_status: 'retained',
       });
@@ -290,7 +270,7 @@ describe('pollLeaseUntilReady', () => {
       ).rejects.toThrow(/provision_status: retained/);
       expect(warnLines.filter((l) => l.includes('Unrecognized'))).toEqual([]);
 
-      mockParseJsonResponse.mockResolvedValue({
+      mockFetchJson.mockResolvedValue({
         state: 'LEASE_STATE_ACTIVE',
         provision_status: 'some_unmodelled_status',
       });
@@ -311,8 +291,7 @@ describe('pollLeaseUntilReady', () => {
   it('still returns immediately when provision_status is ABSENT (a provider that never populates it)', async () => {
     // The absent field is NOT an unrecognized value — it is a provider that does not report
     // provisioning at all, and gating on it would strand every such lease. Unchanged by ENG-651.
-    mockCheckedFetch.mockResolvedValue({} as Response);
-    mockParseJsonResponse.mockResolvedValue({ state: 'LEASE_STATE_ACTIVE' });
+    mockFetchJson.mockResolvedValue({ state: 'LEASE_STATE_ACTIVE' });
 
     const result = await pollLeaseUntilReady(
       PROVIDER_URL,
@@ -321,16 +300,15 @@ describe('pollLeaseUntilReady', () => {
       { intervalMs: 10, timeoutMs: 1000 },
     );
     expect(result.state).toBe(LeaseState.LEASE_STATE_ACTIVE);
-    expect(mockCheckedFetch).toHaveBeenCalledOnce();
+    expect(mockFetchJson).toHaveBeenCalledOnce();
   });
 
   it('keeps polling while provision_status is the known "unknown" (indeterminate, not ready)', async () => {
     // `unknown` is a real backend ProvisionStatus meaning "not confirmed
     // healthy" (unrecognized container status / state-machine read error) — it
     // must NOT be reported as ready; the poll waits for it to settle.
-    mockCheckedFetch.mockResolvedValue({} as Response);
     let callCount = 0;
-    mockParseJsonResponse.mockImplementation(async () => {
+    mockFetchJson.mockImplementation(async () => {
       callCount++;
       return {
         state: 'LEASE_STATE_ACTIVE',
@@ -349,8 +327,7 @@ describe('pollLeaseUntilReady', () => {
   });
 
   it('includes provision_status in the timeout error when stuck provisioning', async () => {
-    mockCheckedFetch.mockResolvedValue({} as Response);
-    mockParseJsonResponse.mockResolvedValue({
+    mockFetchJson.mockResolvedValue({
       state: 'LEASE_STATE_ACTIVE',
       provision_status: 'provisioning',
     });
@@ -364,8 +341,7 @@ describe('pollLeaseUntilReady', () => {
   });
 
   it('throws on CLOSED state', async () => {
-    mockCheckedFetch.mockResolvedValue({} as Response);
-    mockParseJsonResponse.mockResolvedValue({ state: 'LEASE_STATE_CLOSED' });
+    mockFetchJson.mockResolvedValue({ state: 'LEASE_STATE_CLOSED' });
 
     await expect(
       pollLeaseUntilReady(PROVIDER_URL, LEASE_UUID, AUTH_TOKEN, {
@@ -376,8 +352,7 @@ describe('pollLeaseUntilReady', () => {
   });
 
   it('throws on REJECTED state', async () => {
-    mockCheckedFetch.mockResolvedValue({} as Response);
-    mockParseJsonResponse.mockResolvedValue({ state: 'LEASE_STATE_REJECTED' });
+    mockFetchJson.mockResolvedValue({ state: 'LEASE_STATE_REJECTED' });
 
     await expect(
       pollLeaseUntilReady(PROVIDER_URL, LEASE_UUID, AUTH_TOKEN, {
@@ -388,8 +363,7 @@ describe('pollLeaseUntilReady', () => {
   });
 
   it('throws on EXPIRED state', async () => {
-    mockCheckedFetch.mockResolvedValue({} as Response);
-    mockParseJsonResponse.mockResolvedValue({ state: 'LEASE_STATE_EXPIRED' });
+    mockFetchJson.mockResolvedValue({ state: 'LEASE_STATE_EXPIRED' });
 
     await expect(
       pollLeaseUntilReady(PROVIDER_URL, LEASE_UUID, AUTH_TOKEN, {
@@ -400,8 +374,7 @@ describe('pollLeaseUntilReady', () => {
   });
 
   it('throws immediately on UNRECOGNIZED state', async () => {
-    mockCheckedFetch.mockResolvedValue({} as Response);
-    mockParseJsonResponse.mockResolvedValue({ state: 'SOME_FUTURE_STATE' });
+    mockFetchJson.mockResolvedValue({ state: 'SOME_FUTURE_STATE' });
 
     await expect(
       pollLeaseUntilReady(PROVIDER_URL, LEASE_UUID, AUTH_TOKEN, {
@@ -409,12 +382,11 @@ describe('pollLeaseUntilReady', () => {
         timeoutMs: 5000,
       }),
     ).rejects.toThrow(/unexpected state/);
-    expect(mockCheckedFetch).toHaveBeenCalledOnce();
+    expect(mockFetchJson).toHaveBeenCalledOnce();
   });
 
   it('throws immediately on UNSPECIFIED state', async () => {
-    mockCheckedFetch.mockResolvedValue({} as Response);
-    mockParseJsonResponse.mockResolvedValue({
+    mockFetchJson.mockResolvedValue({
       state: 'LEASE_STATE_UNSPECIFIED',
     });
 
@@ -424,13 +396,12 @@ describe('pollLeaseUntilReady', () => {
         timeoutMs: 5000,
       }),
     ).rejects.toThrow(/unexpected state/);
-    expect(mockCheckedFetch).toHaveBeenCalledOnce();
+    expect(mockFetchJson).toHaveBeenCalledOnce();
   });
 
   it('polls until ACTIVE after PENDING', async () => {
-    mockCheckedFetch.mockResolvedValue({} as Response);
     let callCount = 0;
-    mockParseJsonResponse.mockImplementation(async () => {
+    mockFetchJson.mockImplementation(async () => {
       callCount++;
       return {
         state: callCount < 3 ? 'LEASE_STATE_PENDING' : 'LEASE_STATE_ACTIVE',
@@ -451,8 +422,7 @@ describe('pollLeaseUntilReady', () => {
   });
 
   it('times out if never active', async () => {
-    mockCheckedFetch.mockResolvedValue({} as Response);
-    mockParseJsonResponse.mockResolvedValue({ state: 'LEASE_STATE_PENDING' });
+    mockFetchJson.mockResolvedValue({ state: 'LEASE_STATE_PENDING' });
 
     await expect(
       pollLeaseUntilReady(PROVIDER_URL, LEASE_UUID, AUTH_TOKEN, {
@@ -463,9 +433,8 @@ describe('pollLeaseUntilReady', () => {
   });
 
   it('uses callback function for auth token refresh', async () => {
-    mockCheckedFetch.mockResolvedValue({} as Response);
     let callCount = 0;
-    mockParseJsonResponse.mockImplementation(async () => {
+    mockFetchJson.mockImplementation(async () => {
       callCount++;
       return {
         state: callCount < 2 ? 'LEASE_STATE_PENDING' : 'LEASE_STATE_ACTIVE',
@@ -484,11 +453,11 @@ describe('pollLeaseUntilReady', () => {
 
     expect(tokenFn).toHaveBeenCalledTimes(2);
     // Verify different tokens were used in successive calls
-    const firstAuth = mockCheckedFetch.mock.calls[0][1]?.headers as Record<
+    const firstAuth = mockFetchJson.mock.calls[0][1]?.headers as Record<
       string,
       string
     >;
-    const secondAuth = mockCheckedFetch.mock.calls[1][1]?.headers as Record<
+    const secondAuth = mockFetchJson.mock.calls[1][1]?.headers as Record<
       string,
       string
     >;
@@ -497,8 +466,7 @@ describe('pollLeaseUntilReady', () => {
   });
 
   it('includes last state in timeout error message', async () => {
-    mockCheckedFetch.mockResolvedValue({} as Response);
-    mockParseJsonResponse.mockResolvedValue({ state: 'LEASE_STATE_PENDING' });
+    mockFetchJson.mockResolvedValue({ state: 'LEASE_STATE_PENDING' });
 
     await expect(
       pollLeaseUntilReady(PROVIDER_URL, LEASE_UUID, AUTH_TOKEN, {
@@ -509,8 +477,7 @@ describe('pollLeaseUntilReady', () => {
   });
 
   it('aborts immediately with a pre-aborted signal', async () => {
-    mockCheckedFetch.mockResolvedValue({} as Response);
-    mockParseJsonResponse.mockResolvedValue({ state: 'LEASE_STATE_PENDING' });
+    mockFetchJson.mockResolvedValue({ state: 'LEASE_STATE_PENDING' });
 
     const controller = new AbortController();
     controller.abort(new Error('cancelled'));
@@ -522,12 +489,11 @@ describe('pollLeaseUntilReady', () => {
         abortSignal: controller.signal,
       }),
     ).rejects.toThrow(/cancelled/);
-    expect(mockCheckedFetch).not.toHaveBeenCalled();
+    expect(mockFetchJson).not.toHaveBeenCalled();
   });
 
   it('aborts during sleep between polls', async () => {
-    mockCheckedFetch.mockResolvedValue({} as Response);
-    mockParseJsonResponse.mockResolvedValue({ state: 'LEASE_STATE_PENDING' });
+    mockFetchJson.mockResolvedValue({ state: 'LEASE_STATE_PENDING' });
 
     const controller = new AbortController();
     // Abort after a short delay (during the sleep interval)
@@ -541,13 +507,12 @@ describe('pollLeaseUntilReady', () => {
       }),
     ).rejects.toThrow(/user cancelled/);
     // Should have polled once, then been aborted during sleep
-    expect(mockCheckedFetch).toHaveBeenCalledOnce();
+    expect(mockFetchJson).toHaveBeenCalledOnce();
   });
 
   it('invokes checkChainState before the provider on each iteration', async () => {
-    mockCheckedFetch.mockResolvedValue({} as Response);
     let callCount = 0;
-    mockParseJsonResponse.mockImplementation(async () => {
+    mockFetchJson.mockImplementation(async () => {
       callCount++;
       return {
         state: callCount < 3 ? 'LEASE_STATE_PENDING' : 'LEASE_STATE_ACTIVE',
@@ -565,8 +530,7 @@ describe('pollLeaseUntilReady', () => {
   });
 
   it('throws TerminalChainStateError with typed chainState + leaseUuid fields', async () => {
-    mockCheckedFetch.mockResolvedValue({} as Response);
-    mockParseJsonResponse.mockResolvedValue({ state: 'LEASE_STATE_PENDING' });
+    mockFetchJson.mockResolvedValue({ state: 'LEASE_STATE_PENDING' });
 
     const checkChainState = vi.fn().mockResolvedValue({ state: 'rejected' });
 
@@ -592,12 +556,11 @@ describe('pollLeaseUntilReady', () => {
     expect((caught as TerminalChainStateError).message).toMatch(
       /LEASE_STATE_REJECTED on chain/,
     );
-    expect(mockCheckedFetch).not.toHaveBeenCalled();
+    expect(mockFetchJson).not.toHaveBeenCalled();
   });
 
   it('maps closed and expired chain states onto their lease states', async () => {
-    mockCheckedFetch.mockResolvedValue({} as Response);
-    mockParseJsonResponse.mockResolvedValue({ state: 'LEASE_STATE_PENDING' });
+    mockFetchJson.mockResolvedValue({ state: 'LEASE_STATE_PENDING' });
 
     await expect(
       pollLeaseUntilReady(PROVIDER_URL, LEASE_UUID, AUTH_TOKEN, {
@@ -617,9 +580,8 @@ describe('pollLeaseUntilReady', () => {
   });
 
   it('continues polling while checkChainState returns null', async () => {
-    mockCheckedFetch.mockResolvedValue({} as Response);
     let callCount = 0;
-    mockParseJsonResponse.mockImplementation(async () => {
+    mockFetchJson.mockImplementation(async () => {
       callCount++;
       return {
         state: callCount < 2 ? 'LEASE_STATE_PENDING' : 'LEASE_STATE_ACTIVE',
@@ -642,8 +604,7 @@ describe('pollLeaseUntilReady', () => {
   });
 
   it('abortSignal takes precedence over a terminal chainState in the same iteration', async () => {
-    mockCheckedFetch.mockResolvedValue({} as Response);
-    mockParseJsonResponse.mockResolvedValue({ state: 'LEASE_STATE_PENDING' });
+    mockFetchJson.mockResolvedValue({ state: 'LEASE_STATE_PENDING' });
 
     const controller = new AbortController();
     controller.abort(new Error('aborted before iteration'));
@@ -663,8 +624,7 @@ describe('pollLeaseUntilReady', () => {
   });
 
   it('honors abortSignal aborted while checkChainState is awaiting', async () => {
-    mockCheckedFetch.mockResolvedValue({} as Response);
-    mockParseJsonResponse.mockResolvedValue({ state: 'LEASE_STATE_PENDING' });
+    mockFetchJson.mockResolvedValue({ state: 'LEASE_STATE_PENDING' });
 
     const controller = new AbortController();
     const checkChainState = vi.fn(async () => {
@@ -685,13 +645,12 @@ describe('pollLeaseUntilReady', () => {
     ).rejects.toThrow(/cancelled during chain check/);
 
     // Provider status must not be fetched after the signal aborted.
-    expect(mockCheckedFetch).not.toHaveBeenCalled();
+    expect(mockFetchJson).not.toHaveBeenCalled();
     expect(checkChainState).toHaveBeenCalledTimes(1);
   });
 
   it('propagates errors thrown by checkChainState', async () => {
-    mockCheckedFetch.mockResolvedValue({} as Response);
-    mockParseJsonResponse.mockResolvedValue({ state: 'LEASE_STATE_PENDING' });
+    mockFetchJson.mockResolvedValue({ state: 'LEASE_STATE_PENDING' });
 
     const checkChainState = vi
       .fn()
@@ -703,13 +662,12 @@ describe('pollLeaseUntilReady', () => {
         checkChainState,
       }),
     ).rejects.toThrow(/chain RPC down/);
-    expect(mockCheckedFetch).not.toHaveBeenCalled();
+    expect(mockFetchJson).not.toHaveBeenCalled();
   });
 
   it('calls onProgress on each poll iteration', async () => {
-    mockCheckedFetch.mockResolvedValue({} as Response);
     let callCount = 0;
-    mockParseJsonResponse.mockImplementation(async () => {
+    mockFetchJson.mockImplementation(async () => {
       callCount++;
       return {
         state: callCount < 3 ? 'LEASE_STATE_PENDING' : 'LEASE_STATE_ACTIVE',
@@ -754,14 +712,10 @@ describe('pollLeaseUntilReady — transient-failure budget', () => {
   /** Drive the poll from a script of per-iteration outcomes. */
   function scriptReads(steps: Array<{ throw?: unknown; state?: string }>) {
     let i = 0;
-    mockCheckedFetch.mockImplementation(async () => {
+    mockFetchJson.mockImplementation(async () => {
       const step = steps[Math.min(i, steps.length - 1)];
       i += 1;
       if (step?.throw !== undefined) throw step.throw;
-      return {} as Response;
-    });
-    mockParseJsonResponse.mockImplementation(async () => {
-      const step = steps[Math.min(i - 1, steps.length - 1)];
       return { state: step?.state ?? 'LEASE_STATE_PENDING' };
     });
   }
@@ -784,7 +738,7 @@ describe('pollLeaseUntilReady — transient-failure budget', () => {
     );
 
     expect(result.state).toBe(LeaseState.LEASE_STATE_ACTIVE);
-    expect(mockCheckedFetch).toHaveBeenCalledTimes(3);
+    expect(mockFetchJson).toHaveBeenCalledTimes(3);
   });
 
   it('resets the counter on a successful read, so the budget is a BURST tolerance', async () => {
@@ -808,7 +762,7 @@ describe('pollLeaseUntilReady — transient-failure budget', () => {
     );
 
     expect(result.state).toBe(LeaseState.LEASE_STATE_ACTIVE);
-    expect(mockCheckedFetch).toHaveBeenCalledTimes(7);
+    expect(mockFetchJson).toHaveBeenCalledTimes(7);
   });
 
   it('gives up past the budget with reason "provider_unreachable", naming the last error', async () => {
@@ -830,7 +784,7 @@ describe('pollLeaseUntilReady — transient-failure budget', () => {
     // read this as "the deployment failed".
     expect(unconfirmed.message).toContain('NOT a reported failure');
     expect(unconfirmed.cause).toBeInstanceOf(ProviderApiError);
-    expect(mockCheckedFetch).toHaveBeenCalledTimes(3);
+    expect(mockFetchJson).toHaveBeenCalledTimes(3);
   });
 
   it('maxConsecutiveFailures: 0 restores the pre-ENG-661 fail-on-first-blip behaviour', async () => {
@@ -843,7 +797,7 @@ describe('pollLeaseUntilReady — transient-failure budget', () => {
         maxConsecutiveFailures: 0,
       }),
     ).rejects.toBeInstanceOf(LeaseReadinessUnconfirmedError);
-    expect(mockCheckedFetch).toHaveBeenCalledOnce();
+    expect(mockFetchJson).toHaveBeenCalledOnce();
   });
 
   it('defaults to tolerating 3 consecutive failures', async () => {
@@ -883,7 +837,7 @@ describe('pollLeaseUntilReady — transient-failure budget', () => {
       expect(err).toBeInstanceOf(ProviderApiError);
       expect(err).not.toBeInstanceOf(LeaseReadinessUnconfirmedError);
       expect((err as ProviderApiError).status).toBe(status);
-      expect(mockCheckedFetch).toHaveBeenCalledOnce();
+      expect(mockFetchJson).toHaveBeenCalledOnce();
     });
 
     it('propagates an SSRF/URL rejection immediately (it will never change)', async () => {
@@ -902,7 +856,7 @@ describe('pollLeaseUntilReady — transient-failure budget', () => {
           maxConsecutiveFailures: 5,
         }),
       ).rejects.toThrow(/not allowed/);
-      expect(mockCheckedFetch).toHaveBeenCalledOnce();
+      expect(mockFetchJson).toHaveBeenCalledOnce();
     });
 
     it('propagates a non-ProviderApiError (a bug is not a blip)', async () => {
@@ -915,12 +869,11 @@ describe('pollLeaseUntilReady — transient-failure budget', () => {
           maxConsecutiveFailures: 5,
         }),
       ).rejects.toThrow(TypeError);
-      expect(mockCheckedFetch).toHaveBeenCalledOnce();
+      expect(mockFetchJson).toHaveBeenCalledOnce();
     });
 
     it('a PROVISION_FAILED verdict still fails fast, however large the budget', async () => {
-      mockCheckedFetch.mockResolvedValue({} as Response);
-      mockParseJsonResponse.mockResolvedValue({
+      mockFetchJson.mockResolvedValue({
         state: 'LEASE_STATE_ACTIVE',
         provision_status: 'failed',
       });
@@ -932,12 +885,11 @@ describe('pollLeaseUntilReady — transient-failure budget', () => {
           maxConsecutiveFailures: 99,
         }),
       ).rejects.toThrow(/provisioning failed/);
-      expect(mockCheckedFetch).toHaveBeenCalledOnce();
+      expect(mockFetchJson).toHaveBeenCalledOnce();
     });
 
     it('a terminal lease state still fails fast, however large the budget', async () => {
-      mockCheckedFetch.mockResolvedValue({} as Response);
-      mockParseJsonResponse.mockResolvedValue({
+      mockFetchJson.mockResolvedValue({
         state: 'LEASE_STATE_CLOSED',
       });
 
@@ -948,13 +900,13 @@ describe('pollLeaseUntilReady — transient-failure budget', () => {
           maxConsecutiveFailures: 99,
         }),
       ).rejects.toThrow(/terminal state/);
-      expect(mockCheckedFetch).toHaveBeenCalledOnce();
+      expect(mockFetchJson).toHaveBeenCalledOnce();
     });
 
     it('an abort racing a transient failure surfaces the abort, not the tolerance', async () => {
       const controller = new AbortController();
       let calls = 0;
-      mockCheckedFetch.mockImplementation(async () => {
+      mockFetchJson.mockImplementation(async () => {
         calls += 1;
         controller.abort(new Error('user cancelled'));
         throw transient();
@@ -978,7 +930,7 @@ describe('pollLeaseUntilReady — transient-failure budget', () => {
 
     it('an abort DURING the post-failure backoff cancels the wait', async () => {
       const controller = new AbortController();
-      mockCheckedFetch.mockImplementation(async () => {
+      mockFetchJson.mockImplementation(async () => {
         throw transient();
       });
       setTimeout(
@@ -1020,7 +972,7 @@ describe('pollLeaseUntilReady — transient-failure budget', () => {
     );
 
     expect(result.state).toBe(LeaseState.LEASE_STATE_ACTIVE);
-    expect(mockCheckedFetch).toHaveBeenCalledTimes(3);
+    expect(mockFetchJson).toHaveBeenCalledTimes(3);
   });
 
   it('still gives up on a 404 that never resolves — the tolerance is bounded', async () => {
@@ -1039,7 +991,7 @@ describe('pollLeaseUntilReady — transient-failure budget', () => {
     expect((err as LeaseReadinessUnconfirmedError).reason).toBe(
       'provider_unreachable',
     );
-    expect(mockCheckedFetch).toHaveBeenCalledTimes(3);
+    expect(mockFetchJson).toHaveBeenCalledTimes(3);
   });
 
   it('honours a provider Retry-After instead of the poll interval', async () => {
@@ -1100,8 +1052,7 @@ describe('pollLeaseUntilReady — deadline (ENG-661)', () => {
     vi.useFakeTimers();
     try {
       vi.setSystemTime(0);
-      mockCheckedFetch.mockResolvedValue({} as Response);
-      mockParseJsonResponse.mockResolvedValue({ state: 'LEASE_STATE_PENDING' });
+      mockFetchJson.mockResolvedValue({ state: 'LEASE_STATE_PENDING' });
 
       const settled = pollLeaseUntilReady(
         PROVIDER_URL,
@@ -1126,8 +1077,7 @@ describe('pollLeaseUntilReady — deadline (ENG-661)', () => {
   });
 
   it('reports the deadline as unconfirmed, not failed, with the last state seen', async () => {
-    mockCheckedFetch.mockResolvedValue({} as Response);
-    mockParseJsonResponse.mockResolvedValue({
+    mockFetchJson.mockResolvedValue({
       state: 'LEASE_STATE_ACTIVE',
       provision_status: 'provisioning',
     });
@@ -1157,8 +1107,7 @@ describe('pollLeaseUntilReady — deadline (ENG-661)', () => {
   });
 
   it('is a ProviderApiError, brand included, so existing catchers keep working', async () => {
-    mockCheckedFetch.mockResolvedValue({} as Response);
-    mockParseJsonResponse.mockResolvedValue({ state: 'LEASE_STATE_PENDING' });
+    mockFetchJson.mockResolvedValue({ state: 'LEASE_STATE_PENDING' });
 
     const err = await pollLeaseUntilReady(
       PROVIDER_URL,
@@ -1178,8 +1127,7 @@ describe('pollLeaseUntilReady — deadline (ENG-661)', () => {
   });
 
   it('withContext preserves the stack and adds provider identity', async () => {
-    mockCheckedFetch.mockResolvedValue({} as Response);
-    mockParseJsonResponse.mockResolvedValue({ state: 'LEASE_STATE_PENDING' });
+    mockFetchJson.mockResolvedValue({ state: 'LEASE_STATE_PENDING' });
 
     const err = (await pollLeaseUntilReady(
       PROVIDER_URL,
@@ -1208,13 +1156,12 @@ describe('restoreLease', () => {
   const FROM = '11111111-2222-3333-4444-555555555555';
 
   it('POSTs {from_lease_uuid} JSON to /restore with Bearer auth and returns status', async () => {
-    mockCheckedFetch.mockResolvedValue({} as Response);
-    mockParseJsonResponse.mockResolvedValue({ status: 'provisioning' });
+    mockFetchJson.mockResolvedValue({ status: 'provisioning' });
 
     const res = await restoreLease(PROVIDER_URL, LEASE_UUID, FROM, AUTH_TOKEN);
 
     expect(res.status).toBe('provisioning');
-    expect(mockCheckedFetch).toHaveBeenCalledWith(
+    expect(mockFetchJson).toHaveBeenCalledWith(
       expect.stringContaining(`/v1/leases/${LEASE_UUID}/restore`),
       expect.objectContaining({
         method: 'POST',
@@ -1226,14 +1173,14 @@ describe('restoreLease', () => {
       undefined,
       undefined,
     );
-    const body = JSON.parse(
-      mockCheckedFetch.mock.calls[0][1]?.body as string,
-    ) as { from_lease_uuid: string };
+    const body = JSON.parse(mockFetchJson.mock.calls[0][1]?.body as string) as {
+      from_lease_uuid: string;
+    };
     expect(body).toEqual({ from_lease_uuid: FROM });
   });
 
   it('propagates a non-2xx ProviderApiError with its status (e.g. 422 demote)', async () => {
-    mockCheckedFetch.mockRejectedValue(
+    mockFetchJson.mockRejectedValue(
       new ProviderApiError(
         422,
         'retained data exceeds the requested smaller tier',
@@ -1249,14 +1196,12 @@ describe('updateLease', () => {
   beforeEach(() => vi.clearAllMocks());
 
   it('sends JSON body with base64-encoded payload', async () => {
-    const mockRes = {} as Response;
-    mockCheckedFetch.mockResolvedValue(mockRes);
-    mockParseJsonResponse.mockResolvedValue({ status: 'updated' });
+    mockFetchJson.mockResolvedValue({ status: 'updated' });
 
     const payload = new TextEncoder().encode('{"image":"nginx:alpine"}');
     await updateLease(PROVIDER_URL, LEASE_UUID, payload, AUTH_TOKEN);
 
-    expect(mockCheckedFetch).toHaveBeenCalledWith(
+    expect(mockFetchJson).toHaveBeenCalledWith(
       expect.stringContaining(`/v1/leases/${LEASE_UUID}/update`),
       expect.objectContaining({
         method: 'POST',
@@ -1269,25 +1214,23 @@ describe('updateLease', () => {
       undefined,
     );
 
-    const body = JSON.parse(
-      mockCheckedFetch.mock.calls[0][1]?.body as string,
-    ) as { payload: string };
+    const body = JSON.parse(mockFetchJson.mock.calls[0][1]?.body as string) as {
+      payload: string;
+    };
     const decoded = atob(body.payload);
     expect(decoded).toBe('{"image":"nginx:alpine"}');
   });
 
   it('handles large payloads without stack overflow', async () => {
-    const mockRes = {} as Response;
-    mockCheckedFetch.mockResolvedValue(mockRes);
-    mockParseJsonResponse.mockResolvedValue({ status: 'updated' });
+    mockFetchJson.mockResolvedValue({ status: 'updated' });
 
     // 128KB payload — ensures large payloads are handled correctly
     const large = new Uint8Array(128 * 1024).fill(65); // all 'A'
     await updateLease(PROVIDER_URL, LEASE_UUID, large, AUTH_TOKEN);
 
-    const body = JSON.parse(
-      mockCheckedFetch.mock.calls[0][1]?.body as string,
-    ) as { payload: string };
+    const body = JSON.parse(mockFetchJson.mock.calls[0][1]?.body as string) as {
+      payload: string;
+    };
     const decoded = atob(body.payload);
     expect(decoded.length).toBe(128 * 1024);
     expect(decoded[0]).toBe('A');

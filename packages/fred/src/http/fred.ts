@@ -16,10 +16,9 @@ import {
 } from '@manifest-network/manifest-mcp-core';
 import { failureDetail } from '../failure-reason.js';
 import {
-  checkedFetch,
+  fetchJsonChecked,
   isTransientProviderError,
   ProviderApiError,
-  parseJsonResponse,
   validateProviderUrl,
 } from './provider.js';
 
@@ -51,7 +50,7 @@ export async function getLeaseStatus(
 ): Promise<FredLeaseStatus> {
   const validated = validateProviderUrl(providerUrl, { allowLoopback });
   const url = `${validated}/v1/leases/${encodeURIComponent(leaseUuid)}/status`;
-  const res = await checkedFetch(
+  const raw = await fetchJsonChecked<RawLeaseStatus>(
     url,
     {
       headers: { Authorization: `Bearer ${authToken}` },
@@ -60,7 +59,6 @@ export async function getLeaseStatus(
     undefined,
     fetchFn,
   );
-  const raw = await parseJsonResponse<RawLeaseStatus>(res, url);
   const state = leaseStateFromJSON(raw.state);
   if (state === LeaseState.UNRECOGNIZED) {
     logger.warn(
@@ -83,15 +81,12 @@ export async function getLeaseLogs(
   const cappedTail = tail !== undefined ? Math.min(tail, MAX_TAIL) : undefined;
   const qs = cappedTail !== undefined ? `?tail=${cappedTail}` : '';
   const url = `${validated}/v1/leases/${encodeURIComponent(leaseUuid)}/logs${qs}`;
-  const res = await checkedFetch(
+  return await fetchJsonChecked<FredLeaseLogs>(
     url,
-    {
-      headers: { Authorization: `Bearer ${authToken}` },
-    },
+    { headers: { Authorization: `Bearer ${authToken}` } },
     undefined,
     fetchFn,
   );
-  return await parseJsonResponse<FredLeaseLogs>(res, url);
 }
 
 export async function getLeaseProvision(
@@ -103,15 +98,12 @@ export async function getLeaseProvision(
 ): Promise<FredLeaseProvision> {
   const validated = validateProviderUrl(providerUrl, { allowLoopback });
   const url = `${validated}/v1/leases/${encodeURIComponent(leaseUuid)}/provision`;
-  const res = await checkedFetch(
+  return await fetchJsonChecked<FredLeaseProvision>(
     url,
-    {
-      headers: { Authorization: `Bearer ${authToken}` },
-    },
+    { headers: { Authorization: `Bearer ${authToken}` } },
     undefined,
     fetchFn,
   );
-  return await parseJsonResponse<FredLeaseProvision>(res, url);
 }
 
 export async function restartLease(
@@ -123,7 +115,7 @@ export async function restartLease(
 ): Promise<FredActionResponse> {
   const validated = validateProviderUrl(providerUrl, { allowLoopback });
   const url = `${validated}/v1/leases/${encodeURIComponent(leaseUuid)}/restart`;
-  const res = await checkedFetch(
+  return await fetchJsonChecked<FredActionResponse>(
     url,
     {
       method: 'POST',
@@ -132,7 +124,6 @@ export async function restartLease(
     undefined,
     fetchFn,
   );
-  return await parseJsonResponse<FredActionResponse>(res, url);
 }
 
 export async function updateLease(
@@ -147,7 +138,7 @@ export async function updateLease(
   const url = `${validated}/v1/leases/${encodeURIComponent(leaseUuid)}/update`;
   // The provider expects JSON with a base64-encoded payload (Go []byte field).
   const b64 = toBase64(payload);
-  const res = await checkedFetch(
+  return await fetchJsonChecked<FredActionResponse>(
     url,
     {
       method: 'POST',
@@ -160,14 +151,13 @@ export async function updateLease(
     undefined,
     fetchFn,
   );
-  return await parseJsonResponse<FredActionResponse>(res, url);
 }
 
 /**
  * Restore a closed lease's retained volumes onto a fresh PENDING lease (ENG-599).
  * `leaseUuid` is the NEW (fresh PENDING) lease; the body names the SOURCE retained
  * lease. Token must be scoped to the NEW lease. Returns 202 {status:"provisioning"};
- * checkedFetch throws ProviderApiError for any non-2xx (404 not-retained, 409 not
+ * fetchJsonChecked throws ProviderApiError for any non-2xx (404 not-retained, 409 not
  * PENDING, 422 demote, 503 placement, …) — the tool layer classifies by `.status`.
  */
 export async function restoreLease(
@@ -180,7 +170,7 @@ export async function restoreLease(
 ): Promise<FredActionResponse> {
   const validated = validateProviderUrl(providerUrl, { allowLoopback });
   const url = `${validated}/v1/leases/${encodeURIComponent(leaseUuid)}/restore`;
-  const res = await checkedFetch(
+  return await fetchJsonChecked<FredActionResponse>(
     url,
     {
       method: 'POST',
@@ -193,7 +183,6 @@ export async function restoreLease(
     undefined,
     fetchFn,
   );
-  return await parseJsonResponse<FredActionResponse>(res, url);
 }
 
 export async function getLeaseReleases(
@@ -205,15 +194,12 @@ export async function getLeaseReleases(
 ): Promise<FredLeaseReleases> {
   const validated = validateProviderUrl(providerUrl, { allowLoopback });
   const url = `${validated}/v1/leases/${encodeURIComponent(leaseUuid)}/releases`;
-  const res = await checkedFetch(
+  return await fetchJsonChecked<FredLeaseReleases>(
     url,
-    {
-      headers: { Authorization: `Bearer ${authToken}` },
-    },
+    { headers: { Authorization: `Bearer ${authToken}` } },
     undefined,
     fetchFn,
   );
-  return await parseJsonResponse<FredLeaseReleases>(res, url);
 }
 
 export type TerminalChainLeaseState = 'closed' | 'rejected' | 'expired';

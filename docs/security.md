@@ -131,6 +131,15 @@ The single resolution point for provider/Fred HTTP is `checkedFetch` in `package
 
 Residual risk on an unguarded path: a provider `apiUrl` that is a *hostname* resolving to an internal address. Literal internal IPs are still blocked by layer 1 everywhere.
 
+## Transport bounds (provider HTTP)
+
+Provider `apiUrl`s come from on-chain SKU records, so the same attacker-influenced boundary that motivates the SSRF layers also means a provider controls how much it sends and how slowly. Two independent bounds apply, and both cover the **header and body phases**:
+
+- **Bytes** — `MAX_RESPONSE_BYTES` (10 MiB). `readBodyCapped` streams the body and aborts the moment the running total exceeds the cap, so an oversized body never fully materializes. A declared `Content-Length` over the cap is rejected before a single chunk is read.
+- **Time** — `DEFAULT_FETCH_TIMEOUT_MS` (30s), as a budget for the **whole call**. The byte cap alone bounds memory, not time: a provider that returns headers promptly and then trickles one byte at a time stays forever under 10 MiB, so before ENG-662 it could pin a tool call open indefinitely — the timeout and the caller's `AbortSignal` were both torn down before the body was read. An inactivity/stall deadline is deliberately **not** used: any trickle above zero defeats it. Only a total budget bounds a hostile trickle.
+
+`fetchJsonChecked()` is the entry point that spends one budget across both phases, and is what every provider read in this repo uses. Raw `checkedFetch()` returns a `Response` **before** its body is read; that body is still bounded, but by `readBodyCapped`'s own default deadline rather than the caller's `timeoutMs`. If you are calling the raw HTTP surface, prefer `fetchJsonChecked`.
+
 ## Input validation
 
 The MCP server parses input through Zod schemas (registered alongside each tool) before it reaches a handler. Then `validation.ts` helpers (`requireString`, `requireUuid`, `requireStringEnum`, `parseArgs`, `optionalBoolean`, …) check semantic shape before the handler builds chain messages. A static-shape violation from these helpers surfaces as `QUERY_FAILED` (query tools) or `TX_FAILED` (tx tools) — the helpers default to `QUERY_FAILED` and take an explicit error-code argument that tx handlers pass as `TX_FAILED` — with `INVALID_ADDRESS` for a wrong bech32 prefix. `INVALID_CONFIG` is reserved for server/config validation (`createValidatedConfig`) plus structural tool-boundary checks (e.g. mutually-exclusive `fee`/`gasMultiplier` overrides), not routine input shape.
