@@ -72,7 +72,12 @@ function displayMnemonic(mnemonic: string): void {
   console.error(
     '  them controls the funds at this address. They are not stored anywhere in',
   );
-  console.error('  plaintext and will not be shown again.');
+  console.error(
+    '  plaintext -- only inside the password-encrypted keyfile. To print them',
+  );
+  console.error('  again you will need that keyfile and its password:');
+  console.error('');
+  console.error('      <cli> export      (e.g. manifest-mcp-chain export)');
   console.error(rule);
   console.error('');
 }
@@ -227,7 +232,20 @@ export async function runExport(): Promise<void> {
     process.exit(1);
   }
 
-  const password = await promptPassword('Enter keyfile password: ');
+  // MANIFEST_KEY_PASSWORD wins when set, and is used verbatim. This is the
+  // whole recovery route for a keyfile encrypted under a pre-ENG-668 password
+  // that absorbed a paste's trailing CR/LF: those bytes cannot be typed at the
+  // prompt, because the prompt treats CR and LF as submission. Without an
+  // env-var path, the affected wallets — the ones this command exists for —
+  // would be exactly the ones it could not open.
+  const envPassword = config.keyPassword;
+  let password: string;
+  if (envPassword) {
+    console.error('Using the password from MANIFEST_KEY_PASSWORD.');
+    password = envPassword;
+  } else {
+    password = await promptPassword('Enter keyfile password: ');
+  }
   if (!password) {
     console.error('Error: password cannot be empty.');
     process.exit(1);

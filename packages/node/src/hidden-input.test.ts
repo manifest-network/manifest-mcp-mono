@@ -1,6 +1,10 @@
 import { EventEmitter } from 'node:events';
 import { describe, expect, it } from 'vitest';
-import { applyHiddenInputChunk, promptHidden } from './hidden-input.js';
+import {
+  applyHiddenInputChunk,
+  type EscapeMode,
+  promptHidden,
+} from './hidden-input.js';
 
 // Control characters are written as escapes, never as literal glyphs: a raw
 // control code point does not survive a round-trip through most editors and
@@ -14,6 +18,7 @@ const DEL = String.fromCharCode(127);
 const BS = String.fromCharCode(8);
 const CTRL_C = String.fromCharCode(3);
 const CTRL_D = String.fromCharCode(4);
+const VT = String.fromCharCode(11); // vertical tab: a C0 control that starts nothing
 const LOCK = String.fromCodePoint(0x1f510);
 
 /**
@@ -21,6 +26,16 @@ const LOCK = String.fromCodePoint(0x1f510);
  * express "typed" (one chunk per character) and "pasted" (one chunk total) with
  * the same helper and compare them directly.
  */
+/** Projects the two fields the legacy assertions pin; `escape` is carry-over. */
+function fold(
+  value: string,
+  chunk: string,
+  escapeMode: EscapeMode = 'none',
+): { value: string; status: string } {
+  const r = applyHiddenInputChunk(value, chunk, escapeMode);
+  return { value: r.value, status: r.status };
+}
+
 function feed(chunks: readonly string[]): { value: string; status: string } {
   let value = '';
   for (const chunk of chunks) {
@@ -38,7 +53,7 @@ describe('applyHiddenInputChunk', () => {
       // The pre-fix reader compared the whole chunk against CR / LF, missed,
       // fell through to `ch >= ' '` (lexicographic on the first character) and
       // appended the entire string -- CR and LF included -- to the password.
-      expect(applyHiddenInputChunk('', `hunter2${CR}${LF}`)).toEqual({
+      expect(fold('', `hunter2${CR}${LF}`)).toEqual({
         value: 'hunter2',
         status: 'submitted',
       });
@@ -54,14 +69,14 @@ describe('applyHiddenInputChunk', () => {
     });
 
     it('does not absorb a bare trailing LF (paste from a Unix clipboard)', () => {
-      expect(applyHiddenInputChunk('', `hunter2${LF}`)).toEqual({
+      expect(fold('', `hunter2${LF}`)).toEqual({
         value: 'hunter2',
         status: 'submitted',
       });
     });
 
     it('does not absorb a bare trailing CR', () => {
-      expect(applyHiddenInputChunk('', `hunter2${CR}`)).toEqual({
+      expect(fold('', `hunter2${CR}`)).toEqual({
         value: 'hunter2',
         status: 'submitted',
       });
@@ -69,14 +84,14 @@ describe('applyHiddenInputChunk', () => {
 
     it('discards anything following an in-chunk terminator', () => {
       // A multi-line paste must not smuggle its tail into the password.
-      expect(applyHiddenInputChunk('', `hunter2${LF}rm -rf /`)).toEqual({
+      expect(fold('', `hunter2${LF}rm -rf /`)).toEqual({
         value: 'hunter2',
         status: 'submitted',
       });
     });
 
     it('appends a chunk that carries no terminator and keeps reading', () => {
-      expect(applyHiddenInputChunk('', 'hunter2')).toEqual({
+      expect(fold('', 'hunter2')).toEqual({
         value: 'hunter2',
         status: 'reading',
       });
@@ -92,67 +107,170 @@ describe('applyHiddenInputChunk', () => {
 
   describe('control characters', () => {
     it('drops C0 controls instead of absorbing them into key material', () => {
-      // ESC is what an arrow key or a bracketed-paste marker delivers.
-      // Absorbing it silently is the same class of corruption as the CRLF bug.
-      expect(applyHiddenInputChunk('', `a${ESC}b`)).toEqual({
+      // A stray control byte cannot be part of a passphrase the user can
+      // retype, so absorbing it is the same class of corruption as the CRLF
+      // bug. ESC is deliberately NOT used here -- it introduces a sequence
+      // whose remaining bytes must also be consumed, which is covered by the
+      // escape-sequence block below.
+      expect(fold('', `a${VT}b`)).toEqual({
         value: 'ab',
         status: 'reading',
       });
     });
 
     it('drops a NUL without truncating the rest of the chunk', () => {
-      expect(applyHiddenInputChunk('', `a${NUL}b`)).toEqual({
+      expect(fold('', `a${NUL}b`)).toEqual({
         value: 'ab',
         status: 'reading',
       });
     });
 
     it('reports Ctrl+C as interrupted, mid-chunk', () => {
-      expect(applyHiddenInputChunk('', `abc${CTRL_C}def`)).toEqual({
+      expect(fold('', `abc${CTRL_C}def`)).toEqual({
         value: 'abc',
         status: 'interrupted',
       });
     });
 
     it('reports Ctrl+D as eof, mid-chunk', () => {
-      expect(applyHiddenInputChunk('', `abc${CTRL_D}def`)).toEqual({
+      expect(fold('', `abc${CTRL_D}def`)).toEqual({
         value: 'abc',
         status: 'eof',
       });
     });
 
     it('keeps a literal space, which is a legal password character', () => {
-      expect(applyHiddenInputChunk('', 'a b')).toEqual({
+      expect(fold('', 'a b')).toEqual({
         value: 'a b',
         status: 'reading',
       });
     });
   });
 
+  describe('ANSI escape sequences are consumed whole (PR #176 review)', () => {
+    // Dropping the lone ESC byte is not enough: the rest of a sequence is
+    // printable. The first version of this fix appended `[A` for an arrow key
+    // and wrapped a paste in `[200~` ... `[201~` -- silently corrupting key
+    // material, which is the exact failure ENG-668 exists to prevent. It was
+    // also a REGRESSION: the pre-ENG-668 reader compared the whole chunk
+    // against `>= ' '`, so an ESC-leading chunk failed that test and was
+    // dropped entirely.
+    it('discards an arrow key instead of appending its final byte', () => {
+      expect(fold('', `${ESC}[A`)).toEqual({ value: '', status: 'reading' });
+    });
+
+    it('discards an arrow key pressed mid-password', () => {
+      expect(fold('', `pw${ESC}[Dx`)).toEqual({
+        value: 'pwx',
+        status: 'reading',
+      });
+    });
+
+    it('discards bracketed-paste markers around the pasted text', () => {
+      expect(fold('', `${ESC}[200~hunter2${ESC}[201~`)).toEqual({
+        value: 'hunter2',
+        status: 'reading',
+      });
+    });
+
+    it('submits a bracketed paste that ends with CR, markers removed', () => {
+      expect(fold('', `${ESC}[200~hunter2${ESC}[201~${CR}`)).toEqual({
+        value: 'hunter2',
+        status: 'submitted',
+      });
+    });
+
+    it('discards a multi-parameter CSI sequence (e.g. Shift+Left)', () => {
+      expect(fold('', `a${ESC}[1;2Db`)).toEqual({
+        value: 'ab',
+        status: 'reading',
+      });
+    });
+
+    it('discards an SS3 function-key sequence', () => {
+      expect(fold('', `a${ESC}OPb`)).toEqual({
+        value: 'ab',
+        status: 'reading',
+      });
+    });
+
+    it('discards a two-byte ESC sequence (Alt+key)', () => {
+      expect(fold('', `a${ESC}bc`)).toEqual({
+        value: 'ac',
+        status: 'reading',
+      });
+    });
+
+    it('carries an unfinished sequence across a chunk boundary', () => {
+      // The terminal is free to flush `ESC [` and `A` as two 'data' events.
+      const first = applyHiddenInputChunk('', `pw${ESC}[`);
+      expect(first).toEqual({ value: 'pw', status: 'reading', escape: 'csi' });
+
+      const second = applyHiddenInputChunk(first.value, 'A', first.escape);
+      expect(second).toEqual({
+        value: 'pw',
+        status: 'reading',
+        escape: 'none',
+      });
+    });
+
+    it('carries a bare trailing ESC across a chunk boundary', () => {
+      const first = applyHiddenInputChunk('', `pw${ESC}`);
+      expect(first.escape).toBe('esc');
+
+      const second = applyHiddenInputChunk(first.value, '[A', first.escape);
+      expect(second).toEqual({
+        value: 'pw',
+        status: 'reading',
+        escape: 'none',
+      });
+    });
+
+    it('keeps Ctrl+C responsive after a truncated escape sequence', () => {
+      // A C0 control cannot appear inside a well-formed sequence, so the parser
+      // abandons the sequence rather than swallowing the interrupt.
+      expect(fold('', `${ESC}[${CTRL_C}`)).toEqual({
+        value: '',
+        status: 'interrupted',
+      });
+    });
+
+    it('keeps CR responsive after a truncated escape sequence', () => {
+      expect(fold('', `pw${ESC}[${CR}`)).toEqual({
+        value: 'pw',
+        status: 'submitted',
+      });
+    });
+
+    it('reports escape: none for ordinary text', () => {
+      expect(applyHiddenInputChunk('', 'pw').escape).toBe('none');
+    });
+  });
+
   describe('backspace', () => {
     it('erases within a single chunk', () => {
-      expect(applyHiddenInputChunk('', `abc${DEL}`)).toEqual({
+      expect(fold('', `abc${DEL}`)).toEqual({
         value: 'ab',
         status: 'reading',
       });
     });
 
     it('erases across a chunk boundary', () => {
-      expect(applyHiddenInputChunk('abc', DEL)).toEqual({
+      expect(fold('abc', DEL)).toEqual({
         value: 'ab',
         status: 'reading',
       });
     });
 
     it('accepts backspace as well as DEL', () => {
-      expect(applyHiddenInputChunk('abc', BS)).toEqual({
+      expect(fold('abc', BS)).toEqual({
         value: 'ab',
         status: 'reading',
       });
     });
 
     it('is a no-op on an empty buffer', () => {
-      expect(applyHiddenInputChunk('', DEL)).toEqual({
+      expect(fold('', DEL)).toEqual({
         value: '',
         status: 'reading',
       });
@@ -161,14 +279,14 @@ describe('applyHiddenInputChunk', () => {
     it('removes a whole non-BMP code point rather than half a surrogate pair', () => {
       // Splitting a surrogate pair would leave a lone surrogate in the
       // passphrase -- unrepresentable, and unequal to anything the user retypes.
-      expect(applyHiddenInputChunk(`a${LOCK}`, DEL)).toEqual({
+      expect(fold(`a${LOCK}`, DEL)).toEqual({
         value: 'a',
         status: 'reading',
       });
     });
 
     it('keeps a non-BMP code point that is not erased', () => {
-      expect(applyHiddenInputChunk('', `a${LOCK}`)).toEqual({
+      expect(fold('', `a${LOCK}`)).toEqual({
         value: `a${LOCK}`,
         status: 'reading',
       });
@@ -222,6 +340,27 @@ describe('promptHidden', () => {
 
     await expect(p).resolves.toBe('hunter2');
     expect(written[0]).toBe('Password: ');
+  });
+
+  it('strips an escape sequence split across two data events', async () => {
+    // The end-to-end version of the carry-over case: promptHidden must feed the
+    // parser state back, or the tail of a split sequence lands in the secret.
+    const { stdin, call } = harness();
+    const p = call();
+
+    stdin.emit('data', `hun${ESC}[`);
+    stdin.emit('data', `Dter2${CR}`);
+
+    await expect(p).resolves.toBe('hunter2');
+  });
+
+  it('strips a bracketed paste delivered as one event', async () => {
+    const { stdin, call } = harness();
+    const p = call();
+
+    stdin.emit('data', `${ESC}[200~hunter2${ESC}[201~${CR}`);
+
+    await expect(p).resolves.toBe('hunter2');
   });
 
   it('restores the terminal out of raw mode after resolving', async () => {

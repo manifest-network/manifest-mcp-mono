@@ -64,7 +64,8 @@ npx -y -p @manifest-network/manifest-mcp-node <bin-name> [subcommand]
 
 `<bin-name>` is any of the five listed below. The subcommand is optional and takes the same values as
 the PATH-installed form: **omit it to start that MCP server on stdio** (this is the form the
-[Claude Desktop config](#claude-desktop) below uses), or pass `keygen` / `import` for key management.
+[Claude Desktop config](#claude-desktop) below uses), or pass `keygen` / `import` / `export` for key
+management.
 
 ```
 manifest-mcp-chain                Start the chain MCP server (stdio)
