@@ -1353,3 +1353,130 @@ describe('cosmosEstimateFee', () => {
     });
   });
 });
+
+describe('explicit-fee gas ceiling (ENG-665 / PR #177 review)', () => {
+  let clientManager: ReturnType<typeof makeMockClientManager>;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    clientManager = makeMockClientManager();
+    mockGetTxHandler.mockReturnValue(
+      vi.fn().mockResolvedValue({
+        module: 'bank',
+        subcommand: 'send',
+        transactionHash: 'HASH',
+      }) as never,
+    );
+  });
+
+  // makeMockClientManager's getConfig returns no `maxGas`, which is the whole
+  // point: ManifestMCPConfig.maxGas is optional and CosmosClientManager
+  // .getInstance does not default it (only createValidatedConfig does). A
+  // consumer building a manager directly therefore has `undefined` here, and
+  // passing that through raw disabled the ceiling on the explicit-fee path
+  // while the simulated path still applied the documented 50M default.
+  it('applies DEFAULT_MAX_GAS when the config omits maxGas', async () => {
+    expect(clientManager.getConfig().maxGas).toBeUndefined();
+
+    await expect(
+      cosmosTx(
+        clientManager,
+        'bank',
+        'send',
+        ['manifest1recipient', '100umfx'],
+        true,
+        undefined,
+        { fee: { amount: [{ denom: 'umfx', amount: '1' }], gas: '60000000' } },
+      ),
+    ).rejects.toMatchObject({
+      code: ManifestMCPErrorCode.GAS_LIMIT_EXCEEDED,
+    });
+  });
+
+  it('allows an explicit fee under the default ceiling when maxGas is omitted', async () => {
+    await expect(
+      cosmosTx(
+        clientManager,
+        'bank',
+        'send',
+        ['manifest1recipient', '100umfx'],
+        true,
+        undefined,
+        { fee: { amount: [{ denom: 'umfx', amount: '1' }], gas: '1000000' } },
+      ),
+    ).resolves.toMatchObject({ transactionHash: 'HASH' });
+  });
+
+  it('honours an explicit maxGas over the default', async () => {
+    clientManager.getConfig.mockReturnValue({
+      retry: { maxRetries: 3 },
+      maxGas: 1_000_000,
+    });
+
+    await expect(
+      cosmosTx(
+        clientManager,
+        'bank',
+        'send',
+        ['manifest1recipient', '100umfx'],
+        true,
+        undefined,
+        { fee: { amount: [{ denom: 'umfx', amount: '1' }], gas: '2000000' } },
+      ),
+    ).rejects.toMatchObject({
+      code: ManifestMCPErrorCode.GAS_LIMIT_EXCEEDED,
+    });
+  });
+
+  it('treats maxGas -1 as a deliberate disable', async () => {
+    clientManager.getConfig.mockReturnValue({
+      retry: { maxRetries: 3 },
+      maxGas: -1,
+    });
+
+    await expect(
+      cosmosTx(
+        clientManager,
+        'bank',
+        'send',
+        ['manifest1recipient', '100umfx'],
+        true,
+        undefined,
+        {
+          fee: {
+            amount: [{ denom: 'umfx', amount: '1' }],
+            gas: '999999999999',
+          },
+        },
+      ),
+    ).resolves.toMatchObject({ transactionHash: 'HASH' });
+  });
+
+  it('rejects a malformed maxGas instead of failing open', async () => {
+    // 0 is not the disable sentinel -- only -1 is. The explicit-fee path used
+    // to treat any non-positive value as "disabled", so a misconfiguration
+    // became an unbounded broadcast on the path the caller was being most
+    // deliberate about, while the simulated path rejected the same value.
+    clientManager.getConfig.mockReturnValue({
+      retry: { maxRetries: 3 },
+      maxGas: 0,
+    });
+
+    await expect(
+      cosmosTx(
+        clientManager,
+        'bank',
+        'send',
+        ['manifest1recipient', '100umfx'],
+        true,
+        undefined,
+        {
+          fee: {
+            amount: [{ denom: 'umfx', amount: '1' }],
+            gas: '999999999999',
+          },
+        },
+      ),
+    ).rejects.toMatchObject({ code: ManifestMCPErrorCode.INVALID_CONFIG });
+  });
+});

@@ -298,10 +298,19 @@ export async function cosmosTx(
   // careful about cost — was the only unbounded one. Enforced here, before
   // dispatch, so it covers every module rather than only those whose handler
   // reaches resolveTxFeeAndMemo.
+  //
+  // `?? DEFAULT_MAX_GAS` mirrors the simulated path's TxOptions below.
+  // `ManifestMCPConfig.maxGas` is optional and `CosmosClientManager.getInstance`
+  // does not default it — only `createValidatedConfig` does — so a consumer
+  // constructing a manager directly (published `core`, SDK `/chain`) has
+  // `maxGas === undefined`. Passing that through raw would disable the ceiling
+  // here while the simulated path still applied the documented 50M default:
+  // the same fail-open-on-the-explicit-fee-path shape this change exists to
+  // close, one level up (PR #177 review).
   if (txExtras?.fee !== undefined) {
     assertExplicitFeeWithinCeiling(
       txExtras.fee,
-      clientManager.getConfig().maxGas,
+      clientManager.getConfig().maxGas ?? DEFAULT_MAX_GAS,
     );
   }
 
