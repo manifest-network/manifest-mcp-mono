@@ -14,7 +14,6 @@ import {
 import { DNS_LABEL_RE } from '../validation.js';
 import {
   broadcastAndBuildTxResult,
-  buildGasFee,
   extractBooleanFlag,
   extractFlag,
   extractRepeatedFlag,
@@ -25,9 +24,9 @@ import {
   parseHexBytes,
   parseLeaseItem,
   requireArgs,
+  resolveTxFeeAndMemo,
   validateAddress,
   validateArgsLength,
-  validateMemo,
 } from './utils.js';
 
 const {
@@ -579,19 +578,17 @@ export async function routeBillingTransaction(
   txExtras?: { readonly fee?: StdFee; readonly memo?: string },
 ): Promise<CosmosTxResult> {
   const built = buildBillingMessages(senderAddress, subcommand, args, context);
-  const effectiveMemo = txExtras?.memo ?? built.memo;
-  validateMemo(effectiveMemo); // utils.ts (MAX_MEMO_LENGTH=256 → TX_FAILED)
-  // FEE-WINS: an explicit fee skips buildGasFee/simulate entirely (the only no-gasPrice-valid path).
-  const fee =
-    txExtras?.fee !== undefined
-      ? txExtras.fee
-      : await buildGasFee(
-          client,
-          senderAddress,
-          built.messages,
-          options,
-          effectiveMemo,
-        );
+  // Shared with the other thirteen routes (ENG-665). This block used to live
+  // only here, which is precisely why the others silently dropped an explicit
+  // fee or memo.
+  const { fee, memo: effectiveMemo } = await resolveTxFeeAndMemo(
+    client,
+    senderAddress,
+    built.messages,
+    options,
+    built.memo,
+    txExtras,
+  );
   const canonicalSubcommand = built.canonicalSubcommand ?? subcommand;
   return broadcastAndBuildTxResult(
     client,

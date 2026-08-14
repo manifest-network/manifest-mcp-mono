@@ -9,6 +9,7 @@ import {
   getTxMsgBuilder,
 } from './modules.js';
 import { withRetry } from './retry.js';
+import { assertExplicitFeeWithinCeiling } from './transactions/utils.js';
 import {
   type CosmosQueryResult,
   type CosmosTxResult,
@@ -287,6 +288,29 @@ export async function cosmosTx(
     throw new ManifestMCPError(
       ManifestMCPErrorCode.INVALID_CONFIG,
       'passing both fee and gasMultiplier is a caller error; fee wins (it skips simulation), gasMultiplier applies only on the simulate path',
+    );
+  }
+
+  // ENG-665: an explicit fee must not switch the ENG-556 ceiling off. The
+  // simulate path enforces it inside buildGasFee via TxOptions.maxGas, but the
+  // FEE-WINS branch below deliberately skips building TxOptions, so the one code
+  // path where a caller states a fee explicitly — i.e. where they are being most
+  // careful about cost — was the only unbounded one. Enforced here, before
+  // dispatch, so it covers every module rather than only those whose handler
+  // reaches resolveTxFeeAndMemo.
+  //
+  // `?? DEFAULT_MAX_GAS` mirrors the simulated path's TxOptions below.
+  // `ManifestMCPConfig.maxGas` is optional and `CosmosClientManager.getInstance`
+  // does not default it — only `createValidatedConfig` does — so a consumer
+  // constructing a manager directly (published `core`, SDK `/chain`) has
+  // `maxGas === undefined`. Passing that through raw would disable the ceiling
+  // here while the simulated path still applied the documented 50M default:
+  // the same fail-open-on-the-explicit-fee-path shape this change exists to
+  // close, one level up (PR #177 review).
+  if (txExtras?.fee !== undefined) {
+    assertExplicitFeeWithinCeiling(
+      txExtras.fee,
+      clientManager.getConfig().maxGas ?? DEFAULT_MAX_GAS,
     );
   }
 

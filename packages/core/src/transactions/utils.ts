@@ -703,6 +703,129 @@ export function buildExecuteSyncTxResult(
 }
 
 /**
+ * Shared tail of both COSMOS_MAX_GAS refusals — the simulated one in
+ * `buildGasFee` and the explicit-fee one in `assertExplicitFeeWithinCeiling`.
+ * One constant rather than two literals so the advice cannot drift apart.
+ */
+const MAX_GAS_HINT =
+  '(COSMOS_MAX_GAS). Raise COSMOS_MAX_GAS if this transaction is legitimate, ' +
+  'or set it to -1 to disable the ceiling.';
+
+/**
+ * Caller-supplied broadcast overrides threaded from `cosmosTx`.
+ *
+ * `fee` is authoritative and skips simulation (FEE-WINS); `memo` must reach both
+ * the simulate and the broadcast leg, or the two legs sign different bytes.
+ */
+export interface TxExtras {
+  readonly fee?: StdFee;
+  readonly memo?: string;
+}
+
+/**
+ * Resolve the `(fee, memo)` pair a route handler must broadcast with.
+ *
+ * Every tx route calls this rather than `buildGasFee` directly. Before ENG-665
+ * the fee/memo logic existed only in the billing handler and the other thirteen
+ * routes simply did not declare the parameter, so an explicit fee or memo was
+ * dropped on the floor — silently, because a JS call with more arguments than
+ * the callee declares is legal and `TxHandler` marks the trailing params
+ * optional. Centralising it means a new module cannot reintroduce the gap by
+ * forgetting to copy the block.
+ *
+ * The returned `memo` is the one the caller must ALSO hand to the broadcast, so
+ * the simulate and broadcast legs agree on the signed bytes.
+ */
+export async function resolveTxFeeAndMemo(
+  client: SigningStargateClient,
+  senderAddress: string,
+  messages: readonly EncodeObject[],
+  options: TxOptions | undefined,
+  builtMemo: string,
+  txExtras?: TxExtras,
+): Promise<{ fee: StdFee | 'auto'; memo: string }> {
+  const memo = txExtras?.memo ?? builtMemo;
+  validateMemo(memo);
+
+  // FEE-WINS: an explicit fee skips buildGasFee/simulate entirely. It is the one
+  // path valid without a configured gasPrice. The COSMOS_MAX_GAS ceiling is NOT
+  // enforced here but in `cosmosTx`, before dispatch — it must apply even to
+  // modules that never reach this helper, and it needs the resolved config.
+  if (txExtras?.fee !== undefined) {
+    return { fee: txExtras.fee, memo };
+  }
+
+  return {
+    fee: await buildGasFee(client, senderAddress, messages, options, memo),
+    memo,
+  };
+}
+
+/**
+ * Normalise a configured gas ceiling into "the number to compare against", or
+ * `undefined` when the ceiling is deliberately off.
+ *
+ * Both enforcement paths — the simulated one in `buildGasFee` and the
+ * explicit-fee one in `assertExplicitFeeWithinCeiling` — go through this, so
+ * they cannot disagree about what counts as a valid ceiling. They previously
+ * did: the explicit-fee path treated *any* non-positive value as "disabled",
+ * so a malformed `maxGas` of `0` or `-2` produced an unbounded broadcast on the
+ * one path where the caller was being most deliberate about cost, while the
+ * simulated path rejected the same value outright (PR #177 review).
+ *
+ * Fails closed on a malformed value rather than silently proceeding without the
+ * clamp: `buildGasFee` is a public primitive
+ * (`@manifest-network/manifest-mcp-core/gas`), so a hand-built `TxOptions` from
+ * an external consumer can carry anything. `-1` is the only disable sentinel.
+ */
+function resolveGasCeiling(maxGas: number | undefined): number | undefined {
+  if (maxGas === undefined) return undefined; // absent: no ceiling to apply
+  if (maxGas === -1) return undefined; // explicit disable
+  if (!(Number.isSafeInteger(maxGas) && maxGas > 0)) {
+    throw new ManifestMCPError(
+      ManifestMCPErrorCode.INVALID_CONFIG,
+      `maxGas must be a positive integer, or -1 to disable the ceiling, got ${maxGas}`,
+    );
+  }
+  return maxGas;
+}
+
+/**
+ * Enforce the ENG-556 absolute gas ceiling against a caller-supplied explicit fee.
+ *
+ * The simulate path enforces the ceiling inside `buildGasFee` via
+ * `TxOptions.maxGas`. An explicit fee bypasses that path by construction, so
+ * without this check the single code path where a caller is being *most*
+ * deliberate about cost was also the one path with no upper bound (ENG-665).
+ *
+ * Callers must pass a resolved ceiling — `config.maxGas ?? DEFAULT_MAX_GAS` —
+ * not the raw optional config field, or an omitted `maxGas` silently disables
+ * the ceiling here while the simulated path still applies the default.
+ */
+export function assertExplicitFeeWithinCeiling(
+  fee: StdFee,
+  maxGas: number | undefined,
+): void {
+  const ceiling = resolveGasCeiling(maxGas);
+  if (ceiling === undefined) return;
+
+  const gas = Number(fee.gas);
+  if (!Number.isFinite(gas)) {
+    throw new ManifestMCPError(
+      ManifestMCPErrorCode.INVALID_CONFIG,
+      `fee.gas must be a numeric string, got ${JSON.stringify(fee.gas)}`,
+    );
+  }
+  if (gas > ceiling) {
+    throw new ManifestMCPError(
+      ManifestMCPErrorCode.GAS_LIMIT_EXCEEDED,
+      `Explicit fee gas limit ${gas} exceeds the configured ceiling ${ceiling} ${MAX_GAS_HINT}`,
+      { explicitGas: gas, maxGas: ceiling },
+    );
+  }
+}
+
+/**
  * Compute the transaction fee using simulate + calculateFee when gas options
  * are provided, otherwise return 'auto' to use the client's default behavior.
  */
@@ -714,22 +837,12 @@ export async function buildGasFee(
   memo?: string,
 ): Promise<StdFee | 'auto'> {
   if (!options) return 'auto';
-  // Fail closed on a malformed ceiling (ENG-556): buildGasFee is a public primitive
-  // (@manifest-network/manifest-mcp-core/gas), so reject an out-of-contract maxGas
-  // — present, not the -1 disable sentinel, and not a positive safe integer — rather
-  // than silently proceeding WITHOUT the clamp. Config-resolved maxGas is always valid
-  // (validateConfig/loadConfig reject 0 / negatives / unsafe ints), so this only guards
-  // a hand-built TxOptions from an external /gas consumer.
-  if (
-    options.maxGas !== undefined &&
-    options.maxGas !== -1 &&
-    !(Number.isSafeInteger(options.maxGas) && options.maxGas > 0)
-  ) {
-    throw new ManifestMCPError(
-      ManifestMCPErrorCode.INVALID_CONFIG,
-      `maxGas must be a positive integer, or -1 to disable the ceiling, got ${options.maxGas}`,
-    );
-  }
+  // Shared with the explicit-fee path so the two cannot disagree about what a
+  // valid ceiling is; throws INVALID_CONFIG on a malformed value rather than
+  // silently proceeding WITHOUT the clamp. Config-resolved maxGas is always
+  // valid (validateConfig/loadConfig reject 0 / negatives / unsafe ints), so
+  // this only guards a hand-built TxOptions from an external /gas consumer.
+  const ceiling = resolveGasCeiling(options.maxGas);
   const gasEstimate = await client.simulate(signerAddress, messages, memo);
   const gasLimit = Math.ceil(gasEstimate * options.gasMultiplier);
   // Absolute ceiling (ENG-556): a hostile/compromised RPC can inflate simulate();
@@ -739,15 +852,13 @@ export async function buildGasFee(
   // on an astronomically inflated or NaN estimate — replacing an unclassified Error
   // with a clean GAS_LIMIT_EXCEEDED.
   if (
-    options.maxGas !== undefined &&
-    options.maxGas > 0 &&
-    (!Number.isFinite(gasLimit) || gasLimit > options.maxGas)
+    ceiling !== undefined &&
+    (!Number.isFinite(gasLimit) || gasLimit > ceiling)
   ) {
     throw new ManifestMCPError(
       ManifestMCPErrorCode.GAS_LIMIT_EXCEEDED,
       `Estimated gas limit ${gasLimit} exceeds the configured ceiling ${options.maxGas} ` +
-        `(COSMOS_MAX_GAS). A hostile or misconfigured RPC can inflate the simulated gas. ` +
-        `Raise COSMOS_MAX_GAS if this transaction is legitimate, or set it to -1 to disable the ceiling.`,
+        `${MAX_GAS_HINT} A hostile or misconfigured RPC can inflate the simulated gas.`,
       {
         simulatedGas: gasEstimate,
         gasMultiplier: options.gasMultiplier,
