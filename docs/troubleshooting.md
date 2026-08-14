@@ -28,7 +28,7 @@ Cosmwasm server only. Set it to the bech32 address of the MFX→PWR converter co
 
 ### `No wallet found. Either: 1. Run "manifest-mcp-chain keygen" … 2. Set COSMOS_MNEMONIC`
 
-Wallet resolution order is keyfile (`MANIFEST_KEY_FILE`, default `~/.manifest/key.json`) → mnemonic env var (`COSMOS_MNEMONIC`) → fail. Generate or import a key via `npx manifest-mcp-chain keygen` / `import` (any of the five CLIs works — they all share the same keyfile).
+Wallet resolution order is keyfile (`MANIFEST_KEY_FILE`, default `~/.manifest/key.json`) → mnemonic env var (`COSMOS_MNEMONIC`) → fail. Generate or import a key via `npx -y -p @manifest-network/manifest-mcp-node manifest-mcp-chain keygen` / `import` (any of the five CLIs works — they all share the same keyfile). The bin name has to be selected out of the scoped package: `npx manifest-mcp-chain` would resolve `manifest-mcp-chain` as a *package* name, which does not exist on npm.
 
 ### `Failed to decrypt keyfile at <path>. Verify that MANIFEST_KEY_PASSWORD is correct.`
 
