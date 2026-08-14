@@ -800,6 +800,29 @@ describe('checkedFetch error classification', () => {
     expect(err.kind).toBe('invalid_url');
   });
 
+  it('keeps kind "body_cap" when an oversized body rides on a non-2xx', async () => {
+    // Otherwise the cap error is read into text and re-tagged `http`, which
+    // makes a 5xx look transient — so the readiness poll would retry and
+    // re-stream up to the cap on every attempt, defeating the cap.
+    const mockFetch = vi.fn().mockResolvedValue(
+      new Response('truncated', {
+        status: 503,
+        headers: { 'content-length': String(MAX_RESPONSE_BYTES + 1) },
+      }),
+    );
+
+    const err = (await checkedFetch(
+      'https://example.com',
+      undefined,
+      5_000,
+      mockFetch,
+    ).catch((e: unknown) => e)) as ProviderApiError;
+
+    expect(err.kind).toBe('body_cap');
+    expect(err.status).toBe(503); // the real HTTP status is still preserved
+    expect(isTransientProviderError(err)).toBe(false);
+  });
+
   it('tags a malformed body as kind "invalid_json"', async () => {
     const err = (await parseJsonResponse(
       new Response('<html>502 Bad Gateway</html>', { status: 200 }),

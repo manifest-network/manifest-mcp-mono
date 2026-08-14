@@ -95,10 +95,18 @@ export function renderPartialSuccessPrompt(
   // never uploaded — both false, with `retry_set_domain` offered for a domain
   // that is already claimed (ENG-661). Use the reported step when fred sent
   // one; fall back to the legacy inference for builds that don't.
-  const readinessUnconfirmed =
-    input.readinessUnconfirmed === true || input.failedStep === 'poll';
+  // ONLY the dedicated flag may claim "not a reported failure". `failedStep`
+  // alone must not: fred reports `failedStep: 'poll'` for a provider verdict
+  // too — a `PROVISION_FAILED` status or a terminal lease state — and omits the
+  // flag there. Treating the step as sufficient would tell a user that a
+  // deployment the provider explicitly failed "may still be coming up", which is
+  // the exact inverse of the bug this work exists to fix, and would suppress the
+  // one case where closing the lease IS the right advice.
+  const readinessUnconfirmed = input.readinessUnconfirmed === true;
   const setDomainFailed = input.failedStep === 'set_domain';
   const uploadFailed = input.failedStep === 'upload';
+  /** The poll ran and the provider answered "failed" (no unconfirmed flag). */
+  const pollVerdict = input.failedStep === 'poll' && !readinessUnconfirmed;
   const legacy = input.failedStep === undefined && !readinessUnconfirmed;
 
   const lines: string[] = [
@@ -121,6 +129,11 @@ export function renderPartialSuccessPrompt(
     lines.push(
       `  - The manifest upload failed: ${input.reason}.`,
       '    No app is running on this lease.',
+    );
+  } else if (pollVerdict) {
+    lines.push(
+      `  - The provider reported the deployment as FAILED: ${input.reason}.`,
+      '    This is a confirmed failure, not a slow start — no healthy app is running on this lease.',
     );
   } else {
     lines.push(

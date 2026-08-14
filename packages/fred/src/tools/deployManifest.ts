@@ -24,6 +24,7 @@ import {
 import {
   type ConnectionDetails,
   getLeaseConnectionInfo,
+  ProviderApiError,
   uploadLeaseData,
 } from '../http/provider.js';
 import { getServiceNames, metaHashHex, validateManifest } from '../manifest.js';
@@ -300,19 +301,26 @@ export async function deployManifest(
       });
     }
     const cancelled = callOptions.abortSignal?.aborted === true;
-    // The readiness poll ended without a verdict — its deadline expired, the
-    // provider's status endpoint went dark, or the caller cancelled mid-poll.
-    // By this point the lease exists AND the manifest is uploaded, and the
-    // provider never said the deployment failed, so the app may be starting
-    // right now. Reporting that as a failed deploy and pointing the agent at
-    // close_lease tears down working deployments (ENG-661).
+    // Once the poll has started, the lease exists AND the manifest is uploaded.
+    // From here the ONLY thing that justifies "the deployment failed" is the
+    // provider actually saying so — a `PROVISION_FAILED` status, a terminal
+    // lease state, or a state this client cannot interpret. Those arrive tagged
+    // `poll_verdict`.
     //
-    // The abort arm is deliberately narrowed to `step === 'poll'`: a cancel
-    // during set-domain or upload leaves nothing running, so it belongs in the
-    // family below where close_lease is the honest advice.
+    // Everything else at this step is silence, not a verdict: the deadline
+    // expired, the status endpoint returned 401/404, it streamed an oversized
+    // body, the auth-token mint failed, or the caller cancelled. The app may be
+    // starting right now, so reporting a failed deploy and pointing the agent at
+    // close_lease would tear down working deployments (ENG-661).
+    //
+    // Default to unconfirmed and carve out the verdict, rather than the reverse:
+    // a fault nobody anticipated should read as "we do not know", which is
+    // recoverable, not as "it failed", which invites destruction.
+    const pollVerdict =
+      ProviderApiError.isProviderApiError(err) && err.kind === 'poll_verdict';
     const readinessUnconfirmed =
       err instanceof LeaseReadinessUnconfirmedError ||
-      (cancelled && step === 'poll');
+      (step === 'poll' && !pollVerdict);
     if (readinessUnconfirmed) {
       logger.warn(
         `[deploy] lease ${leaseUuid} created but readiness was not confirmed${step ? ` (stopped at '${step}')` : ''}; ` +
@@ -356,9 +364,10 @@ export async function deployManifest(
       );
     }
     // Wrap a post-create-lease failure as a partial-success error so callers
-    // know the lease exists and must be cleaned up. Reaching here means the
-    // failure was NOT the readiness poll — set-domain or the manifest upload
-    // fell over, so nothing is running and close_lease genuinely is the remedy.
+    // know the lease exists and must be cleaned up. Reaching here means one of
+    // two things, and nothing healthy is running in either: set-domain or the
+    // manifest upload fell over, or the provider returned an explicit failure
+    // verdict during the poll. close_lease is genuinely the remedy.
     logger.warn(
       `[deploy] lease ${leaseUuid} created but a subsequent step${step ? ` ('${step}')` : ''} failed; close_lease to clean up`,
     );

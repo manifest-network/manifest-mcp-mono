@@ -172,6 +172,36 @@ describe('renderPartialSuccessPrompt', () => {
       ]);
     });
 
+    /**
+     * The inverse guard. fred reports `failedStep: 'poll'` for a provider
+     * VERDICT too — a `PROVISION_FAILED` status or a terminal lease state — and
+     * omits the unconfirmed flag there. Reading the step as sufficient would
+     * tell a user that a deployment the provider explicitly failed "may still be
+     * coming up", and suppress the one case where closing the lease is right.
+     */
+    it('a provider verdict at the poll step is NOT softened into "may still be starting"', () => {
+      const out = renderPartialSuccessPrompt(
+        base({
+          failedStep: 'poll',
+          reason: 'Lease … is ACTIVE but provisioning failed: image not found',
+        }),
+      );
+
+      expect(out.prompt).not.toContain('NOT a reported failure');
+      expect(out.prompt).not.toContain('may still be coming up');
+      expect(out.prompt).toContain('reported the deployment as FAILED');
+      expect(out.prompt).toContain('confirmed failure');
+      expect(out.options).toContain('close_lease');
+    });
+
+    it('still softens the poll step when fred DID send the unconfirmed flag', () => {
+      const out = renderPartialSuccessPrompt(
+        base({ failedStep: 'poll', readinessUnconfirmed: true }),
+      );
+      expect(out.prompt).toContain('NOT a reported failure');
+      expect(out.prompt).not.toContain('reported the deployment as FAILED');
+    });
+
     it('an upload failure says plainly that no app is running', () => {
       const out = renderPartialSuccessPrompt(base({ failedStep: 'upload' }));
       expect(out.prompt).toContain('The manifest upload failed');

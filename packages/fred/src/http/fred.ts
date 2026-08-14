@@ -669,7 +669,18 @@ export async function pollLeaseUntilReady(
       // checkedFetch rethrows the caller's own abort reason verbatim, which can
       // be any value. A user's cancel is never a transient fault.
       abortSignal?.throwIfAborted();
-      if (!isTransientProviderError(err)) throw err;
+      // A 404 is tolerated HERE although `isTransientProviderError` rejects it
+      // globally. Right after create-lease the provider may still be ingesting
+      // the lease, so its `/status` can 404 for a beat — the window ENG-479 was
+      // filed for, and the one barney's pre-migration poll tolerated. The
+      // tolerance is scoped to this loop deliberately: a 404 from any other
+      // provider call is still a hard error, and here it is bounded by the same
+      // consecutive-failure budget, so a lease the provider genuinely does not
+      // know about still fails after `maxConsecutiveFailures` reads.
+      const tolerable =
+        isTransientProviderError(err) ||
+        (ProviderApiError.isProviderApiError(err) && err.status === 404);
+      if (!tolerable) throw err;
       consecutiveFailures += 1;
       lastPollError = err;
       if (consecutiveFailures > failureBudget) {
@@ -740,6 +751,7 @@ export async function pollLeaseUntilReady(
               `Lease ${leaseUuid} is ACTIVE but provisioning ${ps}${
                 detail ? `: ${detail}` : ''
               }`,
+              { kind: 'poll_verdict' },
             );
           }
           if (!PROVISION_SUCCESS.has(ps)) {
@@ -762,11 +774,13 @@ export async function pollLeaseUntilReady(
         throw new ProviderApiError(
           0,
           `Lease ${leaseUuid} entered terminal state ${leaseStateName(status.state)}`,
+          { kind: 'poll_verdict' },
         );
       default:
         throw new ProviderApiError(
           0,
           `Lease ${leaseUuid} returned unexpected state ${leaseStateName(status.state)}`,
+          { kind: 'poll_verdict' },
         );
     }
     await abortableSleep(intervalMs, abortSignal);

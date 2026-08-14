@@ -865,9 +865,9 @@ describe('pollLeaseUntilReady — transient-failure budget', () => {
 
   describe('never swallowed', () => {
     it.each([
-      ['a 404 (stable answer, and post-upload it is a real anomaly)', 404],
       ['a 401 (auth is not a blip)', 401],
       ['a 403', 403],
+      ['a 400', 400],
     ])('propagates %s on the FIRST iteration', async (_label, status) => {
       scriptReads([
         { throw: new ProviderApiError(status, 'nope', { kind: 'http' }) },
@@ -997,6 +997,49 @@ describe('pollLeaseUntilReady — transient-failure budget', () => {
       ).rejects.toThrow(/cancelled mid-backoff/);
       expect(Date.now() - startedAt).toBeLessThan(1_000);
     });
+  });
+
+  /**
+   * ENG-479's motivating case: right after create-lease the provider may still
+   * be ingesting the lease, so `/status` 404s for a beat. A 404 is NOT globally
+   * transient — `isTransientProviderError` rejects it, and it stays a hard error
+   * on every other provider call — so the tolerance is scoped to this loop.
+   */
+  it('tolerates the 404 ingestion window right after create-lease', async () => {
+    scriptReads([
+      { throw: new ProviderApiError(404, 'lease not found', { kind: 'http' }) },
+      { throw: new ProviderApiError(404, 'lease not found', { kind: 'http' }) },
+      { state: 'LEASE_STATE_ACTIVE' },
+    ]);
+
+    const result = await pollLeaseUntilReady(
+      PROVIDER_URL,
+      LEASE_UUID,
+      AUTH_TOKEN,
+      { intervalMs: 1, timeoutMs: 5000, maxConsecutiveFailures: 3 },
+    );
+
+    expect(result.state).toBe(LeaseState.LEASE_STATE_ACTIVE);
+    expect(mockCheckedFetch).toHaveBeenCalledTimes(3);
+  });
+
+  it('still gives up on a 404 that never resolves — the tolerance is bounded', async () => {
+    scriptReads([
+      { throw: new ProviderApiError(404, 'lease not found', { kind: 'http' }) },
+    ]);
+
+    const err = await pollLeaseUntilReady(
+      PROVIDER_URL,
+      LEASE_UUID,
+      AUTH_TOKEN,
+      { intervalMs: 1, timeoutMs: 5000, maxConsecutiveFailures: 2 },
+    ).catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(LeaseReadinessUnconfirmedError);
+    expect((err as LeaseReadinessUnconfirmedError).reason).toBe(
+      'provider_unreachable',
+    );
+    expect(mockCheckedFetch).toHaveBeenCalledTimes(3);
   });
 
   it('honours a provider Retry-After instead of the poll interval', async () => {

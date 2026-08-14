@@ -3499,6 +3499,99 @@ describe('deployApp — sub-PR D defense-in-depth', () => {
     expect(completed).toHaveLength(0);
   });
 
+  /**
+   * ENG-661. The sibling above is the FAILURE route. This is the "we never
+   * found out" route, and it must not travel it: a poll that ends without a
+   * verdict leaves a live, paid-for lease whose app may be starting, so
+   * reporting `TX_FAILED` tells the user their transaction failed when nothing
+   * of the sort happened.
+   */
+  it('waitForAppReady ending without a verdict → DEPLOY_READINESS_UNCONFIRMED, not TX_FAILED', async () => {
+    const spec = readFixture(
+      'skills',
+      'deploy-app',
+      '01-fast-path-active',
+      'input',
+      'spec.json',
+    ) as DeploySpec;
+    const readinessRaw = readFixture(
+      'skills',
+      'deploy-app',
+      '01-fast-path-active',
+      'input',
+      'readiness-response.json',
+    );
+    const metaHashResp = readFixture(
+      'skills',
+      'deploy-app',
+      '01-fast-path-active',
+      'input',
+      'meta-hash-response.json',
+    ) as { manifest_json: string; meta_hash_hex: string };
+
+    const fred = await import('@manifest-network/manifest-mcp-fred');
+    vi.mocked(fred.checkDeploymentReadiness).mockResolvedValue(
+      readinessRaw as unknown as Awaited<
+        ReturnType<typeof fred.checkDeploymentReadiness>
+      >,
+    );
+    vi.mocked(fred.buildManifestPreview).mockResolvedValue({
+      manifest_json: metaHashResp.manifest_json,
+      meta_hash_hex: metaHashResp.meta_hash_hex,
+    } as Awaited<ReturnType<typeof fred.buildManifestPreview>>);
+    vi.mocked(fred.deployApp).mockResolvedValue({
+      lease_uuid: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+      provider_uuid: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+      provider_url: 'https://provider.testnet.manifest.network',
+      state: 1 as never,
+      connection: { instances: [] },
+    } as unknown as Awaited<ReturnType<typeof fred.deployApp>>);
+    // The REAL class — the SUT branches on `instanceof`, so a stub would make
+    // this test vacuous (it would pass by taking the TX_FAILED route).
+    vi.mocked(fred.waitForAppReady).mockRejectedValue(
+      new fred.LeaseReadinessUnconfirmedError({
+        leaseUuid: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+        reason: 'deadline',
+        timeoutMs: 600_000,
+        elapsedMs: 600_001,
+        lastProvisionStatus: 'provisioning',
+      }),
+    );
+    const core = await import('@manifest-network/manifest-mcp-core');
+    vi.mocked(core.cosmosEstimateFee).mockResolvedValue({
+      module: 'billing',
+      subcommand: 'create-lease',
+      gasEstimate: '142000',
+      fee: { amount: [{ denom: 'umfx', amount: '2300' }], gas: '142000' },
+    } as Awaited<ReturnType<typeof core.cosmosEstimateFee>>);
+
+    const { callbacks, completed } = captureCallbacks();
+    const { deployApp } = await import('./deploy-app.js');
+    const clientManager = makeMockClientManager();
+    const walletProvider = makeMockWalletProvider();
+
+    const caughtErr = await deployApp(spec, callbacks, {
+      clientManager: clientManager as unknown as Parameters<
+        typeof deployApp
+      >[2]['clientManager'],
+      walletProvider,
+    }).catch((err: unknown) => err);
+
+    expect(caughtErr).toBeInstanceOf(ManifestMCPError);
+    const err = caughtErr as ManifestMCPError;
+    expect(err.code).toBe(ManifestMCPErrorCode.DEPLOY_READINESS_UNCONFIRMED);
+    expect(err.code).not.toBe(ManifestMCPErrorCode.TX_FAILED);
+    expect(err.message).toContain('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb');
+    expect(err.message).toContain('readiness could not be confirmed');
+    expect(err.details).toMatchObject({
+      readiness_unconfirmed: true,
+      lease_uuid: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+      poll_reason: 'deadline',
+      last_provision_status: 'provisioning',
+    });
+    expect(completed).toHaveLength(0);
+  });
+
   // waitForReadyTimeoutMs override is forwarded to waitForAppReady.
   it('opts.waitForReadyTimeoutMs is forwarded to waitForAppReady (default = 480_000)', async () => {
     const spec = readFixture(
@@ -3958,6 +4051,46 @@ describe('deployApp — retry_set_domain decomposition (ENG-185 sub-PR E)', () =
     );
     expect((caughtErr as Error).message).toContain(leaseUuid);
     expect((caughtErr as Error).message).toMatch(/polling timed out|wait/i);
+    expect(baseCapture.completed).toHaveLength(0);
+  });
+
+  /**
+   * ENG-661, second site. `retry_set_domain` claimed the domain and uploaded
+   * the manifest before polling, so a poll that ends without a verdict here is
+   * the same "we never found out" state as the main path — and must not be
+   * reported as a failed transaction either.
+   */
+  it('pollLeaseUntilReady ending without a verdict → DEPLOY_READINESS_UNCONFIRMED, not TX_FAILED', async () => {
+    const fred = await import('@manifest-network/manifest-mcp-fred');
+    const { run, baseCapture, leaseUuid } = await setupRetryScenario({
+      // The REAL class: the SUT branches on `instanceof`, so a stub would let
+      // this pass via the TX_FAILED fallback it is meant to rule out.
+      pollLeaseUntilReady: vi.fn().mockRejectedValue(
+        new fred.LeaseReadinessUnconfirmedError({
+          leaseUuid: '550e8400-e29b-41d4-a716-446655440000',
+          reason: 'provider_unreachable',
+          timeoutMs: 600_000,
+          elapsedMs: 12_000,
+          lastProvisionStatus: 'provisioning',
+          consecutiveFailures: 4,
+          lastPollError: new Error('socket hang up'),
+        }),
+      ),
+    });
+
+    const { caughtErr } = await run();
+
+    expect(caughtErr).toBeInstanceOf(ManifestMCPError);
+    const err = caughtErr as ManifestMCPError;
+    expect(err.code).toBe(ManifestMCPErrorCode.DEPLOY_READINESS_UNCONFIRMED);
+    expect(err.code).not.toBe(ManifestMCPErrorCode.TX_FAILED);
+    expect(err.message).toContain(leaseUuid);
+    expect(err.message).toContain('readiness could not be confirmed');
+    expect(err.details).toMatchObject({
+      readiness_unconfirmed: true,
+      poll_reason: 'provider_unreachable',
+      last_provision_status: 'provisioning',
+    });
     expect(baseCapture.completed).toHaveLength(0);
   });
 

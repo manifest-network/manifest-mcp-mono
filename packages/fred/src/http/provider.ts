@@ -29,7 +29,16 @@ export type ProviderErrorKind =
   | 'invalid_url'
   | 'invalid_json'
   | 'body_cap'
-  | 'poll';
+  /** The readiness poll gave up without an answer (deadline / provider unreachable). */
+  | 'poll'
+  /**
+   * The provider ANSWERED, and the answer was failure — `PROVISION_FAILED`, a
+   * terminal lease state, or a state this client cannot interpret. The
+   * distinction from `poll` is what lets a caller tell "the deployment failed"
+   * from "we never found out", which decides whether destructive cleanup advice
+   * is honest (ENG-661).
+   */
+  | 'poll_verdict';
 
 export interface ProviderApiErrorOptions {
   readonly kind?: ProviderErrorKind;
@@ -140,6 +149,7 @@ export function isTransientProviderError(err: unknown): boolean {
     case 'invalid_url':
     case 'body_cap':
     case 'poll':
+    case 'poll_verdict':
       return false;
     default:
       // 'http', and errors from a call site that predates `kind`: fall back to
@@ -399,12 +409,21 @@ export async function checkedFetch(
     // any non-2xx. Optional chaining mirrors `readBodyCapped`'s defensive header
     // read so minimal test/mock Response objects keep working.
     const retryAfterMs = parseRetryAfterMs(res.headers?.get?.('retry-after'));
-    const body = await readBodyCapped(res, url).catch(
-      (readErr: unknown) =>
-        `[body read failed: ${readErr instanceof Error ? readErr.message : String(readErr)}]`,
-    );
+    // A body that breaches the 10 MiB cap must keep its `body_cap` kind even
+    // though the status makes this look like a plain `http` failure. Reading the
+    // error into text and re-tagging it `http` would launder a NON-transient
+    // fault into a transient one for any 5xx, so the readiness poll would retry
+    // and re-stream up to 10 MiB per attempt — exactly what the cap exists to
+    // prevent. The real HTTP status is preserved either way.
+    let capBreached = false;
+    const body = await readBodyCapped(res, url).catch((readErr: unknown) => {
+      capBreached =
+        ProviderApiError.isProviderApiError(readErr) &&
+        readErr.kind === 'body_cap';
+      return `[body read failed: ${readErr instanceof Error ? readErr.message : String(readErr)}]`;
+    });
     throw new ProviderApiError(res.status, body || `HTTP ${res.status}`, {
-      kind: 'http',
+      kind: capBreached ? 'body_cap' : 'http',
       ...(retryAfterMs !== undefined && { retryAfterMs }),
     });
   }
