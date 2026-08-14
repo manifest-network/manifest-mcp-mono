@@ -44,7 +44,7 @@ function resolvePath(p: string): string {
 
 export function loadKeyfileConfig(): Pick<
   NodeMCPConfig,
-  'addressPrefix' | 'keyfilePath'
+  'addressPrefix' | 'keyfilePath' | 'keyPassword'
 > {
   return {
     addressPrefix: getEnvOptional('COSMOS_ADDRESS_PREFIX', 'manifest'),
@@ -54,6 +54,11 @@ export function loadKeyfileConfig(): Pick<
         join(homedir(), '.manifest', 'key.json'),
       ),
     ),
+    // Read verbatim, never trimmed. `export` needs a byte-preserving password
+    // source to open a keyfile encrypted under a pre-ENG-668 password that
+    // absorbed a paste's trailing CR/LF — bytes the TTY prompt cannot express,
+    // because it treats CR and LF as submission.
+    keyPassword: process.env.MANIFEST_KEY_PASSWORD,
   };
 }
 

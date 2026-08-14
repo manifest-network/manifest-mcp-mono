@@ -311,3 +311,24 @@ describe('loadKeyfileConfig', () => {
     expect(config.keyfilePath).toContain('key.json');
   });
 });
+
+describe('loadKeyfileConfig — keyPassword (PR #176 review)', () => {
+  it('surfaces MANIFEST_KEY_PASSWORD so `export` has a byte-preserving source', async () => {
+    // `export` exists to recover a keyfile encrypted under a pre-ENG-668
+    // password that absorbed a paste's trailing CR/LF. Those bytes cannot be
+    // typed at the prompt, which treats CR and LF as submission -- so without
+    // this passthrough the command could not open the very keyfiles it is for.
+    const corrupted = `hunter2${String.fromCharCode(13)}${String.fromCharCode(10)}`;
+    process.env.MANIFEST_KEY_PASSWORD = corrupted;
+
+    const { loadKeyfileConfig } = await import('./config.js');
+
+    expect(loadKeyfileConfig().keyPassword).toBe(corrupted);
+  });
+
+  it('leaves keyPassword undefined when the variable is unset', async () => {
+    const { loadKeyfileConfig } = await import('./config.js');
+
+    expect(loadKeyfileConfig().keyPassword).toBeUndefined();
+  });
+});

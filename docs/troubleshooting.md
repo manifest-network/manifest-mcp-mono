@@ -34,6 +34,22 @@ Wallet resolution order is keyfile (`MANIFEST_KEY_FILE`, default `~/.manifest/ke
 
 The password in `MANIFEST_KEY_PASSWORD` doesn't match the keyfile. The decrypt path checks before the server starts so an MCP host never silently gets a wallet-less process.
 
+**If you are certain the password is right**, the keyfile may have been created by a release before ENG-668, whose hidden-input reader treated a whole stdin chunk as one keystroke. Pasting a password there appended the paste's trailing carriage return and/or newline to the secret, so the keyfile was encrypted with `yourpassword\r\n` while you believed it was `yourpassword`. The confirm prompt matched because the same paste was repeated. Try the exact bytes:
+
+Pass the exact bytes **on the same line as the command**, so they reach the process. A bare `VAR=value` on its own line only sets a shell variable, which a subsequently launched CLI does not inherit:
+
+```bash
+# bash / zsh: $'...' is what makes \r and \n real bytes rather than literal backslashes
+MANIFEST_KEY_PASSWORD=$'yourpassword\r\n' npx -y -p @manifest-network/manifest-mcp-node manifest-mcp-chain export
+
+# if that fails, the paste may have carried only a newline
+MANIFEST_KEY_PASSWORD=$'yourpassword\n' npx -y -p @manifest-network/manifest-mcp-node manifest-mcp-chain export
+```
+
+`export` takes `MANIFEST_KEY_PASSWORD` verbatim when it is set, and only prompts otherwise — deliberately, because the prompt treats CR and LF as submission and therefore *cannot* express the corrupted password. That is the one route into an affected keyfile.
+
+Once it prints the recovery phrase, write it down, then `<cli> import` it under a password you type rather than paste. Current releases classify each character of a chunk individually, so a pasted password now produces exactly the same key as a typed one.
+
 ## Errors at tool call time
 
 Most errors returned to the MCP client are JSON objects with a `code` field drawn from `ManifestMCPErrorCode`. (An error raised outside the Manifest error path — e.g. a `ProviderApiError` from a provider HTTP call — reaches the client without a `ManifestMCPErrorCode` and is logged as `UNKNOWN`.) The 21 codes group into 9 categories:

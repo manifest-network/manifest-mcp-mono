@@ -52,13 +52,17 @@ function handleSubcommand(
   if (subcommand === 'import') {
     return import('./keygen.js').then(({ runImport }) => runImport());
   }
+  if (subcommand === 'export') {
+    return import('./keygen.js').then(({ runExport }) => runExport());
+  }
 
   console.error(
     `Unknown subcommand: "${subcommand}"\n\n` +
       'Usage:\n' +
       `  ${cliName}              Start the ${label} MCP server\n` +
       `  ${cliName} keygen       Generate a new encrypted keyfile\n` +
-      `  ${cliName} import       Import a mnemonic into an encrypted keyfile\n`,
+      `  ${cliName} import       Import a mnemonic into an encrypted keyfile\n` +
+      `  ${cliName} export       Print the keyfile's recovery phrase (asks for the password)\n`,
   );
   exit(1);
 }

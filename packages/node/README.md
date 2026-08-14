@@ -31,6 +31,8 @@ npx -y -p @manifest-network/manifest-mcp-node manifest-mcp-chain keygen
 
 All CLIs share the same keyfile (`~/.manifest/key.json`), so any of the five commands works for `keygen` and `import`. You will be prompted for an encryption password. The keyfile is written with mode `0600`.
 
+`keygen` prints the generated 24-word **recovery phrase** once, before exiting. Write it down and store it offline. The keyfile is encrypted with your password and nothing else on the machine holds the seed — so the recovery phrase is the only thing that survives a forgotten password or a lost keyfile.
+
 ### Option B -- Import an existing mnemonic
 
 ```bash
@@ -62,7 +64,8 @@ npx -y -p @manifest-network/manifest-mcp-node <bin-name> [subcommand]
 
 `<bin-name>` is any of the five listed below. The subcommand is optional and takes the same values as
 the PATH-installed form: **omit it to start that MCP server on stdio** (this is the form the
-[Claude Desktop config](#claude-desktop) below uses), or pass `keygen` / `import` for key management.
+[Claude Desktop config](#claude-desktop) below uses), or pass `keygen` / `import` / `export` for key
+management.
 
 ```
 manifest-mcp-chain                Start the chain MCP server (stdio)
@@ -85,6 +88,24 @@ manifest-mcp-agent                Start the agent MCP server (stdio)
 manifest-mcp-agent keygen         Generate a new encrypted keyfile
 manifest-mcp-agent import         Import a mnemonic into an encrypted keyfile
 ```
+
+Every CLI also accepts `export`, which prints the keyfile's recovery phrase after asking for its
+password (`manifest-mcp-chain export`, and so on).
+
+### Recovering the mnemonic
+
+`keygen` shows the recovery phrase when it generates the wallet. If you generated a keyfile before
+that behaviour existed — or you simply did not write the phrase down — recover it with the keyfile's
+password:
+
+```bash
+npx -y -p @manifest-network/manifest-mcp-node manifest-mcp-chain export
+```
+
+The phrase is printed to stderr, alongside the prompts, so a plain `>` redirect will not capture it
+into a file by accident. If the password itself no longer works, see the decryption entry in
+[`docs/troubleshooting.md`](../../docs/troubleshooting.md) — a keyfile created by an older release
+may have been encrypted with a trailing newline captured from a paste.
 
 ## MCP client integration
 
