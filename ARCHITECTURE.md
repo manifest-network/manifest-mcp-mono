@@ -206,7 +206,7 @@ The fred package is an MCP server that registers 12 provider/Fred-dependent tool
 | `update_app` | Update container manifest |
 | `restore_app` | Recover a CLOSED/credit-exhausted lease's retained volumes onto a fresh lease within the grace window (saga: pre-flight retained-check → create-lease → `POST /restore` → cancel-lease compensation) |
 | `app_diagnostics` | Provision diagnostics (status, failure count, last error) |
-| `app_releases` | List deployment release history |
+| `app_releases` | List deployment release history (20 most recent, manifest blob omitted) |
 
 The fred server also registers 3 MCP resources (`manifest://leases/active`, `manifest://leases/recent`, `manifest://providers`) and 3 prompts (`deploy-containerized-app`, `diagnose-failing-app`, `shutdown-all-leases`).
 
@@ -253,7 +253,7 @@ src/
     └── restoreApp.ts              Restore a CLOSED/retained lease's volumes onto a fresh lease (ENG-599 saga)
 ```
 
-`app_diagnostics` and `app_releases` are registered inline in `server/register-tools.ts` rather than as standalone files in `tools/` because they are thin pass-throughs to the matching Fred API endpoints with no orchestration logic to extract.
+`app_diagnostics` and `app_releases` are registered inline in `server/register-tools.ts` rather than as standalone files in `tools/` because their HTTP orchestration is a thin pass-through to the matching Fred API endpoint. `app_releases` is no longer a pure pass-through, though — it strips the stored manifest, derives `manifest_bytes` and caps the history length — so that *projection* lives in `tools/sanitizeReleases.ts` (alongside `sanitizeRetention.ts`), where its combinatorial cases are unit-testable without the in-memory MCP transport. The fetch/auth sequencing stays inline.
 
 ### HTTP clients
 

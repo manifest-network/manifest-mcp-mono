@@ -169,6 +169,17 @@ function capLength(s: string, maxCodePoints: number): string {
 }
 
 /**
+ * Budget for an error message that mono did not author, on its way into model
+ * context. ~500 tokens — half of `MAX_LOG_CHARS`'s single-copy budget for a
+ * *successful* log fetch, which is the right order for an error path.
+ *
+ * `sanitizeForLogging` redacts secrets but never truncates, so before ENG-669 a
+ * provider could put its entire response body (up to the 10 MiB transport cap)
+ * into a tool's error response verbatim.
+ */
+export const MAX_TOOL_ERROR_MESSAGE_CHARS = 2000;
+
+/**
  * Options for creating a chain, lease, or fred MCP server
  */
 export interface ManifestMCPServerOptions {
@@ -232,9 +243,19 @@ export function withErrorHandling<
           details: sanitizeForLogging(error.details),
         };
       } else {
+        // Cap ONLY this branch. The if/else above already draws the right line:
+        // a ManifestMCPError is first-party, and its message is curated recovery
+        // guidance whose length is a reviewed design choice — truncating it would
+        // amputate advice the agent must read. The else branch is everything mono
+        // did NOT author: provider response bodies, third-party library errors,
+        // String(<arbitrary thrown value>). That is the untrusted, unbounded set,
+        // and it is what reaches model context (ENG-669).
+        //
+        // Into a NEW local, so the stderr log above keeps the full message: stderr
+        // is not model context, so there is no token cost and no diagnostic loss.
         errorResponse = {
           ...errorResponse,
-          message: safeMessage,
+          message: capLength(safeMessage, MAX_TOOL_ERROR_MESSAGE_CHARS),
         };
       }
 

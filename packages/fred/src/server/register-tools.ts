@@ -41,6 +41,7 @@ import { getAppLogs } from '../tools/getLogs.js';
 import { resolveProviderUrl } from '../tools/resolveLeaseProvider.js';
 import { restartApp } from '../tools/restartApp.js';
 import { restoreApp } from '../tools/restoreApp.js';
+import { projectReleases } from '../tools/sanitizeReleases.js';
 import { sanitizeRetentionFields } from '../tools/sanitizeRetention.js';
 import { updateApp } from '../tools/updateApp.js';
 import { waitForAppReady } from '../tools/waitForAppReady.js';
@@ -1059,7 +1060,7 @@ export function registerTools(deps: RegisterToolsDeps): void {
     'app_releases',
     {
       description:
-        'Get release/version history for a deployed app. Use this to see what versions have been deployed, when they were created, and their status.',
+        'Get release/version history for a deployed app. Use this to see what versions have been deployed, when they were created, and their status. Returns the 20 most recent releases (release_count is the true total; truncated says whether older ones were dropped). The stored deployment manifest is omitted — only its size is reported, as manifest_bytes. No tool returns a historical manifest body; build_manifest_preview only validates a manifest you supply, it cannot fetch a past one.',
       inputSchema: {
         lease_uuid: z
           .string()
@@ -1080,8 +1081,16 @@ export function registerTools(deps: RegisterToolsDeps): void {
             // flows through the looseObject.
             reason: z.string().optional(),
             message: z.string().optional(),
+            // Size of the stored manifest, which is itself omitted (ENG-669).
+            // `manifest` is deliberately NOT declared here: looseObject means the
+            // schema is not what strips it — the projection is — and declaring it
+            // would only invite someone to re-add it.
+            manifest_bytes: z.number().int().nonnegative().optional(),
           }),
         ),
+        /** The provider's TRUE total, which may exceed `releases.length`. */
+        release_count: z.number().int().nonnegative(),
+        truncated: z.boolean(),
       },
       annotations: readOnlyAnnotations('Get app release history'),
       _meta: manifestMeta({
@@ -1113,29 +1122,11 @@ export function registerTools(deps: RegisterToolsDeps): void {
         ctx.allowLoopback,
       );
 
+      // The projection (strip the manifest blob + the raw failure keys, cap the
+      // history length) lives in tools/sanitizeReleases.ts so its combinatorial
+      // cases are unit-testable without the in-memory MCP transport (ENG-669).
       return structuredResponse(
-        {
-          lease_uuid: leaseUuid,
-          // ENG-638: a release element is a looseObject forwarded wholesale, so
-          // provider-controlled failure text would otherwise reach model
-          // context raw. Strip the raw failure keys BEFORE re-adding the
-          // sanitized projection — the same order appStatus uses, and for the
-          // same reason: sanitizeFailureFields drops empty and non-string
-          // values (provider JSON is type-asserted, never validated), so a
-          // spread cannot overwrite a key the sanitizer chose to omit. Leaving
-          // the raw key would forward e.g. `reason: 12345` into
-          // structuredContent, where the declared z.string() then REJECTS it
-          // and fails the whole tool call.
-          releases: result.releases.map((r) => {
-            const {
-              reason: _reasonRaw,
-              message: _messageRaw,
-              error: _errorRaw,
-              ...rest
-            } = r;
-            return { ...rest, ...sanitizeFailureFields(r) };
-          }),
-        },
+        { lease_uuid: leaseUuid, ...projectReleases(result.releases) },
         bigIntReplacer,
       );
     }),

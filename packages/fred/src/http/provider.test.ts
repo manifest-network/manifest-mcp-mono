@@ -6,6 +6,7 @@ import {
   getProviderHealth,
   isTransientProviderError,
   isUrlSsrfSafe,
+  MAX_PROVIDER_ERROR_CHARS,
   MAX_RESPONSE_BYTES,
   ProviderApiError,
   parseJsonResponse,
@@ -889,6 +890,90 @@ describe('isTransientProviderError', () => {
     expect(isTransientProviderError(new TypeError('bug'))).toBe(false);
     expect(isTransientProviderError({ status: 503 })).toBe(false);
     expect(isTransientProviderError(undefined)).toBe(false);
+  });
+});
+
+/**
+ * `MAX_RESPONSE_BYTES` is a TRANSPORT cap: it stops 10 MiB reaching the heap, but a
+ * 10 MiB error message still reached model context verbatim, because
+ * `sanitizeForLogging` redacts without truncating. Capped in the CONSTRUCTOR so the
+ * invariant is total — every construction site, both subclasses, and the sinks that
+ * embed a message in composed prose or in a SUCCESS response (ENG-669).
+ */
+describe('ProviderApiError message cap (ENG-669)', () => {
+  it('caps a multi-MB non-2xx body before it becomes the error message', async () => {
+    const mockFetch = vi
+      .fn()
+      .mockResolvedValue(new Response('A'.repeat(2_000_000), { status: 500 }));
+    const err = (await checkedFetch(
+      'https://p.example',
+      undefined,
+      undefined,
+      mockFetch as unknown as typeof globalThis.fetch,
+    ).catch((e: unknown) => e)) as ProviderApiError;
+
+    expect(err.message.length).toBe(MAX_PROVIDER_ERROR_CHARS + 1);
+    expect(err.message.startsWith('AAA')).toBe(true);
+    expect(err.message.endsWith('…')).toBe(true);
+  });
+
+  it('leaves a normal Fred error body byte-identical', async () => {
+    // Guards lifecycle.e2e's /"code"\s*:\s*409/ and /invalid state/i matchers: the
+    // cap must be invisible at realistic sizes.
+    const body = '{"error":"invalid state for restart","code":409}';
+    const mockFetch = vi
+      .fn()
+      .mockResolvedValue(new Response(body, { status: 409 }));
+    const err = (await checkedFetch(
+      'https://p.example',
+      undefined,
+      undefined,
+      mockFetch as unknown as typeof globalThis.fetch,
+    ).catch((e: unknown) => e)) as ProviderApiError;
+
+    expect(err.message).toBe(body);
+    expect(err.message).not.toContain('…');
+  });
+
+  it('caps every construction site, not just the response-body path', () => {
+    expect(new ProviderApiError(0, 'x'.repeat(50_000)).message.length).toBe(
+      MAX_PROVIDER_ERROR_CHARS + 1,
+    );
+  });
+
+  it('caps a subclass message too, via the inherited super() call', () => {
+    class Sub extends ProviderApiError {}
+    expect(new Sub(500, 'x'.repeat(50_000)).message.length).toBe(
+      MAX_PROVIDER_ERROR_CHARS + 1,
+    );
+  });
+
+  it('never bisects a surrogate pair at the cap boundary', () => {
+    const msg = new ProviderApiError(0, '😀'.repeat(8_000)).message;
+    // Both halves matter: length alone would pass on a UTF-16 slice that splits a
+    // pair, and the pair check alone would pass vacuously on an uncapped string.
+    expect(Array.from(msg).length).toBe(MAX_PROVIDER_ERROR_CHARS + 1);
+    expect(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/.test(msg)).toBe(false);
+  });
+
+  it('preserves status / kind / retryAfterMs while capping', async () => {
+    const mockFetch = vi.fn().mockResolvedValue(
+      new Response('B'.repeat(2_000_000), {
+        status: 429,
+        headers: { 'retry-after': '1' },
+      }),
+    );
+    const err = (await checkedFetch(
+      'https://p.example',
+      undefined,
+      undefined,
+      mockFetch as unknown as typeof globalThis.fetch,
+    ).catch((e: unknown) => e)) as ProviderApiError;
+
+    expect(err.status).toBe(429);
+    expect(err.kind).toBe('http');
+    expect(err.retryAfterMs).toBe(1_000);
+    expect(err.message.length).toBe(MAX_PROVIDER_ERROR_CHARS + 1);
   });
 });
 

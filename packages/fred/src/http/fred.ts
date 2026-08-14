@@ -16,8 +16,10 @@ import {
 } from '@manifest-network/manifest-mcp-core';
 import { failureDetail } from '../failure-reason.js';
 import {
+  capProviderText,
   fetchJsonChecked,
   isTransientProviderError,
+  PROVIDER_TEXT_EXCERPT_CHARS,
   ProviderApiError,
   validateProviderUrl,
 } from './provider.js';
@@ -428,8 +430,20 @@ export interface LeaseReadinessUnconfirmedInput {
   readonly context?: TerminalChainStateContext;
 }
 
+/**
+ * A nested error's text, for EMBEDDING in composed prose.
+ *
+ * Capped tighter than the outer `MAX_PROVIDER_ERROR_CHARS`, and not redundant with it:
+ * `readinessUnconfirmedMessage` puts this excerpt in the MIDDLE, followed by the
+ * load-bearing "NOT a reported failure … re-check with app_status" sentence. With only
+ * the outer cap, a 4096-char nested error would push that sentence past it and delete
+ * the very guidance ENG-661 exists to deliver (ENG-669).
+ */
 function errorText(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
+  return capProviderText(
+    err instanceof Error ? err.message : String(err),
+    PROVIDER_TEXT_EXCERPT_CHARS,
+  );
 }
 
 function readinessUnconfirmedMessage(

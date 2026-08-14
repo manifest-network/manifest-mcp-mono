@@ -25,7 +25,7 @@ npm install @manifest-network/manifest-mcp-fred
 | `update_app` | Update a deployed app with a new manifest |
 | `restore_app` | Restore a closed/retained app onto a fresh lease within the grace window |
 | `app_diagnostics` | Get provision diagnostics for a deployed app |
-| `app_releases` | Get release/version history for a deployed app |
+| `app_releases` | Get release/version history for a deployed app (20 most recent; the stored manifest is omitted, its size reported as `manifest_bytes`) |
 
 ## Resources & prompts
 
