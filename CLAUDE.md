@@ -74,7 +74,7 @@ Five MCP servers bridging AI assistants to Cosmos SDK blockchains (Manifest Netw
 
 ### Error handling
 
-`ManifestMCPError` with `ManifestMCPErrorCode` enum (21 codes, 9 categories). Error responses are sanitized via `sanitizeForLogging()` which redacts sensitive fields (mnemonics, passwords, keys, tokens). Retry logic (`retry.ts`) classifies errors as transient vs permanent -- only transient errors (connection, 5xx, 429) are retried.
+`ManifestMCPError` with `ManifestMCPErrorCode` enum (21 codes, 9 categories). Error responses are sanitized via `sanitizeForLogging()` which redacts sensitive fields (mnemonics, passwords, keys, tokens). Retry logic (`retry.ts`) classifies errors as transient vs permanent -- only transient errors (connection, 5xx, 429) are retried. **Do not nest `withRetry`:** connect-retry is owned by `CosmosClientManager` (`getQueryClient`/`getSigningClient` retry internally, and the RPC branch builds five namespace clients per attempt), so call-site ladders in `cosmos.ts`/`tools/executeTx.ts` acquire the client *outside* the ladder and wrap only the query/broadcast leg — nesting multiplied a dead-RPC query to 4 x 4 x 5 = 77 connects / ~35s (ENG-679).
 
 ### Tool annotations and `_meta.manifest`
 

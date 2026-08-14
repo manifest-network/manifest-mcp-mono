@@ -80,14 +80,31 @@ export async function executeTx(
 
   return withTxConfirmation(
     () =>
-      ctx.chain.withBroadcastLock(sender, () =>
-        withRetry(
+      ctx.chain.withBroadcastLock(sender, async () => {
+        // Broadcast client — manages the signer's sequence for non-blocking (SYNC) broadcasts
+        // (serialized per signer by the surrounding withBroadcastLock). See getBroadcastClient.
+        //
+        // Acquired INSIDE the lock but OUTSIDE the ladder below: getSigningClient owns
+        // connect-retry, and nesting the two multiplied attempts (ENG-679).
+        let client: Awaited<ReturnType<TxCtx['chain']['getBroadcastClient']>>;
+        try {
+          client = await ctx.chain.getBroadcastClient();
+        } catch (error) {
+          // Same wrapping as the broadcast leg below: a ManifestMCPError passes through
+          // (a transient RPC_CONNECTION_FAILED stays classifiable for the CALLER), a raw
+          // throw becomes the non-retryable TX_FAILED.
+          if (error instanceof ManifestMCPError) throw error;
+          throw new ManifestMCPError(
+            ManifestMCPErrorCode.TX_FAILED,
+            `executeTx (${typeUrls.join(', ') || 'no messages'}) failed: ${error instanceof Error ? error.message : String(error)}`,
+            { msgTypeUrls: typeUrls },
+          );
+        }
+
+        return withRetry(
           async () => {
             try {
               await ctx.chain.acquireRateLimit();
-              // Broadcast client — manages the signer's sequence for non-blocking (SYNC) broadcasts
-              // (serialized per signer by the surrounding withBroadcastLock). See getBroadcastClient.
-              const client = await ctx.chain.getBroadcastClient();
               const effectiveMemo = opts?.memo ?? '';
               validateMemo(effectiveMemo);
               const fee =
@@ -119,11 +136,12 @@ export async function executeTx(
               );
               return buildExecuteTxResult(result, typeUrls);
             } catch (error) {
-              // M2 — MIRROR cosmosTx's broadcast-leg wrapping (cosmos.ts:251-269): a pre-broadcast
-              // ManifestMCPError (e.g. a transient RPC_CONNECTION_FAILED from getSigningClient) passes
-              // through and stays retryable; ANY raw/non-ManifestMCPError (a network error from
-              // signAndBroadcast/simulate) becomes TX_FAILED → NON_RETRYABLE (retry.ts:35), so a
-              // submitted-but-failed multi-msg batch is NEVER re-broadcast (no double-spend).
+              // M2 — MIRROR cosmosTx's broadcast-leg wrapping (enrichTxError): a pre-broadcast
+              // ManifestMCPError (e.g. a transient RPC_CONNECTION_FAILED from buildGasFee's
+              // simulate) passes through and stays retryable; ANY raw/non-ManifestMCPError (a
+              // network error from signAndBroadcast/simulate) becomes TX_FAILED → NON_RETRYABLE
+              // (retry.ts), so a submitted-but-failed multi-msg batch is NEVER re-broadcast
+              // (no double-spend).
               if (error instanceof ManifestMCPError) throw error;
               throw new ManifestMCPError(
                 ManifestMCPErrorCode.TX_FAILED,
@@ -136,8 +154,8 @@ export async function executeTx(
             config: ctx.chain.getConfig().retry,
             operationName: `executeTx (${messages.length} msgs)`,
           },
-        ),
-      ),
+        );
+      }),
     opts,
   );
 }

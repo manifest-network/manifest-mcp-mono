@@ -1,8 +1,12 @@
 import type { EncodeObject } from '@cosmjs/proto-signing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { makeMockClientManager, makeTxCtx } from '../__test-utils__/mocks.js';
+import {
+  makeMockClientManager,
+  makeMockConfig,
+  makeTxCtx,
+} from '../__test-utils__/mocks.js';
 import type { TxCtx } from '../ctx.js';
-import { ManifestMCPErrorCode } from '../types.js';
+import { ManifestMCPError, ManifestMCPErrorCode } from '../types.js';
 import { executeTx } from './executeTx.js';
 
 const msgs: EncodeObject[] = [
@@ -224,6 +228,66 @@ describe('executeTx', () => {
     resolveFirst();
     await Promise.all([p1, p2]);
     expect(order).toEqual(['a-start', 'a-end', 'b-run']);
+  });
+
+  // ENG-679 — getBroadcastClient/getSigningClient retry the connect internally; acquiring
+  // one inside executeTx's own ladder multiplied attempts (4 outer x 4 inner x 5 namespace
+  // clients = 77 connects on a dead endpoint). These run the REAL withRetry (this file never
+  // mocks ./retry.js) with a ~1ms backoff, so a re-nested acquisition shows up as 4 calls.
+  describe('client acquisition is outside the retry ladder (ENG-679)', () => {
+    const FAST_RETRY = { maxRetries: 3, baseDelayMs: 1, maxDelayMs: 2 };
+    const ATTEMPTS = FAST_RETRY.maxRetries + 1;
+
+    it('acquires the broadcast client ONCE while the broadcast leg still retries', async () => {
+      // A ManifestMCPError with a transient message passes through the catch unwrapped and
+      // stays retryable — a RAW throw would become the non-retryable TX_FAILED and prove nothing.
+      const simulate = vi
+        .fn()
+        .mockRejectedValue(
+          new ManifestMCPError(
+            ManifestMCPErrorCode.RPC_CONNECTION_FAILED,
+            'fetch failed',
+          ),
+        );
+      const chain = makeMockClientManager({
+        config: makeMockConfig({ retry: FAST_RETRY }),
+      });
+      chain.getSigningClient = vi
+        .fn()
+        .mockResolvedValue({ signAndBroadcast: vi.fn(), simulate });
+
+      await expect(executeTx(makeTxCtx({ chain }), msgs)).rejects.toMatchObject(
+        {
+          code: ManifestMCPErrorCode.RPC_CONNECTION_FAILED,
+        },
+      );
+
+      expect(chain.getBroadcastClient).toHaveBeenCalledTimes(1);
+      expect(simulate).toHaveBeenCalledTimes(ATTEMPTS);
+      expect(chain.acquireRateLimit).toHaveBeenCalledTimes(ATTEMPTS);
+    });
+
+    it('does not re-run a failed acquisition', async () => {
+      const chain = makeMockClientManager({
+        config: makeMockConfig({ retry: FAST_RETRY }),
+      });
+      chain.getBroadcastClient = vi
+        .fn()
+        .mockRejectedValue(
+          new ManifestMCPError(
+            ManifestMCPErrorCode.RPC_CONNECTION_FAILED,
+            'Failed to connect signing client: fetch failed',
+          ),
+        );
+
+      await expect(executeTx(makeTxCtx({ chain }), msgs)).rejects.toMatchObject(
+        {
+          code: ManifestMCPErrorCode.RPC_CONNECTION_FAILED,
+        },
+      );
+
+      expect(chain.getBroadcastClient).toHaveBeenCalledTimes(1);
+    });
   });
 
   it('does NOT re-broadcast on a raw transient broadcast error (no double-broadcast)', async () => {

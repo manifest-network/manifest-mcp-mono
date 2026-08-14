@@ -24,13 +24,17 @@ import { MCPTestClient } from './helpers/mcp-client.js';
  *      time is below a generous fast-fail bound.
  *
  * Why bother: the retry config is hard-coded in `DEFAULT_RETRY_CONFIG`
- * with `maxRetries: 3` and `baseDelayMs: 1000`. Each level of withRetry
- * sleeps roughly baseDelay + 2x + 4x ≈ 7s; cosmos.ts wraps an outer
- * retry around getQueryClient's inner retry, so the worst-case wall
- * time on a dead endpoint is ~17–20 s. The test budget below
- * accommodates that. A sentinel-port test against the local loopback
- * is deliberate: ECONNREFUSED is fast (sub-millisecond), so the bulk
- * of the elapsed time is the backoff sleeps, not the network.
+ * with `maxRetries: 3` and `baseDelayMs: 1000`, so one ladder sleeps
+ * roughly baseDelay + 2x + 4x ≈ 7s (≤ ~8.75s with the +25% jitter).
+ * Connect-retry has exactly ONE owner — `CosmosClientManager`'s
+ * initQueryClient — and `cosmos.ts` acquires the client OUTSIDE its own
+ * handler-retry (ENG-679), so a dead endpoint costs one ladder and the
+ * handler ladder is never entered at all. That upper bound is asserted
+ * below: it is the regression guard against re-nesting the two ladders,
+ * which multiplied them to 4 x 4 x 5 = 77 connects / ~35s and blew this
+ * test's budget. A sentinel-port test against the local loopback is
+ * deliberate: ECONNREFUSED is fast (sub-millisecond), so the bulk of the
+ * elapsed time is the backoff sleeps, not the network.
  */
 
 // 127.0.0.1:9 is the "discard" port — nothing listens by default, so
@@ -81,8 +85,17 @@ describe('Retry classifier (live)', () => {
         // 750ms means the call returned without any retry — a regression
         // in the classifier or in withRetry's loop.
         expect(elapsed).toBeGreaterThan(750);
+
+        // Upper bound: ONE connect ladder ≈ 7s, ≤ ~8.75s with jitter, plus
+        // transport overhead. 15s leaves generous headroom for contended CI
+        // while sitting far below any re-nesting (two ladders were ~35s, and
+        // ~17-20s even when a latched init promise short-circuited the inner
+        // one). Anything above this is retry amplification, not slowness.
+        expect(elapsed).toBeLessThan(15_000);
       },
-      30_000,
+      // Above the 15s assertion so the assertion — which names the cause —
+      // reports the failure instead of an opaque test timeout.
+      20_000,
     );
   });
 
