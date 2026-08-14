@@ -51,7 +51,7 @@ The Fred server is sequenced; follow this order:
 3. `build_manifest_preview` — render the manifest the deploy will submit, with validation results and the on-chain `meta_hash`. **Run this before paying for a lease.** Catches bad env var names, wrong port format, malformed RFC 1123 service names, and a few dozen other rule violations.
 4. `deploy_app` — broadcasts a chain TX. Optionally claims a custom domain in the same call. Pass a `progressToken` if the host supports `notifications/progress` so the user sees provisioning progress.
 5. `wait_for_app_ready` — poll the provider until `LEASE_STATE_ACTIVE`. Don't loop `app_status` manually; this tool handles terminal-state detection and timeouts cleanly.
-6. `app_status` / `get_logs` / `app_diagnostics` / `app_releases` — for inspection after deploy. `app_releases` returns the recent window without manifest bodies; use `build_manifest_preview` when you need manifest content.
+6. `app_status` / `get_logs` / `app_diagnostics` / `app_releases` — for inspection after deploy. `app_releases` returns the recent window without manifest bodies, and no MCP tool retrieves a historical manifest body — `build_manifest_preview` only builds and validates a candidate you supply. The raw bytes are available to library consumers via `getLeaseReleases`.
 7. `restart_app` / `update_app` — for in-place changes that don't close the lease.
 8. `close_lease` (lease server) — to terminate a lease. Destructive; use with care.
 

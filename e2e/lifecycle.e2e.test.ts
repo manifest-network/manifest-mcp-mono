@@ -334,10 +334,18 @@ describe('Deploy lifecycle', () => {
     // Fred's own keys — a real observation of the wire (ENG-638).
     for (const release of result.releases) {
       assertWireKeys('release', Object.keys(release));
-      // The live provider really does send a manifest on every release; this is the
-      // observation that proves mono strips it before model context (ENG-669).
       expect(release).not.toHaveProperty('manifest');
     }
+    // `not.toHaveProperty('manifest')` alone would pass just as happily if Fred had
+    // STOPPED sending the blob — it cannot tell "mono stripped it" from "it was never
+    // there". `manifest_bytes` is derived only from a present, valid, non-empty base64
+    // manifest, so a positive value is the observation that the wire really carried it
+    // and mono removed it (ENG-669).
+    expect(
+      result.releases.some(
+        (r) => typeof r.manifest_bytes === 'number' && r.manifest_bytes > 0,
+      ),
+    ).toBe(true);
   });
 
   // restart_app last — it briefly puts the app in a non-stable state that

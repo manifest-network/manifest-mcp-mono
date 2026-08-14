@@ -1060,7 +1060,7 @@ export function registerTools(deps: RegisterToolsDeps): void {
     'app_releases',
     {
       description:
-        'Get release/version history for a deployed app. Use this to see what versions have been deployed, when they were created, and their status. Returns the 20 most recent releases (release_count is the true total; truncated says whether older ones were dropped). The stored deployment manifest is omitted — only its size is reported, as manifest_bytes; use build_manifest_preview if you need manifest content.',
+        'Get release/version history for a deployed app. Use this to see what versions have been deployed, when they were created, and their status. Returns the 20 most recent releases (release_count is the true total; truncated says whether older ones were dropped). The stored deployment manifest is omitted — only its size is reported, as manifest_bytes. No tool returns a historical manifest body; build_manifest_preview only validates a manifest you supply, it cannot fetch a past one.',
       inputSchema: {
         lease_uuid: z
           .string()

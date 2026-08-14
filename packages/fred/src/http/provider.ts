@@ -73,9 +73,23 @@ export function capProviderText(
   max: number = MAX_PROVIDER_ERROR_CHARS,
 ): string {
   if (!Number.isInteger(max) || max < 0) return s;
-  const codePoints = Array.from(s);
-  if (codePoints.length <= max) return s;
-  return `${codePoints.slice(0, max).join('')}…`;
+  // A UTF-16 length at or below the cap can never exceed it in code points, so the
+  // common case returns without scanning at all.
+  if (s.length <= max) return s;
+  // Walk at most `max` code points and stop. `Array.from(s)` would materialize the
+  // WHOLE string first — ~10M entries for a body at the 10 MiB transport cap, and
+  // browse_catalog runs its health checks concurrently — amplifying the very
+  // exhaustion this cap exists to bound. A string iterator is lazy, so breaking out
+  // never visits the tail.
+  let end = 0;
+  let seen = 0;
+  for (const ch of s) {
+    if (seen === max) return `${s.slice(0, end)}…`;
+    end += ch.length;
+    seen += 1;
+  }
+  // Fewer than `max` code points despite a longer UTF-16 length (all surrogate pairs).
+  return s;
 }
 
 export interface ProviderApiErrorOptions {
