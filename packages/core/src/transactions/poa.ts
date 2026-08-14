@@ -7,6 +7,7 @@ import {
   type CosmosTxResult,
   ManifestMCPError,
   ManifestMCPErrorCode,
+  type TxBuildContext,
   type TxOptions,
 } from '../types.js';
 import {
@@ -16,10 +17,11 @@ import {
 } from './json-schemas.js';
 import {
   broadcastAndBuildTxResult,
-  buildGasFee,
   extractBooleanFlag,
   parseBigInt,
   requireArgs,
+  resolveTxFeeAndMemo,
+  type TxExtras,
   validateAddress,
   validateArgsLength,
 } from './utils.js';
@@ -202,14 +204,17 @@ export async function routePoATransaction(
   args: string[],
   waitForConfirmation: boolean,
   options?: TxOptions,
+  _context?: TxBuildContext,
+  txExtras?: TxExtras,
 ): Promise<CosmosTxResult> {
   const built = buildPoAMessages(senderAddress, subcommand, args);
-  const fee = await buildGasFee(
+  const { fee, memo } = await resolveTxFeeAndMemo(
     client,
     senderAddress,
     built.messages,
     options,
     built.memo,
+    txExtras,
   );
   return broadcastAndBuildTxResult(
     client,
@@ -218,7 +223,7 @@ export async function routePoATransaction(
     senderAddress,
     built.messages,
     fee,
-    built.memo,
+    memo,
     waitForConfirmation,
   );
 }

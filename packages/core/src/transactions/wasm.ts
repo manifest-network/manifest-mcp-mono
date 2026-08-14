@@ -2,16 +2,22 @@ import { fromBase64, toUtf8 } from '@cosmjs/encoding';
 import type { SigningStargateClient } from '@cosmjs/stargate';
 import { cosmwasm } from '@manifest-network/manifestjs';
 import { throwUnsupportedSubcommand } from '../modules.js';
-import type { BuiltMessages, CosmosTxResult, TxOptions } from '../types.js';
+import type {
+  BuiltMessages,
+  CosmosTxResult,
+  TxBuildContext,
+  TxOptions,
+} from '../types.js';
 import { ManifestMCPError, ManifestMCPErrorCode } from '../types.js';
 import {
   broadcastAndBuildTxResult,
-  buildGasFee,
   extractFlag,
   filterConsumedArgs,
   parseAmount,
   parseBigInt,
   requireArgs,
+  resolveTxFeeAndMemo,
+  type TxExtras,
   validateAddress,
   validateArgsLength,
   validateMemo,
@@ -357,14 +363,17 @@ export async function routeWasmTransaction(
   args: string[],
   waitForConfirmation: boolean,
   options?: TxOptions,
+  _context?: TxBuildContext,
+  txExtras?: TxExtras,
 ): Promise<CosmosTxResult> {
   const built = buildWasmMessages(senderAddress, subcommand, args);
-  const fee = await buildGasFee(
+  const { fee, memo } = await resolveTxFeeAndMemo(
     client,
     senderAddress,
     built.messages,
     options,
     built.memo,
+    txExtras,
   );
   return broadcastAndBuildTxResult(
     client,
@@ -373,7 +382,7 @@ export async function routeWasmTransaction(
     senderAddress,
     built.messages,
     fee,
-    built.memo,
+    memo,
     waitForConfirmation,
   );
 }

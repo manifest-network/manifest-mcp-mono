@@ -1,13 +1,19 @@
 import type { SigningStargateClient } from '@cosmjs/stargate';
 import { osmosis as osmosisNs } from '@manifest-network/manifestjs';
 import { throwUnsupportedSubcommand } from '../modules.js';
-import type { BuiltMessages, CosmosTxResult, TxOptions } from '../types.js';
+import type {
+  BuiltMessages,
+  CosmosTxResult,
+  TxBuildContext,
+  TxOptions,
+} from '../types.js';
 import { BankMetadataSchema, parseJsonWithSchema } from './json-schemas.js';
 import {
   broadcastAndBuildTxResult,
-  buildGasFee,
   parseAmount,
   requireArgs,
+  resolveTxFeeAndMemo,
+  type TxExtras,
   validateAddress,
   validateArgsLength,
 } from './utils.js';
@@ -163,14 +169,17 @@ export async function routeTokenfactoryTransaction(
   args: string[],
   waitForConfirmation: boolean,
   options?: TxOptions,
+  _context?: TxBuildContext,
+  txExtras?: TxExtras,
 ): Promise<CosmosTxResult> {
   const built = buildTokenfactoryMessages(senderAddress, subcommand, args);
-  const fee = await buildGasFee(
+  const { fee, memo } = await resolveTxFeeAndMemo(
     client,
     senderAddress,
     built.messages,
     options,
     built.memo,
+    txExtras,
   );
   return broadcastAndBuildTxResult(
     client,
@@ -179,7 +188,7 @@ export async function routeTokenfactoryTransaction(
     senderAddress,
     built.messages,
     fee,
-    built.memo,
+    memo,
     waitForConfirmation,
   );
 }

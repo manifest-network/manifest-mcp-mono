@@ -9,6 +9,7 @@ import {
   getTxMsgBuilder,
 } from './modules.js';
 import { withRetry } from './retry.js';
+import { assertExplicitFeeWithinCeiling } from './transactions/utils.js';
 import {
   type CosmosQueryResult,
   type CosmosTxResult,
@@ -287,6 +288,20 @@ export async function cosmosTx(
     throw new ManifestMCPError(
       ManifestMCPErrorCode.INVALID_CONFIG,
       'passing both fee and gasMultiplier is a caller error; fee wins (it skips simulation), gasMultiplier applies only on the simulate path',
+    );
+  }
+
+  // ENG-665: an explicit fee must not switch the ENG-556 ceiling off. The
+  // simulate path enforces it inside buildGasFee via TxOptions.maxGas, but the
+  // FEE-WINS branch below deliberately skips building TxOptions, so the one code
+  // path where a caller states a fee explicitly — i.e. where they are being most
+  // careful about cost — was the only unbounded one. Enforced here, before
+  // dispatch, so it covers every module rather than only those whose handler
+  // reaches resolveTxFeeAndMemo.
+  if (txExtras?.fee !== undefined) {
+    assertExplicitFeeWithinCeiling(
+      txExtras.fee,
+      clientManager.getConfig().maxGas,
     );
   }
 

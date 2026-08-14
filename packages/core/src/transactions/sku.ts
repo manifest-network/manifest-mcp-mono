@@ -6,17 +6,19 @@ import {
   type CosmosTxResult,
   ManifestMCPError,
   ManifestMCPErrorCode,
+  type TxBuildContext,
   type TxOptions,
 } from '../types.js';
 import {
   broadcastAndBuildTxResult,
-  buildGasFee,
   extractFlag,
   filterConsumedArgs,
   MAX_META_HASH_BYTES,
   parseAmount,
   parseHexBytes,
   requireArgs,
+  resolveTxFeeAndMemo,
+  type TxExtras,
   validateAddress,
   validateArgsLength,
 } from './utils.js';
@@ -303,14 +305,17 @@ export async function routeSkuTransaction(
   args: string[],
   waitForConfirmation: boolean,
   options?: TxOptions,
+  _context?: TxBuildContext,
+  txExtras?: TxExtras,
 ): Promise<CosmosTxResult> {
   const built = buildSkuMessages(senderAddress, subcommand, args);
-  const fee = await buildGasFee(
+  const { fee, memo } = await resolveTxFeeAndMemo(
     client,
     senderAddress,
     built.messages,
     options,
     built.memo,
+    txExtras,
   );
   return broadcastAndBuildTxResult(
     client,
@@ -319,7 +324,7 @@ export async function routeSkuTransaction(
     senderAddress,
     built.messages,
     fee,
-    built.memo,
+    memo,
     waitForConfirmation,
   );
 }

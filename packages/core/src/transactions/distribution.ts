@@ -1,12 +1,18 @@
 import type { SigningStargateClient } from '@cosmjs/stargate';
 import { cosmos } from '@manifest-network/manifestjs';
 import { throwUnsupportedSubcommand } from '../modules.js';
-import type { BuiltMessages, CosmosTxResult, TxOptions } from '../types.js';
+import type {
+  BuiltMessages,
+  CosmosTxResult,
+  TxBuildContext,
+  TxOptions,
+} from '../types.js';
 import {
   broadcastAndBuildTxResult,
-  buildGasFee,
   parseAmount,
   requireArgs,
+  resolveTxFeeAndMemo,
+  type TxExtras,
   validateAddress,
   validateArgsLength,
 } from './utils.js';
@@ -101,14 +107,17 @@ export async function routeDistributionTransaction(
   args: string[],
   waitForConfirmation: boolean,
   options?: TxOptions,
+  _context?: TxBuildContext,
+  txExtras?: TxExtras,
 ): Promise<CosmosTxResult> {
   const built = buildDistributionMessages(senderAddress, subcommand, args);
-  const fee = await buildGasFee(
+  const { fee, memo } = await resolveTxFeeAndMemo(
     client,
     senderAddress,
     built.messages,
     options,
     built.memo,
+    txExtras,
   );
   return broadcastAndBuildTxResult(
     client,
@@ -117,7 +126,7 @@ export async function routeDistributionTransaction(
     senderAddress,
     built.messages,
     fee,
-    built.memo,
+    memo,
     waitForConfirmation,
   );
 }

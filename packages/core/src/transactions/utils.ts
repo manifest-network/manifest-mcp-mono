@@ -703,6 +703,95 @@ export function buildExecuteSyncTxResult(
 }
 
 /**
+ * Shared tail of both COSMOS_MAX_GAS refusals — the simulated one in
+ * `buildGasFee` and the explicit-fee one in `assertExplicitFeeWithinCeiling`.
+ * One constant rather than two literals so the advice cannot drift apart.
+ */
+const MAX_GAS_HINT =
+  '(COSMOS_MAX_GAS). Raise COSMOS_MAX_GAS if this transaction is legitimate, ' +
+  'or set it to -1 to disable the ceiling.';
+
+/**
+ * Caller-supplied broadcast overrides threaded from `cosmosTx`.
+ *
+ * `fee` is authoritative and skips simulation (FEE-WINS); `memo` must reach both
+ * the simulate and the broadcast leg, or the two legs sign different bytes.
+ */
+export interface TxExtras {
+  readonly fee?: StdFee;
+  readonly memo?: string;
+}
+
+/**
+ * Resolve the `(fee, memo)` pair a route handler must broadcast with.
+ *
+ * Every tx route calls this rather than `buildGasFee` directly. Before ENG-665
+ * the fee/memo logic existed only in the billing handler and the other thirteen
+ * routes simply did not declare the parameter, so an explicit fee or memo was
+ * dropped on the floor — silently, because a JS call with more arguments than
+ * the callee declares is legal and `TxHandler` marks the trailing params
+ * optional. Centralising it means a new module cannot reintroduce the gap by
+ * forgetting to copy the block.
+ *
+ * The returned `memo` is the one the caller must ALSO hand to the broadcast, so
+ * the simulate and broadcast legs agree on the signed bytes.
+ */
+export async function resolveTxFeeAndMemo(
+  client: SigningStargateClient,
+  senderAddress: string,
+  messages: readonly EncodeObject[],
+  options: TxOptions | undefined,
+  builtMemo: string,
+  txExtras?: TxExtras,
+): Promise<{ fee: StdFee | 'auto'; memo: string }> {
+  const memo = txExtras?.memo ?? builtMemo;
+  validateMemo(memo);
+
+  // FEE-WINS: an explicit fee skips buildGasFee/simulate entirely. It is the one
+  // path valid without a configured gasPrice. The COSMOS_MAX_GAS ceiling is NOT
+  // enforced here but in `cosmosTx`, before dispatch — it must apply even to
+  // modules that never reach this helper, and it needs the resolved config.
+  if (txExtras?.fee !== undefined) {
+    return { fee: txExtras.fee, memo };
+  }
+
+  return {
+    fee: await buildGasFee(client, senderAddress, messages, options, memo),
+    memo,
+  };
+}
+
+/**
+ * Enforce the ENG-556 absolute gas ceiling against a caller-supplied explicit fee.
+ *
+ * The simulate path enforces the ceiling inside `buildGasFee` via
+ * `TxOptions.maxGas`. An explicit fee bypasses that path by construction, so
+ * without this check the single code path where a caller is being *most*
+ * deliberate about cost was also the one path with no upper bound (ENG-665).
+ */
+export function assertExplicitFeeWithinCeiling(
+  fee: StdFee,
+  maxGas: number | undefined,
+): void {
+  if (maxGas === undefined || maxGas <= 0) return; // -1 / absent disables
+
+  const gas = Number(fee.gas);
+  if (!Number.isFinite(gas)) {
+    throw new ManifestMCPError(
+      ManifestMCPErrorCode.INVALID_CONFIG,
+      `fee.gas must be a numeric string, got ${JSON.stringify(fee.gas)}`,
+    );
+  }
+  if (gas > maxGas) {
+    throw new ManifestMCPError(
+      ManifestMCPErrorCode.GAS_LIMIT_EXCEEDED,
+      `Explicit fee gas limit ${gas} exceeds the configured ceiling ${maxGas} ${MAX_GAS_HINT}`,
+      { explicitGas: gas, maxGas },
+    );
+  }
+}
+
+/**
  * Compute the transaction fee using simulate + calculateFee when gas options
  * are provided, otherwise return 'auto' to use the client's default behavior.
  */
@@ -746,8 +835,7 @@ export async function buildGasFee(
     throw new ManifestMCPError(
       ManifestMCPErrorCode.GAS_LIMIT_EXCEEDED,
       `Estimated gas limit ${gasLimit} exceeds the configured ceiling ${options.maxGas} ` +
-        `(COSMOS_MAX_GAS). A hostile or misconfigured RPC can inflate the simulated gas. ` +
-        `Raise COSMOS_MAX_GAS if this transaction is legitimate, or set it to -1 to disable the ceiling.`,
+        `${MAX_GAS_HINT} A hostile or misconfigured RPC can inflate the simulated gas.`,
       {
         simulatedGas: gasEstimate,
         gasMultiplier: options.gasMultiplier,

@@ -7,15 +7,17 @@ import {
   type CosmosTxResult,
   ManifestMCPError,
   ManifestMCPErrorCode,
+  type TxBuildContext,
   type TxOptions,
 } from '../types.js';
 import {
   broadcastAndBuildTxResult,
-  buildGasFee,
   extractFlag,
   filterConsumedArgs,
   parseUnixSecondsToDate,
   requireArgs,
+  resolveTxFeeAndMemo,
+  type TxExtras,
   validateAddress,
   validateArgsLength,
 } from './utils.js';
@@ -193,14 +195,17 @@ export async function routeAuthzTransaction(
   args: string[],
   waitForConfirmation: boolean,
   options?: TxOptions,
+  _context?: TxBuildContext,
+  txExtras?: TxExtras,
 ): Promise<CosmosTxResult> {
   const built = buildAuthzMessages(senderAddress, subcommand, args);
-  const fee = await buildGasFee(
+  const { fee, memo } = await resolveTxFeeAndMemo(
     client,
     senderAddress,
     built.messages,
     options,
     built.memo,
+    txExtras,
   );
   return broadcastAndBuildTxResult(
     client,
@@ -209,7 +214,7 @@ export async function routeAuthzTransaction(
     senderAddress,
     built.messages,
     fee,
-    built.memo,
+    memo,
     waitForConfirmation,
   );
 }
