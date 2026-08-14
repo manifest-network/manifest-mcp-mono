@@ -1,6 +1,7 @@
 import { toHex } from '@cosmjs/encoding';
 import {
   LeaseState,
+  ManifestMCPError,
   ManifestMCPErrorCode,
 } from '@manifest-network/manifest-mcp-core';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -75,6 +76,9 @@ describe('restoreApp', () => {
     mockGetProvision.mockResolvedValue({ status: 'retained', fail_count: 0 });
     mockCreateLease.mockResolvedValue(NEW as never);
     mockRestoreLease.mockResolvedValue({ status: 'provisioning' });
+    // clearAllMocks() resets calls but NOT implementations, so a mockRejectedValue
+    // set by one case would otherwise leak into every later one.
+    mockCosmosTx.mockResolvedValue(undefined as never);
   });
 
   it('happy path: creates a fresh lease from the source and restores onto it', async () => {
@@ -292,20 +296,109 @@ describe('restoreApp', () => {
       restoreApp(
         makeCtx(),
         { address: 'a', sourceLeaseUuid: SOURCE },
-        { pollOptions: false, abortSignal: ac.signal },
+        { pollOptions: false, signal: ac.signal },
       ),
     ).rejects.toSatisfy((e: unknown) => (e as Error)?.name === 'AbortError');
     // The on-chain create-lease broadcast must NOT fire after an abort.
     expect(mockCreateLease).not.toHaveBeenCalled();
   });
 
-  it('re-throws the abort instead of orphaning when the signal fires between createLease and the restore POST (ENG-488)', async () => {
+  it('rolls the fresh lease back when the signal fires between createLease and the restore POST (ENG-666)', async () => {
     mockSource();
     const ac = new AbortController();
     // Abort lands right after the lease is created, before the restore POST.
     mockCreateLease.mockImplementation(async () => {
       ac.abort();
       return NEW as never;
+    });
+    const err = await restoreApp(
+      makeCtx(),
+      { address: 'a', sourceLeaseUuid: SOURCE },
+      { pollOptions: false, signal: ac.signal },
+    ).catch((e: unknown) => e);
+
+    // The restore POST never fired — nothing was adopted (unchanged from ENG-488).
+    expect(mockRestoreLease).not.toHaveBeenCalled();
+    // ...so the empty PENDING shell is rolled back rather than left reserving credit.
+    expect(mockCosmosTx).toHaveBeenCalledWith(
+      expect.anything(),
+      'billing',
+      'cancel-lease',
+      [NEW],
+      true,
+    );
+    // A bare AbortError would name no lease, and over MCP the host never sees the
+    // rejection at all — so the outcome has to be a reported, identified rollback.
+    expect(err).toBeInstanceOf(ManifestMCPError);
+    expect((err as ManifestMCPError).code).toBe(
+      ManifestMCPErrorCode.OPERATION_CANCELLED,
+    );
+    expect((err as ManifestMCPError).details).toMatchObject({
+      lease_uuid: NEW,
+      rolled_back: true,
+    });
+  });
+
+  it('falls back to the orphan surface when the compensating cancel itself fails (ENG-666)', async () => {
+    mockSource();
+    const ac = new AbortController();
+    mockCreateLease.mockImplementation(async () => {
+      ac.abort();
+      return NEW as never;
+    });
+    mockCosmosTx.mockRejectedValue(new Error('chain unreachable'));
+
+    const err = await restoreApp(
+      makeCtx(),
+      { address: 'a', sourceLeaseUuid: SOURCE },
+      { pollOptions: false, signal: ac.signal },
+    ).catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(ManifestMCPError);
+    expect((err as ManifestMCPError).code).toBe(
+      ManifestMCPErrorCode.RESTORE_ORPHAN_COMPENSATION_FAILED,
+    );
+    expect((err as ManifestMCPError).details).toMatchObject({
+      orphaned_lease_uuid: NEW,
+    });
+  });
+
+  it('still compensates and reports the provider verdict when a rejection coincides with an abort (ENG-666)', async () => {
+    // Guards the removal of the `if (aborted) throw err` bypass: a real 422 that
+    // merely coincides with a cancel must still be classified by the PROVIDER's
+    // answer — not short-circuited into a bare abort that skips the rollback.
+    mockSource();
+    const ac = new AbortController();
+    mockRestoreLease.mockImplementation(async () => {
+      ac.abort();
+      throw new ProviderApiError(422, 'unprocessable');
+    });
+
+    const err = await restoreApp(
+      makeCtx(),
+      { address: 'a', sourceLeaseUuid: SOURCE },
+      { pollOptions: false, signal: ac.signal },
+    ).catch((e: unknown) => e);
+
+    expect(mockCosmosTx).toHaveBeenCalledWith(
+      expect.anything(),
+      'billing',
+      'cancel-lease',
+      [NEW],
+      true,
+    );
+    expect(err).toBeInstanceOf(ManifestMCPError);
+    expect((err as ManifestMCPError).code).toBe(
+      ManifestMCPErrorCode.RESTORE_REJECTED,
+    );
+  });
+
+  it('honours the deprecated abortSignal spelling as well as signal (ENG-666)', async () => {
+    mockSource();
+    const ac = new AbortController();
+    mockGetProvision.mockImplementation(async () => {
+      ac.abort();
+      return { status: 'retained', fail_count: 0 };
     });
     await expect(
       restoreApp(
@@ -314,8 +407,6 @@ describe('restoreApp', () => {
         { pollOptions: false, abortSignal: ac.signal },
       ),
     ).rejects.toSatisfy((e: unknown) => (e as Error)?.name === 'AbortError');
-    // The restore POST never fired, and no compensating cancel was attempted.
-    expect(mockRestoreLease).not.toHaveBeenCalled();
-    expect(mockCosmosTx).not.toHaveBeenCalled();
+    expect(mockCreateLease).not.toHaveBeenCalled();
   });
 });

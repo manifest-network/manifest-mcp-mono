@@ -28,6 +28,7 @@ import {
   uploadLeaseData,
 } from '../http/provider.js';
 import { getServiceNames, metaHashHex, validateManifest } from '../manifest.js';
+import { type CancellableOptions, resolveFredSignal } from './call-signal.js';
 import { createLease } from './createLease.js';
 import { resolveProviderUrl } from './resolveLeaseProvider.js';
 
@@ -39,14 +40,18 @@ export type SkuSelector = SkuIntent;
 /** Data-only deploy spec for a raw manifest string (spec §5.1). Public name kept for compatibility. */
 export type DeployManifestInput = ManifestDeploySpec;
 
-/** Per-call runtime orchestration for a deploy (fred layer). Split off the data specs per §5.1. */
-export interface DeployCallOptions {
+/**
+ * Per-call runtime orchestration for a deploy (fred layer). Split off the data specs per §5.1.
+ *
+ * Cancellation is `signal` + `timeout` (inherited from core's `CallOptions`); the legacy
+ * `abortSignal` is deprecated but still honoured (ENG-666).
+ */
+export interface DeployCallOptions extends CancellableOptions {
   gasMultiplier?: number;
   onLeaseCreated?: (
     leaseUuid: string,
     providerUrl: string,
   ) => void | Promise<void>;
-  abortSignal?: AbortSignal;
   /**
    * Readiness-poll tuning. Omitted entirely, the poll uses its own defaults —
    * `DEFAULT_POLL_TIMEOUT_MS` (10 min, matching what the provider is allowed to
@@ -79,6 +84,8 @@ export async function deployManifest(
   spec: ManifestDeploySpec,
   callOptions: DeployCallOptions = {},
 ): Promise<DeployResult> {
+  // Resolve ONCE: a second call would mint a second timeout from the same `timeout`.
+  const signal = resolveFredSignal(callOptions);
   const manifestBytes = new TextEncoder().encode(spec.manifest);
   if (manifestBytes.length > MAX_MANIFEST_BYTES) {
     throw new ManifestMCPError(
@@ -243,7 +250,7 @@ export async function deployManifest(
   let step: 'set_domain' | 'upload' | 'poll' | undefined;
   let status: FredLeaseStatus;
   try {
-    callOptions.abortSignal?.throwIfAborted();
+    signal?.throwIfAborted();
     if (normalizedCustomDomain !== undefined) {
       step = 'set_domain';
       await setItemCustomDomain(
@@ -273,7 +280,7 @@ export async function deployManifest(
       manifestBytes,
       leaseDataToken,
       ctx.fetch,
-      callOptions.abortSignal,
+      signal,
       ctx.allowLoopback,
     );
     step = 'poll';
@@ -281,7 +288,7 @@ export async function deployManifest(
       providerUrl,
       leaseUuid,
       () => ctx.providerAuth.providerToken({ address, leaseUuid }),
-      { ...callOptions.pollOptions, abortSignal: callOptions.abortSignal },
+      { ...callOptions.pollOptions, abortSignal: signal },
       ctx.fetch,
       ctx.allowLoopback,
     );
@@ -300,7 +307,7 @@ export async function deployManifest(
         providerUrl,
       });
     }
-    const cancelled = callOptions.abortSignal?.aborted === true;
+    const cancelled = signal?.aborted === true;
     // Once the poll has started, the lease exists AND the manifest is uploaded.
     // From here the ONLY thing that justifies "the deployment failed" is the
     // provider actually saying so — a `PROVISION_FAILED` status, a terminal

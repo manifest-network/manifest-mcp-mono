@@ -3056,12 +3056,20 @@ describe('deployApp replay — ENG-185 sub-PR D fixtures (05/06/07)', () => {
     const clientManager = makeMockClientManager();
     const walletProvider = makeMockWalletProvider();
 
+    const ac = new AbortController();
     const result = await deployApp(spec, callbacks, {
       clientManager: clientManager as unknown as Parameters<
         typeof deployApp
       >[2]['clientManager'],
       walletProvider,
+      signal: ac.signal,
     });
+
+    // The needs_wait poll is often the longest leg of the flow, so it must carry the
+    // caller's cancellation the same way the deploy leg already does (ENG-666).
+    expect(vi.mocked(fred.waitForAppReady).mock.calls.at(-1)?.[2]).toEqual(
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
 
     // Risk-7 strict ordering: classify < poll < ready, and exactly ONE
     // classifier event (no re-emission after the post-poll Defense #2

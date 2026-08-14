@@ -14,7 +14,9 @@ import type {
 import {
   type BuildManifestOptions,
   createProviderAuth,
+  type DeployCallOptions,
   type DeployResult,
+  type LifecycleCallOptions,
   type ManifestDeploySpec,
   type TxCallOptions,
 } from './deploy.js';
@@ -28,6 +30,7 @@ import {
 // Brand families re-emitted via the ROOT `export type *`.
 import type {
   Address,
+  CallOptions,
   EventSocket,
   EventTransport,
   Fqdn,
@@ -190,6 +193,13 @@ describe('ENG-531 facade completeness (re-emitted through the SDK)', () => {
 
   it('the root `.` re-emits EventSocket alongside the ctx/transport ports', () => {
     expectTypeOf<EventSocket>().not.toBeNever();
+  });
+
+  // One spelling for cancellation across the public surface: the fred per-call bags
+  // carry core's `signal` + `timeout` rather than a fred-only dialect (ENG-666).
+  it('/deploy option bags extend core CallOptions', () => {
+    expectTypeOf<LifecycleCallOptions>().toExtend<CallOptions>();
+    expectTypeOf<DeployCallOptions>().toExtend<CallOptions>();
   });
 
   it('/chain exposes the two generic escape-hatch values', () => {

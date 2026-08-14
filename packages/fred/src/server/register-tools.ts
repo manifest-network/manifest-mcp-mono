@@ -46,6 +46,13 @@ import { updateApp } from '../tools/updateApp.js';
 import { waitForAppReady } from '../tools/waitForAppReady.js';
 import { createProgressEmitter } from './progress.js';
 
+/**
+ * Per-request context the MCP SDK hands every tool handler. `signal` is non-optional
+ * and aborts on host cancellation, on the client's request timeout, and on transport
+ * close — so a handler that mutates provider or chain state must thread it (ENG-666).
+ */
+type ToolExtra = RequestHandlerExtra<ServerRequest, ServerNotification>;
+
 interface RegisterToolsDeps {
   mcpServer: McpServer;
   clientManager: CosmosClientManager;
@@ -244,44 +251,38 @@ export function registerTools(deps: RegisterToolsDeps): void {
         estimable: false,
       }),
     },
-    withErrorHandling(
-      'wait_for_app_ready',
-      async (
-        args,
-        extra: RequestHandlerExtra<ServerRequest, ServerNotification>,
-      ) => {
-        const emit = createProgressEmitter('wait_for_app_ready', extra);
-        const leaseUuid = args.lease_uuid;
-        const address = await walletProvider.getAddress();
-        await clientManager.acquireRateLimit();
-        const ctx = await buildCtx();
-        const result = await waitForAppReady(
-          ctx,
-          { address, leaseUuid },
-          {
-            timeoutMs:
-              args.timeout_seconds !== undefined
-                ? args.timeout_seconds * 1_000
-                : undefined,
-            intervalMs:
-              args.interval_seconds !== undefined
-                ? args.interval_seconds * 1_000
-                : undefined,
-            abortSignal: extra.signal,
-            onProgress: emit
-              ? (status) => {
-                  const state = leaseStateToJSON(status.state);
-                  const provision = status.provision_status
-                    ? `, provision=${status.provision_status}`
-                    : '';
-                  emit(`Polling lease: state=${state}${provision}`);
-                }
+    withErrorHandling('wait_for_app_ready', async (args, extra: ToolExtra) => {
+      const emit = createProgressEmitter('wait_for_app_ready', extra);
+      const leaseUuid = args.lease_uuid;
+      const address = await walletProvider.getAddress();
+      await clientManager.acquireRateLimit();
+      const ctx = await buildCtx();
+      const result = await waitForAppReady(
+        ctx,
+        { address, leaseUuid },
+        {
+          timeoutMs:
+            args.timeout_seconds !== undefined
+              ? args.timeout_seconds * 1_000
               : undefined,
-          },
-        );
-        return structuredResponse(result, bigIntReplacer);
-      },
-    ),
+          intervalMs:
+            args.interval_seconds !== undefined
+              ? args.interval_seconds * 1_000
+              : undefined,
+          signal: extra.signal,
+          onProgress: emit
+            ? (status) => {
+                const state = leaseStateToJSON(status.state);
+                const provision = status.provision_status
+                  ? `, provision=${status.provision_status}`
+                  : '';
+                emit(`Polling lease: state=${state}${provision}`);
+              }
+            : undefined,
+        },
+      );
+      return structuredResponse(result, bigIntReplacer);
+    }),
   );
 
   // -- get_logs --
@@ -735,77 +736,71 @@ export function registerTools(deps: RegisterToolsDeps): void {
         estimable: false,
       }),
     },
-    withErrorHandling(
-      'deploy_app',
-      async (
-        args,
-        extra: RequestHandlerExtra<ServerRequest, ServerNotification>,
-      ) => {
-        const emit = createProgressEmitter('deploy_app', extra);
-        // deployManifest acquires its own rate-limit token internally (it owns
-        // the create-lease tx + reads), so unlike the read handlers we do NOT
-        // pre-acquire here — that would double-consume on the same logical op.
-        const ctx = await buildCtx();
-        const result = await deployApp(
-          ctx,
-          {
-            image: args.image,
-            port: args.port,
-            size: args.size,
-            env: args.env,
-            command: args.command,
-            args: args.args,
-            user: args.user,
-            tmpfs: args.tmpfs,
-            health_check: args.health_check,
-            stop_grace_period: args.stop_grace_period,
-            init: args.init,
-            expose: args.expose,
-            labels: args.labels,
-            storage: args.storage,
-            depends_on: args.depends_on,
-            services: args.services,
-            providerUuid: args.provider_uuid,
-            skuUuid: args.sku_uuid,
-            customDomain: args.custom_domain,
-            serviceName: args.service_name,
-          },
-          {
-            gasMultiplier: args.gas_multiplier,
-            abortSignal: extra.signal,
-            onLeaseCreated: emit
-              ? (leaseUuid, providerUrl) => {
-                  emit(
-                    `Lease ${leaseUuid} created on chain at ${providerUrl}; uploading manifest`,
-                  );
+    withErrorHandling('deploy_app', async (args, extra: ToolExtra) => {
+      const emit = createProgressEmitter('deploy_app', extra);
+      // deployManifest acquires its own rate-limit token internally (it owns
+      // the create-lease tx + reads), so unlike the read handlers we do NOT
+      // pre-acquire here — that would double-consume on the same logical op.
+      const ctx = await buildCtx();
+      const result = await deployApp(
+        ctx,
+        {
+          image: args.image,
+          port: args.port,
+          size: args.size,
+          env: args.env,
+          command: args.command,
+          args: args.args,
+          user: args.user,
+          tmpfs: args.tmpfs,
+          health_check: args.health_check,
+          stop_grace_period: args.stop_grace_period,
+          init: args.init,
+          expose: args.expose,
+          labels: args.labels,
+          storage: args.storage,
+          depends_on: args.depends_on,
+          services: args.services,
+          providerUuid: args.provider_uuid,
+          skuUuid: args.sku_uuid,
+          customDomain: args.custom_domain,
+          serviceName: args.service_name,
+        },
+        {
+          gasMultiplier: args.gas_multiplier,
+          signal: extra.signal,
+          onLeaseCreated: emit
+            ? (leaseUuid, providerUrl) => {
+                emit(
+                  `Lease ${leaseUuid} created on chain at ${providerUrl}; uploading manifest`,
+                );
+              }
+            : undefined,
+          // Built conditionally: `pollOptions === undefined` is the contract
+          // that lets fred's own defaults apply, and it is asserted by the
+          // server tests. Only materialize the object when the caller gave us
+          // something to put in it.
+          pollOptions:
+            emit || args.timeout_seconds !== undefined
+              ? {
+                  ...(args.timeout_seconds !== undefined && {
+                    timeoutMs: args.timeout_seconds * 1_000,
+                  }),
+                  ...(emit && {
+                    onProgress: (status: FredLeaseStatus) => {
+                      const state = leaseStateToJSON(status.state);
+                      const provision = status.provision_status
+                        ? `, provision=${status.provision_status}`
+                        : '';
+                      emit(`Polling lease: state=${state}${provision}`);
+                    },
+                  }),
                 }
               : undefined,
-            // Built conditionally: `pollOptions === undefined` is the contract
-            // that lets fred's own defaults apply, and it is asserted by the
-            // server tests. Only materialize the object when the caller gave us
-            // something to put in it.
-            pollOptions:
-              emit || args.timeout_seconds !== undefined
-                ? {
-                    ...(args.timeout_seconds !== undefined && {
-                      timeoutMs: args.timeout_seconds * 1_000,
-                    }),
-                    ...(emit && {
-                      onProgress: (status: FredLeaseStatus) => {
-                        const state = leaseStateToJSON(status.state);
-                        const provision = status.provision_status
-                          ? `, provision=${status.provision_status}`
-                          : '';
-                        emit(`Polling lease: state=${state}${provision}`);
-                      },
-                    }),
-                  }
-                : undefined,
-          },
-        );
-        return structuredResponse(result, bigIntReplacer);
-      },
-    ),
+        },
+      );
+      return structuredResponse(result, bigIntReplacer);
+    }),
   );
 
   // -- restart_app --
@@ -831,7 +826,7 @@ export function registerTools(deps: RegisterToolsDeps): void {
         estimable: false,
       }),
     },
-    withErrorHandling('restart_app', async (args) => {
+    withErrorHandling('restart_app', async (args, extra: ToolExtra) => {
       const leaseUuid = args.lease_uuid;
       const address = await walletProvider.getAddress();
       await clientManager.acquireRateLimit();
@@ -839,7 +834,7 @@ export function registerTools(deps: RegisterToolsDeps): void {
       const result = await restartApp(
         ctx,
         { address, leaseUuid },
-        { pollOptions: false },
+        { pollOptions: false, signal: extra.signal },
       );
       return jsonResponse(result, bigIntReplacer);
     }),
@@ -871,7 +866,7 @@ export function registerTools(deps: RegisterToolsDeps): void {
       }),
       _meta: manifestMeta({ broadcasts: true, estimable: false }),
     },
-    withErrorHandling('restore_app', async (args) => {
+    withErrorHandling('restore_app', async (args, extra: ToolExtra) => {
       const sourceLeaseUuid = args.source_lease_uuid;
       const address = await walletProvider.getAddress();
       // No outer acquireRateLimit here — restoreApp acquires once internally
@@ -880,7 +875,7 @@ export function registerTools(deps: RegisterToolsDeps): void {
       const result = await restoreApp(
         ctx,
         { address, sourceLeaseUuid },
-        { pollOptions: false },
+        { pollOptions: false, signal: extra.signal },
       );
       return structuredResponse(result, bigIntReplacer);
     }),
@@ -921,7 +916,7 @@ export function registerTools(deps: RegisterToolsDeps): void {
         estimable: false,
       }),
     },
-    withErrorHandling('update_app', async (args) => {
+    withErrorHandling('update_app', async (args, extra: ToolExtra) => {
       const manifest = args.manifest;
 
       try {
@@ -953,7 +948,7 @@ export function registerTools(deps: RegisterToolsDeps): void {
           manifest,
           existingManifest: args.existing_manifest,
         },
-        { pollOptions: false },
+        { pollOptions: false, signal: extra.signal },
       );
       return structuredResponse(result, bigIntReplacer);
     }),

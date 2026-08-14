@@ -553,7 +553,7 @@ export async function deployApp(
   // Last pre-broadcast cancellation boundary: once `fredDeployApp` is called
   // the tx may commit on-chain, so this is the final point an abort can cancel
   // cleanly (no lease created). After this, the signal only bounds fred's own
-  // await (via `abortSignal`) — a post-broadcast abort routes into recovery
+  // await (via `signal`) — a post-broadcast abort routes into recovery
   // (tx MAY STILL COMMIT → re-query; see core's withTxConfirmation contract).
   throwIfCancelled();
   callbacks.onProgress?.({ kind: 'deploy_app_broadcast' });
@@ -597,7 +597,7 @@ export async function deployApp(
       // unreachable from this API (ENG-661). Left unset, fred's own default
       // applies to both.
       {
-        ...(signal ? { abortSignal: signal } : {}),
+        ...(signal ? { signal } : {}),
         ...(opts.waitForReadyTimeoutMs !== undefined && {
           pollOptions: { timeoutMs: opts.waitForReadyTimeoutMs },
         }),
@@ -736,6 +736,10 @@ export async function deployApp(
           // Unset ⇒ inherit fred's DEFAULT_POLL_TIMEOUT_MS, which is derived
           // from the provider's own provisioning ceiling (ENG-661).
           timeoutMs: opts.waitForReadyTimeoutMs,
+          // The same scope signal already threaded into deployManifest above. Without
+          // it this second wait — often the longest leg of the flow — is uncancellable
+          // (ENG-666).
+          ...(signal ? { signal } : {}),
           onProgress: (status) => {
             attempt += 1;
             const stateName = decodeLeaseState(status.state);
