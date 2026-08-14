@@ -40,6 +40,44 @@ export type ProviderErrorKind =
    */
   | 'poll_verdict';
 
+/**
+ * Ceiling on a `ProviderApiError` message. Applied in the constructor rather than at
+ * the one non-2xx call site, so the invariant is TOTAL: it covers all ten construction
+ * sites, both subclasses, and two sinks a branch-local cap would miss — `errorText`,
+ * which folds a nested provider error into readiness prose, and `browseCatalog`, which
+ * puts `err.message` into `structuredContent` for EVERY provider in the catalog (a
+ * *success* response, so a cap at the error sink would never see it) (ENG-669).
+ *
+ * 4096 rather than the 256 used at display boundaries: this layer serves SDK consumers
+ * and stderr, where 256 routinely bisects a JSON error body and loses the actionable
+ * half. It is still a 2560x reduction from `MAX_RESPONSE_BYTES`, which is where the
+ * resource exhaustion actually lives.
+ */
+export const MAX_PROVIDER_ERROR_CHARS = 4096;
+
+/** The provider-text cap used when a message is EMBEDDED in composed prose. */
+export const PROVIDER_TEXT_EXCERPT_CHARS = 256;
+
+/**
+ * Length-only, code-point-safe truncation. The twin of core's `capLength`.
+ *
+ * Deliberately NOT `sanitizeForDisplay`: that also collapses newlines and whitespace
+ * runs, which is right for a display surface but wrong here — a `ProviderApiError`
+ * message is a diagnostic value on a published SDK surface and a stderr log line, so a
+ * multi-line body (an intermediary's HTML page, a nested stack) must keep its
+ * structure. Character sanitization stays at the tool layer, where it already is; the
+ * transport layer bounds length only.
+ */
+export function capProviderText(
+  s: string,
+  max: number = MAX_PROVIDER_ERROR_CHARS,
+): string {
+  if (!Number.isInteger(max) || max < 0) return s;
+  const codePoints = Array.from(s);
+  if (codePoints.length <= max) return s;
+  return `${codePoints.slice(0, max).join('')}…`;
+}
+
 export interface ProviderApiErrorOptions {
   readonly kind?: ProviderErrorKind;
   /** Parsed `Retry-After` in ms, when the provider sent one (see `parseRetryAfterMs`). */
@@ -59,7 +97,9 @@ export class ProviderApiError extends Error {
   public readonly cause?: unknown;
 
   constructor(status: number, message: string, opts?: ProviderApiErrorOptions) {
-    super(message);
+    // Capped here so no construction site — present or future — can put an
+    // unbounded provider body on this message (ENG-669).
+    super(capProviderText(message));
     this.name = 'ProviderApiError';
     this.status = status;
     this.kind = opts?.kind;
@@ -677,7 +717,7 @@ function parseJsonText<T>(text: string, status: number, url: string): T {
       parseErr instanceof Error ? parseErr.message : 'parse failed';
     throw new ProviderApiError(
       status,
-      `Invalid JSON from ${url} (${reason}): ${text.slice(0, 200)}`,
+      `Invalid JSON from ${url} (${reason}): ${capProviderText(text, 200)}`,
       { kind: 'invalid_json', cause: parseErr },
     );
   }

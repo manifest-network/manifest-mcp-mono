@@ -253,7 +253,7 @@ Set `COSMOS_RPC_URL` + `COSMOS_GAS_PRICE` for full access (queries + transaction
 | `restart_app` | Restart a deployed app via the provider |
 | `update_app` | Update a deployed app with a new manifest |
 | `app_diagnostics` | Get provision diagnostics for a deployed app |
-| `app_releases` | Get release/version history for a deployed app |
+| `app_releases` | Get release/version history for a deployed app (20 most recent; the stored manifest is omitted, its size reported as `manifest_bytes`) |
 
 The Fred server also exposes 3 MCP resources (`manifest://leases/active`, `manifest://leases/recent`, `manifest://providers`) and 3 prompts (`deploy-containerized-app`, `diagnose-failing-app`, `shutdown-all-leases`).
 

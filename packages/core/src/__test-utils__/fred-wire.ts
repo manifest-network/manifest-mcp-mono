@@ -162,12 +162,17 @@ export function leaseReleasesWire(opts: {
         image: 'nginx:1.0',
         status: 'active',
         created_at: '2025-01-01T00:00:00Z',
+        // Fred marshals `Manifest []byte` with NO omitempty, so a base64 manifest is
+        // present on EVERY release. Omitting it here made this fixture wrong about the
+        // wire — exactly the drift this shared module exists to prevent (ENG-669).
+        manifest: 'eyJpbWFnZSI6Im5naW54OjEuMCJ9',
       },
       {
         version: 2,
         image: 'nginx:2.0',
         status: 'failed',
         created_at: '2025-01-02T00:00:00Z',
+        manifest: 'eyJpbWFnZSI6Im5naW54OjIuMCJ9',
         ...failureFields(era, {
           reason: 'UpdateFailed',
           message: 'update failed; rolled back',

@@ -747,6 +747,10 @@ describe('FredMCPServer', () => {
       const parsed = JSON.parse(result.content[0].text);
       expect(parsed.lease_uuid).toBe(LEASE_UUID);
       expect(parsed.releases).toHaveLength(2);
+      expect(parsed.release_count).toBe(2);
+      expect(parsed.truncated).toBe(false);
+      // These fixtures carry no `manifest`, so the element shape is unchanged and
+      // stays exactly pinned.
       expect(parsed.releases[0]).toEqual({
         version: 1,
         image: 'nginx:1.0',
@@ -782,6 +786,82 @@ describe('FredMCPServer', () => {
         'function',
       );
       expect(mockGetLeaseReleases.mock.lastCall?.at(-1)).toBe(false);
+    });
+
+    it('never forwards a release manifest into model context (ENG-669)', async () => {
+      mockFetchActiveLease.mockResolvedValue({
+        uuid: LEASE_UUID,
+        providerUuid: 'prov-1',
+      } as never);
+      mockResolveProviderUrl.mockResolvedValue('https://provider.example.com');
+      // Fred sends the full base64 manifest on EVERY release (no omitempty), and
+      // structuredResponse duplicates structuredContent into the text content — so
+      // this used to land in context twice, ~800 KB for one release.
+      mockGetLeaseReleases.mockResolvedValue({
+        lease_uuid: LEASE_UUID,
+        tenant: 'manifest1tenant',
+        provider_uuid: 'prov-1',
+        releases: [
+          {
+            version: 1,
+            image: 'nginx:1.0',
+            status: 'active',
+            created_at: '2025-01-01T00:00:00Z',
+            manifest: 'A'.repeat(400_000),
+          },
+        ],
+      });
+
+      const server = new FredMCPServer({
+        config: makeMockConfig(),
+        walletProvider: makeMockWallet({ signArbitrary: true }),
+      });
+      const result = await callTool(server, 'app_releases', {
+        lease_uuid: LEASE_UUID,
+      });
+
+      // Asserting on the serialized text catches BOTH copies at once.
+      expect(result.content[0].text.length).toBeLessThan(5_000);
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.releases[0]).not.toHaveProperty('manifest');
+      // 400_000 base64 chars, no padding → 300_000 bytes.
+      expect(parsed.releases[0].manifest_bytes).toBe(300_000);
+    });
+
+    it('caps how many releases reach model context and says it did (ENG-669)', async () => {
+      mockFetchActiveLease.mockResolvedValue({
+        uuid: LEASE_UUID,
+        providerUuid: 'prov-1',
+      } as never);
+      mockResolveProviderUrl.mockResolvedValue('https://provider.example.com');
+      // Neither side paginates and Fred prunes by age, never by count, so history
+      // length is a second unbounded dimension independent of the manifest blob.
+      mockGetLeaseReleases.mockResolvedValue({
+        lease_uuid: LEASE_UUID,
+        tenant: 'manifest1tenant',
+        provider_uuid: 'prov-1',
+        releases: Array.from({ length: 30 }, (_, i) => ({
+          version: i + 1,
+          image: `nginx:${i + 1}`,
+          status: 'active',
+          created_at: '2025-01-01T00:00:00Z',
+        })),
+      });
+
+      const server = new FredMCPServer({
+        config: makeMockConfig(),
+        walletProvider: makeMockWallet({ signArbitrary: true }),
+      });
+      const result = await callTool(server, 'app_releases', {
+        lease_uuid: LEASE_UUID,
+      });
+
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.releases).toHaveLength(20);
+      // The newest window, and the true total so the model knows more exist.
+      expect(parsed.releases[0].version).toBe(11);
+      expect(parsed.release_count).toBe(30);
+      expect(parsed.truncated).toBe(true);
     });
 
     it('returns error when lease not found on chain', async () => {

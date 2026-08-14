@@ -4,6 +4,7 @@ import {
   bigIntReplacer,
   createMnemonicServer,
   jsonResponse,
+  MAX_TOOL_ERROR_MESSAGE_CHARS,
   type ManifestMCPServerOptions,
   SENSITIVE_FIELDS,
   sanitizeForDisplay,
@@ -313,6 +314,51 @@ describe('withErrorHandling', () => {
     const parsed = JSON.parse(textOf(result));
     expect(parsed.message).toBe('generic');
     expect(parsed.code).toBeUndefined();
+  });
+
+  // The if/else in withErrorHandling already separates first-party from untrusted, so
+  // the cap rides that split rather than being applied to everything (ENG-669).
+  describe('response-size bound (ENG-669)', () => {
+    it('caps an over-long message mono did not author', async () => {
+      const handler = withErrorHandling<TestToolCb>('test', async () => {
+        throw new Error('x'.repeat(100_000));
+      });
+      const parsed = JSON.parse(textOf(await handler({}, {})));
+      expect(parsed.message.length).toBe(MAX_TOOL_ERROR_MESSAGE_CHARS + 1);
+      expect(parsed.message.endsWith('…')).toBe(true);
+    });
+
+    it('leaves a first-party ManifestMCPError recovery message uncapped', async () => {
+      // These are curated guidance whose length is a reviewed design choice —
+      // truncating them would amputate advice the agent must read.
+      const long = `RECOVERY: ${'y'.repeat(3_000)}`;
+      const handler = withErrorHandling<TestToolCb>('test', async () => {
+        throw new ManifestMCPError(ManifestMCPErrorCode.QUERY_FAILED, long);
+      });
+      const parsed = JSON.parse(textOf(await handler({}, {})));
+      expect(parsed.message).toBe(long);
+    });
+
+    it('still logs the full message to stderr after capping the response', async () => {
+      // Pins against a naive in-place cap of safeMessage: stderr is not model
+      // context, so there is no reason to lose the diagnostic there.
+      const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const handler = withErrorHandling<TestToolCb>('test', async () => {
+        throw new Error(`${'z'.repeat(100_000)}TAIL`);
+      });
+      await handler({}, {});
+      expect(spy.mock.calls.flat().join('\n')).toContain('TAIL');
+      spy.mockRestore();
+    });
+
+    it('redacts a mnemonic BEFORE capping, not after', async () => {
+      const mnemonic = Array(24).fill('abandon').join(' ');
+      const handler = withErrorHandling<TestToolCb>('test', async () => {
+        throw new Error(mnemonic);
+      });
+      const parsed = JSON.parse(textOf(await handler({}, {})));
+      expect(parsed.message).toBe('[REDACTED - possible mnemonic]');
+    });
   });
 
   it('catches non-Error thrown values', async () => {

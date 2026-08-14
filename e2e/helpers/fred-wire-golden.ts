@@ -22,6 +22,13 @@ interface GoldenEntry {
   readonly always: readonly string[];
   readonly sometimes: readonly string[];
   readonly mono_strips: readonly string[];
+  /**
+   * Keys mono ADDS that Fred never sends (e.g. a derived `next_step`, or a
+   * `manifest_bytes` measuring a blob mono strips). They are observed through a
+   * projection, so they must count as known — otherwise they read as an unmodelled
+   * provider field, which is the opposite of the truth.
+   */
+  readonly mono_adds: readonly string[];
 }
 
 const GOLDEN_PATH = fileURLToPath(
@@ -75,6 +82,7 @@ export function assertWireKeys(
     ...entry.always,
     ...entry.sometimes,
     ...entry.mono_strips,
+    ...entry.mono_adds,
   ]);
   const unknown = observed.filter((k) => !known.has(k));
   expect(

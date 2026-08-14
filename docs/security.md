@@ -160,6 +160,17 @@ Errors returned to the MCP client and lines written to stderr are run through `s
 
 The bare keys `key` and `token` are **not** in the sensitive field list (they would match pagination keys, tokenfactory denoms, and other non-sensitive values). Use compound names (`api_key`, `auth_token`, …) when introducing new fields.
 
+## Output bounds
+
+Redaction bounds *what* reaches model context; these bound *how much*. `sanitizeForLogging` never truncates, so before ENG-669 a hostile or merely verbose provider could exhaust the context window and burn the user's tokens on a single tool call. This is a resource concern rather than a disclosure one — the content is the tenant's own.
+
+- **Provider error text — 4096 code points**, applied in the `ProviderApiError` constructor so the bound is total across every construction site, both subclasses, and the sinks that embed a message in composed prose or in a *success* response (`browse_catalog` reports a per-provider `healthError`).
+- **Nested provider text in composed prose — 256**, so a long inner error cannot push the surrounding guidance past the outer cap and delete it.
+- **Any error message mono did not author — 2000 code points**, applied in `withErrorHandling` on its way into the tool response. First-party `ManifestMCPError` messages are deliberately **exempt**: they are curated recovery guidance whose length is a reviewed design choice. stderr keeps the full, uncapped message either way — it is not model context.
+- **`app_releases`** omits the base64 deployment manifest Fred sends on every release (reporting only `manifest_bytes`) and returns the 20 most recent releases, with `release_count` and `truncated`. Release history has no pagination on either side and Fred prunes by age rather than count, so both the blob and the count were unbounded.
+
+These are **AI-context** caps, distinct from the transport bounds above. The raw values survive on the library path: `getLeaseReleases` still returns the manifest, since a consumer reading back what was deployed has no context window to exhaust.
+
 ## What the agent should not be trusted with
 
 Treat these as policy, not technical guarantees:

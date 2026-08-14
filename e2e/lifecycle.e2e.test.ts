@@ -322,14 +322,21 @@ describe('Deploy lifecycle', () => {
     const result = await fredClient.callTool<{
       lease_uuid: string;
       releases: Array<Record<string, unknown>>;
+      release_count: number;
+      truncated: boolean;
     }>('app_releases', { lease_uuid: leaseUuid });
 
     expect(result.lease_uuid).toBe(leaseUuid);
     expect(result.releases.length).toBeGreaterThan(0);
+    expect(result.release_count).toBeGreaterThan(0);
+    expect(result.truncated).toBe(false);
     // Release elements are forwarded through a looseObject, so these are
     // Fred's own keys — a real observation of the wire (ENG-638).
     for (const release of result.releases) {
       assertWireKeys('release', Object.keys(release));
+      // The live provider really does send a manifest on every release; this is the
+      // observation that proves mono strips it before model context (ENG-669).
+      expect(release).not.toHaveProperty('manifest');
     }
   });
 
