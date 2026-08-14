@@ -246,7 +246,77 @@ export function validateProviderUrl(
   );
 }
 
-const DEFAULT_FETCH_TIMEOUT_MS = 30_000;
+/**
+ * Default budget for a whole provider HTTP call — headers AND body. Exported so a
+ * direct `readBodyCapped` / `parseJsonResponse` caller can see (and match) the bound
+ * their body read is subject to.
+ */
+export const DEFAULT_FETCH_TIMEOUT_MS = 30_000;
+
+/**
+ * A composed caller-signal + internal-timeout, armed for the life of one call.
+ *
+ * Deliberately hand-rolled rather than `AbortSignal.any([signal, AbortSignal.timeout(ms)])`:
+ * this needs to *disarm* the timeout the moment the caller aborts first, so a delayed
+ * fetch rejection is not misclassified as a timeout. `AbortSignal.any` offers no way to
+ * cancel one leg, and `timedOut()` would degrade to sniffing `reason.name`, which a
+ * caller's own reason could collide with.
+ */
+interface ArmedDeadline {
+  readonly signal: AbortSignal;
+  /** True iff the INTERNAL timeout fired — as opposed to the caller cancelling. */
+  timedOut(): boolean;
+  /** Idempotent: clears the timer and detaches the caller-signal listener. */
+  dispose(): void;
+}
+
+function armDeadline(
+  timeoutMs: number,
+  callerSignal?: AbortSignal,
+): ArmedDeadline {
+  const composed = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let timedOut = false;
+  let callerAbortHandler: (() => void) | undefined;
+
+  if (callerSignal?.aborted) {
+    composed.abort(callerSignal.reason);
+  } else if (callerSignal) {
+    callerAbortHandler = () => {
+      // Clear the timer so a delayed rejection can't be misclassified as a
+      // timeout after the caller already cancelled.
+      if (timer !== undefined) {
+        clearTimeout(timer);
+        timer = undefined;
+      }
+      composed.abort(callerSignal.reason);
+    };
+    callerSignal.addEventListener('abort', callerAbortHandler, { once: true });
+  }
+  if (timeoutMs > 0 && !composed.signal.aborted) {
+    timer = setTimeout(() => {
+      // Defensive: if the caller already aborted, don't flip timedOut.
+      if (composed.signal.aborted) return;
+      timedOut = true;
+      composed.abort();
+    }, timeoutMs);
+  }
+
+  return {
+    signal: composed.signal,
+    timedOut: () => timedOut,
+    dispose: () => {
+      if (timer !== undefined) {
+        clearTimeout(timer);
+        timer = undefined;
+      }
+      if (callerAbortHandler && callerSignal) {
+        callerSignal.removeEventListener('abort', callerAbortHandler);
+        callerAbortHandler = undefined;
+      }
+    },
+  };
+}
 
 /**
  * Hard ceiling on a provider HTTP response body (10 MiB). Provider payloads
@@ -259,69 +329,167 @@ const DEFAULT_FETCH_TIMEOUT_MS = 30_000;
  */
 export const MAX_RESPONSE_BYTES = 10 * 1024 * 1024;
 
+/** Deadline/cancellation control for a body read. */
+export interface BodyReadOptions {
+  /**
+   * An externally-owned deadline (normally `checkedFetch`'s). When present NO local
+   * timer is armed and the signal's reason is surfaced verbatim — the owner classifies.
+   */
+  readonly signal?: AbortSignal;
+  /** Local deadline when `signal` is absent. `<= 0` disables it. */
+  readonly timeoutMs?: number;
+}
+
 /**
- * Read a response body to a string while enforcing a hard byte ceiling.
+ * Read a response body to a string under BOTH a byte ceiling and a deadline.
  *
  * Streams `res.body` and counts bytes, cancelling the stream and throwing a
  * `ProviderApiError` the moment the running total exceeds `maxBytes` — so an
- * oversized body never fully materializes in memory. A declared
- * `Content-Length` over the cap is rejected up front. Replaces the unbounded
- * `await res.text()` that every provider read previously funnelled through.
+ * oversized body never fully materializes in memory. A declared `Content-Length`
+ * over the cap is rejected up front.
+ *
+ * The byte cap bounds MEMORY; it does not bound TIME. A provider that dripped one
+ * byte per minute stayed forever under 10 MiB and read forever, which is why this
+ * arms its own deadline whenever the caller does not supply one (ENG-662). The two
+ * guards cover the two shapes: the cap kills a fast infinite stream, the deadline
+ * kills a slow one.
  */
 export async function readBodyCapped(
   res: Response,
   url: string,
   maxBytes: number = MAX_RESPONSE_BYTES,
+  opts?: BodyReadOptions,
 ): Promise<string> {
-  // Optional chaining: a real `Response` always has `.headers`, but keep the
-  // fast-path tolerant of minimal test/mock objects — the streaming cap below
-  // is the authoritative guard, this header check is just an early reject.
-  const declared = Number(res.headers?.get?.('content-length'));
-  if (Number.isFinite(declared) && declared > maxBytes) {
-    // Tear the body down before bailing so undici can release the socket back
-    // to the pool immediately, rather than holding it until GC finalization.
-    // Mirrors the `reader.cancel()` on the streamed-overflow path below.
-    await res.body?.cancel().catch(() => {});
-    throw new ProviderApiError(
-      0,
-      `Response from ${url} declares Content-Length ${declared} which exceeds the ${maxBytes}-byte cap; refusing to read.`,
-      { kind: 'body_cap' },
-    );
-  }
+  const timeoutMs = opts?.timeoutMs ?? DEFAULT_FETCH_TIMEOUT_MS;
+  // Own a deadline only when nobody else does.
+  const local = opts?.signal ? undefined : armDeadline(timeoutMs);
+  const signal = opts?.signal ?? local?.signal;
 
-  const reader = res.body?.getReader();
-  if (!reader) {
-    // No readable stream (empty body or a non-stream mock). Nothing to buffer.
-    return await res.text();
-  }
+  // Only a locally-owned timeout can be classified here; an external signal's
+  // reason belongs to whoever armed it.
+  const abortError = (): unknown =>
+    local?.timedOut()
+      ? new ProviderApiError(
+          0,
+          `Reading the response body from ${url} timed out after ${timeoutMs}ms (headers arrived; the body stalled)`,
+          { kind: 'timeout' },
+        )
+      : (signal?.reason ??
+        new DOMException('The operation was aborted', 'AbortError'));
 
-  const decoder = new TextDecoder();
-  let text = '';
-  let total = 0;
   try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      if (value) {
-        total += value.byteLength;
-        if (total > maxBytes) {
-          // Swallow a rejecting cancel() so the meaningful cap error is the one
-          // surfaced, not a teardown error — matches the Content-Length path.
-          await reader.cancel().catch(() => {});
-          throw new ProviderApiError(
-            0,
-            `Response body from ${url} exceeded the ${maxBytes}-byte cap; aborting to avoid memory exhaustion.`,
-            { kind: 'body_cap' },
-          );
-        }
-        text += decoder.decode(value, { stream: true });
-      }
+    if (signal?.aborted) throw abortError();
+
+    // Optional chaining: a real `Response` always has `.headers`, but keep the
+    // fast-path tolerant of minimal test/mock objects — the streaming cap below
+    // is the authoritative guard, this header check is just an early reject.
+    const declared = Number(res.headers?.get?.('content-length'));
+    if (Number.isFinite(declared) && declared > maxBytes) {
+      // Tear the body down before bailing so undici can release the socket back
+      // to the pool immediately, rather than holding it until GC finalization.
+      // Mirrors the `reader.cancel()` on the streamed-overflow path below.
+      await res.body?.cancel().catch(() => {});
+      throw new ProviderApiError(
+        0,
+        `Response from ${url} declares Content-Length ${declared} which exceeds the ${maxBytes}-byte cap; refusing to read.`,
+        { kind: 'body_cap' },
+      );
     }
-    text += decoder.decode(); // flush any trailing multi-byte sequence
+
+    const reader = res.body?.getReader();
+    if (!reader) {
+      // No readable stream (empty body or a non-stream mock). There is no reader to
+      // cancel, so bound it by RACING instead. A genuinely stuck `res.text()` is
+      // abandoned rather than torn down — acceptable only because this branch is
+      // unreachable for a real streamed response (one always exposes a reader, and a
+      // null body has nothing to trickle).
+      return await raceAbort(res.text(), signal, abortError, res);
+    }
+
+    // ONE listener for the whole read. Registering per-iteration would leak tens of
+    // thousands of listeners on a large body.
+    let onAbort: (() => void) | undefined;
+    let abortPromise: Promise<never> | undefined;
+    if (signal) {
+      abortPromise = new Promise<never>((_resolve, reject) => {
+        onAbort = () => reject(abortError());
+        signal.addEventListener('abort', onAbort, { once: true });
+      });
+      // Never let a post-loop abort surface as an unhandled rejection.
+      abortPromise.catch(() => {});
+    }
+
+    const decoder = new TextDecoder();
+    let text = '';
+    let total = 0;
+    try {
+      while (true) {
+        const { done, value } = abortPromise
+          ? await Promise.race([reader.read(), abortPromise])
+          : await reader.read();
+        if (done) break;
+        if (value) {
+          total += value.byteLength;
+          if (total > maxBytes) {
+            // Swallow a rejecting cancel() so the meaningful cap error is the one
+            // surfaced, not a teardown error — matches the Content-Length path.
+            await reader.cancel().catch(() => {});
+            throw new ProviderApiError(
+              0,
+              `Response body from ${url} exceeded the ${maxBytes}-byte cap; aborting to avoid memory exhaustion.`,
+              { kind: 'body_cap' },
+            );
+          }
+          text += decoder.decode(value, { stream: true });
+        }
+      }
+      text += decoder.decode(); // flush any trailing multi-byte sequence
+    } catch (err) {
+      // On a real undici body an abort races two producers — our `abortPromise` and
+      // `reader.read()` erroring — and `Promise.race` takes whichever settles first.
+      // Classify off the signal so the surfaced error is deterministic.
+      if (signal?.aborted) {
+        await reader.cancel().catch(() => {});
+        throw abortError();
+      }
+      throw err;
+    } finally {
+      if (onAbort && signal) signal.removeEventListener('abort', onAbort);
+      reader.releaseLock();
+    }
+    return text;
   } finally {
-    reader.releaseLock();
+    local?.dispose();
   }
-  return text;
+}
+
+/**
+ * Settle `p`, or reject with `abortError()` if `signal` fires first. Single-executor
+ * (rather than `Promise.race`) so the loser always has a handler attached and a late
+ * rejection can never surface as unhandled.
+ */
+async function raceAbort<T>(
+  p: Promise<T>,
+  signal: AbortSignal | undefined,
+  abortError: () => unknown,
+  res: Response,
+): Promise<T> {
+  if (!signal) return await p;
+  if (signal.aborted) throw abortError();
+  let onAbort: (() => void) | undefined;
+  try {
+    return await new Promise<T>((resolve, reject) => {
+      onAbort = () => {
+        // Best-effort socket release; harmless when the body is null.
+        void res.body?.cancel().catch(() => {});
+        reject(abortError());
+      };
+      signal.addEventListener('abort', onAbort, { once: true });
+      p.then(resolve, reject);
+    });
+  } finally {
+    if (onAbort) signal.removeEventListener('abort', onAbort);
+  }
 }
 
 export async function checkedFetch(
@@ -340,67 +508,42 @@ export async function checkedFetch(
   warnUnguardedOnce(hasInjectedFetch(fetchFn));
   const doFetch = fetchFn ?? globalThis.fetch;
 
-  const callerSignal = init?.signal ?? undefined;
-
-  // Compose the caller's signal with an internal timeout so callers cannot
-  // accidentally disable the safety net by supplying their own signal.
-  const composed = new AbortController();
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  let timedOut = false;
-  let callerAbortHandler: (() => void) | undefined;
-
-  if (callerSignal?.aborted) {
-    composed.abort(callerSignal.reason);
-  } else if (callerSignal) {
-    callerAbortHandler = () => {
-      // Clear the timer so a delayed fetch rejection can't be misclassified
-      // as a timeout after the caller already cancelled.
-      if (timer !== undefined) {
-        clearTimeout(timer);
-        timer = undefined;
-      }
-      composed.abort(callerSignal.reason);
-    };
-    callerSignal.addEventListener('abort', callerAbortHandler, { once: true });
+  const deadline = armDeadline(timeoutMs, init?.signal ?? undefined);
+  try {
+    return await checkedFetchWithin(url, init, deadline, timeoutMs, doFetch);
+  } finally {
+    // The SUCCESS path deliberately disarms here: `checkedFetch` returns before the
+    // body is read, so it has nothing coherent to hand forward. Reading that body
+    // through `readBodyCapped` / `parseJsonResponse` re-arms a fresh deadline;
+    // calling `res.text()` on it directly is bounded by NEITHER cap, which is why
+    // `fetchJsonChecked` — one budget across both phases — is the entry point every
+    // provider read in this repo uses.
+    deadline.dispose();
   }
-  if (timeoutMs > 0 && !composed.signal.aborted) {
-    timer = setTimeout(() => {
-      // Defensive: if the caller already aborted, don't flip timedOut.
-      if (composed.signal.aborted) return;
-      timedOut = true;
-      composed.abort();
-    }, timeoutMs);
-  }
+}
 
+/**
+ * The fetch + non-2xx handling of `checkedFetch`, inside an already-armed deadline so
+ * `fetchJsonChecked` can extend the same budget over its body read.
+ *
+ * The nested try is load-bearing: the `!res.ok` branch throws a `ProviderApiError`, and
+ * letting that fall into the transport `catch` would re-wrap every non-2xx as
+ * `kind: 'network'`.
+ */
+async function checkedFetchWithin(
+  url: string,
+  init: RequestInit | undefined,
+  deadline: ArmedDeadline,
+  timeoutMs: number,
+  doFetch: typeof globalThis.fetch,
+): Promise<Response> {
   let res: Response;
   try {
     // Don't even dispatch fetch if the caller's signal is already aborted.
-    composed.signal.throwIfAborted();
-    res = await doFetch(url, { ...init, signal: composed.signal });
+    deadline.signal.throwIfAborted();
+    res = await doFetch(url, { ...init, signal: deadline.signal });
   } catch (err) {
-    if (err instanceof DOMException && err.name === 'AbortError') {
-      if (timedOut) {
-        throw new ProviderApiError(
-          0,
-          `Request to ${url} timed out after ${timeoutMs}ms`,
-          { kind: 'timeout' },
-        );
-      }
-      // Surface the caller's original abort reason (e.g. `new Error('cancelled')`)
-      // rather than the fetch-internal DOMException AbortError.
-      throw composed.signal.reason;
-    }
-    if (composed.signal.aborted && !timedOut) throw composed.signal.reason;
-    throw new ProviderApiError(
-      0,
-      `Network request to ${url} failed: ${err instanceof Error ? err.message : String(err)}`,
-      { kind: 'network', cause: err },
-    );
-  } finally {
-    if (timer !== undefined) clearTimeout(timer);
-    if (callerAbortHandler && callerSignal) {
-      callerSignal.removeEventListener('abort', callerAbortHandler);
-    }
+    throw classifyTransportError(err, deadline, url, timeoutMs);
   }
   if (!res.ok) {
     // Read `Retry-After` BEFORE the body: it is the provider's own guidance on
@@ -416,37 +559,138 @@ export async function checkedFetch(
     // and re-stream up to 10 MiB per attempt — exactly what the cap exists to
     // prevent. The real HTTP status is preserved either way.
     let capBreached = false;
-    const body = await readBodyCapped(res, url).catch((readErr: unknown) => {
+    let bodyTimedOut = false;
+    // This read is now INSIDE the armed window. It used to sit after the teardown,
+    // so a provider that returned error headers promptly and then trickled the body
+    // hung here forever, immune to both the timeout and the caller's cancel (ENG-662).
+    const body = await readBodyCapped(res, url, MAX_RESPONSE_BYTES, {
+      signal: deadline.signal,
+    }).catch((readErr: unknown) => {
+      // A caller cancel is the whole call being cancelled, not a body fault — it must
+      // never be laundered into placeholder text. `pollLeaseUntilReady` keys
+      // cancellation off the signal, so the error's identity matters here.
+      if (deadline.signal.aborted && !deadline.timedOut()) {
+        throw deadline.signal.reason;
+      }
+      bodyTimedOut = deadline.timedOut();
       capBreached =
         ProviderApiError.isProviderApiError(readErr) &&
         readErr.kind === 'body_cap';
-      return `[body read failed: ${readErr instanceof Error ? readErr.message : String(readErr)}]`;
+      return bodyTimedOut
+        ? `[body read from ${url} timed out after ${timeoutMs}ms]`
+        : `[body read failed: ${readErr instanceof Error ? readErr.message : String(readErr)}]`;
     });
     throw new ProviderApiError(res.status, body || `HTTP ${res.status}`, {
-      kind: capBreached ? 'body_cap' : 'http',
+      kind: capBreached ? 'body_cap' : bodyTimedOut ? 'timeout' : 'http',
       ...(retryAfterMs !== undefined && { retryAfterMs }),
     });
   }
   return res;
 }
 
-export async function parseJsonResponse<T>(
-  res: Response,
+function classifyTransportError(
+  err: unknown,
+  deadline: ArmedDeadline,
   url: string,
+  timeoutMs: number,
+): unknown {
+  if (err instanceof DOMException && err.name === 'AbortError') {
+    if (deadline.timedOut()) {
+      return new ProviderApiError(
+        0,
+        `Request to ${url} timed out after ${timeoutMs}ms`,
+        { kind: 'timeout' },
+      );
+    }
+    // Surface the caller's original abort reason (e.g. `new Error('cancelled')`)
+    // rather than the fetch-internal DOMException AbortError.
+    return deadline.signal.reason;
+  }
+  if (deadline.signal.aborted && !deadline.timedOut()) {
+    return deadline.signal.reason;
+  }
+  return new ProviderApiError(
+    0,
+    `Network request to ${url} failed: ${err instanceof Error ? err.message : String(err)}`,
+    { kind: 'network', cause: err },
+  );
+}
+
+/**
+ * `checkedFetch` + `parseJsonResponse` under ONE deadline, so `timeoutMs` is a budget
+ * for the whole call rather than for each phase separately. This is the right entry
+ * point for every provider read; raw `checkedFetch` hands back a `Response` whose body
+ * the caller must bound itself.
+ */
+export async function fetchJsonChecked<T>(
+  url: string,
+  init?: RequestInit,
+  timeoutMs: number = DEFAULT_FETCH_TIMEOUT_MS,
+  fetchFn?: typeof globalThis.fetch,
   maxBytes: number = MAX_RESPONSE_BYTES,
 ): Promise<T> {
-  const text = await readBodyCapped(res, url, maxBytes);
+  warnUnguardedOnce(hasInjectedFetch(fetchFn));
+  const doFetch = fetchFn ?? globalThis.fetch;
+  const deadline = armDeadline(timeoutMs, init?.signal ?? undefined);
+  try {
+    const res = await checkedFetchWithin(
+      url,
+      init,
+      deadline,
+      timeoutMs,
+      doFetch,
+    );
+    const text = await readBodyCapped(res, url, maxBytes, {
+      signal: deadline.signal,
+    }).catch((err: unknown) => {
+      throw classifyBodyError(err, deadline, url, timeoutMs);
+    });
+    // `res.status`, NOT 0: restoreApp distinguishes "restore COMMITTED but the 202
+    // body was empty" from a real failure by branching on a 2xx status here.
+    return parseJsonText<T>(text, res.status, url);
+  } finally {
+    deadline.dispose();
+  }
+}
+
+function classifyBodyError(
+  err: unknown,
+  deadline: ArmedDeadline,
+  url: string,
+  timeoutMs: number,
+): unknown {
+  if (deadline.timedOut()) {
+    return new ProviderApiError(
+      0,
+      `Reading the response body from ${url} timed out after ${timeoutMs}ms (headers arrived; the body stalled)`,
+      { kind: 'timeout' },
+    );
+  }
+  return err;
+}
+
+function parseJsonText<T>(text: string, status: number, url: string): T {
   try {
     return JSON.parse(text) as T;
   } catch (parseErr) {
     const reason =
       parseErr instanceof Error ? parseErr.message : 'parse failed';
     throw new ProviderApiError(
-      res.status,
+      status,
       `Invalid JSON from ${url} (${reason}): ${text.slice(0, 200)}`,
       { kind: 'invalid_json', cause: parseErr },
     );
   }
+}
+
+export async function parseJsonResponse<T>(
+  res: Response,
+  url: string,
+  maxBytes: number = MAX_RESPONSE_BYTES,
+  opts?: BodyReadOptions,
+): Promise<T> {
+  const text = await readBodyCapped(res, url, maxBytes, opts);
+  return parseJsonText<T>(text, res.status, url);
 }
 
 export interface ProviderHealthResponse {
@@ -465,8 +709,12 @@ export async function getProviderHealth(
 ): Promise<ProviderHealthResponse> {
   const validated = validateProviderUrl(providerApiUrl, { allowLoopback });
   const url = `${validated}/health`;
-  const res = await checkedFetch(url, undefined, timeoutMs, fetchFn);
-  return await parseJsonResponse<ProviderHealthResponse>(res, url);
+  return await fetchJsonChecked<ProviderHealthResponse>(
+    url,
+    undefined,
+    timeoutMs,
+    fetchFn,
+  );
 }
 
 import type {
@@ -492,15 +740,12 @@ export async function getLeaseConnectionInfo(
 ): Promise<LeaseConnectionResponse> {
   const validated = validateProviderUrl(providerApiUrl, { allowLoopback });
   const url = `${validated}/v1/leases/${encodeURIComponent(leaseUuid)}/connection`;
-  const res = await checkedFetch(
+  return await fetchJsonChecked<LeaseConnectionResponse>(
     url,
-    {
-      headers: { Authorization: `Bearer ${authToken}` },
-    },
+    { headers: { Authorization: `Bearer ${authToken}` } },
     undefined,
     fetchFn,
   );
-  return await parseJsonResponse<LeaseConnectionResponse>(res, url);
 }
 
 export async function uploadLeaseData(

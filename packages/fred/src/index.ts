@@ -77,8 +77,11 @@ export {
   updateLease,
 } from './http/fred.js';
 export {
+  type BodyReadOptions,
   type ConnectionDetails,
   checkedFetch,
+  DEFAULT_FETCH_TIMEOUT_MS,
+  fetchJsonChecked,
   getLeaseConnectionInfo,
   getProviderHealth,
   type InstanceInfo,

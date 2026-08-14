@@ -119,6 +119,10 @@ describe('manifest-sdk barrels', () => {
       'createProviderAuth',
       'restoreApp',
       'restoreLease',
+      // The bounded provider-read entry point. Raw `checkedFetch` hands back a
+      // Response whose body the caller must bound itself, so the safe alternative
+      // has to be reachable from the SDK too (ENG-662).
+      'fetchJsonChecked',
     ])
       expect(deploy).toHaveProperty(k);
   });

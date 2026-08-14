@@ -131,6 +131,17 @@ The single resolution point for provider/Fred HTTP is `checkedFetch` in `package
 
 Residual risk on an unguarded path: a provider `apiUrl` that is a *hostname* resolving to an internal address. Literal internal IPs are still blocked by layer 1 everywhere.
 
+## Transport bounds (provider HTTP)
+
+Provider `apiUrl`s come from on-chain SKU records, so the same attacker-influenced boundary that motivates the SSRF layers also means a provider controls how much it sends and how slowly. Two bounds apply, and **they have different scopes**:
+
+- **Bytes — body only.** `MAX_RESPONSE_BYTES` (10 MiB), enforced by `readBodyCapped`: it streams the body and aborts the moment the running total exceeds the cap, so an oversized body never fully materializes. A declared `Content-Length` over the cap is rejected before a single chunk is read. Response *headers* are not byte-capped here — that is the HTTP client's own limit.
+- **Time — the whole call.** `DEFAULT_FETCH_TIMEOUT_MS` (30s), covering the header phase **and** the body phase. The byte cap alone bounds memory, not time: a provider that returns headers promptly and then trickles one byte at a time stays forever under 10 MiB, so before ENG-662 it could pin a tool call open indefinitely — the timeout and the caller's `AbortSignal` were both torn down before the body was read. An inactivity/stall deadline is deliberately **not** used: any trickle above zero defeats it. Only a total budget bounds a hostile trickle.
+
+**These bounds apply to reads that go through `fetchJsonChecked` / `readBodyCapped` / `parseJsonResponse` — not to a `Response` object as such.** `fetchJsonChecked()` is the entry point that spends one budget across both phases, and is what every provider read in this repo uses.
+
+Raw `checkedFetch()` is the transport half: it returns a `Response` **before** the body is read, and disposes its deadline on the way out. Reading that body with `readBodyCapped` / `parseJsonResponse` re-arms a fresh 30s deadline; calling `res.text()` or `res.json()` on it **directly is unbounded in both time and bytes**. If you are calling the raw HTTP surface, prefer `fetchJsonChecked`.
+
 ## Input validation
 
 The MCP server parses input through Zod schemas (registered alongside each tool) before it reaches a handler. Then `validation.ts` helpers (`requireString`, `requireUuid`, `requireStringEnum`, `parseArgs`, `optionalBoolean`, …) check semantic shape before the handler builds chain messages. A static-shape violation from these helpers surfaces as `QUERY_FAILED` (query tools) or `TX_FAILED` (tx tools) — the helpers default to `QUERY_FAILED` and take an explicit error-code argument that tx handlers pass as `TX_FAILED` — with `INVALID_ADDRESS` for a wrong bech32 prefix. `INVALID_CONFIG` is reserved for server/config validation (`createValidatedConfig`) plus structural tool-boundary checks (e.g. mutually-exclusive `fee`/`gasMultiplier` overrides), not routine input shape.
