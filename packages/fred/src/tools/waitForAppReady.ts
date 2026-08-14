@@ -1,6 +1,7 @@
 import { leaseStateToJSON } from '@manifest-network/manifest-mcp-core';
 import type { FredAuthCtx } from '../ctx.js';
 import { type FredLeaseStatus, pollLeaseUntilReady } from '../http/fred.js';
+import { resolveFredSignal } from './call-signal.js';
 import { fetchActiveLease } from './fetchActiveLease.js';
 import { resolveProviderUrl } from './resolveLeaseProvider.js';
 
@@ -8,6 +9,13 @@ export interface WaitForAppReadyOptions {
   readonly timeoutMs?: number;
   readonly intervalMs?: number;
   readonly onProgress?: (status: FredLeaseStatus) => void;
+  /**
+   * Caller cancellation — the canonical spelling, shared with core's `CallOptions`.
+   * There is deliberately no `timeout` here: `timeoutMs` above is already this call's
+   * deadline, and two spellings for one concept would be ambiguous (ENG-666).
+   */
+  readonly signal?: AbortSignal;
+  /** @deprecated Use `signal`. Both are honoured — either one cancels. */
   readonly abortSignal?: AbortSignal;
   /** Consecutive provider status-read failures to tolerate. See `PollOptions`. */
   readonly maxConsecutiveFailures?: number;
@@ -49,7 +57,7 @@ export async function waitForAppReady(
     {
       intervalMs: opts.intervalMs,
       timeoutMs: opts.timeoutMs,
-      abortSignal: opts.abortSignal,
+      abortSignal: resolveFredSignal(opts),
       onProgress: opts.onProgress,
       maxConsecutiveFailures: opts.maxConsecutiveFailures,
     },

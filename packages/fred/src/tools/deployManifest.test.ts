@@ -602,7 +602,28 @@ describe('deployManifest', () => {
     });
   });
 
-  it('already-aborted signal → partial with no misleading failedStep', async () => {
+  it('already-aborted signal creates NO lease — zero side effects (ENG-666)', async () => {
+    const cm = makeMockClientManager({
+      queryClient: makeQueryClient(),
+      address: 'manifest1tenant',
+    });
+    const thrown = await deployManifest(
+      await ctx(cm),
+      {
+        manifest: singleManifest(),
+        sku: { kind: 'byName', size: 'docker-micro' },
+      },
+      { abortSignal: AbortSignal.abort() },
+    ).catch((e: unknown) => e as any);
+
+    // The pre-broadcast guard fires before create-lease, so nothing is reserved and
+    // there is no partial state to report. Previously the abort was noticed only
+    // AFTER the lease had been paid for.
+    expect(mockCosmosTx).not.toHaveBeenCalled();
+    expect(thrown?.name).toBe('AbortError');
+  });
+
+  it('abort AFTER create-lease → partial with no misleading failedStep', async () => {
     const cm = makeMockClientManager({
       queryClient: makeQueryClient(),
       address: 'manifest1tenant',
@@ -613,6 +634,9 @@ describe('deployManifest', () => {
       .mockImplementation((m: unknown) => {
         warnLines.push(String(m));
       });
+    // Abort once the lease exists but before any post-create step has started —
+    // the window this test has always been about.
+    const controller = new AbortController();
     let thrown: any;
     try {
       await deployManifest(
@@ -621,7 +645,10 @@ describe('deployManifest', () => {
           manifest: singleManifest(),
           sku: { kind: 'byName', size: 'docker-micro' },
         },
-        { abortSignal: AbortSignal.abort() },
+        {
+          abortSignal: controller.signal,
+          onLeaseCreated: () => controller.abort(),
+        },
       );
     } catch (e) {
       thrown = e;

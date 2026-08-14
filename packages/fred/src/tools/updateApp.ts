@@ -13,6 +13,7 @@ import {
   mergeManifest,
   validateServiceName,
 } from '../manifest.js';
+import { resolveFredSignal } from './call-signal.js';
 import { fetchActiveLease } from './fetchActiveLease.js';
 import type { LifecycleCallOptions } from './lifecycle-options.js';
 import { resolveProviderUrl } from './resolveLeaseProvider.js';
@@ -28,7 +29,9 @@ export async function updateApp(
   opts: LifecycleCallOptions = {},
 ): Promise<{ lease_uuid: string; status: string; ready?: FredLeaseStatus }> {
   const { address, leaseUuid, manifest, existingManifest } = input;
-  opts.abortSignal?.throwIfAborted();
+  // Resolve ONCE: a second call would mint a second timeout from the same `timeout`.
+  const signal = resolveFredSignal(opts);
+  signal?.throwIfAborted();
 
   let finalManifest = manifest;
   if (existingManifest) {
@@ -106,7 +109,7 @@ export async function updateApp(
   });
   // Final check immediately before the non-idempotent mutate POST: an abort during the
   // (slow-path) providerUrl resolution / token mint must not still fire the update.
-  opts.abortSignal?.throwIfAborted();
+  signal?.throwIfAborted();
   const result = await updateLease(
     providerUrl,
     leaseUuid,
@@ -122,7 +125,7 @@ export async function updateApp(
     providerUrl,
     leaseUuid,
     () => ctx.providerAuth.providerToken({ address, leaseUuid }),
-    { ...opts.pollOptions, abortSignal: opts.abortSignal },
+    { ...opts.pollOptions, abortSignal: signal },
     ctx.fetch,
     ctx.allowLoopback,
   );

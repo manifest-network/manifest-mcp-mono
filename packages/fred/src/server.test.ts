@@ -28,8 +28,14 @@ vi.mock('./http/fred.js', async (importOriginal) => {
     ...actual,
     getLeaseProvision: vi.fn(),
     getLeaseReleases: vi.fn(),
+    // restore_app is deliberately NOT mocked at the tool layer (see the ENG-666
+    // block below), so its HTTP leg has to be stubbed here or it would reach the
+    // network.
+    restoreLease: vi.fn(),
   };
 });
+
+vi.mock('./tools/createLease.js', () => ({ createLease: vi.fn() }));
 
 vi.mock('./tools/resolveLeaseProvider.js', () => ({
   resolveProviderUrl: vi.fn(),
@@ -100,11 +106,16 @@ import {
   makeMockQueryClient,
   makeMockWallet,
 } from '@manifest-network/manifest-mcp-core/__test-utils__/mocks.js';
-import { getLeaseProvision, getLeaseReleases } from './http/fred.js';
+import {
+  getLeaseProvision,
+  getLeaseReleases,
+  restoreLease,
+} from './http/fred.js';
 import { FredMCPServer } from './server/index.js';
 import { appStatus } from './tools/appStatus.js';
 import { browseCatalog } from './tools/browseCatalog.js';
 import { checkDeploymentReadiness } from './tools/checkDeploymentReadiness.js';
+import { createLease } from './tools/createLease.js';
 import { deployApp } from './tools/deployApp.js';
 import { fetchActiveLease } from './tools/fetchActiveLease.js';
 import { fetchLease } from './tools/fetchLease.js';
@@ -127,6 +138,8 @@ const mockAppStatus = vi.mocked(appStatus);
 const mockGetAppLogs = vi.mocked(getAppLogs);
 const mockRestartApp = vi.mocked(restartApp);
 const mockUpdateApp = vi.mocked(updateApp);
+const mockCreateLease = vi.mocked(createLease);
+const mockRestoreLease = vi.mocked(restoreLease);
 
 const LEASE_UUID = '550e8400-e29b-41d4-a716-446655440000';
 
@@ -1527,12 +1540,14 @@ describe('SSRF guard wiring (ENG-268)', () => {
   });
 });
 
-// The restart_app/update_app MCP tools must stay fire-and-return: they pass
-// { pollOptions: false } so adopting restartApp/updateApp's new default-poll
-// does not make the tools block ~2 min. These invoke the handler (the
-// annotation-matrix tests above only read tool metadata), pinning the call
-// shape so a silent default-poll regression is caught. (ENG-488)
-describe('restart_app / update_app opt out of default-poll (ENG-488)', () => {
+// Two contracts on one call shape:
+//   - fire-and-return (ENG-488): the tools pass `pollOptions: false` so adopting
+//     restartApp/updateApp's default-poll does not make them block ~2 min;
+//   - cancellable (ENG-666): they pass the request's `extra.signal`, without which
+//     every abort guard inside the tool functions is dead code.
+// These invoke the handler (the annotation-matrix tests above only read metadata),
+// pinning both so either regression is caught.
+describe('restart_app / update_app call shape (ENG-488, ENG-666)', () => {
   function makeServer(): FredMCPServer {
     return new FredMCPServer({
       config: makeMockConfig(),
@@ -1540,17 +1555,19 @@ describe('restart_app / update_app opt out of default-poll (ENG-488)', () => {
     });
   }
 
-  it('restart_app passes { pollOptions: false }', async () => {
+  it('restart_app opts out of the poll and forwards the request signal', async () => {
     const server = makeServer();
     await callTool(server, 'restart_app', { lease_uuid: LEASE_UUID });
     expect(mockRestartApp).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ leaseUuid: LEASE_UUID }),
-      { pollOptions: false },
+      expect.objectContaining({ pollOptions: false }),
     );
+    const opts = mockRestartApp.mock.calls.at(-1)?.[2];
+    expect(opts?.signal).toBeInstanceOf(AbortSignal);
   });
 
-  it('update_app passes { pollOptions: false }', async () => {
+  it('update_app opts out of the poll and forwards the request signal', async () => {
     const server = makeServer();
     await callTool(server, 'update_app', {
       lease_uuid: LEASE_UUID,
@@ -1559,7 +1576,87 @@ describe('restart_app / update_app opt out of default-poll (ENG-488)', () => {
     expect(mockUpdateApp).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ leaseUuid: LEASE_UUID }),
-      { pollOptions: false },
+      expect.objectContaining({ pollOptions: false }),
     );
+    const opts = mockUpdateApp.mock.calls.at(-1)?.[2];
+    expect(opts?.signal).toBeInstanceOf(AbortSignal);
+  });
+});
+
+// The seam ENG-666 exposed: restoreApp's abort guards were 100% unit-tested and 0%
+// reachable, because the handler never took `extra`. This drives the REAL restoreApp
+// (it is deliberately not mocked in this file) through the MCP transport, so it fails
+// if the handler ever stops threading the signal again.
+describe('MCP cancellation reaches the lifecycle tools (ENG-666)', () => {
+  // Must satisfy zod's strict uuid check (version + variant nibbles), or the handler
+  // rejects at schema validation and the test never reaches restoreApp at all.
+  const SOURCE_UUID = '550e8400-e29b-41d4-a716-446655440001';
+
+  // The shared callTool helper does not forward RequestOptions, and widening it would
+  // touch four packages — so drive the client directly here.
+  async function callToolWithSignal(
+    server: FredMCPServer,
+    toolName: string,
+    toolInput: Record<string, unknown>,
+    signal: AbortSignal,
+  ): Promise<unknown> {
+    const [clientTransport, serverTransport] =
+      InMemoryTransport.createLinkedPair();
+    activeTransports.push(clientTransport, serverTransport);
+    const client = new Client({ name: 'test-client', version: '1.0.0' });
+    await server.getServer().connect(serverTransport);
+    await client.connect(clientTransport);
+    return client.callTool(
+      { name: toolName, arguments: toolInput },
+      undefined,
+      { signal },
+    );
+  }
+
+  it('cancelling restore_app during its pre-flight reads creates no lease', async () => {
+    const server = new FredMCPServer({
+      config: makeMockConfig(),
+      walletProvider: makeMockWallet({ signArbitrary: true }),
+    });
+    mockFetchLease.mockResolvedValue({
+      uuid: SOURCE_UUID,
+      state: 4,
+      providerUuid: 'prov-1',
+      metaHash: new Uint8Array([1, 2]),
+      items: [{ skuUuid: 'sku-1', quantity: 1n }],
+    } as never);
+    mockResolveProviderUrl.mockResolvedValue('https://provider.example.com');
+
+    const ac = new AbortController();
+    // Cancel mid-flight, from inside the last pre-flight read. The macrotask lets
+    // notifications/cancelled round-trip and abort the server-side handler signal
+    // before restoreApp reaches its pre-broadcast guard.
+    mockGetLeaseProvision.mockImplementation(async () => {
+      ac.abort();
+      await new Promise((r) => setTimeout(r, 0));
+      return { status: 'retained', fail_count: 0 };
+    });
+
+    await expect(
+      callToolWithSignal(
+        server,
+        'restore_app',
+        { source_lease_uuid: SOURCE_UUID },
+        ac.signal,
+      ),
+    ).rejects.toThrow();
+
+    // The client rejects the moment it aborts, while the server handler is still
+    // running — drain the server side before asserting on it, or the "no broadcast"
+    // check would pass simply by observing too early.
+    for (let i = 0; i < 10; i++) await new Promise((r) => setTimeout(r, 0));
+
+    // Prove the run actually reached the cancellation window: without this the test
+    // would pass vacuously if restoreApp failed earlier for an unrelated reason.
+    expect(mockGetLeaseProvision).toHaveBeenCalled();
+    // The credit-reserving broadcast must not have fired. This is the assertion the
+    // issue asks for, and it fails without extra.signal threaded through.
+    expect(mockCreateLease).not.toHaveBeenCalled();
+    expect(mockRestoreLease).not.toHaveBeenCalled();
   });
 });

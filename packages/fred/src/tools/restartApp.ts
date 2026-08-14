@@ -4,6 +4,7 @@ import {
   pollLeaseUntilReady,
   restartLease,
 } from '../http/fred.js';
+import { resolveFredSignal } from './call-signal.js';
 import { fetchActiveLease } from './fetchActiveLease.js';
 import type { LifecycleCallOptions } from './lifecycle-options.js';
 import { resolveProviderUrl } from './resolveLeaseProvider.js';
@@ -14,7 +15,9 @@ export async function restartApp(
   opts: LifecycleCallOptions = {},
 ): Promise<{ lease_uuid: string; status: string; ready?: FredLeaseStatus }> {
   const { address, leaseUuid } = input;
-  opts.abortSignal?.throwIfAborted();
+  // Resolve ONCE: a second call would mint a second timeout from the same `timeout`.
+  const signal = resolveFredSignal(opts);
+  signal?.throwIfAborted();
 
   // Fast path: a supplied providerUrl skips both on-chain queries (fetchActiveLease + resolveProviderUrl).
   let providerUrl: string;
@@ -31,7 +34,7 @@ export async function restartApp(
   });
   // Final check immediately before the non-idempotent mutate POST: an abort during the
   // (slow-path) providerUrl resolution / token mint must not still fire the restart.
-  opts.abortSignal?.throwIfAborted();
+  signal?.throwIfAborted();
   const result = await restartLease(
     providerUrl,
     leaseUuid,
@@ -46,7 +49,7 @@ export async function restartApp(
     providerUrl,
     leaseUuid,
     () => ctx.providerAuth.providerToken({ address, leaseUuid }),
-    { ...opts.pollOptions, abortSignal: opts.abortSignal },
+    { ...opts.pollOptions, abortSignal: signal },
     ctx.fetch,
     ctx.allowLoopback,
   );

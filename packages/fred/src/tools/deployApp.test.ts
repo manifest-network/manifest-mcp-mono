@@ -596,7 +596,7 @@ describe('deployApp', () => {
     expect(forwarded).toEqual({ abortSignal: undefined });
   });
 
-  it('fires onLeaseCreated even when abortSignal is already aborted (lease exists on-chain)', async () => {
+  it('an already-aborted abortSignal creates no lease at all (ENG-666)', async () => {
     const qc = makeQueryClient();
     const cm = makeMockClientManager({
       queryClient: qc,
@@ -611,11 +611,37 @@ describe('deployApp', () => {
     await expect(
       deployApp(
         await ctx(cm as any),
-        {
-          image: 'nginx:alpine',
-          port: 80,
-          size: 'docker-micro',
-        },
+        { image: 'nginx:alpine', port: 80, size: 'docker-micro' },
+        { abortSignal: controller.signal, onLeaseCreated },
+      ),
+    ).rejects.toThrow();
+
+    // The pre-broadcast guard fires before create-lease, so there is no lease to
+    // notify about. Previously the broadcast went ahead and the abort was noticed
+    // only afterwards — i.e. the caller paid for a deploy they had cancelled.
+    expect(onLeaseCreated).not.toHaveBeenCalled();
+    expect(mockUploadLeaseData).not.toHaveBeenCalled();
+    expect(mockPollLeaseUntilReady).not.toHaveBeenCalled();
+  });
+
+  it('fires onLeaseCreated when the abort lands AFTER the lease exists on-chain', async () => {
+    const qc = makeQueryClient();
+    const cm = makeMockClientManager({
+      queryClient: qc,
+      address: 'manifest1tenant',
+    });
+
+    const controller = new AbortController();
+    // Abort once the lease is already created — the window where the notification
+    // invariant actually bites.
+    const onLeaseCreated = vi.fn(() => {
+      controller.abort(new Error('user cancelled'));
+    });
+
+    await expect(
+      deployApp(
+        await ctx(cm as any),
+        { image: 'nginx:alpine', port: 80, size: 'docker-micro' },
         { abortSignal: controller.signal, onLeaseCreated },
       ),
     ).rejects.toThrow();

@@ -553,7 +553,7 @@ export async function deployApp(
   // Last pre-broadcast cancellation boundary: once `fredDeployApp` is called
   // the tx may commit on-chain, so this is the final point an abort can cancel
   // cleanly (no lease created). After this, the signal only bounds fred's own
-  // await (via `abortSignal`) — a post-broadcast abort routes into recovery
+  // await (via `signal`) — a post-broadcast abort routes into recovery
   // (tx MAY STILL COMMIT → re-query; see core's withTxConfirmation contract).
   throwIfCancelled();
   callbacks.onProgress?.({ kind: 'deploy_app_broadcast' });
@@ -597,7 +597,7 @@ export async function deployApp(
       // unreachable from this API (ENG-661). Left unset, fred's own default
       // applies to both.
       {
-        ...(signal ? { abortSignal: signal } : {}),
+        ...(signal ? { signal } : {}),
         ...(opts.waitForReadyTimeoutMs !== undefined && {
           pollOptions: { timeoutMs: opts.waitForReadyTimeoutMs },
         }),
@@ -736,6 +736,10 @@ export async function deployApp(
           // Unset ⇒ inherit fred's DEFAULT_POLL_TIMEOUT_MS, which is derived
           // from the provider's own provisioning ceiling (ENG-661).
           timeoutMs: opts.waitForReadyTimeoutMs,
+          // The same scope signal already threaded into deployManifest above. Without
+          // it this second wait — often the longest leg of the flow — is uncancellable
+          // (ENG-666).
+          ...(signal ? { signal } : {}),
           onProgress: (status) => {
             attempt += 1;
             const stateName = decodeLeaseState(status.state);
@@ -769,6 +773,19 @@ export async function deployApp(
               last_provision_status: err.details.last_provision_status,
             }),
           },
+        );
+      }
+      // A caller cancel is not a failed transaction. Now that the signal actually
+      // reaches this wait (ENG-666), an abort would otherwise fall through to
+      // TX_FAILED and tell the user their deploy transaction failed — when the
+      // lease exists, is billing, and the manifest is already uploaded. Same
+      // reasoning as the readiness branch above, and it mirrors how fred's own
+      // deployManifest codes a post-broadcast cancel (ENG-661).
+      if (signal?.aborted) {
+        throw new ManifestMCPError(
+          ManifestMCPErrorCode.OPERATION_CANCELLED,
+          `Deploy partially succeeded: lease ${leaseUuid} was created and its manifest uploaded, but the readiness wait was cancelled. The app may still be starting — check with app_status.`,
+          { partial: true, lease_uuid: leaseUuid, readiness_unconfirmed: true },
         );
       }
       // ProviderApiError / TerminalChainStateError → F3 route.

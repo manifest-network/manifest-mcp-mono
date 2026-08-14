@@ -14,6 +14,7 @@ import {
   restoreLease,
 } from '../http/fred.js';
 import { ProviderApiError } from '../http/provider.js';
+import { resolveFredSignal } from './call-signal.js';
 import { createLease } from './createLease.js';
 import { fetchLease } from './fetchLease.js';
 import type { LifecycleCallOptions } from './lifecycle-options.js';
@@ -44,7 +45,9 @@ export async function restoreApp(
   opts: LifecycleCallOptions = {},
 ): Promise<RestoreResult> {
   const { address, sourceLeaseUuid } = input;
-  opts.abortSignal?.throwIfAborted();
+  // Resolve ONCE: a second call would mint a second timeout from the same `timeout`.
+  const signal = resolveFredSignal(opts);
+  signal?.throwIfAborted();
 
   // Rate-limit the whole op once up front (mirrors deployManifest): the pre-tx
   // reads below — fetchLease, resolveProviderUrl, getLeaseProvision — must not
@@ -89,18 +92,55 @@ export async function restoreApp(
   // Final check immediately before the non-idempotent create-lease broadcast: an
   // abort during the (slow-path) reads above must not still reserve credit on a
   // fresh lease (ENG-488). Throwing here — before any tx — leaves zero side effects.
-  opts.abortSignal?.throwIfAborted();
+  signal?.throwIfAborted();
   const newLeaseUuid = await createLease(ctx, { metaHashHex, leaseItems });
+
+  // From here the lease EXISTS and reserves credit, so a cancel is no longer free:
+  // the caller stopping does not un-reserve it, and over MCP the host never even sees
+  // the rejection (a cancelled request gets no response). The restore POST provably
+  // has not fired yet, so nothing is adopted — roll the empty PENDING shell back
+  // rather than propagate a bare AbortError that names no lease (ENG-666 / Q-7).
+  // Deliberately OUTSIDE the try below, so its error is never re-classified as a
+  // restore failure.
+  if (signal?.aborted) {
+    return await handleRestoreAbort(ctx, {
+      newLeaseUuid,
+      sourceLeaseUuid,
+      sourceProviderUuid: source.providerUuid,
+    });
+  }
+
+  // Mint the token OUTSIDE the try. It is an await, so a cancel can land inside it,
+  // and it is not the POST — a failure here provably means nothing was sent. Keeping
+  // it out lets the abort re-check below run before the POST without its own error
+  // falling into the POST's catch, which would misfile a rollback-safe state as an
+  // in-doubt orphan. A mint FAILURE keeps its original routing.
+  let newToken: string;
+  try {
+    newToken = await ctx.providerAuth.providerToken({
+      address,
+      leaseUuid: newLeaseUuid,
+    });
+  } catch (err) {
+    return await handleRestoreFailure(ctx, err, {
+      newLeaseUuid,
+      sourceLeaseUuid,
+      sourceProviderUuid: source.providerUuid,
+    });
+  }
+  // Re-check: the mint above is the one await between the guard and the POST.
+  if (signal?.aborted) {
+    return await handleRestoreAbort(ctx, {
+      newLeaseUuid,
+      sourceLeaseUuid,
+      sourceProviderUuid: source.providerUuid,
+    });
+  }
 
   // 4. Pivot: restore POST. ONLY the POST is inside the try — a post-202 poll
   //    timeout must NOT be misread as the in-doubt restore-POST timeout.
   let restoreStatus: string;
   try {
-    opts.abortSignal?.throwIfAborted();
-    const newToken = await ctx.providerAuth.providerToken({
-      address,
-      leaseUuid: newLeaseUuid,
-    });
     const result = await restoreLease(
       providerUrl,
       newLeaseUuid,
@@ -111,9 +151,12 @@ export async function restoreApp(
     );
     restoreStatus = result.status;
   } catch (err) {
-    // A caller abort (e.g. the throwIfAborted above) is not a restore failure —
-    // propagate it rather than misclassifying it as an in-doubt orphan (ENG-488).
-    if (opts.abortSignal?.aborted) throw err;
+    // NOTE: no `if (signal?.aborted) throw err` bypass here. Every abort that can
+    // still be acted on is handled above, before the POST; what reaches this catch is
+    // a real POST failure that may merely COINCIDE with a cancel. Letting a coincident
+    // cancel short-circuit would suppress both the compensation and the orphan record,
+    // so side-effect classification depends on the provider's answer alone — never on
+    // whether the caller also cancelled (ENG-666).
     // A ProviderApiError with a 2xx status means the restore COMMITTED but the
     // (202) body was empty/non-JSON and parseJsonResponse threw. Treat it as
     // committed — routing it to failure handling would advise cancelling a
@@ -149,7 +192,7 @@ export async function restoreApp(
       newLeaseUuid,
       () =>
         ctx.providerAuth.providerToken({ address, leaseUuid: newLeaseUuid }),
-      { ...opts.pollOptions, abortSignal: opts.abortSignal },
+      { ...opts.pollOptions, abortSignal: signal },
       ctx.fetch,
       ctx.allowLoopback,
     );
@@ -157,9 +200,67 @@ export async function restoreApp(
   } catch (err) {
     // Post-pivot poll timeout / terminal provisioning failure: the restore is
     // committed → report status, NEVER compensate. (A caller abort propagates.)
-    if (opts.abortSignal?.aborted) throw err;
+    if (signal?.aborted) throw err;
     return { ...base, status: 'provisioning' };
   }
+}
+
+/**
+ * Cancelled after the create-lease broadcast but before the restore POST. The fresh
+ * lease is an empty PENDING shell — nothing adopted — which is the same state the
+ * UNCOMMITTED_TERMINAL branch already rolls back, so compensate rather than abandon.
+ *
+ * This matters because a cancelled MCP request receives no response at all: an error
+ * carrying the lease uuid would never reach the host, so a compensating cancel and a
+ * stderr line are the only channels that survive (ENG-666 / Q-7).
+ */
+async function handleRestoreAbort(
+  ctx: FredAuthCtx,
+  ids: {
+    newLeaseUuid: string;
+    sourceLeaseUuid: string;
+    sourceProviderUuid: string;
+  },
+): Promise<never> {
+  try {
+    // cosmosTx takes no signal, so the caller's abort cannot sabotage the rollback.
+    await cosmosTx(
+      ctx.chain,
+      'billing',
+      'cancel-lease',
+      [ids.newLeaseUuid],
+      true,
+    );
+  } catch (cancelErr) {
+    const cx =
+      cancelErr instanceof Error ? cancelErr.message : String(cancelErr);
+    return orphan(
+      ids,
+      'abort-compensating-cancel',
+      `cancelled by caller; cancel failed: ${cx}`,
+    );
+  }
+  // Same single-line JSON shape as orphan(), so both outcomes are greppable. warn,
+  // not error: a rolled-back lease needs no manual intervention.
+  logger.warn(
+    JSON.stringify({
+      event: 'restore_aborted',
+      outcome: 'rolled-back',
+      step: 'pre-restore-post',
+      newLeaseUuid: ids.newLeaseUuid,
+      fromLeaseUuid: ids.sourceLeaseUuid,
+      sourceProviderUuid: ids.sourceProviderUuid,
+    }),
+  );
+  throw new ManifestMCPError(
+    ManifestMCPErrorCode.OPERATION_CANCELLED,
+    `Restore cancelled after the lease was created; lease ${ids.newLeaseUuid} was rolled back (credit released). No data was adopted.`,
+    {
+      lease_uuid: ids.newLeaseUuid,
+      source_lease_uuid: ids.sourceLeaseUuid,
+      rolled_back: true,
+    },
+  );
 }
 
 async function handleRestoreFailure(
