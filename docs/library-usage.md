@@ -296,6 +296,38 @@ try {
 }
 ```
 
+## Cancellation
+
+Every typed read and transaction takes an optional trailing options bag with `signal` (an `AbortSignal`) and `timeout` (a per-call deadline in ms). Either aborts the operation; passing both composes them, and the abort reason tells you which fired — a `TimeoutError` for the deadline, your own reason for a caller cancel.
+
+**Detect a cancellation from `signal.aborted`, never from the thrown value's type, `name`, or message.** The value a cancelled read rejects with need not be an `Error`, and over MCP it usually is not: the cancellation notification's `reason` is an optional *string*, and when an MCP client's own request timeout fires it cancels with `String(err)` — so what reaches you is the bare string `McpError: MCP error -32001: Request timed out`, with no `message` and no `stack`.
+
+That is deliberate, and it splits by layer:
+
+- **Reads and provider transport reject with your own abort reason, verbatim and unwrapped** — what the WHATWG DOM standard asks of an API that accepts an `AbortSignal`. Only a reason carrying *nothing at all* (`null`, or `undefined` from a foreign/polyfilled signal) is replaced with the spec's `AbortError`; an empty string is a value you chose and travels through. At the MCP tool boundary this surfaces under `code: 'UNKNOWN'`, because only a `ManifestMCPError` carries a code.
+- **Transactions and orchestrated flows wrap** into `ManifestMCPError(OPERATION_CANCELLED)`, keeping the original under `details.reason` — the convention Node's own promise APIs follow. Those paths can leave something behind, so they need a structured, non-retryable code plus `details.sent` (was a tx broadcast?) to tell you whether to re-query.
+
+Two things worth knowing about `timeout`:
+
+- It is **one deadline for the whole operation**, not per attempt. The signal is resolved once and threaded down, so a retry ladder underneath inherits the already-elapsed budget. Size it for the worst-case ladder.
+- Supplying `timeout` **together with** `signal` composes them, and the DOM spec requires a composite to keep its sources alive — the timeout signal and its armed timer stay pinned for the full duration no matter when the call finishes. A `{ signal, timeout: 600_000 }` call that returns in 50 ms still holds both for ten minutes. A lone `timeout` is not composed and is reclaimed normally.
+
+A malformed `timeout` (non-integer, `0` or negative, or above the 32-bit `2147483647` ms ceiling) throws `INVALID_CONFIG` before anything is dispatched — it consumes no rate-limit token and sends no transaction. The ceiling is not cosmetic: a larger delay does not fail, it silently becomes a **1 ms** deadline.
+
+```ts
+const controller = new AbortController();
+const stop = () => controller.abort('user navigated away'); // any value; a string is fine
+
+try {
+  await client.getLease(leaseUuid, { signal: controller.signal, timeout: 30_000 });
+} catch (err) {
+  if (controller.signal.aborted) return; // ← the check that always works
+  throw err;
+}
+```
+
+Cancelling also aborts the SDK's own rate-limit wait, so a cancelled call gives its token back to the budget instead of holding one it will never use. The chain RPC underneath still cannot be cancelled — manifestjs accepts no `AbortSignal` — so an abandoned read runs to completion server-side; you simply stop awaiting it.
+
 ## Orchestration tier (optional)
 
 `@manifest-network/manifest-sdk/orchestration` adds plan → confirm → recover flows on top of the capability tier (`deployApp`, `manageDomain`, `closeLease`, `troubleshootDeployment`). These are **callback-driven** — `fn(input, callbacks, opts)` with `onPlan` / `onConfirm` / `onProgress` — a different shape from the capability tier's `fn(ctx, input)`, so the host can drive a human-in-the-loop UI. Most apps compose the capability tier directly and don't need this.

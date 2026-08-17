@@ -35,6 +35,7 @@ import {
 } from './internals/tx-sequence.js';
 import { createLCDQueryClient } from './lcd-adapter.js';
 import { type Logger, noopLogger } from './logger.js';
+import { abortableSleep, abortReason } from './options.js';
 import { withRetry } from './retry.js';
 import {
   type ManifestMCPConfig,
@@ -85,6 +86,20 @@ const DEFAULT_BROADCAST_TIMEOUT_MS = 60_000;
 
 /** Default polling interval for transaction confirmation (3 seconds) */
 const DEFAULT_BROADCAST_POLL_INTERVAL_MS = 3_000;
+
+/**
+ * Poll granularity for the CANCELLABLE rate-limit wait (ENG-710). Deliberately a constant
+ * rather than a value derived from `requestsPerSecond`: any derived form needs a clamp, and
+ * for every rps below ~40 — which includes the default 10 and every value anyone configures —
+ * the clamp returns this number anyway. Storing a derived value would also mean a second field
+ * to update in lockstep at BOTH limiter-construction sites, next to the one hazard this class
+ * already has (the limiter is replaced wholesale on reconfigure).
+ *
+ * Abort latency does NOT depend on it — the sleep is abort-aware, so a cancel rejects at once.
+ * It bounds only the extra wait for a token, and only for a caller that is ALREADY throttled
+ * (whose wait is otherwise up to a full interval), i.e. ≤2.5% overshoot on a 1s budget.
+ */
+const RATE_LIMIT_POLL_MS = 25;
 
 /**
  * Get combined signing client options with all Manifest registries
@@ -575,9 +590,50 @@ export class CosmosClientManager {
   /**
    * Acquire a rate limit token before making an RPC request.
    * This will wait if the rate limit has been exceeded.
+   *
+   * Pass `signal` to make that wait CANCELLABLE (ENG-710). This is the one blocking wait the
+   * SDK actually owns — the RPC underneath it takes no `AbortSignal` — and without a signal an
+   * abort is invisible until the token arrives: measured at t+3004ms for a cancel issued at
+   * t+100ms on a 3s limiter, which then still consumed the token it immediately discarded.
+   * The MCP spec asks a receiver of a cancellation to stop processing and free resources.
+   *
+   * Rejects with the caller's own abort reason (the read/transport convention — see
+   * {@link abortReason}), never a wrapper, so a cancel stays unrecognizable to every retry
+   * classifier by construction.
+   *
+   * MECHANISM. `limiter`'s `removeTokens` exposes no cancellation and cannot be raced usefully:
+   * the abandoned promise still resolves later and still consumes a token (its own issue #33,
+   * "cancel removeTokens()", is open with the internal timer id unreachable). So the signal
+   * path polls the SYNCHRONOUS `tryRemoveTokens`, which consumes nothing when it declines —
+   * the cancelled acquisition therefore leaves the budget untouched, which is the invariant
+   * Go's `x/time/rate` reaches by refunding a cancelled `Reservation`, only without the refund.
+   * The no-signal path keeps `removeTokens` as its wait, so the ~20 call sites that pass no
+   * signal are timing-identical. Measured equivalent regardless: 4 sequential acquires at
+   * rps=2 take 1004ms both ways.
    */
-  async acquireRateLimit(): Promise<void> {
-    await this.rateLimiter.removeTokens(1);
+  async acquireRateLimit(signal?: AbortSignal): Promise<void> {
+    // A bucket that cannot hold one token never yields to polling, where `removeTokens`
+    // throws. Raise it as a typed, non-retryable config error on BOTH paths rather than
+    // letting one path hang and the other surface a vendored library's wording — this agrees
+    // with `validateConfig`, which already rejects a non-positive-integer requestsPerSecond.
+    // (`getInstance` takes an unvalidated config, and it is on the public SDK barrel.)
+    if (this.rateLimiter.tokenBucket.bucketSize < 1) {
+      throw new ManifestMCPError(
+        ManifestMCPErrorCode.INVALID_CONFIG,
+        `rateLimit.requestsPerSecond must be at least 1, got ${this.rateLimiter.tokenBucket.bucketSize}; a single request cannot fit the budget.`,
+      );
+    }
+    if (signal === undefined) {
+      await this.rateLimiter.removeTokens(1);
+      return;
+    }
+    if (signal.aborted) throw abortReason(signal);
+    // `this.rateLimiter` is re-read every pass on purpose: a getInstance reconfigure REPLACES
+    // the limiter object, and an in-flight waiter should adopt the new budget rather than
+    // drain an orphaned one.
+    while (!this.rateLimiter.tryRemoveTokens(1)) {
+      await abortableSleep(RATE_LIMIT_POLL_MS, signal);
+    }
   }
 
   /**

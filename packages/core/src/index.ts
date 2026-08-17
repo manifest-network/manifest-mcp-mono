@@ -106,7 +106,12 @@ export {
   getSupportedModules,
   isSubcommandSupported,
 } from './modules.js';
+// The cancellation vocabulary. `abortReason` + `abortableSleep` were hoisted out of fred in
+// ENG-710 so core's read seam, fred's provider transport and the cancellable rate-limit wait
+// share ONE definition of "the value an abort rejects with" — there were three copies.
 export {
+  abortableSleep,
+  abortReason,
   type CallOptions,
   resolveCallSignal,
   type TxCallOptions,
