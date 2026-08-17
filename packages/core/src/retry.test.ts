@@ -109,6 +109,19 @@ describe('isRetryableError', () => {
       expect(isRetryableError(error)).toBe(false);
     });
 
+    // A cancelled READ rejects with the caller's raw abort reason, and over MCP that reason is
+    // most often a bare STRING — when the client's own request timeout fires it cancels with
+    // `String(err)`. That string contains "timed out", which `isTransientErrorMessage` matches.
+    // It is inert ONLY because the value is not an Error, so `isRetryableError` bails on the
+    // unknown type. The pair below makes that load-bearing accident visible: normalizing a
+    // cancellation with `new Error(String(reason))` anywhere would silently turn a user's
+    // cancel into three automatic retries. Do not "tidy" the raw reason into an Error. (ENG-710)
+    it('does not retry a bare-string MCP cancel reason — but WOULD if it were wrapped', () => {
+      const wireReason = 'McpError: MCP error -32001: Request timed out';
+      expect(isRetryableError(wireReason)).toBe(false);
+      expect(isRetryableError(new Error(wireReason))).toBe(true); // the trap, pinned
+    });
+
     it('treats SKU_AMBIGUOUS as non-retryable (needs caller disambiguation)', () => {
       const err = new ManifestMCPError(
         ManifestMCPErrorCode.SKU_AMBIGUOUS,

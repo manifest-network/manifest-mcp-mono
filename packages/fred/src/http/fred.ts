@@ -10,6 +10,7 @@ import type {
   FredServiceStatus,
 } from '@manifest-network/manifest-mcp-core';
 import {
+  abortableSleep,
   LeaseState,
   leaseStateFromJSON,
   logger,
@@ -560,32 +561,18 @@ export class LeaseReadinessUnconfirmedError extends ProviderApiError {
 }
 
 /**
- * Sleep for `ms`, abort-aware. With no `signal` it is a plain `setTimeout` sleep; with one it clears
- * the timer and rejects with `signal.reason ?? AbortError` if the signal aborts before the sleep ends
- * (pre-aborted signals reject synchronously via `throwIfAborted`). Exported for the lease-status
- * watchers (`waitForLeaseStatus`) so the interval wait cancels on caller abort.
+ * Sleep for `ms`, abort-aware — re-exported from core, which owns it since ENG-710 (it needs the
+ * same primitive for the cancellable rate-limit wait, and this copy had inlined a second, drifting
+ * spelling of core's `abortReason` fallback). Kept on this module's surface so the lease-status
+ * watchers (`waitForLeaseStatus`) keep importing it from here.
+ *
+ * Two behaviour deltas from the copy this replaces, both deliberate: a pre-aborted signal now
+ * rejects the returned promise instead of throwing SYNCHRONOUSLY out of a promise-returning
+ * function (every call site awaits it, so the await point is unchanged), and a `null` abort reason
+ * is normalized to the spec's `AbortError` on the pre-abort leg too — the old `throwIfAborted()`
+ * rethrew it raw while the listener leg already replaced it.
  */
-export function abortableSleep(
-  ms: number,
-  signal?: AbortSignal,
-): Promise<void> {
-  if (!signal) return new Promise((resolve) => setTimeout(resolve, ms));
-  signal.throwIfAborted();
-  return new Promise<void>((resolve, reject) => {
-    const onAbort = () => {
-      clearTimeout(timer);
-      reject(
-        signal.reason ??
-          new DOMException('The operation was aborted', 'AbortError'),
-      );
-    };
-    const timer = setTimeout(() => {
-      signal.removeEventListener('abort', onAbort);
-      resolve();
-    }, ms);
-    signal.addEventListener('abort', onAbort, { once: true });
-  });
-}
+export { abortableSleep };
 
 /**
  * How long a provider may take to make a deployment ready before we stop

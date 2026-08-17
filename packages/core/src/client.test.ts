@@ -1020,6 +1020,137 @@ describe('CosmosClientManager', () => {
       expect(a).toBe(b);
       expect(after).toBe(before);
     });
+
+    // ENG-710. Real timers throughout, matching the two timing tests above: `limiter` derives its
+    // clock from `performance.now()` and the poll loop uses the global `setTimeout`, so a partial
+    // `vi.useFakeTimers({ toFake: [...] })` would freeze one and not the other — and a poll loop
+    // under `vi.runAllTimersAsync()` spins until sinon's timer cap. Give each test its own chainId:
+    // getInstance is a keyed singleton.
+    describe('cancellable acquisition', () => {
+      it('rejects an already-aborted acquisition with the raw reason, spending no token', async () => {
+        const instance = CosmosClientManager.getInstance(
+          makeConfig({
+            chainId: 'rl-cancel-pre',
+            rateLimit: { requestsPerSecond: 1 },
+          }),
+          makeWallet(),
+        );
+        const ac = new AbortController();
+        ac.abort('user cancelled'); // the MCP wire shape: a bare string
+        await expect(instance.acquireRateLimit(ac.signal)).rejects.toBe(
+          'user cancelled',
+        );
+        // Budget intact. This is the assertion that catches the likeliest implementation bug —
+        // a poll loop whose first `tryRemoveTokens` runs before it ever looks at the signal
+        // would still reject, but would have eaten the only token first. The bound is loose on
+        // purpose: at rps=1 the failure mode costs a full ~1000ms interval, so anything well
+        // under that discriminates, and a tight bound would only buy CI flakes.
+        const t0 = Date.now();
+        await instance.acquireRateLimit();
+        expect(Date.now() - t0).toBeLessThan(500);
+      });
+
+      it('an abort DURING the wait rejects at once and consumes no token', async () => {
+        const instance = CosmosClientManager.getInstance(
+          makeConfig({
+            chainId: 'rl-cancel-mid',
+            rateLimit: { requestsPerSecond: 1 },
+          }),
+          makeWallet(),
+        );
+        await instance.acquireRateLimit(); // drain the single token
+        const ac = new AbortController();
+        const t0 = Date.now();
+        const parked = instance.acquireRateLimit(ac.signal);
+        setTimeout(() => ac.abort('cancelled mid-wait'), 50);
+        await expect(parked).rejects.toBe('cancelled mid-wait');
+        // (i) it surfaced promptly rather than at the ~1000ms token grant
+        expect(Date.now() - t0).toBeLessThan(400);
+        // (ii) and the token it did not take is still there for the next interval. A design that
+        // merely RACES `removeTokens` also rejects promptly but leaves the abandoned wait to
+        // consume the token, pushing this acquire out to ~2000ms.
+        await instance.acquireRateLimit();
+        const elapsed = Date.now() - t0;
+        expect(elapsed).toBeGreaterThanOrEqual(900);
+        expect(elapsed).toBeLessThan(1800);
+      });
+
+      it('resolves normally when a token is available and the signal stays live', async () => {
+        const instance = CosmosClientManager.getInstance(
+          makeConfig({
+            chainId: 'rl-cancel-happy',
+            rateLimit: { requestsPerSecond: 10 },
+          }),
+          makeWallet(),
+        );
+        const ac = new AbortController();
+        const limiter = (
+          instance as unknown as {
+            rateLimiter: { getTokensRemaining(): number };
+          }
+        ).rateLimiter;
+        const before = limiter.getTokensRemaining();
+        await instance.acquireRateLimit(ac.signal);
+        // Token accounting rather than wall clock: at rps=10 an interval IS 100ms, so a
+        // "finished in under 100ms" bound would sit exactly on the discrimination boundary and
+        // fail on scheduler jitter alone. What the fast path actually promises is that it
+        // consumed exactly one token and did not park, which the budget shows directly.
+        expect(limiter.getTokensRemaining()).toBeLessThan(before);
+        expect(limiter.getTokensRemaining()).toBeGreaterThan(before - 2);
+      });
+
+      // A bucket that cannot hold one token is the one input where polling and `removeTokens`
+      // disagree: `tryRemoveTokens` declines forever where `removeTokens` throws. Unguarded, the
+      // poll turns a loud failure into a silent hang — so this is a hang-detector as much as an
+      // assertion. Reachable because `getInstance` takes an UNVALIDATED config and is on the
+      // public SDK barrel, while `validateConfig` would have rejected this rps.
+      it.each([
+        ['with a signal', true],
+        ['without a signal', false],
+      ])(
+        'rejects INVALID_CONFIG instead of hanging when requestsPerSecond < 1 (%s)',
+        async (_label, withSignal) => {
+          const instance = CosmosClientManager.getInstance(
+            makeConfig({
+              chainId: `rl-sub-one-${withSignal}`,
+              rateLimit: { requestsPerSecond: 0.5 },
+            }),
+            makeWallet(),
+          );
+          const signal = withSignal ? new AbortController().signal : undefined;
+          await expect(instance.acquireRateLimit(signal)).rejects.toMatchObject(
+            {
+              code: ManifestMCPErrorCode.INVALID_CONFIG,
+            },
+          );
+        },
+      );
+
+      // The guard must follow the limiter, not just the entry. A parked waiter re-reads
+      // `this.rateLimiter` each pass so it adopts a reconfigured budget — which means it can
+      // adopt an INVALID one. Checking only on entry turned that into a silent spin
+      // (`tryRemoveTokens` declines forever below one token) instead of the typed failure.
+      // Caught by Copilot on PR #183.
+      it('raises INVALID_CONFIG when a reconfigure swaps in an undersized budget mid-wait', async () => {
+        const config = makeConfig({
+          chainId: 'rl-reconfig-invalid',
+          rateLimit: { requestsPerSecond: 1 },
+        });
+        const wallet = makeWallet();
+        const instance = CosmosClientManager.getInstance(config, wallet);
+        await instance.acquireRateLimit(); // drain the single token so the next call parks
+        const ac = new AbortController();
+        const parked = instance.acquireRateLimit(ac.signal);
+        // Reconfigure the SAME key to a budget that can never admit one request.
+        CosmosClientManager.getInstance(
+          { ...config, rateLimit: { requestsPerSecond: 0.5 } },
+          wallet,
+        );
+        await expect(parked).rejects.toMatchObject({
+          code: ManifestMCPErrorCode.INVALID_CONFIG,
+        });
+      });
+    });
   });
 
   describe('withBroadcastLock', () => {

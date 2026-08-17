@@ -1,3 +1,4 @@
+import { abortReason } from '@manifest-network/manifest-mcp-core';
 import {
   isBlocked,
   isIpLiteral,
@@ -372,35 +373,15 @@ function armDeadline(
   };
 }
 
-/**
- * The value that represents an abort: the aborter's own reason, or the spec's default
- * `AbortError` when there is none.
- *
- * PRECONDITION — call this only once the signal is known aborted. Every call site below
- * sits under an `aborted` guard or inside an `abort` listener. `reason` is `undefined` on
- * a LIVE signal, and reading it without that guard is precisely the defect this exists to
- * stop recurring: it produced `throw undefined`, which core's `withErrorHandling` renders
- * at the tool boundary as the literal message "undefined" (ENG-703).
- *
- * `??`, not `||`: an EMPTY-STRING reason is a value the caller CHOSE. Over MCP the abort
- * reason is `notification.params.reason`, typed `z.string().optional()`, so `''` is on the
- * wire and is carried verbatim like any other reason — this layer's contract is to
- * propagate the caller's value, not to improve it. The only reasons replaced are the ones
- * carrying nothing at all: `null` (the spec substitutes a default for `abort(undefined)`
- * but NOT for `abort(null)`) and `undefined` from a foreign or polyfilled signal.
- *
- * Deliberately NOT a `ProviderApiError`. A cancel is the caller's own value, and the
- * consumers of this layer recognize one by asking `signal.aborted` rather than by
- * inspecting the error (`pollLeaseUntilReady`, `restoreApp`, `deployManifest`). Leaving it
- * unbranded is also what makes `isTransientProviderError` reject it for free — a user's
- * cancel is never a retryable blip.
+/*
+ * `abortReason` moved to core in ENG-710 and is imported at the top of this file. It was
+ * module-private here (ENG-703) only because putting a real `provider.ts` function on
+ * `fred.ts`'s runtime path collides with the two test files that replace `./provider.js`
+ * wholesale; sourcing it from the core barrel sidesteps that entirely, and collapses the
+ * third copy of the same `??` fallback that `fred.ts`'s `abortableSleep` used to inline.
+ * Its contract is unchanged — including that a cancel is deliberately NOT a
+ * `ProviderApiError`, so `isTransientProviderError` rejects it for free.
  */
-function abortReason(signal: AbortSignal | undefined): unknown {
-  return (
-    signal?.reason ??
-    new DOMException('The operation was aborted', 'AbortError')
-  );
-}
 
 /**
  * Hard ceiling on a provider HTTP response body (10 MiB). Provider payloads
