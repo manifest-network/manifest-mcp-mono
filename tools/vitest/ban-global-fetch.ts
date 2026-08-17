@@ -1,8 +1,15 @@
 // No unit test may reach the network (ENG-705).
 //
-// Loaded as `setupFiles` by every `packages/*/vitest.config.ts`, so it runs once per test
-// WORKER. `globalSetup` would be wrong: under vitest's default `pool: 'forks'` that runs in
-// the parent process, not the process the tests actually execute in.
+// Loaded as `setupFiles` by every `packages/*/vitest.config.ts`, so it is evaluated once per
+// TEST FILE, inside the worker running that file — not once per worker. Under the repo's
+// current defaults (`pool: 'forks'`, `isolate: true`) each file also gets its own process, so
+// the two readings happen to coincide; they stop coinciding the moment isolation is turned off
+// or a pool reuses workers. Measured both ways: 34 fred files give 34 evaluations across 34
+// pids by default, and 34 evaluations in ONE pid under `--no-isolate --pool=threads`. Per-file
+// is the rule to rely on, and it is the one that matters here — every file gets a fresh stub.
+//
+// `globalSetup` would be wrong: it runs in the parent process, not the one the tests execute
+// in, so it could not replace the global the code under test actually sees.
 //
 // WHY THIS EXISTS. `packages/fred`'s HTTP layer takes an injectable `fetchFn` at every entry
 // point and falls back to `globalThis.fetch` when it is omitted (`http/provider.ts`, the
@@ -78,12 +85,21 @@ Object.defineProperty(globalThis, 'fetch', {
   enumerable: true,
 });
 
-// A SWALLOWED violation is still a violation. Without this an escape can still read as a
-// PASS: the fred transport catches any throw from `doFetch` and re-wraps it as
-// `ProviderApiError{status: 0, kind: 'network'}`, so a test asserting exactly that goes
-// green on a banned call. That is the same false-green ENG-705 exists to kill, so the throw
-// alone is not enough — every violation has to survive to the end of the test.
-afterEach(() => {
+/**
+ * Fail the current test if any violation was swallowed. Registered as the `afterEach` below.
+ *
+ * A SWALLOWED violation is still a violation. Without this, an escape can still read as a
+ * PASS: the fred transport catches any throw from `doFetch` and re-wraps it as
+ * `ProviderApiError{status: 0, kind: 'network'}`, so a test asserting exactly that goes green
+ * on a banned call. That is the same false-green ENG-705 exists to kill, so the throw alone is
+ * not enough — every violation has to survive to the end of the test.
+ *
+ * Exported, rather than inlined into the hook, so the guard test can invoke the reporting path
+ * DIRECTLY. Inlined, a test could only observe that violations are recorded, and the throw —
+ * the half that actually converts an escape into a failure — would go unproven. It was: with
+ * this body neutered, all six guard checks still passed.
+ */
+export function __reportSwallowedBannedFetch(): void {
   const hits = __drainBannedFetchCalls();
   if (hits.length === 0) return;
   throw new Error(
@@ -91,4 +107,6 @@ afterEach(() => {
       'swallowed by the code under test, so the assertions above proved nothing about the ' +
       `transport.\n\n${hits.join('\n')}`,
   );
-});
+}
+
+afterEach(__reportSwallowedBannedFetch);
