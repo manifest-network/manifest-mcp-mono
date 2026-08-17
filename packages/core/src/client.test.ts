@@ -1042,10 +1042,12 @@ describe('CosmosClientManager', () => {
         );
         // Budget intact. This is the assertion that catches the likeliest implementation bug —
         // a poll loop whose first `tryRemoveTokens` runs before it ever looks at the signal
-        // would still reject, but would have eaten the only token first.
+        // would still reject, but would have eaten the only token first. The bound is loose on
+        // purpose: at rps=1 the failure mode costs a full ~1000ms interval, so anything well
+        // under that discriminates, and a tight bound would only buy CI flakes.
         const t0 = Date.now();
         await instance.acquireRateLimit();
-        expect(Date.now() - t0).toBeLessThan(100);
+        expect(Date.now() - t0).toBeLessThan(500);
       });
 
       it('an abort DURING the wait rejects at once and consumes no token', async () => {
@@ -1082,9 +1084,19 @@ describe('CosmosClientManager', () => {
           makeWallet(),
         );
         const ac = new AbortController();
-        const t0 = Date.now();
+        const limiter = (
+          instance as unknown as {
+            rateLimiter: { getTokensRemaining(): number };
+          }
+        ).rateLimiter;
+        const before = limiter.getTokensRemaining();
         await instance.acquireRateLimit(ac.signal);
-        expect(Date.now() - t0).toBeLessThan(100); // no poll tick on the uncontended path
+        // Token accounting rather than wall clock: at rps=10 an interval IS 100ms, so a
+        // "finished in under 100ms" bound would sit exactly on the discrimination boundary and
+        // fail on scheduler jitter alone. What the fast path actually promises is that it
+        // consumed exactly one token and did not park, which the budget shows directly.
+        expect(limiter.getTokensRemaining()).toBeLessThan(before);
+        expect(limiter.getTokensRemaining()).toBeGreaterThan(before - 2);
       });
 
       // A bucket that cannot hold one token is the one input where polling and `removeTokens`
