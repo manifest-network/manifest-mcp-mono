@@ -2235,13 +2235,20 @@ describe('deployApp replay — 03-partial-success-set-domain-failed', () => {
 
     // Verify the close_lease dispatch (captureCallbacks default choice)
     // invoked core's stopApp.
-    expect(vi.mocked(core.stopApp)).toHaveBeenCalledWith(
+    // Read off the recorded call rather than pinning the whole argument list with
+    // toHaveBeenCalledWith: that matcher is exact-arity, and core's `stopApp` already
+    // declares a trailing `opts?: TxCallOptions` that agent-core will thread once this
+    // broadcast becomes cancellable. Slots count from the START (ENG-706).
+    const [stopCtx, stopInput] = vi.mocked(core.stopApp).mock.calls[0]!;
+    expect(stopCtx).toEqual(
       expect.objectContaining({
         chain: expect.anything(),
         logger: expect.anything(),
       }),
-      { leaseUuid: '11111111-1111-4111-8111-111111111111' },
     );
+    expect(stopInput).toEqual({
+      leaseUuid: '11111111-1111-4111-8111-111111111111',
+    });
 
     // Verify the orchestrator threw after recovery (caller expected to
     // re-run troubleshootDeployment).

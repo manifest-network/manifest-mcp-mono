@@ -403,21 +403,26 @@ describe('appStatus', () => {
     });
 
     expect(distinctTokenFn).toHaveBeenCalledTimes(2);
-    expect(mockGetLeaseStatus).toHaveBeenCalledWith(
-      expect.any(String),
-      LEASE_UUID,
-      'status-token',
-      fetchSpy,
-      undefined,
-      undefined,
-    );
-    expect(mockGetLeaseConnectionInfo).toHaveBeenCalledWith(
-      expect.any(String),
-      LEASE_UUID,
-      'conn-token',
-      fetchSpy,
-      undefined,
-    );
+    // The claim is which TOKEN reaches each transport call. Read the slots off the
+    // recorded call instead of pinning the whole argument list: toHaveBeenCalledWith is
+    // exact-arity, so the incidental trailing signal/allowLoopback slots would make an
+    // appended parameter break a test that never claimed anything about them (ENG-706).
+    const [statusUrl, statusLease, statusToken, statusFetch] =
+      mockGetLeaseStatus.mock.calls[0]!;
+    expect({ statusUrl, statusLease, statusToken, statusFetch }).toEqual({
+      statusUrl: expect.any(String),
+      statusLease: LEASE_UUID,
+      statusToken: 'status-token',
+      statusFetch: fetchSpy,
+    });
+    const [connUrl, connLease, connToken, connFetch] =
+      mockGetLeaseConnectionInfo.mock.calls[0]!;
+    expect({ connUrl, connLease, connToken, connFetch }).toEqual({
+      connUrl: expect.any(String),
+      connLease: LEASE_UUID,
+      connToken: 'conn-token',
+      connFetch: fetchSpy,
+    });
   });
 
   it('returns connectionError when only connection info fails', async () => {

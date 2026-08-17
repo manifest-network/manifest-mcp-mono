@@ -98,14 +98,26 @@ describe('restoreApp', () => {
       metaHashHex: toHex(META),
       leaseItems: ['s1:1'],
     });
-    expect(mockRestoreLease).toHaveBeenCalledWith(
-      'https://provider.example.com',
-      NEW,
-      SOURCE,
-      'tok',
-      expect.anything(),
-      false,
-    );
+    // Read the slots off the recorded call rather than pinning the whole argument list:
+    // toHaveBeenCalledWith is exact-arity, so an appended parameter would break this even
+    // though every claim below is about a slot counted from the START (ENG-706).
+    const [url, newLease, sourceLease, token, fetchFn, allowLoopback] =
+      mockRestoreLease.mock.calls[0]!;
+    expect({
+      url,
+      newLease,
+      sourceLease,
+      token,
+      fetchFn,
+      allowLoopback,
+    }).toEqual({
+      url: 'https://provider.example.com',
+      newLease: NEW,
+      sourceLease: SOURCE,
+      token: 'tok',
+      fetchFn: expect.anything(),
+      allowLoopback: false,
+    });
     expect(mockCosmosTx).not.toHaveBeenCalled();
   });
 

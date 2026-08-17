@@ -189,13 +189,20 @@ describe('closeLease replay — 01-close-success', () => {
     expect(progress.map((p) => p.kind)).toEqual(['user_confirmed']);
     expect(confirms).toHaveLength(1);
     expect(confirms[0]?.text).toBe(expectedBlock);
-    expect(core.stopApp).toHaveBeenCalledWith(
+    // Read off the recorded call rather than pinning the whole argument list with
+    // toHaveBeenCalledWith: that matcher is exact-arity, and core's `stopApp` already
+    // declares a trailing `opts?: TxCallOptions` that agent-core will thread once this
+    // broadcast becomes cancellable. Slots count from the START (ENG-706).
+    const [stopCtx, stopInput] = vi.mocked(core.stopApp).mock.calls[0]!;
+    expect(stopCtx).toEqual(
       expect.objectContaining({
         chain: expect.anything(),
         logger: expect.anything(),
       }),
-      { leaseUuid: '11111111-1111-4111-8111-111111111111' },
     );
+    expect(stopInput).toEqual({
+      leaseUuid: '11111111-1111-4111-8111-111111111111',
+    });
   });
 });
 

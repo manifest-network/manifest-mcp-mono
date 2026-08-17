@@ -66,13 +66,16 @@ describe('getLeaseConnectionInfo (capability)', () => {
       'prov-1',
     );
     expect(mockGetAuthToken).toHaveBeenCalledWith('manifest1abc', LEASE_UUID);
-    // Threads the resolved URL, minted token, and ctx.fetch into the transport.
-    expect(mockTransport).toHaveBeenCalledWith(
-      'https://provider.example.com',
-      LEASE_UUID,
-      'conn-token',
-      fetchSpy,
-      undefined,
-    );
+    // Threads the resolved URL, minted token, and ctx.fetch into the transport. Read off
+    // the recorded call rather than pinning the whole argument list: toHaveBeenCalledWith
+    // is exact-arity, so the incidental trailing allowLoopback slot would make an appended
+    // parameter break a claim that was only ever about the first four (ENG-706).
+    const [url, leaseUuid, token, fetchFn] = mockTransport.mock.calls[0]!;
+    expect({ url, leaseUuid, token, fetchFn }).toEqual({
+      url: 'https://provider.example.com',
+      leaseUuid: LEASE_UUID,
+      token: 'conn-token',
+      fetchFn: fetchSpy,
+    });
   });
 });

@@ -32,15 +32,36 @@ describe('fundCredits', () => {
       amount: '10000000umfx',
     });
 
-    expect(mockCosmosTx).toHaveBeenCalledWith(
-      cm,
-      'billing',
-      'fund-credit',
-      ['manifest1sender', '10000000umfx'],
-      true,
-      undefined,
-      undefined,
-    );
+    // Read the slots off the recorded call rather than pinning the whole argument
+    // list: toHaveBeenCalledWith is exact-arity, so any parameter appended to
+    // cosmosTx would break every assertion in this file at once. Every claim below
+    // is unchanged — only the mechanism is, and slots count from the START (ENG-706).
+    const [
+      client,
+      module,
+      subcommand,
+      txArgs,
+      waitForConfirmation,
+      overrides,
+      txExtras,
+    ] = mockCosmosTx.mock.calls[0]!;
+    expect({
+      client,
+      module,
+      subcommand,
+      txArgs,
+      waitForConfirmation,
+      overrides,
+      txExtras,
+    }).toEqual({
+      client: cm,
+      module: 'billing',
+      subcommand: 'fund-credit',
+      txArgs: ['manifest1sender', '10000000umfx'],
+      waitForConfirmation: true,
+      overrides: undefined,
+      txExtras: undefined,
+    });
     expect(result).toEqual({
       module: 'billing',
       subcommand: 'fund-credit',
@@ -70,15 +91,35 @@ describe('fundCredits', () => {
       tenant: asAddress('manifest1am058pdux3hyulcmfgj4m3hhrlfn8nzmx97smg'),
     });
 
-    expect(mockCosmosTx).toHaveBeenCalledWith(
-      cm,
-      'billing',
-      'fund-credit',
-      ['manifest1am058pdux3hyulcmfgj4m3hhrlfn8nzmx97smg', '10000000umfx'],
-      true,
-      undefined,
-      undefined,
-    );
+    const [
+      client,
+      module,
+      subcommand,
+      txArgs,
+      waitForConfirmation,
+      overrides,
+      txExtras,
+    ] = mockCosmosTx.mock.calls[0]!;
+    expect({
+      client,
+      module,
+      subcommand,
+      txArgs,
+      waitForConfirmation,
+      overrides,
+      txExtras,
+    }).toEqual({
+      client: cm,
+      module: 'billing',
+      subcommand: 'fund-credit',
+      txArgs: [
+        'manifest1am058pdux3hyulcmfgj4m3hhrlfn8nzmx97smg',
+        '10000000umfx',
+      ],
+      waitForConfirmation: true,
+      overrides: undefined,
+      txExtras: undefined,
+    });
     expect(result).toEqual({
       module: 'billing',
       subcommand: 'fund-credit',
