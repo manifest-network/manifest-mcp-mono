@@ -284,6 +284,12 @@ describe('LeaseMCPServer', () => {
         }),
       );
       expect(mockGetBalance.mock.calls[0][1]).toBe('manifest1abc');
+      // ENG-707: the handler threads the MCP request's `extra.signal` into the
+      // core read's CallOptions bag. Without it, `withReadSignal` takes its
+      // `signal === undefined` fast path and the read is uncancellable.
+      expect(mockGetBalance.mock.calls[0][2]).toEqual(
+        expect.objectContaining({ signal: expect.any(AbortSignal) }),
+      );
       expect(result.isError).toBeUndefined();
       const parsed = JSON.parse(result.content[0].text);
       expect(parsed.balances[0].denom).toBe('umfx');
@@ -348,7 +354,7 @@ describe('LeaseMCPServer', () => {
           logger: expect.anything(),
         }),
         { amount: '10000000umfx', tenant: undefined },
-        undefined,
+        expect.objectContaining({ signal: expect.any(AbortSignal) }),
       );
       expect(result.isError).toBeUndefined();
     });
@@ -371,7 +377,12 @@ describe('LeaseMCPServer', () => {
           logger: expect.anything(),
         }),
         { amount: '10000000umfx', tenant: undefined },
-        { gasMultiplier: 2.5 },
+        // Both keys, not either: the gas override merges INTO the signal-bearing
+        // bag rather than replacing it (ENG-707).
+        expect.objectContaining({
+          gasMultiplier: 2.5,
+          signal: expect.any(AbortSignal),
+        }),
       );
     });
 
@@ -400,7 +411,7 @@ describe('LeaseMCPServer', () => {
           // parseAddress brands the raw tenant; at runtime it's the same string.
           tenant: 'manifest1am058pdux3hyulcmfgj4m3hhrlfn8nzmx97smg',
         },
-        undefined,
+        expect.objectContaining({ signal: expect.any(AbortSignal) }),
       );
     });
   });
@@ -559,7 +570,10 @@ describe('LeaseMCPServer', () => {
           logger: expect.anything(),
         }),
         { leaseUuid: '550e8400-e29b-41d4-a716-446655440000' },
-        { gasMultiplier: 4.0 },
+        expect.objectContaining({
+          gasMultiplier: 4.0,
+          signal: expect.any(AbortSignal),
+        }),
       );
     });
   });
@@ -595,7 +609,7 @@ describe('LeaseMCPServer', () => {
           customDomain: 'app.example.com',
           serviceName: undefined,
         },
-        undefined,
+        expect.objectContaining({ signal: expect.any(AbortSignal) }),
       );
       expect(result.isError).toBeUndefined();
       const parsed = JSON.parse(result.content[0].text);
@@ -631,7 +645,7 @@ describe('LeaseMCPServer', () => {
           logger: expect.anything(),
         }),
         { leaseUuid: LEASE_UUID_FIXTURE, clear: true, serviceName: undefined },
-        undefined,
+        expect.objectContaining({ signal: expect.any(AbortSignal) }),
       );
       expect(result.isError).toBeUndefined();
       const parsed = JSON.parse(result.content[0].text);
@@ -668,7 +682,10 @@ describe('LeaseMCPServer', () => {
           customDomain: 'app.example.com',
           serviceName: 'web',
         },
-        { gasMultiplier: 4.0 },
+        expect.objectContaining({
+          gasMultiplier: 4.0,
+          signal: expect.any(AbortSignal),
+        }),
       );
     });
   });
@@ -943,7 +960,7 @@ describe('LeaseMCPServer', () => {
           clear: true,
           serviceName: undefined,
         },
-        undefined,
+        expect.objectContaining({ signal: expect.any(AbortSignal) }),
       );
     });
   });
@@ -1011,6 +1028,145 @@ describe('LeaseMCPServer', () => {
       expect(parsed.details).toMatchObject({
         customDomain: 'unclaimed.example.com',
       });
+    });
+  });
+
+  // ENG-707: MCP host cancellation (Esc in the host, the client's request
+  // timeout, or transport close) must reach the core call. Every handler used
+  // to be declared `async (args) =>` and drop the SDK's `extra`, so the signal
+  // was never built into the CallOptions bag and `withReadSignal` /
+  // `withTxConfirmation` always took their "no signal" fast path — the same
+  // class of dead-guard bug ENG-666 fixed in fred.
+  //
+  // The per-tool assertions above pin that a signal-bearing bag is PASSED.
+  // These drive a real cancellation over the MCP wire and pin that it has
+  // EFFECT, which a forwarding assertion alone cannot show.
+  describe('MCP cancellation reaches the lease tools (ENG-707)', () => {
+    // The shared callTool helper does not forward RequestOptions, and widening
+    // it would touch every package that uses it — so drive the client directly
+    // here, as packages/fred/src/server.test.ts does for the same reason.
+    async function callToolWithSignal(
+      server: LeaseMCPServer,
+      toolName: string,
+      toolInput: Record<string, unknown>,
+      signal: AbortSignal,
+    ): Promise<unknown> {
+      const [clientTransport, serverTransport] =
+        InMemoryTransport.createLinkedPair();
+      activeTransports.push(clientTransport, serverTransport);
+      const client = new Client({ name: 'test-client', version: '1.0.0' });
+      await server.getServer().connect(serverTransport);
+      await client.connect(clientTransport);
+      return client.callTool(
+        { name: toolName, arguments: toolInput },
+        undefined,
+        {
+          signal,
+        },
+      );
+    }
+
+    /** Let `notifications/cancelled` round-trip and the server handler settle. */
+    async function drain(ticks = 10): Promise<void> {
+      for (let i = 0; i < ticks; i++) {
+        await new Promise((r) => setTimeout(r, 0));
+      }
+    }
+
+    // The four read tools whose core fn is NOT mocked in this file — they run
+    // for real over the mocked query client, so the query-client spy going
+    // uncalled is proof that `withReadSignal` gated the read, not merely that
+    // an options object was handed over.
+    const READ_CASES: Array<{
+      tool: string;
+      input: Record<string, unknown>;
+      querySpy: () => ReturnType<typeof vi.fn>;
+    }> = [
+      { tool: 'get_skus', input: {}, querySpy: () => mockSKUs },
+      { tool: 'get_providers', input: {}, querySpy: () => mockProviders },
+      {
+        tool: 'lease_by_custom_domain',
+        input: { custom_domain: 'app.example.com' },
+        querySpy: () => mockLeaseByCustomDomain,
+      },
+      {
+        tool: 'leases_by_tenant',
+        input: {},
+        querySpy: () => mockLeasesByTenant,
+      },
+    ];
+
+    for (const { tool, input, querySpy } of READ_CASES) {
+      it(`${tool}: a cancel landing during the rate-limit wait abandons the read before the RPC`, async () => {
+        const server = new LeaseMCPServer({
+          config: makeMockConfig(),
+          walletProvider: makeMockWallet(),
+        });
+        const ac = new AbortController();
+
+        // Cancel from inside the token wait. This is exactly the window
+        // withReadSignal's second `signal.aborted` check exists for
+        // (core/src/internals/read-signal.ts:24-25): the deadline may elapse
+        // while acquireRateLimit blocks. The macrotask yields let the client's
+        // notifications/cancelled reach the server and abort extra.signal
+        // before acquireRateLimit resolves.
+        mockAcquireRateLimit.mockImplementationOnce(async () => {
+          ac.abort();
+          await drain(3);
+        });
+
+        await expect(
+          callToolWithSignal(server, tool, input, ac.signal),
+        ).rejects.toThrow();
+
+        // The client rejects the instant it aborts, while the server handler is
+        // still running — drain before asserting on the server side, or a
+        // not-called check would pass merely by observing too early.
+        await drain();
+
+        // Non-vacuity: prove the run actually reached the cancellation window.
+        // Without this the test would pass if the tool had failed earlier for
+        // an unrelated reason (bad input, a throwing mock) and never got near
+        // withReadSignal at all.
+        expect(mockAcquireRateLimit).toHaveBeenCalled();
+        // The assertion that fails against today's code: with no signal in the
+        // bag, withReadSignal takes its `signal === undefined` fast path and
+        // issues the query regardless of the cancel.
+        expect(querySpy()).not.toHaveBeenCalled();
+      });
+    }
+
+    it('close_lease hands core the live request signal, not a detached one', async () => {
+      // stopApp is mocked here, so withTxConfirmation never runs — asserting
+      // that an AbortSignal was passed would not show it is the one the host
+      // actually aborts. Capture the exact instance core received and prove the
+      // host cancel reaches THAT object; core's own tx-confirmation tests then
+      // cover what it does with it (pre-broadcast: nothing is sent).
+      const server = new LeaseMCPServer({
+        config: makeMockConfig(),
+        walletProvider: makeMockWallet(),
+      });
+      const ac = new AbortController();
+      mockStopApp.mockImplementationOnce(async () => {
+        ac.abort();
+        await drain(3);
+        return { transactionHash: 'HASH', code: 0 };
+      });
+
+      await expect(
+        callToolWithSignal(
+          server,
+          'close_lease',
+          { lease_uuid: '550e8400-e29b-41d4-a716-446655440000' },
+          ac.signal,
+        ),
+      ).rejects.toThrow();
+      await drain();
+
+      expect(mockStopApp).toHaveBeenCalledOnce();
+      const forwarded = mockStopApp.mock.calls[0][2]?.signal;
+      expect(forwarded).toBeInstanceOf(AbortSignal);
+      expect(forwarded.aborted).toBe(true);
     });
   });
 });
