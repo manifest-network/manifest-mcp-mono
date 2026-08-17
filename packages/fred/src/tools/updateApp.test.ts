@@ -27,7 +27,14 @@ const READY = {
   provision_status: 'ready',
 } as never;
 const mockGetAuthToken = vi.fn().mockResolvedValue('auth-token');
-const fetchSpy = vi.fn(globalThis.fetch);
+// Threaded and asserted, never invoked — see appStatus.test.ts for why this is spelled
+// with an explicit throw rather than `vi.fn(globalThis.fetch)` (ENG-715).
+const fetchSpy = vi.fn<typeof globalThis.fetch>(() => {
+  throw new Error(
+    'this fetch spy is threaded and asserted, never invoked — a call here means a mock ' +
+      'did not intercept provider HTTP (ENG-705/ENG-715)',
+  );
+});
 
 function activeQc() {
   return makeMockQueryClient({

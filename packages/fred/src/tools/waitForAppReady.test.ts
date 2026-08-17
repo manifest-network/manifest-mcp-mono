@@ -24,7 +24,14 @@ const mockResolveProviderUrl = vi.mocked(resolveProviderUrl);
 
 const LEASE_UUID = '550e8400-e29b-41d4-a716-446655440000';
 const mockGetAuthToken = vi.fn().mockResolvedValue('auth-token');
-const fetchSpy = vi.fn(globalThis.fetch);
+// Threaded and asserted, never invoked — see appStatus.test.ts for why this is spelled
+// with an explicit throw rather than `vi.fn(globalThis.fetch)` (ENG-715).
+const fetchSpy = vi.fn<typeof globalThis.fetch>(() => {
+  throw new Error(
+    'this fetch spy is threaded and asserted, never invoked — a call here means a mock ' +
+      'did not intercept provider HTTP (ENG-705/ENG-715)',
+  );
+});
 
 function makeCtx(qc: ReturnType<typeof makeMockQueryClient>) {
   return {

@@ -10,10 +10,40 @@ vi.mock('@manifest-network/manifest-mcp-core', async (importOriginal) => {
 
 vi.mock('../http/provider.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../http/provider.js')>();
+  // A seal for a wire export nothing on the deploy path calls yet. It throws rather than
+  // resolving `undefined` so that a NEW call site gets a named, actionable error instead of
+  // a silently no-op probe. Defined inside the factory: `vi.mock` is hoisted above the
+  // module body, so a file-scope helper would not reliably be initialised yet.
+  const sealed = (name: string) =>
+    vi.fn(() => {
+      throw new Error(
+        `provider.${name}() is sealed in this test file — nothing on the deploy path ` +
+          'called it when the seal was written. If the code under test needs it now, ' +
+          'replace the seal with an explicit spy and assert on it. Do NOT drop it: ' +
+          'provider.ts calls its own module-local `fetchJsonChecked`, which no module ' +
+          'mock can intercept, so the real function would run the real transport (ENG-715).',
+      );
+    });
   return {
     ...actual,
+    // Closed over provider.ts's WHOLE wire surface, not just the two the deploy
+    // path calls today. A wire export left to `...actual` is a live outbound
+    // request waiting for a caller: `getProviderHealth` was exactly that, one
+    // readiness probe away from firing (ENG-715).
+    //
+    // Note what each entry does and does not buy. Stubbing the ENTRY POINTS is
+    // what closes the hole — provider.ts reaches `fetchJsonChecked` through a
+    // module-local binding, so stubbing that primitive alone intercepts nothing
+    // (measured: identical failures with and without it). The two primitives are
+    // here for the CROSS-module edge instead, which a mock can reach: `http/fred.ts`
+    // imports `fetchJsonChecked`, and only `pollLeaseUntilReady` is mocked there.
+    //
+    // The pure surface stays real on purpose — see PROVIDER_EXPORTS_KEPT_REAL below.
     uploadLeaseData: vi.fn(),
     getLeaseConnectionInfo: vi.fn(),
+    getProviderHealth: sealed('getProviderHealth'),
+    checkedFetch: sealed('checkedFetch'),
+    fetchJsonChecked: sealed('fetchJsonChecked'),
   };
 });
 
@@ -41,6 +71,7 @@ import {
   pollLeaseUntilReady,
   TerminalChainStateError,
 } from '../http/fred.js';
+import * as providerModule from '../http/provider.js';
 import {
   getLeaseConnectionInfo,
   ProviderApiError,
@@ -48,6 +79,82 @@ import {
 } from '../http/provider.js';
 import { deployApp } from './deployApp.js';
 import { deployManifest } from './deployManifest.js';
+
+/**
+ * Every runtime export of `provider.js` that the factory above does NOT stub, each with the
+ * reason it is safe to run for real. A NEW provider export belongs on one side or the other,
+ * and the guard below fails until somebody decides which (ENG-715).
+ *
+ * This is a list rather than a rule because "does it touch the wire" is not observable at
+ * runtime — and getting it wrong is not loud. `vi.mock` replaces only what an IMPORTER sees;
+ * provider.ts's entry points reach `validateProviderUrl` / `fetchJsonChecked` / `checkedFetch`
+ * through module-local bindings that no external mock can rewrite, so a wire export left to
+ * `...actual` dials out from inside the module with nothing to intercept it.
+ */
+const PROVIDER_EXPORTS_KEPT_REAL = new Set([
+  // Constants.
+  'MAX_PROVIDER_ERROR_CHARS',
+  'PROVIDER_TEXT_EXCERPT_CHARS',
+  'DEFAULT_FETCH_TIMEOUT_MS',
+  'MAX_RESPONSE_BYTES',
+  // Pure — string/URL/error inspection, no transport of their own. `readBodyCapped` and
+  // `parseJsonResponse` consume a `Response` somebody else already fetched.
+  'capProviderText',
+  'parseRetryAfterMs',
+  'isTransientProviderError',
+  'isUrlSsrfSafe',
+  'readBodyCapped',
+  'parseJsonResponse',
+  // Real ON PURPOSE, and load-bearing. `http/fred.ts` extends `ProviderApiError` at module
+  // scope, so a stub would break this file's imports outright, and `deployManifest.ts`
+  // brand-checks poll verdicts with `ProviderApiError.isProviderApiError`. The deploy path
+  // runs the real `validateProviderUrl` through `resolveLeaseProvider.ts` — that is what the
+  // SSRF cases here assert against.
+  'ProviderApiError',
+  'validateProviderUrl',
+]);
+
+/** provider.ts's real export names — the mock cannot narrow this, so it cannot hide a gap. */
+async function providerExportNames(): Promise<string[]> {
+  return Object.keys(
+    await vi.importActual<typeof import('../http/provider.js')>(
+      '../http/provider.js',
+    ),
+  );
+}
+
+describe('provider.js mock coverage (ENG-715)', () => {
+  it('classifies every provider export — stubbed above, or named as deliberately real', async () => {
+    const names = await providerExportNames();
+    const unclassified = names.filter(
+      (name) =>
+        !PROVIDER_EXPORTS_KEPT_REAL.has(name) &&
+        !vi.isMockFunction((providerModule as Record<string, unknown>)[name]),
+    );
+    expect(
+      unclassified,
+      'These provider.ts exports reached this file real. If one touches the wire, stub it in\n' +
+        'the vi.mock factory above; otherwise add it to PROVIDER_EXPORTS_KEPT_REAL with the\n' +
+        'reason it is safe to run. See ENG-715.',
+    ).toEqual([]);
+  });
+
+  it('the guard is not vacuous', async () => {
+    // Three ways the check above could pass while proving nothing: the actual import
+    // yields no names, the stubs are not actually stubs, or the allowlist has drifted onto
+    // exports that no longer exist (and so excuses nothing). Pin all three.
+    const names = await providerExportNames();
+    expect(names.length).toBeGreaterThan(10);
+    expect(vi.isMockFunction(providerModule.getProviderHealth)).toBe(true);
+    expect(vi.isMockFunction(providerModule.uploadLeaseData)).toBe(true);
+    expect(vi.isMockFunction(providerModule.getLeaseConnectionInfo)).toBe(true);
+    for (const name of PROVIDER_EXPORTS_KEPT_REAL) {
+      expect(names, `${name} is no longer exported by provider.ts`).toContain(
+        name,
+      );
+    }
+  });
+});
 
 const mockCosmosTx = vi.mocked(cosmosTx);
 const mockUpload = vi.mocked(uploadLeaseData);
@@ -72,7 +179,17 @@ async function ctx(cm: unknown): Promise<FredAuthCtx> {
   return {
     query: await manager.getQueryClient(),
     chain: manager,
-    fetch: vi.fn(globalThis.fetch),
+    // Typed, and loud if it is ever reached. This spy is threaded and (elsewhere)
+    // asserted, never invoked — a call here means a mock did not intercept provider
+    // HTTP. The old `vi.fn(globalThis.fetch)` spelling got that loudness by accident,
+    // from `setupFiles` having already swapped in the ban stub; say it outright instead
+    // of depending on load order (ENG-705/ENG-715).
+    fetch: vi.fn<typeof globalThis.fetch>(() => {
+      throw new Error(
+        'ctx.fetch is threaded and asserted, never invoked — a call here means a mock ' +
+          'did not intercept provider HTTP (ENG-705/ENG-715)',
+      );
+    }),
     logger: noopLogger,
     providerAuth: {
       providerToken: ({ address, leaseUuid }) =>
