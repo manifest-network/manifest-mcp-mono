@@ -90,6 +90,36 @@ describe('resolveCallSignal', () => {
       }
     });
 
+    // The diagnostic must not reintroduce the defect it reports on. `JSON.stringify` THROWS on
+    // a bigint, so `timeout: 1n` from a JS caller would leak a raw TypeError past a guard whose
+    // whole job is to replace raw platform errors with INVALID_CONFIG.
+    it('rejects a bigint through the promised path, not a raw TypeError', () => {
+      const call = () =>
+        resolveCallSignal({ timeout: 1n as unknown as number });
+      expect(call).toThrow(ManifestMCPError);
+      expect(call).not.toThrow(TypeError);
+      try {
+        call();
+      } catch (err) {
+        expect((err as ManifestMCPError).message).toContain('got 1');
+      }
+    });
+
+    // ...and it must name the value it rejected. `JSON.stringify` renders both of these as
+    // "null", which hides what the caller actually passed.
+    it.each([
+      ['NaN', Number.NaN, 'NaN'],
+      ['Infinity', Number.POSITIVE_INFINITY, 'Infinity'],
+      ['a string', '500' as unknown as number, '"500"'],
+    ])('names %s in the message', (_label, timeout, shown) => {
+      try {
+        resolveCallSignal({ timeout });
+        throw new Error('should have thrown');
+      } catch (err) {
+        expect((err as ManifestMCPError).message).toContain(`got ${shown}`);
+      }
+    });
+
     it('accepts 1 and the 32-bit ceiling', () => {
       expect(() => resolveCallSignal({ timeout: 1 })).not.toThrow();
       expect(() => resolveCallSignal({ timeout: 2_147_483_647 })).not.toThrow();

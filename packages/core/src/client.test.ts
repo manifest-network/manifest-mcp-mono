@@ -1125,6 +1125,31 @@ describe('CosmosClientManager', () => {
           );
         },
       );
+
+      // The guard must follow the limiter, not just the entry. A parked waiter re-reads
+      // `this.rateLimiter` each pass so it adopts a reconfigured budget — which means it can
+      // adopt an INVALID one. Checking only on entry turned that into a silent spin
+      // (`tryRemoveTokens` declines forever below one token) instead of the typed failure.
+      // Caught by Copilot on PR #183.
+      it('raises INVALID_CONFIG when a reconfigure swaps in an undersized budget mid-wait', async () => {
+        const config = makeConfig({
+          chainId: 'rl-reconfig-invalid',
+          rateLimit: { requestsPerSecond: 1 },
+        });
+        const wallet = makeWallet();
+        const instance = CosmosClientManager.getInstance(config, wallet);
+        await instance.acquireRateLimit(); // drain the single token so the next call parks
+        const ac = new AbortController();
+        const parked = instance.acquireRateLimit(ac.signal);
+        // Reconfigure the SAME key to a budget that can never admit one request.
+        CosmosClientManager.getInstance(
+          { ...config, rateLimit: { requestsPerSecond: 0.5 } },
+          wallet,
+        );
+        await expect(parked).rejects.toMatchObject({
+          code: ManifestMCPErrorCode.INVALID_CONFIG,
+        });
+      });
     });
   });
 

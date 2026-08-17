@@ -612,17 +612,7 @@ export class CosmosClientManager {
    * rps=2 take 1004ms both ways.
    */
   async acquireRateLimit(signal?: AbortSignal): Promise<void> {
-    // A bucket that cannot hold one token never yields to polling, where `removeTokens`
-    // throws. Raise it as a typed, non-retryable config error on BOTH paths rather than
-    // letting one path hang and the other surface a vendored library's wording — this agrees
-    // with `validateConfig`, which already rejects a non-positive-integer requestsPerSecond.
-    // (`getInstance` takes an unvalidated config, and it is on the public SDK barrel.)
-    if (this.rateLimiter.tokenBucket.bucketSize < 1) {
-      throw new ManifestMCPError(
-        ManifestMCPErrorCode.INVALID_CONFIG,
-        `rateLimit.requestsPerSecond must be at least 1, got ${this.rateLimiter.tokenBucket.bucketSize}; a single request cannot fit the budget.`,
-      );
-    }
+    this.assertBudgetAdmitsOneToken();
     if (signal === undefined) {
       await this.rateLimiter.removeTokens(1);
       return;
@@ -630,9 +620,34 @@ export class CosmosClientManager {
     if (signal.aborted) throw abortReason(signal);
     // `this.rateLimiter` is re-read every pass on purpose: a getInstance reconfigure REPLACES
     // the limiter object, and an in-flight waiter should adopt the new budget rather than
-    // drain an orphaned one.
-    while (!this.rateLimiter.tryRemoveTokens(1)) {
+    // drain an orphaned one. The guard is re-run against each snapshot for the same reason —
+    // adopting a REPLACEMENT budget means adopting its validity too. Checking only on entry
+    // would let a reconfigure to an undersized bucket turn a parked waiter into a silent
+    // spin (`tryRemoveTokens` declines forever below 1 token) instead of the fast, typed
+    // failure this raises.
+    while (true) {
+      if (this.rateLimiter.tryRemoveTokens(1)) return;
+      this.assertBudgetAdmitsOneToken();
       await abortableSleep(RATE_LIMIT_POLL_MS, signal);
+    }
+  }
+
+  /**
+   * Fail fast when the configured budget cannot admit a single request. `tryRemoveTokens(1)`
+   * declines FOREVER below one token where `removeTokens` throws, so the poll path needs this
+   * to keep the two acquisition paths reporting the same misconfiguration the same way —
+   * typed and non-retryable rather than a hang on one side and a vendored library's wording on
+   * the other. It agrees with `validateConfig`, which already rejects a non-positive-integer
+   * `requestsPerSecond`; `getInstance` takes an UNVALIDATED config and is on the public SDK
+   * barrel, which is how such a value gets here at all.
+   */
+  private assertBudgetAdmitsOneToken(): void {
+    const { bucketSize } = this.rateLimiter.tokenBucket;
+    if (bucketSize < 1) {
+      throw new ManifestMCPError(
+        ManifestMCPErrorCode.INVALID_CONFIG,
+        `rateLimit.requestsPerSecond must be at least 1, got ${bucketSize}; a single request cannot fit the budget.`,
+      );
     }
   }
 

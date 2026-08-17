@@ -98,12 +98,21 @@ export function resolveCallSignal(opts?: CallOptions): AbortSignal | undefined {
 /**
  * `Number.isInteger` alone rejects `NaN`, `±Infinity`, a float and every non-number
  * (a string `'500'` included), so the range check only has to carry the two ends.
+ *
+ * The diagnostic deliberately does NOT use `JSON.stringify`. It THROWS on a `bigint`, so a
+ * JS caller passing `timeout: 1n` would leak the raw `TypeError` this guard exists to
+ * replace — the exact defect class ENG-710 is about, reintroduced in the error path. It also
+ * renders `NaN` and `±Infinity` as `null`, hiding the value that was actually rejected.
+ * `String()` is total over every primitive (symbols included); quoting is reserved for
+ * strings so `'500'` stays distinguishable from `500`.
  */
 function assertValidTimeout(timeout: number): void {
   if (!Number.isInteger(timeout) || timeout < 1 || timeout > MAX_TIMEOUT_MS) {
+    const shown =
+      typeof timeout === 'string' ? `"${timeout}"` : String(timeout);
     throw new ManifestMCPError(
       ManifestMCPErrorCode.INVALID_CONFIG,
-      `timeout must be an integer between 1 and ${MAX_TIMEOUT_MS} ms, got ${JSON.stringify(timeout)}`,
+      `timeout must be an integer between 1 and ${MAX_TIMEOUT_MS} ms, got ${shown}`,
       { field: 'timeout', min: 1, max: MAX_TIMEOUT_MS },
     );
   }

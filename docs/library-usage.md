@@ -305,7 +305,7 @@ Every typed read and transaction takes an optional trailing options bag with `si
 That is deliberate, and it splits by layer:
 
 - **Reads and provider transport reject with your own abort reason, verbatim and unwrapped** — what the WHATWG DOM standard asks of an API that accepts an `AbortSignal`. Only a reason carrying *nothing at all* (`null`, or `undefined` from a foreign/polyfilled signal) is replaced with the spec's `AbortError`; an empty string is a value you chose and travels through. At the MCP tool boundary this surfaces under `code: 'UNKNOWN'`, because only a `ManifestMCPError` carries a code.
-- **Transactions and orchestrated flows wrap** into `ManifestMCPError(OPERATION_CANCELLED)`, keeping the original under `details.reason` — the convention Node's own promise APIs follow. Those paths can leave something behind, so they need a structured, non-retryable code plus `details.sent` (was a tx broadcast?) to tell you whether to re-query.
+- **Transactions and orchestrated flows wrap** into `ManifestMCPError(OPERATION_CANCELLED)`, keeping the original under `details.reason` — the convention Node's own promise APIs follow. Those paths can leave something behind, so they need a structured, non-retryable code rather than a bare reason. **`details.sent` is specific to the transaction seam** (`executeTx` and the on-chain tx helpers): it tells you whether a broadcast was started and therefore whether to re-query the chain before retrying. Orchestrated flows (`deployApp`, `manageDomain`, `closeLease`, `troubleshootDeployment`) carry only `details.reason` — plus, where a saga compensated, its own fields such as `details.lease_uuid` and `rolled_back` — so do not branch on `sent` outside the tx seam.
 
 Two things worth knowing about `timeout`:
 
