@@ -469,17 +469,22 @@ describe('manageDomain — set', () => {
     expect(progress.map((p) => p.kind)).toEqual(['user_confirmed']);
     expect(confirms).toHaveLength(1);
     expect(confirms[0]?.text).toBe(expectedBlock);
-    expect(core.setItemCustomDomain).toHaveBeenCalledWith(
+    // Read off the recorded call rather than pinning the whole argument list with
+    // toHaveBeenCalledWith: that matcher is exact-arity, and core already declares a
+    // trailing `opts?: TxCallOptions` that agent-core will thread once these broadcasts
+    // become cancellable. Slots count from the START, so growth cannot shift them (ENG-706).
+    const [ctx, input] = vi.mocked(core.setItemCustomDomain).mock.calls[0]!;
+    expect(ctx).toEqual(
       expect.objectContaining({
         chain: expect.anything(),
         logger: expect.anything(),
       }),
-      {
-        leaseUuid: '11111111-1111-4111-8111-111111111111',
-        customDomain: 'app.testnet.manifest.app',
-        serviceName: undefined, // no serviceName on legacy single-item lease
-      },
     );
+    expect(input).toEqual({
+      leaseUuid: '11111111-1111-4111-8111-111111111111',
+      customDomain: 'app.testnet.manifest.app',
+      serviceName: undefined, // no serviceName on legacy single-item lease
+    });
   });
 
   it('02-set-mismatch: verifier returns mismatch → onFailure invoked with exact reason → throws TX_FAILED', async () => {
@@ -583,17 +588,18 @@ describe('manageDomain — set', () => {
     expect(result).toEqual(expected);
     expect(completed).toEqual([expected]);
     expect(confirms[0]?.text).toBe(expectedBlock);
-    expect(core.setItemCustomDomain).toHaveBeenCalledWith(
+    const [ctx, input] = vi.mocked(core.setItemCustomDomain).mock.calls[0]!;
+    expect(ctx).toEqual(
       expect.objectContaining({
         chain: expect.anything(),
         logger: expect.anything(),
       }),
-      {
-        leaseUuid: '11111111-1111-4111-8111-111111111111',
-        customDomain: 'api.testnet.manifest.app',
-        serviceName: 'web',
-      },
     );
+    expect(input).toEqual({
+      leaseUuid: '11111111-1111-4111-8111-111111111111',
+      customDomain: 'api.testnet.manifest.app',
+      serviceName: 'web',
+    });
   });
 
   it('user declines at confirm → throws OPERATION_CANCELLED; broadcast NOT fired', async () => {
@@ -797,17 +803,18 @@ describe('manageDomain — set', () => {
     );
 
     // Broadcast received the trimmed form.
-    expect(core.setItemCustomDomain).toHaveBeenCalledWith(
+    const [ctx, input] = vi.mocked(core.setItemCustomDomain).mock.calls[0]!;
+    expect(ctx).toEqual(
       expect.objectContaining({
         chain: expect.anything(),
         logger: expect.anything(),
       }),
-      {
-        leaseUuid: '11111111-1111-4111-8111-111111111111',
-        customDomain: 'app.example.com',
-        serviceName: undefined,
-      },
     );
+    expect(input).toEqual({
+      leaseUuid: '11111111-1111-4111-8111-111111111111',
+      customDomain: 'app.example.com',
+      serviceName: undefined,
+    });
     // Confirm block displays the trimmed form (no leading/trailing
     // whitespace in the FQDN line).
     expect(confirms[0]?.text).toContain('FQDN:         app.example.com\n');
@@ -863,17 +870,18 @@ describe('manageDomain — set', () => {
     );
 
     // Broadcast received the lowercased form.
-    expect(core.setItemCustomDomain).toHaveBeenCalledWith(
+    const [ctx, input] = vi.mocked(core.setItemCustomDomain).mock.calls[0]!;
+    expect(ctx).toEqual(
       expect.objectContaining({
         chain: expect.anything(),
         logger: expect.anything(),
       }),
-      {
-        leaseUuid: '11111111-1111-4111-8111-111111111111',
-        customDomain: 'app.example.com',
-        serviceName: undefined,
-      },
     );
+    expect(input).toEqual({
+      leaseUuid: '11111111-1111-4111-8111-111111111111',
+      customDomain: 'app.example.com',
+      serviceName: undefined,
+    });
     // Verification matched the lowercased chain value → success, not a
     // spurious mismatch.
     expect(failures).toEqual([]);
@@ -1113,17 +1121,18 @@ describe('manageDomain — clear', () => {
     expect(result).toEqual(expected);
     expect(completed).toEqual([expected]);
     expect(confirms[0]?.text).toBe(expectedBlock);
-    expect(core.setItemCustomDomain).toHaveBeenCalledWith(
+    const [ctx, input] = vi.mocked(core.setItemCustomDomain).mock.calls[0]!;
+    expect(ctx).toEqual(
       expect.objectContaining({
         chain: expect.anything(),
         logger: expect.anything(),
       }),
-      {
-        leaseUuid: '11111111-1111-4111-8111-111111111111',
-        clear: true,
-        serviceName: undefined,
-      },
     );
+    expect(input).toEqual({
+      leaseUuid: '11111111-1111-4111-8111-111111111111',
+      clear: true,
+      serviceName: undefined,
+    });
   });
 
   it('clear on stack lease threads serviceName + clear:true through broadcast', async () => {
@@ -1172,17 +1181,18 @@ describe('manageDomain — clear', () => {
     expect(result.verified).toBe(true);
     expect(result.finalCustomDomain).toBeNull();
     expect(completed).toHaveLength(1);
-    expect(core.setItemCustomDomain).toHaveBeenCalledWith(
+    const [ctx, input] = vi.mocked(core.setItemCustomDomain).mock.calls[0]!;
+    expect(ctx).toEqual(
       expect.objectContaining({
         chain: expect.anything(),
         logger: expect.anything(),
       }),
-      {
-        leaseUuid: '11111111-1111-4111-8111-111111111111',
-        clear: true,
-        serviceName: 'web',
-      },
     );
+    expect(input).toEqual({
+      leaseUuid: '11111111-1111-4111-8111-111111111111',
+      clear: true,
+      serviceName: 'web',
+    });
   });
 });
 

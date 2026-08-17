@@ -39,6 +39,9 @@ describe('getLeaseStatus', () => {
 
     const result = await getLeaseStatus(PROVIDER_URL, LEASE_UUID, AUTH_TOKEN);
     expect(result.state).toBe(LeaseState.LEASE_STATE_ACTIVE);
+    // NOTE: the `init` bag is matched with objectContaining, so a `signal` landing inside
+    // it passes here without being observed. Anything that needs to prove a signal reaches
+    // the transport must assert the key positively — this assertion does not cover it.
     expect(mockFetchJson).toHaveBeenCalledWith(
       expect.stringContaining(`/v1/leases/${LEASE_UUID}/status`),
       expect.objectContaining({

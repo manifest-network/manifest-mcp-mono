@@ -299,17 +299,40 @@ describe('cosmosTx', () => {
     ]);
 
     expect(mockGetTxHandler).toHaveBeenCalledWith('bank');
-    expect(mockHandler).toHaveBeenCalledWith(
-      { mock: 'signingClient' },
-      'manifest1sender',
-      'send',
-      ['addr', '100umfx'],
+    // Read the slots off the recorded call rather than pinning the whole argument
+    // list: toHaveBeenCalledWith is exact-arity, and TxHandler is the widest signature
+    // in the repo at 8 parameters — any ambient parameter lands at slot 8 and breaks
+    // every one of these. Claims are unchanged; slots count from the START (ENG-706).
+    const [
+      signingClient,
+      senderAddress,
+      subcommand,
+      handlerArgs,
+      waitForConfirmation,
+      txOptions,
+      buildContext,
+      handlerTxExtras,
+    ] = mockHandler.mock.calls[0]!;
+    expect({
+      signingClient,
+      senderAddress,
+      subcommand,
+      handlerArgs,
+      waitForConfirmation,
+      txOptions,
+      buildContext,
+      handlerTxExtras,
+    }).toEqual({
+      signingClient: { mock: 'signingClient' },
+      senderAddress: 'manifest1sender',
+      subcommand: 'send',
+      handlerArgs: ['addr', '100umfx'],
       // Default is now wait-for-confirmation (matches the documented TxCallOptions contract).
-      true,
-      undefined,
-      undefined,
-      undefined,
-    );
+      waitForConfirmation: true,
+      txOptions: undefined,
+      buildContext: undefined,
+      handlerTxExtras: undefined,
+    });
     expect(result).toEqual(txResult);
   });
 
@@ -325,16 +348,35 @@ describe('cosmosTx', () => {
 
     await cosmosTx(clientManager, 'bank', 'send', [], true);
 
-    expect(mockHandler).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.anything(),
-      'send',
-      [],
-      true,
-      undefined,
-      undefined,
-      undefined,
-    );
+    const [
+      signingClient,
+      senderAddress,
+      subcommand,
+      handlerArgs,
+      waitForConfirmation,
+      txOptions,
+      buildContext,
+      handlerTxExtras,
+    ] = mockHandler.mock.calls[0]!;
+    expect({
+      signingClient,
+      senderAddress,
+      subcommand,
+      handlerArgs,
+      waitForConfirmation,
+      txOptions,
+      buildContext,
+      handlerTxExtras,
+    }).toEqual({
+      signingClient: expect.anything(),
+      senderAddress: expect.anything(),
+      subcommand: 'send',
+      handlerArgs: [],
+      waitForConfirmation: true,
+      txOptions: undefined,
+      buildContext: undefined,
+      handlerTxExtras: undefined,
+    });
   });
 
   it('enriches ManifestMCPError with module/subcommand/args context', async () => {
@@ -557,16 +599,39 @@ describe('cosmosTx', () => {
       gasMultiplier: 2.5,
     });
 
-    expect(mockHandler).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.anything(),
-      'send',
-      [],
-      false,
-      { gasMultiplier: 2.5, gasPrice: '1.0umfx', maxGas: 50_000_000 },
-      undefined,
-      undefined,
-    );
+    const [
+      signingClient,
+      senderAddress,
+      subcommand,
+      handlerArgs,
+      waitForConfirmation,
+      txOptions,
+      buildContext,
+      handlerTxExtras,
+    ] = mockHandler.mock.calls[0]!;
+    expect({
+      signingClient,
+      senderAddress,
+      subcommand,
+      handlerArgs,
+      waitForConfirmation,
+      txOptions,
+      buildContext,
+      handlerTxExtras,
+    }).toEqual({
+      signingClient: expect.anything(),
+      senderAddress: expect.anything(),
+      subcommand: 'send',
+      handlerArgs: [],
+      waitForConfirmation: false,
+      txOptions: {
+        gasMultiplier: 2.5,
+        gasPrice: '1.0umfx',
+        maxGas: 50_000_000,
+      },
+      buildContext: undefined,
+      handlerTxExtras: undefined,
+    });
   });
 
   it('resolves TxOptions on the default path (no override) when gasPrice is configured', async () => {
@@ -587,16 +652,39 @@ describe('cosmosTx', () => {
 
     await cosmosTx(clientManager, 'bank', 'send', ['addr', '1umfx']);
 
-    expect(mockHandler).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.anything(),
-      'send',
-      ['addr', '1umfx'],
-      true,
-      { gasMultiplier: 1.5, gasPrice: '1.0umfx', maxGas: 50_000_000 },
-      undefined,
-      undefined,
-    );
+    const [
+      signingClient,
+      senderAddress,
+      subcommand,
+      handlerArgs,
+      waitForConfirmation,
+      txOptions,
+      buildContext,
+      handlerTxExtras,
+    ] = mockHandler.mock.calls[0]!;
+    expect({
+      signingClient,
+      senderAddress,
+      subcommand,
+      handlerArgs,
+      waitForConfirmation,
+      txOptions,
+      buildContext,
+      handlerTxExtras,
+    }).toEqual({
+      signingClient: expect.anything(),
+      senderAddress: expect.anything(),
+      subcommand: 'send',
+      handlerArgs: ['addr', '1umfx'],
+      waitForConfirmation: true,
+      txOptions: {
+        gasMultiplier: 1.5,
+        gasPrice: '1.0umfx',
+        maxGas: 50_000_000,
+      },
+      buildContext: undefined,
+      handlerTxExtras: undefined,
+    });
   });
 
   it('threads config.maxGas into the resolved TxOptions', async () => {
@@ -675,16 +763,35 @@ describe('cosmosTx', () => {
       txExtras,
     );
 
-    expect(mockHandler).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.anything(),
-      'fund-credit',
-      ['manifest1tenant', '100umfx'],
-      false,
-      undefined,
-      undefined,
-      txExtras,
-    );
+    const [
+      signingClient,
+      senderAddress,
+      subcommand,
+      handlerArgs,
+      waitForConfirmation,
+      txOptions,
+      buildContext,
+      handlerTxExtras,
+    ] = mockHandler.mock.calls[0]!;
+    expect({
+      signingClient,
+      senderAddress,
+      subcommand,
+      handlerArgs,
+      waitForConfirmation,
+      txOptions,
+      buildContext,
+      handlerTxExtras,
+    }).toEqual({
+      signingClient: expect.anything(),
+      senderAddress: expect.anything(),
+      subcommand: 'fund-credit',
+      handlerArgs: ['manifest1tenant', '100umfx'],
+      waitForConfirmation: false,
+      txOptions: undefined,
+      buildContext: undefined,
+      handlerTxExtras: txExtras,
+    });
   });
 
   it('threads the registered TxBuildContextLoader result into the handler', async () => {
@@ -723,16 +830,35 @@ describe('cosmosTx', () => {
     ]);
 
     expect(loader).toHaveBeenCalledOnce();
-    expect(mockHandler).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.anything(),
-      'update-params',
-      ['10', '5', '3600', '2', '300'],
-      true,
-      undefined,
-      { currentBillingParams: onChainParams },
-      undefined,
-    );
+    const [
+      signingClient,
+      senderAddress,
+      subcommand,
+      handlerArgs,
+      waitForConfirmation,
+      txOptions,
+      buildContext,
+      handlerTxExtras,
+    ] = mockHandler.mock.calls[0]!;
+    expect({
+      signingClient,
+      senderAddress,
+      subcommand,
+      handlerArgs,
+      waitForConfirmation,
+      txOptions,
+      buildContext,
+      handlerTxExtras,
+    }).toEqual({
+      signingClient: expect.anything(),
+      senderAddress: expect.anything(),
+      subcommand: 'update-params',
+      handlerArgs: ['10', '5', '3600', '2', '300'],
+      waitForConfirmation: true,
+      txOptions: undefined,
+      buildContext: { currentBillingParams: onChainParams },
+      handlerTxExtras: undefined,
+    });
   });
 
   it('skips the loader and passes undefined context for subcommands without a registered loader', async () => {
@@ -748,16 +874,35 @@ describe('cosmosTx', () => {
 
     await cosmosTx(clientManager, 'bank', 'send', ['addr', '100umfx']);
 
-    expect(mockHandler).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.anything(),
-      'send',
-      ['addr', '100umfx'],
-      true,
-      undefined,
-      undefined,
-      undefined,
-    );
+    const [
+      signingClient,
+      senderAddress,
+      subcommand,
+      handlerArgs,
+      waitForConfirmation,
+      txOptions,
+      buildContext,
+      handlerTxExtras,
+    ] = mockHandler.mock.calls[0]!;
+    expect({
+      signingClient,
+      senderAddress,
+      subcommand,
+      handlerArgs,
+      waitForConfirmation,
+      txOptions,
+      buildContext,
+      handlerTxExtras,
+    }).toEqual({
+      signingClient: expect.anything(),
+      senderAddress: expect.anything(),
+      subcommand: 'send',
+      handlerArgs: ['addr', '100umfx'],
+      waitForConfirmation: true,
+      txOptions: undefined,
+      buildContext: undefined,
+      handlerTxExtras: undefined,
+    });
   });
 
   it('acquires a rate-limit token before invoking a context loader', async () => {
@@ -933,12 +1078,14 @@ describe('cosmosEstimateFee', () => {
 
     await cosmosEstimateFee(clientManager, 'bank', 'send', ['addr', '100umfx']);
 
-    expect(mockBuilder).toHaveBeenCalledWith(
-      'manifest1sender',
-      'send',
-      ['addr', '100umfx'],
-      undefined,
-    );
+    const [senderAddress, subcommand, builderArgs, buildContext] =
+      mockBuilder.mock.calls[0]!;
+    expect({ senderAddress, subcommand, builderArgs, buildContext }).toEqual({
+      senderAddress: 'manifest1sender',
+      subcommand: 'send',
+      builderArgs: ['addr', '100umfx'],
+      buildContext: undefined,
+    });
   });
 
   it('memo from builder is forwarded to simulate', async () => {
@@ -982,12 +1129,14 @@ describe('cosmosEstimateFee', () => {
     ]);
 
     expect(loader).toHaveBeenCalledOnce();
-    expect(mockBuilder).toHaveBeenCalledWith(
-      'manifest1sender',
-      'update-params',
-      ['10', '5', '3600', '2', '300'],
-      { currentBillingParams: onChainParams },
-    );
+    const [senderAddress, subcommand, builderArgs, buildContext] =
+      mockBuilder.mock.calls[0]!;
+    expect({ senderAddress, subcommand, builderArgs, buildContext }).toEqual({
+      senderAddress: 'manifest1sender',
+      subcommand: 'update-params',
+      builderArgs: ['10', '5', '3600', '2', '300'],
+      buildContext: { currentBillingParams: onChainParams },
+    });
   });
 
   it('empty memo from builder is forwarded to simulate', async () => {

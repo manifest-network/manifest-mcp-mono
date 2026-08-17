@@ -370,14 +370,19 @@ describe('ChainMCPServer', () => {
 
       // The explicit false MUST reach cosmosTx's 5th positional arg (else async broadcast is
       // unreachable via the tool); the default (omitted) is covered by the gas_multiplier test above.
-      expect(mockCosmosTx).toHaveBeenCalledWith(
-        expect.anything(),
-        'bank',
-        'send',
-        ['addr', '100umfx'],
-        false,
-        undefined,
-      );
+      //
+      // Read off the recorded call rather than pinning the whole argument list with
+      // toHaveBeenCalledWith: that matcher is exact-arity, so an ambient parameter appended to
+      // cosmosTx would break every assertion here, including the ones that never claimed
+      // anything about it. Slots are counted from the START, so growth cannot shift them (ENG-706).
+      const [, module, subcommand, txArgs, waitForConfirmation] =
+        mockCosmosTx.mock.calls[0]!;
+      expect({ module, subcommand, txArgs, waitForConfirmation }).toEqual({
+        module: 'bank',
+        subcommand: 'send',
+        txArgs: ['addr', '100umfx'],
+        waitForConfirmation: false,
+      });
     });
 
     it('passes gas_multiplier override to cosmosTx', async () => {
@@ -400,15 +405,16 @@ describe('ChainMCPServer', () => {
         gas_multiplier: 3.0,
       });
 
-      expect(mockCosmosTx).toHaveBeenCalledWith(
-        expect.anything(),
-        'bank',
-        'send',
-        ['addr', '100umfx'],
+      const [, module, subcommand, txArgs, waitForConfirmation, overrides] =
+        mockCosmosTx.mock.calls[0]!;
+      expect({ module, subcommand, txArgs, waitForConfirmation }).toEqual({
+        module: 'bank',
+        subcommand: 'send',
+        txArgs: ['addr', '100umfx'],
         // Default is now wait-for-confirmation (preserves the tool's historical always-waited behavior).
-        true,
-        { gasMultiplier: 3.0 },
-      );
+        waitForConfirmation: true,
+      });
+      expect(overrides).toEqual({ gasMultiplier: 3.0 });
     });
 
     it('routes cosmos_estimate_fee to cosmosEstimateFee()', async () => {
@@ -452,13 +458,14 @@ describe('ChainMCPServer', () => {
         gas_multiplier: 3.0,
       });
 
-      expect(mockCosmosEstimateFee).toHaveBeenCalledWith(
-        expect.anything(),
-        'bank',
-        'send',
-        ['addr', '100umfx'],
-        { gasMultiplier: 3.0 },
-      );
+      const [, module, subcommand, feeArgs, overrides] =
+        mockCosmosEstimateFee.mock.calls[0]!;
+      expect({ module, subcommand, feeArgs }).toEqual({
+        module: 'bank',
+        subcommand: 'send',
+        feeArgs: ['addr', '100umfx'],
+      });
+      expect(overrides).toEqual({ gasMultiplier: 3.0 });
     });
 
     it('cosmos_estimate_fee accepts missing args (defaults to [])', async () => {
@@ -480,13 +487,13 @@ describe('ChainMCPServer', () => {
       });
 
       expect(result.isError).toBeUndefined();
-      expect(mockCosmosEstimateFee).toHaveBeenCalledWith(
-        expect.anything(),
-        'bank',
-        'params',
-        [],
-        undefined,
-      );
+      const [, module, subcommand, feeArgs] =
+        mockCosmosEstimateFee.mock.calls[0]!;
+      expect({ module, subcommand, feeArgs }).toEqual({
+        module: 'bank',
+        subcommand: 'params',
+        feeArgs: [],
+      });
     });
 
     it('passes undefined (not {}) when no gas_multiplier override', async () => {
@@ -507,13 +514,12 @@ describe('ChainMCPServer', () => {
         args: ['addr', '100umfx'],
       });
 
-      expect(mockCosmosEstimateFee).toHaveBeenCalledWith(
-        expect.anything(),
-        'bank',
-        'send',
-        ['addr', '100umfx'],
-        undefined,
-      );
+      // Deliberate single-slot pin: this test's whole claim IS the overrides argument —
+      // `undefined`, not `{}`, so cosmosEstimateFee keeps its no-override path. Indexed
+      // absolutely (slot 4) rather than pinned by full arity, so the claim survives an
+      // appended parameter instead of being restated by every future signature change.
+      const overrides = mockCosmosEstimateFee.mock.calls[0]![4];
+      expect(overrides).toBeUndefined();
     });
 
     it('routes list_modules to getAvailableModules()', async () => {
@@ -558,11 +564,12 @@ describe('ChainMCPServer', () => {
       });
       const result = await callTool(server, 'request_faucet');
 
-      expect(mockRequestFaucet).toHaveBeenCalledWith(
-        'https://faucet.test.com',
-        'manifest1abc',
-        undefined,
-      );
+      const [faucetUrl, address, denom] = mockRequestFaucet.mock.calls[0]!;
+      expect({ faucetUrl, address, denom }).toEqual({
+        faucetUrl: 'https://faucet.test.com',
+        address: 'manifest1abc',
+        denom: undefined,
+      });
       expect(result.isError).toBeUndefined();
       const parsed = JSON.parse(result.content[0].text);
       expect(parsed.results[0].denom).toBe('umfx');
@@ -583,11 +590,12 @@ describe('ChainMCPServer', () => {
         denom: 'umfx',
       });
 
-      expect(mockRequestFaucet).toHaveBeenCalledWith(
-        'https://faucet.test.com',
-        'manifest1abc',
-        'umfx',
-      );
+      const [faucetUrl, address, denom] = mockRequestFaucet.mock.calls[0]!;
+      expect({ faucetUrl, address, denom }).toEqual({
+        faucetUrl: 'https://faucet.test.com',
+        address: 'manifest1abc',
+        denom: 'umfx',
+      });
       expect(result.isError).toBeUndefined();
     });
   });

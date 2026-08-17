@@ -389,22 +389,38 @@ describe('updateApp', () => {
 
     expect(mockResolveProviderUrl).not.toHaveBeenCalled();
     expect(leaseFn).not.toHaveBeenCalled(); // fetchActiveLease not run
-    expect(mockUpdateLease).toHaveBeenCalledWith(
-      'https://cached.example.com',
-      LEASE_UUID,
-      expect.any(Uint8Array),
-      'auth-token',
-      fetchSpy,
-      undefined,
-    );
-    expect(mockPoll).toHaveBeenCalledWith(
-      'https://cached.example.com',
-      LEASE_UUID,
-      expect.any(Function),
-      expect.anything(),
-      fetchSpy,
-      undefined,
-    );
+    // Read the slots off the recorded call rather than pinning the whole argument list:
+    // toHaveBeenCalledWith is exact-arity, so the incidental trailing allowLoopback slot
+    // would make an appended parameter break claims that were never about it (ENG-706).
+    const [
+      updateUrl,
+      updateLeaseUuid,
+      updatePayload,
+      updateToken,
+      updateFetch,
+    ] = mockUpdateLease.mock.calls[0]!;
+    expect({
+      updateUrl,
+      updateLeaseUuid,
+      updatePayload,
+      updateToken,
+      updateFetch,
+    }).toEqual({
+      updateUrl: 'https://cached.example.com',
+      updateLeaseUuid: LEASE_UUID,
+      updatePayload: expect.any(Uint8Array),
+      updateToken: 'auth-token',
+      updateFetch: fetchSpy,
+    });
+    const [pollUrl, pollLeaseUuid, pollToken, pollOpts, pollFetch] =
+      mockPoll.mock.calls[0]!;
+    expect({ pollUrl, pollLeaseUuid, pollToken, pollOpts, pollFetch }).toEqual({
+      pollUrl: 'https://cached.example.com',
+      pollLeaseUuid: LEASE_UUID,
+      pollToken: expect.any(Function),
+      pollOpts: expect.anything(),
+      pollFetch: fetchSpy,
+    });
   });
 
   it('fast path WITH existingManifest: merge still runs and zero chain queries', async () => {

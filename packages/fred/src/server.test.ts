@@ -366,12 +366,19 @@ describe('FredMCPServer', () => {
         'prov-1',
       );
       expect(mockGetLeaseProvision).toHaveBeenCalledOnce();
-      // SSRF-guarded fetch threaded to this direct-HTTP call site (ENG-268).
-      // fetchFn is now second-to-last; allowLoopback is the trailing arg (ENG-490).
-      expect(typeof mockGetLeaseProvision.mock.lastCall?.at(-2)).toBe(
-        'function',
-      );
-      expect(mockGetLeaseProvision.mock.lastCall?.at(-1)).toBe(false);
+      // Deliberate positional pin. app_diagnostics has no `ctx.fetch` seam — it calls
+      // getLeaseProvision directly (server/register-tools.ts) — so the SSRF wiring
+      // (ENG-268, ENG-490) is only observable on the argument list. Slots are counted
+      // from the START, never the end: these used to read `.at(-2)` / `.at(-1)`, which
+      // silently slide onto different arguments when the tail grows rather than failing
+      // (ENG-706). getLeaseProvision is (providerUrl, leaseUuid, authToken, fetchFn,
+      // allowLoopback), so fetchFn is slot 3 and allowLoopback slot 4.
+      const [, , , fetchFn, allowLoopback] =
+        mockGetLeaseProvision.mock.lastCall!;
+      expect(typeof fetchFn).toBe('function');
+      // The guarded fetch, not the global one — `typeof` alone cannot tell them apart.
+      expect(fetchFn).not.toBe(globalThis.fetch);
+      expect(allowLoopback).toBe(false);
     });
 
     it('surfaces sanitized retention fields for a retained CLOSED lease (ENG-600)', async () => {
@@ -780,12 +787,14 @@ describe('FredMCPServer', () => {
         'prov-1',
       );
       expect(mockGetLeaseReleases).toHaveBeenCalledOnce();
-      // SSRF-guarded fetch threaded to this direct-HTTP call site (ENG-268).
-      // fetchFn is now second-to-last; allowLoopback is the trailing arg (ENG-490).
-      expect(typeof mockGetLeaseReleases.mock.lastCall?.at(-2)).toBe(
-        'function',
-      );
-      expect(mockGetLeaseReleases.mock.lastCall?.at(-1)).toBe(false);
+      // Deliberate positional pin — same contract and same reasoning as the
+      // app_diagnostics case above (ENG-268, ENG-490, ENG-706). getLeaseReleases is
+      // (providerUrl, leaseUuid, authToken, fetchFn, allowLoopback).
+      const [, , , fetchFn, allowLoopback] =
+        mockGetLeaseReleases.mock.lastCall!;
+      expect(typeof fetchFn).toBe('function');
+      expect(fetchFn).not.toBe(globalThis.fetch);
+      expect(allowLoopback).toBe(false);
     });
 
     it('never forwards a release manifest into model context (ENG-669)', async () => {
@@ -1162,16 +1171,17 @@ describe('FredMCPServer', () => {
       });
 
       expect(result.isError).toBeUndefined();
-      expect(mockCheckDeploymentReadiness).toHaveBeenCalledWith(
-        expect.anything(),
-        'manifest1abc',
-        {
+      const [, address, readinessInput] =
+        mockCheckDeploymentReadiness.mock.calls[0]!;
+      expect({ address, readinessInput }).toEqual({
+        address: 'manifest1abc',
+        readinessInput: {
           size: 'docker-micro',
           image: 'nginx:alpine',
           providerUuid: undefined,
           skuUuid: undefined,
         },
-      );
+      });
       expect(result.structuredContent).toMatchObject({
         ready: false,
         missing_steps: expect.any(Array),

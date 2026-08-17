@@ -72,13 +72,16 @@ describe('restartApp', () => {
     });
 
     expect(mockResolveProviderUrl).toHaveBeenCalledTimes(1);
-    expect(mockRestartLease).toHaveBeenCalledWith(
-      'https://provider.example.com',
-      LEASE_UUID,
-      'auth-token',
-      fetchSpy,
-      undefined,
-    );
+    // Read the slots off the recorded call rather than pinning the whole argument list:
+    // toHaveBeenCalledWith is exact-arity, so the incidental trailing allowLoopback slot
+    // would make an appended parameter break claims that were never about it (ENG-706).
+    const [url, leaseUuid, token, fetchFn] = mockRestartLease.mock.calls[0]!;
+    expect({ url, leaseUuid, token, fetchFn }).toEqual({
+      url: 'https://provider.example.com',
+      leaseUuid: LEASE_UUID,
+      token: 'auth-token',
+      fetchFn: fetchSpy,
+    });
     expect(mockPoll).toHaveBeenCalledTimes(1);
     expect(result).toEqual({
       lease_uuid: LEASE_UUID,
@@ -108,21 +111,28 @@ describe('restartApp', () => {
 
     expect(mockResolveProviderUrl).not.toHaveBeenCalled();
     expect(leaseFn).not.toHaveBeenCalled(); // fetchActiveLease not run
-    expect(mockRestartLease).toHaveBeenCalledWith(
-      'https://cached.example.com',
-      LEASE_UUID,
-      'auth-token',
-      fetchSpy,
-      undefined,
-    );
-    expect(mockPoll).toHaveBeenCalledWith(
-      'https://cached.example.com',
-      LEASE_UUID,
-      expect.any(Function),
-      expect.anything(),
-      fetchSpy,
-      undefined,
-    );
+    const [restartUrl, restartLeaseUuid, restartToken, restartFetch] =
+      mockRestartLease.mock.calls[0]!;
+    expect({
+      restartUrl,
+      restartLeaseUuid,
+      restartToken,
+      restartFetch,
+    }).toEqual({
+      restartUrl: 'https://cached.example.com',
+      restartLeaseUuid: LEASE_UUID,
+      restartToken: 'auth-token',
+      restartFetch: fetchSpy,
+    });
+    const [pollUrl, pollLeaseUuid, pollToken, pollOpts, pollFetch] =
+      mockPoll.mock.calls[0]!;
+    expect({ pollUrl, pollLeaseUuid, pollToken, pollOpts, pollFetch }).toEqual({
+      pollUrl: 'https://cached.example.com',
+      pollLeaseUuid: LEASE_UUID,
+      pollToken: expect.any(Function),
+      pollOpts: expect.anything(),
+      pollFetch: fetchSpy,
+    });
     expect(result.ready).toEqual(READY);
   });
 
@@ -146,14 +156,15 @@ describe('restartApp', () => {
       { address: ADDR, leaseUuid: LEASE_UUID },
       { pollOptions: { onProgress }, abortSignal: ac.signal },
     );
-    expect(mockPoll).toHaveBeenCalledWith(
-      expect.any(String),
-      LEASE_UUID,
-      expect.any(Function),
-      { onProgress, abortSignal: ac.signal },
-      fetchSpy,
-      undefined,
-    );
+    const [pollUrl, pollLeaseUuid, pollToken, pollOpts, pollFetch] =
+      mockPoll.mock.calls[0]!;
+    expect({ pollUrl, pollLeaseUuid, pollToken, pollOpts, pollFetch }).toEqual({
+      pollUrl: expect.any(String),
+      pollLeaseUuid: LEASE_UUID,
+      pollToken: expect.any(Function),
+      pollOpts: { onProgress, abortSignal: ac.signal },
+      pollFetch: fetchSpy,
+    });
   });
 
   it('pre-aborted signal → throws before the mutate POST', async () => {

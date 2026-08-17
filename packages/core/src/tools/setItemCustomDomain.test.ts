@@ -37,15 +37,36 @@ describe('setItemCustomDomain', () => {
       customDomain: asFqdn('app.example.com'),
     });
 
-    expect(mockCosmosTx).toHaveBeenCalledWith(
-      cm,
-      'billing',
-      'set-item-custom-domain',
-      [LEASE_UUID, 'app.example.com'],
-      true,
-      undefined,
-      undefined,
-    );
+    // Read the slots off the recorded call rather than pinning the whole argument
+    // list: toHaveBeenCalledWith is exact-arity, so any parameter appended to
+    // cosmosTx would break every assertion in this file at once. Every claim below
+    // is unchanged — only the mechanism is, and slots count from the START (ENG-706).
+    const [
+      client,
+      module,
+      subcommand,
+      txArgs,
+      waitForConfirmation,
+      overrides,
+      txExtras,
+    ] = mockCosmosTx.mock.calls[0]!;
+    expect({
+      client,
+      module,
+      subcommand,
+      txArgs,
+      waitForConfirmation,
+      overrides,
+      txExtras,
+    }).toEqual({
+      client: cm,
+      module: 'billing',
+      subcommand: 'set-item-custom-domain',
+      txArgs: [LEASE_UUID, 'app.example.com'],
+      waitForConfirmation: true,
+      overrides: undefined,
+      txExtras: undefined,
+    });
     expect(result).toEqual({
       lease_uuid: LEASE_UUID,
       service_name: '',
@@ -76,15 +97,32 @@ describe('setItemCustomDomain', () => {
       { waitForConfirmation: false },
     );
 
-    expect(mockCosmosTx).toHaveBeenCalledWith(
-      cm,
-      'billing',
-      'set-item-custom-domain',
-      [LEASE_UUID, 'app.example.com'],
-      false,
-      undefined,
-      undefined,
-    );
+    const [
+      client,
+      module,
+      subcommand,
+      txArgs,
+      waitForConfirmation,
+      overrides,
+      txExtras,
+    ] = mockCosmosTx.mock.calls[0]!;
+    expect({
+      client,
+      module,
+      subcommand,
+      txArgs,
+      waitForConfirmation,
+      overrides,
+      txExtras,
+    }).toEqual({
+      client: cm,
+      module: 'billing',
+      subcommand: 'set-item-custom-domain',
+      txArgs: [LEASE_UUID, 'app.example.com'],
+      waitForConfirmation: false,
+      overrides: undefined,
+      txExtras: undefined,
+    });
     expect(result.confirmed).toBe(false);
     expect(result.transactionHash).toBe('SYNC_HASH');
   });
@@ -97,15 +135,32 @@ describe('setItemCustomDomain', () => {
       clear: true,
     });
 
-    expect(mockCosmosTx).toHaveBeenCalledWith(
-      cm,
-      'billing',
-      'set-item-custom-domain',
-      [LEASE_UUID, '--clear'],
-      true,
-      undefined,
-      undefined,
-    );
+    const [
+      client,
+      module,
+      subcommand,
+      txArgs,
+      waitForConfirmation,
+      overrides,
+      txExtras,
+    ] = mockCosmosTx.mock.calls[0]!;
+    expect({
+      client,
+      module,
+      subcommand,
+      txArgs,
+      waitForConfirmation,
+      overrides,
+      txExtras,
+    }).toEqual({
+      client: cm,
+      module: 'billing',
+      subcommand: 'set-item-custom-domain',
+      txArgs: [LEASE_UUID, '--clear'],
+      waitForConfirmation: true,
+      overrides: undefined,
+      txExtras: undefined,
+    });
     expect(result.custom_domain).toBe('');
     expect(result.lease_uuid).toBe(LEASE_UUID);
   });
@@ -119,15 +174,32 @@ describe('setItemCustomDomain', () => {
       serviceName: 'web',
     });
 
-    expect(mockCosmosTx).toHaveBeenCalledWith(
-      cm,
-      'billing',
-      'set-item-custom-domain',
-      [LEASE_UUID, 'app.example.com', '--service-name', 'web'],
-      true,
-      undefined,
-      undefined,
-    );
+    const [
+      client,
+      module,
+      subcommand,
+      txArgs,
+      waitForConfirmation,
+      overrides,
+      txExtras,
+    ] = mockCosmosTx.mock.calls[0]!;
+    expect({
+      client,
+      module,
+      subcommand,
+      txArgs,
+      waitForConfirmation,
+      overrides,
+      txExtras,
+    }).toEqual({
+      client: cm,
+      module: 'billing',
+      subcommand: 'set-item-custom-domain',
+      txArgs: [LEASE_UUID, 'app.example.com', '--service-name', 'web'],
+      waitForConfirmation: true,
+      overrides: undefined,
+      txExtras: undefined,
+    });
     expect(result.service_name).toBe('web');
   });
 
@@ -140,15 +212,32 @@ describe('setItemCustomDomain', () => {
       serviceName: 'web',
     });
 
-    expect(mockCosmosTx).toHaveBeenCalledWith(
-      cm,
-      'billing',
-      'set-item-custom-domain',
-      [LEASE_UUID, '--clear', '--service-name', 'web'],
-      true,
-      undefined,
-      undefined,
-    );
+    const [
+      client,
+      module,
+      subcommand,
+      txArgs,
+      waitForConfirmation,
+      overrides,
+      txExtras,
+    ] = mockCosmosTx.mock.calls[0]!;
+    expect({
+      client,
+      module,
+      subcommand,
+      txArgs,
+      waitForConfirmation,
+      overrides,
+      txExtras,
+    }).toEqual({
+      client: cm,
+      module: 'billing',
+      subcommand: 'set-item-custom-domain',
+      txArgs: [LEASE_UUID, '--clear', '--service-name', 'web'],
+      waitForConfirmation: true,
+      overrides: undefined,
+      txExtras: undefined,
+    });
   });
 
   it('omits --service-name when an empty string is supplied (legacy lease)', async () => {
@@ -160,15 +249,32 @@ describe('setItemCustomDomain', () => {
       serviceName: '',
     });
 
-    expect(mockCosmosTx).toHaveBeenCalledWith(
-      cm,
-      'billing',
-      'set-item-custom-domain',
-      [LEASE_UUID, 'app.example.com'],
-      true,
-      undefined,
-      undefined,
-    );
+    const [
+      client,
+      module,
+      subcommand,
+      txArgs,
+      waitForConfirmation,
+      overrides,
+      txExtras,
+    ] = mockCosmosTx.mock.calls[0]!;
+    expect({
+      client,
+      module,
+      subcommand,
+      txArgs,
+      waitForConfirmation,
+      overrides,
+      txExtras,
+    }).toEqual({
+      client: cm,
+      module: 'billing',
+      subcommand: 'set-item-custom-domain',
+      txArgs: [LEASE_UUID, 'app.example.com'],
+      waitForConfirmation: true,
+      overrides: undefined,
+      txExtras: undefined,
+    });
   });
 
   it('forwards TxCallOptions (gasMultiplier) through to cosmosTx', async () => {
@@ -183,15 +289,32 @@ describe('setItemCustomDomain', () => {
       { gasMultiplier: 2.5 },
     );
 
-    expect(mockCosmosTx).toHaveBeenCalledWith(
-      cm,
-      'billing',
-      'set-item-custom-domain',
-      [LEASE_UUID, 'app.example.com'],
-      true,
-      { gasMultiplier: 2.5 },
-      undefined,
-    );
+    const [
+      client,
+      module,
+      subcommand,
+      txArgs,
+      waitForConfirmation,
+      overrides,
+      txExtras,
+    ] = mockCosmosTx.mock.calls[0]!;
+    expect({
+      client,
+      module,
+      subcommand,
+      txArgs,
+      waitForConfirmation,
+      overrides,
+      txExtras,
+    }).toEqual({
+      client: cm,
+      module: 'billing',
+      subcommand: 'set-item-custom-domain',
+      txArgs: [LEASE_UUID, 'app.example.com'],
+      waitForConfirmation: true,
+      overrides: { gasMultiplier: 2.5 },
+      txExtras: undefined,
+    });
   });
 
   it('propagates structured tx failures from cosmosTx', async () => {

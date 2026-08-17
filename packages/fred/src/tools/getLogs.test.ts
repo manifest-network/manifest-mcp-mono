@@ -169,13 +169,18 @@ describe('getAppLogs', () => {
       tail: 50,
     });
 
-    expect(mockGetLeaseLogs).toHaveBeenCalledWith(
-      'https://provider.example.com',
-      LEASE_UUID,
-      'auth-token',
-      50,
-      fetchSpy,
-      undefined,
-    );
+    // The claim is that `tail` reaches the transport. Read the slots off the recorded
+    // call instead of pinning the whole argument list: toHaveBeenCalledWith is
+    // exact-arity, so the incidental trailing allowLoopback slot would make an appended
+    // parameter break a test that never claimed anything about it (ENG-706).
+    const [url, leaseUuid, token, tail, fetchFn] =
+      mockGetLeaseLogs.mock.calls[0]!;
+    expect({ url, leaseUuid, token, tail, fetchFn }).toEqual({
+      url: 'https://provider.example.com',
+      leaseUuid: LEASE_UUID,
+      token: 'auth-token',
+      tail: 50,
+      fetchFn: fetchSpy,
+    });
   });
 });

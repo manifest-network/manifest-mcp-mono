@@ -63,15 +63,36 @@ describe('stopApp', () => {
 
     const result = await stopApp(makeTxCtx({ chain: cm }), { leaseUuid: UUID });
 
-    expect(mockCosmosTx).toHaveBeenCalledWith(
-      cm,
-      'billing',
-      'close-lease',
-      ['lease-1'],
-      true,
-      undefined,
-      undefined,
-    );
+    // Read the slots off the recorded call rather than pinning the whole argument
+    // list: toHaveBeenCalledWith is exact-arity, so any parameter appended to
+    // cosmosTx would break every assertion in this file at once. Every claim below
+    // is unchanged — only the mechanism is, and slots count from the START (ENG-706).
+    const [
+      client,
+      module,
+      subcommand,
+      txArgs,
+      waitForConfirmation,
+      overrides,
+      txExtras,
+    ] = mockCosmosTx.mock.calls[0]!;
+    expect({
+      client,
+      module,
+      subcommand,
+      txArgs,
+      waitForConfirmation,
+      overrides,
+      txExtras,
+    }).toEqual({
+      client: cm,
+      module: 'billing',
+      subcommand: 'close-lease',
+      txArgs: ['lease-1'],
+      waitForConfirmation: true,
+      overrides: undefined,
+      txExtras: undefined,
+    });
     expect(result).toEqual({
       lease_uuid: 'lease-1',
       outcome: 'stopped',
@@ -92,15 +113,32 @@ describe('stopApp', () => {
 
     const result = await stopApp(makeTxCtx({ chain: cm }), { leaseUuid: UUID });
 
-    expect(mockCosmosTx).toHaveBeenCalledWith(
-      cm,
-      'billing',
-      'cancel-lease',
-      ['lease-1'],
-      true,
-      undefined,
-      undefined,
-    );
+    const [
+      client,
+      module,
+      subcommand,
+      txArgs,
+      waitForConfirmation,
+      overrides,
+      txExtras,
+    ] = mockCosmosTx.mock.calls[0]!;
+    expect({
+      client,
+      module,
+      subcommand,
+      txArgs,
+      waitForConfirmation,
+      overrides,
+      txExtras,
+    }).toEqual({
+      client: cm,
+      module: 'billing',
+      subcommand: 'cancel-lease',
+      txArgs: ['lease-1'],
+      waitForConfirmation: true,
+      overrides: undefined,
+      txExtras: undefined,
+    });
     expect(result).toEqual({
       lease_uuid: 'lease-1',
       outcome: 'cancelled',
@@ -126,15 +164,32 @@ describe('stopApp', () => {
     );
 
     // The false flows to cosmosTx (5th positional) → signAndBroadcastSync downstream.
-    expect(mockCosmosTx).toHaveBeenCalledWith(
-      cm,
-      'billing',
-      'close-lease',
-      ['lease-1'],
-      false,
-      undefined,
-      undefined,
-    );
+    const [
+      client,
+      module,
+      subcommand,
+      txArgs,
+      waitForConfirmation,
+      overrides,
+      txExtras,
+    ] = mockCosmosTx.mock.calls[0]!;
+    expect({
+      client,
+      module,
+      subcommand,
+      txArgs,
+      waitForConfirmation,
+      overrides,
+      txExtras,
+    }).toEqual({
+      client: cm,
+      module: 'billing',
+      subcommand: 'close-lease',
+      txArgs: ['lease-1'],
+      waitForConfirmation: false,
+      overrides: undefined,
+      txExtras: undefined,
+    });
     expect(result).toEqual({
       lease_uuid: 'lease-1',
       outcome: 'stopped',
@@ -158,15 +213,32 @@ describe('stopApp', () => {
       { waitForConfirmation: false },
     );
 
-    expect(mockCosmosTx).toHaveBeenCalledWith(
-      cm,
-      'billing',
-      'cancel-lease',
-      ['lease-1'],
-      false,
-      undefined,
-      undefined,
-    );
+    const [
+      client,
+      module,
+      subcommand,
+      txArgs,
+      waitForConfirmation,
+      overrides,
+      txExtras,
+    ] = mockCosmosTx.mock.calls[0]!;
+    expect({
+      client,
+      module,
+      subcommand,
+      txArgs,
+      waitForConfirmation,
+      overrides,
+      txExtras,
+    }).toEqual({
+      client: cm,
+      module: 'billing',
+      subcommand: 'cancel-lease',
+      txArgs: ['lease-1'],
+      waitForConfirmation: false,
+      overrides: undefined,
+      txExtras: undefined,
+    });
     expect(result).toEqual({
       lease_uuid: 'lease-1',
       outcome: 'cancelled',
