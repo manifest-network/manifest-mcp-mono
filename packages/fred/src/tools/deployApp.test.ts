@@ -18,10 +18,23 @@ vi.mock('@manifest-network/manifest-mcp-core', async (importOriginal) => {
 
 vi.mock('../http/provider.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../http/provider.js')>();
+  const sealed = (name: string) =>
+    vi.fn(() => {
+      throw new Error(
+        `provider.${name}() is sealed in this test file — see deployManifest.test.ts (ENG-715).`,
+      );
+    });
   return {
     ...actual,
+    // Closed over provider.ts's WHOLE wire surface, not just the two `deployManifest`
+    // calls today — a wire export left to `...actual` is a live outbound request
+    // waiting for a caller. See the twin factory in `deployManifest.test.ts` for the
+    // full rationale, and PROVIDER_EXPORTS_KEPT_REAL below for what stays real (ENG-715).
     uploadLeaseData: vi.fn(),
     getLeaseConnectionInfo: vi.fn(),
+    getProviderHealth: sealed('getProviderHealth'),
+    checkedFetch: sealed('checkedFetch'),
+    fetchJsonChecked: sealed('fetchJsonChecked'),
   };
 });
 
@@ -49,8 +62,76 @@ import {
 } from '@manifest-network/manifest-mcp-core/__test-utils__/mocks.js';
 import type { FredAuthCtx } from '../ctx.js';
 import { pollLeaseUntilReady, TerminalChainStateError } from '../http/fred.js';
+import * as providerModule from '../http/provider.js';
 import { getLeaseConnectionInfo, uploadLeaseData } from '../http/provider.js';
 import { deployApp } from './deployApp.js';
+
+/**
+ * Every runtime export of `provider.js` that the factory above does NOT stub, each with the
+ * reason it is safe to run for real. A NEW provider export belongs on one side or the other,
+ * and the guard below fails until somebody decides which (ENG-715).
+ *
+ * Deliberately duplicated from `deployManifest.test.ts` rather than shared: `vi.mock` is
+ * scoped to a test FILE, so each file's factory is a separate claim and needs its own proof.
+ * See that file for the long-form rationale.
+ */
+const PROVIDER_EXPORTS_KEPT_REAL = new Set([
+  // Constants.
+  'MAX_PROVIDER_ERROR_CHARS',
+  'PROVIDER_TEXT_EXCERPT_CHARS',
+  'DEFAULT_FETCH_TIMEOUT_MS',
+  'MAX_RESPONSE_BYTES',
+  // Pure — string/URL/error inspection, or consumers of a `Response` somebody else fetched.
+  'capProviderText',
+  'parseRetryAfterMs',
+  'isTransientProviderError',
+  'isUrlSsrfSafe',
+  'readBodyCapped',
+  'parseJsonResponse',
+  // Real ON PURPOSE: `http/fred.ts` extends `ProviderApiError` at module scope, and the
+  // deploy path runs the real `validateProviderUrl` through `resolveLeaseProvider.ts`.
+  'ProviderApiError',
+  'validateProviderUrl',
+]);
+
+/** provider.ts's real export names — the mock cannot narrow this, so it cannot hide a gap. */
+async function providerExportNames(): Promise<string[]> {
+  return Object.keys(
+    await vi.importActual<typeof import('../http/provider.js')>(
+      '../http/provider.js',
+    ),
+  );
+}
+
+describe('provider.js mock coverage (ENG-715)', () => {
+  it('classifies every provider export — stubbed above, or named as deliberately real', async () => {
+    const names = await providerExportNames();
+    const unclassified = names.filter(
+      (name) =>
+        !PROVIDER_EXPORTS_KEPT_REAL.has(name) &&
+        !vi.isMockFunction((providerModule as Record<string, unknown>)[name]),
+    );
+    expect(
+      unclassified,
+      'These provider.ts exports reached this file real. If one touches the wire, stub it in\n' +
+        'the vi.mock factory above; otherwise add it to PROVIDER_EXPORTS_KEPT_REAL with the\n' +
+        'reason it is safe to run. See ENG-715.',
+    ).toEqual([]);
+  });
+
+  it('the guard is not vacuous', async () => {
+    const names = await providerExportNames();
+    expect(names.length).toBeGreaterThan(10);
+    expect(vi.isMockFunction(providerModule.getProviderHealth)).toBe(true);
+    expect(vi.isMockFunction(providerModule.uploadLeaseData)).toBe(true);
+    expect(vi.isMockFunction(providerModule.getLeaseConnectionInfo)).toBe(true);
+    for (const name of PROVIDER_EXPORTS_KEPT_REAL) {
+      expect(names, `${name} is no longer exported by provider.ts`).toContain(
+        name,
+      );
+    }
+  });
+});
 
 /**
  * Build a FredAuthCtx for the converted `deployApp(ctx, spec, callOptions?)`
@@ -62,7 +143,13 @@ async function ctx(cm: unknown): Promise<FredAuthCtx> {
   return {
     query: await manager.getQueryClient(),
     chain: manager,
-    fetch: vi.fn(globalThis.fetch),
+    // Typed, and loud if it is ever reached — see deployManifest.test.ts (ENG-705/ENG-715).
+    fetch: vi.fn<typeof globalThis.fetch>(() => {
+      throw new Error(
+        'ctx.fetch is threaded and asserted, never invoked — a call here means a mock ' +
+          'did not intercept provider HTTP (ENG-705/ENG-715)',
+      );
+    }),
     logger: noopLogger,
     providerAuth: {
       providerToken: ({ address, leaseUuid }) =>

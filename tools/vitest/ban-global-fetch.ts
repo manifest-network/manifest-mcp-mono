@@ -19,11 +19,16 @@
 // machine's DNS, and in the SSRF-guard tests actively misleading. This turns that silent
 // fall-through into an immediate, named failure.
 //
-// It also disarms a live class of landmine: ~10 fred tool tests build their fetch spy as
-// `vi.fn(globalThis.fetch)`, which installs the REAL fetch as the spy's default
-// implementation. Those spies are only threaded and asserted on today, never invoked — but
-// `mockReset()` RESTORES that default rather than clearing it, so the landmine is one edit
-// away from firing. With this in place it fires as a test failure instead of a socket.
+// It also disarmed a live class of landmine: 8 fred tool tests built their fetch spy as
+// `vi.fn(globalThis.fetch)`, reading as "default to the REAL fetch". ENG-715 retired that
+// spelling — correcting the reading along the way. Because setupFiles run BEFORE the test
+// module is evaluated, what `vi.fn(globalThis.fetch)` captured was this stub, not real
+// fetch; the spelling was safe, but only by load order, and it documented the opposite of
+// what it did. Those 8 now say it outright: `vi.fn<typeof globalThis.fetch>(() => { throw …
+// })`. Note why NOT the bare `vi.fn<typeof globalThis.fetch>()` — it resolves `undefined`,
+// and `checkedFetchWithin`'s try covers only the `doFetch` call, so the escape would
+// surface as an unclassified `TypeError: … (reading 'ok')` with no URL and no report from
+// the afterEach below, instead of the named failure this guard exists to produce.
 //
 // Measured cost when introduced: zero. A pass-through probe recorded no real-fetch calls
 // anywhere in the repo, and this throwing stub changed no test's outcome in any of the nine
