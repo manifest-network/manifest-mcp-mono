@@ -373,6 +373,36 @@ function armDeadline(
 }
 
 /**
+ * The value that represents an abort: the aborter's own reason, or the spec's default
+ * `AbortError` when there is none.
+ *
+ * PRECONDITION — call this only once the signal is known aborted. Every call site below
+ * sits under an `aborted` guard or inside an `abort` listener. `reason` is `undefined` on
+ * a LIVE signal, and reading it without that guard is precisely the defect this exists to
+ * stop recurring: it produced `throw undefined`, which core's `withErrorHandling` renders
+ * at the tool boundary as the literal message "undefined" (ENG-703).
+ *
+ * `??`, not `||`: an EMPTY-STRING reason is a value the caller CHOSE. Over MCP the abort
+ * reason is `notification.params.reason`, typed `z.string().optional()`, so `''` is on the
+ * wire and is carried verbatim like any other reason — this layer's contract is to
+ * propagate the caller's value, not to improve it. The only reasons replaced are the ones
+ * carrying nothing at all: `null` (the spec substitutes a default for `abort(undefined)`
+ * but NOT for `abort(null)`) and `undefined` from a foreign or polyfilled signal.
+ *
+ * Deliberately NOT a `ProviderApiError`. A cancel is the caller's own value, and the
+ * consumers of this layer recognize one by asking `signal.aborted` rather than by
+ * inspecting the error (`pollLeaseUntilReady`, `restoreApp`, `deployManifest`). Leaving it
+ * unbranded is also what makes `isTransientProviderError` reject it for free — a user's
+ * cancel is never a retryable blip.
+ */
+function abortReason(signal: AbortSignal | undefined): unknown {
+  return (
+    signal?.reason ??
+    new DOMException('The operation was aborted', 'AbortError')
+  );
+}
+
+/**
  * Hard ceiling on a provider HTTP response body (10 MiB). Provider payloads
  * are small — status/health/connection are a few KB, and logs are already
  * bounded upstream (`MAX_TAIL` requested lines, `MAX_LOG_CHARS` on display).
@@ -428,8 +458,7 @@ export async function readBodyCapped(
           `Reading the response body from ${url} timed out after ${timeoutMs}ms (headers arrived; the body stalled)`,
           { kind: 'timeout' },
         )
-      : (signal?.reason ??
-        new DOMException('The operation was aborted', 'AbortError'));
+      : abortReason(signal);
 
   try {
     if (signal?.aborted) throw abortError();
@@ -623,8 +652,13 @@ async function checkedFetchWithin(
       // A caller cancel is the whole call being cancelled, not a body fault — it must
       // never be laundered into placeholder text. `pollLeaseUntilReady` keys
       // cancellation off the signal, so the error's identity matters here.
+      //
+      // Deliberately NOT reordered to match `classifyTransportError`'s deadline-first
+      // arms: a timeout must fall THROUGH to the `bodyTimedOut` placeholder below, so the
+      // thrown error keeps this response's `status` and `retryAfterMs`. `abortReason`
+      // closes the same nullish hole ENG-703 fixed in the classifier.
       if (deadline.signal.aborted && !deadline.timedOut()) {
-        throw deadline.signal.reason;
+        throw abortReason(deadline.signal);
       }
       bodyTimedOut = deadline.timedOut();
       capBreached =
@@ -642,27 +676,62 @@ async function checkedFetchWithin(
   return res;
 }
 
+/**
+ * Classify a transport-phase rejection — from `doFetch`, or from the pre-dispatch
+ * `deadline.signal.throwIfAborted()` — into the value `checkedFetchWithin` throws.
+ *
+ * Keyed on the DEADLINE, never on the error's shape. This used to open on
+ * `err instanceof DOMException && err.name === 'AbortError'` and then return
+ * `deadline.signal.reason` WITHOUT checking `deadline.signal.aborted` — and `reason` is
+ * `undefined` on a signal that never aborted. So an AbortError raised by anything other
+ * than this deadline threw `undefined`: no message, no stack, surfaced at the tool
+ * boundary as the literal "undefined" (ENG-703). Two paths reach that state today, and
+ * ENG-696 widens both: an injected `fetchFn` — a public parameter on the fred barrel and
+ * the SDK `/deploy` subpath — running its own, shorter deadline, and `timeoutMs <= 0`,
+ * which arms no timer of ours at all (`armDeadline`), so nothing of ours can ever abort.
+ *
+ * Sniffing the shape was unreliable in the other direction too. An abort reason reaching
+ * this layer can be a DOMException, a plain string, an empty string or `null` (the MCP SDK
+ * aborts with `notification.params.reason`, an optional STRING), and a fetch stack may
+ * report OUR abort as something that is not a DOMException at all. `timedOut()` and
+ * `signal.aborted` are facts this module owns; they alone decide. Same deadline-first
+ * order as `classifyBodyError`.
+ *
+ * The three arms are exhaustive: `armDeadline` sets `timedOut` immediately before
+ * `composed.abort()` in one synchronous callback, so `timedOut()` implies `aborted` and
+ * the fourth combination is unobservable. `err` is never inspected to CHOOSE an arm — only
+ * to render arm 3's message and to carry `cause`.
+ */
 function classifyTransportError(
   err: unknown,
   deadline: ArmedDeadline,
   url: string,
   timeoutMs: number,
 ): unknown {
-  if (err instanceof DOMException && err.name === 'AbortError') {
-    if (deadline.timedOut()) {
-      return new ProviderApiError(
-        0,
-        `Request to ${url} timed out after ${timeoutMs}ms`,
-        { kind: 'timeout' },
-      );
-    }
-    // Surface the caller's original abort reason (e.g. `new Error('cancelled')`)
-    // rather than the fetch-internal DOMException AbortError.
-    return deadline.signal.reason;
+  // 1. OUR deadline fired. First, because the internal timeout aborts the composed signal
+  //    too, so `aborted` cannot tell the two apart — `timedOut()` is the only
+  //    discriminator. Ordering it ahead of any shape test also stops a fetch stack that
+  //    answers our abort with a non-AbortError from blaming the network for our own
+  //    deadline; `cause` keeps whatever it actually threw.
+  if (deadline.timedOut()) {
+    return new ProviderApiError(
+      0,
+      `Request to ${url} timed out after ${timeoutMs}ms`,
+      { kind: 'timeout', cause: err },
+    );
   }
-  if (deadline.signal.aborted && !deadline.timedOut()) {
-    return deadline.signal.reason;
+  // 2. The CALLER cancelled. Surface their own reason, never wrapped, so the tool layer
+  //    keeps recognizing a cancel by identity plus `signal.aborted`.
+  if (deadline.signal.aborted) {
+    return abortReason(deadline.signal);
   }
+  // 3. Nobody of ours ended it: a genuine transport fault. An abort raised BELOW us lands
+  //    here now, and stays `kind: 'network'` — hence retryable — on purpose: it is a
+  //    shorter deadline expiring or a stream reset, the same transient family as a connect
+  //    error, and it is bounded by the poll's consecutive-failure budget. A real caller
+  //    cancel can never reach this arm, because `armDeadline` composes `init.signal` and
+  //    arm 2 owns it — so a call site threading a host signal MUST thread it through
+  //    `init.signal`, never bind it only inside a `fetchFn` closure.
   return new ProviderApiError(
     0,
     `Network request to ${url} failed: ${err instanceof Error ? err.message : String(err)}`,
