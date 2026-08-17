@@ -817,6 +817,36 @@ describe('pollLeaseUntilReady — transient-failure budget', () => {
     expect(result.state).toBe(LeaseState.LEASE_STATE_ACTIVE);
   });
 
+  /**
+   * The other half of ENG-703: an abort raised BELOW us — an injected fetch running its
+   * own, shorter deadline — reaches this loop as a `kind: 'network'` ProviderApiError and
+   * IS tolerated. Before the fix it arrived as `throw undefined` and failed the deploy on
+   * the first occurrence; nothing of ours aborted, so it is a transport blip like any
+   * other and stays bounded by this budget.
+   */
+  it('tolerates an abort raised below the transport, tagged network', async () => {
+    scriptReads([
+      {
+        throw: new ProviderApiError(
+          0,
+          'Network request to https://p.example failed: The operation was aborted',
+          { kind: 'network' },
+        ),
+      },
+      { state: 'LEASE_STATE_ACTIVE' },
+    ]);
+
+    const result = await pollLeaseUntilReady(
+      PROVIDER_URL,
+      LEASE_UUID,
+      AUTH_TOKEN,
+      { intervalMs: 1, timeoutMs: 5000, maxConsecutiveFailures: 3 },
+    );
+
+    expect(result.state).toBe(LeaseState.LEASE_STATE_ACTIVE);
+    expect(mockFetchJson).toHaveBeenCalledTimes(2);
+  });
+
   describe('never swallowed', () => {
     it.each([
       ['a 401 (auth is not a blip)', 401],
@@ -869,6 +899,28 @@ describe('pollLeaseUntilReady — transient-failure budget', () => {
           maxConsecutiveFailures: 5,
         }),
       ).rejects.toThrow(TypeError);
+      expect(mockFetchJson).toHaveBeenCalledOnce();
+    });
+
+    /**
+     * The retryability half of ENG-703, pinned at the ONE production consumer of
+     * `isTransientProviderError`. `checkedFetch` surfaces a cancel as the caller's own
+     * abort reason — over MCP that is `notification.params.reason`, a plain STRING — and
+     * leaving it unwrapped is what makes it structurally incapable of being tolerated
+     * here. No `abortSignal` is passed on purpose: the VALUE alone must fail fast, so the
+     * guarantee does not depend on the signal gate one line above it.
+     */
+    it('propagates a cancellation value, whatever shape it arrives in', async () => {
+      scriptReads([{ throw: 'user pressed stop' }]);
+
+      const err = await pollLeaseUntilReady(
+        PROVIDER_URL,
+        LEASE_UUID,
+        AUTH_TOKEN,
+        { intervalMs: 1, timeoutMs: 5000, maxConsecutiveFailures: 5 },
+      ).catch((e: unknown) => e);
+
+      expect(err).toBe('user pressed stop');
       expect(mockFetchJson).toHaveBeenCalledOnce();
     });
 

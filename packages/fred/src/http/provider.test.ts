@@ -836,6 +836,193 @@ describe('checkedFetch error classification', () => {
   });
 });
 
+/**
+ * `classifyTransportError` used to open on `err instanceof DOMException && err.name ===
+ * 'AbortError'` and then return `deadline.signal.reason` WITHOUT checking
+ * `deadline.signal.aborted` — and `reason` is `undefined` on a signal that never aborted.
+ * An AbortError raised by anything other than this deadline therefore threw `undefined`,
+ * which `withErrorHandling` renders at the tool boundary as the literal "undefined"
+ * (ENG-703). Every case below keys on the DEADLINE instead of on the error's shape.
+ */
+describe('classifyTransportError (ENG-703)', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  /** Capture settlement eagerly so advancing timers never trips an unhandled rejection. */
+  function capture<T>(p: Promise<T>): { readonly current: unknown } {
+    const box: { current: unknown } = { current: undefined };
+    p.then(
+      (v) => {
+        box.current = v;
+      },
+      (e: unknown) => {
+        box.current = e;
+      },
+    );
+    return box;
+  }
+
+  /**
+   * The publicly reachable form: `fetchFn` is a parameter on the fred barrel and the SDK
+   * `/deploy` subpath, so a consumer whose own fetch wrapper enforces its own deadline
+   * rejects with an AbortError while OUR deadline never fired.
+   */
+  function abortingFetch(underlying: unknown) {
+    return vi
+      .fn()
+      .mockRejectedValue(underlying) as unknown as typeof globalThis.fetch;
+  }
+
+  it('classifies an AbortError raised below us as a ProviderApiError, never as undefined', async () => {
+    const underlying = new DOMException(
+      'The operation was aborted',
+      'AbortError',
+    );
+
+    const caught: unknown = await checkedFetch(
+      'https://p.example',
+      undefined,
+      5_000,
+      abortingFetch(underlying),
+    ).catch((e: unknown) => e);
+
+    expect(ProviderApiError.isProviderApiError(caught)).toBe(true);
+    const err = caught as ProviderApiError;
+    expect(err.kind).toBe('network');
+    expect(err.cause).toBe(underlying);
+    // The symptom this ticket is named for: `String(undefined)` at the tool boundary.
+    expect(String(caught)).not.toBe('undefined');
+  });
+
+  it('classifies it the same way when timeoutMs <= 0 arms no timer of ours at all', async () => {
+    // `armDeadline` skips the timer entirely at `timeoutMs <= 0`, so `aborted` is
+    // structurally false here — the hole with no injected-fetch trickery involved.
+    const caught: unknown = await checkedFetch(
+      'https://p.example',
+      undefined,
+      0,
+      abortingFetch(
+        new DOMException('The operation was aborted', 'AbortError'),
+      ),
+    ).catch((e: unknown) => e);
+
+    expect(ProviderApiError.isProviderApiError(caught)).toBe(true);
+    expect((caught as ProviderApiError).kind).toBe('network');
+  });
+
+  it('leaves an abort raised below us RETRYABLE for the readiness poll', async () => {
+    // Deliberate: its realistic provenance is a shorter deadline elsewhere or a stream
+    // reset — the same transient family as a connect error, and bounded by the poll's
+    // consecutive-failure budget. Before ENG-703 this failed fast, because `undefined`
+    // is not a ProviderApiError.
+    const caught: unknown = await checkedFetch(
+      'https://p.example',
+      undefined,
+      5_000,
+      abortingFetch(
+        new DOMException('The operation was aborted', 'AbortError'),
+      ),
+    ).catch((e: unknown) => e);
+
+    expect(isTransientProviderError(caught)).toBe(true);
+  });
+
+  it('blames our own deadline, not the network, for a rejection that lands after it fired', async () => {
+    // The fetch ignores `init.signal` and rejects with a NON-abort error at 80ms, well
+    // after our 20ms timer. We killed the request; the fetch stack's choice of error
+    // object is not evidence about the cause. `cause` keeps the original either way.
+    vi.useFakeTimers();
+    const underlying = new TypeError('socket hang up');
+    const mockFetch = vi.fn(
+      () =>
+        new Promise<Response>((_resolve, reject) => {
+          setTimeout(() => reject(underlying), 80);
+        }),
+    );
+
+    const caught = capture(
+      checkedFetch(
+        'https://p.example',
+        undefined,
+        20,
+        mockFetch as unknown as typeof globalThis.fetch,
+      ),
+    );
+    await vi.advanceTimersByTimeAsync(80);
+
+    expect(ProviderApiError.isProviderApiError(caught.current)).toBe(true);
+    const err = caught.current as ProviderApiError;
+    expect(err.kind).toBe('timeout');
+    expect(err.message).toMatch(/timed out after 20ms/);
+    expect(err.cause).toBe(underlying);
+  });
+
+  it('never surfaces a bare null when the caller aborts with an explicit null reason', async () => {
+    // The spec substitutes a default AbortError for `abort(undefined)` but NOT for
+    // `abort(null)`, so `reason` really is `null` here and reaches the classifier via
+    // the pre-dispatch `throwIfAborted()`.
+    const controller = new AbortController();
+    controller.abort(null);
+    const mockFetch = vi.fn(async () => new Response('ok'));
+
+    const caught: unknown = await checkedFetch(
+      'https://p.example',
+      { signal: controller.signal },
+      5_000,
+      mockFetch as unknown as typeof globalThis.fetch,
+    ).catch((e: unknown) => e);
+
+    expect(caught).toBeInstanceOf(DOMException);
+    expect((caught as DOMException).name).toBe('AbortError');
+    expect(isTransientProviderError(caught)).toBe(false);
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  /**
+   * The four shapes an abort reason actually takes at this layer. The MCP SDK aborts with
+   * `notification.params.reason`, typed `z.string().optional()`, so a plain string and an
+   * empty string are both on the wire, and `_onclose` calls `abort()` with no args. All
+   * four are the CALLER's value and are carried verbatim: consumers recognise a cancel by
+   * `signal.aborted`, never by the error's shape, and leaving it unwrapped is what makes
+   * `isTransientProviderError` reject it for free — a user's cancel is never a blip.
+   */
+  it.each([
+    ['an Error', new Error('user cancelled')],
+    [
+      'a DOMException',
+      new DOMException('The operation was aborted', 'AbortError'),
+    ],
+    ['a plain string', 'user pressed stop'],
+    ['an empty string', ''],
+  ])(
+    'carries a caller cancel through verbatim (%s) and never tags it transient',
+    async (_label, reason) => {
+      const controller = new AbortController();
+      const mockFetch = vi.fn((_url: string, opts?: RequestInit) => {
+        return new Promise<Response>((_resolve, reject) => {
+          opts?.signal?.addEventListener('abort', () => {
+            reject(new DOMException('The operation was aborted', 'AbortError'));
+          });
+        });
+      });
+
+      const settled = checkedFetch(
+        'https://p.example',
+        { signal: controller.signal },
+        5_000,
+        mockFetch as unknown as typeof globalThis.fetch,
+      ).catch((e: unknown) => e);
+      setTimeout(() => controller.abort(reason), 10);
+      const caught = await settled;
+
+      expect(caught).toBe(reason);
+      expect(ProviderApiError.isProviderApiError(caught)).toBe(false);
+      expect(isTransientProviderError(caught)).toBe(false);
+    },
+  );
+});
+
 describe('isTransientProviderError', () => {
   it.each([
     ['a 500', new ProviderApiError(500, 'boom', { kind: 'http' }), true],
