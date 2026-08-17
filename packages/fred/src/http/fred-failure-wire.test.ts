@@ -1,18 +1,17 @@
-// Failure-path wire tests that run through the REAL adapter.
+// Failure-path wire tests, run against BOTH provider eras from one call site.
 //
-// fred.test.ts mocks './provider.js' at module scope, so every fixture there is
-// handed straight to a vi.fn() — checkedFetch, readBodyCapped and the JSON parse
-// are never exercised, and a fixture proves only that the mock returned what it
-// was told to. That is the "don't mock what you don't own" gap that let Fred's
-// ENG-508 wire change stay invisible to CI (ENG-638).
+// This file was written when fred.test.ts still mocked './provider.js' at module scope, so
+// every fixture there was handed straight to a vi.fn() — checkedFetch, readBodyCapped and the
+// JSON parse were never exercised, and a fixture proved only that the mock returned what it
+// was told to. That was the "don't mock what you don't own" gap that let Fred's ENG-508 wire
+// change stay invisible to CI (ENG-638). ENG-705 has since converted fred.test.ts to the same
+// injected-`fetchFn` approach used here, for the stronger reason that a partial module mock
+// cannot intercept provider.ts's own intra-module calls at all.
 //
-// This file deliberately mocks NOTHING. It injects a `fetchFn` returning a real
-// Response and lets the adapter do its actual job, so the assertions below are
-// about mono's behaviour against a wire payload rather than about vitest.
-//
-// Every case runs against BOTH provider eras from one call site: the fleet
-// upgrades independently of this client, so a fix that reads only `reason` or
-// only `last_error` must fail here.
+// So the two files no longer differ in MECHANISM — both mock nothing and inject a real
+// transport — only in what they pin. This one owns the provider-ERA matrix: the fleet upgrades
+// independently of this client, so a fix that reads only `reason` or only `last_error` must
+// fail here. fred.test.ts owns the per-function request/response behaviour.
 import {
   FRED_WIRE_ERAS,
   type FredWireEra,
