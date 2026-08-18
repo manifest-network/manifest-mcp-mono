@@ -13,7 +13,7 @@
 // cancellation designs outright (its C9), and would kill any design that adds a layer inside
 // provider.ts. (ENG-705)
 //
-// The probe below sits at `doFetch` (provider.ts:608), BELOW every layer of provider.ts, so
+// The probe sits at `doFetch` (provider.ts:608), BELOW every layer of provider.ts, so
 // nothing provider.ts does internally can escape it. This is the argument
 // `fred-failure-wire.test.ts` already makes for the failure path — "don't mock what you
 // don't own", the gap that let Fred's ENG-508 wire change stay invisible to CI (ENG-638) —
@@ -21,7 +21,16 @@
 // `readBodyCapped`, `classifyTransportError`, `classifyBodyError` and the JSON parse now run
 // on every assertion here, so a fixture proves behaviour rather than proving that a `vi.fn`
 // returned what it was told to.
+//
+// The probe itself now lives in `@manifest-network/manifest-mcp-core/__test-utils__/fetch-probe.js`
+// — promoted there in ENG-725 when a second file needed it, to the destination and for the reason
+// its own JSDoc had specified. The cases below are unchanged by that move.
 import { LeaseState, logger } from '@manifest-network/manifest-mcp-core';
+import {
+  type FetchProbe,
+  fetchProbe,
+  type ProbeStep,
+} from '@manifest-network/manifest-mcp-core/__test-utils__/fetch-probe.js';
 import { describe, expect, it, vi } from 'vitest';
 import {
   DEFAULT_POLL_TIMEOUT_MS,
@@ -42,151 +51,6 @@ const AUTH_TOKEN = 'test-token';
 
 /** A lease still coming up — the commonest wire fixture in this file. */
 const PENDING_STEP = { json: { state: 'LEASE_STATE_PENDING' } } as const;
-
-/** One recorded wire dispatch. */
-interface ProbeCall {
-  readonly url: string;
-  /**
-   * What the TRANSPORT passed, not what the caller handed `fetchJsonChecked`:
-   * `checkedFetchWithin` dispatches `{ ...init, signal: deadline.signal }`. So `init.signal`
-   * is ALWAYS present — even for a function with no signal parameter — and is always the
-   * composed deadline signal, never the caller's own instance. Identity comparison against a
-   * caller signal will always fail; assert `.aborted` / `.reason` instead.
-   */
-  readonly init: RequestInit;
-}
-
-/** What the probe should do for one call. */
-type ProbeStep =
-  /** A 2xx JSON body. `json: null` is legal, and models a provider that literally sends `null`. */
-  | {
-      readonly json: unknown;
-      readonly status?: number;
-      readonly headers?: Record<string, string>;
-    }
-  /**
-   * A non-2xx. The REAL non-2xx block builds the `ProviderApiError` from this, so the status,
-   * the `kind` tag and the message-from-body composition are all under test.
-   *
-   * Give `text` a non-empty value unless you mean to exercise the `body || "HTTP <status>"`
-   * fallback — an empty body is falsy and silently becomes `HTTP 502`.
-   */
-  | {
-      readonly status: number;
-      readonly text?: string;
-      readonly headers?: Record<string, string>;
-    }
-  /**
-   * The body stream errors mid-read. `classifyBodyError` passes a non-timeout through
-   * UNCHANGED, so the value arrives at the caller verbatim, identity intact.
-   *
-   * This is the only wire shape that can hand `pollLeaseUntilReady` something that is not a
-   * `ProviderApiError` — a probe that merely REJECTS is laundered into a retryable
-   * `kind: 'network'` by `classifyTransportError`'s third arm, which would silently invert
-   * any test about a value failing fast.
-   */
-  | { readonly streamError: unknown }
-  /**
-   * The transport itself rejects: an injected fetch running its own shorter deadline, a
-   * connect error, a stream reset. When neither our deadline fired nor the caller aborted,
-   * `classifyTransportError`'s third arm tags this `kind: 'network'` — deliberately
-   * retryable. Use it to model a genuine transport fault; to model a value that must reach
-   * the caller verbatim, use `streamError` instead.
-   */
-  | { readonly transportError: unknown }
-  /** Never settles until the observed (composed) signal aborts; then rejects with its reason. */
-  | { readonly hang: true };
-
-/** A step, a script of steps (the last repeats forever), or a per-call function. */
-type ProbeScript =
-  | ProbeStep
-  | ProbeStep[]
-  | ((call: ProbeCall, n: number) => ProbeStep);
-
-interface FetchProbe {
-  /** Pass as the `fetchFn` argument. */
-  readonly fetch: typeof globalThis.fetch;
-  /** Every dispatch, in order. A plain array, not a `vi.fn` log — see the one-probe-per-test rule. */
-  readonly calls: readonly ProbeCall[];
-}
-
-function respond(step: ProbeStep, call: ProbeCall): Promise<Response> {
-  if ('hang' in step) {
-    const { signal } = call.init;
-    return new Promise<Response>((_resolve, reject) => {
-      // A probe that aborts the caller BEFORE returning sees an already-aborted signal, and
-      // `addEventListener('abort')` never fires on one — without this the transport hangs
-      // forever and takes the suite's timeout with it.
-      if (signal?.aborted) {
-        reject(signal.reason);
-        return;
-      }
-      signal?.addEventListener('abort', () => reject(signal.reason), {
-        once: true,
-      });
-    });
-  }
-  if ('transportError' in step) {
-    return Promise.reject(step.transportError);
-  }
-  if ('streamError' in step) {
-    return Promise.resolve(
-      new Response(
-        new ReadableStream({
-          start(controller) {
-            controller.error(step.streamError);
-          },
-          // `BodyInit` is not in scope under this package's `lib`, so the accepted body type
-          // is derived from `Response` itself rather than named.
-        }) as unknown as ConstructorParameters<typeof Response>[0],
-        { status: 200 },
-      ),
-    );
-  }
-  if ('json' in step) {
-    return Promise.resolve(
-      new Response(JSON.stringify(step.json), {
-        status: step.status ?? 200,
-        headers: { 'content-type': 'application/json', ...step.headers },
-      }),
-    );
-  }
-  return Promise.resolve(
-    new Response(step.text ?? `HTTP ${step.status}`, {
-      status: step.status,
-      headers: step.headers,
-    }),
-  );
-}
-
-/**
- * Build a wire probe.
- *
- * Construct one per `it`, never in a `describe` scope or a `beforeEach`: `calls` is a plain
- * array that `vi.clearAllMocks()` would not reset, and a hoisted probe would leak its script
- * cursor into the next test.
- *
- * If a second test file ever needs this, promote it to
- * `packages/core/src/__test-utils__/fetch-probe.ts` beside `fred-wire.ts`, plus an exports
- * entry — not to a new directory under `packages/fred/src`, which tsdown's entry glob would
- * ship to `dist`.
- */
-function fetchProbe(script: ProbeScript): FetchProbe {
-  const calls: ProbeCall[] = [];
-  const fetch = ((input: unknown, init?: RequestInit): Promise<Response> => {
-    const call: ProbeCall = { url: String(input), init: init ?? {} };
-    calls.push(call);
-    const n = calls.length - 1;
-    const step =
-      typeof script === 'function'
-        ? script(call, n)
-        : Array.isArray(script)
-          ? script[Math.min(n, script.length - 1)]
-          : script;
-    return respond(step, call);
-  }) as unknown as typeof globalThis.fetch;
-  return { fetch, calls };
-}
 
 describe('getLeaseStatus', () => {
   it('fetches status with auth header and converts state to LeaseState', async () => {
