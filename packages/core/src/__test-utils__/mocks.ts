@@ -416,3 +416,95 @@ export function makeTxCtx(overrides?: {
     logger: overrides?.logger ?? noopLogger,
   } as TxCtx;
 }
+
+/**
+ * Every public method of {@link CosmosClientManager}. The seal below covers all of them, and
+ * `_SealCoversTheSeam` makes that a COMPILE-TIME claim: adding a public method to the class
+ * without adding it here fails `npm run lint`, not a test somebody has to remember to run.
+ *
+ * Nine names is the whole point. The alternative — enumerating core's *broadcasting exports* —
+ * is an open-ended set that rots the moment core grows a helper, and core's barrel has 85
+ * runtime exports, so classifying all of them (ENG-715's approach for the small `provider.ts`
+ * module) would be noise. One class, nine methods, checked by tsc. (ENG-713)
+ */
+export const SEALED_CHAIN_METHODS = [
+  'getQueryClient',
+  'getSigningClient',
+  'getBroadcastClient',
+  'getAddress',
+  'getConfig',
+  'setLogger',
+  'acquireRateLimit',
+  'withBroadcastLock',
+  'disconnect',
+] as const;
+
+/**
+ * Compile-time exhaustiveness for {@link SEALED_CHAIN_METHODS}. Resolves to `true` while the list
+ * covers `keyof CosmosClientManager`, and to a string-literal tuple — which is not assignable to
+ * `true` — the moment it does not, so the error text below is what the developer reads.
+ */
+type _SealCoversTheSeam =
+  Exclude<
+    keyof CosmosClientManager,
+    (typeof SEALED_CHAIN_METHODS)[number]
+  > extends never
+    ? true
+    : [
+        'unsealed CosmosClientManager method — add it to SEALED_CHAIN_METHODS (ENG-713)',
+      ];
+const _sealCoversTheSeam: _SealCoversTheSeam = true;
+void _sealCoversTheSeam;
+
+/**
+ * The message a sealed method throws. Exported so a test can assert on it exactly rather than
+ * pattern-matching prose that drifts.
+ */
+export function sealedChainMessage(method: string): string {
+  return (
+    `ctx.chain.${method}() is sealed in this test (ENG-713). A REAL core broadcaster reached the ` +
+    'client manager, which means a mock in this test file did not intercept it. The core tx ' +
+    'helpers (setItemCustomDomain / stopApp / fundCredits) call cosmosTx through their own ' +
+    "module-local '../cosmos.js' import, and executeTx reaches ctx.chain directly — neither is " +
+    'reachable from a `vi.mock` of the core BARREL, because vitest does not rewrite intra-module ' +
+    'references. Fix: stub the helper in the barrel factory of this file, or, if the call is ' +
+    `intended, opt this method back in with makeSealedClientManager({ ${method}: ... }).`
+  );
+}
+
+/**
+ * A {@link CosmosClientManager} whose every method throws by name — the broadcast counterpart to
+ * ENG-705's `globalThis.fetch` ban.
+ *
+ * WHY A SEAM AND NOT A LIST. Every core broadcast takes the client manager as an INJECTED
+ * argument: `cosmosTx(clientManager, ...)`, and `executeTx` reaches `ctx.chain.getBroadcastClient()`
+ * without importing `cosmosTx` at all. So `ctx.chain` is the one choke point every broadcast must
+ * pass through, whichever helper is added to core later. CLAUDE.md ranks this first for exactly
+ * this reason: "Prefer dependency injection at the transport seam."
+ *
+ * WHAT IT BUYS, MEASURED (ENG-713). With a real `setItemCustomDomain` call added to `restoreApp.ts`
+ * and only `cosmosTx` stubbed, the `cosmosTx` spy recorded **0 calls** while a line inside the real
+ * `cosmosTx` threw `TypeError: clientManager.getConfig is not a function` — loud, but naming
+ * neither the mock nor the escape. Worse, the same escape arrives CLASSIFIED on other shapes: via
+ * `stopApp` it surfaces as `ManifestMCPError: Failed to query lease ...` (QUERY_FAILED), and under
+ * the permissive `makeMockClientManager` it surfaces as `ManifestMCPError: Tx billing
+ * set-item-custom-domain failed: client.simulate is not a function` (TX_FAILED). A test asserting
+ * either code would go GREEN on an escaped real broadcaster. This turns all three into one named
+ * failure.
+ *
+ * `allow` opts individual methods back in — e.g. `acquireRateLimit` where a test asserts the
+ * rate-limit acquisition. Note the deliberate `vi.fn(impl)` CONSTRUCTOR form below rather than
+ * `mockImplementation`: `vi.clearAllMocks()` (common in a `beforeEach`) clears recorded calls but
+ * not the constructor impl, so the seal survives it.
+ */
+export function makeSealedClientManager(
+  allow?: Partial<CosmosClientManager>,
+): CosmosClientManager {
+  const sealed: Record<string, unknown> = {};
+  for (const method of SEALED_CHAIN_METHODS) {
+    sealed[method] = vi.fn(() => {
+      throw new Error(sealedChainMessage(method));
+    });
+  }
+  return { ...sealed, ...allow } as unknown as CosmosClientManager;
+}

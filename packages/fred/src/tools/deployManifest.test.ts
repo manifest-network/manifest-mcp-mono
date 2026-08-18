@@ -5,7 +5,32 @@ vi.mock('@manifest-network/manifest-mcp-core', async (importOriginal) => {
     await importOriginal<
       typeof import('@manifest-network/manifest-mcp-core')
     >();
-  return { ...actual, cosmosTx: vi.fn(), setItemCustomDomain: vi.fn() };
+  const sealed = (name: string) =>
+    vi.fn(() => {
+      throw new Error(
+        `core.${name}() is sealed in this test file (ENG-713). Nothing here called it when the ` +
+          'seal was written; if the code under test needs it now, replace the seal with an ' +
+          'explicit spy and assert on it. Do NOT simply drop it.',
+      );
+    });
+  return {
+    ...actual,
+    cosmosTx: vi.fn(),
+    // setItemCustomDomain calls cosmosTx through an internal `'../cosmos.js'` import that the
+    // package-level mock above does NOT intercept — vitest does not rewrite intra-module
+    // references. Mocking the helper directly is what closes that edge, and it also makes
+    // deployManifest's orchestration call observable. (deployApp.test.ts carries the same pair.)
+    setItemCustomDomain: vi.fn(),
+    // The rest of core's broadcast surface, sealed for the same reason: `stopApp`/`fundCredits`
+    // share that edge and `executeTx` broadcasts straight off `ctx.chain`, so none of them can
+    // reach the `cosmosTx` spy above. Nothing on the deploy path calls them today — the seal makes
+    // the day one does a named failure rather than the plausible-looking `TX_FAILED` this file's
+    // permissive `makeMockClientManager` chain would otherwise produce (measured, ENG-713).
+    stopApp: sealed('stopApp'),
+    fundCredits: sealed('fundCredits'),
+    executeTx: sealed('executeTx'),
+    cosmosEstimateFee: sealed('cosmosEstimateFee'),
+  };
 });
 
 vi.mock('../http/provider.js', async (importOriginal) => {
@@ -52,6 +77,7 @@ vi.mock('../http/fred.js', async (importOriginal) => {
   return { ...actual, pollLeaseUntilReady: vi.fn() };
 });
 
+import * as coreModule from '@manifest-network/manifest-mcp-core';
 import {
   asProviderUuid,
   asSkuUuid,
@@ -122,6 +148,64 @@ async function providerExportNames(): Promise<string[]> {
     ),
   );
 }
+
+/**
+ * Core's broadcast surface: every barrel export that can reach a signing client. Four of the five
+ * are invisible to the `cosmosTx` spy in the factory above — `setItemCustomDomain`/`stopApp`/
+ * `fundCredits` call `cosmosTx` through their own module-local `'../cosmos.js'` import, and
+ * `executeTx` broadcasts straight off `ctx.chain` — because vitest does not rewrite intra-module
+ * references. Measured: the `cosmosTx` spy recorded 0 calls while the real `cosmosTx` threw from
+ * inside (ENG-713).
+ *
+ * This file enumerates rather than sealing `ctx.chain` (the approach `restoreApp.test.ts` takes)
+ * because the deploy path needs a WORKING `makeMockClientManager` — a query client, an address, a
+ * config. That permissive manager is also what makes an escape here dangerous rather than merely
+ * ugly: it satisfies every method until `simulate`, so the escape surfaces as
+ * `ManifestMCPError(TX_FAILED)` — a plausible error a test could assert on and go green. With no
+ * seam to fall back on, the stubs ARE the defence, so they get a guard.
+ *
+ * Reads are deliberately out of scope: `cosmosQuery` and the `reads.ts` helpers are a different
+ * hazard with a different seam (the mock query client), and folding them in would recreate the
+ * 85-export problem that makes ENG-715's classify-everything guard untransferable to this barrel.
+ *
+ * Duplicated per file rather than shared, for the reason PROVIDER_EXPORTS_KEPT_REAL gives above.
+ */
+const CORE_BROADCASTERS = [
+  'cosmosTx',
+  'cosmosEstimateFee',
+  'setItemCustomDomain',
+  'stopApp',
+  'fundCredits',
+  'executeTx',
+] as const;
+
+describe('core broadcast-surface mock coverage (ENG-713)', () => {
+  it('every core broadcaster is stubbed in this file', () => {
+    const unstubbed = CORE_BROADCASTERS.filter(
+      (name) =>
+        !vi.isMockFunction((coreModule as Record<string, unknown>)[name]),
+    );
+    expect(
+      unstubbed,
+      'These core exports reached this file REAL. Each can sign and broadcast, and none is\n' +
+        'reachable from the cosmosTx spy — stub it in the vi.mock factory above. See ENG-713.',
+    ).toEqual([]);
+  });
+
+  it('the guard is not vacuous', async () => {
+    const names = Object.keys(
+      await vi.importActual<
+        typeof import('@manifest-network/manifest-mcp-core')
+      >('@manifest-network/manifest-mcp-core'),
+    );
+    expect(names.length).toBeGreaterThan(50);
+    for (const name of CORE_BROADCASTERS) {
+      expect(names, `${name} is no longer a core barrel export`).toContain(
+        name,
+      );
+    }
+  });
+});
 
 describe('provider.js mock coverage (ENG-715)', () => {
   it('classifies every provider export — stubbed above, or named as deliberately real', async () => {

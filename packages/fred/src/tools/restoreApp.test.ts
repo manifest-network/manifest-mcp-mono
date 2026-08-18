@@ -11,7 +11,30 @@ vi.mock('@manifest-network/manifest-mcp-core', async (importOriginal) => {
     await importOriginal<
       typeof import('@manifest-network/manifest-mcp-core')
     >();
-  return { ...actual, cosmosTx: vi.fn() };
+  const sealed = (name: string) =>
+    vi.fn(() => {
+      throw new Error(
+        `core.${name}() is sealed in this test file (ENG-713). Nothing here called it when the ` +
+          'seal was written; if the code under test needs it now, replace the seal with an ' +
+          'explicit spy and assert on it. Do NOT simply drop it.',
+      );
+    });
+  return {
+    ...actual,
+    cosmosTx: vi.fn(),
+    // Closed over core's whole BROADCAST surface, not just the `cosmosTx` this file asserts on.
+    // These four never reach the `cosmosTx` spy above: the three tx helpers call it through their
+    // own module-local `'../cosmos.js'` import, and `executeTx` broadcasts straight off
+    // `ctx.chain`. Vitest does not rewrite intra-module references, so a mock of this BARREL
+    // cannot intercept any of them — measured: the spy recorded 0 calls while the real `cosmosTx`
+    // threw from inside. The `makeSealedClientManager` chain in `makeCtx()` below is what actually
+    // CONTAINS them; these stubs only buy a first-line message that names the helper (ENG-713).
+    setItemCustomDomain: sealed('setItemCustomDomain'),
+    stopApp: sealed('stopApp'),
+    fundCredits: sealed('fundCredits'),
+    executeTx: sealed('executeTx'),
+    cosmosEstimateFee: sealed('cosmosEstimateFee'),
+  };
 });
 vi.mock('../http/fred.js', () => ({
   getLeaseProvision: vi.fn(),
@@ -23,6 +46,7 @@ vi.mock('./fetchLease.js', () => ({ fetchLease: vi.fn() }));
 vi.mock('./resolveLeaseProvider.js', () => ({ resolveProviderUrl: vi.fn() }));
 
 import { cosmosTx } from '@manifest-network/manifest-mcp-core';
+import { makeSealedClientManager } from '@manifest-network/manifest-mcp-core/__test-utils__/mocks.js';
 import {
   getLeaseProvision,
   pollLeaseUntilReady,
@@ -48,9 +72,21 @@ const META = new Uint8Array([1, 2]);
 
 function makeCtx() {
   return {
-    chain: { acquireRateLimit: vi.fn().mockResolvedValue(undefined) } as never,
+    // Sealed: every CosmosClientManager method throws by name except the one this file asserts on.
+    // This is the seam every core broadcast must pass through — `cosmosTx(clientManager, ...)` and
+    // `executeTx(ctx)` alike — so it contains the internal `'../cosmos.js'` edge that the barrel
+    // mock above provably cannot reach, and it keeps working when core gains a new helper (ENG-713).
+    chain: makeSealedClientManager({
+      acquireRateLimit: vi.fn().mockResolvedValue(undefined),
+    }) as never,
     query: {} as never,
-    fetch: vi.fn() as never,
+    // Threaded and asserted, never invoked — loud if that ever changes (ENG-705/ENG-715).
+    fetch: vi.fn<typeof globalThis.fetch>(() => {
+      throw new Error(
+        'ctx.fetch is threaded and asserted, never invoked — a call here means a mock ' +
+          'did not intercept provider HTTP (ENG-705/ENG-715)',
+      );
+    }) as never,
     allowLoopback: false,
     providerAuth: {
       providerToken: vi.fn().mockResolvedValue('tok'),
@@ -68,6 +104,43 @@ function mockSource(items: unknown[] = [{ skuUuid: 's1', quantity: 1n }]) {
     items,
   } as never);
 }
+
+/**
+ * The seal's own guard. `packages/core/src/__test-utils__/sealed-chain.test.ts` proves that
+ * `makeSealedClientManager` CONTAINS a real core broadcaster; it cannot prove the seal is INSTALLED
+ * here. This does, and it is the only test in this file that exercises the un-interceptable edge:
+ * `vi.importActual` bypasses the barrel mock above, so `setItemCustomDomain` arrives real, with its
+ * real module-local `import { cosmosTx } from '../cosmos.js'` — exactly the shape a future
+ * custom-domain restore would take (`restoreApp.ts` only reports `custom_domain_not_restored` today).
+ *
+ * Reverting `makeCtx().chain` to a bare `{ acquireRateLimit }` literal makes this fail with an
+ * unclassified `TypeError: clientManager.getConfig is not a function` instead — which is precisely
+ * the pre-ENG-713 behaviour, and why this test is worth its ten lines.
+ */
+describe('core broadcast containment (ENG-713)', () => {
+  it('a REAL core tx helper driven with this file ctx.chain fails by name', async () => {
+    const {
+      setItemCustomDomain: realSetItemCustomDomain,
+      asFqdn,
+      asLeaseUuid,
+    } = await vi.importActual<
+      typeof import('@manifest-network/manifest-mcp-core')
+    >('@manifest-network/manifest-mcp-core');
+
+    const err = await realSetItemCustomDomain(
+      { chain: makeCtx().chain } as never,
+      {
+        leaseUuid: asLeaseUuid(NEW),
+        customDomain: asFqdn('app.example.com'),
+      },
+    ).then(
+      () => new Error('NO THROW — the sealed chain was never reached'),
+      (e: unknown) => e as Error,
+    );
+
+    expect(err.message).toContain('is sealed in this test (ENG-713)');
+  });
+});
 
 describe('restoreApp', () => {
   beforeEach(() => {
