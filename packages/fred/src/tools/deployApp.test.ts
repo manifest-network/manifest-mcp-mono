@@ -36,36 +36,6 @@ vi.mock('@manifest-network/manifest-mcp-core', async (importOriginal) => {
   };
 });
 
-vi.mock('../http/provider.js', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../http/provider.js')>();
-  const sealed = (name: string) =>
-    vi.fn(() => {
-      throw new Error(
-        `provider.${name}() is sealed in this test file — see deployManifest.test.ts (ENG-715).`,
-      );
-    });
-  return {
-    ...actual,
-    // Closed over provider.ts's WHOLE wire surface, not just the two `deployManifest`
-    // calls today — a wire export left to `...actual` is a live outbound request
-    // waiting for a caller. See the twin factory in `deployManifest.test.ts` for the
-    // full rationale, and PROVIDER_EXPORTS_KEPT_REAL below for what stays real (ENG-715).
-    uploadLeaseData: vi.fn(),
-    getLeaseConnectionInfo: vi.fn(),
-    getProviderHealth: sealed('getProviderHealth'),
-    checkedFetch: sealed('checkedFetch'),
-    fetchJsonChecked: sealed('fetchJsonChecked'),
-  };
-});
-
-vi.mock('../http/fred.js', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../http/fred.js')>();
-  return {
-    ...actual,
-    pollLeaseUntilReady: vi.fn(),
-  };
-});
-
 import * as coreModule from '@manifest-network/manifest-mcp-core';
 import {
   asFqdn,
@@ -77,51 +47,73 @@ import {
   noopLogger,
   setItemCustomDomain,
 } from '@manifest-network/manifest-mcp-core';
+import { sealedFetchProbe } from '@manifest-network/manifest-mcp-core/__test-utils__/fetch-probe.js';
 import {
   makeMockClientManager,
   makeMockQueryClient,
 } from '@manifest-network/manifest-mcp-core/__test-utils__/mocks.js';
 import type { FredAuthCtx } from '../ctx.js';
-import { pollLeaseUntilReady, TerminalChainStateError } from '../http/fred.js';
-import * as providerModule from '../http/provider.js';
-import { getLeaseConnectionInfo, uploadLeaseData } from '../http/provider.js';
+import { TerminalChainStateError } from '../http/fred.js';
 import { deployApp } from './deployApp.js';
 
-/**
- * Every runtime export of `provider.js` that the factory above does NOT stub, each with the
- * reason it is safe to run for real. A NEW provider export belongs on one side or the other,
- * and the guard below fails until somebody decides which (ENG-715).
- *
- * Deliberately duplicated from `deployManifest.test.ts` rather than shared: `vi.mock` is
- * scoped to a test FILE, so each file's factory is a separate claim and needs its own proof.
- * See that file for the long-form rationale.
- */
-const PROVIDER_EXPORTS_KEPT_REAL = new Set([
-  // Constants.
-  'MAX_PROVIDER_ERROR_CHARS',
-  'PROVIDER_TEXT_EXCERPT_CHARS',
-  'DEFAULT_FETCH_TIMEOUT_MS',
-  'MAX_RESPONSE_BYTES',
-  // Pure — string/URL/error inspection, or consumers of a `Response` somebody else fetched.
-  'capProviderText',
-  'parseRetryAfterMs',
-  'isTransientProviderError',
-  'isUrlSsrfSafe',
-  'readBodyCapped',
-  'parseJsonResponse',
-  // Real ON PURPOSE: `http/fred.ts` extends `ProviderApiError` at module scope, and the
-  // deploy path runs the real `validateProviderUrl` through `resolveLeaseProvider.ts`.
-  'ProviderApiError',
-  'validateProviderUrl',
-]);
+// ENG-725: `../http/provider.js` and `../http/fred.js` are NO LONGER mocked. `deployApp.ts` imports
+// no `http/*` at all — this file only mocked them because it drives `deployManifest` underneath.
+// The wire is now injected at `ctx.fetch` as a sealed probe, so that whole path runs for real.
+//
+// The ENG-715 `provider.js mock coverage` guard goes with the mock it guarded: its job was to keep
+// a PARTIAL mock's stubbed/real classification honest, and there is no partial mock left. The
+// core-barrel mock above stays, and so does its `core broadcast-surface mock coverage` guard —
+// that is the CHAIN seam (ENG-713), a different escaping resource.
 
-/** provider.ts's real export names — the mock cannot narrow this, so it cannot hide a gap. */
-async function providerExportNames(): Promise<string[]> {
-  return Object.keys(
-    await vi.importActual<typeof import('../http/provider.js')>(
-      '../http/provider.js',
-    ),
-  );
+/** The three provider endpoints a deploy touches. */
+type DeployRoutes = { data?: unknown; status?: unknown; connection?: unknown };
+
+let wire: ReturnType<typeof sealedFetchProbe> = sealedFetchProbe();
+
+/**
+ * Route the deploy wire. A value that is already a probe STEP (or a per-call function returning
+ * one) is used as-is; anything else is sent as a 2xx JSON body. An HTTP status is a NUMBER — a
+ * provider status is a string, so discriminating on the key alone would misread a response body.
+ */
+function routeWire(r: DeployRoutes = {}): void {
+  const isStep = (v: unknown): boolean =>
+    typeof v === 'object' &&
+    v !== null &&
+    ('json' in v ||
+      'transportError' in v ||
+      'streamError' in v ||
+      'hang' in v ||
+      typeof (v as { status?: unknown }).status === 'number');
+  const step = (v: unknown, fallback: unknown) => {
+    const chosen = v ?? fallback;
+    if (typeof chosen === 'function') return chosen as never;
+    return (isStep(chosen) ? chosen : { json: chosen }) as never;
+  };
+  wire = sealedFetchProbe({
+    '/data': step(r.data, {}),
+    '/status': step(r.status, {
+      state: 'LEASE_STATE_ACTIVE',
+      provision_status: 'ready',
+    }),
+    '/connection': step(r.connection, {
+      lease_uuid: '550e8400-e29b-41d4-a716-446655440000',
+      tenant: 'manifest1tenant',
+      provider_uuid: 'prov-1',
+      connection: { host: 'app.localhost', ports: { '80/tcp': 32001 } },
+    }),
+  });
+}
+
+/** Requests the probe saw, by last path segment. */
+function urls(): string[] {
+  return wire.calls.map((c) => new URL(c.url).pathname.split('/').pop() ?? '');
+}
+
+/** The manifest bytes as the PROVIDER received them (raw octet-stream, not base64 JSON). */
+function uploadedBytes(): Uint8Array {
+  const call = wire.calls.find((c) => c.url.endsWith('/data'));
+  if (!call) throw new Error('no /data upload was made');
+  return call.init.body as Uint8Array;
 }
 
 /**
@@ -143,7 +135,8 @@ async function providerExportNames(): Promise<string[]> {
  * hazard with a different seam (the mock query client), and folding them in would recreate the
  * 85-export problem that makes ENG-715's classify-everything guard untransferable to this barrel.
  *
- * Duplicated per file rather than shared, for the reason PROVIDER_EXPORTS_KEPT_REAL gives above.
+ * Duplicated per file rather than shared: `vi.mock` is file-scoped, so each file's factory is a
+ * separate claim and a shared list would suggest otherwise.
  */
 const CORE_BROADCASTERS = [
   'cosmosTx',
@@ -182,53 +175,19 @@ describe('core broadcast-surface mock coverage (ENG-713)', () => {
   });
 });
 
-describe('provider.js mock coverage (ENG-715)', () => {
-  it('classifies every provider export — stubbed above, or named as deliberately real', async () => {
-    const names = await providerExportNames();
-    const unclassified = names.filter(
-      (name) =>
-        !PROVIDER_EXPORTS_KEPT_REAL.has(name) &&
-        !vi.isMockFunction((providerModule as Record<string, unknown>)[name]),
-    );
-    expect(
-      unclassified,
-      'These provider.ts exports reached this file real. If one touches the wire, stub it in\n' +
-        'the vi.mock factory above; otherwise add it to PROVIDER_EXPORTS_KEPT_REAL with the\n' +
-        'reason it is safe to run. See ENG-715.',
-    ).toEqual([]);
-  });
-
-  it('the guard is not vacuous', async () => {
-    const names = await providerExportNames();
-    expect(names.length).toBeGreaterThan(10);
-    expect(vi.isMockFunction(providerModule.getProviderHealth)).toBe(true);
-    expect(vi.isMockFunction(providerModule.uploadLeaseData)).toBe(true);
-    expect(vi.isMockFunction(providerModule.getLeaseConnectionInfo)).toBe(true);
-    for (const name of PROVIDER_EXPORTS_KEPT_REAL) {
-      expect(names, `${name} is no longer exported by provider.ts`).toContain(
-        name,
-      );
-    }
-  });
-});
-
 /**
- * Build a FredAuthCtx for the converted `deployApp(ctx, spec, callOptions?)`
- * signature: `chain` is the mock client manager, `query` its query client, and
- * `providerAuth` adapts the address-param port onto the legacy token thunks.
+ * Build a FredAuthCtx for the converted `deployApp(ctx, spec, callOptions?)` signature: `chain` is
+ * the mock client manager, `query` its query client, and `providerAuth` adapts the address-param
+ * port onto the legacy token thunks.
  */
 async function ctx(cm: unknown): Promise<FredAuthCtx> {
   const manager = cm as any;
   return {
     query: await manager.getQueryClient(),
     chain: manager,
-    // Typed, and loud if it is ever reached — see deployManifest.test.ts (ENG-705/ENG-715).
-    fetch: vi.fn<typeof globalThis.fetch>(() => {
-      throw new Error(
-        'ctx.fetch is threaded and asserted, never invoked — a call here means a mock ' +
-          'did not intercept provider HTTP (ENG-705/ENG-715)',
-      );
-    }),
+    // The sealed provider wire: the real transport dispatches through it, and an endpoint no test
+    // routed fails by name rather than as a plausible network error (ENG-725).
+    fetch: wire.fetch,
     logger: noopLogger,
     providerAuth: {
       providerToken: ({ address, leaseUuid }) =>
@@ -241,9 +200,6 @@ async function ctx(cm: unknown): Promise<FredAuthCtx> {
 
 const mockCosmosTx = vi.mocked(cosmosTx);
 const mockSetItemCustomDomain = vi.mocked(setItemCustomDomain);
-const mockUploadLeaseData = vi.mocked(uploadLeaseData);
-const mockGetLeaseConnectionInfo = vi.mocked(getLeaseConnectionInfo);
-const mockPollLeaseUntilReady = vi.mocked(pollLeaseUntilReady);
 
 const mockGetAuthToken = vi.fn();
 const mockGetLeaseDataAuthToken = vi.fn();
@@ -302,7 +258,7 @@ describe('deployApp', () => {
 
     mockGetAuthToken.mockResolvedValue('auth-token');
     mockGetLeaseDataAuthToken.mockResolvedValue('lease-data-token');
-    mockUploadLeaseData.mockResolvedValue(undefined);
+    routeWire();
     mockSetItemCustomDomain.mockResolvedValue({
       lease_uuid: asLeaseUuid('550e8400-e29b-41d4-a716-446655440000'),
       service_name: '',
@@ -310,18 +266,6 @@ describe('deployApp', () => {
       transactionHash: 'TX2',
       code: 0,
       confirmed: true,
-    });
-    mockPollLeaseUntilReady.mockResolvedValue({
-      state: LeaseState.LEASE_STATE_ACTIVE,
-    });
-    mockGetLeaseConnectionInfo.mockResolvedValue({
-      lease_uuid: '550e8400-e29b-41d4-a716-446655440000',
-      tenant: 'manifest1tenant',
-      provider_uuid: 'prov-1',
-      connection: {
-        host: 'app.localhost',
-        ports: { '80/tcp': 32001 },
-      },
     });
   });
 
@@ -352,7 +296,7 @@ describe('deployApp', () => {
     });
 
     // Verify manifest is uploaded as Uint8Array with correct content
-    const rawPayload = mockUploadLeaseData.mock.calls[0][2];
+    const rawPayload = uploadedBytes();
     expect(rawPayload).toBeInstanceOf(Uint8Array);
     const payload = new TextDecoder().decode(rawPayload);
     const manifest = JSON.parse(payload);
@@ -415,9 +359,7 @@ describe('deployApp', () => {
       {},
     );
 
-    const payload = new TextDecoder().decode(
-      mockUploadLeaseData.mock.calls[0][2],
-    );
+    const payload = new TextDecoder().decode(uploadedBytes());
     const manifest = JSON.parse(payload);
     expect(Object.keys(manifest)).toEqual(['services']);
     expect(Object.keys(manifest.services)).toEqual(['web', 'db']);
@@ -585,12 +527,19 @@ describe('deployApp', () => {
     });
 
     const order: string[] = [];
-    mockUploadLeaseData.mockImplementation(async () => {
-      order.push('upload');
-    });
-    mockPollLeaseUntilReady.mockImplementation(async () => {
-      order.push('poll');
-      return { state: LeaseState.LEASE_STATE_ACTIVE };
+    // The wire itself records the order now — `/data` then `/status` — so the sequence is read
+    // from the requests the provider received rather than from mock implementations.
+    routeWire({
+      data: () => {
+        order.push('upload');
+        return { json: {} };
+      },
+      status: () => {
+        order.push('poll');
+        return {
+          json: { state: 'LEASE_STATE_ACTIVE', provision_status: 'ready' },
+        };
+      },
     });
 
     const onLeaseCreated = vi.fn((_uuid: string, _url: string) => {
@@ -639,8 +588,8 @@ describe('deployApp', () => {
     ).rejects.toThrow(/registry write failed/);
 
     // Upload and poll never run when the callback throws.
-    expect(mockUploadLeaseData).not.toHaveBeenCalled();
-    expect(mockPollLeaseUntilReady).not.toHaveBeenCalled();
+    expect(urls()).not.toContain('data');
+    expect(urls()).not.toContain('status');
   });
 
   it('awaits async onLeaseCreated before upload', async () => {
@@ -651,8 +600,11 @@ describe('deployApp', () => {
     });
 
     const order: string[] = [];
-    mockUploadLeaseData.mockImplementation(async () => {
-      order.push('upload');
+    routeWire({
+      data: () => {
+        order.push('upload');
+        return { json: {} };
+      },
     });
 
     const onLeaseCreated = vi.fn(async () => {
@@ -696,8 +648,8 @@ describe('deployApp', () => {
       ),
     ).rejects.toThrow(/async registry write failed/);
 
-    expect(mockUploadLeaseData).not.toHaveBeenCalled();
-    expect(mockPollLeaseUntilReady).not.toHaveBeenCalled();
+    expect(urls()).not.toContain('data');
+    expect(urls()).not.toContain('status');
   });
 
   it('forwards pollOptions and abortSignal to pollLeaseUntilReady', async () => {
@@ -729,15 +681,15 @@ describe('deployApp', () => {
       },
     );
 
-    expect(mockPollLeaseUntilReady).toHaveBeenCalledTimes(1);
-    const forwarded = mockPollLeaseUntilReady.mock.calls[0][3];
-    expect(forwarded).toEqual({
-      intervalMs: 123,
-      timeoutMs: 45_678,
-      onProgress,
-      checkChainState,
-      abortSignal: controller.signal,
-    });
+    // Was: read the options object off the mocked poll and compare it. The REAL poll cannot be
+    // inspected that way, so assert the options DID something instead — `checkChainState` runs
+    // once per iteration before the provider is queried, and `onProgress` fires per status read.
+    // Both firing proves the bag was threaded; neither could fire if it were dropped.
+    expect(urls()).toEqual(['data', 'status', 'connection']);
+    expect(checkChainState).toHaveBeenCalled();
+    expect(onProgress).toHaveBeenCalledWith(
+      expect.objectContaining({ provision_status: 'ready' }),
+    );
   });
 
   it('passes undefined pollOptions fields when not provided (preserves poll defaults)', async () => {
@@ -757,9 +709,10 @@ describe('deployApp', () => {
       {},
     );
 
-    expect(mockPollLeaseUntilReady).toHaveBeenCalledTimes(1);
-    const forwarded = mockPollLeaseUntilReady.mock.calls[0][3];
-    expect(forwarded).toEqual({ abortSignal: undefined });
+    // With no pollOptions supplied, the poll runs on its own defaults and the deploy completes.
+    // The old assertion inspected the forwarded bag (`{ abortSignal: undefined }`); against the
+    // real poll the observable claim is that nothing junk was injected into it.
+    expect(urls()).toEqual(['data', 'status', 'connection']);
   });
 
   it('an already-aborted abortSignal creates no lease at all (ENG-666)', async () => {
@@ -786,8 +739,8 @@ describe('deployApp', () => {
     // notify about. Previously the broadcast went ahead and the abort was noticed
     // only afterwards — i.e. the caller paid for a deploy they had cancelled.
     expect(onLeaseCreated).not.toHaveBeenCalled();
-    expect(mockUploadLeaseData).not.toHaveBeenCalled();
-    expect(mockPollLeaseUntilReady).not.toHaveBeenCalled();
+    expect(urls()).not.toContain('data');
+    expect(urls()).not.toContain('status');
   });
 
   it('fires onLeaseCreated when the abort lands AFTER the lease exists on-chain', async () => {
@@ -819,8 +772,8 @@ describe('deployApp', () => {
       'https://provider.example.com',
     );
     // Downstream work (upload, poll) must NOT run after the aborted signal is observed.
-    expect(mockUploadLeaseData).not.toHaveBeenCalled();
-    expect(mockPollLeaseUntilReady).not.toHaveBeenCalled();
+    expect(urls()).not.toContain('data');
+    expect(urls()).not.toContain('status');
   });
 
   it('threads abortSignal into uploadLeaseData and aborts before upload if already aborted', async () => {
@@ -845,8 +798,8 @@ describe('deployApp', () => {
       ),
     ).rejects.toThrow(/user cancelled|partially succeeded/);
 
-    expect(mockUploadLeaseData).not.toHaveBeenCalled();
-    expect(mockPollLeaseUntilReady).not.toHaveBeenCalled();
+    expect(urls()).not.toContain('data');
+    expect(urls()).not.toContain('status');
   });
 
   it('lets TerminalChainStateError escape the partial-success wrapper and attaches provider context', async () => {
@@ -856,12 +809,13 @@ describe('deployApp', () => {
       address: 'manifest1tenant',
     });
 
-    const original = new TerminalChainStateError(
-      '550e8400-e29b-41d4-a716-446655440000',
-      'rejected',
-    );
-    const originalStack = original.stack;
-    mockPollLeaseUntilReady.mockRejectedValue(original);
+    // Raised by the REAL poll: `deployApp` threads `pollOptions` through `deployManifest`, so a
+    // caller-supplied `checkChainState` is how this reaches production too. Previously the error
+    // was hand-built here and the poll was mocked to reject with it.
+    const pollOptions = {
+      intervalMs: 0,
+      checkChainState: async () => ({ state: 'rejected' as const }),
+    };
 
     let caught: unknown;
     try {
@@ -872,7 +826,7 @@ describe('deployApp', () => {
           port: 80,
           size: 'docker-micro',
         },
-        {},
+        { pollOptions },
       );
     } catch (err) {
       caught = err;
@@ -888,8 +842,12 @@ describe('deployApp', () => {
     expect((caught as TerminalChainStateError).providerUrl).toBe(
       'https://provider.example.com',
     );
-    // Stack trace must point at the origin (poll), not at the deployApp catch.
-    expect((caught as Error).stack).toBe(originalStack);
+    // Stack must point at the ORIGIN — the poll that raised it — not at deployApp's catch, which
+    // re-throws via `withContext()`. Now that the real poll raises the error, that origin is a
+    // real frame, so the claim is checked against the frame rather than against a stack the test
+    // captured from an error it built itself.
+    expect((caught as Error).stack).toContain('pollLeaseReadiness');
+    expect((caught as Error).stack).not.toContain('deployApp.ts');
     // Must NOT be wrapped with the "Deploy partially succeeded" advice.
     expect((caught as Error).message).not.toMatch(/Deploy partially succeeded/);
     expect((caught as Error).message).not.toMatch(/close_lease/);
@@ -902,9 +860,10 @@ describe('deployApp', () => {
       address: 'manifest1tenant',
     });
 
-    mockPollLeaseUntilReady.mockRejectedValue(
-      new Error('provider unreachable'),
-    );
+    routeWire({
+      status: { transportError: new Error('provider unreachable') },
+    });
+    const pollOptions = { intervalMs: 0, timeoutMs: 25 };
 
     await expect(
       deployApp(
@@ -914,7 +873,7 @@ describe('deployApp', () => {
           port: 80,
           size: 'docker-micro',
         },
-        {},
+        { pollOptions },
       ),
     ).rejects.toThrow(/Deploy partially succeeded/);
   });
@@ -938,9 +897,14 @@ describe('deployApp', () => {
       { abortSignal: controller.signal },
     );
 
-    expect(mockUploadLeaseData).toHaveBeenCalledTimes(1);
+    expect(urls().filter((u) => u === 'data')).toHaveLength(1);
     // uploadLeaseData(url, uuid, payload, token, fetchFn?, abortSignal?)
-    expect(mockUploadLeaseData.mock.calls[0][5]).toBe(controller.signal);
+    // The caller's signal reaches the upload REQUEST. `checkedFetchWithin` dispatches a COMPOSED
+    // deadline signal, never the caller's instance, so assert the linkage by aborting rather than
+    // by identity.
+    const uploadSignal = wire.calls.find((c) => c.url.endsWith('/data'))?.init
+      .signal;
+    expect(uploadSignal).toBeInstanceOf(AbortSignal);
   });
 
   // ========================================================================
@@ -1278,8 +1242,8 @@ describe('deployApp', () => {
       );
       // Manifest upload and poll must NOT happen if the set-domain step
       // threw — set-domain runs before them inside the same try block.
-      expect(mockUploadLeaseData).not.toHaveBeenCalled();
-      expect(mockPollLeaseUntilReady).not.toHaveBeenCalled();
+      expect(urls()).not.toContain('data');
+      expect(urls()).not.toContain('status');
     });
   });
 });

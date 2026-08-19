@@ -1,3 +1,16 @@
+// This file mocks NOTHING (ENG-725).
+//
+// It used to `vi.mock` THREE modules — `../http/fred.js`, `../http/provider.js` and
+// `./resolveLeaseProvider.js`. All gone: the wire is injected at `ctx.fetch` as a sealed probe.
+//
+// That matters most for the sanitization cases below (ENG-555/ENG-638). They exist to prove that
+// hostile provider text cannot reach model context raw, and they used to hand `appStatus` an
+// already-parsed JavaScript object straight from a mock — skipping the JSON parse, the wire types,
+// and `getLeaseStatus`'s own `leaseStateFromJSON` conversion. Now the bidi payload travels as
+// actual JSON over the actual transport, which is the path a real provider would use to deliver it.
+//
+// `appStatus` reads status and connection concurrently under `Promise.allSettled`, so the two
+// requests race. Assertions locate a request by URL rather than by index.
 import {
   INFRASTRUCTURE_ERROR_CODES,
   LeaseState,
@@ -5,65 +18,74 @@ import {
   ManifestMCPErrorCode,
   noopLogger,
 } from '@manifest-network/manifest-mcp-core';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-
-vi.mock('../http/fred.js', () => ({
-  getLeaseStatus: vi.fn(),
-}));
-
-vi.mock('../http/provider.js', () => ({
-  getLeaseConnectionInfo: vi.fn(),
-}));
-
-vi.mock('./resolveLeaseProvider.js', () => ({
-  resolveProviderUrl: vi.fn(),
-}));
-
+import { sealedFetchProbe } from '@manifest-network/manifest-mcp-core/__test-utils__/fetch-probe.js';
 import { makeMockQueryClient } from '@manifest-network/manifest-mcp-core/__test-utils__/mocks.js';
-import { getLeaseStatus } from '../http/fred.js';
-import { getLeaseConnectionInfo } from '../http/provider.js';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { FredAuthCtx } from '../ctx.js';
 import { appStatus } from './appStatus.js';
-import { resolveProviderUrl } from './resolveLeaseProvider.js';
-
-const mockGetLeaseStatus = vi.mocked(getLeaseStatus);
-const mockGetLeaseConnectionInfo = vi.mocked(getLeaseConnectionInfo);
-const mockResolveProviderUrl = vi.mocked(resolveProviderUrl);
 
 const LEASE_UUID = '550e8400-e29b-41d4-a716-446655440000';
-const mockGetAuthToken = vi.fn().mockResolvedValue('auth-token');
-// Typed, and loud if it is ever reached: this spy is threaded into `ctx.fetch` and asserted
-// to have been forwarded, never invoked. The old `vi.fn(globalThis.fetch)` spelling got that
-// loudness by accident — `setupFiles` had already swapped in the ban stub — so it read as
-// "default to the real network" while depending on load order. Say it outright (ENG-715).
-const fetchSpy = vi.fn<typeof globalThis.fetch>(() => {
-  throw new Error(
-    'this fetch spy is threaded and asserted, never invoked — a call here means a mock ' +
-      'did not intercept provider HTTP (ENG-705/ENG-715)',
-  );
-});
+const PROVIDER_URL = 'https://provider.example.com';
+const ADDR = 'manifest1abc';
+/** RIGHT-TO-LEFT OVERRIDE. Written as an escape, never as a literal glyph. */
+const BIDI = String.fromCharCode(0x202e);
 
-function makeActiveQc() {
+const CONNECTION = {
+  lease_uuid: LEASE_UUID,
+  tenant: ADDR,
+  provider_uuid: 'prov-1',
+  connection: { host: 'app.example.com', ports: { '80/tcp': 8080 } },
+};
+
+const mockGetAuthToken = vi.fn().mockResolvedValue('auth-token');
+
+let wire: ReturnType<typeof sealedFetchProbe>;
+
+/** Route both endpoints appStatus may read. Either may be a non-2xx descriptor. */
+function routeWire(
+  status: unknown = {
+    state: 'LEASE_STATE_ACTIVE',
+    services: { web: { instances: [{ name: 'web-0', status: 'running' }] } },
+  },
+  connection: unknown = CONNECTION,
+): void {
+  const step = (v: unknown) =>
+    (v && typeof v === 'object' && 'status' in (v as object)
+      ? v
+      : { json: v }) as never;
+  wire = sealedFetchProbe({
+    '/status': step(status),
+    '/connection': step(connection),
+  });
+}
+
+function makeQc(state = LeaseState.LEASE_STATE_ACTIVE, items?: unknown[]) {
   return makeMockQueryClient({
     billing: {
       lease: {
         uuid: LEASE_UUID,
-        state: LeaseState.LEASE_STATE_ACTIVE,
+        state,
         providerUuid: 'prov-1',
+        ...(items !== undefined && { items }),
       },
+    },
+    sku: {
+      providerLookup: { 'prov-1': { provider: { apiUrl: PROVIDER_URL } } },
     },
   });
 }
 
-// Build a FredAuthCtx whose providerAuth.providerToken delegates to the
-// supplied `getAuthToken` thunk (so the existing token-flow assertions hold).
 function makeCtx(
   qc: ReturnType<typeof makeMockQueryClient>,
-  getAuthToken: (address: string, leaseUuid: string) => Promise<string>,
-) {
+  getAuthToken: (address: string, leaseUuid: string) => Promise<string> = (
+    a,
+    l,
+  ) => mockGetAuthToken(a, l),
+): FredAuthCtx {
   return {
-    query: qc,
+    query: qc as never,
     chain: {} as never,
-    fetch: fetchSpy,
+    fetch: wire.fetch,
     logger: noopLogger,
     providerAuth: {
       providerToken: (i: { address: string; leaseUuid: string }) =>
@@ -73,31 +95,23 @@ function makeCtx(
   };
 }
 
+/** The recorded request whose path ends in `suffix` — the two reads race, so never index. */
+function callTo(suffix: string) {
+  return wire.calls.find((c) => new URL(c.url).pathname.endsWith(suffix));
+}
+
+const run = (ctx: FredAuthCtx) =>
+  appStatus(ctx, { address: ADDR, leaseUuid: LEASE_UUID });
+
 describe('appStatus', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockResolveProviderUrl.mockResolvedValue('https://provider.example.com');
-    mockGetLeaseStatus.mockResolvedValue({
-      state: LeaseState.LEASE_STATE_ACTIVE,
-      services: { web: { instances: [{ name: 'web-0', status: 'running' }] } },
-    });
-    mockGetLeaseConnectionInfo.mockResolvedValue({
-      lease_uuid: LEASE_UUID,
-      tenant: 'manifest1abc',
-      provider_uuid: 'prov-1',
-      connection: {
-        host: 'app.example.com',
-        ports: { '80/tcp': 8080 },
-      },
-    });
+    mockGetAuthToken.mockResolvedValue('auth-token');
+    routeWire();
   });
 
   it('returns combined chain state and provider status for active lease', async () => {
-    const qc = makeActiveQc();
-    const result = await appStatus(makeCtx(qc, mockGetAuthToken), {
-      address: 'manifest1abc',
-      leaseUuid: LEASE_UUID,
-    });
+    const result = await run(makeCtx(makeQc()));
 
     expect(result.lease_uuid).toBe(LEASE_UUID);
     expect(result.chainState.state).toBe(LeaseState.LEASE_STATE_ACTIVE);
@@ -106,56 +120,33 @@ describe('appStatus', () => {
   });
 
   it('queries provider status (but NOT connection) for a closed lease (ENG-600)', async () => {
-    const qc = makeMockQueryClient({
-      billing: {
-        lease: {
-          uuid: LEASE_UUID,
-          state: LeaseState.LEASE_STATE_CLOSED,
-          providerUuid: 'prov-1',
-        },
-      },
-    });
+    routeWire({ state: 'LEASE_STATE_CLOSED' });
 
-    const result = await appStatus(makeCtx(qc, mockGetAuthToken), {
-      address: 'manifest1abc',
-      leaseUuid: LEASE_UUID,
-    });
+    const result = await run(makeCtx(makeQc(LeaseState.LEASE_STATE_CLOSED)));
 
     expect(result.chainState.state).toBe(LeaseState.LEASE_STATE_CLOSED);
-    expect(mockGetLeaseStatus).toHaveBeenCalledTimes(1);
     expect(result.fredStatus).toBeDefined();
-    // Connection is meaningless for a non-running lease — not fetched.
-    expect(mockGetLeaseConnectionInfo).not.toHaveBeenCalled();
+    // Connection is meaningless for a non-running lease — never requested. `/connection` IS
+    // routed, so this counts requests rather than depending on a refusal.
+    expect(callTo('/status')).toBeDefined();
+    expect(callTo('/connection')).toBeUndefined();
     expect(result.connection).toBeUndefined();
   });
 
   it('surfaces sanitized retention fields for a retained closed lease and omits partition (ENG-600)', async () => {
-    mockGetLeaseStatus.mockResolvedValueOnce({
-      state: LeaseState.LEASE_STATE_CLOSED,
+    routeWire({
+      state: 'LEASE_STATE_CLOSED',
       provision_status: 'retained',
       retained_until: '2026-08-01T00:00:00Z',
-      // Control char in sku proves the sanitize spread is WIRED (not just clean-string pass-through).
-      items: [{ sku: `s1${String.fromCharCode(0x202e)}`, quantity: 1 }],
-      restore_hint: `restore${String.fromCharCode(0x202e)}me`,
+      // Control char in sku proves the sanitize spread is WIRED (not clean-string pass-through).
+      items: [{ sku: `s1${BIDI}`, quantity: 1 }],
+      restore_hint: `restore${BIDI}me`,
       partition: 'p',
     });
-    const qc = makeMockQueryClient({
-      billing: {
-        lease: {
-          uuid: LEASE_UUID,
-          state: LeaseState.LEASE_STATE_CLOSED,
-          providerUuid: 'prov-1',
-        },
-      },
-    });
 
-    const result = await appStatus(makeCtx(qc, mockGetAuthToken), {
-      address: 'manifest1abc',
-      leaseUuid: LEASE_UUID,
-    });
+    const result = await run(makeCtx(makeQc(LeaseState.LEASE_STATE_CLOSED)));
 
     expect(result.fredStatus?.retained_until).toBe('2026-08-01T00:00:00Z');
-    // Sanitized: the bidi char is replaced with a space.
     expect(result.fredStatus?.restore_hint).toBe('restore me');
     expect(result.fredStatus?.items?.[0]?.sku).toBe('s1');
     // Decision 6: partition is omitted from the AI-facing projection.
@@ -163,61 +154,33 @@ describe('appStatus', () => {
   });
 
   it('DROPS a malformed/injected retained_until instead of leaking it raw past the sanitizer (ENG-555)', async () => {
-    const injected = `not-a-timestamp${String.fromCharCode(0x202e)}evil`;
-    mockGetLeaseStatus.mockResolvedValueOnce({
-      state: LeaseState.LEASE_STATE_CLOSED,
+    routeWire({
+      state: 'LEASE_STATE_CLOSED',
       provision_status: 'retained',
-      // Non-RFC3339 + bidi-override payload: sanitizeRetentionFields omits it,
-      // so the raw value must NOT survive via the `...rest` spread.
-      retained_until: injected,
+      // Non-RFC3339 + bidi-override payload: sanitizeRetentionFields omits it, so the raw
+      // value must NOT survive via the `...rest` spread.
+      retained_until: `not-a-timestamp${BIDI}evil`,
       partition: 'p',
     });
-    const qc = makeMockQueryClient({
-      billing: {
-        lease: {
-          uuid: LEASE_UUID,
-          state: LeaseState.LEASE_STATE_CLOSED,
-          providerUuid: 'prov-1',
-        },
-      },
-    });
 
-    const result = await appStatus(makeCtx(qc, mockGetAuthToken), {
-      address: 'manifest1abc',
-      leaseUuid: LEASE_UUID,
-    });
+    const result = await run(makeCtx(makeQc(LeaseState.LEASE_STATE_CLOSED)));
 
     expect(result.fredStatus?.retained_until).toBeUndefined();
-    // The raw bidi payload must not appear anywhere in the AI-facing projection.
-    expect(JSON.stringify(result.fredStatus)).not.toContain(
-      String.fromCharCode(0x202e),
-    );
+    expect(JSON.stringify(result.fredStatus)).not.toContain(BIDI);
   });
 
   it('surfaces the post-ENG-508 failure pair on fredStatus (ENG-638)', async () => {
-    // A `ready` lease carrying a rolled-back UpdateFailed: Fred deliberately
-    // retains the attribution on a HEALTHY lease, so this doubles as the case
-    // documenting that a non-empty `reason` does not mean the app is down.
-    mockGetLeaseStatus.mockResolvedValueOnce({
-      state: LeaseState.LEASE_STATE_ACTIVE,
+    // A `ready` lease carrying a rolled-back UpdateFailed: Fred deliberately retains the
+    // attribution on a HEALTHY lease, so this doubles as the case documenting that a
+    // non-empty `reason` does not mean the app is down.
+    routeWire({
+      state: 'LEASE_STATE_ACTIVE',
       provision_status: 'ready',
       reason: 'UpdateFailed',
       message: 'update failed; rolled back to the previous version',
     });
-    const qc = makeMockQueryClient({
-      billing: {
-        lease: {
-          uuid: LEASE_UUID,
-          state: LeaseState.LEASE_STATE_ACTIVE,
-          providerUuid: 'prov-1',
-        },
-      },
-    });
 
-    const result = await appStatus(makeCtx(qc, mockGetAuthToken), {
-      address: 'manifest1abc',
-      leaseUuid: LEASE_UUID,
-    });
+    const result = await run(makeCtx(makeQc()));
 
     expect(result.fredStatus?.provision_status).toBe('ready');
     expect(result.fredStatus?.reason).toBe('UpdateFailed');
@@ -227,56 +190,31 @@ describe('appStatus', () => {
   });
 
   it('SANITIZES provider failure text instead of leaking it raw past the spread (ENG-638)', async () => {
-    // fredStatus is a looseObject, so any raw key left in `...rest` reaches
-    // model context unsanitized. This is the guard that fails if someone drops
-    // reason/message/last_error from the destructure-strip in appStatus.ts.
-    mockGetLeaseStatus.mockResolvedValueOnce({
-      state: LeaseState.LEASE_STATE_ACTIVE,
+    // fredStatus is a looseObject, so any raw key left in `...rest` reaches model context
+    // unsanitized. This is the guard that fails if someone drops reason/message/last_error
+    // from the destructure-strip in appStatus.ts — now proven against text that arrived as
+    // real JSON over the real transport.
+    routeWire({
+      state: 'LEASE_STATE_ACTIVE',
       provision_status: 'failed',
-      reason: `Container${String.fromCharCode(0x202e)}Exited`,
-      message: `crash${String.fromCharCode(0x202e)}loop`,
-    });
-    const qc = makeMockQueryClient({
-      billing: {
-        lease: {
-          uuid: LEASE_UUID,
-          state: LeaseState.LEASE_STATE_ACTIVE,
-          providerUuid: 'prov-1',
-        },
-      },
+      reason: `Container${BIDI}Exited`,
+      message: `crash${BIDI}loop`,
     });
 
-    const result = await appStatus(makeCtx(qc, mockGetAuthToken), {
-      address: 'manifest1abc',
-      leaseUuid: LEASE_UUID,
-    });
+    const result = await run(makeCtx(makeQc()));
 
     expect(result.fredStatus?.message).toBe('crash loop');
-    expect(JSON.stringify(result.fredStatus)).not.toContain(
-      String.fromCharCode(0x202e),
-    );
+    expect(JSON.stringify(result.fredStatus)).not.toContain(BIDI);
   });
 
   it('surfaces a pre-ENG-508 last_error on the canonical message key (ENG-638)', async () => {
-    mockGetLeaseStatus.mockResolvedValueOnce({
-      state: LeaseState.LEASE_STATE_ACTIVE,
+    routeWire({
+      state: 'LEASE_STATE_ACTIVE',
       provision_status: 'failed',
       last_error: 'OOMKilled',
     });
-    const qc = makeMockQueryClient({
-      billing: {
-        lease: {
-          uuid: LEASE_UUID,
-          state: LeaseState.LEASE_STATE_ACTIVE,
-          providerUuid: 'prov-1',
-        },
-      },
-    });
 
-    const result = await appStatus(makeCtx(qc, mockGetAuthToken), {
-      address: 'manifest1abc',
-      leaseUuid: LEASE_UUID,
-    });
+    const result = await run(makeCtx(makeQc()));
 
     expect(result.fredStatus?.last_error).toBe('OOMKilled');
     expect(result.fredStatus?.message).toBe('OOMKilled');
@@ -292,41 +230,18 @@ describe('appStatus', () => {
         customDomain: 'app.example.com',
       },
     ];
-    const qc = makeMockQueryClient({
-      billing: {
-        lease: {
-          uuid: LEASE_UUID,
-          state: LeaseState.LEASE_STATE_ACTIVE,
-          providerUuid: 'prov-1',
-          items,
-        },
-      },
-    });
 
-    const result = await appStatus(makeCtx(qc, mockGetAuthToken), {
-      address: 'manifest1abc',
-      leaseUuid: LEASE_UUID,
-    });
+    const result = await run(
+      makeCtx(makeQc(LeaseState.LEASE_STATE_ACTIVE, items)),
+    );
 
     expect(result.chainState.items).toEqual(items);
   });
 
   it('returns chainState.items as [] when the lease has no items (never undefined)', async () => {
-    const qc = makeMockQueryClient({
-      billing: {
-        lease: {
-          uuid: LEASE_UUID,
-          state: LeaseState.LEASE_STATE_CLOSED,
-          providerUuid: 'prov-1',
-          // items intentionally omitted (partial fixture)
-        },
-      },
-    });
+    routeWire({ state: 'LEASE_STATE_CLOSED' });
 
-    const result = await appStatus(makeCtx(qc, mockGetAuthToken), {
-      address: 'manifest1abc',
-      leaseUuid: LEASE_UUID,
-    });
+    const result = await run(makeCtx(makeQc(LeaseState.LEASE_STATE_CLOSED)));
 
     expect(result.chainState.items).toEqual([]);
   });
@@ -334,119 +249,93 @@ describe('appStatus', () => {
   it('throws when lease not found', async () => {
     const qc = makeMockQueryClient({ billing: { lease: null } });
 
-    await expect(
-      appStatus(makeCtx(qc, mockGetAuthToken), {
-        address: 'manifest1abc',
-        leaseUuid: LEASE_UUID,
-      }),
-    ).rejects.toThrow('not found on chain');
+    await expect(run(makeCtx(qc))).rejects.toThrow('not found on chain');
+    expect(wire.calls).toHaveLength(0);
   });
 
-  it('returns providerError when resolveProviderUrl fails', async () => {
-    const qc = makeActiveQc();
-    mockResolveProviderUrl.mockRejectedValue(new Error('bad url'));
-
-    const result = await appStatus(makeCtx(qc, mockGetAuthToken), {
-      address: 'manifest1abc',
-      leaseUuid: LEASE_UUID,
+  it('returns providerError when the provider cannot be resolved', async () => {
+    // No providerLookup entry → the real resolveProviderUrl wraps the lookup failure as
+    // QUERY_FAILED, and appStatus degrades rather than throwing.
+    const qc = makeMockQueryClient({
+      billing: {
+        lease: {
+          uuid: LEASE_UUID,
+          state: LeaseState.LEASE_STATE_ACTIVE,
+          providerUuid: 'prov-1',
+        },
+      },
     });
+
+    const result = await run(makeCtx(qc));
 
     expect(result.providerError).toContain('Could not resolve provider');
     expect(result.fredStatus).toBeUndefined();
+    expect(wire.calls).toHaveLength(0);
   });
 
-  it('re-throws infrastructure errors from resolveProviderUrl', async () => {
-    const qc = makeActiveQc();
+  it('re-throws infrastructure errors from provider resolution', async () => {
     const infraErr = new ManifestMCPError(
       ManifestMCPErrorCode.RPC_CONNECTION_FAILED,
       'rpc down',
     );
     expect(INFRASTRUCTURE_ERROR_CODES.has(infraErr.code)).toBe(true);
-    mockResolveProviderUrl.mockRejectedValue(infraErr);
+    const qc = makeQc();
+    // resolveProviderUrl re-throws a ManifestMCPError unchanged, so an infra failure from the
+    // chain query reaches appStatus with its identity intact — which is what it branches on.
+    qc.liftedinit.sku.v1.provider = vi
+      .fn()
+      .mockRejectedValue(infraErr) as never;
 
-    await expect(
-      appStatus(makeCtx(qc, mockGetAuthToken), {
-        address: 'manifest1abc',
-        leaseUuid: LEASE_UUID,
-      }),
-    ).rejects.toBe(infraErr);
+    await expect(run(makeCtx(qc))).rejects.toBe(infraErr);
   });
 
   it('handles partial provider failure with Promise.allSettled', async () => {
-    const qc = makeActiveQc();
-    mockGetLeaseStatus.mockRejectedValue(new Error('status failed'));
-    // connection succeeds
+    routeWire({ status: 503, text: 'status failed' }, CONNECTION);
 
-    const result = await appStatus(makeCtx(qc, mockGetAuthToken), {
-      address: 'manifest1abc',
-      leaseUuid: LEASE_UUID,
-    });
+    const result = await run(makeCtx(makeQc()));
 
-    expect(result.providerError).toBe('status failed');
+    expect(result.providerError).toContain('status failed');
     expect(result.connection?.host).toBe('app.example.com');
   });
 
   it('returns providerError when getAuthToken fails', async () => {
-    const qc = makeActiveQc();
-    mockGetAuthToken.mockRejectedValueOnce(new Error('signing failed'));
+    const failing = vi.fn().mockRejectedValue(new Error('signing failed'));
 
-    const result = await appStatus(makeCtx(qc, mockGetAuthToken), {
-      address: 'manifest1abc',
-      leaseUuid: LEASE_UUID,
-    });
+    const result = await run(makeCtx(makeQc(), failing));
 
     expect(result.providerError).toContain('Auth token error');
     expect(result.fredStatus).toBeUndefined();
+    expect(wire.calls).toHaveLength(0);
   });
 
-  it('calls getAuthToken twice with distinct tokens for status and connection', async () => {
-    const qc = makeActiveQc();
+  it('sends the status token to /status and the connection token to /connection', async () => {
+    // The ENG-717 concern, and now a WIRE claim: which token reaches which endpoint. Read off
+    // the recorded requests, matched by URL — the two reads race under allSettled, so an index
+    // would be a coin flip.
     const distinctTokenFn = vi
       .fn()
       .mockResolvedValueOnce('status-token')
       .mockResolvedValueOnce('conn-token');
 
-    await appStatus(makeCtx(qc, distinctTokenFn), {
-      address: 'manifest1abc',
-      leaseUuid: LEASE_UUID,
-    });
+    await run(makeCtx(makeQc(), distinctTokenFn));
 
     expect(distinctTokenFn).toHaveBeenCalledTimes(2);
-    // The claim is which TOKEN reaches each transport call. Read the slots off the
-    // recorded call instead of pinning the whole argument list: toHaveBeenCalledWith is
-    // exact-arity, so the incidental trailing signal/allowLoopback slots would make an
-    // appended parameter break a test that never claimed anything about them (ENG-706).
-    const [statusUrl, statusLease, statusToken, statusFetch] =
-      mockGetLeaseStatus.mock.calls[0]!;
-    expect({ statusUrl, statusLease, statusToken, statusFetch }).toEqual({
-      statusUrl: expect.any(String),
-      statusLease: LEASE_UUID,
-      statusToken: 'status-token',
-      statusFetch: fetchSpy,
-    });
-    const [connUrl, connLease, connToken, connFetch] =
-      mockGetLeaseConnectionInfo.mock.calls[0]!;
-    expect({ connUrl, connLease, connToken, connFetch }).toEqual({
-      connUrl: expect.any(String),
-      connLease: LEASE_UUID,
-      connToken: 'conn-token',
-      connFetch: fetchSpy,
-    });
+    const statusHeaders = callTo('/status')?.init.headers as
+      | Record<string, string>
+      | undefined;
+    const connHeaders = callTo('/connection')?.init.headers as
+      | Record<string, string>
+      | undefined;
+    expect(statusHeaders?.Authorization).toBe('Bearer status-token');
+    expect(connHeaders?.Authorization).toBe('Bearer conn-token');
   });
 
   it('returns connectionError when only connection info fails', async () => {
-    const qc = makeActiveQc();
-    mockGetLeaseConnectionInfo.mockRejectedValue(
-      new Error('connection failed'),
-    );
-    // status succeeds
+    routeWire(undefined, { status: 500, text: 'connection failed' });
 
-    const result = await appStatus(makeCtx(qc, mockGetAuthToken), {
-      address: 'manifest1abc',
-      leaseUuid: LEASE_UUID,
-    });
+    const result = await run(makeCtx(makeQc()));
 
     expect(result.fredStatus?.state).toBe(LeaseState.LEASE_STATE_ACTIVE);
-    expect(result.connectionError).toBe('connection failed');
+    expect(result.connectionError).toContain('connection failed');
   });
 });

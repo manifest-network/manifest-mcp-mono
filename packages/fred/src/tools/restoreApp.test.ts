@@ -36,32 +36,31 @@ vi.mock('@manifest-network/manifest-mcp-core', async (importOriginal) => {
     cosmosEstimateFee: sealed('cosmosEstimateFee'),
   };
 });
-vi.mock('../http/fred.js', () => ({
-  getLeaseProvision: vi.fn(),
-  restoreLease: vi.fn(),
-  pollLeaseUntilReady: vi.fn(),
-}));
+// ENG-725: `../http/fred.js` is NO LONGER mocked. The provider wire is injected at `ctx.fetch` as
+// a sealed probe, so the real `getLeaseProvision` / `restoreLease` / `pollLeaseUntilReady`, the
+// real `fetchJsonChecked` and the real `classifyTransportError` all run. That matters here more
+// than anywhere: every saga branch below is selected by the SHAPE of a `ProviderApiError`, and
+// those errors are now BUILT by the transport from a wire response rather than hand-constructed by
+// the test. A test that says "422 means cancel-and-reject" now proves the transport turns a 422
+// response into that verdict, not merely that the tool branches on a value it was handed.
+//
+// Still mocked, deliberately and out of ENG-725's scope: the CORE BARREL (the chain-broadcast seam
+// — ENG-713, sealed via `makeSealedClientManager` below), and the chain-side tool modules
+// `createLease` / `fetchLease` / `resolveLeaseProvider`. This file's `ctx.query` is `{}` on
+// purpose; it is about the broadcast seam, not the read path.
 vi.mock('./createLease.js', () => ({ createLease: vi.fn() }));
 vi.mock('./fetchLease.js', () => ({ fetchLease: vi.fn() }));
 vi.mock('./resolveLeaseProvider.js', () => ({ resolveProviderUrl: vi.fn() }));
 
 import { cosmosTx } from '@manifest-network/manifest-mcp-core';
+import { sealedFetchProbe } from '@manifest-network/manifest-mcp-core/__test-utils__/fetch-probe.js';
 import { makeSealedClientManager } from '@manifest-network/manifest-mcp-core/__test-utils__/mocks.js';
-import {
-  getLeaseProvision,
-  pollLeaseUntilReady,
-  restoreLease,
-} from '../http/fred.js';
-import { ProviderApiError } from '../http/provider.js';
 import { createLease } from './createLease.js';
 import { fetchLease } from './fetchLease.js';
 import { resolveProviderUrl } from './resolveLeaseProvider.js';
 import { restoreApp } from './restoreApp.js';
 
 const mockCosmosTx = vi.mocked(cosmosTx);
-const mockGetProvision = vi.mocked(getLeaseProvision);
-const mockRestoreLease = vi.mocked(restoreLease);
-const mockPoll = vi.mocked(pollLeaseUntilReady);
 const mockCreateLease = vi.mocked(createLease);
 const mockFetchLease = vi.mocked(fetchLease);
 const mockResolveProviderUrl = vi.mocked(resolveProviderUrl);
@@ -69,6 +68,57 @@ const mockResolveProviderUrl = vi.mocked(resolveProviderUrl);
 const SOURCE = '11111111-2222-3333-4444-555555555555';
 const NEW = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
 const META = new Uint8Array([1, 2]);
+const PROVIDER_URL = 'https://provider.example.com';
+
+/** The three provider endpoints a restore touches, in saga order. */
+type RestoreRoutes = {
+  provision?: unknown;
+  restore?: unknown;
+  status?: unknown;
+};
+
+// Initialized eagerly: the ENG-713 containment describe below builds a ctx outside restoreApp's
+// beforeEach, so `wire` must already exist. It routes nothing there and dispatches nothing.
+let wire: ReturnType<typeof sealedFetchProbe> = sealedFetchProbe();
+
+/**
+ * Route the restore saga's wire. A value that is already a probe STEP (or a per-call function
+ * returning one) is used as-is; anything else is sent as a 2xx JSON body.
+ *
+ * NOTE the numeric-`status` test. Sniffing for a `status` KEY does not work here: Fred's
+ * `/provision` body legitimately carries `status: 'retained'`, so a key-only check turns a
+ * perfectly good response body into `new Response(…, { status: 'retained' })` and the transport
+ * reports an opaque `init["status"] must be in the range of 200 to 599`. An HTTP status is a
+ * number; a provider status is a string. Discriminate on the type, not the key.
+ */
+function routeWire(r: RestoreRoutes = {}): void {
+  const isStep = (v: unknown): boolean =>
+    typeof v === 'object' &&
+    v !== null &&
+    ('json' in v ||
+      'transportError' in v ||
+      'streamError' in v ||
+      'hang' in v ||
+      typeof (v as { status?: unknown }).status === 'number');
+  const step = (v: unknown, fallback: unknown) => {
+    const chosen = v ?? fallback;
+    if (typeof chosen === 'function') return chosen as never; // per-call script
+    return (isStep(chosen) ? chosen : { json: chosen }) as never;
+  };
+  wire = sealedFetchProbe({
+    '/provision': step(r.provision, { status: 'retained', fail_count: 0 }),
+    '/restore': step(r.restore, { status: 'provisioning' }),
+    '/status': step(r.status, {
+      state: 'LEASE_STATE_ACTIVE',
+      provision_status: 'ready',
+    }),
+  });
+}
+
+/** Requests the probe saw, by last path segment. */
+function urls(): string[] {
+  return wire.calls.map((c) => new URL(c.url).pathname.split('/').pop() ?? '');
+}
 
 function makeCtx() {
   return {
@@ -80,13 +130,9 @@ function makeCtx() {
       acquireRateLimit: vi.fn().mockResolvedValue(undefined),
     }) as never,
     query: {} as never,
-    // Threaded and asserted, never invoked — loud if that ever changes (ENG-705/ENG-715).
-    fetch: vi.fn<typeof globalThis.fetch>(() => {
-      throw new Error(
-        'ctx.fetch is threaded and asserted, never invoked — a call here means a mock ' +
-          'did not intercept provider HTTP (ENG-705/ENG-715)',
-      );
-    }) as never,
+    // The sealed provider wire. Unlike the chain seam above, this one is EXERCISED: the real
+    // transport dispatches through it, and an endpoint no test routed fails by name (ENG-725).
+    fetch: wire.fetch as never,
     allowLoopback: false,
     providerAuth: {
       providerToken: vi.fn().mockResolvedValue('tok'),
@@ -145,10 +191,9 @@ describe('core broadcast containment (ENG-713)', () => {
 describe('restoreApp', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockResolveProviderUrl.mockResolvedValue('https://provider.example.com');
-    mockGetProvision.mockResolvedValue({ status: 'retained', fail_count: 0 });
+    routeWire();
+    mockResolveProviderUrl.mockResolvedValue(PROVIDER_URL);
     mockCreateLease.mockResolvedValue(NEW as never);
-    mockRestoreLease.mockResolvedValue({ status: 'provisioning' });
     // clearAllMocks() resets calls but NOT implementations, so a mockRejectedValue
     // set by one case would otherwise leak into every later one.
     mockCosmosTx.mockResolvedValue(undefined as never);
@@ -171,32 +216,29 @@ describe('restoreApp', () => {
       metaHashHex: toHex(META),
       leaseItems: ['s1:1'],
     });
-    // Read the slots off the recorded call rather than pinning the whole argument list:
-    // toHaveBeenCalledWith is exact-arity, so an appended parameter would break this even
-    // though every claim below is about a slot counted from the START (ENG-706).
-    const [url, newLease, sourceLease, token, fetchFn, allowLoopback] =
-      mockRestoreLease.mock.calls[0]!;
-    expect({
-      url,
-      newLease,
-      sourceLease,
-      token,
-      fetchFn,
-      allowLoopback,
-    }).toEqual({
-      url: 'https://provider.example.com',
-      newLease: NEW,
-      sourceLease: SOURCE,
-      token: 'tok',
-      fetchFn: expect.anything(),
-      allowLoopback: false,
+    // The saga's wire, in order, read off the requests the provider actually received. The
+    // POST goes to the NEW lease and names the SOURCE lease in its body — a swap that the old
+    // argument-slot assertion could state but not prove reached the wire that way.
+    expect(urls()).toEqual(['provision', 'restore']);
+    const post = wire.calls[1]!;
+    expect(post.url).toBe(`${PROVIDER_URL}/v1/leases/${NEW}/restore`);
+    expect(post.init.method).toBe('POST');
+    expect(JSON.parse(String(post.init.body))).toEqual({
+      from_lease_uuid: SOURCE,
     });
+    expect((post.init.headers as Record<string, string>).Authorization).toBe(
+      'Bearer tok',
+    );
+    // The pre-flight read is scoped to the SOURCE lease, not the new one.
+    expect(wire.calls[0]?.url).toBe(
+      `${PROVIDER_URL}/v1/leases/${SOURCE}/provision`,
+    );
     expect(mockCosmosTx).not.toHaveBeenCalled();
   });
 
   it('pre-flight: throws RESTORE_NOT_RETAINED without creating a lease when source is not retained', async () => {
     mockSource();
-    mockGetProvision.mockResolvedValue({ status: 'active', fail_count: 0 });
+    routeWire({ provision: { status: 'active', fail_count: 0 } });
     await expect(
       restoreApp(
         makeCtx(),
@@ -211,7 +253,7 @@ describe('restoreApp', () => {
 
   it('terminal 422: cancels the created lease once and throws RESTORE_REJECTED', async () => {
     mockSource();
-    mockRestoreLease.mockRejectedValue(new ProviderApiError(422, 'demote'));
+    routeWire({ restore: { status: 422, text: 'demote' } });
     await expect(
       restoreApp(
         makeCtx(),
@@ -231,9 +273,7 @@ describe('restoreApp', () => {
 
   it('503: cancels and throws RESTORE_RETRYABLE (agent may re-invoke)', async () => {
     mockSource();
-    mockRestoreLease.mockRejectedValue(
-      new ProviderApiError(503, 'insufficient resources'),
-    );
+    routeWire({ restore: { status: 503, text: 'insufficient resources' } });
     await expect(
       restoreApp(
         makeCtx(),
@@ -246,7 +286,9 @@ describe('restoreApp', () => {
 
   it('in-doubt (status 0 timeout): does NOT cancel; throws RESTORE_ORPHAN with the orphaned uuid', async () => {
     mockSource();
-    mockRestoreLease.mockRejectedValue(new ProviderApiError(0, 'timeout'));
+    // A transport-level failure (no HTTP response): classifyTransportError tags it
+    // `kind:'network'` with status 0, which is the in-doubt shape the saga must not cancel on.
+    routeWire({ restore: { transportError: new Error('timeout') } });
     await expect(
       restoreApp(
         makeCtx(),
@@ -262,7 +304,7 @@ describe('restoreApp', () => {
 
   it('compensation fails: 422 + cancel rejects → RESTORE_ORPHAN naming the orphaned uuid', async () => {
     mockSource();
-    mockRestoreLease.mockRejectedValue(new ProviderApiError(422, 'demote'));
+    routeWire({ restore: { status: 422, text: 'demote' } });
     mockCosmosTx.mockRejectedValue(new Error('chain unreachable'));
     await expect(
       restoreApp(
@@ -279,36 +321,48 @@ describe('restoreApp', () => {
 
   it('post-pivot poll timeout: reports provisioning and does NOT cancel (data-loss guard)', async () => {
     mockSource();
-    mockPoll.mockRejectedValue(new ProviderApiError(0, 'poll timeout'));
+    // The provider stays unreachable. Driving the REAL poll means the deadline has to be real
+    // too — a transport fault is retryable by design, so the loop tolerates it until `timeoutMs`
+    // rather than giving up on the first rejection the way the old mock did.
+    routeWire({ status: { transportError: new Error('poll timeout') } });
+
     const result = await restoreApp(
       makeCtx(),
       { address: 'a', sourceLeaseUuid: SOURCE },
-      { pollOptions: {} },
+      { pollOptions: { intervalMs: 0, timeoutMs: 25 } },
     );
+
+    // The volumes are already pivoted onto the new lease, so a poll that never confirms must
+    // still report success-in-progress and must NOT cancel — cancelling would destroy them.
     expect(result).toMatchObject({ lease_uuid: NEW, status: 'provisioning' });
     expect(mockCosmosTx).not.toHaveBeenCalled();
+    expect(urls()).toContain('status');
   });
 
   it('post-pivot poll SUCCESS: returns the polled ready status', async () => {
     mockSource();
-    mockPoll.mockResolvedValue({
-      state: 2,
-      provision_status: 'running',
-    } as never);
+    routeWire({
+      status: { state: 'LEASE_STATE_ACTIVE', provision_status: 'ready' },
+    });
+
     const result = await restoreApp(
       makeCtx(),
       { address: 'a', sourceLeaseUuid: SOURCE },
-      { pollOptions: {} },
+      { pollOptions: { intervalMs: 0 } },
     );
+
     expect(result.lease_uuid).toBe(NEW);
-    expect(result.ready).toMatchObject({ provision_status: 'running' });
+    // `ready` is the only status PROVISION_SUCCESS admits; the old fixture said 'running',
+    // which the real classifier would have kept polling on (ENG-651's fail-closed default).
+    expect(result.ready).toMatchObject({ provision_status: 'ready' });
     expect(mockCosmosTx).not.toHaveBeenCalled();
   });
 
   it('committed-but-empty-body (2xx ProviderApiError): treated as committed, NOT orphaned', async () => {
     mockSource();
-    // parseJsonResponse throws ProviderApiError with the 2xx status on an empty body.
-    mockRestoreLease.mockRejectedValue(new ProviderApiError(202, 'empty body'));
+    // An empty body on a 2xx: the real parse throws a ProviderApiError carrying the 2xx
+    // status, which the saga must read as COMMITTED rather than orphaned.
+    routeWire({ restore: { status: 202, text: '' } });
     const result = await restoreApp(
       makeCtx(),
       { address: 'a', sourceLeaseUuid: SOURCE },
@@ -355,9 +409,7 @@ describe('restoreApp', () => {
   it('sanitizes provider-controlled text out of the failure message (Copilot #1)', async () => {
     mockSource();
     const bidi = String.fromCharCode(0x202e);
-    mockRestoreLease.mockRejectedValue(
-      new ProviderApiError(422, `demote${bidi}evil`),
-    );
+    routeWire({ restore: { status: 422, text: `demote${bidi}evil` } });
     await expect(
       restoreApp(
         makeCtx(),
@@ -373,9 +425,11 @@ describe('restoreApp', () => {
     mockSource();
     const ac = new AbortController();
     // Abort lands during the pre-flight provision read — before createLease.
-    mockGetProvision.mockImplementation(async () => {
-      ac.abort();
-      return { status: 'retained', fail_count: 0 };
+    routeWire({
+      provision: () => {
+        ac.abort();
+        return { json: { status: 'retained', fail_count: 0 } };
+      },
     });
     await expect(
       restoreApp(
@@ -403,7 +457,7 @@ describe('restoreApp', () => {
     ).catch((e: unknown) => e);
 
     // The restore POST never fired — nothing was adopted (unchanged from ENG-488).
-    expect(mockRestoreLease).not.toHaveBeenCalled();
+    expect(urls()).not.toContain('restore');
     // ...so the empty PENDING shell is rolled back rather than left reserving credit.
     expect(mockCosmosTx).toHaveBeenCalledWith(
       expect.anything(),
@@ -444,7 +498,7 @@ describe('restoreApp', () => {
       { pollOptions: false, signal: ac.signal },
     ).catch((e: unknown) => e);
 
-    expect(mockRestoreLease).not.toHaveBeenCalled();
+    expect(urls()).not.toContain('restore');
     expect(mockCosmosTx).toHaveBeenCalledWith(
       expect.anything(),
       'billing',
@@ -487,9 +541,11 @@ describe('restoreApp', () => {
     // answer — not short-circuited into a bare abort that skips the rollback.
     mockSource();
     const ac = new AbortController();
-    mockRestoreLease.mockImplementation(async () => {
-      ac.abort();
-      throw new ProviderApiError(422, 'unprocessable');
+    routeWire({
+      restore: () => {
+        ac.abort();
+        return { status: 422, text: 'unprocessable' };
+      },
     });
 
     const err = await restoreApp(
@@ -514,9 +570,11 @@ describe('restoreApp', () => {
   it('honours the deprecated abortSignal spelling as well as signal (ENG-666)', async () => {
     mockSource();
     const ac = new AbortController();
-    mockGetProvision.mockImplementation(async () => {
-      ac.abort();
-      return { status: 'retained', fail_count: 0 };
+    routeWire({
+      provision: () => {
+        ac.abort();
+        return { json: { status: 'retained', fail_count: 0 } };
+      },
     });
     await expect(
       restoreApp(

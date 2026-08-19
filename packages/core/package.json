@@ -48,6 +48,10 @@
     "./__test-utils__/fred-wire.js": {
       "types": "./dist/__test-utils__/fred-wire.d.ts",
       "import": "./dist/__test-utils__/fred-wire.js"
+    },
+    "./__test-utils__/fetch-probe.js": {
+      "types": "./dist/__test-utils__/fetch-probe.d.ts",
+      "import": "./dist/__test-utils__/fetch-probe.js"
     }
   },
   "scripts": {
