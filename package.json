@@ -21,7 +21,7 @@
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.9",
-    "@modelcontextprotocol/sdk": "1.29.0",
+    "@modelcontextprotocol/sdk": "1.30.0",
     "@size-limit/preset-small-lib": "13.0.3",
     "dependency-cruiser": "18.2.0",
     "size-limit": "13.0.3",
