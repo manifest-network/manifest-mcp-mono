@@ -1,4 +1,5 @@
 import {
+  abortableSleep,
   type CapabilityCtx,
   type EventTransport,
   type FredLeaseStatus,
@@ -7,16 +8,15 @@ import {
   ManifestMCPError,
   ManifestMCPErrorCode,
 } from '@manifest-network/manifest-mcp-core';
+import { getLeaseStatus } from '../http/fred.js';
+import { validateProviderUrl } from '../http/provider.js';
+import type { ProviderAuthPort } from '../http/provider-auth.js';
 import {
-  abortableSleep,
-  getLeaseStatus,
   PROVISION_FAILED,
   PROVISION_IN_PROGRESS,
   PROVISION_SUCCESS,
   warnIfUnrecognizedProvisionStatus,
-} from '../http/fred.js';
-import { validateProviderUrl } from '../http/provider.js';
-import type { ProviderAuthPort } from '../http/provider-auth.js';
+} from '../readiness/poll-lease-readiness.js';
 import { resolveProviderUrl } from './resolveLeaseProvider.js';
 
 /** The capability slice waitForLeaseStatus needs: query (provider lookup) + chain (rate limit +
