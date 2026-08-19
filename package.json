@@ -20,13 +20,16 @@
     "release:version": "node scripts/version.mjs"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.5.5",
+    "@biomejs/biome": "2.5.9",
     "@modelcontextprotocol/sdk": "1.29.0",
-    "@size-limit/preset-small-lib": "12.1.0",
-    "dependency-cruiser": "18.1.0",
-    "size-limit": "12.1.0",
-    "tsdown": "0.22.13",
-    "vitest": "4.1.10"
+    "@size-limit/preset-small-lib": "13.0.3",
+    "dependency-cruiser": "18.2.0",
+    "size-limit": "13.0.3",
+    "tsdown": "0.22.14",
+    "vitest": "4.1.10",
+    "publint": "0.3.24",
+    "@arethetypeswrong/core": "0.18.5",
+    "typescript": "5.9.3"
   },
   "overrides": {
     "ipaddr.js": "2.4.0",
