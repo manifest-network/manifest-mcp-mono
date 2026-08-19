@@ -98,7 +98,7 @@
     "zod": "^4.3.6"
   },
   "optionalDependencies": {
-    "undici": "8.8.0",
+    "undici": "8.9.0",
     "ws": "8.21.1"
   },
   "devDependencies": {
