@@ -1,46 +1,23 @@
+// This file mocks NOTHING (ENG-725).
+//
+// It used to `vi.mock('../http/provider.js')` to replace the transport, and
+// `vi.mock('./resolveLeaseProvider.js')` to skip the provider lookup. Both are gone: the wire is
+// injected at `ctx.fetch` instead, so the REAL `resolveProviderUrl`, `validateProviderUrl`,
+// `getLeaseConnectionInfo`, `fetchJsonChecked` and `checkedFetch` all run on every assertion —
+// including the ENG-490 SSRF string check, which the old `resolveLeaseProvider` mock stubbed away.
+//
+// The probe is default-deny: a request to an endpoint this file did not route fails BY NAME rather
+// than being re-wrapped as a plausible `ProviderApiError{kind:'network'}` that an assertion could
+// go green on.
 import { noopLogger } from '@manifest-network/manifest-mcp-core';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-
-vi.mock('../http/provider.js', () => ({
-  getLeaseConnectionInfo: vi.fn(),
-}));
-
-vi.mock('./resolveLeaseProvider.js', () => ({
-  resolveProviderUrl: vi.fn(),
-}));
-
+import { sealedFetchProbe } from '@manifest-network/manifest-mcp-core/__test-utils__/fetch-probe.js';
 import { makeMockQueryClient } from '@manifest-network/manifest-mcp-core/__test-utils__/mocks.js';
-import { getLeaseConnectionInfo as getLeaseConnectionInfoTransport } from '../http/provider.js';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { FredAuthCtx } from '../ctx.js';
 import { getLeaseConnectionInfo } from './getLeaseConnectionInfo.js';
-import { resolveProviderUrl } from './resolveLeaseProvider.js';
-
-const mockTransport = vi.mocked(getLeaseConnectionInfoTransport);
-const mockResolveProviderUrl = vi.mocked(resolveProviderUrl);
 
 const LEASE_UUID = '550e8400-e29b-41d4-a716-446655440000';
-// Threaded and asserted, never invoked — see appStatus.test.ts for why this is spelled
-// with an explicit throw rather than `vi.fn(globalThis.fetch)` (ENG-715).
-const fetchSpy = vi.fn<typeof globalThis.fetch>(() => {
-  throw new Error(
-    'this fetch spy is threaded and asserted, never invoked — a call here means a mock ' +
-      'did not intercept provider HTTP (ENG-705/ENG-715)',
-  );
-});
-const mockGetAuthToken = vi.fn().mockResolvedValue('conn-token');
-
-function makeCtx(qc: ReturnType<typeof makeMockQueryClient>) {
-  return {
-    query: qc,
-    chain: {} as never,
-    fetch: fetchSpy,
-    logger: noopLogger,
-    providerAuth: {
-      providerToken: (i: { address: string; leaseUuid: string }) =>
-        mockGetAuthToken(i.address, i.leaseUuid),
-      leaseDataToken: vi.fn(),
-    },
-  };
-}
+const PROVIDER_URL = 'https://provider.example.com';
 
 const GOLDEN = {
   lease_uuid: LEASE_UUID,
@@ -52,37 +29,77 @@ const GOLDEN = {
   },
 };
 
+const mockGetAuthToken = vi.fn().mockResolvedValue('conn-token');
+
+let wire: ReturnType<typeof sealedFetchProbe>;
+
+function makeCtx(): FredAuthCtx {
+  return {
+    query: makeMockQueryClient({
+      sku: {
+        providerLookup: { 'prov-1': { provider: { apiUrl: PROVIDER_URL } } },
+      },
+    }) as never,
+    chain: {} as never,
+    fetch: wire.fetch,
+    logger: noopLogger,
+    providerAuth: {
+      providerToken: (i: { address: string; leaseUuid: string }) =>
+        mockGetAuthToken(i.address, i.leaseUuid),
+      leaseDataToken: vi.fn(),
+    },
+  };
+}
+
 describe('getLeaseConnectionInfo (capability)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockResolveProviderUrl.mockResolvedValue('https://provider.example.com');
-    mockTransport.mockResolvedValue(GOLDEN);
+    mockGetAuthToken.mockResolvedValue('conn-token');
+    // One probe per test: `calls` is a plain array `vi.clearAllMocks()` would not reset.
+    wire = sealedFetchProbe({ '/connection': { json: GOLDEN } });
   });
 
   it('resolves the provider URL, mints a token, and returns the connection info', async () => {
-    const qc = makeMockQueryClient({});
-    const result = await getLeaseConnectionInfo(makeCtx(qc), {
+    const result = await getLeaseConnectionInfo(makeCtx(), {
       address: 'manifest1abc',
       leaseUuid: LEASE_UUID,
       providerUuid: 'prov-1',
     });
 
     expect(result).toEqual(GOLDEN);
-    expect(mockResolveProviderUrl).toHaveBeenCalledWith(
-      expect.objectContaining({ query: qc }),
-      'prov-1',
-    );
     expect(mockGetAuthToken).toHaveBeenCalledWith('manifest1abc', LEASE_UUID);
-    // Threads the resolved URL, minted token, and ctx.fetch into the transport. Read off
-    // the recorded call rather than pinning the whole argument list: toHaveBeenCalledWith
-    // is exact-arity, so the incidental trailing allowLoopback slot would make an appended
-    // parameter break a claim that was only ever about the first four (ENG-706).
-    const [url, leaseUuid, token, fetchFn] = mockTransport.mock.calls[0]!;
-    expect({ url, leaseUuid, token, fetchFn }).toEqual({
-      url: 'https://provider.example.com',
+  });
+
+  it('dispatches to the resolved provider URL carrying the minted token', async () => {
+    // The claim the old positional destructure was making, now read off the WIRE instead of an
+    // argument list — so it survives any signature change and states the property directly.
+    await getLeaseConnectionInfo(makeCtx(), {
+      address: 'manifest1abc',
       leaseUuid: LEASE_UUID,
-      token: 'conn-token',
-      fetchFn: fetchSpy,
+      providerUuid: 'prov-1',
     });
+
+    expect(wire.calls).toHaveLength(1);
+    expect(wire.calls[0]?.url).toBe(
+      `${PROVIDER_URL}/v1/leases/${LEASE_UUID}/connection`,
+    );
+    const headers = wire.calls[0]?.init.headers as
+      | Record<string, string>
+      | undefined;
+    expect(headers?.Authorization).toBe('Bearer conn-token');
+  });
+
+  it('propagates a provider error rather than degrading', async () => {
+    wire = sealedFetchProbe({
+      '/connection': { status: 502, text: 'upstream exploded' },
+    });
+
+    await expect(
+      getLeaseConnectionInfo(makeCtx(), {
+        address: 'manifest1abc',
+        leaseUuid: LEASE_UUID,
+        providerUuid: 'prov-1',
+      }),
+    ).rejects.toMatchObject({ status: 502 });
   });
 });
