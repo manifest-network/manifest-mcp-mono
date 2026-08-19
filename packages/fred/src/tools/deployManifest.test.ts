@@ -33,50 +33,6 @@ vi.mock('@manifest-network/manifest-mcp-core', async (importOriginal) => {
   };
 });
 
-vi.mock('../http/provider.js', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../http/provider.js')>();
-  // A seal for a wire export nothing on the deploy path calls yet. It throws rather than
-  // resolving `undefined` so that a NEW call site gets a named, actionable error instead of
-  // a silently no-op probe. Defined inside the factory: `vi.mock` is hoisted above the
-  // module body, so a file-scope helper would not reliably be initialised yet.
-  const sealed = (name: string) =>
-    vi.fn(() => {
-      throw new Error(
-        `provider.${name}() is sealed in this test file — nothing on the deploy path ` +
-          'called it when the seal was written. If the code under test needs it now, ' +
-          'replace the seal with an explicit spy and assert on it. Do NOT drop it: ' +
-          'provider.ts calls its own module-local `fetchJsonChecked`, which no module ' +
-          'mock can intercept, so the real function would run the real transport (ENG-715).',
-      );
-    });
-  return {
-    ...actual,
-    // Closed over provider.ts's WHOLE wire surface, not just the two the deploy
-    // path calls today. A wire export left to `...actual` is a live outbound
-    // request waiting for a caller: `getProviderHealth` was exactly that, one
-    // readiness probe away from firing (ENG-715).
-    //
-    // Note what each entry does and does not buy. Stubbing the ENTRY POINTS is
-    // what closes the hole — provider.ts reaches `fetchJsonChecked` through a
-    // module-local binding, so stubbing that primitive alone intercepts nothing
-    // (measured: identical failures with and without it). The two primitives are
-    // here for the CROSS-module edge instead, which a mock can reach: `http/fred.ts`
-    // imports `fetchJsonChecked`, and only `pollLeaseUntilReady` is mocked there.
-    //
-    // The pure surface stays real on purpose — see PROVIDER_EXPORTS_KEPT_REAL below.
-    uploadLeaseData: vi.fn(),
-    getLeaseConnectionInfo: vi.fn(),
-    getProviderHealth: sealed('getProviderHealth'),
-    checkedFetch: sealed('checkedFetch'),
-    fetchJsonChecked: sealed('fetchJsonChecked'),
-  };
-});
-
-vi.mock('../http/fred.js', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../http/fred.js')>();
-  return { ...actual, pollLeaseUntilReady: vi.fn() };
-});
-
 import * as coreModule from '@manifest-network/manifest-mcp-core';
 import {
   asProviderUuid,
@@ -87,66 +43,83 @@ import {
   ManifestMCPErrorCode,
   noopLogger,
 } from '@manifest-network/manifest-mcp-core';
+import { sealedFetchProbe } from '@manifest-network/manifest-mcp-core/__test-utils__/fetch-probe.js';
 import {
   makeMockClientManager,
   makeMockQueryClient,
 } from '@manifest-network/manifest-mcp-core/__test-utils__/mocks.js';
 import type { FredAuthCtx } from '../ctx.js';
-import {
-  LeaseReadinessUnconfirmedError,
-  pollLeaseUntilReady,
-  TerminalChainStateError,
-} from '../http/fred.js';
-import * as providerModule from '../http/provider.js';
-import {
-  getLeaseConnectionInfo,
-  ProviderApiError,
-  uploadLeaseData,
-} from '../http/provider.js';
+import { TerminalChainStateError } from '../http/fred.js';
+import { ProviderApiError } from '../http/provider.js';
 import { deployApp } from './deployApp.js';
 import { deployManifest } from './deployManifest.js';
 
-/**
- * Every runtime export of `provider.js` that the factory above does NOT stub, each with the
- * reason it is safe to run for real. A NEW provider export belongs on one side or the other,
- * and the guard below fails until somebody decides which (ENG-715).
- *
- * This is a list rather than a rule because "does it touch the wire" is not observable at
- * runtime — and getting it wrong is not loud. `vi.mock` replaces only what an IMPORTER sees;
- * provider.ts's entry points reach `validateProviderUrl` / `fetchJsonChecked` / `checkedFetch`
- * through module-local bindings that no external mock can rewrite, so a wire export left to
- * `...actual` dials out from inside the module with nothing to intercept it.
- */
-const PROVIDER_EXPORTS_KEPT_REAL = new Set([
-  // Constants.
-  'MAX_PROVIDER_ERROR_CHARS',
-  'PROVIDER_TEXT_EXCERPT_CHARS',
-  'DEFAULT_FETCH_TIMEOUT_MS',
-  'MAX_RESPONSE_BYTES',
-  // Pure — string/URL/error inspection, no transport of their own. `readBodyCapped` and
-  // `parseJsonResponse` consume a `Response` somebody else already fetched.
-  'capProviderText',
-  'parseRetryAfterMs',
-  'isTransientProviderError',
-  'isUrlSsrfSafe',
-  'readBodyCapped',
-  'parseJsonResponse',
-  // Real ON PURPOSE, and load-bearing. `http/fred.ts` extends `ProviderApiError` at module
-  // scope, so a stub would break this file's imports outright, and `deployManifest.ts`
-  // brand-checks poll verdicts with `ProviderApiError.isProviderApiError`. The deploy path
-  // runs the real `validateProviderUrl` through `resolveLeaseProvider.ts` — that is what the
-  // SSRF cases here assert against.
-  'ProviderApiError',
-  'validateProviderUrl',
-]);
+// ENG-725: `../http/provider.js` and `../http/fred.js` are NO LONGER mocked. The provider wire is
+// injected at `ctx.fetch` as a sealed probe, so the real `uploadLeaseData`, `getLeaseConnectionInfo`
+// and readiness poll run, along with `validateProviderUrl`, `fetchJsonChecked` and `checkedFetch`.
+//
+// That retires the ENG-715 `provider.js mock coverage` guard this file used to carry. Its job was
+// to prove no WIRE export of `provider.ts` was left real inside a partial mock — a hazard that
+// only exists while there IS a partial mock. Nothing here mocks that module now, so there is no
+// classification to keep honest; the default-deny probe below replaces it, and it covers every
+// endpoint rather than every export.
+//
+// The core-barrel mock ABOVE stays, and so does its `core broadcast-surface mock coverage` guard.
+// That is the CHAIN seam (ENG-713) — a different escaping resource, untouched by any of this.
 
-/** provider.ts's real export names — the mock cannot narrow this, so it cannot hide a gap. */
-async function providerExportNames(): Promise<string[]> {
-  return Object.keys(
-    await vi.importActual<typeof import('../http/provider.js')>(
-      '../http/provider.js',
-    ),
-  );
+/** The three provider endpoints a deploy touches. */
+type DeployRoutes = { data?: unknown; status?: unknown; connection?: unknown };
+
+let wire: ReturnType<typeof sealedFetchProbe> = sealedFetchProbe();
+
+const READY_STATUS = {
+  state: 'LEASE_STATE_ACTIVE',
+  provision_status: 'ready',
+};
+const CONNECTION_BODY = {
+  lease_uuid: '550e8400-e29b-41d4-a716-446655440000',
+  tenant: 'manifest1tenant',
+  provider_uuid: 'prov-1',
+  connection: { host: 'app.localhost', ports: { '80/tcp': 32001 } },
+};
+
+/**
+ * Route the deploy wire. A value that is already a probe STEP (or a per-call function returning
+ * one) is used as-is; anything else is sent as a 2xx JSON body. An HTTP status is a NUMBER — a
+ * provider status is a string, so discriminating on the key alone would misread a response body.
+ */
+function routeWire(r: DeployRoutes = {}): void {
+  const isStep = (v: unknown): boolean =>
+    typeof v === 'object' &&
+    v !== null &&
+    ('json' in v ||
+      'transportError' in v ||
+      'streamError' in v ||
+      'hang' in v ||
+      typeof (v as { status?: unknown }).status === 'number');
+  const step = (v: unknown, fallback: unknown) => {
+    const chosen = v ?? fallback;
+    if (typeof chosen === 'function') return chosen as never;
+    return (isStep(chosen) ? chosen : { json: chosen }) as never;
+  };
+  wire = sealedFetchProbe({
+    // `uploadLeaseData` POSTs the manifest here and ignores the body it gets back.
+    '/data': step(r.data, {}),
+    '/status': step(r.status, READY_STATUS),
+    '/connection': step(r.connection, CONNECTION_BODY),
+  });
+}
+
+/**
+ * The manifest bytes as the PROVIDER received them, taken off the `/data` POST body.
+ *
+ * Raw `application/octet-stream`, NOT base64-in-JSON — `uploadLeaseData` and `updateLease` frame
+ * their payloads differently, and this reads the one the deploy path actually sends.
+ */
+function uploadedBytes(): Uint8Array {
+  const call = wire.calls.find((c) => c.url.endsWith('/data'));
+  if (!call) throw new Error('no /data upload was made');
+  return call.init.body as Uint8Array;
 }
 
 /**
@@ -168,7 +141,8 @@ async function providerExportNames(): Promise<string[]> {
  * hazard with a different seam (the mock query client), and folding them in would recreate the
  * 85-export problem that makes ENG-715's classify-everything guard untransferable to this barrel.
  *
- * Duplicated per file rather than shared, for the reason PROVIDER_EXPORTS_KEPT_REAL gives above.
+ * Duplicated per file rather than shared: `vi.mock` is file-scoped, so each file's factory is a
+ * separate claim and a shared list would suggest otherwise.
  */
 const CORE_BROADCASTERS = [
   'cosmosTx',
@@ -207,43 +181,7 @@ describe('core broadcast-surface mock coverage (ENG-713)', () => {
   });
 });
 
-describe('provider.js mock coverage (ENG-715)', () => {
-  it('classifies every provider export — stubbed above, or named as deliberately real', async () => {
-    const names = await providerExportNames();
-    const unclassified = names.filter(
-      (name) =>
-        !PROVIDER_EXPORTS_KEPT_REAL.has(name) &&
-        !vi.isMockFunction((providerModule as Record<string, unknown>)[name]),
-    );
-    expect(
-      unclassified,
-      'These provider.ts exports reached this file real. If one touches the wire, stub it in\n' +
-        'the vi.mock factory above; otherwise add it to PROVIDER_EXPORTS_KEPT_REAL with the\n' +
-        'reason it is safe to run. See ENG-715.',
-    ).toEqual([]);
-  });
-
-  it('the guard is not vacuous', async () => {
-    // Three ways the check above could pass while proving nothing: the actual import
-    // yields no names, the stubs are not actually stubs, or the allowlist has drifted onto
-    // exports that no longer exist (and so excuses nothing). Pin all three.
-    const names = await providerExportNames();
-    expect(names.length).toBeGreaterThan(10);
-    expect(vi.isMockFunction(providerModule.getProviderHealth)).toBe(true);
-    expect(vi.isMockFunction(providerModule.uploadLeaseData)).toBe(true);
-    expect(vi.isMockFunction(providerModule.getLeaseConnectionInfo)).toBe(true);
-    for (const name of PROVIDER_EXPORTS_KEPT_REAL) {
-      expect(names, `${name} is no longer exported by provider.ts`).toContain(
-        name,
-      );
-    }
-  });
-});
-
 const mockCosmosTx = vi.mocked(cosmosTx);
-const mockUpload = vi.mocked(uploadLeaseData);
-const mockPoll = vi.mocked(pollLeaseUntilReady);
-const mockGetLeaseConnectionInfo = vi.mocked(getLeaseConnectionInfo);
 const getAuthToken = vi.fn(
   async (_address: string, _leaseUuid: string) => 'auth',
 );
@@ -263,17 +201,9 @@ async function ctx(cm: unknown): Promise<FredAuthCtx> {
   return {
     query: await manager.getQueryClient(),
     chain: manager,
-    // Typed, and loud if it is ever reached. This spy is threaded and (elsewhere)
-    // asserted, never invoked — a call here means a mock did not intercept provider
-    // HTTP. The old `vi.fn(globalThis.fetch)` spelling got that loudness by accident,
-    // from `setupFiles` having already swapped in the ban stub; say it outright instead
-    // of depending on load order (ENG-705/ENG-715).
-    fetch: vi.fn<typeof globalThis.fetch>(() => {
-      throw new Error(
-        'ctx.fetch is threaded and asserted, never invoked — a call here means a mock ' +
-          'did not intercept provider HTTP (ENG-705/ENG-715)',
-      );
-    }),
+    // The sealed provider wire: the real transport dispatches through it, and an endpoint no
+    // test routed fails by name rather than as a plausible network error (ENG-725).
+    fetch: wire.fetch,
     logger: noopLogger,
     providerAuth: {
       providerToken: ({ address, leaseUuid }) =>
@@ -339,19 +269,11 @@ describe('deployManifest', () => {
       ],
     });
 
-    mockUpload.mockResolvedValue(undefined);
-    mockPoll.mockResolvedValue({
-      state: LeaseState.LEASE_STATE_ACTIVE,
-    });
-    mockGetLeaseConnectionInfo.mockResolvedValue({
-      lease_uuid: '550e8400-e29b-41d4-a716-446655440000',
-      tenant: 'manifest1tenant',
-      provider_uuid: 'prov-1',
-      connection: {
-        host: 'app.localhost',
-        ports: { '80/tcp': 32001 },
-      },
-    });
+    routeWire();
+    // clearAllMocks() resets calls but NOT implementations, so a rejection set by one case
+    // would otherwise leak into every later one (the same trap the cosmosTx line below names).
+    getAuthToken.mockResolvedValue('auth');
+    getLeaseDataAuthToken.mockResolvedValue('lease-data');
   });
 
   it('deploys a single-service manifest and uploads the ORIGINAL bytes', async () => {
@@ -366,7 +288,7 @@ describe('deployManifest', () => {
       {},
     );
     expect(res.state).toBe(LeaseState.LEASE_STATE_ACTIVE);
-    const uploaded = new TextDecoder().decode(mockUpload.mock.calls[0][2]);
+    const uploaded = new TextDecoder().decode(uploadedBytes());
     expect(uploaded).toBe(manifest); // byte-identical, not re-serialized
   });
 
@@ -545,7 +467,7 @@ describe('deployManifest', () => {
       queryClient: makeQueryClient(),
       address: 'manifest1tenant',
     });
-    mockUpload.mockRejectedValueOnce(new Error('provider 503'));
+    routeWire({ data: { transportError: new Error('provider 503') } });
     let thrown: any;
     try {
       await deployManifest(
@@ -582,22 +504,28 @@ describe('deployManifest', () => {
    * deployment as failed AND pointed the agent at a destructive tool.
    */
   describe('readiness unconfirmed is NOT a failed deploy', () => {
-    const readinessTimedOut = () =>
-      new LeaseReadinessUnconfirmedError({
-        leaseUuid: '550e8400-e29b-41d4-a716-446655440000',
-        reason: 'deadline',
-        timeoutMs: 600_000,
-        elapsedMs: 600_001,
-        lastState: LeaseState.LEASE_STATE_ACTIVE,
-        lastProvisionStatus: 'provisioning',
+    /**
+     * A provider that keeps answering ACTIVE + `provisioning` — never ready, never failed. The
+     * REAL poll then exhausts its deadline and raises `LeaseReadinessUnconfirmedError` with
+     * `reason: 'deadline'` and the last status it saw, which is exactly the shape these two cases
+     * assert on. Previously that error was hand-constructed and the poll was mocked.
+     */
+    const stillProvisioning = () => {
+      routeWire({
+        status: {
+          state: 'LEASE_STATE_ACTIVE',
+          provision_status: 'provisioning',
+        },
       });
+      return { intervalMs: 0, timeoutMs: 25 };
+    };
 
     it('does not recommend close_lease, and says the app may still be starting', async () => {
       const cm = makeMockClientManager({
         queryClient: makeQueryClient(),
         address: 'manifest1tenant',
       });
-      mockPoll.mockRejectedValueOnce(readinessTimedOut());
+      const pollOptions = stillProvisioning();
 
       const thrown = await deployManifest(
         await ctx(cm),
@@ -605,7 +533,7 @@ describe('deployManifest', () => {
           manifest: singleManifest(),
           sku: { kind: 'byName', size: 'docker-micro' },
         },
-        {},
+        { pollOptions },
       ).catch((e: unknown) => e as any);
 
       expect(thrown.message).not.toContain(
@@ -640,7 +568,7 @@ describe('deployManifest', () => {
         .mockImplementation((m: unknown) => {
           warnLines.push(String(m));
         });
-      mockPoll.mockRejectedValueOnce(readinessTimedOut());
+      const pollOptions = stillProvisioning();
 
       const thrown = await deployManifest(
         await ctx(cm),
@@ -648,7 +576,7 @@ describe('deployManifest', () => {
           manifest: singleManifest(),
           sku: { kind: 'byName', size: 'docker-micro' },
         },
-        {},
+        { pollOptions },
       ).catch((e: unknown) => e as any);
       warnSpy.mockRestore();
 
@@ -665,9 +593,11 @@ describe('deployManifest', () => {
         address: 'manifest1tenant',
       });
       const controller = new AbortController();
-      mockPoll.mockImplementationOnce(async () => {
-        controller.abort(new Error('user cancelled'));
-        throw new Error('user cancelled');
+      routeWire({
+        status: () => {
+          controller.abort(new Error('user cancelled'));
+          return { transportError: new Error('user cancelled') };
+        },
       });
 
       const thrown = await deployManifest(
@@ -699,13 +629,15 @@ describe('deployManifest', () => {
       // The provider answered PROVISION_FAILED — an actual verdict, tagged as
       // such by the poll. This is the one poll-step outcome where nothing
       // healthy is running and close_lease is the honest advice.
-      mockPoll.mockRejectedValueOnce(
-        new ProviderApiError(
-          0,
-          'Lease … is ACTIVE but provisioning failed: image not found',
-          { kind: 'poll_verdict' },
-        ),
-      );
+      // The provider itself answers ACTIVE + `failed`, which the REAL poll turns into the
+      // `poll_verdict` error. Previously hand-constructed; now produced by the wire.
+      routeWire({
+        status: {
+          state: 'LEASE_STATE_ACTIVE',
+          provision_status: 'failed',
+          message: 'image not found',
+        },
+      });
 
       const thrown = await deployManifest(
         await ctx(cm),
@@ -730,28 +662,42 @@ describe('deployManifest', () => {
      * already uploaded, and none of them is the provider saying the deployment
      * failed — so none may recommend tearing the lease down.
      */
-    it.each([
+    // Each row now says how the failure is PRODUCED at the wire rather than handing the poll a
+    // pre-built error, so the classification under test covers the transport's own work too.
+    // `streamError` is the one shape that reaches the caller with its identity intact — a probe
+    // that merely rejects is laundered into a retryable `kind:'network'` by classifyTransportError.
+    it.each<[string, () => void]>([
       [
         'a 404 that outlives the tolerance',
-        new ProviderApiError(404, 'lease not found', { kind: 'http' }),
+        () => routeWire({ status: { status: 404, text: 'lease not found' } }),
       ],
       [
         'an auth rejection',
-        new ProviderApiError(401, 'bad token', { kind: 'http' }),
+        () => routeWire({ status: { status: 401, text: 'bad token' } }),
       ],
       [
         'an oversized status body',
-        new ProviderApiError(500, 'huge', { kind: 'body_cap' }),
+        () =>
+          routeWire({
+            status: {
+              streamError: new ProviderApiError(500, 'huge', {
+                kind: 'body_cap',
+              }),
+            },
+          }),
       ],
-      ['a token-mint failure', new Error('wallet locked')],
+      [
+        'a token-mint failure',
+        () => getAuthToken.mockRejectedValue(new Error('wallet locked')),
+      ],
     ])(
       'reports %s as unconfirmed, never as a failure to clean up',
-      async (_label, pollError) => {
+      async (_label, arrange) => {
         const cm = makeMockClientManager({
           queryClient: makeQueryClient(),
           address: 'manifest1tenant',
         });
-        mockPoll.mockRejectedValueOnce(pollError);
+        arrange();
 
         const thrown = await deployManifest(
           await ctx(cm),
@@ -759,7 +705,10 @@ describe('deployManifest', () => {
             manifest: singleManifest(),
             sku: { kind: 'byName', size: 'docker-micro' },
           },
-          {},
+          // A 404 right after create-lease is TOLERATED by the poll's failure budget, so a real
+          // deadline is what turns it into the unconfirmed verdict under test. The non-tolerated
+          // rows reach the same verdict on their first read.
+          { pollOptions: { intervalMs: 0, timeoutMs: 25 } },
         ).catch((e: unknown) => e as any);
 
         expect(thrown.message).not.toContain(
@@ -782,9 +731,7 @@ describe('deployManifest', () => {
       });
       // Same 401 as above, but at the UPLOAD step: nothing was ever uploaded,
       // so there is no app to protect and close_lease is right.
-      mockUpload.mockRejectedValueOnce(
-        new ProviderApiError(401, 'bad token', { kind: 'http' }),
-      );
+      routeWire({ data: { status: 401, text: 'bad token' } });
 
       const thrown = await deployManifest(
         await ctx(cm),
@@ -873,14 +820,10 @@ describe('deployManifest', () => {
       queryClient: makeQueryClient(),
       address: 'manifest1tenant',
     });
-    mockPoll.mockImplementationOnce(async () => {
-      // 'closed' is the TerminalChainLeaseState for LEASE_STATE_CLOSED
-      // (the constructor takes the chain-state string union, not the enum).
-      throw new TerminalChainStateError(
-        '550e8400-e29b-41d4-a716-446655440000',
-        'closed',
-      );
-    });
+    // `deployManifest` threads `callOptions.pollOptions` straight into the poll, so a caller's
+    // `checkChainState` is how this error is reached in production too — the REAL poll raises it.
+    // ('closed' is the TerminalChainLeaseState for LEASE_STATE_CLOSED; the callback returns the
+    // chain-state string union, not the enum.)
     const warnLines: string[] = [];
     const warnSpy = vi
       .spyOn(logger, 'warn')
@@ -895,7 +838,12 @@ describe('deployManifest', () => {
           manifest: singleManifest(),
           sku: { kind: 'byName', size: 'docker-micro' },
         },
-        {},
+        {
+          pollOptions: {
+            intervalMs: 0,
+            checkChainState: async () => ({ state: 'closed' as const }),
+          },
+        },
       );
     } catch (e) {
       thrown = e;
