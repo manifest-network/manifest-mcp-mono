@@ -20,8 +20,12 @@ import { stripDenylist } from './secret-denylist.js';
  *   - `NODE_ENV` test-override env vars (none of the above need them)
  *
  * Keeps (in-process security still relevant):
- *   - `SECRET_KEY_DENYLIST` strip on the diagnostic before it reaches
+ *   - `stripDenylist` on the diagnostic before it reaches
  *     `buildFailureEnvelope` / `buildRecoveryOptions` / the host callback / the result.
+ *     It supplies the ACTION (drop the key); the POLICY is core's shared
+ *     `isSensitiveKey`, which `sanitizeForLogging` also uses to redact values
+ *     in place. This module carried its own parallel regex until ENG-747 /
+ *     ENG-271(b) — the two lists had drifted, which was the bug.
  *   - Prototype-pollution guard on `__proto__` / `constructor` / `prototype`
  *     in the diagnostic walk (defense for verifier-output objects that
  *     could have come via `JSON.parse`).
