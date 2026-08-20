@@ -158,10 +158,22 @@ Replace the placeholder values below with your actual chain ID, RPC/REST endpoin
         "MANIFEST_KEY_PASSWORD": "your-keyfile-password",
         "MANIFEST_CONVERTER_ADDRESS": "manifest1..."
       }
+    },
+    "manifest-agent": {
+      "command": "npx",
+      "args": ["-y", "-p", "@manifest-network/manifest-mcp-node", "manifest-mcp-agent"],
+      "env": {
+        "COSMOS_CHAIN_ID": "your-chain-id",
+        "COSMOS_RPC_URL": "https://your-rpc-endpoint/",
+        "COSMOS_GAS_PRICE": "0.01umfx",
+        "MANIFEST_KEY_PASSWORD": "your-keyfile-password"
+      }
     }
   }
 }
 ```
+
+The agent server's three broadcasting tools drive MCP **elicitation**, so they need an elicitation-capable host (Claude Code >= 2.1.76). Its two read-only tools run anywhere. See the tool table below.
 
 If you use a mnemonic instead of a keyfile, replace `MANIFEST_KEY_PASSWORD` with `COSMOS_MNEMONIC`.
 
@@ -239,7 +251,7 @@ Set `COSMOS_RPC_URL` + `COSMOS_GAS_PRICE` for full access (queries + transaction
 | `get_skus` | List available SKUs |
 | `get_providers` | List available providers |
 
-## Fred server tools (11)
+## Fred server tools (12)
 
 | Tool | Description |
 |------|-------------|
@@ -252,6 +264,7 @@ Set `COSMOS_RPC_URL` + `COSMOS_GAS_PRICE` for full access (queries + transaction
 | `get_logs` | Get logs for a deployed app by lease UUID |
 | `restart_app` | Restart a deployed app via the provider |
 | `update_app` | Update a deployed app with a new manifest |
+| `restore_app` | Recover a CLOSED or credit-exhausted lease's retained volumes onto a fresh lease |
 | `app_diagnostics` | Get provision diagnostics for a deployed app |
 | `app_releases` | Get release/version history for a deployed app (20 most recent; the stored manifest is omitted, its size reported as `manifest_bytes`) |
 
@@ -263,6 +276,21 @@ The Fred server also exposes 3 MCP resources (`manifest://leases/active`, `manif
 |------|-------------|
 | `get_mfx_to_pwr_rate` | Get the current MFX-to-PWR conversion rate and preview amounts |
 | `convert_mfx_to_pwr` | Convert MFX tokens to PWR via the on-chain converter contract |
+
+## Agent server tools (5)
+
+Orchestrated wrappers over `@manifest-network/manifest-agent-core`. The three broadcasting
+tools translate the orchestrator's typed callbacks into MCP `elicitation/create` requests, so
+they **require an elicitation-capable host** (Claude Code >= 2.1.76); the two read-only tools
+run on any host. All five emit `notifications/progress`.
+
+| Tool | Host requirement | Description |
+|------|------------------|-------------|
+| `deploy_app_orchestrated` | Elicitation | Plan-confirm-deploy flow with typed progress and partial-success recovery options |
+| `manage_domain_orchestrated` | Elicitation | Claim, verify or release a custom domain on a lease |
+| `close_lease_orchestrated` | Elicitation | Confirm-then-close a lease, with the plan surfaced before the broadcast |
+| `lookup_custom_domain_orchestrated` | Any | Read-only reverse lookup: which lease owns a custom domain |
+| `troubleshoot_deployment_orchestrated` | Any | Read-only diagnosis of a failing deployment |
 
 ## See also
 
