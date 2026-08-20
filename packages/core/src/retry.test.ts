@@ -57,6 +57,21 @@ describe('isRetryableError', () => {
       }
     });
 
+    it('should not auto-retry UPDATE_INDETERMINATE even though its message embeds "HTTP 500" (ENG-619)', () => {
+      // update_app is non-idempotent, and a 5xx there does NOT prove the update was
+      // rejected — fred may have applied it to the backend and then failed to persist
+      // it, in which case an auto-retry re-applies a change nobody confirmed. The
+      // enrollment in NON_RETRYABLE_ERROR_CODES is also what stops the 5xx
+      // message-sniff below from reading the embedded status as transient, which is
+      // the same trap the RESTORE_* cases above guard against. Deleting the enum entry
+      // must fail here rather than silently re-enabling the fallback.
+      const error = new ManifestMCPError(
+        ManifestMCPErrorCode.UPDATE_INDETERMINATE,
+        'The provider could not durably record the update to lease abc (HTTP 500), so it may or may not have been applied',
+      );
+      expect(isRetryableError(error)).toBe(false);
+    });
+
     it('should retry RPC_CONNECTION_FAILED with network error message', () => {
       const error = new ManifestMCPError(
         ManifestMCPErrorCode.RPC_CONNECTION_FAILED,

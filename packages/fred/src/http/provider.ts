@@ -797,12 +797,40 @@ export async function parseJsonResponse<T>(
   return parseJsonText<T>(text, res.status, url);
 }
 
+/** One dependency probe's result. Unlike the aggregate verdict this stays BINARY —
+ *  a single probe either answered or it did not. `message` is present only on a
+ *  failure, and is a short constant the provider curates for tenant eyes (it never
+ *  carries host paths or raw command output). */
+export interface ProviderHealthCheck {
+  readonly status: string;
+  readonly message?: string;
+}
+
+/**
+ * `GET /health` on a provider.
+ *
+ * `status` is an OPEN three-tier verdict — `'healthy'`, `'degraded'` (a remote,
+ * shared dependency such as the chain or a backend is impaired, and the provider is
+ * deliberately still serving), or `'unhealthy'` (a local, process-owned store is
+ * unusable and the process wants restarting). Typed as `string`, not a union: the
+ * provider may add a tier, and a client that narrows to today's three would
+ * mis-handle a future one. Treat anything that is not exactly `'healthy'` as not
+ * usable rather than switching exhaustively.
+ *
+ * Since ENG-522/ENG-608 this endpoint answers **200 for every tier** — it is a
+ * liveness contract, so the verdict lives in the body and NOT in the status code. A
+ * caller that reads only the status code sees an impaired provider as fine.
+ *
+ * `checks` is keyed by probe name and is open by construction: `chain`,
+ * `token_tracker`, `placement_store`, `payload_store`, and one `backend:<name>` per
+ * configured backend. A key that is ABSENT means that dependency is not configured —
+ * never that it passed.
+ */
 export interface ProviderHealthResponse {
   readonly status: string;
   readonly provider_uuid: string;
-  readonly checks?: {
-    readonly chain?: { readonly status: string };
-  };
+  readonly checks?: Readonly<Record<string, ProviderHealthCheck>>;
+  readonly stats?: { readonly in_flight_provisions: number };
 }
 
 export async function getProviderHealth(

@@ -88,7 +88,7 @@ describe('browseCatalog', () => {
       },
     });
     const fetchSpy = vi.fn<typeof globalThis.fetch>(
-      async () => new Response('{"status":"ok"}'),
+      async () => new Response('{"status":"healthy","checks":{}}'),
     );
     const ctx: FredReadCtx = {
       // `query`/`chain` keep `as never` deliberately — `qc` is a partial
@@ -111,6 +111,7 @@ describe('browseCatalog', () => {
           apiUrl: 'https://provider.example.com',
           active: true,
           healthy: true,
+          health_status: 'healthy',
           providerUuid: undefined,
         },
       ],
@@ -139,5 +140,225 @@ describe('browseCatalog', () => {
     expect(res).not.toHaveProperty('tiers');
     // ctx.fetch is threaded down to the provider-health call.
     expect(fetchSpy).toHaveBeenCalled();
+  });
+});
+
+/**
+ * Fred ENG-522/ENG-608 turned `GET /health` into a LIVENESS contract: it answers 200
+ * whenever the process can answer, and carries a THREE-tier verdict in the body
+ * (`healthy` / `degraded` / `unhealthy`) instead of folding everything into a 503.
+ *
+ * The `healthy` boolean is unaffected — an impaired provider used to 503 into the catch
+ * and land on the `false` initializer, and now reaches `false` through the verdict. What
+ * WAS lost is the diagnosis: the 503 threw a ProviderApiError whose message carried the
+ * whole health body, and a 200 throws nothing. These tests pin that it is carried again.
+ */
+describe('browseCatalog provider health verdicts (Fred ENG-522/608)', () => {
+  function ctxServing(body: unknown): FredReadCtx {
+    return {
+      query: makeMockQueryClient({
+        sku: {
+          providers: [
+            {
+              uuid: 'p1',
+              address: 'm1',
+              apiUrl: 'https://provider.example.com',
+              active: true,
+            },
+          ],
+          skus: [],
+        },
+      }) as never,
+      chain: {} as never,
+      fetch: vi.fn<typeof globalThis.fetch>(
+        async () => new Response(JSON.stringify(body)),
+      ),
+      logger: noopLogger,
+    };
+  }
+
+  it('healthy: usable, verdict carried, no error string', async () => {
+    const res = await browseCatalog(
+      ctxServing({
+        status: 'healthy',
+        provider_uuid: 'prov-1',
+        checks: { chain: { status: 'healthy' } },
+      }),
+    );
+    expect(res.providers[0]).toMatchObject({
+      healthy: true,
+      health_status: 'healthy',
+      providerUuid: 'prov-1',
+    });
+    expect(res.providers[0]).not.toHaveProperty('healthError');
+  });
+
+  it('degraded: not usable, and the FAILING checks are named', async () => {
+    const res = await browseCatalog(
+      ctxServing({
+        status: 'degraded',
+        provider_uuid: 'prov-1',
+        checks: {
+          chain: { status: 'unhealthy', message: 'chain connectivity failed' },
+          'backend:docker-2': {
+            status: 'unhealthy',
+            message: 'backend health check failed',
+          },
+          token_tracker: { status: 'healthy' },
+        },
+      }),
+    );
+    const p = res.providers[0]!;
+    expect(p).toMatchObject({ healthy: false, health_status: 'degraded' });
+    // The whole point of the fix: attribution, not a bare `healthy: false`.
+    expect(p.healthError).toContain('chain');
+    expect(p.healthError).toContain('chain connectivity failed');
+    expect(p.healthError).toContain('backend:docker-2');
+    // Passing checks are noise here and must not be listed.
+    expect(p.healthError).not.toContain('token_tracker');
+  });
+
+  it('unhealthy on a 200: still surfaces the failing check', async () => {
+    const res = await browseCatalog(
+      ctxServing({
+        status: 'unhealthy',
+        provider_uuid: 'prov-1',
+        checks: {
+          payload_store: {
+            status: 'unhealthy',
+            message: 'payload store unavailable',
+          },
+        },
+      }),
+    );
+    const p = res.providers[0]!;
+    expect(p).toMatchObject({ healthy: false, health_status: 'unhealthy' });
+    // payload_store failing is the pre-flight tell that update_app will 500 here.
+    expect(p.healthError).toContain('payload_store');
+  });
+
+  it('a verdict with no per-check detail still reports the verdict itself', async () => {
+    const res = await browseCatalog(
+      ctxServing({ status: 'degraded', provider_uuid: 'prov-1', checks: {} }),
+    );
+    const p = res.providers[0]!;
+    expect(p.healthy).toBe(false);
+    expect(p.healthError).toContain('degraded');
+  });
+
+  // REGRESSION GUARD. `status === 'ok'` was accepted for years and Fred has never
+  // emitted it — `git log -S'"ok"'` finds nothing on the health handler. It made every
+  // fixture written against it fictional. An unknown verdict must read as NOT healthy.
+  it('an unrecognized verdict (including the never-emitted "ok") is not healthy', async () => {
+    const res = await browseCatalog(
+      ctxServing({ status: 'ok', provider_uuid: 'prov-1', checks: {} }),
+    );
+    expect(res.providers[0]).toMatchObject({
+      healthy: false,
+      health_status: 'ok',
+    });
+  });
+
+  // Fred marshals `checks` from a Go map, and encoding/json SORTS map keys — verified
+  // by running the real struct through json.Marshal, which emits
+  //   backend:docker-1..5, chain, payload_store, placement_store
+  // JSON.parse preserves that order, so a naive head-of-list cap keeps only the
+  // repetitive `backend:*` entries and drops every distinct one — including
+  // payload_store, the single check this whole feature exists to surface.
+  it('a wide failing backend fleet does not crowd out the distinct checks', async () => {
+    const checks: Record<string, { status: string; message: string }> = {};
+    for (let i = 1; i <= 6; i++) {
+      checks[`backend:docker-${i}`] = {
+        status: 'unhealthy',
+        message: 'backend health check failed',
+      };
+    }
+    checks.chain = {
+      status: 'unhealthy',
+      message: 'chain connectivity failed',
+    };
+    checks.payload_store = {
+      status: 'unhealthy',
+      message: 'payload store unavailable',
+    };
+    checks.placement_store = {
+      status: 'unhealthy',
+      message: 'placement store unavailable',
+    };
+    // Serialize + reparse so the test sees the SAME key order a provider sends,
+    // rather than the order this object literal happens to have.
+    const wire = JSON.parse(
+      JSON.stringify({
+        status: 'unhealthy',
+        provider_uuid: 'prov-1',
+        checks: Object.fromEntries(
+          Object.entries(checks).sort(([a], [b]) => (a < b ? -1 : 1)),
+        ),
+      }),
+    );
+
+    const p = (await browseCatalog(ctxServing(wire))).providers[0]!;
+    expect(p.healthy).toBe(false);
+    // The three distinct checks must all survive the cap...
+    expect(p.healthError).toContain('payload_store');
+    expect(p.healthError).toContain('chain');
+    expect(p.healthError).toContain('placement_store');
+    // ...and the count of what was elided must still be reported.
+    expect(p.healthError).toMatch(/\d+ more/);
+  });
+
+  // ENG-555 / ENG-669. `checks` names and messages are provider-controlled and arrive
+  // bounded only by the 10 MiB transport cap. Before this summary existed, browse_catalog's
+  // `healthError` came from `err.message`, which the ProviderApiError CONSTRUCTOR caps and
+  // which ENG-669 called out by name — a success response, so no error sink would catch it.
+  // Building the string from `checks` directly bypasses that cap entirely, and this runs for
+  // EVERY provider in the catalog.
+  it('caps and sanitizes provider-controlled check text before it reaches model context', async () => {
+    // Escapes, never literal glyphs: a raw bidi/control char does not survive the
+    // edit pipeline into a fixture.
+    const bidi = String.fromCharCode(0x202e); // RIGHT-TO-LEFT OVERRIDE
+    const nul = String.fromCharCode(0x00); // NUL
+    const p = (
+      await browseCatalog(
+        ctxServing({
+          status: `degraded${bidi}`,
+          provider_uuid: 'prov-1',
+          checks: {
+            chain: {
+              status: 'unhealthy',
+              message: `${bidi}spoofed${nul} ${'A'.repeat(100_000)}`,
+            },
+            [`backend:${'B'.repeat(50_000)}`]: {
+              status: 'unhealthy',
+              message: 'short',
+            },
+          },
+        }),
+      )
+    ).providers[0]!;
+
+    const err = p.healthError ?? '';
+    // Bounded: one provider's contribution cannot be megabytes, and browse_catalog
+    // repeats this for every provider in the catalog.
+    expect(err.length).toBeLessThan(2_000);
+    // Sanitized: no bidi override, no NUL.
+    expect(err).not.toContain(bidi);
+    expect(err).not.toContain(nul);
+    // The verdict is provider-controlled too and is interpolated into the same string.
+    expect(p.health_status).toBeDefined();
+    // Still useful after capping — the failing check is still named.
+    expect(err).toContain('chain');
+  });
+
+  it('a non-2xx still lands in the catch and keeps its HTTP error string', async () => {
+    const ctx: FredReadCtx = {
+      ...ctxServing({}),
+      fetch: vi.fn<typeof globalThis.fetch>(
+        async () => new Response('nope', { status: 500 }),
+      ),
+    };
+    const p = (await browseCatalog(ctx)).providers[0]!;
+    expect(p.healthy).toBe(false);
+    expect(p.healthError).toContain('HTTP 500');
   });
 });

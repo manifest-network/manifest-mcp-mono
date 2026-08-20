@@ -267,15 +267,20 @@ describe('Deploy lifecycle', () => {
     // provider returns 409 invalid-state until the deployment settles.
     // Poll on the 409 until it succeeds.
     //
-    // Fragility note: the 409 detection assumes fred's update_app handler
-    // does NOT wrap provider HTTP errors as a typed ManifestMCPError, so
-    // the raw provider JSON body falls through and parseToolErrorCode
-    // returns 'UNKNOWN'. If fred ever introduces a structured wrap (e.g.
-    // a PROVIDER_REJECTED code), the code === 'UNKNOWN' check below
-    // becomes false and the retry loop bypasses transient 409s — the
-    // test then fails flakily on the first call. The same coupling
-    // exists in the restart_app test below; fix both call sites together
-    // when fred's error wrapping changes.
+    // Fragility note: the 409 detection assumes update_app does NOT wrap a 4xx
+    // provider HTTP error as a typed ManifestMCPError, so the raw provider JSON
+    // body falls through and parseToolErrorCode returns 'UNKNOWN'. If a
+    // structured wrap is ever extended to 4xx (e.g. a PROVIDER_REJECTED code),
+    // the code === 'UNKNOWN' check below becomes false and the retry loop
+    // bypasses transient 409s — the test then fails flakily on the first call.
+    // The same coupling exists in the restart_app test below; fix both call
+    // sites together when the error wrapping changes.
+    //
+    // Partially narrowed already: update_app DOES wrap 5xx as
+    // UPDATE_INDETERMINATE (ENG-619 — a 5xx no longer proves the update was
+    // rejected, since fred may have applied it to the backend and then failed
+    // to persist it). 4xx is deliberately left raw precisely so this loop keeps
+    // working. `updateApp.test.ts` carries the matching unit-level guard.
     const existingManifest = JSON.stringify({
       image: 'nginxinc/nginx-unprivileged:alpine',
       ports: { '8080/tcp': {} },

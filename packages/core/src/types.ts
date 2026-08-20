@@ -449,6 +449,24 @@ export enum ManifestMCPErrorCode {
   RESTORE_ORPHAN_COMPENSATION_FAILED = 'RESTORE_ORPHAN_COMPENSATION_FAILED', // orphan lease exists
 
   /**
+   * `update_app` reached the provider and the provider answered 5xx, which does
+   * NOT establish whether the new manifest was applied (ENG-619).
+   *
+   * Fred's `/update` now persists the payload to `payloads.db` after handing it to
+   * the backend, and answers 500 when that persist fails — where the old build
+   * answered a misleading `202`. Three different faults produce that 500 (payload
+   * store unconfigured, backend rejected, persisted-after-applied) and all three
+   * emit an identical body, so they are indistinguishable on the wire. The
+   * persisted-after-applied one is the dangerous reading: the deployment is live
+   * now and the next reprovision silently reverts it.
+   *
+   * Carries `details = { lease_uuid, status }`. Non-retryable: `update_app` is
+   * non-idempotent, so `withRetry` must never auto-re-apply. An agent may
+   * deliberately re-invoke after diagnosing — a retry re-applies AND re-persists.
+   */
+  UPDATE_INDETERMINATE = 'UPDATE_INDETERMINATE',
+
+  /**
    * A deploy created its lease and uploaded the manifest, but readiness was
    * never CONFIRMED — the poll deadline expired, or the provider's status
    * endpoint stayed unreachable. This is NOT a reported failure: the provider

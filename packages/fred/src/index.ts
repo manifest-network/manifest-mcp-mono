@@ -91,6 +91,7 @@ export {
   ProviderApiError,
   type ProviderApiErrorOptions,
   type ProviderErrorKind,
+  type ProviderHealthCheck,
   type ProviderHealthResponse,
   type ProviderUrlOptions,
   parseRetryAfterMs,

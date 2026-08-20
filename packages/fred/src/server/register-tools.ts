@@ -114,7 +114,7 @@ export function registerTools(deps: RegisterToolsDeps): void {
     'browse_catalog',
     {
       description:
-        'Browse available cloud providers and SKUs with live health checks. Use this before deploy_app to see which providers are online and what SKU sizes (e.g. docker-micro, docker-small) are available with pricing.',
+        'Browse available cloud providers and SKUs with live health checks. Use this before deploy_app to see which providers are serving and what SKU sizes (e.g. docker-micro, docker-small) are available with pricing. Each provider carries `healthy` (true only when it reports a fully-healthy verdict), its raw `health_status` (`healthy` / `degraded` — impaired but still serving / `unhealthy`), and `healthError` naming the failing dependency checks when it is not fully healthy.',
       outputSchema: {
         providers: z.array(z.looseObject({})),
         skus: z.array(

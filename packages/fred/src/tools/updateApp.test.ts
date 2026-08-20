@@ -8,6 +8,7 @@
 import { fromBase64 } from '@cosmjs/encoding';
 import {
   LeaseState,
+  ManifestMCPError,
   ManifestMCPErrorCode,
   noopLogger,
 } from '@manifest-network/manifest-mcp-core';
@@ -15,6 +16,7 @@ import { sealedFetchProbe } from '@manifest-network/manifest-mcp-core/__test-uti
 import { makeMockQueryClient } from '@manifest-network/manifest-mcp-core/__test-utils__/mocks.js';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { FredAuthCtx } from '../ctx.js';
+import { ProviderApiError } from '../http/provider.js';
 import { updateApp } from './updateApp.js';
 
 const LEASE_UUID = '550e8400-e29b-41d4-a716-446655440000';
@@ -486,5 +488,83 @@ describe('updateApp', () => {
       }),
     ).rejects.toThrow('cannot be updated');
     expect(wire.calls).toHaveLength(0);
+  });
+
+  // Fred ENG-619 made `/update` PERSIST the payload, and a persist failure AFTER the
+  // backend already accepted the change answers 500 where the old build answered a
+  // misleading 202. All three of Fred's 500 sources emit an identical body, so "was it
+  // applied?" is unanswerable from the wire — which is exactly what the wrap must say.
+  describe('5xx is indeterminate, not a flat failure (Fred ENG-619)', () => {
+    /** Point `/update` at a status, leaving `/status` routed so a poll would work. */
+    function routeUpdateFailure(status: number, text: string): void {
+      wire = sealedFetchProbe({
+        '/update': { status, text },
+        '/status': { json: READY },
+      });
+    }
+
+    it('500 → UPDATE_INDETERMINATE, and the message refuses to claim either outcome', async () => {
+      routeUpdateFailure(500, '{"error":"internal server error","code":500}');
+
+      const err = await updateApp(
+        makeCtx(activeQc()),
+        { address: ADDR, leaseUuid: LEASE_UUID, manifest: '{"image":"nginx"}' },
+        { pollOptions: false },
+      ).catch((e: unknown) => e);
+
+      expect(err).toBeInstanceOf(ManifestMCPError);
+      expect((err as ManifestMCPError).code).toBe(
+        ManifestMCPErrorCode.UPDATE_INDETERMINATE,
+      );
+      const msg = (err as ManifestMCPError).message;
+      // Must NOT assert the update landed, and must NOT assert it didn't.
+      expect(msg).toMatch(/may already be applied|may or may not/i);
+      // Must point at the reads that resolve the doubt...
+      expect(msg).toMatch(/app_status/);
+      // ...and must steer off the destructive fallback a model otherwise reaches for.
+      expect(msg).toMatch(/close/i);
+      // The provider's own body survives for the operator.
+      expect(msg).toContain('internal server error');
+    });
+
+    it('502 (Fred authored, or a proxy in front of it) is wrapped the same way', async () => {
+      routeUpdateFailure(502, '{"error":"backend returned an unusable error"}');
+
+      const err = await updateApp(
+        makeCtx(activeQc()),
+        { address: ADDR, leaseUuid: LEASE_UUID, manifest: '{"image":"nginx"}' },
+        { pollOptions: false },
+      ).catch((e: unknown) => e);
+
+      // instanceof FIRST: without it this assertion is vacuous while the enum member
+      // is absent — `undefined === undefined` passes against the very ProviderApiError
+      // the wrap is supposed to replace.
+      expect(err).toBeInstanceOf(ManifestMCPError);
+      expect((err as ManifestMCPError).code).toBe(
+        ManifestMCPErrorCode.UPDATE_INDETERMINATE,
+      );
+    });
+
+    // REGRESSION GUARD, do not relax. `e2e/lifecycle.e2e.test.ts` retries a transient
+    // 409 by matching `parseToolErrorCode(err) === 'UNKNOWN'` against the raw provider
+    // body. Wrapping 4xx here would silently turn that check false and the e2e retry
+    // loop would rethrow on the first call instead of polling — a flake, not a failure.
+    it('4xx is NOT wrapped: the raw ProviderApiError still reaches the caller', async () => {
+      routeUpdateFailure(
+        409,
+        '{"error":"lease is in an invalid state","code":409}',
+      );
+
+      const err = await updateApp(
+        makeCtx(activeQc()),
+        { address: ADDR, leaseUuid: LEASE_UUID, manifest: '{"image":"nginx"}' },
+        { pollOptions: false },
+      ).catch((e: unknown) => e);
+
+      expect(err).not.toBeInstanceOf(ManifestMCPError);
+      expect(ProviderApiError.isProviderApiError(err)).toBe(true);
+      expect((err as ProviderApiError).status).toBe(409);
+      expect((err as Error).message).toContain('invalid state');
+    });
   });
 });
