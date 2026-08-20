@@ -259,6 +259,54 @@ describe('browseCatalog provider health verdicts (Fred ENG-522/608)', () => {
     });
   });
 
+  // Fred marshals `checks` from a Go map, and encoding/json SORTS map keys — verified
+  // by running the real struct through json.Marshal, which emits
+  //   backend:docker-1..5, chain, payload_store, placement_store
+  // JSON.parse preserves that order, so a naive head-of-list cap keeps only the
+  // repetitive `backend:*` entries and drops every distinct one — including
+  // payload_store, the single check this whole feature exists to surface.
+  it('a wide failing backend fleet does not crowd out the distinct checks', async () => {
+    const checks: Record<string, { status: string; message: string }> = {};
+    for (let i = 1; i <= 6; i++) {
+      checks[`backend:docker-${i}`] = {
+        status: 'unhealthy',
+        message: 'backend health check failed',
+      };
+    }
+    checks.chain = {
+      status: 'unhealthy',
+      message: 'chain connectivity failed',
+    };
+    checks.payload_store = {
+      status: 'unhealthy',
+      message: 'payload store unavailable',
+    };
+    checks.placement_store = {
+      status: 'unhealthy',
+      message: 'placement store unavailable',
+    };
+    // Serialize + reparse so the test sees the SAME key order a provider sends,
+    // rather than the order this object literal happens to have.
+    const wire = JSON.parse(
+      JSON.stringify({
+        status: 'unhealthy',
+        provider_uuid: 'prov-1',
+        checks: Object.fromEntries(
+          Object.entries(checks).sort(([a], [b]) => (a < b ? -1 : 1)),
+        ),
+      }),
+    );
+
+    const p = (await browseCatalog(ctxServing(wire))).providers[0]!;
+    expect(p.healthy).toBe(false);
+    // The three distinct checks must all survive the cap...
+    expect(p.healthError).toContain('payload_store');
+    expect(p.healthError).toContain('chain');
+    expect(p.healthError).toContain('placement_store');
+    // ...and the count of what was elided must still be reported.
+    expect(p.healthError).toMatch(/\d+ more/);
+  });
+
   it('a non-2xx still lands in the catch and keeps its HTTP error string', async () => {
     const ctx: FredReadCtx = {
       ...ctxServing({}),

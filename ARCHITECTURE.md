@@ -419,7 +419,7 @@ This is handled by `http/auth.ts` in the fred package and used by all fred serve
 
 ## Error handling
 
-Errors use the `ManifestMCPErrorCode` enum (21 codes across 9 categories):
+Errors use the `ManifestMCPErrorCode` enum (23 codes across 11 categories):
 
 | Category | Codes |
 |----------|-------|
@@ -431,7 +431,9 @@ Errors use the `ManifestMCPErrorCode` enum (21 codes across 9 categories):
 | Module | `UNKNOWN_MODULE` |
 | User action | `OPERATION_CANCELLED` (user decline / cancel / elicitation timeout — neither a fault nor retryable) |
 | SKU resolution | `SKU_AMBIGUOUS` (a SKU name matched more than one active SKU; disambiguate with `provider_uuid` / `sku_uuid`) |
-| Restore | `RESTORE_NOT_RETAINED`, `RESTORE_REJECTED`, `RESTORE_RETRYABLE`, `RESTORE_ORPHAN_COMPENSATION_FAILED` (`restore_app` saga outcomes; all non-auto-retryable since restore is non-idempotent; ENG-599) |
+| Restore | `RESTORE_NOT_RETAINED`, `RESTORE_REJECTED`, `RESTORE_RETRYABLE`, `RESTORE_ORPHAN_COMPENSATION_FAILED` (`restore_app` saga outcomes; `RESTORE_RETRYABLE` covers the transient refusals — 503 placement, 429 throttle; all non-auto-retryable since restore is non-idempotent; ENG-599) |
+| Deploy | `DEPLOY_READINESS_UNCONFIRMED` (the lease exists and is paid for but readiness was never confirmed; diagnose before closing anything — non-retryable, since a blind retry buys a second lease; ENG-661) |
+| Update | `UPDATE_INDETERMINATE` (`update_app` got a provider 5xx, which does **not** establish whether the manifest was applied — the provider persists the payload after the backend accepts it, so a persist failure can mean the update is live now and the next reprovision reverts it; diagnose with `app_status` / `app_releases`; non-retryable, since `update_app` is non-idempotent; ENG-619) |
 
 Error responses returned to MCP clients sanitize structured fields (such as `input` and `details`) via a redaction helper so that sensitive values (mnemonics, passwords, keys, tokens) are not exposed; the top-level `error.message` string is passed through verbatim and should not contain secrets.
 

@@ -45,6 +45,31 @@ export async function mapWithConcurrency<T, R>(
 const MAX_REPORTED_CHECKS = 5;
 
 /**
+ * Order failing checks so the cap above can never drop a DISTINCT one.
+ *
+ * The provider's `checks` map is marshalled by Go's `encoding/json`, which SORTS map
+ * keys — so the wire order is `backend:docker-1`, `backend:docker-2`, …, `chain`,
+ * `payload_store`, `placement_store`, `token_tracker`, and `JSON.parse` preserves it.
+ * A head-of-list cap therefore keeps only the `backend:*` prefix and silently drops
+ * every singleton check, including `payload_store` — the one this whole summary exists
+ * to surface, since it is the pre-flight tell that `update_app` will 5xx here.
+ *
+ * The singleton checks are bounded at four by construction and each means something
+ * different, so they all go first. `backend:*` is the unbounded, repetitive family: N
+ * failing backends carry roughly the information of one, and the residual count after
+ * the cap says the rest.
+ */
+function byDiagnosticValue(
+  [a]: [string, unknown],
+  [b]: [string, unknown],
+): number {
+  const backendA = a.startsWith('backend:') ? 1 : 0;
+  const backendB = b.startsWith('backend:') ? 1 : 0;
+  if (backendA !== backendB) return backendA - backendB;
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
+/**
  * Render a non-`healthy` verdict into an actionable one-liner (ENG-522/ENG-608).
  *
  * Before `/health` became a liveness contract, an impaired provider answered 503, the
@@ -59,9 +84,9 @@ const MAX_REPORTED_CHECKS = 5;
  * host paths and command output — so they are safe to relay verbatim.
  */
 function summarizeFailedChecks(health: ProviderHealthResponse): string {
-  const failed = Object.entries(health.checks ?? {}).filter(
-    ([, c]) => c?.status !== 'healthy',
-  );
+  const failed = Object.entries(health.checks ?? {})
+    .filter(([, c]) => c?.status !== 'healthy')
+    .sort(byDiagnosticValue);
   if (failed.length === 0) {
     // A verdict with no failing check named: the provider is telling us something is
     // wrong without saying what. Report the verdict rather than inventing a cause.
