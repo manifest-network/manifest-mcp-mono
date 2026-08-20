@@ -307,6 +307,49 @@ describe('browseCatalog provider health verdicts (Fred ENG-522/608)', () => {
     expect(p.healthError).toMatch(/\d+ more/);
   });
 
+  // ENG-555 / ENG-669. `checks` names and messages are provider-controlled and arrive
+  // bounded only by the 10 MiB transport cap. Before this summary existed, browse_catalog's
+  // `healthError` came from `err.message`, which the ProviderApiError CONSTRUCTOR caps and
+  // which ENG-669 called out by name — a success response, so no error sink would catch it.
+  // Building the string from `checks` directly bypasses that cap entirely, and this runs for
+  // EVERY provider in the catalog.
+  it('caps and sanitizes provider-controlled check text before it reaches model context', async () => {
+    // Escapes, never literal glyphs: a raw bidi/control char does not survive the
+    // edit pipeline into a fixture.
+    const bidi = String.fromCharCode(0x202e); // RIGHT-TO-LEFT OVERRIDE
+    const nul = String.fromCharCode(0x00); // NUL
+    const p = (
+      await browseCatalog(
+        ctxServing({
+          status: `degraded${bidi}`,
+          provider_uuid: 'prov-1',
+          checks: {
+            chain: {
+              status: 'unhealthy',
+              message: `${bidi}spoofed${nul} ${'A'.repeat(100_000)}`,
+            },
+            [`backend:${'B'.repeat(50_000)}`]: {
+              status: 'unhealthy',
+              message: 'short',
+            },
+          },
+        }),
+      )
+    ).providers[0]!;
+
+    const err = p.healthError ?? '';
+    // Bounded: one provider's contribution cannot be megabytes, and browse_catalog
+    // repeats this for every provider in the catalog.
+    expect(err.length).toBeLessThan(2_000);
+    // Sanitized: no bidi override, no NUL.
+    expect(err).not.toContain(bidi);
+    expect(err).not.toContain(nul);
+    // The verdict is provider-controlled too and is interpolated into the same string.
+    expect(p.health_status).toBeDefined();
+    // Still useful after capping — the failing check is still named.
+    expect(err).toContain('chain');
+  });
+
   it('a non-2xx still lands in the catch and keeps its HTTP error string', async () => {
     const ctx: FredReadCtx = {
       ...ctxServing({}),
