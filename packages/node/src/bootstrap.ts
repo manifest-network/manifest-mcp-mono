@@ -95,7 +95,8 @@ function resolveWallet(
 }
 
 /**
- * Shared bootstrap for all three CLI entry points (chain, lease, fred).
+ * Shared bootstrap for all five CLI entry points (chain, lease, fred,
+ * cosmwasm, agent).
  *
  * Handles subcommand dispatch, config loading, wallet resolution,
  * transport setup, and top-level error handling.

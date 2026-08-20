@@ -34,7 +34,7 @@ export function registerPrompts(mcpServer: McpServer): void {
           content: {
             type: 'text',
             text: [
-              `Deploy this containerized app to the Manifest network end-to-end. Use ONLY the manifest-mcp-fred tools listed below; never broadcast a transaction without explicit confirmation from the user.`,
+              `Deploy this containerized app to the Manifest network end-to-end. Use ONLY the manifest-mcp-fred tools listed below, except where a step names another server explicitly; never broadcast a transaction without explicit confirmation from the user.`,
               ``,
               `Inputs:`,
               `- image: ${image}`,
@@ -46,7 +46,7 @@ export function registerPrompts(mcpServer: McpServer): void {
               `2. Build a manifest preview: call \`build_manifest_preview\` with \`image\` and \`port\` parsed as an integer (the prompt arg is a string; the tool's port schema is z.number().int().min(1).max(65535)). Show the user the resulting \`manifest_json\`, \`format\`, and \`meta_hash_hex\`. If \`validation.valid: false\`, surface every \`validation.errors\` entry verbatim and stop.`,
               `3. Print a deployment plan: image, manifest summary, SKU (name + chosen provider_uuid), and the meta_hash. Wait for an explicit "yes" before continuing.`,
               `4. Call \`deploy_app\` (this broadcasts a chain TX and incurs fees), passing the chosen \`provider_uuid\`/\`sku_uuid\` when the size was ambiguous. If deploy_app returns a SKU_AMBIGUOUS error, surface the listed candidates and ask the user to pick, then retry with the disambiguator. Pass any progressToken the host provides.`,
-              `5. Call \`wait_for_app_ready\` with the returned \`lease_uuid\`. On success, print the lease UUID, provider URL, and any \`status.endpoints\`. If it times out, that is NOT a confirmed failure — the provider is allowed 10 minutes to provision and a cold image pull alone can take 5. Call \`app_status\` and \`app_diagnostics\` first, and offer to keep waiting (\`wait_for_app_ready\` with a larger \`timeout_seconds\`). Offer \`close_lease\` ONLY once the provider reports a failed \`provision_status\`, or the user decides to abandon the deploy — it is destructive and the lease may be hosting a healthy app.`,
+              `5. Call \`wait_for_app_ready\` with the returned \`lease_uuid\`. On success, print the lease UUID, provider URL, and any \`status.endpoints\`. If it times out, that is NOT a confirmed failure — the provider is allowed 10 minutes to provision and a cold image pull alone can take 5. Call \`app_status\` and \`app_diagnostics\` first, and offer to keep waiting (\`wait_for_app_ready\` with a larger \`timeout_seconds\`). Offer \`close_lease\` ONLY once the provider reports a failed \`provision_status\`, or the user decides to abandon the deploy — it is destructive and the lease may be hosting a healthy app. Note \`close_lease\` is a **manifest-mcp-lease** tool, not a fred one: if that server is not connected, tell the user which server to add rather than reporting the cleanup as impossible.`,
               ``,
               `Never skip the confirmation step in (3). If anything in (1) or (2) fails, do NOT proceed to (4).`,
             ].join('\n'),
@@ -93,7 +93,7 @@ export function registerPrompts(mcpServer: McpServer): void {
               `- Lease state on chain.`,
               `- Provider state (provision_status / phase / fail_count), and — separately — the failure attribution (reason / message), noting whether it is current or historical.`,
               `- Most relevant log lines (last error or repeated failures).`,
-              `- ONE concrete next step. If \`app_diagnostics\` returned \`next_step\`, lead with it; otherwise derive one from \`message\` plus the logs and name the exact tool to call (get_logs / restart_app / update_app / restore_app / close_lease).`,
+              `- ONE concrete next step. If \`app_diagnostics\` returned \`next_step\`, lead with it; otherwise derive one from \`message\` plus the logs and name the exact tool to call (get_logs / restart_app / update_app / restore_app, all on this server, or \`close_lease\` on **manifest-mcp-lease**). If the step needs a server that is not connected, say which one rather than stopping.`,
             ].join('\n'),
           },
         },
@@ -117,6 +117,8 @@ export function registerPrompts(mcpServer: McpServer): void {
             type: 'text',
             text: [
               `Shut down every active or pending lease for the current wallet. Each \`close_lease\` is a chain transaction with fees, and is destructive — never call it without an explicit "yes" from the user.`,
+              ``,
+              `\`close_lease\` is a **manifest-mcp-lease** tool, not a fred one — this prompt spans both servers. If manifest-mcp-lease is not connected, list the leases from the resource in step 1 and tell the user to add that server, rather than reporting that the leases cannot be closed.`,
               ``,
               `1. Read \`manifest://leases/active\` to list current leases. If the list is empty, report that and stop.`,
               `2. Print a numbered table: { uuid, state, provider_uuid, created_at }. Ask the user "close all (N), some, or none?".`,

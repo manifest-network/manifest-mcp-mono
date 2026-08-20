@@ -154,11 +154,13 @@ Address validation enforces the configured bech32 prefix (default `manifest`). C
 
 Errors returned to the MCP client and lines written to stderr are run through `sanitizeForLogging`:
 
-- A configurable set of sensitive field names (`mnemonic`, `password`, `secret`, `privateKey`, `apikey`, `auth_token`, …) is redacted as `[REDACTED]` regardless of where they appear in nested objects/arrays.
-- Strings that look like BIP-39 mnemonics (12/15/18/21/24 lowercase-alpha words) are redacted as `[REDACTED - possible mnemonic]`. The whitespace tolerance is intentional — it catches mnemonics inside error messages.
+- A set of sensitive field names (`mnemonic`, `password`, `secret`, `private_key`, `api_key`, `auth_token`, …) is redacted as `[REDACTED]` regardless of where they appear in nested objects/arrays. Matching is **normalization-based**, not exact: `isSensitiveKey` lowercases the key and strips `_`/`-`, so `auth_token`, `authToken`, `AUTH_TOKEN` and `auth-token` are one entry. A subset of those names is additionally matched as a **substring**, which is what catches compounds nobody enumerated (`DB_PASSWORD`, `walletPassword`, `X-Auth-Token`, `clientSecret`). Before ENG-747 the lookup was exact-on-lowercased-key against a snake_case-only list, so every camelCase spelling passed through unredacted.
+- Strings that look like BIP-39 mnemonics (12/15/18/21/24 lowercase-alpha words) are redacted as `[REDACTED - possible mnemonic]`. This matches a **whole-string** mnemonic only (leading/trailing whitespace and newline-padded variants included); a mnemonic embedded in a longer error message is **not** caught, because the check requires every whitespace-separated word in the string to be lowercase-alpha. Do not rely on it as a backstop for logging a mnemonic inside a wider message.
 - When an error message gets redacted, the **stack trace is suppressed entirely** (rather than emitting a half-sanitised trace). Stack traces typically embed the original error message verbatim, which would re-leak the redacted string.
 
-The bare keys `key` and `token` are **not** in the sensitive field list (they would match pagination keys, tokenfactory denoms, and other non-sensitive values). Use compound names (`api_key`, `auth_token`, …) when introducing new fields.
+The bare keys `key` and `token` are **not** in the sensitive field list, and are deliberately **not** substring stems either — they are Cosmos domain nouns, and a stem would redact `pub_key` (a *public* key), `next_key` (a pagination cursor), `gas_token`, `fee_token` and `token_id`. Use compound names (`api_key`, `auth_token`, …) when introducing new fields.
+
+The same policy backs both redactors: core's `sanitizeForLogging` redacts the value in place, and agent-core's `stripDenylist` drops the key from a verifier diagnostic. They read from one `isSensitiveKey`, because they were previously two lists that drifted apart (ENG-747 / ENG-271).
 
 ## Output bounds
 

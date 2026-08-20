@@ -120,10 +120,10 @@ The root barrel carries the client factories, branded types (`parse*` / `as*`), 
 | `…/reads` | Branded read fns: `getBalance`, `getLease`, `getLeasesByTenant`, `getSKUs`, `getProviders`, `getLeaseByCustomDomain`, `getBillingParams`, `getWithdrawableAmount` |
 | `…/catalog` | `browseCatalog`, `resolveSku`, `listSkuCandidates`, `checkDeploymentReadiness`, `buildManifestPreview` |
 | `…/deploy` | `deployApp`, `restartApp`, `updateApp`, `restoreApp` / `restoreLease` (recover a CLOSED/retained lease onto a fresh one), `getAppLogs`, `appStatus`, `waitForAppReady`, `waitForLeaseStatus`, `isLeaseFailureTerminal`, `executeTx`, `fundCredits`, `setItemCustomDomain`, `stopApp`, `LeaseState`, `validateProviderUrl` + `isUrlSsrfSafe` (SSRF-classify a provider URL / WebSocket URL), manifest builders, ADR-036 auth helpers + the deploy-family types (`BuildManifestOptions`, `DeployResult`, `ManifestDeploySpec`, `RestoreResult`, `FredLeaseItem`, `TxCallOptions`) |
-| `…/orchestration` | Optional plan/confirm/recover flows: `deployApp`, `manageDomain`, `closeLease`, `troubleshootDeployment` (callback-driven) |
+| `…/orchestration` | Optional plan/confirm/recover flows: `deployApp`, `manageDomain`, `closeLease`, `troubleshootDeployment` (callback-driven), plus `loadChainDenomMap` — pre-load a chain-data file once and pass the map in, so denom humanization does not re-read it per call |
 | `…/chain` | Generic tier-2 chain escape hatches (from **core**, not the `manifest-mcp-chain` server): `cosmosQuery`, `cosmosTx` — the raw query/tx primitives behind the `cosmos_query`/`cosmos_tx` tools |
 | `…/faucet` | Testnet faucet ops (browser-safe): `requestFaucet`, `requestFaucetCredit`, `fetchFaucetStatus` (+ `FaucetAccount`/`FaucetDripResult`/`FaucetStatusResponse`/`RequestFaucetResult`). Testnet/operator concern — deliberately off the root barrel |
-| `…/node` | Node-only: `createFredClientNode` (SSRF-safe fred client), `createGuardedFetch`, `isBlocked` |
+| `…/node` | Node-only: `createFredClientNode` (SSRF-safe fred client), `createNodeEventTransport` (SSRF-guarded `ws` transport for the live-status WebSocket — see the note above), `createGuardedFetch`, `isBlocked` |
 
 ## Full worked example
 

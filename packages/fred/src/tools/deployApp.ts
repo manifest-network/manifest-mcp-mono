@@ -50,6 +50,35 @@ function skuSelectorFromInput(input: AppDeploySpec): SkuIntent {
   };
 }
 
+/**
+ * Deploy a containerized app end-to-end: build the deployment manifest from a
+ * typed spec, then hand off to {@link deployManifest}, which validates it,
+ * broadcasts the credit-reserving create-lease transaction, and uploads the
+ * payload to the provider.
+ *
+ * This function is a thin **input adapter**, not a second deploy path — its
+ * single exit is `deployManifest(...)`, and the orchestrated agent-core path
+ * reaches that same function. Manifest validation therefore happens in one
+ * place, before the paid broadcast, and cannot be bypassed by choosing a
+ * different entry point (ENG-274).
+ *
+ * `spec.image` and `spec.services` are mutually exclusive: `image` is the
+ * single-container form (and then `port` is required), `services` the stack
+ * form. Both raise `INVALID_CONFIG` when combined, omitted, or malformed.
+ *
+ * Cancellation is honoured **before** the create-lease broadcast, so a call
+ * aborted during SKU/provider resolution creates no lease and never fires
+ * `onLeaseCreated`; an abort landing after the broadcast rejects with the lease
+ * already created (ENG-666).
+ *
+ * @param ctx         fred capability ctx — chain client, provider auth, fetch
+ * @param spec        typed deployment input (image + port, or services)
+ * @param callOptions `signal` / `timeout` plus readiness `pollOptions`
+ * @throws ManifestMCPError `INVALID_CONFIG` on a contradictory or incomplete
+ *   spec; `SKU_AMBIGUOUS` when the size name matches several providers and no
+ *   `providerUuid`/`skuUuid` disambiguates it
+ * @public
+ */
 export async function deployApp(
   ctx: FredAuthCtx,
   spec: AppDeploySpec,
