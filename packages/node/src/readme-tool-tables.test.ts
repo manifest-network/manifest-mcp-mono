@@ -39,7 +39,9 @@ function stripComments(src: string): string {
   return src
     .split('\n')
     .map((l) => l.trim())
-    .filter((l) => !l.startsWith('//') && !l.startsWith('*') && !l.startsWith('/*'))
+    .filter(
+      (l) => !l.startsWith('//') && !l.startsWith('*') && !l.startsWith('/*'),
+    )
     .join('\n');
 }
 
@@ -128,7 +130,7 @@ describe('node README tool tables match the registered tools', () => {
   it('the extractor ignores a commented-out registration', () => {
     // Sabotage test: `toContain`-style matching on raw source would count this.
     const sabotaged = stripComments(
-      ["// mcpServer.registerTool(", "//   'ghost_tool',", 'const x = 1;'].join(
+      ['// mcpServer.registerTool(', "//   'ghost_tool',", 'const x = 1;'].join(
         '\n',
       ),
     );

@@ -210,7 +210,70 @@ close_lease({ lease_uuid: "..." })
 
 `close_lease` is annotated `destructiveHint: true` and `_meta.manifest.broadcasts: true` — the manifest-agent plugin will gate it behind a confirmation prompt.
 
-## 12. Discover what a module supports
+## 12. Deploy with the orchestrated agent server
+
+> "Deploy `nginx:latest` and walk me through it."
+
+The agent server wraps the same operations in a plan → confirm → progress → recover flow. Instead of
+the model composing `check_deployment_readiness` → `build_manifest_preview` → `deploy_app` →
+`wait_for_app_ready` itself, one tool drives the whole thing and asks *you* at each decision point:
+
+```ts
+// agent server
+deploy_app_orchestrated({ image: "nginx:latest", port: 80, size: "docker-micro" })
+```
+
+What the host sees, in order:
+
+1. an **elicitation** carrying the deployment plan (image, SKU + provider, fee, `meta_hash`) — you approve or decline
+2. `notifications/progress` as the lease is created, the manifest uploaded, and readiness polled
+3. on success, the lease UUID, provider URL and endpoints
+4. on **partial** success — lease created but readiness unconfirmed, or the domain claim failed — a second elicitation offering typed recovery options (retry the domain, salvage without it, or close the lease)
+
+The three broadcasting tools (`deploy_app_orchestrated`, `manage_domain_orchestrated`,
+`close_lease_orchestrated`) **require an elicitation-capable host** — Claude Code >= 2.1.76. Without
+one they fail fast rather than broadcasting unconfirmed.
+
+## 13. Look up or manage a custom domain (orchestrated)
+
+> "Which lease owns `app.example.com`?"
+
+The read-only lookup runs on **any** host — no elicitation needed, because nothing is broadcast:
+
+```ts
+// agent server
+lookup_custom_domain_orchestrated({ fqdn: "app.example.com" })
+// → { lease_uuid, provider_uuid, ... } or a not-found result
+```
+
+Claiming or releasing a domain *does* broadcast, so it goes through the elicitation path:
+
+```ts
+manage_domain_orchestrated({ lease_uuid: "...", fqdn: "app.example.com", action: "claim" })
+```
+
+Both wrap agent-core's single `manageDomain`; they are split into two tools so the read-only half can
+carry honest `readOnlyHint: true` annotations (ENG-212).
+
+## 14. Troubleshoot or close, orchestrated
+
+> "Why is my deployment failing?"
+
+```ts
+// agent server — read-only, runs anywhere
+troubleshoot_deployment_orchestrated({ lease_uuid: "..." })
+```
+
+It composes the provider status, diagnostics and chain lease state into one verdict, and reports
+`reason` / `message` / `next_step` rather than raw provider text.
+
+Closing a lease is the destructive counterpart, and always confirms first:
+
+```ts
+close_lease_orchestrated({ lease_uuid: "..." })
+```
+
+## 15. Discover what a module supports
 
 > "What governance subcommands are available?"
 
@@ -225,7 +288,7 @@ list_module_subcommands({ type: "tx", module: "gov" })
 
 Useful to keep agent prompts compact: route the LLM through discovery instead of pre-loading every module's surface.
 
-## 13. Use query-only mode
+## 16. Use query-only mode
 
 For read-only deployments (no signing key), set `COSMOS_REST_URL` instead of `COSMOS_RPC_URL`. The wallet is still required at startup (the bootstrap reads the keyfile or mnemonic) but `cosmos_tx`, `fund_credit`, `close_lease`, `deploy_app`, etc. will fail with `INVALID_CONFIG` because the signing client isn't initialized. `cosmos_query`, `credit_balance`, `leases_by_tenant`, and the read-only Fred tools all work.
 

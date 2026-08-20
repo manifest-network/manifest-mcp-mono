@@ -23,7 +23,7 @@ packages/
   sdk/         @manifest-network/manifest-sdk           App-building SDK: aggregates core + fred + agent-core behind one typed surface (for TS apps, not MCP)
 ```
 
-Dependency direction: **node -> {chain, lease, fred, cosmwasm, agent} -> core**; **agent -> agent-core -> {core, fred}** (never reverse).
+Dependency direction: **node -> {chain, lease, fred, cosmwasm, agent} -> core** (node also depends on core directly); **agent -> agent-core -> {core, fred}**; **sdk -> {core, fred, agent-core}** (never reverse).
 
 ## Prerequisites
 

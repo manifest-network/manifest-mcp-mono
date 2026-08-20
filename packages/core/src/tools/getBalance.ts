@@ -15,6 +15,25 @@ function catchNotFound<T>(promise: Promise<T>): Promise<T | null> {
   });
 }
 
+/**
+ * Read an account's full funding picture in one call: its bank balances, its
+ * billing credit account, and the credit estimate.
+ *
+ * This is a **composed** read, which is why it earns a typed wrapper rather
+ * than being reached through `client.query`: it fans out to three chain queries
+ * under a single abort signal and rate-limit acquisition, and it applies
+ * not-found semantics that the raw wire calls do not. A tenant with no credit
+ * account is a normal state, not an error — `creditAccount` and
+ * `creditEstimate` are caught and folded to `null` rather than propagating, so
+ * a brand-new address returns balances with `credits: null` instead of
+ * throwing. The individual 1:1 queries underneath it are deliberately *not*
+ * re-exported (ENG-537).
+ *
+ * @param ctx     read ctx — query client, rate limiter, retry policy
+ * @param address bech32 account address to read
+ * @param opts    `signal` / `timeout`; the deadline covers all three queries
+ * @public
+ */
 export async function getBalance(
   ctx: ReadCtx,
   address: string,
