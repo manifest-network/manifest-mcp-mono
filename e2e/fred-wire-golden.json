@@ -36,7 +36,7 @@
     "if Fred dropped a key mono reads, that is a client fix; if Fred added one, decide",
     "whether to model it, then record it here."
   ],
-  "fred_ref": "0ef5b3eaef50433d0004063ca5998864bd302f76",
+  "fred_ref": "8f0cbd9431b482732d60d81fb59f94a37cd06486",
   "fred_ref_note": "submodules/fred pin at capture time; e2e builds the devnet from this source",
 
   "status": {
