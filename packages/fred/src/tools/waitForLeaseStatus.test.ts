@@ -448,10 +448,39 @@ describe('waitForLeaseStatus — WebSocket transport (ctx.events)', () => {
     (ctx as { events?: EventTransport }).events = transport;
 
     const p = waitForLeaseStatus(ctx, LEASE_UUID, { timeout: 60 });
-    const assertion = expect(p).rejects.toThrow(/timed out/);
+    // Assert the INVARIANT (it must not resolve), not which of two legitimate
+    // rejections wins the race to the 60ms deadline. Both exits are correct
+    // behaviour: `waitViaWs` throws `timedOutError` when the deadline elapses
+    // mid-connection, and otherwise `waitForLeaseStatus` deliberately falls back
+    // to `waitViaPoll`, whose immediate transport rejection escapes. Which one
+    // lands depends on whether the WS driver exits before the deadline, i.e. on
+    // scheduling — pinning /timed out/ made this flaky (~1-2 runs in 15) and
+    // meant that on most runs the confirm-read path it exists to exercise was
+    // never even reached. See ENG-780.
+    // Attach the handlers WITHOUT awaiting — awaiting here would settle the wait
+    // on its deadline before the frame is ever pushed, and the confirm-read path
+    // this test exists for would never run.
+    const settledPromise = p.then(
+      (status) => ({ resolved: true as const, status }),
+      (err: unknown) => ({ resolved: false as const, err }),
+    );
     await vi.waitFor(() => expect(sockets.length).toBe(1));
     sockets[0].msgCb?.(wsFrame('ready'));
-    await assertion;
+    const settled = await settledPromise;
+
+    expect(
+      settled.resolved,
+      'a `ready` frame whose confirm read failed is unverifiable and must never settle the wait',
+    ).toBe(false);
+    // Not vacuous: it must be one of the two legitimate rejections, so a
+    // regression that rejects for some unrelated reason still fails here.
+    // (`in` narrows the union; `toBe(false)` above does not narrow for TS.)
+    const message = !('err' in settled)
+      ? ''
+      : settled.err instanceof Error
+        ? settled.err.message
+        : String(settled.err);
+    expect(message).toMatch(/timed out|provider unreachable/);
   });
 
   it('snapshot-on-open resolves an already-terminal lease before any event', async () => {
