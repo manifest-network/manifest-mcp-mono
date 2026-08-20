@@ -3,10 +3,12 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   bigIntReplacer,
   createMnemonicServer,
+  isSensitiveKey,
   jsonResponse,
   MAX_TOOL_ERROR_MESSAGE_CHARS,
   type ManifestMCPServerOptions,
   SENSITIVE_FIELDS,
+  SENSITIVE_KEY_STEMS,
   sanitizeForDisplay,
   sanitizeForLogging,
   structuredResponse,
@@ -117,6 +119,124 @@ describe('bigIntReplacer', () => {
   });
 });
 
+describe('isSensitiveKey', () => {
+  it.each([
+    // ENG-747: the camelCase spellings that leaked before normalization.
+    'authToken',
+    'bearerToken',
+    'accessToken',
+    'refreshToken',
+    'secretKey',
+    'signingKey',
+    'privateKey',
+    'apiKey',
+    // The same name in every separator/casing spelling.
+    'auth_token',
+    'AUTH_TOKEN',
+    'auth-token',
+    'AuthToken',
+    // Compound password forms (ENG-747 acceptance criteria).
+    'DB_PASSWORD',
+    'POSTGRES_PASSWORD',
+    'walletPassword',
+    'passphrase',
+    // ENG-271(b) additions.
+    'authorization',
+    'proxy-authorization',
+    'bearer',
+    'jwt',
+    'session',
+    'cookie',
+    'credential',
+    'credentials',
+    'priv_key',
+    // Header-shaped and OAuth-shaped compounds.
+    'X-Auth-Token',
+    'clientSecret',
+    // Already covered before this change; must stay covered.
+    'mnemonic',
+    'password',
+    'secret',
+    'seed',
+    'private_key',
+    'api_key',
+  ])('treats %s as sensitive', (key) => {
+    expect(isSensitiveKey(key)).toBe(true);
+  });
+
+  it.each([
+    // Documented non-goals: too generic to match.
+    'key',
+    'token',
+    'Key',
+    'TOKEN',
+    // Cosmos domain nouns — the regression surface. `pub_key` is a PUBLIC key.
+    'pub_key',
+    'pubKey',
+    'next_key',
+    'nextKey',
+    'env_key',
+    'gas_token',
+    'fee_token',
+    'chain_token',
+    'token_id',
+    'token_symbol',
+    // Benign identifiers that merely contain a covered word.
+    'keygen',
+    'keyfileWallet',
+    'seedNode',
+    'sessionCount',
+    // Ordinary payload fields.
+    'denom',
+    'lease_uuid',
+    'fqdn',
+    'message',
+    'safe',
+  ])('treats %s as NOT sensitive', (key) => {
+    expect(isSensitiveKey(key)).toBe(false);
+  });
+
+  it.each([
+    // Every entry the set carried before ENG-747. The published list keeps its
+    // conventional snake_case spelling (the Sentry DEFAULT_DENYLIST idiom:
+    // human-readable, extensible policy data) and normalization is applied to a
+    // DERIVED lookup set — so a consumer's `.has()` keeps working.
+    'mnemonic',
+    'privatekey',
+    'private_key',
+    'secret',
+    'password',
+    'seed',
+    'secret_key',
+    'signing_key',
+    'apikey',
+    'api_key',
+    'auth_token',
+    'bearer_token',
+    'access_token',
+    'refresh_token',
+  ])(
+    'keeps the pre-ENG-747 public entry %s (additive, not a break)',
+    (legacy) => {
+      expect(SENSITIVE_FIELDS.has(legacy)).toBe(true);
+    },
+  );
+
+  it('matches every published entry however it is spelled', () => {
+    for (const field of SENSITIVE_FIELDS) {
+      expect(isSensitiveKey(field)).toBe(true);
+      expect(isSensitiveKey(field.toUpperCase())).toBe(true);
+      expect(isSensitiveKey(field.replace(/_/g, '-'))).toBe(true);
+    }
+  });
+
+  it('matches each stem on its own', () => {
+    for (const stem of SENSITIVE_KEY_STEMS) {
+      expect(isSensitiveKey(stem)).toBe(true);
+    }
+  });
+});
+
 describe('sanitizeForLogging', () => {
   it('returns null/undefined as-is', () => {
     expect(sanitizeForLogging(null)).toBeNull();
@@ -150,6 +270,65 @@ describe('sanitizeForLogging', () => {
     expect(result.auth_token).toBe('[REDACTED]');
     expect(result.key).toBe('not-sensitive');
     expect(result.safe).toBe('visible');
+  });
+
+  it('redacts camelCase and compound secret keys (ENG-747)', () => {
+    const result = sanitizeForLogging({
+      authToken: 'S1',
+      bearerToken: 'S2',
+      accessToken: 'S3',
+      refreshToken: 'S4',
+      secretKey: 'S5',
+      signingKey: 'S6',
+      walletPassword: 'S7',
+      environment: { DB_PASSWORD: 'S8', PORT: '8080' },
+    }) as Record<string, unknown>;
+
+    expect(result.authToken).toBe('[REDACTED]');
+    expect(result.bearerToken).toBe('[REDACTED]');
+    expect(result.accessToken).toBe('[REDACTED]');
+    expect(result.refreshToken).toBe('[REDACTED]');
+    expect(result.secretKey).toBe('[REDACTED]');
+    expect(result.signingKey).toBe('[REDACTED]');
+    expect(result.walletPassword).toBe('[REDACTED]');
+    expect(result.environment).toEqual({
+      DB_PASSWORD: '[REDACTED]',
+      PORT: '8080',
+    });
+  });
+
+  it('leaves Cosmos domain nouns intact', () => {
+    const result = sanitizeForLogging({
+      pub_key: 'A1B2',
+      next_key: 'cursor',
+      gas_token: 'umfx',
+      token_id: '42',
+      denom: 'upwr',
+    }) as Record<string, string>;
+
+    expect(result.pub_key).toBe('A1B2');
+    expect(result.next_key).toBe('cursor');
+    expect(result.gas_token).toBe('umfx');
+    expect(result.token_id).toBe('42');
+    expect(result.denom).toBe('upwr');
+  });
+
+  it('keeps __proto__ as data without re-parenting the result', () => {
+    // JSON.parse materializes __proto__ as a real own property; a plain
+    // `out[key] = value` would route it through Object.prototype's setter,
+    // which silently DROPS a string value and re-parents the result object
+    // for an object value.
+    const input = JSON.parse('{"__proto__":{"polluted":true},"safe":"kept"}');
+    const result = sanitizeForLogging(input) as Record<string, unknown>;
+
+    expect(Object.getPrototypeOf(result)).toBe(Object.prototype);
+    expect(Object.getOwnPropertyDescriptor(result, '__proto__')?.value).toEqual(
+      {
+        polluted: true,
+      },
+    );
+    expect(result.safe).toBe('kept');
+    expect(({} as Record<string, unknown>).polluted).toBeUndefined();
   });
 
   it('redacts sensitive fields case-insensitively', () => {
