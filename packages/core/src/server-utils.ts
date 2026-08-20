@@ -24,28 +24,111 @@ export const INFRASTRUCTURE_ERROR_CODES: ReadonlySet<ManifestMCPErrorCode> =
   ]);
 
 /**
- * Sensitive field names that should be redacted from error responses
+ * Normalize a key name before sensitive-name matching: lowercase, and drop the
+ * separators that distinguish one name's spellings. `auth_token`, `authToken`,
+ * `AUTH_TOKEN` and `auth-token` all normalize to `authtoken`.
+ *
+ * Matching on the raw lowercased key (the pre-ENG-747 behavior) meant a set of
+ * snake_case names silently missed every camelCase spelling — the dominant
+ * convention in this codebase's own TypeScript. `'authToken'.toLowerCase()` is
+ * `'authtoken'`, which was in no list, so the token reached model context and
+ * stderr verbatim through `withErrorHandling`'s `input:` echo.
+ */
+function normalizeKey(key: string): string {
+  return key.toLowerCase().replace(/[_-]/g, '');
+}
+
+/**
+ * Sensitive field names, in NORMALIZED form (see `normalizeKey`), matched
+ * EXACTLY. These are the names too generic to match as a substring: `seed` must
+ * not redact `seedNode` (a p2p seed node), `session` must not redact
+ * `sessionCount`.
+ *
+ * Kept as a complete inventory even where a stem below already subsumes an
+ * entry — this set is exported on the package barrel and reads as the
+ * documentation of what counts as a secret name.
  */
 export const SENSITIVE_FIELDS: ReadonlySet<string> = new Set([
   'mnemonic',
-  'privatekey',
-  'private_key',
-  'secret',
-  'password',
   'seed',
-  'secret_key',
-  'signing_key',
+  'password',
+  'passphrase',
+  'secret',
+  'secretkey',
+  'signingkey',
+  'privatekey',
+  'privkey',
   'apikey',
-  'api_key',
-  'auth_token',
-  'bearer_token',
-  'access_token',
-  'refresh_token',
+  'authtoken',
+  'bearertoken',
+  'accesstoken',
+  'refreshtoken',
+  'authorization',
+  'bearer',
+  'jwt',
+  'session',
+  'sessionid',
+  'cookie',
+  'credential',
+  'credentials',
 ]);
 
-// Note: standalone "key" and "token" are intentionally excluded from SENSITIVE_FIELDS
-// because they are too generic — they would match pagination keys, map keys, and
-// non-sensitive token identifiers. Use compound names (api_key, auth_token, etc.) instead.
+/**
+ * Sensitive name STEMS, matched as a SUBSTRING of the normalized key. This is
+ * the Rails `filter_parameters` idiom ("partially matched — `passw` matches
+ * `password`"), and it is what catches the compounds nobody enumerates:
+ * `DB_PASSWORD`, `walletPassword`, `X-Auth-Token`, `proxy-authorization`,
+ * `clientSecret`.
+ *
+ * A family earns a stem only when it has no benign compound in this domain.
+ */
+export const SENSITIVE_KEY_STEMS: readonly string[] = [
+  'password',
+  'passphrase',
+  'mnemonic',
+  'secret',
+  'privatekey',
+  'privkey',
+  'apikey',
+  'signingkey',
+  'authtoken',
+  'bearertoken',
+  'accesstoken',
+  'refreshtoken',
+  'authorization',
+  'credential',
+  'jwt',
+  'cookie',
+];
+
+// Bare "key" and "token" are deliberately absent from BOTH lists above, and are
+// deliberately NOT stems. Rails and Django both substring-match them; this repo
+// cannot, because they are first-class Cosmos domain nouns. Measured against
+// the tree: a `key` stem would redact `pub_key` (a PUBLIC key), `next_key` /
+// `nextKey` (pagination cursors), `env_key`, `keygen` and `keyfileWallet`; a
+// `token` stem would redact `gas_token`, `fee_token`, `chain_token`, `token_id`
+// and `token_symbol`. Rails anchors this case as `_key`; we go one notch
+// tighter and keep those families exact-match only. `secret` DOES earn a stem —
+// the tree contains no benign `*secret*` field name.
+//
+// Use compound names (api_key, auth_token, …) for anything that must redact.
+
+/**
+ * True when a key name denotes a secret whose value must not be logged or
+ * returned to a caller.
+ *
+ * Single source of truth for both redactors: core's `sanitizeForLogging`
+ * redacts the value in place, agent-core's `stripDenylist` drops the key.
+ * Different actions, one policy — they were two lists that drifted apart, and
+ * that drift is what ENG-747 / ENG-271(b) were.
+ */
+export function isSensitiveKey(key: string): boolean {
+  const normalized = normalizeKey(key);
+  if (SENSITIVE_FIELDS.has(normalized)) {
+    return true;
+  }
+  return SENSITIVE_KEY_STEMS.some((stem) => normalized.includes(stem));
+}
 
 /**
  * JSON replacer that converts BigInt values to strings
@@ -89,12 +172,22 @@ export function sanitizeForLogging(obj: unknown, depth = 0): unknown {
   if (typeof obj === 'object') {
     const sanitized: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(obj)) {
-      const lowerKey = key.toLowerCase();
-      if (SENSITIVE_FIELDS.has(lowerKey)) {
-        sanitized[key] = '[REDACTED]';
-      } else {
-        sanitized[key] = sanitizeForLogging(value, depth + 1);
-      }
+      const sanitizedValue = isSensitiveKey(key)
+        ? '[REDACTED]'
+        : sanitizeForLogging(value, depth + 1);
+      // defineProperty, not `sanitized[key] = …`: a plain assignment on a `{}`
+      // literal routes a `__proto__` key through Object.prototype's setter,
+      // which silently DROPS a string value and re-parents the result object
+      // for an object value. defineProperty always creates an own property, so
+      // the key round-trips as data — no pollution, and no data loss. (A
+      // redactor must not silently delete fields from an error payload, which
+      // is why this differs from agent-core's drop-the-key `stripDenylist`.)
+      Object.defineProperty(sanitized, key, {
+        value: sanitizedValue,
+        enumerable: true,
+        writable: true,
+        configurable: true,
+      });
     }
     return sanitized;
   }
