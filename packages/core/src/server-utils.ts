@@ -39,35 +39,46 @@ function normalizeKey(key: string): string {
 }
 
 /**
- * Sensitive field names, in NORMALIZED form (see `normalizeKey`), matched
- * EXACTLY. These are the names too generic to match as a substring: `seed` must
- * not redact `seedNode` (a p2p seed node), `session` must not redact
- * `sessionCount`.
+ * Sensitive field names matched EXACTLY (after normalization). These are the
+ * names too generic to match as a substring: `seed` must not redact `seedNode`
+ * (a p2p seed node), `session` must not redact `sessionCount`.
+ *
+ * Written in the conventional snake_case spelling and exported on the package
+ * barrel — this is human-readable policy data, the same shape as Sentry's
+ * `DEFAULT_DENYLIST` or Rails' `filter_parameters`. Normalization is applied to
+ * a DERIVED lookup set below, never to this one, so the published list stays
+ * readable, stays additive across releases, and would absorb a caller-supplied
+ * entry in any casing if this is ever made extensible.
+ *
+ * To TEST a key, call `isSensitiveKey` — a raw `.has()` on this set is an exact
+ * match and will miss `authToken`, which is the whole of ENG-747.
  *
  * Kept as a complete inventory even where a stem below already subsumes an
- * entry — this set is exported on the package barrel and reads as the
- * documentation of what counts as a secret name.
+ * entry, so the set reads as the documentation of what counts as a secret name.
  */
 export const SENSITIVE_FIELDS: ReadonlySet<string> = new Set([
   'mnemonic',
-  'seed',
-  'password',
-  'passphrase',
-  'secret',
-  'secretkey',
-  'signingkey',
   'privatekey',
-  'privkey',
+  'private_key',
+  'secret',
+  'password',
+  'seed',
+  'secret_key',
+  'signing_key',
   'apikey',
-  'authtoken',
-  'bearertoken',
-  'accesstoken',
-  'refreshtoken',
+  'api_key',
+  'auth_token',
+  'bearer_token',
+  'access_token',
+  'refresh_token',
+  // ENG-271(b) additions.
+  'passphrase',
+  'priv_key',
   'authorization',
   'bearer',
   'jwt',
   'session',
-  'sessionid',
+  'session_id',
   'cookie',
   'credential',
   'credentials',
@@ -87,19 +98,32 @@ export const SENSITIVE_KEY_STEMS: readonly string[] = [
   'passphrase',
   'mnemonic',
   'secret',
-  'privatekey',
-  'privkey',
-  'apikey',
-  'signingkey',
-  'authtoken',
-  'bearertoken',
-  'accesstoken',
-  'refreshtoken',
+  'private_key',
+  'priv_key',
+  'api_key',
+  'signing_key',
+  'auth_token',
+  'bearer_token',
+  'access_token',
+  'refresh_token',
   'authorization',
   'credential',
   'jwt',
   'cookie',
 ];
+
+// Normalized forms, DERIVED from the two published lists at module init. This is
+// Sentry's `[x.lower() for x in self.denylist]` move, generalized to strip `_`
+// and `-` as well: the library adapts to however the policy is written instead
+// of demanding it be pre-normalized. Deriving rather than publishing the
+// normalized shape is what keeps `SENSITIVE_FIELDS` additive — an earlier cut of
+// ENG-747 normalized the exported set itself, which silently changed
+// `SENSITIVE_FIELDS.has('auth_token')` from true to false for consumers.
+const NORMALIZED_SENSITIVE_FIELDS: ReadonlySet<string> = new Set(
+  [...SENSITIVE_FIELDS].map(normalizeKey),
+);
+const NORMALIZED_SENSITIVE_KEY_STEMS: readonly string[] =
+  SENSITIVE_KEY_STEMS.map(normalizeKey);
 
 // Bare "key" and "token" are deliberately absent from BOTH lists above, and are
 // deliberately NOT stems. Rails and Django both substring-match them; this repo
@@ -124,10 +148,12 @@ export const SENSITIVE_KEY_STEMS: readonly string[] = [
  */
 export function isSensitiveKey(key: string): boolean {
   const normalized = normalizeKey(key);
-  if (SENSITIVE_FIELDS.has(normalized)) {
+  if (NORMALIZED_SENSITIVE_FIELDS.has(normalized)) {
     return true;
   }
-  return SENSITIVE_KEY_STEMS.some((stem) => normalized.includes(stem));
+  return NORMALIZED_SENSITIVE_KEY_STEMS.some((stem) =>
+    normalized.includes(stem),
+  );
 }
 
 /**

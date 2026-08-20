@@ -196,9 +196,37 @@ describe('isSensitiveKey', () => {
     expect(isSensitiveKey(key)).toBe(false);
   });
 
-  it('holds every SENSITIVE_FIELDS entry in already-normalized form', () => {
+  it.each([
+    // Every entry the set carried before ENG-747. The published list keeps its
+    // conventional snake_case spelling (the Sentry DEFAULT_DENYLIST idiom:
+    // human-readable, extensible policy data) and normalization is applied to a
+    // DERIVED lookup set — so a consumer's `.has()` keeps working.
+    'mnemonic',
+    'privatekey',
+    'private_key',
+    'secret',
+    'password',
+    'seed',
+    'secret_key',
+    'signing_key',
+    'apikey',
+    'api_key',
+    'auth_token',
+    'bearer_token',
+    'access_token',
+    'refresh_token',
+  ])(
+    'keeps the pre-ENG-747 public entry %s (additive, not a break)',
+    (legacy) => {
+      expect(SENSITIVE_FIELDS.has(legacy)).toBe(true);
+    },
+  );
+
+  it('matches every published entry however it is spelled', () => {
     for (const field of SENSITIVE_FIELDS) {
-      expect(field).toBe(field.toLowerCase().replace(/[_-]/g, ''));
+      expect(isSensitiveKey(field)).toBe(true);
+      expect(isSensitiveKey(field.toUpperCase())).toBe(true);
+      expect(isSensitiveKey(field.replace(/_/g, '-'))).toBe(true);
     }
   });
 
