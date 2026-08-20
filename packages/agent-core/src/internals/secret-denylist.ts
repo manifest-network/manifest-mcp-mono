@@ -1,29 +1,35 @@
 /**
- * Secret-key denylist + prototype-pollution guard. Used by
+ * Prototype-pollution guard + the *action* half of secret scrubbing. Used by
  * `verify-recover.ts` to scrub a verifier's diagnostic payload before it
  * reaches the host callback (or the journal record in ENG-124).
  *
+ * The **policy** — which key names denote a secret — is NOT here. It lives
+ * once, in core's `isSensitiveKey`, and is shared with `sanitizeForLogging`.
+ * This module supplies only the action: core *redacts the value* in place,
+ * this walker *drops the key entirely*. Different actions, one policy.
+ *
+ * Before ENG-747 / ENG-271(b) this module carried its own parallel regex. The
+ * two lists drifted — core redacted bare `secret` while this one deliberately
+ * did not, and core missed every camelCase spelling that this regex caught.
+ * That drift was the bug, so the list is gone rather than re-synchronized.
+ *
+ * The blanket `token` and `key` keywords remain excluded by that shared policy,
+ * for the same blockchain-domain reason this module always gave: `gas_token`,
+ * `fee_token`, `token_id`, `token_symbol` and `pub_key` are legitimate
+ * non-sensitive field names.
+ *
  * Two exports:
  *
- * - `SECRET_KEY_DENYLIST` — case-insensitive substring match on KEY names
- *   only; values are never inspected. Narrow on purpose: covers the
- *   high-confidence sensitive shapes (mnemonic + keyfile password) plus
- *   credential-shaped suffixes that catch obvious caller mistakes
- *   (`api[_-]?key`, `private[_-]?key`, `secret[_-]?key`, `auth[_-]?token`,
- *   `bearer[_-]?token`). The blanket `token` and `secret` keywords are NOT
- *   here — this is a blockchain context where `gas_token`, `fee_token`,
- *   `token_id`, `token_symbol` are legitimate non-sensitive field names.
+ * - `PROTOTYPE_POLLUTION_KEYS` — the three constructor-related key names.
  *
- * - `stripDenylist` (in `verify-recover.ts`) — recursive walker over
- *   objects + arrays; drops any key matching the denylist regex; ALSO
- *   skips the three prototype-pollution-capable keys `__proto__`,
- *   `constructor`, `prototype` because `JSON.parse` materializes them as
- *   own properties that a bare `out[k] = v` assignment would treat as a
- *   prototype mutation.
+ * - `stripDenylist` — recursive walker over objects + arrays; drops any key
+ *   for which core's `isSensitiveKey` is true; ALSO skips the three
+ *   prototype-pollution-capable keys `__proto__`, `constructor`, `prototype`
+ *   because `JSON.parse` materializes them as own properties that a bare
+ *   `out[k] = v` assignment would treat as a prototype mutation.
  */
 
-export const SECRET_KEY_DENYLIST =
-  /(mnemonic|password|private[_-]?key|secret[_-]?key|api[_-]?key|auth[_-]?token|bearer[_-]?token)/i;
+import { isSensitiveKey } from '@manifest-network/manifest-mcp-core';
 
 export const PROTOTYPE_POLLUTION_KEYS: ReadonlySet<string> = new Set([
   '__proto__',
@@ -33,7 +39,7 @@ export const PROTOTYPE_POLLUTION_KEYS: ReadonlySet<string> = new Set([
 
 /**
  * Recursively walk a value and remove any object keys that:
- *   - Match `SECRET_KEY_DENYLIST` (case-insensitive substring on key name), or
+ *   - Are sensitive per core's `isSensitiveKey` (the shared policy), or
  *   - Are one of the prototype-pollution keys (`__proto__`, `constructor`,
  *     `prototype`).
  *
@@ -51,7 +57,7 @@ export function stripDenylist(value: unknown): unknown {
     const out: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
       if (PROTOTYPE_POLLUTION_KEYS.has(k)) continue;
-      if (SECRET_KEY_DENYLIST.test(k)) continue;
+      if (isSensitiveKey(k)) continue;
       out[k] = stripDenylist(v);
     }
     return out;

@@ -3,8 +3,8 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   bigIntReplacer,
   createMnemonicServer,
-  jsonResponse,
   isSensitiveKey,
+  jsonResponse,
   MAX_TOOL_ERROR_MESSAGE_CHARS,
   type ManifestMCPServerOptions,
   SENSITIVE_FIELDS,
@@ -294,9 +294,11 @@ describe('sanitizeForLogging', () => {
     const result = sanitizeForLogging(input) as Record<string, unknown>;
 
     expect(Object.getPrototypeOf(result)).toBe(Object.prototype);
-    expect(Object.getOwnPropertyDescriptor(result, '__proto__')?.value).toEqual({
-      polluted: true,
-    });
+    expect(Object.getOwnPropertyDescriptor(result, '__proto__')?.value).toEqual(
+      {
+        polluted: true,
+      },
+    );
     expect(result.safe).toBe('kept');
     expect(({} as Record<string, unknown>).polluted).toBeUndefined();
   });

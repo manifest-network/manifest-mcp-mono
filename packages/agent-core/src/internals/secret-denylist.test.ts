@@ -1,56 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-  PROTOTYPE_POLLUTION_KEYS,
-  SECRET_KEY_DENYLIST,
-  stripDenylist,
-} from './secret-denylist.js';
-
-describe('SECRET_KEY_DENYLIST', () => {
-  it('matches the byte-exact regex from _journal.cjs', () => {
-    // qa-engineer's parity check: the source must equal _journal.cjs:127.
-    expect(SECRET_KEY_DENYLIST.source).toBe(
-      '(mnemonic|password|private[_-]?key|secret[_-]?key|api[_-]?key|auth[_-]?token|bearer[_-]?token)',
-    );
-    expect(SECRET_KEY_DENYLIST.flags).toBe('i');
-  });
-
-  it.each([
-    'mnemonic',
-    'MNEMONIC',
-    'password',
-    'wallet_password',
-    'private_key',
-    'private-key',
-    'privatekey',
-    'PrivateKey',
-    'secret_key',
-    'secretkey',
-    'api_key',
-    'apikey',
-    'API_KEY',
-    'auth_token',
-    'authtoken',
-    'bearer_token',
-    'bearertoken',
-  ])('matches sensitive key %s', (key) => {
-    expect(SECRET_KEY_DENYLIST.test(key)).toBe(true);
-  });
-
-  it.each([
-    'token',
-    'secret',
-    'gas_token',
-    'fee_token',
-    'token_id',
-    'token_symbol',
-    'denom',
-    'lease_uuid',
-    'fqdn',
-    'message',
-  ])('does NOT match benign blockchain key %s', (key) => {
-    expect(SECRET_KEY_DENYLIST.test(key)).toBe(false);
-  });
-});
+import { PROTOTYPE_POLLUTION_KEYS, stripDenylist } from './secret-denylist.js';
 
 describe('PROTOTYPE_POLLUTION_KEYS', () => {
   it('contains the three constructor-related keys', () => {
@@ -145,6 +94,37 @@ describe('stripDenylist', () => {
     expect(stringified).not.toMatch(/polluted_via_prototype/);
     expect(stringified).not.toMatch(/polluted_nested/);
     expect(stringified).not.toMatch(/polluted_in_array_elem/);
+  });
+
+  it('drops camelCase secret keys via the shared core policy (ENG-747)', () => {
+    const out = stripDenylist({
+      authToken: 'leaked',
+      walletPassword: 'leaked',
+      outcome: 'ok',
+    });
+    expect(out).toEqual({ outcome: 'ok' });
+  });
+
+  it('drops bare secret, which core has always redacted', () => {
+    // Pre-unification this key survived here while core's sanitizeForLogging
+    // redacted it — the two policies disagreed. Resolved in favor of matching:
+    // the tree contains no benign `*secret*` field name, unlike token/key.
+    expect(stripDenylist({ secret: 'leaked', outcome: 'ok' })).toEqual({
+      outcome: 'ok',
+    });
+  });
+
+  it('keeps Cosmos domain nouns, which are NOT stems', () => {
+    const diagnostic = {
+      gas_token: 'umfx',
+      fee_token: 'umfx',
+      token_id: '42',
+      token_symbol: 'PWR',
+      pub_key: 'A1B2',
+      next_key: 'cursor',
+      outcome: 'ok',
+    };
+    expect(stripDenylist(diagnostic)).toEqual(diagnostic);
   });
 
   it('walks arrays element-wise', () => {
