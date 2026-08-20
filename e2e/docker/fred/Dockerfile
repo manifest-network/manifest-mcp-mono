@@ -1,5 +1,13 @@
 # Multi-stage build for fred (providerd + docker-backend)
-FROM golang:1.26.5-alpine AS builder
+#
+# Pinned to the EXACT patch that submodules/fred's go.mod names, never a floating
+# `golang:1.26-alpine`. These images set GOTOOLCHAIN=local, so the go command will
+# not download a newer toolchain to satisfy the directive — a builder even one patch
+# behind fails outright at `go mod download` below with
+#   go: go.mod requires go >= 1.26.6 (running go 1.26.5; GOTOOLCHAIN=local)
+# rather than degrading gracefully. Bump this line in the same commit as any
+# submodules/fred gitlink move whose go.mod floor advanced.
+FROM golang:1.26.6-alpine AS builder
 
 RUN apk add --no-cache ca-certificates build-base git
 

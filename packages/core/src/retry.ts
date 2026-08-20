@@ -67,6 +67,14 @@ const NON_RETRYABLE_ERROR_CODES: ManifestMCPErrorCode[] = [
   // blind retry of the deploy that produced this would create a second one. The
   // remedy is to look (app_status / wait_for_app_ready), not to re-broadcast.
   ManifestMCPErrorCode.DEPLOY_READINESS_UNCONFIRMED,
+
+  // Update outcome unknown (ENG-619). update_app is non-idempotent and the 5xx
+  // that produced this may mean the manifest is ALREADY applied on the backend,
+  // so an auto-retry re-applies a change the caller has not confirmed. The
+  // remedy is to look (app_status / app_releases). Enrolling it here also stops
+  // the 5xx message-sniff below from reading the embedded "HTTP 500" as
+  // retryable — the same trap the RESTORE_* codes above are enrolled against.
+  ManifestMCPErrorCode.UPDATE_INDETERMINATE,
 ];
 
 /**

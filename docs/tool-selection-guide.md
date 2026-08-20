@@ -46,7 +46,7 @@ Default to the **chain server** with `cosmos_query`. Discover the module/subcomm
 
 The Fred server is sequenced; follow this order:
 
-1. `browse_catalog` — see online providers and pick a SKU size.
+1. `browse_catalog` — see which providers are serving and pick a SKU size. Each entry carries `healthy` (true only when the provider reports a fully-healthy verdict) plus the provider's raw `health_status` — `degraded` means it is impaired but still serving, so `healthy: false` is not always "offline". When a provider is not fully healthy, `healthError` names the failing dependency checks.
 2. `check_deployment_readiness` — surface missing prerequisites (insufficient balance, unfunded credits, unavailable SKU). The result is consumable by an agent: a single `ready: true/false` plus a human-readable `missing_steps` array.
 3. `build_manifest_preview` — render the manifest the deploy will submit, with validation results and the on-chain `meta_hash`. **Run this before paying for a lease.** Catches bad env var names, wrong port format, malformed RFC 1123 service names, and a few dozen other rule violations.
 4. `deploy_app` — broadcasts a chain TX. Optionally claims a custom domain in the same call. Pass a `progressToken` if the host supports `notifications/progress` so the user sees provisioning progress.

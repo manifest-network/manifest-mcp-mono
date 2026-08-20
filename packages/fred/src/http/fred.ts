@@ -153,6 +153,21 @@ export async function restartLease(
   );
 }
 
+/**
+ * Replace a running lease's deployment manifest.
+ *
+ * Answers 202 `{status:"updating"}` on acceptance. Since Fred ENG-619 the payload is
+ * also PERSISTED to the provider's payload store after the backend accepts it — which
+ * is what stops the next reprovision reverting the tenant to the as-created manifest —
+ * and a persist failure answers **500** where the old build answered a misleading 202.
+ * A 5xx therefore does NOT establish that the update was rejected; `updateApp` turns it
+ * into `UPDATE_INDETERMINATE` rather than a flat failure. A provider running with no
+ * payload store configured now refuses `/update` outright.
+ *
+ * `payload` is sent base64-encoded inside JSON because the Go field is a `[]byte`.
+ * The `payload_hash` field in Fred's backend contract is fred→backend only — a tenant
+ * must not send one.
+ */
 export async function updateLease(
   providerUrl: string,
   leaseUuid: string,
@@ -184,8 +199,13 @@ export async function updateLease(
  * Restore a closed lease's retained volumes onto a fresh PENDING lease (ENG-599).
  * `leaseUuid` is the NEW (fresh PENDING) lease; the body names the SOURCE retained
  * lease. Token must be scoped to the NEW lease. Returns 202 {status:"provisioning"};
- * fetchJsonChecked throws ProviderApiError for any non-2xx (404 not-retained, 409 not
- * PENDING, 422 demote, 503 placement, …) — the tool layer classifies by `.status`.
+ * fetchJsonChecked throws ProviderApiError for any non-2xx — the tool layer classifies
+ * by `.status`, and `restoreApp.ts` owns that table (which statuses are safe to
+ * compensate). Fred's answer space here: 404 not-retained, 409 not PENDING or already
+ * provisioned, 422 demote-exceeds-tier OR any other refusal code the backend authored
+ * (widened in ENG-620 — a 422 no longer implies "demote"), 429 throttled, 502 the
+ * backend's error body was off-contract (ENG-620/ENG-739), 503 placement unresolvable.
+ * Not exhaustive by construction: treat an unlisted status as in-doubt, not as terminal.
  */
 export async function restoreLease(
   providerUrl: string,

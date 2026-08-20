@@ -284,6 +284,81 @@ describe('restoreApp', () => {
     expect(mockCosmosTx).toHaveBeenCalledTimes(1);
   });
 
+  // Fred ENG-620/ENG-739 added a tenant-facing 502 to POST /restore: providerd now
+  // AUTHORS the error when a backend's 4xx body is off-contract, instead of relaying
+  // it as a 400/404. These two cases pin the deliberate asymmetry in how mono answers.
+  it('429 (throttled before the handler ran): cancels and throws RESTORE_RETRYABLE', async () => {
+    mockSource();
+    // Fred's TenantRateLimiter rejects inside AuthMiddleware, so the restore handler
+    // never executes and nothing can have been adopted — provably uncommitted, exactly
+    // like the 401 from that same middleware which is already treated as terminal.
+    routeWire({ restore: { status: 429, text: 'rate limit exceeded' } });
+    await expect(
+      restoreApp(
+        makeCtx(),
+        { address: 'a', sourceLeaseUuid: SOURCE },
+        { pollOptions: false },
+      ),
+    ).rejects.toMatchObject({ code: ManifestMCPErrorCode.RESTORE_RETRYABLE });
+    expect(mockCosmosTx).toHaveBeenCalledTimes(1);
+    expect(mockCosmosTx).toHaveBeenCalledWith(
+      expect.anything(),
+      'billing',
+      'cancel-lease',
+      [NEW],
+      true,
+    );
+  });
+
+  it('429 with Retry-After: the wait the provider asked for reaches the caller', async () => {
+    mockSource();
+    routeWire({
+      restore: {
+        status: 429,
+        text: 'rate limit exceeded',
+        headers: { 'retry-after': '30' },
+      },
+    });
+    const err = await restoreApp(
+      makeCtx(),
+      { address: 'a', sourceLeaseUuid: SOURCE },
+      { pollOptions: false },
+    ).catch((e: unknown) => e);
+    // A throttle is only actionable with a delay attached; the transport already
+    // parses Retry-After into ProviderApiError.retryAfterMs, so not surfacing it
+    // would throw the one useful fact away.
+    expect((err as Error).message).toMatch(/30\s*s|30000\s*ms/i);
+  });
+
+  // DELIBERATE, and the inverse of the 429 above — do not "fix" this into a cancel.
+  // Fred's OWN 502 means the request was not applied, so cancelling would be correct
+  // for it. But mono cannot distinguish that from a 502 minted by a reverse proxy
+  // sitting IN FRONT of Fred, where the POST may well have reached Fred and been
+  // adopted. Cancelling there would cancel-lease a restore that committed and destroy
+  // the adopted data — the same hazard the 2xx-parse-failure branch already guards.
+  // Leaving 502 in-doubt costs an orphaned PENDING lease, which is recoverable; the
+  // other way round is not.
+  it('502: does NOT cancel — stays in-doubt and surfaces the orphan for manual rollback', async () => {
+    mockSource();
+    routeWire({
+      restore: {
+        status: 502,
+        text: 'the provider backend returned an unusable error; the request was not applied',
+      },
+    });
+    await expect(
+      restoreApp(
+        makeCtx(),
+        { address: 'a', sourceLeaseUuid: SOURCE },
+        { pollOptions: false },
+      ),
+    ).rejects.toMatchObject({
+      code: ManifestMCPErrorCode.RESTORE_ORPHAN_COMPENSATION_FAILED,
+      details: { orphaned_lease_uuid: NEW },
+    });
+    expect(mockCosmosTx).not.toHaveBeenCalled();
+  });
+
   it('in-doubt (status 0 timeout): does NOT cancel; throws RESTORE_ORPHAN with the orphaned uuid', async () => {
     mockSource();
     // A transport-level failure (no HTTP response): classifyTransportError tags it

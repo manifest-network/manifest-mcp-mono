@@ -497,7 +497,9 @@ describe('low-level fn honors allowLoopback (validate gate)', () => {
     const mockFetch = vi
       .fn()
       .mockResolvedValue(
-        new Response(JSON.stringify({ status: 'ok', provider_uuid: 'prov-1' })),
+        new Response(
+          JSON.stringify({ status: 'healthy', provider_uuid: 'prov-1' }),
+        ),
       );
 
     const result = await getProviderHealth(
@@ -507,7 +509,7 @@ describe('low-level fn honors allowLoopback (validate gate)', () => {
       true,
     );
 
-    expect(result.status).toBe('ok');
+    expect(result.status).toBe('healthy');
     expect(mockFetch).toHaveBeenCalledOnce();
   });
 

@@ -52,7 +52,7 @@ Once it prints the recovery phrase, write it down, then `<cli> import` it under 
 
 ## Errors at tool call time
 
-Most errors returned to the MCP client are JSON objects with a `code` field drawn from `ManifestMCPErrorCode`. (An error raised outside the Manifest error path — e.g. a `ProviderApiError` from a provider HTTP call — reaches the client without a `ManifestMCPErrorCode` and is logged as `UNKNOWN`.) The 21 codes group into 9 categories:
+Most errors returned to the MCP client are JSON objects with a `code` field drawn from `ManifestMCPErrorCode`. (An error raised outside the Manifest error path — e.g. a `ProviderApiError` from a provider HTTP call — reaches the client without a `ManifestMCPErrorCode` and is logged as `UNKNOWN`.) The 23 codes group into 11 categories:
 
 | Category | Codes | Meaning |
 |----------|-------|---------|
@@ -65,7 +65,8 @@ Most errors returned to the MCP client are JSON objects with a `code` field draw
 | User action | `OPERATION_CANCELLED` | A deliberate user decline / cancel / elicitation-timeout — treated as neither a fault nor retryable |
 | SKU resolution | `SKU_AMBIGUOUS` | A SKU `size`/`storage` name matched more than one active SKU; `details` carries `{ reason: 'AMBIGUOUS_SKU_NAME', size, candidates }` — disambiguate with `provider_uuid` / `sku_uuid` |
 | Deploy | `DEPLOY_READINESS_UNCONFIRMED` | The lease was created and the manifest uploaded, but readiness was never confirmed — the poll deadline expired, or the provider's status endpoint was unreachable. **NOT a reported failure**: the app may still be starting. Carries `details.readiness_unconfirmed`, `poll_reason`, `last_state`, `last_provision_status`. Diagnose before closing anything — see below |
-| Restore | `RESTORE_NOT_RETAINED`, `RESTORE_REJECTED`, `RESTORE_RETRYABLE`, `RESTORE_ORPHAN_COMPENSATION_FAILED` | `restore_app` saga outcomes: source not restorable (pre-flight, zero side effects), a terminal 4xx rejection (created lease rolled back), a 503 the agent may deliberately re-invoke (rolled back), or a compensation failure that left an orphan lease. All non-auto-retryable — restore is non-idempotent |
+| Restore | `RESTORE_NOT_RETAINED`, `RESTORE_REJECTED`, `RESTORE_RETRYABLE`, `RESTORE_ORPHAN_COMPENSATION_FAILED` | `restore_app` saga outcomes: source not restorable (pre-flight, zero side effects), a terminal 4xx rejection (created lease rolled back), a transient refusal the agent may deliberately re-invoke — 503 placement or 429 throttle — (rolled back), or a compensation failure that left an orphan lease. All non-auto-retryable — restore is non-idempotent |
+| Update | `UPDATE_INDETERMINATE` | `update_app` reached the provider and got a 5xx, which does **not** establish whether the manifest was applied. The provider persists the payload after the backend accepts it, so a persist failure can mean the update is live now and the next reprovision will revert it. Diagnose with `app_status` / `app_releases` before acting; re-invoking `update_app` re-applies and re-records. Non-auto-retryable — `update_app` is non-idempotent |
 
 ### `INVALID_CONFIG` from a transaction tool
 

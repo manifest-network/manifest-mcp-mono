@@ -5,7 +5,11 @@ import {
   ManifestMCPError,
 } from '@manifest-network/manifest-mcp-core';
 import type { FredReadCtx } from '../ctx.js';
-import { getProviderHealth, ProviderApiError } from '../http/provider.js';
+import {
+  getProviderHealth,
+  ProviderApiError,
+  type ProviderHealthResponse,
+} from '../http/provider.js';
 
 /** Maximum concurrent outgoing health check requests to provider APIs */
 const MAX_CONCURRENT_HEALTH_CHECKS = 5;
@@ -35,6 +39,44 @@ export async function mapWithConcurrency<T, R>(
   return results;
 }
 
+/** Cap on the per-check detail folded into one provider's `healthError`. A provider
+ *  with a large backend fleet can fail many probes at once, and this string is
+ *  repeated for EVERY provider in a catalog response the model then reads. */
+const MAX_REPORTED_CHECKS = 5;
+
+/**
+ * Render a non-`healthy` verdict into an actionable one-liner (ENG-522/ENG-608).
+ *
+ * Before `/health` became a liveness contract, an impaired provider answered 503, the
+ * transport threw, and the thrown `ProviderApiError` carried the entire health body in
+ * its message — so the per-check diagnosis reached the caller as a side effect. On a
+ * 200 nothing throws and `checks` is projected away, which would leave a bare
+ * `healthy: false` with no attribution at all. This puts the attribution back.
+ *
+ * Only FAILING checks are named: a passing probe is noise, and listing them all would
+ * bury the one that matters. The messages are the provider's own curated constants
+ * ("chain connectivity failed", "payload store unavailable", …) — deliberately free of
+ * host paths and command output — so they are safe to relay verbatim.
+ */
+function summarizeFailedChecks(health: ProviderHealthResponse): string {
+  const failed = Object.entries(health.checks ?? {}).filter(
+    ([, c]) => c?.status !== 'healthy',
+  );
+  if (failed.length === 0) {
+    // A verdict with no failing check named: the provider is telling us something is
+    // wrong without saying what. Report the verdict rather than inventing a cause.
+    return `Provider reports status "${health.status}"`;
+  }
+  const shown = failed
+    .slice(0, MAX_REPORTED_CHECKS)
+    .map(([name, c]) => (c?.message ? `${name} (${c.message})` : name))
+    .join(', ');
+  const omitted = failed.length - Math.min(failed.length, MAX_REPORTED_CHECKS);
+  return `Provider reports status "${health.status}"; failing checks: ${shown}${
+    omitted > 0 ? `, and ${omitted} more` : ''
+  }`;
+}
+
 export async function browseCatalog(ctx: FredReadCtx) {
   const sku = ctx.query.liftedinit.sku.v1;
 
@@ -50,6 +92,7 @@ export async function browseCatalog(ctx: FredReadCtx) {
     MAX_CONCURRENT_HEALTH_CHECKS,
     async (p) => {
       let healthy = false;
+      let healthStatus: string | undefined;
       let providerUuid: string | undefined;
       let healthError: string | undefined;
       try {
@@ -59,8 +102,15 @@ export async function browseCatalog(ctx: FredReadCtx) {
           ctx.fetch,
           ctx.allowLoopback,
         );
-        healthy = health.status === 'ok' || health.status === 'healthy';
+        healthStatus = health.status;
+        // Exact match on the one verdict that means "fully serving". Everything else
+        // — `degraded`, `unhealthy`, or a tier a future provider adds — is not usable
+        // for a deploy. Note `degraded` DOES still serve some traffic, which is why
+        // the raw verdict is reported alongside; but its chain-impaired flavour fails
+        // every lease-resolving endpoint, so `false` is the honest default here.
+        healthy = health.status === 'healthy';
         providerUuid = health.provider_uuid;
+        if (!healthy) healthError = summarizeFailedChecks(health);
       } catch (err) {
         if (
           err instanceof ManifestMCPError &&
@@ -79,6 +129,7 @@ export async function browseCatalog(ctx: FredReadCtx) {
         apiUrl: p.apiUrl,
         active: p.active,
         healthy,
+        ...(healthStatus !== undefined && { health_status: healthStatus }),
         providerUuid,
         ...(healthError && { healthError }),
       };

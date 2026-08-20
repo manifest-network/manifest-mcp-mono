@@ -20,10 +20,30 @@ import { fetchLease } from './fetchLease.js';
 import type { LifecycleCallOptions } from './lifecycle-options.js';
 import { resolveProviderUrl } from './resolveLeaseProvider.js';
 
-/** Restore-POST failures where the provider rejected BEFORE adopting anything
- *  (uncommitted) → safe to cancel the empty PENDING shell. Everything else
- *  (500 / status-0 timeout / network) is in-doubt → never auto-cancel. */
-const UNCOMMITTED_TERMINAL = new Set([400, 401, 404, 409, 422, 503]);
+/**
+ * Restore-POST statuses where the provider provably rejected BEFORE adopting
+ * anything → safe to cancel the empty PENDING shell and hand the credit back.
+ * Everything NOT listed here is in-doubt and must never be auto-cancelled.
+ *
+ * `429` earns its place the same way `401` does: Fred's `TenantRateLimiter`
+ * rejects inside `AuthMiddleware`, so the restore handler never runs.
+ *
+ * Deliberately ABSENT, and the interesting case: **502**. Fred began authoring a
+ * tenant-facing 502 in ENG-620/ENG-739 ("the provider backend returned an unusable
+ * error; the request was not applied") where it previously relayed an off-contract
+ * backend body as a 400 or 404. Fred's own 502 IS uncommitted — but a 502 is also
+ * exactly what a reverse proxy in front of Fred mints, and there the POST may have
+ * reached Fred and been adopted. Mono cannot tell the two apart from the wire, so it
+ * takes the recoverable error: an orphaned PENDING lease (surfaced with the
+ * `cancel-lease` remedy) rather than a `cancel-lease` fired at a restore that
+ * committed, which would destroy the adopted data. `restoreApp.test.ts` pins both
+ * halves of this asymmetry.
+ */
+const UNCOMMITTED_TERMINAL = new Set([400, 401, 404, 409, 422, 429, 503]);
+
+/** Uncommitted statuses whose cause is transient — the agent may deliberately
+ *  re-invoke once it clears. Everything else in the set is a stable rejection. */
+const UNCOMMITTED_RETRYABLE = new Set([429, 503]);
 
 export interface RestoreResult {
   lease_uuid: string;
@@ -303,16 +323,30 @@ async function handleRestoreFailure(
         `${cause}; cancel failed: ${cx}`,
       );
     }
-    const code =
-      status === 503
-        ? ManifestMCPErrorCode.RESTORE_RETRYABLE
-        : ManifestMCPErrorCode.RESTORE_REJECTED;
+    const code = UNCOMMITTED_RETRYABLE.has(status)
+      ? ManifestMCPErrorCode.RESTORE_RETRYABLE
+      : ManifestMCPErrorCode.RESTORE_REJECTED;
+    // A throttle is only actionable with the delay attached. The transport already
+    // parses `Retry-After` into `retryAfterMs`, so dropping it here would discard the
+    // one fact that tells the agent when re-invoking is worth attempting.
+    const retryAfterMs = ProviderApiError.isProviderApiError(err)
+      ? err.retryAfterMs
+      : undefined;
+    const waitHint =
+      retryAfterMs !== undefined
+        ? ` The provider asked us to wait ${Math.ceil(retryAfterMs / 1000)}s before retrying.`
+        : '';
     throw new ManifestMCPError(
       code,
-      `Restore rejected (HTTP ${status}); the created lease ${ids.newLeaseUuid} was rolled back (credit released). ${cause}`,
+      `Restore rejected (HTTP ${status}); the created lease ${ids.newLeaseUuid} was rolled back (credit released).${waitHint} ${cause}`,
     );
   }
-  // In-doubt (500 / status-0 timeout / network) — may have committed → do NOT cancel.
+  // In-doubt — the POST may have committed, so do NOT cancel. Reached by 5xx other
+  // than 503 (500, and the 502 Fred added in ENG-620 — see UNCOMMITTED_TERMINAL for
+  // why that one is deliberately not compensated), by a status-0 transport fault
+  // (network / timeout), and by any status Fred grows that this file has not
+  // classified. Defaulting an UNKNOWN status to in-doubt is the point: a new Fred
+  // status must cost an orphaned lease, never an erroneous cancel.
   return orphan(ids, 'in-doubt', cause);
 }
 
