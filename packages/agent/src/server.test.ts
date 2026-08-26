@@ -187,6 +187,58 @@ async function callToolWithCapture(
   }
 }
 
+/**
+ * Drive a tool call with a caller-owned signal so aborting it sends a real
+ * `notifications/cancelled` over the in-memory MCP transport.
+ */
+async function callToolWithSignal(
+  server: AgentMCPServer,
+  toolName: string,
+  toolInput: Record<string, unknown>,
+  signal: AbortSignal,
+  script: ElicitationScript,
+): Promise<unknown> {
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+  activeTransports.push(clientTransport, serverTransport);
+
+  const client = new Client(
+    { name: 'test-client', version: '1.0.0' },
+    { capabilities: { elicitation: {} } },
+  );
+  client.setRequestHandler(ElicitRequestSchema, async (req) =>
+    script.respond(req),
+  );
+
+  await server.getServer().connect(serverTransport);
+  await client.connect(clientTransport);
+
+  try {
+    return await client.callTool(
+      { name: toolName, arguments: toolInput },
+      undefined,
+      { signal },
+    );
+  } finally {
+    await client.close().catch(() => {});
+  }
+}
+
+function deferred(): { promise: Promise<void>; resolve: () => void } {
+  let resolve = (): void => {};
+  const promise = new Promise<void>((r) => {
+    resolve = r;
+  });
+  return { promise, resolve };
+}
+
+/** Let protocol notifications and the server-side handler take a few turns. */
+async function drain(ticks = 10): Promise<void> {
+  for (let i = 0; i < ticks; i++) {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+}
+
 function parseStructured<T = Record<string, unknown>>(result: {
   content: Array<{ type: string; text: string }>;
   structuredContent?: Record<string, unknown>;
@@ -2499,6 +2551,248 @@ describe('AgentMCPServer', () => {
       expect(data.kind).toBe('elicit_timeout');
       expect(data.callback).toBe('onConfirm');
       expect(data.applied_default).toBe('no');
+    });
+  });
+
+  // ENG-745: the MCP SDK gives every handler a live `extra.signal`, but the
+  // wrapper previously dropped it while building the agent-core options. That
+  // left core's already-tested pre-broadcast guard and readiness-poll abort
+  // path unreachable from an MCP host.
+  describe('MCP cancellation reaches every orchestrator (ENG-745)', () => {
+    const leaseUuid = '550e8400-e29b-41d4-a716-446655440000';
+    const deployResult: DeployResult = {
+      leaseUuid,
+      providerUuid: 'provider-uuid',
+      leaseState: 'LEASE_STATE_ACTIVE',
+      urls: ['https://app.example.com/'],
+      manifestPath: '',
+    };
+
+    it('passes the request signal through all five agent tool handlers', async () => {
+      const observed = new Map<string, AbortSignal | undefined>();
+      const server = makeServer({
+        deployApp: async (_spec, _callbacks, opts) => {
+          observed.set('deploy', opts.signal);
+          return deployResult;
+        },
+        manageDomain: async (args, _callbacks, opts) => {
+          observed.set(`domain:${args.action}`, opts.signal);
+          if (args.action === 'lookup') {
+            return {
+              action: 'lookup',
+              fqdn: args.fqdn,
+              lease: { leaseUuid },
+            };
+          }
+          return {
+            action: args.action,
+            leaseUuid: args.leaseUuid,
+            verified: true,
+            finalCustomDomain: args.action === 'set' ? args.fqdn : null,
+          };
+        },
+        troubleshootDeployment: async (_args, _callbacks, opts) => {
+          observed.set('troubleshoot', opts.signal);
+          return { markdown: '# Diagnostic' };
+        },
+        closeLease: async (_args, _callbacks, opts) => {
+          observed.set('close', opts.signal);
+          return {
+            leaseUuid,
+            finalState: 'LEASE_STATE_CLOSED',
+          };
+        },
+      });
+      const [clientTransport, serverTransport] =
+        InMemoryTransport.createLinkedPair();
+      activeTransports.push(clientTransport, serverTransport);
+      const client = new Client(
+        { name: 'test-client', version: '1.0.0' },
+        { capabilities: { elicitation: {} } },
+      );
+      await server.getServer().connect(serverTransport);
+      await client.connect(clientTransport);
+
+      try {
+        await client.callTool({
+          name: 'deploy_app_orchestrated',
+          arguments: {
+            spec: { image: 'nginx', port: 80, size: 'small' },
+          },
+        });
+        await client.callTool({
+          name: 'manage_domain_orchestrated',
+          arguments: {
+            action: 'set',
+            lease_uuid: leaseUuid,
+            fqdn: 'app.example.com',
+          },
+        });
+        await client.callTool({
+          name: 'lookup_custom_domain_orchestrated',
+          arguments: { fqdn: 'app.example.com' },
+        });
+        await client.callTool({
+          name: 'troubleshoot_deployment_orchestrated',
+          arguments: { lease_uuid: leaseUuid },
+        });
+        await client.callTool({
+          name: 'close_lease_orchestrated',
+          arguments: { lease_uuid: leaseUuid },
+        });
+      } finally {
+        await client.close();
+      }
+
+      expect([...observed.keys()]).toEqual([
+        'deploy',
+        'domain:set',
+        'domain:lookup',
+        'troubleshoot',
+        'close',
+      ]);
+      for (const signal of observed.values()) {
+        expect(signal).toBeInstanceOf(AbortSignal);
+      }
+    });
+
+    it('cancels after confirm resolves but before broadcast, so no transaction is sent', async () => {
+      const confirmed = deferred();
+      const releaseBroadcast = deferred();
+      const orchestratorSettled = deferred();
+      const broadcast = vi.fn();
+      let forwardedSignal: AbortSignal | undefined;
+
+      const fakeDeploy: AgentOrchestrators['deployApp'] = async (
+        _spec,
+        callbacks,
+        opts,
+      ) => {
+        try {
+          forwardedSignal = opts.signal;
+          const verdict = await callbacks.onConfirm?.({
+            text: 'Deploy now?',
+          });
+          expect(verdict).toBe('yes');
+          confirmed.resolve();
+
+          // Hold the exact seam under test open: the confirmation response is
+          // back at the orchestrator, but its final pre-broadcast guard has not
+          // run yet.
+          await releaseBroadcast.promise;
+          opts.signal?.throwIfAborted();
+          broadcast();
+          return deployResult;
+        } finally {
+          orchestratorSettled.resolve();
+        }
+      };
+
+      const server = makeServer({ deployApp: fakeDeploy });
+      const controller = new AbortController();
+      const request = callToolWithSignal(
+        server,
+        'deploy_app_orchestrated',
+        { spec: { image: 'nginx', port: 80, size: 'small' } },
+        controller.signal,
+        {
+          respond: () => ({
+            action: 'accept',
+            content: { verdict: 'yes' },
+          }),
+        },
+      );
+      const requestRejected = request.then(
+        () => false,
+        () => true,
+      );
+
+      await confirmed.promise;
+      controller.abort();
+      await drain(3);
+      releaseBroadcast.resolve();
+      await orchestratorSettled.promise;
+
+      expect(await requestRejected).toBe(true);
+      expect(forwardedSignal?.aborted).toBe(true);
+      expect(broadcast).not.toHaveBeenCalled();
+    });
+
+    it('aborts an in-flight readiness poll promptly on host cancellation', async () => {
+      const pollStarted = deferred();
+      const releasePoll = deferred();
+      const orchestratorSettled = deferred();
+      let pollObservedAbort = false;
+      let pollExited = false;
+      let forwardedSignal: AbortSignal | undefined;
+
+      const fakeDeploy: AgentOrchestrators['deployApp'] = async (
+        _spec,
+        callbacks,
+        opts,
+      ) => {
+        try {
+          forwardedSignal = opts.signal;
+          callbacks.onProgress?.({
+            kind: 'polling_for_readiness',
+            leaseUuid,
+            attempt: 1,
+            elapsedMs: 0,
+          });
+          pollStarted.resolve();
+
+          await new Promise<void>((resolve) => {
+            if (opts.signal?.aborted) {
+              pollObservedAbort = true;
+              resolve();
+              return;
+            }
+            opts.signal?.addEventListener(
+              'abort',
+              () => {
+                pollObservedAbort = true;
+                resolve();
+              },
+              { once: true },
+            );
+            void releasePoll.promise.then(resolve);
+          });
+          opts.signal?.throwIfAborted();
+          return deployResult;
+        } finally {
+          pollExited = true;
+          orchestratorSettled.resolve();
+        }
+      };
+
+      const server = makeServer({ deployApp: fakeDeploy });
+      const controller = new AbortController();
+      const request = callToolWithSignal(
+        server,
+        'deploy_app_orchestrated',
+        { spec: { image: 'nginx', port: 80, size: 'small' } },
+        controller.signal,
+        { respond: () => ({ action: 'accept', content: {} }) },
+      );
+      const requestRejected = request.then(
+        () => false,
+        () => true,
+      );
+
+      await pollStarted.promise;
+      controller.abort();
+      // The simulated poll has no timer and otherwise waits forever. Exiting
+      // within a few event-loop turns proves the host signal interrupts the
+      // long-running phase instead of waiting for its readiness deadline.
+      await drain();
+      const exitedPromptly = pollExited;
+      releasePoll.resolve();
+      await orchestratorSettled.promise;
+
+      expect(await requestRejected).toBe(true);
+      expect(forwardedSignal?.aborted).toBe(true);
+      expect(pollObservedAbort).toBe(true);
+      expect(exitedPromptly).toBe(true);
     });
   });
 });

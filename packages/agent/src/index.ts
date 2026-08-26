@@ -262,7 +262,9 @@ export class AgentMCPServer {
 
   // --- per-call options builders -----------------------------------
 
-  private async buildDeployOptions(): Promise<DeployAppOptions> {
+  private async buildDeployOptions(
+    signal: AbortSignal,
+  ): Promise<DeployAppOptions> {
     const [runtime, denomMap] = await Promise.all([
       this.getRuntime(),
       this.getDenomMap(),
@@ -275,21 +277,23 @@ export class AgentMCPServer {
     return {
       ...runtime,
       walletProvider: this.walletProvider,
+      signal,
       denomMap,
       ...(this.chainDataFile ? { chainDataFile: this.chainDataFile } : {}),
       ...(this.dataDir ? { dataDir: this.dataDir } : {}),
     };
   }
 
-  private async buildChainOnlyOptions(): Promise<
-    ManageDomainOptions & TroubleshootOptions & CloseLeaseOptions
-  > {
+  private async buildChainOnlyOptions(
+    signal: AbortSignal,
+  ): Promise<ManageDomainOptions & TroubleshootOptions & CloseLeaseOptions> {
     const [runtime, denomMap] = await Promise.all([
       this.getRuntime(),
       this.getDenomMap(),
     ]);
     return {
       ...runtime,
+      signal,
       denomMap,
       ...(this.chainDataFile ? { chainDataFile: this.chainDataFile } : {}),
     };
@@ -404,7 +408,7 @@ export class AgentMCPServer {
             server: this.mcpServer.server,
             extra,
           });
-          const opts = await this.buildDeployOptions();
+          const opts = await this.buildDeployOptions(extra.signal);
           // Normalize snake_case aliases from sibling fred tools
           // (browse_catalog / check_deployment_readiness emit snake_case
           // `sku_uuid` / `provider_uuid`). An LLM copying those keys into
@@ -494,7 +498,7 @@ export class AgentMCPServer {
             server: this.mcpServer.server,
             extra,
           });
-          const opts = await this.buildChainOnlyOptions();
+          const opts = await this.buildChainOnlyOptions(extra.signal);
           const mdArgs = buildManageDomainArgs(args);
           const result = await this.orchestrators.manageDomain(
             mdArgs,
@@ -550,7 +554,7 @@ export class AgentMCPServer {
             server: this.mcpServer.server,
             extra,
           });
-          const opts = await this.buildChainOnlyOptions();
+          const opts = await this.buildChainOnlyOptions(extra.signal);
           const mdArgs: ManageDomainArgs = {
             action: 'lookup',
             fqdn: args.fqdn,
@@ -601,7 +605,7 @@ export class AgentMCPServer {
             server: this.mcpServer.server,
             extra,
           });
-          const opts = await this.buildChainOnlyOptions();
+          const opts = await this.buildChainOnlyOptions(extra.signal);
           const tArgs: TroubleshootArgs = { leaseUuid: args.lease_uuid };
           const result = await this.orchestrators.troubleshootDeployment(
             tArgs,
@@ -649,7 +653,7 @@ export class AgentMCPServer {
             server: this.mcpServer.server,
             extra,
           });
-          const opts = await this.buildChainOnlyOptions();
+          const opts = await this.buildChainOnlyOptions(extra.signal);
           const cArgs: CloseLeaseArgs = { leaseUuid: args.lease_uuid };
           const result = await this.orchestrators.closeLease(
             cArgs,
