@@ -1391,13 +1391,18 @@ async function retrySetDomainAndComplete(
   callbacks: DeployAppCallbacks,
   ctx: RecoveryContext,
 ): Promise<DeployResult> {
-  const domain = customDomainOf(spec);
-  if (!domain) {
+  const requestedDomain = customDomainOf(spec);
+  if (!requestedDomain) {
     throw new ManifestMCPError(
       ManifestMCPErrorCode.INVALID_CONFIG,
       'retry_set_domain requires a customDomain in spec.',
     );
   }
+  // Use the same boundary canonicalizer as fred's deploy preflight, then
+  // carry its single branded result through broadcast, persistence, and the
+  // result projection. This keeps recovery byte-for-byte aligned with the
+  // original deploy when the caller supplied mixed DNS case.
+  const customDomain = parseFqdn(requestedDomain);
   // C6 fix (preserved from pre-E impl): pass `serviceName` for stack
   // leases so the set-item-custom-domain tx targets the named service
   // item, not the default single-item lease.
@@ -1407,7 +1412,7 @@ async function retrySetDomainAndComplete(
       { chain: opts.clientManager, logger: noopLogger },
       {
         leaseUuid: parseLeaseUuid(leaseUuid),
-        customDomain: parseFqdn(domain),
+        customDomain,
         serviceName,
       },
     );
@@ -1657,7 +1662,7 @@ async function retrySetDomainAndComplete(
     metaHash: ctx.metaHash,
     chainId: ctx.chainId,
     manifestJson: ctx.manifestJson,
-    customDomain: domain,
+    customDomain,
     customDomainService: serviceName,
     dataDir: opts.dataDir,
     callbacks,
@@ -1669,7 +1674,6 @@ async function retrySetDomainAndComplete(
   // `liveState` reads from `pollResult.state` directly (numeric
   // `LeaseState`) and `extractRunningEndpoints` walks `pollResult` itself.
   const liveState = pollResult.state;
-  let leaseStateDecoded: LeaseStateName;
   const decoded = decodeLeaseState(liveState);
   if (decoded === undefined) {
     throw new ManifestMCPError(
@@ -1677,7 +1681,7 @@ async function retrySetDomainAndComplete(
       `Unrecognized lease state from pollLeaseUntilReady response: ${String(liveState)}. Cannot safely classify; refusing to silently coerce to ACTIVE.`,
     );
   }
-  leaseStateDecoded = decoded;
+  const leaseStateDecoded: LeaseStateName = decoded;
   const endpointUrls =
     extractRunningEndpoints(pollResult).map(formatEndpointAsUrl);
   // Lease + provider identity come from the already-resolved values,
@@ -1687,7 +1691,7 @@ async function retrySetDomainAndComplete(
     providerUuid: lease.providerUuid,
     leaseState: leaseStateDecoded,
     urls: endpointUrls,
-    customDomain: domain,
+    customDomain,
     manifestPath: persistedPath ?? '',
   };
   callbacks.onProgress?.({ kind: 'success_rendered', result });

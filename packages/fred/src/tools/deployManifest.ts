@@ -1,6 +1,7 @@
 import type {
   CosmosClientManager,
   DeployResult,
+  Fqdn,
   ManifestDeploySpec,
   SkuIntent,
 } from '@manifest-network/manifest-mcp-core';
@@ -125,16 +126,19 @@ export async function deployManifest(
   const isStack = result.format === 'stack';
   const serviceNames = isStack ? getServiceNames(parsed) : [];
 
-  // customDomain / serviceName coherence (manifest-derived).
-  let normalizedCustomDomain: string | undefined;
+  // Client-verifiable customDomain syntax + serviceName coherence
+  // (manifest-derived), all before any read or credit-reserving broadcast.
+  // Reserved suffixes and current claims remain chain-authoritative: a
+  // pre-read cannot close the race before the later set-domain transaction.
+  let parsedCustomDomain: Fqdn | undefined;
   if (spec.customDomain !== undefined) {
-    normalizedCustomDomain = spec.customDomain.trim();
-    if (normalizedCustomDomain === '') {
+    if (spec.customDomain.trim() === '') {
       throw new ManifestMCPError(
         ManifestMCPErrorCode.INVALID_CONFIG,
         'customDomain cannot be empty or whitespace-only',
       );
     }
+    parsedCustomDomain = parseFqdn(spec.customDomain);
     if (isStack) {
       if (!spec.serviceName) {
         throw new ManifestMCPError(
@@ -257,16 +261,16 @@ export async function deployManifest(
   let status: FredLeaseStatus;
   try {
     signal?.throwIfAborted();
-    if (normalizedCustomDomain !== undefined) {
+    if (parsedCustomDomain !== undefined) {
       step = 'set_domain';
       await setItemCustomDomain(
         { chain: ctx.chain, logger: ctx.logger },
-        // leaseUuid is already a branded LeaseUuid (extractLeaseUuid → asLeaseUuid);
-        // do NOT re-parse (parse-once, ENG-258). normalizedCustomDomain is trim-only
-        // (genuinely unbranded), so parseFqdn brands + validates it here.
+        // Both boundary values are already branded: extractLeaseUuid brands the
+        // lease and preflight parseFqdn brands the domain. Do NOT re-parse
+        // either one (parse-once, ENG-258).
         {
           leaseUuid,
-          customDomain: parseFqdn(normalizedCustomDomain),
+          customDomain: parsedCustomDomain,
           serviceName: spec.serviceName,
         },
         overrides,
@@ -454,10 +458,10 @@ export async function deployManifest(
     ...(connectionError && { connectionError }),
     // Reaching this return implies the set-domain tx (if requested)
     // succeeded — failures earlier in the try block throw and never
-    // get here. Echo the trimmed canonical form, matching what the
-    // chain stored.
-    ...(normalizedCustomDomain && { custom_domain: normalizedCustomDomain }),
-    ...(normalizedCustomDomain &&
-      spec.serviceName && { service_name: spec.serviceName }),
+    // get here. Echo the same branded canonical value sent to the chain.
+    ...(parsedCustomDomain !== undefined && {
+      custom_domain: parsedCustomDomain,
+      ...(spec.serviceName && { service_name: spec.serviceName }),
+    }),
   };
 }

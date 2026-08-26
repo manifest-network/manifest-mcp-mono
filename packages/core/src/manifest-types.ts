@@ -286,7 +286,7 @@ export interface DeployResult {
   readonly url?: string;
   readonly connection?: ConnectionDetails;
   readonly connectionError?: string;
-  /** Set when a `customDomain` was supplied AND the set-domain tx succeeded. */
+  /** Canonical trimmed, lowercase FQDN; set when `customDomain` was supplied and the set-domain tx succeeded. */
   readonly custom_domain?: string;
   /** Set when a `serviceName` was supplied alongside a successful `customDomain` set. */
   readonly service_name?: string;

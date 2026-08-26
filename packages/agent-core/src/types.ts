@@ -280,6 +280,7 @@ export interface DeployResult {
   providerUuid: string;
   leaseState: LeaseStateName;
   urls: string[];
+  /** Canonical trimmed, lowercase FQDN when the deployment set a custom domain. */
   customDomain?: string;
   manifestPath: string;
 }

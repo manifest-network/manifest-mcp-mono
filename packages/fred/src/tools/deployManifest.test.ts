@@ -35,6 +35,8 @@ vi.mock('@manifest-network/manifest-mcp-core', async (importOriginal) => {
 
 import * as coreModule from '@manifest-network/manifest-mcp-core';
 import {
+  asFqdn,
+  asLeaseUuid,
   asProviderUuid,
   asSkuUuid,
   cosmosTx,
@@ -42,6 +44,7 @@ import {
   logger,
   ManifestMCPErrorCode,
   noopLogger,
+  setItemCustomDomain,
 } from '@manifest-network/manifest-mcp-core';
 import { sealedFetchProbe } from '@manifest-network/manifest-mcp-core/__test-utils__/fetch-probe.js';
 import {
@@ -187,6 +190,7 @@ describe('core broadcast-surface mock coverage (ENG-713)', () => {
 });
 
 const mockCosmosTx = vi.mocked(cosmosTx);
+const mockSetItemCustomDomain = vi.mocked(setItemCustomDomain);
 const getAuthToken = vi.fn(
   async (_address: string, _leaseUuid: string) => 'auth',
 );
@@ -279,6 +283,14 @@ describe('deployManifest', () => {
     // would otherwise leak into every later one (the same trap the cosmosTx line below names).
     getAuthToken.mockResolvedValue('auth');
     getLeaseDataAuthToken.mockResolvedValue('lease-data');
+    mockSetItemCustomDomain.mockResolvedValue({
+      lease_uuid: asLeaseUuid('550e8400-e29b-41d4-a716-446655440000'),
+      service_name: 'web',
+      custom_domain: asFqdn('app.example.com'),
+      transactionHash: 'TX2',
+      code: 0,
+      confirmed: true,
+    });
   });
 
   it('deploys a single-service manifest and uploads the ORIGINAL bytes', async () => {
@@ -465,6 +477,92 @@ describe('deployManifest', () => {
       ),
     ).rejects.toMatchObject({ code: 'INVALID_CONFIG' });
     expect(mockCosmosTx).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    {
+      label: 'scheme-prefixed domain',
+      customDomain: 'https://app.example.com',
+      message: /must not include a scheme/,
+    },
+    {
+      label: 'invalid FQDN',
+      customDomain: 'not a domain',
+      message: /is not a valid FQDN/,
+    },
+  ])(
+    'raw stack manifest rejects a $label before any chain read or side effect',
+    async ({ customDomain, message }) => {
+      const cm = makeMockClientManager({
+        queryClient: makeQueryClient(),
+        address: 'manifest1tenant',
+      });
+      const manifest = JSON.stringify({
+        services: { web: { image: 'nginx' } },
+      });
+
+      await expect(
+        deployManifest(
+          await ctx(cm),
+          {
+            manifest,
+            sku: { kind: 'byName', size: 'docker-micro' },
+            customDomain,
+            serviceName: 'web',
+          },
+          {},
+        ),
+      ).rejects.toMatchObject({
+        code: ManifestMCPErrorCode.INVALID_ARGUMENT,
+        message: expect.stringMatching(message),
+      });
+
+      expect(cm.getAddress).not.toHaveBeenCalled();
+      expect(cm.acquireRateLimit).not.toHaveBeenCalled();
+      expect(mockCosmosTx).not.toHaveBeenCalled();
+      expect(mockSetItemCustomDomain).not.toHaveBeenCalled();
+      expect(getAuthToken).not.toHaveBeenCalled();
+      expect(getLeaseDataAuthToken).not.toHaveBeenCalled();
+      expect(wire.calls).toEqual([]);
+    },
+  );
+
+  it('raw stack manifest reuses the canonical domain for set-domain and result output', async () => {
+    const cm = makeMockClientManager({
+      queryClient: makeQueryClient(),
+      address: 'manifest1tenant',
+    });
+    const manifest = JSON.stringify({
+      services: { web: { image: 'nginx' } },
+    });
+
+    const result = await deployManifest(
+      await ctx(cm),
+      {
+        manifest,
+        sku: { kind: 'byName', size: 'docker-micro' },
+        customDomain: '  App.Example.COM  ',
+        serviceName: 'web',
+      },
+      {},
+    );
+
+    expect(mockSetItemCustomDomain).toHaveBeenCalledWith(
+      expect.objectContaining({
+        chain: cm,
+        logger: expect.anything(),
+      }),
+      {
+        leaseUuid: '550e8400-e29b-41d4-a716-446655440000',
+        customDomain: 'app.example.com',
+        serviceName: 'web',
+      },
+      undefined,
+    );
+    expect(result).toMatchObject({
+      custom_domain: 'app.example.com',
+      service_name: 'web',
+    });
   });
 
   it('partial failure carries details.partial + failedStep + lease_uuid', async () => {
