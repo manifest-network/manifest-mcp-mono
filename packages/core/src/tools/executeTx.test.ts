@@ -112,6 +112,57 @@ describe('executeTx', () => {
     );
   });
 
+  it('rejects an explicit fee above config.maxGas before signing', async () => {
+    const signAndBroadcast = vi.fn().mockResolvedValue(okResult());
+    const simulate = vi.fn().mockResolvedValue(100_000);
+    const chain = makeMockClientManager({
+      config: makeMockConfig({ maxGas: 50_000_000 }),
+    });
+    chain.getSigningClient = vi
+      .fn()
+      .mockResolvedValue({ signAndBroadcast, simulate });
+
+    await expect(
+      executeTx(makeTxCtx({ chain }), msgs, {
+        fee: {
+          amount: [{ denom: 'umfx', amount: '1' }],
+          gas: '999999999999',
+        },
+      }),
+    ).rejects.toMatchObject({
+      code: ManifestMCPErrorCode.GAS_LIMIT_EXCEEDED,
+    });
+
+    expect(chain.getBroadcastClient).not.toHaveBeenCalled();
+    expect(signAndBroadcast).not.toHaveBeenCalled();
+    expect(simulate).not.toHaveBeenCalled();
+  });
+
+  it('allows an explicit fee above the default ceiling when maxGas is -1', async () => {
+    const signAndBroadcast = vi.fn().mockResolvedValue(okResult());
+    const simulate = vi.fn().mockResolvedValue(100_000);
+    const chain = makeMockClientManager({
+      config: makeMockConfig({ maxGas: -1 }),
+    });
+    chain.getSigningClient = vi
+      .fn()
+      .mockResolvedValue({ signAndBroadcast, simulate });
+    const fee = {
+      amount: [{ denom: 'umfx', amount: '1' }],
+      gas: '999999999999',
+    };
+
+    await executeTx(makeTxCtx({ chain }), msgs, { fee });
+
+    expect(simulate).not.toHaveBeenCalled();
+    expect(signAndBroadcast).toHaveBeenCalledWith(
+      expect.any(String),
+      msgs,
+      fee,
+      '',
+    );
+  });
+
   it('drives the simulate path when opts.gasMultiplier is set', async () => {
     const signAndBroadcast = vi.fn().mockResolvedValue(okResult());
     const simulate = vi.fn().mockResolvedValue(100_000);

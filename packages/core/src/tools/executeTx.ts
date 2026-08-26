@@ -5,6 +5,7 @@ import { withTxConfirmation } from '../internals/tx-confirmation.js';
 import type { TxCallOptions } from '../options.js';
 import { withRetry } from '../retry.js';
 import {
+  assertExplicitFeeWithinCeiling,
   buildExecuteSyncTxResult,
   buildExecuteTxResult,
   buildGasFee,
@@ -40,6 +41,15 @@ export async function executeTx(
       'passing both fee and gasMultiplier is a caller error; fee wins (it skips simulation), gasMultiplier applies only on the simulate path',
     );
   }
+  // ENG-744: an explicit fee skips buildGasFee, where the simulated-fee path
+  // enforces maxGas. Apply the shared guard before resolving the signer or
+  // broadcast client, using the same default and -1 disable semantics as cosmosTx.
+  if (opts?.fee !== undefined) {
+    assertExplicitFeeWithinCeiling(
+      opts.fee,
+      ctx.chain.getConfig().maxGas ?? DEFAULT_MAX_GAS,
+    );
+  }
   // Validate an explicit gasMultiplier override eagerly (unchanged semantics).
   if (opts?.gasMultiplier !== undefined) {
     if (!Number.isFinite(opts.gasMultiplier) || opts.gasMultiplier < 1) {
@@ -52,8 +62,9 @@ export async function executeTx(
 
   // Always resolve gas options on the non-explicit-fee path so the maxGas ceiling
   // (ENG-556) covers executeTx's default call, not only when a gasMultiplier override
-  // is supplied. Skipped when opts.fee wins. Undefined gasPrice -> 'auto' -> downstream
-  // INVALID_CONFIG at broadcast time, exactly as before.
+  // is supplied. TxOptions are skipped when opts.fee wins because its ceiling was
+  // checked above. Undefined gasPrice -> 'auto' -> downstream INVALID_CONFIG at
+  // broadcast time, exactly as before.
   let txOptions: TxOptions | undefined;
   if (opts?.fee === undefined) {
     const config = ctx.chain.getConfig();
