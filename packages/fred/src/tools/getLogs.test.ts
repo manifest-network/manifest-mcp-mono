@@ -43,7 +43,7 @@ function makeCtx(state = LeaseState.LEASE_STATE_ACTIVE): FredAuthCtx {
 }
 
 /** Script `/logs` with a body; one probe per test (`calls` survives `vi.clearAllMocks`). */
-function routeLogs(logs: Record<string, string>): void {
+function routeLogs(logs: unknown): void {
   wire = sealedFetchProbe({
     '/logs': {
       json: {
@@ -85,7 +85,8 @@ describe('getAppLogs', () => {
     });
 
     expect(result.truncated).toBe(true);
-    expect(result.logs.web.length).toBe(4000);
+    // The provider-controlled service name consumes the same 4,000-character budget.
+    expect(result.logs.web.length).toBe(4000 - 'web'.length);
   });
 
   it('skips services when total chars exceeded', async () => {
@@ -99,6 +100,77 @@ describe('getAppLogs', () => {
     expect(result.truncated).toBe(true);
     expect(result.logs.web).toBeDefined();
     expect(result.logs.worker).toBeUndefined();
+  });
+
+  it('drops non-string entries at the transport seam before they can poison the budget', async () => {
+    routeLogs({ broken: 1, web: 'x'.repeat(10_000) });
+
+    const result = await getAppLogs(makeCtx(), {
+      address: 'manifest1abc',
+      leaseUuid: LEASE_UUID,
+    });
+
+    expect(result.logs.broken).toBeUndefined();
+    expect(result.logs.web).toHaveLength(4000 - 'web'.length);
+    expect(result.truncated).toBe(true);
+    expect(
+      Object.entries(result.logs).reduce(
+        (sum, [service, log]) => sum + service.length + log.length,
+        0,
+      ),
+    ).toBeLessThanOrEqual(4000);
+  });
+
+  it.each([
+    ['null', null],
+    ['missing', undefined],
+  ])(
+    'normalizes a %s logs map to a clean empty result',
+    async (_label, logs) => {
+      routeLogs(logs);
+
+      const result = await getAppLogs(makeCtx(), {
+        address: 'manifest1abc',
+        leaseUuid: LEASE_UUID,
+      });
+
+      expect(result.logs).toEqual({});
+      expect(result.truncated).toBe(false);
+    },
+  );
+
+  it('counts service-name keys and skips an over-budget key without hiding later logs', async () => {
+    const hugeService = 's'.repeat(4001);
+    routeLogs({ [hugeService]: '', web: 'ready' });
+
+    const result = await getAppLogs(makeCtx(), {
+      address: 'manifest1abc',
+      leaseUuid: LEASE_UUID,
+    });
+
+    expect(result.logs[hugeService]).toBeUndefined();
+    expect(result.logs.web).toBe('ready');
+    expect(result.truncated).toBe(true);
+  });
+
+  it('treats __proto__ as a service name without invoking the legacy prototype setter', async () => {
+    routeLogs(
+      Object.fromEntries([
+        ['__proto__', 'safe'],
+        ['web', 'ready'],
+      ]),
+    );
+
+    const result = await getAppLogs(makeCtx(), {
+      address: 'manifest1abc',
+      leaseUuid: LEASE_UUID,
+    });
+
+    expect(
+      Object.getOwnPropertyDescriptor(result.logs, '__proto__')?.value,
+    ).toBe('safe');
+    expect(result.logs.web).toBe('ready');
+    expect(result.truncated).toBe(false);
   });
 
   it('throws when lease is not active', async () => {

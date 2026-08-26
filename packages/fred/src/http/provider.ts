@@ -3,6 +3,11 @@ import {
   isBlocked,
   isIpLiteral,
 } from '@manifest-network/manifest-mcp-core/ssrf';
+import { type output, safeParse, type ZodType } from 'zod';
+import {
+  LeaseConnectionResponseSchema,
+  ProviderHealthResponseSchema,
+} from './response-schemas.js';
 import { hasInjectedFetch, warnUnguardedOnce } from './unguarded-warning.js';
 
 /** Global-registry brand so `isProviderApiError` survives duplicate physical copies of this
@@ -13,10 +18,10 @@ const PROVIDER_API_ERROR_BRAND = Symbol.for(
 );
 
 /**
- * What kind of fault produced a `ProviderApiError`. Exists because `status` is
- * `0` for every non-HTTP failure — invalid URL, SSRF reject, connect error,
- * timeout, body-cap breach, malformed JSON, poll outcome — so `status` alone
- * cannot tell a retryable blip from a permanent rejection (ENG-661).
+ * What kind of fault produced a `ProviderApiError`. Transport failures commonly
+ * use `status = 0`, while body parse/schema failures preserve the response's HTTP
+ * status (including a 2xx). Status alone therefore cannot distinguish a retryable
+ * blip from a permanent rejection (ENG-661/ENG-754).
  *
  * OPTIONAL by design: an error constructed without one (a third-party or older
  * call site) is treated as unclassified, and `isTransientProviderError` falls
@@ -29,6 +34,8 @@ export type ProviderErrorKind =
   | 'timeout'
   | 'invalid_url'
   | 'invalid_json'
+  /** Syntactically valid JSON whose runtime shape violates the endpoint contract. */
+  | 'invalid_response'
   | 'body_cap'
   /** The readiness poll gave up without an answer (deadline / provider unreachable). */
   | 'poll'
@@ -187,12 +194,14 @@ export function parseRetryAfterMs(
  * fails its `/\b(?:http|status)\s*5\d{2}\b/` sniff while a 429 matches only by
  * the accident of Fred echoing the status into the JSON body.
  *
- * Two rows are non-obvious. `invalid_json` IS transient: a truncated body or an
- * intermediary's HTML error page is a classic blip. `body_cap` is NOT: a
- * provider streaming past the 10 MiB ceiling will do it again, and re-reading
- * burns bandwidth. Anything that is not a `ProviderApiError` (a `TypeError`
- * from a bug, say) is never tolerated — swallowing it for N iterations and then
- * blaming the provider is a debugging trap.
+ * Three rows are non-obvious. `invalid_json` IS transient: a truncated body or an
+ * intermediary's HTML error page is a classic blip. `invalid_response` is NOT:
+ * valid JSON with an off-contract shape is a stable provider/version fault, and
+ * retrying the same endpoint only repeats it. `body_cap` is also NOT: a provider
+ * streaming past the 10 MiB ceiling will do it again, and re-reading burns
+ * bandwidth. Anything that is not a `ProviderApiError` (a `TypeError` from a bug,
+ * say) is never tolerated — swallowing it for N iterations and then blaming the
+ * provider is a debugging trap.
  */
 export function isTransientProviderError(err: unknown): boolean {
   if (!ProviderApiError.isProviderApiError(err)) return false;
@@ -202,6 +211,7 @@ export function isTransientProviderError(err: unknown): boolean {
     case 'invalid_json':
       return true;
     case 'invalid_url':
+    case 'invalid_response':
     case 'body_cap':
     case 'poll':
     case 'poll_verdict':
@@ -721,18 +731,50 @@ function classifyTransportError(
 }
 
 /**
- * `checkedFetch` + `parseJsonResponse` under ONE deadline, so `timeoutMs` is a budget
- * for the whole call rather than for each phase separately. This is the right entry
- * point for every provider read; raw `checkedFetch` hands back a `Response` whose body
- * the caller must bound itself.
+ * `checkedFetch` + bounded body parsing under ONE deadline, so `timeoutMs` is a budget for the
+ * whole call rather than for each phase separately. Passing schema-aware options validates the
+ * parsed value before it leaves this transport seam. The legacy positional overload remains for
+ * compatibility; built-in provider calls all use the schema form.
  */
-export async function fetchJsonChecked<T>(
+export interface FetchJsonCheckedOptions<TSchema extends ZodType> {
+  readonly schema: TSchema;
+  readonly timeoutMs?: number;
+  readonly fetchFn?: typeof globalThis.fetch;
+  readonly maxBytes?: number;
+}
+
+export function fetchJsonChecked<TSchema extends ZodType>(
+  url: string,
+  init: RequestInit | undefined,
+  options: FetchJsonCheckedOptions<TSchema>,
+): Promise<output<TSchema>>;
+/** Compatibility overload for callers that own their response validation. */
+export function fetchJsonChecked<T>(
   url: string,
   init?: RequestInit,
-  timeoutMs: number = DEFAULT_FETCH_TIMEOUT_MS,
+  timeoutMs?: number,
   fetchFn?: typeof globalThis.fetch,
-  maxBytes: number = MAX_RESPONSE_BYTES,
-): Promise<T> {
+  maxBytes?: number,
+): Promise<T>;
+export async function fetchJsonChecked(
+  url: string,
+  init?: RequestInit,
+  timeoutOrOptions?: number | FetchJsonCheckedOptions<ZodType>,
+  legacyFetchFn?: typeof globalThis.fetch,
+  legacyMaxBytes?: number,
+): Promise<unknown> {
+  const options =
+    typeof timeoutOrOptions === 'object' && timeoutOrOptions !== null
+      ? timeoutOrOptions
+      : undefined;
+  const timeoutMs =
+    options?.timeoutMs ??
+    (typeof timeoutOrOptions === 'number'
+      ? timeoutOrOptions
+      : DEFAULT_FETCH_TIMEOUT_MS);
+  const fetchFn = options?.fetchFn ?? legacyFetchFn;
+  const maxBytes = options?.maxBytes ?? legacyMaxBytes ?? MAX_RESPONSE_BYTES;
+  const schema = options?.schema;
   warnUnguardedOnce(hasInjectedFetch(fetchFn));
   const doFetch = fetchFn ?? globalThis.fetch;
   const deadline = armDeadline(timeoutMs, init?.signal ?? undefined);
@@ -751,7 +793,7 @@ export async function fetchJsonChecked<T>(
     });
     // `res.status`, NOT 0: restoreApp distinguishes "restore COMMITTED but the 202
     // body was empty" from a real failure by branching on a 2xx status here.
-    return parseJsonText<T>(text, res.status, url);
+    return parseJsonText(text, res.status, url, schema);
   } finally {
     deadline.dispose();
   }
@@ -773,9 +815,15 @@ function classifyBodyError(
   return err;
 }
 
-function parseJsonText<T>(text: string, status: number, url: string): T {
+function parseJsonText<T>(
+  text: string,
+  status: number,
+  url: string,
+  schema?: ZodType<T>,
+): T {
+  let parsed: unknown;
   try {
-    return JSON.parse(text) as T;
+    parsed = JSON.parse(text) as unknown;
   } catch (parseErr) {
     const reason =
       parseErr instanceof Error ? parseErr.message : 'parse failed';
@@ -785,6 +833,27 @@ function parseJsonText<T>(text: string, status: number, url: string): T {
       { kind: 'invalid_json', cause: parseErr },
     );
   }
+
+  if (schema === undefined) return parsed as T;
+
+  const result = safeParse(schema, parsed);
+  if (result.success) return result.data;
+
+  const shown = result.error.issues.slice(0, 3).map((issue) => {
+    const rawPath =
+      issue.path.length === 0
+        ? '(root)'
+        : issue.path.map((part) => String(part)).join('.');
+    const path = capProviderText(rawPath, 128);
+    return `${path}: ${capProviderText(issue.message, 256)}`;
+  });
+  const omitted = result.error.issues.length - shown.length;
+  const details = `${shown.join('; ')}${omitted > 0 ? `; and ${omitted} more issue${omitted === 1 ? '' : 's'}` : ''}`;
+  throw new ProviderApiError(
+    status,
+    `Invalid response shape from ${url}: ${details}`,
+    { kind: 'invalid_response', cause: result.error },
+  );
 }
 
 export async function parseJsonResponse<T>(
@@ -841,12 +910,11 @@ export async function getProviderHealth(
 ): Promise<ProviderHealthResponse> {
   const validated = validateProviderUrl(providerApiUrl, { allowLoopback });
   const url = `${validated}/health`;
-  return await fetchJsonChecked<ProviderHealthResponse>(
-    url,
-    undefined,
+  return await fetchJsonChecked(url, undefined, {
+    schema: ProviderHealthResponseSchema,
     timeoutMs,
     fetchFn,
-  );
+  });
 }
 
 import type {
@@ -872,11 +940,10 @@ export async function getLeaseConnectionInfo(
 ): Promise<LeaseConnectionResponse> {
   const validated = validateProviderUrl(providerApiUrl, { allowLoopback });
   const url = `${validated}/v1/leases/${encodeURIComponent(leaseUuid)}/connection`;
-  return await fetchJsonChecked<LeaseConnectionResponse>(
+  return await fetchJsonChecked(
     url,
     { headers: { Authorization: `Bearer ${authToken}` } },
-    undefined,
-    fetchFn,
+    { schema: LeaseConnectionResponseSchema, fetchFn },
   );
 }
 

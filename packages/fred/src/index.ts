@@ -81,6 +81,7 @@ export {
   type ConnectionDetails,
   checkedFetch,
   DEFAULT_FETCH_TIMEOUT_MS,
+  type FetchJsonCheckedOptions,
   fetchJsonChecked,
   getLeaseConnectionInfo,
   getProviderHealth,

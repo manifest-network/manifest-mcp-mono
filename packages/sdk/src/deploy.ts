@@ -51,6 +51,7 @@ export {
   deployManifest,
   deriveAppNameFromImage,
   describeFredFailure,
+  type FetchJsonCheckedOptions,
   FRED_FAILURE_REASONS,
   FRED_REASON_GUIDANCE,
   type FredActionResponse,

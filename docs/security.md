@@ -133,12 +133,13 @@ Residual risk on an unguarded path: a provider `apiUrl` that is a *hostname* res
 
 ## Transport bounds (provider HTTP)
 
-Provider `apiUrl`s come from on-chain SKU records, so the same attacker-influenced boundary that motivates the SSRF layers also means a provider controls how much it sends and how slowly. Two bounds apply, and **they have different scopes**:
+Provider `apiUrl`s come from on-chain SKU records, so the same attacker-influenced boundary that motivates the SSRF layers also means a provider controls how much it sends, how slowly, and in what runtime shape. Three controls apply, and **they have different scopes**:
 
 - **Bytes — body only.** `MAX_RESPONSE_BYTES` (10 MiB), enforced by `readBodyCapped`: it streams the body and aborts the moment the running total exceeds the cap, so an oversized body never fully materializes. A declared `Content-Length` over the cap is rejected before a single chunk is read. Response *headers* are not byte-capped here — that is the HTTP client's own limit.
 - **Time — the whole call.** `DEFAULT_FETCH_TIMEOUT_MS` (30s), covering the header phase **and** the body phase. The byte cap alone bounds memory, not time: a provider that returns headers promptly and then trickles one byte at a time stays forever under 10 MiB, so before ENG-662 it could pin a tool call open indefinitely — the timeout and the caller's `AbortSignal` were both torn down before the body was read. An inactivity/stall deadline is deliberately **not** used: any trickle above zero defeats it. Only a total budget bounds a hostile trickle.
+- **Shape — parsed JSON.** Every built-in Fred/provider endpoint passes a Zod schema to `fetchJsonChecked`. Required fields consumed by client logic fail closed as `ProviderApiError { kind: 'invalid_response' }`; known optional fields use endpoint-specific validate-or-drop normalization; loose objects preserve unknown fields for forward-compatible provider upgrades. `invalid_response` preserves the response's HTTP status but is non-retryable, because repeating a stable contract violation cannot repair it.
 
-**These bounds apply to reads that go through `fetchJsonChecked` / `readBodyCapped` / `parseJsonResponse` — not to a `Response` object as such.** `fetchJsonChecked()` is the entry point that spends one budget across both phases, and is what every provider read in this repo uses.
+**The byte/time bounds apply to reads that go through `fetchJsonChecked` / `readBodyCapped` / `parseJsonResponse` — not to a `Response` object as such.** `fetchJsonChecked()` is the entry point that spends one budget across both phases, and its schema-aware overload is what every built-in provider JSON read uses. The compatibility overload parses and bounds JSON but deliberately leaves shape validation to its caller.
 
 Raw `checkedFetch()` is the transport half: it returns a `Response` **before** the body is read, and disposes its deadline on the way out. Reading that body with `readBodyCapped` / `parseJsonResponse` re-arms a fresh 30s deadline; calling `res.text()` or `res.json()` on it **directly is unbounded in both time and bytes**. If you are calling the raw HTTP surface, prefer `fetchJsonChecked`.
 
@@ -169,9 +170,11 @@ Redaction bounds *what* reaches model context; these bound *how much*. `sanitize
 - **Provider error text — 4096 code points**, applied in the `ProviderApiError` constructor so the bound is total across every construction site, both subclasses, and the sinks that embed a message in composed prose or in a *success* response (`browse_catalog` reports a per-provider `healthError`).
 - **Nested provider text in composed prose — 256**, so a long inner error cannot push the surrounding guidance past the outer cap and delete it.
 - **Any error message mono did not author — 2000 code points**, applied in `withErrorHandling` on its way into the tool response. First-party `ManifestMCPError` messages are deliberately **exempt**: they are curated recovery guidance whose length is a reviewed design choice. stderr keeps the full, uncapped message either way — it is not model context.
+- **`get_logs` — 4000 characters across service names and retained log values.** Non-string entries are dropped at the schema seam, null/missing maps normalize to empty, and a service name too large to fit is omitted rather than truncated into a misleading/colliding name.
+- **Provider status — 16,000 serialized characters** for the `fredStatus` / `status` object copied into `app_status` and `wait_for_app_ready`. Operational fields are retained first; `fredStatusTruncated` / `status_truncated` reports when any field was omitted. The raw library functions still return the complete validated object.
 - **`app_releases`** omits the base64 deployment manifest Fred sends on every release (reporting only `manifest_bytes`) and returns the 20 most recent releases, with `release_count` and `truncated`. Release history has no pagination on either side and Fred prunes by age rather than count, so both the blob and the count were unbounded.
 
-These are **AI-context** caps, distinct from the transport bounds above. The raw values survive on the library path: `getLeaseReleases` still returns the manifest, since a consumer reading back what was deployed has no context window to exhaust.
+These are **AI-context** caps, distinct from the transport bounds above. Raw values survive on the library path: `getLeaseReleases` still returns the manifest and `appStatus` / `waitForAppReady` retain their complete status objects, since a library consumer has no model context window to exhaust.
 
 ## What the agent should not be trusted with
 

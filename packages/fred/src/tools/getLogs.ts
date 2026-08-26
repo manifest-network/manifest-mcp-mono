@@ -31,7 +31,7 @@ export async function getAppLogs(
   );
 
   let truncated = false;
-  const logs: Record<string, string> = {};
+  const logEntries: Array<[service: string, log: string]> = [];
   let totalChars = 0;
 
   for (const [service, log] of Object.entries(result.logs)) {
@@ -39,19 +39,35 @@ export async function getAppLogs(
       truncated = true;
       break;
     }
+
+    // Service names are provider-controlled JSON keys and consume model context just like their
+    // values. Never truncate a key: doing so can collide two services or attribute one service's
+    // logs to another. Skip an over-budget entry and continue so a hostile first key cannot hide
+    // every smaller, useful sibling.
     const remaining = MAX_LOG_CHARS - totalChars;
-    if (log.length > remaining) {
-      logs[service] = log.slice(-remaining);
+    if (service.length > remaining) {
       truncated = true;
-    } else {
-      logs[service] = log;
+      continue;
     }
-    totalChars += logs[service].length;
+
+    const valueBudget = remaining - service.length;
+    const keptLog =
+      log.length > valueBudget
+        ? valueBudget > 0
+          ? log.slice(-valueBudget)
+          : ''
+        : log;
+    if (keptLog.length < log.length) truncated = true;
+
+    logEntries.push([service, keptLog]);
+    totalChars += service.length + keptLog.length;
   }
 
   return {
     lease_uuid: leaseUuid,
-    logs,
+    // Object.fromEntries defines `__proto__` as an own data property. Assignment into `{}` would
+    // invoke Object.prototype's legacy setter, lose the entry, and poison the length arithmetic.
+    logs: Object.fromEntries(logEntries),
     truncated,
   };
 }

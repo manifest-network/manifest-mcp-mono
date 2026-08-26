@@ -34,7 +34,7 @@ describe('sanitizeReleaseFields (ENG-669)', () => {
   it.each([
     ['null (a nil Go []byte)', null],
     ['absent', undefined],
-    ['a non-string (provider JSON is type-asserted, never validated)', 42],
+    ['a non-string supplied directly to the public projector', 42],
     ['empty', ''],
   ])('omits manifest_bytes when the manifest is %s', (_label, manifest) => {
     const out = sanitizeReleaseFields(release({ manifest }));
@@ -130,7 +130,7 @@ describe('projectReleases (ENG-669)', () => {
     expect(out.truncated).toBe(false);
   });
 
-  it('does not re-sort by version, which is type-asserted off the wire', () => {
+  it('does not re-sort directly supplied releases by version', () => {
     const out = projectReleases([
       release({ version: 9 }),
       release({ version: 'not-a-number' }),

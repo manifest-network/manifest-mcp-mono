@@ -38,6 +38,7 @@ import { deployApp } from '../tools/deployApp.js';
 import { fetchActiveLease } from '../tools/fetchActiveLease.js';
 import { fetchLease } from '../tools/fetchLease.js';
 import { getAppLogs } from '../tools/getLogs.js';
+import { projectLeaseStatus } from '../tools/projectLeaseStatus.js';
 import { resolveProviderUrl } from '../tools/resolveLeaseProvider.js';
 import { restartApp } from '../tools/restartApp.js';
 import { restoreApp } from '../tools/restoreApp.js';
@@ -182,6 +183,12 @@ export function registerTools(deps: RegisterToolsDeps): void {
             restore_hint: z.string().optional(),
           })
           .optional(),
+        fredStatusTruncated: z
+          .boolean()
+          .optional()
+          .describe(
+            'Whether provider status fields were omitted to enforce the model-context budget',
+          ),
         providerError: z.string().optional(),
         connectionError: z.string().optional(),
       },
@@ -197,7 +204,18 @@ export function registerTools(deps: RegisterToolsDeps): void {
       await clientManager.acquireRateLimit();
       const ctx = await buildCtx();
       const result = await appStatus(ctx, { address, leaseUuid });
-      return structuredResponse(result, bigIntReplacer);
+      if (result.fredStatus === undefined) {
+        return structuredResponse(result, bigIntReplacer);
+      }
+      const projected = projectLeaseStatus(result.fredStatus);
+      return structuredResponse(
+        {
+          ...result,
+          fredStatus: projected.status,
+          fredStatusTruncated: projected.truncated,
+        },
+        bigIntReplacer,
+      );
     }),
   );
 
@@ -243,7 +261,12 @@ export function registerTools(deps: RegisterToolsDeps): void {
         status: z
           .looseObject({})
           .describe(
-            'Raw provider status payload (instances, endpoints, services, etc.)',
+            'Validated, size-bounded provider status payload (instances, endpoints, services, etc.)',
+          ),
+        status_truncated: z
+          .boolean()
+          .describe(
+            'Whether provider status fields were omitted to enforce the model-context budget',
           ),
       },
       annotations: readOnlyAnnotations('Wait for deployed app readiness'),
@@ -282,7 +305,15 @@ export function registerTools(deps: RegisterToolsDeps): void {
             : undefined,
         },
       );
-      return structuredResponse(result, bigIntReplacer);
+      const projected = projectLeaseStatus(result.status);
+      return structuredResponse(
+        {
+          ...result,
+          status: projected.status,
+          status_truncated: projected.truncated,
+        },
+        bigIntReplacer,
+      );
     }),
   );
 

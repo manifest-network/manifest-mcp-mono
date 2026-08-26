@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { z } from 'zod';
 import {
   checkedFetch,
   DEFAULT_FETCH_TIMEOUT_MS,
@@ -355,6 +356,42 @@ describe('parseJsonResponse', () => {
   });
 });
 
+describe('fetchJsonChecked schema validation', () => {
+  const StatusSchema = z.looseObject({ status: z.string() });
+
+  it('returns schema-validated data and preserves forward-compatible fields', async () => {
+    const mockFetch = vi.fn(async () =>
+      Response.json({ status: 'ok', future: { enabled: true } }),
+    );
+
+    const result = await fetchJsonChecked(
+      'https://p.example/status',
+      undefined,
+      {
+        schema: StatusSchema,
+        fetchFn: mockFetch as unknown as typeof globalThis.fetch,
+      },
+    );
+
+    expect(result).toEqual({ status: 'ok', future: { enabled: true } });
+  });
+
+  it('classifies valid JSON with the wrong shape and preserves the HTTP status', async () => {
+    const mockFetch = vi.fn(async () =>
+      Response.json({ status: 42 }, { status: 202 }),
+    );
+
+    const err = await fetchJsonChecked('https://p.example/status', undefined, {
+      schema: StatusSchema,
+      fetchFn: mockFetch as unknown as typeof globalThis.fetch,
+    }).catch((caught: unknown) => caught);
+
+    expect(err).toBeInstanceOf(ProviderApiError);
+    expect(err).toMatchObject({ status: 202, kind: 'invalid_response' });
+    expect((err as Error).message).toContain('status');
+  });
+});
+
 describe('readBodyCapped (response-size ceiling)', () => {
   it('exposes a sane default cap', () => {
     expect(MAX_RESPONSE_BYTES).toBe(10 * 1024 * 1024);
@@ -511,6 +548,23 @@ describe('low-level fn honors allowLoopback (validate gate)', () => {
 
     expect(result.status).toBe('healthy');
     expect(mockFetch).toHaveBeenCalledOnce();
+  });
+
+  it('getProviderHealth rejects a type-mismatched provider response', async () => {
+    const mockFetch = vi
+      .fn()
+      .mockResolvedValue(
+        Response.json({ status: 'healthy', provider_uuid: 42 }),
+      );
+
+    const err = await getProviderHealth(
+      'https://provider.example.com',
+      undefined,
+      mockFetch as unknown as typeof globalThis.fetch,
+    ).catch((caught: unknown) => caught);
+
+    expect(err).toBeInstanceOf(ProviderApiError);
+    expect(err).toMatchObject({ status: 200, kind: 'invalid_response' });
   });
 
   it('getProviderHealth rejects a loopback provider URL by default (allowLoopback omitted)', async () => {
@@ -1049,6 +1103,11 @@ describe('isTransientProviderError', () => {
     [
       'an SSRF rejection',
       new ProviderApiError(0, 'x', { kind: 'invalid_url' }),
+      false,
+    ],
+    [
+      'an off-contract response',
+      new ProviderApiError(200, 'x', { kind: 'invalid_response' }),
       false,
     ],
     [

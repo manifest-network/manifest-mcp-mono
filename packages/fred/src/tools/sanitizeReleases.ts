@@ -65,9 +65,9 @@ function capValue(v: unknown): unknown {
  * library path (`getLeaseReleases`). (ENG-669)
  *
  * `manifest_bytes` is validate-or-drop, mirroring how `sanitizeRetentionFields` treats
- * `retained_until`: provider JSON is type-asserted and never validated, so `manifest`
- * can be `null` (a nil `[]byte`), a number, or malformed base64. Emitting a wrong size
- * is worse than emitting none.
+ * `retained_until`. The HTTP schema drops null/non-string manifests, while this public
+ * projector remains defensive for directly constructed/legacy values and malformed
+ * base64. Emitting a wrong size is worse than emitting none.
  */
 export function sanitizeReleaseFields(
   r: FredLeaseRelease,
@@ -106,8 +106,9 @@ export function sanitizeReleaseFields(
  *
  * Takes the TAIL: Fred's `ReleaseStore.Append` + `Latest = releases[len-1]` make
  * oldest-first its contract, so the newest entries are the ones worth keeping.
- * Deliberately does NOT re-sort by `version` — that field is type-asserted off the wire
- * and can be a non-number.
+ * Deliberately does NOT re-sort by `version`: Fred's append order is the contract, and
+ * this public projector can also receive directly constructed data that did not pass
+ * through the HTTP schema.
  */
 export function projectReleases(releases: readonly FredLeaseRelease[]): {
   releases: Record<string, unknown>[];

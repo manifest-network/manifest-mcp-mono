@@ -120,6 +120,7 @@ import { deployApp } from './tools/deployApp.js';
 import { fetchActiveLease } from './tools/fetchActiveLease.js';
 import { fetchLease } from './tools/fetchLease.js';
 import { getAppLogs } from './tools/getLogs.js';
+import { MAX_LEASE_STATUS_CHARS } from './tools/projectLeaseStatus.js';
 import { resolveProviderUrl } from './tools/resolveLeaseProvider.js';
 import { restartApp } from './tools/restartApp.js';
 import { updateApp } from './tools/updateApp.js';
@@ -670,13 +671,11 @@ describe('FredMCPServer', () => {
     });
 
     it('does not let a MALFORMED provider reason break the tool', async () => {
-      // Provider JSON is type-asserted, never validated, so a non-string
-      // `reason` is reachable. sanitizeFailureFields DROPS it (rather than
-      // re-emitting it), so a `{...raw, ...sanitized}` spread would leave the
-      // raw value in place — and because the element schema now declares
-      // `reason: z.string()`, that raw value fails output validation and takes
-      // the whole call down. Declaring the field turned a previously harmless
-      // passthrough into a hard failure; stripping first is what prevents it.
+      // This server-layer test deliberately mocks below the HTTP schema, just as a
+      // direct library caller can supply an already-constructed DTO. The projector
+      // remains defensive: sanitizeFailureFields drops a non-string `reason`, and
+      // stripping the raw key first prevents it surviving the sanitized spread and
+      // failing the declared `reason: z.string()` output schema.
       mockFetchActiveLease.mockResolvedValue({
         providerUuid: 'prov-1',
       } as Awaited<ReturnType<typeof fetchActiveLease>>);
@@ -1268,6 +1267,42 @@ describe('FredMCPServer', () => {
       );
     });
 
+    it('caps provider status before it reaches model context and reports truncation', async () => {
+      mockWaitForAppReady.mockResolvedValueOnce({
+        lease_uuid: LEASE_UUID,
+        provider_uuid: 'prov-1',
+        provider_url: 'https://provider.example.com',
+        state: 'LEASE_STATE_ACTIVE',
+        status: {
+          state: LeaseState.LEASE_STATE_ACTIVE,
+          provision_status: 'ready',
+          giant_extension: 'x'.repeat(MAX_LEASE_STATUS_CHARS),
+        },
+      } as Awaited<ReturnType<typeof waitForAppReady>>);
+
+      const server = new FredMCPServer({
+        config: makeMockConfig(),
+        walletProvider: makeMockWallet({ signArbitrary: true }),
+      });
+      const result = await callTool(server, 'wait_for_app_ready', {
+        lease_uuid: LEASE_UUID,
+      });
+      const output = result.structuredContent as {
+        status: Record<string, unknown>;
+        status_truncated: boolean;
+      };
+
+      expect(output.status).toMatchObject({
+        state: LeaseState.LEASE_STATE_ACTIVE,
+        provision_status: 'ready',
+      });
+      expect(output.status.giant_extension).toBeUndefined();
+      expect(output.status_truncated).toBe(true);
+      expect(JSON.stringify(output.status).length).toBeLessThanOrEqual(
+        MAX_LEASE_STATUS_CHARS,
+      );
+    });
+
     it('omits timeout/interval when not provided', async () => {
       const server = new FredMCPServer({
         config: makeMockConfig(),
@@ -1280,6 +1315,47 @@ describe('FredMCPServer', () => {
         timeoutMs: undefined,
         intervalMs: undefined,
       });
+    });
+  });
+
+  describe('app_status model-context budget', () => {
+    it('caps fredStatus while leaving the chain projection intact', async () => {
+      mockAppStatus.mockResolvedValueOnce({
+        lease_uuid: LEASE_UUID,
+        chainState: {
+          state: LeaseState.LEASE_STATE_ACTIVE,
+          providerUuid: 'prov-1',
+          createdAt: '2026-08-26T00:00:00.000Z',
+          closedAt: undefined,
+          items: [],
+        },
+        fredStatus: {
+          state: LeaseState.LEASE_STATE_ACTIVE,
+          provision_status: 'ready',
+          giant_extension: 'x'.repeat(MAX_LEASE_STATUS_CHARS),
+        },
+      } as Awaited<ReturnType<typeof appStatus>>);
+
+      const server = new FredMCPServer({
+        config: makeMockConfig(),
+        walletProvider: makeMockWallet({ signArbitrary: true }),
+      });
+      const result = await callTool(server, 'app_status', {
+        lease_uuid: LEASE_UUID,
+      });
+      const output = result.structuredContent as {
+        chainState: { providerUuid: string };
+        fredStatus: Record<string, unknown>;
+        fredStatusTruncated: boolean;
+      };
+
+      expect(output.chainState.providerUuid).toBe('prov-1');
+      expect(output.fredStatus).toMatchObject({
+        state: LeaseState.LEASE_STATE_ACTIVE,
+        provision_status: 'ready',
+      });
+      expect(output.fredStatus.giant_extension).toBeUndefined();
+      expect(output.fredStatusTruncated).toBe(true);
     });
   });
 
