@@ -1253,6 +1253,39 @@ describe('cancellation (ENG-374)', () => {
     expect(onConfirm).not.toHaveBeenCalled();
   });
 
+  it('set: abort after confirmation is caught by the final guard before broadcast', async () => {
+    const core = await import('@manifest-network/manifest-mcp-core');
+    const { manageDomain } = await import('./manage-domain.js');
+    const ac = new AbortController();
+    const events: Array<{ kind: string }> = [];
+    const clientManager = makeMockClientManager(makeMockQueryClient());
+
+    await expect(
+      manageDomain(
+        {
+          action: 'set',
+          leaseUuid: CANCEL_LEASE_UUID,
+          fqdn: 'app.example.com',
+          serviceName: 'web',
+        },
+        {
+          onConfirm: async () => 'yes',
+          onProgress: (event) => {
+            events.push(event);
+            if (event.kind === 'user_confirmed') ac.abort('host cancelled');
+          },
+        },
+        { clientManager: clientManager as never, signal: ac.signal },
+      ),
+    ).rejects.toMatchObject({
+      code: ManifestMCPErrorCode.OPERATION_CANCELLED,
+    });
+    expect(core.setItemCustomDomain).not.toHaveBeenCalled();
+    expect(events.filter((event) => event.kind === 'cancelled')).toHaveLength(
+      1,
+    );
+  });
+
   it('lookup positive control: with no signal the query IS invoked and the result returns', async () => {
     const { manageDomain } = await import('./manage-domain.js');
     const queryClient = makeMockQueryClient();
