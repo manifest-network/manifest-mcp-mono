@@ -16,6 +16,7 @@ vi.mock('@manifest-network/manifest-mcp-core', async (importOriginal) => {
   return {
     ...actual,
     cosmosTx: vi.fn(),
+    parseFqdn: vi.fn(actual.parseFqdn),
     // setItemCustomDomain calls cosmosTx through an internal `'../cosmos.js'`
     // import that the package-level mock above doesn't intercept. Mock the
     // helper directly so its orchestration call from deployApp is observable
@@ -45,6 +46,7 @@ import {
   ManifestMCPError,
   ManifestMCPErrorCode,
   noopLogger,
+  parseFqdn,
   setItemCustomDomain,
 } from '@manifest-network/manifest-mcp-core';
 import { sealedFetchProbe } from '@manifest-network/manifest-mcp-core/__test-utils__/fetch-probe.js';
@@ -204,6 +206,7 @@ async function ctx(cm: unknown): Promise<FredAuthCtx> {
 }
 
 const mockCosmosTx = vi.mocked(cosmosTx);
+const mockParseFqdn = vi.mocked(parseFqdn);
 const mockSetItemCustomDomain = vi.mocked(setItemCustomDomain);
 
 const mockGetAuthToken = vi.fn();
@@ -1045,7 +1048,7 @@ describe('deployApp', () => {
       expect(result.service_name).toBe('web');
     });
 
-    it('trims surrounding whitespace before forwarding to setItemCustomDomain and echoing on the result', async () => {
+    it('trims, parses once, and lowercases customDomain before forwarding and echoing it', async () => {
       // Pinned by c9cf3e1: a regression that drops the trim would ship
       // " app.example.com " bytes to the chain, which IsValidFQDN
       // rejects → orphaned paid-for lease via the partial-success wrap.
@@ -1069,11 +1072,13 @@ describe('deployApp', () => {
           image: 'nginx:alpine',
           port: 80,
           size: 'docker-micro',
-          customDomain: '  app.example.com  ',
+          customDomain: '  App.Example.COM  ',
         },
         {},
       );
 
+      expect(mockParseFqdn).toHaveBeenCalledOnce();
+      expect(mockParseFqdn).toHaveBeenCalledWith('App.Example.COM');
       expect(mockSetItemCustomDomain).toHaveBeenCalledWith(
         expect.objectContaining({
           chain: expect.anything(),
@@ -1088,6 +1093,49 @@ describe('deployApp', () => {
       );
       expect(result.custom_domain).toBe('app.example.com');
     });
+
+    it.each([
+      {
+        label: 'scheme-prefixed domain',
+        customDomain: 'https://app.example.com',
+        message: /must not include a scheme/,
+      },
+      {
+        label: 'invalid FQDN',
+        customDomain: 'not a domain',
+        message: /is not a valid FQDN/,
+      },
+    ])(
+      'rejects a $label with INVALID_ARGUMENT before any side effect',
+      async ({ customDomain, message }) => {
+        const qc = makeQueryClient();
+        const cm = makeMockClientManager({ queryClient: qc });
+
+        await expect(
+          deployApp(
+            await ctx(cm as any),
+            {
+              image: 'nginx',
+              port: 80,
+              size: 'docker-micro',
+              customDomain,
+            },
+            {},
+          ),
+        ).rejects.toMatchObject({
+          code: ManifestMCPErrorCode.INVALID_ARGUMENT,
+          message: expect.stringMatching(message),
+        });
+
+        expect(mockParseFqdn).toHaveBeenCalledOnce();
+        expect(mockParseFqdn).toHaveBeenCalledWith(customDomain);
+        expect(mockCosmosTx).not.toHaveBeenCalled();
+        expect(mockSetItemCustomDomain).not.toHaveBeenCalled();
+        expect(mockGetAuthToken).not.toHaveBeenCalled();
+        expect(mockGetLeaseDataAuthToken).not.toHaveBeenCalled();
+        expect(wire.calls).toEqual([]);
+      },
+    );
 
     it('rejects empty/whitespace-only customDomain before any chain tx', async () => {
       const qc = makeQueryClient();
