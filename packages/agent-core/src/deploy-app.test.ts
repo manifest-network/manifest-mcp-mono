@@ -5289,7 +5289,10 @@ describe('deployApp — cancellation contract (signal/timeout) (ENG-310 / D4)', 
     opts: {
       signal?: AbortSignal;
       timeout?: number;
-    } & Pick<DeployAppCallbacks, 'onPlan' | 'onConfirm' | 'onResolveSku'>,
+    } & Pick<
+      DeployAppCallbacks,
+      'onPlan' | 'onConfirm' | 'onResolveSku' | 'onProgress'
+    >,
   ): Promise<{ promise: Promise<DeployResult>; progress: ProgressEvent[] }> {
     const readinessRaw = readFixture(
       'skills',
@@ -5330,13 +5333,15 @@ describe('deployApp — cancellation contract (signal/timeout) (ENG-310 / D4)', 
       fee: { amount: [{ denom: 'umfx', amount: '2300' }], gas: '142000' },
     } as Awaited<ReturnType<typeof core.cosmosEstimateFee>>);
 
-    const { signal, timeout, onPlan, onConfirm, onResolveSku } = opts;
+    const { signal, timeout, onPlan, onConfirm, onResolveSku, onProgress } =
+      opts;
     const base = captureCallbacks();
     const callbacks: DeployAppCallbacks = {
       ...base.callbacks,
       ...(onPlan ? { onPlan } : {}),
       ...(onConfirm ? { onConfirm } : {}),
       ...(onResolveSku ? { onResolveSku } : {}),
+      ...(onProgress ? { onProgress } : {}),
     };
     const { deployApp } = await import('./deploy-app.js');
     const clientManager = makeMockClientManager();
@@ -5363,6 +5368,27 @@ describe('deployApp — cancellation contract (signal/timeout) (ENG-310 / D4)', 
     });
     expect(vi.mocked(fred.deployApp)).not.toHaveBeenCalled();
     expect(progress.some((e) => e.kind === 'cancelled')).toBe(true);
+  });
+
+  it('abort after confirmation is caught by the final guard before broadcast', async () => {
+    const fred = await import('@manifest-network/manifest-mcp-fred');
+    const ac = new AbortController();
+    const progress: ProgressEvent[] = [];
+    const run = await runDeploy({
+      signal: ac.signal,
+      onProgress: (event) => {
+        progress.push(event);
+        if (event.kind === 'user_confirmed') ac.abort('host cancelled');
+      },
+    });
+
+    await expect(run.promise).rejects.toMatchObject({
+      code: ManifestMCPErrorCode.OPERATION_CANCELLED,
+    });
+    expect(fred.deployApp).not.toHaveBeenCalled();
+    expect(progress.filter((event) => event.kind === 'cancelled')).toHaveLength(
+      1,
+    );
   });
 
   it('abort during a pending onConfirm rejects promptly; the late callback rejection is swallowed', async () => {

@@ -612,6 +612,34 @@ describe('cancellation (ENG-374)', () => {
     expect(events.filter((e) => e.kind === 'cancelled')).toHaveLength(1);
   });
 
+  it('abort after confirmation is caught by the final guard before broadcast', async () => {
+    const core = await import('@manifest-network/manifest-mcp-core');
+    const { closeLease } = await import('./close-lease.js');
+    const ac = new AbortController();
+    const events: Array<{ kind: string }> = [];
+    const clientManager = makeMockClientManager(makeMockQueryClient());
+
+    await expect(
+      closeLease(
+        { leaseUuid: CANCEL_LEASE_UUID },
+        {
+          onConfirm: async () => 'yes',
+          onProgress: (event) => {
+            events.push(event);
+            if (event.kind === 'user_confirmed') ac.abort('host cancelled');
+          },
+        },
+        { clientManager: clientManager as never, signal: ac.signal },
+      ),
+    ).rejects.toMatchObject({
+      code: ManifestMCPErrorCode.OPERATION_CANCELLED,
+    });
+    expect(core.stopApp).not.toHaveBeenCalled();
+    expect(events.filter((event) => event.kind === 'cancelled')).toHaveLength(
+      1,
+    );
+  });
+
   it('aborting while onConfirm is pending rejects with OPERATION_CANCELLED and never broadcasts', async () => {
     const core = await import('@manifest-network/manifest-mcp-core');
     const { closeLease } = await import('./close-lease.js');

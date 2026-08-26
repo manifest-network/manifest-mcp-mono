@@ -69,6 +69,7 @@ import type {
 } from '@modelcontextprotocol/sdk/shared/protocol.js';
 import {
   ErrorCode,
+  type LoggingMessageNotification,
   type ServerNotification,
   type ServerRequest,
 } from '@modelcontextprotocol/sdk/types.js';
@@ -206,6 +207,22 @@ async function safeNotify(
     await extra.sendNotification(notification);
   } catch {
     // swallow — progress is best-effort by contract
+  }
+}
+
+/**
+ * Best-effort server-level log. Unlike `extra.sendNotification`, this path is
+ * not suppressed after the originating request is cancelled, so it is reserved
+ * for post-broadcast outcomes the host must still learn about (ENG-745).
+ */
+async function safeServerLog(
+  server: Server,
+  params: LoggingMessageNotification['params'],
+): Promise<void> {
+  try {
+    await server.sendLoggingMessage(params);
+  } catch {
+    // The transport may itself be gone; logging must not alter recovery.
   }
 }
 
@@ -399,21 +416,18 @@ export function makeDeployCallbacks(
         // `options[]`, which agent-core never produces.)
         const dismissedAction = classifyElicitReject(err);
         const choice = parseRecoveryChoice({ action: 'cancel' }, options);
-        await safeNotify(extra, {
-          method: 'notifications/message',
-          params: {
-            level: 'warning',
-            logger: '@manifest-network/manifest-mcp-agent',
-            data: {
-              kind: 'recovery_dismissed',
-              dismissed_action: dismissedAction,
-              applied_default: choice.id,
-              reason:
-                'Recovery prompt rejected (timeout/abort/transport close); ' +
-                'applied lease-preserving default. The lease still exists — ' +
-                'manually invoke close_lease_orchestrated or ' +
-                'manage_domain_orchestrated if you wanted a different outcome.',
-            },
+        await safeServerLog(server, {
+          level: 'warning',
+          logger: '@manifest-network/manifest-mcp-agent',
+          data: {
+            kind: 'recovery_dismissed',
+            dismissed_action: dismissedAction,
+            applied_default: choice.id,
+            reason:
+              'Recovery prompt rejected (timeout/abort/transport close); ' +
+              'applied lease-preserving default. The lease still exists — ' +
+              'manually invoke close_lease_orchestrated or ' +
+              'manage_domain_orchestrated if you wanted a different outcome.',
           },
         });
         return choice;
@@ -427,19 +441,16 @@ export function makeDeployCallbacks(
       // `close_lease_orchestrated` or `manage_domain_orchestrated` if
       // they wanted a different outcome.
       if (result.action !== 'accept') {
-        await safeNotify(extra, {
-          method: 'notifications/message',
-          params: {
-            level: 'warning',
-            logger: '@manifest-network/manifest-mcp-agent',
-            data: {
-              kind: 'recovery_dismissed',
-              dismissed_action: result.action,
-              applied_default: choice.id,
-              reason:
-                'User dismissed the recovery prompt; applied lease-preserving default. ' +
-                'Manually invoke close_lease_orchestrated or manage_domain_orchestrated if needed.',
-            },
+        await safeServerLog(server, {
+          level: 'warning',
+          logger: '@manifest-network/manifest-mcp-agent',
+          data: {
+            kind: 'recovery_dismissed',
+            dismissed_action: result.action,
+            applied_default: choice.id,
+            reason:
+              'User dismissed the recovery prompt; applied lease-preserving default. ' +
+              'Manually invoke close_lease_orchestrated or manage_domain_orchestrated if needed.',
           },
         });
       }

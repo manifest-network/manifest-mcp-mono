@@ -30,6 +30,7 @@ import type {
   CloseLeaseOptions,
   DenomMap,
   DeployAppOptions,
+  DeployResult,
   LeaseStateName,
   ManageDomainArgs,
   ManageDomainOptions,
@@ -262,6 +263,14 @@ export class AgentMCPServer {
 
   // --- per-call options builders -----------------------------------
 
+  /**
+   * The signal is intentionally required: every MCP request owns one, and an
+   * optional/defaulted parameter would let a new handler silently recreate
+   * ENG-745. Agent-core uses it both at the last safe pre-broadcast boundary
+   * and to stop post-broadcast readiness waits. A post-broadcast cancel does
+   * not undo the lease; `reportPartialDeployCancellation` preserves that
+   * outcome on the server-level log channel after the request response closes.
+   */
   private async buildDeployOptions(
     signal: AbortSignal,
   ): Promise<DeployAppOptions> {
@@ -297,6 +306,42 @@ export class AgentMCPServer {
       denomMap,
       ...(this.chainDataFile ? { chainDataFile: this.chainDataFile } : {}),
     };
+  }
+
+  /**
+   * The SDK drops a cancelled request's response and request-scoped
+   * notifications. A cancelled readiness wait is partial success — the paid
+   * lease and uploaded manifest still exist — so publish its identifier on the
+   * server-level logging channel, which remains usable after request abort.
+   */
+  private async reportPartialDeployCancellation(error: unknown): Promise<void> {
+    if (
+      !(error instanceof ManifestMCPError) ||
+      error.code !== ManifestMCPErrorCode.OPERATION_CANCELLED ||
+      error.details?.partial !== true ||
+      typeof error.details.lease_uuid !== 'string'
+    ) {
+      return;
+    }
+
+    try {
+      await this.mcpServer.server.sendLoggingMessage({
+        level: 'warning',
+        logger: '@manifest-network/manifest-mcp-agent',
+        data: {
+          kind: 'deploy_cancelled_after_broadcast',
+          code: error.code,
+          lease_uuid: error.details.lease_uuid,
+          readiness_unconfirmed: error.details.readiness_unconfirmed === true,
+          reason:
+            'The deploy request was cancelled after broadcast. The paid lease ' +
+            'and uploaded manifest still exist; inspect the lease before deciding ' +
+            'whether to keep or close it.',
+        },
+      });
+    } catch {
+      // Best effort: a closed transport has no remaining host channel.
+    }
   }
 
   // --- tool registration -------------------------------------------
@@ -426,11 +471,13 @@ export class AgentMCPServer {
               ? { providerUuid: raw.provider_uuid }
               : {}),
           } as AppDeploySpec;
-          const result = await this.orchestrators.deployApp(
-            spec,
-            callbacks,
-            opts,
-          );
+          let result: DeployResult;
+          try {
+            result = await this.orchestrators.deployApp(spec, callbacks, opts);
+          } catch (error) {
+            await this.reportPartialDeployCancellation(error);
+            throw error;
+          }
           return structuredResponse(result, bigIntReplacer);
         },
       ),

@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **agent, agent-core:** thread each MCP tool request's live cancellation signal through all five agent orchestrators. Cancellation before a mutating operation's final broadcast guard creates no transaction; cancellation while deploy readiness is being polled stops the wait but cannot undo the already-paid lease or uploaded manifest. Because the MCP SDK discards a cancelled request's response and request-scoped notifications, the agent server now reports that partial deploy outcome (including `lease_uuid`) through server-level logging, and recovery-prompt dismissal warnings use the same post-abort-safe channel. Host timeout requirements and the SDK's 60-second default are documented. (ENG-745)
 - **fred:** close the `get_logs` model-context budget bypass. Non-string log values are removed at the transport seam; null/missing maps become empty; provider-controlled service names now consume the same 4,000-character budget as values; oversized names are skipped without hiding smaller siblings; and `__proto__` is treated as an ordinary service key rather than reaching the legacy prototype setter. `app_status` and `wait_for_app_ready` also bound their provider-status projection to 16,000 serialized characters and expose `fredStatusTruncated` / `status_truncated` when fields are omitted. Raw library status responses remain complete. (ENG-746, ENG-754)
 
 ## [0.21.0] - 2026-08-20

@@ -32,6 +32,22 @@ Verified hosts:
 - Claude Code ≥ 2.1.76 (full surface; elicitation-capable)
 - Any MCP host (read-only surface: troubleshoot + lookup_custom_domain)
 
+### Cancellation and host timeouts
+
+All five tools forward the live MCP request cancellation signal into agent-core. For deploy, manage-domain, and close-lease, a cancellation observed before the final broadcast guard creates no transaction. A deploy cancellation observed after broadcast stops the readiness wait, but it cannot undo the paid lease or uploaded manifest.
+
+The MCP TypeScript SDK gives requests a 60-second default timeout, while this server can spend up to 10 minutes waiting for a user elicitation and another 10 minutes waiting for provider readiness. Hosts must configure the whole `tools/call` request for that operating envelope. For an SDK client, one suitable policy is an idle timeout above either 10-minute phase plus a total cap above both phases:
+
+```typescript
+await client.callTool(request, undefined, {
+  timeout: 11 * 60_000,
+  resetTimeoutOnProgress: true,
+  maxTotalTimeout: 25 * 60_000,
+});
+```
+
+A caller abort and an SDK request timeout both reach the server through MCP cancellation and therefore have the same safety behavior. If cancellation lands during readiness, the SDK discards the cancelled tool response, so the server emits a `notifications/message` warning on its server-level logging channel with `data.kind === 'deploy_cancelled_after_broadcast'`, the live `lease_uuid`, and `readiness_unconfirmed: true`. Keep the MCP transport open long enough to receive that log; if the host closes the connection at timeout, no out-of-band result can be delivered. Inspect the lease before deciding whether to keep or close it.
+
 ## Environment variables
 
 The agent server reads the standard chain / wallet env vars (same matrix as `manifest-mcp-chain` / `manifest-mcp-lease` / `manifest-mcp-fred`) plus four agent-only additions.

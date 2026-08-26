@@ -6,7 +6,10 @@
  * and `extra.sendNotification` are called by the factories.
  */
 
-import type { SkuCandidate } from '@manifest-network/manifest-agent-core';
+import type {
+  RecoveryOption,
+  SkuCandidate,
+} from '@manifest-network/manifest-agent-core';
 import {
   asProviderUuid,
   asSkuUuid,
@@ -25,9 +28,11 @@ import { makeDeployCallbacks } from './callbacks.js';
 // Helpers
 // ---------------------------------------------------------------------------
 
-function makeExtra(): RequestHandlerExtra<ServerRequest, ServerNotification> {
+function makeExtra(
+  signal = new AbortController().signal,
+): RequestHandlerExtra<ServerRequest, ServerNotification> {
   return {
-    signal: new AbortController().signal,
+    signal,
     sendNotification: vi.fn().mockResolvedValue(undefined),
     sendRequest: vi.fn(),
     requestId: 'test-req-id',
@@ -188,5 +193,52 @@ describe('makeDeployCallbacks', () => {
     expect(warningData.kind).toBe('elicit_timeout');
     expect(warningData.callback).toBe('onResolveSku');
     expect(warningData.applied_default).toBe('cancel');
+  });
+
+  it('ENG-745: recovery rejection uses server-level logging after the request signal aborts', async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const sendLoggingMessage = vi.fn().mockResolvedValue(undefined);
+    const server = {
+      elicitInput: vi.fn().mockRejectedValue(new Error('request cancelled')),
+      sendLoggingMessage,
+      getClientCapabilities: vi.fn().mockReturnValue({ elicitation: {} }),
+    } as unknown as Server;
+    const extra = makeExtra(controller.signal);
+    const callbacks = makeDeployCallbacks({ server, extra });
+    const options: RecoveryOption[] = [
+      {
+        id: 'retry_set_domain',
+        label: 'Retry',
+        description: 'Retry the failed step.',
+      },
+      {
+        id: 'salvage_without_domain',
+        label: 'Keep lease',
+        description: 'Keep the paid lease without its custom domain.',
+      },
+    ];
+
+    await expect(
+      callbacks.onFailure!(
+        {
+          outcome: 'partially_succeeded',
+          leaseUuid: 'lease-paid',
+          reason: 'Domain attachment failed after lease creation.',
+        },
+        options,
+      ),
+    ).resolves.toEqual({ id: 'salvage_without_domain' });
+
+    expect(sendLoggingMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        level: 'warning',
+        data: expect.objectContaining({
+          kind: 'recovery_dismissed',
+          applied_default: 'salvage_without_domain',
+        }),
+      }),
+    );
+    expect(extra.sendNotification).not.toHaveBeenCalled();
   });
 });

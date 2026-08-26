@@ -20,6 +20,65 @@ export interface ElicitationScript {
   respond: (req: ElicitRequest) => ElicitResult | Promise<ElicitResult>;
 }
 
+export interface ConnectedElicitationClient {
+  readonly client: Client;
+  close(): Promise<void>;
+}
+
+/**
+ * Connect an elicitation-capable test client while leaving its lifetime under
+ * the caller's control. This is the lower-level form used by cancellation and
+ * notification tests that must keep the transport open after `callTool`
+ * rejects; closing immediately would abort the server request independently
+ * and make signal-forwarding assertions vacuous.
+ */
+export async function connectClientWithElicitation(
+  server: Server,
+  script?: ElicitationScript,
+  activeTransports: InMemoryTransport[] = [],
+  declareElicitationCapability = true,
+): Promise<ConnectedElicitationClient> {
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+  activeTransports.push(clientTransport, serverTransport);
+
+  const client = new Client(
+    { name: 'test-client', version: '1.0.0' },
+    declareElicitationCapability
+      ? { capabilities: { elicitation: {} } }
+      : { capabilities: {} },
+  );
+
+  if (declareElicitationCapability && script !== undefined) {
+    client.setRequestHandler(ElicitRequestSchema, async (request) => {
+      return await script.respond(request);
+    });
+  }
+
+  let closed = false;
+  const close = async (): Promise<void> => {
+    if (closed) return;
+    closed = true;
+    await client.close().catch(() => {});
+    await clientTransport.close().catch(() => {});
+    await serverTransport.close().catch(() => {});
+
+    for (const transport of [clientTransport, serverTransport]) {
+      const index = activeTransports.indexOf(transport);
+      if (index !== -1) activeTransports.splice(index, 1);
+    }
+  };
+
+  try {
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    return { client, close };
+  } catch (error) {
+    await close();
+    throw error;
+  }
+}
+
 /**
  * Mirror of `callTool` for tools that mid-execution call
  * `server.elicitInput(...)`. Connects an MCP client (advertising the
@@ -50,50 +109,19 @@ export async function callToolWithElicitation(
   activeTransports: InMemoryTransport[] = [],
   declareElicitationCapability = true,
 ): Promise<ToolResult> {
-  const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
-  activeTransports.push(clientTransport, serverTransport);
-
-  const client = new Client(
-    { name: 'test-client', version: '1.0.0' },
-    declareElicitationCapability
-      ? { capabilities: { elicitation: {} } }
-      : { capabilities: {} },
+  const connection = await connectClientWithElicitation(
+    server,
+    script,
+    activeTransports,
+    declareElicitationCapability,
   );
 
-  // Register BEFORE connect so the handler is in place by the time the
-  // server issues its first `elicitation/create` request mid-tool.
-  //
-  // Skip registration when the client did NOT advertise the elicitation
-  // capability — the SDK's `setRequestHandler` enforces that the client
-  // must have declared the capability for the request type, and would
-  // throw before the tool call ever ran. The capability-guard test path
-  // (`declareElicitationCapability: false`) exercises the wrapper's
-  // `assertElicitationCapability` throw — no elicitation will arrive,
-  // so no handler is needed.
-  if (declareElicitationCapability) {
-    client.setRequestHandler(ElicitRequestSchema, async (request) => {
-      return await script.respond(request);
-    });
-  }
-
   try {
-    await server.connect(serverTransport);
-    await client.connect(clientTransport);
-
-    return (await client.callTool({
+    return (await connection.client.callTool({
       name: toolName,
       arguments: toolInput,
     })) as ToolResult;
   } finally {
-    await client.close().catch(() => {});
-    await clientTransport.close().catch(() => {});
-    await serverTransport.close().catch(() => {});
-
-    // Remove by identity so afterEach won't double-close
-    for (const t of [clientTransport, serverTransport]) {
-      const idx = activeTransports.indexOf(t);
-      if (idx !== -1) activeTransports.splice(idx, 1);
-    }
+    await connection.close();
   }
 }
