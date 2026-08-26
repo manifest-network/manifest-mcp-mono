@@ -70,10 +70,11 @@ export interface FredFailure {
 /**
  * Non-empty string, or `undefined`.
  *
- * Provider JSON is type-asserted, never validated (`parseJsonResponse<T>` is a
- * bare cast), so a non-string here is reachable at runtime and must not flow
- * into string interpolation. Empty string counts as absent, matching Fred's
- * `omitempty` and `parseFredWsEvent`'s existing `o.error !== ''` guard.
+ * Built-in HTTP adapters now schema-validate these fields, but this helper is a
+ * public boundary that also accepts directly constructed/legacy data. Keep the
+ * runtime guard so a non-string can never flow into interpolation. Empty string
+ * counts as absent, matching Fred's `omitempty` and `parseFredWsEvent`'s existing
+ * `o.error !== ''` guard.
  */
 function nonEmpty(v: unknown): string | undefined {
   return typeof v === 'string' && v !== '' ? v : undefined;

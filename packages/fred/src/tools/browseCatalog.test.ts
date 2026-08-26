@@ -88,7 +88,10 @@ describe('browseCatalog', () => {
       },
     });
     const fetchSpy = vi.fn<typeof globalThis.fetch>(
-      async () => new Response('{"status":"healthy","checks":{}}'),
+      async () =>
+        new Response(
+          '{"status":"healthy","provider_uuid":"prov-1","checks":{}}',
+        ),
     );
     const ctx: FredReadCtx = {
       // `query`/`chain` keep `as never` deliberately — `qc` is a partial
@@ -112,7 +115,7 @@ describe('browseCatalog', () => {
           active: true,
           healthy: true,
           health_status: 'healthy',
-          providerUuid: undefined,
+          providerUuid: 'prov-1',
         },
       ],
       skus: [

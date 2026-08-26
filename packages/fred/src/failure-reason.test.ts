@@ -86,7 +86,7 @@ describe('describeFredFailure', () => {
     ).toEqual({ reason: 'SomeFutureReason', message: 'why', legacy: false });
   });
 
-  it('drops a non-string reason/message (provider JSON is a bare cast)', () => {
+  it('defensively drops a non-string reason/message from direct callers', () => {
     const hostile = { reason: 12345, message: { evil: true } } as never;
     expect(describeFredFailure(hostile)).toBeUndefined();
   });

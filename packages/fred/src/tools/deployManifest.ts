@@ -431,8 +431,8 @@ export async function deployManifest(
     connection = connResp.connection;
     if (connection.host && connection.ports) {
       const firstPort = Object.values(connection.ports)[0];
-      if (typeof firstPort === 'number' || typeof firstPort === 'string') {
-        url = `${connection.host}:${firstPort}`;
+      if (firstPort !== undefined) {
+        url = `${connection.host}:${firstPort.host_port}`;
       }
     }
   } catch (err) {

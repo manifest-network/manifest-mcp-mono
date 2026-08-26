@@ -20,6 +20,14 @@ import {
   pollLeaseReadiness,
 } from '../readiness/poll-lease-readiness.js';
 import { fetchJsonChecked, validateProviderUrl } from './provider.js';
+import {
+  FredActionResponseSchema,
+  FredLeaseLogsResponseSchema,
+  FredLeaseProvisionResponseSchema,
+  FredLeaseReleasesResponseSchema,
+  inheritValidationDrops,
+  RawLeaseStatusResponseSchema,
+} from './response-schemas.js';
 
 // The lease-readiness POLICY — the wait loop, the `provision_status` sets, and the two typed
 // readiness errors — moved to `../readiness/poll-lease-readiness.js` in ENG-725. Re-exported here
@@ -77,14 +85,13 @@ export async function getLeaseStatus(
 ): Promise<FredLeaseStatus> {
   const validated = validateProviderUrl(providerUrl, { allowLoopback });
   const url = `${validated}/v1/leases/${encodeURIComponent(leaseUuid)}/status`;
-  const raw = await fetchJsonChecked<RawLeaseStatus>(
+  const raw: RawLeaseStatus = await fetchJsonChecked(
     url,
     {
       headers: { Authorization: `Bearer ${authToken}` },
       signal,
     },
-    undefined,
-    fetchFn,
+    { schema: RawLeaseStatusResponseSchema, fetchFn },
   );
   const state = leaseStateFromJSON(raw.state);
   if (state === LeaseState.UNRECOGNIZED) {
@@ -93,7 +100,7 @@ export async function getLeaseStatus(
         'The provider may be running a newer version than the client supports.',
     );
   }
-  return { ...raw, state };
+  return inheritValidationDrops({ ...raw, state }, raw);
 }
 
 export async function getLeaseLogs(
@@ -108,11 +115,10 @@ export async function getLeaseLogs(
   const cappedTail = tail !== undefined ? Math.min(tail, MAX_TAIL) : undefined;
   const qs = cappedTail !== undefined ? `?tail=${cappedTail}` : '';
   const url = `${validated}/v1/leases/${encodeURIComponent(leaseUuid)}/logs${qs}`;
-  return await fetchJsonChecked<FredLeaseLogs>(
+  return await fetchJsonChecked(
     url,
     { headers: { Authorization: `Bearer ${authToken}` } },
-    undefined,
-    fetchFn,
+    { schema: FredLeaseLogsResponseSchema, fetchFn },
   );
 }
 
@@ -125,11 +131,10 @@ export async function getLeaseProvision(
 ): Promise<FredLeaseProvision> {
   const validated = validateProviderUrl(providerUrl, { allowLoopback });
   const url = `${validated}/v1/leases/${encodeURIComponent(leaseUuid)}/provision`;
-  return await fetchJsonChecked<FredLeaseProvision>(
+  return await fetchJsonChecked(
     url,
     { headers: { Authorization: `Bearer ${authToken}` } },
-    undefined,
-    fetchFn,
+    { schema: FredLeaseProvisionResponseSchema, fetchFn },
   );
 }
 
@@ -142,14 +147,13 @@ export async function restartLease(
 ): Promise<FredActionResponse> {
   const validated = validateProviderUrl(providerUrl, { allowLoopback });
   const url = `${validated}/v1/leases/${encodeURIComponent(leaseUuid)}/restart`;
-  return await fetchJsonChecked<FredActionResponse>(
+  return await fetchJsonChecked(
     url,
     {
       method: 'POST',
       headers: { Authorization: `Bearer ${authToken}` },
     },
-    undefined,
-    fetchFn,
+    { schema: FredActionResponseSchema, fetchFn },
   );
 }
 
@@ -180,7 +184,7 @@ export async function updateLease(
   const url = `${validated}/v1/leases/${encodeURIComponent(leaseUuid)}/update`;
   // The provider expects JSON with a base64-encoded payload (Go []byte field).
   const b64 = toBase64(payload);
-  return await fetchJsonChecked<FredActionResponse>(
+  return await fetchJsonChecked(
     url,
     {
       method: 'POST',
@@ -190,8 +194,7 @@ export async function updateLease(
       },
       body: JSON.stringify({ payload: b64 }),
     },
-    undefined,
-    fetchFn,
+    { schema: FredActionResponseSchema, fetchFn },
   );
 }
 
@@ -217,7 +220,7 @@ export async function restoreLease(
 ): Promise<FredActionResponse> {
   const validated = validateProviderUrl(providerUrl, { allowLoopback });
   const url = `${validated}/v1/leases/${encodeURIComponent(leaseUuid)}/restore`;
-  return await fetchJsonChecked<FredActionResponse>(
+  return await fetchJsonChecked(
     url,
     {
       method: 'POST',
@@ -227,8 +230,7 @@ export async function restoreLease(
       },
       body: JSON.stringify({ from_lease_uuid: fromLeaseUuid }),
     },
-    undefined,
-    fetchFn,
+    { schema: FredActionResponseSchema, fetchFn },
   );
 }
 
@@ -241,11 +243,10 @@ export async function getLeaseReleases(
 ): Promise<FredLeaseReleases> {
   const validated = validateProviderUrl(providerUrl, { allowLoopback });
   const url = `${validated}/v1/leases/${encodeURIComponent(leaseUuid)}/releases`;
-  return await fetchJsonChecked<FredLeaseReleases>(
+  return await fetchJsonChecked(
     url,
     { headers: { Authorization: `Bearer ${authToken}` } },
-    undefined,
-    fetchFn,
+    { schema: FredLeaseReleasesResponseSchema, fetchFn },
   );
 }
 

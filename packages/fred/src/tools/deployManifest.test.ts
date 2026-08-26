@@ -80,7 +80,12 @@ const CONNECTION_BODY = {
   lease_uuid: '550e8400-e29b-41d4-a716-446655440000',
   tenant: 'manifest1tenant',
   provider_uuid: 'prov-1',
-  connection: { host: 'app.localhost', ports: { '80/tcp': 32001 } },
+  connection: {
+    host: 'app.localhost',
+    ports: {
+      '80/tcp': { host_ip: '0.0.0.0', host_port: 32001 },
+    },
+  },
 };
 
 /**

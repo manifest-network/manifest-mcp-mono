@@ -34,7 +34,10 @@ const CONNECTION = {
   lease_uuid: LEASE_UUID,
   tenant: ADDR,
   provider_uuid: 'prov-1',
-  connection: { host: 'app.example.com', ports: { '80/tcp': 8080 } },
+  connection: {
+    host: 'app.example.com',
+    ports: { '80/tcp': { host_ip: '0.0.0.0', host_port: 8080 } },
+  },
 };
 
 const mockGetAuthToken = vi.fn().mockResolvedValue('auth-token');

@@ -25,7 +25,11 @@
 // The probe itself now lives in `@manifest-network/manifest-mcp-core/__test-utils__/fetch-probe.js`
 // — promoted there in ENG-725 when a second file needed it, to the destination and for the reason
 // its own JSDoc had specified. The cases below are unchanged by that move.
-import { LeaseState, logger } from '@manifest-network/manifest-mcp-core';
+import {
+  type FredLeaseStatus,
+  LeaseState,
+  logger,
+} from '@manifest-network/manifest-mcp-core';
 import {
   type FetchProbe,
   fetchProbe,
@@ -48,6 +52,16 @@ import { ProviderApiError } from './provider.js';
 const PROVIDER_URL = 'https://provider.example.com';
 const LEASE_UUID = '550e8400-e29b-41d4-a716-446655440000';
 const AUTH_TOKEN = 'test-token';
+const TENANT = 'manifest1abc';
+
+function leaseLogs(logs: Record<string, unknown> = {}) {
+  return {
+    lease_uuid: LEASE_UUID,
+    tenant: TENANT,
+    provider_uuid: 'prov-1',
+    logs,
+  };
+}
 
 /** A lease still coming up — the commonest wire fixture in this file. */
 const PENDING_STEP = { json: { state: 'LEASE_STATE_PENDING' } } as const;
@@ -117,25 +131,62 @@ describe('getLeaseStatus', () => {
     expect(result.fail_count).toBe(3);
     expect(result.endpoints).toEqual({ http: 'https://app.example.com' });
   });
+
+  it('rejects syntactically valid JSON with an off-contract required field', async () => {
+    const probe = fetchProbe({ json: { state: 3 } });
+
+    const err = await getLeaseStatus(
+      PROVIDER_URL,
+      LEASE_UUID,
+      AUTH_TOKEN,
+      probe.fetch,
+    ).catch((caught: unknown) => caught);
+
+    expect(err).toBeInstanceOf(ProviderApiError);
+    expect(err).toMatchObject({ status: 200, kind: 'invalid_response' });
+    expect((err as Error).message).toContain('state');
+  });
+
+  it('drops malformed optional fields while preserving forward-compatible unknown fields', async () => {
+    const probe = fetchProbe({
+      json: {
+        state: 'LEASE_STATE_ACTIVE',
+        fail_count: 'many',
+        future_capability: { enabled: true },
+      },
+    });
+
+    const result = await getLeaseStatus(
+      PROVIDER_URL,
+      LEASE_UUID,
+      AUTH_TOKEN,
+      probe.fetch,
+    );
+
+    expect(result.fail_count).toBeUndefined();
+    expect(
+      (result as FredLeaseStatus & Record<string, unknown>).future_capability,
+    ).toEqual({ enabled: true });
+  });
 });
 
 describe('getLeaseLogs', () => {
   it('caps tail at MAX_TAIL', async () => {
-    const probe = fetchProbe({ json: { logs: {} } });
+    const probe = fetchProbe({ json: leaseLogs() });
 
     await getLeaseLogs(PROVIDER_URL, LEASE_UUID, AUTH_TOKEN, 5000, probe.fetch);
     expect(probe.calls[0].url).toContain(`?tail=${MAX_TAIL}`);
   });
 
   it('passes tail directly when within limit', async () => {
-    const probe = fetchProbe({ json: { logs: {} } });
+    const probe = fetchProbe({ json: leaseLogs() });
 
     await getLeaseLogs(PROVIDER_URL, LEASE_UUID, AUTH_TOKEN, 50, probe.fetch);
     expect(probe.calls[0].url).toContain('?tail=50');
   });
 
   it('omits tail query param when not provided', async () => {
-    const probe = fetchProbe({ json: { logs: {} } });
+    const probe = fetchProbe({ json: leaseLogs() });
 
     await getLeaseLogs(
       PROVIDER_URL,
@@ -1084,27 +1135,51 @@ describe('pollLeaseUntilReady — transient-failure budget', () => {
       expect(probe.calls).toHaveLength(0);
     });
 
-    it('propagates a non-ProviderApiError (a bug is not a blip)', async () => {
-      // A provider that literally sends `null`: the body parses fine, then `raw.state` throws
-      // a TypeError from OUR code, downstream of the transport, so nothing wraps it. A probe
-      // that merely rejected would be laundered into a retryable `kind: 'network'` and this
-      // test would silently invert — see `transportError` on ProbeStep.
+    it('tolerates one off-contract response within the bounded poll budget', async () => {
+      // Direct SDK reads still fail closed. This loop alone gives a rolling provider/WAF one more
+      // look before abandoning a lease that has already been created on chain.
+      const probe = scriptReads([
+        { json: null },
+        { json: { state: 'LEASE_STATE_ACTIVE' } },
+      ]);
+
+      const result = await pollLeaseUntilReady(
+        PROVIDER_URL,
+        LEASE_UUID,
+        AUTH_TOKEN,
+        {
+          intervalMs: 1,
+          timeoutMs: 5000,
+          maxConsecutiveFailures: 5,
+        },
+        probe.fetch,
+      );
+
+      expect(result.state).toBe(LeaseState.LEASE_STATE_ACTIVE);
+      expect(probe.calls).toHaveLength(2);
+    });
+
+    it('fails after an off-contract response exhausts the bounded poll budget', async () => {
       const probe = scriptReads([{ json: null }]);
 
-      await expect(
-        pollLeaseUntilReady(
-          PROVIDER_URL,
-          LEASE_UUID,
-          AUTH_TOKEN,
-          {
-            intervalMs: 1,
-            timeoutMs: 5000,
-            maxConsecutiveFailures: 5,
-          },
-          probe.fetch,
-        ),
-      ).rejects.toThrow(TypeError);
-      expect(probe.calls).toHaveLength(1);
+      const err = await pollLeaseUntilReady(
+        PROVIDER_URL,
+        LEASE_UUID,
+        AUTH_TOKEN,
+        {
+          intervalMs: 1,
+          timeoutMs: 5000,
+          maxConsecutiveFailures: 1,
+        },
+        probe.fetch,
+      ).catch((caught: unknown) => caught);
+
+      expect(err).toBeInstanceOf(LeaseReadinessUnconfirmedError);
+      expect(err).toMatchObject({
+        consecutiveFailures: 2,
+        cause: { status: 200, kind: 'invalid_response' },
+      });
+      expect(probe.calls).toHaveLength(2);
     });
 
     /**
@@ -1585,7 +1660,7 @@ describe('updateLease', () => {
 describe('the wire seam — what reaches fetch (ENG-696 C9)', () => {
   it('always dispatches a composed AbortSignal, even from a fn with no signal parameter', async () => {
     // `getLeaseLogs` takes no signal at all, yet the transport still arms one.
-    const probe = fetchProbe({ json: { logs: {} } });
+    const probe = fetchProbe({ json: leaseLogs() });
     await getLeaseLogs(PROVIDER_URL, LEASE_UUID, AUTH_TOKEN, 50, probe.fetch);
 
     const { init } = probe.calls[0];

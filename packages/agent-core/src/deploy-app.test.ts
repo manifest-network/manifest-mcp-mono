@@ -1029,7 +1029,9 @@ describe('deployApp replay — Copilot review fixes (PR #58 unresolved comments)
                 name: 'app',
                 status: 'running',
                 fqdn: 'app-33333333.testnet.manifest.app',
-                ports: { '80/tcp': 30001 },
+                ports: {
+                  '80/tcp': { host_ip: '0.0.0.0', host_port: 30001 },
+                },
               },
             ],
           },
@@ -3737,7 +3739,9 @@ describe('deployApp — sub-PR D defense-in-depth', () => {
             name: 'app',
             status: 'running',
             fqdn: 'app-dddddddd.testnet.manifest.app',
-            ports: { '80/tcp': 30001 },
+            ports: {
+              '80/tcp': { host_ip: '0.0.0.0', host_port: 30001 },
+            },
           },
         ],
       },
@@ -3826,7 +3830,9 @@ describe('deployApp — sub-PR D defense-in-depth', () => {
             name: 'app',
             status: 'running',
             fqdn: 'app.testnet.manifest.app',
-            ports: { '80/tcp': 30001 },
+            ports: {
+              '80/tcp': { host_ip: '0.0.0.0', host_port: 30001 },
+            },
           },
         ],
       },
@@ -3970,7 +3976,9 @@ describe('deployApp — retry_set_domain decomposition (ENG-185 sub-PR E)', () =
                 name: 'web-1',
                 status: 'running',
                 fqdn,
-                ports: { '80/tcp': 30001 },
+                ports: {
+                  '80/tcp': { host_ip: '0.0.0.0', host_port: 30001 },
+                },
               },
             ],
           } as Awaited<ReturnType<typeof fred.pollLeaseUntilReady>>;

@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **fred, sdk:** the schema-aware `fetchJsonChecked(url, init, { schema, ... })` overload and `FetchJsonCheckedOptions`. Every built-in Fred/provider JSON endpoint now supplies a forward-compatible Zod schema at the shared transport seam: known fields are runtime-checked, unknown fields remain available for additive provider evolution, and malformed optional diagnostics use an explicit validate-or-drop policy. Syntactically valid JSON with an invalid required shape raises `ProviderApiError` with `kind: 'invalid_response'`, preserves the HTTP status (including a 2xx), and is non-retryable. The legacy positional overload remains compatible for consumers that own response validation. (ENG-754)
+
+### Changed
+
+- **fred, sdk:** `getLeaseStatus`, `getLeaseLogs`, `getLeaseProvision`, `getLeaseReleases`, `getProviderHealth`, and `getLeaseConnectionInfo` now reject syntactically valid responses whose required fields violate the endpoint contract, using `ProviderApiError` with `kind: 'invalid_response'`. This is a runtime behaviour change for the published SDK `/deploy` surface. A readiness poll alone tolerates this error within its existing consecutive-failure budget so one malformed response during a provider rollout does not abandon an already-created lease. Legitimate Go zero values such as null release/instance slices and health-check maps are normalized to empty collections. (ENG-754)
+
+### Fixed
+
+- **fred:** close the `get_logs` model-context budget bypass. Non-string log values are removed at the transport seam; null/missing maps become empty; provider-controlled service names now consume the same 4,000-character budget as values; oversized names are skipped without hiding smaller siblings; and `__proto__` is treated as an ordinary service key rather than reaching the legacy prototype setter. `app_status` and `wait_for_app_ready` also bound their provider-status projection to 16,000 serialized characters and expose `fredStatusTruncated` / `status_truncated` when fields are omitted. Raw library status responses remain complete. (ENG-746, ENG-754)
+
 ## [0.21.0] - 2026-08-20
 
 ### Added
