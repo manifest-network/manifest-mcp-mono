@@ -78,18 +78,20 @@ export function asFqdn(value: string): Fqdn {
 }
 
 /**
- * Normalize (RFC 4343: DNS is case-insensitive) and validate a custom domain. Rejects scheme
- * prefixes and IPv4 literals (FQDN_RE has a letter-led top-level label). The chain remains the
- * authoritative validator (reserved suffixes, etc.).
+ * Normalize surrounding whitespace + DNS case (RFC 4343: DNS is case-insensitive), then validate
+ * a custom domain. Rejects scheme prefixes and IPv4 literals (FQDN_RE has a letter-led top-level
+ * label). The chain remains the authoritative validator for reserved suffixes, current claims,
+ * and other stateful policy.
  */
 export function parseFqdn(value: string): Fqdn {
-  if (SCHEME_PREFIX_RE.test(value)) {
+  const trimmed = value.trim();
+  if (SCHEME_PREFIX_RE.test(trimmed)) {
     throw new ManifestMCPError(
       ARG,
       `customDomain "${value}" must not include a scheme — pass a bare FQDN`,
     );
   }
-  const normalized = value.toLowerCase();
+  const normalized = trimmed.toLowerCase();
   if (!FQDN_RE.test(normalized)) {
     throw new ManifestMCPError(
       ARG,

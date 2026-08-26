@@ -126,18 +126,19 @@ export async function deployManifest(
   const isStack = result.format === 'stack';
   const serviceNames = isStack ? getServiceNames(parsed) : [];
 
-  // customDomain format + serviceName coherence (manifest-derived), all before
-  // any read or credit-reserving broadcast.
+  // Client-verifiable customDomain syntax + serviceName coherence
+  // (manifest-derived), all before any read or credit-reserving broadcast.
+  // Reserved suffixes and current claims remain chain-authoritative: a
+  // pre-read cannot close the race before the later set-domain transaction.
   let parsedCustomDomain: Fqdn | undefined;
   if (spec.customDomain !== undefined) {
-    const trimmedCustomDomain = spec.customDomain.trim();
-    if (trimmedCustomDomain === '') {
+    if (spec.customDomain.trim() === '') {
       throw new ManifestMCPError(
         ManifestMCPErrorCode.INVALID_CONFIG,
         'customDomain cannot be empty or whitespace-only',
       );
     }
-    parsedCustomDomain = parseFqdn(trimmedCustomDomain);
+    parsedCustomDomain = parseFqdn(spec.customDomain);
     if (isStack) {
       if (!spec.serviceName) {
         throw new ManifestMCPError(
@@ -460,8 +461,7 @@ export async function deployManifest(
     // get here. Echo the same branded canonical value sent to the chain.
     ...(parsedCustomDomain !== undefined && {
       custom_domain: parsedCustomDomain,
+      ...(spec.serviceName && { service_name: spec.serviceName }),
     }),
-    ...(parsedCustomDomain !== undefined &&
-      spec.serviceName && { service_name: spec.serviceName }),
   };
 }

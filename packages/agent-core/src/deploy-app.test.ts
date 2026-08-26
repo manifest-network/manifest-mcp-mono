@@ -3894,6 +3894,8 @@ describe('deployApp — retry_set_domain decomposition (ENG-185 sub-PR E)', () =
     setItemCustomDomain?: ReturnType<typeof vi.fn>;
     uploadLeaseData?: ReturnType<typeof vi.fn>;
     pollLeaseUntilReady?: ReturnType<typeof vi.fn>;
+    customDomain?: string;
+    dataDir?: string;
   }) {
     const spec = readFixture(
       'skills',
@@ -3902,6 +3904,9 @@ describe('deployApp — retry_set_domain decomposition (ENG-185 sub-PR E)', () =
       'input',
       'spec.json',
     ) as DeploySpec;
+    if (opts.customDomain !== undefined) {
+      spec.customDomain = opts.customDomain;
+    }
     const readinessRaw = readFixture(
       'skills',
       'deploy-app',
@@ -4033,6 +4038,7 @@ describe('deployApp — retry_set_domain decomposition (ENG-185 sub-PR E)', () =
               typeof deployApp
             >[2]['clientManager'],
             walletProvider,
+            ...(opts.dataDir !== undefined && { dataDir: opts.dataDir }),
           });
         } catch (err) {
           caughtErr = err;
@@ -4107,6 +4113,47 @@ describe('deployApp — retry_set_domain decomposition (ENG-185 sub-PR E)', () =
     expect((result?.urls ?? []).length).toBeGreaterThan(0);
     expect(result?.urls).toContain(`https://${fqdn}/`);
     expect(result?.customDomain).toBe('app.testnet.manifest.app');
+  });
+
+  it('reuses the canonical retry domain for broadcast, persistence, and result output', async () => {
+    const { mkdtempSync, rmSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const dataDir = mkdtempSync(join(tmpdir(), 'eng749-retry-domain-'));
+
+    try {
+      const { run, leaseUuid } = await setupRetryScenario({
+        customDomain: 'App.Testnet.Manifest.App',
+        dataDir,
+      });
+
+      const { caughtErr, result } = await run();
+      expect(caughtErr).toBeNull();
+      expect(result).toBeDefined();
+      if (result === undefined) {
+        throw new Error('expected retry_set_domain to return a deploy result');
+      }
+      expect(result.customDomain).toBe('app.testnet.manifest.app');
+
+      const core = await import('@manifest-network/manifest-mcp-core');
+      expect(vi.mocked(core.setItemCustomDomain)).toHaveBeenCalledWith(
+        expect.anything(),
+        {
+          leaseUuid,
+          customDomain: 'app.testnet.manifest.app',
+          serviceName: undefined,
+        },
+      );
+
+      expect(result.manifestPath).not.toBe('');
+      const persisted = JSON.parse(
+        readFileSync(result.manifestPath, 'utf8'),
+      ) as {
+        custom_domain?: string;
+      };
+      expect(persisted.custom_domain).toBe('app.testnet.manifest.app');
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
   });
 
   it('upload fails → TX_FAILED with leaseUuid in message; onComplete NOT called', async () => {

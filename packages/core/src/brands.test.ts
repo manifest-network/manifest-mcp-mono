@@ -88,6 +88,9 @@ describe('parseFqdn', () => {
   it('NORMALIZES case (RFC 4343) instead of rejecting', () => {
     expect(parseFqdn('APP.Example.COM')).toBe('app.example.com');
   });
+  it('trims surrounding whitespace before validating and normalizing', () => {
+    expect(parseFqdn('  APP.Example.COM  ')).toBe('app.example.com');
+  });
   it.each([
     ['nodot'],
     [''],

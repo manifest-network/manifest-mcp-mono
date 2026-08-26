@@ -74,8 +74,9 @@ function skuSelectorFromInput(input: AppDeploySpec): SkuIntent {
  * @param ctx         fred capability ctx — chain client, provider auth, fetch
  * @param spec        typed deployment input (image + port, or services)
  * @param callOptions `signal` / `timeout` plus readiness `pollOptions`
- * @throws ManifestMCPError `INVALID_CONFIG` on a contradictory or incomplete
- *   spec; `SKU_AMBIGUOUS` when the size name matches several providers and no
+ * @throws ManifestMCPError `INVALID_ARGUMENT` when `customDomain` is not a
+ *   valid bare FQDN; `INVALID_CONFIG` on a contradictory or incomplete spec;
+ *   `SKU_AMBIGUOUS` when the size name matches several providers and no
  *   `providerUuid`/`skuUuid` disambiguates it
  * @public
  */

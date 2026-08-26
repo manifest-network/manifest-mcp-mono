@@ -732,7 +732,7 @@ export function registerTools(deps: RegisterToolsDeps): void {
           .max(253)
           .optional()
           .describe(
-            'Optional FQDN to attach to the lease item once the create-lease tx confirms (e.g. "app.example.com"). Must be lowercase with a non-numeric TLD label and not match a reserved suffix; the chain validates the format. On a stack lease (`services`), pair with `service_name` to pick which item to attach the domain to.',
+            'Optional bare FQDN to attach to the lease item once the create-lease tx confirms (e.g. "app.example.com"). Surrounding whitespace is ignored and DNS case is normalized to lowercase. Schemes and malformed FQDNs are rejected before lease creation; the chain remains authoritative for reserved suffixes and existing claims. On a stack lease (`services`), pair with `service_name` to pick which item to attach the domain to.',
           ),
         service_name: z
           .string()

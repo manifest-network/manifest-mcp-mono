@@ -1049,9 +1049,10 @@ describe('deployApp', () => {
     });
 
     it('trims, parses once, and lowercases customDomain before forwarding and echoing it', async () => {
-      // Pinned by c9cf3e1: a regression that drops the trim would ship
-      // " app.example.com " bytes to the chain, which IsValidFQDN
-      // rejects → orphaned paid-for lease via the partial-success wrap.
+      // parseFqdn owns trim + case normalization at the untrusted boundary.
+      // Pin one call with the RAW value: re-parsing later would violate the
+      // ENG-258 parse-once rule, while forwarding/echoing anything except the
+      // returned brand would recreate the chain/result canonicalization drift.
       const qc = makeQueryClient();
       const cm = makeMockClientManager({
         queryClient: qc,
@@ -1078,7 +1079,7 @@ describe('deployApp', () => {
       );
 
       expect(mockParseFqdn).toHaveBeenCalledOnce();
-      expect(mockParseFqdn).toHaveBeenCalledWith('App.Example.COM');
+      expect(mockParseFqdn).toHaveBeenCalledWith('  App.Example.COM  ');
       expect(mockSetItemCustomDomain).toHaveBeenCalledWith(
         expect.objectContaining({
           chain: expect.anything(),
@@ -1129,6 +1130,8 @@ describe('deployApp', () => {
 
         expect(mockParseFqdn).toHaveBeenCalledOnce();
         expect(mockParseFqdn).toHaveBeenCalledWith(customDomain);
+        expect(cm.getAddress).not.toHaveBeenCalled();
+        expect(cm.acquireRateLimit).not.toHaveBeenCalled();
         expect(mockCosmosTx).not.toHaveBeenCalled();
         expect(mockSetItemCustomDomain).not.toHaveBeenCalled();
         expect(mockGetAuthToken).not.toHaveBeenCalled();
