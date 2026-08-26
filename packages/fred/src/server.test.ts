@@ -1303,6 +1303,36 @@ describe('FredMCPServer', () => {
       );
     });
 
+    it('sanitizes readiness status and omits the owner-only partition key', async () => {
+      mockWaitForAppReady.mockResolvedValueOnce({
+        lease_uuid: LEASE_UUID,
+        provider_uuid: 'prov-1',
+        provider_url: 'https://provider.example.com',
+        state: 'LEASE_STATE_ACTIVE',
+        status: {
+          state: LeaseState.LEASE_STATE_ACTIVE,
+          partition: 'owner-only',
+          reason: 'ImagePull\u202eFailed\nretry',
+          restore_hint: 'restore\u202e\nnow',
+        },
+      } as Awaited<ReturnType<typeof waitForAppReady>>);
+
+      const server = new FredMCPServer({
+        config: makeMockConfig(),
+        walletProvider: makeMockWallet({ signArbitrary: true }),
+      });
+      const result = await callTool(server, 'wait_for_app_ready', {
+        lease_uuid: LEASE_UUID,
+      });
+      const output = result.structuredContent as {
+        status: Record<string, unknown>;
+      };
+
+      expect(output.status.partition).toBeUndefined();
+      expect(output.status.reason).toBe('ImagePull Failed retry');
+      expect(output.status.restore_hint).toBe('restore now');
+    });
+
     it('omits timeout/interval when not provided', async () => {
       const server = new FredMCPServer({
         config: makeMockConfig(),

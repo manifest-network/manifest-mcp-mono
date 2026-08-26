@@ -89,6 +89,7 @@ export {
   isTransientProviderError,
   isUrlSsrfSafe,
   type LeaseConnectionResponse,
+  type PortMapping,
   ProviderApiError,
   type ProviderApiErrorOptions,
   type ProviderErrorKind,

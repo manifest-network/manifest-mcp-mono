@@ -495,17 +495,16 @@ export async function pollLeaseReadiness(
       // checkedFetch rethrows the caller's own abort reason verbatim, which can
       // be any value. A user's cancel is never a transient fault.
       abortSignal?.throwIfAborted();
-      // A 404 is tolerated HERE although `isTransientProviderError` rejects it
-      // globally. Right after create-lease the provider may still be ingesting
-      // the lease, so its `/status` can 404 for a beat — the window ENG-479 was
-      // filed for, and the one barney's pre-migration poll tolerated. The
-      // tolerance is scoped to this loop deliberately: a 404 from any other
-      // provider call is still a hard error, and here it is bounded by the same
-      // consecutive-failure budget, so a lease the provider genuinely does not
-      // know about still fails after `maxConsecutiveFailures` reads.
+      // A 404 and an off-contract response are tolerated HERE although
+      // `isTransientProviderError` rejects both globally. Right after create-lease the provider
+      // may still be ingesting the lease, and a rolling provider/WAF transition can produce one
+      // malformed 2xx response between valid polls. The tolerance is deliberately scoped to this
+      // loop and bounded by the same consecutive-failure budget: ordinary SDK calls still fail
+      // closed, and a stable contract mismatch still fails readiness after a handful of reads.
       const tolerable =
         isTransientProviderError(err) ||
-        (ProviderApiError.isProviderApiError(err) && err.status === 404);
+        (ProviderApiError.isProviderApiError(err) &&
+          (err.status === 404 || err.kind === 'invalid_response'));
       if (!tolerable) throw err;
       consecutiveFailures += 1;
       lastPollError = err;

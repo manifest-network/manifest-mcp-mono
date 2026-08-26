@@ -38,7 +38,10 @@ import { deployApp } from '../tools/deployApp.js';
 import { fetchActiveLease } from '../tools/fetchActiveLease.js';
 import { fetchLease } from '../tools/fetchLease.js';
 import { getAppLogs } from '../tools/getLogs.js';
-import { projectLeaseStatus } from '../tools/projectLeaseStatus.js';
+import {
+  projectLeaseStatus,
+  sanitizeLeaseStatusForDisplay,
+} from '../tools/projectLeaseStatus.js';
 import { resolveProviderUrl } from '../tools/resolveLeaseProvider.js';
 import { restartApp } from '../tools/restartApp.js';
 import { restoreApp } from '../tools/restoreApp.js';
@@ -204,15 +207,17 @@ export function registerTools(deps: RegisterToolsDeps): void {
       await clientManager.acquireRateLimit();
       const ctx = await buildCtx();
       const result = await appStatus(ctx, { address, leaseUuid });
-      if (result.fredStatus === undefined) {
-        return structuredResponse(result, bigIntReplacer);
-      }
-      const projected = projectLeaseStatus(result.fredStatus);
+      const projected =
+        result.fredStatus === undefined
+          ? undefined
+          : projectLeaseStatus(result.fredStatus);
       return structuredResponse(
         {
           ...result,
-          fredStatus: projected.status,
-          fredStatusTruncated: projected.truncated,
+          ...(projected && {
+            fredStatus: projected.status,
+            fredStatusTruncated: projected.truncated,
+          }),
         },
         bigIntReplacer,
       );
@@ -305,7 +310,9 @@ export function registerTools(deps: RegisterToolsDeps): void {
             : undefined,
         },
       );
-      const projected = projectLeaseStatus(result.status);
+      const projected = projectLeaseStatus(
+        sanitizeLeaseStatusForDisplay(result.status),
+      );
       return structuredResponse(
         {
           ...result,

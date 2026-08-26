@@ -95,6 +95,7 @@ export type {
   ManifestFormat,
   ManifestValidationResult,
   PortConfig,
+  PortMapping,
   ServiceConfig,
   ServiceConnectionDetails,
   SkuIntent,

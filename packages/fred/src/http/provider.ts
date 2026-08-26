@@ -730,12 +730,6 @@ function classifyTransportError(
   );
 }
 
-/**
- * `checkedFetch` + bounded body parsing under ONE deadline, so `timeoutMs` is a budget for the
- * whole call rather than for each phase separately. Passing schema-aware options validates the
- * parsed value before it leaves this transport seam. The legacy positional overload remains for
- * compatibility; built-in provider calls all use the schema form.
- */
 export interface FetchJsonCheckedOptions<TSchema extends ZodType> {
   readonly schema: TSchema;
   readonly timeoutMs?: number;
@@ -743,6 +737,12 @@ export interface FetchJsonCheckedOptions<TSchema extends ZodType> {
   readonly maxBytes?: number;
 }
 
+/**
+ * `checkedFetch` + bounded body parsing under ONE deadline, so `timeoutMs` is a budget for the
+ * whole call rather than for each phase separately. Passing schema-aware options validates the
+ * parsed value before it leaves this transport seam. The legacy positional overload remains for
+ * compatibility; built-in provider calls all use the schema form.
+ */
 export function fetchJsonChecked<TSchema extends ZodType>(
   url: string,
   init: RequestInit | undefined,
@@ -921,6 +921,7 @@ import type {
   ConnectionDetails,
   InstanceInfo,
   LeaseConnectionResponse,
+  PortMapping,
   ServiceConnectionDetails,
 } from '@manifest-network/manifest-mcp-core';
 
@@ -928,6 +929,7 @@ export type {
   ConnectionDetails,
   InstanceInfo,
   LeaseConnectionResponse,
+  PortMapping,
   ServiceConnectionDetails,
 };
 

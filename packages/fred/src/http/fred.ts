@@ -25,6 +25,7 @@ import {
   FredLeaseLogsResponseSchema,
   FredLeaseProvisionResponseSchema,
   FredLeaseReleasesResponseSchema,
+  inheritValidationDrops,
   RawLeaseStatusResponseSchema,
 } from './response-schemas.js';
 
@@ -99,7 +100,7 @@ export async function getLeaseStatus(
         'The provider may be running a newer version than the client supports.',
     );
   }
-  return { ...raw, state };
+  return inheritValidationDrops({ ...raw, state }, raw);
 }
 
 export async function getLeaseLogs(

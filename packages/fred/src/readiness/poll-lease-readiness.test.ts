@@ -112,6 +112,19 @@ describe('pollLeaseReadiness — the injected reader', () => {
     ).rejects.toThrow(/entered terminal state/);
     expect(calls()).toBe(1);
   });
+
+  it('propagates a non-ProviderApiError bug on the first read', async () => {
+    const bug = new TypeError('reader invariant failed');
+    const { read, calls } = reader([bug, ACTIVE_READY]);
+
+    await expect(
+      pollLeaseReadiness(read, input, {
+        intervalMs: 0,
+        maxConsecutiveFailures: 1000,
+      }),
+    ).rejects.toBe(bug);
+    expect(calls()).toBe(1);
+  });
 });
 
 describe('pollLeaseReadiness — Retry-After is honoured but BOUNDED', () => {

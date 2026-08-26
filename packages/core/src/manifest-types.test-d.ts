@@ -15,6 +15,7 @@ import type {
   FredLeaseRelease,
   FredLeaseStatus,
   PortConfig,
+  PortMapping,
 } from './manifest-types.js';
 
 describe('manifest-types shape (type-level)', () => {
@@ -71,6 +72,12 @@ describe('manifest-types shape (type-level)', () => {
     expectTypeOf<PortConfig>().toEqualTypeOf<{
       readonly host_port?: number;
       readonly ingress?: boolean;
+    }>();
+  });
+  it('PortMapping matches the Fred connection wire object', () => {
+    expectTypeOf<PortMapping>().toEqualTypeOf<{
+      readonly host_ip: string;
+      readonly host_port: number;
     }>();
   });
   it('DeployResult id-fields are branded (3b-1)', () => {

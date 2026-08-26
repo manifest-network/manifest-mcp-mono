@@ -1,3 +1,14 @@
+import {
+  bigIntReplacer,
+  type FredLeaseStatus,
+} from '@manifest-network/manifest-mcp-core';
+import { sanitizeFailureFields } from '../failure-reason.js';
+import {
+  hadValidationDrops,
+  inheritValidationDrops,
+} from '../http/response-schemas.js';
+import { sanitizeRetentionFields } from './sanitizeRetention.js';
+
 /** Serialized character budget for provider status copied into MCP model context. */
 export const MAX_LEASE_STATUS_CHARS = 16_000;
 
@@ -33,6 +44,39 @@ export interface LeaseStatusProjection {
 }
 
 /**
+ * Build the tenant-safe status view shared by both status MCP tools.
+ *
+ * `partition` is owner-only provider metadata and never enters model context. Failure and
+ * retention text is normalized and control/format characters are removed before budgeting. The
+ * validation-drop marker is inherited out-of-band so the projection can report an incomplete
+ * provider response without adding an internal field to the published JSON DTO.
+ */
+export function sanitizeLeaseStatusForDisplay(
+  status: FredLeaseStatus,
+): FredLeaseStatus & Record<string, unknown> {
+  const source = status as FredLeaseStatus & Record<string, unknown>;
+  const {
+    partition: _partitionOmitted,
+    retained_until: _retainedUntilRaw,
+    items: _itemsRaw,
+    restore_hint: _restoreHintRaw,
+    reason: _reasonRaw,
+    message: _messageRaw,
+    last_error: _lastErrorRaw,
+    ...rest
+  } = source;
+  const sanitized = {
+    ...rest,
+    ...sanitizeFailureFields(status),
+    ...sanitizeRetentionFields(status),
+  };
+  return inheritValidationDrops(
+    sanitized as FredLeaseStatus & Record<string, unknown>,
+    status,
+  );
+}
+
+/**
  * Bound a provider status object by its actual JSON serialization size.
  *
  * Entries are atomic: an oversized nested value is omitted instead of structurally edited into a
@@ -55,14 +99,25 @@ export function projectLeaseStatus(status: object): LeaseStatusProjection {
   const kept: Array<[string, unknown]> = [];
   // Opening and closing braces are always present.
   let serializedChars = 2;
-  let truncated = false;
+  let truncated = hadValidationDrops(status);
 
   for (const [key, value] of ordered) {
-    // Schema validate-or-drop fields can exist as `undefined`; JSON omits them, so the projection
-    // should do the same without claiming user-visible truncation.
-    if (value === undefined) continue;
+    // JSON input cannot contain `undefined`; an own undefined field is the schema's validate-or-
+    // drop fallback and therefore represents information the provider sent but we rejected.
+    if (value === undefined) {
+      truncated = true;
+      continue;
+    }
+    if (hadValidationDrops(value)) truncated = true;
 
-    const encoded = JSON.stringify({ [key]: value });
+    // A provider body may be up to 10 MiB. Avoid allocating another equally large escaped copy
+    // merely to prove a single string cannot fit this 16k model-context budget.
+    if (typeof value === 'string' && value.length > MAX_LEASE_STATUS_CHARS) {
+      truncated = true;
+      continue;
+    }
+
+    const encoded = JSON.stringify({ [key]: value }, bigIntReplacer);
     const contribution = encoded.length - 2 + (kept.length === 0 ? 0 : 1);
     if (serializedChars + contribution > MAX_LEASE_STATUS_CHARS) {
       truncated = true;

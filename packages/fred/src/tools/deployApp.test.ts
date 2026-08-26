@@ -99,7 +99,12 @@ function routeWire(r: DeployRoutes = {}): void {
       lease_uuid: '550e8400-e29b-41d4-a716-446655440000',
       tenant: 'manifest1tenant',
       provider_uuid: 'prov-1',
-      connection: { host: 'app.localhost', ports: { '80/tcp': 32001 } },
+      connection: {
+        host: 'app.localhost',
+        ports: {
+          '80/tcp': { host_ip: '0.0.0.0', host_port: 32001 },
+        },
+      },
     }),
   });
 }
@@ -292,7 +297,9 @@ describe('deployApp', () => {
     expect(result.url).toBe('app.localhost:32001');
     expect(result.connection).toEqual({
       host: 'app.localhost',
-      ports: { '80/tcp': 32001 },
+      ports: {
+        '80/tcp': { host_ip: '0.0.0.0', host_port: 32001 },
+      },
     });
 
     // Verify manifest is uploaded as Uint8Array with correct content

@@ -96,6 +96,7 @@ export {
   metaHashHex,
   normalizePorts,
   type PollOptions,
+  type PortMapping,
   PROVISION_FAILED,
   PROVISION_IN_PROGRESS,
   PROVISION_SUCCESS,

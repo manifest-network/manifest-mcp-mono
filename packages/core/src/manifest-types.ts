@@ -98,26 +98,31 @@ export interface PortConfig {
 }
 
 // ===== Provider connection wire types (relocated from fred/src/http/provider.ts) =====
+export interface PortMapping {
+  readonly host_ip: string;
+  readonly host_port: number;
+}
+
 export interface InstanceInfo {
   readonly instance_index: number;
   readonly container_id: string;
   readonly image: string;
   readonly status: string;
-  readonly ports?: Record<string, unknown>;
+  readonly ports?: Record<string, PortMapping>;
   readonly fqdn?: string;
 }
 
 export interface ServiceConnectionDetails {
   readonly host?: string;
   readonly fqdn?: string;
-  readonly ports?: Record<string, unknown>;
+  readonly ports?: Record<string, PortMapping>;
   readonly instances?: readonly InstanceInfo[];
 }
 
 export interface ConnectionDetails {
   readonly host: string;
   readonly fqdn?: string;
-  readonly ports?: Record<string, unknown>;
+  readonly ports?: Record<string, PortMapping>;
   readonly instances?: readonly InstanceInfo[];
   readonly protocol?: string;
   readonly metadata?: Record<string, string>;
@@ -135,7 +140,7 @@ export interface LeaseConnectionResponse {
 export interface FredInstanceInfo {
   readonly name: string;
   readonly status: string;
-  readonly ports?: Record<string, number>;
+  readonly ports?: Record<string, PortMapping>;
   readonly fqdn?: string;
 }
 

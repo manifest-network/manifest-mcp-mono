@@ -1,5 +1,6 @@
 import type { FredAuthCtx } from '../ctx.js';
 import { getLeaseLogs } from '../http/fred.js';
+import { hadValidationDrops } from '../http/response-schemas.js';
 import { fetchActiveLease } from './fetchActiveLease.js';
 import { resolveProviderUrl } from './resolveLeaseProvider.js';
 
@@ -30,27 +31,58 @@ export async function getAppLogs(
     ctx.allowLoopback,
   );
 
-  let truncated = false;
-  const logEntries: Array<[service: string, log: string]> = [];
-  let totalChars = 0;
+  let truncated = hadValidationDrops(result.logs);
+  const sourceEntries = Object.entries(result.logs);
+  const allocations = new Map<number, number>();
+  let unsettled = sourceEntries.map((_, index) => index);
+  let remainingBudget = MAX_LOG_CHARS;
 
-  for (const [service, log] of Object.entries(result.logs)) {
-    if (totalChars >= MAX_LOG_CHARS) {
-      truncated = true;
-      break;
+  // Max-min fair allocation: fully satisfy small services first, redistribute their unused share,
+  // then split the remainder across large services. Keys are indivisible; a key that cannot fit
+  // its fair share is dropped rather than truncated, so it cannot collide with another service or
+  // starve every useful sibling.
+  while (unsettled.length > 0) {
+    const share = Math.floor(remainingBudget / unsettled.length);
+    const satisfied = unsettled.filter((index) => {
+      const [service, log] = sourceEntries[index] as [string, string];
+      return service.length + log.length <= share;
+    });
+
+    if (satisfied.length > 0) {
+      const satisfiedSet = new Set(satisfied);
+      for (const index of satisfied) {
+        const [service, log] = sourceEntries[index] as [string, string];
+        const cost = service.length + log.length;
+        allocations.set(index, cost);
+        remainingBudget -= cost;
+      }
+      unsettled = unsettled.filter((index) => !satisfiedSet.has(index));
+      continue;
     }
 
-    // Service names are provider-controlled JSON keys and consume model context just like their
-    // values. Never truncate a key: doing so can collide two services or attribute one service's
-    // logs to another. Skip an over-budget entry and continue so a hostile first key cannot hide
-    // every smaller, useful sibling.
-    const remaining = MAX_LOG_CHARS - totalChars;
-    if (service.length > remaining) {
+    const impossibleKeys = unsettled.filter((index) => {
+      const [service] = sourceEntries[index] as [string, string];
+      return service.length > share;
+    });
+    if (impossibleKeys.length > 0) {
+      const impossibleSet = new Set(impossibleKeys);
+      unsettled = unsettled.filter((index) => !impossibleSet.has(index));
       truncated = true;
       continue;
     }
 
-    const valueBudget = remaining - service.length;
+    const remainder = remainingBudget % unsettled.length;
+    for (const [position, index] of unsettled.entries()) {
+      allocations.set(index, share + (position < remainder ? 1 : 0));
+    }
+    break;
+  }
+
+  const logEntries: Array<[service: string, log: string]> = [];
+  for (const [index, [service, log]] of sourceEntries.entries()) {
+    const allocation = allocations.get(index);
+    if (allocation === undefined) continue;
+    const valueBudget = allocation - service.length;
     const keptLog =
       log.length > valueBudget
         ? valueBudget > 0
@@ -58,9 +90,7 @@ export async function getAppLogs(
           : ''
         : log;
     if (keptLog.length < log.length) truncated = true;
-
     logEntries.push([service, keptLog]);
-    totalChars += service.length + keptLog.length;
   }
 
   return {

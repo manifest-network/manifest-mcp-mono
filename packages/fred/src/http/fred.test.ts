@@ -1135,13 +1135,15 @@ describe('pollLeaseUntilReady — transient-failure budget', () => {
       expect(probe.calls).toHaveLength(0);
     });
 
-    it('rejects an off-contract response immediately instead of retrying it as a blip', async () => {
-      // A provider that literally sends `null` is syntactically valid JSON but not a status
-      // response. The schema seam classifies it before downstream property access, and the poll
-      // must not spend its transient-failure budget retrying a stable contract violation.
-      const probe = scriptReads([{ json: null }]);
+    it('tolerates one off-contract response within the bounded poll budget', async () => {
+      // Direct SDK reads still fail closed. This loop alone gives a rolling provider/WAF one more
+      // look before abandoning a lease that has already been created on chain.
+      const probe = scriptReads([
+        { json: null },
+        { json: { state: 'LEASE_STATE_ACTIVE' } },
+      ]);
 
-      const err = await pollLeaseUntilReady(
+      const result = await pollLeaseUntilReady(
         PROVIDER_URL,
         LEASE_UUID,
         AUTH_TOKEN,
@@ -1151,11 +1153,33 @@ describe('pollLeaseUntilReady — transient-failure budget', () => {
           maxConsecutiveFailures: 5,
         },
         probe.fetch,
+      );
+
+      expect(result.state).toBe(LeaseState.LEASE_STATE_ACTIVE);
+      expect(probe.calls).toHaveLength(2);
+    });
+
+    it('fails after an off-contract response exhausts the bounded poll budget', async () => {
+      const probe = scriptReads([{ json: null }]);
+
+      const err = await pollLeaseUntilReady(
+        PROVIDER_URL,
+        LEASE_UUID,
+        AUTH_TOKEN,
+        {
+          intervalMs: 1,
+          timeoutMs: 5000,
+          maxConsecutiveFailures: 1,
+        },
+        probe.fetch,
       ).catch((caught: unknown) => caught);
 
-      expect(err).toBeInstanceOf(ProviderApiError);
-      expect(err).toMatchObject({ status: 200, kind: 'invalid_response' });
-      expect(probe.calls).toHaveLength(1);
+      expect(err).toBeInstanceOf(LeaseReadinessUnconfirmedError);
+      expect(err).toMatchObject({
+        consecutiveFailures: 2,
+        cause: { status: 200, kind: 'invalid_response' },
+      });
+      expect(probe.calls).toHaveLength(2);
     });
 
     /**
