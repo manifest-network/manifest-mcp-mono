@@ -13,8 +13,35 @@ import {
   parseJsonResponse,
   parseRetryAfterMs,
   readBodyCapped,
+  uploadLeaseData,
   validateProviderUrl,
 } from './provider.js';
+
+describe('uploadLeaseData', () => {
+  it('cancels an unread success body so the connection is released', async () => {
+    let cancelled = false;
+    const body = new ReadableStream<Uint8Array>({
+      cancel() {
+        cancelled = true;
+      },
+    });
+    const fetchFn = vi
+      .fn()
+      .mockResolvedValue(
+        new Response(body, { status: 200 }),
+      ) as unknown as typeof globalThis.fetch;
+
+    await uploadLeaseData(
+      'https://provider.example.com',
+      '550e8400-e29b-41d4-a716-446655440000',
+      new Uint8Array([1, 2, 3]),
+      'token',
+      fetchFn,
+    );
+
+    expect(cancelled).toBe(true);
+  });
+});
 
 describe('validateProviderUrl', () => {
   it('accepts HTTPS URLs', () => {

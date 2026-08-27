@@ -965,7 +965,7 @@ describe('deployApp replay — Copilot review fixes (PR #58 unresolved comments)
   // emits one-or-more `polling_for_readiness` events, then fires
   // `app_ready_confirmed` + falls through to onComplete success. This
   // test pins that full happy path end-to-end.
-  it('needs_wait classifier outcome → waitForAppReady polls → app_ready_confirmed + onComplete', async () => {
+  it('needs_wait succeeds when the host progress callback throws during readiness polling', async () => {
     const spec = readFixture(
       'skills',
       'deploy-app',
@@ -1048,6 +1048,13 @@ describe('deployApp replay — Copilot review fixes (PR #58 unresolved comments)
     } as Awaited<ReturnType<typeof core.cosmosEstimateFee>>);
 
     const { callbacks, progress, completed } = captureCallbacks();
+    const recordProgress = callbacks.onProgress;
+    callbacks.onProgress = (event) => {
+      recordProgress?.(event);
+      if (event.kind === 'polling_for_readiness') {
+        throw new Error('host progress sink failed');
+      }
+    };
     const { deployApp } = await import('./deploy-app.js');
     const clientManager = makeMockClientManager();
     const walletProvider = makeMockWalletProvider();

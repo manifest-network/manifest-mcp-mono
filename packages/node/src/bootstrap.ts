@@ -34,11 +34,17 @@ export interface BootstrapConfig {
   readonly cliName: string;
   /** Human-readable server label for the startup log (e.g. "chain") */
   readonly label: string;
-  /** Factory that creates the MCP server and returns its underlying Server */
+  /** Factory that creates the MCP server wrapper and its owned resources. */
   readonly createServer: (opts: {
     config: ReturnType<typeof createValidatedConfig>;
     walletProvider: WalletProvider;
-  }) => Server;
+  }) => BootstrapServer;
+}
+
+/** Resource-owning server surface shared by all CLI package wrappers. */
+export interface BootstrapServer {
+  getServer(): Server;
+  disconnect(): void;
 }
 
 function handleSubcommand(
@@ -94,6 +100,95 @@ function resolveWallet(
   exit(1);
 }
 
+function cleanupWarning(resource: string, error: unknown): void {
+  const message = error instanceof Error ? error.message : String(error);
+  logger.warn(
+    `Failed to disconnect ${resource}: ${sanitizeForLogging(message) as string}`,
+  );
+}
+
+async function closeResources(
+  server: Server | undefined,
+  runtime: BootstrapServer | undefined,
+  walletProvider: WalletProvider | undefined,
+): Promise<void> {
+  try {
+    await server?.close();
+  } catch (error) {
+    cleanupWarning('MCP transport', error);
+  }
+
+  try {
+    runtime?.disconnect();
+  } catch (error) {
+    cleanupWarning('Cosmos client manager', error);
+  }
+
+  try {
+    await walletProvider?.disconnect?.();
+  } catch (error) {
+    cleanupWarning('wallet', error);
+  }
+}
+
+/** Install one idempotent shutdown path for transport, clients, and wallet. */
+function installShutdownHandlers(
+  server: Server,
+  runtime: BootstrapServer,
+  walletProvider: WalletProvider,
+): void {
+  let shuttingDown = false;
+  let shutdownPromise = Promise.resolve();
+  let shutdown = (): Promise<void> => shutdownPromise;
+  const previousOnClose = server.onclose;
+
+  const onInputClosed = (): void => {
+    void shutdown();
+  };
+  const onSigint = (): void => {
+    void shutdown().finally(() => process.exit(130));
+  };
+  const onSigterm = (): void => {
+    void shutdown().finally(() => process.exit(143));
+  };
+  const onServerClose = (): void => {
+    try {
+      previousOnClose?.();
+    } finally {
+      void shutdown();
+    }
+  };
+
+  const removeHandlers = (): void => {
+    process.stdin.off('end', onInputClosed);
+    process.stdin.off('close', onInputClosed);
+    process.off('SIGINT', onSigint);
+    process.off('SIGTERM', onSigterm);
+    if (server.onclose === onServerClose) {
+      server.onclose = previousOnClose;
+    }
+  };
+
+  shutdown = (): Promise<void> => {
+    if (shuttingDown) return shutdownPromise;
+    shuttingDown = true;
+    removeHandlers();
+    shutdownPromise = closeResources(server, runtime, walletProvider);
+    return shutdownPromise;
+  };
+
+  server.onclose = onServerClose;
+  process.stdin.once('end', onInputClosed);
+  process.stdin.once('close', onInputClosed);
+  process.once('SIGINT', onSigint);
+  process.once('SIGTERM', onSigterm);
+
+  // Cover EOF that raced with handler installation while connect() awaited.
+  if (process.stdin.readableEnded || process.stdin.destroyed) {
+    void shutdown();
+  }
+}
+
 /**
  * Shared bootstrap for all five CLI entry points (chain, lease, fred,
  * cosmwasm, agent).
@@ -124,16 +219,25 @@ export function bootstrap(cfg: BootstrapConfig): void {
     });
 
     const walletProvider = resolveWallet(env, config, cfg.cliName);
+    let runtime: BootstrapServer | undefined;
+    let server: Server | undefined;
 
-    if (walletProvider.connect) {
-      await walletProvider.connect();
+    try {
+      if (walletProvider.connect) {
+        await walletProvider.connect();
+      }
+
+      runtime = cfg.createServer({ config, walletProvider });
+      server = runtime.getServer();
+      const transport = new StdioServerTransport();
+      await server.connect(transport);
+      installShutdownHandlers(server, runtime, walletProvider);
+
+      console.error(`Manifest MCP ${cfg.label} server running on stdio`);
+    } catch (error) {
+      await closeResources(server, runtime, walletProvider);
+      throw error;
     }
-
-    const server = cfg.createServer({ config, walletProvider });
-    const transport = new StdioServerTransport();
-    await server.connect(transport);
-
-    console.error(`Manifest MCP ${cfg.label} server running on stdio`);
   }
 
   main().catch((error) => {

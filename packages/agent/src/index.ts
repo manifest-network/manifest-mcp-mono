@@ -126,6 +126,12 @@ export interface AgentOrchestrators {
  * for tests. Production callers leave `orchestrators` undefined.
  */
 export interface AgentMCPServerOptions extends ManifestMCPServerOptions {
+  /** Chain-registry JSON path used to build the denomination map. */
+  readonly chainDataFile?: string;
+  /** Host-controlled directory used for persisted deployment manifests. */
+  readonly dataDir?: string;
+  /** Enable guarded HTTP fetching in agent-core. Defaults to `true`. */
+  readonly fetchGuarded?: boolean;
   /**
    * Optional per-function overrides for the four agent-core
    * orchestration functions. Each provided key replaces the
@@ -156,7 +162,7 @@ export class AgentMCPServer {
   private clientManager: CosmosClientManager;
   private walletProvider: WalletProvider;
   private orchestrators: AgentOrchestrators;
-  // Env-derived per-call extras. Resolved once at construction; cached
+  // Host-configured per-call extras. Resolved once at construction; cached
   // promises lazy-initialise the actual values on first use so the
   // constructor stays synchronous.
   private chainDataFile: string | undefined;
@@ -181,17 +187,20 @@ export class AgentMCPServer {
       closeLease: options.orchestrators?.closeLease ?? realCloseLease,
     };
 
-    this.chainDataFile = readEnv('MANIFEST_CHAIN_DATA_FILE');
-    this.dataDir = readEnv('MANIFEST_AGENT_DATA_DIR');
+    this.chainDataFile =
+      options.chainDataFile ?? readEnv('MANIFEST_CHAIN_DATA_FILE');
+    this.dataDir = options.dataDir ?? readEnv('MANIFEST_AGENT_DATA_DIR');
     // Default ON — agent-core's documented invariant is that the SSRF
     // guard is on; opt-out requires an explicit MANIFEST_AGENT_FETCH_GUARDED=0
     // (or false/no/off). Mismatched values throw INVALID_CONFIG so a
     // typo doesn't silently disable the guard.
-    this.fetchGuarded = parseBooleanEnv(
-      process.env.MANIFEST_AGENT_FETCH_GUARDED,
-      true,
-      'MANIFEST_AGENT_FETCH_GUARDED',
-    );
+    this.fetchGuarded =
+      options.fetchGuarded ??
+      parseBooleanEnv(
+        process.env.MANIFEST_AGENT_FETCH_GUARDED,
+        true,
+        'MANIFEST_AGENT_FETCH_GUARDED',
+      );
 
     this.mcpServer = new McpServer(
       {
@@ -278,11 +287,10 @@ export class AgentMCPServer {
       this.getRuntime(),
       this.getDenomMap(),
     ]);
-    // `dataDir` flows only from `MANIFEST_AGENT_DATA_DIR` (operator-set
-    // at server-startup time). The per-call tool argument was removed in
-    // Phase 2 (finding #4) because `saveManifest` chmods the supplied
-    // path to 0o700 — an LLM-controllable arg there is a host-fs-damage
-    // primitive.
+    // `dataDir` is host-controlled through the constructor (with an env
+    // fallback). The per-call tool argument remains intentionally absent:
+    // `saveManifest` chmods the supplied path to 0o700, so exposing it as an
+    // LLM-controllable argument would create a host-fs-damage primitive.
     return {
       ...runtime,
       walletProvider: this.walletProvider,
@@ -423,7 +431,7 @@ export class AgentMCPServer {
           // (finding #4). `saveManifest` chmods the supplied path to
           // 0o700; allowing the model / client to pick the path is a
           // host-fs-damage primitive. Operators set the persistence
-          // location via the `MANIFEST_AGENT_DATA_DIR` env var only.
+          // location through server construction or MANIFEST_AGENT_DATA_DIR.
         },
         // Mirrors agent-core's DeployResult. structuredResponse drops
         // `undefined` over the JSON round-trip, so customDomain is optional.

@@ -47,7 +47,11 @@ import {
   makeMockConfig,
   makeMockWallet,
 } from '@manifest-network/manifest-mcp-core/__test-utils__/mocks.js';
-import { AgentMCPServer, type AgentOrchestrators } from './index.js';
+import {
+  AgentMCPServer,
+  type AgentMCPServerOptions,
+  type AgentOrchestrators,
+} from './index.js';
 
 let activeTransports: InMemoryTransport[] = [];
 
@@ -65,10 +69,15 @@ afterEach(async () => {
 
 function makeServer(
   orchestrators?: Partial<AgentOrchestrators>,
+  options: Pick<
+    AgentMCPServerOptions,
+    'chainDataFile' | 'dataDir' | 'fetchGuarded'
+  > = {},
 ): AgentMCPServer {
   return new AgentMCPServer({
     config: makeMockConfig(),
     walletProvider: makeMockWallet({ signArbitrary: true }),
+    ...options,
     ...(orchestrators ? { orchestrators } : {}),
   });
 }
@@ -220,6 +229,32 @@ describe('AgentMCPServer fetchGuarded default (finding #5)', () => {
     const r = await invokeLookup(server);
     expect(r.isError).toBeUndefined();
     const args = buildRuntimeMock.mock.calls[0][0] as { fetchGuarded: boolean };
+    expect(args.fetchGuarded).toBe(false);
+  });
+
+  it('constructor option overrides the env fallback', async () => {
+    process.env[ENV] = 'malformed-and-must-not-be-read';
+    const runtime: AgentCoreRuntime = {
+      clientManager: {} as unknown as AgentCoreRuntime['clientManager'],
+    };
+    buildRuntimeMock.mockResolvedValue(runtime);
+
+    const fakeManageDomain: AgentOrchestrators['manageDomain'] = (async () => ({
+      action: 'lookup',
+      fqdn: 'app.example.com',
+      lease: { leaseUuid: 'lease-1' },
+    })) as unknown as AgentOrchestrators['manageDomain'];
+
+    const server = makeServer(
+      { manageDomain: fakeManageDomain },
+      { fetchGuarded: false },
+    );
+    const r = await invokeLookup(server);
+
+    expect(r.isError).toBeUndefined();
+    const args = buildRuntimeMock.mock.calls[0][0] as {
+      fetchGuarded: boolean;
+    };
     expect(args.fetchGuarded).toBe(false);
   });
 });

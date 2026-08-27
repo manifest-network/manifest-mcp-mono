@@ -13,6 +13,6 @@ bootstrap({
           'Set it to the bech32 address of the MFX-to-PWR converter contract.',
       );
     }
-    return new CosmwasmMCPServer({ ...opts, converterAddress }).getServer();
+    return new CosmwasmMCPServer({ ...opts, converterAddress });
   },
 });

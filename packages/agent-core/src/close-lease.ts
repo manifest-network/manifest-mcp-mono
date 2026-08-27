@@ -34,6 +34,7 @@ import {
   decode as decodeLeaseState,
   isTerminal,
 } from './internals/lease-state.js';
+import { emitProgress } from './internals/safe-progress.js';
 import {
   type VerificationSpec,
   verifyAndRecover,
@@ -113,7 +114,7 @@ export async function closeLease(
       );
     }
   }
-  callbacks.onProgress?.({ kind: 'user_confirmed' });
+  emitProgress(callbacks.onProgress, { kind: 'user_confirmed' });
 
   cx.throwIfCancelled();
 

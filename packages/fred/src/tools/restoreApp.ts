@@ -218,9 +218,19 @@ export async function restoreApp(
     );
     return { ...base, ready };
   } catch (err) {
-    // Post-pivot poll timeout / terminal provisioning failure: the restore is
-    // committed → report status, NEVER compensate. (A caller abort propagates.)
+    // Post-pivot poll timeout: the restore is committed → report it as still
+    // provisioning and NEVER compensate. A provider-authored failure verdict
+    // is different: preserve that rejection and its detail instead of
+    // laundering it into an indistinguishable "still coming up" result.
+    // (A caller abort propagates; ENG-699 owns enriching that cancellation with
+    // the committed lease context.)
     if (signal?.aborted) throw err;
+    if (
+      ProviderApiError.isProviderApiError(err) &&
+      err.kind === 'poll_verdict'
+    ) {
+      throw err;
+    }
     return { ...base, status: 'provisioning' };
   }
 }

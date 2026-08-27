@@ -784,6 +784,29 @@ describe('CosmosClientManager', () => {
       expect(mockSC.disconnect).toHaveBeenCalledOnce();
     });
 
+    it('evicts the manager when the final holder disconnects', () => {
+      const config = makeConfig({ chainId: 'evict-on-release' });
+      const wallet = makeWallet();
+      const released = CosmosClientManager.getInstance(config, wallet);
+
+      released.disconnect();
+
+      const reacquired = CosmosClientManager.getInstance(config, wallet);
+      expect(reacquired).not.toBe(released);
+    });
+
+    it("a stale holder's extra disconnect cannot evict a replacement", () => {
+      const config = makeConfig({ chainId: 'stale-release' });
+      const wallet = makeWallet();
+      const released = CosmosClientManager.getInstance(config, wallet);
+      released.disconnect();
+
+      const replacement = CosmosClientManager.getInstance(config, wallet);
+      released.disconnect();
+
+      expect(CosmosClientManager.getInstance(config, wallet)).toBe(replacement);
+    });
+
     it('clearInstances force-tears-down even when refCount > 1', async () => {
       const mockSC = { disconnect: vi.fn() };
       mockConnectWithSigner.mockResolvedValue(mockSC as any);

@@ -50,26 +50,63 @@ describe('adaptModule error classification (ENG-536)', () => {
       code: ManifestMCPErrorCode.QUERY_FAILED,
     });
   });
+
+  it('passes verbatim protobuf map keys through to fromJSON', async () => {
+    const lcdMod = {
+      labels: vi.fn().mockResolvedValue({
+        labels_by_name: {
+          customer_tier: { display_name: 'Gold' },
+        },
+      }),
+    };
+    const converterNs = {
+      QueryLabelsResponse: {
+        fromJSON: (object: {
+          labelsByName: Record<string, { displayName: string }>;
+        }) => ({
+          labelsByName: Object.fromEntries(
+            Object.entries(object.labelsByName).map(([key, value]) => [
+              key,
+              { displayName: value.displayName },
+            ]),
+          ),
+        }),
+      },
+    };
+    const adapted = adaptModule(lcdMod, converterNs);
+
+    await expect(adapted.labels()).resolves.toEqual({
+      labelsByName: {
+        customer_tier: { displayName: 'Gold' },
+      },
+    });
+  });
 });
 
 describe('snakeToCamelDeep', () => {
   it('converts simple snake_case keys', () => {
-    expect(
-      snakeToCamelDeep({ provider_uuid: 'abc', lease_uuid: '123' }),
-    ).toEqual({ providerUuid: 'abc', leaseUuid: '123' });
+    const view = snakeToCamelDeep({
+      provider_uuid: 'abc',
+      lease_uuid: '123',
+    }) as { providerUuid: string; leaseUuid: string };
+    expect(view.providerUuid).toBe('abc');
+    expect(view.leaseUuid).toBe('123');
   });
 
   it('converts nested objects', () => {
-    expect(snakeToCamelDeep({ outer_key: { inner_key: 'val' } })).toEqual({
-      outerKey: { innerKey: 'val' },
-    });
+    const view = snakeToCamelDeep({ outer_key: { inner_key: 'val' } }) as {
+      outerKey: { innerKey: string };
+    };
+    expect(view.outerKey.innerKey).toBe('val');
   });
 
   it('converts arrays of objects', () => {
-    expect(snakeToCamelDeep([{ foo_bar: 1 }, { baz_qux: 2 }])).toEqual([
-      { fooBar: 1 },
-      { bazQux: 2 },
-    ]);
+    const view = snakeToCamelDeep([{ foo_bar: 1 }, { baz_qux: 2 }]) as [
+      { fooBar: number },
+      { bazQux: number },
+    ];
+    expect(view[0].fooBar).toBe(1);
+    expect(view[1].bazQux).toBe(2);
   });
 
   it('passes through primitives', () => {
@@ -91,55 +128,73 @@ describe('snakeToCamelDeep', () => {
   });
 
   it('leaves already-camelCase keys unchanged', () => {
-    expect(snakeToCamelDeep({ providerUuid: 'abc' })).toEqual({
-      providerUuid: 'abc',
-    });
+    const view = snakeToCamelDeep({ providerUuid: 'abc' }) as {
+      providerUuid: string;
+    };
+    expect(view.providerUuid).toBe('abc');
   });
 
   it('handles empty objects', () => {
-    expect(snakeToCamelDeep({})).toEqual({});
+    expect(Object.keys(snakeToCamelDeep({}) as object)).toEqual([]);
   });
 
   it('handles deeply nested structures', () => {
-    expect(
-      snakeToCamelDeep({
-        credit_account: {
-          balance: { amount: '100', denom: 'umfx' },
-          tenant_address: 'manifest1abc',
-        },
-      }),
-    ).toEqual({
-      creditAccount: {
+    const view = snakeToCamelDeep({
+      credit_account: {
         balance: { amount: '100', denom: 'umfx' },
-        tenantAddress: 'manifest1abc',
+        tenant_address: 'manifest1abc',
       },
+    }) as {
+      creditAccount: {
+        balance: { amount: string; denom: string };
+        tenantAddress: string;
+      };
+    };
+    expect(view.creditAccount.balance).toEqual({
+      amount: '100',
+      denom: 'umfx',
     });
+    expect(view.creditAccount.tenantAddress).toBe('manifest1abc');
   });
 
   it('handles arrays nested inside objects', () => {
-    expect(
-      snakeToCamelDeep({
-        lease_items: [
-          { sku_uuid: 'a', item_count: 1 },
-          { sku_uuid: 'b', item_count: 2 },
-        ],
-      }),
-    ).toEqual({
-      leaseItems: [
-        { skuUuid: 'a', itemCount: 1 },
-        { skuUuid: 'b', itemCount: 2 },
+    const view = snakeToCamelDeep({
+      lease_items: [
+        { sku_uuid: 'a', item_count: 1 },
+        { sku_uuid: 'b', item_count: 2 },
       ],
-    });
+    }) as {
+      leaseItems: Array<{ skuUuid: string; itemCount: number }>;
+    };
+    expect(view.leaseItems[0].skuUuid).toBe('a');
+    expect(view.leaseItems[0].itemCount).toBe(1);
+    expect(view.leaseItems[1].skuUuid).toBe('b');
+    expect(view.leaseItems[1].itemCount).toBe(2);
   });
 
   it('handles keys with uppercase after underscore', () => {
-    expect(snakeToCamelDeep({ status_OK: true })).toEqual({ statusOK: true });
+    const view = snakeToCamelDeep({ status_OK: true }) as { statusOK: boolean };
+    expect(view.statusOK).toBe(true);
   });
 
   it('handles keys with digits after underscore', () => {
-    expect(snakeToCamelDeep({ v1beta1_balance: '100' })).toEqual({
-      v1beta1Balance: '100',
-    });
+    const view = snakeToCamelDeep({ v1beta1_balance: '100' }) as {
+      v1beta1Balance: string;
+    };
+    expect(view.v1beta1Balance).toBe('100');
+  });
+
+  it('preserves protobuf map entry keys while aliasing fields in their values', () => {
+    const view = snakeToCamelDeep({
+      labels_by_name: {
+        customer_tier: { display_name: 'Gold' },
+      },
+    }) as {
+      labelsByName: Record<string, { displayName: string }>;
+    };
+
+    expect(Object.keys(view.labelsByName)).toEqual(['customer_tier']);
+    expect(view.labelsByName.customer_tier.displayName).toBe('Gold');
   });
 });
 
@@ -203,10 +258,12 @@ describe('adaptModule', () => {
 
     const result = await adapted.myMethod('arg1');
     expect(originalFn).toHaveBeenCalledWith('arg1');
-    expect(converter.fromJSON).toHaveBeenCalledWith({
-      totalCount: '5',
-      someData: 'raw',
-    });
+    const converterInput = converter.fromJSON.mock.calls[0][0] as {
+      totalCount: string;
+      someData: string;
+    };
+    expect(converterInput.totalCount).toBe('5');
+    expect(converterInput.someData).toBe('raw');
     expect(result).toEqual({ totalCount: 5, someData: 'raw' });
   });
 

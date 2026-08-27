@@ -5,5 +5,5 @@ import { bootstrap } from './bootstrap.js';
 bootstrap({
   cliName: 'manifest-mcp-agent',
   label: 'agent',
-  createServer: (opts) => new AgentMCPServer(opts).getServer(),
+  createServer: (opts) => new AgentMCPServer(opts),
 });

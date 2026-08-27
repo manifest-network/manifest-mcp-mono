@@ -21,5 +21,5 @@ bootstrap({
     new ChainMCPServer({
       ...opts,
       faucetUrl,
-    }).getServer(),
+    }),
 });

@@ -31,6 +31,7 @@ import {
   setItemCustomDomain,
 } from '@manifest-network/manifest-mcp-core';
 import { makeCancellationScope } from './internals/cancellation.js';
+import { emitProgress } from './internals/safe-progress.js';
 import {
   type VerifyDomainOutcome,
   type VerifyDomainResult,
@@ -144,7 +145,7 @@ export async function manageDomain(
       );
     }
   }
-  callbacks.onProgress?.({ kind: 'user_confirmed' });
+  emitProgress(callbacks.onProgress, { kind: 'user_confirmed' });
 
   // --- Broadcast ------------------------------------------------------
   // txCtx has no signer (ManageDomainOptions carries no walletProvider); the

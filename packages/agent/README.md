@@ -118,6 +118,9 @@ import { AgentMCPServer } from '@manifest-network/manifest-mcp-agent';
 const server = new AgentMCPServer({
   config,          // ManifestMCPConfig from @manifest-network/manifest-mcp-core
   walletProvider,  // WalletProvider from @manifest-network/manifest-mcp-core
+  dataDir,         // optional; falls back to MANIFEST_AGENT_DATA_DIR
+  chainDataFile,   // optional; falls back to MANIFEST_CHAIN_DATA_FILE
+  fetchGuarded,    // optional; falls back to MANIFEST_AGENT_FETCH_GUARDED, then true
 });
 const mcpServer = server.getServer();
 // Connect mcpServer to your preferred MCP transport.

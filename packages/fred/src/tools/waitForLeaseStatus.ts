@@ -9,9 +9,15 @@ import {
   ManifestMCPErrorCode,
 } from '@manifest-network/manifest-mcp-core';
 import { getLeaseStatus } from '../http/fred.js';
-import { validateProviderUrl } from '../http/provider.js';
+import {
+  isTransientProviderError,
+  ProviderApiError,
+  validateProviderUrl,
+} from '../http/provider.js';
 import type { ProviderAuthPort } from '../http/provider-auth.js';
 import {
+  DEFAULT_MAX_CONSECUTIVE_FAILURES,
+  DEFAULT_POLL_TIMEOUT_MS,
   PROVISION_FAILED,
   PROVISION_IN_PROGRESS,
   PROVISION_SUCCESS,
@@ -34,10 +40,12 @@ export interface WaitForLeaseStatusOptions {
   onStatus?: (status: FredLeaseStatus) => void;
   /** Caller cancellation. Aborting REJECTS with signal.reason and cancels the in-flight wait. */
   signal?: AbortSignal;
-  /** Overall DEADLINE in ms (default 120000). Reaching it on a non-terminal lease REJECTS. */
+  /** Overall DEADLINE in ms (default 600000, matching Fred's provisioning ceiling). Reaching it on a non-terminal lease REJECTS. */
   timeout?: number;
   /** Poll interval in ms (default 3000). Also the snapshot cadence; the WS path uses it for the fallback. */
   intervalMs?: number;
+  /** Consecutive transient status-read failures tolerated before rejecting (default 3). */
+  maxConsecutiveFailures?: number;
   /** false (default) = dedup onStatus on (state, provision_status); true = raw per-event. */
   emitEvery?: boolean;
 }
@@ -183,6 +191,7 @@ interface DriverArgs {
   readonly signal: AbortSignal | undefined;
   readonly intervalMs: number;
   readonly timeoutMs: number;
+  readonly maxConsecutiveFailures: number;
   readonly deadlineAt: number;
   readonly emit: (status: FredLeaseStatus) => void;
   /** Mutable scratch shared by both drivers: the last provision_status actually observed, so the
@@ -217,15 +226,20 @@ async function waitViaPoll(a: DriverArgs): Promise<FredLeaseStatus> {
     signal,
     intervalMs,
     deadlineAt,
+    maxConsecutiveFailures,
   } = a;
+  let consecutiveFailures = 0;
   for (;;) {
     signal?.throwIfAborted(); // abort observed between polls
+    let token: string;
+    try {
+      token = await ctx.providerAuth.providerToken({ address, leaseUuid });
+    } catch (err) {
+      if (signal?.aborted) throw signal.reason;
+      throw err;
+    }
     let status: FredLeaseStatus;
     try {
-      const token = await ctx.providerAuth.providerToken({
-        address,
-        leaseUuid,
-      });
       status = await getLeaseStatus(
         providerUrl,
         leaseUuid,
@@ -236,8 +250,33 @@ async function waitViaPoll(a: DriverArgs): Promise<FredLeaseStatus> {
       );
     } catch (err) {
       if (signal?.aborted) throw signal.reason; // abort-during-fetch: reject with the abort reason FIRST
-      throw err; // network/parse → reject
+      // Match pollLeaseUntilReady's bounded tolerance: a transient provider
+      // blip, an eventually-consistent 404, or one malformed response is worth
+      // another read; a permanent HTTP/auth/URL failure is not. Keep token
+      // minting outside this budget — only the provider status read is retried.
+      const tolerable =
+        isTransientProviderError(err) ||
+        (ProviderApiError.isProviderApiError(err) &&
+          (err.status === 404 || err.kind === 'invalid_response'));
+      if (!tolerable) throw err;
+      consecutiveFailures += 1;
+      if (consecutiveFailures > maxConsecutiveFailures) throw err;
+      ctx.logger.warn(
+        `waitForLeaseStatus: status read failed (${consecutiveFailures}/${maxConsecutiveFailures} tolerated): ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+      if (Date.now() >= deadlineAt) {
+        throw timedOutError(
+          leaseUuid,
+          a.timeoutMs,
+          a.observed.lastProvisionStatus,
+        );
+      }
+      await abortableSleep(intervalMs, signal);
+      continue;
     }
+    consecutiveFailures = 0;
     a.observed.lastProvisionStatus = status.provision_status;
     if (classifyTerminal(status, leaseUuid) !== 'pending') return status; // resolve (terminal NOT emitted via onStatus)
     a.emit(status);
@@ -530,7 +569,11 @@ export async function waitForLeaseStatus(
 ): Promise<FredLeaseStatus> {
   const { signal, onStatus, emitEvery } = opts;
   const intervalMs = opts.intervalMs ?? 3_000;
-  const timeoutMs = opts.timeout ?? 120_000;
+  const timeoutMs = opts.timeout ?? DEFAULT_POLL_TIMEOUT_MS;
+  const maxConsecutiveFailures = Math.max(
+    0,
+    Math.floor(opts.maxConsecutiveFailures ?? DEFAULT_MAX_CONSECUTIVE_FAILURES),
+  );
 
   signal?.throwIfAborted(); // prompt pre-abort: no chain/provider work
 
@@ -574,6 +617,7 @@ export async function waitForLeaseStatus(
     signal,
     intervalMs,
     timeoutMs,
+    maxConsecutiveFailures,
     deadlineAt: Date.now() + timeoutMs,
     emit,
     observed: {},

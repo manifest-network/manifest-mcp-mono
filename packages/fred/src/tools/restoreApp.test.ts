@@ -55,6 +55,7 @@ vi.mock('./resolveLeaseProvider.js', () => ({ resolveProviderUrl: vi.fn() }));
 import { cosmosTx } from '@manifest-network/manifest-mcp-core';
 import { sealedFetchProbe } from '@manifest-network/manifest-mcp-core/__test-utils__/fetch-probe.js';
 import { makeSealedClientManager } from '@manifest-network/manifest-mcp-core/__test-utils__/mocks.js';
+import { ProviderApiError } from '../http/provider.js';
 import { createLease } from './createLease.js';
 import { fetchLease } from './fetchLease.js';
 import { resolveProviderUrl } from './resolveLeaseProvider.js';
@@ -412,6 +413,31 @@ describe('restoreApp', () => {
     expect(result).toMatchObject({ lease_uuid: NEW, status: 'provisioning' });
     expect(mockCosmosTx).not.toHaveBeenCalled();
     expect(urls()).toContain('status');
+  });
+
+  it('post-pivot provider failure verdict rejects with its detail and does NOT cancel', async () => {
+    mockSource();
+    routeWire({
+      status: {
+        state: 'LEASE_STATE_ACTIVE',
+        provision_status: 'failed',
+        reason: 'ImagePullFailed',
+        message: 'registry denied the image',
+      },
+    });
+
+    const err = await restoreApp(
+      makeCtx(),
+      { address: 'a', sourceLeaseUuid: SOURCE },
+      { pollOptions: { intervalMs: 0, timeoutMs: 25 } },
+    ).catch((caught: unknown) => caught);
+
+    expect(ProviderApiError.isProviderApiError(err)).toBe(true);
+    expect(err).toMatchObject({ kind: 'poll_verdict' });
+    expect((err as Error).message).toContain('registry denied the image');
+    // The restore already committed and adopted the volumes. Even a reported
+    // provisioning failure must never enter the pre-pivot compensation path.
+    expect(mockCosmosTx).not.toHaveBeenCalled();
   });
 
   it('post-pivot poll SUCCESS: returns the polled ready status', async () => {

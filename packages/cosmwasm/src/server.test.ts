@@ -244,6 +244,24 @@ describe('CosmwasmMCPServer', () => {
       const text = (result.content[0] as { text: string }).text;
       expect(text).toContain('Invalid conversion amount');
     });
+
+    it('retries a transient contract query failure', async () => {
+      mockGetConfig.mockReturnValue({
+        gasPrice: '1.0umfx',
+        retry: { maxRetries: 1, baseDelayMs: 0, maxDelayMs: 0 },
+      });
+      mockSmartContractState
+        .mockRejectedValueOnce(new Error('ECONNRESET'))
+        .mockResolvedValueOnce({
+          data: toUtf8(JSON.stringify(makeConverterConfig())),
+        });
+      const server = makeServer();
+
+      const result = await callTool(server, 'get_mfx_to_pwr_rate');
+
+      expect(result.isError).toBeUndefined();
+      expect(mockSmartContractState).toHaveBeenCalledTimes(2);
+    });
   });
 
   describe('convert_mfx_to_pwr', () => {
@@ -285,6 +303,18 @@ describe('CosmwasmMCPServer', () => {
         amount: 'abc',
       });
       expect(result.isError).toBe(true);
+      expect(mockSignAndBroadcast).not.toHaveBeenCalled();
+    });
+
+    it('rejects a gas multiplier below one at the schema boundary', async () => {
+      const server = makeServer();
+      const result = await callTool(server, 'convert_mfx_to_pwr', {
+        amount: '1000000',
+        gas_multiplier: 0.5,
+      });
+
+      expect(result.isError).toBe(true);
+      expect(mockSmartContractState).not.toHaveBeenCalled();
       expect(mockSignAndBroadcast).not.toHaveBeenCalled();
     });
 
@@ -343,6 +373,30 @@ describe('CosmwasmMCPServer', () => {
       expect(data.transactionHash).toBe('TXHASH123');
       expect(data.expected_output.amount).toBe('379000');
       expect(data.rate).toBe('0.379');
+    });
+
+    it('uses the per-call gas multiplier override for fee simulation', async () => {
+      mockConfigResponse();
+      mockSignAndBroadcast.mockResolvedValue({
+        transactionHash: 'TXHASH-GAS',
+        code: 0,
+        height: 100,
+        gasUsed: 100000,
+        gasWanted: 350000,
+      });
+      const server = makeServer();
+
+      const result = await callTool(server, 'convert_mfx_to_pwr', {
+        amount: '1000000',
+        gas_multiplier: 3.5,
+      });
+
+      expect(result.isError).toBeUndefined();
+      expect(mockSignAndBroadcast).toHaveBeenCalledWith(
+        'manifest1abc',
+        expect.any(Array),
+        expect.objectContaining({ gas: '350000' }),
+      );
     });
   });
 

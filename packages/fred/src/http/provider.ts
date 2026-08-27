@@ -971,10 +971,14 @@ export async function uploadLeaseData(
   if (abortSignal) {
     init.signal = abortSignal;
   }
-  await checkedFetch(
+  const response = await checkedFetch(
     `${validated}/v1/leases/${encodeURIComponent(leaseUuid)}/data`,
     init,
     undefined,
     fetchFn,
   );
+  // The upload response has no payload contract. Explicitly cancel any body so
+  // undici can release the connection immediately instead of retaining it
+  // until the unread Response is garbage-collected.
+  await response.body?.cancel().catch(() => {});
 }

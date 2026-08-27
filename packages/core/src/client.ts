@@ -132,6 +132,8 @@ function getSigningManifestClientOptions() {
 export class CosmosClientManager {
   private static instances: Map<string, CosmosClientManager> = new Map();
 
+  /** Registry key used to evict this manager when its final holder releases it. */
+  private readonly instanceKey: string;
   private config: ManifestMCPConfig;
   private walletProvider: WalletProvider;
   private queryClient: ManifestQueryClient | null = null;
@@ -165,7 +167,9 @@ export class CosmosClientManager {
   private constructor(
     config: ManifestMCPConfig,
     walletProvider: WalletProvider,
+    instanceKey: string,
   ) {
+    this.instanceKey = instanceKey;
     this.config = config;
     this.walletProvider = walletProvider;
 
@@ -208,7 +212,7 @@ export class CosmosClientManager {
     let instance = CosmosClientManager.instances.get(key);
 
     if (!instance) {
-      instance = new CosmosClientManager(config, walletProvider);
+      instance = new CosmosClientManager(config, walletProvider, key);
       CosmosClientManager.instances.set(key, instance);
     } else {
       // Check what changed to determine what needs updating
@@ -693,8 +697,19 @@ export class CosmosClientManager {
    * count negative.
    */
   disconnect(): void {
-    if (this.refCount > 0) this.refCount -= 1;
-    if (this.refCount === 0) this.teardown();
+    if (this.refCount === 0) return;
+    this.refCount -= 1;
+    if (this.refCount === 0) {
+      this.teardown();
+      // A released manager is no longer reusable: keeping it in the registry
+      // makes a long-lived SDK process retain one RateLimiter + config per
+      // endpoint it has ever touched. The identity guard protects a fresh
+      // manager registered under the same key from a stale holder's extra
+      // disconnect after clearInstances()/reacquisition.
+      if (CosmosClientManager.instances.get(this.instanceKey) === this) {
+        CosmosClientManager.instances.delete(this.instanceKey);
+      }
+    }
   }
 
   /**

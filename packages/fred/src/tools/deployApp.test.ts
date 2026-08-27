@@ -574,7 +574,7 @@ describe('deployApp', () => {
     expect(order).toEqual(['onLeaseCreated', 'upload', 'poll']);
   });
 
-  it('surfaces onLeaseCreated errors raw (not wrapped as partial success)', async () => {
+  it('wraps a throwing onLeaseCreated callback as partial success with the lease UUID', async () => {
     const qc = makeQueryClient();
     const cm = makeMockClientManager({
       queryClient: qc,
@@ -585,17 +585,24 @@ describe('deployApp', () => {
       throw new Error('registry write failed');
     });
 
-    await expect(
-      deployApp(
-        await ctx(cm as any),
-        {
-          image: 'nginx:alpine',
-          port: 80,
-          size: 'docker-micro',
-        },
-        { onLeaseCreated },
-      ),
-    ).rejects.toThrow(/registry write failed/);
+    const err = await deployApp(
+      await ctx(cm as any),
+      {
+        image: 'nginx:alpine',
+        port: 80,
+        size: 'docker-micro',
+      },
+      { onLeaseCreated },
+    ).catch((caught: unknown) => caught);
+
+    expect(err).toMatchObject({
+      code: ManifestMCPErrorCode.QUERY_FAILED,
+      details: {
+        partial: true,
+        lease_uuid: '550e8400-e29b-41d4-a716-446655440000',
+      },
+    });
+    expect((err as Error).message).toContain('registry write failed');
 
     // Upload and poll never run when the callback throws.
     expect(urls()).not.toContain('data');
@@ -635,7 +642,7 @@ describe('deployApp', () => {
     expect(order).toEqual(['onLeaseCreated-done', 'upload']);
   });
 
-  it('propagates async onLeaseCreated rejection raw', async () => {
+  it('wraps an async onLeaseCreated rejection as partial success', async () => {
     const qc = makeQueryClient();
     const cm = makeMockClientManager({
       queryClient: qc,
@@ -646,17 +653,24 @@ describe('deployApp', () => {
       throw new Error('async registry write failed');
     });
 
-    await expect(
-      deployApp(
-        await ctx(cm as any),
-        {
-          image: 'nginx:alpine',
-          port: 80,
-          size: 'docker-micro',
-        },
-        { onLeaseCreated },
-      ),
-    ).rejects.toThrow(/async registry write failed/);
+    const err = await deployApp(
+      await ctx(cm as any),
+      {
+        image: 'nginx:alpine',
+        port: 80,
+        size: 'docker-micro',
+      },
+      { onLeaseCreated },
+    ).catch((caught: unknown) => caught);
+
+    expect(err).toMatchObject({
+      code: ManifestMCPErrorCode.QUERY_FAILED,
+      details: {
+        partial: true,
+        lease_uuid: '550e8400-e29b-41d4-a716-446655440000',
+      },
+    });
+    expect((err as Error).message).toContain('async registry write failed');
 
     expect(urls()).not.toContain('data');
     expect(urls()).not.toContain('status');

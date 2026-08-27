@@ -445,7 +445,20 @@ export function structuredResponse(
   replacer?: (key: string, value: any) => any,
 ): CallToolResult {
   const serialized = JSON.stringify(data, replacer);
-  const structuredContent = JSON.parse(serialized) as Record<string, unknown>;
+  if (serialized === undefined) {
+    throw new ManifestMCPError(
+      ManifestMCPErrorCode.INVALID_ARGUMENT,
+      'structuredResponse requires a JSON object; the supplied value is not JSON-serializable.',
+    );
+  }
+  const parsed: unknown = JSON.parse(serialized);
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new ManifestMCPError(
+      ManifestMCPErrorCode.INVALID_ARGUMENT,
+      'structuredResponse requires a JSON object after serialization; arrays, null, and primitive values are not valid structuredContent.',
+    );
+  }
+  const structuredContent = parsed as Record<string, unknown>;
   return {
     structuredContent,
     content: [

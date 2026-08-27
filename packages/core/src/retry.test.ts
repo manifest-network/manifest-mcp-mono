@@ -151,7 +151,12 @@ describe('isRetryableError', () => {
       expect(isRetryableError(new Error('ECONNREFUSED'))).toBe(true);
       expect(isRetryableError(new Error('ECONNRESET'))).toBe(true);
       expect(isRetryableError(new Error('ETIMEDOUT'))).toBe(true);
-      expect(isRetryableError(new Error('ENOTFOUND'))).toBe(true);
+    });
+
+    it('does not retry ENOTFOUND because NXDOMAIN is normally a permanent endpoint typo', () => {
+      expect(
+        isRetryableError(new Error('getaddrinfo ENOTFOUND rpc.typo')),
+      ).toBe(false);
     });
 
     it('should retry timeout errors', () => {

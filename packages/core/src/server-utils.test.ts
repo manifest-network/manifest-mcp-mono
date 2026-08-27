@@ -452,6 +452,15 @@ describe('structuredResponse', () => {
     expect(result.structuredContent).toEqual({ val: '42' });
     expect(JSON.parse(textOf(result))).toEqual({ val: '42' });
   });
+
+  it.each([undefined, null, [], 'text', 42])(
+    'rejects non-object structuredContent (%s)',
+    (value) => {
+      expect(() => structuredResponse(value)).toThrow(
+        /structuredResponse requires a JSON object/,
+      );
+    },
+  );
 });
 
 // Callback type for testing tools that accept async (args, extra)

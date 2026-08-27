@@ -93,6 +93,7 @@ import { decode as decodeLeaseState } from './internals/lease-state.js';
 import { renderDeploymentPlan } from './internals/render-deployment-plan.js';
 import { renderIntentRecap } from './internals/render-intent-recap.js';
 import { renderPartialSuccessPrompt } from './internals/render-partial-success-prompt.js';
+import { emitProgress } from './internals/safe-progress.js';
 import {
   isStackSpec,
   summarizeSpec,
@@ -256,7 +257,10 @@ export async function deployApp(
     } catch (err) {
       if (isSkuAmbiguousError(err) && callbacks.onResolveSku) {
         const candidates = [...err.details.candidates];
-        callbacks.onProgress?.({ kind: 'sku_ambiguous', candidates });
+        emitProgress(callbacks.onProgress, {
+          kind: 'sku_ambiguous',
+          candidates,
+        });
         const pick = await race(callbacks.onResolveSku(candidates));
         const pin = await resolveSku(readCtx, {
           size: requestedSize(s),
@@ -295,7 +299,10 @@ export async function deployApp(
     denomMap,
     tenantAddress,
   );
-  callbacks.onProgress?.({ kind: 'readiness_evaluated', readiness });
+  emitProgress(callbacks.onProgress, {
+    kind: 'readiness_evaluated',
+    readiness,
+  });
   if (readiness.status === 'block') {
     const envelope: FailureEnvelope = {
       outcome: 'failed',
@@ -367,7 +374,10 @@ export async function deployApp(
     customDomainService: customDomainServiceOf(spec),
     providerUuid: pinned.providerUuid,
   });
-  callbacks.onProgress?.({ kind: 'deployment_plan_rendered', block });
+  emitProgress(callbacks.onProgress, {
+    kind: 'deployment_plan_rendered',
+    block,
+  });
   if (callbacks.onPlan) {
     const verdict = await race(callbacks.onPlan(plan));
     if (verdict === 'cancel') {
@@ -460,7 +470,10 @@ export async function deployApp(
         denomMap,
         tenantAddress,
       );
-      callbacks.onProgress?.({ kind: 'readiness_evaluated', readiness });
+      emitProgress(callbacks.onProgress, {
+        kind: 'readiness_evaluated',
+        readiness,
+      });
       if (readiness.status === 'block') {
         // Same fail-fast as the original-spec readiness gate above.
         throw new ManifestMCPError(
@@ -496,7 +509,7 @@ export async function deployApp(
         customDomainService: customDomainServiceOf(confirmedSpec),
         providerUuid: pinned.providerUuid,
       });
-      callbacks.onProgress?.({
+      emitProgress(callbacks.onProgress, {
         kind: 'deployment_plan_rendered',
         block: editedBlock,
       });
@@ -515,7 +528,7 @@ export async function deployApp(
       );
     }
   }
-  callbacks.onProgress?.({ kind: 'user_confirmed' });
+  emitProgress(callbacks.onProgress, { kind: 'user_confirmed' });
 
   // --- Compose ADR-036 auth callbacks (E-hybrid: agent-core internalizes) ---
   const signArbitrary = opts.walletProvider.signArbitrary.bind(
@@ -556,7 +569,7 @@ export async function deployApp(
   // await (via `signal`) — a post-broadcast abort routes into recovery
   // (tx MAY STILL COMMIT → re-query; see core's withTxConfirmation contract).
   throwIfCancelled();
-  callbacks.onProgress?.({ kind: 'deploy_app_broadcast' });
+  emitProgress(callbacks.onProgress, { kind: 'deploy_app_broadcast' });
   // D3 / ENG-310: loss-free broadcast. A SHALLOW spread of `confirmedSpec`
   // forwards every rich AppDeploySpec field (user/tmpfs/health_check/
   // stop_grace_period/init/expose/labels/storage/depends_on, plus the stack
@@ -678,7 +691,7 @@ export async function deployApp(
   //                      construction sees the final state/connection.
   //   - `'active'`     → fall through to `app_ready_confirmed` + persist.
   let classification = classifyDeployResponse(fredResult);
-  callbacks.onProgress?.({
+  emitProgress(callbacks.onProgress, {
     kind: 'deploy_response_classified',
     outcome: classification.outcome,
   });
@@ -743,7 +756,7 @@ export async function deployApp(
           onProgress: (status) => {
             attempt += 1;
             const stateName = decodeLeaseState(status.state);
-            callbacks.onProgress?.({
+            emitProgress(callbacks.onProgress, {
               kind: 'polling_for_readiness',
               leaseUuid,
               attempt,
@@ -851,7 +864,7 @@ export async function deployApp(
   }
 
   // 'active' (initial OR post-poll merge): emit + fall through to persist.
-  callbacks.onProgress?.({
+  emitProgress(callbacks.onProgress, {
     kind: 'app_ready_confirmed',
     leaseUuid: fredResult.lease_uuid,
   });
@@ -946,7 +959,7 @@ export async function deployApp(
       : {}),
     manifestPath: persistedPath ?? '',
   };
-  callbacks.onProgress?.({ kind: 'success_rendered', result });
+  emitProgress(callbacks.onProgress, { kind: 'success_rendered', result });
   callbacks.onComplete?.(result);
   return result;
 }
@@ -1256,7 +1269,7 @@ async function handleBroadcastFailure(
       // ProgressEvent emitted exactly once, immediately before the
       // (single) `onFailure` call — so it never fires on the inform-only
       // throw path below and `onFailure` stays invoked exactly once.
-      callbacks.onProgress?.({
+      emitProgress(callbacks.onProgress, {
         kind: 'partial_success_prompt_rendered',
         prompt: promptPayload.prompt,
         leaseUuid: envelope.leaseUuid,
@@ -1555,7 +1568,7 @@ async function retrySetDomainAndComplete(
         onProgress: (status) => {
           attempt += 1;
           const stateName = decodeLeaseState(status.state);
-          callbacks.onProgress?.({
+          emitProgress(callbacks.onProgress, {
             kind: 'polling_for_readiness',
             leaseUuid,
             attempt,
@@ -1650,7 +1663,10 @@ async function retrySetDomainAndComplete(
     throw new ManifestMCPError(ManifestMCPErrorCode.TX_FAILED, reason);
   }
 
-  callbacks.onProgress?.({ kind: 'app_ready_confirmed', leaseUuid });
+  emitProgress(callbacks.onProgress, {
+    kind: 'app_ready_confirmed',
+    leaseUuid,
+  });
 
   // Persist manifest (best-effort; save-fail still emits success — same
   // contract as D's happy path).
@@ -1694,7 +1710,7 @@ async function retrySetDomainAndComplete(
     customDomain,
     manifestPath: persistedPath ?? '',
   };
-  callbacks.onProgress?.({ kind: 'success_rendered', result });
+  emitProgress(callbacks.onProgress, { kind: 'success_rendered', result });
   callbacks.onComplete?.(result);
   return result;
 }
@@ -1759,7 +1775,7 @@ async function tryPersistManifest(
         ? { customDomainServiceName: args.customDomainService }
         : {}),
     });
-    args.callbacks.onProgress?.({
+    emitProgress(args.callbacks.onProgress, {
       kind: 'manifest_saved',
       leaseUuid: args.leaseUuid,
       manifestPath: result.manifestPath,
