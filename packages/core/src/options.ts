@@ -29,9 +29,12 @@ export interface CallOptions {
 /**
  * Per-call options for typed TRANSACTION building blocks. Fee precedence: an explicit
  * `fee` WINS (skips simulation / `gasMultiplier` / configured gasPrice — and is the one
- * path valid WITHOUT a configured gasPrice). `gasMultiplier` applies only on the simulate
- * path. Passing both is a caller error. Per-call gasPrice is intentionally deferred
- * (cosmjs#1526 unresolved upstream) — use explicit `fee`.
+ * path valid WITHOUT a configured gasPrice), but its `gas` must be a positive base-10
+ * safe-integer string and remains subject to `config.maxGas` (default 50_000_000;
+ * `-1` disables). This is a gas-unit ceiling, not a denom-aware spend limit: the caller
+ * remains responsible for an explicit `fee.amount`. `gasMultiplier` applies only on the
+ * simulate path. Passing both is a caller error. Per-call gasPrice is intentionally
+ * deferred (cosmjs#1526 unresolved upstream) — use explicit `fee`.
  */
 export interface TxCallOptions extends CallOptions {
   gasMultiplier?: number;

@@ -1,6 +1,6 @@
 import { calculateFee, type StdFee } from '@cosmjs/stargate';
 import type { CosmosClientManager, ManifestQueryClient } from './client.js';
-import { DEFAULT_GAS_MULTIPLIER, DEFAULT_MAX_GAS } from './config.js';
+import { DEFAULT_GAS_MULTIPLIER } from './config.js';
 import { isNotFoundError } from './internals/classify-query-error.js';
 import {
   getQueryHandler,
@@ -9,7 +9,7 @@ import {
   getTxMsgBuilder,
 } from './modules.js';
 import { withRetry } from './retry.js';
-import { assertExplicitFeeWithinCeiling } from './transactions/utils.js';
+import { resolveBroadcastGasOptions } from './transactions/utils.js';
 import {
   type CosmosQueryResult,
   type CosmosTxResult,
@@ -17,7 +17,6 @@ import {
   ManifestMCPError,
   ManifestMCPErrorCode,
   type TxBuildContext,
-  type TxOptions,
   type TxOverrides,
 } from './types.js';
 
@@ -282,79 +281,13 @@ export async function cosmosTx(
   validateName(module, 'module', ManifestMCPErrorCode.UNSUPPORTED_TX);
   validateName(subcommand, 'subcommand', ManifestMCPErrorCode.UNSUPPORTED_TX);
 
-  // NET-NEW: explicit fee and gasMultiplier are mutually exclusive (fee wins; gasMultiplier
-  // applies only on the simulate path). Co-located with the gas validations below.
-  if (txExtras?.fee !== undefined && overrides?.gasMultiplier !== undefined) {
-    throw new ManifestMCPError(
-      ManifestMCPErrorCode.INVALID_CONFIG,
-      'passing both fee and gasMultiplier is a caller error; fee wins (it skips simulation), gasMultiplier applies only on the simulate path',
-    );
-  }
-
-  // ENG-665: an explicit fee must not switch the ENG-556 ceiling off. The
-  // simulate path enforces it inside buildGasFee via TxOptions.maxGas, but the
-  // FEE-WINS branch below deliberately skips building TxOptions, so the one code
-  // path where a caller states a fee explicitly — i.e. where they are being most
-  // careful about cost — was the only unbounded one. Enforced here, before
-  // dispatch, so it covers every module rather than only those whose handler
-  // reaches resolveTxFeeAndMemo.
-  //
-  // `?? DEFAULT_MAX_GAS` mirrors the simulated path's TxOptions below.
-  // `ManifestMCPConfig.maxGas` is optional and `CosmosClientManager.getInstance`
-  // does not default it — only `createValidatedConfig` does — so a consumer
-  // constructing a manager directly (published `core`, SDK `/chain`) has
-  // `maxGas === undefined`. Passing that through raw would disable the ceiling
-  // here while the simulated path still applied the documented 50M default:
-  // the same fail-open-on-the-explicit-fee-path shape this change exists to
-  // close, one level up (PR #177 review).
-  if (txExtras?.fee !== undefined) {
-    assertExplicitFeeWithinCeiling(
-      txExtras.fee,
-      clientManager.getConfig().maxGas ?? DEFAULT_MAX_GAS,
-    );
-  }
-
-  // Validate an explicit gasMultiplier override eagerly (unchanged semantics).
-  if (overrides?.gasMultiplier !== undefined) {
-    if (
-      !Number.isFinite(overrides.gasMultiplier) ||
-      overrides.gasMultiplier < 1
-    ) {
-      throw new ManifestMCPError(
-        ManifestMCPErrorCode.INVALID_CONFIG,
-        `gasMultiplier must be a finite number >= 1, got ${overrides.gasMultiplier}`,
-      );
-    }
-  }
-
-  // Resolve fully-resolved gas options for the SIMULATE path. Always build them on
-  // the non-explicit-fee path (not just when an override is present) so the maxGas
-  // ceiling in buildGasFee covers the default cosmos_tx path too (ENG-556). Skipped
-  // when an explicit fee wins (FEE-WINS bypasses simulate). When gasPrice is not
-  // configured this stays undefined -> buildGasFee returns 'auto' -> the broadcast
-  // still fails downstream at getBroadcastClient (query-only mode), exactly as before.
-  let txOptions: TxOptions | undefined;
-  if (txExtras?.fee === undefined) {
-    const config = clientManager.getConfig();
-    const gasPrice = config.gasPrice;
-    if (!gasPrice) {
-      if (overrides?.gasMultiplier !== undefined) {
-        throw new ManifestMCPError(
-          ManifestMCPErrorCode.INVALID_CONFIG,
-          'gasMultiplier override requires gasPrice configuration',
-        );
-      }
-    } else {
-      txOptions = {
-        gasMultiplier:
-          overrides?.gasMultiplier ??
-          config.gasMultiplier ??
-          DEFAULT_GAS_MULTIPLIER,
-        gasPrice,
-        maxGas: config.maxGas ?? DEFAULT_MAX_GAS,
-      };
-    }
-  }
+  // ENG-665 / ENG-744: resolve the explicit-fee and simulated-fee branches
+  // through the same guard used by the direct executeTx broadcaster.
+  const config = clientManager.getConfig();
+  const txOptions = resolveBroadcastGasOptions(config, {
+    fee: txExtras?.fee,
+    gasMultiplier: overrides?.gasMultiplier,
+  });
 
   // Get handler from registry (throws if module not found) - do this before retry loop
   const handler = getTxHandler(module);
@@ -421,7 +354,7 @@ export async function cosmosTx(
         }
       },
       {
-        config: clientManager.getConfig().retry,
+        config: config.retry,
         operationName: `tx ${module} ${subcommand}`,
       },
     );

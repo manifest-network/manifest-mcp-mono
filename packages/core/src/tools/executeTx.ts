@@ -1,27 +1,27 @@
 import type { EncodeObject } from '@cosmjs/proto-signing';
-import { DEFAULT_GAS_MULTIPLIER, DEFAULT_MAX_GAS } from '../config.js';
 import type { TxCtx } from '../ctx.js';
 import { withTxConfirmation } from '../internals/tx-confirmation.js';
 import type { TxCallOptions } from '../options.js';
 import { withRetry } from '../retry.js';
 import {
-  assertExplicitFeeWithinCeiling,
   buildExecuteSyncTxResult,
   buildExecuteTxResult,
   buildGasFee,
+  resolveBroadcastGasOptions,
   validateMemo,
 } from '../transactions/utils.js';
-import type { ExecuteTxResult, TxOptions } from '../types.js';
+import type { ExecuteTxResult } from '../types.js';
 import { ManifestMCPError, ManifestMCPErrorCode } from '../types.js';
 
 /**
  * Broadcast MULTIPLE messages as ONE atomic transaction (single sequence, single fee, all-or-nothing).
  * A direct signAndBroadcast path — it does NOT go through the per-module cosmos_tx router (there is no
  * module/subcommand for a raw heterogeneous batch). Threads TxCallOptions exactly like the 3 typed txs
- * (fee-wins / gasMultiplier-simulate / memo / signal) and serializes under the per-signer broadcast
- * mutex. The CALLER's messages must already carry the matching `sender`/`authority` field — executeTx
- * resolves the sender for signing (OI-SENDER: ctx.chain, no requireAuthSigner) but does NOT inject it
- * into message bodies. Typed-face only (no stringly equivalent; §9).
+ * (fee-wins after explicit-gas validation + maxGas enforcement / gasMultiplier-simulate / memo / signal)
+ * and serializes under the per-signer broadcast mutex. The CALLER's messages must already carry the
+ * matching `sender`/`authority` field — executeTx resolves the sender for signing (OI-SENDER:
+ * ctx.chain, no requireAuthSigner) but does NOT inject it into message bodies. Typed-face only (no
+ * stringly equivalent; §9).
  */
 export async function executeTx(
   ctx: TxCtx,
@@ -34,57 +34,10 @@ export async function executeTx(
       'executeTx requires at least one message',
     );
   }
-  // Re-apply the guards that live inside cosmosTx (bypassed by this direct path — OI-EXEC-GUARDS).
-  if (opts?.fee !== undefined && opts?.gasMultiplier !== undefined) {
-    throw new ManifestMCPError(
-      ManifestMCPErrorCode.INVALID_CONFIG,
-      'passing both fee and gasMultiplier is a caller error; fee wins (it skips simulation), gasMultiplier applies only on the simulate path',
-    );
-  }
-  // ENG-744: an explicit fee skips buildGasFee, where the simulated-fee path
-  // enforces maxGas. Apply the shared guard before resolving the signer or
-  // broadcast client, using the same default and -1 disable semantics as cosmosTx.
-  if (opts?.fee !== undefined) {
-    assertExplicitFeeWithinCeiling(
-      opts.fee,
-      ctx.chain.getConfig().maxGas ?? DEFAULT_MAX_GAS,
-    );
-  }
-  // Validate an explicit gasMultiplier override eagerly (unchanged semantics).
-  if (opts?.gasMultiplier !== undefined) {
-    if (!Number.isFinite(opts.gasMultiplier) || opts.gasMultiplier < 1) {
-      throw new ManifestMCPError(
-        ManifestMCPErrorCode.INVALID_CONFIG,
-        `gasMultiplier must be a finite number >= 1, got ${opts.gasMultiplier}`,
-      );
-    }
-  }
-
-  // Always resolve gas options on the non-explicit-fee path so the maxGas ceiling
-  // (ENG-556) covers executeTx's default call, not only when a gasMultiplier override
-  // is supplied. TxOptions are skipped when opts.fee wins because its ceiling was
-  // checked above. Undefined gasPrice -> 'auto' -> downstream INVALID_CONFIG at
-  // broadcast time, exactly as before.
-  let txOptions: TxOptions | undefined;
-  if (opts?.fee === undefined) {
-    const config = ctx.chain.getConfig();
-    const gasPrice = config.gasPrice;
-    if (!gasPrice) {
-      if (opts?.gasMultiplier !== undefined) {
-        throw new ManifestMCPError(
-          ManifestMCPErrorCode.INVALID_CONFIG,
-          'gasMultiplier override requires gasPrice configuration',
-        );
-      }
-    } else {
-      txOptions = {
-        gasMultiplier:
-          opts?.gasMultiplier ?? config.gasMultiplier ?? DEFAULT_GAS_MULTIPLIER,
-        gasPrice,
-        maxGas: config.maxGas ?? DEFAULT_MAX_GAS,
-      };
-    }
-  }
+  // ENG-744 / OI-EXEC-GUARDS: this direct path deliberately bypasses
+  // cosmosTx, so both entry points resolve every gas-path guard centrally.
+  const config = ctx.chain.getConfig();
+  const txOptions = resolveBroadcastGasOptions(config, opts);
 
   const typeUrls = messages.map((m) => m.typeUrl);
   const sender = await ctx.chain.getAddress();
@@ -162,7 +115,7 @@ export async function executeTx(
             }
           },
           {
-            config: ctx.chain.getConfig().retry,
+            config: config.retry,
             operationName: `executeTx (${messages.length} msgs)`,
           },
         );

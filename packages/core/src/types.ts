@@ -198,10 +198,12 @@ export interface ManifestMCPConfig {
   readonly gasMultiplier?: number;
   /**
    * Absolute per-transaction gas-limit ceiling (default: 50_000_000). A broadcast
-   * whose `ceil(simulate() * gasMultiplier)` exceeds this is aborted with
-   * `GAS_LIMIT_EXCEEDED` before signing — defense-in-depth against a hostile RPC
-   * inflating the simulated gas. Must be a positive integer, or `-1` to disable
-   * the ceiling (mirrors the chain's `block.max_gas = -1` "unlimited" convention).
+   * whose simulated-and-multiplied limit or explicit `fee.gas` exceeds this is
+   * aborted with `GAS_LIMIT_EXCEEDED` before signing. This bounds the hostile-RPC
+   * simulation path and keeps caller-supplied gas limits under the same policy;
+   * it does not cap an explicit, denom-dependent `fee.amount`. Must be a positive
+   * integer, or `-1` to disable the upper bound (mirrors the chain's
+   * `block.max_gas = -1` "unlimited" convention).
    */
   readonly maxGas?: number;
 }
@@ -413,11 +415,12 @@ export enum ManifestMCPErrorCode {
   UNSUPPORTED_TX = 'UNSUPPORTED_TX',
   SIMULATION_FAILED = 'SIMULATION_FAILED',
   /**
-   * A pre-broadcast safety abort: `ceil(simulate() * gasMultiplier)` exceeded the
-   * configured absolute ceiling (`COSMOS_MAX_GAS` / `config.maxGas`). Bounds the fee
-   * a hostile/compromised RPC (or an injected gas_multiplier) can make the wallet pay.
-   * Carries `{ simulatedGas, gasMultiplier, estimatedGas, maxGas }`. Non-retryable —
-   * a deterministic estimate will not shrink on retry (ENG-556).
+   * A pre-broadcast safety abort: the final gas limit exceeded the configured
+   * absolute ceiling (`COSMOS_MAX_GAS` / `config.maxGas`). The limit can come from
+   * `ceil(simulate() * gasMultiplier)` or an explicit `fee.gas`. Carries either
+   * `{ simulatedGas, gasMultiplier, estimatedGas, maxGas }` or
+   * `{ explicitGas, maxGas }`. Non-retryable — the same input will not shrink on
+   * retry (ENG-556, ENG-665, ENG-744).
    */
   GAS_LIMIT_EXCEEDED = 'GAS_LIMIT_EXCEEDED',
 
