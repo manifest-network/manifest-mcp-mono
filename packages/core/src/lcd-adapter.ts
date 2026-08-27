@@ -17,15 +17,17 @@ function snakeToCamel(s: string): string {
 }
 
 /**
- * Present an LCD JSON value to telescope's generated `fromJSON` converters
- * through camelCase property aliases without rewriting its enumerable keys.
+ * Present an LCD JSON value to telescope's generated `fromJSON` converters as
+ * an intermediate camelCase property view without rewriting enumerable keys.
  *
  * The distinction is load-bearing for protobuf `map<string, ...>` fields:
  * generated converters read message fields through property access
  * (`object.providerUuid`) but enumerate map entries with `Object.entries`.
  * A recursively rebuilt camelCase object corrupts a verbatim map key such as
- * `customer_tier`; this lazy view aliases message-field reads while leaving
- * enumeration — and therefore map keys — exactly as received on the wire.
+ * `customer_tier`; this lazy view aliases message-field reads and `in` checks
+ * while leaving enumeration/spread/serialization — and therefore map keys —
+ * exactly as received on the wire. It is deliberately passed only to
+ * `fromJSON`; callers receive the converter's owned result, not this Proxy.
  */
 function snakeToCamelDeep(obj: unknown): unknown {
   const views = new WeakMap<object, object>();
@@ -67,6 +69,12 @@ function snakeToCamelDeep(obj: unknown): unknown {
           }
         }
         return wrap(Reflect.get(target, property, receiver));
+      },
+      has(target, property) {
+        return (
+          Reflect.has(target, property) ||
+          (typeof property === 'string' && aliases.has(property))
+        );
       },
     });
     views.set(value, view);

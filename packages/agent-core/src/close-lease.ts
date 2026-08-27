@@ -34,7 +34,11 @@ import {
   decode as decodeLeaseState,
   isTerminal,
 } from './internals/lease-state.js';
-import { emitProgress } from './internals/safe-progress.js';
+import {
+  emitCompletion,
+  emitProgress,
+  notifyFailure,
+} from './internals/safe-progress.js';
 import {
   type VerificationSpec,
   verifyAndRecover,
@@ -151,9 +155,7 @@ export async function closeLease(
         const reason = `Failed to query lease ${args.leaseUuid} during close-verify: ${
           err instanceof Error ? err.message : String(err)
         }`;
-        if (callbacks.onFailure) {
-          await callbacks.onFailure({ reason });
-        }
+        await notifyFailure(callbacks.onFailure, { reason });
         if (err instanceof ManifestMCPError) {
           throw err;
         }
@@ -221,9 +223,7 @@ export async function closeLease(
   if (verifyResult.result !== 'success') {
     const reason =
       verifyResult.failure?.reason ?? 'close-lease verification failed.';
-    if (callbacks.onFailure) {
-      await callbacks.onFailure({ reason });
-    }
+    await notifyFailure(callbacks.onFailure, { reason });
     throw new ManifestMCPError(ManifestMCPErrorCode.TX_FAILED, reason);
   }
 
@@ -248,7 +248,7 @@ export async function closeLease(
     leaseUuid: args.leaseUuid,
     finalState,
   };
-  callbacks.onComplete?.(result);
+  emitCompletion(() => callbacks.onComplete?.(result));
   return result;
 }
 

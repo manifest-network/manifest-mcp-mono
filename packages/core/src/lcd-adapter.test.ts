@@ -91,6 +91,19 @@ describe('snakeToCamelDeep', () => {
     }) as { providerUuid: string; leaseUuid: string };
     expect(view.providerUuid).toBe('abc');
     expect(view.leaseUuid).toBe('123');
+    expect('providerUuid' in view).toBe(true);
+    expect('leaseUuid' in view).toBe(true);
+    // The Proxy is an intermediate fromJSON view: wire keys intentionally
+    // remain enumerable so protobuf map keys cannot be rewritten.
+    expect(Object.keys(view)).toEqual(['provider_uuid', 'lease_uuid']);
+    expect({ ...view }).toEqual({
+      provider_uuid: 'abc',
+      lease_uuid: '123',
+    });
+    expect(JSON.parse(JSON.stringify(view))).toEqual({
+      provider_uuid: 'abc',
+      lease_uuid: '123',
+    });
   });
 
   it('converts nested objects', () => {
@@ -195,6 +208,7 @@ describe('snakeToCamelDeep', () => {
 
     expect(Object.keys(view.labelsByName)).toEqual(['customer_tier']);
     expect(view.labelsByName.customer_tier.displayName).toBe('Gold');
+    expect('customer_tier' in view.labelsByName).toBe(true);
   });
 });
 

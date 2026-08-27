@@ -1,4 +1,15 @@
 import type { ToolAnnotations } from '@modelcontextprotocol/sdk/types.js';
+import { z } from 'zod';
+
+const DEFAULT_GAS_MULTIPLIER_DESCRIPTION =
+  'Gas simulation multiplier override for this transaction. Defaults to the server-configured value (typically 1.5). Increase if a transaction fails with out-of-gas errors.';
+
+/** Shared MCP input contract for every transaction gas override. */
+export function gasMultiplierSchema(
+  description = DEFAULT_GAS_MULTIPLIER_DESCRIPTION,
+) {
+  return z.number().finite().min(1).optional().describe(description);
+}
 
 /**
  * Manifest-namespaced tool metadata, attached to every tool via `_meta.manifest`.

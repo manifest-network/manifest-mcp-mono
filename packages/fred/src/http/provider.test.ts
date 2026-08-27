@@ -550,6 +550,35 @@ describe('ProviderApiError.isProviderApiError (dual-package-safe brand guard)', 
     expect(Object.getOwnPropertyDescriptor(e, BRAND)?.enumerable).toBe(false);
     expect(Object.getOwnPropertySymbols({ ...e })).not.toContain(BRAND);
   });
+
+  it('withContext preserves transport metadata, cause, and stack', () => {
+    const cause = new Error('socket reset');
+    const original = new ProviderApiError(503, 'provider unavailable', {
+      kind: 'http',
+      retryAfterMs: 1_000,
+      cause,
+      details: { operation: 'restore' },
+    });
+
+    const enriched = original.withContext({
+      lease_uuid: 'new-lease',
+      committed: true,
+    });
+
+    expect(enriched).not.toBe(original);
+    expect(enriched).toMatchObject({
+      status: 503,
+      kind: 'http',
+      retryAfterMs: 1_000,
+      cause,
+      details: {
+        operation: 'restore',
+        lease_uuid: 'new-lease',
+        committed: true,
+      },
+    });
+    expect(enriched.stack).toBe(original.stack);
+  });
 });
 
 // The low-level provider HTTP fns forward an `allowLoopback` flag to

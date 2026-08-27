@@ -107,6 +107,10 @@ export class FredMCPServer {
   disconnect(): void {
     this.clientManager.disconnect();
   }
+
+  disconnectWhenIdle(): Promise<void> {
+    return this.clientManager.disconnectWhenIdle();
+  }
 }
 
 export function createMnemonicFredServer(

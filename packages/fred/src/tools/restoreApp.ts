@@ -13,7 +13,11 @@ import {
   pollLeaseUntilReady,
   restoreLease,
 } from '../http/fred.js';
-import { ProviderApiError } from '../http/provider.js';
+import {
+  capProviderText,
+  PROVIDER_TEXT_EXCERPT_CHARS,
+  ProviderApiError,
+} from '../http/provider.js';
 import { resolveFredSignal } from './call-signal.js';
 import { createLease } from './createLease.js';
 import { fetchLease } from './fetchLease.js';
@@ -229,7 +233,24 @@ export async function restoreApp(
       ProviderApiError.isProviderApiError(err) &&
       err.kind === 'poll_verdict'
     ) {
-      throw err;
+      const committedError = err.withContext({
+        lease_uuid: newLeaseUuid,
+        source_lease_uuid: sourceLeaseUuid,
+        committed: true,
+        restore_status: base.status,
+        ...(base.custom_domain_not_restored && {
+          custom_domain_not_restored: base.custom_domain_not_restored,
+        }),
+      });
+      // ProviderApiError context is available to direct library callers, but the
+      // MCP boundary deliberately serializes structured details only from
+      // ManifestMCPError. Re-wrap this first-party post-commit classification so
+      // restore_app returns the adopted lease handle without regex-parsing prose.
+      throw new ManifestMCPError(
+        ManifestMCPErrorCode.RESTORE_COMMITTED_FAILURE,
+        `Restore committed to lease ${newLeaseUuid}, but the provider reported a failure verdict: ${capProviderText(committedError.message, PROVIDER_TEXT_EXCERPT_CHARS)}`,
+        { ...committedError.details },
+      );
     }
     return { ...base, status: 'provisioning' };
   }

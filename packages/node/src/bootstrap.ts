@@ -45,7 +45,11 @@ export interface BootstrapConfig {
 export interface BootstrapServer {
   getServer(): Server;
   disconnect(): void;
+  /** Release the runtime after its already-started broadcast queue drains. */
+  disconnectWhenIdle?(): Promise<void>;
 }
+
+const SHUTDOWN_GRACE_MS = 30_000;
 
 function handleSubcommand(
   cliName: string,
@@ -119,7 +123,11 @@ async function closeResources(
   }
 
   try {
-    runtime?.disconnect();
+    if (runtime?.disconnectWhenIdle) {
+      await runtime.disconnectWhenIdle();
+    } else {
+      runtime?.disconnect();
+    }
   } catch (error) {
     cleanupWarning('Cosmos client manager', error);
   }
@@ -131,6 +139,28 @@ async function closeResources(
   }
 }
 
+async function closeResourcesWithinDeadline(
+  server: Server,
+  runtime: BootstrapServer,
+  walletProvider: WalletProvider,
+): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<void>((resolve) => {
+    timer = setTimeout(() => {
+      logger.warn(
+        `Graceful shutdown exceeded ${SHUTDOWN_GRACE_MS}ms; forcing process exit`,
+      );
+      resolve();
+    }, SHUTDOWN_GRACE_MS);
+  });
+
+  await Promise.race([
+    closeResources(server, runtime, walletProvider),
+    deadline,
+  ]);
+  if (timer) clearTimeout(timer);
+}
+
 /** Install one idempotent shutdown path for transport, clients, and wallet. */
 function installShutdownHandlers(
   server: Server,
@@ -138,6 +168,7 @@ function installShutdownHandlers(
   walletProvider: WalletProvider,
 ): void {
   let shuttingDown = false;
+  let forcedExit = false;
   let shutdownPromise = Promise.resolve();
   let shutdown = (): Promise<void> => shutdownPromise;
   const previousOnClose = server.onclose;
@@ -146,10 +177,24 @@ function installShutdownHandlers(
     void shutdown();
   };
   const onSigint = (): void => {
-    void shutdown().finally(() => process.exit(130));
+    if (shuttingDown) {
+      forcedExit = true;
+      process.exit(130);
+      return;
+    }
+    void shutdown().finally(() => {
+      if (!forcedExit) process.exit(130);
+    });
   };
   const onSigterm = (): void => {
-    void shutdown().finally(() => process.exit(143));
+    if (shuttingDown) {
+      forcedExit = true;
+      process.exit(143);
+      return;
+    }
+    void shutdown().finally(() => {
+      if (!forcedExit) process.exit(143);
+    });
   };
   const onServerClose = (): void => {
     try {
@@ -159,29 +204,38 @@ function installShutdownHandlers(
     }
   };
 
-  const removeHandlers = (): void => {
+  const removeNonSignalHandlers = (): void => {
     process.stdin.off('end', onInputClosed);
     process.stdin.off('close', onInputClosed);
-    process.off('SIGINT', onSigint);
-    process.off('SIGTERM', onSigterm);
     if (server.onclose === onServerClose) {
       server.onclose = previousOnClose;
     }
   };
 
+  const removeSignalHandlers = (): void => {
+    process.off('SIGINT', onSigint);
+    process.off('SIGTERM', onSigterm);
+  };
+
   shutdown = (): Promise<void> => {
     if (shuttingDown) return shutdownPromise;
     shuttingDown = true;
-    removeHandlers();
-    shutdownPromise = closeResources(server, runtime, walletProvider);
+    // Stop duplicate EOF/transport-close entry, but keep signal handlers live:
+    // a second Ctrl-C/SIGTERM is the explicit immediate-exit escape hatch.
+    removeNonSignalHandlers();
+    shutdownPromise = closeResourcesWithinDeadline(
+      server,
+      runtime,
+      walletProvider,
+    ).finally(removeSignalHandlers);
     return shutdownPromise;
   };
 
   server.onclose = onServerClose;
   process.stdin.once('end', onInputClosed);
   process.stdin.once('close', onInputClosed);
-  process.once('SIGINT', onSigint);
-  process.once('SIGTERM', onSigterm);
+  process.on('SIGINT', onSigint);
+  process.on('SIGTERM', onSigterm);
 
   // Cover EOF that raced with handler installation while connect() awaited.
   if (process.stdin.readableEnded || process.stdin.destroyed) {

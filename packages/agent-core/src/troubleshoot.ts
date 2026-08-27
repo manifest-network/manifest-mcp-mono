@@ -36,6 +36,7 @@ import {
   decode as decodeLeaseState,
   isTerminal,
 } from './internals/lease-state.js';
+import { emitCompletion, notifyFailure } from './internals/safe-progress.js';
 import type {
   LeaseStateName,
   TroubleshootArgs,
@@ -112,9 +113,7 @@ export async function troubleshootDeployment(
     // (handled below), so errors landing here are genuinely transport
     // or structured failures.
     const reason = `Failed to query lease ${args.leaseUuid}: ${err instanceof Error ? err.message : String(err)}`;
-    if (callbacks.onFailure) {
-      await callbacks.onFailure({ reason });
-    }
+    await notifyFailure(callbacks.onFailure, { reason });
     if (err instanceof ManifestMCPError) {
       throw err;
     }
@@ -123,15 +122,13 @@ export async function troubleshootDeployment(
 
   if (leasePayload === null || leasePayload === undefined) {
     const reason = `Lease ${args.leaseUuid} not found on chain.`;
-    if (callbacks.onFailure) {
-      await callbacks.onFailure({ reason });
-    }
+    await notifyFailure(callbacks.onFailure, { reason });
     throw new ManifestMCPError(ManifestMCPErrorCode.QUERY_FAILED, reason);
   }
 
   const markdown = renderReport(args.leaseUuid, leasePayload);
   const report: TroubleshootReport = { markdown };
-  callbacks.onComplete?.(report);
+  emitCompletion(() => callbacks.onComplete?.(report));
   return report;
 }
 

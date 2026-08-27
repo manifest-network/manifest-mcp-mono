@@ -734,6 +734,10 @@ export class AgentMCPServer {
   disconnect(): void {
     this.clientManager.disconnect();
   }
+
+  disconnectWhenIdle(): Promise<void> {
+    return this.clientManager.disconnectWhenIdle();
+  }
 }
 
 // ----------------------------------------------------------------------

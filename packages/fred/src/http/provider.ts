@@ -105,12 +105,15 @@ export interface ProviderApiErrorOptions {
   /** Parsed `Retry-After` in ms, when the provider sent one (see `parseRetryAfterMs`). */
   readonly retryAfterMs?: number;
   readonly cause?: unknown;
+  /** Structured operation context retained when an error crosses a commit point. */
+  readonly details?: Readonly<Record<string, unknown>>;
 }
 
 export class ProviderApiError extends Error {
   public readonly status: number;
   public readonly kind?: ProviderErrorKind;
   public readonly retryAfterMs?: number;
+  public readonly details?: Readonly<Record<string, unknown>>;
   /**
    * The underlying error, when this one wraps another. Declared here rather
    * than passed to `super(message, { cause })` because the repo compiles
@@ -127,11 +130,28 @@ export class ProviderApiError extends Error {
     this.kind = opts?.kind;
     this.retryAfterMs = opts?.retryAfterMs;
     this.cause = opts?.cause;
+    this.details = opts?.details;
     Object.setPrototypeOf(this, ProviderApiError.prototype);
     // Dual-package-safe brand. Defined NON-enumerably (default descriptor) so it never appears
     // in JSON.stringify / Object.entries / spread / sanitizeForLogging. Inherited by subclasses
     // (TerminalChainStateError, LeaseReadinessUnconfirmedError) via this super() call.
     Object.defineProperty(this, PROVIDER_API_ERROR_BRAND, { value: true });
+  }
+
+  /**
+   * Return an equivalent error enriched with structured operation context.
+   * The original stack and transport classification remain intact.
+   */
+  withContext(context: Readonly<Record<string, unknown>>): ProviderApiError {
+    const enriched = new ProviderApiError(this.status, this.message, {
+      kind: this.kind,
+      retryAfterMs: this.retryAfterMs,
+      cause: this.cause,
+      details: { ...this.details, ...context },
+    });
+    enriched.name = this.name;
+    if (this.stack) enriched.stack = this.stack;
+    return enriched;
   }
 
   /** Dual-package-safe guard — robust where cross-copy `instanceof` fails. Also matches

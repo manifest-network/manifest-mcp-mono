@@ -62,6 +62,7 @@ const NON_RETRYABLE_ERROR_CODES: ManifestMCPErrorCode[] = [
   ManifestMCPErrorCode.RESTORE_REJECTED,
   ManifestMCPErrorCode.RESTORE_RETRYABLE,
   ManifestMCPErrorCode.RESTORE_ORPHAN_COMPENSATION_FAILED,
+  ManifestMCPErrorCode.RESTORE_COMMITTED_FAILURE,
 
   // Readiness never confirmed (ENG-661). The lease EXISTS and is paid for, so a
   // blind retry of the deploy that produced this would create a second one. The
@@ -142,6 +143,48 @@ function isTransientErrorMessage(message: string): boolean {
   return false;
 }
 
+function errorChain(error: Error): Error[] {
+  const chain: Error[] = [];
+  const seen = new Set<unknown>();
+  let current: unknown = error;
+
+  while (current instanceof Error && !seen.has(current)) {
+    chain.push(current);
+    seen.add(current);
+    current = (current as Error & { cause?: unknown }).cause;
+  }
+  return chain;
+}
+
+function errorCode(error: Error): string {
+  const code = (error as Error & { code?: unknown }).code;
+  return typeof code === 'string' ? code : '';
+}
+
+/** Classify the visible error and nested platform/undici causes together. */
+function isTransientErrorChain(error: Error): boolean {
+  const chain = errorChain(error);
+
+  // undici commonly throws TypeError('fetch failed') with the useful DNS
+  // verdict only on `cause`. A known NXDOMAIN is a permanent endpoint typo;
+  // it must win over the generic retryable wrapper text.
+  if (
+    chain.some(
+      (entry) =>
+        errorCode(entry).toLowerCase() === 'enotfound' ||
+        entry.message.toLowerCase().includes('enotfound'),
+    )
+  ) {
+    return false;
+  }
+
+  return chain.some(
+    (entry) =>
+      isTransientErrorMessage(entry.message) ||
+      isTransientErrorMessage(errorCode(entry)),
+  );
+}
+
 /**
  * Determine if an error is retryable
  */
@@ -191,12 +234,12 @@ export function isRetryableError(error: unknown): boolean {
     }
 
     // Fall back to message sniffing for the RPC leg, which has no status.
-    return isTransientErrorMessage(error.message);
+    return isTransientErrorChain(error);
   }
 
-  // Standard Error - check message
+  // Standard Error - inspect its message and platform/undici cause chain.
   if (error instanceof Error) {
-    return isTransientErrorMessage(error.message);
+    return isTransientErrorChain(error);
   }
 
   // Unknown error type - don't retry

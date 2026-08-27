@@ -159,6 +159,7 @@ export {
 } from './sku-resolution.js';
 // Annotation helpers (used by chain/lease/fred/cosmwasm packages)
 export {
+  gasMultiplierSchema,
   MANIFEST_TOOL_META_VERSION,
   type ManifestToolMeta,
   type ManifestToolMetaContainer,

@@ -93,7 +93,11 @@ import { decode as decodeLeaseState } from './internals/lease-state.js';
 import { renderDeploymentPlan } from './internals/render-deployment-plan.js';
 import { renderIntentRecap } from './internals/render-intent-recap.js';
 import { renderPartialSuccessPrompt } from './internals/render-partial-success-prompt.js';
-import { emitProgress } from './internals/safe-progress.js';
+import {
+  emitCompletion,
+  emitProgress,
+  logCallbackFailure,
+} from './internals/safe-progress.js';
 import {
   isStackSpec,
   summarizeSpec,
@@ -960,7 +964,7 @@ export async function deployApp(
     manifestPath: persistedPath ?? '',
   };
   emitProgress(callbacks.onProgress, { kind: 'success_rendered', result });
-  callbacks.onComplete?.(result);
+  emitCompletion(() => callbacks.onComplete?.(result));
   return result;
 }
 
@@ -1274,7 +1278,18 @@ async function handleBroadcastFailure(
         prompt: promptPayload.prompt,
         leaseUuid: envelope.leaseUuid,
       });
-      const choice = await callbacks.onFailure(envelope, options);
+      let choice: RecoveryChoice;
+      try {
+        choice = await callbacks.onFailure(envelope, options);
+      } catch (callbackError) {
+        // This callback chooses recovery; if the host fails to choose, keep
+        // the original deployment failure as the authoritative outcome.
+        logCallbackFailure('onFailure', callbackError);
+        throw new ManifestMCPError(
+          ManifestMCPErrorCode.TX_FAILED,
+          classified.reason,
+        );
+      }
       return await dispatchRecovery(
         choice,
         envelope,
@@ -1711,7 +1726,7 @@ async function retrySetDomainAndComplete(
     manifestPath: persistedPath ?? '',
   };
   emitProgress(callbacks.onProgress, { kind: 'success_rendered', result });
-  callbacks.onComplete?.(result);
+  emitCompletion(() => callbacks.onComplete?.(result));
   return result;
 }
 

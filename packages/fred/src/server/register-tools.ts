@@ -2,6 +2,7 @@ import {
   bigIntReplacer,
   type CosmosClientManager,
   DNS_LABEL_RE,
+  gasMultiplierSchema,
   jsonResponse,
   LeaseState,
   leaseStateToJSON,
@@ -719,14 +720,7 @@ export function registerTools(deps: RegisterToolsDeps): void {
           .describe(
             'Multi-service stack. Mutually exclusive with image/port. Keys are service names (RFC 1123 DNS labels).',
           ),
-        gas_multiplier: z
-          .number()
-          .finite()
-          .min(1)
-          .optional()
-          .describe(
-            'Gas simulation multiplier override for this transaction. Defaults to the server-configured value (typically 1.5). Increase if a transaction fails with out-of-gas errors.',
-          ),
+        gas_multiplier: gasMultiplierSchema(),
         custom_domain: z
           .string()
           .max(253)

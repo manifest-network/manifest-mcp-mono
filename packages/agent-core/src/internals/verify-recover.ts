@@ -3,6 +3,7 @@ import type {
   RecoveryChoice,
   RecoveryOption,
 } from '../types.js';
+import { logCallbackFailure } from './safe-progress.js';
 import { stripDenylist } from './secret-denylist.js';
 
 /**
@@ -204,7 +205,22 @@ export async function verifyAndRecover<
     };
   }
 
-  const recoveryChoice = await callbacks.onFailure(failure, options);
+  let recoveryChoice: RecoveryChoice;
+  try {
+    recoveryChoice = await callbacks.onFailure(failure, options);
+  } catch (callbackError) {
+    // A recovery prompt is decision-making, but a broken host callback must
+    // not replace the verified failure with an unrelated callback exception.
+    logCallbackFailure('onFailure', callbackError);
+    return {
+      result: 'failure',
+      verifierOutcome: outcome,
+      branchId: branch.branchId,
+      journalActionTags: branch.journalActionTags,
+      diagnostic,
+      failure,
+    };
+  }
   return {
     result: 'failure',
     verifierOutcome: outcome,

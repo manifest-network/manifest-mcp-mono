@@ -795,14 +795,27 @@ describe('CosmosClientManager', () => {
       expect(reacquired).not.toBe(released);
     });
 
-    it("a stale holder's extra disconnect cannot evict a replacement", () => {
-      const config = makeConfig({ chainId: 'stale-release' });
+    it('an old deferred release cannot evict a replacement', async () => {
+      const config = makeConfig({ chainId: 'stale-deferred-release' });
       const wallet = makeWallet();
       const released = CosmosClientManager.getInstance(config, wallet);
-      released.disconnect();
+      let finishBroadcast!: () => void;
+      const broadcast = released.withBroadcastLock(
+        'addr1',
+        () =>
+          new Promise<void>((resolve) => {
+            finishBroadcast = resolve;
+          }),
+      );
+      await Promise.resolve();
+      const deferredRelease = released.disconnectWhenIdle();
 
+      // Force-reset can replace a manager while its old broadcast settles.
+      CosmosClientManager.clearInstances();
       const replacement = CosmosClientManager.getInstance(config, wallet);
-      released.disconnect();
+      finishBroadcast();
+      await broadcast;
+      await deferredRelease;
 
       expect(CosmosClientManager.getInstance(config, wallet)).toBe(replacement);
     });
@@ -1256,10 +1269,7 @@ describe('CosmosClientManager', () => {
       mgr.disconnect();
     });
 
-    it('teardown clears an in-flight broadcast-lock entry', async () => {
-      // Belt-and-suspenders for the delete-on-settle above: a broadcast still
-      // in flight at disconnect time has a live map entry; teardown() clears it
-      // immediately so a reused config key starts clean (code-review PR #102).
+    it('defers teardown and eviction until an in-flight broadcast settles', async () => {
       const mgr = CosmosClientManager.getInstance(
         makeConfig({ chainId: 'lock-teardown' }),
         makeWallet(),
@@ -1272,10 +1282,41 @@ describe('CosmosClientManager', () => {
       });
       const inflight = mgr.withBroadcastLock('addr1', () => pending);
       expect(locks.size).toBe(1); // entry present while the broadcast is in flight
-      mgr.disconnect(); // refCount 0 → teardown clears the map immediately
-      expect(locks.size).toBe(0);
+      let released = false;
+      const idle = mgr.disconnectWhenIdle().then(() => {
+        released = true;
+      });
+      await Promise.resolve();
+      expect(locks.size).toBe(1);
+      expect(released).toBe(false);
+
+      // Reacquisition before the broadcast settles must retain the same lock
+      // domain and cancel the pending final teardown.
+      const reacquired = CosmosClientManager.getInstance(
+        makeConfig({ chainId: 'lock-teardown' }),
+        makeWallet(),
+      );
+      expect(reacquired).toBe(mgr);
+      let queuedStarted = false;
+      const queued = reacquired.withBroadcastLock('addr1', async () => {
+        queuedStarted = true;
+      });
+      await Promise.resolve();
+      expect(queuedStarted).toBe(false);
+
       release();
-      await inflight;
+      await Promise.all([inflight, queued, idle]);
+      expect(queuedStarted).toBe(true);
+      expect(locks.size).toBe(0);
+
+      // The reacquired holder owns the surviving manager; its release now
+      // performs final teardown and eviction.
+      reacquired.disconnect();
+      const replacement = CosmosClientManager.getInstance(
+        makeConfig({ chainId: 'lock-teardown' }),
+        makeWallet(),
+      );
+      expect(replacement).not.toBe(mgr);
     });
   });
 });

@@ -4,6 +4,7 @@ import {
   bigIntReplacer,
   CosmosClientManager,
   createValidatedConfig,
+  gasMultiplierSchema,
   jsonResponse,
   ManifestMCPError,
   ManifestMCPErrorCode,
@@ -222,14 +223,7 @@ export class CosmwasmMCPServer {
           amount: z
             .string()
             .describe('Amount of umfx to convert (e.g. "1000000" for 1 MFX)'),
-          gas_multiplier: z
-            .number()
-            .finite()
-            .min(1)
-            .optional()
-            .describe(
-              'Gas simulation multiplier override for this transaction. Defaults to the server-configured value (typically 1.5). Increase if a transaction fails with out-of-gas errors.',
-            ),
+          gas_multiplier: gasMultiplierSchema(),
         },
         // Destructive: one-way conversion. The MFX is consumed; you cannot
         // convert back to MFX from PWR through this tool.
@@ -343,6 +337,10 @@ export class CosmwasmMCPServer {
 
   disconnect(): void {
     this.clientManager.disconnect();
+  }
+
+  disconnectWhenIdle(): Promise<void> {
+    return this.clientManager.disconnectWhenIdle();
   }
 }
 
