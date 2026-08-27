@@ -36,6 +36,21 @@ function makeMockSigningClient() {
   } as never;
 }
 
+/** Drop `//` and conventional block-comment lines before source matching. */
+function stripComments(source: string): string {
+  return source
+    .split('\n')
+    .filter((line) => {
+      const trimmed = line.trimStart();
+      return (
+        !trimmed.startsWith('//') &&
+        !trimmed.startsWith('/*') &&
+        !trimmed.startsWith('*')
+      );
+    })
+    .join('\n');
+}
+
 /**
  * ENG-665. `cosmosTx` accepts `txExtras` and passes it as the 8th argument to the
  * registered handler, but 13 of the 14 route functions declared only six
@@ -92,7 +107,7 @@ describe('ENG-665 — txExtras reaches every tx route', () => {
     it.each(routeFiles)(
       '%s calls resolveTxFeeAndMemo, never buildGasFee directly',
       (file) => {
-        const src = readFileSync(join(here, file), 'utf8');
+        const src = stripComments(readFileSync(join(here, file), 'utf8'));
         if (!src.includes('Transaction(')) return; // not a route module
 
         expect(src).toContain('resolveTxFeeAndMemo(');
@@ -327,6 +342,10 @@ function productionTypeScriptFiles(dir: string): string[] {
   });
 }
 
+function callsBroadcastGasResolver(source: string): boolean {
+  return stripComments(source).includes('resolveBroadcastGasOptions(');
+}
+
 describe('ENG-744 — broadcast gas guards stay centralized', () => {
   const sourceRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
   const entryPoints = productionTypeScriptFiles(sourceRoot)
@@ -345,10 +364,20 @@ describe('ENG-744 — broadcast gas guards stay centralized', () => {
     expect(entryPoints.length).toBeGreaterThanOrEqual(2);
   });
 
+  it.each([
+    ['line', '// resolveBroadcastGasOptions(config, call);'],
+    [
+      'block',
+      ['/*', ' * resolveBroadcastGasOptions(config, call);', ' */'].join('\n'),
+    ],
+  ])('does not accept a resolver call in a %s comment', (_kind, source) => {
+    expect(callsBroadcastGasResolver(source)).toBe(false);
+  });
+
   it.each(entryPoints)(
     '$file resolves fee and simulation gas options through the shared guard',
     ({ source }) => {
-      expect(source).toContain('resolveBroadcastGasOptions(');
+      expect(callsBroadcastGasResolver(source)).toBe(true);
     },
   );
 });
