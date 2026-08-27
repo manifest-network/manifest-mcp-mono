@@ -486,15 +486,16 @@ describe('Billing custom-domain', () => {
       expect(after.leases.length).toBe(beforeCount);
     });
 
-    it('rejects an invalid FQDN through the orchestrated path with a partial-success error', async () => {
+    it('rejects an invalid FQDN before creating a lease', async () => {
       if (!chainSupportsCustomDomain) return;
-      // Sanity check: "INVALID" (uppercase + no dot separator) is an invalid
-      // FQDN. Since the branded-Fqdn / parse-don't-validate work, parseFqdn
-      // rejects it CLIENT-SIDE with INVALID_ARGUMENT at the set-domain step —
-      // which runs *after* create-lease succeeds and *before* its broadcast —
-      // so deployManifest still wraps it as a partial-success error (the lease
-      // is already created; deployApp just delegates here) and the caller can
-      // identify the orphaned lease from the error details to clean up.
+      // ENG-749 moved parseFqdn to deployManifest's preflight boundary. Pin
+      // that the orchestrated deploy_app path rejects malformed input before
+      // the credit-reserving create-lease transaction, not as partial success.
+      const before = await leaseClient.callTool<{
+        leases: Array<{ uuid: string }>;
+      }>('leases_by_tenant', {});
+      const beforeCount = before.leases.length;
+
       const err = await fredClient.callToolExpectError('deploy_app', {
         image: 'nginxinc/nginx-unprivileged:alpine',
         port: 8080,
@@ -502,30 +503,13 @@ describe('Billing custom-domain', () => {
         custom_domain: 'INVALID',
       });
 
-      // The client-side INVALID_ARGUMENT (from parseFqdn) bubbles through as
-      // part of the partial-success wrap (the wrap reuses the inner code).
       expect(err.code).toBe('INVALID_ARGUMENT');
-      expect(err.message).toMatch(/Deploy partially succeeded/);
-      expect(err.message).toMatch(/close_lease if needed/);
+      expect(err.message).toMatch(/is not a valid FQDN/);
 
-      // Best-effort cleanup of the orphaned lease so the suite leaves clean
-      // state. The error details include `lease_uuid` per the deployManifest
-      // partial-success branch.
-      const orphanedUuid = (err.details as { lease_uuid?: string } | undefined)
-        ?.lease_uuid;
-      if (orphanedUuid) {
-        try {
-          await leaseClient.callTool<{
-            lease_uuid: string;
-            outcome: string;
-            lease_state: string;
-          }>('close_lease', { lease_uuid: orphanedUuid });
-        } catch (cleanupErr) {
-          console.warn(
-            `[billing-custom-domain] orphaned-lease cleanup failed: ${cleanupErr}`,
-          );
-        }
-      }
+      const after = await leaseClient.callTool<{
+        leases: Array<{ uuid: string }>;
+      }>('leases_by_tenant', {});
+      expect(after.leases.length).toBe(beforeCount);
     });
   });
 });
