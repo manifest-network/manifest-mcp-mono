@@ -1,6 +1,12 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import {
+  createScanner,
+  LanguageVariant,
+  ScriptTarget,
+  SyntaxKind,
+} from 'typescript';
 import { describe, expect, it, vi } from 'vitest';
 import { getSupportedModules, getTxHandler } from '../modules.js';
 import { ManifestMCPErrorCode } from '../types.js';
@@ -36,19 +42,37 @@ function makeMockSigningClient() {
   } as never;
 }
 
-/** Drop `//` and conventional block-comment lines before source matching. */
+/** Remove TypeScript comments without treating comment markers in strings as trivia. */
 function stripComments(source: string): string {
-  return source
-    .split('\n')
-    .filter((line) => {
-      const trimmed = line.trimStart();
-      return (
-        !trimmed.startsWith('//') &&
-        !trimmed.startsWith('/*') &&
-        !trimmed.startsWith('*')
-      );
-    })
-    .join('\n');
+  const scanner = createScanner(
+    ScriptTarget.Latest,
+    false,
+    LanguageVariant.Standard,
+    source,
+  );
+  let cursor = 0;
+  let uncommented = '';
+
+  for (
+    let token = scanner.scan();
+    token !== SyntaxKind.EndOfFileToken;
+    token = scanner.scan()
+  ) {
+    if (
+      token !== SyntaxKind.SingleLineCommentTrivia &&
+      token !== SyntaxKind.MultiLineCommentTrivia
+    ) {
+      continue;
+    }
+
+    const start = scanner.getTokenPos();
+    const end = scanner.getTextPos();
+    uncommented += source.slice(cursor, start);
+    uncommented += source.slice(start, end).replace(/[^\r\n]/g, ' ');
+    cursor = end;
+  }
+
+  return uncommented + source.slice(cursor);
 }
 
 /**
@@ -367,11 +391,25 @@ describe('ENG-744 — broadcast gas guards stay centralized', () => {
   it.each([
     ['line', '// resolveBroadcastGasOptions(config, call);'],
     [
+      'trailing line',
+      'const txOptions = undefined; // resolveBroadcastGasOptions(config, call);',
+    ],
+    [
       'block',
       ['/*', ' * resolveBroadcastGasOptions(config, call);', ' */'].join('\n'),
     ],
+    [
+      'inline block',
+      'const txOptions = undefined; /* resolveBroadcastGasOptions(config, call); */',
+    ],
   ])('does not accept a resolver call in a %s comment', (_kind, source) => {
     expect(callsBroadcastGasResolver(source)).toBe(false);
+  });
+
+  it('preserves comment markers inside strings while finding a real call', () => {
+    const source =
+      "const rpcUrl = 'https://rpc.example'; resolveBroadcastGasOptions(config, call);";
+    expect(callsBroadcastGasResolver(source)).toBe(true);
   });
 
   it.each(entryPoints)(
