@@ -576,9 +576,10 @@ export async function checkedFetch(
   // `globalThis.fetch` — fine in a browser, an SSRF surface on Node, since provider URLs come from
   // on-chain records. The MCP servers and `createFredClientNode` always inject a guarded fetch; the
   // raw HTTP functions on the fred barrel / SDK `/deploy` used to take this fallback SILENTLY, so
-  // warn once here. Declared optional (rather than defaulted) precisely so "omitted" stays
-  // distinguishable from "explicitly passed `globalThis.fetch`" — the latter is a deliberate opt-out
-  // and must not warn. Externally the signature is unchanged (`fetchFn?`), so callers are unaffected.
+  // warn once here. A custom injected function is a deliberate opt-out and stays quiet. A
+  // `globalThis.fetch` value still warns even when explicitly passed: core's client factory
+  // materializes that default into `ctx.fetch`, so presence alone cannot prove injection (ENG-672).
+  // Externally the signature is unchanged (`fetchFn?`), so callers are unaffected.
   warnUnguardedOnce(hasInjectedFetch(fetchFn));
   const doFetch = fetchFn ?? globalThis.fetch;
 

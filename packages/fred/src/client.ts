@@ -109,7 +109,8 @@ export { shouldWarnUnguarded } from './http/unguarded-warning.js';
  * On Node, this base factory does NOT guard provider HTTP by default — prefer
  * `createFredClientNode` from `@manifest-network/manifest-mcp-fred/node` (re-exported by the
  * SDK as `@manifest-network/manifest-sdk/node`), which injects an SSRF-guarded fetch.
- * Injecting your own `opts.fetch` opts out of the guard.
+ * Injecting a custom `opts.fetch` opts out of the automatic guard. A plain
+ * `globalThis.fetch` remains unguarded and still triggers the one-time warning.
  */
 export async function createFredClient(
   opts: CreateFredClientOptions,
