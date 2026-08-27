@@ -62,6 +62,34 @@ describe('Billing custom-domain', () => {
   // each test can early-return with a console.warn instead of failing.
   let chainSupportsCustomDomain = false;
 
+  function leaseUuidFromErrorDetails(details: unknown): string | undefined {
+    if (details === null || typeof details !== 'object') return undefined;
+    const value = Reflect.get(details, 'lease_uuid');
+    return typeof value === 'string' && value !== '' ? value : undefined;
+  }
+
+  async function cleanupLeaseFromErrorDetails(
+    details: unknown,
+    label: string,
+  ): Promise<string | undefined> {
+    const orphanedLeaseUuid = leaseUuidFromErrorDetails(details);
+    if (orphanedLeaseUuid === undefined) return undefined;
+
+    try {
+      await leaseClient.callTool('close_lease', {
+        lease_uuid: orphanedLeaseUuid,
+      });
+    } catch (cleanupErr) {
+      const code = parseToolErrorCode(cleanupErr);
+      if (code !== 'TX_FAILED') throw cleanupErr;
+      console.warn(
+        `[billing-custom-domain] ${label} orphaned-lease cleanup rejected (already terminal?): ${cleanupErr}`,
+      );
+    }
+
+    return orphanedLeaseUuid;
+  }
+
   beforeAll(async () => {
     await Promise.all([
       leaseClient.connect({ serverEntry: 'packages/node/dist/lease.js' }),
@@ -397,9 +425,10 @@ describe('Billing custom-domain', () => {
   // ------------------------------------------------------------------
   describe('deploy_app + custom_domain (single-call orchestration)', () => {
     const FQDN_VIA_DEPLOY = `deploy-${RUN_TAG}.e2e.test`;
+    const MIXED_CASE_FQDN_VIA_DEPLOY = `Deploy-${RUN_TAG}.E2E.test`;
     let combinedLeaseUuid: string;
 
-    it('deploy_app accepts custom_domain and surfaces it on the result', async () => {
+    it('deploy_app canonicalizes custom_domain and surfaces it on the result', async () => {
       if (!chainSupportsCustomDomain) return;
       const result = await fredClient.callTool<{
         lease_uuid: string;
@@ -410,7 +439,7 @@ describe('Billing custom-domain', () => {
         image: 'nginxinc/nginx-unprivileged:alpine',
         port: 8080,
         size: 'docker-micro',
-        custom_domain: FQDN_VIA_DEPLOY,
+        custom_domain: MIXED_CASE_FQDN_VIA_DEPLOY,
       });
       expect(result.state).toBe(LeaseState.LEASE_STATE_ACTIVE);
       expect(result.custom_domain).toBe(FQDN_VIA_DEPLOY);
@@ -427,6 +456,37 @@ describe('Billing custom-domain', () => {
         lease: { uuid: string };
       }>('lease_by_custom_domain', { custom_domain: FQDN_VIA_DEPLOY });
       expect(result.lease.uuid).toBe(combinedLeaseUuid);
+    });
+
+    it('reports partial success when custom_domain is already claimed', async () => {
+      if (!chainSupportsCustomDomain) return;
+
+      // The first combined-flow lease still owns FQDN_VIA_DEPLOY. A second
+      // deploy therefore creates its lease, then fails at the chain-authoritative
+      // set-domain step. Keep a live wire-level pin for the partial-success
+      // prefix/details contract while cleaning up the intentionally orphaned
+      // lease before making assertions.
+      const err = await fredClient.callToolExpectError('deploy_app', {
+        image: 'nginxinc/nginx-unprivileged:alpine',
+        port: 8080,
+        size: 'docker-micro',
+        custom_domain: FQDN_VIA_DEPLOY,
+      });
+      const orphanedLeaseUuid = await cleanupLeaseFromErrorDetails(
+        err.details,
+        'duplicate-domain',
+      );
+
+      expect(err.code).toBe('TX_FAILED');
+      expect(err.message).toMatch(/^Deploy partially succeeded:/);
+      expect(err.message).toMatch(/Close this lease with close_lease if needed/);
+      expect(err.details).toMatchObject({
+        partial: true,
+        failedStep: 'set_domain',
+        lease_uuid: expect.any(String),
+      });
+      expect(orphanedLeaseUuid).toBeDefined();
+      expect(orphanedLeaseUuid).not.toBe(combinedLeaseUuid);
     });
 
     it('cleanup: close_lease terminates the combined-flow lease', async () => {
@@ -456,76 +516,60 @@ describe('Billing custom-domain', () => {
     });
 
     it('rejects an empty custom_domain client-side without creating a lease (INVALID_CONFIG)', async () => {
-      // The eager-validation block in deployApp.ts fires before any
-      // chain tx. A regression that drops the check would be caught
-      // by the unit test, but only this e2e test verifies the real
-      // fred MCP server's argument plumbing keeps the rejection
-      // structured. Skip-if-feature-absent because we need the chain
-      // index to be queryable for the lease-count baseline.
-      if (!chainSupportsCustomDomain) return;
-
-      // Snapshot lease count before — must not change after the rejected
-      // call, since the validation runs before create-lease.
-      const before = await leaseClient.callTool<{
-        leases: Array<{ uuid: string }>;
-      }>('leases_by_tenant', {});
-      const beforeCount = before.leases.length;
-
+      // deployManifest's eager validation fires before any chain tx. Only
+      // this e2e test verifies that the real fred MCP argument plumbing keeps
+      // the rejection structured. If a regression does create a lease, clean
+      // it up before failing the no-lease assertion so later files stay clean.
       const err = await fredClient.callToolExpectError('deploy_app', {
         image: 'nginxinc/nginx-unprivileged:alpine',
         port: 8080,
         size: 'docker-micro',
         custom_domain: '   ',
       });
+      const orphanedLeaseUuid = await cleanupLeaseFromErrorDetails(
+        err.details,
+        'empty-domain regression',
+      );
+
       expect(err.code).toBe('INVALID_CONFIG');
       expect(err.message).toMatch(/cannot be empty/);
-
-      const after = await leaseClient.callTool<{
-        leases: Array<{ uuid: string }>;
-      }>('leases_by_tenant', {});
-      expect(after.leases.length).toBe(beforeCount);
+      expect(err.details ?? {}).not.toHaveProperty('lease_uuid');
+      expect(orphanedLeaseUuid).toBeUndefined();
     });
 
-    it('rejects an invalid FQDN through the orchestrated path with a partial-success error', async () => {
-      if (!chainSupportsCustomDomain) return;
-      // Sanity check: "INVALID" (uppercase + no dot separator) is an invalid
-      // FQDN. Since the branded-Fqdn / parse-don't-validate work, parseFqdn
-      // rejects it CLIENT-SIDE with INVALID_ARGUMENT at the set-domain step —
-      // which runs *after* create-lease succeeds and *before* its broadcast —
-      // so deployManifest still wraps it as a partial-success error (the lease
-      // is already created; deployApp just delegates here) and the caller can
-      // identify the orphaned lease from the error details to clean up.
-      const err = await fredClient.callToolExpectError('deploy_app', {
-        image: 'nginxinc/nginx-unprivileged:alpine',
-        port: 8080,
-        size: 'docker-micro',
-        custom_domain: 'INVALID',
-      });
+    it.each([
+      {
+        label: 'scheme-prefixed domain',
+        customDomain: 'https://app.example.com',
+        message:
+          'customDomain "https://app.example.com" must not include a scheme — pass a bare FQDN',
+      },
+      {
+        label: 'invalid FQDN',
+        customDomain: 'INVALID',
+        message: 'customDomain "INVALID" is not a valid FQDN',
+      },
+    ])(
+      'rejects a $label before creating a lease',
+      async ({ customDomain, message }) => {
+        // ENG-749 moved parseFqdn to deployManifest's preflight boundary. Pin
+        // both parser branches before the credit-reserving create-lease tx.
+        const err = await fredClient.callToolExpectError('deploy_app', {
+          image: 'nginxinc/nginx-unprivileged:alpine',
+          port: 8080,
+          size: 'docker-micro',
+          custom_domain: customDomain,
+        });
+        const orphanedLeaseUuid = await cleanupLeaseFromErrorDetails(
+          err.details,
+          `${customDomain} regression`,
+        );
 
-      // The client-side INVALID_ARGUMENT (from parseFqdn) bubbles through as
-      // part of the partial-success wrap (the wrap reuses the inner code).
-      expect(err.code).toBe('INVALID_ARGUMENT');
-      expect(err.message).toMatch(/Deploy partially succeeded/);
-      expect(err.message).toMatch(/close_lease if needed/);
-
-      // Best-effort cleanup of the orphaned lease so the suite leaves clean
-      // state. The error details include `lease_uuid` per the deployManifest
-      // partial-success branch.
-      const orphanedUuid = (err.details as { lease_uuid?: string } | undefined)
-        ?.lease_uuid;
-      if (orphanedUuid) {
-        try {
-          await leaseClient.callTool<{
-            lease_uuid: string;
-            outcome: string;
-            lease_state: string;
-          }>('close_lease', { lease_uuid: orphanedUuid });
-        } catch (cleanupErr) {
-          console.warn(
-            `[billing-custom-domain] orphaned-lease cleanup failed: ${cleanupErr}`,
-          );
-        }
-      }
-    });
+        expect(err.code).toBe('INVALID_ARGUMENT');
+        expect(err.message).toBe(message);
+        expect(err.details ?? {}).not.toHaveProperty('lease_uuid');
+        expect(orphanedLeaseUuid).toBeUndefined();
+      },
+    );
   });
 });
