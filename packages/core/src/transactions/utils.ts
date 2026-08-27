@@ -2,9 +2,11 @@ import { fromHex, toHex } from '@cosmjs/encoding';
 import type { EncodeObject } from '@cosmjs/proto-signing';
 import type { SigningStargateClient } from '@cosmjs/stargate';
 import { calculateFee, type StdFee } from '@cosmjs/stargate';
+import { DEFAULT_GAS_MULTIPLIER, DEFAULT_MAX_GAS } from '../config.js';
 import {
   type CosmosTxResult,
   type ExecuteTxResult,
+  type ManifestMCPConfig,
   ManifestMCPError,
   ManifestMCPErrorCode,
   type TxOptions,
@@ -748,9 +750,9 @@ export async function resolveTxFeeAndMemo(
   validateMemo(memo);
 
   // FEE-WINS: an explicit fee skips buildGasFee/simulate entirely. It is the one
-  // path valid without a configured gasPrice. The COSMOS_MAX_GAS ceiling is NOT
-  // enforced here but in `cosmosTx`, before dispatch — it must apply even to
-  // modules that never reach this helper, and it needs the resolved config.
+  // path valid without a configured gasPrice. Its gas syntax + ceiling were
+  // already enforced by resolveBroadcastGasOptions before dispatch; this helper
+  // deliberately has no config and only resolves the route's effective fee/memo.
   if (txExtras?.fee !== undefined) {
     return { fee: txExtras.fee, memo };
   }
@@ -791,31 +793,64 @@ function resolveGasCeiling(maxGas: number | undefined): number | undefined {
 }
 
 /**
- * Enforce the ENG-556 absolute gas ceiling against a caller-supplied explicit fee.
+ * Parse the exact decimal gas syntax CosmJS signs, but reject values that
+ * cannot represent a useful positive Cosmos gas limit. This runs before the
+ * ceiling comparison so numeric coercions such as hex/scientific notation
+ * cannot be compared as one number and handed to CosmJS as a different string.
+ */
+function parseExplicitFeeGas(fee: StdFee): number {
+  if (fee === null || typeof fee !== 'object') {
+    throw new ManifestMCPError(
+      ManifestMCPErrorCode.INVALID_CONFIG,
+      `fee must be an object with a gas string, got ${String(fee)}`,
+    );
+  }
+
+  const gasValue = (fee as unknown as { readonly gas?: unknown }).gas;
+  const gas = typeof gasValue === 'string' ? Number(gasValue) : Number.NaN;
+  if (
+    typeof gasValue !== 'string' ||
+    !/^[0-9]+$/.test(gasValue) ||
+    !Number.isSafeInteger(gas) ||
+    gas <= 0
+  ) {
+    const shown =
+      typeof gasValue === 'string'
+        ? JSON.stringify(gasValue)
+        : String(gasValue);
+    throw new ManifestMCPError(
+      ManifestMCPErrorCode.INVALID_CONFIG,
+      `fee.gas must be a positive base-10 integer string within the safe-integer range, got ${shown}`,
+    );
+  }
+  return gas;
+}
+
+/**
+ * Validate a caller-supplied explicit fee's gas limit and enforce the ENG-556
+ * absolute gas ceiling against it.
  *
  * The simulate path enforces the ceiling inside `buildGasFee` via
  * `TxOptions.maxGas`. An explicit fee bypasses that path by construction, so
  * without this check the single code path where a caller is being *most*
  * deliberate about cost was also the one path with no upper bound (ENG-665).
  *
- * Callers must pass a resolved ceiling — `config.maxGas ?? DEFAULT_MAX_GAS` —
- * not the raw optional config field, or an omitted `maxGas` silently disables
- * the ceiling here while the simulated path still applies the default.
+ * Gas validation still applies when `maxGas` is `-1`; that sentinel disables
+ * only the upper bound, not the requirement that CosmJS receive a positive
+ * base-10 safe-integer gas string. This guard constrains `fee.gas`, not the
+ * caller-authored, denom-dependent `fee.amount`.
+ *
+ * Production callers go through `resolveBroadcastGasOptions`, which resolves
+ * an omitted config value to `DEFAULT_MAX_GAS` before invoking this guard.
  */
 export function assertExplicitFeeWithinCeiling(
   fee: StdFee,
   maxGas: number | undefined,
 ): void {
   const ceiling = resolveGasCeiling(maxGas);
+  const gas = parseExplicitFeeGas(fee);
   if (ceiling === undefined) return;
 
-  const gas = Number(fee.gas);
-  if (!Number.isFinite(gas)) {
-    throw new ManifestMCPError(
-      ManifestMCPErrorCode.INVALID_CONFIG,
-      `fee.gas must be a numeric string, got ${JSON.stringify(fee.gas)}`,
-    );
-  }
   if (gas > ceiling) {
     throw new ManifestMCPError(
       ManifestMCPErrorCode.GAS_LIMIT_EXCEEDED,
@@ -823,6 +858,62 @@ export function assertExplicitFeeWithinCeiling(
       { explicitGas: gas, maxGas: ceiling },
     );
   }
+}
+
+/**
+ * Resolve the gas branch shared by every public transaction broadcaster.
+ *
+ * An explicit fee wins over simulation, but its gas limit is validated and
+ * checked against the resolved ceiling first. Otherwise this returns the
+ * fully-resolved options consumed by `buildGasFee`. Keeping mutual exclusion,
+ * multiplier validation, default resolution and explicit-fee enforcement in
+ * one function prevents `cosmosTx` and the direct `executeTx` path drifting.
+ */
+export function resolveBroadcastGasOptions(
+  config: Pick<ManifestMCPConfig, 'gasPrice' | 'gasMultiplier' | 'maxGas'>,
+  call?: { readonly fee?: StdFee; readonly gasMultiplier?: number },
+): TxOptions | undefined {
+  const fee = call?.fee;
+  const gasMultiplier = call?.gasMultiplier;
+
+  if (fee !== undefined && gasMultiplier !== undefined) {
+    throw new ManifestMCPError(
+      ManifestMCPErrorCode.INVALID_CONFIG,
+      'passing both fee and gasMultiplier is a caller error; fee wins (it skips simulation), gasMultiplier applies only on the simulate path',
+    );
+  }
+
+  if (fee !== undefined) {
+    assertExplicitFeeWithinCeiling(fee, config.maxGas ?? DEFAULT_MAX_GAS);
+    return undefined;
+  }
+
+  if (
+    gasMultiplier !== undefined &&
+    (!Number.isFinite(gasMultiplier) || gasMultiplier < 1)
+  ) {
+    throw new ManifestMCPError(
+      ManifestMCPErrorCode.INVALID_CONFIG,
+      `gasMultiplier must be a finite number >= 1, got ${gasMultiplier}`,
+    );
+  }
+
+  if (!config.gasPrice) {
+    if (gasMultiplier !== undefined) {
+      throw new ManifestMCPError(
+        ManifestMCPErrorCode.INVALID_CONFIG,
+        'gasMultiplier override requires gasPrice configuration',
+      );
+    }
+    return undefined;
+  }
+
+  return {
+    gasMultiplier:
+      gasMultiplier ?? config.gasMultiplier ?? DEFAULT_GAS_MULTIPLIER,
+    gasPrice: config.gasPrice,
+    maxGas: config.maxGas ?? DEFAULT_MAX_GAS,
+  };
 }
 
 /**

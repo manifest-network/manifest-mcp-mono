@@ -1,6 +1,12 @@
 import { readdirSync, readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import {
+  createScanner,
+  LanguageVariant,
+  ScriptTarget,
+  SyntaxKind,
+} from 'typescript';
 import { describe, expect, it, vi } from 'vitest';
 import { getSupportedModules, getTxHandler } from '../modules.js';
 import { ManifestMCPErrorCode } from '../types.js';
@@ -34,6 +40,39 @@ function makeMockSigningClient() {
       .fn()
       .mockRejectedValue(new Error('simulate must not be called')),
   } as never;
+}
+
+/** Remove TypeScript comments without treating comment markers in strings as trivia. */
+function stripComments(source: string): string {
+  const scanner = createScanner(
+    ScriptTarget.Latest,
+    false,
+    LanguageVariant.Standard,
+    source,
+  );
+  let cursor = 0;
+  let uncommented = '';
+
+  for (
+    let token = scanner.scan();
+    token !== SyntaxKind.EndOfFileToken;
+    token = scanner.scan()
+  ) {
+    if (
+      token !== SyntaxKind.SingleLineCommentTrivia &&
+      token !== SyntaxKind.MultiLineCommentTrivia
+    ) {
+      continue;
+    }
+
+    const start = scanner.getTokenPos();
+    const end = scanner.getTextPos();
+    uncommented += source.slice(cursor, start);
+    uncommented += source.slice(start, end).replace(/[^\r\n]/g, ' ');
+    cursor = end;
+  }
+
+  return uncommented + source.slice(cursor);
 }
 
 /**
@@ -92,7 +131,7 @@ describe('ENG-665 — txExtras reaches every tx route', () => {
     it.each(routeFiles)(
       '%s calls resolveTxFeeAndMemo, never buildGasFee directly',
       (file) => {
-        const src = readFileSync(join(here, file), 'utf8');
+        const src = stripComments(readFileSync(join(here, file), 'utf8'));
         if (!src.includes('Transaction(')) return; // not a route module
 
         expect(src).toContain('resolveTxFeeAndMemo(');
@@ -266,15 +305,117 @@ describe('ENG-665 — txExtras reaches every tx route', () => {
       ).not.toThrow();
     });
 
-    it('rejects a non-numeric gas string rather than silently passing it', () => {
+    it('still validates explicit gas when the upper bound is disabled', () => {
+      expect(() =>
+        assertExplicitFeeWithinCeiling({ ...EXPLICIT_FEE, gas: '-1' }, -1),
+      ).toThrowError(
+        expect.objectContaining({ code: ManifestMCPErrorCode.INVALID_CONFIG }),
+      );
+    });
+
+    it('does not interpret the denom-dependent fee.amount as a gas limit', () => {
       expect(() =>
         assertExplicitFeeWithinCeiling(
-          { ...EXPLICIT_FEE, gas: 'lots' },
+          {
+            amount: [{ denom: 'umfx', amount: '999999999999999' }],
+            gas: '200000',
+          },
           50_000_000,
         ),
+      ).not.toThrow();
+    });
+
+    it.each([
+      ['negative', '-1'],
+      ['zero', '0'],
+      ['hexadecimal', '0x2710'],
+      ['scientific notation', '1e3'],
+      ['fractional', '200000.5'],
+      ['outside the safe-integer range', '9007199254740992'],
+      ['non-numeric', 'lots'],
+    ])('rejects a %s gas string rather than signing it', (_case, gas) => {
+      expect(() =>
+        assertExplicitFeeWithinCeiling({ ...EXPLICIT_FEE, gas }, 50_000_000),
+      ).toThrowError(
+        expect.objectContaining({ code: ManifestMCPErrorCode.INVALID_CONFIG }),
+      );
+    });
+
+    it('rejects a null fee from an untyped caller with INVALID_CONFIG', () => {
+      expect(() =>
+        assertExplicitFeeWithinCeiling(null as never, 50_000_000),
       ).toThrowError(
         expect.objectContaining({ code: ManifestMCPErrorCode.INVALID_CONFIG }),
       );
     });
   });
+});
+
+function productionTypeScriptFiles(dir: string): string[] {
+  return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+    const path = join(dir, entry.name);
+    if (entry.isDirectory()) return productionTypeScriptFiles(path);
+    if (
+      !entry.name.endsWith('.ts') ||
+      entry.name.endsWith('.test.ts') ||
+      entry.name.endsWith('.test-d.ts')
+    ) {
+      return [];
+    }
+    return [path];
+  });
+}
+
+function callsBroadcastGasResolver(source: string): boolean {
+  return stripComments(source).includes('resolveBroadcastGasOptions(');
+}
+
+describe('ENG-744 — broadcast gas guards stay centralized', () => {
+  const sourceRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
+  const entryPoints = productionTypeScriptFiles(sourceRoot)
+    .map((file) => ({
+      file: relative(sourceRoot, file),
+      source: readFileSync(file, 'utf8'),
+    }))
+    .filter(
+      ({ source }) =>
+        source.includes('export async function cosmosTx(') ||
+        (source.includes('TxCallOptions') &&
+          /\.signAndBroadcast(?:Sync)?\(/.test(source)),
+    );
+
+  it('finds both existing broadcast entry-point shapes', () => {
+    expect(entryPoints.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it.each([
+    ['line', '// resolveBroadcastGasOptions(config, call);'],
+    [
+      'trailing line',
+      'const txOptions = undefined; // resolveBroadcastGasOptions(config, call);',
+    ],
+    [
+      'block',
+      ['/*', ' * resolveBroadcastGasOptions(config, call);', ' */'].join('\n'),
+    ],
+    [
+      'inline block',
+      'const txOptions = undefined; /* resolveBroadcastGasOptions(config, call); */',
+    ],
+  ])('does not accept a resolver call in a %s comment', (_kind, source) => {
+    expect(callsBroadcastGasResolver(source)).toBe(false);
+  });
+
+  it('preserves comment markers inside strings while finding a real call', () => {
+    const source =
+      "const rpcUrl = 'https://rpc.example'; resolveBroadcastGasOptions(config, call);";
+    expect(callsBroadcastGasResolver(source)).toBe(true);
+  });
+
+  it.each(entryPoints)(
+    '$file resolves fee and simulation gas options through the shared guard',
+    ({ source }) => {
+      expect(callsBroadcastGasResolver(source)).toBe(true);
+    },
+  );
 });

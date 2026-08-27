@@ -24,8 +24,9 @@ export const DEFAULT_GAS_MULTIPLIER = 1.5;
 
 /**
  * Default absolute gas-limit ceiling (~4x the observed all-time mainnet
- * high-water gasLimit of ~12.5M). A broadcast whose ceil(simulate * multiplier)
- * exceeds this aborts with GAS_LIMIT_EXCEEDED. `-1` disables the ceiling. (ENG-556)
+ * high-water gasLimit of ~12.5M). A broadcast whose final gas limit — either
+ * ceil(simulate * multiplier) or an explicit fee.gas — exceeds this aborts with
+ * GAS_LIMIT_EXCEEDED. `-1` disables the upper bound. (ENG-556, ENG-744)
  */
 export const DEFAULT_MAX_GAS = 50_000_000;
 

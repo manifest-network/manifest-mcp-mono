@@ -34,11 +34,19 @@ function ctxWith(
   signAndBroadcast: ReturnType<typeof vi.fn>,
   simulate: ReturnType<typeof vi.fn> = vi.fn().mockResolvedValue(100_000),
 ): TxCtx {
-  const chain = makeMockClientManager();
+  return makeTxCtx({ chain: chainWith(signAndBroadcast, simulate) });
+}
+
+function chainWith(
+  signAndBroadcast: ReturnType<typeof vi.fn>,
+  simulate: ReturnType<typeof vi.fn> = vi.fn().mockResolvedValue(100_000),
+  config: ReturnType<typeof makeMockConfig> = makeMockConfig(),
+) {
+  const chain = makeMockClientManager({ config });
   chain.getSigningClient = vi
     .fn()
     .mockResolvedValue({ signAndBroadcast, simulate });
-  return makeTxCtx({ chain });
+  return chain;
 }
 
 beforeEach(() => {
@@ -103,6 +111,107 @@ describe('executeTx', () => {
     const simulate = vi.fn().mockResolvedValue(100_000);
     const fee = { amount: [{ denom: 'umfx', amount: '5' }], gas: '200000' };
     await executeTx(ctxWith(signAndBroadcast, simulate), msgs, { fee });
+    expect(simulate).not.toHaveBeenCalled();
+    expect(signAndBroadcast).toHaveBeenCalledWith(
+      expect.any(String),
+      msgs,
+      fee,
+      '',
+    );
+  });
+
+  it('rejects an explicit fee above config.maxGas before signing', async () => {
+    const signAndBroadcast = vi.fn().mockResolvedValue(okResult());
+    const simulate = vi.fn().mockResolvedValue(100_000);
+    const chain = chainWith(
+      signAndBroadcast,
+      simulate,
+      makeMockConfig({ maxGas: 50_000_000 }),
+    );
+
+    await expect(
+      executeTx(makeTxCtx({ chain }), msgs, {
+        fee: {
+          amount: [{ denom: 'umfx', amount: '1' }],
+          gas: '999999999999',
+        },
+      }),
+    ).rejects.toMatchObject({
+      code: ManifestMCPErrorCode.GAS_LIMIT_EXCEEDED,
+    });
+
+    expect(chain.getBroadcastClient).not.toHaveBeenCalled();
+    expect(signAndBroadcast).not.toHaveBeenCalled();
+    expect(simulate).not.toHaveBeenCalled();
+  });
+
+  it('applies DEFAULT_MAX_GAS when config.maxGas is omitted', async () => {
+    const signAndBroadcast = vi.fn().mockResolvedValue(okResult());
+    const simulate = vi.fn().mockResolvedValue(100_000);
+    const chain = chainWith(signAndBroadcast, simulate);
+    expect(chain.getConfig().maxGas).toBeUndefined();
+
+    await expect(
+      executeTx(makeTxCtx({ chain }), msgs, {
+        fee: {
+          amount: [{ denom: 'umfx', amount: '1' }],
+          gas: '60000000',
+        },
+      }),
+    ).rejects.toMatchObject({
+      code: ManifestMCPErrorCode.GAS_LIMIT_EXCEEDED,
+    });
+
+    expect(chain.getBroadcastClient).not.toHaveBeenCalled();
+    expect(signAndBroadcast).not.toHaveBeenCalled();
+    expect(simulate).not.toHaveBeenCalled();
+  });
+
+  it('rejects a malformed config.maxGas instead of failing open', async () => {
+    const signAndBroadcast = vi.fn().mockResolvedValue(okResult());
+    const chain = chainWith(
+      signAndBroadcast,
+      undefined,
+      makeMockConfig({ maxGas: 0 }),
+    );
+
+    await expect(
+      executeTx(makeTxCtx({ chain }), msgs, {
+        fee: { amount: [], gas: '200000' },
+      }),
+    ).rejects.toMatchObject({ code: ManifestMCPErrorCode.INVALID_CONFIG });
+
+    expect(chain.getBroadcastClient).not.toHaveBeenCalled();
+    expect(signAndBroadcast).not.toHaveBeenCalled();
+  });
+
+  it('classifies a null fee from an untyped caller before signing', async () => {
+    const signAndBroadcast = vi.fn().mockResolvedValue(okResult());
+    const chain = chainWith(signAndBroadcast);
+
+    await expect(
+      executeTx(makeTxCtx({ chain }), msgs, { fee: null as never }),
+    ).rejects.toMatchObject({ code: ManifestMCPErrorCode.INVALID_CONFIG });
+
+    expect(chain.getBroadcastClient).not.toHaveBeenCalled();
+    expect(signAndBroadcast).not.toHaveBeenCalled();
+  });
+
+  it('allows an explicit fee above the default ceiling when maxGas is -1', async () => {
+    const signAndBroadcast = vi.fn().mockResolvedValue(okResult());
+    const simulate = vi.fn().mockResolvedValue(100_000);
+    const chain = chainWith(
+      signAndBroadcast,
+      simulate,
+      makeMockConfig({ maxGas: -1 }),
+    );
+    const fee = {
+      amount: [{ denom: 'umfx', amount: '1' }],
+      gas: '999999999999',
+    };
+
+    await executeTx(makeTxCtx({ chain }), msgs, { fee });
+
     expect(simulate).not.toHaveBeenCalled();
     expect(signAndBroadcast).toHaveBeenCalledWith(
       expect.any(String),
