@@ -127,7 +127,7 @@ describe('manifest-sdk barrels', () => {
       expect(deploy).toHaveProperty(k);
   });
 
-  it('/orchestration exposes the 5 orchestration value fns', () => {
+  it('/orchestration exposes 4 orchestrators plus the loadChainDenomMap loader', () => {
     for (const k of [
       'deployApp',
       'manageDomain',
@@ -210,7 +210,7 @@ describe('manifest-sdk barrels', () => {
     );
   });
 
-  it('/orchestration runtime exports are EXACTLY the 5 orchestration fns', () => {
+  it('/orchestration runtime exports are EXACTLY 4 orchestrators plus 1 loader', () => {
     expect(keys(orchestration)).toEqual(
       [
         'deployApp',

@@ -1,29 +1,32 @@
 // Shared "provider HTTP is unguarded" warning, used by BOTH unguarded entry points:
-// `createFredClient` (warns at construction) and `checkedFetch` (warns on the first raw HTTP call
-// made without a `fetchFn`). Lives here rather than in `client.ts` because `http/provider.ts` must
-// reach it and `client.ts` imports `http/` — the reverse edge would be a cycle.
+// `createFredClient` (warns at construction) and the shared HTTP transport (warns on the first call
+// whose fetch was omitted or defaulted by core). Lives here rather than in `client.ts` because
+// `http/provider.ts` must reach it and `client.ts` imports `http/` — the reverse edge would be a cycle.
 //
 // Layer 2 of the SSRF defence (core's `createGuardedFetch`) is opt-in per entry point: the MCP
 // servers and `createFredClientNode` inject it; the base `createFredClient` and the raw HTTP
 // functions on the fred barrel / SDK `/deploy` fall back to `globalThis.fetch`. That fallback used
 // to be silent on the raw-function path, which is what this module fixes. See `docs/security.md`
 // ("Layer 2 activation") for the full matrix.
-import { logger } from '@manifest-network/manifest-mcp-core';
+import {
+  isClientDefaultFetch,
+  logger,
+} from '@manifest-network/manifest-mcp-core';
 
 /**
  * Pure predicate: should we warn that provider HTTP is running unguarded? True only on Node
- * (`isNode`) when the caller injected no `fetch` — in a browser there is no connect guard to be
- * missing (layer 1 plus the platform's Private Network Access / CORS apply instead), and an
- * explicitly-injected fetch is a deliberate opt-out, not an accident.
+ * (`isNode`) when the caller supplied no custom `fetch` — in a browser there is no connect guard
+ * to be missing (layer 1 plus the platform's Private Network Access / CORS apply instead), and an
+ * explicit injection is a deliberate opt-out whose guardedness this package cannot infer.
  *
  * `isNode` is a parameter so the browser-negative case is unit-testable.
  * Not part of the public SDK surface (not re-exported from the fred barrel).
  */
 export function shouldWarnUnguarded(
-  hasInjectedFetch: boolean,
+  hasCustomFetch: boolean,
   isNode: boolean,
 ): boolean {
-  return !hasInjectedFetch && isNode;
+  return !hasCustomFetch && isNode;
 }
 
 /**
@@ -35,19 +38,21 @@ export function isNodeRuntime(): boolean {
 }
 
 /**
- * Did the caller supply a usable fetch? Deliberately **nullish**-aware so it agrees with the
- * `fetchFn ?? globalThis.fetch` fallback at every call site.
+ * Did the caller explicitly supply a fetch rather than omit the transport?
  *
- * A bare `!== undefined` check would disagree on `null`: `null` would count as "injected" (no
- * warning) while `??` would still fall back to unguarded `globalThis.fetch` — a silent unguarded
- * path, which is the exact thing this module exists to prevent. `strict: true` stops a TypeScript
- * caller from passing `null`, but this package is published and plain-JS callers (or an
- * `any`-typed config value) can.
+ * Core's client factories turn an omitted option into a required `ctx.fetch` function, so nullishness
+ * alone loses the distinction. Core owns that composition invariant and provenance-tags only its
+ * default wrapper; {@link isClientDefaultFetch} recovers it even if `globalThis.fetch` is later
+ * replaced. Any other function — including an explicitly passed platform global, bound wrapper or
+ * real guarded fetch — is custom by contract. A plain-JS caller can also pass `null`; because `??`
+ * falls back to the platform global, that remains omitted/unguarded.
  */
-export function hasInjectedFetch(
+export function hasCustomFetch(
   fetchFn: typeof globalThis.fetch | null | undefined,
 ): boolean {
-  return fetchFn !== undefined && fetchFn !== null;
+  return (
+    fetchFn !== undefined && fetchFn !== null && !isClientDefaultFetch(fetchFn)
+  );
 }
 
 export const UNGUARDED_FETCH_WARNING =
@@ -58,7 +63,8 @@ export const UNGUARDED_FETCH_WARNING =
   "(re-exported by the SDK as '@manifest-network/manifest-sdk/node'; SSRF-safe by default), " +
   "or pass a guarded fetch from createGuardedFetch ('@manifest-network/manifest-mcp-core/guarded-fetch') " +
   'as `opts.fetch` on createFredClient or as the `fetchFn` argument of a raw HTTP function. ' +
-  'Note: injecting your own fetch opts OUT of the SSRF guard.';
+  'Note: explicitly injecting any fetch opts OUT of the automatic SSRF guard and this ' +
+  'missing-guard warning; injection alone does not make that fetch guarded.';
 
 // Module-level once-latch SHARED by every unguarded entry point, so a process emits this at most
 // once however many clients it builds or raw calls it makes (isolated in tests via
@@ -69,14 +75,14 @@ let warned = false;
 /**
  * Emit {@link UNGUARDED_FETCH_WARNING} at most once per process, if warranted.
  *
- * @param hasInjectedFetch - Whether the caller supplied their own fetch (which opts out of the guard).
+ * @param hasCustomFetch - Whether the caller explicitly supplied a fetch (which opts out of the guard).
  * @param isNode - Runtime probe; defaults to {@link isNodeRuntime}. Injectable for tests.
  */
 export function warnUnguardedOnce(
-  hasInjectedFetch: boolean,
+  hasCustomFetch: boolean,
   isNode: boolean = isNodeRuntime(),
 ): void {
-  if (warned || !shouldWarnUnguarded(hasInjectedFetch, isNode)) return;
+  if (warned || !shouldWarnUnguarded(hasCustomFetch, isNode)) return;
   warned = true;
   logger.warn(UNGUARDED_FETCH_WARNING);
 }

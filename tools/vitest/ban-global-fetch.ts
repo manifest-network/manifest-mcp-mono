@@ -4,9 +4,9 @@
 // TEST FILE, inside the worker running that file — not once per worker. Under the repo's
 // current defaults (`pool: 'forks'`, `isolate: true`) each file also gets its own process, so
 // the two readings happen to coincide; they stop coinciding the moment isolation is turned off
-// or a pool reuses workers. Measured both ways: 34 fred files give 34 evaluations across 34
-// pids by default, and 34 evaluations in ONE pid under `--no-isolate --pool=threads`. Per-file
-// is the rule to rely on, and it is the one that matters here — every file gets a fresh stub.
+// or a pool reuses workers. This was measured under both the default and a single-process
+// `--no-isolate --pool=threads` run. Per-file is the rule to rely on, and it is the one that
+// matters here — every file gets a fresh stub.
 //
 // `globalSetup` would be wrong: it runs in the parent process, not the one the tests execute
 // in, so it could not replace the global the code under test actually sees.
@@ -19,20 +19,19 @@
 // machine's DNS, and in the SSRF-guard tests actively misleading. This turns that silent
 // fall-through into an immediate, named failure.
 //
-// It also disarmed a live class of landmine: 8 fred tool tests built their fetch spy as
+// It also disarmed a live class of landmine: several fred tool tests built their fetch spy as
 // `vi.fn(globalThis.fetch)`, reading as "default to the REAL fetch". ENG-715 retired that
 // spelling — correcting the reading along the way. Because setupFiles run BEFORE the test
 // module is evaluated, what `vi.fn(globalThis.fetch)` captured was this stub, not real
 // fetch; the spelling was safe, but only by load order, and it documented the opposite of
-// what it did. Those 8 now say it outright: `vi.fn<typeof globalThis.fetch>(() => { throw …
+// what it did. Those tests now say it outright: `vi.fn<typeof globalThis.fetch>(() => { throw …
 // })`. Note why NOT the bare `vi.fn<typeof globalThis.fetch>()` — it resolves `undefined`,
 // and `checkedFetchWithin`'s try covers only the `doFetch` call, so the escape would
 // surface as an unclassified `TypeError: … (reading 'ok')` with no URL and no report from
 // the afterEach below, instead of the named failure this guard exists to produce.
 //
 // Measured cost when introduced: zero. A pass-through probe recorded no real-fetch calls
-// anywhere in the repo, and this throwing stub changed no test's outcome in any of the nine
-// packages.
+// anywhere in the repo, and this throwing stub changed no package test's outcome.
 //
 // DELIBERATE NON-COVERAGE — `undici`. Core's SSRF-guarded fetch does not route through the
 // global at all: `core/src/internals/guarded-fetch.ts` returns `undici.fetch` directly, to
@@ -44,8 +43,8 @@
 // `undici.fetch` too, with an allowlist for that file; deliberately out of scope here.
 //
 // ESCAPE HATCH. A test that genuinely needs to exercise the `?? globalThis.fetch` fallback
-// stubs the global itself — `vi.stubGlobal('fetch', …)`, as two cases in
-// `packages/fred/src/http/provider.test.ts` do. That overwrites this stub for the duration
+// stubs the global itself — `vi.stubGlobal('fetch', …)`, as the ENG-672 provenance tests in core
+// and fred do. That overwrites this stub for the duration
 // and `vi.unstubAllGlobals()` restores THIS stub, never the real fetch. Any other test should
 // inject its own fetch (`fetchFn`, `ctx.fetch`, `opts.fetch`) rather than reaching for the
 // global.

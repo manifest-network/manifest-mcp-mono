@@ -598,7 +598,7 @@ describe('low-level fn honors allowLoopback (validate gate)', () => {
 
 // The raw HTTP functions (exported on the fred barrel and SDK `/deploy`) fall back to unguarded
 // `globalThis.fetch` when `fetchFn` is omitted. That fallback used to be SILENT — these pin the
-// warning, and pin that a deliberately-injected fetch stays quiet.
+// warning, and pin that a deliberately injected custom fetch stays quiet.
 describe('checkedFetch unguarded-fetch warning (raw HTTP path)', () => {
   beforeEach(() => vi.resetModules());
   afterEach(() => {
@@ -622,7 +622,7 @@ describe('checkedFetch unguarded-fetch warning (raw HTTP path)', () => {
     expect(String(warn.mock.calls[0]?.[0])).toContain('createFredClientNode');
   });
 
-  it('does not warn when a fetchFn is injected (even a plain globalThis.fetch)', async () => {
+  it('does not warn when a custom fetchFn is injected', async () => {
     const core = await import('@manifest-network/manifest-mcp-core');
     const { checkedFetch: cf } = await import('./provider.js');
     const warn = vi.spyOn(core.logger, 'warn').mockImplementation(() => {});
@@ -634,6 +634,54 @@ describe('checkedFetch unguarded-fetch warning (raw HTTP path)', () => {
 
     expect(injected).toHaveBeenCalledTimes(1);
     expect(warn).not.toHaveBeenCalled();
+  });
+
+  it('warns when core materializes an omitted fetch into ctx.fetch (ENG-672)', async () => {
+    const core = await import('@manifest-network/manifest-mcp-core');
+    const { getProviderHealth: health } = await import('./provider.js');
+    const warn = vi.spyOn(core.logger, 'warn').mockImplementation(() => {});
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        Response.json({
+          status: 'healthy',
+          provider_uuid: 'provider-1',
+          checks: {},
+        }),
+      ),
+    );
+    vi.spyOn(core.CosmosClientManager, 'getInstance').mockReturnValue({
+      getQueryClient: vi.fn(async () => ({})),
+      setLogger: vi.fn(),
+      disconnect: vi.fn(),
+    } as unknown as ReturnType<typeof core.CosmosClientManager.getInstance>);
+
+    const client = await core.createManifestReadClient({
+      config: {
+        chainId: 'test-1',
+        restUrl: 'http://localhost:1317',
+      },
+    });
+    expect(core.isClientDefaultFetch(client.fetch)).toBe(true);
+
+    // Replacing the global after core captured it used to defeat a reference-identity heuristic.
+    // Stable provenance must survive the replacement and keep the defaulted path warning.
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        Response.json({
+          status: 'replacement',
+          provider_uuid: 'replacement',
+          checks: {},
+        }),
+      ),
+    );
+
+    await health('https://provider.example.com', 5000, client.fetch);
+    client.dispose();
+
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(String(warn.mock.calls[0]?.[0])).toContain('createFredClientNode');
   });
 
   // A plain-JS caller can pass `null` (TypeScript's `strict` blocks it, but this package ships to
@@ -675,15 +723,20 @@ describe('checkedFetch unguarded-fetch warning (raw HTTP path)', () => {
   });
 });
 
-describe('hasInjectedFetch', () => {
-  it('is nullish-aware so it agrees with the `?? globalThis.fetch` fallback', async () => {
-    const { hasInjectedFetch } = await import('./unguarded-warning.js');
+describe('hasCustomFetch', () => {
+  it('treats any explicit function as custom and nullish values as omitted', async () => {
+    const { hasCustomFetch } = await import('./unguarded-warning.js');
     const fn = (() => {}) as unknown as typeof globalThis.fetch;
+    const boundGlobal = globalThis.fetch.bind(globalThis);
+    const wrappedGlobal: typeof globalThis.fetch = (input, init) =>
+      globalThis.fetch(input, init);
 
-    expect(hasInjectedFetch(fn)).toBe(true);
-    expect(hasInjectedFetch(globalThis.fetch)).toBe(true);
-    expect(hasInjectedFetch(undefined)).toBe(false);
-    expect(hasInjectedFetch(null)).toBe(false);
+    expect(hasCustomFetch(fn)).toBe(true);
+    expect(hasCustomFetch(globalThis.fetch)).toBe(true);
+    expect(hasCustomFetch(boundGlobal)).toBe(true);
+    expect(hasCustomFetch(wrappedGlobal)).toBe(true);
+    expect(hasCustomFetch(undefined)).toBe(false);
+    expect(hasCustomFetch(null)).toBe(false);
   });
 });
 
@@ -701,7 +754,7 @@ describe('warnUnguardedOnce', () => {
     expect(warn).not.toHaveBeenCalled();
   });
 
-  it('warns on Node with no injected fetch, and only once', async () => {
+  it('warns on Node with no custom fetch, and only once', async () => {
     const core = await import('@manifest-network/manifest-mcp-core');
     const { warnUnguardedOnce } = await import('./unguarded-warning.js');
     const warn = vi.spyOn(core.logger, 'warn').mockImplementation(() => {});
@@ -710,6 +763,21 @@ describe('warnUnguardedOnce', () => {
     warnUnguardedOnce(false, true);
 
     expect(warn).toHaveBeenCalledTimes(1);
+  });
+
+  it('stays silent for the real createGuardedFetch value', async () => {
+    const core = await import('@manifest-network/manifest-mcp-core');
+    const { createGuardedFetch } = await import(
+      '@manifest-network/manifest-mcp-core/guarded-fetch'
+    );
+    const { hasCustomFetch, warnUnguardedOnce } = await import(
+      './unguarded-warning.js'
+    );
+    const warn = vi.spyOn(core.logger, 'warn').mockImplementation(() => {});
+
+    warnUnguardedOnce(hasCustomFetch(createGuardedFetch()), true);
+
+    expect(warn).not.toHaveBeenCalled();
   });
 });
 

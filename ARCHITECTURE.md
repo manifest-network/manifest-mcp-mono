@@ -67,7 +67,7 @@ submodules/
   fred/                                            Container orchestration backend (main branch)
 ```
 
-Dependency direction: **node -> {chain, lease, fred, cosmwasm, agent} -> core**, **agent -> agent-core -> {core, fred}**, and **sdk -> {core, fred, agent-core}** (never reverse; node also depends on core directly). Fred also uses its own HTTP clients internally. Core has no knowledge of transports or Node.js-specific APIs, though it exports MCP-typed server utilities (`withErrorHandling`, `jsonResponse`) consumed by chain, lease, fred, and cosmwasm packages.
+Dependency direction: **node -> {chain, lease, fred, cosmwasm, agent} -> core**, **agent -> agent-core -> {core, fred}**, and **sdk -> {core, fred, agent-core}** (never reverse; node also depends on core directly). Fred also uses its own HTTP clients internally. Core's universal barrel has no Node.js-specific imports; fenced subpaths expose the Node-only guarded HTTP and WebSocket transports. Core also exports MCP-typed server utilities (`withErrorHandling`, `jsonResponse`) consumed by chain, lease, fred, and cosmwasm packages.
 
 ## Package: core
 
@@ -79,13 +79,15 @@ Representative layout (non-exhaustive — see the package for the full file set)
 
 ```
 src/
-├── index.ts              Public API barrel. NOTE: createGuardedFetch / isBlocked / BLOCKED_RANGES_* are deliberately NOT here — they ship only via the Node-only /guarded-fetch subpath (ENG-281)
-├── guarded-fetch.ts      Node-only subpath entry: @manifest-network/manifest-mcp-core/guarded-fetch
+├── index.ts              Universal public API barrel; guarded transports and low-level SSRF primitives stay on scoped subpaths
+├── guarded-fetch.ts      Node-only HTTP subpath: @manifest-network/manifest-mcp-core/guarded-fetch
+├── events-node.ts        Node-only WebSocket subpath: @manifest-network/manifest-mcp-core/events-node
+├── ssrf.ts               Universal pure-classifier subpath: @manifest-network/manifest-mcp-core/ssrf
 ├── logger.ts             Leveled logger (stderr output; level set via logger.setLevel(), defaults to warn)
 ├── server-utils.ts       Server utilities (error handling, sanitization, response helpers)
 ├── tool-metadata.ts      Tool annotation + _meta.manifest helpers
 ├── client.ts             CosmosClientManager -- keyed-instance client lifecycle (RPC + LCD)
-├── client-factory.ts     Bound read-client factory (createManifestReadClient)
+├── client-factory.ts     Bound read-client factory + omitted-fetch provenance (createManifestReadClient)
 ├── client-full.ts        Full (signing) client surface (createManifestClient; executeTx, setItemCustomDomain, …)
 ├── ctx.ts                Shared capability-context types
 ├── lcd-adapter.ts        LCD/REST adapter -- converts LCD responses to RPC query client shape
@@ -103,9 +105,12 @@ src/
 ├── retry.ts              Retry with exponential backoff
 ├── version.ts            Package version constant
 │
-├── internals/            Internal / Node-only helpers
-│   ├── guarded-fetch.ts  SSRF-guarded fetch factory (createGuardedFetch, isBlocked, BLOCKED_RANGES_*)
+├── internals/            Internal helpers (Node-only where noted)
+│   ├── event-transport-node.ts  SSRF-guarded WebSocket transport (createNodeEventTransport)
+│   ├── guarded-fetch.ts  undici-backed SSRF-guarded fetch factory (createGuardedFetch)
 │   ├── read-signal.ts    AbortSignal plumbing for reads
+│   ├── ssrf-classify.ts  Pure IP classifier (isBlocked, isIpLiteral, BLOCKED_RANGES_*)
+│   ├── ssrf-resolve.ts   Node DNS resolution + public-unicast assertion shared by HTTP and WS
 │   ├── tx-confirmation.ts  Tx confirmation / await helpers
 │   └── tx-opts.ts        Tx option normalization
 │
@@ -155,7 +160,7 @@ Key features:
 
 **Tool annotation helpers** (`tool-metadata.ts`) -- `readOnlyAnnotations()` and `mutatingAnnotations({ destructive, idempotent? })` produce the standard MCP `ToolAnnotations` (`title`, `readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`). `manifestMeta({ broadcasts, estimable })` injects a versioned `_meta.manifest` container (`v: MANIFEST_TOOL_META_VERSION = 1`) for Manifest-specific signals downstream plugins consume.
 
-**SSRF-guarded fetch** (`internals/guarded-fetch.ts`, exposed via the Node-only `@manifest-network/manifest-mcp-core/guarded-fetch` subpath — **not** the barrel) -- `createGuardedFetch()` builds a native `undici` Dispatcher that DNS-resolves the target **inside the connect hook** (substituting the resolved IP) and default-denies any address whose `ipaddr.js` `range()` is not `'unicast'` (loopback, link-local, private, reserved/benchmarking, etc.), closing the DNS-rebinding / TOCTOU gap a hostname-only check leaves open; the hook re-fires on cross-origin redirects. It is consumed by fred (gated `MANIFEST_FRED_FETCH_GUARDED`, default on) and agent-core (gated `MANIFEST_AGENT_FETCH_GUARDED`, default on), so a malicious on-chain provider URL can't point a server at an internal host. Kept off the package barrel for browser-bundle hygiene (no `undici` / `node:async_hooks` in the universal graph); `ipaddr.js` is force-pinned to `2.4.0` tree-wide so a stale transitive copy (e.g. `1.9.1` via `proxy-addr`) can't silently weaken the classification. See [`docs/security.md`](docs/security.md).
+**SSRF guards** -- `internals/guarded-fetch.ts`, exposed via the Node-only `@manifest-network/manifest-mcp-core/guarded-fetch` subpath, builds an `undici` Dispatcher that DNS-resolves the target **inside the connect hook** and connects to the classified IP. `internals/event-transport-node.ts`, exposed via the Node-only `/events-node` subpath, applies the same policy to WebSockets. Both use `internals/ssrf-resolve.ts` for resolution and the pure `internals/ssrf-classify.ts` classifier, which default-denies any `ipaddr.js` range other than `'unicast'`; the classifier is separately available to browser-safe URL checks through `/ssrf`. Connecting to the checked IP closes the DNS-rebinding / TOCTOU gap a hostname-only check leaves open, and the HTTP hook re-fires on cross-origin redirects. The Fred MCP server and `createFredClientNode` enable both guards by default; the agent MCP server enables the HTTP guard by default. The Node transports stay off the package barrel for browser-bundle hygiene, while `ipaddr.js` is force-pinned to `2.4.0` tree-wide so a stale transitive copy cannot silently weaken classification. See [`docs/security.md`](docs/security.md).
 
 ## Package: chain
 
@@ -370,8 +375,8 @@ It exposes an aggregating root barrel plus scoped, tree-shakable subpaths — ea
 | `…/reads` | `reads.ts` | Branded read functions (`getBalance`, `getLease`, `getSKUs`, …) |
 | `…/catalog` | `catalog.ts` | Catalog / readiness helpers (`checkDeploymentReadiness`, …) |
 | `…/deploy` | `deploy.ts` | Deploy lifecycle (`buildManifest`, `deployApp`, `waitForLeaseStatus`, `isLeaseFailureTerminal`, …) |
-| `…/orchestration` | `orchestration.ts` | agent-core's callback-driven flows (`deployApp`, `manageDomain`, …) |
-| `…/node` | `node.ts` | Node-only: `createFredClientNode`, the SSRF-guarded `createGuardedFetch`, `isBlocked` |
+| `…/orchestration` | `orchestration.ts` | Four callback-driven agent-core flows (`deployApp`, `manageDomain`, `closeLease`, `troubleshootDeployment`) plus the `loadChainDenomMap` loader/helper |
+| `…/node` | `node.ts` | Node-only: `createFredClientNode`, `createNodeEventTransport`, the SSRF-guarded `createGuardedFetch`, and `isBlocked` |
 
 The public API surface is guarded by `publint` + `@arethetypeswrong/core` (run in the tsdown build), not api-extractor (ENG-446). See [`packages/sdk/README.md`](packages/sdk/README.md) and the cookbook [`docs/library-usage.md`](docs/library-usage.md).
 

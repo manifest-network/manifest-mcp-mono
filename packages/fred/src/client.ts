@@ -10,10 +10,7 @@ import {
   createProviderAuth,
   type ProviderAuthPort,
 } from './http/provider-auth.js';
-import {
-  hasInjectedFetch,
-  warnUnguardedOnce,
-} from './http/unguarded-warning.js';
+import { hasCustomFetch, warnUnguardedOnce } from './http/unguarded-warning.js';
 import { appStatus } from './tools/appStatus.js';
 import { browseCatalog } from './tools/browseCatalog.js';
 import { deployApp } from './tools/deployApp.js';
@@ -109,12 +106,13 @@ export { shouldWarnUnguarded } from './http/unguarded-warning.js';
  * On Node, this base factory does NOT guard provider HTTP by default — prefer
  * `createFredClientNode` from `@manifest-network/manifest-mcp-fred/node` (re-exported by the
  * SDK as `@manifest-network/manifest-sdk/node`), which injects an SSRF-guarded fetch.
- * Injecting your own `opts.fetch` opts out of the guard.
+ * Explicitly injecting any `opts.fetch` opts out of the automatic guard and its missing-guard
+ * warning. Injection alone does not make that function guarded; prefer the Node factory below.
  */
 export async function createFredClient(
   opts: CreateFredClientOptions,
 ): Promise<FredClient> {
-  warnUnguardedOnce(hasInjectedFetch(opts.fetch));
+  warnUnguardedOnce(hasCustomFetch(opts.fetch));
   const { allowLoopback = false, ...coreOpts } = opts;
   const client = await createManifestClient(coreOpts);
   const providerAuth = createProviderAuth(client.signer, {

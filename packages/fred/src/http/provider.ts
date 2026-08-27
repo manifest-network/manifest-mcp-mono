@@ -8,7 +8,7 @@ import {
   LeaseConnectionResponseSchema,
   ProviderHealthResponseSchema,
 } from './response-schemas.js';
-import { hasInjectedFetch, warnUnguardedOnce } from './unguarded-warning.js';
+import { hasCustomFetch, warnUnguardedOnce } from './unguarded-warning.js';
 
 /** Global-registry brand so `isProviderApiError` survives duplicate physical copies of this
  *  package (the dual-package hazard) — the React `$$typeof` idiom. Symbol.for resolves to the
@@ -576,10 +576,11 @@ export async function checkedFetch(
   // `globalThis.fetch` — fine in a browser, an SSRF surface on Node, since provider URLs come from
   // on-chain records. The MCP servers and `createFredClientNode` always inject a guarded fetch; the
   // raw HTTP functions on the fred barrel / SDK `/deploy` used to take this fallback SILENTLY, so
-  // warn once here. Declared optional (rather than defaulted) precisely so "omitted" stays
-  // distinguishable from "explicitly passed `globalThis.fetch`" — the latter is a deliberate opt-out
-  // and must not warn. Externally the signature is unchanged (`fetchFn?`), so callers are unaffected.
-  warnUnguardedOnce(hasInjectedFetch(fetchFn));
+  // warn once here. An explicitly injected function is a deliberate opt-out and stays quiet; core's
+  // client-factory default carries a stable provenance tag so it still warns after materialization
+  // into `ctx.fetch` or later reassignment of `globalThis.fetch` (ENG-672). Externally the signature
+  // is unchanged (`fetchFn?`), so callers are unaffected.
+  warnUnguardedOnce(hasCustomFetch(fetchFn));
   const doFetch = fetchFn ?? globalThis.fetch;
 
   const deadline = armDeadline(timeoutMs, init?.signal ?? undefined);
@@ -775,7 +776,7 @@ export async function fetchJsonChecked(
   const fetchFn = options?.fetchFn ?? legacyFetchFn;
   const maxBytes = options?.maxBytes ?? legacyMaxBytes ?? MAX_RESPONSE_BYTES;
   const schema = options?.schema;
-  warnUnguardedOnce(hasInjectedFetch(fetchFn));
+  warnUnguardedOnce(hasCustomFetch(fetchFn));
   const doFetch = fetchFn ?? globalThis.fetch;
   const deadline = armDeadline(timeoutMs, init?.signal ?? undefined);
   try {
