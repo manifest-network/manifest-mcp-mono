@@ -108,7 +108,7 @@ import { createFredClientNode } from '@manifest-network/manifest-sdk/node';
 const client = await createFredClientNode({ config, walletProvider }); // provider HTTP is guarded
 ```
 
-Injecting a custom `fetch` opts **out** of the automatic guard; a plain `globalThis.fetch` is still unguarded and still triggers the one-time warning. Wrap `createGuardedFetch()` from `/node` if you need to compose behavior. (Browsers don't need this: same-origin/CORS limits reading a cross-origin *response*, so the request-level guard is a Node concern. The `MANIFEST_FRED_FETCH_GUARDED` env knob is MCP-server-only; the library escape hatch is `opts.fetch`.)
+Explicitly injecting any `fetch` opts **out** of the automatic guard and its missing-guard warning. A plain `globalThis.fetch` remains unguarded, so pass it only as a deliberate opt-out; wrap `createGuardedFetch()` from `/node` if you need to compose behavior. (Browsers don't need this: same-origin/CORS limits reading a cross-origin *response*, so the request-level guard is a Node concern. The `MANIFEST_FRED_FETCH_GUARDED` env knob is MCP-server-only; the library escape hatch is `opts.fetch`.)
 
 ## Subpath map
 

@@ -42,7 +42,10 @@ export type TailOf<F> = F extends (ctx: infer _C, ...rest: infer R) => unknown
 /** Shared factory inputs. `skuSpecs`/`events`/`logLevel` are accepted but NOT threaded in 4b (see plan OI-BETA). */
 interface BaseClientOptions {
   config: ManifestMCPConfig;
-  /** Injected at the edge (node: guarded-undici; browser: providerFetch). Defaults to `globalThis.fetch`. */
+  /**
+   * Injected at the edge (node: guarded-undici; browser: providerFetch). When omitted, defaults to
+   * a provenance-tagged wrapper around the captured `globalThis.fetch`.
+   */
   fetch?: typeof globalThis.fetch;
   /** Per-instance logging sink; defaults to the silent `noopLogger`. */
   logger?: Logger;
@@ -65,6 +68,42 @@ export interface FullClientOptions extends BaseClientOptions {
 
 /** @public — inputs to {@link createManifestReadClient} (query-only). No `walletProvider`. */
 export type ReadClientOptions = BaseClientOptions;
+
+/**
+ * Global-registry brand for the fetch wrapper core creates only when a client factory's `fetch`
+ * option is omitted. `Symbol.for` makes the provenance check survive duplicate physical copies of
+ * core (the same dual-package hazard handled by the public error brands).
+ */
+const CLIENT_DEFAULT_FETCH_BRAND = Symbol.for(
+  '@manifest-network/manifest-mcp-core/client-default-fetch',
+);
+
+/**
+ * Does this function carry core's stable "factory defaulted the fetch" provenance?
+ *
+ * This is intentionally not a guardedness detector: an explicitly injected function may be guarded,
+ * unguarded, bound or wrapped, and core cannot infer which. Fred uses the distinction only to warn
+ * for an *omitted* client option after the factory has materialized it into the required ctx slot.
+ */
+export function isClientDefaultFetch(
+  fetchFn: typeof globalThis.fetch | null | undefined,
+): boolean {
+  return (
+    typeof fetchFn === 'function' &&
+    Reflect.get(fetchFn, CLIENT_DEFAULT_FETCH_BRAND) === true
+  );
+}
+
+/** Capture the current platform fetch while preserving the fact that the option was omitted. */
+function createClientDefaultFetch(): typeof globalThis.fetch {
+  const platformFetch = globalThis.fetch;
+  const defaultFetch: typeof globalThis.fetch = (input, init) =>
+    platformFetch.call(globalThis, input, init);
+  Object.defineProperty(defaultFetch, CLIENT_DEFAULT_FETCH_BRAND, {
+    value: true,
+  });
+  return defaultFetch;
+}
 
 /**
  * A `WalletProvider` for query-only clients. `getInstance` requires a wallet even in query-only mode, but
@@ -102,9 +141,11 @@ export async function buildClient(
     const signer = withSigner
       ? createSignerAdapter(walletProvider, config.addressPrefix) // config.addressPrefix defaulted in createConfig
       : undefined;
-    // NEUTRAL fetch resolution — never import the node-only guarded fetch (ENG-281 browser-bundle hazard).
-    // The node/fred edge injects the guarded fetch via opts.fetch; default to the platform global.
-    const fetch = opts.fetch ?? globalThis.fetch;
+    // NEUTRAL fetch resolution — never import the node-only guarded fetch (ENG-281 browser-bundle
+    // hazard). The node/fred edge injects the guarded fetch via opts.fetch. When omitted, wrap the
+    // captured platform global with stable provenance: Fred must distinguish this default from an
+    // explicit injection after the required ctx.fetch slot has materialized both as a function.
+    const fetch = opts.fetch ?? createClientDefaultFetch();
     const logger = opts.logger ?? noopLogger;
     chain.setLogger(logger); // route the manager's 2 init diagnostics to the per-ctx logger (OI-LOG)
     // Await the query client ONCE so ctx.query is concrete (the await-once-then-read Cosmos idiom).

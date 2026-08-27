@@ -1,7 +1,10 @@
 import { toBech32 } from '@cosmjs/encoding';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { CosmosClientManager, type ManifestQueryClient } from './client.js';
-import { createManifestReadClient } from './client-factory.js';
+import {
+  createManifestReadClient,
+  isClientDefaultFetch,
+} from './client-factory.js';
 import { createManifestClient } from './client-full.js';
 import { noopLogger } from './logger.js';
 import { type ManifestMCPConfig, ManifestMCPErrorCode } from './types.js';
@@ -45,7 +48,10 @@ function fakeWallet() {
   };
 }
 
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+});
 
 describe('createManifestReadClient / createManifestClient', () => {
   it('validates config BEFORE keying an instance (invalid → INVALID_CONFIG, getInstance not called)', async () => {
@@ -103,7 +109,8 @@ describe('createManifestReadClient / createManifestClient', () => {
   it('coalesces fetch and logger to defaults, and uses injected ones when provided', async () => {
     vi.spyOn(CosmosClientManager, 'getInstance').mockReturnValue(fakeManager());
     const dflt = await createManifestReadClient({ config: READ_CONFIG });
-    expect(dflt.fetch).toBe(globalThis.fetch);
+    expect(dflt.fetch).not.toBe(globalThis.fetch);
+    expect(isClientDefaultFetch(dflt.fetch)).toBe(true);
     expect(dflt.logger).toBe(noopLogger);
 
     const myFetch = (async () => new Response()) as typeof globalThis.fetch;
@@ -115,7 +122,27 @@ describe('createManifestReadClient / createManifestClient', () => {
       logger: myLogger,
     });
     expect(injected.fetch).toBe(myFetch);
+    expect(isClientDefaultFetch(injected.fetch)).toBe(false);
     expect(injected.logger).toBe(myLogger);
+  });
+
+  it('default fetch keeps provenance and the captured transport after global reassignment', async () => {
+    const captured = vi
+      .fn<typeof globalThis.fetch>()
+      .mockResolvedValue(new Response('captured'));
+    const replacement = vi
+      .fn<typeof globalThis.fetch>()
+      .mockResolvedValue(new Response('replacement'));
+    vi.stubGlobal('fetch', captured);
+    vi.spyOn(CosmosClientManager, 'getInstance').mockReturnValue(fakeManager());
+    const client = await createManifestReadClient({ config: READ_CONFIG });
+
+    vi.stubGlobal('fetch', replacement);
+    expect(isClientDefaultFetch(client.fetch)).toBe(true);
+    await client.fetch('https://provider.example.com/health');
+
+    expect(captured).toHaveBeenCalledOnce();
+    expect(replacement).not.toHaveBeenCalled();
   });
 
   it('injects the resolved logger into the manager via setLogger', async () => {

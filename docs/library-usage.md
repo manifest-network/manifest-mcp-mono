@@ -256,7 +256,7 @@ import { createFredClientNode } from '@manifest-network/manifest-sdk/node';
 const client = await createFredClientNode({ config, walletProvider });
 ```
 
-The base `createFredClient` does not guard *at connect time* by default and warns once on Node. Injecting your own `fetch` opts **out** of the connect guard (a plain `globalThis.fetch` stays unguarded); wrap `createGuardedFetch()` from `/node` to compose. In the browser, inject a CORS-aware `fetch`; the connect-time request-blocking guard is a Node concern. (`MANIFEST_FRED_FETCH_GUARDED` is MCP-server-only — the library escape hatch is `opts.fetch`.)
+The base `createFredClient` does not guard *at connect time* by default and warns once on Node. Explicitly injecting any `fetch` opts **out** of the connect guard and its missing-guard warning; a plain `globalThis.fetch` stays unguarded, so pass it only as a deliberate opt-out. Wrap `createGuardedFetch()` from `/node` to compose. In the browser, inject a CORS-aware `fetch`; the connect-time request-blocking guard is a Node concern. (`MANIFEST_FRED_FETCH_GUARDED` is MCP-server-only — the library escape hatch is `opts.fetch`.)
 
 Separately, provider-URL **string** SSRF classification is always on (browser included): `validateProviderUrl` default-denies a provider `apiUrl` that is a literal private/internal/loopback/metadata IP. For URLs you validate yourself — e.g. a provider **WebSocket** URL in the browser, where the native `WebSocket` has no connect-time guard (on Node, `createFredClientNode` guards the WebSocket transport too via `createNodeEventTransport`) — use the exported predicate:
 
@@ -330,7 +330,7 @@ Cancelling also aborts the SDK's own rate-limit wait, so a cancelled call gives 
 
 ## Orchestration tier (optional)
 
-`@manifest-network/manifest-sdk/orchestration` adds plan → confirm → recover flows on top of the capability tier (`deployApp`, `manageDomain`, `closeLease`, `troubleshootDeployment`). These are **callback-driven** — `fn(input, callbacks, opts)` with `onPlan` / `onConfirm` / `onProgress` — a different shape from the capability tier's `fn(ctx, input)`, so the host can drive a human-in-the-loop UI. Most apps compose the capability tier directly and don't need this.
+`@manifest-network/manifest-sdk/orchestration` adds four plan → confirm → recover flows on top of the capability tier (`deployApp`, `manageDomain`, `closeLease`, `troubleshootDeployment`), plus `loadChainDenomMap`, a loader/helper that preloads chain-data for denom humanization. The four orchestrators are **callback-driven** — `fn(input, callbacks, opts)` with `onPlan` / `onConfirm` / `onProgress` — a different shape from the capability tier's `fn(ctx, input)`, so the host can drive a human-in-the-loop UI. Most apps compose the capability tier directly and don't need this.
 
 ## Low-level escape hatch
 

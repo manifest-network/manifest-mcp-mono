@@ -34,7 +34,7 @@ All `@manifest-network/*` packages are released in lockstep at a single version.
 
 | Version | Supported |
 |---------|-----------|
-| Latest published minor in the `0.x` line | ✅ |
+| Latest published `0.x` release | ✅ |
 | Any older `0.x` | ❌ (upgrade) |
 
 ## What we consider a vulnerability

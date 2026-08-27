@@ -28,6 +28,7 @@ export {
   type BoundFn,
   createManifestReadClient,
   type FullClientOptions,
+  isClientDefaultFetch,
   type ManifestReadClient,
   type ReadClientOptions,
   type TailOf,

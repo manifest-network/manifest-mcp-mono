@@ -44,8 +44,9 @@ export interface EventSocket {
  * construction (so raw-typed reads `ctx.query.<module>.<service>(...)` need no per-read await). In
  * REST mode a read over an LCD-unsupported module (`cosmos.orm`, `liftedinit.manifest`) throws
  * `UNSUPPORTED_QUERY` synchronously (the lcd-adapter proxy). `signer` (§5.3) is present in full mode
- * only. `fetch` is injected (guarded-undici at the node edge, providerFetch in browser; the factory
- * defaults it to `globalThis.fetch`). `logger` defaults to the frozen `noopLogger` (silent).
+ * only. `fetch` is injected (guarded-undici at the node edge, providerFetch in browser); when omitted,
+ * the factory wraps the captured `globalThis.fetch` with default-provenance metadata for downstream
+ * composition. `logger` defaults to the frozen `noopLogger` (silent).
  */
 export interface CapabilityCtx {
   readonly chain: CosmosClientManager;

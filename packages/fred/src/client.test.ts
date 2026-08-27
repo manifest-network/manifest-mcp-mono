@@ -168,11 +168,11 @@ describe('createFredClient', () => {
 });
 
 describe('shouldWarnUnguarded', () => {
-  it('is true only on Node with no injected fetch', () => {
-    expect(shouldWarnUnguarded(false, true)).toBe(true); // node, no fetch
-    expect(shouldWarnUnguarded(true, true)).toBe(false); // node, fetch injected
-    expect(shouldWarnUnguarded(false, false)).toBe(false); // browser, no fetch
-    expect(shouldWarnUnguarded(true, false)).toBe(false); // browser, fetch injected
+  it('is true only on Node with no custom fetch', () => {
+    expect(shouldWarnUnguarded(false, true)).toBe(true); // node, default fetch
+    expect(shouldWarnUnguarded(true, true)).toBe(false); // node, custom fetch
+    expect(shouldWarnUnguarded(false, false)).toBe(false); // browser, default fetch
+    expect(shouldWarnUnguarded(true, false)).toBe(false); // browser, custom fetch
   });
 });
 
@@ -201,7 +201,7 @@ describe('createFredClient unguarded-fetch warning', () => {
     expect(String(warn.mock.calls[0]?.[0])).toContain('createFredClientNode');
   });
 
-  it('warns when the explicitly supplied fetch is still globalThis.fetch', async () => {
+  it('does not warn when globalThis.fetch is explicitly injected', async () => {
     const core = await import('@manifest-network/manifest-mcp-core');
     const { createFredClient } = await import('./client.js');
     vi.spyOn(core.CosmosClientManager, 'getInstance').mockReturnValue(
@@ -215,7 +215,7 @@ describe('createFredClient unguarded-fetch warning', () => {
       fetch: globalThis.fetch,
     });
 
-    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn).not.toHaveBeenCalled();
   });
 
   it('does not warn when a custom fetch is injected', async () => {

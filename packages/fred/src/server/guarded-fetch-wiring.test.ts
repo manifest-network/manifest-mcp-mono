@@ -13,8 +13,8 @@
 // WHY IT NEEDS A TEST AT ALL, rather than a type. `resolveGuardedFetch` returns `undefined` in two
 // of its four branches BY DESIGN (guard off; non-Node runtime), and `fetchJsonChecked` falls back
 // to `globalThis.fetch` when `fetchFn` is undefined — a fallback that is deliberately preserved.
-// `hasInjectedFetch` recognizes both a nullish fallback and that same platform-global identity as
-// unguarded, while a distinct injected function is a deliberate opt-out. So
+// `hasCustomFetch` recognizes both a nullish fallback and core's provenance-tagged client default as
+// unguarded, while an explicitly injected function is a deliberate opt-out. So
 // no signature, required field or wrapper type can express "the guarded fetch got there". Only a
 // runtime assertion can, and this is it.
 
