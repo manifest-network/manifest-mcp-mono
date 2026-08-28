@@ -148,7 +148,7 @@ Do not close solely because `failedStep` is `poll`, and do not start another rea
 
 ### Set-domain, manifest-upload, or pre-step callback failure
 
-`details.failedStep` is `set_domain` or `upload`; a library callback that fails immediately after lease creation can omit `failedStep`. The manifest is not running on the lease and you're paying for it. Either retry the failing step when appropriate (providers can be transiently unhealthy), or close the orphaned lease with `close_lease({ lease_uuid })`.
+`details.failedStep` is `set_domain` or `upload`; a library callback that fails immediately after lease creation can omit `failedStep`. The manifest is not running on the lease and you're paying for it. Either retry the failing step when appropriate (providers can be transiently unhealthy), or close the orphaned lease with `close_lease({ lease_uuid })`. If that cleanup fails, report its error separately and retain the original partial-deploy error: its `lease_uuid`, provider context, and failed-step metadata remain the recovery record.
 
 ## App is stuck in `LEASE_STATE_PENDING`
 

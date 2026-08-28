@@ -150,7 +150,9 @@ One opt-in exception is not wrapped: if a caller supplies `pollOptions.checkChai
 
 - **`details.readiness_unconfirmed === true`** — the lease exists, the manifest is uploaded, and the provider never reported a failure. The poll ended without a verdict because of a deadline, an unreachable or rejecting status endpoint, an invalid/oversized response, an authentication failure, cancellation, or another non-verdict error. The app may be starting right now. **Do not close it**: for `DEPLOY_READINESS_UNCONFIRMED`, re-check with `client.appStatus` or wait longer with `waitForAppReady({ timeoutMs })`; for `OPERATION_CANCELLED`, respect the cancellation and retain the lease UUID for later diagnosis. `details.failedStep` is `poll`; `poll_reason` is present only for the typed deadline / provider-unreachable variants.
 - **`details.failedStep === 'poll'` without `readiness_unconfirmed`** — polling returned `PROVISION_FAILED`, a terminal provider state, or a state this client cannot interpret. Re-query status before acting and treat `chainState` as authoritative: close when the chain still says ACTIVE and the provider returns a recognized failed `provision_status`; a terminal **on-chain** state is already inactive. A provider terminal state while the chain is ACTIVE is not proof that billing stopped. If its `provision_status` does not confirm failure, preserve and report the mismatch. If the re-query throws, or returns `providerError` without `fredStatus`, preserve the original deploy error and lease for later diagnosis. Never close solely because `failedStep` is `poll`.
-- **Set-domain, upload, or pre-step callback failure** — the manifest never reached a running state, so closing the lease is the cleanup if you do not retry the failed step.
+- **Set-domain, upload, or pre-step callback failure** — the manifest never reached a running state, so closing the lease is the cleanup if you do not retry the failed step. Treat cleanup as best-effort: if it fails, report that failure separately but preserve the original partial-deploy error and its recovery metadata.
+
+The explicit second `waitForAppReady` below has different error precedence from those best-effort diagnostics and cleanup calls. It is a new readiness attempt: if it fails, its newer observation intentionally propagates; if it succeeds, the final `throw err` still preserves the original partial-deploy error because the initial `deployApp` call did not return its full success value.
 
 ```ts
 import {
@@ -174,6 +176,8 @@ try {
     if (err.details.readiness_unconfirmed === true) {
       // Bound Fred path: polling ended without a failure verdict.
       if (err.code !== ManifestMCPErrorCode.OPERATION_CANCELLED) {
+        // This is an explicit second readiness attempt. If it fails, its newer
+        // readiness observation intentionally propagates instead of `err`.
         await waitForAppReady(client, { address, leaseUuid }, { timeoutMs: 600_000 });
       }
     } else if (err.details.failedStep === 'poll') {
@@ -183,7 +187,9 @@ try {
         .catch((statusErr: unknown) => {
           console.warn(
             'Could not re-check partial deploy status; preserving the original deploy error:',
-            sanitizeForLogging(statusErr),
+            sanitizeForLogging(
+              statusErr instanceof Error ? statusErr.message : String(statusErr),
+            ),
           );
           return undefined;
         });
@@ -209,7 +215,9 @@ try {
             await client.stopApp({ leaseUuid }).catch((cleanupErr: unknown) => {
               console.warn(
                 'Failed to close the confirmed failed lease; preserving the original deploy error:',
-                sanitizeForLogging(cleanupErr),
+                sanitizeForLogging(
+                  cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr),
+                ),
               );
             });
           } else {
@@ -223,7 +231,14 @@ try {
       }
     } else {
       // Setup failed before polling reached a running app.
-      await client.stopApp({ leaseUuid });
+      await client.stopApp({ leaseUuid }).catch((cleanupErr: unknown) => {
+        console.warn(
+          'Failed to clean up the partially configured lease; preserving the original deploy error:',
+          sanitizeForLogging(
+            cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr),
+          ),
+        );
+      });
     }
   }
   throw err;
