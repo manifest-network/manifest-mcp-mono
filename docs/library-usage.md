@@ -144,13 +144,18 @@ await client.deployApp({
 
 The result carries the branded `lease_uuid`, the `provider_uuid` / `provider_url`, the `state`, and (best-effort) `connection` info.
 
-**Partial-success errors.** If the create-lease tx succeeds but a later step fails, `deployApp` throws a `ManifestMCPError` whose message is prefixed `Deploy partially succeeded:` and whose `details.lease_uuid` names the lease. Two cases, and they call for opposite responses:
+**Partial-success errors.** This subsection describes the bound `client.deployApp` path (and the equivalent free function from `/deploy`). If the create-lease tx succeeds but a later step fails, it throws a `ManifestMCPError` whose message is prefixed `Deploy partially succeeded:` and whose `details.lease_uuid` names the lease. Three outcomes require different responses:
 
-- **`details.readiness_unconfirmed === true`** (code `DEPLOY_READINESS_UNCONFIRMED`) — the lease exists, the manifest is uploaded, and the provider never reported a failure; readiness just wasn't confirmed before the poll's deadline, or its status endpoint went dark. The app may be starting right now. **Do not close it**: re-check with `client.appStatus` or wait longer with `waitForAppReady({ timeoutMs })`.
-- **Anything else** (set-domain or upload failed) — nothing is running on the lease, so closing it is the cleanup.
+- **`details.readiness_unconfirmed === true`** — the lease exists, the manifest is uploaded, and the provider never reported a failure. The poll ended without a verdict because of a deadline, an unreachable or rejecting status endpoint, an invalid/oversized response, an authentication failure, cancellation, or another non-verdict error. The app may be starting right now. **Do not close it**: for `DEPLOY_READINESS_UNCONFIRMED`, re-check with `client.appStatus` or wait longer with `waitForAppReady({ timeoutMs })`; for `OPERATION_CANCELLED`, respect the cancellation and retain the lease UUID for later diagnosis. `details.failedStep` is `poll`; `poll_reason` is present only for the typed deadline / provider-unreachable variants.
+- **`details.failedStep === 'poll'` without `readiness_unconfirmed`** — the provider returned an explicit failure verdict. Inspect diagnostics/logs for the cause, then close the failed lease; another readiness wait is not the remedy.
+- **Set-domain, upload, or pre-step callback failure** — the manifest never reached a running state, so closing the lease is the cleanup if you do not retry the failed step.
 
 ```ts
-import { asLeaseUuid, ManifestMCPError } from '@manifest-network/manifest-sdk';
+import {
+  asLeaseUuid,
+  ManifestMCPError,
+  ManifestMCPErrorCode,
+} from '@manifest-network/manifest-sdk';
 
 try {
   await client.deployApp(spec);
@@ -159,9 +164,12 @@ try {
     // the id came from the SDK's own error → trusted, so `as*` (not `parse*`)
     const leaseUuid = asLeaseUuid(err.details.lease_uuid);
     if (err.details.readiness_unconfirmed === true) {
-      // Still provisioning as far as anyone knows — look before you tear down.
-      await waitForAppReady(client, { address, leaseUuid }, { timeoutMs: 600_000 });
+      // Bound Fred path: polling ended without a failure verdict.
+      if (err.code !== ManifestMCPErrorCode.OPERATION_CANCELLED) {
+        await waitForAppReady(client, { address, leaseUuid }, { timeoutMs: 600_000 });
+      }
     } else {
+      // Setup failed, or polling returned an explicit failure verdict.
       await client.stopApp({ leaseUuid });
     }
   }
@@ -331,6 +339,8 @@ Cancelling also aborts the SDK's own rate-limit wait, so a cancelled call gives 
 ## Orchestration tier (optional)
 
 The universal `@manifest-network/manifest-sdk/orchestration` subpath adds four plan → confirm → recover flows on top of the capability tier (`deployApp`, `manageDomain`, `closeLease`, `troubleshootDeployment`), plus `loadChainDenomMap`, a loader/helper that preloads chain-data for denom humanization. The four orchestrators are **callback-driven** — `fn(input, callbacks, opts)` with `onPlan` / `onConfirm` / `onProgress` — a different shape from the capability tier's `fn(ctx, input)`, so the host can drive a human-in-the-loop UI. Browser code can import the subpath; only `deployApp(spec, callbacks, { dataDir })` (manifest persistence via filesystem/crypto/path) and `loadChainDenomMap(path)` (filesystem-backed chain data) require Node when invoked. Omit those Node-only options in browser flows.
+
+The orchestration `deployApp` has one additional `DEPLOY_READINESS_UNCONFIRMED` shape: readiness returned, but the authoritative final provider state was absent, malformed, or non-ACTIVE. Within that error code, poll-side uncertainty has `details.failedStep === 'poll'` or a `details.poll_reason`; final-state disagreement has neither. Apply the wait-and-recheck branch above only to poll-side uncertainty. For final-state disagreement, inspect status and diagnostics, preserve the existing lease, and report a persistent provider/client mismatch instead of automatically waiting or redeploying.
 
 ## Low-level escape hatch
 
