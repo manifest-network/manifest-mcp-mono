@@ -21,13 +21,13 @@
     "release:version": "node scripts/version.mjs"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.5.9",
+    "@biomejs/biome": "2.5.10",
     "@modelcontextprotocol/sdk": "1.30.0",
     "@size-limit/preset-small-lib": "13.0.3",
     "dependency-cruiser": "18.2.0",
     "size-limit": "13.0.3",
     "tsdown": "0.22.14",
-    "vitest": "4.1.10",
+    "vitest": "4.1.11",
     "publint": "0.3.24",
     "@arethetypeswrong/core": "0.18.5",
     "typescript": "5.9.3"

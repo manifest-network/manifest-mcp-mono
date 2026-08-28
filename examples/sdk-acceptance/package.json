@@ -26,6 +26,6 @@
   "devDependencies": {
     "rolldown": "1.2.5",
     "typescript": "5.9.3",
-    "vitest": "4.1.10"
+    "vitest": "4.1.11"
   }
 }
