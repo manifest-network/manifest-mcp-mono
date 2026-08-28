@@ -6,6 +6,7 @@ import {
   createValidatedConfig,
   DNS_LABEL_RE,
   fundCredits,
+  gasMultiplierSchema,
   getBalance,
   getLeaseByCustomDomain,
   getLeasesByTenant,
@@ -196,14 +197,7 @@ export class LeaseMCPServer {
             .describe(
               'Tenant address whose credit account is being funded (bech32). Defaults to the sender when omitted.',
             ),
-          gas_multiplier: z
-            .number()
-            .finite()
-            .min(1)
-            .optional()
-            .describe(
-              'Gas simulation multiplier override for this transaction. Defaults to the server-configured value (typically 1.5). Increase if a transaction fails with out-of-gas errors.',
-            ),
+          gas_multiplier: gasMultiplierSchema(),
         },
         // Additive: increases credit balance, doesn't replace or remove state.
         annotations: mutatingAnnotations('Fund billing credit account', {
@@ -332,14 +326,7 @@ export class LeaseMCPServer {
           'Close a lease on-chain. This is permanent — the lease cannot be reopened after closing.',
         inputSchema: {
           lease_uuid: z.string().uuid().describe('The lease UUID to close'),
-          gas_multiplier: z
-            .number()
-            .finite()
-            .min(1)
-            .optional()
-            .describe(
-              'Gas simulation multiplier override for this transaction. Defaults to the server-configured value (typically 1.5). Increase if a transaction fails with out-of-gas errors.',
-            ),
+          gas_multiplier: gasMultiplierSchema(),
         },
         // Closing is permanent — the lease cannot be reopened.
         // Idempotent in the sense that closing a closed lease is a no-op,
@@ -397,14 +384,7 @@ export class LeaseMCPServer {
             .describe(
               'Set true to clear the existing domain and free its reverse-index entry.',
             ),
-          gas_multiplier: z
-            .number()
-            .finite()
-            .min(1)
-            .optional()
-            .describe(
-              'Gas simulation multiplier override for this transaction. Defaults to the server-configured value (typically 1.5). Increase if a transaction fails with out-of-gas errors.',
-            ),
+          gas_multiplier: gasMultiplierSchema(),
         },
         // Re-assigning a domain replaces the prior value; clearing removes it.
         // Setting the same value twice is a no-op on the index.
@@ -611,6 +591,10 @@ export class LeaseMCPServer {
 
   disconnect(): void {
     this.clientManager.disconnect();
+  }
+
+  disconnectWhenIdle(): Promise<void> {
+    return this.clientManager.disconnectWhenIdle();
   }
 }
 

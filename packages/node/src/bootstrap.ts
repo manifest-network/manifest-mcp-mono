@@ -34,12 +34,22 @@ export interface BootstrapConfig {
   readonly cliName: string;
   /** Human-readable server label for the startup log (e.g. "chain") */
   readonly label: string;
-  /** Factory that creates the MCP server and returns its underlying Server */
+  /** Factory that creates the MCP server wrapper and its owned resources. */
   readonly createServer: (opts: {
     config: ReturnType<typeof createValidatedConfig>;
     walletProvider: WalletProvider;
-  }) => Server;
+  }) => BootstrapServer;
 }
+
+/** Resource-owning server surface shared by all CLI package wrappers. */
+export interface BootstrapServer {
+  getServer(): Server;
+  disconnect(): void;
+  /** Release the runtime after its already-enqueued broadcast queue drains. */
+  disconnectWhenIdle?(): Promise<void>;
+}
+
+const SHUTDOWN_GRACE_MS = 30_000;
 
 function handleSubcommand(
   cliName: string,
@@ -94,6 +104,151 @@ function resolveWallet(
   exit(1);
 }
 
+function cleanupWarning(resource: string, error: unknown): void {
+  const message = error instanceof Error ? error.message : String(error);
+  logger.warn(
+    `Failed to disconnect ${resource}: ${sanitizeForLogging(message) as string}`,
+  );
+}
+
+async function closeResources(
+  server: Server | undefined,
+  runtime: BootstrapServer | undefined,
+  walletProvider: WalletProvider | undefined,
+): Promise<void> {
+  // Close first so the MCP SDK aborts request-scoped work and stops accepting
+  // calls. The SDK deliberately suppresses the response for an aborted request;
+  // `disconnectWhenIdle` below is therefore a broadcast drain, not a promise
+  // that every handler response reaches the host. This ordering prioritizes the
+  // irreversible boundary: an already-enqueued transaction keeps its RPC
+  // client until it settles instead of being severed merely to preserve stdio.
+  try {
+    await server?.close();
+  } catch (error) {
+    cleanupWarning('MCP transport', error);
+  }
+
+  try {
+    if (runtime?.disconnectWhenIdle) {
+      await runtime.disconnectWhenIdle();
+    } else {
+      runtime?.disconnect();
+    }
+  } catch (error) {
+    cleanupWarning('Cosmos client manager', error);
+  }
+
+  try {
+    await walletProvider?.disconnect?.();
+  } catch (error) {
+    cleanupWarning('wallet', error);
+  }
+}
+
+async function closeResourcesWithinDeadline(
+  server: Server,
+  runtime: BootstrapServer,
+  walletProvider: WalletProvider,
+): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<void>((resolve) => {
+    timer = setTimeout(() => {
+      logger.warn(
+        `Graceful shutdown exceeded ${SHUTDOWN_GRACE_MS}ms; forcing process exit`,
+      );
+      resolve();
+    }, SHUTDOWN_GRACE_MS);
+  });
+
+  await Promise.race([
+    closeResources(server, runtime, walletProvider),
+    deadline,
+  ]);
+  if (timer) clearTimeout(timer);
+}
+
+/** Install one idempotent shutdown path for transport, clients, and wallet. */
+function installShutdownHandlers(
+  server: Server,
+  runtime: BootstrapServer,
+  walletProvider: WalletProvider,
+): void {
+  let shuttingDown = false;
+  let forcedExit = false;
+  let shutdownPromise = Promise.resolve();
+  let shutdown = (): Promise<void> => shutdownPromise;
+  const previousOnClose = server.onclose;
+
+  const onInputClosed = (): void => {
+    void shutdown();
+  };
+  const onSigint = (): void => {
+    if (shuttingDown) {
+      forcedExit = true;
+      process.exit(130);
+      return;
+    }
+    void shutdown().finally(() => {
+      if (!forcedExit) process.exit(130);
+    });
+  };
+  const onSigterm = (): void => {
+    if (shuttingDown) {
+      forcedExit = true;
+      process.exit(143);
+      return;
+    }
+    void shutdown().finally(() => {
+      if (!forcedExit) process.exit(143);
+    });
+  };
+  const onServerClose = (): void => {
+    try {
+      previousOnClose?.();
+    } finally {
+      void shutdown();
+    }
+  };
+
+  const removeNonSignalHandlers = (): void => {
+    process.stdin.off('end', onInputClosed);
+    process.stdin.off('close', onInputClosed);
+    if (server.onclose === onServerClose) {
+      server.onclose = previousOnClose;
+    }
+  };
+
+  const removeSignalHandlers = (): void => {
+    process.off('SIGINT', onSigint);
+    process.off('SIGTERM', onSigterm);
+  };
+
+  shutdown = (): Promise<void> => {
+    if (shuttingDown) return shutdownPromise;
+    shuttingDown = true;
+    // Stop duplicate EOF/transport-close entry, but keep signal handlers live:
+    // a second Ctrl-C/SIGTERM is the explicit immediate-exit escape hatch.
+    removeNonSignalHandlers();
+    shutdownPromise = closeResourcesWithinDeadline(
+      server,
+      runtime,
+      walletProvider,
+    ).finally(removeSignalHandlers);
+    return shutdownPromise;
+  };
+
+  server.onclose = onServerClose;
+  process.stdin.once('end', onInputClosed);
+  process.stdin.once('close', onInputClosed);
+  process.on('SIGINT', onSigint);
+  process.on('SIGTERM', onSigterm);
+
+  // Cover EOF that raced with handler installation while connect() awaited.
+  if (process.stdin.readableEnded || process.stdin.destroyed) {
+    void shutdown();
+  }
+}
+
 /**
  * Shared bootstrap for all five CLI entry points (chain, lease, fred,
  * cosmwasm, agent).
@@ -124,16 +279,25 @@ export function bootstrap(cfg: BootstrapConfig): void {
     });
 
     const walletProvider = resolveWallet(env, config, cfg.cliName);
+    let runtime: BootstrapServer | undefined;
+    let server: Server | undefined;
 
-    if (walletProvider.connect) {
-      await walletProvider.connect();
+    try {
+      if (walletProvider.connect) {
+        await walletProvider.connect();
+      }
+
+      runtime = cfg.createServer({ config, walletProvider });
+      server = runtime.getServer();
+      const transport = new StdioServerTransport();
+      await server.connect(transport);
+      installShutdownHandlers(server, runtime, walletProvider);
+
+      console.error(`Manifest MCP ${cfg.label} server running on stdio`);
+    } catch (error) {
+      await closeResources(server, runtime, walletProvider);
+      throw error;
     }
-
-    const server = cfg.createServer({ config, walletProvider });
-    const transport = new StdioServerTransport();
-    await server.connect(transport);
-
-    console.error(`Manifest MCP ${cfg.label} server running on stdio`);
   }
 
   main().catch((error) => {

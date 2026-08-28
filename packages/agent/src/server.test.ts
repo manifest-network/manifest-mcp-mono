@@ -83,7 +83,11 @@ import {
   makeMockConfig,
   makeMockWallet,
 } from '@manifest-network/manifest-mcp-core/__test-utils__/mocks.js';
-import { AgentMCPServer, type AgentOrchestrators } from './index.js';
+import {
+  AgentMCPServer,
+  type AgentMCPServerOptions,
+  type AgentOrchestrators,
+} from './index.js';
 
 const AGENT_TOOL_NAMES = [
   'deploy_app_orchestrated',
@@ -113,10 +117,15 @@ afterEach(async () => {
 
 function makeServer(
   orchestrators?: Partial<AgentOrchestrators>,
+  options: Pick<
+    AgentMCPServerOptions,
+    'chainDataFile' | 'dataDir' | 'fetchGuarded'
+  > = {},
 ): AgentMCPServer {
   return new AgentMCPServer({
     config: makeMockConfig(),
     walletProvider: makeMockWallet({ signArbitrary: true }),
+    ...options,
     ...(orchestrators ? { orchestrators } : {}),
   });
 }
@@ -582,6 +591,50 @@ describe('AgentMCPServer', () => {
         },
       );
       expect(observedDataDir).toBe('/tmp/fixture-manifest-data');
+    });
+
+    it('constructor paths override env fallbacks and flow into deploy options', async () => {
+      process.env[ENV] = '/tmp/env-manifest-data';
+      let observedDataDir: string | undefined;
+      let observedChainDataFile: string | undefined;
+      const fakeDeploy: AgentOrchestrators['deployApp'] = async (
+        _spec,
+        cb,
+        opts,
+      ) => {
+        observedDataDir = opts.dataDir;
+        observedChainDataFile = opts.chainDataFile;
+        const { ManifestMCPError, ManifestMCPErrorCode } = await import(
+          '@manifest-network/manifest-mcp-core'
+        );
+        cb.onProgress?.({ kind: 'user_confirmed' });
+        throw new ManifestMCPError(
+          ManifestMCPErrorCode.TX_FAILED,
+          'test stub: short-circuit after observing configured paths',
+        );
+      };
+      const server = makeServer(
+        { deployApp: fakeDeploy },
+        {
+          dataDir: '/tmp/constructor-manifest-data',
+          chainDataFile: '/tmp/constructor-chain-data.json',
+        },
+      );
+
+      await callToolWithCapture(
+        server,
+        'deploy_app_orchestrated',
+        { spec: { image: 'nginx', port: 80, size: 'small' } },
+        {
+          respond: () => ({
+            action: 'accept',
+            content: { verdict: 'confirm' },
+          }),
+        },
+      );
+
+      expect(observedDataDir).toBe('/tmp/constructor-manifest-data');
+      expect(observedChainDataFile).toBe('/tmp/constructor-chain-data.json');
     });
 
     it('unset env → DeployAppOptions.dataDir is undefined', async () => {

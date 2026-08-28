@@ -4,6 +4,7 @@ import {
   bigIntReplacer,
   CosmosClientManager,
   createValidatedConfig,
+  gasMultiplierSchema,
   jsonResponse,
   ManifestMCPError,
   ManifestMCPErrorCode,
@@ -15,6 +16,7 @@ import {
   readOnlyAnnotations,
   VERSION,
   withErrorHandling,
+  withRetry,
 } from '@manifest-network/manifest-mcp-core';
 import {
   buildGasFee,
@@ -103,13 +105,23 @@ export class CosmwasmMCPServer {
   }
 
   private async queryConverterConfig(): Promise<ConverterConfig> {
-    await this.clientManager.acquireRateLimit();
+    // Client construction owns its own retry ladder. Keep it outside the
+    // operation retry below so failures do not multiply attempts.
     const queryClient = await this.clientManager.getQueryClient();
     const wasm = queryClient.cosmwasm.wasm.v1;
-    const result = await wasm.smartContractState({
-      address: this.converterAddress,
-      queryData: toUtf8(JSON.stringify({ config: {} })),
-    });
+    const result = await withRetry(
+      async () => {
+        await this.clientManager.acquireRateLimit();
+        return wasm.smartContractState({
+          address: this.converterAddress,
+          queryData: toUtf8(JSON.stringify({ config: {} })),
+        });
+      },
+      {
+        config: this.clientManager.getConfig().retry,
+        operationName: 'query converter config',
+      },
+    );
 
     let parsed: unknown;
     try {
@@ -211,6 +223,7 @@ export class CosmwasmMCPServer {
           amount: z
             .string()
             .describe('Amount of umfx to convert (e.g. "1000000" for 1 MFX)'),
+          gas_multiplier: gasMultiplierSchema(),
         },
         // Destructive: one-way conversion. The MFX is consumed; you cannot
         // convert back to MFX from PWR through this tool.
@@ -267,7 +280,8 @@ export class CosmwasmMCPServer {
         // bounds this headless broadcast too — a hostile/compromised RPC cannot inflate
         // the simulated gas without being aborted with GAS_LIMIT_EXCEEDED before signing.
         const fee = await buildGasFee(signingClient, senderAddress, [msg], {
-          gasMultiplier: cfg.gasMultiplier ?? DEFAULT_GAS_MULTIPLIER,
+          gasMultiplier:
+            args.gas_multiplier ?? cfg.gasMultiplier ?? DEFAULT_GAS_MULTIPLIER,
           gasPrice: cfg.gasPrice,
           maxGas: cfg.maxGas ?? DEFAULT_MAX_GAS,
         });
@@ -323,6 +337,10 @@ export class CosmwasmMCPServer {
 
   disconnect(): void {
     this.clientManager.disconnect();
+  }
+
+  disconnectWhenIdle(): Promise<void> {
+    return this.clientManager.disconnectWhenIdle();
   }
 }
 

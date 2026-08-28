@@ -52,6 +52,10 @@ describe('isRetryableError', () => {
           ManifestMCPErrorCode.RESTORE_RETRYABLE,
           'Restore rejected (HTTP 503); rolled back',
         ),
+        new ManifestMCPError(
+          ManifestMCPErrorCode.RESTORE_COMMITTED_FAILURE,
+          'Restore committed, but provisioning failed (HTTP 500)',
+        ),
       ]) {
         expect(isRetryableError(err)).toBe(false);
       }
@@ -151,7 +155,39 @@ describe('isRetryableError', () => {
       expect(isRetryableError(new Error('ECONNREFUSED'))).toBe(true);
       expect(isRetryableError(new Error('ECONNRESET'))).toBe(true);
       expect(isRetryableError(new Error('ETIMEDOUT'))).toBe(true);
-      expect(isRetryableError(new Error('ENOTFOUND'))).toBe(true);
+    });
+
+    it('does not retry ENOTFOUND because NXDOMAIN is normally a permanent endpoint typo', () => {
+      expect(
+        isRetryableError(new Error('getaddrinfo ENOTFOUND rpc.typo')),
+      ).toBe(false);
+    });
+
+    it('does not retry an undici fetch wrapper whose cause is ENOTFOUND', () => {
+      const cause = Object.assign(new Error('getaddrinfo ENOTFOUND rpc.typo'), {
+        code: 'ENOTFOUND',
+      });
+      const error = Object.assign(new TypeError('fetch failed'), { cause });
+
+      expect(isRetryableError(error)).toBe(false);
+    });
+
+    it('does retry an undici fetch wrapper whose cause is transient', () => {
+      const cause = Object.assign(new Error('socket closed'), {
+        code: 'ECONNRESET',
+      });
+      const error = Object.assign(new TypeError('fetch failed'), { cause });
+
+      expect(isRetryableError(error)).toBe(true);
+    });
+
+    it('retries a temporary DNS resolver failure surfaced by cosmjs', () => {
+      const error = Object.assign(
+        new Error('getaddrinfo EAI_AGAIN rpc.example.com'),
+        { code: 'EAI_AGAIN' },
+      );
+
+      expect(isRetryableError(error)).toBe(true);
     });
 
     it('should retry timeout errors', () => {

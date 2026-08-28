@@ -9,9 +9,18 @@ import {
   ManifestMCPErrorCode,
 } from '@manifest-network/manifest-mcp-core';
 import { getLeaseStatus } from '../http/fred.js';
-import { validateProviderUrl } from '../http/provider.js';
+import {
+  capProviderText,
+  isTransientProviderError,
+  PROVIDER_TEXT_EXCERPT_CHARS,
+  ProviderApiError,
+  validateProviderUrl,
+} from '../http/provider.js';
 import type { ProviderAuthPort } from '../http/provider-auth.js';
 import {
+  DEFAULT_MAX_CONSECUTIVE_FAILURES,
+  DEFAULT_POLL_TIMEOUT_MS,
+  MAX_RETRY_AFTER_HONOURED_MS,
   PROVISION_FAILED,
   PROVISION_IN_PROGRESS,
   PROVISION_SUCCESS,
@@ -34,10 +43,12 @@ export interface WaitForLeaseStatusOptions {
   onStatus?: (status: FredLeaseStatus) => void;
   /** Caller cancellation. Aborting REJECTS with signal.reason and cancels the in-flight wait. */
   signal?: AbortSignal;
-  /** Overall DEADLINE in ms (default 120000). Reaching it on a non-terminal lease REJECTS. */
+  /** Overall DEADLINE in ms (default 600000, matching Fred's provisioning ceiling). Reaching it on a non-terminal lease REJECTS. */
   timeout?: number;
   /** Poll interval in ms (default 3000). Also the snapshot cadence; the WS path uses it for the fallback. */
   intervalMs?: number;
+  /** Consecutive transient status-read failures tolerated before rejecting (default 3). */
+  maxConsecutiveFailures?: number;
   /** false (default) = dedup onStatus on (state, provision_status); true = raw per-event. */
   emitEvery?: boolean;
 }
@@ -183,11 +194,15 @@ interface DriverArgs {
   readonly signal: AbortSignal | undefined;
   readonly intervalMs: number;
   readonly timeoutMs: number;
+  readonly maxConsecutiveFailures: number;
   readonly deadlineAt: number;
   readonly emit: (status: FredLeaseStatus) => void;
   /** Mutable scratch shared by both drivers: the last provision_status actually observed, so the
    *  deadline rejection can name it. Held in an object because DriverArgs itself is readonly. */
-  readonly observed: { lastProvisionStatus?: string };
+  readonly observed: {
+    lastProvisionStatus?: string;
+    lastPollError?: unknown;
+  };
 }
 
 /** The overall-deadline rejection, shared by the poll and WS paths so the message stays consistent.
@@ -198,12 +213,32 @@ interface DriverArgs {
 function timedOutError(
   leaseUuid: LeaseUuid,
   timeoutMs: number,
-  lastProvisionStatus?: string,
+  observed: DriverArgs['observed'],
 ): ManifestMCPError {
+  const lastPollError =
+    observed.lastPollError === undefined
+      ? undefined
+      : capProviderText(
+          observed.lastPollError instanceof Error
+            ? observed.lastPollError.message
+            : String(observed.lastPollError),
+          PROVIDER_TEXT_EXCERPT_CHARS,
+        );
   return new ManifestMCPError(
     ManifestMCPErrorCode.QUERY_FAILED,
     `waitForLeaseStatus timed out after ${timeoutMs}ms; lease ${leaseUuid} still non-terminal ` +
-      `(last provision_status: ${lastProvisionStatus ?? 'unknown'})`,
+      `(last provision_status: ${observed.lastProvisionStatus ?? 'unknown'})` +
+      (lastPollError !== undefined
+        ? `; last status read failed with: ${lastPollError}`
+        : ''),
+    {
+      lease_uuid: leaseUuid,
+      timeout_ms: timeoutMs,
+      last_provision_status: observed.lastProvisionStatus,
+      ...(lastPollError !== undefined && {
+        last_poll_error: lastPollError,
+      }),
+    },
   );
 }
 
@@ -217,15 +252,23 @@ async function waitViaPoll(a: DriverArgs): Promise<FredLeaseStatus> {
     signal,
     intervalMs,
     deadlineAt,
+    maxConsecutiveFailures,
   } = a;
+  let consecutiveFailures = 0;
   for (;;) {
     signal?.throwIfAborted(); // abort observed between polls
+    if (Date.now() >= deadlineAt) {
+      throw timedOutError(leaseUuid, a.timeoutMs, a.observed);
+    }
+    let token: string;
+    try {
+      token = await ctx.providerAuth.providerToken({ address, leaseUuid });
+    } catch (err) {
+      if (signal?.aborted) throw signal.reason;
+      throw err;
+    }
     let status: FredLeaseStatus;
     try {
-      const token = await ctx.providerAuth.providerToken({
-        address,
-        leaseUuid,
-      });
       status = await getLeaseStatus(
         providerUrl,
         leaseUuid,
@@ -236,17 +279,47 @@ async function waitViaPoll(a: DriverArgs): Promise<FredLeaseStatus> {
       );
     } catch (err) {
       if (signal?.aborted) throw signal.reason; // abort-during-fetch: reject with the abort reason FIRST
-      throw err; // network/parse → reject
+      // Match pollLeaseUntilReady's bounded tolerance: a transient provider
+      // blip, an eventually-consistent 404, or one malformed response is worth
+      // another read; a permanent HTTP/auth/URL failure is not. Keep token
+      // minting outside this budget — only the provider status read is retried.
+      const tolerable =
+        isTransientProviderError(err) ||
+        (ProviderApiError.isProviderApiError(err) &&
+          (err.status === 404 || err.kind === 'invalid_response'));
+      if (!tolerable) throw err;
+      consecutiveFailures += 1;
+      a.observed.lastPollError = err;
+      if (consecutiveFailures > maxConsecutiveFailures) throw err;
+      ctx.logger.warn(
+        `waitForLeaseStatus: status read failed (${consecutiveFailures}/${maxConsecutiveFailures} tolerated): ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+      if (Date.now() >= deadlineAt) {
+        throw timedOutError(leaseUuid, a.timeoutMs, a.observed);
+      }
+      const retryAfterMs = ProviderApiError.isProviderApiError(err)
+        ? err.retryAfterMs
+        : undefined;
+      const wait = Math.max(
+        0,
+        Math.min(
+          retryAfterMs ?? intervalMs,
+          MAX_RETRY_AFTER_HONOURED_MS,
+          deadlineAt - Date.now(),
+        ),
+      );
+      await abortableSleep(wait, signal);
+      continue;
     }
+    consecutiveFailures = 0;
+    a.observed.lastPollError = undefined;
     a.observed.lastProvisionStatus = status.provision_status;
     if (classifyTerminal(status, leaseUuid) !== 'pending') return status; // resolve (terminal NOT emitted via onStatus)
     a.emit(status);
     if (Date.now() >= deadlineAt)
-      throw timedOutError(
-        leaseUuid,
-        a.timeoutMs,
-        a.observed.lastProvisionStatus,
-      );
+      throw timedOutError(leaseUuid, a.timeoutMs, a.observed);
     await abortableSleep(intervalMs, signal); // rejects with signal.reason on abort during the interval
   }
 }
@@ -489,11 +562,7 @@ async function waitViaWs(a: DriverArgs): Promise<FredLeaseStatus> {
     // The overall deadline elapsed mid-connection — reject with the timeout (do NOT reconnect or poll;
     // a fall-through to polling could otherwise resolve AFTER the documented deadline).
     if (outcome.kind === 'deadline')
-      throw timedOutError(
-        leaseUuid,
-        a.timeoutMs,
-        a.observed.lastProvisionStatus,
-      );
+      throw timedOutError(leaseUuid, a.timeoutMs, a.observed);
     // reconnect: short delay before the next attempt (if any budget remains).
     if (attempt < WS_MAX_RECONNECT_ATTEMPTS - 1 && Date.now() < deadlineAt) {
       await abortableSleep(WS_RECONNECT_DELAY_MS, signal);
@@ -530,7 +599,11 @@ export async function waitForLeaseStatus(
 ): Promise<FredLeaseStatus> {
   const { signal, onStatus, emitEvery } = opts;
   const intervalMs = opts.intervalMs ?? 3_000;
-  const timeoutMs = opts.timeout ?? 120_000;
+  const timeoutMs = opts.timeout ?? DEFAULT_POLL_TIMEOUT_MS;
+  const maxConsecutiveFailures = Math.max(
+    0,
+    Math.floor(opts.maxConsecutiveFailures ?? DEFAULT_MAX_CONSECUTIVE_FAILURES),
+  );
 
   signal?.throwIfAborted(); // prompt pre-abort: no chain/provider work
 
@@ -574,6 +647,7 @@ export async function waitForLeaseStatus(
     signal,
     intervalMs,
     timeoutMs,
+    maxConsecutiveFailures,
     deadlineAt: Date.now() + timeoutMs,
     emit,
     observed: {},
@@ -588,11 +662,7 @@ export async function waitForLeaseStatus(
       // If the overall deadline already elapsed, reject with the timeout — do NOT fall back to polling
       // (a poll could resolve AFTER the documented deadline).
       if (Date.now() >= args.deadlineAt)
-        throw timedOutError(
-          leaseUuid,
-          timeoutMs,
-          args.observed.lastProvisionStatus,
-        );
+        throw timedOutError(leaseUuid, timeoutMs, args.observed);
       ctx.logger.warn(
         `waitForLeaseStatus: WebSocket transport failed, falling back to polling: ${
           err instanceof Error ? err.message : String(err)

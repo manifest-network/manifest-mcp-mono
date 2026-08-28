@@ -422,10 +422,10 @@ export function makeTxCtx(overrides?: {
  * `_SealCoversTheSeam` makes that a COMPILE-TIME claim: adding a public method to the class
  * without adding it here fails `npm run lint`, not a test somebody has to remember to run.
  *
- * Nine names is the whole point. The alternative — enumerating core's *broadcasting exports* —
+ * Ten names is the whole point. The alternative — enumerating core's *broadcasting exports* —
  * is an open-ended set that rots the moment core grows a helper, and core's barrel has 85
  * runtime exports, so classifying all of them (ENG-715's approach for the small `provider.ts`
- * module) would be noise. One class, nine methods, checked by tsc. (ENG-713)
+ * module) would be noise. One class, ten methods, checked by tsc. (ENG-713)
  */
 export const SEALED_CHAIN_METHODS = [
   'getQueryClient',
@@ -437,6 +437,7 @@ export const SEALED_CHAIN_METHODS = [
   'acquireRateLimit',
   'withBroadcastLock',
   'disconnect',
+  'disconnectWhenIdle',
 ] as const;
 
 /**

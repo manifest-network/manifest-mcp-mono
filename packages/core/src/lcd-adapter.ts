@@ -16,24 +16,74 @@ function snakeToCamel(s: string): string {
   return s.replace(/_(.)/g, (_, c: string) => c.toUpperCase());
 }
 
+/**
+ * Present an LCD JSON value to telescope's generated `fromJSON` converters as
+ * an intermediate camelCase property view without rewriting enumerable keys.
+ *
+ * Generated converters read message fields through property access
+ * (`object.providerUuid`). Telescope converters for protobuf
+ * `map<string, ...>` fields can additionally enumerate entries with
+ * `Object.entries`; the pinned manifestjs codegen currently contains no such
+ * map converter, but preserving wire-key enumeration keeps this adapter safe
+ * if one is generated later. A recursively rebuilt camelCase object would then
+ * corrupt a verbatim map key such as `customer_tier`. This lazy view aliases
+ * message-field reads and `in` checks while leaving enumeration/spread/
+ * serialization exactly as received. It is passed only to `fromJSON`; callers
+ * receive the converter's owned result, never this Proxy.
+ */
 function snakeToCamelDeep(obj: unknown): unknown {
-  if (Array.isArray(obj)) {
-    return obj.map(snakeToCamelDeep);
-  }
-  if (
-    obj !== null &&
-    typeof obj === 'object' &&
-    !(obj instanceof Date) &&
-    !(obj instanceof Uint8Array)
-  ) {
-    return Object.fromEntries(
-      Object.entries(obj as Record<string, unknown>).map(([k, v]) => [
-        snakeToCamel(k),
-        snakeToCamelDeep(v),
-      ]),
-    );
-  }
-  return obj;
+  const views = new WeakMap<object, object>();
+
+  const wrap = (value: unknown): unknown => {
+    if (
+      value === null ||
+      typeof value !== 'object' ||
+      value instanceof Date ||
+      value instanceof Uint8Array
+    ) {
+      return value;
+    }
+
+    const cached = views.get(value);
+    if (cached) return cached;
+
+    const aliases = new Map<string, string>();
+    for (const key of Object.keys(value)) {
+      const camelKey = snakeToCamel(key);
+      // An actual camelCase property wins over a snake_case alias. LCD JSON
+      // should not contain both, but deterministic precedence avoids hiding a
+      // real property if an intermediary ever produces that malformed shape.
+      if (
+        camelKey !== key &&
+        Object.getOwnPropertyDescriptor(value, camelKey) === undefined &&
+        !aliases.has(camelKey)
+      ) {
+        aliases.set(camelKey, key);
+      }
+    }
+
+    const view = new Proxy(value, {
+      get(target, property, receiver) {
+        if (typeof property === 'string' && !Reflect.has(target, property)) {
+          const sourceKey = aliases.get(property);
+          if (sourceKey !== undefined) {
+            return wrap(Reflect.get(target, sourceKey, receiver));
+          }
+        }
+        return wrap(Reflect.get(target, property, receiver));
+      },
+      has(target, property) {
+        return (
+          Reflect.has(target, property) ||
+          (typeof property === 'string' && aliases.has(property))
+        );
+      },
+    });
+    views.set(value, view);
+    return view;
+  };
+
+  return wrap(obj);
 }
 
 function ucFirst(s: string): string {

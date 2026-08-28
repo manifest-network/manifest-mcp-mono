@@ -202,8 +202,129 @@ describe('waitForLeaseStatus', () => {
         ) as unknown as typeof globalThis.fetch,
     });
     await expect(
-      waitForLeaseStatus(ctx, LEASE_UUID, { intervalMs: 1 }),
+      waitForLeaseStatus(ctx, LEASE_UUID, {
+        intervalMs: 1,
+        maxConsecutiveFailures: 0,
+      }),
     ).rejects.toThrow(/boom/);
+  });
+
+  it('tolerates a transient status-read blip and resets the failure budget on success', async () => {
+    const fetch = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('ECONNRESET'))
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            state: 'LEASE_STATE_ACTIVE',
+            provision_status: 'ready',
+          }),
+          { status: 200 },
+        ),
+      ) as unknown as typeof globalThis.fetch;
+    const ctx = makeWaitCtx({
+      providerUuid: 'p1',
+      statusFrames: [],
+      fetch,
+    });
+
+    await expect(
+      waitForLeaseStatus(ctx, LEASE_UUID, {
+        intervalMs: 0,
+        maxConsecutiveFailures: 1,
+      }),
+    ).resolves.toMatchObject({
+      state: LeaseState.LEASE_STATE_ACTIVE,
+      provision_status: 'ready',
+    });
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('rejects once consecutive transient reads exceed the configured budget', async () => {
+    const fetch = vi
+      .fn()
+      .mockRejectedValue(
+        new Error('ECONNRESET'),
+      ) as unknown as typeof globalThis.fetch;
+    const ctx = makeWaitCtx({
+      providerUuid: 'p1',
+      statusFrames: [],
+      fetch,
+    });
+
+    await expect(
+      waitForLeaseStatus(ctx, LEASE_UUID, {
+        intervalMs: 0,
+        maxConsecutiveFailures: 1,
+      }),
+    ).rejects.toThrow(/ECONNRESET/);
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('honours Retry-After within the overall poll deadline', async () => {
+    vi.useFakeTimers();
+    const fetch = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response('slow down', {
+          status: 429,
+          headers: { 'Retry-After': '1' },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            state: 'LEASE_STATE_ACTIVE',
+            provision_status: 'ready',
+          }),
+          { status: 200 },
+        ),
+      ) as unknown as typeof globalThis.fetch;
+    const ctx = makeWaitCtx({ providerUuid: 'p1', statusFrames: [], fetch });
+
+    const result = waitForLeaseStatus(ctx, LEASE_UUID, {
+      intervalMs: 10,
+      timeout: 2_000,
+      maxConsecutiveFailures: 1,
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(999);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1);
+
+    await expect(result).resolves.toMatchObject({
+      state: LeaseState.LEASE_STATE_ACTIVE,
+      provision_status: 'ready',
+    });
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('includes the last transient read failure in a deadline error', async () => {
+    vi.useFakeTimers();
+    const fetch = vi
+      .fn()
+      .mockRejectedValue(
+        new Error('ECONNRESET from provider'),
+      ) as unknown as typeof globalThis.fetch;
+    const ctx = makeWaitCtx({ providerUuid: 'p1', statusFrames: [], fetch });
+
+    const result = waitForLeaseStatus(ctx, LEASE_UUID, {
+      intervalMs: 10,
+      timeout: 25,
+      maxConsecutiveFailures: 99,
+    });
+    const assertion = expect(result).rejects.toMatchObject({
+      code: 'QUERY_FAILED',
+      message: expect.stringContaining('ECONNRESET from provider'),
+      details: {
+        lease_uuid: LEASE_UUID,
+        timeout_ms: 25,
+        last_poll_error: expect.stringContaining('ECONNRESET from provider'),
+      },
+    });
+    await vi.advanceTimersByTimeAsync(30);
+    await assertion;
   });
 
   it('rejects on the poll deadline for a stuck non-terminal lease', async () => {

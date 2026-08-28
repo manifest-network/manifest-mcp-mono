@@ -7,8 +7,8 @@
  * because they vary by env-var visibility and per-tool relevance.
  *
  * `createGuardedFetch` is imported **dynamically** from agent-core's
- * Node-only `/guarded-fetch` subpath, behind the
- * `MANIFEST_AGENT_FETCH_GUARDED=1` env-var gate. The subpath is fenced
+ * Node-only `/guarded-fetch` subpath, behind the server's `fetchGuarded`
+ * option (which falls back to `MANIFEST_AGENT_FETCH_GUARDED`). The subpath is fenced
  * off the `.` barrel (ENG-281/287) so the barrel stays
  * browser-bundleable; importing it dynamically also defers the
  * `createGuardedFetch()` *invocation* and the `undici` + Node-builtin
@@ -26,8 +26,9 @@ export interface BuildRuntimeArgs {
    * When `true`, replace `globalThis.fetch` with the SSRF-guarded
    * variant exported by
    * `@manifest-network/manifest-agent-core/guarded-fetch`. The import is
-   * dynamic so the platform-neutral build stays legal. Operators flip
-   * this via `MANIFEST_AGENT_FETCH_GUARDED=1`.
+   * dynamic so the platform-neutral build stays legal. Library consumers set
+   * `AgentMCPServerOptions.fetchGuarded`; CLI operators use the matching env
+   * fallback.
    */
   readonly fetchGuarded: boolean;
 }

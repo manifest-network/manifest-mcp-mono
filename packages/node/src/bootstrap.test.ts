@@ -1,5 +1,11 @@
 import { existsSync } from 'node:fs';
+import type { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+const { walletConnect, walletDisconnect } = vi.hoisted(() => ({
+  walletConnect: vi.fn().mockResolvedValue(undefined),
+  walletDisconnect: vi.fn().mockResolvedValue(undefined),
+}));
 
 vi.mock('node:fs', () => ({
   existsSync: vi.fn(),
@@ -9,6 +15,13 @@ vi.mock('node:fs', () => ({
 
 vi.mock('./config.js', () => ({
   loadConfig: vi.fn(),
+}));
+
+vi.mock('./keyfileWallet.js', () => ({
+  KeyfileWalletProvider: class {
+    connect = walletConnect;
+    disconnect = walletDisconnect;
+  },
 }));
 
 vi.mock('@modelcontextprotocol/sdk/server/stdio.js', () => ({
@@ -31,12 +44,30 @@ const baseEnv = {
   mnemonic: undefined,
 };
 
+function makeRuntime() {
+  const sdkServer = {
+    connect: vi.fn().mockResolvedValue(undefined),
+    close: vi.fn(),
+    onclose: undefined,
+  } as unknown as Server;
+  vi.mocked(sdkServer.close).mockImplementation(async () => {
+    sdkServer.onclose?.();
+  });
+  const runtime = {
+    getServer: vi.fn().mockReturnValue(sdkServer),
+    disconnect: vi.fn(),
+    disconnectWhenIdle: vi.fn().mockResolvedValue(undefined),
+  };
+  return { sdkServer, runtime };
+}
+
 describe('bootstrap', () => {
   let originalArgv: string[];
   let exitSpy: ReturnType<typeof vi.spyOn>;
   let errorSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
+    vi.clearAllMocks();
     originalArgv = process.argv;
     process.argv = ['node', 'manifest-mcp-chain'];
     exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => {}) as any);
@@ -83,5 +114,158 @@ describe('bootstrap', () => {
     expect(errorSpy).toHaveBeenCalledWith(
       expect.stringContaining('No wallet found'),
     );
+  });
+
+  it('stdin EOF closes the transport, client manager, and wallet exactly once', async () => {
+    mockExistsSync.mockReturnValue(true);
+    const priorEndListeners = new Set(process.stdin.listeners('end'));
+    const { sdkServer, runtime } = makeRuntime();
+
+    bootstrap({
+      cliName: 'manifest-mcp-chain',
+      label: 'chain',
+      createServer: vi.fn().mockReturnValue(runtime),
+    });
+
+    await vi.waitFor(() => {
+      expect(sdkServer.connect).toHaveBeenCalledTimes(1);
+    });
+    const endListener = process.stdin
+      .listeners('end')
+      .find((listener) => !priorEndListeners.has(listener));
+    expect(endListener).toBeDefined();
+
+    endListener?.();
+    await vi.waitFor(() => {
+      expect(walletDisconnect).toHaveBeenCalledTimes(1);
+    });
+
+    expect(walletConnect).toHaveBeenCalledTimes(1);
+    expect(sdkServer.close).toHaveBeenCalledTimes(1);
+    expect(runtime.disconnectWhenIdle).toHaveBeenCalledTimes(1);
+    expect(runtime.disconnect).not.toHaveBeenCalled();
+
+    // A competing close event must join the same cleanup operation.
+    endListener?.();
+    await Promise.resolve();
+    expect(sdkServer.close).toHaveBeenCalledTimes(1);
+    expect(runtime.disconnectWhenIdle).toHaveBeenCalledTimes(1);
+    expect(walletDisconnect).toHaveBeenCalledTimes(1);
+  });
+
+  it('transport close tears down the client manager and wallet', async () => {
+    mockExistsSync.mockReturnValue(true);
+    const { sdkServer, runtime } = makeRuntime();
+
+    bootstrap({
+      cliName: 'manifest-mcp-chain',
+      label: 'chain',
+      createServer: vi.fn().mockReturnValue(runtime),
+    });
+
+    await vi.waitFor(() => {
+      expect(sdkServer.connect).toHaveBeenCalledTimes(1);
+    });
+    sdkServer.onclose?.();
+    await vi.waitFor(() => {
+      expect(walletDisconnect).toHaveBeenCalledTimes(1);
+    });
+
+    expect(sdkServer.close).toHaveBeenCalledTimes(1);
+    expect(runtime.disconnectWhenIdle).toHaveBeenCalledTimes(1);
+  });
+
+  it('SIGTERM waits for cleanup before exiting with the conventional code', async () => {
+    mockExistsSync.mockReturnValue(true);
+    const priorTermListeners = new Set(process.listeners('SIGTERM'));
+    const { sdkServer, runtime } = makeRuntime();
+
+    bootstrap({
+      cliName: 'manifest-mcp-chain',
+      label: 'chain',
+      createServer: vi.fn().mockReturnValue(runtime),
+    });
+
+    await vi.waitFor(() => {
+      expect(sdkServer.connect).toHaveBeenCalledTimes(1);
+    });
+    const termListener = process
+      .listeners('SIGTERM')
+      .find((listener) => !priorTermListeners.has(listener));
+    expect(termListener).toBeDefined();
+
+    termListener?.('SIGTERM');
+    await vi.waitFor(() => {
+      expect(exitSpy).toHaveBeenCalledWith(143);
+    });
+
+    expect(sdkServer.close).toHaveBeenCalledTimes(1);
+    expect(runtime.disconnectWhenIdle).toHaveBeenCalledTimes(1);
+    expect(walletDisconnect).toHaveBeenCalledTimes(1);
+  });
+
+  it('a second SIGTERM forces immediate exit while broadcast drain is hung', async () => {
+    mockExistsSync.mockReturnValue(true);
+    const priorTermListeners = new Set(process.listeners('SIGTERM'));
+    const { sdkServer, runtime } = makeRuntime();
+    let finishDrain!: () => void;
+    runtime.disconnectWhenIdle.mockReturnValue(
+      new Promise<void>((resolve) => {
+        finishDrain = resolve;
+      }),
+    );
+
+    bootstrap({
+      cliName: 'manifest-mcp-chain',
+      label: 'chain',
+      createServer: vi.fn().mockReturnValue(runtime),
+    });
+
+    await vi.waitFor(() => {
+      expect(sdkServer.connect).toHaveBeenCalledTimes(1);
+    });
+    const termListener = process
+      .listeners('SIGTERM')
+      .find((listener) => !priorTermListeners.has(listener));
+    expect(termListener).toBeDefined();
+
+    termListener?.('SIGTERM');
+    await vi.waitFor(() => {
+      expect(runtime.disconnectWhenIdle).toHaveBeenCalledTimes(1);
+    });
+    expect(exitSpy).not.toHaveBeenCalled();
+
+    termListener?.('SIGTERM');
+    expect(exitSpy).toHaveBeenCalledWith(143);
+
+    finishDrain();
+    await vi.waitFor(() => {
+      expect(walletDisconnect).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it('forces exit when graceful shutdown exceeds its deadline', async () => {
+    vi.useFakeTimers();
+    mockExistsSync.mockReturnValue(true);
+    const priorTermListeners = new Set(process.listeners('SIGTERM'));
+    const { runtime } = makeRuntime();
+    runtime.disconnectWhenIdle.mockReturnValue(new Promise<void>(() => {}));
+
+    bootstrap({
+      cliName: 'manifest-mcp-chain',
+      label: 'chain',
+      createServer: vi.fn().mockReturnValue(runtime),
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    const termListener = process
+      .listeners('SIGTERM')
+      .find((listener) => !priorTermListeners.has(listener));
+    expect(termListener).toBeDefined();
+
+    termListener?.('SIGTERM');
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(exitSpy).toHaveBeenCalledWith(143);
+
+    vi.useRealTimers();
   });
 });

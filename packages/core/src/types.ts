@@ -450,6 +450,7 @@ export enum ManifestMCPErrorCode {
   RESTORE_REJECTED = 'RESTORE_REJECTED', // terminal 4xx; the created lease was rolled back
   RESTORE_RETRYABLE = 'RESTORE_RETRYABLE', // 503; rolled back, agent may re-invoke
   RESTORE_ORPHAN_COMPENSATION_FAILED = 'RESTORE_ORPHAN_COMPENSATION_FAILED', // orphan lease exists
+  RESTORE_COMMITTED_FAILURE = 'RESTORE_COMMITTED_FAILURE', // post-pivot failure; adopted lease exists
 
   /**
    * `update_app` reached the provider and the provider answered 5xx, which does

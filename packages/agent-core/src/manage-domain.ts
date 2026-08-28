@@ -32,6 +32,11 @@ import {
 } from '@manifest-network/manifest-mcp-core';
 import { makeCancellationScope } from './internals/cancellation.js';
 import {
+  emitCompletion,
+  emitProgress,
+  notifyFailure,
+} from './internals/safe-progress.js';
+import {
   type VerifyDomainOutcome,
   type VerifyDomainResult,
   verifyDomainState,
@@ -144,7 +149,7 @@ export async function manageDomain(
       );
     }
   }
-  callbacks.onProgress?.({ kind: 'user_confirmed' });
+  emitProgress(callbacks.onProgress, { kind: 'user_confirmed' });
 
   // --- Broadcast ------------------------------------------------------
   // txCtx has no signer (ManageDomainOptions carries no walletProvider); the
@@ -196,9 +201,7 @@ export async function manageDomain(
         const reason = `Failed to query lease ${args.leaseUuid} during ${args.action}-verify: ${
           err instanceof Error ? err.message : String(err)
         }`;
-        if (callbacks.onFailure) {
-          await callbacks.onFailure({ reason });
-        }
+        await notifyFailure(callbacks.onFailure, { reason });
         if (err instanceof ManifestMCPError) {
           throw err;
         }
@@ -255,9 +258,7 @@ export async function manageDomain(
     const reason =
       verifyResult.failure?.reason ??
       `manage-domain ${args.action} verification failed.`;
-    if (callbacks.onFailure) {
-      await callbacks.onFailure({ reason });
-    }
+    await notifyFailure(callbacks.onFailure, { reason });
     throw new ManifestMCPError(ManifestMCPErrorCode.TX_FAILED, reason);
   }
 
@@ -267,7 +268,7 @@ export async function manageDomain(
     verified,
     finalCustomDomain,
   };
-  callbacks.onComplete?.(result);
+  emitCompletion(() => callbacks.onComplete?.(result));
   return result;
 }
 
@@ -414,15 +415,13 @@ async function lookupDomain(
         fqdn: customDomain,
         lease: null,
       };
-      callbacks.onComplete?.(notFoundResult);
+      emitCompletion(() => callbacks.onComplete?.(notFoundResult));
       return notFoundResult;
     }
     const reason = `lease_by_custom_domain lookup failed for "${customDomain}": ${
       err instanceof Error ? err.message : String(err)
     }`;
-    if (callbacks.onFailure) {
-      await callbacks.onFailure({ reason });
-    }
+    await notifyFailure(callbacks.onFailure, { reason });
     if (err instanceof ManifestMCPError) {
       throw err;
     }
@@ -440,7 +439,7 @@ async function lookupDomain(
   // function and vs `closeLease` / `troubleshootDeployment`. Was
   // documented as "intentional" in PR_DESCRIPTION.md Risks #1 but
   // was really an oversight rationalized post-hoc. Now consistent.
-  callbacks.onComplete?.(lookupResult);
+  emitCompletion(() => callbacks.onComplete?.(lookupResult));
   return lookupResult;
 }
 

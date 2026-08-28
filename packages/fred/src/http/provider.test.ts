@@ -13,8 +13,35 @@ import {
   parseJsonResponse,
   parseRetryAfterMs,
   readBodyCapped,
+  uploadLeaseData,
   validateProviderUrl,
 } from './provider.js';
+
+describe('uploadLeaseData', () => {
+  it('cancels an unread success body so the connection is released', async () => {
+    let cancelled = false;
+    const body = new ReadableStream<Uint8Array>({
+      cancel() {
+        cancelled = true;
+      },
+    });
+    const fetchFn = vi
+      .fn()
+      .mockResolvedValue(
+        new Response(body, { status: 200 }),
+      ) as unknown as typeof globalThis.fetch;
+
+    await uploadLeaseData(
+      'https://provider.example.com',
+      '550e8400-e29b-41d4-a716-446655440000',
+      new Uint8Array([1, 2, 3]),
+      'token',
+      fetchFn,
+    );
+
+    expect(cancelled).toBe(true);
+  });
+});
 
 describe('validateProviderUrl', () => {
   it('accepts HTTPS URLs', () => {
@@ -522,6 +549,35 @@ describe('ProviderApiError.isProviderApiError (dual-package-safe brand guard)', 
     const e = new ProviderApiError(500, 'boom');
     expect(Object.getOwnPropertyDescriptor(e, BRAND)?.enumerable).toBe(false);
     expect(Object.getOwnPropertySymbols({ ...e })).not.toContain(BRAND);
+  });
+
+  it('withContext preserves transport metadata, cause, and stack', () => {
+    const cause = new Error('socket reset');
+    const original = new ProviderApiError(503, 'provider unavailable', {
+      kind: 'http',
+      retryAfterMs: 1_000,
+      cause,
+      details: { operation: 'restore' },
+    });
+
+    const enriched = original.withContext({
+      lease_uuid: 'new-lease',
+      committed: true,
+    });
+
+    expect(enriched).not.toBe(original);
+    expect(enriched).toMatchObject({
+      status: 503,
+      kind: 'http',
+      retryAfterMs: 1_000,
+      cause,
+      details: {
+        operation: 'restore',
+        lease_uuid: 'new-lease',
+        committed: true,
+      },
+    });
+    expect(enriched.stack).toBe(original.stack);
   });
 });
 

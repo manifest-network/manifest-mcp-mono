@@ -1,3 +1,4 @@
+import { logger } from '@manifest-network/manifest-mcp-core';
 import { describe, expect, it, vi } from 'vitest';
 import type {
   FailureEnvelope,
@@ -124,6 +125,42 @@ describe('case 2 — failure on mismatch → named branch, tag, envelope, onFail
     expect(onFailure).toHaveBeenCalledOnce();
     expect(onFailure.mock.calls[0]?.[1]).toEqual(STANDARD_OPTIONS);
     expect(result.recoveryChoice).toEqual({ id: 'retry_set_domain' });
+  });
+
+  it('preserves the verified failure when the recovery callback rejects', async () => {
+    const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+    const spec: VerificationSpec<unknown, DomainOutcome, DomainDiag> = {
+      verifier: domainVerifier({
+        outcome: 'mismatch',
+        diagnostic: { actual: 'old.example.com' },
+      }),
+      successValues: ['match'],
+      branches: {
+        mismatch: domainBranch(
+          'domain_verification_mismatch',
+          'domain-verification-mismatch',
+          (d) => `Chain still shows ${d.actual}`,
+          STANDARD_OPTIONS,
+        ),
+      },
+    };
+
+    const result = await verifyAndRecover(
+      spec,
+      {},
+      {
+        onFailure: async () => {
+          throw new Error('host recovery UI failed');
+        },
+      },
+    );
+
+    expect(result.result).toBe('failure');
+    expect(result.failure?.reason).toBe('Chain still shows old.example.com');
+    expect(result.recoveryChoice).toBeUndefined();
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining('host recovery UI failed'),
+    );
   });
 });
 

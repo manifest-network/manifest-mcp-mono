@@ -21,7 +21,7 @@ import type {
   ServerNotification,
   ServerRequest,
 } from '@modelcontextprotocol/sdk/types.js';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { makeDeployCallbacks } from './callbacks.js';
 
 // ---------------------------------------------------------------------------
@@ -40,11 +40,89 @@ function makeExtra(
   } as unknown as RequestHandlerExtra<ServerRequest, ServerNotification>;
 }
 
+function makeSkuCandidates(): SkuCandidate[] {
+  return [
+    {
+      skuUuid: asSkuUuid('a'),
+      providerUuid: asProviderUuid('p1'),
+      name: 'docker-micro',
+      active: true,
+    },
+    {
+      skuUuid: asSkuUuid('b'),
+      providerUuid: asProviderUuid('p2'),
+      name: 'docker-micro',
+      active: true,
+    },
+  ];
+}
+
 // ---------------------------------------------------------------------------
 // makeDeployCallbacks — onResolveSku
 // ---------------------------------------------------------------------------
 
 describe('makeDeployCallbacks', () => {
+  describe('elicitation timeout', () => {
+    const envName = 'MANIFEST_AGENT_ELICIT_TIMEOUT_MS';
+    let original: string | undefined;
+
+    beforeEach(() => {
+      original = process.env[envName];
+    });
+
+    afterEach(() => {
+      if (original === undefined) {
+        delete process.env[envName];
+      } else {
+        process.env[envName] = original;
+      }
+    });
+
+    it('reads the operator override at each elicitation call', async () => {
+      const elicitInput = vi
+        .fn()
+        .mockResolvedValue({ action: 'accept', content: { sku_uuid: 'a' } });
+      const server = {
+        elicitInput,
+        getClientCapabilities: vi.fn().mockReturnValue({ elicitation: {} }),
+      } as unknown as Server;
+      const callbacks = makeDeployCallbacks({ server, extra: makeExtra() });
+
+      process.env[envName] = '12345';
+      await callbacks.onResolveSku!(makeSkuCandidates());
+      expect(
+        (elicitInput.mock.calls[0]?.[1] as { timeout?: number } | undefined)
+          ?.timeout,
+      ).toBe(12345);
+
+      process.env[envName] = '23456';
+      await callbacks.onResolveSku!(makeSkuCandidates());
+      expect(
+        (elicitInput.mock.calls[1]?.[1] as { timeout?: number } | undefined)
+          ?.timeout,
+      ).toBe(23456);
+    });
+
+    it('falls back to ten minutes for a malformed override', async () => {
+      process.env[envName] = '12000ms';
+      const elicitInput = vi
+        .fn()
+        .mockResolvedValue({ action: 'accept', content: { sku_uuid: 'a' } });
+      const server = {
+        elicitInput,
+        getClientCapabilities: vi.fn().mockReturnValue({ elicitation: {} }),
+      } as unknown as Server;
+      const callbacks = makeDeployCallbacks({ server, extra: makeExtra() });
+
+      await callbacks.onResolveSku!(makeSkuCandidates());
+
+      expect(
+        (elicitInput.mock.calls[0]?.[1] as { timeout?: number } | undefined)
+          ?.timeout,
+      ).toBe(600_000);
+    });
+  });
+
   it('ENG-258: onResolveSku elicits a pick and returns the pin', async () => {
     const elicitInput = vi
       .fn()

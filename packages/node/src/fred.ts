@@ -5,5 +5,5 @@ import { bootstrap } from './bootstrap.js';
 bootstrap({
   cliName: 'manifest-mcp-fred',
   label: 'fred',
-  createServer: (opts) => new FredMCPServer(opts).getServer(),
+  createServer: (opts) => new FredMCPServer(opts),
 });

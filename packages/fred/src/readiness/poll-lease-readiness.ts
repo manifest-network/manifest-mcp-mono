@@ -408,7 +408,7 @@ export const DEFAULT_MAX_CONSECUTIVE_FAILURES = 3;
 /** Ceiling on how long a provider-supplied `Retry-After` may park the poll. Fred
  *  caps its own header at 86400s; honouring that literally would hand a single
  *  response the entire budget, so we honour the hint but bound it. */
-const MAX_RETRY_AFTER_HONOURED_MS = 30_000;
+export const MAX_RETRY_AFTER_HONOURED_MS = 30_000;
 
 /**
  * Read one lease status. The single I/O operation this loop performs, injected.

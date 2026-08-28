@@ -5,5 +5,5 @@ import { bootstrap } from './bootstrap.js';
 bootstrap({
   cliName: 'manifest-mcp-lease',
   label: 'lease',
-  createServer: (opts) => new LeaseMCPServer(opts).getServer(),
+  createServer: (opts) => new LeaseMCPServer(opts),
 });

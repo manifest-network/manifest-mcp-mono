@@ -414,6 +414,45 @@ describe('restoreApp', () => {
     expect(urls()).toContain('status');
   });
 
+  it('post-pivot provider failure verdict rejects with its detail and does NOT cancel', async () => {
+    mockSource([
+      {
+        skuUuid: 's1',
+        quantity: 1n,
+        customDomain: 'app.x.com',
+      },
+    ]);
+    routeWire({
+      status: {
+        state: 'LEASE_STATE_ACTIVE',
+        provision_status: 'failed',
+        reason: 'ImagePullFailed',
+        message: 'registry denied the image',
+      },
+    });
+
+    const err = await restoreApp(
+      makeCtx(),
+      { address: 'a', sourceLeaseUuid: SOURCE },
+      { pollOptions: { intervalMs: 0, timeoutMs: 25 } },
+    ).catch((caught: unknown) => caught);
+
+    expect(err).toMatchObject({
+      code: ManifestMCPErrorCode.RESTORE_COMMITTED_FAILURE,
+      details: {
+        lease_uuid: NEW,
+        source_lease_uuid: SOURCE,
+        committed: true,
+        restore_status: 'provisioning',
+        custom_domain_not_restored: ['app.x.com'],
+      },
+    });
+    expect((err as Error).message).toContain('registry denied the image');
+    // The restore already committed and adopted the volumes. Even a reported
+    // provisioning failure must never enter the pre-pivot compensation path.
+    expect(mockCosmosTx).not.toHaveBeenCalled();
+  });
+
   it('post-pivot poll SUCCESS: returns the polled ready status', async () => {
     mockSource();
     routeWire({

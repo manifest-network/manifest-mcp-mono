@@ -132,6 +132,8 @@ function getSigningManifestClientOptions() {
 export class CosmosClientManager {
   private static instances: Map<string, CosmosClientManager> = new Map();
 
+  /** Registry key used to evict this manager when its final holder releases it. */
+  private readonly instanceKey: string;
   private config: ManifestMCPConfig;
   private walletProvider: WalletProvider;
   private queryClient: ManifestQueryClient | null = null;
@@ -158,6 +160,12 @@ export class CosmosClientManager {
   // disconnects), so one server's shutdown can't sever another's shared client.
   private refCount = 0;
 
+  // Final release is deferred while a broadcast queue is live. Keeping the
+  // manager registered during that drain is essential: a concurrent
+  // reacquisition must join this manager's lock domain, not create a second
+  // manager capable of broadcasting the same account sequence in parallel.
+  private pendingRelease: Promise<void> | null = null;
+
   // Promises to prevent concurrent client initialization (lazy init race condition)
   private queryClientPromise: Promise<ManifestQueryClient> | null = null;
   private signingClientPromise: Promise<SigningStargateClient> | null = null;
@@ -165,7 +173,9 @@ export class CosmosClientManager {
   private constructor(
     config: ManifestMCPConfig,
     walletProvider: WalletProvider,
+    instanceKey: string,
   ) {
+    this.instanceKey = instanceKey;
     this.config = config;
     this.walletProvider = walletProvider;
 
@@ -208,7 +218,7 @@ export class CosmosClientManager {
     let instance = CosmosClientManager.instances.get(key);
 
     if (!instance) {
-      instance = new CosmosClientManager(config, walletProvider);
+      instance = new CosmosClientManager(config, walletProvider, key);
       CosmosClientManager.instances.set(key, instance);
     } else {
       // Check what changed to determine what needs updating
@@ -693,8 +703,69 @@ export class CosmosClientManager {
    * count negative.
    */
   disconnect(): void {
-    if (this.refCount > 0) this.refCount -= 1;
-    if (this.refCount === 0) this.teardown();
+    void this.releaseReference();
+  }
+
+  /**
+   * Release this holder and resolve after any already-queued broadcasts have
+   * drained and final teardown has completed. CLI shutdown uses this form so
+   * transport cancellation cannot sever a transaction or its compensation
+   * path halfway through. Reacquisition during the drain cancels teardown and
+   * continues to share this manager.
+   */
+  disconnectWhenIdle(): Promise<void> {
+    return this.releaseReference();
+  }
+
+  private releaseReference(): Promise<void> {
+    if (this.refCount === 0) {
+      return this.pendingRelease ?? Promise.resolve();
+    }
+
+    this.refCount -= 1;
+    if (this.refCount > 0) return Promise.resolve();
+
+    // Preserve the historical synchronous teardown behavior when there is no
+    // broadcast work to drain.
+    if (this.broadcastLocks.size === 0) {
+      this.finalizeRelease();
+      return Promise.resolve();
+    }
+
+    if (!this.pendingRelease) {
+      const release = this.releaseWhenBroadcastsDrain();
+      this.pendingRelease = release;
+      // Clear only this generation: clearInstances/reacquisition can schedule
+      // subsequent work before an older drain settles.
+      void release.then(
+        () => {
+          if (this.pendingRelease === release) this.pendingRelease = null;
+        },
+        () => {
+          if (this.pendingRelease === release) this.pendingRelease = null;
+        },
+      );
+    }
+    return this.pendingRelease;
+  }
+
+  private async releaseWhenBroadcastsDrain(): Promise<void> {
+    while (this.refCount === 0 && this.broadcastLocks.size > 0) {
+      await Promise.allSettled([...this.broadcastLocks.values()]);
+    }
+    if (this.refCount === 0) this.finalizeRelease();
+  }
+
+  private finalizeRelease(): void {
+    this.teardown();
+    // A released manager is no longer reusable: keeping it in the registry
+    // makes a long-lived SDK process retain one RateLimiter + config per
+    // endpoint it has ever touched. The identity guard protects a fresh
+    // manager registered under the same key when an older deferred release
+    // settles after clearInstances()/reacquisition.
+    if (CosmosClientManager.instances.get(this.instanceKey) === this) {
+      CosmosClientManager.instances.delete(this.instanceKey);
+    }
   }
 
   /**

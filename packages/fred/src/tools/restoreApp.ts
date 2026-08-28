@@ -13,7 +13,11 @@ import {
   pollLeaseUntilReady,
   restoreLease,
 } from '../http/fred.js';
-import { ProviderApiError } from '../http/provider.js';
+import {
+  capProviderText,
+  PROVIDER_TEXT_EXCERPT_CHARS,
+  ProviderApiError,
+} from '../http/provider.js';
 import { resolveFredSignal } from './call-signal.js';
 import { createLease } from './createLease.js';
 import { fetchLease } from './fetchLease.js';
@@ -218,9 +222,36 @@ export async function restoreApp(
     );
     return { ...base, ready };
   } catch (err) {
-    // Post-pivot poll timeout / terminal provisioning failure: the restore is
-    // committed → report status, NEVER compensate. (A caller abort propagates.)
+    // Post-pivot poll timeout: the restore is committed → report it as still
+    // provisioning and NEVER compensate. A provider-authored failure verdict
+    // is different: preserve that rejection and its detail instead of
+    // laundering it into an indistinguishable "still coming up" result.
+    // (A caller abort propagates; ENG-699 owns enriching that cancellation with
+    // the committed lease context.)
     if (signal?.aborted) throw err;
+    if (
+      ProviderApiError.isProviderApiError(err) &&
+      err.kind === 'poll_verdict'
+    ) {
+      const committedError = err.withContext({
+        lease_uuid: newLeaseUuid,
+        source_lease_uuid: sourceLeaseUuid,
+        committed: true,
+        restore_status: base.status,
+        ...(base.custom_domain_not_restored && {
+          custom_domain_not_restored: base.custom_domain_not_restored,
+        }),
+      });
+      // ProviderApiError context is available to direct library callers, but the
+      // MCP boundary deliberately serializes structured details only from
+      // ManifestMCPError. Re-wrap this first-party post-commit classification so
+      // restore_app returns the adopted lease handle without regex-parsing prose.
+      throw new ManifestMCPError(
+        ManifestMCPErrorCode.RESTORE_COMMITTED_FAILURE,
+        `Restore committed to lease ${newLeaseUuid}, but the provider reported a failure verdict: ${capProviderText(committedError.message, PROVIDER_TEXT_EXCERPT_CHARS)}`,
+        { ...committedError.details },
+      );
+    }
     return { ...base, status: 'provisioning' };
   }
 }

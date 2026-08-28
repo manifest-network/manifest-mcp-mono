@@ -255,11 +255,14 @@ export async function deployManifest(
     `[deploy] lease ${leaseUuid} created on provider ${providerUuid}`,
   );
 
-  await callOptions.onLeaseCreated?.(leaseUuid, providerUrl);
-
   let step: 'set_domain' | 'upload' | 'poll' | undefined;
   let status: FredLeaseStatus;
   try {
+    // This notification runs after the paid lease exists. A consumer callback
+    // failure is therefore partial success just like the upload/set-domain
+    // legs below: keep it inside the wrapper so the caller always learns the
+    // lease UUID that now needs reconciliation.
+    await callOptions.onLeaseCreated?.(leaseUuid, providerUrl);
     signal?.throwIfAborted();
     if (parsedCustomDomain !== undefined) {
       step = 'set_domain';
@@ -381,10 +384,10 @@ export async function deployManifest(
       );
     }
     // Wrap a post-create-lease failure as a partial-success error so callers
-    // know the lease exists and must be cleaned up. Reaching here means one of
-    // two things, and nothing healthy is running in either: set-domain or the
-    // manifest upload fell over, or the provider returned an explicit failure
-    // verdict during the poll. close_lease is genuinely the remedy.
+    // know the lease exists and must be cleaned up. Reaching here means the
+    // consumer notification, set-domain step, or manifest upload failed, or
+    // the provider returned an explicit failure verdict during the poll.
+    // close_lease is genuinely the remedy.
     logger.warn(
       `[deploy] lease ${leaseUuid} created but a subsequent step${step ? ` ('${step}')` : ''} failed; close_lease to clean up`,
     );

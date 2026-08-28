@@ -104,12 +104,14 @@ export interface CallbackFactoryArgs {
  * `MANIFEST_AGENT_ELICIT_TIMEOUT_MS` (positive integer, milliseconds);
  * malformed values fall back to the default.
  */
-const ELICIT_TIMEOUT_MS = ((): number => {
-  const raw = process.env.MANIFEST_AGENT_ELICIT_TIMEOUT_MS;
-  if (raw === undefined || raw.trim().length === 0) return 10 * 60_000;
-  const n = Number.parseInt(raw, 10);
-  return Number.isFinite(n) && n > 0 ? n : 10 * 60_000;
-})();
+const DEFAULT_ELICIT_TIMEOUT_MS = 10 * 60_000;
+
+function readElicitTimeoutMs(): number {
+  const raw = process.env.MANIFEST_AGENT_ELICIT_TIMEOUT_MS?.trim();
+  if (!raw || !/^[1-9]\d*$/.test(raw)) return DEFAULT_ELICIT_TIMEOUT_MS;
+  const parsed = Number(raw);
+  return Number.isSafeInteger(parsed) ? parsed : DEFAULT_ELICIT_TIMEOUT_MS;
+}
 
 /**
  * Build the `RequestOptions` second-arg every `server.elicitInput()`
@@ -125,7 +127,7 @@ const ELICIT_TIMEOUT_MS = ((): number => {
 function elicitOptions(
   extra: RequestHandlerExtra<ServerRequest, ServerNotification>,
 ): RequestOptions {
-  return { timeout: ELICIT_TIMEOUT_MS, signal: extra.signal };
+  return { timeout: readElicitTimeoutMs(), signal: extra.signal };
 }
 
 /**

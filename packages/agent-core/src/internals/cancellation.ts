@@ -4,6 +4,7 @@ import {
   resolveCallSignal,
 } from '@manifest-network/manifest-mcp-core';
 import type { ProgressEvent } from '../types.js';
+import { emitProgress } from './safe-progress.js';
 
 /**
  * Build the structured cancellation error for an aborted/timed-out PRE-broadcast
@@ -105,7 +106,7 @@ export function makeCancellationScope(args: {
   const cancelOnAbort = (reason: unknown): never => {
     if (!cancelledEmitted) {
       cancelledEmitted = true;
-      onProgress?.({ kind: 'cancelled' });
+      emitProgress(onProgress, { kind: 'cancelled' });
     }
     throw makeError(reason);
   };

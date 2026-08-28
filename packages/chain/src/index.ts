@@ -8,6 +8,7 @@ import {
   cosmosTx,
   createMnemonicServer,
   createValidatedConfig,
+  gasMultiplierSchema,
   getAvailableModules,
   getModuleSubcommands,
   jsonResponse,
@@ -163,14 +164,7 @@ export class ChainMCPServer {
             .describe(
               'If true (default), wait for the transaction to be included in a block and return the full result (code, height, events). If false, broadcast at the Cosmos SYNC/CheckTx level and return immediately with the transaction hash only — no block-inclusion wait, no DeliverTx result.',
             ),
-          gas_multiplier: z
-            .number()
-            .finite()
-            .min(1)
-            .optional()
-            .describe(
-              'Gas simulation multiplier override for this transaction. Defaults to the server-configured value (typically 1.5). Increase if a transaction fails with out-of-gas errors.',
-            ),
+          gas_multiplier: gasMultiplierSchema(),
         },
         annotations: mutatingAnnotations('Broadcast a Cosmos SDK transaction', {
           // Generic tx — can carry destructive messages (close, redelegate
@@ -220,14 +214,9 @@ export class ChainMCPServer {
             .describe(
               'Arguments to the transaction as an array of strings (e.g., ["<to_address>", "1000umfx"] for bank send). Use array to preserve arguments with spaces. Omit for subcommands that take no arguments.',
             ),
-          gas_multiplier: z
-            .number()
-            .finite()
-            .min(1)
-            .optional()
-            .describe(
-              'Gas simulation multiplier override for this estimation. Defaults to the server-configured value (typically 1.5).',
-            ),
+          gas_multiplier: gasMultiplierSchema(
+            'Gas simulation multiplier override for this estimation. Defaults to the server-configured value (typically 1.5).',
+          ),
         },
         outputSchema: {
           module: z.string(),
@@ -370,6 +359,10 @@ export class ChainMCPServer {
 
   disconnect(): void {
     this.clientManager.disconnect();
+  }
+
+  disconnectWhenIdle(): Promise<void> {
+    return this.clientManager.disconnectWhenIdle();
   }
 }
 
