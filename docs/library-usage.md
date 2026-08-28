@@ -144,10 +144,12 @@ await client.deployApp({
 
 The result carries the branded `lease_uuid`, the `provider_uuid` / `provider_url`, the `state`, and (best-effort) `connection` info.
 
-**Partial-success errors.** This subsection describes the bound `client.deployApp` path (and the equivalent free function from `/deploy`). If the create-lease tx succeeds but a later step fails, it throws a `ManifestMCPError` whose message is prefixed `Deploy partially succeeded:` and whose `details.lease_uuid` names the lease. Three outcomes require different responses:
+**Partial-success errors.** This subsection describes the bound `client.deployApp` path (and the equivalent free function from `/deploy`). Most failures after the create-lease tx are wrapped in a `ManifestMCPError` whose message is prefixed `Deploy partially succeeded:` and whose `details.lease_uuid` names the lease. Three outcomes require different responses:
+
+One opt-in exception is not wrapped: if a caller supplies `pollOptions.checkChainState` and it reports a terminal on-chain state, `deployApp` rethrows `TerminalChainStateError` (a `ProviderApiError`) with `details.lease_uuid` and no partial-success prefix. The chain has already made that lease inactive, so surface the error rather than trying to close the lease again. The recovery sample below intentionally lets this error fall through to its final `throw`.
 
 - **`details.readiness_unconfirmed === true`** — the lease exists, the manifest is uploaded, and the provider never reported a failure. The poll ended without a verdict because of a deadline, an unreachable or rejecting status endpoint, an invalid/oversized response, an authentication failure, cancellation, or another non-verdict error. The app may be starting right now. **Do not close it**: for `DEPLOY_READINESS_UNCONFIRMED`, re-check with `client.appStatus` or wait longer with `waitForAppReady({ timeoutMs })`; for `OPERATION_CANCELLED`, respect the cancellation and retain the lease UUID for later diagnosis. `details.failedStep` is `poll`; `poll_reason` is present only for the typed deadline / provider-unreachable variants.
-- **`details.failedStep === 'poll'` without `readiness_unconfirmed`** — the provider returned an explicit failure verdict. Inspect diagnostics/logs for the cause, then close the failed lease; another readiness wait is not the remedy.
+- **`details.failedStep === 'poll'` without `readiness_unconfirmed`** — polling returned `PROVISION_FAILED`, a terminal lease state, or a state this client cannot interpret. Re-query status before acting: close a known ACTIVE lease only when its `provision_status` is recognized as failed; a known terminal lease is already inactive; preserve and report an unexpected/unrecognized state. Never close solely because `failedStep` is `poll`.
 - **Set-domain, upload, or pre-step callback failure** — the manifest never reached a running state, so closing the lease is the cleanup if you do not retry the failed step.
 
 ```ts
@@ -156,6 +158,11 @@ import {
   ManifestMCPError,
   ManifestMCPErrorCode,
 } from '@manifest-network/manifest-sdk';
+import {
+  LeaseState,
+  PROVISION_FAILED,
+  waitForAppReady,
+} from '@manifest-network/manifest-sdk/deploy';
 
 try {
   await client.deployApp(spec);
@@ -168,8 +175,20 @@ try {
       if (err.code !== ManifestMCPErrorCode.OPERATION_CANCELLED) {
         await waitForAppReady(client, { address, leaseUuid }, { timeoutMs: 600_000 });
       }
+    } else if (err.details.failedStep === 'poll') {
+      // Polling can stop on failure, an already-terminal state, or an uninterpretable state.
+      const current = await client.appStatus({ address, leaseUuid });
+      const provisionStatus = current.fredStatus?.provision_status;
+      if (
+        current.fredStatus?.state === LeaseState.LEASE_STATE_ACTIVE &&
+        provisionStatus !== undefined &&
+        PROVISION_FAILED.has(provisionStatus)
+      ) {
+        await client.stopApp({ leaseUuid });
+      }
+      // Known terminal states need no tx; preserve unexpected states for investigation.
     } else {
-      // Setup failed, or polling returned an explicit failure verdict.
+      // Setup failed before polling reached a running app.
       await client.stopApp({ leaseUuid });
     }
   }

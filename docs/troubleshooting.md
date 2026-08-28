@@ -111,7 +111,7 @@ Every variant carries `details.readiness_unconfirmed === true`, `details.partial
 |-------------|---------|------------------|
 | `DEPLOY_READINESS_UNCONFIRMED` + `readiness_unconfirmed` + either `failedStep: 'poll'` or `poll_reason` | Poll ended without a failure verdict | Inspect status; waiting may be appropriate |
 | `DEPLOY_READINESS_UNCONFIRMED` + `readiness_unconfirmed` + neither `failedStep` nor `poll_reason` | Orchestration final-state disagreement | Inspect and report a persistent provider/client mismatch |
-| Usually `QUERY_FAILED` + `failedStep: 'poll'` without `readiness_unconfirmed` | Provider returned an explicit failure verdict | Diagnose, then close the failed lease |
+| Usually `QUERY_FAILED` + `failedStep: 'poll'` without `readiness_unconfirmed` | Poll returned failure, terminal, or uninterpretable state | Re-query; close only a confirmed failed lease |
 
 Absence of `poll_reason` alone is not a discriminator.
 
@@ -134,9 +134,15 @@ For `DEPLOY_READINESS_UNCONFIRMED`, this is the branch where both `details.faile
 
 Inspect `app_status({ lease_uuid })` and `app_diagnostics({ lease_uuid })`. If the provider repeatedly omits or malforms the state, or reports a non-ACTIVE state after declaring readiness, capture the error message and provider response and report a provider/client compatibility issue. Do not blindly wait or redeploy; act on the verified lease state once the disagreement is understood.
 
-### Provider reported a failure during readiness polling
+### Readiness polling stopped on a provider state
 
-`details.failedStep === 'poll'` with no `details.readiness_unconfirmed` is a different partial-success outcome, normally coded `QUERY_FAILED`. Here the provider returned an explicit failure verdict, such as `PROVISION_FAILED` or a terminal/unexpected lease state. The manifest was uploaded, but there is no healthy app to protect: inspect `app_diagnostics` / logs for the cause, then close the lease. Waiting again is not the remedy for this shape.
+`details.failedStep === 'poll'` with no `details.readiness_unconfirmed` is a different partial-success outcome, normally coded `QUERY_FAILED`. The poll groups three causes into this shape:
+
+- ACTIVE with a recognized failed `provision_status`: inspect `app_diagnostics` / logs, then close the failed lease.
+- CLOSED, REJECTED, or EXPIRED: the lease is already inactive; no cleanup transaction is needed.
+- An unexpected or unrecognized lease state: the client cannot interpret the provider's answer; preserve the lease, capture `app_status` / diagnostics, and report the mismatch.
+
+Re-query the current status before acting. Do not close solely because `failedStep` is `poll`, and do not start another readiness wait after a confirmed failure.
 
 ### Set-domain, manifest-upload, or pre-step callback failure
 
