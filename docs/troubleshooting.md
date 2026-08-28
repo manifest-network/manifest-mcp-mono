@@ -111,7 +111,7 @@ Every variant carries `details.readiness_unconfirmed === true`, `details.partial
 |-------------|---------|------------------|
 | `DEPLOY_READINESS_UNCONFIRMED` + `readiness_unconfirmed` + either `failedStep: 'poll'` or `poll_reason` | Poll ended without a failure verdict | Inspect status; waiting may be appropriate |
 | `DEPLOY_READINESS_UNCONFIRMED` + `readiness_unconfirmed` + neither `failedStep` nor `poll_reason` | Orchestration final-state disagreement | Inspect and report a persistent provider/client mismatch |
-| Usually `QUERY_FAILED` + `failedStep: 'poll'` without `readiness_unconfirmed` | Poll returned failure, terminal, or uninterpretable state | Re-query; close only a confirmed failed lease |
+| Usually `QUERY_FAILED` + `failedStep: 'poll'` without `readiness_unconfirmed` | Poll returned failure, terminal, or uninterpretable state | Re-query chain and provider; close only a chain-ACTIVE, provider-confirmed failed lease |
 
 Absence of `poll_reason` alone is not a discriminator.
 
@@ -136,13 +136,15 @@ Inspect `app_status({ lease_uuid })` and `app_diagnostics({ lease_uuid })`. If t
 
 ### Readiness polling stopped on a provider state
 
-`details.failedStep === 'poll'` with no `details.readiness_unconfirmed` is a different partial-success outcome, normally coded `QUERY_FAILED`. The poll groups three causes into this shape:
+`details.failedStep === 'poll'` with no `details.readiness_unconfirmed` is a different partial-success outcome, normally coded `QUERY_FAILED`. Re-query `app_status` and treat its on-chain `chainState` as authoritative:
 
-- ACTIVE with a recognized failed `provision_status`: inspect `app_diagnostics` / logs, then close the failed lease.
-- CLOSED, REJECTED, or EXPIRED: the lease is already inactive; no cleanup transaction is needed.
-- An unexpected or unrecognized lease state: the client cannot interpret the provider's answer; preserve the lease, capture `app_status` / diagnostics, and report the mismatch.
+- Chain ACTIVE with a recognized failed provider `provision_status`: inspect `app_diagnostics` / logs, then close the failed lease, even if the provider's lease-state field now says terminal.
+- Chain CLOSED, REJECTED, or EXPIRED: the lease is already inactive; no cleanup transaction is needed.
+- Chain ACTIVE while the provider reports CLOSED, REJECTED, or EXPIRED without a recognized failed `provision_status`: this is a source mismatch. The lease remains active and may still be billing; do not mistake the provider state for on-chain closure.
+- An unexpected or unrecognized chain or provider state: preserve the lease, capture `app_status` / diagnostics, and report the mismatch.
+- `app_status` throws, or returns `providerError` without `fredStatus`: the re-check itself is inconclusive. Preserve both the original partial-deploy error and the lease, then retry diagnosis later.
 
-Re-query the current status before acting. Do not close solely because `failedStep` is `poll`, and do not start another readiness wait after a confirmed failure.
+Do not close solely because `failedStep` is `poll`, and do not start another readiness wait after a confirmed failure. A diagnostic re-query must not replace the original partial-deploy error if it fails.
 
 ### Set-domain, manifest-upload, or pre-step callback failure
 

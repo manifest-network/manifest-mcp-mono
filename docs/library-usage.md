@@ -149,7 +149,7 @@ The result carries the branded `lease_uuid`, the `provider_uuid` / `provider_url
 One opt-in exception is not wrapped: if a caller supplies `pollOptions.checkChainState` and it reports a terminal on-chain state, `deployApp` rethrows `TerminalChainStateError` (a `ProviderApiError`) with `details.lease_uuid` and no partial-success prefix. The chain has already made that lease inactive, so surface the error rather than trying to close the lease again. The recovery sample below intentionally lets this error fall through to its final `throw`.
 
 - **`details.readiness_unconfirmed === true`** — the lease exists, the manifest is uploaded, and the provider never reported a failure. The poll ended without a verdict because of a deadline, an unreachable or rejecting status endpoint, an invalid/oversized response, an authentication failure, cancellation, or another non-verdict error. The app may be starting right now. **Do not close it**: for `DEPLOY_READINESS_UNCONFIRMED`, re-check with `client.appStatus` or wait longer with `waitForAppReady({ timeoutMs })`; for `OPERATION_CANCELLED`, respect the cancellation and retain the lease UUID for later diagnosis. `details.failedStep` is `poll`; `poll_reason` is present only for the typed deadline / provider-unreachable variants.
-- **`details.failedStep === 'poll'` without `readiness_unconfirmed`** — polling returned `PROVISION_FAILED`, a terminal lease state, or a state this client cannot interpret. Re-query status before acting: close a known ACTIVE lease only when its `provision_status` is recognized as failed; a known terminal lease is already inactive; preserve and report an unexpected/unrecognized state. Never close solely because `failedStep` is `poll`.
+- **`details.failedStep === 'poll'` without `readiness_unconfirmed`** — polling returned `PROVISION_FAILED`, a terminal provider state, or a state this client cannot interpret. Re-query status before acting and treat `chainState` as authoritative: close when the chain still says ACTIVE and the provider returns a recognized failed `provision_status`; a terminal **on-chain** state is already inactive. A provider terminal state while the chain is ACTIVE is not proof that billing stopped. If its `provision_status` does not confirm failure, preserve and report the mismatch. If the re-query throws, or returns `providerError` without `fredStatus`, preserve the original deploy error and lease for later diagnosis. Never close solely because `failedStep` is `poll`.
 - **Set-domain, upload, or pre-step callback failure** — the manifest never reached a running state, so closing the lease is the cleanup if you do not retry the failed step.
 
 ```ts
@@ -157,6 +157,7 @@ import {
   asLeaseUuid,
   ManifestMCPError,
   ManifestMCPErrorCode,
+  sanitizeForLogging,
 } from '@manifest-network/manifest-sdk';
 import {
   LeaseState,
@@ -176,17 +177,50 @@ try {
         await waitForAppReady(client, { address, leaseUuid }, { timeoutMs: 600_000 });
       }
     } else if (err.details.failedStep === 'poll') {
-      // Polling can stop on failure, an already-terminal state, or an uninterpretable state.
-      const current = await client.appStatus({ address, leaseUuid });
-      const provisionStatus = current.fredStatus?.provision_status;
-      if (
-        current.fredStatus?.state === LeaseState.LEASE_STATE_ACTIVE &&
-        provisionStatus !== undefined &&
-        PROVISION_FAILED.has(provisionStatus)
-      ) {
-        await client.stopApp({ leaseUuid });
+      // Re-check both sources. A provider-terminal state does not make the chain inactive.
+      const current = await client
+        .appStatus({ address, leaseUuid })
+        .catch((statusErr: unknown) => {
+          console.warn(
+            'Could not re-check partial deploy status; preserving the original deploy error:',
+            sanitizeForLogging(statusErr),
+          );
+          return undefined;
+        });
+      if (current !== undefined) {
+        const chainState = current.chainState.state;
+        const chainActive = chainState === LeaseState.LEASE_STATE_ACTIVE;
+        const chainTerminal =
+          chainState === LeaseState.LEASE_STATE_CLOSED ||
+          chainState === LeaseState.LEASE_STATE_REJECTED ||
+          chainState === LeaseState.LEASE_STATE_EXPIRED;
+        const provisionStatus = current.fredStatus?.provision_status;
+        const providerReportsFailure =
+          provisionStatus !== undefined && PROVISION_FAILED.has(provisionStatus);
+
+        if (!chainTerminal) {
+          if (current.providerError !== undefined || current.fredStatus === undefined) {
+            // The chain may still be ACTIVE, but provider status could not be confirmed.
+            console.warn(
+              'Provider status re-check was inconclusive; preserving the lease:',
+              sanitizeForLogging(current.providerError ?? 'provider status was absent'),
+            );
+          } else if (chainActive && providerReportsFailure) {
+            await client.stopApp({ leaseUuid }).catch((cleanupErr: unknown) => {
+              console.warn(
+                'Failed to close the confirmed failed lease; preserving the original deploy error:',
+                sanitizeForLogging(cleanupErr),
+              );
+            });
+          } else {
+            // Provider/chain mismatch or an unrecognized state: preserve and investigate.
+            console.warn(
+              'Lease status is not safe to clean up automatically; preserving the lease.',
+            );
+          }
+        }
+        // Only CLOSED/REJECTED/EXPIRED on chain proves no cleanup tx is needed.
       }
-      // Known terminal states need no tx; preserve unexpected states for investigation.
     } else {
       // Setup failed before polling reached a running app.
       await client.stopApp({ leaseUuid });
