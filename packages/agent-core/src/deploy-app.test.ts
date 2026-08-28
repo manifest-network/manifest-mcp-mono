@@ -573,17 +573,17 @@ describe('deployApp — required live lease state (ENG-656)', () => {
     {
       label: 'CLOSED',
       statusState: 3,
-      renderedState: '3',
+      renderedState: 'status.state: 3',
     },
     {
-      label: 'null',
-      statusState: null,
-      renderedState: 'null',
+      label: 'PENDING',
+      statusState: 1,
+      renderedState: 'status.state: 1',
     },
     {
       label: 'a malformed object',
       statusState: { value: 2 },
-      renderedState: '{"value":2}',
+      renderedState: 'status.state: {"value":2}',
     },
   ])(
     'does not complete as ACTIVE when canonical status.state is $label',
@@ -3894,6 +3894,7 @@ describe('deployApp — sub-PR D defense-in-depth', () => {
     expect(err.details).toMatchObject({
       readiness_unconfirmed: true,
       lease_uuid: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+      partial: true,
       poll_reason: 'deadline',
       last_provision_status: 'provisioning',
     });
@@ -4458,6 +4459,8 @@ describe('deployApp — retry_set_domain decomposition (ENG-185 sub-PR E)', () =
     expect(err.message).toContain('readiness could not be confirmed');
     expect(err.details).toMatchObject({
       readiness_unconfirmed: true,
+      lease_uuid: leaseUuid,
+      partial: true,
       poll_reason: 'provider_unreachable',
       last_provision_status: 'provisioning',
     });

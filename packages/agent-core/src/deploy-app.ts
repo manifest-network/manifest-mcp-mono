@@ -778,6 +778,7 @@ export async function deployApp(
           {
             readiness_unconfirmed: true,
             lease_uuid: leaseUuid,
+            partial: true,
             poll_reason: err.reason,
             ...(err.details.last_state !== undefined && {
               last_state: err.details.last_state,
@@ -1649,6 +1650,7 @@ async function retrySetDomainAndComplete(
         {
           readiness_unconfirmed: true,
           lease_uuid: leaseUuid,
+          partial: true,
           poll_reason: err.reason,
           ...(err.details.last_state !== undefined && {
             last_state: err.details.last_state,
