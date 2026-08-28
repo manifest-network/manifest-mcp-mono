@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
+  BROWSER_BUNDLE_TIMEOUT_MS,
   bundleForBrowser,
   findNodeOnlyImports,
   hasWebCryptoFallback,
@@ -81,13 +82,17 @@ describe('manifest-sdk browser resolution + Node-builtin hygiene', () => {
   });
 
   for (const { subpath, specifier } of BROWSER_SAFE) {
-    it(`${subpath} bundles cleanly under browser conditions`, async () => {
-      const { code, unresolvedWarnings } = await bundleForBrowser(specifier);
-      expect(unallowedBrowserWarnings(unresolvedWarnings)).toEqual([]);
-      const leaks = findNodeOnlyImports(code);
-      expect(leaks, JSON.stringify(leaks, null, 2)).toEqual([]);
-      if (subpath === '.') expect(hasWebCryptoFallback(code)).toBe(true);
-    });
+    it(
+      `${subpath} bundles cleanly under browser conditions`,
+      async () => {
+        const { code, unresolvedWarnings } = await bundleForBrowser(specifier);
+        expect(unallowedBrowserWarnings(unresolvedWarnings)).toEqual([]);
+        const leaks = findNodeOnlyImports(code);
+        expect(leaks, JSON.stringify(leaks, null, 2)).toEqual([]);
+        if (subpath === '.') expect(hasWebCryptoFallback(code)).toBe(true);
+      },
+      BROWSER_BUNDLE_TIMEOUT_MS,
+    );
   }
 
   // Public-entry controls prove the SDK's own browser fences remain active.

@@ -2,6 +2,9 @@ import { builtinModules } from 'node:module';
 import { rolldown } from 'rolldown';
 import ts from 'typescript';
 
+/** Browser bundles parse multi-megabyte CosmJS graphs on slower CI runners. */
+export const BROWSER_BUNDLE_TIMEOUT_MS = 30_000;
+
 export interface BrowserBundle {
   code: string;
   unresolvedWarnings: string[];

@@ -1,6 +1,7 @@
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import {
+  BROWSER_BUNDLE_TIMEOUT_MS,
   bundleForBrowser,
   findNodeOnlyImports,
   hasWebCryptoFallback,
@@ -30,33 +31,41 @@ import {
  */
 
 describe('sdk-acceptance browser build (fail-closed; no UNGUARDED node-only)', () => {
-  it('bundles for the browser with no unallowed node-only resolution + clean chunk', async () => {
-    const { code, unresolvedWarnings } = await bundleForBrowser(
-      new URL('../dist/main.js', import.meta.url).pathname,
-    );
+  it(
+    'bundles for the browser with no unallowed node-only resolution + clean chunk',
+    async () => {
+      const { code, unresolvedWarnings } = await bundleForBrowser(
+        new URL('../dist/main.js', import.meta.url).pathname,
+      );
 
-    expect(unallowedBrowserWarnings(unresolvedWarnings)).toEqual([]);
-    const leaks = findNodeOnlyImports(code);
-    expect(leaks, JSON.stringify(leaks, null, 2)).toEqual([]);
+      expect(unallowedBrowserWarnings(unresolvedWarnings)).toEqual([]);
+      const leaks = findNodeOnlyImports(code);
+      expect(leaks, JSON.stringify(leaks, null, 2)).toEqual([]);
 
-    // POSITIVE: prove the Web-Crypto path shipped (not a node-shim) — the cosmjs guarded crypto degrades here.
-    expect(hasWebCryptoFallback(code)).toBe(true);
-  });
+      // POSITIVE: prove the Web-Crypto path shipped (not a node-shim) — the cosmjs guarded crypto degrades here.
+      expect(hasWebCryptoFallback(code)).toBe(true);
+    },
+    BROWSER_BUNDLE_TIMEOUT_MS,
+  );
 
-  it('the /reads tree-shaken chunk pulls NO tx/signer/codec symbols (tree-shakability belt)', async () => {
-    // Resolve the SDK /reads subpath via the installed package map (hoist-agnostic — the workspace
-    // hoists @manifest-network/manifest-sdk to the repo-root node_modules, so a literal
-    // ../node_modules/... path would miss it). import.meta.resolve honors the `import` condition.
-    const readsPath = fileURLToPath(
-      import.meta.resolve('@manifest-network/manifest-sdk/reads'),
-    );
-    const { code } = await bundleForBrowser(readsPath);
-    for (const sym of [
-      'executeTx',
-      'signArbitraryWithAmino',
-      'MsgFundCredit',
-      'fundCredits',
-    ])
-      expect(code.includes(sym), sym).toBe(false);
-  });
+  it(
+    'the /reads tree-shaken chunk pulls NO tx/signer/codec symbols (tree-shakability belt)',
+    async () => {
+      // Resolve the SDK /reads subpath via the installed package map (hoist-agnostic — the workspace
+      // hoists @manifest-network/manifest-sdk to the repo-root node_modules, so a literal
+      // ../node_modules/... path would miss it). import.meta.resolve honors the `import` condition.
+      const readsPath = fileURLToPath(
+        import.meta.resolve('@manifest-network/manifest-sdk/reads'),
+      );
+      const { code } = await bundleForBrowser(readsPath);
+      for (const sym of [
+        'executeTx',
+        'signArbitraryWithAmino',
+        'MsgFundCredit',
+        'fundCredits',
+      ])
+        expect(code.includes(sym), sym).toBe(false);
+    },
+    BROWSER_BUNDLE_TIMEOUT_MS,
+  );
 });
