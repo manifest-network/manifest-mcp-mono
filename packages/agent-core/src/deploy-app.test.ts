@@ -419,6 +419,115 @@ describe('deployApp replay — 01-fast-path-active', () => {
   });
 });
 
+describe('deployApp — required live lease state (ENG-656)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('fails closed when waitForAppReady omits status.state instead of completing as ACTIVE', async () => {
+    const spec = readFixture(
+      'skills',
+      'deploy-app',
+      '01-fast-path-active',
+      'input',
+      'spec.json',
+    ) as DeploySpec;
+    const readinessRaw = readFixture(
+      'skills',
+      'deploy-app',
+      '01-fast-path-active',
+      'input',
+      'readiness-response.json',
+    );
+    const metaHashResp = readFixture(
+      'skills',
+      'deploy-app',
+      '01-fast-path-active',
+      'input',
+      'meta-hash-response.json',
+    ) as { manifest_json: string; meta_hash_hex: string };
+
+    const leaseUuid = '33333333-3333-4333-8333-333333333333';
+    const providerUuid = '44444444-4444-4444-8444-444444444444';
+    const fred = await import('@manifest-network/manifest-mcp-fred');
+    vi.mocked(fred.checkDeploymentReadiness).mockResolvedValue(
+      readinessRaw as unknown as Awaited<
+        ReturnType<typeof fred.checkDeploymentReadiness>
+      >,
+    );
+    vi.mocked(fred.buildManifestPreview).mockResolvedValue({
+      manifest_json: metaHashResp.manifest_json,
+      meta_hash_hex: metaHashResp.meta_hash_hex,
+    } as Awaited<ReturnType<typeof fred.buildManifestPreview>>);
+    vi.mocked(fred.deployApp).mockResolvedValue({
+      lease_uuid: leaseUuid,
+      provider_uuid: providerUuid,
+      provider_url: 'https://provider.testnet.manifest.network',
+      state: 1 as never,
+      connection: { instances: [] },
+    } as unknown as Awaited<ReturnType<typeof fred.deployApp>>);
+    vi.mocked(fred.waitForAppReady).mockResolvedValue({
+      lease_uuid: leaseUuid,
+      provider_uuid: providerUuid,
+      provider_url: 'https://provider.testnet.manifest.network',
+      // The wrapper-level JSON state is present, so the post-poll classifier
+      // observes ACTIVE. The canonical live state used for DeployResult is
+      // status.state, which is intentionally absent in this malformed shape.
+      state: 'LEASE_STATE_ACTIVE',
+      status: {
+        instances: [
+          {
+            name: 'app',
+            status: 'running',
+            fqdn: 'app-33333333.testnet.manifest.app',
+            ports: {
+              '80/tcp': { host_ip: '0.0.0.0', host_port: 30001 },
+            },
+          },
+        ],
+      },
+    } as unknown as Awaited<ReturnType<typeof fred.waitForAppReady>>);
+
+    const core = await import('@manifest-network/manifest-mcp-core');
+    vi.mocked(core.cosmosEstimateFee).mockResolvedValue({
+      module: 'billing',
+      subcommand: 'create-lease',
+      gasEstimate: '142000',
+      fee: { amount: [{ denom: 'umfx', amount: '2300' }], gas: '142000' },
+    } as Awaited<ReturnType<typeof core.cosmosEstimateFee>>);
+
+    const { callbacks, progress, completed } = captureCallbacks();
+    const { deployApp } = await import('./deploy-app.js');
+    const clientManager = makeMockClientManager();
+    const walletProvider = makeMockWalletProvider();
+
+    let caughtErr: unknown = null;
+    try {
+      await deployApp(spec, callbacks, {
+        clientManager: clientManager as unknown as Parameters<
+          typeof deployApp
+        >[2]['clientManager'],
+        walletProvider,
+      });
+    } catch (err) {
+      caughtErr = err;
+    }
+
+    expect(caughtErr).toBeInstanceOf(ManifestMCPError);
+    expect((caughtErr as ManifestMCPError).code).toBe(
+      ManifestMCPErrorCode.INVALID_CONFIG,
+    );
+    expect((caughtErr as Error).message).toMatch(/missing.*status\.state/i);
+    expect(progress.some((event) => event.kind === 'app_ready_confirmed')).toBe(
+      false,
+    );
+    expect(progress.some((event) => event.kind === 'success_rendered')).toBe(
+      false,
+    );
+    expect(completed).toHaveLength(0);
+  });
+});
+
 describe('deployApp — ENG-258 SKU pin resolution + ambiguity elicitation', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -4132,6 +4241,42 @@ describe('deployApp — retry_set_domain decomposition (ENG-185 sub-PR E)', () =
     expect((result?.urls ?? []).length).toBeGreaterThan(0);
     expect(result?.urls).toContain(`https://${fqdn}/`);
     expect(result?.customDomain).toBe('app.testnet.manifest.app');
+  });
+
+  it('ENG-656: a missing pollLeaseUntilReady state cannot complete retry_set_domain as ACTIVE', async () => {
+    const { run, baseCapture } = await setupRetryScenario({
+      pollLeaseUntilReady: vi.fn().mockResolvedValue({
+        instances: [
+          {
+            name: 'web-1',
+            status: 'running',
+            fqdn: 'app-11111111.testnet.manifest.app',
+            ports: {
+              '80/tcp': { host_ip: '0.0.0.0', host_port: 30001 },
+            },
+          },
+        ],
+      }),
+    });
+
+    const { caughtErr, result } = await run();
+
+    expect(result).toBeUndefined();
+    expect(caughtErr).toBeInstanceOf(ManifestMCPError);
+    expect((caughtErr as ManifestMCPError).code).toBe(
+      ManifestMCPErrorCode.TX_FAILED,
+    );
+    expect((caughtErr as Error).message).toContain('retry_set_domain');
+    expect((caughtErr as Error).message).toContain('needs_wait');
+    expect(
+      baseCapture.progress.some(
+        (event) => event.kind === 'app_ready_confirmed',
+      ),
+    ).toBe(false);
+    expect(
+      baseCapture.progress.some((event) => event.kind === 'success_rendered'),
+    ).toBe(false);
+    expect(baseCapture.completed).toHaveLength(0);
   });
 
   it('reuses the canonical retry domain for broadcast, persistence, and result output', async () => {

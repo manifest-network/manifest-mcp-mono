@@ -667,6 +667,7 @@ export async function deployApp(
   //   - `fredResult.connection` (`ConnectionDetails | undefined`) initial.
   //   - `pollResult.status` (`FredLeaseStatus`) post-poll.
   let liveState: FredDeployAppResult['state'] | undefined = fredResult.state;
+  let liveStateSource = 'fred deployApp response state';
   let liveConnection: ConnectionDetails | FredLeaseStatus | undefined =
     fredResult.connection;
 
@@ -864,8 +865,24 @@ export async function deployApp(
       provider_url: pollResult.provider_url,
     };
     liveState = pollResult.status.state;
+    liveStateSource = 'waitForAppReady response status.state';
     liveConnection = pollResult.status;
   }
+
+  // Decode the authoritative live state before emitting any success-shaped
+  // callback. The post-poll wrapper also carries a JSON `state`, but
+  // DeployResult is built from the canonical numeric `status.state`; if that
+  // field is absent, the wrapper-level value must not manufacture ACTIVE.
+  // This deliberately matches retry_set_domain's fail-closed decoder below.
+  const decoded = decodeLeaseState(liveState);
+  if (decoded === undefined) {
+    const reason =
+      liveState === undefined
+        ? `Missing lease state from ${liveStateSource}. Cannot safely classify; refusing to silently coerce to ACTIVE.`
+        : `Unrecognized lease state from ${liveStateSource}: ${String(liveState)}. Cannot safely classify; refusing to silently coerce to ACTIVE.`;
+    throw new ManifestMCPError(ManifestMCPErrorCode.INVALID_CONFIG, reason);
+  }
+  const leaseStateDecoded: LeaseStateName = decoded;
 
   // 'active' (initial OR post-poll merge): emit + fall through to persist.
   emitProgress(callbacks.onProgress, {
@@ -889,42 +906,6 @@ export async function deployApp(
   });
 
   // --- Build typed DeployResult --------------------------------------
-  // F1 fix: decode lease state via the canonical lease-state.decode()
-  // (handles int + LEASE_STATE_* string + undefined paths exhaustively).
-  //
-  // C3 fix (defensive bias correction; checklist item #16): distinguish
-  // absent state (undefined → default ACTIVE as defense-in-depth against
-  // legacy/mocked shapes that bypass fred's required-state contract —
-  // fred itself always sets `state` in `DeployAppResult`)
-  // from UNRECOGNIZED state (decode returned undefined for a value that
-  // WAS provided → likely a terminal/unknown chain emission that must
-  // NOT be silently classified as ACTIVE). For the unrecognized case,
-  // throw `INVALID_CONFIG` so callers see the empirical mismatch
-  // instead of consuming a misleading ACTIVE.
-  // Reads via `liveState` (Copilot fix-3): carries the post-poll
-  // `pollResult.status.state` (numeric `LeaseState`) when the needs_wait
-  // branch fired; falls back to `fredResult.state` for the direct-active
-  // path. Effective type is `LeaseState | undefined` — numeric only after
-  // the fix-3 type-tightening. The `undefined` branch handles the C3
-  // defense-in-depth case above (legacy/mocked shapes that bypass fred's
-  // required-state contract). The numeric branch decodes the enum via
-  // `decodeLeaseState`; the `decoded === undefined` arm catches
-  // UNRECOGNIZED enum values (defense-in-depth against future chain
-  // emissions that add new states beyond the current `LeaseStateName`
-  // union).
-  let leaseStateDecoded: LeaseStateName;
-  if (liveState === undefined) {
-    leaseStateDecoded = 'LEASE_STATE_ACTIVE';
-  } else {
-    const decoded = decodeLeaseState(liveState);
-    if (decoded === undefined) {
-      throw new ManifestMCPError(
-        ManifestMCPErrorCode.INVALID_CONFIG,
-        `Unrecognized lease state from fred deployApp response: ${String(liveState)}. Cannot safely classify; refusing to silently coerce to ACTIVE.`,
-      );
-    }
-    leaseStateDecoded = decoded;
-  }
 
   // F4 fix: derive `urls` from `extractRunningEndpoints(connection)` for
   // multi-FQDN dedup (matches CJS pipeline behavior). fred's
