@@ -8,7 +8,7 @@ This is the deep dive. For a 60-second start, see the [SDK README](../packages/s
 npm install @manifest-network/manifest-sdk @manifest-network/manifestjs
 ```
 
-> **Browser compatibility.** The SDK barrel and every subpath except `/node` are browser-safe (built `platform: "neutral"`, no Node builtins). `/node` is the one node-only entry (the SSRF-guarded fetch). Use a `cosmos-kit` / Keplr / Leap wallet for browser apps.
+> **Browser compatibility.** The SDK barrel and its universal subpaths are browser-safe. `/node` and `/orchestration` are Node-only and mapped to fail fast under browser resolution: `/node` owns the SSRF-guarded transports, while `/orchestration` can persist deployment manifests with Node filesystem/crypto APIs. Use a `cosmos-kit` / Keplr / Leap wallet with the universal client and capability subpaths for browser apps.
 
 ## Choosing a client
 
@@ -330,7 +330,7 @@ Cancelling also aborts the SDK's own rate-limit wait, so a cancelled call gives 
 
 ## Orchestration tier (optional)
 
-`@manifest-network/manifest-sdk/orchestration` adds four plan → confirm → recover flows on top of the capability tier (`deployApp`, `manageDomain`, `closeLease`, `troubleshootDeployment`), plus `loadChainDenomMap`, a loader/helper that preloads chain-data for denom humanization. The four orchestrators are **callback-driven** — `fn(input, callbacks, opts)` with `onPlan` / `onConfirm` / `onProgress` — a different shape from the capability tier's `fn(ctx, input)`, so the host can drive a human-in-the-loop UI. Most apps compose the capability tier directly and don't need this.
+The Node-only `@manifest-network/manifest-sdk/orchestration` subpath adds four plan → confirm → recover flows on top of the capability tier (`deployApp`, `manageDomain`, `closeLease`, `troubleshootDeployment`), plus `loadChainDenomMap`, a loader/helper that preloads chain-data for denom humanization. The four orchestrators are **callback-driven** — `fn(input, callbacks, opts)` with `onPlan` / `onConfirm` / `onProgress` — a different shape from the capability tier's `fn(ctx, input)`, so the host can drive a human-in-the-loop UI. The subpath is Node-only because `deployApp` can persist deployment manifests with Node filesystem/crypto APIs. Browser apps should compose the universal capability tier directly.
 
 ## Low-level escape hatch
 
@@ -373,7 +373,7 @@ import { requestFaucet, fetchFaucetStatus } from '@manifest-network/manifest-sdk
 
 ## Browser quirks
 
-- Don't import `@manifest-network/manifest-sdk/node` (or `…/manifest-mcp-node`) in a browser bundle — `/node` is mapped so a browser bundler fails fast rather than pulling Node builtins.
+- Don't import `@manifest-network/manifest-sdk/node`, `@manifest-network/manifest-sdk/orchestration`, or `…/manifest-mcp-node` in a browser bundle — the two SDK subpaths are mapped so a browser bundler fails fast rather than pulling Node builtins.
 - Many chain fields (heights, gas, supply) round-trip as `bigint`, which `JSON.stringify` rejects — supply a small replacer that coerces `bigint` to a string when serializing chain responses.
 - The browser blocks cross-origin `fetch` by default — run a CORS proxy in dev or push provider calls server-side, and pass your CORS-aware `fetch` to the client so URL validation stays intact.
 

@@ -53,7 +53,8 @@
     },
     "./orchestration": {
       "types": "./dist/orchestration.d.ts",
-      "import": "./dist/orchestration.js"
+      "node": "./dist/orchestration.js",
+      "default": null
     },
     "./chain": {
       "types": "./dist/chain.d.ts",
@@ -78,6 +79,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@cosmjs/proto-signing": "0.32.4",
     "@manifest-network/manifest-mcp-core": "0.21.0",
     "@manifest-network/manifest-mcp-fred": "0.21.0",
     "@manifest-network/manifest-agent-core": "0.21.0",
