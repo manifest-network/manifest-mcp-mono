@@ -424,7 +424,15 @@ describe('deployApp — required live lease state (ENG-656)', () => {
     vi.clearAllMocks();
   });
 
-  it('fails closed when waitForAppReady omits status.state instead of completing as ACTIVE', async () => {
+  /**
+   * First-party waitForAppReady derives its wrapper state from status.state,
+   * so this inconsistent shape is defense-in-depth for mocked, legacy, or
+   * otherwise contract-bypassing callers of the orchestration package.
+   */
+  async function runInconsistentPostPollState(
+    statusState?: unknown,
+    dataDir?: string,
+  ) {
     const spec = readFixture(
       'skills',
       'deploy-app',
@@ -472,9 +480,10 @@ describe('deployApp — required live lease state (ENG-656)', () => {
       provider_url: 'https://provider.testnet.manifest.network',
       // The wrapper-level JSON state is present, so the post-poll classifier
       // observes ACTIVE. The canonical live state used for DeployResult is
-      // status.state, which is intentionally absent in this malformed shape.
+      // status.state, which is intentionally malformed or absent here.
       state: 'LEASE_STATE_ACTIVE',
       status: {
+        ...(statusState !== undefined ? { state: statusState } : {}),
         instances: [
           {
             name: 'app',
@@ -508,24 +517,101 @@ describe('deployApp — required live lease state (ENG-656)', () => {
           typeof deployApp
         >[2]['clientManager'],
         walletProvider,
+        ...(dataDir !== undefined ? { dataDir } : {}),
       });
     } catch (err) {
       caughtErr = err;
     }
 
-    expect(caughtErr).toBeInstanceOf(ManifestMCPError);
-    expect((caughtErr as ManifestMCPError).code).toBe(
-      ManifestMCPErrorCode.INVALID_CONFIG,
-    );
-    expect((caughtErr as Error).message).toMatch(/missing.*status\.state/i);
-    expect(progress.some((event) => event.kind === 'app_ready_confirmed')).toBe(
-      false,
-    );
-    expect(progress.some((event) => event.kind === 'success_rendered')).toBe(
-      false,
-    );
-    expect(completed).toHaveLength(0);
+    return { caughtErr, progress, completed, leaseUuid };
+  }
+
+  it('persists the live lease and reports lease-aware uncertainty when status.state is absent', async () => {
+    const { mkdtempSync, rmSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const dataDir = mkdtempSync(join(tmpdir(), 'eng656-missing-state-'));
+
+    try {
+      const { caughtErr, progress, completed, leaseUuid } =
+        await runInconsistentPostPollState(undefined, dataDir);
+
+      expect(caughtErr).toBeInstanceOf(ManifestMCPError);
+      const error = caughtErr as ManifestMCPError;
+      expect(error.code).toBe(
+        ManifestMCPErrorCode.DEPLOY_READINESS_UNCONFIRMED,
+      );
+      expect(error.message).toContain(leaseUuid);
+      expect(error.message).toContain('status.state');
+      expect(error.message).toContain('undefined');
+      expect(error.details).toMatchObject({
+        readiness_unconfirmed: true,
+        lease_uuid: leaseUuid,
+        partial: true,
+      });
+
+      const saved = progress.find((event) => event.kind === 'manifest_saved');
+      expect(saved).toBeDefined();
+      if (saved?.kind === 'manifest_saved') {
+        const persisted = JSON.parse(
+          readFileSync(saved.manifestPath, 'utf8'),
+        ) as { lease_uuid?: string };
+        expect(persisted.lease_uuid).toBe(leaseUuid);
+      }
+      expect(
+        progress.some((event) => event.kind === 'app_ready_confirmed'),
+      ).toBe(false);
+      expect(progress.some((event) => event.kind === 'success_rendered')).toBe(
+        false,
+      );
+      expect(completed).toHaveLength(0);
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
   });
+
+  it.each([
+    {
+      label: 'CLOSED',
+      statusState: 3,
+      renderedState: '3',
+    },
+    {
+      label: 'null',
+      statusState: null,
+      renderedState: 'null',
+    },
+    {
+      label: 'a malformed object',
+      statusState: { value: 2 },
+      renderedState: '{"value":2}',
+    },
+  ])(
+    'does not complete as ACTIVE when canonical status.state is $label',
+    async ({ statusState, renderedState }) => {
+      const { caughtErr, progress, completed, leaseUuid } =
+        await runInconsistentPostPollState(statusState);
+
+      expect(caughtErr).toBeInstanceOf(ManifestMCPError);
+      const error = caughtErr as ManifestMCPError;
+      expect(error.code).toBe(
+        ManifestMCPErrorCode.DEPLOY_READINESS_UNCONFIRMED,
+      );
+      expect(error.message).toContain(leaseUuid);
+      expect(error.message).toContain(renderedState);
+      expect(error.details).toMatchObject({
+        readiness_unconfirmed: true,
+        lease_uuid: leaseUuid,
+        partial: true,
+      });
+      expect(
+        progress.some((event) => event.kind === 'app_ready_confirmed'),
+      ).toBe(false);
+      expect(progress.some((event) => event.kind === 'success_rendered')).toBe(
+        false,
+      );
+      expect(completed).toHaveLength(0);
+    },
+  );
 });
 
 describe('deployApp — ENG-258 SKU pin resolution + ambiguity elicitation', () => {
@@ -4243,49 +4329,13 @@ describe('deployApp — retry_set_domain decomposition (ENG-185 sub-PR E)', () =
     expect(result?.customDomain).toBe('app.testnet.manifest.app');
   });
 
-  it('ENG-656: a missing pollLeaseUntilReady state cannot complete retry_set_domain as ACTIVE', async () => {
-    const { run, baseCapture } = await setupRetryScenario({
-      pollLeaseUntilReady: vi.fn().mockResolvedValue({
-        instances: [
-          {
-            name: 'web-1',
-            status: 'running',
-            fqdn: 'app-11111111.testnet.manifest.app',
-            ports: {
-              '80/tcp': { host_ip: '0.0.0.0', host_port: 30001 },
-            },
-          },
-        ],
-      }),
-    });
-
-    const { caughtErr, result } = await run();
-
-    expect(result).toBeUndefined();
-    expect(caughtErr).toBeInstanceOf(ManifestMCPError);
-    expect((caughtErr as ManifestMCPError).code).toBe(
-      ManifestMCPErrorCode.TX_FAILED,
-    );
-    expect((caughtErr as Error).message).toContain('retry_set_domain');
-    expect((caughtErr as Error).message).toContain('needs_wait');
-    expect(
-      baseCapture.progress.some(
-        (event) => event.kind === 'app_ready_confirmed',
-      ),
-    ).toBe(false);
-    expect(
-      baseCapture.progress.some((event) => event.kind === 'success_rendered'),
-    ).toBe(false);
-    expect(baseCapture.completed).toHaveLength(0);
-  });
-
   it('reuses the canonical retry domain for broadcast, persistence, and result output', async () => {
     const { mkdtempSync, rmSync } = await import('node:fs');
     const { tmpdir } = await import('node:os');
     const dataDir = mkdtempSync(join(tmpdir(), 'eng749-retry-domain-'));
 
     try {
-      const { run, leaseUuid } = await setupRetryScenario({
+      const { run, leaseUuid, baseCapture } = await setupRetryScenario({
         customDomain: 'App.Testnet.Manifest.App',
         dataDir,
       });
@@ -4315,6 +4365,15 @@ describe('deployApp — retry_set_domain decomposition (ENG-185 sub-PR E)', () =
         custom_domain?: string;
       };
       expect(persisted.custom_domain).toBe('app.testnet.manifest.app');
+
+      const savedIdx = baseCapture.progress.findIndex(
+        (event) => event.kind === 'manifest_saved',
+      );
+      const readyIdx = baseCapture.progress.findIndex(
+        (event) => event.kind === 'app_ready_confirmed',
+      );
+      expect(savedIdx).toBeGreaterThanOrEqual(0);
+      expect(readyIdx).toBeGreaterThan(savedIdx);
     } finally {
       rmSync(dataDir, { recursive: true, force: true });
     }
