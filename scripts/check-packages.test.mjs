@@ -20,6 +20,12 @@ function inspect(files, sources = {}, dependencies = {}) {
   }).failures;
 }
 
+test('sabotage: rejects a package with no recognized shipped sources', () => {
+  assert.deepEqual(inspect(['dist/index.json']), [
+    '@example/package: no shipped JS/declaration sources found; dependency gate is vacuous',
+  ]);
+});
+
 test('sabotage: rejects a nested runtime dependency', () => {
   const path = 'dist/node_modules/private-dep/index.js';
   assert.deepEqual(inspect([path]), [

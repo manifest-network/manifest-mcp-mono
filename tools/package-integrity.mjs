@@ -61,6 +61,11 @@ export function inspectPackedPackage({
       `${packageJson.name}: npm pack contains no dist/ files; run the build first`,
     );
   }
+  if (sourceFiles.length === 0) {
+    failures.push(
+      `${packageJson.name}: no shipped JS/declaration sources found; dependency gate is vacuous`,
+    );
+  }
 
   for (const path of files) {
     // Declaration bundlers may materialize external declarations here. Runtime
