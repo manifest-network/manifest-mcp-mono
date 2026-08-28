@@ -126,10 +126,13 @@ import type {
  *   `'no'` or `onPlan` returns `'cancel'` (deliberate user cancellation —
  *   ENG-272).
  * @throws `ManifestMCPError(DEPLOY_READINESS_UNCONFIRMED)` after broadcast
- *   when the final provider state cannot be confirmed as ACTIVE. Carries
- *   `details = { readiness_unconfirmed: true, readiness_reason,
- *   lease_uuid, partial: true }` so callers diagnose the existing paid lease
- *   instead of retrying the deploy.
+ *   when readiness cannot be safely confirmed. Every variant carries
+ *   `details = { readiness_unconfirmed: true, lease_uuid, partial: true }`.
+ *   A poll that ends without a verdict additionally carries `poll_reason` and
+ *   may carry `last_state` / `last_provision_status`. A returned final-state
+ *   mismatch carries `readiness_reason: 'final_state_mismatch'`, `operation`,
+ *   `state_source`, a bounded `observed_state`, and available provider context.
+ *   Callers must diagnose the existing paid lease instead of retrying deploy.
  *
  * Errors from fred's broadcast or core's recovery primitives surface as
  * typed `ManifestMCPError`s. Partial-success failures with applicable
