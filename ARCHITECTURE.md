@@ -308,7 +308,7 @@ The `CosmwasmMCPServer` class takes a `CosmwasmMCPServerOptions` (config + walle
 
 The agent-core package is the TypeScript orchestration surface for Manifest agent flows -- `deployApp`, `manageDomain`, `troubleshootDeployment`, `closeLease`. It is **not** an MCP server; it exposes typed, callback-driven functions so different host surfaces (chat, conversational UI, autonomous daemon) can drive the same plan → confirm → progress → recover lifecycle in lockstep -- a fix in its recovery branch fixes every host surface at once.
 
-Each function takes a typed args object plus a callbacks object. The mutating flows expose `onConfirm` / `onProgress` / `onComplete` / `onFailure`; only `deployApp` adds `onPlan` and an enriched `onFailure(FailureEnvelope, RecoveryOption[]) => Promise<RecoveryChoice>` that drives partial-success recovery (retry the set-domain step, salvage the lease without the domain, cancel a pending lease, or close an active one -- see `RecoveryOptionId` in `src/types.ts`). Node-only paths (e.g. `saveManifest`) use dynamic `node:fs` imports so the build stays `platform: "neutral"`. The SSRF-guarded fetch is re-exported from a Node-only `@manifest-network/manifest-agent-core/guarded-fetch` subpath (mirrors core's split). Depends on `core` + `fred`.
+Each function takes a typed args object plus a callbacks object. The mutating flows expose `onConfirm` / `onProgress` / `onComplete` / `onFailure`; only `deployApp` adds `onPlan` and an enriched `onFailure(FailureEnvelope, RecoveryOption[]) => Promise<RecoveryChoice>` that drives partial-success recovery (retry the set-domain step, salvage the lease without the domain, cancel a pending lease, or close an active one -- see `RecoveryOptionId` in `src/types.ts`). Node-only paths (e.g. `saveManifest`) use dynamic `node:fs` imports so the build stays `platform: "neutral"`; those imports still make the orchestration graph Node-only for consumers. The SSRF-guarded fetch is re-exported from a Node-only `@manifest-network/manifest-agent-core/guarded-fetch` subpath (mirrors core's split). Depends on `core` + `fred`.
 
 Source: `deploy-app.ts`, `manage-domain.ts`, `troubleshoot.ts`, `close-lease.ts` (one per flow), `types.ts` (frozen callback/recovery shapes), `guarded-fetch.ts` (subpath entry), plus `internals/` render + denom-humanize helpers.
 
@@ -375,7 +375,7 @@ It exposes an aggregating root barrel plus scoped, tree-shakable subpaths — ea
 | `…/reads` | `reads.ts` | Branded read functions (`getBalance`, `getLease`, `getSKUs`, …) |
 | `…/catalog` | `catalog.ts` | Catalog / readiness helpers (`checkDeploymentReadiness`, …) |
 | `…/deploy` | `deploy.ts` | Deploy lifecycle (`buildManifest`, `deployApp`, `waitForLeaseStatus`, `isLeaseFailureTerminal`, …) |
-| `…/orchestration` | `orchestration.ts` | Four callback-driven agent-core flows (`deployApp`, `manageDomain`, `closeLease`, `troubleshootDeployment`) plus the `loadChainDenomMap` loader/helper |
+| `…/orchestration` | `orchestration.ts` | Node-only: four callback-driven agent-core flows (`deployApp`, `manageDomain`, `closeLease`, `troubleshootDeployment`) plus the `loadChainDenomMap` loader/helper |
 | `…/node` | `node.ts` | Node-only: `createFredClientNode`, `createNodeEventTransport`, the SSRF-guarded `createGuardedFetch`, and `isBlocked` |
 
 The public API surface is guarded by `publint` + `@arethetypeswrong/core` (run in the tsdown build), not api-extractor (ENG-446). See [`packages/sdk/README.md`](packages/sdk/README.md) and the cookbook [`docs/library-usage.md`](docs/library-usage.md).
@@ -505,7 +505,7 @@ docker compose -f e2e/docker-compose.yml down -v --remove-orphans
 
 ## Build and test
 
-- **Build**: `tsdown` (unbundled ESM output with sourcemaps and `.d.ts` declarations). Core, chain, lease, fred, cosmwasm, agent-core, agent, and sdk use `platform: "neutral"` for browser compatibility (Node-only code paths go through dynamic imports); node uses `platform: "node"`.
+- **Build**: `tsdown` (unbundled ESM output with sourcemaps and `.d.ts` declarations). Core, chain, lease, fred, cosmwasm, agent-core, agent, and sdk use `platform: "neutral"`; browser compatibility is enforced separately by conditional exports and browser-bundle tests because dynamic Node imports still resolve during bundling. Node uses `platform: "node"`.
 - **Unit tests**: Vitest, co-located `*.test.ts` files
 - **E2E tests**: See [E2E testing](#e2e-testing) above
 - **Type checking**: `tsc --noEmit`

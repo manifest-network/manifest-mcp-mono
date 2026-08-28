@@ -34,12 +34,38 @@
  * mode 0700 (chmod-tightens an existing parent that was previously
  * looser).
  *
- * **Dynamic node-import discipline** (mirrors `guarded-fetch.ts`): the
- * `node:fs` / `node:path` / `node:crypto` imports are deferred to call
- * time so module load doesn't violate the `platform: 'neutral'` build
- * target. A `typeof process` check throws a clear "Node-only API" error
- * if invoked outside a Node-like runtime.
+ * **Runtime Node-builtin discipline:** filesystem / path / crypto modules
+ * are obtained through `process.getBuiltinModule` at call time. That keeps
+ * the `platform: 'neutral'` module graph browser-bundleable while retaining
+ * a clear "Node-only API" error when persistence is invoked elsewhere.
  */
+
+import { getNodeBuiltin } from './node-builtins.js';
+
+interface NodeFsBuiltin {
+  mkdirSync(
+    path: string,
+    options: { recursive: true; mode: number },
+  ): string | undefined;
+  chmodSync(path: string, mode: number): void;
+  writeFileSync(path: string, data: string, options: { mode: number }): void;
+  renameSync(oldPath: string, newPath: string): void;
+}
+
+interface NodeHash {
+  update(data: string): NodeHash;
+  digest(encoding: 'hex'): string;
+}
+
+interface NodeCryptoBuiltin {
+  createHash(algorithm: 'sha256'): NodeHash;
+  randomUUID(): string;
+}
+
+interface NodePathBuiltin {
+  join(...paths: string[]): string;
+  resolve(...paths: string[]): string;
+}
 
 /** SHA-256 hex digest — 64 lowercase hex chars. */
 const META_HASH_RE = /^[0-9a-f]{64}$/i;
@@ -126,10 +152,10 @@ export class SaveManifestError extends Error {
 export async function saveManifest(
   input: SaveManifestInput,
 ): Promise<SaveManifestResult> {
-  if (
-    typeof process === 'undefined' ||
-    typeof process.versions?.node !== 'string'
-  ) {
+  const fs = getNodeBuiltin<NodeFsBuiltin>('fs');
+  const crypto = getNodeBuiltin<NodeCryptoBuiltin>('crypto');
+  const path = getNodeBuiltin<NodePathBuiltin>('path');
+  if (!fs || !crypto || !path) {
     throw new SaveManifestError(
       'platform_unsupported',
       'saveManifest: requires Node.js runtime (node:fs / node:crypto / node:path)',
@@ -204,13 +230,9 @@ export async function saveManifest(
     !Array.isArray(parsedRec.services);
   const format: 'single' | 'stack' = isStack ? 'stack' : 'single';
 
-  // Dynamic imports — node-only deps deferred per the `platform: 'neutral'`
-  // build target. Mirrors `guarded-fetch.ts`'s lazy-init pattern.
-  const { mkdirSync, chmodSync, writeFileSync, renameSync } = await import(
-    'node:fs'
-  );
-  const { createHash, randomUUID } = await import('node:crypto');
-  const { join, resolve: pathResolve } = await import('node:path');
+  const { mkdirSync, chmodSync, writeFileSync, renameSync } = fs;
+  const { createHash, randomUUID } = crypto;
+  const { join, resolve: pathResolve } = path;
 
   // SHA-256 audit: catches the most common foot-gun (passing the
   // structured spec where the canonical manifest_json was expected).

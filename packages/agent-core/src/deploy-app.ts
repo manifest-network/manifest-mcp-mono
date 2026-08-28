@@ -1774,8 +1774,9 @@ async function tryPersistManifest(
 ): Promise<string | undefined> {
   if (!args.dataDir) return undefined;
   try {
-    // Dynamic import keeps save-manifest's `node:fs` dep out of the
-    // platform-neutral build path until needed.
+    // Keep the optional persistence implementation lazy. saveManifest itself
+    // resolves Node builtins through process.getBuiltinModule at call time, so
+    // this dynamic edge remains safe for browser bundlers.
     const { saveManifest } = await import('./internals/save-manifest.js');
     const result = await saveManifest({
       leaseUuid: args.leaseUuid,

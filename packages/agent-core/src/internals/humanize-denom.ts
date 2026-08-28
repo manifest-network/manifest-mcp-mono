@@ -15,10 +15,10 @@
  * is rendered untouched (denom kept as-is, amount printed as integer)
  * because we can't safely guess its exponent.
  *
- * **Dynamic node-import discipline** (mirrors `guarded-fetch.ts` +
- * `save-manifest.ts`): the `node:fs` import is deferred to call time so
- * module load doesn't violate the package's `platform: 'neutral'` build
- * target. `loadChainDenomMap` is therefore async; consumers must
+ * **Runtime Node-builtin discipline** (mirrors `save-manifest.ts`): the
+ * filesystem module is obtained through `process.getBuiltinModule` at call
+ * time, leaving no bundler-visible Node import in this universal module.
+ * `loadChainDenomMap` remains async; consumers must
  * `await` the result. The other 3 exports (`humanizeCoin`,
  * `humanizeBalances`, `denomToSymbol`) remain pure-sync since they take
  * a pre-loaded `DenomMap` as input.
@@ -37,6 +37,11 @@
  */
 
 import type { DenomLookup, DenomMap } from '../types.js';
+import { getNodeBuiltin } from './node-builtins.js';
+
+interface NodeFsBuiltin {
+  readFileSync(path: string, encoding: 'utf8'): string;
+}
 
 // Re-export the public types for convenience to existing internal consumers
 // (this file's pre-PR-3 history exported DenomLookup + DenomMap directly).
@@ -58,10 +63,8 @@ export async function loadChainDenomMap(
   chainDataFilePath?: string,
 ): Promise<DenomMap> {
   if (!chainDataFilePath) return EMPTY_DENOM_MAP;
-  if (
-    typeof process === 'undefined' ||
-    typeof process.versions?.node !== 'string'
-  ) {
+  const fs = getNodeBuiltin<NodeFsBuiltin>('fs');
+  if (!fs) {
     // Lazy node-only dep — refuse outside Node-like runtimes rather than
     // silently no-op'ing (which would hide a misconfiguration).
     throw new Error(
@@ -70,8 +73,7 @@ export async function loadChainDenomMap(
   }
   let raw: unknown;
   try {
-    const { readFileSync } = await import('node:fs');
-    raw = JSON.parse(readFileSync(chainDataFilePath, 'utf8'));
+    raw = JSON.parse(fs.readFileSync(chainDataFilePath, 'utf8'));
   } catch (err) {
     // CJS parity: warn loudly when a path was passed but read/parse failed.
     // A corrupted chain file silently downgrades all balance/fee rendering to
