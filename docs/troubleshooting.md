@@ -64,7 +64,7 @@ Most errors returned to the MCP client are JSON objects with a `code` field draw
 | Module | `UNKNOWN_MODULE` | Module name not in the registry |
 | User action | `OPERATION_CANCELLED` | A deliberate user decline / cancel / elicitation-timeout — treated as neither a fault nor retryable |
 | SKU resolution | `SKU_AMBIGUOUS` | A SKU `size`/`storage` name matched more than one active SKU; `details` carries `{ reason: 'AMBIGUOUS_SKU_NAME', size, candidates }` — disambiguate with `provider_uuid` / `sku_uuid` |
-| Deploy | `DEPLOY_READINESS_UNCONFIRMED` | A paid lease exists, but the client cannot safely confirm it as ready. Either the readiness poll ended without a verdict, or the authoritative final provider state was absent, malformed, or not ACTIVE. Carries `details.readiness_unconfirmed`, `lease_uuid`, and `partial`. Within this code, `failedStep: 'poll'` or `poll_reason` identifies poll-side uncertainty; the orchestration final-state check has neither. Diagnose the existing lease instead of repeating `deploy_app` — see below |
+| Deploy | `DEPLOY_READINESS_UNCONFIRMED` | A paid lease exists, but the client cannot safely confirm it as ready. Either the readiness poll ended without a verdict, or the canonical final provider state was absent, malformed, or not ACTIVE. Carries `details.readiness_unconfirmed`, `lease_uuid`, and `partial`; orchestration final-state disagreement additionally carries `readiness_reason: 'final_state_mismatch'`, `state_source`, and bounded `observed_state`. Diagnose the existing lease instead of repeating `deploy_app` — see below |
 | Restore | `RESTORE_NOT_RETAINED`, `RESTORE_REJECTED`, `RESTORE_RETRYABLE`, `RESTORE_ORPHAN_COMPENSATION_FAILED` | `restore_app` saga outcomes: source not restorable (pre-flight, zero side effects), a terminal 4xx rejection (created lease rolled back), a transient refusal the agent may deliberately re-invoke — 503 placement or 429 throttle — (rolled back), or a compensation failure that left an orphan lease. All non-auto-retryable — restore is non-idempotent |
 | Update | `UPDATE_INDETERMINATE` | `update_app` reached the provider and got a 5xx, which does **not** establish whether the manifest was applied. The provider persists the payload after the backend accepts it, so a persist failure can mean the update is live now and the next reprovision will revert it. Diagnose with `app_status` / `app_releases` before acting; re-invoking `update_app` re-applies and re-records. Non-auto-retryable — `update_app` is non-idempotent |
 
@@ -110,7 +110,7 @@ Every variant carries `details.readiness_unconfirmed === true`, `details.partial
 | Error shape | Meaning | Default response |
 |-------------|---------|------------------|
 | `DEPLOY_READINESS_UNCONFIRMED` + `readiness_unconfirmed` + either `failedStep: 'poll'` or `poll_reason` | Poll ended without a failure verdict | Inspect status; waiting may be appropriate |
-| `DEPLOY_READINESS_UNCONFIRMED` + `readiness_unconfirmed` + neither `failedStep` nor `poll_reason` | Orchestration final-state disagreement | Inspect and report a persistent provider/client mismatch |
+| `DEPLOY_READINESS_UNCONFIRMED` + `readiness_reason: 'final_state_mismatch'` | Orchestration final-state disagreement | Inspect and report a persistent provider/client mismatch |
 | Usually `QUERY_FAILED` + `failedStep: 'poll'` without `readiness_unconfirmed` | Poll returned failure, terminal, or uninterpretable state | Re-query chain and provider; close only a chain-ACTIVE, provider-confirmed failed lease |
 
 Absence of `poll_reason` alone is not a discriminator.
@@ -130,7 +130,7 @@ Raise the deadline up front with `deploy_app({ …, timeout_seconds })` if your 
 
 #### The final provider state disagreed with readiness
 
-For `DEPLOY_READINESS_UNCONFIRMED`, this is the branch where both `details.failedStep` and `details.poll_reason` are absent. The callback-oriented orchestration flow's readiness operation returned, but its authoritative final state was absent, malformed, or a value other than `LEASE_STATE_ACTIVE`. That emitter's message names the response field and observed value; the client refuses to turn the disagreement into a successful ACTIVE result.
+For `DEPLOY_READINESS_UNCONFIRMED`, this branch has `details.readiness_reason === 'final_state_mismatch'`. The callback-oriented orchestration flow's readiness operation returned, but its canonical final state was absent, malformed, or a value other than `LEASE_STATE_ACTIVE`. `details.state_source` names the response field and bounded `details.observed_state` records what was seen; the client refuses to turn the disagreement into a successful ACTIVE result.
 
 Inspect `app_status({ lease_uuid })` and `app_diagnostics({ lease_uuid })`. If the provider repeatedly omits or malforms the state, or reports a non-ACTIVE state after declaring readiness, capture the error message and provider response and report a provider/client compatibility issue. Do not blindly wait or redeploy; act on the verified lease state once the disagreement is understood.
 

@@ -429,9 +429,15 @@ describe('deployApp — required live lease state (ENG-656)', () => {
    * so this inconsistent shape is defense-in-depth for mocked, legacy, or
    * otherwise contract-bypassing callers of the orchestration package.
    */
+  interface PostPollStateOverrides {
+    statusState?: unknown;
+    wrapperState?: unknown;
+    omitWrapperState?: boolean;
+    dataDir?: string;
+  }
+
   async function runInconsistentPostPollState(
-    statusState?: unknown,
-    dataDir?: string,
+    overrides: PostPollStateOverrides = {},
   ) {
     const spec = readFixture(
       'skills',
@@ -478,12 +484,20 @@ describe('deployApp — required live lease state (ENG-656)', () => {
       lease_uuid: leaseUuid,
       provider_uuid: providerUuid,
       provider_url: 'https://provider.testnet.manifest.network',
-      // The wrapper-level JSON state is present, so the post-poll classifier
-      // observes ACTIVE. The canonical live state used for DeployResult is
-      // status.state, which is intentionally malformed or absent here.
-      state: 'LEASE_STATE_ACTIVE',
+      // The wrapper is deliberately independently configurable from the
+      // canonical status. First-party waitForAppReady derives one from the
+      // other, but legacy/mocked callers can violate that contract in either
+      // direction; agent-core must trust status.state consistently.
+      ...(overrides.omitWrapperState
+        ? {}
+        : {
+            state:
+              'wrapperState' in overrides
+                ? overrides.wrapperState
+                : 'LEASE_STATE_ACTIVE',
+          }),
       status: {
-        ...(statusState !== undefined ? { state: statusState } : {}),
+        ...('statusState' in overrides ? { state: overrides.statusState } : {}),
         instances: [
           {
             name: 'app',
@@ -511,19 +525,29 @@ describe('deployApp — required live lease state (ENG-656)', () => {
     const walletProvider = makeMockWalletProvider();
 
     let caughtErr: unknown = null;
+    let result: DeployResult | undefined;
     try {
-      await deployApp(spec, callbacks, {
+      result = await deployApp(spec, callbacks, {
         clientManager: clientManager as unknown as Parameters<
           typeof deployApp
         >[2]['clientManager'],
         walletProvider,
-        ...(dataDir !== undefined ? { dataDir } : {}),
+        ...(overrides.dataDir !== undefined
+          ? { dataDir: overrides.dataDir }
+          : {}),
       });
     } catch (err) {
       caughtErr = err;
     }
 
-    return { caughtErr, progress, completed, leaseUuid };
+    return {
+      caughtErr,
+      result,
+      progress,
+      completed,
+      leaseUuid,
+      providerUuid,
+    };
   }
 
   it('persists the live lease and reports lease-aware uncertainty when status.state is absent', async () => {
@@ -533,7 +557,7 @@ describe('deployApp — required live lease state (ENG-656)', () => {
 
     try {
       const { caughtErr, progress, completed, leaseUuid } =
-        await runInconsistentPostPollState(undefined, dataDir);
+        await runInconsistentPostPollState({ dataDir });
 
       expect(caughtErr).toBeInstanceOf(ManifestMCPError);
       const error = caughtErr as ManifestMCPError;
@@ -545,8 +569,14 @@ describe('deployApp — required live lease state (ENG-656)', () => {
       expect(error.message).toContain('undefined');
       expect(error.details).toMatchObject({
         readiness_unconfirmed: true,
+        readiness_reason: 'final_state_mismatch',
+        operation: 'deploy',
         lease_uuid: leaseUuid,
         partial: true,
+        state_source: 'wait_for_app_ready_response.status.state',
+        observed_state: 'undefined',
+        provider_uuid: '44444444-4444-4444-8444-444444444444',
+        provider_url: 'https://provider.testnet.manifest.network',
       });
 
       const saved = progress.find((event) => event.kind === 'manifest_saved');
@@ -589,7 +619,7 @@ describe('deployApp — required live lease state (ENG-656)', () => {
     'does not complete as ACTIVE when canonical status.state is $label',
     async ({ statusState, renderedState }) => {
       const { caughtErr, progress, completed, leaseUuid } =
-        await runInconsistentPostPollState(statusState);
+        await runInconsistentPostPollState({ statusState });
 
       expect(caughtErr).toBeInstanceOf(ManifestMCPError);
       const error = caughtErr as ManifestMCPError;
@@ -600,8 +630,12 @@ describe('deployApp — required live lease state (ENG-656)', () => {
       expect(error.message).toContain(renderedState);
       expect(error.details).toMatchObject({
         readiness_unconfirmed: true,
+        readiness_reason: 'final_state_mismatch',
+        operation: 'deploy',
         lease_uuid: leaseUuid,
         partial: true,
+        state_source: 'wait_for_app_ready_response.status.state',
+        observed_state: renderedState.replace(/^status\.state: /, ''),
       });
       expect(
         progress.some((event) => event.kind === 'app_ready_confirmed'),
@@ -610,6 +644,58 @@ describe('deployApp — required live lease state (ENG-656)', () => {
         false,
       );
       expect(completed).toHaveLength(0);
+    },
+  );
+
+  it('bounds a malformed observed state before exposing it in error details', async () => {
+    const { caughtErr } = await runInconsistentPostPollState({
+      statusState: { value: 'x'.repeat(10_000) },
+    });
+
+    expect(caughtErr).toBeInstanceOf(ManifestMCPError);
+    const observedState = (caughtErr as ManifestMCPError).details
+      ?.observed_state;
+    expect(typeof observedState).toBe('string');
+    if (typeof observedState === 'string') {
+      expect(Array.from(observedState)).toHaveLength(257);
+      expect(observedState.endsWith('…')).toBe(true);
+      expect(observedState).not.toContain('x'.repeat(1_000));
+    }
+  });
+
+  it.each([
+    {
+      label: 'absent',
+      overrides: { omitWrapperState: true },
+    },
+    {
+      label: 'terminal',
+      overrides: { wrapperState: 'LEASE_STATE_CLOSED' },
+    },
+  ] satisfies Array<{
+    label: string;
+    overrides: PostPollStateOverrides;
+  }>)(
+    'uses canonical ACTIVE status when wrapper state is $label',
+    async ({ overrides }) => {
+      const { caughtErr, result, progress, completed, leaseUuid } =
+        await runInconsistentPostPollState({
+          ...overrides,
+          statusState: 2,
+        });
+
+      expect(caughtErr).toBeNull();
+      expect(result).toMatchObject({
+        leaseUuid,
+        leaseState: 'LEASE_STATE_ACTIVE',
+      });
+      expect(
+        progress.some((event) => event.kind === 'app_ready_confirmed'),
+      ).toBe(true);
+      expect(progress.some((event) => event.kind === 'success_rendered')).toBe(
+        true,
+      );
+      expect(completed).toHaveLength(1);
     },
   );
 });
@@ -4510,50 +4596,83 @@ describe('deployApp — retry_set_domain decomposition (ENG-185 sub-PR E)', () =
     expect(baseCapture.completed).toHaveLength(0);
   });
 
-  it('post-poll re-classify with errorSummary (terminal state) → TX_FAILED with retry_set_domain prefix + leaseUuid + errorSummary content', async () => {
-    // Copilot fix-4 (PR #71) regression guard for the errorSummary
-    // branch of the `??` fallback at L1267. The pre-fix code used
-    // `classification.errorSummary ?? ...fallback...` which meant when
-    // errorSummary IS set (post-poll classifier produces 'failed' with
-    // a terminal-state errorSummary), the thrown message would be
-    // errorSummary VERBATIM — no `retry_set_domain` prefix, no leaseUuid.
-    // Inconsistent with the sibling-parity discipline that all other
-    // throw sites in this helper honor (fixup-3 wrap).
-    //
-    // To drive the errorSummary path: mock pollLeaseUntilReady to
-    // RESOLVE with a terminal-state response. The post-poll re-classify
-    // then sees state=REJECTED → outcome='failed' → classifier sets
-    // errorSummary to `Lease ${leaseUuid} reached terminal state
-    // LEASE_STATE_REJECTED` (per classify-deploy-response.ts:120).
-    const { run, baseCapture, leaseUuid } = await setupRetryScenario({
-      pollLeaseUntilReady: vi.fn().mockResolvedValue({
-        state: 4, // LEASE_STATE_REJECTED — terminal
-        instances: [],
-      }),
-    });
+  it.each([
+    {
+      label: 'an absent state',
+      pollResult: { instances: [] },
+      observedState: 'undefined',
+    },
+    {
+      label: 'a terminal state',
+      pollResult: { state: 4, instances: [] },
+      observedState: '4',
+    },
+    {
+      label: 'a malformed state',
+      pollResult: { state: { value: 2 }, instances: [] },
+      observedState: '{"value":2}',
+    },
+  ])(
+    'retry_set_domain persists recovery context and reports $label as final-state mismatch',
+    async ({ pollResult, observedState }) => {
+      const { mkdtempSync, rmSync } = await import('node:fs');
+      const { tmpdir } = await import('node:os');
+      const dataDir = mkdtempSync(join(tmpdir(), 'eng656-retry-state-'));
 
-    const { caughtErr } = await run();
+      try {
+        const { run, baseCapture, leaseUuid, providerUuid, providerApiUrl } =
+          await setupRetryScenario({
+            dataDir,
+            pollLeaseUntilReady: vi.fn().mockResolvedValue(pollResult),
+          });
 
-    expect(caughtErr).toBeInstanceOf(ManifestMCPError);
-    expect((caughtErr as ManifestMCPError).code).toBe(
-      ManifestMCPErrorCode.TX_FAILED,
-    );
-    // Sibling-parity invariant: prefix + leaseUuid in the message.
-    expect((caughtErr as Error).message).toContain('retry_set_domain');
-    expect((caughtErr as Error).message).toContain(leaseUuid);
-    // The classifier's errorSummary content is preserved (we wrap it
-    // for prefix, but the underlying terminal-state diagnostic is the
-    // information operators need).
-    expect((caughtErr as Error).message).toContain('LEASE_STATE_REJECTED');
-    expect((caughtErr as Error).message).toContain('terminal state');
-    // Wording differentiates the errorSummary path from the
-    // no-errorSummary fallback (latter says "but post-poll classifier
-    // outcome is needs_wait").
-    expect((caughtErr as Error).message).toMatch(
-      /post-poll re-classification/i,
-    );
-    expect(baseCapture.completed).toHaveLength(0);
-  });
+        const { caughtErr } = await run();
+
+        expect(caughtErr).toBeInstanceOf(ManifestMCPError);
+        const error = caughtErr as ManifestMCPError;
+        expect(error.code).toBe(
+          ManifestMCPErrorCode.DEPLOY_READINESS_UNCONFIRMED,
+        );
+        expect(error.message).toContain('retry_set_domain');
+        expect(error.message).toContain(leaseUuid);
+        expect(error.details).toMatchObject({
+          readiness_unconfirmed: true,
+          readiness_reason: 'final_state_mismatch',
+          operation: 'retry_set_domain',
+          lease_uuid: leaseUuid,
+          partial: true,
+          state_source: 'poll_lease_until_ready_response.state',
+          observed_state: observedState,
+          provider_uuid: providerUuid,
+          provider_url: providerApiUrl,
+        });
+
+        const saved = baseCapture.progress.find(
+          (event) => event.kind === 'manifest_saved',
+        );
+        expect(saved).toBeDefined();
+        if (saved?.kind === 'manifest_saved') {
+          const persisted = JSON.parse(
+            readFileSync(saved.manifestPath, 'utf8'),
+          ) as { lease_uuid?: string };
+          expect(persisted.lease_uuid).toBe(leaseUuid);
+        }
+        expect(
+          baseCapture.progress.some(
+            (event) => event.kind === 'app_ready_confirmed',
+          ),
+        ).toBe(false);
+        expect(
+          baseCapture.progress.some(
+            (event) => event.kind === 'success_rendered',
+          ),
+        ).toBe(false);
+        expect(baseCapture.completed).toHaveLength(0);
+      } finally {
+        rmSync(dataDir, { recursive: true, force: true });
+      }
+    },
+  );
 
   it('post-poll re-classify without errorSummary (ACTIVE with no instances) → TX_FAILED with retry_set_domain prefix + leaseUuid + fallback wording', async () => {
     // Copilot fix-4 (PR #71) regression guard for the no-errorSummary
