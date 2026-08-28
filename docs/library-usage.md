@@ -8,7 +8,7 @@ This is the deep dive. For a 60-second start, see the [SDK README](../packages/s
 npm install @manifest-network/manifest-sdk @manifest-network/manifestjs
 ```
 
-> **Browser compatibility.** The SDK barrel and its universal subpaths are browser-safe. `/node` and `/orchestration` are Node-only and mapped to fail fast under browser resolution: `/node` owns the SSRF-guarded transports, while `/orchestration` can persist deployment manifests with Node filesystem/crypto APIs. Use a `cosmos-kit` / Keplr / Leap wallet with the universal client and capability subpaths for browser apps.
+> **Browser compatibility.** The SDK barrel and its universal subpaths are browser-bundleable without unguarded Node-only modules. CosmJS retains a guarded optional `crypto` fallback but uses Web Crypto in browsers. `/node` is mapped to fail fast under browser resolution because it owns the SSRF-guarded transports. `/orchestration` is universal, but its opt-in filesystem operations — `deployApp(spec, callbacks, { dataDir })` manifest persistence and `loadChainDenomMap(path)` — require Node when called. Use a `cosmos-kit` / Keplr / Leap wallet with the universal client and capability subpaths for browser apps.
 
 ## Choosing a client
 
@@ -330,7 +330,7 @@ Cancelling also aborts the SDK's own rate-limit wait, so a cancelled call gives 
 
 ## Orchestration tier (optional)
 
-The Node-only `@manifest-network/manifest-sdk/orchestration` subpath adds four plan → confirm → recover flows on top of the capability tier (`deployApp`, `manageDomain`, `closeLease`, `troubleshootDeployment`), plus `loadChainDenomMap`, a loader/helper that preloads chain-data for denom humanization. The four orchestrators are **callback-driven** — `fn(input, callbacks, opts)` with `onPlan` / `onConfirm` / `onProgress` — a different shape from the capability tier's `fn(ctx, input)`, so the host can drive a human-in-the-loop UI. The subpath is Node-only because `deployApp` can persist deployment manifests with Node filesystem/crypto APIs. Browser apps should compose the universal capability tier directly.
+The universal `@manifest-network/manifest-sdk/orchestration` subpath adds four plan → confirm → recover flows on top of the capability tier (`deployApp`, `manageDomain`, `closeLease`, `troubleshootDeployment`), plus `loadChainDenomMap`, a loader/helper that preloads chain-data for denom humanization. The four orchestrators are **callback-driven** — `fn(input, callbacks, opts)` with `onPlan` / `onConfirm` / `onProgress` — a different shape from the capability tier's `fn(ctx, input)`, so the host can drive a human-in-the-loop UI. Browser code can import the subpath; only `deployApp(spec, callbacks, { dataDir })` (manifest persistence via filesystem/crypto/path) and `loadChainDenomMap(path)` (filesystem-backed chain data) require Node when invoked. Omit those Node-only options in browser flows.
 
 ## Low-level escape hatch
 
@@ -373,7 +373,7 @@ import { requestFaucet, fetchFaucetStatus } from '@manifest-network/manifest-sdk
 
 ## Browser quirks
 
-- Don't import `@manifest-network/manifest-sdk/node`, `@manifest-network/manifest-sdk/orchestration`, or `…/manifest-mcp-node` in a browser bundle — the two SDK subpaths are mapped so a browser bundler fails fast rather than pulling Node builtins.
+- Don't import `@manifest-network/manifest-sdk/node` or `…/manifest-mcp-node` in a browser bundle — the SDK `/node` subpath is mapped so a browser bundler fails fast rather than pulling Node builtins. `/orchestration` can be bundled, but `deployApp(spec, callbacks, { dataDir })` and `loadChainDenomMap(path)` remain Node-only at call time.
 - Many chain fields (heights, gas, supply) round-trip as `bigint`, which `JSON.stringify` rejects — supply a small replacer that coerces `bigint` to a string when serializing chain responses.
 - The browser blocks cross-origin `fetch` by default — run a CORS proxy in dev or push provider calls server-side, and pass your CORS-aware `fetch` to the client so URL validation stays intact.
 

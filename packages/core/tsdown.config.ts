@@ -1,7 +1,8 @@
 import { defineConfig } from 'tsdown';
+import { packageEntries } from '../../tools/tsdown-entries.mjs';
 
 export default defineConfig({
-  entry: ['src/**/*.ts', '!src/**/*.test.ts', '!src/**/*.test-d.ts'],
+  entry: packageEntries(),
   format: 'esm',
   unbundle: true,
   dts: true,

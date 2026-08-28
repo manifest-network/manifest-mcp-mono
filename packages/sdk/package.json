@@ -53,8 +53,7 @@
     },
     "./orchestration": {
       "types": "./dist/orchestration.d.ts",
-      "node": "./dist/orchestration.js",
-      "default": null
+      "import": "./dist/orchestration.js"
     },
     "./chain": {
       "types": "./dist/chain.d.ts",

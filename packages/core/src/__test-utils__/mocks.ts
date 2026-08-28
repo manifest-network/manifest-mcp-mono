@@ -1,5 +1,5 @@
 import { LeaseState } from '@manifest-network/manifestjs/dist/codegen/liftedinit/billing/v1/types.js';
-import { vi } from 'vitest';
+import { type Mock, vi } from 'vitest';
 import type { CosmosClientManager, ManifestQueryClient } from '../client.js';
 import type { ReadCtx, TxCtx } from '../ctx.js';
 import { noopLogger } from '../logger.js';
@@ -354,11 +354,25 @@ export function makeMockQueryClient(overrides?: {
 /**
  * Create a mock CosmosClientManager.
  */
+type LooseMock = Mock<(...args: any[]) => any>;
+
+/** Public shape returned by {@link makeMockClientManager}. */
+export interface MockClientManager {
+  getQueryClient: LooseMock;
+  getSigningClient: LooseMock;
+  getBroadcastClient: LooseMock;
+  getAddress: LooseMock;
+  getConfig: LooseMock;
+  acquireRateLimit: LooseMock;
+  withBroadcastLock: <T>(address: string, fn: () => Promise<T>) => Promise<T>;
+  disconnect: LooseMock;
+}
+
 export function makeMockClientManager(overrides?: {
   queryClient?: ManifestQueryClient;
   address?: string;
   config?: ManifestMCPConfig;
-}) {
+}): MockClientManager {
   const queryClient = overrides?.queryClient ?? makeMockQueryClient();
   const address = overrides?.address ?? 'manifest1abc';
   const config = overrides?.config ?? makeMockConfig();
@@ -381,7 +395,10 @@ export function makeMockClientManager(overrides?: {
     ): Promise<T> => fn(),
     disconnect: vi.fn(),
   };
-  return cm;
+  // Keep the public declaration on Vitest's declared `Mock<T>` surface. If
+  // these inferred mocks escape directly, Vitest's default generic expands to
+  // its private `@vitest/spy` package in the published .d.ts.
+  return cm as MockClientManager;
 }
 
 /** A ReadCtx for unit tests: a mock query client, a chain stub whose acquireRateLimit resolves, noopLogger. */

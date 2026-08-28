@@ -7,7 +7,15 @@
   },
   "files": {
     "ignoreUnknown": true,
-    "includes": ["packages/**", "examples/**"],
+    "includes": [
+      "packages/**",
+      "examples/**",
+      "scripts/check-packages.mjs",
+      "scripts/check-packages.test.mjs",
+      "tools/browser-bundle.ts",
+      "tools/package-integrity.mjs",
+      "tools/tsdown-entries.mjs"
+    ],
     "experimentalScannerIgnores": ["**/dist/**"]
   },
   "formatter": {

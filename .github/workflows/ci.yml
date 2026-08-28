@@ -15,9 +15,9 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run build
-      # Dry-run every publishable package, reject compiled type tests / nested runtime
-      # dependencies, and verify that every bare import in the SDK's shipped declarations
-      # is backed by a consumer-installed dependency. (ENG-667)
+      # Sabotage-test the package guard, dry-run every publishable package, reject compiled
+      # tests / nested runtime dependencies, and verify every bare import in shipped JS and
+      # declarations is backed by a consumer-installed dependency. (ENG-667)
       - run: npm run check:packages
       # The SDK build runs publint + attw (esm-only, level=error) as part of tsdown.
       # Run it explicitly so the package-export / type-resolution gate is a named,
@@ -38,8 +38,8 @@ jobs:
       - run: npm run test:types -w @manifest-network/manifest-sdk
       # Fail-closed browser build of the compose-only acceptance example: a rolldown
       # platform:browser bundle of dist/main.js with UNRESOLVED_IMPORT capture (asserts the
-      # set is empty minus the documented @cosmjs/crypto allowlist) + an import-specifier-
-      # anchored node-only scan + a positive Web-Crypto assertion, plus the /reads tree-shake
+      # set is empty minus one exact guarded @cosmjs/crypto warning) + a complete builtin/CJS
+      # node-only scan + a positive Web-Crypto assertion, plus the /reads tree-shake
       # symbol-absence belt. No live chain — pure bundle. The root `npm test` above covers it
       # transitively; this names it as a visible, standalone CI gate. (ENG-309)
       - run: npm run build -w @manifest-network/sdk-acceptance
