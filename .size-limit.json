@@ -21,7 +21,7 @@
     "import": "{ deployApp }",
     "ignore": ["crypto"],
     "gzip": true,
-    "limit": "1087826 B"
+    "limit": "1087838 B"
   },
   {
     "name": "manifest-sdk root client",
@@ -29,6 +29,6 @@
     "import": "{ createManifestClient }",
     "ignore": ["crypto"],
     "gzip": true,
-    "limit": "1079406 B"
+    "limit": "1079413 B"
   }
 ]

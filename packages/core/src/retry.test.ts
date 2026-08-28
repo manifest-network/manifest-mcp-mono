@@ -181,6 +181,15 @@ describe('isRetryableError', () => {
       expect(isRetryableError(error)).toBe(true);
     });
 
+    it('retries a temporary DNS resolver failure surfaced by cosmjs', () => {
+      const error = Object.assign(
+        new Error('getaddrinfo EAI_AGAIN rpc.example.com'),
+        { code: 'EAI_AGAIN' },
+      );
+
+      expect(isRetryableError(error)).toBe(true);
+    });
+
     it('should retry timeout errors', () => {
       expect(isRetryableError(new Error('Request timed out'))).toBe(true);
       expect(isRetryableError(new Error('ETIMEDOUT'))).toBe(true);

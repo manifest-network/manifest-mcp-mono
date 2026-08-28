@@ -108,6 +108,7 @@ function isTransientErrorMessage(message: string): boolean {
     lowerMessage.includes('econnrefused') ||
     lowerMessage.includes('econnreset') ||
     lowerMessage.includes('etimedout') ||
+    lowerMessage.includes('eai_again') ||
     lowerMessage.includes('epipe') ||
     lowerMessage.includes('socket hang up') ||
     lowerMessage.includes('timed out') ||

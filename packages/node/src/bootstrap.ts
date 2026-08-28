@@ -45,7 +45,7 @@ export interface BootstrapConfig {
 export interface BootstrapServer {
   getServer(): Server;
   disconnect(): void;
-  /** Release the runtime after its already-started broadcast queue drains. */
+  /** Release the runtime after its already-enqueued broadcast queue drains. */
   disconnectWhenIdle?(): Promise<void>;
 }
 
@@ -116,6 +116,12 @@ async function closeResources(
   runtime: BootstrapServer | undefined,
   walletProvider: WalletProvider | undefined,
 ): Promise<void> {
+  // Close first so the MCP SDK aborts request-scoped work and stops accepting
+  // calls. The SDK deliberately suppresses the response for an aborted request;
+  // `disconnectWhenIdle` below is therefore a broadcast drain, not a promise
+  // that every handler response reaches the host. This ordering prioritizes the
+  // irreversible boundary: an already-enqueued transaction keeps its RPC
+  // client until it settles instead of being severed merely to preserve stdio.
   try {
     await server?.close();
   } catch (error) {
