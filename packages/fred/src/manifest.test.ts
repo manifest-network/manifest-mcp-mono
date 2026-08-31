@@ -507,6 +507,8 @@ describe('validateManifest', () => {
       ['APP_PORT', true],
       ['PATH', false],
       ['path', false],
+      ['PATHS', true],
+      ['PATH_PREFIX', true],
       ['LD_PRELOAD', false],
       ['ld_library_path', false],
       ['FRED_TOKEN', false],
@@ -533,14 +535,29 @@ describe('validateManifest', () => {
       ).toBe(true);
     });
 
-    it('rejects fred.* prefix', () => {
+    it.each([
+      ['fred.lease', 'fred.'],
+      ['Fred.retention', 'fred.'],
+      ['traefik.http.routers.web.rule', 'traefik.'],
+      ['TRAEFIK.enable', 'traefik.'],
+    ])('rejects reserved label %s case-insensitively', (key, prefix) => {
       const r = validateManifest({
         image: 'nginx',
-        labels: { 'fred.lease': 'abc' },
+        labels: { [key]: 'abc' },
       });
       expect(r.valid).toBe(false);
-      expect(r.errors.some((e) => e.includes('fred.'))).toBe(true);
+      expect(r.errors.join(' ')).toContain(key);
+      expect(r.errors.join(' ')).toContain(prefix);
     });
+
+    it.each(['traefikish.foo', 'com.example.traefik', 'FREDDIE.foo'])(
+      'accepts non-reserved near-miss label %s',
+      (key) => {
+        expect(
+          validateManifest({ image: 'nginx', labels: { [key]: 'ok' } }).valid,
+        ).toBe(true);
+      },
+    );
   });
 
   describe('ports', () => {
@@ -582,6 +599,24 @@ describe('validateManifest', () => {
         ports: { '65535/tcp': {} },
       });
       expect(r.valid).toBe(true);
+    });
+
+    it('rejects a fixed host_port and names the offending field', () => {
+      const r = validateManifest({
+        image: 'nginx',
+        ports: { '80/tcp': { host_port: 8080 } },
+      });
+      expect(r.valid).toBe(false);
+      expect(r.errors.join(' ')).toContain('ports["80/tcp"].host_port');
+    });
+
+    it('accepts an omitted or zero host_port', () => {
+      expect(
+        validateManifest({
+          image: 'nginx',
+          ports: { '80/tcp': {}, '443/tcp': { host_port: 0 } },
+        }).valid,
+      ).toBe(true);
     });
   });
 

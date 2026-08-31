@@ -444,6 +444,53 @@ describe('deployManifest', () => {
     expect(mockCosmosTx).not.toHaveBeenCalled();
   });
 
+  it.each([
+    [
+      'a traefik.* label',
+      { image: 'nginx', labels: { 'traefik.enable': 'true' } },
+      'labels["traefik.enable"]',
+    ],
+    [
+      'a mixed-case Fred.* label',
+      { image: 'nginx', labels: { 'Fred.owner': 'tenant' } },
+      'labels["Fred.owner"]',
+    ],
+    [
+      'a fixed host_port',
+      { image: 'nginx', ports: { '80/tcp': { host_port: 8080 } } },
+      'ports["80/tcp"].host_port',
+    ],
+  ])(
+    'ENG-637 rejects %s before the paid create-lease broadcast',
+    async (_name, manifest, offendingField) => {
+      const cm = makeMockClientManager({
+        queryClient: makeQueryClient(),
+        address: 'manifest1tenant',
+      });
+
+      let thrown: unknown;
+      try {
+        await deployManifest(
+          await ctx(cm),
+          {
+            manifest: JSON.stringify(manifest),
+            sku: { kind: 'byName', size: 'docker-micro' },
+          },
+          {},
+        );
+      } catch (error) {
+        thrown = error;
+      }
+
+      expect(thrown).toBeInstanceOf(Error);
+      if (!(thrown instanceof Error))
+        throw new Error('expected deploy to fail');
+      expect(thrown.message).toContain(offendingField);
+      expect(mockCosmosTx).not.toHaveBeenCalled();
+      expect(wire.calls).toHaveLength(0);
+    },
+  );
+
   it('rejects a top-level __proto__ key', async () => {
     const cm = makeMockClientManager({
       queryClient: makeQueryClient(),

@@ -278,6 +278,20 @@ describe('FredMCPServer', () => {
       });
     });
 
+    it('deploy_app documents Fred-compatible tmpfs and expose syntax', async () => {
+      const tool = (await listTools()).get('deploy_app');
+      const inputSchema = tool?.inputSchema as {
+        properties?: Record<string, { description?: string }>;
+      };
+
+      expect(inputSchema.properties?.tmpfs?.description).toBe(
+        'tmpfs mount paths as bare absolute paths (e.g. ["/var/cache/app"])',
+      );
+      expect(inputSchema.properties?.expose?.description).toBe(
+        'Container-network ports as bare number strings (e.g. ["8080"])',
+      );
+    });
+
     it('restart_app broadcasts an additive, fund-spending tx (not idempotent: each call triggers a fresh restart cycle)', async () => {
       const t = (await listTools()).get('restart_app');
       expect(t?.annotations).toMatchObject({

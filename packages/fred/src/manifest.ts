@@ -292,7 +292,9 @@ const HEALTH_CHECK_KEYS = new Set<string>([
 
 const PORT_KEY_RE = /^([1-9][0-9]{0,4})\/(tcp|udp)$/i;
 const EXPOSE_PORT_RE = /^([1-9][0-9]{0,4})$/;
-const ENV_NAME_BLOCKED_RE = /^(path|ld_|fred_|docker_)/i;
+const ENV_NAME_BLOCKED_PREFIX_RE = /^(ld_|fred_|docker_)/i;
+const RESERVED_LABEL_PREFIX_RE = /^(fred|traefik)\./i;
+const PORT_CONFIG_KEYS = new Set<string>(['host_port', 'ingress']);
 const TMPFS_BLOCKED = new Set<string>(['/', '/tmp', '/run']);
 const TMPFS_BLOCKED_PREFIXES = ['/proc', '/sys', '/dev'];
 const HEALTH_CHECK_TYPES = new Set<string>(['CMD', 'CMD-SHELL', 'NONE']);
@@ -300,6 +302,14 @@ const DEPENDS_ON_CONDITIONS = new Set<string>([
   'service_started',
   'service_healthy',
 ]);
+
+// Fred v0.13.0's per-service allocation caps (manifest.go, ENG-547). These
+// admission limits are not represented in docs/manifest-schema.json, so they
+// remain an explicit semantic overlay on the schema contract.
+const MAX_PORTS = 64;
+const MAX_EXPOSE_PORTS = 64;
+const MAX_ENV_VARS = 256;
+const MAX_LABELS = 128;
 
 function isPlainObject(v: unknown): v is Record<string, unknown> {
   return v !== null && typeof v === 'object' && !Array.isArray(v);
@@ -353,7 +363,14 @@ function validateService(
     if (!isPlainObject(service.ports)) {
       errors.push(`${scope}.ports: must be an object`);
     } else {
-      for (const key of Object.keys(service.ports)) {
+      const portEntries = Object.entries(service.ports);
+      if (portEntries.length > MAX_PORTS) {
+        errors.push(
+          `${scope}.ports: too many entries (${portEntries.length}), maximum is ${MAX_PORTS}`,
+        );
+      }
+      let ingressPort: string | undefined;
+      for (const [key, config] of portEntries) {
         // PORT_KEY_RE permits up to 5 digits (so 1-99999); the docs and the
         // error message limit ports to 1-65535. validatePort closes the gap
         // so 70000/tcp doesn't silently pass pre-flight.
@@ -362,6 +379,48 @@ function validateService(
           errors.push(
             `${scope}.ports["${key}"]: must be in "port/protocol" format with port 1-65535 and protocol tcp|udp`,
           );
+        }
+        if (!isPlainObject(config)) {
+          errors.push(`${scope}.ports["${key}"]: must be an object`);
+          continue;
+        }
+        for (const configKey of Object.keys(config)) {
+          if (!PORT_CONFIG_KEYS.has(configKey)) {
+            errors.push(`${scope}.ports["${key}"].${configKey}: unknown field`);
+          }
+        }
+        if ('host_port' in config) {
+          if (
+            typeof config.host_port !== 'number' ||
+            !Number.isInteger(config.host_port) ||
+            config.host_port < 0
+          ) {
+            errors.push(
+              `${scope}.ports["${key}"].host_port: must be the integer 0 when provided`,
+            );
+          } else if (config.host_port > 0) {
+            errors.push(
+              `${scope}.ports["${key}"].host_port: fixed host ports are not permitted; omit host_port so Fred assigns one dynamically`,
+            );
+          }
+        }
+        if ('ingress' in config) {
+          if (typeof config.ingress !== 'boolean') {
+            errors.push(`${scope}.ports["${key}"].ingress: must be a boolean`);
+          } else if (config.ingress) {
+            if (match?.[2].toLowerCase() !== 'tcp') {
+              errors.push(
+                `${scope}.ports["${key}"].ingress: requires TCP protocol`,
+              );
+            }
+            if (ingressPort !== undefined) {
+              errors.push(
+                `${scope}.ports["${key}"].ingress: at most one port may set ingress=true (already set on "${ingressPort}")`,
+              );
+            } else {
+              ingressPort = key;
+            }
+          }
         }
       }
     }
@@ -372,14 +431,23 @@ function validateService(
     if (!isPlainObject(service.env)) {
       errors.push(`${scope}.env: must be an object`);
     } else {
-      for (const [name, value] of Object.entries(service.env)) {
+      const envEntries = Object.entries(service.env);
+      if (envEntries.length > MAX_ENV_VARS) {
+        errors.push(
+          `${scope}.env: too many variables (${envEntries.length}), maximum is ${MAX_ENV_VARS}`,
+        );
+      }
+      for (const [name, value] of envEntries) {
         if (name.length === 0) {
           errors.push(`${scope}.env: variable name cannot be empty`);
         } else if (name.includes('=') || name.includes('\0')) {
           errors.push(
             `${scope}.env["${name}"]: name cannot contain '=' or NUL`,
           );
-        } else if (ENV_NAME_BLOCKED_RE.test(name)) {
+        } else if (
+          name.toUpperCase() === 'PATH' ||
+          ENV_NAME_BLOCKED_PREFIX_RE.test(name)
+        ) {
           errors.push(
             `${scope}.env["${name}"]: blocked variable name (PATH, LD_*, FRED_*, DOCKER_* are reserved)`,
           );
@@ -391,15 +459,23 @@ function validateService(
     }
   }
 
-  // labels: fred.* prefix is reserved
+  // labels: fred.* and traefik.* prefixes are reserved case-insensitively.
   if ('labels' in service) {
     if (!isPlainObject(service.labels)) {
       errors.push(`${scope}.labels: must be an object`);
     } else {
-      for (const key of Object.keys(service.labels)) {
-        if (key.startsWith('fred.')) {
+      const labelKeys = Object.keys(service.labels);
+      if (labelKeys.length > MAX_LABELS) {
+        errors.push(
+          `${scope}.labels: too many labels (${labelKeys.length}), maximum is ${MAX_LABELS}`,
+        );
+      }
+      for (const key of labelKeys) {
+        const reserved = key.match(RESERVED_LABEL_PREFIX_RE);
+        if (reserved) {
+          const prefix = `${reserved[1].toLowerCase()}.`;
           errors.push(
-            `${scope}.labels["${key}"]: reserved prefix 'fred.' is not allowed`,
+            `${scope}.labels["${key}"]: reserved prefix '${prefix}' is not allowed`,
           );
         }
       }
@@ -548,6 +624,11 @@ function validateService(
     if (!Array.isArray(service.expose)) {
       errors.push(`${scope}.expose: must be an array of port strings`);
     } else {
+      if (service.expose.length > MAX_EXPOSE_PORTS) {
+        errors.push(
+          `${scope}.expose: too many ports (${service.expose.length}), maximum is ${MAX_EXPOSE_PORTS}`,
+        );
+      }
       const seen = new Set<string>();
       for (const p of service.expose) {
         if (typeof p !== 'string' || !EXPOSE_PORT_RE.test(p)) {
@@ -581,11 +662,12 @@ function validateService(
 
 /**
  * Validates a parsed manifest object against the documented Fred rules.
- * Pre-flight only: catches the constraints documented in the public spec
- * (env-name blocklist, label prefix, port format, tmpfs limits, RFC 1123
- * service names, depends_on placement, unknown fields). The provider does
- * the canonical validation server-side; this helper exists so agents can
- * reject obviously-broken manifests before paying for a lease.
+ * `manifest-schema-contract.test.ts` checks this pre-flight validator against
+ * the schema vendored from the exact Fred gitlink used by E2E. Security rules
+ * that Fred enforces outside (or more strictly than) that schema remain named
+ * semantic overlays here: case-insensitive reserved labels and collection
+ * caps. The provider stays authoritative, but known-invalid manifests are
+ * rejected before the paid create-lease transaction.
  */
 export function validateManifest(manifest: unknown): ManifestValidationResult {
   const errors: string[] = [];

@@ -651,7 +651,9 @@ export function registerTools(deps: RegisterToolsDeps): void {
         tmpfs: z
           .array(z.string())
           .optional()
-          .describe('tmpfs mounts (e.g. ["/tmp:size=64M"])'),
+          .describe(
+            'tmpfs mount paths as bare absolute paths (e.g. ["/var/cache/app"])',
+          ),
         health_check: z
           .object({
             test: z.array(z.string()),
@@ -673,7 +675,9 @@ export function registerTools(deps: RegisterToolsDeps): void {
         expose: z
           .array(z.string())
           .optional()
-          .describe('Expose ports without publishing (e.g. ["8080/tcp"])'),
+          .describe(
+            'Container-network ports as bare number strings (e.g. ["8080"])',
+          ),
         labels: z
           .record(z.string(), z.string())
           .optional()
