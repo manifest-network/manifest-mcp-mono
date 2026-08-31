@@ -64,7 +64,7 @@ Most errors returned to the MCP client are JSON objects with a `code` field draw
 | Module | `UNKNOWN_MODULE` | Module name not in the registry |
 | User action | `OPERATION_CANCELLED` | A deliberate user decline / cancel / elicitation-timeout — treated as neither a fault nor retryable |
 | SKU resolution | `SKU_AMBIGUOUS` | A SKU `size`/`storage` name matched more than one active SKU; `details` carries `{ reason: 'AMBIGUOUS_SKU_NAME', size, candidates }` — disambiguate with `provider_uuid` / `sku_uuid` |
-| Deploy | `DEPLOY_READINESS_UNCONFIRMED` | The lease was created and the manifest uploaded, but readiness was never confirmed — the poll deadline expired, or the provider's status endpoint was unreachable. **NOT a reported failure**: the app may still be starting. Carries `details.readiness_unconfirmed`, `poll_reason`, `last_state`, `last_provision_status`. Diagnose before closing anything — see below |
+| Deploy | `DEPLOY_READINESS_UNCONFIRMED` | A paid lease exists, but the client cannot safely confirm it as ready. Either the readiness poll ended without a verdict, or the canonical final provider state was absent, malformed, or not ACTIVE. Carries `details.readiness_unconfirmed`, `lease_uuid`, and `partial`; orchestration final-state disagreement additionally carries `readiness_reason: 'final_state_mismatch'`, `state_source`, and bounded `observed_state`. Diagnose the existing lease instead of repeating `deploy_app` — see below |
 | Restore | `RESTORE_NOT_RETAINED`, `RESTORE_REJECTED`, `RESTORE_RETRYABLE`, `RESTORE_ORPHAN_COMPENSATION_FAILED` | `restore_app` saga outcomes: source not restorable (pre-flight, zero side effects), a terminal 4xx rejection (created lease rolled back), a transient refusal the agent may deliberately re-invoke — 503 placement or 429 throttle — (rolled back), or a compensation failure that left an orphan lease. All non-auto-retryable — restore is non-idempotent |
 | Update | `UPDATE_INDETERMINATE` | `update_app` reached the provider and got a 5xx, which does **not** establish whether the manifest was applied. The provider persists the payload after the backend accepts it, so a persist failure can mean the update is live now and the next reprovision will revert it. Diagnose with `app_status` / `app_releases` before acting; re-invoking `update_app` re-applies and re-records. Non-auto-retryable — `update_app` is non-idempotent |
 
@@ -101,11 +101,23 @@ Bech32 prefix doesn't match `COSMOS_ADDRESS_PREFIX` (default `manifest`), or the
 
 ## Deploy partial-success errors
 
-If `deploy_app` creates the lease but fails on a later step, it returns an error with the live `lease_uuid`, `provider_uuid`, and `provider_url`. The message starts with `Deploy partially succeeded:` and `details.partial` is `true`, so an agent can branch structurally. **Which step failed decides what to do — the two cases call for opposite responses.**
+If `deploy_app` creates the lease but cannot complete normally, `details.partial` is `true` and `details.lease_uuid` identifies the existing paid lease. Some lower-level partial failures also include `provider_uuid` / `provider_url` and use a `Deploy partially succeeded:` message prefix, but callers should branch on structured details instead of prose. **Where confirmation stopped decides what to do — the cases below call for different responses.**
 
-### `DEPLOY_READINESS_UNCONFIRMED` — readiness was never confirmed
+### `DEPLOY_READINESS_UNCONFIRMED` — readiness could not be safely confirmed
 
-`details.readiness_unconfirmed === true`, `details.failedStep === 'poll'`. The lease exists, the manifest is uploaded, and **the provider never reported the deployment as failed** — the poll simply hit its deadline (`poll_reason: 'deadline'`) or the provider's status endpoint was unreachable (`poll_reason: 'provider_unreachable'`). A cold image pull alone can take 5 minutes, and the provider is allowed 10.
+Every variant carries `details.readiness_unconfirmed === true`, `details.partial === true`, and `details.lease_uuid`. Do not repeat `deploy_app`: it is non-idempotent and the lease already exists. The related post-broadcast shapes are:
+
+| Error shape | Meaning | Default response |
+|-------------|---------|------------------|
+| `DEPLOY_READINESS_UNCONFIRMED` + `readiness_unconfirmed` + either `failedStep: 'poll'` or `poll_reason` | Poll ended without a failure verdict | Inspect status; waiting may be appropriate |
+| `DEPLOY_READINESS_UNCONFIRMED` + `readiness_reason: 'final_state_mismatch'` | Orchestration final-state disagreement | Inspect and report a persistent provider/client mismatch |
+| Usually `QUERY_FAILED` + `failedStep: 'poll'` without `readiness_unconfirmed` | Poll returned failure, terminal, or uninterpretable state | Re-query chain and provider; close only a chain-ACTIVE, provider-confirmed failed lease |
+
+Absence of `poll_reason` alone is not a discriminator.
+
+#### The readiness poll ended without a verdict
+
+This is the branch when `details.failedStep === 'poll'` or `details.poll_reason` is present. `poll_reason` is optional: typed deadline and provider-unreachable outcomes set it and may include `last_state` / `last_provision_status`; a first-read auth rejection, oversized status body, or token-mint failure can set only `failedStep: 'poll'`. In every case the lease exists, the manifest is uploaded, and **the provider never reported the deployment as failed**. A cold image pull alone can take 5 minutes, and the provider is allowed 10.
 
 This is not a failed deploy, and closing the lease here can tear down a deployment that is working. In order:
 
@@ -116,9 +128,27 @@ This is not a failed deploy, and closing the lease here can tear down a deployme
 
 Raise the deadline up front with `deploy_app({ …, timeout_seconds })` if your images are large.
 
-### Set-domain or manifest-upload failure
+#### The final provider state disagreed with readiness
 
-`details.failedStep` is `set_domain` or `upload`. Nothing is running on the lease and you're paying for it. Either retry the failing step (providers can be transiently unhealthy), or close the orphaned lease with `close_lease({ lease_uuid })`.
+For `DEPLOY_READINESS_UNCONFIRMED`, this branch has `details.readiness_reason === 'final_state_mismatch'`. The callback-oriented orchestration flow's readiness operation returned, but its canonical final state was absent, malformed, or a value other than `LEASE_STATE_ACTIVE`. `details.state_source` names the response field and bounded `details.observed_state` records what was seen; the client refuses to turn the disagreement into a successful ACTIVE result.
+
+Inspect `app_status({ lease_uuid })` and `app_diagnostics({ lease_uuid })`. If the provider repeatedly omits or malforms the state, or reports a non-ACTIVE state after declaring readiness, capture the error message and provider response and report a provider/client compatibility issue. Do not blindly wait or redeploy; act on the verified lease state once the disagreement is understood.
+
+### Readiness polling stopped on a provider state
+
+`details.failedStep === 'poll'` with no `details.readiness_unconfirmed` is a different partial-success outcome, normally coded `QUERY_FAILED`. Re-query `app_status` and treat its on-chain `chainState` as authoritative:
+
+- Chain ACTIVE with a recognized failed provider `provision_status`: inspect `app_diagnostics` / logs, then close the failed lease, even if the provider's lease-state field now says terminal.
+- Chain CLOSED, REJECTED, or EXPIRED: the lease is already inactive; no cleanup transaction is needed.
+- Chain ACTIVE while the provider reports CLOSED, REJECTED, or EXPIRED without a recognized failed `provision_status`: this is a source mismatch. The lease remains active and may still be billing; do not mistake the provider state for on-chain closure.
+- An unexpected or unrecognized chain or provider state: preserve the lease, capture `app_status` / diagnostics, and report the mismatch.
+- `app_status` throws, or returns `providerError` without `fredStatus`: the re-check itself is inconclusive. Preserve both the original partial-deploy error and the lease, then retry diagnosis later.
+
+Do not close solely because `failedStep` is `poll`, and do not start another readiness wait after a confirmed failure. A diagnostic re-query must not replace the original partial-deploy error if it fails.
+
+### Set-domain, manifest-upload, or pre-step callback failure
+
+`details.failedStep` is `set_domain` or `upload`; a library callback that fails immediately after lease creation can omit `failedStep`. The manifest is not running on the lease and you're paying for it. Either retry the failing step when appropriate (providers can be transiently unhealthy), or close the orphaned lease with `close_lease({ lease_uuid })`. If that cleanup fails, report its error separately and retain the original partial-deploy error: its `lease_uuid`, provider context, and failed-step metadata remain the recovery record.
 
 ## App is stuck in `LEASE_STATE_PENDING`
 

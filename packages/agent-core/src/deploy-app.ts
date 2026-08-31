@@ -50,6 +50,7 @@ import {
   type ReadCtx,
   resolveSku,
   type SkuCandidate,
+  sanitizeForDisplay,
   setItemCustomDomain,
   stopApp,
 } from '@manifest-network/manifest-mcp-core';
@@ -75,10 +76,7 @@ import {
 } from '@manifest-network/manifest-mcp-fred';
 import { makeCancellationScope } from './internals/cancellation.js';
 import { classifyDeployError } from './internals/classify-deploy-error.js';
-import {
-  classifyDeployResponse,
-  type DeployResponseShape,
-} from './internals/classify-deploy-response.js';
+import { classifyDeployResponse } from './internals/classify-deploy-response.js';
 import {
   extractRunningEndpoints,
   formatEndpointAsUrl,
@@ -111,7 +109,6 @@ import type {
   DeployResult,
   FailureEnvelope,
   FeeEstimate,
-  LeaseStateName,
   Plan,
   Readiness,
   RecoveryChoice,
@@ -128,6 +125,14 @@ import type {
  * @throws `ManifestMCPError(OPERATION_CANCELLED)` when `onConfirm` returns
  *   `'no'` or `onPlan` returns `'cancel'` (deliberate user cancellation —
  *   ENG-272).
+ * @throws `ManifestMCPError(DEPLOY_READINESS_UNCONFIRMED)` after broadcast
+ *   when readiness cannot be safely confirmed. Every variant carries
+ *   `details = { readiness_unconfirmed: true, lease_uuid, partial: true }`.
+ *   A poll that ends without a verdict additionally carries `poll_reason` and
+ *   may carry `last_state` / `last_provision_status`. A returned final-state
+ *   mismatch carries `readiness_reason: 'final_state_mismatch'`, `operation`,
+ *   `state_source`, a bounded `observed_state`, and available provider context.
+ *   Callers must diagnose the existing paid lease instead of retrying deploy.
  *
  * Errors from fred's broadcast or core's recovery primitives surface as
  * typed `ManifestMCPError`s. Partial-success failures with applicable
@@ -648,7 +653,7 @@ export async function deployApp(
     );
   }
 
-  // Live-state + live-connection trackers (Copilot fix-3, post-PR-D):
+  // Post-poll status tracker (Copilot fix-3, post-PR-D):
   // the pre-fix code merged `pollResult.state` (a JSON-encoded string from
   // `waitForAppReady`) into `fredResult.state` (numeric `LeaseState`) via
   // a width-erasing cast, hiding a type mismatch. Same for `pollResult.status`
@@ -657,18 +662,10 @@ export async function deployApp(
   // `hasRunningInstances` / `decodeLeaseState`, all of which accept the
   // wider shape), but the type contract was violated.
   //
-  // The fix: track the FINAL (post-poll if applicable, else initial)
-  // state + connection in two separate locals with HONEST types. Each
-  // upstream source has a typed slot:
-  //   - `fredResult.state` (`LeaseState`) when no polling fired.
-  //   - `pollResult.status.state` (`LeaseState`) when polling did fire —
-  //     NOTE: `pollResult.state` is the STRING form (JSON-encoded), wrong
-  //     source. The numeric form lives one level deeper.
-  //   - `fredResult.connection` (`ConnectionDetails | undefined`) initial.
-  //   - `pollResult.status` (`FredLeaseStatus`) post-poll.
-  let liveState: FredDeployAppResult['state'] | undefined = fredResult.state;
-  let liveConnection: ConnectionDetails | FredLeaseStatus | undefined =
-    fredResult.connection;
+  // The final observation is derived after routing: direct-active reads the
+  // deployApp response, while a polled flow reads the canonical numeric
+  // `pollResult.status.state` rather than the wrapper's JSON string state.
+  let postPollStatus: FredLeaseStatus | undefined;
 
   // --- Classify happy-path result + full routing (ENG-185 sub-PR D) -
   // Architect's α-lock: fred returns after tx + manifest upload succeed,
@@ -684,17 +681,14 @@ export async function deployApp(
   //                      this kind of failure — there's no recovery
   //                      choice once fred returns a terminal-state
   //                      response from a successful broadcast).
-  //   - `'needs_wait'` → poll `wait_for_app_ready`, emit
-  //                      `polling_for_readiness` events per onProgress
-  //                      sample, then RE-classify the post-poll result
-  //                      (Defense #2 — rare provider race where
-  //                      pollLeaseUntilReady exits on state==ACTIVE
-  //                      without a running instance). On post-poll
-  //                      success, merge the polled fields back into
-  //                      `fredResult` so downstream DeployResult
-  //                      construction sees the final state/connection.
-  //   - `'active'`     → fall through to `app_ready_confirmed` + persist.
-  let classification = classifyDeployResponse(fredResult);
+  //   - `'needs_wait'` → poll `wait_for_app_ready`, normalize its canonical
+  //                      `status`, then join the common persist → validate
+  //                      state → validate running-instance path. The last
+  //                      check is Defense #2 for a rare provider race where
+  //                      readiness returns ACTIVE without a running instance.
+  //   - `'active'`     → persist, confirm the authoritative state is ACTIVE,
+  //                      then emit `app_ready_confirmed` and complete.
+  const classification = classifyDeployResponse(fredResult);
   emitProgress(callbacks.onProgress, {
     kind: 'deploy_response_classified',
     outcome: classification.outcome,
@@ -782,6 +776,7 @@ export async function deployApp(
           {
             readiness_unconfirmed: true,
             lease_uuid: leaseUuid,
+            partial: true,
             poll_reason: err.reason,
             ...(err.details.last_state !== undefined && {
               last_state: err.details.last_state,
@@ -815,65 +810,42 @@ export async function deployApp(
       throw new ManifestMCPError(ManifestMCPErrorCode.TX_FAILED, reason);
     }
 
-    // Defense #2: re-classify post-poll. `pollLeaseUntilReady` exits on
-    // state==ACTIVE but doesn't check running-instances; a rare provider-
-    // side race could leave us at ACTIVE with no instances → outcome
-    // 'needs_wait' on the re-classify. We treat that as TX_FAILED rather
-    // than misleadingly emitting app_ready_confirmed + onComplete on a
-    // non-running deploy.
-    const postPollResponse: DeployResponseShape = {
-      lease_uuid: pollResult.lease_uuid,
-      provider_uuid: pollResult.provider_uuid,
-      provider_url: pollResult.provider_url,
-      state: pollResult.state,
-      connection: pollResult.status,
-    };
-    classification = classifyDeployResponse(postPollResponse);
-    if (classification.outcome !== 'active') {
-      // Copilot fix-6: include `leaseUuid` in the fallback message so
-      // log/user-report correlation matches the sibling
-      // `waitForAppReady` catch path at L548-550. Diagnostic consistency
-      // invariant — locked in by the Defense #2 test's
-      // `expect(...).toContain(leaseUuid)` assertion. The
-      // `errorSummary` path is unaffected; the classifier already
-      // includes leaseUuid in its terminal-state summary
-      // (`classify-deploy-response.ts:120`), but errorSummary fires only
-      // for `outcome === 'failed'`. The no-errorSummary fallback
-      // (this branch) fires when post-poll outcome is `'needs_wait'`
-      // (Defense #2's race scenario) — that's the gap we're closing.
-      const reason =
-        classification.errorSummary ??
-        `wait_for_app_ready returned for lease ${leaseUuid} but post-poll classifier outcome is ${classification.outcome}`;
-      throw new ManifestMCPError(ManifestMCPErrorCode.TX_FAILED, reason);
-    }
-
-    // Merge post-poll fields back into `fredResult` so downstream
+    // Normalize the post-poll observation before any further verdict. The
+    // wrapper's JSON `pollResult.state` is derived from `status.state` by the
+    // first-party implementation, but legacy/mocked callers can violate that
+    // relationship. From here onward the canonical numeric status is the only
+    // state source; wrapper disagreement cannot pre-empt persistence or turn a
+    // confirmed ACTIVE status into TX_FAILED.
+    //
+    // Merge post-poll identity back into `fredResult` so downstream
     // DeployResult construction sees the final lease/provider identity.
     // lease_uuid / provider_uuid are chain-polled, trusted ids — they are
     // trust-cast (asLeaseUuid / asProviderUuid) to satisfy DeployResult's
     // branded wire types (brands erase at runtime; zero behavior change).
     // provider_url stays a plain string. The state + connection fields are
-    // NOT merged here — they go into `liveState` and `liveConnection` so
-    // each carries the type that matches its upstream source (no
-    // width-erasing casts). See the live-tracker declarations above for
-    // the full rationale.
+    // NOT merged here — `postPollStatus` preserves their honest
+    // `FredLeaseStatus` shape for the final state and endpoint reads.
     fredResult = {
       ...fredResult,
       lease_uuid: asLeaseUuid(pollResult.lease_uuid),
       provider_uuid: asProviderUuid(pollResult.provider_uuid),
       provider_url: pollResult.provider_url,
     };
-    liveState = pollResult.status.state;
-    liveConnection = pollResult.status;
+    postPollStatus = pollResult.status;
   }
 
-  // 'active' (initial OR post-poll merge): emit + fall through to persist.
-  emitProgress(callbacks.onProgress, {
-    kind: 'app_ready_confirmed',
-    leaseUuid: fredResult.lease_uuid,
-  });
+  const liveState =
+    postPollStatus === undefined ? fredResult.state : postPollStatus.state;
+  const liveStateSource =
+    postPollStatus === undefined
+      ? 'fred_deploy_app_response.state'
+      : 'wait_for_app_ready_response.status.state';
+  const liveConnection: ConnectionDetails | FredLeaseStatus | undefined =
+    postPollStatus ?? fredResult.connection;
 
-  // --- Persist manifest (best-effort; save-fail still emits success) -
+  // Persist before the final state verdict. The lease already exists and its
+  // manifest is uploaded, so an indeterminate state must not erase the local
+  // recovery record used by troubleshooting and restore flows.
   const persistedPath = await tryPersistManifest({
     leaseUuid: fredResult.lease_uuid,
     image: primaryImage(confirmedSpec),
@@ -888,43 +860,43 @@ export async function deployApp(
     callbacks,
   });
 
-  // --- Build typed DeployResult --------------------------------------
-  // F1 fix: decode lease state via the canonical lease-state.decode()
-  // (handles int + LEASE_STATE_* string + undefined paths exhaustively).
-  //
-  // C3 fix (defensive bias correction; checklist item #16): distinguish
-  // absent state (undefined → default ACTIVE as defense-in-depth against
-  // legacy/mocked shapes that bypass fred's required-state contract —
-  // fred itself always sets `state` in `DeployAppResult`)
-  // from UNRECOGNIZED state (decode returned undefined for a value that
-  // WAS provided → likely a terminal/unknown chain emission that must
-  // NOT be silently classified as ACTIVE). For the unrecognized case,
-  // throw `INVALID_CONFIG` so callers see the empirical mismatch
-  // instead of consuming a misleading ACTIVE.
-  // Reads via `liveState` (Copilot fix-3): carries the post-poll
-  // `pollResult.status.state` (numeric `LeaseState`) when the needs_wait
-  // branch fired; falls back to `fredResult.state` for the direct-active
-  // path. Effective type is `LeaseState | undefined` — numeric only after
-  // the fix-3 type-tightening. The `undefined` branch handles the C3
-  // defense-in-depth case above (legacy/mocked shapes that bypass fred's
-  // required-state contract). The numeric branch decodes the enum via
-  // `decodeLeaseState`; the `decoded === undefined` arm catches
-  // UNRECOGNIZED enum values (defense-in-depth against future chain
-  // emissions that add new states beyond the current `LeaseStateName`
-  // union).
-  let leaseStateDecoded: LeaseStateName;
-  if (liveState === undefined) {
-    leaseStateDecoded = 'LEASE_STATE_ACTIVE';
-  } else {
-    const decoded = decodeLeaseState(liveState);
-    if (decoded === undefined) {
-      throw new ManifestMCPError(
-        ManifestMCPErrorCode.INVALID_CONFIG,
-        `Unrecognized lease state from fred deployApp response: ${String(liveState)}. Cannot safely classify; refusing to silently coerce to ACTIVE.`,
-      );
+  const leaseStateDecoded = requireConfirmedActiveLeaseState({
+    state: liveState,
+    source: liveStateSource,
+    operation: 'deploy',
+    leaseUuid: fredResult.lease_uuid,
+    providerUuid: fredResult.provider_uuid,
+    providerUrl: fredResult.provider_url,
+  });
+
+  if (postPollStatus !== undefined) {
+    // Defense #2: waitForAppReady can return ACTIVE before any instance is
+    // observably running. Re-classify only AFTER persisting and validating the
+    // canonical state, so an invalid wrapper cannot bypass the recovery record
+    // or override `status.state`.
+    const postPollClassification = classifyDeployResponse({
+      lease_uuid: fredResult.lease_uuid,
+      provider_uuid: fredResult.provider_uuid,
+      provider_url: fredResult.provider_url,
+      state: postPollStatus.state,
+      connection: postPollStatus,
+    });
+    if (postPollClassification.outcome !== 'active') {
+      const reason =
+        postPollClassification.errorSummary ??
+        `wait_for_app_ready returned for lease ${fredResult.lease_uuid} but post-poll classifier outcome is ${postPollClassification.outcome}`;
+      throw new ManifestMCPError(ManifestMCPErrorCode.TX_FAILED, reason);
     }
-    leaseStateDecoded = decoded;
   }
+
+  // 'active' (initial OR post-poll): emit only after persistence and the
+  // authoritative live-state check both complete.
+  emitProgress(callbacks.onProgress, {
+    kind: 'app_ready_confirmed',
+    leaseUuid: fredResult.lease_uuid,
+  });
+
+  // --- Build typed DeployResult --------------------------------------
 
   // F4 fix: derive `urls` from `extractRunningEndpoints(connection)` for
   // multi-FQDN dedup (matches CJS pipeline behavior). fred's
@@ -969,6 +941,82 @@ export async function deployApp(
 }
 
 // --- Helpers ---------------------------------------------------------
+
+type FinalLeaseStateSource =
+  | 'fred_deploy_app_response.state'
+  | 'wait_for_app_ready_response.status.state'
+  | 'poll_lease_until_ready_response.state';
+
+interface ConfirmActiveLeaseStateArgs {
+  state: unknown;
+  source: FinalLeaseStateSource;
+  operation: 'deploy' | 'retry_set_domain';
+  leaseUuid: string;
+  providerUuid?: string;
+  providerUrl?: string;
+}
+
+/**
+ * Require the authoritative result state to be exactly ACTIVE before a deploy
+ * can emit a success verdict. First-party waitForAppReady derives its wrapper
+ * state from status.state, so disagreement is reachable only through a mocked,
+ * legacy, or otherwise contract-bypassing shape; the guard remains fail-closed
+ * because retrying here would create a second paid lease.
+ */
+function requireConfirmedActiveLeaseState(
+  args: ConfirmActiveLeaseStateArgs,
+): 'LEASE_STATE_ACTIVE' {
+  const decodableState =
+    typeof args.state === 'number' || typeof args.state === 'string'
+      ? args.state
+      : undefined;
+  const decoded = decodeLeaseState(decodableState);
+  if (decoded !== 'LEASE_STATE_ACTIVE') {
+    const observedState = formatObservedLeaseState(args.state);
+    throw new ManifestMCPError(
+      ManifestMCPErrorCode.DEPLOY_READINESS_UNCONFIRMED,
+      `${args.operation === 'retry_set_domain' ? 'retry_set_domain: ' : ''}Lease ${args.leaseUuid} was deployed but its live state could not be confirmed as ACTIVE (${args.source}: ${observedState}). Cannot safely classify; refusing to silently coerce to ACTIVE.`,
+      {
+        readiness_unconfirmed: true,
+        readiness_reason: 'final_state_mismatch',
+        operation: args.operation,
+        lease_uuid: args.leaseUuid,
+        partial: true,
+        state_source: args.source,
+        observed_state: observedState,
+        ...(args.providerUuid !== undefined && {
+          provider_uuid: args.providerUuid,
+        }),
+        ...(args.providerUrl !== undefined && {
+          provider_url: args.providerUrl,
+        }),
+      },
+    );
+  }
+  return decoded;
+}
+
+function formatObservedLeaseState(state: unknown): string {
+  let rendered: string;
+  try {
+    const serialized = JSON.stringify(state);
+    if (serialized !== undefined) {
+      rendered = serialized;
+    } else {
+      rendered = String(state);
+    }
+  } catch {
+    try {
+      rendered = String(state);
+    } catch {
+      rendered = '<unprintable>';
+    }
+  }
+  // This helper deliberately accepts `unknown` for legacy/contract-bypassing
+  // shapes. Keep that diagnostic bounded and display-safe before it reaches a
+  // public error message or structured details.
+  return sanitizeForDisplay(rendered, 256, '<unprintable>');
+}
 
 function primaryImage(spec: AppDeploySpec): string {
   if (isStackSpec(spec)) {
@@ -1385,10 +1433,12 @@ async function dispatchRecovery(
  *      `onProgress` closure translates each `FredLeaseStatus` sample
  *      into a typed `polling_for_readiness` ProgressEvent, fred's
  *      `DEFAULT_POLL_TIMEOUT_MS` overridable via `opts.waitForReadyTimeoutMs`.
- *   5. Defense #2 parity (post-poll re-classify) — guard the
+ *   5. Persist the manifest (best-effort) before any final verdict.
+ *   6. Apply the shared exact-ACTIVE state policy.
+ *   7. Defense #2 parity (post-poll re-classify) — guard the
  *      ACTIVE-with-no-instances race per D's pattern.
- *   6. Persist manifest (best-effort) + build typed `DeployResult` +
- *      emit `app_ready_confirmed` + `success_rendered` + onComplete.
+ *   8. Build typed `DeployResult` + emit `app_ready_confirmed` +
+ *      `success_rendered` + onComplete.
  *
  * Failure paths (sibling-parity wraps — every catch site surfaces
  * `retry_set_domain <primitive-name> failed for lease ${leaseUuid}:
@@ -1396,9 +1446,10 @@ async function dispatchRecovery(
  * Error-code policy: typed `ManifestMCPError`s flow through with their
  * original code preserved (precedent at `estimateFees` — see the
  * `cosmosEstimateFee` catch block); untyped errors default to
- * `TX_FAILED`. The post-poll re-classify path likewise prefixes BOTH
- * the errorSummary-set and the no-errorSummary branches with
- * `retry_set_domain` + leaseUuid (Copilot fix-4, PR #71):
+ * `TX_FAILED`. A returned final-state mismatch uses the shared
+ * non-retryable `DEPLOY_READINESS_UNCONFIRMED` contract after persistence;
+ * the ACTIVE-with-no-instances re-classify path retains its
+ * `retry_set_domain` + leaseUuid diagnostic:
  *   - `setItemCustomDomain` throws → wrap with prefix + leaseUuid +
  *     code preservation. Most likely cause: chain rejected the
  *     set-item-custom-domain tx (FQDN validation, reserved-suffix
@@ -1407,10 +1458,9 @@ async function dispatchRecovery(
  *     prefix + leaseUuid.
  *   - `uploadLeaseData` throws → wrap with prefix + leaseUuid.
  *   - `pollLeaseUntilReady` throws → wrap with prefix + leaseUuid.
- *   - Post-poll re-classify outcome !== 'active' → wrap both
- *     branches: errorSummary-set (terminal-state response) AND
- *     no-errorSummary fallback (ACTIVE-with-no-instances Defense #2
- *     race) carry prefix + leaseUuid.
+ *   - Returned state !== ACTIVE → preserve + throw the shared structured
+ *     final-state-mismatch error.
+ *   - ACTIVE with no running instance → TX_FAILED with prefix + leaseUuid.
  */
 async function retrySetDomainAndComplete(
   leaseUuid: string,
@@ -1625,6 +1675,7 @@ async function retrySetDomainAndComplete(
         {
           readiness_unconfirmed: true,
           lease_uuid: leaseUuid,
+          partial: true,
           poll_reason: err.reason,
           ...(err.details.last_state !== undefined && {
             last_state: err.details.last_state,
@@ -1646,45 +1697,9 @@ async function retrySetDomainAndComplete(
     throw new ManifestMCPError(code, reason);
   }
 
-  // Defense #2 parity (from D): re-classify the post-poll response and
-  // refuse to declare success if the classifier doesn't see ACTIVE +
-  // running instances. Catches the rare provider race where
-  // `pollLeaseUntilReady` exits on state==ACTIVE but instances are empty.
-  //
-  // pollResult IS a `FredLeaseStatus` directly (no `WaitForAppReadyResult`
-  // wrapping — that's what the refactor unlocked). The lease/provider
-  // identity fields below come from the already-resolved values, NOT
-  // from a (no-longer-existing) nested response object.
-  const postPollResponse: DeployResponseShape = {
-    lease_uuid: leaseUuid,
-    provider_uuid: lease.providerUuid,
-    provider_url: providerApiUrl,
-    state: pollResult.state,
-    connection: pollResult,
-  };
-  const classification = classifyDeployResponse(postPollResponse);
-  if (classification.outcome !== 'active') {
-    // Copilot fix-4 (PR #71): sibling-parity for BOTH branches. The
-    // pre-fix `??` collapsed errorSummary (set when the post-poll
-    // classifier produces 'failed' with a terminal-state response)
-    // directly into the throw — no `retry_set_domain` prefix, no
-    // leaseUuid. Both branches now carry the prefix + leaseUuid, and
-    // the no-errorSummary fallback names the actual primitive
-    // (`pollLeaseUntilReady` post-fixup-1, not `wait_for_app_ready`).
-    const reason =
-      classification.errorSummary !== undefined
-        ? `retry_set_domain post-poll re-classification failed for lease ${leaseUuid}: ${classification.errorSummary}`
-        : `retry_set_domain: pollLeaseUntilReady returned for lease ${leaseUuid} but post-poll classifier outcome is ${classification.outcome}`;
-    throw new ManifestMCPError(ManifestMCPErrorCode.TX_FAILED, reason);
-  }
-
-  emitProgress(callbacks.onProgress, {
-    kind: 'app_ready_confirmed',
-    leaseUuid,
-  });
-
-  // Persist manifest (best-effort; save-fail still emits success — same
-  // contract as D's happy path).
+  // Persist before every final verdict, matching the main deploy path.
+  // This recovery has already claimed the domain and uploaded the manifest;
+  // even an indeterminate final state needs its local recovery record.
   const persistedPath = await tryPersistManifest({
     leaseUuid,
     image: primaryImage(spec),
@@ -1699,20 +1714,39 @@ async function retrySetDomainAndComplete(
     callbacks,
   });
 
-  // Build DeployResult. State decoding + urls extraction mirror the
-  // happy-path block in `deployApp` verbatim. After the Copilot fix-1
-  // refactor, `pollResult` IS a `FredLeaseStatus` (no wrapping), so
-  // `liveState` reads from `pollResult.state` directly (numeric
-  // `LeaseState`) and `extractRunningEndpoints` walks `pollResult` itself.
-  const liveState = pollResult.state;
-  const decoded = decodeLeaseState(liveState);
-  if (decoded === undefined) {
-    throw new ManifestMCPError(
-      ManifestMCPErrorCode.INVALID_CONFIG,
-      `Unrecognized lease state from pollLeaseUntilReady response: ${String(liveState)}. Cannot safely classify; refusing to silently coerce to ACTIVE.`,
-    );
+  const leaseStateDecoded = requireConfirmedActiveLeaseState({
+    state: pollResult.state,
+    source: 'poll_lease_until_ready_response.state',
+    operation: 'retry_set_domain',
+    leaseUuid,
+    providerUuid: lease.providerUuid,
+    providerUrl: providerApiUrl,
+  });
+
+  // Defense #2 parity (from D): after the canonical state is known ACTIVE,
+  // still require a running instance. Keeping this after persistence and the
+  // shared state guard ensures malformed/non-ACTIVE contract-bypassing returns
+  // receive the same recoverable error shape as the main path.
+  const postPollClassification = classifyDeployResponse({
+    lease_uuid: leaseUuid,
+    provider_uuid: lease.providerUuid,
+    provider_url: providerApiUrl,
+    state: pollResult.state,
+    connection: pollResult,
+  });
+  if (postPollClassification.outcome !== 'active') {
+    const reason =
+      postPollClassification.errorSummary !== undefined
+        ? `retry_set_domain post-poll re-classification failed for lease ${leaseUuid}: ${postPollClassification.errorSummary}`
+        : `retry_set_domain: pollLeaseUntilReady returned for lease ${leaseUuid} but post-poll classifier outcome is ${postPollClassification.outcome}`;
+    throw new ManifestMCPError(ManifestMCPErrorCode.TX_FAILED, reason);
   }
-  const leaseStateDecoded: LeaseStateName = decoded;
+
+  emitProgress(callbacks.onProgress, {
+    kind: 'app_ready_confirmed',
+    leaseUuid,
+  });
+
   const endpointUrls =
     extractRunningEndpoints(pollResult).map(formatEndpointAsUrl);
   // Lease + provider identity come from the already-resolved values,

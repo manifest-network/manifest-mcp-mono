@@ -471,13 +471,16 @@ export enum ManifestMCPErrorCode {
   UPDATE_INDETERMINATE = 'UPDATE_INDETERMINATE',
 
   /**
-   * A deploy created its lease and uploaded the manifest, but readiness was
-   * never CONFIRMED — the poll deadline expired, or the provider's status
-   * endpoint stayed unreachable. This is NOT a reported failure: the provider
-   * never returned a failed `provision_status`, so the lease is live and the
-   * app may well be starting. Carries `details.readiness_unconfirmed === true`
-   * plus the last state / provision_status seen. Callers must diagnose
-   * (`app_status`, `wait_for_app_ready`) before closing anything.
+   * A deploy created its lease and uploaded the manifest, but readiness could
+   * not be safely CONFIRMED. Either the poll ended without a verdict (deadline,
+   * unreachable provider, or another non-verdict error), or an orchestration
+   * boundary returned while its canonical final state was absent, malformed,
+   * or non-ACTIVE. Carries `details.readiness_unconfirmed === true`,
+   * `details.lease_uuid`, and `details.partial === true`. Final-state mismatch
+   * additionally carries `readiness_reason: 'final_state_mismatch'`, a stable
+   * `state_source`, and a bounded `observed_state`; poll variants carry their
+   * existing `failedStep` / `poll_reason` context. Callers must diagnose the
+   * existing lease before closing anything.
    *
    * Non-retryable: `deploy_app` is non-idempotent, so an auto-retry would
    * create a SECOND paid lease (ENG-661).

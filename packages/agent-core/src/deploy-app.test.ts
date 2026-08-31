@@ -419,6 +419,287 @@ describe('deployApp replay — 01-fast-path-active', () => {
   });
 });
 
+describe('deployApp — required live lease state (ENG-656)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  /**
+   * First-party waitForAppReady derives its wrapper state from status.state,
+   * so this inconsistent shape is defense-in-depth for mocked, legacy, or
+   * otherwise contract-bypassing callers of the orchestration package.
+   */
+  interface PostPollStateOverrides {
+    statusState?: unknown;
+    wrapperState?: unknown;
+    omitWrapperState?: boolean;
+    dataDir?: string;
+  }
+
+  async function runInconsistentPostPollState(
+    overrides: PostPollStateOverrides = {},
+  ) {
+    const spec = readFixture(
+      'skills',
+      'deploy-app',
+      '01-fast-path-active',
+      'input',
+      'spec.json',
+    ) as DeploySpec;
+    const readinessRaw = readFixture(
+      'skills',
+      'deploy-app',
+      '01-fast-path-active',
+      'input',
+      'readiness-response.json',
+    );
+    const metaHashResp = readFixture(
+      'skills',
+      'deploy-app',
+      '01-fast-path-active',
+      'input',
+      'meta-hash-response.json',
+    ) as { manifest_json: string; meta_hash_hex: string };
+
+    const leaseUuid = '33333333-3333-4333-8333-333333333333';
+    const providerUuid = '44444444-4444-4444-8444-444444444444';
+    const fred = await import('@manifest-network/manifest-mcp-fred');
+    vi.mocked(fred.checkDeploymentReadiness).mockResolvedValue(
+      readinessRaw as unknown as Awaited<
+        ReturnType<typeof fred.checkDeploymentReadiness>
+      >,
+    );
+    vi.mocked(fred.buildManifestPreview).mockResolvedValue({
+      manifest_json: metaHashResp.manifest_json,
+      meta_hash_hex: metaHashResp.meta_hash_hex,
+    } as Awaited<ReturnType<typeof fred.buildManifestPreview>>);
+    vi.mocked(fred.deployApp).mockResolvedValue({
+      lease_uuid: leaseUuid,
+      provider_uuid: providerUuid,
+      provider_url: 'https://provider.testnet.manifest.network',
+      state: 1 as never,
+      connection: { instances: [] },
+    } as unknown as Awaited<ReturnType<typeof fred.deployApp>>);
+    vi.mocked(fred.waitForAppReady).mockResolvedValue({
+      lease_uuid: leaseUuid,
+      provider_uuid: providerUuid,
+      provider_url: 'https://provider.testnet.manifest.network',
+      // The wrapper is deliberately independently configurable from the
+      // canonical status. First-party waitForAppReady derives one from the
+      // other, but legacy/mocked callers can violate that contract in either
+      // direction; agent-core must trust status.state consistently.
+      ...(overrides.omitWrapperState
+        ? {}
+        : {
+            state:
+              'wrapperState' in overrides
+                ? overrides.wrapperState
+                : 'LEASE_STATE_ACTIVE',
+          }),
+      status: {
+        ...('statusState' in overrides ? { state: overrides.statusState } : {}),
+        instances: [
+          {
+            name: 'app',
+            status: 'running',
+            fqdn: 'app-33333333.testnet.manifest.app',
+            ports: {
+              '80/tcp': { host_ip: '0.0.0.0', host_port: 30001 },
+            },
+          },
+        ],
+      },
+    } as unknown as Awaited<ReturnType<typeof fred.waitForAppReady>>);
+
+    const core = await import('@manifest-network/manifest-mcp-core');
+    vi.mocked(core.cosmosEstimateFee).mockResolvedValue({
+      module: 'billing',
+      subcommand: 'create-lease',
+      gasEstimate: '142000',
+      fee: { amount: [{ denom: 'umfx', amount: '2300' }], gas: '142000' },
+    } as Awaited<ReturnType<typeof core.cosmosEstimateFee>>);
+
+    const { callbacks, progress, completed } = captureCallbacks();
+    const { deployApp } = await import('./deploy-app.js');
+    const clientManager = makeMockClientManager();
+    const walletProvider = makeMockWalletProvider();
+
+    let caughtErr: unknown = null;
+    let result: DeployResult | undefined;
+    try {
+      result = await deployApp(spec, callbacks, {
+        clientManager: clientManager as unknown as Parameters<
+          typeof deployApp
+        >[2]['clientManager'],
+        walletProvider,
+        ...(overrides.dataDir !== undefined
+          ? { dataDir: overrides.dataDir }
+          : {}),
+      });
+    } catch (err) {
+      caughtErr = err;
+    }
+
+    return {
+      caughtErr,
+      result,
+      progress,
+      completed,
+      leaseUuid,
+      providerUuid,
+    };
+  }
+
+  it('persists the live lease and reports lease-aware uncertainty when status.state is absent', async () => {
+    const { mkdtempSync, rmSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const dataDir = mkdtempSync(join(tmpdir(), 'eng656-missing-state-'));
+
+    try {
+      const { caughtErr, progress, completed, leaseUuid } =
+        await runInconsistentPostPollState({ dataDir });
+
+      expect(caughtErr).toBeInstanceOf(ManifestMCPError);
+      const error = caughtErr as ManifestMCPError;
+      expect(error.code).toBe(
+        ManifestMCPErrorCode.DEPLOY_READINESS_UNCONFIRMED,
+      );
+      expect(error.message).toContain(leaseUuid);
+      expect(error.message).toContain('status.state');
+      expect(error.message).toContain('undefined');
+      expect(error.details).toMatchObject({
+        readiness_unconfirmed: true,
+        readiness_reason: 'final_state_mismatch',
+        operation: 'deploy',
+        lease_uuid: leaseUuid,
+        partial: true,
+        state_source: 'wait_for_app_ready_response.status.state',
+        observed_state: 'undefined',
+        provider_uuid: '44444444-4444-4444-8444-444444444444',
+        provider_url: 'https://provider.testnet.manifest.network',
+      });
+
+      const saved = progress.find((event) => event.kind === 'manifest_saved');
+      expect(saved).toBeDefined();
+      if (saved?.kind === 'manifest_saved') {
+        const persisted = JSON.parse(
+          readFileSync(saved.manifestPath, 'utf8'),
+        ) as { lease_uuid?: string };
+        expect(persisted.lease_uuid).toBe(leaseUuid);
+      }
+      expect(
+        progress.some((event) => event.kind === 'app_ready_confirmed'),
+      ).toBe(false);
+      expect(progress.some((event) => event.kind === 'success_rendered')).toBe(
+        false,
+      );
+      expect(completed).toHaveLength(0);
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    {
+      label: 'CLOSED',
+      statusState: 3,
+      renderedState: 'status.state: 3',
+    },
+    {
+      label: 'PENDING',
+      statusState: 1,
+      renderedState: 'status.state: 1',
+    },
+    {
+      label: 'a malformed object',
+      statusState: { value: 2 },
+      renderedState: 'status.state: {"value":2}',
+    },
+  ])(
+    'does not complete as ACTIVE when canonical status.state is $label',
+    async ({ statusState, renderedState }) => {
+      const { caughtErr, progress, completed, leaseUuid } =
+        await runInconsistentPostPollState({ statusState });
+
+      expect(caughtErr).toBeInstanceOf(ManifestMCPError);
+      const error = caughtErr as ManifestMCPError;
+      expect(error.code).toBe(
+        ManifestMCPErrorCode.DEPLOY_READINESS_UNCONFIRMED,
+      );
+      expect(error.message).toContain(leaseUuid);
+      expect(error.message).toContain(renderedState);
+      expect(error.details).toMatchObject({
+        readiness_unconfirmed: true,
+        readiness_reason: 'final_state_mismatch',
+        operation: 'deploy',
+        lease_uuid: leaseUuid,
+        partial: true,
+        state_source: 'wait_for_app_ready_response.status.state',
+        observed_state: renderedState.replace(/^status\.state: /, ''),
+      });
+      expect(
+        progress.some((event) => event.kind === 'app_ready_confirmed'),
+      ).toBe(false);
+      expect(progress.some((event) => event.kind === 'success_rendered')).toBe(
+        false,
+      );
+      expect(completed).toHaveLength(0);
+    },
+  );
+
+  it('bounds a malformed observed state before exposing it in error details', async () => {
+    const { caughtErr } = await runInconsistentPostPollState({
+      statusState: { value: 'x'.repeat(10_000) },
+    });
+
+    expect(caughtErr).toBeInstanceOf(ManifestMCPError);
+    const observedState = (caughtErr as ManifestMCPError).details
+      ?.observed_state;
+    expect(typeof observedState).toBe('string');
+    if (typeof observedState === 'string') {
+      expect(Array.from(observedState)).toHaveLength(257);
+      expect(observedState.endsWith('…')).toBe(true);
+      expect(observedState).not.toContain('x'.repeat(1_000));
+    }
+  });
+
+  it.each([
+    {
+      label: 'absent',
+      overrides: { omitWrapperState: true },
+    },
+    {
+      label: 'terminal',
+      overrides: { wrapperState: 'LEASE_STATE_CLOSED' },
+    },
+  ] satisfies Array<{
+    label: string;
+    overrides: PostPollStateOverrides;
+  }>)(
+    'uses canonical ACTIVE status when wrapper state is $label',
+    async ({ overrides }) => {
+      const { caughtErr, result, progress, completed, leaseUuid } =
+        await runInconsistentPostPollState({
+          ...overrides,
+          statusState: 2,
+        });
+
+      expect(caughtErr).toBeNull();
+      expect(result).toMatchObject({
+        leaseUuid,
+        leaseState: 'LEASE_STATE_ACTIVE',
+      });
+      expect(
+        progress.some((event) => event.kind === 'app_ready_confirmed'),
+      ).toBe(true);
+      expect(progress.some((event) => event.kind === 'success_rendered')).toBe(
+        true,
+      );
+      expect(completed).toHaveLength(1);
+    },
+  );
+});
+
 describe('deployApp — ENG-258 SKU pin resolution + ambiguity elicitation', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -3699,6 +3980,7 @@ describe('deployApp — sub-PR D defense-in-depth', () => {
     expect(err.details).toMatchObject({
       readiness_unconfirmed: true,
       lease_uuid: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+      partial: true,
       poll_reason: 'deadline',
       last_provision_status: 'provisioning',
     });
@@ -4140,7 +4422,7 @@ describe('deployApp — retry_set_domain decomposition (ENG-185 sub-PR E)', () =
     const dataDir = mkdtempSync(join(tmpdir(), 'eng749-retry-domain-'));
 
     try {
-      const { run, leaseUuid } = await setupRetryScenario({
+      const { run, leaseUuid, baseCapture } = await setupRetryScenario({
         customDomain: 'App.Testnet.Manifest.App',
         dataDir,
       });
@@ -4170,6 +4452,15 @@ describe('deployApp — retry_set_domain decomposition (ENG-185 sub-PR E)', () =
         custom_domain?: string;
       };
       expect(persisted.custom_domain).toBe('app.testnet.manifest.app');
+
+      const savedIdx = baseCapture.progress.findIndex(
+        (event) => event.kind === 'manifest_saved',
+      );
+      const readyIdx = baseCapture.progress.findIndex(
+        (event) => event.kind === 'app_ready_confirmed',
+      );
+      expect(savedIdx).toBeGreaterThanOrEqual(0);
+      expect(readyIdx).toBeGreaterThan(savedIdx);
     } finally {
       rmSync(dataDir, { recursive: true, force: true });
     }
@@ -4254,6 +4545,8 @@ describe('deployApp — retry_set_domain decomposition (ENG-185 sub-PR E)', () =
     expect(err.message).toContain('readiness could not be confirmed');
     expect(err.details).toMatchObject({
       readiness_unconfirmed: true,
+      lease_uuid: leaseUuid,
+      partial: true,
       poll_reason: 'provider_unreachable',
       last_provision_status: 'provisioning',
     });
@@ -4303,50 +4596,83 @@ describe('deployApp — retry_set_domain decomposition (ENG-185 sub-PR E)', () =
     expect(baseCapture.completed).toHaveLength(0);
   });
 
-  it('post-poll re-classify with errorSummary (terminal state) → TX_FAILED with retry_set_domain prefix + leaseUuid + errorSummary content', async () => {
-    // Copilot fix-4 (PR #71) regression guard for the errorSummary
-    // branch of the `??` fallback at L1267. The pre-fix code used
-    // `classification.errorSummary ?? ...fallback...` which meant when
-    // errorSummary IS set (post-poll classifier produces 'failed' with
-    // a terminal-state errorSummary), the thrown message would be
-    // errorSummary VERBATIM — no `retry_set_domain` prefix, no leaseUuid.
-    // Inconsistent with the sibling-parity discipline that all other
-    // throw sites in this helper honor (fixup-3 wrap).
-    //
-    // To drive the errorSummary path: mock pollLeaseUntilReady to
-    // RESOLVE with a terminal-state response. The post-poll re-classify
-    // then sees state=REJECTED → outcome='failed' → classifier sets
-    // errorSummary to `Lease ${leaseUuid} reached terminal state
-    // LEASE_STATE_REJECTED` (per classify-deploy-response.ts:120).
-    const { run, baseCapture, leaseUuid } = await setupRetryScenario({
-      pollLeaseUntilReady: vi.fn().mockResolvedValue({
-        state: 4, // LEASE_STATE_REJECTED — terminal
-        instances: [],
-      }),
-    });
+  it.each([
+    {
+      label: 'an absent state',
+      pollResult: { instances: [] },
+      observedState: 'undefined',
+    },
+    {
+      label: 'a terminal state',
+      pollResult: { state: 4, instances: [] },
+      observedState: '4',
+    },
+    {
+      label: 'a malformed state',
+      pollResult: { state: { value: 2 }, instances: [] },
+      observedState: '{"value":2}',
+    },
+  ])(
+    'retry_set_domain persists recovery context and reports $label as final-state mismatch',
+    async ({ pollResult, observedState }) => {
+      const { mkdtempSync, rmSync } = await import('node:fs');
+      const { tmpdir } = await import('node:os');
+      const dataDir = mkdtempSync(join(tmpdir(), 'eng656-retry-state-'));
 
-    const { caughtErr } = await run();
+      try {
+        const { run, baseCapture, leaseUuid, providerUuid, providerApiUrl } =
+          await setupRetryScenario({
+            dataDir,
+            pollLeaseUntilReady: vi.fn().mockResolvedValue(pollResult),
+          });
 
-    expect(caughtErr).toBeInstanceOf(ManifestMCPError);
-    expect((caughtErr as ManifestMCPError).code).toBe(
-      ManifestMCPErrorCode.TX_FAILED,
-    );
-    // Sibling-parity invariant: prefix + leaseUuid in the message.
-    expect((caughtErr as Error).message).toContain('retry_set_domain');
-    expect((caughtErr as Error).message).toContain(leaseUuid);
-    // The classifier's errorSummary content is preserved (we wrap it
-    // for prefix, but the underlying terminal-state diagnostic is the
-    // information operators need).
-    expect((caughtErr as Error).message).toContain('LEASE_STATE_REJECTED');
-    expect((caughtErr as Error).message).toContain('terminal state');
-    // Wording differentiates the errorSummary path from the
-    // no-errorSummary fallback (latter says "but post-poll classifier
-    // outcome is needs_wait").
-    expect((caughtErr as Error).message).toMatch(
-      /post-poll re-classification/i,
-    );
-    expect(baseCapture.completed).toHaveLength(0);
-  });
+        const { caughtErr } = await run();
+
+        expect(caughtErr).toBeInstanceOf(ManifestMCPError);
+        const error = caughtErr as ManifestMCPError;
+        expect(error.code).toBe(
+          ManifestMCPErrorCode.DEPLOY_READINESS_UNCONFIRMED,
+        );
+        expect(error.message).toContain('retry_set_domain');
+        expect(error.message).toContain(leaseUuid);
+        expect(error.details).toMatchObject({
+          readiness_unconfirmed: true,
+          readiness_reason: 'final_state_mismatch',
+          operation: 'retry_set_domain',
+          lease_uuid: leaseUuid,
+          partial: true,
+          state_source: 'poll_lease_until_ready_response.state',
+          observed_state: observedState,
+          provider_uuid: providerUuid,
+          provider_url: providerApiUrl,
+        });
+
+        const saved = baseCapture.progress.find(
+          (event) => event.kind === 'manifest_saved',
+        );
+        expect(saved).toBeDefined();
+        if (saved?.kind === 'manifest_saved') {
+          const persisted = JSON.parse(
+            readFileSync(saved.manifestPath, 'utf8'),
+          ) as { lease_uuid?: string };
+          expect(persisted.lease_uuid).toBe(leaseUuid);
+        }
+        expect(
+          baseCapture.progress.some(
+            (event) => event.kind === 'app_ready_confirmed',
+          ),
+        ).toBe(false);
+        expect(
+          baseCapture.progress.some(
+            (event) => event.kind === 'success_rendered',
+          ),
+        ).toBe(false);
+        expect(baseCapture.completed).toHaveLength(0);
+      } finally {
+        rmSync(dataDir, { recursive: true, force: true });
+      }
+    },
+  );
 
   it('post-poll re-classify without errorSummary (ACTIVE with no instances) → TX_FAILED with retry_set_domain prefix + leaseUuid + fallback wording', async () => {
     // Copilot fix-4 (PR #71) regression guard for the no-errorSummary
