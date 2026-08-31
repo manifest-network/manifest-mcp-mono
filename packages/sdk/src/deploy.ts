@@ -18,6 +18,7 @@ export {
   leaseStateFromJSON,
   leaseStateToJSON,
   type ManifestDeploySpec,
+  type PortConfig,
   type SetItemCustomDomainInput,
   type SetItemCustomDomainResult,
   type StopAppResult,

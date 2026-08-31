@@ -81,25 +81,38 @@ interface RegisterToolsDeps {
   allowLoopback?: boolean;
 }
 
-function manifestPortsSchema() {
+type ManifestInputMode = 'preview' | 'deploy';
+
+function manifestPortsSchema(mode: ManifestInputMode) {
+  const portConfigShape = {
+    host_port:
+      mode === 'preview'
+        ? z
+            .number()
+            .int()
+            .optional()
+            .describe(
+              'Preview accepts any integer so Fred-incompatible fixed ports are returned as validation errors.',
+            )
+        : z
+            .literal(0)
+            .optional()
+            .describe(
+              'Must be 0 or omitted; Fred assigns host ports dynamically.',
+            ),
+    ingress: z
+      .boolean()
+      .optional()
+      .describe(
+        'Prefer this port for ingress. Only one TCP port may set ingress=true.',
+      ),
+  };
+  const portConfig =
+    mode === 'preview'
+      ? z.looseObject(portConfigShape)
+      : z.strictObject(portConfigShape);
   return z
-    .record(
-      z.string(),
-      z.strictObject({
-        host_port: z
-          .literal(0)
-          .optional()
-          .describe(
-            'Must be 0 or omitted; Fred assigns host ports dynamically.',
-          ),
-        ingress: z
-          .boolean()
-          .optional()
-          .describe(
-            'Prefer this port for ingress. Only one TCP port may set ingress=true.',
-          ),
-      }),
-    )
+    .record(z.string(), portConfig)
     .optional()
     .describe(
       'Port map keyed by "port/protocol" (e.g. {"8080/tcp":{"ingress":true}}).',
@@ -120,6 +133,46 @@ function manifestExposeSchema() {
     .array(z.string())
     .optional()
     .describe('Container-network ports as bare number strings (e.g. ["8080"])');
+}
+
+function manifestHealthCheckSchema(mode: ManifestInputMode) {
+  const shape = {
+    test: z.array(z.string()),
+    interval: z.string().optional(),
+    timeout: z.string().optional(),
+    retries: z.number().int().optional(),
+    start_period: z.string().optional(),
+  };
+  return (mode === 'preview' ? z.looseObject(shape) : z.strictObject(shape))
+    .optional()
+    .describe('Container health check configuration');
+}
+
+function manifestDependsOnSchema(mode: ManifestInputMode) {
+  const condition =
+    mode === 'preview'
+      ? z.looseObject({ condition: z.string() })
+      : z.strictObject({ condition: z.string() });
+  return z.record(z.string(), condition).optional();
+}
+
+function manifestServiceSchema(mode: ManifestInputMode) {
+  const shape = {
+    image: z.string(),
+    ports: manifestPortsSchema(mode),
+    env: z.record(z.string(), z.string()).optional(),
+    command: z.array(z.string()).optional(),
+    args: z.array(z.string()).optional(),
+    user: z.string().optional(),
+    tmpfs: manifestTmpfsSchema(),
+    health_check: manifestHealthCheckSchema(mode),
+    stop_grace_period: z.string().optional(),
+    init: z.boolean().optional(),
+    depends_on: manifestDependsOnSchema(mode),
+    expose: manifestExposeSchema(),
+    labels: z.record(z.string(), z.string()).optional(),
+  };
+  return mode === 'preview' ? z.looseObject(shape) : z.strictObject(shape);
 }
 
 export function registerTools(deps: RegisterToolsDeps): void {
@@ -536,50 +589,14 @@ export function registerTools(deps: RegisterToolsDeps): void {
         args: z.array(z.string()).optional(),
         user: z.string().optional(),
         tmpfs: manifestTmpfsSchema(),
-        health_check: z
-          .object({
-            test: z.array(z.string()),
-            interval: z.string().optional(),
-            timeout: z.string().optional(),
-            retries: z.number().int().optional(),
-            start_period: z.string().optional(),
-          })
-          .optional(),
+        health_check: manifestHealthCheckSchema('preview'),
         stop_grace_period: z.string().optional(),
         init: z.boolean().optional(),
         expose: manifestExposeSchema(),
         labels: z.record(z.string(), z.string()).optional(),
-        depends_on: z
-          .record(z.string(), z.object({ condition: z.string() }))
-          .optional(),
+        depends_on: manifestDependsOnSchema('preview'),
         services: z
-          .record(
-            z.string(),
-            z.object({
-              image: z.string(),
-              ports: manifestPortsSchema(),
-              env: z.record(z.string(), z.string()).optional(),
-              command: z.array(z.string()).optional(),
-              args: z.array(z.string()).optional(),
-              user: z.string().optional(),
-              tmpfs: manifestTmpfsSchema(),
-              health_check: z
-                .object({
-                  test: z.array(z.string()),
-                  interval: z.string().optional(),
-                  timeout: z.string().optional(),
-                  retries: z.number().int().optional(),
-                  start_period: z.string().optional(),
-                })
-                .optional(),
-              stop_grace_period: z.string().optional(),
-              depends_on: z
-                .record(z.string(), z.object({ condition: z.string() }))
-                .optional(),
-              expose: manifestExposeSchema(),
-              labels: z.record(z.string(), z.string()).optional(),
-            }),
-          )
+          .record(z.string(), manifestServiceSchema('preview'))
           .optional()
           .describe(
             'Multi-service stack. Mutually exclusive with image/port and manifest.',
@@ -690,16 +707,7 @@ export function registerTools(deps: RegisterToolsDeps): void {
           .optional()
           .describe('User to run the container as (e.g. "1000:1000")'),
         tmpfs: manifestTmpfsSchema(),
-        health_check: z
-          .object({
-            test: z.array(z.string()),
-            interval: z.string().optional(),
-            timeout: z.string().optional(),
-            retries: z.number().int().optional(),
-            start_period: z.string().optional(),
-          })
-          .optional()
-          .describe('Container health check configuration'),
+        health_check: manifestHealthCheckSchema('deploy'),
         stop_grace_period: z
           .string()
           .optional()
@@ -719,38 +727,11 @@ export function registerTools(deps: RegisterToolsDeps): void {
           .describe(
             'Storage SKU name for persistent disk (adds a second lease item)',
           ),
-        depends_on: z
-          .record(z.string(), z.object({ condition: z.string() }))
-          .optional()
-          .describe('Service dependencies'),
+        depends_on: manifestDependsOnSchema('deploy').describe(
+          'Service dependencies',
+        ),
         services: z
-          .record(
-            z.string(),
-            z.object({
-              image: z.string(),
-              ports: manifestPortsSchema(),
-              env: z.record(z.string(), z.string()).optional(),
-              command: z.array(z.string()).optional(),
-              args: z.array(z.string()).optional(),
-              user: z.string().optional(),
-              tmpfs: manifestTmpfsSchema(),
-              health_check: z
-                .object({
-                  test: z.array(z.string()),
-                  interval: z.string().optional(),
-                  timeout: z.string().optional(),
-                  retries: z.number().int().optional(),
-                  start_period: z.string().optional(),
-                })
-                .optional(),
-              stop_grace_period: z.string().optional(),
-              depends_on: z
-                .record(z.string(), z.object({ condition: z.string() }))
-                .optional(),
-              expose: manifestExposeSchema(),
-              labels: z.record(z.string(), z.string()).optional(),
-            }),
-          )
+          .record(z.string(), manifestServiceSchema('deploy'))
           .optional()
           .describe(
             'Multi-service stack. Mutually exclusive with image/port. Keys are service names (RFC 1123 DNS labels).',

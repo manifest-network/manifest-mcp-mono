@@ -16,6 +16,7 @@ import type {
   FredLeaseStatus,
   PortConfig,
   PortMapping,
+  ServiceConfig,
 } from './manifest-types.js';
 
 describe('manifest-types shape (type-level)', () => {
@@ -73,6 +74,9 @@ describe('manifest-types shape (type-level)', () => {
       readonly host_port?: number;
       readonly ingress?: boolean;
     }>();
+  });
+  it('ServiceConfig carries the per-service init flag', () => {
+    expectTypeOf<ServiceConfig['init']>().toEqualTypeOf<boolean | undefined>();
   });
   it('PortMapping matches the Fred connection wire object', () => {
     expectTypeOf<PortMapping>().toEqualTypeOf<{

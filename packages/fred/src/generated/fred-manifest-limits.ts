@@ -5,5 +5,8 @@ export const FRED_MANIFEST_LIMITS = {
   "maxPorts": 64,
   "maxExposePorts": 64,
   "maxEnvVars": 256,
-  "maxLabels": 128
+  "maxLabels": 128,
+  "dependsOnMaxDepth": 10,
+  "minStopGracePeriodNanoseconds": 1000000000,
+  "maxStopGracePeriodNanoseconds": 120000000000
 } as const;

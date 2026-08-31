@@ -9,6 +9,19 @@ import {
 } from '../manifest.js';
 
 export const MAX_MANIFEST_BYTES = 256 * 1024;
+export const MAX_MANIFEST_VALIDATION_MESSAGE_CHARACTERS = 2_048;
+
+function validationErrorMessage(errors: readonly string[]): string {
+  const prefix = 'Invalid manifest: ';
+  const joined = errors.join('; ');
+  const available = MAX_MANIFEST_VALIDATION_MESSAGE_CHARACTERS - prefix.length;
+  const characters = Array.from(joined);
+  const summary =
+    characters.length <= available
+      ? joined
+      : `${characters.slice(0, available - 1).join('')}…`;
+  return `${prefix}${summary}`;
+}
 
 export interface ValidatedManifestPayload {
   readonly bytes: Uint8Array;
@@ -57,7 +70,7 @@ export function parseAndValidateManifestPayload(
   if (!validation.valid || validation.format === null) {
     throw new ManifestMCPError(
       ManifestMCPErrorCode.INVALID_CONFIG,
-      `Invalid manifest: ${validation.errors.join('; ')}`,
+      validationErrorMessage(validation.errors),
       { errors: validation.errors },
     );
   }

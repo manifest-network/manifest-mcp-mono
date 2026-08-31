@@ -3,6 +3,7 @@
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import Ajv2020 from 'ajv/dist/2020.js';
@@ -30,7 +31,7 @@ const generatedLimitsPath = resolve(
   repoRoot,
   'packages/fred/src/generated/fred-manifest-limits.ts',
 );
-const checkOnly = process.argv.includes('--check');
+const AJV_VERSION = createRequire(import.meta.url)('ajv/package.json').version;
 
 const GO_LIMITS = {
   maxTmpfsMounts: 'MaxTmpfsMounts',
@@ -38,7 +39,13 @@ const GO_LIMITS = {
   maxExposePorts: 'MaxExposePorts',
   maxEnvVars: 'MaxEnvVars',
   maxLabels: 'MaxLabels',
+  dependsOnMaxDepth: 'dependsOnMaxDepth',
 };
+const GENERATED_LIMIT_KEYS = [
+  ...Object.keys(GO_LIMITS),
+  'minStopGracePeriodNanoseconds',
+  'maxStopGracePeriodNanoseconds',
+];
 
 function tryGit(args, errors, purpose) {
   try {
@@ -70,9 +77,27 @@ function fail(messages) {
   process.exitCode = 1;
 }
 
-function readJson(path, label, errors) {
+function readBytes(path, label, errors) {
   try {
-    return JSON.parse(readFileSync(path, 'utf8'));
+    return readFileSync(path);
+  } catch (error) {
+    errors.push(
+      `cannot read ${label}: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    return undefined;
+  }
+}
+
+function readText(path, label, errors) {
+  const bytes = readBytes(path, label, errors);
+  return bytes?.toString('utf8');
+}
+
+function readJson(path, label, errors) {
+  const text = readText(path, label, errors);
+  if (text === undefined) return undefined;
+  try {
+    return JSON.parse(text);
   } catch (error) {
     errors.push(
       `${label} is not valid JSON: ${error instanceof Error ? error.message : String(error)}`,
@@ -82,19 +107,196 @@ function readJson(path, label, errors) {
   }
 }
 
-function parseGoLimits(source, errors) {
-  const limits = {};
-  for (const [key, goName] of Object.entries(GO_LIMITS)) {
-    const match = source.match(new RegExp(`\\b${goName}\\s*=\\s*(\\d+)\\b`));
-    if (!match) {
-      errors.push(
-        `could not find ${goName} in ${limitsSourceRelative}; update the sync parser for Fred's new declaration shape`,
-      );
+export function validateProvenanceShape(value, errors) {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    errors.push('schema provenance must be a JSON object');
+    return undefined;
+  }
+  return value;
+}
+
+/** Remove comments and quoted literals while preserving line structure. */
+export function stripGoNonCode(source) {
+  let state = 'code';
+  let output = '';
+  for (let index = 0; index < source.length; index++) {
+    const char = source[index];
+    const next = source[index + 1];
+    if (state === 'code') {
+      if (char === '/' && next === '/') {
+        output += '  ';
+        index++;
+        state = 'line-comment';
+      } else if (char === '/' && next === '*') {
+        output += '  ';
+        index++;
+        state = 'block-comment';
+      } else if (char === '"' || char === "'") {
+        output += ' ';
+        state = char === '"' ? 'string' : 'rune';
+      } else if (char === '`') {
+        output += ' ';
+        state = 'raw-string';
+      } else {
+        output += char;
+      }
       continue;
     }
-    limits[key] = Number(match[1]);
+
+    if (state === 'line-comment') {
+      if (char === '\n') {
+        output += '\n';
+        state = 'code';
+      } else {
+        output += ' ';
+      }
+      continue;
+    }
+
+    if (state === 'block-comment') {
+      if (char === '*' && next === '/') {
+        output += '  ';
+        index++;
+        state = 'code';
+      } else {
+        output += char === '\n' ? '\n' : ' ';
+      }
+      continue;
+    }
+
+    const terminator = state === 'string' ? '"' : state === 'rune' ? "'" : '`';
+    if (state !== 'raw-string' && char === '\\') {
+      output += ' ';
+      if (next !== undefined) {
+        output += next === '\n' ? '\n' : ' ';
+        index++;
+      }
+    } else if (char === terminator) {
+      output += ' ';
+      state = 'code';
+    } else {
+      output += char === '\n' ? '\n' : ' ';
+    }
   }
-  return Object.keys(limits).length === Object.keys(GO_LIMITS).length
+  return output;
+}
+
+function parsePlainIntegerDeclaration(code, goName, errors) {
+  const matches = [
+    ...code.matchAll(
+      new RegExp(`^\\s*(?:const\\s+)?${goName}\\s*=\\s*(.*?)\\s*$`, 'gm'),
+    ),
+  ];
+  if (matches.length !== 1) {
+    errors.push(
+      `${goName} must have exactly one declaration in ${limitsSourceRelative}; found ${matches.length}`,
+    );
+    return undefined;
+  }
+  const expression = matches[0][1].trim();
+  if (!/^\d+$/.test(expression)) {
+    errors.push(
+      `${goName} must be a plain decimal integer in ${limitsSourceRelative}; got ${JSON.stringify(expression)}`,
+    );
+    return undefined;
+  }
+  const value = Number(expression);
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    errors.push(`${goName} must be a positive safe integer; got ${expression}`);
+    return undefined;
+  }
+  return value;
+}
+
+const GO_DURATION_UNITS = {
+  Nanosecond: 1,
+  Microsecond: 1_000,
+  Millisecond: 1_000_000,
+  Second: 1_000_000_000,
+  Minute: 60_000_000_000,
+  Hour: 3_600_000_000_000,
+};
+
+function parseGoDurationConstant(expression, label, errors) {
+  const normalized = expression.replace(/\s+/g, '');
+  const match = normalized.match(
+    /^(?:(\d+)\*)?time\.(Nanosecond|Microsecond|Millisecond|Second|Minute|Hour)(?:\*(\d+))?$/,
+  );
+  if (!match || (match[1] !== undefined && match[3] !== undefined)) {
+    errors.push(
+      `${label} must be an integer multiple of a time.Duration unit; got ${JSON.stringify(expression.trim())}`,
+    );
+    return undefined;
+  }
+  const factor = Number(match[1] ?? match[3] ?? '1');
+  const value = factor * GO_DURATION_UNITS[match[2]];
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    errors.push(`${label} is not a positive safe nanosecond duration`);
+    return undefined;
+  }
+  return value;
+}
+
+function parseStopGraceLimits(code, errors) {
+  const comparisons = [
+    ...code.matchAll(/^\s*if\s+d\s*([<>])\s*([^{}]+?)\s*\{\s*$/gm),
+  ];
+  const lower = comparisons.filter((match) => match[1] === '<');
+  const upper = comparisons.filter((match) => match[1] === '>');
+  if (lower.length !== 1 || upper.length !== 1) {
+    errors.push(
+      `stop_grace_period bounds must have one "d < ..." and one "d > ..." comparison; found ${lower.length}/${upper.length}`,
+    );
+    return undefined;
+  }
+  const minStopGracePeriodNanoseconds = parseGoDurationConstant(
+    lower[0][2],
+    'minimum stop_grace_period',
+    errors,
+  );
+  const maxStopGracePeriodNanoseconds = parseGoDurationConstant(
+    upper[0][2],
+    'maximum stop_grace_period',
+    errors,
+  );
+  if (
+    minStopGracePeriodNanoseconds === undefined ||
+    maxStopGracePeriodNanoseconds === undefined
+  ) {
+    return undefined;
+  }
+  return { minStopGracePeriodNanoseconds, maxStopGracePeriodNanoseconds };
+}
+
+export function parseGoLimits(source, errors) {
+  const code = stripGoNonCode(source);
+  const declaredMaxNames = new Set(
+    [...code.matchAll(/^\s*(?:const\s+)?(Max[A-Z][A-Za-z0-9_]*)\s*=/gm)].map(
+      (match) => match[1],
+    ),
+  );
+  const knownMaxNames = new Set(
+    Object.values(GO_LIMITS).filter((name) => name.startsWith('Max')),
+  );
+  const unknownMaxNames = [...declaredMaxNames].filter(
+    (name) => !knownMaxNames.has(name),
+  );
+  if (unknownMaxNames.length > 0) {
+    errors.push(
+      `untracked Fred Max* constants in ${limitsSourceRelative}: ${unknownMaxNames.join(', ')}`,
+    );
+  }
+
+  const limits = {};
+  for (const [key, goName] of Object.entries(GO_LIMITS)) {
+    const value = parsePlainIntegerDeclaration(code, goName, errors);
+    if (value !== undefined) limits[key] = value;
+  }
+  const stopGraceLimits = parseStopGraceLimits(code, errors);
+  if (stopGraceLimits) Object.assign(limits, stopGraceLimits);
+
+  const expectedKeys = Object.keys(GO_LIMITS).length + 2;
+  return Object.keys(limits).length === expectedKeys && errors.length === 0
     ? limits
     : undefined;
 }
@@ -105,7 +307,7 @@ function validateRecordedLimits(limits, errors) {
     return undefined;
   }
   const normalized = {};
-  for (const key of Object.keys(GO_LIMITS)) {
+  for (const key of GENERATED_LIMIT_KEYS) {
     const value = limits[key];
     if (!Number.isInteger(value) || value <= 0) {
       errors.push(`provenance limits.${key} must be a positive integer`);
@@ -113,7 +315,9 @@ function validateRecordedLimits(limits, errors) {
       normalized[key] = value;
     }
   }
-  const unknown = Object.keys(limits).filter((key) => !(key in GO_LIMITS));
+  const unknown = Object.keys(limits).filter(
+    (key) => !GENERATED_LIMIT_KEYS.includes(key),
+  );
   if (unknown.length > 0) {
     errors.push(`provenance limits has unknown keys: ${unknown.join(', ')}`);
   }
@@ -182,6 +386,17 @@ function validateSchemaGoAlignment(schemaBytes, limits, errors) {
       `schema tmpfs.maxItems is ${String(schemaTmpfsLimit)}, but pinned Fred MaxTmpfsMounts is ${limits.maxTmpfsMounts}`,
     );
   }
+  const integerStopGrace = schema?.$defs?.StopGracePeriod?.oneOf?.find(
+    (branch) => branch?.type === 'integer',
+  );
+  if (
+    integerStopGrace?.minimum !== limits.minStopGracePeriodNanoseconds ||
+    integerStopGrace?.maximum !== limits.maxStopGracePeriodNanoseconds
+  ) {
+    errors.push(
+      `schema integer stop_grace_period bounds are ${String(integerStopGrace?.minimum)}..${String(integerStopGrace?.maximum)}, but pinned Fred uses ${limits.minStopGracePeriodNanoseconds}..${limits.maxStopGracePeriodNanoseconds}`,
+    );
+  }
 }
 
 function generateLimitsModule(limits) {
@@ -197,7 +412,8 @@ function compareBytes(actualPath, expected, label, errors) {
     errors.push(`${label} is missing; run npm run sync:fred-manifest-schema`);
     return;
   }
-  if (!readFileSync(actualPath).equals(expected)) {
+  const actual = readBytes(actualPath, label, errors);
+  if (actual && !actual.equals(expected)) {
     errors.push(`${label} is stale; run npm run sync:fred-manifest-schema`);
   }
 }
@@ -224,8 +440,10 @@ function sync(indexedFredCommit, errors) {
     return;
   }
 
-  const sourceBytes = readFileSync(sourcePath);
-  const limits = parseGoLimits(readFileSync(limitsSourcePath, 'utf8'), errors);
+  const sourceBytes = readBytes(sourcePath, sourceRelative, errors);
+  const limitsSource = readText(limitsSourcePath, limitsSourceRelative, errors);
+  if (!sourceBytes || limitsSource === undefined) return;
+  const limits = parseGoLimits(limitsSource, errors);
   if (limits) validateSchemaGoAlignment(sourceBytes, limits, errors);
   const validatorBytes = generateValidator(sourceBytes, errors);
   if (!limits || !validatorBytes || errors.length > 0) return;
@@ -241,6 +459,7 @@ function sync(indexedFredCommit, errors) {
         limitsSource: limitsSourceRelative,
         fredCommit: indexedFredCommit,
         sha256: sha256(sourceBytes),
+        generator: { ajv: AJV_VERSION },
         limits,
       },
       null,
@@ -262,8 +481,10 @@ function check(indexedFredCommit, errors) {
     return;
   }
 
-  const vendoredBytes = readFileSync(vendoredPath);
-  const provenance = readJson(provenancePath, 'schema provenance', errors);
+  const vendoredBytes = readBytes(vendoredPath, 'vendored schema', errors);
+  const provenanceValue = readJson(provenancePath, 'schema provenance', errors);
+  if (vendoredBytes === undefined || provenanceValue === undefined) return;
+  const provenance = validateProvenanceShape(provenanceValue, errors);
   if (!provenance) return;
 
   if (provenance.source !== sourceRelative) {
@@ -275,6 +496,11 @@ function check(indexedFredCommit, errors) {
   if (provenance.fredCommit !== indexedFredCommit) {
     errors.push(
       `Fred gitlink moved to ${indexedFredCommit}, but the schema records ${provenance.fredCommit}`,
+    );
+  }
+  if (provenance.generator?.ajv !== AJV_VERSION) {
+    errors.push(
+      `generated validator records Ajv ${String(provenance.generator?.ajv)}, but the sync tool is using Ajv ${AJV_VERSION}; run npm run sync:fred-manifest-schema intentionally after reviewing the generator diff`,
     );
   }
   const vendoredSha = sha256(vendoredBytes);
@@ -327,16 +553,20 @@ function check(indexedFredCommit, errors) {
         `Fred checkout ${checkedOutFredCommit} does not match gitlink ${indexedFredCommit}`,
       );
     }
-    if (!readFileSync(sourcePath).equals(vendoredBytes)) {
+    const sourceBytes = readBytes(sourcePath, sourceRelative, errors);
+    const limitsSource = readText(
+      limitsSourcePath,
+      limitsSourceRelative,
+      errors,
+    );
+    if (!sourceBytes || limitsSource === undefined) return;
+    if (!sourceBytes.equals(vendoredBytes)) {
       errors.push(
         'vendored schema differs from the pinned Fred source; run npm run sync:fred-manifest-schema',
       );
     }
     const sourceLimitErrors = [];
-    const sourceLimits = parseGoLimits(
-      readFileSync(limitsSourcePath, 'utf8'),
-      sourceLimitErrors,
-    );
+    const sourceLimits = parseGoLimits(limitsSource, sourceLimitErrors);
     errors.push(...sourceLimitErrors);
     if (
       sourceLimits &&
@@ -356,14 +586,29 @@ function check(indexedFredCommit, errors) {
   }
 }
 
-const errors = [];
-const indexedFredCommit = tryGit(
-  ['rev-parse', ':submodules/fred'],
-  errors,
-  'read the submodules/fred gitlink',
-);
-if (indexedFredCommit) {
-  if (checkOnly) check(indexedFredCommit, errors);
-  else sync(indexedFredCommit, errors);
+export function main(argv = process.argv.slice(2)) {
+  const errors = [];
+  try {
+    const indexedFredCommit = tryGit(
+      ['rev-parse', ':submodules/fred'],
+      errors,
+      'read the submodules/fred gitlink',
+    );
+    if (indexedFredCommit) {
+      if (argv.includes('--check')) check(indexedFredCommit, errors);
+      else sync(indexedFredCommit, errors);
+    }
+  } catch (error) {
+    errors.push(
+      `unexpected sync failure: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  if (errors.length > 0) fail(errors);
 }
-if (errors.length > 0) fail(errors);
+
+if (
+  process.argv[1] !== undefined &&
+  resolve(process.argv[1]) === fileURLToPath(import.meta.url)
+) {
+  main();
+}

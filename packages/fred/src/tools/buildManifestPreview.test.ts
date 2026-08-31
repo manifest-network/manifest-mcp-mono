@@ -118,6 +118,45 @@ describe('buildManifestPreview', () => {
         result.validation.errors.some((e) => e.toLowerCase().includes('rfc')),
       ).toBe(true);
     });
+
+    it('preserves init and returns fixed host ports as validation errors', async () => {
+      const result = await buildManifestPreview({
+        services: {
+          web: {
+            image: 'nginx',
+            init: true,
+            ports: { '8080/tcp': { host_port: 8080 } },
+          },
+        },
+      });
+
+      expect(result.manifest).toMatchObject({
+        services: {
+          web: {
+            init: true,
+            ports: { '8080/tcp': { host_port: 8080 } },
+          },
+        },
+      });
+      expect(result.validation.valid).toBe(false);
+      expect(result.validation.errors.join(' ')).toContain('host_port');
+    });
+
+    it('preserves unsupported Compose fields for actionable validation', async () => {
+      const web = {
+        image: 'nginx',
+        volumes: ['/data:/data'],
+      };
+      const result = await buildManifestPreview({
+        services: { web },
+      });
+
+      expect(result.manifest).toMatchObject({
+        services: { web: { volumes: ['/data:/data'] } },
+      });
+      expect(result.validation.valid).toBe(false);
+      expect(result.validation.errors.join(' ')).toContain('volumes');
+    });
   });
 
   describe('raw manifest mode', () => {

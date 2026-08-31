@@ -18,6 +18,7 @@ import {
   type DeployResult,
   type LifecycleCallOptions,
   type ManifestDeploySpec,
+  type PortConfig,
   type TxCallOptions,
 } from './deploy.js';
 import {
@@ -188,6 +189,10 @@ describe('ENG-531 facade completeness (re-emitted through the SDK)', () => {
     expectTypeOf<BuildManifestOptions>().not.toBeNever();
     expectTypeOf<DeployResult>().not.toBeNever();
     expectTypeOf<ManifestDeploySpec>().not.toBeNever();
+    expectTypeOf<PortConfig>().toEqualTypeOf<{
+      readonly host_port?: number;
+      readonly ingress?: boolean;
+    }>();
     expectTypeOf<TxCallOptions>().not.toBeNever();
   });
 

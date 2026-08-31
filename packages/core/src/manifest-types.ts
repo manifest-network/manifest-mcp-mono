@@ -84,6 +84,7 @@ export interface ServiceConfig {
     start_period?: string;
   };
   stop_grace_period?: string;
+  init?: boolean;
   depends_on?: Record<string, { condition: string }>;
   expose?: string[];
   labels?: Record<string, string>;

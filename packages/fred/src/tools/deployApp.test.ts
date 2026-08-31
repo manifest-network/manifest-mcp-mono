@@ -358,7 +358,7 @@ describe('deployApp', () => {
       {
         size: 'docker-micro',
         services: {
-          web: { image: 'nginx', ports: { '80/tcp': {} } },
+          web: { image: 'nginx', init: true, ports: { '80/tcp': {} } },
           db: {
             image: 'mysql:8',
             ports: { '3306/tcp': {} },
@@ -376,6 +376,7 @@ describe('deployApp', () => {
     expect(manifest.services.web).toEqual({
       image: 'nginx',
       ports: { '80/tcp': {} },
+      init: true,
     });
     expect(manifest.services.db).toEqual({
       image: 'mysql:8',

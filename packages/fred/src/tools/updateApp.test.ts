@@ -66,6 +66,7 @@ interface MergedService {
 /** A merged manifest: either a single service, or a `services` stack. */
 interface MergedManifest extends MergedService {
   user?: string;
+  stop_grace_period?: string;
   services?: Record<string, MergedService>;
 }
 
@@ -189,6 +190,29 @@ describe('updateApp', () => {
     });
     expect(wire.calls).toHaveLength(0);
     expect(mockGetAuthToken).not.toHaveBeenCalled();
+  });
+
+  it('allows Go-valid schema divergences carried forward from an existing lease', async () => {
+    await updateApp(
+      makeCtx(activeQc()),
+      {
+        address: ADDR,
+        leaseUuid: LEASE_UUID,
+        manifest: JSON.stringify({ image: 'nginx:2' }),
+        existingManifest: JSON.stringify({
+          image: 'nginx:1',
+          user: '',
+          stop_grace_period: '1000000000ns',
+        }),
+      },
+      { providerUrl: PROVIDER_URL, pollOptions: false },
+    );
+
+    expect(sentManifest()).toMatchObject({
+      image: 'nginx:2',
+      user: '',
+      stop_grace_period: '1000000000ns',
+    });
   });
 
   it('rejects an oversized final manifest before the update wire', async () => {

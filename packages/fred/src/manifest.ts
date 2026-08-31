@@ -306,8 +306,6 @@ const HEALTH_CHECK_KEYS = new Set<string>([
   'start_period',
 ]);
 
-const PORT_KEY_RE = /^([1-9][0-9]{0,4})\/(tcp|udp)$/i;
-const EXPOSE_PORT_RE = /^([1-9][0-9]{0,4})$/;
 const ENV_NAME_BLOCKED_PREFIX_RE = /^(ld_|fred_|docker_)/i;
 const RESERVED_LABEL_PREFIX_RE = /^(fred|traefik)\./i;
 const PORT_CONFIG_KEYS = new Set<string>(['host_port', 'ingress']);
@@ -328,18 +326,55 @@ const {
   maxExposePorts: MAX_EXPOSE_PORTS,
   maxEnvVars: MAX_ENV_VARS,
   maxLabels: MAX_LABELS,
+  dependsOnMaxDepth: DEPENDS_ON_MAX_DEPTH,
+  minStopGracePeriodNanoseconds: MIN_STOP_GRACE_PERIOD_NANOSECONDS,
+  maxStopGracePeriodNanoseconds: MAX_STOP_GRACE_PERIOD_NANOSECONDS,
 } = FRED_MANIFEST_LIMITS;
 
-const DURATION_UNIT_NANOSECONDS: Readonly<Record<string, number>> = {
-  ns: 1,
-  us: 1_000,
-  µs: 1_000,
-  μs: 1_000,
-  ms: 1_000_000,
-  s: 1_000_000_000,
-  m: 60_000_000_000,
-  h: 3_600_000_000_000,
+const DURATION_UNIT_NANOSECONDS: Readonly<Record<string, bigint>> = {
+  ns: 1n,
+  us: 1_000n,
+  µs: 1_000n,
+  μs: 1_000n,
+  ms: 1_000_000n,
+  s: 1_000_000_000n,
+  m: 60_000_000_000n,
+  h: 3_600_000_000_000n,
 };
+const MAX_INT64 = (1n << 63n) - 1n;
+const MIN_INT64_MAGNITUDE = 1n << 63n;
+const MAX_REPORTED_VALIDATION_ERRORS = 16;
+const MAX_VALIDATION_ERROR_CHARACTERS = 240;
+
+function hasOwn(object: object, key: PropertyKey): boolean {
+  return Object.getOwnPropertyDescriptor(object, key) !== undefined;
+}
+
+class BoundedValidationErrors extends Array<string> {
+  omitted = 0;
+
+  override push(...messages: string[]): number {
+    for (const message of messages) {
+      if (this.length >= MAX_REPORTED_VALIDATION_ERRORS - 1) {
+        this.omitted++;
+        continue;
+      }
+      const characters = Array.from(message);
+      super.push(
+        characters.length <= MAX_VALIDATION_ERROR_CHARACTERS
+          ? message
+          : `${characters.slice(0, MAX_VALIDATION_ERROR_CHARACTERS - 1).join('')}…`,
+      );
+    }
+    return this.length;
+  }
+
+  reported(): string[] {
+    return this.omitted === 0
+      ? [...this]
+      : [...this, `… ${this.omitted} additional validation errors omitted`];
+  }
+}
 
 function cleanPosixPath(value: string): string {
   const absolute = value.startsWith('/');
@@ -356,21 +391,86 @@ function cleanPosixPath(value: string): string {
   return parts.join('/') || '.';
 }
 
-function parseGoDurationNanoseconds(value: string): number | undefined {
+function parseGoDurationNanoseconds(value: string): bigint | undefined {
   if (value.length === 0) return undefined;
-  const partRe = /(\d+(?:\.\d+)?)(ns|us|µs|μs|ms|s|m|h)/gy;
+
+  let remaining = value;
+  let negative = false;
+  if (remaining[0] === '+' || remaining[0] === '-') {
+    negative = remaining[0] === '-';
+    remaining = remaining.slice(1);
+  }
+  if (remaining === '0') return 0n;
+  if (remaining.length === 0) return undefined;
+
+  // Mirror time.ParseDuration's decimal grammar, but keep the arithmetic in
+  // integers. Converting the whole decimal through Number first rounds values
+  // near the 1s/120s admission bounds differently from Go.
+  const partRe = /(\d*)(?:\.(\d*))?(ns|us|µs|μs|ms|s|m|h)/gy;
   let offset = 0;
-  let total = 0;
-  while (offset < value.length) {
+  let total = 0n;
+  while (offset < remaining.length) {
     partRe.lastIndex = offset;
-    const match = partRe.exec(value);
+    const match = partRe.exec(remaining);
     if (!match || match.index !== offset) return undefined;
-    // time.ParseDuration truncates each fractional component to whole
-    // nanoseconds before adding it to the duration.
-    total += Math.trunc(Number(match[1]) * DURATION_UNIT_NANOSECONDS[match[2]]);
+    const whole = match[1];
+    const fraction = match[2];
+    if (whole.length === 0 && (fraction === undefined || fraction.length === 0))
+      return undefined;
+
+    const unit = DURATION_UNIT_NANOSECONDS[match[3]];
+    const significantWhole = whole.replace(/^0+/, '');
+    if (significantWhole.length > 19) return undefined;
+    let component =
+      significantWhole.length === 0 ? 0n : BigInt(significantWhole) * unit;
+    if (fraction !== undefined && fraction.length > 0) {
+      // Go's leadingFraction stops accumulating once its uint64 would
+      // overflow. Reproduce that bounded prefix so an input near the payload
+      // cap cannot force a giant BigInt allocation.
+      let numerator = 0n;
+      let scale = 1;
+      let overflow = false;
+      for (const digit of fraction) {
+        if (overflow) continue;
+        if (numerator > MAX_INT64 / 10n) {
+          overflow = true;
+          continue;
+        }
+        const next = numerator * 10n + BigInt(digit);
+        if (next > MIN_INT64_MAGNITUDE) {
+          overflow = true;
+          continue;
+        }
+        numerator = next;
+        scale *= 10;
+      }
+      if (numerator > 0n) {
+        // time.ParseDuration deliberately performs this fractional step in
+        // float64. Keep the whole component in bigint, but mirror that final
+        // operation so nanosecond truncation agrees with Go at its rounding
+        // boundaries.
+        const fractionalNanoseconds = Math.trunc(
+          Number(numerator) * (Number(unit) / scale),
+        );
+        component += BigInt(fractionalNanoseconds);
+      }
+    }
+    total += component;
+    if (total > MIN_INT64_MAGNITUDE) return undefined;
     offset = partRe.lastIndex;
   }
-  return Number.isFinite(total) ? total : undefined;
+
+  if (!negative && total > MAX_INT64) return undefined;
+  return negative ? -total : total;
+}
+
+function durationValueNanoseconds(value: unknown): bigint | undefined {
+  if (typeof value === 'string') return parseGoDurationNanoseconds(value);
+  if (typeof value !== 'number' || !Number.isInteger(value)) return undefined;
+  const nanoseconds = BigInt(value);
+  if (nanoseconds < -MIN_INT64_MAGNITUDE || nanoseconds > MAX_INT64)
+    return undefined;
+  return nanoseconds;
 }
 
 function pointerPath(pointer: string): string {
@@ -388,40 +488,49 @@ function pointerPath(pointer: string): string {
 
 function appendSchemaErrors(
   manifest: Record<string, unknown>,
-  errors: string[],
+  errors: BoundedValidationErrors,
 ): void {
   if (validateFredManifestSchema(manifest)) return;
 
-  const stackIntent = 'services' in manifest;
+  const stackIntent = hasOwn(manifest, 'services');
   const seen = new Set<string>();
   for (const error of validateFredManifestSchema.errors ?? []) {
-    // The root oneOf reports the errors for both the single and stack branch.
-    // Drop only wrong-branch/generic root noise; the handwritten semantic pass
-    // below retains actionable unknown-top-level diagnostics.
-    if (error.keyword === 'oneOf') continue;
-    if (error.instancePath === '' && error.keyword === 'additionalProperties')
-      continue;
+    // Ajv reports every failed alternative beneath oneOf. The semantic pass
+    // owns these structural diagnostics and emits one actionable error instead
+    // of leaking irrelevant errors from the opposite manifest/health branch.
     if (
-      error.instancePath === '' &&
-      error.keyword === 'required' &&
-      ((stackIntent && error.params.missingProperty === 'image') ||
-        (!stackIntent && error.params.missingProperty === 'services'))
-    ) {
+      error.keyword === 'oneOf' ||
+      error.keyword === 'not' ||
+      error.keyword === 'additionalProperties' ||
+      error.keyword === 'propertyNames' ||
+      error.keyword === 'required'
+    )
       continue;
-    }
 
-    let path = pointerPath(error.instancePath);
+    // Fred's published schema is narrower than its Go decoder for these
+    // fields (notably duration spellings, USER syntax, and Atoi port forms).
+    // Their handwritten validators below are therefore authoritative.
+    const segments = error.instancePath
+      .slice(1)
+      .split('/')
+      .filter(Boolean)
+      .map((segment) => segment.replace(/~1/g, '/').replace(/~0/g, '~'));
+    const serviceField = stackIntent
+      ? segments[0] === 'services' && segments.length >= 3
+        ? segments[2]
+        : undefined
+      : segments[0];
     if (
-      error.keyword === 'required' &&
-      typeof error.params.missingProperty === 'string'
-    ) {
-      path += `.${error.params.missingProperty}`;
-    } else if (
-      error.keyword === 'propertyNames' &&
-      typeof error.params.propertyName === 'string'
-    ) {
-      path += `[${JSON.stringify(error.params.propertyName)}]`;
-    }
+      serviceField === 'ports' ||
+      serviceField === 'labels' ||
+      serviceField === 'health_check' ||
+      serviceField === 'user' ||
+      serviceField === 'stop_grace_period' ||
+      serviceField === 'expose'
+    )
+      continue;
+
+    const path = pointerPath(error.instancePath);
     const message = `${path}: ${error.message ?? `failed ${error.keyword}`}`;
     if (!seen.has(message)) {
       seen.add(message);
@@ -434,20 +543,157 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
   return v !== null && typeof v === 'object' && !Array.isArray(v);
 }
 
-function validatePort(portStr: string): boolean {
-  const n = Number(portStr);
-  return Number.isInteger(n) && n >= 1 && n <= 65535;
+function normalizeStringArray(value: unknown): unknown {
+  if (value === null) return [];
+  if (!Array.isArray(value)) return value;
+  return value.map((entry) => (entry === null ? '' : entry));
+}
+
+function normalizeStringMap(value: unknown): unknown {
+  if (value === null) return {};
+  if (!isPlainObject(value)) return value;
+  return Object.fromEntries(
+    Object.entries(value).map(([key, entry]) => [
+      key,
+      entry === null ? '' : entry,
+    ]),
+  );
+}
+
+/** Model encoding/json's null-to-zero-value behavior before validating. */
+function normalizeServiceForGo(service: unknown): unknown {
+  if (!isPlainObject(service)) return service;
+  const normalized: Record<string, unknown> = { ...service };
+
+  for (const field of ['image', 'user'] as const) {
+    if (normalized[field] === null) normalized[field] = '';
+  }
+  for (const field of ['command', 'args', 'tmpfs', 'expose'] as const) {
+    if (field in normalized)
+      normalized[field] = normalizeStringArray(normalized[field]);
+  }
+  for (const field of ['env', 'labels'] as const) {
+    if (field in normalized)
+      normalized[field] = normalizeStringMap(normalized[field]);
+  }
+
+  if ('ports' in normalized) {
+    if (normalized.ports === null) {
+      normalized.ports = {};
+    } else if (isPlainObject(normalized.ports)) {
+      normalized.ports = Object.fromEntries(
+        Object.entries(normalized.ports).map(([key, config]) => {
+          if (config === null) return [key, {}];
+          if (!isPlainObject(config)) return [key, config];
+          const decoded = { ...config };
+          if (decoded.host_port === null) decoded.host_port = 0;
+          if (decoded.ingress === null) decoded.ingress = false;
+          return [key, decoded];
+        }),
+      );
+    }
+  }
+
+  if ('health_check' in normalized) {
+    if (normalized.health_check === null) {
+      delete normalized.health_check;
+    } else if (isPlainObject(normalized.health_check)) {
+      const healthCheck = { ...normalized.health_check };
+      if ('test' in healthCheck)
+        healthCheck.test = normalizeStringArray(healthCheck.test);
+      if (healthCheck.retries === null) healthCheck.retries = 0;
+      normalized.health_check = healthCheck;
+    }
+  }
+
+  if ('depends_on' in normalized) {
+    if (normalized.depends_on === null) {
+      normalized.depends_on = {};
+    } else if (isPlainObject(normalized.depends_on)) {
+      normalized.depends_on = Object.fromEntries(
+        Object.entries(normalized.depends_on).map(([key, condition]) => {
+          if (condition === null) return [key, {}];
+          if (!isPlainObject(condition)) return [key, condition];
+          const decoded = { ...condition };
+          if (decoded.condition === null) decoded.condition = '';
+          return [key, decoded];
+        }),
+      );
+    }
+  }
+
+  if (normalized.stop_grace_period === null)
+    delete normalized.stop_grace_period;
+  if (normalized.init === null) delete normalized.init;
+  return normalized;
+}
+
+function normalizeManifestForGo(
+  manifest: Record<string, unknown>,
+): Record<string, unknown> {
+  if (!hasOwn(manifest, 'services'))
+    return normalizeServiceForGo(manifest) as Record<string, unknown>;
+  if (!isPlainObject(manifest.services)) return { ...manifest };
+  return {
+    ...manifest,
+    services: Object.fromEntries(
+      Object.entries(manifest.services).map(([name, service]) => [
+        name,
+        normalizeServiceForGo(service),
+      ]),
+    ),
+  };
+}
+
+function parseGoDecimalInteger(value: string): bigint | undefined {
+  if (!/^[+-]?\d+$/.test(value)) return undefined;
+  const negative = value[0] === '-';
+  const digits = value[0] === '-' || value[0] === '+' ? value.slice(1) : value;
+  const significant = digits.replace(/^0+/, '') || '0';
+  // strconv.Atoi is machine-int bounded. Avoid constructing an arbitrarily
+  // large bigint from a tenant-controlled port key while retaining its
+  // accepted signed/leading-zero spellings.
+  if (significant.length > 19) return undefined;
+  const parsed = BigInt(significant);
+  return negative ? -parsed : parsed;
+}
+
+function parsePortSpec(
+  spec: string,
+): { readonly port: bigint; readonly protocol: string } | undefined {
+  const parts = spec.split('/');
+  if (parts.length !== 2) return undefined;
+  const port = parseGoDecimalInteger(parts[0]);
+  const protocol = parts[1].toLowerCase();
+  if (
+    port === undefined ||
+    port < 1n ||
+    port > 65_535n ||
+    (protocol !== 'tcp' && protocol !== 'udp')
+  )
+    return undefined;
+  return { port, protocol };
 }
 
 function validateService(
   service: unknown,
   scope: string,
   inStack: boolean,
-  errors: string[],
+  errors: BoundedValidationErrors,
 ): void {
   if (!isPlainObject(service)) {
     errors.push(`${scope}: must be a JSON object`);
     return;
+  }
+
+  for (const field of ['command', 'args'] as const) {
+    if (!(field in service)) continue;
+    const value = service[field];
+    if (!Array.isArray(value)) {
+      errors.push(`${scope}.${field}: must be an array of strings`);
+    } else if (!value.every((entry) => typeof entry === 'string')) {
+      errors.push(`${scope}.${field}: entries must be strings`);
+    }
   }
 
   // image (required, non-empty string)
@@ -490,11 +736,8 @@ function validateService(
       }
       let ingressPort: string | undefined;
       for (const [key, config] of portEntries) {
-        // PORT_KEY_RE permits up to 5 digits (so 1-99999); the docs and the
-        // error message limit ports to 1-65535. validatePort closes the gap
-        // so 70000/tcp doesn't silently pass pre-flight.
-        const match = key.match(PORT_KEY_RE);
-        if (!match || !validatePort(match[1])) {
+        const parsedPort = parsePortSpec(key);
+        if (!parsedPort) {
           errors.push(
             `${scope}.ports["${key}"]: must be in "port/protocol" format with port 1-65535 and protocol tcp|udp`,
           );
@@ -527,7 +770,7 @@ function validateService(
           if (typeof config.ingress !== 'boolean') {
             errors.push(`${scope}.ports["${key}"].ingress: must be a boolean`);
           } else if (config.ingress) {
-            if (match?.[2].toLowerCase() !== 'tcp') {
+            if (parsedPort?.protocol !== 'tcp') {
               errors.push(
                 `${scope}.ports["${key}"].ingress: requires TCP protocol`,
               );
@@ -597,6 +840,12 @@ function validateService(
             `${scope}.labels["${key}"]: reserved prefix '${prefix}' is not allowed`,
           );
         }
+        if (typeof service.labels[key] !== 'string') {
+          const valuePath = /^[A-Za-z_$][\w$]*$/.test(key)
+            ? `${scope}.labels.${key}`
+            : `${scope}.labels["${key}"]`;
+          errors.push(`${valuePath}: value must be a string`);
+        }
       }
     }
   }
@@ -653,7 +902,7 @@ function validateService(
       errors.push(`${scope}.user: must be a string`);
     } else if (service.user.length > 0) {
       const u = service.user;
-      if (/\s/.test(u)) {
+      if (/[ \t\n\r]/.test(u)) {
         errors.push(`${scope}.user: cannot contain whitespace`);
       } else {
         const colon = u.indexOf(':');
@@ -709,6 +958,13 @@ function validateService(
           `${scope}.health_check.retries: must be a non-negative integer`,
         );
       }
+      for (const field of ['interval', 'timeout', 'start_period'] as const) {
+        if (field in hc && durationValueNanoseconds(hc[field]) === undefined) {
+          errors.push(
+            `${scope}.health_check.${field}: must be a valid Go duration string or integer nanoseconds`,
+          );
+        }
+      }
     }
   }
 
@@ -757,11 +1013,13 @@ function validateService(
       }
       const seen = new Set<string>();
       for (const p of service.expose) {
-        if (typeof p !== 'string' || !EXPOSE_PORT_RE.test(p)) {
+        const port =
+          typeof p === 'string' ? parseGoDecimalInteger(p) : undefined;
+        if (port === undefined) {
           errors.push(
             `${scope}.expose["${String(p)}"]: must be a port number string (1-65535)`,
           );
-        } else if (!validatePort(p)) {
+        } else if (port < 1n || port > 65_535n) {
           errors.push(`${scope}.expose["${p}"]: port out of range`);
         }
         if (seen.has(String(p))) {
@@ -778,34 +1036,102 @@ function validateService(
   }
   if ('stop_grace_period' in service) {
     const v = service.stop_grace_period;
-    let nanoseconds: number | undefined;
-    if (typeof v === 'string') {
-      nanoseconds = parseGoDurationNanoseconds(v);
-    } else if (typeof v === 'number' && Number.isSafeInteger(v)) {
-      nanoseconds = v;
-    }
+    const nanoseconds = durationValueNanoseconds(v);
     if (nanoseconds === undefined) {
       errors.push(
-        `${scope}.stop_grace_period: must be a valid Go duration string or safe integer nanoseconds`,
+        `${scope}.stop_grace_period: must be a valid Go duration string or integer nanoseconds`,
       );
-    } else if (nanoseconds < 1_000_000_000) {
+    } else if (nanoseconds < BigInt(MIN_STOP_GRACE_PERIOD_NANOSECONDS)) {
       errors.push(`${scope}.stop_grace_period: must be at least 1s`);
-    } else if (nanoseconds > 120_000_000_000) {
+    } else if (nanoseconds > BigInt(MAX_STOP_GRACE_PERIOD_NANOSECONDS)) {
       errors.push(`${scope}.stop_grace_period: must be at most 120s`);
     }
   }
 }
 
+function hasActiveHealthCheck(service: unknown): boolean {
+  if (!isPlainObject(service) || !isPlainObject(service.health_check))
+    return false;
+  const test = service.health_check.test;
+  return Array.isArray(test) && test.length > 0 && test[0] !== 'NONE';
+}
+
+function validateStackDependencies(
+  services: Record<string, unknown>,
+  errors: BoundedValidationErrors,
+): void {
+  const serviceNames = Object.keys(services);
+  const serviceNameSet = new Set(serviceNames);
+
+  for (const [name, service] of Object.entries(services)) {
+    if (!isPlainObject(service) || !isPlainObject(service.depends_on)) continue;
+    for (const [dependency, condition] of Object.entries(service.depends_on)) {
+      const path = `services["${name}"].depends_on["${dependency}"]`;
+      if (dependency === name) {
+        errors.push(`${path}: a service cannot depend on itself`);
+        continue;
+      }
+      if (!serviceNameSet.has(dependency)) {
+        errors.push(`${path}: references undefined service`);
+        continue;
+      }
+      if (
+        isPlainObject(condition) &&
+        condition.condition === 'service_healthy' &&
+        !hasActiveHealthCheck(services[dependency])
+      ) {
+        errors.push(
+          `${path}: service_healthy requires "${dependency}" to have an active health_check`,
+        );
+      }
+    }
+  }
+
+  const WHITE = 0;
+  const GRAY = 1;
+  const BLACK = 2;
+  const color = new Map<string, number>();
+  const visit = (name: string, depth: number): boolean => {
+    if (depth > DEPENDS_ON_MAX_DEPTH) {
+      errors.push(
+        `depends_on: dependency chain exceeds maximum depth of ${DEPENDS_ON_MAX_DEPTH}`,
+      );
+      return false;
+    }
+    color.set(name, GRAY);
+    const service = services[name];
+    if (isPlainObject(service) && isPlainObject(service.depends_on)) {
+      for (const dependency of Object.keys(service.depends_on)) {
+        if (!serviceNameSet.has(dependency) || dependency === name) continue;
+        const dependencyColor = color.get(dependency) ?? WHITE;
+        if (dependencyColor === GRAY) {
+          errors.push(
+            `depends_on: cycle detected involving service "${dependency}"`,
+          );
+          return false;
+        }
+        if (dependencyColor === WHITE && !visit(dependency, depth + 1))
+          return false;
+      }
+    }
+    color.set(name, BLACK);
+    return true;
+  };
+
+  for (const name of serviceNames) {
+    if ((color.get(name) ?? WHITE) === WHITE && !visit(name, 0)) return;
+  }
+}
+
 /**
  * Validates a parsed manifest object with the standalone validator generated
- * from the Fred schema at the exact gitlink used by E2E, then applies the Go
- * rules that schema cannot express: case-insensitive reserved labels, ingress
- * cardinality/protocol, normalized tmpfs paths, stop-grace runtime bounds,
- * cross-service references, and generated collection caps. The provider stays
- * authoritative, but known-invalid manifests are rejected before mutation.
+ * from the Fred schema at the exact gitlink used by E2E and a Go-compatible
+ * semantic pass. Where the published schema is narrower than Fred's decoder,
+ * the semantic pass is authoritative. Diagnostics are bounded before they can
+ * enter an MCP error response or model context.
  */
 export function validateManifest(manifest: unknown): ManifestValidationResult {
-  const errors: string[] = [];
+  const errors = new BoundedValidationErrors();
 
   if (!isPlainObject(manifest)) {
     return {
@@ -815,63 +1141,54 @@ export function validateManifest(manifest: unknown): ManifestValidationResult {
     };
   }
 
-  appendSchemaErrors(manifest, errors);
+  const decodedManifest = normalizeManifestForGo(manifest);
+  const stackIntent = hasOwn(decodedManifest, 'services');
 
-  if (isStackManifest(manifest)) {
+  if (stackIntent) {
     // Stack manifest — only `services` is allowed at the top level.
-    for (const key of Object.keys(manifest)) {
+    for (const key of Object.keys(decodedManifest)) {
       if (key !== 'services') {
         errors.push(`${key}: unknown top-level field for stack manifest`);
       }
     }
-    const serviceNames = Object.keys(manifest.services);
-    if (serviceNames.length === 0) {
-      errors.push('services: at least one service is required');
-    }
-    for (const name of serviceNames) {
-      if (!validateServiceName(name)) {
-        errors.push(
-          `services["${name}"]: must be a valid RFC 1123 DNS label (1-63 chars, lowercase alphanumeric + hyphens)`,
+    if (!isPlainObject(decodedManifest.services)) {
+      errors.push('services: must be a JSON object');
+    } else {
+      const serviceNames = Object.keys(decodedManifest.services);
+      if (serviceNames.length === 0) {
+        errors.push('services: at least one service is required');
+      }
+      for (const name of serviceNames) {
+        if (!validateServiceName(name)) {
+          errors.push(
+            `services["${name}"]: must be a valid RFC 1123 DNS label (1-63 chars, lowercase alphanumeric + hyphens)`,
+          );
+        }
+        validateService(
+          decodedManifest.services[name],
+          `services["${name}"]`,
+          true,
+          errors,
         );
       }
-      validateService(
-        manifest.services[name],
-        `services["${name}"]`,
-        true,
-        errors,
-      );
+      validateStackDependencies(decodedManifest.services, errors);
     }
-    // Cross-service: depends_on must only reference defined services and not
-    // self. Set lookup keeps the cross-check linear in total dep edges
-    // instead of O(services * deps * services).
-    const serviceNameSet = new Set(serviceNames);
-    for (const [name, svc] of Object.entries(manifest.services)) {
-      if (isPlainObject(svc) && isPlainObject(svc.depends_on)) {
-        for (const dep of Object.keys(svc.depends_on)) {
-          if (dep === name) {
-            errors.push(
-              `services["${name}"].depends_on["${dep}"]: a service cannot depend on itself`,
-            );
-          } else if (!serviceNameSet.has(dep)) {
-            errors.push(
-              `services["${name}"].depends_on["${dep}"]: references undefined service`,
-            );
-          }
-        }
-      }
-    }
+    appendSchemaErrors(decodedManifest, errors);
+    const reportedErrors = errors.reported();
     return {
-      valid: errors.length === 0,
-      errors,
+      valid: reportedErrors.length === 0,
+      errors: reportedErrors,
       format: 'stack',
     };
   }
 
   // Single-service manifest.
-  validateService(manifest, '', false, errors);
+  validateService(decodedManifest, '', false, errors);
+  appendSchemaErrors(decodedManifest, errors);
+  const reportedErrors = errors.reported();
   return {
-    valid: errors.length === 0,
-    errors,
+    valid: reportedErrors.length === 0,
+    errors: reportedErrors,
     format: 'single',
   };
 }

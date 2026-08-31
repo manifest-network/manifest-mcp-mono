@@ -22,10 +22,10 @@ import { isStackSpec, normalizeServices } from './spec-normalize.js';
  *
  * **Port-shape handling:** two runtime shapes for ports:
  *   - Single-service: `port: number` → renders one ingress=true entry.
- *   - Stack service: `ServiceConfig.ports: Record<portKey, {}>` (canonical
- *     map, e.g. `{ '80/tcp': {} }`) → one entry per port-key (ingress
- *     default false). The recap renders the map KEY string (`'80/tcp'`),
- *     not a bare number.
+ *   - Stack service: `ServiceConfig.ports: Record<portKey, PortConfig>`
+ *     (canonical map, e.g. `{ '80/tcp': { ingress: true } }`) → one entry per
+ *     port-key (`ingress` defaults false). The recap renders the map KEY
+ *     string (`'80/tcp'`), not a bare number.
  *
  * `extractPorts` also handles the historical `number[]` Record-or-array
  * shapes at runtime (matching `summarizeSpec`'s defensive widening) so

@@ -282,6 +282,7 @@ describe('FredMCPServer', () => {
       interface JsonSchemaNode {
         const?: unknown;
         description?: string;
+        type?: unknown;
         properties?: Record<string, JsonSchemaNode>;
         additionalProperties?: JsonSchemaNode;
       }
@@ -305,8 +306,14 @@ describe('FredMCPServer', () => {
           'Container-network ports as bare number strings (e.g. ["8080"])',
         );
         const portConfig = serviceProperties?.ports?.additionalProperties;
-        expect(portConfig?.properties?.host_port?.const).toBe(0);
+        if (toolName === 'deploy_app') {
+          expect(portConfig?.properties?.host_port?.const).toBe(0);
+        } else {
+          expect(portConfig?.properties?.host_port?.const).toBeUndefined();
+          expect(portConfig?.properties?.host_port?.type).toBe('integer');
+        }
         expect(portConfig?.properties?.ingress).toBeDefined();
+        expect(serviceProperties?.init?.type).toBe('boolean');
       }
     });
 
@@ -1286,6 +1293,61 @@ describe('FredMCPServer', () => {
         validation: { valid: true },
       });
     });
+
+    it('returns fixed host ports as preview validation errors, not -32602', async () => {
+      const server = new FredMCPServer({
+        config: makeMockConfig(),
+        walletProvider: makeMockWallet(),
+      });
+      const result = await callTool(server, 'build_manifest_preview', {
+        services: {
+          web: {
+            image: 'nginx',
+            ports: { '8080/tcp': { host_port: 8080 } },
+          },
+        },
+      });
+
+      expect(result.isError).toBeUndefined();
+      expect(result.structuredContent).toMatchObject({
+        manifest: {
+          services: {
+            web: { ports: { '8080/tcp': { host_port: 8080 } } },
+          },
+        },
+        validation: { valid: false },
+      });
+      const validation = (
+        result.structuredContent as {
+          validation: { errors: string[] };
+        }
+      ).validation;
+      expect(validation.errors.join(' ')).toContain('host_port');
+    });
+
+    it('preserves unsupported service fields so preview can explain them', async () => {
+      const server = new FredMCPServer({
+        config: makeMockConfig(),
+        walletProvider: makeMockWallet(),
+      });
+      const result = await callTool(server, 'build_manifest_preview', {
+        services: {
+          web: {
+            image: 'nginx',
+            init: true,
+            volumes: ['/data:/data'],
+          },
+        },
+      });
+
+      expect(result.isError).toBeUndefined();
+      expect(result.structuredContent).toMatchObject({
+        manifest: {
+          services: { web: { init: true, volumes: ['/data:/data'] } },
+        },
+        validation: { valid: false },
+      });
+    });
   });
 
   describe('wait_for_app_ready', () => {
@@ -1521,6 +1583,7 @@ describe('FredMCPServer', () => {
         services: {
           web: {
             image: 'nginx',
+            init: true,
             ports: { '8080/tcp': { host_port: 0, ingress: true } },
           },
         },
@@ -1532,6 +1595,7 @@ describe('FredMCPServer', () => {
           services: {
             web: {
               image: 'nginx',
+              init: true,
               ports: { '8080/tcp': { host_port: 0, ingress: true } },
             },
           },
@@ -1551,6 +1615,25 @@ describe('FredMCPServer', () => {
           web: {
             image: 'nginx',
             ports: { '8080/tcp': { host_port: 8080 } },
+          },
+        },
+      });
+
+      expect(result.isError).toBe(true);
+      expect(mockDeployApp).not.toHaveBeenCalled();
+    });
+
+    it('rejects unsupported Compose fields instead of stripping them', async () => {
+      const server = new FredMCPServer({
+        config: makeMockConfig(),
+        walletProvider: makeMockWallet({ signArbitrary: true }),
+      });
+      const result = await callTool(server, 'deploy_app', {
+        size: 'docker-micro',
+        services: {
+          web: {
+            image: 'nginx',
+            volumes: ['/data:/data'],
           },
         },
       });

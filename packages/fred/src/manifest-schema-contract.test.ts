@@ -145,6 +145,12 @@ const contractCases: readonly ContractCase[] = [
     schemaValid: false,
   },
   {
+    name: 'sub-second stop grace Go-bound overlay',
+    manifest: { image: 'nginx', stop_grace_period: '0.5s' },
+    schemaValid: true,
+    preflightValid: false,
+  },
+  {
     name: 'non-empty single-service depends_on',
     manifest: {
       image: 'nginx',
@@ -206,6 +212,90 @@ const contractCases: readonly ContractCase[] = [
     manifest: { image: 'nginx', stop_grace_period: '500.0s' },
     schemaValid: true,
     preflightValid: false,
+  },
+  // Fred's published schema is narrower than its encoding/json decoder and
+  // Go semantic validators. These rows protect provider-accepted payloads
+  // from becoming false rejects in deploy/update pre-flight.
+  {
+    name: 'nanosecond stop grace accepted by Go',
+    manifest: { image: 'nginx', stop_grace_period: '1000000000ns' },
+    schemaValid: false,
+    preflightValid: true,
+  },
+  {
+    name: 'maximum nanosecond stop grace accepted by Go',
+    manifest: { image: 'nginx', stop_grace_period: '120000000000ns' },
+    schemaValid: false,
+    preflightValid: true,
+  },
+  {
+    name: 'microsecond stop grace accepted by Go',
+    manifest: { image: 'nginx', stop_grace_period: '1000000us' },
+    schemaValid: false,
+    preflightValid: true,
+  },
+  {
+    name: 'leading-zero stop grace accepted by Go',
+    manifest: { image: 'nginx', stop_grace_period: '0120s' },
+    schemaValid: false,
+    preflightValid: true,
+  },
+  {
+    name: 'explicit-plus stop grace accepted by Go',
+    manifest: { image: 'nginx', stop_grace_period: '+5s' },
+    schemaValid: false,
+    preflightValid: true,
+  },
+  {
+    name: 'empty-fraction stop grace accepted by Go',
+    manifest: { image: 'nginx', stop_grace_period: '1.s' },
+    schemaValid: false,
+    preflightValid: true,
+  },
+  {
+    name: 'empty user accepted by Go',
+    manifest: { image: 'nginx', user: '' },
+    schemaValid: false,
+    preflightValid: true,
+  },
+  {
+    name: 'multi-colon user accepted by Go SplitN',
+    manifest: { image: 'nginx', user: 'a:b:c' },
+    schemaValid: false,
+    preflightValid: true,
+  },
+  {
+    name: 'null label value decoded as empty string by Go',
+    manifest: { image: 'nginx', labels: { app: null } },
+    schemaValid: false,
+    preflightValid: true,
+  },
+  {
+    name: 'zero health duration accepted by Go',
+    manifest: {
+      image: 'nginx',
+      health_check: { test: ['NONE'], interval: '0' },
+    },
+    schemaValid: false,
+    preflightValid: true,
+  },
+  {
+    name: 'negative health duration accepted by Go',
+    manifest: {
+      image: 'nginx',
+      health_check: { test: ['NONE'], timeout: '-5s' },
+    },
+    schemaValid: false,
+    preflightValid: true,
+  },
+  {
+    name: 'Greek-mu health duration accepted by Go',
+    manifest: {
+      image: 'nginx',
+      health_check: { test: ['NONE'], start_period: '5μs' },
+    },
+    schemaValid: false,
+    preflightValid: true,
   },
 ];
 

@@ -5,8 +5,6 @@ import {
 import {
   type BuildManifestOptions,
   buildManifest,
-  buildStackManifest,
-  isStackManifest,
   type ManifestFormat,
   metaHashHex,
   validateManifest,
@@ -22,6 +20,7 @@ export interface ManifestPreviewServiceInput {
   readonly tmpfs?: readonly string[];
   readonly health_check?: BuildManifestOptions['health_check'];
   readonly stop_grace_period?: string;
+  readonly init?: boolean;
   readonly depends_on?: Record<string, { condition: string }>;
   readonly expose?: readonly string[];
   readonly labels?: Record<string, string>;
@@ -78,25 +77,6 @@ const STRUCTURED_FIELDS: readonly (keyof BuildManifestPreviewInput)[] = [
 
 function hasAnyStructuredField(input: BuildManifestPreviewInput): boolean {
   return STRUCTURED_FIELDS.some((k) => input[k] !== undefined);
-}
-
-function toBuildOptions(
-  svc: ManifestPreviewServiceInput,
-): BuildManifestOptions {
-  return {
-    image: svc.image,
-    ports: svc.ports ?? {},
-    env: svc.env,
-    command: svc.command ? [...svc.command] : undefined,
-    args: svc.args ? [...svc.args] : undefined,
-    user: svc.user,
-    tmpfs: svc.tmpfs ? [...svc.tmpfs] : undefined,
-    health_check: svc.health_check,
-    stop_grace_period: svc.stop_grace_period,
-    depends_on: svc.depends_on,
-    expose: svc.expose ? [...svc.expose] : undefined,
-    labels: svc.labels,
-  };
 }
 
 /**
@@ -160,20 +140,25 @@ export async function buildManifestPreview(
     if (Object.keys(input.services).length === 0) {
       // services={} is a hard structural failure: caller signalled stack
       // intent but defined zero services. Without this guard, the empty
-      // map would round-trip into a single-service manifest (because
-      // isStackManifest treats an empty services map as "not a stack")
-      // and validation errors would be misleading. Per the docstring:
-      // hard structural failures throw.
+      // map cannot produce a useful deploy preview. Per the docstring, hard
+      // structural failures throw.
       throw new ManifestMCPError(
         ManifestMCPErrorCode.INVALID_CONFIG,
         'services is empty; provide at least one service or use image/port for a single-service manifest',
       );
     }
-    const services: Record<string, BuildManifestOptions> = {};
-    for (const [name, svc] of Object.entries(input.services)) {
-      services[name] = toBuildOptions(svc);
-    }
-    manifestObj = buildStackManifest({ services }) as Record<string, unknown>;
+    // Preserve the structured object exactly. Preview is deliberately more
+    // permissive than deploy parsing so unsupported Compose fields and fixed
+    // host ports can be returned as actionable validation errors instead of
+    // being stripped or rejected as protocol-level -32602 errors.
+    manifestObj = {
+      services: Object.fromEntries(
+        Object.entries(input.services).map(([name, service]) => [
+          name,
+          { ...service },
+        ]),
+      ),
+    };
   } else if (input.image !== undefined) {
     if (input.port === undefined) {
       throw new ManifestMCPError(
@@ -207,12 +192,9 @@ export async function buildManifestPreview(
   const hash = await metaHashHex(manifestJson);
   const validation = validateManifest(manifestObj);
 
-  // Format is derived from the parsed manifest. validateManifest returns null
-  // only when the value isn't even a JSON object, which we've already
-  // rejected above. Fall back to single for type narrowing.
-  const format: ManifestFormat = isStackManifest(manifestObj)
-    ? 'stack'
-    : 'single';
+  // validateManifest returns null only when the value is not a JSON object,
+  // which was rejected above. Keep the fallback solely for type narrowing.
+  const format: ManifestFormat = validation.format ?? 'single';
 
   return {
     manifest_json: manifestJson,

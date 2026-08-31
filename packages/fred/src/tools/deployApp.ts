@@ -132,6 +132,7 @@ export async function deployApp(
         tmpfs: svc.tmpfs,
         health_check: svc.health_check,
         stop_grace_period: svc.stop_grace_period,
+        init: svc.init,
         depends_on: svc.depends_on,
         expose: svc.expose,
         labels: svc.labels,

@@ -123,7 +123,7 @@ If the chain rejects the domain claim (e.g. it's already taken), `deploy_app` re
 
 ## 7. Deploy a multi-service stack
 
-Per-service objects accept `image`, `ports`, `env`, `command`, `args`, `user`, `tmpfs`, `health_check`, `stop_grace_period`, `depends_on`, `expose`, and `labels` — no `port` (singular) and no `accept` field. `ports` is a `{ "<port>/<proto>": {} }` map. The FQDN-claim lives at the top level via `custom_domain` + `service_name`.
+Per-service objects accept `image`, `ports`, `env`, `command`, `args`, `user`, `tmpfs`, `health_check`, `stop_grace_period`, `init`, `depends_on`, `expose`, and `labels` — no `port` (singular) and no `accept` field. `ports` is a `{ "<port>/<proto>": { host_port?: 0, ingress?: boolean } }` map; omit `host_port` (or use `0`) so Fred assigns it dynamically, and set `ingress: true` on at most one TCP port. The FQDN claim lives at the top level via `custom_domain` + `service_name`.
 
 ```ts
 // fred server
@@ -131,7 +131,8 @@ build_manifest_preview({
   services: {
     web: {
       image: "nginx:1.25",
-      ports: { "80/tcp": {} }
+      ports: { "80/tcp": { ingress: true } },
+      init: true
     },
     db: {
       image: "postgres:16",
