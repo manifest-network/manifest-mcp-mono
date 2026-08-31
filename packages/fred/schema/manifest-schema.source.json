@@ -1,5 +1,13 @@
 {
   "source": "submodules/fred/docs/manifest-schema.json",
+  "limitsSource": "submodules/fred/internal/backend/shared/manifest/manifest.go",
   "fredCommit": "8f0cbd9431b482732d60d81fb59f94a37cd06486",
-  "sha256": "1071104ae335a997f9c1581e9ce75d65d593f765312a064e121d931e329ab72b"
+  "sha256": "1071104ae335a997f9c1581e9ce75d65d593f765312a064e121d931e329ab72b",
+  "limits": {
+    "maxTmpfsMounts": 4,
+    "maxPorts": 64,
+    "maxExposePorts": 64,
+    "maxEnvVars": 256,
+    "maxLabels": 128
+  }
 }

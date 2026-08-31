@@ -109,7 +109,7 @@ describe('buildManifest', () => {
       command: ['/bin/sh'],
       args: ['-c', 'echo hello'],
       user: '1000:1000',
-      tmpfs: ['/tmp:size=64M'],
+      tmpfs: ['/var/cache/app'],
       health_check: {
         test: ['CMD', 'curl', '-f', 'http://localhost/'],
         interval: '30s',
@@ -117,7 +117,7 @@ describe('buildManifest', () => {
       },
       stop_grace_period: '30s',
       init: true,
-      expose: ['8080/tcp'],
+      expose: ['8080'],
       labels: { app: 'test' },
       depends_on: { db: { condition: 'service_healthy' } },
     });
@@ -126,7 +126,7 @@ describe('buildManifest', () => {
     expect(result.command).toEqual(['/bin/sh']);
     expect(result.args).toEqual(['-c', 'echo hello']);
     expect(result.user).toBe('1000:1000');
-    expect(result.tmpfs).toEqual(['/tmp:size=64M']);
+    expect(result.tmpfs).toEqual(['/var/cache/app']);
     expect(result.health_check).toEqual({
       test: ['CMD', 'curl', '-f', 'http://localhost/'],
       interval: '30s',
@@ -134,7 +134,7 @@ describe('buildManifest', () => {
     });
     expect(result.stop_grace_period).toBe('30s');
     expect(result.init).toBe(true);
-    expect(result.expose).toEqual(['8080/tcp']);
+    expect(result.expose).toEqual(['8080']);
     expect(result.labels).toEqual({ app: 'test' });
     expect(result.depends_on).toEqual({
       db: { condition: 'service_healthy' },
@@ -499,6 +499,17 @@ describe('validateManifest', () => {
       // top-level field. Either way, validation should fail.
       expect(result.valid).toBe(false);
     });
+
+    it.each([
+      ['command string', { command: 'sh -c echo' }],
+      ['args string', { args: '--verbose' }],
+      ['non-string command entry', { command: [1, 2] }],
+      ['non-string args entry', { args: ['ok', false] }],
+    ])('rejects schema-invalid %s', (_name, fields) => {
+      const result = validateManifest({ image: 'nginx', ...fields });
+      expect(result.valid).toBe(false);
+      expect(result.errors.join(' ')).toMatch(/command|args/);
+    });
   });
 
   describe('env', () => {
@@ -558,6 +569,15 @@ describe('validateManifest', () => {
         ).toBe(true);
       },
     );
+
+    it('rejects non-string label values through the generated schema validator', () => {
+      const result = validateManifest({
+        image: 'nginx',
+        labels: { app: 1 },
+      });
+      expect(result.valid).toBe(false);
+      expect(result.errors.join(' ')).toContain('labels.app');
+    });
   });
 
   describe('ports', () => {
@@ -618,6 +638,33 @@ describe('validateManifest', () => {
         }).valid,
       ).toBe(true);
     });
+
+    it('rejects ingress on UDP and more than one ingress TCP port', () => {
+      const udp = validateManifest({
+        image: 'nginx',
+        ports: { '53/udp': { ingress: true } },
+      });
+      const multiple = validateManifest({
+        image: 'nginx',
+        ports: {
+          '80/tcp': { ingress: true },
+          '443/tcp': { ingress: true },
+        },
+      });
+      expect(udp.valid).toBe(false);
+      expect(udp.errors.join(' ')).toContain('requires TCP');
+      expect(multiple.valid).toBe(false);
+      expect(multiple.errors.join(' ')).toContain('at most one');
+    });
+
+    it('accepts one TCP ingress hint', () => {
+      expect(
+        validateManifest({
+          image: 'nginx',
+          ports: { '8080/tcp': { ingress: true } },
+        }).valid,
+      ).toBe(true);
+    });
   });
 
   describe('tmpfs', () => {
@@ -643,6 +690,24 @@ describe('validateManifest', () => {
         tmpfs: ['/var/cache/app', '/run/mysqld'],
       });
       expect(r.valid).toBe(true);
+    });
+
+    it.each(['/var/../proc', '/tmp/', '/a/../../'])(
+      'rejects a path that normalizes to blocked location %s',
+      (path) => {
+        const result = validateManifest({ image: 'nginx', tmpfs: [path] });
+        expect(result.valid).toBe(false);
+        expect(result.errors.join(' ')).toContain(path);
+      },
+    );
+
+    it('detects duplicates after path normalization', () => {
+      const result = validateManifest({
+        image: 'nginx',
+        tmpfs: ['/var/cache/app', '/var/cache/app/'],
+      });
+      expect(result.valid).toBe(false);
+      expect(result.errors.join(' ')).toContain('duplicate normalized mount');
     });
   });
 
@@ -734,6 +799,42 @@ describe('validateManifest', () => {
         health_check: { test: ['NONE'], retries: -1 },
       });
       expect(r.valid).toBe(false);
+    });
+
+    it.each(['abc', '1 second', 1.5])(
+      'rejects invalid duration value %j',
+      (duration) => {
+        const result = validateManifest({
+          image: 'nginx',
+          health_check: { test: ['NONE'], interval: duration },
+        });
+        expect(result.valid).toBe(false);
+        expect(result.errors.join(' ')).toContain('health_check.interval');
+      },
+    );
+  });
+
+  describe('stop_grace_period', () => {
+    it.each(['500s', '500ms', 999_999_999, 120_000_000_001])(
+      'rejects an out-of-range duration %j',
+      (stop_grace_period) => {
+        const result = validateManifest({ image: 'nginx', stop_grace_period });
+        expect(result.valid).toBe(false);
+        expect(result.errors.join(' ')).toContain('stop_grace_period');
+      },
+    );
+
+    it.each([
+      '1s',
+      '1m30s',
+      '120s',
+      '120.0000000001s',
+      1_000_000_000,
+      120_000_000_000,
+    ])('accepts an in-range duration %j', (stop_grace_period) => {
+      expect(
+        validateManifest({ image: 'nginx', stop_grace_period }).valid,
+      ).toBe(true);
     });
   });
 

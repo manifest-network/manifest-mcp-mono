@@ -14,7 +14,7 @@ import {
 
 export interface ManifestPreviewServiceInput {
   readonly image: string;
-  readonly ports?: Record<string, Record<string, never>>;
+  readonly ports?: BuildManifestOptions['ports'];
   readonly env?: Record<string, string>;
   readonly command?: readonly string[];
   readonly args?: readonly string[];

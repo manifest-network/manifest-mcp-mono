@@ -81,6 +81,47 @@ interface RegisterToolsDeps {
   allowLoopback?: boolean;
 }
 
+function manifestPortsSchema() {
+  return z
+    .record(
+      z.string(),
+      z.strictObject({
+        host_port: z
+          .literal(0)
+          .optional()
+          .describe(
+            'Must be 0 or omitted; Fred assigns host ports dynamically.',
+          ),
+        ingress: z
+          .boolean()
+          .optional()
+          .describe(
+            'Prefer this port for ingress. Only one TCP port may set ingress=true.',
+          ),
+      }),
+    )
+    .optional()
+    .describe(
+      'Port map keyed by "port/protocol" (e.g. {"8080/tcp":{"ingress":true}}).',
+    );
+}
+
+function manifestTmpfsSchema() {
+  return z
+    .array(z.string())
+    .optional()
+    .describe(
+      'tmpfs mount paths as bare absolute paths (e.g. ["/var/cache/app"])',
+    );
+}
+
+function manifestExposeSchema() {
+  return z
+    .array(z.string())
+    .optional()
+    .describe('Container-network ports as bare number strings (e.g. ["8080"])');
+}
+
 export function registerTools(deps: RegisterToolsDeps): void {
   const {
     mcpServer,
@@ -494,7 +535,7 @@ export function registerTools(deps: RegisterToolsDeps): void {
         command: z.array(z.string()).optional(),
         args: z.array(z.string()).optional(),
         user: z.string().optional(),
-        tmpfs: z.array(z.string()).optional(),
+        tmpfs: manifestTmpfsSchema(),
         health_check: z
           .object({
             test: z.array(z.string()),
@@ -506,7 +547,7 @@ export function registerTools(deps: RegisterToolsDeps): void {
           .optional(),
         stop_grace_period: z.string().optional(),
         init: z.boolean().optional(),
-        expose: z.array(z.string()).optional(),
+        expose: manifestExposeSchema(),
         labels: z.record(z.string(), z.string()).optional(),
         depends_on: z
           .record(z.string(), z.object({ condition: z.string() }))
@@ -516,12 +557,12 @@ export function registerTools(deps: RegisterToolsDeps): void {
             z.string(),
             z.object({
               image: z.string(),
-              ports: z.record(z.string(), z.object({})).optional(),
+              ports: manifestPortsSchema(),
               env: z.record(z.string(), z.string()).optional(),
               command: z.array(z.string()).optional(),
               args: z.array(z.string()).optional(),
               user: z.string().optional(),
-              tmpfs: z.array(z.string()).optional(),
+              tmpfs: manifestTmpfsSchema(),
               health_check: z
                 .object({
                   test: z.array(z.string()),
@@ -535,7 +576,7 @@ export function registerTools(deps: RegisterToolsDeps): void {
               depends_on: z
                 .record(z.string(), z.object({ condition: z.string() }))
                 .optional(),
-              expose: z.array(z.string()).optional(),
+              expose: manifestExposeSchema(),
               labels: z.record(z.string(), z.string()).optional(),
             }),
           )
@@ -648,12 +689,7 @@ export function registerTools(deps: RegisterToolsDeps): void {
           .string()
           .optional()
           .describe('User to run the container as (e.g. "1000:1000")'),
-        tmpfs: z
-          .array(z.string())
-          .optional()
-          .describe(
-            'tmpfs mount paths as bare absolute paths (e.g. ["/var/cache/app"])',
-          ),
+        tmpfs: manifestTmpfsSchema(),
         health_check: z
           .object({
             test: z.array(z.string()),
@@ -672,12 +708,7 @@ export function registerTools(deps: RegisterToolsDeps): void {
           .boolean()
           .optional()
           .describe('Run an init process inside the container'),
-        expose: z
-          .array(z.string())
-          .optional()
-          .describe(
-            'Container-network ports as bare number strings (e.g. ["8080"])',
-          ),
+        expose: manifestExposeSchema(),
         labels: z
           .record(z.string(), z.string())
           .optional()
@@ -697,12 +728,12 @@ export function registerTools(deps: RegisterToolsDeps): void {
             z.string(),
             z.object({
               image: z.string(),
-              ports: z.record(z.string(), z.object({})).optional(),
+              ports: manifestPortsSchema(),
               env: z.record(z.string(), z.string()).optional(),
               command: z.array(z.string()).optional(),
               args: z.array(z.string()).optional(),
               user: z.string().optional(),
-              tmpfs: z.array(z.string()).optional(),
+              tmpfs: manifestTmpfsSchema(),
               health_check: z
                 .object({
                   test: z.array(z.string()),
@@ -716,7 +747,7 @@ export function registerTools(deps: RegisterToolsDeps): void {
               depends_on: z
                 .record(z.string(), z.object({ condition: z.string() }))
                 .optional(),
-              expose: z.array(z.string()).optional(),
+              expose: manifestExposeSchema(),
               labels: z.record(z.string(), z.string()).optional(),
             }),
           )

@@ -18,6 +18,7 @@ import { resolveFredSignal } from './call-signal.js';
 import { fetchActiveLease } from './fetchActiveLease.js';
 import type { LifecycleCallOptions } from './lifecycle-options.js';
 import { resolveProviderUrl } from './resolveLeaseProvider.js';
+import { parseAndValidateManifestPayload } from './validateManifestPayload.js';
 
 /**
  * Turn a 5xx from `POST /update` into an honest "we do not know" (ENG-619).
@@ -76,7 +77,15 @@ export async function updateApp(
   if (existingManifest) {
     let parsed: Record<string, unknown>;
     try {
-      parsed = JSON.parse(manifest) as Record<string, unknown>;
+      const candidate: unknown = JSON.parse(manifest);
+      if (
+        candidate === null ||
+        typeof candidate !== 'object' ||
+        Array.isArray(candidate)
+      ) {
+        throw new Error('must be a JSON object');
+      }
+      parsed = candidate as Record<string, unknown>;
     } catch (err) {
       throw new ManifestMCPError(
         ManifestMCPErrorCode.INVALID_CONFIG,
@@ -133,6 +142,12 @@ export async function updateApp(
     }
   }
 
+  // Validate the final payload after merge. This catches bad fields carried
+  // forward from existing_manifest as well as new input, before provider URL
+  // lookup, token minting, or the destructive update POST (ENG-637/ENG-755).
+  const { bytes: finalManifestBytes } =
+    parseAndValidateManifestPayload(finalManifest);
+
   // Fast path: a supplied providerUrl skips both on-chain queries (fetchActiveLease + resolveProviderUrl).
   let providerUrl: string;
   if (opts.providerUrl) {
@@ -154,7 +169,7 @@ export async function updateApp(
     result = await updateLease(
       providerUrl,
       leaseUuid,
-      new TextEncoder().encode(finalManifest),
+      finalManifestBytes,
       authToken,
       ctx.fetch,
       ctx.allowLoopback,

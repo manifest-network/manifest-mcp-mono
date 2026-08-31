@@ -28,10 +28,11 @@ import {
   ProviderApiError,
   uploadLeaseData,
 } from '../http/provider.js';
-import { getServiceNames, metaHashHex, validateManifest } from '../manifest.js';
+import { getServiceNames, metaHashHex } from '../manifest.js';
 import { type CancellableOptions, resolveFredSignal } from './call-signal.js';
 import { createLease } from './createLease.js';
 import { resolveProviderUrl } from './resolveLeaseProvider.js';
+import { parseAndValidateManifestPayload } from './validateManifestPayload.js';
 
 export type { DeployResult as DeployAppResult };
 
@@ -78,8 +79,6 @@ export interface DeployManifestOptions {
   fetchFn?: typeof globalThis.fetch;
 }
 
-const MAX_MANIFEST_BYTES = 256 * 1024;
-
 export async function deployManifest(
   ctx: FredAuthCtx,
   spec: ManifestDeploySpec,
@@ -87,43 +86,14 @@ export async function deployManifest(
 ): Promise<DeployResult> {
   // Resolve ONCE: a second call would mint a second timeout from the same `timeout`.
   const signal = resolveFredSignal(callOptions);
-  const manifestBytes = new TextEncoder().encode(spec.manifest);
-  if (manifestBytes.length > MAX_MANIFEST_BYTES) {
-    throw new ManifestMCPError(
-      ManifestMCPErrorCode.INVALID_CONFIG,
-      `Manifest is ${manifestBytes.length} bytes; the maximum is ${MAX_MANIFEST_BYTES}.`,
-    );
-  }
-
-  // Parse + validate at the boundary, before any tx (size cap above;
-  // __proto__/constructor reject below; provider re-validates server-side).
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(spec.manifest);
-  } catch (err) {
-    throw new ManifestMCPError(
-      ManifestMCPErrorCode.INVALID_CONFIG,
-      `Manifest is not valid JSON: ${err instanceof Error ? err.message : String(err)}`,
-    );
-  }
-  if (parsed !== null && typeof parsed === 'object') {
-    const topKeys = Object.keys(parsed as Record<string, unknown>);
-    if (topKeys.includes('__proto__') || topKeys.includes('constructor')) {
-      throw new ManifestMCPError(
-        ManifestMCPErrorCode.INVALID_CONFIG,
-        'Manifest must not contain a top-level "__proto__" or "constructor" key.',
-      );
-    }
-  }
-  const result = validateManifest(parsed);
-  if (!result.valid) {
-    throw new ManifestMCPError(
-      ManifestMCPErrorCode.INVALID_CONFIG,
-      `Invalid manifest: ${result.errors.join('; ')}`,
-      { errors: result.errors },
-    );
-  }
-  const isStack = result.format === 'stack';
+  // Shared with update_app: validate the exact final wire payload before any
+  // chain/provider mutation, including size and prototype-key guards.
+  const {
+    bytes: manifestBytes,
+    parsed,
+    format,
+  } = parseAndValidateManifestPayload(spec.manifest);
+  const isStack = format === 'stack';
   const serviceNames = isStack ? getServiceNames(parsed) : [];
 
   // Client-verifiable customDomain syntax + serviceName coherence

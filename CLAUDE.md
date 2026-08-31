@@ -41,8 +41,10 @@ a Fred wire change before providers run it (ENG-638). Do not assume a pin is a r
 `git submodule update --init --recursive` in a fresh worktree and after pulling a gitlink change: a
 stale on-disk checkout silently makes e2e build a different Fred than the one recorded.
 Fred's deployment-manifest contract is vendored under `packages/fred/schema/` from that same
-gitlink. `npm run check:fred-manifest-schema` fails when the pin, provenance, or bytes drift; after
-an intentional Fred bump, run `npm run sync:fred-manifest-schema` with the submodule initialized.
+gitlink. `npm run check:fred-manifest-schema` fails when the pin, provenance, schema bytes,
+standalone generated validator, or Go-only manifest caps drift; after an intentional Fred bump,
+run `npm run sync:fred-manifest-schema` with the submodule initialized. The vendored schema and
+`packages/fred/src/generated/` are generated artifacts excluded from Biome formatting.
 
 ## Architecture
 

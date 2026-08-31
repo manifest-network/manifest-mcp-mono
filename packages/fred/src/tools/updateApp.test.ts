@@ -133,6 +133,84 @@ describe('updateApp', () => {
     expect(new TextDecoder().decode(rawPayload)).toBe(manifest);
   });
 
+  it.each([
+    [
+      'reserved label',
+      { image: 'nginx', labels: { 'TRAEFIK.enable': 'true' } },
+      'TRAEFIK.enable',
+    ],
+    [
+      'fixed host port',
+      { image: 'nginx', ports: { '80/tcp': { host_port: 8080 } } },
+      'host_port',
+    ],
+    [
+      'schema-invalid command',
+      { image: 'nginx', command: 'sh -c echo' },
+      'command',
+    ],
+  ])('rejects %s before the update wire', async (_name, value, field) => {
+    await expect(
+      updateApp(
+        makeCtx(activeQc()),
+        {
+          address: ADDR,
+          leaseUuid: LEASE_UUID,
+          manifest: JSON.stringify(value),
+        },
+        { providerUrl: PROVIDER_URL, pollOptions: false },
+      ),
+    ).rejects.toMatchObject({
+      code: ManifestMCPErrorCode.INVALID_CONFIG,
+      message: expect.stringContaining(field),
+    });
+    expect(wire.calls).toHaveLength(0);
+    expect(mockGetAuthToken).not.toHaveBeenCalled();
+  });
+
+  it('rejects a fixed host port carried forward by merge before the update wire', async () => {
+    await expect(
+      updateApp(
+        makeCtx(activeQc()),
+        {
+          address: ADDR,
+          leaseUuid: LEASE_UUID,
+          manifest: JSON.stringify({ image: 'nginx:2' }),
+          existingManifest: JSON.stringify({
+            image: 'nginx:1',
+            ports: { '80/tcp': { host_port: 8080 } },
+          }),
+        },
+        { providerUrl: PROVIDER_URL, pollOptions: false },
+      ),
+    ).rejects.toMatchObject({
+      code: ManifestMCPErrorCode.INVALID_CONFIG,
+      message: expect.stringContaining('host_port'),
+    });
+    expect(wire.calls).toHaveLength(0);
+    expect(mockGetAuthToken).not.toHaveBeenCalled();
+  });
+
+  it('rejects an oversized final manifest before the update wire', async () => {
+    const manifest = JSON.stringify({
+      image: 'nginx',
+      env: { PAYLOAD: 'x'.repeat(256 * 1024) },
+    });
+
+    await expect(
+      updateApp(
+        makeCtx(activeQc()),
+        { address: ADDR, leaseUuid: LEASE_UUID, manifest },
+        { providerUrl: PROVIDER_URL, pollOptions: false },
+      ),
+    ).rejects.toMatchObject({
+      code: ManifestMCPErrorCode.INVALID_CONFIG,
+      message: expect.stringContaining('maximum is 262144'),
+    });
+    expect(wire.calls).toHaveLength(0);
+    expect(mockGetAuthToken).not.toHaveBeenCalled();
+  });
+
   it('with existingManifest: env merged, ports merged, fields carried forward', async () => {
     const qc = activeQc();
 

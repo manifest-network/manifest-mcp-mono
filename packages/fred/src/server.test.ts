@@ -278,18 +278,36 @@ describe('FredMCPServer', () => {
       });
     });
 
-    it('deploy_app documents Fred-compatible tmpfs and expose syntax', async () => {
-      const tool = (await listTools()).get('deploy_app');
-      const inputSchema = tool?.inputSchema as {
-        properties?: Record<string, { description?: string }>;
-      };
+    it('all structured manifest sites document syntax and preserve port config', async () => {
+      interface JsonSchemaNode {
+        const?: unknown;
+        description?: string;
+        properties?: Record<string, JsonSchemaNode>;
+        additionalProperties?: JsonSchemaNode;
+      }
 
-      expect(inputSchema.properties?.tmpfs?.description).toBe(
-        'tmpfs mount paths as bare absolute paths (e.g. ["/var/cache/app"])',
-      );
-      expect(inputSchema.properties?.expose?.description).toBe(
-        'Container-network ports as bare number strings (e.g. ["8080"])',
-      );
+      const tools = await listTools();
+      for (const toolName of ['deploy_app', 'build_manifest_preview']) {
+        const inputSchema = tools.get(toolName)?.inputSchema as JsonSchemaNode;
+        expect(inputSchema.properties?.tmpfs?.description).toBe(
+          'tmpfs mount paths as bare absolute paths (e.g. ["/var/cache/app"])',
+        );
+        expect(inputSchema.properties?.expose?.description).toBe(
+          'Container-network ports as bare number strings (e.g. ["8080"])',
+        );
+
+        const serviceProperties =
+          inputSchema.properties?.services?.additionalProperties?.properties;
+        expect(serviceProperties?.tmpfs?.description).toBe(
+          'tmpfs mount paths as bare absolute paths (e.g. ["/var/cache/app"])',
+        );
+        expect(serviceProperties?.expose?.description).toBe(
+          'Container-network ports as bare number strings (e.g. ["8080"])',
+        );
+        const portConfig = serviceProperties?.ports?.additionalProperties;
+        expect(portConfig?.properties?.host_port?.const).toBe(0);
+        expect(portConfig?.properties?.ingress).toBeDefined();
+      }
     });
 
     it('restart_app broadcasts an additive, fund-spending tx (not idempotent: each call triggers a fresh restart cycle)', async () => {
@@ -1241,6 +1259,33 @@ describe('FredMCPServer', () => {
       expect(sc.validation.valid).toBe(false);
       expect(sc.validation.errors.some((e) => e.includes('PATH'))).toBe(true);
     });
+
+    it('preserves stack ingress and dynamic host-port configuration', async () => {
+      const server = new FredMCPServer({
+        config: makeMockConfig(),
+        walletProvider: makeMockWallet(),
+      });
+      const result = await callTool(server, 'build_manifest_preview', {
+        services: {
+          web: {
+            image: 'nginx',
+            ports: { '8080/tcp': { host_port: 0, ingress: true } },
+          },
+        },
+      });
+
+      expect(result.isError).toBeUndefined();
+      expect(result.structuredContent).toMatchObject({
+        manifest: {
+          services: {
+            web: {
+              ports: { '8080/tcp': { host_port: 0, ingress: true } },
+            },
+          },
+        },
+        validation: { valid: true },
+      });
+    });
   });
 
   describe('wait_for_app_ready', () => {
@@ -1464,6 +1509,54 @@ describe('FredMCPServer', () => {
         // callOptions content is asserted in the gas_multiplier test above; here we only pin the spec mapping
         expect.any(Object),
       );
+    });
+
+    it('preserves stack port configuration at the deploy helper boundary', async () => {
+      const server = new FredMCPServer({
+        config: makeMockConfig(),
+        walletProvider: makeMockWallet({ signArbitrary: true }),
+      });
+      await callTool(server, 'deploy_app', {
+        size: 'docker-micro',
+        services: {
+          web: {
+            image: 'nginx',
+            ports: { '8080/tcp': { host_port: 0, ingress: true } },
+          },
+        },
+      });
+
+      expect(mockDeployApp).toHaveBeenCalledWith(
+        expect.any(Object),
+        expect.objectContaining({
+          services: {
+            web: {
+              image: 'nginx',
+              ports: { '8080/tcp': { host_port: 0, ingress: true } },
+            },
+          },
+        }),
+        expect.any(Object),
+      );
+    });
+
+    it('rejects a structured fixed host port at the MCP boundary', async () => {
+      const server = new FredMCPServer({
+        config: makeMockConfig(),
+        walletProvider: makeMockWallet({ signArbitrary: true }),
+      });
+      const result = await callTool(server, 'deploy_app', {
+        size: 'docker-micro',
+        services: {
+          web: {
+            image: 'nginx',
+            ports: { '8080/tcp': { host_port: 8080 } },
+          },
+        },
+      });
+
+      expect(result.isError).toBe(true);
+      expect(mockDeployApp).not.toHaveBeenCalled();
     });
 
     it('rejects a service_name that is not a valid RFC 1123 DNS label at the MCP boundary', async () => {

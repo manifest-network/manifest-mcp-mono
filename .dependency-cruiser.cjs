@@ -187,6 +187,12 @@ module.exports = {
     // resolves there (unexcluded: 767 modules and 12 chokepoint violations out of built output). What
     // it must never again do is delete something a rule needs as a `to` target — the first-party
     // cross-package edge is safe from it now only because the alias above lands it in `src`.
-    exclude: { path: '^(packages|examples)/[^/]+/dist/' },
+    // Ajv's generated Fred validator is also excluded from parsing. The schema-sync gate proves it
+    // byte-for-byte current and rejects any generated `import()`/static-import/`require()` runtime
+    // edge, so cruising its ~100 KiB machine output adds no architectural signal and makes each
+    // positive-control cruise exceed its deliberately tight 5-second deadline.
+    exclude: {
+      path: '^(packages|examples)/[^/]+/dist/|^packages/fred/src/generated/',
+    },
   },
 };

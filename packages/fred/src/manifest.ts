@@ -11,6 +11,22 @@ import {
   ManifestMCPError,
   ManifestMCPErrorCode,
 } from '@manifest-network/manifest-mcp-core';
+import { FRED_MANIFEST_LIMITS } from './generated/fred-manifest-limits.js';
+import generatedFredManifestSchemaValidator from './generated/fred-manifest-schema-validator.js';
+
+interface SchemaValidationError {
+  readonly instancePath: string;
+  readonly keyword: string;
+  readonly params: Record<string, unknown>;
+  readonly message?: string;
+}
+
+type SchemaValidator = ((value: unknown) => boolean) & {
+  errors?: readonly SchemaValidationError[] | null;
+};
+
+const validateFredManifestSchema =
+  generatedFredManifestSchemaValidator as SchemaValidator;
 
 const MAX_NAME_LENGTH = 32;
 
@@ -303,13 +319,116 @@ const DEPENDS_ON_CONDITIONS = new Set<string>([
   'service_healthy',
 ]);
 
-// Fred v0.13.0's per-service allocation caps (manifest.go, ENG-547). These
-// admission limits are not represented in docs/manifest-schema.json, so they
-// remain an explicit semantic overlay on the schema contract.
-const MAX_PORTS = 64;
-const MAX_EXPOSE_PORTS = 64;
-const MAX_ENV_VARS = 256;
-const MAX_LABELS = 128;
+// Fred's Go-only allocation caps are generated from the manifest.go pinned by
+// the submodule gitlink. The schema sync gate regenerates and checks this file,
+// so a Fred limit change cannot be hidden behind an unchanged JSON Schema.
+const {
+  maxTmpfsMounts: MAX_TMPFS_MOUNTS,
+  maxPorts: MAX_PORTS,
+  maxExposePorts: MAX_EXPOSE_PORTS,
+  maxEnvVars: MAX_ENV_VARS,
+  maxLabels: MAX_LABELS,
+} = FRED_MANIFEST_LIMITS;
+
+const DURATION_UNIT_NANOSECONDS: Readonly<Record<string, number>> = {
+  ns: 1,
+  us: 1_000,
+  µs: 1_000,
+  μs: 1_000,
+  ms: 1_000_000,
+  s: 1_000_000_000,
+  m: 60_000_000_000,
+  h: 3_600_000_000_000,
+};
+
+function cleanPosixPath(value: string): string {
+  const absolute = value.startsWith('/');
+  const parts: string[] = [];
+  for (const part of value.split('/')) {
+    if (part === '' || part === '.') continue;
+    if (part === '..') {
+      parts.pop();
+    } else {
+      parts.push(part);
+    }
+  }
+  if (absolute) return `/${parts.join('/')}`;
+  return parts.join('/') || '.';
+}
+
+function parseGoDurationNanoseconds(value: string): number | undefined {
+  if (value.length === 0) return undefined;
+  const partRe = /(\d+(?:\.\d+)?)(ns|us|µs|μs|ms|s|m|h)/gy;
+  let offset = 0;
+  let total = 0;
+  while (offset < value.length) {
+    partRe.lastIndex = offset;
+    const match = partRe.exec(value);
+    if (!match || match.index !== offset) return undefined;
+    // time.ParseDuration truncates each fractional component to whole
+    // nanoseconds before adding it to the duration.
+    total += Math.trunc(Number(match[1]) * DURATION_UNIT_NANOSECONDS[match[2]]);
+    offset = partRe.lastIndex;
+  }
+  return Number.isFinite(total) ? total : undefined;
+}
+
+function pointerPath(pointer: string): string {
+  if (pointer === '') return 'manifest';
+  const segments = pointer
+    .slice(1)
+    .split('/')
+    .map((segment) => segment.replace(/~1/g, '/').replace(/~0/g, '~'));
+  return segments.reduce((path, segment) => {
+    if (/^(0|[1-9]\d*)$/.test(segment)) return `${path}[${segment}]`;
+    if (/^[A-Za-z_$][\w$]*$/.test(segment)) return `${path}.${segment}`;
+    return `${path}[${JSON.stringify(segment)}]`;
+  }, 'manifest');
+}
+
+function appendSchemaErrors(
+  manifest: Record<string, unknown>,
+  errors: string[],
+): void {
+  if (validateFredManifestSchema(manifest)) return;
+
+  const stackIntent = 'services' in manifest;
+  const seen = new Set<string>();
+  for (const error of validateFredManifestSchema.errors ?? []) {
+    // The root oneOf reports the errors for both the single and stack branch.
+    // Drop only wrong-branch/generic root noise; the handwritten semantic pass
+    // below retains actionable unknown-top-level diagnostics.
+    if (error.keyword === 'oneOf') continue;
+    if (error.instancePath === '' && error.keyword === 'additionalProperties')
+      continue;
+    if (
+      error.instancePath === '' &&
+      error.keyword === 'required' &&
+      ((stackIntent && error.params.missingProperty === 'image') ||
+        (!stackIntent && error.params.missingProperty === 'services'))
+    ) {
+      continue;
+    }
+
+    let path = pointerPath(error.instancePath);
+    if (
+      error.keyword === 'required' &&
+      typeof error.params.missingProperty === 'string'
+    ) {
+      path += `.${error.params.missingProperty}`;
+    } else if (
+      error.keyword === 'propertyNames' &&
+      typeof error.params.propertyName === 'string'
+    ) {
+      path += `[${JSON.stringify(error.params.propertyName)}]`;
+    }
+    const message = `${path}: ${error.message ?? `failed ${error.keyword}`}`;
+    if (!seen.has(message)) {
+      seen.add(message);
+      errors.push(message);
+    }
+  }
+}
 
 function isPlainObject(v: unknown): v is Record<string, unknown> {
   return v !== null && typeof v === 'object' && !Array.isArray(v);
@@ -487,36 +606,43 @@ function validateService(
     if (!Array.isArray(service.tmpfs)) {
       errors.push(`${scope}.tmpfs: must be an array of strings`);
     } else {
-      if (service.tmpfs.length > 4) {
+      if (service.tmpfs.length > MAX_TMPFS_MOUNTS) {
         errors.push(
-          `${scope}.tmpfs: too many mounts (${service.tmpfs.length}), maximum is 4`,
+          `${scope}.tmpfs: too many mounts (${service.tmpfs.length}), maximum is ${MAX_TMPFS_MOUNTS}`,
         );
       }
       const seen = new Set<string>();
-      for (const path of service.tmpfs) {
-        if (typeof path !== 'string') {
+      for (const rawPath of service.tmpfs) {
+        if (typeof rawPath !== 'string') {
           errors.push(`${scope}.tmpfs: entries must be strings`);
           continue;
         }
-        if (!path.startsWith('/')) {
-          errors.push(`${scope}.tmpfs["${path}"]: must be an absolute path`);
+        if (!rawPath.startsWith('/')) {
+          errors.push(`${scope}.tmpfs["${rawPath}"]: must be an absolute path`);
+          continue;
         }
-        if (TMPFS_BLOCKED.has(path)) {
+        // Fred applies path.Clean before its blocked-path and duplicate checks.
+        // Mirror that normalization so trailing slashes and `..` cannot hide a
+        // backend-managed/sensitive path or a duplicate mount.
+        const cleanedPath = cleanPosixPath(rawPath);
+        if (TMPFS_BLOCKED.has(cleanedPath)) {
           errors.push(
-            `${scope}.tmpfs["${path}"]: path is managed by the backend`,
+            `${scope}.tmpfs["${rawPath}"]: resolves to backend-managed path ${cleanedPath}`,
           );
         }
         for (const prefix of TMPFS_BLOCKED_PREFIXES) {
-          if (path === prefix || path.startsWith(`${prefix}/`)) {
+          if (cleanedPath === prefix || cleanedPath.startsWith(`${prefix}/`)) {
             errors.push(
-              `${scope}.tmpfs["${path}"]: path is under sensitive path ${prefix}`,
+              `${scope}.tmpfs["${rawPath}"]: resolves under sensitive path ${prefix}`,
             );
           }
         }
-        if (seen.has(path)) {
-          errors.push(`${scope}.tmpfs["${path}"]: duplicate mount`);
+        if (seen.has(cleanedPath)) {
+          errors.push(
+            `${scope}.tmpfs["${rawPath}"]: duplicate normalized mount ${cleanedPath}`,
+          );
         }
-        seen.add(path);
+        seen.add(cleanedPath);
       }
     }
   }
@@ -646,28 +772,37 @@ function validateService(
     }
   }
 
-  // init / stop_grace_period: minimal type checks (range validation is runtime).
+  // init / stop_grace_period
   if ('init' in service && typeof service.init !== 'boolean') {
     errors.push(`${scope}.init: must be a boolean`);
   }
   if ('stop_grace_period' in service) {
     const v = service.stop_grace_period;
-    if (typeof v !== 'string' && typeof v !== 'number') {
+    let nanoseconds: number | undefined;
+    if (typeof v === 'string') {
+      nanoseconds = parseGoDurationNanoseconds(v);
+    } else if (typeof v === 'number' && Number.isSafeInteger(v)) {
+      nanoseconds = v;
+    }
+    if (nanoseconds === undefined) {
       errors.push(
-        `${scope}.stop_grace_period: must be a duration string or integer nanoseconds`,
+        `${scope}.stop_grace_period: must be a valid Go duration string or safe integer nanoseconds`,
       );
+    } else if (nanoseconds < 1_000_000_000) {
+      errors.push(`${scope}.stop_grace_period: must be at least 1s`);
+    } else if (nanoseconds > 120_000_000_000) {
+      errors.push(`${scope}.stop_grace_period: must be at most 120s`);
     }
   }
 }
 
 /**
- * Validates a parsed manifest object against the documented Fred rules.
- * `manifest-schema-contract.test.ts` checks this pre-flight validator against
- * the schema vendored from the exact Fred gitlink used by E2E. Security rules
- * that Fred enforces outside (or more strictly than) that schema remain named
- * semantic overlays here: case-insensitive reserved labels and collection
- * caps. The provider stays authoritative, but known-invalid manifests are
- * rejected before the paid create-lease transaction.
+ * Validates a parsed manifest object with the standalone validator generated
+ * from the Fred schema at the exact gitlink used by E2E, then applies the Go
+ * rules that schema cannot express: case-insensitive reserved labels, ingress
+ * cardinality/protocol, normalized tmpfs paths, stop-grace runtime bounds,
+ * cross-service references, and generated collection caps. The provider stays
+ * authoritative, but known-invalid manifests are rejected before mutation.
  */
 export function validateManifest(manifest: unknown): ManifestValidationResult {
   const errors: string[] = [];
@@ -679,6 +814,8 @@ export function validateManifest(manifest: unknown): ManifestValidationResult {
       format: null,
     };
   }
+
+  appendSchemaErrors(manifest, errors);
 
   if (isStackManifest(manifest)) {
     // Stack manifest — only `services` is allowed at the top level.
