@@ -142,6 +142,24 @@ await client.deployApp({
 });
 ```
 
+Stack port keys always include the protocol. `host_port` must be omitted (or
+`0`) because Fred assigns it dynamically; `ingress: true` selects at most one
+TCP port for public routing. `PortConfig` is available from every scoped SDK
+subpath that exposes a service input:
+
+```ts
+import type {
+  PortConfig,
+  ServiceConfig,
+} from '@manifest-network/manifest-sdk/orchestration';
+
+const publicHttp: PortConfig = { ingress: true };
+const web: ServiceConfig = {
+  image: 'nginxinc/nginx-unprivileged:alpine',
+  ports: { '8080/tcp': publicHttp },
+};
+```
+
 The result carries the branded `lease_uuid`, the `provider_uuid` / `provider_url`, the `state`, and (best-effort) `connection` info.
 
 **Partial-success errors.** This subsection describes the bound `client.deployApp` path (and the equivalent free function from `/deploy`). Most failures after the create-lease tx are wrapped in a `ManifestMCPError` whose message is prefixed `Deploy partially succeeded:` and whose `details.lease_uuid` names the lease. Three outcomes require different responses:
@@ -322,11 +340,13 @@ If you build the manifest yourself (e.g. a UI editor) rather than letting `deplo
 
 ```ts
 import { buildManifest, buildStackManifest, mergeManifest, validateManifest } from '@manifest-network/manifest-sdk/deploy';
+import type { PortConfig } from '@manifest-network/manifest-sdk/deploy';
 
-const manifest = buildManifest({ image: 'nginx:1.25', ports: { '80/tcp': {} }, env: { FOO: 'bar' } });
+const ingress: PortConfig = { ingress: true };
+const manifest = buildManifest({ image: 'nginx:1.25', ports: { '80/tcp': ingress }, env: { FOO: 'bar' } });
 ```
 
-`mergeManifest` applies UI-shaped edits onto an existing manifest while preserving fields the editor doesn't touch; `validateManifest` / `parseStackManifest` / `getServiceNames` support preview UIs.
+`mergeManifest` applies UI-shaped edits onto an existing manifest while preserving fields the editor doesn't touch; `validateManifest` / `parseStackManifest` / `getServiceNames` support preview UIs. A deploy accepts at most **1 MiB** of manifest JSON. Update sends the manifest base64-encoded inside a JSON request, so its maximum raw manifest is **786,420 bytes**; both limits fit Fred's default 1 MiB inbound request cap exactly. When sending raw JSON, integer fields must use integer tokens (`3`, `1000000000`), not mathematically integral decimal/exponent spellings (`3.0`, `1e9`), because Fred decodes them into Go integer types.
 
 ## `fetch` injection, CORS, and the SSRF guard
 

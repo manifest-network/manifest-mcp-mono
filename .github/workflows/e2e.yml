@@ -39,7 +39,10 @@ jobs:
         run: docker compose -f e2e/docker-compose.yml up -d --wait --wait-timeout 180
 
       - name: Install and build
-        run: npm ci && npm run build
+        run: |
+          npm ci
+          npm run check:fred-manifest-schema
+          npm run build
 
       - name: Run E2E tests
         run: npm run test:e2e

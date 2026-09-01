@@ -5351,14 +5351,13 @@ describe('deployApp input = AppDeploySpec — loss-free broadcast (ENG-310)', ()
     command: ['/bin/sh'],
     args: ['-c', 'true'],
     user: '1000:1000',
-    tmpfs: ['/tmp'],
+    tmpfs: ['/var/cache/app'],
     health_check: { test: ['CMD', 'true'], interval: '10s', retries: 3 },
     stop_grace_period: '30s',
     init: true,
     expose: ['9090'],
     labels: { tier: 'web' },
     storage: '10Gi',
-    depends_on: { db: { condition: 'service_started' } },
     customDomain: 'app.example.com',
   };
   const STACK: AppDeploySpec = {
@@ -5373,13 +5372,14 @@ describe('deployApp input = AppDeploySpec — loss-free broadcast (ENG-310)', ()
         command: ['/bin/sh'],
         args: ['-c', 'true'],
         user: '1000:1000',
-        tmpfs: ['/tmp'],
+        tmpfs: ['/var/cache/app'],
         health_check: { test: ['CMD', 'true'] },
         stop_grace_period: '30s',
         depends_on: { db: { condition: 'service_started' } },
         expose: ['9090'],
         labels: { tier: 'web' },
       },
+      db: { image: 'postgres:16' },
     },
   };
 

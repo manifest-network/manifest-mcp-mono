@@ -149,7 +149,10 @@ export async function runAcceptanceFlow(opts: AcceptanceOpts): Promise<void> {
                   string,
                   {
                     image: string;
-                    ports: Record<string, Record<string, never>>;
+                    ports: Record<
+                      string,
+                      { host_port?: number; ingress?: boolean }
+                    >;
                   }
                 >;
               }

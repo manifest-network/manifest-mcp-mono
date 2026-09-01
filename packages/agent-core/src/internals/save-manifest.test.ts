@@ -23,7 +23,7 @@ function baseInput(
 ) {
   const manifestJson = JSON.stringify({
     image: 'nginx:1.27',
-    ports: { '80': { ingress: true } },
+    ports: { '80/tcp': { ingress: true } },
   });
   return {
     leaseUuid: VALID_UUID,

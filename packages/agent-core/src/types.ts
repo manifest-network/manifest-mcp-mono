@@ -6,6 +6,7 @@
 import type {
   AppDeploySpec,
   CosmosClientManager,
+  PortConfig,
   ServiceConfig,
   SkuCandidate,
   WalletProvider,
@@ -18,6 +19,7 @@ import type {
 export type {
   AppDeploySpec,
   CosmosClientManager,
+  PortConfig,
   ServiceConfig,
   SkuCandidate,
   WalletProvider,

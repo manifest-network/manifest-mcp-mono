@@ -12,11 +12,15 @@
       "examples/**",
       "scripts/check-packages.mjs",
       "scripts/check-packages.test.mjs",
+      "scripts/sync-fred-manifest-schema.mjs",
+      "scripts/sync-fred-manifest-schema.test.mjs",
       "tools/browser-bundle.ts",
       "tools/package-integrity.mjs",
-      "tools/tsdown-entries.mjs"
-    ],
-    "experimentalScannerIgnores": ["**/dist/**"]
+      "tools/tsdown-entries.mjs",
+      "!!**/dist/**",
+      "!!**/packages/fred/schema/**",
+      "!!**/packages/fred/src/generated/**"
+    ]
   },
   "formatter": {
     "enabled": true,

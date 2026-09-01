@@ -102,6 +102,14 @@ wait_for_app_ready({ lease_uuid: "..." })
 // → { state: "LEASE_STATE_ACTIVE", status: { ... endpoints: [...] } }
 ```
 
+Only use `meta_hash_hex` as the prospective on-chain hash when
+`validation.valid` is `true`. Raw JSON is preserved byte-for-byte; a valid
+structured stack is canonicalized exactly as `deploy_app` will upload it. An
+invalid structured candidate is intentionally preserved for diagnosis, so its
+hash cannot be deployed. Deploy rejects manifest JSON above **1 MiB**; update's
+base64 JSON envelope limits its raw manifest to **786,420 bytes** under the same
+default Fred request cap.
+
 If step 4 succeeds but a later step fails, the error returned by `deploy_app` includes the `lease_uuid` so you can either retry the upload or close the orphaned lease with `close_lease` (lease server).
 
 ## 6. Deploy with a custom domain
@@ -123,7 +131,7 @@ If the chain rejects the domain claim (e.g. it's already taken), `deploy_app` re
 
 ## 7. Deploy a multi-service stack
 
-Per-service objects accept `image`, `ports`, `env`, `command`, `args`, `user`, `tmpfs`, `health_check`, `stop_grace_period`, `depends_on`, `expose`, and `labels` — no `port` (singular) and no `accept` field. `ports` is a `{ "<port>/<proto>": {} }` map. The FQDN-claim lives at the top level via `custom_domain` + `service_name`.
+Per-service objects accept `image`, `ports`, `env`, `command`, `args`, `user`, `tmpfs`, `health_check`, `stop_grace_period`, `init`, `depends_on`, `expose`, and `labels` — no `port` (singular) and no `accept` field. `ports` is a `{ "<port>/<proto>": { host_port?: 0, ingress?: boolean } }` map; omit `host_port` (or use `0`) so Fred assigns it dynamically, and set `ingress: true` on at most one TCP port. The FQDN claim lives at the top level via `custom_domain` + `service_name`.
 
 ```ts
 // fred server
@@ -131,7 +139,8 @@ build_manifest_preview({
   services: {
     web: {
       image: "nginx:1.25",
-      ports: { "80/tcp": {} }
+      ports: { "80/tcp": { ingress: true } },
+      init: true
     },
     db: {
       image: "postgres:16",

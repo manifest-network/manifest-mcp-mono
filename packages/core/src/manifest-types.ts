@@ -39,7 +39,7 @@ import type {
 // ===== Manifest build / validation (relocated from fred/src/manifest.ts) =====
 export interface BuildManifestOptions {
   image: string;
-  ports: Record<string, Record<string, never>>;
+  ports: Record<string, PortConfig>;
   env?: Record<string, string>;
   command?: string[];
   args?: string[];
@@ -47,12 +47,12 @@ export interface BuildManifestOptions {
   tmpfs?: string[];
   health_check?: {
     test: string[];
-    interval?: string;
-    timeout?: string;
+    interval?: string | number;
+    timeout?: string | number;
     retries?: number;
-    start_period?: string;
+    start_period?: string | number;
   };
-  stop_grace_period?: string;
+  stop_grace_period?: string | number;
   init?: boolean;
   expose?: string[];
   labels?: Record<string, string>;
@@ -70,7 +70,7 @@ export interface ManifestValidationResult {
 // ===== Service config (relocated from fred/src/tools/deployApp.ts) =====
 export interface ServiceConfig {
   image: string;
-  ports?: Record<string, Record<string, never>>;
+  ports?: Record<string, PortConfig>;
   env?: Record<string, string>;
   command?: string[];
   args?: string[];
@@ -78,20 +78,22 @@ export interface ServiceConfig {
   tmpfs?: string[];
   health_check?: {
     test: string[];
-    interval?: string;
-    timeout?: string;
+    interval?: string | number;
+    timeout?: string | number;
     retries?: number;
-    start_period?: string;
+    start_period?: string | number;
   };
-  stop_grace_period?: string;
+  stop_grace_period?: string | number;
+  init?: boolean;
   depends_on?: Record<string, { condition: string }>;
   expose?: string[];
   labels?: Record<string, string>;
 }
 
-// ===== Net-new canonical port config (ENG-282). FORWARD-DECLARED: the chokepoint owns the
-// canonical shape, but wiring it into `ServiceConfig.ports` (today `Record<string, never>`)
-// is ENG-282 and has no P0a consumer — do not wire it here. =====
+// ===== Canonical tenant manifest port config. Fred assigns host ports
+// dynamically (`host_port` may only be 0/omitted); `ingress` selects at most
+// one TCP port. Wired into the structured builders in ENG-637 so MCP parsing
+// cannot silently strip these fields before pre-flight validation. =====
 export interface PortConfig {
   readonly host_port?: number;
   readonly ingress?: boolean;
@@ -346,12 +348,12 @@ export interface AppDeploySpec {
   tmpfs?: string[];
   health_check?: {
     test: string[];
-    interval?: string;
-    timeout?: string;
+    interval?: string | number;
+    timeout?: string | number;
     retries?: number;
-    start_period?: string;
+    start_period?: string | number;
   };
-  stop_grace_period?: string;
+  stop_grace_period?: string | number;
   init?: boolean;
   expose?: string[];
   labels?: Record<string, string>;

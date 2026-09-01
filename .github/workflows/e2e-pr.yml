@@ -93,7 +93,10 @@ jobs:
         run: docker compose -f e2e/docker-compose.yml up -d --wait --wait-timeout 180
 
       - name: Install and build
-        run: npm ci && npm run build
+        run: |
+          npm ci
+          npm run check:fred-manifest-schema
+          npm run build
 
       # Single variant only (stack + full matrix stay nightly, e2e.yml). The pretest:e2e hook builds
       # @manifest-network/sdk-acceptance; the trailing ':' pins the single-service it, not a substring.

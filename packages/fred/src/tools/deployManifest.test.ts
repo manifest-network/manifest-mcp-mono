@@ -56,6 +56,7 @@ import { TerminalChainStateError } from '../http/fred.js';
 import { ProviderApiError } from '../http/provider.js';
 import { deployApp } from './deployApp.js';
 import { deployManifest } from './deployManifest.js';
+import { MAX_MANIFEST_BYTES } from './validateManifestPayload.js';
 
 // ENG-725: `../http/provider.js` and `../http/fred.js` are NO LONGER mocked. The provider wire is
 // injected at `ctx.fetch` as a sealed probe, so the real `uploadLeaseData`, `getLeaseConnectionInfo`
@@ -414,7 +415,7 @@ describe('deployManifest', () => {
     const huge = JSON.stringify({
       image: 'x',
       ports: { '80/tcp': {} },
-      labels: { big: 'A'.repeat(300_000) },
+      labels: { big: 'A'.repeat(MAX_MANIFEST_BYTES + 1) },
     });
     await expect(
       deployManifest(
@@ -443,6 +444,103 @@ describe('deployManifest', () => {
     ).rejects.toMatchObject({ code: 'INVALID_CONFIG' });
     expect(mockCosmosTx).not.toHaveBeenCalled();
   });
+
+  it('rejects a decimal/exponent integer token before create-lease', async () => {
+    const cm = makeMockClientManager({
+      queryClient: makeQueryClient(),
+      address: 'manifest1tenant',
+    });
+    await expect(
+      deployManifest(
+        await ctx(cm),
+        {
+          manifest: '{"image":"nginx","stop_grace_period":1e9}',
+          sku: { kind: 'byName', size: 'docker-micro' },
+        },
+        {},
+      ),
+    ).rejects.toMatchObject({
+      code: 'INVALID_CONFIG',
+      message: expect.stringContaining('integer JSON literals'),
+    });
+    expect(mockCosmosTx).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [
+      'duplicate object key',
+      '{"image":"nginx","ports":{"80/tcp":{"host_port":"fixed","host_port":0}}}',
+      'duplicate object key',
+    ],
+    [
+      'signed-int64 overflow',
+      '{"image":"nginx","health_check":{"test":["NONE"],"retries":9223372036854775808}}',
+      'signed 64-bit range',
+    ],
+  ])('rejects %s before create-lease', async (_name, manifest, message) => {
+    const cm = makeMockClientManager({
+      queryClient: makeQueryClient(),
+      address: 'manifest1tenant',
+    });
+    await expect(
+      deployManifest(
+        await ctx(cm),
+        { manifest, sku: { kind: 'byName', size: 'docker-micro' } },
+        {},
+      ),
+    ).rejects.toMatchObject({
+      code: 'INVALID_CONFIG',
+      message: expect.stringContaining(message),
+    });
+    expect(mockCosmosTx).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [
+      'a traefik.* label',
+      { image: 'nginx', labels: { 'traefik.enable': 'true' } },
+      'labels["traefik.enable"]',
+    ],
+    [
+      'a mixed-case Fred.* label',
+      { image: 'nginx', labels: { 'Fred.owner': 'tenant' } },
+      'labels["Fred.owner"]',
+    ],
+    [
+      'a fixed host_port',
+      { image: 'nginx', ports: { '80/tcp': { host_port: 8080 } } },
+      'ports["80/tcp"].host_port',
+    ],
+  ])(
+    'ENG-637 rejects %s before the paid create-lease broadcast',
+    async (_name, manifest, offendingField) => {
+      const cm = makeMockClientManager({
+        queryClient: makeQueryClient(),
+        address: 'manifest1tenant',
+      });
+
+      let thrown: unknown;
+      try {
+        await deployManifest(
+          await ctx(cm),
+          {
+            manifest: JSON.stringify(manifest),
+            sku: { kind: 'byName', size: 'docker-micro' },
+          },
+          {},
+        );
+      } catch (error) {
+        thrown = error;
+      }
+
+      expect(thrown).toBeInstanceOf(Error);
+      if (!(thrown instanceof Error))
+        throw new Error('expected deploy to fail');
+      expect(thrown.message).toContain(offendingField);
+      expect(mockCosmosTx).not.toHaveBeenCalled();
+      expect(wire.calls).toHaveLength(0);
+    },
+  );
 
   it('rejects a top-level __proto__ key', async () => {
     const cm = makeMockClientManager({

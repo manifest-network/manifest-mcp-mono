@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, expectTypeOf, it } from 'vitest';
+import type { PortConfig } from './index.js';
 import * as barrel from './index.js';
 
 /**
@@ -25,6 +26,13 @@ describe('fred barrel — MCP server kept out (browser bundle safety, ENG-287)',
     expect(typeof barrel.updateApp).toBe('function');
     expect(typeof barrel.buildManifest).toBe('function');
     expect(typeof barrel.appStatus).toBe('function');
+  });
+
+  it('exports the nested manifest port type from the package barrel', () => {
+    expectTypeOf<PortConfig>().toEqualTypeOf<{
+      readonly host_port?: number;
+      readonly ingress?: boolean;
+    }>();
   });
 });
 

@@ -18,6 +18,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { FredAuthCtx } from '../ctx.js';
 import { ProviderApiError } from '../http/provider.js';
 import { updateApp } from './updateApp.js';
+import {
+  MAX_MANIFEST_BYTES,
+  MAX_UPDATE_MANIFEST_BYTES,
+} from './validateManifestPayload.js';
 
 const LEASE_UUID = '550e8400-e29b-41d4-a716-446655440000';
 const PROVIDER_URL = 'https://provider.example.com';
@@ -66,6 +70,7 @@ interface MergedService {
 /** A merged manifest: either a single service, or a `services` stack. */
 interface MergedManifest extends MergedService {
   user?: string;
+  stop_grace_period?: string;
   services?: Record<string, MergedService>;
 }
 
@@ -132,6 +137,180 @@ describe('updateApp', () => {
     expect(rawPayload).toBeInstanceOf(Uint8Array);
     expect(new TextDecoder().decode(rawPayload)).toBe(manifest);
   });
+
+  it.each([
+    [
+      'reserved label',
+      { image: 'nginx', labels: { 'TRAEFIK.enable': 'true' } },
+      'TRAEFIK.enable',
+    ],
+    [
+      'fixed host port',
+      { image: 'nginx', ports: { '80/tcp': { host_port: 8080 } } },
+      'host_port',
+    ],
+    [
+      'schema-invalid command',
+      { image: 'nginx', command: 'sh -c echo' },
+      'command',
+    ],
+  ])('rejects %s before the update wire', async (_name, value, field) => {
+    await expect(
+      updateApp(
+        makeCtx(activeQc()),
+        {
+          address: ADDR,
+          leaseUuid: LEASE_UUID,
+          manifest: JSON.stringify(value),
+        },
+        { providerUrl: PROVIDER_URL, pollOptions: false },
+      ),
+    ).rejects.toMatchObject({
+      code: ManifestMCPErrorCode.INVALID_CONFIG,
+      message: expect.stringContaining(field),
+    });
+    expect(wire.calls).toHaveLength(0);
+    expect(mockGetAuthToken).not.toHaveBeenCalled();
+  });
+
+  it('rejects a decimal integer token before the update wire', async () => {
+    await expect(
+      updateApp(
+        makeCtx(activeQc()),
+        {
+          address: ADDR,
+          leaseUuid: LEASE_UUID,
+          manifest:
+            '{"image":"nginx","health_check":{"test":["CMD","true"],"retries":3.0}}',
+        },
+        { providerUrl: PROVIDER_URL, pollOptions: false },
+      ),
+    ).rejects.toMatchObject({
+      code: ManifestMCPErrorCode.INVALID_CONFIG,
+      message: expect.stringContaining('integer JSON literals'),
+    });
+    expect(wire.calls).toHaveLength(0);
+    expect(mockGetAuthToken).not.toHaveBeenCalled();
+  });
+
+  it('rejects a fixed host port carried forward by merge before the update wire', async () => {
+    await expect(
+      updateApp(
+        makeCtx(activeQc()),
+        {
+          address: ADDR,
+          leaseUuid: LEASE_UUID,
+          manifest: JSON.stringify({ image: 'nginx:2' }),
+          existingManifest: JSON.stringify({
+            image: 'nginx:1',
+            ports: { '80/tcp': { host_port: 8080 } },
+          }),
+        },
+        { providerUrl: PROVIDER_URL, pollOptions: false },
+      ),
+    ).rejects.toMatchObject({
+      code: ManifestMCPErrorCode.INVALID_CONFIG,
+      message: expect.stringContaining('host_port'),
+    });
+    expect(wire.calls).toHaveLength(0);
+    expect(mockGetAuthToken).not.toHaveBeenCalled();
+  });
+
+  it('allows Go-valid schema divergences carried forward from an existing lease', async () => {
+    await updateApp(
+      makeCtx(activeQc()),
+      {
+        address: ADDR,
+        leaseUuid: LEASE_UUID,
+        manifest: JSON.stringify({ image: 'nginx:2' }),
+        existingManifest: JSON.stringify({
+          image: 'nginx:1',
+          user: '',
+          stop_grace_period: '1000000000ns',
+        }),
+      },
+      { providerUrl: PROVIDER_URL, pollOptions: false },
+    );
+
+    expect(sentManifest()).toMatchObject({
+      image: 'nginx:2',
+      user: '',
+      stop_grace_period: '1000000000ns',
+    });
+  });
+
+  it('rejects an oversized final manifest before the update wire', async () => {
+    const manifest = JSON.stringify({
+      image: 'nginx',
+      env: { PAYLOAD: 'x'.repeat(MAX_MANIFEST_BYTES + 1) },
+    });
+
+    await expect(
+      updateApp(
+        makeCtx(activeQc()),
+        { address: ADDR, leaseUuid: LEASE_UUID, manifest },
+        { providerUrl: PROVIDER_URL, pollOptions: false },
+      ),
+    ).rejects.toMatchObject({
+      code: ManifestMCPErrorCode.INVALID_CONFIG,
+      message: expect.stringContaining(`maximum is ${MAX_MANIFEST_BYTES}`),
+    });
+    expect(wire.calls).toHaveLength(0);
+    expect(mockGetAuthToken).not.toHaveBeenCalled();
+  });
+
+  it("rejects a manifest whose base64 update envelope exceeds Fred's cap", async () => {
+    const manifest = JSON.stringify({
+      image: 'nginx',
+      labels: { note: 'x'.repeat(MAX_UPDATE_MANIFEST_BYTES) },
+    });
+
+    await expect(
+      updateApp(
+        makeCtx(activeQc()),
+        { address: ADDR, leaseUuid: LEASE_UUID, manifest },
+        { providerUrl: PROVIDER_URL, pollOptions: false },
+      ),
+    ).rejects.toMatchObject({
+      code: ManifestMCPErrorCode.INVALID_CONFIG,
+      message: expect.stringContaining('base64 JSON encoding'),
+    });
+    expect(wire.calls).toHaveLength(0);
+    expect(mockGetAuthToken).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['init', { init: true }],
+    ['env', { env: { APP: 'web' } }],
+    ['labels', { labels: { app: 'web' } }],
+    ['tmpfs', { tmpfs: ['/var/cache/app'] }],
+  ])(
+    'rejects a stack update mixed with top-level %s instead of dropping it',
+    async (_field, extra) => {
+      await expect(
+        updateApp(
+          makeCtx(activeQc()),
+          {
+            address: ADDR,
+            leaseUuid: LEASE_UUID,
+            manifest: JSON.stringify({
+              services: { web: { image: 'nginx:2' } },
+              ...extra,
+            }),
+            existingManifest: JSON.stringify({
+              services: { web: { image: 'nginx:1' } },
+            }),
+          },
+          { providerUrl: PROVIDER_URL, pollOptions: false },
+        ),
+      ).rejects.toMatchObject({
+        code: ManifestMCPErrorCode.INVALID_CONFIG,
+        message: expect.stringContaining('only the top-level "services"'),
+      });
+      expect(wire.calls).toHaveLength(0);
+      expect(mockGetAuthToken).not.toHaveBeenCalled();
+    },
+  );
 
   it('with existingManifest: env merged, ports merged, fields carried forward', async () => {
     const qc = activeQc();

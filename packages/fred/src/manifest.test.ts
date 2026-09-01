@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { FRED_MANIFEST_LIMITS } from './generated/fred-manifest-limits.js';
 import {
   buildManifest,
   buildStackManifest,
@@ -109,7 +110,7 @@ describe('buildManifest', () => {
       command: ['/bin/sh'],
       args: ['-c', 'echo hello'],
       user: '1000:1000',
-      tmpfs: ['/tmp:size=64M'],
+      tmpfs: ['/var/cache/app'],
       health_check: {
         test: ['CMD', 'curl', '-f', 'http://localhost/'],
         interval: '30s',
@@ -117,7 +118,7 @@ describe('buildManifest', () => {
       },
       stop_grace_period: '30s',
       init: true,
-      expose: ['8080/tcp'],
+      expose: ['8080'],
       labels: { app: 'test' },
       depends_on: { db: { condition: 'service_healthy' } },
     });
@@ -126,7 +127,7 @@ describe('buildManifest', () => {
     expect(result.command).toEqual(['/bin/sh']);
     expect(result.args).toEqual(['-c', 'echo hello']);
     expect(result.user).toBe('1000:1000');
-    expect(result.tmpfs).toEqual(['/tmp:size=64M']);
+    expect(result.tmpfs).toEqual(['/var/cache/app']);
     expect(result.health_check).toEqual({
       test: ['CMD', 'curl', '-f', 'http://localhost/'],
       interval: '30s',
@@ -134,7 +135,7 @@ describe('buildManifest', () => {
     });
     expect(result.stop_grace_period).toBe('30s');
     expect(result.init).toBe(true);
-    expect(result.expose).toEqual(['8080/tcp']);
+    expect(result.expose).toEqual(['8080']);
     expect(result.labels).toEqual({ app: 'test' });
     expect(result.depends_on).toEqual({
       db: { condition: 'service_healthy' },
@@ -275,13 +276,13 @@ describe('mergeManifest', () => {
       JSON.stringify({
         image: 'nginx:1',
         user: '1000:1000',
-        tmpfs: ['/tmp'],
+        tmpfs: ['/var/cache/app'],
         command: ['/bin/sh'],
       }),
     );
     expect(result.image).toBe('nginx:2');
     expect(result.user).toBe('1000:1000');
-    expect(result.tmpfs).toEqual(['/tmp']);
+    expect(result.tmpfs).toEqual(['/var/cache/app']);
     expect(result.command).toEqual(['/bin/sh']);
   });
 
@@ -494,10 +495,20 @@ describe('validateManifest', () => {
 
     it('rejects empty services map', () => {
       const result = validateManifest({ services: {} });
-      // isStackManifest requires at least one service so this is actually
-      // detected as a single-service manifest with `services` as an unknown
-      // top-level field. Either way, validation should fail.
       expect(result.valid).toBe(false);
+      expect(result.format).toBe('stack');
+      expect(result.errors.join(' ')).toContain('at least one service');
+    });
+
+    it.each([
+      ['command string', { command: 'sh -c echo' }],
+      ['args string', { args: '--verbose' }],
+      ['non-string command entry', { command: [1, 2] }],
+      ['non-string args entry', { args: ['ok', false] }],
+    ])('rejects schema-invalid %s', (_name, fields) => {
+      const result = validateManifest({ image: 'nginx', ...fields });
+      expect(result.valid).toBe(false);
+      expect(result.errors.join(' ')).toMatch(/command|args/);
     });
   });
 
@@ -507,6 +518,8 @@ describe('validateManifest', () => {
       ['APP_PORT', true],
       ['PATH', false],
       ['path', false],
+      ['PATHS', true],
+      ['PATH_PREFIX', true],
       ['LD_PRELOAD', false],
       ['ld_library_path', false],
       ['FRED_TOKEN', false],
@@ -521,6 +534,28 @@ describe('validateManifest', () => {
         expect(r.valid).toBe(ok);
       });
     }
+
+    it('preserves the diagnosis while bounding a long blocked name', () => {
+      const result = validateManifest({
+        image: 'nginx',
+        env: { [`LD_${'A'.repeat(400)}`]: 'x' },
+      });
+      expect(result.valid).toBe(false);
+      expect(result.errors).toHaveLength(1);
+      expect(result.errors[0]).toContain('blocked variable name');
+      expect(result.errors[0]).toContain('…');
+      expect([...result.errors[0]].length).toBeLessThanOrEqual(240);
+    });
+
+    it('escapes quotes and newlines in tenant-controlled diagnostic paths', () => {
+      const result = validateManifest({
+        image: 'nginx',
+        env: { 'a"b\nc': 1 },
+      });
+      expect(result.valid).toBe(false);
+      expect(result.errors[0]).toContain('a\\"b\\nc');
+      expect(result.errors[0]).not.toContain('\n');
+    });
   });
 
   describe('labels', () => {
@@ -533,13 +568,43 @@ describe('validateManifest', () => {
       ).toBe(true);
     });
 
-    it('rejects fred.* prefix', () => {
+    it.each([
+      ['fred.lease', 'fred.'],
+      ['Fred.retention', 'fred.'],
+      ['traefik.http.routers.web.rule', 'traefik.'],
+      ['TRAEFIK.enable', 'traefik.'],
+    ])('rejects reserved label %s case-insensitively', (key, prefix) => {
       const r = validateManifest({
         image: 'nginx',
-        labels: { 'fred.lease': 'abc' },
+        labels: { [key]: 'abc' },
       });
       expect(r.valid).toBe(false);
-      expect(r.errors.some((e) => e.includes('fred.'))).toBe(true);
+      expect(r.errors.join(' ')).toContain(key);
+      expect(r.errors.join(' ')).toContain(prefix);
+    });
+
+    it.each(['traefikish.foo', 'com.example.traefik', 'FREDDIE.foo'])(
+      'accepts non-reserved near-miss label %s',
+      (key) => {
+        expect(
+          validateManifest({ image: 'nginx', labels: { [key]: 'ok' } }).valid,
+        ).toBe(true);
+      },
+    );
+
+    it('rejects non-string label values through Go-compatible semantics', () => {
+      const result = validateManifest({
+        image: 'nginx',
+        labels: { app: 1 },
+      });
+      expect(result.valid).toBe(false);
+      expect(result.errors.join(' ')).toContain('labels["app"]');
+    });
+
+    it('accepts null label values because Go decodes them as empty strings', () => {
+      expect(
+        validateManifest({ image: 'nginx', labels: { app: null } }).valid,
+      ).toBe(true);
     });
   });
 
@@ -566,8 +631,6 @@ describe('validateManifest', () => {
     });
 
     it('rejects ports above 65535', () => {
-      // PORT_KEY_RE permits up to 5 digits, so the regex alone would let
-      // 70000/tcp through. validatePort() closes the gap.
       const r = validateManifest({
         image: 'nginx',
         ports: { '70000/tcp': {} },
@@ -576,12 +639,90 @@ describe('validateManifest', () => {
       expect(r.errors.some((e) => e.includes('70000'))).toBe(true);
     });
 
+    it.each(['0/tcp', '65536/tcp', '80/tcp/extra'])(
+      'rejects malformed or out-of-range port key %s',
+      (key) => {
+        const result = validateManifest({
+          image: 'nginx',
+          ports: { [key]: {} },
+        });
+        expect(result.valid).toBe(false);
+        expect(result.errors.join(' ')).toContain('port 1-65535');
+      },
+    );
+
     it('accepts the maximum legal port 65535/tcp', () => {
       const r = validateManifest({
         image: 'nginx',
         ports: { '65535/tcp': {} },
       });
       expect(r.valid).toBe(true);
+    });
+
+    it.each([1, 8080])(
+      'rejects fixed host_port %s and names the offending field',
+      (hostPort) => {
+        const r = validateManifest({
+          image: 'nginx',
+          ports: { '80/tcp': { host_port: hostPort } },
+        });
+        expect(r.valid).toBe(false);
+        expect(r.errors.join(' ')).toContain('ports["80/tcp"].host_port');
+      },
+    );
+
+    it('accepts an omitted or zero host_port', () => {
+      expect(
+        validateManifest({
+          image: 'nginx',
+          ports: { '80/tcp': {}, '443/tcp': { host_port: 0 } },
+        }).valid,
+      ).toBe(true);
+    });
+
+    it('rejects a negative host_port', () => {
+      const result = validateManifest({
+        image: 'nginx',
+        ports: { '80/tcp': { host_port: -1 } },
+      });
+      expect(result.valid).toBe(false);
+      expect(result.errors.join(' ')).toContain('host_port');
+    });
+
+    it('rejects ingress on UDP and more than one ingress TCP port', () => {
+      const udp = validateManifest({
+        image: 'nginx',
+        ports: { '53/udp': { ingress: true } },
+      });
+      const multiple = validateManifest({
+        image: 'nginx',
+        ports: {
+          '80/tcp': { ingress: true },
+          '443/tcp': { ingress: true },
+        },
+      });
+      expect(udp.valid).toBe(false);
+      expect(udp.errors.join(' ')).toContain('requires TCP');
+      expect(multiple.valid).toBe(false);
+      expect(multiple.errors.join(' ')).toContain('at most one');
+    });
+
+    it('accepts one TCP ingress hint', () => {
+      expect(
+        validateManifest({
+          image: 'nginx',
+          ports: { '8080/tcp': { ingress: true } },
+        }).valid,
+      ).toBe(true);
+    });
+
+    it('accepts the signed and leading-zero forms handled by strconv.Atoi', () => {
+      expect(
+        validateManifest({
+          image: 'nginx',
+          ports: { '+80/TCP': {}, '0053/udp': null },
+        }).valid,
+      ).toBe(true);
     });
   });
 
@@ -608,6 +749,58 @@ describe('validateManifest', () => {
         tmpfs: ['/var/cache/app', '/run/mysqld'],
       });
       expect(r.valid).toBe(true);
+    });
+
+    it.each(['/var/../proc', '/tmp/', '/a/../../'])(
+      'rejects a path that normalizes to blocked location %s',
+      (path) => {
+        const result = validateManifest({ image: 'nginx', tmpfs: [path] });
+        expect(result.valid).toBe(false);
+        expect(result.errors.join(' ')).toContain(path);
+      },
+    );
+
+    it('detects duplicates after path normalization', () => {
+      const result = validateManifest({
+        image: 'nginx',
+        tmpfs: ['/var/cache/app', '/var/cache/app/'],
+      });
+      expect(result.valid).toBe(false);
+      expect(result.errors.join(' ')).toContain(
+        'duplicates another mount after path normalization',
+      );
+    });
+
+    it('rejects a relative mount path', () => {
+      const result = validateManifest({
+        image: 'nginx',
+        tmpfs: ['var/cache/app'],
+      });
+      expect(result.valid).toBe(false);
+      expect(result.errors.join(' ')).toContain('must be an absolute path');
+    });
+
+    it('escapes control characters and preserves the duplicate rule text', () => {
+      const path = `/var/cache/${'\u0001'.repeat(300)}`;
+      const result = validateManifest({ image: 'nginx', tmpfs: [path, path] });
+      expect(result.valid).toBe(false);
+      expect(result.errors[0]).toContain(
+        'duplicates another mount after path normalization',
+      );
+      expect(result.errors[0]).not.toContain('\u0001');
+      expect(result.errors[0]).toContain('\\u0001');
+      expect([...result.errors[0]].length).toBeLessThanOrEqual(240);
+    });
+
+    it('preserves the diagnosis while bounding a long sensitive path', () => {
+      const result = validateManifest({
+        image: 'nginx',
+        tmpfs: [`/proc/${'x'.repeat(400)}`],
+      });
+      expect(result.valid).toBe(false);
+      expect(result.errors[0]).toContain('resolves under sensitive path /proc');
+      expect(result.errors[0]).toContain('…');
+      expect([...result.errors[0]].length).toBeLessThanOrEqual(240);
     });
   });
 
@@ -658,6 +851,96 @@ describe('validateManifest', () => {
         },
       });
       expect(r.valid).toBe(false);
+      expect(r.errors.join(' ')).toContain('cannot depend on itself');
+    });
+
+    it.each([
+      ['missing', undefined],
+      ['disabled', { test: ['NONE'] }],
+    ])(
+      'rejects service_healthy when the dependency health check is %s',
+      (_name, health_check) => {
+        const result = validateManifest({
+          services: {
+            web: {
+              image: 'nginx',
+              depends_on: { db: { condition: 'service_healthy' } },
+            },
+            db: { image: 'postgres', health_check },
+          },
+        });
+        expect(result.valid).toBe(false);
+        expect(result.errors.join(' ')).toContain('active health_check');
+      },
+    );
+
+    it('rejects dependency cycles', () => {
+      const result = validateManifest({
+        services: {
+          a: {
+            image: 'a',
+            depends_on: { b: { condition: 'service_started' } },
+          },
+          b: {
+            image: 'b',
+            depends_on: { c: { condition: 'service_started' } },
+          },
+          c: {
+            image: 'c',
+            depends_on: { a: { condition: 'service_started' } },
+          },
+        },
+      });
+      expect(result.valid).toBe(false);
+      expect(result.errors.join(' ')).toContain('cycle detected');
+      expect(result.errors.join(' ')).toContain(
+        'manifest.services["c"].depends_on["a"]',
+      );
+    });
+
+    it('rejects an invalid dependency condition at the exact edge path', () => {
+      const result = validateManifest({
+        services: {
+          web: {
+            image: 'nginx',
+            depends_on: { db: { condition: 'ready' } },
+          },
+          db: { image: 'postgres' },
+        },
+      });
+      expect(result.valid).toBe(false);
+      expect(result.errors.join(' ')).toContain(
+        'manifest.services["web"].depends_on["db"].condition',
+      );
+    });
+
+    it('derives the dependency depth limit from pinned Fred Go source', () => {
+      const chain = (edges: number) => ({
+        services: Object.fromEntries(
+          Array.from({ length: edges + 1 }, (_, index) => [
+            `s${index}`,
+            {
+              image: 'nginx',
+              ...(index < edges && {
+                depends_on: {
+                  [`s${index + 1}`]: { condition: 'service_started' },
+                },
+              }),
+            },
+          ]),
+        ),
+      });
+      expect(
+        validateManifest(chain(FRED_MANIFEST_LIMITS.dependsOnMaxDepth)).valid,
+      ).toBe(true);
+      const overLimit = validateManifest(
+        chain(FRED_MANIFEST_LIMITS.dependsOnMaxDepth + 1),
+      );
+      expect(overLimit.valid).toBe(false);
+      expect(overLimit.errors.join(' ')).toContain('maximum depth');
+      expect(overLimit.errors.join(' ')).toContain(
+        `manifest.services["s${FRED_MANIFEST_LIMITS.dependsOnMaxDepth}"].depends_on["s${FRED_MANIFEST_LIMITS.dependsOnMaxDepth + 1}"]`,
+      );
     });
   });
 
@@ -693,12 +976,228 @@ describe('validateManifest', () => {
       expect(r.valid).toBe(true);
     });
 
+    it('reports one actionable NONE error without failed-branch schema noise', () => {
+      const result = validateManifest({
+        image: 'nginx',
+        health_check: { test: ['NONE', 'ignored'] },
+      });
+      expect(result.valid).toBe(false);
+      expect(result.errors).toEqual([
+        'manifest.health_check.test: NONE accepts no further arguments',
+      ]);
+    });
+
     it('rejects negative retries', () => {
       const r = validateManifest({
         image: 'nginx',
         health_check: { test: ['NONE'], retries: -1 },
       });
       expect(r.valid).toBe(false);
+    });
+
+    it('bounds retries to a signed 64-bit integer', () => {
+      expect(
+        validateManifest({
+          image: 'nginx',
+          health_check: {
+            test: ['NONE'],
+            retries: Number(9_223_372_036_854_775_807n),
+          },
+        }).valid,
+      ).toBe(true);
+      const result = validateManifest({
+        image: 'nginx',
+        health_check: { test: ['NONE'], retries: 1e21 },
+      });
+      expect(result.valid).toBe(false);
+      expect(result.errors.join(' ')).toContain('signed 64-bit');
+    });
+
+    it('accepts parsed signed-int64 duration endpoints', () => {
+      for (const interval of [
+        Number(-9_223_372_036_854_775_808n),
+        Number(9_223_372_036_854_775_807n),
+      ]) {
+        expect(
+          validateManifest({
+            image: 'nginx',
+            health_check: { test: ['NONE'], interval },
+          }).valid,
+        ).toBe(true);
+      }
+    });
+
+    it.each(['abc', '1 second', 1.5])(
+      'rejects invalid duration value %j',
+      (duration) => {
+        const result = validateManifest({
+          image: 'nginx',
+          health_check: { test: ['NONE'], interval: duration },
+        });
+        expect(result.valid).toBe(false);
+        expect(result.errors.join(' ')).toContain('health_check.interval');
+      },
+    );
+
+    it.each(['0', '-5s', '5μs'])(
+      'accepts Go duration spelling %j even when the published schema does not',
+      (interval) => {
+        expect(
+          validateManifest({
+            image: 'nginx',
+            health_check: { test: ['NONE'], interval },
+          }).valid,
+        ).toBe(true);
+      },
+    );
+
+    it('rejects a null duration because Duration.UnmarshalJSON rejects it', () => {
+      expect(
+        validateManifest({
+          image: 'nginx',
+          health_check: { test: ['NONE'], interval: null },
+        }).valid,
+      ).toBe(false);
+    });
+  });
+
+  describe('stop_grace_period', () => {
+    it.each(['500s', '500ms', 999_999_999, 120_000_000_001])(
+      'rejects an out-of-range duration %j',
+      (stop_grace_period) => {
+        const result = validateManifest({ image: 'nginx', stop_grace_period });
+        expect(result.valid).toBe(false);
+        expect(result.errors.join(' ')).toContain('stop_grace_period');
+      },
+    );
+
+    it.each([
+      '1s',
+      '1m30s',
+      '120s',
+      '120.0000000001s',
+      '1000000000ns',
+      '120000000000ns',
+      '1000000us',
+      '0120s',
+      '+5s',
+      '1.s',
+      1_000_000_000,
+      120_000_000_000,
+    ])('accepts an in-range duration %j', (stop_grace_period) => {
+      expect(
+        validateManifest({ image: 'nginx', stop_grace_period }).valid,
+      ).toBe(true);
+    });
+
+    it('mirrors Go fractional rounding at both runtime bounds', () => {
+      expect(
+        validateManifest({
+          image: 'nginx',
+          stop_grace_period: '0.0166666666666666664m',
+        }).valid,
+      ).toBe(false);
+      expect(
+        validateManifest({
+          image: 'nginx',
+          stop_grace_period: '120000.000000999993ms',
+        }).valid,
+      ).toBe(true);
+    });
+
+    it.each(['-1s', '-9223372036854775809ns', '9223372036854775808ns'])(
+      'rejects signed or int64-overflow duration %j',
+      (stop_grace_period) => {
+        const result = validateManifest({ image: 'nginx', stop_grace_period });
+        expect(result.valid).toBe(false);
+        expect(result.errors.join(' ')).toContain('stop_grace_period');
+      },
+    );
+  });
+
+  describe('expose', () => {
+    it.each(['0', '65536'])('rejects out-of-range exposed port %s', (port) => {
+      const result = validateManifest({ image: 'nginx', expose: [port] });
+      expect(result.valid).toBe(false);
+      expect(result.errors.join(' ')).toContain('port out of range');
+    });
+
+    it('rejects duplicate exposed ports', () => {
+      const result = validateManifest({
+        image: 'nginx',
+        expose: ['8080', '8080'],
+      });
+      expect(result.valid).toBe(false);
+      expect(result.errors.join(' ')).toContain('duplicate');
+    });
+  });
+
+  describe('Go JSON null decoding', () => {
+    it('accepts null optional fields after applying their Go zero values', () => {
+      const result = validateManifest({
+        image: 'nginx',
+        ports: null,
+        env: null,
+        command: null,
+        args: null,
+        labels: null,
+        health_check: null,
+        tmpfs: null,
+        user: null,
+        depends_on: null,
+        stop_grace_period: null,
+        init: null,
+        expose: null,
+      });
+      expect(result.valid).toBe(true);
+    });
+
+    it('accepts null elements and struct values as Go zero values', () => {
+      expect(
+        validateManifest({
+          image: 'nginx',
+          command: [null],
+          args: [null],
+          labels: { app: null },
+          env: { APP: null },
+          ports: { '80/tcp': null },
+        }).valid,
+      ).toBe(true);
+    });
+  });
+
+  describe('user', () => {
+    it.each(['', 'a:b:c'])('accepts the Go-valid user spelling %j', (user) => {
+      expect(validateManifest({ image: 'nginx', user }).valid).toBe(true);
+    });
+
+    it.each([' user', ':group', 'user:'])(
+      'rejects the Go-invalid user spelling %j',
+      (user) => {
+        expect(validateManifest({ image: 'nginx', user }).valid).toBe(false);
+      },
+    );
+  });
+
+  describe('bounded diagnostics', () => {
+    it('caps error count and each tenant-controlled diagnostic', () => {
+      const services = Object.fromEntries(
+        Array.from({ length: 100 }, (_, index) => [
+          `service-${index}`,
+          {
+            image: '',
+            command: 'invalid',
+            [`${'x'.repeat(500)}-${index}`]: true,
+          },
+        ]),
+      );
+      const result = validateManifest({ services });
+      expect(result.valid).toBe(false);
+      expect(result.errors.length).toBeLessThanOrEqual(16);
+      expect(result.errors.every((error) => [...error].length <= 240)).toBe(
+        true,
+      );
+      expect(result.errors.at(-1)).toContain('additional validation errors');
     });
   });
 

@@ -50,6 +50,26 @@ try {
 
 > **Prerequisites.** Deploying broadcasts on-chain transactions and takes a paid lease, so the wallet above must be **funded** with gas (and billing credit — see the [cookbook](../../docs/library-usage.md)). For a read-only app, use `createManifestReadClient(...)`, which needs no wallet.
 
+For a stack, ports use `"port/protocol"` keys. `host_port` must be omitted
+(or `0`) because Fred assigns it dynamically; `ingress: true` selects at most
+one TCP port for public routing. The same `PortConfig` type is exported from
+`/deploy`, `/catalog`, and `/orchestration` so each scoped input is self-contained:
+
+```ts
+import type { PortConfig } from '@manifest-network/manifest-sdk/deploy';
+
+const publicHttp: PortConfig = { ingress: true };
+await client.deployApp({
+  size: 'docker-micro',
+  services: {
+    web: {
+      image: 'nginxinc/nginx-unprivileged:alpine',
+      ports: { '8080/tcp': publicHttp },
+    },
+  },
+});
+```
+
 **In the browser** (the reference consumer, [Barney](../../docs/library-usage.md), is a web app), supply a `WalletProvider` that wraps your wallet adapter instead of `MnemonicWalletProvider`:
 
 ```ts
@@ -118,9 +138,9 @@ The root barrel carries the client factories, branded types (`parse*` / `as*`), 
 |--------|--------------|
 | `@manifest-network/manifest-sdk` | Client factories (`createFredClient`, `createManifestClient`, `createManifestReadClient`), brands + `parse*`/`as*`, ports (`WalletProvider`, `Signer` adapters), the error vocabulary (`ManifestMCPError`/`ManifestMCPErrorCode` + the typed guards `ProviderApiError`/`isSkuAmbiguousError`), `createConfig`, and the wholesale type surface (barrel `createFredClient` is unguarded on Node — prefer `createFredClientNode` from `/node`) |
 | `…/reads` | Branded read fns: `getBalance`, `getLease`, `getLeasesByTenant`, `getSKUs`, `getProviders`, `getLeaseByCustomDomain`, `getBillingParams`, `getWithdrawableAmount` |
-| `…/catalog` | `browseCatalog`, `resolveSku`, `listSkuCandidates`, `checkDeploymentReadiness`, `buildManifestPreview` |
-| `…/deploy` | `deployApp`, `restartApp`, `updateApp`, `restoreApp` / `restoreLease` (recover a CLOSED/retained lease onto a fresh one), `getAppLogs`, `appStatus`, `waitForAppReady`, `waitForLeaseStatus`, `isLeaseFailureTerminal`, `executeTx`, `fundCredits`, `setItemCustomDomain`, `stopApp`, `LeaseState`, `validateProviderUrl` + `isUrlSsrfSafe` (SSRF-classify a provider URL / WebSocket URL), manifest builders, ADR-036 auth helpers + the deploy-family types (`BuildManifestOptions`, `DeployResult`, `ManifestDeploySpec`, `RestoreResult`, `FredLeaseItem`, `TxCallOptions`) |
-| `…/orchestration` | Optional plan/confirm/recover flows: `deployApp`, `manageDomain`, `closeLease`, `troubleshootDeployment` (callback-driven), plus `loadChainDenomMap`. The subpath is browser-bundleable; two opt-in operations require Node when called: `deployApp(spec, callbacks, { dataDir })` for manifest persistence and `loadChainDenomMap(path)` for filesystem-backed chain data |
+| `…/catalog` | `browseCatalog`, `resolveSku`, `listSkuCandidates`, `checkDeploymentReadiness`, `buildManifestPreview`, plus its preview input types and `PortConfig` |
+| `…/deploy` | `deployApp`, `restartApp`, `updateApp`, `restoreApp` / `restoreLease` (recover a CLOSED/retained lease onto a fresh one), `getAppLogs`, `appStatus`, `waitForAppReady`, `waitForLeaseStatus`, `isLeaseFailureTerminal`, `executeTx`, `fundCredits`, `setItemCustomDomain`, `stopApp`, `LeaseState`, `validateProviderUrl` + `isUrlSsrfSafe` (SSRF-classify a provider URL / WebSocket URL), manifest builders, ADR-036 auth helpers + the deploy-family types (`BuildManifestOptions`, `PortConfig`, `DeployResult`, `ManifestDeploySpec`, `RestoreResult`, `FredLeaseItem`, `TxCallOptions`) |
+| `…/orchestration` | Optional plan/confirm/recover flows: `deployApp`, `manageDomain`, `closeLease`, `troubleshootDeployment` (callback-driven), plus `loadChainDenomMap` and the complete `ServiceConfig` / `PortConfig` input types. The subpath is browser-bundleable; two opt-in operations require Node when called: `deployApp(spec, callbacks, { dataDir })` for manifest persistence and `loadChainDenomMap(path)` for filesystem-backed chain data |
 | `…/chain` | Generic tier-2 chain escape hatches (from **core**, not the `manifest-mcp-chain` server): `cosmosQuery`, `cosmosTx` — the raw query/tx primitives behind the `cosmos_query`/`cosmos_tx` tools |
 | `…/faucet` | Testnet faucet ops (browser-safe): `requestFaucet`, `requestFaucetCredit`, `fetchFaucetStatus` (+ `FaucetAccount`/`FaucetDripResult`/`FaucetStatusResponse`/`RequestFaucetResult`). Testnet/operator concern — deliberately off the root barrel |
 | `…/node` | Node-only: `createFredClientNode` (SSRF-safe fred client), `createNodeEventTransport` (SSRF-guarded `ws` transport for the live-status WebSocket — see the note above), `createGuardedFetch`, `isBlocked` |

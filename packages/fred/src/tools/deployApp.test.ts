@@ -358,7 +358,7 @@ describe('deployApp', () => {
       {
         size: 'docker-micro',
         services: {
-          web: { image: 'nginx', ports: { '80/tcp': {} } },
+          web: { image: 'nginx', init: true, ports: { '80/tcp': {} } },
           db: {
             image: 'mysql:8',
             ports: { '3306/tcp': {} },
@@ -376,6 +376,7 @@ describe('deployApp', () => {
     expect(manifest.services.web).toEqual({
       image: 'nginx',
       ports: { '80/tcp': {} },
+      init: true,
     });
     expect(manifest.services.db).toEqual({
       image: 'mysql:8',
@@ -430,6 +431,35 @@ describe('deployApp', () => {
       message: expect.stringContaining('mutually exclusive'),
     });
   });
+
+  it.each([
+    ['env', { env: { APP: 'web' } }],
+    ['init', { init: true }],
+    ['labels', { labels: { app: 'web' } }],
+    ['tmpfs', { tmpfs: ['/var/cache/app'] }],
+  ])(
+    'throws when services is mixed with top-level %s',
+    async (_name, fields) => {
+      const qc = makeQueryClient();
+      const cm = makeMockClientManager({ queryClient: qc });
+
+      await expect(
+        deployApp(
+          await ctx(cm as any),
+          {
+            size: 'docker-micro',
+            services: { web: { image: 'nginx' } },
+            ...fields,
+          },
+          {},
+        ),
+      ).rejects.toMatchObject({
+        code: ManifestMCPErrorCode.INVALID_CONFIG,
+        message: expect.stringContaining('mutually exclusive'),
+      });
+      expect(mockCosmosTx).not.toHaveBeenCalled();
+    },
+  );
 
   it('throws when neither image nor services is provided', async () => {
     const qc = makeQueryClient();

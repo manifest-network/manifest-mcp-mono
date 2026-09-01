@@ -3,6 +3,7 @@
 // fenced; core's SKU helpers carry no node code).
 export {
   listSkuCandidates,
+  type PortConfig,
   type ResolveSkuInput,
   resolveSku,
   type SkuCandidate,
