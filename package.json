@@ -8,7 +8,8 @@
   ],
   "scripts": {
     "build": "npm run build --workspaces",
-    "lint": "npm run lint --workspaces --if-present",
+    "lint": "npm run lint --workspaces --if-present && npm run lint:e2e",
+    "lint:e2e": "tsc --noEmit -p e2e/tsconfig.json",
     "depcruise": "depcruise packages examples --config .dependency-cruiser.cjs",
     "precheck": "npm run check:fred-manifest-schema",
     "check": "biome check packages/ examples/ scripts/check-packages.mjs scripts/check-packages.test.mjs scripts/sync-fred-manifest-schema.mjs scripts/sync-fred-manifest-schema.test.mjs tools/browser-bundle.ts tools/package-integrity.mjs tools/tsdown-entries.mjs",
