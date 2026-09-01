@@ -47,12 +47,12 @@ export interface BuildManifestOptions {
   tmpfs?: string[];
   health_check?: {
     test: string[];
-    interval?: string;
-    timeout?: string;
+    interval?: string | number;
+    timeout?: string | number;
     retries?: number;
-    start_period?: string;
+    start_period?: string | number;
   };
-  stop_grace_period?: string;
+  stop_grace_period?: string | number;
   init?: boolean;
   expose?: string[];
   labels?: Record<string, string>;
@@ -78,12 +78,12 @@ export interface ServiceConfig {
   tmpfs?: string[];
   health_check?: {
     test: string[];
-    interval?: string;
-    timeout?: string;
+    interval?: string | number;
+    timeout?: string | number;
     retries?: number;
-    start_period?: string;
+    start_period?: string | number;
   };
-  stop_grace_period?: string;
+  stop_grace_period?: string | number;
   init?: boolean;
   depends_on?: Record<string, { condition: string }>;
   expose?: string[];
@@ -348,12 +348,12 @@ export interface AppDeploySpec {
   tmpfs?: string[];
   health_check?: {
     test: string[];
-    interval?: string;
-    timeout?: string;
+    interval?: string | number;
+    timeout?: string | number;
     retries?: number;
-    start_period?: string;
+    start_period?: string | number;
   };
-  stop_grace_period?: string;
+  stop_grace_period?: string | number;
   init?: boolean;
   expose?: string[];
   labels?: Record<string, string>;

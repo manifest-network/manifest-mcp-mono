@@ -279,6 +279,39 @@ describe('updateApp', () => {
     expect(mockGetAuthToken).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ['init', { init: true }],
+    ['env', { env: { APP: 'web' } }],
+    ['labels', { labels: { app: 'web' } }],
+    ['tmpfs', { tmpfs: ['/var/cache/app'] }],
+  ])(
+    'rejects a stack update mixed with top-level %s instead of dropping it',
+    async (_field, extra) => {
+      await expect(
+        updateApp(
+          makeCtx(activeQc()),
+          {
+            address: ADDR,
+            leaseUuid: LEASE_UUID,
+            manifest: JSON.stringify({
+              services: { web: { image: 'nginx:2' } },
+              ...extra,
+            }),
+            existingManifest: JSON.stringify({
+              services: { web: { image: 'nginx:1' } },
+            }),
+          },
+          { providerUrl: PROVIDER_URL, pollOptions: false },
+        ),
+      ).rejects.toMatchObject({
+        code: ManifestMCPErrorCode.INVALID_CONFIG,
+        message: expect.stringContaining('only the top-level "services"'),
+      });
+      expect(wire.calls).toHaveLength(0);
+      expect(mockGetAuthToken).not.toHaveBeenCalled();
+    },
+  );
+
   it('with existingManifest: env merged, ports merged, fields carried forward', async () => {
     const qc = activeQc();
 

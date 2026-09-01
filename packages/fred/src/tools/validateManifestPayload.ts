@@ -20,6 +20,8 @@ const EMPTY_UPDATE_ENVELOPE_BYTES = new TextEncoder().encode(
 export const MAX_UPDATE_MANIFEST_BYTES =
   3 * Math.floor((MAX_MANIFEST_BYTES - EMPTY_UPDATE_ENVELOPE_BYTES) / 4);
 const MAX_JSON_NUMBER_LITERAL_DIAGNOSTIC_CHARACTERS = 80;
+const MAX_INT64_LITERAL = '9223372036854775807';
+const MIN_INT64_MAGNITUDE_LITERAL = '9223372036854775808';
 
 function validationErrorMessage(errors: readonly string[]): string {
   const prefix = 'Invalid manifest: ';
@@ -33,15 +35,29 @@ function validationErrorMessage(errors: readonly string[]): string {
   return `${prefix}${summary}`;
 }
 
+export interface InvalidJsonNumberLiteral {
+  readonly literal: string;
+  readonly reason: 'non_integer_spelling' | 'outside_int64';
+}
+
+function integerLiteralFitsInt64(literal: string): boolean {
+  const negative = literal.startsWith('-');
+  const digits = negative ? literal.slice(1) : literal;
+  const limit = negative ? MIN_INT64_MAGNITUDE_LITERAL : MAX_INT64_LITERAL;
+  return (
+    digits.length < limit.length ||
+    (digits.length === limit.length && digits <= limit)
+  );
+}
+
 /**
- * Return the first decimal/exponent JSON number outside a quoted string.
- * Fred decodes every numeric manifest field into int/int64, and Go's
- * encoding/json rejects those literal spellings even when their parsed
- * JavaScript value is mathematically integral.
+ * Return the first JSON number token Fred cannot decode into an int/int64.
+ * The scan skips quoted strings and uses lexical range comparison so even a
+ * payload-sized integer cannot force a giant BigInt allocation.
  */
-export function findNonIntegerJsonNumberLiteral(
+export function findInvalidJsonNumberLiteral(
   source: string,
-): string | undefined {
+): InvalidJsonNumberLiteral | undefined {
   const numberToken = /-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?/y;
   let inString = false;
   let escaped = false;
@@ -65,8 +81,64 @@ export function findNonIntegerJsonNumberLiteral(
     numberToken.lastIndex = index;
     const literal = numberToken.exec(source)?.[0];
     if (literal === undefined) continue;
-    if (literal.includes('.') || /[eE]/.test(literal)) return literal;
+    if (literal.includes('.') || /[eE]/.test(literal)) {
+      return { literal, reason: 'non_integer_spelling' };
+    }
+    if (!integerLiteralFitsInt64(literal)) {
+      return { literal, reason: 'outside_int64' };
+    }
     index += literal.length - 1;
+  }
+  return undefined;
+}
+
+/** Return the first decoded object key that occurs twice in the same object. */
+export function findDuplicateJsonObjectKey(source: string): string | undefined {
+  const containers: Array<
+    { readonly kind: 'array' } | { readonly kind: 'object'; keys: Set<string> }
+  > = [];
+
+  for (let index = 0; index < source.length; index++) {
+    const char = source[index];
+    if (char === '{') {
+      containers.push({ kind: 'object', keys: new Set() });
+      continue;
+    }
+    if (char === '[') {
+      containers.push({ kind: 'array' });
+      continue;
+    }
+    if (char === '}' || char === ']') {
+      containers.pop();
+      continue;
+    }
+    if (char !== '"') continue;
+
+    const start = index;
+    let escaped = false;
+    for (index++; index < source.length; index++) {
+      const stringChar = source[index];
+      if (escaped) {
+        escaped = false;
+      } else if (stringChar === '\\') {
+        escaped = true;
+      } else if (stringChar === '"') {
+        break;
+      }
+    }
+
+    const container = containers.at(-1);
+    if (container?.kind !== 'object') continue;
+    let next = index + 1;
+    while (/\s/.test(source[next] ?? '')) next++;
+    if (source[next] !== ':') continue;
+
+    // parseAndValidateManifestPayload calls this only after JSON.parse has
+    // accepted the complete document, so this slice is guaranteed to be a
+    // valid JSON string literal.
+    const key = JSON.parse(source.slice(start, index + 1)) as string;
+    if (container.keys.has(key)) return key;
+    container.keys.add(key);
   }
   return undefined;
 }
@@ -75,6 +147,31 @@ export function displayJsonNumberLiteral(literal: string): string {
   if (literal.length <= MAX_JSON_NUMBER_LITERAL_DIAGNOSTIC_CHARACTERS)
     return literal;
   return `${literal.slice(0, 39)}…${literal.slice(-40)}`;
+}
+
+export function displayJsonObjectKey(key: string): string {
+  const escaped = JSON.stringify(key);
+  const characters = Array.from(escaped);
+  if (characters.length <= MAX_JSON_NUMBER_LITERAL_DIAGNOSTIC_CHARACTERS)
+    return escaped;
+  return `${characters.slice(0, 39).join('')}…${characters.slice(-40).join('')}`;
+}
+
+export function jsonNumberLiteralErrorMessage(
+  issue: InvalidJsonNumberLiteral,
+  subject = 'Manifest',
+): string {
+  const displayed = displayJsonNumberLiteral(issue.literal);
+  return issue.reason === 'non_integer_spelling'
+    ? `${subject} numeric values must use integer JSON literals; Fred rejects decimal or exponent form ${JSON.stringify(displayed)}.`
+    : `${subject} integer literal ${JSON.stringify(displayed)} is outside Fred's signed 64-bit range.`;
+}
+
+export function duplicateJsonObjectKeyErrorMessage(
+  key: string,
+  subject = 'Manifest',
+): string {
+  return `${subject} contains duplicate object key ${displayJsonObjectKey(key)}; Fred rejects duplicates.`;
 }
 
 export interface ValidatedManifestPayload {
@@ -125,13 +222,24 @@ export function parseAndValidateManifestPayload(
     );
   }
 
-  const nonIntegerLiteral = findNonIntegerJsonNumberLiteral(manifest);
-  if (nonIntegerLiteral !== undefined) {
-    const displayed = displayJsonNumberLiteral(nonIntegerLiteral);
+  const duplicateKey = findDuplicateJsonObjectKey(manifest);
+  if (duplicateKey !== undefined) {
     throw new ManifestMCPError(
       ManifestMCPErrorCode.INVALID_CONFIG,
-      `Manifest numeric values must use integer JSON literals; Fred rejects decimal or exponent form ${JSON.stringify(displayed)}.`,
-      { literal: displayed },
+      duplicateJsonObjectKeyErrorMessage(duplicateKey),
+      { key: displayJsonObjectKey(duplicateKey) },
+    );
+  }
+
+  const invalidNumber = findInvalidJsonNumberLiteral(manifest);
+  if (invalidNumber !== undefined) {
+    throw new ManifestMCPError(
+      ManifestMCPErrorCode.INVALID_CONFIG,
+      jsonNumberLiteralErrorMessage(invalidNumber),
+      {
+        literal: displayJsonNumberLiteral(invalidNumber.literal),
+        reason: invalidNumber.reason,
+      },
     );
   }
 

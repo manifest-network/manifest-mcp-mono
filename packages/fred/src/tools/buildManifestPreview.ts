@@ -11,8 +11,10 @@ import {
   validateManifest,
 } from '../manifest.js';
 import {
-  displayJsonNumberLiteral,
-  findNonIntegerJsonNumberLiteral,
+  duplicateJsonObjectKeyErrorMessage,
+  findDuplicateJsonObjectKey,
+  findInvalidJsonNumberLiteral,
+  jsonNumberLiteralErrorMessage,
   MAX_MANIFEST_BYTES,
 } from './validateManifestPayload.js';
 
@@ -25,7 +27,7 @@ export interface ManifestPreviewServiceInput {
   readonly user?: string;
   readonly tmpfs?: readonly string[];
   readonly health_check?: BuildManifestOptions['health_check'];
-  readonly stop_grace_period?: string;
+  readonly stop_grace_period?: string | number;
   readonly init?: boolean;
   readonly depends_on?: Record<string, { condition: string }>;
   readonly expose?: readonly string[];
@@ -44,7 +46,7 @@ export interface BuildManifestPreviewInput {
   readonly user?: string;
   readonly tmpfs?: readonly string[];
   readonly health_check?: BuildManifestOptions['health_check'];
-  readonly stop_grace_period?: string;
+  readonly stop_grace_period?: string | number;
   readonly init?: boolean;
   readonly expose?: readonly string[];
   readonly labels?: Record<string, string>;
@@ -136,7 +138,7 @@ export async function buildManifestPreview(
 ): Promise<BuildManifestPreviewResult> {
   let manifestObj: Record<string, unknown>;
   let exactManifestJson: string | undefined;
-  let nonIntegerLiteral: string | undefined;
+  let duplicateKey: string | undefined;
 
   if (input.manifest !== undefined) {
     if (hasAnyStructuredField(input)) {
@@ -166,7 +168,7 @@ export async function buildManifestPreview(
     }
     manifestObj = parsed as Record<string, unknown>;
     exactManifestJson = input.manifest;
-    nonIntegerLiteral = findNonIntegerJsonNumberLiteral(input.manifest);
+    duplicateKey = findDuplicateJsonObjectKey(input.manifest);
   } else if (input.services !== undefined) {
     const mixedFields = SINGLE_SERVICE_STRUCTURED_FIELDS.filter(
       (field) => input[field] !== undefined,
@@ -230,20 +232,11 @@ export async function buildManifestPreview(
 
   const semanticValidation = validateManifest(manifestObj);
   const validationErrors = [...semanticValidation.errors];
-  if (nonIntegerLiteral !== undefined) {
-    validationErrors.push(
-      `manifest: numeric values must use integer JSON literals; Fred rejects decimal or exponent form ${JSON.stringify(displayJsonNumberLiteral(nonIntegerLiteral))}`,
-    );
-  }
 
   // A valid structured stack follows the exact same canonical builder as
   // deployApp (including default empty `ports` objects). Invalid candidates
   // stay untouched so unsupported keys remain visible in the preview.
-  if (
-    input.services !== undefined &&
-    semanticValidation.valid &&
-    nonIntegerLiteral === undefined
-  ) {
+  if (input.services !== undefined && semanticValidation.valid) {
     manifestObj = buildStackManifest({
       services: Object.fromEntries(
         Object.entries(input.services).map(([name, service]) => [
@@ -255,6 +248,17 @@ export async function buildManifestPreview(
   }
 
   const manifestJson = exactManifestJson ?? JSON.stringify(manifestObj);
+  const invalidNumber = findInvalidJsonNumberLiteral(manifestJson);
+  if (invalidNumber !== undefined) {
+    validationErrors.push(
+      jsonNumberLiteralErrorMessage(invalidNumber, 'manifest:'),
+    );
+  }
+  if (duplicateKey !== undefined) {
+    validationErrors.push(
+      duplicateJsonObjectKeyErrorMessage(duplicateKey, 'manifest:'),
+    );
+  }
   const manifestBytes = new TextEncoder().encode(manifestJson).length;
   if (manifestBytes > MAX_MANIFEST_BYTES) {
     validationErrors.push(
@@ -275,7 +279,8 @@ export async function buildManifestPreview(
     validation: {
       valid:
         semanticValidation.valid &&
-        nonIntegerLiteral === undefined &&
+        invalidNumber === undefined &&
+        duplicateKey === undefined &&
         manifestBytes <= MAX_MANIFEST_BYTES,
       errors: validationErrors,
     },

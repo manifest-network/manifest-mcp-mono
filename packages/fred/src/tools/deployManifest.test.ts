@@ -468,6 +468,35 @@ describe('deployManifest', () => {
 
   it.each([
     [
+      'duplicate object key',
+      '{"image":"nginx","ports":{"80/tcp":{"host_port":"fixed","host_port":0}}}',
+      'duplicate object key',
+    ],
+    [
+      'signed-int64 overflow',
+      '{"image":"nginx","health_check":{"test":["NONE"],"retries":9223372036854775808}}',
+      'signed 64-bit range',
+    ],
+  ])('rejects %s before create-lease', async (_name, manifest, message) => {
+    const cm = makeMockClientManager({
+      queryClient: makeQueryClient(),
+      address: 'manifest1tenant',
+    });
+    await expect(
+      deployManifest(
+        await ctx(cm),
+        { manifest, sku: { kind: 'byName', size: 'docker-micro' } },
+        {},
+      ),
+    ).rejects.toMatchObject({
+      code: 'INVALID_CONFIG',
+      message: expect.stringContaining(message),
+    });
+    expect(mockCosmosTx).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [
       'a traefik.* label',
       { image: 'nginx', labels: { 'traefik.enable': 'true' } },
       'labels["traefik.enable"]',

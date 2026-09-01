@@ -96,6 +96,12 @@ export async function updateApp(
       );
     }
     if (isStackManifest(parsed)) {
+      if (Object.keys(parsed).some((key) => key !== 'services')) {
+        throw new ManifestMCPError(
+          ManifestMCPErrorCode.INVALID_CONFIG,
+          'Stack manifest updates must contain only the top-level "services" field; move single-service fields inside each service.',
+        );
+      }
       for (const name of Object.keys(parsed.services)) {
         if (!validateServiceName(name)) {
           throw new ManifestMCPError(

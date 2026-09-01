@@ -117,6 +117,7 @@ export {
   mergeManifest,
   metaHashHex,
   normalizePorts,
+  type PortConfig,
   parseStackManifest,
   validateManifest,
   validateServiceName,

@@ -299,6 +299,8 @@ describe('FredMCPServer', () => {
 
         const serviceProperties =
           inputSchema.properties?.services?.additionalProperties?.properties;
+        expect(inputSchema.properties?.depends_on).toBeUndefined();
+        expect(serviceProperties?.depends_on).toBeDefined();
         expect(serviceProperties?.tmpfs?.description).toBe(
           'tmpfs mount paths as bare absolute paths (e.g. ["/var/cache/app"])',
         );
@@ -1294,6 +1296,28 @@ describe('FredMCPServer', () => {
       });
     });
 
+    it('accepts integer-nanosecond durations at the structured boundary', async () => {
+      const server = new FredMCPServer({
+        config: makeMockConfig(),
+        walletProvider: makeMockWallet(),
+      });
+      const result = await callTool(server, 'build_manifest_preview', {
+        image: 'nginx',
+        port: 80,
+        health_check: { test: ['NONE'], interval: 1_000_000_000 },
+        stop_grace_period: 1_000_000_000,
+      });
+
+      expect(result.isError).toBeUndefined();
+      expect(result.structuredContent).toMatchObject({
+        manifest: {
+          health_check: { interval: 1_000_000_000 },
+          stop_grace_period: 1_000_000_000,
+        },
+        validation: { valid: true },
+      });
+    });
+
     it('returns fixed host ports as preview validation errors, not -32602', async () => {
       const server = new FredMCPServer({
         config: makeMockConfig(),
@@ -1639,6 +1663,27 @@ describe('FredMCPServer', () => {
       });
 
       expect(result.isError).toBe(true);
+      expect(mockDeployApp).not.toHaveBeenCalled();
+    });
+
+    it('rejects an own __proto__ record key instead of silently dropping it', async () => {
+      const server = new FredMCPServer({
+        config: makeMockConfig(),
+        walletProvider: makeMockWallet({ signArbitrary: true }),
+      });
+      const services = JSON.parse('{"__proto__":{"image":"nginx"}}') as Record<
+        string,
+        unknown
+      >;
+      const result = await callTool(server, 'deploy_app', {
+        size: 'docker-micro',
+        services,
+      });
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0]).toMatchObject({
+        text: expect.stringContaining('__proto__'),
+      });
       expect(mockDeployApp).not.toHaveBeenCalled();
     });
 

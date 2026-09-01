@@ -496,17 +496,33 @@ export function check(
         targetErrors,
         'read the checked-out Fred commit',
       ),
+    paths = {},
   } = {},
 ) {
-  if (!existsSync(vendoredPath) || !existsSync(provenancePath)) {
+  // Injectable paths let the decision tests corrupt isolated fixtures and
+  // prove every comparison fails closed without touching repository files.
+  const checkVendoredPath = paths.vendoredPath ?? vendoredPath;
+  const checkProvenancePath = paths.provenancePath ?? provenancePath;
+  const checkGeneratedValidatorPath =
+    paths.generatedValidatorPath ?? generatedValidatorPath;
+  const checkGeneratedLimitsPath =
+    paths.generatedLimitsPath ?? generatedLimitsPath;
+  const checkSourcePath = paths.sourcePath ?? sourcePath;
+  const checkLimitsSourcePath = paths.limitsSourcePath ?? limitsSourcePath;
+
+  if (!existsSync(checkVendoredPath) || !existsSync(checkProvenancePath)) {
     errors.push(
       'vendored schema or provenance is missing; run npm run sync:fred-manifest-schema',
     );
     return;
   }
 
-  const vendoredBytes = readBytes(vendoredPath, 'vendored schema', errors);
-  const provenanceValue = readJson(provenancePath, 'schema provenance', errors);
+  const vendoredBytes = readBytes(checkVendoredPath, 'vendored schema', errors);
+  const provenanceValue = readJson(
+    checkProvenancePath,
+    'schema provenance',
+    errors,
+  );
   if (vendoredBytes === undefined || provenanceValue === undefined) return;
   const provenance = validateProvenanceShape(provenanceValue, errors);
   if (!provenance) return;
@@ -541,7 +557,7 @@ export function check(
   const validatorBytes = generateValidator(vendoredBytes, errors);
   if (validatorBytes) {
     compareBytes(
-      generatedValidatorPath,
+      checkGeneratedValidatorPath,
       validatorBytes,
       'generated Fred schema validator',
       errors,
@@ -549,7 +565,7 @@ export function check(
   }
   if (limits) {
     compareBytes(
-      generatedLimitsPath,
+      checkGeneratedLimitsPath,
       generateLimitsModule(limits),
       'generated Fred manifest limits',
       errors,
@@ -560,8 +576,8 @@ export function check(
   // digest, generated-validator, and generated-limit checks above still fail
   // closed there. With a Fred checkout, also prove the source bytes, Go caps,
   // and checked-out commit all match the gitlink.
-  if (existsSync(sourcePath) || existsSync(limitsSourcePath)) {
-    if (!existsSync(sourcePath) || !existsSync(limitsSourcePath)) {
+  if (existsSync(checkSourcePath) || existsSync(checkLimitsSourcePath)) {
+    if (!existsSync(checkSourcePath) || !existsSync(checkLimitsSourcePath)) {
       errors.push(
         'the Fred submodule checkout is partial: schema and manifest.go must either both exist or both be absent',
       );
@@ -573,9 +589,9 @@ export function check(
         `Fred checkout ${checkedOutFredCommit} does not match gitlink ${indexedFredCommit}`,
       );
     }
-    const sourceBytes = readBytes(sourcePath, sourceRelative, errors);
+    const sourceBytes = readBytes(checkSourcePath, sourceRelative, errors);
     const limitsSource = readText(
-      limitsSourcePath,
+      checkLimitsSourcePath,
       limitsSourceRelative,
       errors,
     );

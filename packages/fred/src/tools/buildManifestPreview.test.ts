@@ -102,6 +102,19 @@ describe('buildManifestPreview', () => {
         true,
       );
     });
+
+    it('validates the exact structured JSON serialization Fred will decode', async () => {
+      const result = await buildManifestPreview({
+        image: 'nginx',
+        port: 80,
+        health_check: { test: ['NONE'], retries: 1e21 },
+      });
+      expect(result.manifest_json).toContain('1e+21');
+      expect(result.validation.valid).toBe(false);
+      expect(result.validation.errors.join(' ')).toContain(
+        'integer JSON literals',
+      );
+    });
   });
 
   describe('structured stack mode', () => {
@@ -213,6 +226,17 @@ describe('buildManifestPreview', () => {
       expect(result.validation.valid).toBe(false);
       expect(result.validation.errors.join(' ')).toContain(
         'integer JSON literals',
+      );
+    });
+
+    it('returns a validation error for duplicate raw object keys', async () => {
+      const manifest =
+        '{"image":"nginx","ports":{"80/tcp":{"host_port":"fixed","host_port":0}}}';
+      const result = await buildManifestPreview({ manifest });
+      expect(result.manifest_json).toBe(manifest);
+      expect(result.validation.valid).toBe(false);
+      expect(result.validation.errors.join(' ')).toContain(
+        'duplicate object key "host_port"',
       );
     });
 

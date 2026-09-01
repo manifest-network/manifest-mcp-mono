@@ -2,9 +2,15 @@ import type {
   BuildManifestOptions,
   ManifestFormat,
   ManifestValidationResult,
+  PortConfig,
 } from '@manifest-network/manifest-mcp-core';
 
-export type { BuildManifestOptions, ManifestFormat, ManifestValidationResult };
+export type {
+  BuildManifestOptions,
+  ManifestFormat,
+  ManifestValidationResult,
+  PortConfig,
+};
 
 import {
   DNS_LABEL_RE,
@@ -66,7 +72,7 @@ export function buildManifest(
   if (opts.user) manifest.user = opts.user;
   if (opts.tmpfs) manifest.tmpfs = opts.tmpfs;
   if (opts.health_check) manifest.health_check = opts.health_check;
-  if (opts.stop_grace_period)
+  if (opts.stop_grace_period !== undefined)
     manifest.stop_grace_period = opts.stop_grace_period;
   if (opts.init !== undefined) manifest.init = opts.init;
   if (opts.expose) manifest.expose = opts.expose;
@@ -328,6 +334,12 @@ const DURATION_UNIT_NANOSECONDS: Readonly<Record<string, bigint>> = {
 };
 const MAX_INT64 = (1n << 63n) - 1n;
 const MIN_INT64_MAGNITUDE = 1n << 63n;
+// Both signed int64 endpoints round to representable IEEE-754 values. Exact
+// raw-token admission is handled at the JSON wire boundary; these sentinels
+// keep the parsed-object validator from rejecting a valid endpoint solely
+// because JSON.parse rounded it.
+const MAX_INT64_NUMBER = Number(MAX_INT64);
+const MIN_INT64_NUMBER = -Number(MIN_INT64_MAGNITUDE);
 const MAX_REPORTED_VALIDATION_ERRORS = 16;
 const MAX_VALIDATION_ERROR_CHARACTERS = 240;
 const MAX_DIAGNOSTIC_VALUE_CHARACTERS = 96;
@@ -362,15 +374,15 @@ class BoundedValidationErrors extends Array<string> {
   }
 }
 
-function truncateDiagnosticValue(value: string): string {
-  const characters = Array.from(value);
-  if (characters.length <= MAX_DIAGNOSTIC_VALUE_CHARACTERS) return value;
+function diagnosticValue(value: unknown): string {
+  // Escape first: a control character can expand to six characters (for
+  // example, U+0001 -> "\\u0001"). Bounding the raw value first let that
+  // expansion consume the surrounding rule text after interpolation.
+  const escaped = JSON.stringify(String(value));
+  const characters = Array.from(escaped);
+  if (characters.length <= MAX_DIAGNOSTIC_VALUE_CHARACTERS) return escaped;
   const side = MAX_DIAGNOSTIC_VALUE_CHARACTERS / 2;
   return `${characters.slice(0, side - 1).join('')}…${characters.slice(-side).join('')}`;
-}
-
-function diagnosticValue(value: unknown): string {
-  return JSON.stringify(truncateDiagnosticValue(String(value)));
 }
 
 function mapKeyPath(base: string, key: unknown): string {
@@ -474,10 +486,10 @@ function parseGoDurationNanoseconds(value: string): bigint | undefined {
 function durationValueNanoseconds(value: unknown): bigint | undefined {
   if (typeof value === 'string') return parseGoDurationNanoseconds(value);
   if (typeof value !== 'number' || !Number.isInteger(value)) return undefined;
-  const nanoseconds = BigInt(value);
-  if (nanoseconds < -MIN_INT64_MAGNITUDE || nanoseconds > MAX_INT64)
-    return undefined;
-  return nanoseconds;
+  if (value < MIN_INT64_NUMBER || value > MAX_INT64_NUMBER) return undefined;
+  if (value === MIN_INT64_NUMBER) return -MIN_INT64_MAGNITUDE;
+  if (value === MAX_INT64_NUMBER) return MAX_INT64;
+  return BigInt(value);
 }
 
 function isPlainObject(v: unknown): v is Record<string, unknown> {
@@ -715,7 +727,7 @@ function validateService(
             }
             if (ingressPort !== undefined) {
               errors.push(
-                `${portPath}.ingress: at most one port may set ingress=true (already set on ${diagnosticValue(ingressPort)})`,
+                `${portPath}.ingress: duplicate ingress preference; at most one TCP port may set ingress=true`,
               );
             } else {
               ingressPort = key;
@@ -812,7 +824,7 @@ function validateService(
         const cleanedPath = cleanPosixPath(rawPath);
         if (TMPFS_BLOCKED.has(cleanedPath)) {
           errors.push(
-            `${tmpfsPath}: resolves to backend-managed path ${diagnosticValue(cleanedPath)}`,
+            `${tmpfsPath}: resolves to a backend-managed path after normalization`,
           );
         }
         for (const prefix of TMPFS_BLOCKED_PREFIXES) {
@@ -824,7 +836,7 @@ function validateService(
         }
         if (seen.has(cleanedPath)) {
           errors.push(
-            `${tmpfsPath}: duplicate normalized mount ${diagnosticValue(cleanedPath)}`,
+            `${tmpfsPath}: duplicates another mount after path normalization`,
           );
         }
         seen.add(cleanedPath);
@@ -890,10 +902,11 @@ function validateService(
         'retries' in hc &&
         (typeof hc.retries !== 'number' ||
           !Number.isInteger(hc.retries) ||
-          hc.retries < 0)
+          hc.retries < 0 ||
+          durationValueNanoseconds(hc.retries) === undefined)
       ) {
         errors.push(
-          `${scope}.health_check.retries: must be a non-negative integer`,
+          `${scope}.health_check.retries: must be a non-negative signed 64-bit integer`,
         );
       }
       for (const field of ['interval', 'timeout', 'start_period'] as const) {
@@ -1022,7 +1035,7 @@ function validateStackDependencies(
         !hasActiveHealthCheck(services[dependency])
       ) {
         errors.push(
-          `${path}: service_healthy requires ${diagnosticValue(dependency)} to have an active health_check`,
+          `${path}: service_healthy requires the dependency to have an active health_check`,
         );
       }
     }
@@ -1033,26 +1046,29 @@ function validateStackDependencies(
   const BLACK = 2;
   const color = new Map<string, number>();
   const visit = (name: string, depth: number): boolean => {
-    if (depth > DEPENDS_ON_MAX_DEPTH) {
-      errors.push(
-        `manifest.depends_on: dependency chain exceeds maximum depth of ${DEPENDS_ON_MAX_DEPTH}`,
-      );
-      return false;
-    }
     color.set(name, GRAY);
     const service = services[name];
     if (isPlainObject(service) && isPlainObject(service.depends_on)) {
       for (const dependency of Object.keys(service.depends_on)) {
         if (!serviceNameSet.has(dependency) || dependency === name) continue;
+        const path = mapKeyPath(
+          `${mapKeyPath('manifest.services', name)}.depends_on`,
+          dependency,
+        );
         const dependencyColor = color.get(dependency) ?? WHITE;
         if (dependencyColor === GRAY) {
-          errors.push(
-            `manifest.depends_on: cycle detected involving service ${diagnosticValue(dependency)}`,
-          );
+          errors.push(`${path}: dependency cycle detected`);
           return false;
         }
-        if (dependencyColor === WHITE && !visit(dependency, depth + 1))
-          return false;
+        if (dependencyColor === WHITE) {
+          if (depth + 1 > DEPENDS_ON_MAX_DEPTH) {
+            errors.push(
+              `${path}: dependency chain exceeds maximum depth of ${DEPENDS_ON_MAX_DEPTH}`,
+            );
+            return false;
+          }
+          if (!visit(dependency, depth + 1)) return false;
+        }
       }
     }
     color.set(name, BLACK);

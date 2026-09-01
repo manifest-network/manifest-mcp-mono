@@ -1,5 +1,11 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  copyFileSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
@@ -47,6 +53,61 @@ const VALID_LIMITS = {
   minStopGracePeriodNanoseconds: 1_000_000_000,
   maxStopGracePeriodNanoseconds: 120_000_000_000,
 };
+
+function runCheckAgainstFixture(mutate, checkedOutCommit) {
+  const directory = mkdtempSync(join(tmpdir(), 'fred-schema-check-'));
+  const provenance = JSON.parse(
+    readFileSync(
+      join('packages', 'fred', 'schema', 'manifest-schema.source.json'),
+      'utf8',
+    ),
+  );
+  const paths = {
+    vendoredPath: join(directory, 'manifest-schema.json'),
+    provenancePath: join(directory, 'manifest-schema.source.json'),
+    generatedValidatorPath: join(directory, 'validator.ts'),
+    generatedLimitsPath: join(directory, 'limits.ts'),
+    sourcePath: join(directory, 'source-schema.json'),
+    limitsSourcePath: join(directory, 'manifest.go'),
+  };
+
+  try {
+    copyFileSync(
+      join('packages', 'fred', 'schema', 'manifest-schema.json'),
+      paths.vendoredPath,
+    );
+    copyFileSync(
+      join('packages', 'fred', 'schema', 'manifest-schema.source.json'),
+      paths.provenancePath,
+    );
+    copyFileSync(
+      join(
+        'packages',
+        'fred',
+        'src',
+        'generated',
+        'fred-manifest-schema-validator.ts',
+      ),
+      paths.generatedValidatorPath,
+    );
+    copyFileSync(
+      join('packages', 'fred', 'src', 'generated', 'fred-manifest-limits.ts'),
+      paths.generatedLimitsPath,
+    );
+    copyFileSync(paths.vendoredPath, paths.sourcePath);
+    writeFileSync(paths.limitsSourcePath, VALID_GO_SOURCE);
+
+    mutate({ paths, provenance });
+    const errors = [];
+    check(provenance.fredCommit, errors, {
+      paths,
+      readCheckedOutFredCommit: () => checkedOutCommit ?? provenance.fredCommit,
+    });
+    return errors;
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+}
 
 describe('Fred manifest Go-limit parser', () => {
   it('extracts named caps, dependency depth, and inline duration bounds', () => {
@@ -291,5 +352,100 @@ describe('Fred manifest gate decisions', () => {
       readCheckedOutFredCommit: () => indexedFredCommit,
     });
     assert.deepEqual(errors, []);
+  });
+
+  const driftCases = [
+    [
+      'provenance source',
+      ({ paths, provenance }) =>
+        writeFileSync(
+          paths.provenancePath,
+          JSON.stringify({ ...provenance, source: 'wrong/schema.json' }),
+        ),
+      /provenance source must be/,
+    ],
+    [
+      'limits source',
+      ({ paths, provenance }) =>
+        writeFileSync(
+          paths.provenancePath,
+          JSON.stringify({ ...provenance, limitsSource: 'wrong/manifest.go' }),
+        ),
+      /provenance limitsSource must be/,
+    ],
+    [
+      'recorded Fred commit',
+      ({ paths, provenance }) =>
+        writeFileSync(
+          paths.provenancePath,
+          JSON.stringify({ ...provenance, fredCommit: '0'.repeat(40) }),
+        ),
+      /Fred gitlink moved/,
+    ],
+    [
+      'Ajv generator version',
+      ({ paths, provenance }) =>
+        writeFileSync(
+          paths.provenancePath,
+          JSON.stringify({
+            ...provenance,
+            generator: { ajv: '0.0.0-test' },
+          }),
+        ),
+      /generated validator records Ajv/,
+    ],
+    [
+      'vendored schema digest',
+      ({ paths }) => writeFileSync(paths.vendoredPath, '{}\n'),
+      /vendored schema SHA-256/,
+    ],
+    [
+      'schema-to-Go limit alignment',
+      ({ paths, provenance }) =>
+        writeFileSync(
+          paths.provenancePath,
+          JSON.stringify({
+            ...provenance,
+            limits: { ...provenance.limits, maxTmpfsMounts: 5 },
+          }),
+        ),
+      /schema tmpfs\.maxItems/,
+    ],
+    [
+      'generated validator bytes',
+      ({ paths }) => writeFileSync(paths.generatedValidatorPath, 'stale\n'),
+      /generated Fred schema validator is stale/,
+    ],
+    [
+      'generated limits bytes',
+      ({ paths }) => writeFileSync(paths.generatedLimitsPath, 'stale\n'),
+      /generated Fred manifest limits is stale/,
+    ],
+    [
+      'pinned schema bytes',
+      ({ paths }) => writeFileSync(paths.sourcePath, '{}\n'),
+      /vendored schema differs from the pinned Fred source/,
+    ],
+    [
+      'pinned Go limits',
+      ({ paths }) =>
+        writeFileSync(
+          paths.limitsSourcePath,
+          VALID_GO_SOURCE.replace('MaxPorts = 64', 'MaxPorts = 63'),
+        ),
+      /recorded limits .* differ from pinned Fred/,
+    ],
+  ];
+
+  for (const [name, mutate, diagnostic] of driftCases) {
+    it(`fails the full check when ${name} drifts`, () => {
+      const errors = runCheckAgainstFixture(mutate);
+      assert.match(errors.join('\n'), diagnostic);
+    });
+  }
+
+  it('fails the full check when the Fred checkout differs from the gitlink', () => {
+    const errors = runCheckAgainstFixture(() => {}, 'f'.repeat(40));
+    assert.match(errors.join('\n'), /Fred checkout .* does not match gitlink/);
   });
 });
