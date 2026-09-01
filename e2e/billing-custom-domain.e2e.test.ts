@@ -1,5 +1,5 @@
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { LeaseState } from '@manifest-network/manifest-mcp-core';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { MCPTestClient, parseToolErrorCode } from './helpers/mcp-client.js';
 
 /**
@@ -127,7 +127,9 @@ describe('Billing custom-domain', () => {
             'v2.1.0+ (or rebuild dist after a manifestjs/MCP server upgrade) ' +
             'to enable.',
         );
-      } else if (/NotFound|no lease with custom_domain|key not found/i.test(message)) {
+      } else if (
+        /NotFound|no lease with custom_domain|key not found/i.test(message)
+      ) {
         // Probe FQDN isn't claimed by anyone — expected. The query path
         // is registered, so the feature is available.
         chainSupportsCustomDomain = true;
@@ -360,10 +362,13 @@ describe('Billing custom-domain', () => {
   });
 
   it('set_item_custom_domain rejects an empty custom_domain client-side (does not broadcast)', async () => {
-    const err = await leaseClient.callToolExpectError('set_item_custom_domain', {
-      lease_uuid: leaseUuid,
-      custom_domain: '',
-    });
+    const err = await leaseClient.callToolExpectError(
+      'set_item_custom_domain',
+      {
+        lease_uuid: leaseUuid,
+        custom_domain: '',
+      },
+    );
     expect(err.code).toBe('INVALID_CONFIG');
     expect(err.message).toMatch(/custom_domain|cannot be empty|clear/i);
   });
@@ -479,7 +484,9 @@ describe('Billing custom-domain', () => {
 
       expect(err.code).toBe('TX_FAILED');
       expect(err.message).toMatch(/^Deploy partially succeeded:/);
-      expect(err.message).toMatch(/Close this lease with close_lease if needed/);
+      expect(err.message).toMatch(
+        /Close this lease with close_lease if needed/,
+      );
       expect(err.details).toMatchObject({
         partial: true,
         failedStep: 'set_domain',

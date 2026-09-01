@@ -94,7 +94,11 @@ describe('Deploy roundtrip via M1 primitives', () => {
       ready: boolean;
       missing_steps: string[];
       sku: { name: string } | null;
-      available_skus: Array<{ name: string; uuid: string; provider_uuid: string }>;
+      available_skus: Array<{
+        name: string;
+        uuid: string;
+        provider_uuid: string;
+      }>;
     }>('check_deployment_readiness', { size: 'docker-massive-imaginary' });
 
     expect(result.ready).toBe(false);

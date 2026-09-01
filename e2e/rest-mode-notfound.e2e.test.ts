@@ -17,7 +17,9 @@ describe('not-found contract over LCD (ENG-536)', () => {
     client = await createManifestReadClient({
       config: { chainId: CHAIN_ID, restUrl: REST_URL },
     });
-    const wallet = await DirectSecp256k1HdWallet.generate(24, { prefix: 'manifest' });
+    const wallet = await DirectSecp256k1HdWallet.generate(24, {
+      prefix: 'manifest',
+    });
     freshAddress = (await wallet.getAccounts())[0].address;
   });
   afterAll(() => client?.dispose());
@@ -27,7 +29,9 @@ describe('not-found contract over LCD (ENG-536)', () => {
   });
 
   it('getLeaseByCustomDomain returns null for an unclaimed FQDN', async () => {
-    await expect(client.getLeaseByCustomDomain('definitely-unclaimed-xyz.example.com')).resolves.toBeNull();
+    await expect(
+      client.getLeaseByCustomDomain('definitely-unclaimed-xyz.example.com'),
+    ).resolves.toBeNull();
   });
 
   it('getBalance returns credits: null for an address with no credit account', async () => {

@@ -1,15 +1,15 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { spawn } from 'node:child_process';
 import {
   mkdtempSync,
-  rmSync,
-  writeFileSync,
-  statSync,
   readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { spawn } from 'node:child_process';
 import { DirectSecp256k1HdWallet } from '@cosmjs/proto-signing';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { MCPTestClient } from './helpers/mcp-client.js';
 
 /**
@@ -57,11 +57,9 @@ describe('Wallet bootstrap (keyfile)', () => {
     // dispatches by presence of `obj.type` (encrypted) vs `obj.mnemonic`
     // (plaintext) at packages/node/src/keyfileWallet.ts:~120.
     plaintextPath = join(tmpDir, 'plaintext.json');
-    writeFileSync(
-      plaintextPath,
-      JSON.stringify({ mnemonic: TEST_MNEMONIC }),
-      { mode: 0o600 },
-    );
+    writeFileSync(plaintextPath, JSON.stringify({ mnemonic: TEST_MNEMONIC }), {
+      mode: 0o600,
+    });
 
     // Encrypted keyfile: same format as `runKeygen`/`runImport` writes,
     // because we use the same serialize() call under the hood.
@@ -206,7 +204,11 @@ describe('Wallet bootstrap (keyfile)', () => {
 async function spawnChainExpectingFatal(
   extraEnv: Record<string, string | null>,
   timeoutMs = 5000,
-): Promise<{ code: number | null; signal: NodeJS.Signals | null; stderr: string }> {
+): Promise<{
+  code: number | null;
+  signal: NodeJS.Signals | null;
+  stderr: string;
+}> {
   return new Promise((resolveRun, rejectRun) => {
     const env: Record<string, string> = {};
     for (const [k, v] of Object.entries(process.env)) {

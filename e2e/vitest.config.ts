@@ -7,9 +7,9 @@ export default defineConfig({
     root: dirname(fileURLToPath(import.meta.url)),
     globalSetup: './helpers/global-setup.ts',
     include: ['**/*.e2e.test.ts'],
-    testTimeout: 300_000,      // 5 min per test
-    hookTimeout: 120_000,      // 2 min for beforeAll/afterAll
-    fileParallelism: false,    // test files share a single on-chain wallet
+    testTimeout: 300_000, // 5 min per test
+    hookTimeout: 120_000, // 2 min for beforeAll/afterAll
+    fileParallelism: false, // test files share a single on-chain wallet
     sequence: { concurrent: false },
   },
 });

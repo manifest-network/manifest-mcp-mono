@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { MCPTestClient } from './helpers/mcp-client.js';
 
 /**
@@ -294,10 +294,7 @@ describe('Error paths through MCP transport', () => {
       const err = await client.callToolExpectError('cosmos_estimate_fee', {
         module: 'bank',
         subcommand: 'send',
-        args: [
-          address,
-          '100000000000000000000000000000000000umfx',
-        ],
+        args: [address, '100000000000000000000000000000000000umfx'],
       });
       expect(err.code).toBe('SIMULATION_FAILED');
       // The wrapper preserves module/subcommand/args context for callers.

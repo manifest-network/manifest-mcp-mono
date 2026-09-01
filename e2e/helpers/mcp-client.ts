@@ -1,6 +1,6 @@
+import { resolve } from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
-import { resolve } from 'node:path';
 
 // Test tenant mnemonic (test-only, never used for real funds)
 const DEFAULT_MNEMONIC =

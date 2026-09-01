@@ -1,10 +1,10 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { fromBase64 } from '@cosmjs/encoding';
 import {
   createAuthToken,
-  createSignMessage,
   createLeaseDataSignMessage,
+  createSignMessage,
 } from '@manifest-network/manifest-mcp-fred';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { MCPTestClient } from './helpers/mcp-client.js';
 
 /**
@@ -201,10 +201,9 @@ describe('ADR-036 auth-token wire shape', () => {
     const token = createAuthToken(tenant, lease, timestamp, pubKey, signature);
 
     // Token is base64. Decode and inspect.
-    const decoded = JSON.parse(new TextDecoder().decode(fromBase64(token))) as Record<
-      string,
-      unknown
-    >;
+    const decoded = JSON.parse(
+      new TextDecoder().decode(fromBase64(token)),
+    ) as Record<string, unknown>;
 
     // Required fields, in the names providerd consumes:
     expect(decoded.tenant).toBe(tenant);
@@ -234,10 +233,9 @@ describe('ADR-036 auth-token wire shape', () => {
       metaHash,
     );
 
-    const decoded = JSON.parse(new TextDecoder().decode(fromBase64(token))) as Record<
-      string,
-      unknown
-    >;
+    const decoded = JSON.parse(
+      new TextDecoder().decode(fromBase64(token)),
+    ) as Record<string, unknown>;
 
     // The wire field name is `meta_hash` per CLAUDE.md, regardless of
     // the parameter name on the helper signature (`metaHashHex`).

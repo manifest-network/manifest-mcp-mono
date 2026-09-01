@@ -1,6 +1,4 @@
 import { readFileSync } from 'node:fs';
-import { Agent, fetch as undiciFetch } from 'undici';
-import { beforeAll, describe, it } from 'vitest';
 import {
   createFredClient,
   type ManifestMCPConfig,
@@ -8,6 +6,8 @@ import {
   parseFqdn,
 } from '@manifest-network/manifest-sdk';
 import { runAcceptanceFlow } from '@manifest-network/sdk-acceptance';
+import { Agent, fetch as undiciFetch } from 'undici';
+import { beforeAll, describe, it } from 'vitest';
 
 /**
  * SDK-direct acceptance — the single tracked P0a metric (ENG-309 / spec §9).

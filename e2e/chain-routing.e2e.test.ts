@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { MCPTestClient, parseToolErrorCode } from './helpers/mcp-client.js';
 
 /**
@@ -116,7 +116,9 @@ describe('Chain routing coverage', () => {
         args: [testAddress],
       });
       expect(Array.isArray(result.result.balances)).toBe(true);
-      expect(result.result.balances.find((b) => b.denom === 'umfx')).toBeDefined();
+      expect(
+        result.result.balances.find((b) => b.denom === 'umfx'),
+      ).toBeDefined();
     });
 
     it('total-supply', async () => {
@@ -124,7 +126,9 @@ describe('Chain routing coverage', () => {
         result: { supply: Array<{ denom: string; amount: string }> };
       }>('cosmos_query', { module: 'bank', subcommand: 'total-supply' });
       expect(Array.isArray(result.result.supply)).toBe(true);
-      expect(result.result.supply.find((c) => c.denom === 'umfx')).toBeDefined();
+      expect(
+        result.result.supply.find((c) => c.denom === 'umfx'),
+      ).toBeDefined();
     });
 
     it('total (alias of total-supply)', async () => {
@@ -170,7 +174,9 @@ describe('Chain routing coverage', () => {
         result: { metadatas: Array<{ base: string }> };
       }>('cosmos_query', { module: 'bank', subcommand: 'denoms-metadata' });
       expect(Array.isArray(result.result.metadatas)).toBe(true);
-      expect(result.result.metadatas.find((m) => m.base === 'umfx')).toBeDefined();
+      expect(
+        result.result.metadatas.find((m) => m.base === 'umfx'),
+      ).toBeDefined();
     });
 
     it('send-enabled', async () => {
@@ -274,14 +280,14 @@ describe('Chain routing coverage', () => {
       });
       expect(toBytes.result.addressBytes).toMatch(/^[0-9a-fA-F]+$/);
 
-      const toString = await client.callTool<{
+      const toAddressString = await client.callTool<{
         result: { addressString: string };
       }>('cosmos_query', {
         module: 'auth',
         subcommand: 'address-bytes-to-string',
         args: [toBytes.result.addressBytes],
       });
-      expect(toString.result.addressString).toBe(testAddress);
+      expect(toAddressString.result.addressString).toBe(testAddress);
     });
 
     it('bech32-prefix', async () => {
@@ -575,7 +581,9 @@ describe('Chain routing coverage', () => {
 
     it('leases-by-provider', async () => {
       if (!providerUuid) {
-        console.warn('[chain-routing] No providerUuid — skipping leases-by-provider');
+        console.warn(
+          '[chain-routing] No providerUuid — skipping leases-by-provider',
+        );
         return;
       }
       const result = await client.callTool<{
@@ -635,24 +643,32 @@ describe('Chain routing coverage', () => {
     });
 
     it('credit-estimate', async () => {
-      const result = await client.callTool<{ result: unknown }>('cosmos_query', {
-        module: 'billing',
-        subcommand: 'credit-estimate',
-        args: [testAddress],
-      });
+      const result = await client.callTool<{ result: unknown }>(
+        'cosmos_query',
+        {
+          module: 'billing',
+          subcommand: 'credit-estimate',
+          args: [testAddress],
+        },
+      );
       expect(result.result).toBeDefined();
     });
 
     it('provider-withdrawable', async () => {
       if (!providerUuid) {
-        console.warn('[chain-routing] No providerUuid — skipping provider-withdrawable');
+        console.warn(
+          '[chain-routing] No providerUuid — skipping provider-withdrawable',
+        );
         return;
       }
-      const result = await client.callTool<{ result: unknown }>('cosmos_query', {
-        module: 'billing',
-        subcommand: 'provider-withdrawable',
-        args: [providerUuid],
-      });
+      const result = await client.callTool<{ result: unknown }>(
+        'cosmos_query',
+        {
+          module: 'billing',
+          subcommand: 'provider-withdrawable',
+          args: [providerUuid],
+        },
+      );
       expect(result.result).toBeDefined();
     });
   });
@@ -715,7 +731,9 @@ describe('Chain routing coverage', () => {
 
     it('skus-by-provider', async () => {
       if (!providerUuid) {
-        console.warn('[chain-routing] No providerUuid — skipping skus-by-provider');
+        console.warn(
+          '[chain-routing] No providerUuid — skipping skus-by-provider',
+        );
         return;
       }
       const result = await client.callTool<{
@@ -1057,7 +1075,10 @@ describe('Chain routing coverage', () => {
     it('denom-traces', async () => {
       const result = await client.callTool<{
         result: { denomTraces: unknown[] };
-      }>('cosmos_query', { module: 'ibc-transfer', subcommand: 'denom-traces' });
+      }>('cosmos_query', {
+        module: 'ibc-transfer',
+        subcommand: 'denom-traces',
+      });
       expect(Array.isArray(result.result.denomTraces)).toBe(true);
     });
 
@@ -1070,7 +1091,9 @@ describe('Chain routing coverage', () => {
         await client.callTool('cosmos_query', {
           module: 'ibc-transfer',
           subcommand: 'denom-trace',
-          args: ['0000000000000000000000000000000000000000000000000000000000000000'],
+          args: [
+            '0000000000000000000000000000000000000000000000000000000000000000',
+          ],
         });
       } catch (err) {
         threw = true;

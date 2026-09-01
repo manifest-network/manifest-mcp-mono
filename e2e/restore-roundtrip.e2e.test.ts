@@ -39,7 +39,8 @@ describe('Restore roundtrip (ENG-604)', () => {
   let negativeUuid: string | undefined;
 
   const reserved = (b: CreditBalance) =>
-    b.credits?.reserved_amounts?.find((c) => c.denom === skuDenom)?.amount ?? '0';
+    b.credits?.reserved_amounts?.find((c) => c.denom === skuDenom)?.amount ??
+    '0';
 
   beforeAll(async () => {
     await Promise.all([
@@ -78,19 +79,19 @@ describe('Restore roundtrip (ENG-604)', () => {
   });
 
   it('deploys a stateful redis and writes a persistent marker (MARKER_COUNT=1)', async () => {
-    const r = await fredClient.callTool<{ lease_uuid: string; state: LeaseState }>(
-      'deploy_app',
-      {
-        image: 'redis:7', // declares VOLUME /data → a managed, retainable volume at disk_mb>0
-        port: 6379,
-        size: 'docker-small',
-        command: [
-          'sh',
-          '-c',
-          'echo boot >> /data/boots.log; echo "MARKER_COUNT=$(wc -l < /data/boots.log)"; exec sleep 3600',
-        ],
-      },
-    );
+    const r = await fredClient.callTool<{
+      lease_uuid: string;
+      state: LeaseState;
+    }>('deploy_app', {
+      image: 'redis:7', // declares VOLUME /data → a managed, retainable volume at disk_mb>0
+      port: 6379,
+      size: 'docker-small',
+      command: [
+        'sh',
+        '-c',
+        'echo boot >> /data/boots.log; echo "MARKER_COUNT=$(wc -l < /data/boots.log)"; exec sleep 3600',
+      ],
+    });
     expect(r.state).toBe(LeaseState.LEASE_STATE_ACTIVE);
     sourceUuid = r.lease_uuid;
     const logs = await fredClient.callTool<{ logs: unknown }>('get_logs', {
@@ -102,9 +103,12 @@ describe('Restore roundtrip (ENG-604)', () => {
 
   it('closes with retention and releases reserved credit (single-shot, on-chain)', async () => {
     const before = await leaseClient.callTool<CreditBalance>('credit_balance');
-    const c = await leaseClient.callTool<{ lease_state: string }>('close_lease', {
-      lease_uuid: sourceUuid,
-    });
+    const c = await leaseClient.callTool<{ lease_state: string }>(
+      'close_lease',
+      {
+        lease_uuid: sourceUuid,
+      },
+    );
     expect(c.lease_state).toBe('LEASE_STATE_CLOSED');
     const after = await leaseClient.callTool<CreditBalance>('credit_balance');
     expect(BigInt(reserved(after))).toBeLessThan(BigInt(reserved(before)));
@@ -114,7 +118,9 @@ describe('Restore roundtrip (ENG-604)', () => {
     // Provider retain is async vs the on-chain close — poll (container_stop_timeout:1s
     // keeps this within seconds; bound clears the 30s reconciler fallback). Not
     // wait_for_app_ready: a CLOSED-retained lease never reaches ACTIVE.
-    let fredStatus: { retained_until?: string; restore_hint?: string } | undefined;
+    let fredStatus:
+      | { retained_until?: string; restore_hint?: string }
+      | undefined;
     for (let attempt = 0; attempt < 20; attempt++) {
       const st = await fredClient.callTool<{
         fredStatus?: { retained_until?: string; restore_hint?: string };
@@ -136,11 +142,14 @@ describe('Restore roundtrip (ENG-604)', () => {
     );
     expect(r.status).toBe('provisioning'); // pollOptions:false → returns immediately
     restoredUuid = r.lease_uuid;
-    const ready = await fredClient.callTool<{ state: string }>('wait_for_app_ready', {
-      lease_uuid: restoredUuid,
-      timeout_seconds: 120,
-      interval_seconds: 3,
-    });
+    const ready = await fredClient.callTool<{ state: string }>(
+      'wait_for_app_ready',
+      {
+        lease_uuid: restoredUuid,
+        timeout_seconds: 120,
+        interval_seconds: 3,
+      },
+    );
     expect(ready.state).toBe('LEASE_STATE_ACTIVE');
     const logs = await fredClient.callTool<{ logs: unknown }>('get_logs', {
       lease_uuid: restoredUuid,
@@ -155,7 +164,9 @@ describe('Restore roundtrip (ENG-604)', () => {
     const closed = await leaseClient.callTool<{
       leases: Array<{ uuid: string; stateLabel: string }>;
     }>('leases_by_tenant', { state: 'closed' });
-    expect(closed.leases.find((l) => l.uuid === sourceUuid)?.stateLabel).toBe('closed');
+    expect(closed.leases.find((l) => l.uuid === sourceUuid)?.stateLabel).toBe(
+      'closed',
+    );
   });
 
   it('restore_app on a non-retained (ACTIVE) source → RESTORE_NOT_RETAINED, zero side effects', async () => {
@@ -163,10 +174,14 @@ describe('Restore roundtrip (ENG-604)', () => {
     // → the pre-flight guard throws RESTORE_NOT_RETAINED BEFORE createLease, so
     // no lease is created and no credit reserved. (A closed-then-deprovisioned
     // lease would 404 instead — design spec §6.) Do NOT close it first.
-    const dep = await fredClient.callTool<{ lease_uuid: string; state: LeaseState }>(
-      'deploy_app',
-      { image: 'nginxinc/nginx-unprivileged:alpine', port: 8080, size: 'docker-micro' },
-    );
+    const dep = await fredClient.callTool<{
+      lease_uuid: string;
+      state: LeaseState;
+    }>('deploy_app', {
+      image: 'nginxinc/nginx-unprivileged:alpine',
+      port: 8080,
+      size: 'docker-micro',
+    });
     expect(dep.state).toBe(LeaseState.LEASE_STATE_ACTIVE);
     negativeUuid = dep.lease_uuid;
 
@@ -174,7 +189,8 @@ describe('Restore roundtrip (ENG-604)', () => {
       'leases_by_tenant',
       { state: 'active' },
     );
-    const beforeCredit = await leaseClient.callTool<CreditBalance>('credit_balance');
+    const beforeCredit =
+      await leaseClient.callTool<CreditBalance>('credit_balance');
 
     const err = await fredClient.callToolExpectError('restore_app', {
       source_lease_uuid: negativeUuid,
@@ -185,7 +201,8 @@ describe('Restore roundtrip (ENG-604)', () => {
       'leases_by_tenant',
       { state: 'active' },
     );
-    const afterCredit = await leaseClient.callTool<CreditBalance>('credit_balance');
+    const afterCredit =
+      await leaseClient.callTool<CreditBalance>('credit_balance');
     expect(afterLeases.leases.length).toBe(beforeLeases.leases.length); // no lease created
     expect(reserved(afterCredit)).toBe(reserved(beforeCredit)); // no credit reserved
   });

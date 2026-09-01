@@ -45,6 +45,8 @@ jobs:
 
       - run: npm run lint
 
+      - run: npm run lint:e2e
+
       - run: npm run check
 
       - run: npm test

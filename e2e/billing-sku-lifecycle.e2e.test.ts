@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { MCPTestClient, parseToolErrorCode } from './helpers/mcp-client.js';
 
 /**
@@ -101,7 +101,9 @@ describe('Billing/SKU lifecycle', () => {
       subcommand: 'provider-by-address',
       args: [testAddress],
     });
-    const found = lookup.result.providers.find((p) => p.address === testAddress);
+    const found = lookup.result.providers.find(
+      (p) => p.address === testAddress,
+    );
     expect(found).toBeDefined();
     providerUuid = found!.uuid;
   });
@@ -145,7 +147,9 @@ describe('Billing/SKU lifecycle', () => {
     expect(result.code).toBe(0);
 
     const lookup = await client.callTool<{
-      result: { skus: Array<{ uuid: string; name: string; providerUuid: string }> };
+      result: {
+        skus: Array<{ uuid: string; name: string; providerUuid: string }>;
+      };
     }>('cosmos_query', {
       module: 'sku',
       subcommand: 'skus-by-provider',
@@ -275,7 +279,9 @@ describe('Billing/SKU lifecycle', () => {
 
   it('tx: billing withdraw (flow A) — provider claims accrued earnings', async () => {
     if (!selfAckOk) {
-      console.warn('[billing-sku-lifecycle] skipping withdraw — self-ack failed');
+      console.warn(
+        '[billing-sku-lifecycle] skipping withdraw — self-ack failed',
+      );
       return;
     }
     // Wait a couple of seconds to accrue earnings (1 upwr/sec at this rate).
@@ -292,7 +298,9 @@ describe('Billing/SKU lifecycle', () => {
 
   it('tx: billing close-lease (flow A) — closes the active lease', async () => {
     if (!selfAckOk) {
-      console.warn('[billing-sku-lifecycle] skipping close-lease — self-ack failed');
+      console.warn(
+        '[billing-sku-lifecycle] skipping close-lease — self-ack failed',
+      );
       return;
     }
     const result = await client.callTool<{ code: number }>('cosmos_tx', {

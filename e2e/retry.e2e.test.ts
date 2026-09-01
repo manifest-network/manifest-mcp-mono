@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { MCPTestClient } from './helpers/mcp-client.js';
 
 /**
@@ -57,46 +57,42 @@ describe('Retry classifier (live)', () => {
       await client.close();
     });
 
-    it(
-      'cosmos_query against a dead RPC eventually fails RPC_CONNECTION_FAILED after retrying',
-      async () => {
-        const start = Date.now();
-        let thrown: unknown;
-        try {
-          await client.callTool('cosmos_query', {
-            module: 'bank',
-            subcommand: 'params',
-          });
-        } catch (err) {
-          thrown = err;
-        }
-        const elapsed = Date.now() - start;
+    // The timeout sits above the 15s assertion so that assertion — which names
+    // the cause — reports the failure instead of an opaque test timeout.
+    it('cosmos_query against a dead RPC eventually fails RPC_CONNECTION_FAILED after retrying', async () => {
+      const start = Date.now();
+      let thrown: unknown;
+      try {
+        await client.callTool('cosmos_query', {
+          module: 'bank',
+          subcommand: 'params',
+        });
+      } catch (err) {
+        thrown = err;
+      }
+      const elapsed = Date.now() - start;
 
-        expect(thrown).toBeDefined();
-        const msg = thrown instanceof Error ? thrown.message : String(thrown);
-        // The outer retry exhausts and the wrapped error surfaces. Allow
-        // for either the wrapped RPC_CONNECTION_FAILED or a related
-        // transient code, since the classifier may bubble the inner
-        // failure through.
-        expect(msg).toMatch(/RPC_CONNECTION_FAILED|ECONNREFUSED/);
+      expect(thrown).toBeDefined();
+      const msg = thrown instanceof Error ? thrown.message : String(thrown);
+      // The outer retry exhausts and the wrapped error surfaces. Allow
+      // for either the wrapped RPC_CONNECTION_FAILED or a related
+      // transient code, since the classifier may bubble the inner
+      // failure through.
+      expect(msg).toMatch(/RPC_CONNECTION_FAILED|ECONNREFUSED/);
 
-        // baseDelayMs is 1000 by default. Even ONE retry forces a sleep
-        // of at least ~750ms (jitter floor: 1000 * 0.75). Anything under
-        // 750ms means the call returned without any retry — a regression
-        // in the classifier or in withRetry's loop.
-        expect(elapsed).toBeGreaterThan(750);
+      // baseDelayMs is 1000 by default. Even ONE retry forces a sleep
+      // of at least ~750ms (jitter floor: 1000 * 0.75). Anything under
+      // 750ms means the call returned without any retry — a regression
+      // in the classifier or in withRetry's loop.
+      expect(elapsed).toBeGreaterThan(750);
 
-        // Upper bound: ONE connect ladder ≈ 7s, ≤ ~8.75s with jitter, plus
-        // transport overhead. 15s leaves generous headroom for contended CI
-        // while sitting far below any re-nesting (two ladders were ~35s, and
-        // ~17-20s even when a latched init promise short-circuited the inner
-        // one). Anything above this is retry amplification, not slowness.
-        expect(elapsed).toBeLessThan(15_000);
-      },
-      // Above the 15s assertion so the assertion — which names the cause —
-      // reports the failure instead of an opaque test timeout.
-      20_000,
-    );
+      // Upper bound: ONE connect ladder ≈ 7s, ≤ ~8.75s with jitter, plus
+      // transport overhead. 15s leaves generous headroom for contended CI
+      // while sitting far below any re-nesting (two ladders were ~35s, and
+      // ~17-20s even when a latched init promise short-circuited the inner
+      // one). Anything above this is retry amplification, not slowness.
+      expect(elapsed).toBeLessThan(15_000);
+    }, 20_000);
   });
 
   describe('Permanent failures fail-fast (no retry)', () => {

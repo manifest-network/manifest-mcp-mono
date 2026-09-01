@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { MCPTestClient, parseToolErrorCode } from './helpers/mcp-client.js';
 
 /**
@@ -93,10 +93,7 @@ describe('REST/LCD mode', () => {
         subcommand: 'send',
         // Args are valid; the rejection is at the signing-client level,
         // not at the message-building level.
-        args: [
-          'manifest1hj5fveer5cjtn4wd6wstzugjfdxzl0xp8ws9ct',
-          '1000umfx',
-        ],
+        args: ['manifest1hj5fveer5cjtn4wd6wstzugjfdxzl0xp8ws9ct', '1000umfx'],
       });
       expect(err.code).toBe('INVALID_CONFIG');
       expect(err.message).toMatch(/rpcUrl|gasPrice|query-only/i);
@@ -106,10 +103,7 @@ describe('REST/LCD mode', () => {
       const err = await client.callToolExpectError('cosmos_estimate_fee', {
         module: 'bank',
         subcommand: 'send',
-        args: [
-          'manifest1hj5fveer5cjtn4wd6wstzugjfdxzl0xp8ws9ct',
-          '1000umfx',
-        ],
+        args: ['manifest1hj5fveer5cjtn4wd6wstzugjfdxzl0xp8ws9ct', '1000umfx'],
       });
       expect(err.code).toBe('INVALID_CONFIG');
     });
@@ -157,10 +151,7 @@ describe('REST/LCD mode', () => {
         await client.callTool('cosmos_tx', {
           module: 'bank',
           subcommand: 'send',
-          args: [
-            'manifest1hj5fveer5cjtn4wd6wstzugjfdxzl0xp8ws9ct',
-            '1000umfx',
-          ],
+          args: ['manifest1hj5fveer5cjtn4wd6wstzugjfdxzl0xp8ws9ct', '1000umfx'],
           wait_for_confirmation: true,
         });
       } catch (e) {
