@@ -56,6 +56,7 @@ import { TerminalChainStateError } from '../http/fred.js';
 import { ProviderApiError } from '../http/provider.js';
 import { deployApp } from './deployApp.js';
 import { deployManifest } from './deployManifest.js';
+import { MAX_MANIFEST_BYTES } from './validateManifestPayload.js';
 
 // ENG-725: `../http/provider.js` and `../http/fred.js` are NO LONGER mocked. The provider wire is
 // injected at `ctx.fetch` as a sealed probe, so the real `uploadLeaseData`, `getLeaseConnectionInfo`
@@ -414,7 +415,7 @@ describe('deployManifest', () => {
     const huge = JSON.stringify({
       image: 'x',
       ports: { '80/tcp': {} },
-      labels: { big: 'A'.repeat(300_000) },
+      labels: { big: 'A'.repeat(MAX_MANIFEST_BYTES + 1) },
     });
     await expect(
       deployManifest(
@@ -441,6 +442,27 @@ describe('deployManifest', () => {
         {},
       ),
     ).rejects.toMatchObject({ code: 'INVALID_CONFIG' });
+    expect(mockCosmosTx).not.toHaveBeenCalled();
+  });
+
+  it('rejects a decimal/exponent integer token before create-lease', async () => {
+    const cm = makeMockClientManager({
+      queryClient: makeQueryClient(),
+      address: 'manifest1tenant',
+    });
+    await expect(
+      deployManifest(
+        await ctx(cm),
+        {
+          manifest: '{"image":"nginx","stop_grace_period":1e9}',
+          sku: { kind: 'byName', size: 'docker-micro' },
+        },
+        {},
+      ),
+    ).rejects.toMatchObject({
+      code: 'INVALID_CONFIG',
+      message: expect.stringContaining('integer JSON literals'),
+    });
     expect(mockCosmosTx).not.toHaveBeenCalled();
   });
 

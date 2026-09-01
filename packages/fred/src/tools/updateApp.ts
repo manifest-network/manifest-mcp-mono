@@ -18,7 +18,10 @@ import { resolveFredSignal } from './call-signal.js';
 import { fetchActiveLease } from './fetchActiveLease.js';
 import type { LifecycleCallOptions } from './lifecycle-options.js';
 import { resolveProviderUrl } from './resolveLeaseProvider.js';
-import { parseAndValidateManifestPayload } from './validateManifestPayload.js';
+import {
+  assertManifestFitsUpdateRequest,
+  parseAndValidateManifestPayload,
+} from './validateManifestPayload.js';
 
 /**
  * Turn a 5xx from `POST /update` into an honest "we do not know" (ENG-619).
@@ -147,6 +150,7 @@ export async function updateApp(
   // lookup, token minting, or the destructive update POST (ENG-637/ENG-755).
   const { bytes: finalManifestBytes } =
     parseAndValidateManifestPayload(finalManifest);
+  assertManifestFitsUpdateRequest(finalManifestBytes);
 
   // Fast path: a supplied providerUrl skips both on-chain queries (fetchActiveLease + resolveProviderUrl).
   let providerUrl: string;

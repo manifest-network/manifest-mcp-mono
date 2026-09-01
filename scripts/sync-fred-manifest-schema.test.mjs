@@ -1,9 +1,17 @@
 import assert from 'node:assert/strict';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, it } from 'node:test';
 import {
+  check,
+  compareBytes,
+  finish,
   parseGoLimits,
   stripGoNonCode,
   validateProvenanceShape,
+  validateRecordedLimits,
+  validateSchemaGoAlignment,
 } from './sync-fred-manifest-schema.mjs';
 
 const VALID_GO_SOURCE = `
@@ -28,6 +36,17 @@ func validateStop(d time.Duration) error {
   return nil
 }
 `;
+
+const VALID_LIMITS = {
+  maxTmpfsMounts: 4,
+  maxPorts: 64,
+  maxExposePorts: 64,
+  maxEnvVars: 256,
+  maxLabels: 128,
+  dependsOnMaxDepth: 10,
+  minStopGracePeriodNanoseconds: 1_000_000_000,
+  maxStopGracePeriodNanoseconds: 120_000_000_000,
+};
 
 describe('Fred manifest Go-limit parser', () => {
   it('extracts named caps, dependency depth, and inline duration bounds', () => {
@@ -67,7 +86,19 @@ describe('Fred manifest Go-limit parser', () => {
       ),
       undefined,
     );
-    assert.match(errors.join('\n'), /MaxPorts must be a plain decimal integer/);
+    assert.match(errors.join('\n'), /MaxPorts must be a plain base-10 integer/);
+  });
+
+  it('rejects a leading-zero Go integer instead of reading it as decimal', () => {
+    const errors = [];
+    assert.equal(
+      parseGoLimits(
+        VALID_GO_SOURCE.replace('MaxPorts = 64', 'MaxPorts = 0100'),
+        errors,
+      ),
+      undefined,
+    );
+    assert.match(errors.join('\n'), /without a leading zero/);
   });
 
   it('rejects duplicate declarations and newly introduced Max constants', () => {
@@ -85,8 +116,36 @@ describe('Fred manifest Go-limit parser', () => {
     );
     assert.match(
       errors.join('\n'),
-      /untracked Fred Max\* constants.*MaxServices/,
+      /untracked Fred limit-like constants.*MaxServices/,
     );
+  });
+
+  it('rejects newly introduced unexported limit-like constants', () => {
+    const errors = [];
+    assert.equal(
+      parseGoLimits(
+        `${VALID_GO_SOURCE}\nconst serviceMaxDepth = 12\nconst maxServices = 20\n`,
+        errors,
+      ),
+      undefined,
+    );
+    assert.match(
+      errors.join('\n'),
+      /untracked Fred limit-like constants.*serviceMaxDepth/,
+    );
+    assert.match(errors.join('\n'), /maxServices/);
+  });
+
+  it('rejects leading-zero duration factors that Go interprets as octal', () => {
+    const errors = [];
+    assert.equal(
+      parseGoLimits(
+        VALID_GO_SOURCE.replace('120 * time.Second', '0120 * time.Second'),
+        errors,
+      ),
+      undefined,
+    );
+    assert.match(errors.join('\n'), /integer multiple of a time.Duration unit/);
   });
 
   it('preserves newlines while removing block comments and raw strings', () => {
@@ -110,6 +169,127 @@ describe('Fred manifest provenance shape', () => {
     const errors = [];
     const value = { source: 'schema.json' };
     assert.equal(validateProvenanceShape(value, errors), value);
+    assert.deepEqual(errors, []);
+  });
+});
+
+describe('Fred manifest gate decisions', () => {
+  it('validates every recorded limit and rejects missing or unknown keys', () => {
+    const validErrors = [];
+    assert.deepEqual(
+      validateRecordedLimits(VALID_LIMITS, validErrors),
+      VALID_LIMITS,
+    );
+    assert.deepEqual(validErrors, []);
+
+    const errors = [];
+    assert.equal(
+      validateRecordedLimits(
+        { ...VALID_LIMITS, maxPorts: undefined, surpriseLimit: 1 },
+        errors,
+      ),
+      undefined,
+    );
+    assert.match(
+      errors.join('\n'),
+      /limits\.maxPorts must be a positive integer/,
+    );
+    assert.match(errors.join('\n'), /unknown keys: surpriseLimit/);
+  });
+
+  it('cross-checks schema-backed Go limits', () => {
+    const schema = Buffer.from(
+      JSON.stringify({
+        $defs: {
+          DockerManifestBase: {
+            properties: { tmpfs: { maxItems: 4 } },
+          },
+          StopGracePeriod: {
+            oneOf: [
+              {
+                type: 'integer',
+                minimum: 1_000_000_000,
+                maximum: 120_000_000_000,
+              },
+            ],
+          },
+        },
+      }),
+    );
+    const validErrors = [];
+    validateSchemaGoAlignment(schema, VALID_LIMITS, validErrors);
+    assert.deepEqual(validErrors, []);
+
+    const errors = [];
+    validateSchemaGoAlignment(
+      schema,
+      { ...VALID_LIMITS, maxTmpfsMounts: 5 },
+      errors,
+    );
+    assert.match(errors.join('\n'), /tmpfs\.maxItems.*MaxTmpfsMounts/);
+  });
+
+  it('detects missing, stale, equal, and unreadable generated artifacts', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'fred-schema-gate-'));
+    try {
+      const artifact = join(directory, 'artifact.ts');
+      const expected = Buffer.from('expected\n');
+
+      const missingErrors = [];
+      compareBytes(artifact, expected, 'artifact', missingErrors);
+      assert.match(missingErrors.join('\n'), /artifact is missing/);
+
+      writeFileSync(artifact, expected);
+      const equalErrors = [];
+      compareBytes(artifact, expected, 'artifact', equalErrors);
+      assert.deepEqual(equalErrors, []);
+
+      writeFileSync(artifact, 'stale\n');
+      const staleErrors = [];
+      compareBytes(artifact, expected, 'artifact', staleErrors);
+      assert.match(staleErrors.join('\n'), /artifact is stale/);
+
+      const unreadableErrors = [];
+      compareBytes(directory, expected, 'artifact directory', unreadableErrors);
+      assert.match(
+        unreadableErrors.join('\n'),
+        /cannot read artifact directory/,
+      );
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('sets a failing exit code and emits every collected diagnostic', () => {
+    let output = '';
+    let exitCode;
+    assert.equal(
+      finish(['first', 'second'], {
+        writeError: (message) => {
+          output += message;
+        },
+        setExitCode: (code) => {
+          exitCode = code;
+        },
+      }),
+      false,
+    );
+    assert.equal(exitCode, 1);
+    assert.match(output, /fred manifest schema: first/);
+    assert.match(output, /fred manifest schema: second/);
+  });
+
+  it('executes the full check decision against the indexed Fred contract', () => {
+    const indexedFredCommit = JSON.parse(
+      readFileSync(
+        join('packages', 'fred', 'schema', 'manifest-schema.source.json'),
+        'utf8',
+      ),
+    ).fredCommit;
+    const errors = [];
+    check(indexedFredCommit, errors, {
+      readCheckedOutFredCommit: () => indexedFredCommit,
+    });
     assert.deepEqual(errors, []);
   });
 });

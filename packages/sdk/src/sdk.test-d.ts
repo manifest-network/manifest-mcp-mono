@@ -1,4 +1,9 @@
 import { describe, expectTypeOf, it } from 'vitest';
+import type {
+  BuildManifestPreviewInput,
+  PortConfig as CatalogPortConfig,
+  ManifestPreviewServiceInput,
+} from './catalog.js';
 import { cosmosQuery, cosmosTx } from './chain.js';
 // The tx/lifecycle value surface re-emitted on the `/deploy` subpath.
 import type {
@@ -61,6 +66,10 @@ import {
   type QueryCtx,
   type ReadClientOptions,
 } from './index.js';
+import type {
+  PortConfig as OrchestrationPortConfig,
+  ServiceConfig as OrchestrationServiceConfig,
+} from './orchestration.js';
 
 describe('SDK factory return types (re-emitted; codegen-passthrough tripwire)', () => {
   it('the 3 client factories are async and resolve to the precise re-emitted client type', () => {
@@ -194,6 +203,20 @@ describe('ENG-531 facade completeness (re-emitted through the SDK)', () => {
       readonly ingress?: boolean;
     }>();
     expectTypeOf<TxCallOptions>().not.toBeNever();
+  });
+
+  it('/catalog and /orchestration expose the port type their service inputs reference', () => {
+    expectTypeOf<CatalogPortConfig>().toEqualTypeOf<PortConfig>();
+    expectTypeOf<OrchestrationPortConfig>().toEqualTypeOf<PortConfig>();
+    expectTypeOf<
+      NonNullable<ManifestPreviewServiceInput['ports']>[string]
+    >().toEqualTypeOf<PortConfig>();
+    expectTypeOf<
+      NonNullable<BuildManifestPreviewInput['services']>[string]
+    >().toExtend<ManifestPreviewServiceInput>();
+    expectTypeOf<
+      NonNullable<OrchestrationServiceConfig['ports']>[string]
+    >().toEqualTypeOf<PortConfig>();
   });
 
   it('the root `.` re-emits EventSocket alongside the ctx/transport ports', () => {

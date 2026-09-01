@@ -12,21 +12,6 @@ import {
   ManifestMCPErrorCode,
 } from '@manifest-network/manifest-mcp-core';
 import { FRED_MANIFEST_LIMITS } from './generated/fred-manifest-limits.js';
-import generatedFredManifestSchemaValidator from './generated/fred-manifest-schema-validator.js';
-
-interface SchemaValidationError {
-  readonly instancePath: string;
-  readonly keyword: string;
-  readonly params: Record<string, unknown>;
-  readonly message?: string;
-}
-
-type SchemaValidator = ((value: unknown) => boolean) & {
-  errors?: readonly SchemaValidationError[] | null;
-};
-
-const validateFredManifestSchema =
-  generatedFredManifestSchemaValidator as SchemaValidator;
 
 const MAX_NAME_LENGTH = 32;
 
@@ -345,6 +330,7 @@ const MAX_INT64 = (1n << 63n) - 1n;
 const MIN_INT64_MAGNITUDE = 1n << 63n;
 const MAX_REPORTED_VALIDATION_ERRORS = 16;
 const MAX_VALIDATION_ERROR_CHARACTERS = 240;
+const MAX_DIAGNOSTIC_VALUE_CHARACTERS = 96;
 
 function hasOwn(object: object, key: PropertyKey): boolean {
   return Object.getOwnPropertyDescriptor(object, key) !== undefined;
@@ -363,7 +349,7 @@ class BoundedValidationErrors extends Array<string> {
       super.push(
         characters.length <= MAX_VALIDATION_ERROR_CHARACTERS
           ? message
-          : `${characters.slice(0, MAX_VALIDATION_ERROR_CHARACTERS - 1).join('')}…`,
+          : `${characters.slice(0, MAX_VALIDATION_ERROR_CHARACTERS / 2 - 1).join('')}…${characters.slice(-(MAX_VALIDATION_ERROR_CHARACTERS / 2)).join('')}`,
       );
     }
     return this.length;
@@ -374,6 +360,27 @@ class BoundedValidationErrors extends Array<string> {
       ? [...this]
       : [...this, `… ${this.omitted} additional validation errors omitted`];
   }
+}
+
+function truncateDiagnosticValue(value: string): string {
+  const characters = Array.from(value);
+  if (characters.length <= MAX_DIAGNOSTIC_VALUE_CHARACTERS) return value;
+  const side = MAX_DIAGNOSTIC_VALUE_CHARACTERS / 2;
+  return `${characters.slice(0, side - 1).join('')}…${characters.slice(-side).join('')}`;
+}
+
+function diagnosticValue(value: unknown): string {
+  return JSON.stringify(truncateDiagnosticValue(String(value)));
+}
+
+function mapKeyPath(base: string, key: unknown): string {
+  return `${base}[${diagnosticValue(key)}]`;
+}
+
+function propertyPath(base: string, key: string): string {
+  return /^[A-Za-z_$][\w$]*$/.test(key)
+    ? `${base}.${key}`
+    : mapKeyPath(base, key);
 }
 
 function cleanPosixPath(value: string): string {
@@ -471,72 +478,6 @@ function durationValueNanoseconds(value: unknown): bigint | undefined {
   if (nanoseconds < -MIN_INT64_MAGNITUDE || nanoseconds > MAX_INT64)
     return undefined;
   return nanoseconds;
-}
-
-function pointerPath(pointer: string): string {
-  if (pointer === '') return 'manifest';
-  const segments = pointer
-    .slice(1)
-    .split('/')
-    .map((segment) => segment.replace(/~1/g, '/').replace(/~0/g, '~'));
-  return segments.reduce((path, segment) => {
-    if (/^(0|[1-9]\d*)$/.test(segment)) return `${path}[${segment}]`;
-    if (/^[A-Za-z_$][\w$]*$/.test(segment)) return `${path}.${segment}`;
-    return `${path}[${JSON.stringify(segment)}]`;
-  }, 'manifest');
-}
-
-function appendSchemaErrors(
-  manifest: Record<string, unknown>,
-  errors: BoundedValidationErrors,
-): void {
-  if (validateFredManifestSchema(manifest)) return;
-
-  const stackIntent = hasOwn(manifest, 'services');
-  const seen = new Set<string>();
-  for (const error of validateFredManifestSchema.errors ?? []) {
-    // Ajv reports every failed alternative beneath oneOf. The semantic pass
-    // owns these structural diagnostics and emits one actionable error instead
-    // of leaking irrelevant errors from the opposite manifest/health branch.
-    if (
-      error.keyword === 'oneOf' ||
-      error.keyword === 'not' ||
-      error.keyword === 'additionalProperties' ||
-      error.keyword === 'propertyNames' ||
-      error.keyword === 'required'
-    )
-      continue;
-
-    // Fred's published schema is narrower than its Go decoder for these
-    // fields (notably duration spellings, USER syntax, and Atoi port forms).
-    // Their handwritten validators below are therefore authoritative.
-    const segments = error.instancePath
-      .slice(1)
-      .split('/')
-      .filter(Boolean)
-      .map((segment) => segment.replace(/~1/g, '/').replace(/~0/g, '~'));
-    const serviceField = stackIntent
-      ? segments[0] === 'services' && segments.length >= 3
-        ? segments[2]
-        : undefined
-      : segments[0];
-    if (
-      serviceField === 'ports' ||
-      serviceField === 'labels' ||
-      serviceField === 'health_check' ||
-      serviceField === 'user' ||
-      serviceField === 'stop_grace_period' ||
-      serviceField === 'expose'
-    )
-      continue;
-
-    const path = pointerPath(error.instancePath);
-    const message = `${path}: ${error.message ?? `failed ${error.keyword}`}`;
-    if (!seen.has(message)) {
-      seen.add(message);
-      errors.push(message);
-    }
-  }
 }
 
 function isPlainObject(v: unknown): v is Record<string, unknown> {
@@ -710,16 +651,14 @@ function validateService(
     const lower = key.toLowerCase();
     const prev = seenLower.get(lower);
     if (prev !== undefined) {
-      // `scope` is '' for a single-service manifest; use a non-empty label so
-      // the message doesn't read with a stray leading colon.
       errors.push(
-        `${scope || 'manifest'}: keys "${prev}" and "${key}" collide case-insensitively (the provider matches fields case-insensitively)`,
+        `${scope}: keys ${diagnosticValue(prev)} and ${diagnosticValue(key)} collide case-insensitively (the provider matches fields case-insensitively)`,
       );
     } else {
       seenLower.set(lower, key);
     }
     if (!ALLOWED_TOP_LEVEL_KEYS.has(key)) {
-      errors.push(`${scope}.${key}: unknown field`);
+      errors.push(`${propertyPath(scope, key)}: unknown field`);
     }
   }
 
@@ -736,19 +675,20 @@ function validateService(
       }
       let ingressPort: string | undefined;
       for (const [key, config] of portEntries) {
+        const portPath = mapKeyPath(`${scope}.ports`, key);
         const parsedPort = parsePortSpec(key);
         if (!parsedPort) {
           errors.push(
-            `${scope}.ports["${key}"]: must be in "port/protocol" format with port 1-65535 and protocol tcp|udp`,
+            `${portPath}: must be in "port/protocol" format with port 1-65535 and protocol tcp|udp`,
           );
         }
         if (!isPlainObject(config)) {
-          errors.push(`${scope}.ports["${key}"]: must be an object`);
+          errors.push(`${portPath}: must be an object`);
           continue;
         }
         for (const configKey of Object.keys(config)) {
           if (!PORT_CONFIG_KEYS.has(configKey)) {
-            errors.push(`${scope}.ports["${key}"].${configKey}: unknown field`);
+            errors.push(`${propertyPath(portPath, configKey)}: unknown field`);
           }
         }
         if ('host_port' in config) {
@@ -758,26 +698,24 @@ function validateService(
             config.host_port < 0
           ) {
             errors.push(
-              `${scope}.ports["${key}"].host_port: must be the integer 0 when provided`,
+              `${portPath}.host_port: must be the integer 0 when provided`,
             );
           } else if (config.host_port > 0) {
             errors.push(
-              `${scope}.ports["${key}"].host_port: fixed host ports are not permitted; omit host_port so Fred assigns one dynamically`,
+              `${portPath}.host_port: fixed host ports are not permitted; omit host_port so Fred assigns one dynamically`,
             );
           }
         }
         if ('ingress' in config) {
           if (typeof config.ingress !== 'boolean') {
-            errors.push(`${scope}.ports["${key}"].ingress: must be a boolean`);
+            errors.push(`${portPath}.ingress: must be a boolean`);
           } else if (config.ingress) {
             if (parsedPort?.protocol !== 'tcp') {
-              errors.push(
-                `${scope}.ports["${key}"].ingress: requires TCP protocol`,
-              );
+              errors.push(`${portPath}.ingress: requires TCP protocol`);
             }
             if (ingressPort !== undefined) {
               errors.push(
-                `${scope}.ports["${key}"].ingress: at most one port may set ingress=true (already set on "${ingressPort}")`,
+                `${portPath}.ingress: at most one port may set ingress=true (already set on ${diagnosticValue(ingressPort)})`,
               );
             } else {
               ingressPort = key;
@@ -800,22 +738,21 @@ function validateService(
         );
       }
       for (const [name, value] of envEntries) {
+        const envPath = mapKeyPath(`${scope}.env`, name);
         if (name.length === 0) {
           errors.push(`${scope}.env: variable name cannot be empty`);
         } else if (name.includes('=') || name.includes('\0')) {
-          errors.push(
-            `${scope}.env["${name}"]: name cannot contain '=' or NUL`,
-          );
+          errors.push(`${envPath}: name cannot contain '=' or NUL`);
         } else if (
           name.toUpperCase() === 'PATH' ||
           ENV_NAME_BLOCKED_PREFIX_RE.test(name)
         ) {
           errors.push(
-            `${scope}.env["${name}"]: blocked variable name (PATH, LD_*, FRED_*, DOCKER_* are reserved)`,
+            `${envPath}: blocked variable name (PATH, LD_*, FRED_*, DOCKER_* are reserved)`,
           );
         }
         if (typeof value !== 'string') {
-          errors.push(`${scope}.env["${name}"]: value must be a string`);
+          errors.push(`${envPath}: value must be a string`);
         }
       }
     }
@@ -833,18 +770,16 @@ function validateService(
         );
       }
       for (const key of labelKeys) {
+        const labelPath = mapKeyPath(`${scope}.labels`, key);
         const reserved = key.match(RESERVED_LABEL_PREFIX_RE);
         if (reserved) {
           const prefix = `${reserved[1].toLowerCase()}.`;
           errors.push(
-            `${scope}.labels["${key}"]: reserved prefix '${prefix}' is not allowed`,
+            `${labelPath}: reserved prefix '${prefix}' is not allowed`,
           );
         }
         if (typeof service.labels[key] !== 'string') {
-          const valuePath = /^[A-Za-z_$][\w$]*$/.test(key)
-            ? `${scope}.labels.${key}`
-            : `${scope}.labels["${key}"]`;
-          errors.push(`${valuePath}: value must be a string`);
+          errors.push(`${labelPath}: value must be a string`);
         }
       }
     }
@@ -866,8 +801,9 @@ function validateService(
           errors.push(`${scope}.tmpfs: entries must be strings`);
           continue;
         }
+        const tmpfsPath = mapKeyPath(`${scope}.tmpfs`, rawPath);
         if (!rawPath.startsWith('/')) {
-          errors.push(`${scope}.tmpfs["${rawPath}"]: must be an absolute path`);
+          errors.push(`${tmpfsPath}: must be an absolute path`);
           continue;
         }
         // Fred applies path.Clean before its blocked-path and duplicate checks.
@@ -876,19 +812,19 @@ function validateService(
         const cleanedPath = cleanPosixPath(rawPath);
         if (TMPFS_BLOCKED.has(cleanedPath)) {
           errors.push(
-            `${scope}.tmpfs["${rawPath}"]: resolves to backend-managed path ${cleanedPath}`,
+            `${tmpfsPath}: resolves to backend-managed path ${diagnosticValue(cleanedPath)}`,
           );
         }
         for (const prefix of TMPFS_BLOCKED_PREFIXES) {
           if (cleanedPath === prefix || cleanedPath.startsWith(`${prefix}/`)) {
             errors.push(
-              `${scope}.tmpfs["${rawPath}"]: resolves under sensitive path ${prefix}`,
+              `${tmpfsPath}: resolves under sensitive path ${prefix}`,
             );
           }
         }
         if (seen.has(cleanedPath)) {
           errors.push(
-            `${scope}.tmpfs["${rawPath}"]: duplicate normalized mount ${cleanedPath}`,
+            `${tmpfsPath}: duplicate normalized mount ${diagnosticValue(cleanedPath)}`,
           );
         }
         seen.add(cleanedPath);
@@ -921,7 +857,9 @@ function validateService(
       const hc = service.health_check;
       for (const key of Object.keys(hc)) {
         if (!HEALTH_CHECK_KEYS.has(key)) {
-          errors.push(`${scope}.health_check.${key}: unknown field`);
+          errors.push(
+            `${propertyPath(`${scope}.health_check`, key)}: unknown field`,
+          );
         }
       }
       if (!('test' in hc)) {
@@ -980,13 +918,14 @@ function validateService(
         );
       }
       for (const [name, cond] of entries) {
+        const dependencyPath = mapKeyPath(`${scope}.depends_on`, name);
         if (!isPlainObject(cond)) {
-          errors.push(`${scope}.depends_on["${name}"]: must be an object`);
+          errors.push(`${dependencyPath}: must be an object`);
           continue;
         }
         for (const k of Object.keys(cond)) {
           if (k !== 'condition') {
-            errors.push(`${scope}.depends_on["${name}"].${k}: unknown field`);
+            errors.push(`${propertyPath(dependencyPath, k)}: unknown field`);
           }
         }
         if (
@@ -994,7 +933,7 @@ function validateService(
           !DEPENDS_ON_CONDITIONS.has(cond.condition)
         ) {
           errors.push(
-            `${scope}.depends_on["${name}"].condition: must be "service_started" or "service_healthy"`,
+            `${dependencyPath}.condition: must be "service_started" or "service_healthy"`,
           );
         }
       }
@@ -1013,17 +952,16 @@ function validateService(
       }
       const seen = new Set<string>();
       for (const p of service.expose) {
+        const exposePath = mapKeyPath(`${scope}.expose`, p);
         const port =
           typeof p === 'string' ? parseGoDecimalInteger(p) : undefined;
         if (port === undefined) {
-          errors.push(
-            `${scope}.expose["${String(p)}"]: must be a port number string (1-65535)`,
-          );
+          errors.push(`${exposePath}: must be a port number string (1-65535)`);
         } else if (port < 1n || port > 65_535n) {
-          errors.push(`${scope}.expose["${p}"]: port out of range`);
+          errors.push(`${exposePath}: port out of range`);
         }
         if (seen.has(String(p))) {
-          errors.push(`${scope}.expose["${String(p)}"]: duplicate`);
+          errors.push(`${exposePath}: duplicate`);
         }
         seen.add(String(p));
       }
@@ -1066,7 +1004,10 @@ function validateStackDependencies(
   for (const [name, service] of Object.entries(services)) {
     if (!isPlainObject(service) || !isPlainObject(service.depends_on)) continue;
     for (const [dependency, condition] of Object.entries(service.depends_on)) {
-      const path = `services["${name}"].depends_on["${dependency}"]`;
+      const path = mapKeyPath(
+        `${mapKeyPath('manifest.services', name)}.depends_on`,
+        dependency,
+      );
       if (dependency === name) {
         errors.push(`${path}: a service cannot depend on itself`);
         continue;
@@ -1081,7 +1022,7 @@ function validateStackDependencies(
         !hasActiveHealthCheck(services[dependency])
       ) {
         errors.push(
-          `${path}: service_healthy requires "${dependency}" to have an active health_check`,
+          `${path}: service_healthy requires ${diagnosticValue(dependency)} to have an active health_check`,
         );
       }
     }
@@ -1094,7 +1035,7 @@ function validateStackDependencies(
   const visit = (name: string, depth: number): boolean => {
     if (depth > DEPENDS_ON_MAX_DEPTH) {
       errors.push(
-        `depends_on: dependency chain exceeds maximum depth of ${DEPENDS_ON_MAX_DEPTH}`,
+        `manifest.depends_on: dependency chain exceeds maximum depth of ${DEPENDS_ON_MAX_DEPTH}`,
       );
       return false;
     }
@@ -1106,7 +1047,7 @@ function validateStackDependencies(
         const dependencyColor = color.get(dependency) ?? WHITE;
         if (dependencyColor === GRAY) {
           errors.push(
-            `depends_on: cycle detected involving service "${dependency}"`,
+            `manifest.depends_on: cycle detected involving service ${diagnosticValue(dependency)}`,
           );
           return false;
         }
@@ -1124,11 +1065,11 @@ function validateStackDependencies(
 }
 
 /**
- * Validates a parsed manifest object with the standalone validator generated
- * from the Fred schema at the exact gitlink used by E2E and a Go-compatible
- * semantic pass. Where the published schema is narrower than Fred's decoder,
- * the semantic pass is authoritative. Diagnostics are bounded before they can
- * enter an MCP error response or model context.
+ * Validates a parsed manifest object against Fred's Go decoding and semantic
+ * admission rules. The published schema remains a generated drift/test
+ * artifact, but is deliberately not authoritative at runtime because it is
+ * narrower than Fred's decoder. Diagnostics are bounded before they can enter
+ * an MCP error response or model context.
  */
 export function validateManifest(manifest: unknown): ManifestValidationResult {
   const errors = new BoundedValidationErrors();
@@ -1148,32 +1089,34 @@ export function validateManifest(manifest: unknown): ManifestValidationResult {
     // Stack manifest — only `services` is allowed at the top level.
     for (const key of Object.keys(decodedManifest)) {
       if (key !== 'services') {
-        errors.push(`${key}: unknown top-level field for stack manifest`);
+        errors.push(
+          `${propertyPath('manifest', key)}: unknown top-level field for stack manifest`,
+        );
       }
     }
     if (!isPlainObject(decodedManifest.services)) {
-      errors.push('services: must be a JSON object');
+      errors.push('manifest.services: must be a JSON object');
     } else {
       const serviceNames = Object.keys(decodedManifest.services);
       if (serviceNames.length === 0) {
-        errors.push('services: at least one service is required');
+        errors.push('manifest.services: at least one service is required');
       }
       for (const name of serviceNames) {
+        const servicePath = mapKeyPath('manifest.services', name);
         if (!validateServiceName(name)) {
           errors.push(
-            `services["${name}"]: must be a valid RFC 1123 DNS label (1-63 chars, lowercase alphanumeric + hyphens)`,
+            `${servicePath}: must be a valid RFC 1123 DNS label (1-63 chars, lowercase alphanumeric + hyphens)`,
           );
         }
         validateService(
           decodedManifest.services[name],
-          `services["${name}"]`,
+          servicePath,
           true,
           errors,
         );
       }
       validateStackDependencies(decodedManifest.services, errors);
     }
-    appendSchemaErrors(decodedManifest, errors);
     const reportedErrors = errors.reported();
     return {
       valid: reportedErrors.length === 0,
@@ -1183,8 +1126,7 @@ export function validateManifest(manifest: unknown): ManifestValidationResult {
   }
 
   // Single-service manifest.
-  validateService(decodedManifest, '', false, errors);
-  appendSchemaErrors(decodedManifest, errors);
+  validateService(decodedManifest, 'manifest', false, errors);
   const reportedErrors = errors.reported();
   return {
     valid: reportedErrors.length === 0,

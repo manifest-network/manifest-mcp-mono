@@ -3,6 +3,7 @@ import {
   ManifestMCPErrorCode,
 } from '@manifest-network/manifest-mcp-core';
 import { describe, expect, it } from 'vitest';
+import { metaHashHex } from '../manifest.js';
 import { buildManifestPreview } from './buildManifestPreview.js';
 
 describe('buildManifestPreview', () => {
@@ -31,6 +32,23 @@ describe('buildManifestPreview', () => {
           services: { web: { image: 'nginx' } },
         }),
       ).rejects.toMatchObject({ code: ManifestMCPErrorCode.INVALID_CONFIG });
+    });
+
+    it.each([
+      ['env', { env: { APP: 'web' } }],
+      ['init', { init: true }],
+      ['labels', { labels: { app: 'web' } }],
+      ['tmpfs', { tmpfs: ['/var/cache/app'] }],
+    ])('rejects services mixed with top-level %s', async (_name, fields) => {
+      await expect(
+        buildManifestPreview({
+          services: { web: { image: 'nginx' } },
+          ...fields,
+        }),
+      ).rejects.toMatchObject({
+        code: ManifestMCPErrorCode.INVALID_CONFIG,
+        message: expect.stringContaining('mutually exclusive'),
+      });
     });
 
     it('rejects empty services (hard structural failure per docstring)', async () => {
@@ -107,6 +125,19 @@ describe('buildManifestPreview', () => {
           db: expect.any(Object),
         },
       });
+      expect(result.manifest_json).toBe(
+        JSON.stringify({
+          services: {
+            web: { image: 'nginx', ports: { '80/tcp': {} } },
+            db: {
+              image: 'postgres:16',
+              ports: {},
+              env: { POSTGRES_PASSWORD: 'x' },
+              health_check: { test: ['CMD', 'pg_isready'] },
+            },
+          },
+        }),
+      );
     });
 
     it('flags invalid service names in validation result', async () => {
@@ -166,6 +197,46 @@ describe('buildManifestPreview', () => {
       });
       expect(result.format).toBe('single');
       expect(result.validation.valid).toBe(true);
+    });
+
+    it('preserves and hashes the exact raw JSON bytes', async () => {
+      const manifest = '{\n  "image": "redis:7"\n}\n';
+      const result = await buildManifestPreview({ manifest });
+      expect(result.manifest_json).toBe(manifest);
+      expect(result.meta_hash_hex).toBe(await metaHashHex(manifest));
+    });
+
+    it('returns a validation error for a Go-incompatible numeric spelling', async () => {
+      const manifest = '{"image":"nginx","stop_grace_period":1e9}';
+      const result = await buildManifestPreview({ manifest });
+      expect(result.manifest_json).toBe(manifest);
+      expect(result.validation.valid).toBe(false);
+      expect(result.validation.errors.join(' ')).toContain(
+        'integer JSON literals',
+      );
+    });
+
+    it('bounds a long Go-incompatible numeric spelling in preview output', async () => {
+      const manifest = `{"image":"nginx","stop_grace_period":1.${'0'.repeat(10_000)}}`;
+      const result = await buildManifestPreview({ manifest });
+      const numericError = result.validation.errors.find((error) =>
+        error.includes('integer JSON literals'),
+      );
+      expect(numericError).toContain('…');
+      expect(numericError?.length).toBeLessThan(240);
+    });
+
+    it("reports a candidate above Fred's 1 MiB request limit", async () => {
+      const result = await buildManifestPreview({
+        manifest: JSON.stringify({
+          image: 'nginx',
+          labels: { note: 'x'.repeat((1 << 20) + 1) },
+        }),
+      });
+      expect(result.validation.valid).toBe(false);
+      expect(result.validation.errors.join(' ')).toContain(
+        'maximum is 1048576',
+      );
     });
 
     it('throws on invalid JSON', async () => {

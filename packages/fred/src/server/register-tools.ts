@@ -49,6 +49,7 @@ import { restoreApp } from '../tools/restoreApp.js';
 import { projectReleases } from '../tools/sanitizeReleases.js';
 import { sanitizeRetentionFields } from '../tools/sanitizeRetention.js';
 import { updateApp } from '../tools/updateApp.js';
+import { MAX_UPDATE_MANIFEST_BYTES } from '../tools/validateManifestPayload.js';
 import { waitForAppReady } from '../tools/waitForAppReady.js';
 import { createProgressEmitter } from './progress.js';
 
@@ -560,7 +561,7 @@ export function registerTools(deps: RegisterToolsDeps): void {
     'build_manifest_preview',
     {
       description:
-        'Build a deployment manifest, validate it against the documented Fred rules, and compute the SHA-256 meta_hash that would be recorded on-chain. Use this BEFORE deploy_app to catch invalid manifests without paying for a lease. Two modes: raw `manifest` JSON string, or structured fields (image+port, or services for stacks).',
+        'Build a deployment manifest, validate it against the documented Fred rules, and compute its SHA-256 meta_hash. For validation.valid=true, manifest_json and the hash exactly match the corresponding deploy; an invalid structured preview preserves the rejected candidate for diagnosis, so its hash is not deployable. Use this BEFORE deploy_app to catch invalid manifests without paying for a lease. Two modes: raw `manifest` JSON string, or structured fields (image+port, or services for stacks).',
       inputSchema: {
         manifest: z
           .string()
@@ -599,22 +600,26 @@ export function registerTools(deps: RegisterToolsDeps): void {
           .record(z.string(), manifestServiceSchema('preview'))
           .optional()
           .describe(
-            'Multi-service stack. Mutually exclusive with image/port and manifest.',
+            'Multi-service stack. Mutually exclusive with manifest and every top-level single-service manifest field (image, port, env, command, args, user, tmpfs, health_check, stop_grace_period, init, expose, labels, depends_on).',
           ),
       },
       outputSchema: {
         manifest_json: z
           .string()
-          .describe('Canonical manifest JSON that would be uploaded'),
+          .describe(
+            'Exact raw JSON, canonical deploy JSON for valid structured input, or the preserved rejected candidate for invalid structured input',
+          ),
         manifest: z
           .looseObject({})
-          .describe('Parsed manifest object (same content as manifest_json)'),
+          .describe('Parsed object represented by manifest_json'),
         format: z
           .enum(['single', 'stack'])
           .describe('Detected manifest format'),
         meta_hash_hex: z
           .string()
-          .describe('SHA-256 of manifest_json, lowercase hex'),
+          .describe(
+            'SHA-256 of manifest_json, lowercase hex; a deploy meta_hash only when validation.valid is true',
+          ),
         validation: z.object({
           valid: z.boolean(),
           errors: z.array(z.string()),
@@ -734,7 +739,7 @@ export function registerTools(deps: RegisterToolsDeps): void {
           .record(z.string(), manifestServiceSchema('deploy'))
           .optional()
           .describe(
-            'Multi-service stack. Mutually exclusive with image/port. Keys are service names (RFC 1123 DNS labels).',
+            'Multi-service stack. Mutually exclusive with every top-level single-service manifest field. Keys are service names (RFC 1123 DNS labels).',
           ),
         gas_multiplier: gasMultiplierSchema(),
         custom_domain: z
@@ -943,7 +948,9 @@ export function registerTools(deps: RegisterToolsDeps): void {
           .describe('The lease UUID of the app to update'),
         manifest: z
           .string()
-          .describe('The full manifest JSON string to deploy'),
+          .describe(
+            `The full manifest JSON string to deploy. After any merge it must be at most ${MAX_UPDATE_MANIFEST_BYTES} UTF-8 bytes so its base64 envelope fits Fred's default 1 MiB request cap; integer fields must use integer JSON tokens, not decimal/exponent spellings.`,
+          ),
         existing_manifest: z
           .string()
           .optional()

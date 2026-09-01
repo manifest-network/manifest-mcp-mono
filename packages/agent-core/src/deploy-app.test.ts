@@ -5358,7 +5358,6 @@ describe('deployApp input = AppDeploySpec — loss-free broadcast (ENG-310)', ()
     expose: ['9090'],
     labels: { tier: 'web' },
     storage: '10Gi',
-    depends_on: { db: { condition: 'service_started' } },
     customDomain: 'app.example.com',
   };
   const STACK: AppDeploySpec = {
@@ -5380,6 +5379,7 @@ describe('deployApp input = AppDeploySpec — loss-free broadcast (ENG-310)', ()
         expose: ['9090'],
         labels: { tier: 'web' },
       },
+      db: { image: 'postgres:16' },
     },
   };
 

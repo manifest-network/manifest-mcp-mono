@@ -5,10 +5,16 @@ import {
 import {
   type BuildManifestOptions,
   buildManifest,
+  buildStackManifest,
   type ManifestFormat,
   metaHashHex,
   validateManifest,
 } from '../manifest.js';
+import {
+  displayJsonNumberLiteral,
+  findNonIntegerJsonNumberLiteral,
+  MAX_MANIFEST_BYTES,
+} from './validateManifestPayload.js';
 
 export interface ManifestPreviewServiceInput {
   readonly image: string;
@@ -43,7 +49,7 @@ export interface BuildManifestPreviewInput {
   readonly expose?: readonly string[];
   readonly labels?: Record<string, string>;
   readonly depends_on?: Record<string, { condition: string }>;
-  /** Stack manifest. Mutually exclusive with `image`/`port` and `manifest`. */
+  /** Stack manifest. Mutually exclusive with every top-level single-service field and `manifest`. */
   readonly services?: Record<string, ManifestPreviewServiceInput>;
 }
 
@@ -75,24 +81,51 @@ const STRUCTURED_FIELDS: readonly (keyof BuildManifestPreviewInput)[] = [
   'services',
 ];
 
+const SINGLE_SERVICE_STRUCTURED_FIELDS = STRUCTURED_FIELDS.filter(
+  (field) => field !== 'services',
+);
+
 function hasAnyStructuredField(input: BuildManifestPreviewInput): boolean {
   return STRUCTURED_FIELDS.some((k) => input[k] !== undefined);
+}
+
+function toBuildOptions(
+  service: ManifestPreviewServiceInput,
+): BuildManifestOptions {
+  return {
+    image: service.image,
+    ports: service.ports ?? {},
+    env: service.env,
+    command: service.command ? [...service.command] : undefined,
+    args: service.args ? [...service.args] : undefined,
+    user: service.user,
+    tmpfs: service.tmpfs ? [...service.tmpfs] : undefined,
+    health_check: service.health_check,
+    stop_grace_period: service.stop_grace_period,
+    init: service.init,
+    depends_on: service.depends_on,
+    expose: service.expose ? [...service.expose] : undefined,
+    labels: service.labels,
+  };
 }
 
 /**
  * Builds and validates a deployment manifest without touching the chain or
  * any provider. Use this before `deploy_app` to confirm the manifest is
- * accepted by the documented Fred rules and to compute the SHA-256
- * `meta_hash` that will be recorded on-chain.
+ * accepted by the documented Fred rules and, for a valid candidate, to
+ * compute the SHA-256 `meta_hash` the corresponding deploy will record.
  *
  * Two input modes:
  *   - Raw JSON: pass `manifest` (a JSON string).
  *   - Structured: pass `image`+`port` (single-service) or `services` (stack),
  *     mirroring `deploy_app`'s shape.
  *
- * The returned `manifest_json` is the exact byte sequence that would be
- * uploaded; `meta_hash_hex` is its SHA-256. Validation errors are returned
- * inside the result rather than thrown — the caller decides what to do.
+ * For raw JSON and valid structured input, the returned `manifest_json` is the
+ * exact byte sequence the corresponding deploy path uploads and
+ * `meta_hash_hex` is its SHA-256. Invalid structured input is preserved for an
+ * actionable preview; its hash identifies that rejected candidate and cannot
+ * be recorded on-chain. Validation errors are returned inside the result
+ * rather than thrown — the caller decides what to do.
  *
  * Hard structural failures (mutual-exclusion violations, invalid JSON in
  * `manifest`, missing required fields) DO throw, since there is no
@@ -102,6 +135,8 @@ export async function buildManifestPreview(
   input: BuildManifestPreviewInput,
 ): Promise<BuildManifestPreviewResult> {
   let manifestObj: Record<string, unknown>;
+  let exactManifestJson: string | undefined;
+  let nonIntegerLiteral: string | undefined;
 
   if (input.manifest !== undefined) {
     if (hasAnyStructuredField(input)) {
@@ -130,11 +165,16 @@ export async function buildManifestPreview(
       );
     }
     manifestObj = parsed as Record<string, unknown>;
+    exactManifestJson = input.manifest;
+    nonIntegerLiteral = findNonIntegerJsonNumberLiteral(input.manifest);
   } else if (input.services !== undefined) {
-    if (input.image !== undefined || input.port !== undefined) {
+    const mixedFields = SINGLE_SERVICE_STRUCTURED_FIELDS.filter(
+      (field) => input[field] !== undefined,
+    );
+    if (mixedFields.length > 0) {
       throw new ManifestMCPError(
         ManifestMCPErrorCode.INVALID_CONFIG,
-        'services is mutually exclusive with image/port',
+        `services is mutually exclusive with single-service fields: ${mixedFields.join(', ')}`,
       );
     }
     if (Object.keys(input.services).length === 0) {
@@ -188,13 +228,44 @@ export async function buildManifestPreview(
     );
   }
 
-  const manifestJson = JSON.stringify(manifestObj);
+  const semanticValidation = validateManifest(manifestObj);
+  const validationErrors = [...semanticValidation.errors];
+  if (nonIntegerLiteral !== undefined) {
+    validationErrors.push(
+      `manifest: numeric values must use integer JSON literals; Fred rejects decimal or exponent form ${JSON.stringify(displayJsonNumberLiteral(nonIntegerLiteral))}`,
+    );
+  }
+
+  // A valid structured stack follows the exact same canonical builder as
+  // deployApp (including default empty `ports` objects). Invalid candidates
+  // stay untouched so unsupported keys remain visible in the preview.
+  if (
+    input.services !== undefined &&
+    semanticValidation.valid &&
+    nonIntegerLiteral === undefined
+  ) {
+    manifestObj = buildStackManifest({
+      services: Object.fromEntries(
+        Object.entries(input.services).map(([name, service]) => [
+          name,
+          toBuildOptions(service),
+        ]),
+      ),
+    });
+  }
+
+  const manifestJson = exactManifestJson ?? JSON.stringify(manifestObj);
+  const manifestBytes = new TextEncoder().encode(manifestJson).length;
+  if (manifestBytes > MAX_MANIFEST_BYTES) {
+    validationErrors.push(
+      `manifest: is ${manifestBytes} bytes; the maximum is ${MAX_MANIFEST_BYTES}`,
+    );
+  }
   const hash = await metaHashHex(manifestJson);
-  const validation = validateManifest(manifestObj);
 
   // validateManifest returns null only when the value is not a JSON object,
   // which was rejected above. Keep the fallback solely for type narrowing.
-  const format: ManifestFormat = validation.format ?? 'single';
+  const format: ManifestFormat = semanticValidation.format ?? 'single';
 
   return {
     manifest_json: manifestJson,
@@ -202,8 +273,11 @@ export async function buildManifestPreview(
     format,
     meta_hash_hex: hash,
     validation: {
-      valid: validation.valid,
-      errors: validation.errors,
+      valid:
+        semanticValidation.valid &&
+        nonIntegerLiteral === undefined &&
+        manifestBytes <= MAX_MANIFEST_BYTES,
+      errors: validationErrors,
     },
   };
 }

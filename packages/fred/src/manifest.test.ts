@@ -534,6 +534,28 @@ describe('validateManifest', () => {
         expect(r.valid).toBe(ok);
       });
     }
+
+    it('preserves the diagnosis while bounding a long blocked name', () => {
+      const result = validateManifest({
+        image: 'nginx',
+        env: { [`LD_${'A'.repeat(400)}`]: 'x' },
+      });
+      expect(result.valid).toBe(false);
+      expect(result.errors).toHaveLength(1);
+      expect(result.errors[0]).toContain('blocked variable name');
+      expect(result.errors[0]).toContain('…');
+      expect([...result.errors[0]].length).toBeLessThanOrEqual(240);
+    });
+
+    it('escapes quotes and newlines in tenant-controlled diagnostic paths', () => {
+      const result = validateManifest({
+        image: 'nginx',
+        env: { 'a"b\nc': 1 },
+      });
+      expect(result.valid).toBe(false);
+      expect(result.errors[0]).toContain('a\\"b\\nc');
+      expect(result.errors[0]).not.toContain('\n');
+    });
   });
 
   describe('labels', () => {
@@ -576,7 +598,7 @@ describe('validateManifest', () => {
         labels: { app: 1 },
       });
       expect(result.valid).toBe(false);
-      expect(result.errors.join(' ')).toContain('labels.app');
+      expect(result.errors.join(' ')).toContain('labels["app"]');
     });
 
     it('accepts null label values because Go decodes them as empty strings', () => {
@@ -617,6 +639,18 @@ describe('validateManifest', () => {
       expect(r.errors.some((e) => e.includes('70000'))).toBe(true);
     });
 
+    it.each(['0/tcp', '80/tcp/extra'])(
+      'rejects malformed or out-of-range port key %s',
+      (key) => {
+        const result = validateManifest({
+          image: 'nginx',
+          ports: { [key]: {} },
+        });
+        expect(result.valid).toBe(false);
+        expect(result.errors.join(' ')).toContain('port 1-65535');
+      },
+    );
+
     it('accepts the maximum legal port 65535/tcp', () => {
       const r = validateManifest({
         image: 'nginx',
@@ -641,6 +675,15 @@ describe('validateManifest', () => {
           ports: { '80/tcp': {}, '443/tcp': { host_port: 0 } },
         }).valid,
       ).toBe(true);
+    });
+
+    it('rejects a negative host_port', () => {
+      const result = validateManifest({
+        image: 'nginx',
+        ports: { '80/tcp': { host_port: -1 } },
+      });
+      expect(result.valid).toBe(false);
+      expect(result.errors.join(' ')).toContain('host_port');
     });
 
     it('rejects ingress on UDP and more than one ingress TCP port', () => {
@@ -721,6 +764,17 @@ describe('validateManifest', () => {
       });
       expect(result.valid).toBe(false);
       expect(result.errors.join(' ')).toContain('duplicate normalized mount');
+    });
+
+    it('preserves the diagnosis while bounding a long sensitive path', () => {
+      const result = validateManifest({
+        image: 'nginx',
+        tmpfs: [`/proc/${'x'.repeat(400)}`],
+      });
+      expect(result.valid).toBe(false);
+      expect(result.errors[0]).toContain('resolves under sensitive path /proc');
+      expect(result.errors[0]).toContain('…');
+      expect([...result.errors[0]].length).toBeLessThanOrEqual(240);
     });
   });
 
@@ -881,7 +935,7 @@ describe('validateManifest', () => {
       });
       expect(result.valid).toBe(false);
       expect(result.errors).toEqual([
-        '.health_check.test: NONE accepts no further arguments',
+        'manifest.health_check.test: NONE accepts no further arguments',
       ]);
     });
 
@@ -969,6 +1023,23 @@ describe('validateManifest', () => {
           stop_grace_period: '120000.000000999993ms',
         }).valid,
       ).toBe(true);
+    });
+
+    it.each(['-1s', '-9223372036854775809ns', '9223372036854775808ns'])(
+      'rejects signed or int64-overflow duration %j',
+      (stop_grace_period) => {
+        const result = validateManifest({ image: 'nginx', stop_grace_period });
+        expect(result.valid).toBe(false);
+        expect(result.errors.join(' ')).toContain('stop_grace_period');
+      },
+    );
+  });
+
+  describe('expose', () => {
+    it.each(['0', '65536'])('rejects out-of-range exposed port %s', (port) => {
+      const result = validateManifest({ image: 'nginx', expose: [port] });
+      expect(result.valid).toBe(false);
+      expect(result.errors.join(' ')).toContain('port out of range');
     });
   });
 

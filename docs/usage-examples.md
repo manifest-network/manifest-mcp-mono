@@ -102,6 +102,14 @@ wait_for_app_ready({ lease_uuid: "..." })
 // → { state: "LEASE_STATE_ACTIVE", status: { ... endpoints: [...] } }
 ```
 
+Only use `meta_hash_hex` as the prospective on-chain hash when
+`validation.valid` is `true`. Raw JSON is preserved byte-for-byte; a valid
+structured stack is canonicalized exactly as `deploy_app` will upload it. An
+invalid structured candidate is intentionally preserved for diagnosis, so its
+hash cannot be deployed. Deploy rejects manifest JSON above **1 MiB**; update's
+base64 JSON envelope limits its raw manifest to **786,420 bytes** under the same
+default Fred request cap.
+
 If step 4 succeeds but a later step fails, the error returned by `deploy_app` includes the `lease_uuid` so you can either retry the upload or close the orphaned lease with `close_lease` (lease server).
 
 ## 6. Deploy with a custom domain

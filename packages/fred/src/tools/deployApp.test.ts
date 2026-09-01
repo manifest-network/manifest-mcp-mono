@@ -432,6 +432,35 @@ describe('deployApp', () => {
     });
   });
 
+  it.each([
+    ['env', { env: { APP: 'web' } }],
+    ['init', { init: true }],
+    ['labels', { labels: { app: 'web' } }],
+    ['tmpfs', { tmpfs: ['/var/cache/app'] }],
+  ])(
+    'throws when services is mixed with top-level %s',
+    async (_name, fields) => {
+      const qc = makeQueryClient();
+      const cm = makeMockClientManager({ queryClient: qc });
+
+      await expect(
+        deployApp(
+          await ctx(cm as any),
+          {
+            size: 'docker-micro',
+            services: { web: { image: 'nginx' } },
+            ...fields,
+          },
+          {},
+        ),
+      ).rejects.toMatchObject({
+        code: ManifestMCPErrorCode.INVALID_CONFIG,
+        message: expect.stringContaining('mutually exclusive'),
+      });
+      expect(mockCosmosTx).not.toHaveBeenCalled();
+    },
+  );
+
   it('throws when neither image nor services is provided', async () => {
     const qc = makeQueryClient();
     const cm = makeMockClientManager({ queryClient: qc });

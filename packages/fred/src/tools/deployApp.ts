@@ -27,6 +27,22 @@ export type { ServiceConfig };
 /** Data-only deploy spec for a high-level app deployment (spec §5.1). Public name kept for compatibility. */
 export type DeployAppInput = AppDeploySpec;
 
+const SINGLE_SERVICE_MANIFEST_FIELDS = [
+  'image',
+  'port',
+  'env',
+  'command',
+  'args',
+  'user',
+  'tmpfs',
+  'health_check',
+  'stop_grace_period',
+  'init',
+  'expose',
+  'labels',
+  'depends_on',
+] as const satisfies readonly (keyof AppDeploySpec)[];
+
 function skuSelectorFromInput(input: AppDeploySpec): SkuIntent {
   const skuUuid = input.skuUuid?.trim();
   const providerUuid = input.providerUuid?.trim();
@@ -62,9 +78,10 @@ function skuSelectorFromInput(input: AppDeploySpec): SkuIntent {
  * place, before the paid broadcast, and cannot be bypassed by choosing a
  * different entry point (ENG-274).
  *
- * `spec.image` and `spec.services` are mutually exclusive: `image` is the
- * single-container form (and then `port` is required), `services` the stack
- * form. Both raise `INVALID_CONFIG` when combined, omitted, or malformed.
+ * All top-level single-service manifest fields and `spec.services` are
+ * mutually exclusive: `image` is the single-container form (and then `port`
+ * is required), `services` the stack form. Contradictory, omitted, or
+ * malformed forms raise `INVALID_CONFIG`.
  *
  * Cancellation is honoured **before** the create-lease broadcast, so a call
  * aborted during SKU/provider resolution creates no lease and never fires
@@ -86,10 +103,15 @@ export async function deployApp(
   callOptions: DeployCallOptions = {},
 ): Promise<DeployAppResult> {
   // Validate mutually exclusive inputs
-  if (spec.image && spec.services) {
+  const mixedFields = spec.services
+    ? SINGLE_SERVICE_MANIFEST_FIELDS.filter(
+        (field) => spec[field] !== undefined,
+      )
+    : [];
+  if (mixedFields.length > 0) {
     throw new ManifestMCPError(
       ManifestMCPErrorCode.INVALID_CONFIG,
-      'image and services are mutually exclusive',
+      `services is mutually exclusive with single-service fields: ${mixedFields.join(', ')}`,
     );
   }
   if (!spec.image && !spec.services) {

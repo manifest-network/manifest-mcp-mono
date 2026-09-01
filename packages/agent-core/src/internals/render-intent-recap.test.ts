@@ -102,29 +102,31 @@ describe('renderIntentRecap', () => {
           web: {
             image: 'nginx:1.27',
             ports: {
-              '80': { ingress: true },
-              '9090': { ingress: false },
+              '80/tcp': { ingress: true },
+              '9090/tcp': { ingress: false },
             },
           },
         },
       } as unknown as DeploySpec;
       const out = renderIntentRecap({ spec, activeChain: 'testnet' });
       expect(out).toContain(
-        "  - web port 80: publicly reachable via the provider's HTTPS subdomain",
+        "  - web port 80/tcp: publicly reachable via the provider's HTTPS subdomain",
       );
       expect(out).toContain(
-        '  - web port 9090: internal only (cluster-private)',
+        '  - web port 9090/tcp: internal only (cluster-private)',
       );
     });
 
     it('defaults ingress=false when services-map config omits the flag', () => {
       const spec = {
         services: {
-          web: { image: 'nginx:1.27', ports: { '80': {} } },
+          web: { image: 'nginx:1.27', ports: { '80/tcp': {} } },
         },
       } as unknown as DeploySpec;
       const out = renderIntentRecap({ spec, activeChain: 'testnet' });
-      expect(out).toContain('  - web port 80: internal only (cluster-private)');
+      expect(out).toContain(
+        '  - web port 80/tcp: internal only (cluster-private)',
+      );
     });
 
     it('renders single-service `port` array as ingress=true entries', () => {

@@ -18,6 +18,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { FredAuthCtx } from '../ctx.js';
 import { ProviderApiError } from '../http/provider.js';
 import { updateApp } from './updateApp.js';
+import {
+  MAX_MANIFEST_BYTES,
+  MAX_UPDATE_MANIFEST_BYTES,
+} from './validateManifestPayload.js';
 
 const LEASE_UUID = '550e8400-e29b-41d4-a716-446655440000';
 const PROVIDER_URL = 'https://provider.example.com';
@@ -169,6 +173,26 @@ describe('updateApp', () => {
     expect(mockGetAuthToken).not.toHaveBeenCalled();
   });
 
+  it('rejects a decimal integer token before the update wire', async () => {
+    await expect(
+      updateApp(
+        makeCtx(activeQc()),
+        {
+          address: ADDR,
+          leaseUuid: LEASE_UUID,
+          manifest:
+            '{"image":"nginx","health_check":{"test":["CMD","true"],"retries":3.0}}',
+        },
+        { providerUrl: PROVIDER_URL, pollOptions: false },
+      ),
+    ).rejects.toMatchObject({
+      code: ManifestMCPErrorCode.INVALID_CONFIG,
+      message: expect.stringContaining('integer JSON literals'),
+    });
+    expect(wire.calls).toHaveLength(0);
+    expect(mockGetAuthToken).not.toHaveBeenCalled();
+  });
+
   it('rejects a fixed host port carried forward by merge before the update wire', async () => {
     await expect(
       updateApp(
@@ -218,7 +242,7 @@ describe('updateApp', () => {
   it('rejects an oversized final manifest before the update wire', async () => {
     const manifest = JSON.stringify({
       image: 'nginx',
-      env: { PAYLOAD: 'x'.repeat(256 * 1024) },
+      env: { PAYLOAD: 'x'.repeat(MAX_MANIFEST_BYTES + 1) },
     });
 
     await expect(
@@ -229,7 +253,27 @@ describe('updateApp', () => {
       ),
     ).rejects.toMatchObject({
       code: ManifestMCPErrorCode.INVALID_CONFIG,
-      message: expect.stringContaining('maximum is 262144'),
+      message: expect.stringContaining(`maximum is ${MAX_MANIFEST_BYTES}`),
+    });
+    expect(wire.calls).toHaveLength(0);
+    expect(mockGetAuthToken).not.toHaveBeenCalled();
+  });
+
+  it("rejects a manifest whose base64 update envelope exceeds Fred's cap", async () => {
+    const manifest = JSON.stringify({
+      image: 'nginx',
+      labels: { note: 'x'.repeat(MAX_UPDATE_MANIFEST_BYTES) },
+    });
+
+    await expect(
+      updateApp(
+        makeCtx(activeQc()),
+        { address: ADDR, leaseUuid: LEASE_UUID, manifest },
+        { providerUrl: PROVIDER_URL, pollOptions: false },
+      ),
+    ).rejects.toMatchObject({
+      code: ManifestMCPErrorCode.INVALID_CONFIG,
+      message: expect.stringContaining('base64 JSON encoding'),
     });
     expect(wire.calls).toHaveLength(0);
     expect(mockGetAuthToken).not.toHaveBeenCalled();

@@ -70,11 +70,21 @@ function sha256(bytes) {
   return createHash('sha256').update(bytes).digest('hex');
 }
 
-function fail(messages) {
+export function finish(
+  messages,
+  {
+    writeError = (message) => process.stderr.write(message),
+    setExitCode = (code) => {
+      process.exitCode = code;
+    },
+  } = {},
+) {
+  if (messages.length === 0) return true;
   for (const message of messages) {
-    process.stderr.write(`fred manifest schema: ${message}\n`);
+    writeError(`fred manifest schema: ${message}\n`);
   }
-  process.exitCode = 1;
+  setExitCode(1);
+  return false;
 }
 
 function readBytes(path, label, errors) {
@@ -194,9 +204,9 @@ function parsePlainIntegerDeclaration(code, goName, errors) {
     return undefined;
   }
   const expression = matches[0][1].trim();
-  if (!/^\d+$/.test(expression)) {
+  if (!/^(0|[1-9]\d*)$/.test(expression)) {
     errors.push(
-      `${goName} must be a plain decimal integer in ${limitsSourceRelative}; got ${JSON.stringify(expression)}`,
+      `${goName} must be a plain base-10 integer without a leading zero in ${limitsSourceRelative}; got ${JSON.stringify(expression)}`,
     );
     return undefined;
   }
@@ -220,7 +230,7 @@ const GO_DURATION_UNITS = {
 function parseGoDurationConstant(expression, label, errors) {
   const normalized = expression.replace(/\s+/g, '');
   const match = normalized.match(
-    /^(?:(\d+)\*)?time\.(Nanosecond|Microsecond|Millisecond|Second|Minute|Hour)(?:\*(\d+))?$/,
+    /^(?:(0|[1-9]\d*)\*)?time\.(Nanosecond|Microsecond|Millisecond|Second|Minute|Hour)(?:\*(0|[1-9]\d*))?$/,
   );
   if (!match || (match[1] !== undefined && match[3] !== undefined)) {
     errors.push(
@@ -270,20 +280,23 @@ function parseStopGraceLimits(code, errors) {
 
 export function parseGoLimits(source, errors) {
   const code = stripGoNonCode(source);
-  const declaredMaxNames = new Set(
-    [...code.matchAll(/^\s*(?:const\s+)?(Max[A-Z][A-Za-z0-9_]*)\s*=/gm)].map(
-      (match) => match[1],
-    ),
+  const declaredLimitNames = new Set(
+    [...code.matchAll(/^\s*(?:const\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=/gm)]
+      .map((match) => match[1])
+      .filter(
+        (name) =>
+          /^(?:Max|max)[A-Z]/.test(name) ||
+          /[a-z]Max[A-Z]/.test(name) ||
+          /(?:Limit|Depth)$/.test(name),
+      ),
   );
-  const knownMaxNames = new Set(
-    Object.values(GO_LIMITS).filter((name) => name.startsWith('Max')),
+  const knownLimitNames = new Set(Object.values(GO_LIMITS));
+  const unknownLimitNames = [...declaredLimitNames].filter(
+    (name) => !knownLimitNames.has(name),
   );
-  const unknownMaxNames = [...declaredMaxNames].filter(
-    (name) => !knownMaxNames.has(name),
-  );
-  if (unknownMaxNames.length > 0) {
+  if (unknownLimitNames.length > 0) {
     errors.push(
-      `untracked Fred Max* constants in ${limitsSourceRelative}: ${unknownMaxNames.join(', ')}`,
+      `untracked Fred limit-like constants in ${limitsSourceRelative}: ${unknownLimitNames.join(', ')}`,
     );
   }
 
@@ -301,7 +314,7 @@ export function parseGoLimits(source, errors) {
     : undefined;
 }
 
-function validateRecordedLimits(limits, errors) {
+export function validateRecordedLimits(limits, errors) {
   if (limits === null || typeof limits !== 'object' || Array.isArray(limits)) {
     errors.push('provenance limits must be an object');
     return undefined;
@@ -371,7 +384,7 @@ function generateValidator(schemaBytes, errors) {
   }
 }
 
-function validateSchemaGoAlignment(schemaBytes, limits, errors) {
+export function validateSchemaGoAlignment(schemaBytes, limits, errors) {
   let schema;
   try {
     schema = JSON.parse(schemaBytes.toString('utf8'));
@@ -407,7 +420,7 @@ function generateLimitsModule(limits) {
   );
 }
 
-function compareBytes(actualPath, expected, label, errors) {
+export function compareBytes(actualPath, expected, label, errors) {
   if (!existsSync(actualPath)) {
     errors.push(`${label} is missing; run npm run sync:fred-manifest-schema`);
     return;
@@ -473,7 +486,18 @@ function sync(indexedFredCommit, errors) {
   );
 }
 
-function check(indexedFredCommit, errors) {
+export function check(
+  indexedFredCommit,
+  errors,
+  {
+    readCheckedOutFredCommit = (targetErrors) =>
+      tryGit(
+        ['-C', resolve(repoRoot, 'submodules/fred'), 'rev-parse', 'HEAD'],
+        targetErrors,
+        'read the checked-out Fred commit',
+      ),
+  } = {},
+) {
   if (!existsSync(vendoredPath) || !existsSync(provenancePath)) {
     errors.push(
       'vendored schema or provenance is missing; run npm run sync:fred-manifest-schema',
@@ -543,11 +567,7 @@ function check(indexedFredCommit, errors) {
       );
       return;
     }
-    const checkedOutFredCommit = tryGit(
-      ['-C', resolve(repoRoot, 'submodules/fred'), 'rev-parse', 'HEAD'],
-      errors,
-      'read the checked-out Fred commit',
-    );
+    const checkedOutFredCommit = readCheckedOutFredCommit(errors);
     if (checkedOutFredCommit && checkedOutFredCommit !== indexedFredCommit) {
       errors.push(
         `Fred checkout ${checkedOutFredCommit} does not match gitlink ${indexedFredCommit}`,
@@ -603,7 +623,7 @@ export function main(argv = process.argv.slice(2)) {
       `unexpected sync failure: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
-  if (errors.length > 0) fail(errors);
+  return finish(errors);
 }
 
 if (
