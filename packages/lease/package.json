@@ -46,7 +46,7 @@
   ],
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.30.0",
-    "zod": "^4.3.6"
+    "zod": "^4.5.4"
   },
   "peerDependencies": {
     "@manifest-network/manifest-mcp-core": "^0.21.0"
