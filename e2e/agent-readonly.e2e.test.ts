@@ -8,15 +8,15 @@ import { MCPTestClient, parseToolErrorCode } from './helpers/mcp-client.js';
  * also proves these handlers stay usable by headless hosts.
  *
  * The diagnostic fixture is created directly on-chain and intentionally has
- * no deployment payload. With providerd running it may be rejected quickly;
- * without providerd it remains pending. Both are valid, queryable states for
- * the chain-only troubleshooter, and neither provisions a container.
+ * no deployment payload. With providerd running it may pass through active
+ * before being rejected; without providerd it remains pending. All are valid,
+ * queryable states for the chain-only troubleshooter, and none provisions a
+ * container.
  */
 
-const POA_ADMIN_ADDRESS =
-  'manifest1afk9zr2hn2jsac63h4hm60vl9z3e5u69gndzf7c99cqge3vzwjzsfmy9qj';
-const PWR_DENOM = `factory/${POA_ADMIN_ADDRESS}/upwr`;
 const UNCLAIMED_FQDN = `agent-unclaimed-${Date.now()}.e2e.test`;
+const CUSTOM_DOMAIN_SKIP_REASON =
+  'chain does not expose the manifest-ledger v2.1+ custom-domain API';
 const TERMINAL_STATES = [
   LeaseState.LEASE_STATE_CLOSED,
   LeaseState.LEASE_STATE_REJECTED,
@@ -38,7 +38,13 @@ describe('Agent read-only tools (live MCP transport)', () => {
   });
 
   afterAll(async () => {
-    await Promise.all([agentClient.close(), chainClient.close()]);
+    try {
+      if (leaseUuid !== undefined) {
+        await settleDiagnosticLease(leaseUuid);
+      }
+    } finally {
+      await Promise.all([agentClient.close(), chainClient.close()]);
+    }
   });
 
   async function queryLeaseState(uuid: string): Promise<LeaseState> {
@@ -52,12 +58,49 @@ describe('Agent read-only tools (live MCP transport)', () => {
     return result.result.lease.state;
   }
 
-  it('lookup_custom_domain_orchestrated returns null for an unclaimed FQDN without elicitation', async () => {
-    const result = await agentClient.callTool<{
-      action: 'lookup';
-      fqdn: string;
-      lease: { leaseUuid: string } | null;
-    }>('lookup_custom_domain_orchestrated', { fqdn: UNCLAIMED_FQDN });
+  async function settleDiagnosticLease(uuid: string): Promise<void> {
+    const state = await queryLeaseState(uuid);
+    if (!TERMINAL_STATES.includes(state)) {
+      const subcommand =
+        state === LeaseState.LEASE_STATE_ACTIVE
+          ? 'close-lease'
+          : 'cancel-lease';
+      try {
+        const result = await chainClient.callTool<{ code: number }>(
+          'cosmos_tx',
+          {
+            module: 'billing',
+            subcommand,
+            args: [uuid],
+            wait_for_confirmation: true,
+          },
+        );
+        expect(result.code).toBe(0);
+      } catch (err) {
+        // providerd may win the race and reject a PENDING lease between the
+        // state query and cancel broadcast. Accept only that terminal race.
+        expect(parseToolErrorCode(err)).toBe('TX_FAILED');
+        expect(TERMINAL_STATES).toContain(await queryLeaseState(uuid));
+      }
+    }
+  }
+
+  it('lookup_custom_domain_orchestrated returns null for an unclaimed FQDN without elicitation', async ({
+    skip,
+  }) => {
+    const result = await agentClient
+      .callTool<{
+        action: 'lookup';
+        fqdn: string;
+        lease: { leaseUuid: string } | null;
+      }>('lookup_custom_domain_orchestrated', { fqdn: UNCLAIMED_FQDN })
+      .catch((err: unknown) => {
+        const message = err instanceof Error ? err.message : String(err);
+        if (message.match(/unknown query path|unable to resolve type URL/i)) {
+          skip(CUSTOM_DOMAIN_SKIP_REASON);
+        }
+        throw err;
+      });
 
     expect(result).toEqual({
       action: 'lookup',
@@ -74,7 +117,13 @@ describe('Agent read-only tools (live MCP transport)', () => {
     expect(testAddress).toMatch(/^manifest1/);
 
     const skus = await chainClient.callTool<{
-      result: { skus: Array<{ uuid: string; name: string }> };
+      result: {
+        skus: Array<{
+          uuid: string;
+          name: string;
+          basePrice: { denom: string };
+        }>;
+      };
     }>('cosmos_query', { module: 'sku', subcommand: 'skus' });
     const micro = skus.result.skus.find((sku) => sku.name === 'docker-micro');
     expect(micro).toBeDefined();
@@ -93,7 +142,7 @@ describe('Agent read-only tools (live MCP transport)', () => {
     const funding = await chainClient.callTool<{ code: number }>('cosmos_tx', {
       module: 'billing',
       subcommand: 'fund-credit',
-      args: [testAddress, `5000000${PWR_DENOM}`],
+      args: [testAddress, `5000000${micro!.basePrice.denom}`],
       wait_for_confirmation: true,
     });
     expect(funding.code).toBe(0);
@@ -134,42 +183,9 @@ describe('Agent read-only tools (live MCP transport)', () => {
 
     expect(result.markdown).toContain(`# Lease diagnostic — ${leaseUuid}`);
     expect(result.markdown).toMatch(
-      /\*\*State:\*\* LEASE_STATE_(PENDING|REJECTED)/,
+      /\*\*State:\*\* LEASE_STATE_(PENDING|ACTIVE|REJECTED)/,
     );
     expect(result.markdown).toContain('## Items');
     expect(result.markdown).toContain('## Guidance');
-  });
-
-  it('cleanup: settles the diagnostic lease if it is still live', async ({
-    skip,
-  }) => {
-    const uuid = leaseUuid ?? skip('diagnostic lease was not created');
-
-    const state = await queryLeaseState(uuid);
-    if (TERMINAL_STATES.includes(state)) {
-      expect(TERMINAL_STATES).toContain(state);
-    } else {
-      const subcommand =
-        state === LeaseState.LEASE_STATE_ACTIVE
-          ? 'close-lease'
-          : 'cancel-lease';
-      try {
-        const result = await chainClient.callTool<{ code: number }>(
-          'cosmos_tx',
-          {
-            module: 'billing',
-            subcommand,
-            args: [uuid],
-            wait_for_confirmation: true,
-          },
-        );
-        expect(result.code).toBe(0);
-      } catch (err) {
-        // providerd may win the race and reject a PENDING lease between the
-        // state query and cancel broadcast. Accept only that terminal race.
-        expect(parseToolErrorCode(err)).toBe('TX_FAILED');
-        expect(TERMINAL_STATES).toContain(await queryLeaseState(uuid));
-      }
-    }
   });
 });

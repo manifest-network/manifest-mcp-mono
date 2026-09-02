@@ -83,13 +83,11 @@ export class MCPTestClient {
     // Build env carefully:
     //   1. Inherit only entries with defined string values from process.env
     //      (NodeJS.ProcessEnv values are typed `string | undefined`).
-    //   2. Explicitly delete the keys that any of our options can opt out
-    //      of (RPC, mnemonic, REST, faucet, converter address). Otherwise
-    //      a developer with one of these set in their shell would silently
-    //      override the test's intent — e.g. a stray COSMOS_RPC_URL would
-    //      defeat `disableRpc: true`, and a stray MANIFEST_FAUCET_URL
-    //      would make the chain server register `request_faucet` even
-    //      when the test wants the no-faucet branch.
+    //   2. Explicitly delete keys that change test-server behavior. Otherwise
+    //      a developer with one set in their shell could silently override the
+    //      test's intent — e.g. a stray COSMOS_RPC_URL would defeat
+    //      `disableRpc: true`, MANIFEST_FAUCET_URL would alter the tool list,
+    //      and agent data/config paths could replace live-chain reads.
     const env: Record<string, string> = {};
     for (const [k, v] of Object.entries(process.env)) {
       if (typeof v === 'string') env[k] = v;
@@ -103,6 +101,10 @@ export class MCPTestClient {
     delete env.MANIFEST_FAUCET_URL;
     delete env.MANIFEST_CONVERTER_ADDRESS;
     delete env.MANIFEST_KEY_PASSWORD;
+    delete env.MANIFEST_AGENT_FETCH_GUARDED;
+    delete env.MANIFEST_AGENT_DATA_DIR;
+    delete env.MANIFEST_CHAIN_DATA_FILE;
+    delete env.MANIFEST_AGENT_ELICIT_TIMEOUT_MS;
 
     // Silence the spawned server's logger by default. withErrorHandling
     // logs every tool error at error level; tests that exercise error
@@ -142,14 +144,13 @@ export class MCPTestClient {
       env.NODE_EXTRA_CA_CERTS = process.env.E2E_TLS_CERT_PATH;
     }
 
-    // Disable fred's default-ON SSRF guard for the spawned server. The e2e
-    // providerd runs on loopback (https://localhost:8080), which the guard
-    // correctly classifies as a blocked (loopback) range — so a guarded fetch
-    // refuses the lease-data upload ("fetch failed", cause: "SSRF blocked").
-    // e2e talks to a *trusted* local provider, so the guard is intentionally
-    // off here; its blocking behavior is unit-tested in core
-    // (internals/guarded-fetch.test.ts) and fred (server/fetch-gate.test.ts).
-    // Set unconditionally so a stray host-env value can't re-enable it. (ENG-268)
+    // Disable both servers' default-ON SSRF guards. The e2e providerd runs on
+    // loopback (https://localhost:8080), which the guards correctly block.
+    // E2E talks to that trusted local provider, so guarding is intentionally
+    // off here; blocking behavior is covered by focused unit tests. Set both
+    // unconditionally so host environment values cannot change test intent.
+    // (ENG-268)
+    env.MANIFEST_AGENT_FETCH_GUARDED = '0';
     env.MANIFEST_FRED_FETCH_GUARDED = '0';
     if (converterAddress) {
       env.MANIFEST_CONVERTER_ADDRESS = converterAddress;

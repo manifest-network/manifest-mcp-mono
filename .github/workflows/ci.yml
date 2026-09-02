@@ -19,7 +19,7 @@ jobs:
       # annotations + _meta.manifest row must fail before merge. This test does not
       # call the chain, so it needs no compose devnet or repository secrets. (ENG-670)
       - name: Gate the live MCP tool metadata matrix
-        run: npx vitest run e2e/tool-annotations.e2e.test.ts
+        run: npm run test:e2e:annotations
       # Sabotage-test the package guard, dry-run every publishable package, reject compiled
       # tests / nested runtime dependencies, and verify every bare import in shipped JS and
       # declarations is backed by a consumer-installed dependency. (ENG-667)

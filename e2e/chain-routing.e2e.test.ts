@@ -967,7 +967,7 @@ describe('Chain routing coverage', () => {
       }
     };
 
-    it('query: params (probe)', async () => {
+    it('query: params (probe)', async ({ skip }) => {
       try {
         const result = await client.callTool<{
           result: { params: unknown };
@@ -975,13 +975,11 @@ describe('Chain routing coverage', () => {
         expect(result.result.params).toBeDefined();
       } catch (err) {
         expectChainSide(err, ['QUERY_FAILED']);
-        console.warn(
-          `[chain-routing] distribution params probe rejected by chain: ${err}`,
-        );
+        skip('distribution module rejected the params query');
       }
     });
 
-    it('query: community-pool (probe)', async () => {
+    it('query: community-pool (probe)', async ({ skip }) => {
       try {
         const result = await client.callTool<{
           result: { pool: unknown };
@@ -992,13 +990,11 @@ describe('Chain routing coverage', () => {
         expect(result.result.pool).toBeDefined();
       } catch (err) {
         expectChainSide(err, ['QUERY_FAILED']);
-        console.warn(
-          `[chain-routing] distribution community-pool probe rejected by chain: ${err}`,
-        );
+        skip('distribution module rejected the community-pool query');
       }
     });
 
-    it('tx: fund-community-pool (probe)', async () => {
+    it('tx: fund-community-pool (probe)', async ({ skip }) => {
       try {
         const result = await client.callTool<{ code: number }>('cosmos_tx', {
           module: 'distribution',
@@ -1009,9 +1005,7 @@ describe('Chain routing coverage', () => {
         expect(result.code).toBe(0);
       } catch (err) {
         expectChainSide(err, ['TX_FAILED']);
-        console.warn(
-          `[chain-routing] distribution fund-community-pool probe rejected by chain: ${err}`,
-        );
+        skip('distribution module rejected the fund-community-pool tx');
       }
     });
   });

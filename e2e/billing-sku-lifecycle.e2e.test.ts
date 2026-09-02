@@ -1,3 +1,4 @@
+import { LeaseState } from '@manifest-network/manifest-mcp-core';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { MCPTestClient, parseToolErrorCode } from './helpers/mcp-client.js';
 
@@ -252,7 +253,9 @@ describe('Billing/SKU lifecycle', () => {
     expect(Array.isArray(result.result.amounts)).toBe(true);
   });
 
-  it('tx: billing acknowledge-lease (flow A) — provider self-acknowledges (probe)', async () => {
+  it('tx: billing acknowledge-lease (flow A) — provider self-acknowledges (probe)', async ({
+    skip,
+  }) => {
     try {
       const result = await client.callTool<{ code: number }>('cosmos_tx', {
         module: 'billing',
@@ -271,8 +274,8 @@ describe('Billing/SKU lifecycle', () => {
         throw err;
       }
       selfAckOk = false;
-      console.warn(
-        `[billing-sku-lifecycle] self-acknowledgement rejected by chain — close/withdraw paths will be skipped: ${err}`,
+      skip(
+        'provider self-acknowledgement was rejected; dependent close and withdraw tests cannot run',
       );
     }
   });
@@ -406,21 +409,28 @@ describe('Billing/SKU lifecycle', () => {
   // If self-ack was rejected upstream, flow A's lease was created but never
   // acknowledged/closed — it's still bound to the SKU. Cancel it before
   // deactivation. cancel-lease is tenant-only and works on any non-terminal
-  // lease, so it's a safe terminal action regardless of state. No-op when
-  // selfAckOk is true (close-lease already terminated the lease).
-  it('cleanup: cancel flow A lease if self-ack was rejected', async ({
-    skip,
-  }) => {
+  // lease, so it's a safe terminal action regardless of state. When self-ack
+  // succeeded, verify the earlier close left the lease terminal instead of
+  // reporting an inert cleanup test as skipped.
+  it('cleanup: flow A lease is terminal before SKU deactivation', async () => {
     if (selfAckOk) {
-      skip('flow A lease was already closed; fallback cleanup is not needed');
+      const result = await client.callTool<{
+        result: { lease: { state: LeaseState } };
+      }>('cosmos_query', {
+        module: 'billing',
+        subcommand: 'lease',
+        args: [activeLeaseUuid],
+      });
+      expect(result.result.lease.state).toBe(LeaseState.LEASE_STATE_CLOSED);
+    } else {
+      const result = await client.callTool<{ code: number }>('cosmos_tx', {
+        module: 'billing',
+        subcommand: 'cancel-lease',
+        args: [activeLeaseUuid],
+        wait_for_confirmation: true,
+      });
+      expect(result.code).toBe(0);
     }
-    const result = await client.callTool<{ code: number }>('cosmos_tx', {
-      module: 'billing',
-      subcommand: 'cancel-lease',
-      args: [activeLeaseUuid],
-      wait_for_confirmation: true,
-    });
-    expect(result.code).toBe(0);
   });
 
   // create-lease-for-tenant routes through the MsgCreateLeaseForTenant

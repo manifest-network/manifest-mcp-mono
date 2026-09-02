@@ -364,7 +364,7 @@ describe('Wasm tx lifecycle', () => {
   // routing reaches the wasm module: a successful 0-code tx OR a contract
   // error counts. A routing failure (e.g., handler crash) does not.
   // ==========================================================================
-  it('tx: migrate (probe — contract may not support it)', async () => {
+  it('tx: migrate (probe — contract may not support it)', async ({ skip }) => {
     try {
       const result = await client.callTool<{ code: number }>('cosmos_tx', {
         module: 'wasm',
@@ -391,8 +391,8 @@ describe('Wasm tx lifecycle', () => {
       ) {
         throw err;
       }
-      console.warn(
-        `[wasm-mutations] migrate probe rejected by contract (expected for v0.2.0 converter): ${msg}`,
+      skip(
+        'converter contract rejected migration because it has no compatible migrate handler',
       );
     }
   });

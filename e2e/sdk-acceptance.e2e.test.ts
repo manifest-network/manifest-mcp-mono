@@ -7,7 +7,7 @@ import {
 } from '@manifest-network/manifest-sdk';
 import { runAcceptanceFlow } from '@manifest-network/sdk-acceptance';
 import { Agent, fetch as undiciFetch } from 'undici';
-import { beforeAll, describe, it } from 'vitest';
+import { beforeAll, describe, it, type TestContext } from 'vitest';
 
 /**
  * SDK-direct acceptance — the single tracked P0a metric (ENG-309 / spec §9).
@@ -99,7 +99,16 @@ describe('SDK acceptance (compose-only, live chain)', () => {
     skipCustomDomain = !(await probeCustomDomainSupported(certTrustingFetch()));
   });
 
-  const run = async (variant: 'single' | 'stack') => {
+  const run = async (
+    variant: 'single' | 'stack',
+    annotate: TestContext['annotate'],
+  ) => {
+    if (skipCustomDomain) {
+      await annotate(
+        'Custom-domain step omitted: chain does not expose the manifest-ledger v2.1+ API.',
+        'warning',
+      );
+    }
     const walletProvider = new MnemonicWalletProvider(config, DEFAULT_MNEMONIC);
     await walletProvider.connect();
     try {
@@ -115,6 +124,14 @@ describe('SDK acceptance (compose-only, live chain)', () => {
     }
   };
 
-  it('single-service: deploy → … → stopApp', () => run('single'), 300_000);
-  it('stack-format lease: deploy → … → stopApp', () => run('stack'), 300_000);
+  it(
+    'single-service: deploy → … → stopApp',
+    ({ annotate }) => run('single', annotate),
+    300_000,
+  );
+  it(
+    'stack-format lease: deploy → … → stopApp',
+    ({ annotate }) => run('stack', annotate),
+    300_000,
+  );
 });

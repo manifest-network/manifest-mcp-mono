@@ -83,6 +83,27 @@ describe('Billing custom-domain', () => {
     return typeof value === 'string' && value !== '' ? value : undefined;
   }
 
+  async function expectLeaseTerminal(
+    uuid: string,
+    label = 'lease',
+  ): Promise<void> {
+    const result = await chainClient.callTool<{
+      result: { lease: { state: LeaseState } };
+    }>('cosmos_query', {
+      module: 'billing',
+      subcommand: 'lease',
+      args: [uuid],
+    });
+    expect(
+      [
+        LeaseState.LEASE_STATE_CLOSED,
+        LeaseState.LEASE_STATE_REJECTED,
+        LeaseState.LEASE_STATE_EXPIRED,
+      ],
+      `${label} cleanup must leave a terminal lease`,
+    ).toContain(result.result.lease.state);
+  }
+
   async function cleanupLeaseFromErrorDetails(
     details: unknown,
     label: string,
@@ -97,9 +118,7 @@ describe('Billing custom-domain', () => {
     } catch (cleanupErr) {
       const code = parseToolErrorCode(cleanupErr);
       if (code !== 'TX_FAILED') throw cleanupErr;
-      console.warn(
-        `[billing-custom-domain] ${label} orphaned-lease cleanup rejected (already terminal?): ${cleanupErr}`,
-      );
+      await expectLeaseTerminal(orphanedLeaseUuid, label);
     }
 
     return orphanedLeaseUuid;
@@ -448,9 +467,7 @@ describe('Billing custom-domain', () => {
       if (code !== 'TX_FAILED') {
         throw err;
       }
-      console.warn(
-        `[billing-custom-domain] close_lease rejected (already terminal?): ${err}`,
-      );
+      await expectLeaseTerminal(leaseUuid);
     }
   });
 
@@ -561,9 +578,7 @@ describe('Billing custom-domain', () => {
       } catch (err) {
         const code = parseToolErrorCode(err);
         if (code !== 'TX_FAILED') throw err;
-        console.warn(
-          `[billing-custom-domain] combined close_lease rejected (already terminal?): ${err}`,
-        );
+        await expectLeaseTerminal(combinedLeaseUuid);
       }
     });
 

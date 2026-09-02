@@ -24,12 +24,18 @@ import { MCPTestClient } from './helpers/mcp-client.js';
 // (`expect.any(String)`).
 interface ExpectedAnnotations {
   readOnlyHint: boolean;
-  destructiveHint?: boolean; // only asserted for mutating tools
+  destructiveHint?: boolean;
   idempotentHint: boolean;
   openWorldHint: boolean;
   broadcasts: boolean;
   estimable: boolean;
 }
+
+// Syntactically valid zero address used only when no compose-provided
+// converter exists. Tool registration validates presence, but performs no
+// contract query; the dedicated metadata config deliberately has no devnet.
+const METADATA_ONLY_CONVERTER_ADDRESS =
+  'manifest1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqjpzgn4';
 
 const CHAIN_MATRIX: Record<string, ExpectedAnnotations> = {
   get_account_info: {
@@ -334,12 +340,10 @@ function assertToolMatrix(
   expect(tool.annotations?.readOnlyHint, `${tool.name} readOnlyHint`).toBe(
     expected.readOnlyHint,
   );
-  if (expected.destructiveHint !== undefined) {
-    expect(
-      tool.annotations?.destructiveHint,
-      `${tool.name} destructiveHint`,
-    ).toBe(expected.destructiveHint);
-  }
+  expect(
+    tool.annotations?.destructiveHint,
+    `${tool.name} destructiveHint`,
+  ).toBe(expected.destructiveHint);
   expect(tool.annotations?.idempotentHint, `${tool.name} idempotentHint`).toBe(
     expected.idempotentHint,
   );
@@ -463,11 +467,12 @@ describe('Tool annotations + _meta.manifest (live MCP transport)', () => {
     beforeAll(async () => {
       await client.connect({
         serverEntry: 'packages/node/dist/cosmwasm.js',
-        // Registration does not query the contract. Supplying a deterministic
-        // placeholder keeps this PR gate independent from global-setup's live
-        // compose-only converter address extraction.
+        // Prefer global-setup's live contract in the full e2e suite. The
+        // metadata-only PR gate has no devnet, so it falls back to a valid
+        // zero address; registration does not query the contract.
         converterAddress:
-          'manifest1afk9zr2hn2jsac63h4hm60vl9z3e5u69gndzf7c99cqge3vzwjzsfmy9qj',
+          process.env.MANIFEST_CONVERTER_ADDRESS ??
+          METADATA_ONLY_CONVERTER_ADDRESS,
       });
     });
 
