@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { PWR_DENOM } from './helpers/devnet-constants.js';
 import { MCPTestClient, parseToolErrorCode } from './helpers/mcp-client.js';
 
 /**
@@ -25,9 +26,6 @@ import { MCPTestClient, parseToolErrorCode } from './helpers/mcp-client.js';
  */
 
 const PROVIDER_ADDRESS = 'manifest1hj5fveer5cjtn4wd6wstzugjfdxzl0xp8ws9ct';
-const POA_ADMIN_ADDRESS =
-  'manifest1afk9zr2hn2jsac63h4hm60vl9z3e5u69gndzf7c99cqge3vzwjzsfmy9qj';
-const PWR_DENOM = `factory/${POA_ADMIN_ADDRESS}/upwr`;
 
 describe('Wasm tx lifecycle', () => {
   const client = new MCPTestClient();
@@ -364,7 +362,7 @@ describe('Wasm tx lifecycle', () => {
   // routing reaches the wasm module: a successful 0-code tx OR a contract
   // error counts. A routing failure (e.g., handler crash) does not.
   // ==========================================================================
-  it('tx: migrate (probe — contract may not support it)', async () => {
+  it('tx: migrate (probe — contract may not support it)', async ({ skip }) => {
     try {
       const result = await client.callTool<{ code: number }>('cosmos_tx', {
         module: 'wasm',
@@ -391,8 +389,8 @@ describe('Wasm tx lifecycle', () => {
       ) {
         throw err;
       }
-      console.warn(
-        `[wasm-mutations] migrate probe rejected by contract (expected for v0.2.0 converter): ${msg}`,
+      skip(
+        'converter contract rejected migration because it has no compatible migrate handler',
       );
     }
   });

@@ -22,6 +22,7 @@
     "check:packages": "node --test scripts/check-packages.test.mjs && node scripts/check-packages.mjs",
     "pretest:e2e": "npm run build -w @manifest-network/sdk-acceptance",
     "test:e2e": "vitest run --config e2e/vitest.config.ts",
+    "test:e2e:annotations": "vitest run --config e2e/vitest.annotations.config.mjs",
     "size": "size-limit",
     "release:version": "node scripts/version.mjs"
   },

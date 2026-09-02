@@ -11,7 +11,7 @@ import { MCPTestClient } from './helpers/mcp-client.js';
  * here too.
  *
  * The expected matrix below mirrors the one in:
- *   packages/{chain,lease,fred,cosmwasm}/src/server.test.ts
+ *   packages/{chain,lease,fred,cosmwasm,agent}/src/server.test.ts
  * Keep both in sync — a downstream-visible change requires a coordinated
  * plugin update and updates to *both* test files.
  */
@@ -20,16 +20,22 @@ import { MCPTestClient } from './helpers/mcp-client.js';
 // tweaked for clarity without contract impact). The matrix below pins
 // only the flag-shaped fields — `title` is asserted to exist and be a
 // non-empty string in `assertToolMatrix`, mirroring the unit-test
-// contract in packages/{chain,lease,fred,cosmwasm}/src/server.test.ts
+// contract in packages/{chain,lease,fred,cosmwasm,agent}/src/server.test.ts
 // (`expect.any(String)`).
 interface ExpectedAnnotations {
   readOnlyHint: boolean;
-  destructiveHint?: boolean; // only asserted for mutating tools
+  destructiveHint?: boolean;
   idempotentHint: boolean;
   openWorldHint: boolean;
   broadcasts: boolean;
   estimable: boolean;
 }
+
+// Syntactically valid zero address used only when no compose-provided
+// converter exists. Tool registration validates presence, but performs no
+// contract query; the dedicated metadata config deliberately has no devnet.
+const METADATA_ONLY_CONVERTER_ADDRESS =
+  'manifest1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqjpzgn4';
 
 const CHAIN_MATRIX: Record<string, ExpectedAnnotations> = {
   get_account_info: {
@@ -258,6 +264,47 @@ const COSMWASM_MATRIX: Record<string, ExpectedAnnotations> = {
   },
 };
 
+const AGENT_MATRIX: Record<string, ExpectedAnnotations> = {
+  deploy_app_orchestrated: {
+    readOnlyHint: false,
+    destructiveHint: false,
+    idempotentHint: false,
+    openWorldHint: true,
+    broadcasts: true,
+    estimable: false,
+  },
+  manage_domain_orchestrated: {
+    readOnlyHint: false,
+    destructiveHint: false,
+    idempotentHint: true,
+    openWorldHint: true,
+    broadcasts: true,
+    estimable: false,
+  },
+  lookup_custom_domain_orchestrated: {
+    readOnlyHint: true,
+    idempotentHint: true,
+    openWorldHint: true,
+    broadcasts: false,
+    estimable: false,
+  },
+  troubleshoot_deployment_orchestrated: {
+    readOnlyHint: true,
+    idempotentHint: true,
+    openWorldHint: true,
+    broadcasts: false,
+    estimable: false,
+  },
+  close_lease_orchestrated: {
+    readOnlyHint: false,
+    destructiveHint: true,
+    idempotentHint: true,
+    openWorldHint: true,
+    broadcasts: true,
+    estimable: false,
+  },
+};
+
 interface ToolDescriptor {
   name: string;
   annotations?: {
@@ -293,12 +340,10 @@ function assertToolMatrix(
   expect(tool.annotations?.readOnlyHint, `${tool.name} readOnlyHint`).toBe(
     expected.readOnlyHint,
   );
-  if (expected.destructiveHint !== undefined) {
-    expect(
-      tool.annotations?.destructiveHint,
-      `${tool.name} destructiveHint`,
-    ).toBe(expected.destructiveHint);
-  }
+  expect(
+    tool.annotations?.destructiveHint,
+    `${tool.name} destructiveHint`,
+  ).toBe(expected.destructiveHint);
   expect(tool.annotations?.idempotentHint, `${tool.name} idempotentHint`).toBe(
     expected.idempotentHint,
   );
@@ -420,7 +465,15 @@ describe('Tool annotations + _meta.manifest (live MCP transport)', () => {
     const client = new MCPTestClient();
 
     beforeAll(async () => {
-      await client.connect({ serverEntry: 'packages/node/dist/cosmwasm.js' });
+      await client.connect({
+        serverEntry: 'packages/node/dist/cosmwasm.js',
+        // Prefer global-setup's live contract in the full e2e suite. The
+        // metadata-only PR gate has no devnet, so it falls back to a valid
+        // zero address; registration does not query the contract.
+        converterAddress:
+          process.env.MANIFEST_CONVERTER_ADDRESS ??
+          METADATA_ONLY_CONVERTER_ADDRESS,
+      });
     });
 
     afterAll(async () => {
@@ -432,6 +485,28 @@ describe('Tool annotations + _meta.manifest (live MCP transport)', () => {
       expect(tools).toHaveLength(2);
       for (const tool of tools) {
         const expected = COSMWASM_MATRIX[tool.name];
+        expect(expected, `unexpected tool ${tool.name}`).toBeDefined();
+        assertToolMatrix(tool, expected);
+      }
+    });
+  });
+
+  describe('agent', () => {
+    const client = new MCPTestClient();
+
+    beforeAll(async () => {
+      await client.connect({ serverEntry: 'packages/node/dist/agent.js' });
+    });
+
+    afterAll(async () => {
+      await client.close();
+    });
+
+    it('every agent tool matches the annotation matrix', async () => {
+      const tools = await client.listToolsRaw();
+      expect(tools).toHaveLength(5);
+      for (const tool of tools) {
+        const expected = AGENT_MATRIX[tool.name];
         expect(expected, `unexpected tool ${tool.name}`).toBeDefined();
         assertToolMatrix(tool, expected);
       }

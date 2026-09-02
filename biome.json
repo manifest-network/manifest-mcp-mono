@@ -11,6 +11,7 @@
       "packages/**",
       "examples/**",
       "e2e/**/*.ts",
+      "e2e/vitest.annotations.config.mjs",
       "scripts/check-packages.mjs",
       "scripts/check-packages.test.mjs",
       "scripts/ensure-e2e-typecheck-build.mjs",

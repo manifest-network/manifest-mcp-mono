@@ -1,4 +1,6 @@
+import { LeaseState } from '@manifest-network/manifest-mcp-core';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { PWR_DENOM } from './helpers/devnet-constants.js';
 import { MCPTestClient, parseToolErrorCode } from './helpers/mcp-client.js';
 
 /**
@@ -11,7 +13,7 @@ import { MCPTestClient, parseToolErrorCode } from './helpers/mcp-client.js';
  * test wallet can register itself as a provider. The test then *attempts*
  * to self-acknowledge its own leases; if the chain rejects this (e.g. a
  * future keeper version forbids tenant=provider), the close-lease and
- * withdraw flows skip with a console.warn while flows B (reject) and C
+ * withdraw flows are reported as skipped while flows B (reject) and C
  * (cancel) remain valid as standalone routing-coverage tests.
  * ADDR1's provider (registered by init_billing.sh) is left untouched —
  * the lifecycle test continues to use it for deploy_app.
@@ -42,10 +44,6 @@ import { MCPTestClient, parseToolErrorCode } from './helpers/mcp-client.js';
  * Mutations that *can* be made re-runnable use a timestamp suffix —
  * see `SKU_NAME` below.
  */
-
-const POA_ADMIN_ADDRESS =
-  'manifest1afk9zr2hn2jsac63h4hm60vl9z3e5u69gndzf7c99cqge3vzwjzsfmy9qj';
-const PWR_DENOM = `factory/${POA_ADMIN_ADDRESS}/upwr`;
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -252,7 +250,9 @@ describe('Billing/SKU lifecycle', () => {
     expect(Array.isArray(result.result.amounts)).toBe(true);
   });
 
-  it('tx: billing acknowledge-lease (flow A) — provider self-acknowledges (probe)', async () => {
+  it('tx: billing acknowledge-lease (flow A) — provider self-acknowledges (probe)', async ({
+    skip,
+  }) => {
     try {
       const result = await client.callTool<{ code: number }>('cosmos_tx', {
         module: 'billing',
@@ -271,18 +271,17 @@ describe('Billing/SKU lifecycle', () => {
         throw err;
       }
       selfAckOk = false;
-      console.warn(
-        `[billing-sku-lifecycle] self-acknowledgement rejected by chain — close/withdraw paths will be skipped: ${err}`,
+      skip(
+        'provider self-acknowledgement was rejected; dependent close and withdraw tests cannot run',
       );
     }
   });
 
-  it('tx: billing withdraw (flow A) — provider claims accrued earnings', async () => {
+  it('tx: billing withdraw (flow A) — provider claims accrued earnings', async ({
+    skip,
+  }) => {
     if (!selfAckOk) {
-      console.warn(
-        '[billing-sku-lifecycle] skipping withdraw — self-ack failed',
-      );
-      return;
+      skip('provider self-acknowledgement was rejected by the chain');
     }
     // Wait a couple of seconds to accrue earnings (1 upwr/sec at this rate).
     await sleep(2_000);
@@ -296,12 +295,11 @@ describe('Billing/SKU lifecycle', () => {
     expect(result.code).toBe(0);
   });
 
-  it('tx: billing close-lease (flow A) — closes the active lease', async () => {
+  it('tx: billing close-lease (flow A) — closes the active lease', async ({
+    skip,
+  }) => {
     if (!selfAckOk) {
-      console.warn(
-        '[billing-sku-lifecycle] skipping close-lease — self-ack failed',
-      );
-      return;
+      skip('provider self-acknowledgement was rejected by the chain');
     }
     const result = await client.callTool<{ code: number }>('cosmos_tx', {
       module: 'billing',
@@ -408,19 +406,28 @@ describe('Billing/SKU lifecycle', () => {
   // If self-ack was rejected upstream, flow A's lease was created but never
   // acknowledged/closed — it's still bound to the SKU. Cancel it before
   // deactivation. cancel-lease is tenant-only and works on any non-terminal
-  // lease, so it's a safe terminal action regardless of state. No-op when
-  // selfAckOk is true (close-lease already terminated the lease).
-  it('cleanup: cancel flow A lease if self-ack was rejected', async () => {
+  // lease, so it's a safe terminal action regardless of state. When self-ack
+  // succeeded, verify the earlier close left the lease terminal instead of
+  // reporting an inert cleanup test as skipped.
+  it('cleanup: flow A lease is terminal before SKU deactivation', async () => {
     if (selfAckOk) {
-      return;
+      const result = await client.callTool<{
+        result: { lease: { state: LeaseState } };
+      }>('cosmos_query', {
+        module: 'billing',
+        subcommand: 'lease',
+        args: [activeLeaseUuid],
+      });
+      expect(result.result.lease.state).toBe(LeaseState.LEASE_STATE_CLOSED);
+    } else {
+      const result = await client.callTool<{ code: number }>('cosmos_tx', {
+        module: 'billing',
+        subcommand: 'cancel-lease',
+        args: [activeLeaseUuid],
+        wait_for_confirmation: true,
+      });
+      expect(result.code).toBe(0);
     }
-    const result = await client.callTool<{ code: number }>('cosmos_tx', {
-      module: 'billing',
-      subcommand: 'cancel-lease',
-      args: [activeLeaseUuid],
-      wait_for_confirmation: true,
-    });
-    expect(result.code).toBe(0);
   });
 
   // create-lease-for-tenant routes through the MsgCreateLeaseForTenant
@@ -468,8 +475,12 @@ describe('Billing/SKU lifecycle', () => {
     tenantLeaseUuid = newLease!.uuid;
   });
 
-  it('cleanup: cancel the create-lease-for-tenant probe lease', async () => {
-    if (!tenantLeaseUuid) return;
+  it('cleanup: cancel the create-lease-for-tenant probe lease', async ({
+    skip,
+  }) => {
+    if (!tenantLeaseUuid) {
+      skip('create-lease-for-tenant did not produce a lease to clean up');
+    }
     const result = await client.callTool<{ code: number }>('cosmos_tx', {
       module: 'billing',
       subcommand: 'cancel-lease',

@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { POA_ADMIN_ADDRESS, PWR_DENOM } from './helpers/devnet-constants.js';
 import { MCPTestClient, parseToolErrorCode } from './helpers/mcp-client.js';
 
 /**
@@ -30,14 +31,6 @@ import { MCPTestClient, parseToolErrorCode } from './helpers/mcp-client.js';
 // init_billing.sh. Used as a recipient for multi-send and as the creator
 // argument for sku/wasm queries that need a known account.
 const PROVIDER_ADDRESS = 'manifest1hj5fveer5cjtn4wd6wstzugjfdxzl0xp8ws9ct';
-
-// POA admin group-policy address. Has no signing key — we only use it as a
-// query target (e.g., as the admin in tokenfactory denoms-from-admin).
-const POA_ADMIN_ADDRESS =
-  'manifest1afk9zr2hn2jsac63h4hm60vl9z3e5u69gndzf7c99cqge3vzwjzsfmy9qj';
-
-// PWR denom (tokenfactory, owned by POA admin). Created in genesis.
-const PWR_DENOM = `factory/${POA_ADMIN_ADDRESS}/upwr`;
 
 describe('Chain routing coverage', () => {
   const client = new MCPTestClient();
@@ -313,7 +306,7 @@ describe('Chain routing coverage', () => {
   // poa — queries (admin txs are out of scope)
   // ==========================================================================
   describe('poa queries', () => {
-    it('consensus-power for the genesis validator', async () => {
+    it('consensus-power for the genesis validator', async ({ skip }) => {
       // The chain has exactly one validator created from the provider key
       // via `genesis gentx`. We discover its valoper via staking validators.
       // If staking is fully disabled and returns empty, skip the assertion
@@ -333,10 +326,9 @@ describe('Chain routing coverage', () => {
       }
 
       if (!valoper) {
-        console.warn(
-          '[chain-routing] No valoper available for poa consensus-power; skipping assertion.',
+        skip(
+          'no validator operator address is available for poa consensus-power',
         );
-        return;
       }
 
       const result = await client.callTool<{
@@ -579,12 +571,9 @@ describe('Chain routing coverage', () => {
       expect(Array.isArray(result.result.leases)).toBe(true);
     });
 
-    it('leases-by-provider', async () => {
+    it('leases-by-provider', async ({ skip }) => {
       if (!providerUuid) {
-        console.warn(
-          '[chain-routing] No providerUuid — skipping leases-by-provider',
-        );
-        return;
+        skip('provider fixture was not discovered for leases-by-provider');
       }
       const result = await client.callTool<{
         result: { leases: unknown[] };
@@ -596,10 +585,9 @@ describe('Chain routing coverage', () => {
       expect(Array.isArray(result.result.leases)).toBe(true);
     });
 
-    it('leases-by-sku', async () => {
+    it('leases-by-sku', async ({ skip }) => {
       if (!skuUuid) {
-        console.warn('[chain-routing] No skuUuid — skipping leases-by-sku');
-        return;
+        skip('SKU fixture was not discovered for leases-by-sku');
       }
       const result = await client.callTool<{
         result: { leases: unknown[] };
@@ -654,12 +642,9 @@ describe('Chain routing coverage', () => {
       expect(result.result).toBeDefined();
     });
 
-    it('provider-withdrawable', async () => {
+    it('provider-withdrawable', async ({ skip }) => {
       if (!providerUuid) {
-        console.warn(
-          '[chain-routing] No providerUuid — skipping provider-withdrawable',
-        );
-        return;
+        skip('provider fixture was not discovered for provider-withdrawable');
       }
       const result = await client.callTool<{ result: unknown }>(
         'cosmos_query',
@@ -692,10 +677,9 @@ describe('Chain routing coverage', () => {
       expect(result.result.providers.length).toBeGreaterThan(0);
     });
 
-    it('provider', async () => {
+    it('provider', async ({ skip }) => {
       if (!providerUuid) {
-        console.warn('[chain-routing] No providerUuid — skipping provider');
-        return;
+        skip('provider fixture was not discovered for provider query');
       }
       const result = await client.callTool<{
         result: { provider: { uuid: string } };
@@ -714,10 +698,9 @@ describe('Chain routing coverage', () => {
       expect(result.result.skus.length).toBeGreaterThan(0);
     });
 
-    it('sku', async () => {
+    it('sku', async ({ skip }) => {
       if (!skuUuid) {
-        console.warn('[chain-routing] No skuUuid — skipping sku');
-        return;
+        skip('SKU fixture was not discovered for SKU query');
       }
       const result = await client.callTool<{
         result: { sku: { uuid: string } };
@@ -729,12 +712,9 @@ describe('Chain routing coverage', () => {
       expect(result.result.sku.uuid).toBe(skuUuid);
     });
 
-    it('skus-by-provider', async () => {
+    it('skus-by-provider', async ({ skip }) => {
       if (!providerUuid) {
-        console.warn(
-          '[chain-routing] No providerUuid — skipping skus-by-provider',
-        );
-        return;
+        skip('provider fixture was not discovered for skus-by-provider');
       }
       const result = await client.callTool<{
         result: { skus: Array<{ uuid: string }> };
@@ -980,7 +960,7 @@ describe('Chain routing coverage', () => {
       }
     };
 
-    it('query: params (probe)', async () => {
+    it('query: params (probe)', async ({ skip }) => {
       try {
         const result = await client.callTool<{
           result: { params: unknown };
@@ -988,13 +968,11 @@ describe('Chain routing coverage', () => {
         expect(result.result.params).toBeDefined();
       } catch (err) {
         expectChainSide(err, ['QUERY_FAILED']);
-        console.warn(
-          `[chain-routing] distribution params probe rejected by chain: ${err}`,
-        );
+        skip('distribution module rejected the params query');
       }
     });
 
-    it('query: community-pool (probe)', async () => {
+    it('query: community-pool (probe)', async ({ skip }) => {
       try {
         const result = await client.callTool<{
           result: { pool: unknown };
@@ -1005,13 +983,11 @@ describe('Chain routing coverage', () => {
         expect(result.result.pool).toBeDefined();
       } catch (err) {
         expectChainSide(err, ['QUERY_FAILED']);
-        console.warn(
-          `[chain-routing] distribution community-pool probe rejected by chain: ${err}`,
-        );
+        skip('distribution module rejected the community-pool query');
       }
     });
 
-    it('tx: fund-community-pool (probe)', async () => {
+    it('tx: fund-community-pool (probe)', async ({ skip }) => {
       try {
         const result = await client.callTool<{ code: number }>('cosmos_tx', {
           module: 'distribution',
@@ -1022,9 +998,7 @@ describe('Chain routing coverage', () => {
         expect(result.code).toBe(0);
       } catch (err) {
         expectChainSide(err, ['TX_FAILED']);
-        console.warn(
-          `[chain-routing] distribution fund-community-pool probe rejected by chain: ${err}`,
-        );
+        skip('distribution module rejected the fund-community-pool tx');
       }
     });
   });

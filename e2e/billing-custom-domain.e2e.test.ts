@@ -1,5 +1,12 @@
 import { LeaseState } from '@manifest-network/manifest-mcp-core';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import {
+  afterAll,
+  beforeAll,
+  describe,
+  expect,
+  it,
+  type TestContext,
+} from 'vitest';
 import { MCPTestClient, parseToolErrorCode } from './helpers/mcp-client.js';
 
 /**
@@ -41,6 +48,9 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 const RUN_TAG = `${Date.now()}`;
 
+const CUSTOM_DOMAIN_SKIP_REASON =
+  'chain does not expose the manifest-ledger v2.1+ custom-domain API';
+
 describe('Billing custom-domain', () => {
   const leaseClient = new MCPTestClient();
   const chainClient = new MCPTestClient();
@@ -59,13 +69,39 @@ describe('Billing custom-domain', () => {
   // for `MsgSetItemCustomDomain` and `Query/LeaseByCustomDomain`). Older
   // devnets reject the message type as "unable to resolve type URL" and
   // the query path as "unknown query path". Probe once in beforeAll so
-  // each test can early-return with a console.warn instead of failing.
+  // each dependent test is reported as skipped instead of passing without
+  // running an assertion.
   let chainSupportsCustomDomain = false;
+
+  function skipUnlessCustomDomainSupported(skip: TestContext['skip']): void {
+    skip(!chainSupportsCustomDomain, CUSTOM_DOMAIN_SKIP_REASON);
+  }
 
   function leaseUuidFromErrorDetails(details: unknown): string | undefined {
     if (details === null || typeof details !== 'object') return undefined;
     const value = Reflect.get(details, 'lease_uuid');
     return typeof value === 'string' && value !== '' ? value : undefined;
+  }
+
+  async function expectLeaseTerminal(
+    uuid: string,
+    label = 'lease',
+  ): Promise<void> {
+    const result = await chainClient.callTool<{
+      result: { lease: { state: LeaseState } };
+    }>('cosmos_query', {
+      module: 'billing',
+      subcommand: 'lease',
+      args: [uuid],
+    });
+    expect(
+      [
+        LeaseState.LEASE_STATE_CLOSED,
+        LeaseState.LEASE_STATE_REJECTED,
+        LeaseState.LEASE_STATE_EXPIRED,
+      ],
+      `${label} cleanup must leave a terminal lease`,
+    ).toContain(result.result.lease.state);
   }
 
   async function cleanupLeaseFromErrorDetails(
@@ -82,9 +118,7 @@ describe('Billing custom-domain', () => {
     } catch (cleanupErr) {
       const code = parseToolErrorCode(cleanupErr);
       if (code !== 'TX_FAILED') throw cleanupErr;
-      console.warn(
-        `[billing-custom-domain] ${label} orphaned-lease cleanup rejected (already terminal?): ${cleanupErr}`,
-      );
+      await expectLeaseTerminal(orphanedLeaseUuid, label);
     }
 
     return orphanedLeaseUuid;
@@ -200,13 +234,15 @@ describe('Billing custom-domain', () => {
   // ------------------------------------------------------------------
   // 2. High-level lease MCP tools — set, look up, clear
   //
-  // Each test that touches the chain-side custom-domain surface returns
-  // early when the probe in `beforeAll` decided the chain is too old.
+  // Each test that touches the chain-side custom-domain surface records a
+  // runtime skip when the probe in `beforeAll` decided the chain is too old.
   // Client-side rejection tests in section 4 don't need the feature on
   // chain and run unconditionally.
   // ------------------------------------------------------------------
-  it('set_item_custom_domain assigns an FQDN to the lease (legacy 1-item — no service_name)', async () => {
-    if (!chainSupportsCustomDomain) return;
+  it('set_item_custom_domain assigns an FQDN to the lease (legacy 1-item — no service_name)', async ({
+    skip,
+  }) => {
+    skipUnlessCustomDomainSupported(skip);
     const result = await leaseClient.callTool<{
       lease_uuid: string;
       service_name: string;
@@ -226,8 +262,10 @@ describe('Billing custom-domain', () => {
     await sleep(1_000);
   });
 
-  it('lease_by_custom_domain (high-level) returns the lease that claimed the FQDN', async () => {
-    if (!chainSupportsCustomDomain) return;
+  it('lease_by_custom_domain (high-level) returns the lease that claimed the FQDN', async ({
+    skip,
+  }) => {
+    skipUnlessCustomDomainSupported(skip);
     const result = await leaseClient.callTool<{
       lease: { uuid: string; tenant: string };
       service_name: string;
@@ -239,8 +277,10 @@ describe('Billing custom-domain', () => {
     expect(result.service_name).toBe('');
   });
 
-  it('cosmos_query billing lease-by-custom-domain (low-level) returns the same shape', async () => {
-    if (!chainSupportsCustomDomain) return;
+  it('cosmos_query billing lease-by-custom-domain (low-level) returns the same shape', async ({
+    skip,
+  }) => {
+    skipUnlessCustomDomainSupported(skip);
     const result = await chainClient.callTool<{
       result: {
         lease: { uuid: string; tenant: string };
@@ -259,8 +299,10 @@ describe('Billing custom-domain', () => {
     expect(result.result.serviceName).toBe('');
   });
 
-  it('leases_by_tenant per-item output now surfaces customDomain / serviceName', async () => {
-    if (!chainSupportsCustomDomain) return;
+  it('leases_by_tenant per-item output now surfaces customDomain / serviceName', async ({
+    skip,
+  }) => {
+    skipUnlessCustomDomainSupported(skip);
     const result = await leaseClient.callTool<{
       leases: Array<{
         uuid: string;
@@ -280,8 +322,10 @@ describe('Billing custom-domain', () => {
     expect(item.serviceName ?? '').toBe('');
   });
 
-  it('set_item_custom_domain clears the FQDN with clear:true', async () => {
-    if (!chainSupportsCustomDomain) return;
+  it('set_item_custom_domain clears the FQDN with clear:true', async ({
+    skip,
+  }) => {
+    skipUnlessCustomDomainSupported(skip);
     const result = await leaseClient.callTool<{
       custom_domain: string;
       code: number;
@@ -294,8 +338,10 @@ describe('Billing custom-domain', () => {
     await sleep(1_000);
   });
 
-  it('lease_by_custom_domain after clearing rejects the lookup with NotFound (no lease claims the FQDN)', async () => {
-    if (!chainSupportsCustomDomain) return;
+  it('lease_by_custom_domain after clearing rejects the lookup with NotFound (no lease claims the FQDN)', async ({
+    skip,
+  }) => {
+    skipUnlessCustomDomainSupported(skip);
     // The keeper returns `status.Errorf(codes.NotFound, "no lease with
     // custom_domain X")` when the reverse index has no entry for the
     // given domain. The MCP layer now raises NOT_FOUND, with the
@@ -311,8 +357,10 @@ describe('Billing custom-domain', () => {
   // ------------------------------------------------------------------
   // 3. Generic chain layer — set / clear via cosmos_tx
   // ------------------------------------------------------------------
-  it('cosmos_tx billing set-item-custom-domain (low-level) assigns a different FQDN', async () => {
-    if (!chainSupportsCustomDomain) return;
+  it('cosmos_tx billing set-item-custom-domain (low-level) assigns a different FQDN', async ({
+    skip,
+  }) => {
+    skipUnlessCustomDomainSupported(skip);
     const result = await chainClient.callTool<{ code: number }>('cosmos_tx', {
       module: 'billing',
       subcommand: 'set-item-custom-domain',
@@ -323,16 +371,20 @@ describe('Billing custom-domain', () => {
     await sleep(1_000);
   });
 
-  it('lease_by_custom_domain finds the FQDN set via the chain layer', async () => {
-    if (!chainSupportsCustomDomain) return;
+  it('lease_by_custom_domain finds the FQDN set via the chain layer', async ({
+    skip,
+  }) => {
+    skipUnlessCustomDomainSupported(skip);
     const result = await leaseClient.callTool<{
       lease: { uuid: string };
     }>('lease_by_custom_domain', { custom_domain: FQDN_VIA_CHAIN });
     expect(result.lease.uuid).toBe(leaseUuid);
   });
 
-  it('cosmos_tx billing set-item-custom-domain --clear (low-level) clears the FQDN', async () => {
-    if (!chainSupportsCustomDomain) return;
+  it('cosmos_tx billing set-item-custom-domain --clear (low-level) clears the FQDN', async ({
+    skip,
+  }) => {
+    skipUnlessCustomDomainSupported(skip);
     const result = await chainClient.callTool<{ code: number }>('cosmos_tx', {
       module: 'billing',
       subcommand: 'set-item-custom-domain',
@@ -345,8 +397,10 @@ describe('Billing custom-domain', () => {
   // ------------------------------------------------------------------
   // 4. Negative cases — chain-side and client-side rejections
   // ------------------------------------------------------------------
-  it('cosmos_tx rejects an invalid FQDN on chain (TX_FAILED with chain error)', async () => {
-    if (!chainSupportsCustomDomain) return;
+  it('cosmos_tx rejects an invalid FQDN on chain (TX_FAILED with chain error)', async ({
+    skip,
+  }) => {
+    skipUnlessCustomDomainSupported(skip);
     // The chain's IsValidFQDN requires lowercase, ≥1 dot separator, RFC
     // 1123 labels, and a non-numeric TLD. "INVALID" violates all three —
     // the broadcast itself succeeds (passes ValidateBasic for lease_uuid /
@@ -413,9 +467,7 @@ describe('Billing custom-domain', () => {
       if (code !== 'TX_FAILED') {
         throw err;
       }
-      console.warn(
-        `[billing-custom-domain] close_lease rejected (already terminal?): ${err}`,
-      );
+      await expectLeaseTerminal(leaseUuid);
     }
   });
 
@@ -433,8 +485,10 @@ describe('Billing custom-domain', () => {
     const MIXED_CASE_FQDN_VIA_DEPLOY = `Deploy-${RUN_TAG}.E2E.test`;
     let combinedLeaseUuid: string;
 
-    it('deploy_app canonicalizes custom_domain and surfaces it on the result', async () => {
-      if (!chainSupportsCustomDomain) return;
+    it('deploy_app canonicalizes custom_domain and surfaces it on the result', async ({
+      skip,
+    }) => {
+      skipUnlessCustomDomainSupported(skip);
       const result = await fredClient.callTool<{
         lease_uuid: string;
         state: LeaseState;
@@ -455,16 +509,20 @@ describe('Billing custom-domain', () => {
       await sleep(1_000);
     });
 
-    it('lease_by_custom_domain finds the lease set by the combined call', async () => {
-      if (!chainSupportsCustomDomain) return;
+    it('lease_by_custom_domain finds the lease set by the combined call', async ({
+      skip,
+    }) => {
+      skipUnlessCustomDomainSupported(skip);
       const result = await leaseClient.callTool<{
         lease: { uuid: string };
       }>('lease_by_custom_domain', { custom_domain: FQDN_VIA_DEPLOY });
       expect(result.lease.uuid).toBe(combinedLeaseUuid);
     });
 
-    it('reports partial success when custom_domain is already claimed', async () => {
-      if (!chainSupportsCustomDomain) return;
+    it('reports partial success when custom_domain is already claimed', async ({
+      skip,
+    }) => {
+      skipUnlessCustomDomainSupported(skip);
 
       // The first combined-flow lease still owns FQDN_VIA_DEPLOY. A second
       // deploy therefore creates its lease, then fails at the chain-authoritative
@@ -496,8 +554,12 @@ describe('Billing custom-domain', () => {
       expect(orphanedLeaseUuid).not.toBe(combinedLeaseUuid);
     });
 
-    it('cleanup: close_lease terminates the combined-flow lease', async () => {
-      if (!combinedLeaseUuid) return;
+    it('cleanup: close_lease terminates the combined-flow lease', async ({
+      skip,
+    }) => {
+      if (!combinedLeaseUuid) {
+        skip('combined-flow lease was not created');
+      }
       try {
         const result = await leaseClient.callTool<{
           lease_uuid: string;
@@ -516,9 +578,7 @@ describe('Billing custom-domain', () => {
       } catch (err) {
         const code = parseToolErrorCode(err);
         if (code !== 'TX_FAILED') throw err;
-        console.warn(
-          `[billing-custom-domain] combined close_lease rejected (already terminal?): ${err}`,
-        );
+        await expectLeaseTerminal(combinedLeaseUuid);
       }
     });
 
