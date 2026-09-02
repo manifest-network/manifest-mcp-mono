@@ -39,6 +39,8 @@ describe('Agent read-only tools (live MCP transport)', () => {
 
   afterAll(async () => {
     try {
+      // Missing UUID is already a hard failure in the named setup test;
+      // teardown only has a resource to settle once discovery succeeded.
       if (leaseUuid !== undefined) {
         await settleDiagnosticLease(leaseUuid);
       }

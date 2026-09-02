@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { POA_ADMIN_ADDRESS, PWR_DENOM } from './helpers/devnet-constants.js';
 import { MCPTestClient } from './helpers/mcp-client.js';
 
 /**
@@ -143,10 +144,6 @@ describe('Error paths through MCP transport', () => {
   // a successful gas estimate.
   // ==========================================================================
   describe('Simulation failure', () => {
-    const POA_ADMIN_ADDRESS =
-      'manifest1afk9zr2hn2jsac63h4hm60vl9z3e5u69gndzf7c99cqge3vzwjzsfmy9qj';
-    const PWR_DENOM = `factory/${POA_ADMIN_ADDRESS}/upwr`;
-
     it('SIMULATION_FAILED when cosmos_estimate_fee simulates an unauthorized tokenfactory burn', async () => {
       const err = await client.callToolExpectError('cosmos_estimate_fee', {
         module: 'tokenfactory',

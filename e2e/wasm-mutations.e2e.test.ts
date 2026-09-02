@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { PWR_DENOM } from './helpers/devnet-constants.js';
 import { MCPTestClient, parseToolErrorCode } from './helpers/mcp-client.js';
 
 /**
@@ -25,9 +26,6 @@ import { MCPTestClient, parseToolErrorCode } from './helpers/mcp-client.js';
  */
 
 const PROVIDER_ADDRESS = 'manifest1hj5fveer5cjtn4wd6wstzugjfdxzl0xp8ws9ct';
-const POA_ADMIN_ADDRESS =
-  'manifest1afk9zr2hn2jsac63h4hm60vl9z3e5u69gndzf7c99cqge3vzwjzsfmy9qj';
-const PWR_DENOM = `factory/${POA_ADMIN_ADDRESS}/upwr`;
 
 describe('Wasm tx lifecycle', () => {
   const client = new MCPTestClient();

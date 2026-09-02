@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { POA_ADMIN_ADDRESS, PWR_DENOM } from './helpers/devnet-constants.js';
 import { MCPTestClient, parseToolErrorCode } from './helpers/mcp-client.js';
 
 /**
@@ -30,14 +31,6 @@ import { MCPTestClient, parseToolErrorCode } from './helpers/mcp-client.js';
 // init_billing.sh. Used as a recipient for multi-send and as the creator
 // argument for sku/wasm queries that need a known account.
 const PROVIDER_ADDRESS = 'manifest1hj5fveer5cjtn4wd6wstzugjfdxzl0xp8ws9ct';
-
-// POA admin group-policy address. Has no signing key — we only use it as a
-// query target (e.g., as the admin in tokenfactory denoms-from-admin).
-const POA_ADMIN_ADDRESS =
-  'manifest1afk9zr2hn2jsac63h4hm60vl9z3e5u69gndzf7c99cqge3vzwjzsfmy9qj';
-
-// PWR denom (tokenfactory, owned by POA admin). Created in genesis.
-const PWR_DENOM = `factory/${POA_ADMIN_ADDRESS}/upwr`;
 
 describe('Chain routing coverage', () => {
   const client = new MCPTestClient();

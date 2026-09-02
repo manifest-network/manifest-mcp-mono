@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { PWR_DENOM } from './helpers/devnet-constants.js';
 import { MCPTestClient } from './helpers/mcp-client.js';
 
 /**
@@ -15,9 +16,6 @@ import { MCPTestClient } from './helpers/mcp-client.js';
  * default e2e .env). Cooldown is 0 so multiple drips per address work.
  */
 
-const POA_ADMIN_ADDRESS =
-  'manifest1afk9zr2hn2jsac63h4hm60vl9z3e5u69gndzf7c99cqge3vzwjzsfmy9qj';
-const PWR_DENOM = `factory/${POA_ADMIN_ADDRESS}/upwr`;
 const FAUCET_URL = 'http://localhost:8000';
 const DRIP_AMOUNT = 10_000_000n;
 
