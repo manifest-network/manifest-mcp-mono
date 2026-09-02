@@ -15,6 +15,11 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run build
+      # Closed-world contract over every live MCP CLI: adding a tool without a pinned
+      # annotations + _meta.manifest row must fail before merge. This test does not
+      # call the chain, so it needs no compose devnet or repository secrets. (ENG-670)
+      - name: Gate the live MCP tool metadata matrix
+        run: npx vitest run e2e/tool-annotations.e2e.test.ts
       # Sabotage-test the package guard, dry-run every publishable package, reject compiled
       # tests / nested runtime dependencies, and verify every bare import in shipped JS and
       # declarations is backed by a consumer-installed dependency. (ENG-667)

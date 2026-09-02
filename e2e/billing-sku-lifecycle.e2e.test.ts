@@ -11,7 +11,7 @@ import { MCPTestClient, parseToolErrorCode } from './helpers/mcp-client.js';
  * test wallet can register itself as a provider. The test then *attempts*
  * to self-acknowledge its own leases; if the chain rejects this (e.g. a
  * future keeper version forbids tenant=provider), the close-lease and
- * withdraw flows skip with a console.warn while flows B (reject) and C
+ * withdraw flows are reported as skipped while flows B (reject) and C
  * (cancel) remain valid as standalone routing-coverage tests.
  * ADDR1's provider (registered by init_billing.sh) is left untouched —
  * the lifecycle test continues to use it for deploy_app.
@@ -277,12 +277,11 @@ describe('Billing/SKU lifecycle', () => {
     }
   });
 
-  it('tx: billing withdraw (flow A) — provider claims accrued earnings', async () => {
+  it('tx: billing withdraw (flow A) — provider claims accrued earnings', async ({
+    skip,
+  }) => {
     if (!selfAckOk) {
-      console.warn(
-        '[billing-sku-lifecycle] skipping withdraw — self-ack failed',
-      );
-      return;
+      skip('provider self-acknowledgement was rejected by the chain');
     }
     // Wait a couple of seconds to accrue earnings (1 upwr/sec at this rate).
     await sleep(2_000);
@@ -296,12 +295,11 @@ describe('Billing/SKU lifecycle', () => {
     expect(result.code).toBe(0);
   });
 
-  it('tx: billing close-lease (flow A) — closes the active lease', async () => {
+  it('tx: billing close-lease (flow A) — closes the active lease', async ({
+    skip,
+  }) => {
     if (!selfAckOk) {
-      console.warn(
-        '[billing-sku-lifecycle] skipping close-lease — self-ack failed',
-      );
-      return;
+      skip('provider self-acknowledgement was rejected by the chain');
     }
     const result = await client.callTool<{ code: number }>('cosmos_tx', {
       module: 'billing',
@@ -410,9 +408,11 @@ describe('Billing/SKU lifecycle', () => {
   // deactivation. cancel-lease is tenant-only and works on any non-terminal
   // lease, so it's a safe terminal action regardless of state. No-op when
   // selfAckOk is true (close-lease already terminated the lease).
-  it('cleanup: cancel flow A lease if self-ack was rejected', async () => {
+  it('cleanup: cancel flow A lease if self-ack was rejected', async ({
+    skip,
+  }) => {
     if (selfAckOk) {
-      return;
+      skip('flow A lease was already closed; fallback cleanup is not needed');
     }
     const result = await client.callTool<{ code: number }>('cosmos_tx', {
       module: 'billing',
@@ -468,8 +468,12 @@ describe('Billing/SKU lifecycle', () => {
     tenantLeaseUuid = newLease!.uuid;
   });
 
-  it('cleanup: cancel the create-lease-for-tenant probe lease', async () => {
-    if (!tenantLeaseUuid) return;
+  it('cleanup: cancel the create-lease-for-tenant probe lease', async ({
+    skip,
+  }) => {
+    if (!tenantLeaseUuid) {
+      skip('create-lease-for-tenant did not produce a lease to clean up');
+    }
     const result = await client.callTool<{ code: number }>('cosmos_tx', {
       module: 'billing',
       subcommand: 'cancel-lease',

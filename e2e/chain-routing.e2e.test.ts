@@ -313,7 +313,7 @@ describe('Chain routing coverage', () => {
   // poa — queries (admin txs are out of scope)
   // ==========================================================================
   describe('poa queries', () => {
-    it('consensus-power for the genesis validator', async () => {
+    it('consensus-power for the genesis validator', async ({ skip }) => {
       // The chain has exactly one validator created from the provider key
       // via `genesis gentx`. We discover its valoper via staking validators.
       // If staking is fully disabled and returns empty, skip the assertion
@@ -333,10 +333,9 @@ describe('Chain routing coverage', () => {
       }
 
       if (!valoper) {
-        console.warn(
-          '[chain-routing] No valoper available for poa consensus-power; skipping assertion.',
+        skip(
+          'no validator operator address is available for poa consensus-power',
         );
-        return;
       }
 
       const result = await client.callTool<{
@@ -579,12 +578,9 @@ describe('Chain routing coverage', () => {
       expect(Array.isArray(result.result.leases)).toBe(true);
     });
 
-    it('leases-by-provider', async () => {
+    it('leases-by-provider', async ({ skip }) => {
       if (!providerUuid) {
-        console.warn(
-          '[chain-routing] No providerUuid — skipping leases-by-provider',
-        );
-        return;
+        skip('provider fixture was not discovered for leases-by-provider');
       }
       const result = await client.callTool<{
         result: { leases: unknown[] };
@@ -596,10 +592,9 @@ describe('Chain routing coverage', () => {
       expect(Array.isArray(result.result.leases)).toBe(true);
     });
 
-    it('leases-by-sku', async () => {
+    it('leases-by-sku', async ({ skip }) => {
       if (!skuUuid) {
-        console.warn('[chain-routing] No skuUuid — skipping leases-by-sku');
-        return;
+        skip('SKU fixture was not discovered for leases-by-sku');
       }
       const result = await client.callTool<{
         result: { leases: unknown[] };
@@ -654,12 +649,9 @@ describe('Chain routing coverage', () => {
       expect(result.result).toBeDefined();
     });
 
-    it('provider-withdrawable', async () => {
+    it('provider-withdrawable', async ({ skip }) => {
       if (!providerUuid) {
-        console.warn(
-          '[chain-routing] No providerUuid — skipping provider-withdrawable',
-        );
-        return;
+        skip('provider fixture was not discovered for provider-withdrawable');
       }
       const result = await client.callTool<{ result: unknown }>(
         'cosmos_query',
@@ -692,10 +684,9 @@ describe('Chain routing coverage', () => {
       expect(result.result.providers.length).toBeGreaterThan(0);
     });
 
-    it('provider', async () => {
+    it('provider', async ({ skip }) => {
       if (!providerUuid) {
-        console.warn('[chain-routing] No providerUuid — skipping provider');
-        return;
+        skip('provider fixture was not discovered for provider query');
       }
       const result = await client.callTool<{
         result: { provider: { uuid: string } };
@@ -714,10 +705,9 @@ describe('Chain routing coverage', () => {
       expect(result.result.skus.length).toBeGreaterThan(0);
     });
 
-    it('sku', async () => {
+    it('sku', async ({ skip }) => {
       if (!skuUuid) {
-        console.warn('[chain-routing] No skuUuid — skipping sku');
-        return;
+        skip('SKU fixture was not discovered for SKU query');
       }
       const result = await client.callTool<{
         result: { sku: { uuid: string } };
@@ -729,12 +719,9 @@ describe('Chain routing coverage', () => {
       expect(result.result.sku.uuid).toBe(skuUuid);
     });
 
-    it('skus-by-provider', async () => {
+    it('skus-by-provider', async ({ skip }) => {
       if (!providerUuid) {
-        console.warn(
-          '[chain-routing] No providerUuid — skipping skus-by-provider',
-        );
-        return;
+        skip('provider fixture was not discovered for skus-by-provider');
       }
       const result = await client.callTool<{
         result: { skus: Array<{ uuid: string }> };
