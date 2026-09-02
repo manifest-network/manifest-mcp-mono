@@ -144,8 +144,9 @@ For a deeper look at the codebase design, see [`ARCHITECTURE.md`](ARCHITECTURE.m
 # Build all packages
 npm run build
 
-# Lint (type-check)
+# Type-check workspace packages and the E2E suite
 npm run lint
+npm run lint:e2e
 
 # Run unit tests
 npm run test

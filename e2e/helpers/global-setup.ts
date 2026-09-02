@@ -27,7 +27,14 @@ export function setup() {
   try {
     execFileSync(
       'docker',
-      ['compose', '-f', 'e2e/docker-compose.yml', 'cp', 'providerd:/shared/tls/cert.pem', CERT_PATH],
+      [
+        'compose',
+        '-f',
+        'e2e/docker-compose.yml',
+        'cp',
+        'providerd:/shared/tls/cert.pem',
+        CERT_PATH,
+      ],
       { stdio: 'pipe' },
     );
     process.env.E2E_TLS_CERT_PATH = CERT_PATH;
@@ -49,7 +56,14 @@ export function setup() {
   try {
     execFileSync(
       'docker',
-      ['compose', '-f', 'e2e/docker-compose.yml', 'cp', 'chain:/shared/converter.env', CONVERTER_ENV_PATH],
+      [
+        'compose',
+        '-f',
+        'e2e/docker-compose.yml',
+        'cp',
+        'chain:/shared/converter.env',
+        CONVERTER_ENV_PATH,
+      ],
       { stdio: 'pipe' },
     );
     const contents = readFileSync(CONVERTER_ENV_PATH, 'utf8');
@@ -78,7 +92,14 @@ export function setup() {
   try {
     execFileSync(
       'docker',
-      ['compose', '-f', 'e2e/docker-compose.yml', 'cp', 'chain:/usr/local/share/converter.wasm', CONVERTER_WASM_PATH],
+      [
+        'compose',
+        '-f',
+        'e2e/docker-compose.yml',
+        'cp',
+        'chain:/usr/local/share/converter.wasm',
+        CONVERTER_WASM_PATH,
+      ],
       { stdio: 'pipe' },
     );
     process.env.E2E_CONVERTER_WASM_PATH = CONVERTER_WASM_PATH;

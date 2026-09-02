@@ -24,6 +24,9 @@ jobs:
       # visible CI step (the root build above covers it transitively). (ENG-309)
       - run: npm run build -w @manifest-network/manifest-sdk
       - run: npm run lint
+      # e2e/ is intentionally not a workspace, so its exports-aware TypeScript project needs a
+      # named gate of its own. Keep this explicit: root workspace lint cannot discover it. (ENG-649)
+      - run: npm run lint:e2e
       - run: npm run check
       # dependency-cruiser DAG + manifestjs-type chokepoint + no-static-node/undici guards (ENG-309).
       # The brand-cast / no-parse*-in-lcd-adapter grep guards + the known-bad fixtures' proof run as

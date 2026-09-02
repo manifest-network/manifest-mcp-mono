@@ -6,11 +6,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ```bash
 npm run build          # Build all packages (tsdown, unbundled ESM)
-npm run lint           # Type-check all packages (tsc --noEmit)
+npm run lint           # Type-check all workspace packages (tsc --noEmit)
 npm run test           # Unit tests all packages (vitest)
-npm run check          # Lint, format, and import sorting check via biome
+npm run check          # Lint, format, and import sorting check, including e2e TypeScript
 npm run check:fix      # Auto-fix biome issues
 npm run format         # Format all packages via biome
+npm run lint:e2e       # Rebuild dependencies, then type-check e2e; CI runs it as a named gate
 npm run depcruise      # Architecture boundary + package-DAG guard (dependency-cruiser); CI runs it
 npm run size           # Bundle-size budgets for the SDK subpaths (size-limit); CI runs it
 npm run check:packages # Dry-run npm packs; reject test/runtime vendoring + undeclared SDK d.ts imports

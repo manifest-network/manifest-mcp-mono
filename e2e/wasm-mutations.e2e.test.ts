@@ -1,5 +1,5 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { readFileSync } from 'node:fs';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { MCPTestClient, parseToolErrorCode } from './helpers/mcp-client.js';
 
 /**
@@ -37,7 +37,6 @@ describe('Wasm tx lifecycle', () => {
   let firstCodeId: string;
   let secondCodeId: string;
   let contractFromInstantiate: string;
-  let contractFromInstantiate2: string;
   let contractForUpdateAdmin: string;
   let contractForClearAdmin: string;
 
@@ -53,7 +52,9 @@ describe('Wasm tx lifecycle', () => {
       );
     }
 
-    wasmBase64 = readFileSync(process.env.E2E_CONVERTER_WASM_PATH).toString('base64');
+    wasmBase64 = readFileSync(process.env.E2E_CONVERTER_WASM_PATH).toString(
+      'base64',
+    );
 
     await client.connect({ serverEntry: 'packages/node/dist/chain.js' });
     const acct = await client.callTool<{ address: string }>('get_account_info');
@@ -76,7 +77,9 @@ describe('Wasm tx lifecycle', () => {
       subcommand: 'codes',
       args: ['--limit', '1000'],
     });
-    const beforeIds = new Set(beforeRes.result.codeInfos.map((c) => c.codeId.toString()));
+    const beforeIds = new Set(
+      beforeRes.result.codeInfos.map((c) => c.codeId.toString()),
+    );
 
     const result = await client.callTool<{ code: number }>('cosmos_tx', {
       module: 'wasm',
@@ -108,7 +111,9 @@ describe('Wasm tx lifecycle', () => {
       subcommand: 'codes',
       args: ['--limit', '1000'],
     });
-    const beforeIds = new Set(beforeRes.result.codeInfos.map((c) => c.codeId.toString()));
+    const beforeIds = new Set(
+      beforeRes.result.codeInfos.map((c) => c.codeId.toString()),
+    );
 
     const result = await client.callTool<{ code: number }>('cosmos_tx', {
       module: 'wasm',
@@ -176,7 +181,9 @@ describe('Wasm tx lifecycle', () => {
       subcommand: 'contracts-by-code',
       args: [firstCodeId],
     });
-    const newContract = afterRes.result.contracts.find((c) => !beforeAddrs.has(c));
+    const newContract = afterRes.result.contracts.find(
+      (c) => !beforeAddrs.has(c),
+    );
     expect(newContract).toBeDefined();
     contractFromInstantiate = newContract!;
 
@@ -224,9 +231,10 @@ describe('Wasm tx lifecycle', () => {
       subcommand: 'contracts-by-code',
       args: [firstCodeId],
     });
-    const newContract = afterRes.result.contracts.find((c) => !beforeAddrs.has(c));
+    const newContract = afterRes.result.contracts.find(
+      (c) => !beforeAddrs.has(c),
+    );
     expect(newContract).toBeDefined();
-    contractFromInstantiate2 = newContract!;
   });
 
   // ==========================================================================
@@ -251,12 +259,7 @@ describe('Wasm tx lifecycle', () => {
     const result = await client.callTool<{ code: number }>('cosmos_tx', {
       module: 'wasm',
       subcommand: 'execute',
-      args: [
-        converter,
-        '{"convert":{}}',
-        '--funds',
-        '1000umfx',
-      ],
+      args: [converter, '{"convert":{}}', '--funds', '1000umfx'],
       wait_for_confirmation: true,
     });
     expect(result.code).toBe(0);
@@ -305,7 +308,9 @@ describe('Wasm tx lifecycle', () => {
         subcommand: 'contracts-by-code',
         args: [firstCodeId],
       });
-      const newContract = afterRes.result.contracts.find((c) => !beforeAddrs.has(c));
+      const newContract = afterRes.result.contracts.find(
+        (c) => !beforeAddrs.has(c),
+      );
       expect(newContract).toBeDefined();
       return newContract!;
     };
@@ -379,7 +384,11 @@ describe('Wasm tx lifecycle', () => {
         throw err;
       }
       const msg = err instanceof Error ? err.message : String(err);
-      if (!/migrate wasm contract failed|no migrate handler|kind: Serialization/i.test(msg)) {
+      if (
+        !/migrate wasm contract failed|no migrate handler|kind: Serialization/i.test(
+          msg,
+        )
+      ) {
         throw err;
       }
       console.warn(

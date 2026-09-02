@@ -1,5 +1,5 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { cosmos } from '@manifest-network/manifestjs';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { MCPTestClient } from './helpers/mcp-client.js';
 
 /**
@@ -111,7 +111,9 @@ describe('Group lifecycle', () => {
 
   it('query: group-members lists the test wallet as the only member', async () => {
     const result = await client.callTool<{
-      result: { members: Array<{ member: { address: string; weight: string } }> };
+      result: {
+        members: Array<{ member: { address: string; weight: string } }>;
+      };
     }>('cosmos_query', {
       module: 'group',
       subcommand: 'group-members',
@@ -187,7 +189,9 @@ describe('Group lifecycle', () => {
       subcommand: 'group-policies-by-group',
       args: [groupId],
     });
-    const beforeAddrs = new Set(beforeRes.result.groupPolicies.map((p) => p.address));
+    const beforeAddrs = new Set(
+      beforeRes.result.groupPolicies.map((p) => p.address),
+    );
 
     const result = await client.callTool<{ code: number }>('cosmos_tx', {
       module: 'group',
@@ -325,7 +329,12 @@ describe('Group lifecycle', () => {
     const result = await client.callTool<{ code: number }>('cosmos_tx', {
       module: 'group',
       subcommand: 'submit-proposal',
-      args: [policyAddress, 'self-update', 'rotate metadata via proposal', messageJson],
+      args: [
+        policyAddress,
+        'self-update',
+        'rotate metadata via proposal',
+        messageJson,
+      ],
       wait_for_confirmation: true,
     });
     expect(result.code).toBe(0);
@@ -337,7 +346,9 @@ describe('Group lifecycle', () => {
       subcommand: 'proposals-by-group-policy',
       args: [policyAddress, '--limit', '1000'],
     });
-    const newProposal = afterRes.result.proposals.find((p) => !beforeIds.has(p.id));
+    const newProposal = afterRes.result.proposals.find(
+      (p) => !beforeIds.has(p.id),
+    );
     expect(newProposal).toBeDefined();
     votableProposalId = newProposal!.id;
   });
@@ -381,7 +392,9 @@ describe('Group lifecycle', () => {
       subcommand: 'votes-by-proposal',
       args: [votableProposalId],
     });
-    expect(byProp.result.votes.find((v) => v.voter === testAddress)).toBeDefined();
+    expect(
+      byProp.result.votes.find((v) => v.voter === testAddress),
+    ).toBeDefined();
 
     const byVoter = await client.callTool<{
       result: { votes: Array<{ proposalId: string }> };
@@ -468,7 +481,9 @@ describe('Group lifecycle', () => {
       subcommand: 'proposals-by-group-policy',
       args: [policyAddress, '--limit', '1000'],
     });
-    const newProposal = afterRes.result.proposals.find((p) => !beforeIds.has(p.id));
+    const newProposal = afterRes.result.proposals.find(
+      (p) => !beforeIds.has(p.id),
+    );
     expect(newProposal).toBeDefined();
     withdrawableProposalId = newProposal!.id;
 
@@ -579,7 +594,9 @@ describe('Group lifecycle', () => {
       subcommand: 'groups-by-admin',
       args: [testAddress, '--limit', '1000'],
     });
-    const newGroup = afterGroups.result.groups.find((g) => !beforeIds.has(g.id));
+    const newGroup = afterGroups.result.groups.find(
+      (g) => !beforeIds.has(g.id),
+    );
     expect(newGroup).toBeDefined();
 
     // Verify the policy was attached to the new group.

@@ -22,9 +22,10 @@ Node.js 22.19+ (declared via `engines` on every package) and npm 10+ (ships with
 
 ```bash
 npm run build          # Build all packages (tsdown)
-npm run lint           # Type-check (tsc --noEmit)
+npm run lint           # Type-check workspace packages (tsc --noEmit)
+npm run lint:e2e       # Rebuild dependencies, then type-check the E2E suite
 npm run test           # Unit tests (vitest)
-npm run check          # Biome: format + lint + import sorting (read-only)
+npm run check          # Biome: format + lint + import sorting, including E2E TypeScript
 npm run check:fix      # Auto-fix anything Biome can fix
 ```
 
@@ -72,7 +73,7 @@ Dependency direction is **node → {chain, lease, fred, cosmwasm, agent} → cor
 2. Implement the transaction handler in `packages/core/src/transactions/<module>.ts` exporting `routeXxxTransaction(client, senderAddress, subcommand, args, waitForConfirmation, options?, context?)` and a pure `buildXxxMessages(senderAddress, subcommand, args, context?)` for fee estimation.
 3. Register both in the `QUERY_MODULES` / `TX_MODULES` maps in `packages/core/src/modules.ts` with a description and a `subcommands` list (the `args` strings power `list_module_subcommands`).
 4. Add unit tests for both handlers next to the source.
-5. Add an e2e test in `e2e/` that exercises the surface against a real chain. The repo's existing `chain-routing.e2e.test.ts` and `*-lifecycle.e2e.test.ts` files are good templates.
+5. Add an e2e test in `e2e/` that exercises the surface against a real chain, and run `npm run lint:e2e`. The repo's existing `chain-routing.e2e.test.ts` and `*-lifecycle.e2e.test.ts` files are good templates.
 6. Update `README.md`'s supported-modules list and `packages/core/README.md`'s module table.
 
 Once the module is registered, it's automatically reachable through `cosmos_query` / `cosmos_tx` and discoverable via `list_modules` / `list_module_subcommands`.

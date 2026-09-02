@@ -1,7 +1,7 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { LeaseState } from '@manifest-network/manifest-mcp-core';
-import { MCPTestClient, parseToolErrorCode } from './helpers/mcp-client.js';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { assertWireKeys } from './helpers/fred-wire-golden.js';
+import { MCPTestClient, parseToolErrorCode } from './helpers/mcp-client.js';
 
 /**
  * Full deploy lifecycle E2E test.
@@ -30,17 +30,16 @@ describe('Deploy lifecycle', () => {
   });
 
   afterAll(async () => {
-    await Promise.all([
-      leaseClient.close(),
-      fredClient.close(),
-    ]);
+    await Promise.all([leaseClient.close(), fredClient.close()]);
   });
 
   // ------------------------------------------------------------------
   // 1. Balance check (smoke test — confirms wallet/chain connection)
   // ------------------------------------------------------------------
   it('credit_balance returns initial balances', async () => {
-    const result = await leaseClient.callTool<{ balances: unknown }>('credit_balance');
+    const result = await leaseClient.callTool<{ balances: unknown }>(
+      'credit_balance',
+    );
     expect(result.balances).toBeDefined();
   });
 
@@ -319,7 +318,9 @@ describe('Deploy lifecycle', () => {
       }
     }
     if (!mergeOk) {
-      throw new Error(`update_app merge never succeeded after retries: ${lastErr}`);
+      throw new Error(
+        `update_app merge never succeeded after retries: ${lastErr}`,
+      );
     }
   });
 

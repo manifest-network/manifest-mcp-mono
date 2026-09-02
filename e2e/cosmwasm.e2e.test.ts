@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { MCPTestClient } from './helpers/mcp-client.js';
 
 /**
@@ -59,7 +59,9 @@ describe('Cosmwasm tools', () => {
     expect(result.source_denom).toBe('umfx');
     expect(result.target_denom).toMatch(/^factory\/manifest1[a-z0-9]+\/upwr$/);
     expect(result.paused).toBe(false);
-    expect(result.converter_address).toBe(process.env.MANIFEST_CONVERTER_ADDRESS);
+    expect(result.converter_address).toBe(
+      process.env.MANIFEST_CONVERTER_ADDRESS,
+    );
     expect(result.preview).toBeUndefined();
   });
 
@@ -93,7 +95,9 @@ describe('Cosmwasm tools', () => {
         subcommand: 'balances',
         args: [address],
       });
-      return new Map(res.result.balances.map((b) => [b.denom, BigInt(b.amount)]));
+      return new Map(
+        res.result.balances.map((b) => [b.denom, BigInt(b.amount)]),
+      );
     };
 
     const rate = await cosmwasmClient.callTool<{ target_denom: string }>(

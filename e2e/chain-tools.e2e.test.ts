@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { MCPTestClient } from './helpers/mcp-client.js';
 
 /**
@@ -19,7 +19,9 @@ describe('Chain tools', () => {
   });
 
   it('get_account_info returns address and key name', async () => {
-    const result = await client.callTool<{ address: string }>('get_account_info');
+    const result = await client.callTool<{ address: string }>(
+      'get_account_info',
+    );
     expect(result.address).toMatch(/^manifest1/);
   });
 
@@ -53,7 +55,9 @@ describe('Chain tools', () => {
   });
 
   it('cosmos_query bank balances returns account balances', async () => {
-    const { address } = await client.callTool<{ address: string }>('get_account_info');
+    const { address } = await client.callTool<{ address: string }>(
+      'get_account_info',
+    );
 
     const result = await client.callTool<{
       module: string;
@@ -74,7 +78,9 @@ describe('Chain tools', () => {
   });
 
   it('cosmos_tx bank send transfers tokens to self', async () => {
-    const { address } = await client.callTool<{ address: string }>('get_account_info');
+    const { address } = await client.callTool<{ address: string }>(
+      'get_account_info',
+    );
 
     const result = await client.callTool<{
       transactionHash: string;
@@ -91,7 +97,9 @@ describe('Chain tools', () => {
   });
 
   it('cosmos_estimate_fee bank send returns gas/fee without broadcasting', async () => {
-    const { address } = await client.callTool<{ address: string }>('get_account_info');
+    const { address } = await client.callTool<{ address: string }>(
+      'get_account_info',
+    );
 
     // Query balance before
     const balanceBefore = await client.callTool<{
@@ -165,7 +173,9 @@ describe('Chain tools', () => {
   });
 
   it('cosmos_query auth account returns the test wallet account', async () => {
-    const { address } = await client.callTool<{ address: string }>('get_account_info');
+    const { address } = await client.callTool<{ address: string }>(
+      'get_account_info',
+    );
 
     const result = await client.callTool<{
       module: string;
@@ -226,7 +236,9 @@ describe('Chain tools', () => {
   });
 
   it('cosmos_query tokenfactory denoms-from-creator includes the new denom', async () => {
-    const { address } = await client.callTool<{ address: string }>('get_account_info');
+    const { address } = await client.callTool<{ address: string }>(
+      'get_account_info',
+    );
 
     const result = await client.callTool<{
       result: { denoms: string[] };
@@ -241,7 +253,9 @@ describe('Chain tools', () => {
   });
 
   it('cosmos_tx tokenfactory mint credits the test wallet', async () => {
-    const { address } = await client.callTool<{ address: string }>('get_account_info');
+    const { address } = await client.callTool<{ address: string }>(
+      'get_account_info',
+    );
     const denom = `factory/${address}/${subdenom}`;
     const mintAmount = 12_345n;
 
@@ -277,7 +291,9 @@ describe('Chain tools', () => {
   });
 
   it('cosmos_tx group create-group succeeds for a single-member group', async () => {
-    const { address } = await client.callTool<{ address: string }>('get_account_info');
+    const { address } = await client.callTool<{ address: string }>(
+      'get_account_info',
+    );
 
     const result = await client.callTool<{
       transactionHash: string;
@@ -295,7 +311,9 @@ describe('Chain tools', () => {
   });
 
   it('cosmos_estimate_fee tokenfactory create-denom returns gas/fee without broadcasting', async () => {
-    const { address } = await client.callTool<{ address: string }>('get_account_info');
+    const { address } = await client.callTool<{ address: string }>(
+      'get_account_info',
+    );
 
     // Snapshot creator's denoms before — estimator must not broadcast.
     const before = await client.callTool<{
@@ -321,7 +339,9 @@ describe('Chain tools', () => {
     expect(result.module).toBe('tokenfactory');
     expect(result.subcommand).toBe('create-denom');
     expect(Number(result.gasEstimate)).toBeGreaterThan(0);
-    expect(Number(result.fee.gas)).toBeGreaterThanOrEqual(Number(result.gasEstimate));
+    expect(Number(result.fee.gas)).toBeGreaterThanOrEqual(
+      Number(result.gasEstimate),
+    );
     expect(result.fee.amount[0].denom).toBe('umfx');
 
     // No broadcast — denoms list is unchanged.
