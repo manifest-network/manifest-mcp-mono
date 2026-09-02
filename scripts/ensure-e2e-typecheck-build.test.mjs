@@ -1,6 +1,13 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join, resolve } from 'node:path';
 import test from 'node:test';
 import {
   discoverWorkspaceDeclarations,
@@ -8,42 +15,60 @@ import {
   repoRoot,
 } from './ensure-e2e-typecheck-build.mjs';
 
-test('sabotage: discovers the complete public workspace declaration set', () => {
-  const declarations = discoverWorkspaceDeclarations();
-  const expected = [
-    'examples/sdk-acceptance/dist/index.d.ts',
-    'packages/agent-core/dist/guarded-fetch.d.ts',
-    'packages/agent-core/dist/index.d.ts',
-    'packages/agent/dist/index.d.ts',
-    'packages/chain/dist/index.d.ts',
-    'packages/core/dist/__test-utils__/callTool.d.ts',
-    'packages/core/dist/__test-utils__/callToolWithElicitation.d.ts',
-    'packages/core/dist/__test-utils__/fetch-probe.d.ts',
-    'packages/core/dist/__test-utils__/fred-wire.d.ts',
-    'packages/core/dist/__test-utils__/mocks.d.ts',
-    'packages/core/dist/events-node.d.ts',
-    'packages/core/dist/faucet.d.ts',
-    'packages/core/dist/gas.d.ts',
-    'packages/core/dist/guarded-fetch.d.ts',
-    'packages/core/dist/index.d.ts',
-    'packages/core/dist/ssrf.d.ts',
-    'packages/cosmwasm/dist/index.d.ts',
-    'packages/fred/dist/index.d.ts',
-    'packages/fred/dist/node.d.ts',
-    'packages/fred/dist/server/index.d.ts',
-    'packages/lease/dist/index.d.ts',
-    'packages/sdk/dist/catalog.d.ts',
-    'packages/sdk/dist/chain.d.ts',
-    'packages/sdk/dist/deploy.d.ts',
-    'packages/sdk/dist/faucet.d.ts',
-    'packages/sdk/dist/index.d.ts',
-    'packages/sdk/dist/node.d.ts',
-    'packages/sdk/dist/orchestration.d.ts',
-    'packages/sdk/dist/reads.d.ts',
-  ].sort((a, b) => a.localeCompare(b));
+function writeJson(path, value) {
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`);
+}
 
-  assert.deepEqual(declarations, expected);
-  assert(declarations.includes('packages/agent-core/dist/index.d.ts'));
+test('sabotage: discovers top-level and exported workspace declarations', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'e2e-typecheck-build-'));
+  try {
+    writeJson(resolve(directory, 'package.json'), {
+      workspaces: ['packages/*', 'examples/*'],
+    });
+    writeJson(resolve(directory, 'packages', 'sdk', 'package.json'), {
+      types: './dist/index.d.ts',
+      exports: {
+        '.': {
+          types: './dist/index.d.ts',
+          import: './dist/index.js',
+        },
+        './orchestration': {
+          types: './dist/orchestration.d.ts',
+          import: './dist/orchestration.js',
+        },
+      },
+    });
+    writeJson(resolve(directory, 'packages', 'agent-core', 'package.json'), {
+      types: 'dist/index.d.ts',
+    });
+    writeJson(resolve(directory, 'packages', 'bin-only', 'package.json'), {
+      bin: { example: './dist/example.js' },
+    });
+    writeJson(
+      resolve(directory, 'examples', 'sdk-acceptance', 'package.json'),
+      { types: './dist/index.d.ts' },
+    );
+
+    assert.deepEqual(discoverWorkspaceDeclarations(directory), [
+      'examples/sdk-acceptance/dist/index.d.ts',
+      'packages/agent-core/dist/index.d.ts',
+      'packages/sdk/dist/index.d.ts',
+      'packages/sdk/dist/orchestration.d.ts',
+    ]);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('sabotage: current closure retains the transitive agent-core output', () => {
+  const declarations = discoverWorkspaceDeclarations();
+  for (const path of [
+    'packages/sdk/dist/orchestration.d.ts',
+    'packages/agent-core/dist/index.d.ts',
+  ]) {
+    assert(declarations.includes(path), `missing declaration guard: ${path}`);
+  }
 });
 
 test('sabotage: rebuilds even when declarations already exist', () => {
