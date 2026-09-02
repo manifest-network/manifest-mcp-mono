@@ -1,8 +1,0 @@
-{
-  "extends": "./tsconfig.base.json",
-  "compilerOptions": {
-    "composite": false,
-    "noEmit": true
-  },
-  "include": ["**/*.test-d.ts", "packages/agent-core/src/types.test.ts"]
-}

@@ -1,7 +1,6 @@
 import { toBech32 } from '@cosmjs/encoding';
 import type {
   LeaseUuid,
-  ManifestClient,
   ManifestMCPConfig,
   ManifestQueryClient,
   WalletProvider,
@@ -11,20 +10,8 @@ import {
   LeaseState,
 } from '@manifest-network/manifest-mcp-core';
 import { makeMockQueryClient } from '@manifest-network/manifest-mcp-core/__test-utils__/mocks.js';
-import {
-  afterEach,
-  beforeEach,
-  describe,
-  expect,
-  expectTypeOf,
-  it,
-  vi,
-} from 'vitest';
-import {
-  createFredClient,
-  type FredClient,
-  shouldWarnUnguarded,
-} from './client.js';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createFredClient, shouldWarnUnguarded } from './client.js';
 
 const FULL_CONFIG: ManifestMCPConfig = {
   chainId: 'test-1',
@@ -158,13 +145,8 @@ describe('createFredClient', () => {
     expect(statusFetch).toHaveBeenCalled(); // the wait used the client's injected fetch (ctx forwarded)
   });
 
-  it('FredClient is ManifestClient & FredActions; a query-only client is not assignable', async () => {
-    expectTypeOf<FredClient>().toMatchTypeOf<ManifestClient>();
-    expectTypeOf<FredClient>().toHaveProperty('waitForLeaseStatus');
-    // A read client (no required signer) is NOT a FredClient.
-    type ReadShape = Omit<ManifestClient, 'signer'>;
-    expectTypeOf<ReadShape>().not.toMatchTypeOf<FredClient>();
-  });
+  // The FredClient / ManifestClient shape assertions live in `client.test-d.ts`: as a
+  // runtime test they compiled to nothing and could only fail under `npm run lint` (ENG-648).
 });
 
 describe('shouldWarnUnguarded', () => {

@@ -1,21 +1,28 @@
 import { defineConfig } from 'vitest/config';
 
+// Root entry point for `npx vitest run <path>` from the repository root.
+//
+// This file defines NO test options of its own: it only delegates to each workspace
+// member's `vitest.config.ts`, so a root-invoked run uses exactly the same `typecheck`,
+// `setupFiles`, and `exclude` as `npm run test -w <pkg>`. Before it existed, a root run
+// loaded Vitest's defaults instead — type tests ran with no `typecheck` block, `expectTypeOf`
+// compiled to nothing, and every assertion passed unconditionally (ENG-648).
+//
+// Delegating (rather than repeating the per-package `typecheck.include` here with a shared
+// root tsconfig) matters because Vitest spawns `tsc -p <typecheck.tsconfig>` over that
+// tsconfig's WHOLE program: a file that Vitest's glob collects but tsc's `include` does
+// not reach is reported as passing with zero type analysis. Two hand-maintained lists
+// can only agree by accident (Vitest globs with `dot: true`; tsc's `include` skips
+// dot-directories), and a repo-wide tsconfig would also have needed every sibling's dist
+// built for a core-only run. Per-package configs pair each glob with the tsconfig whose
+// `include` already covers it (`src/**/*`). `scripts/check-type-tests.test.mjs` proves both
+// halves: a known-bad probe fails a root run, and every collected type-test file is a root
+// file of its project's tsconfig.
+//
+// The globs are anchored at `packages/` and `examples/`, so a nested checkout under
+// `.claude/worktrees/**` is never picked up as a project.
 export default defineConfig({
   test: {
-    // Match the package configs so a root-level single-file run keeps the
-    // repository-wide no-network invariant (ENG-705).
-    setupFiles: ['./tools/vitest/ban-global-fetch.ts'],
-    typecheck: {
-      enabled: true,
-      include: [
-        '**/*.test-d.ts',
-        // agent-core deliberately keeps these assertions in a runtime-shaped
-        // file; its package config treats the same file as a type test.
-        'packages/agent-core/src/types.test.ts',
-      ],
-      // The root tsconfig is a references-only index with `files: []` and
-      // therefore cannot diagnose a selected type-test on its own.
-      tsconfig: './tsconfig.type-tests.json',
-    },
+    projects: ['packages/*/vitest.config.ts', 'examples/*/vitest.config.ts'],
   },
 });
