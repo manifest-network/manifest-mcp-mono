@@ -21,6 +21,8 @@
       "tools/browser-bundle.ts",
       "tools/package-integrity.mjs",
       "tools/tsdown-entries.mjs",
+      "vitest.config.mts",
+      "tsconfig.type-tests.json",
       "!!**/dist/**",
       "!!**/packages/fred/schema/**",
       "!!**/packages/fred/src/generated/**"

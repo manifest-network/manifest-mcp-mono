@@ -29,6 +29,8 @@ npm run test:watch     # vitest (watch mode)
 
 # Single test file
 npx vitest run packages/core/src/cosmos.test.ts
+# Type-test file: use the owning workspace, never a root `vitest run <path>`
+npm run test -w @manifest-network/manifest-mcp-core -- src/manifest-types.test-d.ts
 
 # E2E setup
 docker compose -f e2e/docker-compose.yml up -d --wait --wait-timeout 180
