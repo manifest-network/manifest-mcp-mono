@@ -14,6 +14,7 @@
       "scripts/check-packages.mjs",
       "scripts/check-packages.test.mjs",
       "scripts/ensure-e2e-typecheck-build.mjs",
+      "scripts/ensure-e2e-typecheck-build.test.mjs",
       "scripts/sync-fred-manifest-schema.mjs",
       "scripts/sync-fred-manifest-schema.test.mjs",
       "tools/browser-bundle.ts",

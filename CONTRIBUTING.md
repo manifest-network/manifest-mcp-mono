@@ -23,7 +23,7 @@ Node.js 22.19+ (declared via `engines` on every package) and npm 10+ (ships with
 ```bash
 npm run build          # Build all packages (tsdown)
 npm run lint           # Type-check workspace packages (tsc --noEmit)
-npm run lint:e2e       # Type-check the E2E suite
+npm run lint:e2e       # Rebuild dependencies, then type-check the E2E suite
 npm run test           # Unit tests (vitest)
 npm run check          # Biome: format + lint + import sorting, including E2E TypeScript
 npm run check:fix      # Auto-fix anything Biome can fix
