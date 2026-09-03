@@ -202,6 +202,18 @@ function parseStructured<T = Record<string, unknown>>(result: {
   return JSON.parse(result.content[0].text) as T;
 }
 
+function parseResultCode(captured: CaptureResult): {
+  code?: string;
+  message?: string;
+  details?: Record<string, unknown>;
+} {
+  return JSON.parse(captured.toolResult.content[0].text) as {
+    code?: string;
+    message?: string;
+    details?: Record<string, unknown>;
+  };
+}
+
 // ---------------------------------------------------------------------
 
 describe('AgentMCPServer', () => {
@@ -964,116 +976,128 @@ describe('AgentMCPServer', () => {
   //   - Message body concatenates `envelope.reason` + the option
   //     `label: description` lines (per PLAN.md §2.4 + callbacks.ts
   //     renderRecoveryMessage; all strings agent-core-owned).
-  //   - Client returns accept{choice:'retry_set_domain'}; fake observes
-  //     the typed RecoveryChoice.
-  //   - Fake throws ManifestMCPError(TX_FAILED, "retry_set_domain
-  //     completed...") matching dispatchRecovery's contract; tool
-  //     surfaces it as the structured error envelope.
+  //   - Client returns a completed recovery choice; fake observes the typed
+  //     RecoveryChoice.
+  //   - Fake throws ManifestMCPError(OPERATION_CANCELLED) matching
+  //     dispatchRecovery's completed-recovery contract; the tool preserves its
+  //     structured lease UUID + outcome details at the MCP boundary.
   // ─────────────────────────────────────────────────────────────────
   describe('#2 deploy_app_orchestrated partial-success recovery', () => {
-    it('routes RecoveryOption[] through the elicitation and returns the dispatchRecovery throw as TX_FAILED', async () => {
-      const envelope: FailureEnvelope = {
-        outcome: 'partially_succeeded',
-        leaseUuid: 'lease-1',
-        requestedCustomDomain: 'app.example.com',
-        reason:
-          'Partial success: lease lease-1 created but custom_domain attach failed.',
-      };
-      const options: RecoveryOption[] = [
-        {
-          id: 'retry_set_domain',
-          label: 'Retry set-domain + upload',
-          description:
-            'Retry the set-domain transaction against the already-created lease.',
-        },
-        {
-          id: 'salvage_without_domain',
-          label: 'Salvage without domain',
-          description: 'Keep the lease without the requested custom domain.',
-        },
-        {
-          id: 'cancel_lease',
-          label: 'Cancel the lease',
-          description:
-            'Submit a cancel-lease transaction (pre-active terminal).',
-        },
-        {
-          id: 'close_lease',
-          label: 'Cancel or close the lease',
-          description:
-            'Submit a close-lease transaction (post-active or pre-active terminal).',
-        },
-      ];
-      let observedChoice: RecoveryChoice | undefined;
-
-      const fakeDeploy: AgentOrchestrators['deployApp'] = async (
-        _spec,
-        cb,
-        _opts,
-      ) => {
-        observedChoice = await cb.onFailure?.(envelope, options);
-        // Replicate dispatchRecovery's `retry_set_domain` contract — a
-        // ManifestMCPError(TX_FAILED) carrying the retry message.
-        // (Importing the real `ManifestMCPError` via the mocked-module
-        // surface still works because `importOriginal` is spread.)
-        const { ManifestMCPError, ManifestMCPErrorCode } = await import(
-          '@manifest-network/manifest-mcp-core'
-        );
-        throw new ManifestMCPError(
-          ManifestMCPErrorCode.TX_FAILED,
-          `retry_set_domain completed for ${envelope.leaseUuid}; caller should re-run troubleshootDeployment to confirm app readiness.`,
-        );
-      };
-
-      const server = makeServer({ deployApp: fakeDeploy });
-      const captured = await callToolWithCapture(
-        server,
-        'deploy_app_orchestrated',
-        { spec: { image: 'nginx', port: 80, size: 'small' } },
-        {
-          respond: () => ({
-            action: 'accept',
-            content: { choice: 'retry_set_domain' },
-          }),
-        },
-      );
-
-      // Fake observed the typed RecoveryChoice.
-      expect(observedChoice).toEqual({ id: 'retry_set_domain' });
-
-      // Exactly one elicitation — the recovery picker.
-      expect(captured.elicitations).toHaveLength(1);
-      const recReq = captured.elicitations[0];
-      const recSchema = recReq.requestedSchema as unknown as {
-        properties: {
-          choice: { enum: string[]; enumNames?: string[] };
+    it.each(['salvage_without_domain', 'cancel_lease', 'close_lease'] as const)(
+      'routes %s through elicitation as a structured cancellation outcome',
+      async (recoveryOutcome) => {
+        const envelope: FailureEnvelope = {
+          outcome: 'partially_succeeded',
+          leaseUuid: 'lease-1',
+          requestedCustomDomain: 'app.example.com',
+          reason:
+            'Partial success: lease lease-1 created but custom_domain attach failed.',
         };
-      };
-      // Enum mirrors options[].id 1-1 (dynamic build).
-      expect(recSchema.properties.choice.enum).toEqual(
-        options.map((o) => o.id),
-      );
-      expect(recSchema.properties.choice.enumNames).toEqual(
-        options.map((o) => o.label),
-      );
-      // Message carries envelope.reason + per-option label:description
-      // lines (mechanical assembly; no wrapper-flavored prose).
-      expect(recReq.message).toContain(envelope.reason);
-      for (const o of options) {
-        expect(recReq.message).toContain(o.label);
-        expect(recReq.message).toContain(o.description);
-      }
+        const options: RecoveryOption[] = [
+          {
+            id: 'retry_set_domain',
+            label: 'Retry set-domain + upload',
+            description:
+              'Retry the set-domain transaction against the already-created lease.',
+          },
+          {
+            id: 'salvage_without_domain',
+            label: 'Salvage without domain',
+            description: 'Keep the lease without the requested custom domain.',
+          },
+          {
+            id: 'cancel_lease',
+            label: 'Cancel the lease',
+            description:
+              'Submit a cancel-lease transaction (pre-active terminal).',
+          },
+          {
+            id: 'close_lease',
+            label: 'Cancel or close the lease',
+            description:
+              'Submit a close-lease transaction (post-active or pre-active terminal).',
+          },
+        ];
+        let observedChoice: RecoveryChoice | undefined;
 
-      // Tool result surfaces the structured TX_FAILED envelope.
-      expect(captured.toolResult.isError).toBe(true);
-      const parsed = JSON.parse(captured.toolResult.content[0].text) as {
-        code: string;
-        message: string;
-      };
-      expect(parsed.code).toBe('TX_FAILED');
-      expect(parsed.message).toContain('retry_set_domain completed');
-      expect(parsed.message).toContain(envelope.leaseUuid);
-    });
+        const fakeDeploy: AgentOrchestrators['deployApp'] = async (
+          _spec,
+          cb,
+          _opts,
+        ) => {
+          observedChoice = await cb.onFailure?.(envelope, options);
+          // Replicate dispatchRecovery's completed-recovery contract.
+          // (Importing the real `ManifestMCPError` via the mocked-module
+          // surface still works because `importOriginal` is spread.)
+          const { ManifestMCPError, ManifestMCPErrorCode } = await import(
+            '@manifest-network/manifest-mcp-core'
+          );
+          throw new ManifestMCPError(
+            ManifestMCPErrorCode.OPERATION_CANCELLED,
+            `${recoveryOutcome} completed for ${envelope.leaseUuid}.`,
+            {
+              lease_uuid: envelope.leaseUuid,
+              recovery_outcome: recoveryOutcome,
+            },
+          );
+        };
+
+        const server = makeServer({ deployApp: fakeDeploy });
+        const captured = await callToolWithCapture(
+          server,
+          'deploy_app_orchestrated',
+          { spec: { image: 'nginx', port: 80, size: 'small' } },
+          {
+            respond: () => ({
+              action: 'accept',
+              content: { choice: recoveryOutcome },
+            }),
+          },
+        );
+
+        // Fake observed the typed RecoveryChoice.
+        expect(observedChoice).toEqual({ id: recoveryOutcome });
+
+        // Exactly one elicitation — the recovery picker.
+        expect(captured.elicitations).toHaveLength(1);
+        const recReq = captured.elicitations[0];
+        const recSchema = recReq.requestedSchema as unknown as {
+          properties: {
+            choice: { enum: string[]; enumNames?: string[] };
+          };
+        };
+        // Enum mirrors options[].id 1-1 (dynamic build).
+        expect(recSchema.properties.choice.enum).toEqual(
+          options.map((o) => o.id),
+        );
+        expect(recSchema.properties.choice.enumNames).toEqual(
+          options.map((o) => o.label),
+        );
+        // Message carries envelope.reason + per-option label:description
+        // lines (mechanical assembly; no wrapper-flavored prose).
+        expect(recReq.message).toContain(envelope.reason);
+        for (const o of options) {
+          expect(recReq.message).toContain(o.label);
+          expect(recReq.message).toContain(o.description);
+        }
+
+        // Tool result preserves the structured completed-recovery envelope.
+        expect(captured.toolResult.isError).toBe(true);
+        const parsed = JSON.parse(captured.toolResult.content[0].text) as {
+          code: string;
+          message: string;
+          details: Record<string, unknown>;
+        };
+        expect(parsed.code).toBe('OPERATION_CANCELLED');
+        expect(parsed.code).not.toBe('TX_FAILED');
+        expect(parsed.message).toContain(`${recoveryOutcome} completed`);
+        expect(parsed.message).toContain(envelope.leaseUuid);
+        expect(parsed.details).toEqual({
+          lease_uuid: envelope.leaseUuid,
+          recovery_outcome: recoveryOutcome,
+        });
+      },
+    );
   });
 
   // ─────────────────────────────────────────────────────────────────
@@ -1087,7 +1111,10 @@ describe('AgentMCPServer', () => {
   // applied.
   // ─────────────────────────────────────────────────────────────────
   describe('#2b deploy_app_orchestrated recovery dismiss', () => {
-    const envelope: FailureEnvelope = {
+    const envelope: Extract<
+      FailureEnvelope,
+      { outcome: 'partially_succeeded' }
+    > = {
       outcome: 'partially_succeeded',
       leaseUuid: 'lease-1',
       requestedCustomDomain: 'app.example.com',
@@ -1130,15 +1157,18 @@ describe('AgentMCPServer', () => {
         _opts,
       ) => {
         observed = await cb.onFailure?.(envelope, fullOptions);
-        // Mimic dispatchRecovery's `salvage_without_domain` contract —
-        // it returns the lease with the domain field cleared. Resolve
-        // the orchestrator so we can inspect the warning notification.
+        // Mimic dispatchRecovery's completed salvage contract while preserving
+        // the wrapper's warning notification for a dismissed recovery prompt.
         const { ManifestMCPError, ManifestMCPErrorCode } = await import(
           '@manifest-network/manifest-mcp-core'
         );
         throw new ManifestMCPError(
-          ManifestMCPErrorCode.TX_FAILED,
+          ManifestMCPErrorCode.OPERATION_CANCELLED,
           'salvage_without_domain applied; lease preserved.',
+          {
+            lease_uuid: envelope.leaseUuid,
+            recovery_outcome: 'salvage_without_domain',
+          },
         );
       };
       const server = makeServer({ deployApp: fakeDeploy });
@@ -1165,6 +1195,13 @@ describe('AgentMCPServer', () => {
       expect(data.kind).toBe('recovery_dismissed');
       expect(data.dismissed_action).toBe('cancel');
       expect(data.applied_default).toBe('salvage_without_domain');
+      expect(parseResultCode(captured)).toMatchObject({
+        code: 'OPERATION_CANCELLED',
+        details: {
+          lease_uuid: envelope.leaseUuid,
+          recovery_outcome: 'salvage_without_domain',
+        },
+      });
     });
 
     it('action=decline → synthesizes salvage_without_domain + emits warning notification', async () => {
@@ -1175,6 +1212,13 @@ describe('AgentMCPServer', () => {
       expect(
         (warnings[0].data as { dismissed_action: string }).dismissed_action,
       ).toBe('decline');
+      expect(parseResultCode(captured)).toMatchObject({
+        code: 'OPERATION_CANCELLED',
+        details: {
+          lease_uuid: envelope.leaseUuid,
+          recovery_outcome: 'salvage_without_domain',
+        },
+      });
     });
 
     it('defensive: empty options[] on dismiss → INVALID_CONFIG', async () => {
@@ -2155,7 +2199,8 @@ describe('AgentMCPServer', () => {
   // FIX: each elicit site catches the rejection and applies a safe
   // default:
   //   - recovery (onFailure) → `salvage_without_domain` (lease preserved);
-  //     surfaces as TX_FAILED from agent-core (NOT UNKNOWN).
+  //     surfaces as OPERATION_CANCELLED with structured recovery details
+  //     from agent-core (NOT TX_FAILED / UNKNOWN).
   //   - confirm/plan (onPlan, onConfirm ×3) → decline; agent-core throws
   //     OPERATION_CANCELLED (NOT UNKNOWN); no broadcast fires.
   // A warning `notifications/message` documents the implicit decision.
@@ -2166,7 +2211,10 @@ describe('AgentMCPServer', () => {
   // rejected in-flight elicitation. Mirrors the test #12 spy pattern.
   // ─────────────────────────────────────────────────────────────────
   describe('#15 elicitInput rejection — safe defaults', () => {
-    const envelope: FailureEnvelope = {
+    const envelope: Extract<
+      FailureEnvelope,
+      { outcome: 'partially_succeeded' }
+    > = {
       outcome: 'partially_succeeded',
       leaseUuid: 'lease-272',
       requestedCustomDomain: 'app.example.com',
@@ -2206,17 +2254,7 @@ describe('AgentMCPServer', () => {
       },
     };
 
-    function parseResultCode(captured: CaptureResult): {
-      code?: string;
-      message?: string;
-    } {
-      return JSON.parse(captured.toolResult.content[0].text) as {
-        code?: string;
-        message?: string;
-      };
-    }
-
-    it('#15a recovery (onFailure) rejection → salvage_without_domain, lease preserved (TX_FAILED, not UNKNOWN)', async () => {
+    it('#15a recovery (onFailure) rejection → salvage_without_domain, lease preserved (OPERATION_CANCELLED)', async () => {
       let observed: RecoveryChoice | undefined;
       const fakeDeploy: AgentOrchestrators['deployApp'] = async (
         _spec,
@@ -2225,13 +2263,17 @@ describe('AgentMCPServer', () => {
       ) => {
         observed = await cb.onFailure?.(envelope, fullOptions);
         // Mimic dispatchRecovery's salvage_without_domain contract: it
-        // preserves the lease (no stopApp) and surfaces TX_FAILED.
+        // preserves the lease (no stopApp) and reports the completed choice.
         const { ManifestMCPError, ManifestMCPErrorCode } = await import(
           '@manifest-network/manifest-mcp-core'
         );
         throw new ManifestMCPError(
-          ManifestMCPErrorCode.TX_FAILED,
+          ManifestMCPErrorCode.OPERATION_CANCELLED,
           'salvage_without_domain applied; lease preserved.',
+          {
+            lease_uuid: envelope.leaseUuid,
+            recovery_outcome: 'salvage_without_domain',
+          },
         );
       };
       const server = makeServer({ deployApp: fakeDeploy });
@@ -2249,11 +2291,16 @@ describe('AgentMCPServer', () => {
 
       // Lease-preserving default returned to the orchestrator.
       expect(observed).toEqual({ id: 'salvage_without_domain' });
-      // Tool result is the TX_FAILED salvage outcome — NOT UNKNOWN.
+      // Tool result is the structured cancellation outcome — not a failed tx.
       expect(captured.toolResult.isError).toBe(true);
       const parsed = parseResultCode(captured);
-      expect(parsed.code).toBe('TX_FAILED');
+      expect(parsed.code).toBe('OPERATION_CANCELLED');
+      expect(parsed.code).not.toBe('TX_FAILED');
       expect(parsed.code).not.toBe('UNKNOWN');
+      expect(parsed.details).toEqual({
+        lease_uuid: envelope.leaseUuid,
+        recovery_outcome: 'salvage_without_domain',
+      });
       // Exactly one warning notification, describing the implicit choice.
       const warnings = captured.logs.filter((l) => l.level === 'warning');
       expect(warnings).toHaveLength(1);
@@ -2279,8 +2326,12 @@ describe('AgentMCPServer', () => {
           '@manifest-network/manifest-mcp-core'
         );
         throw new ManifestMCPError(
-          ManifestMCPErrorCode.TX_FAILED,
+          ManifestMCPErrorCode.OPERATION_CANCELLED,
           'salvage_without_domain applied; lease preserved.',
+          {
+            lease_uuid: envelope.leaseUuid,
+            recovery_outcome: 'salvage_without_domain',
+          },
         );
       };
       const server = makeServer({ deployApp: fakeDeploy });
@@ -2296,7 +2347,11 @@ describe('AgentMCPServer', () => {
 
       expect(observed).toEqual({ id: 'salvage_without_domain' });
       const parsed = parseResultCode(captured);
-      expect(parsed.code).toBe('TX_FAILED');
+      expect(parsed.code).toBe('OPERATION_CANCELLED');
+      expect(parsed.details).toEqual({
+        lease_uuid: envelope.leaseUuid,
+        recovery_outcome: 'salvage_without_domain',
+      });
       const warnings = captured.logs.filter((l) => l.level === 'warning');
       expect(warnings).toHaveLength(1);
       const data = warnings[0].data as {

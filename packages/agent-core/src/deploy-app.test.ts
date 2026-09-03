@@ -2441,121 +2441,141 @@ describe('deployApp replay — 03-partial-success-set-domain-failed', () => {
     vi.clearAllMocks();
   });
 
-  it('partial-success: fred throws → onFailure fires with recovery options → close_lease dispatched', async () => {
-    const spec = readFixture(
-      'skills',
-      'deploy-app',
-      '03-partial-success-set-domain-failed',
-      'input',
-      'spec.json',
-    ) as DeploySpec;
-    const readinessRaw = readFixture(
-      'skills',
-      'deploy-app',
-      '03-partial-success-set-domain-failed',
-      'input',
-      'readiness-response.json',
-    );
-    const metaHashResp = readFixture(
-      'skills',
-      'deploy-app',
-      '03-partial-success-set-domain-failed',
-      'input',
-      'meta-hash-response.json',
-    ) as { manifest_json: string; meta_hash_hex: string };
+  it.each([
+    ['salvage_without_domain', false],
+    ['cancel_lease', true],
+    ['close_lease', true],
+  ] as const)(
+    'partial-success: %s reports a structured cancellation outcome',
+    async (recoveryOutcome, shouldStopLease) => {
+      const spec = readFixture(
+        'skills',
+        'deploy-app',
+        '03-partial-success-set-domain-failed',
+        'input',
+        'spec.json',
+      ) as DeploySpec;
+      const readinessRaw = readFixture(
+        'skills',
+        'deploy-app',
+        '03-partial-success-set-domain-failed',
+        'input',
+        'readiness-response.json',
+      );
+      const metaHashResp = readFixture(
+        'skills',
+        'deploy-app',
+        '03-partial-success-set-domain-failed',
+        'input',
+        'meta-hash-response.json',
+      ) as { manifest_json: string; meta_hash_hex: string };
 
-    const fred = await import('@manifest-network/manifest-mcp-fred');
-    vi.mocked(fred.checkDeploymentReadiness).mockResolvedValue(
-      readinessRaw as unknown as Awaited<
-        ReturnType<typeof fred.checkDeploymentReadiness>
-      >,
-    );
-    vi.mocked(fred.buildManifestPreview).mockResolvedValue({
-      manifest_json: metaHashResp.manifest_json,
-      meta_hash_hex: metaHashResp.meta_hash_hex,
-    } as Awaited<ReturnType<typeof fred.buildManifestPreview>>);
-    // fred throws the partial-success error envelope.
-    const partialSuccessReason =
-      'Deploy partially succeeded: lease 11111111-1111-4111-8111-111111111111 was created but set-domain failed: simulation error';
-    vi.mocked(fred.deployApp).mockRejectedValue(
-      new Error(partialSuccessReason),
-    );
+      const fred = await import('@manifest-network/manifest-mcp-fred');
+      vi.mocked(fred.checkDeploymentReadiness).mockResolvedValue(
+        readinessRaw as unknown as Awaited<
+          ReturnType<typeof fred.checkDeploymentReadiness>
+        >,
+      );
+      vi.mocked(fred.buildManifestPreview).mockResolvedValue({
+        manifest_json: metaHashResp.manifest_json,
+        meta_hash_hex: metaHashResp.meta_hash_hex,
+      } as Awaited<ReturnType<typeof fred.buildManifestPreview>>);
+      // fred throws the partial-success error envelope.
+      const partialSuccessReason =
+        'Deploy partially succeeded: lease 11111111-1111-4111-8111-111111111111 was created but set-domain failed: simulation error';
+      vi.mocked(fred.deployApp).mockRejectedValue(
+        new Error(partialSuccessReason),
+      );
 
-    const { callbacks, failures } = captureCallbacks();
-    const { deployApp } = await import('./deploy-app.js');
-    const core = await import('@manifest-network/manifest-mcp-core');
-    // fix-3: cosmosEstimateFee mock — set-domain emits sentinel
-    // (per architect-ratified "as designed" framing), so only
-    // create-lease estimate is invoked.
-    vi.mocked(core.cosmosEstimateFee).mockResolvedValue({
-      module: 'billing',
-      subcommand: 'create-lease',
-      gasEstimate: '142000',
-      fee: { amount: [{ denom: 'umfx', amount: '2300' }], gas: '142000' },
-    } as Awaited<ReturnType<typeof core.cosmosEstimateFee>>);
-    vi.mocked(core.stopApp).mockResolvedValue(
-      {} as Awaited<ReturnType<typeof core.stopApp>>,
-    );
+      const { callbacks, failures } = captureCallbacks();
+      callbacks.onFailure = async (envelope, options) => {
+        failures.push({ envelope, options });
+        return { id: recoveryOutcome };
+      };
+      const { deployApp } = await import('./deploy-app.js');
+      const core = await import('@manifest-network/manifest-mcp-core');
+      // fix-3: cosmosEstimateFee mock — set-domain emits sentinel
+      // (per architect-ratified "as designed" framing), so only
+      // create-lease estimate is invoked.
+      vi.mocked(core.cosmosEstimateFee).mockResolvedValue({
+        module: 'billing',
+        subcommand: 'create-lease',
+        gasEstimate: '142000',
+        fee: { amount: [{ denom: 'umfx', amount: '2300' }], gas: '142000' },
+      } as Awaited<ReturnType<typeof core.cosmosEstimateFee>>);
+      vi.mocked(core.stopApp).mockResolvedValue(
+        {} as Awaited<ReturnType<typeof core.stopApp>>,
+      );
 
-    const clientManager = makeMockClientManager();
-    const walletProvider = makeMockWalletProvider();
+      const clientManager = makeMockClientManager();
+      const walletProvider = makeMockWalletProvider();
 
-    // The orchestrator throws after recovery dispatch (the inline closure
-    // signals "lease closed" via ManifestMCPError + the recovery branch
-    // path; caller is expected to re-run troubleshootDeployment).
-    let caughtErr: unknown = null;
-    try {
-      await deployApp(spec, callbacks, {
-        clientManager: clientManager as unknown as Parameters<
-          typeof deployApp
-        >[2]['clientManager'],
-        walletProvider,
+      // Recovery intentionally terminates the original deploy flow after the
+      // user's chosen action has completed.
+      let caughtErr: unknown = null;
+      try {
+        await deployApp(spec, callbacks, {
+          clientManager: clientManager as unknown as Parameters<
+            typeof deployApp
+          >[2]['clientManager'],
+          walletProvider,
+        });
+      } catch (err) {
+        caughtErr = err;
+      }
+
+      // Verify onFailure fired with the partial-success envelope.
+      expect(failures).toHaveLength(1);
+      const failure = failures[0];
+      expect(failure).toBeDefined();
+      expect(failure?.envelope.outcome).toBe('partially_succeeded');
+      if (failure?.envelope.outcome === 'partially_succeeded') {
+        expect(failure.envelope.leaseUuid).toBe(
+          '11111111-1111-4111-8111-111111111111',
+        );
+        expect(failure.envelope.requestedCustomDomain).toBe(
+          'app.testnet.manifest.app',
+        );
+      }
+
+      // Verify recovery options offered (with-domain case: 3 options).
+      const optionIds = failure?.options.map((o) => o.id) ?? [];
+      expect(optionIds).toContain('retry_set_domain');
+      expect(optionIds).toContain('salvage_without_domain');
+      expect(optionIds).toContain('close_lease');
+
+      if (shouldStopLease) {
+        // Read off the recorded call rather than pinning the whole argument list
+        // with toHaveBeenCalledWith: that matcher is exact-arity, and core's
+        // `stopApp` already declares a trailing `opts?: TxCallOptions` that
+        // agent-core will thread once this broadcast becomes cancellable. Slots
+        // count from the START (ENG-706).
+        const [stopCtx, stopInput] = vi.mocked(core.stopApp).mock.calls[0]!;
+        expect(stopCtx).toEqual(
+          expect.objectContaining({
+            chain: expect.anything(),
+            logger: expect.anything(),
+          }),
+        );
+        expect(stopInput).toEqual({
+          leaseUuid: '11111111-1111-4111-8111-111111111111',
+        });
+      } else {
+        expect(core.stopApp).not.toHaveBeenCalled();
+      }
+
+      expect(caughtErr).toMatchObject({
+        code: ManifestMCPErrorCode.OPERATION_CANCELLED,
+        details: {
+          lease_uuid: '11111111-1111-4111-8111-111111111111',
+          recovery_outcome: recoveryOutcome,
+        },
       });
-    } catch (err) {
-      caughtErr = err;
-    }
-
-    // Verify onFailure fired with the partial-success envelope.
-    expect(failures).toHaveLength(1);
-    const failure = failures[0];
-    expect(failure).toBeDefined();
-    expect(failure?.envelope.outcome).toBe('partially_succeeded');
-    if (failure?.envelope.outcome === 'partially_succeeded') {
-      expect(failure.envelope.leaseUuid).toBe(
-        '11111111-1111-4111-8111-111111111111',
+      expect((caughtErr as ManifestMCPError).code).not.toBe(
+        ManifestMCPErrorCode.TX_FAILED,
       );
-      expect(failure.envelope.requestedCustomDomain).toBe(
-        'app.testnet.manifest.app',
-      );
-    }
-
-    // Verify recovery options offered (with-domain case: 3 options).
-    const optionIds = failure?.options.map((o) => o.id) ?? [];
-    expect(optionIds).toContain('retry_set_domain');
-    expect(optionIds).toContain('salvage_without_domain');
-    expect(optionIds).toContain('close_lease');
-
-    // Verify the close_lease dispatch (captureCallbacks default choice)
-    // invoked core's stopApp.
-    // Read off the recorded call rather than pinning the whole argument list with
-    // toHaveBeenCalledWith: that matcher is exact-arity, and core's `stopApp` already
-    // declares a trailing `opts?: TxCallOptions` that agent-core will thread once this
-    // broadcast becomes cancellable. Slots count from the START (ENG-706).
-    const [stopCtx, stopInput] = vi.mocked(core.stopApp).mock.calls[0]!;
-    expect(stopCtx).toEqual(
-      expect.objectContaining({
-        chain: expect.anything(),
-        logger: expect.anything(),
-      }),
-    );
-    expect(stopInput).toEqual({
-      leaseUuid: '11111111-1111-4111-8111-111111111111',
-    });
-
-    // Verify the orchestrator threw after recovery (caller expected to
-    // re-run troubleshootDeployment).
-    expect(caughtErr).toBeInstanceOf(Error);
-  });
+    },
+  );
 
   // ENG-185 #7 (route β): the rendered partial-success prompt body rides a
   // `partial_success_prompt_rendered` ProgressEvent, emitted exactly once

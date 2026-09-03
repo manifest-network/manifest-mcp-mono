@@ -124,7 +124,10 @@ import type {
  * @throws `ManifestMCPError(INVALID_CONFIG)` for spec / wallet validation.
  * @throws `ManifestMCPError(OPERATION_CANCELLED)` when `onConfirm` returns
  *   `'no'` or `onPlan` returns `'cancel'` (deliberate user cancellation —
- *   ENG-272).
+ *   ENG-272), or when a user-selected `salvage_without_domain`,
+ *   `cancel_lease`, or `close_lease` recovery completes. Completed recovery
+ *   errors carry `details = { lease_uuid, recovery_outcome }` so callers can
+ *   distinguish the non-failure outcome without parsing the message (ENG-750).
  * @throws `ManifestMCPError(DEPLOY_READINESS_UNCONFIRMED)` after broadcast
  *   when readiness cannot be safely confirmed. Every variant carries
  *   `details = { readiness_unconfirmed: true, lease_uuid, partial: true }`.
@@ -1389,8 +1392,12 @@ async function dispatchRecovery(
       );
     case 'salvage_without_domain':
       throw new ManifestMCPError(
-        ManifestMCPErrorCode.TX_FAILED,
+        ManifestMCPErrorCode.OPERATION_CANCELLED,
         `salvage_without_domain: lease ${leaseUuid} retained without domain; caller should re-run troubleshootDeployment.`,
+        {
+          lease_uuid: leaseUuid,
+          recovery_outcome: choice.id,
+        },
       );
     case 'cancel_lease':
     case 'close_lease': {
@@ -1399,8 +1406,12 @@ async function dispatchRecovery(
         { leaseUuid: parseLeaseUuid(leaseUuid) },
       );
       throw new ManifestMCPError(
-        ManifestMCPErrorCode.TX_FAILED,
+        ManifestMCPErrorCode.OPERATION_CANCELLED,
         `${choice.id}: lease ${leaseUuid} closed.`,
+        {
+          lease_uuid: leaseUuid,
+          recovery_outcome: choice.id,
+        },
       );
     }
   }
