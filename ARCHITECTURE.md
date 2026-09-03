@@ -434,7 +434,7 @@ Errors use the `ManifestMCPErrorCode` enum (23 codes across 11 categories):
 | Query | `QUERY_FAILED`, `UNSUPPORTED_QUERY`, `INVALID_ADDRESS`, `INVALID_ARGUMENT`, `NOT_FOUND` (an expected "no such entity" absence, not a fault; non-retryable) |
 | Transaction | `TX_FAILED`, `UNSUPPORTED_TX`, `SIMULATION_FAILED`, `GAS_LIMIT_EXCEEDED` (pre-broadcast abort: `ceil(simulate × multiplier)` exceeded `COSMOS_MAX_GAS`; ENG-556) |
 | Module | `UNKNOWN_MODULE` |
-| User action | `OPERATION_CANCELLED` (user decline / cancel / elicitation timeout — neither a fault nor retryable) |
+| User action | `OPERATION_CANCELLED` (user decline / cancel / elicitation timeout, or a completed user-selected orchestration recovery — neither a fault nor retryable; inspect operation-specific `details` because side effects may have completed) |
 | SKU resolution | `SKU_AMBIGUOUS` (a SKU name matched more than one active SKU; disambiguate with `provider_uuid` / `sku_uuid`) |
 | Restore | `RESTORE_NOT_RETAINED`, `RESTORE_REJECTED`, `RESTORE_RETRYABLE`, `RESTORE_ORPHAN_COMPENSATION_FAILED` (`restore_app` saga outcomes; `RESTORE_RETRYABLE` covers the transient refusals — 503 placement, 429 throttle; all non-auto-retryable since restore is non-idempotent; ENG-599) |
 | Deploy | `DEPLOY_READINESS_UNCONFIRMED` (the lease exists and is paid for but readiness was never confirmed; diagnose before closing anything — non-retryable, since a blind retry buys a second lease; ENG-661) |

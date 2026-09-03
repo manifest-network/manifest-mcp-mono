@@ -126,8 +126,11 @@ import type {
  *   `'no'` or `onPlan` returns `'cancel'` (deliberate user cancellation —
  *   ENG-272), or when a user-selected `salvage_without_domain`,
  *   `cancel_lease`, or `close_lease` recovery completes. Completed recovery
- *   errors carry `details = { lease_uuid, recovery_outcome }` so callers can
- *   distinguish the non-failure outcome without parsing the message (ENG-750).
+ *   errors carry `details.lease_uuid` plus the selected
+ *   `details.recovery_outcome` so callers can distinguish the non-failure
+ *   outcome without parsing the message. Terminal recovery also carries the
+ *   authoritative `stop_outcome` / `lease_state` and, when a transaction was
+ *   broadcast, `transaction_hash` (ENG-750).
  * @throws `ManifestMCPError(DEPLOY_READINESS_UNCONFIRMED)` after broadcast
  *   when readiness cannot be safely confirmed. Every variant carries
  *   `details = { readiness_unconfirmed: true, lease_uuid, partial: true }`.
@@ -1401,16 +1404,21 @@ async function dispatchRecovery(
       );
     case 'cancel_lease':
     case 'close_lease': {
-      await stopApp(
+      const stopResult = await stopApp(
         { chain: opts.clientManager, logger: noopLogger },
         { leaseUuid: parseLeaseUuid(leaseUuid) },
       );
       throw new ManifestMCPError(
         ManifestMCPErrorCode.OPERATION_CANCELLED,
-        `${choice.id}: lease ${leaseUuid} closed.`,
+        `${choice.id}: lease ${leaseUuid} teardown completed with ${stopResult.outcome} (${stopResult.lease_state}).`,
         {
           lease_uuid: leaseUuid,
           recovery_outcome: choice.id,
+          stop_outcome: stopResult.outcome,
+          lease_state: stopResult.lease_state,
+          ...('transactionHash' in stopResult
+            ? { transaction_hash: stopResult.transactionHash }
+            : {}),
         },
       );
     }

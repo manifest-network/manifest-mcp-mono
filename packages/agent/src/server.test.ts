@@ -983,41 +983,41 @@ describe('AgentMCPServer', () => {
   //     structured lease UUID + outcome details at the MCP boundary.
   // ─────────────────────────────────────────────────────────────────
   describe('#2 deploy_app_orchestrated partial-success recovery', () => {
+    const envelope: FailureEnvelope = {
+      outcome: 'partially_succeeded',
+      leaseUuid: 'lease-1',
+      requestedCustomDomain: 'app.example.com',
+      reason:
+        'Partial success: lease lease-1 created but custom_domain attach failed.',
+    };
+    const options: RecoveryOption[] = [
+      {
+        id: 'retry_set_domain',
+        label: 'Retry set-domain + upload',
+        description:
+          'Retry the set-domain transaction against the already-created lease.',
+      },
+      {
+        id: 'salvage_without_domain',
+        label: 'Salvage without domain',
+        description: 'Keep the lease without the requested custom domain.',
+      },
+      {
+        id: 'cancel_lease',
+        label: 'Cancel the lease',
+        description: 'Submit a cancel-lease transaction (pre-active terminal).',
+      },
+      {
+        id: 'close_lease',
+        label: 'Cancel or close the lease',
+        description:
+          'Submit a close-lease transaction (post-active or pre-active terminal).',
+      },
+    ];
+
     it.each(['salvage_without_domain', 'cancel_lease', 'close_lease'] as const)(
       'routes %s through elicitation as a structured cancellation outcome',
       async (recoveryOutcome) => {
-        const envelope: FailureEnvelope = {
-          outcome: 'partially_succeeded',
-          leaseUuid: 'lease-1',
-          requestedCustomDomain: 'app.example.com',
-          reason:
-            'Partial success: lease lease-1 created but custom_domain attach failed.',
-        };
-        const options: RecoveryOption[] = [
-          {
-            id: 'retry_set_domain',
-            label: 'Retry set-domain + upload',
-            description:
-              'Retry the set-domain transaction against the already-created lease.',
-          },
-          {
-            id: 'salvage_without_domain',
-            label: 'Salvage without domain',
-            description: 'Keep the lease without the requested custom domain.',
-          },
-          {
-            id: 'cancel_lease',
-            label: 'Cancel the lease',
-            description:
-              'Submit a cancel-lease transaction (pre-active terminal).',
-          },
-          {
-            id: 'close_lease',
-            label: 'Cancel or close the lease',
-            description:
-              'Submit a close-lease transaction (post-active or pre-active terminal).',
-          },
-        ];
         let observedChoice: RecoveryChoice | undefined;
 
         const fakeDeploy: AgentOrchestrators['deployApp'] = async (
@@ -1038,6 +1038,19 @@ describe('AgentMCPServer', () => {
             {
               lease_uuid: envelope.leaseUuid,
               recovery_outcome: recoveryOutcome,
+              ...(recoveryOutcome === 'salvage_without_domain'
+                ? {}
+                : {
+                    stop_outcome:
+                      recoveryOutcome === 'cancel_lease'
+                        ? 'cancelled'
+                        : 'stopped',
+                    lease_state:
+                      recoveryOutcome === 'cancel_lease'
+                        ? 'LEASE_STATE_REJECTED'
+                        : 'LEASE_STATE_CLOSED',
+                    transaction_hash: `${recoveryOutcome}_TX_HASH`,
+                  }),
             },
           );
         };
@@ -1083,11 +1096,7 @@ describe('AgentMCPServer', () => {
 
         // Tool result preserves the structured completed-recovery envelope.
         expect(captured.toolResult.isError).toBe(true);
-        const parsed = JSON.parse(captured.toolResult.content[0].text) as {
-          code: string;
-          message: string;
-          details: Record<string, unknown>;
-        };
+        const parsed = parseResultCode(captured);
         expect(parsed.code).toBe('OPERATION_CANCELLED');
         expect(parsed.code).not.toBe('TX_FAILED');
         expect(parsed.message).toContain(`${recoveryOutcome} completed`);
@@ -1095,9 +1104,60 @@ describe('AgentMCPServer', () => {
         expect(parsed.details).toEqual({
           lease_uuid: envelope.leaseUuid,
           recovery_outcome: recoveryOutcome,
+          ...(recoveryOutcome === 'salvage_without_domain'
+            ? {}
+            : {
+                stop_outcome:
+                  recoveryOutcome === 'cancel_lease' ? 'cancelled' : 'stopped',
+                lease_state:
+                  recoveryOutcome === 'cancel_lease'
+                    ? 'LEASE_STATE_REJECTED'
+                    : 'LEASE_STATE_CLOSED',
+                transaction_hash: `${recoveryOutcome}_TX_HASH`,
+              }),
         });
       },
     );
+
+    it('returns DeployResult when retry_set_domain succeeds', async () => {
+      const deployResult: DeployResult = {
+        leaseUuid: envelope.leaseUuid,
+        providerUuid: 'provider-1',
+        leaseState: 'LEASE_STATE_ACTIVE',
+        urls: ['https://app.example.com/'],
+        customDomain: 'app.example.com',
+        manifestPath: '',
+      };
+      let observedChoice: RecoveryChoice | undefined;
+      const fakeDeploy: AgentOrchestrators['deployApp'] = async (
+        _spec,
+        cb,
+        _opts,
+      ) => {
+        observedChoice = await cb.onFailure?.(envelope, options);
+        return deployResult;
+      };
+
+      const server = makeServer({ deployApp: fakeDeploy });
+      const captured = await callToolWithCapture(
+        server,
+        'deploy_app_orchestrated',
+        { spec: { image: 'nginx', port: 80, size: 'small' } },
+        {
+          respond: () => ({
+            action: 'accept',
+            content: { choice: 'retry_set_domain' },
+          }),
+        },
+      );
+
+      expect(observedChoice).toEqual({ id: 'retry_set_domain' });
+      expect(captured.elicitations).toHaveLength(1);
+      expect(captured.toolResult.isError).toBeUndefined();
+      expect(parseStructured<DeployResult>(captured.toolResult)).toEqual(
+        deployResult,
+      );
+    });
   });
 
   // ─────────────────────────────────────────────────────────────────

@@ -114,6 +114,8 @@ Most failures throw `ManifestMCPError` (with a `code` from `ManifestMCPErrorCode
 - **`isSkuAmbiguousError(err)`** narrows `err.details` to `{ reason: 'AMBIGUOUS_SKU_NAME', size, candidates }` when a SKU name matched more than one active SKU — render a picker from `candidates`.
 - **`ProviderApiError.isProviderApiError(err)`** is a dual-package-safe brand guard for provider HTTP errors (exposes `err.status`).
 
+The `/orchestration` deploy flow has a deliberate completed-recovery error contract. An accepted `retry_set_domain` returns the normal `DeployResult`; completed `salvage_without_domain`, `cancel_lease`, and `close_lease` choices end the original invocation with non-retryable `OPERATION_CANCELLED`, `details.lease_uuid`, and the selected `details.recovery_outcome`. Terminal choices also carry the authoritative `details.stop_outcome` and `details.lease_state`, plus `details.transaction_hash` when teardown broadcast a transaction. Salvage leaves the live lease in place and billing, so do not automatically clean it up or redeploy.
+
 See the [cookbook](../../docs/library-usage.md#errors) for a worked example.
 
 ## Node consumers: keep the SSRF guard on

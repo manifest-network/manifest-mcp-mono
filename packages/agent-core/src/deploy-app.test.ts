@@ -2442,12 +2442,43 @@ describe('deployApp replay — 03-partial-success-set-domain-failed', () => {
   });
 
   it.each([
-    ['salvage_without_domain', false],
-    ['cancel_lease', true],
-    ['close_lease', true],
+    ['salvage_without_domain', 'salvage_without_domain', undefined],
+    [
+      'cancel_lease',
+      'cancel_lease',
+      {
+        lease_uuid: '11111111-1111-4111-8111-111111111111',
+        outcome: 'cancelled',
+        lease_state: 'LEASE_STATE_REJECTED',
+        transactionHash: 'CANCEL_TX_HASH',
+        code: 0,
+        confirmed: true,
+      },
+    ],
+    [
+      'close_lease',
+      'close_lease',
+      {
+        lease_uuid: '11111111-1111-4111-8111-111111111111',
+        outcome: 'stopped',
+        lease_state: 'LEASE_STATE_CLOSED',
+        transactionHash: 'CLOSE_TX_HASH',
+        code: 0,
+        confirmed: true,
+      },
+    ],
+    [
+      'close_lease (already inactive)',
+      'close_lease',
+      {
+        lease_uuid: '11111111-1111-4111-8111-111111111111',
+        outcome: 'already_inactive',
+        lease_state: 'LEASE_STATE_EXPIRED',
+      },
+    ],
   ] as const)(
     'partial-success: %s reports a structured cancellation outcome',
-    async (recoveryOutcome, shouldStopLease) => {
+    async (_caseLabel, recoveryOutcome, stopResult) => {
       const spec = readFixture(
         'skills',
         'deploy-app',
@@ -2504,7 +2535,11 @@ describe('deployApp replay — 03-partial-success-set-domain-failed', () => {
         fee: { amount: [{ denom: 'umfx', amount: '2300' }], gas: '142000' },
       } as Awaited<ReturnType<typeof core.cosmosEstimateFee>>);
       vi.mocked(core.stopApp).mockResolvedValue(
-        {} as Awaited<ReturnType<typeof core.stopApp>>,
+        (stopResult ?? {
+          lease_uuid: '11111111-1111-4111-8111-111111111111',
+          outcome: 'already_inactive',
+          lease_state: 'LEASE_STATE_CLOSED',
+        }) as Awaited<ReturnType<typeof core.stopApp>>,
       );
 
       const clientManager = makeMockClientManager();
@@ -2544,7 +2579,7 @@ describe('deployApp replay — 03-partial-success-set-domain-failed', () => {
       expect(optionIds).toContain('salvage_without_domain');
       expect(optionIds).toContain('close_lease');
 
-      if (shouldStopLease) {
+      if (stopResult !== undefined) {
         // Read off the recorded call rather than pinning the whole argument list
         // with toHaveBeenCalledWith: that matcher is exact-arity, and core's
         // `stopApp` already declares a trailing `opts?: TxCallOptions` that
@@ -2569,8 +2604,22 @@ describe('deployApp replay — 03-partial-success-set-domain-failed', () => {
         details: {
           lease_uuid: '11111111-1111-4111-8111-111111111111',
           recovery_outcome: recoveryOutcome,
+          ...(stopResult === undefined
+            ? {}
+            : {
+                stop_outcome: stopResult.outcome,
+                lease_state: stopResult.lease_state,
+                ...('transactionHash' in stopResult
+                  ? { transaction_hash: stopResult.transactionHash }
+                  : {}),
+              }),
         },
       });
+      if (stopResult !== undefined) {
+        expect((caughtErr as Error).message).toContain(
+          `teardown completed with ${stopResult.outcome} (${stopResult.lease_state})`,
+        );
+      }
       expect((caughtErr as ManifestMCPError).code).not.toBe(
         ManifestMCPErrorCode.TX_FAILED,
       );

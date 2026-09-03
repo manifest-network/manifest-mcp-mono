@@ -365,7 +365,7 @@ export class AgentMCPServer {
           'the create-lease + manifest upload (+ optional set-domain) atomically ' +
           'through fred, and prompts for recovery on partial-success failures. ' +
           'A completed salvage/cancel/close recovery returns OPERATION_CANCELLED ' +
-          'with structured lease_uuid and recovery_outcome details. ' +
+          'with structured recovery and authoritative teardown details. ' +
           'Requires an elicitation-capable MCP host (Claude Code ≥ 2.1.76).',
         inputSchema: {
           spec: z
