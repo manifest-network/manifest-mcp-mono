@@ -5,8 +5,11 @@ import { defineConfig } from 'vitest/config';
 // This file defines NO test options of its own: it only delegates to each workspace
 // member's `vitest.config.ts`, so a root-invoked run uses exactly the same `typecheck`,
 // `setupFiles`, and `exclude` as `npm run test -w <pkg>`. Before it existed, a root run
-// loaded Vitest's defaults instead — type tests ran with no `typecheck` block, `expectTypeOf`
-// compiled to nothing, and every assertion passed unconditionally (ENG-648).
+// used Vitest's defaults instead: a bare run of a `.test-d.ts` found no test files, and
+// `--typecheck` pointed tsc at the root `tsconfig.json` — a references-only index with
+// `files: []` — so `expectTypeOf` assertions passed with zero analysis, while an
+// `expectTypeOf` inside a runtime `.test.ts` compiled to nothing and passed unconditionally
+// (ENG-648).
 //
 // Delegating (rather than repeating the per-package `typecheck.include` here with a shared
 // root tsconfig) matters because Vitest spawns `tsc -p <typecheck.tsconfig>` over that

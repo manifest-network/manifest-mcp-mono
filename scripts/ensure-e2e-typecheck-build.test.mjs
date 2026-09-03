@@ -134,12 +134,9 @@ test('wiring: npm, CI, release, formatting, and PR checks retain the gate', () =
     readFileSync(resolve(repoRoot, 'biome.json'), 'utf8'),
   );
   assert(biomeConfig.files.includes.includes(testPath), 'biome.json includes');
-  for (const script of ['check', 'check:fix', 'format']) {
-    assert.match(
-      packageJson.scripts[script],
-      /^biome (check|format)( --write)? \.$/,
-    );
-  }
+  assert.equal(packageJson.scripts.check, 'biome check .');
+  assert.equal(packageJson.scripts['check:fix'], 'biome check --write .');
+  assert.equal(packageJson.scripts.format, 'biome format --write .');
 
   for (const workflow of ['ci.yml', 'release.yml']) {
     const source = readFileSync(

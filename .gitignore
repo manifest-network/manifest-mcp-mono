@@ -16,6 +16,7 @@ examples/*/src/__dcprobe_*.ts
 # Same shape for the root type-test harness's probes (scripts/check-type-tests.test.mjs).
 packages/*/src/__tcprobe_*.ts
 packages/*/src/.__tcprobe_*/
+.claude/worktrees/__tcprobe_*/
 .env
 !e2e/.env
 .env.local
