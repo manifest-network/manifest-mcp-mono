@@ -128,9 +128,15 @@ test('wiring: npm, CI, release, formatting, and PR checks retain the gate', () =
     `node --test ${testPath} && node scripts/ensure-e2e-typecheck-build.mjs`,
   );
   assert.equal(packageJson.scripts['lint:e2e'], 'tsc -p e2e/tsconfig.json');
-  for (const script of ['check', 'check:fix', 'format']) {
-    assert.match(packageJson.scripts[script], new RegExp(testPath));
-  }
+  // Biome's file set is `biome.json`'s `files.includes` (the scripts run `biome check .`), so
+  // that list is where this file must be named to stay formatted and linted.
+  const biomeConfig = JSON.parse(
+    readFileSync(resolve(repoRoot, 'biome.json'), 'utf8'),
+  );
+  assert(biomeConfig.files.includes.includes(testPath), 'biome.json includes');
+  assert.equal(packageJson.scripts.check, 'biome check .');
+  assert.equal(packageJson.scripts['check:fix'], 'biome check --write .');
+  assert.equal(packageJson.scripts.format, 'biome format --write .');
 
   for (const workflow of ['ci.yml', 'release.yml']) {
     const source = readFileSync(

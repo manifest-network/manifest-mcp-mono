@@ -44,6 +44,14 @@ jobs:
       # bound methods, the brand families + ports, the read-vs-full guarantee) so an
       # upstream codegen/type-shape drift that survives a value-only test fails CI here. (ENG-309)
       - run: npm run test:types -w @manifest-network/manifest-sdk
+      # Root type-test harness: proves a root-invoked `vitest run <path>` type-checks instead of
+      # degrading to a runtime no-op (a known-bad probe must FAIL), that every type-assertion
+      # file in every workspace member is collected by some package's typecheck glob, and that
+      # every collected file is a root file of the tsconfig Vitest hands to tsc — the three ways
+      # a type test goes vacuous without CI noticing. The harness itself needs no dist (its one
+      # vitest run is a core-only probe); it sits after the build so a future cross-package
+      # probe cannot come to depend on ordering by accident. (ENG-648)
+      - run: npm run check:type-tests
       # Fail-closed browser build of the compose-only acceptance example: a rolldown
       # platform:browser bundle of dist/main.js with UNRESOLVED_IMPORT capture (asserts the
       # set is empty minus one exact guarded @cosmjs/crypto warning) + a complete builtin/CJS

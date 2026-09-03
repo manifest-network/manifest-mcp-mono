@@ -7,7 +7,10 @@ export default defineConfig({
     setupFiles: ['../../tools/vitest/ban-global-fetch.ts'],
     typecheck: {
       enabled: true,
-      include: ['**/*.test-d.ts'],
+      // Anchored under `src/` so the glob can only collect files that `tsconfig.json`'s
+      // `include: ["src/**/*"]` also compiles. Vitest reports a collected file that tsc's
+      // program never reaches as passing with zero type analysis (ENG-648).
+      include: ['src/**/*.test-d.ts'],
       tsconfig: './tsconfig.json',
     },
   },

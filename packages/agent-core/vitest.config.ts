@@ -12,7 +12,9 @@ export default defineConfig({
       // those assertions are actually enforced under `--typecheck` (a
       // `toEqualTypeOf` mismatch is a runtime no-op, so without this the
       // assertions stay inert — ENG-310).
-      include: ['**/*.test-d.ts', '**/types.test.ts'],
+      // Anchored under `src/` so the globs can only collect files that
+      // `tsconfig.json`'s `include: ["src/**/*"]` also compiles (ENG-648).
+      include: ['src/**/*.test-d.ts', 'src/**/types.test.ts'],
       tsconfig: './tsconfig.json',
     },
   },
