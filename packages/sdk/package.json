@@ -86,10 +86,10 @@
   },
   "devDependencies": {
     "typescript": "5.9.3",
-    "vitest": "4.1.10",
+    "vitest": "4.1.11",
     "@types/node": "22.20.1",
     "publint": "0.3.24",
     "@arethetypeswrong/core": "0.18.5",
-    "rolldown": "1.2.5"
+    "rolldown": "1.2.6"
   }
 }
