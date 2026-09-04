@@ -1,3 +1,4 @@
+import { parseLeaseUuid } from '@manifest-network/manifest-mcp-core';
 import type { RecoveryOptionId } from '../types.js';
 
 /**
@@ -29,12 +30,8 @@ import type { RecoveryOptionId } from '../types.js';
  * fidelity, unlike `formatSuccess` which strips the prefix for display).
  */
 
-/** RFC 4122 UUID — 36 chars, hex + 4 hyphens, lowercase or upper. */
-const UUID_RE =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-
 export interface RenderPartialSuccessPromptInput {
-  /** The lease UUID created on-chain (validated RFC 4122). */
+  /** The lease UUID created on-chain (validated with core's canonical UUID-shape policy). */
   leaseUuid: string;
   /** Canonical lease state name (e.g. `LEASE_STATE_PENDING`) — pre-decoded. */
   decodedState: string;
@@ -65,11 +62,7 @@ export interface PartialSuccessPrompt {
 export function renderPartialSuccessPrompt(
   input: RenderPartialSuccessPromptInput,
 ): PartialSuccessPrompt {
-  if (!UUID_RE.test(input.leaseUuid)) {
-    throw new TypeError(
-      `renderPartialSuccessPrompt: leaseUuid must be a UUID; got "${input.leaseUuid}"`,
-    );
-  }
+  const leaseUuid = parseLeaseUuid(input.leaseUuid);
   if (
     typeof input.decodedState !== 'string' ||
     input.decodedState.length === 0
@@ -111,7 +104,7 @@ export function renderPartialSuccessPrompt(
 
   const lines: string[] = [
     'Deploy partially succeeded:',
-    `  - Lease ${input.leaseUuid} was created on-chain (state: ${input.decodedState}).`,
+    `  - Lease ${leaseUuid} was created on-chain (state: ${input.decodedState}).`,
   ];
   if (readinessUnconfirmed) {
     lines.push(

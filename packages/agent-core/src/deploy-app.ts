@@ -1290,11 +1290,24 @@ async function handleBroadcastFailure(
       : {}),
   });
 
-  if (classified.outcome === 'partially_succeeded' && classified.leaseUuid) {
-    // `details.lease_uuid` originates in fred/provider error data. Validate it
-    // once at this trust boundary, before it reaches prompt rendering,
-    // callbacks, recovery diagnostics, or a recovery-side effect.
-    const leaseUuid = parseLeaseUuid(classified.leaseUuid);
+  if (classified.outcome === 'partially_succeeded') {
+    // `details.lease_uuid` originates in fred error data. Validate it at this
+    // trust boundary before it reaches prompt rendering, callbacks, recovery
+    // diagnostics, or a recovery-side effect. A malformed identifier means we
+    // cannot recover safely, but it must not erase the fact that the deploy
+    // partially succeeded and may have left a billable lease behind.
+    let leaseUuid: LeaseUuid;
+    try {
+      leaseUuid = parseLeaseUuid(classified.leaseUuid ?? '');
+    } catch {
+      throw new ManifestMCPError(
+        ManifestMCPErrorCode.TX_FAILED,
+        `Deploy partially succeeded, but recovery could not continue because fred did not report a valid lease UUID: ${classified.reason}`,
+        classified.leaseUuid === undefined
+          ? undefined
+          : { rejected_lease_uuid: classified.leaseUuid },
+      );
+    }
     const envelope: FailureEnvelope = {
       outcome: 'partially_succeeded',
       leaseUuid,
