@@ -129,8 +129,9 @@ import type {
  *   errors carry `details.lease_uuid` plus the selected
  *   `details.recovery_outcome` so callers can distinguish the non-failure
  *   outcome without parsing the message. Terminal recovery also carries the
- *   authoritative `stop_outcome` / `lease_state` and an optional
- *   `transaction_hash` when `stopApp` returns one (ENG-750).
+ *   authoritative `stop_outcome` / `lease_state`. `transaction_hash` is
+ *   present for `stopped` / `cancelled` and absent for `already_inactive`
+ *   (ENG-750).
  * @throws `ManifestMCPError(DEPLOY_READINESS_UNCONFIRMED)` after broadcast
  *   when readiness cannot be safely confirmed. Every variant carries
  *   `details = { readiness_unconfirmed: true, lease_uuid, partial: true }`.

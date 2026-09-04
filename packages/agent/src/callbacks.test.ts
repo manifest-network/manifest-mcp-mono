@@ -314,9 +314,50 @@ describe('makeDeployCallbacks', () => {
         data: expect.objectContaining({
           kind: 'recovery_dismissed',
           applied_default: 'salvage_without_domain',
+          lease_uuid: 'lease-paid',
         }),
       }),
     );
     expect(extra.sendNotification).not.toHaveBeenCalled();
+  });
+
+  it('includes the paid lease UUID when the user dismisses recovery', async () => {
+    const sendLoggingMessage = vi.fn().mockResolvedValue(undefined);
+    const server = {
+      elicitInput: vi.fn().mockResolvedValue({ action: 'cancel' }),
+      sendLoggingMessage,
+      getClientCapabilities: vi.fn().mockReturnValue({ elicitation: {} }),
+    } as unknown as Server;
+    const callbacks = makeDeployCallbacks({ server, extra: makeExtra() });
+    const options: RecoveryOption[] = [
+      {
+        id: 'salvage_without_domain',
+        label: 'Keep lease',
+        description: 'Keep the paid lease without its custom domain.',
+      },
+    ];
+
+    await expect(
+      callbacks.onFailure!(
+        {
+          outcome: 'partially_succeeded',
+          leaseUuid: 'lease-paid',
+          reason: 'Domain attachment failed after lease creation.',
+        },
+        options,
+      ),
+    ).resolves.toEqual({ id: 'salvage_without_domain' });
+
+    expect(sendLoggingMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        level: 'warning',
+        data: expect.objectContaining({
+          kind: 'recovery_dismissed',
+          dismissed_action: 'cancel',
+          applied_default: 'salvage_without_domain',
+          lease_uuid: 'lease-paid',
+        }),
+      }),
+    );
   });
 });

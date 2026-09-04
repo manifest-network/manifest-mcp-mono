@@ -2544,6 +2544,10 @@ describe('deployApp replay — 03-partial-success-set-domain-failed', () => {
       };
       const { deployApp } = await import('./deploy-app.js');
       const core = await import('@manifest-network/manifest-mcp-core');
+      // Each table row owns exactly one teardown result. Reset first so a
+      // queued or default implementation cannot leak across cases, then use a
+      // one-shot implementation because dispatchRecovery calls stopApp once.
+      vi.mocked(core.stopApp).mockReset();
       // fix-3: cosmosEstimateFee mock — set-domain emits sentinel
       // (per architect-ratified "as designed" framing), so only
       // create-lease estimate is invoked.
@@ -2554,9 +2558,9 @@ describe('deployApp replay — 03-partial-success-set-domain-failed', () => {
         fee: { amount: [{ denom: 'umfx', amount: '2300' }], gas: '142000' },
       } as Awaited<ReturnType<typeof core.cosmosEstimateFee>>);
       if (stopError !== undefined) {
-        vi.mocked(core.stopApp).mockRejectedValue(stopError);
+        vi.mocked(core.stopApp).mockRejectedValueOnce(stopError);
       } else {
-        vi.mocked(core.stopApp).mockResolvedValue(
+        vi.mocked(core.stopApp).mockResolvedValueOnce(
           (stopResult ?? {
             lease_uuid: '11111111-1111-4111-8111-111111111111',
             outcome: 'already_inactive',
@@ -2624,9 +2628,11 @@ describe('deployApp replay — 03-partial-success-set-domain-failed', () => {
 
       if (stopError !== undefined) {
         expect(caughtErr).toBe(stopError);
-        expect(caughtErr).toMatchObject({
-          code: ManifestMCPErrorCode.TX_FAILED,
-          details: { raw_log: 'fixture rejection' },
+        expect((caughtErr as ManifestMCPError).code).toBe(
+          ManifestMCPErrorCode.TX_FAILED,
+        );
+        expect((caughtErr as ManifestMCPError).details).toStrictEqual({
+          raw_log: 'fixture rejection',
         });
         return;
       }
@@ -2634,7 +2640,7 @@ describe('deployApp replay — 03-partial-success-set-domain-failed', () => {
       expect(caughtErr).toMatchObject({
         code: ManifestMCPErrorCode.OPERATION_CANCELLED,
       });
-      expect((caughtErr as ManifestMCPError).details).toEqual({
+      expect((caughtErr as ManifestMCPError).details).toStrictEqual({
         lease_uuid: '11111111-1111-4111-8111-111111111111',
         recovery_outcome: recoveryOutcome,
         ...(stopResult === undefined
@@ -2647,11 +2653,11 @@ describe('deployApp replay — 03-partial-success-set-domain-failed', () => {
                 : {}),
             }),
       });
-      if (stopResult !== undefined) {
-        expect((caughtErr as Error).message).toContain(
-          `teardown completed with ${stopResult.outcome} (${stopResult.lease_state})`,
-        );
-      }
+      expect((caughtErr as Error).message).toBe(
+        stopResult === undefined
+          ? 'salvage_without_domain: lease 11111111-1111-4111-8111-111111111111 retained without domain; caller should re-run troubleshootDeployment.'
+          : `${recoveryOutcome}: lease 11111111-1111-4111-8111-111111111111 teardown completed with ${stopResult.outcome} (${stopResult.lease_state}).`,
+      );
       expect((caughtErr as ManifestMCPError).code).not.toBe(
         ManifestMCPErrorCode.TX_FAILED,
       );

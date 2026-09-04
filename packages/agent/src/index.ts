@@ -366,8 +366,8 @@ export class AgentMCPServer {
           'through fred, and prompts for recovery on partial-success failures. ' +
           'A completed salvage/cancel/close recovery returns OPERATION_CANCELLED ' +
           'with details.lease_uuid and details.recovery_outcome; cancel/close ' +
-          'also carry details.stop_outcome, details.lease_state, and optional ' +
-          'details.transaction_hash. ' +
+          'also carry details.stop_outcome and details.lease_state, plus ' +
+          'details.transaction_hash when the stop outcome is stopped or cancelled. ' +
           'Requires an elicitation-capable MCP host (Claude Code ≥ 2.1.76).',
         inputSchema: {
           spec: z

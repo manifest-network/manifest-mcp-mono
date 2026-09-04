@@ -425,6 +425,9 @@ export function makeDeployCallbacks(
             kind: 'recovery_dismissed',
             dismissed_action: dismissedAction,
             applied_default: choice.id,
+            ...(failure.outcome === 'partially_succeeded'
+              ? { lease_uuid: failure.leaseUuid }
+              : {}),
             reason:
               'Recovery prompt rejected (timeout/abort/transport close); ' +
               'applied lease-preserving default. The lease still exists — ' +
@@ -450,6 +453,9 @@ export function makeDeployCallbacks(
             kind: 'recovery_dismissed',
             dismissed_action: result.action,
             applied_default: choice.id,
+            ...(failure.outcome === 'partially_succeeded'
+              ? { lease_uuid: failure.leaseUuid }
+              : {}),
             reason:
               'User dismissed the recovery prompt; applied lease-preserving default. ' +
               'Manually invoke close_lease_orchestrated or manage_domain_orchestrated if needed.',
