@@ -51,6 +51,7 @@ import type {
   SkuCandidate,
   WalletProvider,
 } from './index.js';
+import { classifyDeployError } from './internals/classify-deploy-error.js';
 
 // ENG-310: the narrow DeploySpec union (and SingleServiceSpec) are gone —
 // agent-core's deploy input IS the canonical AppDeploySpec. These local
@@ -2437,6 +2438,8 @@ describe('deployApp replay — Copilot review fixes (PR #58 unresolved comments)
 });
 
 describe('deployApp replay — 03-partial-success-set-domain-failed', () => {
+  const OVERLONG_REJECTED_LEASE_UUID = 'x'.repeat(10_001);
+
   beforeEach(() => {
     vi.clearAllMocks();
   });
@@ -2518,6 +2521,20 @@ describe('deployApp replay — 03-partial-success-set-domain-failed', () => {
       undefined,
       '',
     ],
+    [
+      'preserves the partial-deploy classification when the structured lease UUID is absent',
+      undefined,
+      undefined,
+      undefined,
+      null,
+    ],
+    [
+      'bounds an overlong rejected structured lease UUID',
+      undefined,
+      undefined,
+      undefined,
+      OVERLONG_REJECTED_LEASE_UUID,
+    ],
   ] as const)(
     'partial-success: %s',
     async (_caseLabel, recoveryOutcome, stopResult, stopError, invalidLeaseUuid) => {
@@ -2564,7 +2581,9 @@ describe('deployApp replay — 03-partial-success-set-domain-failed', () => {
           : new ManifestMCPError(
               ManifestMCPErrorCode.TX_FAILED,
               'Deploy partially succeeded after lease creation',
-              { partial: true, lease_uuid: invalidLeaseUuid },
+              invalidLeaseUuid === null
+                ? { partial: true }
+                : { partial: true, lease_uuid: invalidLeaseUuid },
             ),
       );
 
@@ -2635,15 +2654,21 @@ describe('deployApp replay — 03-partial-success-set-domain-failed', () => {
         expect((caughtErr as ManifestMCPError).code).toBe(
           ManifestMCPErrorCode.TX_FAILED,
         );
-        expect((caughtErr as Error).message).toContain(
-          'Deploy partially succeeded, but recovery could not continue',
+        expect((caughtErr as Error).message).toMatch(
+          /^Deploy partially succeeded: recovery could not continue/,
         );
         expect((caughtErr as Error).message).toContain(
           'Deploy partially succeeded after lease creation',
         );
         expect((caughtErr as ManifestMCPError).details).toStrictEqual({
-          rejected_lease_uuid: invalidLeaseUuid,
+          partial: true,
+          ...(invalidLeaseUuid === null
+            ? {}
+            : { rejected_lease_uuid: invalidLeaseUuid.slice(0, 50) }),
         });
+        const reclassified = classifyDeployError(caughtErr);
+        expect(reclassified.outcome).toBe('partially_succeeded');
+        expect(reclassified.leaseUuid).toBeUndefined();
         return;
       }
 

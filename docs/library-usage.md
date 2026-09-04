@@ -162,7 +162,9 @@ const web: ServiceConfig = {
 
 The result carries the branded `lease_uuid`, the `provider_uuid` / `provider_url`, the `state`, and (best-effort) `connection` info.
 
-**Partial-success errors.** This subsection describes the bound `client.deployApp` path (and the equivalent free function from `/deploy`). Most failures after the create-lease tx are wrapped in a `ManifestMCPError` whose message is prefixed `Deploy partially succeeded:` and whose `details.lease_uuid` names the lease. The outcomes below require different responses:
+**Partial-success errors.** This subsection describes the bound `client.deployApp` path (and the equivalent free function from `/deploy`). Most failures after the create-lease tx are wrapped in a `ManifestMCPError` whose message is prefixed `Deploy partially succeeded:` and whose `details.lease_uuid` names the lease. The outcomes below require different responses.
+
+The defensive exception is a malformed Fred envelope: if Fred declares partial success but omits the lease UUID or supplies an invalid one, agent-core throws `TX_FAILED` with `details.partial === true`, no usable `details.lease_uuid`, and a bounded `details.rejected_lease_uuid` when a value was supplied. It does not invoke recovery callbacks or side effects. Preserve and escalate that error rather than redeploying automatically because an unidentified paid lease may exist. The sample below naturally falls through to its final `throw` for this shape.
 
 One opt-in exception is not wrapped: if a caller supplies `pollOptions.checkChainState` and it reports a terminal on-chain state, `deployApp` rethrows `TerminalChainStateError` (a `ProviderApiError`) with `details.lease_uuid` and no partial-success prefix. The chain has already made that lease inactive, so surface the error rather than trying to close the lease again. The recovery sample below intentionally lets this error fall through to its final `throw`.
 

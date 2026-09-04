@@ -1,3 +1,4 @@
+import { parseLeaseUuid } from '@manifest-network/manifest-mcp-core';
 import {
   extractRunningEndpoints,
   formatEndpointAsIngress,
@@ -37,10 +38,6 @@ import { decode as decodeLeaseState } from './lease-state.js';
  * `name`, restore via a thin helper.
  */
 
-/** RFC 4122 UUID — 36 chars, hex + 4 hyphens, lowercase or upper. */
-const UUID_RE =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-
 /** Deploy response shape consumed by `formatSuccess`. Subset of fred's `mcp__manifest-fred__deploy_app` response. */
 export interface DeployResponse {
   /** Chain lease state — int (raw) or `LEASE_STATE_*` string (codec). */
@@ -65,18 +62,14 @@ export interface DeployResponse {
 }
 
 export interface FormatSuccessInput {
-  /** Validated lease UUID (RFC 4122 v1-v5). */
+  /** Lease UUID, validated with core's canonical UUID-shape policy. */
   leaseUuid: string;
   /** Deploy response from `deploy_app` (or equivalent atomic broadcast). */
   deployResponse: DeployResponse;
 }
 
 export function formatSuccess(input: FormatSuccessInput): string {
-  if (!UUID_RE.test(input.leaseUuid)) {
-    throw new TypeError(
-      `formatSuccess: leaseUuid must be a UUID; got "${input.leaseUuid}"`,
-    );
-  }
+  const leaseUuid = parseLeaseUuid(input.leaseUuid);
   if (
     input.deployResponse === null ||
     typeof input.deployResponse !== 'object'
@@ -107,7 +100,7 @@ export function formatSuccess(input: FormatSuccessInput): string {
   const lines: string[] = [
     'Deployed.',
     `  Provider:      ${providerName}`,
-    `  Lease UUID:    ${input.leaseUuid}`,
+    `  Lease UUID:    ${leaseUuid}`,
     `  Lease Status:  ${stateName}`,
   ];
 
@@ -150,7 +143,7 @@ export function formatSuccess(input: FormatSuccessInput): string {
   }
   lines.push('');
   lines.push(
-    `For logs / status:  /manifest-agent:troubleshoot-deployment ${input.leaseUuid}`,
+    `For logs / status:  /manifest-agent:troubleshoot-deployment ${leaseUuid}`,
   );
 
   return lines.join('\n');

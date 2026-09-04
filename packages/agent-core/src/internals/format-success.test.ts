@@ -1,5 +1,9 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import {
+  ManifestMCPError,
+  ManifestMCPErrorCode,
+} from '@manifest-network/manifest-mcp-core';
 import { describe, expect, it } from 'vitest';
 import {
   type DeployResponse,
@@ -33,13 +37,38 @@ function baseInput(
 
 describe('formatSuccess', () => {
   describe('input validation', () => {
-    it('throws TypeError for non-UUID lease', () => {
-      expect(() =>
+    it('throws the canonical UUID validation error for a non-UUID lease', () => {
+      let caught: unknown;
+      try {
         formatSuccess({
           leaseUuid: 'not-a-uuid',
           deployResponse: { state: 'LEASE_STATE_ACTIVE' },
-        }),
-      ).toThrow(/leaseUuid must be a UUID/);
+        });
+      } catch (error) {
+        caught = error;
+      }
+
+      expect(caught).toBeInstanceOf(ManifestMCPError);
+      expect((caught as ManifestMCPError).code).toBe(
+        ManifestMCPErrorCode.INVALID_ARGUMENT,
+      );
+      expect((caught as Error).message).toContain('not-a-uuid');
+    });
+
+    it.each([
+      ['nil UUID', '00000000-0000-0000-0000-000000000000'],
+      ['UUIDv7', '01890f47-e89b-7cc3-98c8-4cf59e2d35d2'],
+      ['variant-lenient UUID', '550e8400-e29b-41d4-7a16-446655440000'],
+    ])('accepts a core-valid %s', (_label, leaseUuid) => {
+      const out = formatSuccess({
+        ...baseInput(),
+        leaseUuid,
+      });
+
+      expect(out).toContain(`  Lease UUID:    ${leaseUuid}`);
+      expect(out).toContain(
+        `/manifest-agent:troubleshoot-deployment ${leaseUuid}`,
+      );
     });
 
     it('throws TypeError for null deployResponse', () => {

@@ -58,6 +58,22 @@ describe('saveManifest', () => {
       });
     });
 
+    it.each([
+      ['nil UUID', '00000000-0000-0000-0000-000000000000'],
+      ['UUIDv7', '01890f47-e89b-7cc3-98c8-4cf59e2d35d2'],
+      ['variant-lenient UUID', '550e8400-e29b-41d4-7a16-446655440000'],
+    ])('persists a core-valid %s', async (_label, leaseUuid) => {
+      const result = await saveManifest(
+        baseInput({ dataDir: tmpDir, leaseUuid }),
+      );
+      const wrapper = JSON.parse(readFileSync(result.manifestPath, 'utf8'));
+
+      expect(result.manifestPath).toBe(
+        join(tmpDir, 'manifests', `${leaseUuid}.json`),
+      );
+      expect(wrapper.lease_uuid).toBe(leaseUuid);
+    });
+
     it('throws SaveManifestError(invalid_meta_hash) for non-hex-64 hash', async () => {
       await expect(
         saveManifest({ ...baseInput({ dataDir: tmpDir }), metaHash: 'abc' }),

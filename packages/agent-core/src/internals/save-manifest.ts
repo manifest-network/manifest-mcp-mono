@@ -40,6 +40,10 @@
  * a clear "Node-only API" error when persistence is invoked elsewhere.
  */
 
+import {
+  type LeaseUuid,
+  parseLeaseUuid,
+} from '@manifest-network/manifest-mcp-core';
 import { getNodeBuiltin } from './node-builtins.js';
 
 interface NodeFsBuiltin {
@@ -70,13 +74,9 @@ interface NodePathBuiltin {
 /** SHA-256 hex digest — 64 lowercase hex chars. */
 const META_HASH_RE = /^[0-9a-f]{64}$/i;
 
-/** RFC 4122 UUID — 36 chars. */
-const UUID_RE =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-
 /** Input contract for `saveManifest`. All `*Hex` / UUID fields are validated. */
 export interface SaveManifestInput {
-  /** Validated lease UUID (RFC 4122 v1-v5). */
+  /** Lease UUID, validated with core's canonical UUID-shape policy. */
   leaseUuid: string;
   /** Canonical primary image reference (for the wrapper's `image` field). */
   image: string;
@@ -180,11 +180,13 @@ export async function saveManifest(
       }.`,
     );
   }
-  if (!UUID_RE.test(input.leaseUuid)) {
-    throw new SaveManifestError(
-      'invalid_uuid',
-      `saveManifest: leaseUuid must be a UUID; got "${input.leaseUuid}"`,
-    );
+  let leaseUuid: LeaseUuid;
+  try {
+    leaseUuid = parseLeaseUuid(input.leaseUuid);
+  } catch (error) {
+    const reason =
+      error instanceof Error ? error.message : 'leaseUuid must be a valid UUID';
+    throw new SaveManifestError('invalid_uuid', `saveManifest: ${reason}`);
   }
   if (!META_HASH_RE.test(input.metaHash)) {
     throw new SaveManifestError(
@@ -271,7 +273,7 @@ export async function saveManifest(
   const deployedAt = new Date();
   const wrapper: Record<string, unknown> = {
     schema_version: 3,
-    lease_uuid: input.leaseUuid,
+    lease_uuid: leaseUuid,
     deployed_at_iso: deployedAt.toISOString(),
     deployed_at_unix: Math.floor(deployedAt.getTime() / 1000),
     chain_id: input.chainId,
@@ -288,7 +290,7 @@ export async function saveManifest(
     wrapper.custom_domain_service_name = input.customDomainServiceName;
   }
 
-  const outPath = join(manifestsDir, `${input.leaseUuid}.json`);
+  const outPath = join(manifestsDir, `${leaseUuid}.json`);
   // Atomic write: temp file in same dir + rename. Survives crash mid-write
   // without leaving a partial file at the canonical name. The randomUUID
   // suffix avoids collisions if multiple concurrent saves target the same

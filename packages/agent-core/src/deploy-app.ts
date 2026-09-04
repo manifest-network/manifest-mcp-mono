@@ -141,6 +141,11 @@ import type {
  *   mismatch carries `readiness_reason: 'final_state_mismatch'`, `operation`,
  *   `state_source`, a bounded `observed_state`, and available provider context.
  *   Callers must diagnose the existing paid lease instead of retrying deploy.
+ * @throws `ManifestMCPError(TX_FAILED)` with `details.partial === true` when
+ *   fred reports partial success without a usable lease UUID. A supplied
+ *   malformed value is exposed only as the bounded
+ *   `details.rejected_lease_uuid`; recovery callbacks and side effects do not
+ *   run because no lease can be targeted safely.
  *
  * Errors from fred's broadcast or core's recovery primitives surface as
  * typed `ManifestMCPError`s. Partial-success failures with applicable
@@ -1302,10 +1307,13 @@ async function handleBroadcastFailure(
     } catch {
       throw new ManifestMCPError(
         ManifestMCPErrorCode.TX_FAILED,
-        `Deploy partially succeeded, but recovery could not continue because fred did not report a valid lease UUID: ${classified.reason}`,
-        classified.leaseUuid === undefined
-          ? undefined
-          : { rejected_lease_uuid: classified.leaseUuid },
+        `Deploy partially succeeded: recovery could not continue because fred did not report a valid lease UUID: ${classified.reason}`,
+        {
+          partial: true,
+          ...(classified.leaseUuid === undefined
+            ? {}
+            : { rejected_lease_uuid: classified.leaseUuid.slice(0, 50) }),
+        },
       );
     }
     const envelope: FailureEnvelope = {
