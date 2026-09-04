@@ -2442,9 +2442,14 @@ describe('deployApp replay — 03-partial-success-set-domain-failed', () => {
   });
 
   it.each([
-    ['salvage_without_domain', 'salvage_without_domain', undefined],
     [
-      'cancel_lease',
+      'salvage_without_domain reports a structured cancellation outcome',
+      'salvage_without_domain',
+      undefined,
+      undefined,
+    ],
+    [
+      'cancel_lease reports a structured cancellation outcome',
       'cancel_lease',
       {
         lease_uuid: '11111111-1111-4111-8111-111111111111',
@@ -2454,9 +2459,10 @@ describe('deployApp replay — 03-partial-success-set-domain-failed', () => {
         code: 0,
         confirmed: true,
       },
+      undefined,
     ],
     [
-      'close_lease',
+      'close_lease reports a structured cancellation outcome',
       'close_lease',
       {
         lease_uuid: '11111111-1111-4111-8111-111111111111',
@@ -2466,19 +2472,32 @@ describe('deployApp replay — 03-partial-success-set-domain-failed', () => {
         code: 0,
         confirmed: true,
       },
+      undefined,
     ],
     [
-      'close_lease (already inactive)',
+      'close_lease omits hash and untrusted reason for an already-rejected lease',
       'close_lease',
       {
         lease_uuid: '11111111-1111-4111-8111-111111111111',
         outcome: 'already_inactive',
-        lease_state: 'LEASE_STATE_EXPIRED',
+        lease_state: 'LEASE_STATE_REJECTED',
+        rejection_reason: 'provider-controlled fixture reason',
       },
+      undefined,
+    ],
+    [
+      'close_lease preserves a genuine teardown failure',
+      'close_lease',
+      undefined,
+      new ManifestMCPError(
+        ManifestMCPErrorCode.TX_FAILED,
+        'close-lease rejected by chain',
+        { raw_log: 'fixture rejection' },
+      ),
     ],
   ] as const)(
-    'partial-success: %s reports a structured cancellation outcome',
-    async (_caseLabel, recoveryOutcome, stopResult) => {
+    'partial-success: %s',
+    async (_caseLabel, recoveryOutcome, stopResult, stopError) => {
       const spec = readFixture(
         'skills',
         'deploy-app',
@@ -2534,13 +2553,17 @@ describe('deployApp replay — 03-partial-success-set-domain-failed', () => {
         gasEstimate: '142000',
         fee: { amount: [{ denom: 'umfx', amount: '2300' }], gas: '142000' },
       } as Awaited<ReturnType<typeof core.cosmosEstimateFee>>);
-      vi.mocked(core.stopApp).mockResolvedValue(
-        (stopResult ?? {
-          lease_uuid: '11111111-1111-4111-8111-111111111111',
-          outcome: 'already_inactive',
-          lease_state: 'LEASE_STATE_CLOSED',
-        }) as Awaited<ReturnType<typeof core.stopApp>>,
-      );
+      if (stopError !== undefined) {
+        vi.mocked(core.stopApp).mockRejectedValue(stopError);
+      } else {
+        vi.mocked(core.stopApp).mockResolvedValue(
+          (stopResult ?? {
+            lease_uuid: '11111111-1111-4111-8111-111111111111',
+            outcome: 'already_inactive',
+            lease_state: 'LEASE_STATE_CLOSED',
+          }) as Awaited<ReturnType<typeof core.stopApp>>,
+        );
+      }
 
       const clientManager = makeMockClientManager();
       const walletProvider = makeMockWalletProvider();
@@ -2579,7 +2602,7 @@ describe('deployApp replay — 03-partial-success-set-domain-failed', () => {
       expect(optionIds).toContain('salvage_without_domain');
       expect(optionIds).toContain('close_lease');
 
-      if (stopResult !== undefined) {
+      if (stopResult !== undefined || stopError !== undefined) {
         // Read off the recorded call rather than pinning the whole argument list
         // with toHaveBeenCalledWith: that matcher is exact-arity, and core's
         // `stopApp` already declares a trailing `opts?: TxCallOptions` that
@@ -2599,21 +2622,30 @@ describe('deployApp replay — 03-partial-success-set-domain-failed', () => {
         expect(core.stopApp).not.toHaveBeenCalled();
       }
 
+      if (stopError !== undefined) {
+        expect(caughtErr).toBe(stopError);
+        expect(caughtErr).toMatchObject({
+          code: ManifestMCPErrorCode.TX_FAILED,
+          details: { raw_log: 'fixture rejection' },
+        });
+        return;
+      }
+
       expect(caughtErr).toMatchObject({
         code: ManifestMCPErrorCode.OPERATION_CANCELLED,
-        details: {
-          lease_uuid: '11111111-1111-4111-8111-111111111111',
-          recovery_outcome: recoveryOutcome,
-          ...(stopResult === undefined
-            ? {}
-            : {
-                stop_outcome: stopResult.outcome,
-                lease_state: stopResult.lease_state,
-                ...('transactionHash' in stopResult
-                  ? { transaction_hash: stopResult.transactionHash }
-                  : {}),
-              }),
-        },
+      });
+      expect((caughtErr as ManifestMCPError).details).toEqual({
+        lease_uuid: '11111111-1111-4111-8111-111111111111',
+        recovery_outcome: recoveryOutcome,
+        ...(stopResult === undefined
+          ? {}
+          : {
+              stop_outcome: stopResult.outcome,
+              lease_state: stopResult.lease_state,
+              ...('transactionHash' in stopResult
+                ? { transaction_hash: stopResult.transactionHash }
+                : {}),
+            }),
       });
       if (stopResult !== undefined) {
         expect((caughtErr as Error).message).toContain(
@@ -2681,9 +2713,11 @@ describe('deployApp replay — 03-partial-success-set-domain-failed', () => {
       gasEstimate: '142000',
       fee: { amount: [{ denom: 'umfx', amount: '2300' }], gas: '142000' },
     } as Awaited<ReturnType<typeof core.cosmosEstimateFee>>);
-    vi.mocked(core.stopApp).mockResolvedValue(
-      {} as Awaited<ReturnType<typeof core.stopApp>>,
-    );
+    vi.mocked(core.stopApp).mockResolvedValue({
+      lease_uuid: '11111111-1111-4111-8111-111111111111',
+      outcome: 'already_inactive',
+      lease_state: 'LEASE_STATE_CLOSED',
+    } as Awaited<ReturnType<typeof core.stopApp>>);
 
     const clientManager = makeMockClientManager();
     const walletProvider = makeMockWalletProvider();

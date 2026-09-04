@@ -1014,10 +1014,44 @@ describe('AgentMCPServer', () => {
           'Submit a close-lease transaction (post-active or pre-active terminal).',
       },
     ];
+    const completedRecoveryFixture = (
+      recoveryOutcome:
+        | 'salvage_without_domain'
+        | 'cancel_lease'
+        | 'close_lease',
+    ): { message: string; details: Record<string, unknown> } => {
+      const details = {
+        lease_uuid: envelope.leaseUuid,
+        recovery_outcome: recoveryOutcome,
+      };
+      if (recoveryOutcome === 'salvage_without_domain') {
+        return {
+          message: `salvage_without_domain: lease ${envelope.leaseUuid} retained without domain; caller should re-run troubleshootDeployment.`,
+          details,
+        };
+      }
+
+      const stopOutcome =
+        recoveryOutcome === 'cancel_lease' ? 'cancelled' : 'stopped';
+      const leaseState =
+        recoveryOutcome === 'cancel_lease'
+          ? 'LEASE_STATE_REJECTED'
+          : 'LEASE_STATE_CLOSED';
+      return {
+        message: `${recoveryOutcome}: lease ${envelope.leaseUuid} teardown completed with ${stopOutcome} (${leaseState}).`,
+        details: {
+          ...details,
+          stop_outcome: stopOutcome,
+          lease_state: leaseState,
+          transaction_hash: `${recoveryOutcome}_TX_HASH`,
+        },
+      };
+    };
 
     it.each(['salvage_without_domain', 'cancel_lease', 'close_lease'] as const)(
       'routes %s through elicitation as a structured cancellation outcome',
       async (recoveryOutcome) => {
+        const recovery = completedRecoveryFixture(recoveryOutcome);
         let observedChoice: RecoveryChoice | undefined;
 
         const fakeDeploy: AgentOrchestrators['deployApp'] = async (
@@ -1034,24 +1068,8 @@ describe('AgentMCPServer', () => {
           );
           throw new ManifestMCPError(
             ManifestMCPErrorCode.OPERATION_CANCELLED,
-            `${recoveryOutcome} completed for ${envelope.leaseUuid}.`,
-            {
-              lease_uuid: envelope.leaseUuid,
-              recovery_outcome: recoveryOutcome,
-              ...(recoveryOutcome === 'salvage_without_domain'
-                ? {}
-                : {
-                    stop_outcome:
-                      recoveryOutcome === 'cancel_lease'
-                        ? 'cancelled'
-                        : 'stopped',
-                    lease_state:
-                      recoveryOutcome === 'cancel_lease'
-                        ? 'LEASE_STATE_REJECTED'
-                        : 'LEASE_STATE_CLOSED',
-                    transaction_hash: `${recoveryOutcome}_TX_HASH`,
-                  }),
-            },
+            recovery.message,
+            recovery.details,
           );
         };
 
@@ -1099,23 +1117,8 @@ describe('AgentMCPServer', () => {
         const parsed = parseResultCode(captured);
         expect(parsed.code).toBe('OPERATION_CANCELLED');
         expect(parsed.code).not.toBe('TX_FAILED');
-        expect(parsed.message).toContain(`${recoveryOutcome} completed`);
-        expect(parsed.message).toContain(envelope.leaseUuid);
-        expect(parsed.details).toEqual({
-          lease_uuid: envelope.leaseUuid,
-          recovery_outcome: recoveryOutcome,
-          ...(recoveryOutcome === 'salvage_without_domain'
-            ? {}
-            : {
-                stop_outcome:
-                  recoveryOutcome === 'cancel_lease' ? 'cancelled' : 'stopped',
-                lease_state:
-                  recoveryOutcome === 'cancel_lease'
-                    ? 'LEASE_STATE_REJECTED'
-                    : 'LEASE_STATE_CLOSED',
-                transaction_hash: `${recoveryOutcome}_TX_HASH`,
-              }),
-        });
+        expect(parsed.message).toBe(recovery.message);
+        expect(parsed.details).toEqual(recovery.details);
       },
     );
 

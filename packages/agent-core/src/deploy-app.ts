@@ -129,8 +129,8 @@ import type {
  *   errors carry `details.lease_uuid` plus the selected
  *   `details.recovery_outcome` so callers can distinguish the non-failure
  *   outcome without parsing the message. Terminal recovery also carries the
- *   authoritative `stop_outcome` / `lease_state` and, when a transaction was
- *   broadcast, `transaction_hash` (ENG-750).
+ *   authoritative `stop_outcome` / `lease_state` and an optional
+ *   `transaction_hash` when `stopApp` returns one (ENG-750).
  * @throws `ManifestMCPError(DEPLOY_READINESS_UNCONFIRMED)` after broadcast
  *   when readiness cannot be safely confirmed. Every variant carries
  *   `details = { readiness_unconfirmed: true, lease_uuid, partial: true }`.
@@ -1408,6 +1408,8 @@ async function dispatchRecovery(
         { chain: opts.clientManager, logger: noopLogger },
         { leaseUuid: parseLeaseUuid(leaseUuid) },
       );
+      // Copy only stable machine fields. Do not spread `stopResult`: its
+      // REJECTED `already_inactive` arm carries an untrusted rejection reason.
       throw new ManifestMCPError(
         ManifestMCPErrorCode.OPERATION_CANCELLED,
         `${choice.id}: lease ${leaseUuid} teardown completed with ${stopResult.outcome} (${stopResult.lease_state}).`,
