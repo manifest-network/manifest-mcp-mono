@@ -2449,10 +2449,13 @@ describe('deployApp replay — 03-partial-success-set-domain-failed', () => {
       undefined,
     ],
     [
-      'cancel_lease reports a structured cancellation outcome',
+      'cancel_lease reports a structured cancellation outcome from the envelope lease',
       'cancel_lease',
       {
-        lease_uuid: '11111111-1111-4111-8111-111111111111',
+        // Deliberately differs from the partial-success envelope. Recovery
+        // diagnostics must identify the existing lease from that envelope,
+        // not trust a mismatched UUID echoed by the teardown result.
+        lease_uuid: '22222222-2222-4222-8222-222222222222',
         outcome: 'cancelled',
         lease_state: 'LEASE_STATE_REJECTED',
         transactionHash: 'CANCEL_TX_HASH',
@@ -2607,6 +2610,7 @@ describe('deployApp replay — 03-partial-success-set-domain-failed', () => {
       expect(optionIds).toContain('close_lease');
 
       if (stopResult !== undefined || stopError !== undefined) {
+        expect(core.stopApp).toHaveBeenCalledTimes(1);
         // Read off the recorded call rather than pinning the whole argument list
         // with toHaveBeenCalledWith: that matcher is exact-arity, and core's
         // `stopApp` already declares a trailing `opts?: TxCallOptions` that
@@ -2628,6 +2632,9 @@ describe('deployApp replay — 03-partial-success-set-domain-failed', () => {
 
       if (stopError !== undefined) {
         expect(caughtErr).toBe(stopError);
+        expect((caughtErr as Error).message).toBe(
+          'close-lease rejected by chain',
+        );
         expect((caughtErr as ManifestMCPError).code).toBe(
           ManifestMCPErrorCode.TX_FAILED,
         );
