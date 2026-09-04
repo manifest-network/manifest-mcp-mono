@@ -42,6 +42,7 @@ import {
   asProviderUuid,
   cosmosEstimateFee,
   isSkuAmbiguousError,
+  type LeaseUuid,
   ManifestMCPError,
   ManifestMCPErrorCode,
   noopLogger,
@@ -1290,9 +1291,13 @@ async function handleBroadcastFailure(
   });
 
   if (classified.outcome === 'partially_succeeded' && classified.leaseUuid) {
+    // `details.lease_uuid` originates in fred/provider error data. Validate it
+    // once at this trust boundary, before it reaches prompt rendering,
+    // callbacks, recovery diagnostics, or a recovery-side effect.
+    const leaseUuid = parseLeaseUuid(classified.leaseUuid);
     const envelope: FailureEnvelope = {
       outcome: 'partially_succeeded',
-      leaseUuid: classified.leaseUuid,
+      leaseUuid,
       ...(requestedCustomDomain ? { requestedCustomDomain } : {}),
       reason: classified.reason,
     };
@@ -1301,7 +1306,7 @@ async function handleBroadcastFailure(
     // chain emits state asynchronously after the create-lease tx); the
     // user prompt's "state: <name>" line is informational.
     const promptPayload = renderPartialSuccessPrompt({
-      leaseUuid: classified.leaseUuid,
+      leaseUuid,
       decodedState: 'LEASE_STATE_PENDING',
       reason: classified.reason,
       ...(requestedCustomDomain ? { requestedCustomDomain } : {}),
@@ -1347,7 +1352,7 @@ async function handleBroadcastFailure(
       }
       return await dispatchRecovery(
         choice,
-        envelope.leaseUuid,
+        leaseUuid,
         spec,
         opts,
         callbacks,
@@ -1376,7 +1381,7 @@ async function handleBroadcastFailure(
 
 async function dispatchRecovery(
   choice: RecoveryChoice,
-  leaseUuid: string,
+  leaseUuid: LeaseUuid,
   spec: AppDeploySpec,
   opts: DeployAppOptions,
   callbacks: DeployAppCallbacks,
@@ -1405,7 +1410,7 @@ async function dispatchRecovery(
     case 'close_lease': {
       const stopResult = await stopApp(
         { chain: opts.clientManager, logger: noopLogger },
-        { leaseUuid: parseLeaseUuid(leaseUuid) },
+        { leaseUuid },
       );
       // Copy only stable machine fields. Do not spread `stopResult`: its
       // REJECTED `already_inactive` arm carries an untrusted rejection reason.
@@ -1483,7 +1488,7 @@ async function dispatchRecovery(
  *   - ACTIVE with no running instance → TX_FAILED with prefix + leaseUuid.
  */
 async function retrySetDomainAndComplete(
-  leaseUuid: string,
+  leaseUuid: LeaseUuid,
   spec: AppDeploySpec,
   opts: DeployAppOptions,
   callbacks: DeployAppCallbacks,
@@ -1509,7 +1514,7 @@ async function retrySetDomainAndComplete(
     await setItemCustomDomain(
       { chain: opts.clientManager, logger: noopLogger },
       {
-        leaseUuid: parseLeaseUuid(leaseUuid),
+        leaseUuid,
         customDomain,
         serviceName,
       },

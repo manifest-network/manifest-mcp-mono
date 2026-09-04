@@ -2443,11 +2443,13 @@ describe('deployApp replay — 03-partial-success-set-domain-failed', () => {
 
   // Every teardown result deliberately echoes a different UUID from the
   // partial-success envelope. Recovery diagnostics must consistently identify
-  // the envelope lease, regardless of which terminal recovery arm runs.
+  // the envelope lease, regardless of which terminal recovery arm runs. The
+  // malformed row must fail before any teardown or recovery callback.
   it.each([
     [
       'salvage_without_domain reports a structured cancellation outcome',
       'salvage_without_domain',
+      undefined,
       undefined,
       undefined,
     ],
@@ -2463,6 +2465,7 @@ describe('deployApp replay — 03-partial-success-set-domain-failed', () => {
         confirmed: true,
       },
       undefined,
+      undefined,
     ],
     [
       'close_lease reports a structured cancellation outcome',
@@ -2476,6 +2479,7 @@ describe('deployApp replay — 03-partial-success-set-domain-failed', () => {
         confirmed: true,
       },
       undefined,
+      undefined,
     ],
     [
       'close_lease omits hash and untrusted reason for an already-rejected lease',
@@ -2487,6 +2491,7 @@ describe('deployApp replay — 03-partial-success-set-domain-failed', () => {
         rejection_reason: 'provider-controlled fixture reason',
       },
       undefined,
+      undefined,
     ],
     [
       'close_lease preserves a genuine teardown failure',
@@ -2497,10 +2502,18 @@ describe('deployApp replay — 03-partial-success-set-domain-failed', () => {
         'close-lease rejected by chain',
         { raw_log: 'fixture rejection' },
       ),
+      undefined,
+    ],
+    [
+      'a malformed provider lease UUID cannot reach salvage_without_domain',
+      'salvage_without_domain',
+      undefined,
+      undefined,
+      'provider-controlled-lease-id',
     ],
   ] as const)(
     'partial-success: %s',
-    async (_caseLabel, recoveryOutcome, stopResult, stopError) => {
+    async (_caseLabel, recoveryOutcome, stopResult, stopError, malformedLeaseUuid) => {
       const spec = readFixture(
         'skills',
         'deploy-app',
@@ -2533,14 +2546,22 @@ describe('deployApp replay — 03-partial-success-set-domain-failed', () => {
         manifest_json: metaHashResp.manifest_json,
         meta_hash_hex: metaHashResp.meta_hash_hex,
       } as Awaited<ReturnType<typeof fred.buildManifestPreview>>);
-      // fred throws the partial-success error envelope.
+      // fred throws the partial-success error envelope. The malformed row
+      // exercises the structured provider boundary because the legacy message
+      // fallback only recognizes UUID-shaped values.
       const partialSuccessReason =
         'Deploy partially succeeded: lease 11111111-1111-4111-8111-111111111111 was created but set-domain failed: simulation error';
       vi.mocked(fred.deployApp).mockRejectedValue(
-        new Error(partialSuccessReason),
+        malformedLeaseUuid === undefined
+          ? new Error(partialSuccessReason)
+          : new ManifestMCPError(
+              ManifestMCPErrorCode.TX_FAILED,
+              'Deploy partially succeeded after lease creation',
+              { partial: true, lease_uuid: malformedLeaseUuid },
+            ),
       );
 
-      const { callbacks, failures } = captureCallbacks();
+      const { callbacks, failures, progress } = captureCallbacks();
       callbacks.onFailure = async (envelope, options) => {
         failures.push({ envelope, options });
         return { id: recoveryOutcome };
@@ -2589,6 +2610,28 @@ describe('deployApp replay — 03-partial-success-set-domain-failed', () => {
         caughtErr = err;
       }
 
+      if (malformedLeaseUuid !== undefined) {
+        expect(failures).toHaveLength(0);
+        expect(
+          progress.filter(
+            (event) => event.kind === 'partial_success_prompt_rendered',
+          ),
+        ).toHaveLength(0);
+        expect(core.setItemCustomDomain).not.toHaveBeenCalled();
+        expect(core.stopApp).not.toHaveBeenCalled();
+        expect(fred.uploadLeaseData).not.toHaveBeenCalled();
+        expect(fred.deployApp).toHaveBeenCalledTimes(1);
+        expect(caughtErr).toBeInstanceOf(ManifestMCPError);
+        expect((caughtErr as ManifestMCPError).code).toBe(
+          ManifestMCPErrorCode.INVALID_ARGUMENT,
+        );
+        expect((caughtErr as Error).message).toBe(
+          'leaseUuid must be a valid UUID (e.g., "550e8400-e29b-41d4-a716-446655440000"), got "provider-controlled-lease-id"',
+        );
+        expect((caughtErr as ManifestMCPError).details).toBeUndefined();
+        return;
+      }
+
       // Verify onFailure fired with the partial-success envelope.
       expect(failures).toHaveLength(1);
       const failure = failures[0];
@@ -2613,6 +2656,7 @@ describe('deployApp replay — 03-partial-success-set-domain-failed', () => {
       // sibling core broadcast. fredDeployApp is the single original deploy
       // attempt that produced the partial-success envelope.
       expect(core.setItemCustomDomain).not.toHaveBeenCalled();
+      expect(fred.uploadLeaseData).not.toHaveBeenCalled();
       expect(fred.deployApp).toHaveBeenCalledTimes(1);
 
       if (stopResult !== undefined || stopError !== undefined) {
