@@ -2441,6 +2441,9 @@ describe('deployApp replay — 03-partial-success-set-domain-failed', () => {
     vi.clearAllMocks();
   });
 
+  // Every teardown result deliberately echoes a different UUID from the
+  // partial-success envelope. Recovery diagnostics must consistently identify
+  // the envelope lease, regardless of which terminal recovery arm runs.
   it.each([
     [
       'salvage_without_domain reports a structured cancellation outcome',
@@ -2452,9 +2455,6 @@ describe('deployApp replay — 03-partial-success-set-domain-failed', () => {
       'cancel_lease reports a structured cancellation outcome from the envelope lease',
       'cancel_lease',
       {
-        // Deliberately differs from the partial-success envelope. Recovery
-        // diagnostics must identify the existing lease from that envelope,
-        // not trust a mismatched UUID echoed by the teardown result.
         lease_uuid: '22222222-2222-4222-8222-222222222222',
         outcome: 'cancelled',
         lease_state: 'LEASE_STATE_REJECTED',
@@ -2468,7 +2468,7 @@ describe('deployApp replay — 03-partial-success-set-domain-failed', () => {
       'close_lease reports a structured cancellation outcome',
       'close_lease',
       {
-        lease_uuid: '11111111-1111-4111-8111-111111111111',
+        lease_uuid: '22222222-2222-4222-8222-222222222222',
         outcome: 'stopped',
         lease_state: 'LEASE_STATE_CLOSED',
         transactionHash: 'CLOSE_TX_HASH',
@@ -2481,7 +2481,7 @@ describe('deployApp replay — 03-partial-success-set-domain-failed', () => {
       'close_lease omits hash and untrusted reason for an already-rejected lease',
       'close_lease',
       {
-        lease_uuid: '11111111-1111-4111-8111-111111111111',
+        lease_uuid: '22222222-2222-4222-8222-222222222222',
         outcome: 'already_inactive',
         lease_state: 'LEASE_STATE_REJECTED',
         rejection_reason: 'provider-controlled fixture reason',
@@ -2608,6 +2608,12 @@ describe('deployApp replay — 03-partial-success-set-domain-failed', () => {
       expect(optionIds).toContain('retry_set_domain');
       expect(optionIds).toContain('salvage_without_domain');
       expect(optionIds).toContain('close_lease');
+
+      // These completed-recovery arms must never enter retry_set_domain's
+      // sibling core broadcast. fredDeployApp is the single original deploy
+      // attempt that produced the partial-success envelope.
+      expect(core.setItemCustomDomain).not.toHaveBeenCalled();
+      expect(fred.deployApp).toHaveBeenCalledTimes(1);
 
       if (stopResult !== undefined || stopError !== undefined) {
         expect(core.stopApp).toHaveBeenCalledTimes(1);

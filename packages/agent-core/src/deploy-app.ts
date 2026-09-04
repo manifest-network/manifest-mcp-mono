@@ -1347,7 +1347,7 @@ async function handleBroadcastFailure(
       }
       return await dispatchRecovery(
         choice,
-        envelope,
+        envelope.leaseUuid,
         spec,
         opts,
         callbacks,
@@ -1376,15 +1376,13 @@ async function handleBroadcastFailure(
 
 async function dispatchRecovery(
   choice: RecoveryChoice,
-  envelope: FailureEnvelope,
+  leaseUuid: string,
   spec: AppDeploySpec,
   opts: DeployAppOptions,
   callbacks: DeployAppCallbacks,
   ctx: RecoveryContext,
 ): Promise<DeployResult> {
   // Inline closures per gate-2 verdict (no separate strategy module).
-  const leaseUuid =
-    envelope.outcome === 'partially_succeeded' ? envelope.leaseUuid : '';
   switch (choice.id) {
     case 'retry_set_domain':
       return await retrySetDomainAndComplete(
