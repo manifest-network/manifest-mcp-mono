@@ -42,6 +42,7 @@ import {
   asProviderUuid,
   cosmosEstimateFee,
   isSkuAmbiguousError,
+  type LeaseUuid,
   ManifestMCPError,
   ManifestMCPErrorCode,
   noopLogger,
@@ -124,7 +125,14 @@ import type {
  * @throws `ManifestMCPError(INVALID_CONFIG)` for spec / wallet validation.
  * @throws `ManifestMCPError(OPERATION_CANCELLED)` when `onConfirm` returns
  *   `'no'` or `onPlan` returns `'cancel'` (deliberate user cancellation —
- *   ENG-272).
+ *   ENG-272), or when a user-selected `salvage_without_domain`,
+ *   `cancel_lease`, or `close_lease` recovery completes. Completed recovery
+ *   errors carry `details.lease_uuid` plus the selected
+ *   `details.recovery_outcome` so callers can distinguish the non-failure
+ *   outcome without parsing the message. Terminal recovery also carries the
+ *   authoritative `stop_outcome` / `lease_state`. `transaction_hash` is
+ *   present for `stopped` / `cancelled` and absent for `already_inactive`
+ *   (ENG-750).
  * @throws `ManifestMCPError(DEPLOY_READINESS_UNCONFIRMED)` after broadcast
  *   when readiness cannot be safely confirmed. Every variant carries
  *   `details = { readiness_unconfirmed: true, lease_uuid, partial: true }`.
@@ -133,6 +141,11 @@ import type {
  *   mismatch carries `readiness_reason: 'final_state_mismatch'`, `operation`,
  *   `state_source`, a bounded `observed_state`, and available provider context.
  *   Callers must diagnose the existing paid lease instead of retrying deploy.
+ * @throws `ManifestMCPError(TX_FAILED)` with `details.partial === true` when
+ *   fred reports partial success without a usable lease UUID. A supplied
+ *   malformed value is exposed only as the bounded
+ *   `details.rejected_lease_uuid`; recovery callbacks and side effects do not
+ *   run because no lease can be targeted safely.
  *
  * Errors from fred's broadcast or core's recovery primitives surface as
  * typed `ManifestMCPError`s. Partial-success failures with applicable
@@ -1282,10 +1295,30 @@ async function handleBroadcastFailure(
       : {}),
   });
 
-  if (classified.outcome === 'partially_succeeded' && classified.leaseUuid) {
+  if (classified.outcome === 'partially_succeeded') {
+    // `details.lease_uuid` originates in fred error data. Validate it at this
+    // trust boundary before it reaches prompt rendering, callbacks, recovery
+    // diagnostics, or a recovery-side effect. A malformed identifier means we
+    // cannot recover safely, but it must not erase the fact that the deploy
+    // partially succeeded and may have left a billable lease behind.
+    let leaseUuid: LeaseUuid;
+    try {
+      leaseUuid = parseLeaseUuid(classified.leaseUuid ?? '');
+    } catch {
+      throw new ManifestMCPError(
+        ManifestMCPErrorCode.TX_FAILED,
+        `Deploy partially succeeded: recovery could not continue because fred did not report a valid lease UUID: ${classified.reason}`,
+        {
+          partial: true,
+          ...(classified.leaseUuid === undefined
+            ? {}
+            : { rejected_lease_uuid: classified.leaseUuid.slice(0, 50) }),
+        },
+      );
+    }
     const envelope: FailureEnvelope = {
       outcome: 'partially_succeeded',
-      leaseUuid: classified.leaseUuid,
+      leaseUuid,
       ...(requestedCustomDomain ? { requestedCustomDomain } : {}),
       reason: classified.reason,
     };
@@ -1294,7 +1327,7 @@ async function handleBroadcastFailure(
     // chain emits state asynchronously after the create-lease tx); the
     // user prompt's "state: <name>" line is informational.
     const promptPayload = renderPartialSuccessPrompt({
-      leaseUuid: classified.leaseUuid,
+      leaseUuid,
       decodedState: 'LEASE_STATE_PENDING',
       reason: classified.reason,
       ...(requestedCustomDomain ? { requestedCustomDomain } : {}),
@@ -1340,7 +1373,7 @@ async function handleBroadcastFailure(
       }
       return await dispatchRecovery(
         choice,
-        envelope,
+        leaseUuid,
         spec,
         opts,
         callbacks,
@@ -1369,15 +1402,13 @@ async function handleBroadcastFailure(
 
 async function dispatchRecovery(
   choice: RecoveryChoice,
-  envelope: FailureEnvelope,
+  leaseUuid: LeaseUuid,
   spec: AppDeploySpec,
   opts: DeployAppOptions,
   callbacks: DeployAppCallbacks,
   ctx: RecoveryContext,
 ): Promise<DeployResult> {
   // Inline closures per gate-2 verdict (no separate strategy module).
-  const leaseUuid =
-    envelope.outcome === 'partially_succeeded' ? envelope.leaseUuid : '';
   switch (choice.id) {
     case 'retry_set_domain':
       return await retrySetDomainAndComplete(
@@ -1389,18 +1420,33 @@ async function dispatchRecovery(
       );
     case 'salvage_without_domain':
       throw new ManifestMCPError(
-        ManifestMCPErrorCode.TX_FAILED,
+        ManifestMCPErrorCode.OPERATION_CANCELLED,
         `salvage_without_domain: lease ${leaseUuid} retained without domain; caller should re-run troubleshootDeployment.`,
+        {
+          lease_uuid: leaseUuid,
+          recovery_outcome: choice.id,
+        },
       );
     case 'cancel_lease':
     case 'close_lease': {
-      await stopApp(
+      const stopResult = await stopApp(
         { chain: opts.clientManager, logger: noopLogger },
-        { leaseUuid: parseLeaseUuid(leaseUuid) },
+        { leaseUuid },
       );
+      // Copy only stable machine fields. Do not spread `stopResult`: its
+      // REJECTED `already_inactive` arm carries an untrusted rejection reason.
       throw new ManifestMCPError(
-        ManifestMCPErrorCode.TX_FAILED,
-        `${choice.id}: lease ${leaseUuid} closed.`,
+        ManifestMCPErrorCode.OPERATION_CANCELLED,
+        `${choice.id}: lease ${leaseUuid} teardown completed with ${stopResult.outcome} (${stopResult.lease_state}).`,
+        {
+          lease_uuid: leaseUuid,
+          recovery_outcome: choice.id,
+          stop_outcome: stopResult.outcome,
+          lease_state: stopResult.lease_state,
+          ...('transactionHash' in stopResult
+            ? { transaction_hash: stopResult.transactionHash }
+            : {}),
+        },
       );
     }
   }
@@ -1463,7 +1509,7 @@ async function dispatchRecovery(
  *   - ACTIVE with no running instance → TX_FAILED with prefix + leaseUuid.
  */
 async function retrySetDomainAndComplete(
-  leaseUuid: string,
+  leaseUuid: LeaseUuid,
   spec: AppDeploySpec,
   opts: DeployAppOptions,
   callbacks: DeployAppCallbacks,
@@ -1489,7 +1535,7 @@ async function retrySetDomainAndComplete(
     await setItemCustomDomain(
       { chain: opts.clientManager, logger: noopLogger },
       {
-        leaseUuid: parseLeaseUuid(leaseUuid),
+        leaseUuid,
         customDomain,
         serviceName,
       },

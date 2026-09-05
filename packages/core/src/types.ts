@@ -428,12 +428,14 @@ export enum ManifestMCPErrorCode {
   UNKNOWN_MODULE = 'UNKNOWN_MODULE',
 
   // User-action errors
-  // A deliberate user decline / cancel / elicitation-timeout. Per the MCP
-  // elicitation spec these are expected "cancellation" outcomes, not faults —
-  // so this code is treated as NEITHER infrastructure (server-utils.ts'
+  // A deliberate user decline / cancel / elicitation-timeout, or an
+  // orchestrated flow terminated after a user-selected recovery completed.
+  // Per the MCP elicitation spec these are expected "cancellation" outcomes,
+  // not faults — so this code is treated as NEITHER infrastructure (server-utils.ts'
   // INFRASTRUCTURE_ERROR_CODES) NOR retryable (retry.ts'
   // NON_RETRYABLE_ERROR_CODES lists it). Retrying a user's cancel makes no
-  // sense; surfacing it as UNKNOWN (the prior bug, ENG-272) hid the cause.
+  // sense; operation-specific details identify any completed side effects.
+  // Surfacing user cancellation as UNKNOWN (the prior bug, ENG-272) hid the cause.
   OPERATION_CANCELLED = 'OPERATION_CANCELLED',
 
   // SKU-resolution errors

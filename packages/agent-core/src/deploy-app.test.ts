@@ -51,6 +51,7 @@ import type {
   SkuCandidate,
   WalletProvider,
 } from './index.js';
+import { classifyDeployError } from './internals/classify-deploy-error.js';
 
 // ENG-310: the narrow DeploySpec union (and SingleServiceSpec) are gone —
 // agent-core's deploy input IS the canonical AppDeploySpec. These local
@@ -2437,125 +2438,330 @@ describe('deployApp replay — Copilot review fixes (PR #58 unresolved comments)
 });
 
 describe('deployApp replay — 03-partial-success-set-domain-failed', () => {
+  const OVERLONG_REJECTED_LEASE_UUID = 'x'.repeat(10_001);
+
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
-  it('partial-success: fred throws → onFailure fires with recovery options → close_lease dispatched', async () => {
-    const spec = readFixture(
-      'skills',
-      'deploy-app',
-      '03-partial-success-set-domain-failed',
-      'input',
-      'spec.json',
-    ) as DeploySpec;
-    const readinessRaw = readFixture(
-      'skills',
-      'deploy-app',
-      '03-partial-success-set-domain-failed',
-      'input',
-      'readiness-response.json',
-    );
-    const metaHashResp = readFixture(
-      'skills',
-      'deploy-app',
-      '03-partial-success-set-domain-failed',
-      'input',
-      'meta-hash-response.json',
-    ) as { manifest_json: string; meta_hash_hex: string };
+  // Every teardown result deliberately echoes a different UUID from the
+  // partial-success envelope. Recovery diagnostics must consistently identify
+  // the envelope lease, regardless of which terminal recovery arm runs. The
+  // invalid-id rows must fail before any teardown or recovery callback.
+  it.each([
+    [
+      'salvage_without_domain reports a structured cancellation outcome',
+      'salvage_without_domain',
+      undefined,
+      undefined,
+      undefined,
+    ],
+    [
+      'cancel_lease reports a structured cancellation outcome from the envelope lease',
+      'cancel_lease',
+      {
+        lease_uuid: '22222222-2222-4222-8222-222222222222',
+        outcome: 'cancelled',
+        lease_state: 'LEASE_STATE_REJECTED',
+        transactionHash: 'CANCEL_TX_HASH',
+        code: 0,
+        confirmed: true,
+      },
+      undefined,
+      undefined,
+    ],
+    [
+      'close_lease reports a structured cancellation outcome',
+      'close_lease',
+      {
+        lease_uuid: '22222222-2222-4222-8222-222222222222',
+        outcome: 'stopped',
+        lease_state: 'LEASE_STATE_CLOSED',
+        transactionHash: 'CLOSE_TX_HASH',
+        code: 0,
+        confirmed: true,
+      },
+      undefined,
+      undefined,
+    ],
+    [
+      'close_lease omits hash and untrusted reason for an already-rejected lease',
+      'close_lease',
+      {
+        lease_uuid: '22222222-2222-4222-8222-222222222222',
+        outcome: 'already_inactive',
+        lease_state: 'LEASE_STATE_REJECTED',
+        rejection_reason: 'provider-controlled fixture reason',
+      },
+      undefined,
+      undefined,
+    ],
+    [
+      'close_lease preserves a genuine teardown failure',
+      'close_lease',
+      undefined,
+      new ManifestMCPError(
+        ManifestMCPErrorCode.TX_FAILED,
+        'close-lease rejected by chain',
+        { raw_log: 'fixture rejection' },
+      ),
+      undefined,
+    ],
+    [
+      'reports a malformed structured lease UUID as a typed partial-deploy failure',
+      undefined,
+      undefined,
+      undefined,
+      'provider-controlled-lease-id',
+    ],
+    [
+      'preserves the partial-deploy narrative for an empty structured lease UUID',
+      undefined,
+      undefined,
+      undefined,
+      '',
+    ],
+    [
+      'preserves the partial-deploy classification when the structured lease UUID is absent',
+      undefined,
+      undefined,
+      undefined,
+      null,
+    ],
+    [
+      'bounds an overlong rejected structured lease UUID',
+      undefined,
+      undefined,
+      undefined,
+      OVERLONG_REJECTED_LEASE_UUID,
+    ],
+  ] as const)(
+    'partial-success: %s',
+    async (_caseLabel, recoveryOutcome, stopResult, stopError, invalidLeaseUuid) => {
+      const spec = readFixture(
+        'skills',
+        'deploy-app',
+        '03-partial-success-set-domain-failed',
+        'input',
+        'spec.json',
+      ) as DeploySpec;
+      const readinessRaw = readFixture(
+        'skills',
+        'deploy-app',
+        '03-partial-success-set-domain-failed',
+        'input',
+        'readiness-response.json',
+      );
+      const metaHashResp = readFixture(
+        'skills',
+        'deploy-app',
+        '03-partial-success-set-domain-failed',
+        'input',
+        'meta-hash-response.json',
+      ) as { manifest_json: string; meta_hash_hex: string };
 
-    const fred = await import('@manifest-network/manifest-mcp-fred');
-    vi.mocked(fred.checkDeploymentReadiness).mockResolvedValue(
-      readinessRaw as unknown as Awaited<
-        ReturnType<typeof fred.checkDeploymentReadiness>
-      >,
-    );
-    vi.mocked(fred.buildManifestPreview).mockResolvedValue({
-      manifest_json: metaHashResp.manifest_json,
-      meta_hash_hex: metaHashResp.meta_hash_hex,
-    } as Awaited<ReturnType<typeof fred.buildManifestPreview>>);
-    // fred throws the partial-success error envelope.
-    const partialSuccessReason =
-      'Deploy partially succeeded: lease 11111111-1111-4111-8111-111111111111 was created but set-domain failed: simulation error';
-    vi.mocked(fred.deployApp).mockRejectedValue(
-      new Error(partialSuccessReason),
-    );
+      const fred = await import('@manifest-network/manifest-mcp-fred');
+      vi.mocked(fred.checkDeploymentReadiness).mockResolvedValue(
+        readinessRaw as unknown as Awaited<
+          ReturnType<typeof fred.checkDeploymentReadiness>
+        >,
+      );
+      vi.mocked(fred.buildManifestPreview).mockResolvedValue({
+        manifest_json: metaHashResp.manifest_json,
+        meta_hash_hex: metaHashResp.meta_hash_hex,
+      } as Awaited<ReturnType<typeof fred.buildManifestPreview>>);
+      // fred throws the partial-success error envelope. The invalid-id rows
+      // exercise the structured fred-envelope boundary because the legacy
+      // message fallback only recognizes UUID-shaped values.
+      const partialSuccessReason =
+        'Deploy partially succeeded: lease 11111111-1111-4111-8111-111111111111 was created but set-domain failed: simulation error';
+      vi.mocked(fred.deployApp).mockRejectedValue(
+        invalidLeaseUuid === undefined
+          ? new Error(partialSuccessReason)
+          : new ManifestMCPError(
+              ManifestMCPErrorCode.TX_FAILED,
+              'Deploy partially succeeded after lease creation',
+              invalidLeaseUuid === null
+                ? { partial: true }
+                : { partial: true, lease_uuid: invalidLeaseUuid },
+            ),
+      );
 
-    const { callbacks, failures } = captureCallbacks();
-    const { deployApp } = await import('./deploy-app.js');
-    const core = await import('@manifest-network/manifest-mcp-core');
-    // fix-3: cosmosEstimateFee mock — set-domain emits sentinel
-    // (per architect-ratified "as designed" framing), so only
-    // create-lease estimate is invoked.
-    vi.mocked(core.cosmosEstimateFee).mockResolvedValue({
-      module: 'billing',
-      subcommand: 'create-lease',
-      gasEstimate: '142000',
-      fee: { amount: [{ denom: 'umfx', amount: '2300' }], gas: '142000' },
-    } as Awaited<ReturnType<typeof core.cosmosEstimateFee>>);
-    vi.mocked(core.stopApp).mockResolvedValue(
-      {} as Awaited<ReturnType<typeof core.stopApp>>,
-    );
+      const { callbacks, failures, progress } = captureCallbacks();
+      callbacks.onFailure = async (envelope, options) => {
+        failures.push({ envelope, options });
+        if (recoveryOutcome === undefined) {
+          throw new Error('onFailure must not run for an invalid lease UUID');
+        }
+        return { id: recoveryOutcome };
+      };
+      const { deployApp } = await import('./deploy-app.js');
+      const core = await import('@manifest-network/manifest-mcp-core');
+      // Each table row owns exactly one teardown result. Reset first so a
+      // queued or default implementation cannot leak across cases, then use a
+      // one-shot implementation because dispatchRecovery calls stopApp once.
+      vi.mocked(core.stopApp).mockReset();
+      // fix-3: cosmosEstimateFee mock — set-domain emits sentinel
+      // (per architect-ratified "as designed" framing), so only
+      // create-lease estimate is invoked.
+      vi.mocked(core.cosmosEstimateFee).mockResolvedValue({
+        module: 'billing',
+        subcommand: 'create-lease',
+        gasEstimate: '142000',
+        fee: { amount: [{ denom: 'umfx', amount: '2300' }], gas: '142000' },
+      } as Awaited<ReturnType<typeof core.cosmosEstimateFee>>);
+      if (stopError !== undefined) {
+        vi.mocked(core.stopApp).mockRejectedValueOnce(stopError);
+      } else {
+        vi.mocked(core.stopApp).mockResolvedValueOnce(
+          (stopResult ?? {
+            lease_uuid: '11111111-1111-4111-8111-111111111111',
+            outcome: 'already_inactive',
+            lease_state: 'LEASE_STATE_CLOSED',
+          }) as Awaited<ReturnType<typeof core.stopApp>>,
+        );
+      }
 
-    const clientManager = makeMockClientManager();
-    const walletProvider = makeMockWalletProvider();
+      const clientManager = makeMockClientManager();
+      const walletProvider = makeMockWalletProvider();
 
-    // The orchestrator throws after recovery dispatch (the inline closure
-    // signals "lease closed" via ManifestMCPError + the recovery branch
-    // path; caller is expected to re-run troubleshootDeployment).
-    let caughtErr: unknown = null;
-    try {
-      await deployApp(spec, callbacks, {
-        clientManager: clientManager as unknown as Parameters<
-          typeof deployApp
-        >[2]['clientManager'],
-        walletProvider,
+      // Recovery intentionally terminates the original deploy flow after the
+      // user's chosen action has completed.
+      let caughtErr: unknown = null;
+      try {
+        await deployApp(spec, callbacks, {
+          clientManager: clientManager as unknown as Parameters<
+            typeof deployApp
+          >[2]['clientManager'],
+          walletProvider,
+        });
+      } catch (err) {
+        caughtErr = err;
+      }
+
+      if (invalidLeaseUuid !== undefined) {
+        expect(failures).toHaveLength(0);
+        expect(
+          progress.filter(
+            (event) => event.kind === 'partial_success_prompt_rendered',
+          ),
+        ).toHaveLength(0);
+        expect(core.setItemCustomDomain).not.toHaveBeenCalled();
+        expect(core.stopApp).not.toHaveBeenCalled();
+        expect(fred.uploadLeaseData).not.toHaveBeenCalled();
+        expect(fred.deployApp).toHaveBeenCalledTimes(1);
+        expect(caughtErr).toBeInstanceOf(ManifestMCPError);
+        expect((caughtErr as ManifestMCPError).code).toBe(
+          ManifestMCPErrorCode.TX_FAILED,
+        );
+        expect((caughtErr as Error).message).toMatch(
+          /^Deploy partially succeeded: recovery could not continue/,
+        );
+        expect((caughtErr as Error).message).toContain(
+          'Deploy partially succeeded after lease creation',
+        );
+        expect((caughtErr as ManifestMCPError).details).toStrictEqual({
+          partial: true,
+          ...(invalidLeaseUuid === null
+            ? {}
+            : { rejected_lease_uuid: invalidLeaseUuid.slice(0, 50) }),
+        });
+        const reclassified = classifyDeployError(caughtErr);
+        expect(reclassified.outcome).toBe('partially_succeeded');
+        expect(reclassified.leaseUuid).toBeUndefined();
+        return;
+      }
+
+      // Verify onFailure fired with the partial-success envelope.
+      expect(failures).toHaveLength(1);
+      const failure = failures[0];
+      expect(failure).toBeDefined();
+      expect(failure?.envelope.outcome).toBe('partially_succeeded');
+      if (failure?.envelope.outcome === 'partially_succeeded') {
+        expect(failure.envelope.leaseUuid).toBe(
+          '11111111-1111-4111-8111-111111111111',
+        );
+        expect(failure.envelope.requestedCustomDomain).toBe(
+          'app.testnet.manifest.app',
+        );
+      }
+
+      // Verify recovery options offered (with-domain case: 3 options).
+      const optionIds = failure?.options.map((o) => o.id) ?? [];
+      expect(optionIds).toContain('retry_set_domain');
+      expect(optionIds).toContain('salvage_without_domain');
+      expect(optionIds).toContain('close_lease');
+
+      // These completed-recovery arms must never enter retry_set_domain's
+      // sibling domain broadcast or provider upload. Both calls currently live
+      // only in that helper; these negative assertions guard against wiring a
+      // future stray write into a terminal arm. fredDeployApp is the single
+      // original deploy attempt that produced the partial-success envelope.
+      expect(core.setItemCustomDomain).not.toHaveBeenCalled();
+      expect(fred.uploadLeaseData).not.toHaveBeenCalled();
+      expect(fred.deployApp).toHaveBeenCalledTimes(1);
+
+      if (stopResult !== undefined || stopError !== undefined) {
+        expect(core.stopApp).toHaveBeenCalledTimes(1);
+        // Read off the recorded call rather than pinning the whole argument list
+        // with toHaveBeenCalledWith: that matcher is exact-arity, and core's
+        // `stopApp` already declares a trailing `opts?: TxCallOptions` that
+        // agent-core will thread once this broadcast becomes cancellable. Slots
+        // count from the START (ENG-706).
+        const [stopCtx, stopInput] = vi.mocked(core.stopApp).mock.calls[0]!;
+        expect(stopCtx).toEqual(
+          expect.objectContaining({
+            chain: expect.anything(),
+            logger: expect.anything(),
+          }),
+        );
+        expect(stopInput).toEqual({
+          leaseUuid: '11111111-1111-4111-8111-111111111111',
+        });
+      } else {
+        expect(core.stopApp).not.toHaveBeenCalled();
+      }
+
+      if (stopError !== undefined) {
+        expect(caughtErr).toBe(stopError);
+        expect((caughtErr as Error).message).toBe(
+          'close-lease rejected by chain',
+        );
+        expect((caughtErr as ManifestMCPError).code).toBe(
+          ManifestMCPErrorCode.TX_FAILED,
+        );
+        expect((caughtErr as ManifestMCPError).details).toStrictEqual({
+          raw_log: 'fixture rejection',
+        });
+        return;
+      }
+
+      expect(caughtErr).toMatchObject({
+        code: ManifestMCPErrorCode.OPERATION_CANCELLED,
       });
-    } catch (err) {
-      caughtErr = err;
-    }
-
-    // Verify onFailure fired with the partial-success envelope.
-    expect(failures).toHaveLength(1);
-    const failure = failures[0];
-    expect(failure).toBeDefined();
-    expect(failure?.envelope.outcome).toBe('partially_succeeded');
-    if (failure?.envelope.outcome === 'partially_succeeded') {
-      expect(failure.envelope.leaseUuid).toBe(
-        '11111111-1111-4111-8111-111111111111',
+      expect((caughtErr as ManifestMCPError).details).toStrictEqual({
+        lease_uuid: '11111111-1111-4111-8111-111111111111',
+        recovery_outcome: recoveryOutcome,
+        ...(stopResult === undefined
+          ? {}
+          : {
+              stop_outcome: stopResult.outcome,
+              lease_state: stopResult.lease_state,
+              ...('transactionHash' in stopResult
+                ? { transaction_hash: stopResult.transactionHash }
+                : {}),
+            }),
+      });
+      expect((caughtErr as Error).message).toBe(
+        stopResult === undefined
+          ? 'salvage_without_domain: lease 11111111-1111-4111-8111-111111111111 retained without domain; caller should re-run troubleshootDeployment.'
+          : `${recoveryOutcome}: lease 11111111-1111-4111-8111-111111111111 teardown completed with ${stopResult.outcome} (${stopResult.lease_state}).`,
       );
-      expect(failure.envelope.requestedCustomDomain).toBe(
-        'app.testnet.manifest.app',
+      expect((caughtErr as ManifestMCPError).code).not.toBe(
+        ManifestMCPErrorCode.TX_FAILED,
       );
-    }
-
-    // Verify recovery options offered (with-domain case: 3 options).
-    const optionIds = failure?.options.map((o) => o.id) ?? [];
-    expect(optionIds).toContain('retry_set_domain');
-    expect(optionIds).toContain('salvage_without_domain');
-    expect(optionIds).toContain('close_lease');
-
-    // Verify the close_lease dispatch (captureCallbacks default choice)
-    // invoked core's stopApp.
-    // Read off the recorded call rather than pinning the whole argument list with
-    // toHaveBeenCalledWith: that matcher is exact-arity, and core's `stopApp` already
-    // declares a trailing `opts?: TxCallOptions` that agent-core will thread once this
-    // broadcast becomes cancellable. Slots count from the START (ENG-706).
-    const [stopCtx, stopInput] = vi.mocked(core.stopApp).mock.calls[0]!;
-    expect(stopCtx).toEqual(
-      expect.objectContaining({
-        chain: expect.anything(),
-        logger: expect.anything(),
-      }),
-    );
-    expect(stopInput).toEqual({
-      leaseUuid: '11111111-1111-4111-8111-111111111111',
-    });
-
-    // Verify the orchestrator threw after recovery (caller expected to
-    // re-run troubleshootDeployment).
-    expect(caughtErr).toBeInstanceOf(Error);
-  });
+    },
+  );
 
   // ENG-185 #7 (route β): the rendered partial-success prompt body rides a
   // `partial_success_prompt_rendered` ProgressEvent, emitted exactly once
@@ -2612,9 +2818,11 @@ describe('deployApp replay — 03-partial-success-set-domain-failed', () => {
       gasEstimate: '142000',
       fee: { amount: [{ denom: 'umfx', amount: '2300' }], gas: '142000' },
     } as Awaited<ReturnType<typeof core.cosmosEstimateFee>>);
-    vi.mocked(core.stopApp).mockResolvedValue(
-      {} as Awaited<ReturnType<typeof core.stopApp>>,
-    );
+    vi.mocked(core.stopApp).mockResolvedValue({
+      lease_uuid: '11111111-1111-4111-8111-111111111111',
+      outcome: 'already_inactive',
+      lease_state: 'LEASE_STATE_CLOSED',
+    } as Awaited<ReturnType<typeof core.stopApp>>);
 
     const clientManager = makeMockClientManager();
     const walletProvider = makeMockWalletProvider();

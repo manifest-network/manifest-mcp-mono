@@ -162,7 +162,9 @@ const web: ServiceConfig = {
 
 The result carries the branded `lease_uuid`, the `provider_uuid` / `provider_url`, the `state`, and (best-effort) `connection` info.
 
-**Partial-success errors.** This subsection describes the bound `client.deployApp` path (and the equivalent free function from `/deploy`). Most failures after the create-lease tx are wrapped in a `ManifestMCPError` whose message is prefixed `Deploy partially succeeded:` and whose `details.lease_uuid` names the lease. Three outcomes require different responses:
+**Partial-success errors.** This subsection describes the bound `client.deployApp` path (and the equivalent free function from `/deploy`). Most failures after the create-lease tx are wrapped in a `ManifestMCPError` whose message is prefixed `Deploy partially succeeded:` and whose `details.lease_uuid` names the lease. The outcomes below require different responses.
+
+The defensive exception is a malformed Fred envelope: if Fred declares partial success but omits the lease UUID or supplies an invalid one, agent-core throws `TX_FAILED` with `details.partial === true`, no usable `details.lease_uuid`, and a bounded `details.rejected_lease_uuid` when a value was supplied. It does not invoke recovery callbacks or side effects. Preserve and escalate that error rather than redeploying automatically because an unidentified paid lease may exist. The sample below naturally falls through to its final `throw` for this shape.
 
 One opt-in exception is not wrapped: if a caller supplies `pollOptions.checkChainState` and it reports a terminal on-chain state, `deployApp` rethrows `TerminalChainStateError` (a `ProviderApiError`) with `details.lease_uuid` and no partial-success prefix. The chain has already made that lease inactive, so surface the error rather than trying to close the lease again. The recovery sample below intentionally lets this error fall through to its final `throw`.
 
@@ -191,7 +193,16 @@ try {
   if (err instanceof ManifestMCPError && typeof err.details?.lease_uuid === 'string') {
     // the id came from the SDK's own error → trusted, so `as*` (not `parse*`)
     const leaseUuid = asLeaseUuid(err.details.lease_uuid);
-    if (err.details.readiness_unconfirmed === true) {
+    if (typeof err.details.recovery_outcome === 'string') {
+      // Defensive if this handler is reused around orchestration: the chosen
+      // recovery already completed. Salvage deliberately keeps the billing
+      // lease; cancel/close already ran stopApp. Never feed either case into
+      // generic cleanup or deploy again automatically.
+      console.info(
+        'Orchestrated deploy recovery completed; skipping cleanup:',
+        err.details.recovery_outcome,
+      );
+    } else if (err.details.readiness_unconfirmed === true) {
       // Bound Fred path: polling ended without a failure verdict.
       if (err.code !== ManifestMCPErrorCode.OPERATION_CANCELLED) {
         // This explicit attempt can fail during chain/provider pre-flight before
@@ -407,7 +418,7 @@ Every typed read and transaction takes an optional trailing options bag with `si
 That is deliberate, and it splits by layer:
 
 - **Reads and provider transport reject with your own abort reason, verbatim and unwrapped** — what the WHATWG DOM standard asks of an API that accepts an `AbortSignal`. Only a reason carrying *nothing at all* (`null`, or `undefined` from a foreign/polyfilled signal) is replaced with the spec's `AbortError`; an empty string is a value you chose and travels through. At the MCP tool boundary this surfaces under `code: 'UNKNOWN'`, because only a `ManifestMCPError` carries a code.
-- **Transactions and orchestrated flows wrap** into `ManifestMCPError(OPERATION_CANCELLED)`, keeping the original under `details.reason` — the convention Node's own promise APIs follow. Those paths can leave something behind, so they need a structured, non-retryable code rather than a bare reason. **`details.sent` is specific to the transaction seam** (`executeTx` and the on-chain tx helpers): it tells you whether a broadcast was started and therefore whether to re-query the chain before retrying. Orchestrated flows (`deployApp`, `manageDomain`, `closeLease`, `troubleshootDeployment`) carry only `details.reason` — plus, where a saga compensated, its own fields such as `details.lease_uuid` and `rolled_back` — so do not branch on `sent` outside the tx seam.
+- **Transactions and orchestrated flows wrap** into `ManifestMCPError(OPERATION_CANCELLED)`. A cancellation keeps the original under `details.reason` when that path has a reason to preserve, following the convention used by Node's promise APIs. Operation-specific outcomes add their own structured fields: a compensated restore carries `details.lease_uuid` and `rolled_back`; a completed deploy recovery carries `lease_uuid` and `recovery_outcome`, with terminal recovery also reporting `stop_outcome` and `lease_state` (`transaction_hash` is present for `stopped` / `cancelled` and absent for `already_inactive`); readiness cancellation carries its partial-lease diagnostics. **`details.sent` is specific to the transaction seam** (`executeTx` and the on-chain tx helpers): it tells you whether a broadcast was started and therefore whether to re-query the chain before retrying. Do not require `reason`, or branch on `sent`, for every orchestration error.
 
 Two things worth knowing about `timeout`:
 
@@ -433,6 +444,8 @@ Cancelling also aborts the SDK's own rate-limit wait, so a cancelled call gives 
 ## Orchestration tier (optional)
 
 The universal `@manifest-network/manifest-sdk/orchestration` subpath adds four plan → confirm → recover flows on top of the capability tier (`deployApp`, `manageDomain`, `closeLease`, `troubleshootDeployment`), plus `loadChainDenomMap`, a loader/helper that preloads chain-data for denom humanization. The four orchestrators are **callback-driven** — `fn(input, callbacks, opts)` with `onPlan` / `onConfirm` / `onProgress` — a different shape from the capability tier's `fn(ctx, input)`, so the host can drive a human-in-the-loop UI. Browser code can import the subpath; only `deployApp(spec, callbacks, { dataDir })` (manifest persistence via filesystem/crypto/path) and `loadChainDenomMap(path)` (filesystem-backed chain data) require Node when invoked. Omit those Node-only options in browser flows.
+
+For orchestrated deploy recovery, an accepted `retry_set_domain` returns the normal `DeployResult`. Completed `salvage_without_domain`, `cancel_lease`, and `close_lease` choices end that invocation with non-retryable `OPERATION_CANCELLED`: `details.recovery_outcome` identifies the selected choice and `details.lease_uuid` identifies the existing lease. Terminal choices additionally expose `details.stop_outcome` and `details.lease_state`. `details.transaction_hash` is present exactly when `stop_outcome` is `stopped` or `cancelled`, and absent for `already_inactive` (including post-broadcast terminal reconciliation). Salvage intentionally retains the live, billing lease, so callers must not treat this error as a failed transaction or blindly redeploy.
 
 The orchestration `deployApp` has one additional `DEPLOY_READINESS_UNCONFIRMED` shape: readiness returned, but the canonical final provider state was absent, malformed, or non-ACTIVE. It is positively identified by `details.readiness_reason === 'final_state_mismatch'`; `details.state_source` and bounded `details.observed_state` carry the diagnostic. Apply the wait-and-recheck branch above only to poll-side uncertainty (`failedStep === 'poll'` or `poll_reason`). For final-state disagreement, inspect status and diagnostics, preserve the existing lease, and report a persistent provider/client mismatch instead of automatically waiting or redeploying.
 
