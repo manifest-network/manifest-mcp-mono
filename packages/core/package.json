@@ -99,7 +99,7 @@
   },
   "optionalDependencies": {
     "undici": "8.10.0",
-    "ws": "8.21.1"
+    "ws": "8.21.3"
   },
   "devDependencies": {
     "@types/node": "22.20.1",
