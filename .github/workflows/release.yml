@@ -5,16 +5,17 @@ on:
     tags: ['v[0-9]*.[0-9]*.[0-9]*']
 
 permissions:
-  contents: write
-  id-token: write # required for npm provenance (OIDC signing)
+  contents: read
 
 jobs:
-  release:
+  validate:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22
           cache: npm
@@ -39,6 +40,9 @@ jobs:
 
       - run: npm ci
 
+      - name: Check immutable action references
+        run: npm run check:workflows
+
       - run: npm run build
 
       - run: npm run check:packages
@@ -50,6 +54,29 @@ jobs:
       - run: npm run check
 
       - run: npm test
+
+  release:
+    needs: validate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Upgrade npm for OIDC trusted publishing
+        run: npx npm@11.5.1 install -g npm@11.5.1
+
+      - run: npm ci
+
+      - run: npm run build
 
       - name: Publish packages to npm
         run: |
@@ -72,9 +99,16 @@ jobs:
           publish packages/node      @manifest-network/manifest-mcp-node      "$VERSION"
           publish packages/sdk       @manifest-network/manifest-sdk          "$VERSION"
 
+  github-release:
+    needs: release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
             echo "Release $GITHUB_REF_NAME already exists, skipping"
