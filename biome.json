@@ -17,6 +17,7 @@
       "scripts/check-type-tests.test.mjs",
       "scripts/check-workflows.mjs",
       "scripts/check-workflows.test.mjs",
+      "scripts/check-dependency-hygiene.test.mjs",
       "scripts/ensure-e2e-typecheck-build.mjs",
       "scripts/ensure-e2e-typecheck-build.test.mjs",
       "scripts/sync-fred-manifest-schema.mjs",

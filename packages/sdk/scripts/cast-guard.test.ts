@@ -135,6 +135,7 @@ function cruise(args: string[]): { exitCode: number; output: string } {
     const output = execFileSync('npx', ['depcruise', ...args], {
       cwd: ROOT,
       encoding: 'utf8',
+      timeout: 30_000,
     });
     return { exitCode: 0, output };
   } catch (err) {
@@ -201,7 +202,11 @@ const productionRuleNames: string[] = createRequire(import.meta.url)(
   join(ROOT, '.dependency-cruiser.cjs'),
 ).forbidden.map((rule: { name: string }) => rule.name);
 
-describe('dependency-cruiser import-edge rules bite (fixtures fail, real tree clean; ENG-309)', () => {
+// Each probe scans the workspace graph in a subprocess, which can exceed the
+// five-second unit-test default. The child has its own 30-second deadline.
+describe('dependency-cruiser import-edge rules bite (fixtures fail, real tree clean; ENG-309)', {
+  timeout: 45_000,
+}, () => {
   it('flags a known-bad fixture for EVERY production rule (non-zero exit)', () => {
     const { exitCode, output } = cruise(FIXTURES_CRUISE);
     expect(exitCode).toBeGreaterThan(0);

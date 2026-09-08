@@ -1,3 +1,6 @@
+import * as attw from '@arethetypeswrong/core';
+import * as publint from 'publint';
+import * as publintUtils from 'publint/utils';
 import { defineConfig } from 'tsdown';
 import { packageEntries } from '../../tools/tsdown-entries.mjs';
 
@@ -18,6 +21,7 @@ export default defineConfig({
   // `protobufjs`), which fails to bundle. This mirrors core/fred, which leave the same cosmjs
   // types as external dts imports. (ENG-309)
   deps: { dts: { neverBundle: [/^@cosmjs\//, 'protobufjs'] } },
-  publint: true,
-  attw: { profile: 'esm-only', level: 'error' },
+  // Resolve validators from this workspace even when tsdown is installed elsewhere.
+  publint: { module: [publint, publintUtils] },
+  attw: { module: attw, profile: 'esm-only', level: 'error' },
 });

@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **ci:** audit all dependencies and fail on high/critical advisories in CI and release validation; deploy-relevant PRs now fail `e2e-gate` when live acceptance is skipped. (ENG-768)
+- **core, cosmwasm, sdk:** use ManifestJS namespace entry points, guard browser bundles against the full codegen barrel, and lower SDK gzip budgets by the measured savings. (ENG-768)
+
+### Fixed
+
+- **sdk:** inject publint and AreTheTypesWrong modules into tsdown so package validation does not depend on their resolution from tsdown's installation directory. (ENG-768)
+
 ## [0.22.0] - 2026-09-08
 
 ### Added

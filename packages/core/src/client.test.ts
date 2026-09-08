@@ -2,47 +2,85 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ManifestMCPError, ManifestMCPErrorCode } from './types.js';
 
 // Mock external dependencies
-vi.mock('@manifest-network/manifestjs', () => ({
-  liftedinit: {
-    ClientFactory: {
-      createRPCQueryClient: vi.fn(),
-    },
-  },
+vi.mock('@manifest-network/manifestjs/dist/codegen/cosmos/client.js', () => ({
+  cosmosProtoRegistry: [],
+  cosmosAminoConverters: {},
+}));
+
+vi.mock('@manifest-network/manifestjs/dist/codegen/cosmwasm/bundle.js', () => ({
   cosmwasm: {
     ClientFactory: {
       createRPCQueryClient: vi.fn().mockResolvedValue({ cosmwasm: {} }),
     },
   },
-  strangelove_ventures: {
-    ClientFactory: {
-      createRPCQueryClient: vi
-        .fn()
-        .mockResolvedValue({ strangelove_ventures: {} }),
-    },
-  },
-  osmosis: {
-    ClientFactory: {
-      createRPCQueryClient: vi.fn().mockResolvedValue({ osmosis: {} }),
-    },
-  },
+}));
+
+vi.mock('@manifest-network/manifestjs/dist/codegen/cosmwasm/client.js', () => ({
+  cosmwasmProtoRegistry: [],
+  cosmwasmAminoConverters: {},
+}));
+
+vi.mock('@manifest-network/manifestjs/dist/codegen/ibc/bundle.js', () => ({
   ibc: {
     ClientFactory: {
       createRPCQueryClient: vi.fn().mockResolvedValue({ ibc: {} }),
     },
   },
-  cosmosProtoRegistry: [],
-  cosmosAminoConverters: {},
-  cosmwasmProtoRegistry: [],
-  cosmwasmAminoConverters: {},
-  liftedinitProtoRegistry: [],
-  liftedinitAminoConverters: {},
-  strangeloveVenturesProtoRegistry: [],
-  strangeloveVenturesAminoConverters: {},
-  osmosisProtoRegistry: [],
-  osmosisAminoConverters: {},
+}));
+
+vi.mock('@manifest-network/manifestjs/dist/codegen/ibc/client.js', () => ({
   ibcProtoRegistry: [],
   ibcAminoConverters: {},
 }));
+
+vi.mock(
+  '@manifest-network/manifestjs/dist/codegen/liftedinit/bundle.js',
+  () => ({
+    liftedinit: { ClientFactory: { createRPCQueryClient: vi.fn() } },
+  }),
+);
+
+vi.mock(
+  '@manifest-network/manifestjs/dist/codegen/liftedinit/client.js',
+  () => ({
+    liftedinitProtoRegistry: [],
+    liftedinitAminoConverters: {},
+  }),
+);
+
+vi.mock('@manifest-network/manifestjs/dist/codegen/osmosis/bundle.js', () => ({
+  osmosis: {
+    ClientFactory: {
+      createRPCQueryClient: vi.fn().mockResolvedValue({ osmosis: {} }),
+    },
+  },
+}));
+
+vi.mock('@manifest-network/manifestjs/dist/codegen/osmosis/client.js', () => ({
+  osmosisProtoRegistry: [],
+  osmosisAminoConverters: {},
+}));
+
+vi.mock(
+  '@manifest-network/manifestjs/dist/codegen/strangelove_ventures/bundle.js',
+  () => ({
+    strangelove_ventures: {
+      ClientFactory: {
+        createRPCQueryClient: vi
+          .fn()
+          .mockResolvedValue({ strangelove_ventures: {} }),
+      },
+    },
+  }),
+);
+
+vi.mock(
+  '@manifest-network/manifestjs/dist/codegen/strangelove_ventures/client.js',
+  () => ({
+    strangeloveVenturesProtoRegistry: [],
+    strangeloveVenturesAminoConverters: {},
+  }),
+);
 
 vi.mock('@cosmjs/stargate', () => ({
   SigningStargateClient: {
@@ -75,10 +113,8 @@ vi.mock('./retry.js', async (importOriginal) => {
 });
 
 import { SigningStargateClient } from '@cosmjs/stargate';
-import {
-  cosmwasm as cosmwasmNs,
-  liftedinit,
-} from '@manifest-network/manifestjs';
+import { cosmwasm as cosmwasmNs } from '@manifest-network/manifestjs/dist/codegen/cosmwasm/bundle.js';
+import { liftedinit } from '@manifest-network/manifestjs/dist/codegen/liftedinit/bundle.js';
 import { CosmosClientManager } from './client.js';
 import { createLCDQueryClient } from './lcd-adapter.js';
 import { noopLogger } from './logger.js';

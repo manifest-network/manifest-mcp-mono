@@ -1,6 +1,6 @@
 import { fromBase64, toBase64 } from '@cosmjs/encoding';
 import type { SigningStargateClient, StdFee } from '@cosmjs/stargate';
-import { liftedinit } from '@manifest-network/manifestjs';
+import { liftedinit } from '@manifest-network/manifestjs/dist/codegen/liftedinit/bundle.js';
 import type { ManifestQueryClient } from '../client.js';
 import { getSubcommandUsage, throwUnsupportedSubcommand } from '../modules.js';
 import {

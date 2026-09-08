@@ -1,6 +1,6 @@
 import { fromBase64, toUtf8 } from '@cosmjs/encoding';
 import type { SigningStargateClient } from '@cosmjs/stargate';
-import { cosmwasm } from '@manifest-network/manifestjs';
+import { cosmwasm } from '@manifest-network/manifestjs/dist/codegen/cosmwasm/bundle.js';
 import { throwUnsupportedSubcommand } from '../modules.js';
 import type {
   BuiltMessages,

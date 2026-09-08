@@ -8,22 +8,32 @@ import {
 import {
   cosmosAminoConverters,
   cosmosProtoRegistry,
+} from '@manifest-network/manifestjs/dist/codegen/cosmos/client.js';
+import { cosmwasm as cosmwasmNs } from '@manifest-network/manifestjs/dist/codegen/cosmwasm/bundle.js';
+import {
   cosmwasmAminoConverters,
-  cosmwasm as cosmwasmNs,
   cosmwasmProtoRegistry,
+} from '@manifest-network/manifestjs/dist/codegen/cosmwasm/client.js';
+import { ibc as ibcNs } from '@manifest-network/manifestjs/dist/codegen/ibc/bundle.js';
+import {
   ibcAminoConverters,
-  ibc as ibcNs,
   ibcProtoRegistry,
-  liftedinit,
+} from '@manifest-network/manifestjs/dist/codegen/ibc/client.js';
+import { liftedinit } from '@manifest-network/manifestjs/dist/codegen/liftedinit/bundle.js';
+import {
   liftedinitAminoConverters,
   liftedinitProtoRegistry,
+} from '@manifest-network/manifestjs/dist/codegen/liftedinit/client.js';
+import { osmosis as osmosisNs } from '@manifest-network/manifestjs/dist/codegen/osmosis/bundle.js';
+import {
   osmosisAminoConverters,
-  osmosis as osmosisNs,
   osmosisProtoRegistry,
+} from '@manifest-network/manifestjs/dist/codegen/osmosis/client.js';
+import { strangelove_ventures as strangeloveVenturesNs } from '@manifest-network/manifestjs/dist/codegen/strangelove_ventures/bundle.js';
+import {
   strangeloveVenturesAminoConverters,
-  strangelove_ventures as strangeloveVenturesNs,
   strangeloveVenturesProtoRegistry,
-} from '@manifest-network/manifestjs';
+} from '@manifest-network/manifestjs/dist/codegen/strangelove_ventures/client.js';
 import { RateLimiter } from 'limiter';
 import {
   DEFAULT_GAS_MULTIPLIER,

@@ -1,5 +1,5 @@
 import type { SigningStargateClient } from '@cosmjs/stargate';
-import { ibc as ibcNs } from '@manifest-network/manifestjs';
+import { ibc as ibcNs } from '@manifest-network/manifestjs/dist/codegen/ibc/bundle.js';
 import { throwUnsupportedSubcommand } from '../modules.js';
 import {
   type BuiltMessages,
