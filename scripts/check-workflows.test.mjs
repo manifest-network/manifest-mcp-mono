@@ -307,7 +307,11 @@ function assertWorkflowPermissions(
         );
       }
       for (const step of job.steps ?? []) {
-        if (step.uses?.startsWith('actions/checkout@')) {
+        const reference =
+          typeof step.uses === 'string'
+            ? step.uses.trim().toLowerCase()
+            : undefined;
+        if (reference?.startsWith('actions/checkout@')) {
           assert.equal(
             step.with?.['persist-credentials'],
             false,
@@ -319,8 +323,18 @@ function assertWorkflowPermissions(
   }
 }
 
-for (const extension of ['yml', 'yaml']) {
-  test(`sabotage: permissions cover newly added .${extension} workflows`, () => {
+for (const [extension, reference] of ['yml', 'yaml'].flatMap((extension) =>
+  [
+    `actions/checkout@${commit}`,
+    `Actions/checkout@${commit}`,
+    `actions/Checkout@${commit}`,
+    `ACTIONS/CHECKOUT@${commit}`,
+    ` actions/checkout@${commit}`,
+    `actions/checkout@${commit} `,
+    ` Actions/Checkout@${commit} `,
+  ].map((reference) => [extension, reference]),
+)) {
+  test(`sabotage: permissions cover newly added .${extension} workflows using ${JSON.stringify(reference)}`, () => {
     const directory = mkdtempSync(join(tmpdir(), 'workflow-permissions-'));
     try {
       cpSync(resolve(repoRoot, '.github/workflows'), directory, {
@@ -336,7 +350,7 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@${commit} # v7.0.1
+      - uses: ${JSON.stringify(reference)} # v7.0.1
         with:
           persist-credentials: false
       - run: echo fixture
