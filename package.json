@@ -22,6 +22,8 @@
     "check:packages": "node --test scripts/check-packages.test.mjs && node scripts/check-packages.mjs",
     "check:type-tests": "node --test scripts/check-type-tests.test.mjs",
     "check:workflows": "node --test scripts/check-workflows.test.mjs && node scripts/check-workflows.mjs",
+    "check:dependency-hygiene": "node --test scripts/check-dependency-hygiene.test.mjs",
+    "audit:dependencies": "npm audit --include=dev --include=optional --include=peer --audit-level=high",
     "pretest:e2e": "npm run build -w @manifest-network/sdk-acceptance",
     "test:e2e": "vitest run --config e2e/vitest.config.ts",
     "test:e2e:annotations": "vitest run --config e2e/vitest.annotations.config.mjs",

@@ -1,5 +1,5 @@
 import type { SigningStargateClient } from '@cosmjs/stargate';
-import { osmosis as osmosisNs } from '@manifest-network/manifestjs';
+import { osmosis as osmosisNs } from '@manifest-network/manifestjs/dist/codegen/osmosis/bundle.js';
 import { throwUnsupportedSubcommand } from '../modules.js';
 import type {
   BuiltMessages,

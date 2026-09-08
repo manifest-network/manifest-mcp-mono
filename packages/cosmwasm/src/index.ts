@@ -23,7 +23,7 @@ import {
   DEFAULT_GAS_MULTIPLIER,
   DEFAULT_MAX_GAS,
 } from '@manifest-network/manifest-mcp-core/gas';
-import { cosmwasm } from '@manifest-network/manifestjs';
+import { cosmwasm } from '@manifest-network/manifestjs/dist/codegen/cosmwasm/bundle.js';
 import type { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';

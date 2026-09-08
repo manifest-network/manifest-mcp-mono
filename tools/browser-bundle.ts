@@ -7,6 +7,7 @@ export const BROWSER_BUNDLE_TIMEOUT_MS = 30_000;
 
 export interface BrowserBundle {
   code: string;
+  modules: string[];
   unresolvedWarnings: string[];
 }
 
@@ -60,6 +61,9 @@ export async function bundleForBrowser(input: string): Promise<BrowserBundle> {
         .filter((item) => item.type === 'chunk')
         .map((item) => item.code)
         .join('\n'),
+      modules: output
+        .filter((item) => item.type === 'chunk')
+        .flatMap((item) => Object.keys(item.modules)),
       unresolvedWarnings,
     };
   } finally {

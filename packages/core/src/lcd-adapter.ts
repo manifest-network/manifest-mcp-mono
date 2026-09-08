@@ -1,12 +1,10 @@
 import { toBase64, toUtf8 } from '@cosmjs/encoding';
-import {
-  cosmos,
-  cosmwasm as cosmwasmNs,
-  ibc as ibcNs,
-  liftedinit,
-  osmosis as osmosisNs,
-  strangelove_ventures as strangeloveVenturesNs,
-} from '@manifest-network/manifestjs';
+import { cosmos } from '@manifest-network/manifestjs/dist/codegen/cosmos/bundle.js';
+import { cosmwasm as cosmwasmNs } from '@manifest-network/manifestjs/dist/codegen/cosmwasm/bundle.js';
+import { ibc as ibcNs } from '@manifest-network/manifestjs/dist/codegen/ibc/bundle.js';
+import { liftedinit } from '@manifest-network/manifestjs/dist/codegen/liftedinit/bundle.js';
+import { osmosis as osmosisNs } from '@manifest-network/manifestjs/dist/codegen/osmosis/bundle.js';
+import { strangelove_ventures as strangeloveVenturesNs } from '@manifest-network/manifestjs/dist/codegen/strangelove_ventures/bundle.js';
 import type { ManifestQueryClient } from './client.js';
 import { classifyLcdError } from './internals/classify-query-error.js';
 import { type Logger, noopLogger } from './logger.js';

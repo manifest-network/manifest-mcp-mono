@@ -1,5 +1,5 @@
 import type { SigningStargateClient } from '@cosmjs/stargate';
-import { liftedinit } from '@manifest-network/manifestjs';
+import { liftedinit } from '@manifest-network/manifestjs/dist/codegen/liftedinit/bundle.js';
 import { throwUnsupportedSubcommand } from '../modules.js';
 import {
   type BuiltMessages,

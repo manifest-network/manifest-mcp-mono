@@ -43,6 +43,11 @@ jobs:
       - name: Check immutable action references
         run: npm run check:workflows
 
+      - run: npm run check:dependency-hygiene
+
+      - name: Audit all dependencies (high and critical block)
+        run: npm run audit:dependencies
+
       - run: npm run build
 
       - run: npm run check:packages

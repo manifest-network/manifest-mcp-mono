@@ -1,6 +1,6 @@
 import { fromBase64, fromBech32, toBech32 } from '@cosmjs/encoding';
 import type { SigningStargateClient } from '@cosmjs/stargate';
-import { strangelove_ventures as strangeloveVenturesNs } from '@manifest-network/manifestjs';
+import { strangelove_ventures as strangeloveVenturesNs } from '@manifest-network/manifestjs/dist/codegen/strangelove_ventures/bundle.js';
 import { throwUnsupportedSubcommand } from '../modules.js';
 import {
   type BuiltMessages,

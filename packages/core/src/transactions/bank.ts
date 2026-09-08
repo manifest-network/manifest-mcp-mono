@@ -1,5 +1,5 @@
 import type { SigningStargateClient } from '@cosmjs/stargate';
-import { cosmos } from '@manifest-network/manifestjs';
+import { cosmos } from '@manifest-network/manifestjs/dist/codegen/cosmos/bundle.js';
 import { throwUnsupportedSubcommand } from '../modules.js';
 import type {
   BuiltMessages,

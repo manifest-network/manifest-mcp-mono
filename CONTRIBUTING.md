@@ -27,6 +27,8 @@ npm run lint:e2e       # Rebuild dependencies, then type-check the E2E suite
 npm run test           # Unit tests (vitest)
 npm run check          # Biome: format + lint + import sorting, including E2E TypeScript
 npm run check:workflows # Immutable action references + policy regression tests
+npm run check:dependency-hygiene # Validator resolution + E2E gate regression tests
+npm run audit:dependencies      # Full dependency graph; high/critical findings fail
 npm run check:fix      # Auto-fix anything Biome can fix
 ```
 
@@ -73,6 +75,29 @@ policy validates pin syntax and comments, not upstream provenance. GitHub
 documents this approach in its [secure use reference](https://docs.github.com/en/actions/reference/security/secure-use).
 Required-review enforcement is a repository ruleset setting, not part of
 Dependabot configuration.
+
+## Dependency updates
+
+`npm run audit:dependencies` checks the complete locked tree, including development,
+optional, and peer dependencies. CI's `audit` job and release validation fail on high
+or critical advisories; lower-severity findings stay visible. Registry failures also
+fail the command. Root overrides must be rechecked against current advisories when
+updating dependencies; a previously safe exact pin can become vulnerable.
+
+Deploy-relevant changes (including the root lockfile) require a successful
+`acceptance-single` run. `e2e-gate` fails when that run is skipped, including on
+Dependabot and fork PRs that cannot access the private-submodule checkout secret.
+A maintainer must carry the reviewed changes onto a same-repository, non-Dependabot
+PR to obtain acceptance coverage. Docs-only changes can still pass without live E2E.
+
+Configure `test`, `audit`, and `e2e-gate` as required status checks in the `main`
+ruleset to enforce these results at merge time. Workflow definitions alone do not
+make a check required.
+
+The SDK build resolves publint and AreTheTypesWrong explicitly from its own config.
+The browser tests reject ManifestJS's package-wide codegen barrel; use its narrower
+namespace entries. See [dependency hygiene](docs/dependency-hygiene.md) for bundle
+measurements and the limits on further narrowing.
 
 ## Commit and PR conventions
 

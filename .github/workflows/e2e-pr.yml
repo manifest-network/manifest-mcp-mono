@@ -1,7 +1,7 @@
 name: E2E (PR)
 
-# Runs on EVERY PR (no `on.paths` filter) so the required `e2e-gate` job below always posts a
-# status. A path-filtered REQUIRED check would never report on a docs-only PR → merge deadlock.
+# Runs on EVERY PR (no `on.paths` filter) so `e2e-gate` always posts a status and can be required
+# by a branch ruleset. A path-filtered required check would never report on a docs-only PR.
 # The expensive live job is instead gated by the `changes` job + a job-level `if`.
 on:
   pull_request:
@@ -121,11 +121,11 @@ jobs:
         run: docker compose -f e2e/docker-compose.yml down -v --remove-orphans
 
   e2e-gate:
-    # THE REQUIRED CHECK. Runs on EVERY PR (if: always(), so it runs even when acceptance-single was
-    # skipped) → it always posts a status, so requiring it never deadlocks a merge. RED when the
+    # Stable check for branch rulesets. Runs on EVERY PR (if: always(), even when acceptance-single
+    # was skipped), so a required check always has a result. RED when the
     # change-detection job did not succeed (a broken filter would falsely skip the live job) OR the
-    # live job failed/cancelled. GREEN when the live job passed OR was correctly skipped as
-    # not-applicable (docs-only / fork / Dependabot).
+    # live job failed/cancelled or was skipped on a deploy-relevant change. Fork/Dependabot
+    # skips mean coverage is missing; they must not look like a passing acceptance run.
     needs: [changes, acceptance-single]
     if: always()
     runs-on: ubuntu-latest
@@ -134,15 +134,29 @@ jobs:
       - name: Gate on change-detection + the acceptance result
         env:
           CHANGES: ${{ needs.changes.result }}
+          DEPLOY: ${{ needs.changes.outputs.deploy }}
           ACCEPTANCE: ${{ needs.acceptance-single.result }}
         run: |
+          set -euo pipefail
           echo "changes: $CHANGES | acceptance-single: $ACCEPTANCE"
           if [ "$CHANGES" != 'success' ]; then
             echo "::error::change-detection job did not succeed ($CHANGES) — cannot trust the gate"
+            exit 1
+          fi
+          if [ "$DEPLOY" != 'true' ] && [ "$DEPLOY" != 'false' ]; then
+            echo '::error::change-detection returned no valid deploy decision'
             exit 1
           fi
           if [ "$ACCEPTANCE" = 'failure' ] || [ "$ACCEPTANCE" = 'cancelled' ]; then
             echo '::error::live single-variant acceptance e2e failed'
             exit 1
           fi
-          echo 'OK (acceptance passed or not applicable to this PR)'
+          if [ "$DEPLOY" = 'true' ] && [ "$ACCEPTANCE" != 'success' ]; then
+            echo '::error::deploy-relevant changes require successful live acceptance; a skipped run provides no coverage. A maintainer must carry these changes on a same-repository, non-Dependabot PR so acceptance-single can run.'
+            exit 1
+          fi
+          if [ "$ACCEPTANCE" != 'success' ] && [ "$ACCEPTANCE" != 'skipped' ]; then
+            echo '::error::unexpected acceptance result'
+            exit 1
+          fi
+          echo 'OK (acceptance passed or no deploy-relevant changes)'
