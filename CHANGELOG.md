@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.22.0] - 2026-09-08
+
 ### Added
 
 - **fred, sdk:** the schema-aware `fetchJsonChecked(url, init, { schema, ... })` overload and `FetchJsonCheckedOptions`. Every built-in Fred/provider JSON endpoint now supplies a forward-compatible Zod schema at the shared transport seam: known fields are runtime-checked, unknown fields remain available for additive provider evolution, and malformed optional diagnostics use an explicit validate-or-drop policy. Syntactically valid JSON with an invalid required shape raises `ProviderApiError` with `kind: 'invalid_response'`, preserves the HTTP status (including a 2xx), and is non-retryable. The legacy positional overload remains compatible for consumers that own response validation. (ENG-754)
@@ -36,6 +38,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **fred, core, agent-core, sdk:** malformed custom domains are now rejected with `INVALID_ARGUMENT` during Fred deploy preflight, before Fred's chain reads or the credit-reserving create-lease broadcast. `parseFqdn` is the single boundary canonicalizer for surrounding whitespace and DNS case; the same trimmed, lowercase value is used by the set-domain transaction, deploy result, and orchestrated retry persistence. Chain-state policy such as reserved suffixes and existing claims remains authoritative at the set-domain transaction. (ENG-749)
 - **agent, agent-core:** thread each MCP tool request's live cancellation signal through all five agent orchestrators. Cancellation before a mutating operation's final broadcast guard creates no transaction; cancellation while deploy readiness is being polled stops the wait but cannot undo the already-paid lease or uploaded manifest. Because the MCP SDK discards a cancelled request's response and request-scoped notifications, the agent server now reports that partial deploy outcome (including `lease_uuid`) through server-level logging, and recovery-prompt dismissal warnings use the same post-abort-safe channel. Host timeout requirements and the SDK's 60-second default are documented. (ENG-745)
 - **fred:** close the `get_logs` model-context budget bypass. Non-string log values are removed at the transport seam; null/missing maps become empty; provider-controlled service names now consume the same 4,000-character budget as values; oversized names are skipped without hiding smaller siblings; and `__proto__` is treated as an ordinary service key rather than reaching the legacy prototype setter. `app_status` and `wait_for_app_ready` also bound their provider-status projection to 16,000 serialized characters and expose `fredStatusTruncated` / `status_truncated` when fields are omitted. Raw library status responses remain complete. (ENG-746, ENG-754)
+
+### Security
+
+- **deps:** refresh the locked transitive `fast-uri` from 3.1.5 to 3.1.7 and `qs` from 6.15.3 to 6.16.0 within their existing dependency ranges, clearing the newly reported high/moderate [URI-normalization](https://github.com/advisories/GHSA-f65p-4m7j-42xc) and [query-parser denial-of-service](https://github.com/advisories/GHSA-4mjr-xmp4-gh2g) findings from release validation. No new overrides or unrelated dependency updates are introduced. Existing consumers should refresh their own lockfiles to resolve these patched transitives; the repository lockfile is not shipped as a consumer constraint.
+
+### Upgrade notes
+
+- **Lockstep upgrade:** update directly installed `@manifest-network/manifest-mcp-*`, `@manifest-network/manifest-agent-core`, and `@manifest-network/manifest-sdk` packages together to `0.22.0`. Internal peers now target `^0.22.0`; consumers pinned to the previous minor must opt into the upgrade.
+- **Provider response validation:** malformed required Fred/provider fields now reject with `ProviderApiError.kind === 'invalid_response'`, even for HTTP 2xx responses. Do not retry this error blindly; fix the provider contract or diagnose the response. The legacy positional `fetchJsonChecked` overload remains supported.
+- **Lease-status deadlines:** `waitForLeaseStatus` defaults to 600 seconds and tolerates three consecutive transient status-read failures. Pass `{ timeout: 120_000, maxConsecutiveFailures: 0 }` to retain the previous deadline and fail-on-first-error behaviour. MCP host request deadlines must exceed the tool's wait budget; the MCP SDK's 60-second default is too short for a default readiness wait.
+- **Deploy and recovery outcomes:** a missing or invalid final lease state after a paid deploy now reports `DEPLOY_READINESS_UNCONFIRMED`, not `INVALID_CONFIG`. Completed salvage/cancel/close recovery choices now report `OPERATION_CANCELLED`, not `TX_FAILED`. Branch on the structured `lease_uuid`, `partial`, `recovery_outcome`, and `stop_outcome` fields where present instead of parsing messages or automatically redeploying.
+- **Committed restores:** `RESTORE_COMMITTED_FAILURE` means the restore already adopted its new lease. Preserve the returned `lease_uuid` and inspect `committed`/`restore_status`; do not retry the restore or assume the original lease is still the active target.
+- **Cancellation and callbacks:** agent MCP requests now pass host cancellation to their orchestrators. Cancellation can stop waiting after a paid deploy without undoing it; recover the lease handle from server-level logs. Exceptions from observational progress/completion/failure callbacks no longer control orchestration or turn a successful operation into a failure.
+- **Preflight and gas limits:** deployment/update manifests now follow pinned Fred v0.13.0 admission rules, including raw JSON and payload-size checks, before mutation. Invalid custom domains fail before lease creation. Explicit-fee `executeTx` calls now enforce the configured gas-unit ceiling before signing; `maxGas: -1` disables only that ceiling, not fee syntax validation.
 
 ## [0.21.0] - 2026-08-20
 
@@ -472,7 +488,8 @@ Initial public release.
 - Biome for formatting, linting, and import sorting
 - Tag-triggered npm publish workflow with provenance
 
-[Unreleased]: https://github.com/manifest-network/manifest-mcp-mono/compare/v0.21.0...HEAD
+[Unreleased]: https://github.com/manifest-network/manifest-mcp-mono/compare/v0.22.0...HEAD
+[0.22.0]: https://github.com/manifest-network/manifest-mcp-mono/compare/v0.21.0...v0.22.0
 [0.21.0]: https://github.com/manifest-network/manifest-mcp-mono/compare/v0.20.1...v0.21.0
 [0.20.1]: https://github.com/manifest-network/manifest-mcp-mono/compare/v0.20.0...v0.20.1
 [0.20.0]: https://github.com/manifest-network/manifest-mcp-mono/compare/v0.19.0...v0.20.0
