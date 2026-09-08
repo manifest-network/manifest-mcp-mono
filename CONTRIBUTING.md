@@ -26,6 +26,7 @@ npm run lint           # Type-check workspace packages (tsc --noEmit)
 npm run lint:e2e       # Rebuild dependencies, then type-check the E2E suite
 npm run test           # Unit tests (vitest)
 npm run check          # Biome: format + lint + import sorting, including E2E TypeScript
+npm run check:workflows # Immutable action references + policy regression tests
 npm run check:fix      # Auto-fix anything Biome can fix
 ```
 
@@ -38,6 +39,40 @@ docker compose -f e2e/docker-compose.yml down -v --remove-orphans
 ```
 
 5. Open a pull request against `main`. CI runs the same checks.
+
+## GitHub Actions updates
+
+External actions and reusable workflows must use a full 40-character commit SHA
+with an adjacent release-version comment, for example `# v7.0.1`. Local `./`
+references are allowed; Docker actions must use an immutable `@sha256:` digest
+and a version comment. `npm run check:workflows` parses every `.yml` and `.yaml`
+workflow and tests the policy before CI or release validation builds the code.
+
+Every workflow, including newly added files, must declare
+`permissions: { contents: read }`. Non-release jobs inherit that default or
+narrow it to `permissions: {}`; only the isolated publishing and GitHub Release
+jobs in `release.yml` may grant their required write permissions. Every
+`actions/checkout` step must set `persist-credentials: false`.
+
+Local composite action metadata (`action.yml` / `action.yaml`) is not scanned;
+review and pin its external `runs.steps` references manually.
+
+Weekly GitHub Actions updates are already enabled in `.github/dependabot.yml`.
+Review these PRs normally; do not auto-approve or auto-merge them. Check the
+upstream release notes and verify the proposed SHA against the release tag in
+the action's official repository, not a fork:
+
+```bash
+gh api repos/actions/checkout/git/ref/tags/v7.0.1 --jq '.object'
+```
+
+For an annotated tag (`type: tag`), follow its object through the repository's
+`git/tags/<sha>` endpoint until the object is a commit. Compare that full commit
+SHA with `uses:` and keep the release-version comment current. The offline
+policy validates pin syntax and comments, not upstream provenance. GitHub
+documents this approach in its [secure use reference](https://docs.github.com/en/actions/reference/security/secure-use).
+Required-review enforcement is a repository ruleset setting, not part of
+Dependabot configuration.
 
 ## Commit and PR conventions
 
@@ -103,7 +138,12 @@ git push origin main --tags
 
 Pushing a `vMAJOR.MINOR.PATCH` tag triggers `.github/workflows/release.yml`, which validates that the tag matches every `package.json`, runs the full check + test suite, then publishes all nine packages to npm with provenance via OIDC trusted publishing (no `NPM_TOKEN` secret needed). Publish order is `core → chain → lease → fred → cosmwasm → agent-core → agent → node → sdk`; `.github/workflows/release.yml` is the authoritative list.
 
-The workflow also creates a GitHub Release with auto-generated notes; that step is best-effort — publish succeeds even if the Release creation fails.
+Validation runs with read-only repository access. The separate npm publishing
+job runs only after validation, checks out the same tag commit, and repeats the
+locked install and build with `contents: read` and `id-token: write`. Repository
+write access is restricted to a final GitHub Release job, which has no checkout
+or OIDC permission. That job creates a GitHub Release with auto-generated notes;
+creation remains best-effort — publish succeeds even if Release creation fails.
 
 The release body is auto-generated from merged PRs via `gh release create --generate-notes` — the workflow does not read `CHANGELOG.md`. Keep the `[Unreleased]` section of `CHANGELOG.md` current anyway: it is the human-authored changelog of record.
 

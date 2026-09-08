@@ -21,6 +21,7 @@
     "test": "npm run test --workspaces --if-present",
     "check:packages": "node --test scripts/check-packages.test.mjs && node scripts/check-packages.mjs",
     "check:type-tests": "node --test scripts/check-type-tests.test.mjs",
+    "check:workflows": "node --test scripts/check-workflows.test.mjs && node scripts/check-workflows.mjs",
     "pretest:e2e": "npm run build -w @manifest-network/sdk-acceptance",
     "test:e2e": "vitest run --config e2e/vitest.config.ts",
     "test:e2e:annotations": "vitest run --config e2e/vitest.annotations.config.mjs",
@@ -46,7 +47,8 @@
     "tsdown": "0.22.14",
     "typescript": "5.9.3",
     "undici": "8.10.0",
-    "vitest": "4.1.10"
+    "vitest": "4.1.10",
+    "yaml": "2.9.0"
   },
   "overrides": {
     "ipaddr.js": "2.4.0",
