@@ -1,6 +1,13 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  cpSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import test from 'node:test';
@@ -150,13 +157,32 @@ jobs:
   }
 });
 
+test('sabotage: merge keys fail without relying on another workflow defect', () => {
+  for (const source of [
+    workflow(`      - <<:
+          uses: owner/action@main # v1.2.3`),
+    `on: push
+x-step: &step
+  uses: owner/action@main # v1.2.3
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - <<: *step
+`,
+  ]) {
+    assert.deepEqual(inspectWorkflow(source, 'merge.yml'), [
+      'merge.yml: YAML merge keys are not supported',
+    ]);
+  }
+});
+
 for (const source of [
   'jobs: [',
   'jobs: {}\njobs: {}',
   'jobs: {}\n---\njobs: {}',
   'jobs: *missing',
   'jobs: !unknown {}',
-  'jobs: { test: { <<: { uses: owner/action@main } } }',
   '',
   'jobs: {}',
   'jobs: []',
@@ -205,10 +231,11 @@ test('CLI discovers .yml and .yaml files and fails for new mutable references', 
   }
 });
 
-function readWorkflow(filename) {
-  return parse(
-    readFileSync(resolve(repoRoot, '.github/workflows', filename), 'utf8'),
-  );
+function readWorkflow(
+  filename,
+  directory = resolve(repoRoot, '.github/workflows'),
+) {
+  return parse(readFileSync(resolve(directory, filename), 'utf8'));
 }
 
 test('wiring: all repository workflow references satisfy the policy', () => {
@@ -247,10 +274,21 @@ test('wiring: CI and release validation run the guard before building', () => {
   }
 });
 
-test('wiring: permissions stay read-only except for isolated release jobs', () => {
-  for (const filename of ['ci.yml', 'e2e.yml', 'e2e-pr.yml', 'release.yml']) {
-    const workflow = readWorkflow(filename);
-    assert.deepEqual(workflow.permissions, { contents: 'read' });
+function assertWorkflowPermissions(
+  directory = resolve(repoRoot, '.github/workflows'),
+) {
+  const filenames = readdirSync(directory, { withFileTypes: true })
+    .filter((entry) => entry.isFile() && entry.name.match(/\.ya?ml$/))
+    .map((entry) => entry.name)
+    .sort();
+  assert(filenames.length > 0, 'no workflow YAML files found');
+  for (const filename of filenames) {
+    const workflow = readWorkflow(filename, directory);
+    assert.deepEqual(
+      workflow.permissions,
+      { contents: 'read' },
+      `${filename}: workflow permissions must be contents: read`,
+    );
     for (const [name, job] of Object.entries(workflow.jobs)) {
       const permissions = job.permissions ?? workflow.permissions;
       if (filename === 'release.yml' && name === 'release') {
@@ -265,15 +303,90 @@ test('wiring: permissions stay read-only except for isolated release jobs', () =
           Object.keys(permissions).every(
             (scope) => scope === 'contents' && permissions[scope] === 'read',
           ),
+          `${filename}: jobs.${name}: permissions must be read-only`,
         );
       }
       for (const step of job.steps ?? []) {
         if (step.uses?.startsWith('actions/checkout@')) {
-          assert.equal(step.with?.['persist-credentials'], false);
+          assert.equal(
+            step.with?.['persist-credentials'],
+            false,
+            `${filename}: jobs.${name}: checkout must set persist-credentials: false`,
+          );
         }
       }
     }
   }
+}
+
+for (const extension of ['yml', 'yaml']) {
+  test(`sabotage: permissions cover newly added .${extension} workflows`, () => {
+    const directory = mkdtempSync(join(tmpdir(), 'workflow-permissions-'));
+    try {
+      cpSync(resolve(repoRoot, '.github/workflows'), directory, {
+        recursive: true,
+      });
+      assertWorkflowPermissions(directory);
+      const filename = join(directory, `future-workflow.${extension}`);
+      const source = `name: Future workflow
+on: pull_request_target
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@${commit} # v7.0.1
+        with:
+          persist-credentials: false
+      - run: echo fixture
+`;
+      writeFileSync(filename, source);
+      assert.deepEqual(checkWorkflows(directory), []);
+      assertWorkflowPermissions(directory);
+
+      for (const [mutation, message] of [
+        [
+          source.replace(
+            'permissions:\n  contents: read',
+            'permissions: write-all',
+          ),
+          /future-workflow\.ya?ml: workflow permissions/,
+        ],
+        [
+          source.replace(
+            '    runs-on:',
+            '    permissions:\n      contents: write\n    runs-on:',
+          ),
+          /future-workflow\.ya?ml: jobs.test: permissions/,
+        ],
+        [
+          source.replace(
+            'persist-credentials: false',
+            'persist-credentials: true',
+          ),
+          /future-workflow\.ya?ml: jobs.test: checkout must set persist-credentials: false/,
+        ],
+        [
+          source.replace(
+            '        with:\n          persist-credentials: false\n',
+            '',
+          ),
+          /future-workflow\.ya?ml: jobs.test: checkout must set persist-credentials: false/,
+        ],
+      ]) {
+        writeFileSync(filename, mutation);
+        assert.deepEqual(checkWorkflows(directory), []);
+        assert.throws(() => assertWorkflowPermissions(directory), message);
+      }
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+}
+
+test('wiring: permissions stay read-only except for isolated release jobs', () => {
+  assertWorkflowPermissions();
   const { jobs } = readWorkflow('release.yml');
   assert.equal(jobs.release.needs, 'validate');
   assert.equal(jobs['github-release'].needs, 'release');

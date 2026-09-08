@@ -48,6 +48,15 @@ references are allowed; Docker actions must use an immutable `@sha256:` digest
 and a version comment. `npm run check:workflows` parses every `.yml` and `.yaml`
 workflow and tests the policy before CI or release validation builds the code.
 
+Every workflow, including newly added files, must declare
+`permissions: { contents: read }`. Non-release jobs inherit that default or
+narrow it to `permissions: {}`; only the isolated publishing and GitHub Release
+jobs in `release.yml` may grant their required write permissions. Every
+`actions/checkout` step must set `persist-credentials: false`.
+
+Local composite action metadata (`action.yml` / `action.yaml`) is not scanned;
+review and pin its external `runs.steps` references manually.
+
 Weekly GitHub Actions updates are already enabled in `.github/dependabot.yml`.
 Review these PRs normally; do not auto-approve or auto-merge them. Check the
 upstream release notes and verify the proposed SHA against the release tag in
