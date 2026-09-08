@@ -8,6 +8,12 @@ including optional and peer dependencies. High and critical findings fail CI's
 report. The policy uses npm's failure threshold rather than filtering the report
 or suppressing individual advisories; see the [npm audit documentation](https://docs.npmjs.com/cli/v11/commands/npm-audit/).
 
+The standalone CI audit reads `package-lock.json` without installing dependencies.
+The `test` job's `npm ci` separately checks manifest/lockfile consistency. Advisory
+coverage is unchanged without `node_modules`, but npm's remediation hints and
+reverse-dependency annotations can differ; investigate fixes from an installed
+checkout.
+
 An override is not a permanent security exception. Auditing the resolved graph
 catches a pin that falls into a newly disclosed vulnerable range. On 2026-09-08,
 the full audit passed this threshold with seven low-severity dependency paths
@@ -33,6 +39,58 @@ mandatory.
 The repository's `main` ruleset had no required status checks when inspected on
 2026-09-08. Require `test`, `audit`, and `e2e-gate` there to enforce these checks at
 merge time; this is separate from the checked-in workflow definitions.
+
+## Release audit failures and emergency exceptions
+
+Release validation fails on audit errors as well as high/critical findings. The
+advisory feed can change independently of the lockfile: a severity increase on an
+unfixed dependency (including the elliptic chain tracked by ENG-808) can block an
+otherwise unchanged release. A missing upstream fix is not evidence of safety.
+
+For a transient registry failure, restore connectivity and re-run the failed
+validation job. For an advisory with a compatible fix, update and validate the
+dependency graph through the normal PR and release flow.
+
+If an urgent release cannot wait for an upstream fix or registry recovery, use a
+reviewed workflow change for that release. There is no standing skip flag or
+advisory allowlist:
+
+1. Record the failed run, complete audit output (or registry error), affected
+   advisories and dependency paths, lockfile hash, why delaying the release is
+   riskier, and the mitigation/follow-up owner. Follow [SECURITY.md](../SECURITY.md) for nonpublic
+   vulnerability details. A maintainer must explicitly approve that assessment
+   and the exact release commit before tagging.
+2. Open a PR that bumps to a **new** release version and temporarily replaces only
+   the release validation audit step with the following steps. Replace `vX.Y.Z`
+   with that exact tag and `REVIEW_URL` with the approval record. Keep the full
+   audit command, all other validation, and CI's separate failing `audit` check.
+   If required checks block the PR, obtain an authorized ruleset exception;
+   do not remove the required check globally.
+
+   ```yaml
+   - name: Audit all dependencies (approved exception for vX.Y.Z)
+     id: dependency_audit
+     continue-on-error: ${{ github.ref == 'refs/tags/vX.Y.Z' }}
+     run: npm run audit:dependencies
+
+   - name: Record approved audit exception
+     if: ${{ github.ref == 'refs/tags/vX.Y.Z' && steps.dependency_audit.outcome == 'failure' }}
+     run: |
+       echo "::warning::Audit failed; release vX.Y.Z uses the exception approved in REVIEW_URL."
+       echo "Audit failed; release vX.Y.Z uses the exception approved in REVIEW_URL." >> "$GITHUB_STEP_SUMMARY"
+   ```
+
+3. After review, push the new tag at the approved commit. Re-running an old tag's
+   workflow uses its original commit, so it cannot pick up the exception. Do not
+   move an existing tag or switch to publishing manually. Include the exception
+   and mitigation in the release notes.
+4. Remove the temporary steps in a follow-up PR immediately after the release,
+   restoring the ordinary blocking audit step. The exact-tag condition already
+   blocks audit failures on every other release while that cleanup is pending.
+
+The audit still runs and its failure remains in the log and job summary. GitHub's
+[step `continue-on-error` behavior](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#jobsjob_idstepscontinue-on-error)
+permits the approved release to continue; [re-runs retain the original ref and SHA](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/re-run-workflows-and-jobs).
 
 ## Bundle measurements
 

@@ -18,7 +18,7 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      - run: npm ci --ignore-scripts --no-audit
+      # npm audit reads the lockfile; the test job checks install/lockfile consistency.
       - name: Audit all dependencies (high and critical block)
         run: npm run audit:dependencies
 

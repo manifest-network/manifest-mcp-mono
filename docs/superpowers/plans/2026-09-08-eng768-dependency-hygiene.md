@@ -13,6 +13,11 @@ Low and moderate findings remain visible. No advisory allowlist or override-spec
 filter will hide vulnerabilities. The existing low-severity elliptic migration is
 tracked separately by ENG-808.
 
+Release recovery is documented in `docs/dependency-hygiene.md`: transient failures
+can be retried; an urgent exception requires a maintainer-reviewed workflow change
+scoped to one new tag, retains the full audit output and CI failure, and is removed
+afterward. The normal release workflow has no bypass toggle.
+
 Deploy-relevant PRs require a successful live acceptance result. A skipped
 Dependabot/fork run must fail the summary gate and explain the missing coverage;
 the workflow keeps its existing secret boundary.

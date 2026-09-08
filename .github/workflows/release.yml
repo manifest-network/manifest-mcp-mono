@@ -45,6 +45,7 @@ jobs:
 
       - run: npm run check:dependency-hygiene
 
+      # Recovery and reviewed emergency exceptions: docs/dependency-hygiene.md.
       - name: Audit all dependencies (high and critical block)
         run: npm run audit:dependencies
 

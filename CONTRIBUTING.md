@@ -163,6 +163,11 @@ git push origin main --tags
 
 Pushing a `vMAJOR.MINOR.PATCH` tag triggers `.github/workflows/release.yml`, which validates that the tag matches every `package.json`, runs the full check + test suite, then publishes all nine packages to npm with provenance via OIDC trusted publishing (no `NPM_TOKEN` secret needed). Publish order is `core → chain → lease → fred → cosmwasm → agent-core → agent → node → sdk`; `.github/workflows/release.yml` is the authoritative list.
 
+Audit failures block publishing, including registry outages or an advisory severity
+change affecting an unchanged lockfile. Follow the [release audit recovery and
+emergency exception procedure](docs/dependency-hygiene.md#release-audit-failures-and-emergency-exceptions)
+for retries or a maintainer-reviewed exception scoped to one new release tag.
+
 Validation runs with read-only repository access. The separate npm publishing
 job runs only after validation, checks out the same tag commit, and repeats the
 locked install and build with `contents: read` and `id-token: write`. Repository

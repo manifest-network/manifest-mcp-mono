@@ -56,14 +56,10 @@ export async function bundleForBrowser(input: string): Promise<BrowserBundle> {
 
   try {
     const { output } = await bundle.generate({ format: 'esm' });
+    const chunks = output.filter((item) => item.type === 'chunk');
     return {
-      code: output
-        .filter((item) => item.type === 'chunk')
-        .map((item) => item.code)
-        .join('\n'),
-      modules: output
-        .filter((item) => item.type === 'chunk')
-        .flatMap((item) => Object.keys(item.modules)),
+      code: chunks.map((item) => item.code).join('\n'),
+      modules: chunks.flatMap((item) => Object.keys(item.modules)),
       unresolvedWarnings,
     };
   } finally {
