@@ -1,7 +1,11 @@
 import { z } from 'zod';
 import { isTransportTimeout } from './internals/transport-timeout.js';
 import { logger } from './logger.js';
-import { ManifestMCPError, ManifestMCPErrorCode } from './types.js';
+import {
+  ManifestMCPError,
+  ManifestMCPErrorCode,
+  type TransportErrorDetails,
+} from './types.js';
 
 const CoinSchema = z.object({
   denom: z.string(),
@@ -56,7 +60,7 @@ export async function fetchFaucetStatus(
         ManifestMCPErrorCode.QUERY_FAILED,
         `Faucet status request failed: ${err instanceof Error ? err.message : String(err)}`,
         isTransportTimeout(err, deadline)
-          ? { transportCode: 'ETIMEDOUT' }
+          ? ({ transportCode: 'ETIMEDOUT' } satisfies TransportErrorDetails)
           : undefined,
       ),
       { cause: err },
@@ -83,7 +87,9 @@ export async function fetchFaucetStatus(
         timedOut
           ? 'Faucet status response deadline expired.'
           : `Faucet /status returned invalid JSON (HTTP ${res.status})`,
-        timedOut ? { transportCode: 'ETIMEDOUT' } : { httpStatus: res.status },
+        timedOut
+          ? ({ transportCode: 'ETIMEDOUT' } satisfies TransportErrorDetails)
+          : { httpStatus: res.status },
       ),
       { cause: err },
     );

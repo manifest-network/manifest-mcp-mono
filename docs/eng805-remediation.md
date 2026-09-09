@@ -232,9 +232,10 @@ The contract adds exported `TransportErrorDetails` with optional
 `transportCode: 'ETIMEDOUT'` on existing `QUERY_FAILED`/`RPC_CONNECTION_FAILED`
 errors. Only identity requests and faucet `GET /status` mark a timeout verified
 against their own fresh per-attempt signal, including response-body failures.
-Cause inspection preserves known status verdicts and permanent, partial or
-submitted outcomes over transient wrappers. An unknown native abort/deadline is
-not sufficient evidence for retry. Faucet credit POST behavior stays unchanged.
+Cause inspection preserves permanent HTTP/gRPC verdicts and permanent, partial
+or submitted outcomes over transient wrappers. An unknown native abort/deadline
+is not sufficient evidence for retry, even with a transient status in its cause
+chain. Faucet credit POST behavior stays unchanged.
 
 `RetryOptions.signal` and `isRetryableError(error, { signal })` carry the separate
 overall cancellation boundary. They stop backoff and later attempts; the
@@ -260,6 +261,46 @@ Validation for this follow-up:
 - Independent review found no concrete blocker in the ownership, cancellation
   or cause-precedence changes (confidence 98%). No dependencies changed.
 
-CI for this follow-up remains pending; the earlier PR's live acceptance does not
-validate these new changes. Broader ENG-805 dependency, coverage, compiler and
-simplification work remains open.
+Initial PR #225 head `bf5a7e2` passed all CI checks, including live SDK acceptance
+and the E2E gate. Broader ENG-805 dependency, coverage, compiler and simplification
+work remains open.
+
+### PR #225 review amendment
+
+[Claude's review](https://github.com/manifest-network/manifest-mcp-mono/pull/225#issuecomment-5607995839)
+identified one API gap and three smaller improvements:
+
+| Finding | Confidence | Resolution |
+| --- | --- | --- |
+| SDK-only cookbook required a direct core import, risking error identity under version skew | 99% | Re-export `withRetry` and `isRetryableError` from the SDK root, using the same pinned core dependency as its error producers. Cover the public package imports, runtime faucet-error identity and typed cookbook composition. |
+| Timeout producers were not checked against their exported metadata type | 100% | Bind all three literals with `satisfies TransportErrorDetails`, preserving their inferred types for the generic error-details record. |
+| Nested, non-identical `TimeoutError` recognition lacked a regression | 100% | Exercise the helper and real RPC identity boundary, with cancellation, permanent-verdict and cycle controls. |
+| Status-precedence wording was broader than the classifier's behavior | 100% | Document permanent status vetoes separately from transient statuses, which cannot override an unowned native abort. |
+
+The nine refuted candidates remain refuted; they do not justify additional runtime
+changes. The pre-existing HTTP 408/425 policy observation is retained as one P3
+follow-up in ENG-805. Actual LCD/faucet read probes make one attempt on 408/425
+and two on a 503 control (`maxRetries: 1`). Bounded 408 retries could improve read
+availability (recommendation confidence 99%; [RFC 9110 §15.5.9](https://www.rfc-editor.org/rfc/rfc9110.html#section-15.5.9)).
+A 425 retry policy first needs evidence that supported transports avoid TLS early
+data on replay; a production defect has not been established (assessment confidence
+99%; [RFC 8470 §5.2](https://www.rfc-editor.org/rfc/rfc8470.html#section-5.2)).
+
+Review validation:
+
+- All 204 focused runtime/type tests pass against freshly built packages. Removing
+  the two SDK value exports fails the runtime surface guard and produces
+  TS1485/TS1362 in the SDK type tests. Removing only the `TimeoutError` disjunct
+  through an isolated transform fails five new regressions; 43 controls pass.
+- The full coverage run records 3,760 passing tests, 17 existing skips and five
+  browser-bundle timeouts across 175 files, with no type errors. All coverage
+  thresholds pass: 84.43% lines, 84.15% statements, 83.71% branches and 88.09%
+  functions. The two affected browser files then pass all 16 tests sequentially
+  with a temporary 120-second local timeout. Repository timeouts are unchanged;
+  the initial run is not recorded as an unconditional pass.
+- Workspace builds, workspace/E2E TypeScript, Biome, all nine package-integrity
+  checks and all four unchanged bundle budgets pass. Independent review found
+  no concrete blocker (confidence 98%). No dependencies changed.
+
+These review changes still require CI on their new commit; `bf5a7e2`'s green live
+acceptance result covers the initial implementation only.

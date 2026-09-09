@@ -134,11 +134,11 @@ Explicitly injecting any `fetch` opts **out** of the automatic guard and its mis
 
 ## Subpath map
 
-The root barrel carries the client factories, branded types (`parse*` / `as*`), the ports, the error vocabulary, and config; the free functions live on scoped, tree-shakable subpaths.
+The root barrel carries the client factories, branded types (`parse*` / `as*`), the ports, the error vocabulary, retry helpers (`withRetry` / `isRetryableError`), and config; domain-operation functions live on scoped, tree-shakable subpaths. Import retry helpers from the SDK so they share its pinned core dependency with the error producers. See the [faucet-status retry example](../../docs/library-usage.md#errors) for per-attempt deadlines and overall cancellation.
 
 | Import | What's there |
 |--------|--------------|
-| `@manifest-network/manifest-sdk` | Client factories (`createFredClient`, `createManifestClient`, `createManifestReadClient`), brands + `parse*`/`as*`, ports (`WalletProvider`, `Signer` adapters), the error vocabulary (`ManifestMCPError`/`ManifestMCPErrorCode` + the typed guards `ProviderApiError`/`isSkuAmbiguousError`), `createConfig`, and the wholesale type surface (barrel `createFredClient` is unguarded on Node — prefer `createFredClientNode` from `/node`) |
+| `@manifest-network/manifest-sdk` | Client factories (`createFredClient`, `createManifestClient`, `createManifestReadClient`), brands + `parse*`/`as*`, ports (`WalletProvider`, `Signer` adapters), the error vocabulary (`ManifestMCPError`/`ManifestMCPErrorCode` + the typed guards `ProviderApiError`/`isSkuAmbiguousError`), retry helpers (`withRetry`/`isRetryableError`), `createConfig`, and the wholesale type surface (barrel `createFredClient` is unguarded on Node — prefer `createFredClientNode` from `/node`) |
 | `…/reads` | Branded read fns: `getBalance`, `getLease`, `getLeasesByTenant`, `getSKUs`, `getProviders`, `getLeaseByCustomDomain`, `getBillingParams`, `getWithdrawableAmount` |
 | `…/catalog` | `browseCatalog`, `resolveSku`, `listSkuCandidates`, `checkDeploymentReadiness`, `buildManifestPreview`, plus its preview input types and `PortConfig` |
 | `…/deploy` | `deployApp`, `restartApp`, `updateApp`, `restoreApp` / `restoreLease` (recover a CLOSED/retained lease onto a fresh one), `getAppLogs`, `appStatus`, `waitForAppReady`, `waitForLeaseStatus`, `isLeaseFailureTerminal`, `executeTx`, `fundCredits`, `setItemCustomDomain`, `stopApp`, `LeaseState`, `validateProviderUrl` + `isUrlSsrfSafe` (SSRF-classify a provider URL / WebSocket URL), manifest builders, ADR-036 auth helpers + the deploy-family types (`BuildManifestOptions`, `PortConfig`, `DeployResult`, `ManifestDeploySpec`, `RestoreResult`, `FredLeaseItem`, `TxCallOptions`) |

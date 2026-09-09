@@ -1,5 +1,9 @@
 import { z } from 'zod';
-import { ManifestMCPError, ManifestMCPErrorCode } from '../types.js';
+import {
+  ManifestMCPError,
+  ManifestMCPErrorCode,
+  type TransportErrorDetails,
+} from '../types.js';
 import { isTransportTimeout } from './transport-timeout.js';
 
 const chainIdSchema = z.string().min(1).max(256);
@@ -143,7 +147,11 @@ async function verifyChainIdentity(
         new ManifestMCPError(
           ManifestMCPErrorCode.RPC_CONNECTION_FAILED,
           `${protocol} chain identity verification timed out.`,
-          { ...details, transportCode: 'ETIMEDOUT' },
+          { ...details, transportCode: 'ETIMEDOUT' } satisfies Record<
+            string,
+            unknown
+          > &
+            TransportErrorDetails,
         ),
         { cause: error },
       );

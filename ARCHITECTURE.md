@@ -445,9 +445,11 @@ Deadline ownership is carried separately from these error categories. Identity
 requests and faucet `GET /status` verify their own fresh per-attempt abort signal
 before adding exported `TransportErrorDetails` (`transportCode: 'ETIMEDOUT'`) to
 `RPC_CONNECTION_FAILED` or `QUERY_FAILED`. Fetch and body-read failures retain
-their causes. Retry classification inspects that chain; known status envelopes
-remain authoritative, and permanent, partial or submitted outcomes veto retry.
-An unknown native `TimeoutError`/`AbortError` supplies no ownership evidence.
+their causes. Permanent HTTP/gRPC verdicts and permanent, partial or submitted
+outcomes anywhere in the cause chain veto retry. A transient status cannot
+override a native `TimeoutError`/`AbortError` unless an enclosing transport
+marker establishes ownership. The SDK root re-exports `withRetry` and
+`isRetryableError` from its pinned core dependency alongside its error classes.
 `RetryOptions.signal` stops new attempts and backoff after whole-operation
 cancellation; the callback must propagate the signal to cancel in-flight work.
 The retry wrapper does not race that callback or discard success. Faucet credit

@@ -3,8 +3,9 @@
 // Carries the WHOLESALE type surface (query-result types, ports, contracts) via
 // `export type *` plus a curated set of VALUE re-exports: the client factories,
 // brand parsers/casts, the signer/wallet ports, the error vocabulary, and config.
-// NO free fns EXCEPT error-vocabulary helpers over ManifestMCPError (sanitizeForLogging,
-// isSkuAmbiguousError) — domain-operation fns live on the scoped subpaths (`/reads`, `/catalog`, `/deploy`,
+// Shared error/cancellation/retry helpers live here with ManifestMCPError, keeping
+// their runtime identity aligned with the scoped producers. Domain-operation fns
+// live on the scoped subpaths (`/reads`, `/catalog`, `/deploy`,
 // `/orchestration`), which also structurally resolves the fred-vs-agent-core
 // `deployApp` name clash. `export type * from core` + the named VALUE re-exports of
 // the same symbols compile clean (no TS2300/TS2308) and emit only the curated
@@ -24,6 +25,7 @@ export {
   createValidatedConfig,
   INFRASTRUCTURE_ERROR_CODES,
   isNotFoundError,
+  isRetryableError,
   isSkuAmbiguousError,
   ManifestMCPError,
   ManifestMCPErrorCode,
@@ -44,6 +46,7 @@ export {
   signArbitraryWithAmino,
   VERSION,
   validateConfig,
+  withRetry,
 } from '@manifest-network/manifest-mcp-core';
 export type {
   CreateFredClientOptions,

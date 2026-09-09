@@ -25,8 +25,8 @@ transactions and recovery flows.
   adding the marker, including during response-body reads. An elapsed signal
   alone cannot replace an unrelated failure or an established HTTP/validation
   verdict. Preserve causes when wrapping.
-- Inspect the cause chain before authorizing retry. Known HTTP/gRPC statuses
-  remain authoritative; permanent errors, partial outcomes and submitted
+- Inspect the cause chain before authorizing retry. Permanent HTTP/gRPC verdicts,
+  permanent errors, partial outcomes and submitted
   transactions veto a marker or transient outer message. A native
   `TimeoutError`/`AbortError` with unknown ownership is not automatically
   retryable, including when hidden behind transient prose.
@@ -38,6 +38,8 @@ transactions and recovery flows.
 - Keep one retry owner per operation. The public example wraps only
   `fetchFaucetStatus`, combining its supplied attempt signal with the caller's
   overall signal in an injected fetch. The faucet helper gains no retry loop.
+- Re-export `withRetry` and `isRetryableError` from the SDK root so applications
+  use the SDK's pinned core dependency for both retry helpers and error producers.
 
 Retain the existing backoff loop. A package such as `p-retry` could supply retry
 mechanics but cannot determine who owns a deadline, whether a mutation was
@@ -73,5 +75,8 @@ Local validation passes: 254 focused tests, 3,747 full-suite tests, all coverage
 thresholds, workspace/E2E compiler checks, package integrity and unchanged bundle
 budgets. The pre-fix classifier fails 15/19 ownership cases in the negative
 control; independent review found no concrete blocker (98% confidence).
-See the implementation record for full results. New PR CI remains pending.
+The initial PR #225 head `bf5a7e2` passed all CI checks, including live SDK
+acceptance. The review amendment adds SDK value exports, producer type checks,
+nested timeout regressions and precise status-precedence documentation; see the
+implementation record for its validation and the retained HTTP 408/425 policy work.
 Keep ENG-805's broader retained scope open; these changes are not a package release.

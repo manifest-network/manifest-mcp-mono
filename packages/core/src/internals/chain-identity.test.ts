@@ -28,6 +28,35 @@ describe.each([
     document: { default_node_info: { network: CHAIN_ID } },
   },
 ])('$protocol identity response bounds', ({ verify, document }) => {
+  it('marks a wrapped TimeoutError distinct from the expired owned signal reason', async () => {
+    const deadline = new AbortController();
+    deadline.abort(new DOMException('Owned deadline elapsed', 'TimeoutError'));
+    vi.spyOn(AbortSignal, 'timeout').mockReturnValue(deadline.signal);
+    const timeout = new DOMException(
+      'Transport deadline expired',
+      'TimeoutError',
+    );
+    const failure = Object.assign(new TypeError('Opaque transport wrapper'), {
+      cause: timeout,
+    });
+    const fetch = vi.fn<typeof globalThis.fetch>(async () => {
+      throw failure;
+    });
+    const error: unknown = await verify(URL, CHAIN_ID, fetch).catch(
+      (error: unknown) => error,
+    );
+
+    expect(timeout).not.toBe(deadline.signal.reason);
+    expect(error).toMatchObject({
+      code: ManifestMCPErrorCode.RPC_CONNECTION_FAILED,
+      details: { transportCode: 'ETIMEDOUT' },
+    });
+    expect(Object.getOwnPropertyDescriptor(error, 'cause')?.value).toBe(
+      failure,
+    );
+    expect(isRetryableError(error)).toBe(true);
+  });
+
   it.each(['fetch', 'body'] as const)(
     'retries a nested owned deadline during %s using a fresh signal',
     async (phase) => {

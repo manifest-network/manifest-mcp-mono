@@ -59,12 +59,16 @@ import {
   createManifestReadClient,
   type FredClient,
   type FullClientOptions,
+  isRetryableError,
   isSkuAmbiguousError,
   type ManifestClient,
   type ManifestReadClient,
   ProviderApiError,
   type QueryCtx,
   type ReadClientOptions,
+  type RetryOptions,
+  type TransportErrorDetails,
+  withRetry,
 } from './index.js';
 import type {
   PortConfig as OrchestrationPortConfig,
@@ -190,6 +194,44 @@ describe('error-narrowing guards (ENG-462)', () => {
       >();
       expectTypeOf(e.details).toExtend<SkuAmbiguousDetails>();
     }
+  });
+});
+
+describe('SDK retry helpers and faucet composition', () => {
+  it('exposes retry helpers as values and preserves optional cancellation and marker types', () => {
+    expectTypeOf(isRetryableError).parameters.toEqualTypeOf<
+      [error: unknown, options?: { signal?: AbortSignal }]
+    >();
+    expectTypeOf<RetryOptions['signal']>().toEqualTypeOf<
+      AbortSignal | undefined
+    >();
+    expectTypeOf<TransportErrorDetails>().toEqualTypeOf<{
+      readonly transportCode?: 'ETIMEDOUT';
+    }>();
+  });
+
+  it('infers the cookbook faucet response using only SDK entrypoints', () => {
+    // Never invoked: this checks the SDK-only consumer example without network I/O.
+    function readFaucet(faucetUrl: string, signal: AbortSignal) {
+      const fetchWithCancellation: typeof globalThis.fetch = (input, init) =>
+        globalThis.fetch(input, {
+          ...init,
+          signal: init?.signal
+            ? AbortSignal.any([signal, init.signal])
+            : signal,
+        });
+      return withRetry(
+        () => fetchFaucetStatus(faucetUrl, fetchWithCancellation),
+        {
+          signal,
+          config: { maxRetries: 2 },
+          operationName: 'faucet status',
+        },
+      );
+    }
+    expectTypeOf(readFaucet).returns.toEqualTypeOf<
+      Promise<FaucetStatusResponse>
+    >();
   });
 });
 

@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **core:** export `TransportErrorDetails` for verified per-attempt read/connection timeouts. `RetryOptions.signal` and `isRetryableError(error, { signal })` let callers stop retries and backoff on overall cancellation; operations must propagate the signal to cancel their own in-flight work. (ENG-805 follow-up)
+- **sdk:** export `withRetry` and `isRetryableError` from the root alongside the error classes, keeping the documented faucet-status retry composition on the SDK's pinned core dependency. (ENG-805 review)
 
 ### Changed
 
@@ -24,7 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **core:** retain verified transport deadline ownership and causes through identity and faucet status errors, including body-read failures. Known status envelopes and permanent, partial or submitted outcomes take precedence over timeout markers and transient wrapper prose. Unknown native aborts/deadlines do not authorize retry; faucet credit POST behavior is unchanged. (ENG-805 follow-up)
+- **core:** retain verified transport deadline ownership and causes through identity and faucet status errors, including body-read failures. Permanent HTTP/gRPC verdicts and permanent, partial or submitted outcomes take precedence over timeout markers and transient wrapper prose. Unknown native aborts/deadlines do not authorize retry, even with a transient status in the cause chain; faucet credit POST behavior is unchanged. (ENG-805 follow-up)
 - **core, sdk:** verify chain identity before initializing RPC-only query clients, closing the read path left outside the original signing/REST checks. Each initialization/retry sends a bounded JSON-RPC `status` POST through `chainIdentityFetch` to the configured RPC URL, preserving path/query; cached query reuse adds no request. REST preference and signing verification are preserved. Identity errors retain their classification when an injected transport ignores the deadline or response cleanup fails. This detects endpoint misconfiguration, without binding later requests to a dishonest or inconsistently routed node. (ENG-805 follow-up)
 - **core, fred:** cap complete model-facing errors at 8,000 serialized characters, prioritize recovery handles, and mark truncation. Provider text is neutralized at model output boundaries, including a 1,024-code-point cap on progress messages, while original SDK errors remain available. (ENG-805, ENG-756)
 - **core, node:** prevent wallet initialization from restoring secret references after disconnect. Encrypted keyfile replacement now completes and flushes a private temporary file before rename, preserving the old file on write/fsync/rename failures. (ENG-805)
