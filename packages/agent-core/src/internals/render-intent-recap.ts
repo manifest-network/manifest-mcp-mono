@@ -247,10 +247,10 @@ function renderCustomDomain(
   const lines = [`Custom domain: ${customDomain} → ${target}`];
   lines.push('');
   lines.push(
-    'Note: when a custom domain is set, deploy_app broadcasts TWO billing\n' +
-      'transactions atomically: create-lease AND set-item-custom-domain. The\n' +
-      'single permission prompt that fires later covers BOTH; this textual\n' +
-      'recap is your per-tx review.',
+    'Note: a custom domain requires two separate billing transactions:\n' +
+      'create-lease, then set-item-custom-domain after the manifest upload.\n' +
+      'The domain step can fail after the paid lease exists. Reconcile the\n' +
+      'returned lease ID before retrying; confirmation covers both transactions.',
   );
   if (activeChain === 'mainnet') {
     lines.push('');

@@ -246,9 +246,11 @@ describe('renderIntentRecap', () => {
         customDomain: 'app.testnet.manifest.app',
       };
       const out = renderIntentRecap({ spec, activeChain: 'testnet' });
+      expect(out).toContain('two separate billing transactions');
       expect(out).toContain(
-        'deploy_app broadcasts TWO billing\ntransactions atomically',
+        'The domain step can fail after the paid lease exists',
       );
+      expect(out).not.toContain('atomically');
     });
 
     it('omits mainnet warning on testnet', () => {

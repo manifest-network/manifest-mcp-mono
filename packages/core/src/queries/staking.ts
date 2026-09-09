@@ -1,5 +1,5 @@
 import type { ManifestQueryClient } from '../client.js';
-import { throwUnsupportedSubcommand } from '../modules.js';
+import { throwUnsupportedSubcommand } from '../module-metadata.js';
 import type {
   DelegationResult,
   DelegationsResult,
@@ -12,7 +12,7 @@ import type {
   ValidatorResult,
   ValidatorsResult,
 } from '../types.js';
-import { extractPaginationArgs, parseBigInt, requireArgs } from './utils.js';
+import { extractPaginationArgs, parseInt64, requireArgs } from './utils.js';
 
 /** Staking query result union type */
 type StakingQueryResult =
@@ -215,7 +215,7 @@ export async function routeStakingQuery(
 
     case 'historical-info': {
       requireArgs(args, 1, ['height'], 'staking historical-info');
-      const height = parseBigInt(args[0], 'height');
+      const height = parseInt64(args[0], 'height');
       const result = await staking.historicalInfo({ height });
       return { hist: result.hist };
     }

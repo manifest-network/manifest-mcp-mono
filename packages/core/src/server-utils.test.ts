@@ -6,15 +6,36 @@ import {
   isSensitiveKey,
   jsonResponse,
   MAX_TOOL_ERROR_MESSAGE_CHARS,
+  MAX_TOOL_ERROR_RESPONSE_CHARS,
   type ManifestMCPServerOptions,
   SENSITIVE_FIELDS,
   SENSITIVE_KEY_STEMS,
   sanitizeForDisplay,
   sanitizeForLogging,
+  sanitizeForModelText,
   structuredResponse,
   withErrorHandling,
 } from './server-utils.js';
+import { buildTxResult } from './transactions/utils.js';
 import { ManifestMCPError, ManifestMCPErrorCode } from './types.js';
+
+describe('sanitizeForModelText', () => {
+  it('redacts a mnemonic even when terminal controls initially obscure its shape', () => {
+    const mnemonic = `\u001b[31m${Array(12).fill('abandon').join(' ')}\u001b[0m`;
+    expect(sanitizeForModelText(mnemonic)).toBe(
+      '[REDACTED - possible mnemonic]',
+    );
+  });
+  it('removes terminal escapes, bidi and zero-width controls while preserving log layout', () => {
+    const text = '\u001b[31mfirst\u001b[0m\r\n\tsecond\u202e\u200b\u0000';
+    expect(sanitizeForModelText(text)).toBe('first\n\tsecond');
+    expect(
+      sanitizeForModelText(
+        '\u001b]8;;https://example.com\u001b\\link\u001b]8;;\u001b\\',
+      ),
+    ).toBe('link');
+  });
+});
 
 describe('sanitizeForDisplay', () => {
   // Every control/format code point is an escape-based constant so the source
@@ -504,9 +525,7 @@ describe('withErrorHandling', () => {
     expect(parsed.code).toBeUndefined();
   });
 
-  // The if/else in withErrorHandling already separates first-party from untrusted, so
-  // the cap rides that split rather than being applied to everything (ENG-669).
-  describe('response-size bound (ENG-669)', () => {
+  describe('complete error response-size bound (ENG-756)', () => {
     it('caps an over-long message mono did not author', async () => {
       const handler = withErrorHandling<TestToolCb>('test', async () => {
         throw new Error('x'.repeat(100_000));
@@ -516,15 +535,137 @@ describe('withErrorHandling', () => {
       expect(parsed.message.endsWith('…')).toBe(true);
     });
 
-    it('leaves a first-party ManifestMCPError recovery message uncapped', async () => {
-      // These are curated guidance whose length is a reviewed design choice —
-      // truncating them would amputate advice the agent must read.
+    it('caps first-party messages too, without changing the original SDK error', async () => {
       const long = `RECOVERY: ${'y'.repeat(3_000)}`;
+      const original = new ManifestMCPError(
+        ManifestMCPErrorCode.QUERY_FAILED,
+        long,
+      );
       const handler = withErrorHandling<TestToolCb>('test', async () => {
-        throw new ManifestMCPError(ManifestMCPErrorCode.QUERY_FAILED, long);
+        throw original;
       });
       const parsed = JSON.parse(textOf(await handler({}, {})));
-      expect(parsed.message).toBe(long);
+      expect(parsed.message.length).toBeLessThanOrEqual(
+        MAX_TOOL_ERROR_MESSAGE_CHARS + 1,
+      );
+      expect(parsed.truncated).toBe(true);
+      expect(parsed.code).toBe(ManifestMCPErrorCode.QUERY_FAILED);
+      expect(original.message).toBe(long);
+    });
+
+    it('bounds a real transaction error containing duplicate multi-megabyte RPC rawLog', async () => {
+      const logSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const rawLog = `\u001b[31mremote\u202e\n${'x'.repeat(2 * 1024 * 1024)}`;
+      const hash = 'A'.repeat(64);
+      let original: unknown;
+      try {
+        buildTxResult(
+          'bank',
+          'send',
+          {
+            code: 5,
+            txIndex: 0,
+            height: 42,
+            transactionHash: hash,
+            rawLog,
+            gasUsed: 1n,
+            gasWanted: 2n,
+            events: [],
+            msgResponses: [],
+          },
+          true,
+        );
+      } catch (error) {
+        original = error;
+      }
+      const handler = withErrorHandling<TestToolCb>('cosmos_tx', async () => {
+        throw original;
+      });
+      try {
+        const text = textOf(await handler({}, {}));
+        const parsed = JSON.parse(text);
+        expect(text.length).toBeLessThanOrEqual(MAX_TOOL_ERROR_RESPONSE_CHARS);
+        expect(parsed.code).toBe('TX_FAILED');
+        expect(parsed.details.transactionHash).toBe(hash);
+        expect(parsed.details.rawLog.length).toBeLessThanOrEqual(
+          MAX_TOOL_ERROR_MESSAGE_CHARS + 1,
+        );
+        expect(parsed.message).not.toContain('\u001b');
+        expect(parsed.details.rawLog).not.toContain('\u202e');
+        expect(parsed.truncated).toBe(true);
+        expect((original as ManifestMCPError).details?.rawLog).toBe(rawLog);
+      } finally {
+        logSpy.mockRestore();
+      }
+    });
+
+    it('prioritizes reconciliation fields over large nested details and input', async () => {
+      const lease = '11111111-1111-4111-8111-111111111111';
+      const source = '22222222-2222-4222-8222-222222222222';
+      const details = {
+        rawLog: '\\"\n'.repeat(100_000),
+        noisy: { values: Array.from({ length: 5000 }, () => 'x'.repeat(5000)) },
+        lease_uuid: lease,
+        source_lease_uuid: source,
+        partial: true,
+        sent: true,
+        adoption_status: 'unknown',
+        next_action: 'app_diagnostics',
+        password: 'never-return-this',
+      };
+      const handler = withErrorHandling<TestToolCb>('restore_app', async () => {
+        throw new ManifestMCPError(
+          ManifestMCPErrorCode.RESTORE_ORPHAN_COMPENSATION_FAILED,
+          'Restore outcome unknown',
+          details,
+        );
+      });
+      const text = textOf(await handler({ blob: 'z'.repeat(1_000_000) }, {}));
+      const parsed = JSON.parse(text);
+      expect(text.length).toBeLessThanOrEqual(MAX_TOOL_ERROR_RESPONSE_CHARS);
+      expect(parsed.details).toMatchObject({
+        lease_uuid: lease,
+        source_lease_uuid: source,
+        partial: true,
+        sent: true,
+        adoption_status: 'unknown',
+        next_action: 'app_diagnostics',
+      });
+      expect(text).not.toContain('never-return-this');
+      expect(parsed.truncated).toBe(true);
+      expect(details.rawLog).toHaveLength(300_000);
+    });
+
+    it('projects cycles, bigints, and throwing accessors without calling custom serialization', async () => {
+      const toJSON = vi.fn(() => {
+        throw new Error('must not run');
+      });
+      const input: Record<string, unknown> = {
+        password: 'hidden',
+        amount: 42n,
+        toJSON,
+      };
+      input.self = input;
+      Object.defineProperty(input, 'getter', {
+        enumerable: true,
+        get() {
+          throw new Error('must not run');
+        },
+      });
+      const handler = withErrorHandling<TestToolCb>('test', async () => {
+        throw new Error('fail');
+      });
+      const text = textOf(await handler(input, {}));
+      const parsed = JSON.parse(text);
+      expect(text.length).toBeLessThanOrEqual(MAX_TOOL_ERROR_RESPONSE_CHARS);
+      expect(parsed.input).toMatchObject({
+        password: '[REDACTED]',
+        amount: '42',
+        self: '[circular]',
+        getter: '[accessor omitted]',
+      });
+      expect(toJSON).not.toHaveBeenCalled();
+      expect(parsed.truncated).toBe(true);
     });
 
     it('still logs the full message to stderr after capping the response', async () => {
@@ -585,29 +726,33 @@ describe('withErrorHandling', () => {
     expect(parsed.input.password).toBe('[REDACTED]');
   });
 
-  it('falls back to minimal JSON and logs serialization failure when stringify fails', async () => {
+  it('keeps the fallback response bounded when error details cannot be read', async () => {
     const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
-    // Create a details object with a toJSON that throws — sanitizeForLogging
-    // copies plain properties so it won't trigger toJSON, but JSON.stringify will.
-    const details = {
-      info: 'value',
-      toJSON() {
-        throw new Error('toJSON exploded');
+    const error = new ManifestMCPError(
+      ManifestMCPErrorCode.QUERY_FAILED,
+      'x'.repeat(100_000),
+    );
+    Object.defineProperty(error, 'details', {
+      get() {
+        throw new Error('details unavailable');
       },
-    };
+    });
     const handler = withErrorHandling<TestToolCb>('test', async () => {
-      throw new ManifestMCPError(
-        ManifestMCPErrorCode.QUERY_FAILED,
-        'broken',
-        details,
-      );
+      throw error;
     });
     const result = await handler({}, {});
     expect(result.isError).toBe(true);
     const parsed = JSON.parse(textOf(result));
     expect(parsed.error).toBe(true);
     expect(parsed.tool).toBe('test');
-    expect(parsed.message).toBe('broken');
+    expect(parsed.code).toBe('QUERY_FAILED');
+    expect(parsed.message.length).toBeLessThanOrEqual(
+      MAX_TOOL_ERROR_MESSAGE_CHARS + 1,
+    );
+    expect(parsed.truncated).toBe(true);
+    expect(textOf(result).length).toBeLessThanOrEqual(
+      MAX_TOOL_ERROR_RESPONSE_CHARS,
+    );
     const calls = spy.mock.calls.map((c) => c.map((a) => String(a)).join(' '));
     expect(
       calls.some((c) =>

@@ -199,7 +199,7 @@ export class TerminalChainStateError extends ProviderApiError {
    * the affected lease without re-deriving it from the message; provider keys
    * appear once `withContext` enriches the error.
    */
-  public readonly details: {
+  public override readonly details: {
     readonly lease_uuid: string;
     readonly provider_uuid?: string;
     readonly provider_url?: string;
@@ -233,7 +233,9 @@ export class TerminalChainStateError extends ProviderApiError {
    * preserving the original stack trace so debugging points to where the
    * terminal state was first detected.
    */
-  withContext(context: TerminalChainStateContext): TerminalChainStateError {
+  override withContext(
+    context: TerminalChainStateContext,
+  ): TerminalChainStateError {
     const enriched = new TerminalChainStateError(
       this.leaseUuid,
       this.chainState,
@@ -329,7 +331,7 @@ export class LeaseReadinessUnconfirmedError extends ProviderApiError {
   public readonly elapsedMs: number;
   public readonly consecutiveFailures?: number;
   /** Structured context for downstream classifiers (agent-core's classify-deploy-error). */
-  public readonly details: {
+  public override readonly details: {
     readonly lease_uuid: string;
     readonly provider_uuid?: string;
     readonly provider_url?: string;
@@ -376,7 +378,7 @@ export class LeaseReadinessUnconfirmedError extends ProviderApiError {
    * the original stack so debugging points at the poll, not the enricher.
    * Mirrors `TerminalChainStateError.withContext`.
    */
-  withContext(
+  override withContext(
     context: TerminalChainStateContext,
   ): LeaseReadinessUnconfirmedError {
     const enriched = new LeaseReadinessUnconfirmedError({

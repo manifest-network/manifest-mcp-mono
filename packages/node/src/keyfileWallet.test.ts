@@ -2,7 +2,7 @@ import {
   ManifestMCPError,
   ManifestMCPErrorCode,
 } from '@manifest-network/manifest-mcp-core';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // A valid 24-word test mnemonic (DO NOT use in production)
 const TEST_MNEMONIC =
@@ -13,6 +13,7 @@ vi.mock('node:fs', () => ({
 }));
 
 import { readFileSync } from 'node:fs';
+import { Secp256k1HdWallet } from '@cosmjs/amino';
 import { DirectSecp256k1HdWallet } from '@cosmjs/proto-signing';
 import { KeyfileWalletProvider } from './keyfileWallet.js';
 
@@ -21,6 +22,7 @@ const mockedReadFileSync = vi.mocked(readFileSync);
 beforeEach(() => {
   vi.clearAllMocks();
 });
+afterEach(() => vi.restoreAllMocks());
 
 describe('KeyfileWalletProvider', () => {
   describe('connect from plaintext mnemonic keyfile', () => {
@@ -211,5 +213,115 @@ describe('KeyfileWalletProvider', () => {
       await expect(provider.connect()).rejects.toThrow(ManifestMCPError);
       await expect(provider.connect()).rejects.toThrow(/has been disconnected/);
     });
+
+    it.each(['decrypt', 'amino', 'accounts'] as const)(
+      'cannot resurrect keys when disconnected during %s initialization',
+      async (stage) => {
+        const direct = await DirectSecp256k1HdWallet.fromMnemonic(
+          TEST_MNEMONIC,
+          {
+            prefix: 'manifest',
+          },
+        );
+        const amino = await Secp256k1HdWallet.fromMnemonic(TEST_MNEMONIC, {
+          prefix: 'manifest',
+        });
+        const accounts = await direct.getAccounts();
+        mockedReadFileSync.mockReturnValue(
+          JSON.stringify({ type: 'encrypted-fixture' }),
+        );
+        let release = () => {};
+        let markEntered = () => {};
+        const gate = new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        const entered = new Promise<void>((resolve) => {
+          markEntered = resolve;
+        });
+        function pause<T>(value: T): Promise<T> {
+          markEntered();
+          return gate.then(() => value);
+        }
+        vi.spyOn(DirectSecp256k1HdWallet, 'deserialize').mockImplementation(
+          () => (stage === 'decrypt' ? pause(direct) : Promise.resolve(direct)),
+        );
+        vi.spyOn(Secp256k1HdWallet, 'fromMnemonic').mockImplementation(() =>
+          stage === 'amino' ? pause(amino) : Promise.resolve(amino),
+        );
+        if (stage === 'accounts') {
+          vi.spyOn(direct, 'getAccounts').mockImplementation(() =>
+            pause(accounts),
+          );
+        }
+        const provider = new KeyfileWalletProvider(
+          '/fake/key.json',
+          'manifest',
+          'test-password',
+        );
+        const waiting = Promise.allSettled([
+          provider.getSigner(),
+          provider.getAddress(),
+          provider.connect(),
+        ]);
+        await entered;
+        await provider.disconnect();
+        release();
+        for (const result of await waiting) {
+          expect(result).toMatchObject({
+            status: 'rejected',
+            reason: { code: ManifestMCPErrorCode.WALLET_NOT_CONNECTED },
+          });
+        }
+        for (const field of [
+          'wallet',
+          'aminoWallet',
+          'address',
+          'initPromise',
+        ]) {
+          expect(Reflect.get(provider, field)).toBeNull();
+        }
+        expect(Reflect.get(provider, 'password')).toBeUndefined();
+        await expect(provider.getSigner()).rejects.toMatchObject({
+          code: ManifestMCPErrorCode.WALLET_NOT_CONNECTED,
+        });
+      },
+    );
+  });
+
+  it('retries a synchronous read failure after the keyfile becomes available', async () => {
+    mockedReadFileSync
+      .mockImplementationOnce(() => {
+        throw Object.assign(new Error('missing'), { code: 'ENOENT' });
+      })
+      .mockReturnValue(JSON.stringify({ mnemonic: TEST_MNEMONIC }));
+    const provider = new KeyfileWalletProvider('/fake/key.json', 'manifest');
+    await expect(provider.connect()).rejects.toThrow('Keyfile not found');
+    await expect(provider.getAddress()).resolves.toMatch(/^manifest1/);
+    expect(mockedReadFileSync).toHaveBeenCalledTimes(2);
+  });
+
+  it('retains the password for retry after partial encrypted initialization fails', async () => {
+    const direct = await DirectSecp256k1HdWallet.fromMnemonic(TEST_MNEMONIC, {
+      prefix: 'manifest',
+    });
+    const raw = JSON.stringify({ type: 'encrypted-fixture' });
+    mockedReadFileSync.mockReturnValue(raw);
+    const deserialize = vi
+      .spyOn(DirectSecp256k1HdWallet, 'deserialize')
+      .mockResolvedValue(direct);
+    vi.spyOn(Secp256k1HdWallet, 'fromMnemonic').mockRejectedValueOnce(
+      new Error('amino unavailable'),
+    );
+    const provider = new KeyfileWalletProvider(
+      '/fake/key.json',
+      'manifest',
+      'test-password',
+    );
+    await expect(provider.getSigner()).rejects.toThrow('amino unavailable');
+    expect(Reflect.get(provider, 'wallet')).toBeNull();
+    await expect(provider.getSigner()).resolves.toBe(direct);
+    expect(deserialize).toHaveBeenNthCalledWith(1, raw, 'test-password');
+    expect(deserialize).toHaveBeenNthCalledWith(2, raw, 'test-password');
+    expect(Reflect.get(provider, 'password')).toBeUndefined();
   });
 });

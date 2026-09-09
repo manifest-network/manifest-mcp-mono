@@ -1,5 +1,5 @@
 {
-  "$schema": "https://biomejs.dev/schemas/2.4.8/schema.json",
+  "$schema": "https://biomejs.dev/schemas/2.5.9/schema.json",
   "vcs": {
     "enabled": true,
     "clientKind": "git",
@@ -26,6 +26,13 @@
       "tools/package-integrity.mjs",
       "tools/tsdown-entries.mjs",
       "vitest.config.mts",
+      "scripts/check-consumers.mjs",
+      "scripts/check-consumers.test.mjs",
+      "scripts/check-coverage.test.mjs",
+      "scripts/check-e2e-env.mjs",
+      "scripts/check-e2e-env.test.mjs",
+      "tools/consumer-packages.mjs",
+      "tools/depcruise/workspace-dag.cjs",
       "!!**/dist",
       "!!**/packages/fred/schema",
       "!!**/packages/fred/src/generated"

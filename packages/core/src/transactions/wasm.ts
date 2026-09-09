@@ -1,7 +1,8 @@
 import { fromBase64, toUtf8 } from '@cosmjs/encoding';
 import type { SigningStargateClient } from '@cosmjs/stargate';
 import { cosmwasm } from '@manifest-network/manifestjs/dist/codegen/cosmwasm/bundle.js';
-import { throwUnsupportedSubcommand } from '../modules.js';
+import { parseUint64 } from '../internals/protobuf-integers.js';
+import { throwUnsupportedSubcommand } from '../module-metadata.js';
 import type {
   BuiltMessages,
   CosmosTxResult,
@@ -14,7 +15,6 @@ import {
   extractFlag,
   filterConsumedArgs,
   parseAmount,
-  parseBigInt,
   requireArgs,
   resolveTxFeeAndMemo,
   type TxExtras,
@@ -164,7 +164,7 @@ export function buildWasmMessages(
         'wasm instantiate',
       );
       const [codeIdStr, jsonMsg, label] = positionalArgs;
-      const codeId = parseBigInt(codeIdStr, 'code_id');
+      const codeId = parseUint64(codeIdStr, 'code_id');
       validateJson(jsonMsg, 'instantiate message');
 
       const admin = adminFlag.value ?? '';
@@ -205,7 +205,7 @@ export function buildWasmMessages(
         'wasm instantiate2',
       );
       const [codeIdStr, jsonMsg, label, salt] = positionalArgs;
-      const codeId = parseBigInt(codeIdStr, 'code_id');
+      const codeId = parseUint64(codeIdStr, 'code_id');
       validateJson(jsonMsg, 'instantiate2 message');
 
       const admin = adminFlag.value ?? '';
@@ -278,7 +278,7 @@ export function buildWasmMessages(
       );
       const [contractAddress, newCodeIdStr, jsonMessage] = positionalArgs;
       validateAddress(contractAddress, 'contract address');
-      const codeId = parseBigInt(newCodeIdStr, 'new_code_id');
+      const codeId = parseUint64(newCodeIdStr, 'new_code_id');
       validateJson(jsonMessage, 'migrate message');
 
       const memo = memoFlag.value ?? '';

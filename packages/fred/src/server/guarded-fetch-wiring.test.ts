@@ -18,7 +18,10 @@
 // no signature, required field or wrapper type can express "the guarded fetch got there". Only a
 // runtime assertion can, and this is it.
 
-import { LeaseState } from '@manifest-network/manifest-mcp-core';
+import {
+  LeaseState,
+  leaseStateToJSON,
+} from '@manifest-network/manifest-mcp-core';
 import { callTool } from '@manifest-network/manifest-mcp-core/__test-utils__/callTool.js';
 import {
   fetchProbe,
@@ -46,6 +49,7 @@ const { LEASE_UUID, PROVIDER_URL } = vi.hoisted(() => ({
  * case.
  */
 let guarded = sealedFetchProbe();
+let chainState = LeaseState.LEASE_STATE_ACTIVE;
 
 /**
  * What `createGuardedFetch()` returns for this file: a STABLE function that forwards to whichever
@@ -84,7 +88,7 @@ vi.mock('@manifest-network/manifest-mcp-core', async (importOriginal) => {
               lease: {
                 uuid: LEASE_UUID,
                 providerUuid: 'prov-1',
-                state: LeaseState.LEASE_STATE_ACTIVE,
+                state: chainState,
                 items: [],
                 createdAt: new Date(0),
               },
@@ -115,7 +119,81 @@ function makeServer(): FredMCPServer {
 }
 
 beforeEach(() => {
+  chainState = LeaseState.LEASE_STATE_ACTIVE;
   guarded = sealedFetchProbe({ '/logs': { json: { logs: { web: 'hello' } } } });
+});
+
+describe.each([
+  LeaseState.LEASE_STATE_REJECTED,
+  LeaseState.LEASE_STATE_EXPIRED,
+])('terminal diagnostics for chain state %s', (state) => {
+  it('queries the retained provider record with lease-scoped authentication', async () => {
+    chainState = state;
+    guarded = sealedFetchProbe({
+      '/provision': {
+        json: {
+          status: 'failed',
+          fail_count: 4,
+          reason: 'ImagePullFailed',
+          message: 'image unavailable',
+        },
+      },
+    });
+    const result = await callTool(makeServer().getServer(), 'app_diagnostics', {
+      lease_uuid: LEASE_UUID,
+    });
+
+    expect(result.isError).toBeUndefined();
+    expect(result.structuredContent).toMatchObject({
+      lease_uuid: LEASE_UUID,
+      lease_state: leaseStateToJSON(state),
+      provision_status: 'failed',
+      fail_count: 4,
+      reason: 'ImagePullFailed',
+      message: 'image unavailable',
+    });
+    expect(result.structuredContent?.next_step).toContain('reconcile');
+    expect(result.structuredContent?.next_step).not.toContain('update_app');
+    expect(guarded.calls).toHaveLength(1);
+    expect(guarded.calls[0]?.url).toBe(
+      `${PROVIDER_URL}/v1/leases/${LEASE_UUID}/provision`,
+    );
+    const authorization =
+      new Headers(guarded.calls[0]?.init.headers).get('Authorization') ?? '';
+    expect(authorization).toMatch(/^Bearer .+/);
+    expect(
+      JSON.parse(
+        Buffer.from(authorization.slice(7), 'base64').toString('utf8'),
+      ),
+    ).toMatchObject({ lease_uuid: LEASE_UUID });
+  });
+
+  it.each([
+    [404, 'provision not found'],
+    [503, 'provider unavailable'],
+  ])(
+    'preserves HTTP %s as an error without fabricating diagnostics',
+    async (status, message) => {
+      chainState = state;
+      guarded = sealedFetchProbe({
+        '/provision': { status, json: { error: message } },
+      });
+
+      const result = await callTool(
+        makeServer().getServer(),
+        'app_diagnostics',
+        { lease_uuid: LEASE_UUID },
+      );
+
+      expect(guarded.calls).toHaveLength(1);
+      expect(result.isError).toBe(true);
+      expect(result.structuredContent).toBeUndefined();
+      const error = JSON.parse(result.content[0]?.text ?? '{}');
+      expect(error.message).toContain(message);
+      expect(error).not.toHaveProperty('provision_status');
+      expect(error).not.toHaveProperty('fail_count');
+    },
+  );
 });
 
 afterEach(() => {

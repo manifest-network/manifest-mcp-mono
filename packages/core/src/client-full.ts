@@ -36,11 +36,11 @@ export interface ManifestClient extends ManifestReadClient, CapabilityCtx {
  * @public — construct a full (signing) {@link ManifestClient}. Requires a `walletProvider`.
  *
  * @remarks
- * Each client acquires one reference on a `CosmosClientManager` instance keyed by config
- * (`chainId:rpcUrl[:restUrl]`). Clients sharing a config key share that one underlying instance, and
- * `getInstance` mutates it — so do NOT construct a separate read/full client against a config key this
- * client already holds. Always `dispose()` each client; the shared clients tear down only once the last
- * holder disposes.
+ * Each client retains its wallet and immutable transaction policy. Compatible holders using the
+ * same wallet, configuration, and chain-identity fetch references share cached transports; other clients remain
+ * independent. Broadcast sequencing is shared by chain ID and account even across RPC endpoints.
+ * RPC chain identity is verified before exposing a signing connection, and configured REST
+ * identity is verified before queries are exposed. Always `dispose()` each client.
  */
 export async function createManifestClient(
   opts: FullClientOptions,

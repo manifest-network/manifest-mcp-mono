@@ -76,6 +76,27 @@ describe('getAppLogs', () => {
     expect(result.truncated).toBe(false);
   });
 
+  it('strips hostile controls from log text while retaining lines and tabs', async () => {
+    routeLogs({
+      web: '\u001b[31mfirst\u001b[0m\r\n\tsecond\u202e\u200b\u0000',
+    });
+    const result = await getAppLogs(makeCtx(), {
+      address: 'manifest1abc',
+      leaseUuid: LEASE_UUID,
+    });
+    expect(result.logs).toEqual({ web: 'first\n\tsecond' });
+  });
+
+  it('drops unsafe service names without replacing a legitimate sibling', async () => {
+    routeLogs({ 'w\u200beb': 'forged', web: 'legitimate' });
+    const result = await getAppLogs(makeCtx(), {
+      address: 'manifest1abc',
+      leaseUuid: LEASE_UUID,
+    });
+    expect(result.logs).toEqual({ web: 'legitimate' });
+    expect(result.truncated).toBe(true);
+  });
+
   it('truncates logs exceeding MAX_LOG_CHARS', async () => {
     routeLogs({ web: 'x'.repeat(5000) });
 

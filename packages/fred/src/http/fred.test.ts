@@ -92,7 +92,8 @@ describe('getLeaseStatus', () => {
     expect(init.headers).toEqual({ Authorization: `Bearer ${AUTH_TOKEN}` });
     // ENG-696 C9: assert the signal POSITIVELY. See `describe('the wire seam')` below.
     expect(init.signal).toBeInstanceOf(AbortSignal);
-    expect(Object.keys(init)).toEqual(['headers', 'signal']);
+    expect(init.redirect).toBe('manual');
+    expect(Object.keys(init)).toEqual(['headers', 'signal', 'redirect']);
   });
 
   it('returns UNRECOGNIZED for unknown state strings', async () => {
@@ -1577,7 +1578,14 @@ describe('restoreLease', () => {
     // has no signal parameter at all, which is C3's "guarded only by parameter-list absence".
     // This assertion is what makes that decision visible the day it changes.
     expect(init.signal).toBeInstanceOf(AbortSignal);
-    expect(Object.keys(init)).toEqual(['method', 'headers', 'body', 'signal']);
+    expect(init.redirect).toBe('manual');
+    expect(Object.keys(init)).toEqual([
+      'method',
+      'headers',
+      'body',
+      'signal',
+      'redirect',
+    ]);
     expect(JSON.parse(init.body as string)).toEqual({ from_lease_uuid: FROM });
   });
 
@@ -1621,7 +1629,14 @@ describe('updateLease', () => {
       'Content-Type': 'application/json',
     });
     expect(init.signal).toBeInstanceOf(AbortSignal);
-    expect(Object.keys(init)).toEqual(['method', 'headers', 'body', 'signal']);
+    expect(init.redirect).toBe('manual');
+    expect(Object.keys(init)).toEqual([
+      'method',
+      'headers',
+      'body',
+      'signal',
+      'redirect',
+    ]);
 
     const body = JSON.parse(init.body as string) as { payload: string };
     expect(atob(body.payload)).toBe('{"image":"nginx:alpine"}');
@@ -1666,7 +1681,8 @@ describe('the wire seam — what reaches fetch (ENG-696 C9)', () => {
     const { init } = probe.calls[0];
     expect(init.signal).toBeInstanceOf(AbortSignal);
     expect(init.signal?.aborted).toBe(false);
-    expect(Object.keys(init)).toEqual(['headers', 'signal']);
+    expect(init.redirect).toBe('manual');
+    expect(Object.keys(init)).toEqual(['headers', 'signal', 'redirect']);
   });
 
   it("a caller's signal reaches the wire, and its own reason arrives with it", async () => {

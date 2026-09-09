@@ -5,9 +5,9 @@ import { ibc as ibcNs } from '@manifest-network/manifestjs/dist/codegen/ibc/bund
 import { liftedinit } from '@manifest-network/manifestjs/dist/codegen/liftedinit/bundle.js';
 import { osmosis as osmosisNs } from '@manifest-network/manifestjs/dist/codegen/osmosis/bundle.js';
 import { strangelove_ventures as strangeloveVenturesNs } from '@manifest-network/manifestjs/dist/codegen/strangelove_ventures/bundle.js';
-import type { ManifestQueryClient } from './client.js';
 import { classifyLcdError } from './internals/classify-query-error.js';
 import { type Logger, noopLogger } from './logger.js';
+import type { ManifestQueryClient } from './manifest-query-client.js';
 import { ManifestMCPError, ManifestMCPErrorCode } from './types.js';
 
 function snakeToCamel(s: string): string {
@@ -201,11 +201,12 @@ function patchWasmQueryData(
           queryData instanceof Uint8Array ? toBase64(queryData) : queryData,
       })) as Record<string, unknown>;
 
-      // The LCD REST API returns `data` as a parsed JSON object, but the
-      // protobuf `fromJSON` converter expects a base64 string representing
-      // the UTF-8 bytes of the JSON payload.  Re-encode so the adapter's
-      // normal snakeToCamel → fromJSON pipeline works correctly.
-      if (result.data != null && typeof result.data !== 'string') {
+      // Smart queries expose RawContractMessage as inline JSON at the LCD
+      // boundary. Every present JSON value, including a string or null, must
+      // become UTF-8 JSON bytes for protobuf fromJSON. A base64-looking string
+      // is still a JSON string here. Raw queries instead expose []byte as base64
+      // already, so leave their data untouched. Missing data stays missing.
+      if (method === 'smartContractState' && result.data !== undefined) {
         return {
           ...result,
           data: toBase64(toUtf8(JSON.stringify(result.data))),

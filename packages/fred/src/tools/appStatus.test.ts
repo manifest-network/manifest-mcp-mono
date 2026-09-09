@@ -301,6 +301,19 @@ describe('appStatus', () => {
     expect(result.connection?.host).toBe('app.example.com');
   });
 
+  it('bounds and sanitizes provider errors carried by a successful partial status', async () => {
+    const body = `\u001b[31mfailed\u202e\u200b\n${'x'.repeat(100_000)}`;
+    routeWire({ status: 503, text: body }, { status: 503, text: body });
+    const result = await run(makeCtx(makeQc()));
+    for (const message of [result.providerError, result.connectionError]) {
+      expect(message).toContain('failed\n');
+      expect(message).not.toContain('\u001b');
+      expect(message).not.toContain('\u202e');
+      expect(message).not.toContain('\u200b');
+      expect(message?.length).toBeLessThanOrEqual(2001);
+    }
+  });
+
   it('returns providerError when getAuthToken fails', async () => {
     const failing = vi.fn().mockRejectedValue(new Error('signing failed'));
 

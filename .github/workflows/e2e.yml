@@ -34,7 +34,10 @@ jobs:
           sudo mkfs.xfs -f /tmp/fred-xfs.img
           sudo mount -o loop,prjquota /tmp/fred-xfs.img /mnt/fred-xfs
           sudo chmod 0777 /mnt/fred-xfs
-          xfs_quota -x -c 'state -p' /mnt/fred-xfs   # fail loudly if project quota isn't active
+          xfs_quota -x -c 'state -p' /mnt/fred-xfs   # diagnostic state; preflight below asserts it
+
+      - name: Verify local Docker and XFS quota environment
+        run: node scripts/check-e2e-env.mjs
 
       - name: Build Docker images
         run: docker compose -f e2e/docker-compose.yml build

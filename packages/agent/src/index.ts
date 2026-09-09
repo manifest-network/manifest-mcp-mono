@@ -362,8 +362,10 @@ export class AgentMCPServer {
         description:
           'Orchestrate a deployment via @manifest-network/manifest-agent-core. ' +
           'Renders a plan, asks for confirmation via MCP elicitation, broadcasts ' +
-          'the create-lease + manifest upload (+ optional set-domain) atomically ' +
-          'through fred, and prompts for recovery on partial-success failures. ' +
+          'a create-lease transaction, uploads the manifest over HTTP, then optionally ' +
+          'sets the domain in a separate transaction. These steps can succeed partially; ' +
+          'reconcile the returned lease ID before retrying or closing it. ' +
+          'Prompts for recovery on partial-success failures. ' +
           'A completed salvage/cancel/close recovery returns OPERATION_CANCELLED ' +
           'with details.lease_uuid and details.recovery_outcome; cancel/close ' +
           'also carry details.stop_outcome and details.lease_state, plus ' +

@@ -47,7 +47,7 @@ jobs:
           # above makes the merge-base available.
           files="$(git diff --name-only "$BASE_SHA...$HEAD_SHA")"
           if printf '%s\n' "$files" | grep -Eq \
-            '^(packages/(core|fred|agent-core|sdk)/|examples/sdk-acceptance/|e2e/|submodules/|\.gitmodules$|package\.json$|package-lock\.json$|\.github/workflows/e2e-pr\.yml$)'; then
+            '^(packages/(core|fred|agent-core|sdk)/|examples/sdk-acceptance/|e2e/|scripts/check-e2e-env\.mjs$|submodules/|\.gitmodules$|package\.json$|package-lock\.json$|\.github/workflows/e2e-pr\.yml$)'; then
             echo 'deploy=true' >> "$GITHUB_OUTPUT"
           else
             echo 'deploy=false' >> "$GITHUB_OUTPUT"
@@ -86,7 +86,10 @@ jobs:
           sudo mkfs.xfs -f /tmp/fred-xfs.img
           sudo mount -o loop,prjquota /tmp/fred-xfs.img /mnt/fred-xfs
           sudo chmod 0777 /mnt/fred-xfs
-          xfs_quota -x -c 'state -p' /mnt/fred-xfs   # fail loudly if project quota isn't active
+          xfs_quota -x -c 'state -p' /mnt/fred-xfs   # diagnostic state; preflight below asserts it
+
+      - name: Verify local Docker and XFS quota environment
+        run: node scripts/check-e2e-env.mjs
 
       - name: Build Docker images
         run: docker compose -f e2e/docker-compose.yml build

@@ -1,5 +1,9 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
+import {
+  type ProgressNotification,
+  ProgressNotificationSchema,
+} from '@modelcontextprotocol/sdk/types.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@manifest-network/manifest-mcp-core', async (importOriginal) => {
@@ -96,6 +100,8 @@ import {
   LeaseState,
   ManifestMCPError,
   ManifestMCPErrorCode,
+  parseLeaseUuid,
+  parseProviderUuid,
 } from '@manifest-network/manifest-mcp-core';
 import {
   callTool as callToolHelper,
@@ -457,11 +463,18 @@ describe('FredMCPServer', () => {
       expect(parsed.partition).toBeUndefined();
     });
 
-    it('returns a benign early result for a non-provisionable (REJECTED) lease without querying the provider (ENG-600)', async () => {
+    it('queries a REJECTED lease and preserves its provider failure record', async () => {
       mockFetchLease.mockResolvedValue({
         providerUuid: 'prov-1',
         state: LeaseState.LEASE_STATE_REJECTED,
       } as Awaited<ReturnType<typeof fetchLease>>);
+      mockResolveProviderUrl.mockResolvedValue('https://provider.example.com');
+      mockGetLeaseProvision.mockResolvedValue({
+        status: 'failed',
+        fail_count: 3,
+        reason: 'ImagePullFailed',
+        message: 'image pull failed before lease acceptance',
+      });
 
       const server = new FredMCPServer({
         config: makeMockConfig(),
@@ -473,11 +486,12 @@ describe('FredMCPServer', () => {
 
       expect(result.isError).toBeUndefined();
       const parsed = JSON.parse(result.content[0].text);
-      expect(parsed.provision_status).toBe('LEASE_STATE_REJECTED');
-      expect(parsed.fail_count).toBe(0);
-      // Never provisioned → the provider is not queried.
-      expect(mockResolveProviderUrl).not.toHaveBeenCalled();
-      expect(mockGetLeaseProvision).not.toHaveBeenCalled();
+      expect(parsed.lease_state).toBe('LEASE_STATE_REJECTED');
+      expect(parsed.provision_status).toBe('failed');
+      expect(parsed.fail_count).toBe(3);
+      expect(parsed.reason).toBe('ImagePullFailed');
+      expect(mockResolveProviderUrl).toHaveBeenCalledOnce();
+      expect(mockGetLeaseProvision).toHaveBeenCalledOnce();
     });
 
     it('accepts a provision response with no failure fields at all', async () => {
@@ -1492,6 +1506,122 @@ describe('FredMCPServer', () => {
       });
     });
   });
+
+  it.each([
+    ['deploy_app', 'bounded-progress'],
+    ['wait_for_app_ready', 0],
+  ] as const)(
+    '%s bounds and sanitizes actual progress notifications',
+    async (toolName, progressToken) => {
+      const mnemonic =
+        'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about';
+      const hostileStatuses = [
+        `\u001b[31mimage_pulling\u001b[0m\u202e${'x'.repeat(2 * 1024 * 1024)}`,
+        `\u001b[31m${mnemonic}\u001b[0m`,
+        'ready',
+      ];
+      const ids = {
+        lease_uuid: parseLeaseUuid(LEASE_UUID),
+        provider_uuid: parseProviderUuid(
+          '550e8400-e29b-41d4-a716-446655440001',
+        ),
+        provider_url: 'https://provider.example.com',
+      };
+      if (toolName === 'deploy_app') {
+        mockDeployApp.mockImplementationOnce(async (_ctx, _spec, opts) => {
+          await opts?.onLeaseCreated?.(
+            LEASE_UUID,
+            `https://provider.example.com/${'x'.repeat(2048)}`,
+          );
+          for (const provision_status of hostileStatuses) {
+            opts?.pollOptions?.onProgress?.({
+              state: LeaseState.LEASE_STATE_PENDING,
+              provision_status,
+            });
+          }
+          return { ...ids, state: LeaseState.LEASE_STATE_ACTIVE };
+        });
+      } else {
+        mockWaitForAppReady.mockImplementationOnce(
+          async (_ctx, _input, opts) => {
+            for (const provision_status of hostileStatuses) {
+              opts?.onProgress?.({
+                state: LeaseState.LEASE_STATE_PENDING,
+                provision_status,
+              });
+            }
+            return {
+              ...ids,
+              state: 'LEASE_STATE_ACTIVE',
+              status: { state: LeaseState.LEASE_STATE_ACTIVE },
+            };
+          },
+        );
+      }
+      const server = new FredMCPServer({
+        config: makeMockConfig(),
+        walletProvider: makeMockWallet({ signArbitrary: true }),
+      });
+      const notifications: ProgressNotification['params'][] = [];
+      await withClient(server, async (client) => {
+        client.setNotificationHandler(
+          ProgressNotificationSchema,
+          ({ params }) => {
+            notifications.push(params);
+          },
+        );
+        const result = await client.callTool({
+          name: toolName,
+          arguments:
+            toolName === 'deploy_app'
+              ? {
+                  image: 'nginx',
+                  port: 80,
+                  size: 'docker-micro',
+                  timeout_seconds: 45,
+                }
+              : {
+                  lease_uuid: LEASE_UUID,
+                  timeout_seconds: 45,
+                  interval_seconds: 5,
+                },
+          _meta: { progressToken },
+        });
+        expect(result.isError).toBeUndefined();
+      });
+      expect(notifications).toHaveLength(toolName === 'deploy_app' ? 4 : 3);
+      for (const [index, notification] of notifications.entries()) {
+        expect(notification).toMatchObject({
+          progressToken,
+          progress: index + 1,
+        });
+        expect(notification.total).toBeUndefined();
+        const message = notification.message ?? '';
+        expect(Array.from(message).length).toBeLessThanOrEqual(1024);
+        expect(message).not.toContain('\u001b');
+        expect(message).not.toContain('\u202e');
+        expect(message).not.toContain(mnemonic);
+      }
+      const polling = notifications.slice(-3).map(({ message }) => message);
+      expect(polling[0]).toContain('provision=image_pulling');
+      expect(polling[0]).toMatch(/…$/);
+      expect(polling[1]).toContain('provision=[REDACTED - possible mnemonic]');
+      expect(polling[2]).toContain('provision=ready');
+      if (toolName === 'deploy_app') {
+        expect(notifications[0]?.message).toHaveLength(1024);
+        expect(notifications[0]?.message).toContain(LEASE_UUID);
+        expect(mockDeployApp.mock.lastCall?.[2]?.pollOptions?.timeoutMs).toBe(
+          45_000,
+        );
+      } else {
+        expect(mockWaitForAppReady.mock.lastCall?.[2]).toMatchObject({
+          timeoutMs: 45_000,
+          intervalMs: 5_000,
+          signal: expect.any(AbortSignal),
+        });
+      }
+    },
+  );
 
   describe('app_status model-context budget', () => {
     it('caps fredStatus while leaving the chain projection intact', async () => {

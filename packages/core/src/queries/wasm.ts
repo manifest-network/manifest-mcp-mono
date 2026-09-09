@@ -1,6 +1,6 @@
 import { fromHex, fromUtf8, toBase64, toUtf8 } from '@cosmjs/encoding';
 import type { ManifestQueryClient } from '../client.js';
-import { throwUnsupportedSubcommand } from '../modules.js';
+import { throwUnsupportedSubcommand } from '../module-metadata.js';
 import type {
   WasmAllContractStateResult,
   WasmBuildAddressResult,
@@ -22,7 +22,7 @@ import {
   ManifestMCPErrorCode,
   type WasmCodeInfo,
 } from '../types.js';
-import { extractPaginationArgs, parseBigInt, requireArgs } from './utils.js';
+import { extractPaginationArgs, parseUint64, requireArgs } from './utils.js';
 
 /** Convert a CodeInfoResponse (with Uint8Array dataHash) to a JSON-safe WasmCodeInfo. */
 function toWasmCodeInfo(info: {
@@ -94,7 +94,7 @@ export async function routeWasmQuery(
       );
       requireArgs(remainingArgs, 1, ['code_id'], 'wasm contracts-by-code');
       const [codeIdStr] = remainingArgs;
-      const codeId = parseBigInt(codeIdStr, 'code_id');
+      const codeId = parseUint64(codeIdStr, 'code_id');
       const result = await wasm.contractsByCode({ codeId, pagination });
       return { contracts: result.contracts, pagination: result.pagination };
     }
@@ -166,7 +166,7 @@ export async function routeWasmQuery(
     case 'code': {
       requireArgs(args, 1, ['code_id'], 'wasm code');
       const [codeIdStr] = args;
-      const codeId = parseBigInt(codeIdStr, 'code_id');
+      const codeId = parseUint64(codeIdStr, 'code_id');
       const result = await wasm.code({ codeId });
       return {
         codeInfo: result.codeInfo ? toWasmCodeInfo(result.codeInfo) : undefined,
@@ -186,7 +186,7 @@ export async function routeWasmQuery(
     case 'code-info': {
       requireArgs(args, 1, ['code_id'], 'wasm code-info');
       const [codeIdStr] = args;
-      const codeId = parseBigInt(codeIdStr, 'code_id');
+      const codeId = parseUint64(codeIdStr, 'code_id');
       const result = await wasm.codeInfo({ codeId });
       return {
         codeInfo: toWasmCodeInfo({

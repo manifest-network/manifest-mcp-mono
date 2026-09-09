@@ -270,9 +270,8 @@ export function sanitizeForDisplay(
 /**
  * Truncate to `maxCodePoints` retained code points, appending a single-code-point
  * ellipsis when truncated (so a truncated result is `maxCodePoints + 1` long).
- * Iterates by CODE POINT via `Array.from` (not `String.prototype.slice`, which
- * indexes by UTF-16 code unit and can split a surrogate pair into a
- * lone-surrogate `U+FFFD`). Control/format chars — including the ZWJ that binds
+ * Iterates lazily by CODE POINT rather than materializing a remote response as
+ * a potentially multi-million-element array. Control/format chars — including the ZWJ that binds
  * emoji sequences — are already stripped upstream, so code-point capping is
  * sufficient and avoids an `Intl.Segmenter` (grapheme) dependency.
  */
@@ -282,13 +281,18 @@ function capLength(s: string, maxCodePoints: number): string {
   // than the surprising `slice` behavior it would otherwise produce — consistent
   // with this helper's defensive treatment of its other inputs.
   if (!Number.isInteger(maxCodePoints) || maxCodePoints < 0) return s;
-  const codePoints = Array.from(s);
-  if (codePoints.length <= maxCodePoints) return s;
-  return `${codePoints.slice(0, maxCodePoints).join('')}…`;
+  let end = 0;
+  let count = 0;
+  for (const point of s) {
+    if (count === maxCodePoints) return `${s.slice(0, end)}…`;
+    end += point.length;
+    count += 1;
+  }
+  return s;
 }
 
 /**
- * Budget for an error message that mono did not author, on its way into model
+ * Budget for any error message on its way into model
  * context. ~500 tokens — half of `MAX_LOG_CHARS`'s single-copy budget for a
  * *successful* log fetch, which is the right order for an error path.
  *
@@ -297,6 +301,233 @@ function capLength(s: string, maxCodePoints: number): string {
  * into a tool's error response verbatim.
  */
 export const MAX_TOOL_ERROR_MESSAGE_CHARS = 2000;
+
+/** Maximum serialized JSON text for the complete MCP error, including input/details. */
+export const MAX_TOOL_ERROR_RESPONSE_CHARS = 8000;
+
+// biome-ignore lint/suspicious/noControlCharactersInRegex: the purpose is to remove terminal CSI control sequences.
+const MODEL_ANSI_CSI = /(?:\u001b\[|\u009b)[0-?]*[ -/]*[@-~]/g;
+// biome-ignore lint/suspicious/noControlCharactersInRegex: the purpose is to remove terminal OSC control sequences.
+const MODEL_ANSI_OSC = /\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)/g;
+
+/**
+ * Sanitize text for model context without flattening logs or diagnostic lines.
+ * Removes terminal CSI/OSC sequences and other control/format characters, keeping
+ * newlines and tabs. Raw SDK error objects are never modified by this projection.
+ */
+export function sanitizeForModelText(
+  raw: string,
+  maxLength = MAX_TOOL_ERROR_MESSAGE_CHARS,
+): string {
+  const cleaned = raw
+    .replace(MODEL_ANSI_CSI, '')
+    .replace(MODEL_ANSI_OSC, '')
+    .replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, (ch) =>
+      ch === '\n' || ch === '\t' ? ch : '',
+    );
+  // Match the visible value too: terminal/bidi controls must not hide a mnemonic
+  // from the redactor and then reveal it as a side effect of sanitization.
+  return capLength(sanitizeForLogging(cleaned) as string, maxLength);
+}
+
+// Reserve scarce space for the identifiers and facts a caller needs to reconcile
+// side effects. Both snake_case and camelCase spellings normalize to these names.
+const RECOVERY_FIELDS = new Set([
+  'code',
+  'leaseuuid',
+  'sourceleaseuuid',
+  'orphanedleaseuuid',
+  'newleaseuuid',
+  'provideruuid',
+  'sourceprovideruuid',
+  'transactionhash',
+  'txhash',
+  'hash',
+  'partial',
+  'sent',
+  'committed',
+  'adoptionstatus',
+  'rolledback',
+  'recoverable',
+  'recoveryoutcome',
+  'stopoutcome',
+  'leasestate',
+  'restorestatus',
+  'nextaction',
+  'readinessunconfirmed',
+  'retryafterms',
+  'name',
+  'message',
+]);
+
+interface ErrorProjectionState {
+  truncated: boolean;
+  nodes: number;
+  readonly ancestors: WeakSet<object>;
+}
+
+/** Fit a string to its JSON-encoded budget, accounting for escaped newlines/quotes. */
+function fitErrorString(
+  value: string,
+  budget: number,
+  state: ErrorProjectionState,
+): string {
+  const clean = sanitizeForModelText(value);
+  if (clean.endsWith('…') && clean !== value) state.truncated = true;
+  if (JSON.stringify(clean).length <= budget) return clean;
+  state.truncated = true;
+  let low = 0;
+  let high = Math.min(clean.length, budget);
+  while (low < high) {
+    const mid = Math.ceil((low + high) / 2);
+    if (JSON.stringify(`${clean.slice(0, mid)}…`).length <= budget) low = mid;
+    else high = mid - 1;
+  }
+  // Avoid cutting a UTF-16 surrogate pair at the budget boundary.
+  const lastCodeUnit = clean.charCodeAt(low - 1);
+  if (lastCodeUnit >= 0xd800 && lastCodeUnit <= 0xdbff) low -= 1;
+  return `${clean.slice(0, low)}…`;
+}
+
+/** Bounded traversal of data properties only: never run getters or custom toJSON. */
+function projectErrorValue(
+  value: unknown,
+  budget: number,
+  state: ErrorProjectionState,
+  depth = 0,
+): unknown {
+  if (++state.nodes > 256 || depth > 6) {
+    state.truncated = true;
+    return '[omitted]';
+  }
+  if (value === null || value === undefined) return value;
+  if (typeof value === 'string') return fitErrorString(value, budget, state);
+  if (typeof value === 'bigint')
+    return fitErrorString(value.toString(), budget, state);
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+  if (typeof value !== 'object') {
+    state.truncated = true;
+    return '[unsupported value]';
+  }
+  if (state.ancestors.has(value)) {
+    state.truncated = true;
+    return '[circular]';
+  }
+  state.ancestors.add(value);
+  try {
+    const array = Array.isArray(value);
+    const projected: Record<string, unknown> | unknown[] = array
+      ? []
+      : Object.create(null);
+    let used = 2;
+    const keys = Object.keys(value);
+    // Error.message is normally non-enumerable, but is useful when an Error is a
+    // nested cancellation reason or cause. Descriptor reads keep getters inert.
+    if (value instanceof Error && !keys.includes('message'))
+      keys.unshift('message');
+    if (!array)
+      keys.sort(
+        (a, b) =>
+          Number(!RECOVERY_FIELDS.has(normalizeKey(a))) -
+          Number(!RECOVERY_FIELDS.has(normalizeKey(b))),
+      );
+    for (const rawKey of keys) {
+      if (state.nodes >= 256 || used + 32 >= budget) {
+        state.truncated = true;
+        break;
+      }
+      const key = sanitizeForModelText(rawKey, 128);
+      if (
+        rawKey.length > 128 ||
+        Object.getOwnPropertyDescriptor(projected, key) !== undefined
+      ) {
+        state.truncated = true;
+        continue;
+      }
+      const descriptor = Object.getOwnPropertyDescriptor(value, rawKey);
+      if (!descriptor) continue;
+      const overhead = array ? 1 : JSON.stringify(key).length + 2;
+      const childBudget = budget - used - overhead;
+      if (childBudget < 32) {
+        state.truncated = true;
+        continue;
+      }
+      let child: unknown;
+      if (isSensitiveKey(key)) child = '[REDACTED]';
+      else if (!('value' in descriptor)) {
+        state.truncated = true;
+        child = '[accessor omitted]';
+      } else
+        child = projectErrorValue(
+          descriptor.value,
+          childBudget,
+          state,
+          depth + 1,
+        );
+      if (child === undefined) continue;
+      const encoded = JSON.stringify(child);
+      if (used + overhead + encoded.length > budget) {
+        state.truncated = true;
+        continue;
+      }
+      if (array) (projected as unknown[]).push(child);
+      else
+        Object.defineProperty(projected, key, {
+          value: child,
+          enumerable: true,
+        });
+      used += overhead + encoded.length;
+    }
+    return projected;
+  } catch {
+    state.truncated = true;
+    return '[unavailable]';
+  } finally {
+    state.ancestors.delete(value);
+  }
+}
+
+function errorResponseText(
+  tool: string,
+  message: string,
+  args: unknown,
+  error: unknown,
+): string {
+  const state: ErrorProjectionState = {
+    truncated: false,
+    nodes: 0,
+    ancestors: new WeakSet(),
+  };
+  const response: Record<string, unknown> = {
+    error: true,
+    tool: fitErrorString(tool, 200, state),
+    ...(error instanceof ManifestMCPError && {
+      code: fitErrorString(error.code, 200, state),
+    }),
+    message: fitErrorString(message, 3000, state),
+  };
+  // Compact JSON makes the budget deterministic. Details precede input because
+  // recovery handles must survive even when the echoed arguments contain a blob.
+  for (const [key, value] of [
+    ['details', error instanceof ManifestMCPError ? error.details : undefined],
+    ['input', args],
+  ] as const) {
+    if (value === undefined) continue;
+    const remaining =
+      MAX_TOOL_ERROR_RESPONSE_CHARS -
+      JSON.stringify(response).length -
+      key.length -
+      40;
+    if (remaining < 32) {
+      state.truncated = true;
+      continue;
+    }
+    response[key] = projectErrorValue(value, remaining, state);
+  }
+  if (state.truncated) response.truncated = true;
+  return JSON.stringify(response);
+}
 
 /**
  * Options for creating a chain, lease, or fred MCP server
@@ -325,8 +556,13 @@ export function withErrorHandling<
     try {
       return hasArgs ? await fn(args, cbArgs[1]) : await fn(cbArgs[0]);
     } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : String(error);
+      let errorMessage: string;
+      try {
+        errorMessage =
+          error instanceof Error ? String(error.message) : String(error);
+      } catch {
+        errorMessage = 'Error message unavailable';
+      }
       const errorCode =
         error instanceof ManifestMCPError ? error.code : 'UNKNOWN';
       // Sanitize error messages before including in the MCP response or logs.
@@ -348,47 +584,26 @@ export function withErrorHandling<
         );
       }
 
-      let errorResponse: Record<string, unknown> = {
-        error: true,
-        tool: toolName,
-        input: sanitizeForLogging(args),
-      };
-
-      if (error instanceof ManifestMCPError) {
-        errorResponse = {
-          ...errorResponse,
-          code: error.code,
-          message: sanitizeForLogging(error.message) as string,
-          details: sanitizeForLogging(error.details),
-        };
-      } else {
-        // Cap ONLY this branch. The if/else above already draws the right line:
-        // a ManifestMCPError is first-party, and its message is curated recovery
-        // guidance whose length is a reviewed design choice — truncating it would
-        // amputate advice the agent must read. The else branch is everything mono
-        // did NOT author: provider response bodies, third-party library errors,
-        // String(<arbitrary thrown value>). That is the untrusted, unbounded set,
-        // and it is what reaches model context (ENG-669).
-        //
-        // Into a NEW local, so the stderr log above keeps the full message: stderr
-        // is not model context, so there is no token cost and no diagnostic loss.
-        errorResponse = {
-          ...errorResponse,
-          message: capLength(safeMessage, MAX_TOOL_ERROR_MESSAGE_CHARS),
-        };
-      }
-
       let responseText: string;
       try {
-        responseText = JSON.stringify(errorResponse, bigIntReplacer, 2);
+        responseText = errorResponseText(toolName, safeMessage, args, error);
       } catch (stringifyError) {
         logger.error(
           `[${toolName}] Failed to serialize error response: ${stringifyError instanceof Error ? stringifyError.message : String(stringifyError)}`,
         );
+        const state: ErrorProjectionState = {
+          truncated: true,
+          nodes: 0,
+          ancestors: new WeakSet(),
+        };
         responseText = JSON.stringify({
           error: true,
-          tool: toolName,
-          message: safeMessage,
+          tool: fitErrorString(toolName, 200, state),
+          ...(error instanceof ManifestMCPError && {
+            code: fitErrorString(errorCode, 200, state),
+          }),
+          message: fitErrorString(safeMessage, 3000, state),
+          truncated: true,
         });
       }
 

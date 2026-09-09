@@ -4,6 +4,7 @@ import {
   bigIntReplacer,
   CosmosClientManager,
   createValidatedConfig,
+  executeTx,
   gasMultiplierSchema,
   jsonResponse,
   ManifestMCPError,
@@ -13,16 +14,12 @@ import {
   MnemonicWalletProvider,
   manifestMeta,
   mutatingAnnotations,
+  noopLogger,
   readOnlyAnnotations,
   VERSION,
   withErrorHandling,
   withRetry,
 } from '@manifest-network/manifest-mcp-core';
-import {
-  buildGasFee,
-  DEFAULT_GAS_MULTIPLIER,
-  DEFAULT_MAX_GAS,
-} from '@manifest-network/manifest-mcp-core/gas';
 import { cosmwasm } from '@manifest-network/manifestjs/dist/codegen/cosmwasm/bundle.js';
 import type { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
@@ -54,13 +51,13 @@ function calculateConversion(
   rateStr: string,
   amountErrorCode: ManifestMCPErrorCode = ManifestMCPErrorCode.TX_FAILED,
 ): string {
-  if (!/^\d+$/.test(amount)) {
+  if (!amount.match(/^\d+$/)) {
     throw new ManifestMCPError(
       amountErrorCode,
       `Invalid conversion amount: "${amount}". Must be a non-negative integer string.`,
     );
   }
-  if (!/^\d+(\.\d+)?$/.test(rateStr)) {
+  if (!rateStr.match(/^\d+(\.\d+)?$/)) {
     throw new ManifestMCPError(
       ManifestMCPErrorCode.QUERY_FAILED,
       `Invalid conversion rate from contract: "${rateStr}". Expected a decimal number.`,
@@ -235,8 +232,8 @@ export class CosmwasmMCPServer {
           estimable: false,
         }),
       },
-      withErrorHandling('convert_mfx_to_pwr', async (args) => {
-        if (!/^\d+$/.test(args.amount) || BigInt(args.amount) === 0n) {
+      withErrorHandling('convert_mfx_to_pwr', async (args, extra) => {
+        if (!args.amount.match(/^\d+$/) || BigInt(args.amount) === 0n) {
           throw new ManifestMCPError(
             ManifestMCPErrorCode.TX_FAILED,
             `Invalid conversion amount: "${args.amount}". Must be a positive integer string.`,
@@ -253,10 +250,7 @@ export class CosmwasmMCPServer {
         }
         const expectedOutput = calculateConversion(args.amount, config.rate);
 
-        // Execute conversion
-        await this.clientManager.acquireRateLimit();
-        const signingClient = await this.clientManager.getSigningClient();
-        const senderAddress = await this.walletProvider.getAddress();
+        const senderAddress = await this.clientManager.getAddress();
 
         const msg = {
           typeUrl: '/cosmwasm.wasm.v1.MsgExecuteContract',
@@ -268,41 +262,13 @@ export class CosmwasmMCPServer {
           }),
         };
 
-        const cfg = this.clientManager.getConfig();
-        // getSigningClient() above already requires gasPrice; this guard is defensive.
-        if (!cfg.gasPrice) {
-          throw new ManifestMCPError(
-            ManifestMCPErrorCode.INVALID_CONFIG,
-            'gasPrice configuration is required for MFX-to-PWR conversion',
-          );
-        }
-        // Route the fee through buildGasFee so the COSMOS_MAX_GAS ceiling (ENG-556)
-        // bounds this headless broadcast too — a hostile/compromised RPC cannot inflate
-        // the simulated gas without being aborted with GAS_LIMIT_EXCEEDED before signing.
-        const fee = await buildGasFee(signingClient, senderAddress, [msg], {
-          gasMultiplier:
-            args.gas_multiplier ?? cfg.gasMultiplier ?? DEFAULT_GAS_MULTIPLIER,
-          gasPrice: cfg.gasPrice,
-          maxGas: cfg.maxGas ?? DEFAULT_MAX_GAS,
-        });
-
-        const result = await signingClient.signAndBroadcast(
-          senderAddress,
+        // Share account locking, sequence handling, gas guards, retry policy and
+        // cancellation with every other core transaction path.
+        const result = await executeTx(
+          { chain: this.clientManager, logger: noopLogger },
           [msg],
-          fee,
+          { gasMultiplier: args.gas_multiplier, signal: extra?.signal },
         );
-
-        if (result.code !== 0) {
-          throw new ManifestMCPError(
-            ManifestMCPErrorCode.TX_FAILED,
-            `MFX-to-PWR conversion failed with code ${result.code}: ${result.rawLog || 'no details'}`,
-            {
-              transactionHash: result.transactionHash,
-              code: result.code,
-              rawLog: result.rawLog,
-            },
-          );
-        }
 
         return jsonResponse(
           {

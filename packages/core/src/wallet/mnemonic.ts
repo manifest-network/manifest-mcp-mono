@@ -38,12 +38,7 @@ export class MnemonicWalletProvider implements WalletProvider {
    * Initialize the wallet from the mnemonic
    */
   private async initWallet(): Promise<void> {
-    if (this.disconnected) {
-      throw new ManifestMCPError(
-        ManifestMCPErrorCode.WALLET_NOT_CONNECTED,
-        'Wallet has been disconnected and cannot be reconnected. Create a new MnemonicWalletProvider instance.',
-      );
-    }
+    this.assertNotDisconnected();
 
     // Return if already initialized
     if (this.wallet) {
@@ -70,14 +65,15 @@ export class MnemonicWalletProvider implements WalletProvider {
       const prefix = this.config.addressPrefix ?? 'manifest';
 
       try {
-        this.wallet = await DirectSecp256k1HdWallet.fromMnemonic(mnemonic, {
+        const wallet = await DirectSecp256k1HdWallet.fromMnemonic(mnemonic, {
           prefix,
         });
-        this.aminoWallet = await Secp256k1HdWallet.fromMnemonic(mnemonic, {
+        this.assertNotDisconnected();
+        const aminoWallet = await Secp256k1HdWallet.fromMnemonic(mnemonic, {
           prefix,
         });
 
-        const accounts = await this.wallet.getAccounts();
+        const accounts = await wallet.getAccounts();
         if (accounts.length === 0) {
           throw new ManifestMCPError(
             ManifestMCPErrorCode.INVALID_MNEMONIC,
@@ -85,15 +81,14 @@ export class MnemonicWalletProvider implements WalletProvider {
           );
         }
 
+        // Initialization owns its temporary keys until every asynchronous step
+        // succeeds. A disconnect during derivation must never publish them back
+        // into the provider or resolve a waiting getSigner with a usable wallet.
+        this.assertNotDisconnected();
+        this.wallet = wallet;
+        this.aminoWallet = aminoWallet;
         this.address = accounts[0].address;
-        // Clear promise after successful init - wallet check will short-circuit future calls
-        this.initPromise = null;
       } catch (error) {
-        // Clear state on failure so retry is possible
-        this.initPromise = null;
-        this.wallet = null;
-        this.aminoWallet = null;
-        this.address = null;
         if (error instanceof ManifestMCPError) {
           throw error;
         }
@@ -102,9 +97,21 @@ export class MnemonicWalletProvider implements WalletProvider {
           `Failed to create wallet from mnemonic: ${error instanceof Error ? error.message : String(error)}`,
         );
       }
-    })();
+    })().finally(() => {
+      // Clear after assignment, including failures before the first await.
+      this.initPromise = null;
+    });
 
     return this.initPromise;
+  }
+
+  private assertNotDisconnected(): void {
+    if (this.disconnected) {
+      throw new ManifestMCPError(
+        ManifestMCPErrorCode.WALLET_NOT_CONNECTED,
+        'Wallet has been disconnected and cannot be reconnected. Create a new MnemonicWalletProvider instance.',
+      );
+    }
   }
 
   /**

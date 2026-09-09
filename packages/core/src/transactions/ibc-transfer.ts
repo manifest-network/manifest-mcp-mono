@@ -1,6 +1,7 @@
 import type { SigningStargateClient } from '@cosmjs/stargate';
 import { ibc as ibcNs } from '@manifest-network/manifestjs/dist/codegen/ibc/bundle.js';
-import { throwUnsupportedSubcommand } from '../modules.js';
+import { parseUint64 } from '../internals/protobuf-integers.js';
+import { throwUnsupportedSubcommand } from '../module-metadata.js';
 import {
   type BuiltMessages,
   type CosmosTxResult,
@@ -14,7 +15,6 @@ import {
   extractFlag,
   filterConsumedArgs,
   parseAmount,
-  parseBigInt,
   requireArgs,
   resolveTxFeeAndMemo,
   type TxExtras,
@@ -117,12 +117,12 @@ export function buildIbcTransferMessages(
           );
         }
         const [numStr, heightStr] = parts;
-        // Note: negative values cannot reach parseBigInt here because `-` is
+        // Note: negative values cannot reach parseUint64 here because `-` is
         // the field separator — `-1-1000` splits to 3 parts and is rejected
         // by the length check above.
         timeoutHeight = {
-          revisionNumber: parseBigInt(numStr, 'timeout-height revision-number'),
-          revisionHeight: parseBigInt(
+          revisionNumber: parseUint64(numStr, 'timeout-height revision-number'),
+          revisionHeight: parseUint64(
             heightStr,
             'timeout-height revision-height',
           ),
@@ -132,16 +132,10 @@ export function buildIbcTransferMessages(
       // timeout-timestamp is a nanosecond epoch timestamp; default to now + 10 min.
       let timeoutTimestamp: bigint;
       if (timeoutTimestampFlag.value) {
-        timeoutTimestamp = parseBigInt(
+        timeoutTimestamp = parseUint64(
           timeoutTimestampFlag.value,
           'timeout-timestamp',
         );
-        if (timeoutTimestamp < BigInt(0)) {
-          throw new ManifestMCPError(
-            ManifestMCPErrorCode.TX_FAILED,
-            'timeout-timestamp must be non-negative',
-          );
-        }
       } else if (
         timeoutHeight.revisionNumber === BigInt(0) &&
         timeoutHeight.revisionHeight === BigInt(0)

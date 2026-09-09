@@ -138,6 +138,7 @@ export {
   SENSITIVE_KEY_STEMS,
   sanitizeForDisplay,
   sanitizeForLogging,
+  sanitizeForModelText,
   structuredResponse,
   withErrorHandling,
 } from './server-utils.js';

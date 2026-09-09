@@ -1,10 +1,35 @@
 {
   "references": [
-    { "path": "packages/core" },
-    { "path": "packages/chain" },
-    { "path": "packages/lease" },
-    { "path": "packages/fred" },
-    { "path": "packages/node" }
+    {
+      "path": "packages/core"
+    },
+    {
+      "path": "packages/chain"
+    },
+    {
+      "path": "packages/lease"
+    },
+    {
+      "path": "packages/fred"
+    },
+    {
+      "path": "packages/cosmwasm"
+    },
+    {
+      "path": "packages/agent-core"
+    },
+    {
+      "path": "packages/agent"
+    },
+    {
+      "path": "packages/sdk"
+    },
+    {
+      "path": "packages/node"
+    },
+    {
+      "path": "examples/sdk-acceptance"
+    }
   ],
   "files": []
 }

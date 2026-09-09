@@ -1,7 +1,11 @@
 import { fromBase64 } from '@cosmjs/encoding';
 import type { SigningStargateClient } from '@cosmjs/stargate';
 import { cosmos } from '@manifest-network/manifestjs/dist/codegen/cosmos/bundle.js';
-import { throwUnsupportedSubcommand } from '../modules.js';
+import {
+  parseDurationSeconds,
+  parseUint64,
+} from '../internals/protobuf-integers.js';
+import { throwUnsupportedSubcommand } from '../module-metadata.js';
 import {
   type BuiltMessages,
   type CosmosTxResult,
@@ -15,7 +19,6 @@ import {
   extractBooleanFlag,
   extractFlag,
   filterConsumedArgs,
-  parseBigInt,
   parseColonPair,
   parseVoteOption,
   requireArgs,
@@ -85,8 +88,11 @@ function buildDecisionPolicy(
   votingPeriodSecs: string,
   minExecPeriodSecs: string,
 ): ThresholdPolicy | PercentagePolicy {
-  const votingSecs = parseBigInt(votingPeriodSecs, 'voting-period-secs');
-  const minExecSecs = parseBigInt(
+  const votingSecs = parseDurationSeconds(
+    votingPeriodSecs,
+    'voting-period-secs',
+  );
+  const minExecSecs = parseDurationSeconds(
     minExecPeriodSecs,
     'min-execution-period-secs',
   );
@@ -229,7 +235,7 @@ export function buildGroupMessages(
         'group update-group-members',
       );
       const [groupIdStr, ...memberPairs] = args;
-      const groupId = parseBigInt(groupIdStr, 'group-id');
+      const groupId = parseUint64(groupIdStr, 'group-id');
       const memberUpdates = parseMemberRequests(memberPairs);
 
       const msg = {
@@ -252,7 +258,7 @@ export function buildGroupMessages(
         'group update-group-admin',
       );
       const [groupIdStr, newAdmin] = args;
-      const groupId = parseBigInt(groupIdStr, 'group-id');
+      const groupId = parseUint64(groupIdStr, 'group-id');
       validateAddress(newAdmin, 'new admin address');
 
       const msg = {
@@ -275,7 +281,7 @@ export function buildGroupMessages(
         'group update-group-metadata',
       );
       const [groupIdStr, metadata] = args;
-      const groupId = parseBigInt(groupIdStr, 'group-id');
+      const groupId = parseUint64(groupIdStr, 'group-id');
 
       const msg = {
         typeUrl: '/cosmos.group.v1.MsgUpdateGroupMetadata',
@@ -311,7 +317,7 @@ export function buildGroupMessages(
         votingPeriodSecs,
         minExecPeriodSecs,
       ] = args;
-      const groupId = parseBigInt(groupIdStr, 'group-id');
+      const groupId = parseUint64(groupIdStr, 'group-id');
       const decisionPolicy = buildDecisionPolicy(
         policyType,
         value,
@@ -518,7 +524,7 @@ export function buildGroupMessages(
 
     case 'withdraw-proposal': {
       requireArgs(args, 1, ['proposal-id'], 'group withdraw-proposal');
-      const proposalId = parseBigInt(args[0], 'proposal-id');
+      const proposalId = parseUint64(args[0], 'proposal-id');
 
       const msg = {
         typeUrl: '/cosmos.group.v1.MsgWithdrawProposal',
@@ -543,7 +549,7 @@ export function buildGroupMessages(
 
       requireArgs(positionalArgs, 2, ['proposal-id', 'option'], 'group vote');
       const [proposalIdStr, optionStr] = positionalArgs;
-      const proposalId = parseBigInt(proposalIdStr, 'proposal-id');
+      const proposalId = parseUint64(proposalIdStr, 'proposal-id');
       const option = parseVoteOption(optionStr, VoteOption);
       const exec = parseExec(execFlag.value);
       const metadata = metadataFlag.value ?? '';
@@ -564,7 +570,7 @@ export function buildGroupMessages(
 
     case 'exec': {
       requireArgs(args, 1, ['proposal-id'], 'group exec');
-      const proposalId = parseBigInt(args[0], 'proposal-id');
+      const proposalId = parseUint64(args[0], 'proposal-id');
 
       const msg = {
         typeUrl: '/cosmos.group.v1.MsgExec',
@@ -579,7 +585,7 @@ export function buildGroupMessages(
 
     case 'leave-group': {
       requireArgs(args, 1, ['group-id'], 'group leave-group');
-      const groupId = parseBigInt(args[0], 'group-id');
+      const groupId = parseUint64(args[0], 'group-id');
 
       const msg = {
         typeUrl: '/cosmos.group.v1.MsgLeaveGroup',

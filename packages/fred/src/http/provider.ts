@@ -33,6 +33,8 @@ export type ProviderErrorKind =
   | 'network'
   | 'timeout'
   | 'invalid_url'
+  /** Redirects are refused before any request can be forwarded to another URL. */
+  | 'redirect'
   | 'invalid_json'
   /** Syntactically valid JSON whose runtime shape violates the endpoint contract. */
   | 'invalid_response'
@@ -231,6 +233,7 @@ export function isTransientProviderError(err: unknown): boolean {
     case 'invalid_json':
       return true;
     case 'invalid_url':
+    case 'redirect':
     case 'invalid_response':
     case 'body_cap':
     case 'poll':
@@ -636,9 +639,30 @@ async function checkedFetchWithin(
   try {
     // Don't even dispatch fetch if the caller's signal is already aborted.
     deadline.signal.throwIfAborted();
-    res = await doFetch(url, { ...init, signal: deadline.signal });
+    // Provider bodies can contain manifests and credentials. Fetch's default
+    // redirect handling can replay them to HTTP or another origin even when it
+    // strips Authorization. Require a canonical endpoint; never issue a second
+    // request. This also keeps the existing DNS/IP connect guard authoritative.
+    res = await doFetch(url, {
+      ...init,
+      signal: deadline.signal,
+      redirect: 'manual',
+    });
   } catch (err) {
     throw classifyTransportError(err, deadline, url, timeoutMs);
+  }
+  if (
+    res.type === 'opaqueredirect' ||
+    (res.status >= 300 && res.status < 400)
+  ) {
+    // Browsers hide a manual redirect's status/headers behind an opaque response.
+    // Neither surface needs its body or Location exposed to decide safely.
+    void res.body?.cancel().catch(() => {});
+    throw new ProviderApiError(
+      res.status,
+      'Provider redirects are not allowed; configure the canonical provider API URL.',
+      { kind: 'redirect' },
+    );
   }
   if (!res.ok) {
     // Read `Retry-After` BEFORE the body: it is the provider's own guidance on
@@ -812,8 +836,8 @@ export async function fetchJsonChecked(
     }).catch((err: unknown) => {
       throw classifyBodyError(err, deadline, url, timeoutMs);
     });
-    // `res.status`, NOT 0: restoreApp distinguishes "restore COMMITTED but the 202
-    // body was empty" from a real failure by branching on a 2xx status here.
+    // Preserve the HTTP status for diagnostics when a body cannot be decoded.
+    // A malformed 2xx alone does not establish whether a restore was adopted.
     return parseJsonText(text, res.status, url, schema);
   } finally {
     deadline.dispose();

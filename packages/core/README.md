@@ -15,7 +15,7 @@ npm install @manifest-network/manifest-mcp-core
 - **Module registry** (`modules.ts`) -- Static maps of Cosmos SDK modules with metadata and handler functions
 - **Query/transaction routing** (`cosmos.ts`) -- Routes `(module, subcommand, args)` to per-module handlers
 - **On-chain tool functions** (`tools/`) -- e.g. `getBalance`, `fundCredits`, `setItemCustomDomain`, `stopApp`, `executeTx` (atomic multi-message tx), plus read helpers such as `getLease` / `getSKUs` (used by lease and fred packages)
-- **Server utilities** (`server-utils.ts`) -- `withErrorHandling`, `jsonResponse`, `structuredResponse`, `bigIntReplacer`, `sanitizeForLogging`
+- **Server utilities** (`server-utils.ts`) -- `withErrorHandling`, `jsonResponse`, `structuredResponse`, `bigIntReplacer`, `sanitizeForLogging`, `sanitizeForModelText`
 - **Tool annotation helpers** (`tool-metadata.ts`) -- `readOnlyAnnotations`, `mutatingAnnotations`, `manifestMeta` (versioned `_meta.manifest` payload, `MANIFEST_TOOL_META_VERSION = 1`)
 - **Wallet providers** (`wallet/`) -- `MnemonicWalletProvider` (BIP-39), `signArbitraryWithAmino` (ADR-036)
 - **Logger** (`logger.ts`) -- Leveled logger (stderr output; defaults to `warn`, configurable via `logger.setLevel()`; the node package's bootstrap reads `LOG_LEVEL` and applies it)
@@ -112,3 +112,7 @@ npm run test     # vitest
 ## License
 
 MIT
+
+## Browser support
+
+The root entry point and query/transaction helpers can be bundled for browsers. Inject a browser wallet and fetch transport through the client factory. Node-only `/guarded-fetch` and `/events-node` exports require Node; filesystem-backed operations also require Node when invoked. Browser-safe importability does not make every exported operation available in a browser. See the [runtime guidance](../../docs/library-usage.md).

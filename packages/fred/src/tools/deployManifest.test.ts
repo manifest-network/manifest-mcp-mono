@@ -294,6 +294,28 @@ describe('deployManifest', () => {
     });
   });
 
+  it('sanitizes and bounds a connection error after a successful deploy', async () => {
+    routeWire({
+      connection: {
+        status: 503,
+        text: `\u001b[31munavailable\u202e\u200b\n${'x'.repeat(100_000)}`,
+      },
+    });
+    const cm = makeMockClientManager({
+      queryClient: makeQueryClient(),
+      address: 'manifest1tenant',
+    });
+    const result = await deployManifest(await ctx(cm), {
+      manifest: singleManifest(),
+      sku: { kind: 'byName', size: 'docker-micro' },
+    });
+    expect(result.connectionError).toContain('unavailable\n');
+    expect(result.connectionError).not.toContain('\u001b');
+    expect(result.connectionError).not.toContain('\u202e');
+    expect(result.connectionError?.length).toBeLessThanOrEqual(2001);
+    expect(result.lease_uuid).toBe('550e8400-e29b-41d4-a716-446655440000');
+  });
+
   it('deploys a single-service manifest and uploads the ORIGINAL bytes', async () => {
     const cm = makeMockClientManager({
       queryClient: makeQueryClient(),

@@ -52,7 +52,7 @@ Once it prints the recovery phrase, write it down, then `<cli> import` it under 
 
 ## Errors at tool call time
 
-Most errors returned to the MCP client are JSON objects with a `code` field drawn from `ManifestMCPErrorCode`. (An error raised outside the Manifest error path — e.g. a `ProviderApiError` from a provider HTTP call — reaches the client without a `ManifestMCPErrorCode` and is logged as `UNKNOWN`.) The 23 codes group into 11 categories:
+Most errors returned to the MCP client are JSON objects with a `code` field drawn from `ManifestMCPErrorCode`. (An error raised outside the Manifest error path — e.g. a `ProviderApiError` from a provider HTTP call — reaches the client without a `ManifestMCPErrorCode` and is logged as `UNKNOWN`.) The 24 codes group into 11 categories:
 
 | Category | Codes | Meaning |
 |----------|-------|---------|
@@ -65,7 +65,7 @@ Most errors returned to the MCP client are JSON objects with a `code` field draw
 | User action | `OPERATION_CANCELLED` | A deliberate user decline / cancel / elicitation-timeout, or a completed user-selected orchestration recovery — neither a fault nor retryable; inspect operation-specific `details` because side effects may have completed |
 | SKU resolution | `SKU_AMBIGUOUS` | A SKU `size`/`storage` name matched more than one active SKU; `details` carries `{ reason: 'AMBIGUOUS_SKU_NAME', size, candidates }` — disambiguate with `provider_uuid` / `sku_uuid` |
 | Deploy | `DEPLOY_READINESS_UNCONFIRMED` | A paid lease exists, but the client cannot safely confirm it as ready. Either the readiness poll ended without a verdict, or the canonical final provider state was absent, malformed, or not ACTIVE. Carries `details.readiness_unconfirmed`, `lease_uuid`, and `partial`; orchestration final-state disagreement additionally carries `readiness_reason: 'final_state_mismatch'`, `state_source`, and bounded `observed_state`. Diagnose the existing lease instead of repeating `deploy_app` — see below |
-| Restore | `RESTORE_NOT_RETAINED`, `RESTORE_REJECTED`, `RESTORE_RETRYABLE`, `RESTORE_ORPHAN_COMPENSATION_FAILED` | `restore_app` saga outcomes: source not restorable (pre-flight, zero side effects), a terminal 4xx rejection (created lease rolled back), a transient refusal the agent may deliberately re-invoke — 503 placement or 429 throttle — (rolled back), or a compensation failure that left an orphan lease. All non-auto-retryable — restore is non-idempotent |
+| Restore | `RESTORE_NOT_RETAINED`, `RESTORE_REJECTED`, `RESTORE_ORPHAN_COMPENSATION_FAILED`, `RESTORE_COMMITTED_FAILURE`; compatibility-only `RESTORE_RETRYABLE` | Source not restorable (pre-flight, zero side effects), a locally known failure before the POST successfully compensated, unknown adoption / failed compensation, or a provider failure verdict after adoption. Current `restoreApp` does not emit `RESTORE_RETRYABLE`. Every restore POST exception, including all 4xx/5xx, network failures and malformed 2xx, preserves both lease IDs for reconciliation; do not cancel an uncertain target. `provider_status`, `provider_error_kind`, and `retry_after_ms` are diagnostic only: 429 with `Retry-After` does not authorize replay. All non-auto-retryable — restore is non-idempotent |
 | Update | `UPDATE_INDETERMINATE` | `update_app` reached the provider and got a 5xx, which does **not** establish whether the manifest was applied. The provider persists the payload after the backend accepts it, so a persist failure can mean the update is live now and the next reprovision will revert it. Diagnose with `app_status` / `app_releases` before acting; re-invoking `update_app` re-applies and re-records. Non-auto-retryable — `update_app` is non-idempotent |
 
 ### `INVALID_CONFIG` from a transaction tool
@@ -218,10 +218,11 @@ Note that `last_error` is now a deprecated alias kept only for providers older t
 
 ## E2E suite fails locally
 
-The Compose stack expects healthy submodules and a recent Docker:
+The Compose stack requires Linux, local Docker, initialized submodules, and a dedicated XFS project-quota mount at `/mnt/fred-xfs`. Follow [E2E environment setup](e2e-setup.md), including verification and cleanup. Then run:
 
 ```bash
 git submodule update --init --recursive
+npm run check:e2e-env
 docker compose -f e2e/docker-compose.yml up -d --wait --wait-timeout 180
 npm run test:e2e
 docker compose -f e2e/docker-compose.yml down -v --remove-orphans

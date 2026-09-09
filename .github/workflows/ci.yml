@@ -36,6 +36,7 @@ jobs:
       - name: Check immutable action references
         run: npm run check:workflows
       - run: npm run check:dependency-hygiene
+      - run: npm run check:review-tooling
       - run: npm run build
       # Closed-world contract over every live MCP CLI: adding a tool without a pinned
       # annotations + _meta.manifest row must fail before merge. This test does not
@@ -57,11 +58,12 @@ jobs:
       - run: npm run check
       # dependency-cruiser DAG + manifestjs-type chokepoint + no-static-node/undici guards (ENG-309).
       # The brand-cast / no-parse*-in-lcd-adapter grep guards + the known-bad fixtures' proof run as
-      # part of `npm test` (packages/sdk/scripts/cast-guard.test.ts).
+      # part of the coverage-enabled workspace test run (packages/sdk/scripts/cast-guard.test.ts).
       - run: npm run depcruise
-      - run: npm test
+      - run: npm run check:coverage-config
+      - run: npm run test:coverage
       # SDK type tripwire: re-run the SDK package's `vitest --typecheck` as a NAMED,
-      # visible gate (the root `npm test` above covers it transitively). `*.test-d.ts`
+      # visible gate (the workspace coverage run above covers it transitively). `*.test-d.ts`
       # pins the re-emitted public type surface (factory return types, the ManifestClient
       # bound methods, the brand families + ports, the read-vs-full guarantee) so an
       # upstream codegen/type-shape drift that survives a value-only test fails CI here. (ENG-309)

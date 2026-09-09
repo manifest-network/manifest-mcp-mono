@@ -1,3 +1,4 @@
+import type { SigningStargateClient } from '@cosmjs/stargate';
 import {
   abortReason,
   type CallOptions,
@@ -26,50 +27,104 @@ function cancelledTxError(reason: unknown, sent: boolean): ManifestMCPError {
   );
 }
 
+/** Execution state shared by preparation, lock wait, retries, and the final submission boundary. */
+export interface TxExecution {
+  readonly signal: AbortSignal | undefined;
+  checkpoint(): void;
+  /** Call immediately before entering CosmJS's opaque signing/broadcast operation. */
+  markBroadcast(): void;
+}
+
+/** Place the submission checkpoint after handler-owned preparation and gas simulation. */
+export function guardTxClient(
+  client: SigningStargateClient,
+  execution: TxExecution,
+): SigningStargateClient {
+  if (!execution.signal) return client;
+  return new Proxy(client, {
+    get(target, property, receiver) {
+      const value: unknown = Reflect.get(target, property, receiver);
+      if (
+        property === 'signAndBroadcast' ||
+        property === 'signAndBroadcastSync'
+      ) {
+        return (
+          ...args: Parameters<SigningStargateClient['signAndBroadcast']>
+        ) => {
+          execution.markBroadcast();
+          return Reflect.apply(
+            value as (...args: unknown[]) => unknown,
+            target,
+            args,
+          );
+        };
+      }
+      return typeof value === 'function' ? value.bind(target) : value;
+    },
+  });
+}
+
 /**
- * Bound the AWAIT of a broadcast+confirmation with the caller's effective AbortSignal (opts.signal + opts.timeout).
- * CRITICAL: a submitted tx CANNOT be un-broadcast (cosmjs's signAndBroadcast combines broadcast + the commit
- * poll and accepts no AbortSignal). This PRE-CHECKS `sig.aborted` BEFORE calling `broadcast` (an already-aborted
- * call sends NOTHING), then races the broadcast() promise vs abort. Once broadcast() is called the tx is sent;
- * an abort/timeout stops you AWAITING, but the tx MAY STILL COMMIT (the losing broadcast() runs to completion
- * in the background, its result discarded) — the signal bounds your wait, NOT the broadcast; a caller who
- * aborts must re-query the chain. Does NOT acquireRateLimit (cosmosTx does that).
- * CONVENTION — this seam WRAPS: BOTH a timeout and a caller abort reject with
- * `ManifestMCPError(OPERATION_CANCELLED)`, never with the raw `TimeoutError`/`AbortError`, and the original
- * reason is preserved under `details.reason` (`details.sent` says whether a broadcast was started). That is
- * the opposite of the read seam in `read-signal.ts`, which rejects with the raw reason, and both are
- * legitimate: rejecting with the signal's own reason is what the WHATWG DOM asks of an API that accepts an
- * `AbortSignal`, while wrapping and demoting the original to a `cause`/`details` slot is what Node's own
- * promise APIs do. The split is per layer, chosen by whether the cancelled operation could have left
- * something behind — a broadcast can, so its outcome needs a structured, non-retryable code and a `sent`
- * flag. It is not an inconsistency to unify. (Pre-ENG-710 this comment also claimed the raw DOMException
- * surfaced here; it has wrapped since PR #102, so those sentences were stale, not a second contract.)
- * NOTE: `broadcast` here is the WHOLE cosmosTx call (getBroadcastClient → per attempt: acquireRateLimit →
- * simulate → signAndBroadcast; the client is acquired once, outside the retry ladder — ENG-679),
- * so an abort racing the early window (client acquisition/acquire/simulate, BEFORE the wire send) ALSO reports
- * `sent: true` even though NO tx was sent. The caller cannot distinguish "aborted pre-send" from "aborted
- * post-send, still committing" from this seam — hence the conservative contract: on abort, treat the outcome
- * as UNKNOWN and re-query.
+ * Resolve the operation deadline once and reject promptly on cancellation. Every awaited
+ * preparation stage must checkpoint before continuing; markBroadcast performs the final check.
+ * Before submission, cancellation reports sent:false and prevents later transmission. Once the
+ * opaque CosmJS signing/broadcast operation starts, it cannot be cancelled safely: sent:true means
+ * the outcome is unknown and must be reconciled. The losing promise remains observed.
  */
-export async function withTxConfirmation<T>(
-  broadcast: () => Promise<T>,
+export async function withTxExecution<T>(
+  operation: (execution: TxExecution) => Promise<T>,
   opts?: CallOptions,
 ): Promise<T> {
   const signal = resolveCallSignal(opts);
-  if (signal === undefined) return broadcast();
-  // `abortReason` normalizes a reason carrying nothing at all, so `details.reason` and the
-  // interpolated message can never read "null"/"undefined" (ENG-710); a reason the caller
-  // actually chose — an empty string included — is preserved verbatim inside the wrapper.
-  if (signal.aborted) throw cancelledTxError(abortReason(signal), false); // BEFORE broadcast — no tx sent
-  const p = broadcast();
+  let sent = false;
+  const execution: TxExecution = {
+    signal,
+    checkpoint() {
+      if (signal?.aborted) throw cancelledTxError(abortReason(signal), sent);
+    },
+    markBroadcast() {
+      execution.checkpoint();
+      sent = true;
+    },
+  };
+  execution.checkpoint();
+  if (signal === undefined) return operation(execution);
   return new Promise<T>((resolve, reject) => {
-    const onAbort = () => reject(cancelledTxError(abortReason(signal), true)); // tx MAY have committed
+    const cleanup = () => signal.removeEventListener('abort', onAbort);
+    const onAbort = () => {
+      cleanup();
+      reject(cancelledTxError(abortReason(signal), sent));
+    };
+    // Register before invoking user/wallet code, which can synchronously abort the signal.
     signal.addEventListener('abort', onAbort, { once: true });
-    // No `p.catch(() => {})` swallow: `.then(resolve, reject)` below is attached synchronously
-    // in this same tick, so the losing broadcast's late rejection is already handled and never
-    // reaches `unhandledRejection` (verified, ENG-710).
-    p.then(resolve, reject).finally(() =>
-      signal.removeEventListener('abort', onAbort),
-    );
+    try {
+      operation(execution).then(
+        (value) => {
+          cleanup();
+          resolve(value);
+        },
+        (error: unknown) => {
+          cleanup();
+          reject(error);
+        },
+      );
+    } catch (error) {
+      cleanup();
+      reject(error);
+    }
   });
+}
+
+/**
+ * Compatibility wrapper for an opaque broadcast callback: entering the callback means submission
+ * may have begun. Preparation-aware callers use withTxExecution and mark the final boundary.
+ */
+export function withTxConfirmation<T>(
+  broadcast: () => Promise<T>,
+  opts?: CallOptions,
+): Promise<T> {
+  return withTxExecution((execution) => {
+    execution.markBroadcast();
+    return broadcast();
+  }, opts);
 }

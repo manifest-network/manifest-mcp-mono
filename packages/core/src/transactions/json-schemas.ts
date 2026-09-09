@@ -1,4 +1,8 @@
 import { z } from 'zod';
+import {
+  MAX_DURATION_SECONDS,
+  MAX_UINT32,
+} from '../internals/protobuf-integers.js';
 import { ManifestMCPError, ManifestMCPErrorCode } from '../types.js';
 
 /**
@@ -28,7 +32,8 @@ const bigintFromJson = z
     /^\d+$/,
     'must be a non-negative decimal integer string (e.g. "1209600")',
   )
-  .transform((v) => BigInt(v));
+  .transform((v) => BigInt(v))
+  .pipe(z.bigint().max(MAX_DURATION_SECONDS));
 
 /**
  * google.protobuf.Duration ({ seconds: bigint, nanos: int32 }).
@@ -49,7 +54,7 @@ const DurationSchema = z
 const DenomUnitSchema = z
   .object({
     denom: z.string().min(1),
-    exponent: z.number().int().min(0),
+    exponent: z.number().int().min(0).max(MAX_UINT32),
     aliases: z.array(z.string()).default([]),
   })
   .strict();
@@ -81,9 +86,9 @@ export const BankMetadataSchema = z
 export const PoAStakingParamsSchema = z
   .object({
     unbondingTime: DurationSchema,
-    maxValidators: z.number().int().min(1),
-    maxEntries: z.number().int().min(1),
-    historicalEntries: z.number().int().min(0),
+    maxValidators: z.number().int().min(1).max(MAX_UINT32),
+    maxEntries: z.number().int().min(1).max(MAX_UINT32),
+    historicalEntries: z.number().int().min(0).max(MAX_UINT32),
     bondDenom: z.string().min(1),
     minCommissionRate: z
       .string()

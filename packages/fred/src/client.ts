@@ -96,11 +96,11 @@ export { shouldWarnUnguarded } from './http/unguarded-warning.js';
  * `fredActions` binds the lifecycle methods onto it.
  *
  * @remarks
- * Wraps {@link createManifestClient}, so the same shared-config-key caveat applies: each client acquires
- * one reference on a `CosmosClientManager` instance keyed by config (`chainId:rpcUrl[:restUrl]`), and
- * `getInstance` mutates the shared instance — do NOT construct a separate read/full client against a key
- * this client already holds. Always `dispose()` each client; the shared clients tear down only once the
- * last holder disposes.
+ * Wraps {@link createManifestClient}: each client retains its wallet and immutable configuration.
+ * Compatible holders share cached chain transports; other wallets and policies remain independent.
+ * Chain identity verification uses `chainIdentityFetch` (platform fetch by default), independently of
+ * provider `fetch`, so trusted localhost/private chain endpoints do not weaken provider SSRF protection.
+ * Always `dispose()` each client; shared transports tear down once their last holder disposes.
  *
  * @remarks
  * On Node, this base factory does NOT guard provider HTTP by default — prefer

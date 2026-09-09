@@ -9,7 +9,7 @@ Sensitive values are redacted in this recap (keys only, never values):
 
 Custom domain: app.testnet.manifest.app → single-service lease
 
-Note: when a custom domain is set, deploy_app broadcasts TWO billing
-transactions atomically: create-lease AND set-item-custom-domain. The
-single permission prompt that fires later covers BOTH; this textual
-recap is your per-tx review.
+Note: a custom domain requires two separate billing transactions:
+create-lease, then set-item-custom-domain after the manifest upload.
+The domain step can fail after the paid lease exists. Reconcile the
+returned lease ID before retrying; confirmation covers both transactions.

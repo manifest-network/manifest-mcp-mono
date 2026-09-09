@@ -54,10 +54,9 @@ const NON_RETRYABLE_ERROR_CODES: ManifestMCPErrorCode[] = [
 
   // Restore outcomes (ENG-599). ALL are non-auto-retryable: restore_app is
   // non-idempotent (each call creates a fresh lease), so withRetry must never
-  // re-broadcast it. RESTORE_RETRYABLE means "the AGENT may re-invoke" — a
-  // deliberate, human/agent-driven decision — NOT that withRetry should auto-
-  // retry. (Its message can also embed "HTTP 503", which the 5xx message-sniff
-  // would otherwise mis-read as retryable.)
+  // re-broadcast it. RESTORE_RETRYABLE remains exported for compatibility but
+  // restoreApp no longer emits it: a POST status cannot establish safe replay.
+  // Messages may contain HTTP statuses that otherwise match retryable errors.
   ManifestMCPErrorCode.RESTORE_NOT_RETAINED,
   ManifestMCPErrorCode.RESTORE_REJECTED,
   ManifestMCPErrorCode.RESTORE_RETRYABLE,

@@ -42,8 +42,8 @@ describe('isRetryableError', () => {
     });
 
     it('should not auto-retry any RESTORE_* code (restore_app is non-idempotent)', () => {
-      // RESTORE_RETRYABLE included: "retryable" means the AGENT may re-invoke,
-      // NOT that withRetry should auto-re-broadcast (that would re-create a lease).
+      // Keep the legacy RESTORE_RETRYABLE code non-retryable as well:
+      // replaying restore would create another lease.
       // Its "HTTP 503" message must not slip through the 5xx sniff either.
       for (const err of [
         new ManifestMCPError(ManifestMCPErrorCode.RESTORE_NOT_RETAINED, 'x'),

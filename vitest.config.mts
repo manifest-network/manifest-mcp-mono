@@ -2,7 +2,7 @@ import { defineConfig } from 'vitest/config';
 
 // Root entry point for `npx vitest run <path>` from the repository root.
 //
-// This file defines NO test options of its own: it only delegates to each workspace
+// Aggregate coverage is configured here. Runtime/type-test options delegate to each
 // member's `vitest.config.ts`, so a root-invoked run uses exactly the same `typecheck`,
 // `setupFiles`, and `exclude` as `npm run test -w <pkg>`. Before it existed, a root run
 // used Vitest's defaults instead: a bare run of a `.test-d.ts` found no test files, and
@@ -27,5 +27,40 @@ import { defineConfig } from 'vitest/config';
 export default defineConfig({
   test: {
     projects: ['packages/*/vitest.config.ts', 'examples/*/vitest.config.ts'],
+    coverage: {
+      provider: 'v8',
+      // Explicit inclusion keeps never-imported production modules in the denominator.
+      include: ['packages/*/src/**/*.ts'],
+      exclude: [
+        '**/*.test.ts',
+        '**/*.test-d.ts',
+        '**/*.spec.ts',
+        '**/*.d.ts',
+        '**/__test-utils__/**',
+        '**/__fixtures__/**',
+        '**/generated/**',
+      ],
+      reporter: ['text-summary', 'json-summary', 'json', 'html'],
+      reportsDirectory: './coverage',
+      reportOnFailure: true,
+      thresholds: {
+        lines: 84,
+        statements: 84,
+        branches: 83,
+        functions: 87,
+        'packages/core/src/queries/**': {
+          lines: 38,
+          statements: 38,
+          branches: 44,
+          functions: 84,
+        },
+        'packages/core/src/transactions/**': {
+          lines: 61,
+          statements: 61,
+          branches: 65,
+          functions: 66,
+        },
+      },
+    },
   },
 });

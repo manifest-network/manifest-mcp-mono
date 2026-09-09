@@ -24,8 +24,10 @@ npm install @manifest-network/manifest-mcp-fred
 | `restart_app` | Restart a deployed app via the provider |
 | `update_app` | Update a deployed app with a new manifest |
 | `restore_app` | Restore a closed/retained app onto a fresh lease within the grace window |
-| `app_diagnostics` | Get provision diagnostics for a deployed app |
+| `app_diagnostics` | Get chain state and surviving provider provision diagnostics, including terminal leases |
 | `app_releases` | Get release/version history for a deployed app (20 most recent; the stored manifest is omitted, its size reported as `manifest_bytes`) |
+
+`restore_app` creates a new lease and adopts the source's retained data in separate steps. Every restore POST exception, including all HTTP 4xx/5xx, network failures, and malformed 2xx responses, leaves adoption **unknown**: preserve both lease IDs, check `app_status` / `app_diagnostics`, and reconcile with the provider before retrying or considering cleanup. The SDK does not cancel an uncertain target or advise doing so. A PENDING chain state alone does not establish that no volumes were adopted, and a 429 `Retry-After` does not authorize replay. Only locally known failures or cancellation before the restore POST begins permit automatic compensation. See [restore outcomes and cancellation](../../docs/library-usage.md#restoring-a-closed-lease) for the structured error fields.
 
 ## Resources & prompts
 
@@ -63,6 +65,8 @@ The package contains three HTTP client modules:
 - **`http/auth.ts`** -- ADR-036 token construction. Pure functions that build sign messages and assemble base64 bearer tokens. No network calls.
 - **`http/provider.ts`** -- Provider API client: `uploadLeaseData()`, `getLeaseConnectionInfo()`, `getProviderHealth()`, plus `validateProviderUrl()` / `isUrlSsrfSafe()`. Provider URLs (from untrusted on-chain records) are SSRF-classified by default: HTTPS required, and literal private/internal/loopback/metadata IPs are rejected (ENG-490). Loopback is opt-in via `{ allowLoopback }` — the fred server enables it only when `MANIFEST_FRED_FETCH_GUARDED=0`. JSON reads are byte/time bounded and runtime-schema-validated before returning.
 - **`http/fred.ts`** -- Fred API client: `getLeaseStatus()`, `getLeaseLogs()`, `getLeaseProvision()`, `restartLease()`, `updateLease()`, `restoreLease()`, `getLeaseReleases()`, and `pollLeaseUntilReady()`. Endpoint schemas validate known fields while preserving unknown additions from newer providers.
+
+Provider HTTP redirects are refused, including same-origin redirects. Configure the canonical API URL: the client never forwards a manifest body or credentials to a redirected destination. This policy applies in browsers and Node and remains active when a custom `fetch` is injected; the injected function must honor `RequestInit.redirect`. Redirect errors have `ProviderApiError.kind === 'redirect'` and are not transient.
 
 ## Build
 

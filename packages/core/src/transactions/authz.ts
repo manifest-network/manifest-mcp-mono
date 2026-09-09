@@ -2,7 +2,7 @@ import type { GeneratedType } from '@cosmjs/proto-signing';
 import type { SigningStargateClient } from '@cosmjs/stargate';
 import { cosmos } from '@manifest-network/manifestjs/dist/codegen/cosmos/bundle.js';
 import { cosmosProtoRegistry } from '@manifest-network/manifestjs/dist/codegen/cosmos/client.js';
-import { throwUnsupportedSubcommand } from '../modules.js';
+import { throwUnsupportedSubcommand } from '../module-metadata.js';
 import {
   type BuiltMessages,
   type CosmosTxResult,

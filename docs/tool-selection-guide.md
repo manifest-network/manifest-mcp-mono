@@ -60,14 +60,14 @@ The Fred server is sequenced; follow this order:
 A lease that was CLOSED (e.g. credit-exhausted) can be recovered **while its volumes are still within the provider's retention grace window**:
 
 1. `app_status` / `app_diagnostics` — on a CLOSED lease these surface the retention metadata (`retained_until`, `items`, `restore_hint`). Use them to confirm the source is still restorable and until when.
-2. `restore_app` — broadcasts a chain TX to create a *fresh* lease and restore the retained volumes onto it (a saga that rolls the new lease back on terminal failure). Restore is non-idempotent, so its errors (`RESTORE_*`) are never auto-retried. Returns the new `lease_uuid`.
+2. `restore_app` — broadcasts a chain TX to create a *fresh* lease and restore the retained volumes onto it. Compensation is limited to locally known failures or cancellation before the restore POST begins. Restore is non-idempotent, so its errors (`RESTORE_*`) are never auto-retried. Returns the new `lease_uuid`. Every restore POST exception, including all 4xx/5xx, network failures, and malformed 2xx responses, leaves adoption unknown: preserve both lease IDs and reconcile through status/diagnostics and the provider before retrying or considering cleanup. Do not cancel an uncertain target. HTTP 429 with `Retry-After` does not authorize replay, and PENDING alone does not prove non-adoption.
 
 ### Diagnosing a stuck or failing app
 
 Prefer the `diagnose-failing-app` MCP prompt — it bundles `app_status`, `app_diagnostics`, and `get_logs` into a single triage workflow. See the [prompts reference](prompts-and-resources.md). Manually:
 
 - `app_status({ lease_uuid })` — chain state + provider state.
-- `app_diagnostics({ lease_uuid })` — `provision_status`, `fail_count`, `reason`, `message`, `next_step`.
+- `app_diagnostics({ lease_uuid })` — chain `lease_state`, provider `provision_status`, `fail_count`, `reason`, `message`, `next_step`. CLOSED, REJECTED and EXPIRED leases can still have provider diagnostics; missing or unavailable records remain errors rather than a zero-failure report.
 - `get_logs({ lease_uuid, tail: 200 })` — recent container output.
 
 ### Custom domains

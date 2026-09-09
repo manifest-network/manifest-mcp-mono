@@ -3,6 +3,7 @@ import type { EncodeObject } from '@cosmjs/proto-signing';
 import type { SigningStargateClient } from '@cosmjs/stargate';
 import { calculateFee, type StdFee } from '@cosmjs/stargate';
 import { DEFAULT_GAS_MULTIPLIER, DEFAULT_MAX_GAS } from '../config.js';
+import { parseUint64 } from '../internals/protobuf-integers.js';
 import {
   type CosmosTxResult,
   type ExecuteTxResult,
@@ -473,7 +474,7 @@ export function parseLeaseItem(input: string): ParsedLeaseItem {
     );
   }
 
-  const quantity = parseBigInt(quantityStr, 'quantity');
+  const quantity = parseUint64(quantityStr, 'quantity');
 
   if (serviceName !== undefined) {
     if (!serviceName) {
