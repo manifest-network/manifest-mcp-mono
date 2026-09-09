@@ -162,8 +162,16 @@ describe('CosmosClientManager', () => {
     CosmosClientManager.clearInstances();
     vi.stubGlobal(
       'fetch',
-      vi.fn(async () =>
-        Response.json({ default_node_info: { network: 'test-chain' } }),
+      vi.fn<typeof globalThis.fetch>(async (_input, init) =>
+        Response.json(
+          init?.method === 'POST'
+            ? {
+                jsonrpc: '2.0',
+                id: 'manifest-chain-identity',
+                result: { node_info: { network: 'test-chain' } },
+              }
+            : { default_node_info: { network: 'test-chain' } },
+        ),
       ),
     );
     // Restore default mock return values after clearAllMocks
@@ -346,6 +354,9 @@ describe('CosmosClientManager', () => {
       const p1 = instance.getQueryClient();
       const p2 = instance.getQueryClient();
 
+      await vi.waitFor(() =>
+        expect(mockCreateRPCQueryClient).toHaveBeenCalledOnce(),
+      );
       resolveInit({ mock: 'queryClient' });
 
       const [c1, c2] = await Promise.all([p1, p2]);
@@ -457,6 +468,9 @@ describe('CosmosClientManager', () => {
         makeWallet(),
       );
       const p1 = instance.getQueryClient(); // init #1 owns the slot
+      await vi.waitFor(() =>
+        expect(mockCreateRPCQueryClient).toHaveBeenCalledOnce(),
+      );
       instance.disconnect(); // refCount 1 -> 0 -> teardown() nulls the slot
 
       resolveInit({ mock: 'qc1' });
@@ -493,8 +507,14 @@ describe('CosmosClientManager', () => {
         makeWallet(),
       );
       const p1 = instance.getQueryClient(); // init #1 owns the slot
+      await vi.waitFor(() =>
+        expect(mockCreateRPCQueryClient).toHaveBeenCalledOnce(),
+      );
       instance.disconnect(); // teardown nulls the slot
       const p2 = instance.getQueryClient(); // init #2 owns the slot
+      await vi.waitFor(() =>
+        expect(mockCreateRPCQueryClient).toHaveBeenCalledTimes(2),
+      );
 
       // Settle the NEWER init first, then the stale one. That order is what makes this test
       // discriminating: if #1 settled first, #2's own handler would repair the damage and the
@@ -974,8 +994,15 @@ describe('CosmosClientManager', () => {
       // re-init signals teardown occurred.
       const config = makeConfig({ chainId: 'refcount-query-probe' });
       const wallet = makeWallet();
-      const a = CosmosClientManager.getInstance(config, wallet);
-      const b = CosmosClientManager.getInstance(config, wallet);
+      const identityFetch = vi.fn<typeof globalThis.fetch>(async () =>
+        Response.json({
+          jsonrpc: '2.0',
+          id: 'manifest-chain-identity',
+          result: { node_info: { network: config.chainId } },
+        }),
+      );
+      const a = CosmosClientManager.getInstance(config, wallet, identityFetch);
+      const b = CosmosClientManager.getInstance(config, wallet, identityFetch);
 
       await a.getQueryClient();
       expect(mockCreateRPCQueryClient).toHaveBeenCalledOnce();
@@ -984,11 +1011,13 @@ describe('CosmosClientManager', () => {
       a.disconnect();
       await b.getQueryClient();
       expect(mockCreateRPCQueryClient).toHaveBeenCalledOnce();
+      expect(identityFetch).toHaveBeenCalledOnce();
 
       // Last holder releases — torn down, so the next query re-initializes.
       b.disconnect();
       await b.getQueryClient();
       expect(mockCreateRPCQueryClient).toHaveBeenCalledTimes(2);
+      expect(identityFetch).toHaveBeenCalledTimes(2);
     });
   });
 

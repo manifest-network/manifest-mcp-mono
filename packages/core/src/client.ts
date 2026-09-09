@@ -39,7 +39,10 @@ import {
   DEFAULT_GAS_MULTIPLIER,
   DEFAULT_REQUESTS_PER_SECOND,
 } from './config.js';
-import { verifyRestChainIdentity } from './internals/chain-identity.js';
+import {
+  verifyRestChainIdentity,
+  verifyRpcChainIdentity,
+} from './internals/chain-identity.js';
 import {
   type SequenceCache,
   sequencedSigningClient,
@@ -218,7 +221,8 @@ export class CosmosClientManager {
    * Compatible sibling servers share clients; a different wallet or policy gets an independent
    * manager. Constructing another client never reconfigures existing holders. Broadcast locks and
    * pending account sequences remain shared across every manager for the same chain ID.
-   * The optional fetch transport only verifies REST node-info; it does not serve provider or LCD requests.
+   * The optional fetch transport verifies REST node-info or RPC status; it does not serve provider
+   * requests or generated queries.
    * Balance each acquisition with one disconnect(), including repeated compatible acquisitions.
    */
   static getInstance(
@@ -360,6 +364,11 @@ export class CosmosClientManager {
         // Use RPC: merge liftedinit + cosmwasm + strangelove_ventures + osmosis + ibc namespaces
         client = await withRetry(
           async () => {
+            await verifyRpcChainIdentity(
+              this.config.rpcUrl!,
+              this.config.chainId,
+              this.fetchFn,
+            );
             const [
               liftedinitClient,
               cosmwasmClient,
