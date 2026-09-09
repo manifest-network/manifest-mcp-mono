@@ -162,15 +162,16 @@ describe('CosmosClientManager', () => {
     CosmosClientManager.clearInstances();
     vi.stubGlobal(
       'fetch',
-      vi.fn<typeof globalThis.fetch>(async (_input, init) =>
+      vi.fn<typeof globalThis.fetch>(async (input) =>
         Response.json(
-          init?.method === 'POST'
-            ? {
+          new URL(input instanceof Request ? input.url : input).pathname ===
+            '/cosmos/base/tendermint/v1beta1/node_info'
+            ? { default_node_info: { network: 'test-chain' } }
+            : {
                 jsonrpc: '2.0',
                 id: 'manifest-chain-identity',
                 result: { node_info: { network: 'test-chain' } },
-              }
-            : { default_node_info: { network: 'test-chain' } },
+              },
         ),
       ),
     );

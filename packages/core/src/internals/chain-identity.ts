@@ -15,6 +15,16 @@ const rpcStatusSchema = z
   })
   .transform((status) => status.result.node_info.network);
 
+async function cancelRejectedBody(
+  body: { cancel(): Promise<void> } | null | undefined,
+): Promise<void> {
+  try {
+    await body?.cancel();
+  } catch {
+    // Cleanup cannot replace an established HTTP or response-size verdict.
+  }
+}
+
 /** Fail closed before exposing queries from a REST endpoint belonging to another chain. */
 export async function verifyRestChainIdentity(
   restUrl: string,
@@ -50,6 +60,7 @@ async function verifyChainIdentity(
         : endpoint,
       {
         signal,
+        // Verify the configured destination itself, even where CosmJS would follow a redirect.
         redirect: 'error',
         // Match CosmJS's JSON-RPC POST rather than assuming gateways expose a /status path.
         ...(!rest && {
@@ -65,7 +76,7 @@ async function verifyChainIdentity(
       },
     );
     if (!response.ok) {
-      await response.body?.cancel();
+      await cancelRejectedBody(response.body);
       throw new ManifestMCPError(
         ManifestMCPErrorCode.RPC_CONNECTION_FAILED,
         `${protocol} chain identity verification failed: HTTP ${response.status}.`,
@@ -83,7 +94,7 @@ async function verifyChainIdentity(
           if (done) break;
           bytes += value.byteLength;
           if (bytes > 65_536) {
-            await reader.cancel();
+            await cancelRejectedBody(reader);
             throw new ManifestMCPError(
               ManifestMCPErrorCode.INVALID_CONFIG,
               `${protocol} ${document} response exceeds the 64 KiB verification limit.`,
@@ -124,9 +135,15 @@ async function verifyChainIdentity(
       );
     }
   } catch (error) {
-    if (signal.aborted) {
-      // Native timeout/AbortError prose differs across fetch and body reads. Normalize the
-      // helper's own deadline so the existing connection retry policy handles both phases.
+    if (
+      signal.aborted &&
+      !(error instanceof ManifestMCPError) &&
+      (error === signal.reason ||
+        (error instanceof Error &&
+          (error.name === 'AbortError' || error.name === 'TimeoutError')))
+    ) {
+      // Fetch may reject with the signal's reason while a response stream reports AbortError.
+      // Preserve unrelated failures and validation verdicts even when a transport ignores abort.
       throw new ManifestMCPError(
         ManifestMCPErrorCode.RPC_CONNECTION_FAILED,
         `${protocol} chain identity verification timed out.`,

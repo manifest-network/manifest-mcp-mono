@@ -145,7 +145,7 @@ src/
 
 Key features:
 - Lazy initialization with promise-based concurrency control (multiple callers wait for the same init)
-- Token-bucket rate limiting (default: 10 requests/sec via `limiter`), acquired by callers before chain calls
+- Token-bucket rate limiting (default: 10 requests/sec via `limiter`), acquired by callers before metered chain operations. Connection initialization, including identity preflights, is outside `rateLimit.requestsPerSecond`; its retries are bounded by `config.retry`. Reuse clients to avoid repeated initialization traffic.
 - Automatic retry with exponential backoff (base 1s, max 10s, 3 retries) on transient failures (network errors, HTTP 5xx, 429); permanent errors (`INVALID_CONFIG`, `WALLET_NOT_CONNECTED`, `WALLET_CONNECTION_FAILED`, `INVALID_MNEMONIC`, `INVALID_ADDRESS`, `INVALID_ARGUMENT`, `UNSUPPORTED_QUERY`, `UNSUPPORTED_TX`, `UNKNOWN_MODULE`, `TX_FAILED`, `OPERATION_CANCELLED`, `SKU_AMBIGUOUS`) are not retried
 - Retry policy has exactly ONE owner per operation: `getQueryClient` / `getSigningClient` retry the *connect* internally, so `cosmos.ts` and `executeTx` acquire the client **outside** their own `withRetry`, which then covers only the query/broadcast leg. Nesting the two ladders multiplies attempts (4 x 4 x 5 namespace clients = 77 connects / ~35s on a dead RPC) and is guarded by unit tests plus an elapsed-time bound in `e2e/retry.e2e.test.ts` (ENG-679)
 - Immutable ownership: a new wallet, policy or chain-identity transport receives an independent manager; value-equal compatible holders share an instance. Caller mutation cannot change a pending transaction policy. All managers on the same chain coordinate account broadcasts and pending sequences.

@@ -27,6 +27,120 @@ describe.each([
     document: { default_node_info: { network: CHAIN_ID } },
   },
 ])('$protocol identity response bounds', ({ verify, document }) => {
+  it('preserves a late chain mismatch after an injected transport ignores the deadline', async () => {
+    const deadline = new AbortController();
+    deadline.abort(new DOMException('Deadline elapsed', 'TimeoutError'));
+    vi.spyOn(AbortSignal, 'timeout').mockReturnValue(deadline.signal);
+    const fetch = vi.fn<typeof globalThis.fetch>(
+      async () =>
+        new Response(JSON.stringify(document).replace(CHAIN_ID, 'wrong-chain')),
+    );
+    await expect(verify(URL, CHAIN_ID, fetch)).rejects.toMatchObject({
+      code: ManifestMCPErrorCode.INVALID_CONFIG,
+      details: { expectedChainId: CHAIN_ID, actualChainId: 'wrong-chain' },
+    });
+  });
+
+  it('preserves a late size-limit verdict after an injected transport ignores the deadline', async () => {
+    const deadline = new AbortController();
+    deadline.abort(new DOMException('Deadline elapsed', 'TimeoutError'));
+    vi.spyOn(AbortSignal, 'timeout').mockReturnValue(deadline.signal);
+    const fetch = vi.fn<typeof globalThis.fetch>(
+      async () => new Response('x'.repeat(65_537)),
+    );
+    await expect(verify(URL, CHAIN_ID, fetch)).rejects.toMatchObject({
+      code: ManifestMCPErrorCode.INVALID_CONFIG,
+      message: expect.stringContaining('64 KiB'),
+    });
+  });
+
+  it('preserves HTTP 502 classification when response cancellation rejects', async () => {
+    const cancel = vi.fn(async () => {
+      throw new Error('cleanup failed');
+    });
+    const response = new Response(new ReadableStream<Uint8Array>({ cancel }), {
+      status: 502,
+    });
+    const fetch = vi.fn<typeof globalThis.fetch>(async () => response);
+    await expect(verify(URL, CHAIN_ID, fetch)).rejects.toMatchObject({
+      code: ManifestMCPErrorCode.RPC_CONNECTION_FAILED,
+      message: expect.stringContaining('HTTP 502'),
+    });
+    expect(cancel).toHaveBeenCalledOnce();
+  });
+
+  it('preserves the size-limit verdict when reader cancellation rejects', async () => {
+    const cancel = vi.fn(async () => {
+      throw new Error('cleanup failed');
+    });
+    const response = new Response(
+      new ReadableStream<Uint8Array>({
+        start(stream) {
+          stream.enqueue(new Uint8Array(65_537));
+        },
+        cancel,
+      }),
+    );
+    const fetch = vi.fn<typeof globalThis.fetch>(async () => response);
+    await expect(verify(URL, CHAIN_ID, fetch)).rejects.toMatchObject({
+      code: ManifestMCPErrorCode.INVALID_CONFIG,
+      message: expect.stringContaining('64 KiB'),
+    });
+    expect(cancel).toHaveBeenCalledOnce();
+    expect(response.body?.locked).toBe(false);
+  });
+
+  it.each(['fetch', 'body'] as const)(
+    'preserves an unrelated late TypeError during %s',
+    async (phase) => {
+      const deadline = new AbortController();
+      deadline.abort(new DOMException('Deadline elapsed', 'TimeoutError'));
+      vi.spyOn(AbortSignal, 'timeout').mockReturnValue(deadline.signal);
+      const unrelated = new TypeError('Custom transport invariant failed');
+      let response: Response | undefined;
+      const fetch = vi.fn<typeof globalThis.fetch>(async () => {
+        if (phase === 'fetch') throw unrelated;
+        response = new Response(
+          new ReadableStream<Uint8Array>({
+            start(stream) {
+              stream.error(unrelated);
+            },
+          }),
+        );
+        return response;
+      });
+      await expect(verify(URL, CHAIN_ID, fetch)).rejects.toBe(unrelated);
+      if (response) expect(response.body?.locked).toBe(false);
+    },
+  );
+
+  it('does not attribute an unrelated AbortError to a deadline that has not elapsed', async () => {
+    const deadline = new AbortController();
+    vi.spyOn(AbortSignal, 'timeout').mockReturnValue(deadline.signal);
+    const unrelated = new DOMException(
+      'Transport independently aborted',
+      'AbortError',
+    );
+    const fetch = vi.fn<typeof globalThis.fetch>(async () => {
+      throw unrelated;
+    });
+    await expect(verify(URL, CHAIN_ID, fetch)).rejects.toBe(unrelated);
+  });
+
+  it('normalizes the deadline reason even when its error name is not an abort name', async () => {
+    const deadline = new AbortController();
+    const reason = new Error('Custom deadline reason');
+    deadline.abort(reason);
+    vi.spyOn(AbortSignal, 'timeout').mockReturnValue(deadline.signal);
+    const fetch = vi.fn<typeof globalThis.fetch>(async (_input, init) => {
+      throw init?.signal?.reason;
+    });
+    await expect(verify(URL, CHAIN_ID, fetch)).rejects.toMatchObject({
+      code: ManifestMCPErrorCode.RPC_CONNECTION_FAILED,
+      message: expect.stringContaining('timed out'),
+    });
+  });
+
   it('accepts a complete valid response exactly at the 64 KiB byte limit', async () => {
     const json = JSON.stringify(document);
     const body = json.padEnd(65_536, ' ');
@@ -121,7 +235,7 @@ describe.each([
     await rejected;
   });
 
-  it('releases the reader when the deadline interrupts response streaming', async () => {
+  it('normalizes a body AbortError distinct from the deadline reason and releases the reader', async () => {
     const controller = new AbortController();
     vi.spyOn(AbortSignal, 'timeout').mockReturnValue(controller.signal);
     let response: Response | undefined;
@@ -136,7 +250,10 @@ describe.each([
             stream.enqueue(encoder.encode('{'));
             init?.signal?.addEventListener(
               'abort',
-              () => stream.error(init.signal?.reason),
+              () =>
+                stream.error(
+                  new DOMException('The operation was aborted', 'AbortError'),
+                ),
               { once: true },
             );
           },

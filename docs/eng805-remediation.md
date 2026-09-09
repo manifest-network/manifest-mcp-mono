@@ -190,3 +190,30 @@ Live validation of this follow-up is left to the PR acceptance workflow, whose
 public SDK flow uses an RPC-only query configuration. The original batch's
 successful live checks do not validate this additional change. The tracker stays
 open for its broader dependency, coverage, compiler and simplification work.
+
+### PR 224 review amendment
+
+Further review confirmed two error-preservation bugs (confidence 100% each).
+A deadline that elapsed before an identity verdict could replace a permanent
+mismatch or response-size error with a retryable timeout. Separately, a rejecting
+response-body cancellation could replace the HTTP-status or response-size error.
+Both paths now preserve the established verdict and its retry classification.
+
+The review also confirmed intentional compatibility policies: configure canonical
+RPC URLs because identity requests reject redirects; JSON-RPC success must omit
+`error`; the fixed ID checks correspondence, without freshness or authentication;
+and initialization is outside the operation token bucket, with retries bounded by
+configuration. The [client guide](library-usage.md) documents these decisions and
+recommends client reuse.
+
+Validation for this amendment: all 129 focused tests pass, including 21 new
+regressions; eight direct cases were confirmed failing before the fix. Full V8
+coverage passes 3,693 tests with 17 existing skips across 171 files and no type
+errors: 84.41% lines, 84.1% statements, 83.62% branches and 88% functions, above all
+configured thresholds. Workspace builds, workspace/E2E TypeScript, Biome, all
+nine package-integrity checks and all four unchanged bundle budgets pass.
+Independent review found no remaining blocker in these fixes (confidence 98%).
+
+The initial PR acceptance run failed during the Docker build because a Go
+checksum-database download returned an HTTP/2 internal error; acceptance tests
+never started. Live acceptance of the updated PR remains pending.

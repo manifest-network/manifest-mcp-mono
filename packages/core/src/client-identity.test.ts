@@ -669,6 +669,91 @@ describe('RPC-only public query identity', () => {
     for (const factory of rpc.factories) expect(factory).toHaveBeenCalledOnce();
   });
 
+  it.each([
+    'late mismatch',
+    'late oversize',
+    'oversize cleanup rejection',
+  ] as const)(
+    'never retries an identity rejection caused by %s',
+    async (failure) => {
+      if (failure !== 'oversize cleanup rejection') {
+        const deadline = new AbortController();
+        deadline.abort(new DOMException('Deadline elapsed', 'TimeoutError'));
+        vi.spyOn(AbortSignal, 'timeout').mockReturnValueOnce(deadline.signal);
+      }
+      const identityFetch = rpcFetch().mockImplementationOnce(async () => {
+        if (failure === 'late mismatch')
+          return Response.json(rpcStatus('wrong-chain'));
+        return new Response(
+          new ReadableStream<Uint8Array>({
+            start(stream) {
+              stream.enqueue(new Uint8Array(65_537));
+            },
+            cancel() {
+              if (failure === 'oversize cleanup rejection')
+                throw new TypeError('fetch failed');
+            },
+          }),
+        );
+      });
+      await expect(
+        createManifestReadClient({
+          config: {
+            ...rpcConfig,
+            retry: { maxRetries: 1, baseDelayMs: 1, maxDelayMs: 1 },
+          },
+          chainIdentityFetch: identityFetch,
+        }),
+      ).rejects.toMatchObject({ code: ManifestMCPErrorCode.INVALID_CONFIG });
+      expect(identityFetch).toHaveBeenCalledOnce();
+      for (const factory of rpc.factories)
+        expect(factory).not.toHaveBeenCalled();
+    },
+  );
+
+  it('does not turn an unrelated late transport error into a retryable deadline', async () => {
+    const deadline = new AbortController();
+    deadline.abort(new DOMException('Deadline elapsed', 'TimeoutError'));
+    vi.spyOn(AbortSignal, 'timeout').mockReturnValueOnce(deadline.signal);
+    const identityFetch = rpcFetch().mockRejectedValueOnce(
+      new TypeError('Custom transport invariant failed'),
+    );
+    await expect(
+      createManifestReadClient({
+        config: {
+          ...rpcConfig,
+          retry: { maxRetries: 1, baseDelayMs: 1, maxDelayMs: 1 },
+        },
+        chainIdentityFetch: identityFetch,
+      }),
+    ).rejects.toMatchObject({
+      code: ManifestMCPErrorCode.RPC_CONNECTION_FAILED,
+      message: expect.stringContaining('Custom transport invariant failed'),
+    });
+    expect(identityFetch).toHaveBeenCalledOnce();
+    for (const factory of rpc.factories) expect(factory).not.toHaveBeenCalled();
+  });
+
+  it('retries HTTP 502 when discarding its response body rejects', async () => {
+    const cancel = vi.fn(async () => {
+      throw new Error('cleanup failed');
+    });
+    const identityFetch = rpcFetch().mockResolvedValueOnce(
+      new Response(new ReadableStream<Uint8Array>({ cancel }), { status: 502 }),
+    );
+    const client = await createManifestReadClient({
+      config: {
+        ...rpcConfig,
+        retry: { maxRetries: 1, baseDelayMs: 1, maxDelayMs: 1 },
+      },
+      chainIdentityFetch: identityFetch,
+    });
+    expect(cancel).toHaveBeenCalledOnce();
+    expect(identityFetch).toHaveBeenCalledTimes(2);
+    for (const factory of rpc.factories) expect(factory).toHaveBeenCalledOnce();
+    client.dispose();
+  });
+
   it.each(['fetch', 'body'] as const)(
     'retries an identity deadline reached during %s before exposing queries',
     async (phase) => {
@@ -696,7 +781,13 @@ describe('RPC-only public query identity', () => {
                 start(stream) {
                   init?.signal?.addEventListener(
                     'abort',
-                    () => stream.error(init.signal?.reason),
+                    () =>
+                      stream.error(
+                        new DOMException(
+                          'The operation was aborted',
+                          'AbortError',
+                        ),
+                      ),
                     { once: true },
                   );
                 },
