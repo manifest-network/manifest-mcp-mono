@@ -142,3 +142,78 @@ dependency installations/caches were removed, preserving reports and lockfiles.
 Final runs use a disk-backed temporary directory outside the repository. An earlier
 architecture probe also hit its 30-second subprocess limit; a bounded 60-second
 limit passes both its isolated V8 test and the final full suite.
+
+## RPC-only query identity follow-up (2026-09-09)
+
+Baseline: `83424ee`; branch: `codex/eng-805-rpc-query-identity`. The original F04
+finding concerned identity before signing; the first batch also verified REST
+queries. This follow-up adds verification to RPC-only query initialization.
+
+Before each RPC query construction attempt, including retries and replacements,
+the manager sends a JSON-RPC `status` POST to the exact configured `rpcUrl`,
+preserving its path and query string. It validates the response envelope and ID,
+then requires `result.node_info.network` to match `chainId`. The existing
+`chainIdentityFetch` supplies this request independently from provider HTTP;
+responses are limited to 64 KiB and 10 seconds, with redirects rejected. Cached
+query reuse adds no request. REST remains preferred when configured, and the
+existing signing connection checks remain active.
+
+Independent review caught a timeout retry gap (confidence 99%): native
+`TimeoutError` prose did not match the connection retry classifier. The shared
+helper now normalizes its own deadline failures during both fetch and response
+streaming to a retryable connection error. Focused regressions cover both phases
+without changing the global retry policy.
+
+The [CometBFT RPC specification](https://docs.cosmos.network/cometbft/v0.38/spec/rpc/Rpc-Spe)
+documents the JSON-RPC POST form of `status`; its
+[status response](https://docs.cosmos.network/cometbft/v0.38/api-reference/rpc/info/status)
+includes `node_info.network`. Installed CosmJS `rpcclients/httpclient.js` likewise
+POSTs JSON-RPC requests to the supplied URL. Generated query factories hide their
+Comet clients, so this separate preflight detects configuration mistakes; it does
+not guarantee the identity of later requests through a dishonest endpoint or a
+load balancer that routes requests to different chains.
+
+Follow-up validation on September 9:
+
+- The public RPC mismatch regression failed before the guard was inserted.
+- All 108 focused client, lifecycle and identity-bound tests pass. Independent
+  review confirmed the timeout correction and found no remaining actionable
+  issue in this scope (confidence 99%).
+- The complete V8 suite passes: 3,672 tests, 17 existing skips, 171 files, no type
+  errors. Coverage is 84.4% lines, 84.09% statements, 83.6% branches and 87.99%
+  functions; all global and scoped thresholds pass.
+- Workspace builds, workspace/E2E TypeScript checks, Biome and all nine package
+  integrity checks pass. All four unchanged bundle budgets pass; the root client
+  retains 3.79 kB of headroom.
+
+Live validation of this follow-up is left to the PR acceptance workflow, whose
+public SDK flow uses an RPC-only query configuration. The original batch's
+successful live checks do not validate this additional change. The tracker stays
+open for its broader dependency, coverage, compiler and simplification work.
+
+### PR 224 review amendment
+
+Further review confirmed two error-preservation bugs (confidence 100% each).
+A deadline that elapsed before an identity verdict could replace a permanent
+mismatch or response-size error with a retryable timeout. Separately, a rejecting
+response-body cancellation could replace the HTTP-status or response-size error.
+Both paths now preserve the established verdict and its retry classification.
+
+The review also confirmed intentional compatibility policies: configure canonical
+RPC URLs because identity requests reject redirects; JSON-RPC success must omit
+`error`; the fixed ID checks correspondence, without freshness or authentication;
+and initialization is outside the operation token bucket, with retries bounded by
+configuration. The [client guide](library-usage.md) documents these decisions and
+recommends client reuse.
+
+Validation for this amendment: all 129 focused tests pass, including 21 new
+regressions; eight direct cases were confirmed failing before the fix. Full V8
+coverage passes 3,693 tests with 17 existing skips across 171 files and no type
+errors: 84.41% lines, 84.1% statements, 83.62% branches and 88% functions, above all
+configured thresholds. Workspace builds, workspace/E2E TypeScript, Biome, all
+nine package-integrity checks and all four unchanged bundle budgets pass.
+Independent review found no remaining blocker in these fixes (confidence 98%).
+
+The initial PR acceptance run failed during the Docker build because a Go
+checksum-database download returned an HTTP/2 internal error; acceptance tests
+never started. Live acceptance of the updated PR remains pending.

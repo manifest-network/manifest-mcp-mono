@@ -1,6 +1,11 @@
 import { toBech32 } from '@cosmjs/encoding';
 import type { OfflineSigner } from '@cosmjs/proto-signing';
 import { SigningStargateClient } from '@cosmjs/stargate';
+import { cosmwasm } from '@manifest-network/manifestjs/dist/codegen/cosmwasm/bundle.js';
+import { ibc } from '@manifest-network/manifestjs/dist/codegen/ibc/bundle.js';
+import { liftedinit } from '@manifest-network/manifestjs/dist/codegen/liftedinit/bundle.js';
+import { osmosis } from '@manifest-network/manifestjs/dist/codegen/osmosis/bundle.js';
+import { strangelove_ventures } from '@manifest-network/manifestjs/dist/codegen/strangelove_ventures/bundle.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { CosmosClientManager } from './client.js';
 import { createManifestReadClient } from './client-factory.js';
@@ -66,6 +71,60 @@ function chainFetch(chainId = CHAIN_ID) {
       default_node_info: { network: chainId },
     }),
   );
+}
+
+function rpcStatus(chainId = CHAIN_ID) {
+  return {
+    jsonrpc: '2.0',
+    id: 'manifest-chain-identity',
+    result: { node_info: { network: chainId } },
+  };
+}
+
+function rpcFetch(chainId = CHAIN_ID) {
+  return vi.fn<typeof globalThis.fetch>(async () =>
+    Response.json(rpcStatus(chainId)),
+  );
+}
+
+function stubRpcFactories() {
+  const balance = vi.fn(async () => ({
+    balance: { denom: 'umfx', amount: '42' },
+  }));
+  // Replace transport construction only; the public clients and identity/retry
+  // lifecycle run unchanged. Minimal module fixtures keep every query off the wire.
+  const factories = [
+    vi
+      .spyOn(liftedinit.ClientFactory, 'createRPCQueryClient')
+      .mockResolvedValue({
+        cosmos: { bank: { v1beta1: { balance } } },
+      } as unknown as Awaited<
+        ReturnType<typeof liftedinit.ClientFactory.createRPCQueryClient>
+      >),
+    vi.spyOn(cosmwasm.ClientFactory, 'createRPCQueryClient').mockResolvedValue({
+      cosmwasm: {},
+    } as Awaited<
+      ReturnType<typeof cosmwasm.ClientFactory.createRPCQueryClient>
+    >),
+    vi
+      .spyOn(strangelove_ventures.ClientFactory, 'createRPCQueryClient')
+      .mockResolvedValue({
+        strangelove_ventures: {},
+      } as Awaited<
+        ReturnType<
+          typeof strangelove_ventures.ClientFactory.createRPCQueryClient
+        >
+      >),
+    vi.spyOn(osmosis.ClientFactory, 'createRPCQueryClient').mockResolvedValue({
+      osmosis: {},
+    } as Awaited<
+      ReturnType<typeof osmosis.ClientFactory.createRPCQueryClient>
+    >),
+    vi.spyOn(ibc.ClientFactory, 'createRPCQueryClient').mockResolvedValue({
+      ibc: {},
+    } as Awaited<ReturnType<typeof ibc.ClientFactory.createRPCQueryClient>>),
+  ];
+  return { factories, balance };
 }
 
 beforeEach(() => CosmosClientManager.clearInstances());
@@ -225,6 +284,40 @@ describe('public client ownership', () => {
 });
 
 describe('endpoint chain identity', () => {
+  it('rejects a mismatched RPC-only read endpoint before constructing any query namespace', async () => {
+    const factories = [
+      liftedinit.ClientFactory,
+      cosmwasm.ClientFactory,
+      strangelove_ventures.ClientFactory,
+      osmosis.ClientFactory,
+      ibc.ClientFactory,
+    ].map((factory) =>
+      vi
+        .spyOn(factory, 'createRPCQueryClient')
+        .mockRejectedValue(
+          new Error('Query factory must not run before identity validation'),
+        ),
+    );
+    const identityFetch = vi.fn<typeof globalThis.fetch>(async () =>
+      Response.json({
+        jsonrpc: '2.0',
+        id: 'manifest-chain-identity',
+        result: { node_info: { network: 'wrong-chain' } },
+      }),
+    );
+    await expect(
+      createManifestReadClient({
+        config: { ...CONFIG, restUrl: undefined },
+        chainIdentityFetch: identityFetch,
+      }),
+    ).rejects.toMatchObject({
+      code: ManifestMCPErrorCode.INVALID_CONFIG,
+      details: { expectedChainId: CHAIN_ID, actualChainId: 'wrong-chain' },
+    });
+    expect(identityFetch).toHaveBeenCalledOnce();
+    for (const factory of factories) expect(factory).not.toHaveBeenCalled();
+  });
+
   it('uses the captured platform transport for a trusted local chain independently of provider fetch', async () => {
     const identityFetch = chainFetch();
     const providerFetch = vi.fn<typeof globalThis.fetch>(async () => {
@@ -362,4 +455,411 @@ describe('endpoint chain identity', () => {
       ).rejects.toMatchObject({ code });
     },
   );
+});
+
+describe('RPC-only public query identity', () => {
+  const rpcConfig = { ...CONFIG, restUrl: undefined };
+  let rpc: ReturnType<typeof stubRpcFactories>;
+
+  beforeEach(() => {
+    rpc = stubRpcFactories();
+  });
+
+  it('verifies the exact gateway URL, exposes working queries, and reuses the verified cache', async () => {
+    const rpcUrl = 'https://rpc.example.com/gateway/v1?tenant=example';
+    const identityFetch = rpcFetch();
+    const providerFetch = vi.fn<typeof globalThis.fetch>();
+    const client = await createManifestReadClient({
+      config: { ...rpcConfig, rpcUrl },
+      chainIdentityFetch: identityFetch,
+      fetch: providerFetch,
+    });
+    expect(identityFetch).toHaveBeenCalledOnce();
+    expect(identityFetch).toHaveBeenCalledWith(rpcUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 'manifest-chain-identity',
+        method: 'status',
+        params: {},
+      }),
+      redirect: 'error',
+      signal: expect.any(AbortSignal),
+    });
+    for (const factory of rpc.factories) {
+      expect(factory).toHaveBeenCalledOnce();
+      expect(factory).toHaveBeenCalledWith({ rpcEndpoint: rpcUrl });
+    }
+    await expect(
+      client.query.cosmos.bank.v1beta1.balance({
+        address: ADDRESS_A,
+        denom: 'umfx',
+      }),
+    ).resolves.toEqual({ balance: { denom: 'umfx', amount: '42' } });
+    await expect(client.chain.getQueryClient()).resolves.toBe(client.query);
+    expect(identityFetch).toHaveBeenCalledOnce();
+    expect(providerFetch).not.toHaveBeenCalled();
+    await expect(client.chain.getSigningClient()).rejects.toMatchObject({
+      code: ManifestMCPErrorCode.INVALID_CONFIG,
+    });
+    client.dispose();
+  });
+
+  it.each([
+    ['missing network', { ...rpcStatus(), result: { node_info: {} } }],
+    ['empty network', rpcStatus('')],
+    ['overlong network', rpcStatus('x'.repeat(257))],
+    [
+      'non-string network',
+      { ...rpcStatus(), result: { node_info: { network: 1 } } },
+    ],
+    ['missing result', { jsonrpc: '2.0', id: 'manifest-chain-identity' }],
+    ['wrong protocol version', { ...rpcStatus(), jsonrpc: '1.0' }],
+    [
+      'missing protocol version',
+      { id: 'manifest-chain-identity', result: rpcStatus().result },
+    ],
+    ['wrong request id', { ...rpcStatus(), id: 'different-request' }],
+    ['missing request id', { jsonrpc: '2.0', result: rpcStatus().result }],
+    [
+      'RPC error',
+      { ...rpcStatus(), error: { code: -32603, message: 'unavailable' } },
+    ],
+    ['null RPC error', { ...rpcStatus(), error: null }],
+  ])('rejects %s before creating query namespaces', async (_name, response) => {
+    await expect(
+      createManifestReadClient({
+        config: rpcConfig,
+        chainIdentityFetch: vi.fn(async () => Response.json(response)),
+      }),
+    ).rejects.toMatchObject({ code: ManifestMCPErrorCode.INVALID_CONFIG });
+    for (const factory of rpc.factories) expect(factory).not.toHaveBeenCalled();
+  });
+
+  it('rejects non-JSON status without constructing queries', async () => {
+    await expect(
+      createManifestReadClient({
+        config: rpcConfig,
+        chainIdentityFetch: vi.fn(
+          async () => new Response('<html>not a node</html>'),
+        ),
+      }),
+    ).rejects.toMatchObject({ code: ManifestMCPErrorCode.INVALID_CONFIG });
+    for (const factory of rpc.factories) expect(factory).not.toHaveBeenCalled();
+  });
+
+  it.each([401, 503])(
+    'fails closed on HTTP %i from the status endpoint',
+    async (status) => {
+      await expect(
+        createManifestReadClient({
+          config: rpcConfig,
+          chainIdentityFetch: vi.fn(async () => new Response(null, { status })),
+        }),
+      ).rejects.toMatchObject({
+        code: ManifestMCPErrorCode.RPC_CONNECTION_FAILED,
+      });
+      for (const factory of rpc.factories)
+        expect(factory).not.toHaveBeenCalled();
+    },
+  );
+
+  it('fails closed on transport rejection without constructing queries', async () => {
+    await expect(
+      createManifestReadClient({
+        config: rpcConfig,
+        chainIdentityFetch: vi.fn(async () => {
+          throw new TypeError('fetch failed');
+        }),
+      }),
+    ).rejects.toMatchObject({
+      code: ManifestMCPErrorCode.RPC_CONNECTION_FAILED,
+    });
+    for (const factory of rpc.factories) expect(factory).not.toHaveBeenCalled();
+  });
+
+  it('shares a pending identity verification across compatible public clients', async () => {
+    let resolveIdentity!: (response: Response) => void;
+    const identityFetch = vi.fn<typeof globalThis.fetch>(
+      () =>
+        new Promise((resolve) => {
+          resolveIdentity = resolve;
+        }),
+    );
+    const opts = {
+      config: rpcConfig,
+      walletProvider: wallet(ADDRESS_A),
+      chainIdentityFetch: identityFetch,
+    };
+    const first = createManifestClient(opts);
+    const second = createManifestClient(opts);
+    expect(identityFetch).toHaveBeenCalledOnce();
+    for (const factory of rpc.factories) expect(factory).not.toHaveBeenCalled();
+    resolveIdentity(Response.json(rpcStatus()));
+    const [a, b] = await Promise.all([first, second]);
+    expect(a.chain).toBe(b.chain);
+    expect(a.query).toBe(b.query);
+    for (const factory of rpc.factories) expect(factory).toHaveBeenCalledOnce();
+    a.dispose();
+    await expect(b.chain.getQueryClient()).resolves.toBe(b.query);
+    expect(identityFetch).toHaveBeenCalledOnce();
+    b.dispose();
+  });
+
+  it('revalidates a replacement and can recover after its identity check fails', async () => {
+    const identityFetch = rpcFetch();
+    const opts = {
+      config: rpcConfig,
+      walletProvider: wallet(ADDRESS_A),
+      chainIdentityFetch: identityFetch,
+    };
+    const original = await createManifestClient(opts);
+    original.dispose();
+    identityFetch.mockResolvedValueOnce(
+      Response.json(rpcStatus('replaced-chain')),
+    );
+    await expect(createManifestClient(opts)).rejects.toMatchObject({
+      code: ManifestMCPErrorCode.INVALID_CONFIG,
+      details: { actualChainId: 'replaced-chain' },
+    });
+    for (const factory of rpc.factories) expect(factory).toHaveBeenCalledOnce();
+    const recovered = await createManifestClient(opts);
+    expect(recovered.chain).not.toBe(original.chain);
+    expect(identityFetch).toHaveBeenCalledTimes(3);
+    for (const factory of rpc.factories)
+      expect(factory).toHaveBeenCalledTimes(2);
+    recovered.dispose();
+  });
+
+  it('retries transient identity failures before initializing namespaces', async () => {
+    const identityFetch = rpcFetch().mockRejectedValueOnce(
+      new TypeError('fetch failed'),
+    );
+    const client = await createManifestReadClient({
+      config: {
+        ...rpcConfig,
+        retry: { maxRetries: 1, baseDelayMs: 1, maxDelayMs: 1 },
+      },
+      chainIdentityFetch: identityFetch,
+    });
+    expect(identityFetch).toHaveBeenCalledTimes(2);
+    for (const factory of rpc.factories) expect(factory).toHaveBeenCalledOnce();
+    client.dispose();
+  });
+
+  it('rechecks identity before retrying failed namespace initialization', async () => {
+    rpc.factories[0].mockRejectedValueOnce(new TypeError('fetch failed'));
+    const identityFetch = rpcFetch()
+      .mockResolvedValueOnce(Response.json(rpcStatus()))
+      .mockResolvedValueOnce(Response.json(rpcStatus('changed-on-retry')));
+    await expect(
+      createManifestReadClient({
+        config: {
+          ...rpcConfig,
+          retry: { maxRetries: 1, baseDelayMs: 1, maxDelayMs: 1 },
+        },
+        chainIdentityFetch: identityFetch,
+      }),
+    ).rejects.toMatchObject({
+      code: ManifestMCPErrorCode.INVALID_CONFIG,
+      details: { actualChainId: 'changed-on-retry' },
+    });
+    expect(identityFetch).toHaveBeenCalledTimes(2);
+    for (const factory of rpc.factories) expect(factory).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    'late mismatch',
+    'late oversize',
+    'oversize cleanup rejection',
+  ] as const)(
+    'never retries an identity rejection caused by %s',
+    async (failure) => {
+      if (failure !== 'oversize cleanup rejection') {
+        const deadline = new AbortController();
+        deadline.abort(new DOMException('Deadline elapsed', 'TimeoutError'));
+        vi.spyOn(AbortSignal, 'timeout').mockReturnValueOnce(deadline.signal);
+      }
+      const identityFetch = rpcFetch().mockImplementationOnce(async () => {
+        if (failure === 'late mismatch')
+          return Response.json(rpcStatus('wrong-chain'));
+        return new Response(
+          new ReadableStream<Uint8Array>({
+            start(stream) {
+              stream.enqueue(new Uint8Array(65_537));
+            },
+            cancel() {
+              if (failure === 'oversize cleanup rejection')
+                throw new TypeError('fetch failed');
+            },
+          }),
+        );
+      });
+      await expect(
+        createManifestReadClient({
+          config: {
+            ...rpcConfig,
+            retry: { maxRetries: 1, baseDelayMs: 1, maxDelayMs: 1 },
+          },
+          chainIdentityFetch: identityFetch,
+        }),
+      ).rejects.toMatchObject({ code: ManifestMCPErrorCode.INVALID_CONFIG });
+      expect(identityFetch).toHaveBeenCalledOnce();
+      for (const factory of rpc.factories)
+        expect(factory).not.toHaveBeenCalled();
+    },
+  );
+
+  it('does not turn an unrelated late transport error into a retryable deadline', async () => {
+    const deadline = new AbortController();
+    deadline.abort(new DOMException('Deadline elapsed', 'TimeoutError'));
+    vi.spyOn(AbortSignal, 'timeout').mockReturnValueOnce(deadline.signal);
+    const identityFetch = rpcFetch().mockRejectedValueOnce(
+      new TypeError('Custom transport invariant failed'),
+    );
+    await expect(
+      createManifestReadClient({
+        config: {
+          ...rpcConfig,
+          retry: { maxRetries: 1, baseDelayMs: 1, maxDelayMs: 1 },
+        },
+        chainIdentityFetch: identityFetch,
+      }),
+    ).rejects.toMatchObject({
+      code: ManifestMCPErrorCode.RPC_CONNECTION_FAILED,
+      message: expect.stringContaining('Custom transport invariant failed'),
+    });
+    expect(identityFetch).toHaveBeenCalledOnce();
+    for (const factory of rpc.factories) expect(factory).not.toHaveBeenCalled();
+  });
+
+  it('retries HTTP 502 when discarding its response body rejects', async () => {
+    const cancel = vi.fn(async () => {
+      throw new Error('cleanup failed');
+    });
+    const identityFetch = rpcFetch().mockResolvedValueOnce(
+      new Response(new ReadableStream<Uint8Array>({ cancel }), { status: 502 }),
+    );
+    const client = await createManifestReadClient({
+      config: {
+        ...rpcConfig,
+        retry: { maxRetries: 1, baseDelayMs: 1, maxDelayMs: 1 },
+      },
+      chainIdentityFetch: identityFetch,
+    });
+    expect(cancel).toHaveBeenCalledOnce();
+    expect(identityFetch).toHaveBeenCalledTimes(2);
+    for (const factory of rpc.factories) expect(factory).toHaveBeenCalledOnce();
+    client.dispose();
+  });
+
+  it.each(['fetch', 'body'] as const)(
+    'retries an identity deadline reached during %s before exposing queries',
+    async (phase) => {
+      const deadline = new AbortController();
+      vi.spyOn(AbortSignal, 'timeout').mockReturnValueOnce(deadline.signal);
+      let started!: () => void;
+      const pending = new Promise<void>((resolve) => {
+        started = resolve;
+      });
+      const identityFetch = rpcFetch().mockImplementationOnce(
+        async (_input, init) => {
+          if (phase === 'fetch') {
+            return new Promise((_resolve, reject) => {
+              init?.signal?.addEventListener(
+                'abort',
+                () => reject(init.signal?.reason),
+                { once: true },
+              );
+              started();
+            });
+          }
+          return new Response(
+            new ReadableStream<Uint8Array>(
+              {
+                start(stream) {
+                  init?.signal?.addEventListener(
+                    'abort',
+                    () =>
+                      stream.error(
+                        new DOMException(
+                          'The operation was aborted',
+                          'AbortError',
+                        ),
+                      ),
+                    { once: true },
+                  );
+                },
+                pull() {
+                  started();
+                },
+              },
+              { highWaterMark: 0 },
+            ),
+          );
+        },
+      );
+      const initializing = createManifestReadClient({
+        config: {
+          ...rpcConfig,
+          retry: { maxRetries: 1, baseDelayMs: 1, maxDelayMs: 1 },
+        },
+        chainIdentityFetch: identityFetch,
+      });
+      await pending;
+      for (const factory of rpc.factories)
+        expect(factory).not.toHaveBeenCalled();
+      // Native AbortSignal.timeout prose does not include "timed out"; it must still retry.
+      deadline.abort(
+        new DOMException(
+          'The operation was aborted due to timeout',
+          'TimeoutError',
+        ),
+      );
+      const client = await initializing;
+      expect(identityFetch).toHaveBeenCalledTimes(2);
+      for (const factory of rpc.factories)
+        expect(factory).toHaveBeenCalledOnce();
+      client.dispose();
+    },
+  );
+
+  it('prefers REST identity and LCD queries when both endpoints are configured', async () => {
+    const identityFetch = chainFetch();
+    const client = await createManifestReadClient({
+      config: CONFIG,
+      chainIdentityFetch: identityFetch,
+    });
+    expect(identityFetch).toHaveBeenCalledOnce();
+    expect(identityFetch).toHaveBeenCalledWith(
+      'https://rest.example.com/prefix/cosmos/base/tendermint/v1beta1/node_info',
+      expect.not.objectContaining({ method: 'POST' }),
+    );
+    for (const factory of rpc.factories) expect(factory).not.toHaveBeenCalled();
+    client.dispose();
+  });
+
+  it('still checks the actual signing connection after RPC query identity succeeds', async () => {
+    const wire = transport('different-signing-chain');
+    vi.spyOn(SigningStargateClient, 'connectWithSigner').mockResolvedValue(
+      wire as unknown as SigningStargateClient,
+    );
+    const identityFetch = rpcFetch();
+    const client = await createManifestClient({
+      config: rpcConfig,
+      walletProvider: wallet(ADDRESS_A),
+      chainIdentityFetch: identityFetch,
+    });
+    await expect(
+      client.executeTx([MESSAGE], { fee: FEE }),
+    ).rejects.toMatchObject({
+      code: ManifestMCPErrorCode.INVALID_CONFIG,
+      details: { actualChainId: 'different-signing-chain' },
+    });
+    expect(wire.disconnect).toHaveBeenCalledOnce();
+    expect(wire.signAndBroadcast).not.toHaveBeenCalled();
+    expect(identityFetch).toHaveBeenCalledOnce();
+    client.dispose();
+  });
 });

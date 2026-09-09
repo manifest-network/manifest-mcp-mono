@@ -48,10 +48,10 @@ interface BaseClientOptions {
    */
   fetch?: typeof globalThis.fetch;
   /**
-   * Transport for the configured REST endpoint's node-info identity check only. Defaults to the
-   * captured platform fetch. Kept separate from provider HTTP because operator-configured chain
-   * endpoints may use localhost/private networks. Generated LCD queries still use Axios, and RPC
-   * connections use CosmJS; this option does not configure either transport.
+   * Transport for query identity checks: REST node-info when restUrl is configured, otherwise RPC
+   * status. Defaults to the captured platform fetch. Kept separate from provider HTTP because
+   * operator-configured chain endpoints may use localhost/private networks. Generated LCD queries
+   * still use Axios, and RPC connections use CosmJS; this option does not configure either transport.
    */
   chainIdentityFetch?: typeof globalThis.fetch;
   /** Per-instance logging sink; defaults to the silent `noopLogger`. */
@@ -223,8 +223,8 @@ export async function buildClient(
  * @remarks
  * Each client owns its wallet and an immutable configuration snapshot. Compatible holders using
  * the same wallet, configuration, and chain-identity fetch references share cached transports; read and signing
- * clients may safely use the same endpoints. REST node-info must match `config.chainId` before
- * queries are exposed. Always `dispose()` each client to release its reference.
+ * clients may safely use the same endpoints. REST node-info or RPC status must match
+ * `config.chainId` before queries are exposed. Always `dispose()` each client to release its reference.
  */
 export async function createManifestReadClient(
   opts: ReadClientOptions,

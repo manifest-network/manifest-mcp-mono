@@ -56,3 +56,39 @@ External dependency remediation is documented in `docs/dependency-consumers.md`.
 The repository's release gate must continue to fail while an unmodified packed
 consumer still resolves high/critical advisories. A safe application-root override
 is an explicitly documented interim consumer action, not a published-library fix.
+
+## RPC-only query identity follow-up (2026-09-09)
+
+The original F04 scope was verification before signing, with REST query checks
+added in the first batch. Starting from `83424ee` on
+`codex/eng-805-rpc-query-identity`, extend verification to the RPC-only query path.
+
+- Before every RPC query initialization attempt, including retries, send a
+  JSON-RPC `status` POST to the exact configured `rpcUrl`, preserving path and
+  query string. Validate the envelope and matching response ID, then compare
+  `result.node_info.network` with `chainId` before invoking generated factories.
+- Use the existing `chainIdentityFetch` independently from provider `fetch`,
+  with a 64 KiB response cap, 10-second request deadline and no redirects. Keep
+  REST preference and existing signing checks. Cached query reuse performs no
+  new preflight; replacement attempts verify again.
+- Normalize the identity helper's own deadline failures during fetch and response
+  streaming so configured connection retries also cover native timeout errors.
+- Treat this as a configuration check. Generated factories hide their Comet
+  clients, so the separate status request cannot bind subsequent queries to the
+  verified node or establish honesty across changing load-balancer backends.
+
+The [official CometBFT RPC specification](https://docs.cosmos.network/cometbft/v0.38/spec/rpc/Rpc-Spe)
+documents JSON-RPC `status` over POST, and its
+[status response reference](https://docs.cosmos.network/cometbft/v0.38/api-reference/rpc/info/status)
+defines the network field. The installed CosmJS HTTP client uses POST to the
+configured URL, supporting gateways whose RPC endpoint has a path or query.
+
+Validation completed: 108 focused tests cover matching/mismatched identity,
+envelope/ID and response bounds, exact endpoint preservation, query caching,
+retry/replacement verification, REST preference, separate provider transport and
+deadline retries. The complete coverage run passes 3,672 tests with 17 existing
+skips across 171 files. Workspace builds, workspace/E2E TypeScript, Biome, all
+nine package integrity checks and all four bundle budgets pass. Independent
+review confirmed the timeout correction (confidence 99%). Live validation of
+the new RPC path remains for the PR acceptance workflow; retain the broader
+ENG-805 follow-ups.

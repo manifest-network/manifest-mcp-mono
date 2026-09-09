@@ -39,8 +39,9 @@ export interface ManifestClient extends ManifestReadClient, CapabilityCtx {
  * Each client retains its wallet and immutable transaction policy. Compatible holders using the
  * same wallet, configuration, and chain-identity fetch references share cached transports; other clients remain
  * independent. Broadcast sequencing is shared by chain ID and account even across RPC endpoints.
- * RPC chain identity is verified before exposing a signing connection, and configured REST
- * identity is verified before queries are exposed. Always `dispose()` each client.
+ * RPC chain identity is verified before exposing a signing connection. Query identity is verified
+ * through REST node-info when configured, otherwise RPC status, before queries are exposed.
+ * Always `dispose()` each client.
  */
 export async function createManifestClient(
   opts: FullClientOptions,
