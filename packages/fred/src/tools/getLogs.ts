@@ -1,3 +1,4 @@
+import { sanitizeForModelText } from '@manifest-network/manifest-mcp-core';
 import type { FredAuthCtx } from '../ctx.js';
 import { getLeaseLogs } from '../http/fred.js';
 import { hadValidationDrops } from '../http/response-schemas.js';
@@ -32,7 +33,18 @@ export async function getAppLogs(
   );
 
   let truncated = hadValidationDrops(result.logs);
-  const sourceEntries = Object.entries(result.logs);
+  const sourceEntries = Object.entries(result.logs).flatMap(
+    ([service, log]) => {
+      // Do not rename an attacker-controlled service key into a useful sibling's
+      // name. Drop unsafe keys; preserve printable names and log layout verbatim.
+      if (sanitizeForModelText(service, Number.POSITIVE_INFINITY) !== service) {
+        truncated = true;
+        return [];
+      }
+      const cleanLog = sanitizeForModelText(log, Number.POSITIVE_INFINITY);
+      return [[service, cleanLog] as const];
+    },
+  );
   const allocations = new Map<number, number>();
   let unsettled = sourceEntries.map((_, index) => index);
   let remainingBudget = MAX_LOG_CHARS;

@@ -53,6 +53,10 @@ jobs:
 
       - run: npm run check:packages
 
+      # Root overrides do not protect installed SDK/CLI consumers.
+      - name: Audit and smoke-test isolated packed consumers
+        run: npm run check:consumers -- --output "$RUNNER_TEMP/manifest-consumers"
+
       - run: npm run lint
 
       - run: npm run lint:e2e

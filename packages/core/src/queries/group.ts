@@ -1,5 +1,5 @@
 import type { ManifestQueryClient } from '../client.js';
-import { throwUnsupportedSubcommand } from '../modules.js';
+import { throwUnsupportedSubcommand } from '../module-metadata.js';
 import type {
   GroupInfoResult,
   GroupMembersResult,
@@ -14,7 +14,7 @@ import type {
 } from '../types.js';
 import {
   extractPaginationArgs,
-  parseBigInt,
+  parseUint64,
   requireArgs,
   validateAddress,
 } from './utils.js';
@@ -47,7 +47,7 @@ export async function routeGroupQuery(
   switch (subcommand) {
     case 'group-info': {
       requireArgs(args, 1, ['group-id'], 'group group-info');
-      const groupId = parseBigInt(args[0], 'group-id');
+      const groupId = parseUint64(args[0], 'group-id');
       const result = await group.groupInfo({ groupId });
       return { info: result.info };
     }
@@ -65,7 +65,7 @@ export async function routeGroupQuery(
         'group group-members',
       );
       requireArgs(remainingArgs, 1, ['group-id'], 'group group-members');
-      const groupId = parseBigInt(remainingArgs[0], 'group-id');
+      const groupId = parseUint64(remainingArgs[0], 'group-id');
       const result = await group.groupMembers({ groupId, pagination });
       return { members: result.members, pagination: result.pagination };
     }
@@ -95,7 +95,7 @@ export async function routeGroupQuery(
         ['group-id'],
         'group group-policies-by-group',
       );
-      const groupId = parseBigInt(remainingArgs[0], 'group-id');
+      const groupId = parseUint64(remainingArgs[0], 'group-id');
       const result = await group.groupPoliciesByGroup({ groupId, pagination });
       return {
         groupPolicies: result.groupPolicies,
@@ -127,7 +127,7 @@ export async function routeGroupQuery(
 
     case 'proposal': {
       requireArgs(args, 1, ['proposal-id'], 'group proposal');
-      const proposalId = parseBigInt(args[0], 'proposal-id');
+      const proposalId = parseUint64(args[0], 'proposal-id');
       const result = await group.proposal({ proposalId });
       return { proposal: result.proposal };
     }
@@ -153,7 +153,7 @@ export async function routeGroupQuery(
 
     case 'vote': {
       requireArgs(args, 2, ['proposal-id', 'voter-address'], 'group vote');
-      const proposalId = parseBigInt(args[0], 'proposal-id');
+      const proposalId = parseUint64(args[0], 'proposal-id');
       validateAddress(args[1], 'voter address');
       const result = await group.voteByProposalVoter({
         proposalId,
@@ -168,7 +168,7 @@ export async function routeGroupQuery(
         'group votes-by-proposal',
       );
       requireArgs(remainingArgs, 1, ['proposal-id'], 'group votes-by-proposal');
-      const proposalId = parseBigInt(remainingArgs[0], 'proposal-id');
+      const proposalId = parseUint64(remainingArgs[0], 'proposal-id');
       const result = await group.votesByProposal({ proposalId, pagination });
       return { votes: result.votes, pagination: result.pagination };
     }
@@ -208,7 +208,7 @@ export async function routeGroupQuery(
 
     case 'tally': {
       requireArgs(args, 1, ['proposal-id'], 'group tally');
-      const proposalId = parseBigInt(args[0], 'proposal-id');
+      const proposalId = parseUint64(args[0], 'proposal-id');
       const result = await group.tallyResult({ proposalId });
       return { tally: result.tally };
     }

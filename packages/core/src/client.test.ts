@@ -84,7 +84,10 @@ vi.mock(
 
 vi.mock('@cosmjs/stargate', () => ({
   SigningStargateClient: {
-    connectWithSigner: vi.fn().mockResolvedValue({ disconnect: vi.fn() }),
+    connectWithSigner: vi.fn().mockResolvedValue({
+      getChainId: vi.fn().mockResolvedValue('test-chain'),
+      disconnect: vi.fn(),
+    }),
   },
   GasPrice: {
     fromString: vi.fn().mockReturnValue({}),
@@ -157,16 +160,26 @@ describe('CosmosClientManager', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     CosmosClientManager.clearInstances();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        Response.json({ default_node_info: { network: 'test-chain' } }),
+      ),
+    );
     // Restore default mock return values after clearAllMocks
     mockCreateRPCQueryClient.mockResolvedValue({ mock: 'defaultQC' } as any);
     mockCreateCosmwasmRPCQueryClient.mockResolvedValue({
       cosmwasm: {},
     } as any);
-    mockConnectWithSigner.mockResolvedValue({ disconnect: vi.fn() } as any);
+    mockConnectWithSigner.mockResolvedValue({
+      getChainId: vi.fn().mockResolvedValue('test-chain'),
+      disconnect: vi.fn(),
+    } as any);
   });
 
   afterEach(() => {
     CosmosClientManager.clearInstances();
+    vi.unstubAllGlobals();
   });
 
   describe('getInstance', () => {
@@ -204,10 +217,16 @@ describe('CosmosClientManager', () => {
       expect(a).not.toBe(b);
     });
 
-    it('invalidates signing client when gasPrice changes', async () => {
+    it('isolates signing clients when gasPrice changes', async () => {
       const wallet = makeWallet();
-      const client1 = { disconnect: vi.fn() };
-      const client2 = { disconnect: vi.fn() };
+      const client1 = {
+        getChainId: vi.fn().mockResolvedValue('test-chain'),
+        disconnect: vi.fn(),
+      };
+      const client2 = {
+        getChainId: vi.fn().mockResolvedValue('test-chain'),
+        disconnect: vi.fn(),
+      };
       mockConnectWithSigner
         .mockResolvedValueOnce(client1 as any)
         .mockResolvedValueOnce(client2 as any);
@@ -222,23 +241,28 @@ describe('CosmosClientManager', () => {
       // supersede branch disconnected it here), and IS disconnected when eviction evicts it.
       expect(client1.disconnect).not.toHaveBeenCalled();
 
-      // Re-get with different gasPrice — should create new signing client
-      CosmosClientManager.getInstance(
+      // A new policy gets a separate manager, preserving the existing client.
+      const other = CosmosClientManager.getInstance(
         makeConfig({ gasPrice: '2.0umfx' }),
         wallet,
       );
-      const sc2 = await instance.getSigningClient();
+      const sc2 = await other.getSigningClient();
       expect(sc2).toBe(client2);
+      expect(await instance.getSigningClient()).toBe(client1);
       expect(mockConnectWithSigner).toHaveBeenCalledTimes(2);
-      // The invalidation path disconnects the client it evicts. Dead code before ENG-636
-      // (`signingClient` was never populated, so the guard never fired).
-      expect(client1.disconnect).toHaveBeenCalledOnce();
+      expect(client1.disconnect).not.toHaveBeenCalled();
     });
 
-    it('invalidates signing client when gasMultiplier changes', async () => {
+    it('isolates signing clients when gasMultiplier changes', async () => {
       const wallet = makeWallet();
-      const client1 = { disconnect: vi.fn() };
-      const client2 = { disconnect: vi.fn() };
+      const client1 = {
+        getChainId: vi.fn().mockResolvedValue('test-chain'),
+        disconnect: vi.fn(),
+      };
+      const client2 = {
+        getChainId: vi.fn().mockResolvedValue('test-chain'),
+        disconnect: vi.fn(),
+      };
       mockConnectWithSigner
         .mockResolvedValueOnce(client1 as any)
         .mockResolvedValueOnce(client2 as any);
@@ -250,26 +274,26 @@ describe('CosmosClientManager', () => {
       const sc1 = await instance.getSigningClient();
       expect(sc1).toBe(client1);
 
-      // Re-get with different gasMultiplier — should create new signing client
-      CosmosClientManager.getInstance(
+      const other = CosmosClientManager.getInstance(
         makeConfig({ gasMultiplier: 2.5 }),
         wallet,
       );
-      const sc2 = await instance.getSigningClient();
+      const sc2 = await other.getSigningClient();
       expect(sc2).toBe(client2);
+      expect(await instance.getSigningClient()).toBe(client1);
       expect(mockConnectWithSigner).toHaveBeenCalledTimes(2);
     });
 
-    it('invalidates signing client when walletProvider changes', async () => {
+    it('isolates signing clients when walletProvider changes', async () => {
       const wallet1 = makeWallet();
       const wallet2 = makeWallet();
 
       const instance = CosmosClientManager.getInstance(makeConfig(), wallet1);
       await instance.getSigningClient();
 
-      // Re-get with different wallet — should need new signing client
-      CosmosClientManager.getInstance(makeConfig(), wallet2);
-      await instance.getSigningClient();
+      const other = CosmosClientManager.getInstance(makeConfig(), wallet2);
+      expect(other).not.toBe(instance);
+      await other.getSigningClient();
       expect(mockConnectWithSigner).toHaveBeenCalledTimes(2);
     });
 
@@ -491,7 +515,11 @@ describe('CosmosClientManager', () => {
 
   describe('getSigningClient', () => {
     it('overrides defaultGasMultiplier when property exists', async () => {
-      const mockSC = { disconnect: vi.fn(), defaultGasMultiplier: 1.4 };
+      const mockSC = {
+        getChainId: vi.fn().mockResolvedValue('test-chain'),
+        disconnect: vi.fn(),
+        defaultGasMultiplier: 1.4,
+      };
       mockConnectWithSigner.mockResolvedValue(mockSC as any);
 
       const instance = CosmosClientManager.getInstance(
@@ -504,7 +532,11 @@ describe('CosmosClientManager', () => {
     });
 
     it('applies custom gasMultiplier from config', async () => {
-      const mockSC = { disconnect: vi.fn(), defaultGasMultiplier: 1.4 };
+      const mockSC = {
+        getChainId: vi.fn().mockResolvedValue('test-chain'),
+        disconnect: vi.fn(),
+        defaultGasMultiplier: 1.4,
+      };
       mockConnectWithSigner.mockResolvedValue(mockSC as any);
 
       const instance = CosmosClientManager.getInstance(
@@ -517,7 +549,10 @@ describe('CosmosClientManager', () => {
     });
 
     it('warns when defaultGasMultiplier is absent', async () => {
-      const mockSC = { disconnect: vi.fn() };
+      const mockSC = {
+        getChainId: vi.fn().mockResolvedValue('test-chain'),
+        disconnect: vi.fn(),
+      };
       mockConnectWithSigner.mockResolvedValue(mockSC as any);
       const spyLogger = makeSpyLogger();
       const instance = CosmosClientManager.getInstance(
@@ -533,7 +568,10 @@ describe('CosmosClientManager', () => {
     });
 
     it('warns with custom multiplier when defaultGasMultiplier is absent', async () => {
-      const mockSC = { disconnect: vi.fn() };
+      const mockSC = {
+        getChainId: vi.fn().mockResolvedValue('test-chain'),
+        disconnect: vi.fn(),
+      };
       mockConnectWithSigner.mockResolvedValue(mockSC as any);
       const spyLogger = makeSpyLogger();
       const instance = CosmosClientManager.getInstance(
@@ -554,7 +592,10 @@ describe('CosmosClientManager', () => {
       // calls: a fresh makeWallet() would trip the reference-equality wallet-invalidation gate
       // (client.ts getInstance). The caching half of this proof used to be unassertable because
       // getSigningClient() never populated `this.signingClient` (ENG-636); it is asserted now.
-      const mockSC = { disconnect: vi.fn() };
+      const mockSC = {
+        getChainId: vi.fn().mockResolvedValue('test-chain'),
+        disconnect: vi.fn(),
+      };
       mockConnectWithSigner.mockResolvedValue(mockSC as any);
 
       const w = makeWallet();
@@ -570,7 +611,10 @@ describe('CosmosClientManager', () => {
     });
 
     it('is SILENT by default when setLogger is never called (the warn goes to the frozen noopLogger)', async () => {
-      const mockSC = { disconnect: vi.fn() }; // no defaultGasMultiplier → triggers the warn branch
+      const mockSC = {
+        getChainId: vi.fn().mockResolvedValue('test-chain'),
+        disconnect: vi.fn(),
+      }; // no defaultGasMultiplier → triggers the warn branch
       mockConnectWithSigner.mockResolvedValue(mockSC as any);
       const instance = CosmosClientManager.getInstance(
         makeConfig(),
@@ -581,7 +625,10 @@ describe('CosmosClientManager', () => {
     });
 
     it('creates and returns signing client', async () => {
-      const mockSC = { disconnect: vi.fn() };
+      const mockSC = {
+        getChainId: vi.fn().mockResolvedValue('test-chain'),
+        disconnect: vi.fn(),
+      };
       mockConnectWithSigner.mockResolvedValue(mockSC as any);
 
       const instance = CosmosClientManager.getInstance(
@@ -623,7 +670,10 @@ describe('CosmosClientManager', () => {
     });
 
     it('does not latch a rejected init — a transient failure recovers on the next call (ENG-636)', async () => {
-      const mockSC = { disconnect: vi.fn() };
+      const mockSC = {
+        getChainId: vi.fn().mockResolvedValue('test-chain'),
+        disconnect: vi.fn(),
+      };
       mockConnectWithSigner
         .mockRejectedValueOnce(new Error('ECONNREFUSED'))
         .mockResolvedValueOnce(mockSC as any);
@@ -647,7 +697,10 @@ describe('CosmosClientManager', () => {
       // spurious init-time disconnect was inert only by accident — @cosmjs/tendermint-rpc's
       // HttpClient.disconnect() is a no-op — so a WebSocket endpoint would have been closed
       // the instant it was created.
-      const mockSC = { disconnect: vi.fn() };
+      const mockSC = {
+        getChainId: vi.fn().mockResolvedValue('test-chain'),
+        disconnect: vi.fn(),
+      };
       mockConnectWithSigner.mockResolvedValue(mockSC as any);
 
       const instance = CosmosClientManager.getInstance(
@@ -674,7 +727,10 @@ describe('CosmosClientManager', () => {
             }),
         ),
       });
-      const mockSC = { disconnect: vi.fn() };
+      const mockSC = {
+        getChainId: vi.fn().mockResolvedValue('test-chain'),
+        disconnect: vi.fn(),
+      };
       mockConnectWithSigner.mockResolvedValue(mockSC as any);
 
       const instance = CosmosClientManager.getInstance(makeConfig(), wallet);
@@ -693,7 +749,7 @@ describe('CosmosClientManager', () => {
       expect(mockConnectWithSigner).toHaveBeenCalledOnce();
     });
 
-    it('supersede: a getInstance config change mid-init releases the orphan; the retry gets a fresh client (ENG-636)', async () => {
+    it('a new config cannot supersede another holder’s pending signing initialization', async () => {
       let resolveSigner!: (value: any) => void;
       const wallet = makeWallet({
         // Defer only the FIRST getSigner so the retry below can complete.
@@ -707,8 +763,14 @@ describe('CosmosClientManager', () => {
           )
           .mockResolvedValue({}),
       });
-      const client1 = { disconnect: vi.fn() };
-      const client2 = { disconnect: vi.fn() };
+      const client1 = {
+        getChainId: vi.fn().mockResolvedValue('test-chain'),
+        disconnect: vi.fn(),
+      };
+      const client2 = {
+        getChainId: vi.fn().mockResolvedValue('test-chain'),
+        disconnect: vi.fn(),
+      };
       mockConnectWithSigner
         .mockResolvedValueOnce(client1 as any)
         .mockResolvedValueOnce(client2 as any);
@@ -718,21 +780,16 @@ describe('CosmosClientManager', () => {
         wallet,
       );
       const p1 = instance.getSigningClient(); // init in flight on the OLD gasPrice
-      // Nulls signingClientPromise (the signingClient slot is still null mid-flight).
-      CosmosClientManager.getInstance(
+      const other = CosmosClientManager.getInstance(
         makeConfig({ gasPrice: '2.0umfx' }),
         wallet,
       );
 
       resolveSigner({});
 
-      await expect(p1).rejects.toMatchObject({
-        details: { reason: 'superseded' },
-      });
-      expect(client1.disconnect).toHaveBeenCalledOnce();
-
-      // The retry the error tells the caller to make yields a freshly-built client.
-      await expect(instance.getSigningClient()).resolves.toBe(client2);
+      await expect(p1).resolves.toBe(client1);
+      expect(client1.disconnect).not.toHaveBeenCalled();
+      await expect(other.getSigningClient()).resolves.toBe(client2);
       expect(mockConnectWithSigner).toHaveBeenCalledTimes(2);
     });
 
@@ -783,7 +840,10 @@ describe('CosmosClientManager', () => {
       (instance as unknown as { signingClient: unknown }).signingClient;
 
     it('only tears down the shared signing client after the last holder disconnects', async () => {
-      const mockSC = { disconnect: vi.fn() };
+      const mockSC = {
+        getChainId: vi.fn().mockResolvedValue('test-chain'),
+        disconnect: vi.fn(),
+      };
       mockConnectWithSigner.mockResolvedValue(mockSC as any);
 
       const config = makeConfig();
@@ -807,7 +867,10 @@ describe('CosmosClientManager', () => {
     });
 
     it('single acquire still tears down on the first disconnect', async () => {
-      const mockSC = { disconnect: vi.fn() };
+      const mockSC = {
+        getChainId: vi.fn().mockResolvedValue('test-chain'),
+        disconnect: vi.fn(),
+      };
       mockConnectWithSigner.mockResolvedValue(mockSC as any);
 
       const instance = CosmosClientManager.getInstance(
@@ -857,7 +920,10 @@ describe('CosmosClientManager', () => {
     });
 
     it('clearInstances force-tears-down even when refCount > 1', async () => {
-      const mockSC = { disconnect: vi.fn() };
+      const mockSC = {
+        getChainId: vi.fn().mockResolvedValue('test-chain'),
+        disconnect: vi.fn(),
+      };
       mockConnectWithSigner.mockResolvedValue(mockSC as any);
 
       const config = makeConfig();
@@ -877,7 +943,10 @@ describe('CosmosClientManager', () => {
     });
 
     it('over-disconnect is safe: extra disconnect() does not throw or re-tear-down', async () => {
-      const mockSC = { disconnect: vi.fn() };
+      const mockSC = {
+        getChainId: vi.fn().mockResolvedValue('test-chain'),
+        disconnect: vi.fn(),
+      };
       mockConnectWithSigner.mockResolvedValue(mockSC as any);
 
       const instance = CosmosClientManager.getInstance(
@@ -1061,7 +1130,7 @@ describe('CosmosClientManager', () => {
       expect(elapsed).toBeGreaterThanOrEqual(900);
     });
 
-    it('replaces the rate limiter when requestsPerSecond changes', async () => {
+    it('isolates the rate limiter when requestsPerSecond changes', async () => {
       const config1 = makeConfig({
         chainId: 'rate-reconfig-test',
         rateLimit: { requestsPerSecond: 10 },
@@ -1075,7 +1144,7 @@ describe('CosmosClientManager', () => {
       const before = (a as unknown as { rateLimiter: unknown }).rateLimiter;
       const b = CosmosClientManager.getInstance(config2, wallet);
       const after = (b as unknown as { rateLimiter: unknown }).rateLimiter;
-      expect(a).toBe(b); // same singleton
+      expect(a).not.toBe(b); // independently owned policies
       expect(after).not.toBe(before); // limiter object replaced
     });
 
@@ -1198,29 +1267,26 @@ describe('CosmosClientManager', () => {
         },
       );
 
-      // The guard must follow the limiter, not just the entry. A parked waiter re-reads
-      // `this.rateLimiter` each pass so it adopts a reconfigured budget — which means it can
-      // adopt an INVALID one. Checking only on entry turned that into a silent spin
-      // (`tryRemoveTokens` declines forever below one token) instead of the typed failure.
-      // Caught by Copilot on PR #183.
-      it('raises INVALID_CONFIG when a reconfigure swaps in an undersized budget mid-wait', async () => {
+      it('another client’s undersized budget cannot replace a parked waiter’s valid budget', async () => {
         const config = makeConfig({
           chainId: 'rl-reconfig-invalid',
           rateLimit: { requestsPerSecond: 1 },
         });
         const wallet = makeWallet();
         const instance = CosmosClientManager.getInstance(config, wallet);
-        await instance.acquireRateLimit(); // drain the single token so the next call parks
+        await instance.acquireRateLimit();
         const ac = new AbortController();
         const parked = instance.acquireRateLimit(ac.signal);
-        // Reconfigure the SAME key to a budget that can never admit one request.
-        CosmosClientManager.getInstance(
+        const other = CosmosClientManager.getInstance(
           { ...config, rateLimit: { requestsPerSecond: 0.5 } },
           wallet,
         );
-        await expect(parked).rejects.toMatchObject({
+        await expect(other.acquireRateLimit()).rejects.toMatchObject({
           code: ManifestMCPErrorCode.INVALID_CONFIG,
         });
+        ac.abort(new Error('stop waiting'));
+        await expect(parked).rejects.toThrow('stop waiting');
+        expect(instance.getConfig().rateLimit?.requestsPerSecond).toBe(1);
       });
     });
   });
@@ -1306,9 +1372,10 @@ describe('CosmosClientManager', () => {
     });
 
     it('defers teardown and eviction until an in-flight broadcast settles', async () => {
+      const wallet = makeWallet();
       const mgr = CosmosClientManager.getInstance(
         makeConfig({ chainId: 'lock-teardown' }),
-        makeWallet(),
+        wallet,
       );
       const locks = (mgr as unknown as { broadcastLocks: Map<string, unknown> })
         .broadcastLocks;
@@ -1330,7 +1397,7 @@ describe('CosmosClientManager', () => {
       // domain and cancel the pending final teardown.
       const reacquired = CosmosClientManager.getInstance(
         makeConfig({ chainId: 'lock-teardown' }),
-        makeWallet(),
+        wallet,
       );
       expect(reacquired).toBe(mgr);
       let queuedStarted = false;
@@ -1350,7 +1417,7 @@ describe('CosmosClientManager', () => {
       reacquired.disconnect();
       const replacement = CosmosClientManager.getInstance(
         makeConfig({ chainId: 'lock-teardown' }),
-        makeWallet(),
+        wallet,
       );
       expect(replacement).not.toBe(mgr);
     });

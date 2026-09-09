@@ -1,5 +1,5 @@
 import type { ManifestQueryClient } from '../client.js';
-import { throwUnsupportedSubcommand } from '../modules.js';
+import { throwUnsupportedSubcommand } from '../module-metadata.js';
 import type {
   CommissionResult,
   CommunityPoolResult,
@@ -10,7 +10,7 @@ import type {
   SlashesResult,
   ValidatorOutstandingRewardsResult,
 } from '../types.js';
-import { extractPaginationArgs, parseBigInt, requireArgs } from './utils.js';
+import { extractPaginationArgs, parseUint64, requireArgs } from './utils.js';
 
 /** Distribution query result union type */
 type DistributionQueryResult =
@@ -108,10 +108,10 @@ export async function routeDistributionQuery(
       const [validatorAddress] = remainingArgs;
       // Optional: starting and ending height for filtering
       const startingHeight = remainingArgs[1]
-        ? parseBigInt(remainingArgs[1], 'starting-height')
+        ? parseUint64(remainingArgs[1], 'starting-height')
         : BigInt(0);
       const endingHeight = remainingArgs[2]
-        ? parseBigInt(remainingArgs[2], 'ending-height')
+        ? parseUint64(remainingArgs[2], 'ending-height')
         : BigInt(Number.MAX_SAFE_INTEGER);
       const result = await distribution.validatorSlashes({
         validatorAddress,

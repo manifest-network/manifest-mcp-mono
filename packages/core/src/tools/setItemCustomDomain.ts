@@ -1,7 +1,6 @@
 import { asFqdn, type Fqdn, type LeaseUuid } from '../brands.js';
 import { cosmosTx } from '../cosmos.js';
 import type { TxCtx } from '../ctx.js';
-import { withTxConfirmation } from '../internals/tx-confirmation.js';
 import { txExtrasFrom, txOverridesFrom } from '../internals/tx-opts.js';
 import type { TxCallOptions } from '../options.js';
 
@@ -50,9 +49,9 @@ export interface SetItemCustomDomainResult {
  *   which is intentionally unset here); the query-only `INVALID_CONFIG` guard
  *   comes downstream from `cosmosTx → ctx.chain.getSigningClient()`. See
  *   OI-SENDER.
- * - `opts.signal` bounds the AWAIT of the confirmation only — a submitted tx
- *   cannot be un-broadcast; on abort the tx may still commit (re-query the
- *   chain). See {@link withTxConfirmation}.
+ * - `opts.signal` prevents submission if cancelled during preparation. After the
+ *   CosmJS signing/broadcast call begins, cancellation stops waiting and the
+ *   outcome must be reconciled on chain (`OPERATION_CANCELLED.details.sent`).
  *
  * Authorised signers per `MsgSetItemCustomDomain.ValidateBasic`: the lease
  * tenant, the module authority, or any address in `params.allowed_list`.
@@ -73,17 +72,14 @@ export async function setItemCustomDomain(
     args.push('--service-name', input.serviceName);
   }
 
-  const result = await withTxConfirmation(
-    () =>
-      cosmosTx(
-        ctx.chain,
-        'billing',
-        'set-item-custom-domain',
-        args,
-        opts?.waitForConfirmation ?? true,
-        txOverridesFrom(opts),
-        txExtrasFrom(opts),
-      ),
+  const result = await cosmosTx(
+    ctx.chain,
+    'billing',
+    'set-item-custom-domain',
+    args,
+    opts?.waitForConfirmation ?? true,
+    txOverridesFrom(opts),
+    txExtrasFrom(opts),
     opts,
   );
 

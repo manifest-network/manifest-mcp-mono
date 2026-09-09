@@ -1,3 +1,4 @@
+import { isLeaseUuidShape } from './internals/uuid-shape.js';
 /**
  * Public entry point: orchestrate setting, clearing, or looking up a
  * lease item's custom domain.
@@ -52,9 +53,6 @@ import type {
   ManageDomainOptions,
   ManageDomainResult,
 } from './types.js';
-
-const UUID_RE =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 // RFC 1123 hostname: each label 1-63 chars, alphanumeric + hyphens, no leading/
 // trailing hyphen; total ≤253 chars; ≥2 labels (FQDN, not single-label host).
@@ -294,7 +292,7 @@ function validateArgs(args: ManageDomainArgs): void {
     }
     return;
   }
-  if (typeof args.leaseUuid !== 'string' || !args.leaseUuid.match(UUID_RE)) {
+  if (!isLeaseUuidShape(args.leaseUuid)) {
     throw new ManifestMCPError(
       ManifestMCPErrorCode.INVALID_CONFIG,
       `manageDomain ${args.action}: leaseUuid must be a UUID; got "${args.leaseUuid}".`,

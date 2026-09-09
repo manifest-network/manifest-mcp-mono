@@ -33,173 +33,172 @@ export class KeyfileWalletProvider implements WalletProvider {
   }
 
   async connect(): Promise<void> {
+    this.assertNotDisconnected();
+    if (this.wallet) return;
+    if (this.initPromise) return this.initPromise;
+
+    this.initPromise = this.doConnect().finally(() => {
+      // doConnect can reject before its first await (e.g. a missing file).
+      // Clear after assignment so the rejected promise cannot block a retry.
+      this.initPromise = null;
+    });
+    return this.initPromise;
+  }
+
+  private assertNotDisconnected(): void {
     if (this.disconnected) {
       throw new ManifestMCPError(
         ManifestMCPErrorCode.WALLET_NOT_CONNECTED,
         'Wallet has been disconnected. Create a new KeyfileWalletProvider instance to reconnect.',
       );
     }
-    if (this.wallet) return;
-    if (this.initPromise) return this.initPromise;
-
-    this.initPromise = this.doConnect();
-    return this.initPromise;
   }
 
   private async doConnect(): Promise<void> {
+    let raw: string;
     try {
-      let raw: string;
-      try {
-        raw = readFileSync(this.keyfilePath, 'utf-8');
-      } catch (err: unknown) {
-        const code = (err as NodeJS.ErrnoException).code;
-        if (code === 'ENOENT') {
-          throw new ManifestMCPError(
-            ManifestMCPErrorCode.WALLET_CONNECTION_FAILED,
-            `Keyfile not found at ${this.keyfilePath}. Run "<cli> keygen" to generate one, or "<cli> import" to import an existing mnemonic (where <cli> is manifest-mcp-chain, manifest-mcp-lease, manifest-mcp-fred, manifest-mcp-cosmwasm, or manifest-mcp-agent). Check MANIFEST_KEY_FILE if the path is wrong.`,
-          );
-        }
-        if (code === 'EACCES') {
-          throw new ManifestMCPError(
-            ManifestMCPErrorCode.WALLET_CONNECTION_FAILED,
-            `Permission denied reading keyfile at ${this.keyfilePath}. Check file permissions (expected mode 0600).`,
-          );
-        }
+      raw = readFileSync(this.keyfilePath, 'utf-8');
+    } catch (err: unknown) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code === 'ENOENT') {
         throw new ManifestMCPError(
           ManifestMCPErrorCode.WALLET_CONNECTION_FAILED,
-          `Failed to read keyfile at ${this.keyfilePath}: ${err instanceof Error ? err.message : String(err)}`,
+          `Keyfile not found at ${this.keyfilePath}. Run "<cli> keygen" to generate one, or "<cli> import" to import an existing mnemonic (where <cli> is manifest-mcp-chain, manifest-mcp-lease, manifest-mcp-fred, manifest-mcp-cosmwasm, or manifest-mcp-agent). Check MANIFEST_KEY_FILE if the path is wrong.`,
         );
       }
-
-      // Warn if keyfile has overly permissive permissions
-      try {
-        const mode = statSync(this.keyfilePath).mode & 0o777;
-        if (mode & 0o077) {
-          logger.warn(
-            `Keyfile ${this.keyfilePath} has permissions 0${mode.toString(8)}; recommended 0600. ` +
-              `Other users on this system may be able to read your private key. ` +
-              `Fix with: chmod 600 ${this.keyfilePath}`,
-          );
-        }
-      } catch (err) {
-        logger.debug(
-          `Could not check keyfile permissions for ${this.keyfilePath}: ${err instanceof Error ? err.message : String(err)}`,
-        );
-      }
-
-      let data: unknown;
-      try {
-        data = JSON.parse(raw);
-      } catch {
+      if (code === 'EACCES') {
         throw new ManifestMCPError(
           ManifestMCPErrorCode.WALLET_CONNECTION_FAILED,
-          `Keyfile at ${this.keyfilePath} contains invalid JSON. The file may be corrupted. Regenerate with "<cli> keygen" or import an existing mnemonic with "<cli> import" (any manifest-mcp-* CLI).`,
+          `Permission denied reading keyfile at ${this.keyfilePath}. Check file permissions (expected mode 0600).`,
         );
       }
-
-      if (typeof data !== 'object' || data === null || Array.isArray(data)) {
-        throw new ManifestMCPError(
-          ManifestMCPErrorCode.WALLET_CONNECTION_FAILED,
-          `Keyfile at ${this.keyfilePath} does not contain a valid JSON object. Expected a CosmJS encrypted wallet or a JSON object with a "mnemonic" field.`,
-        );
-      }
-
-      const obj = data as Record<string, unknown>;
-
-      if (obj.type !== undefined) {
-        if (!this.password?.trim()) {
-          throw new ManifestMCPError(
-            ManifestMCPErrorCode.WALLET_CONNECTION_FAILED,
-            'Keyfile is encrypted but no password provided. Set MANIFEST_KEY_PASSWORD to the password used when the keyfile was created.',
-          );
-        }
-        try {
-          this.wallet = await DirectSecp256k1HdWallet.deserialize(
-            raw,
-            this.password,
-          );
-        } catch (err: unknown) {
-          throw new ManifestMCPError(
-            ManifestMCPErrorCode.WALLET_CONNECTION_FAILED,
-            `Failed to decrypt keyfile at ${this.keyfilePath}. Verify that MANIFEST_KEY_PASSWORD is correct. (${err instanceof Error ? err.message : String(err)})`,
-          );
-        }
-      } else if (obj.mnemonic) {
-        if (typeof obj.mnemonic !== 'string') {
-          throw new ManifestMCPError(
-            ManifestMCPErrorCode.WALLET_CONNECTION_FAILED,
-            `Keyfile at ${this.keyfilePath} has a "mnemonic" field that is not a string. Expected a BIP-39 mnemonic phrase.`,
-          );
-        }
-        logger.warn(
-          `Keyfile at ${this.keyfilePath} contains an unencrypted mnemonic. ` +
-            'Consider encrypting with "<cli> import" (any manifest-mcp-* CLI).',
-        );
-        try {
-          this.wallet = await DirectSecp256k1HdWallet.fromMnemonic(
-            obj.mnemonic,
-            {
-              prefix: this.addressPrefix,
-            },
-          );
-        } catch (err: unknown) {
-          throw new ManifestMCPError(
-            ManifestMCPErrorCode.INVALID_MNEMONIC,
-            `Invalid mnemonic in keyfile at ${this.keyfilePath}. The stored mnemonic may be corrupted. (${err instanceof Error ? err.message : String(err)})`,
-          );
-        }
-      } else {
-        throw new ManifestMCPError(
-          ManifestMCPErrorCode.WALLET_CONNECTION_FAILED,
-          `Unrecognized keyfile format in ${this.keyfilePath}. Expected a CosmJS encrypted wallet or a JSON object with a "mnemonic" field.`,
-        );
-      }
-
-      try {
-        this.aminoWallet = await Secp256k1HdWallet.fromMnemonic(
-          this.wallet.mnemonic,
-          {
-            prefix: this.addressPrefix,
-          },
-        );
-      } catch (err: unknown) {
-        throw new ManifestMCPError(
-          ManifestMCPErrorCode.WALLET_CONNECTION_FAILED,
-          `Failed to initialize amino signing wallet from keyfile at ${this.keyfilePath}: ${err instanceof Error ? err.message : String(err)}`,
-        );
-      }
-
-      const accounts = await this.wallet.getAccounts().catch((err: unknown) => {
-        throw new ManifestMCPError(
-          ManifestMCPErrorCode.WALLET_CONNECTION_FAILED,
-          `Failed to derive accounts from keyfile at ${this.keyfilePath}: ${err instanceof Error ? err.message : String(err)}`,
-        );
-      });
-      if (accounts.length === 0) {
-        throw new ManifestMCPError(
-          ManifestMCPErrorCode.WALLET_CONNECTION_FAILED,
-          'No accounts derived from keyfile',
-        );
-      }
-      this.address = accounts[0].address;
-      const actualPrefix = fromBech32(this.address).prefix;
-      if (actualPrefix !== this.addressPrefix) {
-        throw new ManifestMCPError(
-          ManifestMCPErrorCode.WALLET_CONNECTION_FAILED,
-          `Keyfile address prefix mismatch: keyfile produced "${actualPrefix}" but config expects "${this.addressPrefix}". Regenerate the keyfile with the correct COSMOS_ADDRESS_PREFIX.`,
-        );
-      }
-      // Clear password from memory only after full initialization succeeds,
-      // so that a retry after a partial failure can still use it.
-      this.password = undefined;
-      this.initPromise = null;
-    } catch (error) {
-      this.initPromise = null;
-      this.wallet = null;
-      this.aminoWallet = null;
-      this.address = null;
-      throw error;
+      throw new ManifestMCPError(
+        ManifestMCPErrorCode.WALLET_CONNECTION_FAILED,
+        `Failed to read keyfile at ${this.keyfilePath}: ${err instanceof Error ? err.message : String(err)}`,
+      );
     }
+
+    // Warn if keyfile has overly permissive permissions
+    try {
+      const mode = statSync(this.keyfilePath).mode & 0o777;
+      if (mode & 0o077) {
+        logger.warn(
+          `Keyfile ${this.keyfilePath} has permissions 0${mode.toString(8)}; recommended 0600. ` +
+            `Other users on this system may be able to read your private key. ` +
+            `Fix with: chmod 600 ${this.keyfilePath}`,
+        );
+      }
+    } catch (err) {
+      logger.debug(
+        `Could not check keyfile permissions for ${this.keyfilePath}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+
+    let data: unknown;
+    try {
+      data = JSON.parse(raw);
+    } catch {
+      throw new ManifestMCPError(
+        ManifestMCPErrorCode.WALLET_CONNECTION_FAILED,
+        `Keyfile at ${this.keyfilePath} contains invalid JSON. The file may be corrupted. Regenerate with "<cli> keygen" or import an existing mnemonic with "<cli> import" (any manifest-mcp-* CLI).`,
+      );
+    }
+
+    if (typeof data !== 'object' || data === null || Array.isArray(data)) {
+      throw new ManifestMCPError(
+        ManifestMCPErrorCode.WALLET_CONNECTION_FAILED,
+        `Keyfile at ${this.keyfilePath} does not contain a valid JSON object. Expected a CosmJS encrypted wallet or a JSON object with a "mnemonic" field.`,
+      );
+    }
+
+    const obj = data as Record<string, unknown>;
+
+    let wallet: DirectSecp256k1HdWallet;
+    if (obj.type !== undefined) {
+      if (!this.password?.trim()) {
+        throw new ManifestMCPError(
+          ManifestMCPErrorCode.WALLET_CONNECTION_FAILED,
+          'Keyfile is encrypted but no password provided. Set MANIFEST_KEY_PASSWORD to the password used when the keyfile was created.',
+        );
+      }
+      try {
+        wallet = await DirectSecp256k1HdWallet.deserialize(raw, this.password);
+      } catch (err: unknown) {
+        throw new ManifestMCPError(
+          ManifestMCPErrorCode.WALLET_CONNECTION_FAILED,
+          `Failed to decrypt keyfile at ${this.keyfilePath}. Verify that MANIFEST_KEY_PASSWORD is correct. (${err instanceof Error ? err.message : String(err)})`,
+        );
+      }
+    } else if (obj.mnemonic) {
+      if (typeof obj.mnemonic !== 'string') {
+        throw new ManifestMCPError(
+          ManifestMCPErrorCode.WALLET_CONNECTION_FAILED,
+          `Keyfile at ${this.keyfilePath} has a "mnemonic" field that is not a string. Expected a BIP-39 mnemonic phrase.`,
+        );
+      }
+      logger.warn(
+        `Keyfile at ${this.keyfilePath} contains an unencrypted mnemonic. ` +
+          'Consider encrypting with "<cli> import" (any manifest-mcp-* CLI).',
+      );
+      try {
+        wallet = await DirectSecp256k1HdWallet.fromMnemonic(obj.mnemonic, {
+          prefix: this.addressPrefix,
+        });
+      } catch (err: unknown) {
+        throw new ManifestMCPError(
+          ManifestMCPErrorCode.INVALID_MNEMONIC,
+          `Invalid mnemonic in keyfile at ${this.keyfilePath}. The stored mnemonic may be corrupted. (${err instanceof Error ? err.message : String(err)})`,
+        );
+      }
+    } else {
+      throw new ManifestMCPError(
+        ManifestMCPErrorCode.WALLET_CONNECTION_FAILED,
+        `Unrecognized keyfile format in ${this.keyfilePath}. Expected a CosmJS encrypted wallet or a JSON object with a "mnemonic" field.`,
+      );
+    }
+
+    this.assertNotDisconnected();
+    let aminoWallet: Secp256k1HdWallet;
+    try {
+      aminoWallet = await Secp256k1HdWallet.fromMnemonic(wallet.mnemonic, {
+        prefix: this.addressPrefix,
+      });
+    } catch (err: unknown) {
+      throw new ManifestMCPError(
+        ManifestMCPErrorCode.WALLET_CONNECTION_FAILED,
+        `Failed to initialize amino signing wallet from keyfile at ${this.keyfilePath}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+
+    const accounts = await wallet.getAccounts().catch((err: unknown) => {
+      throw new ManifestMCPError(
+        ManifestMCPErrorCode.WALLET_CONNECTION_FAILED,
+        `Failed to derive accounts from keyfile at ${this.keyfilePath}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    });
+    if (accounts.length === 0) {
+      throw new ManifestMCPError(
+        ManifestMCPErrorCode.WALLET_CONNECTION_FAILED,
+        'No accounts derived from keyfile',
+      );
+    }
+    const address = accounts[0].address;
+    const actualPrefix = fromBech32(address).prefix;
+    if (actualPrefix !== this.addressPrefix) {
+      throw new ManifestMCPError(
+        ManifestMCPErrorCode.WALLET_CONNECTION_FAILED,
+        `Keyfile address prefix mismatch: keyfile produced "${actualPrefix}" but config expects "${this.addressPrefix}". Regenerate the keyfile with the correct COSMOS_ADDRESS_PREFIX.`,
+      );
+    }
+    // Keep derived keys local until initialization is complete, so a
+    // disconnect while decrypting or deriving cannot resurrect the wallet.
+    this.assertNotDisconnected();
+    this.wallet = wallet;
+    this.aminoWallet = aminoWallet;
+    this.address = address;
+    // Clear password from memory only after full initialization succeeds,
+    // so that a retry after a partial failure can still use it.
+    this.password = undefined;
   }
 
   async getAddress(): Promise<string> {

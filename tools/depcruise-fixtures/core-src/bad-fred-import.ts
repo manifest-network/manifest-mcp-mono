@@ -2,7 +2,7 @@
 //
 // Simulates a `packages/core/src` file reaching UP into fred. core is the dependency sink; the DAG
 // is node -> {chain, lease, fred, cosmwasm, agent} -> core, never reverse. The production
-// `no-core-to-fred-or-agentcore` rule MUST flag this.
+// `workspace-core-dependencies` rule MUST flag this.
 //
 // The import is written BY PACKAGE NAME because that is the only form anyone actually writes — and
 // it is precisely the form the rule used to be blind to (ENG-641): before `webpackConfig` aliased

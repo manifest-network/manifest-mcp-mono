@@ -1,12 +1,12 @@
 import type { LeaseUuid } from '../brands.js';
 import { cosmosTx } from '../cosmos.js';
 import type { TxCtx } from '../ctx.js';
-import { withTxConfirmation } from '../internals/tx-confirmation.js';
+import { withTxExecution } from '../internals/tx-confirmation.js';
 import { txExtrasFrom, txOverridesFrom } from '../internals/tx-opts.js';
 // Routed through the manifest-types chokepoint (spec §8) rather than importing
 // the manifestjs codegen path directly (dependency-cruiser manifestjs-types-chokepoint).
 import { type Lease, LeaseState, leaseStateToJSON } from '../manifest-types.js';
-import type { TxCallOptions } from '../options.js';
+import { resolveCallSignal, type TxCallOptions } from '../options.js';
 import { ManifestMCPError, ManifestMCPErrorCode } from '../types.js';
 
 /**
@@ -109,16 +109,21 @@ export async function stopApp(
   opts?: TxCallOptions,
 ): Promise<StopAppResult> {
   const { leaseUuid } = input;
+  const callOptions = { signal: resolveCallSignal(opts) };
 
   // Query the lease. A raw thrown query (transport/decode) is wrapped as QUERY_FAILED;
   // an existing ManifestMCPError (e.g. RPC_CONNECTION_FAILED from getQueryClient) passes through unchanged.
   const queryLease = async (): Promise<Lease | null> => {
     try {
-      const queryClient = await ctx.chain.getQueryClient();
-      const { lease } = await queryClient.liftedinit.billing.v1.lease({
-        leaseUuid,
-      });
-      return lease ?? null;
+      return await withTxExecution(async (execution) => {
+        const queryClient = await ctx.chain.getQueryClient();
+        execution.checkpoint();
+        const { lease } = await queryClient.liftedinit.billing.v1.lease({
+          leaseUuid,
+        });
+        execution.checkpoint();
+        return lease ?? null;
+      }, callOptions);
     } catch (err) {
       if (err instanceof ManifestMCPError) throw err;
       throw new ManifestMCPError(
@@ -160,18 +165,15 @@ export async function stopApp(
   // hash only) so a bulk caller doesn't serialize on N block confirmations.
   const wait = opts?.waitForConfirmation ?? true;
   try {
-    const result = await withTxConfirmation(
-      () =>
-        cosmosTx(
-          ctx.chain,
-          'billing',
-          subcommand,
-          [leaseUuid],
-          wait,
-          txOverridesFrom(opts),
-          txExtrasFrom(opts),
-        ),
-      opts,
+    const result = await cosmosTx(
+      ctx.chain,
+      'billing',
+      subcommand,
+      [leaseUuid],
+      wait,
+      txOverridesFrom(opts),
+      txExtrasFrom(opts),
+      callOptions,
     );
     if (subcommand === 'close-lease') {
       return wait

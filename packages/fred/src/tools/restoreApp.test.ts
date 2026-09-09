@@ -3,6 +3,7 @@ import {
   LeaseState,
   ManifestMCPError,
   ManifestMCPErrorCode,
+  withRetry,
 } from '@manifest-network/manifest-mcp-core';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -39,10 +40,9 @@ vi.mock('@manifest-network/manifest-mcp-core', async (importOriginal) => {
 // ENG-725: `../http/fred.js` is NO LONGER mocked. The provider wire is injected at `ctx.fetch` as
 // a sealed probe, so the real `getLeaseProvision` / `restoreLease` / `pollLeaseUntilReady`, the
 // real `fetchJsonChecked` and the real `classifyTransportError` all run. That matters here more
-// than anywhere: every saga branch below is selected by the SHAPE of a `ProviderApiError`, and
-// those errors are now BUILT by the transport from a wire response rather than hand-constructed by
-// the test. A test that says "422 means cancel-and-reject" now proves the transport turns a 422
-// response into that verdict, not merely that the tool branches on a value it was handed.
+// than anywhere: response failures are BUILT by the transport rather than hand-constructed.
+// The tests prove every POST exception preserves unknown adoption, including a 422 relayed
+// from an already-provisioned backend verdict and malformed success bodies.
 //
 // Still mocked, deliberately and out of ENG-725's scope: the CORE BARREL (the chain-broadcast seam
 // — ENG-713, sealed via `makeSealedClientManager` below), and the chain-side tool modules
@@ -251,66 +251,126 @@ describe('restoreApp', () => {
     expect(mockCreateLease).not.toHaveBeenCalled();
   });
 
-  it('terminal 422: cancels the created lease once and throws RESTORE_REJECTED', async () => {
+  it('a relayed 422 already_provisioned verdict cannot authorize cancellation', async () => {
     mockSource();
-    routeWire({ restore: { status: 422, text: 'demote' } });
+    // Fred's backend client accepts 422 {error, code:"already_provisioned"}
+    // as ErrRestoreRefused. The API then relays the message with its numeric
+    // HTTP code (handlers.go writeError); it supplies no non-adoption verdict.
+    routeWire({
+      restore: {
+        status: 422,
+        json: { error: 'lease already provisioned', code: 422 },
+      },
+    });
     await expect(
       restoreApp(
         makeCtx(),
         { address: 'a', sourceLeaseUuid: SOURCE },
         { pollOptions: false },
       ),
-    ).rejects.toMatchObject({ code: ManifestMCPErrorCode.RESTORE_REJECTED });
-    expect(mockCosmosTx).toHaveBeenCalledTimes(1);
-    expect(mockCosmosTx).toHaveBeenCalledWith(
-      expect.anything(),
-      'billing',
-      'cancel-lease',
-      [NEW],
-      true,
-    );
+    ).rejects.toMatchObject({
+      code: ManifestMCPErrorCode.RESTORE_ORPHAN_COMPENSATION_FAILED,
+      details: {
+        lease_uuid: NEW,
+        source_lease_uuid: SOURCE,
+        source_provider_uuid: 'prov-1',
+        adoption_status: 'unknown',
+        provider_status: 422,
+        provider_error_kind: 'http',
+        next_action: 'app_diagnostics',
+      },
+    });
+    expect(mockCosmosTx).not.toHaveBeenCalled();
+    expect(urls()).toEqual(['provision', 'restore']);
   });
 
-  it('503: cancels and throws RESTORE_RETRYABLE (agent may re-invoke)', async () => {
-    mockSource();
-    routeWire({ restore: { status: 503, text: 'insufficient resources' } });
-    await expect(
-      restoreApp(
+  it.each([
+    ['400 gateway response', { status: 400, text: 'invalid request' }],
+    ['401 gateway response', { status: 401, text: 'unauthorized' }],
+    ['404 gateway response', { status: 404, text: 'not found' }],
+    ['422 gateway response', { status: 422, text: 'unprocessable' }],
+    ['429 gateway response', { status: 429, text: 'rate limit exceeded' }],
+    [
+      '409 already-provisioned conflict',
+      { status: 409, text: 'lease already provisioned' },
+    ],
+    ['502 gateway response', { status: 502, text: 'bad gateway' }],
+    ['503 gateway response', { status: 503, text: 'service unavailable' }],
+    ['504 gateway response', { status: 504, text: 'gateway timeout' }],
+    ['lost direct response', { transportError: new Error('socket closed') }],
+  ])(
+    'preserves adopted data after %s and requires reconciliation',
+    async (_name, fault) => {
+      mockSource();
+      let volumeOwner = SOURCE;
+      routeWire({
+        restore: () => {
+          // The provider adopts BEFORE the response is lost or replaced by a proxy.
+          // A cancellation would now destroy the source's only surviving data.
+          volumeOwner = NEW;
+          return fault;
+        },
+      });
+      mockCosmosTx.mockImplementation(async () => {
+        volumeOwner = 'deleted';
+        return undefined as never;
+      });
+
+      const err = await restoreApp(
         makeCtx(),
         { address: 'a', sourceLeaseUuid: SOURCE },
         { pollOptions: false },
-      ),
-    ).rejects.toMatchObject({ code: ManifestMCPErrorCode.RESTORE_RETRYABLE });
-    expect(mockCosmosTx).toHaveBeenCalledTimes(1);
-  });
+      ).catch((e: unknown) => e);
 
-  // Fred ENG-620/ENG-739 added a tenant-facing 502 to POST /restore: providerd now
-  // AUTHORS the error when a backend's 4xx body is off-contract, instead of relaying
-  // it as a 400/404. These two cases pin the deliberate asymmetry in how mono answers.
-  it('429 (throttled before the handler ran): cancels and throws RESTORE_RETRYABLE', async () => {
+      expect(err).toMatchObject({
+        code: ManifestMCPErrorCode.RESTORE_ORPHAN_COMPENSATION_FAILED,
+        details: {
+          lease_uuid: NEW,
+          orphaned_lease_uuid: NEW,
+          source_lease_uuid: SOURCE,
+          source_provider_uuid: 'prov-1',
+          adoption_status: 'unknown',
+          next_action: 'app_diagnostics',
+        },
+      });
+      expect((err as Error).message).toContain('outcome is unknown');
+      expect((err as Error).message).toContain('app_status');
+      expect((err as Error).message).toContain(
+        'PENDING chain state does not prove',
+      );
+      expect((err as Error).message).not.toContain('cancel-lease');
+      expect(mockCosmosTx).not.toHaveBeenCalled();
+      expect(volumeOwner).toBe(NEW);
+      expect(urls()).toEqual(['provision', 'restore']);
+    },
+  );
+
+  it('429 never auto-retries or compensates the restore', async () => {
     mockSource();
-    // Fred's TenantRateLimiter rejects inside AuthMiddleware, so the restore handler
-    // never executes and nothing can have been adopted — provably uncommitted, exactly
-    // like the 401 from that same middleware which is already treated as terminal.
     routeWire({ restore: { status: 429, text: 'rate limit exceeded' } });
+    const ctx = makeCtx();
+    const onRetry = vi.fn();
     await expect(
-      restoreApp(
-        makeCtx(),
-        { address: 'a', sourceLeaseUuid: SOURCE },
-        { pollOptions: false },
+      withRetry(
+        () =>
+          restoreApp(
+            ctx,
+            { address: 'a', sourceLeaseUuid: SOURCE },
+            { pollOptions: false },
+          ),
+        { config: { maxRetries: 2, baseDelayMs: 1, maxDelayMs: 1 }, onRetry },
       ),
-    ).rejects.toMatchObject({ code: ManifestMCPErrorCode.RESTORE_RETRYABLE });
-    expect(mockCosmosTx).toHaveBeenCalledTimes(1);
-    expect(mockCosmosTx).toHaveBeenCalledWith(
-      expect.anything(),
-      'billing',
-      'cancel-lease',
-      [NEW],
-      true,
-    );
+    ).rejects.toMatchObject({
+      code: ManifestMCPErrorCode.RESTORE_ORPHAN_COMPENSATION_FAILED,
+      details: { adoption_status: 'unknown', provider_status: 429 },
+    });
+    expect(mockCosmosTx).not.toHaveBeenCalled();
+    expect(mockCreateLease).toHaveBeenCalledTimes(1);
+    expect(onRetry).not.toHaveBeenCalled();
+    expect(urls()).toEqual(['provision', 'restore']);
   });
 
-  it('429 with Retry-After: the wait the provider asked for reaches the caller', async () => {
+  it('429 preserves Retry-After only as diagnostics, without inferring non-adoption', async () => {
     mockSource();
     routeWire({
       restore: {
@@ -324,21 +384,23 @@ describe('restoreApp', () => {
       { address: 'a', sourceLeaseUuid: SOURCE },
       { pollOptions: false },
     ).catch((e: unknown) => e);
-    // A throttle is only actionable with a delay attached; the transport already
-    // parses Retry-After into ProviderApiError.retryAfterMs, so not surfacing it
-    // would throw the one useful fact away.
-    expect((err as Error).message).toMatch(/30\s*s|30000\s*ms/i);
+    expect(err).toMatchObject({
+      code: ManifestMCPErrorCode.RESTORE_ORPHAN_COMPENSATION_FAILED,
+      details: {
+        adoption_status: 'unknown',
+        provider_status: 429,
+        provider_error_kind: 'http',
+        retry_after_ms: 30_000,
+        next_action: 'app_diagnostics',
+      },
+    });
+    expect((err as Error).message).toContain('reconcile with the provider');
+    expect((err as Error).message).not.toContain('cancel-lease');
+    expect(mockCosmosTx).not.toHaveBeenCalled();
   });
 
-  // DELIBERATE, and the inverse of the 429 above — do not "fix" this into a cancel.
-  // Fred's OWN 502 means the request was not applied, so cancelling would be correct
-  // for it. But mono cannot distinguish that from a 502 minted by a reverse proxy
-  // sitting IN FRONT of Fred, where the POST may well have reached Fred and been
-  // adopted. Cancelling there would cancel-lease a restore that committed and destroy
-  // the adopted data — the same hazard the 2xx-parse-failure branch already guards.
-  // Leaving 502 in-doubt costs an orphaned PENDING lease, which is recoverable; the
-  // other way round is not.
-  it('502: does NOT cancel — stays in-doubt and surfaces the orphan for manual rollback', async () => {
+  // Response prose is not an acknowledgement of non-adoption tied to this request.
+  it('502: even a body claiming non-adoption requires reconciliation', async () => {
     mockSource();
     routeWire({
       restore: {
@@ -354,7 +416,11 @@ describe('restoreApp', () => {
       ),
     ).rejects.toMatchObject({
       code: ManifestMCPErrorCode.RESTORE_ORPHAN_COMPENSATION_FAILED,
-      details: { orphaned_lease_uuid: NEW },
+      details: {
+        orphaned_lease_uuid: NEW,
+        adoption_status: 'unknown',
+        next_action: 'app_diagnostics',
+      },
     });
     expect(mockCosmosTx).not.toHaveBeenCalled();
   });
@@ -377,21 +443,76 @@ describe('restoreApp', () => {
     expect(mockCosmosTx).not.toHaveBeenCalled();
   });
 
-  it('compensation fails: 422 + cancel rejects → RESTORE_ORPHAN naming the orphaned uuid', async () => {
-    mockSource();
-    routeWire({ restore: { status: 422, text: 'demote' } });
-    mockCosmosTx.mockRejectedValue(new Error('chain unreachable'));
-    await expect(
-      restoreApp(
-        makeCtx(),
+  it.each([false, true])(
+    'token failure before POST is known not adopted (cancel fails: %s)',
+    async (cancelFails) => {
+      mockSource();
+      const ctx = makeCtx();
+      vi.mocked(ctx.providerAuth.providerToken)
+        .mockResolvedValueOnce('source-token')
+        .mockRejectedValueOnce(new Error('wallet disconnected'));
+      if (cancelFails)
+        mockCosmosTx.mockRejectedValueOnce(new Error('chain unreachable'));
+
+      const err = await restoreApp(
+        ctx,
         { address: 'a', sourceLeaseUuid: SOURCE },
         { pollOptions: false },
-      ),
-    ).rejects.toMatchObject({
-      code: ManifestMCPErrorCode.RESTORE_ORPHAN_COMPENSATION_FAILED,
-      details: { orphaned_lease_uuid: NEW },
+      ).catch((e: unknown) => e);
+
+      expect(urls()).toEqual(['provision']);
+      expect(mockCosmosTx).toHaveBeenCalledExactlyOnceWith(
+        ctx.chain,
+        'billing',
+        'cancel-lease',
+        [NEW],
+        true,
+      );
+      expect(err).toMatchObject({
+        code: cancelFails
+          ? ManifestMCPErrorCode.RESTORE_ORPHAN_COMPENSATION_FAILED
+          : ManifestMCPErrorCode.RESTORE_REJECTED,
+        details: {
+          lease_uuid: NEW,
+          source_lease_uuid: SOURCE,
+          adoption_status: 'not_adopted',
+          ...(cancelFails
+            ? { next_action: 'cosmos_tx billing cancel-lease' }
+            : { rolled_back: true }),
+        },
+      });
+    },
+  );
+
+  it('post-commit cancellation retains the adopted lease IDs and original reason', async () => {
+    mockSource();
+    const ac = new AbortController();
+    const reason = new Error('caller stopped waiting');
+    routeWire({
+      restore: () => {
+        ac.abort(reason);
+        return { status: 202, json: { status: 'provisioning' } };
+      },
     });
-    expect(mockCosmosTx).toHaveBeenCalledTimes(1);
+
+    const err = await restoreApp(
+      makeCtx(),
+      { address: 'a', sourceLeaseUuid: SOURCE },
+      { signal: ac.signal },
+    ).catch((e: unknown) => e);
+
+    expect(err).toMatchObject({
+      code: ManifestMCPErrorCode.OPERATION_CANCELLED,
+      details: {
+        lease_uuid: NEW,
+        source_lease_uuid: SOURCE,
+        committed: true,
+        restore_status: 'provisioning',
+        next_action: 'app_diagnostics',
+      },
+    });
+    expect((err as ManifestMCPError).details?.reason).toBe(reason);
+    expect(mockCosmosTx).not.toHaveBeenCalled();
   });
 
   it('post-pivot poll timeout: reports provisioning and does NOT cancel (data-loss guard)', async () => {
@@ -472,19 +593,37 @@ describe('restoreApp', () => {
     expect(mockCosmosTx).not.toHaveBeenCalled();
   });
 
-  it('committed-but-empty-body (2xx ProviderApiError): treated as committed, NOT orphaned', async () => {
-    mockSource();
-    // An empty body on a 2xx: the real parse throws a ProviderApiError carrying the 2xx
-    // status, which the saga must read as COMMITTED rather than orphaned.
-    routeWire({ restore: { status: 202, text: '' } });
-    const result = await restoreApp(
-      makeCtx(),
-      { address: 'a', sourceLeaseUuid: SOURCE },
-      { pollOptions: false },
-    );
-    expect(result).toMatchObject({ lease_uuid: NEW, status: 'provisioning' });
-    expect(mockCosmosTx).not.toHaveBeenCalled();
-  });
+  it.each([
+    [{ status: 202, text: '' }, 'invalid_json'],
+    [{ status: 200, text: '<html>accepted</html>' }, 'invalid_json'],
+    [{ status: 202, json: {} }, 'invalid_response'],
+    [{ status: 201, json: { status: 1 } }, 'invalid_response'],
+  ] as const)(
+    'malformed success body %j preserves unknown adoption without polling or cleanup',
+    async (fault, kind) => {
+      mockSource();
+      routeWire({ restore: fault });
+      const err = await restoreApp(makeCtx(), {
+        address: 'a',
+        sourceLeaseUuid: SOURCE,
+      }).catch((e: unknown) => e);
+      expect(err).toMatchObject({
+        code: ManifestMCPErrorCode.RESTORE_ORPHAN_COMPENSATION_FAILED,
+        details: {
+          lease_uuid: NEW,
+          source_lease_uuid: SOURCE,
+          adoption_status: 'unknown',
+          provider_status: fault.status,
+          provider_error_kind: kind,
+          next_action: 'app_diagnostics',
+        },
+      });
+      expect((err as ManifestMCPError).details).not.toHaveProperty('committed');
+      expect((err as Error).message).not.toContain('cancel-lease');
+      expect(mockCosmosTx).not.toHaveBeenCalled();
+      expect(urls()).toEqual(['provision', 'restore']);
+    },
+  );
 
   it('surfaces custom_domain_not_restored when the source items carry a custom domain', async () => {
     mockSource([
@@ -649,10 +788,8 @@ describe('restoreApp', () => {
     });
   });
 
-  it('still compensates and reports the provider verdict when a rejection coincides with an abort (ENG-666)', async () => {
-    // Guards the removal of the `if (aborted) throw err` bypass: a real 422 that
-    // merely coincides with a cancel must still be classified by the PROVIDER's
-    // answer — not short-circuited into a bare abort that skips the rollback.
+  it('preserves unknown adoption when a POST error coincides with an abort (ENG-666)', async () => {
+    // A coincident abort must not erase the IDs or authorize unsafe cleanup.
     mockSource();
     const ac = new AbortController();
     routeWire({
@@ -668,17 +805,17 @@ describe('restoreApp', () => {
       { pollOptions: false, signal: ac.signal },
     ).catch((e: unknown) => e);
 
-    expect(mockCosmosTx).toHaveBeenCalledWith(
-      expect.anything(),
-      'billing',
-      'cancel-lease',
-      [NEW],
-      true,
-    );
-    expect(err).toBeInstanceOf(ManifestMCPError);
-    expect((err as ManifestMCPError).code).toBe(
-      ManifestMCPErrorCode.RESTORE_REJECTED,
-    );
+    expect(mockCosmosTx).not.toHaveBeenCalled();
+    expect(err).toMatchObject({
+      code: ManifestMCPErrorCode.RESTORE_ORPHAN_COMPENSATION_FAILED,
+      details: {
+        lease_uuid: NEW,
+        source_lease_uuid: SOURCE,
+        adoption_status: 'unknown',
+        next_action: 'app_diagnostics',
+      },
+    });
+    expect((err as Error).message).not.toContain('cancel-lease');
   });
 
   it('honours the deprecated abortSignal spelling as well as signal (ENG-666)', async () => {

@@ -24,31 +24,6 @@ import { fetchLease } from './fetchLease.js';
 import type { LifecycleCallOptions } from './lifecycle-options.js';
 import { resolveProviderUrl } from './resolveLeaseProvider.js';
 
-/**
- * Restore-POST statuses where the provider provably rejected BEFORE adopting
- * anything → safe to cancel the empty PENDING shell and hand the credit back.
- * Everything NOT listed here is in-doubt and must never be auto-cancelled.
- *
- * `429` earns its place the same way `401` does: Fred's `TenantRateLimiter`
- * rejects inside `AuthMiddleware`, so the restore handler never runs.
- *
- * Deliberately ABSENT, and the interesting case: **502**. Fred began authoring a
- * tenant-facing 502 in ENG-620/ENG-739 ("the provider backend returned an unusable
- * error; the request was not applied") where it previously relayed an off-contract
- * backend body as a 400 or 404. Fred's own 502 IS uncommitted — but a 502 is also
- * exactly what a reverse proxy in front of Fred mints, and there the POST may have
- * reached Fred and been adopted. Mono cannot tell the two apart from the wire, so it
- * takes the recoverable error: an orphaned PENDING lease (surfaced with the
- * `cancel-lease` remedy) rather than a `cancel-lease` fired at a restore that
- * committed, which would destroy the adopted data. `restoreApp.test.ts` pins both
- * halves of this asymmetry.
- */
-const UNCOMMITTED_TERMINAL = new Set([400, 401, 404, 409, 422, 429, 503]);
-
-/** Uncommitted statuses whose cause is transient — the agent may deliberately
- *  re-invoke once it clears. Everything else in the set is a stable rejection. */
-const UNCOMMITTED_RETRYABLE = new Set([429, 503]);
-
 export interface RestoreResult {
   lease_uuid: string;
   source_lease_uuid: string;
@@ -60,8 +35,9 @@ export interface RestoreResult {
 /**
  * Restore a closed lease's retained volumes onto a fresh lease (ENG-599). A saga:
  * pre-flight retained-check → create fresh PENDING lease from the source's on-chain
- * metaHash+items → restore POST (pivot) → cancel-lease on uncommitted-terminal
- * failure / orphan surface on in-doubt. See the design spec for the full model.
+ * metaHash+items → restore POST (pivot). Only a locally proven pre-POST failure
+ * permits compensation. Every POST exception requires reconciliation: HTTP status
+ * and error prose do not establish non-adoption, even for 4xx or malformed 2xx.
  */
 export async function restoreApp(
   ctx: FredAuthCtx,
@@ -138,7 +114,7 @@ export async function restoreApp(
   // and it is not the POST — a failure here provably means nothing was sent. Keeping
   // it out lets the abort re-check below run before the POST without its own error
   // falling into the POST's catch, which would misfile a rollback-safe state as an
-  // in-doubt orphan. A mint FAILURE keeps its original routing.
+  // in-doubt outcome. A mint failure also proves that the POST was never sent.
   let newToken: string;
   try {
     newToken = await ctx.providerAuth.providerToken({
@@ -146,11 +122,16 @@ export async function restoreApp(
       leaseUuid: newLeaseUuid,
     });
   } catch (err) {
-    return await handleRestoreFailure(ctx, err, {
-      newLeaseUuid,
-      sourceLeaseUuid,
-      sourceProviderUuid: source.providerUuid,
-    });
+    return await handleRestoreFailure(
+      ctx,
+      err,
+      {
+        newLeaseUuid,
+        sourceLeaseUuid,
+        sourceProviderUuid: source.providerUuid,
+      },
+      'pre-restore-post',
+    );
   }
   // Re-check: the mint above is the one await between the guard and the POST.
   if (signal?.aborted) {
@@ -175,29 +156,15 @@ export async function restoreApp(
     );
     restoreStatus = result.status;
   } catch (err) {
-    // NOTE: no `if (signal?.aborted) throw err` bypass here. Every abort that can
-    // still be acted on is handled above, before the POST; what reaches this catch is
-    // a real POST failure that may merely COINCIDE with a cancel. Letting a coincident
-    // cancel short-circuit would suppress both the compensation and the orphan record,
-    // so side-effect classification depends on the provider's answer alone — never on
-    // whether the caller also cancelled (ENG-666).
-    // A ProviderApiError with a 2xx status means the restore COMMITTED but the
-    // (202) body was empty/non-JSON and parseJsonResponse threw. Treat it as
-    // committed — routing it to failure handling would advise cancelling a
-    // lease with adopted volumes (data loss). Only non-2xx is a real failure.
-    if (
-      ProviderApiError.isProviderApiError(err) &&
-      err.status >= 200 &&
-      err.status < 300
-    ) {
-      restoreStatus = 'provisioning';
-    } else {
-      return await handleRestoreFailure(ctx, err, {
-        newLeaseUuid,
-        sourceLeaseUuid,
-        sourceProviderUuid: source.providerUuid,
-      });
-    }
+    // Keep the reconciliation record even if cancellation coincides with this
+    // failure. No POST error establishes non-adoption: Fred can relay a 422 with
+    // an unknown backend verdict, and gateways can replace any response. A 2xx
+    // with an unreadable/invalid body does not establish commitment either.
+    return await handleRestoreFailure(ctx, err, {
+      newLeaseUuid,
+      sourceLeaseUuid,
+      sourceProviderUuid: source.providerUuid,
+    });
   }
 
   // Committed (202). Post-pivot: never compensate from here on.
@@ -226,9 +193,34 @@ export async function restoreApp(
     // provisioning and NEVER compensate. A provider-authored failure verdict
     // is different: preserve that rejection and its detail instead of
     // laundering it into an indistinguishable "still coming up" result.
-    // (A caller abort propagates; ENG-699 owns enriching that cancellation with
-    // the committed lease context.)
-    if (signal?.aborted) throw err;
+    if (signal?.aborted) {
+      // A cancelled MCP request may receive no response. Keep the recovery handle
+      // in stderr too, without logging the caller's potentially sensitive reason.
+      logger.warn(
+        JSON.stringify({
+          event: 'restore_poll_cancelled',
+          outcome: 'committed',
+          newLeaseUuid,
+          fromLeaseUuid: sourceLeaseUuid,
+          sourceProviderUuid: source.providerUuid,
+        }),
+      );
+      throw new ManifestMCPError(
+        ManifestMCPErrorCode.OPERATION_CANCELLED,
+        `Restore committed to lease ${newLeaseUuid}; waiting for readiness was cancelled. Check app_status or app_diagnostics for this lease before taking further action.`,
+        {
+          lease_uuid: newLeaseUuid,
+          source_lease_uuid: sourceLeaseUuid,
+          committed: true,
+          restore_status: base.status,
+          next_action: 'app_diagnostics',
+          reason: err,
+          ...(base.custom_domain_not_restored && {
+            custom_domain_not_restored: base.custom_domain_not_restored,
+          }),
+        },
+      );
+    }
     if (
       ProviderApiError.isProviderApiError(err) &&
       err.kind === 'poll_verdict'
@@ -258,8 +250,8 @@ export async function restoreApp(
 
 /**
  * Cancelled after the create-lease broadcast but before the restore POST. The fresh
- * lease is an empty PENDING shell — nothing adopted — which is the same state the
- * UNCOMMITTED_TERMINAL branch already rolls back, so compensate rather than abandon.
+ * lease is an empty PENDING shell: local execution proves this restore never sent
+ * its POST, so compensate rather than abandon it.
  *
  * This matters because a cancelled MCP request receives no response at all: an error
  * carrying the lease uuid would never reach the host, so a compensating cancel and a
@@ -274,7 +266,7 @@ async function handleRestoreAbort(
   },
 ): Promise<never> {
   try {
-    // cosmosTx takes no signal, so the caller's abort cannot sabotage the rollback.
+    // Deliberately omit a signal: caller cancellation must not sabotage this safe rollback.
     await cosmosTx(
       ctx.chain,
       'billing',
@@ -322,10 +314,8 @@ async function handleRestoreFailure(
     sourceLeaseUuid: string;
     sourceProviderUuid: string;
   },
+  phase: 'pre-restore-post' | 'restore-post' = 'restore-post',
 ): Promise<never> {
-  const status = ProviderApiError.isProviderApiError(err)
-    ? err.status
-    : undefined;
   // The cause can be a ProviderApiError whose message is provider-controlled
   // response-body text (untrusted on-chain SKU origin). Sanitize before it is
   // interpolated into a model/human-facing error message (ENG-555).
@@ -334,7 +324,7 @@ async function handleRestoreFailure(
     256,
   ) as string;
 
-  if (status !== undefined && UNCOMMITTED_TERMINAL.has(status)) {
+  if (phase === 'pre-restore-post') {
     // Uncommitted → nothing adopted → cancel the empty PENDING shell (single
     // best-effort; the orphan surface below is the safety net if it fails).
     try {
@@ -354,31 +344,33 @@ async function handleRestoreFailure(
         `${cause}; cancel failed: ${cx}`,
       );
     }
-    const code = UNCOMMITTED_RETRYABLE.has(status)
-      ? ManifestMCPErrorCode.RESTORE_RETRYABLE
-      : ManifestMCPErrorCode.RESTORE_REJECTED;
-    // A throttle is only actionable with the delay attached. The transport already
-    // parses `Retry-After` into `retryAfterMs`, so dropping it here would discard the
-    // one fact that tells the agent when re-invoking is worth attempting.
-    const retryAfterMs = ProviderApiError.isProviderApiError(err)
-      ? err.retryAfterMs
-      : undefined;
-    const waitHint =
-      retryAfterMs !== undefined
-        ? ` The provider asked us to wait ${Math.ceil(retryAfterMs / 1000)}s before retrying.`
-        : '';
     throw new ManifestMCPError(
-      code,
-      `Restore rejected (HTTP ${status}); the created lease ${ids.newLeaseUuid} was rolled back (credit released).${waitHint} ${cause}`,
+      ManifestMCPErrorCode.RESTORE_REJECTED,
+      `Restore failed before the POST; the created lease ${ids.newLeaseUuid} was rolled back (credit released). ${cause}`,
+      {
+        lease_uuid: ids.newLeaseUuid,
+        source_lease_uuid: ids.sourceLeaseUuid,
+        adoption_status: 'not_adopted',
+        rolled_back: true,
+      },
     );
   }
-  // In-doubt — the POST may have committed, so do NOT cancel. Reached by 5xx other
-  // than 503 (500, and the 502 Fred added in ENG-620 — see UNCOMMITTED_TERMINAL for
-  // why that one is deliberately not compensated), by a status-0 transport fault
-  // (network / timeout), and by any status Fred grows that this file has not
-  // classified. Defaulting an UNKNOWN status to in-doubt is the point: a new Fred
-  // status must cost an orphaned lease, never an erroneous cancel.
-  return orphan(ids, 'in-doubt', cause);
+  // These fields are diagnostics, never evidence authorizing cancellation or
+  // replay. In particular, Retry-After does not make a non-idempotent restore safe.
+  return orphan(
+    ids,
+    'in-doubt',
+    cause,
+    ProviderApiError.isProviderApiError(err)
+      ? {
+          provider_status: err.status,
+          ...(err.kind !== undefined && { provider_error_kind: err.kind }),
+          ...(err.retryAfterMs !== undefined && {
+            retry_after_ms: err.retryAfterMs,
+          }),
+        }
+      : undefined,
+  );
 }
 
 function orphan(
@@ -387,15 +379,22 @@ function orphan(
     sourceLeaseUuid: string;
     sourceProviderUuid: string;
   },
-  step: string,
+  step: 'abort-compensating-cancel' | 'compensating-cancel' | 'in-doubt',
   cause: string,
+  providerDetails?: {
+    provider_status: number;
+    provider_error_kind?: string;
+    retry_after_ms?: number;
+  },
 ): never {
-  // One greppable/alertable structured stderr line for every orphan outcome.
+  const adoptionStatus = step === 'in-doubt' ? 'unknown' : 'not_adopted';
+  // One greppable/alertable structured stderr line for every unresolved outcome.
   logger.error(
     JSON.stringify({
       event: 'restore_orphan',
       outcome: 'manual-intervention-required',
       step,
+      adoption_status: adoptionStatus,
       newLeaseUuid: ids.newLeaseUuid,
       fromLeaseUuid: ids.sourceLeaseUuid,
       sourceProviderUuid: ids.sourceProviderUuid,
@@ -403,11 +402,20 @@ function orphan(
   );
   throw new ManifestMCPError(
     ManifestMCPErrorCode.RESTORE_ORPHAN_COMPENSATION_FAILED,
-    `Restore left an orphaned PENDING lease ${ids.newLeaseUuid} (${step}). It reserves credit — cancel it with: cosmos_tx billing cancel-lease ${ids.newLeaseUuid} (via the chain server). Cause: ${cause}`,
+    adoptionStatus === 'unknown'
+      ? `Restore adoption outcome is unknown for lease ${ids.newLeaseUuid} from source ${ids.sourceLeaseUuid}. Check app_status and app_diagnostics for both leases and reconcile with the provider before retrying restore or considering cleanup. A PENDING chain state does not prove that no data was adopted. Cause: ${cause}`
+      : `Restore did not adopt data, but cleanup of lease ${ids.newLeaseUuid} is unconfirmed (${step}). Check its chain state and, if it is still PENDING, cancel it with: cosmos_tx billing cancel-lease ${ids.newLeaseUuid} (via the chain server). Cause: ${cause}`,
     {
+      lease_uuid: ids.newLeaseUuid,
       orphaned_lease_uuid: ids.newLeaseUuid,
       source_lease_uuid: ids.sourceLeaseUuid,
-      next_action: 'cosmos_tx billing cancel-lease',
+      source_provider_uuid: ids.sourceProviderUuid,
+      adoption_status: adoptionStatus,
+      ...providerDetails,
+      next_action:
+        adoptionStatus === 'unknown'
+          ? 'app_diagnostics'
+          : 'cosmos_tx billing cancel-lease',
     },
   );
 }

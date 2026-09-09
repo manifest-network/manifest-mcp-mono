@@ -69,7 +69,7 @@ export interface DenomMap {
 //   - Per-function options extend `AgentCoreRuntime` with whatever
 //     extra fields that function specifically needs. Only `deployApp`
 //     requires `walletProvider` (ADR-036 auth tokens for the manifest
-//     upload via fred's atomic deployApp tool); the other 3 stay
+//     upload via fred's multi-step deployApp tool); the other 3 stay
 //     base + chainDataFile/denomMap.
 //   - "I/O at orchestrator boundary" principle preserved (Path-Bii):
 //     callers compose the runtime; agent-core's public functions stay

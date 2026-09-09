@@ -1,3 +1,4 @@
+import { isLeaseUuidShape } from './internals/uuid-shape.js';
 /**
  * Public entry point: produce a markdown-formatted diagnostic report
  * for a given lease.
@@ -44,9 +45,6 @@ import type {
   TroubleshootOptions,
   TroubleshootReport,
 } from './types.js';
-
-const UUID_RE =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
  * Generate a diagnostic markdown report for `args.leaseUuid`.
@@ -135,7 +133,7 @@ export async function troubleshootDeployment(
 // --- Helpers --------------------------------------------------------
 
 function validateArgs(args: TroubleshootArgs): void {
-  if (typeof args.leaseUuid !== 'string' || !args.leaseUuid.match(UUID_RE)) {
+  if (!isLeaseUuidShape(args.leaseUuid)) {
     throw new ManifestMCPError(
       ManifestMCPErrorCode.INVALID_CONFIG,
       `troubleshootDeployment: leaseUuid must be a UUID; got "${args.leaseUuid}".`,

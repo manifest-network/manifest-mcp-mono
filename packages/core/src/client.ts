@@ -39,12 +39,14 @@ import {
   DEFAULT_GAS_MULTIPLIER,
   DEFAULT_REQUESTS_PER_SECOND,
 } from './config.js';
+import { verifyRestChainIdentity } from './internals/chain-identity.js';
 import {
   type SequenceCache,
   sequencedSigningClient,
 } from './internals/tx-sequence.js';
 import { createLCDQueryClient } from './lcd-adapter.js';
 import { type Logger, noopLogger } from './logger.js';
+import type { ManifestQueryClient } from './manifest-query-client.js';
 import { abortableSleep, abortReason } from './options.js';
 import { withRetry } from './retry.js';
 import {
@@ -54,29 +56,7 @@ import {
   type WalletProvider,
 } from './types.js';
 
-// Combined query client type: liftedinit modules (cosmos + billing/manifest/sku) + cosmwasm
-// + strangelove_ventures (poa) + osmosis (tokenfactory) + ibc (transfer, channel, client, connection).
-// Uses Pick to extract only each factory's unique namespace, avoiding conflicts with overlapping cosmos types.
-type LiftedinitQueryClient = Awaited<
-  ReturnType<typeof liftedinit.ClientFactory.createRPCQueryClient>
->;
-type CosmwasmQueryClient = Awaited<
-  ReturnType<typeof cosmwasmNs.ClientFactory.createRPCQueryClient>
->;
-type StrangeloveVenturesQueryClient = Awaited<
-  ReturnType<typeof strangeloveVenturesNs.ClientFactory.createRPCQueryClient>
->;
-type OsmosisQueryClient = Awaited<
-  ReturnType<typeof osmosisNs.ClientFactory.createRPCQueryClient>
->;
-type IbcQueryClient = Awaited<
-  ReturnType<typeof ibcNs.ClientFactory.createRPCQueryClient>
->;
-export type ManifestQueryClient = LiftedinitQueryClient &
-  Pick<CosmwasmQueryClient, 'cosmwasm'> &
-  Pick<StrangeloveVenturesQueryClient, 'strangelove_ventures'> &
-  Pick<OsmosisQueryClient, 'osmosis'> &
-  Pick<IbcQueryClient, 'ibc'>;
+export type { ManifestQueryClient } from './manifest-query-client.js';
 
 /**
  * Extract the registry type expected by SigningStargateClient.connectWithSigner.
@@ -97,18 +77,7 @@ const DEFAULT_BROADCAST_TIMEOUT_MS = 60_000;
 /** Default polling interval for transaction confirmation (3 seconds) */
 const DEFAULT_BROADCAST_POLL_INTERVAL_MS = 3_000;
 
-/**
- * Poll granularity for the CANCELLABLE rate-limit wait (ENG-710). Deliberately a constant
- * rather than a value derived from `requestsPerSecond`: any derived form needs a clamp, and
- * for every rps below ~40 — which includes the default 10 and every value anyone configures —
- * the clamp returns this number anyway. Storing a derived value would also mean a second field
- * to update in lockstep at BOTH limiter-construction sites, next to the one hazard this class
- * already has (the limiter is replaced wholesale on reconfigure).
- *
- * Abort latency does NOT depend on it — the sleep is abort-aware, so a cancel rejects at once.
- * It bounds only the extra wait for a token, and only for a caller that is ALREADY throttled
- * (whose wait is otherwise up to a full interval), i.e. ≤2.5% overshoot on a 1s budget.
- */
+/** Poll for an available rate-limit token; abort-aware sleep rejects immediately on cancellation. */
 const RATE_LIMIT_POLL_MS = 25;
 
 /**
@@ -136,30 +105,67 @@ function getSigningManifestClientOptions() {
   return { registry, aminoTypes };
 }
 
-/**
- * Manages CosmJS client instances with lazy initialization and singleton pattern
- */
+/** Only account sequencing is shared between independently configured clients. */
+interface ChainCoordination {
+  readonly locks: Map<string, Promise<unknown>>;
+  readonly sequences: SequenceCache;
+  managers: number;
+}
+
+/** A stable, owned snapshot: caller mutations cannot change an approved transaction's policy. */
+function snapshotConfig(config: ManifestMCPConfig): ManifestMCPConfig {
+  return Object.freeze({
+    chainId: config.chainId,
+    rpcUrl: config.rpcUrl,
+    restUrl: config.restUrl,
+    addressPrefix: config.addressPrefix,
+    gasPrice: config.gasPrice,
+    gasMultiplier: config.gasMultiplier,
+    maxGas: config.maxGas,
+    rateLimit:
+      config.rateLimit &&
+      Object.freeze({
+        requestsPerSecond: config.rateLimit.requestsPerSecond,
+      }),
+    retry:
+      config.retry &&
+      Object.freeze({
+        maxRetries: config.retry.maxRetries,
+        baseDelayMs: config.retry.baseDelayMs,
+        maxDelayMs: config.retry.maxDelayMs,
+      }),
+  } satisfies Record<keyof ManifestMCPConfig, unknown>);
+}
+
+/** Lazy clients shared only by holders with the same wallet and transaction policy. */
 export class CosmosClientManager {
   private static instances: Map<string, CosmosClientManager> = new Map();
+  private static readonly walletIds = new WeakMap<WalletProvider, number>();
+  private static nextWalletId = 0;
+  private static readonly fetchIds = new WeakMap<
+    typeof globalThis.fetch,
+    number
+  >();
+  private static nextFetchId = 0;
+  private static readonly chainCoordination = new Map<
+    string,
+    ChainCoordination
+  >();
 
   /** Registry key used to evict this manager when its final holder releases it. */
   private readonly instanceKey: string;
-  private config: ManifestMCPConfig;
-  private walletProvider: WalletProvider;
+  private readonly config: ManifestMCPConfig;
+  private readonly walletProvider: WalletProvider;
+  private readonly coordination: ChainCoordination;
+  private coordinationReleased = false;
   private queryClient: ManifestQueryClient | null = null;
   private signingClient: SigningStargateClient | null = null;
-  private rateLimiter: RateLimiter;
+  private readonly rateLimiter: RateLimiter;
 
-  // Per-signer broadcast serialization. A promise-chain lock keyed by signer ADDRESS so concurrent
-  // signAndBroadcast calls from one account can't both read the same committed sequence (cosmjs
-  // re-queries the sequence per broadcast — account-sequence-mismatch). Pure-JS (NO node:async_hooks
-  // — browser-safe). One entry per distinct address (today one wallet ⇒ one entry).
-  private broadcastLocks: Map<string, Promise<unknown>> = new Map();
-
-  // Per-signer local sequence tracking for non-blocking (SYNC) broadcasts (see internals/tx-sequence.ts).
-  // Only populated while a signer has an unconfirmed sync tx in flight; self-heals on error. Cleared
-  // whenever the signing client is replaced (config change / disconnect) since the account/chain may differ.
-  private txSequenceCache: SequenceCache = new Map();
+  // Shared by chain ID and then signer address, including across wallets and RPC endpoints.
+  private readonly broadcastLocks: Map<string, Promise<unknown>>;
+  private readonly txSequenceCache: SequenceCache;
+  private readonly pendingBroadcasts = new Set<Promise<unknown>>();
 
   /** Per-instance logger for the 3 init-time diagnostics. Defaults to noopLogger (silent); see setLogger. */
   private logger: Logger = noopLogger;
@@ -170,10 +176,7 @@ export class CosmosClientManager {
   // disconnects), so one server's shutdown can't sever another's shared client.
   private refCount = 0;
 
-  // Final release is deferred while a broadcast queue is live. Keeping the
-  // manager registered during that drain is essential: a concurrent
-  // reacquisition must join this manager's lock domain, not create a second
-  // manager capable of broadcasting the same account sequence in parallel.
+  // Keep compatible holders reusable while this manager's accepted broadcast work drains.
   private pendingRelease: Promise<void> | null = null;
 
   // Promises to prevent concurrent client initialization (lazy init race condition)
@@ -184,10 +187,22 @@ export class CosmosClientManager {
     config: ManifestMCPConfig,
     walletProvider: WalletProvider,
     instanceKey: string,
+    private readonly fetchFn: typeof globalThis.fetch,
   ) {
     this.instanceKey = instanceKey;
     this.config = config;
     this.walletProvider = walletProvider;
+    let coordination = CosmosClientManager.chainCoordination.get(
+      config.chainId,
+    );
+    if (!coordination) {
+      coordination = { locks: new Map(), sequences: new Map(), managers: 0 };
+      CosmosClientManager.chainCoordination.set(config.chainId, coordination);
+    }
+    coordination.managers += 1;
+    this.coordination = coordination;
+    this.broadcastLocks = coordination.locks;
+    this.txSequenceCache = coordination.sequences;
 
     // Initialize rate limiter with configured or default requests per second
     const requestsPerSecond =
@@ -199,75 +214,40 @@ export class CosmosClientManager {
   }
 
   /**
-   * Get or create a singleton instance for the given config.
-   * Instances are keyed by chainId:rpcUrl:restUrl. For existing instances:
-   * - Config and walletProvider references are always updated
-   * - Signing client is disconnected/recreated if gasPrice, gasMultiplier, or walletProvider changed
-   * - Rate limiter is updated if requestsPerSecond changed (without affecting signing client)
-   *
-   * Every call acquires a reference (increments refCount). Each caller must
-   * balance it with exactly one disconnect() so the shared clients are torn
-   * down only once the last holder releases (see disconnect()).
-   *
-   * Reference accounting counts calls, not distinct callers: a call that only
-   * updates config on an existing key (changed gasPrice/gasMultiplier/
-   * walletProvider/rate limit) still acquires a reference. A holder that
-   * re-invokes getInstance to reconfigure a key it already holds therefore
-   * takes an ADDITIONAL reference and must balance it with an additional
-   * disconnect(), or refCount never reaches zero and the clients leak. Today
-   * every server acquires once at construction and releases once at shutdown,
-   * so this caveat only applies to callers that reconfigure a live key in place.
+   * Acquire a manager for this wallet reference and immutable configuration snapshot.
+   * Compatible sibling servers share clients; a different wallet or policy gets an independent
+   * manager. Constructing another client never reconfigures existing holders. Broadcast locks and
+   * pending account sequences remain shared across every manager for the same chain ID.
+   * The optional fetch transport only verifies REST node-info; it does not serve provider or LCD requests.
+   * Balance each acquisition with one disconnect(), including repeated compatible acquisitions.
    */
   static getInstance(
     config: ManifestMCPConfig,
     walletProvider: WalletProvider,
+    fetchFn: typeof globalThis.fetch = globalThis.fetch,
   ): CosmosClientManager {
-    const parts = [config.chainId, config.rpcUrl ?? ''];
-    if (config.restUrl) parts.push(config.restUrl);
-    const key = parts.join(':');
-    let instance = CosmosClientManager.instances.get(key);
-
-    if (!instance) {
-      instance = new CosmosClientManager(config, walletProvider, key);
-      CosmosClientManager.instances.set(key, instance);
-    } else {
-      // Check what changed to determine what needs updating
-      const signingClientAffected =
-        instance.config.gasPrice !== config.gasPrice ||
-        instance.config.gasMultiplier !== config.gasMultiplier ||
-        instance.walletProvider !== walletProvider;
-
-      const rateLimitChanged =
-        instance.config.rateLimit?.requestsPerSecond !==
-        config.rateLimit?.requestsPerSecond;
-
-      // Always update config reference
-      instance.config = config;
-      instance.walletProvider = walletProvider;
-
-      // Only invalidate signing client if fields it depends on changed
-      if (signingClientAffected) {
-        if (instance.signingClient) {
-          instance.signingClient.disconnect();
-          instance.signingClient = null;
-        }
-        // Also clear the promise to allow re-initialization with new config
-        instance.signingClientPromise = null;
-        // Drop local sequence tracking — the account/chain the counters were seeded from may differ.
-        instance.txSequenceCache.clear();
-      }
-
-      // Update rate limiter independently (doesn't affect signing client)
-      if (rateLimitChanged) {
-        const newRps =
-          config.rateLimit?.requestsPerSecond ?? DEFAULT_REQUESTS_PER_SECOND;
-        instance.rateLimiter = new RateLimiter({
-          tokensPerInterval: newRps,
-          interval: 'second',
-        });
-      }
+    let walletId = CosmosClientManager.walletIds.get(walletProvider);
+    if (walletId === undefined) {
+      walletId = CosmosClientManager.nextWalletId++;
+      CosmosClientManager.walletIds.set(walletProvider, walletId);
     }
-
+    let fetchId = CosmosClientManager.fetchIds.get(fetchFn);
+    if (fetchId === undefined) {
+      fetchId = CosmosClientManager.nextFetchId++;
+      CosmosClientManager.fetchIds.set(fetchFn, fetchId);
+    }
+    const snapshot = snapshotConfig(config);
+    const key = JSON.stringify([walletId, fetchId, snapshot]);
+    let instance = CosmosClientManager.instances.get(key);
+    if (!instance) {
+      instance = new CosmosClientManager(
+        snapshot,
+        walletProvider,
+        key,
+        fetchFn,
+      );
+      CosmosClientManager.instances.set(key, instance);
+    }
     instance.refCount += 1;
     return instance;
   }
@@ -287,6 +267,7 @@ export class CosmosClientManager {
       instance.refCount = 0;
     }
     CosmosClientManager.instances.clear();
+    CosmosClientManager.chainCoordination.clear();
   }
 
   /**
@@ -362,7 +343,14 @@ export class CosmosClientManager {
       if (this.config.restUrl) {
         // Use LCD/REST for queries when restUrl is configured
         client = await withRetry(
-          () => createLCDQueryClient(this.config.restUrl!, this.logger),
+          async () => {
+            await verifyRestChainIdentity(
+              this.config.restUrl!,
+              this.config.chainId,
+              this.fetchFn,
+            );
+            return createLCDQueryClient(this.config.restUrl!, this.logger);
+          },
           {
             config: this.config.retry,
             operationName: 'connect LCD query client',
@@ -436,6 +424,7 @@ export class CosmosClientManager {
    * {@link getQueryClient}).
    */
   async getSigningClient(): Promise<SigningStargateClient> {
+    this.assertActive();
     if (!this.config.rpcUrl || !this.config.gasPrice) {
       throw new ManifestMCPError(
         ManifestMCPErrorCode.INVALID_CONFIG,
@@ -462,13 +451,8 @@ export class CosmosClientManager {
           this.signingClientPromise = null;
           return client;
         }
-        // Superseded mid-flight by teardown()/disconnect() or a getInstance config change.
-        // Unlike the query client this one owns a live transport, so the orphan MUST be
-        // released — and it must NOT be handed back. Over a WebSocket endpoint a disconnected
-        // client is dead (the old always-superseded code only appeared to work because
-        // @cosmjs/tendermint-rpc's HttpClient.disconnect() is a no-op), and after a config
-        // change it was built from the superseded gasPrice/wallet. Fail loudly; the caller
-        // re-invokes and gets a client built from the CURRENT configuration.
+        // A disconnect or forced reset superseded this initialization. Release its live transport
+        // and refuse to expose an orphan signing client, including on WebSocket endpoints.
         try {
           client.disconnect();
         } catch (err) {
@@ -479,7 +463,7 @@ export class CosmosClientManager {
         }
         throw new ManifestMCPError(
           ManifestMCPErrorCode.RPC_CONNECTION_FAILED,
-          'Signing client initialization was superseded by a disconnect or configuration change before it completed. Retry to obtain a client for the current configuration.',
+          'Signing client initialization was superseded by a disconnect before it completed. Retry with a live client.',
           { rpcUrl: this.config.rpcUrl, reason: 'superseded' },
         );
       },
@@ -501,6 +485,8 @@ export class CosmosClientManager {
    */
   private async initSigningClient(): Promise<SigningStargateClient> {
     try {
+      // Query and signing endpoints must agree. Read clients run the same REST identity check.
+      if (this.config.restUrl) await this.getQueryClient();
       const signer = await this.walletProvider.getSigner();
       const gasPrice = GasPrice.fromString(this.config.gasPrice!);
       const { registry, aminoTypes } = getSigningManifestClientOptions();
@@ -528,6 +514,28 @@ export class CosmosClientManager {
               broadcastPollIntervalMs: DEFAULT_BROADCAST_POLL_INTERVAL_MS,
             },
           );
+          try {
+            const actualChainId = await c.getChainId();
+            if (actualChainId !== this.config.chainId) {
+              throw new ManifestMCPError(
+                ManifestMCPErrorCode.INVALID_CONFIG,
+                'RPC chain identity does not match the configured chainId.',
+                {
+                  expectedChainId: this.config.chainId,
+                  actualChainId,
+                  rpcUrl: this.config.rpcUrl,
+                },
+              );
+            }
+          } catch (error) {
+            // A failed identity read must not leak a connected client or make it usable for signing.
+            try {
+              c.disconnect();
+            } catch {
+              /* Preserve the identity failure. */
+            }
+            throw error;
+          }
           // The property is private readonly with no constructor option,
           // so we must bypass TypeScript's access control to override it.
           const record = c as unknown as Record<string, unknown>;
@@ -586,22 +594,16 @@ export class CosmosClientManager {
   }
 
   /**
-   * Get the configuration
+   * Get this manager's frozen, owned configuration snapshot.
    */
   getConfig(): ManifestMCPConfig {
     return this.config;
   }
 
   /**
-   * Inject a per-instance Logger for the 3 init-time diagnostics (signing-client gasMultiplier
-   * fallback; LCD wasm-patch missing-method; orphaned-signing-client disconnect failure on a
-   * superseded init — ENG-636). NON-KEY + non-invalidating: NOT part of the getInstance
-   * key (chainId:rpcUrl[:restUrl]) and NOT in the signing/query-client invalidation gate — a pure
-   * reference mutation, mirroring the existing config/walletProvider mutation. Defaults to noopLogger
-   * (silent, per spec §5.3). Shared-key last-writer-wins: if two ctxs share a config key the later
-   * setLogger wins; acceptable because the two gasMultiplier/LCD diagnostics are one-time,
-   * init-cached and never re-fire, and the supersede diagnostic only fires on a shutdown or
-   * reconfiguration race, where "whichever holder's logger is current" is the right answer anyway.
+   * Set the sink for cached-client initialization diagnostics. Compatible sibling servers share
+   * this sink; callers needing independent diagnostics can use distinct wallet-provider adapters.
+   * Logging does not change the immutable wallet/configuration or invalidate a connection.
    */
   setLogger(logger: Logger): void {
     this.logger = logger;
@@ -638,16 +640,8 @@ export class CosmosClientManager {
       return;
     }
     if (signal.aborted) throw abortReason(signal);
-    // `this.rateLimiter` is re-read every pass on purpose: a getInstance reconfigure REPLACES
-    // the limiter object, and an in-flight waiter should adopt the new budget rather than
-    // drain an orphaned one. The guard is re-run against each snapshot for the same reason —
-    // adopting a REPLACEMENT budget means adopting its validity too. Checking only on entry
-    // would let a reconfigure to an undersized bucket turn a parked waiter into a silent
-    // spin (`tryRemoveTokens` declines forever below 1 token) instead of the fast, typed
-    // failure this raises.
     while (true) {
       if (this.rateLimiter.tryRemoveTokens(1)) return;
-      this.assertBudgetAdmitsOneToken();
       await abortableSleep(RATE_LIMIT_POLL_MS, signal);
     }
   }
@@ -684,6 +678,7 @@ export class CosmosClientManager {
     address: string,
     fn: () => Promise<T>,
   ): Promise<T> {
+    this.assertActive();
     const prev = this.broadcastLocks.get(address) ?? Promise.resolve();
     const run = prev.then(fn, fn); // run regardless of the prior task's outcome
     // Store a swallowed tail so the next waiter chains cleanly and no unhandledRejection escapes.
@@ -692,11 +687,13 @@ export class CosmosClientManager {
       () => undefined,
     );
     this.broadcastLocks.set(address, tail);
+    this.pendingBroadcasts.add(tail);
     // Release the entry once this chain drains, so the map stays bounded to
     // in-flight chains — a long-lived manager broadcasting from many distinct
     // addresses would otherwise grow it without bound (code-review PR #102 +
     // Copilot). Delete only if no newer broadcast has replaced this tail.
     void tail.then(() => {
+      this.pendingBroadcasts.delete(tail);
       if (this.broadcastLocks.get(address) === tail) {
         this.broadcastLocks.delete(address);
       }
@@ -737,7 +734,7 @@ export class CosmosClientManager {
 
     // Preserve the historical synchronous teardown behavior when there is no
     // broadcast work to drain.
-    if (this.broadcastLocks.size === 0) {
+    if (this.pendingBroadcasts.size === 0) {
       this.finalizeRelease();
       return Promise.resolve();
     }
@@ -760,10 +757,19 @@ export class CosmosClientManager {
   }
 
   private async releaseWhenBroadcastsDrain(): Promise<void> {
-    while (this.refCount === 0 && this.broadcastLocks.size > 0) {
-      await Promise.allSettled([...this.broadcastLocks.values()]);
+    while (this.refCount === 0 && this.pendingBroadcasts.size > 0) {
+      await Promise.allSettled([...this.pendingBroadcasts]);
     }
     if (this.refCount === 0) this.finalizeRelease();
+  }
+
+  private assertActive(): void {
+    if (this.coordinationReleased) {
+      throw new ManifestMCPError(
+        ManifestMCPErrorCode.INVALID_CONFIG,
+        'This client has been released. Acquire a new client before signing or broadcasting.',
+      );
+    }
   }
 
   private finalizeRelease(): void {
@@ -791,11 +797,21 @@ export class CosmosClientManager {
     this.signingClientPromise = null;
     this.queryClient = null;
     this.queryClientPromise = null;
-    // Reset the per-signer broadcast-lock chain so a reused config key
-    // (disconnect → getInstance) starts clean and the map does not retain
-    // stale settled tails (code-review PR #102).
-    this.broadcastLocks.clear();
-    // Drop local sequence tracking too — a reused config key must re-seed from committed state.
-    this.txSequenceCache.clear();
+    this.pendingBroadcasts.clear();
+    // Releasing one wallet/policy must not reset another manager's account coordination.
+    if (!this.coordinationReleased) {
+      this.coordinationReleased = true;
+      this.coordination.managers -= 1;
+      if (this.coordination.managers === 0) {
+        this.broadcastLocks.clear();
+        this.txSequenceCache.clear();
+        if (
+          CosmosClientManager.chainCoordination.get(this.config.chainId) ===
+          this.coordination
+        ) {
+          CosmosClientManager.chainCoordination.delete(this.config.chainId);
+        }
+      }
+    }
   }
 }

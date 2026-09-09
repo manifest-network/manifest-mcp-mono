@@ -1,9 +1,15 @@
-import { logger } from '@manifest-network/manifest-mcp-core';
+import {
+  logger,
+  sanitizeForModelText,
+} from '@manifest-network/manifest-mcp-core';
 import type { RequestHandlerExtra } from '@modelcontextprotocol/sdk/shared/protocol.js';
 import type {
   ServerNotification,
   ServerRequest,
 } from '@modelcontextprotocol/sdk/types.js';
+
+/** Includes the ellipsis emitted when a progress message is truncated. */
+const MAX_PROGRESS_MESSAGE_CHARS = 1024;
 
 /**
  * Builds a fire-and-forget progress emitter for a long-running tool.
@@ -29,7 +35,10 @@ export function createProgressEmitter(
         params: {
           progressToken: token,
           progress: counter,
-          message,
+          message: sanitizeForModelText(
+            message,
+            MAX_PROGRESS_MESSAGE_CHARS - 1,
+          ),
         },
       })
       .catch((err: unknown) => {

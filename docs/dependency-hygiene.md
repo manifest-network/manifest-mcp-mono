@@ -1,5 +1,10 @@
 # Dependency hygiene
 
+For the separate published SDK/CLI dependency graph, its blocking consumer audit,
+and the current application-root mitigation, see
+[Published dependency security](dependency-consumers.md). Monorepo overrides do
+not propagate to consumers (ENG-805 F01).
+
 ## Automated gates
 
 `npm run audit:dependencies` audits the locked production and development graph,

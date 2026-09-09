@@ -2,7 +2,11 @@ import { fromBase64, toBase64 } from '@cosmjs/encoding';
 import type { SigningStargateClient, StdFee } from '@cosmjs/stargate';
 import { liftedinit } from '@manifest-network/manifestjs/dist/codegen/liftedinit/bundle.js';
 import type { ManifestQueryClient } from '../client.js';
-import { getSubcommandUsage, throwUnsupportedSubcommand } from '../modules.js';
+import { parseUint64 } from '../internals/protobuf-integers.js';
+import {
+  getSubcommandUsage,
+  throwUnsupportedSubcommand,
+} from '../module-metadata.js';
 import {
   type BuiltMessages,
   type CosmosTxResult,
@@ -20,7 +24,6 @@ import {
   filterConsumedArgs,
   MAX_META_HASH_BYTES,
   parseAmount,
-  parseBigInt,
   parseHexBytes,
   parseLeaseItem,
   requireArgs,
@@ -193,7 +196,7 @@ export function buildBillingMessages(
 
         // Parse optional --limit flag (only valid with --provider)
         if (limitFlag.value) {
-          limit = parseBigInt(limitFlag.value, 'limit');
+          limit = parseUint64(limitFlag.value, 'limit');
           if (limit < BigInt(1) || limit > BigInt(100)) {
             throw new ManifestMCPError(
               ManifestMCPErrorCode.TX_FAILED,
@@ -451,23 +454,23 @@ export function buildBillingMessages(
           // manifestjs in sync with manifest-ledger to stay safe.
           params: {
             ...(currentParams ?? {}),
-            maxLeasesPerTenant: parseBigInt(
+            maxLeasesPerTenant: parseUint64(
               maxLeasesPerTenantStr,
               'max-leases-per-tenant',
             ),
-            maxItemsPerLease: parseBigInt(
+            maxItemsPerLease: parseUint64(
               maxItemsPerLeaseStr,
               'max-items-per-lease',
             ),
-            minLeaseDuration: parseBigInt(
+            minLeaseDuration: parseUint64(
               minLeaseDurationStr,
               'min-lease-duration',
             ),
-            maxPendingLeasesPerTenant: parseBigInt(
+            maxPendingLeasesPerTenant: parseUint64(
               maxPendingLeasesPerTenantStr,
               'max-pending-leases-per-tenant',
             ),
-            pendingTimeout: parseBigInt(pendingTimeoutStr, 'pending-timeout'),
+            pendingTimeout: parseUint64(pendingTimeoutStr, 'pending-timeout'),
             allowedList,
             reservedDomainSuffixes,
           },

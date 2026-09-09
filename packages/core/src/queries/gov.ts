@@ -1,5 +1,5 @@
 import type { ManifestQueryClient } from '../client.js';
-import { throwUnsupportedSubcommand } from '../modules.js';
+import { throwUnsupportedSubcommand } from '../module-metadata.js';
 import type {
   DepositResult,
   DepositsResult,
@@ -10,10 +10,11 @@ import type {
   VoteResult,
   VotesResult,
 } from '../types.js';
+import { ManifestMCPError, ManifestMCPErrorCode } from '../types.js';
 import {
   extractPaginationArgs,
-  parseBigInt,
   parseInteger,
+  parseUint64,
   requireArgs,
 } from './utils.js';
 
@@ -43,7 +44,7 @@ export async function routeGovQuery(
   switch (subcommand) {
     case 'proposal': {
       requireArgs(args, 1, ['proposal-id'], 'gov proposal');
-      const proposalId = parseBigInt(args[0], 'proposal-id');
+      const proposalId = parseUint64(args[0], 'proposal-id');
       const result = await gov.proposal({ proposalId });
       return { proposal: result.proposal };
     }
@@ -57,6 +58,14 @@ export async function routeGovQuery(
       const proposalStatus = remainingArgs[0]
         ? parseInteger(remainingArgs[0], 'status')
         : 0;
+      // Cosmos ProposalStatus is 0 (no filter) through 5 (failed). The
+      // protobuf int32 encoder would otherwise wrap larger safe JS integers.
+      if (proposalStatus < 0 || proposalStatus > 5) {
+        throw new ManifestMCPError(
+          ManifestMCPErrorCode.QUERY_FAILED,
+          'Invalid status: expected a ProposalStatus integer from 0 through 5.',
+        );
+      }
       const voter = remainingArgs[1] || '';
       const depositor = remainingArgs[2] || '';
       const result = await gov.proposals({
@@ -70,7 +79,7 @@ export async function routeGovQuery(
 
     case 'vote': {
       requireArgs(args, 2, ['proposal-id', 'voter-address'], 'gov vote');
-      const proposalId = parseBigInt(args[0], 'proposal-id');
+      const proposalId = parseUint64(args[0], 'proposal-id');
       const voter = args[1];
       const result = await gov.vote({ proposalId, voter });
       return { vote: result.vote };
@@ -82,14 +91,14 @@ export async function routeGovQuery(
         'gov votes',
       );
       requireArgs(remainingArgs, 1, ['proposal-id'], 'gov votes');
-      const proposalId = parseBigInt(remainingArgs[0], 'proposal-id');
+      const proposalId = parseUint64(remainingArgs[0], 'proposal-id');
       const result = await gov.votes({ proposalId, pagination });
       return { votes: result.votes, pagination: result.pagination };
     }
 
     case 'deposit': {
       requireArgs(args, 2, ['proposal-id', 'depositor-address'], 'gov deposit');
-      const proposalId = parseBigInt(args[0], 'proposal-id');
+      const proposalId = parseUint64(args[0], 'proposal-id');
       const depositor = args[1];
       const result = await gov.deposit({ proposalId, depositor });
       return { deposit: result.deposit };
@@ -101,14 +110,14 @@ export async function routeGovQuery(
         'gov deposits',
       );
       requireArgs(remainingArgs, 1, ['proposal-id'], 'gov deposits');
-      const proposalId = parseBigInt(remainingArgs[0], 'proposal-id');
+      const proposalId = parseUint64(remainingArgs[0], 'proposal-id');
       const result = await gov.deposits({ proposalId, pagination });
       return { deposits: result.deposits, pagination: result.pagination };
     }
 
     case 'tally': {
       requireArgs(args, 1, ['proposal-id'], 'gov tally');
-      const proposalId = parseBigInt(args[0], 'proposal-id');
+      const proposalId = parseUint64(args[0], 'proposal-id');
       const result = await gov.tallyResult({ proposalId });
       return { tally: result.tally };
     }

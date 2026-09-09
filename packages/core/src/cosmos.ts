@@ -3,11 +3,17 @@ import type { CosmosClientManager, ManifestQueryClient } from './client.js';
 import { DEFAULT_GAS_MULTIPLIER } from './config.js';
 import { isNotFoundError } from './internals/classify-query-error.js';
 import {
+  guardTxClient,
+  type TxExecution,
+  withTxExecution,
+} from './internals/tx-confirmation.js';
+import {
   getQueryHandler,
   getTxContextLoader,
   getTxHandler,
   getTxMsgBuilder,
 } from './modules.js';
+import type { CallOptions } from './options.js';
 import { withRetry } from './retry.js';
 import { resolveBroadcastGasOptions } from './transactions/utils.js';
 import {
@@ -44,6 +50,7 @@ async function loadBuildContext(
   clientManager: CosmosClientManager,
   module: string,
   subcommand: string,
+  execution?: TxExecution,
 ): Promise<TxBuildContext | undefined> {
   const loader = getTxContextLoader(module, subcommand);
   if (!loader) return undefined;
@@ -51,6 +58,7 @@ async function loadBuildContext(
   let queryClient: ManifestQueryClient;
   try {
     queryClient = await clientManager.getQueryClient();
+    execution?.checkpoint();
   } catch (error) {
     throw enrichBuildContextError(error, module, subcommand);
   }
@@ -61,8 +69,12 @@ async function loadBuildContext(
       // the {module, subcommand} attribution callers expect from a structured
       // error, matching the acquisition leg above.
       try {
-        await clientManager.acquireRateLimit();
-        return await loader(queryClient);
+        execution?.checkpoint();
+        await clientManager.acquireRateLimit(execution?.signal);
+        execution?.checkpoint();
+        const context = await loader(queryClient);
+        execution?.checkpoint();
+        return context;
       } catch (error) {
         throw enrichBuildContextError(error, module, subcommand);
       }
@@ -277,6 +289,7 @@ export async function cosmosTx(
   waitForConfirmation: boolean = true,
   overrides?: TxOverrides,
   txExtras?: { readonly fee?: StdFee; readonly memo?: string },
+  callOptions?: CallOptions,
 ): Promise<CosmosTxResult> {
   validateName(module, 'module', ManifestMCPErrorCode.UNSUPPORTED_TX);
   validateName(subcommand, 'subcommand', ManifestMCPErrorCode.UNSUPPORTED_TX);
@@ -289,76 +302,89 @@ export async function cosmosTx(
     gasMultiplier: overrides?.gasMultiplier,
   });
 
-  // Get handler from registry (throws if module not found) - do this before retry loop
-  const handler = getTxHandler(module);
-  // Fetch chain context once before the broadcast retry loop: every broadcast
-  // attempt uses the same snapshot and we don't consume extra rate-limit
-  // tokens per broadcast retry. loadBuildContext owns its own withRetry over
-  // the loader call, so transient LCD failures during the chain read still get
-  // retried (parity with cosmosQuery's params reads) without nesting a second
-  // ladder around its client acquisition (ENG-679).
-  const buildContext = await loadBuildContext(
-    clientManager,
-    module,
-    subcommand,
-  );
+  return withTxExecution(async (execution) => {
+    // Get handler from registry (throws if module not found) - do this before retry loop
+    const handler = getTxHandler(module);
+    // Fetch chain context once before the broadcast retry loop: every broadcast
+    // attempt uses the same snapshot and we don't consume extra rate-limit
+    // tokens per broadcast retry. loadBuildContext owns its own withRetry over
+    // the loader call, so transient LCD failures during the chain read still get
+    // retried (parity with cosmosQuery's params reads) without nesting a second
+    // ladder around its client acquisition (ENG-679).
+    const buildContext = await loadBuildContext(
+      clientManager,
+      module,
+      subcommand,
+      execution,
+    );
+    execution.checkpoint();
 
-  // Resolve the sender ONCE — it is both the broadcast-lock key and the signAndBroadcast sender.
-  // Resolve BEFORE the lock so the per-signer mutex can key on it; enrich a wallet failure with the
-  // same {module,subcommand,args} attribution the broadcast leg uses.
-  let senderAddress: string;
-  try {
-    senderAddress = await clientManager.getAddress();
-  } catch (error) {
-    throw enrichTxError(error, module, subcommand, args);
-  }
-
-  // Per-signer broadcast mutex (OUTER) serializes the whole simulate→sign→broadcast→commit cycle
-  // for this address; acquireRateLimit stays INNER. Acquired ONCE around withRetry.
-  return clientManager.withBroadcastLock(senderAddress, async () => {
-    // Broadcast client — manages the signer's sequence for non-blocking (SYNC) broadcasts so a
-    // burst of waitForConfirmation:false txs from one signer doesn't collide on the committed
-    // sequence. Serialized per signer by the surrounding withBroadcastLock. See getBroadcastClient.
-    //
-    // Acquired INSIDE the lock (serialization must cover the whole cycle) but OUTSIDE the ladder
-    // below: getSigningClient owns connect-retry, and nesting the two multiplied attempts
-    // (ENG-679). The sequenced client is a stateless proxy — all sequence-cache access happens
-    // per broadcast call — so reusing it across attempts is safe.
-    let signingClient: Awaited<
-      ReturnType<CosmosClientManager['getBroadcastClient']>
-    >;
+    // Resolve the sender ONCE — it is both the broadcast-lock key and the signAndBroadcast sender.
+    // Resolve BEFORE the lock so the per-signer mutex can key on it; enrich a wallet failure with the
+    // same {module,subcommand,args} attribution the broadcast leg uses.
+    let senderAddress: string;
     try {
-      signingClient = await clientManager.getBroadcastClient();
+      senderAddress = await clientManager.getAddress();
     } catch (error) {
       throw enrichTxError(error, module, subcommand, args);
     }
 
-    return withRetry(
-      async () => {
-        // The handler leg runs inside the try/catch so a failure is wrapped with
-        // {module, subcommand, args} attribution, matching the acquisition leg above.
-        try {
-          await clientManager.acquireRateLimit();
-          return await handler(
-            signingClient,
-            senderAddress,
-            subcommand,
-            args,
-            waitForConfirmation,
-            txOptions,
-            buildContext,
-            txExtras,
-          );
-        } catch (error) {
-          throw enrichTxError(error, module, subcommand, args);
-        }
-      },
-      {
-        config: config.retry,
-        operationName: `tx ${module} ${subcommand}`,
-      },
-    );
-  });
+    execution.checkpoint();
+    // Per-signer broadcast mutex (OUTER) serializes the whole simulate→sign→broadcast→commit cycle
+    // for this address; acquireRateLimit stays INNER. Acquired ONCE around withRetry.
+    return clientManager.withBroadcastLock(senderAddress, async () => {
+      execution.checkpoint();
+      // Broadcast client — manages the signer's sequence for non-blocking (SYNC) broadcasts so a
+      // burst of waitForConfirmation:false txs from one signer doesn't collide on the committed
+      // sequence. Serialized per signer by the surrounding withBroadcastLock. See getBroadcastClient.
+      //
+      // Acquired INSIDE the lock (serialization must cover the whole cycle) but OUTSIDE the ladder
+      // below: getSigningClient owns connect-retry, and nesting the two multiplied attempts
+      // (ENG-679). The sequenced client is a stateless proxy — all sequence-cache access happens
+      // per broadcast call — so reusing it across attempts is safe.
+      let signingClient: Awaited<
+        ReturnType<CosmosClientManager['getBroadcastClient']>
+      >;
+      try {
+        signingClient = guardTxClient(
+          await clientManager.getBroadcastClient(),
+          execution,
+        );
+        execution.checkpoint();
+      } catch (error) {
+        throw enrichTxError(error, module, subcommand, args);
+      }
+
+      return withRetry(
+        async () => {
+          // The handler leg runs inside the try/catch so a failure is wrapped with
+          // {module, subcommand, args} attribution, matching the acquisition leg above.
+          try {
+            execution.checkpoint();
+            await clientManager.acquireRateLimit(execution.signal);
+            execution.checkpoint();
+            return await handler(
+              signingClient,
+              senderAddress,
+              subcommand,
+              args,
+              waitForConfirmation,
+              txOptions,
+              buildContext,
+              txExtras,
+            );
+          } catch (error) {
+            execution.checkpoint();
+            throw enrichTxError(error, module, subcommand, args);
+          }
+        },
+        {
+          config: config.retry,
+          operationName: `tx ${module} ${subcommand}`,
+        },
+      );
+    });
+  }, callOptions);
 }
 
 /**

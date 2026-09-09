@@ -31,13 +31,36 @@ Wallets resolve in this order:
 2. `COSMOS_MNEMONIC` env var (only used when no keyfile exists).
 3. Fatal exit.
 
-The mnemonic and decrypted private key are held in memory for the lifetime of the server process. The `WalletProvider` interface declares an optional `disconnect()` method and both providers implement it (it nulls the mnemonic/wallet refs and locks the instance against reconnection), but the bootstrap doesn't invoke it — there's no MCP tool, CLI subcommand, or signal handler that calls `disconnect()` during normal operation, so in practice references are dropped on process exit. Library consumers embedding the providers can call `disconnect()` themselves to clear earlier. JavaScript strings are immutable, so the cleared references rely on garbage collection regardless — there's no zeroing of the underlying memory.
+The mnemonic and derived private keys remain in memory while the wallet is connected. Bootstrap installs one shutdown path for transport closure and SIGINT/SIGTERM: it closes the transport, drains in-flight broadcasts within its grace period, releases chain clients, and invokes wallet `disconnect()`. Both providers drop their mnemonic and wallet references and permanently reject reconnection after disconnect; library consumers must release their own wallets. Forced process exit can interrupt cleanup. JavaScript strings are immutable, so dropping references relies on garbage collection and does not guarantee memory zeroing.
 
 Both wallet providers maintain **two derived wallets** from the same seed:
 - A `DirectSecp256k1HdWallet` for proto signing (transactions).
 - A `Secp256k1HdWallet` for amino signing (ADR-036 auth tokens).
 
 This is purely an SDK-shape constraint — the underlying key material is the same.
+
+Initialization keeps both wallets local until all derivation and account checks
+succeed. Disconnecting during initialization rejects waiting callers and prevents
+those keys from being stored back into the provider. An initialization failure
+remains retryable until the provider has been disconnected.
+
+Keyfile replacement encrypts before touching the filesystem, creates an exclusive
+random temporary file beside the destination with mode `0600`, writes the complete
+ciphertext, flushes it, then renames it over the previous file. Write, flush, and
+rename failures preserve the previous keyfile and clean up temporary ciphertext.
+If cleanup also fails, the error preserves both causes and identifies the private
+temporary file that could not be removed.
+An abrupt process kill can leave a private temporary ciphertext file; atomic
+replacement does not promise durability across every filesystem or power failure.
+
+The review's proposed `write-file-atomic` dependency was evaluated and rejected
+(ENG-805 O03). Version 7.0.1 resolved successfully after a simulated short OS write
+and replaced an existing keyfile with only two ciphertext bytes. Its
+[implementation calls `fs.write` once without checking `bytesWritten`](https://github.com/npm/write-file-atomic/blob/v7.0.1/lib/index.js).
+The small native writer instead uses Node's complete-write loop; regressions cover
+a successful short write and a short write followed by `ENOSPC`, in addition to
+encryption, write, flush, and rename failures. KDF parameters and existing keyfile
+formats are unchanged.
 
 ## What gets signed
 
@@ -100,7 +123,7 @@ This runs **before** any HTTP call, so a chain row with a hostile `apiUrl` — l
 
 Where it is active (see [Layer 2 activation](#layer-2-activation) — the MCP servers and `createFredClientNode` by default, **not** every library entry point), provider/Fred HTTP is routed through an SSRF-guarded `fetch` — `createGuardedFetch` in `packages/core/src/internals/guarded-fetch.ts`, a native `undici` Dispatcher. It:
 
-- **Resolves the target host inside the connect hook** and substitutes the resolved IP as the connect address, so it inspects the *actual* IP the request reaches and closes the DNS-rebinding / TOCTOU window a hostname-only check leaves open. The hook re-fires on every cross-origin redirect, so a redirect to an internal host is caught too.
+- **Resolves the target host inside the connect hook** and substitutes the resolved IP as the connect address, so it inspects the *actual* IP the request reaches and closes the DNS-rebinding / TOCTOU window a hostname-only check leaves open. Every new connection is checked; reused connections retain their already-checked destination. Fred provider HTTP separately rejects redirects before credentials or request bodies can be forwarded.
 - **Default-denies** any address whose `ipaddr.js` `range()` is not `'unicast'` — loopback, link-local, private (RFC 1918), carrier-grade NAT, reserved / benchmarking (`198.18.0.0/15`), and any unrecognised label all block. It is an allow-list of exactly one category (`'unicast'`), so a range the table doesn't know about fails **closed** rather than falling through as allowed. The classifier itself (`isBlocked` + `BLOCKED_RANGES_*`) lives in the pure, `ipaddr.js`-only `packages/core/src/internals/ssrf-classify.ts` (ENG-490), shared by *both* SSRF layers — layer 1's `isUrlSsrfSafe` imports it browser-safely.
 - Is gated per server and **on by default**: `MANIFEST_FRED_FETCH_GUARDED` (fred) and `MANIFEST_AGENT_FETCH_GUARDED` (agent). Both accept `1`/`true`/`yes`/`on` and `0`/`false`/`no`/`off` (case-insensitive); an unrecognised value throws `INVALID_CONFIG` — an unparseable flag never silently disables the guard. `fred`'s `FredMCPServer` constructor injects the guarded fetch via `server/fetch-gate.ts`.
 - **Fails closed on a missing dependency.** `undici` is an `optionalDependency` of `core`. If it is absent, the dispatcher build rejects and `createGuardedFetch` re-throws (clearing its cached promise) rather than falling back to an unguarded `fetch` — so an install without `undici` makes guarded provider calls error out instead of silently losing the guard. Note the dispatcher is built lazily, so this surfaces on the first provider call rather than at startup.
@@ -135,7 +158,7 @@ Residual risk on an unguarded path: a provider `apiUrl` that is a *hostname* res
 
 ## Transport bounds (provider HTTP)
 
-Provider `apiUrl`s come from on-chain SKU records, so the same attacker-influenced boundary that motivates the SSRF layers also means a provider controls how much it sends, how slowly, and in what runtime shape. Three controls apply, and **they have different scopes**:
+Provider `apiUrl`s come from on-chain SKU records, so the same attacker-influenced boundary that motivates the SSRF layers also means a provider controls how much it sends, how slowly, and in what runtime shape. Provider requests refuse all redirects, including same-origin redirects, so credentials and bodies cannot be forwarded to a different destination or downgraded to HTTP. The IP guard alone does not establish this redirect policy. Three additional controls apply, with different scopes:
 
 - **Bytes — body only.** `MAX_RESPONSE_BYTES` (10 MiB), enforced by `readBodyCapped`: it streams the body and aborts the moment the running total exceeds the cap, so an oversized body never fully materializes. A declared `Content-Length` over the cap is rejected before a single chunk is read. Response *headers* are not byte-capped here — that is the HTTP client's own limit.
 - **Time — the whole call.** `DEFAULT_FETCH_TIMEOUT_MS` (30s), covering the header phase **and** the body phase. The byte cap alone bounds memory, not time: a provider that returns headers promptly and then trickles one byte at a time stays forever under 10 MiB, so before ENG-662 it could pin a tool call open indefinitely — the timeout and the caller's `AbortSignal` were both torn down before the body was read. An inactivity/stall deadline is deliberately **not** used: any trickle above zero defeats it. Only a total budget bounds a hostile trickle.
@@ -157,7 +180,7 @@ Address validation enforces the configured bech32 prefix (default `manifest`). C
 
 ## Output redaction
 
-Errors returned to the MCP client and lines written to stderr are run through `sanitizeForLogging`:
+MCP error projections and local `sanitizeForLogging` diagnostics share the following redaction policy:
 
 - A set of sensitive field names (`mnemonic`, `password`, `secret`, `private_key`, `api_key`, `auth_token`, …) is redacted as `[REDACTED]` regardless of where they appear in nested objects/arrays. Matching is **normalization-based**, not exact: `isSensitiveKey` lowercases the key and strips `_`/`-`, so `auth_token`, `authToken`, `AUTH_TOKEN` and `auth-token` are one entry. A subset of those names is additionally matched as a **substring**, which is what catches compounds nobody enumerated (`DB_PASSWORD`, `walletPassword`, `X-Auth-Token`, `clientSecret`). Before ENG-747 the lookup was exact-on-lowercased-key against a snake_case-only list, so every camelCase spelling passed through unredacted.
 - Strings that look like BIP-39 mnemonics (12/15/18/21/24 lowercase-alpha words) are redacted as `[REDACTED - possible mnemonic]`. This matches a **whole-string** mnemonic only (leading/trailing whitespace and newline-padded variants included); a mnemonic embedded in a longer error message is **not** caught, because the check requires every whitespace-separated word in the string to be lowercase-alpha. Do not rely on it as a backstop for logging a mnemonic inside a wider message.
@@ -165,20 +188,22 @@ Errors returned to the MCP client and lines written to stderr are run through `s
 
 The bare keys `key` and `token` are **not** in the sensitive field list, and are deliberately **not** substring stems either — they are Cosmos domain nouns, and a stem would redact `pub_key` (a *public* key), `next_key` (a pagination cursor), `gas_token`, `fee_token` and `token_id`. Use compound names (`api_key`, `auth_token`, …) when introducing new fields.
 
-The same policy backs both redactors: core's `sanitizeForLogging` redacts the value in place, and agent-core's `stripDenylist` drops the key from a verifier diagnostic. They read from one `isSensitiveKey`, because they were previously two lists that drifted apart (ENG-747 / ENG-271).
+The same policy backs both redactors: core's `sanitizeForLogging` returns a copy with redacted values, and agent-core's `stripDenylist` drops the key from a verifier diagnostic. They read from one `isSensitiveKey`, because they were previously two lists that drifted apart (ENG-747 / ENG-271).
 
 ## Output bounds
 
 Redaction bounds *what* reaches model context; these bound *how much*. `sanitizeForLogging` never truncates, so before ENG-669 a hostile or merely verbose provider could exhaust the context window and burn the user's tokens on a single tool call. This is a resource concern rather than a disclosure one — the content is the tenant's own.
 
-- **Provider error text — 4096 code points**, applied in the `ProviderApiError` constructor so the bound is total across every construction site, both subclasses, and the sinks that embed a message in composed prose or in a *success* response (`browse_catalog` reports a per-provider `healthError`).
-- **Nested provider text in composed prose — 256**, so a long inner error cannot push the surrounding guidance past the outer cap and delete it.
-- **Any error message mono did not author — 2000 code points**, applied in `withErrorHandling` on its way into the tool response. First-party `ManifestMCPError` messages are deliberately **exempt**: they are curated recovery guidance whose length is a reviewed design choice. stderr keeps the full, uncapped message either way — it is not model context.
-- **`get_logs` — 4000 characters across service names and retained log values.** Non-string entries are dropped at the schema seam, null/missing maps normalize to empty, and a service name too large to fit is omitted rather than truncated into a misleading/colliding name.
+- **Provider error text — 4096 code points plus a truncation ellipsis**, applied in the `ProviderApiError` constructor so the bound is total across every construction site, both subclasses, and the sinks that embed a message in composed prose or in a *success* response (`browse_catalog` reports a per-provider `healthError`).
+- **Nested provider text in composed prose — 256 code points plus a truncation ellipsis**, so a long inner error cannot push the surrounding guidance past the outer cap and delete it.
+- **Complete MCP error response — 8,000 serialized characters**, including message, details, and echoed input. All string/message values, including `ManifestMCPError` text interpolating remote logs, retain at most 2,000 code points plus a truncation ellipsis. Recovery IDs, codes and state flags take priority over verbose diagnostics; `truncated: true` marks omissions. Projection neutralizes control/format characters while preserving ordinary log newlines and tabs, redacts sensitive keys, and does not mutate the original SDK error. Local stderr keeps full redacted diagnostic messages.
+- **Successful provider error text** is sanitized too: `browse_catalog.healthError` retains at most 1,024 code points, and `app_status` provider/connection errors plus `deploy_app.connectionError` at most 2,000. Diagnostics `provision_status` and restore response `status` retain at most 64 code points. Each of these text limits allows one additional truncation ellipsis; failure attribution and retention messages keep their endpoint-specific bounds.
+- **Progress notifications — 1,024 code points including a truncation marker.** The shared emitter sanitizes every message. Polling status values are sanitized before interpolation too, preserving whole-string mnemonic redaction when the value is included in surrounding progress prose. Tokens and counters remain unchanged.
+- **`get_logs` — 4000 characters across service names and retained log values.** Non-string entries are dropped at the schema seam, null/missing maps normalize to empty, and log text is redacted and stripped of terminal/control sequences while retaining ordinary newlines and tabs. Unsafe or oversized service names are omitted rather than rewritten into misleading or colliding names.
 - **Provider status — 16,000 serialized characters** for the `fredStatus` / `status` object copied into `app_status` and `wait_for_app_ready`. Operational fields are retained first; `fredStatusTruncated` / `status_truncated` reports when any field was omitted. The raw library functions still return the complete validated object.
 - **`app_releases`** omits the base64 deployment manifest Fred sends on every release (reporting only `manifest_bytes`) and returns the 20 most recent releases, with `release_count` and `truncated`. Release history has no pagination on either side and Fred prunes by age rather than count, so both the blob and the count were unbounded.
 
-These are **AI-context** caps, distinct from the transport bounds above. Raw values survive on the library path: `getLeaseReleases` still returns the manifest and `appStatus` / `waitForAppReady` retain their complete status objects, since a library consumer has no model context window to exhaust.
+These are **AI-context** caps, distinct from the transport bounds above. Full release manifests and provider status objects remain available on the library path: `getLeaseReleases` returns the manifest, and `appStatus` / `waitForAppReady` retain their complete validated status objects. Convenience outputs such as `appStatus.providerError` and `getAppLogs.logs` still undergo text sanitization.
 
 ## What the agent should not be trusted with
 

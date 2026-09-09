@@ -25,6 +25,8 @@ npm run build          # Build all packages (tsdown)
 npm run lint           # Type-check workspace packages (tsc --noEmit)
 npm run lint:e2e       # Rebuild dependencies, then type-check the E2E suite
 npm run test           # Unit tests (vitest)
+npm run test:coverage  # Full tests with explicit production coverage and thresholds
+npm run check:coverage-config # Negative control for unimported files/thresholds
 npm run check          # Biome: format + lint + import sorting, including E2E TypeScript
 npm run check:workflows # Immutable action references + policy regression tests
 npm run check:dependency-hygiene # Validator resolution + E2E gate regression tests
@@ -32,15 +34,19 @@ npm run audit:dependencies      # Full dependency graph; high/critical findings 
 npm run check:fix      # Auto-fix anything Biome can fix
 ```
 
-4. If your changes touch chain interactions, also run the E2E suite:
+4. If your changes touch chain interactions, also run the E2E suite. First follow the [Linux/XFS setup](docs/e2e-setup.md); Compose alone does not prepare its required quota mount:
 
 ```bash
+npm run check:e2e-env
 docker compose -f e2e/docker-compose.yml up -d --wait --wait-timeout 180
 npm run test:e2e
 docker compose -f e2e/docker-compose.yml down -v --remove-orphans
 ```
 
 5. Open a pull request against `main`. CI runs the same checks.
+
+Coverage scope, current floors, remaining untested areas and compiler migration
+constraints are documented in [coverage and TypeScript](docs/coverage-and-typescript.md).
 
 ## GitHub Actions updates
 
@@ -110,7 +116,7 @@ measurements and the limits on further narrowing.
 
 - **Formatter / linter / import sorter**: [Biome](https://biomejs.dev/). Run `npm run check:fix` before committing.
 - **ESM-only**: every package is `"type": "module"`. Use `.js` extensions in relative imports (`'./client.js'`, not `'./client'`) — TypeScript's ESM rules require it.
-- **No `any`**: prefer `unknown` + narrowing. There are a few targeted `any` casts (e.g. in `withErrorHandling` to preserve generic SDK signatures) — those carry inline `eslint-disable` comments and a justification.
+- **Types**: prefer `unknown` + narrowing. Biome currently disables `noExplicitAny` globally; this preference is reviewed rather than mechanically enforced. Generic MCP callback adapters use documented `any` where needed to preserve SDK signatures. ESLint comments do not suppress Biome rules.
 - **Tests**: Vitest, co-located `*.test.ts`. Mocks live in `packages/core/src/__test-utils__/` and are imported cross-package by chain/lease/fred tests.
 - **Comments**: keep them rare and load-bearing. Prefer expressive code over describing what the code does. Document *why* — invariants, constraints, surprising behaviour. Don't write "added for X feature" — that belongs in the commit message and rots over time.
 - **Error handling**: throw `ManifestMCPError` with a `ManifestMCPErrorCode` from the enumeration. Use `INVALID_CONFIG` for static rule violations, `QUERY_FAILED` / `TX_FAILED` only for chain-side rejections. Surfacing the same logical issue with two different codes across two paths is a bug — see the v0.8.0 alignment work for an example.

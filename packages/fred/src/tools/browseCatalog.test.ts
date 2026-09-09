@@ -364,4 +364,24 @@ describe('browseCatalog provider health verdicts (Fred ENG-522/608)', () => {
     expect(p.healthy).toBe(false);
     expect(p.healthError).toContain('HTTP 500');
   });
+
+  it('bounds and strips provider HTTP error text inside a successful catalog response', async () => {
+    const ctx: FredReadCtx = {
+      ...ctxServing({}),
+      fetch: vi.fn<typeof globalThis.fetch>(
+        async () =>
+          new Response(
+            `\u001b[31munavailable\u202e\u200b\n${'x'.repeat(100_000)}`,
+            { status: 503 },
+          ),
+      ),
+    };
+    const error = (await browseCatalog(ctx)).providers[0]?.healthError ?? '';
+    expect(error).toContain('HTTP 503: unavailable\n');
+    expect(error).not.toContain('\u001b');
+    expect(error).not.toContain('\u202e');
+    expect(error).not.toContain('\u200b');
+    expect(error.length).toBeLessThanOrEqual(1025);
+    expect(error.endsWith('…')).toBe(true);
+  });
 });

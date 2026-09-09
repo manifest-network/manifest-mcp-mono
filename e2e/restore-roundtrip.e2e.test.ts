@@ -12,8 +12,8 @@ import { MCPTestClient } from './helpers/mcp-client.js';
  * is stateful, docker-backend on XFS pquota with retain_on_close — see
  * e2e/scripts/init_billing.sh + docker-compose.yml).
  *
- * The saga's failure/compensation branches (terminal-4xx→cancel, 503→retryable,
- * in-doubt→orphan) are covered deterministically by restoreApp.test.ts with
+ * The saga's failure/compensation branches (pre-POST failure→cancel, POST error→unknown,
+ * failed pre-POST cleanup→manual reconciliation) are covered by restoreApp.test.ts with
  * mocked provider responses and are DELIBERATELY not reproduced here: an e2e
  * gate must not depend on a TOCTOU race to force a mid-saga rollback (design
  * spec §5). The one deterministic negative — restore of a non-retained source

@@ -43,10 +43,17 @@ export type TailOf<F> = F extends (ctx: infer _C, ...rest: infer R) => unknown
 interface BaseClientOptions {
   config: ManifestMCPConfig;
   /**
-   * Injected at the edge (node: guarded-undici; browser: providerFetch). When omitted, defaults to
-   * a provenance-tagged wrapper around the captured `globalThis.fetch`.
+   * Provider HTTP transport, injected at the edge (node: guarded-undici; browser: providerFetch).
+   * When omitted, defaults to a provenance-tagged wrapper around the captured `globalThis.fetch`.
    */
   fetch?: typeof globalThis.fetch;
+  /**
+   * Transport for the configured REST endpoint's node-info identity check only. Defaults to the
+   * captured platform fetch. Kept separate from provider HTTP because operator-configured chain
+   * endpoints may use localhost/private networks. Generated LCD queries still use Axios, and RPC
+   * connections use CosmJS; this option does not configure either transport.
+   */
+  chainIdentityFetch?: typeof globalThis.fetch;
   /** Per-instance logging sink; defaults to the silent `noopLogger`. */
   logger?: Logger;
   /** @beta — carried for the later SDK-side level gate; the gate is NOT built in 4b. */
@@ -125,10 +132,8 @@ function queryOnlyWalletStub(): WalletProvider {
 
 /**
  * Shared ctx builder. Returns the base `ManifestReadClient` (ctx fields + `dispose`); the full factory
- * up-casts to `ManifestClient` (sound — `withSigner=true` ⇒ a defined signer). NOTE (cross-ctx hazard,
- * OI-DISPOSE): `getInstance` mutates the shared instance for a given config key, so do not construct a
- * read client (wallet stub) against a key a full client already holds — the common case is safe because
- * read configs omit `rpcUrl` → a different key.
+ * up-casts to `ManifestClient` (sound — `withSigner=true` ⇒ a defined signer). The manager owns a
+ * frozen configuration snapshot and wallet reference; a read client cannot replace a signing wallet.
  */
 export async function buildClient(
   opts: BaseClientOptions,
@@ -136,7 +141,11 @@ export async function buildClient(
   withSigner: boolean,
 ): Promise<ManifestReadClient> {
   const config = createValidatedConfig(opts.config); // throws INVALID_CONFIG before any instance is keyed
-  const chain = CosmosClientManager.getInstance(config, walletProvider); // ONCE; acquires one refCount
+  const chain = CosmosClientManager.getInstance(
+    config,
+    walletProvider,
+    opts.chainIdentityFetch,
+  ); // ONCE; acquires one refCount
   try {
     const signer = withSigner
       ? createSignerAdapter(walletProvider, config.addressPrefix) // config.addressPrefix defaulted in createConfig
@@ -212,11 +221,10 @@ export async function buildClient(
  * @public — construct a query-only {@link ManifestReadClient} (no signer; reads/queries only).
  *
  * @remarks
- * Each client acquires one reference on a `CosmosClientManager` instance keyed by config
- * (`chainId:rpcUrl[:restUrl]`). Clients sharing a config key share that one underlying instance, and
- * `getInstance` mutates it — so do NOT construct a read client against a config key a full (signing)
- * client already holds (the common case is safe: a query-only config omits `rpcUrl` → a different key).
- * Always `dispose()` each client; the shared clients tear down only once the last holder disposes.
+ * Each client owns its wallet and an immutable configuration snapshot. Compatible holders using
+ * the same wallet, configuration, and chain-identity fetch references share cached transports; read and signing
+ * clients may safely use the same endpoints. REST node-info must match `config.chainId` before
+ * queries are exposed. Always `dispose()` each client to release its reference.
  */
 export async function createManifestReadClient(
   opts: ReadClientOptions,

@@ -1,4 +1,5 @@
 import { findLease, normalizeItem } from './lease-items.js';
+import { isLeaseUuidShape } from './uuid-shape.js';
 
 /**
  * Verify a lease item's `customDomain` against an expected value after a
@@ -23,10 +24,6 @@ import { findLease, normalizeItem } from './lease-items.js';
  * port surfaces a typed error instead of a synthetic `not_found` result
  * so caller-side argument bugs don't masquerade as a chain-state outcome.
  */
-
-/** Anchored UUID-shape regex (8-4-4-4-12, version-byte lenient — matches `_uuid.cjs#UUID_RE`). */
-const UUID_RE =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export type VerifyDomainOutcome = 'match' | 'mismatch' | 'not_found';
 
@@ -55,7 +52,7 @@ export function verifyDomainState(
       `verifyDomainState: leaseUuid must be a string, got ${typeof args.leaseUuid}`,
     );
   }
-  if (!UUID_RE.test(args.leaseUuid)) {
+  if (!isLeaseUuidShape(args.leaseUuid)) {
     throw new TypeError(
       `verifyDomainState: leaseUuid must be a UUID; got "${args.leaseUuid}"`,
     );

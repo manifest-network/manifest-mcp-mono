@@ -13,6 +13,7 @@ import {
   noopLogger,
   type ReadCtx,
   readOnlyAnnotations,
+  sanitizeForModelText,
   structuredResponse,
   type WalletProvider,
   withErrorHandling,
@@ -438,7 +439,7 @@ export function registerTools(deps: RegisterToolsDeps): void {
             ? (status) => {
                 const state = leaseStateToJSON(status.state);
                 const provision = status.provision_status
-                  ? `, provision=${status.provision_status}`
+                  ? `, provision=${sanitizeForModelText(status.provision_status, 63)}`
                   : '';
                 emit(`Polling lease: state=${state}${provision}`);
               }
@@ -871,7 +872,7 @@ export function registerTools(deps: RegisterToolsDeps): void {
                     onProgress: (status: FredLeaseStatus) => {
                       const state = leaseStateToJSON(status.state);
                       const provision = status.provision_status
-                        ? `, provision=${status.provision_status}`
+                        ? `, provision=${sanitizeForModelText(status.provision_status, 63)}`
                         : '';
                       emit(`Polling lease: state=${state}${provision}`);
                     },
@@ -958,7 +959,10 @@ export function registerTools(deps: RegisterToolsDeps): void {
         { address, sourceLeaseUuid },
         { pollOptions: false, signal: extra.signal },
       );
-      return structuredResponse(result, bigIntReplacer);
+      return structuredResponse(
+        { ...result, status: sanitizeForModelText(result.status, 64) },
+        bigIntReplacer,
+      );
     }),
   );
 
@@ -1042,7 +1046,7 @@ export function registerTools(deps: RegisterToolsDeps): void {
     'app_diagnostics',
     {
       description:
-        'Get provision diagnostics for a deployed app. Use this to debug apps stuck in provisioning or that failed to start. Returns provision status, failure count, and the failure attribution: a machine-readable reason, a human message, and a suggested next step. Older providers report last_error instead of reason/message.',
+        'Get provision diagnostics for an existing app, including REJECTED, EXPIRED, and CLOSED leases when the provider still has a record. Returns the chain lease state separately from provider provision status, failure count, and failure attribution: a machine-readable reason, a human message, and a suggested next step. Missing or pruned provider records return an error; they do not imply zero failures. Older providers report last_error instead of reason/message.',
       inputSchema: {
         lease_uuid: z
           .string()
@@ -1051,6 +1055,7 @@ export function registerTools(deps: RegisterToolsDeps): void {
       },
       outputSchema: {
         lease_uuid: z.string(),
+        lease_state: z.string(),
         provision_status: z.string(),
         fail_count: z.number(),
         // Failure attribution (ENG-508/ENG-638). The provider omits these when
@@ -1086,25 +1091,10 @@ export function registerTools(deps: RegisterToolsDeps): void {
       await clientManager.acquireRateLimit();
       const ctx = await buildCtx();
 
-      // ENG-600: diagnose CLOSED (retained) leases too, not just ACTIVE/PENDING.
-      // State-agnostic fetch; the provider is only queried for states that can
-      // carry a provision record (PENDING/ACTIVE/CLOSED).
+      // Chain state does not determine whether Fred still has provision history.
+      // Rejected/expired leases can retain their failure attribution; a missing
+      // record must remain the provider's error, never fabricated success data.
       const lease = await fetchLease(ctx, leaseUuid);
-      const st = lease.state;
-      if (
-        st !== LeaseState.LEASE_STATE_PENDING &&
-        st !== LeaseState.LEASE_STATE_ACTIVE &&
-        st !== LeaseState.LEASE_STATE_CLOSED
-      ) {
-        return structuredResponse(
-          {
-            lease_uuid: leaseUuid,
-            provision_status: leaseStateToJSON(st),
-            fail_count: 0,
-          },
-          bigIntReplacer,
-        );
-      }
       const providerUrl = await resolveProviderUrl(ctx, lease.providerUuid);
       const authToken = await ctx.providerAuth.providerToken({
         address,
@@ -1121,12 +1111,24 @@ export function registerTools(deps: RegisterToolsDeps): void {
       // ENG-638: `next_step` is derived, not from the wire — guidanceFor
       // returns undefined for a reason this client does not recognize, which is
       // the expected result for a newer Fred, not an error.
-      const nextStep = guidanceFor(provision.reason)?.nextStep;
+      const guidance = guidanceFor(provision.reason);
+      const terminal =
+        lease.state === LeaseState.LEASE_STATE_REJECTED ||
+        lease.state === LeaseState.LEASE_STATE_EXPIRED ||
+        lease.state === LeaseState.LEASE_STATE_CLOSED;
+      // Tenant guidance commonly names update/restart, which require an ACTIVE
+      // lease. A terminal record is useful history, not permission to retry those
+      // operations or to adopt retained data again without reconciliation.
+      const nextStep =
+        terminal && guidance?.actor === 'tenant'
+          ? 'Check app_status and reconcile any retained data with the provider before creating another lease. This terminal lease cannot be updated or restarted.'
+          : guidance?.nextStep;
 
       return structuredResponse(
         {
           lease_uuid: leaseUuid,
-          provision_status: provision.status,
+          lease_state: leaseStateToJSON(lease.state),
+          provision_status: sanitizeForModelText(provision.status, 64),
           fail_count: provision.fail_count,
           ...sanitizeFailureFields(provision),
           ...(nextStep !== undefined ? { next_step: nextStep } : {}),

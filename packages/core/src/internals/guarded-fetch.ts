@@ -23,10 +23,10 @@
  * - **Construction-time runtime check** (`typeof process === 'undefined'`)
  *   throws a clear error on browser/Deno so the failure is actionable, not
  *   a confusing mid-fetch module-resolution error.
- * - **Redirect safety:** undici re-fires the connect hook on every cross-
- *   host redirect; same-host redirects reuse the checked socket. The fetch
- *   closure does NOT need `redirect: 'manual'` — default `follow` is safe
- *   by construction.
+ * - **Redirect IP checks:** undici re-fires the connect hook for a new host;
+ *   reused sockets were already checked. This only protects destination IPs.
+ *   Callers must enforce scheme, credential and body-forwarding policy; Fred's
+ *   provider transport refuses redirects with `redirect: 'manual'`.
  *
  * Cross-platform note: core's `tsdown.config.ts` targets
  * `platform: 'neutral'`. `ipaddr.js` is isomorphic (pure JS, no node:*

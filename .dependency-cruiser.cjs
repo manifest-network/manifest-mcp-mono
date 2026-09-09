@@ -2,7 +2,8 @@
  * dependency-cruiser boundary + DAG guard for the manifest-mcp-mono SDK spine (ENG-309).
  *
  * Encodes the spec §8 / §13 machine-checkable invariants:
- *   - the package DAG direction (core never reaches up into fred/agent-core; fred never into agent-core);
+ *   - the complete nine-package DAG, with an explicit allowlist for every workspace;
+ *   - no production module cycles (static metadata and type definitions live below executable wiring);
  *   - the manifestjs generated-TYPE-path chokepoint (spec §5.1 / §8 line 273): downstream packages must
  *     consume the canonical Manifest/Fred DTO types via `core`'s re-exports, never reach into the
  *     `@manifest-network/manifestjs/dist/codegen/.../types.js` generated paths directly;
@@ -33,32 +34,27 @@
  * Without it a cross-package import written the only way anyone writes it — by package name —
  * resolves into `packages/<pkg>/dist/` (which `exclude` then DROPS) or, for a subpath import, does
  * not resolve at all (depcruise hard-defaults `exportsFields: []`, and these packages publish only
- * via `exports`). Both DAG rules below were therefore silently unfireable from the day they were
+ * via `exports`). The original DAG rules were therefore silently unfireable from the day they were
  * written, and `npm run depcruise` reported green on a tree containing the exact violation they
  * forbid. The alias is also what keeps their `to` matchers `src`-only and the guard independent of
  * whether the tree happens to be built. See that file's header for the full mechanism.
  *
  * @type {import('dependency-cruiser').IConfiguration}
  */
+const { workspaceRules } = require('./tools/depcruise/workspace-dag.cjs');
+
 module.exports = {
   forbidden: [
-    // DAG direction: core is the sink; it must never reach up into fred/agent-core.
-    // The `src`-only `to` matcher here is live ONLY because `options.webpackConfig` aliases package
-    // names to `src` (ENG-641) — drop that and this rule goes back to matching nothing, silently.
+    ...workspaceRules,
     {
-      name: 'no-core-to-fred-or-agentcore',
-      comment: 'core is the dependency sink — it must not import from fred or agent-core (DAG; spec §13).',
+      name: 'no-production-cycles',
+      comment: 'Production modules must have an acyclic import graph, including type-only edges.',
       severity: 'error',
-      from: { path: '^packages/core/src' },
-      to: { path: '^packages/(fred|agent-core)/src' },
-    },
-    // DAG direction: fred must never reach up into agent-core (agent-core -> fred, never reverse).
-    {
-      name: 'no-fred-to-agentcore',
-      comment: 'fred must not import from agent-core (DAG: agent-core -> fred -> core; spec §13).',
-      severity: 'error',
-      from: { path: '^packages/fred/src' },
-      to: { path: '^packages/agent-core/src' },
+      from: {
+        path: '^(packages|examples)/[^/]+/src/',
+        pathNot: ['\\.(test|test-d)\\.ts$', '/__test-utils__/'],
+      },
+      to: { circular: true },
     },
     // manifestjs generated-TYPE-path chokepoint (spec §5.1 / §8 line 273).
     // Scope to the GENERATED TYPE paths only — legit codec/value imports of manifestjs elsewhere
@@ -169,7 +165,7 @@ module.exports = {
     tsPreCompilationDeps: true,
     // ENG-641: alias every first-party package NAME to that package's `src`, so a cross-package
     // import lands on SOURCE (`packages/fred/src/index.ts`) instead of on build output or on
-    // nothing at all. This is what makes the two DAG rules above able to fire, and it is why they
+    // nothing at all. This is what makes the workspace DAG rules above able to fire, and it is why they
     // can keep `src`-only `to` matchers. `webpackConfig` is the only place depcruise's config schema
     // accepts a resolver alias — `enhancedResolveOptions` is `additionalProperties: false` and has
     // no `alias` key. Full rationale in the aliased file's header.
@@ -189,8 +185,7 @@ module.exports = {
     // cross-package edge is safe from it now only because the alias above lands it in `src`.
     // Ajv's generated Fred validator is also excluded from parsing. The schema-sync gate proves it
     // byte-for-byte current and rejects any generated `import()`/static-import/`require()` runtime
-    // edge, so cruising its ~100 KiB machine output adds no architectural signal and makes each
-    // positive-control cruise exceed its deliberately tight 5-second deadline.
+    // edge, so cruising its ~100 KiB machine output adds parsing work without architectural signal.
     exclude: {
       path: '^(packages|examples)/[^/]+/dist/|^packages/fred/src/generated/',
     },

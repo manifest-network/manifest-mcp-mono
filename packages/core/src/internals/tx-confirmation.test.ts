@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { ManifestMCPError, ManifestMCPErrorCode } from '../types.js';
-import { withTxConfirmation } from './tx-confirmation.js';
+import { withTxConfirmation, withTxExecution } from './tx-confirmation.js';
 
 describe('withTxConfirmation', () => {
   it('no signal/timeout: returns the broadcast() result', async () => {
@@ -67,5 +67,46 @@ describe('withTxConfirmation', () => {
       signal: ac.signal,
     });
     expect(out).toBe('committed');
+  });
+
+  it('observes an abort fired synchronously by an opaque broadcast callback', async () => {
+    const abort = new AbortController();
+    await expect(
+      withTxConfirmation(
+        () => {
+          abort.abort(new Error('cancelled synchronously'));
+          return new Promise<string>(() => {});
+        },
+        { signal: abort.signal },
+      ),
+    ).rejects.toMatchObject({
+      code: ManifestMCPErrorCode.OPERATION_CANCELLED,
+      details: { sent: true },
+    });
+  });
+
+  it('preparation cancellation keeps the final submission checkpoint closed', async () => {
+    const abort = new AbortController();
+    const broadcast = vi.fn();
+    let resume!: () => void;
+    const prepared = new Promise<void>((resolve) => {
+      resume = resolve;
+    });
+    const result = withTxExecution(
+      async (execution) => {
+        await prepared;
+        execution.markBroadcast();
+        broadcast();
+      },
+      { signal: abort.signal },
+    );
+    abort.abort();
+    await expect(result).rejects.toMatchObject({
+      code: ManifestMCPErrorCode.OPERATION_CANCELLED,
+      details: { sent: false },
+    });
+    resume();
+    await prepared;
+    expect(broadcast).not.toHaveBeenCalled();
   });
 });

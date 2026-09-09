@@ -9,10 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **tooling:** enforce the full workspace dependency direction and reject production import cycles; separate static command metadata from executable registration. Include never-imported source in coverage with regression floors, and enable `verbatimModuleSyntax` and `noImplicitOverride`. (ENG-805, ENG-751, ENG-753, ENG-806)
+- **core, sdk:** client configurations are immutable. Only holders with the same wallet, chain-identity transport and value-equal policy share an instance; independently configured clients coordinate broadcasts by chain/account. Verify each new RPC signing connection and REST query identity, rejecting mixed-endpoint disagreement before signing. REST endpoints must expose the Cosmos node-info route, adding an initial bounded request. (ENG-805)
+- **fred:** refuse provider redirects and preserve both restore lease IDs for reconciliation after every restore POST exception, including all 4xx/5xx, network failures, and malformed 2xx responses. These outcomes trigger neither automatic nor advised cancellation; compensation is limited to locally known failures or cancellation before the POST begins. `RESTORE_RETRYABLE` remains compatibility-only, and a 429 `Retry-After` does not authorize replay. Terminal diagnostics retrieve surviving provider records and distinguish chain state from provider provisioning state. (ENG-805)
+- **release:** validate isolated packed SDK and CLI consumers without repository overrides. The new high/critical advisory gate currently blocks release pending the upstream dependency repairs described in `docs/dependency-consumers.md`. (ENG-805)
+- **docs:** describe deployment as separate chain/HTTP steps with partial outcomes; document Linux/XFS project-quota setup and add a read-only E2E environment preflight. Correct wallet shutdown and browser runtime guidance. (ENG-805)
+
 - **ci:** audit all dependencies and fail on high/critical advisories in CI and release validation; deploy-relevant PRs now fail `e2e-gate` when live acceptance is skipped. (ENG-768)
 - **core, cosmwasm, sdk:** use ManifestJS namespace entry points, guard browser bundles against the full codegen barrel, and lower SDK gzip budgets by the measured savings. (ENG-768)
 
 ### Fixed
+
+- **core, fred:** cap complete model-facing errors at 8,000 serialized characters, prioritize recovery handles, and mark truncation. Provider text is neutralized at model output boundaries, including a 1,024-code-point cap on progress messages, while original SDK errors remain available. (ENG-805, ENG-756)
+- **core, node:** prevent wallet initialization from restoring secret references after disconnect. Encrypted keyfile replacement now completes and flushes a private temporary file before rename, preserving the old file on write/fsync/rename failures. (ENG-805)
+- **core:** reject protobuf integer overflow and nondecimal identifiers before encoding, preserving arbitrary-precision coin amounts. LCD smart-query responses now preserve strings, null, scalars and containers; raw queries retain byte semantics. (ENG-805)
+- **core, cosmwasm:** cancel transactions before submission through queue, client initialization, rate limiting and simulation. Once signing/broadcast starts, cancellation reports `sent: true` and requires reconciliation. Converter transactions now use the shared execution path and account lock. (ENG-805, ENG-674)
 
 - **sdk:** inject publint and AreTheTypesWrong modules into tsdown so package validation does not depend on their resolution from tsdown's installation directory. (ENG-768)
 

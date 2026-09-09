@@ -12,7 +12,7 @@ import {
   ManifestMCPErrorCode,
   parseFqdn,
   resolveSku,
-  sanitizeForLogging,
+  sanitizeForModelText,
   setItemCustomDomain,
 } from '@manifest-network/manifest-mcp-core';
 import type { FredAuthCtx } from '../ctx.js';
@@ -418,7 +418,7 @@ export async function deployManifest(
     logger.error(
       `[deploy] Failed to fetch connection info for lease ${leaseUuid}: ${rawMsg}`,
     );
-    connectionError = sanitizeForLogging(rawMsg) as string;
+    connectionError = sanitizeForModelText(rawMsg);
   }
 
   return {

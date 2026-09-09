@@ -5,11 +5,11 @@
  * Architect's α-locked composition (post-PR-3 sub-plan Q1):
  *
  *   Happy path: `fredDeployApp` (workspace MCP-tool function) is called
- *   atomically for create-lease + manifest upload + (optional) set-
+ *   sequentially for create-lease + manifest upload + (optional) set-
  *   item-custom-domain. agent-core wraps the call with planning, user
  *   confirmation, progress events, and post-success persistence.
  *
- *   Recovery path: when fred's atomic deployApp throws or the lease
+ *   Recovery path: when fred's multi-step deployApp throws or the lease
  *   reaches a non-recoverable state, agent-core renders a recovery
  *   prompt (typed `RecoveryOption[]`), invokes `onFailure`, and
  *   dispatches the user's `RecoveryChoice` to inline closures that
@@ -193,7 +193,7 @@ export async function deployApp(
   // Copilot review fix (PR #58 r3248900328): `opts.walletProvider` and
   // `opts.clientManager` are independently-injected runtime objects.
   // The readiness check + ADR-036 auth-token signing read the address
-  // from `walletProvider`; fred's atomic `deployApp` (create-lease +
+  // from `walletProvider`; fred's multi-step `deployApp` (create-lease +
   // manifest upload) reads it from `clientManager`. If the two are
   // bound to different wallets (misconfiguration / copy-paste in
   // host-surface composition / multi-tenant test rig), readiness is
@@ -584,7 +584,7 @@ export async function deployApp(
     );
   };
 
-  // --- Broadcast: fred's atomic deployApp (architect α-locked) -------
+  // --- Broadcast: fred's multi-step deployApp (architect α-locked) -------
   // Last pre-broadcast cancellation boundary: once `fredDeployApp` is called
   // the tx may commit on-chain, so this is the final point an abort can cancel
   // cleanly (no lease created). After this, the signal only bounds fred's own
@@ -642,7 +642,7 @@ export async function deployApp(
     // ENG-185 sub-PR E: thread a `RecoveryContext` so the
     // `retry_set_domain` branch can decompose the deploy into
     // `setItemCustomDomain` + `uploadLeaseData` + `pollLeaseUntilReady`.
-    // Captured values mirror what fred's atomic `deployApp` had: the
+    // Captured values mirror what fred's multi-step `deployApp` had: the
     // ADR-036 auth closures, the manifest payload + hash, and the chain
     // identity (for downstream `tryPersistManifest`).
     const recoveryCtx: RecoveryContext = {
@@ -1460,7 +1460,7 @@ async function dispatchRecovery(
  * `retry_set_domain` recovery: decompose the deploy after the partial-
  * success failure. ENG-185 sub-PR E.
  *
- * Steps (mirrors fred's atomic `deployApp` minus the create-lease tx,
+ * Steps (mirrors fred's multi-step `deployApp` minus the create-lease tx,
  * which already succeeded):
  *   1. `setItemCustomDomain` — broadcast the domain claim against the
  *      pre-existing lease. Stack specs thread `serviceName` so the
@@ -1565,7 +1565,7 @@ async function retrySetDomainAndComplete(
   }
 
   // Resolve the lease + provider URL via on-chain queries. The
-  // partial-success envelope only carried `leaseUuid` — fred's atomic
+  // partial-success envelope only carried `leaseUuid` — fred's multi-step
   // deployApp already had providerUuid in scope, but here we recover it.
   // BOTH values are hoisted to outer scope so the poll + DeployResult
   // build below can reuse them WITHOUT re-running the on-chain queries

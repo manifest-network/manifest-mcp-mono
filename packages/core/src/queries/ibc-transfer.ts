@@ -1,5 +1,5 @@
 import type { ManifestQueryClient } from '../client.js';
-import { throwUnsupportedSubcommand } from '../modules.js';
+import { throwUnsupportedSubcommand } from '../module-metadata.js';
 import type {
   IbcDenomTraceResult,
   IbcDenomTracesResult,

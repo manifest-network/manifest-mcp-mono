@@ -1,11 +1,6 @@
-import {
-  chmodSync,
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  writeFileSync,
-} from 'node:fs';
-import { dirname } from 'node:path';
+import { randomUUID } from 'node:crypto';
+import fs, { existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { basename, dirname, join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { DirectSecp256k1HdWallet } from '@cosmjs/proto-signing';
 import { loadKeyfileConfig } from './config.js';
@@ -116,7 +111,7 @@ export async function exportMnemonic(
   return wallet.mnemonic;
 }
 
-// Exported for unit testing of the on-disk permission enforcement.
+// Exported for testing encrypted persistence, failure recovery, and permissions.
 export async function writeKeyfile(
   wallet: DirectSecp256k1HdWallet,
   keyfilePath: string,
@@ -130,19 +125,45 @@ export async function writeKeyfile(
       `Failed to encrypt wallet: ${err instanceof Error ? err.message : String(err)}`,
     );
   }
+  let temporary: string | undefined;
   try {
     mkdirSync(dirname(keyfilePath), { recursive: true, mode: 0o700 });
-    writeFileSync(keyfilePath, serialized, { mode: 0o600 });
-    // writeFileSync's `mode` applies ONLY when the file is newly created (flag
-    // 'w' = O_CREAT|O_WRONLY|O_TRUNC); for an already-existing path the OS
-    // ignores it and the file keeps its current (possibly loose, e.g. 0644)
-    // permissions. chmodSync unconditionally enforces 0600 so re-running
-    // keygen/import over a pre-existing keyfile can never leave it
-    // group/world-readable.
-    chmodSync(keyfilePath, 0o600);
+    // A same-directory temporary file is private from creation, flushed, then
+    // renamed over the previous keyfile. Write/fsync/rename failures leave the
+    // existing encrypted wallet intact and remove the temporary ciphertext.
+    // Use writeFileSync's complete-write loop: write-file-atomic 7.0.1 calls
+    // fs.write once and can silently commit a short write (ENG-805 F11/O03).
+    const candidate = join(
+      dirname(keyfilePath),
+      `.${basename(keyfilePath)}.${randomUUID()}.tmp`,
+    );
+    const descriptor = fs.openSync(candidate, 'wx', 0o600);
+    temporary = candidate;
+    try {
+      fs.writeFileSync(descriptor, Buffer.from(serialized, 'utf8'));
+      fs.fsyncSync(descriptor);
+    } finally {
+      fs.closeSync(descriptor);
+    }
+    fs.renameSync(temporary, keyfilePath);
+    temporary = undefined;
   } catch (err: unknown) {
+    let cause = err;
+    let cleanupDetail = '';
+    if (temporary !== undefined) {
+      try {
+        fs.unlinkSync(temporary);
+      } catch (cleanupError: unknown) {
+        cause = new AggregateError(
+          [err, cleanupError],
+          'Keyfile persistence and temporary ciphertext cleanup failed.',
+        );
+        cleanupDetail = ` Could not remove temporary ciphertext at ${temporary}: ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`;
+      }
+    }
     throw new Error(
-      `Failed to write keyfile to ${keyfilePath}: ${err instanceof Error ? err.message : String(err)}`,
+      `Failed to write keyfile to ${keyfilePath}: ${err instanceof Error ? err.message : String(err)}${cleanupDetail}`,
+      { cause },
     );
   }
 }

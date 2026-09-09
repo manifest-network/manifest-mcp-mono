@@ -1,6 +1,7 @@
 import type { SigningStargateClient } from '@cosmjs/stargate';
 import { cosmos } from '@manifest-network/manifestjs/dist/codegen/cosmos/bundle.js';
-import { throwUnsupportedSubcommand } from '../modules.js';
+import { parseUint64 } from '../internals/protobuf-integers.js';
+import { throwUnsupportedSubcommand } from '../module-metadata.js';
 import {
   type BuiltMessages,
   type CosmosTxResult,
@@ -14,7 +15,6 @@ import {
   extractFlag,
   filterConsumedArgs,
   parseAmount,
-  parseBigInt,
   parseVoteOption,
   requireArgs,
   resolveTxFeeAndMemo,
@@ -98,7 +98,7 @@ export function buildGovMessages(
 
       requireArgs(positionalArgs, 2, ['proposal-id', 'option'], 'gov vote');
       const [proposalIdStr, optionStr] = positionalArgs;
-      const proposalId = parseBigInt(proposalIdStr, 'proposal-id');
+      const proposalId = parseUint64(proposalIdStr, 'proposal-id');
       const option = parseVoteOption(optionStr, VoteOption);
       const metadata = metadataFlag.value ?? '';
 
@@ -118,7 +118,7 @@ export function buildGovMessages(
     case 'weighted-vote': {
       requireArgs(args, 2, ['proposal-id', 'options'], 'gov weighted-vote');
       const [proposalIdStr, optionsStr] = args;
-      const proposalId = parseBigInt(proposalIdStr, 'proposal-id');
+      const proposalId = parseUint64(proposalIdStr, 'proposal-id');
 
       // Parse weighted options (format: yes=0.5,no=0.3,abstain=0.2)
       const voteOptions = optionsStr.split(',').map((opt) => {
@@ -164,7 +164,7 @@ export function buildGovMessages(
     case 'deposit': {
       requireArgs(args, 2, ['proposal-id', 'amount'], 'gov deposit');
       const [proposalIdStr, amountStr] = args;
-      const proposalId = parseBigInt(proposalIdStr, 'proposal-id');
+      const proposalId = parseUint64(proposalIdStr, 'proposal-id');
       const { amount, denom } = parseAmount(amountStr);
 
       const msg = {

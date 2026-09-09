@@ -4,6 +4,7 @@ import {
   MAX_PAGE_LIMIT,
   ManifestMCPError,
   sanitizeForDisplay,
+  sanitizeForModelText,
 } from '@manifest-network/manifest-mcp-core';
 import type { FredReadCtx } from '../ctx.js';
 import {
@@ -180,9 +181,15 @@ export async function browseCatalog(ctx: FredReadCtx) {
         )
           throw err;
         if (err instanceof ProviderApiError) {
-          healthError = `HTTP ${err.status}: ${err.message}`;
+          healthError = sanitizeForModelText(
+            `HTTP ${err.status}: ${err.message}`,
+            MAX_HEALTH_ERROR_CHARS,
+          );
         } else {
-          healthError = `Health check failed: ${err instanceof Error ? err.message : String(err)}`;
+          healthError = sanitizeForModelText(
+            `Health check failed: ${err instanceof Error ? err.message : String(err)}`,
+            MAX_HEALTH_ERROR_CHARS,
+          );
         }
       }
       return {

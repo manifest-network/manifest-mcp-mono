@@ -64,7 +64,7 @@ export interface DeployResponse {
 export interface FormatSuccessInput {
   /** Lease UUID, validated with core's canonical UUID-shape policy. */
   leaseUuid: string;
-  /** Deploy response from `deploy_app` (or equivalent atomic broadcast). */
+  /** Deploy response from `deploy_app` (or an equivalent completed deployment). */
   deployResponse: DeployResponse;
 }
 

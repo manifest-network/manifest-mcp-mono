@@ -138,7 +138,7 @@ src/
 
 ### Key components
 
-**CosmosClientManager** (`client.ts`) -- Keyed-instance cache that manages client lifecycle. Instances are keyed by `chainId:rpcUrl[:restUrl]` (the `restUrl` segment is appended only when configured, so query-only mode keys as `chainId::restUrl`). Supports two operating modes:
+**CosmosClientManager** (`client.ts`) -- Keyed-instance cache that manages client lifecycle. Instances share only when wallet references, chain-identity fetch references and configuration values match; each manager owns a frozen configuration snapshot. Supports two operating modes:
 - **Full mode** (`rpcUrl` + `gasPrice`): queries via RPC or LCD, transactions via signing client
 - **Query-only mode** (`restUrl` only): queries via LCD/REST, `getSigningClient()` throws `INVALID_CONFIG`
 - When both `rpcUrl` and `restUrl` are configured, `restUrl` is preferred for queries
@@ -148,19 +148,20 @@ Key features:
 - Token-bucket rate limiting (default: 10 requests/sec via `limiter`), acquired by callers before chain calls
 - Automatic retry with exponential backoff (base 1s, max 10s, 3 retries) on transient failures (network errors, HTTP 5xx, 429); permanent errors (`INVALID_CONFIG`, `WALLET_NOT_CONNECTED`, `WALLET_CONNECTION_FAILED`, `INVALID_MNEMONIC`, `INVALID_ADDRESS`, `INVALID_ARGUMENT`, `UNSUPPORTED_QUERY`, `UNSUPPORTED_TX`, `UNKNOWN_MODULE`, `TX_FAILED`, `OPERATION_CANCELLED`, `SKU_AMBIGUOUS`) are not retried
 - Retry policy has exactly ONE owner per operation: `getQueryClient` / `getSigningClient` retry the *connect* internally, so `cosmos.ts` and `executeTx` acquire the client **outside** their own `withRetry`, which then covers only the query/broadcast leg. Nesting the two ladders multiplies attempts (4 x 4 x 5 namespace clients = 77 connects / ~35s on a dead RPC) and is guarded by unit tests plus an elapsed-time bound in `e2e/retry.e2e.test.ts` (ENG-679)
-- Selective invalidation on config update: signing client is recreated when `gasPrice`, `gasMultiplier`, or `walletProvider` changes; the rate limiter is rebuilt independently when `requestsPerSecond` changes; the query client is never invalidated (stateless HTTP)
+- Immutable ownership: a new wallet, policy or chain-identity transport receives an independent manager; value-equal compatible holders share an instance. Caller mutation cannot change a pending transaction policy. All managers on the same chain coordinate account broadcasts and pending sequences.
+- Verify each new RPC signing connection against `chainId`; verify REST node-info before exposing REST queries. Mixed endpoints must agree before signing. `chainIdentityFetch` configures only the REST node-info request and is independent from provider `fetch`; normal LCD queries retain their Axios transport.
 
-**Module registry** (`modules.ts`) -- Static `QUERY_MODULES` and `TX_MODULES` maps that register each Cosmos module's metadata (description, subcommands) and handler functions. This powers the `list_modules` and `list_module_subcommands` discovery tools, allowing AI clients to explore available operations dynamically.
+**Module registry** (`modules.ts`) -- Executable `QUERY_MODULES` and `TX_MODULES` maps register handlers against separately defined static `module-metadata.ts` keys using `satisfies`. Handlers import metadata helpers without importing their own dispatch registry, avoiding cycles. This powers the `list_modules` and `list_module_subcommands` discovery tools, allowing AI clients to explore available operations dynamically.
 
 **cosmosQuery / cosmosTx** (`cosmos.ts`) -- Routes a `(module, subcommand, args)` tuple to the correct query or transaction handler by looking up the module registry.
 
-**LCD adapter** (`lcd-adapter.ts`) -- Adapts the LCD/REST client from manifestjs to match the `ManifestQueryClient` shape used by RPC, making the rest of the codebase transport-agnostic. For each LCD module method, the adapter: (1) calls the original LCD method, (2) converts the snake_case JSON response to camelCase via `snakeToCamelDeep()`, (3) runs the result through the matching protobuf `fromJSON` converter. Modules without LCD support (`cosmos.orm.query.v1alpha1`, `liftedinit.manifest.v1`) return proxy objects that throw `UNSUPPORTED_QUERY` on access.
+**LCD adapter** (`lcd-adapter.ts`) -- Adapts the LCD/REST client from manifestjs to match the `ManifestQueryClient` shape used by RPC, making the rest of the codebase transport-agnostic. For each LCD module method, the adapter: (1) calls the original LCD method, (2) converts the snake_case JSON response to camelCase via `snakeToCamelDeep()`, (3) runs the result through the matching protobuf `fromJSON` converter. For CosmWasm smart queries, the JSON `data` value is serialized into UTF-8 bytes before conversion, preserving strings, numbers, booleans, null, arrays, objects, and contract-defined object keys. Raw contract queries instead decode their base64 byte payload directly. Modules without LCD support (`cosmos.orm.query.v1alpha1`, `liftedinit.manifest.v1`) return proxy objects that throw `UNSUPPORTED_QUERY` on access.
 
-**Server utilities** (`server-utils.ts`) -- Shared by chain, lease, fred, and cosmwasm packages: `withErrorHandling` (wraps tool handlers with error sanitization), `jsonResponse` (formats successful text responses), `structuredResponse` (formats responses with `structuredContent` for tools that declare an `outputSchema`), `bigIntReplacer` (serializes BigInt), `sanitizeForLogging` (redacts sensitive fields).
+**Server utilities** (`server-utils.ts`) -- Shared by chain, lease, fred, and cosmwasm packages: `withErrorHandling` (wraps tool handlers with error sanitization), `jsonResponse` (formats successful text responses), `structuredResponse` (formats responses with `structuredContent` for tools that declare an `outputSchema`), `bigIntReplacer` (serializes BigInt), `sanitizeForLogging` (returns redacted diagnostic copies), `sanitizeForModelText` (redacts and bounds untrusted strings while neutralizing control characters).
 
 **Tool annotation helpers** (`tool-metadata.ts`) -- `readOnlyAnnotations()` and `mutatingAnnotations({ destructive, idempotent? })` produce the standard MCP `ToolAnnotations` (`title`, `readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`). `manifestMeta({ broadcasts, estimable })` injects a versioned `_meta.manifest` container (`v: MANIFEST_TOOL_META_VERSION = 1`) for Manifest-specific signals downstream plugins consume.
 
-**SSRF guards** -- `internals/guarded-fetch.ts`, exposed via the Node-only `@manifest-network/manifest-mcp-core/guarded-fetch` subpath, builds an `undici` Dispatcher that DNS-resolves the target **inside the connect hook** and connects to the classified IP. `internals/event-transport-node.ts`, exposed via the Node-only `/events-node` subpath, applies the same policy to WebSockets. Both use `internals/ssrf-resolve.ts` for resolution and the pure `internals/ssrf-classify.ts` classifier, which default-denies any `ipaddr.js` range other than `'unicast'`; the classifier is separately available to browser-safe URL checks through `/ssrf`. Connecting to the checked IP closes the DNS-rebinding / TOCTOU gap a hostname-only check leaves open, and the HTTP hook re-fires on cross-origin redirects. The Fred MCP server and `createFredClientNode` enable both guards by default; the agent MCP server enables the HTTP guard by default. The Node transports stay off the package barrel for browser-bundle hygiene, while `ipaddr.js` is force-pinned to `2.4.0` tree-wide so a stale transitive copy cannot silently weaken classification. See [`docs/security.md`](docs/security.md).
+**SSRF guards** -- `internals/guarded-fetch.ts`, exposed via the Node-only `@manifest-network/manifest-mcp-core/guarded-fetch` subpath, builds an `undici` Dispatcher that DNS-resolves the target **inside the connect hook** and connects to the classified IP. `internals/event-transport-node.ts`, exposed via the Node-only `/events-node` subpath, applies the same policy to WebSockets. Both use `internals/ssrf-resolve.ts` for resolution and the pure `internals/ssrf-classify.ts` classifier, which default-denies any `ipaddr.js` range other than `'unicast'`; the classifier is separately available to browser-safe URL checks through `/ssrf`. Connecting to the checked IP closes the DNS-rebinding / TOCTOU gap a hostname-only check leaves open, and the HTTP hook checks newly connected destinations. Fred provider HTTP separately refuses all redirects to protect schemes, credentials and request bodies. The Fred MCP server and `createFredClientNode` enable both guards by default; the agent MCP server enables the HTTP guard by default. The Node transports stay off the package barrel for browser-bundle hygiene, while `ipaddr.js` is force-pinned to `2.4.0` tree-wide so a stale transitive copy cannot silently weaken classification. See [`docs/security.md`](docs/security.md).
 
 ## Package: chain
 
@@ -209,8 +210,8 @@ The fred package is an MCP server that registers 12 provider/Fred-dependent tool
 | `get_logs` | Fetch container logs |
 | `restart_app` | Restart via provider API |
 | `update_app` | Update container manifest |
-| `restore_app` | Recover a CLOSED/credit-exhausted lease's retained volumes onto a fresh lease within the grace window (saga: pre-flight retained-check → create-lease → `POST /restore` → cancel-lease compensation) |
-| `app_diagnostics` | Provision diagnostics (status, failure count, last error) |
+| `restore_app` | Recover a CLOSED/credit-exhausted lease's retained volumes onto a fresh lease within the grace window (pre-flight retained-check → create-lease → `POST /restore`; compensation only for locally known failures or cancellation before the POST begins; every POST exception preserves both lease IDs for reconciliation without automatic or advised cancellation) |
+| `app_diagnostics` | Chain state plus surviving provider provision diagnostics, including CLOSED, REJECTED and EXPIRED leases |
 | `app_releases` | List deployment release history (20 most recent, manifest blob omitted) |
 
 The fred server also registers 3 MCP resources (`manifest://leases/active`, `manifest://leases/recent`, `manifest://providers`) and 3 prompts (`deploy-containerized-app`, `diagnose-failing-app`, `shutdown-all-leases`).
@@ -258,7 +259,7 @@ src/
     └── restoreApp.ts              Restore a CLOSED/retained lease's volumes onto a fresh lease (ENG-599 saga)
 ```
 
-`app_diagnostics` and `app_releases` are registered inline in `server/register-tools.ts` rather than as standalone files in `tools/` because their HTTP orchestration is a thin pass-through to the matching Fred API endpoint. `app_releases` is no longer a pure pass-through, though — it strips the stored manifest, derives `manifest_bytes` and caps the history length — so that *projection* lives in `tools/sanitizeReleases.ts` (alongside `sanitizeRetention.ts`), where its combinatorial cases are unit-testable without the in-memory MCP transport. The fetch/auth sequencing stays inline.
+`app_diagnostics` and `app_releases` are registered inline in `server/register-tools.ts`. Diagnostics joins authorized on-chain `lease_state` with the provider's separate `provision_status`, failure count and bounded failure guidance. It queries surviving records for terminal leases too; missing or unavailable provider records remain errors, without fabricated zero failures. `app_releases` strips the stored manifest, derives `manifest_bytes` and caps the history length; that projection lives in `tools/sanitizeReleases.ts` alongside `sanitizeRetention.ts`. The fetch/auth sequencing stays inline.
 
 ### HTTP clients
 
@@ -308,7 +309,7 @@ The `CosmwasmMCPServer` class takes a `CosmwasmMCPServerOptions` (config + walle
 
 The agent-core package is the TypeScript orchestration surface for Manifest agent flows -- `deployApp`, `manageDomain`, `troubleshootDeployment`, `closeLease`. It is **not** an MCP server; it exposes typed, callback-driven functions so different host surfaces (chat, conversational UI, autonomous daemon) can drive the same plan → confirm → progress → recover lifecycle in lockstep -- a fix in its recovery branch fixes every host surface at once.
 
-Each function takes a typed args object plus a callbacks object. The mutating flows expose `onConfirm` / `onProgress` / `onComplete` / `onFailure`; only `deployApp` adds `onPlan` and an enriched `onFailure(FailureEnvelope, RecoveryOption[]) => Promise<RecoveryChoice>` that drives partial-success recovery (retry the set-domain step, salvage the lease without the domain, cancel a pending lease, or close an active one -- see `RecoveryOptionId` in `src/types.ts`). Node-only paths (e.g. `saveManifest`) use dynamic `node:fs` imports so the build stays `platform: "neutral"`; those imports still make the orchestration graph Node-only for consumers. The SSRF-guarded fetch is re-exported from a Node-only `@manifest-network/manifest-agent-core/guarded-fetch` subpath (mirrors core's split). Depends on `core` + `fred`.
+Each function takes a typed args object plus a callbacks object. The mutating flows expose `onConfirm` / `onProgress` / `onComplete` / `onFailure`; only `deployApp` adds `onPlan` and an enriched `onFailure(FailureEnvelope, RecoveryOption[]) => Promise<RecoveryChoice>` that drives partial-success recovery (retry the set-domain step, salvage the lease without the domain, cancel a pending lease, or close an active one -- see `RecoveryOptionId` in `src/types.ts`). Opt-in filesystem operations (`deployApp` with `dataDir`, or `loadChainDenomMap(path)`) require Node when called and acquire builtins after a runtime guard. The orchestration import graph remains browser-safe; filesystem persistence is unavailable in browsers. The SSRF-guarded fetch is re-exported from a Node-only `@manifest-network/manifest-agent-core/guarded-fetch` subpath (mirrors core's split). Depends on `core` + `fred`.
 
 Source: `deploy-app.ts`, `manage-domain.ts`, `troubleshoot.ts`, `close-lease.ts` (one per flow), `types.ts` (frozen callback/recovery shapes), `guarded-fetch.ts` (subpath entry), plus `internals/` render + denom-humanize helpers.
 
@@ -375,7 +376,7 @@ It exposes an aggregating root barrel plus scoped, tree-shakable subpaths — ea
 | `…/reads` | `reads.ts` | Branded read functions (`getBalance`, `getLease`, `getSKUs`, …) |
 | `…/catalog` | `catalog.ts` | Catalog / readiness helpers (`checkDeploymentReadiness`, …) |
 | `…/deploy` | `deploy.ts` | Deploy lifecycle (`buildManifest`, `deployApp`, `waitForLeaseStatus`, `isLeaseFailureTerminal`, …) |
-| `…/orchestration` | `orchestration.ts` | Node-only: four callback-driven agent-core flows (`deployApp`, `manageDomain`, `closeLease`, `troubleshootDeployment`) plus the `loadChainDenomMap` loader/helper |
+| `…/orchestration` | `orchestration.ts` | Universal: four callback-driven agent-core flows (`deployApp`, `manageDomain`, `closeLease`, `troubleshootDeployment`) plus the `loadChainDenomMap` loader/helper |
 | `…/node` | `node.ts` | Node-only: `createFredClientNode`, `createNodeEventTransport`, the SSRF-guarded `createGuardedFetch`, and `isBlocked` |
 
 The public API surface is guarded by `publint` + `@arethetypeswrong/core` (run in the tsdown build), not api-extractor (ENG-446). See [`packages/sdk/README.md`](packages/sdk/README.md) and the cookbook [`docs/library-usage.md`](docs/library-usage.md).
@@ -424,7 +425,7 @@ This is handled by `http/auth.ts` in the fred package and used by all fred serve
 
 ## Error handling
 
-Errors use the `ManifestMCPErrorCode` enum (23 codes across 11 categories):
+Errors use the `ManifestMCPErrorCode` enum (24 codes across 11 categories):
 
 | Category | Codes |
 |----------|-------|
@@ -436,11 +437,11 @@ Errors use the `ManifestMCPErrorCode` enum (23 codes across 11 categories):
 | Module | `UNKNOWN_MODULE` |
 | User action | `OPERATION_CANCELLED` (user decline / cancel / elicitation timeout, or a completed user-selected orchestration recovery — neither a fault nor retryable; inspect operation-specific `details` because side effects may have completed) |
 | SKU resolution | `SKU_AMBIGUOUS` (a SKU name matched more than one active SKU; disambiguate with `provider_uuid` / `sku_uuid`) |
-| Restore | `RESTORE_NOT_RETAINED`, `RESTORE_REJECTED`, `RESTORE_RETRYABLE`, `RESTORE_ORPHAN_COMPENSATION_FAILED` (`restore_app` saga outcomes; `RESTORE_RETRYABLE` covers the transient refusals — 503 placement, 429 throttle; all non-auto-retryable since restore is non-idempotent; ENG-599) |
+| Restore | `RESTORE_NOT_RETAINED`, `RESTORE_REJECTED`, `RESTORE_ORPHAN_COMPENSATION_FAILED`, `RESTORE_COMMITTED_FAILURE`; `RESTORE_RETRYABLE` remains exported for compatibility and is not emitted by current `restoreApp`. `RESTORE_REJECTED` means a locally known failure before the POST was successfully compensated. Every restore POST exception (all 4xx/5xx, network failures, malformed 2xx) reports unknown adoption for reconciliation; a 429 `Retry-After` is diagnostic only. `RESTORE_COMMITTED_FAILURE` preserves the adopted lease after a provider failure verdict. All are non-auto-retryable since restore is non-idempotent (ENG-599, ENG-805). |
 | Deploy | `DEPLOY_READINESS_UNCONFIRMED` (the lease exists and is paid for but readiness was never confirmed; diagnose before closing anything — non-retryable, since a blind retry buys a second lease; ENG-661) |
 | Update | `UPDATE_INDETERMINATE` (`update_app` got a provider 5xx, which does **not** establish whether the manifest was applied — the provider persists the payload after the backend accepts it, so a persist failure can mean the update is live now and the next reprovision reverts it; diagnose with `app_status` / `app_releases`; non-retryable, since `update_app` is non-idempotent; ENG-619) |
 
-Error responses returned to MCP clients sanitize structured fields (such as `input` and `details`) via a redaction helper so that sensitive values (mnemonics, passwords, keys, tokens) are not exposed; the top-level `error.message` string is passed through verbatim and should not contain secrets.
+MCP error responses use a redacted projection capped at 8,000 serialized characters, including message, details and echoed input. Strings are capped at 2,000 code points and control characters are neutralized; recovery identifiers, error codes and outcome flags take priority over verbose diagnostics, with `truncated: true` marking omissions. The original SDK error is unchanged, and stderr retains full redacted diagnostic messages. Sensitive-key and whole-string mnemonic redaction do not detect every secret embedded in prose; do not place secrets in error messages.
 
 ## Configuration
 

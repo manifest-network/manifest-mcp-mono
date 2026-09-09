@@ -1,4 +1,8 @@
 import {
+  parseInt64 as parseInt64Base,
+  parseUint64 as parseUint64Base,
+} from '../internals/protobuf-integers.js';
+import {
   extractBooleanFlag,
   extractFlag,
   filterConsumedArgs,
@@ -132,13 +136,22 @@ export function parseBigInt(value: string, fieldName: string): bigint {
   );
 }
 
+/** Validate query identifiers against their protobuf wire widths. */
+export function parseUint64(value: string, fieldName: string): bigint {
+  return parseUint64Base(value, fieldName, ManifestMCPErrorCode.QUERY_FAILED);
+}
+
+export function parseInt64(value: string, fieldName: string): bigint {
+  return parseInt64Base(value, fieldName, ManifestMCPErrorCode.QUERY_FAILED);
+}
+
 /**
  * Safely parse a string to integer with proper error handling.
  * Named parseInteger to avoid shadowing global parseInt.
  */
 export function parseInteger(value: string, fieldName: string): number {
-  const parsed = Number.parseInt(value, 10);
-  if (Number.isNaN(parsed)) {
+  const parsed = Number(value);
+  if (!value.match(/^-?\d+$/) || !Number.isSafeInteger(parsed)) {
     throw new ManifestMCPError(
       ManifestMCPErrorCode.QUERY_FAILED,
       `Invalid ${fieldName}: "${value}". Expected a valid integer.`,

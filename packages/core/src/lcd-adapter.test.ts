@@ -1,4 +1,5 @@
 import { toBase64, toUtf8 } from '@cosmjs/encoding';
+import { cosmwasm } from '@manifest-network/manifestjs/dist/codegen/cosmwasm/bundle.js';
 import { describe, expect, it, vi } from 'vitest';
 import {
   _adaptModule as adaptModule,
@@ -377,20 +378,89 @@ describe('patchWasmQueryData', () => {
     );
   });
 
-  it('passes through string data unchanged', async () => {
+  it('passes through raw-query base64 data unchanged', async () => {
     const mockFn = vi
       .fn()
       .mockResolvedValue({ data: 'already-base64-encoded' });
-    const patched = patchWasmQueryData({ smartContractState: mockFn, req: {} });
+    const patched = patchWasmQueryData({ rawContractState: mockFn, req: {} });
 
     const result = (await (
-      patched.smartContractState as (...args: unknown[]) => Promise<unknown>
+      patched.rawContractState as (...args: unknown[]) => Promise<unknown>
     )({
       address: 'manifest1abc',
       queryData: 'eyJjb25maWciOnt9fQ==',
     })) as { data: unknown };
 
     expect(result.data).toBe('already-base64-encoded');
+  });
+
+  it.each([
+    { name: 'plain string', data: 'hello' },
+    { name: 'base64-looking string', data: 'dGVzdA==' },
+    { name: 'empty string', data: '' },
+    { name: 'Unicode string', data: 'héllo 🌍' },
+    { name: 'integer', data: 42 },
+    { name: 'fraction', data: -0.125 },
+    { name: 'zero', data: 0 },
+    { name: 'true', data: true },
+    { name: 'false', data: false },
+    { name: 'null', data: null },
+    { name: 'array', data: ['hello', 0, null, { nested_key: false }] },
+    { name: 'object', data: { contract_key: { nested_key: 'hello' } } },
+    {
+      name: 'converter configuration',
+      data: {
+        poa_admin: 'manifest1abc',
+        rate: '0.379',
+        source_denom: 'umfx',
+        target_denom: 'upwr',
+        paused: false,
+      },
+    },
+  ])(
+    'preserves smart-query $name through the actual protobuf converter',
+    async ({ data }) => {
+      const wire = vi.fn().mockResolvedValue({ data });
+      const adapted = adaptModule(
+        patchWasmQueryData({ smartContractState: wire }),
+        cosmwasm.wasm.v1,
+      );
+      const queryData = toUtf8(JSON.stringify({ config: {} }));
+
+      const result = (await adapted.smartContractState({
+        address: 'manifest1abc',
+        queryData,
+      })) as ReturnType<
+        typeof cosmwasm.wasm.v1.QuerySmartContractStateResponse.fromJSON
+      >;
+
+      expect(result.data).toBeInstanceOf(Uint8Array);
+      expect(new TextDecoder().decode(result.data)).toBe(JSON.stringify(data));
+      expect(JSON.parse(new TextDecoder().decode(result.data))).toEqual(data);
+      expect(wire).toHaveBeenCalledExactlyOnceWith({
+        address: 'manifest1abc',
+        queryData: toBase64(queryData),
+      });
+    },
+  );
+
+  it('keeps binary raw-query bytes distinct from smart-query JSON', async () => {
+    const bytes = new Uint8Array([0, 255, 34, 128, 123]);
+    const adapted = adaptModule(
+      patchWasmQueryData({
+        rawContractState: vi.fn().mockResolvedValue({ data: toBase64(bytes) }),
+      }),
+      cosmwasm.wasm.v1,
+    );
+
+    const result = (await adapted.rawContractState({
+      address: 'manifest1abc',
+      queryData: new Uint8Array(),
+    })) as ReturnType<
+      typeof cosmwasm.wasm.v1.QueryRawContractStateResponse.fromJSON
+    >;
+
+    expect(result.data).toEqual(bytes);
   });
 
   it('warns and skips methods that do not exist on the module', () => {

@@ -1,3 +1,4 @@
+import { isLeaseUuidShape } from './internals/uuid-shape.js';
 /**
  * Public entry point: orchestrate tearing down an existing lease via the
  * polymorphic `stopApp` (close for ACTIVE, cancel for PENDING, no-op if
@@ -51,9 +52,6 @@ import type {
   DeploymentPlanBlock,
   LeaseStateName,
 } from './types.js';
-
-const UUID_RE =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 type CloseOutcome = 'terminal' | 'pending' | 'not_found';
 
@@ -255,7 +253,7 @@ export async function closeLease(
 // --- Helpers --------------------------------------------------------
 
 function validateArgs(args: CloseLeaseArgs): void {
-  if (typeof args.leaseUuid !== 'string' || !args.leaseUuid.match(UUID_RE)) {
+  if (!isLeaseUuidShape(args.leaseUuid)) {
     throw new ManifestMCPError(
       ManifestMCPErrorCode.INVALID_CONFIG,
       `closeLease: leaseUuid must be a UUID; got "${args.leaseUuid}".`,

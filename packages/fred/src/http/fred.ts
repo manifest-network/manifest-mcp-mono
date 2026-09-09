@@ -202,13 +202,13 @@ export async function updateLease(
  * Restore a closed lease's retained volumes onto a fresh PENDING lease (ENG-599).
  * `leaseUuid` is the NEW (fresh PENDING) lease; the body names the SOURCE retained
  * lease. Token must be scoped to the NEW lease. Returns 202 {status:"provisioning"};
- * fetchJsonChecked throws ProviderApiError for any non-2xx — the tool layer classifies
- * by `.status`, and `restoreApp.ts` owns that table (which statuses are safe to
- * compensate). Fred's answer space here: 404 not-retained, 409 not PENDING or already
+ * fetchJsonChecked throws ProviderApiError for any non-2xx or malformed success body.
+ * restoreApp treats every such error as unknown adoption: HTTP status/prose cannot
+ * authorize compensation. Fred's answer space here: 404 not-retained, 409 not PENDING or already
  * provisioned, 422 demote-exceeds-tier OR any other refusal code the backend authored
  * (widened in ENG-620 — a 422 no longer implies "demote"), 429 throttled, 502 the
  * backend's error body was off-contract (ENG-620/ENG-739), 503 placement unresolvable.
- * Not exhaustive by construction: treat an unlisted status as in-doubt, not as terminal.
+ * This response contract has no structured non-adoption verdict for safe rollback.
  */
 export async function restoreLease(
   providerUrl: string,

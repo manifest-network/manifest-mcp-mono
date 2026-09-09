@@ -28,7 +28,8 @@ vi.mock('@manifest-network/manifest-mcp-core', async (importOriginal) => {
             },
           },
         }),
-        getSigningClient: vi.fn().mockResolvedValue({
+        withBroadcastLock: vi.fn(async (_address, operation) => operation()),
+        getBroadcastClient: vi.fn().mockResolvedValue({
           signAndBroadcast: (...args: unknown[]) =>
             mockSignAndBroadcast(...args),
           simulate: (...args: unknown[]) => mockSimulate(...args),
@@ -396,6 +397,7 @@ describe('CosmwasmMCPServer', () => {
         'manifest1abc',
         expect.any(Array),
         expect.objectContaining({ gas: '350000' }),
+        '',
       );
     });
   });

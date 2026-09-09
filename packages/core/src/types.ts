@@ -447,11 +447,12 @@ export enum ManifestMCPErrorCode {
 
   // Restore (ENG-599). ALL are enrolled in retry.ts NON_RETRYABLE_ERROR_CODES
   // (restore_app is non-idempotent, so withRetry must never auto-re-broadcast).
-  // RESTORE_RETRYABLE signals the AGENT may deliberately re-invoke — not auto-retry.
+  // RESTORE_RETRYABLE is retained for compatibility; restoreApp no longer emits it.
+  // POST status/prose never authorizes compensation or replay without reconciliation.
   RESTORE_NOT_RETAINED = 'RESTORE_NOT_RETAINED', // pre-flight: source not restorable
-  RESTORE_REJECTED = 'RESTORE_REJECTED', // terminal 4xx; the created lease was rolled back
-  RESTORE_RETRYABLE = 'RESTORE_RETRYABLE', // 503; rolled back, agent may re-invoke
-  RESTORE_ORPHAN_COMPENSATION_FAILED = 'RESTORE_ORPHAN_COMPENSATION_FAILED', // orphan lease exists
+  RESTORE_REJECTED = 'RESTORE_REJECTED', // failure before POST; created lease was rolled back
+  RESTORE_RETRYABLE = 'RESTORE_RETRYABLE', // legacy compatibility code; never auto-retry
+  RESTORE_ORPHAN_COMPENSATION_FAILED = 'RESTORE_ORPHAN_COMPENSATION_FAILED', // adoption unknown or safe compensation failed; inspect details
   RESTORE_COMMITTED_FAILURE = 'RESTORE_COMMITTED_FAILURE', // post-pivot failure; adopted lease exists
 
   /**

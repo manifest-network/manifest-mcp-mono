@@ -4,7 +4,7 @@ import {
   logger,
   ManifestMCPError,
   ManifestMCPErrorCode,
-  sanitizeForLogging,
+  sanitizeForModelText,
 } from '@manifest-network/manifest-mcp-core';
 import type { FredAuthCtx } from '../ctx.js';
 import { type FredLeaseStatus, getLeaseStatus } from '../http/fred.js';
@@ -78,7 +78,7 @@ export async function appStatus(
       return {
         lease_uuid: leaseUuid,
         chainState,
-        providerError: sanitizeForLogging(rawMsg) as string,
+        providerError: sanitizeForModelText(rawMsg),
       };
     }
 
@@ -108,7 +108,7 @@ export async function appStatus(
       return {
         lease_uuid: leaseUuid,
         chainState,
-        providerError: sanitizeForLogging(rawMsg) as string,
+        providerError: sanitizeForModelText(rawMsg),
       };
     }
 
@@ -137,7 +137,7 @@ export async function appStatus(
       logger.error(
         `[app_status] Failed to get ${label} for ${leaseUuid}: ${rawMsg}`,
       );
-      return sanitizeForLogging(rawMsg) as string;
+      return sanitizeForModelText(rawMsg);
     }
 
     if (statusResult.status === 'fulfilled') {

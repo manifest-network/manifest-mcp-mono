@@ -12,7 +12,7 @@ npm install @manifest-network/manifest-mcp-agent
 
 | Tool | agent-core function | Description |
 | ---- | ------------------- | ----------- |
-| `deploy_app_orchestrated` | `deployApp` | Plan → confirm → broadcast (fred atomic deploy: create-lease + manifest upload + optional set-domain) → persist manifest. Bidirectional recovery on partial-success via `onFailure(env, options)` → enum-of-`RecoveryOptionId` elicitation. |
+| `deploy_app_orchestrated` | `deployApp` | Plan → confirm → broadcast (sequential deploy: create-lease + manifest upload + optional set-domain) → persist manifest. Bidirectional recovery on partial-success via `onFailure(env, options)` → enum-of-`RecoveryOptionId` elicitation. |
 | `manage_domain_orchestrated` | `manageDomain` | `set` / `clear` a lease item's custom domain. Confirm → broadcast → verify on-chain. |
 | `lookup_custom_domain_orchestrated` | `manageDomain` (lookup) | Reverse-resolve an FQDN to its owning lease. Pure chain query — no broadcast, zero elicitations. Returns the lease or `null` when unclaimed. |
 | `troubleshoot_deployment_orchestrated` | `troubleshootDeployment` | Markdown-formatted chain-side diagnostic report. No broadcast. |

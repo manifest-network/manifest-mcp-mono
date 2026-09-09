@@ -94,7 +94,7 @@ See [`packages/node/README.md`](packages/node/README.md) for wallet setup and MC
 | `restart_app` | Restart a deployed app via the provider |
 | `update_app` | Update a deployed app with a new manifest |
 | `restore_app` | Restore a closed/retained app onto a fresh lease within the grace window |
-| `app_diagnostics` | Get provision diagnostics for a deployed app |
+| `app_diagnostics` | Get chain state and available provider diagnostics, including terminal leases |
 | `app_releases` | Get release/version history for a deployed app (20 most recent; the stored manifest is omitted, its size reported as `manifest_bytes`) |
 
 The Fred server also exposes 3 MCP resources (`manifest://leases/active`, `manifest://leases/recent`, `manifest://providers`) and 3 prompts (`deploy-containerized-app`, `diagnose-failing-app`, `shutdown-all-leases`).
@@ -151,7 +151,8 @@ npm run lint:e2e
 # Run unit tests
 npm run test
 
-# Run E2E tests (requires Docker)
+# Run E2E tests (Linux, local Docker, XFS project quotas; see docs/e2e-setup.md)
+npm run check:e2e-env
 docker compose -f e2e/docker-compose.yml up -d --wait --wait-timeout 180
 npm run test:e2e
 docker compose -f e2e/docker-compose.yml down -v --remove-orphans

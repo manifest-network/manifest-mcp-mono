@@ -1,7 +1,8 @@
 import { fromBase64, fromBech32, toBech32 } from '@cosmjs/encoding';
 import type { SigningStargateClient } from '@cosmjs/stargate';
 import { strangelove_ventures as strangeloveVenturesNs } from '@manifest-network/manifestjs/dist/codegen/strangelove_ventures/bundle.js';
-import { throwUnsupportedSubcommand } from '../modules.js';
+import { parseUint64 } from '../internals/protobuf-integers.js';
+import { throwUnsupportedSubcommand } from '../module-metadata.js';
 import {
   type BuiltMessages,
   type CosmosTxResult,
@@ -18,7 +19,6 @@ import {
 import {
   broadcastAndBuildTxResult,
   extractBooleanFlag,
-  parseBigInt,
   requireArgs,
   resolveTxFeeAndMemo,
   type TxExtras,
@@ -68,7 +68,7 @@ export function buildPoAMessages(
       );
       const [validatorAddress, powerStr] = remainingArgs;
       validateAddress(validatorAddress, 'validator address', valoperPrefix);
-      const power = parseBigInt(powerStr, 'power');
+      const power = parseUint64(powerStr, 'power');
 
       const msg = {
         typeUrl: '/strangelove_ventures.poa.v1.MsgSetPower',
