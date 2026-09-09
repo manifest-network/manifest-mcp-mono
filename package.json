@@ -37,7 +37,7 @@
   },
   "devDependencies": {
     "@arethetypeswrong/core": "0.18.5",
-    "@biomejs/biome": "2.5.9",
+    "@biomejs/biome": "2.5.12",
     "@cosmjs/encoding": "0.32.4",
     "@cosmjs/proto-signing": "0.32.4",
     "@manifest-network/manifest-mcp-core": "0.22.0",
@@ -52,7 +52,7 @@
     "dependency-cruiser": "18.2.0",
     "publint": "0.3.24",
     "size-limit": "13.0.3",
-    "tsdown": "0.22.14",
+    "tsdown": "0.23.0",
     "typescript": "5.9.3",
     "undici": "8.10.0",
     "vitest": "4.1.10",
