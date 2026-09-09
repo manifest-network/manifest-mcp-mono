@@ -1,4 +1,6 @@
 import type { QueryErrorDetails } from './internals/classify-query-error.js';
+import { errorChain } from './internals/error-chain.js';
+import { abortableSleep, abortReason } from './options.js';
 import {
   ManifestMCPError,
   ManifestMCPErrorCode,
@@ -143,107 +145,80 @@ function isTransientErrorMessage(message: string): boolean {
   return false;
 }
 
-function errorChain(error: Error): Error[] {
-  const chain: Error[] = [];
-  const seen = new Set<unknown>();
-  let current: unknown = error;
-
-  while (current instanceof Error && !seen.has(current)) {
-    chain.push(current);
-    seen.add(current);
-    current = (current as Error & { cause?: unknown }).cause;
-  }
-  return chain;
-}
-
 function errorCode(error: Error): string {
   const code = (error as Error & { code?: unknown }).code;
   return typeof code === 'string' ? code : '';
 }
 
-/** Classify the visible error and nested platform/undici causes together. */
-function isTransientErrorChain(error: Error): boolean {
-  const chain = errorChain(error);
+/** A gRPC envelope is authoritative over HTTP status and message text (ENG-536). */
+function queryStatusRetryability(error: Error): boolean | undefined {
+  if (!(error instanceof ManifestMCPError)) return undefined;
+  const { httpStatus, grpcCode } = (error.details ?? {}) as QueryErrorDetails;
+  // Keepers can return HTTP 500 with a deterministic code:2 answer. Only
+  // explicitly transient gRPC codes authorize another idempotent query.
+  if (typeof grpcCode === 'number')
+    return RETRYABLE_GRPC_CODES.includes(grpcCode);
+  if (typeof httpStatus === 'number')
+    return httpStatus >= 500 || httpStatus === 429;
+  return undefined;
+}
 
-  // undici commonly throws TypeError('fetch failed') with the useful DNS
-  // verdict only on `cause`. A known NXDOMAIN is a permanent endpoint typo;
-  // it must win over the generic retryable wrapper text.
+function isPermanentError(error: Error): boolean {
+  // A generic "fetch failed" wrapper must not conceal NXDOMAIN on its cause.
   if (
-    chain.some(
-      (entry) =>
-        errorCode(entry).toLowerCase() === 'enotfound' ||
-        entry.message.toLowerCase().includes('enotfound'),
-    )
-  ) {
-    return false;
-  }
-
-  return chain.some(
-    (entry) =>
-      isTransientErrorMessage(entry.message) ||
-      isTransientErrorMessage(errorCode(entry)),
+    errorCode(error).toLowerCase() === 'enotfound' ||
+    error.message.toLowerCase().includes('enotfound')
+  )
+    return true;
+  if (queryStatusRetryability(error) === false) return true;
+  return (
+    error instanceof ManifestMCPError &&
+    (NON_RETRYABLE_ERROR_CODES.includes(error.code) ||
+      // An existing lease or submitted operation must be reconciled, never replayed.
+      error.details?.partial === true ||
+      error.details?.sent === true)
   );
 }
 
 /**
- * Determine if an error is retryable
+ * Classify an error and its causes. A native abort/deadline has no ownership
+ * information by itself. Only a query/connection boundary that owns the failed
+ * transport attempt may annotate it with `transportCode: 'ETIMEDOUT'`.
+ * Pass the whole-operation signal to suppress retry after caller cancellation.
  */
-export function isRetryableError(error: unknown): boolean {
-  // ManifestMCPError with non-retryable code
-  if (error instanceof ManifestMCPError) {
-    if (NON_RETRYABLE_ERROR_CODES.includes(error.code)) {
-      return false;
-    }
+export function isRetryableError(
+  error: unknown,
+  options: { signal?: AbortSignal } = {},
+): boolean {
+  if (!(error instanceof Error)) return false;
+  const chain = errorChain(error);
+  // Permanent verdicts in any cause dominate transient wrappers and markers.
+  if (chain.some(isPermanentError) || options.signal?.aborted) return false;
 
-    // A partial success is never auto-retryable, whatever its code says. The
-    // ENG-280 contract is that `details.partial === true` means "a lease was
-    // already created on-chain and paid for"; the deploy that produced it is
-    // non-idempotent, so re-running it buys a SECOND lease. This matters
-    // because the wrap preserves the inner error's code — a readiness timeout
-    // used to arrive as QUERY_FAILED whose message contains "timed out", which
-    // the transient-message sniff below would happily retry (ENG-661).
+  let transportTimeout = false;
+  for (const entry of chain) {
+    // A marker may own a nested native timeout/stream abort, but cannot authorize
+    // retry of an outer cancellation that wraps a previous transport failure.
+    if (entry.name === 'AbortError' || entry.name === 'TimeoutError') {
+      return transportTimeout;
+    }
     if (
-      (error.details as { partial?: unknown } | undefined)?.partial === true
-    ) {
-      return false;
-    }
-
-    const { httpStatus, grpcCode } = (error.details ?? {}) as QueryErrorDetails;
-
-    // An envelope means the request reached grpc-gateway and carries a gRPC
-    // status. It does NOT mean a keeper ran — the gateway status.Convert()s its
-    // OWN failures too (routing 501/code:12, path-decode 400/code:3). So do not
-    // infer "the app answered"; retry only the explicitly transient codes.
-    //
-    // Why status alone must not drive this: Cosmos keepers are not uniform —
-    // sdkerrors-wrapped errors collapse to codes.Unknown -> HTTP 500 + code:2
-    // (verified live: wasm "no such code", group "not found: group"). Retrying
-    // those burns attempts, backoff and rate-limiter tokens on a fixed answer.
-    // code:2 is ambiguous (keeper answer, or a gateway-side non-status coerced by
-    // status.Convert) — we deliberately do not retry it. (ENG-536)
-    if (typeof grpcCode === 'number') {
-      return RETRYABLE_GRPC_CODES.includes(grpcCode);
-    }
-
-    // No envelope: a genuine transport/proxy failure. This is the leg the old
-    // message pattern missed — axios's template is "Request failed with status
-    // code 500", and /\b(?:http|status)\s*5\d{2}\b/ cannot match it because the
-    // word "code" sits between "status" and the number.
-    if (typeof httpStatus === 'number') {
-      return httpStatus >= 500 || httpStatus === 429;
-    }
-
-    // Fall back to message sniffing for the RPC leg, which has no status.
-    return isTransientErrorChain(error);
+      entry instanceof ManifestMCPError &&
+      (entry.code === ManifestMCPErrorCode.QUERY_FAILED ||
+        entry.code === ManifestMCPErrorCode.RPC_CONNECTION_FAILED) &&
+      entry.details?.transportCode === 'ETIMEDOUT'
+    )
+      transportTimeout = true;
   }
-
-  // Standard Error - inspect its message and platform/undici cause chain.
-  if (error instanceof Error) {
-    return isTransientErrorChain(error);
-  }
-
-  // Unknown error type - don't retry
-  return false;
+  return (
+    transportTimeout ||
+    chain.some(
+      (entry) =>
+        queryStatusRetryability(entry) === true ||
+        isTransientErrorMessage(entry.message) ||
+        isTransientErrorMessage(errorCode(entry)),
+    )
+  );
 }
 
 /**
@@ -271,16 +246,15 @@ export function calculateBackoff(
 }
 
 /**
- * Sleep for a given number of milliseconds
- */
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-/**
  * Options for the retry wrapper
  */
 export interface RetryOptions {
+  /**
+   * Whole-operation cancellation: prevents attempts and interrupts backoff.
+   * The operation must observe this signal to cancel its own in-flight work;
+   * withRetry does not race that work or discard a successful result.
+   */
+  signal?: AbortSignal;
   /** Retry configuration */
   config?: RetryConfig;
   /** Operation name for error messages */
@@ -316,6 +290,7 @@ export async function withRetry<T>(
   operation: () => Promise<T>,
   options: RetryOptions = {},
 ): Promise<T> {
+  const signal = options.signal;
   const config = {
     ...DEFAULT_RETRY_CONFIG,
     ...options.config,
@@ -324,16 +299,20 @@ export async function withRetry<T>(
   let lastError: unknown;
 
   for (let attempt = 0; attempt <= config.maxRetries; attempt++) {
+    if (signal?.aborted) throw abortReason(signal);
     try {
       return await operation();
     } catch (error) {
       lastError = error;
 
+      // Preserve established validation/partial/submitted outcomes even if the
+      // caller signal expired while an injected operation ignored cancellation.
+      if (!isRetryableError(error)) throw error;
+      if (signal?.aborted) throw abortReason(signal);
+
       // Check if we should retry
       const isLastAttempt = attempt === config.maxRetries;
-      const shouldRetry = !isLastAttempt && isRetryableError(error);
-
-      if (!shouldRetry) {
+      if (isLastAttempt) {
         throw error;
       }
 
@@ -350,7 +329,7 @@ export async function withRetry<T>(
       }
 
       // Wait before retrying
-      await sleep(delayMs);
+      await abortableSleep(delayMs, signal);
     }
   }
 

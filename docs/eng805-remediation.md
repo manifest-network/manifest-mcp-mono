@@ -217,3 +217,49 @@ Independent review found no remaining blocker in these fixes (confidence 98%).
 The initial PR acceptance run failed during the Docker build because a Go
 checksum-database download returned an HTTP/2 internal error; acceptance tests
 never started. Live acceptance of the updated PR remains pending.
+
+## Transport-owned deadline follow-up (2026-09-09)
+
+Baseline: `0036f18`; branch: `codex/eng-805-transport-deadlines`.
+PR #224 subsequently passed all CI checks on reviewed head `30df49b` and merged
+as this baseline; the pending acceptance note above records the earlier state.
+The retained retry finding is a separate scope: native deadline prose loses its
+ownership when wrapped, so an idempotent read can miss an intended retry
+(finding confidence 99%). See the
+[implementation plan](superpowers/plans/2026-09-09-eng805-transport-deadlines.md).
+
+The contract adds exported `TransportErrorDetails` with optional
+`transportCode: 'ETIMEDOUT'` on existing `QUERY_FAILED`/`RPC_CONNECTION_FAILED`
+errors. Only identity requests and faucet `GET /status` mark a timeout verified
+against their own fresh per-attempt signal, including response-body failures.
+Cause inspection preserves known status verdicts and permanent, partial or
+submitted outcomes over transient wrappers. An unknown native abort/deadline is
+not sufficient evidence for retry. Faucet credit POST behavior stays unchanged.
+
+`RetryOptions.signal` and `isRetryableError(error, { signal })` carry the separate
+overall cancellation boundary. They stop backoff and later attempts; the
+operation must pass that signal to its transport to cancel in-flight work.
+The wrapper does not race opaque callbacks or discard successful results. The
+[client guide](library-usage.md#errors) shows this composition around the
+idempotent faucet status read, which has no internal retry loop. Retain the
+existing backoff implementation: adding `p-retry` would not establish ownership
+or replace the operation-specific exclusions.
+
+Validation for this follow-up:
+
+- All 254 focused runtime/type tests pass, including the previous PR's identity
+  regressions and the documented cancellation composition. A negative control
+  against the pre-fix retry classifier fails 15 of the 19 ownership cases; the
+  current implementation was restored before integrated validation.
+- The full V8 suite passes 3,747 tests with 17 existing skips across 172 files,
+  with no type errors. Coverage is 84.43% lines, 84.15% statements, 83.71%
+  branches and 88.09% functions; all thresholds pass.
+- Workspace builds, workspace/E2E TypeScript, Biome and all nine package
+  integrity checks pass. All four unchanged bundle budgets pass; reads/catalog
+  remain 26.07/26.38 kB, with 5.2 kB deploy and 3.59 kB root-client headroom.
+- Independent review found no concrete blocker in the ownership, cancellation
+  or cause-precedence changes (confidence 98%). No dependencies changed.
+
+CI for this follow-up remains pending; the earlier PR's live acceptance does not
+validate these new changes. Broader ENG-805 dependency, coverage, compiler and
+simplification work remains open.

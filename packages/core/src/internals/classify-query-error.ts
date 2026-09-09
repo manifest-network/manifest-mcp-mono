@@ -1,4 +1,8 @@
-import { ManifestMCPError, ManifestMCPErrorCode } from '../types.js';
+import {
+  ManifestMCPError,
+  ManifestMCPErrorCode,
+  type TransportErrorDetails,
+} from '../types.js';
 
 /** gRPC status code for NOT_FOUND. grpc-gateway maps it to HTTP 404 — but NOT vice versa. */
 const GRPC_NOT_FOUND = 5;
@@ -16,7 +20,7 @@ const RPC_NOT_FOUND_RE = /rpc error: code = NotFound/i;
  * when the transport cannot supply them (RPC has no HTTP layer; a proxy 404 has no
  * grpc envelope).
  */
-export interface QueryErrorDetails {
+export interface QueryErrorDetails extends TransportErrorDetails {
   readonly httpStatus?: number;
   readonly grpcCode?: number;
   readonly grpcMessage?: string;

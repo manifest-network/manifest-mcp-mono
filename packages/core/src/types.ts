@@ -492,6 +492,15 @@ export enum ManifestMCPErrorCode {
 }
 
 /**
+ * Evidence supplied by a transport that owns a fresh deadline for one read/connection attempt.
+ * Never attach this to caller cancellation, a whole-operation deadline, or a mutating request.
+ * Carry it in QUERY_FAILED/RPC_CONNECTION_FAILED details when wrapping a verified timeout.
+ */
+export interface TransportErrorDetails {
+  readonly transportCode?: 'ETIMEDOUT';
+}
+
+/**
  * Custom error class for Manifest MCP errors
  */
 export class ManifestMCPError extends Error {

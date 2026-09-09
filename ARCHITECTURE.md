@@ -441,6 +441,19 @@ Errors use the `ManifestMCPErrorCode` enum (24 codes across 11 categories):
 | Deploy | `DEPLOY_READINESS_UNCONFIRMED` (the lease exists and is paid for but readiness was never confirmed; diagnose before closing anything — non-retryable, since a blind retry buys a second lease; ENG-661) |
 | Update | `UPDATE_INDETERMINATE` (`update_app` got a provider 5xx, which does **not** establish whether the manifest was applied — the provider persists the payload after the backend accepts it, so a persist failure can mean the update is live now and the next reprovision reverts it; diagnose with `app_status` / `app_releases`; non-retryable, since `update_app` is non-idempotent; ENG-619) |
 
+Deadline ownership is carried separately from these error categories. Identity
+requests and faucet `GET /status` verify their own fresh per-attempt abort signal
+before adding exported `TransportErrorDetails` (`transportCode: 'ETIMEDOUT'`) to
+`RPC_CONNECTION_FAILED` or `QUERY_FAILED`. Fetch and body-read failures retain
+their causes. Retry classification inspects that chain; known status envelopes
+remain authoritative, and permanent, partial or submitted outcomes veto retry.
+An unknown native `TimeoutError`/`AbortError` supplies no ownership evidence.
+`RetryOptions.signal` stops new attempts and backoff after whole-operation
+cancellation; the callback must propagate the signal to cancel in-flight work.
+The retry wrapper does not race that callback or discard success. Faucet credit
+POSTs and non-idempotent recovery policies are unchanged. A generic backoff
+package cannot establish deadline ownership, so the existing shared loop remains.
+
 MCP error responses use a redacted projection capped at 8,000 serialized characters, including message, details and echoed input. Strings are capped at 2,000 code points and control characters are neutralized; recovery identifiers, error codes and outcome flags take priority over verbose diagnostics, with `truncated: true` marking omissions. The original SDK error is unchanged, and stderr retains full redacted diagnostic messages. Sensitive-key and whole-string mnemonic redaction do not detect every secret embedded in prose; do not place secrets in error messages.
 
 ## Configuration
