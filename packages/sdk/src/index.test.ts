@@ -11,7 +11,7 @@ import * as reads from './reads.js';
 /**
  * Barrel-hygiene contract for `@manifest-network/manifest-sdk` (ENG-309). The SDK
  * is a PURE re-export aggregator: a thin ROOT (factories + types + brands + ports
- * + wallet + errors + config, NO free fns) plus scoped subpaths. These assertions
+ * + wallet + errors + config + retry helpers) plus scoped domain subpaths. These assertions
  * pin the public surface AND the browser-safety invariant: the Node-only
  * SSRF-guarded fetch (`createGuardedFetch`/`isBlocked`/`GuardedFetch`) must NOT
  * leak into any browser-safe barrel — it lives ONLY on `./node`. (A Node-run
@@ -26,7 +26,7 @@ const ROOT_FACTORIES = [
   'createFredClient',
 ] as const;
 
-// Free fns belong on subpaths, never on the thin ROOT (also structurally avoids
+// Domain free fns belong on subpaths, never on the thin ROOT (also structurally avoids
 // the fred-vs-agent-core `deployApp` name clash).
 const ROOT_FORBIDDEN_FREE_FNS = [
   'getBalance',
@@ -49,7 +49,7 @@ const READS = [
 const GUARDED_FETCH_EXPORTS = ['createGuardedFetch', 'isBlocked'] as const;
 
 describe('manifest-sdk barrels', () => {
-  it('ROOT exposes the client factories, no free fns', () => {
+  it('ROOT exposes the client factories without domain free fns', () => {
     for (const k of ROOT_FACTORIES) expect(root).toHaveProperty(k);
     for (const k of ROOT_FORBIDDEN_FREE_FNS) expect(root).not.toHaveProperty(k);
   });
@@ -67,6 +67,7 @@ describe('manifest-sdk barrels', () => {
       'ManifestMCPErrorCode',
       'ProviderApiError',
       'isNotFoundError',
+      'isRetryableError',
       'isSkuAmbiguousError',
       'INFRASTRUCTURE_ERROR_CODES',
       'sanitizeForLogging',
@@ -74,6 +75,7 @@ describe('manifest-sdk barrels', () => {
       'validateConfig',
       'createValidatedConfig',
       'resolveCallSignal',
+      'withRetry',
       'VERSION',
     ])
       expect(root).toHaveProperty(k);
@@ -184,6 +186,7 @@ describe('manifest-sdk barrels', () => {
         'ManifestMCPErrorCode',
         'ProviderApiError',
         'isNotFoundError',
+        'isRetryableError',
         'isSkuAmbiguousError',
         'INFRASTRUCTURE_ERROR_CODES',
         'sanitizeForLogging',
@@ -191,6 +194,7 @@ describe('manifest-sdk barrels', () => {
         'validateConfig',
         'createValidatedConfig',
         'resolveCallSignal',
+        'withRetry',
         'VERSION',
       ].sort(),
     );

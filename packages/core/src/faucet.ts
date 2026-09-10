@@ -1,6 +1,11 @@
 import { z } from 'zod';
+import { isTransportTimeout } from './internals/transport-timeout.js';
 import { logger } from './logger.js';
-import { ManifestMCPError, ManifestMCPErrorCode } from './types.js';
+import {
+  ManifestMCPError,
+  ManifestMCPErrorCode,
+  type TransportErrorDetails,
+} from './types.js';
 
 const CoinSchema = z.object({
   denom: z.string(),
@@ -45,13 +50,20 @@ export async function fetchFaucetStatus(
 ): Promise<FaucetStatusResponse> {
   const base = faucetUrl.replace(/\/+$/, '');
   const url = `${base}/status`;
+  const deadline = AbortSignal.timeout(10_000);
   let res: Response;
   try {
-    res = await fetchFn(url, { signal: AbortSignal.timeout(10_000) });
+    res = await fetchFn(url, { signal: deadline });
   } catch (err) {
-    throw new ManifestMCPError(
-      ManifestMCPErrorCode.QUERY_FAILED,
-      `Faucet status request failed: ${err instanceof Error ? err.message : String(err)}`,
+    throw Object.assign(
+      new ManifestMCPError(
+        ManifestMCPErrorCode.QUERY_FAILED,
+        `Faucet status request failed: ${err instanceof Error ? err.message : String(err)}`,
+        isTransportTimeout(err, deadline)
+          ? ({ transportCode: 'ETIMEDOUT' } satisfies TransportErrorDetails)
+          : undefined,
+      ),
+      { cause: err },
     );
   }
 
@@ -60,16 +72,26 @@ export async function fetchFaucetStatus(
     throw new ManifestMCPError(
       ManifestMCPErrorCode.QUERY_FAILED,
       `Faucet status returned HTTP ${res.status}: ${text}`,
+      { httpStatus: res.status },
     );
   }
 
   let body: unknown;
   try {
     body = await res.json();
-  } catch {
-    throw new ManifestMCPError(
-      ManifestMCPErrorCode.QUERY_FAILED,
-      `Faucet /status returned invalid JSON (HTTP ${res.status})`,
+  } catch (err) {
+    const timedOut = isTransportTimeout(err, deadline);
+    throw Object.assign(
+      new ManifestMCPError(
+        ManifestMCPErrorCode.QUERY_FAILED,
+        timedOut
+          ? 'Faucet status response deadline expired.'
+          : `Faucet /status returned invalid JSON (HTTP ${res.status})`,
+        timedOut
+          ? ({ transportCode: 'ETIMEDOUT' } satisfies TransportErrorDetails)
+          : { httpStatus: res.status },
+      ),
+      { cause: err },
     );
   }
 
@@ -78,6 +100,7 @@ export async function fetchFaucetStatus(
     throw new ManifestMCPError(
       ManifestMCPErrorCode.QUERY_FAILED,
       `Faucet /status response has invalid shape: ${parsed.error.message}`,
+      { httpStatus: res.status },
     );
   }
 

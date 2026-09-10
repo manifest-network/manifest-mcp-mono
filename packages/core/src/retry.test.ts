@@ -7,6 +7,18 @@ import {
 } from './retry.js';
 import { ManifestMCPError, ManifestMCPErrorCode } from './types.js';
 
+function transportTimeout(
+  cause?: unknown,
+  code = ManifestMCPErrorCode.QUERY_FAILED,
+): ManifestMCPError {
+  return Object.assign(
+    new ManifestMCPError(code, 'Attempt deadline elapsed', {
+      transportCode: 'ETIMEDOUT',
+    }),
+    { cause },
+  );
+}
+
 describe('isRetryableError', () => {
   describe('ManifestMCPError handling', () => {
     it('should not retry INVALID_CONFIG errors', () => {
@@ -367,6 +379,338 @@ describe('DEFAULT_RETRY_CONFIG', () => {
     expect(DEFAULT_RETRY_CONFIG.maxRetries).toBe(3);
     expect(DEFAULT_RETRY_CONFIG.baseDelayMs).toBe(1000);
     expect(DEFAULT_RETRY_CONFIG.maxDelayMs).toBe(10000);
+  });
+});
+
+describe('transport deadline ownership', () => {
+  it.each(['AbortError', 'TimeoutError'])(
+    'does not retry an unowned native %s, even under transient wrapper prose',
+    (name) => {
+      const native = new DOMException(
+        'The operation was aborted due to timeout',
+        name,
+      );
+      expect(isRetryableError(native)).toBe(false);
+      expect(
+        isRetryableError(
+          Object.assign(new TypeError('fetch failed'), { cause: native }),
+        ),
+      ).toBe(false);
+    },
+  );
+
+  it.each([
+    ManifestMCPErrorCode.QUERY_FAILED,
+    ManifestMCPErrorCode.RPC_CONNECTION_FAILED,
+  ])(
+    'retries an explicitly owned %s deadline and its native causes',
+    (code) => {
+      for (const name of ['TimeoutError', 'AbortError']) {
+        const native = new DOMException(
+          'The operation was aborted due to timeout',
+          name,
+        );
+        const marked = transportTimeout(native, code);
+        expect(isRetryableError(marked)).toBe(true);
+        expect(
+          isRetryableError(
+            Object.assign(new Error('Opaque adapter failure'), {
+              cause: marked,
+            }),
+          ),
+        ).toBe(true);
+      }
+    },
+  );
+
+  it.each(['AbortError', 'TimeoutError'])(
+    'does not let a nested transport marker override an outer %s',
+    (name) => {
+      const outer = Object.assign(
+        new DOMException('Caller ended the operation', name),
+        {
+          cause: transportTimeout(),
+        },
+      );
+      expect(isRetryableError(outer)).toBe(false);
+      expect(
+        isRetryableError(
+          Object.assign(new Error('fetch failed'), { cause: outer }),
+        ),
+      ).toBe(false);
+    },
+  );
+
+  it('does not authorize simulation or transaction replay from the transport marker', () => {
+    expect(
+      isRetryableError(
+        transportTimeout(undefined, ManifestMCPErrorCode.SIMULATION_FAILED),
+      ),
+    ).toBe(false);
+    expect(
+      isRetryableError(
+        transportTimeout(undefined, ManifestMCPErrorCode.TX_FAILED),
+      ),
+    ).toBe(false);
+  });
+
+  it('requires the exact structured marker rather than timeout prose or truthiness', () => {
+    expect(isRetryableError(new Error('A timeout occurred'))).toBe(false);
+    for (const transportCode of [true, 'timeout', 'etimedout']) {
+      expect(
+        isRetryableError(
+          new ManifestMCPError(
+            ManifestMCPErrorCode.QUERY_FAILED,
+            'Opaque failure',
+            { transportCode },
+          ),
+        ),
+      ).toBe(false);
+    }
+  });
+
+  it.each([
+    [
+      'validation',
+      new ManifestMCPError(ManifestMCPErrorCode.INVALID_CONFIG, 'Wrong chain'),
+    ],
+    [
+      'caller cancellation',
+      new ManifestMCPError(
+        ManifestMCPErrorCode.OPERATION_CANCELLED,
+        'Cancelled',
+      ),
+    ],
+    [
+      'transaction failure',
+      new ManifestMCPError(ManifestMCPErrorCode.TX_FAILED, 'Already sent'),
+    ],
+    [
+      'partial success',
+      new ManifestMCPError(
+        ManifestMCPErrorCode.QUERY_FAILED,
+        'Created a lease',
+        { partial: true },
+      ),
+    ],
+    [
+      'submitted outcome',
+      new ManifestMCPError(
+        ManifestMCPErrorCode.QUERY_FAILED,
+        'Outcome unknown',
+        { sent: true },
+      ),
+    ],
+    [
+      'permanent DNS',
+      Object.assign(new Error('Lookup failed'), { code: 'ENOTFOUND' }),
+    ],
+    [
+      'HTTP verdict',
+      new ManifestMCPError(ManifestMCPErrorCode.QUERY_FAILED, 'Forbidden', {
+        httpStatus: 403,
+      }),
+    ],
+    [
+      'gRPC verdict',
+      new ManifestMCPError(ManifestMCPErrorCode.QUERY_FAILED, 'Keeper answer', {
+        grpcCode: 2,
+        httpStatus: 500,
+      }),
+    ],
+  ])(
+    'preserves nested %s against transient prose and transport markers',
+    (_name, cause) => {
+      expect(
+        isRetryableError(Object.assign(new Error('fetch failed'), { cause })),
+      ).toBe(false);
+      expect(isRetryableError(transportTimeout(cause))).toBe(false);
+    },
+  );
+
+  it('preserves authoritative nested query metadata without depending on message text', () => {
+    const cause = new ManifestMCPError(
+      ManifestMCPErrorCode.QUERY_FAILED,
+      'Opaque response',
+      {
+        grpcCode: 14,
+        httpStatus: 400,
+      },
+    );
+    expect(
+      isRetryableError(Object.assign(new Error('Opaque wrapper'), { cause })),
+    ).toBe(true);
+  });
+
+  it('terminates cyclic cause chains while retaining a permanent verdict', () => {
+    const permanent = new ManifestMCPError(
+      ManifestMCPErrorCode.INVALID_CONFIG,
+      'Wrong chain',
+    );
+    const marker = transportTimeout(permanent);
+    Object.assign(permanent, { cause: marker });
+    expect(isRetryableError(marker)).toBe(false);
+  });
+
+  it('lets the caller signal veto marked deadlines and legacy transient errors', () => {
+    const controller = new AbortController();
+    expect(
+      isRetryableError(transportTimeout(), { signal: controller.signal }),
+    ).toBe(true);
+    controller.abort(
+      new DOMException(
+        'The operation was aborted due to timeout',
+        'TimeoutError',
+      ),
+    );
+    expect(
+      isRetryableError(transportTimeout(), { signal: controller.signal }),
+    ).toBe(false);
+    expect(
+      isRetryableError(new Error('fetch failed'), {
+        signal: controller.signal,
+      }),
+    ).toBe(false);
+  });
+});
+
+describe('withRetry cancellation and deadline ownership', () => {
+  const config = { maxRetries: 2, baseDelayMs: 1, maxDelayMs: 1 };
+
+  it('retries a marked attempt deadline but does not retry an unowned native timeout', async () => {
+    const native = new DOMException(
+      'The operation was aborted due to timeout',
+      'TimeoutError',
+    );
+    const markedOperation = vi
+      .fn()
+      .mockRejectedValueOnce(transportTimeout(native))
+      .mockResolvedValue('recovered');
+    await expect(withRetry(markedOperation, { config })).resolves.toBe(
+      'recovered',
+    );
+    expect(markedOperation).toHaveBeenCalledTimes(2);
+
+    const unownedOperation = vi.fn().mockRejectedValue(native);
+    await expect(withRetry(unownedOperation, { config })).rejects.toBe(native);
+    expect(unownedOperation).toHaveBeenCalledOnce();
+  });
+
+  it('does not start an operation after caller cancellation and preserves its raw reason', async () => {
+    const controller = new AbortController();
+    const reason = 'MCP request timed out';
+    controller.abort(reason);
+    const operation = vi.fn();
+    await expect(
+      withRetry(operation, { config, signal: controller.signal }),
+    ).rejects.toBe(reason);
+    expect(operation).not.toHaveBeenCalled();
+  });
+
+  it('preserves a permanent operation error that arrives after cancellation', async () => {
+    const controller = new AbortController();
+    const error = new ManifestMCPError(
+      ManifestMCPErrorCode.INVALID_CONFIG,
+      'Wrong chain',
+    );
+    const operation = vi.fn(async () => {
+      controller.abort('Caller ended the operation');
+      throw error;
+    });
+    const onRetry = vi.fn();
+    await expect(
+      withRetry(operation, { config, signal: controller.signal, onRetry }),
+    ).rejects.toBe(error);
+    expect(operation).toHaveBeenCalledOnce();
+    expect(onRetry).not.toHaveBeenCalled();
+  });
+
+  it('stops after a transient operation failure when the caller has cancelled', async () => {
+    const controller = new AbortController();
+    const reason = new DOMException(
+      'Whole-operation deadline elapsed',
+      'TimeoutError',
+    );
+    const operation = vi.fn(async () => {
+      controller.abort(reason);
+      throw transportTimeout();
+    });
+    const onRetry = vi.fn();
+    await expect(
+      withRetry(operation, { config, signal: controller.signal, onRetry }),
+    ).rejects.toBe(reason);
+    expect(operation).toHaveBeenCalledOnce();
+    expect(onRetry).not.toHaveBeenCalled();
+  });
+
+  it('interrupts backoff without starting another attempt or retaining its timer', async () => {
+    vi.useFakeTimers();
+    try {
+      const controller = new AbortController();
+      const operation = vi.fn().mockRejectedValue(transportTimeout());
+      let retryScheduled!: () => void;
+      const scheduled = new Promise<void>((resolve) => {
+        retryScheduled = resolve;
+      });
+      const result = withRetry(operation, {
+        signal: controller.signal,
+        config: { maxRetries: 2, baseDelayMs: 10_000, maxDelayMs: 10_000 },
+        onRetry: retryScheduled,
+      });
+      await scheduled;
+      expect(vi.getTimerCount()).toBe(1);
+      const rejected = expect(result).rejects.toBe('Stop waiting');
+      controller.abort('Stop waiting');
+      await rejected;
+      expect(vi.getTimerCount()).toBe(0);
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(operation).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('observes cancellation triggered by onRetry before scheduling another attempt', async () => {
+    const controller = new AbortController();
+    const operation = vi.fn().mockRejectedValue(transportTimeout());
+    await expect(
+      withRetry(operation, {
+        config,
+        signal: controller.signal,
+        onRetry: () => controller.abort('Cancelled in retry callback'),
+      }),
+    ).rejects.toBe('Cancelled in retry callback');
+    expect(operation).toHaveBeenCalledOnce();
+  });
+
+  it('does not race an in-flight operation or discard its eventual success', async () => {
+    const controller = new AbortController();
+    let finish!: (result: string) => void;
+    const pending = new Promise<string>((resolve) => {
+      finish = resolve;
+    });
+    const operation = vi.fn(() => pending);
+    const settled = vi.fn();
+    const result = withRetry(operation, { config, signal: controller.signal });
+    void result.then(settled, settled);
+    controller.abort('Caller cancelled while the operation completed');
+    await Promise.resolve();
+    expect(settled).not.toHaveBeenCalled();
+    finish('committed');
+    await expect(result).resolves.toBe('committed');
+    expect(operation).toHaveBeenCalledOnce();
+  });
+
+  it('never invokes another attempt for a nested submitted outcome', async () => {
+    const outcome = new ManifestMCPError(
+      ManifestMCPErrorCode.QUERY_FAILED,
+      'Outcome unknown',
+      { sent: true },
+    );
+    const error = transportTimeout(outcome);
+    const operation = vi.fn().mockRejectedValue(error);
+    await expect(withRetry(operation, { config })).rejects.toBe(error);
+    expect(operation).toHaveBeenCalledOnce();
   });
 });
 

@@ -399,7 +399,32 @@ Most failures throw `ManifestMCPError` with a `code` from `ManifestMCPErrorCode`
 
 **What retries, and what doesn't.** Chain reads and broadcasts auto-retry transient failures (network, 5xx, 429) with exponential backoff — 3 retries, 1s base, 10s cap. **Provider HTTP calls do not**: several of them (`uploadLeaseData`, `restoreApp`, `updateApp`) are non-idempotent, so a transport-level retry could duplicate a side effect; `ProviderApiError` surfaces the provider's answer on the first failure. The one exception is the readiness poll (`pollLeaseUntilReady`, and therefore `waitForAppReady` / `deployApp`), which tolerates `PollOptions.maxConsecutiveFailures` consecutive status-read failures (default 3, reset on every successful read) and honours a `Retry-After` header before its next attempt. If you want retries around an idempotent provider read of your own, wrap it yourself — `isTransientProviderError` (`/deploy`) is the same classifier the poll uses.
 
-For the two error shapes that carry typed detail, prefer the exported guards over `instanceof` (unreliable across duplicate package copies) or hand-rolled `code` checks:
+**Transport deadlines.** The SDK exports the `TransportErrorDetails` type with optional `transportCode: 'ETIMEDOUT'`. Identity checks and faucet `GET /status` attach this detail to existing `RPC_CONNECTION_FAILED` or `QUERY_FAILED` errors only when their own fresh per-attempt signal caused a transport timeout, including during body reads. The marker authorizes retry classification for that read/connection attempt; it must never describe caller cancellation, a whole-operation deadline or a mutating request. An unclassified native `TimeoutError` or `AbortError` is not automatically retryable. Permanent HTTP/gRPC verdicts, permanent errors, partial outcomes and submitted transactions anywhere in the cause chain veto retry. A transient status cannot override a native abort unless an enclosing transport marker establishes ownership.
+
+Import `withRetry` and `isRetryableError` from the SDK root so they use the same pinned core dependency as the SDK's error producers. For a custom retry loop, `isRetryableError(error, { signal })` returns false once the overall signal aborts. `withRetry` accepts the same signal through `RetryOptions.signal` to prevent further attempts and interrupt backoff. Pass it to the operation's transport as well: the wrapper does not race opaque in-flight work or discard a successful result, even if the callback ignores cancellation. Keep one retry owner per operation; do not wrap an operation that already retries internally.
+
+Faucet status does not retry internally, so an application can wrap this idempotent read explicitly. This example combines the helper's fresh 10-second deadline with a 30-second budget for the entire retry sequence. Passing the overall signal to the injected fetch cancels the in-flight request; passing it to `withRetry` stops backoff and later attempts:
+
+```ts
+import { withRetry } from '@manifest-network/manifest-sdk';
+import { fetchFaucetStatus } from '@manifest-network/manifest-sdk/faucet';
+
+const signal = AbortSignal.timeout(30_000);
+const fetchWithCancellation: typeof globalThis.fetch = (input, init) =>
+  fetch(input, {
+    ...init,
+    signal: init?.signal ? AbortSignal.any([signal, init.signal]) : signal,
+  });
+
+const status = await withRetry(
+  () => fetchFaucetStatus(faucetUrl, fetchWithCancellation),
+  { signal, config: { maxRetries: 2 }, operationName: 'faucet status' },
+);
+```
+
+Do not apply this wrapper to `requestFaucetCredit` or `requestFaucet`: the credit POST can already have succeeded when its response is lost. Their behavior is unchanged.
+
+Where a public narrowing guard is available, prefer it over `instanceof` (unreliable across duplicate package copies) or hand-rolled `code` checks:
 
 ```ts
 import { isSkuAmbiguousError, ProviderApiError } from '@manifest-network/manifest-sdk';

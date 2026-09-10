@@ -217,3 +217,119 @@ Independent review found no remaining blocker in these fixes (confidence 98%).
 The initial PR acceptance run failed during the Docker build because a Go
 checksum-database download returned an HTTP/2 internal error; acceptance tests
 never started. Live acceptance of the updated PR remains pending.
+
+## Transport-owned deadline follow-up (2026-09-09)
+
+Baseline: `0036f18`; branch: `codex/eng-805-transport-deadlines`.
+PR #224 subsequently passed all CI checks on reviewed head `30df49b` and merged
+as this baseline; the pending acceptance note above records the earlier state.
+The retained retry finding is a separate scope: native deadline prose loses its
+ownership when wrapped, so an idempotent read can miss an intended retry
+(finding confidence 99%). See the
+[implementation plan](superpowers/plans/2026-09-09-eng805-transport-deadlines.md).
+
+The contract adds exported `TransportErrorDetails` with optional
+`transportCode: 'ETIMEDOUT'` on existing `QUERY_FAILED`/`RPC_CONNECTION_FAILED`
+errors. Only identity requests and faucet `GET /status` mark a timeout verified
+against their own fresh per-attempt signal, including response-body failures.
+Cause inspection preserves permanent HTTP/gRPC verdicts and permanent, partial
+or submitted outcomes over transient wrappers. An unknown native abort/deadline
+is not sufficient evidence for retry, even with a transient status in its cause
+chain. Faucet credit POST behavior stays unchanged.
+
+`RetryOptions.signal` and `isRetryableError(error, { signal })` carry the separate
+overall cancellation boundary. They stop backoff and later attempts; the
+operation must pass that signal to its transport to cancel in-flight work.
+The wrapper does not race opaque callbacks or discard successful results. The
+[client guide](library-usage.md#errors) shows this composition around the
+idempotent faucet status read, which has no internal retry loop. Retain the
+existing backoff implementation: adding `p-retry` would not establish ownership
+or replace the operation-specific exclusions.
+
+Validation for this follow-up:
+
+- All 254 focused runtime/type tests pass, including the previous PR's identity
+  regressions and the documented cancellation composition. A negative control
+  against the pre-fix retry classifier fails 15 of the 19 ownership cases; the
+  current implementation was restored before integrated validation.
+- The full V8 suite passes 3,747 tests with 17 existing skips across 172 files,
+  with no type errors. Coverage is 84.43% lines, 84.15% statements, 83.71%
+  branches and 88.09% functions; all thresholds pass.
+- Workspace builds, workspace/E2E TypeScript, Biome and all nine package
+  integrity checks pass. All four unchanged bundle budgets pass; reads/catalog
+  remain 26.07/26.38 kB, with 5.2 kB deploy and 3.59 kB root-client headroom.
+- Independent review found no concrete blocker in the ownership, cancellation
+  or cause-precedence changes (confidence 98%). No dependencies changed.
+
+Initial PR #225 head `bf5a7e2` passed all CI checks, including live SDK acceptance
+and the E2E gate. Broader ENG-805 dependency, coverage, compiler and simplification
+work remains open.
+
+### PR #225 review amendment
+
+[Claude's review](https://github.com/manifest-network/manifest-mcp-mono/pull/225#issuecomment-5607995839)
+identified one API gap and three smaller improvements:
+
+| Finding | Confidence | Resolution |
+| --- | --- | --- |
+| SDK-only cookbook required a direct core import, risking error identity under version skew | 99% | Re-export `withRetry` and `isRetryableError` from the SDK root, using the same pinned core dependency as its error producers. Cover the public package imports, runtime faucet-error identity and typed cookbook composition. |
+| Timeout producers were not checked against their exported metadata type | 100% | Bind all three literals with `satisfies TransportErrorDetails`, preserving their inferred types for the generic error-details record. |
+| Nested, non-identical `TimeoutError` recognition lacked a regression | 100% | Exercise the helper and real RPC identity boundary, with cancellation, permanent-verdict and cycle controls. |
+| Status-precedence wording was broader than the classifier's behavior | 100% | Document permanent status vetoes separately from transient statuses, which cannot override an unowned native abort. |
+
+The nine refuted candidates remain refuted; they do not justify additional runtime
+changes. The pre-existing HTTP 408/425 policy observation is retained as one P3
+follow-up in ENG-805. Actual LCD/faucet read probes make one attempt on 408/425
+and two on a 503 control (`maxRetries: 1`). Bounded 408 retries could improve read
+availability (recommendation confidence 99%; [RFC 9110 §15.5.9](https://www.rfc-editor.org/rfc/rfc9110.html#section-15.5.9)).
+A 425 retry policy first needs evidence that supported transports avoid TLS early
+data on replay; a production defect has not been established (assessment confidence
+99%; [RFC 8470 §5.2](https://www.rfc-editor.org/rfc/rfc8470.html#section-5.2)).
+
+Review validation:
+
+- All 204 focused runtime/type tests pass against freshly built packages. Removing
+  the two SDK value exports fails the runtime surface guard and produces
+  TS1485/TS1362 in the SDK type tests. Removing only the `TimeoutError` disjunct
+  through an isolated transform fails five new regressions; 43 controls pass.
+- The full coverage run records 3,760 passing tests, 17 existing skips and five
+  browser-bundle timeouts across 175 files, with no type errors. All coverage
+  thresholds pass: 84.43% lines, 84.15% statements, 83.71% branches and 88.09%
+  functions. The two affected browser files then pass all 16 tests sequentially
+  with a temporary 120-second local timeout. Repository timeouts are unchanged;
+  the initial run is not recorded as an unconditional pass.
+- Workspace builds, workspace/E2E TypeScript, Biome, all nine package-integrity
+  checks and all four unchanged bundle budgets pass. Independent review found
+  no concrete blocker (confidence 98%). No dependencies changed.
+
+CI subsequently passed on review commit `9fe0883`, including the dependency audit,
+unit tests, live SDK acceptance and the E2E gate.
+
+### PR #225 type-constraint correction (2026-09-10)
+
+[Claude's re-review](https://github.com/manifest-network/manifest-mcp-mono/pull/225#issuecomment-5619159481)
+corrected the recommendation to intersect the identity marker's constraint with
+`Record<string, unknown>`. The spread does not need that index signature, which
+lets an explicit misspelled `transportCoed` key compile. Use bare
+`satisfies TransportErrorDetails`, matching the faucet producers (P3, confidence
+100%). The existing key and runtime behavior were already correct.
+
+Four compiler-host probes against the real core project confirm that both forms
+accept the valid key, the old form accepts the typo, and the corrected form rejects
+it with TS1360. Generated JavaScript is byte-identical. All 48 focused identity and
+timeout tests pass; Biome fix/check and diff checks pass. Full coverage and package
+builds were not repeated for this erased type-constraint change.
+
+The three nonblocking residuals retain their existing scope:
+
+- SDK script tests execute outside the compiler projects; the public API type
+  tests remain gated. Add a scoped no-emit script gate under
+  [ENG-806](https://linear.app/liftedinit/issue/ENG-806) (confidence 100%).
+- The classifier's marker comparison is currently correct and runtime-tested but
+  statically unbound to the metadata type. No production defect or additional
+  change is established by this observation (assessment confidence 99%).
+- Individual identity-check mutations expose optional coverage for arbitrary or
+  polyfilled abort reasons. Normal production deadlines yield `TimeoutError`;
+  no production failure was demonstrated. Retain compatibility cases under
+  [ENG-751](https://linear.app/liftedinit/issue/ENG-751) (coverage distinction
+  confidence 100%).

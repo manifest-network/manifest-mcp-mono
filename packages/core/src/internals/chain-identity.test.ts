@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { ManifestMCPErrorCode } from '../types.js';
+import { isRetryableError, withRetry } from '../retry.js';
+import { ManifestMCPError, ManifestMCPErrorCode } from '../types.js';
 import {
   verifyRestChainIdentity,
   verifyRpcChainIdentity,
@@ -27,6 +28,149 @@ describe.each([
     document: { default_node_info: { network: CHAIN_ID } },
   },
 ])('$protocol identity response bounds', ({ verify, document }) => {
+  it('marks a wrapped TimeoutError distinct from the expired owned signal reason', async () => {
+    const deadline = new AbortController();
+    deadline.abort(new DOMException('Owned deadline elapsed', 'TimeoutError'));
+    vi.spyOn(AbortSignal, 'timeout').mockReturnValue(deadline.signal);
+    const timeout = new DOMException(
+      'Transport deadline expired',
+      'TimeoutError',
+    );
+    const failure = Object.assign(new TypeError('Opaque transport wrapper'), {
+      cause: timeout,
+    });
+    const fetch = vi.fn<typeof globalThis.fetch>(async () => {
+      throw failure;
+    });
+    const error: unknown = await verify(URL, CHAIN_ID, fetch).catch(
+      (error: unknown) => error,
+    );
+
+    expect(timeout).not.toBe(deadline.signal.reason);
+    expect(error).toMatchObject({
+      code: ManifestMCPErrorCode.RPC_CONNECTION_FAILED,
+      details: { transportCode: 'ETIMEDOUT' },
+    });
+    expect(Object.getOwnPropertyDescriptor(error, 'cause')?.value).toBe(
+      failure,
+    );
+    expect(isRetryableError(error)).toBe(true);
+  });
+
+  it.each(['fetch', 'body'] as const)(
+    'retries a nested owned deadline during %s using a fresh signal',
+    async (phase) => {
+      const first = new AbortController();
+      const next = new AbortController();
+      const timeout = vi
+        .spyOn(AbortSignal, 'timeout')
+        .mockReturnValueOnce(first.signal)
+        .mockReturnValueOnce(next.signal);
+      const reason = new DOMException(
+        'The operation was aborted due to timeout',
+        'TimeoutError',
+      );
+      const failure = Object.assign(new TypeError('Custom transport wrapper'), {
+        cause: Object.assign(new Error('Intermediate wrapper'), {
+          cause:
+            phase === 'fetch'
+              ? reason
+              : new DOMException('The operation was aborted', 'AbortError'),
+        }),
+      });
+      let failedResponse: Response | undefined;
+      const fetch = vi
+        .fn<typeof globalThis.fetch>()
+        .mockImplementationOnce(async () => {
+          first.abort(reason);
+          if (phase === 'fetch') throw failure;
+          failedResponse = new Response(
+            new ReadableStream<Uint8Array>({
+              start(stream) {
+                stream.error(failure);
+              },
+            }),
+          );
+          return failedResponse;
+        })
+        .mockResolvedValueOnce(Response.json(document));
+      const onRetry = vi.fn();
+
+      await expect(
+        withRetry(() => verify(URL, CHAIN_ID, fetch), {
+          config: { maxRetries: 1, baseDelayMs: 1, maxDelayMs: 1 },
+          onRetry,
+        }),
+      ).resolves.toBeUndefined();
+
+      expect(fetch).toHaveBeenCalledTimes(2);
+      expect(timeout).toHaveBeenNthCalledWith(1, 10_000);
+      expect(timeout).toHaveBeenNthCalledWith(2, 10_000);
+      expect(fetch.mock.calls[0]?.[1]?.signal).toBe(first.signal);
+      expect(fetch.mock.calls[1]?.[1]?.signal).toBe(next.signal);
+      expect(next.signal.aborted).toBe(false);
+      expect(onRetry).toHaveBeenCalledOnce();
+      const error: unknown = onRetry.mock.calls[0]?.[0];
+      expect(error).toMatchObject({
+        code: ManifestMCPErrorCode.RPC_CONNECTION_FAILED,
+        details: { transportCode: 'ETIMEDOUT' },
+      });
+      expect(error).toHaveProperty('cause', failure);
+      if (failedResponse) expect(failedResponse.body?.locked).toBe(false);
+    },
+  );
+
+  it.each([false, true])(
+    'preserves an established SDK verdict containing an abort (wrapped: %s)',
+    async (wrapped) => {
+      const deadline = new AbortController();
+      const reason = new DOMException('Deadline elapsed', 'TimeoutError');
+      deadline.abort(reason);
+      vi.spyOn(AbortSignal, 'timeout').mockReturnValue(deadline.signal);
+      const verdict = Object.assign(
+        new ManifestMCPError(
+          ManifestMCPErrorCode.INVALID_CONFIG,
+          'Established configuration verdict',
+          { actualChainId: 'wrong-chain' },
+        ),
+        { cause: reason },
+      );
+      const failure = wrapped
+        ? Object.assign(new TypeError('fetch failed'), { cause: verdict })
+        : verdict;
+      const fetch = vi.fn<typeof globalThis.fetch>(async () => {
+        throw failure;
+      });
+
+      await expect(
+        withRetry(() => verify(URL, CHAIN_ID, fetch), {
+          config: { maxRetries: 1, baseDelayMs: 1, maxDelayMs: 1 },
+        }),
+      ).rejects.toBe(failure);
+      expect(fetch).toHaveBeenCalledOnce();
+      expect(verdict.details).toEqual({ actualChainId: 'wrong-chain' });
+      expect(isRetryableError(failure)).toBe(false);
+    },
+  );
+
+  it('preserves an unrelated cyclic cause chain after the deadline', async () => {
+    const deadline = new AbortController();
+    deadline.abort(new DOMException('Deadline elapsed', 'TimeoutError'));
+    vi.spyOn(AbortSignal, 'timeout').mockReturnValue(deadline.signal);
+    const failure: Error & { cause?: unknown } = new Error(
+      'Transport invariant',
+    );
+    const nested: Error & { cause?: unknown } = new Error('Nested invariant');
+    failure.cause = nested;
+    nested.cause = failure;
+    const fetch = vi.fn<typeof globalThis.fetch>(async () => {
+      throw failure;
+    });
+
+    await expect(verify(URL, CHAIN_ID, fetch)).rejects.toBe(failure);
+    expect(isRetryableError(failure)).toBe(false);
+  });
+
   it('preserves a late chain mismatch after an injected transport ignores the deadline', async () => {
     const deadline = new AbortController();
     deadline.abort(new DOMException('Deadline elapsed', 'TimeoutError'));
@@ -138,6 +282,8 @@ describe.each([
     await expect(verify(URL, CHAIN_ID, fetch)).rejects.toMatchObject({
       code: ManifestMCPErrorCode.RPC_CONNECTION_FAILED,
       message: expect.stringContaining('timed out'),
+      details: { transportCode: 'ETIMEDOUT' },
+      cause: reason,
     });
   });
 
@@ -230,6 +376,8 @@ describe.each([
     const rejected = expect(verification).rejects.toMatchObject({
       code: ManifestMCPErrorCode.RPC_CONNECTION_FAILED,
       message: expect.stringContaining('timed out'),
+      details: { transportCode: 'ETIMEDOUT' },
+      cause: reason,
     });
     controller.abort(reason);
     await rejected;
@@ -272,6 +420,8 @@ describe.each([
     const rejected = expect(verification).rejects.toMatchObject({
       code: ManifestMCPErrorCode.RPC_CONNECTION_FAILED,
       message: expect.stringContaining('timed out'),
+      details: { transportCode: 'ETIMEDOUT' },
+      cause: expect.objectContaining({ name: 'AbortError' }),
     });
     await streaming;
     controller.abort(reason);

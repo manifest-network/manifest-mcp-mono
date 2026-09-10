@@ -1,5 +1,10 @@
 import { z } from 'zod';
-import { ManifestMCPError, ManifestMCPErrorCode } from '../types.js';
+import {
+  ManifestMCPError,
+  ManifestMCPErrorCode,
+  type TransportErrorDetails,
+} from '../types.js';
+import { isTransportTimeout } from './transport-timeout.js';
 
 const chainIdSchema = z.string().min(1).max(256);
 const nodeInfoSchema = z
@@ -135,19 +140,19 @@ async function verifyChainIdentity(
       );
     }
   } catch (error) {
-    if (
-      signal.aborted &&
-      !(error instanceof ManifestMCPError) &&
-      (error === signal.reason ||
-        (error instanceof Error &&
-          (error.name === 'AbortError' || error.name === 'TimeoutError')))
-    ) {
+    if (isTransportTimeout(error, signal)) {
       // Fetch may reject with the signal's reason while a response stream reports AbortError.
       // Preserve unrelated failures and validation verdicts even when a transport ignores abort.
-      throw new ManifestMCPError(
-        ManifestMCPErrorCode.RPC_CONNECTION_FAILED,
-        `${protocol} chain identity verification timed out.`,
-        details,
+      throw Object.assign(
+        new ManifestMCPError(
+          ManifestMCPErrorCode.RPC_CONNECTION_FAILED,
+          `${protocol} chain identity verification timed out.`,
+          {
+            ...details,
+            transportCode: 'ETIMEDOUT',
+          } satisfies TransportErrorDetails,
+        ),
+        { cause: error },
       );
     }
     throw error;

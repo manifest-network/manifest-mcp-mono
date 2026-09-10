@@ -1,10 +1,13 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   fetchFaucetStatus,
   requestFaucet,
   requestFaucetCredit,
 } from './faucet.js';
-import { ManifestMCPError } from './types.js';
+import { isRetryableError, withRetry } from './retry.js';
+import { ManifestMCPError, ManifestMCPErrorCode } from './types.js';
+
+afterEach(() => vi.restoreAllMocks());
 
 function mockFetch(
   responses: Array<{ status: number; body: string | Record<string, unknown> }>,
@@ -148,6 +151,227 @@ describe('fetchFaucetStatus', () => {
       'https://faucet.test.com/status',
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
+  });
+});
+
+describe('faucet attempt deadline ownership', () => {
+  it.each([
+    ['fetch', false],
+    ['fetch', true],
+    ['body', false],
+    ['body', true],
+  ] as const)(
+    'retries an owned %s deadline with a fresh signal (nested cause: %s)',
+    async (phase, nested) => {
+      const first = new AbortController();
+      const next = new AbortController();
+      const timeout = vi
+        .spyOn(AbortSignal, 'timeout')
+        .mockReturnValueOnce(first.signal)
+        .mockReturnValueOnce(next.signal);
+      const reason = new DOMException(
+        'The operation was aborted due to timeout',
+        'TimeoutError',
+      );
+      const abort =
+        phase === 'fetch'
+          ? reason
+          : new DOMException('The operation was aborted', 'AbortError');
+      const failure = nested
+        ? Object.assign(new TypeError('Custom transport wrapper'), {
+            cause: Object.assign(new Error('Intermediate wrapper'), {
+              cause: abort,
+            }),
+          })
+        : abort;
+      const fetch = vi
+        .fn<typeof globalThis.fetch>()
+        .mockImplementationOnce(async () => {
+          first.abort(reason);
+          if (phase === 'fetch') throw failure;
+          return new Response(
+            new ReadableStream<Uint8Array>({
+              start(stream) {
+                stream.error(failure);
+              },
+            }),
+          );
+        })
+        .mockResolvedValueOnce(Response.json(statusBody()));
+      const onRetry = vi.fn();
+
+      await expect(
+        withRetry(() => fetchFaucetStatus(FAUCET_URL, fetch), {
+          config: { maxRetries: 1, baseDelayMs: 1, maxDelayMs: 1 },
+          onRetry,
+        }),
+      ).resolves.toEqual(statusBody());
+
+      expect(fetch).toHaveBeenCalledTimes(2);
+      expect(timeout).toHaveBeenNthCalledWith(1, 10_000);
+      expect(timeout).toHaveBeenNthCalledWith(2, 10_000);
+      expect(fetch.mock.calls[0]?.[1]?.signal).toBe(first.signal);
+      expect(fetch.mock.calls[1]?.[1]?.signal).toBe(next.signal);
+      expect(next.signal.aborted).toBe(false);
+      expect(onRetry).toHaveBeenCalledOnce();
+      const error: unknown = onRetry.mock.calls[0]?.[0];
+      expect(error).toMatchObject({
+        code: ManifestMCPErrorCode.QUERY_FAILED,
+        details: { transportCode: 'ETIMEDOUT' },
+      });
+      expect(error).toHaveProperty('cause', failure);
+    },
+  );
+
+  it.each(['invalid JSON', 'invalid shape', 'HTTP 404'] as const)(
+    'preserves a late %s verdict without retrying',
+    async (verdict) => {
+      const deadline = new AbortController();
+      deadline.abort(new DOMException('Deadline elapsed', 'TimeoutError'));
+      vi.spyOn(AbortSignal, 'timeout').mockReturnValue(deadline.signal);
+      const response =
+        verdict === 'invalid JSON'
+          ? new Response('request timed out {')
+          : verdict === 'invalid shape'
+            ? Response.json({ availableTokens: 'request timed out' })
+            : new Response('request timed out; HTTP 503', { status: 404 });
+      const fetch = vi.fn<typeof globalThis.fetch>(async () => response);
+      const error: unknown = await withRetry(
+        () => fetchFaucetStatus(FAUCET_URL, fetch),
+        { config: { maxRetries: 1, baseDelayMs: 1, maxDelayMs: 1 } },
+      ).catch((error: unknown) => error);
+
+      expect(error).toMatchObject({
+        code: ManifestMCPErrorCode.QUERY_FAILED,
+        details: { httpStatus: verdict === 'HTTP 404' ? 404 : 200 },
+      });
+      expect(error).not.toHaveProperty('details.transportCode');
+      expect(isRetryableError(error)).toBe(false);
+      expect(fetch).toHaveBeenCalledOnce();
+    },
+  );
+
+  it.each([404, 502])(
+    'preserves HTTP %s when its error-body read hits the deadline',
+    async (status) => {
+      const deadline = new AbortController();
+      deadline.abort(new DOMException('Deadline elapsed', 'TimeoutError'));
+      vi.spyOn(AbortSignal, 'timeout').mockReturnValue(deadline.signal);
+      const fetch = vi.fn<typeof globalThis.fetch>(
+        async () =>
+          new Response(
+            new ReadableStream<Uint8Array>({
+              start(stream) {
+                stream.error(new DOMException('Body aborted', 'AbortError'));
+              },
+            }),
+            { status },
+          ),
+      );
+      const error: unknown = await fetchFaucetStatus(FAUCET_URL, fetch).catch(
+        (error: unknown) => error,
+      );
+
+      expect(error).toMatchObject({
+        code: ManifestMCPErrorCode.QUERY_FAILED,
+        details: { httpStatus: status },
+      });
+      expect(error).not.toHaveProperty('details.transportCode');
+      expect(isRetryableError(error)).toBe(status === 502);
+    },
+  );
+
+  it.each(['fetch', 'body'] as const)(
+    'does not mark an unrelated late error during %s',
+    async (phase) => {
+      const deadline = new AbortController();
+      deadline.abort(new DOMException('Deadline elapsed', 'TimeoutError'));
+      vi.spyOn(AbortSignal, 'timeout').mockReturnValue(deadline.signal);
+      const unrelated = new TypeError('Custom transport invariant failed');
+      const fetch = vi.fn<typeof globalThis.fetch>(async () => {
+        if (phase === 'fetch') throw unrelated;
+        return new Response(
+          new ReadableStream<Uint8Array>({
+            start(stream) {
+              stream.error(unrelated);
+            },
+          }),
+        );
+      });
+      const error: unknown = await fetchFaucetStatus(FAUCET_URL, fetch).catch(
+        (error: unknown) => error,
+      );
+
+      expect(error).toHaveProperty('cause', unrelated);
+      expect(error).not.toHaveProperty('details.transportCode');
+      expect(isRetryableError(error)).toBe(false);
+    },
+  );
+
+  it('does not mark an independent abort before its own deadline expires', async () => {
+    const deadline = new AbortController();
+    vi.spyOn(AbortSignal, 'timeout').mockReturnValue(deadline.signal);
+    const unrelated = new DOMException('Independently aborted', 'AbortError');
+    const fetch = vi.fn<typeof globalThis.fetch>(async () => {
+      throw unrelated;
+    });
+    const error: unknown = await fetchFaucetStatus(FAUCET_URL, fetch).catch(
+      (error: unknown) => error,
+    );
+
+    expect(error).toHaveProperty('cause', unrelated);
+    expect(error).not.toHaveProperty('details.transportCode');
+    expect(isRetryableError(error)).toBe(false);
+  });
+
+  it('does not retry or lose the original error when a late cause chain is cyclic', async () => {
+    const deadline = new AbortController();
+    deadline.abort(new DOMException('Deadline elapsed', 'TimeoutError'));
+    vi.spyOn(AbortSignal, 'timeout').mockReturnValue(deadline.signal);
+    const unrelated: Error & { cause?: unknown } = new Error(
+      'Transport invariant',
+    );
+    const nested: Error & { cause?: unknown } = new Error('Nested invariant');
+    unrelated.cause = nested;
+    nested.cause = unrelated;
+    const fetch = vi.fn<typeof globalThis.fetch>(async () => {
+      throw unrelated;
+    });
+    const error: unknown = await fetchFaucetStatus(FAUCET_URL, fetch).catch(
+      (error: unknown) => error,
+    );
+
+    expect(error).toHaveProperty('cause', unrelated);
+    expect(error).not.toHaveProperty('details.transportCode');
+    expect(isRetryableError(error)).toBe(false);
+  });
+
+  it('returns a failed credit result after its deadline without replaying the POST', async () => {
+    const deadline = new AbortController();
+    const timeout = vi
+      .spyOn(AbortSignal, 'timeout')
+      .mockReturnValue(deadline.signal);
+    const reason = new DOMException(
+      'The operation was aborted due to timeout',
+      'TimeoutError',
+    );
+    const fetch = vi.fn<typeof globalThis.fetch>(async () => {
+      deadline.abort(reason);
+      throw reason;
+    });
+
+    await expect(
+      withRetry(() => requestFaucetCredit(FAUCET_URL, ADDRESS, 'umfx', fetch), {
+        config: { maxRetries: 1, baseDelayMs: 1, maxDelayMs: 1 },
+      }),
+    ).resolves.toEqual({
+      denom: 'umfx',
+      success: false,
+      error: reason.message,
+    });
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(fetch.mock.calls[0]?.[1]?.method).toBe('POST');
+    expect(timeout).toHaveBeenCalledWith(15_000);
   });
 });
 
