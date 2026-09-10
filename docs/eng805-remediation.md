@@ -380,3 +380,37 @@ review found no concrete blocker (confidence 96%).
 
 AggregateError policy, compiler tooling, optional reason-compatibility coverage
 and the broader ENG-805 audit remain with their existing owners.
+
+### PR #226 review clarification
+
+[Claude's adversarial review](https://github.com/manifest-network/manifest-mcp-mono/pull/226#issuecomment-5620767563)
+found no blocking regression and identified two optional clarifications:
+
+| Finding | Confidence | Resolution |
+| --- | --- | --- |
+| The `TX_FAILED` table row does not distinguish a broadened 408 allowlist because the permanent-code veto independently protects it | 100% | Move the numeric-408 case beside the existing permanent transaction-error test. Keep `RPC_CONNECTION_FAILED` and `SIMULATION_FAILED` as the discriminating scope controls; retain the same number of tests. |
+| Retry documentation could imply that typed SDK reads retry failed queries | 99% | Name `cosmosQuery` as the query-call retry owner and state that typed `/reads` helpers only apply rate limiting and cancellation. Distinguish connection retries, correct the blanket broadcast claim and its API comment, and align the 408 changelog entry. |
+
+All 156 focused classifier/LCD/faucet tests, core TypeScript and Biome pass after
+the test relocation. Independent review found no concrete blocker (confidence
+98%). Runtime logic and public types are unchanged; removing comments yields
+identical transpiled `cosmos.ts` JavaScript. The previous 3,800-test coverage
+run remains applicable to that runtime; all five CI checks passed on `f2de246`,
+including live SDK acceptance and the E2E gate. Full coverage and package builds
+are not repeated for this documentation/test-organization correction.
+
+One pre-existing hardening gap remains under ENG-805 (P3, confidence 99%):
+`manageDomain` and `closeLease` can lose a successful mutation's hash/outcome when
+the following verification read fails. Six isolated no-network probes (set,
+clear and close, each with HTTP 503/408) confirm that a caller's whole-orchestration
+`withRetry` can invoke a mocked successful mutation twice and receive the original
+marker-free `QUERY_FAILED`. The 503 case predates this PR; numeric 408 adds a
+trigger for the same gap. This proves orchestration re-entry, not two accepted
+transactions or charged fees. No first-party whole-orchestration retry caller was
+found, and real `stopApp` can return a no-op after reading a terminal lease.
+
+The retained acceptance criteria are to preserve the actual submitted outcome,
+transaction hash and verification cause, prevent whole-operation replay after
+submission, and test both mutations and read-only lookup. A no-op close must not
+invent submission evidence. Narrow deduplication found no dedicated owner;
+completed related work and ENG-267's adjacent scope remain unchanged.

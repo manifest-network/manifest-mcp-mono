@@ -146,8 +146,8 @@ src/
 Key features:
 - Lazy initialization with promise-based concurrency control (multiple callers wait for the same init)
 - Token-bucket rate limiting (default: 10 requests/sec via `limiter`), acquired by callers before metered chain operations. Connection initialization, including identity preflights, is outside `rateLimit.requestsPerSecond`; its retries are bounded by `config.retry`. Reuse clients to avoid repeated initialization traffic.
-- Automatic retry with exponential backoff (base 1s, max 10s, 3 retries) on transient failures (network errors, HTTP 5xx, 429); permanent errors (`INVALID_CONFIG`, `WALLET_NOT_CONNECTED`, `WALLET_CONNECTION_FAILED`, `INVALID_MNEMONIC`, `INVALID_ADDRESS`, `INVALID_ARGUMENT`, `UNSUPPORTED_QUERY`, `UNSUPPORTED_TX`, `UNKNOWN_MODULE`, `TX_FAILED`, `OPERATION_CANCELLED`, `SKU_AMBIGUOUS`) are not retried
-- Retry policy has exactly ONE owner per operation: `getQueryClient` / `getSigningClient` retry the *connect* internally, so `cosmos.ts` and `executeTx` acquire the client **outside** their own `withRetry`, which then covers only the query/broadcast leg. Nesting the two ladders multiplies attempts (4 x 4 x 5 namespace clients = 77 connects / ~35s on a dead RPC) and is guarded by unit tests plus an elapsed-time bound in `e2e/retry.e2e.test.ts` (ENG-679)
+- Connection initialization retries eligible transient failures with exponential backoff (base 1s, max 10s, 3 retries); permanent errors (`INVALID_CONFIG`, `WALLET_NOT_CONNECTED`, `WALLET_CONNECTION_FAILED`, `INVALID_MNEMONIC`, `INVALID_ADDRESS`, `INVALID_ARGUMENT`, `UNSUPPORTED_QUERY`, `UNSUPPORTED_TX`, `UNKNOWN_MODULE`, `TX_FAILED`, `OPERATION_CANCELLED`, `SKU_AMBIGUOUS`) are not retried
+- Retry policy has exactly ONE owner per operation: `getQueryClient` / `getSigningClient` retry the *connect* internally, so `cosmos.ts` and `executeTx` acquire the client **outside** their own `withRetry`. `cosmosQuery` then retries eligible query-call failures; transaction loops honor structured safety verdicts, with raw broadcast failures wrapped as non-retryable `TX_FAILED`. Typed SDK `/reads` helpers use `withReadSignal` for rate limiting and cancellation, without a query-call retry loop. Nesting connection retries inside another ladder multiplies attempts (4 x 4 x 5 namespace clients = 77 connects / ~35s on a dead RPC) and is guarded by unit tests plus an elapsed-time bound in `e2e/retry.e2e.test.ts` (ENG-679)
 - Immutable ownership: a new wallet, policy or chain-identity transport receives an independent manager; value-equal compatible holders share an instance. Caller mutation cannot change a pending transaction policy. All managers on the same chain coordinate account broadcasts and pending sequences.
 - Verify each new RPC signing connection against `chainId`. Before exposing queries, verify REST node-info when REST is configured; otherwise, each RPC query initialization/retry first sends a JSON-RPC `status` POST to the exact `rpcUrl`, retaining its path and query string, and validates the response envelope/ID and `result.node_info.network`. Cached query reuse does not repeat the request; replacement attempts do. Mixed endpoints must agree before signing. `chainIdentityFetch` supplies these bounded identity requests (64 KiB, 10 seconds each, redirects rejected) independently from provider `fetch`; normal LCD queries retain Axios and RPC queries retain CosmJS. Generated RPC factories hide their Comet clients, so the separate preflight detects endpoint misconfiguration without guaranteeing that dishonest or inconsistently routed later requests use the same chain.
 
@@ -444,8 +444,9 @@ Errors use the `ManifestMCPErrorCode` enum (24 codes across 11 categories):
 The retry classifier considers numeric gRPC status before HTTP status. Without
 a gRPC verdict, numeric `details.httpStatus: 408` permits retry only on
 `QUERY_FAILED`, following [RFC 9110 §15.5.9](https://www.rfc-editor.org/rfc/rfc9110.html#section-15.5.9).
-LCD reads retain the `cosmosQuery` retry owner and a rate-limit token per attempt;
-faucet `GET /status` retries only when the caller supplies a retry loop. Existing
+LCD queries routed through `cosmosQuery` retain its query-call retry loop and a
+rate-limit token per attempt; typed SDK `/reads` helpers do not add such a loop.
+Faucet `GET /status` retries only when the caller supplies a retry loop. Existing
 retry budgets and cancellation/protected-outcome checks apply. HTTP-only 425
 remains terminal because the supported transports do not establish the
 no-TLS-early-data prerequisite for replay in

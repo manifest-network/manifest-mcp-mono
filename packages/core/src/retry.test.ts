@@ -104,13 +104,17 @@ describe('isRetryableError', () => {
       expect(isRetryableError(error)).toBe(true);
     });
 
-    it('should not retry TX_FAILED errors (non-idempotent)', () => {
-      const error = new ManifestMCPError(
-        ManifestMCPErrorCode.TX_FAILED,
-        'Service unavailable (503)',
-      );
-      expect(isRetryableError(error)).toBe(false);
-    });
+    it.each([undefined, { httpStatus: 408 }])(
+      'keeps permanent TX_FAILED errors terminal with details %j',
+      (details) => {
+        const error = new ManifestMCPError(
+          ManifestMCPErrorCode.TX_FAILED,
+          'Service unavailable (503)',
+          details,
+        );
+        expect(isRetryableError(error)).toBe(false);
+      },
+    );
 
     it('should not retry GAS_LIMIT_EXCEEDED errors', () => {
       // Transient-looking message on purpose: the ONLY reason this returns false
@@ -268,7 +272,6 @@ describe('HTTP request timeout read policy', () => {
   it.each([
     ManifestMCPErrorCode.RPC_CONNECTION_FAILED,
     ManifestMCPErrorCode.SIMULATION_FAILED,
-    ManifestMCPErrorCode.TX_FAILED,
   ])('does not broaden HTTP 408 to %s', (code) => {
     expect(
       isRetryableError(

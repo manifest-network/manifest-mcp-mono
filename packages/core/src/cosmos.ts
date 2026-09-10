@@ -271,11 +271,10 @@ function enrichEstimateError(
 /**
  * Execute a Cosmos transaction via manifestjs signing client
  *
- * Automatically retries on transient failures (network errors, timeouts, 5xx)
- * with exponential backoff. Configure retry behavior via `config.retry`.
- *
- * Note: Only network-level failures are retried. Transaction validation errors
- * (insufficient funds, invalid args, etc.) are not retried as they won't succeed.
+ * Client acquisition retries eligible connection failures separately. The
+ * transaction leg uses the shared retry classifier and `config.retry`; raw
+ * failures become non-retryable `TX_FAILED` errors. Permanent errors and
+ * partial/submitted outcomes veto retry.
  */
 export async function cosmosTx(
   clientManager: CosmosClientManager,
