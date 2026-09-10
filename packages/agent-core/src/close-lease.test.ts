@@ -737,6 +737,84 @@ describe('closeLease post-mutation verification (ENG-805)', () => {
     );
   }
 
+  it('does not evaluate verification diagnostic getters or replay a confirmed stop', async () => {
+    const core = await import('@manifest-network/manifest-mcp-core');
+    const { closeLease } = await import('./close-lease.js');
+    const receipt = Object.freeze({
+      lease_uuid: leaseUuid,
+      outcome: 'stopped',
+      lease_state: 'LEASE_STATE_CLOSED',
+      transactionHash: 'A'.repeat(64),
+      confirmed: true,
+      code: 0,
+    } satisfies StopAppResult);
+    vi.mocked(core.stopApp).mockResolvedValue(receipt);
+    const diagnosticGetter = vi.fn(() => {
+      throw new Error('fetch failed');
+    });
+    const originalDetails = Object.freeze(
+      Object.defineProperty({ httpStatus: 503 }, 'diagnostic', {
+        enumerable: true,
+        get: diagnosticGetter,
+      }),
+    );
+    const original = Object.freeze(
+      new ManifestMCPError(
+        ManifestMCPErrorCode.QUERY_FAILED,
+        'verification query unavailable',
+        originalDetails,
+      ),
+    );
+    const queryClient = makeMockQueryClient();
+    queryClient.liftedinit.billing.v1.lease.mockRejectedValue(original);
+    const clientManager = makeMockClientManager(queryClient);
+    const { callbacks, confirms, failures, completed } = captureCallbacks();
+    const retry = vi.fn();
+
+    const error: unknown = await withRetry(
+      () =>
+        closeLease({ leaseUuid }, callbacks, {
+          clientManager: clientManager as unknown as Parameters<
+            typeof closeLease
+          >[2]['clientManager'],
+        }),
+      { config: retryConfig, onRetry: retry },
+    ).catch((error: unknown) => error);
+
+    expect(core.stopApp).toHaveBeenCalledTimes(1);
+    expect(queryClient.liftedinit.billing.v1.lease).toHaveBeenCalledTimes(1);
+    expect(retry).not.toHaveBeenCalled();
+    expect(diagnosticGetter).not.toHaveBeenCalled();
+    expect(error).toBeInstanceOf(ManifestMCPError);
+    if (!(error instanceof ManifestMCPError)) {
+      throw new Error('expected a structured verification failure');
+    }
+    expect(error.code).toBe(original.code);
+    expect(error.message).toBe(original.message);
+    expect(Reflect.get(error, 'cause')).toBe(original);
+    expect(error.details).toEqual({
+      lease_uuid: leaseUuid,
+      sent: true,
+      transaction_hash: receipt.transactionHash,
+      transaction_confirmed: true,
+      transaction_code: 0,
+      stop_outcome: 'stopped',
+      lease_state: 'LEASE_STATE_CLOSED',
+      httpStatus: 503,
+    });
+    expect(original.details).toBe(originalDetails);
+    expect(
+      Object.getOwnPropertyDescriptor(originalDetails, 'diagnostic')?.get,
+    ).toBe(diagnosticGetter);
+    expect(confirms).toHaveLength(1);
+    expect(failures).toEqual([
+      {
+        reason: `Failed to query lease ${leaseUuid} during close-verify: ${original.message}`,
+      },
+    ]);
+    expect(completed).toEqual([]);
+  });
+
   const inactiveResults = [
     {
       lease_uuid: leaseUuid,

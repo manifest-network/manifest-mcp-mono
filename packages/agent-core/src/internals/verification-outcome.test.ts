@@ -51,12 +51,36 @@ const FOREIGN_RECEIPT_DETAILS = Object.freeze({
   lease_state: 'LEASE_STATE_PENDING',
   service_name: 'unrelated-service',
   custom_domain: 'unrelated.example.com',
+  rejection_reason: 'unrelated native-shaped rejection reason',
+  leaseUuid: 'unrelated-camel-lease',
+  SENT: true,
+  transactionHash: 'UNRELATED-CAMEL-HASH',
+  'TRANSACTION-HASH': 'UNRELATED-UPPER-HYPHEN-HASH',
+  txHash: 'UNRELATED-SHORT-CAMEL-HASH',
+  tx_hash: 'UNRELATED-SHORT-SNAKE-HASH',
+  transactionConfirmed: true,
+  transactionCode: 98,
+  stopOutcome: 'unrelated-camel-stop-outcome',
+  leaseState: 'LEASE_STATE_ACTIVE',
+  serviceName: 'unrelated-camel-service',
+  customDomain: 'unrelated-camel.example.com',
+  rejectionReason: 'unrelated camel-shaped rejection reason',
+  // Display sanitization removes these zero-width, bidi and ANSI controls.
+  'rejection_\u200breason': 'disguised upstream rejection reason',
+  'transaction\u202eHash': 'DISGUISED-TRANSACTION-HASH',
+  '\u001b[31mtxHash\u001b[0m': 'DISGUISED-ANSI-TX-HASH',
+  'tx_\u200bhash': 'DISGUISED-ZERO-WIDTH-TX-HASH',
 });
 const READ_DIAGNOSTICS = Object.freeze({
   httpStatus: 408,
   grpcCode: 14,
   grpcMessage: 'Verification service unavailable',
   transportCode: 'ETIMEDOUT',
+  code: 73,
+  confirmed: false,
+  outcome: 'verification-diagnostic',
+  hash: 'verification-diagnostic-hash',
+  committed: false,
   diagnostic: Object.freeze({ phase: 'verification', attempt: 1 }),
 });
 
@@ -159,7 +183,7 @@ describe('verification outcome through retry and MCP boundaries', () => {
       },
     },
   ])(
-    'does not attribute foreign receipt fields to the $name result in SDK or MCP errors',
+    'does not attribute foreign receipt fields or normalized aliases to the $name result in SDK or MCP errors',
     async ({ receipt, expectedReceipt }) => {
       const details = Object.freeze({
         ...FOREIGN_RECEIPT_DETAILS,
@@ -189,7 +213,28 @@ describe('verification outcome through retry and MCP boundaries', () => {
       // Exact comparison guards absent fields as well as authoritative values;
       // receipt variants must not inherit another operation's evidence.
       const expectedDetails = { ...expectedReceipt, ...READ_DIAGNOSTICS };
-      expect(error.details).toEqual(expectedDetails);
+      expect.soft(error.details).toEqual(expectedDetails);
+      // Generic verification diagnostics coexist with qualified receipt fields;
+      // they must not be treated as semantic aliases for transaction metadata.
+      expect(error.details).toMatchObject({
+        code: 73,
+        confirmed: false,
+        outcome: 'verification-diagnostic',
+        hash: 'verification-diagnostic-hash',
+        committed: false,
+      });
+      if ('transactionHash' in receipt) {
+        expect(error.details?.transaction_hash).toBe(receipt.transactionHash);
+        expect(error.details?.transaction_confirmed).toBe(receipt.confirmed);
+        if ('code' in receipt) {
+          expect(error.details?.transaction_code).toBe(receipt.code);
+          expect(error.details?.code).not.toBe(receipt.code);
+        }
+      }
+      if ('outcome' in receipt) {
+        expect(error.details?.stop_outcome).toBe(receipt.outcome);
+        expect(error.details?.outcome).not.toBe(receipt.outcome);
+      }
       expect(original.details).toBe(details);
       expect(original.details).toEqual({
         ...FOREIGN_RECEIPT_DETAILS,
@@ -216,7 +261,7 @@ describe('verification outcome through retry and MCP boundaries', () => {
 
       const { body } = await projectError(error);
       expect(body.code).toBe(original.code);
-      expect(body.details).toEqual(expectedDetails);
+      expect.soft(body.details).toEqual(expectedDetails);
       expect(body).not.toHaveProperty('cause');
     },
   );
@@ -258,6 +303,120 @@ describe('verification outcome through retry and MCP boundaries', () => {
     });
     expect(body.details).not.toHaveProperty('sent');
     expect(body.details).not.toHaveProperty('transaction_hash');
+  });
+
+  it('copies only enumerable metadata data properties without invoking getters or replaying a submitted mutation', async () => {
+    const getter = vi.fn(() => {
+      throw new Error('fetch failed while reading diagnostic metadata');
+    });
+    const details: Record<string, unknown> = { httpStatus: 503, grpcCode: 14 };
+    Object.defineProperties(details, {
+      diagnostic: { enumerable: true, get: getter },
+      hiddenDiagnostic: {
+        enumerable: false,
+        value: 'non-enumerable diagnostic must stay private',
+      },
+    });
+    Object.freeze(details);
+    const original = Object.freeze(
+      new ManifestMCPError(
+        ManifestMCPErrorCode.QUERY_FAILED,
+        'Verification query unavailable',
+        details,
+      ),
+    );
+    const operation = vi.fn(() =>
+      withVerificationOutcome(STOPPED, async () => {
+        throw original;
+      }),
+    );
+
+    const error: unknown = await withRetry(operation, { config: RETRY }).catch(
+      (error: unknown) => error,
+    );
+    expect.soft(operation).toHaveBeenCalledOnce();
+    expect.soft(getter).not.toHaveBeenCalled();
+    expect(error).toBeInstanceOf(ManifestMCPError);
+    if (!(error instanceof ManifestMCPError))
+      throw new Error(
+        'Expected the submitted receipt to survive metadata copying',
+      );
+    expect(causeOf(error)).toBe(original);
+    expect(original.details).toBe(details);
+    expect(Object.getOwnPropertyDescriptor(details, 'diagnostic')?.get).toBe(
+      getter,
+    );
+    expect(
+      Object.getOwnPropertyDescriptor(details, 'hiddenDiagnostic')?.enumerable,
+    ).toBe(false);
+    const expectedDetails = {
+      lease_uuid: LEASE,
+      sent: true,
+      transaction_hash: HASH,
+      transaction_confirmed: true,
+      transaction_code: 0,
+      stop_outcome: 'stopped',
+      lease_state: 'LEASE_STATE_CLOSED',
+      httpStatus: 503,
+      grpcCode: 14,
+    };
+    expect(error.details).toEqual(expectedDetails);
+    expect(isRetryableError(error)).toBe(false);
+    const { body, text } = await projectError(error);
+    expect(body.details).toEqual(expectedDetails);
+    expect(text).not.toContain('non-enumerable diagnostic must stay private');
+    expect(getter).not.toHaveBeenCalled();
+  });
+
+  it('retains the submitted receipt and cause when metadata reflection fails instead of replaying', async () => {
+    const ownKeys = vi.fn(() => {
+      throw new Error('fetch failed during metadata reflection');
+    });
+    const details = new Proxy(
+      Object.freeze({ httpStatus: 503, grpcCode: 14 }),
+      { ownKeys },
+    );
+    const original = Object.freeze(
+      new ManifestMCPError(
+        ManifestMCPErrorCode.QUERY_FAILED,
+        'Verification query unavailable',
+        details,
+      ),
+    );
+    const operation = vi.fn(() =>
+      withVerificationOutcome(DOMAIN, async () => {
+        throw original;
+      }),
+    );
+
+    const error: unknown = await withRetry(operation, { config: RETRY }).catch(
+      (error: unknown) => error,
+    );
+    expect.soft(operation).toHaveBeenCalledOnce();
+    expect(ownKeys).toHaveBeenCalled();
+    expect(error).toBeInstanceOf(ManifestMCPError);
+    if (!(error instanceof ManifestMCPError))
+      throw new Error(
+        'Expected the submitted receipt to survive reflection failure',
+      );
+    expect(causeOf(error)).toBe(original);
+    expect(original.details).toBe(details);
+    expect(error.code).toBe(original.code);
+    expect(error.message).toBe(original.message);
+    const expectedDetails = {
+      lease_uuid: LEASE,
+      sent: true,
+      transaction_hash: HASH,
+      transaction_confirmed: true,
+      transaction_code: 0,
+      service_name: 'web',
+      custom_domain: 'app.example.com',
+    };
+    expect(error.details).toEqual(expectedDetails);
+    expect(isRetryableError(error)).toBe(false);
+    const { body } = await projectError(error);
+    expect(body.details).toEqual(expectedDetails);
+    expect(body).not.toHaveProperty('cause');
   });
 
   it('keeps a frozen receipt authoritative over frozen conflicting query details without replay', async () => {
@@ -504,6 +663,8 @@ describe('verification outcome through retry and MCP boundaries', () => {
       lease_state: 'LEASE_STATE_REJECTED',
       httpStatus: 408,
     });
+    // This input supplies no evidence: these are no-fabrication checks.
+    // Separate injected-evidence cases verify filtering and retained partial vetoes.
     for (const key of [
       'sent',
       'partial',
@@ -522,5 +683,74 @@ describe('verification outcome through retry and MCP boundaries', () => {
     expect(body.details).not.toHaveProperty('sent');
     expect(body.details).not.toHaveProperty('transaction_hash');
     expect(text).not.toContain(inactive.rejection_reason);
+  });
+
+  it('omits both native and foreign rejection reasons while retaining transient read diagnostics and causes', async () => {
+    const inactive = Object.freeze({
+      lease_uuid: LEASE,
+      outcome: 'already_inactive',
+      lease_state: 'LEASE_STATE_REJECTED',
+      rejection_reason: 'Native provider rejection reason A',
+    } satisfies StopAppResult);
+    const readDiagnostics = Object.freeze({
+      httpStatus: 503,
+      grpcCode: 14,
+      grpcMessage: 'Verification service unavailable',
+    });
+    const details = Object.freeze({
+      ...readDiagnostics,
+      rejection_reason: 'Foreign upstream rejection reason B',
+    });
+    const original = Object.freeze(
+      new ManifestMCPError(
+        ManifestMCPErrorCode.QUERY_FAILED,
+        'Verification read unavailable',
+        details,
+      ),
+    );
+    const success = Object.freeze({
+      leaseUuid: LEASE,
+      finalState: 'LEASE_STATE_REJECTED',
+    });
+    const verify = vi
+      .fn()
+      .mockRejectedValueOnce(original)
+      .mockResolvedValueOnce(success);
+    const onRetry = vi.fn();
+
+    await expect(
+      withRetry(() => withVerificationOutcome(inactive, verify), {
+        config: { ...RETRY, maxRetries: 1 },
+        onRetry,
+      }),
+    ).resolves.toBe(success);
+    expect(verify).toHaveBeenCalledTimes(2);
+    expect(onRetry).toHaveBeenCalledOnce();
+    const error: unknown = onRetry.mock.calls[0]?.[0];
+    expect(error).toBeInstanceOf(ManifestMCPError);
+    if (!(error instanceof ManifestMCPError))
+      throw new Error('Expected SDK error');
+    expect(isRetryableError(error)).toBe(true);
+    expect(causeOf(error)).toBe(original);
+    expect(original.details).toBe(details);
+    expect(original.details?.rejection_reason).toBe(
+      'Foreign upstream rejection reason B',
+    );
+    expect(inactive.rejection_reason).toBe(
+      'Native provider rejection reason A',
+    );
+
+    const expectedDetails = {
+      lease_uuid: LEASE,
+      stop_outcome: 'already_inactive',
+      lease_state: 'LEASE_STATE_REJECTED',
+      ...readDiagnostics,
+    };
+    const { body, text } = await projectError(error);
+    expect.soft(error.details).toEqual(expectedDetails);
+    expect.soft(body.details).toEqual(expectedDetails);
+    expect.soft(text).not.toContain(inactive.rejection_reason);
+    expect.soft(text).not.toContain(details.rejection_reason);
+    expect(body).not.toHaveProperty('cause');
   });
 });

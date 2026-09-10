@@ -3,21 +3,45 @@ import {
   ManifestMCPErrorCode,
   type SetItemCustomDomainResult,
   type StopAppResult,
+  sanitizeForModelText,
 } from '@manifest-network/manifest-mcp-core';
 
 type MutationReceipt = SetItemCustomDomainResult | StopAppResult;
 
-const RECEIPT_DETAIL_KEYS = [
-  'lease_uuid',
+// Match the MCP projection's case/separator equivalence for reserved receipt
+// names. Generic query diagnostics (code, confirmed, outcome) are separate.
+const RECEIPT_DETAIL_NAMES = new Set([
+  'leaseuuid',
   'sent',
-  'transaction_hash',
-  'transaction_confirmed',
-  'transaction_code',
-  'stop_outcome',
-  'lease_state',
-  'service_name',
-  'custom_domain',
-] as const;
+  'transactionhash',
+  'txhash',
+  'transactionconfirmed',
+  'transactioncode',
+  'stopoutcome',
+  'leasestate',
+  'servicename',
+  'customdomain',
+  'rejectionreason', // Free-form provider prose is never receipt metadata.
+]);
+
+function isReceiptDetailName(key: string): boolean {
+  return RECEIPT_DETAIL_NAMES.has(key.toLowerCase().replace(/[_-]/g, ''));
+}
+
+function verificationDetails(error: ManifestMCPError): Record<string, unknown> {
+  try {
+    return Object.fromEntries(
+      Object.entries(Object.getOwnPropertyDescriptors(error.details ?? {}))
+        .filter(
+          ([, descriptor]) => descriptor.enumerable && 'value' in descriptor,
+        )
+        .map(([key, descriptor]) => [key, descriptor.value]),
+    );
+  } catch {
+    // Diagnostic inspection must not discard an established mutation receipt.
+    return {};
+  }
+}
 
 function withCause(error: ManifestMCPError, cause: unknown): ManifestMCPError {
   Object.defineProperty(error, 'cause', {
@@ -74,13 +98,17 @@ export async function withVerificationOutcome<T>(
       // Keep receipt fields first for bounded MCP output, and authoritative
       // even when the later query supplies conflicting details.
       ...outcome,
-      ...error.details,
+      ...verificationDetails(error),
       ...outcome,
     };
-    for (const key of RECEIPT_DETAIL_KEYS) {
+    for (const key of Object.keys(details)) {
       // Do not attribute another operation's receipt fields to this result.
       // Its submission/partial-outcome vetoes remain in the original cause.
-      if (Object.getOwnPropertyDescriptor(outcome, key) === undefined) {
+      if (
+        (isReceiptDetailName(key) ||
+          isReceiptDetailName(sanitizeForModelText(key, 128))) &&
+        Object.getOwnPropertyDescriptor(outcome, key) === undefined
+      ) {
         delete details[key];
       }
     }

@@ -503,3 +503,67 @@ build/type check and repository Biome checks also pass. The own-property check
 uses an ES2020-compatible descriptor lookup that survives formatter rewrites.
 CI will validate the new commit separately; this review adds no retained item
 or public success-type/callback change.
+
+## PR #227 re-review: rejection reasons, field spellings and lookup scope
+
+[Claude's re-review](https://github.com/manifest-network/manifest-mcp-mono/pull/227#issuecomment-5623316498)
+confirmed the existing receipt filter and cause-based retry protection, then
+identified one omitted field, equivalent spellings and lookup documentation
+imprecision. The response keeps the receipt contract qualified and explicit:
+
+| Finding | Confidence | Resolution |
+| --- | --- | --- |
+| A foreign `rejection_reason` can appear beside the current rejected lease's outcome | 100% helper-boundary reproduction; 98% assessment that no current first-party verifier produces it | Exclude this free-form field and its equivalent spellings from outer details. A native REJECTED receipt and a frozen query error carry different reasons; the new regression proves neither reason reaches SDK/MCP receipt details while read retry and original causes survive. |
+| Equivalent receipt-key spellings bypass the exact-name filter | 100% reproduction; same conditional reachability | Match the MCP projection's lowercase/underscore/hyphen normalization against the closed reserved-name inventory. Only exact canonical fields supplied by the receipt remain; extend all four native receipt-shape cases through SDK and MCP boundaries. |
+| The consumer guide's callback/cause statements could include read-only lookup | 100% | Scope them explicitly to post-mutation verification. Document lookup's cancellation and NotFound branches, structured-error passthrough and plain-error normalization without a mutation receipt or outer cause wrapper. |
+
+`transactionHash` and `transaction_hash` normalize to the same receipt name.
+The transaction-hash alias `txHash` is also reserved. Bare `code` is independently
+prioritized by MCP; bare `confirmed` and `outcome`
+are neither equivalent to the qualified receipt names nor recovery-priority
+fields. Those generic names and bare `hash` remain query diagnostics, alongside ordinary
+HTTP/gRPC/transport details. Tests assert that they coexist with authoritative
+`transaction_code`, `transaction_confirmed` and `stop_outcome`. The filter does
+not infer that arbitrary diagnostic names describe another receipt. SDK callers
+use the documented qualified fields for the mutation result; the original error
+and its safety evidence remain available through the cause.
+
+The old no-evidence test remains a no-fabrication control. It does not claim to
+suppress `partial`; separate injected-evidence tests retain that flag and prove
+its retry veto. The new reason case and four strengthened alias cases failed
+before the implementation, while the other nine helper controls passed.
+
+A further independent review established two related conditional failures with
+built-runtime probes (confidence 100% reproduction, no actual broadcasts):
+
+- A zero-width field spelling became `transactionHash` or `rejection_reason`
+  after MCP display cleanup. Reserved-name checks now consider the exact same
+  sanitized display key as MCP, as well as the original spelling.
+- An enumerable diagnostic getter threw a raw retryable error while the wrapper
+  spread upstream details, losing the successful receipt. A three-attempt probe
+  replayed the post-receipt operation. The wrapper now copies enumerable data
+  descriptors without invoking getters and tolerates diagnostic reflection
+  failures; the original SDK error stays in the cause. A public `closeLease`
+  regression verifies one mutation and one verification call.
+
+These are custom-object/detail-key hardening cases; no current first-party
+verifier producer was found to supply them. They are fixed in this revision,
+with no deferred tracker item.
+
+The final revision passes **3,849 tests / 17 skipped across 176 files**, with no
+type errors and all coverage thresholds met: 84.51% lines, 84.23% statements,
+83.87% branches and 88.19% functions. The helper retains 100% across all four
+measures. The PR now adds 49 regression cases in total. All 327 focused
+orchestration/helper/retry/MCP tests, agent-core build/types and Biome pass.
+Before the final metadata fix, six helper cases failed and ten controls passed;
+the new public getter regression independently failed while the other 34 close
+tests passed. These tests prove operation invocation counts at controlled
+boundaries, without broadcasting transactions.
+
+Independent code and documentation review found no remaining blocker
+(confidence 98–99%). All five CI checks, including live acceptance and the E2E
+gate, passed on preceding head `55b6162`; the new revision requires its own CI.
+Local XFS project quotas remain unavailable. ENG-805 stays In Progress with
+11 unchecked criteria; its two implemented post-mutation criteria remain
+PR-open and unreleased. All 72 pre-existing untracked artifacts, both submodule
+pins and the unrelated release branch are preserved.
