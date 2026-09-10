@@ -441,6 +441,18 @@ Errors use the `ManifestMCPErrorCode` enum (24 codes across 11 categories):
 | Deploy | `DEPLOY_READINESS_UNCONFIRMED` (the lease exists and is paid for but readiness was never confirmed; diagnose before closing anything — non-retryable, since a blind retry buys a second lease; ENG-661) |
 | Update | `UPDATE_INDETERMINATE` (`update_app` got a provider 5xx, which does **not** establish whether the manifest was applied — the provider persists the payload after the backend accepts it, so a persist failure can mean the update is live now and the next reprovision reverts it; diagnose with `app_status` / `app_releases`; non-retryable, since `update_app` is non-idempotent; ENG-619) |
 
+The retry classifier considers numeric gRPC status before HTTP status. Without
+a gRPC verdict, numeric `details.httpStatus: 408` permits retry only on
+`QUERY_FAILED`, following [RFC 9110 §15.5.9](https://www.rfc-editor.org/rfc/rfc9110.html#section-15.5.9).
+LCD reads retain the `cosmosQuery` retry owner and a rate-limit token per attempt;
+faucet `GET /status` retries only when the caller supplies a retry loop. Existing
+retry budgets and cancellation/protected-outcome checks apply. HTTP-only 425
+remains terminal because the supported transports do not establish the
+no-TLS-early-data prerequisite for replay in
+[RFC 8470 §5.2](https://www.rfc-editor.org/rfc/rfc8470.html#section-5.2); a transient
+gRPC verdict still takes precedence. See the [library guide](docs/library-usage.md#errors)
+for transport constraints and caller retry examples.
+
 Deadline ownership is carried separately from these error categories. Identity
 requests and faucet `GET /status` verify their own fresh per-attempt abort signal
 before adding exported `TransportErrorDetails` (`transportCode: 'ETIMEDOUT'`) to

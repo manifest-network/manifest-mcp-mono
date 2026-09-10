@@ -1,3 +1,4 @@
+import { cosmos } from '@manifest-network/manifestjs/dist/codegen/cosmos/bundle.js';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ManifestMCPError, ManifestMCPErrorCode } from './types.js';
 
@@ -30,12 +31,14 @@ vi.mock('./modules.js', () => ({
 }));
 
 import { cosmosEstimateFee, cosmosQuery, cosmosTx } from './cosmos.js';
+import { _adaptModule as adaptModule } from './lcd-adapter.js';
 import {
   getQueryHandler,
   getTxContextLoader,
   getTxHandler,
   getTxMsgBuilder,
 } from './modules.js';
+import { routeBankQuery } from './queries/bank.js';
 
 const mockGetQueryHandler = vi.mocked(getQueryHandler);
 const mockGetTxHandler = vi.mocked(getTxHandler);
@@ -79,6 +82,189 @@ function makeMockClientManager() {
   } as any;
   return cm;
 }
+
+function lcdHttpError(status: number, data: unknown = {}): Error {
+  return Object.assign(new Error(`Request failed with status code ${status}`), {
+    response: { status, data },
+  });
+}
+
+function makeLcdQueryProbe() {
+  const clientManager = makeMockClientManager();
+  const request = vi.fn().mockResolvedValue({
+    balances: [{ denom: 'umfx', amount: '42' }],
+    pagination: { next_key: 'AQI=', total: '1' },
+  });
+  // Only transport I/O and manager acquisition are replaced. The LCD adapter,
+  // generated JSON converter, bank router, cosmos attribution, and retry ladder run unchanged.
+  const bank = adaptModule({ allBalances: request }, cosmos.bank.v1beta1);
+  clientManager.getQueryClient.mockResolvedValue({
+    cosmos: { bank: { v1beta1: bank } },
+  });
+  mockGetQueryHandler.mockReturnValue(routeBankQuery);
+  return { clientManager, request };
+}
+
+describe('LCD status metadata through cosmosQuery', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('retries LCD 408 once and returns the generated bank response', async () => {
+    const { clientManager, request } = makeLcdQueryProbe();
+    request.mockRejectedValueOnce(lcdHttpError(408));
+
+    await expect(
+      cosmosQuery(clientManager, 'bank', 'balances', ['manifest1tenant']),
+    ).resolves.toEqual({
+      module: 'bank',
+      subcommand: 'balances',
+      result: {
+        balances: [{ denom: 'umfx', amount: '42' }],
+        pagination: { nextKey: new Uint8Array([1, 2]), total: 1n },
+      },
+    });
+    expect(request).toHaveBeenCalledTimes(2);
+    expect(clientManager.acquireRateLimit).toHaveBeenCalledTimes(2);
+    expect(clientManager.getQueryClient).toHaveBeenCalledOnce();
+  });
+
+  it('bounds repeated LCD 408 failures and preserves the final status and query attribution', async () => {
+    const { clientManager, request } = makeLcdQueryProbe();
+    request.mockRejectedValue(lcdHttpError(408));
+
+    await expect(
+      cosmosQuery(clientManager, 'bank', 'balances', ['manifest1tenant']),
+    ).rejects.toMatchObject({
+      code: ManifestMCPErrorCode.QUERY_FAILED,
+      details: { httpStatus: 408, module: 'bank', subcommand: 'balances' },
+    });
+    expect(request).toHaveBeenCalledTimes(EXPECTED_ATTEMPTS);
+    expect(clientManager.acquireRateLimit).toHaveBeenCalledTimes(
+      EXPECTED_ATTEMPTS,
+    );
+    expect(clientManager.getQueryClient).toHaveBeenCalledOnce();
+  });
+
+  it('honors maxRetries zero for an LCD 408', async () => {
+    const { clientManager, request } = makeLcdQueryProbe();
+    clientManager.getConfig.mockReturnValue({
+      retry: { ...FAST_RETRY, maxRetries: 0 },
+    });
+    request.mockRejectedValueOnce(lcdHttpError(408));
+
+    await expect(
+      cosmosQuery(clientManager, 'bank', 'balances', ['manifest1tenant']),
+    ).rejects.toMatchObject({
+      code: ManifestMCPErrorCode.QUERY_FAILED,
+      details: { httpStatus: 408 },
+    });
+    expect(request).toHaveBeenCalledOnce();
+    expect(clientManager.acquireRateLimit).toHaveBeenCalledOnce();
+  });
+
+  it('keeps an unenveloped LCD 425 terminal despite transient-looking error text', async () => {
+    const { clientManager, request } = makeLcdQueryProbe();
+    const failure = lcdHttpError(425);
+    failure.message += ': request timed out; HTTP 503';
+    request.mockRejectedValueOnce(failure);
+
+    await expect(
+      cosmosQuery(clientManager, 'bank', 'balances', ['manifest1tenant']),
+    ).rejects.toMatchObject({
+      code: ManifestMCPErrorCode.QUERY_FAILED,
+      details: { httpStatus: 425, module: 'bank', subcommand: 'balances' },
+    });
+    expect(request).toHaveBeenCalledOnce();
+    expect(clientManager.acquireRateLimit).toHaveBeenCalledOnce();
+    expect(clientManager.getQueryClient).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    [2, ManifestMCPErrorCode.QUERY_FAILED],
+    [5, ManifestMCPErrorCode.NOT_FOUND],
+  ] as const)(
+    'keeps gRPC code %i authoritative over LCD HTTP 408',
+    async (grpcCode, code) => {
+      const { clientManager, request } = makeLcdQueryProbe();
+      request.mockRejectedValueOnce(
+        lcdHttpError(408, {
+          code: grpcCode,
+          message: 'keeper answer: request timed out',
+          details: [],
+        }),
+      );
+
+      await expect(
+        cosmosQuery(clientManager, 'bank', 'balances', ['manifest1tenant']),
+      ).rejects.toMatchObject({
+        code,
+        details: {
+          httpStatus: 408,
+          grpcCode,
+          grpcMessage: 'keeper answer: request timed out',
+          module: 'bank',
+          subcommand: 'balances',
+        },
+      });
+      expect(request).toHaveBeenCalledOnce();
+      expect(clientManager.acquireRateLimit).toHaveBeenCalledOnce();
+    },
+  );
+
+  it('retains retries for a transient gRPC envelope carried with LCD HTTP 408', async () => {
+    const { clientManager, request } = makeLcdQueryProbe();
+    request.mockRejectedValueOnce(
+      lcdHttpError(408, {
+        code: 14,
+        message: 'service unavailable',
+        details: [],
+      }),
+    );
+
+    await expect(
+      cosmosQuery(clientManager, 'bank', 'balances', ['manifest1tenant']),
+    ).resolves.toMatchObject({
+      result: { balances: [{ denom: 'umfx', amount: '42' }] },
+    });
+    expect(request).toHaveBeenCalledTimes(2);
+    expect(clientManager.acquireRateLimit).toHaveBeenCalledTimes(2);
+    expect(clientManager.getQueryClient).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    ['caller cancellation', ManifestMCPErrorCode.OPERATION_CANCELLED, {}],
+    ['invalid configuration', ManifestMCPErrorCode.INVALID_CONFIG, {}],
+    ['partial outcome', ManifestMCPErrorCode.QUERY_FAILED, { partial: true }],
+    ['submitted outcome', ManifestMCPErrorCode.QUERY_FAILED, { sent: true }],
+  ] as const)(
+    'preserves an established %s even when its details include HTTP 408',
+    async (_name, code, details) => {
+      const { clientManager, request } = makeLcdQueryProbe();
+      // The adapter deliberately preserves already-classified SDK errors. Status
+      // metadata must not turn those cancellations or existing outcomes into replay.
+      request.mockRejectedValueOnce(
+        new ManifestMCPError(code, 'Request timed out', {
+          httpStatus: 408,
+          ...details,
+        }),
+      );
+
+      await expect(
+        cosmosQuery(clientManager, 'bank', 'balances', ['manifest1tenant']),
+      ).rejects.toMatchObject({
+        code,
+        details: {
+          httpStatus: 408,
+          module: 'bank',
+          subcommand: 'balances',
+          ...details,
+        },
+      });
+      expect(request).toHaveBeenCalledOnce();
+      expect(clientManager.acquireRateLimit).toHaveBeenCalledOnce();
+      expect(clientManager.getQueryClient).toHaveBeenCalledOnce();
+    },
+  );
+});
 
 describe('client acquisition is outside the call-site retry ladder (ENG-679)', () => {
   let clientManager: ReturnType<typeof makeMockClientManager>;

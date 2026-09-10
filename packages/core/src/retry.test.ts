@@ -252,6 +252,102 @@ describe('isRetryableError', () => {
   });
 });
 
+describe('HTTP request timeout read policy', () => {
+  it('retries a numeric 408 query verdict through an opaque wrapper', () => {
+    const cause = new ManifestMCPError(
+      ManifestMCPErrorCode.QUERY_FAILED,
+      'Opaque response',
+      { httpStatus: 408 },
+    );
+    expect(isRetryableError(cause)).toBe(true);
+    expect(
+      isRetryableError(Object.assign(new Error('Adapter failure'), { cause })),
+    ).toBe(true);
+  });
+
+  it.each([
+    ManifestMCPErrorCode.RPC_CONNECTION_FAILED,
+    ManifestMCPErrorCode.SIMULATION_FAILED,
+    ManifestMCPErrorCode.TX_FAILED,
+  ])('does not broaden HTTP 408 to %s', (code) => {
+    expect(
+      isRetryableError(
+        new ManifestMCPError(code, 'Request timed out; HTTP 503', {
+          httpStatus: 408,
+        }),
+      ),
+    ).toBe(false);
+  });
+
+  it.each([
+    { httpStatus: 408, grpcCode: 2, expected: false },
+    { httpStatus: 408, grpcCode: 14, expected: true },
+    { httpStatus: 425, grpcCode: 14, expected: true },
+  ])(
+    'preserves gRPC precedence for $httpStatus/$grpcCode',
+    ({ expected, ...details }) => {
+      expect(
+        isRetryableError(
+          new ManifestMCPError(
+            ManifestMCPErrorCode.QUERY_FAILED,
+            'Response',
+            details,
+          ),
+        ),
+      ).toBe(expected);
+    },
+  );
+
+  it('keeps HTTP-only 425 terminal despite a transport timeout marker', () => {
+    expect(
+      isRetryableError(
+        new ManifestMCPError(ManifestMCPErrorCode.QUERY_FAILED, 'HTTP 503', {
+          httpStatus: 425,
+          transportCode: 'ETIMEDOUT',
+        }),
+      ),
+    ).toBe(false);
+  });
+
+  it.each(['AbortError', 'TimeoutError'])(
+    'does not let a 408 verdict authorize a nested unowned %s',
+    (name) => {
+      const error = Object.assign(
+        new ManifestMCPError(ManifestMCPErrorCode.QUERY_FAILED, 'Response', {
+          httpStatus: 408,
+        }),
+        { cause: new DOMException('Operation ended', name) },
+      );
+      expect(isRetryableError(error)).toBe(false);
+    },
+  );
+
+  it.each([{ httpStatus: 403 }, { partial: true }, { sent: true }])(
+    'preserves a nested protected outcome %j under a 408 verdict',
+    (details) => {
+      const cause = new ManifestMCPError(
+        ManifestMCPErrorCode.QUERY_FAILED,
+        'Established outcome',
+        details,
+      );
+      const error = Object.assign(
+        new ManifestMCPError(ManifestMCPErrorCode.QUERY_FAILED, 'Response', {
+          httpStatus: 408,
+        }),
+        { cause },
+      );
+      expect(isRetryableError(error)).toBe(false);
+    },
+  );
+
+  it.each([408, 425])(
+    'does not classify HTTP %s from prose alone',
+    (status) => {
+      expect(isRetryableError(new Error(`HTTP ${status}`))).toBe(false);
+    },
+  );
+});
+
 describe('calculateBackoff', () => {
   it('should return base delay for first attempt', () => {
     const delay = calculateBackoff(0, 1000, 10000);

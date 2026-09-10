@@ -158,6 +158,13 @@ function queryStatusRetryability(error: Error): boolean | undefined {
   // explicitly transient gRPC codes authorize another idempotent query.
   if (typeof grpcCode === 'number')
     return RETRYABLE_GRPC_CODES.includes(grpcCode);
+  // A numeric 408 permits another idempotent read (RFC 9110 §15.5.9).
+  // Limit this allowance to the LCD/faucet query-error contract; other error
+  // categories and status-like prose do not establish that read boundary.
+  if (httpStatus === 408)
+    return error.code === ManifestMCPErrorCode.QUERY_FAILED;
+  // HTTP-only 425 stays terminal: replay must avoid TLS early data, which the
+  // supported transports do not guarantee. A gRPC verdict was handled above.
   if (typeof httpStatus === 'number')
     return httpStatus >= 500 || httpStatus === 429;
   return undefined;

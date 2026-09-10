@@ -333,3 +333,50 @@ The three nonblocking residuals retain their existing scope:
   no production failure was demonstrated. Retain compatibility cases under
   [ENG-751](https://linear.app/liftedinit/issue/ENG-751) (coverage distinction
   confidence 100%).
+
+## HTTP read-status follow-up (2026-09-10)
+
+Baseline: `a5db747` (merged PR #225); branch:
+`codex/eng-805-http-read-retries`. All five PR #225 CI checks passed, including
+live SDK acceptance, and its merge tree matches the reviewed head. The
+[implementation plan](superpowers/plans/2026-09-10-eng805-http-read-retries.md)
+addresses the retained HTTP 408/425 observation without closing the broader audit.
+
+Numeric `details.httpStatus: 408` on `QUERY_FAILED` now permits another idempotent
+LCD or faucet status read within the existing retry budget. gRPC verdicts remain
+authoritative, and permanent errors/statuses, partial/submitted outcomes and
+cancellation still veto retry throughout the cause chain. Client acquisition
+remains outside the query ladder; faucet status remains caller-retried. The
+allowance does not extend to other error categories or HTTP-like prose, including
+identity-preflight HTTP failures. Credit POSTs retain their existing one-attempt
+failure result.
+
+HTTP-only 425 remains terminal. [RFC 8470 §5.2](https://www.rfc-editor.org/rfc/rfc8470.html#section-5.2)
+requires replay without TLS early data; the SDK does not establish that guarantee
+across native/injected fetch and LCD transports. This does not assert that native
+Node fetch uses early data. Existing transient gRPC verdicts still take precedence
+over HTTP 425. The 408 decision follows [RFC 9110 §15.5.9](https://www.rfc-editor.org/rfc/rfc9110.html#section-15.5.9).
+
+| Finding or decision | Confidence | Evidence |
+| --- | --- | --- |
+| Structured HTTP 408 stopped established LCD/faucet reads after one attempt | 100% | Before the classifier change, two LCD and five faucet regressions failed as expected; the thirteen negative controls passed. |
+| Bounded 408 retry belongs on the existing query-error contract | 99% | Actual LCD conversion/routing and faucet responses recover and exhaust their budgets; other error categories and credit POSTs stay protected. |
+| Keep HTTP-only 425 terminal until replay transport guarantees exist | 99% | The early-data requirement is explicit; this SDK exposes no universal replay control. Regression tests retain both terminal HTTP-only behavior and gRPC precedence. |
+
+Focused validation passes all 156 tests in the classifier, LCD retry-isolation
+and faucet suites, including 35 new cases. No dependencies or public types changed.
+
+Integrated validation passes 3,800 tests with 17 existing skips across 175 files,
+with no type errors. V8 coverage is 84.44% lines, 84.17% statements, 83.74% branches
+and 88.09% functions; all thresholds pass. The browser checks pass with the normal
+30-second test timeout and two-worker coverage configuration. Workspace builds,
+workspace/E2E TypeScript, Biome, all nine package-integrity checks, all four bundle
+budgets, architecture and coverage/type/workflow/dependency guards pass.
+Workflow/dependency guard subprocesses initially failed without diagnostics under
+the default temporary-directory setup; both pass using the task's writable cache.
+The dependency audit passes its high/critical gate and reports seven low and four
+moderate advisories in the unchanged dependency tree. Independent production/test
+review found no concrete blocker (confidence 96%).
+
+AggregateError policy, compiler tooling, optional reason-compatibility coverage
+and the broader ENG-805 audit remain with their existing owners.
