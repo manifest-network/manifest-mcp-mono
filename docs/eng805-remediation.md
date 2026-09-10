@@ -468,3 +468,38 @@ Local live acceptance is unavailable because the dedicated XFS project-quota
 mount is absent. The PR's live acceptance/E2E gate remains required before merge.
 The 72 pre-existing untracked artifacts and both submodule pins are preserved.
 These changes are implemented and unreleased; ENG-805 remains In Progress.
+
+## PR #227 review: receipt provenance and callback documentation
+
+[Claude's review](https://github.com/manifest-network/manifest-mcp-mono/pull/227#issuecomment-5622587856)
+reported no blocking defect and raised two observations. Both are addressed in
+this PR:
+
+| Finding | Confidence | Resolution |
+| --- | --- | --- |
+| Upstream details can supply canonical receipt fields absent from the actual receipt | 100% helper-level reproduction; 98% assessment that no current first-party verifier producer supplies them | Filter the helper's nine canonical receipt keys against its actual receipt fields. Preserve unrelated diagnostics and the immutable original cause. Four receipt-shape regressions verify SDK and real MCP output; separate sent-only and partial-only controls preserve retry vetoes. |
+| `QUERY_FAILED` documentation omits unexpected verifier errors that bypass `onFailure` | 100% | Document acquisition/query failures, unexpected decoding/spec/result errors, and the close success-state invariant separately in both orchestrators and the consumer guide. The outer wrapper adds no callback invocation. |
+
+This is conditional metadata hardening: current built-in query/acquisition paths
+have not demonstrated these foreign receipt details, but custom client behavior
+can supply them. Filtering covers the canonical keys owned by this helper;
+unrelated fields, including `partial` and transport diagnostics, remain intact.
+An inactive result never gains an inferred `sent: false`; upstream submission
+and partial-outcome evidence remains in the cause and continues to veto retry.
+The existing transient inactive-read control still permits retry.
+
+Five new cases failed before the filter and pass afterward. All **323 focused
+tests** pass, including the orchestration, retry and MCP projection controls.
+The two orchestrator modules emit identical JavaScript with comments removed;
+callback behavior is unchanged. Independent review found no remaining gap
+(confidence 99%).
+
+All five CI checks passed on the preceding `b509c17` head, including live SDK
+acceptance and the E2E gate. The final review revision passes **3,845 tests**,
+17 skipped, across 176 files with no type errors. Coverage is 84.51% lines,
+84.23% statements, 83.87% branches and 88.15% functions; all thresholds pass,
+and the receipt helper retains 100% across all four measures. Agent-core's
+build/type check and repository Biome checks also pass. The own-property check
+uses an ES2020-compatible descriptor lookup that survives formatter rewrites.
+CI will validate the new commit separately; this review adds no retained item
+or public success-type/callback change.

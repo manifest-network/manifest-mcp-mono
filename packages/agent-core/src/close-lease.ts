@@ -18,8 +18,9 @@ import { isLeaseUuidShape } from './internals/uuid-shape.js';
  *      PENDING / ACTIVE map to the `pending_drift` branch; a chain
  *      response with no lease (`{ lease: null }`) maps to the catch-all
  *      `unclassified` branch.
- *   5. On verify-failure, invoke the simple-form `onFailure({ reason })`
- *      then throw `ManifestMCPError(TX_FAILED)`. On success, emit
+ *   5. On a non-terminal or missing-lease verification result, invoke
+ *      `onFailure({ reason })` then throw `ManifestMCPError(TX_FAILED)`.
+ *      On success, emit
  *      `onComplete` with the typed `CloseLeaseResult`.
  */
 
@@ -88,12 +89,17 @@ interface CloseDiag {
  *       decoded as PENDING / ACTIVE / similar non-terminal); or
  *     - the chain returns `{ lease: null }` post-close, so the lease is
  *       not visible on-chain (`unclassified` branch).
- * @throws `ManifestMCPError(QUERY_FAILED)` when the post-broadcast verify
- *   chain query (`billing.v1.lease`) raises a non-NotFound error
- *   (RPC / transport / decoding failure). Wrapped inside the verifier
- *   closure so the failure flows through `onFailure({ reason })` before
- *   the throw. Post-mutation errors preserve structured code/message and
- *   original cause in a fresh error carrying the stop outcome. An actual
+ *   Also covers a verifier success result missing its required state;
+ *   that invariant failure does not invoke `onFailure`.
+ * @throws `ManifestMCPError(QUERY_FAILED)` when verification client
+ *   acquisition or the `billing.v1.lease` query raises a non-SDK error.
+ *   These query failures invoke `onFailure({ reason })` before throwing.
+ *   Unexpected non-SDK errors elsewhere in post-mutation verification
+ *   (such as decoding or verifier spec/result validation) also become
+ *   `QUERY_FAILED`, but bypass that query-failure callback. The outer
+ *   receipt wrapper does not add an `onFailure` invocation.
+ *   Post-mutation SDK errors preserve their code/message and original
+ *   cause in a fresh error carrying the stop outcome. An actual
  *   transaction receipt adds its hash, confirmation and `details.sent: true`;
  *   `already_inactive` adds no inferred submission evidence. Reconcile a
  *   submitted transaction before considering another mutation.

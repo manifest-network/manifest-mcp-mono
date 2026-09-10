@@ -7,6 +7,18 @@ import {
 
 type MutationReceipt = SetItemCustomDomainResult | StopAppResult;
 
+const RECEIPT_DETAIL_KEYS = [
+  'lease_uuid',
+  'sent',
+  'transaction_hash',
+  'transaction_confirmed',
+  'transaction_code',
+  'stop_outcome',
+  'lease_state',
+  'service_name',
+  'custom_domain',
+] as const;
+
 function withCause(error: ManifestMCPError, cause: unknown): ManifestMCPError {
   Object.defineProperty(error, 'cause', {
     value: cause,
@@ -65,10 +77,12 @@ export async function withVerificationOutcome<T>(
       ...error.details,
       ...outcome,
     };
-    if ('transactionHash' in receipt && !('code' in receipt)) {
-      // An unconfirmed stop receipt supplies no code. Do not attach a query's
-      // unrelated code to this transaction hash; it remains available in cause.
-      delete details.transaction_code;
+    for (const key of RECEIPT_DETAIL_KEYS) {
+      // Do not attribute another operation's receipt fields to this result.
+      // Its submission/partial-outcome vetoes remain in the original cause.
+      if (Object.getOwnPropertyDescriptor(outcome, key) === undefined) {
+        delete details[key];
+      }
     }
     throw withCause(
       new ManifestMCPError(error.code, error.message, details),

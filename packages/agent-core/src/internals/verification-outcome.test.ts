@@ -36,6 +36,29 @@ const DOMAIN = Object.freeze({
   confirmed: true,
   code: 0,
 } satisfies SetItemCustomDomainResult);
+const INACTIVE = Object.freeze({
+  lease_uuid: LEASE,
+  outcome: 'already_inactive',
+  lease_state: 'LEASE_STATE_CLOSED',
+} satisfies StopAppResult);
+const FOREIGN_RECEIPT_DETAILS = Object.freeze({
+  lease_uuid: 'unrelated-lease',
+  sent: true,
+  transaction_hash: 'UNRELATED-HASH',
+  transaction_confirmed: true,
+  transaction_code: 99,
+  stop_outcome: 'unrelated-stop-outcome',
+  lease_state: 'LEASE_STATE_PENDING',
+  service_name: 'unrelated-service',
+  custom_domain: 'unrelated.example.com',
+});
+const READ_DIAGNOSTICS = Object.freeze({
+  httpStatus: 408,
+  grpcCode: 14,
+  grpcMessage: 'Verification service unavailable',
+  transportCode: 'ETIMEDOUT',
+  diagnostic: Object.freeze({ phase: 'verification', attempt: 1 }),
+});
 
 async function rejectedError(
   operation: () => Promise<unknown>,
@@ -80,6 +103,162 @@ async function projectError(error: ManifestMCPError) {
 
 describe('verification outcome through retry and MCP boundaries', () => {
   afterEach(() => vi.restoreAllMocks());
+
+  it.each([
+    {
+      name: 'inactive',
+      receipt: INACTIVE,
+      expectedReceipt: {
+        lease_uuid: LEASE,
+        stop_outcome: 'already_inactive',
+        lease_state: 'LEASE_STATE_CLOSED',
+      },
+    },
+    {
+      name: 'domain',
+      receipt: DOMAIN,
+      expectedReceipt: {
+        lease_uuid: LEASE,
+        sent: true,
+        transaction_hash: HASH,
+        transaction_confirmed: true,
+        transaction_code: 0,
+        service_name: 'web',
+        custom_domain: 'app.example.com',
+      },
+    },
+    {
+      name: 'confirmed stop',
+      receipt: STOPPED,
+      expectedReceipt: {
+        lease_uuid: LEASE,
+        sent: true,
+        transaction_hash: HASH,
+        transaction_confirmed: true,
+        transaction_code: 0,
+        stop_outcome: 'stopped',
+        lease_state: 'LEASE_STATE_CLOSED',
+      },
+    },
+    {
+      name: 'unconfirmed stop',
+      receipt: Object.freeze({
+        lease_uuid: LEASE,
+        outcome: 'stopped',
+        lease_state: 'LEASE_STATE_CLOSED',
+        transactionHash: HASH,
+        confirmed: false,
+      } satisfies StopAppResult),
+      expectedReceipt: {
+        lease_uuid: LEASE,
+        sent: true,
+        transaction_hash: HASH,
+        transaction_confirmed: false,
+        stop_outcome: 'stopped',
+        lease_state: 'LEASE_STATE_CLOSED',
+      },
+    },
+  ])(
+    'does not attribute foreign receipt fields to the $name result in SDK or MCP errors',
+    async ({ receipt, expectedReceipt }) => {
+      const details = Object.freeze({
+        ...FOREIGN_RECEIPT_DETAILS,
+        ...READ_DIAGNOSTICS,
+      });
+      const original = Object.freeze(
+        new ManifestMCPError(
+          ManifestMCPErrorCode.QUERY_FAILED,
+          'Read failure carrying unrelated receipt metadata',
+          details,
+        ),
+      );
+      const operation = vi.fn(() =>
+        withVerificationOutcome(receipt, async () => {
+          throw original;
+        }),
+      );
+      const error = await rejectedError(() =>
+        withRetry(operation, { config: RETRY }),
+      );
+
+      expect(operation).toHaveBeenCalledOnce();
+      expect(error).not.toBe(original);
+      expect(causeOf(error)).toBe(original);
+      expect(error.code).toBe(original.code);
+      expect(error.message).toBe(original.message);
+      // Exact comparison guards absent fields as well as authoritative values;
+      // receipt variants must not inherit another operation's evidence.
+      const expectedDetails = { ...expectedReceipt, ...READ_DIAGNOSTICS };
+      expect(error.details).toEqual(expectedDetails);
+      expect(original.details).toBe(details);
+      expect(original.details).toEqual({
+        ...FOREIGN_RECEIPT_DETAILS,
+        ...READ_DIAGNOSTICS,
+      });
+      expect(
+        Object.getOwnPropertyDescriptor(original, 'cause'),
+      ).toBeUndefined();
+      expect(isRetryableError(error)).toBe(false);
+
+      if (receipt === INACTIVE) {
+        // No partial flag or permanent code can mask this guard: retry stays
+        // prohibited solely because the retained original cause has sent:true.
+        expect(error.details).not.toHaveProperty('sent');
+        expect(error.details).not.toHaveProperty('partial');
+        expect(original.details?.sent).toBe(true);
+        expect(original.details).not.toHaveProperty('partial');
+        expect(
+          isRetryableError(
+            new ManifestMCPError(error.code, error.message, error.details),
+          ),
+        ).toBe(true);
+      }
+
+      const { body } = await projectError(error);
+      expect(body.code).toBe(original.code);
+      expect(body.details).toEqual(expectedDetails);
+      expect(body).not.toHaveProperty('cause');
+    },
+  );
+
+  it('preserves a partial-outcome veto independently of sent on an inactive receipt', async () => {
+    const details = Object.freeze({
+      ...FOREIGN_RECEIPT_DETAILS,
+      ...READ_DIAGNOSTICS,
+      sent: false,
+      partial: true,
+    });
+    const original = Object.freeze(
+      new ManifestMCPError(
+        ManifestMCPErrorCode.QUERY_FAILED,
+        'Verification encountered a partial outcome',
+        details,
+      ),
+    );
+    const operation = vi.fn(() =>
+      withVerificationOutcome(INACTIVE, async () => {
+        throw original;
+      }),
+    );
+    const error = await rejectedError(() =>
+      withRetry(operation, { config: RETRY }),
+    );
+
+    expect(operation).toHaveBeenCalledOnce();
+    expect(causeOf(error)).toBe(original);
+    expect(original.details).toBe(details);
+    expect(error.details).not.toHaveProperty('sent');
+    expect(error.details).not.toHaveProperty('transaction_hash');
+    expect(error.details).toMatchObject({ ...READ_DIAGNOSTICS, partial: true });
+    expect(isRetryableError(error)).toBe(false);
+    const { body } = await projectError(error);
+    expect(body.details).toMatchObject({
+      partial: true,
+      stop_outcome: 'already_inactive',
+    });
+    expect(body.details).not.toHaveProperty('sent');
+    expect(body.details).not.toHaveProperty('transaction_hash');
+  });
 
   it('keeps a frozen receipt authoritative over frozen conflicting query details without replay', async () => {
     const details = Object.freeze({

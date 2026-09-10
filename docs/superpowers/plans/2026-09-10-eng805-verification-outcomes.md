@@ -23,7 +23,9 @@ unsafe replay authorization, not two accepted transactions or fees. Confidence:
   `transaction_confirmed`, optional `transaction_code`, and `lease_uuid`.
   Domain receipts retain `service_name` / `custom_domain`; close receipts retain
   `stop_outcome` / `lease_state`. Receipt evidence overrides conflicting query
-  details and precedes them for bounded MCP projection.
+  details and precedes them for bounded MCP projection. Omit canonical receipt
+  fields that this receipt does not supply; preserve foreign submission/partial
+  evidence in the original cause, where it still vetoes retry.
 - `already_inactive` preserves its outcome/state but adds no inferred sent/hash.
   It can also follow reconciliation after a broadcast error; it does not prove
   that no submission was attempted. Add no submission-based retry veto when
@@ -48,7 +50,7 @@ unsafe replay authorization, not two accepted transactions or fees. Confidence:
 AggregateError policy, broad coverage/compiler migration and other retained
 ENG-805 work remain separate. Preserve pre-existing untracked review artifacts.
 
-Validation: 3,840 tests pass, 17 skip, no type errors; 40 new regressions. All
+Validation: 3,845 tests pass, 17 skip, no type errors; 45 new regressions. All
 coverage floors, workspace/E2E types, builds, Biome, architecture, package/size,
 MCP metadata and harness gates pass. No high/critical dependency audit findings.
 The [implementation record](../../eng805-remediation.md#follow-up-mutation-receipts-across-verification-failures)

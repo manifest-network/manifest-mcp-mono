@@ -93,16 +93,16 @@ const SCHEME_PREFIX_RE = /^https?:\/\//i;
  * @throws `ManifestMCPError(TX_FAILED)` when post-broadcast verification
  *   reaches a `not_found` / `mismatch` outcome (after `onFailure` has
  *   been invoked so the caller can react).
- * @throws `ManifestMCPError(QUERY_FAILED)` when a chain query raises a
- *   non-NotFound error (RPC / transport / decoding failure). Two paths
- *   surface this:
- *     - the `lookup` chain query (`lease_by_custom_domain`); the keeper's
- *       `NotFound` on an unclaimed FQDN is surfaced as a typed
- *       `{ lease: null }` result, not a throw.
- *     - the post-broadcast verify chain query (`billing.v1.lease`) in
- *       the `set` / `clear` paths (wrapped inside the verifier closure
- *       so the failure flows through `onFailure({ reason })` before the
- *       throw).
+ * @throws `ManifestMCPError(QUERY_FAILED)` when client acquisition or
+ *   execution of the lookup (`lease_by_custom_domain`) or post-mutation
+ *   verification (`billing.v1.lease`) query raises a non-SDK error.
+ *   These query failures invoke `onFailure({ reason })` before throwing;
+ *   lookup instead returns `{ lease: null }` for the keeper's `NotFound`
+ *   on an unclaimed FQDN.
+ *   Unexpected non-SDK errors elsewhere in post-mutation verification
+ *   (such as decoding or verifier spec/result validation) also become
+ *   `QUERY_FAILED`, but bypass that query-failure callback. The outer
+ *   receipt wrapper does not add an `onFailure` invocation.
  *   Lookup preserves structured errors as-is. After a successful mutation,
  *   verification errors preserve their code/message and original cause in a
  *   fresh error carrying the mutation receipt and `details.sent: true`.
