@@ -154,6 +154,174 @@ describe('fetchFaucetStatus', () => {
   });
 });
 
+describe('faucet HTTP 408 retry policy', () => {
+  const config = { maxRetries: 2, baseDelayMs: 1, maxDelayMs: 1 };
+
+  it('recovers from HTTP 408 with a fresh status request', async () => {
+    const fetch = vi
+      .fn<typeof globalThis.fetch>()
+      .mockResolvedValueOnce(new Response('Request Timeout', { status: 408 }))
+      .mockResolvedValueOnce(Response.json(statusBody()));
+    const onRetry = vi.fn();
+
+    await expect(
+      withRetry(() => fetchFaucetStatus(FAUCET_URL, fetch), {
+        config,
+        onRetry,
+      }),
+    ).resolves.toEqual(statusBody());
+
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(fetch.mock.calls[0]?.[0]).toBe(`${FAUCET_URL}/status`);
+    expect(fetch.mock.calls[1]?.[0]).toBe(`${FAUCET_URL}/status`);
+    expect(fetch.mock.calls[0]?.[1]?.signal).toBeInstanceOf(AbortSignal);
+    expect(fetch.mock.calls[1]?.[1]?.signal).not.toBe(
+      fetch.mock.calls[0]?.[1]?.signal,
+    );
+    expect(onRetry).toHaveBeenCalledOnce();
+    const error: unknown = onRetry.mock.calls[0]?.[0];
+    expect(error).toMatchObject({
+      code: ManifestMCPErrorCode.QUERY_FAILED,
+      details: { httpStatus: 408 },
+    });
+    expect(error).not.toHaveProperty('details.transportCode');
+  });
+
+  it.each([0, 2])(
+    'stops repeated HTTP 408 responses after the configured %s retries',
+    async (maxRetries) => {
+      let responses = 0;
+      const fetch = vi.fn<typeof globalThis.fetch>(async () => {
+        responses += 1;
+        return new Response(`Request Timeout attempt ${responses}`, {
+          status: 408,
+        });
+      });
+      const onRetry = vi.fn();
+
+      await expect(
+        withRetry(() => fetchFaucetStatus(FAUCET_URL, fetch), {
+          config: { ...config, maxRetries },
+          onRetry,
+        }),
+      ).rejects.toMatchObject({
+        code: ManifestMCPErrorCode.QUERY_FAILED,
+        details: { httpStatus: 408 },
+        message: expect.stringContaining(
+          `Request Timeout attempt ${maxRetries + 1}`,
+        ),
+      });
+      expect(fetch).toHaveBeenCalledTimes(maxRetries + 1);
+      expect(onRetry).toHaveBeenCalledTimes(maxRetries);
+    },
+  );
+
+  it.each([400, 425])(
+    'does not retry HTTP %s even when its response text mentions HTTP 408',
+    async (status) => {
+      const fetch = vi.fn<typeof globalThis.fetch>(
+        async () => new Response('Request timed out; HTTP 408', { status }),
+      );
+      const onRetry = vi.fn();
+
+      await expect(
+        withRetry(() => fetchFaucetStatus(FAUCET_URL, fetch), {
+          config,
+          onRetry,
+        }),
+      ).rejects.toMatchObject({
+        code: ManifestMCPErrorCode.QUERY_FAILED,
+        details: { httpStatus: status },
+      });
+      expect(fetch).toHaveBeenCalledOnce();
+      expect(onRetry).not.toHaveBeenCalled();
+    },
+  );
+
+  it('honors caller cancellation before retrying an HTTP 408 response', async () => {
+    const controller = new AbortController();
+    const reason = 'Caller stopped the faucet request';
+    const fetch = vi.fn<typeof globalThis.fetch>(
+      async () => new Response('Request Timeout', { status: 408 }),
+    );
+    const onRetry = vi.fn(() => controller.abort(reason));
+
+    await expect(
+      withRetry(() => fetchFaucetStatus(FAUCET_URL, fetch), {
+        config,
+        signal: controller.signal,
+        onRetry,
+      }),
+    ).rejects.toBe(reason);
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(onRetry).toHaveBeenCalledOnce();
+  });
+
+  it('does not let an earlier HTTP 408 authorize replay of an unowned abort', async () => {
+    const abort = new DOMException('Independent cancellation', 'AbortError');
+    const fetch = vi
+      .fn<typeof globalThis.fetch>()
+      .mockResolvedValueOnce(new Response('Request Timeout', { status: 408 }))
+      .mockRejectedValueOnce(abort)
+      .mockResolvedValueOnce(Response.json(statusBody()));
+    const onRetry = vi.fn();
+    const error: unknown = await withRetry(
+      () => fetchFaucetStatus(FAUCET_URL, fetch),
+      { config, onRetry },
+    ).catch((error: unknown) => error);
+
+    expect(error).toHaveProperty('code', ManifestMCPErrorCode.QUERY_FAILED);
+    expect(Object.getOwnPropertyDescriptor(error, 'cause')?.value).toBe(abort);
+    expect(error).not.toHaveProperty('details.transportCode');
+    expect(isRetryableError(error)).toBe(false);
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(onRetry).toHaveBeenCalledOnce();
+  });
+
+  it('stops when a retry after HTTP 408 returns malformed successful-response JSON', async () => {
+    const fetch = vi
+      .fn<typeof globalThis.fetch>()
+      .mockResolvedValueOnce(new Response('Request Timeout', { status: 408 }))
+      .mockResolvedValueOnce(new Response('Request timed out; HTTP 408 {'))
+      .mockResolvedValueOnce(Response.json(statusBody()));
+    const onRetry = vi.fn();
+
+    await expect(
+      withRetry(() => fetchFaucetStatus(FAUCET_URL, fetch), {
+        config,
+        onRetry,
+      }),
+    ).rejects.toMatchObject({
+      code: ManifestMCPErrorCode.QUERY_FAILED,
+      details: { httpStatus: 200 },
+      message: expect.stringContaining('invalid JSON'),
+    });
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(onRetry).toHaveBeenCalledOnce();
+  });
+
+  it('does not replay a credit POST that returns HTTP 408', async () => {
+    const fetch = vi.fn<typeof globalThis.fetch>(
+      async () => new Response('Request Timeout', { status: 408 }),
+    );
+    const onRetry = vi.fn();
+
+    await expect(
+      withRetry(() => requestFaucetCredit(FAUCET_URL, ADDRESS, 'umfx', fetch), {
+        config,
+        onRetry,
+      }),
+    ).resolves.toEqual({
+      denom: 'umfx',
+      success: false,
+      error: 'Request Timeout',
+    });
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(fetch.mock.calls[0]?.[1]?.method).toBe('POST');
+    expect(onRetry).not.toHaveBeenCalled();
+  });
+});
+
 describe('faucet attempt deadline ownership', () => {
   it.each([
     ['fetch', false],

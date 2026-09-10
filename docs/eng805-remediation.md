@@ -333,3 +333,84 @@ The three nonblocking residuals retain their existing scope:
   no production failure was demonstrated. Retain compatibility cases under
   [ENG-751](https://linear.app/liftedinit/issue/ENG-751) (coverage distinction
   confidence 100%).
+
+## HTTP read-status follow-up (2026-09-10)
+
+Baseline: `a5db747` (merged PR #225); branch:
+`codex/eng-805-http-read-retries`. All five PR #225 CI checks passed, including
+live SDK acceptance, and its merge tree matches the reviewed head. The
+[implementation plan](superpowers/plans/2026-09-10-eng805-http-read-retries.md)
+addresses the retained HTTP 408/425 observation without closing the broader audit.
+
+Numeric `details.httpStatus: 408` on `QUERY_FAILED` now permits another idempotent
+LCD or faucet status read within the existing retry budget. gRPC verdicts remain
+authoritative, and permanent errors/statuses, partial/submitted outcomes and
+cancellation still veto retry throughout the cause chain. Client acquisition
+remains outside the query ladder; faucet status remains caller-retried. The
+allowance does not extend to other error categories or HTTP-like prose, including
+identity-preflight HTTP failures. Credit POSTs retain their existing one-attempt
+failure result.
+
+HTTP-only 425 remains terminal. [RFC 8470 §5.2](https://www.rfc-editor.org/rfc/rfc8470.html#section-5.2)
+requires replay without TLS early data; the SDK does not establish that guarantee
+across native/injected fetch and LCD transports. This does not assert that native
+Node fetch uses early data. Existing transient gRPC verdicts still take precedence
+over HTTP 425. The 408 decision follows [RFC 9110 §15.5.9](https://www.rfc-editor.org/rfc/rfc9110.html#section-15.5.9).
+
+| Finding or decision | Confidence | Evidence |
+| --- | --- | --- |
+| Structured HTTP 408 stopped established LCD/faucet reads after one attempt | 100% | Before the classifier change, two LCD and five faucet regressions failed as expected; the thirteen negative controls passed. |
+| Bounded 408 retry belongs on the existing query-error contract | 99% | Actual LCD conversion/routing and faucet responses recover and exhaust their budgets; other error categories and credit POSTs stay protected. |
+| Keep HTTP-only 425 terminal until replay transport guarantees exist | 99% | The early-data requirement is explicit; this SDK exposes no universal replay control. Regression tests retain both terminal HTTP-only behavior and gRPC precedence. |
+
+Focused validation passes all 156 tests in the classifier, LCD retry-isolation
+and faucet suites, including 35 new cases. No dependencies or public types changed.
+
+Integrated validation passes 3,800 tests with 17 existing skips across 175 files,
+with no type errors. V8 coverage is 84.44% lines, 84.17% statements, 83.74% branches
+and 88.09% functions; all thresholds pass. The browser checks pass with the normal
+30-second test timeout and two-worker coverage configuration. Workspace builds,
+workspace/E2E TypeScript, Biome, all nine package-integrity checks, all four bundle
+budgets, architecture and coverage/type/workflow/dependency guards pass.
+Workflow/dependency guard subprocesses initially failed without diagnostics under
+the default temporary-directory setup; both pass using the task's writable cache.
+The dependency audit passes its high/critical gate and reports seven low and four
+moderate advisories in the unchanged dependency tree. Independent production/test
+review found no concrete blocker (confidence 96%).
+
+AggregateError policy, compiler tooling, optional reason-compatibility coverage
+and the broader ENG-805 audit remain with their existing owners.
+
+### PR #226 review clarification
+
+[Claude's adversarial review](https://github.com/manifest-network/manifest-mcp-mono/pull/226#issuecomment-5620767563)
+found no blocking regression and identified two optional clarifications:
+
+| Finding | Confidence | Resolution |
+| --- | --- | --- |
+| The `TX_FAILED` table row does not distinguish a broadened 408 allowlist because the permanent-code veto independently protects it | 100% | Move the numeric-408 case beside the existing permanent transaction-error test. Keep `RPC_CONNECTION_FAILED` and `SIMULATION_FAILED` as the discriminating scope controls; retain the same number of tests. |
+| Retry documentation could imply that typed SDK reads retry failed queries | 99% | Name `cosmosQuery` as the query-call retry owner and state that typed `/reads` helpers only apply rate limiting and cancellation. Distinguish connection retries, correct the blanket broadcast claim and its API comment, and align the 408 changelog entry. |
+
+All 156 focused classifier/LCD/faucet tests, core TypeScript and Biome pass after
+the test relocation. Independent review found no concrete blocker (confidence
+98%). Runtime logic and public types are unchanged; removing comments yields
+identical transpiled `cosmos.ts` JavaScript. The previous 3,800-test coverage
+run remains applicable to that runtime; all five CI checks passed on `f2de246`,
+including live SDK acceptance and the E2E gate. Full coverage and package builds
+are not repeated for this documentation/test-organization correction.
+
+One pre-existing hardening gap remains under ENG-805 (P3, confidence 99%):
+`manageDomain` and `closeLease` can lose a successful mutation's hash/outcome when
+the following verification read fails. Six isolated no-network probes (set,
+clear and close, each with HTTP 503/408) confirm that a caller's whole-orchestration
+`withRetry` can invoke a mocked successful mutation twice and receive the original
+marker-free `QUERY_FAILED`. The 503 case predates this PR; numeric 408 adds a
+trigger for the same gap. This proves orchestration re-entry, not two accepted
+transactions or charged fees. No first-party whole-orchestration retry caller was
+found, and real `stopApp` can return a no-op after reading a terminal lease.
+
+The retained acceptance criteria are to preserve the actual submitted outcome,
+transaction hash and verification cause, prevent whole-operation replay after
+submission, and test both mutations and read-only lookup. A no-op close must not
+invent submission evidence. Narrow deduplication found no dedicated owner;
+completed related work and ENG-267's adjacent scope remain unchanged.

@@ -104,13 +104,17 @@ describe('isRetryableError', () => {
       expect(isRetryableError(error)).toBe(true);
     });
 
-    it('should not retry TX_FAILED errors (non-idempotent)', () => {
-      const error = new ManifestMCPError(
-        ManifestMCPErrorCode.TX_FAILED,
-        'Service unavailable (503)',
-      );
-      expect(isRetryableError(error)).toBe(false);
-    });
+    it.each([undefined, { httpStatus: 408 }])(
+      'keeps permanent TX_FAILED errors terminal with details %j',
+      (details) => {
+        const error = new ManifestMCPError(
+          ManifestMCPErrorCode.TX_FAILED,
+          'Service unavailable (503)',
+          details,
+        );
+        expect(isRetryableError(error)).toBe(false);
+      },
+    );
 
     it('should not retry GAS_LIMIT_EXCEEDED errors', () => {
       // Transient-looking message on purpose: the ONLY reason this returns false
@@ -250,6 +254,101 @@ describe('isRetryableError', () => {
       expect(isRetryableError({ message: 'object error' })).toBe(false);
     });
   });
+});
+
+describe('HTTP request timeout read policy', () => {
+  it('retries a numeric 408 query verdict through an opaque wrapper', () => {
+    const cause = new ManifestMCPError(
+      ManifestMCPErrorCode.QUERY_FAILED,
+      'Opaque response',
+      { httpStatus: 408 },
+    );
+    expect(isRetryableError(cause)).toBe(true);
+    expect(
+      isRetryableError(Object.assign(new Error('Adapter failure'), { cause })),
+    ).toBe(true);
+  });
+
+  it.each([
+    ManifestMCPErrorCode.RPC_CONNECTION_FAILED,
+    ManifestMCPErrorCode.SIMULATION_FAILED,
+  ])('does not broaden HTTP 408 to %s', (code) => {
+    expect(
+      isRetryableError(
+        new ManifestMCPError(code, 'Request timed out; HTTP 503', {
+          httpStatus: 408,
+        }),
+      ),
+    ).toBe(false);
+  });
+
+  it.each([
+    { httpStatus: 408, grpcCode: 2, expected: false },
+    { httpStatus: 408, grpcCode: 14, expected: true },
+    { httpStatus: 425, grpcCode: 14, expected: true },
+  ])(
+    'preserves gRPC precedence for $httpStatus/$grpcCode',
+    ({ expected, ...details }) => {
+      expect(
+        isRetryableError(
+          new ManifestMCPError(
+            ManifestMCPErrorCode.QUERY_FAILED,
+            'Response',
+            details,
+          ),
+        ),
+      ).toBe(expected);
+    },
+  );
+
+  it('keeps HTTP-only 425 terminal despite a transport timeout marker', () => {
+    expect(
+      isRetryableError(
+        new ManifestMCPError(ManifestMCPErrorCode.QUERY_FAILED, 'HTTP 503', {
+          httpStatus: 425,
+          transportCode: 'ETIMEDOUT',
+        }),
+      ),
+    ).toBe(false);
+  });
+
+  it.each(['AbortError', 'TimeoutError'])(
+    'does not let a 408 verdict authorize a nested unowned %s',
+    (name) => {
+      const error = Object.assign(
+        new ManifestMCPError(ManifestMCPErrorCode.QUERY_FAILED, 'Response', {
+          httpStatus: 408,
+        }),
+        { cause: new DOMException('Operation ended', name) },
+      );
+      expect(isRetryableError(error)).toBe(false);
+    },
+  );
+
+  it.each([{ httpStatus: 403 }, { partial: true }, { sent: true }])(
+    'preserves a nested protected outcome %j under a 408 verdict',
+    (details) => {
+      const cause = new ManifestMCPError(
+        ManifestMCPErrorCode.QUERY_FAILED,
+        'Established outcome',
+        details,
+      );
+      const error = Object.assign(
+        new ManifestMCPError(ManifestMCPErrorCode.QUERY_FAILED, 'Response', {
+          httpStatus: 408,
+        }),
+        { cause },
+      );
+      expect(isRetryableError(error)).toBe(false);
+    },
+  );
+
+  it.each([408, 425])(
+    'does not classify HTTP %s from prose alone',
+    (status) => {
+      expect(isRetryableError(new Error(`HTTP ${status}`))).toBe(false);
+    },
+  );
 });
 
 describe('calculateBackoff', () => {
