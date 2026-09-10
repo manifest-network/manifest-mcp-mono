@@ -302,5 +302,34 @@ Review validation:
   checks and all four unchanged bundle budgets pass. Independent review found
   no concrete blocker (confidence 98%). No dependencies changed.
 
-These review changes still require CI on their new commit; `bf5a7e2`'s green live
-acceptance result covers the initial implementation only.
+CI subsequently passed on review commit `9fe0883`, including the dependency audit,
+unit tests, live SDK acceptance and the E2E gate.
+
+### PR #225 type-constraint correction (2026-09-10)
+
+[Claude's re-review](https://github.com/manifest-network/manifest-mcp-mono/pull/225#issuecomment-5619159481)
+corrected the recommendation to intersect the identity marker's constraint with
+`Record<string, unknown>`. The spread does not need that index signature, which
+lets an explicit misspelled `transportCoed` key compile. Use bare
+`satisfies TransportErrorDetails`, matching the faucet producers (P3, confidence
+100%). The existing key and runtime behavior were already correct.
+
+Four compiler-host probes against the real core project confirm that both forms
+accept the valid key, the old form accepts the typo, and the corrected form rejects
+it with TS1360. Generated JavaScript is byte-identical. All 48 focused identity and
+timeout tests pass; Biome fix/check and diff checks pass. Full coverage and package
+builds were not repeated for this erased type-constraint change.
+
+The three nonblocking residuals retain their existing scope:
+
+- SDK script tests execute outside the compiler projects; the public API type
+  tests remain gated. Add a scoped no-emit script gate under
+  [ENG-806](https://linear.app/liftedinit/issue/ENG-806) (confidence 100%).
+- The classifier's marker comparison is currently correct and runtime-tested but
+  statically unbound to the metadata type. No production defect or additional
+  change is established by this observation (assessment confidence 99%).
+- Individual identity-check mutations expose optional coverage for arbitrary or
+  polyfilled abort reasons. Normal production deadlines yield `TimeoutError`;
+  no production failure was demonstrated. Retain compatibility cases under
+  [ENG-751](https://linear.app/liftedinit/issue/ENG-751) (coverage distinction
+  confidence 100%).

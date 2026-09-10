@@ -147,11 +147,10 @@ async function verifyChainIdentity(
         new ManifestMCPError(
           ManifestMCPErrorCode.RPC_CONNECTION_FAILED,
           `${protocol} chain identity verification timed out.`,
-          { ...details, transportCode: 'ETIMEDOUT' } satisfies Record<
-            string,
-            unknown
-          > &
-            TransportErrorDetails,
+          {
+            ...details,
+            transportCode: 'ETIMEDOUT',
+          } satisfies TransportErrorDetails,
         ),
         { cause: error },
       );
