@@ -62,8 +62,9 @@ Final revision: 3,857 tests pass, 17 skip, no type errors; 57 new regressions.
 All coverage floors, 335 focused checks, agent-core build/types and Biome pass.
 Earlier PR validation also passed workspace/E2E types, builds, architecture,
 package/size, MCP metadata and harness gates, with no high/critical dependency
-audit findings. All five CI checks passed on preceding head `550c06a`; the new
-revision requires its own CI.
+audit findings. All five CI checks passed on `df28fd7`. A subsequent documentation correction
+clarifies the exported inactive-result type; emitted JavaScript is unchanged,
+and that documentation commit requires its own CI.
 The [implementation record](../../eng805-remediation.md#follow-up-mutation-receipts-across-verification-failures)
 contains coverage values, review confidence scores and validation limitations.
 Live acceptance requires PR CI because the local XFS quota mount is absent.

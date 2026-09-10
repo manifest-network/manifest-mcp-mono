@@ -616,3 +616,30 @@ remain unavailable. ENG-805 stays In Progress with 11 unchecked criteria; the
 two post-mutation criteria remain implemented, PR open and unreleased. All 72
 pre-existing artifacts, submodule pins and the unrelated release branch are
 preserved. No new retained item was added.
+
+
+## PR #227 final review: inactive-result type documentation
+
+[Claude's final review](https://github.com/manifest-network/manifest-mcp-mono/pull/227#issuecomment-5624679553)
+confirms that `df28fd7` closes both implementation items and reports no new
+runtime finding. All five CI checks on that commit pass, including live SDK
+acceptance and the E2E gate.
+
+The review repeats that `already_inactive` implies no broadcast. Tracing that
+wording exposed a remaining documentation gap: the exported `StopAppResult`
+comment also made that claim, although the consumer guide already distinguishes
+terminal pre-query results from reconciliation after a failed blocking
+broadcast. The type comment now states that distinction and promises only that
+no transaction receipt is returned. Confidence: 100% from control flow and the
+existing ACTIVE-to-CLOSED and PENDING-to-REJECTED reconciliation tests.
+
+This revision changes comments and the implementation record only. `stopApp`
+emits byte-identical JavaScript with comments removed; Biome and diff checks
+pass. Existing reconciliation regressions already cover the described behavior,
+so no tests were added or rerun for this prose change. The previous validation
+remains 3,857 pass / 17 skip, 335 focused checks and 57 new PR regressions, with
+all coverage thresholds met. Independent review confirms the correction (100%
+confidence). The documentation commit requires its own CI; the PR remains open
+and unreleased. ENG-805 retains 11 unchecked criteria, unchanged owners/triage
+and no new deferred item. All 72 pre-existing artifacts, submodule pins and the
+unrelated release branch remain intact.
