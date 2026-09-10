@@ -399,7 +399,8 @@ run remains applicable to that runtime; all five CI checks passed on `f2de246`,
 including live SDK acceptance and the E2E gate. Full coverage and package builds
 are not repeated for this documentation/test-organization correction.
 
-One pre-existing hardening gap remains under ENG-805 (P3, confidence 99%):
+One pre-existing hardening gap was retained under ENG-805 at PR #226 review
+(P3, confidence 99%; addressed by the follow-up below):
 `manageDomain` and `closeLease` can lose a successful mutation's hash/outcome when
 the following verification read fails. Six isolated no-network probes (set,
 clear and close, each with HTTP 503/408) confirm that a caller's whole-orchestration
@@ -414,3 +415,56 @@ transaction hash and verification cause, prevent whole-operation replay after
 submission, and test both mutations and read-only lookup. A no-op close must not
 invent submission evidence. Narrow deduplication found no dedicated owner;
 completed related work and ENG-267's adjacent scope remain unchanged.
+
+
+## Follow-up: mutation receipts across verification failures
+
+The [focused plan](superpowers/plans/2026-09-10-eng805-verification-outcomes.md)
+implements the two retained post-mutation criteria on base `7cc796a`.
+`manageDomain` set/clear and `closeLease` now retain their typed core result and
+wrap every later verification/result-handling failure in a fresh SDK error.
+Structured code/message and original causes survive without changing upstream
+errors or their frozen details. Actual transaction receipts add `sent: true`,
+hash, confirmation and optional code, plus lease/domain/stop context. This
+prevents `withRetry` from replaying the whole orchestration after submission.
+
+Read-only lookup, pre-receipt errors, callbacks and successful public result
+shapes are unchanged. `already_inactive` preserves outcome/state without
+inventing submission evidence; normal retry classification applies to the preserved cause chain. Keeping a
+previously discarded abort/permanent transport cause can correctly veto retry.
+That result can also follow terminal reconciliation after a caught broadcast
+error, so missing receipt data cannot prove that no broadcast was attempted.
+Unconfirmed receipts likewise do not establish committed execution.
+
+| Finding | Confidence | Resolution |
+| --- | --- | --- |
+| Retrying verification failures could re-enter successful mutation helpers | 100% observed; 99% conditional SDK-composition impact | Public orchestration regressions cover set, clear, stopped and cancelled outcomes with 408, 503 and raw transient failures. Each now invokes the mutation once. |
+| Query metadata could attach an unrelated transaction code to an unconfirmed stop receipt | 100% | Omit that field when the actual stop receipt supplies no code; preserve the upstream details in the cause. Two red regressions now pass. |
+| Oversized query diagnostics could displace receipt confirmation/domain fields in MCP output | 99% | Prioritize the four additional receipt fields in the existing bounded projection; exercise both receipt types through real `withErrorHandling`. Existing sent/hash/lease protections remain intact. |
+
+No new dependency, public success type, retry option or global classification
+rule is introduced. SDK error object identity changes only after a successful
+core result. Consumer documentation lists exact fields and reconciliation
+semantics; MCP retains bounded sanitized details without serializing the cause.
+AggregateError and the other retained ENG-805 work remain separate.
+
+Validation passes: **3,840 tests**, 17 skipped, across 176 files with no type
+errors; 40 cases are new. Coverage is 84.49% lines, 84.22% statements, 83.85%
+branches and 88.15% functions, with all global/query/transaction floors passing.
+The receipt helper has 100% coverage across all four measures. The integrated
+focused run passed 317 cases before the final permanent-cause control, which is
+included in the full run.
+
+Workspace builds/types, E2E types, Biome, dependency architecture, package
+integrity, bundle budgets, the eight local MCP metadata cases, and coverage/type
+harness negative controls all pass. Package validation was repeated after the
+E2E type gate completed rebuilding dist; an initial overlap had observed the
+transiently empty cosmwasm output. The required dependency audit reports the
+unchanged seven low/four moderate findings and no high/critical findings.
+Independent review found no remaining blocker (confidence 98%); its projection
+and no-receipt wording observations are resolved (confidence 99% each).
+
+Local live acceptance is unavailable because the dedicated XFS project-quota
+mount is absent. The PR's live acceptance/E2E gate remains required before merge.
+The 72 pre-existing untracked artifacts and both submodule pins are preserved.
+These changes are implemented and unreleased; ENG-805 remains In Progress.

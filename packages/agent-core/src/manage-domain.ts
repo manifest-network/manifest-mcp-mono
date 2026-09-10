@@ -38,6 +38,10 @@ import {
   notifyFailure,
 } from './internals/safe-progress.js';
 import {
+  verificationQueryError,
+  withVerificationOutcome,
+} from './internals/verification-outcome.js';
+import {
   type VerifyDomainOutcome,
   type VerifyDomainResult,
   verifyDomainState,
@@ -99,8 +103,10 @@ const SCHEME_PREFIX_RE = /^https?:\/\//i;
  *       the `set` / `clear` paths (wrapped inside the verifier closure
  *       so the failure flows through `onFailure({ reason })` before the
  *       throw).
- *   Structured `ManifestMCPError`s raised by the chain client are
- *   re-thrown as-is (with `onFailure` invoked first).
+ *   Lookup preserves structured errors as-is. After a successful mutation,
+ *   verification errors preserve their code/message and original cause in a
+ *   fresh error carrying the mutation receipt and `details.sent: true`.
+ *   Reconcile that transaction before considering another mutation.
  */
 export async function manageDomain(
   args: ManageDomainArgs,
@@ -155,119 +161,121 @@ export async function manageDomain(
   // The raw MCP `leaseUuid`/`fqdn` strings are unbranded → parse at the boundary.
   const leaseUuid = parseLeaseUuid(args.leaseUuid);
   cx.throwIfCancelled();
-  await setItemCustomDomain(
+  const mutationReceipt = await setItemCustomDomain(
     { chain: opts.clientManager, logger: noopLogger },
     args.action === 'set'
       ? { leaseUuid, customDomain: parseFqdn(fqdn), serviceName }
       : { leaseUuid, clear: true, serviceName },
   );
 
-  // --- Verify ---------------------------------------------------------
-  // Direct single-lease query (Copilot review PR #60, comment 3275999569):
-  // the previous `leasesByTenant` + page-1-only pagination would
-  // false-`not_found` for tenants with >100 leases. `billing.v1.lease`
-  // is the same query shape `troubleshoot.ts` already uses; it's
-  // tenant-agnostic and bounded to a single lease.
-  //
-  // We wrap the single-lease result as `{ leases: [result.lease] }`
-  // (or an empty array if the chain returns no match) so
-  // `verifyDomainState` stays untouched — its `findLease` walks the
-  // same shape, and a `not_found` outcome falls out naturally when the
-  // wrapper array is empty.
-  const spec: VerificationSpec<
-    unknown,
-    VerifyDomainOutcome,
-    VerifyDomainResult
-  > = {
-    verifier: async () => {
-      // Wrap the chain call in try/catch (Copilot review PR #60,
-      // comment 3276419210): if `billing.v1.lease` rejects (RPC down,
-      // transport, structured `ManifestMCPError`), the error would
-      // otherwise propagate OUT of `verifyAndRecover` and bypass the
-      // post-verify `onFailure({ reason })` callback below. Mirror
-      // the disambiguation pattern from `lookupDomain` (commit aaa5cc5)
-      // and `troubleshootDeployment` (commit f1a4737): invoke
-      // `onFailure` first, then re-throw `ManifestMCPError` as-is or
-      // wrap plain errors as `QUERY_FAILED`.
-      let result: unknown;
-      try {
-        const queryClient = await opts.clientManager.getQueryClient();
-        result = await queryClient.liftedinit.billing.v1.lease({
-          leaseUuid: args.leaseUuid,
-        });
-      } catch (err) {
-        const reason = `Failed to query lease ${args.leaseUuid} during ${args.action}-verify: ${
-          err instanceof Error ? err.message : String(err)
-        }`;
-        await notifyFailure(callbacks.onFailure, { reason });
-        if (err instanceof ManifestMCPError) {
-          throw err;
+  return withVerificationOutcome(mutationReceipt, async () => {
+    // --- Verify ---------------------------------------------------------
+    // Direct single-lease query (Copilot review PR #60, comment 3275999569):
+    // the previous `leasesByTenant` + page-1-only pagination would
+    // false-`not_found` for tenants with >100 leases. `billing.v1.lease`
+    // is the same query shape `troubleshoot.ts` already uses; it's
+    // tenant-agnostic and bounded to a single lease.
+    //
+    // We wrap the single-lease result as `{ leases: [result.lease] }`
+    // (or an empty array if the chain returns no match) so
+    // `verifyDomainState` stays untouched — its `findLease` walks the
+    // same shape, and a `not_found` outcome falls out naturally when the
+    // wrapper array is empty.
+    const spec: VerificationSpec<
+      unknown,
+      VerifyDomainOutcome,
+      VerifyDomainResult
+    > = {
+      verifier: async () => {
+        // Wrap the chain call in try/catch (Copilot review PR #60,
+        // comment 3276419210): if `billing.v1.lease` rejects (RPC down,
+        // transport, structured `ManifestMCPError`), the error would
+        // otherwise propagate OUT of `verifyAndRecover` and bypass the
+        // post-verify `onFailure({ reason })` callback below. Mirror
+        // the disambiguation pattern from `lookupDomain` (commit aaa5cc5)
+        // and `troubleshootDeployment` (commit f1a4737): invoke
+        // `onFailure` first, then re-throw `ManifestMCPError` as-is or
+        // wrap plain errors as `QUERY_FAILED`.
+        let result: unknown;
+        try {
+          const queryClient = await opts.clientManager.getQueryClient();
+          result = await queryClient.liftedinit.billing.v1.lease({
+            leaseUuid: args.leaseUuid,
+          });
+        } catch (err) {
+          const reason = `Failed to query lease ${args.leaseUuid} during ${args.action}-verify: ${
+            err instanceof Error ? err.message : String(err)
+          }`;
+          await notifyFailure(callbacks.onFailure, { reason });
+          if (err instanceof ManifestMCPError) {
+            throw err;
+          }
+          throw verificationQueryError(reason, err);
         }
-        throw new ManifestMCPError(ManifestMCPErrorCode.QUERY_FAILED, reason);
-      }
-      const lease = (result as { lease?: unknown })?.lease;
-      const leases = lease === null || lease === undefined ? [] : [lease];
-      const decoded = verifyDomainState(
-        { leases },
-        {
-          leaseUuid: args.leaseUuid,
-          ...(serviceName ? { serviceName } : {}),
-          expected: fqdn,
+        const lease = (result as { lease?: unknown })?.lease;
+        const leases = lease === null || lease === undefined ? [] : [lease];
+        const decoded = verifyDomainState(
+          { leases },
+          {
+            leaseUuid: args.leaseUuid,
+            ...(serviceName ? { serviceName } : {}),
+            expected: fqdn,
+          },
+        );
+        return { outcome: decoded.outcome, diagnostic: decoded };
+      },
+      successValues: ['match'],
+      branches: {
+        mismatch: {
+          branchId: 'domain_verification_mismatch',
+          journalActionTags: ['domain-verification-mismatch'],
+          buildFailureEnvelope: (d) => ({
+            outcome: 'failed',
+            reason:
+              args.action === 'set'
+                ? `Chain shows custom_domain="${d.actual ?? ''}" for lease ${args.leaseUuid}; expected "${fqdn}".`
+                : `Chain still shows custom_domain="${d.actual ?? ''}" for lease ${args.leaseUuid}; expected cleared.`,
+          }),
+          buildRecoveryOptions: () => [],
         },
-      );
-      return { outcome: decoded.outcome, diagnostic: decoded };
-    },
-    successValues: ['match'],
-    branches: {
-      mismatch: {
-        branchId: 'domain_verification_mismatch',
-        journalActionTags: ['domain-verification-mismatch'],
-        buildFailureEnvelope: (d) => ({
-          outcome: 'failed',
-          reason:
-            args.action === 'set'
-              ? `Chain shows custom_domain="${d.actual ?? ''}" for lease ${args.leaseUuid}; expected "${fqdn}".`
-              : `Chain still shows custom_domain="${d.actual ?? ''}" for lease ${args.leaseUuid}; expected cleared.`,
-        }),
-        buildRecoveryOptions: () => [],
+        not_found: {
+          branchId: 'domain_not_found',
+          journalActionTags: ['domain-verification-not-found'],
+          buildFailureEnvelope: (d) => ({
+            outcome: 'failed',
+            reason:
+              d.reason ??
+              `Lease ${args.leaseUuid} not found when verifying domain state.`,
+          }),
+          buildRecoveryOptions: () => [],
+        },
       },
-      not_found: {
-        branchId: 'domain_not_found',
-        journalActionTags: ['domain-verification-not-found'],
-        buildFailureEnvelope: (d) => ({
-          outcome: 'failed',
-          reason:
-            d.reason ??
-            `Lease ${args.leaseUuid} not found when verifying domain state.`,
-        }),
-        buildRecoveryOptions: () => [],
-      },
-    },
-  };
+    };
 
-  const verifyResult = await verifyAndRecover(spec, undefined);
-  const verified = verifyResult.result === 'success';
-  const finalCustomDomain = deriveFinalCustomDomain(
-    verifyResult.diagnostic,
-    args.action,
-  );
+    const verifyResult = await verifyAndRecover(spec, undefined);
+    const verified = verifyResult.result === 'success';
+    const finalCustomDomain = deriveFinalCustomDomain(
+      verifyResult.diagnostic,
+      args.action,
+    );
 
-  if (!verified) {
-    const reason =
-      verifyResult.failure?.reason ??
-      `manage-domain ${args.action} verification failed.`;
-    await notifyFailure(callbacks.onFailure, { reason });
-    throw new ManifestMCPError(ManifestMCPErrorCode.TX_FAILED, reason);
-  }
+    if (!verified) {
+      const reason =
+        verifyResult.failure?.reason ??
+        `manage-domain ${args.action} verification failed.`;
+      await notifyFailure(callbacks.onFailure, { reason });
+      throw new ManifestMCPError(ManifestMCPErrorCode.TX_FAILED, reason);
+    }
 
-  const result: ManageDomainResult = {
-    action: args.action,
-    leaseUuid: args.leaseUuid,
-    verified,
-    finalCustomDomain,
-  };
-  emitCompletion(() => callbacks.onComplete?.(result));
-  return result;
+    const result: ManageDomainResult = {
+      action: args.action,
+      leaseUuid: args.leaseUuid,
+      verified,
+      finalCustomDomain,
+    };
+    emitCompletion(() => callbacks.onComplete?.(result));
+    return result;
+  });
 }
 
 // --- Helpers --------------------------------------------------------

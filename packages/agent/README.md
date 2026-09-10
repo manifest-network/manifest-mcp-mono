@@ -22,6 +22,14 @@ Each tool returns the corresponding agent-core result type (`DeployResult` / `Ma
 
 ## Host requirements
 
+Domain set/clear and close verification failures preserve the mutation receipt in
+MCP error details. When that receipt has a transaction hash, `sent: true` tells the
+host to reconcile the submitted transaction and lease state before another
+mutation. The SDK cause chain is not serialized into MCP responses; receipt
+fields are preserved through the bounded error projection. A close outcome of
+`already_inactive` adds no inferred submission evidence. See the
+[verification error contract](../../docs/library-usage.md#errors).
+
 MCP elicitation support is required **only for the tools/actions that prompt the user**: `deploy_app_orchestrated`, `close_lease_orchestrated`, and `manage_domain_orchestrated` with `action='set'` or `'clear'`. Hosts that don't advertise `capabilities.elicitation` at `initialize` receive `ManifestMCPError(INVALID_CONFIG)` with a clear diagnostic when invoking those paths — the wrapper does not fall back to stdin prompts or auto-confirm.
 
 The two read-only paths run **without** an elicitation-capable host:
