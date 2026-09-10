@@ -815,6 +815,116 @@ describe('closeLease post-mutation verification (ENG-805)', () => {
     expect(completed).toEqual([]);
   });
 
+  it.each([
+    {
+      label: 'SDK message',
+      field: 'message',
+      createError: () =>
+        new ManifestMCPError(
+          ManifestMCPErrorCode.RPC_CONNECTION_FAILED,
+          'verification query failed',
+        ),
+      expectedCode: ManifestMCPErrorCode.RPC_CONNECTION_FAILED,
+      expectedMessage: 'Verification error message unavailable',
+    },
+    {
+      label: 'SDK code',
+      field: 'code',
+      createError: () =>
+        new ManifestMCPError(
+          ManifestMCPErrorCode.QUERY_FAILED,
+          'verification query failed',
+        ),
+      expectedCode: ManifestMCPErrorCode.QUERY_FAILED,
+      expectedMessage: 'verification query failed',
+    },
+    {
+      label: 'raw Error message',
+      field: 'message',
+      createError: () => new Error('verification query failed'),
+      expectedCode: ManifestMCPErrorCode.QUERY_FAILED,
+      expectedMessage: `Failed to query lease ${leaseUuid} during close-verify: Verification error message unavailable`,
+    },
+  ])(
+    'preserves the stop receipt and original cause when $label access throws',
+    async ({ createError, field, expectedCode, expectedMessage }) => {
+      const core = await import('@manifest-network/manifest-mcp-core');
+      const { closeLease } = await import('./close-lease.js');
+      const receipt = Object.freeze({
+        lease_uuid: leaseUuid,
+        outcome: 'stopped',
+        lease_state: 'LEASE_STATE_CLOSED',
+        transactionHash: 'B'.repeat(64),
+        confirmed: true,
+        code: 0,
+      } satisfies StopAppResult);
+      vi.mocked(core.stopApp).mockResolvedValue(receipt);
+      const original = createError();
+      const metadataGetter = vi.fn(() => {
+        throw new Error(
+          'fetch failed while reading verification error metadata',
+        );
+      });
+      Object.defineProperty(original, field, {
+        configurable: true,
+        get: metadataGetter,
+      });
+      const queryClient = makeMockQueryClient();
+      queryClient.liftedinit.billing.v1.lease.mockRejectedValue(original);
+      const clientManager = makeMockClientManager(queryClient);
+      const { callbacks, confirms, failures, completed } = captureCallbacks();
+      const retry = vi.fn();
+
+      const error: unknown = await withRetry(
+        () =>
+          closeLease({ leaseUuid }, callbacks, {
+            clientManager: clientManager as unknown as Parameters<
+              typeof closeLease
+            >[2]['clientManager'],
+          }),
+        { config: retryConfig, onRetry: retry },
+      ).catch((error: unknown) => error);
+
+      expect(core.stopApp).toHaveBeenCalledTimes(1);
+      expect(queryClient.liftedinit.billing.v1.lease).toHaveBeenCalledTimes(1);
+      expect(retry).not.toHaveBeenCalled();
+      expect(error).toBeInstanceOf(ManifestMCPError);
+      if (!(error instanceof ManifestMCPError)) {
+        throw new Error('expected a structured verification failure');
+      }
+      expect(error.code).toBe(expectedCode);
+      expect(error.message).toBe(expectedMessage);
+      expect(error.details).toEqual({
+        lease_uuid: leaseUuid,
+        sent: true,
+        transaction_hash: receipt.transactionHash,
+        transaction_confirmed: true,
+        transaction_code: 0,
+        stop_outcome: 'stopped',
+        lease_state: 'LEASE_STATE_CLOSED',
+      });
+      const cause: unknown = Reflect.get(error, 'cause');
+      expect(
+        cause === original ||
+          (cause instanceof Error && Reflect.get(cause, 'cause') === original),
+      ).toBe(true);
+      expect(Object.getOwnPropertyDescriptor(original, field)?.get).toBe(
+        metadataGetter,
+      );
+      expect(confirms).toHaveLength(1);
+      expect(failures).toEqual([
+        {
+          reason: `Failed to query lease ${leaseUuid} during close-verify: ${
+            field === 'code'
+              ? 'verification query failed'
+              : 'Verification error message unavailable'
+          }`,
+        },
+      ]);
+      expect(completed).toEqual([]);
+    },
+  );
+
   const inactiveResults = [
     {
       lease_uuid: leaseUuid,

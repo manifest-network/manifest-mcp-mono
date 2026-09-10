@@ -517,8 +517,9 @@ imprecision. The response keeps the receipt contract qualified and explicit:
 | Equivalent receipt-key spellings bypass the exact-name filter | 100% reproduction; same conditional reachability | Match the MCP projection's lowercase/underscore/hyphen normalization against the closed reserved-name inventory. Only exact canonical fields supplied by the receipt remain; extend all four native receipt-shape cases through SDK and MCP boundaries. |
 | The consumer guide's callback/cause statements could include read-only lookup | 100% | Scope them explicitly to post-mutation verification. Document lookup's cancellation and NotFound branches, structured-error passthrough and plain-error normalization without a mutation receipt or outer cause wrapper. |
 
-`transactionHash` and `transaction_hash` normalize to the same receipt name.
-The transaction-hash alias `txHash` is also reserved. Bare `code` is independently
+At `550c06a`, `transactionHash` and `transaction_hash` normalize to the same
+receipt name, and `txHash` is also reserved. The following generic-name policy
+records that revision; the next review amendment narrows it further. Bare `code` is independently
 prioritized by MCP; bare `confirmed` and `outcome`
 are neither equivalent to the qualified receipt names nor recovery-priority
 fields. Those generic names and bare `hash` remain query diagnostics, alongside ordinary
@@ -567,3 +568,51 @@ Local XFS project quotas remain unavailable. ENG-805 stays In Progress with
 11 unchecked criteria; its two implemented post-mutation criteria remain
 PR-open and unreleased. All 72 pre-existing untracked artifacts, both submodule
 pins and the unrelated release branch are preserved.
+
+
+## PR #227 review amendment: native receipt aliases and error inspection
+
+[Claude's next review](https://github.com/manifest-network/manifest-mcp-mono/pull/227#issuecomment-5624326560)
+confirmed the previous spelling/accessor regressions, then asked whether native
+`confirmed` and `outcome` should remain query diagnostics and identified an
+unguarded code/message read. The native-name argument changes the earlier
+policy decision: these names are receipt aliases, even though MCP does not give
+them recovery priority.
+
+| Finding | Confidence | Resolution |
+| --- | --- | --- |
+| Foreign bare `confirmed` / `outcome` can contradict the qualified receipt fields | 100% helper/SDK/MCP reproduction; 99% rationale for the narrower policy | Reserve both native names and their normalized/display-cleaned forms. Four receipt-shape cases inject conflicting receipt-like values. Keep `code`, `hash`, `committed` and ordinary HTTP/gRPC details as diagnostics. |
+| Throwing SDK code/message accessors can discard the receipt during error construction | 100% controlled reproduction | Guard reads independently, preserving the other readable field and original error. An unavailable code becomes `QUERY_FAILED`; an unavailable message becomes stable fallback prose. Ordinary raw-error prefixes remain. |
+| Query callback message formatting can replace the original verification cause before wrapping | 100% public-orchestration reproduction | Reuse guarded message formatting in both post-mutation query catch paths. Existing notifications and readable callback reasons remain; accessor failures preserve the original query error in the cause. |
+
+The helper also tolerates failed thrown-value string conversion and prototype
+inspection at its construction boundary. These remain custom-error hardening
+cases: no current first-party verifier was found to produce these native detail
+keys or throwing accessors (98–99% assessment confidence). The pre-fix helper
+run failed nine cases while twelve controls passed; the three new public close
+cases failed while the other 35 tests passed. Probes measure operation
+invocations without real broadcasts or claims about accepted transactions/fees.
+
+`already_inactive` can follow terminal reconciliation after a broadcast error;
+contrary to the review's premise, it does not establish that no broadcast was
+attempted. The wrapper adds no inferred sent flag to that result. This revision
+hardens post-mutation error construction; global retry cause traversal and
+classification are unchanged and can still reject on pathological custom cause
+accessors/proxies. Ordinary transaction-receipt errors still veto retries before
+classification inspects their original code/message accessors. The revoked-proxy
+regression deliberately asserts only the wrapper's construction boundary. No
+new retained tracker item or broader hostile-object guarantee is introduced.
+
+Final validation: **3,857 tests pass / 17 skip across 176 files**, no type
+errors; all 335 focused orchestration/helper/retry/MCP checks pass. The PR now
+adds 57 regression cases in total. Coverage meets every threshold: 84.54% lines,
+84.27% statements, 83.91% branches and 88.22% functions; the helper remains 100%
+across all four measures. Agent-core build/types and Biome pass. Independent
+code/docs/test review found no remaining blocker (98–99% confidence).
+
+All five CI checks, including live acceptance and the E2E gate, passed on
+preceding head `550c06a`; the new revision requires its own CI. Local XFS quotas
+remain unavailable. ENG-805 stays In Progress with 11 unchecked criteria; the
+two post-mutation criteria remain implemented, PR open and unreleased. All 72
+pre-existing artifacts, submodule pins and the unrelated release branch are
+preserved. No new retained item was added.

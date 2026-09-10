@@ -42,6 +42,7 @@ import {
   notifyFailure,
 } from './internals/safe-progress.js';
 import {
+  verificationErrorMessage,
   verificationQueryError,
   withVerificationOutcome,
 } from './internals/verification-outcome.js';
@@ -98,8 +99,9 @@ interface CloseDiag {
  *   (such as decoding or verifier spec/result validation) also become
  *   `QUERY_FAILED`, but bypass that query-failure callback. The outer
  *   receipt wrapper does not add an `onFailure` invocation.
- *   Post-mutation SDK errors preserve their code/message and original
- *   cause in a fresh error carrying the stop outcome. An actual
+ *   Post-mutation SDK errors preserve readable code/message values and their
+ *   original cause; failed reads use `QUERY_FAILED` / fallback message text.
+ *   The fresh error carries the stop outcome. An actual
  *   transaction receipt adds its hash, confirmation and `details.sent: true`;
  *   `already_inactive` adds no inferred submission evidence. Reconcile a
  *   submitted transaction before considering another mutation.
@@ -164,9 +166,7 @@ export async function closeLease(
             leaseUuid: args.leaseUuid,
           });
         } catch (err) {
-          const reason = `Failed to query lease ${args.leaseUuid} during close-verify: ${
-            err instanceof Error ? err.message : String(err)
-          }`;
+          const reason = `Failed to query lease ${args.leaseUuid} during close-verify: ${verificationErrorMessage(err)}`;
           await notifyFailure(callbacks.onFailure, { reason });
           if (err instanceof ManifestMCPError) {
             throw err;

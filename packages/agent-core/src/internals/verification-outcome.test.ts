@@ -47,6 +47,8 @@ const FOREIGN_RECEIPT_DETAILS = Object.freeze({
   transaction_hash: 'UNRELATED-HASH',
   transaction_confirmed: true,
   transaction_code: 99,
+  confirmed: true,
+  outcome: 'cancelled',
   stop_outcome: 'unrelated-stop-outcome',
   lease_state: 'LEASE_STATE_PENDING',
   service_name: 'unrelated-service',
@@ -65,11 +67,16 @@ const FOREIGN_RECEIPT_DETAILS = Object.freeze({
   serviceName: 'unrelated-camel-service',
   customDomain: 'unrelated-camel.example.com',
   rejectionReason: 'unrelated camel-shaped rejection reason',
+  CONFIRMED: true,
+  'out-come': 'cancelled',
   // Display sanitization removes these zero-width, bidi and ANSI controls.
   'rejection_\u200breason': 'disguised upstream rejection reason',
   'transaction\u202eHash': 'DISGUISED-TRANSACTION-HASH',
   '\u001b[31mtxHash\u001b[0m': 'DISGUISED-ANSI-TX-HASH',
   'tx_\u200bhash': 'DISGUISED-ZERO-WIDTH-TX-HASH',
+  'confi\u200brmed': true,
+  'out\u202ecome': 'cancelled',
+  '\u001b[31moutcome\u001b[0m': 'cancelled',
 });
 const READ_DIAGNOSTICS = Object.freeze({
   httpStatus: 408,
@@ -77,8 +84,6 @@ const READ_DIAGNOSTICS = Object.freeze({
   grpcMessage: 'Verification service unavailable',
   transportCode: 'ETIMEDOUT',
   code: 73,
-  confirmed: false,
-  outcome: 'verification-diagnostic',
   hash: 'verification-diagnostic-hash',
   committed: false,
   diagnostic: Object.freeze({ phase: 'verification', attempt: 1 }),
@@ -185,8 +190,16 @@ describe('verification outcome through retry and MCP boundaries', () => {
   ])(
     'does not attribute foreign receipt fields or normalized aliases to the $name result in SDK or MCP errors',
     async ({ receipt, expectedReceipt }) => {
+      const foreignNativeAliases = {
+        confirmed: 'confirmed' in receipt ? !receipt.confirmed : true,
+        outcome:
+          'outcome' in receipt && receipt.outcome === 'stopped'
+            ? 'cancelled'
+            : 'stopped',
+      };
       const details = Object.freeze({
         ...FOREIGN_RECEIPT_DETAILS,
+        ...foreignNativeAliases,
         ...READ_DIAGNOSTICS,
       });
       const original = Object.freeze(
@@ -214,15 +227,15 @@ describe('verification outcome through retry and MCP boundaries', () => {
       // receipt variants must not inherit another operation's evidence.
       const expectedDetails = { ...expectedReceipt, ...READ_DIAGNOSTICS };
       expect.soft(error.details).toEqual(expectedDetails);
-      // Generic verification diagnostics coexist with qualified receipt fields;
-      // they must not be treated as semantic aliases for transaction metadata.
+      // Bare native confirmed/outcome fields are reserved aliases. Generic
+      // code/hash/committed diagnostics coexist with qualified receipt fields.
       expect(error.details).toMatchObject({
         code: 73,
-        confirmed: false,
-        outcome: 'verification-diagnostic',
         hash: 'verification-diagnostic-hash',
         committed: false,
       });
+      expect.soft(error.details).not.toHaveProperty('confirmed');
+      expect.soft(error.details).not.toHaveProperty('outcome');
       if ('transactionHash' in receipt) {
         expect(error.details?.transaction_hash).toBe(receipt.transactionHash);
         expect(error.details?.transaction_confirmed).toBe(receipt.confirmed);
@@ -233,11 +246,12 @@ describe('verification outcome through retry and MCP boundaries', () => {
       }
       if ('outcome' in receipt) {
         expect(error.details?.stop_outcome).toBe(receipt.outcome);
-        expect(error.details?.outcome).not.toBe(receipt.outcome);
+        expect(foreignNativeAliases.outcome).not.toBe(receipt.outcome);
       }
       expect(original.details).toBe(details);
       expect(original.details).toEqual({
         ...FOREIGN_RECEIPT_DETAILS,
+        ...foreignNativeAliases,
         ...READ_DIAGNOSTICS,
       });
       expect(
@@ -417,6 +431,130 @@ describe('verification outcome through retry and MCP boundaries', () => {
     const { body } = await projectError(error);
     expect(body.details).toEqual(expectedDetails);
     expect(body).not.toHaveProperty('cause');
+  });
+
+  it.each([
+    {
+      name: 'SDK code accessor',
+      create: (fail: () => never) =>
+        Object.defineProperty(
+          new ManifestMCPError(
+            ManifestMCPErrorCode.RPC_CONNECTION_FAILED,
+            'Verification service unavailable',
+            { httpStatus: 503 },
+          ),
+          'code',
+          { get: fail },
+        ),
+      code: ManifestMCPErrorCode.QUERY_FAILED,
+      message: 'Verification service unavailable',
+      sdk: true,
+    },
+    {
+      name: 'SDK message accessor',
+      create: (fail: () => never) =>
+        Object.defineProperty(
+          new ManifestMCPError(
+            ManifestMCPErrorCode.RPC_CONNECTION_FAILED,
+            'Verification service unavailable',
+            { httpStatus: 503 },
+          ),
+          'message',
+          { get: fail },
+        ),
+      code: ManifestMCPErrorCode.RPC_CONNECTION_FAILED,
+      message: 'Verification error message unavailable',
+      sdk: true,
+    },
+    {
+      name: 'raw message accessor',
+      create: (fail: () => never) =>
+        Object.defineProperty(new Error('Verification failed'), 'message', {
+          get: fail,
+        }),
+      code: ManifestMCPErrorCode.QUERY_FAILED,
+      message:
+        'Post-mutation verification failed: Verification error message unavailable',
+      sdk: false,
+    },
+    {
+      name: 'thrown value string conversion',
+      create: (fail: () => never) => ({ [Symbol.toPrimitive]: fail }),
+      code: ManifestMCPErrorCode.QUERY_FAILED,
+      message:
+        'Post-mutation verification failed: Verification error message unavailable',
+      sdk: false,
+    },
+  ])(
+    'preserves the submitted receipt and original cause when the $name throws',
+    async ({ create, code, message, sdk }) => {
+      const fail = vi.fn((): never => {
+        throw new Error('fetch failed while inspecting verification error');
+      });
+      const original = create(fail);
+      const operation = vi.fn(() =>
+        withVerificationOutcome(STOPPED, async () => {
+          throw original;
+        }),
+      );
+      const caught: unknown = await withRetry(operation, {
+        config: RETRY,
+      }).catch((error: unknown) => error);
+
+      expect.soft(operation).toHaveBeenCalledOnce();
+      expect(caught).toBeInstanceOf(ManifestMCPError);
+      if (!(caught instanceof ManifestMCPError))
+        throw new Error(
+          'Expected the submitted receipt to survive error inspection',
+        );
+      expect(caught.code).toBe(code);
+      expect(caught.message).toBe(message);
+      expect(sdk ? causeOf(caught) : causeOf(causeOf(caught))).toBe(original);
+      const expectedDetails = {
+        lease_uuid: LEASE,
+        sent: true,
+        transaction_hash: HASH,
+        transaction_confirmed: true,
+        transaction_code: 0,
+        stop_outcome: 'stopped',
+        lease_state: 'LEASE_STATE_CLOSED',
+        ...(sdk ? { httpStatus: 503 } : {}),
+      };
+      expect(caught.details).toEqual(expectedDetails);
+      expect(isRetryableError(caught)).toBe(false);
+      const { body } = await projectError(caught);
+      expect(body.code).toBe(code);
+      expect(body.message).toBe(message);
+      expect(body.details).toEqual(expectedDetails);
+      expect(body).not.toHaveProperty('cause');
+    },
+  );
+
+  it('retains the receipt at the wrapper boundary if the thrown value cannot be inspected', async () => {
+    const { proxy, revoke } = Proxy.revocable({}, {});
+    revoke();
+    const error = await rejectedError(() =>
+      withVerificationOutcome(DOMAIN, async () => {
+        throw proxy;
+      }),
+    );
+
+    expect(error.code).toBe(ManifestMCPErrorCode.QUERY_FAILED);
+    expect(error.message).toBe(
+      'Post-mutation verification failed: Verification error message unavailable',
+    );
+    expect(causeOf(causeOf(error))).toBe(proxy);
+    expect(error.details).toEqual({
+      lease_uuid: LEASE,
+      sent: true,
+      transaction_hash: HASH,
+      transaction_confirmed: true,
+      transaction_code: 0,
+      service_name: 'web',
+      custom_domain: 'app.example.com',
+    });
+    // This asserts construction only: downstream cause traversal has its own
+    // inspection contract and does not accept arbitrary revoked proxies.
   });
 
   it('keeps a frozen receipt authoritative over frozen conflicting query details without replay', async () => {

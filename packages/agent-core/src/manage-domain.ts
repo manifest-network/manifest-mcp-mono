@@ -38,6 +38,7 @@ import {
   notifyFailure,
 } from './internals/safe-progress.js';
 import {
+  verificationErrorMessage,
   verificationQueryError,
   withVerificationOutcome,
 } from './internals/verification-outcome.js';
@@ -104,8 +105,9 @@ const SCHEME_PREFIX_RE = /^https?:\/\//i;
  *   `QUERY_FAILED`, but bypass that query-failure callback. The outer
  *   receipt wrapper does not add an `onFailure` invocation.
  *   Lookup preserves structured errors as-is. After a successful mutation,
- *   verification errors preserve their code/message and original cause in a
- *   fresh error carrying the mutation receipt and `details.sent: true`.
+ *   verification errors preserve readable code/message values and their
+ *   original cause; failed reads use `QUERY_FAILED` / fallback message text.
+ *   The fresh error carries the mutation receipt and `details.sent: true`.
  *   Reconcile that transaction before considering another mutation.
  */
 export async function manageDomain(
@@ -203,9 +205,7 @@ export async function manageDomain(
             leaseUuid: args.leaseUuid,
           });
         } catch (err) {
-          const reason = `Failed to query lease ${args.leaseUuid} during ${args.action}-verify: ${
-            err instanceof Error ? err.message : String(err)
-          }`;
+          const reason = `Failed to query lease ${args.leaseUuid} during ${args.action}-verify: ${verificationErrorMessage(err)}`;
           await notifyFailure(callbacks.onFailure, { reason });
           if (err instanceof ManifestMCPError) {
             throw err;

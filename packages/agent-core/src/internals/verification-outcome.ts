@@ -9,15 +9,17 @@ import {
 type MutationReceipt = SetItemCustomDomainResult | StopAppResult;
 
 // Match the MCP projection's case/separator equivalence for reserved receipt
-// names. Generic query diagnostics (code, confirmed, outcome) are separate.
+// names and their native receipt aliases. Generic code/hash diagnostics remain.
 const RECEIPT_DETAIL_NAMES = new Set([
   'leaseuuid',
   'sent',
   'transactionhash',
   'txhash',
   'transactionconfirmed',
+  'confirmed',
   'transactioncode',
   'stopoutcome',
+  'outcome',
   'leasestate',
   'servicename',
   'customdomain',
@@ -52,12 +54,41 @@ function withCause(error: ManifestMCPError, cause: unknown): ManifestMCPError {
   return error;
 }
 
+/** Error inspection must not replace the original verification failure. */
+export function verificationErrorMessage(cause: unknown): string {
+  try {
+    return cause instanceof Error ? String(cause.message) : String(cause);
+  } catch {
+    return 'Verification error message unavailable';
+  }
+}
+
+function verificationErrorCode(error: ManifestMCPError): ManifestMCPErrorCode {
+  try {
+    return error.code;
+  } catch {
+    return ManifestMCPErrorCode.QUERY_FAILED;
+  }
+}
+
 export function verificationQueryError(
   reason: string,
   cause: unknown,
 ): ManifestMCPError {
   return withCause(
     new ManifestMCPError(ManifestMCPErrorCode.QUERY_FAILED, reason),
+    cause,
+  );
+}
+
+function normalizeVerificationError(cause: unknown): ManifestMCPError {
+  try {
+    if (cause instanceof ManifestMCPError) return cause;
+  } catch {
+    // Even a failed prototype inspection must preserve the thrown value.
+  }
+  return verificationQueryError(
+    `Post-mutation verification failed: ${verificationErrorMessage(cause)}`,
     cause,
   );
 }
@@ -70,13 +101,7 @@ export async function withVerificationOutcome<T>(
   try {
     return await verify();
   } catch (cause) {
-    const error =
-      cause instanceof ManifestMCPError
-        ? cause
-        : verificationQueryError(
-            `Post-mutation verification failed: ${cause instanceof Error ? cause.message : String(cause)}`,
-            cause,
-          );
+    const error = normalizeVerificationError(cause);
     const outcome = {
       lease_uuid: receipt.lease_uuid,
       ...('transactionHash' in receipt
@@ -113,7 +138,11 @@ export async function withVerificationOutcome<T>(
       }
     }
     throw withCause(
-      new ManifestMCPError(error.code, error.message, details),
+      new ManifestMCPError(
+        verificationErrorCode(error),
+        verificationErrorMessage(error),
+        details,
+      ),
       error,
     );
   }

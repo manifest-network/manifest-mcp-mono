@@ -17,16 +17,19 @@ unsafe replay authorization, not two accepted transactions or fees. Confidence:
 - Retain the typed `SetItemCustomDomainResult` / `StopAppResult` and guard the
   complete subsequent verification and result-handling boundary with an internal
   agent-core helper.
-- Fresh errors preserve the SDK code/message, safely copied query diagnostics
+- Fresh errors preserve readable SDK code/message, safely copied query diagnostics
   and the original error in a non-enumerable cause chain. Never mutate upstream
-  errors or details.
+  errors or details. Guard code reads and message formatting independently;
+  unavailable values use `QUERY_FAILED` / stable fallback prose. Reuse guarded
+  formatting in the post-mutation query failure callbacks.
 - Actual transaction receipts add `sent: true`, `transaction_hash`,
   `transaction_confirmed`, optional `transaction_code`, and `lease_uuid`.
   Domain receipts retain `service_name` / `custom_domain`; close receipts retain
   `stop_outcome` / `lease_state`. Receipt evidence overrides conflicting query
   details and precedes them for bounded MCP projection. Omit canonical receipt
   fields that this receipt does not supply, including equivalent case/separator
-  spellings and MCP display-cleaned aliases; reserve `txHash` too. Exclude
+  spellings and MCP display-cleaned aliases; reserve `txHash` and native
+  `confirmed` / `outcome` too. Exclude
   free-form rejection reasons from outer details. Copy only enumerable query
   data properties, without invoking accessors, and tolerate reflection failure.
   Preserve original diagnostics and submission/partial evidence in the cause,
@@ -36,7 +39,7 @@ unsafe replay authorization, not two accepted transactions or fees. Confidence:
   that no submission was attempted. Add no submission-based retry veto when
   that result supplies no receipt; normal classification still applies to
   preserved causes.
-- Preserve successful public result types, callback reasons/isolation, read-only
+- Preserve successful public result types, readable callback reasons/isolation, read-only
   lookup and pre-mutation failures. No global retry changes or dependencies.
 
 ## Verification and completion
@@ -55,11 +58,11 @@ unsafe replay authorization, not two accepted transactions or fees. Confidence:
 AggregateError policy, broad coverage/compiler migration and other retained
 ENG-805 work remain separate. Preserve pre-existing untracked review artifacts.
 
-Final revision: 3,849 tests pass, 17 skip, no type errors; 49 new regressions.
-All coverage floors, 327 focused checks, agent-core build/types and Biome pass.
+Final revision: 3,857 tests pass, 17 skip, no type errors; 57 new regressions.
+All coverage floors, 335 focused checks, agent-core build/types and Biome pass.
 Earlier PR validation also passed workspace/E2E types, builds, architecture,
 package/size, MCP metadata and harness gates, with no high/critical dependency
-audit findings. All five CI checks passed on preceding head `55b6162`; the new
+audit findings. All five CI checks passed on preceding head `550c06a`; the new
 revision requires its own CI.
 The [implementation record](../../eng805-remediation.md#follow-up-mutation-receipts-across-verification-failures)
 contains coverage values, review confidence scores and validation limitations.
