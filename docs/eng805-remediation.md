@@ -643,3 +643,56 @@ confidence). The documentation commit requires its own CI; the PR remains open
 and unreleased. ENG-805 retains 11 unchecked criteria, unchanged owners/triage
 and no new deferred item. All 72 pre-existing artifacts, submodule pins and the
 unrelated release branch remain intact.
+
+
+## PR #227 review: close teardown rejection documentation
+
+[Claude's next review](https://github.com/manifest-network/manifest-mcp-mono/pull/227#issuecomment-5634520238)
+accepts the inactive-result type correction and identifies a remaining
+`closeLease` clause claiming only ACTIVE broadcast failures or the
+PENDING-to-ACTIVE race propagate as-is. The rewritten teardown `@throws`
+paragraph now covers the actual branches:
+
+- Initial query, validation and cancellation failures can reject teardown.
+- Either an ACTIVE close or a PENDING cancel attempt can fail. A non-cancellation
+  failure in blocking mode can instead converge to `already_inactive` when the
+  re-query finds a terminal lease, returning no transaction receipt.
+- A PENDING cancellation whose re-query finds ACTIVE raises a new `TX_FAILED`;
+  other unresolved attempt failures retain their original error.
+- `closeLease` forwards whichever rejection `stopApp` produces unchanged,
+  without notifying `onFailure`; that callback belongs to later verification.
+
+Confidence: 100% from the control flow and existing close/cancel reconciliation,
+unchanged-state, failed-query and callback regressions. The related wording
+search found no second copy of the overstatement (99% confidence). This is a
+comment-only source correction; `closeLease` emits byte-identical JavaScript
+with comments removed. Existing tests already cover the described paths, so no
+new tests or runtime retesting are needed for the prose change.
+
+Independent review confirms the revised paragraph (100% confidence). Biome
+and diff checks pass. The unchanged runtime remains backed by 3,857 passing
+tests / 17 skipped, 335 focused checks and 57 new PR regressions, with all
+coverage thresholds met. All five CI checks passed on `6f4000a`, including live
+acceptance/E2E; the new documentation revision requires its own CI.
+
+The review's pre-existing reconciliation-diagnostics observation is recorded
+as an optional P3 core contract extension, not a blocker or a reopened criterion.
+Confidence is 100% in the source-level evidence loss: first-party failed
+DeliverTx errors can carry actual hash/code/height, but terminal reconciliation
+returns only the inactive result and discards that error. A future design would
+preserve those actual diagnostics separately from observed state and carry them
+through later verification failures, while distinguishing pre-submission errors
+from hash-bearing transaction failures. It must never infer submission from
+terminal state alone. This PR preserves the result that core actually returns.
+
+The claim that a retry never broadcasts again is conditional on its next
+pre-query reporting terminal. There is no persistent guard across invocations;
+a stale ACTIVE/PENDING response can reach another attempt (99% control-flow
+confidence, not demonstrated duplicate execution or fees). Cancellation and
+nonblocking errors bypass this reconciliation branch. The current no-receipt
+contract is already documented, and a narrow tracker search found no dedicated
+outstanding reconciliation-diagnostics criterion. The optional extension is
+recorded in ENG-805's review comment; its 11 unchecked criteria and two checked
+post-mutation criteria retain their existing scope. The PR remains open and
+unreleased. All 72 pre-existing artifacts, submodule pins and the unrelated
+release branch are preserved.

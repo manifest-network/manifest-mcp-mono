@@ -72,17 +72,17 @@ interface CloseDiag {
  * @throws `ManifestMCPError(INVALID_CONFIG)` for args validation.
  * @throws `ManifestMCPError(OPERATION_CANCELLED)` when `onConfirm` returns
  *   `'no'` (deliberate user cancellation — ENG-272).
- * @throws `ManifestMCPError` (typically `TX_FAILED`) propagated as-is
- *   from the `stopApp()` teardown step. `stopApp` is now polymorphic and
- *   idempotent: an already-terminal lease resolves as a no-op success and
- *   a PENDING lease is CANCELLED (→ REJECTED, which the verifier accepts
- *   as terminal), so neither raises here anymore. Only a genuine broadcast
- *   error on an ACTIVE close (or the rare `PENDING→ACTIVE` mid-call race)
- *   still propagates as-is. Broadcast errors do NOT invoke `onFailure` —
- *   that callback is reserved for post-broadcast verification failures.
- *   `stopApp` already raises a structured `ManifestMCPError` from the core
- *   package; wrapping it again at this layer would be redundant. Callers
- *   wanting to react to broadcast errors should catch them at the call site.
+ * @throws `ManifestMCPError` from the `stopApp()` teardown step, including
+ *   query, validation, cancellation and transaction failures. A terminal
+ *   pre-query resolves as a no-op; ACTIVE and PENDING leases select close
+ *   and cancel respectively, and either operation can fail. After a
+ *   non-cancellation failure from a blocking close/cancel attempt, a terminal
+ *   re-query makes `stopApp` resolve `already_inactive` without a transaction
+ *   receipt, and verification continues. Otherwise it preserves the original
+ *   failure, except that a `PENDING→ACTIVE` cancel race becomes a new `TX_FAILED`.
+ *   `closeLease` propagates whichever rejection `stopApp` produces unchanged,
+ *   without invoking `onFailure`. Catch the rejected promise to handle
+ *   teardown failures; `onFailure` belongs to subsequent verification.
  * @throws `ManifestMCPError(TX_FAILED)` when post-broadcast verification
  *   reaches one of two failure modes (both with `onFailure({ reason })`
  *   invoked first):
