@@ -13,6 +13,7 @@ function qc(
     name: string;
     providerUuid: string;
     basePrice?: { amount: string; denom: string };
+    unit?: number;
   }>,
 ) {
   return makeMockQueryClient({ sku: { skus } }) as never;
@@ -24,6 +25,7 @@ const rc = (
     name: string;
     providerUuid: string;
     basePrice?: { amount: string; denom: string };
+    unit?: number;
   }>,
 ) => makeReadCtx({ query: qc(skus) });
 
@@ -43,6 +45,23 @@ const dup = [
 ];
 
 describe('resolveSku', () => {
+  it.each([
+    [1, 'hour'],
+    [2, 'day'],
+    [0, undefined],
+    [-1, undefined],
+    [123, undefined],
+    [undefined, undefined],
+  ] as const)(
+    'preserves billing unit %s as %s without assuming hourly billing',
+    async (unit, billingUnit) => {
+      const result = await resolveSku(rc([{ ...dup[0], unit }]), {
+        size: 'docker-micro',
+      });
+      expect(result.billingUnit).toBe(billingUnit);
+    },
+  );
+
   it('resolves a unique name to its single candidate', async () => {
     const r = await resolveSku(rc([dup[0]]), { size: 'docker-micro' });
     expect(r).toMatchObject({

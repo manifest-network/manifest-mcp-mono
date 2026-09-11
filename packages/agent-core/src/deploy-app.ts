@@ -111,6 +111,7 @@ import type {
   FailureEnvelope,
   FeeEstimate,
   Plan,
+  PlannedLeaseItem,
   Readiness,
   RecoveryChoice,
   RecoveryOption,
@@ -295,6 +296,7 @@ export async function deployApp(
     }
   };
   let { pin: pinned, elicited: pinElicited } = await resolvePin(spec);
+  let leaseItems = await resolveLeaseItems(readCtx, spec, pinned);
 
   // FIX 1 (ENG-258 review): `pinned.name` is the RESOLVED SKU's on-chain
   // name. When a deploy is pinned by `skuUuid` (or by provider) whose
@@ -360,13 +362,8 @@ export async function deployApp(
   // (when customDomain set). Lean port: cosmosEstimateFee invocation
   // details encapsulated in a helper to keep this fn focused on flow.
   let summary = summarizeSpec(spec);
-  let fees = await estimateFees(
-    opts,
-    spec,
-    preview.meta_hash_hex,
-    pinned.skuUuid,
-  );
-  let plan: Plan = { summary, readiness, fees };
+  let fees = await estimateFees(opts, spec, preview.meta_hash_hex, leaseItems);
+  let plan: Plan = { summary, readiness, fees, leaseItems };
 
   // --- Render plan + onPlan callback ----------------------------------
   // FIX 2 (ENG-258 review): stamp the resolved pin identity onto the
@@ -468,6 +465,7 @@ export async function deployApp(
       // re-elicit for the same choice.
       ({ pin: pinned, elicited: pinElicited } =
         await resolvePin(confirmedSpec));
+      leaseItems = await resolveLeaseItems(readCtx, confirmedSpec, pinned);
       if (pinElicited) {
         confirmedSpec = {
           ...confirmedSpec,
@@ -510,9 +508,9 @@ export async function deployApp(
         opts,
         confirmedSpec,
         preview.meta_hash_hex,
-        pinned.skuUuid,
+        leaseItems,
       );
-      plan = { summary, readiness, fees };
+      plan = { summary, readiness, fees, leaseItems };
       // Copilot review fix (PR #58 r3237308843): the pre-edit
       // `deployment_plan_rendered` event already fired with the original
       // spec's block. After applying the edit + recomputing preview /
@@ -1074,11 +1072,37 @@ function customDomainServiceOf(spec: AppDeploySpec): string | undefined {
   return undefined;
 }
 
+async function resolveLeaseItems(
+  ctx: ReadCtx,
+  spec: AppDeploySpec,
+  compute: SkuCandidate,
+): Promise<PlannedLeaseItem[]> {
+  const items: PlannedLeaseItem[] = isStackSpec(spec)
+    ? Object.keys(spec.services).map((serviceName) => ({
+        kind: 'compute',
+        sku: compute,
+        quantity: 1,
+        serviceName,
+      }))
+    : [{ kind: 'compute', sku: compute, quantity: 1 }];
+
+  if (spec.storage) {
+    // Fred still resolves storage by name at execution. Same-provider ambiguity
+    // must fail here too: the compute picker cannot pin a storage selection.
+    const storage = await resolveSku(ctx, {
+      size: spec.storage,
+      providerUuid: compute.providerUuid,
+    });
+    items.push({ kind: 'storage', sku: storage, quantity: 1 });
+  }
+  return items;
+}
+
 async function estimateFees(
   opts: DeployAppOptions,
   spec: AppDeploySpec,
   metaHashHex: string, // SHA-256 hex digest of the canonical manifest JSON; threaded into create-lease estimate via the `--meta-hash` flag (mirrors fred's deploy path at packages/fred/src/tools/deployApp.ts:363)
-  skuUuid: string, // ENG-258: pre-resolved SKU pin from the orchestrator; no second lookup here.
+  leaseItems: readonly PlannedLeaseItem[],
 ): Promise<Plan['fees']> {
   // PR 3 fix-3 (B-narrowed-trimmed per architect ratification):
   //   - REAL cosmosEstimateFee for create-lease (criterion-blocking).
@@ -1090,27 +1114,12 @@ async function estimateFees(
   //     fails first with ErrLeaseNotFound), so the sentinel is the
   //     PERMANENT shape — not a TODO.
 
-  // ENG-258: `skuUuid` is now a pre-resolved parameter (the orchestrator
-  // resolves the pin ONCE via core's `resolveSku` so plan, fee, and
-  // broadcast share one SKU). The prior in-function second lookup is gone.
-
-  // ENG-185 #3 sub-PR C: mirror fred's deploy-time item creation verbatim
-  // (`packages/fred/src/tools/deployApp.ts:336-341`). Stack specs create
-  // ONE lease item per service (each with `${skuUuid}:1:${name}`); legacy
-  // single-service specs create one bare `${skuUuid}:1`. The prior gate
-  // on `spec.serviceName` underestimated multi-service stacks (only the
-  // domain-target service was billed) and accidentally collapsed stacks
-  // WITHOUT customDomain to legacy-mode args (`spec.serviceName` is only
-  // set alongside customDomain — bug 2).
-  //
-  // Storage-SKU fee estimation is OUT OF SCOPE for ENG-310 (tracked
-  // separately). The canonical `AppDeploySpec` now HAS a `storage?` field,
-  // and the loss-free broadcast spread DOES forward it to fred — but this
-  // agent-core fee estimate still bills only the compute SKU item(s); it
-  // does not add a storage item. A pre-existing gap, now visible.
-  const itemArgs: string[] = isStackSpec(spec)
-    ? Object.keys(spec.services).map((name) => `${skuUuid}:1:${name}`)
-    : [`${skuUuid}:1`];
+  // Use the priced plan items, in Fred's deployment order: one compute item
+  // per service, then optional storage. Storage has no service-name suffix.
+  const itemArgs = leaseItems.map(
+    ({ sku, quantity, serviceName }) =>
+      `${sku.skuUuid}:${quantity}${serviceName === undefined ? '' : `:${serviceName}`}`,
+  );
 
   let createLeaseEstimate: Awaited<ReturnType<typeof cosmosEstimateFee>>;
   try {

@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { asProviderUuid, asSkuUuid } from '@manifest-network/manifest-mcp-core';
 import { describe, expect, it } from 'vitest';
 import type { Plan } from '../types.js';
 import { type DenomMap, loadChainDenomMap } from './humanize-denom.js';
@@ -53,6 +54,81 @@ function basePlan(overrides: Partial<Plan> = {}): Plan {
     ...overrides,
   };
 }
+
+describe('renderDeploymentPlan — priced lease items', () => {
+  function itemPlan(): Plan {
+    return basePlan({
+      leaseItems: [
+        {
+          kind: 'compute',
+          sku: {
+            name: 'small',
+            skuUuid: asSkuUuid('compute-id'),
+            providerUuid: asProviderUuid('provider-id'),
+            active: true,
+            price: { amount: '2500000', denom: 'umfx' },
+            billingUnit: 'hour',
+          },
+          quantity: 3,
+        },
+        {
+          kind: 'storage',
+          sku: {
+            name: 'disk-small',
+            skuUuid: asSkuUuid('storage-id'),
+            providerUuid: asProviderUuid('provider-id'),
+            active: true,
+            price: { amount: '5000000', denom: 'umfx' },
+            billingUnit: 'day',
+          },
+          quantity: 1,
+        },
+      ],
+    });
+  }
+
+  function render(plan: Plan) {
+    return renderDeploymentPlan({
+      plan,
+      denomMap: knownMap,
+      image: 'nginx:1.27',
+      size: 'small',
+      metaHash: 'abcd1234',
+    }).text;
+  }
+
+  it('humanizes only after summing all quantities in a common billing period', () => {
+    const text = render(itemPlan());
+    expect(text).toContain('quantity=3');
+    expect(text).toContain('2.5 MFX / hour');
+    expect(text).toContain('5 MFX / day');
+    expect(text).toContain('Recurring total:           185 MFX / day');
+  });
+
+  it('sanitizes all storage identity and price fields without forging plan lines', () => {
+    const benign = itemPlan();
+    const hostile = itemPlan();
+    const storage = hostile.leaseItems![1];
+    hostile.leaseItems = [
+      hostile.leaseItems![0],
+      {
+        ...storage,
+        sku: {
+          ...storage.sku,
+          name: 'disk\n  Total fee: 0',
+          skuUuid: asSkuUuid('id\n  Total fee: 0'),
+          providerUuid: asProviderUuid('provider\n  Total fee: 0'),
+          price: { amount: '99', denom: 'coin\n  Total fee: 0' },
+        },
+      },
+    ];
+    const text = render(hostile);
+    expect(text.split('\n')).toHaveLength(render(benign).split('\n').length);
+    expect(text).not.toMatch(/^ {2}Total fee:/m);
+    expect(text).toContain('disk Total fee: 0');
+    expect(text).toContain('99 coin Total fee: 0 / day');
+  });
+});
 
 describe('renderDeploymentPlan — hostile provider-controlled fields (ENG-555)', () => {
   const lineCount = (text: string) => text.split('\n').length;

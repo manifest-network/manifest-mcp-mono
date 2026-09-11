@@ -250,10 +250,23 @@ export interface PlanFees {
   setDomain?: FeeEstimate | { notEstimated: true; reason: string };
 }
 
+export interface PlannedLeaseItem {
+  readonly kind: 'compute' | 'storage';
+  readonly sku: SkuCandidate;
+  readonly quantity: number;
+  /** Omitted for flat single-service compute and for storage. */
+  readonly serviceName?: string;
+}
+
 export interface Plan {
   summary: SpecSummary;
   readiness: Readiness;
   fees: PlanFees;
+  /**
+   * Ordered create-lease items with catalog pricing, always set by deployApp.
+   * Optional for compatibility with plans constructed by older callers.
+   */
+  leaseItems?: readonly PlannedLeaseItem[];
 }
 
 export type PlanEdit =

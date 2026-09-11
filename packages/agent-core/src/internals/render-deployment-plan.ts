@@ -1,5 +1,10 @@
 import { sanitizeForDisplay } from '@manifest-network/manifest-mcp-core';
-import type { DeploymentPlanBlock, FeeEstimate, Plan } from '../types.js';
+import type {
+  DeploymentPlanBlock,
+  FeeEstimate,
+  Plan,
+  PlannedLeaseItem,
+} from '../types.js';
 import {
   type DenomMap,
   EMPTY_DENOM_MAP,
@@ -106,6 +111,52 @@ function formatSkuPrice(plan: Plan, denomMap: DenomMap): string {
   )} / hour`;
 }
 
+function formatItemPrice(item: PlannedLeaseItem, denomMap: DenomMap): string {
+  const { price, billingUnit } = item.sku;
+  const amount = price
+    ? sanitizeForDisplay(humanizeCoin(price.amount, price.denom, denomMap))
+    : '(unknown — SKU has no listed price)';
+  const unit =
+    billingUnit === 'hour' || billingUnit === 'day'
+      ? billingUnit
+      : '(unknown billing unit)';
+  return `${amount} / ${unit}`;
+}
+
+function formatRecurringTotal(
+  items: readonly PlannedLeaseItem[],
+  denomMap: DenomMap,
+): string {
+  // Hours convert exactly to days in integer base units; the reverse may
+  // require rounding. Never add different currencies or omit an unpriced item.
+  const unit = items.some((item) => item.sku.billingUnit === 'day')
+    ? 'day'
+    : 'hour';
+  const totals = new Map<string, bigint>();
+  for (const { sku, quantity } of items) {
+    const { price, billingUnit } = sku;
+    if (
+      !price?.amount.match(/^\d+$/) ||
+      !price.denom.trim() ||
+      (billingUnit !== 'hour' && billingUnit !== 'day') ||
+      !Number.isSafeInteger(quantity) ||
+      quantity <= 0
+    ) {
+      return '(incomplete — unknown item price, quantity, or billing unit)';
+    }
+    const multiplier = unit === 'day' && billingUnit === 'hour' ? 24n : 1n;
+    const amount = BigInt(price.amount) * BigInt(quantity) * multiplier;
+    totals.set(price.denom, (totals.get(price.denom) ?? 0n) + amount);
+  }
+  if (totals.size === 0) return '(unknown — no lease items)';
+  return [...totals]
+    .map(
+      ([denom, amount]) =>
+        `${sanitizeForDisplay(humanizeCoin(amount.toString(), denom, denomMap))} / ${unit}`,
+    )
+    .join(' + ');
+}
+
 function formatWallet(plan: Plan, denomMap: DenomMap): string {
   return humanizeBalances(plan.readiness.walletBalances, denomMap);
 }
@@ -200,9 +251,31 @@ export function renderDeploymentPlan(
     lines.push(`  Custom domain:             ${input.customDomain} ${target}`);
   }
 
-  lines.push(
-    `  SKU price:                 ${formatSkuPrice(input.plan, denomMap)}`,
-  );
+  if (input.plan.leaseItems) {
+    for (const item of input.plan.leaseItems) {
+      const { sku } = item;
+      const label = item.kind === 'storage' ? 'Storage item:' : 'Compute item:';
+      const service =
+        item.serviceName === undefined
+          ? ''
+          : `, service=${sanitizeForDisplay(item.serviceName, 64)}`;
+      lines.push(
+        `  ${label.padEnd(27)}${sanitizeForDisplay(sku.name, 64, '(unnamed SKU)')} ` +
+          `(sku_uuid=${sanitizeForDisplay(sku.skuUuid, 64)}, ` +
+          `provider_uuid=${sanitizeForDisplay(sku.providerUuid, 64)}, ` +
+          `quantity=${item.quantity}${service})`,
+        `    Unit price:              ${formatItemPrice(item, denomMap)}`,
+      );
+    }
+    lines.push(
+      `  Recurring total:           ${formatRecurringTotal(input.plan.leaseItems, denomMap)}`,
+    );
+  } else {
+    // Compatibility for callers rendering a legacy Plan without item data.
+    lines.push(
+      `  SKU price:                 ${formatSkuPrice(input.plan, denomMap)}`,
+    );
+  }
 
   if (hasDomain) {
     // Two-tx layout: labeled lines + Total fee. Honors approach-3
