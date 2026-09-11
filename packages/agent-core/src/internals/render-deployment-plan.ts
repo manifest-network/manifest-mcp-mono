@@ -11,6 +11,7 @@ import {
   humanizeBalances,
   humanizeCoin,
 } from './humanize-denom.js';
+import { summarizeRecurringCosts } from './recurring-costs.js';
 
 /**
  * Render the canonical `DeploymentPlan` block for `deployApp`'s
@@ -100,17 +101,6 @@ function formatFeeLine(humanFee: string, gas: number): string {
   return `${humanFee} (gas ${gas})`;
 }
 
-function formatSkuPrice(plan: Plan, denomMap: DenomMap): string {
-  const sku = plan.readiness.sku;
-  if (sku === null) return '(unknown — SKU has no listed price)';
-  // SKU price amount + denom are provider-controlled on-chain strings, and
-  // humanizeCoin renders an unknown denom (and a non-numeric amount) verbatim —
-  // sanitize the composed value so it cannot forge a plan line (ENG-555).
-  return `${sanitizeForDisplay(
-    humanizeCoin(sku.price.amount, sku.price.denom, denomMap),
-  )} / hour`;
-}
-
 function formatItemPrice(item: PlannedLeaseItem, denomMap: DenomMap): string {
   const { price, billingUnit } = item.sku;
   const amount = price
@@ -127,34 +117,20 @@ function formatRecurringTotal(
   items: readonly PlannedLeaseItem[],
   denomMap: DenomMap,
 ): string {
-  // Hours convert exactly to days in integer base units; the reverse may
-  // require rounding. Never add different currencies or omit an unpriced item.
-  const unit = items.some((item) => item.sku.billingUnit === 'day')
-    ? 'day'
-    : 'hour';
-  const totals = new Map<string, bigint>();
-  for (const { sku, quantity } of items) {
-    const { price, billingUnit } = sku;
-    if (
-      !price?.amount.match(/^\d+$/) ||
-      !price.denom.trim() ||
-      (billingUnit !== 'hour' && billingUnit !== 'day') ||
-      !Number.isSafeInteger(quantity) ||
-      quantity <= 0
-    ) {
-      return '(incomplete — unknown item price, quantity, or billing unit)';
-    }
-    const multiplier = unit === 'day' && billingUnit === 'hour' ? 24n : 1n;
-    const amount = BigInt(price.amount) * BigInt(quantity) * multiplier;
-    totals.set(price.denom, (totals.get(price.denom) ?? 0n) + amount);
-  }
-  if (totals.size === 0) return '(unknown — no lease items)';
-  return [...totals]
+  const { unit, totals, unpricedItemCount } = summarizeRecurringCosts(items);
+  const subtotal = totals
     .map(
-      ([denom, amount]) =>
+      ({ denom, amount }) =>
         `${sanitizeForDisplay(humanizeCoin(amount.toString(), denom, denomMap))} / ${unit}`,
     )
     .join(' + ');
+  if (unpricedItemCount > 0) {
+    const unknown = `${unpricedItemCount} unpriced ${unpricedItemCount === 1 ? 'item' : 'items'}`;
+    return subtotal
+      ? `${subtotal} + ${unknown} (incomplete)`
+      : `(incomplete — ${unknown})`;
+  }
+  return subtotal || '(unknown — no lease items)';
 }
 
 function formatWallet(plan: Plan, denomMap: DenomMap): string {
@@ -251,31 +227,24 @@ export function renderDeploymentPlan(
     lines.push(`  Custom domain:             ${input.customDomain} ${target}`);
   }
 
-  if (input.plan.leaseItems) {
-    for (const item of input.plan.leaseItems) {
-      const { sku } = item;
-      const label = item.kind === 'storage' ? 'Storage item:' : 'Compute item:';
-      const service =
-        item.serviceName === undefined
-          ? ''
-          : `, service=${sanitizeForDisplay(item.serviceName, 64)}`;
-      lines.push(
-        `  ${label.padEnd(27)}${sanitizeForDisplay(sku.name, 64, '(unnamed SKU)')} ` +
-          `(sku_uuid=${sanitizeForDisplay(sku.skuUuid, 64)}, ` +
-          `provider_uuid=${sanitizeForDisplay(sku.providerUuid, 64)}, ` +
-          `quantity=${item.quantity}${service})`,
-        `    Unit price:              ${formatItemPrice(item, denomMap)}`,
-      );
-    }
+  for (const item of input.plan.leaseItems) {
+    const { sku } = item;
+    const label = item.kind === 'storage' ? 'Storage item:' : 'Compute item:';
+    const service =
+      item.serviceName === undefined
+        ? ''
+        : `, service=${sanitizeForDisplay(item.serviceName, 64)}`;
     lines.push(
-      `  Recurring total:           ${formatRecurringTotal(input.plan.leaseItems, denomMap)}`,
-    );
-  } else {
-    // Compatibility for callers rendering a legacy Plan without item data.
-    lines.push(
-      `  SKU price:                 ${formatSkuPrice(input.plan, denomMap)}`,
+      `  ${label.padEnd(27)}${sanitizeForDisplay(sku.name, 64, '(unnamed SKU)')} ` +
+        `(sku_uuid=${sanitizeForDisplay(sku.skuUuid, 64)}, ` +
+        `provider_uuid=${sanitizeForDisplay(sku.providerUuid, 64)}, ` +
+        `quantity=${item.quantity}${service})`,
+      `    Unit price:              ${formatItemPrice(item, denomMap)}`,
     );
   }
+  lines.push(
+    `  Recurring total:           ${formatRecurringTotal(input.plan.leaseItems, denomMap)}`,
+  );
 
   if (hasDomain) {
     // Two-tx layout: labeled lines + Total fee. Honors approach-3

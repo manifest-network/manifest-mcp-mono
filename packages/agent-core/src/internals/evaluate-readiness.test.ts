@@ -1,3 +1,4 @@
+import { asProviderUuid, asSkuUuid } from '@manifest-network/manifest-mcp-core';
 import { describe, expect, it } from 'vitest';
 import type { Coin } from '../types.js';
 import {
@@ -19,7 +20,26 @@ const knownMap: DenomMap = {
 function makeInputs(
   overrides: Partial<EvaluateReadinessInputs> = {},
 ): EvaluateReadinessInputs {
+  const sku =
+    overrides.sku === undefined
+      ? { name: 'docker-micro', price: { denom: 'umfx', amount: '100' } }
+      : overrides.sku;
   return {
+    leaseItems: sku
+      ? [
+          {
+            kind: 'compute',
+            quantity: 1,
+            sku: {
+              ...sku,
+              skuUuid: asSkuUuid('sku-id'),
+              providerUuid: asProviderUuid('provider-id'),
+              active: true,
+              billingUnit: 'hour',
+            },
+          },
+        ]
+      : [],
     tenant: 'manifest1xxx',
     image: 'nginx:1.27',
     size: 'docker-micro',
@@ -183,7 +203,7 @@ describe('evaluateReadiness — credits', () => {
     expect(r.status).toBe('warn');
     expect(
       r.reasons.some((x) =>
-        /Credit account is empty for the .* SKU's MFX denom/.test(x),
+        /Credit account is empty for this deployment's MFX denom/.test(x),
       ),
     ).toBe(true);
   });
@@ -228,7 +248,7 @@ describe('evaluateReadiness — credits', () => {
     expect(r.status).toBe('warn'); // 500/100 = 5h < 24h
   });
 
-  it('uses hoursRemaining fallback when SKU pricing is unavailable', () => {
+  it('uses hoursRemaining fallback when no lease items are selected', () => {
     const r = evaluateReadiness(
       makeInputs({
         sku: null,
@@ -311,6 +331,7 @@ describe('evaluateReadiness — ENG-258 skuCandidates gate', () => {
       walletBalances: [{ denom: 'umfx', amount: '100000' }],
       credits: null,
       sku: null,
+      leaseItems: [],
       availableSkuNames: ['docker-micro'],
       skuCandidates: [{ name: 'docker-micro', providerUuid: 'p1' }],
       requestedProviderUuid: 'p2',
@@ -328,6 +349,7 @@ describe('evaluateReadiness — ENG-258 skuCandidates gate', () => {
       walletBalances: [{ denom: 'umfx', amount: '100000' }],
       credits: null,
       sku: null,
+      leaseItems: [],
       availableSkuNames: ['docker-micro'],
       skuCandidates: [{ name: 'docker-micro', providerUuid: 'p1' }],
       gasPrice: '1umfx',
@@ -357,5 +379,95 @@ describe('evaluateReadiness — gas-price formats', () => {
     );
     expect(r.status).toBe('block');
     expect(r.reasons.some((x) => x.includes('no PWR balance'))).toBe(true);
+  });
+});
+
+describe('evaluateReadiness — exact deployment runway', () => {
+  it.each(['hour', 'day'] as const)(
+    'keeps the 24h boundary exact for large %s prices',
+    (billingUnit) => {
+      const price = 9007199254740993n;
+      const threshold = billingUnit === 'day' ? price : price * 24n;
+      for (const delta of [-1n, 0n, 1n]) {
+        const inputs = makeInputs();
+        inputs.leaseItems = inputs.leaseItems.map((item) => ({
+          ...item,
+          sku: {
+            ...item.sku,
+            billingUnit,
+            price: { amount: price.toString(), denom: 'umfx' },
+          },
+        }));
+        inputs.credits = {
+          availableBalances: [
+            { amount: (threshold + delta).toString(), denom: 'umfx' },
+          ],
+        };
+        const result = evaluateReadiness(inputs);
+        expect(result.status).toBe(delta < 0n ? 'warn' : 'ok');
+      }
+    },
+  );
+
+  it('warns using the known subtotal even when another item cannot be priced', () => {
+    const inputs = makeInputs({
+      credits: {
+        availableBalances: [{ amount: '100', denom: 'umfx' }],
+        hoursRemaining: '9999',
+      },
+    });
+    inputs.leaseItems = [
+      ...inputs.leaseItems,
+      {
+        ...inputs.leaseItems[0],
+        kind: 'storage',
+        sku: { ...inputs.leaseItems[0].sku, price: undefined },
+      },
+    ];
+    const result = evaluateReadiness(inputs);
+    expect(result.status).toBe('warn');
+    expect(result.reasons).toEqual([
+      expect.stringContaining('~1.0h of runtime'),
+      expect.stringContaining('Cannot fully estimate deployment runtime'),
+    ]);
+    expect(result.suggestedActions).toContain('fund_credit');
+  });
+
+  it('warns for the limiting denomination after normalizing mixed periods', () => {
+    const inputs = makeInputs({
+      credits: {
+        availableBalances: [
+          { amount: '10000', denom: 'umfx' },
+          { amount: '48', denom: 'upwr' },
+        ],
+      },
+    });
+    inputs.leaseItems = [
+      ...inputs.leaseItems,
+      {
+        ...inputs.leaseItems[0],
+        kind: 'storage',
+        sku: {
+          ...inputs.leaseItems[0].sku,
+          billingUnit: 'day',
+          price: { amount: '96', denom: 'upwr' },
+        },
+      },
+    ];
+    const result = evaluateReadiness(inputs);
+    expect(result.status).toBe('warn');
+    expect(result.reasons).toEqual([
+      expect.stringContaining('~12.0h of runtime'),
+    ]);
+    expect(result.reasons[0]).toContain('0.000096 PWR per day');
+  });
+
+  it('does not require credits in the denomination of a free item', () => {
+    const inputs = makeInputs({ credits: { availableBalances: [] } });
+    inputs.leaseItems = inputs.leaseItems.map((item) => ({
+      ...item,
+      sku: { ...item.sku, price: { amount: '0', denom: 'upwr' } },
+    }));
+    expect(evaluateReadiness(inputs).status).toBe('ok');
   });
 });

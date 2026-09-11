@@ -29,9 +29,9 @@
  *      preserves null — synthesizing a credits object from the stray
  *      top-level fields would bypass the evaluator's
  *      `credits === null` warn rule ("No credit account funded for
- *      compute leases").
+ *      deployment lease items").
  *
- *   3. **Context injection** — `gasPrice`, `denomMap`, and `tenant`
+ *   3. **Context injection** — resolved `leaseItems`, `gasPrice`, `denomMap`, and `tenant`
  *      come from the orchestrator's scope (not from fred). For
  *      `tenant`, the translator deliberately IGNORES `raw.tenant` and
  *      uses the `tenantAddress` arg: the orchestrator already resolved
@@ -45,7 +45,7 @@
  */
 
 import type { CheckDeploymentReadinessResult } from '@manifest-network/manifest-mcp-fred';
-import type { Coin, Readiness } from '../types.js';
+import type { Coin, PlannedLeaseItem, Readiness } from '../types.js';
 import {
   type EvaluateReadinessInputs,
   evaluateReadiness,
@@ -71,12 +71,15 @@ import type { DenomMap } from './humanize-denom.js';
  *                       differs (configuration drift / replayed mock)
  *                       does NOT silently route the verdict against a
  *                       different wallet.
+ * @param leaseItems     Resolved items used by the plan and fee estimate;
+ *                       authoritative for prospective recurring costs.
  */
 export function evaluateReadinessFromFredResponse(
   raw: CheckDeploymentReadinessResult,
   gasPrice: string,
   denomMap: DenomMap,
   tenantAddress: string,
+  leaseItems: readonly PlannedLeaseItem[],
 ): Readiness {
   // Names are only a fallback hint now; derive them from the structured list.
   // ENG-258 Task 15 removed the old flat names field — available_skus is
@@ -101,6 +104,7 @@ export function evaluateReadinessFromFredResponse(
     walletBalances: toCoinArray(raw.wallet_balances),
     credits: translateCredits(raw),
     sku: translateSku(raw.sku),
+    leaseItems,
     availableSkuNames,
     skuCandidates: Array.isArray(raw.sku_candidates)
       ? raw.sku_candidates.map((c) => ({

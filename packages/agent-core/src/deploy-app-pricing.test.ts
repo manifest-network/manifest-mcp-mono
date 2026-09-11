@@ -14,6 +14,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { deployApp } from './deploy-app.js';
 import type {
   AppDeploySpec,
+  Coin,
   DeployAppCallbacks,
   Plan,
   ProgressEvent,
@@ -57,8 +58,20 @@ function catalog(): CatalogSku[] {
 
 // Exercise real resolution, preview, fee/message construction, and rendering.
 // Only the injected chain transport is fake; every broadcast/signing path is sealed.
-function harness(skus = catalog()) {
+function harness(
+  skus = catalog(),
+  credits: Coin[] = [{ amount: '50000000000', denom: 'umfx' }],
+) {
   const query = makeMockQueryClient({
+    billing: {
+      creditAccount: {
+        activeLeaseCount: 0n,
+        pendingLeaseCount: 0n,
+        reservedAmounts: [],
+      },
+      creditAccountBalances: credits,
+      creditAccountAvailableBalances: credits,
+    },
     sku: {
       skus: skus.filter((sku) => sku.active),
       providerLookup: {
@@ -114,10 +127,11 @@ function harness(skus = catalog()) {
       events.flatMap((event) =>
         event.kind === 'deployment_plan_rendered' ? [event.block.text] : [],
       ),
-    run: (spec: AppDeploySpec) =>
+    run: (spec: AppDeploySpec, signal?: AbortSignal) =>
       deployApp(spec, callbacks, {
         clientManager: chain,
         walletProvider: wallet,
+        signal,
       }),
   };
 }
@@ -161,6 +175,164 @@ const shapes: { label: string; spec: AppDeploySpec; services: string[] }[] = [
 ];
 
 describe('deployApp storage pricing and simulated messages (ENG-944)', () => {
+  it.each([
+    {
+      label: 'all compute services plus storage',
+      spec: { ...shapes[2].spec, storage: 'disk-small' },
+      daily: false,
+      storageDenom: 'umfx',
+      status: 'warn',
+      reason: /105 umfx per hour/,
+    },
+    {
+      label: 'storage paid in another denomination',
+      spec: { ...shapes[0].spec, storage: 'disk-small' },
+      daily: false,
+      storageDenom: 'upwr',
+      status: 'warn',
+      reason: /Fund upwr credits/,
+    },
+    {
+      label: 'daily compute billing',
+      spec: shapes[0].spec,
+      daily: true,
+      storageDenom: 'umfx',
+      status: 'ok',
+      reason: undefined,
+    },
+  ])(
+    'uses the displayed prices for readiness: $label',
+    async ({ spec, daily, storageDenom, status, reason }) => {
+      const skus = catalog();
+      if (daily) {
+        skus[0].unit = 2;
+        skus[0].basePrice = { amount: '48', denom: 'umfx' };
+      }
+      skus[1].basePrice = { amount: '99', denom: storageDenom };
+      const h = harness(skus, [{ amount: '100', denom: 'umfx' }]);
+      await expect(h.run(spec)).rejects.toMatchObject({
+        code: ManifestMCPErrorCode.OPERATION_CANCELLED,
+      });
+      expect(h.plans[0].readiness.status).toBe(status);
+      if (reason)
+        expect(h.plans[0].readiness.reasons.join('\n')).toMatch(reason);
+      else expect(h.plans[0].readiness.reasons).toEqual([]);
+    },
+  );
+
+  it.each(['confirm', 'cancel'] as const)(
+    'presents the edited price to onPlan before accepting %s',
+    async (verdict) => {
+      const h = harness();
+      const shown: string[] = [];
+      h.callbacks.onPlan = vi.fn(async () => {
+        shown.push(h.blocks().at(-1)!);
+        return shown.length === 1
+          ? {
+              kind: 'replace_spec' as const,
+              spec: { ...shapes[0].spec, storage: 'disk-small' },
+            }
+          : verdict;
+      });
+      await expect(h.run(shapes[0].spec)).rejects.toMatchObject({
+        code: ManifestMCPErrorCode.OPERATION_CANCELLED,
+      });
+      expect(shown).toHaveLength(2);
+      expect(shown[0]).toContain('Recurring total:           2 umfx / hour');
+      expect(shown[1]).toContain('Recurring total:           101 umfx / hour');
+      expect(h.callbacks.onConfirm).toHaveBeenCalledTimes(
+        verdict === 'confirm' ? 1 : 0,
+      );
+      expect(h.chain.getBroadcastClient).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([5, { size: 'disk-small' }, null, false, '', '  ', '\t\n'])(
+    'rejects malformed storage %j at the input boundary',
+    async (storage) => {
+      const h = harness();
+      await expect(
+        h.run({ ...shapes[0].spec, storage } as unknown as AppDeploySpec),
+      ).rejects.toMatchObject({
+        code: ManifestMCPErrorCode.INVALID_CONFIG,
+        message: expect.stringContaining('`storage`'),
+      });
+      expect(h.query.liftedinit.sku.v1.sKUs).not.toHaveBeenCalled();
+      expect(h.callbacks.onPlan).not.toHaveBeenCalled();
+      expect(h.simulate).not.toHaveBeenCalled();
+    },
+  );
+
+  it('rechecks readiness and confirmation across multiple edits', async () => {
+    const h = harness(catalog(), [{ amount: '100', denom: 'umfx' }]);
+    const plans: Plan[] = [];
+    h.callbacks.onPlan = async (plan) => {
+      plans.push(plan);
+      if (plans.length === 1)
+        return {
+          kind: 'replace_spec',
+          spec: { ...shapes[0].spec, storage: 'disk-small' },
+        };
+      if (plans.length === 2)
+        return { kind: 'replace_spec', spec: shapes[0].spec };
+      return 'cancel';
+    };
+    await expect(h.run(shapes[0].spec)).rejects.toMatchObject({
+      code: ManifestMCPErrorCode.OPERATION_CANCELLED,
+    });
+    expect(plans.map((plan) => plan.readiness.status)).toEqual([
+      'ok',
+      'warn',
+      'ok',
+    ]);
+    expect(plans.map((plan) => plan.leaseItems.length)).toEqual([1, 2, 1]);
+    expect(h.simulate).toHaveBeenCalledTimes(3);
+    expect(h.blocks()).toHaveLength(3);
+    expect(h.callbacks.onConfirm).not.toHaveBeenCalled();
+    expect(h.chain.getBroadcastClient).not.toHaveBeenCalled();
+  });
+
+  it('cancels while waiting for confirmation of the edited price', async () => {
+    const h = harness();
+    const controller = new AbortController();
+    h.callbacks.onPlan = vi
+      .fn<NonNullable<DeployAppCallbacks['onPlan']>>()
+      .mockResolvedValueOnce({
+        kind: 'replace_spec',
+        spec: { ...shapes[0].spec, storage: 'disk-small' },
+      })
+      .mockImplementationOnce(() => {
+        controller.abort();
+        return new Promise(() => {});
+      });
+    await expect(
+      h.run(shapes[0].spec, controller.signal),
+    ).rejects.toMatchObject({ code: ManifestMCPErrorCode.OPERATION_CANCELLED });
+    expect(h.callbacks.onPlan).toHaveBeenCalledTimes(2);
+    expect(h.callbacks.onConfirm).not.toHaveBeenCalled();
+    expect(h.chain.getBroadcastClient).not.toHaveBeenCalled();
+  });
+
+  it.each([5, '  '])(
+    'rejects malformed post-edit storage %j before replanning',
+    async (storage) => {
+      const h = harness();
+      h.callbacks.onPlan = async () => ({
+        kind: 'replace_spec',
+        spec: { ...shapes[0].spec, storage } as unknown as AppDeploySpec,
+      });
+      await expect(h.run(shapes[0].spec)).rejects.toMatchObject({
+        code: ManifestMCPErrorCode.INVALID_CONFIG,
+        message: expect.stringContaining(
+          'Post-edit spec failed validation: validateSpec: `storage`',
+        ),
+      });
+      expect(h.simulate).toHaveBeenCalledTimes(1);
+      expect(h.blocks()).toHaveLength(1);
+      expect(h.callbacks.onConfirm).not.toHaveBeenCalled();
+    },
+  );
+
   for (const { label, spec, services } of shapes) {
     for (const storage of [false, true]) {
       it(`${label}, ${storage ? 'with' : 'without'} storage`, async () => {
@@ -307,6 +479,17 @@ describe('deployApp storage pricing and simulated messages (ENG-944)', () => {
           failure === 'ambiguous'
             ? ManifestMCPErrorCode.SKU_AMBIGUOUS
             : ManifestMCPErrorCode.QUERY_FAILED,
+        message: expect.stringMatching(
+          failure === 'ambiguous'
+            ? /Ambiguous storage SKU.*Choose another compute provider/
+            : /Could not resolve storage SKU/,
+        ),
+        details: expect.objectContaining({
+          selection: 'storage',
+          phase: 'initial',
+          providerUuid: PROVIDER,
+          storage: 'disk-small',
+        }),
       });
       expect(h.simulate).not.toHaveBeenCalled();
       expect(h.blocks()).toEqual([]);
@@ -389,7 +572,13 @@ describe('deployApp storage pricing and simulated messages (ENG-944)', () => {
       ).rejects.toMatchObject({
         code: ManifestMCPErrorCode.OPERATION_CANCELLED,
       });
-      expect(h.blocks()[0]).toContain('Recurring total:           (incomplete');
+      expect(h.blocks()[0]).toContain(
+        'Recurring total:           2 umfx / hour + 1 unpriced item (incomplete)',
+      );
+      expect(h.plans[0].readiness.status).toBe('warn');
+      expect(h.plans[0].readiness.reasons.join(' ')).toContain(
+        'Cannot fully estimate deployment runtime',
+      );
       expect(h.simulate.mock.calls[0][1][0].value.items).toHaveLength(2);
       expect(h.blocks()[0]).toContain(STORAGE);
     },
@@ -399,13 +588,16 @@ describe('deployApp storage pricing and simulated messages (ENG-944)', () => {
     'rebuilds both estimate and rendered plan when storage becomes %s',
     async (withStorage) => {
       const h = harness();
-      h.callbacks.onPlan = vi.fn(async () => ({
-        kind: 'replace_spec' as const,
-        spec: {
-          ...shapes[0].spec,
-          ...(withStorage ? { storage: 'disk-small' } : {}),
-        },
-      }));
+      h.callbacks.onPlan = vi
+        .fn<NonNullable<DeployAppCallbacks['onPlan']>>()
+        .mockResolvedValueOnce({
+          kind: 'replace_spec' as const,
+          spec: {
+            ...shapes[0].spec,
+            ...(withStorage ? { storage: 'disk-small' } : {}),
+          },
+        })
+        .mockResolvedValue('confirm');
       await expect(
         h.run({
           ...shapes[0].spec,
@@ -450,10 +642,17 @@ describe('deployApp storage pricing and simulated messages (ENG-944)', () => {
       },
     );
     const h = harness(skus);
-    h.callbacks.onPlan = vi.fn(async () => ({
-      kind: 'replace_spec' as const,
-      spec: { ...shapes[2].spec, skuUuid: nextCompute, storage: 'disk-small' },
-    }));
+    h.callbacks.onPlan = vi
+      .fn<NonNullable<DeployAppCallbacks['onPlan']>>()
+      .mockResolvedValueOnce({
+        kind: 'replace_spec' as const,
+        spec: {
+          ...shapes[2].spec,
+          skuUuid: nextCompute,
+          storage: 'disk-small',
+        },
+      })
+      .mockResolvedValue('confirm');
     await expect(
       h.run({ ...shapes[0].spec, skuUuid: COMPUTE, storage: 'disk-small' }),
     ).rejects.toMatchObject({ code: ManifestMCPErrorCode.OPERATION_CANCELLED });
@@ -475,12 +674,22 @@ describe('deployApp storage pricing and simulated messages (ENG-944)', () => {
 
   it('fails closed when an edited spec requests unresolved storage', async () => {
     const h = harness();
-    h.callbacks.onPlan = vi.fn(async () => ({
-      kind: 'replace_spec' as const,
-      spec: { ...shapes[0].spec, storage: 'missing-disk' },
-    }));
+    h.callbacks.onPlan = vi
+      .fn<NonNullable<DeployAppCallbacks['onPlan']>>()
+      .mockResolvedValueOnce({
+        kind: 'replace_spec' as const,
+        spec: { ...shapes[0].spec, storage: 'missing-disk' },
+      })
+      .mockResolvedValue('confirm');
     await expect(h.run(shapes[0].spec)).rejects.toMatchObject({
       code: ManifestMCPErrorCode.QUERY_FAILED,
+      message: expect.stringContaining(
+        'Post-edit: Could not resolve storage SKU',
+      ),
+      details: expect.objectContaining({
+        selection: 'storage',
+        phase: 'post_edit',
+      }),
     });
     expect(h.simulate).toHaveBeenCalledTimes(1);
     expect(h.blocks()).toHaveLength(1);

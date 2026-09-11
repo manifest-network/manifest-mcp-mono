@@ -37,20 +37,27 @@ Each function takes a typed args object plus a callbacks object with `onConfirm`
 `deployApp` supplies `Plan.leaseItems` to `onPlan`: one compute item per service,
 followed by one optional storage item. Each `PlannedLeaseItem` contains its
 `kind`, resolved `sku` (UUID, provider UUID, name, price, and `billingUnit`),
-`quantity`, and optional compute `serviceName`. The field is optional in the
-public `Plan` type for compatibility with older caller-constructed plans;
-new deploy flows always populate it.
+`quantity`, and optional compute `serviceName`. `Plan.leaseItems` is required.
 
 The rendered confirmation lists those items and their recurring costs, while
 create-lease fee simulation uses the same ordered item list. Totals use integer
 base-unit arithmetic, convert hourly prices to daily when periods differ, and
-keep different denominations separate. Missing prices or unsupported billing
-units produce an explicitly incomplete recurring total. A plan edit repeats
-resolution, pricing, and simulation for the edited spec.
+keep different denominations separate. Credit readiness uses those same totals
+and periods, checks each charged denomination against the 24-hour floor, and
+warns when any item cannot be priced. Missing prices or unsupported billing
+units preserve the known subtotal with an explicit unpriced-item count.
+
+Every plan edit repeats resolution, readiness, pricing, and simulation, then
+invokes `onPlan` again with the newly rendered prices. The callback must return
+`confirm` to advance to the intent recap; another edit repeats the loop and
+`cancel` stops it. Cancellation and deadlines remain active while waiting.
 
 Storage resolves by name on the compute provider before confirmation. Missing
 or ambiguous storage fails before simulation; `onResolveSku` handles compute
-ambiguity only. Fred still resolves storage by name at execution, so the plan is
+ambiguity only. Storage lookup errors include `details.selection: 'storage'`
+and `details.phase: 'initial' | 'post_edit'`. A duplicate storage name on the
+compute provider requires another compute provider or a catalog correction.
+Malformed storage values fail validation with `INVALID_CONFIG`. Fred still resolves storage by name at execution, so the plan is
 a catalog snapshot, not a storage UUID pin or a price lock. Storage UUID selection
 is tracked by [ENG-295](https://linear.app/liftedinit/issue/ENG-295). The catalog
 has no compute/storage category; the selected name does not prove suitability

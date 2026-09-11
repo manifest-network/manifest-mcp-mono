@@ -62,6 +62,23 @@ describe('resolveSku', () => {
     },
   );
 
+  it.each([
+    [1, 'hour'],
+    [2, 'day'],
+    [undefined, 'unknown billing unit'],
+  ] as const)(
+    'includes the %s billing unit in ambiguity diagnostics',
+    async (unit, label) => {
+      await expect(
+        resolveSku(rc(dup.map((sku) => ({ ...sku, unit }))), {
+          size: 'docker-micro',
+        }),
+      ).rejects.toMatchObject({
+        message: expect.stringContaining(`price=100 umfx / ${label}`),
+      });
+    },
+  );
+
   it('resolves a unique name to its single candidate', async () => {
     const r = await resolveSku(rc([dup[0]]), { size: 'docker-micro' });
     expect(r).toMatchObject({

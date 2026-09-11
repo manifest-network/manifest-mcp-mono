@@ -262,11 +262,8 @@ export interface Plan {
   summary: SpecSummary;
   readiness: Readiness;
   fees: PlanFees;
-  /**
-   * Ordered create-lease items with catalog pricing, always set by deployApp.
-   * Optional for compatibility with plans constructed by older callers.
-   */
-  leaseItems?: readonly PlannedLeaseItem[];
+  /** Ordered create-lease items with the catalog pricing used for readiness and fees. */
+  leaseItems: readonly PlannedLeaseItem[];
 }
 
 export type PlanEdit =
@@ -371,6 +368,7 @@ export interface RecoveryChoice {
 // --- callbacks: deploy --------------------------------------------------
 
 export interface DeployAppCallbacks {
+  /** Each edit produces a fresh plan and another invocation; only `confirm` proceeds. */
   onPlan?: (plan: Plan) => Promise<PlanEdit | 'confirm' | 'cancel'>;
   onConfirm?: (block: DeploymentPlanBlock) => Promise<'yes' | 'no'>;
   onProgress?: (event: ProgressEvent) => void;
@@ -380,9 +378,10 @@ export interface DeployAppCallbacks {
     options: RecoveryOption[],
   ) => Promise<RecoveryChoice>;
   /**
-   * Resolve an ambiguous SKU name. Invoked when a requested `size` matches
-   * more than one active SKU and no provider_uuid/sku_uuid was supplied.
-   * Returns the user's pick; when absent, agent-core re-throws SKU_AMBIGUOUS.
+   * Resolve an ambiguous compute SKU name after applying any provider selector.
+   * Returns the user's compute pick; when absent, SKU_AMBIGUOUS is re-thrown.
+   * Storage ambiguity never invokes this callback: storage remains name-selected
+   * on the compute provider and fails with details.selection === 'storage'.
    */
   onResolveSku?: (
     candidates: SkuCandidate[],

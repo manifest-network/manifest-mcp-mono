@@ -119,7 +119,7 @@ function ambiguous(size: string, candidates: SkuCandidate[]): ManifestMCPError {
     .map(
       (c) =>
         `  - ${sanitizeForDisplay(c.name, 64, '(unnamed SKU)')} (sku_uuid=${sanitizeForDisplay(c.skuUuid, 64)}, provider_uuid=${sanitizeForDisplay(c.providerUuid, 64)}` +
-        `${c.price ? `, price=${sanitizeForDisplay(`${c.price.amount} ${c.price.denom}`, 48)}` : ''})`,
+        `${c.price ? `, price=${sanitizeForDisplay(`${c.price.amount} ${c.price.denom}`, 48)} / ${c.billingUnit ?? 'unknown billing unit'}` : ''})`,
     )
     .join('\n');
   return new ManifestMCPError(
