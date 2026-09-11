@@ -116,7 +116,9 @@ Most failures throw `ManifestMCPError` (with a `code` from `ManifestMCPErrorCode
 
 The `/orchestration` deploy flow has a deliberate completed-recovery error contract. An accepted `retry_set_domain` returns the normal `DeployResult`; completed `salvage_without_domain`, `cancel_lease`, and `close_lease` choices end the original invocation with non-retryable `OPERATION_CANCELLED`, `details.lease_uuid`, and the selected `details.recovery_outcome`. Terminal choices also carry the authoritative `details.stop_outcome` and `details.lease_state`. `details.transaction_hash` is present exactly when `stop_outcome` is `stopped` or `cancelled`, and absent for `already_inactive` (including post-broadcast terminal reconciliation). Salvage leaves the live lease in place and billing, so do not automatically clean it up or redeploy.
 
-See the [cookbook](../../docs/library-usage.md#errors) for a worked example.
+For `manageDomain` set/clear and `closeLease`, a post-mutation verification failure retains the actual mutation receipt in fresh error details: `lease_uuid`, transaction hash/confirmation/code when supplied, and domain or stop outcome context. A transaction receipt adds `sent: true`, making the error terminal to `withRetry` even if the verification cause is transient. Reconcile the transaction and lease state before another mutation. An `already_inactive` close adds no inferred submission evidence; read-only lookup is unchanged, while normal retry classification applies to preserved causes in no-receipt verification errors. Original errors remain in a non-enumerable cause chain; successful result shapes are unchanged.
+
+See the [cookbook](../../docs/library-usage.md#errors) for exact detail fields and retry examples.
 
 ## Node consumers: keep the SSRF guard on
 

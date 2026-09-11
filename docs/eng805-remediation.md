@@ -399,7 +399,8 @@ run remains applicable to that runtime; all five CI checks passed on `f2de246`,
 including live SDK acceptance and the E2E gate. Full coverage and package builds
 are not repeated for this documentation/test-organization correction.
 
-One pre-existing hardening gap remains under ENG-805 (P3, confidence 99%):
+One pre-existing hardening gap was retained under ENG-805 at PR #226 review
+(P3, confidence 99%; addressed by the follow-up below):
 `manageDomain` and `closeLease` can lose a successful mutation's hash/outcome when
 the following verification read fails. Six isolated no-network probes (set,
 clear and close, each with HTTP 503/408) confirm that a caller's whole-orchestration
@@ -414,3 +415,284 @@ transaction hash and verification cause, prevent whole-operation replay after
 submission, and test both mutations and read-only lookup. A no-op close must not
 invent submission evidence. Narrow deduplication found no dedicated owner;
 completed related work and ENG-267's adjacent scope remain unchanged.
+
+
+## Follow-up: mutation receipts across verification failures
+
+The [focused plan](superpowers/plans/2026-09-10-eng805-verification-outcomes.md)
+implements the two retained post-mutation criteria on base `7cc796a`.
+`manageDomain` set/clear and `closeLease` now retain their typed core result and
+wrap every later verification/result-handling failure in a fresh SDK error.
+Structured code/message and original causes survive without changing upstream
+errors or their frozen details. Actual transaction receipts add `sent: true`,
+hash, confirmation and optional code, plus lease/domain/stop context. This
+prevents `withRetry` from replaying the whole orchestration after submission.
+
+Read-only lookup, pre-receipt errors, callbacks and successful public result
+shapes are unchanged. `already_inactive` preserves outcome/state without
+inventing submission evidence; normal retry classification applies to the preserved cause chain. Keeping a
+previously discarded abort/permanent transport cause can correctly veto retry.
+That result can also follow terminal reconciliation after a caught broadcast
+error, so missing receipt data cannot prove that no broadcast was attempted.
+Unconfirmed receipts likewise do not establish committed execution.
+
+| Finding | Confidence | Resolution |
+| --- | --- | --- |
+| Retrying verification failures could re-enter successful mutation helpers | 100% observed; 99% conditional SDK-composition impact | Public orchestration regressions cover set, clear, stopped and cancelled outcomes with 408, 503 and raw transient failures. Each now invokes the mutation once. |
+| Query metadata could attach an unrelated transaction code to an unconfirmed stop receipt | 100% | Omit that field when the actual stop receipt supplies no code; preserve the upstream details in the cause. Two red regressions now pass. |
+| Oversized query diagnostics could displace receipt confirmation/domain fields in MCP output | 99% | Prioritize the four additional receipt fields in the existing bounded projection; exercise both receipt types through real `withErrorHandling`. Existing sent/hash/lease protections remain intact. |
+
+No new dependency, public success type, retry option or global classification
+rule is introduced. SDK error object identity changes only after a successful
+core result. Consumer documentation lists exact fields and reconciliation
+semantics; MCP retains bounded sanitized details without serializing the cause.
+AggregateError and the other retained ENG-805 work remain separate.
+
+Validation passes: **3,840 tests**, 17 skipped, across 176 files with no type
+errors; 40 cases are new. Coverage is 84.49% lines, 84.22% statements, 83.85%
+branches and 88.15% functions, with all global/query/transaction floors passing.
+The receipt helper has 100% coverage across all four measures. The integrated
+focused run passed 317 cases before the final permanent-cause control, which is
+included in the full run.
+
+Workspace builds/types, E2E types, Biome, dependency architecture, package
+integrity, bundle budgets, the eight local MCP metadata cases, and coverage/type
+harness negative controls all pass. Package validation was repeated after the
+E2E type gate completed rebuilding dist; an initial overlap had observed the
+transiently empty cosmwasm output. The required dependency audit reports the
+unchanged seven low/four moderate findings and no high/critical findings.
+Independent review found no remaining blocker (confidence 98%); its projection
+and no-receipt wording observations are resolved (confidence 99% each).
+
+Local live acceptance is unavailable because the dedicated XFS project-quota
+mount is absent. The PR's live acceptance/E2E gate remains required before merge.
+The 72 pre-existing untracked artifacts and both submodule pins are preserved.
+These changes are implemented and unreleased; ENG-805 remains In Progress.
+
+## PR #227 review: receipt provenance and callback documentation
+
+[Claude's review](https://github.com/manifest-network/manifest-mcp-mono/pull/227#issuecomment-5622587856)
+reported no blocking defect and raised two observations. Both are addressed in
+this PR:
+
+| Finding | Confidence | Resolution |
+| --- | --- | --- |
+| Upstream details can supply canonical receipt fields absent from the actual receipt | 100% helper-level reproduction; 98% assessment that no current first-party verifier producer supplies them | Filter the helper's nine canonical receipt keys against its actual receipt fields. Preserve unrelated diagnostics and the immutable original cause. Four receipt-shape regressions verify SDK and real MCP output; separate sent-only and partial-only controls preserve retry vetoes. |
+| `QUERY_FAILED` documentation omits unexpected verifier errors that bypass `onFailure` | 100% | Document acquisition/query failures, unexpected decoding/spec/result errors, and the close success-state invariant separately in both orchestrators and the consumer guide. The outer wrapper adds no callback invocation. |
+
+This is conditional metadata hardening: current built-in query/acquisition paths
+have not demonstrated these foreign receipt details, but custom client behavior
+can supply them. Filtering covers the canonical keys owned by this helper;
+unrelated fields, including `partial` and transport diagnostics, remain intact.
+An inactive result never gains an inferred `sent: false`; upstream submission
+and partial-outcome evidence remains in the cause and continues to veto retry.
+The existing transient inactive-read control still permits retry.
+
+Five new cases failed before the filter and pass afterward. All **323 focused
+tests** pass, including the orchestration, retry and MCP projection controls.
+The two orchestrator modules emit identical JavaScript with comments removed;
+callback behavior is unchanged. Independent review found no remaining gap
+(confidence 99%).
+
+All five CI checks passed on the preceding `b509c17` head, including live SDK
+acceptance and the E2E gate. The final review revision passes **3,845 tests**,
+17 skipped, across 176 files with no type errors. Coverage is 84.51% lines,
+84.23% statements, 83.87% branches and 88.15% functions; all thresholds pass,
+and the receipt helper retains 100% across all four measures. Agent-core's
+build/type check and repository Biome checks also pass. The own-property check
+uses an ES2020-compatible descriptor lookup that survives formatter rewrites.
+CI will validate the new commit separately; this review adds no retained item
+or public success-type/callback change.
+
+## PR #227 re-review: rejection reasons, field spellings and lookup scope
+
+[Claude's re-review](https://github.com/manifest-network/manifest-mcp-mono/pull/227#issuecomment-5623316498)
+confirmed the existing receipt filter and cause-based retry protection, then
+identified one omitted field, equivalent spellings and lookup documentation
+imprecision. The response keeps the receipt contract qualified and explicit:
+
+| Finding | Confidence | Resolution |
+| --- | --- | --- |
+| A foreign `rejection_reason` can appear beside the current rejected lease's outcome | 100% helper-boundary reproduction; 98% assessment that no current first-party verifier produces it | Exclude this free-form field and its equivalent spellings from outer details. A native REJECTED receipt and a frozen query error carry different reasons; the new regression proves neither reason reaches SDK/MCP receipt details while read retry and original causes survive. |
+| Equivalent receipt-key spellings bypass the exact-name filter | 100% reproduction; same conditional reachability | Match the MCP projection's lowercase/underscore/hyphen normalization against the closed reserved-name inventory. Only exact canonical fields supplied by the receipt remain; extend all four native receipt-shape cases through SDK and MCP boundaries. |
+| The consumer guide's callback/cause statements could include read-only lookup | 100% | Scope them explicitly to post-mutation verification. Document lookup's cancellation and NotFound branches, structured-error passthrough and plain-error normalization without a mutation receipt or outer cause wrapper. |
+
+At `550c06a`, `transactionHash` and `transaction_hash` normalize to the same
+receipt name, and `txHash` is also reserved. The following generic-name policy
+records that revision; the next review amendment narrows it further. Bare `code` is independently
+prioritized by MCP; bare `confirmed` and `outcome`
+are neither equivalent to the qualified receipt names nor recovery-priority
+fields. Those generic names and bare `hash` remain query diagnostics, alongside ordinary
+HTTP/gRPC/transport details. Tests assert that they coexist with authoritative
+`transaction_code`, `transaction_confirmed` and `stop_outcome`. The filter does
+not infer that arbitrary diagnostic names describe another receipt. SDK callers
+use the documented qualified fields for the mutation result; the original error
+and its safety evidence remain available through the cause.
+
+The old no-evidence test remains a no-fabrication control. It does not claim to
+suppress `partial`; separate injected-evidence tests retain that flag and prove
+its retry veto. The new reason case and four strengthened alias cases failed
+before the implementation, while the other nine helper controls passed.
+
+A further independent review established two related conditional failures with
+built-runtime probes (confidence 100% reproduction, no actual broadcasts):
+
+- A zero-width field spelling became `transactionHash` or `rejection_reason`
+  after MCP display cleanup. Reserved-name checks now consider the exact same
+  sanitized display key as MCP, as well as the original spelling.
+- An enumerable diagnostic getter threw a raw retryable error while the wrapper
+  spread upstream details, losing the successful receipt. A three-attempt probe
+  replayed the post-receipt operation. The wrapper now copies enumerable data
+  descriptors without invoking getters and tolerates diagnostic reflection
+  failures; the original SDK error stays in the cause. A public `closeLease`
+  regression verifies one mutation and one verification call.
+
+These are custom-object/detail-key hardening cases; no current first-party
+verifier producer was found to supply them. They are fixed in this revision,
+with no deferred tracker item.
+
+The final revision passes **3,849 tests / 17 skipped across 176 files**, with no
+type errors and all coverage thresholds met: 84.51% lines, 84.23% statements,
+83.87% branches and 88.19% functions. The helper retains 100% across all four
+measures. The PR now adds 49 regression cases in total. All 327 focused
+orchestration/helper/retry/MCP tests, agent-core build/types and Biome pass.
+Before the final metadata fix, six helper cases failed and ten controls passed;
+the new public getter regression independently failed while the other 34 close
+tests passed. These tests prove operation invocation counts at controlled
+boundaries, without broadcasting transactions.
+
+Independent code and documentation review found no remaining blocker
+(confidence 98–99%). All five CI checks, including live acceptance and the E2E
+gate, passed on preceding head `55b6162`; the new revision requires its own CI.
+Local XFS project quotas remain unavailable. ENG-805 stays In Progress with
+11 unchecked criteria; its two implemented post-mutation criteria remain
+PR-open and unreleased. All 72 pre-existing untracked artifacts, both submodule
+pins and the unrelated release branch are preserved.
+
+
+## PR #227 review amendment: native receipt aliases and error inspection
+
+[Claude's next review](https://github.com/manifest-network/manifest-mcp-mono/pull/227#issuecomment-5624326560)
+confirmed the previous spelling/accessor regressions, then asked whether native
+`confirmed` and `outcome` should remain query diagnostics and identified an
+unguarded code/message read. The native-name argument changes the earlier
+policy decision: these names are receipt aliases, even though MCP does not give
+them recovery priority.
+
+| Finding | Confidence | Resolution |
+| --- | --- | --- |
+| Foreign bare `confirmed` / `outcome` can contradict the qualified receipt fields | 100% helper/SDK/MCP reproduction; 99% rationale for the narrower policy | Reserve both native names and their normalized/display-cleaned forms. Four receipt-shape cases inject conflicting receipt-like values. Keep `code`, `hash`, `committed` and ordinary HTTP/gRPC details as diagnostics. |
+| Throwing SDK code/message accessors can discard the receipt during error construction | 100% controlled reproduction | Guard reads independently, preserving the other readable field and original error. An unavailable code becomes `QUERY_FAILED`; an unavailable message becomes stable fallback prose. Ordinary raw-error prefixes remain. |
+| Query callback message formatting can replace the original verification cause before wrapping | 100% public-orchestration reproduction | Reuse guarded message formatting in both post-mutation query catch paths. Existing notifications and readable callback reasons remain; accessor failures preserve the original query error in the cause. |
+
+The helper also tolerates failed thrown-value string conversion and prototype
+inspection at its construction boundary. These remain custom-error hardening
+cases: no current first-party verifier was found to produce these native detail
+keys or throwing accessors (98–99% assessment confidence). The pre-fix helper
+run failed nine cases while twelve controls passed; the three new public close
+cases failed while the other 35 tests passed. Probes measure operation
+invocations without real broadcasts or claims about accepted transactions/fees.
+
+`already_inactive` can follow terminal reconciliation after a broadcast error;
+contrary to the review's premise, it does not establish that no broadcast was
+attempted. The wrapper adds no inferred sent flag to that result. This revision
+hardens post-mutation error construction; global retry cause traversal and
+classification are unchanged and can still reject on pathological custom cause
+accessors/proxies. Ordinary transaction-receipt errors still veto retries before
+classification inspects their original code/message accessors. The revoked-proxy
+regression deliberately asserts only the wrapper's construction boundary. No
+new retained tracker item or broader hostile-object guarantee is introduced.
+
+Final validation: **3,857 tests pass / 17 skip across 176 files**, no type
+errors; all 335 focused orchestration/helper/retry/MCP checks pass. The PR now
+adds 57 regression cases in total. Coverage meets every threshold: 84.54% lines,
+84.27% statements, 83.91% branches and 88.22% functions; the helper remains 100%
+across all four measures. Agent-core build/types and Biome pass. Independent
+code/docs/test review found no remaining blocker (98–99% confidence).
+
+All five CI checks, including live acceptance and the E2E gate, passed on
+preceding head `550c06a`; the new revision requires its own CI. Local XFS quotas
+remain unavailable. ENG-805 stays In Progress with 11 unchecked criteria; the
+two post-mutation criteria remain implemented, PR open and unreleased. All 72
+pre-existing artifacts, submodule pins and the unrelated release branch are
+preserved. No new retained item was added.
+
+
+## PR #227 final review: inactive-result type documentation
+
+[Claude's final review](https://github.com/manifest-network/manifest-mcp-mono/pull/227#issuecomment-5624679553)
+confirms that `df28fd7` closes both implementation items and reports no new
+runtime finding. All five CI checks on that commit pass, including live SDK
+acceptance and the E2E gate.
+
+The review repeats that `already_inactive` implies no broadcast. Tracing that
+wording exposed a remaining documentation gap: the exported `StopAppResult`
+comment also made that claim, although the consumer guide already distinguishes
+terminal pre-query results from reconciliation after a failed blocking
+broadcast. The type comment now states that distinction and promises only that
+no transaction receipt is returned. Confidence: 100% from control flow and the
+existing ACTIVE-to-CLOSED and PENDING-to-REJECTED reconciliation tests.
+
+This revision changes comments and the implementation record only. `stopApp`
+emits byte-identical JavaScript with comments removed; Biome and diff checks
+pass. Existing reconciliation regressions already cover the described behavior,
+so no tests were added or rerun for this prose change. The previous validation
+remains 3,857 pass / 17 skip, 335 focused checks and 57 new PR regressions, with
+all coverage thresholds met. Independent review confirms the correction (100%
+confidence). The documentation commit requires its own CI; the PR remains open
+and unreleased. ENG-805 retains 11 unchecked criteria, unchanged owners/triage
+and no new deferred item. All 72 pre-existing artifacts, submodule pins and the
+unrelated release branch remain intact.
+
+
+## PR #227 review: close teardown rejection documentation
+
+[Claude's next review](https://github.com/manifest-network/manifest-mcp-mono/pull/227#issuecomment-5634520238)
+accepts the inactive-result type correction and identifies a remaining
+`closeLease` clause claiming only ACTIVE broadcast failures or the
+PENDING-to-ACTIVE race propagate as-is. The rewritten teardown `@throws`
+paragraph now covers the actual branches:
+
+- Initial query, validation and cancellation failures can reject teardown.
+- Either an ACTIVE close or a PENDING cancel attempt can fail. A non-cancellation
+  failure in blocking mode can instead converge to `already_inactive` when the
+  re-query finds a terminal lease, returning no transaction receipt.
+- A PENDING cancellation whose re-query finds ACTIVE raises a new `TX_FAILED`;
+  other unresolved attempt failures retain their original error.
+- `closeLease` forwards whichever rejection `stopApp` produces unchanged,
+  without notifying `onFailure`; that callback belongs to later verification.
+
+Confidence: 100% from the control flow and existing close/cancel reconciliation,
+unchanged-state, failed-query and callback regressions. The related wording
+search found no second copy of the overstatement (99% confidence). This is a
+comment-only source correction; `closeLease` emits byte-identical JavaScript
+with comments removed. Existing tests already cover the described paths, so no
+new tests or runtime retesting are needed for the prose change.
+
+Independent review confirms the revised paragraph (100% confidence). Biome
+and diff checks pass. The unchanged runtime remains backed by 3,857 passing
+tests / 17 skipped, 335 focused checks and 57 new PR regressions, with all
+coverage thresholds met. All five CI checks passed on `6f4000a`, including live
+acceptance/E2E; the new documentation revision requires its own CI.
+
+The review's pre-existing reconciliation-diagnostics observation is recorded
+as an optional P3 core contract extension, not a blocker or a reopened criterion.
+Confidence is 100% in the source-level evidence loss: first-party failed
+DeliverTx errors can carry actual hash/code/height, but terminal reconciliation
+returns only the inactive result and discards that error. A future design would
+preserve those actual diagnostics separately from observed state and carry them
+through later verification failures, while distinguishing pre-submission errors
+from hash-bearing transaction failures. It must never infer submission from
+terminal state alone. This PR preserves the result that core actually returns.
+
+The claim that a retry never broadcasts again is conditional on its next
+pre-query reporting terminal. There is no persistent guard across invocations;
+a stale ACTIVE/PENDING response can reach another attempt (99% control-flow
+confidence, not demonstrated duplicate execution or fees). Cancellation and
+nonblocking errors bypass this reconciliation branch. The current no-receipt
+contract is already documented, and a narrow tracker search found no dedicated
+outstanding reconciliation-diagnostics criterion. The optional extension is
+recorded in ENG-805's review comment; its 11 unchecked criteria and two checked
+post-mutation criteria retain their existing scope. The PR remains open and
+unreleased. All 72 pre-existing artifacts, submodule pins and the unrelated
+release branch are preserved.

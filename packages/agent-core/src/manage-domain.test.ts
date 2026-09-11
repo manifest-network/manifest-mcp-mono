@@ -22,8 +22,14 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
+  asFqdn,
+  isRetryableError,
   ManifestMCPError,
   ManifestMCPErrorCode,
+  parseFqdn,
+  parseLeaseUuid,
+  type SetItemCustomDomainResult,
+  withRetry,
 } from '@manifest-network/manifest-mcp-core';
 import { beforeEach, describe, expect, it, type Mock, vi } from 'vitest';
 import type {
@@ -126,6 +132,292 @@ function captureCallbacks(
     confirms,
   };
 }
+
+describe('manageDomain — post-mutation outcome', () => {
+  const leaseUuid = parseLeaseUuid('11111111-1111-4111-8111-111111111111');
+  const retryOptions = {
+    config: { maxRetries: 1, baseDelayMs: 0, maxDelayMs: 0 },
+  };
+
+  function receipt(
+    action: 'set' | 'clear',
+    confirmed = true,
+  ): SetItemCustomDomainResult {
+    return Object.freeze({
+      lease_uuid: leaseUuid,
+      service_name: 'web',
+      custom_domain:
+        action === 'set' ? parseFqdn('app.example.com') : asFqdn(''),
+      transactionHash: `ACCEPTED-${action.toUpperCase()}-HASH`,
+      code: 0,
+      confirmed,
+    });
+  }
+
+  function argsFor(action: 'set' | 'clear'): ManageDomainArgs {
+    return action === 'set'
+      ? { action, leaseUuid, fqdn: 'App.Example.COM', serviceName: 'web' }
+      : { action, leaseUuid, serviceName: 'web' };
+  }
+
+  async function rejection(
+    promise: Promise<unknown>,
+  ): Promise<ManifestMCPError> {
+    try {
+      await promise;
+    } catch (error) {
+      expect(error).toBeInstanceOf(ManifestMCPError);
+      if (error instanceof ManifestMCPError) return error;
+      throw error;
+    }
+    throw new Error('Expected the verification failure to be reported');
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  describe.each(['set', 'clear'] as const)('%s', (action) => {
+    it.each([
+      {
+        label: 'HTTP 408',
+        makeError: () =>
+          new ManifestMCPError(
+            ManifestMCPErrorCode.QUERY_FAILED,
+            'verification request failed',
+            Object.freeze({ httpStatus: 408, diagnostic: 'upstream detail' }),
+          ),
+      },
+      {
+        label: 'HTTP 503',
+        makeError: () =>
+          new ManifestMCPError(
+            ManifestMCPErrorCode.QUERY_FAILED,
+            'verification request failed',
+            Object.freeze({
+              httpStatus: 503,
+              diagnostic: 'upstream detail',
+              sent: false,
+              lease_uuid: 'untrusted-lease',
+              transaction_hash: 'UNTRUSTED-HASH',
+              transaction_confirmed: false,
+              transaction_code: 99,
+              service_name: 'untrusted-service',
+              custom_domain: 'untrusted.example.com',
+            }),
+          ),
+      },
+      {
+        label: 'raw transport failure',
+        makeError: () => new Error('ECONNRESET: verification socket closed'),
+      },
+    ])(
+      'does not repeat a successful mutation after $label',
+      async ({ makeError }) => {
+        const core = await import('@manifest-network/manifest-mcp-core');
+        const { manageDomain } = await import('./manage-domain.js');
+        // A typed receipt is authoritative even if it reports acceptance
+        // without confirmation; the wrapper must not invent confirmation.
+        const mutationReceipt = receipt(action, action === 'set');
+        vi.mocked(core.setItemCustomDomain).mockResolvedValue(mutationReceipt);
+        const upstream = Object.freeze(makeError());
+        const originalProperties = Object.getOwnPropertyDescriptors(upstream);
+        expect(isRetryableError(upstream)).toBe(true);
+        const queryClient = makeMockQueryClient();
+        queryClient.liftedinit.billing.v1.lease.mockRejectedValue(upstream);
+        const clientManager = makeMockClientManager(queryClient);
+        const { callbacks, failures, confirms, completed } = captureCallbacks();
+
+        const failure = await rejection(
+          withRetry(
+            () =>
+              manageDomain(argsFor(action), callbacks, {
+                clientManager: clientManager as unknown as Parameters<
+                  typeof manageDomain
+                >[2]['clientManager'],
+              }),
+            retryOptions,
+          ),
+        );
+
+        expect(core.setItemCustomDomain).toHaveBeenCalledTimes(1);
+        expect(queryClient.liftedinit.billing.v1.lease).toHaveBeenCalledTimes(
+          1,
+        );
+        expect(failure).not.toBe(upstream);
+        expect(failure.code).toBe(ManifestMCPErrorCode.QUERY_FAILED);
+        const cause: unknown = Object.getOwnPropertyDescriptor(
+          failure,
+          'cause',
+        )?.value;
+        if (upstream instanceof ManifestMCPError) {
+          expect(cause).toBe(upstream);
+          expect(failure.message).toBe(upstream.message);
+          expect(failure.details?.httpStatus).toBe(
+            upstream.details?.httpStatus,
+          );
+          expect(failure.details?.diagnostic).toBe('upstream detail');
+        } else {
+          const nestedCause: unknown =
+            cause instanceof Error
+              ? Object.getOwnPropertyDescriptor(cause, 'cause')?.value
+              : undefined;
+          expect([cause, nestedCause]).toContain(upstream);
+        }
+        expect(
+          Object.getOwnPropertyDescriptor(failure, 'cause')?.enumerable,
+        ).toBe(false);
+        expect(failure.details).toMatchObject({
+          sent: true,
+          lease_uuid: leaseUuid,
+          transaction_hash: mutationReceipt.transactionHash,
+          transaction_confirmed: mutationReceipt.confirmed,
+          transaction_code: mutationReceipt.code,
+          service_name: 'web',
+          custom_domain: action === 'set' ? 'app.example.com' : '',
+        });
+        expect(isRetryableError(failure)).toBe(false);
+        expect(Object.getOwnPropertyDescriptors(upstream)).toEqual(
+          originalProperties,
+        );
+        expect(failures).toHaveLength(1);
+        expect(failures[0]?.reason).toContain(`${action}-verify`);
+        expect(failures[0]?.reason).toContain(leaseUuid);
+        expect(failures[0]?.reason).toContain(upstream.message);
+        expect(confirms).toHaveLength(1);
+        expect(completed).toEqual([]);
+      },
+    );
+
+    it('preserves the successful receipt when verification finds a domain mismatch', async () => {
+      const core = await import('@manifest-network/manifest-mcp-core');
+      const { manageDomain } = await import('./manage-domain.js');
+      const mutationReceipt = receipt(action);
+      vi.mocked(core.setItemCustomDomain).mockResolvedValue(mutationReceipt);
+      const queryClient = makeMockQueryClient();
+      queryClient.liftedinit.billing.v1.lease.mockResolvedValue({
+        lease: {
+          uuid: leaseUuid,
+          items: [
+            { serviceName: 'web', customDomain: 'different.example.com' },
+          ],
+        },
+      });
+      const clientManager = makeMockClientManager(queryClient);
+      const { callbacks, failures, completed } = captureCallbacks();
+
+      const failure = await rejection(
+        withRetry(
+          () =>
+            manageDomain(argsFor(action), callbacks, {
+              clientManager: clientManager as unknown as Parameters<
+                typeof manageDomain
+              >[2]['clientManager'],
+            }),
+          retryOptions,
+        ),
+      );
+
+      expect(core.setItemCustomDomain).toHaveBeenCalledTimes(1);
+      expect(failure.code).toBe(ManifestMCPErrorCode.TX_FAILED);
+      expect(failure.details).toMatchObject({
+        sent: true,
+        lease_uuid: leaseUuid,
+        transaction_hash: mutationReceipt.transactionHash,
+        transaction_confirmed: mutationReceipt.confirmed,
+        transaction_code: mutationReceipt.code,
+        service_name: 'web',
+        custom_domain: action === 'set' ? 'app.example.com' : '',
+      });
+      expect(failure.message).toContain('different.example.com');
+      expect(failures).toEqual([{ reason: failure.message }]);
+      expect(completed).toEqual([]);
+      expect(isRetryableError(failure)).toBe(false);
+    });
+  });
+
+  it.each([408, 503])(
+    'keeps a read-only lookup retryable after HTTP %i',
+    async (httpStatus) => {
+      const core = await import('@manifest-network/manifest-mcp-core');
+      const { manageDomain } = await import('./manage-domain.js');
+      const upstream = new ManifestMCPError(
+        ManifestMCPErrorCode.QUERY_FAILED,
+        'lookup unavailable',
+        { httpStatus },
+      );
+      const queryClient = makeMockQueryClient();
+      queryClient.liftedinit.billing.v1.leaseByCustomDomain
+        .mockRejectedValueOnce(upstream)
+        .mockResolvedValue({ lease: null });
+      const clientManager = makeMockClientManager(queryClient);
+      const { callbacks, failures, confirms, completed } = captureCallbacks();
+      const retried = vi.fn();
+
+      const result = await withRetry(
+        () =>
+          manageDomain(
+            { action: 'lookup', fqdn: 'app.example.com' },
+            callbacks,
+            {
+              clientManager: clientManager as unknown as Parameters<
+                typeof manageDomain
+              >[2]['clientManager'],
+            },
+          ),
+        { ...retryOptions, onRetry: retried },
+      );
+
+      expect(result).toEqual({
+        action: 'lookup',
+        fqdn: 'app.example.com',
+        lease: null,
+      });
+      expect(
+        queryClient.liftedinit.billing.v1.leaseByCustomDomain,
+      ).toHaveBeenCalledTimes(2);
+      expect(core.setItemCustomDomain).not.toHaveBeenCalled();
+      expect(retried).toHaveBeenCalledExactlyOnceWith(upstream, 1, 0);
+      expect(upstream.details).toEqual({ httpStatus });
+      expect(failures).toHaveLength(1);
+      expect(confirms).toEqual([]);
+      expect(completed).toEqual([result]);
+    },
+  );
+
+  it('passes a mutation rejection through without fabricating a successful receipt', async () => {
+    const core = await import('@manifest-network/manifest-mcp-core');
+    const { manageDomain } = await import('./manage-domain.js');
+    const upstream = new ManifestMCPError(
+      ManifestMCPErrorCode.TX_FAILED,
+      'set-item-custom-domain rejected by chain',
+      { code: 5 },
+    );
+    vi.mocked(core.setItemCustomDomain).mockRejectedValue(upstream);
+    const queryClient = makeMockQueryClient();
+    const clientManager = makeMockClientManager(queryClient);
+    const { callbacks, failures, completed } = captureCallbacks();
+
+    const failure = await rejection(
+      withRetry(
+        () =>
+          manageDomain(argsFor('set'), callbacks, {
+            clientManager: clientManager as unknown as Parameters<
+              typeof manageDomain
+            >[2]['clientManager'],
+          }),
+        retryOptions,
+      ),
+    );
+
+    expect(failure).toBe(upstream);
+    expect(failure.details).toEqual({ code: 5 });
+    expect(core.setItemCustomDomain).toHaveBeenCalledTimes(1);
+    expect(queryClient.liftedinit.billing.v1.lease).not.toHaveBeenCalled();
+    expect(failures).toEqual([]);
+    expect(completed).toEqual([]);
+  });
+});
 
 // =============================================================================
 // Lookup path — fixture replay 04-lookup-found + 05-lookup-not-found

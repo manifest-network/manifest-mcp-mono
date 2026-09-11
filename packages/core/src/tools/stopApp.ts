@@ -10,11 +10,13 @@ import { resolveCallSignal, type TxCallOptions } from '../options.js';
 import { ManifestMCPError, ManifestMCPErrorCode } from '../types.js';
 
 /**
- * Result of {@link stopApp}. Discriminated on `outcome` (the action taken):
+ * Result of {@link stopApp}, discriminated by `outcome`:
  * `stopped` (ACTIVE lease closed), `cancelled` (PENDING lease cancelled), or
- * `already_inactive` (no broadcast — the lease was already terminal).
- * `outcome` — not `lease_state` — is the discriminant, because `stopped` and a
- * no-op `already_inactive` can both land on `LEASE_STATE_CLOSED`.
+ * `already_inactive` (terminal lease observed; no transaction receipt returned).
+ * The inactive result can follow a terminal pre-query or reconciliation after a
+ * failed blocking broadcast. It does not establish that no broadcast was attempted.
+ * Both `stopped` and `already_inactive` can report `LEASE_STATE_CLOSED`, so
+ * `outcome` distinguishes the returned result variants.
  *
  * The `stopped`/`cancelled` outcomes carry `confirmed`: `true` after a blocking broadcast
  * (`waitForConfirmation` default) — with the DeliverTx `code`; `false` after a non-blocking

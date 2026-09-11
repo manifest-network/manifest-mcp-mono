@@ -18,8 +18,9 @@ import { isLeaseUuidShape } from './internals/uuid-shape.js';
  *      PENDING / ACTIVE map to the `pending_drift` branch; a chain
  *      response with no lease (`{ lease: null }`) maps to the catch-all
  *      `unclassified` branch.
- *   5. On verify-failure, invoke the simple-form `onFailure({ reason })`
- *      then throw `ManifestMCPError(TX_FAILED)`. On success, emit
+ *   5. On a non-terminal or missing-lease verification result, invoke
+ *      `onFailure({ reason })` then throw `ManifestMCPError(TX_FAILED)`.
+ *      On success, emit
  *      `onComplete` with the typed `CloseLeaseResult`.
  */
 
@@ -40,6 +41,11 @@ import {
   emitProgress,
   notifyFailure,
 } from './internals/safe-progress.js';
+import {
+  verificationErrorMessage,
+  verificationQueryError,
+  withVerificationOutcome,
+} from './internals/verification-outcome.js';
 import {
   type VerificationSpec,
   verifyAndRecover,
@@ -66,17 +72,17 @@ interface CloseDiag {
  * @throws `ManifestMCPError(INVALID_CONFIG)` for args validation.
  * @throws `ManifestMCPError(OPERATION_CANCELLED)` when `onConfirm` returns
  *   `'no'` (deliberate user cancellation — ENG-272).
- * @throws `ManifestMCPError` (typically `TX_FAILED`) propagated as-is
- *   from the `stopApp()` teardown step. `stopApp` is now polymorphic and
- *   idempotent: an already-terminal lease resolves as a no-op success and
- *   a PENDING lease is CANCELLED (→ REJECTED, which the verifier accepts
- *   as terminal), so neither raises here anymore. Only a genuine broadcast
- *   error on an ACTIVE close (or the rare `PENDING→ACTIVE` mid-call race)
- *   still propagates as-is. Broadcast errors do NOT invoke `onFailure` —
- *   that callback is reserved for post-broadcast verification failures.
- *   `stopApp` already raises a structured `ManifestMCPError` from the core
- *   package; wrapping it again at this layer would be redundant. Callers
- *   wanting to react to broadcast errors should catch them at the call site.
+ * @throws `ManifestMCPError` from the `stopApp()` teardown step, including
+ *   query, validation, cancellation and transaction failures. A terminal
+ *   pre-query resolves as a no-op; ACTIVE and PENDING leases select close
+ *   and cancel respectively, and either operation can fail. After a
+ *   non-cancellation failure from a blocking close/cancel attempt, a terminal
+ *   re-query makes `stopApp` resolve `already_inactive` without a transaction
+ *   receipt, and verification continues. Otherwise it preserves the original
+ *   failure, except that a `PENDING→ACTIVE` cancel race becomes a new `TX_FAILED`.
+ *   `closeLease` propagates whichever rejection `stopApp` produces unchanged,
+ *   without invoking `onFailure`. Catch the rejected promise to handle
+ *   teardown failures; `onFailure` belongs to subsequent verification.
  * @throws `ManifestMCPError(TX_FAILED)` when post-broadcast verification
  *   reaches one of two failure modes (both with `onFailure({ reason })`
  *   invoked first):
@@ -84,12 +90,21 @@ interface CloseDiag {
  *       decoded as PENDING / ACTIVE / similar non-terminal); or
  *     - the chain returns `{ lease: null }` post-close, so the lease is
  *       not visible on-chain (`unclassified` branch).
- * @throws `ManifestMCPError(QUERY_FAILED)` when the post-broadcast verify
- *   chain query (`billing.v1.lease`) raises a non-NotFound error
- *   (RPC / transport / decoding failure). Wrapped inside the verifier
- *   closure so the failure flows through `onFailure({ reason })` before
- *   the throw. Structured `ManifestMCPError`s raised by the chain client
- *   are re-thrown as-is (with `onFailure` invoked first).
+ *   Also covers a verifier success result missing its required state;
+ *   that invariant failure does not invoke `onFailure`.
+ * @throws `ManifestMCPError(QUERY_FAILED)` when verification client
+ *   acquisition or the `billing.v1.lease` query raises a non-SDK error.
+ *   These query failures invoke `onFailure({ reason })` before throwing.
+ *   Unexpected non-SDK errors elsewhere in post-mutation verification
+ *   (such as decoding or verifier spec/result validation) also become
+ *   `QUERY_FAILED`, but bypass that query-failure callback. The outer
+ *   receipt wrapper does not add an `onFailure` invocation.
+ *   Post-mutation SDK errors preserve readable code/message values and their
+ *   original cause; failed reads use `QUERY_FAILED` / fallback message text.
+ *   The fresh error carries the stop outcome. An actual
+ *   transaction receipt adds its hash, confirmation and `details.sent: true`;
+ *   `already_inactive` adds no inferred submission evidence. Reconcile a
+ *   submitted transaction before considering another mutation.
  */
 export async function closeLease(
   args: CloseLeaseArgs,
@@ -122,132 +137,132 @@ export async function closeLease(
 
   // txCtx has no signer (ManageDomain/CloseLease flows carry no walletProvider);
   // the sender resolves from ctx.chain (the CosmosClientManager wallet). See OI-SENDER.
-  await stopApp(
+  const mutationReceipt = await stopApp(
     { chain: opts.clientManager, logger: noopLogger },
     { leaseUuid: parseLeaseUuid(args.leaseUuid) },
   );
 
-  // Direct single-lease query (Copilot review PR #60, comment 3275999624):
-  // the previous `leasesByTenant` + page-1-only pagination would
-  // false-`not_found` for tenants with >100 leases. `billing.v1.lease`
-  // is the same query shape `troubleshoot.ts` already uses; it's
-  // tenant-agnostic and bounded to a single lease.
-  const spec: VerificationSpec<unknown, CloseOutcome, CloseDiag> = {
-    verifier: async () => {
-      // Wrap the chain call in try/catch (Copilot review PR #60,
-      // comment 3276419264): if `billing.v1.lease` rejects (RPC down,
-      // transport, structured `ManifestMCPError`), the error would
-      // otherwise propagate OUT of `verifyAndRecover` and bypass the
-      // post-verify `onFailure({ reason })` callback below. Mirror
-      // the disambiguation pattern from `lookupDomain` (commit aaa5cc5)
-      // and `troubleshootDeployment` (commit f1a4737): invoke
-      // `onFailure` first, then re-throw `ManifestMCPError` as-is or
-      // wrap plain errors as `QUERY_FAILED`.
-      let result: unknown;
-      try {
-        const queryClient = await opts.clientManager.getQueryClient();
-        result = await queryClient.liftedinit.billing.v1.lease({
-          leaseUuid: args.leaseUuid,
-        });
-      } catch (err) {
-        const reason = `Failed to query lease ${args.leaseUuid} during close-verify: ${
-          err instanceof Error ? err.message : String(err)
-        }`;
-        await notifyFailure(callbacks.onFailure, { reason });
-        if (err instanceof ManifestMCPError) {
-          throw err;
+  return withVerificationOutcome(mutationReceipt, async () => {
+    // Direct single-lease query (Copilot review PR #60, comment 3275999624):
+    // the previous `leasesByTenant` + page-1-only pagination would
+    // false-`not_found` for tenants with >100 leases. `billing.v1.lease`
+    // is the same query shape `troubleshoot.ts` already uses; it's
+    // tenant-agnostic and bounded to a single lease.
+    const spec: VerificationSpec<unknown, CloseOutcome, CloseDiag> = {
+      verifier: async () => {
+        // Wrap the chain call in try/catch (Copilot review PR #60,
+        // comment 3276419264): if `billing.v1.lease` rejects (RPC down,
+        // transport, structured `ManifestMCPError`), the error would
+        // otherwise propagate OUT of `verifyAndRecover` and bypass the
+        // post-verify `onFailure({ reason })` callback below. Mirror
+        // the disambiguation pattern from `lookupDomain` (commit aaa5cc5)
+        // and `troubleshootDeployment` (commit f1a4737): invoke
+        // `onFailure` first, then re-throw `ManifestMCPError` as-is or
+        // wrap plain errors as `QUERY_FAILED`.
+        let result: unknown;
+        try {
+          const queryClient = await opts.clientManager.getQueryClient();
+          result = await queryClient.liftedinit.billing.v1.lease({
+            leaseUuid: args.leaseUuid,
+          });
+        } catch (err) {
+          const reason = `Failed to query lease ${args.leaseUuid} during close-verify: ${verificationErrorMessage(err)}`;
+          await notifyFailure(callbacks.onFailure, { reason });
+          if (err instanceof ManifestMCPError) {
+            throw err;
+          }
+          throw verificationQueryError(reason, err);
         }
-        throw new ManifestMCPError(ManifestMCPErrorCode.QUERY_FAILED, reason);
-      }
-      const lease = (result as { lease?: unknown })?.lease;
-      if (lease === null || lease === undefined) {
+        const lease = (result as { lease?: unknown })?.lease;
+        if (lease === null || lease === undefined) {
+          return {
+            outcome: 'not_found' as const,
+            diagnostic: {
+              reason: `lease ${args.leaseUuid} not visible on chain after close`,
+            },
+          };
+        }
+        const rawState = (lease as { state?: unknown }).state;
+        const stateName = decodeLeaseState(
+          typeof rawState === 'number' || typeof rawState === 'string'
+            ? rawState
+            : undefined,
+        );
+        if (stateName === undefined) {
+          return {
+            outcome: 'pending' as const,
+            diagnostic: {
+              reason: `lease ${args.leaseUuid} state could not be decoded (raw=${String(rawState)})`,
+            },
+          };
+        }
         return {
-          outcome: 'not_found' as const,
-          diagnostic: {
-            reason: `lease ${args.leaseUuid} not visible on chain after close`,
-          },
+          outcome: (isTerminal(stateName) ? 'terminal' : 'pending') as
+            | 'terminal'
+            | 'pending',
+          diagnostic: { stateName },
         };
-      }
-      const rawState = (lease as { state?: unknown }).state;
-      const stateName = decodeLeaseState(
-        typeof rawState === 'number' || typeof rawState === 'string'
-          ? rawState
-          : undefined,
+      },
+      successValues: ['terminal'],
+      branches: {
+        pending: {
+          branchId: 'pending_drift',
+          journalActionTags: ['close-lease-verify-pending'],
+          buildFailureEnvelope: (d) => ({
+            outcome: 'failed',
+            reason:
+              d.reason ??
+              `close_lease tx accepted but state is still ${d.stateName ?? 'unknown'}.`,
+          }),
+          buildRecoveryOptions: () => [],
+        },
+        not_found: {
+          branchId: 'unclassified',
+          journalActionTags: ['close-lease-verify-not-found'],
+          buildFailureEnvelope: (d) => ({
+            outcome: 'failed',
+            reason:
+              d.reason ??
+              `Lease ${args.leaseUuid} not visible on chain after close.`,
+          }),
+          buildRecoveryOptions: () => [],
+        },
+      },
+    };
+
+    const verifyResult = await verifyAndRecover(spec, undefined);
+
+    if (verifyResult.result !== 'success') {
+      const reason =
+        verifyResult.failure?.reason ?? 'close-lease verification failed.';
+      await notifyFailure(callbacks.onFailure, { reason });
+      throw new ManifestMCPError(ManifestMCPErrorCode.TX_FAILED, reason);
+    }
+
+    // Invariant: when `verifyAndRecover` returns success, the matched
+    // outcome was `'terminal'`, and the verifier's `terminal` branch
+    // ALWAYS sets `diagnostic.stateName` (see the spec above). A missing
+    // `stateName` on the success path means the verifier invariant is
+    // broken — likely a future refactor regression. The previous
+    // implementation fell back to `'LEASE_STATE_CLOSED'` silently, which
+    // would lie to the caller (Copilot review PR #60, comment 3276719603).
+    // Fail loudly with a typed error instead. `TX_FAILED` is the closest
+    // available code in `ManifestMCPErrorCode` (no `INTERNAL_ERROR`
+    // variant); the message names the invariant explicitly.
+    if (!verifyResult.diagnostic.stateName) {
+      throw new ManifestMCPError(
+        ManifestMCPErrorCode.TX_FAILED,
+        `close-lease verifier invariant violated: success outcome reached without diagnostic.stateName for lease ${args.leaseUuid}`,
       );
-      if (stateName === undefined) {
-        return {
-          outcome: 'pending' as const,
-          diagnostic: {
-            reason: `lease ${args.leaseUuid} state could not be decoded (raw=${String(rawState)})`,
-          },
-        };
-      }
-      return {
-        outcome: (isTerminal(stateName) ? 'terminal' : 'pending') as
-          | 'terminal'
-          | 'pending',
-        diagnostic: { stateName },
-      };
-    },
-    successValues: ['terminal'],
-    branches: {
-      pending: {
-        branchId: 'pending_drift',
-        journalActionTags: ['close-lease-verify-pending'],
-        buildFailureEnvelope: (d) => ({
-          outcome: 'failed',
-          reason:
-            d.reason ??
-            `close_lease tx accepted but state is still ${d.stateName ?? 'unknown'}.`,
-        }),
-        buildRecoveryOptions: () => [],
-      },
-      not_found: {
-        branchId: 'unclassified',
-        journalActionTags: ['close-lease-verify-not-found'],
-        buildFailureEnvelope: (d) => ({
-          outcome: 'failed',
-          reason:
-            d.reason ??
-            `Lease ${args.leaseUuid} not visible on chain after close.`,
-        }),
-        buildRecoveryOptions: () => [],
-      },
-    },
-  };
-
-  const verifyResult = await verifyAndRecover(spec, undefined);
-
-  if (verifyResult.result !== 'success') {
-    const reason =
-      verifyResult.failure?.reason ?? 'close-lease verification failed.';
-    await notifyFailure(callbacks.onFailure, { reason });
-    throw new ManifestMCPError(ManifestMCPErrorCode.TX_FAILED, reason);
-  }
-
-  // Invariant: when `verifyAndRecover` returns success, the matched
-  // outcome was `'terminal'`, and the verifier's `terminal` branch
-  // ALWAYS sets `diagnostic.stateName` (see the spec above). A missing
-  // `stateName` on the success path means the verifier invariant is
-  // broken — likely a future refactor regression. The previous
-  // implementation fell back to `'LEASE_STATE_CLOSED'` silently, which
-  // would lie to the caller (Copilot review PR #60, comment 3276719603).
-  // Fail loudly with a typed error instead. `TX_FAILED` is the closest
-  // available code in `ManifestMCPErrorCode` (no `INTERNAL_ERROR`
-  // variant); the message names the invariant explicitly.
-  if (!verifyResult.diagnostic.stateName) {
-    throw new ManifestMCPError(
-      ManifestMCPErrorCode.TX_FAILED,
-      `close-lease verifier invariant violated: success outcome reached without diagnostic.stateName for lease ${args.leaseUuid}`,
-    );
-  }
-  const finalState: LeaseStateName = verifyResult.diagnostic.stateName;
-  const result: CloseLeaseResult = {
-    leaseUuid: args.leaseUuid,
-    finalState,
-  };
-  emitCompletion(() => callbacks.onComplete?.(result));
-  return result;
+    }
+    const finalState: LeaseStateName = verifyResult.diagnostic.stateName;
+    const result: CloseLeaseResult = {
+      leaseUuid: args.leaseUuid,
+      finalState,
+    };
+    emitCompletion(() => callbacks.onComplete?.(result));
+    return result;
+  });
 }
 
 // --- Helpers --------------------------------------------------------

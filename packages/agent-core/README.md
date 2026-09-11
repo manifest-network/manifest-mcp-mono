@@ -44,3 +44,15 @@ Each function takes a typed args object plus a callbacks object with `onConfirm`
 ## SSRF-guarded fetch (Node-only subpath)
 
 The SSRF-guarded `fetch` factory is re-exported from a Node-only subpath, `@manifest-network/manifest-agent-core/guarded-fetch` — deliberately kept off the package barrel so browser bundles don't drag in `undici` / `node:async_hooks` (mirrors core's `@manifest-network/manifest-mcp-core/guarded-fetch` split). Import it from that subpath, never the barrel.
+
+## Verification failures after mutation
+
+`manageDomain` set/clear and `closeLease` preserve their successful core mutation
+receipt if later verification fails. Fresh errors retain structured code/message,
+original causes and reconciliation details. A receipt containing a transaction
+hash adds `details.sent: true`, preventing whole-orchestration replay through
+`withRetry`; use that hash and lease ID to inspect the chain before another
+mutation. `already_inactive` close outcomes carry no inferred submission evidence,
+and read-only lookup remains unchanged. Successful result types and callbacks
+are unchanged. See the [SDK error contract](../../docs/library-usage.md#errors)
+for field names, confirmation semantics and the no-receipt limitation.
