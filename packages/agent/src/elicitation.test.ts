@@ -13,6 +13,7 @@ const cands: SkuCandidate[] = [
     providerUuid: asProviderUuid('p1'),
     name: 'docker-micro',
     price: { amount: '100', denom: 'umfx' },
+    billingUnit: 'hour',
     active: true,
   },
   {
@@ -20,6 +21,7 @@ const cands: SkuCandidate[] = [
     providerUuid: asProviderUuid('p2'),
     name: 'docker-micro',
     price: { amount: '120', denom: 'umfx' },
+    billingUnit: 'day',
     active: true,
   },
 ];
@@ -37,7 +39,21 @@ describe('buildSkuPickSchema', () => {
     const s = buildSkuPickSchema(cands) as unknown as {
       properties: { sku_uuid: { enumNames: string[] } };
     };
-    expect(s.properties.sku_uuid.enumNames[0]).toContain('100umfx');
+    expect(s.properties.sku_uuid.enumNames).toEqual([
+      'docker-micro @ p1 (100umfx / hour)',
+      'docker-micro @ p2 (120umfx / day)',
+    ]);
+  });
+
+  it('labels an unknown billing period without assuming hourly pricing', () => {
+    const s = buildSkuPickSchema([
+      { ...cands[0], billingUnit: undefined },
+    ]) as unknown as {
+      properties: { sku_uuid: { enumNames: string[] } };
+    };
+    expect(s.properties.sku_uuid.enumNames[0]).toContain(
+      '100umfx / unknown billing unit',
+    );
   });
 
   it('sanitizes control chars so a hostile SKU cannot inject into the label (ENG-555)', () => {

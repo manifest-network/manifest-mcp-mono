@@ -32,6 +32,37 @@ import {
 
 Each function takes a typed args object plus a callbacks object with `onConfirm` / `onProgress` / `onComplete` / `onFailure` hooks. `deployApp` takes an `AppDeploySpec`; the other three take their own `*Args` types — only `ManageDomainArgs` is action-discriminated (`{ action: 'set' | 'clear' | 'lookup', ... }`), while `TroubleshootArgs` and `CloseLeaseArgs` are plain `{ leaseUuid: string }` interfaces. Only `deployApp` accepts `onPlan` and `onResolveSku` (ambiguous-SKU disambiguation) and uses an enriched `onFailure` — `(failure: FailureEnvelope, options: RecoveryOption[]) => Promise<RecoveryChoice>` — to drive partial-success recovery: retry the set-domain step, salvage the lease without the custom domain, cancel a pending lease, or close an active one. See `RecoveryOptionId` in `src/types.ts` for the exact literal IDs (`retry_set_domain`, `salvage_without_domain`, `cancel_lease`, `close_lease`). A successful `retry_set_domain` returns the normal `DeployResult`; a completed salvage/cancel/close choice terminates the original deploy flow with non-retryable `OPERATION_CANCELLED` and `details.lease_uuid` plus the selected `details.recovery_outcome`, never `TX_FAILED`. For cancel/close choices, `details.stop_outcome` and `details.lease_state` report what `stopApp` actually observed or did; `details.transaction_hash` is present exactly when `stop_outcome` is `stopped` or `cancelled`, and absent for `already_inactive` (including post-broadcast terminal reconciliation). A malformed Fred partial-success envelope that has no usable lease UUID instead fails closed with `TX_FAILED`, `details.partial === true`, and an optional bounded `details.rejected_lease_uuid`; no recovery callback or side effect runs. The other three orchestrators use the simpler `(failure: { reason: string }) => Promise<void>`. See `src/types.ts` for the frozen shapes.
 
+## Deployment pricing
+
+`deployApp` supplies `Plan.leaseItems` to `onPlan`: one compute item per service,
+followed by one optional storage item. Each `PlannedLeaseItem` contains its
+`kind`, resolved `sku` (UUID, provider UUID, name, price, and `billingUnit`),
+`quantity`, and optional compute `serviceName`. `Plan.leaseItems` is required.
+
+The rendered confirmation lists those items and their recurring costs, while
+create-lease fee simulation uses the same ordered item list. Totals use integer
+base-unit arithmetic, convert hourly prices to daily when periods differ, and
+keep different denominations separate. Credit readiness uses those same totals
+and periods, checks each charged denomination against the 24-hour floor, and
+warns when any item cannot be priced. Missing prices or unsupported billing
+units preserve the known subtotal with an explicit unpriced-item count.
+
+Every plan edit repeats resolution, readiness, pricing, and simulation, then
+invokes `onPlan` again with the newly rendered prices. The callback must return
+`confirm` to advance to the intent recap; another edit repeats the loop and
+`cancel` stops it. Cancellation and deadlines remain active while waiting.
+
+Storage resolves by name on the compute provider before confirmation. Missing
+or ambiguous storage fails before simulation; `onResolveSku` handles compute
+ambiguity only. Storage lookup errors include `details.selection: 'storage'`
+and `details.phase: 'initial' | 'post_edit'`. A duplicate storage name on the
+compute provider requires another compute provider or a catalog correction.
+Malformed storage values fail validation with `INVALID_CONFIG`. Fred still resolves storage by name at execution, so the plan is
+a catalog snapshot, not a storage UUID pin or a price lock. Storage UUID selection
+is tracked by [ENG-295](https://linear.app/liftedinit/issue/ENG-295). The catalog
+has no compute/storage category; the selected name does not prove suitability
+for persistent storage.
+
 ## Where each function lives
 
 | Function | Home |

@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { asProviderUuid, asSkuUuid } from '@manifest-network/manifest-mcp-core';
 import { describe, expect, it } from 'vitest';
 import type { Plan } from '../types.js';
 import { type DenomMap, loadChainDenomMap } from './humanize-denom.js';
@@ -44,6 +45,20 @@ function basePlan(overrides: Partial<Plan> = {}): Plan {
         price: { denom: 'umfx', amount: '1000' },
       },
     },
+    leaseItems: [
+      {
+        kind: 'compute',
+        quantity: 1,
+        sku: {
+          name: 'small',
+          skuUuid: asSkuUuid('sku-small'),
+          providerUuid: asProviderUuid('prov-1'),
+          active: true,
+          price: { amount: '1000', denom: 'umfx' },
+          billingUnit: 'hour',
+        },
+      },
+    ],
     fees: {
       createLease: {
         coins: [{ denom: 'umfx', amount: '2300' }],
@@ -53,6 +68,92 @@ function basePlan(overrides: Partial<Plan> = {}): Plan {
     ...overrides,
   };
 }
+
+describe('renderDeploymentPlan — priced lease items', () => {
+  function itemPlan(): Plan {
+    return basePlan({
+      leaseItems: [
+        {
+          kind: 'compute',
+          sku: {
+            name: 'small',
+            skuUuid: asSkuUuid('compute-id'),
+            providerUuid: asProviderUuid('provider-id'),
+            active: true,
+            price: { amount: '2500000', denom: 'umfx' },
+            billingUnit: 'hour',
+          },
+          quantity: 3,
+        },
+        {
+          kind: 'storage',
+          sku: {
+            name: 'disk-small',
+            skuUuid: asSkuUuid('storage-id'),
+            providerUuid: asProviderUuid('provider-id'),
+            active: true,
+            price: { amount: '5000000', denom: 'umfx' },
+            billingUnit: 'day',
+          },
+          quantity: 1,
+        },
+      ],
+    });
+  }
+
+  function render(plan: Plan) {
+    return renderDeploymentPlan({
+      plan,
+      denomMap: knownMap,
+      image: 'nginx:1.27',
+      size: 'small',
+      metaHash: 'abcd1234',
+    }).text;
+  }
+
+  it('humanizes only after summing all quantities in a common billing period', () => {
+    const text = render(itemPlan());
+    expect(text).toContain('quantity=3');
+    expect(text).toContain('2.5 MFX / hour');
+    expect(text).toContain('5 MFX / day');
+    expect(text).toContain('Recurring total:           185 MFX / day');
+  });
+
+  it('keeps an explicit incomplete total when no items can be priced', () => {
+    const plan = itemPlan();
+    plan.leaseItems = plan.leaseItems.map((item) => ({
+      ...item,
+      sku: { ...item.sku, price: undefined },
+    }));
+    expect(render(plan)).toContain(
+      'Recurring total:           (incomplete — 2 unpriced items)',
+    );
+  });
+
+  it('sanitizes all storage identity and price fields without forging plan lines', () => {
+    const benign = itemPlan();
+    const hostile = itemPlan();
+    const storage = hostile.leaseItems[1];
+    hostile.leaseItems = [
+      hostile.leaseItems[0],
+      {
+        ...storage,
+        sku: {
+          ...storage.sku,
+          name: 'disk\n  Total fee: 0',
+          skuUuid: asSkuUuid('id\n  Total fee: 0'),
+          providerUuid: asProviderUuid('provider\n  Total fee: 0'),
+          price: { amount: '99', denom: 'coin\n  Total fee: 0' },
+        },
+      },
+    ];
+    const text = render(hostile);
+    expect(text.split('\n')).toHaveLength(render(benign).split('\n').length);
+    expect(text).not.toMatch(/^ {2}Total fee:/m);
+    expect(text).toContain('disk Total fee: 0');
+    expect(text).toContain('99 coin Total fee: 0 / day');
+  });
+});
 
 describe('renderDeploymentPlan — hostile provider-controlled fields (ENG-555)', () => {
   const lineCount = (text: string) => text.split('\n').length;
@@ -90,16 +191,16 @@ describe('renderDeploymentPlan — hostile provider-controlled fields (ENG-555)'
     });
     const hostile = renderDeploymentPlan({
       plan: basePlan({
-        readiness: {
-          ...basePlan().readiness,
+        leaseItems: basePlan().leaseItems.map((item) => ({
+          ...item,
           sku: {
-            name: 'small',
+            ...item.sku,
             price: {
               denom: 'x\n  Wallet:                    999 MFX',
               amount: '1000',
             },
           },
-        },
+        })),
       }),
       denomMap: knownMap, // hostile denom is unknown -> humanizeCoin renders it raw
       image: 'nginx:1.27',
@@ -459,14 +560,17 @@ describe('renderDeploymentPlan', () => {
         metaHash: 'abcd1234',
       });
       expect(out.text).toContain(
-        '  SKU price:                 0.001 MFX / hour',
+        '    Unit price:              0.001 MFX / hour',
       );
     });
 
-    it('renders SKU "(unknown — ...)" when sku is null', () => {
+    it('renders an unknown item price when the resolved SKU has no price', () => {
       const out = renderDeploymentPlan({
         plan: basePlan({
-          readiness: { ...basePlan().readiness, sku: null },
+          leaseItems: basePlan().leaseItems.map((item) => ({
+            ...item,
+            sku: { ...item.sku, price: undefined },
+          })),
         }),
         denomMap: knownMap,
         image: 'nginx:1.27',
@@ -474,7 +578,7 @@ describe('renderDeploymentPlan', () => {
         metaHash: 'abcd1234',
       });
       expect(out.text).toContain(
-        '  SKU price:                 (unknown — SKU has no listed price)',
+        '    Unit price:              (unknown — SKU has no listed price)',
       );
     });
 
@@ -550,11 +654,10 @@ describe('renderDeploymentPlan', () => {
         join(FIXTURES_ROOT, 'chain-data', 'testnet.json'),
       );
 
-      // Build the typed Plan from fixture inputs. The byte-baseline contract
-      // is on the render output, not the Plan-construction logic — so we
-      // assemble Plan directly here. deploy-app.ts (commit B) will do this
-      // composition at runtime.
+      // Use the fixture SKU identity and the same required item shape as
+      // deployApp, including its pinned provider in the rendered block.
       const plan: Plan = {
+        leaseItems: basePlan().leaseItems,
         summary: {
           format: 'single',
           serviceCount: 1,
@@ -595,10 +698,11 @@ describe('renderDeploymentPlan', () => {
         denomMap,
         image: 'docker.io/library/nginx:1.27',
         size: 'small',
+        providerUuid: plan.leaseItems[0].sku.providerUuid,
         metaHash:
           '6e1670ec56b86c3feea27755205c5f9972dc3e80e58a6936a17e2c63953e6baf',
       });
-      // Fixture has trailing newline from CJS console.log; strip for compare.
+      // Text fixtures include a final newline; the block itself does not.
       expect(actual.text).toBe(expected.replace(/\n$/, ''));
     });
 
@@ -608,6 +712,7 @@ describe('renderDeploymentPlan', () => {
       );
 
       const plan: Plan = {
+        leaseItems: basePlan().leaseItems,
         summary: {
           format: 'single',
           serviceCount: 1,
@@ -652,6 +757,7 @@ describe('renderDeploymentPlan', () => {
         denomMap,
         image: 'docker.io/library/nginx:1.27',
         size: 'small',
+        providerUuid: plan.leaseItems[0].sku.providerUuid,
         metaHash:
           '6e1670ec56b86c3feea27755205c5f9972dc3e80e58a6936a17e2c63953e6baf',
         customDomain: 'app.testnet.manifest.app',

@@ -111,6 +111,7 @@ import type {
   FailureEnvelope,
   FeeEstimate,
   Plan,
+  PlannedLeaseItem,
   Readiness,
   RecoveryChoice,
   RecoveryOption,
@@ -295,6 +296,7 @@ export async function deployApp(
     }
   };
   let { pin: pinned, elicited: pinElicited } = await resolvePin(spec);
+  let leaseItems = await resolveLeaseItems(readCtx, spec, pinned);
 
   // FIX 1 (ENG-258 review): `pinned.name` is the RESOLVED SKU's on-chain
   // name. When a deploy is pinned by `skuUuid` (or by provider) whose
@@ -312,14 +314,13 @@ export async function deployApp(
     providerUuid: pinned.providerUuid,
     skuUuid: pinned.skuUuid,
   });
-  // `readiness` is `let`-bound because the post-edit recompute branch
-  // re-evaluates it against the edited spec (Copilot r3267373084 — see
-  // the recall block inside the `onPlan` `verdict !== 'confirm'` arm).
+  // Re-evaluate readiness from the new lease items after each plan edit.
   let readiness: Readiness = evaluateReadinessFromFredResponse(
     readinessRaw,
     opts.clientManager.getConfig().gasPrice ?? '1umfx',
     denomMap,
     tenantAddress,
+    leaseItems,
   );
   emitProgress(callbacks.onProgress, {
     kind: 'readiness_evaluated',
@@ -344,10 +345,8 @@ export async function deployApp(
   // --- Plan assembly --------------------------------------------------
   // Build manifest preview (provides meta_hash for Plan + later save).
   // These are `let`-bound because the onPlan callback may return a
-  // PlanEdit that triggers a re-plan (C2 fix below — single-iteration
-  // plan-edit must recompute preview/summary/fees/block against the
-  // edited spec; otherwise the manifest persistence at step 16 uses
-  // the stale pre-edit preview).
+  // PlanEdit. Every edit recomputes the plan before asking for confirmation
+  // again, so pricing, the broadcast spec, and the persisted manifest agree.
   // `buildManifestPreview` reads ONLY the manifest STRUCTURED_FIELDS and
   // ignores size/customDomain/serviceName/skuUuid/providerUuid — so passing
   // the spec (via a variable, not a fresh literal, to dodge excess-property
@@ -360,13 +359,8 @@ export async function deployApp(
   // (when customDomain set). Lean port: cosmosEstimateFee invocation
   // details encapsulated in a helper to keep this fn focused on flow.
   let summary = summarizeSpec(spec);
-  let fees = await estimateFees(
-    opts,
-    spec,
-    preview.meta_hash_hex,
-    pinned.skuUuid,
-  );
-  let plan: Plan = { summary, readiness, fees };
+  let fees = await estimateFees(opts, spec, preview.meta_hash_hex, leaseItems);
+  let plan: Plan = { summary, readiness, fees, leaseItems };
 
   // --- Render plan + onPlan callback ----------------------------------
   // FIX 2 (ENG-258 review): stamp the resolved pin identity onto the
@@ -400,7 +394,8 @@ export async function deployApp(
     kind: 'deployment_plan_rendered',
     block,
   });
-  if (callbacks.onPlan) {
+  while (callbacks.onPlan) {
+    throwIfCancelled();
     const verdict = await race(callbacks.onPlan(plan));
     if (verdict === 'cancel') {
       throw new ManifestMCPError(
@@ -408,134 +403,94 @@ export async function deployApp(
         'User cancelled deployment at plan step.',
       );
     }
-    if (verdict !== 'confirm') {
-      // PlanEdit — apply edits to the spec, then re-plan against the
-      // edited spec so downstream consumers (intent recap, fred input,
-      // manifest persistence) all see the post-edit values.
-      //
-      // C2 fix (post-edit propagation gap): the prior single-iteration
-      // implementation updated `confirmedSpec` but kept `preview` /
-      // `summary` / `fees` / `plan` based on the original spec, which
-      // caused the manifest persistence at step 16 to record the stale
-      // pre-edit `meta_hash_hex` / `manifest_json` while fred's
-      // deployApp broadcast used the edited spec — a real mismatch.
-      // Re-planning closes the gap. Multi-iteration plan-edit (loop
-      // back to onPlan with the new plan) remains a PR-3.x follow-up;
-      // this fix addresses single-iteration freshness only.
-      confirmedSpec = applyPlanEdit(confirmedSpec, verdict);
-      // Copilot review fix (PR #58 r3249684686): re-validate the post-
-      // edit spec at the agent-core boundary. `validateSpec` runs once
-      // on the original input at the top of `deployApp`; without this
-      // second invocation a `replace_spec` edit returning an invalid
-      // spec (portless single-service, out-of-range port, stack-
-      // without-services, stack-with-customDomain-missing-serviceName,
-      // etc.) flows through to `buildManifestPreview` / fred's
-      // broadcast and surfaces only as a mid-orchestration error.
-      // Placed BEFORE the recompute so we don't spend a
-      // `buildManifestPreview` round-trip on a known-bad spec. Wraps
-      // `TypeError` from `validateSpec` into `INVALID_CONFIG` to match
-      // the initial-input-validation convention at the top of this fn.
-      try {
-        validateSpec(confirmedSpec);
-      } catch (err) {
-        throw new ManifestMCPError(
-          ManifestMCPErrorCode.INVALID_CONFIG,
-          err instanceof Error
-            ? `Post-edit spec failed validation: ${err.message}`
-            : `Post-edit spec failed validation: ${String(err)}`,
-        );
-      }
-      // Copilot review fix (PR #58 r3267373084): readiness recall.
-      // The original-spec `readiness` (captured pre-`onPlan`) gates
-      // SKU + credit-balance pre-flight; a `replace_spec` /
-      // `edit_env` edit that changes `image` or `size` can produce a
-      // different readiness outcome. Without this recall, the
-      // post-edit `plan` still carries the original-spec readiness,
-      // which mis-renders the plan and may bypass a `status: 'block'`
-      // condition specific to the edited shape.
-      //
-      // ENG-185 #1 (sub-PR B): the always-`'ok'` stub
-      // `evaluateReadinessFromRaw` has been replaced by
-      // `evaluateReadinessFromFredResponse` (the canonical evaluator
-      // wired through the snake_case → camelCase translator). Both
-      // call sites now fire the `status === 'block'` short-circuit
-      // correctly (initial-spec L207 + post-edit recall below).
-      // Re-resolve the SKU pin for the edited spec (ENG-258): an edit can
-      // change `size` / `providerUuid`, so the pin threaded into the
-      // post-edit readiness/fee/plan/broadcast must reflect the edit.
-      // Track elicitation again: if the post-edit resolve is also
-      // interactive, stamp the new pin so a further re-plan won't
-      // re-elicit for the same choice.
-      ({ pin: pinned, elicited: pinElicited } =
-        await resolvePin(confirmedSpec));
-      if (pinElicited) {
-        confirmedSpec = {
-          ...confirmedSpec,
-          skuUuid: pinned.skuUuid,
-          providerUuid: pinned.providerUuid,
-        };
-      }
-      const editedReadinessRaw = await checkDeploymentReadiness(
-        readCtx,
-        tenantAddress,
-        {
-          image: primaryImage(confirmedSpec),
-          // FIX 1: canonical resolved SKU name, not the user's requested size.
-          size: pinned.name,
-          providerUuid: pinned.providerUuid,
-          skuUuid: pinned.skuUuid,
-        },
+    if (verdict === 'confirm') break;
+    // Apply the edit, recompute the plan, then ask the callback to confirm
+    // the new prices. Cancellation remains active across every iteration.
+    confirmedSpec = applyPlanEdit(confirmedSpec, verdict);
+    // Validate before any new queries or simulations, using the same typed
+    // error as the initial input with post-edit context for the caller.
+    try {
+      validateSpec(confirmedSpec);
+    } catch (err) {
+      throw new ManifestMCPError(
+        ManifestMCPErrorCode.INVALID_CONFIG,
+        err instanceof Error
+          ? `Post-edit spec failed validation: ${err.message}`
+          : `Post-edit spec failed validation: ${String(err)}`,
       );
-      readiness = evaluateReadinessFromFredResponse(
-        editedReadinessRaw,
-        opts.clientManager.getConfig().gasPrice ?? '1umfx',
-        denomMap,
-        tenantAddress,
-      );
-      emitProgress(callbacks.onProgress, {
-        kind: 'readiness_evaluated',
-        readiness,
-      });
-      if (readiness.status === 'block') {
-        // Same fail-fast as the original-spec readiness gate above.
-        throw new ManifestMCPError(
-          ManifestMCPErrorCode.INVALID_CONFIG,
-          `Post-edit readiness check failed: ${readiness.reasons.join('; ')}`,
-        );
-      }
-      const editedPreviewInput: BuildManifestPreviewInput = confirmedSpec;
-      preview = await buildManifestPreview(editedPreviewInput);
-      summary = summarizeSpec(confirmedSpec);
-      fees = await estimateFees(
-        opts,
-        confirmedSpec,
-        preview.meta_hash_hex,
-        pinned.skuUuid,
-      );
-      plan = { summary, readiness, fees };
-      // Copilot review fix (PR #58 r3237308843): the pre-edit
-      // `deployment_plan_rendered` event already fired with the original
-      // spec's block. After applying the edit + recomputing preview /
-      // summary / fees / plan, re-render and emit a fresh block so
-      // consumers see the post-edit plan alongside the post-edit intent
-      // recap. Without this re-emit, the event stream is inconsistent
-      // with the user's confirmation surface and the persisted manifest.
-      const editedBlock = renderDeploymentPlan({
-        plan,
-        denomMap,
+    }
+    // Resolve against the edited spec, then evaluate its full recurring cost.
+    // Stamp an elicited compute pin so later env-only edits keep that choice.
+    ({ pin: pinned, elicited: pinElicited } = await resolvePin(confirmedSpec));
+    leaseItems = await resolveLeaseItems(
+      readCtx,
+      confirmedSpec,
+      pinned,
+      'post_edit',
+    );
+    if (pinElicited) {
+      confirmedSpec = {
+        ...confirmedSpec,
+        skuUuid: pinned.skuUuid,
+        providerUuid: pinned.providerUuid,
+      };
+    }
+    const editedReadinessRaw = await checkDeploymentReadiness(
+      readCtx,
+      tenantAddress,
+      {
         image: primaryImage(confirmedSpec),
         // FIX 1: canonical resolved SKU name, not the user's requested size.
         size: pinned.name,
-        metaHash: preview.meta_hash_hex,
-        customDomain: customDomainOf(confirmedSpec),
-        customDomainService: customDomainServiceOf(confirmedSpec),
         providerUuid: pinned.providerUuid,
-      });
-      emitProgress(callbacks.onProgress, {
-        kind: 'deployment_plan_rendered',
-        block: editedBlock,
-      });
+        skuUuid: pinned.skuUuid,
+      },
+    );
+    readiness = evaluateReadinessFromFredResponse(
+      editedReadinessRaw,
+      opts.clientManager.getConfig().gasPrice ?? '1umfx',
+      denomMap,
+      tenantAddress,
+      leaseItems,
+    );
+    emitProgress(callbacks.onProgress, {
+      kind: 'readiness_evaluated',
+      readiness,
+    });
+    if (readiness.status === 'block') {
+      // Same fail-fast as the original-spec readiness gate above.
+      throw new ManifestMCPError(
+        ManifestMCPErrorCode.INVALID_CONFIG,
+        `Post-edit readiness check failed: ${readiness.reasons.join('; ')}`,
+      );
     }
+    const editedPreviewInput: BuildManifestPreviewInput = confirmedSpec;
+    preview = await buildManifestPreview(editedPreviewInput);
+    summary = summarizeSpec(confirmedSpec);
+    fees = await estimateFees(
+      opts,
+      confirmedSpec,
+      preview.meta_hash_hex,
+      leaseItems,
+    );
+    plan = { summary, readiness, fees, leaseItems };
+    // The wrapper captures this block and uses it verbatim in the next
+    // onPlan elicitation, so confirmation always shows the latest prices.
+    const editedBlock = renderDeploymentPlan({
+      plan,
+      denomMap,
+      image: primaryImage(confirmedSpec),
+      // FIX 1: canonical resolved SKU name, not the user's requested size.
+      size: pinned.name,
+      metaHash: preview.meta_hash_hex,
+      customDomain: customDomainOf(confirmedSpec),
+      customDomainService: customDomainServiceOf(confirmedSpec),
+      providerUuid: pinned.providerUuid,
+    });
+    emitProgress(callbacks.onProgress, {
+      kind: 'deployment_plan_rendered',
+      block: editedBlock,
+    });
   }
 
   // --- Intent recap + onConfirm callback ------------------------------
@@ -1074,11 +1029,63 @@ function customDomainServiceOf(spec: AppDeploySpec): string | undefined {
   return undefined;
 }
 
+async function resolveLeaseItems(
+  ctx: ReadCtx,
+  spec: AppDeploySpec,
+  compute: SkuCandidate,
+  phase: 'initial' | 'post_edit' = 'initial',
+): Promise<PlannedLeaseItem[]> {
+  const items: PlannedLeaseItem[] = isStackSpec(spec)
+    ? Object.keys(spec.services).map((serviceName) => ({
+        kind: 'compute',
+        sku: compute,
+        quantity: 1,
+        serviceName,
+      }))
+    : [{ kind: 'compute', sku: compute, quantity: 1 }];
+
+  if (spec.storage) {
+    // Fred still resolves storage by name at execution. Same-provider ambiguity
+    // must fail here too: the compute picker cannot pin a storage selection.
+    let storage: SkuCandidate;
+    try {
+      storage = await resolveSku(ctx, {
+        size: spec.storage,
+        providerUuid: compute.providerUuid,
+      });
+    } catch (err) {
+      if (!(err instanceof ManifestMCPError)) throw err;
+      const selection = `storage SKU "${sanitizeForDisplay(spec.storage.trim(), 64)}" on compute provider ${sanitizeForDisplay(compute.providerUuid, 64)}`;
+      const message = isSkuAmbiguousError(err)
+        ? `Ambiguous ${selection}. Choose another compute provider with an unambiguous storage SKU, or ask the provider to make its storage SKU names unique. Storage UUID selection is not supported.`
+        : `Could not resolve ${selection}: ${err.message}`;
+      const wrapped = new ManifestMCPError(
+        err.code,
+        `${phase === 'post_edit' ? 'Post-edit: ' : ''}${message}`,
+        {
+          ...err.details,
+          selection: 'storage',
+          phase,
+          storage: spec.storage,
+          providerUuid: compute.providerUuid,
+        },
+      );
+      Object.defineProperty(wrapped, 'cause', {
+        value: err,
+        configurable: true,
+      });
+      throw wrapped;
+    }
+    items.push({ kind: 'storage', sku: storage, quantity: 1 });
+  }
+  return items;
+}
+
 async function estimateFees(
   opts: DeployAppOptions,
   spec: AppDeploySpec,
   metaHashHex: string, // SHA-256 hex digest of the canonical manifest JSON; threaded into create-lease estimate via the `--meta-hash` flag (mirrors fred's deploy path at packages/fred/src/tools/deployApp.ts:363)
-  skuUuid: string, // ENG-258: pre-resolved SKU pin from the orchestrator; no second lookup here.
+  leaseItems: readonly PlannedLeaseItem[],
 ): Promise<Plan['fees']> {
   // PR 3 fix-3 (B-narrowed-trimmed per architect ratification):
   //   - REAL cosmosEstimateFee for create-lease (criterion-blocking).
@@ -1090,27 +1097,12 @@ async function estimateFees(
   //     fails first with ErrLeaseNotFound), so the sentinel is the
   //     PERMANENT shape — not a TODO.
 
-  // ENG-258: `skuUuid` is now a pre-resolved parameter (the orchestrator
-  // resolves the pin ONCE via core's `resolveSku` so plan, fee, and
-  // broadcast share one SKU). The prior in-function second lookup is gone.
-
-  // ENG-185 #3 sub-PR C: mirror fred's deploy-time item creation verbatim
-  // (`packages/fred/src/tools/deployApp.ts:336-341`). Stack specs create
-  // ONE lease item per service (each with `${skuUuid}:1:${name}`); legacy
-  // single-service specs create one bare `${skuUuid}:1`. The prior gate
-  // on `spec.serviceName` underestimated multi-service stacks (only the
-  // domain-target service was billed) and accidentally collapsed stacks
-  // WITHOUT customDomain to legacy-mode args (`spec.serviceName` is only
-  // set alongside customDomain — bug 2).
-  //
-  // Storage-SKU fee estimation is OUT OF SCOPE for ENG-310 (tracked
-  // separately). The canonical `AppDeploySpec` now HAS a `storage?` field,
-  // and the loss-free broadcast spread DOES forward it to fred — but this
-  // agent-core fee estimate still bills only the compute SKU item(s); it
-  // does not add a storage item. A pre-existing gap, now visible.
-  const itemArgs: string[] = isStackSpec(spec)
-    ? Object.keys(spec.services).map((name) => `${skuUuid}:1:${name}`)
-    : [`${skuUuid}:1`];
+  // Use the priced plan items, in Fred's deployment order: one compute item
+  // per service, then optional storage. Storage has no service-name suffix.
+  const itemArgs = leaseItems.map(
+    ({ sku, quantity, serviceName }) =>
+      `${sku.skuUuid}:${quantity}${serviceName === undefined ? '' : `:${serviceName}`}`,
+  );
 
   let createLeaseEstimate: Awaited<ReturnType<typeof cosmosEstimateFee>>;
   try {
@@ -1190,7 +1182,7 @@ function applyPlanEdit(
     'confirm' | 'cancel'
   >,
 ): AppDeploySpec {
-  // PR 3 single-iteration: replace_spec replaces; edit_env merges env keys
+  // replace_spec replaces; edit_env merges env keys
   // into the matching service (or single-service spec).
   if (edit.kind === 'replace_spec') return edit.spec;
   if (edit.kind === 'edit_env') {

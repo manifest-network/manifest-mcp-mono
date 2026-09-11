@@ -24,6 +24,7 @@ import type {
   Plan,
   PlanEdit,
   PlanFees,
+  PlannedLeaseItem,
   ProgressEvent,
   Readiness,
   ReadinessAction,
@@ -539,6 +540,7 @@ describe('Exported type shapes (load-bearing public surface)', () => {
       summary: SpecSummary;
       readiness: Readiness;
       fees: PlanFees;
+      leaseItems: readonly PlannedLeaseItem[];
     }>();
   });
 

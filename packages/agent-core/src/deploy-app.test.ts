@@ -46,6 +46,7 @@ import type {
   DeployResult,
   FailureEnvelope,
   Plan,
+  PlanEdit,
   ProgressEvent,
   RecoveryOption,
   SkuCandidate,
@@ -59,6 +60,17 @@ import { classifyDeployError } from './internals/classify-deploy-error.js';
 // pointing at the single canonical type.
 type DeploySpec = AppDeploySpec;
 type SingleServiceSpec = AppDeploySpec;
+
+function planEditOnce(
+  edit: PlanEdit,
+): NonNullable<DeployAppCallbacks['onPlan']> {
+  let edited = false;
+  return async () => {
+    if (edited) return 'confirm';
+    edited = true;
+    return edit;
+  };
+}
 
 // Mock the workspace deps at the module level. Individual tests inject
 // per-scenario behaviors via vi.mocked.
@@ -115,6 +127,8 @@ vi.mock('@manifest-network/manifest-mcp-core', async () => {
       providerUuid: 'provider-uuid-fixture',
       name: 'small',
       active: true,
+      price: { amount: '1000', denom: 'umfx' },
+      billingUnit: 'hour',
     }),
   };
 });
@@ -999,7 +1013,7 @@ describe('deployApp — ENG-258 SKU pin resolution + ambiguity elicitation', () 
       providerUuid: asProviderUuid('p2'),
     }));
 
-    // onPlan returns an `edit_env` edit on the first (and only) call,
+    // onPlan returns an `edit_env` edit on the first call,
     // triggering a single post-edit re-plan. The single-service spec gets
     // a new env key; `resolvePin(confirmedSpec)` then runs again — and must
     // NOT re-elicit because the stamped pin resolves by uuid.
@@ -1197,7 +1211,7 @@ describe('deployApp replay — Copilot review fixes (PR #58 unresolved comments)
     const baseCapture = captureCallbacks();
     const callbacks: DeployAppCallbacks = {
       ...baseCapture.callbacks,
-      onPlan: async () => ({ kind: 'replace_spec', spec: editedSpec }),
+      onPlan: planEditOnce({ kind: 'replace_spec', spec: editedSpec }),
     };
 
     const { deployApp } = await import('./deploy-app.js');
@@ -1750,7 +1764,7 @@ describe('deployApp replay — Copilot review fixes (PR #58 unresolved comments)
       const baseCapture = captureCallbacks();
       const callbacks: DeployAppCallbacks = {
         ...baseCapture.callbacks,
-        onPlan: async () => ({ kind: 'replace_spec', spec: replacementSpec }),
+        onPlan: planEditOnce({ kind: 'replace_spec', spec: replacementSpec }),
       };
 
       const { deployApp } = await import('./deploy-app.js');
@@ -1915,7 +1929,7 @@ describe('deployApp replay — Copilot review fixes (PR #58 unresolved comments)
       const baseCapture = captureCallbacks();
       const callbacks: DeployAppCallbacks = {
         ...baseCapture.callbacks,
-        onPlan: async () => ({ kind: 'replace_spec', spec: editedSpec }),
+        onPlan: planEditOnce({ kind: 'replace_spec', spec: editedSpec }),
       };
 
       const { deployApp } = await import('./deploy-app.js');
@@ -2148,7 +2162,7 @@ describe('deployApp replay — Copilot review fixes (PR #58 unresolved comments)
       const baseCapture = captureCallbacks();
       const callbacks: DeployAppCallbacks = {
         ...baseCapture.callbacks,
-        onPlan: async () => ({ kind: 'replace_spec', spec: editedSpec }),
+        onPlan: planEditOnce({ kind: 'replace_spec', spec: editedSpec }),
       };
 
       const { deployApp } = await import('./deploy-app.js');
@@ -2941,7 +2955,7 @@ describe('deployApp — applyPlanEdit edit_env validation (r3266642610)', () => 
     const baseCapture = captureCallbacks();
     const callbacks: DeployAppCallbacks = {
       ...baseCapture.callbacks,
-      onPlan: async () => plannedEdit,
+      onPlan: planEditOnce(plannedEdit),
     };
 
     const { deployApp } = await import('./deploy-app.js');
@@ -5185,7 +5199,7 @@ describe('deployApp — C2 plan-edit roundtrip propagates edited size (ENG-185 #
     const baseCapture = captureCallbacks();
     const callbacks: DeployAppCallbacks = {
       ...baseCapture.callbacks,
-      onPlan: async () => ({ kind: 'replace_spec', spec: editedSpec }),
+      onPlan: planEditOnce({ kind: 'replace_spec', spec: editedSpec }),
     };
 
     return { baseSpec, editedSpec, callbacks, baseCapture, fred, core };
@@ -5825,7 +5839,7 @@ describe('deployApp validateSpec image-xor-services gate (ENG-310)', () => {
     const base = captureCallbacks();
     const callbacks: DeployAppCallbacks = {
       ...base.callbacks,
-      onPlan: async () => ({ kind: 'replace_spec', spec: replacement }),
+      onPlan: planEditOnce({ kind: 'replace_spec', spec: replacement }),
     };
     const { deployApp } = await import('./deploy-app.js');
     const clientManager = makeMockClientManager();

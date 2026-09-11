@@ -6,6 +6,7 @@ import {
 } from './brands.js';
 import type { ReadCtx } from './ctx.js';
 import { withReadSignal } from './internals/read-signal.js';
+import { SkuUnit } from './manifest-types.js';
 import type { CallOptions } from './options.js';
 import { createPagination, MAX_PAGE_LIMIT } from './queries/utils.js';
 import { sanitizeForDisplay } from './server-utils.js';
@@ -20,6 +21,8 @@ export interface SkuCandidate {
   readonly providerUuid: ProviderUuid;
   readonly name: string;
   readonly price?: { readonly amount: string; readonly denom: string };
+  /** Absent when the chain's billing unit is missing or unsupported. */
+  readonly billingUnit?: 'hour' | 'day';
   readonly active: boolean;
 }
 
@@ -59,6 +62,7 @@ function toCandidate(s: {
   name: string;
   providerUuid: string;
   basePrice?: { amount: string; denom: string };
+  unit?: number;
   active?: boolean;
 }): SkuCandidate {
   return {
@@ -68,6 +72,11 @@ function toCandidate(s: {
     ...(s.basePrice
       ? { price: { amount: s.basePrice.amount, denom: s.basePrice.denom } }
       : {}),
+    ...(s.unit === SkuUnit.UNIT_PER_HOUR
+      ? { billingUnit: 'hour' as const }
+      : s.unit === SkuUnit.UNIT_PER_DAY
+        ? { billingUnit: 'day' as const }
+        : {}),
     active: s.active ?? true,
   };
 }
@@ -110,7 +119,7 @@ function ambiguous(size: string, candidates: SkuCandidate[]): ManifestMCPError {
     .map(
       (c) =>
         `  - ${sanitizeForDisplay(c.name, 64, '(unnamed SKU)')} (sku_uuid=${sanitizeForDisplay(c.skuUuid, 64)}, provider_uuid=${sanitizeForDisplay(c.providerUuid, 64)}` +
-        `${c.price ? `, price=${sanitizeForDisplay(`${c.price.amount} ${c.price.denom}`, 48)}` : ''})`,
+        `${c.price ? `, price=${sanitizeForDisplay(`${c.price.amount} ${c.price.denom}`, 48)} / ${c.billingUnit ?? 'unknown billing unit'}` : ''})`,
     )
     .join('\n');
   return new ManifestMCPError(

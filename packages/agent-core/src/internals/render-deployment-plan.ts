@@ -1,11 +1,17 @@
 import { sanitizeForDisplay } from '@manifest-network/manifest-mcp-core';
-import type { DeploymentPlanBlock, FeeEstimate, Plan } from '../types.js';
+import type {
+  DeploymentPlanBlock,
+  FeeEstimate,
+  Plan,
+  PlannedLeaseItem,
+} from '../types.js';
 import {
   type DenomMap,
   EMPTY_DENOM_MAP,
   humanizeBalances,
   humanizeCoin,
 } from './humanize-denom.js';
+import { summarizeRecurringCosts } from './recurring-costs.js';
 
 /**
  * Render the canonical `DeploymentPlan` block for `deployApp`'s
@@ -95,15 +101,36 @@ function formatFeeLine(humanFee: string, gas: number): string {
   return `${humanFee} (gas ${gas})`;
 }
 
-function formatSkuPrice(plan: Plan, denomMap: DenomMap): string {
-  const sku = plan.readiness.sku;
-  if (sku === null) return '(unknown — SKU has no listed price)';
-  // SKU price amount + denom are provider-controlled on-chain strings, and
-  // humanizeCoin renders an unknown denom (and a non-numeric amount) verbatim —
-  // sanitize the composed value so it cannot forge a plan line (ENG-555).
-  return `${sanitizeForDisplay(
-    humanizeCoin(sku.price.amount, sku.price.denom, denomMap),
-  )} / hour`;
+function formatItemPrice(item: PlannedLeaseItem, denomMap: DenomMap): string {
+  const { price, billingUnit } = item.sku;
+  const amount = price
+    ? sanitizeForDisplay(humanizeCoin(price.amount, price.denom, denomMap))
+    : '(unknown — SKU has no listed price)';
+  const unit =
+    billingUnit === 'hour' || billingUnit === 'day'
+      ? billingUnit
+      : '(unknown billing unit)';
+  return `${amount} / ${unit}`;
+}
+
+function formatRecurringTotal(
+  items: readonly PlannedLeaseItem[],
+  denomMap: DenomMap,
+): string {
+  const { unit, totals, unpricedItemCount } = summarizeRecurringCosts(items);
+  const subtotal = totals
+    .map(
+      ({ denom, amount }) =>
+        `${sanitizeForDisplay(humanizeCoin(amount.toString(), denom, denomMap))} / ${unit}`,
+    )
+    .join(' + ');
+  if (unpricedItemCount > 0) {
+    const unknown = `${unpricedItemCount} unpriced ${unpricedItemCount === 1 ? 'item' : 'items'}`;
+    return subtotal
+      ? `${subtotal} + ${unknown} (incomplete)`
+      : `(incomplete — ${unknown})`;
+  }
+  return subtotal || '(unknown — no lease items)';
 }
 
 function formatWallet(plan: Plan, denomMap: DenomMap): string {
@@ -200,8 +227,23 @@ export function renderDeploymentPlan(
     lines.push(`  Custom domain:             ${input.customDomain} ${target}`);
   }
 
+  for (const item of input.plan.leaseItems) {
+    const { sku } = item;
+    const label = item.kind === 'storage' ? 'Storage item:' : 'Compute item:';
+    const service =
+      item.serviceName === undefined
+        ? ''
+        : `, service=${sanitizeForDisplay(item.serviceName, 64)}`;
+    lines.push(
+      `  ${label.padEnd(27)}${sanitizeForDisplay(sku.name, 64, '(unnamed SKU)')} ` +
+        `(sku_uuid=${sanitizeForDisplay(sku.skuUuid, 64)}, ` +
+        `provider_uuid=${sanitizeForDisplay(sku.providerUuid, 64)}, ` +
+        `quantity=${item.quantity}${service})`,
+      `    Unit price:              ${formatItemPrice(item, denomMap)}`,
+    );
+  }
   lines.push(
-    `  SKU price:                 ${formatSkuPrice(input.plan, denomMap)}`,
+    `  Recurring total:           ${formatRecurringTotal(input.plan.leaseItems, denomMap)}`,
   );
 
   if (hasDomain) {
