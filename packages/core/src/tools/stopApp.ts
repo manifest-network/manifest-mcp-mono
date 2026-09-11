@@ -9,12 +9,28 @@ import { type Lease, LeaseState, leaseStateToJSON } from '../manifest-types.js';
 import { resolveCallSignal, type TxCallOptions } from '../options.js';
 import { ManifestMCPError, ManifestMCPErrorCode } from '../types.js';
 
+/** Diagnostics from a failed blocking transaction followed by a terminal lease observation. */
+export interface StopAppReconciliation {
+  /** Original caught value, retained non-enumerably for SDK diagnostics and never mutated. */
+  readonly error: unknown;
+  readonly errorCode?: ManifestMCPErrorCode;
+  /** Explicit transaction-boundary evidence; absence does not establish that nothing was sent. */
+  readonly sent?: boolean;
+  readonly transactionHash?: string;
+  readonly transactionCode?: number;
+  readonly transactionHeight?: string;
+  /** Inclusion evidence from the failed transaction, not confirmation of the observed lease state. */
+  readonly transactionConfirmed?: boolean;
+}
+
 /**
  * Result of {@link stopApp}, discriminated by `outcome`:
  * `stopped` (ACTIVE lease closed), `cancelled` (PENDING lease cancelled), or
- * `already_inactive` (terminal lease observed; no transaction receipt returned).
+ * `already_inactive` (terminal lease observed).
  * The inactive result can follow a terminal pre-query or reconciliation after a
- * failed blocking broadcast. It does not establish that no broadcast was attempted.
+ * failed blocking transaction. Only the latter carries `reconciliation`, with the
+ * original error and any explicit transaction evidence. Missing evidence does not
+ * establish that no broadcast was attempted.
  * Both `stopped` and `already_inactive` can report `LEASE_STATE_CLOSED`, so
  * `outcome` distinguishes the returned result variants.
  *
@@ -61,11 +77,13 @@ export type StopAppResult =
       readonly outcome: 'already_inactive';
       readonly lease_state: 'LEASE_STATE_REJECTED';
       readonly rejection_reason: string;
+      readonly reconciliation?: StopAppReconciliation;
     }
   | {
       readonly lease_uuid: LeaseUuid;
       readonly outcome: 'already_inactive';
       readonly lease_state: 'LEASE_STATE_CLOSED' | 'LEASE_STATE_EXPIRED';
+      readonly reconciliation?: StopAppReconciliation;
     };
 
 const TERMINAL_STATES: ReadonlySet<LeaseState> = new Set([
@@ -74,8 +92,77 @@ const TERMINAL_STATES: ReadonlySet<LeaseState> = new Set([
   LeaseState.LEASE_STATE_EXPIRED,
 ]);
 
+/** Read only an exact own data property; diagnostic access must not replace a terminal result. */
+function ownDataProperty(value: unknown, key: string): unknown {
+  if (
+    (typeof value !== 'object' || value === null) &&
+    typeof value !== 'function'
+  )
+    return undefined;
+  try {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    return descriptor && 'value' in descriptor ? descriptor.value : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function isCancellationError(error: unknown): boolean {
+  try {
+    return (
+      error instanceof ManifestMCPError &&
+      error.code === ManifestMCPErrorCode.OPERATION_CANCELLED
+    );
+  } catch {
+    return false;
+  }
+}
+
+/** Snapshot only bounded machine facts. Raw logs, arbitrary details and error serializers stay local. */
+function reconciliationFrom(error: unknown): StopAppReconciliation {
+  const code = ownDataProperty(error, 'code');
+  const errorCode = Object.values(ManifestMCPErrorCode).find(
+    (value) => value === code,
+  );
+  const details = ownDataProperty(error, 'details');
+  const sent = ownDataProperty(details, 'sent');
+  const hash = ownDataProperty(details, 'transactionHash');
+  const transactionCode = ownDataProperty(details, 'code');
+  const height = ownDataProperty(details, 'height');
+  const confirmed = ownDataProperty(details, 'confirmed');
+  const snapshot: StopAppReconciliation = {
+    error,
+    ...(errorCode !== undefined ? { errorCode } : {}),
+    ...(typeof sent === 'boolean' ? { sent } : {}),
+    ...(typeof hash === 'string' &&
+    hash.length === 64 &&
+    hash.match(/^[0-9a-fA-F]{64}$/)
+      ? { transactionHash: hash }
+      : {}),
+    ...(typeof transactionCode === 'number' &&
+    Number.isSafeInteger(transactionCode) &&
+    transactionCode >= 0
+      ? { transactionCode }
+      : {}),
+    ...(typeof height === 'string' &&
+    height.length > 0 &&
+    height.length <= 20 &&
+    !height.match(/[^0-9]/)
+      ? { transactionHeight: height }
+      : {}),
+    ...(typeof confirmed === 'boolean'
+      ? { transactionConfirmed: confirmed }
+      : {}),
+  };
+  Object.defineProperty(snapshot, 'error', { enumerable: false });
+  return Object.freeze(snapshot);
+}
+
 /** Build the `already_inactive` result from a lease observed in a terminal state. */
-function inactive(leaseUuid: LeaseUuid, lease: Lease): StopAppResult {
+function inactive(
+  leaseUuid: LeaseUuid,
+  lease: Lease,
+): Extract<StopAppResult, { outcome: 'already_inactive' }> {
   if (lease.state === LeaseState.LEASE_STATE_REJECTED) {
     return {
       lease_uuid: leaseUuid,
@@ -213,10 +300,7 @@ export async function stopApp(
         };
   } catch (err) {
     // Preserve a deliberate cancellation (aborted withTxConfirmation) — never reclassify it.
-    if (
-      err instanceof ManifestMCPError &&
-      err.code === ManifestMCPErrorCode.OPERATION_CANCELLED
-    ) {
+    if (isCancellationError(err)) {
       throw err;
     }
     // Async (non-blocking) broadcast returns no DeliverTx result, so there is nothing to reconcile
@@ -233,7 +317,10 @@ export async function stopApp(
       throw err; // re-query failed -> surface the original broadcast error
     }
     if (fresh !== null && TERMINAL_STATES.has(fresh.state)) {
-      return inactive(leaseUuid, fresh); // converged (incl. reason from THIS re-query)
+      return {
+        ...inactive(leaseUuid, fresh),
+        reconciliation: reconciliationFrom(err),
+      }; // converged (incl. reason from THIS re-query); retain the separate failed transaction evidence
     }
     // Only the PENDING->ACTIVE *cancel* race maps to the retry error. Gate on the op:
     // a plain ACTIVE->close broadcast failure ALSO leaves the lease ACTIVE, but that must

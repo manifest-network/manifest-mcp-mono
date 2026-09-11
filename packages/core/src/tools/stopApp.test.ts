@@ -17,6 +17,33 @@ import { stopApp } from './stopApp.js';
 
 const mockCosmosTx = vi.mocked(cosmosTx);
 const UUID = asLeaseUuid('lease-1');
+const RECONCILIATION_HASH = 'aB'.repeat(32);
+
+async function reconcileFailure(error: unknown) {
+  const query = makeMockQueryClient();
+  query.liftedinit.billing.v1.lease = vi
+    .fn()
+    .mockResolvedValueOnce({
+      lease: { uuid: UUID, state: LeaseState.LEASE_STATE_ACTIVE },
+    })
+    .mockResolvedValue({
+      lease: { uuid: UUID, state: LeaseState.LEASE_STATE_CLOSED },
+    });
+  mockCosmosTx.mockRejectedValue(error);
+  const result = await stopApp(
+    makeTxCtx({ chain: makeMockClientManager({ queryClient: query }) }),
+    { leaseUuid: UUID },
+  );
+  expect(query.liftedinit.billing.v1.lease).toHaveBeenCalledTimes(2);
+  if (result.outcome !== 'already_inactive' || !result.reconciliation)
+    throw new Error('expected reconciliation diagnostics');
+  expect(result.reconciliation.error).toBe(error);
+  expect(
+    Object.getOwnPropertyDescriptor(result.reconciliation, 'error'),
+  ).toMatchObject({ enumerable: false, writable: false });
+  expect(Object.isFrozen(result.reconciliation)).toBe(true);
+  return result.reconciliation;
+}
 
 // A CosmosClientManager whose getQueryClient() returns a client resolving the given lease.
 function cmWithLease(lease: unknown) {
@@ -402,6 +429,7 @@ describe('stopApp', () => {
       lease_uuid: 'lease-1',
       outcome: 'already_inactive',
       lease_state: 'LEASE_STATE_CLOSED',
+      reconciliation: { errorCode: ManifestMCPErrorCode.TX_FAILED },
     });
   });
 
@@ -472,6 +500,7 @@ describe('stopApp', () => {
       outcome: 'already_inactive',
       lease_state: 'LEASE_STATE_REJECTED',
       rejection_reason: 'cancelled by tenant',
+      reconciliation: { errorCode: ManifestMCPErrorCode.TX_FAILED },
     });
   });
 
@@ -560,4 +589,287 @@ describe('stopApp', () => {
     ).rejects.toThrow('cancel boom');
     expect(mockCosmosTx).toHaveBeenCalledTimes(1);
   });
+});
+
+describe('stopApp reconciliation diagnostic boundaries', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('retains exact bounded facts and a frozen original without reading its message or serializer', async () => {
+    const details = Object.freeze({
+      sent: true,
+      transactionHash: RECONCILIATION_HASH,
+      code: 11,
+      height: '18446744073709551615',
+      confirmed: true,
+      rawLog: 'untrusted raw log '.repeat(100_000),
+      password: 'secret',
+    });
+    const original = new ManifestMCPError(
+      ManifestMCPErrorCode.TX_FAILED,
+      'unused',
+      details,
+    );
+    const message = vi.fn(() => {
+      throw new Error('message must not be read');
+    });
+    const serializer = vi.fn(() => {
+      throw new Error('serializer must not be run');
+    });
+    Object.defineProperty(original, 'message', { get: message });
+    Object.defineProperty(original, 'toJSON', { value: serializer });
+    Object.freeze(original);
+    const snapshot = await reconcileFailure(original);
+    expect(snapshot).toEqual({
+      errorCode: ManifestMCPErrorCode.TX_FAILED,
+      sent: true,
+      transactionHash: RECONCILIATION_HASH,
+      transactionCode: 11,
+      transactionHeight: '18446744073709551615',
+      transactionConfirmed: true,
+    });
+    expect(JSON.parse(JSON.stringify(snapshot))).toEqual({
+      errorCode: ManifestMCPErrorCode.TX_FAILED,
+      sent: true,
+      transactionHash: RECONCILIATION_HASH,
+      transactionCode: 11,
+      transactionHeight: '18446744073709551615',
+      transactionConfirmed: true,
+    });
+    expect(message).not.toHaveBeenCalled();
+    expect(serializer).not.toHaveBeenCalled();
+    expect(original.details).toBe(details);
+  });
+
+  it.each([
+    {
+      details: { transactionHash: RECONCILIATION_HASH },
+      expected: { transactionHash: RECONCILIATION_HASH },
+    },
+    {
+      details: { sent: false, confirmed: false },
+      expected: { sent: false, transactionConfirmed: false },
+    },
+    {
+      details: {
+        sent: true,
+        transactionHash: 'invalid',
+        code: -1,
+        height: '9'.repeat(21),
+        confirmed: 'true',
+      },
+      expected: { sent: true },
+    },
+    {
+      details: {
+        sent: 'true',
+        transactionHash: 'A'.repeat(63),
+        code: Number.MAX_SAFE_INTEGER + 1,
+        height: '-1',
+        confirmed: 1,
+      },
+      expected: {},
+    },
+    {
+      details: {
+        transactionHash: `${'A'.repeat(63)}\n`,
+        code: 1.5,
+        height: '1e2',
+      },
+      expected: {},
+    },
+    {
+      details: {
+        transactionHash: 'g'.repeat(64),
+        code: Number.NaN,
+        height: '',
+      },
+      expected: {},
+    },
+    {
+      details: {
+        transactionHash: 'A'.repeat(65),
+        code: Number.POSITIVE_INFINITY,
+        height: '42\n',
+      },
+      expected: {},
+    },
+    {
+      details: { transactionHash: 'Ａ'.repeat(64), code: '11', height: 42 },
+      expected: {},
+    },
+    {
+      details: { sent: true, code: 0, height: '0', confirmed: false },
+      expected: {
+        sent: true,
+        transactionCode: 0,
+        transactionHeight: '0',
+        transactionConfirmed: false,
+      },
+    },
+    {
+      details: { code: Number.MAX_SAFE_INTEGER, height: '00042' },
+      expected: {
+        transactionCode: Number.MAX_SAFE_INTEGER,
+        transactionHeight: '00042',
+      },
+    },
+  ])(
+    'copies only valid primitive evidence from $details',
+    async ({ details, expected }) => {
+      const original = Object.freeze(
+        new ManifestMCPError(
+          ManifestMCPErrorCode.TX_FAILED,
+          'failed',
+          Object.freeze(details),
+        ),
+      );
+      const snapshot = await reconcileFailure(original);
+      expect(snapshot).toEqual({
+        errorCode: ManifestMCPErrorCode.TX_FAILED,
+        ...expected,
+      });
+    },
+  );
+
+  it('ignores inherited or aliased fields and unknown error codes', async () => {
+    const details: Record<string, unknown> = Object.create({
+      sent: true,
+      transactionHash: RECONCILIATION_HASH,
+      code: 11,
+      height: '42',
+      confirmed: true,
+    });
+    Object.assign(details, {
+      transaction_hash: RECONCILIATION_HASH,
+      txHash: RECONCILIATION_HASH,
+      Sent: true,
+    });
+    const original = new ManifestMCPError(
+      ManifestMCPErrorCode.TX_FAILED,
+      'failed',
+      details,
+    );
+    Object.defineProperty(original, 'code', { value: 'UNRECOGNIZED' });
+    expect(await reconcileFailure(original)).toEqual({});
+  });
+
+  it.each(['code', 'details'])(
+    'ignores an unreadable error %s after the cancellation guard',
+    async (key) => {
+      const original = new ManifestMCPError(
+        ManifestMCPErrorCode.TX_FAILED,
+        'failed',
+        { sent: true },
+      );
+      const getter = vi.fn(() => {
+        throw new Error(`do not read ${key}`);
+      });
+      Object.defineProperty(original, key, { get: getter });
+      const snapshot = await reconcileFailure(original);
+      expect(snapshot).toEqual(
+        key === 'code'
+          ? { sent: true }
+          : { errorCode: ManifestMCPErrorCode.TX_FAILED },
+      );
+      expect(getter).toHaveBeenCalledTimes(key === 'code' ? 1 : 0);
+    },
+  );
+
+  it.each(['accessor', 'inherited'])(
+    'preserves a readable %s cancellation code without reconciliation',
+    async (kind) => {
+      const original = new ManifestMCPError(
+        ManifestMCPErrorCode.OPERATION_CANCELLED,
+        'caller cancelled',
+      );
+      if (kind === 'accessor') {
+        Object.defineProperty(original, 'code', {
+          get: () => ManifestMCPErrorCode.OPERATION_CANCELLED,
+        });
+      } else {
+        const prototype: object = Object.create(ManifestMCPError.prototype);
+        Object.defineProperty(prototype, 'code', {
+          value: ManifestMCPErrorCode.OPERATION_CANCELLED,
+        });
+        Reflect.deleteProperty(original, 'code');
+        Object.setPrototypeOf(original, prototype);
+      }
+      const query = makeMockQueryClient({
+        billing: {
+          lease: {
+            uuid: UUID,
+            state: LeaseState.LEASE_STATE_ACTIVE,
+            providerUuid: 'p1',
+          },
+        },
+      });
+      mockCosmosTx.mockRejectedValue(original);
+      await expect(
+        stopApp(
+          makeTxCtx({ chain: makeMockClientManager({ queryClient: query }) }),
+          { leaseUuid: UUID },
+        ),
+      ).rejects.toBe(original);
+      expect(query.liftedinit.billing.v1.lease).toHaveBeenCalledOnce();
+      expect(mockCosmosTx).toHaveBeenCalledOnce();
+    },
+  );
+
+  it.each(['transactionHash', 'code', 'height', 'confirmed'])(
+    'omits an inaccessible %s descriptor without losing explicit sent evidence',
+    async (key) => {
+      const details = new Proxy(
+        { sent: true },
+        {
+          getOwnPropertyDescriptor(target, field) {
+            if (field === key) throw new Error('descriptor unavailable');
+            return Reflect.getOwnPropertyDescriptor(target, field);
+          },
+        },
+      );
+      const original = new ManifestMCPError(
+        ManifestMCPErrorCode.TX_FAILED,
+        'failed',
+        details,
+      );
+      expect(await reconcileFailure(original)).toEqual({
+        errorCode: ManifestMCPErrorCode.TX_FAILED,
+        sent: true,
+      });
+    },
+  );
+
+  it('omits data-field accessors without invoking them', async () => {
+    const getter = vi.fn(() => {
+      throw new Error('do not evaluate diagnostics');
+    });
+    const details = { sent: true };
+    for (const key of ['transactionHash', 'code', 'height', 'confirmed'])
+      Object.defineProperty(details, key, { get: getter, enumerable: true });
+    const original = new ManifestMCPError(
+      ManifestMCPErrorCode.TX_FAILED,
+      'failed',
+      details,
+    );
+    expect(await reconcileFailure(original)).toEqual({
+      errorCode: ManifestMCPErrorCode.TX_FAILED,
+      sent: true,
+    });
+    expect(getter).not.toHaveBeenCalled();
+  });
+
+  it('retains a revoked proxy error without inspecting or serializing it', async () => {
+    const revocable = Proxy.revocable({}, {});
+    revocable.revoke();
+    const snapshot = await reconcileFailure(revocable.proxy);
+    expect(JSON.stringify(snapshot)).toBe('{}');
+  });
+
+  it.each([null, undefined, 'raw failure', 42])(
+    'preserves the raw thrown value %s without fabricating machine evidence',
+    async (error) => {
+      const snapshot = await reconcileFailure(error);
+      expect(snapshot).toEqual({});
+    },
+  );
 });

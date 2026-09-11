@@ -27,7 +27,12 @@ MCP error details. When that receipt has a transaction hash, `sent: true` tells 
 host to reconcile the submitted transaction and lease state before another
 mutation. The SDK cause chain is not serialized into MCP responses; receipt
 fields are preserved through the bounded error projection. A close outcome of
-`already_inactive` adds no inferred submission evidence. See the
+`already_inactive` adds no inferred submission evidence. A failed blocking attempt
+followed by terminal reconciliation supplies a separate `details.reconciliation`
+machine snapshot on later verification and completed teardown-recovery errors.
+Its explicit `sent: true` also sets outer `sent: true`; failed-transaction fields
+stay nested. The original teardown error is retained only for SDK inspection and
+is not serialized. See the
 [verification error contract](../../docs/library-usage.md#errors).
 
 MCP elicitation support is required **only for the tools/actions that prompt the user**: `deploy_app_orchestrated`, `close_lease_orchestrated`, and `manage_domain_orchestrated` with `action='set'` or `'clear'`. Hosts that don't advertise `capabilities.elicitation` at `initialize` receive `ManifestMCPError(INVALID_CONFIG)` with a clear diagnostic when invoking those paths — the wrapper does not fall back to stdin prompts or auto-confirm.

@@ -696,3 +696,50 @@ recorded in ENG-805's review comment; its 11 unchecked criteria and two checked
 post-mutation criteria retain their existing scope. The PR remains open and
 unreleased. All 72 pre-existing artifacts, submodule pins and the unrelated
 release branch are preserved.
+
+## Follow-up: failed teardown reconciliation diagnostics
+
+The [focused plan](superpowers/plans/2026-09-11-eng805-reconciliation-diagnostics.md)
+implements the optional P3 extension on merged PR #227 (`e1f3ca2`). It leaves
+the two completed receipt criteria and 11 remaining ENG-805 criteria intact.
+
+`stopApp` now attaches a frozen optional `reconciliation` snapshot only when a
+caught blocking failure is followed by a terminal re-query. It preserves the
+original thrown value non-enumerably without mutation, copying only bounded
+machine metadata from own data properties. The actual failed DeliverTx producer
+records submission and inclusion explicitly. Terminal observation, failure
+category and missing hash do not establish submission or non-submission.
+
+Close-verification and completed teardown-recovery errors retain the snapshot.
+Explicit `reconciliation.sent: true` adds the existing outer submission retry
+veto; failed-transaction metadata stays separate from successful receipts and
+lease state. The later verification error remains the cause, with the earlier
+teardown error available through `reconciliation.error`. Retry classification
+does not traverse this sibling error or expand grouped-error policy. MCP keeps
+the machine snapshot within its existing response budget; the earlier raw error
+does not serialize through either successful JSON or error projection.
+
+| Finding | Confidence | Regression evidence |
+| --- | --- | --- |
+| Terminal reconciliation discarded a real failed DeliverTx's evidence | 100% | Real `stopApp` → `cosmosTx` → billing handler with mocked signing/query wire reproduces missing metadata for ACTIVE and PENDING; preparation failure and no-receipt broadcast rejection remain distinct controls. |
+| A transient later verifier could authorize another teardown invocation | 100% observed; 99% conditional submission impact | Public `closeLease` with real `withRetry` invokes `stopApp` twice before propagation; the patch carries explicit submission evidence as a retry veto. Whether a repeated invocation broadcasts depends on its next pre-query. No duplicate accepted execution or fees are demonstrated. |
+| Large unrelated MCP diagnostics could crowd out the snapshot | 100% | A red bounded-projection regression loses `reconciliation`; prioritizing it preserves the machine fields while excluding the non-enumerable original error. |
+
+Validation passes: **3,903 tests**, 17 skipped, across 177 files with no type
+errors; 46 cases are new. Coverage is 84.64% lines, 84.36% statements, 84.08%
+branches and 88.26% functions, with all global/query/transaction floors passing.
+`stopApp` has 100% line/function coverage and 97.36% branch coverage; the
+verification-outcome helper has 100% across all four measures. The 495 focused
+core/agent/MCP checks, workspace build/types, E2E types, eight type-harness checks,
+architecture, package integrity, bundle size, eight live MCP metadata checks and
+Biome pass. A type-only import mistake in the new SDK assertion was corrected
+and the SDK type check rerun successfully.
+
+Independent review caught and corrected a cancellation compatibility regression:
+readable accessor/inherited cancellation codes retain the previous direct-read
+behavior under a guard, while copied diagnostics remain descriptor-only. Both
+forms have passthrough regressions (100% confidence). Final independent review
+found no further blockers (99% confidence). Live chain acceptance requires PR CI;
+no local broadcasts were made. Consumer docs and SDK type assertions cover the
+additive contract. No dependency, submodule or release-version change is part of
+this slice. The work remains unreleased.

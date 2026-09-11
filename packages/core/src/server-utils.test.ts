@@ -636,6 +636,68 @@ describe('withErrorHandling', () => {
       expect(details.rawLog).toHaveLength(300_000);
     });
 
+    it('keeps a reconciled failed attempt ahead of oversized unrelated diagnostics', async () => {
+      const original = Object.freeze(
+        new ManifestMCPError(
+          ManifestMCPErrorCode.TX_FAILED,
+          'private raw log',
+          {
+            rawLog: 'do not serialize this diagnostic'.repeat(10_000),
+          },
+        ),
+      );
+      const reconciliation = Object.freeze(
+        Object.defineProperty(
+          {
+            errorCode: ManifestMCPErrorCode.TX_FAILED,
+            sent: true,
+            transactionHash: 'A'.repeat(64),
+            transactionCode: 5,
+            transactionHeight: '42',
+            transactionConfirmed: true,
+          },
+          'error',
+          { value: original },
+        ),
+      );
+      const handler = withErrorHandling<TestToolCb>('close_lease', async () => {
+        throw new ManifestMCPError(
+          ManifestMCPErrorCode.QUERY_FAILED,
+          'Read failed',
+          {
+            noisy: Array.from({ length: 5000 }, () => 'x'.repeat(5000)),
+            stop_outcome: 'already_inactive',
+            lease_state: 'LEASE_STATE_CLOSED',
+            sent: true,
+            reconciliation,
+          },
+        );
+      });
+      const text = textOf(await handler({}, {}));
+      const parsed = JSON.parse(text);
+      expect(text.length).toBeLessThanOrEqual(MAX_TOOL_ERROR_RESPONSE_CHARS);
+      expect(parsed.details.reconciliation).toEqual({
+        errorCode: 'TX_FAILED',
+        sent: true,
+        transactionHash: 'A'.repeat(64),
+        transactionCode: 5,
+        transactionHeight: '42',
+        transactionConfirmed: true,
+      });
+      expect(parsed.details).toMatchObject({
+        stop_outcome: 'already_inactive',
+        lease_state: 'LEASE_STATE_CLOSED',
+        sent: true,
+      });
+      expect(parsed.details).not.toHaveProperty('transaction_hash');
+      expect(text).not.toContain('private raw log');
+      expect(text).not.toContain('do not serialize');
+      expect(parsed.truncated).toBe(true);
+      expect(
+        Object.getOwnPropertyDescriptor(reconciliation, 'error')?.value,
+      ).toBe(original);
+    });
+
     it('projects cycles, bigints, and throwing accessors without calling custom serialization', async () => {
       const toJSON = vi.fn(() => {
         throw new Error('must not run');

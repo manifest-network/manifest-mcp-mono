@@ -31,6 +31,7 @@ import {
   asSkuUuid,
   ManifestMCPError,
   ManifestMCPErrorCode,
+  type StopAppReconciliation,
 } from '@manifest-network/manifest-mcp-core';
 import {
   afterEach,
@@ -2439,6 +2440,39 @@ describe('deployApp replay — Copilot review fixes (PR #58 unresolved comments)
 
 describe('deployApp replay — 03-partial-success-set-domain-failed', () => {
   const OVERLONG_REJECTED_LEASE_UUID = 'x'.repeat(10_001);
+  const earlierRecoveryError = Object.freeze(
+    new ManifestMCPError(
+      ManifestMCPErrorCode.TX_FAILED,
+      'earlier recovery broadcast diagnostic',
+    ),
+  );
+  const sentReconciliation: StopAppReconciliation = Object.freeze(
+    Object.defineProperty(
+      {
+        error: earlierRecoveryError,
+        errorCode: ManifestMCPErrorCode.TX_FAILED,
+        sent: true,
+        transactionHash: 'D'.repeat(64),
+        transactionCode: 9,
+        transactionHeight: '500',
+        transactionConfirmed: true,
+      },
+      'error',
+      { enumerable: false },
+    ),
+  );
+  const preSubmitReconciliation: StopAppReconciliation = Object.freeze(
+    Object.defineProperty(
+      { error: earlierRecoveryError, sent: false },
+      'error',
+      { enumerable: false },
+    ),
+  );
+  const unknownReconciliation: StopAppReconciliation = Object.freeze(
+    Object.defineProperty({ error: earlierRecoveryError }, 'error', {
+      enumerable: false,
+    }),
+  );
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -2492,6 +2526,43 @@ describe('deployApp replay — 03-partial-success-set-domain-failed', () => {
         outcome: 'already_inactive',
         lease_state: 'LEASE_STATE_REJECTED',
         rejection_reason: 'provider-controlled fixture reason',
+      },
+      undefined,
+      undefined,
+    ],
+    [
+      'cancel_lease preserves the reconciled failed transaction separately from terminal state',
+      'cancel_lease',
+      {
+        lease_uuid: '22222222-2222-4222-8222-222222222222',
+        outcome: 'already_inactive',
+        lease_state: 'LEASE_STATE_REJECTED',
+        rejection_reason: 'provider-controlled fixture reason',
+        reconciliation: sentReconciliation,
+      },
+      undefined,
+      undefined,
+    ],
+    [
+      'close_lease carries pre-submission reconciliation without inventing sent',
+      'close_lease',
+      {
+        lease_uuid: '22222222-2222-4222-8222-222222222222',
+        outcome: 'already_inactive',
+        lease_state: 'LEASE_STATE_CLOSED',
+        reconciliation: preSubmitReconciliation,
+      },
+      undefined,
+      undefined,
+    ],
+    [
+      'close_lease carries unknown reconciliation without inventing sent',
+      'close_lease',
+      {
+        lease_uuid: '22222222-2222-4222-8222-222222222222',
+        outcome: 'already_inactive',
+        lease_state: 'LEASE_STATE_EXPIRED',
+        reconciliation: unknownReconciliation,
       },
       undefined,
       undefined,
@@ -2750,8 +2821,31 @@ describe('deployApp replay — 03-partial-success-set-domain-failed', () => {
               ...('transactionHash' in stopResult
                 ? { transaction_hash: stopResult.transactionHash }
                 : {}),
+              ...('reconciliation' in stopResult
+                ? {
+                    reconciliation: stopResult.reconciliation,
+                    ...(stopResult.reconciliation.sent === true
+                      ? { sent: true }
+                      : {}),
+                  }
+                : {}),
             }),
       });
+      if (stopResult && 'reconciliation' in stopResult) {
+        expect((caughtErr as ManifestMCPError).details?.reconciliation).toBe(
+          stopResult.reconciliation,
+        );
+        expect(stopResult.reconciliation.error).toBe(earlierRecoveryError);
+        expect(Object.isFrozen(stopResult.reconciliation)).toBe(true);
+        expect(caughtErr).not.toHaveProperty('cause');
+        expect(earlierRecoveryError).not.toHaveProperty('cause');
+        expect(JSON.stringify(caughtErr)).not.toContain(
+          earlierRecoveryError.message,
+        );
+        expect((caughtErr as ManifestMCPError).details).not.toHaveProperty(
+          'transaction_hash',
+        );
+      }
       expect((caughtErr as Error).message).toBe(
         stopResult === undefined
           ? 'salvage_without_domain: lease 11111111-1111-4111-8111-111111111111 retained without domain; caller should re-run troubleshootDeployment.'

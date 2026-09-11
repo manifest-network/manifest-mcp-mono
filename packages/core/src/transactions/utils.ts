@@ -563,6 +563,8 @@ export function buildTxResult(
         transactionHash: result.transactionHash,
         rawLog: result.rawLog,
         height: String(result.height),
+        sent: true,
+        confirmed: true,
       },
     );
   }

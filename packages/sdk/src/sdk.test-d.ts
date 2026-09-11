@@ -13,6 +13,8 @@ import type {
   FredReadCtx,
   fundCredits,
   ProviderAuthPort,
+  StopAppReconciliation,
+  StopAppResult,
   setItemCustomDomain,
   stopApp,
 } from './deploy.js';
@@ -41,8 +43,11 @@ import type {
   EventTransport,
   Fqdn,
   LeaseUuid,
+  ManifestMCPErrorCode,
   ProviderUuid,
   ReadCtx,
+  StopAppReconciliation as RootStopAppReconciliation,
+  StopAppResult as RootStopAppResult,
   SkuAmbiguousDetails,
   SkuCandidate,
   SkuUuid,
@@ -120,6 +125,62 @@ describe('ManifestClient bound read + tx + executeTx methods (re-emitted)', () =
     expectTypeOf<ManifestClient['executeTx']>().parameters.toEqualTypeOf<
       Parameters<typeof executeTx> extends [unknown, ...infer R] ? R : never
     >();
+  });
+});
+
+describe('stopApp reconciliation evidence through SDK entrypoints', () => {
+  it('exports the same readonly reconciliation contract from root and /deploy', () => {
+    expectTypeOf<StopAppReconciliation>().toEqualTypeOf<RootStopAppReconciliation>();
+    expectTypeOf<StopAppResult>().toEqualTypeOf<RootStopAppResult>();
+    expectTypeOf<StopAppReconciliation>().toEqualTypeOf<{
+      readonly error: unknown;
+      readonly errorCode?: ManifestMCPErrorCode;
+      readonly sent?: boolean;
+      readonly transactionHash?: string;
+      readonly transactionCode?: number;
+      readonly transactionHeight?: string;
+      readonly transactionConfirmed?: boolean;
+    }>();
+  });
+
+  it('preserves the result union through both the free function and bound client', () => {
+    expectTypeOf<
+      typeof stopApp
+    >().returns.resolves.toEqualTypeOf<StopAppResult>();
+    expectTypeOf<
+      ManifestClient['stopApp']
+    >().returns.resolves.toEqualTypeOf<StopAppResult>();
+    expectTypeOf<
+      Extract<StopAppResult, { outcome: 'already_inactive' }>['reconciliation']
+    >().toEqualTypeOf<StopAppReconciliation | undefined>();
+    expectTypeOf<
+      Exclude<StopAppResult, { outcome: 'already_inactive' }>
+    >().not.toHaveProperty('reconciliation');
+  });
+
+  it('requires outcome narrowing and keeps failed-attempt evidence separate from successful receipts', () => {
+    // This SDK-only consumer is compiled, never invoked.
+    function inspectStop(result: StopAppResult) {
+      if (result.outcome === 'already_inactive') {
+        expectTypeOf(result.reconciliation).toEqualTypeOf<
+          StopAppReconciliation | undefined
+        >();
+        // @ts-expect-error An inactive result has no successful transaction receipt.
+        void result.transactionHash;
+        // @ts-expect-error Observed terminal state does not confirm a transaction.
+        void result.confirmed;
+        if (result.reconciliation) {
+          expectTypeOf(result.reconciliation.error).toEqualTypeOf<unknown>();
+          // @ts-expect-error The captured snapshot is readonly.
+          result.reconciliation.sent = true;
+        }
+      } else {
+        expectTypeOf(result.transactionHash).toEqualTypeOf<string>();
+        // @ts-expect-error Reconciliation evidence belongs only to inactive results.
+        void result.reconciliation;
+      }
+    }
+    expectTypeOf(inspectStop).parameter(0).toEqualTypeOf<StopAppResult>();
   });
 });
 

@@ -132,7 +132,9 @@ import type {
  *   outcome without parsing the message. Terminal recovery also carries the
  *   authoritative `stop_outcome` / `lease_state`. `transaction_hash` is
  *   present for `stopped` / `cancelled` and absent for `already_inactive`
- *   (ENG-750).
+ *   (ENG-750). A reconciled inactive result retains its failed attempt under
+ *   `details.reconciliation`, including its non-enumerable original error.
+ *   An explicit `reconciliation.sent === true` also sets `details.sent: true`.
  * @throws `ManifestMCPError(DEPLOY_READINESS_UNCONFIRMED)` after broadcast
  *   when readiness cannot be safely confirmed. Every variant carries
  *   `details = { readiness_unconfirmed: true, lease_uuid, partial: true }`.
@@ -1433,6 +1435,10 @@ async function dispatchRecovery(
         { chain: opts.clientManager, logger: noopLogger },
         { leaseUuid },
       );
+      const reconciliation =
+        stopResult.outcome === 'already_inactive'
+          ? stopResult.reconciliation
+          : undefined;
       // Copy only stable machine fields. Do not spread `stopResult`: its
       // REJECTED `already_inactive` arm carries an untrusted rejection reason.
       throw new ManifestMCPError(
@@ -1446,6 +1452,12 @@ async function dispatchRecovery(
           ...('transactionHash' in stopResult
             ? { transaction_hash: stopResult.transactionHash }
             : {}),
+          ...(reconciliation === undefined
+            ? {}
+            : {
+                reconciliation,
+                ...(reconciliation.sent === true ? { sent: true } : {}),
+              }),
         },
       );
     }

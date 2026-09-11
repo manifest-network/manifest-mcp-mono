@@ -21,6 +21,16 @@ npm install @manifest-network/manifest-mcp-lease
 | `get_skus` | List available SKUs |
 | `get_providers` | List available providers |
 
+`close_lease` uses core `stopApp`: ACTIVE leases are closed, PENDING leases are
+cancelled, and terminal leases return `already_inactive`. When a failed blocking
+attempt is followed by a terminal re-query, that inactive result includes an
+optional `reconciliation` machine snapshot with actual failed-attempt diagnostics.
+It does not turn the observed state into a successful transaction receipt.
+An explicit `sent: true` or transaction confirmation describes that attempt;
+missing metadata leaves submission unknown. The original error remains available
+only to SDK callers and is omitted from JSON. See the
+[error contract](../../docs/library-usage.md#errors) for field names and limits.
+
 ## Usage
 
 ### As an MCP server (via node package)

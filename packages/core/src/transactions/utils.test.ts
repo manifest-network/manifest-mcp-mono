@@ -1008,6 +1008,32 @@ describe('buildTxResult — decodeExtra gating', () => {
     expect(decodeExtra).not.toHaveBeenCalled();
     expect(result).not.toHaveProperty('pagination');
   });
+
+  it.each([true, false])(
+    'retains failed DeliverTx submission and inclusion evidence independently of decode gating (%s)',
+    (waitForConfirmation) => {
+      const failure = Object.freeze({ ...deliverTx, code: 11 });
+      let caught: unknown;
+      try {
+        buildTxResult('billing', 'close-lease', failure, waitForConfirmation);
+      } catch (error) {
+        caught = error;
+      }
+      expect(caught).toBeInstanceOf(ManifestMCPError);
+      expect(caught).toMatchObject({
+        code: ManifestMCPErrorCode.TX_FAILED,
+        details: {
+          transactionHash: failure.transactionHash,
+          code: 11,
+          height: '7',
+          sent: true,
+          confirmed: true,
+        },
+      });
+      expect(failure).not.toHaveProperty('sent');
+      expect(failure).not.toHaveProperty('confirmed');
+    },
+  );
 });
 
 describe('broadcastAndBuildTxResult', () => {

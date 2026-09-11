@@ -24,6 +24,7 @@ import {
   asLeaseUuid,
   ManifestMCPError,
   ManifestMCPErrorCode,
+  type StopAppReconciliation,
   type StopAppResult,
   withRetry,
 } from '@manifest-network/manifest-mcp-core';
@@ -922,6 +923,107 @@ describe('closeLease post-mutation verification (ENG-805)', () => {
         },
       ]);
       expect(completed).toEqual([]);
+    },
+  );
+
+  it.each([true, false, undefined])(
+    'reconciled inactive sent=%s retains separate failure histories across verification retries',
+    async (sent) => {
+      const core = await import('@manifest-network/manifest-mcp-core');
+      const { closeLease } = await import('./close-lease.js');
+      const earlier = Object.freeze(
+        new ManifestMCPError(
+          sent === true
+            ? ManifestMCPErrorCode.TX_FAILED
+            : ManifestMCPErrorCode.INVALID_CONFIG,
+          'earlier stop attempt failed',
+        ),
+      );
+      const reconciliation: StopAppReconciliation = Object.freeze(
+        Object.defineProperty(
+          {
+            error: earlier,
+            errorCode: earlier.code,
+            ...(sent === undefined ? {} : { sent }),
+            ...(sent === true
+              ? {
+                  transactionHash: 'C'.repeat(64),
+                  transactionConfirmed: true,
+                  transactionCode: 7,
+                }
+              : {}),
+          },
+          'error',
+          { enumerable: false },
+        ),
+      );
+      const inactive = {
+        lease_uuid: leaseUuid,
+        outcome: 'already_inactive',
+        lease_state: 'LEASE_STATE_CLOSED',
+      } satisfies StopAppResult;
+      // A repeat can observe an inactive pre-query and lose the first attempt's
+      // receipt. Established submission evidence must prevent that repeat.
+      vi.mocked(core.stopApp)
+        .mockReset()
+        .mockResolvedValueOnce(Object.freeze({ ...inactive, reconciliation }))
+        .mockResolvedValue(inactive);
+      const later = Object.freeze(
+        new ManifestMCPError(
+          ManifestMCPErrorCode.QUERY_FAILED,
+          'later verification unavailable',
+          Object.freeze({ httpStatus: 503 }),
+        ),
+      );
+      const queryClient = makeMockQueryClient();
+      queryClient.liftedinit.billing.v1.lease
+        .mockRejectedValueOnce(later)
+        .mockResolvedValue({ lease: { uuid: leaseUuid, state: 3 } });
+      const clientManager = makeMockClientManager(queryClient);
+      const { callbacks, failures, completed } = captureCallbacks();
+      let observedError: unknown;
+      const retry = vi.fn((error: unknown) => {
+        observedError = error;
+      });
+
+      const result = await withRetry(
+        () =>
+          closeLease({ leaseUuid }, callbacks, {
+            clientManager: clientManager as unknown as Parameters<
+              typeof closeLease
+            >[2]['clientManager'],
+          }),
+        { config: retryConfig, onRetry: retry },
+      ).catch((error: unknown) => {
+        observedError = error;
+        return undefined;
+      });
+
+      expect(core.stopApp).toHaveBeenCalledTimes(sent === true ? 1 : 2);
+      expect(queryClient.liftedinit.billing.v1.lease).toHaveBeenCalledTimes(
+        sent === true ? 1 : 2,
+      );
+      expect(retry).toHaveBeenCalledTimes(sent === true ? 0 : 1);
+      expect(observedError).toBeInstanceOf(ManifestMCPError);
+      if (!(observedError instanceof ManifestMCPError))
+        throw new Error('expected verification failure');
+      expect(Reflect.get(observedError, 'cause')).toBe(later);
+      expect(observedError.details?.reconciliation).toBe(reconciliation);
+      expect(reconciliation.error).toBe(earlier);
+      expect(earlier).not.toHaveProperty('cause');
+      expect(later).not.toHaveProperty('cause');
+      expect(observedError.details).not.toHaveProperty('transaction_hash');
+      expect(JSON.stringify(observedError)).not.toContain(earlier.message);
+      if (sent === true) {
+        expect(observedError.details?.sent).toBe(true);
+        expect(result).toBeUndefined();
+        expect(completed).toEqual([]);
+      } else {
+        expect(observedError.details).not.toHaveProperty('sent');
+        expect(result).toEqual({ leaseUuid, finalState: 'LEASE_STATE_CLOSED' });
+        expect(completed).toEqual([result]);
+      }
+      expect(failures).toHaveLength(1);
     },
   );
 

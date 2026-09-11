@@ -103,7 +103,10 @@ interface CloseDiag {
  *   original cause; failed reads use `QUERY_FAILED` / fallback message text.
  *   The fresh error carries the stop outcome. An actual
  *   transaction receipt adds its hash, confirmation and `details.sent: true`;
- *   `already_inactive` adds no inferred submission evidence. Reconcile a
+ *   `already_inactive` adds no inferred submission evidence. When it retains
+ *   a failed attempt's reconciliation snapshot, that snapshot is exposed under
+ *   `details.reconciliation`; its explicit `sent: true` also sets the outer
+ *   retry veto. The later verification error remains the cause. Reconcile a
  *   submitted transaction before considering another mutation.
  */
 export async function closeLease(

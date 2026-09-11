@@ -52,7 +52,11 @@ receipt if later verification fails. Fresh errors retain structured code/message
 original causes and reconciliation details. A receipt containing a transaction
 hash adds `details.sent: true`, preventing whole-orchestration replay through
 `withRetry`; use that hash and lease ID to inspect the chain before another
-mutation. `already_inactive` close outcomes carry no inferred submission evidence,
-and read-only lookup remains unchanged. Successful result types and callbacks
+mutation. `already_inactive` close outcomes carry no inferred submission evidence.
+When a failed blocking teardown converged to terminal state, its optional frozen
+`details.reconciliation` snapshot retains the earlier error non-enumerably and
+actual machine diagnostics separately from the later verification cause. Explicit
+`reconciliation.sent: true` adds the outer retry veto. Completed cancel/close deploy
+recovery preserves the same snapshot. Read-only lookup remains unchanged. Successful result types and callbacks
 are unchanged. See the [SDK error contract](../../docs/library-usage.md#errors)
-for field names, confirmation semantics and the no-receipt limitation.
+for field names, confirmation semantics and submission-evidence limits.
