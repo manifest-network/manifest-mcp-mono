@@ -9,6 +9,7 @@ import type {
   PortConfig,
   ServiceConfig,
   SkuCandidate,
+  StopAppReconciliation,
   WalletProvider,
 } from '@manifest-network/manifest-mcp-core';
 
@@ -22,6 +23,7 @@ export type {
   PortConfig,
   ServiceConfig,
   SkuCandidate,
+  StopAppReconciliation,
   WalletProvider,
 };
 
@@ -431,6 +433,16 @@ export interface CloseLeaseArgs {
 export interface CloseLeaseResult {
   leaseUuid: string;
   finalState: LeaseStateName;
+  /**
+   * Present only when `stopApp` reconciled a failed blocking close/cancel
+   * attempt to `already_inactive` and verification then observed a terminal
+   * state. Submission and inclusion depend on the snapshot's explicit
+   * evidence, independently of terminal lease state. The frozen snapshot is the same
+   * object `stopApp` attached (its original `error` is non-enumerable), so a
+   * successful result does not silently discard that evidence. Absent after a
+   * successful `stopped`/`cancelled` receipt or a terminal pre-query no-op.
+   */
+  reconciliation?: StopAppReconciliation;
 }
 
 export interface CloseLeaseCallbacks {

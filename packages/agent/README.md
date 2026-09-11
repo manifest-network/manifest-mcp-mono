@@ -32,7 +32,11 @@ followed by terminal reconciliation supplies a separate `details.reconciliation`
 machine snapshot on later verification and completed teardown-recovery errors.
 Its explicit `sent: true` also sets outer `sent: true`; failed-transaction fields
 stay nested. The original teardown error is retained only for SDK inspection and
-is not serialized. See the
+is not serialized. Successful `close_lease_orchestrated` results also expose the
+optional machine snapshot in `reconciliation`, matching the declared output
+schema. A hash alone does not establish inclusion; `transactionConfirmed: true`
+records inclusion of that failed attempt. Tool descriptions explain these fields
+for both close and deploy recovery. See the
 [verification error contract](../../docs/library-usage.md#errors).
 
 MCP elicitation support is required **only for the tools/actions that prompt the user**: `deploy_app_orchestrated`, `close_lease_orchestrated`, and `manage_domain_orchestrated` with `action='set'` or `'clear'`. Hosts that don't advertise `capabilities.elicitation` at `initialize` receive `ManifestMCPError(INVALID_CONFIG)` with a clear diagnostic when invoking those paths — the wrapper does not fall back to stdin prompts or auto-confirm.

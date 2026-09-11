@@ -76,6 +76,9 @@ import {
   withRetry,
 } from './index.js';
 import type {
+  CloseLeaseCallbacks,
+  CloseLeaseResult,
+  closeLease,
   PortConfig as OrchestrationPortConfig,
   ServiceConfig as OrchestrationServiceConfig,
 } from './orchestration.js';
@@ -181,6 +184,30 @@ describe('stopApp reconciliation evidence through SDK entrypoints', () => {
       }
     }
     expectTypeOf(inspectStop).parameter(0).toEqualTypeOf<StopAppResult>();
+  });
+});
+
+describe('closeLease reconciliation evidence through SDK /orchestration', () => {
+  it('preserves the result contract in the function and completion callback', () => {
+    expectTypeOf<
+      typeof closeLease
+    >().returns.resolves.toEqualTypeOf<CloseLeaseResult>();
+    expectTypeOf<NonNullable<CloseLeaseCallbacks['onComplete']>>()
+      .parameter(0)
+      .toEqualTypeOf<CloseLeaseResult>();
+    expectTypeOf<CloseLeaseResult['reconciliation']>().toEqualTypeOf<
+      StopAppReconciliation | undefined
+    >();
+  });
+
+  it('keeps state-only results valid without fabricating a reconciliation snapshot', () => {
+    const result = {
+      leaseUuid: '550e8400-e29b-41d4-a716-446655440000',
+      finalState: 'LEASE_STATE_CLOSED',
+    } satisfies CloseLeaseResult;
+    expectTypeOf(result).toExtend<CloseLeaseResult>();
+    expectTypeOf<CloseLeaseResult>().not.toHaveProperty('transactionHash');
+    expectTypeOf<CloseLeaseResult>().not.toHaveProperty('sent');
   });
 });
 

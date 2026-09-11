@@ -57,6 +57,9 @@ When a failed blocking teardown converged to terminal state, its optional frozen
 `details.reconciliation` snapshot retains the earlier error non-enumerably and
 actual machine diagnostics separately from the later verification cause. Explicit
 `reconciliation.sent: true` adds the outer retry veto. Completed cancel/close deploy
-recovery preserves the same snapshot. Read-only lookup remains unchanged. Successful result types and callbacks
-are unchanged. See the [SDK error contract](../../docs/library-usage.md#errors)
+recovery preserves the same snapshot. Successful `closeLease` verification also
+forwards it through optional `CloseLeaseResult.reconciliation` and `onComplete`;
+it is absent when core supplied no snapshot. A failed cancel whose re-query finds
+ACTIVE still rejects with `TX_FAILED`, retaining the earlier attempt under
+`details.reconciliation`. Read-only lookup remains unchanged. See the [SDK error contract](../../docs/library-usage.md#errors)
 for field names, confirmation semantics and submission-evidence limits.

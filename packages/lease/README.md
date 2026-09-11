@@ -28,7 +28,10 @@ optional `reconciliation` machine snapshot with actual failed-attempt diagnostic
 It does not turn the observed state into a successful transaction receipt.
 An explicit `sent: true` or transaction confirmation describes that attempt;
 missing metadata leaves submission unknown. The original error remains available
-only to SDK callers and is omitted from JSON. See the
+only to SDK callers and is omitted from JSON. If a failed PENDING cancellation
+re-queries ACTIVE, the tool still reports `TX_FAILED`, with the known lease ID
+and the failed attempt in `details.reconciliation`; `details.sent: true` is added
+only when explicitly established. See the
 [error contract](../../docs/library-usage.md#errors) for field names and limits.
 
 ## Usage

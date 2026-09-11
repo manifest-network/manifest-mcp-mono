@@ -9,7 +9,10 @@ import { type Lease, LeaseState, leaseStateToJSON } from '../manifest-types.js';
 import { resolveCallSignal, type TxCallOptions } from '../options.js';
 import { ManifestMCPError, ManifestMCPErrorCode } from '../types.js';
 
-/** Diagnostics from a failed blocking transaction followed by a terminal lease observation. */
+/**
+ * Diagnostics retained when a re-query replaces a failed blocking transaction error:
+ * on an inactive result, or in `details.reconciliation` on a PENDING→ACTIVE cancel-race error.
+ */
 export interface StopAppReconciliation {
   /** Original caught value, retained non-enumerably for SDK diagnostics and never mutated. */
   readonly error: unknown;
@@ -17,6 +20,7 @@ export interface StopAppReconciliation {
   /** Explicit transaction-boundary evidence; absence does not establish that nothing was sent. */
   readonly sent?: boolean;
   readonly transactionHash?: string;
+  /** Generic code/height/confirmed fields become transaction facts only with explicit `sent: true`. */
   readonly transactionCode?: number;
   readonly transactionHeight?: string;
   /** Inclusion evidence from the failed transaction, not confirmation of the observed lease state. */
@@ -127,9 +131,16 @@ function reconciliationFrom(error: unknown): StopAppReconciliation {
   const details = ownDataProperty(error, 'details');
   const sent = ownDataProperty(details, 'sent');
   const hash = ownDataProperty(details, 'transactionHash');
-  const transactionCode = ownDataProperty(details, 'code');
-  const height = ownDataProperty(details, 'height');
-  const confirmed = ownDataProperty(details, 'confirmed');
+  // Generic diagnostic names do not identify transaction facts without an explicit
+  // submission marker. The qualified transactionHash can be retained independently.
+  const submitted = sent === true;
+  const transactionCode = submitted
+    ? ownDataProperty(details, 'code')
+    : undefined;
+  const height = submitted ? ownDataProperty(details, 'height') : undefined;
+  const confirmed = submitted
+    ? ownDataProperty(details, 'confirmed')
+    : undefined;
   const snapshot: StopAppReconciliation = {
     error,
     ...(errorCode !== undefined ? { errorCode } : {}),
@@ -335,9 +346,15 @@ export async function stopApp(
       // re-queries, sees ACTIVE, and dispatches to close) — NOT an automated retry: TX_FAILED
       // is intentionally non-retryable (retry.ts) so cosmosTx's inner withRetry can never
       // re-broadcast the submitted cancel-lease (double-spend guard).
+      const reconciliation = reconciliationFrom(err);
       throw new ManifestMCPError(
         ManifestMCPErrorCode.TX_FAILED,
         `Lease "${leaseUuid}" state changed during teardown (now ACTIVE); re-invoke stopApp to close it.`,
+        {
+          lease_uuid: leaseUuid,
+          reconciliation,
+          ...(reconciliation.sent === true ? { sent: true } : {}),
+        },
       );
     }
     throw err; // unchanged actionable state (incl. a plain ACTIVE close failure) / null -> original

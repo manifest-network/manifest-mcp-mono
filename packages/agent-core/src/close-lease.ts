@@ -21,7 +21,10 @@ import { isLeaseUuidShape } from './internals/uuid-shape.js';
  *   5. On a non-terminal or missing-lease verification result, invoke
  *      `onFailure({ reason })` then throw `ManifestMCPError(TX_FAILED)`.
  *      On success, emit
- *      `onComplete` with the typed `CloseLeaseResult`.
+ *      `onComplete` with the typed `CloseLeaseResult`. If `stopApp` reconciled
+ *      a failed blocking attempt, the result preserves its frozen snapshot.
+ *      Terminal lease state does not establish whether that attempt was sent
+ *      or included; those facts remain explicit snapshot fields.
  */
 
 import {
@@ -79,7 +82,8 @@ interface CloseDiag {
  *   non-cancellation failure from a blocking close/cancel attempt, a terminal
  *   re-query makes `stopApp` resolve `already_inactive` without a transaction
  *   receipt, and verification continues. Otherwise it preserves the original
- *   failure, except that a `PENDING→ACTIVE` cancel race becomes a new `TX_FAILED`.
+ *   failure, except that a `PENDING→ACTIVE` cancel race becomes a new `TX_FAILED`
+ *   with the known lease ID and the earlier attempt in `details.reconciliation`.
  *   `closeLease` propagates whichever rejection `stopApp` produces unchanged,
  *   without invoking `onFailure`. Catch the rejected promise to handle
  *   teardown failures; `onFailure` belongs to subsequent verification.
@@ -259,9 +263,16 @@ export async function closeLease(
       );
     }
     const finalState: LeaseStateName = verifyResult.diagnostic.stateName;
+    // Verification success must preserve the separate failed-attempt history,
+    // including when its submission or inclusion status remains unknown.
+    const reconciliation =
+      mutationReceipt.outcome === 'already_inactive'
+        ? mutationReceipt.reconciliation
+        : undefined;
     const result: CloseLeaseResult = {
       leaseUuid: args.leaseUuid,
       finalState,
+      ...(reconciliation === undefined ? {} : { reconciliation }),
     };
     emitCompletion(() => callbacks.onComplete?.(result));
     return result;

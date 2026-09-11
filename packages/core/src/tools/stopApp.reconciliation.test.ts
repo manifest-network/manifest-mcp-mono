@@ -3,6 +3,7 @@ import type {
   DeliverTxResponse,
   SigningStargateClient,
 } from '@cosmjs/stargate';
+import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { describe, expect, it, vi } from 'vitest';
 import {
   makeMockConfig,
@@ -12,7 +13,8 @@ import {
 } from '../__test-utils__/mocks.js';
 import { parseLeaseUuid } from '../brands.js';
 import { LeaseState } from '../manifest-types.js';
-import { jsonResponse } from '../server-utils.js';
+import { withRetry } from '../retry.js';
+import { jsonResponse, withErrorHandling } from '../server-utils.js';
 import { ManifestMCPError, ManifestMCPErrorCode } from '../types.js';
 import { stopApp } from './stopApp.js';
 
@@ -54,15 +56,23 @@ function fixture(
     signAndBroadcast: broadcast,
     signAndBroadcastSync: sync,
   } as unknown as SigningStargateClient;
+  const getBroadcastClient = vi.fn(async () => wire);
   const chain = makeSealedClientManager({
     getQueryClient: vi.fn(async () => query),
     getConfig: vi.fn(() => makeMockConfig({ retry: { maxRetries: 0 } })),
     getAddress: vi.fn(async () => ADDRESS),
-    getBroadcastClient: vi.fn(async () => wire),
+    getBroadcastClient,
     acquireRateLimit: vi.fn(async () => undefined),
     withBroadcastLock: async (_address, action) => action(),
   });
-  return { ctx: makeTxCtx({ chain }), lease, simulate, broadcast, sync };
+  return {
+    ctx: makeTxCtx({ chain }),
+    lease,
+    simulate,
+    broadcast,
+    sync,
+    getBroadcastClient,
+  };
 }
 
 describe('stopApp reconciliation through the real transaction pipeline', () => {
@@ -149,6 +159,52 @@ describe('stopApp reconciliation through the real transaction pipeline', () => {
     expect(f.broadcast).not.toHaveBeenCalled();
   });
 
+  it.each([
+    {
+      label: 'no sent marker',
+      code: ManifestMCPErrorCode.QUERY_FAILED,
+      details: { code: 3, height: '12', confirmed: true },
+      expected: { errorCode: ManifestMCPErrorCode.QUERY_FAILED },
+    },
+    {
+      label: 'sent: false',
+      code: ManifestMCPErrorCode.RPC_CONNECTION_FAILED,
+      details: { sent: false, code: 0, height: '12', confirmed: false },
+      expected: {
+        errorCode: ManifestMCPErrorCode.RPC_CONNECTION_FAILED,
+        sent: false,
+      },
+    },
+  ])(
+    'does not promote bare code/height/confirmed to transaction facts before broadcast ($label)',
+    async ({ code, details, expected }) => {
+      // A consumer-injected manager (or wallet) can throw a ManifestMCPError whose details use the
+      // generic `code`/`height`/`confirmed` names before simulate/broadcast ever run; enrichTxError
+      // attributes it (module/subcommand) with those details intact. Without `sent: true` they are
+      // not DeliverTx facts, so the snapshot must not rename them to `transaction*`.
+      const f = fixture();
+      f.getBroadcastClient.mockRejectedValue(
+        new ManifestMCPError(code, 'signing client unavailable', {
+          ...details,
+        }),
+      );
+      const result = await stopApp(f.ctx, { leaseUuid: LEASE });
+      if (result.outcome !== 'already_inactive')
+        throw new Error('expected terminal reconciliation');
+      expect(result.reconciliation).toEqual(expected);
+      expect(result.reconciliation).not.toHaveProperty('transactionCode');
+      expect(result.reconciliation).not.toHaveProperty('transactionHeight');
+      expect(result.reconciliation).not.toHaveProperty('transactionConfirmed');
+      // The bare names reached the caught error unchanged: the gate, not the shape check, withheld them.
+      expect(result.reconciliation?.error).toBeInstanceOf(ManifestMCPError);
+      expect(result.reconciliation?.error).toMatchObject({ code, details });
+      expect(JSON.stringify(jsonResponse(result))).not.toContain('transaction');
+      expect(f.lease).toHaveBeenCalledTimes(2);
+      expect(f.simulate).not.toHaveBeenCalled();
+      expect(f.broadcast).not.toHaveBeenCalled();
+    },
+  );
+
   it('does not infer submission or confirmation from a raw broadcast rejection without a receipt', async () => {
     const f = fixture();
     f.broadcast.mockRejectedValue(
@@ -167,6 +223,139 @@ describe('stopApp reconciliation through the real transaction pipeline', () => {
     expect(result.reconciliation).not.toHaveProperty('transactionConfirmed');
     expect(f.broadcast).toHaveBeenCalledOnce();
   });
+
+  it('retains the failed MsgCancelLease receipt on the PENDING→ACTIVE cancel-race error', async () => {
+    const f = fixture(
+      LeaseState.LEASE_STATE_PENDING,
+      LeaseState.LEASE_STATE_ACTIVE,
+    );
+    const retry = vi.fn();
+    let caught: unknown;
+    try {
+      await withRetry(() => stopApp(f.ctx, { leaseUuid: LEASE }), {
+        config: { maxRetries: 1, baseDelayMs: 1, maxDelayMs: 1 },
+        onRetry: retry,
+      });
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(ManifestMCPError);
+    if (!(caught instanceof ManifestMCPError))
+      throw new Error('expected the cancel-race TX_FAILED');
+    // The replacement error keeps its non-retryable code and re-invoke guidance...
+    expect(caught.code).toBe(ManifestMCPErrorCode.TX_FAILED);
+    expect(caught.message).toMatch(
+      /state changed during teardown \(now ACTIVE\)/,
+    );
+    // ...and retains the included, failed DeliverTx it replaced.
+    expect(caught.details).toEqual({
+      lease_uuid: LEASE,
+      sent: true,
+      reconciliation: {
+        errorCode: ManifestMCPErrorCode.TX_FAILED,
+        sent: true,
+        transactionHash: HASH,
+        transactionCode: 11,
+        transactionHeight: '42',
+        transactionConfirmed: true,
+      },
+    });
+    const reconciliation = caught.details?.reconciliation;
+    const original = Object.getOwnPropertyDescriptor(
+      reconciliation,
+      'error',
+    )?.value;
+    expect(original).toBeInstanceOf(ManifestMCPError);
+    expect(original).not.toBe(caught);
+    expect(original).toMatchObject({
+      code: ManifestMCPErrorCode.TX_FAILED,
+      details: {
+        transactionHash: HASH,
+        sent: true,
+        confirmed: true,
+        rawLog: FAILED_TX.rawLog,
+      },
+    });
+    expect(Object.isFrozen(reconciliation)).toBe(true);
+    expect(
+      Object.getOwnPropertyDescriptor(reconciliation, 'error'),
+    ).toMatchObject({ enumerable: false, writable: false });
+    // Same single cancel broadcast as before: no auto-escalation to close.
+    expect(f.lease).toHaveBeenCalledTimes(2);
+    expect(f.broadcast).toHaveBeenCalledOnce();
+    expect(retry).not.toHaveBeenCalled();
+    expect(f.broadcast.mock.calls[0]?.[1][0]?.typeUrl).toBe(
+      '/liftedinit.billing.v1.MsgCancelLease',
+    );
+
+    // MCP error projection carries the machine snapshot, never the original's rawLog.
+    const handler = withErrorHandling<
+      (
+        _args: Record<string, unknown>,
+        _extra: unknown,
+      ) => Promise<CallToolResult>
+    >('close_lease', async () => {
+      throw caught;
+    });
+    const response = await handler({}, {});
+    const item = response.content[0];
+    const text = item?.type === 'text' ? item.text : '';
+    expect(response.isError).toBe(true);
+    expect(JSON.parse(text).details.reconciliation).toEqual({
+      errorCode: 'TX_FAILED',
+      sent: true,
+      transactionHash: HASH,
+      transactionCode: 11,
+      transactionHeight: '42',
+      transactionConfirmed: true,
+    });
+    expect(text).not.toContain('untrusted provider diagnostic');
+  });
+
+  it.each([undefined, false])(
+    'does not claim submission on the cancel-race error after a preparation failure (sent: %s)',
+    async (sent) => {
+      const f = fixture(
+        LeaseState.LEASE_STATE_PENDING,
+        LeaseState.LEASE_STATE_ACTIVE,
+      );
+      const details = Object.freeze({
+        module: 'billing',
+        maxGas: 1,
+        ...(sent === false ? { sent: false } : {}),
+      });
+      const original = Object.freeze(
+        new ManifestMCPError(
+          ManifestMCPErrorCode.GAS_LIMIT_EXCEEDED,
+          'simulation exceeds configured gas ceiling',
+          details,
+        ),
+      );
+      f.simulate.mockRejectedValue(original);
+      const caught = await stopApp(f.ctx, { leaseUuid: LEASE }).catch(
+        (error: unknown) => error,
+      );
+      if (!(caught instanceof ManifestMCPError))
+        throw new Error('expected the cancel-race TX_FAILED');
+      expect(caught.code).toBe(ManifestMCPErrorCode.TX_FAILED);
+      expect(caught.message).toMatch(/state changed during teardown/);
+      expect(caught.details).toEqual({
+        lease_uuid: LEASE,
+        reconciliation: {
+          errorCode: original.code,
+          ...(sent === false ? { sent: false } : {}),
+        },
+      });
+      expect(caught.details).not.toHaveProperty('sent');
+      expect(
+        Object.getOwnPropertyDescriptor(caught.details?.reconciliation, 'error')
+          ?.value,
+      ).toBe(original);
+      expect(original.details).toBe(details);
+      expect(f.simulate).toHaveBeenCalledOnce();
+      expect(f.broadcast).not.toHaveBeenCalled();
+    },
+  );
 
   it('keeps terminal pre-query success free of reconciliation metadata', async () => {
     const f = fixture(LeaseState.LEASE_STATE_CLOSED);

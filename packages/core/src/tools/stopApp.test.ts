@@ -646,8 +646,29 @@ describe('stopApp reconciliation diagnostic boundaries', () => {
       expected: { transactionHash: RECONCILIATION_HASH },
     },
     {
+      // Bare `confirmed` is a DeliverTx fact only under explicit `sent: true`.
       details: { sent: false, confirmed: false },
-      expected: { sent: false, transactionConfirmed: false },
+      expected: { sent: false },
+    },
+    {
+      details: {
+        sent: false,
+        transactionHash: RECONCILIATION_HASH,
+        code: 11,
+        height: '42',
+        confirmed: true,
+      },
+      expected: { sent: false, transactionHash: RECONCILIATION_HASH },
+    },
+    {
+      details: {
+        sent: 'true',
+        transactionHash: RECONCILIATION_HASH,
+        code: 11,
+        height: '42',
+        confirmed: true,
+      },
+      expected: { transactionHash: RECONCILIATION_HASH },
     },
     {
       details: {
@@ -671,31 +692,39 @@ describe('stopApp reconciliation diagnostic boundaries', () => {
     },
     {
       details: {
+        sent: true,
         transactionHash: `${'A'.repeat(63)}\n`,
         code: 1.5,
         height: '1e2',
       },
-      expected: {},
+      expected: { sent: true },
     },
     {
       details: {
+        sent: true,
         transactionHash: 'g'.repeat(64),
         code: Number.NaN,
         height: '',
       },
-      expected: {},
+      expected: { sent: true },
     },
     {
       details: {
+        sent: true,
         transactionHash: 'A'.repeat(65),
         code: Number.POSITIVE_INFINITY,
         height: '42\n',
       },
-      expected: {},
+      expected: { sent: true },
     },
     {
-      details: { transactionHash: 'Ａ'.repeat(64), code: '11', height: 42 },
-      expected: {},
+      details: {
+        sent: true,
+        transactionHash: 'Ａ'.repeat(64),
+        code: '11',
+        height: 42,
+      },
+      expected: { sent: true },
     },
     {
       details: { sent: true, code: 0, height: '0', confirmed: false },
@@ -707,11 +736,18 @@ describe('stopApp reconciliation diagnostic boundaries', () => {
       },
     },
     {
-      details: { code: Number.MAX_SAFE_INTEGER, height: '00042' },
+      details: { sent: true, code: Number.MAX_SAFE_INTEGER, height: '00042' },
       expected: {
+        sent: true,
         transactionCode: Number.MAX_SAFE_INTEGER,
         transactionHeight: '00042',
       },
+    },
+    {
+      // Valid shapes, but without `sent: true` a bare `code`/`height` is a generic diagnostic
+      // (e.g. a consumer-thrown QUERY_FAILED { code: 3 } before broadcast), not a transaction.
+      details: { code: Number.MAX_SAFE_INTEGER, height: '00042' },
+      expected: {},
     },
   ])(
     'copies only valid primitive evidence from $details',

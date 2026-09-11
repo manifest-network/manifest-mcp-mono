@@ -701,16 +701,22 @@ release branch are preserved.
 
 The [focused plan](superpowers/plans/2026-09-11-eng805-reconciliation-diagnostics.md)
 implements the optional P3 extension on merged PR #227 (`e1f3ca2`). It leaves
-the two completed receipt criteria and 11 remaining ENG-805 criteria intact.
+the two completed receipt criteria and the prior 11 ENG-805 criteria intact.
+The review below retains two additional inclusion-timeout criteria separately.
 
-`stopApp` now attaches a frozen optional `reconciliation` snapshot only when a
-caught blocking failure is followed by a terminal re-query. It preserves the
+`stopApp` attaches a frozen optional `reconciliation` snapshot when a caught
+blocking failure is followed by a terminal re-query. The PENDING-to-ACTIVE cancel
+race also retains the snapshot and known lease ID in its existing TX_FAILED error. It preserves the
 original thrown value non-enumerably without mutation, copying only bounded
-machine metadata from own data properties. The actual failed DeliverTx producer
-records submission and inclusion explicitly. Terminal observation, failure
+machine metadata from own data properties. Generic code/height/confirmation fields
+require explicit sent:true before promotion; a qualified hash can survive without
+that marker and does not prove inclusion. Both failed DeliverTx producers record
+submission and inclusion explicitly. Terminal observation, failure
 category and missing hash do not establish submission or non-submission.
 
 Close-verification and completed teardown-recovery errors retain the snapshot.
+Successful close verification also forwards it through the optional
+CloseLeaseResult.reconciliation field and onComplete, mirrored by MCP outputSchema.
 Explicit `reconciliation.sent: true` adds the existing outer submission retry
 veto; failed-transaction metadata stays separate from successful receipts and
 lease state. The later verification error remains the cause, with the earlier
@@ -725,7 +731,7 @@ does not serialize through either successful JSON or error projection.
 | A transient later verifier could authorize another teardown invocation | 100% observed; 99% conditional submission impact | Public `closeLease` with real `withRetry` invokes `stopApp` twice before propagation; the patch carries explicit submission evidence as a retry veto. Whether a repeated invocation broadcasts depends on its next pre-query. No duplicate accepted execution or fees are demonstrated. |
 | Large unrelated MCP diagnostics could crowd out the snapshot | 100% | A red bounded-projection regression loses `reconciliation`; prioritizing it preserves the machine fields while excluding the non-enumerable original error. |
 
-Validation passes: **3,903 tests**, 17 skipped, across 177 files with no type
+Initial revision `d4076ca` validation: **3,903 tests**, 17 skipped, across 177 files with no type
 errors; 46 cases are new. Coverage is 84.64% lines, 84.36% statements, 84.08%
 branches and 88.26% functions, with all global/query/transaction floors passing.
 `stopApp` has 100% line/function coverage and 97.36% branch coverage; the
@@ -743,3 +749,50 @@ found no further blockers (99% confidence). Live chain acceptance requires PR CI
 no local broadcasts were made. Consumer docs and SDK type assertions cover the
 additive contract. No dependency, submodule or release-version change is part of
 this slice. The work remains unreleased.
+
+
+## PR #228 review corrections — 2026-09-11
+
+[Claude's execution-verified review](https://github.com/manifest-network/manifest-mcp-mono/pull/228#issuecomment-5636910930)
+identified five gaps. The supplied patches were inspected and their relevant
+source/test hunks reused, with current documentation merged by hand. Independent
+regressions reproduce the core and public-result defects before correction.
+
+| Finding | Disposition | Confidence |
+| --- | --- | --- |
+| Multi-message failed DeliverTx lacks sent/confirmation metadata | Align buildExecuteTxResult with buildTxResult and pin the public executeTx error details. | 100% |
+| PENDING-to-ACTIVE cancel race discards its failed-attempt error | Preserve the frozen snapshot, known lease ID and explicit sent:true on the existing non-retryable TX_FAILED envelope. Preparation-failure controls retain unknown/false submission. | 100% |
+| Successful close verification drops the snapshot | Include optional CloseLeaseResult.reconciliation and forward the same object to onComplete; expose machine fields in MCP structured content/outputSchema. This deliberately extends the earlier state-only success contract. | 100% evidence loss; 99% scope choice |
+| Generic code/height/confirmed can be renamed to transaction facts before submission | Gate promotion on sent===true, retaining validated qualified transactionHash independently. Test real preparation failures plus false/unknown/truthy-marker controls. | 100% mechanism; 99% conditional consumer impact |
+| Deploy tool description omits new recovery fields | Document nested diagnostics, explicit sent and transactionConfirmed semantics on the wire, and cover listTools. A hash alone does not establish inclusion; no model misinterpretation is claimed as observed. | 100% documentation gap |
+
+The proposed descriptions were narrowed: a reconciled attempt need not have
+consumed fees or been included, and a qualified hash alone does not establish
+inclusion. Existing cancellation-accessor behavior remains intentional and
+covered. Re-query failures still preserve the original transaction error, and
+the two propagation sites retain their distinct surrounding receipt contracts.
+No shared helper or cosmetic hash-regex change is needed.
+
+The separate pinned CosmJS inclusion-timeout path loses **structured** evidence:
+its real broadcastTx implementation receives a txId from broadcastTxSync, then
+can throw TimeoutError(message, txId) while polling. A no-network producer probe
+confirms one invocation of the mocked broadcastTxSync and one getTx poll,
+without a network submission. The class retains Error as its name;
+enrichTxError drops its txId property and original cause, though the hash may
+remain in message prose. Evidence-loss confidence is 100%; conditional retry
+impact is 99%, without demonstrated duplicate execution or fees. A narrow
+tracker search found no dedicated owner (98%). Two new ENG-805 criteria retain
+owned-boundary provenance, validated txId/cause preservation and downstream
+retry/negative controls. They remain outside this correction; the tracker now
+has 35 checked / 13 unchecked criteria. Arbitrary timeout objects never establish
+submission or inclusion.
+
+Combined review validation passes: **3,921 tests / 17 skipped / 177 files**, no
+type errors; **18 new regressions**. Coverage is **84.65% lines / 84.37% statements /
+84.14% branches / 88.26% functions**, with all configured floors passing. The
+316 focused core/close/MCP regressions, workspace build/types, E2E types, package
+integrity, architecture, bundle size, eight live MCP metadata checks and eight
+type-harness checks pass. Biome and whitespace checks pass.
+Independent final review found no blockers (99% confidence). Fresh PR CI is
+required for the updated commit. All 78 current untracked artifacts, including
+the six supplied review files, remain preserved.
