@@ -483,6 +483,46 @@ describe('AgentMCPServer', () => {
         await client.close();
       }
     });
+
+    // ENG-805: the tool description is the ONLY contract the host model
+    // reads in-band — the READMEs/docs are not on the wire. A completed
+    // cancel/close recovery reconciled to `already_inactive` after a
+    // failed teardown attempt reaches the host with `details.sent: true`
+    // and the failed attempt's hash ONLY under
+    // `details.reconciliation.transactionHash` (no `details.transaction_hash`,
+    // which the ENG-750 sentence reserves for stopped/cancelled). Pin that
+    // the description names both, so a host is not steered into reporting
+    // "no transaction was sent" from the absent top-level hash.
+    it('deploy_app_orchestrated description names details.reconciliation + details.sent for already_inactive recoveries', async () => {
+      const server = makeServer();
+      const [clientTransport, serverTransport] =
+        InMemoryTransport.createLinkedPair();
+      activeTransports.push(clientTransport, serverTransport);
+      const client = new Client({ name: 'test-client', version: '1.0.0' });
+      await server.getServer().connect(serverTransport);
+      await client.connect(clientTransport);
+      try {
+        const result = await client.listTools();
+        const deploy = result.tools.find(
+          (t) => t.name === 'deploy_app_orchestrated',
+        );
+        const description = deploy?.description ?? '';
+        // ENG-750 enumeration stays: transaction_hash is exactly the
+        // stopped/cancelled receipt.
+        expect(description).toContain('details.transaction_hash');
+        expect(description).toContain('already_inactive');
+        // ENG-805 additions: the snapshot and its outer submission flag.
+        expect(description).toContain('details.reconciliation');
+        expect(description).toContain('details.sent');
+        expect(description).toContain('transactionHash');
+        expect(description).toContain('transactionConfirmed is true');
+        expect(description).toContain(
+          'A hash alone does not establish inclusion',
+        );
+      } finally {
+        await client.close();
+      }
+    });
   });
 
   // ─────────────────────────────────────────────────────────────────
@@ -1798,6 +1838,129 @@ describe('AgentMCPServer', () => {
       expect(captured.toolResult.isError).toBeUndefined();
       const parsed = parseStructured<CloseLeaseResult>(captured.toolResult);
       expect(parsed).toEqual(result);
+    });
+
+    it('advertises and forwards the reconciliation snapshot of a failed teardown that converged', async () => {
+      const { ManifestMCPError, ManifestMCPErrorCode } = await import(
+        '@manifest-network/manifest-mcp-core'
+      );
+      const expectedLeaseUuid = '550e8400-e29b-41d4-a716-446655440000';
+      const hash = 'C'.repeat(64);
+      const earlier = new ManifestMCPError(
+        ManifestMCPErrorCode.TX_FAILED,
+        'earlier stop attempt failed',
+      );
+      // Same shape core's `stopApp` attaches: frozen, original error retained
+      // non-enumerably, only bounded machine facts enumerable.
+      const reconciliation = Object.freeze(
+        Object.defineProperty(
+          {
+            error: earlier,
+            errorCode: ManifestMCPErrorCode.TX_FAILED,
+            sent: true,
+            transactionHash: hash,
+            transactionCode: 11,
+            transactionHeight: '12345',
+            transactionConfirmed: true,
+          },
+          'error',
+          { enumerable: false },
+        ),
+      );
+      const result: CloseLeaseResult = {
+        leaseUuid: expectedLeaseUuid,
+        finalState: 'LEASE_STATE_CLOSED',
+        reconciliation,
+      };
+      const fakeClose: AgentOrchestrators['closeLease'] = async (
+        _args,
+        cb,
+        _opts,
+      ) => {
+        await cb.onConfirm?.({ text: 'close?' });
+        cb.onComplete?.(result);
+        return result;
+      };
+      const server = makeServer({ closeLease: fakeClose });
+
+      // The advertised contract must tell hosts the field exists and what it
+      // carries; the host cannot act on a failed tx it never
+      // sees. Optional: absent after a clean `stopped`/`cancelled` or no-op.
+      const connection = await connectClientWithElicitation(
+        server.getServer(),
+        undefined,
+        activeTransports,
+      );
+      try {
+        const listed = (await connection.client.listTools()).tools.find(
+          (t) => t.name === 'close_lease_orchestrated',
+        );
+        const output = listed?.outputSchema as
+          | {
+              required?: string[];
+              properties?: Record<
+                string,
+                { properties?: Record<string, unknown>; required?: string[] }
+              >;
+            }
+          | undefined;
+        expect(listed?.description).toContain('cancels PENDING');
+        expect(listed?.description).toContain('closes ACTIVE');
+        expect(listed?.description).toContain('reconciliation');
+        expect(listed?.description).toContain('transactionConfirmed is true');
+        expect(listed?.description).toContain(
+          'A hash alone does not establish inclusion',
+        );
+        expect(output?.required).toEqual(['leaseUuid', 'finalState']);
+        expect(
+          Object.keys(output?.properties?.reconciliation?.properties ?? {}),
+        ).toEqual([
+          'errorCode',
+          'sent',
+          'transactionHash',
+          'transactionCode',
+          'transactionHeight',
+          'transactionConfirmed',
+        ]);
+        expect(output?.properties?.reconciliation?.required).toBeUndefined();
+      } finally {
+        await connection.close();
+      }
+
+      const captured = await callToolWithCapture(
+        server,
+        'close_lease_orchestrated',
+        { lease_uuid: expectedLeaseUuid },
+        {
+          respond: () => ({
+            action: 'accept',
+            content: { verdict: 'yes' },
+          }),
+        },
+      );
+      expect(captured.toolResult.isError).toBeUndefined();
+      const parsed = parseStructured<CloseLeaseResult>(captured.toolResult);
+      // Machine snapshot forwarded; the retained SDK error never serializes.
+      expect(parsed).toEqual({
+        leaseUuid: expectedLeaseUuid,
+        finalState: 'LEASE_STATE_CLOSED',
+        reconciliation: {
+          errorCode: 'TX_FAILED',
+          sent: true,
+          transactionHash: hash,
+          transactionCode: 11,
+          transactionHeight: '12345',
+          transactionConfirmed: true,
+        },
+      });
+      expect(parsed.reconciliation).not.toHaveProperty('error');
+      expect(captured.toolResult.content[0]?.text).not.toContain(
+        earlier.message,
+      );
+      expect(captured.toolResult.structuredContent).toEqual(parsed);
+      expect(
+        JSON.stringify(captured.toolResult.structuredContent),
+      ).not.toContain(earlier.message);
     });
   });
 

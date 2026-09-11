@@ -7,6 +7,7 @@ import {
   ManifestMCPError,
   ManifestMCPErrorCode,
   type SetItemCustomDomainResult,
+  type StopAppReconciliation,
   type StopAppResult,
   withErrorHandling,
   withRetry,
@@ -77,6 +78,10 @@ const FOREIGN_RECEIPT_DETAILS = Object.freeze({
   'confi\u200brmed': true,
   'out\u202ecome': 'cancelled',
   '\u001b[31moutcome\u001b[0m': 'cancelled',
+  reconciliation: { sent: true, transactionHash: 'FOREIGN-RECONCILIATION' },
+  Reconciliation: { sent: true },
+  're_con-ciliation': { sent: true },
+  'recon\u200bciliation': { sent: true },
 });
 const READ_DIAGNOSTICS = Object.freeze({
   httpStatus: 408,
@@ -132,6 +137,133 @@ async function projectError(error: ManifestMCPError) {
 
 describe('verification outcome through retry and MCP boundaries', () => {
   afterEach(() => vi.restoreAllMocks());
+
+  it('retains a reconciled submission beside the later verification cause without replay or serialized errors', async () => {
+    const earlier = Object.freeze(
+      new ManifestMCPError(
+        ManifestMCPErrorCode.TX_FAILED,
+        'earlier private broadcast diagnostic',
+      ),
+    );
+    const reconciliation: StopAppReconciliation = Object.freeze(
+      Object.defineProperty(
+        {
+          error: earlier,
+          errorCode: ManifestMCPErrorCode.TX_FAILED,
+          sent: true,
+          transactionHash: HASH,
+          transactionCode: 7,
+          transactionHeight: '1234',
+          transactionConfirmed: true,
+        },
+        'error',
+        { enumerable: false },
+      ),
+    );
+    const receipt = Object.freeze({
+      ...INACTIVE,
+      reconciliation,
+    } satisfies StopAppResult);
+    const later = Object.freeze(
+      new ManifestMCPError(
+        ManifestMCPErrorCode.QUERY_FAILED,
+        'later verification unavailable',
+        Object.freeze({
+          ...FOREIGN_RECEIPT_DETAILS,
+          httpStatus: 503,
+          sent: false,
+        }),
+      ),
+    );
+    const operation = vi.fn(() =>
+      withVerificationOutcome(receipt, async () => {
+        throw later;
+      }),
+    );
+    const error = await rejectedError(() =>
+      withRetry(operation, { config: RETRY }),
+    );
+
+    expect(operation).toHaveBeenCalledOnce();
+    expect(causeOf(error)).toBe(later);
+    expect(error.details?.reconciliation).toBe(reconciliation);
+    expect(reconciliation.error).toBe(earlier);
+    expect(Object.isFrozen(reconciliation)).toBe(true);
+    expect(later).not.toHaveProperty('cause');
+    expect(earlier).not.toHaveProperty('cause');
+    expect(error.details).toEqual({
+      lease_uuid: LEASE,
+      stop_outcome: 'already_inactive',
+      lease_state: 'LEASE_STATE_CLOSED',
+      reconciliation,
+      sent: true,
+      httpStatus: 503,
+    });
+    expect(isRetryableError(error)).toBe(false);
+    const serializedSnapshot = {
+      errorCode: ManifestMCPErrorCode.TX_FAILED,
+      sent: true,
+      transactionHash: HASH,
+      transactionCode: 7,
+      transactionHeight: '1234',
+      transactionConfirmed: true,
+    };
+    const json = JSON.stringify(error);
+    expect(JSON.parse(json).details.reconciliation).toEqual(serializedSnapshot);
+    expect(json).not.toContain(earlier.message);
+    const { body, text } = await projectError(error);
+    expect(body.details.reconciliation).toEqual(serializedSnapshot);
+    expect(body.details.sent).toBe(true);
+    expect(body.details).not.toHaveProperty('transaction_hash');
+    expect(body).not.toHaveProperty('cause');
+    expect(text).not.toContain(earlier.message);
+  });
+
+  it.each([false, undefined])(
+    'keeps reconciliation sent=%s distinct from the later retryable verification',
+    async (sent) => {
+      const earlier = Object.freeze(
+        new ManifestMCPError(
+          ManifestMCPErrorCode.INVALID_CONFIG,
+          'earlier connection configuration failure',
+        ),
+      );
+      const reconciliation: StopAppReconciliation = Object.freeze(
+        Object.defineProperty(
+          {
+            error: earlier,
+            errorCode: ManifestMCPErrorCode.INVALID_CONFIG,
+            ...(sent === undefined ? {} : { sent }),
+          },
+          'error',
+          { enumerable: false },
+        ),
+      );
+      const receipt = Object.freeze({
+        ...INACTIVE,
+        reconciliation,
+      } satisfies StopAppResult);
+      const later = Object.freeze(
+        new ManifestMCPError(
+          ManifestMCPErrorCode.QUERY_FAILED,
+          'later HTTP 503',
+          { httpStatus: 503 },
+        ),
+      );
+      const error = await rejectedError(() =>
+        withVerificationOutcome(receipt, async () => {
+          throw later;
+        }),
+      );
+
+      expect(error.details?.reconciliation).toBe(reconciliation);
+      expect(causeOf(error)).toBe(later);
+      expect(reconciliation.error).toBe(earlier);
+      expect(error.details).not.toHaveProperty('sent');
+      expect(error.details).not.toHaveProperty('transaction_hash');
+      expect(isRetryableError(error)).toBe(true);
+    },
+  );
 
   it.each([
     {

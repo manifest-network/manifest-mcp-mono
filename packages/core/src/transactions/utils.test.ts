@@ -3,6 +3,7 @@ import { describe, expect, it, type Mock, vi } from 'vitest';
 import { ManifestMCPError, ManifestMCPErrorCode } from '../types.js';
 import {
   broadcastAndBuildTxResult,
+  buildExecuteTxResult,
   buildGasFee,
   buildSyncTxResult,
   buildTxResult,
@@ -1007,6 +1008,74 @@ describe('buildTxResult — decodeExtra gating', () => {
     );
     expect(decodeExtra).not.toHaveBeenCalled();
     expect(result).not.toHaveProperty('pagination');
+  });
+
+  it.each([true, false])(
+    'retains failed DeliverTx submission and inclusion evidence independently of decode gating (%s)',
+    (waitForConfirmation) => {
+      const failure = Object.freeze({ ...deliverTx, code: 11 });
+      let caught: unknown;
+      try {
+        buildTxResult('billing', 'close-lease', failure, waitForConfirmation);
+      } catch (error) {
+        caught = error;
+      }
+      expect(caught).toBeInstanceOf(ManifestMCPError);
+      expect(caught).toMatchObject({
+        code: ManifestMCPErrorCode.TX_FAILED,
+        details: {
+          transactionHash: failure.transactionHash,
+          code: 11,
+          height: '7',
+          sent: true,
+          confirmed: true,
+        },
+      });
+      expect(failure).not.toHaveProperty('sent');
+      expect(failure).not.toHaveProperty('confirmed');
+    },
+  );
+});
+
+describe('buildExecuteTxResult', () => {
+  const deliverTx = {
+    transactionHash: 'HASH',
+    code: 0,
+    height: 7,
+    txIndex: 0,
+    rawLog: '',
+    gasUsed: 1n,
+    gasWanted: 1n,
+    events: [],
+    msgResponses: [],
+  } satisfies Parameters<typeof buildExecuteTxResult>[0];
+  const msgTypeUrls = ['/liftedinit.billing.v1.MsgCloseLease'];
+
+  // The executeTx seam must emit the SAME failed-DeliverTx evidence as buildTxResult (the
+  // cosmosTx / on-chain tx helper seam): a consumer or reconciliation snapshot reading
+  // `details.sent` off either seam sees an identical contract for an identical failure.
+  it('retains failed DeliverTx submission and inclusion evidence like buildTxResult', () => {
+    const failure = Object.freeze({ ...deliverTx, code: 11 });
+    let caught: unknown;
+    try {
+      buildExecuteTxResult(failure, msgTypeUrls);
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(ManifestMCPError);
+    expect(caught).toMatchObject({
+      code: ManifestMCPErrorCode.TX_FAILED,
+      details: {
+        transactionHash: failure.transactionHash,
+        code: 11,
+        height: '7',
+        msgTypeUrls,
+        sent: true,
+        confirmed: true,
+      },
+    });
+    expect(failure).not.toHaveProperty('sent');
+    expect(failure).not.toHaveProperty('confirmed');
   });
 });
 

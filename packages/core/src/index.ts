@@ -187,7 +187,11 @@ export {
   type SetItemCustomDomainResult,
   setItemCustomDomain,
 } from './tools/setItemCustomDomain.js';
-export { type StopAppResult, stopApp } from './tools/stopApp.js';
+export {
+  type StopAppReconciliation,
+  type StopAppResult,
+  stopApp,
+} from './tools/stopApp.js';
 export { validateAddress } from './transactions/utils.js';
 export * from './types.js';
 export {

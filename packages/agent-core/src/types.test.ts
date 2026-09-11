@@ -32,6 +32,7 @@ import type {
   RecoveryOptionId,
   SkuCandidate,
   SpecSummary,
+  StopAppReconciliation,
   TroubleshootCallbacks,
   TroubleshootOptions,
   TroubleshootReport,
@@ -574,9 +575,13 @@ describe('Exported type shapes (load-bearing public surface)', () => {
   });
 
   it('CloseLeaseResult', () => {
+    // `reconciliation` is optional and additive: present only when a failed
+    // blocking teardown converged to a terminal lease, so a verified success
+    // still surfaces the failed attempt's available evidence.
     expectTypeOf<CloseLeaseResult>().toEqualTypeOf<{
       leaseUuid: string;
       finalState: LeaseStateName;
+      reconciliation?: StopAppReconciliation;
     }>();
   });
 });
