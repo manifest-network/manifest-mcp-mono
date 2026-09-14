@@ -151,7 +151,7 @@ describe('owned inclusion-timeout receiver and provenance boundaries', () => {
       .fn<SigningStargateClient['broadcastTx']>()
       .mockRejectedValue(delegated);
     f.client.broadcastTx = broadcast;
-    f.installGuard();
+    expect(f.installGuard()).toBe(false);
     await expect(
       f.client.signAndBroadcast(f.sender, f.messages, f.fee),
     ).rejects.toBe(delegated);
@@ -184,9 +184,9 @@ describe('owned inclusion-timeout receiver and provenance boundaries', () => {
 
   it('installation is idempotent and copied public error fields cannot forge internal provenance', async () => {
     const f = await makeInclusionTimeoutFixture();
-    f.installGuard();
+    expect(f.installGuard()).toBe(true);
     const broadcast = f.client.broadcastTx;
-    installBroadcastFailureGuard(f.client);
+    expect(installBroadcastFailureGuard(f.client)).toBe(false);
     expect(f.client.broadcastTx).toBe(broadcast);
     const forged = new ManifestMCPError(
       ManifestMCPErrorCode.TX_FAILED,

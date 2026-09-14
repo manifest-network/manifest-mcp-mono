@@ -539,6 +539,49 @@ describe('CosmosClientManager', () => {
   });
 
   describe('getSigningClient', () => {
+    it.each(['native', 'broadcastTx', 'broadcastTxSync'] as const)(
+      'reports broadcast guard support for %s methods once per connection',
+      async (method) => {
+        const actual =
+          await vi.importActual<typeof import('@cosmjs/stargate')>(
+            '@cosmjs/stargate',
+          );
+        const signingClient = await actual.SigningStargateClient.offline({
+          getAccounts: async () => [],
+          signDirect: async () => {
+            throw new Error('Unexpected signing in client initialization test');
+          },
+        });
+        vi.spyOn(signingClient, 'getChainId').mockResolvedValue('test-chain');
+        if (method !== 'native') vi.spyOn(signingClient, method);
+        const broadcast = signingClient.broadcastTx;
+        const sync = signingClient.broadcastTxSync;
+        mockConnectWithSigner.mockResolvedValue(signingClient);
+        const spyLogger = makeSpyLogger();
+        const instance = CosmosClientManager.getInstance(
+          makeConfig(),
+          makeWallet(),
+        );
+        instance.setLogger(spyLogger);
+
+        await expect(instance.getSigningClient()).resolves.toBe(signingClient);
+        await expect(instance.getSigningClient()).resolves.toBe(signingClient);
+
+        if (method === 'native') {
+          expect(spyLogger.warn).not.toHaveBeenCalled();
+          expect(signingClient.broadcastTx).not.toBe(broadcast);
+        } else {
+          expect(spyLogger.warn).toHaveBeenCalledExactlyOnceWith(
+            'Broadcast failure guard could not be installed: signing client broadcast methods differ from the supported native implementation. ' +
+              'Failures after submission may omit sent and transactionHash diagnostics.',
+          );
+          expect(signingClient.broadcastTx).toBe(broadcast);
+        }
+        expect(signingClient.broadcastTxSync).toBe(sync);
+        expect(mockConnectWithSigner).toHaveBeenCalledOnce();
+      },
+    );
+
     it('overrides defaultGasMultiplier when property exists', async () => {
       const mockSC = {
         getChainId: vi.fn().mockResolvedValue('test-chain'),

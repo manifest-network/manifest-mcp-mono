@@ -1,7 +1,7 @@
 import { calculateFee, type StdFee } from '@cosmjs/stargate';
 import type { CosmosClientManager, ManifestQueryClient } from './client.js';
 import { DEFAULT_GAS_MULTIPLIER } from './config.js';
-import { attributeBroadcastFailure } from './internals/attribute-broadcast-failure.js';
+import { attributeBroadcastFailure } from './internals/broadcast-failure.js';
 import { isNotFoundError } from './internals/classify-query-error.js';
 import {
   guardTxClient,

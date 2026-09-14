@@ -863,16 +863,16 @@ The existing cause-only boundary and separate grouped-error policy remain intact
 Caller cancellation retains its existing precedence and conservative sent flag;
 its prompt response does not wait for the later inclusion result to acquire a hash.
 
-Independent boundary and test review found no remaining blocker in this slice
+Initial boundary and test review found no remaining blocker in this slice
 (98–99% confidence). Validation caught and corrected an untyped test receiver and
 an inferred mock declaration that referenced an undeclared transitive package;
-the fixture now uses an explicit callable type without adding a dependency. The
+the disconnect mock received an explicit callable type without adding a dependency. The
 shared transaction test helper also uses a consistent promise return type. A
 legacy total Stargate mock was updated to preserve native exports; its 59 tests
 pass again. Documentation review narrowed the SDK's raw-error exclusion to
 failures before observed acceptance (99% confidence in that documentation gap).
 
-Final local validation: **4,039 passed / 17 skipped / 181 files**, no type errors;
+Initial local validation: **4,039 passed / 17 skipped / 181 files**, no type errors;
 **56 new regressions**. Coverage is **84.85% lines / 84.57% statements / 84.38%
 branches / 88.49% functions**, with all configured floors passing. Workspace
 build/types, E2E types, Biome, whitespace, architecture, package integrity, bundle
@@ -880,3 +880,40 @@ budgets, eight MCP metadata checks and eight type-harness checks pass. The two
 criteria are implemented and locally validated; PR CI and merge status are
 recorded in Linear. The other eleven criteria remain separate, and this work is
 unreleased. All 80 pre-existing user artifacts are preserved.
+
+### PR #230 review corrections — 2026-09-14
+
+[Claude's review](https://github.com/manifest-network/manifest-mcp-mono/pull/230#issuecomment-5668357367)
+identified two regressions, three small improvements and two separate existing
+gaps. Each finding was checked against the implementation before correction.
+
+| Finding | Disposition and evidence | Confidence |
+| --- | --- | --- |
+| Parameterized reconciliation tests dropped hidden-property guards | Restore both `not.toHaveProperty` assertions. Injecting non-enumerable `sent` or `transactionConfirmed` makes all three unowned-error controls fail; structural equality alone misses them. | 100% |
+| Exported fixture signatures vendor transitive declarations | Use local callable/result contracts for both RPC mocks and the signing spy. The original disconnect correction did not cover these additional inferred types. Fresh core declarations import only declared dependencies; its 359-file tarball contains zero vendored `node_modules` files, without adding dependencies or exemptions. | 100% mechanism and artifact result |
+| Unsupported native broadcast methods silently skip protection | Return installation status and warn through the existing client logger. Both customized-method warning regressions fail before correction; native initialization remains silent. | 100% missing warning; 99% correction |
+| Exact transaction-hash validation is duplicated | Share one internal validator between observed acceptance and reconciliation. Boundary tests cover case, length, non-hex, trailing line terminators and non-string values. | 100% duplication; 99% equivalence |
+| Attribution is split from its provenance module | Move the unchanged helper into `broadcast-failure.ts`; remove the forwarding module. Existing public attribution/cause tests verify the consolidation. | 100% import coupling; 98% simplification choice |
+| Caller cancellation after acceptance loses the known hash | Track [ENG-952](https://linear.app/liftedinit/issue/ENG-952). Prompt cancellation settles before the guard's failure; preserve its current terminal behavior in this PR. The follow-up must share already-observed per-call evidence without delaying cancellation. | 100% mechanism |
+| Unreadable causes on custom nonterminal retry inputs replace original errors | Track [ENG-953](https://linear.app/liftedinit/issue/ENG-953). The decisive outer verdict protects this PR's submitted errors; exception-safe standard cause inspection remains separate from grouped-error policy. | 100% mechanism |
+
+A new public `cosmosTx` regression combines an active caller signal, the cached
+sequence wrapper and the owned broadcast guard. It proves cached sequence use,
+one submission/poll, sparse attributed evidence, original causes, cache
+invalidation and no retry. The six refuted review claims remain refuted; the
+wrapper interaction had a coverage gap, with no demonstrated runtime defect.
+
+Focused validation passes 200 boundary/client/hash/transaction tests and 21
+public timeout tests. Both hidden-property mutations fail all three unowned-error
+controls; missing-warning mutations fail both customized-method controls.
+Workspace build and type checks, E2E types, Biome, architecture, package integrity
+and bundle budgets pass. The E2E type-check prerequisite rebuild initially
+overlapped lint and package inspection; both checks pass when run against the
+completed build. Full coverage and fresh PR CI results are recorded on the PR
+and in Linear. Independent review of the corrections found no further issue
+(98–99% confidence).
+
+ENG-952 and ENG-953 are separate Backlog child issues with acceptance criteria.
+The existing tracker remains In Progress with 37 checked / 11 unchecked criteria;
+these two additional child issues remain open alongside those eleven criteria.
+PR #230 remains open and unreleased.

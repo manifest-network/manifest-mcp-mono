@@ -1,6 +1,6 @@
 import type { EncodeObject } from '@cosmjs/proto-signing';
 import type { TxCtx } from '../ctx.js';
-import { attributeBroadcastFailure } from '../internals/attribute-broadcast-failure.js';
+import { attributeBroadcastFailure } from '../internals/broadcast-failure.js';
 import { withTxExecution } from '../internals/tx-confirmation.js';
 import type { TxCallOptions } from '../options.js';
 import { withRetry } from '../retry.js';

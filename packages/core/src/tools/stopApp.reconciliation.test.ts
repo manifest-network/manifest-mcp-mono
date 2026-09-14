@@ -422,6 +422,8 @@ describe('stopApp reconciliation through the real transaction pipeline', () => {
       expect(result.reconciliation).toEqual({
         errorCode: ManifestMCPErrorCode.TX_FAILED,
       });
+      expect(result.reconciliation).not.toHaveProperty('sent');
+      expect(result.reconciliation).not.toHaveProperty('transactionConfirmed');
       expect(result.reconciliation?.error).toMatchObject({
         code: ManifestMCPErrorCode.TX_FAILED,
       });

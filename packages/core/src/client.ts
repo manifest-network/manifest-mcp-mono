@@ -561,7 +561,12 @@ export class CosmosClientManager {
                 `Transactions will use the CosmJS built-in gas multiplier instead.`,
             );
           }
-          installBroadcastFailureGuard(c);
+          if (!installBroadcastFailureGuard(c)) {
+            this.logger.warn(
+              'Broadcast failure guard could not be installed: signing client broadcast methods differ from the supported native implementation. ' +
+                'Failures after submission may omit sent and transactionHash diagnostics.',
+            );
+          }
           return c;
         },
         {

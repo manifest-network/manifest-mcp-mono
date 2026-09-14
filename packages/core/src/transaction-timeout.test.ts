@@ -7,6 +7,11 @@ import {
   makeTxCtx,
 } from './__test-utils__/mocks.js';
 import { cosmosTx } from './cosmos.js';
+import { isOwnedBroadcastFailure } from './internals/broadcast-failure.js';
+import {
+  type SequenceCache,
+  sequencedSigningClient,
+} from './internals/tx-sequence.js';
 import type { TxCallOptions } from './options.js';
 import { withRetry } from './retry.js';
 import { executeTx } from './tools/executeTx.js';
@@ -58,6 +63,7 @@ async function fixture(entryPoint: EntryPoint, guarded = true) {
       : executeTx(ctx, wire.messages, { ...options, fee: wire.fee });
   return {
     ...wire,
+    chain,
     invoke,
     getAddress,
     broadcastError: () => broadcastError,
@@ -79,6 +85,71 @@ afterEach(() => {
   vi.clearAllTimers();
   vi.useRealTimers();
   vi.restoreAllMocks();
+});
+
+it('cosmosTx composes the active-signal guard, cached sequence and owned broadcast failure', async () => {
+  const f = await fixture('cosmosTx');
+  const committedSequence = vi
+    .spyOn(f.client, 'getSequence')
+    .mockResolvedValue({ accountNumber: 1, sequence: 5 });
+  const signedSequences: number[] = [];
+  f.sign.mockImplementation(async function (this: SigningStargateClient) {
+    signedSequences.push((await this.getSequence(f.sender)).sequence);
+    return {
+      bodyBytes: new Uint8Array(),
+      authInfoBytes: new Uint8Array(),
+      signatures: [],
+    };
+  });
+  const cache: SequenceCache = new Map([
+    [f.sender, { accountNumber: 1, sequence: 8 }],
+  ]);
+  vi.spyOn(f.chain, 'getBroadcastClient').mockResolvedValue(
+    sequencedSigningClient(f.client, cache),
+  );
+  // Supplying a live signal activates cosmosTx's outer guardTxClient proxy.
+  // The seeded cache then requires the sequencer's receiver view underneath it.
+  const controller = new AbortController();
+  const operation = vi.fn(() => f.invoke({ signal: controller.signal }));
+  const retry = vi.fn();
+  const pending = withRetry(operation, {
+    config: { maxRetries: 2, baseDelayMs: 1, maxDelayMs: 1 },
+    onRetry: retry,
+  }).catch((error: unknown) => error);
+  await vi.advanceTimersByTimeAsync(20);
+  const error = await pending;
+
+  expect(controller.signal.aborted).toBe(false);
+  expect(f.chain.acquireRateLimit).toHaveBeenCalledExactlyOnceWith(
+    controller.signal,
+  );
+  expect(signedSequences).toEqual([8]);
+  expect(committedSequence).not.toHaveBeenCalled();
+  expect(cache.has(f.sender)).toBe(false);
+  expect(error).toBeInstanceOf(ManifestMCPError);
+  if (!(error instanceof ManifestMCPError))
+    throw new Error('expected attributed broadcast failure');
+  expect(error.code).toBe(ManifestMCPErrorCode.TX_FAILED);
+  expect(error.details).toEqual({
+    sent: true,
+    transactionHash: f.hash,
+    ...f.context,
+  });
+  const owned = ownCause(error);
+  expect(owned).toBe(f.broadcastError());
+  expect(isOwnedBroadcastFailure(owned)).toBe(true);
+  expect(ownCause(owned)).toBeInstanceOf(TimeoutError);
+  expect(ownCause(owned)).toMatchObject({ txId: f.hash });
+  expect(Object.getOwnPropertyDescriptor(error, 'cause')).toMatchObject({
+    enumerable: false,
+  });
+  expect(operation).toHaveBeenCalledOnce();
+  expect(retry).not.toHaveBeenCalled();
+  expect(f.sign).toHaveBeenCalledOnce();
+  expect(f.comet.broadcastTxSync).toHaveBeenCalledOnce();
+  expect(f.comet.txSearchAll).toHaveBeenCalledExactlyOnceWith({
+    query: `tx.hash='${f.hash}'`,
+  });
 });
 
 describe.each<EntryPoint>(['cosmosTx', 'executeTx'])(

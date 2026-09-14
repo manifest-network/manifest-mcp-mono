@@ -1,5 +1,6 @@
 import { type SigningStargateClient, StargateClient } from '@cosmjs/stargate';
 import { ManifestMCPError, ManifestMCPErrorCode } from '../types.js';
+import { isTransactionHash } from './transaction-hash.js';
 
 const nativeBroadcast = StargateClient.prototype.broadcastTx;
 const nativeBroadcastSync = StargateClient.prototype.broadcastTxSync;
@@ -13,14 +14,6 @@ export function isOwnedBroadcastFailure(
     typeof error === 'object' &&
     error !== null &&
     ownedBroadcastErrors.has(error)
-  );
-}
-
-function validTransactionHash(value: unknown): value is string {
-  return (
-    typeof value === 'string' &&
-    value.length === 64 &&
-    !!value.match(/^[0-9a-fA-F]{64}$/)
   );
 }
 
@@ -63,6 +56,23 @@ function ownedFailure(
   return normalized;
 }
 
+/** Add operation context while retaining an owned post-submission failure's cause chain. */
+export function attributeBroadcastFailure(
+  error: unknown,
+  messagePrefix: string,
+  details: Record<string, unknown>,
+): ManifestMCPError | null {
+  if (!isOwnedBroadcastFailure(error)) return null;
+  return Object.defineProperty(
+    new ManifestMCPError(error.code, `${messagePrefix}${error.message}`, {
+      ...error.details,
+      ...details,
+    }),
+    'cause',
+    { value: error, configurable: true, writable: true },
+  );
+}
+
 /**
  * Install only on an SDK-created signing client. Keep CosmJS's signing and polling
  * implementations; observe its accepted SYNC hash before preserving that evidence on
@@ -70,15 +80,17 @@ function ownedFailure(
  *
  * The method deliberately preserves dynamic `this`: sequence tracking invokes it on
  * Object.create(client) views. Submission state belongs to each call, never the client.
+ * Returns whether the guard was installed by this call; unsupported or already-wrapped
+ * methods are left untouched.
  */
 export function installBroadcastFailureGuard(
   client: SigningStargateClient,
-): void {
+): boolean {
   if (
     client.broadcastTx !== nativeBroadcast ||
     client.broadcastTxSync !== nativeBroadcastSync
   )
-    return;
+    return false;
 
   Object.defineProperty(client, 'broadcastTx', {
     configurable: true,
@@ -95,7 +107,7 @@ export function installBroadcastFailureGuard(
       let acceptedHash: string | undefined;
       view.broadcastTxSync = async (tx) => {
         const hash = await nativeBroadcastSync.call(this, tx);
-        if (validTransactionHash(hash)) acceptedHash = hash;
+        if (isTransactionHash(hash)) acceptedHash = hash;
         return hash;
       };
       // Keep a customized query method's receiver and dynamic method lookup intact.
@@ -109,4 +121,5 @@ export function installBroadcastFailureGuard(
       }
     },
   });
+  return true;
 }

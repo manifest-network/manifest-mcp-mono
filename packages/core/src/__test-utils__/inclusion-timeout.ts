@@ -1,13 +1,65 @@
 import { toBech32, toHex } from '@cosmjs/encoding';
 import type { EncodeObject } from '@cosmjs/proto-signing';
-import { GasPrice, SigningStargateClient, type StdFee } from '@cosmjs/stargate';
-import { vi } from 'vitest';
+import {
+  GasPrice,
+  type SignerData,
+  SigningStargateClient,
+  type StdFee,
+} from '@cosmjs/stargate';
+import { type Mock, vi } from 'vitest';
 import { installBroadcastFailureGuard } from '../internals/broadcast-failure.js';
 
 type CometClient = Parameters<typeof SigningStargateClient.createWithSigner>[0];
 type OfflineSigner = Parameters<
   typeof SigningStargateClient.createWithSigner
 >[1];
+
+// Keep the exported mocks on small local wire contracts. Inferring them from
+// CometClient's protocol union or the sign spy makes declaration generation
+// vendor transitive Tendermint/protobuf types into this test utility's package.
+interface FixtureTxData {
+  readonly code: number;
+  readonly codespace?: string;
+  readonly log?: string;
+  readonly data?: Uint8Array;
+  readonly events: readonly {
+    readonly type: string;
+    readonly attributes: readonly {
+      readonly key: string | Uint8Array;
+      readonly value: string | Uint8Array;
+    }[];
+  }[];
+  readonly gasUsed: bigint;
+  readonly gasWanted: bigint;
+}
+
+type FixtureBroadcastTxSync = (params: {
+  readonly tx: Uint8Array;
+}) => Promise<FixtureTxData & { readonly hash: Uint8Array }>;
+
+type FixtureTxSearchAll = (params: { readonly query: string }) => Promise<{
+  readonly txs: readonly {
+    readonly tx: Uint8Array;
+    readonly hash: Uint8Array;
+    readonly height: number;
+    readonly index: number;
+    readonly result: FixtureTxData;
+  }[];
+  readonly totalCount: number;
+}>;
+
+type FixtureSign = (
+  signerAddress: string,
+  messages: readonly EncodeObject[],
+  fee: StdFee,
+  memo: string,
+  explicitSignerData?: SignerData,
+  timeoutHeight?: bigint,
+) => Promise<{
+  bodyBytes: Uint8Array;
+  authInfoBytes: Uint8Array;
+  signatures: Uint8Array[];
+}>;
 
 export interface InclusionTimeoutFixtureOptions {
   readonly chainId?: string;
@@ -51,12 +103,10 @@ export async function makeInclusionTimeoutFixture(
     events: [],
     gasUsed: 0n,
     gasWanted: 0n,
-  } satisfies Awaited<ReturnType<CometClient['broadcastTxSync']>>;
+  } satisfies Awaited<ReturnType<FixtureBroadcastTxSync>>;
   const comet = {
-    broadcastTxSync: vi
-      .fn<CometClient['broadcastTxSync']>()
-      .mockResolvedValue(checkTx),
-    txSearchAll: vi.fn<CometClient['txSearchAll']>().mockResolvedValue({
+    broadcastTxSync: vi.fn<FixtureBroadcastTxSync>().mockResolvedValue(checkTx),
+    txSearchAll: vi.fn<FixtureTxSearchAll>().mockResolvedValue({
       txs: [],
       totalCount: 0,
     }),
@@ -80,7 +130,7 @@ export async function makeInclusionTimeoutFixture(
       gasPrice: GasPrice.fromString('1umfx'),
     },
   );
-  const sign = vi.spyOn(client, 'sign').mockResolvedValue({
+  const sign: Mock<FixtureSign> = vi.spyOn(client, 'sign').mockResolvedValue({
     bodyBytes: new Uint8Array(),
     authInfoBytes: new Uint8Array(),
     signatures: [],
