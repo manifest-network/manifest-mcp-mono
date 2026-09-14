@@ -796,3 +796,23 @@ type-harness checks pass. Biome and whitespace checks pass.
 Independent final review found no blockers (99% confidence). Fresh PR CI is
 required for the updated commit. All 78 current untracked artifacts, including
 the six supplied review files, remain preserved.
+
+## PR #228 documentation and test review — 2026-09-14
+
+[Claude's second review](https://github.com/manifest-network/manifest-mcp-mono/pull/228#issuecomment-5664586148)
+verified the five earlier corrections and identified two minor gaps. Neither
+requires a runtime change.
+
+| Finding | Correction and evidence | Confidence |
+| --- | --- | --- |
+| The generic transaction_hash assertion also matches the already_inactive sentence | Pin the distinguishing stopped/cancelled receipt clause. All 61 server tests pass; removing only that clause makes the targeted test fail while the inactive sentence still contains the generic substring. The temporary source edit was restored byte-for-byte. | 100% |
+| README tables imply every close orchestration broadcasts close-lease | Align agent and node tables with the implemented flow: confirm, cancel PENDING or close ACTIVE, or observe an already terminal lease without broadcasting, then verify terminal state. | 100% |
+
+The SDK README also lists the existing StopAppReconciliation type export from
+/orchestration alongside the root and /deploy exports (100% confidence from the
+re-export chain). Independent documentation review found no further gap (99%
+confidence). Biome and whitespace checks pass. This correction strengthens an
+existing test, so it adds no test cases; the full-suite figures above describe
+the previous revision. Fresh CI will validate the pushed revision. All 79 current
+user artifacts are preserved. ENG-805 remains In Progress with 35 checked / 13
+unchecked criteria, including the separate inclusion-timeout follow-up.

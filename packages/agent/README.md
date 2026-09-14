@@ -16,7 +16,7 @@ npm install @manifest-network/manifest-mcp-agent
 | `manage_domain_orchestrated` | `manageDomain` | `set` / `clear` a lease item's custom domain. Confirm → broadcast → verify on-chain. |
 | `lookup_custom_domain_orchestrated` | `manageDomain` (lookup) | Reverse-resolve an FQDN to its owning lease. Pure chain query — no broadcast, zero elicitations. Returns the lease or `null` when unclaimed. |
 | `troubleshoot_deployment_orchestrated` | `troubleshootDeployment` | Markdown-formatted chain-side diagnostic report. No broadcast. |
-| `close_lease_orchestrated` | `closeLease` | Confirm → broadcast close-lease → verify terminal state on-chain. Permanent. |
+| `close_lease_orchestrated` | `closeLease` | Confirm → cancel PENDING, close ACTIVE, or observe an already terminal lease without broadcasting → verify terminal state on-chain. Permanent. |
 
 Each tool returns the corresponding agent-core result type (`DeployResult` / `ManageDomainResult` / `TroubleshootReport` / `CloseLeaseResult`) as structured content. Errors surface as the standard MCP error envelope; `ManifestMCPError` subtypes pass through unchanged via `withErrorHandling`. When a deploy recovery successfully salvages or tears down the lease, the original deploy flow ends with `OPERATION_CANCELLED` and machine-readable `details.lease_uuid` plus the selected `details.recovery_outcome`; hosts must not treat that outcome as a failed transaction or automatically redeploy. Cancel/close recoveries additionally expose the authoritative `details.stop_outcome` and `details.lease_state`. `details.transaction_hash` is present exactly when `stop_outcome` is `stopped` or `cancelled`, and absent for `already_inactive` (including post-broadcast terminal reconciliation).
 

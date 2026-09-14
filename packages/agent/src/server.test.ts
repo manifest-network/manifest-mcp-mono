@@ -509,7 +509,9 @@ describe('AgentMCPServer', () => {
         const description = deploy?.description ?? '';
         // ENG-750 enumeration stays: transaction_hash is exactly the
         // stopped/cancelled receipt.
-        expect(description).toContain('details.transaction_hash');
+        expect(description).toContain(
+          'details.transaction_hash when the stop outcome is stopped or cancelled',
+        );
         expect(description).toContain('already_inactive');
         // ENG-805 additions: the snapshot and its outer submission flag.
         expect(description).toContain('details.reconciliation');

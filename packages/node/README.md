@@ -288,7 +288,7 @@ run on any host. All five emit `notifications/progress`.
 |------|------------------|-------------|
 | `deploy_app_orchestrated` | Elicitation | Plan-confirm-deploy flow with typed progress and partial-success recovery options |
 | `manage_domain_orchestrated` | Elicitation | Claim, verify or release a custom domain on a lease |
-| `close_lease_orchestrated` | Elicitation | Confirm-then-close a lease, with the plan surfaced before the broadcast |
+| `close_lease_orchestrated` | Elicitation | Confirm, then cancel PENDING, close ACTIVE, or observe an already terminal lease without broadcasting; verify terminal state on-chain |
 | `lookup_custom_domain_orchestrated` | Any | Read-only reverse lookup: which lease owns a custom domain |
 | `troubleshoot_deployment_orchestrated` | Any | Read-only diagnosis of a failing deployment |
 
