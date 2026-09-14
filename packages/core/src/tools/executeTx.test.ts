@@ -1,4 +1,5 @@
 import type { EncodeObject } from '@cosmjs/proto-signing';
+import type { DeliverTxResponse } from '@cosmjs/stargate';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   makeMockClientManager,
@@ -274,15 +275,33 @@ describe('executeTx', () => {
   });
 
   it('throws TX_FAILED naming the msgTypeUrls on a non-zero code', async () => {
-    const signAndBroadcast = vi
-      .fn()
-      .mockResolvedValue(okResult({ code: 5, rawLog: 'insufficient funds' }));
+    const failure = Object.freeze({
+      ...okResult(),
+      code: 5,
+      rawLog: 'insufficient funds',
+      txIndex: 0,
+      msgResponses: [],
+    } satisfies DeliverTxResponse);
+    const signAndBroadcast = vi.fn().mockResolvedValue(failure);
     await expect(
       executeTx(ctxWith(signAndBroadcast), msgs),
     ).rejects.toMatchObject({
       code: ManifestMCPErrorCode.TX_FAILED,
       message: expect.stringContaining('/cosmos.bank.v1beta1.MsgSend'),
+      // A failed DeliverTx was received: the same `sent`/`confirmed` evidence cosmosTx emits,
+      // so the two broadcast seams agree on `details.sent` for an identical failure.
+      details: {
+        code: 5,
+        transactionHash: 'HASH',
+        height: '42',
+        msgTypeUrls: ['/cosmos.bank.v1beta1.MsgSend'],
+        sent: true,
+        confirmed: true,
+      },
     });
+    expect(signAndBroadcast).toHaveBeenCalledOnce();
+    expect(failure).not.toHaveProperty('sent');
+    expect(failure).not.toHaveProperty('confirmed');
   });
 
   it('serializes two concurrent executeTx from the same ctx.chain (real lock)', async () => {

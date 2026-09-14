@@ -16,7 +16,7 @@ npm install @manifest-network/manifest-mcp-agent
 | `manage_domain_orchestrated` | `manageDomain` | `set` / `clear` a lease item's custom domain. Confirm → broadcast → verify on-chain. |
 | `lookup_custom_domain_orchestrated` | `manageDomain` (lookup) | Reverse-resolve an FQDN to its owning lease. Pure chain query — no broadcast, zero elicitations. Returns the lease or `null` when unclaimed. |
 | `troubleshoot_deployment_orchestrated` | `troubleshootDeployment` | Markdown-formatted chain-side diagnostic report. No broadcast. |
-| `close_lease_orchestrated` | `closeLease` | Confirm → broadcast close-lease → verify terminal state on-chain. Permanent. |
+| `close_lease_orchestrated` | `closeLease` | Confirm → cancel PENDING, close ACTIVE, or observe an already terminal lease without broadcasting → verify terminal state on-chain. Permanent. |
 
 Each tool returns the corresponding agent-core result type (`DeployResult` / `ManageDomainResult` / `TroubleshootReport` / `CloseLeaseResult`) as structured content. Errors surface as the standard MCP error envelope; `ManifestMCPError` subtypes pass through unchanged via `withErrorHandling`. When a deploy recovery successfully salvages or tears down the lease, the original deploy flow ends with `OPERATION_CANCELLED` and machine-readable `details.lease_uuid` plus the selected `details.recovery_outcome`; hosts must not treat that outcome as a failed transaction or automatically redeploy. Cancel/close recoveries additionally expose the authoritative `details.stop_outcome` and `details.lease_state`. `details.transaction_hash` is present exactly when `stop_outcome` is `stopped` or `cancelled`, and absent for `already_inactive` (including post-broadcast terminal reconciliation).
 
@@ -27,7 +27,16 @@ MCP error details. When that receipt has a transaction hash, `sent: true` tells 
 host to reconcile the submitted transaction and lease state before another
 mutation. The SDK cause chain is not serialized into MCP responses; receipt
 fields are preserved through the bounded error projection. A close outcome of
-`already_inactive` adds no inferred submission evidence. See the
+`already_inactive` adds no inferred submission evidence. A failed blocking attempt
+followed by terminal reconciliation supplies a separate `details.reconciliation`
+machine snapshot on later verification and completed teardown-recovery errors.
+Its explicit `sent: true` also sets outer `sent: true`; failed-transaction fields
+stay nested. The original teardown error is retained only for SDK inspection and
+is not serialized. Successful `close_lease_orchestrated` results also expose the
+optional machine snapshot in `reconciliation`, matching the declared output
+schema. A hash alone does not establish inclusion; `transactionConfirmed: true`
+records inclusion of that failed attempt. Tool descriptions explain these fields
+for both close and deploy recovery. See the
 [verification error contract](../../docs/library-usage.md#errors).
 
 MCP elicitation support is required **only for the tools/actions that prompt the user**: `deploy_app_orchestrated`, `close_lease_orchestrated`, and `manage_domain_orchestrated` with `action='set'` or `'clear'`. Hosts that don't advertise `capabilities.elicitation` at `initialize` receive `ManifestMCPError(INVALID_CONFIG)` with a clear diagnostic when invoking those paths — the wrapper does not fall back to stdin prompts or auto-confirm.

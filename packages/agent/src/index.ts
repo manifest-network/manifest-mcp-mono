@@ -370,6 +370,13 @@ export class AgentMCPServer {
           'with details.lease_uuid and details.recovery_outcome; cancel/close ' +
           'also carry details.stop_outcome and details.lease_state, plus ' +
           'details.transaction_hash when the stop outcome is stopped or cancelled. ' +
+          'An already_inactive stop outcome has no details.transaction_hash. ' +
+          'After a failed teardown attempt, details.reconciliation retains its ' +
+          'machine evidence, including any transactionHash, transactionCode and ' +
+          'transactionHeight. Explicit reconciliation.sent: true also sets ' +
+          'details.sent: true. Inclusion of the failed transaction is established ' +
+          'only when transactionConfirmed is true. A hash alone does not establish inclusion; ' +
+          'report the failed attempt separately from terminal lease state. ' +
           'Requires an elicitation-capable MCP host (Claude Code ≥ 2.1.76).',
         inputSchema: {
           spec: z
@@ -684,16 +691,31 @@ export class AgentMCPServer {
       {
         description:
           'Orchestrate closing a lease via @manifest-network/manifest-agent-core. ' +
-          'Asks for confirmation via MCP elicitation, broadcasts the close-lease ' +
-          'tx, then verifies the lease reached a terminal state on-chain. ' +
+          'Asks for confirmation via MCP elicitation, cancels PENDING leases, ' +
+          'closes ACTIVE leases, or observes an already terminal lease, then ' +
+          'verifies terminal state on-chain. A successful result may include ' +
+          'reconciliation for a failed teardown attempt. Its sent field records ' +
+          'explicit submission evidence; inclusion of the failed transaction is ' +
+          'established only when transactionConfirmed is true. A hash alone does not establish inclusion. ' +
           'Permanent — the lease cannot be reopened.',
         inputSchema: {
           lease_uuid: z.string().uuid().describe('Lease UUID to close.'),
         },
-        // Mirrors agent-core's CloseLeaseResult.
+        // Mirrors CloseLeaseResult's enumerable machine snapshot. Its original
+        // error remains non-enumerable in SDK results and is omitted by JSON.
         outputSchema: {
           leaseUuid: z.string(),
           finalState: leaseStateSchema,
+          reconciliation: z
+            .object({
+              errorCode: z.enum(ManifestMCPErrorCode).optional(),
+              sent: z.boolean().optional(),
+              transactionHash: z.string().optional(),
+              transactionCode: z.number().int().nonnegative().optional(),
+              transactionHeight: z.string().optional(),
+              transactionConfirmed: z.boolean().optional(),
+            })
+            .optional(),
         },
         // Closing is permanent (destructive); closing a closed lease converges
         // to the same terminal state (idempotent in the convergence sense).

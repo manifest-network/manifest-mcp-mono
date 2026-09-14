@@ -21,6 +21,7 @@ export {
   type PortConfig,
   type SetItemCustomDomainInput,
   type SetItemCustomDomainResult,
+  type StopAppReconciliation,
   type StopAppResult,
   setItemCustomDomain,
   stopApp,

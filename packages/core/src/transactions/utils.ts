@@ -563,6 +563,8 @@ export function buildTxResult(
         transactionHash: result.transactionHash,
         rawLog: result.rawLog,
         height: String(result.height),
+        sent: true,
+        confirmed: true,
       },
     );
   }
@@ -669,6 +671,9 @@ export function buildExecuteTxResult(
         rawLog: result.rawLog,
         height: String(result.height),
         msgTypeUrls,
+        // A failed DeliverTx still establishes submission and inclusion.
+        sent: true,
+        confirmed: true,
       },
     );
   }

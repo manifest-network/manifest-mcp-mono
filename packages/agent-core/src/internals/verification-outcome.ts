@@ -23,6 +23,7 @@ const RECEIPT_DETAIL_NAMES = new Set([
   'leasestate',
   'servicename',
   'customdomain',
+  'reconciliation',
   'rejectionreason', // Free-form provider prose is never receipt metadata.
 ]);
 
@@ -102,6 +103,10 @@ export async function withVerificationOutcome<T>(
     return await verify();
   } catch (cause) {
     const error = normalizeVerificationError(cause);
+    const reconciliation =
+      'outcome' in receipt && receipt.outcome === 'already_inactive'
+        ? receipt.reconciliation
+        : undefined;
     const outcome = {
       lease_uuid: receipt.lease_uuid,
       ...('transactionHash' in receipt
@@ -112,6 +117,14 @@ export async function withVerificationOutcome<T>(
             ...('code' in receipt ? { transaction_code: receipt.code } : {}),
           }
         : {}),
+      ...(reconciliation === undefined
+        ? {}
+        : {
+            // The earlier stop failure is a sibling history, not the cause of
+            // this verification failure. Keep its frozen snapshot intact.
+            reconciliation,
+            ...(reconciliation.sent === true ? { sent: true } : {}),
+          }),
       ...('outcome' in receipt
         ? { stop_outcome: receipt.outcome, lease_state: receipt.lease_state }
         : {

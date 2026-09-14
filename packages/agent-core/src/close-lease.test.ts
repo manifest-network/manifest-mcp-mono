@@ -22,8 +22,10 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   asLeaseUuid,
+  type CosmosClientManager,
   ManifestMCPError,
   ManifestMCPErrorCode,
+  type StopAppReconciliation,
   type StopAppResult,
   withRetry,
 } from '@manifest-network/manifest-mcp-core';
@@ -922,6 +924,358 @@ describe('closeLease post-mutation verification (ENG-805)', () => {
         },
       ]);
       expect(completed).toEqual([]);
+    },
+  );
+
+  it.each([true, false, undefined])(
+    'reconciled inactive sent=%s retains separate failure histories across verification retries',
+    async (sent) => {
+      const core = await import('@manifest-network/manifest-mcp-core');
+      const { closeLease } = await import('./close-lease.js');
+      const earlier = Object.freeze(
+        new ManifestMCPError(
+          sent === true
+            ? ManifestMCPErrorCode.TX_FAILED
+            : ManifestMCPErrorCode.INVALID_CONFIG,
+          'earlier stop attempt failed',
+        ),
+      );
+      const reconciliation: StopAppReconciliation = Object.freeze(
+        Object.defineProperty(
+          {
+            error: earlier,
+            errorCode: earlier.code,
+            ...(sent === undefined ? {} : { sent }),
+            ...(sent === true
+              ? {
+                  transactionHash: 'C'.repeat(64),
+                  transactionConfirmed: true,
+                  transactionCode: 7,
+                }
+              : {}),
+          },
+          'error',
+          { enumerable: false },
+        ),
+      );
+      const inactive = {
+        lease_uuid: leaseUuid,
+        outcome: 'already_inactive',
+        lease_state: 'LEASE_STATE_CLOSED',
+      } satisfies StopAppResult;
+      // A repeat can observe an inactive pre-query and lose the first attempt's
+      // receipt. Established submission evidence must prevent that repeat.
+      vi.mocked(core.stopApp)
+        .mockReset()
+        .mockResolvedValueOnce(Object.freeze({ ...inactive, reconciliation }))
+        .mockResolvedValue(inactive);
+      const later = Object.freeze(
+        new ManifestMCPError(
+          ManifestMCPErrorCode.QUERY_FAILED,
+          'later verification unavailable',
+          Object.freeze({ httpStatus: 503 }),
+        ),
+      );
+      const queryClient = makeMockQueryClient();
+      queryClient.liftedinit.billing.v1.lease
+        .mockRejectedValueOnce(later)
+        .mockResolvedValue({ lease: { uuid: leaseUuid, state: 3 } });
+      const clientManager = makeMockClientManager(queryClient);
+      const { callbacks, failures, completed } = captureCallbacks();
+      let observedError: unknown;
+      const retry = vi.fn((error: unknown) => {
+        observedError = error;
+      });
+
+      const result = await withRetry(
+        () =>
+          closeLease({ leaseUuid }, callbacks, {
+            clientManager: clientManager as unknown as Parameters<
+              typeof closeLease
+            >[2]['clientManager'],
+          }),
+        { config: retryConfig, onRetry: retry },
+      ).catch((error: unknown) => {
+        observedError = error;
+        return undefined;
+      });
+
+      expect(core.stopApp).toHaveBeenCalledTimes(sent === true ? 1 : 2);
+      expect(queryClient.liftedinit.billing.v1.lease).toHaveBeenCalledTimes(
+        sent === true ? 1 : 2,
+      );
+      expect(retry).toHaveBeenCalledTimes(sent === true ? 0 : 1);
+      expect(observedError).toBeInstanceOf(ManifestMCPError);
+      if (!(observedError instanceof ManifestMCPError))
+        throw new Error('expected verification failure');
+      expect(Reflect.get(observedError, 'cause')).toBe(later);
+      expect(observedError.details?.reconciliation).toBe(reconciliation);
+      expect(reconciliation.error).toBe(earlier);
+      expect(earlier).not.toHaveProperty('cause');
+      expect(later).not.toHaveProperty('cause');
+      expect(observedError.details).not.toHaveProperty('transaction_hash');
+      expect(JSON.stringify(observedError)).not.toContain(earlier.message);
+      if (sent === true) {
+        expect(observedError.details?.sent).toBe(true);
+        expect(result).toBeUndefined();
+        expect(completed).toEqual([]);
+      } else {
+        expect(observedError.details).not.toHaveProperty('sent');
+        expect(result).toEqual({ leaseUuid, finalState: 'LEASE_STATE_CLOSED' });
+        expect(completed).toEqual([result]);
+      }
+      expect(failures).toHaveLength(1);
+    },
+  );
+
+  it('real stopApp and cosmosTx preserve an included failed close through successful verification', async () => {
+    const core = await import('@manifest-network/manifest-mcp-core');
+    const actualCore = await vi.importActual<typeof core>(
+      '@manifest-network/manifest-mcp-core',
+    );
+    const {
+      makeSealedClientManager,
+      makeMockConfig,
+      makeMockQueryClient: makeCoreQueryClient,
+    } = await import(
+      '@manifest-network/manifest-mcp-core/__test-utils__/mocks.js'
+    );
+    const { closeLease } = await import('./close-lease.js');
+    type BroadcastClient = Awaited<
+      ReturnType<CosmosClientManager['getBroadcastClient']>
+    >;
+    const failedTx: Awaited<ReturnType<BroadcastClient['signAndBroadcast']>> = {
+      code: 11,
+      transactionHash: 'E'.repeat(64),
+      height: 42,
+      txIndex: 0,
+      gasUsed: 100n,
+      gasWanted: 100n,
+      events: [],
+      msgResponses: [],
+      rawLog: 'private failed-close diagnostic',
+    };
+    const broadcast = vi
+      .fn<BroadcastClient['signAndBroadcast']>()
+      .mockResolvedValue(failedTx);
+    const simulate = vi
+      .fn<BroadcastClient['simulate']>()
+      .mockResolvedValue(100);
+    const sync = vi.fn<BroadcastClient['signAndBroadcastSync']>();
+    // Real transaction handlers use this injected wire. Every other manager
+    // method remains sealed, so unexpected transport use fails by name.
+    const wire = {
+      signAndBroadcast: broadcast,
+      simulate,
+      signAndBroadcastSync: sync,
+    } as unknown as BroadcastClient;
+    const queryClient = makeCoreQueryClient();
+    const lease = vi
+      .fn()
+      .mockResolvedValueOnce({ lease: { uuid: leaseUuid, state: 2 } })
+      .mockResolvedValue({ lease: { uuid: leaseUuid, state: 3 } });
+    queryClient.liftedinit.billing.v1.lease = lease;
+    const clientManager = makeSealedClientManager({
+      getQueryClient: vi.fn(async () => queryClient),
+      getConfig: vi.fn(() => makeMockConfig({ retry: { maxRetries: 0 } })),
+      getAddress: vi.fn(async () => 'manifest1deadbeef'),
+      getBroadcastClient: vi.fn(async () => wire),
+      acquireRateLimit: vi.fn(async () => undefined),
+      withBroadcastLock: async (_address, action) => action(),
+    });
+    let stopResult: StopAppResult | undefined;
+    vi.mocked(core.stopApp).mockImplementation(async (ctx, input, options) => {
+      stopResult = await actualCore.stopApp(ctx, input, options);
+      return stopResult;
+    });
+    const { callbacks, completed, failures } = captureCallbacks();
+
+    const result = await closeLease({ leaseUuid }, callbacks, {
+      clientManager,
+    });
+
+    expect(stopResult?.outcome).toBe('already_inactive');
+    if (stopResult?.outcome !== 'already_inactive')
+      throw new Error('expected terminal reconciliation');
+    expect(result.reconciliation).toBe(stopResult.reconciliation);
+    expect(result.reconciliation).toEqual({
+      errorCode: ManifestMCPErrorCode.TX_FAILED,
+      sent: true,
+      transactionHash: failedTx.transactionHash,
+      transactionCode: 11,
+      transactionHeight: '42',
+      transactionConfirmed: true,
+    });
+    expect(Object.isFrozen(result.reconciliation)).toBe(true);
+    expect(result.reconciliation?.error).toMatchObject({
+      code: ManifestMCPErrorCode.TX_FAILED,
+      details: {
+        transactionHash: failedTx.transactionHash,
+        rawLog: failedTx.rawLog,
+        sent: true,
+        confirmed: true,
+      },
+    });
+    expect(
+      Object.getOwnPropertyDescriptor(result.reconciliation, 'error'),
+    ).toMatchObject({ enumerable: false, writable: false });
+    expect(result.finalState).toBe('LEASE_STATE_CLOSED');
+    expect(completed).toHaveLength(1);
+    expect(completed[0]).toBe(result);
+    expect(failures).toEqual([]);
+    expect(core.stopApp).toHaveBeenCalledTimes(1);
+    expect(lease).toHaveBeenCalledTimes(3);
+    expect(simulate).toHaveBeenCalledTimes(1);
+    expect(broadcast).toHaveBeenCalledTimes(1);
+    expect(broadcast.mock.calls[0]?.[1][0]?.typeUrl).toBe(
+      '/liftedinit.billing.v1.MsgCloseLease',
+    );
+    expect(sync).not.toHaveBeenCalled();
+    expect(JSON.stringify(result)).not.toContain(failedTx.rawLog);
+    expect(
+      JSON.parse(JSON.stringify(result)).reconciliation,
+    ).not.toHaveProperty('error');
+  });
+
+  it('reconciled inactive success forwards the failed attempt snapshot to the caller', async () => {
+    const core = await import('@manifest-network/manifest-mcp-core');
+    const { closeLease } = await import('./close-lease.js');
+    const earlier = Object.freeze(
+      new ManifestMCPError(
+        ManifestMCPErrorCode.TX_FAILED,
+        'earlier stop attempt failed',
+      ),
+    );
+    const hash = 'C'.repeat(64);
+    const reconciliation: StopAppReconciliation = Object.freeze(
+      Object.defineProperty(
+        {
+          error: earlier,
+          errorCode: earlier.code,
+          sent: true,
+          transactionHash: hash,
+          transactionCode: 11,
+          transactionHeight: '12345',
+          transactionConfirmed: true,
+        },
+        'error',
+        { enumerable: false },
+      ),
+    );
+    // A failed blocking close (DeliverTx code 11) followed by a terminal
+    // re-query: `stopApp` reports `already_inactive` with the snapshot.
+    vi.mocked(core.stopApp).mockResolvedValue(
+      Object.freeze({
+        lease_uuid: leaseUuid,
+        outcome: 'already_inactive',
+        lease_state: 'LEASE_STATE_CLOSED',
+        reconciliation,
+      } satisfies StopAppResult),
+    );
+    const queryClient = makeMockQueryClient();
+    queryClient.liftedinit.billing.v1.lease.mockResolvedValue({
+      lease: { uuid: leaseUuid, state: 3 },
+    });
+    const clientManager = makeMockClientManager(queryClient);
+    const { callbacks, completed, failures, progress } = captureCallbacks();
+
+    const result = await closeLease({ leaseUuid }, callbacks, {
+      clientManager: clientManager as unknown as Parameters<
+        typeof closeLease
+      >[2]['clientManager'],
+    });
+
+    // Verification observed CLOSED, so this is a success — but the caller
+    // must still learn that the fixture transaction was included and failed. The
+    // snapshot travels by identity (same frozen object the error path
+    // retains), with its original error still non-enumerable.
+    expect(result).toStrictEqual({
+      leaseUuid,
+      finalState: 'LEASE_STATE_CLOSED',
+      reconciliation,
+    });
+    expect(result.reconciliation).toBe(reconciliation);
+    expect(result.reconciliation?.error).toBe(earlier);
+    expect(completed).toHaveLength(1);
+    expect(completed[0]).toBe(result);
+    expect(failures).toEqual([]);
+    expect(progress.map((p) => p.kind)).toEqual(['user_confirmed']);
+    expect(core.stopApp).toHaveBeenCalledTimes(1);
+    // JSON/MCP projection: machine fields only; the retained error and its
+    // message never serialize.
+    expect(JSON.parse(JSON.stringify(result))).toEqual({
+      leaseUuid,
+      finalState: 'LEASE_STATE_CLOSED',
+      reconciliation: {
+        errorCode: ManifestMCPErrorCode.TX_FAILED,
+        sent: true,
+        transactionHash: hash,
+        transactionCode: 11,
+        transactionHeight: '12345',
+        transactionConfirmed: true,
+      },
+    });
+    expect(JSON.stringify(result)).not.toContain(earlier.message);
+  });
+
+  it.each([
+    {
+      label: 'stopped receipt',
+      receipt: {
+        lease_uuid: leaseUuid,
+        outcome: 'stopped',
+        lease_state: 'LEASE_STATE_CLOSED',
+        transactionHash: 'D'.repeat(64),
+        confirmed: true,
+        code: 0,
+      } satisfies StopAppResult,
+    },
+    {
+      label: 'cancelled receipt',
+      receipt: {
+        lease_uuid: leaseUuid,
+        outcome: 'cancelled',
+        lease_state: 'LEASE_STATE_REJECTED',
+        transactionHash: 'F'.repeat(64),
+        confirmed: true,
+        code: 0,
+      } satisfies StopAppResult,
+    },
+    {
+      label: 'terminal pre-query no-op',
+      receipt: {
+        lease_uuid: leaseUuid,
+        outcome: 'already_inactive',
+        lease_state: 'LEASE_STATE_CLOSED',
+      } satisfies StopAppResult,
+    },
+  ])(
+    '$label success result carries no reconciliation key',
+    async ({ receipt }) => {
+      const core = await import('@manifest-network/manifest-mcp-core');
+      const { closeLease } = await import('./close-lease.js');
+      vi.mocked(core.stopApp).mockResolvedValue(receipt);
+      const queryClient = makeMockQueryClient();
+      queryClient.liftedinit.billing.v1.lease.mockResolvedValue({
+        lease: { uuid: leaseUuid, state: 3 },
+      });
+      const clientManager = makeMockClientManager(queryClient);
+      const { callbacks, completed } = captureCallbacks();
+
+      const result = await closeLease({ leaseUuid }, callbacks, {
+        clientManager: clientManager as unknown as Parameters<
+          typeof closeLease
+        >[2]['clientManager'],
+      });
+
+      // No failed attempt to report: the key is absent, not `undefined`, so
+      // the pre-existing two-field shape (and its fixtures) stays byte-exact.
+      expect(Object.keys(result)).toEqual(['leaseUuid', 'finalState']);
+      expect(result).toStrictEqual({
+        leaseUuid,
+        finalState: 'LEASE_STATE_CLOSED',
+      });
+      expect(completed).toEqual([result]);
     },
   );
 
