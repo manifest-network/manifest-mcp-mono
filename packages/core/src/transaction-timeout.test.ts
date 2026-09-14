@@ -1,0 +1,288 @@
+import { type SigningStargateClient, TimeoutError } from '@cosmjs/stargate';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  makeInclusionTimeoutFixture,
+  makeMockConfig,
+  makeSealedClientManager,
+  makeTxCtx,
+} from './__test-utils__/mocks.js';
+import { cosmosTx } from './cosmos.js';
+import type { TxCallOptions } from './options.js';
+import { withRetry } from './retry.js';
+import { executeTx } from './tools/executeTx.js';
+import { ManifestMCPError, ManifestMCPErrorCode } from './types.js';
+
+type EntryPoint = 'cosmosTx' | 'executeTx';
+
+async function fixture(entryPoint: EntryPoint, guarded = true) {
+  const wire = await makeInclusionTimeoutFixture();
+  if (guarded) wire.installGuard();
+  let broadcastError: unknown;
+  const originalBroadcast = wire.client.signAndBroadcast;
+  vi.spyOn(wire.client, 'signAndBroadcast').mockImplementation(async function (
+    this: SigningStargateClient,
+    ...args
+  ) {
+    try {
+      return await originalBroadcast.apply(this, args);
+    } catch (error) {
+      broadcastError = error;
+      throw error;
+    }
+  });
+  const config = makeMockConfig({
+    retry: { maxRetries: 2, baseDelayMs: 1, maxDelayMs: 1 },
+  });
+  const getAddress = vi.fn(async () => wire.sender);
+  const chain = makeSealedClientManager({
+    getConfig: vi.fn(() => config),
+    getAddress,
+    getBroadcastClient: vi.fn(async () => wire.client),
+    acquireRateLimit: vi.fn(async () => undefined),
+    withBroadcastLock: async (_sender, action) => action(),
+  });
+  const ctx = makeTxCtx({ chain });
+  const args = [wire.sender, '1umfx'];
+  const invoke = async (options: TxCallOptions = {}) =>
+    entryPoint === 'cosmosTx'
+      ? cosmosTx(
+          chain,
+          'bank',
+          'send',
+          args,
+          options.waitForConfirmation ?? true,
+          undefined,
+          { fee: wire.fee },
+          options,
+        )
+      : executeTx(ctx, wire.messages, { ...options, fee: wire.fee });
+  return {
+    ...wire,
+    invoke,
+    getAddress,
+    broadcastError: () => broadcastError,
+    context:
+      entryPoint === 'cosmosTx'
+        ? { module: 'bank', subcommand: 'send', args }
+        : { msgTypeUrls: wire.messages.map((message) => message.typeUrl) },
+  };
+}
+
+function ownCause(error: unknown): unknown {
+  return error instanceof Error
+    ? Object.getOwnPropertyDescriptor(error, 'cause')?.value
+    : undefined;
+}
+
+beforeEach(() => vi.useFakeTimers());
+afterEach(() => {
+  vi.clearAllTimers();
+  vi.useRealTimers();
+  vi.restoreAllMocks();
+});
+
+describe.each<EntryPoint>(['cosmosTx', 'executeTx'])(
+  '%s inclusion-timeout attribution',
+  (entryPoint) => {
+    it('retains accepted submission and the original timeout without retrying or inferring inclusion', async () => {
+      const f = await fixture(entryPoint);
+      const retry = vi.fn();
+      let calls = 0;
+      const result = withRetry(
+        () => {
+          calls += 1;
+          return f.invoke();
+        },
+        {
+          config: { maxRetries: 2, baseDelayMs: 1, maxDelayMs: 1 },
+          onRetry: retry,
+        },
+      ).catch((error: unknown) => error);
+      await vi.advanceTimersByTimeAsync(20);
+      const error = await result;
+      expect(error).toBeInstanceOf(ManifestMCPError);
+      expect(error).toMatchObject({
+        code: ManifestMCPErrorCode.TX_FAILED,
+        message: expect.stringContaining(
+          entryPoint === 'cosmosTx' ? 'Tx bank send failed:' : 'executeTx (',
+        ),
+      });
+      expect((error as ManifestMCPError).details).toEqual({
+        sent: true,
+        transactionHash: f.hash,
+        ...f.context,
+      });
+      expect(ownCause(error)).toBe(f.broadcastError());
+      const timeout = ownCause(f.broadcastError());
+      expect(timeout).toBeInstanceOf(TimeoutError);
+      expect(timeout).toMatchObject({ txId: f.hash });
+      expect(Object.getOwnPropertyDescriptor(error, 'cause')).toMatchObject({
+        enumerable: false,
+      });
+      expect(JSON.stringify(error)).not.toContain('"cause"');
+      expect(calls).toBe(1);
+      expect(retry).not.toHaveBeenCalled();
+      expect(f.sign).toHaveBeenCalledOnce();
+      expect(f.comet.broadcastTxSync).toHaveBeenCalledOnce();
+      expect(f.comet.txSearchAll).toHaveBeenCalledOnce();
+    });
+
+    it('does not infer evidence from an unguarded native timeout', async () => {
+      const f = await fixture(entryPoint, false);
+      const result = f.invoke().catch((error: unknown) => error);
+      await vi.advanceTimersByTimeAsync(20);
+      const error = await result;
+      expect(error).toMatchObject({ code: ManifestMCPErrorCode.TX_FAILED });
+      expect((error as ManifestMCPError).details).toEqual(f.context);
+      expect(f.broadcastError()).toBeInstanceOf(TimeoutError);
+      expect(f.comet.broadcastTxSync).toHaveBeenCalledOnce();
+    });
+
+    it('uses observed acceptance when a later lookup fails, ignoring claimed transaction metadata', async () => {
+      const f = await fixture(entryPoint);
+      const lookupError = Object.freeze(
+        new ManifestMCPError(
+          ManifestMCPErrorCode.QUERY_FAILED,
+          'RPC unavailable',
+          {
+            transactionHash: 'FF'.repeat(32),
+            confirmed: true,
+            code: 0,
+            height: '999',
+          },
+        ),
+      );
+      f.comet.txSearchAll.mockRejectedValue(lookupError);
+      const result = f.invoke().catch((error: unknown) => error);
+      await vi.advanceTimersByTimeAsync(20);
+      const error = await result;
+      expect(error).toMatchObject({ code: ManifestMCPErrorCode.TX_FAILED });
+      expect((error as ManifestMCPError).details).toEqual({
+        sent: true,
+        transactionHash: f.hash,
+        ...f.context,
+      });
+      expect(ownCause(error)).toBe(f.broadcastError());
+      expect(ownCause(f.broadcastError())).toBe(lookupError);
+      expect(f.comet.broadcastTxSync).toHaveBeenCalledOnce();
+      expect(f.comet.txSearchAll).toHaveBeenCalledOnce();
+    });
+
+    it('keeps a structured cancellation terminal after accepted submission', async () => {
+      const f = await fixture(entryPoint);
+      const cancellation = new ManifestMCPError(
+        ManifestMCPErrorCode.OPERATION_CANCELLED,
+        'Lookup cancelled',
+      );
+      f.comet.txSearchAll.mockRejectedValue(cancellation);
+      const result = f.invoke().catch((error: unknown) => error);
+      await vi.advanceTimersByTimeAsync(20);
+      const error = await result;
+      expect(error).toMatchObject({
+        code: ManifestMCPErrorCode.OPERATION_CANCELLED,
+      });
+      expect((error as ManifestMCPError).details).toEqual({
+        sent: true,
+        transactionHash: f.hash,
+        ...f.context,
+      });
+      expect(ownCause(f.broadcastError())).toBe(cancellation);
+      expect(f.comet.broadcastTxSync).toHaveBeenCalledOnce();
+    });
+
+    it.each(['revoked proxy', 'throwing cause getter'])(
+      'retains the submission envelope when the lookup rejects with a hostile %s',
+      async (kind) => {
+        const f = await fixture(entryPoint);
+        let hostile: unknown;
+        if (kind === 'revoked proxy') {
+          const { proxy, revoke } = Proxy.revocable(
+            new Error('Lookup failed'),
+            {},
+          );
+          revoke();
+          hostile = proxy;
+        } else {
+          hostile = Object.defineProperty(new Error('Lookup failed'), 'cause', {
+            get() {
+              throw new Error('Diagnostic cause must not be inspected');
+            },
+          });
+        }
+        f.comet.txSearchAll.mockRejectedValue(hostile);
+        const result = f.invoke().catch((error: unknown) => error);
+        await vi.advanceTimersByTimeAsync(20);
+        const error = await result;
+        expect(error).toBeInstanceOf(ManifestMCPError);
+        expect((error as ManifestMCPError).details).toEqual({
+          sent: true,
+          transactionHash: f.hash,
+          ...f.context,
+        });
+        expect(ownCause(ownCause(error))).toBe(hostile);
+        expect(f.comet.broadcastTxSync).toHaveBeenCalledOnce();
+      },
+    );
+
+    it('does not promote a forged timeout rejected during signing', async () => {
+      const f = await fixture(entryPoint);
+      const forged = new TimeoutError('Transaction was submitted', f.hash);
+      f.sign.mockRejectedValue(forged);
+      const result = f.invoke().catch((error: unknown) => error);
+      await vi.advanceTimersByTimeAsync(20);
+      const error = await result;
+      expect(error).toMatchObject({ code: ManifestMCPErrorCode.TX_FAILED });
+      expect((error as ManifestMCPError).details).toEqual(f.context);
+      expect(f.broadcastError()).toBe(forged);
+      expect(f.sign).toHaveBeenCalledOnce();
+      expect(f.comet.broadcastTxSync).not.toHaveBeenCalled();
+    });
+
+    it('keeps the SYNC result hash-only and never polls', async () => {
+      const f = await fixture(entryPoint);
+      const result = await f.invoke({ waitForConfirmation: false });
+      expect(result).toMatchObject({
+        transactionHash: f.hash,
+        confirmed: false,
+        code: 0,
+        height: '',
+      });
+      expect(result).not.toHaveProperty('reconciliation');
+      expect(f.comet.broadcastTxSync).toHaveBeenCalledOnce();
+      expect(f.comet.txSearchAll).not.toHaveBeenCalled();
+    });
+
+    it('preserves caller cancellation after submission without substituting the later inclusion timeout', async () => {
+      const f = await fixture(entryPoint);
+      const abort = new AbortController();
+      f.comet.txSearchAll.mockImplementation(async () => {
+        abort.abort(new Error('Caller stopped waiting'));
+        return { txs: [], totalCount: 0 };
+      });
+      const result = f
+        .invoke({ signal: abort.signal })
+        .catch((error: unknown) => error);
+      await vi.advanceTimersByTimeAsync(20);
+      const error = await result;
+      expect(error).toMatchObject({
+        code: ManifestMCPErrorCode.OPERATION_CANCELLED,
+        details: { sent: true, reason: abort.signal.reason },
+      });
+      expect(error).not.toHaveProperty('details.transactionHash');
+      expect(f.comet.broadcastTxSync).toHaveBeenCalledOnce();
+    });
+
+    it('prevents signing for a pre-cancelled call', async () => {
+      const f = await fixture(entryPoint);
+      const abort = new AbortController();
+      abort.abort();
+      await expect(f.invoke({ signal: abort.signal })).rejects.toMatchObject({
+        code: ManifestMCPErrorCode.OPERATION_CANCELLED,
+        details: { sent: false },
+      });
+      expect(f.getAddress).not.toHaveBeenCalled();
+      expect(f.sign).not.toHaveBeenCalled();
+      expect(f.comet.broadcastTxSync).not.toHaveBeenCalled();
+    });
+  },
+);

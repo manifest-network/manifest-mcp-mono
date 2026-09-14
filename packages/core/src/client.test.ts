@@ -82,18 +82,22 @@ vi.mock(
   }),
 );
 
-vi.mock('@cosmjs/stargate', () => ({
-  SigningStargateClient: {
-    connectWithSigner: vi.fn().mockResolvedValue({
-      getChainId: vi.fn().mockResolvedValue('test-chain'),
-      disconnect: vi.fn(),
-    }),
-  },
-  GasPrice: {
-    fromString: vi.fn().mockReturnValue({}),
-  },
-  AminoTypes: class MockAminoTypes {},
-}));
+vi.mock('@cosmjs/stargate', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@cosmjs/stargate')>();
+  return {
+    ...actual,
+    SigningStargateClient: {
+      connectWithSigner: vi.fn().mockResolvedValue({
+        getChainId: vi.fn().mockResolvedValue('test-chain'),
+        disconnect: vi.fn(),
+      }),
+    },
+    GasPrice: {
+      fromString: vi.fn().mockReturnValue({}),
+    },
+    AminoTypes: class MockAminoTypes {},
+  };
+});
 
 vi.mock('@cosmjs/proto-signing', () => ({
   Registry: class MockRegistry {},

@@ -39,6 +39,7 @@ import {
   DEFAULT_GAS_MULTIPLIER,
   DEFAULT_REQUESTS_PER_SECOND,
 } from './config.js';
+import { installBroadcastFailureGuard } from './internals/broadcast-failure.js';
 import {
   verifyRestChainIdentity,
   verifyRpcChainIdentity,
@@ -560,6 +561,7 @@ export class CosmosClientManager {
                 `Transactions will use the CosmJS built-in gas multiplier instead.`,
             );
           }
+          installBroadcastFailureGuard(c);
           return c;
         },
         {

@@ -826,3 +826,57 @@ workspace build, TypeScript, Biome and full coverage: **3,983 passed / 17 skippe
 88.30% functions**, with all configured floors passing. The additional cases
 come from the updated base; PR #228 still contributes 64 regressions. The live
 acceptance result remains a separate PR CI check.
+
+## Follow-up: evidence after accepted submission — 2026-09-14
+
+The [focused plan](superpowers/plans/2026-09-14-eng805-inclusion-timeout-evidence.md)
+addresses the two inclusion-timeout criteria retained from PR #228, starting from
+its merged commit `12af628`.
+
+SDK-created signing clients now observe their native CheckTx broadcast on a fresh
+per-call receiver. A validated accepted hash establishes submission independently
+of the later error's class, message or claimed txId. If blocking inclusion polling
+then rejects, including the native inclusion timer or an RPC lookup failure, a
+fresh error retains exactly sent:true and transactionHash plus a non-enumerable
+cause. Raw failures use non-retryable TX_FAILED; readable structured cancellation
+keeps OPERATION_CANCELLED. No confirmation, transaction code or height is inferred.
+Custom broadcast implementations, pre-acceptance errors and invalid hashes keep
+their existing behavior. The wrapper reuses CosmJS signing/polling and preserves
+sequence views and concurrent-call isolation.
+
+Cosmos and multi-message transaction entry points retain their operation context
+and the owned error's cause chain. Existing teardown reconciliation forwards the
+sparse snapshot through success, callbacks, later verification and recovery.
+Explicit submission evidence prevents whole-orchestration retry without claiming
+that the transaction was included or that the teardown succeeded.
+
+| Finding | Evidence and correction | Confidence |
+| --- | --- | --- |
+| Native inclusion timeouts lose structured txId and original cause | Real pinned signing/broadcast/poll methods with isolated signing and Comet seams reach the native timer. Disabling manager guard installation makes the integration test fail; restoring it passes. | 100% |
+| A later RPC lookup rejection loses the same observed submission facts | Preserve the accepted native hash regardless of the later exception type; conflicting error metadata cannot supply hash/code/height/confirmation. | 100% event ordering; 99% scope choice |
+| Hostile retained causes can replace the submitted error during retry classification | Four public transaction regressions reproduce replacement by revoked-proxy or cause-getter exceptions. Honor an already-decisive outer verdict before traversing irrelevant causes; all four pass after correction. | 100% conditional mechanism |
+
+The pathological-cause cases are injected controls, not observed native RPC
+payloads. The retry correction protects decisive outer verdicts; it does not
+establish a universal exception-safe contract for arbitrary custom retry inputs.
+The existing cause-only boundary and separate grouped-error policy remain intact.
+Caller cancellation retains its existing precedence and conservative sent flag;
+its prompt response does not wait for the later inclusion result to acquire a hash.
+
+Independent boundary and test review found no remaining blocker in this slice
+(98–99% confidence). Validation caught and corrected an untyped test receiver and
+an inferred mock declaration that referenced an undeclared transitive package;
+the fixture now uses an explicit callable type without adding a dependency. The
+shared transaction test helper also uses a consistent promise return type. A
+legacy total Stargate mock was updated to preserve native exports; its 59 tests
+pass again. Documentation review narrowed the SDK's raw-error exclusion to
+failures before observed acceptance (99% confidence in that documentation gap).
+
+Final local validation: **4,039 passed / 17 skipped / 181 files**, no type errors;
+**56 new regressions**. Coverage is **84.85% lines / 84.57% statements / 84.38%
+branches / 88.49% functions**, with all configured floors passing. Workspace
+build/types, E2E types, Biome, whitespace, architecture, package integrity, bundle
+budgets, eight MCP metadata checks and eight type-harness checks pass. The two
+criteria are implemented and locally validated; PR CI and merge status are
+recorded in Linear. The other eleven criteria remain separate, and this work is
+unreleased. All 80 pre-existing user artifacts are preserved.

@@ -12,6 +12,8 @@ import {
   type WalletProvider,
 } from '../types.js';
 
+export { makeInclusionTimeoutFixture } from './inclusion-timeout.js';
+
 /**
  * Create a mock ManifestMCPConfig with sensible defaults.
  */

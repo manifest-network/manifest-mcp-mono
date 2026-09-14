@@ -59,8 +59,8 @@ Most errors returned to the MCP client are JSON objects with a `code` field draw
 | Configuration | `INVALID_CONFIG` | Missing/invalid env, query-only mode invoked for a tx, malformed input that's a static rule violation |
 | Wallet | `WALLET_NOT_CONNECTED`, `WALLET_CONNECTION_FAILED`, `INVALID_MNEMONIC` | Wallet bootstrap failed or a wallet operation was attempted post-disconnect |
 | Client / RPC | `RPC_CONNECTION_FAILED` | Couldn't reach the configured `rpcUrl` / `restUrl` |
-| Query | `QUERY_FAILED`, `UNSUPPORTED_QUERY`, `INVALID_ADDRESS`, `INVALID_ARGUMENT`, `NOT_FOUND` | Chain-side rejection of a read, unsupported subcommand, malformed bech32, a malformed argument (non-UUID id, bad FQDN), or an expected "no such entity" absence (`NOT_FOUND` — the chain answered no such entity; non-retryable, distinct from an HTTP/route 404 which stays `QUERY_FAILED`) |
-| Transaction | `TX_FAILED`, `UNSUPPORTED_TX`, `SIMULATION_FAILED`, `GAS_LIMIT_EXCEEDED` | Chain-side rejection of a write, unsupported subcommand, simulation step failed, or a pre-broadcast safety abort (`GAS_LIMIT_EXCEEDED` — either `ceil(simulate × gasMultiplier)` or an explicit `fee.gas` exceeded the `COSMOS_MAX_GAS` / `maxGas` ceiling; non-retryable) |
+| Query | `QUERY_FAILED`, `UNSUPPORTED_QUERY`, `INVALID_ADDRESS`, `INVALID_ARGUMENT`, `NOT_FOUND` | Failed read or query transport, unsupported subcommand, malformed bech32, a malformed argument (non-UUID id, bad FQDN), or an expected "no such entity" absence (`NOT_FOUND` — the chain answered no such entity; non-retryable, distinct from an HTTP/route 404 which stays `QUERY_FAILED`) |
+| Transaction | `TX_FAILED`, `UNSUPPORTED_TX`, `SIMULATION_FAILED`, `GAS_LIMIT_EXCEEDED` | Transaction failure with a possibly unknown outcome, unsupported subcommand, simulation step failed, or a pre-broadcast safety abort (`GAS_LIMIT_EXCEEDED` — either `ceil(simulate × gasMultiplier)` or an explicit `fee.gas` exceeded the `COSMOS_MAX_GAS` / `maxGas` ceiling; non-retryable) |
 | Module | `UNKNOWN_MODULE` | Module name not in the registry |
 | User action | `OPERATION_CANCELLED` | A deliberate user decline / cancel / elicitation-timeout, or a completed user-selected orchestration recovery — neither a fault nor retryable; inspect operation-specific `details` because side effects may have completed |
 | SKU resolution | `SKU_AMBIGUOUS` | A SKU `size`/`storage` name matched more than one active SKU; `details` carries `{ reason: 'AMBIGUOUS_SKU_NAME', size, candidates }` — disambiguate with `provider_uuid` / `sku_uuid` |
@@ -78,10 +78,22 @@ The configured endpoint isn't reachable. Verify the URL, that it's HTTPS-or-loca
 
 ### `QUERY_FAILED` / `TX_FAILED`
 
-The chain answered "no". `error.details` usually carries the chain's raw error string. Common causes:
+The operation failed, but the code alone does not tell you whether the chain
+rejected a transaction or whether submission occurred. `error.details` may carry
+chain or transport diagnostics. Common causes:
 - Insufficient balance.
 - Sequence mismatch (rare; usually caused by another process broadcasting from the same wallet).
 - A governance/billing rule that rejected the message.
+
+If native CheckTx accepted a transaction and its inclusion wait or lookup then
+failed, SDK-created clients preserve `details.sent: true` and the validated
+`details.transactionHash`, with the original error in a non-enumerable cause
+chain. `TX_FAILED` remains non-retryable; structured cancellation retains
+`OPERATION_CANCELLED`. Inspect that hash and the current lease state before
+another mutation. No transaction code, height or confirmation is inferred from
+acceptance. A raw timeout or claimed `txId` without observed acceptance supplies
+no submission evidence. Reconciled teardown outcomes retain these facts under
+`reconciliation` or `details.reconciliation`, separately from successful receipts.
 
 ### `SIMULATION_FAILED`
 

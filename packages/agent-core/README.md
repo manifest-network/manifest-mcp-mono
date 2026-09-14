@@ -86,7 +86,10 @@ hash adds `details.sent: true`, preventing whole-orchestration replay through
 mutation. `already_inactive` close outcomes carry no inferred submission evidence.
 When a failed blocking teardown converged to terminal state, its optional frozen
 `details.reconciliation` snapshot retains the earlier error non-enumerably and
-actual machine diagnostics separately from the later verification cause. Explicit
+actual machine diagnostics separately from the later verification cause. After
+observed native CheckTx acceptance, inclusion-timeout or lookup failures retain
+the validated hash and `sent: true`, without a transaction code, height or
+confirmation. The original failure remains in the SDK cause chain. Explicit
 `reconciliation.sent: true` adds the outer retry veto. Completed cancel/close deploy
 recovery preserves the same snapshot. Successful `closeLease` verification also
 forwards it through optional `CloseLeaseResult.reconciliation` and `onComplete`;

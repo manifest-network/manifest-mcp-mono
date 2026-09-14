@@ -35,7 +35,9 @@ stay nested. The original teardown error is retained only for SDK inspection and
 is not serialized. Successful `close_lease_orchestrated` results also expose the
 optional machine snapshot in `reconciliation`, matching the declared output
 schema. A hash alone does not establish inclusion; `transactionConfirmed: true`
-records inclusion of that failed attempt. Tool descriptions explain these fields
+records inclusion of that failed attempt. An inclusion-timeout or lookup failure
+after observed native CheckTx acceptance retains `sent: true` and the validated
+hash, with no inferred transaction confirmation, code or height. Tool descriptions explain these fields
 for both close and deploy recovery. See the
 [verification error contract](../../docs/library-usage.md#errors).
 

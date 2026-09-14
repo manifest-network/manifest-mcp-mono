@@ -61,6 +61,22 @@ const config = createValidatedConfig({
 });
 ```
 
+## Broadcast failures after submission
+
+SDK-created signing clients retain a validated transaction hash after their native
+CheckTx broadcast succeeds. If the subsequent inclusion timer or transaction
+lookup fails, `cosmosTx` and `executeTx` report `TX_FAILED` with `details.sent: true`,
+`details.transactionHash`, operation context and a non-enumerable cause chain to
+the original error. Structured cancellation retains `OPERATION_CANCELLED`.
+These errors are not automatically retried. Inspect the transaction before
+submitting another mutation: acceptance does not establish block inclusion or
+execution success, and no confirmation, code or height is inferred.
+
+An arbitrary timeout or claimed `txId` supplies no submission evidence. Errors
+before observed acceptance, invalid returned hashes and custom broadcast methods
+keep their existing behavior. Caller cancellation and SYNC results are unchanged.
+See the [SDK error contract](../../docs/library-usage.md#errors) for reconciliation.
+
 ## SSRF-guarded fetch
 
 Core hosts a shared, SSRF-guarded `fetch` factory (used by the fred and agent-core packages to route provider / off-chain HTTP). It is **Node-only** and exposed via the dedicated subpath export `@manifest-network/manifest-mcp-core/guarded-fetch` -- **not** the package barrel (`index.ts`). Keeping it off the barrel keeps the barrel isomorphic: the guard dynamic-imports `undici` (which transitively pulls in `node:async_hooks`), so re-exporting it from the root would drag Node-only modules into browser / Deno bundle graphs.
