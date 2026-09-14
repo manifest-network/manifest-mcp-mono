@@ -7,6 +7,7 @@
  */
 
 import type {
+  Plan,
   RecoveryOption,
   SkuCandidate,
 } from '@manifest-network/manifest-agent-core';
@@ -62,6 +63,70 @@ function makeSkuCandidates(): SkuCandidate[] {
 // ---------------------------------------------------------------------------
 
 describe('makeDeployCallbacks', () => {
+  it('elicits each newly rendered plan after an edit, including the updated price', async () => {
+    const spec = {
+      image: 'nginx',
+      size: 'small',
+      ports: ['80:80'],
+      storage: 'disk-small',
+    };
+    const elicitInput = vi
+      .fn()
+      .mockResolvedValueOnce({
+        action: 'accept',
+        content: { verdict: 'replace_spec', spec_json: JSON.stringify(spec) },
+      })
+      .mockResolvedValueOnce({
+        action: 'accept',
+        content: { verdict: 'confirm' },
+      });
+    const server = {
+      elicitInput,
+      getClientCapabilities: vi.fn().mockReturnValue({ elicitation: {} }),
+    } as unknown as Server;
+    const callbacks = makeDeployCallbacks({ server, extra: makeExtra() });
+    const plan: Plan = {
+      summary: {
+        format: 'single',
+        serviceCount: 1,
+        portCount: 1,
+        envCount: 0,
+        envKeys: [],
+        images: ['nginx'],
+      },
+      leaseItems: [],
+      readiness: {
+        status: 'ok',
+        reasons: [],
+        suggestedActions: [],
+        walletBalances: [],
+        credits: null,
+        sku: null,
+      },
+      fees: { createLease: { coins: [], gas: 100000 } },
+    };
+    const before = 'DeploymentPlan\n  Recurring total:           2 umfx / hour';
+    const after =
+      'DeploymentPlan\n  Storage item:              disk-small\n  Recurring total:           101 umfx / hour';
+    callbacks.onProgress?.({
+      kind: 'deployment_plan_rendered',
+      block: { text: before },
+    });
+    expect(await callbacks.onPlan?.(plan)).toEqual({
+      kind: 'replace_spec',
+      spec,
+    });
+    callbacks.onProgress?.({
+      kind: 'deployment_plan_rendered',
+      block: { text: after },
+    });
+    expect(await callbacks.onPlan?.(plan)).toBe('confirm');
+    expect(elicitInput.mock.calls.map(([request]) => request.message)).toEqual([
+      before,
+      after,
+    ]);
+  });
+
   describe('elicitation timeout', () => {
     const envName = 'MANIFEST_AGENT_ELICIT_TIMEOUT_MS';
     let original: string | undefined;

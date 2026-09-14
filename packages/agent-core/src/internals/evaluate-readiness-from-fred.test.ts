@@ -1,5 +1,7 @@
+import { asProviderUuid, asSkuUuid } from '@manifest-network/manifest-mcp-core';
 import type { CheckDeploymentReadinessResult } from '@manifest-network/manifest-mcp-fred';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { PlannedLeaseItem } from '../types.js';
 import * as evalMod from './evaluate-readiness.js';
 import { evaluateReadinessFromFredResponse } from './evaluate-readiness-from-fred.js';
 import { EMPTY_DENOM_MAP } from './humanize-denom.js';
@@ -84,9 +86,53 @@ function fredResponse(
   } as CheckDeploymentReadinessResult;
 }
 
+function plannedItemsFor(
+  raw: CheckDeploymentReadinessResult,
+): PlannedLeaseItem[] {
+  return raw.sku
+    ? [
+        {
+          kind: 'compute',
+          quantity: 1,
+          sku: {
+            name: raw.sku.name,
+            skuUuid: asSkuUuid(raw.sku.uuid),
+            providerUuid: asProviderUuid(raw.sku.provider_uuid),
+            active: true,
+            price: raw.sku.price,
+            billingUnit: 'hour',
+          },
+        },
+      ]
+    : [];
+}
+
 describe('evaluateReadinessFromFredResponse — field mapping', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+  });
+
+  it('passes the plan items through independently of the legacy Fred price', () => {
+    const raw = fredResponse();
+    const leaseItems = plannedItemsFor(raw).map((item) => ({
+      ...item,
+      quantity: 3,
+      sku: {
+        ...item.sku,
+        billingUnit: 'day' as const,
+        price: { amount: '48', denom: 'upwr' },
+      },
+    }));
+    evaluateReadinessFromFredResponse(
+      raw,
+      '1umfx',
+      EMPTY_DENOM_MAP,
+      'tenant',
+      leaseItems,
+    );
+    const input = vi.mocked(evalMod.evaluateReadiness).mock.calls[0]?.[0];
+    expect(input?.leaseItems).toBe(leaseItems);
+    expect(input?.sku?.price).toEqual({ amount: '1000', denom: 'umfx' });
   });
 
   it('renames the top-level snake_case fields to camelCase; derives availableSkuNames from available_skus', () => {
@@ -96,6 +142,7 @@ describe('evaluateReadinessFromFredResponse — field mapping', () => {
       '1umfx',
       EMPTY_DENOM_MAP,
       'manifest1context',
+      plannedItemsFor(raw),
     );
     expect(evalMod.evaluateReadiness).toHaveBeenCalledTimes(1);
     const input = vi.mocked(evalMod.evaluateReadiness).mock.calls[0]?.[0];
@@ -110,7 +157,13 @@ describe('evaluateReadinessFromFredResponse — field mapping', () => {
 
   it('renames credits.available_balances and credits.balances to camelCase', () => {
     const raw = fredResponse();
-    evaluateReadinessFromFredResponse(raw, '1umfx', EMPTY_DENOM_MAP, 'tenant');
+    evaluateReadinessFromFredResponse(
+      raw,
+      '1umfx',
+      EMPTY_DENOM_MAP,
+      'tenant',
+      plannedItemsFor(raw),
+    );
     const input = vi.mocked(evalMod.evaluateReadiness).mock.calls[0]?.[0];
     expect(input?.credits?.availableBalances).toEqual([
       { denom: 'umfx', amount: '50000000000' },
@@ -127,7 +180,13 @@ describe('evaluateReadinessFromFredResponse — field mapping', () => {
     const raw = fredResponse({
       current_balance: [{ denom: 'umfx', amount: '12345' }],
     });
-    evaluateReadinessFromFredResponse(raw, '1umfx', EMPTY_DENOM_MAP, 'tenant');
+    evaluateReadinessFromFredResponse(
+      raw,
+      '1umfx',
+      EMPTY_DENOM_MAP,
+      'tenant',
+      plannedItemsFor(raw),
+    );
     const input = vi.mocked(evalMod.evaluateReadiness).mock.calls[0]?.[0];
     expect(input?.credits?.currentBalance).toEqual([
       { denom: 'umfx', amount: '12345' },
@@ -136,14 +195,26 @@ describe('evaluateReadinessFromFredResponse — field mapping', () => {
 
   it('folds top-level `hours_remaining` into `credits.hoursRemaining`', () => {
     const raw = fredResponse({ hours_remaining: '42.7' });
-    evaluateReadinessFromFredResponse(raw, '1umfx', EMPTY_DENOM_MAP, 'tenant');
+    evaluateReadinessFromFredResponse(
+      raw,
+      '1umfx',
+      EMPTY_DENOM_MAP,
+      'tenant',
+      plannedItemsFor(raw),
+    );
     const input = vi.mocked(evalMod.evaluateReadiness).mock.calls[0]?.[0];
     expect(input?.credits?.hoursRemaining).toBe('42.7');
   });
 
   it('passes `credits: null` through unchanged', () => {
     const raw = fredResponse({ credits: null });
-    evaluateReadinessFromFredResponse(raw, '1umfx', EMPTY_DENOM_MAP, 'tenant');
+    evaluateReadinessFromFredResponse(
+      raw,
+      '1umfx',
+      EMPTY_DENOM_MAP,
+      'tenant',
+      plannedItemsFor(raw),
+    );
     const input = vi.mocked(evalMod.evaluateReadiness).mock.calls[0]?.[0];
     expect(input?.credits).toBeNull();
   });
@@ -162,7 +233,13 @@ describe('evaluateReadinessFromFredResponse — field mapping', () => {
         available_balances: [{ denom: 'umfx', amount: '50000000000' }],
       } as unknown as CheckDeploymentReadinessResult['credits'],
     });
-    evaluateReadinessFromFredResponse(raw, '1umfx', EMPTY_DENOM_MAP, 'tenant');
+    evaluateReadinessFromFredResponse(
+      raw,
+      '1umfx',
+      EMPTY_DENOM_MAP,
+      'tenant',
+      plannedItemsFor(raw),
+    );
     const input = vi.mocked(evalMod.evaluateReadiness).mock.calls[0]?.[0];
     expect(input?.credits?.availableBalances).toEqual([
       { denom: 'umfx', amount: '50000000000' },
@@ -181,14 +258,26 @@ describe('evaluateReadinessFromFredResponse — field mapping', () => {
       current_balance: [{ denom: 'umfx', amount: '999' }],
       hours_remaining: '10',
     });
-    evaluateReadinessFromFredResponse(raw, '1umfx', EMPTY_DENOM_MAP, 'tenant');
+    evaluateReadinessFromFredResponse(
+      raw,
+      '1umfx',
+      EMPTY_DENOM_MAP,
+      'tenant',
+      plannedItemsFor(raw),
+    );
     const input = vi.mocked(evalMod.evaluateReadiness).mock.calls[0]?.[0];
     expect(input?.credits).toBeNull();
   });
 
   it('drops fred sku.uuid / sku.provider_uuid / sku.active; keeps name + price', () => {
     const raw = fredResponse();
-    evaluateReadinessFromFredResponse(raw, '1umfx', EMPTY_DENOM_MAP, 'tenant');
+    evaluateReadinessFromFredResponse(
+      raw,
+      '1umfx',
+      EMPTY_DENOM_MAP,
+      'tenant',
+      plannedItemsFor(raw),
+    );
     const input = vi.mocked(evalMod.evaluateReadiness).mock.calls[0]?.[0];
     expect(input?.sku).toEqual({
       name: 'small',
@@ -203,7 +292,13 @@ describe('evaluateReadinessFromFredResponse — field mapping', () => {
 
   it('passes `sku: null` through unchanged', () => {
     const raw = fredResponse({ sku: null });
-    evaluateReadinessFromFredResponse(raw, '1umfx', EMPTY_DENOM_MAP, 'tenant');
+    evaluateReadinessFromFredResponse(
+      raw,
+      '1umfx',
+      EMPTY_DENOM_MAP,
+      'tenant',
+      plannedItemsFor(raw),
+    );
     const input = vi.mocked(evalMod.evaluateReadiness).mock.calls[0]?.[0];
     expect(input?.sku).toBeNull();
   });
@@ -223,7 +318,13 @@ describe('evaluateReadinessFromFredResponse — field mapping', () => {
         // no price
       } as unknown as CheckDeploymentReadinessResult['sku'],
     });
-    evaluateReadinessFromFredResponse(raw, '1umfx', EMPTY_DENOM_MAP, 'tenant');
+    evaluateReadinessFromFredResponse(
+      raw,
+      '1umfx',
+      EMPTY_DENOM_MAP,
+      'tenant',
+      plannedItemsFor(raw),
+    );
     const input = vi.mocked(evalMod.evaluateReadiness).mock.calls[0]?.[0];
     expect(input?.sku).toBeNull();
   });
@@ -239,6 +340,7 @@ describe('evaluateReadinessFromFredResponse — context injection', () => {
       '1umfx',
       EMPTY_DENOM_MAP,
       'manifest1context',
+      plannedItemsFor(raw),
     );
     const input = vi.mocked(evalMod.evaluateReadiness).mock.calls[0]?.[0];
     expect(input?.tenant).toBe('manifest1context');
@@ -252,7 +354,13 @@ describe('evaluateReadinessFromFredResponse — context injection', () => {
         denom === 'umfx' ? { symbol: 'MFX', exponent: 6 } : null,
       raw: null,
     };
-    evaluateReadinessFromFredResponse(raw, '0.37upwr', customMap, 'tenant');
+    evaluateReadinessFromFredResponse(
+      raw,
+      '0.37upwr',
+      customMap,
+      'tenant',
+      plannedItemsFor(raw),
+    );
     const input = vi.mocked(evalMod.evaluateReadiness).mock.calls[0]?.[0];
     expect(input?.gasPrice).toBe('0.37upwr');
     expect(input?.denomMap).toBe(customMap);
@@ -271,6 +379,7 @@ describe('evaluateReadinessFromFredResponse — smoke-integrated through evaluat
       '1umfx',
       EMPTY_DENOM_MAP,
       'manifest1deadbeef',
+      plannedItemsFor(raw),
     );
     expect(out.status).toBe('ok');
     expect(out.reasons).toEqual([]);
@@ -284,6 +393,7 @@ describe('evaluateReadinessFromFredResponse — smoke-integrated through evaluat
       '1umfx',
       EMPTY_DENOM_MAP,
       'manifest1deadbeef',
+      plannedItemsFor(raw),
     );
     expect(out.status).toBe('block');
     expect(out.reasons.length).toBeGreaterThan(0);
@@ -312,6 +422,7 @@ describe('evaluateReadinessFromFredResponse — smoke-integrated through evaluat
       '1umfx',
       EMPTY_DENOM_MAP,
       'manifest1deadbeef',
+      plannedItemsFor(raw),
     );
     expect(out.status).toBe('block');
     expect(out.suggestedActions).toContain('pick_different_sku');
@@ -349,6 +460,7 @@ describe('evaluateReadinessFromFredResponse — ENG-258 sku_candidates forwardin
       '1umfx',
       EMPTY_DENOM_MAP,
       't',
+      plannedItemsFor(raw),
     );
     // SKU gate passes because a candidate matches (not because of a name list).
     expect(r.reasons.join(' ')).not.toMatch(/not currently offered/);
@@ -408,6 +520,7 @@ describe('evaluateReadinessFromFredResponse — FIX-1 end-to-end gate (ENG-258 r
       '1umfx',
       EMPTY_DENOM_MAP,
       'manifest1deadbeef',
+      plannedItemsFor(raw),
     );
 
     // The SKU gate must NOT have fired — resolved name matches candidate.
@@ -457,6 +570,7 @@ describe('evaluateReadinessFromFredResponse — FIX-1 end-to-end gate (ENG-258 r
       '1umfx',
       EMPTY_DENOM_MAP,
       'manifest1deadbeef',
+      plannedItemsFor(raw),
     );
 
     // The SKU gate must have fired — 'small' is not in the candidate list.
@@ -517,6 +631,7 @@ describe('evaluateReadinessFromFredResponse — sku-name union (Copilot #3319670
       '1umfx',
       EMPTY_DENOM_MAP,
       'manifest1deadbeef',
+      plannedItemsFor(raw),
     );
     // The SKU-availability rule must NOT have fired —
     // candidates path found a match for 'docker-xxlarge'.
@@ -554,6 +669,7 @@ describe('evaluateReadinessFromFredResponse — sku-name union (Copilot #3319670
       '1umfx',
       EMPTY_DENOM_MAP,
       'manifest1deadbeef',
+      plannedItemsFor(raw),
     );
     const input = vi.mocked(evalMod.evaluateReadiness).mock.calls[0]?.[0];
     expect(input?.availableSkuNames).toEqual(['small', 'medium']);
@@ -582,6 +698,7 @@ describe('evaluateReadinessFromFredResponse — sku-name union (Copilot #3319670
       '1umfx',
       EMPTY_DENOM_MAP,
       'manifest1deadbeef',
+      plannedItemsFor(raw),
     );
     const input = vi.mocked(evalMod.evaluateReadiness).mock.calls[0]?.[0];
     expect(input?.availableSkuNames).toEqual(['small', 'medium']);

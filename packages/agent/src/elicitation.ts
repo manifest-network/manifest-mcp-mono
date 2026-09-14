@@ -201,7 +201,7 @@ export function buildReplaceSpecSchema(): RequestedSchema {
 
 /**
  * Build the SKU-pick elicitation schema. `enum` is sku uuids; `enumNames`
- * are human labels of the form "<name> @ <providerUuid> (<amount><denom>)".
+ * are human labels of the form "<name> @ <providerUuid> (<amount><denom> / <billing unit>)".
  * The price suffix is omitted when no price is available.
  */
 export function buildSkuPickSchema(
@@ -225,7 +225,7 @@ export function buildSkuPickSchema(
             '(unknown provider)',
           );
           const price = c.price
-            ? ` (${sanitizeForDisplay(`${c.price.amount}${c.price.denom}`, 48)})`
+            ? ` (${sanitizeForDisplay(`${c.price.amount}${c.price.denom}`, 48)} / ${c.billingUnit ?? 'unknown billing unit'})`
             : '';
           return `${name} @ ${provider}${price}`;
         }),

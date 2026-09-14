@@ -892,6 +892,7 @@ describe('AgentMCPServer', () => {
         });
         cb.onProgress?.({ kind: 'deployment_plan_rendered', block: planBlock });
         observedPlanVerdict = await cb.onPlan?.({
+          leaseItems: [],
           summary: {
             format: 'single',
             serviceCount: 1,
@@ -1381,6 +1382,7 @@ describe('AgentMCPServer', () => {
           block: { text: '## Deployment plan body' },
         });
         observedPlanVerdict = await cb.onPlan?.({
+          leaseItems: [],
           summary: {
             format: 'single',
             serviceCount: 1,
@@ -2310,6 +2312,7 @@ describe('AgentMCPServer', () => {
           block: { text: 'plan' },
         });
         await cb.onPlan?.({
+          leaseItems: [],
           summary: {
             format: 'single',
             serviceCount: 1,
@@ -2604,6 +2607,7 @@ describe('AgentMCPServer', () => {
           block: { text: 'plan' },
         });
         observed = await cb.onPlan?.({
+          leaseItems: [],
           summary: {
             format: 'single',
             serviceCount: 1,
@@ -2676,6 +2680,7 @@ describe('AgentMCPServer', () => {
           block: { text: 'plan' },
         });
         const planVerdict = await cb.onPlan?.({
+          leaseItems: [],
           summary: {
             format: 'single',
             serviceCount: 1,

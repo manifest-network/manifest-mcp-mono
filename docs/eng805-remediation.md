@@ -816,3 +816,13 @@ existing test, so it adds no test cases; the full-suite figures above describe
 the previous revision. Fresh CI will validate the pushed revision. All 79 current
 user artifacts are preserved. ENG-805 remains In Progress with 35 checked / 13
 unchecked criteria, including the separate inclusion-timeout follow-up.
+
+PR #229 subsequently advanced the base to 9bfdade, preventing PR CI because of
+adjacent CHANGELOG entries. Merging the base preserves both ENG-944 storage
+pricing and ENG-805 reconciliation; independent review found no lost behavior
+in the overlapping files (98% confidence). The combined revision passes a fresh
+workspace build, TypeScript, Biome and full coverage: **3,983 passed / 17 skipped /
+178 files**, no type errors, **84.76% lines / 84.47% statements / 84.27% branches /
+88.30% functions**, with all configured floors passing. The additional cases
+come from the updated base; PR #228 still contributes 64 regressions. The live
+acceptance result remains a separate PR CI check.

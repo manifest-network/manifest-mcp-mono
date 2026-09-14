@@ -27,6 +27,7 @@ export {
   LeaseState,
   leaseStateToJSON,
 } from '@manifest-network/manifestjs/dist/codegen/liftedinit/billing/v1/types.js';
+export { Unit as SkuUnit } from '@manifest-network/manifestjs/dist/codegen/liftedinit/sku/v1/types.js';
 
 import type {
   Address,

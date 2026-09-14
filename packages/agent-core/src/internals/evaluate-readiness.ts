@@ -1,10 +1,17 @@
-import type { Coin, Readiness, ReadinessAction } from '../types.js';
+import { sanitizeForDisplay } from '@manifest-network/manifest-mcp-core';
+import type {
+  Coin,
+  PlannedLeaseItem,
+  Readiness,
+  ReadinessAction,
+} from '../types.js';
 import {
   type DenomMap,
   denomToSymbol,
   EMPTY_DENOM_MAP,
   humanizeCoin,
 } from './humanize-denom.js';
+import { summarizeRecurringCosts } from './recurring-costs.js';
 
 /**
  * Evaluate `check_deployment_readiness` MCP response data into the frozen
@@ -77,6 +84,8 @@ export interface EvaluateReadinessInputs {
   } | null;
   /** Chosen SKU + price, or `null` when no size selected. */
   sku: { name: string; price: Coin } | null;
+  /** Resolved create-lease items, including storage and every service quantity. */
+  leaseItems: readonly PlannedLeaseItem[];
   /** All active SKU names the chain currently advertises. */
   availableSkuNames: string[];
   /**
@@ -218,16 +227,14 @@ export function evaluateReadiness(inputs: EvaluateReadinessInputs): Readiness {
   // the credit source produces a false "Credit account is empty" warning.
   // Mirror the CJS precedence: availableBalances → balances → currentBalance.
   const credits = inputs.credits;
+  const { unit, totals, unpricedItemCount } = summarizeRecurringCosts(
+    inputs.leaseItems,
+  );
   if (credits === null) {
     if (status === 'ok') status = 'warn';
-    reasons.push('No credit account funded for compute leases.');
+    reasons.push('No credit account funded for deployment lease items.');
     actions.add('fund_credit');
-  } else if (
-    inputs.sku !== null &&
-    inputs.sku.price.amount.length > 0 &&
-    inputs.sku.price.denom.length > 0
-  ) {
-    const skuPrice = inputs.sku.price;
+  } else {
     const creditBalances: Coin[] = Array.isArray(credits.availableBalances)
       ? credits.availableBalances
       : Array.isArray(credits.balances)
@@ -235,63 +242,63 @@ export function evaluateReadiness(inputs: EvaluateReadinessInputs): Readiness {
         : Array.isArray(credits.currentBalance)
           ? credits.currentBalance
           : [];
-    const creditEntry = creditBalances.find((b) => b.denom === skuPrice.denom);
-    const pricePerHour = asBigInt(skuPrice.amount);
-    if (creditEntry === undefined) {
-      // The credit account has NO entry in the SKU's price denom. Distinct
-      // from "credits ran out" — usually means credits are funded in a
-      // different denom than the SKU charges in. Emit a specific
-      // diagnostic so the user knows to fund_credit in the right denom
-      // rather than seeing a false "0 hours of runtime" warning.
-      const fundedDenoms = creditBalances
-        .map((b) => b.denom)
-        .filter((d): d is string => typeof d === 'string' && d.length > 0);
-      const skuSymbol = denomToSymbol(skuPrice.denom, denomMap);
-      const fundedSymbols = fundedDenoms.map((d) => denomToSymbol(d, denomMap));
-      if (status === 'ok') status = 'warn';
-      reasons.push(
-        fundedDenoms.length > 0
-          ? `Credit account has no ${skuSymbol} balance (the ${inputs.sku.name} SKU charges in ${skuSymbol}; account holds ${fundedSymbols.join(
-              ', ',
-            )}). Fund ${skuSymbol} credits before deploying.`
-          : `Credit account is empty for the ${inputs.sku.name} SKU's ${skuSymbol} denom. Fund ${skuSymbol} credits before deploying.`,
-      );
-      actions.add('fund_credit');
-    } else if (pricePerHour > 0n) {
-      const creditAmount = asBigInt(creditEntry.amount);
-      // Convert via Number for the human-readable hours figure. Credit
-      // amounts are in the chain's smallest unit and bounded well below
-      // Number.MAX_SAFE_INTEGER for any realistic balance.
-      const hrsForThisSku = Number(creditAmount) / Number(pricePerHour);
-      if (hrsForThisSku < HOURS_REMAINING_WARN_FLOOR) {
+    for (const { denom, amount } of totals) {
+      if (amount === 0n) continue;
+      const creditEntry = creditBalances.find((b) => b.denom === denom);
+      const symbol = sanitizeForDisplay(denomToSymbol(denom, denomMap));
+      if (creditEntry === undefined) {
+        const fundedSymbols = creditBalances.map((b) =>
+          sanitizeForDisplay(denomToSymbol(b.denom, denomMap)),
+        );
         if (status === 'ok') status = 'warn';
         reasons.push(
-          `Credits cover ~${hrsForThisSku.toFixed(1)}h of runtime at the ${inputs.sku.name} SKU (${humanizeCoin(
-            creditAmount.toString(),
-            skuPrice.denom,
-            denomMap,
-          )} / ${humanizeCoin(
-            pricePerHour.toString(),
-            skuPrice.denom,
-            denomMap,
-          )} per hour); below the ${HOURS_REMAINING_WARN_FLOOR}h floor.`,
+          fundedSymbols.length > 0
+            ? `Credit account has no ${symbol} balance (this deployment charges in ${symbol}; account holds ${fundedSymbols.join(', ')}). Fund ${symbol} credits before deploying.`
+            : `Credit account is empty for this deployment's ${symbol} denom. Fund ${symbol} credits before deploying.`,
+        );
+        actions.add('fund_credit');
+        continue;
+      }
+      const balance = asBigInt(creditEntry.amount);
+      const creditAmount = balance > 0n ? balance : 0n;
+      const hoursPerPeriod = unit === 'day' ? 24n : 1n;
+      // Compare in integer units before rounding the display. This keeps
+      // the 24h boundary exact even for amounts above Number.MAX_SAFE_INTEGER.
+      if (
+        creditAmount * hoursPerPeriod <
+        amount * BigInt(HOURS_REMAINING_WARN_FLOOR)
+      ) {
+        const tenths =
+          (creditAmount * hoursPerPeriod * 10n + amount / 2n) / amount;
+        const hours = `${tenths / 10n}.${tenths % 10n}`;
+        if (status === 'ok') status = 'warn';
+        reasons.push(
+          `Credits cover ~${hours}h of runtime for this deployment (${sanitizeForDisplay(humanizeCoin(creditAmount.toString(), denom, denomMap))} / ${sanitizeForDisplay(humanizeCoin(amount.toString(), denom, denomMap))} per ${unit}); below the ${HOURS_REMAINING_WARN_FLOOR}h floor.`,
         );
         actions.add('fund_credit');
       }
     }
-  } else if (credits.hoursRemaining !== undefined) {
-    // Fallback for cases where SKU pricing is not available (e.g. caller
-    // didn't pass --size). Use the chain's hoursRemaining but ONLY warn
-    // when it's a meaningful positive number below the floor — `0` here
-    // means "no current burn", not "low credits".
-    const hrs = Number(credits.hoursRemaining);
-    if (Number.isFinite(hrs) && hrs > 0 && hrs < HOURS_REMAINING_WARN_FLOOR) {
-      if (status === 'ok') status = 'warn';
-      reasons.push(
-        `Credits cover ~${hrs.toFixed(1)}h of runtime at the current burn rate; below the ${HOURS_REMAINING_WARN_FLOOR}h floor.`,
-      );
-      actions.add('fund_credit');
+    // With no selected lease items, the current burn rate remains a useful
+    // fallback. Never substitute it for an unpriced prospective deployment.
+    if (
+      inputs.leaseItems.length === 0 &&
+      credits.hoursRemaining !== undefined
+    ) {
+      const hrs = Number(credits.hoursRemaining);
+      if (Number.isFinite(hrs) && hrs > 0 && hrs < HOURS_REMAINING_WARN_FLOOR) {
+        if (status === 'ok') status = 'warn';
+        reasons.push(
+          `Credits cover ~${hrs.toFixed(1)}h of runtime at the current burn rate; below the ${HOURS_REMAINING_WARN_FLOOR}h floor.`,
+        );
+        actions.add('fund_credit');
+      }
     }
+  }
+  if (unpricedItemCount > 0) {
+    if (status === 'ok') status = 'warn';
+    reasons.push(
+      `Cannot fully estimate deployment runtime: ${unpricedItemCount} lease ${unpricedItemCount === 1 ? 'item has' : 'items have'} an unknown price or billing unit.`,
+    );
   }
 
   // --- Map input shape into the frozen `Readiness` carrier fields ---

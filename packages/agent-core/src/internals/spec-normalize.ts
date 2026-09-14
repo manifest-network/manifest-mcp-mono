@@ -176,6 +176,15 @@ export function validateSpec(spec: unknown): void {
   }
   const record = spec as unknown as Record<string, unknown>;
 
+  if (
+    record.storage !== undefined &&
+    (typeof record.storage !== 'string' || record.storage.trim().length === 0)
+  ) {
+    throw new TypeError(
+      'validateSpec: `storage` must be a non-empty string or absent.',
+    );
+  }
+
   // Mutual-exclusion gate uses KEY presence (not value validity). This
   // closes the bypass where a caller supplies a malformed `image` value
   // (empty string, number, null) alongside a valid `services` map: the
