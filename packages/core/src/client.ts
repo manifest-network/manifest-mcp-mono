@@ -171,7 +171,7 @@ export class CosmosClientManager {
   private readonly txSequenceCache: SequenceCache;
   private readonly pendingBroadcasts = new Set<Promise<unknown>>();
 
-  /** Per-instance logger for the 3 init-time diagnostics. Defaults to noopLogger (silent); see setLogger. */
+  /** Per-instance logger for initialization diagnostics. Defaults to noopLogger (silent); see setLogger. */
   private logger: Logger = noopLogger;
 
   // Number of live holders (servers) sharing this instance. Each getInstance

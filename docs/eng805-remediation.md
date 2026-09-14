@@ -864,10 +864,12 @@ Caller cancellation retains its existing precedence and conservative sent flag;
 its prompt response does not wait for the later inclusion result to acquire a hash.
 
 Initial boundary and test review found no remaining blocker in this slice
-(98–99% confidence). Validation caught and corrected an untyped test receiver and
-an inferred mock declaration that referenced an undeclared transitive package;
-the disconnect mock received an explicit callable type without adding a dependency. The
-shared transaction test helper also uses a consistent promise return type. A
+(98–99% confidence). Validation caught and corrected an untyped test receiver.
+The bare disconnect mock inferred Vitest's `Procedure`, creating an undeclared
+`@vitest/spy` reference; an explicit callable type removed that reference without
+adding a dependency. The separately vendored Comet/protobuf declarations remained
+until the PR #230 review correction below. The shared transaction test helper
+also uses a consistent promise return type. A
 legacy total Stargate mock was updated to preserve native exports; its 59 tests
 pass again. Documentation review narrowed the SDK's raw-error exclusion to
 failures before observed acceptance (99% confidence in that documentation gap).
@@ -917,3 +919,30 @@ ENG-952 and ENG-953 are separate Backlog child issues with acceptance criteria.
 The existing tracker remains In Progress with 37 checked / 11 unchecked criteria;
 these two additional child issues remain open alongside those eleven criteria.
 PR #230 remains open and unreleased.
+
+### PR #230 second review — 2026-09-14
+
+[The re-review](https://github.com/manifest-network/manifest-mcp-mono/pull/230#issuecomment-5669869001)
+verified the prior five fixes and identified the following remaining details.
+
+| Finding | Disposition and evidence | Confidence |
+| --- | --- | --- |
+| Manager warnings are silent in MCP servers | All five server constructors now attach their existing leveled stderr logger before client initialization. A real-manager regression fails for all five warning cases before the wiring; silent-level controls remain silent. The README also qualifies behavior for SDK consumers without a logger. | 100% missing wiring; 99% correction |
+| Fixture attribute types span incompatible protocol generations | Use Comet38 string attributes and privately check the local RPC mocks against the real Comet method types with `satisfies`. An in-memory compiler mutation restoring the broader union fails at that check; current source has no diagnostics. | 100% |
+| Initialization comments contain stale diagnostic counts | Describe their purpose without brittle numeric counts. | 100% |
+| Signal-state assertion cannot detect a production regression | Remove it; retain the assertion that the actual rate-limit acquisition receives the caller's signal. | 100% |
+| Historical declaration fixes remain ambiguous | Separate the earlier `@vitest/spy` reference from later vendored Comet/protobuf files. Original logs show the former disappearing while the 375-file tarball remains unchanged, so the claim that disconnect was never involved is incorrect. | 99% historical attribution |
+| Owned/public tests miss hidden inclusion fields | Explicitly assert absence of generic and qualified inclusion fields on both error layers. Separate hidden `confirmed` and `transactionHeight` mutations each fail the selected owned, `cosmosTx` and `executeTx` controls. | 100% demonstrated coverage gap |
+
+The constructor regression uses the real manager and native signing client with
+only its connection replaced; it checks warning delivery, silent-level behavior,
+single initialization and absence of signing/broadcasting. Public error tests
+continue to check the original cause and sparse submission evidence. Full
+validation and PR CI results are recorded on the PR and in Linear. ENG-952 and
+ENG-953 remain separate; no cancellation or retry policy changes are included.
+
+Focused validation passes 261 server/logger tests and 35 owned/public error
+tests. Fresh declarations retain Comet38 string attributes, import only declared
+dependencies and contain no vendored `node_modules` files. Workspace build,
+E2E types, formatting, architecture, package integrity and bundle gates pass;
+the full coverage and fresh CI results are recorded with the review response.

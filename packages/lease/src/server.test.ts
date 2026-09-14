@@ -32,6 +32,7 @@ vi.mock('@manifest-network/manifest-mcp-core', async (importOriginal) => {
     ...actual,
     CosmosClientManager: {
       getInstance: vi.fn().mockReturnValue({
+        setLogger: vi.fn(),
         disconnect: vi.fn(),
         getQueryClient: vi.fn().mockResolvedValue({
           liftedinit: {

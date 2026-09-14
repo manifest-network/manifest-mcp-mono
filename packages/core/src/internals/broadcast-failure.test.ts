@@ -8,6 +8,22 @@ import {
 } from './broadcast-failure.js';
 import { type SequenceCache, sequencedSigningClient } from './tx-sequence.js';
 
+function expectNoInclusionFields(error: unknown) {
+  if (!(error instanceof ManifestMCPError))
+    throw new Error('expected a structured broadcast failure');
+  // Property presence matters to SDK callers even when JSON/equality omits it.
+  for (const field of [
+    'confirmed',
+    'code',
+    'height',
+    'transactionConfirmed',
+    'transactionCode',
+    'transactionHeight',
+  ]) {
+    expect(error.details).not.toHaveProperty(field);
+  }
+}
+
 beforeEach(() => vi.useFakeTimers());
 afterEach(() => {
   vi.clearAllTimers();
@@ -45,6 +61,7 @@ describe('owned inclusion-timeout receiver and provenance boundaries', () => {
       code: ManifestMCPErrorCode.TX_FAILED,
       details: { sent: true, transactionHash: f.hash },
     });
+    expectNoInclusionFields(error);
     expect(sequences).toEqual([8]);
     expect(committedSequence).not.toHaveBeenCalled();
     expect(cache.has(f.sender)).toBe(false);
@@ -85,6 +102,7 @@ describe('owned inclusion-timeout receiver and provenance boundaries', () => {
       if (!isOwnedBroadcastFailure(error))
         throw new Error('expected owned timeout');
       expect(error.details).toEqual({ sent: true, transactionHash: hash });
+      expectNoInclusionFields(error);
       expect(
         Object.getOwnPropertyDescriptor(error, 'cause')?.value,
       ).toMatchObject({ txId: hash });
@@ -113,7 +131,9 @@ describe('owned inclusion-timeout receiver and provenance boundaries', () => {
       .broadcastTx(Uint8Array.of(2), 1, 2)
       .catch((error: unknown) => error);
     await vi.advanceTimersByTimeAsync(2);
-    expect(isOwnedBroadcastFailure(await first)).toBe(true);
+    const acceptedFailure = await first;
+    expect(isOwnedBroadcastFailure(acceptedFailure)).toBe(true);
+    expectNoInclusionFields(acceptedFailure);
     expect(await second).toBe(delegated);
     expect(isOwnedBroadcastFailure(delegated)).toBe(false);
     expect(f.comet.txSearchAll).toHaveBeenCalledOnce();
@@ -135,6 +155,7 @@ describe('owned inclusion-timeout receiver and provenance boundaries', () => {
     if (!isOwnedBroadcastFailure(error))
       throw new Error('expected accepted broadcast failure');
     expect(error.details).toEqual({ sent: true, transactionHash: f.hash });
+    expectNoInclusionFields(error);
     expect(Object.getOwnPropertyDescriptor(error, 'cause')?.value).toBe(
       delegated,
     );
@@ -213,7 +234,9 @@ describe('owned inclusion-timeout receiver and provenance boundaries', () => {
       .broadcastTx(Uint8Array.of(1), 1, 2)
       .catch((error: unknown) => error);
     await vi.advanceTimersByTimeAsync(2);
-    expect(isOwnedBroadcastFailure(await pending)).toBe(true);
+    const error = await pending;
+    expect(isOwnedBroadcastFailure(error)).toBe(true);
+    expectNoInclusionFields(error);
     expect(receivers).toHaveLength(1);
     expect(receivers[0]).toBe(f.client);
   });
@@ -298,6 +321,7 @@ describe('owned inclusion-timeout receiver and provenance boundaries', () => {
       expect(error.code).toBe(code);
       expect(error.message).toBe(message);
       expect(error.details).toEqual({ sent: true, transactionHash: f.hash });
+      expectNoInclusionFields(error);
       const cause = Object.getOwnPropertyDescriptor(error, 'cause');
       expect(cause?.value).toBe(original);
       expect(cause?.enumerable).toBe(false);

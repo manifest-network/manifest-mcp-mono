@@ -31,6 +31,7 @@ vi.mock('@manifest-network/manifest-mcp-core', async () => {
     typeof import('@manifest-network/manifest-mcp-core')
   >('@manifest-network/manifest-mcp-core');
   const clientManager = {
+    setLogger: vi.fn(),
     disconnect: vi.fn(),
     getQueryClient: vi.fn().mockResolvedValue({}),
     getSigningClient: vi.fn().mockResolvedValue({}),

@@ -12,6 +12,7 @@ import {
   getAvailableModules,
   getModuleSubcommands,
   jsonResponse,
+  logger,
   type ManifestMCPServerOptions,
   type MnemonicServerConfig,
   manifestMeta,
@@ -59,6 +60,7 @@ export class ChainMCPServer {
       config,
       this.walletProvider,
     );
+    this.clientManager.setLogger(logger);
 
     this.mcpServer = new McpServer(
       {

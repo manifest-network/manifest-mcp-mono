@@ -25,8 +25,8 @@ interface FixtureTxData {
   readonly events: readonly {
     readonly type: string;
     readonly attributes: readonly {
-      readonly key: string | Uint8Array;
-      readonly value: string | Uint8Array;
+      readonly key: string;
+      readonly value: string;
     }[];
   }[];
   readonly gasUsed: bigint;
@@ -119,10 +119,14 @@ export async function makeInclusionTimeoutFixture(
       throw new Error('Unexpected real signing in inclusion-timeout fixture');
     }),
   } satisfies OfflineSigner;
-  // A deliberately partial Comet wire: every production method exercised here
-  // is present, while unexpected transport use fails instead of reaching a node.
+  // Check the local string-attribute contracts against the real Comet methods
+  // without exposing their protocol union in the fixture's declaration. Other
+  // wire methods are deliberately partial; unexpected use cannot reach a node.
   const client = await SigningStargateClient.createWithSigner(
-    comet as unknown as CometClient,
+    comet satisfies Pick<
+      CometClient,
+      'broadcastTxSync' | 'txSearchAll'
+    > as unknown as CometClient,
     signer,
     {
       broadcastTimeoutMs: options.timeoutMs ?? 1,

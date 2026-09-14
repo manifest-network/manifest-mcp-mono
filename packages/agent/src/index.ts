@@ -50,6 +50,7 @@ import {
   CosmosClientManager,
   createMnemonicServer,
   createValidatedConfig,
+  logger,
   ManifestMCPError,
   ManifestMCPErrorCode,
   type ManifestMCPServerOptions,
@@ -178,6 +179,7 @@ export class AgentMCPServer {
       config,
       this.walletProvider,
     );
+    this.clientManager.setLogger(logger);
 
     this.orchestrators = {
       deployApp: options.orchestrators?.deployApp ?? realDeployApp,

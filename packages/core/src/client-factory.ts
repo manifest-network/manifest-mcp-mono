@@ -156,7 +156,7 @@ export async function buildClient(
     // explicit injection after the required ctx.fetch slot has materialized both as a function.
     const fetch = opts.fetch ?? createClientDefaultFetch();
     const logger = opts.logger ?? noopLogger;
-    chain.setLogger(logger); // route the manager's 2 init diagnostics to the per-ctx logger (OI-LOG)
+    chain.setLogger(logger); // route manager initialization diagnostics to the per-ctx logger (OI-LOG)
     // Await the query client ONCE so ctx.query is concrete (the await-once-then-read Cosmos idiom).
     const query = await chain.getQueryClient();
 

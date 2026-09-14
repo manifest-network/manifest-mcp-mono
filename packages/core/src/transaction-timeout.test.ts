@@ -80,6 +80,23 @@ function ownCause(error: unknown): unknown {
     : undefined;
 }
 
+function expectNoInclusionFields(error: unknown) {
+  if (!(error instanceof ManifestMCPError))
+    throw new Error('expected a structured broadcast failure');
+  // Deep equality ignores non-enumerable fields and keys holding undefined.
+  // SDK callers can still observe them, so absence is part of this contract.
+  for (const field of [
+    'confirmed',
+    'code',
+    'height',
+    'transactionConfirmed',
+    'transactionCode',
+    'transactionHeight',
+  ]) {
+    expect(error.details).not.toHaveProperty(field);
+  }
+}
+
 beforeEach(() => vi.useFakeTimers());
 afterEach(() => {
   vi.clearAllTimers();
@@ -119,7 +136,6 @@ it('cosmosTx composes the active-signal guard, cached sequence and owned broadca
   await vi.advanceTimersByTimeAsync(20);
   const error = await pending;
 
-  expect(controller.signal.aborted).toBe(false);
   expect(f.chain.acquireRateLimit).toHaveBeenCalledExactlyOnceWith(
     controller.signal,
   );
@@ -135,9 +151,11 @@ it('cosmosTx composes the active-signal guard, cached sequence and owned broadca
     transactionHash: f.hash,
     ...f.context,
   });
+  expectNoInclusionFields(error);
   const owned = ownCause(error);
   expect(owned).toBe(f.broadcastError());
   expect(isOwnedBroadcastFailure(owned)).toBe(true);
+  expectNoInclusionFields(owned);
   expect(ownCause(owned)).toBeInstanceOf(TimeoutError);
   expect(ownCause(owned)).toMatchObject({ txId: f.hash });
   expect(Object.getOwnPropertyDescriptor(error, 'cause')).toMatchObject({
@@ -183,6 +201,8 @@ describe.each<EntryPoint>(['cosmosTx', 'executeTx'])(
         transactionHash: f.hash,
         ...f.context,
       });
+      expectNoInclusionFields(error);
+      expectNoInclusionFields(f.broadcastError());
       expect(ownCause(error)).toBe(f.broadcastError());
       const timeout = ownCause(f.broadcastError());
       expect(timeout).toBeInstanceOf(TimeoutError);
@@ -220,6 +240,9 @@ describe.each<EntryPoint>(['cosmosTx', 'executeTx'])(
             confirmed: true,
             code: 0,
             height: '999',
+            transactionConfirmed: true,
+            transactionCode: 0,
+            transactionHeight: '999',
           },
         ),
       );
@@ -233,6 +256,8 @@ describe.each<EntryPoint>(['cosmosTx', 'executeTx'])(
         transactionHash: f.hash,
         ...f.context,
       });
+      expectNoInclusionFields(error);
+      expectNoInclusionFields(f.broadcastError());
       expect(ownCause(error)).toBe(f.broadcastError());
       expect(ownCause(f.broadcastError())).toBe(lookupError);
       expect(f.comet.broadcastTxSync).toHaveBeenCalledOnce();
@@ -257,6 +282,8 @@ describe.each<EntryPoint>(['cosmosTx', 'executeTx'])(
         transactionHash: f.hash,
         ...f.context,
       });
+      expectNoInclusionFields(error);
+      expectNoInclusionFields(f.broadcastError());
       expect(ownCause(f.broadcastError())).toBe(cancellation);
       expect(f.comet.broadcastTxSync).toHaveBeenCalledOnce();
     });
@@ -290,6 +317,8 @@ describe.each<EntryPoint>(['cosmosTx', 'executeTx'])(
           transactionHash: f.hash,
           ...f.context,
         });
+        expectNoInclusionFields(error);
+        expectNoInclusionFields(ownCause(error));
         expect(ownCause(ownCause(error))).toBe(hostile);
         expect(f.comet.broadcastTxSync).toHaveBeenCalledOnce();
       },

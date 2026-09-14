@@ -9,6 +9,7 @@ import {
   CosmosClientManager,
   createMnemonicServer,
   createValidatedConfig,
+  logger,
   type ManifestMCPServerOptions,
   type MnemonicServerConfig,
   parseBooleanEnv,
@@ -37,6 +38,7 @@ export class FredMCPServer {
       config,
       this.walletProvider,
     );
+    this.clientManager.setLogger(logger);
     this.authTokens = new AuthTokenService(this.walletProvider);
 
     this.mcpServer = new McpServer(

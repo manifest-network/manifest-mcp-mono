@@ -75,8 +75,10 @@ execution success, and no confirmation, code or height is inferred.
 An arbitrary timeout or claimed `txId` supplies no submission evidence. Errors
 before observed acceptance, invalid returned hashes and custom broadcast methods
 keep their existing behavior. Caller cancellation and SYNC results are unchanged.
-Initialization logs a warning if unsupported signing-client broadcast methods
-prevent the guard from installing; failures may then lack submission diagnostics.
+With a configured logger, initialization warns if unsupported signing-client
+broadcast methods prevent the guard from installing; failures may then lack
+submission diagnostics. MCP servers use their leveled stderr logger; SDK consumers
+can supply `opts.logger`, and the default no-op logger remains silent.
 See the [SDK error contract](../../docs/library-usage.md#errors) for reconciliation.
 
 ## SSRF-guarded fetch
