@@ -61,9 +61,10 @@ export const logger = {
 /**
  * Public, injectable logging port for SDK consumers. STRUCTURAL — compatible with
  * `console`, pino, winston, tslog, and `@smithy/types` Logger. `trace` is optional;
- * SDK code calls it only via `ctx.logger.trace?.(…)`. The SDK applies its own level
- * gate before dispatching; the sink is this injected logger. Per-instance, never
- * process-global (unlike the internal `logger` singleton above).
+ * SDK code calls it only via `ctx.logger.trace?.(…)`. Injected sinks control their
+ * own levels; the SDK's `logLevel` option is currently a placeholder. SDK contexts retain
+ * their own sink; shared-manager initialization diagnostics follow `setLogger`'s
+ * last non-noop sink policy, including when an MCP server attaches the singleton above.
  */
 export interface Logger {
   trace?(...args: unknown[]): void;

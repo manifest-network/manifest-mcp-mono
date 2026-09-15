@@ -10,6 +10,14 @@ import { type Mock, vi } from 'vitest';
 import { installBroadcastFailureGuard } from '../internals/broadcast-failure.js';
 
 type CometClient = Parameters<typeof SigningStargateClient.createWithSigner>[0];
+// In the pinned client union, only Comet 0.38's commit response has txResult.
+// Select that concrete member through our declared stargate dependency.
+type Comet38Member<Client extends CometClient> = Client extends CometClient
+  ? 'txResult' extends keyof Awaited<ReturnType<Client['broadcastTxCommit']>>
+    ? Client
+    : never
+  : never;
+type Comet38Client = Comet38Member<CometClient>;
 type OfflineSigner = Parameters<
   typeof SigningStargateClient.createWithSigner
 >[1];
@@ -119,12 +127,12 @@ export async function makeInclusionTimeoutFixture(
       throw new Error('Unexpected real signing in inclusion-timeout fixture');
     }),
   } satisfies OfflineSigner;
-  // Check the local string-attribute contracts against the real Comet methods
-  // without exposing their protocol union in the fixture's declaration. Other
-  // wire methods are deliberately partial; unexpected use cannot reach a node.
+  // Check broadcastTxSync and txSearchAll against Comet 0.38, whose event
+  // attributes are strings, without leaking protocol types into declarations.
+  // Other wire methods are deliberately partial; no mock can reach a node.
   const client = await SigningStargateClient.createWithSigner(
     comet satisfies Pick<
-      CometClient,
+      Comet38Client,
       'broadcastTxSync' | 'txSearchAll'
     > as unknown as CometClient,
     signer,

@@ -54,7 +54,12 @@ interface BaseClientOptions {
    * still use Axios, and RPC connections use CosmJS; this option does not configure either transport.
    */
   chainIdentityFetch?: typeof globalThis.fetch;
-  /** Per-instance logging sink; defaults to the silent `noopLogger`. */
+  /**
+   * Per-client logging sink; defaults to the silent `noopLogger`. Manager initialization
+   * diagnostics are shared by compatible clients/servers: the last non-noopLogger sink wins,
+   * and disposing a holder does not restore its predecessor. Use distinct wallet-provider
+   * adapters when initialization diagnostics need independent sinks.
+   */
   logger?: Logger;
   /** @beta — carried for the later SDK-side level gate; the gate is NOT built in 4b. */
   logLevel?: LogLevel;
@@ -156,7 +161,7 @@ export async function buildClient(
     // explicit injection after the required ctx.fetch slot has materialized both as a function.
     const fetch = opts.fetch ?? createClientDefaultFetch();
     const logger = opts.logger ?? noopLogger;
-    chain.setLogger(logger); // route manager initialization diagnostics to the per-ctx logger (OI-LOG)
+    chain.setLogger(logger); // configure shared manager diagnostics when a non-default sink is supplied
     // Await the query client ONCE so ctx.query is concrete (the await-once-then-read Cosmos idiom).
     const query = await chain.getQueryClient();
 

@@ -226,6 +226,11 @@ Set `COSMOS_RPC_URL` + `COSMOS_GAS_PRICE` for full access (queries + transaction
 
 `COSMOS_CHAIN_ID` and at least one endpoint URL are only required when starting an MCP server, not for `keygen` or `import`.
 
+Server logs use stderr; stdout carries MCP messages. Environment loading suppresses
+dotenv's default startup banner. Leave `DOTENV_CONFIG_DEBUG` and
+`DOTENV_CONFIG_QUIET` unset: those upstream overrides can re-enable dotenv output
+on stdout independently of `LOG_LEVEL`.
+
 ## Chain server tools (6, +1 optional)
 
 | Tool | Description |

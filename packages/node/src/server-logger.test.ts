@@ -67,7 +67,9 @@ describe.each(SERVERS)('$name server manager diagnostics', ({ create }) => {
     async (level) => {
       const fixture = await makeInclusionTimeoutFixture();
       // Use the fixture's real signing class without adding a transitive package
-      // import to node. Replace only the connection: no socket or signing occurs.
+      // import to node. Redirect the connection to its mocked signing/Comet wire;
+      // the broadcastTx spy below separately forces an unsupported method identity.
+      // Initialization does not invoke signing or broadcast, and opens no socket.
       const signingClass = fixture.client.constructor;
       const connection = Object.getOwnPropertyDescriptor(
         signingClass,
@@ -87,8 +89,10 @@ describe.each(SERVERS)('$name server manager diagnostics', ({ create }) => {
       // A method override is a real unsupported-guard condition. Keep the real
       // manager initialization and its warning instead of mocking setLogger.
       const broadcast = vi.spyOn(fixture.client, 'broadcastTx');
+      const warn = vi.spyOn(logger, 'warn');
       const stderr = vi.spyOn(console, 'error').mockImplementation(() => {});
-      const stdout = vi.spyOn(console, 'log').mockImplementation(() => {});
+      const consoleLog = vi.spyOn(console, 'log').mockImplementation(() => {});
+      const stdout = vi.spyOn(process.stdout, 'write').mockReturnValue(true);
       logger.setLevel(level);
       server = create({
         config: makeMockConfig({ chainId: fixture.chainId }),
@@ -102,15 +106,18 @@ describe.each(SERVERS)('$name server manager diagnostics', ({ create }) => {
       await expect(manager.getSigningClient()).resolves.toBe(fixture.client);
       await expect(manager.getSigningClient()).resolves.toBe(fixture.client);
 
+      // Both levels must reach the real shared logger through this manager.
+      // Silence is a level decision, not proof by absence from an unbound sink.
+      const warning =
+        'Broadcast failure guard could not be installed: signing client broadcast methods differ from the supported native implementation. ' +
+        'Failures after submission may omit sent and transactionHash diagnostics.';
+      expect(warn).toHaveBeenCalledExactlyOnceWith(warning);
       if (level === 'warn') {
-        expect(stderr).toHaveBeenCalledExactlyOnceWith(
-          '[WARN]',
-          'Broadcast failure guard could not be installed: signing client broadcast methods differ from the supported native implementation. ' +
-            'Failures after submission may omit sent and transactionHash diagnostics.',
-        );
+        expect(stderr).toHaveBeenCalledExactlyOnceWith('[WARN]', warning);
       } else {
         expect(stderr).not.toHaveBeenCalled();
       }
+      expect(consoleLog).not.toHaveBeenCalled();
       expect(stdout).not.toHaveBeenCalled();
       expect(connect).toHaveBeenCalledOnce();
       expect(fixture.comet.status).toHaveBeenCalledOnce();

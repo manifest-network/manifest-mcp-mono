@@ -870,7 +870,7 @@ The bare disconnect mock inferred Vitest's `Procedure`, creating an undeclared
 adding a dependency. The separately vendored Comet/protobuf declarations remained
 until the PR #230 review correction below. The shared transaction test helper
 also uses a consistent promise return type. A
-legacy total Stargate mock was updated to preserve native exports; its 59 tests
+legacy total Stargate mock was updated to preserve native exports; its then-59 tests
 pass again. Documentation review narrowed the SDK's raw-error exclusion to
 failures before observed acceptance (99% confidence in that documentation gap).
 
@@ -928,14 +928,15 @@ verified the prior five fixes and identified the following remaining details.
 | Finding | Disposition and evidence | Confidence |
 | --- | --- | --- |
 | Manager warnings are silent in MCP servers | All five server constructors now attach their existing leveled stderr logger before client initialization. A real-manager regression fails for all five warning cases before the wiring; silent-level controls remain silent. The README also qualifies behavior for SDK consumers without a logger. | 100% missing wiring; 99% correction |
-| Fixture attribute types span incompatible protocol generations | Use Comet38 string attributes and privately check the local RPC mocks against the real Comet method types with `satisfies`. An in-memory compiler mutation restoring the broader union fails at that check; current source has no diagnostics. | 100% |
+| Fixture attribute types span incompatible protocol generations | Use Comet38 string attributes and privately check `broadcastTxSync` and `txSearchAll` against the accepted Comet client union with `satisfies`; `status` and `disconnect` remain partial. An in-memory compiler mutation restoring the broader attribute union fails at that check. The next review narrows the check to one protocol generation. | 100% |
 | Initialization comments contain stale diagnostic counts | Describe their purpose without brittle numeric counts. | 100% |
 | Signal-state assertion cannot detect a production regression | Remove it; retain the assertion that the actual rate-limit acquisition receives the caller's signal. | 100% |
 | Historical declaration fixes remain ambiguous | Separate the earlier `@vitest/spy` reference from later vendored Comet/protobuf files. Original logs show the former disappearing while the 375-file tarball remains unchanged, so the claim that disconnect was never involved is incorrect. | 99% historical attribution |
 | Owned/public tests miss hidden inclusion fields | Explicitly assert absence of generic and qualified inclusion fields on both error layers. Separate hidden `confirmed` and `transactionHeight` mutations each fail the selected owned, `cosmosTx` and `executeTx` controls. | 100% demonstrated coverage gap |
 
 The constructor regression uses the real manager and native signing client with
-only its connection replaced; it checks warning delivery, silent-level behavior,
+its connection replaced and a `broadcastTx` spy that makes guard installation
+unsupported; it checks warning delivery, silent-level behavior,
 single initialization and absence of signing/broadcasting. Public error tests
 continue to check the original cause and sparse submission evidence. Full
 validation and PR CI results are recorded on the PR and in Linear. ENG-952 and
@@ -946,3 +947,34 @@ tests. Fresh declarations retain Comet38 string attributes, import only declared
 dependencies and contain no vendored `node_modules` files. Workspace build,
 E2E types, formatting, architecture, package integrity and bundle gates pass;
 the full coverage and fresh CI results are recorded with the review response.
+
+### PR #230 third review — 2026-09-15
+
+[Claude's latest review](https://github.com/manifest-network/manifest-mcp-mono/pull/230#issuecomment-5684358143)
+verified the preceding corrections and found one default CLI startup defect and
+five smaller runtime or test-contract gaps.
+
+| Finding | Disposition and evidence | Confidence |
+| --- | --- | --- |
+| dotenv's default startup banner writes to MCP stdout | Load environment configuration with `quiet: true`. An isolated child process using real dotenv reproduces the pre-fix banner; regressions cover environment loading and all five built CLI startup paths. Explicit dotenv debug/banner environment overrides retain upstream behavior and should remain unset for stdio use. | 100% reproduction; 99% correction |
+| Logger test watches `console.log` but misses direct stdout writes | Also guard `process.stdout.write`, the actual protocol stream. Retain the console guard because Vitest intercepts console output separately. | 100% |
+| Hidden details outside a six-name denylist survive | Share an exhaustive own-key and strict-value assertion through the existing test utilities. Owned errors permit only `sent` and `transactionHash`; attributed errors additionally permit their specific operation context. Hidden `deliverTx` objects, undefined-valued keys and symbol keys are rejected. | 100% |
+| `Pick` over a client union accepts mixed protocol generations | Privately select the concrete Comet 0.38 member through Stargate's declared parameter type, then check `broadcastTxSync` and `txSearchAll`. All-TM34 and both mixed-generation mutations fail compilation; `status` and `disconnect` remain intentionally partial. | 99% |
+| Silent logging tests cannot prove the manager reached the configured sink | Both warning and silent cases now assert the actual shared `logger.warn` invocation with passthrough. Stderr presence or absence then proves the level decision on that sink. | 100% |
+| Compatible holders overwrite a shared initialization logger | Ignore the exact default `noopLogger`; document and test that the last other sink wins and holder disconnect does not restore a prior sink. A server can still replace a compatible SDK holder's custom initialization sink by this explicit policy; distinct wallet-provider adapters provide isolation. Per-client SDK logging is unchanged. | 100% mechanism; 98% bounded policy |
+
+The proposed separate dotenv exact-pin issue is not a current policy violation:
+`CLAUDE.md` and `scripts/version.mjs` constrain internal workspace siblings, while
+[ENG-538](https://linear.app/liftedinit/issue/ENG-538) explicitly distinguishes
+external dependency ranges from those lockstep pins. No manifest change or new
+dependency issue is needed on that evidence (99% confidence).
+
+The earlier constructor-test wording now includes the unsupported `broadcastTx`
+override, the RPC check names its two covered methods, and the historical test
+count is explicitly historical. Logger API documentation also distinguishes
+immutable wallet/configuration ownership from shared initialization diagnostics
+and no longer claims the placeholder SDK `logLevel` applies a level gate.
+
+Validation evidence and the final head are recorded in the PR response and
+Linear. ENG-805 remains In Progress with its eleven unchecked tracker criteria
+and two existing Backlog child issues; this revision adds no deferred finding.

@@ -1,5 +1,5 @@
 import { LeaseState } from '@manifest-network/manifestjs/dist/codegen/liftedinit/billing/v1/types.js';
-import { type Mock, vi } from 'vitest';
+import { expect, type Mock, vi } from 'vitest';
 import type { CosmosClientManager, ManifestQueryClient } from '../client.js';
 import type { ReadCtx, TxCtx } from '../ctx.js';
 import { noopLogger } from '../logger.js';
@@ -13,6 +13,21 @@ import {
 } from '../types.js';
 
 export { makeInclusionTimeoutFixture } from './inclusion-timeout.js';
+
+/** Assert exact own detail keys and values, including hidden properties. */
+export function expectExactDetails(
+  error: unknown,
+  expected: Record<string, unknown>,
+): void {
+  if (!(error instanceof ManifestMCPError) || error.details === undefined)
+    throw new Error('expected structured broadcast failure details');
+  // Reflect.ownKeys includes hidden and symbol properties, even with undefined values.
+  const keys = Reflect.ownKeys(error.details);
+  // Details use string keys; assert this separately for clear symbol diagnostics.
+  expect(keys.every((key) => typeof key === 'string')).toBe(true);
+  expect(new Set(keys)).toEqual(new Set(Reflect.ownKeys(expected)));
+  expect(error.details).toStrictEqual(expected);
+}
 
 /**
  * Create a mock ManifestMCPConfig with sensible defaults.

@@ -654,7 +654,7 @@ describe('CosmosClientManager', () => {
     });
 
     it('setLogger is non-key and non-invalidating: same instance AND same cached signing client', async () => {
-      // setLogger is a pure field assignment, NOT part of the getInstance key and NOT in the
+      // setLogger is not part of the getInstance key or the
       // invalidation gate — so calling it between two same-key getInstance calls must neither
       // fragment the singleton nor drop the cached signing client. SAME wallet reference both
       // calls: a fresh makeWallet() would trip the reference-equality wallet-invalidation gate
@@ -677,6 +677,44 @@ describe('CosmosClientManager', () => {
       expect(mockConnectWithSigner).toHaveBeenCalledOnce();
       expect(mockSC.disconnect).not.toHaveBeenCalled();
     });
+
+    it.each([
+      { assignments: ['first', 'noop'], expected: 'first' },
+      { assignments: ['noop', 'second'], expected: 'second' },
+      { assignments: ['first', 'second', 'noop'], expected: 'second' },
+    ] as const)(
+      'shares the last configured sink after $assignments and a holder disconnects',
+      async ({ assignments, expected }) => {
+        const sinks = {
+          first: makeSpyLogger(),
+          second: makeSpyLogger(),
+          noop: noopLogger,
+        };
+        const wallet = makeWallet();
+        const manager = CosmosClientManager.getInstance(makeConfig(), wallet);
+        for (const assignment of assignments) {
+          const holder = CosmosClientManager.getInstance(makeConfig(), wallet);
+          expect(holder).toBe(manager);
+          holder.setLogger(sinks[assignment]);
+          // Releasing this holder neither silences nor restores another sink;
+          // the original holder keeps the shared manager alive.
+          holder.disconnect();
+        }
+
+        await expect(manager.getSigningClient()).resolves.toBeDefined();
+
+        expect(sinks[expected].warn).toHaveBeenCalledWith(
+          expect.stringContaining(
+            'Broadcast failure guard could not be installed',
+          ),
+        );
+        expect(
+          sinks[expected === 'first' ? 'second' : 'first'].warn,
+        ).not.toHaveBeenCalled();
+        expect(mockConnectWithSigner).toHaveBeenCalledOnce();
+        manager.disconnect();
+      },
+    );
 
     it('is SILENT by default when setLogger is never called (the warn goes to the frozen noopLogger)', async () => {
       const mockSC = {

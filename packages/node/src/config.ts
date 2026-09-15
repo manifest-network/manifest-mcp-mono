@@ -2,7 +2,8 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import dotenv from 'dotenv';
 
-dotenv.config();
+// stdout is reserved for MCP protocol messages, including during module loading.
+dotenv.config({ quiet: true });
 
 export interface NodeMCPConfig {
   readonly chainId: string;

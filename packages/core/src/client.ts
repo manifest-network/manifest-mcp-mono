@@ -220,7 +220,7 @@ export class CosmosClientManager {
   /**
    * Acquire a manager for this wallet reference and immutable configuration snapshot.
    * Compatible sibling servers share clients; a different wallet or policy gets an independent
-   * manager. Constructing another client never reconfigures existing holders. Broadcast locks and
+   * manager. Constructing another client never changes existing holders' wallet or configuration. Broadcast locks and
    * pending account sequences remain shared across every manager for the same chain ID.
    * The optional fetch transport verifies REST node-info or RPC status; it does not serve provider
    * requests or generated queries.
@@ -617,12 +617,14 @@ export class CosmosClientManager {
   }
 
   /**
-   * Set the sink for cached-client initialization diagnostics. Compatible sibling servers share
-   * this sink; callers needing independent diagnostics can use distinct wallet-provider adapters.
-   * Logging does not change the immutable wallet/configuration or invalidate a connection.
+   * Set the sink for cached-client initialization diagnostics. Compatible holders share this
+   * sink: the last non-noopLogger assignment wins and disconnect does not restore an earlier sink.
+   * The default noopLogger never replaces a configured sink. Callers needing independent
+   * diagnostics can use distinct wallet-provider adapters. Logging does not change the immutable
+   * wallet/configuration or invalidate a connection.
    */
   setLogger(logger: Logger): void {
-    this.logger = logger;
+    if (logger !== noopLogger) this.logger = logger;
   }
 
   /**

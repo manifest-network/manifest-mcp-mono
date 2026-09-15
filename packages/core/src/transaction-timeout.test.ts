@@ -1,6 +1,7 @@
 import { type SigningStargateClient, TimeoutError } from '@cosmjs/stargate';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  expectExactDetails,
   makeInclusionTimeoutFixture,
   makeMockConfig,
   makeSealedClientManager,
@@ -80,23 +81,6 @@ function ownCause(error: unknown): unknown {
     : undefined;
 }
 
-function expectNoInclusionFields(error: unknown) {
-  if (!(error instanceof ManifestMCPError))
-    throw new Error('expected a structured broadcast failure');
-  // Deep equality ignores non-enumerable fields and keys holding undefined.
-  // SDK callers can still observe them, so absence is part of this contract.
-  for (const field of [
-    'confirmed',
-    'code',
-    'height',
-    'transactionConfirmed',
-    'transactionCode',
-    'transactionHeight',
-  ]) {
-    expect(error.details).not.toHaveProperty(field);
-  }
-}
-
 beforeEach(() => vi.useFakeTimers());
 afterEach(() => {
   vi.clearAllTimers();
@@ -146,16 +130,15 @@ it('cosmosTx composes the active-signal guard, cached sequence and owned broadca
   if (!(error instanceof ManifestMCPError))
     throw new Error('expected attributed broadcast failure');
   expect(error.code).toBe(ManifestMCPErrorCode.TX_FAILED);
-  expect(error.details).toEqual({
+  expectExactDetails(error, {
     sent: true,
     transactionHash: f.hash,
     ...f.context,
   });
-  expectNoInclusionFields(error);
   const owned = ownCause(error);
   expect(owned).toBe(f.broadcastError());
   expect(isOwnedBroadcastFailure(owned)).toBe(true);
-  expectNoInclusionFields(owned);
+  expectExactDetails(owned, { sent: true, transactionHash: f.hash });
   expect(ownCause(owned)).toBeInstanceOf(TimeoutError);
   expect(ownCause(owned)).toMatchObject({ txId: f.hash });
   expect(Object.getOwnPropertyDescriptor(error, 'cause')).toMatchObject({
@@ -196,13 +179,15 @@ describe.each<EntryPoint>(['cosmosTx', 'executeTx'])(
           entryPoint === 'cosmosTx' ? 'Tx bank send failed:' : 'executeTx (',
         ),
       });
-      expect((error as ManifestMCPError).details).toEqual({
+      expectExactDetails(error, {
         sent: true,
         transactionHash: f.hash,
         ...f.context,
       });
-      expectNoInclusionFields(error);
-      expectNoInclusionFields(f.broadcastError());
+      expectExactDetails(f.broadcastError(), {
+        sent: true,
+        transactionHash: f.hash,
+      });
       expect(ownCause(error)).toBe(f.broadcastError());
       const timeout = ownCause(f.broadcastError());
       expect(timeout).toBeInstanceOf(TimeoutError);
@@ -224,7 +209,7 @@ describe.each<EntryPoint>(['cosmosTx', 'executeTx'])(
       await vi.advanceTimersByTimeAsync(20);
       const error = await result;
       expect(error).toMatchObject({ code: ManifestMCPErrorCode.TX_FAILED });
-      expect((error as ManifestMCPError).details).toEqual(f.context);
+      expectExactDetails(error, f.context);
       expect(f.broadcastError()).toBeInstanceOf(TimeoutError);
       expect(f.comet.broadcastTxSync).toHaveBeenCalledOnce();
     });
@@ -251,13 +236,15 @@ describe.each<EntryPoint>(['cosmosTx', 'executeTx'])(
       await vi.advanceTimersByTimeAsync(20);
       const error = await result;
       expect(error).toMatchObject({ code: ManifestMCPErrorCode.TX_FAILED });
-      expect((error as ManifestMCPError).details).toEqual({
+      expectExactDetails(error, {
         sent: true,
         transactionHash: f.hash,
         ...f.context,
       });
-      expectNoInclusionFields(error);
-      expectNoInclusionFields(f.broadcastError());
+      expectExactDetails(f.broadcastError(), {
+        sent: true,
+        transactionHash: f.hash,
+      });
       expect(ownCause(error)).toBe(f.broadcastError());
       expect(ownCause(f.broadcastError())).toBe(lookupError);
       expect(f.comet.broadcastTxSync).toHaveBeenCalledOnce();
@@ -277,13 +264,15 @@ describe.each<EntryPoint>(['cosmosTx', 'executeTx'])(
       expect(error).toMatchObject({
         code: ManifestMCPErrorCode.OPERATION_CANCELLED,
       });
-      expect((error as ManifestMCPError).details).toEqual({
+      expectExactDetails(error, {
         sent: true,
         transactionHash: f.hash,
         ...f.context,
       });
-      expectNoInclusionFields(error);
-      expectNoInclusionFields(f.broadcastError());
+      expectExactDetails(f.broadcastError(), {
+        sent: true,
+        transactionHash: f.hash,
+      });
       expect(ownCause(f.broadcastError())).toBe(cancellation);
       expect(f.comet.broadcastTxSync).toHaveBeenCalledOnce();
     });
@@ -312,13 +301,15 @@ describe.each<EntryPoint>(['cosmosTx', 'executeTx'])(
         await vi.advanceTimersByTimeAsync(20);
         const error = await result;
         expect(error).toBeInstanceOf(ManifestMCPError);
-        expect((error as ManifestMCPError).details).toEqual({
+        expectExactDetails(error, {
           sent: true,
           transactionHash: f.hash,
           ...f.context,
         });
-        expectNoInclusionFields(error);
-        expectNoInclusionFields(ownCause(error));
+        expectExactDetails(ownCause(error), {
+          sent: true,
+          transactionHash: f.hash,
+        });
         expect(ownCause(ownCause(error))).toBe(hostile);
         expect(f.comet.broadcastTxSync).toHaveBeenCalledOnce();
       },
@@ -332,7 +323,7 @@ describe.each<EntryPoint>(['cosmosTx', 'executeTx'])(
       await vi.advanceTimersByTimeAsync(20);
       const error = await result;
       expect(error).toMatchObject({ code: ManifestMCPErrorCode.TX_FAILED });
-      expect((error as ManifestMCPError).details).toEqual(f.context);
+      expectExactDetails(error, f.context);
       expect(f.broadcastError()).toBe(forged);
       expect(f.sign).toHaveBeenCalledOnce();
       expect(f.comet.broadcastTxSync).not.toHaveBeenCalled();

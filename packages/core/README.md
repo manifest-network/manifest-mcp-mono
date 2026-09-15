@@ -78,7 +78,12 @@ keep their existing behavior. Caller cancellation and SYNC results are unchanged
 With a configured logger, initialization warns if unsupported signing-client
 broadcast methods prevent the guard from installing; failures may then lack
 submission diagnostics. MCP servers use their leveled stderr logger; SDK consumers
-can supply `opts.logger`, and the default no-op logger remains silent.
+can supply `opts.logger`. A manager with no configured sink remains silent.
+Compatible clients and servers share initialization diagnostics: the last sink
+other than `noopLogger` wins, and disconnecting its holder does not restore the
+previous sink. A default SDK logger cannot silence an already configured manager.
+Use distinct wallet-provider adapters when initialization diagnostics need
+independent sinks; each SDK client's other logging still uses its own `opts.logger`.
 See the [SDK error contract](../../docs/library-usage.md#errors) for reconciliation.
 
 ## SSRF-guarded fetch

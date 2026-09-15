@@ -1,28 +1,13 @@
 import { type SigningStargateClient, TimeoutError } from '@cosmjs/stargate';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { makeInclusionTimeoutFixture } from '../__test-utils__/inclusion-timeout.js';
+import { expectExactDetails } from '../__test-utils__/mocks.js';
 import { ManifestMCPError, ManifestMCPErrorCode } from '../types.js';
 import {
   installBroadcastFailureGuard,
   isOwnedBroadcastFailure,
 } from './broadcast-failure.js';
 import { type SequenceCache, sequencedSigningClient } from './tx-sequence.js';
-
-function expectNoInclusionFields(error: unknown) {
-  if (!(error instanceof ManifestMCPError))
-    throw new Error('expected a structured broadcast failure');
-  // Property presence matters to SDK callers even when JSON/equality omits it.
-  for (const field of [
-    'confirmed',
-    'code',
-    'height',
-    'transactionConfirmed',
-    'transactionCode',
-    'transactionHeight',
-  ]) {
-    expect(error.details).not.toHaveProperty(field);
-  }
-}
 
 beforeEach(() => vi.useFakeTimers());
 afterEach(() => {
@@ -61,7 +46,7 @@ describe('owned inclusion-timeout receiver and provenance boundaries', () => {
       code: ManifestMCPErrorCode.TX_FAILED,
       details: { sent: true, transactionHash: f.hash },
     });
-    expectNoInclusionFields(error);
+    expectExactDetails(error, { sent: true, transactionHash: f.hash });
     expect(sequences).toEqual([8]);
     expect(committedSequence).not.toHaveBeenCalled();
     expect(cache.has(f.sender)).toBe(false);
@@ -101,8 +86,7 @@ describe('owned inclusion-timeout receiver and provenance boundaries', () => {
       expect(isOwnedBroadcastFailure(error)).toBe(true);
       if (!isOwnedBroadcastFailure(error))
         throw new Error('expected owned timeout');
-      expect(error.details).toEqual({ sent: true, transactionHash: hash });
-      expectNoInclusionFields(error);
+      expectExactDetails(error, { sent: true, transactionHash: hash });
       expect(
         Object.getOwnPropertyDescriptor(error, 'cause')?.value,
       ).toMatchObject({ txId: hash });
@@ -133,7 +117,10 @@ describe('owned inclusion-timeout receiver and provenance boundaries', () => {
     await vi.advanceTimersByTimeAsync(2);
     const acceptedFailure = await first;
     expect(isOwnedBroadcastFailure(acceptedFailure)).toBe(true);
-    expectNoInclusionFields(acceptedFailure);
+    expectExactDetails(acceptedFailure, {
+      sent: true,
+      transactionHash: f.hash,
+    });
     expect(await second).toBe(delegated);
     expect(isOwnedBroadcastFailure(delegated)).toBe(false);
     expect(f.comet.txSearchAll).toHaveBeenCalledOnce();
@@ -154,8 +141,7 @@ describe('owned inclusion-timeout receiver and provenance boundaries', () => {
     expect(isOwnedBroadcastFailure(error)).toBe(true);
     if (!isOwnedBroadcastFailure(error))
       throw new Error('expected accepted broadcast failure');
-    expect(error.details).toEqual({ sent: true, transactionHash: f.hash });
-    expectNoInclusionFields(error);
+    expectExactDetails(error, { sent: true, transactionHash: f.hash });
     expect(Object.getOwnPropertyDescriptor(error, 'cause')?.value).toBe(
       delegated,
     );
@@ -236,7 +222,7 @@ describe('owned inclusion-timeout receiver and provenance boundaries', () => {
     await vi.advanceTimersByTimeAsync(2);
     const error = await pending;
     expect(isOwnedBroadcastFailure(error)).toBe(true);
-    expectNoInclusionFields(error);
+    expectExactDetails(error, { sent: true, transactionHash: f.hash });
     expect(receivers).toHaveLength(1);
     expect(receivers[0]).toBe(f.client);
   });
@@ -320,8 +306,7 @@ describe('owned inclusion-timeout receiver and provenance boundaries', () => {
         throw new Error('expected accepted broadcast failure');
       expect(error.code).toBe(code);
       expect(error.message).toBe(message);
-      expect(error.details).toEqual({ sent: true, transactionHash: f.hash });
-      expectNoInclusionFields(error);
+      expectExactDetails(error, { sent: true, transactionHash: f.hash });
       const cause = Object.getOwnPropertyDescriptor(error, 'cause');
       expect(cause?.value).toBe(original);
       expect(cause?.enumerable).toBe(false);
