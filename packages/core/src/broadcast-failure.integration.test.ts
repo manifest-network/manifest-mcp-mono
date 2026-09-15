@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import {
   BroadcastTxError,
   SigningStargateClient,
@@ -6,10 +7,10 @@ import {
 } from '@cosmjs/stargate';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-  type InclusionTimeoutFixtureOptions,
+  expectExactDetails,
   makeInclusionTimeoutFixture,
-} from './__test-utils__/inclusion-timeout.js';
-import { makeMockConfig } from './__test-utils__/mocks.js';
+  makeMockConfig,
+} from './__test-utils__/mocks.js';
 import { CosmosClientManager } from './client.js';
 import { isOwnedBroadcastFailure } from './internals/broadcast-failure.js';
 import { withRetry } from './retry.js';
@@ -27,7 +28,9 @@ afterEach(async () => {
   vi.restoreAllMocks();
 });
 
-async function managedFixture(options?: InclusionTimeoutFixtureOptions) {
+async function managedFixture(
+  options?: Parameters<typeof makeInclusionTimeoutFixture>[0],
+) {
   const fixture = await makeInclusionTimeoutFixture(options);
   const connect = vi
     .spyOn(SigningStargateClient, 'connectWithSigner')
@@ -65,6 +68,12 @@ describe('pinned inclusion timeout through the SDK-owned signing client', () => 
     expect(fixture.sign).toHaveBeenCalledOnce();
     expect(fixture.signer.signDirect).not.toHaveBeenCalled();
     expect(fixture.comet.broadcastTxSync).toHaveBeenCalledOnce();
+    expect(fixture.hash).toBe(
+      createHash('sha256')
+        .update(fixture.comet.broadcastTxSync.mock.calls[0][0].tx)
+        .digest('hex')
+        .toUpperCase(),
+    );
     expect(fixture.comet.txSearchAll).toHaveBeenCalledExactlyOnceWith({
       query: `tx.hash='${fixture.hash}'`,
     });
@@ -93,7 +102,7 @@ describe('pinned inclusion timeout through the SDK-owned signing client', () => 
     if (!(error instanceof ManifestMCPError))
       throw new Error('expected owned timeout');
     expect(error.code).toBe(ManifestMCPErrorCode.TX_FAILED);
-    expect(error.details).toEqual({
+    expectExactDetails(error, {
       sent: true,
       transactionHash: fixture.hash,
     });
@@ -104,7 +113,6 @@ describe('pinned inclusion timeout through the SDK-owned signing client', () => 
     expect(cause?.value).toMatchObject({ name: 'Error', txId: fixture.hash });
     expect(error.message).toBe(cause?.value.message);
     expect(cause?.value).not.toHaveProperty('details');
-    expect(JSON.parse(JSON.stringify(error))).not.toHaveProperty('cause');
     expect(fixture.connect).toHaveBeenCalledOnce();
     expect(fixture.comet.status).toHaveBeenCalledOnce();
     expect(fixture.comet.broadcastTxSync).toHaveBeenCalledOnce();
@@ -164,24 +172,43 @@ describe('pinned inclusion timeout through the SDK-owned signing client', () => 
     expect(fixture.comet.txSearchAll).not.toHaveBeenCalled();
   });
 
-  it.each([31, 33])(
-    'does not promote an accepted %i-byte hash to structured transaction evidence',
+  it.each([31, 32, 33])(
+    'rejects an incorrect %i-byte CheckTx hash without polling or retrying',
     async (length) => {
       const fixture = await managedFixture({
         hashBytes: new Uint8Array(length).fill(0xab),
       });
-      const pending = fixture.client
-        .signAndBroadcast(fixture.sender, fixture.messages, fixture.fee)
-        .catch((error: unknown) => error);
-      await vi.advanceTimersByTimeAsync(2);
+      const getTx = vi.spyOn(fixture.rawClient, 'getTx');
+      const onRetry = vi.fn();
+      const pending = withRetry(
+        () =>
+          fixture.client.signAndBroadcast(
+            fixture.sender,
+            fixture.messages,
+            fixture.fee,
+          ),
+        {
+          config: { maxRetries: 1, baseDelayMs: 1, maxDelayMs: 1 },
+          onRetry,
+        },
+      ).catch((error: unknown) => error);
+      await vi.advanceTimersByTimeAsync(4);
       const error = await pending;
 
-      expect(error).toBeInstanceOf(TimeoutError);
-      expect(error).toMatchObject({ txId: fixture.hash });
-      expect(isOwnedBroadcastFailure(error)).toBe(false);
-      expect(error).not.toHaveProperty('details');
       expect(fixture.comet.broadcastTxSync).toHaveBeenCalledOnce();
-      expect(fixture.comet.txSearchAll).toHaveBeenCalledOnce();
+      const submitted = fixture.comet.broadcastTxSync.mock.calls[0][0].tx;
+      const localHash = createHash('sha256')
+        .update(submitted)
+        .digest('hex')
+        .toUpperCase();
+      expect(fixture.hash).toBe(localHash);
+      expect(error).toMatchObject({ code: ManifestMCPErrorCode.TX_FAILED });
+      expectExactDetails(error, { sent: true, transactionHash: localHash });
+      expect(isOwnedBroadcastFailure(error)).toBe(true);
+      expect(getTx).not.toHaveBeenCalled();
+      expect(fixture.comet.txSearchAll).not.toHaveBeenCalled();
+      expect(onRetry).not.toHaveBeenCalled();
+      expect(vi.getTimerCount()).toBe(0);
     },
   );
 
@@ -215,7 +242,7 @@ describe('pinned inclusion timeout through the SDK-owned signing client', () => 
       if (!(error instanceof ManifestMCPError))
         throw new Error('expected owned broadcast failure');
       expect(error.code).toBe(ManifestMCPErrorCode.TX_FAILED);
-      expect(error.details).toEqual({
+      expectExactDetails(error, {
         sent: true,
         transactionHash: fixture.hash,
       });
@@ -233,7 +260,7 @@ describe('pinned inclusion timeout through the SDK-owned signing client', () => 
     },
   );
 
-  it('preserves a recognized cancellation code after acceptance while retaining its original cause', async () => {
+  it('preserves an injected lookup cancellation code after acceptance while retaining its original cause', async () => {
     const fixture = await managedFixture();
     const original = Object.freeze(
       new ManifestMCPError(
@@ -250,8 +277,8 @@ describe('pinned inclusion timeout through the SDK-owned signing client', () => 
 
     expect(error).toMatchObject({
       code: ManifestMCPErrorCode.OPERATION_CANCELLED,
-      details: { sent: true, transactionHash: fixture.hash },
     });
+    expectExactDetails(error, { sent: true, transactionHash: fixture.hash });
     expect(error).not.toBe(original);
     expect(isOwnedBroadcastFailure(error)).toBe(true);
     expect(Object.getOwnPropertyDescriptor(error, 'cause')?.value).toBe(

@@ -1,3 +1,5 @@
+import { sha256 } from '@cosmjs/crypto';
+import { toHex } from '@cosmjs/encoding';
 import { type SigningStargateClient, StargateClient } from '@cosmjs/stargate';
 import { ManifestMCPError, ManifestMCPErrorCode } from '../types.js';
 import { isTransactionHash } from './transaction-hash.js';
@@ -73,53 +75,75 @@ export function attributeBroadcastFailure(
   );
 }
 
+async function guardedBroadcast(
+  this: SigningStargateClient,
+  ...args: Parameters<SigningStargateClient['broadcastTx']>
+) {
+  // A consumer may replace the submission method after client creation. Its
+  // returned value does not establish provenance for the native producer.
+  if (this.broadcastTxSync !== nativeBroadcastSync)
+    return nativeBroadcast.call(this, ...args);
+  const view = Object.create(this) as SigningStargateClient;
+  let acceptedHash: string | undefined;
+  let hashMismatch: Error | undefined;
+  view.broadcastTxSync = async (tx) => {
+    // Hash the same snapshot passed to the native sender, not caller-owned bytes
+    // that could change while CheckTx is in flight.
+    const submittedTx = new Uint8Array(tx);
+    const localHash = toHex(sha256(submittedTx)).toUpperCase();
+    const reportedHash = await nativeBroadcastSync.call(this, submittedTx);
+    acceptedHash = localHash;
+    if (
+      !isTransactionHash(reportedHash) ||
+      reportedHash.toUpperCase() !== localHash
+    ) {
+      hashMismatch = new Error(
+        'RPC returned a transaction hash that does not match the submitted transaction bytes.',
+      );
+    }
+    return reportedHash;
+  };
+  // Reject a mismatched ID before any real lookup. Throwing after SYNC returns
+  // lets native polling clear its timer; throwing inside SYNC would skip cleanup.
+  // Keep a customized query method's receiver and dynamic method lookup intact.
+  view.getTx = (hash) => {
+    if (hashMismatch) return Promise.reject(hashMismatch);
+    return this.getTx(hash);
+  };
+
+  try {
+    return await nativeBroadcast.call(view, ...args);
+  } catch (error) {
+    if (acceptedHash !== undefined)
+      // The native deadline can expire before getTx; retain the known mismatch.
+      throw ownedFailure(hashMismatch ?? error, acceptedHash);
+    throw error;
+  }
+}
+
 /**
  * Install only on an SDK-created signing client. Keep CosmJS's signing and polling
- * implementations; observe its accepted SYNC hash before preserving that evidence on
- * a later failure. Neither a timeout's class nor its fields establish submission.
+ * implementations; bind accepted SYNC evidence to the submitted bytes' SHA-256
+ * hash before preserving it on a later failure. A mismatched RPC hash fails before
+ * any lookup, without discarding known submission. Neither a timeout's class nor
+ * its fields establish submission.
  *
  * The method deliberately preserves dynamic `this`: sequence tracking invokes it on
  * Object.create(client) views. Submission state belongs to each call, never the client.
- * Returns whether the guard was installed by this call; unsupported or already-wrapped
- * methods are left untouched.
+ * Returns whether this guard is installed, including an unchanged prior installation;
+ * unsupported methods are left untouched.
  */
 export function installBroadcastFailureGuard(
   client: SigningStargateClient,
 ): boolean {
-  if (
-    client.broadcastTx !== nativeBroadcast ||
-    client.broadcastTxSync !== nativeBroadcastSync
-  )
-    return false;
+  if (client.broadcastTxSync !== nativeBroadcastSync) return false;
+  if (client.broadcastTx === guardedBroadcast) return true;
+  if (client.broadcastTx !== nativeBroadcast) return false;
 
   Object.defineProperty(client, 'broadcastTx', {
     configurable: true,
     writable: true,
-    async value(
-      this: SigningStargateClient,
-      ...args: Parameters<SigningStargateClient['broadcastTx']>
-    ) {
-      // A consumer may replace the submission method after client creation. Its
-      // returned value does not establish provenance for the native producer.
-      if (this.broadcastTxSync !== nativeBroadcastSync)
-        return nativeBroadcast.call(this, ...args);
-      const view = Object.create(this) as SigningStargateClient;
-      let acceptedHash: string | undefined;
-      view.broadcastTxSync = async (tx) => {
-        const hash = await nativeBroadcastSync.call(this, tx);
-        if (isTransactionHash(hash)) acceptedHash = hash;
-        return hash;
-      };
-      // Keep a customized query method's receiver and dynamic method lookup intact.
-      view.getTx = (hash) => this.getTx(hash);
-
-      try {
-        return await nativeBroadcast.call(view, ...args);
-      } catch (error) {
-        if (acceptedHash !== undefined) throw ownedFailure(error, acceptedHash);
-        throw error;
-      }
-    },
+    value: guardedBroadcast,
   });
   return true;
 }

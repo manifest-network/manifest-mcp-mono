@@ -834,15 +834,16 @@ addresses the two inclusion-timeout criteria retained from PR #228, starting fro
 its merged commit `12af628`.
 
 SDK-created signing clients now observe their native CheckTx broadcast on a fresh
-per-call receiver. A validated accepted hash establishes submission independently
-of the later error's class, message or claimed txId. If blocking inclusion polling
+per-call receiver. Initially, a format-validated accepted hash established
+submission independently of the later error's class, message or claimed txId. If blocking inclusion polling
 then rejects, including the native inclusion timer or an RPC lookup failure, a
 fresh error retains exactly sent:true and transactionHash plus a non-enumerable
 cause. Raw failures use non-retryable TX_FAILED; readable structured cancellation
 keeps OPERATION_CANCELLED. No confirmation, transaction code or height is inferred.
-Custom broadcast implementations, pre-acceptance errors and invalid hashes keep
-their existing behavior. The wrapper reuses CosmJS signing/polling and preserves
-sequence views and concurrent-call isolation.
+At this stage, custom broadcast implementations, pre-acceptance errors and invalid
+hashes kept their existing behavior; the fifth review below binds accepted evidence
+to the signed bytes and rejects mismatched RPC hashes. The wrapper reuses CosmJS
+signing/polling and preserves sequence views and concurrent-call isolation.
 
 Cosmos and multi-message transaction entry points retain their operation context
 and the owned error's cause chain. Existing teardown reconciliation forwards the
@@ -956,7 +957,7 @@ five smaller runtime or test-contract gaps.
 
 | Finding | Disposition and evidence | Confidence |
 | --- | --- | --- |
-| dotenv's default startup banner writes to MCP stdout | Load environment configuration with `quiet: true`. An isolated child process using real dotenv reproduces the pre-fix banner; regressions cover environment loading and all five built CLI startup paths. Explicit dotenv debug/banner environment overrides retain upstream behavior and should remain unset for stdio use. | 100% reproduction; 99% correction |
+| dotenv's default startup banner writes to MCP stdout | Load environment configuration with `quiet: true`. An isolated child process using real dotenv reproduces the pre-fix banner; regressions cover environment loading and all five built CLI startup paths. At this revision, explicit dotenv debug/banner environment overrides retained upstream behavior. **Superseded by the fourth review below:** the final loader uses parse/populate and never activates dotenv diagnostics. | 100% reproduction; 99% correction |
 | Logger test watches `console.log` but misses direct stdout writes | Also guard `process.stdout.write`, the actual protocol stream. Retain the console guard because Vitest intercepts console output separately. | 100% |
 | Hidden details outside a six-name denylist survive | Share an exhaustive top-level own-key and strict-value assertion through the existing test utilities. Owned errors permit only `sent` and `transactionHash`; attributed errors additionally permit their specific operation context. Top-level hidden `deliverTx` objects, undefined-valued keys and symbol keys are rejected; nested values use Vitest strict equality. | 100% |
 | `Pick` over a client union accepts mixed protocol generations | Privately select the concrete Comet 0.38 member through Stargate's declared parameter type, then check `broadcastTxSync` and `txSearchAll`. All-TM34 and both mixed-generation mutations fail compilation; `status` and `disconnect` remain intentionally partial. | 99% |
@@ -1005,3 +1006,45 @@ password values. No new environment parser or global console interception is
 introduced. Validation, mutation evidence and fresh PR checks are recorded in
 the review response and Linear. ENG-805 stays In Progress with its eleven
 unchecked tracker criteria; this round adds no deferred issue.
+
+### PR #230 fifth review — 2026-09-15
+
+[Claude's full-diff review](https://github.com/manifest-network/manifest-mcp-mono/pull/230#issuecomment-5687219033)
+verified the previous corrections and identified these remaining gaps. This pass
+also reviews the complete PR against its merged base, including the initial
+feature tests.
+
+| Finding | Disposition and evidence | Confidence |
+| --- | --- | --- |
+| RPC hash format validation does not bind evidence to the submitted transaction | Snapshot signed bytes and calculate SHA-256 with the already installed CosmJS crypto package, now declared directly. After native CheckTx resolves, compare its returned hash to the local digest. Wrong length/value rejects before any real lookup and retains local sent/hash evidence. Rejection runs through native polling cleanup; no unrelated lookup or rebroadcast occurs. Undecodable responses that reject before observed acceptance keep their existing behavior. | 100% gap; 99% correction |
+| Injected lookup cancellation is mistaken for real caller cancellation | Rename tests and narrow public documentation. Those controls preserve custom lookup error codes. Actual caller cancellation settles through the outer synchronous abort listener; forwarding accepted local hash evidence remains [ENG-952](https://linear.app/liftedinit/issue/ENG-952). | 100% |
+| Initial integration tests still allow extra hidden details | Apply the shared exact top-level details assertion to both owned and attributed errors; preserve explicit cause descriptors. | 100% |
+| Built startup checks omit keyfileWallet and discard JavaScript bytes | Traverse actual built static relative imports within node/dist, including keyfileWallet. Check nonempty code, source-map linkage and current embedded inputs. Workspace package imports retain the normal build prerequisite. This is a freshness guard, not an integrity verifier for arbitrary rewritten JavaScript/map pairs. | 100% gap; 99% correction |
+| Built config loading lacks behavioral coverage | Restore a child-process assertion that reads .env values through dist/config.js. Omitting only the compiled loadDotEnv call fails even with the original map; source-only tests remain independent. | 100% |
+| The dotenv caret can return without a policy failure | Enforce exact external runtime and optional dependency versions for published CLI packages. Mutation controls reject caret, tilde, comparator and tag declarations; library, peer and development ranges remain allowed. | 99% policy |
+| Closed toJSON output does not prove cause non-enumerability | Remove redundant JSON assertions on ManifestMCPError; retain direct property-descriptor checks. The separate plain-object reconciliation JSON assertion remains useful. | 100% |
+| The executeTx cancellation test does not guard internal catch ordering | Name the caller-observable cancellation behavior accurately. Keep catch checkpoint order consistent with cosmosTx; moving it cannot change the already-settled abort response or solve ENG-952. | 100% |
+| Throwing initialization diagnostics leak a connected signing client | Extend cleanup across all post-connect initialization. Both warning branches release the transport and permit a fresh initialization even when cleanup also throws; existing error normalization remains unchanged. | 100% |
+| Guard status conflates already-installed and unsupported methods | Recognize the one private wrapper function, with native SYNC still required. Reinstallation succeeds without another wrapper; customized SYNC still reports unsupported. | 100% |
+| Fixture options and import paths imply unsupported variation | Remove unused chainId/timeout/poll options and use the existing shared test-utility barrel consistently. Derive normal fixture wire hashes from actual submitted bytes. | 100% |
+| Historical dotenv row describes superseded behavior as current | Mark the third-review loader and override behavior explicitly superseded by the fourth review. | 100% |
+| Cold subprocesses repeatedly compile the same dependencies | Share a suite-owned temporary Node compile cache and remove it afterward. | 99% |
+| Source-map failures hide the diagnostic cause | Retain the original cause behind the rebuild guidance, including corrupt JSON and stale inputs. | 100% |
+| Plain node tests require a build without command guidance | Document the root build prerequisite and source-map checks in CLAUDE.md, including workspace and targeted test commands. | 100% |
+
+Hash mutation tests fail against the prior guard and pass with the correction.
+They cover wrong-length and unrelated 32-byte hashes, caller byte mutation,
+per-call concurrency, idempotence, native deadline cleanup and a mismatch arriving
+after the deadline. CLI negative controls cover stale keyfile input, corrupt map,
+empty built JavaScript and omitted built environment loading without modifying
+tracked files or dist. Full validation and fresh CI/live results are recorded on
+the PR and in Linear. This round adds no deferred issue; ENG-952/ENG-953 and the
+existing eleven unchecked tracker criteria remain separate.
+
+Local validation passes **4,107 tests / 17 skipped / 184 files**, with no type
+errors and every coverage floor passing: **84.87% lines / 84.60% statements /
+84.40% branches / 88.41% functions**. Build, workspace/E2E types, Biome,
+architecture, package integrity, bundle budgets, twenty dependency-hygiene checks,
+eight metadata checks and eight type-harness checks pass. Core still packs
+359 files without vendored dependencies. This revision adds seven runtime tests;
+the PR adds 124 relative to its merged base, plus three dependency-policy checks.

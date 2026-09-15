@@ -63,18 +63,24 @@ const config = createValidatedConfig({
 
 ## Broadcast failures after submission
 
-SDK-created signing clients retain a validated transaction hash after their native
-CheckTx broadcast succeeds. If the subsequent inclusion timer or transaction
-lookup fails, `cosmosTx` and `executeTx` report `TX_FAILED` with `details.sent: true`,
+SDK-created signing clients snapshot the signed bytes, compute their SHA-256
+transaction hash, and compare the native CheckTx response against it. After
+CheckTx succeeds, a returned hash of the wrong length or value fails before any
+transaction lookup; diagnostics retain the local hash. If the subsequent inclusion timer or
+transaction lookup fails, `cosmosTx` and `executeTx` report `TX_FAILED` with
+`details.sent: true`,
 `details.transactionHash`, operation context and a non-enumerable cause chain to
-the original error. Structured cancellation retains `OPERATION_CANCELLED`.
+the original error. A structured cancellation thrown by a custom transaction
+lookup retains `OPERATION_CANCELLED`.
 These errors are not automatically retried. Inspect the transaction before
 submitting another mutation: acceptance does not establish block inclusion or
 execution success, and no confirmation, code or height is inferred.
 
 An arbitrary timeout or claimed `txId` supplies no submission evidence. Errors
-before observed acceptance, invalid returned hashes and custom broadcast methods
-keep their existing behavior. Caller cancellation and SYNC results are unchanged.
+before observed acceptance (including undecodable CheckTx responses) and custom
+broadcast methods keep their existing behavior. Caller cancellation remains prompt and conservatively marks submission,
+but currently does not receive the guard's known hash (tracked in ENG-952).
+SYNC-only calls keep their existing behavior.
 With a configured logger, initialization warns if unsupported signing-client
 broadcast methods prevent the guard from installing; failures may then lack
 submission diagnostics. MCP servers use their leveled stderr logger; SDK consumers
@@ -83,7 +89,9 @@ Compatible clients and servers share initialization diagnostics: the last sink
 other than `noopLogger` wins, and disconnecting its holder does not restore the
 previous sink. A default SDK logger cannot silence an already configured manager.
 Only the exported `noopLogger` instance is ignored; custom logger objects,
-including silent ones, are deliberate sink assignments.
+including silent ones, are deliberate sink assignments. If post-connect
+initialization fails, including a throwing diagnostic sink, the manager attempts
+to disconnect the transport before propagating the failure.
 Use distinct wallet-provider adapters when initialization diagnostics need
 independent sinks; each SDK client's other logging still uses its own `opts.logger`.
 See the [SDK error contract](../../docs/library-usage.md#errors) for reconciliation.

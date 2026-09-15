@@ -195,7 +195,6 @@ describe.each<EntryPoint>(['cosmosTx', 'executeTx'])(
       expect(Object.getOwnPropertyDescriptor(error, 'cause')).toMatchObject({
         enumerable: false,
       });
-      expect(JSON.stringify(error)).not.toContain('"cause"');
       expect(calls).toBe(1);
       expect(retry).not.toHaveBeenCalled();
       expect(f.sign).toHaveBeenCalledOnce();
@@ -251,12 +250,14 @@ describe.each<EntryPoint>(['cosmosTx', 'executeTx'])(
       expect(f.comet.txSearchAll).toHaveBeenCalledOnce();
     });
 
-    it('keeps a structured cancellation terminal after accepted submission', async () => {
+    it('keeps an injected lookup cancellation terminal after accepted submission', async () => {
       const f = await fixture(entryPoint);
       const cancellation = new ManifestMCPError(
         ManifestMCPErrorCode.OPERATION_CANCELLED,
         'Lookup cancelled',
       );
+      // This custom lookup rejection has no caller signal; the separate real
+      // caller-abort regression below exercises withTxExecution's abort race.
       f.comet.txSearchAll.mockRejectedValue(cancellation);
       const result = f.invoke().catch((error: unknown) => error);
       await vi.advanceTimersByTimeAsync(20);

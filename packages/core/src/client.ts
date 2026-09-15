@@ -537,37 +537,38 @@ export class CosmosClientManager {
                 },
               );
             }
+            // The property is private readonly with no constructor option,
+            // so we must bypass TypeScript's access control to override it.
+            const record = c as unknown as Record<string, unknown>;
+            if (typeof record.defaultGasMultiplier === 'number') {
+              record.defaultGasMultiplier =
+                this.config.gasMultiplier ?? DEFAULT_GAS_MULTIPLIER;
+            } else {
+              const effective =
+                this.config.gasMultiplier ?? DEFAULT_GAS_MULTIPLIER;
+              this.logger.warn(
+                `gasMultiplier ${effective} could not be applied: ` +
+                  `signing client defaultGasMultiplier is ${typeof record.defaultGasMultiplier}, expected number. ` +
+                  `Transactions will use the CosmJS built-in gas multiplier instead.`,
+              );
+            }
+            if (!installBroadcastFailureGuard(c)) {
+              this.logger.warn(
+                'Broadcast failure guard could not be installed: signing client broadcast methods differ from the supported native implementation. ' +
+                  'Failures after submission may omit sent and transactionHash diagnostics.',
+              );
+            }
+            return c;
           } catch (error) {
-            // A failed identity read must not leak a connected client or make it usable for signing.
+            // Every post-connect initialization failure must release the transport,
+            // including a throwing configuration setter or diagnostic sink.
             try {
               c.disconnect();
             } catch {
-              /* Preserve the identity failure. */
+              /* Preserve the initialization failure. */
             }
             throw error;
           }
-          // The property is private readonly with no constructor option,
-          // so we must bypass TypeScript's access control to override it.
-          const record = c as unknown as Record<string, unknown>;
-          if (typeof record.defaultGasMultiplier === 'number') {
-            record.defaultGasMultiplier =
-              this.config.gasMultiplier ?? DEFAULT_GAS_MULTIPLIER;
-          } else {
-            const effective =
-              this.config.gasMultiplier ?? DEFAULT_GAS_MULTIPLIER;
-            this.logger.warn(
-              `gasMultiplier ${effective} could not be applied: ` +
-                `signing client defaultGasMultiplier is ${typeof record.defaultGasMultiplier}, expected number. ` +
-                `Transactions will use the CosmJS built-in gas multiplier instead.`,
-            );
-          }
-          if (!installBroadcastFailureGuard(c)) {
-            this.logger.warn(
-              'Broadcast failure guard could not be installed: signing client broadcast methods differ from the supported native implementation. ' +
-                'Failures after submission may omit sent and transactionHash diagnostics.',
-            );
-          }
-          return c;
         },
         {
           config: this.config.retry,

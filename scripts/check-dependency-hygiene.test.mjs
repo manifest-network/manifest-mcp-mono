@@ -3,6 +3,7 @@ import { spawnSync } from 'node:child_process';
 import {
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   rmSync,
   symlinkSync,
@@ -20,6 +21,87 @@ const prWorkflow = parse(
 );
 const gate = prWorkflow.jobs['e2e-gate'];
 const gateStep = gate.steps.find((step) => step.env?.ACCEPTANCE);
+
+// Published CLIs own their runtime dependency graph. Shared libraries retain
+// their compatibility ranges; workspace sibling policy is enforced separately.
+function cliRuntimeRangeFailures(packages) {
+  const internalNames = new Set(packages.map((pkg) => pkg.name));
+  const failures = [];
+  for (const pkg of packages) {
+    if (pkg.private === true || !pkg.bin || Object.keys(pkg.bin).length === 0)
+      continue;
+    for (const section of ['dependencies', 'optionalDependencies']) {
+      for (const [name, version] of Object.entries(pkg[section] ?? {})) {
+        if (internalNames.has(name)) continue;
+        // This is a range-policy check, not a replacement for npm's semver validation.
+        if (
+          !/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/.test(
+            version,
+          )
+        ) {
+          failures.push(
+            `${pkg.name} ${section}.${name} must use an exact registry version; received ${version}`,
+          );
+        }
+      }
+    }
+  }
+  return failures;
+}
+
+const workspacePackages = readdirSync(join(root, 'packages'), {
+  withFileTypes: true,
+})
+  .filter((entry) => entry.isDirectory())
+  .map((entry) =>
+    JSON.parse(
+      readFileSync(join(root, 'packages', entry.name, 'package.json'), 'utf8'),
+    ),
+  );
+
+test('published CLI external runtime dependencies use exact versions', () => {
+  assert(workspacePackages.some((pkg) => pkg.private !== true && pkg.bin));
+  assert.deepEqual(cliRuntimeRangeFailures(workspacePackages), []);
+});
+
+test('CLI dependency policy rejects restored dotenv ranges and optional runtime ranges', () => {
+  for (const version of ['^17.2.3', '~17.4.2', '>=17.4.2', 'latest']) {
+    const mutated = structuredClone(workspacePackages);
+    const node = mutated.find(
+      (pkg) => pkg.name === '@manifest-network/manifest-mcp-node',
+    );
+    node.dependencies.dotenv = version;
+    assert.deepEqual(cliRuntimeRangeFailures(mutated), [
+      `${node.name} dependencies.dotenv must use an exact registry version; received ${version}`,
+    ]);
+  }
+  const mutated = structuredClone(workspacePackages);
+  const node = mutated.find(
+    (pkg) => pkg.name === '@manifest-network/manifest-mcp-node',
+  );
+  node.optionalDependencies = { 'optional-runtime': '^1.2.3' };
+  assert.deepEqual(cliRuntimeRangeFailures(mutated), [
+    `${node.name} optionalDependencies.optional-runtime must use an exact registry version; received ^1.2.3`,
+  ]);
+});
+
+test('CLI dependency policy leaves library, peer and development ranges alone', () => {
+  const mutated = structuredClone(workspacePackages);
+  const library = mutated.find((pkg) => pkg.private !== true && !pkg.bin);
+  library.dependencies = {
+    ...library.dependencies,
+    'library-runtime': '^1.2.3',
+  };
+  const node = mutated.find(
+    (pkg) => pkg.name === '@manifest-network/manifest-mcp-node',
+  );
+  node.peerDependencies = { peer: '^1.2.3' };
+  node.devDependencies = {
+    ...node.devDependencies,
+    'development-tool': '^1.2.3',
+  };
+  assert.deepEqual(cliRuntimeRangeFailures(mutated), []);
+});
 
 test('E2E gate receives both the change decision and the live result on every PR', () => {
   assert.equal(gate.if, 'always()');

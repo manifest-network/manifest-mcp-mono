@@ -7,14 +7,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ```bash
 npm run build          # Build all packages (tsdown, unbundled ESM)
 npm run lint           # Type-check all workspace packages (tsc --noEmit)
-npm run test           # Unit tests all packages (vitest)
+npm run test           # Unit tests all packages (vitest); run npm run build first
 npm run check          # Lint, format, and import sorting check, including e2e TypeScript
 npm run check:fix      # Auto-fix biome issues
 npm run format         # Format all packages via biome
 npm run lint:e2e       # Rebuild dependencies, then type-check e2e; CI runs it as a named gate
 npm run test:e2e:annotations # PR-safe live MCP metadata matrix (run after build; no compose devnet)
 npm run check:workflows # Immutable action pins + workflow permissions; CI and release run it
-npm run check:dependency-hygiene # Validator resolution + E2E gate decision regressions (ENG-768)
+npm run check:dependency-hygiene # Validator resolution, published CLI runtime pins + E2E gate regressions
 npm run audit:dependencies # Full locked dependency graph; high/critical findings fail CI/release
 npm run depcruise      # Architecture boundary + package-DAG guard (dependency-cruiser); CI runs it
 npm run size           # Bundle-size budgets for the SDK subpaths (size-limit); CI runs it
@@ -35,7 +35,9 @@ npm run test:watch     # vitest (watch mode)
 # (before ENG-648 a root run used Vitest's defaults: a bare run found no test files, and
 # `--typecheck` pointed tsc at the references-only root tsconfig.json with `files: []`, so
 # every assertion passed with zero analysis). Cross-package type tests (sdk, agent-core, fred)
-# resolve siblings through dist, so build first.
+# resolve siblings through dist, so build first. Node config-stdout.test.ts also probes built
+# config and all five CLIs; rebuild from the repository root after changing their local
+# startup sources. It verifies current source-map inputs and uses an isolated compile cache.
 npx vitest run packages/core/src/cosmos.test.ts
 npx vitest run packages/core/src/manifest-types.test-d.ts
 npm run test -w @manifest-network/manifest-mcp-core -- src/manifest-types.test-d.ts

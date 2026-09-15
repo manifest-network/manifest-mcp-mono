@@ -1,3 +1,4 @@
+import { sha256 } from '@cosmjs/crypto';
 import { toBech32, toHex } from '@cosmjs/encoding';
 import type { EncodeObject } from '@cosmjs/proto-signing';
 import {
@@ -81,10 +82,8 @@ type FixtureSign = (
 }>;
 
 export interface InclusionTimeoutFixtureOptions {
-  readonly chainId?: string;
+  /** Override the RPC-reported hash to exercise malformed or mismatched responses. */
   readonly hashBytes?: Uint8Array;
-  readonly timeoutMs?: number;
-  readonly pollIntervalMs?: number;
 }
 
 /**
@@ -97,9 +96,12 @@ export interface InclusionTimeoutFixtureOptions {
 export async function makeInclusionTimeoutFixture(
   options: InclusionTimeoutFixtureOptions = {},
 ) {
-  const chainId = options.chainId ?? 'test-chain';
-  const hashBytes = options.hashBytes ?? new Uint8Array(32).fill(0xab);
+  const chainId = 'test-chain';
+  // The default mocked TxRaw below encodes to empty bytes. Each wire call still
+  // hashes its actual input so direct broadcasts with other bytes remain honest.
+  const hashBytes = sha256(new Uint8Array());
   const hash = toHex(hashBytes).toUpperCase();
+  const reportedHash = toHex(options.hashBytes ?? hashBytes).toUpperCase();
   const sender = toBech32('manifest', new Uint8Array(20).fill(1));
   const recipient = toBech32('manifest', new Uint8Array(20).fill(2));
   const messages: readonly EncodeObject[] = [
@@ -118,13 +120,18 @@ export async function makeInclusionTimeoutFixture(
   };
   const checkTx = {
     code: 0,
-    hash: hashBytes,
+    hash: options.hashBytes ?? hashBytes,
     events: [],
     gasUsed: 0n,
     gasWanted: 0n,
   } satisfies Awaited<ReturnType<FixtureBroadcastTxSync>>;
   const comet = {
-    broadcastTxSync: vi.fn<FixtureBroadcastTxSync>().mockResolvedValue(checkTx),
+    broadcastTxSync: vi
+      .fn<FixtureBroadcastTxSync>()
+      .mockImplementation(async ({ tx }) => ({
+        ...checkTx,
+        hash: options.hashBytes ?? sha256(tx),
+      })),
     txSearchAll: vi.fn<FixtureTxSearchAll>().mockResolvedValue({
       txs: [],
       totalCount: 0,
@@ -148,8 +155,8 @@ export async function makeInclusionTimeoutFixture(
     > as unknown as CometClient,
     signer,
     {
-      broadcastTimeoutMs: options.timeoutMs ?? 1,
-      broadcastPollIntervalMs: options.pollIntervalMs ?? 2,
+      broadcastTimeoutMs: 1,
+      broadcastPollIntervalMs: 2,
       gasPrice: GasPrice.fromString('1umfx'),
     },
   );
@@ -164,6 +171,7 @@ export async function makeInclusionTimeoutFixture(
     sign,
     signer,
     hash,
+    reportedHash,
     sender,
     messages,
     fee,

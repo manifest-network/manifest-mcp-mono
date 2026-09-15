@@ -1,7 +1,10 @@
+import { createHash } from 'node:crypto';
 import { type SigningStargateClient, TimeoutError } from '@cosmjs/stargate';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { makeInclusionTimeoutFixture } from '../__test-utils__/inclusion-timeout.js';
-import { expectExactDetails } from '../__test-utils__/mocks.js';
+import {
+  expectExactDetails,
+  makeInclusionTimeoutFixture,
+} from '../__test-utils__/mocks.js';
 import { ManifestMCPError, ManifestMCPErrorCode } from '../types.js';
 import {
   installBroadcastFailureGuard,
@@ -57,21 +60,6 @@ describe('owned inclusion-timeout receiver and provenance boundaries', () => {
   it('keeps simultaneous calls on distinct receiver views independent', async () => {
     const f = await makeInclusionTimeoutFixture();
     f.installGuard();
-    f.comet.broadcastTxSync
-      .mockResolvedValueOnce({
-        code: 0,
-        hash: new Uint8Array(32).fill(0xa1),
-        events: [],
-        gasUsed: 0n,
-        gasWanted: 0n,
-      })
-      .mockResolvedValueOnce({
-        code: 0,
-        hash: new Uint8Array(32).fill(0xb2),
-        events: [],
-        gasUsed: 0n,
-        gasWanted: 0n,
-      });
     const first = Object.create(f.client) as SigningStargateClient;
     const second = Object.create(f.client) as SigningStargateClient;
     const pending = [first, second].map((client, index) =>
@@ -81,7 +69,13 @@ describe('owned inclusion-timeout receiver and provenance boundaries', () => {
     );
     await vi.advanceTimersByTimeAsync(2);
     const errors = await Promise.all(pending);
-    for (const [index, hash] of ['A1'.repeat(32), 'B2'.repeat(32)].entries()) {
+    const hashes = [0, 1].map((value) =>
+      createHash('sha256')
+        .update(Uint8Array.of(value))
+        .digest('hex')
+        .toUpperCase(),
+    );
+    for (const [index, hash] of hashes.entries()) {
       const error = errors[index];
       expect(isOwnedBroadcastFailure(error)).toBe(true);
       if (!isOwnedBroadcastFailure(error))
@@ -101,11 +95,8 @@ describe('owned inclusion-timeout receiver and provenance boundaries', () => {
     const delegated = new TimeoutError('rejected before acceptance', f.hash);
     f.comet.broadcastTxSync
       .mockResolvedValueOnce({
-        code: 0,
-        hash: new Uint8Array(32).fill(0xab),
-        events: [],
-        gasUsed: 0n,
-        gasWanted: 0n,
+        ...f.checkTx,
+        hash: createHash('sha256').update(Uint8Array.of(1)).digest(),
       })
       .mockRejectedValueOnce(delegated);
     const first = f.client
@@ -119,11 +110,85 @@ describe('owned inclusion-timeout receiver and provenance boundaries', () => {
     expect(isOwnedBroadcastFailure(acceptedFailure)).toBe(true);
     expectExactDetails(acceptedFailure, {
       sent: true,
-      transactionHash: f.hash,
+      transactionHash: createHash('sha256')
+        .update(Uint8Array.of(1))
+        .digest('hex')
+        .toUpperCase(),
     });
     expect(await second).toBe(delegated);
     expect(isOwnedBroadcastFailure(delegated)).toBe(false);
     expect(f.comet.txSearchAll).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    { label: 'before the deadline', timeoutMs: 10_000, responseDelayMs: 0 },
+    { label: 'after the deadline', timeoutMs: 1, responseDelayMs: 10 },
+  ])(
+    'rejects an incorrect accepted hash $label and clears native timers',
+    async ({ timeoutMs, responseDelayMs }) => {
+      const f = await makeInclusionTimeoutFixture({
+        hashBytes: new Uint8Array(32).fill(0xab),
+      });
+      f.installGuard();
+      f.comet.broadcastTxSync.mockImplementationOnce(async () => {
+        if (responseDelayMs > 0) {
+          await new Promise((resolve) => setTimeout(resolve, responseDelayMs));
+        }
+        return f.checkTx;
+      });
+      const getTx = vi.spyOn(f.client, 'getTx');
+      const tx = Uint8Array.of(1, 2, 3);
+      const localHash = createHash('sha256')
+        .update(tx)
+        .digest('hex')
+        .toUpperCase();
+      const settled = vi.fn();
+      const pending = f.client
+        .broadcastTx(tx, timeoutMs, 2)
+        .catch((error: unknown) => error);
+      void pending.then(settled);
+      await vi.advanceTimersByTimeAsync(responseDelayMs + 2);
+      expect(settled).toHaveBeenCalledOnce();
+      const error = await pending;
+
+      expect(isOwnedBroadcastFailure(error)).toBe(true);
+      if (!isOwnedBroadcastFailure(error))
+        throw new Error('expected local hash evidence');
+      expect(error.code).toBe(ManifestMCPErrorCode.TX_FAILED);
+      expect(error.message).toContain('hash');
+      expectExactDetails(error, { sent: true, transactionHash: localHash });
+      expect(getTx).not.toHaveBeenCalled();
+      expect(f.comet.txSearchAll).not.toHaveBeenCalled();
+      expect(f.comet.broadcastTxSync).toHaveBeenCalledExactlyOnceWith({ tx });
+      expect(vi.getTimerCount()).toBe(0);
+    },
+  );
+
+  it('hashes and submits a byte snapshot even if the caller mutates its input', async () => {
+    const f = await makeInclusionTimeoutFixture();
+    f.installGuard();
+    const input = Uint8Array.of(1, 2, 3);
+    const originalBytes = input.slice();
+    const localHash = createHash('sha256')
+      .update(originalBytes)
+      .digest('hex')
+      .toUpperCase();
+    const pending = f.client
+      .broadcastTx(input, 1, 2)
+      .catch((error: unknown) => error);
+    input.fill(0xff);
+    await vi.advanceTimersByTimeAsync(2);
+    const error = await pending;
+
+    expectExactDetails(error, { sent: true, transactionHash: localHash });
+    expect(f.comet.broadcastTxSync).toHaveBeenCalledExactlyOnceWith({
+      tx: originalBytes,
+    });
+    expect(f.comet.broadcastTxSync.mock.calls[0][0].tx).not.toBe(input);
+    expect(f.comet.txSearchAll).toHaveBeenCalledExactlyOnceWith({
+      query: `tx.hash='${localHash}'`,
+    });
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it('preserves accepted submission evidence when a customized poll throws a TimeoutError', async () => {
@@ -176,7 +241,7 @@ describe('owned inclusion-timeout receiver and provenance boundaries', () => {
         .fn<SigningStargateClient['broadcastTxSync']>()
         .mockResolvedValue(f.hash);
       f.client.broadcastTxSync = sync;
-      if (when === 'before') f.installGuard();
+      expect(f.installGuard()).toBe(false);
       const pending = f.client
         .signAndBroadcast(f.sender, f.messages, f.fee)
         .catch((error: unknown) => error);
@@ -193,7 +258,7 @@ describe('owned inclusion-timeout receiver and provenance boundaries', () => {
     const f = await makeInclusionTimeoutFixture();
     expect(f.installGuard()).toBe(true);
     const broadcast = f.client.broadcastTx;
-    expect(installBroadcastFailureGuard(f.client)).toBe(false);
+    expect(installBroadcastFailureGuard(f.client)).toBe(true);
     expect(f.client.broadcastTx).toBe(broadcast);
     const forged = new ManifestMCPError(
       ManifestMCPErrorCode.TX_FAILED,
@@ -222,7 +287,13 @@ describe('owned inclusion-timeout receiver and provenance boundaries', () => {
     await vi.advanceTimersByTimeAsync(2);
     const error = await pending;
     expect(isOwnedBroadcastFailure(error)).toBe(true);
-    expectExactDetails(error, { sent: true, transactionHash: f.hash });
+    expectExactDetails(error, {
+      sent: true,
+      transactionHash: createHash('sha256')
+        .update(Uint8Array.of(1))
+        .digest('hex')
+        .toUpperCase(),
+    });
     expect(receivers).toHaveLength(1);
     expect(receivers[0]).toBe(f.client);
   });

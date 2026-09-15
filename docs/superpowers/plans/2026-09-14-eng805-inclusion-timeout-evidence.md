@@ -6,15 +6,20 @@ inclusion-timeout criteria. The other eleven ENG-805 criteria remain separate.
 ## Contract
 
 The SDK-created signing client reuses the installed CosmJS blocking broadcast
-implementation. A per-call observer records a validated hash returned by its
-native CheckTx broadcast. That observed acceptance establishes submission even
-if the subsequent inclusion timer or transaction lookup fails. A class, name,
-message or txId supplied by an unrelated throw does not establish submission.
-The observed hash is authoritative; a later error's claimed txId is ignored.
+implementation. A per-call observer snapshots the signed bytes and computes their
+SHA-256 hash. When native CheckTx resolves, compare its returned hash with this
+digest; a wrong length/value rejects before transaction lookup. Observed acceptance
+establishes submission even if subsequent inclusion polling fails. The local hash
+is authoritative; RPC metadata or an unrelated error's class, name, message or txId
+cannot replace it. Network/decoding failures before native CheckTx resolves do not
+establish observed acceptance and keep their existing behavior.
 
 The owned failure becomes non-retryable TX_FAILED with exactly sent:true and
 transactionHash in its initial details; a readable structured
-OPERATION_CANCELLED retains its cancellation code. Its original error is retained as a
+OPERATION_CANCELLED from a custom lookup retains its cancellation code. Actual
+caller cancellation settles independently and still lacks the accepted hash;
+propagation without delaying cancellation is tracked separately in ENG-952.
+The original failure is retained as a
 non-enumerable cause. Cosmos and multi-message entry points add their normal
 operation attribution while preserving the cause chain. There is no inferred
 transaction code, height, confirmation or successful receipt.

@@ -6,8 +6,8 @@ import {
 } from '@cosmjs/stargate';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { describe, expect, it, vi } from 'vitest';
-import { makeInclusionTimeoutFixture } from '../__test-utils__/inclusion-timeout.js';
 import {
+  makeInclusionTimeoutFixture,
   makeMockConfig,
   makeMockQueryClient,
   makeSealedClientManager,
@@ -212,7 +212,7 @@ describe('stopApp reconciliation through the real transaction pipeline', () => {
     }
   });
 
-  it('preserves cancellation after accepted submission without reconciling or retrying stopApp', async () => {
+  it('preserves an injected lookup cancellation after acceptance without reconciling or retrying stopApp', async () => {
     const f = fixture();
     const inclusion = await makeInclusionTimeoutFixture();
     inclusion.installGuard();

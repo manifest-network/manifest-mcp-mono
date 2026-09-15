@@ -653,6 +653,50 @@ describe('CosmosClientManager', () => {
       );
     });
 
+    it.each([
+      { warning: 'gasMultiplier', defaultGasMultiplier: undefined },
+      { warning: 'Broadcast failure guard', defaultGasMultiplier: 1.4 },
+    ])(
+      'releases the connected client if the $warning diagnostic throws',
+      async ({ warning, defaultGasMultiplier }) => {
+        const sinkError = new Error('diagnostic sink failed');
+        const mockSC = {
+          getChainId: vi.fn().mockResolvedValue('test-chain'),
+          defaultGasMultiplier,
+          disconnect: vi.fn(() => {
+            throw new Error('cleanup also failed');
+          }),
+        };
+        mockConnectWithSigner.mockResolvedValue(mockSC as any);
+        const sink = makeSpyLogger();
+        sink.warn.mockImplementation(() => {
+          throw sinkError;
+        });
+        const manager = CosmosClientManager.getInstance(
+          makeConfig(),
+          makeWallet(),
+        );
+        manager.setLogger(sink);
+
+        await expect(manager.getSigningClient()).rejects.toMatchObject({
+          code: ManifestMCPErrorCode.RPC_CONNECTION_FAILED,
+          message: 'Failed to connect signing client: diagnostic sink failed',
+        });
+        expect(sink.warn).toHaveBeenCalledWith(
+          expect.stringContaining(warning),
+        );
+        expect(mockSC.disconnect).toHaveBeenCalledOnce();
+
+        // Failed initialization is not cached; replacing the sink permits a fresh connection.
+        manager.setLogger(makeSpyLogger());
+        const fresh = { ...mockSC, disconnect: vi.fn() };
+        mockConnectWithSigner.mockResolvedValue(fresh as any);
+        await expect(manager.getSigningClient()).resolves.toBe(fresh);
+        expect(mockConnectWithSigner).toHaveBeenCalledTimes(2);
+        expect(fresh.disconnect).not.toHaveBeenCalled();
+      },
+    );
+
     it('setLogger is non-key and non-invalidating: same instance AND same cached signing client', async () => {
       // setLogger is not part of the getInstance key or the
       // invalidation gate — so calling it between two same-key getInstance calls must neither
