@@ -14,7 +14,10 @@ import {
 
 export { makeInclusionTimeoutFixture } from './inclusion-timeout.js';
 
-/** Assert exact own detail keys and values, including hidden properties. */
+/**
+ * Assert all top-level own detail keys, including hidden properties and symbols.
+ * Compare values with Vitest's strict equality; nested hidden keys are not inspected.
+ */
 export function expectExactDetails(
   error: unknown,
   expected: Record<string, unknown>,

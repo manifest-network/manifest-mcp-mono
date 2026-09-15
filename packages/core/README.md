@@ -82,6 +82,8 @@ can supply `opts.logger`. A manager with no configured sink remains silent.
 Compatible clients and servers share initialization diagnostics: the last sink
 other than `noopLogger` wins, and disconnecting its holder does not restore the
 previous sink. A default SDK logger cannot silence an already configured manager.
+Only the exported `noopLogger` instance is ignored; custom logger objects,
+including silent ones, are deliberate sink assignments.
 Use distinct wallet-provider adapters when initialization diagnostics need
 independent sinks; each SDK client's other logging still uses its own `opts.logger`.
 See the [SDK error contract](../../docs/library-usage.md#errors) for reconciliation.

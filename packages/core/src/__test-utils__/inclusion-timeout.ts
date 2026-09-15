@@ -17,7 +17,18 @@ type Comet38Member<Client extends CometClient> = Client extends CometClient
     ? Client
     : never
   : never;
-type Comet38Client = Comet38Member<CometClient>;
+type IsUnion<Member, Whole = Member> = Member extends Whole
+  ? [Whole] extends [Member]
+    ? false
+    : true
+  : never;
+// Fail the wire check if an upstream change leaves zero or multiple matches.
+type SingleMember<Member> = [Member] extends [never]
+  ? never
+  : IsUnion<Member> extends false
+    ? Member
+    : never;
+type Comet38Client = SingleMember<Comet38Member<CometClient>>;
 type OfflineSigner = Parameters<
   typeof SigningStargateClient.createWithSigner
 >[1];

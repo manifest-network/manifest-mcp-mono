@@ -958,16 +958,17 @@ five smaller runtime or test-contract gaps.
 | --- | --- | --- |
 | dotenv's default startup banner writes to MCP stdout | Load environment configuration with `quiet: true`. An isolated child process using real dotenv reproduces the pre-fix banner; regressions cover environment loading and all five built CLI startup paths. Explicit dotenv debug/banner environment overrides retain upstream behavior and should remain unset for stdio use. | 100% reproduction; 99% correction |
 | Logger test watches `console.log` but misses direct stdout writes | Also guard `process.stdout.write`, the actual protocol stream. Retain the console guard because Vitest intercepts console output separately. | 100% |
-| Hidden details outside a six-name denylist survive | Share an exhaustive own-key and strict-value assertion through the existing test utilities. Owned errors permit only `sent` and `transactionHash`; attributed errors additionally permit their specific operation context. Hidden `deliverTx` objects, undefined-valued keys and symbol keys are rejected. | 100% |
+| Hidden details outside a six-name denylist survive | Share an exhaustive top-level own-key and strict-value assertion through the existing test utilities. Owned errors permit only `sent` and `transactionHash`; attributed errors additionally permit their specific operation context. Top-level hidden `deliverTx` objects, undefined-valued keys and symbol keys are rejected; nested values use Vitest strict equality. | 100% |
 | `Pick` over a client union accepts mixed protocol generations | Privately select the concrete Comet 0.38 member through Stargate's declared parameter type, then check `broadcastTxSync` and `txSearchAll`. All-TM34 and both mixed-generation mutations fail compilation; `status` and `disconnect` remain intentionally partial. | 99% |
 | Silent logging tests cannot prove the manager reached the configured sink | Both warning and silent cases now assert the actual shared `logger.warn` invocation with passthrough. Stderr presence or absence then proves the level decision on that sink. | 100% |
 | Compatible holders overwrite a shared initialization logger | Ignore the exact default `noopLogger`; document and test that the last other sink wins and holder disconnect does not restore a prior sink. A server can still replace a compatible SDK holder's custom initialization sink by this explicit policy; distinct wallet-provider adapters provide isolation. Per-client SDK logging is unchanged. | 100% mechanism; 98% bounded policy |
 
-The proposed separate dotenv exact-pin issue is not a current policy violation:
+The proposed separate dotenv exact-pin issue was not a general policy violation:
 `CLAUDE.md` and `scripts/version.mjs` constrain internal workspace siblings, while
 [ENG-538](https://linear.app/liftedinit/issue/ENG-538) explicitly distinguishes
-external dependency ranges from those lockstep pins. No manifest change or new
-dependency issue is needed on that evidence (99% confidence).
+external dependency ranges from those lockstep pins. That review left the range
+unchanged (99% confidence in the policy distinction); the next review revisits
+the narrower case of a terminal CLI dependency that crosses no consumer API.
 
 The earlier constructor-test wording now includes the unsupported `broadcastTx`
 override, the RPC check names its two covered methods, and the historical test
@@ -977,4 +978,30 @@ and no longer claims the placeholder SDK `logLevel` applies a level gate.
 
 Validation evidence and the final head are recorded in the PR response and
 Linear. ENG-805 remains In Progress with its eleven unchecked tracker criteria
-and two existing Backlog child issues; this revision adds no deferred finding.
+and the two Backlog children added during this PR, ENG-952 and ENG-953; this
+revision adds no deferred finding. Those two are a subset of the tracker's children.
+
+### PR #230 fourth review — 2026-09-15
+
+[The next review](https://github.com/manifest-network/manifest-mcp-mono/pull/230#issuecomment-5686002516)
+verified the previous six fixes, including real JSON-RPC sessions through all
+five CLIs, and identified these additional gaps.
+
+| Finding | Disposition and evidence | Confidence |
+| --- | --- | --- |
+| Child-process deadline exceeds the default test budget | Give the subprocess cases an explicit 30-second test budget around their 20-second child deadline, including plain workspace test runs. | 100% structural mismatch |
+| Dotenv environment settings bypass `quiet: true` | Read the optional working-directory `.env`, then use dotenv's parser and non-overriding population without its logging wrapper. Process and file values cannot enable diagnostics; existing environment values and dotenv parsing semantics are preserved. Merely deleting flags before `config()` would not handle flags loaded from the file. | 100% reproduction; 99% correction |
+| Built-only tests can pass against stale output | Exercise the current configuration source in isolated child processes. Before built CLI probes, compare embedded source-map content with current config, bootstrap and entrypoint source; report an actionable rebuild failure on drift. This protects the named startup paths, not every transitive workspace artifact. | 99% |
+| Exact-details helper does not inspect nested hidden fields | Explicitly scope its JSDoc to all top-level own keys and Vitest strict value equality. Nested hidden-key traversal is not claimed; no production nested-field leak was identified. | 100% scope correction |
+| A future Comet union can select multiple generations | Require exactly one selected member; zero or multiple matches become `never` and fail the fixture's existing `satisfies` check. A synthetic fourth-member mutation is accepted by the old selector and rejected by the corrected selector. | 99% |
+| Logger default suppression depends on identity | Document that only the exact exported `noopLogger` instance is ignored. A custom silent logger is an explicit sink assignment. The existing last-writer policy is unchanged. | 100% |
+| Terminal CLI dependency range permits unreviewed parser changes | Pin dotenv to the already locked 17.4.2; no installed dependency version changes. ENG-538's shared-library compatibility rationale does not require a range for this private CLI implementation detail. | 99% |
+| Tracker wording implies only two Backlog children exist | Name the two added during this PR. The verified current total is seven children: six Backlog and ENG-807 Done. | 100% Linear verification |
+| User-visible logging changes are absent from the changelog | Add Unreleased entries for CLI stdout protection and shared initialization logging behavior. Document plain `.env` loading and that dotenv control variables no longer activate vault loading. | 100% |
+
+The parser is retained deliberately: native Node environment parsing differs
+for escaped carriage returns and colon assignments, including byte-sensitive
+password values. No new environment parser or global console interception is
+introduced. Validation, mutation evidence and fresh PR checks are recorded in
+the review response and Linear. ENG-805 stays In Progress with its eleven
+unchecked tracker criteria; this round adds no deferred issue.

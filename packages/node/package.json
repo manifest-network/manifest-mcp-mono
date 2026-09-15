@@ -52,7 +52,7 @@
     "@manifest-network/manifest-mcp-cosmwasm": "0.22.0",
     "@manifest-network/manifest-mcp-fred": "0.22.0",
     "@modelcontextprotocol/sdk": "1.30.0",
-    "dotenv": "^17.2.3"
+    "dotenv": "17.4.2"
   },
   "devDependencies": {
     "@types/node": "22.20.1",

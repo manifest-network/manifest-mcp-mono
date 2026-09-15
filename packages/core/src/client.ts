@@ -619,8 +619,9 @@ export class CosmosClientManager {
   /**
    * Set the sink for cached-client initialization diagnostics. Compatible holders share this
    * sink: the last non-noopLogger assignment wins and disconnect does not restore an earlier sink.
-   * The default noopLogger never replaces a configured sink. Callers needing independent
-   * diagnostics can use distinct wallet-provider adapters. Logging does not change the immutable
+   * Only the exported noopLogger instance is ignored; custom silent sinks are assignments.
+   * Callers needing independent diagnostics can use distinct wallet-provider adapters.
+   * Logging does not change the immutable
    * wallet/configuration or invalidate a connection.
    */
   setLogger(logger: Logger): void {

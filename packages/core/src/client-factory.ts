@@ -56,7 +56,8 @@ interface BaseClientOptions {
   chainIdentityFetch?: typeof globalThis.fetch;
   /**
    * Per-client logging sink; defaults to the silent `noopLogger`. Manager initialization
-   * diagnostics are shared by compatible clients/servers: the last non-noopLogger sink wins,
+   * diagnostics are shared by compatible clients/servers: the last sink other than the exact
+   * exported noopLogger instance wins (custom silent sinks are assignments),
    * and disposing a holder does not restore its predecessor. Use distinct wallet-provider
    * adapters when initialization diagnostics need independent sinks.
    */

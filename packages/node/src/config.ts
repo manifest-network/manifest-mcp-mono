@@ -1,9 +1,24 @@
+import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import dotenv from 'dotenv';
 
-// stdout is reserved for MCP protocol messages, including during module loading.
-dotenv.config({ quiet: true });
+function loadDotEnv(): void {
+  const path = join(process.cwd(), '.env');
+  let source: string;
+  try {
+    source = readFileSync(path, 'utf8');
+  } catch {
+    // The .env file is optional; existing process environment remains usable.
+    return;
+  }
+  // stdout belongs to MCP. The config wrapper can log even with quiet:true;
+  // parse/populate preserve dotenv syntax and precedence without reading its
+  // logging controls. Keep unexpected parser/population failures observable.
+  dotenv.populate(process.env, dotenv.parse(source));
+}
+
+loadDotEnv();
 
 export interface NodeMCPConfig {
   readonly chainId: string;
