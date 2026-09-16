@@ -1,10 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
-import {
-  isRetryableError,
-  ManifestMCPError,
-  ManifestMCPErrorCode,
-  withRetry,
-} from './index.js';
+import { isRetryableError, withRetry } from './retry.js';
+import { ManifestMCPError, ManifestMCPErrorCode } from './types.js';
 
 function transientError(): ManifestMCPError {
   return new ManifestMCPError(
@@ -57,7 +53,52 @@ const unreadableErrors = [
   { name: 'name getter', create: () => unreadableProperty('name') },
 ];
 
-describe('public retry error inspection', () => {
+describe('retry error inspection', () => {
+  it.each([
+    {
+      verdict: 'permanent code',
+      create: () =>
+        new ManifestMCPError(ManifestMCPErrorCode.TX_FAILED, 'fetch failed'),
+    },
+    {
+      verdict: 'submitted outcome',
+      create: () =>
+        new ManifestMCPError(
+          ManifestMCPErrorCode.RPC_CONNECTION_FAILED,
+          'fetch failed',
+          { sent: true },
+        ),
+    },
+    {
+      verdict: 'partial outcome',
+      create: () =>
+        new ManifestMCPError(
+          ManifestMCPErrorCode.QUERY_FAILED,
+          'fetch failed',
+          { partial: true },
+        ),
+    },
+  ])('does not inspect causes behind an outer $verdict', async ({ create }) => {
+    const cause = vi.fn(() => {
+      throw new Error('Must not inspect');
+    });
+    const error = Object.defineProperty(create(), 'cause', { get: cause });
+    const operation = vi.fn(async () => {
+      throw error;
+    });
+    const onRetry = vi.fn();
+    expect(isRetryableError(error)).toBe(false);
+    await expect(
+      withRetry(operation, {
+        config: { maxRetries: 2, baseDelayMs: 1, maxDelayMs: 1 },
+        onRetry,
+      }),
+    ).rejects.toBe(error);
+    expect(operation).toHaveBeenCalledOnce();
+    expect(onRetry).not.toHaveBeenCalled();
+    expect(cause).not.toHaveBeenCalled();
+  });
+
   describe.each(unreadableErrors)('$name', ({ create }) => {
     it.each([false, true])(
       'preserves the original failure without retrying (nested: %s)',

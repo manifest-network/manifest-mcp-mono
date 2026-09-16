@@ -84,6 +84,27 @@ const DEFAULT_BROADCAST_POLL_INTERVAL_MS = 3_000;
 /** Poll for an available rate-limit token; abort-aware sleep rejects immediately on cancellation. */
 const RATE_LIMIT_POLL_MS = 25;
 
+/** Preserve SDK errors and normalize untrusted connection failures without inspecting them unsafely. */
+function connectionError(
+  error: unknown,
+  messagePrefix: string,
+  details: Record<string, unknown>,
+): ManifestMCPError {
+  let message: string;
+  try {
+    if (error instanceof ManifestMCPError) return error;
+    message = error instanceof Error ? String(error.message) : String(error);
+  } catch {
+    // Both instanceof (a proxy's prototype) and message extraction can throw.
+    message = 'Error message unavailable';
+  }
+  return new ManifestMCPError(
+    ManifestMCPErrorCode.RPC_CONNECTION_FAILED,
+    `${messagePrefix}: ${message}`,
+    details,
+  );
+}
+
 /**
  * Get combined signing client options with all Manifest registries
  */
@@ -414,13 +435,10 @@ export class CosmosClientManager {
       }
       return client;
     } catch (error) {
-      if (error instanceof ManifestMCPError) {
-        throw error;
-      }
       const endpoint = this.config.restUrl ?? this.config.rpcUrl;
-      throw new ManifestMCPError(
-        ManifestMCPErrorCode.RPC_CONNECTION_FAILED,
-        `Failed to connect to ${this.config.restUrl ? 'REST' : 'RPC'} endpoint: ${error instanceof Error ? error.message : String(error)}`,
+      throw connectionError(
+        error,
+        `Failed to connect to ${this.config.restUrl ? 'REST' : 'RPC'} endpoint`,
         { url: endpoint },
       );
     }
@@ -577,14 +595,9 @@ export class CosmosClientManager {
       );
       return client;
     } catch (error) {
-      if (error instanceof ManifestMCPError) {
-        throw error;
-      }
-      throw new ManifestMCPError(
-        ManifestMCPErrorCode.RPC_CONNECTION_FAILED,
-        `Failed to connect signing client: ${error instanceof Error ? error.message : String(error)}`,
-        { rpcUrl: this.config.rpcUrl },
-      );
+      throw connectionError(error, 'Failed to connect signing client', {
+        rpcUrl: this.config.rpcUrl,
+      });
     }
   }
 

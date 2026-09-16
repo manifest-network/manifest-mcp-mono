@@ -429,6 +429,8 @@ Import `withRetry` and `isRetryableError` from the SDK root so they use the same
 
 **Custom error inspection.** If inspecting an error or its standard `.cause` chain throws (for example, a throwing accessor or revoked proxy), `isRetryableError` returns false. `withRetry` then rejects with that exact original error without another attempt or `onRetry` call, including when `maxRetries` is zero. Classification never authorizes retry from a partially inspected chain. Established outer permanent/submitted verdicts can skip irrelevant causes. This boundary applies to errors received by the retry helpers; it does not change diagnostic handling inside a producer before the error reaches them. `AggregateError.errors` and other grouped/sibling errors are not traversed.
 
+Client-manager connection catches preserve recognized SDK errors. Other initialization failures are normalized to `RPC_CONNECTION_FAILED` with the configured `url` (query connection) or `rpcUrl` (signing connection). Unreadable error reflection or message/string coercion uses the fallback `Error message unavailable` instead of replacing that connection envelope with a diagnostic exception. This also covers wallet signer acquisition before the connection retry loop.
+
 Faucet status does not retry internally, so an application can wrap this idempotent read explicitly. This example combines the helper's fresh 10-second deadline with a 30-second budget for the entire retry sequence. Passing the overall signal to the injected fetch cancels the in-flight request; passing it to `withRetry` stops backoff and later attempts:
 
 ```ts

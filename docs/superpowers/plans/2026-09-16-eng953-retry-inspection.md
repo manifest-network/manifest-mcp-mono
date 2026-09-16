@@ -17,6 +17,14 @@ could authorize replay. Leave the shared `errorChain` and transport ownership
 helpers unchanged. The boundary covers errors supplied to the retry helpers;
 producer-side diagnostic inspection before those helpers remains separate.
 
+Connection catches receiving the preserved error also need guarded SDK-error
+discrimination and message extraction. Normalize other failures to the existing
+`RPC_CONNECTION_FAILED` envelope with endpoint details, using a fixed fallback
+when diagnostics cannot be read. Recognized SDK errors retain their identity.
+Cover REST/RPC initialization, signing connection and wallet signer acquisition
+with the real retry helper. Pin the outer-verdict short-circuit with zero cause
+accesses so a conservative catch cannot hide an ordering regression.
+
 No dependency, compiler-target, public type, or grouped-error policy change is
 needed. AggregateError members remain outside the standard `.cause` traversal.
 
@@ -31,5 +39,4 @@ needed. AggregateError members remain outside the standard `.cause` traversal.
    formatting, architecture and package checks. Review independently, open a PR,
    and record its validation in ENG-953 and the compact ENG-805 status.
 
-The 81 existing user artifacts, release branch and submodule pins are preserved.
 ENG-805's other open criteria retain their existing scope and owners.

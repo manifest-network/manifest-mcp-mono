@@ -1123,6 +1123,8 @@ regression. Independent production/documentation review found no blocker
 
 ## Unreadable retry diagnostics (ENG-953, 2026-09-16)
 
+Implementation plan: [preserve failures during retry inspection](superpowers/plans/2026-09-16-eng953-retry-inspection.md).
+
 `isRetryableError` now catches exceptions encountered while inspecting its error
 argument and standard causes, returning a conservative nonretryable verdict.
 `withRetry` consequently rejects with the exact original failure, without another
@@ -1131,7 +1133,7 @@ that arrive after a previous readable transient failure has already retried.
 
 | Finding | Resolution and evidence | Confidence |
 | --- | --- | --- |
-| A throwing cause accessor replaces the original operation failure | Contain error inspection at the public classifier. Before the fix, 18 core cases and three built-SDK identity cases fail; readable controls pass. | 100% reproduction; 99% correction |
+| A throwing cause accessor replaces the original operation failure | Contain error inspection at the public classifier. At `4ce59ea`, 19 of the 21 core cases and three built-SDK identity cases fail with the original classifier; the readable and already-aborted-signal controls pass. | 100% reproduction; 99% correction |
 | Catching only property access misses proxy reflection and other diagnostic reads | The boundary includes the initial instanceof check, cause membership/prototype inspection and classification fields. Root/nested proxy and accessor cases preserve rejection identity with zero and positive retry budgets. | 99% |
 | Returning a partial chain could hide a permanent/submitted veto | A failed inspection returns false instead of classifying a prefix. Transient wrapper and owned-timeout controls prove unreadable causes cannot authorize replay. Shared errorChain and transport ownership helpers are unchanged. | 99% |
 | A broad promise about all injected transport errors would exceed this boundary | Public docs scope the behavior to errors received by the retry helpers. Producer-side diagnostics and grouped/sibling errors retain their existing policy. | 99% |
@@ -1152,3 +1154,39 @@ statements / 84.51% branches / 88.47% functions**. Fresh workspace builds,
 workspace/E2E TypeScript, Fred schema, Biome, architecture, all nine package
 integrity checks and all four SDK bundle budgets pass. CI and live acceptance
 results are recorded on the PR and ENG-953.
+
+## PR #233 review: connection envelopes and observable short-circuits (2026-09-16)
+
+[Claude's execution-verified review of `4ce59ea`](https://github.com/manifest-network/manifest-mcp-mono/pull/233#issuecomment-5703102677)
+found a downstream normalization regression and a test-ordering gap. The
+connection catches must safely handle the unreadable value now preserved by
+`withRetry`; they cannot assume the former secondary inspection error arrives.
+
+| Finding | Disposition and evidence | Confidence |
+| --- | --- | --- |
+| Connection catches throw while discriminating or formatting the preserved error | A module-local normalizer guards SDK-error discrimination and message/string extraction. Other failures retain RPC_CONNECTION_FAILED and existing endpoint details; recognized SDK errors retain identity. Twelve hostile-input cases fail before the fix; all 83 client tests pass afterward, using real retry for REST, RPC and signing, plus the pre-retry wallet leg. | 100% reproduction; 99% correction |
+| A false verdict alone no longer proves terminal errors skip cause inspection | Three tests assert zero cause reads for permanent, submitted and partial outer verdicts. An isolated mutation moving traversal first fails all three, while 21 controls pass. | 100% |
+| The initial reproduction count omitted the last added regression | Correct the historical `4ce59ea` count to 19 failures / 2 controls out of 21 core cases. An archive copy with the original classifier reproduces it; the original three SDK failures remain accurate for that revision. | 100% |
+| Producer and MCP diagnostic inspection can still replace original failures | Independently reproduced; track the pre-existing boundary in [ENG-983](https://linear.app/liftedinit/issue/ENG-983), including unsafe timeout ownership and MCP reflection. | 100% mechanism; 98% scope |
+| A throwing onRetry callback replaces the operation failure | Independently reproduced; [ENG-984](https://linear.app/liftedinit/issue/ENG-984) owns explicit observer/control semantics, diagnostics and documentation. | 100% mechanism; 98% scope |
+| Undefined or invalid retry limits skip operations or add unmatched backoff | Independently reproduced through withRetry and partial public getInstance configuration; [ENG-985](https://linear.app/liftedinit/issue/ENG-985) owns defaults and validation. | 100% mechanism; 99% scope |
+| The classifier does not log inspection failures | Keep logging out of the classifier. Its contract requires a conservative verdict; logging would add another fallible diagnostic operation. Any future trace must avoid inspecting the error. | 98% |
+| Non-string messages stop retry classification | Retain the conservative malformed-input behavior. String coercion would broaden retry policy and is not required for standard cause exception safety. | 100% mechanism; 98% scope |
+| Core unit tests load the full barrel | Use direct retry/type imports for the core matrix. Built SDK consumer tests still exercise public exports through the SDK's core dependency. | 99% |
+| The SDK assertion itself resolves a hostile rejection value | Compare identity inside the rejection handler and add a root revoked-proxy case. Restoring the prior catch-return pattern fails this case independently of the correct classifier. | 100% |
+| The plan is unlinked and contains checkout-specific state | Link the plan from this section's implementation record and remove the local untracked-file count from the plan. | 100% |
+
+The proposed caller-abort precedence change remains refuted: nonretryable
+operation failures retain their established priority, including ordinary readable
+errors. The review adds no grouped-error policy change. The three new follow-ups
+are pre-existing, separate boundaries; the PR fixes the connection regression and
+retains its conservative retry contract.
+
+Validation passes **217 focused tests** and **4,188 full-suite tests / 17 existing
+skips / 187 files**, with no type errors and all coverage floors: **84.95% lines /
+84.67% statements / 84.55% branches / 88.48% functions**. Fresh workspace builds,
+workspace/E2E TypeScript, schema, Biome, architecture, nine package-integrity checks
+and four SDK bundle budgets pass. Independent review found no blocker (99%
+confidence); removing reflection containment fails four cases, removing message
+containment fails eight, and moving cause traversal before terminal verdicts fails
+three. Fresh PR-head CI and live acceptance are recorded on PR #233 and ENG-953.

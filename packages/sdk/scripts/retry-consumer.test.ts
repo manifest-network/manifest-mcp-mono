@@ -14,6 +14,15 @@ afterEach(() => vi.restoreAllMocks());
 describe('SDK-only retry consumer', () => {
   it.each([
     {
+      description: 'an unreadable root proxy without retries',
+      maxRetries: 0,
+      createError: () => {
+        const { proxy, revoke } = Proxy.revocable(new Error('ECONNRESET'), {});
+        revoke();
+        return proxy;
+      },
+    },
+    {
       description: 'a throwing root cause getter without retries',
       maxRetries: 0,
       createError: () =>
@@ -49,13 +58,17 @@ describe('SDK-only retry consumer', () => {
     const operation = vi.fn().mockRejectedValue(error);
     const onRetry = vi.fn();
 
-    const rejection = await withRetry(operation, {
+    const originalPreserved = await withRetry(operation, {
       config: { maxRetries, baseDelayMs: 1, maxDelayMs: 1 },
       onRetry,
-    }).catch((reason: unknown) => reason);
+    }).then(
+      () => false,
+      (reason: unknown) => reason === error,
+    );
 
-    // Keep assertion failure formatting from inspecting the hostile cause itself.
-    expect(rejection === error).toBe(true);
+    // Resolving a revoked proxy as a promise value would read its `then` property.
+    // Compare inside the handler and keep failure formatting off the error too.
+    expect(originalPreserved).toBe(true);
 
     expect(operation).toHaveBeenCalledOnce();
     expect(onRetry).not.toHaveBeenCalled();

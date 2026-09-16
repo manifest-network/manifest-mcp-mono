@@ -125,6 +125,7 @@ import { liftedinit } from '@manifest-network/manifestjs/dist/codegen/liftedinit
 import { CosmosClientManager } from './client.js';
 import { createLCDQueryClient } from './lcd-adapter.js';
 import { noopLogger } from './logger.js';
+import { withRetry } from './retry.js';
 import type { ManifestMCPConfig, WalletProvider } from './types.js';
 
 const mockCreateLCDQueryClient = vi.mocked(createLCDQueryClient);
@@ -194,6 +195,109 @@ describe('CosmosClientManager', () => {
     CosmosClientManager.clearInstances();
     vi.unstubAllGlobals();
   });
+
+  describe.each(['REST', 'RPC', 'signing', 'wallet'] as const)(
+    '%s initialization error normalization with real retry',
+    (boundary) => {
+      beforeEach(async () => {
+        const actual =
+          await vi.importActual<typeof import('./retry.js')>('./retry.js');
+        vi.mocked(withRetry).mockImplementation(actual.withRetry);
+      });
+
+      afterEach(() => {
+        vi.mocked(withRetry).mockImplementation((operation) => operation());
+      });
+
+      function failInitialization(error: unknown) {
+        const wallet = makeWallet();
+        const config = makeConfig({
+          restUrl: boundary === 'REST' ? 'https://lcd.example.com' : undefined,
+          retry: { maxRetries: 2, baseDelayMs: 0, maxDelayMs: 0 },
+        });
+        const operation =
+          boundary === 'REST'
+            ? mockCreateLCDQueryClient
+            : boundary === 'RPC'
+              ? mockCreateRPCQueryClient
+              : boundary === 'signing'
+                ? mockConnectWithSigner
+                : vi.mocked(wallet.getSigner);
+        operation.mockRejectedValueOnce(error);
+        const manager = CosmosClientManager.getInstance(config, wallet);
+        const query = boundary === 'REST' || boundary === 'RPC';
+        return {
+          operation,
+          pending: query
+            ? manager.getQueryClient()
+            : manager.getSigningClient(),
+          messagePrefix: query
+            ? `Failed to connect to ${boundary} endpoint`
+            : 'Failed to connect signing client',
+          details: query
+            ? { url: config.restUrl ?? config.rpcUrl }
+            : { rpcUrl: config.rpcUrl },
+        };
+      }
+
+      it.each([
+        {
+          name: 'throwing message getter',
+          create: () =>
+            Object.defineProperty(new Error('fetch failed'), 'message', {
+              get() {
+                throw new Error('diagnostic inspection failed');
+              },
+            }),
+        },
+        {
+          name: 'revoked proxy',
+          create: () => {
+            const { proxy, revoke } = Proxy.revocable(new Error(), {});
+            revoke();
+            return proxy;
+          },
+        },
+        {
+          name: 'throwing string coercion',
+          create: () => ({
+            [Symbol.toPrimitive]() {
+              throw new Error('diagnostic coercion failed');
+            },
+          }),
+        },
+      ])('normalizes a $name without another attempt', async ({ create }) => {
+        const { pending, operation, messagePrefix, details } =
+          failInitialization(create());
+
+        await expect(pending).rejects.toMatchObject({
+          code: ManifestMCPErrorCode.RPC_CONNECTION_FAILED,
+          message: `${messagePrefix}: Error message unavailable`,
+          details,
+        });
+        expect(operation).toHaveBeenCalledOnce();
+        expect(withRetry).toHaveBeenCalledTimes(boundary === 'wallet' ? 0 : 1);
+      });
+
+      it('preserves an established SDK error without reading its message', async () => {
+        const original = new ManifestMCPError(
+          ManifestMCPErrorCode.INVALID_CONFIG,
+          'custom configuration error',
+          { source: boundary },
+        );
+        Object.defineProperty(original, 'message', {
+          get() {
+            throw new Error('diagnostic inspection failed');
+          },
+        });
+        const { pending, operation } = failInitialization(original);
+
+        await expect(pending).rejects.toBe(original);
+        expect(operation).toHaveBeenCalledOnce();
+        expect(withRetry).toHaveBeenCalledTimes(boundary === 'wallet' ? 0 : 1);
+      });
+    },
+  );
 
   describe('getInstance', () => {
     it('returns same instance for same chainId:rpcUrl', () => {
