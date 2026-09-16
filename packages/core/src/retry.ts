@@ -192,44 +192,52 @@ function isPermanentError(error: Error): boolean {
  * information by itself. Only a query/connection boundary that owns the failed
  * transport attempt may annotate it with `transportCode: 'ETIMEDOUT'`.
  * Pass the whole-operation signal to suppress retry after caller cancellation.
+ * An exception while inspecting the error or its standard causes returns false;
+ * withRetry preserves the original failure rather than the inspection exception.
  */
 export function isRetryableError(
   error: unknown,
   options: { signal?: AbortSignal } = {},
 ): boolean {
   if (options.signal?.aborted) return false;
-  if (!(error instanceof Error)) return false;
-  // An outer permanent/submitted verdict is final. Do not inspect retained
-  // diagnostic causes that cannot change it and may have hostile accessors.
-  if (isPermanentError(error)) return false;
-  const chain = errorChain(error);
-  // Permanent verdicts in any cause dominate transient wrappers and markers.
-  if (chain.slice(1).some(isPermanentError)) return false;
+  try {
+    if (!(error instanceof Error)) return false;
+    // An outer permanent/submitted verdict is final. Do not inspect retained
+    // diagnostic causes that cannot change it and may have hostile accessors.
+    if (isPermanentError(error)) return false;
+    const chain = errorChain(error);
+    // Permanent verdicts in any cause dominate transient wrappers and markers.
+    if (chain.slice(1).some(isPermanentError)) return false;
 
-  let transportTimeout = false;
-  for (const entry of chain) {
-    // A marker may own a nested native timeout/stream abort, but cannot authorize
-    // retry of an outer cancellation that wraps a previous transport failure.
-    if (entry.name === 'AbortError' || entry.name === 'TimeoutError') {
-      return transportTimeout;
+    let transportTimeout = false;
+    for (const entry of chain) {
+      // A marker may own a nested native timeout/stream abort, but cannot authorize
+      // retry of an outer cancellation that wraps a previous transport failure.
+      if (entry.name === 'AbortError' || entry.name === 'TimeoutError') {
+        return transportTimeout;
+      }
+      if (
+        entry instanceof ManifestMCPError &&
+        (entry.code === ManifestMCPErrorCode.QUERY_FAILED ||
+          entry.code === ManifestMCPErrorCode.RPC_CONNECTION_FAILED) &&
+        entry.details?.transportCode === 'ETIMEDOUT'
+      )
+        transportTimeout = true;
     }
-    if (
-      entry instanceof ManifestMCPError &&
-      (entry.code === ManifestMCPErrorCode.QUERY_FAILED ||
-        entry.code === ManifestMCPErrorCode.RPC_CONNECTION_FAILED) &&
-      entry.details?.transportCode === 'ETIMEDOUT'
-    )
-      transportTimeout = true;
+    return (
+      transportTimeout ||
+      chain.some(
+        (entry) =>
+          queryStatusRetryability(entry) === true ||
+          isTransientErrorMessage(entry.message) ||
+          isTransientErrorMessage(errorCode(entry)),
+      )
+    );
+  } catch {
+    // Unreadable diagnostics cannot establish safe replay. Keep this boundary
+    // around the entire inspection so withRetry preserves the original error.
+    return false;
   }
-  return (
-    transportTimeout ||
-    chain.some(
-      (entry) =>
-        queryStatusRetryability(entry) === true ||
-        isTransientErrorMessage(entry.message) ||
-        isTransientErrorMessage(errorCode(entry)),
-    )
-  );
 }
 
 /**

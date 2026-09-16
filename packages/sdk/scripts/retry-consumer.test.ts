@@ -12,6 +12,81 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 afterEach(() => vi.restoreAllMocks());
 
 describe('SDK-only retry consumer', () => {
+  it.each([
+    {
+      description: 'a throwing root cause getter without retries',
+      maxRetries: 0,
+      createError: () =>
+        Object.defineProperty(new Error('Request timed out'), 'cause', {
+          get() {
+            throw new Error('Cannot inspect root cause');
+          },
+        }),
+    },
+    {
+      description: 'a throwing nested cause getter with retries available',
+      maxRetries: 2,
+      createError: () =>
+        Object.assign(new Error('HTTP 503'), {
+          cause: Object.defineProperty(new Error('Adapter failure'), 'cause', {
+            get() {
+              throw new Error('Cannot inspect nested cause');
+            },
+          }),
+        }),
+    },
+    {
+      description: 'an unreadable nested proxy with retries available',
+      maxRetries: 2,
+      createError: () => {
+        const { proxy, revoke } = Proxy.revocable(new Error('ECONNRESET'), {});
+        revoke();
+        return Object.assign(new Error('HTTP 503'), { cause: proxy });
+      },
+    },
+  ])('preserves $description', async ({ maxRetries, createError }) => {
+    const error = createError();
+    const operation = vi.fn().mockRejectedValue(error);
+    const onRetry = vi.fn();
+
+    const rejection = await withRetry(operation, {
+      config: { maxRetries, baseDelayMs: 1, maxDelayMs: 1 },
+      onRetry,
+    }).catch((reason: unknown) => reason);
+
+    // Keep assertion failure formatting from inspecting the hostile cause itself.
+    expect(rejection === error).toBe(true);
+
+    expect(operation).toHaveBeenCalledOnce();
+    expect(onRetry).not.toHaveBeenCalled();
+    expect(isRetryableError(error)).toBe(false);
+  });
+
+  it('still retries a readable transient cause through the public exports', async () => {
+    const error = Object.assign(new Error('Adapter failure'), {
+      cause: new Error('ECONNRESET'),
+    });
+    const operation = vi
+      .fn()
+      .mockRejectedValueOnce(error)
+      .mockResolvedValueOnce('recovered');
+    const onRetry = vi.fn();
+
+    expect(isRetryableError(error)).toBe(true);
+    await expect(
+      withRetry(operation, {
+        config: { maxRetries: 1, baseDelayMs: 1, maxDelayMs: 1 },
+        onRetry,
+      }),
+    ).resolves.toBe('recovered');
+    expect(operation).toHaveBeenCalledTimes(2);
+    expect(onRetry).toHaveBeenCalledExactlyOnceWith(
+      error,
+      1,
+      expect.any(Number),
+    );
+  });
+
   it('recognizes the faucet producer error instance and retries its owned deadline', async () => {
     const deadline = new AbortController();
     vi.spyOn(AbortSignal, 'timeout').mockReturnValueOnce(deadline.signal);

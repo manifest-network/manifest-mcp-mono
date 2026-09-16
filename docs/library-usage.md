@@ -427,6 +427,8 @@ HTTP-only 425 remains terminal because [RFC 8470 §5.2](https://www.rfc-editor.o
 
 Import `withRetry` and `isRetryableError` from the SDK root so they use the same pinned core dependency as the SDK's error producers. For a custom retry loop, `isRetryableError(error, { signal })` returns false once the overall signal aborts. `withRetry` accepts the same signal through `RetryOptions.signal` to prevent further attempts and interrupt backoff. Pass it to the operation's transport as well: the wrapper does not race opaque in-flight work or discard a successful result, even if the callback ignores cancellation. Keep one retry owner per operation; do not wrap an operation that already retries internally.
 
+**Custom error inspection.** If inspecting an error or its standard `.cause` chain throws (for example, a throwing accessor or revoked proxy), `isRetryableError` returns false. `withRetry` then rejects with that exact original error without another attempt or `onRetry` call, including when `maxRetries` is zero. Classification never authorizes retry from a partially inspected chain. Established outer permanent/submitted verdicts can skip irrelevant causes. This boundary applies to errors received by the retry helpers; it does not change diagnostic handling inside a producer before the error reaches them. `AggregateError.errors` and other grouped/sibling errors are not traversed.
+
 Faucet status does not retry internally, so an application can wrap this idempotent read explicitly. This example combines the helper's fresh 10-second deadline with a 30-second budget for the entire retry sequence. Passing the overall signal to the injected fetch cancels the in-flight request; passing it to `withRetry` stops backoff and later attempts:
 
 ```ts

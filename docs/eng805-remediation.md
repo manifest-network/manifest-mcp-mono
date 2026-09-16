@@ -1120,3 +1120,35 @@ three fixture-isolation probes fail before their respective corrections and pass
 afterward. The receiver-changing observation mutation fails its compatibility
 regression. Independent production/documentation review found no blocker
 (99% confidence). Fresh CI and live acceptance results are recorded on the PR.
+
+## Unreadable retry diagnostics (ENG-953, 2026-09-16)
+
+`isRetryableError` now catches exceptions encountered while inspecting its error
+argument and standard causes, returning a conservative nonretryable verdict.
+`withRetry` consequently rejects with the exact original failure, without another
+attempt or `onRetry` call. This includes a zero retry budget and unreadable errors
+that arrive after a previous readable transient failure has already retried.
+
+| Finding | Resolution and evidence | Confidence |
+| --- | --- | --- |
+| A throwing cause accessor replaces the original operation failure | Contain error inspection at the public classifier. Before the fix, 18 core cases and three built-SDK identity cases fail; readable controls pass. | 100% reproduction; 99% correction |
+| Catching only property access misses proxy reflection and other diagnostic reads | The boundary includes the initial instanceof check, cause membership/prototype inspection and classification fields. Root/nested proxy and accessor cases preserve rejection identity with zero and positive retry budgets. | 99% |
+| Returning a partial chain could hide a permanent/submitted veto | A failed inspection returns false instead of classifying a prefix. Transient wrapper and owned-timeout controls prove unreadable causes cannot authorize replay. Shared errorChain and transport ownership helpers are unchanged. | 99% |
+| A broad promise about all injected transport errors would exceed this boundary | Public docs scope the behavior to errors received by the retry helpers. Producer-side diagnostics and grouped/sibling errors retain their existing policy. | 99% |
+
+The whole-operation signal remains the first check. Existing permanent/submitted
+short-circuits still skip irrelevant causes; readable transient, HTTP/gRPC,
+timeout-ownership, cancellation and cycle behavior is preserved. No dependency,
+compiler-target or public type changes are required.
+
+All 130 focused core and rebuilt SDK tests pass, with no type errors. Independent
+production and test review found no blocker (99% confidence). Its documentation
+precision note is addressed: a prior successful retry does not change the rule
+that an unreadable failure stops further attempts.
+
+Full local validation passes **4,168 tests / 17 existing skips / 187 files**, with
+no type errors and all coverage floors passing: **84.93% lines / 84.65%
+statements / 84.51% branches / 88.47% functions**. Fresh workspace builds,
+workspace/E2E TypeScript, Fred schema, Biome, architecture, all nine package
+integrity checks and all four SDK bundle budgets pass. CI and live acceptance
+results are recorded on the PR and ENG-953.

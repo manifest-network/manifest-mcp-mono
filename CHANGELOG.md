@@ -25,6 +25,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **core, sdk:** stop retry classification when inspecting a custom error or its standard cause chain throws. `withRetry` preserves the exact original rejection without retrying or calling `onRetry`, including with a zero retry budget. Readable cause-chain policy and transport ownership are unchanged. (ENG-953, ENG-805 follow-up)
+
 - **core, sdk:** preserve the locally computed transaction hash when a caller cancels after observed native CheckTx acceptance. Cancellation stays prompt and non-retryable, retains its original reason, and adds no inclusion/code/height claims. Evidence is scoped to one operation and fixed at settlement; later acceptance does not modify an earlier cancellation. Both `cosmosTx` and `executeTx` carry it through cached-sequence views. Custom `signAndBroadcast` or broadcast implementations, SYNC-only calls and opaque confirmation callbacks retain their previous behavior. (ENG-952, ENG-805 follow-up)
 
 - **node:** keep environment-file loading off MCP stdout, including when `DOTENV_CONFIG_DEBUG` or `DOTENV_CONFIG_QUIET` appears in the process environment or `.env`. Load the optional working-directory `.env` through pinned dotenv parsing and population without its logging/configuration wrapper; existing process values take precedence. Dotenv control variables are ordinary environment data and no longer activate its vault loader. (ENG-805 review)
