@@ -597,6 +597,46 @@ describe('closeLease post-mutation verification (ENG-805)', () => {
     vi.clearAllMocks();
   });
 
+  async function realCloseFixture(
+    wire: Awaited<ReturnType<CosmosClientManager['getBroadcastClient']>>,
+    sender: string,
+  ) {
+    const core = await import('@manifest-network/manifest-mcp-core');
+    const actualCore = await vi.importActual<typeof core>(
+      '@manifest-network/manifest-mcp-core',
+    );
+    const {
+      makeSealedClientManager,
+      makeMockConfig,
+      makeMockQueryClient: makeCoreQueryClient,
+    } = await import(
+      '@manifest-network/manifest-mcp-core/__test-utils__/mocks.js'
+    );
+    const queryClient = makeCoreQueryClient();
+    const lease = vi
+      .fn()
+      .mockResolvedValueOnce({ lease: { uuid: leaseUuid, state: 2 } })
+      .mockResolvedValue({ lease: { uuid: leaseUuid, state: 3 } });
+    queryClient.liftedinit.billing.v1.lease = lease;
+    const clientManager = makeSealedClientManager({
+      getQueryClient: vi.fn(async () => queryClient),
+      getConfig: vi.fn(() => makeMockConfig({ retry: { maxRetries: 0 } })),
+      getAddress: vi.fn(async () => sender),
+      getBroadcastClient: vi.fn(async () => wire),
+      acquireRateLimit: vi.fn(async () => undefined),
+      withBroadcastLock: async (_address, action) => action(),
+    });
+    const stopResults: StopAppResult[] = [];
+    vi.mocked(core.stopApp)
+      .mockReset()
+      .mockImplementation(async (ctx, input, options) => {
+        const result = await actualCore.stopApp(ctx, input, options);
+        stopResults.push(result);
+        return result;
+      });
+    return { core, clientManager, lease, stopResults };
+  }
+
   const receipts = [
     {
       lease_uuid: leaseUuid,
@@ -1027,6 +1067,188 @@ describe('closeLease post-mutation verification (ENG-805)', () => {
       expect(failures).toHaveLength(1);
     },
   );
+
+  it.each(['terminal', 'HTTP 503'] as const)(
+    'real owned inclusion timeout retains sparse evidence after %s verification',
+    async (verification) => {
+      const { makeInclusionTimeoutFixture } = await import(
+        '@manifest-network/manifest-mcp-core/__test-utils__/mocks.js'
+      );
+      const inclusion = await makeInclusionTimeoutFixture();
+      inclusion.installGuard();
+      const simulate = vi
+        .spyOn(inclusion.client, 'simulate')
+        .mockResolvedValue(100);
+      const h = await realCloseFixture(inclusion.client, inclusion.sender);
+      const { closeLease } = await import('./close-lease.js');
+      const later = Object.freeze(
+        new ManifestMCPError(
+          ManifestMCPErrorCode.QUERY_FAILED,
+          'verification temporarily unavailable',
+          Object.freeze({ httpStatus: 503 }),
+        ),
+      );
+      if (verification === 'HTTP 503') {
+        h.lease
+          .mockReset()
+          .mockResolvedValueOnce({ lease: { uuid: leaseUuid, state: 2 } })
+          .mockResolvedValueOnce({ lease: { uuid: leaseUuid, state: 3 } })
+          .mockRejectedValueOnce(later)
+          .mockResolvedValue({ lease: { uuid: leaseUuid, state: 3 } });
+      }
+      const { callbacks, completed, failures } = captureCallbacks();
+      const retry = vi.fn();
+      vi.useFakeTimers();
+      try {
+        const observed = withRetry(
+          () =>
+            closeLease({ leaseUuid }, callbacks, {
+              clientManager: h.clientManager,
+            }),
+          { config: retryConfig, onRetry: retry },
+        ).then(
+          (result) => ({ result }),
+          (error: unknown) => ({ error }),
+        );
+        await vi.advanceTimersByTimeAsync(10);
+        const settled = await observed;
+        const stopResult = h.stopResults[0];
+        if (stopResult?.outcome !== 'already_inactive')
+          throw new Error('expected terminal stop reconciliation');
+        const snapshot = stopResult.reconciliation;
+        expect(snapshot).toEqual({
+          errorCode: ManifestMCPErrorCode.TX_FAILED,
+          sent: true,
+          transactionHash: inclusion.hash,
+        });
+        expect(Object.isFrozen(snapshot)).toBe(true);
+        expect(
+          Object.getOwnPropertyDescriptor(snapshot, 'error'),
+        ).toMatchObject({
+          enumerable: false,
+          writable: false,
+        });
+        const attributed = snapshot?.error;
+        expect(attributed).toBeInstanceOf(ManifestMCPError);
+        const owned: unknown = Reflect.get(attributed as Error, 'cause');
+        expect(owned).toBeInstanceOf(ManifestMCPError);
+        const original: unknown = Reflect.get(owned as Error, 'cause');
+        expect(original).toBeInstanceOf(Error);
+        expect(original).toMatchObject({ txId: inclusion.hash });
+        expect(original).not.toHaveProperty('details');
+        expect(original).not.toHaveProperty('cause');
+        expect(h.core.stopApp).toHaveBeenCalledOnce();
+        expect(h.lease).toHaveBeenCalledTimes(3);
+        expect(simulate).toHaveBeenCalledOnce();
+        expect(inclusion.sign).toHaveBeenCalledOnce();
+        expect(inclusion.comet.broadcastTxSync).toHaveBeenCalledOnce();
+        expect(retry).not.toHaveBeenCalled();
+        if (verification === 'terminal') {
+          if ('error' in settled) throw settled.error;
+          expect(settled.result).toEqual({
+            leaseUuid,
+            finalState: 'LEASE_STATE_CLOSED',
+            reconciliation: snapshot,
+          });
+          expect(settled.result.reconciliation).toBe(snapshot);
+          expect(completed).toHaveLength(1);
+          expect(completed[0]).toBe(settled.result);
+          expect(failures).toEqual([]);
+          expect(
+            JSON.parse(JSON.stringify(settled.result)).reconciliation,
+          ).toEqual({
+            errorCode: ManifestMCPErrorCode.TX_FAILED,
+            sent: true,
+            transactionHash: inclusion.hash,
+          });
+        } else {
+          if (
+            !('error' in settled) ||
+            !(settled.error instanceof ManifestMCPError)
+          )
+            throw new Error('expected verification failure');
+          expect(settled.error.code).toBe(ManifestMCPErrorCode.QUERY_FAILED);
+          expect(Reflect.get(settled.error, 'cause')).toBe(later);
+          expect(settled.error.details).toEqual({
+            lease_uuid: leaseUuid,
+            reconciliation: snapshot,
+            sent: true,
+            stop_outcome: 'already_inactive',
+            lease_state: 'LEASE_STATE_CLOSED',
+            httpStatus: 503,
+          });
+          expect(settled.error.details?.reconciliation).toBe(snapshot);
+          expect(JSON.stringify(settled.error)).not.toContain(
+            (original as Error).message,
+          );
+          expect(completed).toEqual([]);
+          expect(failures).toHaveLength(1);
+        }
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
+
+  it('an unowned timeout-shaped broadcast rejection does not prevent a normal verification-read retry', async () => {
+    const original = Object.freeze(
+      Object.assign(new Error('Transaction inclusion timed out'), {
+        name: 'TimeoutError',
+        txId: 'D'.repeat(64),
+      }),
+    );
+    const broadcast = vi.fn().mockRejectedValue(original);
+    const wire = {
+      signAndBroadcast: broadcast,
+      simulate: vi.fn(async () => 100),
+    } as unknown as Awaited<
+      ReturnType<CosmosClientManager['getBroadcastClient']>
+    >;
+    const h = await realCloseFixture(wire, 'manifest1deadbeef');
+    const { closeLease } = await import('./close-lease.js');
+    const later = Object.freeze(
+      new ManifestMCPError(
+        ManifestMCPErrorCode.QUERY_FAILED,
+        'verification temporarily unavailable',
+        { httpStatus: 503 },
+      ),
+    );
+    h.lease
+      .mockReset()
+      .mockResolvedValueOnce({ lease: { uuid: leaseUuid, state: 2 } })
+      .mockResolvedValueOnce({ lease: { uuid: leaseUuid, state: 3 } })
+      .mockRejectedValueOnce(later)
+      .mockResolvedValue({ lease: { uuid: leaseUuid, state: 3 } });
+    const { callbacks, completed, failures } = captureCallbacks();
+    const retry = vi.fn();
+    const result = await withRetry(
+      () =>
+        closeLease({ leaseUuid }, callbacks, {
+          clientManager: h.clientManager,
+        }),
+      { config: retryConfig, onRetry: retry },
+    );
+    expect(result).toEqual({ leaseUuid, finalState: 'LEASE_STATE_CLOSED' });
+    expect(h.core.stopApp).toHaveBeenCalledTimes(2);
+    expect(h.lease).toHaveBeenCalledTimes(5);
+    expect(broadcast).toHaveBeenCalledOnce();
+    expect(retry).toHaveBeenCalledOnce();
+    const firstStop = h.stopResults[0];
+    if (firstStop?.outcome !== 'already_inactive')
+      throw new Error('expected first stop reconciliation');
+    expect(firstStop.reconciliation).toEqual({
+      errorCode: ManifestMCPErrorCode.TX_FAILED,
+    });
+    const firstFailure: unknown = retry.mock.calls[0]?.[0];
+    if (!(firstFailure instanceof ManifestMCPError))
+      throw new Error('expected the transient verification failure');
+    expect(firstFailure.details?.reconciliation).toBe(firstStop.reconciliation);
+    expect(firstFailure.details).not.toHaveProperty('sent');
+    expect(firstFailure.details).not.toHaveProperty('transaction_hash');
+    expect(Reflect.get(firstFailure, 'cause')).toBe(later);
+    expect(completed).toEqual([result]);
+    expect(failures).toHaveLength(1);
+  });
 
   it('real stopApp and cosmosTx preserve an included failed close through successful verification', async () => {
     const core = await import('@manifest-network/manifest-mcp-core');

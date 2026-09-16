@@ -1,6 +1,7 @@
 import type { LeaseUuid } from '../brands.js';
 import { cosmosTx } from '../cosmos.js';
 import type { TxCtx } from '../ctx.js';
+import { isTransactionHash } from '../internals/transaction-hash.js';
 import { withTxExecution } from '../internals/tx-confirmation.js';
 import { txExtrasFrom, txOverridesFrom } from '../internals/tx-opts.js';
 // Routed through the manifest-types chokepoint (spec §8) rather than importing
@@ -145,11 +146,7 @@ function reconciliationFrom(error: unknown): StopAppReconciliation {
     error,
     ...(errorCode !== undefined ? { errorCode } : {}),
     ...(typeof sent === 'boolean' ? { sent } : {}),
-    ...(typeof hash === 'string' &&
-    hash.length === 64 &&
-    hash.match(/^[0-9a-fA-F]{64}$/)
-      ? { transactionHash: hash }
-      : {}),
+    ...(isTransactionHash(hash) ? { transactionHash: hash } : {}),
     ...(typeof transactionCode === 'number' &&
     Number.isSafeInteger(transactionCode) &&
     transactionCode >= 0

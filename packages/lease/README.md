@@ -27,7 +27,9 @@ attempt is followed by a terminal re-query, that inactive result includes an
 optional `reconciliation` machine snapshot with actual failed-attempt diagnostics.
 It does not turn the observed state into a successful transaction receipt.
 An explicit `sent: true` or transaction confirmation describes that attempt;
-missing metadata leaves submission unknown. The original error remains available
+missing metadata leaves submission unknown. Inclusion-timeout and lookup failures
+after observed native CheckTx acceptance retain `sent: true` and the validated
+hash, without inferring transaction confirmation, code or height. The original error remains available
 only to SDK callers and is omitted from JSON. If a failed PENDING cancellation
 re-queries ACTIVE, the tool still reports `TX_FAILED`, with the known lease ID
 and the failed attempt in `details.reconciliation`; `details.sent: true` is added

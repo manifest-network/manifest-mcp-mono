@@ -226,6 +226,14 @@ Set `COSMOS_RPC_URL` + `COSMOS_GAS_PRICE` for full access (queries + transaction
 
 `COSMOS_CHAIN_ID` and at least one endpoint URL are only required when starting an MCP server, not for `keygen` or `import`.
 
+Server logs use stderr; stdout carries MCP messages. The optional `.env` in the
+working directory is loaded with dotenv's parser and non-overriding population:
+existing process environment values take precedence. The CLI pins this parser's
+version and bypasses dotenv's logging wrapper, so `DOTENV_CONFIG_DEBUG` and
+`DOTENV_CONFIG_QUIET` cannot enable stdout diagnostics. Dotenv control variables
+are treated as ordinary environment data; `DOTENV_KEY` does not activate
+`.env.vault` loading. Use a plain `.env` or inject the process environment directly.
+
 ## Chain server tools (6, +1 optional)
 
 | Tool | Description |

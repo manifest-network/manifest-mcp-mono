@@ -89,9 +89,9 @@ async function managedBroadcast(
     if (wait) cache.delete(sender);
     return result;
   } catch (err) {
-    // Reset on ANY failure (CheckTx rejection, network error, …). The submitted-but-rejected tx did not
-    // consume the sequence, so the next broadcast must re-read the committed state rather than trust a
-    // possibly-drifted local counter. Self-heals a stale counter within one extra broadcast.
+    // Reset on ANY failure (CheckTx rejection, network error, inclusion timeout, …).
+    // A post-acceptance failure can leave sequence consumption unknown. Re-read the
+    // committed state on a later explicit broadcast instead of trusting this counter.
     cache.delete(sender);
     throw err;
   }

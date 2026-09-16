@@ -826,3 +826,225 @@ workspace build, TypeScript, Biome and full coverage: **3,983 passed / 17 skippe
 88.30% functions**, with all configured floors passing. The additional cases
 come from the updated base; PR #228 still contributes 64 regressions. The live
 acceptance result remains a separate PR CI check.
+
+## Follow-up: evidence after accepted submission — 2026-09-14
+
+The [focused plan](superpowers/plans/2026-09-14-eng805-inclusion-timeout-evidence.md)
+addresses the two inclusion-timeout criteria retained from PR #228, starting from
+its merged commit `12af628`.
+
+SDK-created signing clients now observe their native CheckTx broadcast on a fresh
+per-call receiver. Initially, a format-validated accepted hash established
+submission independently of the later error's class, message or claimed txId. If blocking inclusion polling
+then rejects, including the native inclusion timer or an RPC lookup failure, a
+fresh error retains exactly sent:true and transactionHash plus a non-enumerable
+cause. Raw failures use non-retryable TX_FAILED; readable structured cancellation
+keeps OPERATION_CANCELLED. No confirmation, transaction code or height is inferred.
+At this stage, custom broadcast implementations, pre-acceptance errors and invalid
+hashes kept their existing behavior; the fifth review below binds accepted evidence
+to the signed bytes and rejects mismatched RPC hashes. The wrapper reuses CosmJS
+signing/polling and preserves sequence views and concurrent-call isolation.
+
+Cosmos and multi-message transaction entry points retain their operation context
+and the owned error's cause chain. Existing teardown reconciliation forwards the
+sparse snapshot through success, callbacks, later verification and recovery.
+Explicit submission evidence prevents whole-orchestration retry without claiming
+that the transaction was included or that the teardown succeeded.
+
+| Finding | Evidence and correction | Confidence |
+| --- | --- | --- |
+| Native inclusion timeouts lose structured txId and original cause | Real pinned signing/broadcast/poll methods with isolated signing and Comet seams reach the native timer. Disabling manager guard installation makes the integration test fail; restoring it passes. | 100% |
+| A later RPC lookup rejection loses the same observed submission facts | Preserve the accepted native hash regardless of the later exception type; conflicting error metadata cannot supply hash/code/height/confirmation. | 100% event ordering; 99% scope choice |
+| Hostile retained causes can replace the submitted error during retry classification | Four public transaction regressions reproduce replacement by revoked-proxy or cause-getter exceptions. Honor an already-decisive outer verdict before traversing irrelevant causes; all four pass after correction. | 100% conditional mechanism |
+
+The pathological-cause cases are injected controls, not observed native RPC
+payloads. The retry correction protects decisive outer verdicts; it does not
+establish a universal exception-safe contract for arbitrary custom retry inputs.
+The existing cause-only boundary and separate grouped-error policy remain intact.
+Caller cancellation retains its existing precedence and conservative sent flag;
+its prompt response does not wait for the later inclusion result to acquire a hash.
+
+Initial boundary and test review found no remaining blocker in this slice
+(98–99% confidence). Validation caught and corrected an untyped test receiver.
+The bare disconnect mock inferred Vitest's `Procedure`, creating an undeclared
+`@vitest/spy` reference; an explicit callable type removed that reference without
+adding a dependency. The separately vendored Comet/protobuf declarations remained
+until the PR #230 review correction below. The shared transaction test helper
+also uses a consistent promise return type. A
+legacy total Stargate mock was updated to preserve native exports; its then-59 tests
+pass again. Documentation review narrowed the SDK's raw-error exclusion to
+failures before observed acceptance (99% confidence in that documentation gap).
+
+Initial local validation: **4,039 passed / 17 skipped / 181 files**, no type errors;
+**56 new regressions**. Coverage is **84.85% lines / 84.57% statements / 84.38%
+branches / 88.49% functions**, with all configured floors passing. Workspace
+build/types, E2E types, Biome, whitespace, architecture, package integrity, bundle
+budgets, eight MCP metadata checks and eight type-harness checks pass. The two
+criteria are implemented and locally validated; PR CI and merge status are
+recorded in Linear. The other eleven criteria remain separate, and this work is
+unreleased. All 80 pre-existing user artifacts are preserved.
+
+### PR #230 review corrections — 2026-09-14
+
+[Claude's review](https://github.com/manifest-network/manifest-mcp-mono/pull/230#issuecomment-5668357367)
+identified two regressions, three small improvements and two separate existing
+gaps. Each finding was checked against the implementation before correction.
+
+| Finding | Disposition and evidence | Confidence |
+| --- | --- | --- |
+| Parameterized reconciliation tests dropped hidden-property guards | Restore both `not.toHaveProperty` assertions. Injecting non-enumerable `sent` or `transactionConfirmed` makes all three unowned-error controls fail; structural equality alone misses them. | 100% |
+| Exported fixture signatures vendor transitive declarations | Use local callable/result contracts for both RPC mocks and the signing spy. The original disconnect correction did not cover these additional inferred types. Fresh core declarations import only declared dependencies; its 359-file tarball contains zero vendored `node_modules` files, without adding dependencies or exemptions. | 100% mechanism and artifact result |
+| Unsupported native broadcast methods silently skip protection | Return installation status and warn through the existing client logger. Both customized-method warning regressions fail before correction; native initialization remains silent. | 100% missing warning; 99% correction |
+| Exact transaction-hash validation is duplicated | Share one internal validator between observed acceptance and reconciliation. Boundary tests cover case, length, non-hex, trailing line terminators and non-string values. | 100% duplication; 99% equivalence |
+| Attribution is split from its provenance module | Move the unchanged helper into `broadcast-failure.ts`; remove the forwarding module. Existing public attribution/cause tests verify the consolidation. | 100% import coupling; 98% simplification choice |
+| Caller cancellation after acceptance loses the known hash | Track [ENG-952](https://linear.app/liftedinit/issue/ENG-952). Prompt cancellation settles before the guard's failure; preserve its current terminal behavior in this PR. The follow-up must share already-observed per-call evidence without delaying cancellation. | 100% mechanism |
+| Unreadable causes on custom nonterminal retry inputs replace original errors | Track [ENG-953](https://linear.app/liftedinit/issue/ENG-953). The decisive outer verdict protects this PR's submitted errors; exception-safe standard cause inspection remains separate from grouped-error policy. | 100% mechanism |
+
+A new public `cosmosTx` regression combines an active caller signal, the cached
+sequence wrapper and the owned broadcast guard. It proves cached sequence use,
+one submission/poll, sparse attributed evidence, original causes, cache
+invalidation and no retry. The six refuted review claims remain refuted; the
+wrapper interaction had a coverage gap, with no demonstrated runtime defect.
+
+Focused validation passes 200 boundary/client/hash/transaction tests and 21
+public timeout tests. Both hidden-property mutations fail all three unowned-error
+controls; missing-warning mutations fail both customized-method controls.
+Workspace build and type checks, E2E types, Biome, architecture, package integrity
+and bundle budgets pass. The E2E type-check prerequisite rebuild initially
+overlapped lint and package inspection; both checks pass when run against the
+completed build. Full coverage and fresh PR CI results are recorded on the PR
+and in Linear. Independent review of the corrections found no further issue
+(98–99% confidence).
+
+ENG-952 and ENG-953 are separate Backlog child issues with acceptance criteria.
+The existing tracker remains In Progress with 37 checked / 11 unchecked criteria;
+these two additional child issues remain open alongside those eleven criteria.
+PR #230 remains open and unreleased.
+
+### PR #230 second review — 2026-09-14
+
+[The re-review](https://github.com/manifest-network/manifest-mcp-mono/pull/230#issuecomment-5669869001)
+verified the prior five fixes and identified the following remaining details.
+
+| Finding | Disposition and evidence | Confidence |
+| --- | --- | --- |
+| Manager warnings are silent in MCP servers | All five server constructors now attach their existing leveled stderr logger before client initialization. A real-manager regression fails for all five warning cases before the wiring; silent-level controls remain silent. The README also qualifies behavior for SDK consumers without a logger. | 100% missing wiring; 99% correction |
+| Fixture attribute types span incompatible protocol generations | Use Comet38 string attributes and privately check `broadcastTxSync` and `txSearchAll` against the accepted Comet client union with `satisfies`; `status` and `disconnect` remain partial. An in-memory compiler mutation restoring the broader attribute union fails at that check. The next review narrows the check to one protocol generation. | 100% |
+| Initialization comments contain stale diagnostic counts | Describe their purpose without brittle numeric counts. | 100% |
+| Signal-state assertion cannot detect a production regression | Remove it; retain the assertion that the actual rate-limit acquisition receives the caller's signal. | 100% |
+| Historical declaration fixes remain ambiguous | Separate the earlier `@vitest/spy` reference from later vendored Comet/protobuf files. Original logs show the former disappearing while the 375-file tarball remains unchanged, so the claim that disconnect was never involved is incorrect. | 99% historical attribution |
+| Owned/public tests miss hidden inclusion fields | Explicitly assert absence of generic and qualified inclusion fields on both error layers. Separate hidden `confirmed` and `transactionHeight` mutations each fail the selected owned, `cosmosTx` and `executeTx` controls. | 100% demonstrated coverage gap |
+
+The constructor regression uses the real manager and native signing client with
+its connection replaced and a `broadcastTx` spy that makes guard installation
+unsupported; it checks warning delivery, silent-level behavior,
+single initialization and absence of signing/broadcasting. Public error tests
+continue to check the original cause and sparse submission evidence. Full
+validation and PR CI results are recorded on the PR and in Linear. ENG-952 and
+ENG-953 remain separate; no cancellation or retry policy changes are included.
+
+Focused validation passes 261 server/logger tests and 35 owned/public error
+tests. Fresh declarations retain Comet38 string attributes, import only declared
+dependencies and contain no vendored `node_modules` files. Workspace build,
+E2E types, formatting, architecture, package integrity and bundle gates pass;
+the full coverage and fresh CI results are recorded with the review response.
+
+### PR #230 third review — 2026-09-15
+
+[Claude's latest review](https://github.com/manifest-network/manifest-mcp-mono/pull/230#issuecomment-5684358143)
+verified the preceding corrections and found one default CLI startup defect and
+five smaller runtime or test-contract gaps.
+
+| Finding | Disposition and evidence | Confidence |
+| --- | --- | --- |
+| dotenv's default startup banner writes to MCP stdout | Load environment configuration with `quiet: true`. An isolated child process using real dotenv reproduces the pre-fix banner; regressions cover environment loading and all five built CLI startup paths. At this revision, explicit dotenv debug/banner environment overrides retained upstream behavior. **Superseded by the fourth review below:** the final loader uses parse/populate and never activates dotenv diagnostics. | 100% reproduction; 99% correction |
+| Logger test watches `console.log` but misses direct stdout writes | Also guard `process.stdout.write`, the actual protocol stream. Retain the console guard because Vitest intercepts console output separately. | 100% |
+| Hidden details outside a six-name denylist survive | Share an exhaustive top-level own-key and strict-value assertion through the existing test utilities. Owned errors permit only `sent` and `transactionHash`; attributed errors additionally permit their specific operation context. Top-level hidden `deliverTx` objects, undefined-valued keys and symbol keys are rejected; nested values use Vitest strict equality. | 100% |
+| `Pick` over a client union accepts mixed protocol generations | Privately select the concrete Comet 0.38 member through Stargate's declared parameter type, then check `broadcastTxSync` and `txSearchAll`. All-TM34 and both mixed-generation mutations fail compilation; `status` and `disconnect` remain intentionally partial. | 99% |
+| Silent logging tests cannot prove the manager reached the configured sink | Both warning and silent cases now assert the actual shared `logger.warn` invocation with passthrough. Stderr presence or absence then proves the level decision on that sink. | 100% |
+| Compatible holders overwrite a shared initialization logger | Ignore the exact default `noopLogger`; document and test that the last other sink wins and holder disconnect does not restore a prior sink. A server can still replace a compatible SDK holder's custom initialization sink by this explicit policy; distinct wallet-provider adapters provide isolation. Per-client SDK logging is unchanged. | 100% mechanism; 98% bounded policy |
+
+The proposed separate dotenv exact-pin issue was not a general policy violation:
+`CLAUDE.md` and `scripts/version.mjs` constrain internal workspace siblings, while
+[ENG-538](https://linear.app/liftedinit/issue/ENG-538) explicitly distinguishes
+external dependency ranges from those lockstep pins. That review left the range
+unchanged (99% confidence in the policy distinction); the next review revisits
+the narrower case of a terminal CLI dependency that crosses no consumer API.
+
+The earlier constructor-test wording now includes the unsupported `broadcastTx`
+override, the RPC check names its two covered methods, and the historical test
+count is explicitly historical. Logger API documentation also distinguishes
+immutable wallet/configuration ownership from shared initialization diagnostics
+and no longer claims the placeholder SDK `logLevel` applies a level gate.
+
+Validation evidence and the final head are recorded in the PR response and
+Linear. ENG-805 remains In Progress with its eleven unchecked tracker criteria
+and the two Backlog children added during this PR, ENG-952 and ENG-953; this
+revision adds no deferred finding. Those two are a subset of the tracker's children.
+
+### PR #230 fourth review — 2026-09-15
+
+[The next review](https://github.com/manifest-network/manifest-mcp-mono/pull/230#issuecomment-5686002516)
+verified the previous six fixes, including real JSON-RPC sessions through all
+five CLIs, and identified these additional gaps.
+
+| Finding | Disposition and evidence | Confidence |
+| --- | --- | --- |
+| Child-process deadline exceeds the default test budget | Give the subprocess cases an explicit 30-second test budget around their 20-second child deadline, including plain workspace test runs. | 100% structural mismatch |
+| Dotenv environment settings bypass `quiet: true` | Read the optional working-directory `.env`, then use dotenv's parser and non-overriding population without its logging wrapper. Process and file values cannot enable diagnostics; existing environment values and dotenv parsing semantics are preserved. Merely deleting flags before `config()` would not handle flags loaded from the file. | 100% reproduction; 99% correction |
+| Built-only tests can pass against stale output | Exercise the current configuration source in isolated child processes. Before built CLI probes, compare embedded source-map content with current config, bootstrap and entrypoint source; report an actionable rebuild failure on drift. This protects the named startup paths, not every transitive workspace artifact. | 99% |
+| Exact-details helper does not inspect nested hidden fields | Explicitly scope its JSDoc to all top-level own keys and Vitest strict value equality. Nested hidden-key traversal is not claimed; no production nested-field leak was identified. | 100% scope correction |
+| A future Comet union can select multiple generations | Require exactly one selected member; zero or multiple matches become `never` and fail the fixture's existing `satisfies` check. A synthetic fourth-member mutation is accepted by the old selector and rejected by the corrected selector. | 99% |
+| Logger default suppression depends on identity | Document that only the exact exported `noopLogger` instance is ignored. A custom silent logger is an explicit sink assignment. The existing last-writer policy is unchanged. | 100% |
+| Terminal CLI dependency range permits unreviewed parser changes | Pin dotenv to the already locked 17.4.2; no installed dependency version changes. ENG-538's shared-library compatibility rationale does not require a range for this private CLI implementation detail. | 99% |
+| Tracker wording implies only two Backlog children exist | Name the two added during this PR. The verified current total is seven children: six Backlog and ENG-807 Done. | 100% Linear verification |
+| User-visible logging changes are absent from the changelog | Add Unreleased entries for CLI stdout protection and shared initialization logging behavior. Document plain `.env` loading and that dotenv control variables no longer activate vault loading. | 100% |
+
+The parser is retained deliberately: native Node environment parsing differs
+for escaped carriage returns and colon assignments, including byte-sensitive
+password values. No new environment parser or global console interception is
+introduced. Validation, mutation evidence and fresh PR checks are recorded in
+the review response and Linear. ENG-805 stays In Progress with its eleven
+unchecked tracker criteria; this round adds no deferred issue.
+
+### PR #230 fifth review — 2026-09-15
+
+[Claude's full-diff review](https://github.com/manifest-network/manifest-mcp-mono/pull/230#issuecomment-5687219033)
+verified the previous corrections and identified these remaining gaps. This pass
+also reviews the complete PR against its merged base, including the initial
+feature tests.
+
+| Finding | Disposition and evidence | Confidence |
+| --- | --- | --- |
+| RPC hash format validation does not bind evidence to the submitted transaction | Snapshot signed bytes and calculate SHA-256 with the already installed CosmJS crypto package, now declared directly. After native CheckTx resolves, compare its returned hash to the local digest. Wrong length/value rejects before any real lookup and retains local sent/hash evidence. Rejection runs through native polling cleanup; no unrelated lookup or rebroadcast occurs. Undecodable responses that reject before observed acceptance keep their existing behavior. | 100% gap; 99% correction |
+| Injected lookup cancellation is mistaken for real caller cancellation | Rename tests and narrow public documentation. Those controls preserve custom lookup error codes. Actual caller cancellation settles through the outer synchronous abort listener; forwarding accepted local hash evidence remains [ENG-952](https://linear.app/liftedinit/issue/ENG-952). | 100% |
+| Initial integration tests still allow extra hidden details | Apply the shared exact top-level details assertion to both owned and attributed errors; preserve explicit cause descriptors. | 100% |
+| Built startup checks omit keyfileWallet and discard JavaScript bytes | Traverse actual built static relative imports within node/dist, including keyfileWallet. Check nonempty code, source-map linkage and current embedded inputs. Workspace package imports retain the normal build prerequisite. This is a freshness guard, not an integrity verifier for arbitrary rewritten JavaScript/map pairs. | 100% gap; 99% correction |
+| Built config loading lacks behavioral coverage | Restore a child-process assertion that reads .env values through dist/config.js. Omitting only the compiled loadDotEnv call fails even with the original map; source-only tests remain independent. | 100% |
+| The dotenv caret can return without a policy failure | Enforce exact external runtime and optional dependency versions for published CLI packages. Mutation controls reject caret, tilde, comparator and tag declarations; library, peer and development ranges remain allowed. | 99% policy |
+| Closed toJSON output does not prove cause non-enumerability | Remove redundant JSON assertions on ManifestMCPError; retain direct property-descriptor checks. The separate plain-object reconciliation JSON assertion remains useful. | 100% |
+| The executeTx cancellation test does not guard internal catch ordering | Name the caller-observable cancellation behavior accurately. Keep catch checkpoint order consistent with cosmosTx; moving it cannot change the already-settled abort response or solve ENG-952. | 100% |
+| Throwing initialization diagnostics leak a connected signing client | Extend cleanup across all post-connect initialization. Both warning branches release the transport and permit a fresh initialization even when cleanup also throws; existing error normalization remains unchanged. | 100% |
+| Guard status conflates already-installed and unsupported methods | Recognize the one private wrapper function, with native SYNC still required. Reinstallation succeeds without another wrapper; customized SYNC still reports unsupported. | 100% |
+| Fixture options and import paths imply unsupported variation | Remove unused chainId/timeout/poll options and use the existing shared test-utility barrel consistently. Derive normal fixture wire hashes from actual submitted bytes. | 100% |
+| Historical dotenv row describes superseded behavior as current | Mark the third-review loader and override behavior explicitly superseded by the fourth review. | 100% |
+| Cold subprocesses repeatedly compile the same dependencies | Share a suite-owned temporary Node compile cache and remove it afterward. | 99% |
+| Source-map failures hide the diagnostic cause | Retain the original cause behind the rebuild guidance, including corrupt JSON and stale inputs. | 100% |
+| Plain node tests require a build without command guidance | Document the root build prerequisite and source-map checks in CLAUDE.md, including workspace and targeted test commands. | 100% |
+
+Hash mutation tests fail against the prior guard and pass with the correction.
+They cover wrong-length and unrelated 32-byte hashes, caller byte mutation,
+per-call concurrency, idempotence, native deadline cleanup and a mismatch arriving
+after the deadline. CLI negative controls cover stale keyfile input, corrupt map,
+empty built JavaScript and omitted built environment loading without modifying
+tracked files or dist. Full validation and fresh CI/live results are recorded on
+the PR and in Linear. This round adds no deferred issue; ENG-952/ENG-953 and the
+existing eleven unchecked tracker criteria remain separate.
+
+Local validation passes **4,107 tests / 17 skipped / 184 files**, with no type
+errors and every coverage floor passing: **84.87% lines / 84.60% statements /
+84.40% branches / 88.41% functions**. Build, workspace/E2E types, Biome,
+architecture, package integrity, bundle budgets, twenty dependency-hygiene checks,
+eight metadata checks and eight type-harness checks pass. Core still packs
+359 files without vendored dependencies. This revision adds seven runtime tests;
+the PR adds 124 relative to its merged base, plus three dependency-policy checks.

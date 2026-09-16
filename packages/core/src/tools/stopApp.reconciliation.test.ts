@@ -1,11 +1,13 @@
 import { toBech32 } from '@cosmjs/encoding';
-import type {
-  DeliverTxResponse,
-  SigningStargateClient,
+import {
+  type DeliverTxResponse,
+  type SigningStargateClient,
+  TimeoutError,
 } from '@cosmjs/stargate';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { describe, expect, it, vi } from 'vitest';
 import {
+  makeInclusionTimeoutFixture,
   makeMockConfig,
   makeMockQueryClient,
   makeSealedClientManager,
@@ -16,7 +18,7 @@ import { LeaseState } from '../manifest-types.js';
 import { withRetry } from '../retry.js';
 import { jsonResponse, withErrorHandling } from '../server-utils.js';
 import { ManifestMCPError, ManifestMCPErrorCode } from '../types.js';
-import { stopApp } from './stopApp.js';
+import { type StopAppReconciliation, stopApp } from './stopApp.js';
 
 const LEASE = parseLeaseUuid('550e8400-e29b-41d4-a716-446655440000');
 const ADDRESS = toBech32('manifest', new Uint8Array(20).fill(1));
@@ -75,7 +77,195 @@ function fixture(
   };
 }
 
+function expectInclusionTimeoutSnapshot(
+  reconciliation: StopAppReconciliation | undefined,
+  hash: string,
+) {
+  expect(reconciliation).toEqual({
+    errorCode: ManifestMCPErrorCode.TX_FAILED,
+    sent: true,
+    transactionHash: hash,
+  });
+  expect(Object.isFrozen(reconciliation)).toBe(true);
+  expect(
+    Object.getOwnPropertyDescriptor(reconciliation, 'error'),
+  ).toMatchObject({ enumerable: false, writable: false });
+  const attributed = reconciliation?.error;
+  expect(attributed).toBeInstanceOf(ManifestMCPError);
+  const owned: unknown = Reflect.get(attributed as Error, 'cause');
+  expect(owned).toBeInstanceOf(ManifestMCPError);
+  const original: unknown = Reflect.get(owned as Error, 'cause');
+  expect(original).toBeInstanceOf(TimeoutError);
+  expect(original).toMatchObject({ txId: hash });
+  expect(original).not.toHaveProperty('details');
+  expect(original).not.toHaveProperty('cause');
+  expect(JSON.parse(JSON.stringify(reconciliation))).toEqual({
+    errorCode: ManifestMCPErrorCode.TX_FAILED,
+    sent: true,
+    transactionHash: hash,
+  });
+}
+
 describe('stopApp reconciliation through the real transaction pipeline', () => {
+  it.each([
+    {
+      initial: LeaseState.LEASE_STATE_ACTIVE,
+      terminal: LeaseState.LEASE_STATE_CLOSED,
+      command: 'MsgCloseLease',
+    },
+    {
+      initial: LeaseState.LEASE_STATE_PENDING,
+      terminal: LeaseState.LEASE_STATE_REJECTED,
+      command: 'MsgCancelLease',
+    },
+  ])(
+    'retains owned $command inclusion-timeout evidence without claiming inclusion',
+    async ({ initial, terminal, command }) => {
+      const f = fixture(initial, terminal);
+      const inclusion = await makeInclusionTimeoutFixture();
+      inclusion.installGuard();
+      f.getBroadcastClient.mockResolvedValue(inclusion.client);
+      vi.useFakeTimers();
+      try {
+        const observed = stopApp(
+          f.ctx,
+          { leaseUuid: LEASE },
+          {
+            fee: { amount: [], gas: '100000' },
+          },
+        ).then(
+          (result) => ({ result }),
+          (error: unknown) => ({ error }),
+        );
+        await vi.advanceTimersByTimeAsync(10);
+        const settled = await observed;
+        if ('error' in settled) throw settled.error;
+        const { result } = settled;
+        if (result.outcome !== 'already_inactive')
+          throw new Error('expected terminal reconciliation');
+        expectInclusionTimeoutSnapshot(result.reconciliation, inclusion.hash);
+        expect(result).not.toHaveProperty('transactionHash');
+        expect(f.lease).toHaveBeenCalledTimes(2);
+        expect(inclusion.sign).toHaveBeenCalledOnce();
+        expect(inclusion.sign.mock.calls[0]?.[1][0]?.typeUrl).toBe(
+          `/liftedinit.billing.v1.${command}`,
+        );
+        expect(inclusion.comet.broadcastTxSync).toHaveBeenCalledOnce();
+        expect(inclusion.comet.txSearchAll).toHaveBeenCalledOnce();
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
+
+  it('retains owned inclusion-timeout evidence when a cancelled lease becomes ACTIVE without retrying', async () => {
+    const f = fixture(
+      LeaseState.LEASE_STATE_PENDING,
+      LeaseState.LEASE_STATE_ACTIVE,
+    );
+    const inclusion = await makeInclusionTimeoutFixture();
+    inclusion.installGuard();
+    f.getBroadcastClient.mockResolvedValue(inclusion.client);
+    const retry = vi.fn();
+    vi.useFakeTimers();
+    try {
+      const caught = withRetry(
+        () =>
+          stopApp(
+            f.ctx,
+            { leaseUuid: LEASE },
+            {
+              fee: { amount: [], gas: '100000' },
+            },
+          ),
+        {
+          config: { maxRetries: 1, baseDelayMs: 1, maxDelayMs: 1 },
+          onRetry: retry,
+        },
+      ).catch((error: unknown) => error);
+      await vi.advanceTimersByTimeAsync(10);
+      const error = await caught;
+      if (!(error instanceof ManifestMCPError))
+        throw new Error('expected cancel-race error');
+      expect(error.code).toBe(ManifestMCPErrorCode.TX_FAILED);
+      expect(error.details).toEqual({
+        lease_uuid: LEASE,
+        sent: true,
+        reconciliation: {
+          errorCode: ManifestMCPErrorCode.TX_FAILED,
+          sent: true,
+          transactionHash: inclusion.hash,
+        },
+      });
+      expectInclusionTimeoutSnapshot(
+        error.details?.reconciliation as StopAppReconciliation,
+        inclusion.hash,
+      );
+      expect(retry).not.toHaveBeenCalled();
+      expect(f.lease).toHaveBeenCalledTimes(2);
+      expect(inclusion.comet.broadcastTxSync).toHaveBeenCalledOnce();
+      expect(inclusion.sign.mock.calls[0]?.[1][0]?.typeUrl).toBe(
+        '/liftedinit.billing.v1.MsgCancelLease',
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('preserves an injected lookup cancellation after acceptance without reconciling or retrying stopApp', async () => {
+    const f = fixture();
+    const inclusion = await makeInclusionTimeoutFixture();
+    inclusion.installGuard();
+    f.getBroadcastClient.mockResolvedValue(inclusion.client);
+    const original = Object.freeze(
+      new ManifestMCPError(
+        ManifestMCPErrorCode.OPERATION_CANCELLED,
+        'polling was cancelled by the transport',
+      ),
+    );
+    inclusion.comet.txSearchAll.mockRejectedValue(original);
+    const retry = vi.fn();
+    vi.useFakeTimers();
+    try {
+      const caught = withRetry(
+        () =>
+          stopApp(
+            f.ctx,
+            { leaseUuid: LEASE },
+            { fee: { amount: [], gas: '100000' } },
+          ),
+        {
+          config: { maxRetries: 1, baseDelayMs: 1, maxDelayMs: 1 },
+          onRetry: retry,
+        },
+      ).catch((error: unknown) => error);
+      await vi.advanceTimersByTimeAsync(10);
+      const error = await caught;
+      if (!(error instanceof ManifestMCPError))
+        throw new Error('expected cancellation error');
+      expect(error.code).toBe(ManifestMCPErrorCode.OPERATION_CANCELLED);
+      expect(error.details).toMatchObject({
+        sent: true,
+        transactionHash: inclusion.hash,
+      });
+      expect(error.details).not.toHaveProperty('reconciliation');
+      expect(error.details).not.toHaveProperty('confirmed');
+      expect(error.details).not.toHaveProperty('code');
+      expect(error.details).not.toHaveProperty('height');
+      const owned: unknown = Reflect.get(error, 'cause');
+      expect(owned).toBeInstanceOf(ManifestMCPError);
+      expect(Reflect.get(owned as Error, 'cause')).toBe(original);
+      expect(original).not.toHaveProperty('cause');
+      expect(original.details).toBeUndefined();
+      expect(f.lease).toHaveBeenCalledOnce();
+      expect(inclusion.comet.broadcastTxSync).toHaveBeenCalledOnce();
+      expect(inclusion.comet.txSearchAll).toHaveBeenCalledOnce();
+      expect(retry).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it.each([
     {
       initial: LeaseState.LEASE_STATE_ACTIVE,
@@ -205,24 +395,41 @@ describe('stopApp reconciliation through the real transaction pipeline', () => {
     },
   );
 
-  it('does not infer submission or confirmation from a raw broadcast rejection without a receipt', async () => {
-    const f = fixture();
-    f.broadcast.mockRejectedValue(
-      new Error('connection lost while awaiting broadcast'),
-    );
-    const result = await stopApp(f.ctx, { leaseUuid: LEASE });
-    if (result.outcome !== 'already_inactive')
-      throw new Error('expected terminal reconciliation');
-    expect(result.reconciliation).toEqual({
-      errorCode: ManifestMCPErrorCode.TX_FAILED,
-    });
-    expect(result.reconciliation?.error).toMatchObject({
-      code: ManifestMCPErrorCode.TX_FAILED,
-    });
-    expect(result.reconciliation).not.toHaveProperty('sent');
-    expect(result.reconciliation).not.toHaveProperty('transactionConfirmed');
-    expect(f.broadcast).toHaveBeenCalledOnce();
-  });
+  it.each([
+    {
+      label: 'raw network error',
+      error: new Error('connection lost while awaiting broadcast'),
+    },
+    {
+      label: 'unowned CosmJS timeout',
+      error: new TimeoutError('Transaction inclusion timed out', HASH),
+    },
+    {
+      label: 'timeout-shaped error',
+      error: Object.assign(new Error('Transaction inclusion timed out'), {
+        name: 'TimeoutError',
+        txId: HASH,
+      }),
+    },
+  ])(
+    'does not infer submission or confirmation from $label at an injected broadcast',
+    async ({ error }) => {
+      const f = fixture();
+      f.broadcast.mockRejectedValue(error);
+      const result = await stopApp(f.ctx, { leaseUuid: LEASE });
+      if (result.outcome !== 'already_inactive')
+        throw new Error('expected terminal reconciliation');
+      expect(result.reconciliation).toEqual({
+        errorCode: ManifestMCPErrorCode.TX_FAILED,
+      });
+      expect(result.reconciliation).not.toHaveProperty('sent');
+      expect(result.reconciliation).not.toHaveProperty('transactionConfirmed');
+      expect(result.reconciliation?.error).toMatchObject({
+        code: ManifestMCPErrorCode.TX_FAILED,
+      });
+      expect(f.broadcast).toHaveBeenCalledOnce();
+    },
+  );
 
   it('retains the failed MsgCancelLease receipt on the PENDING→ACTIVE cancel-race error', async () => {
     const f = fixture(

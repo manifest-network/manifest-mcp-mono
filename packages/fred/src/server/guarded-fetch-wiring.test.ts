@@ -79,6 +79,7 @@ vi.mock('@manifest-network/manifest-mcp-core', async (importOriginal) => {
     ...actual,
     CosmosClientManager: {
       getInstance: vi.fn().mockReturnValue({
+        setLogger: vi.fn(),
         disconnect: vi.fn(),
         // Built LAZILY: the factory body runs during the barrel's first import, when this file's
         // imports (`makeMockQueryClient`, `LeaseState`) are not yet initialized.

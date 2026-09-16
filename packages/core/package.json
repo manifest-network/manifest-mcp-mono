@@ -88,6 +88,7 @@
   ],
   "dependencies": {
     "@cosmjs/amino": "0.32.4",
+    "@cosmjs/crypto": "0.32.4",
     "@cosmjs/encoding": "0.32.4",
     "@cosmjs/proto-signing": "0.32.4",
     "@cosmjs/stargate": "npm:@manifest-network/stargate@0.32.4-ll.3",

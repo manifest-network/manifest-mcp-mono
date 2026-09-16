@@ -15,6 +15,7 @@ import {
   jsonResponse,
   LeaseState,
   leaseStateToJSON,
+  logger,
   ManifestMCPError,
   ManifestMCPErrorCode,
   type ManifestMCPServerOptions,
@@ -107,6 +108,7 @@ export class LeaseMCPServer {
       config,
       this.walletProvider,
     );
+    this.clientManager.setLogger(logger);
 
     this.mcpServer = new McpServer(
       {

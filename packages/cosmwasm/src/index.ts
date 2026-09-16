@@ -7,6 +7,7 @@ import {
   executeTx,
   gasMultiplierSchema,
   jsonResponse,
+  logger,
   ManifestMCPError,
   ManifestMCPErrorCode,
   type ManifestMCPServerOptions,
@@ -85,6 +86,7 @@ export class CosmwasmMCPServer {
       config,
       this.walletProvider,
     );
+    this.clientManager.setLogger(logger);
 
     this.mcpServer = new McpServer(
       {

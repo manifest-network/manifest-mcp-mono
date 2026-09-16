@@ -1,5 +1,6 @@
 import type { EncodeObject } from '@cosmjs/proto-signing';
 import type { TxCtx } from '../ctx.js';
+import { attributeBroadcastFailure } from '../internals/broadcast-failure.js';
 import { withTxExecution } from '../internals/tx-confirmation.js';
 import type { TxCallOptions } from '../options.js';
 import { withRetry } from '../retry.js';
@@ -105,6 +106,12 @@ export async function executeTx(
             return buildExecuteTxResult(result, typeUrls);
           } catch (error) {
             execution.checkpoint();
+            const submittedFailure = attributeBroadcastFailure(
+              error,
+              `executeTx (${typeUrls.join(', ') || 'no messages'}) failed: `,
+              { msgTypeUrls: typeUrls },
+            );
+            if (submittedFailure) throw submittedFailure;
             // M2 — MIRROR cosmosTx's broadcast-leg wrapping (enrichTxError): a pre-broadcast
             // ManifestMCPError (e.g. a transient RPC_CONNECTION_FAILED from buildGasFee's
             // simulate) passes through and stays retryable; ANY raw/non-ManifestMCPError (a

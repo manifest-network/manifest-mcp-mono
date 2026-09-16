@@ -39,6 +39,7 @@ import {
   DEFAULT_GAS_MULTIPLIER,
   DEFAULT_REQUESTS_PER_SECOND,
 } from './config.js';
+import { installBroadcastFailureGuard } from './internals/broadcast-failure.js';
 import {
   verifyRestChainIdentity,
   verifyRpcChainIdentity,
@@ -170,7 +171,7 @@ export class CosmosClientManager {
   private readonly txSequenceCache: SequenceCache;
   private readonly pendingBroadcasts = new Set<Promise<unknown>>();
 
-  /** Per-instance logger for the 3 init-time diagnostics. Defaults to noopLogger (silent); see setLogger. */
+  /** Per-instance logger for initialization diagnostics. Defaults to noopLogger (silent); see setLogger. */
   private logger: Logger = noopLogger;
 
   // Number of live holders (servers) sharing this instance. Each getInstance
@@ -219,7 +220,7 @@ export class CosmosClientManager {
   /**
    * Acquire a manager for this wallet reference and immutable configuration snapshot.
    * Compatible sibling servers share clients; a different wallet or policy gets an independent
-   * manager. Constructing another client never reconfigures existing holders. Broadcast locks and
+   * manager. Constructing another client never changes existing holders' wallet or configuration. Broadcast locks and
    * pending account sequences remain shared across every manager for the same chain ID.
    * The optional fetch transport verifies REST node-info or RPC status; it does not serve provider
    * requests or generated queries.
@@ -536,31 +537,38 @@ export class CosmosClientManager {
                 },
               );
             }
+            // The property is private readonly with no constructor option,
+            // so we must bypass TypeScript's access control to override it.
+            const record = c as unknown as Record<string, unknown>;
+            if (typeof record.defaultGasMultiplier === 'number') {
+              record.defaultGasMultiplier =
+                this.config.gasMultiplier ?? DEFAULT_GAS_MULTIPLIER;
+            } else {
+              const effective =
+                this.config.gasMultiplier ?? DEFAULT_GAS_MULTIPLIER;
+              this.logger.warn(
+                `gasMultiplier ${effective} could not be applied: ` +
+                  `signing client defaultGasMultiplier is ${typeof record.defaultGasMultiplier}, expected number. ` +
+                  `Transactions will use the CosmJS built-in gas multiplier instead.`,
+              );
+            }
+            if (!installBroadcastFailureGuard(c)) {
+              this.logger.warn(
+                'Broadcast failure guard could not be installed: signing client broadcast methods differ from the supported native implementation. ' +
+                  'Failures after submission may omit sent and transactionHash diagnostics.',
+              );
+            }
+            return c;
           } catch (error) {
-            // A failed identity read must not leak a connected client or make it usable for signing.
+            // Every post-connect initialization failure must release the transport,
+            // including a throwing configuration setter or diagnostic sink.
             try {
               c.disconnect();
             } catch {
-              /* Preserve the identity failure. */
+              /* Preserve the initialization failure. */
             }
             throw error;
           }
-          // The property is private readonly with no constructor option,
-          // so we must bypass TypeScript's access control to override it.
-          const record = c as unknown as Record<string, unknown>;
-          if (typeof record.defaultGasMultiplier === 'number') {
-            record.defaultGasMultiplier =
-              this.config.gasMultiplier ?? DEFAULT_GAS_MULTIPLIER;
-          } else {
-            const effective =
-              this.config.gasMultiplier ?? DEFAULT_GAS_MULTIPLIER;
-            this.logger.warn(
-              `gasMultiplier ${effective} could not be applied: ` +
-                `signing client defaultGasMultiplier is ${typeof record.defaultGasMultiplier}, expected number. ` +
-                `Transactions will use the CosmJS built-in gas multiplier instead.`,
-            );
-          }
-          return c;
         },
         {
           config: this.config.retry,
@@ -610,12 +618,15 @@ export class CosmosClientManager {
   }
 
   /**
-   * Set the sink for cached-client initialization diagnostics. Compatible sibling servers share
-   * this sink; callers needing independent diagnostics can use distinct wallet-provider adapters.
-   * Logging does not change the immutable wallet/configuration or invalidate a connection.
+   * Set the sink for cached-client initialization diagnostics. Compatible holders share this
+   * sink: the last non-noopLogger assignment wins and disconnect does not restore an earlier sink.
+   * Only the exported noopLogger instance is ignored; custom silent sinks are assignments.
+   * Callers needing independent diagnostics can use distinct wallet-provider adapters.
+   * Logging does not change the immutable
+   * wallet/configuration or invalidate a connection.
    */
   setLogger(logger: Logger): void {
-    this.logger = logger;
+    if (logger !== noopLogger) this.logger = logger;
   }
 
   /**

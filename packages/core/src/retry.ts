@@ -197,10 +197,14 @@ export function isRetryableError(
   error: unknown,
   options: { signal?: AbortSignal } = {},
 ): boolean {
+  if (options.signal?.aborted) return false;
   if (!(error instanceof Error)) return false;
+  // An outer permanent/submitted verdict is final. Do not inspect retained
+  // diagnostic causes that cannot change it and may have hostile accessors.
+  if (isPermanentError(error)) return false;
   const chain = errorChain(error);
   // Permanent verdicts in any cause dominate transient wrappers and markers.
-  if (chain.some(isPermanentError) || options.signal?.aborted) return false;
+  if (chain.slice(1).some(isPermanentError)) return false;
 
   let transportTimeout = false;
   for (const entry of chain) {

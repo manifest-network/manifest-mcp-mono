@@ -1,13 +1,18 @@
 import { homedir } from 'node:os';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-// Mock dotenv so module-level config() is a no-op
-vi.mock('dotenv', () => ({
-  default: { config: vi.fn() },
+const { readEnvFile } = vi.hoisted(() => ({
+  readEnvFile: vi.fn<() => string>(),
 }));
+
+// Keep dotenv's real parser/populator; isolate only the optional file read.
+vi.mock('node:fs', () => ({ readFileSync: readEnvFile }));
 
 beforeEach(() => {
   vi.resetModules();
+  readEnvFile.mockReset().mockImplementation(() => {
+    throw Object.assign(new Error('No .env file'), { code: 'ENOENT' });
+  });
   // Clear all env vars we set in tests
   delete process.env.COSMOS_CHAIN_ID;
   delete process.env.COSMOS_RPC_URL;
@@ -21,9 +26,78 @@ beforeEach(() => {
   delete process.env.MANIFEST_KEY_PASSWORD;
 });
 
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.unstubAllEnvs();
+});
+
 async function importConfig() {
   return import('./config.js');
 }
+
+describe('optional .env loading', () => {
+  it('preserves dotenv quoting and byte-sensitive password escapes', async () => {
+    readEnvFile.mockReturnValue(
+      'COSMOS_CHAIN_ID: file-chain\n' +
+        'COSMOS_REST_URL=https://rest.test.com\n' +
+        'MANIFEST_KEY_PASSWORD="line1\\nline2\\r"\n',
+    );
+
+    const { loadConfig } = await importConfig();
+    expect(loadConfig()).toMatchObject({
+      chainId: 'file-chain',
+      restUrl: 'https://rest.test.com',
+      keyPassword: 'line1\nline2\r',
+    });
+    expect(readEnvFile).toHaveBeenCalledOnce();
+  });
+
+  it('keeps existing environment values, including an explicitly empty password', async () => {
+    process.env.COSMOS_CHAIN_ID = 'existing-chain';
+    process.env.MANIFEST_KEY_PASSWORD = '';
+    readEnvFile.mockReturnValue(
+      'COSMOS_CHAIN_ID=file-chain\n' +
+        'COSMOS_REST_URL=https://rest.test.com\n' +
+        'MANIFEST_KEY_PASSWORD=file-password\n',
+    );
+
+    const { loadConfig } = await importConfig();
+    expect(loadConfig()).toMatchObject({
+      chainId: 'existing-chain',
+      restUrl: 'https://rest.test.com',
+      keyPassword: '',
+    });
+  });
+
+  it.each(['ENOENT', 'EACCES', 'EISDIR'])(
+    'keeps optional file read failures non-fatal (%s)',
+    async (code) => {
+      readEnvFile.mockImplementation(() => {
+        throw Object.assign(new Error('Optional file unavailable'), { code });
+      });
+      process.env.COSMOS_CHAIN_ID = 'existing-chain';
+      process.env.COSMOS_REST_URL = 'https://rest.test.com';
+
+      const { loadConfig } = await importConfig();
+      expect(loadConfig().chainId).toBe('existing-chain');
+      expect(readEnvFile).toHaveBeenCalledOnce();
+    },
+  );
+
+  it.each(['parse', 'populate'] as const)(
+    'does not swallow unexpected %s failures as optional file errors',
+    async (operation) => {
+      readEnvFile.mockReturnValue('COSMOS_CHAIN_ID=file-chain\n');
+      const dotenv = (await import('dotenv')).default;
+      const error = new Error(`Unexpected dotenv ${operation} failure`);
+      vi.spyOn(dotenv, operation).mockImplementation(() => {
+        throw error;
+      });
+
+      await expect(importConfig()).rejects.toBe(error);
+    },
+  );
+});
 
 describe('loadConfig', () => {
   it('should load required fields from env', async () => {

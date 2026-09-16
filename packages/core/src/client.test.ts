@@ -82,18 +82,22 @@ vi.mock(
   }),
 );
 
-vi.mock('@cosmjs/stargate', () => ({
-  SigningStargateClient: {
-    connectWithSigner: vi.fn().mockResolvedValue({
-      getChainId: vi.fn().mockResolvedValue('test-chain'),
-      disconnect: vi.fn(),
-    }),
-  },
-  GasPrice: {
-    fromString: vi.fn().mockReturnValue({}),
-  },
-  AminoTypes: class MockAminoTypes {},
-}));
+vi.mock('@cosmjs/stargate', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@cosmjs/stargate')>();
+  return {
+    ...actual,
+    SigningStargateClient: {
+      connectWithSigner: vi.fn().mockResolvedValue({
+        getChainId: vi.fn().mockResolvedValue('test-chain'),
+        disconnect: vi.fn(),
+      }),
+    },
+    GasPrice: {
+      fromString: vi.fn().mockReturnValue({}),
+    },
+    AminoTypes: class MockAminoTypes {},
+  };
+});
 
 vi.mock('@cosmjs/proto-signing', () => ({
   Registry: class MockRegistry {},
@@ -535,6 +539,49 @@ describe('CosmosClientManager', () => {
   });
 
   describe('getSigningClient', () => {
+    it.each(['native', 'broadcastTx', 'broadcastTxSync'] as const)(
+      'reports broadcast guard support for %s methods once per connection',
+      async (method) => {
+        const actual =
+          await vi.importActual<typeof import('@cosmjs/stargate')>(
+            '@cosmjs/stargate',
+          );
+        const signingClient = await actual.SigningStargateClient.offline({
+          getAccounts: async () => [],
+          signDirect: async () => {
+            throw new Error('Unexpected signing in client initialization test');
+          },
+        });
+        vi.spyOn(signingClient, 'getChainId').mockResolvedValue('test-chain');
+        if (method !== 'native') vi.spyOn(signingClient, method);
+        const broadcast = signingClient.broadcastTx;
+        const sync = signingClient.broadcastTxSync;
+        mockConnectWithSigner.mockResolvedValue(signingClient);
+        const spyLogger = makeSpyLogger();
+        const instance = CosmosClientManager.getInstance(
+          makeConfig(),
+          makeWallet(),
+        );
+        instance.setLogger(spyLogger);
+
+        await expect(instance.getSigningClient()).resolves.toBe(signingClient);
+        await expect(instance.getSigningClient()).resolves.toBe(signingClient);
+
+        if (method === 'native') {
+          expect(spyLogger.warn).not.toHaveBeenCalled();
+          expect(signingClient.broadcastTx).not.toBe(broadcast);
+        } else {
+          expect(spyLogger.warn).toHaveBeenCalledExactlyOnceWith(
+            'Broadcast failure guard could not be installed: signing client broadcast methods differ from the supported native implementation. ' +
+              'Failures after submission may omit sent and transactionHash diagnostics.',
+          );
+          expect(signingClient.broadcastTx).toBe(broadcast);
+        }
+        expect(signingClient.broadcastTxSync).toBe(sync);
+        expect(mockConnectWithSigner).toHaveBeenCalledOnce();
+      },
+    );
+
     it('overrides defaultGasMultiplier when property exists', async () => {
       const mockSC = {
         getChainId: vi.fn().mockResolvedValue('test-chain'),
@@ -606,8 +653,52 @@ describe('CosmosClientManager', () => {
       );
     });
 
+    it.each([
+      { warning: 'gasMultiplier', defaultGasMultiplier: undefined },
+      { warning: 'Broadcast failure guard', defaultGasMultiplier: 1.4 },
+    ])(
+      'releases the connected client if the $warning diagnostic throws',
+      async ({ warning, defaultGasMultiplier }) => {
+        const sinkError = new Error('diagnostic sink failed');
+        const mockSC = {
+          getChainId: vi.fn().mockResolvedValue('test-chain'),
+          defaultGasMultiplier,
+          disconnect: vi.fn(() => {
+            throw new Error('cleanup also failed');
+          }),
+        };
+        mockConnectWithSigner.mockResolvedValue(mockSC as any);
+        const sink = makeSpyLogger();
+        sink.warn.mockImplementation(() => {
+          throw sinkError;
+        });
+        const manager = CosmosClientManager.getInstance(
+          makeConfig(),
+          makeWallet(),
+        );
+        manager.setLogger(sink);
+
+        await expect(manager.getSigningClient()).rejects.toMatchObject({
+          code: ManifestMCPErrorCode.RPC_CONNECTION_FAILED,
+          message: 'Failed to connect signing client: diagnostic sink failed',
+        });
+        expect(sink.warn).toHaveBeenCalledWith(
+          expect.stringContaining(warning),
+        );
+        expect(mockSC.disconnect).toHaveBeenCalledOnce();
+
+        // Failed initialization is not cached; replacing the sink permits a fresh connection.
+        manager.setLogger(makeSpyLogger());
+        const fresh = { ...mockSC, disconnect: vi.fn() };
+        mockConnectWithSigner.mockResolvedValue(fresh as any);
+        await expect(manager.getSigningClient()).resolves.toBe(fresh);
+        expect(mockConnectWithSigner).toHaveBeenCalledTimes(2);
+        expect(fresh.disconnect).not.toHaveBeenCalled();
+      },
+    );
+
     it('setLogger is non-key and non-invalidating: same instance AND same cached signing client', async () => {
-      // setLogger is a pure field assignment, NOT part of the getInstance key and NOT in the
+      // setLogger is not part of the getInstance key or the
       // invalidation gate — so calling it between two same-key getInstance calls must neither
       // fragment the singleton nor drop the cached signing client. SAME wallet reference both
       // calls: a fresh makeWallet() would trip the reference-equality wallet-invalidation gate
@@ -630,6 +721,44 @@ describe('CosmosClientManager', () => {
       expect(mockConnectWithSigner).toHaveBeenCalledOnce();
       expect(mockSC.disconnect).not.toHaveBeenCalled();
     });
+
+    it.each([
+      { assignments: ['first', 'noop'], expected: 'first' },
+      { assignments: ['noop', 'second'], expected: 'second' },
+      { assignments: ['first', 'second', 'noop'], expected: 'second' },
+    ] as const)(
+      'shares the last configured sink after $assignments and a holder disconnects',
+      async ({ assignments, expected }) => {
+        const sinks = {
+          first: makeSpyLogger(),
+          second: makeSpyLogger(),
+          noop: noopLogger,
+        };
+        const wallet = makeWallet();
+        const manager = CosmosClientManager.getInstance(makeConfig(), wallet);
+        for (const assignment of assignments) {
+          const holder = CosmosClientManager.getInstance(makeConfig(), wallet);
+          expect(holder).toBe(manager);
+          holder.setLogger(sinks[assignment]);
+          // Releasing this holder neither silences nor restores another sink;
+          // the original holder keeps the shared manager alive.
+          holder.disconnect();
+        }
+
+        await expect(manager.getSigningClient()).resolves.toBeDefined();
+
+        expect(sinks[expected].warn).toHaveBeenCalledWith(
+          expect.stringContaining(
+            'Broadcast failure guard could not be installed',
+          ),
+        );
+        expect(
+          sinks[expected === 'first' ? 'second' : 'first'].warn,
+        ).not.toHaveBeenCalled();
+        expect(mockConnectWithSigner).toHaveBeenCalledOnce();
+        manager.disconnect();
+      },
+    );
 
     it('is SILENT by default when setLogger is never called (the warn goes to the frozen noopLogger)', async () => {
       const mockSC = {

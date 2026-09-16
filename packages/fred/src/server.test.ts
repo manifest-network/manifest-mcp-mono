@@ -15,6 +15,7 @@ vi.mock('@manifest-network/manifest-mcp-core', async (importOriginal) => {
     ...actual,
     CosmosClientManager: {
       getInstance: vi.fn().mockReturnValue({
+        setLogger: vi.fn(),
         disconnect: vi.fn(),
         getQueryClient: vi.fn().mockResolvedValue({}),
         getSigningClient: vi.fn().mockResolvedValue({}),
@@ -1049,6 +1050,7 @@ describe('FredMCPServer', () => {
         },
       });
       vi.mocked(CosmosClientManager.getInstance).mockReturnValue({
+        setLogger: vi.fn(),
         disconnect: vi.fn(),
         getQueryClient: vi.fn().mockResolvedValue(qc),
         getSigningClient: vi.fn().mockResolvedValue({}),
