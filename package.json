@@ -37,7 +37,7 @@
   },
   "devDependencies": {
     "@arethetypeswrong/core": "0.18.5",
-    "@biomejs/biome": "2.5.9",
+    "@biomejs/biome": "2.5.13",
     "@cosmjs/encoding": "0.32.4",
     "@cosmjs/proto-signing": "0.32.4",
     "@manifest-network/manifest-mcp-core": "0.22.0",
@@ -45,18 +45,18 @@
     "@manifest-network/manifest-sdk": "0.22.0",
     "@manifest-network/manifestjs": "3.0.0",
     "@modelcontextprotocol/sdk": "1.30.0",
-    "@size-limit/preset-small-lib": "13.0.3",
-    "@types/node": "22.20.1",
+    "@size-limit/preset-small-lib": "13.1.1",
+    "@types/node": "22.20.2",
     "@vitest/coverage-v8": "4.1.10",
     "ajv": "8.20.0",
     "dependency-cruiser": "18.2.0",
     "publint": "0.3.24",
-    "size-limit": "13.0.3",
-    "tsdown": "0.22.14",
+    "size-limit": "13.1.1",
+    "tsdown": "0.23.0",
     "typescript": "5.9.3",
     "undici": "8.10.0",
     "vitest": "4.1.10",
-    "yaml": "2.9.0"
+    "yaml": "2.9.1"
   },
   "overrides": {
     "ipaddr.js": "2.4.0",
