@@ -95,6 +95,15 @@ acceptance. A raw timeout or claimed `txId` without observed acceptance supplies
 no submission evidence. Reconciled teardown outcomes retain these facts under
 `reconciliation` or `details.reconciliation`, separately from successful receipts.
 
+Caller cancellation remains prompt `OPERATION_CANCELLED` with the original
+`details.reason`. On the supported native `signAndBroadcast`/broadcast path,
+`details.transactionHash` retains the local hash only when this operation already
+observed acceptance. Cancellation does not wait for acceptance, and late
+observations do not update the error. `sent: true` remains conservative, so a
+missing hash is not evidence that nothing was sent. Custom `signAndBroadcast` or
+broadcast methods, SYNC-only calls and opaque compatibility callbacks gain no cancellation
+hash. Deliberate cancellation bypasses `stopApp` terminal-state reconciliation.
+
 ### `SIMULATION_FAILED`
 
 The transaction couldn't even be simulated (so it was never broadcast). Often an out-of-gas or message-validation failure. Try `cosmos_estimate_fee` with the same inputs to surface the chain's exact reason.

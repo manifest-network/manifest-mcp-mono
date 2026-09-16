@@ -78,9 +78,14 @@ execution success, and no confirmation, code or height is inferred.
 
 An arbitrary timeout or claimed `txId` supplies no submission evidence. Errors
 before observed acceptance (including undecodable CheckTx responses) and custom
-broadcast methods keep their existing behavior. Caller cancellation remains prompt and conservatively marks submission,
-but currently does not receive the guard's known hash (tracked in ENG-952).
-SYNC-only calls keep their existing behavior.
+broadcast methods keep their existing behavior. Caller cancellation remains
+prompt, preserves `details.reason`, and conservatively reports `sent: true` once
+signing/broadcast begins. On the supported native `signAndBroadcast`/broadcast
+path, it also includes the local `transactionHash` if this operation observed
+acceptance before cancellation. It does not wait for acceptance or change the
+error when a later observation arrives. Custom `signAndBroadcast` or broadcast methods,
+SYNC-only calls and opaque compatibility callbacks gain no cancellation hash.
+A missing hash does not establish that nothing was sent.
 With a configured logger, initialization warns if unsupported signing-client
 broadcast methods prevent the guard from installing; failures may then lack
 submission diagnostics. MCP servers use their leveled stderr logger; SDK consumers

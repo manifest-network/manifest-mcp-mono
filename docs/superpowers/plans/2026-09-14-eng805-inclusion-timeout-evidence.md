@@ -3,6 +3,9 @@
 Base: merged PR #228, `12af628`. This slice addresses the two retained
 inclusion-timeout criteria. The other eleven ENG-805 criteria remain separate.
 
+The later [ENG-952 follow-up](2026-09-16-eng952-cancellation-evidence.md)
+supersedes the caller-cancellation hash limitation described in this plan.
+
 ## Contract
 
 The SDK-created signing client reuses the installed CosmJS blocking broadcast

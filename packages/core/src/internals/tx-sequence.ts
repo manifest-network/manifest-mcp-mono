@@ -4,6 +4,7 @@ import type {
   SigningStargateClient,
   StdFee,
 } from '@cosmjs/stargate';
+import { signAndBroadcastWithObservation } from './broadcast-failure.js';
 
 /**
  * Per-signer local sequence tracking for non-blocking (SYNC / CheckTx) broadcasts.
@@ -51,13 +52,18 @@ async function managedBroadcast(
   messages: readonly EncodeObject[],
   fee: StdFee | 'auto' | number,
   memo: string,
+  onAccepted?: (transactionHash: string) => void,
 ): Promise<DeliverTxResponse | string> {
   const cached = cache.get(sender);
 
   // Fast path — a blocking broadcast with no unconfirmed sync tx in flight keeps cosmjs's exact
   // behavior: read the committed sequence and wait for inclusion. Nothing to track or invalidate.
   if (wait && !cached) {
-    return real.signAndBroadcast(sender, messages, fee, memo);
+    return signAndBroadcastWithObservation(
+      real,
+      [sender, messages, fee, memo],
+      onAccepted,
+    );
   }
 
   // Seed the local counter from committed state on first use.
@@ -79,7 +85,11 @@ async function managedBroadcast(
 
   try {
     const result = wait
-      ? await real.signAndBroadcast.call(view, sender, messages, fee, memo)
+      ? await signAndBroadcastWithObservation(
+          view,
+          [sender, messages, fee, memo],
+          onAccepted,
+        )
       : await real.signAndBroadcastSync.call(view, sender, messages, fee, memo);
     // A tx that passes CheckTx consumes its sequence even if it later fails in DeliverTx, so advancing
     // here is correct for both the blocking and sync outcomes.
@@ -135,6 +145,7 @@ async function managedSimulate(
 export function sequencedSigningClient(
   real: SigningStargateClient,
   cache: SequenceCache,
+  onAccepted?: (transactionHash: string) => void,
 ): SigningStargateClient {
   return new Proxy(real, {
     get(target, prop, receiver) {
@@ -148,6 +159,7 @@ export function sequencedSigningClient(
             args[1],
             args[2],
             args[3] ?? '',
+            onAccepted,
           );
       }
       if (prop === 'signAndBroadcastSync') {

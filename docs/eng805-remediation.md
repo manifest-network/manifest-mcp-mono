@@ -1048,3 +1048,41 @@ architecture, package integrity, bundle budgets, twenty dependency-hygiene check
 eight metadata checks and eight type-harness checks pass. Core still packs
 359 files without vendored dependencies. This revision adds seven runtime tests;
 the PR adds 124 relative to its merged base, plus three dependency-policy checks.
+
+## Follow-up: caller cancellation after accepted submission — 2026-09-16
+
+[ENG-952](https://linear.app/liftedinit/issue/ENG-952) closes the separate caller
+cancellation gap retained by PR #230. The
+[implementation plan](superpowers/plans/2026-09-16-eng952-cancellation-evidence.md)
+starts from its merged commit `032addd`. The earlier review rows describing a
+missing cancellation hash are historical; this section supersedes that limitation.
+
+`withTxExecution` now retains the first local accepted hash for its own operation
+and closes observation when it settles. Actual caller cancellation still rejects
+promptly with its original reason and conservative sent flag. It includes the
+hash only if native acceptance was already observed; late acceptance cannot add
+it to an earlier error. Inclusion, execution success, code and height remain unknown.
+
+Both `cosmosTx` and `executeTx` pass an observer through the manager's broadcast
+client into the existing sequencer. Each call owns its observer; shared signing
+clients and sequence caches carry no mutable operation evidence. The native
+blocking helper intercepts only its broadcast call, preserving the original
+receiver for signing, simulation and lookup. Both direct and cached-sequence
+paths notify from the existing guard after native CheckTx resolves, using its
+local digest even when an RPC identifier mismatches. Observer failures cannot
+change the transaction outcome or bypass native polling cleanup.
+
+| Finding | Correction and evidence | Confidence |
+| --- | --- | --- |
+| Prompt caller cancellation loses the already-established transaction identity | Capture accepted local SHA-256 evidence in per-execution state before the cancellation listener builds its error; both public transaction entry points retain the original reason and sparse details. | 100% gap; 99% correction |
+| Outer client wrappers discard context on the sequence fast/cached paths | Thread the observer explicitly through getBroadcastClient and sequencedSigningClient; native signing/query methods retain the raw or sequence receiver. Real-manager and cached-sequence regressions cover the path. | 100% mechanism; 99% correction |
+| Late acceptance or concurrent operations could change cancellation diagnostics | Close evidence updates at settlement and retain only the first accepted hash. Test pending CheckTx, late success/failure, distinct concurrent signed bytes and unchanged returned details after late settlement. | 99% |
+| Custom method overrides and observer exceptions need bounded behavior | Native method identity checks leave custom `signAndBroadcast` or broadcast methods and SYNC-only calls unchanged; thrown/rejected observer failures cannot alter the native outcome or timer cleanup. | 99% |
+
+The change adds no public result schema. Custom `signAndBroadcast` or broadcast implementations,
+SYNC-only calls and opaque confirmation callbacks do not gain acceptance evidence.
+Current guides describe this boundary; MCP wrappers and orchestration paths still
+have their existing signal-forwarding rules, and transport cancellation does not
+guarantee delivery of a final MCP error response. ENG-953, grouped-error retry
+policy and the parent's eleven unchecked criteria remain separate. Validation
+and PR/merge status are recorded in Linear and the PR; work remains unreleased.

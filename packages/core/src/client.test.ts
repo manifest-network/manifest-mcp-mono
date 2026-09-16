@@ -87,6 +87,7 @@ vi.mock('@cosmjs/stargate', async (importOriginal) => {
   return {
     ...actual,
     SigningStargateClient: {
+      prototype: actual.SigningStargateClient.prototype,
       connectWithSigner: vi.fn().mockResolvedValue({
         getChainId: vi.fn().mockResolvedValue('test-chain'),
         disconnect: vi.fn(),
