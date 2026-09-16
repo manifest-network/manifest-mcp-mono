@@ -20,9 +20,10 @@ retaining the local digest once native acceptance was observed.
 ## Implementation
 
 1. Give each cancellation-aware transaction execution an acceptance observer.
-   It records the first local hash only after submission starts and before the
-   outer operation settles. Cancellation constructs fresh details from that
-   state; the losing operation remains observed.
+   It records the first local hash before the outer operation settles. Native
+   acceptance establishes `sent: true` even if it precedes the conservative
+   submission marker. Cancellation constructs fresh details from that state;
+   the losing operation remains observed.
 2. Pass the optional observer explicitly through `getBroadcastClient` and
    `sequencedSigningClient`. Both blocking sequence paths route it to the native
    broadcast guard. Do not store operation state on a shared raw signing client.

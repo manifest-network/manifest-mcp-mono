@@ -178,21 +178,27 @@ describe('transaction cancellation evidence snapshots', () => {
     expectExactDetails(lateCheckpoint, { reason, sent: true });
   });
 
-  it('does not create accepted evidence before the submission boundary', async () => {
-    const abort = new AbortController();
-    const pending = withTxExecution(
-      async (execution) => {
-        execution.onAccepted?.('A1'.repeat(32));
-        return new Promise<void>(() => {});
-      },
-      { signal: abort.signal },
-    ).catch((error: unknown) => error);
-    abort.abort('during preparation');
-    expectExactDetails(await pending, {
-      reason: 'during preparation',
-      sent: false,
-    });
-  });
+  it.each([false, true])(
+    'native acceptance establishes submission evidence before the marker (later marker: %s)',
+    async (markAfterAcceptance) => {
+      const abort = new AbortController();
+      const hash = 'A1'.repeat(32);
+      const pending = withTxExecution(
+        async (execution) => {
+          execution.onAccepted?.(hash);
+          if (markAfterAcceptance) execution.markBroadcast();
+          return new Promise<void>(() => {});
+        },
+        { signal: abort.signal },
+      ).catch((error: unknown) => error);
+      abort.abort('after observed acceptance');
+      expectExactDetails(await pending, {
+        reason: 'after observed acceptance',
+        sent: true,
+        transactionHash: hash,
+      });
+    },
+  );
 
   it('does not observe acceptance when there is no cancellation boundary', async () => {
     await expect(

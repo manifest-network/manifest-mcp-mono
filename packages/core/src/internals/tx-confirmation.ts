@@ -97,8 +97,10 @@ export async function withTxExecution<T>(
     signal,
     onAccepted: signal
       ? (hash) => {
-          if (!settled && sent && transactionHash === undefined)
-            transactionHash = hash;
+          if (settled) return;
+          // Native acceptance proves submission even if the conservative marker came later.
+          sent = true;
+          transactionHash ??= hash;
         }
       : undefined,
     checkpoint() {

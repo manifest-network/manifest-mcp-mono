@@ -161,6 +161,42 @@ describe('per-operation native acceptance observation', () => {
     expect(f.comet.broadcastTxSync).not.toHaveBeenCalled();
   });
 
+  it('preserves a receiver-sensitive delegating signer on its uncached client', async () => {
+    const f = await makeInclusionTimeoutFixture();
+    f.installGuard();
+    const originalSignAndBroadcast = f.client.signAndBroadcast;
+    const signerState = { calls: 0 };
+    const stateByClient = new WeakMap([[f.client, signerState]]);
+    const accepted = vi.fn();
+    const client = sequencedSigningClient(f.client, new Map(), accepted);
+    f.client.signAndBroadcast = function (
+      this: SigningStargateClient,
+      ...args: Parameters<SigningStargateClient['signAndBroadcast']>
+    ) {
+      const state = stateByClient.get(this);
+      if (!state) throw new TypeError('Signer receiver is not registered');
+      state.calls += 1;
+      return originalSignAndBroadcast.apply(this, args);
+    };
+    const pending = client
+      .signAndBroadcast(f.sender, f.messages, f.fee)
+      .catch((error: unknown) => error);
+    await vi.advanceTimersByTimeAsync(2);
+    const error = await pending;
+
+    expect(signerState.calls).toBe(1);
+    expect(isOwnedBroadcastFailure(error)).toBe(true);
+    expect(error).toMatchObject({
+      details: { sent: true, transactionHash: f.hash },
+    });
+    // The native broadcast guard still retains failure evidence. Observation
+    // cannot wrap an arbitrary signer's receiver just to add cancellation data.
+    expect(accepted).not.toHaveBeenCalled();
+    expect(f.comet.broadcastTxSync).toHaveBeenCalledOnce();
+    expect(f.comet.txSearchAll).toHaveBeenCalledOnce();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
   it.each(['broadcast', 'sync'])(
     'does not observe a custom %s method replaced after wrapper creation',
     async (method) => {

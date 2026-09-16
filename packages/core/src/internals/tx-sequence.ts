@@ -19,8 +19,11 @@ import { signAndBroadcastWithObservation } from './broadcast-failure.js';
  *
  * This module tracks the "next unused sequence" per signer locally and injects it so consecutive sync
  * broadcasts use consecutive sequences. It reuses cosmjs's real broadcast pipeline (fee/`'auto'`
- * resolution, `simulate`, `sign`, `broadcastTx`/`broadcastTxSync`) and only shadows `getSequence` via an
- * `Object.create` view — no reimplementation of signing/fee logic.
+ * resolution, `simulate`, `sign`, `broadcastTx`/`broadcastTxSync`). The sequence adjustment shadows
+ * `getSequence` via an `Object.create` view without reimplementing signing/fee logic. Blocking calls
+ * can additionally observe native acceptance through {@link signAndBroadcastWithObservation}, which
+ * intercepts the broadcast on a per-call Proxy and delegates submission/polling to the native guard.
+ * The observer is scoped to this wrapper; neither the raw client nor the sequence cache stores it.
  *
  * The same shadow is applied to `simulate` (see {@link managedSimulate}). A gas simulation
  * (`buildGasFee`, ENG-556) runs the node's ante handler against the **check state**, which an in-flight
@@ -56,8 +59,8 @@ async function managedBroadcast(
 ): Promise<DeliverTxResponse | string> {
   const cached = cache.get(sender);
 
-  // Fast path — a blocking broadcast with no unconfirmed sync tx in flight keeps cosmjs's exact
-  // behavior: read the committed sequence and wait for inclusion. Nothing to track or invalidate.
+  // No unconfirmed sync tx: read the committed sequence and wait for inclusion, with no sequence
+  // cache work. The optional observer still follows the supported native blocking path.
   if (wait && !cached) {
     return signAndBroadcastWithObservation(
       real,
@@ -141,6 +144,9 @@ async function managedSimulate(
  * gas-ceiling preflight (see {@link managedSimulate}) — use per-signer local sequence tracking (see module
  * doc). Every OTHER method delegates unchanged to the real client. The caller must serialize broadcasts per
  * signer (the SDK does, via `withBroadcastLock`).
+ * `onAccepted` receives the accepted local hash on the supported native blocking path only; custom
+ * `signAndBroadcast`/broadcast methods and SYNC-only calls do not notify it. It applies with and without
+ * a cached sequence, and observer failures cannot change the transaction outcome.
  */
 export function sequencedSigningClient(
   real: SigningStargateClient,

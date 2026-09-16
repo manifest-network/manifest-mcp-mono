@@ -2,6 +2,7 @@ import { SigningStargateClient } from '@cosmjs/stargate';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  deferred,
   expectExactDetails,
   makeInclusionTimeoutFixture,
 } from './__test-utils__/mocks.js';
@@ -25,14 +26,6 @@ vi.mock('./lcd-adapter.js', () => ({
 }));
 
 const LEASE = asLeaseUuid('550e8400-e29b-41d4-a716-446655440000');
-
-function deferred<T>() {
-  let resolve!: (value: T) => void;
-  const promise = new Promise<T>((done) => {
-    resolve = done;
-  });
-  return { promise, resolve };
-}
 
 /** Real factory, manager, stopApp and native broadcast; only signing and remote reads are mocked. */
 async function cancelAcceptedStop(initialState: LeaseState, reason: unknown) {

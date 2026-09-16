@@ -2,6 +2,7 @@ import { toBech32 } from '@cosmjs/encoding';
 import type { OfflineSigner } from '@cosmjs/proto-signing';
 import { SigningStargateClient } from '@cosmjs/stargate';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { deferred } from './__test-utils__/mocks.js';
 import { asFqdn, asLeaseUuid } from './brands.js';
 import { CosmosClientManager } from './client.js';
 import { createManifestClient, type ManifestClient } from './client-full.js';
@@ -41,14 +42,6 @@ const RESULT = {
   events: [],
   msgResponses: [],
 };
-
-function deferred<T>() {
-  let resolve!: (value: T) => void;
-  const promise = new Promise<T>((done) => {
-    resolve = done;
-  });
-  return { promise, resolve };
-}
 
 function wireClient() {
   return {

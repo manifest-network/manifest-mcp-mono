@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { SigningStargateClient, TimeoutError } from '@cosmjs/stargate';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  deferred,
   expectExactDetails,
   makeInclusionTimeoutFixture,
   makeMockConfig,
@@ -22,20 +23,23 @@ import { ManifestMCPError, ManifestMCPErrorCode } from './types.js';
 
 type EntryPoint = 'cosmosTx' | 'executeTx';
 
-const managers: CosmosClientManager[] = [];
+type FixtureOptions = {
+  readonly captureBroadcastError?: boolean;
+} & (
+  | { readonly guarded?: true; readonly realManager?: boolean }
+  | { readonly guarded: false; readonly realManager?: false }
+);
 
 async function fixture(
   entryPoint: EntryPoint,
   {
     guarded = true,
-    captureBroadcastError = true,
+    captureBroadcastError = false,
     realManager = false,
-  }: {
-    guarded?: boolean;
-    captureBroadcastError?: boolean;
-    realManager?: boolean;
-  } = {},
+  }: FixtureOptions = {},
 ) {
+  if (!guarded && realManager)
+    throw new Error('A real manager always installs the broadcast guard');
   const wire = await makeInclusionTimeoutFixture();
   if (guarded && !realManager) wire.installGuard();
   let broadcastError: unknown;
@@ -65,7 +69,6 @@ async function fixture(
       getAddress,
       getSigner: async () => wire.signer,
     });
-    managers.push(chain);
   } else {
     chain = makeSealedClientManager({
       getConfig: vi.fn(() => config),
@@ -106,16 +109,6 @@ async function fixture(
   };
 }
 
-function deferred<T>() {
-  let resolve!: (value: T) => void;
-  let reject!: (error: unknown) => void;
-  const promise = new Promise<T>((fulfill, fail) => {
-    resolve = fulfill;
-    reject = fail;
-  });
-  return { promise, resolve, reject };
-}
-
 type Fixture = Awaited<ReturnType<typeof fixture>>;
 type PollResult = Awaited<ReturnType<Fixture['comet']['txSearchAll']>>;
 
@@ -145,15 +138,18 @@ function ownCause(error: unknown): unknown {
 }
 
 beforeEach(() => vi.useFakeTimers());
-afterEach(async () => {
-  for (const manager of managers.splice(0)) await manager.disconnectWhenIdle();
-  vi.clearAllTimers();
-  vi.useRealTimers();
-  vi.restoreAllMocks();
+afterEach(() => {
+  try {
+    CosmosClientManager.clearInstances();
+  } finally {
+    vi.clearAllTimers();
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  }
 });
 
 it('cosmosTx composes the active-signal guard, cached sequence and owned broadcast failure', async () => {
-  const f = await fixture('cosmosTx');
+  const f = await fixture('cosmosTx', { captureBroadcastError: true });
   const committedSequence = vi
     .spyOn(f.client, 'getSequence')
     .mockResolvedValue({ accountNumber: 1, sequence: 5 });
@@ -221,7 +217,7 @@ describe.each<EntryPoint>(['cosmosTx', 'executeTx'])(
   '%s inclusion-timeout attribution',
   (entryPoint) => {
     it('retains accepted submission and the original timeout without retrying or inferring inclusion', async () => {
-      const f = await fixture(entryPoint);
+      const f = await fixture(entryPoint, { captureBroadcastError: true });
       const retry = vi.fn();
       let calls = 0;
       const result = withRetry(
@@ -267,7 +263,10 @@ describe.each<EntryPoint>(['cosmosTx', 'executeTx'])(
     });
 
     it('does not infer evidence from an unguarded native timeout', async () => {
-      const f = await fixture(entryPoint, { guarded: false });
+      const f = await fixture(entryPoint, {
+        guarded: false,
+        captureBroadcastError: true,
+      });
       const result = f.invoke().catch((error: unknown) => error);
       await vi.advanceTimersByTimeAsync(20);
       const error = await result;
@@ -278,7 +277,7 @@ describe.each<EntryPoint>(['cosmosTx', 'executeTx'])(
     });
 
     it('uses observed acceptance when a later lookup fails, ignoring claimed transaction metadata', async () => {
-      const f = await fixture(entryPoint);
+      const f = await fixture(entryPoint, { captureBroadcastError: true });
       const lookupError = Object.freeze(
         new ManifestMCPError(
           ManifestMCPErrorCode.QUERY_FAILED,
@@ -315,7 +314,7 @@ describe.each<EntryPoint>(['cosmosTx', 'executeTx'])(
     });
 
     it('keeps an injected lookup cancellation terminal after accepted submission', async () => {
-      const f = await fixture(entryPoint);
+      const f = await fixture(entryPoint, { captureBroadcastError: true });
       const cancellation = new ManifestMCPError(
         ManifestMCPErrorCode.OPERATION_CANCELLED,
         'Lookup cancelled',
@@ -381,7 +380,7 @@ describe.each<EntryPoint>(['cosmosTx', 'executeTx'])(
     );
 
     it('does not promote a forged timeout rejected during signing', async () => {
-      const f = await fixture(entryPoint);
+      const f = await fixture(entryPoint, { captureBroadcastError: true });
       const forged = new TimeoutError('Transaction was submitted', f.hash);
       f.sign.mockRejectedValue(forged);
       const result = f.invoke().catch((error: unknown) => error);
@@ -413,7 +412,7 @@ describe.each<EntryPoint>(['cosmosTx', 'executeTx'])(
     });
 
     it('preserves caller cancellation and known identity without substituting the later inclusion timeout', async () => {
-      const f = await fixture(entryPoint, { captureBroadcastError: false });
+      const f = await fixture(entryPoint);
       const abort = new AbortController();
       f.comet.txSearchAll.mockImplementation(async () => {
         abort.abort(new Error('Caller stopped waiting'));
@@ -463,10 +462,7 @@ describe.each<EntryPoint>(['cosmosTx', 'executeTx'])(
         // The failure case proves actual manager→sequencer argument forwarding;
         // the success case also requires the cached-sequence receiver view.
         const realManager = lateOutcome === 'failure';
-        const f = await fixture(entryPoint, {
-          captureBroadcastError: false,
-          realManager,
-        });
+        const f = await fixture(entryPoint, { realManager });
         const sequences: number[] = [];
         if (!realManager) {
           f.cache.set(f.sender, { accountNumber: 1, sequence: 8 });
@@ -550,7 +546,7 @@ describe.each<EntryPoint>(['cosmosTx', 'executeTx'])(
     );
 
     it('does not retroactively add a hash when cancellation precedes the CheckTx response', async () => {
-      const f = await fixture(entryPoint, { captureBroadcastError: false });
+      const f = await fixture(entryPoint);
       const checkTx = deferred<typeof f.checkTx>();
       f.comet.broadcastTxSync.mockReturnValue(checkTx.promise);
       const abort = new AbortController();
@@ -581,7 +577,7 @@ describe.each<EntryPoint>(['cosmosTx', 'executeTx'])(
     it.each([31, 32])(
       'retains the local digest when the accepted RPC hash has %i incorrect bytes',
       async (length) => {
-        const f = await fixture(entryPoint, { captureBroadcastError: false });
+        const f = await fixture(entryPoint);
         f.comet.broadcastTxSync.mockResolvedValue({
           ...f.checkTx,
           hash: new Uint8Array(length).fill(0xab),
@@ -612,10 +608,7 @@ describe.each<EntryPoint>(['cosmosTx', 'executeTx'])(
     );
 
     it('does not infer a hash from accepted submission without the owned guard', async () => {
-      const f = await fixture(entryPoint, {
-        guarded: false,
-        captureBroadcastError: false,
-      });
+      const f = await fixture(entryPoint, { guarded: false });
       const poll = deferred<PollResult>();
       f.comet.txSearchAll.mockReturnValue(poll.promise);
       const abort = new AbortController();
@@ -637,7 +630,7 @@ describe.each<EntryPoint>(['cosmosTx', 'executeTx'])(
     });
 
     it('does not trust hash-shaped metadata from a custom signing callback', async () => {
-      const f = await fixture(entryPoint, { captureBroadcastError: false });
+      const f = await fixture(entryPoint);
       const abort = new AbortController();
       const reason = new Error('Custom signing was cancelled');
       const custom = vi
@@ -661,12 +654,8 @@ describe.each<EntryPoint>(['cosmosTx', 'executeTx'])(
     it.each([false, true])(
       'keeps concurrent identities separate when the first acceptance is pending=%s',
       async (firstPending) => {
-        const first = await fixture(entryPoint, {
-          captureBroadcastError: false,
-        });
-        const second = await fixture(entryPoint, {
-          captureBroadcastError: false,
-        });
+        const first = await fixture(entryPoint);
+        const second = await fixture(entryPoint);
         for (const [index, f] of [first, second].entries()) {
           f.sign.mockResolvedValue({
             bodyBytes: Uint8Array.of(index + 1),

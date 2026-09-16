@@ -6,7 +6,9 @@ import { isTransactionHash } from './transaction-hash.js';
 
 const nativeBroadcast = StargateClient.prototype.broadcastTx;
 const nativeBroadcastSync = StargateClient.prototype.broadcastTxSync;
-const nativeSignAndBroadcast = SigningStargateClient.prototype.signAndBroadcast;
+// Keep eager identity capture without requiring constructor prototypes in partial mocks.
+const nativeSignAndBroadcast =
+  SigningStargateClient?.prototype?.signAndBroadcast;
 const ownedBroadcastErrors = new WeakSet<object>();
 
 /** Internal provenance for attribution; arbitrary SDK/transport errors cannot claim this marker. */
@@ -138,7 +140,7 @@ async function guardedBroadcast(
   return broadcastWithFailureGuard(this, args);
 }
 
-/** Observe only this native blocking call, without changing custom method receivers. */
+/** Observe this native blocking call, preserving raw/sequence receivers for delegated signing/query methods. */
 export function signAndBroadcastWithObservation(
   client: SigningStargateClient,
   args: Parameters<SigningStargateClient['signAndBroadcast']>,

@@ -1086,3 +1086,37 @@ have their existing signal-forwarding rules, and transport cancellation does not
 guarantee delivery of a final MCP error response. ENG-953, grouped-error retry
 policy and the parent's eleven unchecked criteria remain separate. Validation
 and PR/merge status are recorded in Linear and the PR; work remains unreleased.
+
+## PR #232 review: compatibility and regression safeguards — 2026-09-16
+
+[Claude's review of `5c6a106`](https://github.com/manifest-network/manifest-mcp-mono/pull/232#issuecomment-5700223232)
+identified two compatibility questions and six smaller improvements. The review
+response preserves the native observation boundary and tightens its implementation,
+tests and documentation.
+
+| Finding | Disposition and evidence | Confidence |
+| --- | --- | --- |
+| Eager SigningStargateClient prototype access breaks existing partial module mocks | Keep eager native-method capture with optional access. Restore the original plain-object connectWithSigner mock: it fails import before the correction and passes afterward. | 100% reproduction; 99% correction |
+| Delegating custom signAndBroadcast wrappers retain timeout evidence but lack a cancellation hash | Retain the documented native-only observation policy. A receiver-sensitive wrapper backed by WeakMap state works with the original raw receiver and fails if observation changes it to a Proxy. The pre-existing cached-sequence view does not justify changing uncached calls. The public fixture now preserves native identity by default, with explicit opt-in for an error-capturing wrapper. | 100% asymmetry; 99% compatibility decision |
+| The sent marker can discard stronger native acceptance evidence | Native acceptance now establishes sent:true and the first local hash before settlement, independently of marker ordering. Both missing-marker and later-marker regressions fail before this correction. Late observations remain ignored. | 100% mechanism; 99% correction |
+| Cancellation can omit the RPC-hash mismatch diagnostic | Retain the sparse cancellation contract and document the limitation. The local digest, original reason and retry veto remain correct. A structured mismatch flag on both failure paths would be an additive diagnostic extension, outside these acceptance criteria; it is not required for this fix. | 99% |
+| Sequence-wrapper comments omit optional acceptance observation | Distinguish the getSequence adjustment from the blocking observation wrapper, and describe eligibility, direct/cached paths and unchanged SYNC behavior next to the observer parameter. | 99% |
+| The fixture silently guards guarded:false with realManager:true | Reject the incompatible combination in both the option type and runtime fixture boundary. | 99% |
+| Awaiting idle teardown under fake timers can leak a lock into later cases | Force manager cleanup in afterEach; retain explicit poll release/drain checks inside individual tests. A missing-drain negative control checks cleanup isolation. | 99% |
+| Deferred promises repeat across test files | Share one resolve/reject helper through the existing test utility barrel and reuse it in core and the existing CosmWasm test seam. Keep the ES2020 library target. | 99% |
+
+The proposed late-outcome matrix expansion remains unnecessary: existing tests
+already catch the relevant error and sequence-cache mutations. The documented
+SYNC boundary, terminal post-acceptance failures and native broadcast identity
+checks remain unchanged. Validation, confidence scores and the retained diagnostic
+limitation are recorded on the PR and ENG-952; ENG-805's other criteria stay open.
+
+Local validation passes **4,143 tests / 17 existing skips / 186 files**, including
+the rebuilt CosmWasm consumer, with no type errors and every coverage floor
+passing: **84.93% lines / 84.65% statements / 84.51% branches / 88.47% functions**.
+Fresh workspace builds, workspace/E2E TypeScript, Fred schema, Biome and diff
+checks pass. The original constructor mock, both acceptance-order cases and all
+three fixture-isolation probes fail before their respective corrections and pass
+afterward. The receiver-changing observation mutation fails its compatibility
+regression. Independent production/documentation review found no blocker
+(99% confidence). Fresh CI and live acceptance results are recorded on the PR.

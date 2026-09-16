@@ -6,6 +6,7 @@ import {
 } from '@manifest-network/manifest-mcp-core';
 import { callTool } from '@manifest-network/manifest-mcp-core/__test-utils__/callTool.js';
 import {
+  deferred,
   makeMockConfig,
   makeMockQueryClient,
   makeMockWallet,
@@ -13,14 +14,6 @@ import {
 import type { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { afterEach, expect, it, vi } from 'vitest';
 import { CosmwasmMCPServer } from './index.js';
-
-function deferred() {
-  let resolve!: () => void;
-  const promise = new Promise<void>((done) => {
-    resolve = done;
-  });
-  return { promise, resolve };
-}
 
 const transports: InMemoryTransport[] = [];
 afterEach(async () => {
