@@ -1,11 +1,14 @@
 import { sha256 } from '@cosmjs/crypto';
 import { toHex } from '@cosmjs/encoding';
-import { type SigningStargateClient, StargateClient } from '@cosmjs/stargate';
+import { SigningStargateClient, StargateClient } from '@cosmjs/stargate';
 import { ManifestMCPError, ManifestMCPErrorCode } from '../types.js';
 import { isTransactionHash } from './transaction-hash.js';
 
 const nativeBroadcast = StargateClient.prototype.broadcastTx;
 const nativeBroadcastSync = StargateClient.prototype.broadcastTxSync;
+// Keep eager identity capture without requiring constructor prototypes in partial mocks.
+const nativeSignAndBroadcast =
+  SigningStargateClient?.prototype?.signAndBroadcast;
 const ownedBroadcastErrors = new WeakSet<object>();
 
 /** Internal provenance for attribution; arbitrary SDK/transport errors cannot claim this marker. */
@@ -75,15 +78,16 @@ export function attributeBroadcastFailure(
   );
 }
 
-async function guardedBroadcast(
-  this: SigningStargateClient,
-  ...args: Parameters<SigningStargateClient['broadcastTx']>
+async function broadcastWithFailureGuard(
+  client: SigningStargateClient,
+  args: Parameters<SigningStargateClient['broadcastTx']>,
+  onAccepted?: (transactionHash: string) => void,
 ) {
   // A consumer may replace the submission method after client creation. Its
   // returned value does not establish provenance for the native producer.
-  if (this.broadcastTxSync !== nativeBroadcastSync)
-    return nativeBroadcast.call(this, ...args);
-  const view = Object.create(this) as SigningStargateClient;
+  if (client.broadcastTxSync !== nativeBroadcastSync)
+    return nativeBroadcast.call(client, ...args);
+  const view = Object.create(client) as SigningStargateClient;
   let acceptedHash: string | undefined;
   let hashMismatch: Error | undefined;
   view.broadcastTxSync = async (tx) => {
@@ -91,8 +95,16 @@ async function guardedBroadcast(
     // that could change while CheckTx is in flight.
     const submittedTx = new Uint8Array(tx);
     const localHash = toHex(sha256(submittedTx)).toUpperCase();
-    const reportedHash = await nativeBroadcastSync.call(this, submittedTx);
+    const reportedHash = await nativeBroadcastSync.call(client, submittedTx);
     acceptedHash = localHash;
+    if (onAccepted) {
+      try {
+        // Observation cannot change submission, polling or native timer cleanup.
+        void Promise.resolve(onAccepted(localHash)).catch(() => {});
+      } catch {
+        // A synchronous observer failure is likewise non-authoritative.
+      }
+    }
     if (
       !isTransactionHash(reportedHash) ||
       reportedHash.toUpperCase() !== localHash
@@ -108,7 +120,7 @@ async function guardedBroadcast(
   // Keep a customized query method's receiver and dynamic method lookup intact.
   view.getTx = (hash) => {
     if (hashMismatch) return Promise.reject(hashMismatch);
-    return this.getTx(hash);
+    return client.getTx(hash);
   };
 
   try {
@@ -119,6 +131,42 @@ async function guardedBroadcast(
       throw ownedFailure(hashMismatch ?? error, acceptedHash);
     throw error;
   }
+}
+
+async function guardedBroadcast(
+  this: SigningStargateClient,
+  ...args: Parameters<SigningStargateClient['broadcastTx']>
+) {
+  return broadcastWithFailureGuard(this, args);
+}
+
+/** Observe this native blocking call, preserving raw/sequence receivers for delegated signing/query methods. */
+export function signAndBroadcastWithObservation(
+  client: SigningStargateClient,
+  args: Parameters<SigningStargateClient['signAndBroadcast']>,
+  onAccepted?: (transactionHash: string) => void,
+) {
+  if (
+    !onAccepted ||
+    client.signAndBroadcast !== nativeSignAndBroadcast ||
+    client.broadcastTx !== guardedBroadcast ||
+    client.broadcastTxSync !== nativeBroadcastSync
+  )
+    return client.signAndBroadcast(...args);
+
+  const view = new Proxy(client, {
+    get(target, property) {
+      const value: unknown = Reflect.get(target, property, target);
+      if (property === 'broadcastTx' && value === guardedBroadcast) {
+        return (
+          ...broadcastArgs: Parameters<SigningStargateClient['broadcastTx']>
+        ) => broadcastWithFailureGuard(target, broadcastArgs, onAccepted);
+      }
+      // Signing, simulation and queries keep the original raw/sequence receiver.
+      return typeof value === 'function' ? value.bind(target) : value;
+    },
+  });
+  return nativeSignAndBroadcast.call(view, ...args);
 }
 
 /**

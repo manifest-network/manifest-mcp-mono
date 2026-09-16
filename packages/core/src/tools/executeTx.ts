@@ -53,7 +53,7 @@ export async function executeTx(
       // connect-retry, and nesting the two multiplied attempts (ENG-679).
       let client: Awaited<ReturnType<TxCtx['chain']['getBroadcastClient']>>;
       try {
-        client = await ctx.chain.getBroadcastClient();
+        client = await ctx.chain.getBroadcastClient(execution.onAccepted);
         execution.checkpoint();
       } catch (error) {
         // Same wrapping as the broadcast leg below: a ManifestMCPError passes through

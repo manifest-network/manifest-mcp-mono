@@ -52,6 +52,8 @@ export interface SetItemCustomDomainResult {
  * - `opts.signal` prevents submission if cancelled during preparation. After the
  *   CosmJS signing/broadcast call begins, cancellation stops waiting and the
  *   outcome must be reconciled on chain (`OPERATION_CANCELLED.details.sent`).
+ *   On the supported native path, `details.transactionHash` includes the local
+ *   hash when acceptance was already observed; cancellation never waits for it.
  *
  * Authorised signers per `MsgSetItemCustomDomain.ValidateBasic`: the lease
  * tenant, the module authority, or any address in `params.allowed_list`.

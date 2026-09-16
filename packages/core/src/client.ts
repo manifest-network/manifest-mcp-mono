@@ -595,11 +595,17 @@ export class CosmosClientManager {
    * (`account sequence mismatch`). The blocking path is unchanged for the common case (no in-flight sync
    * tx). Callers MUST hold {@link withBroadcastLock} for the signer around the broadcast (cosmosTx does),
    * so the per-signer counter is only touched serially. Non-broadcast methods delegate to the raw client.
+   * The optional per-operation callback observes the local hash once the supported native blocking
+   * path passes CheckTx. Custom signAndBroadcast/broadcast methods and SYNC-only calls do not notify it.
+   * Callback failures cannot replace the transaction outcome.
    */
-  async getBroadcastClient(): Promise<SigningStargateClient> {
+  async getBroadcastClient(
+    onAccepted?: (transactionHash: string) => void,
+  ): Promise<SigningStargateClient> {
     return sequencedSigningClient(
       await this.getSigningClient(),
       this.txSequenceCache,
+      onAccepted,
     );
   }
 

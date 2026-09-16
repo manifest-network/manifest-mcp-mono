@@ -352,7 +352,7 @@ export async function cosmosTx(
       >;
       try {
         signingClient = guardTxClient(
-          await clientManager.getBroadcastClient(),
+          await clientManager.getBroadcastClient(execution.onAccepted),
           execution,
         );
         execution.checkpoint();

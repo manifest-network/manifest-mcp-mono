@@ -1048,3 +1048,75 @@ architecture, package integrity, bundle budgets, twenty dependency-hygiene check
 eight metadata checks and eight type-harness checks pass. Core still packs
 359 files without vendored dependencies. This revision adds seven runtime tests;
 the PR adds 124 relative to its merged base, plus three dependency-policy checks.
+
+## Follow-up: caller cancellation after accepted submission — 2026-09-16
+
+[ENG-952](https://linear.app/liftedinit/issue/ENG-952) closes the separate caller
+cancellation gap retained by PR #230. The
+[implementation plan](superpowers/plans/2026-09-16-eng952-cancellation-evidence.md)
+starts from its merged commit `032addd`. The earlier review rows describing a
+missing cancellation hash are historical; this section supersedes that limitation.
+
+`withTxExecution` now retains the first local accepted hash for its own operation
+and closes observation when it settles. Actual caller cancellation still rejects
+promptly with its original reason and conservative sent flag. It includes the
+hash only if native acceptance was already observed; late acceptance cannot add
+it to an earlier error. Inclusion, execution success, code and height remain unknown.
+
+Both `cosmosTx` and `executeTx` pass an observer through the manager's broadcast
+client into the existing sequencer. Each call owns its observer; shared signing
+clients and sequence caches carry no mutable operation evidence. The native
+blocking helper intercepts only its broadcast call, preserving the original
+receiver for signing, simulation and lookup. Both direct and cached-sequence
+paths notify from the existing guard after native CheckTx resolves, using its
+local digest even when an RPC identifier mismatches. Observer failures cannot
+change the transaction outcome or bypass native polling cleanup.
+
+| Finding | Correction and evidence | Confidence |
+| --- | --- | --- |
+| Prompt caller cancellation loses the already-established transaction identity | Capture accepted local SHA-256 evidence in per-execution state before the cancellation listener builds its error; both public transaction entry points retain the original reason and sparse details. | 100% gap; 99% correction |
+| Outer client wrappers discard context on the sequence fast/cached paths | Thread the observer explicitly through getBroadcastClient and sequencedSigningClient; native signing/query methods retain the raw or sequence receiver. Real-manager and cached-sequence regressions cover the path. | 100% mechanism; 99% correction |
+| Late acceptance or concurrent operations could change cancellation diagnostics | Close evidence updates at settlement and retain only the first accepted hash. Test pending CheckTx, late success/failure, distinct concurrent signed bytes and unchanged returned details after late settlement. | 99% |
+| Custom method overrides and observer exceptions need bounded behavior | Native method identity checks leave custom `signAndBroadcast` or broadcast methods and SYNC-only calls unchanged; thrown/rejected observer failures cannot alter the native outcome or timer cleanup. | 99% |
+
+The change adds no public result schema. Custom `signAndBroadcast` or broadcast implementations,
+SYNC-only calls and opaque confirmation callbacks do not gain acceptance evidence.
+Current guides describe this boundary; MCP wrappers and orchestration paths still
+have their existing signal-forwarding rules, and transport cancellation does not
+guarantee delivery of a final MCP error response. ENG-953, grouped-error retry
+policy and the parent's eleven unchecked criteria remain separate. Validation
+and PR/merge status are recorded in Linear and the PR; work remains unreleased.
+
+## PR #232 review: compatibility and regression safeguards — 2026-09-16
+
+[Claude's review of `5c6a106`](https://github.com/manifest-network/manifest-mcp-mono/pull/232#issuecomment-5700223232)
+identified two compatibility questions and six smaller improvements. The review
+response preserves the native observation boundary and tightens its implementation,
+tests and documentation.
+
+| Finding | Disposition and evidence | Confidence |
+| --- | --- | --- |
+| Eager SigningStargateClient prototype access breaks existing partial module mocks | Keep eager native-method capture with optional access. Restore the original plain-object connectWithSigner mock: it fails import before the correction and passes afterward. | 100% reproduction; 99% correction |
+| Delegating custom signAndBroadcast wrappers retain timeout evidence but lack a cancellation hash | Retain the documented native-only observation policy. A receiver-sensitive wrapper backed by WeakMap state works with the original raw receiver and fails if observation changes it to a Proxy. The pre-existing cached-sequence view does not justify changing uncached calls. The module-local transaction fixture now preserves native identity by default, with explicit opt-in for an error-capturing wrapper. | 100% asymmetry; 99% compatibility decision |
+| The sent marker can discard stronger native acceptance evidence | Native acceptance now establishes sent:true and the first local hash before settlement, independently of marker ordering. Both missing-marker and later-marker regressions fail before this correction. Late observations remain ignored. | 100% mechanism; 99% correction |
+| Cancellation can omit the RPC-hash mismatch diagnostic | Retain the sparse cancellation contract and document the limitation. The local digest, original reason and retry veto remain correct. A structured mismatch flag on both failure paths would be an additive diagnostic extension, outside these acceptance criteria; it is not required for this fix. | 99% |
+| Sequence-wrapper comments omit optional acceptance observation | Distinguish the getSequence adjustment from the blocking observation wrapper, and describe eligibility, direct/cached paths and unchanged SYNC behavior next to the observer parameter. | 99% |
+| The fixture silently guards guarded:false with realManager:true | Reject the incompatible combination in both the option type and runtime fixture boundary. | 99% |
+| Awaiting idle teardown under fake timers can leak a lock into later cases | Force manager cleanup in afterEach; retain explicit poll release/drain checks inside individual tests. A missing-drain negative control checks cleanup isolation. | 99% |
+| Deferred promises repeat across test files | Share one resolve/reject helper through the existing test utility barrel and reuse it in core and the existing CosmWasm test seam. Keep the ES2020 library target. | 99% |
+
+The proposed late-outcome matrix expansion remains unnecessary: existing tests
+already catch the relevant error and sequence-cache mutations. The documented
+SYNC boundary, terminal post-acceptance failures and native broadcast identity
+checks remain unchanged. Validation, confidence scores and the retained diagnostic
+limitation are recorded on the PR and ENG-952; ENG-805's other criteria stay open.
+
+Local validation passes **4,143 tests / 17 existing skips / 186 files**, including
+the rebuilt CosmWasm consumer, with no type errors and every coverage floor
+passing: **84.93% lines / 84.65% statements / 84.51% branches / 88.47% functions**.
+Fresh workspace builds, workspace/E2E TypeScript, Fred schema, Biome and diff
+checks pass. The original constructor mock, both acceptance-order cases and all
+three fixture-isolation probes fail before their respective corrections and pass
+afterward. The receiver-changing observation mutation fails its compatibility
+regression. Independent production/documentation review found no blocker
+(99% confidence). Fresh CI and live acceptance results are recorded on the PR.

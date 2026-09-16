@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
+import { expectExactDetails } from '../__test-utils__/mocks.js';
 import { ManifestMCPError, ManifestMCPErrorCode } from '../types.js';
-import { withTxConfirmation, withTxExecution } from './tx-confirmation.js';
+import {
+  type TxExecution,
+  withTxConfirmation,
+  withTxExecution,
+} from './tx-confirmation.js';
 
 describe('withTxConfirmation', () => {
   it('no signal/timeout: returns the broadcast() result', async () => {
@@ -108,5 +113,100 @@ describe('withTxConfirmation', () => {
     resume();
     await prepared;
     expect(broadcast).not.toHaveBeenCalled();
+  });
+});
+
+describe('transaction cancellation evidence snapshots', () => {
+  it('retains the first accepted hash and original reason without waiting for the operation', async () => {
+    const abort = new AbortController();
+    const reason = { source: 'caller' };
+    const firstHash = 'A1'.repeat(32);
+    let execution!: TxExecution;
+    const pending = withTxExecution(
+      async (current) => {
+        execution = current;
+        current.markBroadcast();
+        current.onAccepted?.(firstHash);
+        current.onAccepted?.('B2'.repeat(32));
+        return new Promise<void>(() => {});
+      },
+      { signal: abort.signal },
+    ).catch((error: unknown) => error);
+
+    abort.abort(reason);
+    const error = await pending;
+    expectExactDetails(error, {
+      reason,
+      sent: true,
+      transactionHash: firstHash,
+    });
+    expect((error as ManifestMCPError).details?.reason).toBe(reason);
+    expect((error as ManifestMCPError).code).toBe(
+      ManifestMCPErrorCode.OPERATION_CANCELLED,
+    );
+    execution.onAccepted?.('C3'.repeat(32));
+    expectExactDetails(error, {
+      reason,
+      sent: true,
+      transactionHash: firstHash,
+    });
+  });
+
+  it('ignores acceptance after cancellation, including later checkpoints', async () => {
+    const abort = new AbortController();
+    const reason = 'stop before acceptance';
+    let execution!: TxExecution;
+    const pending = withTxExecution(
+      async (current) => {
+        execution = current;
+        current.markBroadcast();
+        return new Promise<void>(() => {});
+      },
+      { signal: abort.signal },
+    ).catch((error: unknown) => error);
+
+    abort.abort(reason);
+    const error = await pending;
+    execution.onAccepted?.('A1'.repeat(32));
+    expectExactDetails(error, { reason, sent: true });
+    let lateCheckpoint: unknown;
+    try {
+      execution.checkpoint();
+    } catch (caught) {
+      lateCheckpoint = caught;
+    }
+    expectExactDetails(lateCheckpoint, { reason, sent: true });
+  });
+
+  it.each([false, true])(
+    'native acceptance establishes submission evidence before the marker (later marker: %s)',
+    async (markAfterAcceptance) => {
+      const abort = new AbortController();
+      const hash = 'A1'.repeat(32);
+      const pending = withTxExecution(
+        async (execution) => {
+          execution.onAccepted?.(hash);
+          if (markAfterAcceptance) execution.markBroadcast();
+          return new Promise<void>(() => {});
+        },
+        { signal: abort.signal },
+      ).catch((error: unknown) => error);
+      abort.abort('after observed acceptance');
+      expectExactDetails(await pending, {
+        reason: 'after observed acceptance',
+        sent: true,
+        transactionHash: hash,
+      });
+    },
+  );
+
+  it('does not observe acceptance when there is no cancellation boundary', async () => {
+    await expect(
+      withTxExecution(async (execution) => {
+        expect(execution.onAccepted).toBeUndefined();
+        execution.markBroadcast();
+        return 'normal result';
+      }),
+    ).resolves.toBe('normal result');
   });
 });

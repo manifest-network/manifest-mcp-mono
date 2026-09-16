@@ -14,6 +14,21 @@ import {
 
 export { makeInclusionTimeoutFixture } from './inclusion-timeout.js';
 
+/** Explicit settlement controls for deterministic asynchronous test boundaries. */
+export function deferred<T = void>(): {
+  promise: Promise<T>;
+  resolve: (value: T | PromiseLike<T>) => void;
+  reject: (reason?: unknown) => void;
+} {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((fulfill, fail) => {
+    resolve = fulfill;
+    reject = fail;
+  });
+  return { promise, resolve, reject };
+}
+
 /**
  * Assert all top-level own detail keys, including hidden properties and symbols.
  * Compare values with Vitest's strict equality; nested hidden keys are not inspected.
