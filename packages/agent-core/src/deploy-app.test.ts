@@ -6490,3 +6490,168 @@ describe('deployApp — cancellation contract (signal/timeout) (ENG-310 / D4)', 
     }
   });
 });
+
+describe('deployApp estimate failure preserves the core retry verdict', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  const estimateCases = [
+    {
+      name: 'unreadable details normalized by core',
+      make: () =>
+        new ManifestMCPError(
+          ManifestMCPErrorCode.QUERY_FAILED,
+          'fetch failed',
+          Object.defineProperty({ httpStatus: 503 }, 'extra', {
+            enumerable: true,
+            get() {
+              throw new Error('unreadable detail');
+            },
+          }),
+        ),
+      attempts: 1,
+    },
+    {
+      name: 'malformed code normalized by core',
+      make: () =>
+        Object.defineProperty(
+          new ManifestMCPError(
+            ManifestMCPErrorCode.QUERY_FAILED,
+            'fetch failed',
+          ),
+          'code',
+          { value: 42 },
+        ),
+      attempts: 1,
+    },
+    {
+      name: 'native cancellation on an already attributed error',
+      make: () =>
+        Object.assign(
+          new ManifestMCPError(
+            ManifestMCPErrorCode.QUERY_FAILED,
+            'fetch failed',
+            { module: 'billing' },
+          ),
+          { name: 'AbortError' },
+        ),
+      attempts: 1,
+    },
+    {
+      name: 'permanent query status',
+      make: () =>
+        new ManifestMCPError(
+          ManifestMCPErrorCode.QUERY_FAILED,
+          'fetch failed',
+          { grpcCode: 3 },
+        ),
+      attempts: 1,
+    },
+    {
+      name: 'readable transient simulation',
+      make: () =>
+        new ManifestMCPError(
+          ManifestMCPErrorCode.QUERY_FAILED,
+          'fetch failed',
+          { httpStatus: 503 },
+        ),
+      attempts: 3,
+    },
+  ];
+
+  it.each(estimateCases)(
+    '$name does not gain retry permission at the orchestration boundary',
+    async ({ make, attempts }) => {
+      const core = await import('@manifest-network/manifest-mcp-core');
+      const actualCore = await vi.importActual<typeof core>(
+        '@manifest-network/manifest-mcp-core',
+      );
+      const fred = await import('@manifest-network/manifest-mcp-fred');
+      const { makeMockConfig, makeMockQueryClient, makeSealedClientManager } =
+        await import(
+          '@manifest-network/manifest-mcp-core/__test-utils__/mocks.js'
+        );
+      const { deployApp } = await import('./deploy-app.js');
+      const fixture = (...parts: string[]) =>
+        readFixture(
+          'skills',
+          'deploy-app',
+          '01-fast-path-active',
+          'input',
+          ...parts,
+        );
+      const spec = fixture('spec.json') as DeploySpec;
+      vi.mocked(fred.checkDeploymentReadiness).mockResolvedValue(
+        fixture('readiness-response.json') as Awaited<
+          ReturnType<typeof fred.checkDeploymentReadiness>
+        >,
+      );
+      vi.mocked(fred.buildManifestPreview).mockResolvedValue(
+        fixture('meta-hash-response.json') as Awaited<
+          ReturnType<typeof fred.buildManifestPreview>
+        >,
+      );
+
+      const simulationError = make();
+      const simulate = vi.fn().mockRejectedValue(simulationError);
+      // The real registry, message builder, normalizer and classifier run. All
+      // transport entry points are sealed; only simulate is opted in to reject.
+      const manager = makeSealedClientManager({
+        getConfig: () => makeMockConfig({ retry: { maxRetries: 0 } }),
+        getQueryClient: async () => makeMockQueryClient(),
+        getAddress: async () => 'manifest1deadbeef',
+        getSigningClient: async () =>
+          ({ simulate }) as unknown as Awaited<
+            ReturnType<
+              typeof core.CosmosClientManager.prototype.getSigningClient
+            >
+          >,
+        acquireRateLimit: async () => {},
+      });
+      const normalizedErrors: unknown[] = [];
+      vi.mocked(core.cosmosEstimateFee).mockImplementation(async (...args) => {
+        try {
+          return await actualCore.cosmosEstimateFee(...args);
+        } catch (error) {
+          normalizedErrors.push(error);
+          throw error;
+        }
+      });
+      try {
+        const { callbacks } = captureCallbacks();
+        const operation = vi.fn(() =>
+          deployApp(spec, callbacks, {
+            clientManager: manager,
+            walletProvider: makeMockWalletProvider(),
+          }),
+        );
+        // Model a caller retrying the whole orchestration. Core's own retry
+        // budget is zero so each outer attempt contains exactly one simulation.
+        const error: unknown = await withRetry(operation, {
+          config: { maxRetries: 2, baseDelayMs: 1, maxDelayMs: 1 },
+        }).catch((failure: unknown) => failure);
+        expect(error).toBeInstanceOf(ManifestMCPError);
+        expect((error as Error).message).toContain(
+          'Failed to estimate create-lease fee:',
+        );
+        expect(normalizedErrors).toHaveLength(attempts);
+        expect(isRetryableError(normalizedErrors[0])).toBe(attempts > 1);
+        expect(isRetryableError(error)).toBe(attempts > 1);
+        expect(operation).toHaveBeenCalledTimes(attempts);
+        expect(simulate).toHaveBeenCalledTimes(attempts);
+        expect(fred.deployApp).not.toHaveBeenCalled();
+        expect(manager.getBroadcastClient).not.toHaveBeenCalled();
+        const cause = Object.getOwnPropertyDescriptor(error, 'cause');
+        if (attempts === 1) {
+          expect(cause).toMatchObject({
+            value: normalizedErrors[0],
+            enumerable: false,
+          });
+        } else {
+          expect(cause).toBeUndefined();
+        }
+      } finally {
+        vi.mocked(core.cosmosEstimateFee).mockReset();
+      }
+    },
+  );
+});

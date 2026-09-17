@@ -2,13 +2,16 @@
 const ANSI_CSI = /(?:\u001b\[|\u009b)[0-?]*[ -/]*[@-~]/g;
 // biome-ignore lint/suspicious/noControlCharactersInRegex: strip terminal OSC sequences.
 const ANSI_OSC = /\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)/g;
+// Cc consists of C0/C1; exclude tab and LF without invoking a replacement
+// callback for every control in a potentially large diagnostic.
+const TEXT_CONTROLS =
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: strip controls except diagnostic tabs and newlines.
+  /[\u0000-\u0008\u000b-\u001f\u007f-\u009f\p{Cf}\p{Zl}\p{Zp}]/gu;
 
 /** Remove terminal/format controls while preserving diagnostic newlines and tabs. */
 export function stripTextControls(raw: string): string {
   return raw
     .replace(ANSI_CSI, '')
     .replace(ANSI_OSC, '')
-    .replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, (ch) =>
-      ch === '\n' || ch === '\t' ? ch : '',
-    );
+    .replace(TEXT_CONTROLS, '');
 }

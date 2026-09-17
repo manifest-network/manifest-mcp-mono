@@ -495,6 +495,35 @@ describe('all cosmos attribution boundaries with real retry', () => {
     );
   });
 
+  it.each(['tx', 'query', 'estimate'] as const)(
+    '%s redacts a whole-message mnemonic before operation attribution',
+    async (boundary) => {
+      const f = fixture();
+      const mnemonic = `${'abandon '.repeat(11)}about`;
+      const reject = vi.fn().mockRejectedValue(new Error(mnemonic));
+      let operation: Promise<unknown>;
+      if (boundary === 'query') {
+        vi.mocked(getQueryHandler).mockReturnValue(reject);
+        operation = cosmosQuery(f.manager, 'bank', 'balances');
+      } else if (boundary === 'estimate') {
+        f.simulate.mockImplementation(reject);
+        operation = cosmosEstimateFee(f.manager, 'bank', 'send');
+      } else {
+        f.signAndBroadcast.mockImplementation(reject);
+        operation = cosmosTx(f.manager, 'billing', 'set-domain');
+      }
+      const { error } = await operation.then(
+        () => ({ error: undefined }),
+        (error: unknown) => ({ error }),
+      );
+      expect((error as Error).message).toMatch(
+        /failed: \[REDACTED - possible mnemonic\]$/,
+      );
+      expect((error as Error).message).not.toContain('abandon');
+      expect(reject).toHaveBeenCalledOnce();
+    },
+  );
+
   for (const boundary of [
     'query',
     'estimate',
@@ -673,6 +702,62 @@ describe('transaction evidence validation during diagnostic recovery', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(getTxContextLoader).mockReturnValue(undefined);
+  });
+
+  it('observes an enumerable named sent getter once during recovery', async () => {
+    const f = fixture();
+    const sent = vi.fn(() => true);
+    const original = new ManifestMCPError(
+      ManifestMCPErrorCode.QUERY_FAILED,
+      'operation failed',
+      Object.defineProperties(
+        {},
+        {
+          sent: { enumerable: true, get: sent },
+          extra: {
+            enumerable: true,
+            get() {
+              throw new Error('unavailable');
+            },
+          },
+        },
+      ),
+    );
+    f.signAndBroadcast.mockRejectedValue(original);
+    const { error } = await cosmosTx(f.manager, 'billing', 'set-domain').then(
+      () => ({ error: undefined }),
+      (error: unknown) => ({ error }),
+    );
+    expect((error as ManifestMCPError).details?.sent).toBe(true);
+    expect(sent).toHaveBeenCalledOnce();
+    expect(f.signAndBroadcast).toHaveBeenCalledOnce();
+  });
+
+  it('salvages submission evidence from a raw Error with an unreadable message', async () => {
+    const f = fixture();
+    const original = Object.defineProperties(new Error('unused'), {
+      details: { value: valid },
+      message: {
+        get() {
+          throw new Error('unavailable');
+        },
+      },
+    });
+    f.signAndBroadcast.mockRejectedValue(original);
+    const { error } = await cosmosTx(f.manager, 'billing', 'set-domain').then(
+      () => ({ error: undefined }),
+      (error: unknown) => ({ error }),
+    );
+    expect((error as ManifestMCPError).details).toStrictEqual({
+      ...valid,
+      module: 'billing',
+      subcommand: 'set-domain',
+      args: [],
+    });
+    expect(Object.getOwnPropertyDescriptor(error, 'cause')?.value).toBe(
+      original,
+    );
+    expect(f.signAndBroadcast).toHaveBeenCalledOnce();
   });
 
   it.each(cases)(

@@ -305,10 +305,10 @@ export function sanitizeForModelText(
   raw: string,
   maxLength = MAX_TOOL_ERROR_MESSAGE_CHARS,
 ): string {
-  const cleaned = stripTextControls(raw);
-  // Match the visible value too: terminal/bidi controls must not hide a mnemonic
-  // from the redactor and then reveal it as a side effect of sanitization.
-  return capLength(sanitizeForLogging(cleaned) as string, maxLength);
+  // Redact before removing controls that may also delimit mnemonic words.
+  // The redactor checks both the original and the control-free candidate.
+  const redacted = sanitizeForLogging(raw) as string;
+  return capLength(stripTextControls(redacted), maxLength);
 }
 
 // Reserve scarce space for the identifiers and facts a caller needs to reconcile

@@ -1205,7 +1205,7 @@ previously deferred to ENG-983.
 | --- | --- | --- |
 | MCP tools lose their bounded JSON envelope | Cache safe SDK metadata, guard lazy stack formatting and never inspect a serialization failure. Real MCP/real-retry tests fail before the fix and retain sanitized bounded responses afterward. | 100% reproduction; 99% correction |
 | Connection catches preserve unreadable SDK errors | Require string code/message and readable shallow details before identity pass-through. Exact error class/details/no-cause, hostile identity-fetch/signing/wallet, Symbol message and cleanup tests cover the boundary. | 100% reproduction; 99% correction |
-| Transaction attribution lets hostile errors erase paid-lease recovery | Guard the entire tx attribution operation; unreadable diagnostics produce permanent TX_FAILED with operation context and a hidden original cause. Fred deploy/restore catches independently protect known lease IDs, partial flags and orphan logs. Agent estimate/retry-set-domain formatting and deployment classification preserve their context. | 100% reproduction; 98% correction |
+| Transaction attribution lets hostile errors erase paid-lease recovery | Guard the entire tx attribution operation; unreadable diagnostics produce permanent TX_FAILED with operation context and a hidden original cause. Fred deploy catches and restore pre-POST/compensation message formatting protect known lease IDs, partial flags and orphan logs. Later restore POST/poll diagnostics and terminal `withContext` remain in ENG-996; this row does not claim complete restore coverage. Agent estimate/retry-set-domain formatting and deployment classification preserve their context. | 100% reproduction; 98% correction |
 | Fred resource failures can leave requests unanswered | Fresh readable errors protect all three resource callbacks, including wallet failures. Messages are bounded and sanitized; readable numeric protocol codes survive, arbitrary diagnostic data is omitted. Real MCP requests cover retry failures and real manager identity failures. | 100% reproduction; 99% correction |
 | Existing client assertions permit the wrong envelope | Assert ManifestMCPError class, exact details and absent cause. Mutations of class/details/cause and removal of String(message) fail the strengthened tests. | 100% |
 | Outer verdict tests omit transport-message and HTTP-status branches | Add ENOTFOUND and HTTP 403 cases asserting zero cause access, one attempt and no retry callback. | 100% |
@@ -1307,3 +1307,52 @@ client tests pass. Independent final review found and verified the additional
 control-wrapped mnemonic and malformed-code HTTP 408 cases, with no remaining
 blocker in the reviewed scope (98% confidence). PR-head CI/live acceptance results
 are recorded on PR #233 and ENG-953.
+
+
+## PR #233 review: redaction separators and retry veto propagation (2026-09-17)
+
+[Claude's review of `e09f94b`](https://github.com/manifest-network/manifest-mcp-mono/pull/233#issuecomment-5718852563)
+confirmed the previous corrections and identified six remaining findings. The
+review also exposed text-policy and coverage gaps in the new normalization code.
+
+| Finding | Resolution and evidence | Confidence |
+| --- | --- | --- |
+| 1. Control stripping fuses mnemonic words | Check both the original whitespace-separated candidate and the control-free candidate; redact before model formatting removes separators. CR, VT, FF, line/paragraph separators and BOM now retain redaction through the helper, actual stderr and tool response. Space/tab/LF/ANSI/bidi controls stay covered. The new matrix has 18 failures before the fix. | 100% reproduction; 99% correction |
+| 2. Connection retry vetoes disappear during Cosmos rebuilding | Require successful retry inspection for identity/cause preservation; retain private veto provenance on repaired errors and subsequent Cosmos attribution. Internal helpers stay off the public barrel. Boundary tests exercise real query/tx/estimate/custom-domain retry paths with injected REST/RPC identity and signer failures, before any handler, simulation or broadcast. | 100% reproduction; 99% correction |
+| 3. Non-string connection Error messages introduce transient prose | Use `Error message unavailable` for non-string Error messages. Symbol/array/object fixtures and readable controls pin classifier results and end-to-end attempt counts. | 100% reproduction; 99% correction |
+| 4. Agent fee-estimate context discards an existing veto | Retain a hidden original cause when a readable contextual wrapper would become retryable; otherwise preserve historical cause omission. Four real Cosmos-estimate/deploy paths now stop after one simulation rejection and no Fred deployment. Removing the condition fails ten cases; six controls still pass. | 100% reproduction; 99% correction |
+| 5. Resource Error messages expose function/class/object coercions | Use `Internal error` for object/function messages even on Error instances; retain primitive formatting using the already-read message. Six new protocol rows fail before the fix; both numeric-message controls pass. All 49 resource tests pass after it. | 100% reproduction; 99% correction |
+| 6. Redaction documentation overstates covered prefixes | Name the covered Cosmos/owned-broadcast/contextualError sites explicitly. Expand existing ENG-271 to remaining prefixes and MCP response/notification sinks. A built real troubleshoot/callback/tool-wrapper probe reproduces the complete mnemonic in the response and one failure notification; these paths are unchanged from main. | 100% demonstrated leak; 98% remaining scope |
+| Redaction changes readable retry policy | Retain lexical retry decisions privately alongside the public redacted display, without retaining the original secret or inventing statuses. Copy provenance on rebuilding; explicit changes to the displayed message use its current policy. Cover transient and ENOTFOUND outcomes, readable reattribution and connection repair. | 100% reproduction; 99% correction |
+| Control-heavy diagnostic performance | Replace per-character callbacks with a control-category regex. Exhaustive Unicode code-point comparison and ANSI/layout controls verify equivalent stripping. No timing assertion is added to the suite. | 100% equivalence; 98% performance mechanism |
+| Evidence-validator and owner-coverage gaps | Distinguishing mutations fail for invalid transport/status types (12), repeated named getter reads (1), lost raw-error evidence (1), wrong SDK fallback code (4), Cosmos-prefix redaction (3), veto propagation (4) and lexical policy (8). | 100% mutation evidence |
+| Thrown non-Error coercion | Keep the established policy in this PR and add the gap to ENG-983. Sealed main/current Cosmos probes each retry thrown Symbol/object transient text three times (four comparative rows), with no network or broadcasts. | 100% mechanism; 99% pre-existing scope |
+| Historical restore guarantee | Narrow the earlier downstream-review row to pre-POST/compensation formatting and explicitly retain later POST/poll/terminal scope in ENG-996. | 100% |
+
+The contextual cause fix also preserves readable inner sent/partial/permanent
+vetoes; ENG-1000 still owns missing paid-lease context and hidden outcome fields
+lost by readable spread. It does not establish that whole paid orchestrations are
+safe to retry. A shared public rebuilding API was unnecessary: core keeps its
+classification provenance private, and agent-core uses the existing public
+classifier plus a hidden cause. Arbitrary state-changing accessors and grouped
+error traversal remain outside this shallow-inspection contract.
+
+
+Client validation passes **445 tests** (283 client / 162 operation-boundary cases).
+The original 439-case matrix fails **136 cases** against the prior client source;
+guard mutations fail **29 / 2 / 28 / 28 / 42** cases. Independent review then
+identified lexical provenance loss during connection repair: four of six added
+controls fail before copying the provenance and all six pass afterward. Cosmos
+and retry validation passes **274 tests**, including displayed-message changes
+and reattribution; redaction/contextual validation passes **359 tests / one
+existing skip**. These focused counts overlap full-suite validation. Independent
+final review found no remaining blocker in the reviewed scope (98% confidence).
+
+
+Full validation passes **4,924 tests / 17 existing skips / 196 files**, with no
+type errors. Coverage floors pass: **85.31% lines / 85.05% statements / 85.23%
+branches / 88.80% functions**. Fresh workspace builds (publint/attw), workspace/E2E
+TypeScript, schema, Biome, architecture, all nine package-integrity checks and all
+four unchanged SDK bundle budgets pass. The initial sandbox run could not spawn
+required subprocesses or bind the local WebSocket test server; the unrestricted
+rerun passes. Fresh PR-head CI/live acceptance is recorded on PR #233 and ENG-953.

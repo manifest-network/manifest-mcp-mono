@@ -1,4 +1,5 @@
 import {
+  isRetryableError,
   type jsonResponse,
   ManifestMCPError,
   ManifestMCPErrorCode,
@@ -54,6 +55,113 @@ describe('contextual error redaction', () => {
       } finally {
         log.mockRestore();
       }
+    },
+  );
+});
+
+describe('contextual error retry verdicts', () => {
+  it.each([
+    [
+      'native cancellation',
+      () => Object.assign(new Error('fetch failed'), { name: 'AbortError' }),
+    ],
+    [
+      'native timeout',
+      () => Object.assign(new Error('fetch failed'), { name: 'TimeoutError' }),
+    ],
+    [
+      'permanent status',
+      () =>
+        new ManifestMCPError(
+          ManifestMCPErrorCode.QUERY_FAILED,
+          'fetch failed',
+          { grpcCode: 3 },
+        ),
+    ],
+    [
+      'submitted operation',
+      () =>
+        new ManifestMCPError(
+          ManifestMCPErrorCode.QUERY_FAILED,
+          'fetch failed',
+          { sent: true },
+        ),
+    ],
+    [
+      'partial operation',
+      () =>
+        new ManifestMCPError(
+          ManifestMCPErrorCode.QUERY_FAILED,
+          'fetch failed',
+          { partial: true },
+        ),
+    ],
+    [
+      'nested permanent error',
+      () =>
+        Object.assign(new Error('fetch failed'), {
+          cause: new ManifestMCPError(
+            ManifestMCPErrorCode.INVALID_CONFIG,
+            'invalid configuration',
+          ),
+        }),
+    ],
+  ] as const)(
+    'preserves the %s veto when attribution would discard it',
+    (_name, makeError) => {
+      const original = makeError();
+      expect(isRetryableError(original)).toBe(false);
+      const contextual = contextualError(
+        original,
+        ManifestMCPErrorCode.SIMULATION_FAILED,
+        'Failed to estimate: ',
+      );
+      expect(contextual.message).toBe('Failed to estimate: fetch failed');
+      expect(isRetryableError(contextual)).toBe(false);
+      expect(
+        Object.getOwnPropertyDescriptor(contextual, 'cause'),
+      ).toMatchObject({ value: original, enumerable: false });
+      expect(contextual.details).toBeUndefined();
+    },
+  );
+
+  it.each([
+    ['readable transient message', new Error('fetch failed'), true],
+    [
+      'transient status only',
+      new ManifestMCPError(
+        ManifestMCPErrorCode.QUERY_FAILED,
+        'estimate unavailable',
+        { httpStatus: 503 },
+      ),
+      false,
+    ],
+    [
+      'nested transient only',
+      Object.assign(new Error('estimate unavailable'), {
+        cause: new Error('fetch failed'),
+      }),
+      false,
+    ],
+    [
+      'ordinary permanent code',
+      new ManifestMCPError(ManifestMCPErrorCode.INVALID_CONFIG, 'fetch failed'),
+      false,
+    ],
+    ['ordinary diagnostic', new Error('estimate unavailable'), false],
+  ] as const)(
+    'keeps historical cause omission for %s',
+    (_name, original, retryable) => {
+      const contextual = contextualError(
+        original,
+        ManifestMCPErrorCode.SIMULATION_FAILED,
+        'Failed to estimate: ',
+      );
+      expect(isRetryableError(contextual)).toBe(retryable);
+      expect(
+        Object.getOwnPropertyDescriptor(contextual, 'cause'),
+      ).toBeUndefined();
+      expect(contextual.details).toBeUndefined();
     },
   );
 });

@@ -1,4 +1,5 @@
 import {
+  isRetryableError,
   ManifestMCPError,
   type ManifestMCPErrorCode,
   sanitizeForLogging,
@@ -56,9 +57,13 @@ export function contextualError(
     unreadable ? fallbackCode : code,
     `${prefix}${sanitizeForLogging(message) as string}`,
   );
-  // Readable wrappers historically omitted cause/details. Retaining those can
-  // expose nested transient signals and authorize replay of a paid deployment.
-  return unreadable
+  // Preserve an existing retry veto when attribution would discard it (for
+  // example a core normalization marker, cancellation name or permanent status).
+  // Otherwise keep historical cause omission: copying a transient cause can
+  // authorize replay of an operation whose contextual wrapper is terminal.
+  const losesRetryVeto =
+    !unreadable && isRetryableError(contextual) && !isRetryableError(error);
+  return unreadable || losesRetryVeto
     ? Object.defineProperty(contextual, 'cause', {
         value: error,
         configurable: true,

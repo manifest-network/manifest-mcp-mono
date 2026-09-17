@@ -29,9 +29,15 @@ function resourceErrorMessage(error: unknown): string {
     ) {
       const message = Reflect.get(error, 'message');
       if (typeof message === 'string') return message;
-      // Function coercion exposes source code; ordinary object coercion adds no
-      // useful protocol diagnostic. Preserve Error and primitive formatting.
-      if (!(error instanceof Error)) return 'Internal error';
+      // Function coercion exposes source code; object coercion adds no useful
+      // protocol diagnostic, including when either is an Error's message.
+      if (
+        !(error instanceof Error) ||
+        typeof message === 'function' ||
+        (message !== null && typeof message === 'object')
+      )
+        return 'Internal error';
+      return String(message);
     }
   } catch {
     return 'Error message unavailable';

@@ -22,7 +22,11 @@ import {
   getTxMsgBuilder,
 } from './modules.js';
 import type { CallOptions } from './options.js';
-import { withRetry } from './retry.js';
+import {
+  preserveRetryMessageVerdict,
+  preserveRetryVerdicts,
+  withRetry,
+} from './retry.js';
 import { resolveBroadcastGasOptions } from './transactions/utils.js';
 import {
   type CosmosQueryResult,
@@ -170,10 +174,12 @@ function enrichOperationError(
 
   if (sdk && !unreadable && !malformedCode) {
     if (snapshot.module) return error as ManifestMCPError;
-    return new ManifestMCPError(sdkCode ?? fallbackCode, message, {
+    const attributed = new ManifestMCPError(sdkCode ?? fallbackCode, message, {
       ...readableDetails,
       ...details,
     });
+    preserveRetryVerdicts(error as Error, attributed);
+    return attributed;
   }
 
   let code = options.transaction ? fallbackCode : (sdkCode ?? fallbackCode);
@@ -184,14 +190,14 @@ function enrichOperationError(
       unreadable = true;
     }
   }
-  const normalized = new ManifestMCPError(
-    code,
-    `${prefix}${redactPossibleMnemonic(message)}`,
-    {
-      ...(sdk ? readableDetails : unreadable ? readableTxEvidence(error) : {}),
-      ...details,
-    },
-  );
+  const redactedMessage = redactPossibleMnemonic(message);
+  const normalized = new ManifestMCPError(code, `${prefix}${redactedMessage}`, {
+    ...(sdk ? readableDetails : unreadable ? readableTxEvidence(error) : {}),
+    ...details,
+  });
+  if (redactedMessage !== message && !unreadable && !malformedCode) {
+    preserveRetryMessageVerdict(normalized, `${prefix}${message}`);
+  }
   // Adding causes to readable wrappers changes retry policy. Only retain the
   // original when its diagnostics forced this normalization.
   // Invalid SDK codes have no reliable retry contract either: changing one to

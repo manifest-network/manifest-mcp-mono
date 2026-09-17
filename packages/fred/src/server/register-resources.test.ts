@@ -153,6 +153,40 @@ describe.each(['leases/active', 'leases/recent'])(
         message: 'Internal error',
       },
       {
+        name: 'Error with a function message',
+        create: () =>
+          Object.assign(new Error(), {
+            message: function leakySource() {
+              return 'SOURCE_TEXT_SECRET';
+            },
+          }),
+        code: -32603,
+        message: 'Internal error',
+      },
+      {
+        name: 'Error with a class message',
+        create: () =>
+          Object.assign(new Error(), {
+            message: class LeakySource {
+              secret = 'SOURCE_TEXT_SECRET';
+            },
+          }),
+        code: -32603,
+        message: 'Internal error',
+      },
+      {
+        name: 'Error with an object message',
+        create: () => Object.assign(new Error(), { message: {} }),
+        code: -32603,
+        message: 'Internal error',
+      },
+      {
+        name: 'Error with a numeric message',
+        create: () => Object.assign(new Error(), { message: 42 }),
+        code: -32603,
+        message: '42',
+      },
+      {
         name: 'function with protocol diagnostics',
         create: () =>
           Object.assign(() => 'SOURCE_TEXT_SECRET', {

@@ -812,21 +812,29 @@ describe('CosmosClientManager', () => {
         },
       );
 
-      it('coerces a Symbol message without losing the connection envelope', async () => {
-        const original = Object.defineProperty(new Error(), 'message', {
-          value: Symbol('connection diagnostic'),
-        });
-        const { pending, operation, messagePrefix, details } =
-          failInitialization(original);
+      it.each([Symbol('fetch failed'), ['fetch failed']])(
+        'does not coerce a non-string Error message (%s) into a transient connection error',
+        async (message) => {
+          const original = Object.defineProperty(new Error(), 'message', {
+            value: message,
+          });
+          const { pending, operation, messagePrefix, details } =
+            failInitialization(original);
 
-        await expectConnectionError(
-          pending,
-          `${messagePrefix}: Symbol(connection diagnostic)`,
-          details,
-        );
-        expect(operation).toHaveBeenCalledOnce();
-        expect(withRetry).toHaveBeenCalledTimes(boundary === 'wallet' ? 0 : 1);
-      });
+          await expectConnectionError(
+            pending,
+            `${messagePrefix}: Error message unavailable`,
+            details,
+          );
+          await pending.catch((error: unknown) => {
+            expect(isRetryableError(error)).toBe(false);
+          });
+          expect(operation).toHaveBeenCalledOnce();
+          expect(withRetry).toHaveBeenCalledTimes(
+            boundary === 'wallet' ? 0 : 1,
+          );
+        },
+      );
 
       it('preserves the identity and details of a readable SDK error', async () => {
         const original = new ManifestMCPError(

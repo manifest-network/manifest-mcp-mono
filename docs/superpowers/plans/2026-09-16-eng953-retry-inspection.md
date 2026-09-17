@@ -20,7 +20,7 @@ producer-side diagnostic inspection before those helpers remains separate.
 Connection catches receiving the preserved error also need guarded SDK-error
 discrimination and message extraction. Normalize other failures to the existing
 `RPC_CONNECTION_FAILED` envelope with endpoint details, using a fixed fallback
-when diagnostics cannot be read. SDK errors retain identity only with readable string code/message and shallow details, including named consumer fields. Incidental detail failures preserve readable code/message, safe evidence and an existing readable cause; unreadable named fields retain the endpoint-only fallback.
+when diagnostics cannot be read. SDK errors retain identity only with readable string code/message, shallow details (including named consumer fields) and successful retry inspection. Incidental detail failures preserve readable code/message, safe evidence and an existing cause whose retry inspection succeeds; unreadable named fields retain the endpoint-only fallback unless an independently terminal repaired verdict survives. Non-string Error messages use the fixed fallback rather than transient string coercion.
 Cover REST/RPC initialization and signing connection with the real retry helper,
 and wallet signer acquisition separately before retry. Pin the outer-verdict short-circuit with zero cause
 accesses so a conservative catch cannot hide an ordering regression.
@@ -29,9 +29,10 @@ Review also requires following preserved rejections through all downstream catch
 Guard MCP tool and resource responses, all four Cosmos attribution paths, post-lease deploy
 diagnostics, restore pre-POST/compensation formatting, and orchestration diagnostics. Preserve known submission,
 partial-success and lease evidence; never authorize replay because diagnostics
-are unreadable. Pin exact connection error classes/details/no-cause, Symbol
-coercion, and all outer-verdict branches with executable regressions. Readable
-orchestration wrappers must not gain a cause or expose new transient signals.
+are unreadable. Pin exact connection error classes/details/no-cause, non-string
+message fallback, and all outer-verdict branches with executable regressions. Readable
+orchestration wrappers retain a cause only when needed to preserve a retry veto;
+do not expose new transient signals through an otherwise unchanged wrapper.
 Recover safe own-data receipt fields without invoking accessors; malformed tx
 diagnostics retain TX_FAILED. Preserve independently established terminal verdicts.
 
@@ -46,9 +47,19 @@ signals; use a private identity marker rather than a new public error code.
 Malformed-code-only read normalization must not gain a retry-enabling cause; malformed SDK codes remain terminal to prevent fallback-code status promotion.
 Agent paid recovery uses its terminal fallback when a message is non-string or
 unreadable. Apply the existing mnemonic heuristic before Cosmos prefixes, keep
-resource function/class source out of responses, and pin data omission and each
+resource function/class source out of responses (including non-string Error messages), and pin data omission and each
 readiness diagnostic guard. Broader log hygiene remains ENG-271; readable paid
 outcome-veto preservation is ENG-1000, and cross-realm NotFound joins ENG-983.
+
+Retain veto provenance through connection repair and Cosmos rebuilding, and
+preserve an estimate failure's veto through agent contextual attribution. Keep
+the internal classification/formatting distinction off the public barrel.
+Mnemonic detection checks both raw whitespace tokenization and a control-free
+candidate; model formatting must redact before removing word separators. Retain
+lexical retry decisions privately when presentation redacts text, without storing
+the original secret or inventing status metadata. Redaction coverage is limited
+to Cosmos/owned-broadcast attribution and agent contextualError; other prefixes,
+MCP response/notification sinks and embedded-secret handling remain ENG-271.
 
 No dependency, compiler-target, public type, or grouped-error policy change is
 needed. AggregateError members remain outside the standard `.cause` traversal.

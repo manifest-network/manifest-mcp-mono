@@ -44,6 +44,7 @@ import {
   verifyRestChainIdentity,
   verifyRpcChainIdentity,
 } from './internals/chain-identity.js';
+import { markErrorInspectionFailure } from './internals/error-inspection-failure.js';
 import {
   guardedField,
   snapshotErrorDetails,
@@ -56,7 +57,12 @@ import { createLCDQueryClient } from './lcd-adapter.js';
 import { type Logger, noopLogger } from './logger.js';
 import type { ManifestQueryClient } from './manifest-query-client.js';
 import { abortableSleep, abortReason } from './options.js';
-import { isRetryableError, withRetry } from './retry.js';
+import {
+  isRetryableError,
+  preserveRetryVerdicts,
+  retryInspectionFails,
+  withRetry,
+} from './retry.js';
 import {
   type ManifestMCPConfig,
   ManifestMCPError,
@@ -105,17 +111,26 @@ function connectionError(
         const snapshot = snapshotErrorDetails(
           sdkDetails.ok ? sdkDetails.value : undefined,
         );
-        if (sdkDetails.ok && snapshot.readable) return error;
+        const inspectionFailed = retryInspectionFails(error);
+        if (sdkDetails.ok && snapshot.readable && !inspectionFailed)
+          return error;
         const name = guardedField(error, 'name');
         const cause = guardedField(error, 'cause');
         const normalized = new ManifestMCPError(code, sdkMessage, {
           ...details,
           ...snapshot.safeValue,
         });
+        preserveRetryVerdicts(error, normalized);
         // AbortError/TimeoutError names are retry vetoes, including on SDK errors.
         if (name.ok && typeof name.value === 'string')
           normalized.name = name.value;
-        if (sdkDetails.ok && snapshot.namedReadable && name.ok && cause.ok) {
+        if (
+          sdkDetails.ok &&
+          snapshot.namedReadable &&
+          name.ok &&
+          cause.ok &&
+          !inspectionFailed
+        ) {
           // Only incidental diagnostics failed. Keep the independently readable verdict
           // and details; copying must not invoke failing getters a second time.
           // An existing cause participates in retry classification. Preserve it unchanged,
@@ -127,16 +142,27 @@ function connectionError(
               writable: true,
             });
           }
+          // Attribution may rebuild this envelope without its name or cause.
+          // Carry a terminal verdict through that later normalization as well.
+          if (!isRetryableError(normalized))
+            markErrorInspectionFailure(normalized);
           return normalized;
         }
         // A known permanent/cancellation verdict needs no replay protection from unreadable
         // details, name or cause. Retain it without a cause; use the endpoint-only fallback
         // only if the repaired envelope could otherwise authorize another attempt.
-        if (!isRetryableError(normalized)) return normalized;
+        if (!isRetryableError(normalized)) {
+          markErrorInspectionFailure(normalized);
+          return normalized;
+        }
       }
       message = 'Error message unavailable';
     } else {
-      message = error instanceof Error ? String(error.message) : String(error);
+      const rawMessage = error instanceof Error ? error.message : String(error);
+      message =
+        typeof rawMessage === 'string'
+          ? rawMessage
+          : 'Error message unavailable';
     }
   } catch {
     // Both instanceof (a proxy's prototype) and message extraction can throw.
