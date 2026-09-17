@@ -84,7 +84,7 @@ const DEFAULT_BROADCAST_POLL_INTERVAL_MS = 3_000;
 /** Poll for an available rate-limit token; abort-aware sleep rejects immediately on cancellation. */
 const RATE_LIMIT_POLL_MS = 25;
 
-/** Preserve SDK errors and normalize untrusted connection failures without inspecting them unsafely. */
+/** Preserve readable SDK errors and normalize failures whose diagnostic fields cannot be read. */
 function connectionError(
   error: unknown,
   messagePrefix: string,
@@ -92,8 +92,18 @@ function connectionError(
 ): ManifestMCPError {
   let message: string;
   try {
-    if (error instanceof ManifestMCPError) return error;
-    message = error instanceof Error ? String(error.message) : String(error);
+    if (error instanceof ManifestMCPError) {
+      // An SDK prototype does not guarantee readable diagnostics (custom wallets/fetches can
+      // supply getters or proxies). Consumers attribute these fields and spread details.
+      const { code, message: sdkMessage, details: sdkDetails } = error;
+      if (typeof code === 'string' && typeof sdkMessage === 'string') {
+        if (sdkDetails != null) void { ...sdkDetails };
+        return error;
+      }
+      message = 'Error message unavailable';
+    } else {
+      message = error instanceof Error ? String(error.message) : String(error);
+    }
   } catch {
     // Both instanceof (a proxy's prototype) and message extraction can throw.
     message = 'Error message unavailable';
@@ -485,9 +495,13 @@ export class CosmosClientManager {
           client.disconnect();
         } catch (err) {
           // A failing orphan cleanup must never mask the supersede error below.
-          this.logger.debug(
-            `orphaned signing client disconnect failed: ${err instanceof Error ? err.message : String(err)}`,
-          );
+          try {
+            this.logger.debug(
+              `orphaned signing client disconnect failed: ${err instanceof Error ? String(err.message) : String(err)}`,
+            );
+          } catch {
+            // Error inspection and the diagnostic sink are both best effort during cleanup.
+          }
         }
         throw new ManifestMCPError(
           ManifestMCPErrorCode.RPC_CONNECTION_FAILED,

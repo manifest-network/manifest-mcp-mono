@@ -7,6 +7,7 @@ import {
   sanitizeForDisplay,
 } from '@manifest-network/manifest-mcp-core';
 import type { FredAuthCtx } from '../ctx.js';
+import { errorMessageOf } from '../error-diagnostics.js';
 import {
   type FredLeaseStatus,
   getLeaseProvision,
@@ -275,8 +276,7 @@ async function handleRestoreAbort(
       true,
     );
   } catch (cancelErr) {
-    const cx =
-      cancelErr instanceof Error ? cancelErr.message : String(cancelErr);
+    const cx = errorMessageOf(cancelErr);
     return orphan(
       ids,
       'abort-compensating-cancel',
@@ -319,10 +319,7 @@ async function handleRestoreFailure(
   // The cause can be a ProviderApiError whose message is provider-controlled
   // response-body text (untrusted on-chain SKU origin). Sanitize before it is
   // interpolated into a model/human-facing error message (ENG-555).
-  const cause = sanitizeForDisplay(
-    err instanceof Error ? err.message : String(err),
-    256,
-  ) as string;
+  const cause = sanitizeForDisplay(errorMessageOf(err), 256) as string;
 
   if (phase === 'pre-restore-post') {
     // Uncommitted → nothing adopted → cancel the empty PENDING shell (single
@@ -336,8 +333,7 @@ async function handleRestoreFailure(
         true,
       );
     } catch (cancelErr) {
-      const cx =
-        cancelErr instanceof Error ? cancelErr.message : String(cancelErr);
+      const cx = errorMessageOf(cancelErr);
       return orphan(
         ids,
         'compensating-cancel',

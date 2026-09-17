@@ -1164,10 +1164,10 @@ connection catches must safely handle the unreadable value now preserved by
 
 | Finding | Disposition and evidence | Confidence |
 | --- | --- | --- |
-| Connection catches throw while discriminating or formatting the preserved error | A module-local normalizer guards SDK-error discrimination and message/string extraction. Other failures retain RPC_CONNECTION_FAILED and existing endpoint details; recognized SDK errors retain identity. Twelve hostile-input cases fail before the fix; all 83 client tests pass afterward, using real retry for REST, RPC and signing, plus the pre-retry wallet leg. | 100% reproduction; 99% correction |
+| Connection catches throw while discriminating or formatting the preserved error | A module-local normalizer guards SDK-error discrimination and message/string extraction. Other failures retain RPC_CONNECTION_FAILED and existing endpoint details; recognized SDK errors retain identity. Twelve hostile-input cases fail against `4ce59ea`; six restore main behavior (message/proxy × REST/RPC/signing), while wallet and throwing-coercion cases add normalization. All 83 client tests pass; the 16 added rows cover real retry for REST/RPC/signing and wallet acquisition before retry. | 100% reproduction; 99% correction |
 | A false verdict alone no longer proves terminal errors skip cause inspection | Three tests assert zero cause reads for permanent, submitted and partial outer verdicts. An isolated mutation moving traversal first fails all three, while 21 controls pass. | 100% |
 | The initial reproduction count omitted the last added regression | Correct the historical `4ce59ea` count to 19 failures / 2 controls out of 21 core cases. An archive copy with the original classifier reproduces it; the original three SDK failures remain accurate for that revision. | 100% |
-| Producer and MCP diagnostic inspection can still replace original failures | Independently reproduced; track the pre-existing boundary in [ENG-983](https://linear.app/liftedinit/issue/ENG-983), including unsafe timeout ownership and MCP reflection. | 100% mechanism; 98% scope |
+| Producer and MCP diagnostic inspection can still replace original failures | Producer/direct-MCP failures were reproduced and initially grouped in [ENG-983](https://linear.app/liftedinit/issue/ENG-983). The next review established that retry-fed MCP failures are PR regressions; those are fixed here, and ENG-983 retains producer-side work. | 100% mechanism; 98% scope |
 | A throwing onRetry callback replaces the operation failure | Independently reproduced; [ENG-984](https://linear.app/liftedinit/issue/ENG-984) owns explicit observer/control semantics, diagnostics and documentation. | 100% mechanism; 98% scope |
 | Undefined or invalid retry limits skip operations or add unmatched backoff | Independently reproduced through withRetry and partial public getInstance configuration; [ENG-985](https://linear.app/liftedinit/issue/ENG-985) owns defaults and validation. | 100% mechanism; 99% scope |
 | The classifier does not log inspection failures | Keep logging out of the classifier. Its contract requires a conservative verdict; logging would add another fallible diagnostic operation. Any future trace must avoid inspecting the error. | 98% |
@@ -1178,9 +1178,9 @@ connection catches must safely handle the unreadable value now preserved by
 
 The proposed caller-abort precedence change remains refuted: nonretryable
 operation failures retain their established priority, including ordinary readable
-errors. The review adds no grouped-error policy change. The three new follow-ups
-are pre-existing, separate boundaries; the PR fixes the connection regression and
-retains its conservative retry contract.
+errors. The review adds no grouped-error policy change. The callback and retry-configuration follow-ups are pre-existing. ENG-983 was
+initially scoped too broadly: direct MCP injection was pre-existing, but preserved
+retry rejections expose new downstream regressions, addressed below.
 
 Validation passes **217 focused tests** and **4,188 full-suite tests / 17 existing
 skips / 187 files**, with no type errors and all coverage floors: **84.95% lines /
@@ -1190,3 +1190,41 @@ and four SDK bundle budgets pass. Independent review found no blocker (99%
 confidence); removing reflection containment fails four cases, removing message
 containment fails eight, and moving cause traversal before terminal verdicts fails
 three. Fresh PR-head CI and live acceptance are recorded on PR #233 and ENG-953.
+
+
+## PR #233 review: downstream retry consumers (2026-09-17)
+
+[Claude's review of `3bf38f4`](https://github.com/manifest-network/manifest-mcp-mono/pull/233#issuecomment-5714166265)
+correctly distinguishes direct hostile injections from errors arriving through a
+retry loop. Returning the original unreadable rejection exposed downstream catches
+that had previously received readable inspection exceptions. These are P3 custom
+JavaScript-input regressions and belong in this PR, including the MCP portion
+previously deferred to ENG-983.
+
+| Finding | Resolution and evidence | Confidence |
+| --- | --- | --- |
+| MCP tools lose their bounded JSON envelope | Cache safe SDK metadata, guard lazy stack formatting and never inspect a serialization failure. Real MCP/real-retry tests fail before the fix and retain sanitized bounded responses afterward. | 100% reproduction; 99% correction |
+| Connection catches preserve unreadable SDK errors | Require string code/message and readable shallow details before identity pass-through. Exact error class/details/no-cause, hostile identity-fetch/signing/wallet, Symbol message and cleanup tests cover the boundary. | 100% reproduction; 99% correction |
+| Transaction attribution lets hostile errors erase paid-lease recovery | Guard the entire tx attribution operation; unreadable diagnostics produce permanent TX_FAILED with operation context and a hidden original cause. Fred deploy/restore catches independently protect known lease IDs, partial flags and orphan logs. Agent estimate/retry-set-domain formatting and deployment classification preserve their context. | 100% reproduction; 98% correction |
+| Fred resource failures can leave requests unanswered | Fresh readable errors protect all three resource callbacks, including wallet failures. Messages are bounded and sanitized; readable numeric protocol codes survive, arbitrary diagnostic data is omitted. Real MCP requests cover retry failures and real manager identity failures. | 100% reproduction; 99% correction |
+| Existing client assertions permit the wrong envelope | Assert ManifestMCPError class, exact details and absent cause. Mutations of class/details/cause and removal of String(message) fail the strengthened tests. | 100% |
+| Outer verdict tests omit transport-message and HTTP-status branches | Add ENOTFOUND and HTTP 403 cases asserting zero cause access, one attempt and no retry callback. | 100% |
+| Documentation and previous triage overstate scope | Correct the six-regression/twelve-case distinction, pre-retry wallet wording and 83-test claim. Re-scope ENG-983 to producer-side timeout/faucet/LCD handling; explain unreadable rejection handling for custom consumers. | 100% |
+
+The pre-retry LCD adapter diagnostic pattern also exists on main and remains in
+ENG-983 with the producer-side work. No dependency, public type, replay-policy or
+grouped-error traversal change is included. Readability checks are shallow and do
+not promise safety for arbitrary state-changing accessors or recursively hostile
+diagnostic objects. Independent review of all nine production retry call sites and
+the recovery changes found no further blocker (97% confidence).
+
+Validation passes **672 focused tests / one existing skip** and **4,316 full-suite
+tests / 17 existing skips / 190 files**, with no type errors. Coverage floors pass:
+**85.08% lines / 84.80% statements / 84.78% branches / 88.55% functions**. Fresh
+workspace builds (including publint/attw), workspace/E2E types, schema, Biome,
+architecture, all nine package integrity checks and all four bundle budgets pass.
+Final before/after checks reproduce 40 client failures, nine MCP-boundary failures
+and 21 core/agent attribution failures. Reverting only the resource wrapper with
+the fixed core fails 16 of 27 resource cases; traversal reordering fails all five
+outer-verdict cases while 21 controls pass. Fresh CI/live acceptance is recorded
+on PR #233 and ENG-953.

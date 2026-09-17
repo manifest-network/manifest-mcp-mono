@@ -197,7 +197,7 @@ describe('CosmosClientManager', () => {
   });
 
   describe.each(['REST', 'RPC', 'signing', 'wallet'] as const)(
-    '%s initialization error normalization with real retry',
+    '%s initialization error normalization',
     (boundary) => {
       beforeEach(async () => {
         const actual =
@@ -209,20 +209,31 @@ describe('CosmosClientManager', () => {
         vi.mocked(withRetry).mockImplementation((operation) => operation());
       });
 
-      function failInitialization(error: unknown) {
+      function failInitialization(error: unknown, identityFetch = false) {
         const wallet = makeWallet();
+        const getChainId = vi.fn().mockResolvedValue('test-chain');
+        if (boundary === 'signing' && identityFetch) {
+          mockConnectWithSigner.mockResolvedValueOnce({
+            getChainId,
+            disconnect: vi.fn(),
+          } as unknown as SigningStargateClient);
+        }
         const config = makeConfig({
           restUrl: boundary === 'REST' ? 'https://lcd.example.com' : undefined,
           retry: { maxRetries: 2, baseDelayMs: 0, maxDelayMs: 0 },
         });
         const operation =
-          boundary === 'REST'
-            ? mockCreateLCDQueryClient
-            : boundary === 'RPC'
-              ? mockCreateRPCQueryClient
-              : boundary === 'signing'
-                ? mockConnectWithSigner
-                : vi.mocked(wallet.getSigner);
+          boundary === 'wallet'
+            ? vi.mocked(wallet.getSigner)
+            : identityFetch
+              ? boundary === 'signing'
+                ? getChainId
+                : vi.mocked(globalThis.fetch)
+              : boundary === 'REST'
+                ? mockCreateLCDQueryClient
+                : boundary === 'RPC'
+                  ? mockCreateRPCQueryClient
+                  : mockConnectWithSigner;
         operation.mockRejectedValueOnce(error);
         const manager = CosmosClientManager.getInstance(config, wallet);
         const query = boundary === 'REST' || boundary === 'RPC';
@@ -238,6 +249,28 @@ describe('CosmosClientManager', () => {
             ? { url: config.restUrl ?? config.rpcUrl }
             : { rpcUrl: config.rpcUrl },
         };
+      }
+
+      async function expectConnectionError(
+        pending: Promise<unknown>,
+        message: string,
+        details: Record<string, unknown>,
+      ) {
+        await pending.then(
+          () => {
+            throw new Error('Expected initialization to fail');
+          },
+          (error: unknown) => {
+            expect(error).toBeInstanceOf(ManifestMCPError);
+            const normalized = error as ManifestMCPError;
+            expect(normalized.code).toBe(
+              ManifestMCPErrorCode.RPC_CONNECTION_FAILED,
+            );
+            expect(normalized.message).toBe(message);
+            expect(normalized.details).toStrictEqual(details);
+            expect('cause' in normalized).toBe(false);
+          },
+        );
       }
 
       it.each([
@@ -270,27 +303,140 @@ describe('CosmosClientManager', () => {
         const { pending, operation, messagePrefix, details } =
           failInitialization(create());
 
-        await expect(pending).rejects.toMatchObject({
-          code: ManifestMCPErrorCode.RPC_CONNECTION_FAILED,
-          message: `${messagePrefix}: Error message unavailable`,
+        await expectConnectionError(
+          pending,
+          `${messagePrefix}: Error message unavailable`,
           details,
-        });
+        );
         expect(operation).toHaveBeenCalledOnce();
         expect(withRetry).toHaveBeenCalledTimes(boundary === 'wallet' ? 0 : 1);
       });
 
-      it('preserves an established SDK error without reading its message', async () => {
+      it.each([
+        ...(['code', 'message', 'details'] as const).map((property) => ({
+          name: `throwing SDK ${property} getter`,
+          create: () =>
+            Object.defineProperty(
+              new ManifestMCPError(
+                ManifestMCPErrorCode.INVALID_CONFIG,
+                'custom configuration error',
+              ),
+              property,
+              {
+                get() {
+                  throw new Error(`SDK ${property} inspection failed`);
+                },
+              },
+            ),
+        })),
+        ...(
+          [
+            ['code', Symbol('connection code')],
+            ['message', Symbol('connection message')],
+            ['code', 503],
+          ] as const
+        ).map(([property, value]) => ({
+          name: `non-string SDK ${property} (${typeof value})`,
+          create: () =>
+            Object.defineProperty(
+              new ManifestMCPError(
+                ManifestMCPErrorCode.INVALID_CONFIG,
+                'custom configuration error',
+              ),
+              property,
+              { value },
+            ),
+        })),
+        {
+          name: 'SDK get-trap proxy',
+          create: () =>
+            new Proxy(
+              new ManifestMCPError(
+                ManifestMCPErrorCode.INVALID_CONFIG,
+                'custom configuration error',
+              ),
+              {
+                get(target, property, receiver) {
+                  // Promise machinery must be able to deliver this rejection.
+                  if (property === 'then') return undefined;
+                  if (property === 'code') {
+                    throw new Error('SDK get trap failed');
+                  }
+                  return Reflect.get(target, property, receiver);
+                },
+              },
+            ),
+        },
+        {
+          name: 'SDK details entry getter',
+          create: () =>
+            new ManifestMCPError(
+              ManifestMCPErrorCode.INVALID_CONFIG,
+              'custom configuration error',
+              {
+                get source() {
+                  throw new Error('SDK details entry inspection failed');
+                },
+              },
+            ),
+        },
+        {
+          name: 'SDK details ownKeys trap',
+          create: () =>
+            new ManifestMCPError(
+              ManifestMCPErrorCode.INVALID_CONFIG,
+              'custom configuration error',
+              new Proxy(
+                {},
+                {
+                  ownKeys() {
+                    throw new Error('SDK details enumeration failed');
+                  },
+                },
+              ),
+            ),
+        },
+      ])(
+        'normalizes a $name at the connection boundary',
+        async ({ create }) => {
+          const { pending, operation, messagePrefix, details } =
+            failInitialization(create(), true);
+
+          await expectConnectionError(
+            pending,
+            `${messagePrefix}: Error message unavailable`,
+            details,
+          );
+          expect(operation).toHaveBeenCalledOnce();
+          expect(withRetry).toHaveBeenCalledTimes(
+            boundary === 'wallet' ? 0 : 1,
+          );
+        },
+      );
+
+      it('coerces a Symbol message without losing the connection envelope', async () => {
+        const original = Object.defineProperty(new Error(), 'message', {
+          value: Symbol('connection diagnostic'),
+        });
+        const { pending, operation, messagePrefix, details } =
+          failInitialization(original);
+
+        await expectConnectionError(
+          pending,
+          `${messagePrefix}: Symbol(connection diagnostic)`,
+          details,
+        );
+        expect(operation).toHaveBeenCalledOnce();
+        expect(withRetry).toHaveBeenCalledTimes(boundary === 'wallet' ? 0 : 1);
+      });
+
+      it('preserves the identity and details of a readable SDK error', async () => {
         const original = new ManifestMCPError(
           ManifestMCPErrorCode.INVALID_CONFIG,
           'custom configuration error',
           { source: boundary },
         );
-        Object.defineProperty(original, 'message', {
-          get() {
-            throw new Error('diagnostic inspection failed');
-          },
-        });
-        const { pending, operation } = failInitialization(original);
+        const { pending, operation } = failInitialization(original, true);
 
         await expect(pending).rejects.toBe(original);
         expect(operation).toHaveBeenCalledOnce();
@@ -1002,6 +1148,73 @@ describe('CosmosClientManager', () => {
       expect(mockSC.disconnect).toHaveBeenCalledOnce();
       expect(mockConnectWithSigner).toHaveBeenCalledOnce();
     });
+
+    it.each(['message getter', 'revoked proxy', 'string coercion', 'logger'])(
+      'preserves the superseded verdict when cleanup diagnostics fail via %s',
+      async (failure) => {
+        let cleanupError: unknown = new Error('cleanup failed');
+        if (failure === 'message getter') {
+          cleanupError = Object.defineProperty(new Error(), 'message', {
+            get() {
+              throw new Error('cleanup message inspection failed');
+            },
+          });
+        } else if (failure === 'revoked proxy') {
+          const { proxy, revoke } = Proxy.revocable({}, {});
+          revoke();
+          cleanupError = proxy;
+        } else if (failure === 'string coercion') {
+          cleanupError = {
+            [Symbol.toPrimitive]() {
+              throw new Error('cleanup coercion failed');
+            },
+          };
+        }
+        const signer = await makeWallet().getSigner();
+        let releaseSigner!: () => void;
+        const wallet = makeWallet({
+          getSigner: vi.fn<WalletProvider['getSigner']>(
+            () =>
+              new Promise((resolve) => {
+                releaseSigner = () => resolve(signer);
+              }),
+          ),
+        });
+        let disconnectCalls = 0;
+        const orphan = {
+          getChainId: vi.fn().mockResolvedValue('test-chain'),
+          disconnect() {
+            disconnectCalls++;
+            throw cleanupError;
+          },
+        };
+        mockConnectWithSigner.mockResolvedValue(
+          orphan as unknown as SigningStargateClient,
+        );
+        const manager = CosmosClientManager.getInstance(makeConfig(), wallet);
+        const logger = makeSpyLogger();
+        if (failure === 'logger') {
+          logger.debug.mockImplementation(() => {
+            throw new Error('cleanup logger failed');
+          });
+        }
+        manager.setLogger(logger);
+        const pending = manager.getSigningClient();
+        manager.disconnect();
+        releaseSigner();
+
+        await expect(pending).rejects.toMatchObject({
+          code: ManifestMCPErrorCode.RPC_CONNECTION_FAILED,
+          message: expect.stringContaining('superseded'),
+          details: {
+            rpcUrl: 'https://rpc.example.com',
+            reason: 'superseded',
+          },
+        });
+        expect(disconnectCalls).toBe(1);
+        expect(mockConnectWithSigner).toHaveBeenCalledOnce();
+      },
+    );
 
     it('a new config cannot supersede another holder’s pending signing initialization', async () => {
       let resolveSigner!: (value: any) => void;

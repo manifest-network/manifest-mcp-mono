@@ -20,10 +20,17 @@ producer-side diagnostic inspection before those helpers remains separate.
 Connection catches receiving the preserved error also need guarded SDK-error
 discrimination and message extraction. Normalize other failures to the existing
 `RPC_CONNECTION_FAILED` envelope with endpoint details, using a fixed fallback
-when diagnostics cannot be read. Recognized SDK errors retain their identity.
-Cover REST/RPC initialization, signing connection and wallet signer acquisition
-with the real retry helper. Pin the outer-verdict short-circuit with zero cause
+when diagnostics cannot be read. SDK errors retain identity only with readable string code/message and shallow details.
+Cover REST/RPC initialization and signing connection with the real retry helper,
+and wallet signer acquisition separately before retry. Pin the outer-verdict short-circuit with zero cause
 accesses so a conservative catch cannot hide an ordering regression.
+
+Review also requires following preserved rejections through all downstream catches.
+Guard MCP tool and resource responses, transaction attribution, post-lease deploy
+and restore recovery, and orchestration diagnostics. Preserve known submission,
+partial-success and lease evidence; never authorize replay because diagnostics
+are unreadable. Pin exact connection error classes/details/no-cause, Symbol
+coercion, and all outer-verdict branches with executable regressions.
 
 No dependency, compiler-target, public type, or grouped-error policy change is
 needed. AggregateError members remain outside the standard `.cause` traversal.

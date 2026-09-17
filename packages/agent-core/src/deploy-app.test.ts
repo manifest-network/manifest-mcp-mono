@@ -2449,6 +2449,42 @@ describe('deployApp replay — Copilot review fixes (PR #58 unresolved comments)
       );
       expect((err as Error).message).toContain('untyped failure');
     });
+
+    it.each(['message getter', 'code getter', 'revoked proxy'])(
+      'retains the estimate envelope for a hostile %s',
+      async (kind) => {
+        const { proxy, revoke } = Proxy.revocable({}, {});
+        revoke();
+        const original =
+          kind === 'revoked proxy'
+            ? proxy
+            : Object.defineProperty(
+                kind === 'code getter'
+                  ? new ManifestMCPError(
+                      ManifestMCPErrorCode.SIMULATION_FAILED,
+                      'estimate failed',
+                    )
+                  : new Error('estimate failed'),
+                kind === 'code getter' ? 'code' : 'message',
+                {
+                  get() {
+                    throw proxy;
+                  },
+                },
+              );
+        const error = await runDeployWithEstimateError(original);
+        expect(error).toBeInstanceOf(ManifestMCPError);
+        expect((error as ManifestMCPError).code).toBe(
+          ManifestMCPErrorCode.SIMULATION_FAILED,
+        );
+        expect((error as Error).message).toContain(
+          'Failed to estimate create-lease fee:',
+        );
+        expect(Object.getOwnPropertyDescriptor(error, 'cause')?.value).toBe(
+          original,
+        );
+      },
+    );
   });
 });
 
@@ -4509,6 +4545,7 @@ describe('deployApp — retry_set_domain decomposition (ENG-185 sub-PR E)', () =
    */
   async function setupRetryScenario(opts: {
     setItemCustomDomain?: ReturnType<typeof vi.fn>;
+    fetchActiveLease?: ReturnType<typeof vi.fn>;
     uploadLeaseData?: ReturnType<typeof vi.fn>;
     pollLeaseUntilReady?: ReturnType<typeof vi.fn>;
     customDomain?: string;
@@ -4562,9 +4599,15 @@ describe('deployApp — retry_set_domain decomposition (ENG-185 sub-PR E)', () =
     // For the retry-completion path: resolve provider URL via lease lookup,
     // upload manifest payload, then poll. All mocks default to success;
     // callers override the specific step they want to exercise.
-    vi.mocked(fred.fetchActiveLease).mockResolvedValue({
-      providerUuid,
-    } as unknown as Awaited<ReturnType<typeof fred.fetchActiveLease>>);
+    if (opts.fetchActiveLease) {
+      vi.mocked(fred.fetchActiveLease).mockImplementation(
+        opts.fetchActiveLease as unknown as typeof fred.fetchActiveLease,
+      );
+    } else {
+      vi.mocked(fred.fetchActiveLease).mockResolvedValue({
+        providerUuid,
+      } as unknown as Awaited<ReturnType<typeof fred.fetchActiveLease>>);
+    }
     vi.mocked(fred.resolveProviderUrl).mockResolvedValue(providerApiUrl);
     if (opts.uploadLeaseData) {
       vi.mocked(fred.uploadLeaseData).mockImplementation(
@@ -4911,6 +4954,45 @@ describe('deployApp — retry_set_domain decomposition (ENG-185 sub-PR E)', () =
     expect(vi.mocked(fred.pollLeaseUntilReady)).not.toHaveBeenCalled();
     expect(baseCapture.completed).toHaveLength(0);
   });
+
+  it.each([
+    'setItemCustomDomain',
+    'fetchActiveLease',
+    'uploadLeaseData',
+    'pollLeaseUntilReady',
+  ] as const)(
+    'keeps the lease recovery diagnostic when %s throws an unreadable error',
+    async (stage) => {
+      const { proxy, revoke } = Proxy.revocable({}, {});
+      revoke();
+      const original = Object.defineProperty(
+        new ManifestMCPError(ManifestMCPErrorCode.TX_FAILED, 'recovery failed'),
+        'message',
+        {
+          get() {
+            throw proxy;
+          },
+        },
+      );
+      const { run, leaseUuid, baseCapture } = await setupRetryScenario({
+        [stage]: vi.fn().mockRejectedValue(original),
+      });
+      const { caughtErr } = await run();
+      expect(caughtErr).toBeInstanceOf(ManifestMCPError);
+      expect((caughtErr as ManifestMCPError).code).toBe(
+        ManifestMCPErrorCode.TX_FAILED,
+      );
+      expect((caughtErr as Error).message).toContain('retry_set_domain');
+      expect((caughtErr as Error).message).toContain(leaseUuid);
+      expect((caughtErr as Error).message).toContain(
+        'Error message unavailable',
+      );
+      expect(Object.getOwnPropertyDescriptor(caughtErr, 'cause')?.value).toBe(
+        original,
+      );
+      expect(baseCapture.completed).toHaveLength(0);
+    },
+  );
 
   it.each([
     {

@@ -227,10 +227,11 @@ export async function cosmosQuery(
 
 /**
  * Attribute a tx-leg failure with `{module, subcommand, args}`. A `ManifestMCPError`
- * that already carries a `module` is returned untouched (no double-enrichment);
+ * with readable diagnostics that already carries a `module` is returned untouched;
  * one without is re-wrapped preserving its code + details; any other thrown value
  * is wrapped as `TX_FAILED` (a NON_RETRYABLE code — so `withRetry` cannot re-broadcast
- * a submitted tx on a raw transient error, guarding against double-spend).
+ * a submitted tx on a raw transient error, guarding against double-spend). Unreadable
+ * attribution receives the same permanent fallback, retaining its original cause.
  */
 function enrichTxError(
   error: unknown,
@@ -238,19 +239,48 @@ function enrichTxError(
   subcommand: string,
   args: string[],
 ): ManifestMCPError {
-  return (
-    attributeBroadcastFailure(error, `Tx ${module} ${subcommand} failed: `, {
-      module,
-      subcommand,
-      args,
-    }) ??
-    attributeManifestError(error, { module, subcommand, args }) ??
-    new ManifestMCPError(
+  const details = { module, subcommand, args };
+  const prefix = `Tx ${module} ${subcommand} failed: `;
+  try {
+    const attributed =
+      attributeBroadcastFailure(error, prefix, details) ??
+      attributeManifestError(error, details);
+    if (attributed) {
+      // An already-attributed SDK error may come from an injected signer.
+      // Validate the fields consumers read before letting it leave the ladder.
+      const code = attributed.code;
+      const rawMessage = attributed.message;
+      const message = String(rawMessage);
+      const attributedDetails = attributed.details;
+      if (attributedDetails != null) void { ...attributedDetails };
+      if (typeof code !== 'string') throw new Error('Unreadable error code');
+      if (typeof rawMessage !== 'string') {
+        return Object.defineProperty(
+          new ManifestMCPError(code, message, attributedDetails),
+          'cause',
+          { value: error, configurable: true, writable: true },
+        );
+      }
+      return attributed;
+    }
+    return new ManifestMCPError(
       ManifestMCPErrorCode.TX_FAILED,
-      `Tx ${module} ${subcommand} failed: ${error instanceof Error ? error.message : String(error)}`,
-      { module, subcommand, args },
-    )
-  );
+      `${prefix}${error instanceof Error ? String(error.message) : String(error)}`,
+      details,
+    );
+  } catch {
+    // Diagnostic failures cannot replace this transaction's context or make
+    // an unknown submission retryable. Retain the original only as a cause.
+    return Object.defineProperty(
+      new ManifestMCPError(
+        ManifestMCPErrorCode.TX_FAILED,
+        `${prefix}Error message unavailable`,
+        details,
+      ),
+      'cause',
+      { value: error, configurable: true, writable: true },
+    );
+  }
 }
 
 /** Attribute an estimate-leg failure. Raw throws classify as SIMULATION_FAILED. */

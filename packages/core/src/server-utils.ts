@@ -499,7 +499,8 @@ function errorResponseText(
   tool: string,
   message: string,
   args: unknown,
-  error: unknown,
+  code: string | undefined,
+  details: unknown,
 ): string {
   const state: ErrorProjectionState = {
     truncated: false,
@@ -509,15 +510,15 @@ function errorResponseText(
   const response: Record<string, unknown> = {
     error: true,
     tool: fitErrorString(tool, 200, state),
-    ...(error instanceof ManifestMCPError && {
-      code: fitErrorString(error.code, 200, state),
+    ...(code !== undefined && {
+      code: fitErrorString(code, 200, state),
     }),
     message: fitErrorString(message, 3000, state),
   };
   // Compact JSON makes the budget deterministic. Details precede input because
   // recovery handles must survive even when the echoed arguments contain a blob.
   for (const [key, value] of [
-    ['details', error instanceof ManifestMCPError ? error.details : undefined],
+    ['details', details],
     ['input', args],
   ] as const) {
     if (value === undefined) continue;
@@ -570,21 +571,37 @@ export function withErrorHandling<
       } catch {
         errorMessage = 'Error message unavailable';
       }
-      const errorCode =
-        error instanceof ManifestMCPError ? error.code : 'UNKNOWN';
+      // Rejections can be proxies or expose throwing accessors. Inspect SDK
+      // metadata once and retain only a successfully read string for logging
+      // and either response path.
+      let sdkError: ManifestMCPError | undefined;
+      let errorCode = 'UNKNOWN';
+      try {
+        if (error instanceof ManifestMCPError) {
+          errorCode = String(error.code);
+          sdkError = error;
+        }
+      } catch {
+        // An unreadable SDK discriminator/code has the generic error envelope.
+      }
       // Sanitize error messages before including in the MCP response or logs.
       // This catches mnemonic-like strings in error messages and redacts them.
       const safeMessage = sanitizeForLogging(errorMessage) as string;
       const messageWasRedacted = safeMessage !== errorMessage;
-      if (error instanceof ManifestMCPError) {
+      if (sdkError) {
         logger.error(`[${toolName}] Tool error [${errorCode}]: ${safeMessage}`);
       } else {
         // Stack traces embed error.message verbatim. If the message was
         // redacted, the stack would re-leak the original — so suppress the
         // stack in that case rather than emit a half-sanitized trace.
         let stackSuffix = '';
-        if (!messageWasRedacted && error instanceof Error && error.stack) {
-          stackSuffix = `\n${sanitizeForLogging(error.stack) as string}`;
+        try {
+          if (!messageWasRedacted && error instanceof Error) {
+            const stack = error.stack;
+            if (stack) stackSuffix = `\n${sanitizeForLogging(String(stack))}`;
+          }
+        } catch {
+          // V8 can invoke a hostile message getter while formatting a stack.
         }
         logger.error(
           `[${toolName}] Tool error [${errorCode}]: ${safeMessage}${stackSuffix}`,
@@ -593,11 +610,16 @@ export function withErrorHandling<
 
       let responseText: string;
       try {
-        responseText = errorResponseText(toolName, safeMessage, args, error);
-      } catch (stringifyError) {
-        logger.error(
-          `[${toolName}] Failed to serialize error response: ${stringifyError instanceof Error ? stringifyError.message : String(stringifyError)}`,
+        responseText = errorResponseText(
+          toolName,
+          safeMessage,
+          args,
+          sdkError ? errorCode : undefined,
+          sdkError?.details,
         );
+      } catch {
+        // Even the inspection failure may itself be a revoked proxy.
+        logger.error(`[${toolName}] Failed to serialize error response:`);
         const state: ErrorProjectionState = {
           truncated: true,
           nodes: 0,
@@ -606,7 +628,7 @@ export function withErrorHandling<
         responseText = JSON.stringify({
           error: true,
           tool: fitErrorString(toolName, 200, state),
-          ...(error instanceof ManifestMCPError && {
+          ...(sdkError && {
             code: fitErrorString(errorCode, 200, state),
           }),
           message: fitErrorString(safeMessage, 3000, state),

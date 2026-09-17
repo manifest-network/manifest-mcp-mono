@@ -56,6 +56,21 @@ const unreadableErrors = [
 describe('retry error inspection', () => {
   it.each([
     {
+      verdict: 'permanent transport message',
+      create: () => new Error('getaddrinfo ENOTFOUND invalid.example'),
+    },
+    {
+      verdict: 'permanent HTTP status',
+      create: () =>
+        new ManifestMCPError(
+          ManifestMCPErrorCode.QUERY_FAILED,
+          'fetch failed',
+          {
+            httpStatus: 403,
+          },
+        ),
+    },
+    {
       verdict: 'permanent code',
       create: () =>
         new ManifestMCPError(ManifestMCPErrorCode.TX_FAILED, 'fetch failed'),

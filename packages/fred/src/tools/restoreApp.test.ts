@@ -1,6 +1,7 @@
 import { toHex } from '@cosmjs/encoding';
 import {
   LeaseState,
+  logger,
   ManifestMCPError,
   ManifestMCPErrorCode,
   withRetry,
@@ -55,6 +56,7 @@ vi.mock('./resolveLeaseProvider.js', () => ({ resolveProviderUrl: vi.fn() }));
 import { cosmosTx } from '@manifest-network/manifest-mcp-core';
 import { sealedFetchProbe } from '@manifest-network/manifest-mcp-core/__test-utils__/fetch-probe.js';
 import { makeSealedClientManager } from '@manifest-network/manifest-mcp-core/__test-utils__/mocks.js';
+import { unreadableErrors } from '../__test-utils__/unreadable-errors.js';
 import { createLease } from './createLease.js';
 import { fetchLease } from './fetchLease.js';
 import { resolveProviderUrl } from './resolveLeaseProvider.js';
@@ -763,6 +765,57 @@ describe('restoreApp', () => {
       ManifestMCPErrorCode.OPERATION_CANCELLED,
     );
   });
+
+  describe.each(['abort', 'token'] as const)(
+    'unreadable compensation after %s',
+    (phase) => {
+      it.each(unreadableErrors)(
+        'retains orphan recovery for $name',
+        async ({ create }) => {
+          mockSource();
+          const ac = new AbortController();
+          const ctx = makeCtx();
+          if (phase === 'abort') {
+            mockCreateLease.mockImplementation(async () => {
+              ac.abort();
+              return NEW as never;
+            });
+          } else {
+            vi.mocked(ctx.providerAuth.providerToken)
+              .mockResolvedValueOnce('source')
+              .mockRejectedValueOnce(new Error('wallet disconnected'));
+          }
+          mockCosmosTx.mockRejectedValueOnce(create());
+          const logged = vi.spyOn(logger, 'error').mockImplementation(() => {});
+          try {
+            await expect(
+              restoreApp(
+                ctx,
+                { address: 'a', sourceLeaseUuid: SOURCE },
+                { pollOptions: false, signal: ac.signal },
+              ),
+            ).rejects.toMatchObject({
+              code: ManifestMCPErrorCode.RESTORE_ORPHAN_COMPENSATION_FAILED,
+              details: {
+                lease_uuid: NEW,
+                orphaned_lease_uuid: NEW,
+                source_lease_uuid: SOURCE,
+                adoption_status: 'not_adopted',
+                next_action: 'cosmos_tx billing cancel-lease',
+              },
+            });
+            expect(logged).toHaveBeenCalledWith(
+              expect.stringContaining('restore_orphan'),
+            );
+            expect(mockCosmosTx).toHaveBeenCalledOnce();
+            expect(urls()).toEqual(['provision']);
+          } finally {
+            logged.mockRestore();
+          }
+        },
+      );
+    },
+  );
 
   it('falls back to the orphan surface when the compensating cancel itself fails (ENG-666)', async () => {
     mockSource();

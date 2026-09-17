@@ -51,6 +51,7 @@ import {
   makeMockClientManager,
   makeMockQueryClient,
 } from '@manifest-network/manifest-mcp-core/__test-utils__/mocks.js';
+import { unreadableErrors } from '../__test-utils__/unreadable-errors.js';
 import type { FredAuthCtx } from '../ctx.js';
 import { TerminalChainStateError } from '../http/fred.js';
 import { ProviderApiError } from '../http/provider.js';
@@ -684,6 +685,36 @@ describe('deployManifest', () => {
       service_name: 'web',
     });
   });
+
+  it.each(unreadableErrors)(
+    'retains the paid lease after a $name at set-domain',
+    async ({ create }) => {
+      const cm = makeMockClientManager({
+        queryClient: makeQueryClient(),
+        address: 'manifest1tenant',
+      });
+      mockSetItemCustomDomain.mockRejectedValueOnce(create());
+      await expect(
+        deployManifest(await ctx(cm), {
+          manifest: singleManifest(),
+          sku: { kind: 'byName', size: 'docker-micro' },
+          customDomain: 'app.example.com',
+        }),
+      ).rejects.toMatchObject({
+        message: expect.stringContaining('Deploy partially succeeded:'),
+        details: {
+          partial: true,
+          failedStep: 'set_domain',
+          lease_uuid: '550e8400-e29b-41d4-a716-446655440000',
+          provider_uuid: 'prov-1',
+          provider_url: 'https://provider.example.com',
+        },
+      });
+      expect(mockCosmosTx).toHaveBeenCalledOnce();
+      expect(mockSetItemCustomDomain).toHaveBeenCalledOnce();
+      expect(wire.calls).toHaveLength(0);
+    },
+  );
 
   it('partial failure carries details.partial + failedStep + lease_uuid', async () => {
     const cm = makeMockClientManager({
