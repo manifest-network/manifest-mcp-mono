@@ -1268,3 +1268,42 @@ core/client run passes 433 tests across eight files. All 215 client tests pass;
 Independent review reproduced and verified the hidden-status correction, with no
 further blocker found (97% confidence). Fresh PR-head CI/live acceptance is
 recorded on PR #233 and ENG-953.
+
+## PR #233 review: malformed diagnostics and cancellation verdicts (2026-09-17)
+
+[Claude's review of `232727d`](https://github.com/manifest-network/manifest-mcp-mono/pull/233#issuecomment-5716936392)
+reproduced the prior validation and found no blocker, while identifying further
+malformed-input retry differences, lost verdicts and unsafe resource/secret text.
+These corrections supersede earlier broad claims about unchanged retry behavior:
+readable controls retain their established behavior, and malformed diagnostics
+receive explicitly conservative treatment.
+
+| Finding | Resolution and evidence | Confidence |
+| --- | --- | --- |
+| Non-string orchestration messages manufacture transient prose | Mark non-string messages as unreadable, retain String coercion and the hidden original, and use the caller's fallback code. Four paid recovery sites × two codes × four hostile message forms fail before correction and stop after one orchestration attempt afterward. | 100% reproduction; 99% correction |
+| Failed orchestration inspection retains a retryable original code | The supplied fallback remains authoritative after inspection fails; paid recovery uses TX_FAILED. The 32-case matrix includes throwing coercion and a getter that becomes readable later. | 100% reproduction; 99% correction |
+| Connection repair loses AbortError/TimeoutError names | Guard name reads and copy readable names on repair. Twelve before/after rows cover all four connection boundaries, including unreadable names. | 100% reproduction; 99% correction |
+| Cosmos read normalization introduces retries from copied details/causes | Privately identify envelopes whose inspection failed and veto retry before examining their diagnostics. Non-string Error messages receive the same protection. A readable malformed code alone uses the operation fallback without introducing a new cause on read legs. | 100% reproduction; 98% correction |
+| Connection repair downgrades permanent codes and drops readable metadata | Retain an independently non-retryable normalized code/message even when details, named fields, name or cause cannot be read. Preserve independently readable ordinary details and supplied endpoint precedence; otherwise retain the conservative endpoint fallback. | 100% reproduction; 99% correction |
+| Resource messages expose function/class source and useless object coercion | Read string message fields on objects/functions; message-less non-Errors use Internal error. Eight cases fail before correction. Real MCP assertions now pin omitted data, including when the rejected object/function contains data. | 100% reproduction; 99% correction |
+| Operation prefixes defeat whole-string mnemonic redaction | Share the existing mnemonic heuristic as a pure helper and apply it before Cosmos prefixes; agent contextual errors reuse the existing public sanitizer before their prefix. Inspect a control-free candidate so ANSI/bidi wrappers cannot hide the mnemonic until later model sanitization. General embedded-prose secret detection remains separate. | 100% reproduction; 98% correction |
+| Readiness tests did not exercise individual guards | Replace the inert terminal-details row with four LeaseReadinessUnconfirmedError rows. They assert a paid lease, unconfirmed verdict and independently readable poll fields; removing reason/state/provision guards fails 1/2/2 cases. Forwarding resource data fails four cases; removing orchestration String coercion fails 16. | 100% |
+| Evidence-validator branches lacked distinguishing tests | Add adversarial receipt/hash/flag fixtures at the Cosmos boundary, preserving valid evidence without accepting malformed or accessor-derived receipt claims. | 99% |
+
+Remaining work is explicit and deduplicated:
+
+- [ENG-1000](https://linear.app/liftedinit/issue/ENG-1000) owns readable paid-operation retry vetoes. Independent source-comparison probes confirm retry_set_domain loses known lease/inner partial context, and readable Cosmos spread loses hidden/inherited positive sent/partial flags. Both mechanisms predate this PR. The probes use real orchestration/retry with mocked paid/broadcast seams, not live transactions. Confidence: 100% mechanism, 99% pre-existing scope.
+- [ENG-271](https://linear.app/liftedinit/issue/ENG-271) retains broader free-form secret scrubbing and stderr log hygiene. A built-module probe preserves embedded mnemonic text and a 20,018-character diagnostic with ANSI/newlines. Prefix redaction here does not provide general embedded-secret detection, bounded logs or control-safe log framing. Confidence: 100% mechanism, 98% scope.
+- [ENG-983](https://linear.app/liftedinit/issue/ENG-983) additionally owns cross-realm NotFound recognition in its existing query-classification scope. The same RPC NotFound message classifies true on a local Error and false on a cross-realm Error. Completed ENG-536 is unchanged. Confidence: 100% mechanism, 99% scope.
+- [ENG-996](https://linear.app/liftedinit/issue/ENG-996) retains later restore/terminal diagnostic recovery. State-changing custom accessors and general grouped-error traversal remain outside this change.
+
+Final local validation passes **4,644 tests / 17 existing skips / 193 files**, with
+no type errors. Coverage floors pass: **85.25% lines / 85.00% statements / 85.14%
+branches / 88.76% functions**. Fresh workspace builds (including publint/attw), the
+final core rebuild, workspace/E2E types, schema, Biome, architecture, all nine
+package integrity checks and all four unchanged bundle budgets pass. Focused
+core plus real chain MCP validation passes 304 tests across six files; all 279
+client tests pass. Independent final review found and verified the additional
+control-wrapped mnemonic and malformed-code HTTP 408 cases, with no remaining
+blocker in the reviewed scope (98% confidence). PR-head CI/live acceptance results
+are recorded on PR #233 and ENG-953.

@@ -23,9 +23,15 @@ interface RegisterResourcesDeps {
 /** Preserve message-shaped wallet and cross-realm failures without exposing getters. */
 function resourceErrorMessage(error: unknown): string {
   try {
-    if (error !== null && typeof error === 'object') {
+    if (
+      error !== null &&
+      (typeof error === 'object' || typeof error === 'function')
+    ) {
       const message = Reflect.get(error, 'message');
       if (typeof message === 'string') return message;
+      // Function coercion exposes source code; ordinary object coercion adds no
+      // useful protocol diagnostic. Preserve Error and primitive formatting.
+      if (!(error instanceof Error)) return 'Internal error';
     }
   } catch {
     return 'Error message unavailable';
@@ -47,7 +53,8 @@ function readableResourceFailure(
       );
       try {
         const code =
-          error != null && typeof error === 'object'
+          error != null &&
+          (typeof error === 'object' || typeof error === 'function')
             ? Reflect.get(error, 'code')
             : undefined;
         if (typeof code === 'number' && Number.isSafeInteger(code)) {

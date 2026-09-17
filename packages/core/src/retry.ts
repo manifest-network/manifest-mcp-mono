@@ -1,5 +1,6 @@
 import type { QueryErrorDetails } from './internals/classify-query-error.js';
 import { errorChain } from './internals/error-chain.js';
+import { isErrorInspectionFailure } from './internals/error-inspection-failure.js';
 import { abortableSleep, abortReason } from './options.js';
 import {
   ManifestMCPError,
@@ -171,6 +172,7 @@ function queryStatusRetryability(error: Error): boolean | undefined {
 }
 
 function isPermanentError(error: Error): boolean {
+  if (isErrorInspectionFailure(error)) return true;
   // A generic "fetch failed" wrapper must not conceal NXDOMAIN on its cause.
   if (
     errorCode(error).toLowerCase() === 'enotfound' ||

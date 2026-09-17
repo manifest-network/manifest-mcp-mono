@@ -44,7 +44,10 @@ import {
   verifyRestChainIdentity,
   verifyRpcChainIdentity,
 } from './internals/chain-identity.js';
-import { snapshotErrorDetails } from './internals/guarded-error-fields.js';
+import {
+  guardedField,
+  snapshotErrorDetails,
+} from './internals/guarded-error-fields.js';
 import {
   type SequenceCache,
   sequencedSigningClient,
@@ -53,7 +56,7 @@ import { createLCDQueryClient } from './lcd-adapter.js';
 import { type Logger, noopLogger } from './logger.js';
 import type { ManifestQueryClient } from './manifest-query-client.js';
 import { abortableSleep, abortReason } from './options.js';
-import { withRetry } from './retry.js';
+import { isRetryableError, withRetry } from './retry.js';
 import {
   type ManifestMCPConfig,
   ManifestMCPError,
@@ -96,31 +99,40 @@ function connectionError(
     if (error instanceof ManifestMCPError) {
       // Consumers read named status/attribution fields as well as enumerable details. A
       // hidden getter must not escape merely because spreading the object skipped it.
-      const { code, message: sdkMessage, details: sdkDetails } = error;
+      const { code, message: sdkMessage } = error;
       if (typeof code === 'string' && typeof sdkMessage === 'string') {
-        const snapshot = snapshotErrorDetails(sdkDetails);
-        if (snapshot.readable) return error;
-        if (snapshot.namedReadable) {
-          // Only incidental diagnostics failed. Keep the established verdict and any
-          // own-data recovery evidence; copying must not invoke failing getters again.
-          const cause = Reflect.get(error, 'cause');
-          const normalized = new ManifestMCPError(code, sdkMessage, {
-            ...snapshot.value,
-            ...details,
-          });
+        const sdkDetails = guardedField(error, 'details');
+        const snapshot = snapshotErrorDetails(
+          sdkDetails.ok ? sdkDetails.value : undefined,
+        );
+        if (sdkDetails.ok && snapshot.readable) return error;
+        const name = guardedField(error, 'name');
+        const cause = guardedField(error, 'cause');
+        const normalized = new ManifestMCPError(code, sdkMessage, {
+          ...details,
+          ...snapshot.safeValue,
+        });
+        // AbortError/TimeoutError names are retry vetoes, including on SDK errors.
+        if (name.ok && typeof name.value === 'string')
+          normalized.name = name.value;
+        if (sdkDetails.ok && snapshot.namedReadable && name.ok && cause.ok) {
+          // Only incidental diagnostics failed. Keep the independently readable verdict
+          // and details; copying must not invoke failing getters a second time.
           // An existing cause participates in retry classification. Preserve it unchanged,
           // including inherited/accessor causes, rather than attaching the original wrapper.
-          if (cause !== undefined) {
+          if (cause.value !== undefined) {
             Object.defineProperty(normalized, 'cause', {
-              value: cause,
+              value: cause.value,
               configurable: true,
               writable: true,
             });
           }
           return normalized;
         }
-        // Unreadable named fields leave attribution/retry semantics unknown. Retain the
-        // conservative endpoint-only fallback, without attaching an uninspectable cause.
+        // A known permanent/cancellation verdict needs no replay protection from unreadable
+        // details, name or cause. Retain it without a cause; use the endpoint-only fallback
+        // only if the repaired envelope could otherwise authorize another attempt.
+        if (!isRetryableError(normalized)) return normalized;
       }
       message = 'Error message unavailable';
     } else {

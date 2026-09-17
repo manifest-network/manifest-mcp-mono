@@ -600,3 +600,146 @@ describe('all cosmos attribution boundaries with real retry', () => {
     },
   );
 });
+
+describe('transaction evidence validation during diagnostic recovery', () => {
+  const hash = 'ab'.repeat(32);
+  const valid = {
+    sent: true,
+    partial: true,
+    transactionHash: hash,
+    code: 0,
+    height: '00042',
+    confirmed: false,
+    lease_uuid: 'lease-1',
+  };
+  const cases = [
+    { name: 'zero code and false confirmation', facts: valid, expected: valid },
+    {
+      name: 'invalid hash',
+      facts: { ...valid, transactionHash: 'x'.repeat(64) },
+      expected: {
+        sent: true,
+        partial: true,
+        code: 0,
+        height: '00042',
+        confirmed: false,
+        lease_uuid: 'lease-1',
+      },
+    },
+    {
+      name: 'truthy submission and partial markers',
+      facts: { ...valid, sent: 1, partial: 'yes' },
+      expected: { transactionHash: hash, lease_uuid: 'lease-1' },
+    },
+    {
+      name: 'negative code and non-digit height',
+      facts: {
+        ...valid,
+        code: -1,
+        height: '42x',
+        confirmed: 'yes',
+        lease_uuid: 42,
+      },
+      expected: { sent: true, partial: true, transactionHash: hash },
+    },
+    {
+      name: 'fractional code and empty height',
+      facts: { ...valid, code: 1.5, height: '' },
+      expected: {
+        sent: true,
+        partial: true,
+        transactionHash: hash,
+        confirmed: false,
+        lease_uuid: 'lease-1',
+      },
+    },
+    {
+      name: 'unsafe code and overlong height',
+      facts: {
+        ...valid,
+        code: Number.MAX_SAFE_INTEGER + 1,
+        height: '1'.repeat(21),
+      },
+      expected: {
+        sent: true,
+        partial: true,
+        transactionHash: hash,
+        confirmed: false,
+        lease_uuid: 'lease-1',
+      },
+    },
+  ];
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(getTxContextLoader).mockReturnValue(undefined);
+  });
+
+  it.each(cases)(
+    'retains only validated facts for $name',
+    async ({ facts, expected }) => {
+      const f = fixture();
+      const original = new ManifestMCPError(
+        ManifestMCPErrorCode.QUERY_FAILED,
+        'operation failed',
+        Object.defineProperty({ ...facts }, 'extra', {
+          enumerable: true,
+          get() {
+            throw new Error('unavailable');
+          },
+        }),
+      );
+      f.signAndBroadcast.mockRejectedValue(original);
+      const { error } = await cosmosTx(f.manager, 'billing', 'set-domain').then(
+        () => ({ error: undefined }),
+        (error: unknown) => ({ error }),
+      );
+      expect(error).toBeInstanceOf(ManifestMCPError);
+      expect((error as ManifestMCPError).code).toBe(
+        ManifestMCPErrorCode.TX_FAILED,
+      );
+      expect((error as ManifestMCPError).details).toStrictEqual({
+        ...expected,
+        module: 'billing',
+        subcommand: 'set-domain',
+        args: [],
+      });
+      const cause = Object.getOwnPropertyDescriptor(error, 'cause');
+      expect(cause?.value).toBe(original);
+      expect(cause?.enumerable).toBe(false);
+      expect(f.signAndBroadcast).toHaveBeenCalledOnce();
+    },
+  );
+
+  it('recovers validated own data when all ordinary SDK property reads throw', async () => {
+    const f = fixture();
+    const original = new Proxy(
+      new ManifestMCPError(
+        ManifestMCPErrorCode.QUERY_FAILED,
+        'operation failed',
+        valid,
+      ),
+      {
+        get() {
+          throw new Error('unavailable');
+        },
+      },
+    );
+    f.signAndBroadcast.mockRejectedValue(original);
+    const { error } = await cosmosTx(f.manager, 'billing', 'set-domain').then(
+      () => ({ error: undefined }),
+      (error: unknown) => ({ error }),
+    );
+    expect(error).toBeInstanceOf(ManifestMCPError);
+    expect((error as ManifestMCPError).details).toStrictEqual({
+      ...valid,
+      module: 'billing',
+      subcommand: 'set-domain',
+      args: [],
+    });
+    expect(Object.getOwnPropertyDescriptor(error, 'cause')?.value).toBe(
+      original,
+    );
+    expect(f.signAndBroadcast).toHaveBeenCalledOnce();
+  });
+});

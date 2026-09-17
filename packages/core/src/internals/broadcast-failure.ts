@@ -2,6 +2,7 @@ import { sha256 } from '@cosmjs/crypto';
 import { toHex } from '@cosmjs/encoding';
 import { SigningStargateClient, StargateClient } from '@cosmjs/stargate';
 import { ManifestMCPError, ManifestMCPErrorCode } from '../types.js';
+import { redactPossibleMnemonic } from './redact-mnemonic.js';
 import { isTransactionHash } from './transaction-hash.js';
 
 const nativeBroadcast = StargateClient.prototype.broadcastTx;
@@ -69,10 +70,14 @@ export function attributeBroadcastFailure(
 ): ManifestMCPError | null {
   if (!isOwnedBroadcastFailure(error)) return null;
   return Object.defineProperty(
-    new ManifestMCPError(error.code, `${messagePrefix}${error.message}`, {
-      ...error.details,
-      ...details,
-    }),
+    new ManifestMCPError(
+      error.code,
+      `${messagePrefix}${redactPossibleMnemonic(error.message)}`,
+      {
+        ...error.details,
+        ...details,
+      },
+    ),
     'cause',
     { value: error, configurable: true, writable: true },
   );

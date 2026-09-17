@@ -243,6 +243,8 @@ describe('CosmosClientManager', () => {
         const query = boundary === 'REST' || boundary === 'RPC';
         return {
           operation,
+          invoke: () =>
+            query ? manager.getQueryClient() : manager.getSigningClient(),
           pending: query
             ? manager.getQueryClient()
             : manager.getSigningClient(),
@@ -322,8 +324,8 @@ describe('CosmosClientManager', () => {
           create: () =>
             Object.defineProperty(
               new ManifestMCPError(
-                ManifestMCPErrorCode.INVALID_CONFIG,
-                'custom configuration error',
+                ManifestMCPErrorCode.QUERY_FAILED,
+                'fetch failed',
               ),
               property,
               {
@@ -344,8 +346,8 @@ describe('CosmosClientManager', () => {
           create: () =>
             Object.defineProperty(
               new ManifestMCPError(
-                ManifestMCPErrorCode.INVALID_CONFIG,
-                'custom configuration error',
+                ManifestMCPErrorCode.QUERY_FAILED,
+                'fetch failed',
               ),
               property,
               { value },
@@ -356,8 +358,8 @@ describe('CosmosClientManager', () => {
           create: () =>
             new Proxy(
               new ManifestMCPError(
-                ManifestMCPErrorCode.INVALID_CONFIG,
-                'custom configuration error',
+                ManifestMCPErrorCode.QUERY_FAILED,
+                'fetch failed',
               ),
               {
                 get(target, property, receiver) {
@@ -403,8 +405,8 @@ describe('CosmosClientManager', () => {
                       },
                     );
               return new ManifestMCPError(
-                ManifestMCPErrorCode.INVALID_CONFIG,
-                'custom configuration error',
+                ManifestMCPErrorCode.QUERY_FAILED,
+                'fetch failed',
                 details,
               );
             },
@@ -414,7 +416,7 @@ describe('CosmosClientManager', () => {
         'normalizes a $name at the connection boundary',
         async ({ create }) => {
           const { pending, operation, messagePrefix, details } =
-            failInitialization(create(), true);
+            failInitialization(create(), true, 0);
 
           await expectConnectionError(
             pending,
@@ -427,6 +429,173 @@ describe('CosmosClientManager', () => {
           );
         },
       );
+
+      it.each(['AbortError', 'TimeoutError', 'unreadable'])(
+        'does not turn a %s name into an outer connection retry',
+        async (name) => {
+          const original = new ManifestMCPError(
+            ManifestMCPErrorCode.QUERY_FAILED,
+            'fetch failed',
+            {
+              get extra() {
+                throw new Error('extra unavailable');
+              },
+            },
+          );
+          Object.defineProperty(
+            original,
+            'name',
+            name === 'unreadable'
+              ? {
+                  get() {
+                    throw new Error('name unavailable');
+                  },
+                }
+              : { value: name },
+          );
+          expect(isRetryableError(original)).toBe(false);
+          const { pending, invoke, operation, messagePrefix, details } =
+            failInitialization(original, true);
+          let attempts = 0;
+          const outer = withRetry<unknown>(
+            () => (++attempts === 1 ? pending : invoke()),
+            {
+              config: { maxRetries: 2, baseDelayMs: 0, maxDelayMs: 0 },
+            },
+          );
+          await outer.then(
+            () => {
+              throw new Error('Expected a terminal connection failure');
+            },
+            (error: unknown) => {
+              expect(error).toBeInstanceOf(ManifestMCPError);
+              const normalized = error as ManifestMCPError;
+              expect(normalized.code).toBe(
+                name === 'unreadable'
+                  ? ManifestMCPErrorCode.RPC_CONNECTION_FAILED
+                  : ManifestMCPErrorCode.QUERY_FAILED,
+              );
+              expect(normalized.message).toBe(
+                name === 'unreadable'
+                  ? `${messagePrefix}: Error message unavailable`
+                  : 'fetch failed',
+              );
+              expect(normalized.name).toBe(
+                name === 'unreadable' ? 'ManifestMCPError' : name,
+              );
+              expect(normalized.details).toStrictEqual(details);
+              expect('cause' in normalized).toBe(false);
+              expect(isRetryableError(normalized)).toBe(false);
+            },
+          );
+          expect(attempts).toBe(1);
+          expect(operation).toHaveBeenCalledOnce();
+        },
+      );
+
+      it.each(
+        [
+          ManifestMCPErrorCode.INVALID_CONFIG,
+          ManifestMCPErrorCode.OPERATION_CANCELLED,
+        ].flatMap((code) =>
+          ['module', 'partial', 'httpStatus', 'details', 'cause', 'name'].map(
+            (field) => ({ code, field }),
+          ),
+        ),
+      )(
+        'retains the terminal $code verdict when $field is unreadable',
+        async ({ code, field }) => {
+          const metadata = {
+            reason: 'keyfile locked',
+            expected: 'chain-a',
+            actual: 'chain-b',
+          };
+          const original = new ManifestMCPError(
+            code,
+            code === ManifestMCPErrorCode.OPERATION_CANCELLED
+              ? 'user cancelled'
+              : 'keyfile locked',
+            metadata,
+          );
+          const get = () => {
+            throw new Error(`${field} unavailable`);
+          };
+          if (field === 'details') {
+            Object.defineProperty(original, field, { get });
+          } else if (field === 'cause' || field === 'name') {
+            Object.defineProperty(original, field, { get });
+            Object.defineProperty(metadata, 'extra', { enumerable: true, get });
+          } else {
+            Object.defineProperty(metadata, field, { get });
+          }
+          const { pending, operation, details } = failInitialization(
+            original,
+            true,
+          );
+          await pending.then(
+            () => {
+              throw new Error('Expected a terminal SDK failure');
+            },
+            (error: unknown) => {
+              expect(error).toBeInstanceOf(ManifestMCPError);
+              const normalized = error as ManifestMCPError;
+              expect(normalized.code).toBe(code);
+              expect(normalized.message).toBe(original.message);
+              expect(normalized.details).toStrictEqual({
+                ...details,
+                ...(field === 'details'
+                  ? {}
+                  : {
+                      reason: 'keyfile locked',
+                      expected: 'chain-a',
+                      actual: 'chain-b',
+                    }),
+              });
+              expect('cause' in normalized).toBe(false);
+              expect(isRetryableError(normalized)).toBe(false);
+            },
+          );
+          expect(operation).toHaveBeenCalledOnce();
+          expect(withRetry).toHaveBeenCalledTimes(
+            boundary === 'wallet' ? 0 : 1,
+          );
+        },
+      );
+
+      it('retains independently readable details and caller endpoint precedence during repair', async () => {
+        const metadata = {
+          reason: 'wallet locked',
+          expected: 'chain-a',
+          actual: 'chain-b',
+          rpcUrl: 'https://supplied-rpc.example.com',
+          url: 'https://supplied-query.example.com',
+        };
+        const original = new ManifestMCPError(
+          ManifestMCPErrorCode.INVALID_CONFIG,
+          'keyfile locked',
+          Object.defineProperty({ ...metadata }, 'extra', {
+            enumerable: true,
+            get() {
+              throw new Error('extra unavailable');
+            },
+          }),
+        );
+        const { pending, operation } = failInitialization(original, true);
+        await pending.then(
+          () => {
+            throw new Error('Expected initialization to fail');
+          },
+          (error: unknown) => {
+            expect(error).toBeInstanceOf(ManifestMCPError);
+            const normalized = error as ManifestMCPError;
+            expect(normalized.code).toBe(ManifestMCPErrorCode.INVALID_CONFIG);
+            expect(normalized.message).toBe('keyfile locked');
+            expect(normalized.details).toStrictEqual(metadata);
+            expect('cause' in normalized).toBe(false);
+          },
+        );
+        expect(operation).toHaveBeenCalledOnce();
+      });
 
       it.each(['terminal', 'transient', 'getter', 'inherited'] as const)(
         'preserves an existing %s cause when repairing incidental details',

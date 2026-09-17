@@ -100,7 +100,11 @@ describe.each(['leases/active', 'leases/recent'])(
     it.each([
       {
         name: 'plain wallet rejection',
-        create: () => ({ code: 4001, message: 'User rejected the request.' }),
+        create: () => ({
+          code: 4001,
+          message: 'User rejected the request.',
+          data: { secret: 'not for the resource protocol' },
+        }),
         code: 4001,
         message: 'User rejected the request.',
       },
@@ -123,6 +127,41 @@ describe.each(['leases/active', 'leases/recent'])(
         },
         code: -32603,
         message: 'Wallet locked',
+      },
+      {
+        name: 'function without a message',
+        create: () =>
+          function leakySource() {
+            return 'SOURCE_TEXT_SECRET';
+          },
+        code: -32603,
+        message: 'Internal error',
+      },
+      {
+        name: 'class without a message',
+        create: () =>
+          class LeakySource {
+            secret = 'SOURCE_TEXT_SECRET';
+          },
+        code: -32603,
+        message: 'Internal error',
+      },
+      {
+        name: 'object without a message',
+        create: () => ({ code: 4001 }),
+        code: 4001,
+        message: 'Internal error',
+      },
+      {
+        name: 'function with protocol diagnostics',
+        create: () =>
+          Object.assign(() => 'SOURCE_TEXT_SECRET', {
+            code: 4001,
+            message: 'User rejected the request.',
+            data: { secret: 'not for the resource protocol' },
+          }),
+        code: 4001,
+        message: 'User rejected the request.',
       },
     ])(
       'preserves readable message from a $name',
@@ -206,6 +245,7 @@ async function expectResourceFailure(
         (error: unknown) => {
           expect(error).toMatchObject({ code: expectedCode });
           expect(error).toBeInstanceOf(Error);
+          expect((error as { data?: unknown }).data).toBeUndefined();
           const message = (error as Error).message;
           expect(message).toBe(`MCP error ${expectedCode}: ${expectedMessage}`);
           expect(message.length).toBeLessThan(2100);

@@ -38,6 +38,18 @@ diagnostics retain TX_FAILED. Preserve independently established terminal verdic
 Later restore POST/poll discrimination and terminal withContext remain in ENG-996;
 producer-side executeTx diagnostic replay joins timeout/faucet/LCD work in ENG-983.
 
+Further review requires retaining cancellation names and independently terminal
+connection verdicts despite failed detail/cause reads, while preserving readable
+detail fields and caller endpoint precedence. Failed-inspection Cosmos envelopes
+must remain non-retryable even when copied facts or causes contain transient
+signals; use a private identity marker rather than a new public error code.
+Malformed-code-only read normalization must not gain a retry-enabling cause; malformed SDK codes remain terminal to prevent fallback-code status promotion.
+Agent paid recovery uses its terminal fallback when a message is non-string or
+unreadable. Apply the existing mnemonic heuristic before Cosmos prefixes, keep
+resource function/class source out of responses, and pin data omission and each
+readiness diagnostic guard. Broader log hygiene remains ENG-271; readable paid
+outcome-veto preservation is ENG-1000, and cross-realm NotFound joins ENG-983.
+
 No dependency, compiler-target, public type, or grouped-error policy change is
 needed. AggregateError members remain outside the standard `.cause` traversal.
 

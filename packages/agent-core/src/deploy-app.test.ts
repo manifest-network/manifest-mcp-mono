@@ -5167,6 +5167,102 @@ describe('deployApp — retry_set_domain decomposition (ENG-185 sub-PR E)', () =
     },
   );
 
+  describe.each([
+    ['setItemCustomDomain', 'set-item-custom-domain'],
+    ['fetchActiveLease', 'failed to resolve provider'],
+    ['uploadLeaseData', 'manifest upload'],
+    ['pollLeaseUntilReady', 'pollLeaseUntilReady'],
+  ] as const)('%s malformed recovery diagnostics', (stage, operationName) => {
+    const messages = [
+      {
+        name: 'Symbol message',
+        expected: 'Symbol(fetch failed)',
+        property: () => ({ value: Symbol('fetch failed') }),
+      },
+      {
+        name: 'object message',
+        expected: 'fetch failed',
+        property: () => ({
+          value: {
+            toString: () => 'fetch failed',
+            toLowerCase: () => 'benign',
+          },
+        }),
+      },
+      {
+        name: 'throwing coercion with a transient classifier',
+        expected: 'Error message unavailable',
+        property: () => ({
+          value: {
+            toString() {
+              throw new Error('Cannot format message');
+            },
+            toLowerCase: () => 'fetch failed',
+          },
+        }),
+      },
+      {
+        name: 'message getter failing once before a transient value',
+        expected: 'Error message unavailable',
+        property: () => {
+          let reads = 0;
+          return {
+            get() {
+              if (reads++ === 0) throw new Error('Cannot read message');
+              return 'fetch failed';
+            },
+          };
+        },
+      },
+    ];
+    it.each(
+      [
+        ManifestMCPErrorCode.QUERY_FAILED,
+        ManifestMCPErrorCode.RPC_CONNECTION_FAILED,
+      ].flatMap((code) => messages.map((message) => ({ code, ...message }))),
+    )(
+      'stops paid replay for $code with $name',
+      async ({ code, expected, property }) => {
+        const original = Object.defineProperty(
+          new ManifestMCPError(code, 'recovery failed'),
+          'message',
+          property(),
+        );
+        const { run, leaseUuid } = await setupRetryScenario({
+          [stage]: vi.fn().mockRejectedValue(original),
+        });
+        const operation = vi.fn(async () => {
+          const { caughtErr, result } = await run();
+          if (caughtErr) throw caughtErr;
+          return result;
+        });
+        const onRetry = vi.fn();
+        const outcome = await withRetry(operation, {
+          config: { maxRetries: 2, baseDelayMs: 0, maxDelayMs: 0 },
+          onRetry,
+        }).then(
+          () => ({ error: undefined }),
+          (error: unknown) => ({ error }),
+        );
+        expect(operation).toHaveBeenCalledOnce();
+        expect(onRetry).not.toHaveBeenCalled();
+        const fred = await import('@manifest-network/manifest-mcp-fred');
+        expect(fred.deployApp).toHaveBeenCalledOnce();
+        expect(outcome.error).toBeInstanceOf(ManifestMCPError);
+        const error = outcome.error as ManifestMCPError;
+        expect(error.code).toBe(ManifestMCPErrorCode.TX_FAILED);
+        expect(error.message).toContain('retry_set_domain');
+        expect(error.message).toContain(operationName);
+        expect(error.message).toContain(leaseUuid);
+        expect(error.message.endsWith(`: ${expected}`)).toBe(true);
+        const cause = Object.getOwnPropertyDescriptor(error, 'cause');
+        expect(cause?.value).toBe(original);
+        expect(cause?.enumerable).toBe(false);
+        expect(isRetryableError(error)).toBe(false);
+      },
+    );
+  });
+
   it.each([
     {
       label: 'an absent state',

@@ -53,7 +53,10 @@ import {
 } from '@manifest-network/manifest-mcp-core/__test-utils__/mocks.js';
 import { unreadableErrors } from '../__test-utils__/unreadable-errors.js';
 import type { FredAuthCtx } from '../ctx.js';
-import { TerminalChainStateError } from '../http/fred.js';
+import {
+  LeaseReadinessUnconfirmedError,
+  TerminalChainStateError,
+} from '../http/fred.js';
 import { ProviderApiError } from '../http/provider.js';
 import { deployApp } from './deployApp.js';
 import { deployManifest } from './deployManifest.js';
@@ -1069,7 +1072,7 @@ describe('deployManifest', () => {
     );
   });
 
-  it.each(['kind', 'details'] as const)(
+  it.each(['kind'] as const)(
     'preserves a terminal verdict when unrelated %s inspection throws',
     async (field) => {
       const cm = makeMockClientManager({
@@ -1104,6 +1107,87 @@ describe('deployManifest', () => {
             },
           ),
         ).rejects.toBeInstanceOf(TerminalChainStateError);
+        expect(warn).not.toHaveBeenCalledWith(
+          expect.stringContaining('close_lease'),
+        );
+        expect(mockCosmosTx).toHaveBeenCalledOnce();
+      } finally {
+        warn.mockRestore();
+      }
+    },
+  );
+
+  it.each([
+    'details',
+    'reason',
+    'last_state',
+    'last_provision_status',
+  ] as const)(
+    'keeps unconfirmed lease recovery when %s cannot be read',
+    async (field) => {
+      const cm = makeMockClientManager({
+        queryClient: makeQueryClient(),
+        address: 'manifest1tenant',
+      });
+      const leaseUuid = '550e8400-e29b-41d4-a716-446655440000';
+      const failure = new LeaseReadinessUnconfirmedError({
+        leaseUuid,
+        reason: 'deadline',
+        timeoutMs: 100,
+        elapsedMs: 100,
+        lastState: LeaseState.LEASE_STATE_PENDING,
+        lastProvisionStatus: 'PROVISIONING',
+      });
+      const reads = vi.fn(() => {
+        throw new Error('unreadable poll diagnostic');
+      });
+      Object.defineProperty(
+        field === 'details' || field === 'reason' ? failure : failure.details,
+        field,
+        { get: reads },
+      );
+      const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+      try {
+        const result = await deployManifest(
+          await ctx(cm),
+          {
+            manifest: singleManifest(),
+            sku: { kind: 'byName', size: 'docker-micro' },
+          },
+          {
+            onLeaseCreated: () => {
+              throw failure;
+            },
+          },
+        ).then(
+          () => {
+            throw new Error('Expected unconfirmed readiness');
+          },
+          (error: unknown) => error as coreModule.ManifestMCPError,
+        );
+        expect(result).toBeInstanceOf(coreModule.ManifestMCPError);
+        expect(result.code).toBe(
+          ManifestMCPErrorCode.DEPLOY_READINESS_UNCONFIRMED,
+        );
+        expect(result.details).toMatchObject({
+          lease_uuid: leaseUuid,
+          partial: true,
+          readiness_unconfirmed: true,
+        });
+        expect(result.details?.poll_reason).toBe(
+          field === 'reason' ? undefined : 'deadline',
+        );
+        expect(result.details?.last_state).toBe(
+          field === 'details' || field === 'last_state'
+            ? undefined
+            : 'LEASE_STATE_PENDING',
+        );
+        expect(result.details?.last_provision_status).toBe(
+          field === 'details' || field === 'last_provision_status'
+            ? undefined
+            : 'PROVISIONING',
+        );
+        expect(reads).toHaveBeenCalled();
         expect(warn).not.toHaveBeenCalledWith(
           expect.stringContaining('close_lease'),
         );

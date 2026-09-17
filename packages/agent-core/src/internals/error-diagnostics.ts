@@ -1,6 +1,7 @@
 import {
   ManifestMCPError,
   type ManifestMCPErrorCode,
+  sanitizeForLogging,
 } from '@manifest-network/manifest-mcp-core';
 
 /** Read one diagnostic without letting injected accessors replace the outcome. */
@@ -41,12 +42,20 @@ export function contextualError(
   }
   let message: string;
   try {
-    message = error instanceof Error ? String(error.message) : String(error);
+    const rawMessage = error instanceof Error ? error.message : error;
+    if (typeof rawMessage !== 'string') unreadable = true;
+    message = String(rawMessage);
   } catch {
     unreadable = true;
     message = 'Error message unavailable';
   }
-  const contextual = new ManifestMCPError(code, `${prefix}${message}`);
+  // Diagnostic coercion can introduce transient text, and an inspection
+  // failure's cause can still look transient. Keep the caller's fallback
+  // verdict authoritative (TX_FAILED at paid recovery boundaries).
+  const contextual = new ManifestMCPError(
+    unreadable ? fallbackCode : code,
+    `${prefix}${sanitizeForLogging(message) as string}`,
+  );
   // Readable wrappers historically omitted cause/details. Retaining those can
   // expose nested transient signals and authorize replay of a paid deployment.
   return unreadable

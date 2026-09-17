@@ -25,6 +25,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **core, agent-core, fred:** preserve cancellation names and independently terminal connection verdicts when incidental diagnostics fail. Prevent malformed orchestration messages and normalized Cosmos read errors from introducing retries; retain safe connection details and endpoint precedence. Redact mnemonic-shaped Cosmos and agent diagnostics, including control-wrapped text, before adding operation prefixes. Resource errors no longer expose function/class source or message-less object coercions; regression tests pin omitted protocol data and readiness recovery fields. Pre-existing readable paid-operation replay remains tracked in ENG-1000. (ENG-953 review)
+
 - **core, sdk:** stop retry classification when inspecting a custom error or its standard cause chain throws. `withRetry` preserves the exact original rejection without retrying or calling `onRetry`, including with a zero retry budget. Readable cause-chain policy and transport ownership are unchanged. (ENG-953, ENG-805 follow-up)
 
 - **core:** validate client initialization diagnostics, including hidden named fields, wallet acquisition and failed string coercion. Readable SDK errors retain identity; unrelated detail failures preserve readable code/message and safe verdict/evidence fields. Other unreadable diagnostics produce `RPC_CONNECTION_FAILED` with exact endpoint details. Superseded signing cleanup diagnostics cannot replace the lifecycle verdict. (ENG-953 review)

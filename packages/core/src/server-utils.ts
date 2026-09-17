@@ -1,5 +1,7 @@
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { createValidatedConfig } from './config.js';
+import { redactPossibleMnemonic } from './internals/redact-mnemonic.js';
+import { stripTextControls } from './internals/text-controls.js';
 import { logger } from './logger.js';
 import {
   type ManifestMCPConfig,
@@ -177,18 +179,7 @@ export function sanitizeForLogging(obj: unknown, depth = 0): unknown {
   }
 
   if (typeof obj === 'string') {
-    // Redact strings that look like BIP-39 mnemonics (12/15/18/21/24 words).
-    // BIP-39 words are all lowercase alphabetic, so require that to avoid
-    // false positives on error messages that happen to be 12/24 words.
-    const words = obj.trim().split(/\s+/);
-    const wordCount = words.length;
-    if (wordCount >= 12 && wordCount <= 24 && wordCount % 3 === 0) {
-      const allLowercaseAlpha = words.every((w) => /^[a-z]+$/.test(w));
-      if (allLowercaseAlpha) {
-        return '[REDACTED - possible mnemonic]';
-      }
-    }
-    return obj;
+    return redactPossibleMnemonic(obj);
   }
 
   if (Array.isArray(obj)) {
@@ -305,11 +296,6 @@ export const MAX_TOOL_ERROR_MESSAGE_CHARS = 2000;
 /** Maximum serialized JSON text for the complete MCP error, including input/details. */
 export const MAX_TOOL_ERROR_RESPONSE_CHARS = 8000;
 
-// biome-ignore lint/suspicious/noControlCharactersInRegex: the purpose is to remove terminal CSI control sequences.
-const MODEL_ANSI_CSI = /(?:\u001b\[|\u009b)[0-?]*[ -/]*[@-~]/g;
-// biome-ignore lint/suspicious/noControlCharactersInRegex: the purpose is to remove terminal OSC control sequences.
-const MODEL_ANSI_OSC = /\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)/g;
-
 /**
  * Sanitize text for model context without flattening logs or diagnostic lines.
  * Removes terminal CSI/OSC sequences and other control/format characters, keeping
@@ -319,12 +305,7 @@ export function sanitizeForModelText(
   raw: string,
   maxLength = MAX_TOOL_ERROR_MESSAGE_CHARS,
 ): string {
-  const cleaned = raw
-    .replace(MODEL_ANSI_CSI, '')
-    .replace(MODEL_ANSI_OSC, '')
-    .replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, (ch) =>
-      ch === '\n' || ch === '\t' ? ch : '',
-    );
+  const cleaned = stripTextControls(raw);
   // Match the visible value too: terminal/bidi controls must not hide a mnemonic
   // from the redactor and then reveal it as a side effect of sanitization.
   return capLength(sanitizeForLogging(cleaned) as string, maxLength);

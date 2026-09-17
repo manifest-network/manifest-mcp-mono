@@ -3,11 +3,13 @@ import type { CosmosClientManager, ManifestQueryClient } from './client.js';
 import { DEFAULT_GAS_MULTIPLIER } from './config.js';
 import { attributeBroadcastFailure } from './internals/broadcast-failure.js';
 import { isNotFoundError } from './internals/classify-query-error.js';
+import { markErrorInspectionFailure } from './internals/error-inspection-failure.js';
 import {
   guardedField,
   readableTxEvidence,
   snapshotErrorDetails,
 } from './internals/guarded-error-fields.js';
+import { redactPossibleMnemonic } from './internals/redact-mnemonic.js';
 import {
   guardTxClient,
   type TxExecution,
@@ -142,7 +144,8 @@ function enrichOperationError(
     codeField?.ok && typeof codeField.value === 'string'
       ? (codeField.value as ManifestMCPErrorCode)
       : undefined;
-  if (sdk && sdkCode === undefined) unreadable = true;
+  const malformedCode = sdk && sdkCode === undefined && codeField?.ok === true;
+  if (sdk && sdkCode === undefined && !malformedCode) unreadable = true;
 
   let message = 'Error message unavailable';
   let rawMessage: unknown;
@@ -152,9 +155,9 @@ function enrichOperationError(
   } catch {
     unreadable = true;
   }
-  // Coercing an injected SDK message can introduce transient text that its
-  // original classifier never recognized. Transactions must remain terminal.
-  if (sdk && typeof rawMessage !== 'string') unreadable = true;
+  // Coercing a non-string message can introduce transient text that its
+  // original classifier never recognized. Normalization cannot authorize retries.
+  if (typeof rawMessage !== 'string') unreadable = true;
 
   const detailsField = sdk ? guardedField(error, 'details') : undefined;
   const snapshot = snapshotErrorDetails(
@@ -165,7 +168,7 @@ function enrichOperationError(
     ? snapshot.value
     : readableTxEvidence(error);
 
-  if (sdk && !unreadable) {
+  if (sdk && !unreadable && !malformedCode) {
     if (snapshot.module) return error as ManifestMCPError;
     return new ManifestMCPError(sdkCode ?? fallbackCode, message, {
       ...readableDetails,
@@ -181,13 +184,20 @@ function enrichOperationError(
       unreadable = true;
     }
   }
-  const normalized = new ManifestMCPError(code, `${prefix}${message}`, {
-    ...(sdk ? readableDetails : unreadable ? readableTxEvidence(error) : {}),
-    ...details,
-  });
+  const normalized = new ManifestMCPError(
+    code,
+    `${prefix}${redactPossibleMnemonic(message)}`,
+    {
+      ...(sdk ? readableDetails : unreadable ? readableTxEvidence(error) : {}),
+      ...details,
+    },
+  );
   // Adding causes to readable wrappers changes retry policy. Only retain the
   // original when its diagnostics forced this normalization.
-  if (unreadable) {
+  // Invalid SDK codes have no reliable retry contract either: changing one to
+  // QUERY_FAILED must not grant HTTP 408 or message-based retry permission.
+  if (unreadable || malformedCode) markErrorInspectionFailure(normalized);
+  if (unreadable || (options.transaction && malformedCode)) {
     Object.defineProperty(normalized, 'cause', {
       value: error,
       configurable: true,

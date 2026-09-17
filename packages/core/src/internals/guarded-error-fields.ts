@@ -76,6 +76,7 @@ const DETAIL_KEYS = [
 /** Validate consumer fields and spread fields once; salvage only machine facts on failure. */
 export function snapshotErrorDetails(details: unknown): {
   value: Record<string, unknown>;
+  safeValue: Record<string, unknown>;
   readable: boolean;
   namedReadable: boolean;
   module: unknown;
@@ -84,6 +85,7 @@ export function snapshotErrorDetails(details: unknown): {
   if (details == null)
     return {
       value: evidence,
+      safeValue: evidence,
       readable: true,
       namedReadable: true,
       module: undefined,
@@ -147,6 +149,7 @@ export function snapshotErrorDetails(details: unknown): {
   const module = named.get('module');
   return {
     value: readable ? value : evidence,
+    safeValue: readable ? value : { ...value, ...evidence },
     readable,
     namedReadable,
     module: module?.ok ? module.value : undefined,
