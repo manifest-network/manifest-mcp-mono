@@ -125,7 +125,7 @@ import { liftedinit } from '@manifest-network/manifestjs/dist/codegen/liftedinit
 import { CosmosClientManager } from './client.js';
 import { createLCDQueryClient } from './lcd-adapter.js';
 import { noopLogger } from './logger.js';
-import { withRetry } from './retry.js';
+import { isRetryableError, withRetry } from './retry.js';
 import type { ManifestMCPConfig, WalletProvider } from './types.js';
 
 const mockCreateLCDQueryClient = vi.mocked(createLCDQueryClient);
@@ -209,7 +209,11 @@ describe('CosmosClientManager', () => {
         vi.mocked(withRetry).mockImplementation((operation) => operation());
       });
 
-      function failInitialization(error: unknown, identityFetch = false) {
+      function failInitialization(
+        error: unknown,
+        identityFetch = false,
+        maxRetries = 2,
+      ) {
         const wallet = makeWallet();
         const getChainId = vi.fn().mockResolvedValue('test-chain');
         if (boundary === 'signing' && identityFetch) {
@@ -220,7 +224,7 @@ describe('CosmosClientManager', () => {
         }
         const config = makeConfig({
           restUrl: boundary === 'REST' ? 'https://lcd.example.com' : undefined,
-          retry: { maxRetries: 2, baseDelayMs: 0, maxDelayMs: 0 },
+          retry: { maxRetries, baseDelayMs: 0, maxDelayMs: 0 },
         });
         const operation =
           boundary === 'wallet'
@@ -367,35 +371,45 @@ describe('CosmosClientManager', () => {
               },
             ),
         },
-        {
-          name: 'SDK details entry getter',
-          create: () =>
-            new ManifestMCPError(
-              ManifestMCPErrorCode.INVALID_CONFIG,
-              'custom configuration error',
-              {
-                get source() {
-                  throw new Error('SDK details entry inspection failed');
-                },
-              },
-            ),
-        },
-        {
-          name: 'SDK details ownKeys trap',
-          create: () =>
-            new ManifestMCPError(
-              ManifestMCPErrorCode.INVALID_CONFIG,
-              'custom configuration error',
-              new Proxy(
-                {},
-                {
-                  ownKeys() {
-                    throw new Error('SDK details enumeration failed');
-                  },
-                },
-              ),
-            ),
-        },
+        ...[
+          'module',
+          'partial',
+          'sent',
+          'httpStatus',
+          'grpcCode',
+          'transportCode',
+        ].flatMap((property) =>
+          ['hidden getter', 'omitted proxy key'].map((kind) => ({
+            name: `SDK details ${property} ${kind}`,
+            create: () => {
+              const details =
+                kind === 'hidden getter'
+                  ? Object.defineProperty({}, property, {
+                      get() {
+                        throw new Error(`SDK ${property} inspection failed`);
+                      },
+                    })
+                  : new Proxy(
+                      {},
+                      {
+                        ownKeys: () => [],
+                        get(_target, key) {
+                          if (key === property) {
+                            throw new Error(
+                              `SDK ${property} inspection failed`,
+                            );
+                          }
+                        },
+                      },
+                    );
+              return new ManifestMCPError(
+                ManifestMCPErrorCode.INVALID_CONFIG,
+                'custom configuration error',
+                details,
+              );
+            },
+          })),
+        ),
       ])(
         'normalizes a $name at the connection boundary',
         async ({ create }) => {
@@ -406,6 +420,221 @@ describe('CosmosClientManager', () => {
             pending,
             `${messagePrefix}: Error message unavailable`,
             details,
+          );
+          expect(operation).toHaveBeenCalledOnce();
+          expect(withRetry).toHaveBeenCalledTimes(
+            boundary === 'wallet' ? 0 : 1,
+          );
+        },
+      );
+
+      it.each(['terminal', 'transient', 'getter', 'inherited'] as const)(
+        'preserves an existing %s cause when repairing incidental details',
+        async (kind) => {
+          const cause =
+            kind === 'transient'
+              ? new Error('ECONNRESET')
+              : new ManifestMCPError(
+                  ManifestMCPErrorCode.TX_FAILED,
+                  'do not replay',
+                );
+          const original = new ManifestMCPError(
+            ManifestMCPErrorCode.QUERY_FAILED,
+            kind === 'transient' ? 'query failed' : 'fetch failed',
+            {
+              get extra() {
+                throw new Error('extra diagnostic unavailable');
+              },
+            },
+          );
+          if (kind === 'inherited') {
+            Object.setPrototypeOf(
+              original,
+              Object.create(Object.getPrototypeOf(original), {
+                cause: { value: cause },
+              }),
+            );
+          } else {
+            Object.defineProperty(
+              original,
+              'cause',
+              kind === 'getter' ? { get: () => cause } : { value: cause },
+            );
+          }
+          const retryable = kind === 'transient';
+          expect(isRetryableError(original)).toBe(retryable);
+          const { pending, operation, details } = failInitialization(
+            original,
+            true,
+            retryable ? 0 : 2,
+          );
+          await pending.then(
+            () => {
+              throw new Error('Expected initialization to fail');
+            },
+            (error: unknown) => {
+              expect(error).toBeInstanceOf(ManifestMCPError);
+              const normalized = error as ManifestMCPError;
+              expect(normalized.code).toBe(ManifestMCPErrorCode.QUERY_FAILED);
+              expect(normalized.message).toBe(original.message);
+              expect(normalized.details).toStrictEqual(details);
+              const descriptor = Object.getOwnPropertyDescriptor(
+                normalized,
+                'cause',
+              );
+              expect(descriptor?.value === cause).toBe(true);
+              expect(descriptor?.enumerable).toBe(false);
+              expect(isRetryableError(normalized)).toBe(retryable);
+            },
+          );
+          expect(operation).toHaveBeenCalledOnce();
+          expect(withRetry).toHaveBeenCalledTimes(
+            boundary === 'wallet' ? 0 : 1,
+          );
+        },
+      );
+
+      it('uses the conservative endpoint fallback when an existing cause cannot be read during repair', async () => {
+        const original = Object.defineProperty(
+          new ManifestMCPError(
+            ManifestMCPErrorCode.QUERY_FAILED,
+            'fetch failed',
+            {
+              get extra() {
+                throw new Error('extra diagnostic unavailable');
+              },
+            },
+          ),
+          'cause',
+          {
+            get() {
+              throw new Error('cause unavailable');
+            },
+          },
+        );
+        const { pending, operation, messagePrefix, details } =
+          failInitialization(original, true);
+        await expectConnectionError(
+          pending,
+          `${messagePrefix}: Error message unavailable`,
+          details,
+        );
+        expect(operation).toHaveBeenCalledOnce();
+        expect(withRetry).toHaveBeenCalledTimes(boundary === 'wallet' ? 0 : 1);
+      });
+
+      it.each(['extra getter', 'ownKeys trap'])(
+        'preserves the SDK verdict when only details %s is unreadable',
+        async (kind) => {
+          const facts = { sent: true, transactionHash: 'A'.repeat(64) };
+          const details =
+            kind === 'extra getter'
+              ? Object.defineProperty({ ...facts }, 'extra', {
+                  enumerable: true,
+                  get() {
+                    throw new Error('extra diagnostic unavailable');
+                  },
+                })
+              : new Proxy(facts, {
+                  ownKeys() {
+                    throw new Error('details enumeration unavailable');
+                  },
+                });
+          const original = new ManifestMCPError(
+            ManifestMCPErrorCode.INVALID_CONFIG,
+            'keyfile locked',
+            details,
+          );
+          const {
+            pending,
+            operation,
+            details: endpoint,
+          } = failInitialization(original, true);
+
+          await pending.then(
+            () => {
+              throw new Error('Expected initialization to fail');
+            },
+            (error: unknown) => {
+              expect(error).toBeInstanceOf(ManifestMCPError);
+              expect(error === original).toBe(false);
+              const normalized = error as ManifestMCPError;
+              expect(normalized.code).toBe(ManifestMCPErrorCode.INVALID_CONFIG);
+              expect(normalized.message).toBe('keyfile locked');
+              expect(normalized.details).toStrictEqual({
+                ...facts,
+                ...endpoint,
+              });
+              expect('cause' in normalized).toBe(false);
+            },
+          );
+          expect(operation).toHaveBeenCalledOnce();
+          expect(withRetry).toHaveBeenCalledTimes(
+            boundary === 'wallet' ? 0 : 1,
+          );
+        },
+      );
+
+      it.each([
+        { name: 'HTTP 403', status: { httpStatus: 403 } },
+        { name: 'gRPC 2', status: { httpStatus: 500, grpcCode: 2 } },
+        {
+          name: 'HTTP 403 getter',
+          status: {
+            get httpStatus() {
+              return 403;
+            },
+          },
+        },
+        {
+          name: 'submitted getter',
+          status: {
+            get sent() {
+              return true;
+            },
+          },
+        },
+        {
+          name: 'partial getter',
+          status: {
+            get partial() {
+              return true;
+            },
+          },
+        },
+      ])(
+        'retains terminal $name when other details cannot be enumerated',
+        async ({ status }) => {
+          const original = new ManifestMCPError(
+            ManifestMCPErrorCode.QUERY_FAILED,
+            'fetch failed',
+            new Proxy(status, {
+              ownKeys() {
+                throw new Error('details enumeration unavailable');
+              },
+            }),
+          );
+          expect(isRetryableError(original)).toBe(false);
+          const { pending, operation, details } = failInitialization(
+            original,
+            true,
+          );
+          await pending.then(
+            () => {
+              throw new Error('Expected initialization to fail');
+            },
+            (error: unknown) => {
+              expect(error).toBeInstanceOf(ManifestMCPError);
+              const normalized = error as ManifestMCPError;
+              expect(normalized.code).toBe(ManifestMCPErrorCode.QUERY_FAILED);
+              expect(normalized.message).toBe('fetch failed');
+              expect(normalized.details).toStrictEqual({
+                ...status,
+                ...details,
+              });
+              expect(isRetryableError(normalized)).toBe(false);
+              expect('cause' in normalized).toBe(false);
+            },
           );
           expect(operation).toHaveBeenCalledOnce();
           expect(withRetry).toHaveBeenCalledTimes(

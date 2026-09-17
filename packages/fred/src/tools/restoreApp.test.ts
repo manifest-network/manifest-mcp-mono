@@ -445,6 +445,41 @@ describe('restoreApp', () => {
     expect(mockCosmosTx).not.toHaveBeenCalled();
   });
 
+  it('retains rollback context when the pre-POST token failure has an unreadable message', async () => {
+    mockSource();
+    const ctx = makeCtx();
+    const failure = Object.defineProperty(
+      new Error('wallet unavailable'),
+      'message',
+      {
+        get() {
+          throw new Error('message inspection failed');
+        },
+      },
+    );
+    vi.mocked(ctx.providerAuth.providerToken)
+      .mockResolvedValueOnce('source-token')
+      .mockRejectedValueOnce(failure);
+    await expect(
+      restoreApp(
+        ctx,
+        { address: 'a', sourceLeaseUuid: SOURCE },
+        { pollOptions: false },
+      ),
+    ).rejects.toMatchObject({
+      code: ManifestMCPErrorCode.RESTORE_REJECTED,
+      message: expect.stringContaining('Error message unavailable'),
+      details: {
+        lease_uuid: NEW,
+        source_lease_uuid: SOURCE,
+        adoption_status: 'not_adopted',
+        rolled_back: true,
+      },
+    });
+    expect(mockCosmosTx).toHaveBeenCalledOnce();
+    expect(urls()).toEqual(['provision']);
+  });
+
   it.each([false, true])(
     'token failure before POST is known not adopted (cancel fails: %s)',
     async (cancelFails) => {

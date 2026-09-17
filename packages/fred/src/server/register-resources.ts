@@ -20,6 +20,19 @@ interface RegisterResourcesDeps {
   walletProvider: WalletProvider;
 }
 
+/** Preserve message-shaped wallet and cross-realm failures without exposing getters. */
+function resourceErrorMessage(error: unknown): string {
+  try {
+    if (error !== null && typeof error === 'object') {
+      const message = Reflect.get(error, 'message');
+      if (typeof message === 'string') return message;
+    }
+  } catch {
+    return 'Error message unavailable';
+  }
+  return errorMessageOf(error);
+}
+
 /** MCP itself reads rejected errors while constructing JSON-RPC responses. */
 function readableResourceFailure(
   read: ReadResourceCallback,
@@ -29,7 +42,9 @@ function readableResourceFailure(
       return await read(...args);
     } catch (error) {
       // A fresh plain Error keeps hostile code/message accessors out of the protocol.
-      const normalized = new Error(sanitizeForModelText(errorMessageOf(error)));
+      const normalized = new Error(
+        sanitizeForModelText(resourceErrorMessage(error)),
+      );
       try {
         const code =
           error != null && typeof error === 'object'

@@ -210,4 +210,63 @@ describe('retried failures at the MCP boundary', () => {
       log.mockRestore();
     }
   });
+
+  it.each([
+    {
+      name: 'readable Error',
+      create: () => new Error('details unavailable'),
+      reason: 'details unavailable',
+    },
+    {
+      name: 'readable string',
+      create: () => 'details unavailable',
+      reason: 'details unavailable',
+    },
+    {
+      name: 'mnemonic',
+      create: () => new Error(Array(12).fill('abandon').join(' ')),
+      reason: '[REDACTED - possible mnemonic]',
+    },
+    {
+      name: 'revoked proxy',
+      create: revokedProxy,
+      reason: 'Error message unavailable',
+    },
+    {
+      name: 'getter throwing a revoked proxy',
+      create: () =>
+        unreadableProperty(new Error('secondary'), 'message', revokedProxy()),
+      reason: 'Error message unavailable',
+    },
+  ])(
+    'safely logs the serialization fallback reason for a $name',
+    async ({ create, reason }) => {
+      const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const original = unreadableProperty(sdkError(), 'details', create());
+      const handler = withErrorHandling<() => Promise<CallToolResult>>(
+        'probe',
+        async () => {
+          throw original;
+        },
+      );
+      try {
+        const result = await handler();
+        const text = (result.content[0] as { text: string }).text;
+        expect(JSON.parse(text)).toStrictEqual({
+          error: true,
+          tool: 'probe',
+          code: 'QUERY_FAILED',
+          message: 'query failed',
+          truncated: true,
+        });
+        expect(log).toHaveBeenCalledWith(
+          '[ERROR]',
+          `[probe] Failed to serialize error response: ${reason}`,
+        );
+        expect(text.length).toBeLessThanOrEqual(MAX_TOOL_ERROR_RESPONSE_CHARS);
+      } finally {
+        log.mockRestore();
+      }
+    },
+  );
 });

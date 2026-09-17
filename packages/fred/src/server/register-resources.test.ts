@@ -1,3 +1,4 @@
+import { runInNewContext } from 'node:vm';
 import {
   CosmosClientManager,
   withRetry,
@@ -33,7 +34,12 @@ describe.each(['leases/active', 'leases/recent', 'providers'])(
         },
       );
       try {
-        await expectResourceFailure(path, manager, wallet);
+        await expectResourceFailure(
+          path,
+          manager,
+          wallet,
+          'Failed to connect to REST endpoint: Error message unavailable',
+        );
         expect(fetches).toBe(1);
       } finally {
         manager.disconnect();
@@ -41,7 +47,7 @@ describe.each(['leases/active', 'leases/recent', 'providers'])(
     });
     it.each(unreadableErrors)(
       'answers a retried $name without an MCP timeout',
-      async ({ create }) => {
+      async ({ create, name }) => {
         const error = create();
         let attempts = 0;
         const manager = makeSealedClientManager({
@@ -58,7 +64,14 @@ describe.each(['leases/active', 'leases/recent', 'providers'])(
             ),
           ),
         });
-        await expectResourceFailure(path, manager, makeMockWallet());
+        await expectResourceFailure(
+          path,
+          manager,
+          makeMockWallet(),
+          name.includes('message') || name === 'revoked proxy'
+            ? 'Error message unavailable'
+            : 'fetch failed',
+        );
         expect(attempts).toBe(1);
       },
     );
@@ -81,8 +94,56 @@ describe.each(['leases/active', 'leases/recent'])(
           getQueryClient: vi.fn().mockResolvedValue({}),
         }),
         wallet,
+        'fetch failed',
       );
     });
+    it.each([
+      {
+        name: 'plain wallet rejection',
+        create: () => ({ code: 4001, message: 'User rejected the request.' }),
+        code: 4001,
+        message: 'User rejected the request.',
+      },
+      {
+        name: 'cross-realm Error',
+        create: () => runInNewContext("new Error('Wallet locked')") as unknown,
+        code: -32603,
+        message: 'Wallet locked',
+      },
+      {
+        name: 'code getter throwing a revoked proxy',
+        create: () => {
+          const { proxy, revoke } = Proxy.revocable({}, {});
+          revoke();
+          return Object.defineProperty(new Error('Wallet locked'), 'code', {
+            get() {
+              throw proxy;
+            },
+          });
+        },
+        code: -32603,
+        message: 'Wallet locked',
+      },
+    ])(
+      'preserves readable message from a $name',
+      async ({ create, code, message }) => {
+        const wallet = makeMockWallet();
+        const failure = create();
+        wallet.getAddress = async () => {
+          throw failure;
+        };
+        await expectResourceFailure(
+          path,
+          makeSealedClientManager({
+            acquireRateLimit: vi.fn().mockResolvedValue(undefined),
+            getQueryClient: vi.fn().mockResolvedValue({}),
+          }),
+          wallet,
+          message,
+          code,
+        );
+      },
+    );
     it('preserves readable numeric protocol codes', async () => {
       const wallet = makeMockWallet();
       wallet.getAddress = async () => {
@@ -97,6 +158,7 @@ describe.each(['leases/active', 'leases/recent'])(
           getQueryClient: vi.fn().mockResolvedValue({}),
         }),
         wallet,
+        'Invalid wallet request',
         -32602,
       );
     });
@@ -112,6 +174,7 @@ describe.each(['leases/active', 'leases/recent'])(
           getQueryClient: vi.fn().mockResolvedValue({}),
         }),
         wallet,
+        `GETTER${'x'.repeat(1994)}…`,
       );
     });
   },
@@ -121,6 +184,7 @@ async function expectResourceFailure(
   path: string,
   clientManager: CosmosClientManager,
   walletProvider: ReturnType<typeof makeMockWallet>,
+  expectedMessage: string,
   expectedCode = -32603,
 ) {
   const server = new McpServer({ name: 'resource-error-test', version: '1' });
@@ -143,6 +207,7 @@ async function expectResourceFailure(
           expect(error).toMatchObject({ code: expectedCode });
           expect(error).toBeInstanceOf(Error);
           const message = (error as Error).message;
+          expect(message).toBe(`MCP error ${expectedCode}: ${expectedMessage}`);
           expect(message.length).toBeLessThan(2100);
           expect(message).not.toContain('\u001b');
           expect(message).not.toContain('\u0007');

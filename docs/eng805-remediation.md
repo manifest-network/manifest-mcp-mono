@@ -1228,3 +1228,43 @@ and 21 core/agent attribution failures. Reverting only the resource wrapper with
 the fixed core fails 16 of 27 resource cases; traversal reordering fails all five
 outer-verdict cases while 21 controls pass. Fresh CI/live acceptance is recorded
 on PR #233 and ENG-953.
+
+
+## PR #233 review: preserve readable verdicts and independent evidence (2026-09-17)
+
+[Claude's review of `fece70b`](https://github.com/manifest-network/manifest-mcp-mono/pull/233#issuecomment-5715197207)
+reproduced the prior validation claims, then exposed additional diagnostic-field
+and retry-policy regressions. The preceding sections record those earlier revisions;
+the contract below supersedes their broader recovery and replay claims.
+
+| Finding | Resolution and evidence | Confidence |
+| --- | --- | --- |
+| Adding a cause to readable orchestration errors authorizes whole-deployment replay | Attach the original only when code/reflection/message inspection throws. Real `withRetry` around `deployApp` asserts one orchestration attempt for HTTP 503 and gRPC 14/4, plus permanent controls. Paid deployment primitives are mocked; these are orchestration-attempt assertions, not live broadcast measurements. | 100% reproduction; 99% correction |
+| Transaction fallback loses readable text and submission facts | Shared guarded readers preserve text independently and salvage validated own-data sent/hash/receipt/partial/lease fields without invoking evidence accessors. Malformed tx code/message and unreadable diagnostics retain permanent TX_FAILED, exact operation details and a hidden original cause. | 100% reproduction; 98% correction |
+| Connection spread checks skip hidden consumer fields and lose readable verdicts on incidental failure | Validate module/partial/sent/HTTP/gRPC/transport fields by name; unreadable named fields retain the endpoint-only fallback. Incidental failures preserve code/message, safe facts and an existing readable cause, including terminal status/partial/submission vetoes. No original wrapper is added as a cause. | 100% reproduction; 98% correction |
+| Direct query, estimate and build-context enrichers still throw while inspecting failures | Use one guarded enrichment helper across all four Cosmos paths. Exact envelopes and hidden causes survive; readable NOT_FOUND, SDK identity and transient retry controls remain covered. | 100% reproduction; 98% correction |
+| Resource normalization loses plain-object/cross-realm message text | Prefer a safely read string message; preserve numeric protocol codes and exact bounded/sanitized text. Code getters throwing revoked proxies are exercised through actual MCP requests. | 100% reproduction; 99% correction |
+| An unrelated diagnostic failure erases an established terminal deployment verdict | Read each deploy diagnostic independently. Terminal kind/details getter cases preserve terminal guidance; known later withContext failures are tracked separately. | 100% reproduction; 98% correction |
+| Serialization fallback logging drops readable failure reasons | Safely extract and sanitize the serialization error message; unreadable secondary errors retain a fixed fallback. | 100% reproduction; 99% correction |
+| New guards lacked observable regressions | Isolated mutations fail for resource code protection (2), exact resource messages (4), restore pre-POST message protection (1), terminal deploy discrimination (1), agent readiness/code guards (5), and serialization-reason guards (3). | 100% |
+| executeTx still synthesizes retries from diagnostic failures | A sealed broadcast probe reproduces four calls with a three-retry budget. Runtime predates this PR; remove the inaccurate mirror comment and add explicit acceptance criteria to [ENG-983](https://linear.app/liftedinit/issue/ENG-983). | 100% mechanism; 98% scope |
+| Restore/terminal documentation promises more than the guarded paths provide | Narrow docs to guarded deploy diagnostics and restore pre-POST/compensation formatting. [ENG-996](https://linear.app/liftedinit/issue/ENG-996) owns restore POST/poll discrimination and terminal withContext, with independently reproduced helper failures. | 100% mechanism; 97% scope |
+
+Additional review controls catch evaluation of unrelated non-enumerable detail
+getters and promotion of hidden/inherited transient fields into readable wrappers.
+Only named consumer fields are read unconditionally; complete snapshots preserve
+ordinary spread semantics. Safe existing cause/status/positive submission and
+partial verdicts survive incidental detail failures. No dependency, public type or grouped-error policy changes are
+needed. Arbitrary state-changing accessors and recursively hostile diagnostics
+remain outside the shallow snapshot contract.
+
+Final local validation passes **4,458 tests / 17 existing skips / 190 files**, with
+no type errors and all coverage floors: **85.23% lines / 84.96% statements /
+85.05% branches / 88.72% functions**. Fresh workspace builds (including
+publint/attw), workspace/E2E types, schema, Biome, architecture, all nine package
+integrity checks and all four unchanged bundle budgets pass. The final focused
+core/client run passes 433 tests across eight files. All 215 client tests pass;
+92 fail against the prior client implementation, with 123 controls passing.
+Independent review reproduced and verified the hidden-status correction, with no
+further blocker found (97% confidence). Fresh PR-head CI/live acceptance is
+recorded on PR #233 and ENG-953.

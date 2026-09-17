@@ -44,6 +44,7 @@ import {
   verifyRestChainIdentity,
   verifyRpcChainIdentity,
 } from './internals/chain-identity.js';
+import { snapshotErrorDetails } from './internals/guarded-error-fields.js';
 import {
   type SequenceCache,
   sequencedSigningClient,
@@ -93,12 +94,33 @@ function connectionError(
   let message: string;
   try {
     if (error instanceof ManifestMCPError) {
-      // An SDK prototype does not guarantee readable diagnostics (custom wallets/fetches can
-      // supply getters or proxies). Consumers attribute these fields and spread details.
+      // Consumers read named status/attribution fields as well as enumerable details. A
+      // hidden getter must not escape merely because spreading the object skipped it.
       const { code, message: sdkMessage, details: sdkDetails } = error;
       if (typeof code === 'string' && typeof sdkMessage === 'string') {
-        if (sdkDetails != null) void { ...sdkDetails };
-        return error;
+        const snapshot = snapshotErrorDetails(sdkDetails);
+        if (snapshot.readable) return error;
+        if (snapshot.namedReadable) {
+          // Only incidental diagnostics failed. Keep the established verdict and any
+          // own-data recovery evidence; copying must not invoke failing getters again.
+          const cause = Reflect.get(error, 'cause');
+          const normalized = new ManifestMCPError(code, sdkMessage, {
+            ...snapshot.value,
+            ...details,
+          });
+          // An existing cause participates in retry classification. Preserve it unchanged,
+          // including inherited/accessor causes, rather than attaching the original wrapper.
+          if (cause !== undefined) {
+            Object.defineProperty(normalized, 'cause', {
+              value: cause,
+              configurable: true,
+              writable: true,
+            });
+          }
+          return normalized;
+        }
+        // Unreadable named fields leave attribution/retry semantics unknown. Retain the
+        // conservative endpoint-only fallback, without attaching an uninspectable cause.
       }
       message = 'Error message unavailable';
     } else {

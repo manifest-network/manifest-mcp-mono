@@ -4,6 +4,11 @@ import { DEFAULT_GAS_MULTIPLIER } from './config.js';
 import { attributeBroadcastFailure } from './internals/broadcast-failure.js';
 import { isNotFoundError } from './internals/classify-query-error.js';
 import {
+  guardedField,
+  readableTxEvidence,
+  snapshotErrorDetails,
+} from './internals/guarded-error-fields.js';
+import {
   guardTxClient,
   type TxExecution,
   withTxExecution,
@@ -105,22 +110,91 @@ function validateName(
   }
 }
 
-/**
- * The branch every `enrich*` below duplicates: a `ManifestMCPError` that already
- * carries a `module` is final (no double-enrichment); one without is re-wrapped
- * preserving its code + details. Returns `null` when the thrown value is not ours,
- * so each caller can apply its own fallback classification.
- */
-function attributeManifestError(
+/** Preserve readable attribution; contain each diagnostic failure independently. */
+function enrichOperationError(
   error: unknown,
+  prefix: string,
   details: Record<string, unknown>,
-): ManifestMCPError | null {
-  if (!(error instanceof ManifestMCPError)) return null;
-  if (error.details?.module) return error;
-  return new ManifestMCPError(error.code, error.message, {
-    ...error.details,
+  fallbackCode: ManifestMCPErrorCode,
+  options: {
+    transaction?: boolean;
+    classifyRaw?: (error: unknown) => ManifestMCPErrorCode;
+  } = {},
+): ManifestMCPError {
+  let unreadable = false;
+  if (options.transaction) {
+    try {
+      const owned = attributeBroadcastFailure(error, prefix, details);
+      if (owned) return owned;
+    } catch {
+      unreadable = true;
+    }
+  }
+
+  let sdk = false;
+  try {
+    sdk = error instanceof ManifestMCPError;
+  } catch {
+    unreadable = true;
+  }
+  const codeField = sdk ? guardedField(error, 'code') : undefined;
+  const sdkCode =
+    codeField?.ok && typeof codeField.value === 'string'
+      ? (codeField.value as ManifestMCPErrorCode)
+      : undefined;
+  if (sdk && sdkCode === undefined) unreadable = true;
+
+  let message = 'Error message unavailable';
+  let rawMessage: unknown;
+  try {
+    rawMessage = error instanceof Error ? error.message : String(error);
+    message = String(rawMessage);
+  } catch {
+    unreadable = true;
+  }
+  // Coercing an injected SDK message can introduce transient text that its
+  // original classifier never recognized. Transactions must remain terminal.
+  if (sdk && typeof rawMessage !== 'string') unreadable = true;
+
+  const detailsField = sdk ? guardedField(error, 'details') : undefined;
+  const snapshot = snapshotErrorDetails(
+    detailsField?.ok ? detailsField.value : undefined,
+  );
+  if (sdk && (!detailsField?.ok || !snapshot.readable)) unreadable = true;
+  const readableDetails = detailsField?.ok
+    ? snapshot.value
+    : readableTxEvidence(error);
+
+  if (sdk && !unreadable) {
+    if (snapshot.module) return error as ManifestMCPError;
+    return new ManifestMCPError(sdkCode ?? fallbackCode, message, {
+      ...readableDetails,
+      ...details,
+    });
+  }
+
+  let code = options.transaction ? fallbackCode : (sdkCode ?? fallbackCode);
+  if (!sdk && options.classifyRaw) {
+    try {
+      code = options.classifyRaw(error);
+    } catch {
+      unreadable = true;
+    }
+  }
+  const normalized = new ManifestMCPError(code, `${prefix}${message}`, {
+    ...(sdk ? readableDetails : unreadable ? readableTxEvidence(error) : {}),
     ...details,
   });
+  // Adding causes to readable wrappers changes retry policy. Only retain the
+  // original when its diagnostics forced this normalization.
+  if (unreadable) {
+    Object.defineProperty(normalized, 'cause', {
+      value: error,
+      configurable: true,
+      writable: true,
+    });
+  }
+  return normalized;
 }
 
 /** Attribute a query-leg failure. Raw throws classify as NOT_FOUND or QUERY_FAILED. */
@@ -129,18 +203,17 @@ function enrichQueryError(
   module: string,
   subcommand: string,
 ): ManifestMCPError {
-  return (
-    attributeManifestError(error, { module, subcommand }) ??
-    // The RPC leg throws plain Errors — classify so the generic query path
-    // yields NOT_FOUND on BOTH transports (the LCD leg already arrives as a
-    // structured ManifestMCPError and is preserved above). ENG-536.
-    new ManifestMCPError(
-      isNotFoundError(error)
-        ? ManifestMCPErrorCode.NOT_FOUND
-        : ManifestMCPErrorCode.QUERY_FAILED,
-      `Query ${module} ${subcommand} failed: ${error instanceof Error ? error.message : String(error)}`,
-      { module, subcommand },
-    )
+  return enrichOperationError(
+    error,
+    `Query ${module} ${subcommand} failed: `,
+    { module, subcommand },
+    ManifestMCPErrorCode.QUERY_FAILED,
+    {
+      classifyRaw: (raw) =>
+        isNotFoundError(raw)
+          ? ManifestMCPErrorCode.NOT_FOUND
+          : ManifestMCPErrorCode.QUERY_FAILED,
+    },
   );
 }
 
@@ -150,15 +223,11 @@ function enrichBuildContextError(
   module: string,
   subcommand: string,
 ): ManifestMCPError {
-  return (
-    attributeManifestError(error, { module, subcommand }) ??
-    new ManifestMCPError(
-      ManifestMCPErrorCode.QUERY_FAILED,
-      `Failed to load build context for ${module} ${subcommand}: ${
-        error instanceof Error ? error.message : String(error)
-      }`,
-      { module, subcommand },
-    )
+  return enrichOperationError(
+    error,
+    `Failed to load build context for ${module} ${subcommand}: `,
+    { module, subcommand },
+    ManifestMCPErrorCode.QUERY_FAILED,
   );
 }
 
@@ -225,82 +294,34 @@ export async function cosmosQuery(
   );
 }
 
-/**
- * Attribute a tx-leg failure with `{module, subcommand, args}`. A `ManifestMCPError`
- * with readable diagnostics that already carries a `module` is returned untouched;
- * one without is re-wrapped preserving its code + details; any other thrown value
- * is wrapped as `TX_FAILED` (a NON_RETRYABLE code — so `withRetry` cannot re-broadcast
- * a submitted tx on a raw transient error, guarding against double-spend). Unreadable
- * attribution receives the same permanent fallback, retaining its original cause.
- */
+/** Attribute a tx failure, retaining submission facts and forbidding malformed-error replay. */
 function enrichTxError(
   error: unknown,
   module: string,
   subcommand: string,
   args: string[],
 ): ManifestMCPError {
-  const details = { module, subcommand, args };
-  const prefix = `Tx ${module} ${subcommand} failed: `;
-  try {
-    const attributed =
-      attributeBroadcastFailure(error, prefix, details) ??
-      attributeManifestError(error, details);
-    if (attributed) {
-      // An already-attributed SDK error may come from an injected signer.
-      // Validate the fields consumers read before letting it leave the ladder.
-      const code = attributed.code;
-      const rawMessage = attributed.message;
-      const message = String(rawMessage);
-      const attributedDetails = attributed.details;
-      if (attributedDetails != null) void { ...attributedDetails };
-      if (typeof code !== 'string') throw new Error('Unreadable error code');
-      if (typeof rawMessage !== 'string') {
-        return Object.defineProperty(
-          new ManifestMCPError(code, message, attributedDetails),
-          'cause',
-          { value: error, configurable: true, writable: true },
-        );
-      }
-      return attributed;
-    }
-    return new ManifestMCPError(
-      ManifestMCPErrorCode.TX_FAILED,
-      `${prefix}${error instanceof Error ? String(error.message) : String(error)}`,
-      details,
-    );
-  } catch {
-    // Diagnostic failures cannot replace this transaction's context or make
-    // an unknown submission retryable. Retain the original only as a cause.
-    return Object.defineProperty(
-      new ManifestMCPError(
-        ManifestMCPErrorCode.TX_FAILED,
-        `${prefix}Error message unavailable`,
-        details,
-      ),
-      'cause',
-      { value: error, configurable: true, writable: true },
-    );
-  }
+  return enrichOperationError(
+    error,
+    `Tx ${module} ${subcommand} failed: `,
+    { module, subcommand, args },
+    ManifestMCPErrorCode.TX_FAILED,
+    { transaction: true },
+  );
 }
 
-/** Attribute an estimate-leg failure. Raw throws classify as SIMULATION_FAILED. */
+/** Attribute an estimate failure; readable transient simulation errors still retry. */
 function enrichEstimateError(
   error: unknown,
   module: string,
   subcommand: string,
   args: string[],
 ): ManifestMCPError {
-  return (
-    attributeManifestError(error, { module, subcommand, args }) ??
-    // SIMULATION_FAILED is NOT in NON_RETRYABLE_ERROR_CODES, so withRetry
-    // will fall through to isTransientErrorMessage for message-based
-    // classification. Transient errors (network/5xx) get retried; real
-    // simulation failures (insufficient funds, etc) fail fast.
-    new ManifestMCPError(
-      ManifestMCPErrorCode.SIMULATION_FAILED,
-      `Fee estimation for ${module} ${subcommand} failed: ${error instanceof Error ? error.message : String(error)}`,
-      { module, subcommand, args },
-    )
+  return enrichOperationError(
+    error,
+    `Fee estimation for ${module} ${subcommand} failed: `,
+    { module, subcommand, args },
+    ManifestMCPErrorCode.SIMULATION_FAILED,
   );
 }
 

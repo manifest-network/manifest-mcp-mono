@@ -20,17 +20,23 @@ producer-side diagnostic inspection before those helpers remains separate.
 Connection catches receiving the preserved error also need guarded SDK-error
 discrimination and message extraction. Normalize other failures to the existing
 `RPC_CONNECTION_FAILED` envelope with endpoint details, using a fixed fallback
-when diagnostics cannot be read. SDK errors retain identity only with readable string code/message and shallow details.
+when diagnostics cannot be read. SDK errors retain identity only with readable string code/message and shallow details, including named consumer fields. Incidental detail failures preserve readable code/message, safe evidence and an existing readable cause; unreadable named fields retain the endpoint-only fallback.
 Cover REST/RPC initialization and signing connection with the real retry helper,
 and wallet signer acquisition separately before retry. Pin the outer-verdict short-circuit with zero cause
 accesses so a conservative catch cannot hide an ordering regression.
 
 Review also requires following preserved rejections through all downstream catches.
-Guard MCP tool and resource responses, transaction attribution, post-lease deploy
-and restore recovery, and orchestration diagnostics. Preserve known submission,
+Guard MCP tool and resource responses, all four Cosmos attribution paths, post-lease deploy
+diagnostics, restore pre-POST/compensation formatting, and orchestration diagnostics. Preserve known submission,
 partial-success and lease evidence; never authorize replay because diagnostics
 are unreadable. Pin exact connection error classes/details/no-cause, Symbol
-coercion, and all outer-verdict branches with executable regressions.
+coercion, and all outer-verdict branches with executable regressions. Readable
+orchestration wrappers must not gain a cause or expose new transient signals.
+Recover safe own-data receipt fields without invoking accessors; malformed tx
+diagnostics retain TX_FAILED. Preserve independently established terminal verdicts.
+
+Later restore POST/poll discrimination and terminal withContext remain in ENG-996;
+producer-side executeTx diagnostic replay joins timeout/faucet/LCD work in ENG-983.
 
 No dependency, compiler-target, public type, or grouped-error policy change is
 needed. AggregateError members remain outside the standard `.cause` traversal.

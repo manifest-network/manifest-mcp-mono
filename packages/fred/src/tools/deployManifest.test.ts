@@ -1069,6 +1069,51 @@ describe('deployManifest', () => {
     );
   });
 
+  it.each(['kind', 'details'] as const)(
+    'preserves a terminal verdict when unrelated %s inspection throws',
+    async (field) => {
+      const cm = makeMockClientManager({
+        queryClient: makeQueryClient(),
+        address: 'manifest1tenant',
+      });
+      const failure = Object.defineProperty(
+        new TerminalChainStateError(
+          '550e8400-e29b-41d4-a716-446655440000',
+          'closed',
+        ),
+        field,
+        {
+          get() {
+            throw new Error('unreadable diagnostic');
+          },
+        },
+      );
+      const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+      try {
+        await expect(
+          deployManifest(
+            await ctx(cm),
+            {
+              manifest: singleManifest(),
+              sku: { kind: 'byName', size: 'docker-micro' },
+            },
+            {
+              onLeaseCreated: () => {
+                throw failure;
+              },
+            },
+          ),
+        ).rejects.toBeInstanceOf(TerminalChainStateError);
+        expect(warn).not.toHaveBeenCalledWith(
+          expect.stringContaining('close_lease'),
+        );
+        expect(mockCosmosTx).toHaveBeenCalledOnce();
+      } finally {
+        warn.mockRestore();
+      }
+    },
+  );
+
   it('TerminalChainStateError surfaces lease_uuid', async () => {
     const cm = makeMockClientManager({
       queryClient: makeQueryClient(),

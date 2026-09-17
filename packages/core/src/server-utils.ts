@@ -545,6 +545,14 @@ export interface ManifestMCPServerOptions {
   walletProvider: WalletProvider;
 }
 
+function readErrorMessage(error: unknown): string {
+  try {
+    return error instanceof Error ? String(error.message) : String(error);
+  } catch {
+    return 'Error message unavailable';
+  }
+}
+
 /**
  * Wrap a tool handler with error handling that preserves the existing error format.
  *
@@ -564,13 +572,7 @@ export function withErrorHandling<
     try {
       return hasArgs ? await fn(args, cbArgs[1]) : await fn(cbArgs[0]);
     } catch (error) {
-      let errorMessage: string;
-      try {
-        errorMessage =
-          error instanceof Error ? String(error.message) : String(error);
-      } catch {
-        errorMessage = 'Error message unavailable';
-      }
+      const errorMessage = readErrorMessage(error);
       // Rejections can be proxies or expose throwing accessors. Inspect SDK
       // metadata once and retain only a successfully read string for logging
       // and either response path.
@@ -617,9 +619,12 @@ export function withErrorHandling<
           sdkError ? errorCode : undefined,
           sdkError?.details,
         );
-      } catch {
+      } catch (stringifyError) {
         // Even the inspection failure may itself be a revoked proxy.
-        logger.error(`[${toolName}] Failed to serialize error response:`);
+        const reason = sanitizeForLogging(readErrorMessage(stringifyError));
+        logger.error(
+          `[${toolName}] Failed to serialize error response: ${reason}`,
+        );
         const state: ErrorProjectionState = {
           truncated: true,
           nodes: 0,

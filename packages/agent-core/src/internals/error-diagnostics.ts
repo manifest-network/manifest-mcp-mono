@@ -29,6 +29,7 @@ export function contextualError(
   prefix: string,
 ): ManifestMCPError {
   let code = fallbackCode;
+  let unreadable = false;
   try {
     if (error instanceof ManifestMCPError) {
       const originalCode = error.code;
@@ -36,10 +37,23 @@ export function contextualError(
     }
   } catch {
     // The supplied fallback remains authoritative when attribution is unreadable.
+    unreadable = true;
   }
-  return Object.defineProperty(
-    new ManifestMCPError(code, `${prefix}${diagnosticMessage(error)}`),
-    'cause',
-    { value: error, configurable: true, writable: true },
-  );
+  let message: string;
+  try {
+    message = error instanceof Error ? String(error.message) : String(error);
+  } catch {
+    unreadable = true;
+    message = 'Error message unavailable';
+  }
+  const contextual = new ManifestMCPError(code, `${prefix}${message}`);
+  // Readable wrappers historically omitted cause/details. Retaining those can
+  // expose nested transient signals and authorize replay of a paid deployment.
+  return unreadable
+    ? Object.defineProperty(contextual, 'cause', {
+        value: error,
+        configurable: true,
+        writable: true,
+      })
+    : contextual;
 }

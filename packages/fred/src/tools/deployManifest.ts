@@ -16,7 +16,7 @@ import {
   setItemCustomDomain,
 } from '@manifest-network/manifest-mcp-core';
 import type { FredAuthCtx } from '../ctx.js';
-import { errorMessageOf } from '../error-diagnostics.js';
+import { errorMessageOf, readDiagnostic } from '../error-diagnostics.js';
 import type { FredLeaseStatus, PollOptions } from '../http/fred.js';
 import {
   LeaseReadinessUnconfirmedError,
@@ -83,48 +83,50 @@ export interface DeployManifestOptions {
 /** Snapshot fallible diagnostics before constructing the paid-lease recovery envelope. */
 function deployFailure(error: unknown) {
   const message = errorMessageOf(error);
-  try {
-    const terminal =
-      error instanceof TerminalChainStateError ? error : undefined;
-    const unconfirmed = error instanceof LeaseReadinessUnconfirmedError;
-    const pollVerdict =
-      ProviderApiError.isProviderApiError(error) &&
-      error.kind === 'poll_verdict';
-    const sdk = error instanceof ManifestMCPError;
-    const code = sdk ? error.code : ManifestMCPErrorCode.QUERY_FAILED;
-    const details = sdk ? { ...error.details } : undefined;
-    const pollDetails = unconfirmed
-      ? {
-          poll_reason: error.reason,
-          ...(error.details.last_state !== undefined && {
-            last_state: error.details.last_state,
-          }),
-          ...(error.details.last_provision_status !== undefined && {
-            last_provision_status: error.details.last_provision_status,
-          }),
-        }
-      : {};
-    return {
-      message,
-      terminal,
-      unconfirmed,
-      pollVerdict,
-      code,
-      details,
-      pollDetails,
-    };
-  } catch {
-    // The lease is known to exist even when none of the rejection can be inspected.
-    return {
-      message,
-      terminal: undefined,
-      unconfirmed: false,
-      pollVerdict: false,
-      code: ManifestMCPErrorCode.QUERY_FAILED,
-      details: undefined,
-      pollDetails: {},
-    };
-  }
+  const terminal = readDiagnostic(() =>
+    error instanceof TerminalChainStateError ? error : undefined,
+  );
+  const unconfirmed = readDiagnostic(() =>
+    error instanceof LeaseReadinessUnconfirmedError ? error : undefined,
+  );
+  const pollVerdict =
+    readDiagnostic(
+      () =>
+        ProviderApiError.isProviderApiError(error) &&
+        error.kind === 'poll_verdict',
+    ) === true;
+  const sdk = readDiagnostic(() =>
+    error instanceof ManifestMCPError ? error : undefined,
+  );
+  const candidateCode = readDiagnostic(() => sdk?.code);
+  const code =
+    typeof candidateCode === 'string'
+      ? candidateCode
+      : ManifestMCPErrorCode.QUERY_FAILED;
+  const details = readDiagnostic(() => (sdk ? { ...sdk.details } : undefined));
+  const pollReason = readDiagnostic(() => unconfirmed?.reason);
+  const lastState = readDiagnostic(() => unconfirmed?.details.last_state);
+  const lastProvisionStatus = readDiagnostic(
+    () => unconfirmed?.details.last_provision_status,
+  );
+  const pollDetails = unconfirmed
+    ? {
+        ...(pollReason !== undefined && { poll_reason: pollReason }),
+        ...(lastState !== undefined && { last_state: lastState }),
+        ...(lastProvisionStatus !== undefined && {
+          last_provision_status: lastProvisionStatus,
+        }),
+      }
+    : {};
+  return {
+    message,
+    terminal,
+    unconfirmed: unconfirmed !== undefined,
+    pollVerdict,
+    code,
+    details,
+    pollDetails,
+  };
 }
 
 export async function deployManifest(
