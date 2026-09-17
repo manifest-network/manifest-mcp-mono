@@ -2,6 +2,13 @@ import { describe, expect, it } from 'vitest';
 import { stripTextControls } from './text-controls.js';
 
 describe('stripTextControls', () => {
+  it('preserves printable ASCII and diagnostic layout across large bodies', () => {
+    const value = `${Array.from({ length: 95 }, (_, index) =>
+      String.fromCharCode(index + 32),
+    ).join('')}\t\n`.repeat(10_000);
+    expect(stripTextControls(value)).toBe(value);
+  });
+
   it('matches Unicode control categories for every code point, except preserved tabs and newlines', () => {
     for (let start = 0; start <= 0x10ffff; start += 4096) {
       const text = String.fromCodePoint(

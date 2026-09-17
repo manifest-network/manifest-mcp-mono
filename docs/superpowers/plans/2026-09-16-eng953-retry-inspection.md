@@ -61,6 +61,19 @@ the original secret or inventing status metadata. Redaction coverage is limited
 to Cosmos/owned-broadcast attribution and agent contextualError; other prefixes,
 MCP response/notification sinks and embedded-secret handling remain ENG-271.
 
+Separate failed-inspection permanence from repaired readable context. Preserve a
+non-retryable repair's cancellation name and existing cause through attribution using
+standard cause traversal: ordinary non-transient text is not a permanent veto on an
+enclosing error, and an outer owned deadline can still own a nested cancellation.
+Keep actual failed-inspection provenance conservative, but do not treat an unreadable
+attribution-only field as a classifier failure. Already-retryable repairs retain
+their prior cause omission at Cosmos attribution. Test own-data status
+salvage when a proxy rejects reads but exposes a data descriptor. Optimize
+mnemonic checks without broadening the detection set or rescanning unchanged
+text; control stripping only deletes text, so fewer than twelve original words
+cannot become a mnemonic candidate. Non-Error causes and duplicate core copies
+do not carry the same guarantees; keep those limits explicit in the guide.
+
 No dependency, compiler-target, public type, or grouped-error policy change is
 needed. AggregateError members remain outside the standard `.cause` traversal.
 

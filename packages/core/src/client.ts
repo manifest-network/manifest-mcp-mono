@@ -59,6 +59,7 @@ import type { ManifestQueryClient } from './manifest-query-client.js';
 import { abortableSleep, abortReason } from './options.js';
 import {
   isRetryableError,
+  preserveRepairedErrorContext,
   preserveRetryVerdicts,
   retryInspectionFails,
   withRetry,
@@ -142,17 +143,21 @@ function connectionError(
               writable: true,
             });
           }
-          // Attribution may rebuild this envelope without its name or cause.
-          // Carry a terminal verdict through that later normalization as well.
+          // Preserve a non-retryable repair's name/cause without making it a permanent
+          // veto on enclosing transport errors. Already-retryable errors keep the
+          // established attribution behavior, which omits their existing causes.
           if (!isRetryableError(normalized))
-            markErrorInspectionFailure(normalized);
+            preserveRepairedErrorContext(normalized);
           return normalized;
         }
         // A known permanent/cancellation verdict needs no replay protection from unreadable
         // details, name or cause. Retain it without a cause; use the endpoint-only fallback
         // only if the repaired envelope could otherwise authorize another attempt.
         if (!isRetryableError(normalized)) {
-          markErrorInspectionFailure(normalized);
+          // A field irrelevant to the classifier (for example, module) can fail
+          // without making the independently readable retry verdict permanent.
+          if (inspectionFailed) markErrorInspectionFailure(normalized);
+          else preserveRepairedErrorContext(normalized);
           return normalized;
         }
       }

@@ -1164,7 +1164,7 @@ connection catches must safely handle the unreadable value now preserved by
 
 | Finding | Disposition and evidence | Confidence |
 | --- | --- | --- |
-| Connection catches throw while discriminating or formatting the preserved error | A module-local normalizer guards SDK-error discrimination and message/string extraction. Other failures retain RPC_CONNECTION_FAILED and existing endpoint details; recognized SDK errors retain identity. Twelve hostile-input cases fail against `4ce59ea`; six restore main behavior (message/proxy × REST/RPC/signing), while wallet and throwing-coercion cases add normalization. All 83 client tests pass; the 16 added rows cover real retry for REST/RPC/signing and wallet acquisition before retry. | 100% reproduction; 99% correction |
+| Connection catches throw while discriminating or formatting the preserved error | A module-local normalizer guards SDK-error discrimination and message/string extraction. Other failures retain RPC_CONNECTION_FAILED and existing endpoint details; recognized SDK errors retained identity at this revision. Later review tightened identity pass-through to readable code/message/details and successful retry inspection, including errors surfaced by Fred client factories. Twelve hostile-input cases fail against `4ce59ea`; six restore main behavior (message/proxy × REST/RPC/signing), while wallet and throwing-coercion cases add normalization. All 83 client tests pass; the 16 added rows cover real retry for REST/RPC/signing and wallet acquisition before retry. | 100% reproduction; 99% correction |
 | A false verdict alone no longer proves terminal errors skip cause inspection | Three tests assert zero cause reads for permanent, submitted and partial outer verdicts. An isolated mutation moving traversal first fails all three, while 21 controls pass. | 100% |
 | The initial reproduction count omitted the last added regression | Correct the historical `4ce59ea` count to 19 failures / 2 controls out of 21 core cases. An archive copy with the original classifier reproduces it; the original three SDK failures remain accurate for that revision. | 100% |
 | Producer and MCP diagnostic inspection can still replace original failures | Producer/direct-MCP failures were reproduced and initially grouped in [ENG-983](https://linear.app/liftedinit/issue/ENG-983). The next review established that retry-fed MCP failures are PR regressions; those are fixed here, and ENG-983 retains producer-side work. | 100% mechanism; 98% scope |
@@ -1356,3 +1356,67 @@ TypeScript, schema, Biome, architecture, all nine package-integrity checks and a
 four unchanged SDK bundle budgets pass. The initial sandbox run could not spawn
 required subprocesses or bind the local WebSocket test server; the unrestricted
 rerun passes. Fresh PR-head CI/live acceptance is recorded on PR #233 and ENG-953.
+
+
+## PR #233 review: diagnostic performance and nested retry context (2026-09-17)
+
+[Claude's review of `e4a7e8d`](https://github.com/manifest-network/manifest-mcp-mono/pull/233#issuecomment-5720548174)
+reports no blockers and confirms the previous fixes. This follow-up addresses the
+two recommended corrections and records the smaller contract/coverage notes.
+
+| Finding | Resolution and evidence | Confidence |
+| --- | --- | --- |
+| Large ordinary strings incur repeated redaction work | Reuse the raw tokenization; fewer than twelve words cannot gain words through deletion. Skip Unicode control scans for printable ASCII/layout and skip mnemonic rescanning when stripping changes nothing. Preserve raw-whitespace and control-stripped detection, including OSC removal that reduces more than 24 words to 12. A 3,038-case equivalence matrix, large ASCII/Unicode corpus, exhaustive control-category comparison and actual stderr/tool-response cases pass. | 100% reproduced overhead; 99% semantics; 98% measured performance |
+| Merely non-retryable repairs become permanent causes | Separate readable repair context from failed-inspection provenance. Only non-retryable repairs enroll for cancellation-name/existing-cause transfer through Cosmos. Ordinary messages can inherit enclosing transient/owned-deadline context; native cancellation ordering and permanent/submitted/partial verdicts stay intact. Already-retryable repairs retain prior attribution cause omission. An unreadable attribution-only field does not imply a failed classifier inspection. | 100% reproduction; 99% correction |
+| Fred factory identity wording is too broad | Document that both Fred factories delegate to the core connection contract, which preserves identity only after successful diagnostic/retry inspection. Correct the historical broad claim; no Fred runtime change is needed. | 100% delegation and wording |
+| Own-data HTTP salvage is unpinned | Add one real identity-fetch → connection → Cosmos case with a throwing-get proxy over own HTTP 403. It retains QUERY_FAILED, the message, 403 and endpoint/operation context after one attempt. Removing only the descriptor fallback in an isolated copy fails those assertions. | 100% mutation evidence; 99% test adequacy |
+| Non-Error contextual causes do not restore vetoes | Clarify that only the supported standard Error chain carries retry verdicts. Built probes confirm raw string/object false → contextual true despite a hidden cause. Extend existing ENG-983's thrown-value scope; do not change that pre-existing policy in one wrapper. | 100% mechanism; 99% scope |
+| Non-whitespace controls used as mnemonic separators | Add the zero-width/bidi/NUL/NEL cases to existing ENG-271 and state the limit in the guide. Ten built-helper probes reproduce the gap; this optimization keeps the existing redaction set. A space-mapping candidate needs separate false-positive review. | 100% current mechanism; 98% pre-existing scope |
+| Private provenance does not cross core copies | Document one shared resolved core instance and the limits of duplicate installations or cloning/serialization. An isolated second physical dist copy classifies a malformed-code query envelope as retryable while the producing copy rejects it. No public marker or type is added. | 100% reproduced duplicate-copy mechanism; 99% guidance |
+
+Balanced local benchmarks use Node 24.15, source-transpiled sanitizer functions,
+the same built dependencies, nine interleaved samples of ten calls, and GC
+outside timed samples. For approximately 1 MiB inputs, `sanitizeForLogging`
+median milliseconds per call are:
+
+| Input | main `5a49cd4` | `e4a7e8d` | Current |
+| --- | ---: | ---: | ---: |
+| Base64 | 0.049 | 1.824 | 0.051 |
+| Compact JSON | 0.051 | 2.147 | 0.052 |
+| ASCII prose | 8.055 | 18.001 | 8.543 |
+| Unicode prose | 8.219 | 27.540 | 22.807 |
+
+These measurements establish the improvement on the sampled inputs, not a
+universal latency guarantee. Unicode prose still pays for the control scan;
+there is no blanket main-parity claim and no timing threshold in unit tests.
+ENG-271/983/996/1000 retain the documented remaining redaction, producer,
+restore/terminal and paid-operation scope. Arbitrary state-changing accessors
+and grouped-error traversal remain outside this shallow-inspection contract.
+
+
+Retry validation passes **563 focused tests**, including **88 new cases**; the
+exact prior `e4a7e8d` baseline fails **40** of the new cases. Isolated mutations
+fail for enrollment (44), cancellation-name copying (24), existing-cause copying
+(12), provenance transfer (36), genuine inspection failure (12), later transfer
+failure (8), the already-retryable enrollment guard (4), and fallback permanence
+(20). No existing assertions were weakened.
+
+Independent sealed main/prior/current source comparisons use the same built
+dependencies and real manager → Cosmos → `withRetry`, with injected transport
+calls rather than network or broadcasts. Four transient-only cause shapes remain
+at one outer attempt, ordinary errors under transient wrappers and native aborts
+under owned deadlines recover the main three-attempt behavior, and permanent
+cause/status controls stay at one. The descriptor-salvage regression also passes
+normally and fails under its isolated mutation. Independent final review found
+no further issue in these branches (98% scope confidence); redaction validation
+passes **191 tests**. Focused counts overlap full-suite validation.
+
+
+Full validation passes **5,022 tests / 17 existing skips / 197 files**, with no
+type errors. Coverage floors pass: **85.36% lines / 85.10% statements / 85.29%
+branches / 88.81% functions**. Workspace builds (publint/attw), final core rebuild,
+workspace/E2E types, schema, Biome, architecture, all nine package-integrity checks
+and all four unchanged SDK bundle budgets pass. The first full run identified
+four ES2020 type incompatibilities; those are corrected and the complete rerun
+passes without changing the compiler target. Fresh PR-head CI/live acceptance
+results are recorded on PR #233 and ENG-953.

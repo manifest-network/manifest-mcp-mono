@@ -156,6 +156,17 @@ const redactedMessageVerdicts = new WeakMap<
   { displayMessage: string; permanent: boolean; transient: boolean }
 >();
 
+// A non-retryable repair is not necessarily permanent. Keep only the provenance
+// needed to carry its readable cancellation name and existing cause through later
+// attribution using the standard error-chain rules. Already-retryable repairs
+// retain the established attribution behavior, without copying their causes.
+const repairedErrorContexts = new WeakSet<Error>();
+
+/** Internal: retain readable context for a non-retryable diagnostic repair. */
+export function preserveRepairedErrorContext(error: Error): void {
+  repairedErrorContexts.add(error);
+}
+
 /** Internal: preserve the existing text policy before a boundary redacts it. */
 export function preserveRetryMessageVerdict(
   error: Error,
@@ -182,6 +193,25 @@ export function preserveRetryVerdicts(source: Error, target: Error): void {
   if (isErrorInspectionFailure(source)) markErrorInspectionFailure(target);
   const messageVerdicts = redactedMessageVerdicts.get(source);
   if (messageVerdicts) redactedMessageVerdicts.set(target, messageVerdicts);
+  if (repairedErrorContexts.has(source)) {
+    repairedErrorContexts.add(target);
+    try {
+      const name = source.name;
+      if (name === 'AbortError' || name === 'TimeoutError') target.name = name;
+      const cause = (source as Error & { cause?: unknown }).cause;
+      if (cause !== undefined) {
+        Object.defineProperty(target, 'cause', {
+          value: cause,
+          configurable: true,
+          writable: true,
+        });
+      }
+    } catch {
+      // A consumer may replace previously repaired fields with hostile getters.
+      // Failed inspection still vetoes retries through any enclosing error.
+      markErrorInspectionFailure(target);
+    }
+  }
 }
 
 function errorCode(error: Error): string {

@@ -7,9 +7,13 @@ const ANSI_OSC = /\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)/g;
 const TEXT_CONTROLS =
   // biome-ignore lint/suspicious/noControlCharactersInRegex: strip controls except diagnostic tabs and newlines.
   /[\u0000-\u0008\u000b-\u001f\u007f-\u009f\p{Cf}\p{Zl}\p{Zp}]/gu;
+// Most diagnostics are printable ASCII plus layout. Avoid Unicode-category
+// scans on large ordinary strings; all other code units take the full path.
+const NEEDS_CONTROL_SCAN = /[^\t\n\u0020-\u007e]/;
 
 /** Remove terminal/format controls while preserving diagnostic newlines and tabs. */
 export function stripTextControls(raw: string): string {
+  if (!raw.match(NEEDS_CONTROL_SCAN)) return raw;
   return raw
     .replace(ANSI_CSI, '')
     .replace(ANSI_OSC, '')

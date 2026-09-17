@@ -107,6 +107,13 @@ vi.mock('./lcd-adapter.js', () => ({
   createLCDQueryClient: vi.fn().mockResolvedValue({ mock: 'lcdClient' }),
 }));
 
+vi.mock('./modules.js', () => ({
+  getQueryHandler: vi.fn(),
+  getTxHandler: vi.fn(),
+  getTxContextLoader: vi.fn(),
+  getTxMsgBuilder: vi.fn(),
+}));
+
 vi.mock('./retry.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./retry.js')>();
   return {
@@ -123,6 +130,7 @@ import { SigningStargateClient } from '@cosmjs/stargate';
 import { cosmwasm as cosmwasmNs } from '@manifest-network/manifestjs/dist/codegen/cosmwasm/bundle.js';
 import { liftedinit } from '@manifest-network/manifestjs/dist/codegen/liftedinit/bundle.js';
 import { CosmosClientManager } from './client.js';
+import { cosmosQuery } from './cosmos.js';
 import { createLCDQueryClient } from './lcd-adapter.js';
 import { noopLogger } from './logger.js';
 import { isRetryableError, withRetry } from './retry.js';
@@ -691,6 +699,310 @@ describe('CosmosClientManager', () => {
         expect(operation).toHaveBeenCalledOnce();
         expect(withRetry).toHaveBeenCalledTimes(boundary === 'wallet' ? 0 : 1);
       });
+
+      it.each([
+        { kind: 'ordinary', standalone: false, transient: true, owned: true },
+        {
+          kind: 'AbortError',
+          standalone: false,
+          transient: false,
+          owned: true,
+        },
+        {
+          kind: 'TimeoutError',
+          standalone: false,
+          transient: false,
+          owned: true,
+        },
+        {
+          kind: 'abort cause',
+          standalone: false,
+          transient: false,
+          owned: true,
+        },
+        {
+          kind: 'timeout cause',
+          standalone: false,
+          transient: false,
+          owned: true,
+        },
+        {
+          kind: 'permanent code',
+          standalone: false,
+          transient: false,
+          owned: false,
+        },
+        {
+          kind: 'permanent cause',
+          standalone: false,
+          transient: false,
+          owned: false,
+        },
+        {
+          kind: 'transient cause',
+          standalone: true,
+          transient: true,
+          owned: true,
+        },
+        { kind: 'HTTP 503', standalone: true, transient: true, owned: true },
+        { kind: 'gRPC 14', standalone: true, transient: true, owned: true },
+        { kind: 'HTTP 403', standalone: false, transient: false, owned: false },
+        { kind: 'gRPC 2', standalone: false, transient: false, owned: false },
+        {
+          kind: 'unreadable status',
+          standalone: false,
+          transient: false,
+          owned: false,
+        },
+        {
+          kind: 'unreadable name',
+          standalone: false,
+          transient: false,
+          owned: false,
+        },
+        {
+          kind: 'unreadable cause',
+          standalone: false,
+          transient: false,
+          owned: false,
+        },
+        {
+          kind: 'module getter',
+          standalone: false,
+          transient: true,
+          owned: true,
+        },
+        {
+          kind: 'AbortError module getter',
+          standalone: false,
+          transient: false,
+          owned: true,
+        },
+        {
+          kind: 'TimeoutError module getter',
+          standalone: false,
+          transient: false,
+          owned: true,
+        },
+        {
+          kind: 'AbortError transport getter',
+          standalone: false,
+          transient: false,
+          owned: true,
+        },
+        {
+          kind: 'TimeoutError transport getter',
+          standalone: false,
+          transient: false,
+          owned: true,
+        },
+      ])(
+        'preserves nested retry semantics for a repaired $kind envelope through Cosmos attribution',
+        async ({ kind, standalone, transient, owned }) => {
+          const facts: Record<string, unknown> = {
+            get extra() {
+              throw new Error('incidental diagnostic unavailable');
+            },
+          };
+          if (kind.startsWith('HTTP '))
+            facts.httpStatus = Number(kind.slice(5));
+          if (kind.startsWith('gRPC ')) facts.grpcCode = Number(kind.slice(5));
+          const original = new ManifestMCPError(
+            kind === 'permanent code'
+              ? ManifestMCPErrorCode.INVALID_CONFIG
+              : ManifestMCPErrorCode.RPC_CONNECTION_FAILED,
+            'connection ended',
+            facts,
+          );
+          if (kind === 'AbortError' || kind === 'TimeoutError')
+            original.name = kind;
+          if (kind.endsWith(' getter')) {
+            Object.defineProperty(
+              facts,
+              kind.endsWith('module getter') ? 'module' : 'transportCode',
+              {
+                get() {
+                  throw new Error('unused diagnostic unavailable');
+                },
+              },
+            );
+            if (kind.startsWith('AbortError')) original.name = 'AbortError';
+            if (kind.startsWith('TimeoutError')) original.name = 'TimeoutError';
+          }
+          if (kind.endsWith(' cause') && kind !== 'unreadable cause') {
+            Object.defineProperty(original, 'cause', {
+              value:
+                kind === 'permanent cause'
+                  ? new ManifestMCPError(
+                      ManifestMCPErrorCode.TX_FAILED,
+                      'reconcile',
+                    )
+                  : kind === 'transient cause'
+                    ? new Error('ECONNRESET')
+                    : new DOMException(
+                        'operation ended',
+                        kind === 'abort cause' ? 'AbortError' : 'TimeoutError',
+                      ),
+            });
+          }
+          if (kind.startsWith('unreadable ')) {
+            Object.defineProperty(
+              kind === 'unreadable status' ? facts : original,
+              kind === 'unreadable status' ? 'httpStatus' : kind.slice(11),
+              {
+                get() {
+                  throw new Error('retry diagnostic unavailable');
+                },
+              },
+            );
+          }
+          const envelopes = (error: Error, afterAttribution = false) => [
+            {
+              error,
+              // Attribution historically drops an already-retryable connection
+              // error's cause. Repairing unrelated details must not add retries.
+              retryable:
+                kind === 'transient cause' && afterAttribution
+                  ? false
+                  : standalone,
+            },
+            {
+              error: Object.defineProperty(new Error('fetch failed'), 'cause', {
+                value: error,
+                configurable: true,
+                writable: true,
+              }),
+              retryable: transient,
+            },
+            {
+              error: Object.assign(
+                new ManifestMCPError(
+                  ManifestMCPErrorCode.QUERY_FAILED,
+                  'transport deadline',
+                  { transportCode: 'ETIMEDOUT' },
+                ),
+                { cause: error },
+              ),
+              retryable: owned,
+            },
+          ];
+          for (const { error, retryable } of envelopes(original)) {
+            expect(isRetryableError(error)).toBe(retryable);
+          }
+
+          const { pending, operation } = failInitialization(original, true, 0);
+          const normalized = await pending.then(
+            () => {
+              throw new Error('Expected initialization to fail');
+            },
+            (error: unknown) => error as ManifestMCPError,
+          );
+          expect(normalized === original).toBe(false);
+          expect(operation).toHaveBeenCalledOnce();
+
+          let current = normalized;
+          for (let attribution = 0; attribution < 3; attribution += 1) {
+            for (const { error, retryable } of envelopes(
+              current,
+              attribution > 0,
+            )) {
+              expect(isRetryableError(error)).toBe(retryable);
+              const attempt = vi.fn().mockRejectedValue(error);
+              await expect(
+                withRetry(attempt, {
+                  config: { maxRetries: 2, baseDelayMs: 0, maxDelayMs: 0 },
+                }),
+              ).rejects.toBe(error);
+              expect(attempt).toHaveBeenCalledTimes(retryable ? 3 : 1);
+            }
+            if (attribution === 2) break;
+            if (current.details) delete current.details.module;
+            const manager = {
+              getQueryClient: vi.fn().mockRejectedValue(current),
+            } as unknown as CosmosClientManager;
+            const attributed = await cosmosQuery(
+              manager,
+              'bank',
+              'balances',
+            ).then(
+              () => {
+                throw new Error('Expected query acquisition to fail');
+              },
+              (error: unknown) => error as ManifestMCPError,
+            );
+            expect(attributed).not.toBe(current);
+            expect(attributed.details?.module).toBe('bank');
+            if (kind === 'transient cause')
+              expect('cause' in attributed).toBe(false);
+            current = attributed;
+          }
+        },
+      );
+
+      it.each(['name', 'cause'])(
+        'keeps a repaired %s that becomes unreadable terminal through later attribution',
+        async (field) => {
+          const original = new ManifestMCPError(
+            ManifestMCPErrorCode.RPC_CONNECTION_FAILED,
+            'connection ended',
+            {
+              get extra() {
+                throw new Error('incidental diagnostic unavailable');
+              },
+            },
+          );
+          const { pending, operation } = failInitialization(original, true, 0);
+          const normalized = await pending.then(
+            () => {
+              throw new Error('Expected initialization to fail');
+            },
+            (error: unknown) => error as ManifestMCPError,
+          );
+          Object.defineProperty(normalized, field, {
+            get() {
+              throw new Error('changed diagnostic unavailable');
+            },
+          });
+          const manager = {
+            getQueryClient: vi.fn().mockRejectedValue(normalized),
+          } as unknown as CosmosClientManager;
+          const attributed = await cosmosQuery(
+            manager,
+            'bank',
+            'balances',
+          ).then(
+            () => {
+              throw new Error('Expected query acquisition to fail');
+            },
+            (error: unknown) => error as ManifestMCPError,
+          );
+          expect(attributed === normalized).toBe(false);
+          expect(attributed.code).toBe(
+            ManifestMCPErrorCode.RPC_CONNECTION_FAILED,
+          );
+          expect(attributed.message).toBe('connection ended');
+          expect(attributed.details?.module).toBe('bank');
+          const wrapper = Object.assign(
+            new ManifestMCPError(
+              ManifestMCPErrorCode.QUERY_FAILED,
+              'fetch failed',
+              {
+                transportCode: 'ETIMEDOUT',
+              },
+            ),
+            { cause: attributed },
+          );
+          expect(isRetryableError(wrapper)).toBe(false);
+          const attempt = vi.fn().mockRejectedValue(wrapper);
+          await expect(
+            withRetry(attempt, {
+              config: { maxRetries: 2, baseDelayMs: 0, maxDelayMs: 0 },
+            }),
+          ).rejects.toBe(wrapper);
+          expect(attempt).toHaveBeenCalledOnce();
+          expect(operation).toHaveBeenCalledOnce();
+        },
+      );
 
       it.each(['extra getter', 'ownKeys trap'])(
         'preserves the SDK verdict when only details %s is unreadable',

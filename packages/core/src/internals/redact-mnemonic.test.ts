@@ -25,6 +25,11 @@ const candidates = [
   ].map(([name, separator]) => [name, words.split(' ').join(separator)]),
   ['ANSI', `\u001b[31m${words}\u001b[0m`],
   ['bidi', `\u202e${words}\u202c`],
+  ['controls inside words', words.replace(/a/g, 'a\u200b')],
+  [
+    'OSC containing more than 24 words',
+    `\u001b]${'window title '.repeat(15)}\u0007${words}`,
+  ],
 ];
 
 describe('mnemonic redaction retains whitespace tokenization', () => {
@@ -82,5 +87,83 @@ describe('mnemonic redaction retains whitespace tokenization', () => {
     '\u001b[31mHTTP 503\u001b[0m',
   ])('preserves non-mnemonic input %j', (value) => {
     expect(redactPossibleMnemonic(value)).toBe(value);
+  });
+});
+
+describe('mnemonic redaction output equivalence', () => {
+  // The contract is the union of the raw whitespace-delimited candidate and
+  // the terminal/control-free candidate. Keep a declarative reference here
+  // so fast paths cannot silently drop either interpretation.
+  function reference(value: string): string {
+    const visible = value
+      // biome-ignore lint/suspicious/noControlCharactersInRegex: reference ANSI CSI stripping.
+      .replace(/(?:\u001b\[|\u009b)[0-?]*[ -/]*[@-~]/g, '')
+      // biome-ignore lint/suspicious/noControlCharactersInRegex: reference ANSI OSC stripping.
+      .replace(/\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)/g, '')
+      .replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, (character) =>
+        character === '\n' || character === '\t' ? character : '',
+      );
+    return [value, visible].some((candidate) =>
+      candidate
+        .trim()
+        .match(/^[a-z]+(?:\s+[a-z]+){11}(?:(?:\s+[a-z]+){3}){0,4}$/),
+    )
+      ? redacted
+      : value;
+  }
+
+  it('retains both interpretations across word counts, controls and terminal sequences', () => {
+    const separators = [
+      ' ',
+      '\t',
+      '\n',
+      '\r',
+      '\v',
+      '\f',
+      '\u0085',
+      '\u00a0',
+      '\u2003',
+      '\u200b',
+      '\u2028',
+      '\u2029',
+      '\ufeff',
+      '\u001b[0m ',
+    ];
+    const wrappers = [
+      ['', ''],
+      ['\u001b[31m', '\u001b[0m'],
+      ['\u202e', '\u202c'],
+      [`\u001b]${'title '.repeat(30)}\u0007`, ''],
+      ['\u001b]8;;https://example.com\u001b\\', '\u001b]8;;\u0007'],
+      ['context: ', ''],
+      ['', '!'],
+    ];
+    for (let count = 0; count <= 30; count++) {
+      for (const separator of separators) {
+        for (const [prefix, suffix] of wrappers) {
+          const value = `${prefix}${Array(count).fill('abandon').join(separator)}${suffix}`;
+          expect(redactPossibleMnemonic(value), JSON.stringify(value)).toBe(
+            reference(value),
+          );
+        }
+      }
+    }
+  });
+
+  it('preserves a deterministic corpus of ordinary ASCII and Unicode diagnostics', () => {
+    const corpus = [
+      'YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXl6'.repeat(20_000),
+      JSON.stringify({ items: Array(5000).fill({ id: 42, status: 'ready' }) }),
+      'The provider returned HTTP 503 while handling the deployment.\n'.repeat(
+        5000,
+      ),
+      'Réponse du fournisseur : indisponible. 日本語の診断。 😀\n'.repeat(5000),
+      ...Array.from({ length: 128 }, (_, code) =>
+        words.replace(/a/g, `a${String.fromCharCode(code)}`),
+      ),
+    ];
+    for (const value of corpus) {
+      expect(redactPossibleMnemonic(value)).toBe(reference(value));
+    }
   });
 });
