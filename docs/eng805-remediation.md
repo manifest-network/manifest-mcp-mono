@@ -1454,13 +1454,13 @@ output uniformly discarded. Median milliseconds per call:
 
 | Input | main `5a49cd4` | `ccc0665` | Current |
 | --- | ---: | ---: | ---: |
-| Unicode 4 KiB message | 0.105 | 0.230 | 0.159 |
-| Unicode 60 × 16 KiB details | 0.909 | 1.750 | 1.312 |
-| ANSI/bidi 4 KiB message | 0.113 | 0.322 | 0.241 |
-| ANSI/bidi 60 × 16 KiB details | 0.945 | 2.426 | 1.543 |
+| Unicode message (4,096 UTF-16 code units) | 0.105 | 0.230 | 0.159 |
+| Unicode details (60 × 16,384 UTF-16 code units) | 0.909 | 1.750 | 1.312 |
+| ANSI/bidi message (4,096 UTF-16 code units) | 0.113 | 0.322 | 0.241 |
+| ANSI/bidi details (60 × 16,384 UTF-16 code units) | 0.945 | 2.426 | 1.543 |
 
-The benchmark outputs match `ccc0665` byte-for-byte. A roughly 1 MiB ANSI/bidi
-logging sample still takes 30.114 ms versus main's 8.813 ms (about 3.42×); its
+The benchmark outputs match `ccc0665` byte-for-byte. An ANSI/bidi
+logging sample of 1,048,576 UTF-16 code units still takes 30.114 ms versus main's 8.813 ms (about 3.42×); its
 prior value was 32.924 ms. These are local measurements, not universal latency
 guarantees or timing assertions in the test suite.
 
