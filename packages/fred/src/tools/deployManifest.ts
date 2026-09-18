@@ -16,6 +16,7 @@ import {
   setItemCustomDomain,
 } from '@manifest-network/manifest-mcp-core';
 import type { FredAuthCtx } from '../ctx.js';
+import { errorMessageOf, readDiagnostic } from '../error-diagnostics.js';
 import type { FredLeaseStatus, PollOptions } from '../http/fred.js';
 import {
   LeaseReadinessUnconfirmedError,
@@ -77,6 +78,55 @@ export interface DeployManifestOptions {
     metaHash: string,
   ) => Promise<string>;
   fetchFn?: typeof globalThis.fetch;
+}
+
+/** Snapshot fallible diagnostics before constructing the paid-lease recovery envelope. */
+function deployFailure(error: unknown) {
+  const message = errorMessageOf(error);
+  const terminal = readDiagnostic(() =>
+    error instanceof TerminalChainStateError ? error : undefined,
+  );
+  const unconfirmed = readDiagnostic(() =>
+    error instanceof LeaseReadinessUnconfirmedError ? error : undefined,
+  );
+  const pollVerdict =
+    readDiagnostic(
+      () =>
+        ProviderApiError.isProviderApiError(error) &&
+        error.kind === 'poll_verdict',
+    ) === true;
+  const sdk = readDiagnostic(() =>
+    error instanceof ManifestMCPError ? error : undefined,
+  );
+  const candidateCode = readDiagnostic(() => sdk?.code);
+  const code =
+    typeof candidateCode === 'string'
+      ? candidateCode
+      : ManifestMCPErrorCode.QUERY_FAILED;
+  const details = readDiagnostic(() => (sdk ? { ...sdk.details } : undefined));
+  const pollReason = readDiagnostic(() => unconfirmed?.reason);
+  const lastState = readDiagnostic(() => unconfirmed?.details.last_state);
+  const lastProvisionStatus = readDiagnostic(
+    () => unconfirmed?.details.last_provision_status,
+  );
+  const pollDetails = unconfirmed
+    ? {
+        ...(pollReason !== undefined && { poll_reason: pollReason }),
+        ...(lastState !== undefined && { last_state: lastState }),
+        ...(lastProvisionStatus !== undefined && {
+          last_provision_status: lastProvisionStatus,
+        }),
+      }
+    : {};
+  return {
+    message,
+    terminal,
+    unconfirmed: unconfirmed !== undefined,
+    pollVerdict,
+    code,
+    details,
+    pollDetails,
+  };
 }
 
 export async function deployManifest(
@@ -276,15 +326,16 @@ export async function deployManifest(
       ctx.allowLoopback,
     );
   } catch (err) {
+    const failure = deployFailure(err);
     // A chain-terminal state (rejected / closed / expired) is self-explanatory
     // and the chain has already cleared the lease, so `close_lease` is NOT the
     // remedy — re-throw with lease context and an honest breadcrumb rather than
     // the partial-success "close_lease" advice below.
-    if (err instanceof TerminalChainStateError) {
+    if (failure.terminal) {
       logger.warn(
         `[deploy] lease ${leaseUuid} reached a terminal chain state during deploy`,
       );
-      throw err.withContext({
+      throw failure.terminal.withContext({
         lease_uuid: leaseUuid,
         providerUuid,
         providerUrl,
@@ -306,28 +357,13 @@ export async function deployManifest(
     // Default to unconfirmed and carve out the verdict, rather than the reverse:
     // a fault nobody anticipated should read as "we do not know", which is
     // recoverable, not as "it failed", which invites destruction.
-    const pollVerdict =
-      ProviderApiError.isProviderApiError(err) && err.kind === 'poll_verdict';
     const readinessUnconfirmed =
-      err instanceof LeaseReadinessUnconfirmedError ||
-      (step === 'poll' && !pollVerdict);
+      failure.unconfirmed || (step === 'poll' && !failure.pollVerdict);
     if (readinessUnconfirmed) {
       logger.warn(
         `[deploy] lease ${leaseUuid} created but readiness was not confirmed${step ? ` (stopped at '${step}')` : ''}; ` +
           'it may still be provisioning — do NOT close it on this signal alone',
       );
-      const pollDetails =
-        err instanceof LeaseReadinessUnconfirmedError
-          ? {
-              poll_reason: err.reason,
-              ...(err.details.last_state !== undefined && {
-                last_state: err.details.last_state,
-              }),
-              ...(err.details.last_provision_status !== undefined && {
-                last_provision_status: err.details.last_provision_status,
-              }),
-            }
-          : {};
       throw new ManifestMCPError(
         cancelled
           ? ManifestMCPErrorCode.OPERATION_CANCELLED
@@ -340,12 +376,12 @@ export async function deployManifest(
           `so the app may still be starting. Re-check with app_status({ lease_uuid: "${leaseUuid}" }), ` +
           `or keep waiting with wait_for_app_ready({ lease_uuid: "${leaseUuid}", timeout_seconds: 600 }). ` +
           'Close this lease with close_lease ONLY if the provider reports a failed provision_status, ' +
-          `or you have decided to abandon the deploy. Error: ${err instanceof Error ? err.message : String(err)}`,
+          `or you have decided to abandon the deploy. Error: ${failure.message}`,
         {
-          ...(err instanceof ManifestMCPError ? err.details : undefined),
+          ...failure.details,
           partial: true,
           readiness_unconfirmed: true,
-          ...pollDetails,
+          ...failure.pollDetails,
           ...(step !== undefined && { failedStep: step }),
           lease_uuid: leaseUuid,
           provider_uuid: providerUuid,
@@ -368,16 +404,13 @@ export async function deployManifest(
     // the pre-step throwIfAborted and the mid-flight-abort cases.
     const code = cancelled
       ? ManifestMCPErrorCode.OPERATION_CANCELLED
-      : err instanceof ManifestMCPError
-        ? err.code
-        : ManifestMCPErrorCode.QUERY_FAILED;
-    const base = err instanceof ManifestMCPError ? err.details : undefined;
+      : failure.code;
     throw new ManifestMCPError(
       code,
       `Deploy partially succeeded: lease ${leaseUuid} was created but subsequent steps failed. ` +
-        `Close this lease with close_lease if needed. Error: ${err instanceof Error ? err.message : String(err)}`,
+        `Close this lease with close_lease if needed. Error: ${failure.message}`,
       {
-        ...base,
+        ...failure.details,
         partial: true,
         ...(step !== undefined && { failedStep: step }),
         lease_uuid: leaseUuid,

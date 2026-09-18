@@ -29,9 +29,11 @@ import type { AppDeploySpec } from '@manifest-network/manifest-mcp-core';
 import {
   asProviderUuid,
   asSkuUuid,
+  isRetryableError,
   ManifestMCPError,
   ManifestMCPErrorCode,
   type StopAppReconciliation,
+  withRetry,
 } from '@manifest-network/manifest-mcp-core';
 import {
   afterEach,
@@ -2449,6 +2451,42 @@ describe('deployApp replay — Copilot review fixes (PR #58 unresolved comments)
       );
       expect((err as Error).message).toContain('untyped failure');
     });
+
+    it.each(['message getter', 'code getter', 'revoked proxy'])(
+      'retains the estimate envelope for a hostile %s',
+      async (kind) => {
+        const { proxy, revoke } = Proxy.revocable({}, {});
+        revoke();
+        const original =
+          kind === 'revoked proxy'
+            ? proxy
+            : Object.defineProperty(
+                kind === 'code getter'
+                  ? new ManifestMCPError(
+                      ManifestMCPErrorCode.SIMULATION_FAILED,
+                      'estimate failed',
+                    )
+                  : new Error('estimate failed'),
+                kind === 'code getter' ? 'code' : 'message',
+                {
+                  get() {
+                    throw proxy;
+                  },
+                },
+              );
+        const error = await runDeployWithEstimateError(original);
+        expect(error).toBeInstanceOf(ManifestMCPError);
+        expect((error as ManifestMCPError).code).toBe(
+          ManifestMCPErrorCode.SIMULATION_FAILED,
+        );
+        expect((error as Error).message).toContain(
+          'Failed to estimate create-lease fee:',
+        );
+        expect(Object.getOwnPropertyDescriptor(error, 'cause')?.value).toBe(
+          original,
+        );
+      },
+    );
   });
 });
 
@@ -4509,6 +4547,7 @@ describe('deployApp — retry_set_domain decomposition (ENG-185 sub-PR E)', () =
    */
   async function setupRetryScenario(opts: {
     setItemCustomDomain?: ReturnType<typeof vi.fn>;
+    fetchActiveLease?: ReturnType<typeof vi.fn>;
     uploadLeaseData?: ReturnType<typeof vi.fn>;
     pollLeaseUntilReady?: ReturnType<typeof vi.fn>;
     customDomain?: string;
@@ -4562,9 +4601,15 @@ describe('deployApp — retry_set_domain decomposition (ENG-185 sub-PR E)', () =
     // For the retry-completion path: resolve provider URL via lease lookup,
     // upload manifest payload, then poll. All mocks default to success;
     // callers override the specific step they want to exercise.
-    vi.mocked(fred.fetchActiveLease).mockResolvedValue({
-      providerUuid,
-    } as unknown as Awaited<ReturnType<typeof fred.fetchActiveLease>>);
+    if (opts.fetchActiveLease) {
+      vi.mocked(fred.fetchActiveLease).mockImplementation(
+        opts.fetchActiveLease as unknown as typeof fred.fetchActiveLease,
+      );
+    } else {
+      vi.mocked(fred.fetchActiveLease).mockResolvedValue({
+        providerUuid,
+      } as unknown as Awaited<ReturnType<typeof fred.fetchActiveLease>>);
+    }
     vi.mocked(fred.resolveProviderUrl).mockResolvedValue(providerApiUrl);
     if (opts.uploadLeaseData) {
       vi.mocked(fred.uploadLeaseData).mockImplementation(
@@ -4910,6 +4955,312 @@ describe('deployApp — retry_set_domain decomposition (ENG-185 sub-PR E)', () =
     expect(vi.mocked(fred.uploadLeaseData)).not.toHaveBeenCalled();
     expect(vi.mocked(fred.pollLeaseUntilReady)).not.toHaveBeenCalled();
     expect(baseCapture.completed).toHaveLength(0);
+  });
+
+  it.each([
+    {
+      name: 'HTTP 503',
+      details: { httpStatus: 503 },
+      code: ManifestMCPErrorCode.QUERY_FAILED,
+      message: 'Request failed with status code 503',
+    },
+    {
+      name: 'gRPC unavailable',
+      details: { grpcCode: 14 },
+      code: ManifestMCPErrorCode.QUERY_FAILED,
+      message: 'RPC request failed',
+    },
+    {
+      name: 'gRPC deadline',
+      details: { grpcCode: 4 },
+      code: ManifestMCPErrorCode.QUERY_FAILED,
+      message: 'RPC request failed',
+    },
+    {
+      name: 'permanent HTTP status',
+      details: { httpStatus: 403 },
+      code: ManifestMCPErrorCode.QUERY_FAILED,
+      message: 'Request failed with status code 403',
+    },
+    {
+      name: 'permanent gRPC status over HTTP 500',
+      details: { grpcCode: 2, httpStatus: 500 },
+      code: ManifestMCPErrorCode.QUERY_FAILED,
+      message: 'RPC request failed',
+    },
+    {
+      name: 'permanent SDK code',
+      details: { httpStatus: 503 },
+      code: ManifestMCPErrorCode.TX_FAILED,
+      message: 'fetch failed',
+    },
+  ])(
+    'does not replay a paid deploy after readable $name provider lookup failure',
+    async ({ details, code, message }) => {
+      const original = new ManifestMCPError(code, message, details);
+      const { run, leaseUuid } = await setupRetryScenario({
+        fetchActiveLease: vi.fn().mockRejectedValue(original),
+      });
+      const operation = vi.fn(async () => {
+        const { caughtErr, result } = await run();
+        if (caughtErr) throw caughtErr;
+        return result;
+      });
+      const onRetry = vi.fn();
+      let rejection: unknown;
+      await withRetry(operation, {
+        config: { maxRetries: 2, baseDelayMs: 0, maxDelayMs: 0 },
+        onRetry,
+      }).then(
+        () => {
+          throw new Error('Expected provider lookup failure');
+        },
+        (error: unknown) => {
+          rejection = error;
+        },
+      );
+      expect(operation).toHaveBeenCalledOnce();
+      expect(onRetry).not.toHaveBeenCalled();
+      const fred = await import('@manifest-network/manifest-mcp-fred');
+      const core = await import('@manifest-network/manifest-mcp-core');
+      expect(fred.deployApp).toHaveBeenCalledOnce();
+      expect(core.setItemCustomDomain).toHaveBeenCalledOnce();
+      expect(rejection).toBeInstanceOf(ManifestMCPError);
+      expect((rejection as ManifestMCPError).code).toBe(code);
+      expect((rejection as Error).message).toBe(
+        `retry_set_domain failed to resolve provider for lease ${leaseUuid}: ${message}`,
+      );
+      expect(
+        Object.getOwnPropertyDescriptor(rejection, 'cause'),
+      ).toBeUndefined();
+      expect(isRetryableError(rejection)).toBe(false);
+    },
+  );
+
+  it.each([42, Symbol('invalid'), undefined])(
+    'uses the terminal fallback for readable non-string SDK code %s',
+    async (code) => {
+      const original = Object.defineProperty(
+        new ManifestMCPError(
+          ManifestMCPErrorCode.QUERY_FAILED,
+          'insufficient funds',
+        ),
+        'code',
+        { value: code },
+      );
+      const { run, leaseUuid } = await setupRetryScenario({
+        setItemCustomDomain: vi.fn().mockRejectedValue(original),
+      });
+      const { caughtErr } = await run();
+      expect(caughtErr).toBeInstanceOf(ManifestMCPError);
+      expect((caughtErr as ManifestMCPError).code).toBe(
+        ManifestMCPErrorCode.TX_FAILED,
+      );
+      expect((caughtErr as Error).message).toBe(
+        `retry_set_domain set-item-custom-domain failed for lease ${leaseUuid}: insufficient funds`,
+      );
+      expect(
+        Object.getOwnPropertyDescriptor(caughtErr, 'cause'),
+      ).toBeUndefined();
+      expect(isRetryableError(caughtErr)).toBe(false);
+    },
+  );
+
+  it.each(['revoked proxy', 'prototype trap'] as const)(
+    'keeps the recovery context when poll readiness inspection sees a %s',
+    async (kind) => {
+      const { proxy, revoke } = Proxy.revocable({}, {});
+      revoke();
+      const original =
+        kind === 'revoked proxy'
+          ? proxy
+          : new Proxy(new Error('failed'), {
+              getPrototypeOf() {
+                throw proxy;
+              },
+            });
+      const { run, leaseUuid } = await setupRetryScenario({
+        pollLeaseUntilReady: vi.fn().mockRejectedValue(original),
+      });
+      const { caughtErr } = await run();
+      expect(caughtErr).toBeInstanceOf(ManifestMCPError);
+      expect((caughtErr as ManifestMCPError).code).toBe(
+        ManifestMCPErrorCode.TX_FAILED,
+      );
+      expect((caughtErr as Error).message).toBe(
+        `retry_set_domain pollLeaseUntilReady failed for lease ${leaseUuid}: Error message unavailable`,
+      );
+      const cause = Object.getOwnPropertyDescriptor(caughtErr, 'cause');
+      expect(cause?.value).toBe(original);
+      expect(cause?.enumerable).toBe(false);
+      expect(isRetryableError(caughtErr)).toBe(false);
+    },
+  );
+
+  it('preserves a readable recovery message when only the SDK code throws', async () => {
+    const { proxy, revoke } = Proxy.revocable({}, {});
+    revoke();
+    const original = Object.defineProperty(
+      new ManifestMCPError(
+        ManifestMCPErrorCode.QUERY_FAILED,
+        'insufficient funds',
+      ),
+      'code',
+      {
+        get() {
+          throw proxy;
+        },
+      },
+    );
+    const { run, leaseUuid } = await setupRetryScenario({
+      setItemCustomDomain: vi.fn().mockRejectedValue(original),
+    });
+    const { caughtErr } = await run();
+    expect(caughtErr).toBeInstanceOf(ManifestMCPError);
+    expect((caughtErr as ManifestMCPError).code).toBe(
+      ManifestMCPErrorCode.TX_FAILED,
+    );
+    expect((caughtErr as Error).message).toBe(
+      `retry_set_domain set-item-custom-domain failed for lease ${leaseUuid}: insufficient funds`,
+    );
+    const cause = Object.getOwnPropertyDescriptor(caughtErr, 'cause');
+    expect(cause?.value).toBe(original);
+    expect(cause?.enumerable).toBe(false);
+  });
+
+  it.each([
+    'setItemCustomDomain',
+    'fetchActiveLease',
+    'uploadLeaseData',
+    'pollLeaseUntilReady',
+  ] as const)(
+    'keeps the lease recovery diagnostic when %s throws an unreadable error',
+    async (stage) => {
+      const { proxy, revoke } = Proxy.revocable({}, {});
+      revoke();
+      const original = Object.defineProperty(
+        new ManifestMCPError(ManifestMCPErrorCode.TX_FAILED, 'recovery failed'),
+        'message',
+        {
+          get() {
+            throw proxy;
+          },
+        },
+      );
+      const { run, leaseUuid, baseCapture } = await setupRetryScenario({
+        [stage]: vi.fn().mockRejectedValue(original),
+      });
+      const { caughtErr } = await run();
+      expect(caughtErr).toBeInstanceOf(ManifestMCPError);
+      expect((caughtErr as ManifestMCPError).code).toBe(
+        ManifestMCPErrorCode.TX_FAILED,
+      );
+      expect((caughtErr as Error).message).toContain('retry_set_domain');
+      expect((caughtErr as Error).message).toContain(leaseUuid);
+      expect((caughtErr as Error).message).toContain(
+        'Error message unavailable',
+      );
+      expect(Object.getOwnPropertyDescriptor(caughtErr, 'cause')?.value).toBe(
+        original,
+      );
+      expect(baseCapture.completed).toHaveLength(0);
+    },
+  );
+
+  describe.each([
+    ['setItemCustomDomain', 'set-item-custom-domain'],
+    ['fetchActiveLease', 'failed to resolve provider'],
+    ['uploadLeaseData', 'manifest upload'],
+    ['pollLeaseUntilReady', 'pollLeaseUntilReady'],
+  ] as const)('%s malformed recovery diagnostics', (stage, operationName) => {
+    const messages = [
+      {
+        name: 'Symbol message',
+        expected: 'Symbol(fetch failed)',
+        property: () => ({ value: Symbol('fetch failed') }),
+      },
+      {
+        name: 'object message',
+        expected: 'fetch failed',
+        property: () => ({
+          value: {
+            toString: () => 'fetch failed',
+            toLowerCase: () => 'benign',
+          },
+        }),
+      },
+      {
+        name: 'throwing coercion with a transient classifier',
+        expected: 'Error message unavailable',
+        property: () => ({
+          value: {
+            toString() {
+              throw new Error('Cannot format message');
+            },
+            toLowerCase: () => 'fetch failed',
+          },
+        }),
+      },
+      {
+        name: 'message getter failing once before a transient value',
+        expected: 'Error message unavailable',
+        property: () => {
+          let reads = 0;
+          return {
+            get() {
+              if (reads++ === 0) throw new Error('Cannot read message');
+              return 'fetch failed';
+            },
+          };
+        },
+      },
+    ];
+    it.each(
+      [
+        ManifestMCPErrorCode.QUERY_FAILED,
+        ManifestMCPErrorCode.RPC_CONNECTION_FAILED,
+      ].flatMap((code) => messages.map((message) => ({ code, ...message }))),
+    )(
+      'stops paid replay for $code with $name',
+      async ({ code, expected, property }) => {
+        const original = Object.defineProperty(
+          new ManifestMCPError(code, 'recovery failed'),
+          'message',
+          property(),
+        );
+        const { run, leaseUuid } = await setupRetryScenario({
+          [stage]: vi.fn().mockRejectedValue(original),
+        });
+        const operation = vi.fn(async () => {
+          const { caughtErr, result } = await run();
+          if (caughtErr) throw caughtErr;
+          return result;
+        });
+        const onRetry = vi.fn();
+        const outcome = await withRetry(operation, {
+          config: { maxRetries: 2, baseDelayMs: 0, maxDelayMs: 0 },
+          onRetry,
+        }).then(
+          () => ({ error: undefined }),
+          (error: unknown) => ({ error }),
+        );
+        expect(operation).toHaveBeenCalledOnce();
+        expect(onRetry).not.toHaveBeenCalled();
+        const fred = await import('@manifest-network/manifest-mcp-fred');
+        expect(fred.deployApp).toHaveBeenCalledOnce();
+        expect(outcome.error).toBeInstanceOf(ManifestMCPError);
+        const error = outcome.error as ManifestMCPError;
+        expect(error.code).toBe(ManifestMCPErrorCode.TX_FAILED);
+        expect(error.message).toContain('retry_set_domain');
+        expect(error.message).toContain(operationName);
+        expect(error.message).toContain(leaseUuid);
+        expect(error.message.endsWith(`: ${expected}`)).toBe(true);
+        const cause = Object.getOwnPropertyDescriptor(error, 'cause');
+        expect(cause?.value).toBe(original);
+        expect(cause?.enumerable).toBe(false);
+        expect(isRetryableError(error)).toBe(false);
+      },
+    );
   });
 
   it.each([
@@ -6138,4 +6489,169 @@ describe('deployApp — cancellation contract (signal/timeout) (ENG-310 / D4)', 
       vi.useRealTimers();
     }
   });
+});
+
+describe('deployApp estimate failure preserves the core retry verdict', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  const estimateCases = [
+    {
+      name: 'unreadable details normalized by core',
+      make: () =>
+        new ManifestMCPError(
+          ManifestMCPErrorCode.QUERY_FAILED,
+          'fetch failed',
+          Object.defineProperty({ httpStatus: 503 }, 'extra', {
+            enumerable: true,
+            get() {
+              throw new Error('unreadable detail');
+            },
+          }),
+        ),
+      attempts: 1,
+    },
+    {
+      name: 'malformed code normalized by core',
+      make: () =>
+        Object.defineProperty(
+          new ManifestMCPError(
+            ManifestMCPErrorCode.QUERY_FAILED,
+            'fetch failed',
+          ),
+          'code',
+          { value: 42 },
+        ),
+      attempts: 1,
+    },
+    {
+      name: 'native cancellation on an already attributed error',
+      make: () =>
+        Object.assign(
+          new ManifestMCPError(
+            ManifestMCPErrorCode.QUERY_FAILED,
+            'fetch failed',
+            { module: 'billing' },
+          ),
+          { name: 'AbortError' },
+        ),
+      attempts: 1,
+    },
+    {
+      name: 'permanent query status',
+      make: () =>
+        new ManifestMCPError(
+          ManifestMCPErrorCode.QUERY_FAILED,
+          'fetch failed',
+          { grpcCode: 3 },
+        ),
+      attempts: 1,
+    },
+    {
+      name: 'readable transient simulation',
+      make: () =>
+        new ManifestMCPError(
+          ManifestMCPErrorCode.QUERY_FAILED,
+          'fetch failed',
+          { httpStatus: 503 },
+        ),
+      attempts: 3,
+    },
+  ];
+
+  it.each(estimateCases)(
+    '$name does not gain retry permission at the orchestration boundary',
+    async ({ make, attempts }) => {
+      const core = await import('@manifest-network/manifest-mcp-core');
+      const actualCore = await vi.importActual<typeof core>(
+        '@manifest-network/manifest-mcp-core',
+      );
+      const fred = await import('@manifest-network/manifest-mcp-fred');
+      const { makeMockConfig, makeMockQueryClient, makeSealedClientManager } =
+        await import(
+          '@manifest-network/manifest-mcp-core/__test-utils__/mocks.js'
+        );
+      const { deployApp } = await import('./deploy-app.js');
+      const fixture = (...parts: string[]) =>
+        readFixture(
+          'skills',
+          'deploy-app',
+          '01-fast-path-active',
+          'input',
+          ...parts,
+        );
+      const spec = fixture('spec.json') as DeploySpec;
+      vi.mocked(fred.checkDeploymentReadiness).mockResolvedValue(
+        fixture('readiness-response.json') as Awaited<
+          ReturnType<typeof fred.checkDeploymentReadiness>
+        >,
+      );
+      vi.mocked(fred.buildManifestPreview).mockResolvedValue(
+        fixture('meta-hash-response.json') as Awaited<
+          ReturnType<typeof fred.buildManifestPreview>
+        >,
+      );
+
+      const simulationError = make();
+      const simulate = vi.fn().mockRejectedValue(simulationError);
+      // The real registry, message builder, normalizer and classifier run. All
+      // transport entry points are sealed; only simulate is opted in to reject.
+      const manager = makeSealedClientManager({
+        getConfig: () => makeMockConfig({ retry: { maxRetries: 0 } }),
+        getQueryClient: async () => makeMockQueryClient(),
+        getAddress: async () => 'manifest1deadbeef',
+        getSigningClient: async () =>
+          ({ simulate }) as unknown as Awaited<
+            ReturnType<
+              typeof core.CosmosClientManager.prototype.getSigningClient
+            >
+          >,
+        acquireRateLimit: async () => {},
+      });
+      const normalizedErrors: unknown[] = [];
+      vi.mocked(core.cosmosEstimateFee).mockImplementation(async (...args) => {
+        try {
+          return await actualCore.cosmosEstimateFee(...args);
+        } catch (error) {
+          normalizedErrors.push(error);
+          throw error;
+        }
+      });
+      try {
+        const { callbacks } = captureCallbacks();
+        const operation = vi.fn(() =>
+          deployApp(spec, callbacks, {
+            clientManager: manager,
+            walletProvider: makeMockWalletProvider(),
+          }),
+        );
+        // Model a caller retrying the whole orchestration. Core's own retry
+        // budget is zero so each outer attempt contains exactly one simulation.
+        const error: unknown = await withRetry(operation, {
+          config: { maxRetries: 2, baseDelayMs: 1, maxDelayMs: 1 },
+        }).catch((failure: unknown) => failure);
+        expect(error).toBeInstanceOf(ManifestMCPError);
+        expect((error as Error).message).toContain(
+          'Failed to estimate create-lease fee:',
+        );
+        expect(normalizedErrors).toHaveLength(attempts);
+        expect(isRetryableError(normalizedErrors[0])).toBe(attempts > 1);
+        expect(isRetryableError(error)).toBe(attempts > 1);
+        expect(operation).toHaveBeenCalledTimes(attempts);
+        expect(simulate).toHaveBeenCalledTimes(attempts);
+        expect(fred.deployApp).not.toHaveBeenCalled();
+        expect(manager.getBroadcastClient).not.toHaveBeenCalled();
+        const cause = Object.getOwnPropertyDescriptor(error, 'cause');
+        if (attempts === 1) {
+          expect(cause).toMatchObject({
+            value: normalizedErrors[0],
+            enumerable: false,
+          });
+        } else {
+          expect(cause).toBeUndefined();
+        }
+      } finally {
+        vi.mocked(core.cosmosEstimateFee).mockReset();
+      }
+    },
+  );
 });

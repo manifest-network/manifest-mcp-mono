@@ -1,5 +1,9 @@
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { createValidatedConfig } from './config.js';
+import {
+  redactAndStripTextControls,
+  redactPossibleMnemonic,
+} from './internals/redact-mnemonic.js';
 import { logger } from './logger.js';
 import {
   type ManifestMCPConfig,
@@ -177,18 +181,7 @@ export function sanitizeForLogging(obj: unknown, depth = 0): unknown {
   }
 
   if (typeof obj === 'string') {
-    // Redact strings that look like BIP-39 mnemonics (12/15/18/21/24 words).
-    // BIP-39 words are all lowercase alphabetic, so require that to avoid
-    // false positives on error messages that happen to be 12/24 words.
-    const words = obj.trim().split(/\s+/);
-    const wordCount = words.length;
-    if (wordCount >= 12 && wordCount <= 24 && wordCount % 3 === 0) {
-      const allLowercaseAlpha = words.every((w) => /^[a-z]+$/.test(w));
-      if (allLowercaseAlpha) {
-        return '[REDACTED - possible mnemonic]';
-      }
-    }
-    return obj;
+    return redactPossibleMnemonic(obj);
   }
 
   if (Array.isArray(obj)) {
@@ -305,11 +298,6 @@ export const MAX_TOOL_ERROR_MESSAGE_CHARS = 2000;
 /** Maximum serialized JSON text for the complete MCP error, including input/details. */
 export const MAX_TOOL_ERROR_RESPONSE_CHARS = 8000;
 
-// biome-ignore lint/suspicious/noControlCharactersInRegex: the purpose is to remove terminal CSI control sequences.
-const MODEL_ANSI_CSI = /(?:\u001b\[|\u009b)[0-?]*[ -/]*[@-~]/g;
-// biome-ignore lint/suspicious/noControlCharactersInRegex: the purpose is to remove terminal OSC control sequences.
-const MODEL_ANSI_OSC = /\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)/g;
-
 /**
  * Sanitize text for model context without flattening logs or diagnostic lines.
  * Removes terminal CSI/OSC sequences and other control/format characters, keeping
@@ -319,15 +307,9 @@ export function sanitizeForModelText(
   raw: string,
   maxLength = MAX_TOOL_ERROR_MESSAGE_CHARS,
 ): string {
-  const cleaned = raw
-    .replace(MODEL_ANSI_CSI, '')
-    .replace(MODEL_ANSI_OSC, '')
-    .replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, (ch) =>
-      ch === '\n' || ch === '\t' ? ch : '',
-    );
-  // Match the visible value too: terminal/bidi controls must not hide a mnemonic
-  // from the redactor and then reveal it as a side effect of sanitization.
-  return capLength(sanitizeForLogging(cleaned) as string, maxLength);
+  // Keep both mnemonic interpretations, then reuse the control-free candidate
+  // instead of stripping the whole diagnostic again after redaction.
+  return capLength(redactAndStripTextControls(raw), maxLength);
 }
 
 // Reserve scarce space for the identifiers and facts a caller needs to reconcile
@@ -502,7 +484,8 @@ function errorResponseText(
   tool: string,
   message: string,
   args: unknown,
-  error: unknown,
+  code: string | undefined,
+  details: unknown,
 ): string {
   const state: ErrorProjectionState = {
     truncated: false,
@@ -512,15 +495,15 @@ function errorResponseText(
   const response: Record<string, unknown> = {
     error: true,
     tool: fitErrorString(tool, 200, state),
-    ...(error instanceof ManifestMCPError && {
-      code: fitErrorString(error.code, 200, state),
+    ...(code !== undefined && {
+      code: fitErrorString(code, 200, state),
     }),
     message: fitErrorString(message, 3000, state),
   };
   // Compact JSON makes the budget deterministic. Details precede input because
   // recovery handles must survive even when the echoed arguments contain a blob.
   for (const [key, value] of [
-    ['details', error instanceof ManifestMCPError ? error.details : undefined],
+    ['details', details],
     ['input', args],
   ] as const) {
     if (value === undefined) continue;
@@ -547,6 +530,14 @@ export interface ManifestMCPServerOptions {
   walletProvider: WalletProvider;
 }
 
+function readErrorMessage(error: unknown): string {
+  try {
+    return error instanceof Error ? String(error.message) : String(error);
+  } catch {
+    return 'Error message unavailable';
+  }
+}
+
 /**
  * Wrap a tool handler with error handling that preserves the existing error format.
  *
@@ -566,28 +557,38 @@ export function withErrorHandling<
     try {
       return hasArgs ? await fn(args, cbArgs[1]) : await fn(cbArgs[0]);
     } catch (error) {
-      let errorMessage: string;
+      const errorMessage = readErrorMessage(error);
+      // Rejections can be proxies or expose throwing accessors. Inspect SDK
+      // metadata once and retain only a successfully read string for logging
+      // and either response path.
+      let sdkError: ManifestMCPError | undefined;
+      let errorCode = 'UNKNOWN';
       try {
-        errorMessage =
-          error instanceof Error ? String(error.message) : String(error);
+        if (error instanceof ManifestMCPError) {
+          errorCode = String(error.code);
+          sdkError = error;
+        }
       } catch {
-        errorMessage = 'Error message unavailable';
+        // An unreadable SDK discriminator/code has the generic error envelope.
       }
-      const errorCode =
-        error instanceof ManifestMCPError ? error.code : 'UNKNOWN';
       // Sanitize error messages before including in the MCP response or logs.
       // This catches mnemonic-like strings in error messages and redacts them.
       const safeMessage = sanitizeForLogging(errorMessage) as string;
       const messageWasRedacted = safeMessage !== errorMessage;
-      if (error instanceof ManifestMCPError) {
+      if (sdkError) {
         logger.error(`[${toolName}] Tool error [${errorCode}]: ${safeMessage}`);
       } else {
         // Stack traces embed error.message verbatim. If the message was
         // redacted, the stack would re-leak the original — so suppress the
         // stack in that case rather than emit a half-sanitized trace.
         let stackSuffix = '';
-        if (!messageWasRedacted && error instanceof Error && error.stack) {
-          stackSuffix = `\n${sanitizeForLogging(error.stack) as string}`;
+        try {
+          if (!messageWasRedacted && error instanceof Error) {
+            const stack = error.stack;
+            if (stack) stackSuffix = `\n${sanitizeForLogging(String(stack))}`;
+          }
+        } catch {
+          // V8 can invoke a hostile message getter while formatting a stack.
         }
         logger.error(
           `[${toolName}] Tool error [${errorCode}]: ${safeMessage}${stackSuffix}`,
@@ -596,10 +597,18 @@ export function withErrorHandling<
 
       let responseText: string;
       try {
-        responseText = errorResponseText(toolName, safeMessage, args, error);
+        responseText = errorResponseText(
+          toolName,
+          safeMessage,
+          args,
+          sdkError ? errorCode : undefined,
+          sdkError?.details,
+        );
       } catch (stringifyError) {
+        // Even the inspection failure may itself be a revoked proxy.
+        const reason = sanitizeForLogging(readErrorMessage(stringifyError));
         logger.error(
-          `[${toolName}] Failed to serialize error response: ${stringifyError instanceof Error ? stringifyError.message : String(stringifyError)}`,
+          `[${toolName}] Failed to serialize error response: ${reason}`,
         );
         const state: ErrorProjectionState = {
           truncated: true,
@@ -609,7 +618,7 @@ export function withErrorHandling<
         responseText = JSON.stringify({
           error: true,
           tool: fitErrorString(toolName, 200, state),
-          ...(error instanceof ManifestMCPError && {
+          ...(sdkError && {
             code: fitErrorString(errorCode, 200, state),
           }),
           message: fitErrorString(safeMessage, 3000, state),

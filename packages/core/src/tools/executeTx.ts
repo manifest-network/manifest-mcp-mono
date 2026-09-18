@@ -112,12 +112,11 @@ export async function executeTx(
               { msgTypeUrls: typeUrls },
             );
             if (submittedFailure) throw submittedFailure;
-            // M2 — MIRROR cosmosTx's broadcast-leg wrapping (enrichTxError): a pre-broadcast
-            // ManifestMCPError (e.g. a transient RPC_CONNECTION_FAILED from buildGasFee's
-            // simulate) passes through and stays retryable; ANY raw/non-ManifestMCPError (a
-            // network error from signAndBroadcast/simulate) becomes TX_FAILED → NON_RETRYABLE
-            // (retry.ts), so a submitted-but-failed multi-msg batch is NEVER re-broadcast
-            // (no double-spend).
+            // Readable SDK errors (e.g. transient simulation failures) pass through;
+            // readable non-SDK failures become non-retryable TX_FAILED. Unlike
+            // cosmosTx's guarded attribution, diagnostic inspection below can still
+            // throw for injected hostile values and authorize a synthetic retry.
+            // ENG-983 tracks that remaining producer-side boundary.
             if (error instanceof ManifestMCPError) throw error;
             throw new ManifestMCPError(
               ManifestMCPErrorCode.TX_FAILED,

@@ -1120,3 +1120,484 @@ three fixture-isolation probes fail before their respective corrections and pass
 afterward. The receiver-changing observation mutation fails its compatibility
 regression. Independent production/documentation review found no blocker
 (99% confidence). Fresh CI and live acceptance results are recorded on the PR.
+
+## Unreadable retry diagnostics (ENG-953, 2026-09-16)
+
+Implementation plan: [preserve failures during retry inspection](superpowers/plans/2026-09-16-eng953-retry-inspection.md).
+
+`isRetryableError` now catches exceptions encountered while inspecting its error
+argument and standard causes, returning a conservative nonretryable verdict.
+`withRetry` consequently rejects with the exact original failure, without another
+attempt or `onRetry` call. This includes a zero retry budget and unreadable errors
+that arrive after a previous readable transient failure has already retried.
+
+| Finding | Resolution and evidence | Confidence |
+| --- | --- | --- |
+| A throwing cause accessor replaces the original operation failure | Contain error inspection at the public classifier. At `4ce59ea`, 19 of the 21 core cases and three built-SDK identity cases fail with the original classifier; the readable and already-aborted-signal controls pass. | 100% reproduction; 99% correction |
+| Catching only property access misses proxy reflection and other diagnostic reads | The boundary includes the initial instanceof check, cause membership/prototype inspection and classification fields. Root/nested proxy and accessor cases preserve rejection identity with zero and positive retry budgets. | 99% |
+| Returning a partial chain could hide a permanent/submitted veto | A failed inspection returns false instead of classifying a prefix. Transient wrapper and owned-timeout controls prove unreadable causes cannot authorize replay. Shared errorChain and transport ownership helpers are unchanged. | 99% |
+| A broad promise about all injected transport errors would exceed this boundary | Public docs scope the behavior to errors received by the retry helpers. Producer-side diagnostics and grouped/sibling errors retain their existing policy. | 99% |
+
+The whole-operation signal remains the first check. Existing permanent/submitted
+short-circuits still skip irrelevant causes; readable transient, HTTP/gRPC,
+timeout-ownership, cancellation and cycle behavior is preserved. No dependency,
+compiler-target or public type changes are required.
+
+All 130 focused core and rebuilt SDK tests pass, with no type errors. Independent
+production and test review found no blocker (99% confidence). Its documentation
+precision note is addressed: a prior successful retry does not change the rule
+that an unreadable failure stops further attempts.
+
+Full local validation passes **4,168 tests / 17 existing skips / 187 files**, with
+no type errors and all coverage floors passing: **84.93% lines / 84.65%
+statements / 84.51% branches / 88.47% functions**. Fresh workspace builds,
+workspace/E2E TypeScript, Fred schema, Biome, architecture, all nine package
+integrity checks and all four SDK bundle budgets pass. CI and live acceptance
+results are recorded on the PR and ENG-953.
+
+## PR #233 review: connection envelopes and observable short-circuits (2026-09-16)
+
+[Claude's execution-verified review of `4ce59ea`](https://github.com/manifest-network/manifest-mcp-mono/pull/233#issuecomment-5703102677)
+found a downstream normalization regression and a test-ordering gap. The
+connection catches must safely handle the unreadable value now preserved by
+`withRetry`; they cannot assume the former secondary inspection error arrives.
+
+| Finding | Disposition and evidence | Confidence |
+| --- | --- | --- |
+| Connection catches throw while discriminating or formatting the preserved error | A module-local normalizer guards SDK-error discrimination and message/string extraction. Other failures retain RPC_CONNECTION_FAILED and existing endpoint details; recognized SDK errors retained identity at this revision. Later review tightened identity pass-through to readable code/message/details and successful retry inspection, including errors surfaced by Fred client factories. Twelve hostile-input cases fail against `4ce59ea`; six restore main behavior (message/proxy × REST/RPC/signing), while wallet and throwing-coercion cases add normalization. All 83 client tests pass; the 16 added rows cover real retry for REST/RPC/signing and wallet acquisition before retry. | 100% reproduction; 99% correction |
+| A false verdict alone no longer proves terminal errors skip cause inspection | Three tests assert zero cause reads for permanent, submitted and partial outer verdicts. An isolated mutation moving traversal first fails all three, while 21 controls pass. | 100% |
+| The initial reproduction count omitted the last added regression | Correct the historical `4ce59ea` count to 19 failures / 2 controls out of 21 core cases. An archive copy with the original classifier reproduces it; the original three SDK failures remain accurate for that revision. | 100% |
+| Producer and MCP diagnostic inspection can still replace original failures | Producer/direct-MCP failures were reproduced and initially grouped in [ENG-983](https://linear.app/liftedinit/issue/ENG-983). The next review established that retry-fed MCP failures are PR regressions; those are fixed here, and ENG-983 retains producer-side work. | 100% mechanism; 98% scope |
+| A throwing onRetry callback replaces the operation failure | Independently reproduced; [ENG-984](https://linear.app/liftedinit/issue/ENG-984) owns explicit observer/control semantics, diagnostics and documentation. | 100% mechanism; 98% scope |
+| Undefined or invalid retry limits skip operations or add unmatched backoff | Independently reproduced through withRetry and partial public getInstance configuration; [ENG-985](https://linear.app/liftedinit/issue/ENG-985) owns defaults and validation. | 100% mechanism; 99% scope |
+| The classifier does not log inspection failures | Keep logging out of the classifier. Its contract requires a conservative verdict; logging would add another fallible diagnostic operation. Any future trace must avoid inspecting the error. | 98% |
+| Non-string messages stop retry classification | Retain the conservative malformed-input behavior. String coercion would broaden retry policy and is not required for standard cause exception safety. | 100% mechanism; 98% scope |
+| Core unit tests load the full barrel | Use direct retry/type imports for the core matrix. Built SDK consumer tests still exercise public exports through the SDK's core dependency. | 99% |
+| The SDK assertion itself resolves a hostile rejection value | Compare identity inside the rejection handler and add a root revoked-proxy case. Restoring the prior catch-return pattern fails this case independently of the correct classifier. | 100% |
+| The plan is unlinked and contains checkout-specific state | Link the plan from this section's implementation record and remove the local untracked-file count from the plan. | 100% |
+
+The proposed caller-abort precedence change remains refuted: nonretryable
+operation failures retain their established priority, including ordinary readable
+errors. The review adds no grouped-error policy change. The callback and retry-configuration follow-ups are pre-existing. ENG-983 was
+initially scoped too broadly: direct MCP injection was pre-existing, but preserved
+retry rejections expose new downstream regressions, addressed below.
+
+Validation passes **217 focused tests** and **4,188 full-suite tests / 17 existing
+skips / 187 files**, with no type errors and all coverage floors: **84.95% lines /
+84.67% statements / 84.55% branches / 88.48% functions**. Fresh workspace builds,
+workspace/E2E TypeScript, schema, Biome, architecture, nine package-integrity checks
+and four SDK bundle budgets pass. Independent review found no blocker (99%
+confidence); removing reflection containment fails four cases, removing message
+containment fails eight, and moving cause traversal before terminal verdicts fails
+three. Fresh PR-head CI and live acceptance are recorded on PR #233 and ENG-953.
+
+
+## PR #233 review: downstream retry consumers (2026-09-17)
+
+[Claude's review of `3bf38f4`](https://github.com/manifest-network/manifest-mcp-mono/pull/233#issuecomment-5714166265)
+correctly distinguishes direct hostile injections from errors arriving through a
+retry loop. Returning the original unreadable rejection exposed downstream catches
+that had previously received readable inspection exceptions. These are P3 custom
+JavaScript-input regressions and belong in this PR, including the MCP portion
+previously deferred to ENG-983.
+
+| Finding | Resolution and evidence | Confidence |
+| --- | --- | --- |
+| MCP tools lose their bounded JSON envelope | Cache safe SDK metadata, guard lazy stack formatting and never inspect a serialization failure. Real MCP/real-retry tests fail before the fix and retain sanitized bounded responses afterward. | 100% reproduction; 99% correction |
+| Connection catches preserve unreadable SDK errors | Require string code/message and readable shallow details before identity pass-through. Exact error class/details/no-cause, hostile identity-fetch/signing/wallet, Symbol message and cleanup tests cover the boundary. | 100% reproduction; 99% correction |
+| Transaction attribution lets hostile errors erase paid-lease recovery | Guard the entire tx attribution operation; unreadable diagnostics produce permanent TX_FAILED with operation context and a hidden original cause. Fred deploy catches and restore pre-POST/compensation message formatting protect known lease IDs, partial flags and orphan logs. Later restore POST/poll diagnostics and terminal `withContext` remain in ENG-996; this row does not claim complete restore coverage. Agent estimate/retry-set-domain formatting and deployment classification preserve their context. | 100% reproduction; 98% correction |
+| Fred resource failures can leave requests unanswered | Fresh readable errors protect all three resource callbacks, including wallet failures. Messages are bounded and sanitized; readable numeric protocol codes survive, arbitrary diagnostic data is omitted. Real MCP requests cover retry failures and real manager identity failures. | 100% reproduction; 99% correction |
+| Existing client assertions permit the wrong envelope | Assert ManifestMCPError class, exact details and absent cause. Mutations of class/details/cause and removal of String(message) fail the strengthened tests. | 100% |
+| Outer verdict tests omit transport-message and HTTP-status branches | Add ENOTFOUND and HTTP 403 cases asserting zero cause access, one attempt and no retry callback. | 100% |
+| Documentation and previous triage overstate scope | Correct the six-regression/twelve-case distinction, pre-retry wallet wording and 83-test claim. Re-scope ENG-983 to producer-side timeout/faucet/LCD handling; explain unreadable rejection handling for custom consumers. | 100% |
+
+The pre-retry LCD adapter diagnostic pattern also exists on main and remains in
+ENG-983 with the producer-side work. No dependency, public type, replay-policy or
+grouped-error traversal change is included. Readability checks are shallow and do
+not promise safety for arbitrary state-changing accessors or recursively hostile
+diagnostic objects. Independent review of all nine production retry call sites and
+the recovery changes found no further blocker (97% confidence).
+
+Validation passes **672 focused tests / one existing skip** and **4,316 full-suite
+tests / 17 existing skips / 190 files**, with no type errors. Coverage floors pass:
+**85.08% lines / 84.80% statements / 84.78% branches / 88.55% functions**. Fresh
+workspace builds (including publint/attw), workspace/E2E types, schema, Biome,
+architecture, all nine package integrity checks and all four bundle budgets pass.
+Final before/after checks reproduce 40 client failures, nine MCP-boundary failures
+and 21 core/agent attribution failures. Reverting only the resource wrapper with
+the fixed core fails 16 of 27 resource cases; traversal reordering fails all five
+outer-verdict cases while 21 controls pass. Fresh CI/live acceptance is recorded
+on PR #233 and ENG-953.
+
+
+## PR #233 review: preserve readable verdicts and independent evidence (2026-09-17)
+
+[Claude's review of `fece70b`](https://github.com/manifest-network/manifest-mcp-mono/pull/233#issuecomment-5715197207)
+reproduced the prior validation claims, then exposed additional diagnostic-field
+and retry-policy regressions. The preceding sections record those earlier revisions;
+the contract below supersedes their broader recovery and replay claims.
+
+| Finding | Resolution and evidence | Confidence |
+| --- | --- | --- |
+| Adding a cause to readable orchestration errors authorizes whole-deployment replay | Attach the original only when code/reflection/message inspection throws. Real `withRetry` around `deployApp` asserts one orchestration attempt for HTTP 503 and gRPC 14/4, plus permanent controls. Paid deployment primitives are mocked; these are orchestration-attempt assertions, not live broadcast measurements. | 100% reproduction; 99% correction |
+| Transaction fallback loses readable text and submission facts | Shared guarded readers preserve text independently and salvage validated own-data sent/hash/receipt/partial/lease fields without invoking evidence accessors. Malformed tx code/message and unreadable diagnostics retain permanent TX_FAILED, exact operation details and a hidden original cause. | 100% reproduction; 98% correction |
+| Connection spread checks skip hidden consumer fields and lose readable verdicts on incidental failure | Validate module/partial/sent/HTTP/gRPC/transport fields by name; unreadable named fields retain the endpoint-only fallback. Incidental failures preserve code/message, safe facts and an existing readable cause, including terminal status/partial/submission vetoes. No original wrapper is added as a cause. | 100% reproduction; 98% correction |
+| Direct query, estimate and build-context enrichers still throw while inspecting failures | Use one guarded enrichment helper across all four Cosmos paths. Exact envelopes and hidden causes survive; readable NOT_FOUND, SDK identity and transient retry controls remain covered. | 100% reproduction; 98% correction |
+| Resource normalization loses plain-object/cross-realm message text | Prefer a safely read string message; preserve numeric protocol codes and exact bounded/sanitized text. Code getters throwing revoked proxies are exercised through actual MCP requests. | 100% reproduction; 99% correction |
+| An unrelated diagnostic failure erases an established terminal deployment verdict | Read each deploy diagnostic independently. Terminal kind/details getter cases preserve terminal guidance; known later withContext failures are tracked separately. | 100% reproduction; 98% correction |
+| Serialization fallback logging drops readable failure reasons | Safely extract and sanitize the serialization error message; unreadable secondary errors retain a fixed fallback. | 100% reproduction; 99% correction |
+| New guards lacked observable regressions | Isolated mutations fail for resource code protection (2), exact resource messages (4), restore pre-POST message protection (1), terminal deploy discrimination (1), agent readiness/code guards (5), and serialization-reason guards (3). | 100% |
+| executeTx still synthesizes retries from diagnostic failures | A sealed broadcast probe reproduces four calls with a three-retry budget. Runtime predates this PR; remove the inaccurate mirror comment and add explicit acceptance criteria to [ENG-983](https://linear.app/liftedinit/issue/ENG-983). | 100% mechanism; 98% scope |
+| Restore/terminal documentation promises more than the guarded paths provide | Narrow docs to guarded deploy diagnostics and restore pre-POST/compensation formatting. [ENG-996](https://linear.app/liftedinit/issue/ENG-996) owns restore POST/poll discrimination and terminal withContext, with independently reproduced helper failures. | 100% mechanism; 97% scope |
+
+Additional review controls catch evaluation of unrelated non-enumerable detail
+getters and promotion of hidden/inherited transient fields into readable wrappers.
+Only named consumer fields are read unconditionally; complete snapshots preserve
+ordinary spread semantics. Safe existing cause/status/positive submission and
+partial verdicts survive incidental detail failures. No dependency, public type or grouped-error policy changes are
+needed. Arbitrary state-changing accessors and recursively hostile diagnostics
+remain outside the shallow snapshot contract.
+
+Final local validation passes **4,458 tests / 17 existing skips / 190 files**, with
+no type errors and all coverage floors: **85.23% lines / 84.96% statements /
+85.05% branches / 88.72% functions**. Fresh workspace builds (including
+publint/attw), workspace/E2E types, schema, Biome, architecture, all nine package
+integrity checks and all four unchanged bundle budgets pass. The final focused
+core/client run passes 433 tests across eight files. All 215 client tests pass;
+92 fail against the prior client implementation, with 123 controls passing.
+Independent review reproduced and verified the hidden-status correction, with no
+further blocker found (97% confidence). Fresh PR-head CI/live acceptance is
+recorded on PR #233 and ENG-953.
+
+## PR #233 review: malformed diagnostics and cancellation verdicts (2026-09-17)
+
+[Claude's review of `232727d`](https://github.com/manifest-network/manifest-mcp-mono/pull/233#issuecomment-5716936392)
+reproduced the prior validation and found no blocker, while identifying further
+malformed-input retry differences, lost verdicts and unsafe resource/secret text.
+These corrections supersede earlier broad claims about unchanged retry behavior:
+readable controls retain their established behavior, and malformed diagnostics
+receive explicitly conservative treatment.
+
+| Finding | Resolution and evidence | Confidence |
+| --- | --- | --- |
+| Non-string orchestration messages manufacture transient prose | Mark non-string messages as unreadable, retain String coercion and the hidden original, and use the caller's fallback code. Four paid recovery sites × two codes × four hostile message forms fail before correction and stop after one orchestration attempt afterward. | 100% reproduction; 99% correction |
+| Failed orchestration inspection retains a retryable original code | The supplied fallback remains authoritative after inspection fails; paid recovery uses TX_FAILED. The 32-case matrix includes throwing coercion and a getter that becomes readable later. | 100% reproduction; 99% correction |
+| Connection repair loses AbortError/TimeoutError names | Guard name reads and copy readable names on repair. Twelve before/after rows cover all four connection boundaries, including unreadable names. | 100% reproduction; 99% correction |
+| Cosmos read normalization introduces retries from copied details/causes | Privately identify envelopes whose inspection failed and veto retry before examining their diagnostics. Non-string Error messages receive the same protection. A readable malformed code alone uses the operation fallback without introducing a new cause on read legs. | 100% reproduction; 98% correction |
+| Connection repair downgrades permanent codes and drops readable metadata | Retain an independently non-retryable normalized code/message even when details, named fields, name or cause cannot be read. Preserve independently readable ordinary details and supplied endpoint precedence; otherwise retain the conservative endpoint fallback. | 100% reproduction; 99% correction |
+| Resource messages expose function/class source and useless object coercion | Read string message fields on objects/functions; message-less non-Errors use Internal error. Eight cases fail before correction. Real MCP assertions now pin omitted data, including when the rejected object/function contains data. | 100% reproduction; 99% correction |
+| Operation prefixes defeat whole-string mnemonic redaction | Share the existing mnemonic heuristic as a pure helper and apply it before Cosmos prefixes; agent contextual errors reuse the existing public sanitizer before their prefix. Inspect a control-free candidate so ANSI/bidi wrappers cannot hide the mnemonic until later model sanitization. General embedded-prose secret detection remains separate. | 100% reproduction; 98% correction |
+| Readiness tests did not exercise individual guards | Replace the inert terminal-details row with four LeaseReadinessUnconfirmedError rows. They assert a paid lease, unconfirmed verdict and independently readable poll fields; removing reason/state/provision guards fails 1/2/2 cases. Forwarding resource data fails four cases; removing orchestration String coercion fails 16. | 100% |
+| Evidence-validator branches lacked distinguishing tests | Add adversarial receipt/hash/flag fixtures at the Cosmos boundary, preserving valid evidence without accepting malformed or accessor-derived receipt claims. | 99% |
+
+Remaining work is explicit and deduplicated:
+
+- [ENG-1000](https://linear.app/liftedinit/issue/ENG-1000) owns readable paid-operation retry vetoes. Independent source-comparison probes confirm retry_set_domain loses known lease/inner partial context, and readable Cosmos spread loses hidden/inherited positive sent/partial flags. Both mechanisms predate this PR. The probes use real orchestration/retry with mocked paid/broadcast seams, not live transactions. Confidence: 100% mechanism, 99% pre-existing scope.
+- [ENG-271](https://linear.app/liftedinit/issue/ENG-271) retains broader free-form secret scrubbing and stderr log hygiene. A built-module probe preserves embedded mnemonic text and a 20,018-character diagnostic with ANSI/newlines. Prefix redaction here does not provide general embedded-secret detection, bounded logs or control-safe log framing. Confidence: 100% mechanism, 98% scope.
+- [ENG-983](https://linear.app/liftedinit/issue/ENG-983) additionally owns cross-realm NotFound recognition in its existing query-classification scope. The same RPC NotFound message classifies true on a local Error and false on a cross-realm Error. Completed ENG-536 is unchanged. Confidence: 100% mechanism, 99% scope.
+- [ENG-996](https://linear.app/liftedinit/issue/ENG-996) retains later restore/terminal diagnostic recovery. State-changing custom accessors and general grouped-error traversal remain outside this change.
+
+Final local validation passes **4,644 tests / 17 existing skips / 193 files**, with
+no type errors. Coverage floors pass: **85.25% lines / 85.00% statements / 85.14%
+branches / 88.76% functions**. Fresh workspace builds (including publint/attw), the
+final core rebuild, workspace/E2E types, schema, Biome, architecture, all nine
+package integrity checks and all four unchanged bundle budgets pass. Focused
+core plus real chain MCP validation passes 304 tests across six files; all 279
+client tests pass. Independent final review found and verified the additional
+control-wrapped mnemonic and malformed-code HTTP 408 cases, with no remaining
+blocker in the reviewed scope (98% confidence). PR-head CI/live acceptance results
+are recorded on PR #233 and ENG-953.
+
+
+## PR #233 review: redaction separators and retry veto propagation (2026-09-17)
+
+[Claude's review of `e09f94b`](https://github.com/manifest-network/manifest-mcp-mono/pull/233#issuecomment-5718852563)
+confirmed the previous corrections and identified six remaining findings. The
+review also exposed text-policy and coverage gaps in the new normalization code.
+
+| Finding | Resolution and evidence | Confidence |
+| --- | --- | --- |
+| 1. Control stripping fuses mnemonic words | Check both the original whitespace-separated candidate and the control-free candidate; redact before model formatting removes separators. CR, VT, FF, line/paragraph separators and BOM now retain redaction through the helper, actual stderr and tool response. Space/tab/LF/ANSI/bidi controls stay covered. The new matrix has 18 failures before the fix. | 100% reproduction; 99% correction |
+| 2. Connection retry vetoes disappear during Cosmos rebuilding | Require successful retry inspection for identity/cause preservation; retain private veto provenance on repaired errors and subsequent Cosmos attribution. Internal helpers stay off the public barrel. Boundary tests exercise real query/tx/estimate/custom-domain retry paths with injected REST/RPC identity and signer failures, before any handler, simulation or broadcast. | 100% reproduction; 99% correction |
+| 3. Non-string connection Error messages introduce transient prose | Use `Error message unavailable` for non-string Error messages. Symbol/array/object fixtures and readable controls pin classifier results and end-to-end attempt counts. | 100% reproduction; 99% correction |
+| 4. Agent fee-estimate context discards an existing veto | Retain a hidden original cause when a readable contextual wrapper would become retryable; otherwise preserve historical cause omission. Four real Cosmos-estimate/deploy paths now stop after one simulation rejection and no Fred deployment. Removing the condition fails ten cases; six controls still pass. | 100% reproduction; 99% correction |
+| 5. Resource Error messages expose function/class/object coercions | Use `Internal error` for object/function messages even on Error instances; retain primitive formatting using the already-read message. Six new protocol rows fail before the fix; both numeric-message controls pass. All 49 resource tests pass after it. | 100% reproduction; 99% correction |
+| 6. Redaction documentation overstates covered prefixes | Name the covered Cosmos/owned-broadcast/contextualError sites explicitly. Expand existing ENG-271 to remaining prefixes and MCP response/notification sinks. A built real troubleshoot/callback/tool-wrapper probe reproduces the complete mnemonic in the response and one failure notification; these paths are unchanged from main. | 100% demonstrated leak; 98% remaining scope |
+| Redaction changes readable retry policy | Retain lexical retry decisions privately alongside the public redacted display, without retaining the original secret or inventing statuses. Copy provenance on rebuilding; explicit changes to the displayed message use its current policy. Cover transient and ENOTFOUND outcomes, readable reattribution and connection repair. | 100% reproduction; 99% correction |
+| Control-heavy diagnostic performance | Replace per-character callbacks with a control-category regex. Exhaustive Unicode code-point comparison and ANSI/layout controls verify equivalent stripping. No timing assertion is added to the suite. | 100% equivalence; 98% performance mechanism |
+| Evidence-validator and owner-coverage gaps | Distinguishing mutations fail for invalid transport/status types (12), repeated named getter reads (1), lost raw-error evidence (1), wrong SDK fallback code (4), Cosmos-prefix redaction (3), veto propagation (4) and lexical policy (8). | 100% mutation evidence |
+| Thrown non-Error coercion | Keep the established policy in this PR and add the gap to ENG-983. Sealed main/current Cosmos probes each retry thrown Symbol/object transient text three times (four comparative rows), with no network or broadcasts. | 100% mechanism; 99% pre-existing scope |
+| Historical restore guarantee | Narrow the earlier downstream-review row to pre-POST/compensation formatting and explicitly retain later POST/poll/terminal scope in ENG-996. | 100% |
+
+The contextual cause fix also preserves readable inner sent/partial/permanent
+vetoes; ENG-1000 still owns missing paid-lease context and hidden outcome fields
+lost by readable spread. It does not establish that whole paid orchestrations are
+safe to retry. A shared public rebuilding API was unnecessary: core keeps its
+classification provenance private, and agent-core uses the existing public
+classifier plus a hidden cause. Arbitrary state-changing accessors and grouped
+error traversal remain outside this shallow-inspection contract.
+
+
+Client validation passes **445 tests** (283 client / 162 operation-boundary cases).
+The original 439-case matrix fails **136 cases** against the prior client source;
+guard mutations fail **29 / 2 / 28 / 28 / 42** cases. Independent review then
+identified lexical provenance loss during connection repair: four of six added
+controls fail before copying the provenance and all six pass afterward. Cosmos
+and retry validation passes **274 tests**, including displayed-message changes
+and reattribution; redaction/contextual validation passes **359 tests / one
+existing skip**. These focused counts overlap full-suite validation. Independent
+final review found no remaining blocker in the reviewed scope (98% confidence).
+
+
+Full validation passes **4,924 tests / 17 existing skips / 196 files**, with no
+type errors. Coverage floors pass: **85.31% lines / 85.05% statements / 85.23%
+branches / 88.80% functions**. Fresh workspace builds (publint/attw), workspace/E2E
+TypeScript, schema, Biome, architecture, all nine package-integrity checks and all
+four unchanged SDK bundle budgets pass. The initial sandbox run could not spawn
+required subprocesses or bind the local WebSocket test server; the unrestricted
+rerun passes. Fresh PR-head CI/live acceptance is recorded on PR #233 and ENG-953.
+
+
+## PR #233 review: diagnostic performance and nested retry context (2026-09-17)
+
+[Claude's review of `e4a7e8d`](https://github.com/manifest-network/manifest-mcp-mono/pull/233#issuecomment-5720548174)
+reports no blockers and confirms the previous fixes. This follow-up addresses the
+two recommended corrections and records the smaller contract/coverage notes.
+
+| Finding | Resolution and evidence | Confidence |
+| --- | --- | --- |
+| Large ordinary strings incur repeated redaction work | Reuse the raw tokenization; fewer than twelve words cannot gain words through deletion. Skip Unicode control scans for printable ASCII/layout and skip mnemonic rescanning when stripping changes nothing. Preserve raw-whitespace and control-stripped detection, including OSC removal that reduces more than 24 words to 12. A 3,038-case equivalence matrix, large ASCII/Unicode corpus, exhaustive control-category comparison and actual stderr/tool-response cases pass. | 100% reproduced overhead; 99% semantics; 98% measured performance |
+| Merely non-retryable repairs become permanent causes | Separate readable repair context from failed-inspection provenance. Only non-retryable repairs enroll for cancellation-name/existing-cause transfer through Cosmos. Ordinary messages can inherit enclosing transient/owned-deadline context. The initial matrix covered permanent/submitted/partial causes separately from named-field failures; the paired cause-loss regression found in the next review is corrected below. Already-retryable repairs retain prior attribution cause omission. An unreadable attribution-only field does not imply a failed classifier inspection. | 100% reproduction; 99% correction |
+| Fred factory identity wording is too broad | Document that both Fred factories delegate to the core connection contract, which preserves identity only after successful diagnostic/retry inspection. Correct the historical broad claim; no Fred runtime change is needed. | 100% delegation and wording |
+| Own-data HTTP salvage is unpinned | Add one real identity-fetch → connection → Cosmos case with a throwing-get proxy over own HTTP 403. It retains QUERY_FAILED, the message, 403 and endpoint/operation context after one attempt. Removing only the descriptor fallback in an isolated copy fails those assertions. | 100% mutation evidence; 99% test adequacy |
+| Non-Error contextual causes do not restore vetoes | Clarify that only the supported standard Error chain carries retry verdicts. Built probes confirm raw string/object false → contextual true despite a hidden cause. Extend existing ENG-983's thrown-value scope; do not change that pre-existing policy in one wrapper. | 100% mechanism; 99% scope |
+| Non-whitespace controls used as mnemonic separators | Add the zero-width/bidi/NUL/NEL cases to existing ENG-271 and state the limit in the guide. Ten built-helper probes reproduce the gap; this optimization keeps the existing redaction set. A space-mapping candidate needs separate false-positive review. | 100% current mechanism; 98% pre-existing scope |
+| Private provenance does not cross core copies | Document one shared resolved core instance and the limits of duplicate installations or cloning/serialization. An isolated second physical dist copy classifies a malformed-code query envelope as retryable while the producing copy rejects it. No public marker or type is added. | 100% reproduced duplicate-copy mechanism; 99% guidance |
+
+Balanced local benchmarks use Node 24.15, source-transpiled sanitizer functions,
+the same built dependencies, nine interleaved samples of ten calls, and GC
+outside timed samples. For approximately 1 MiB inputs, `sanitizeForLogging`
+median milliseconds per call are:
+
+| Input | main `5a49cd4` | `e4a7e8d` | Current |
+| --- | ---: | ---: | ---: |
+| Base64 | 0.049 | 1.824 | 0.051 |
+| Compact JSON | 0.051 | 2.147 | 0.052 |
+| ASCII prose | 8.055 | 18.001 | 8.543 |
+| Unicode prose | 8.219 | 27.540 | 22.807 |
+
+These measurements establish the improvement on the sampled inputs, not a
+universal latency guarantee. Unicode prose still pays for the control scan, and
+control-bearing logging retains the cost of checking the control-free mnemonic
+candidate. ASCII results do not establish parity for ANSI/bidi diagnostics. There
+is no blanket main-parity claim and no timing threshold in unit tests.
+ENG-271/983/996/1000 retain the documented remaining redaction, producer,
+restore/terminal and paid-operation scope. Arbitrary state-changing accessors
+and grouped-error traversal remain outside this shallow-inspection contract.
+
+
+Retry validation passes **563 focused tests**, including **88 new cases**; the
+exact prior `e4a7e8d` baseline fails **40** of the new cases. Isolated mutations
+fail for enrollment (44), cancellation-name copying (24), existing-cause copying
+(12), provenance transfer (36), genuine inspection failure (12), later transfer
+failure (8), the already-retryable enrollment guard (4), and fallback permanence
+(20). No existing assertions were weakened.
+
+Independent sealed main/prior/current source comparisons use the same built
+dependencies and real manager → Cosmos → `withRetry`, with injected transport
+calls rather than network or broadcasts. Four transient-only cause shapes remain
+at one outer attempt, ordinary errors under transient wrappers and native aborts
+under owned deadlines recover the main three-attempt behavior, and permanent
+cause/status controls stay at one. The descriptor-salvage regression also passes
+normally and fails under its isolated mutation. Independent final review found
+no further issue in these branches (98% scope confidence); redaction validation
+passes **191 tests**. Focused counts overlap full-suite validation.
+
+
+Full validation passes **5,022 tests / 17 existing skips / 197 files**, with no
+type errors. Coverage floors pass: **85.36% lines / 85.10% statements / 85.29%
+branches / 88.81% functions**. Workspace builds (publint/attw), final core rebuild,
+workspace/E2E types, schema, Biome, architecture, all nine package-integrity checks
+and all four unchanged SDK bundle budgets pass. The first full run identified
+four ES2020 type incompatibilities; those are corrected and the complete rerun
+passes without changing the compiler target. Fresh PR-head CI/live acceptance
+results are recorded on PR #233 and ENG-953.
+
+
+## PR #233 review: cause vetoes across incomplete attribution (2026-09-18)
+
+[Claude's review of `ccc0665`](https://github.com/manifest-network/manifest-mcp-mono/pull/233#issuecomment-5729827065)
+confirms the prior performance and permanence fixes but identifies a missing
+combination: an unreadable attribution-only field with a veto on an existing
+cause. The previous matrix tested those conditions separately.
+
+| Finding | Resolution and evidence | Confidence |
+| --- | --- | --- |
+| The second repair branch drops a cause-only veto | Copy the already-read cause before selecting a repair branch, only when retry inspection succeeded and the cause read succeeded. An unreadable `details.module` can no longer erase submitted/partial/permanent causes. Keep the exact non-enumerable cause and its original hash/lease facts through repeated Cosmos attribution. | 100% reproduction; 99% correction |
+| A transient-looking repair falls into the endpoint-only fallback despite a permanent cause | The same earlier copy lets the existing classifier see the veto before deciding whether an endpoint fallback is needed. This also corrects the related pre-existing cause-loss path. Genuine classifier failures retain their conservative behavior; already-retryable repairs retain historical cause omission at Cosmos attribution. | 100% mechanism; 99% correction |
+| Model text strips a diagnostic twice | Reuse the control-free candidate from the mnemonic check for model projection. Keep raw-whitespace and control-free detection, raw non-secret logging text, short-string handling and code-point capping. The existing 3,038-case matrix now also compares model output; all 200 focused redaction/formatting tests pass. | 99% semantic preservation; 98% local performance |
+| Control-bearing diagnostics remain more expensive than main | Explicitly record the remaining cost of control-free mnemonic detection. The optimization removes duplicate model scans; it does not establish main parity for Unicode or ANSI/bidi input. | 100% observed residual; 98% measured magnitude |
+| Printable-ASCII fast-path boundaries lack direct tests | Add isolated DEL, NEL, C1 CSI and soft-hyphen fixtures in `text-controls.test.ts`, plus public model/log controls. Widening the guard to U+007F/U+0085/U+009F/U+00FF fails 1/2/3/4 targeted cases in isolated copies. | 100% mutation evidence |
+| Hostile identity-abort diagnostics lose timeout attribution | Both real Fred factories reproduce the generic endpoint-only fallback. Exact-source comparisons show the current shape predates this correction and avoids main's diagnostic-inspection leak. Record this conservative fallback in the guide and existing ENG-983 timeout scope; no Fred runtime change. | 100% reproduction; 99% scope |
+
+Independent injected manager/Cosmos probes retain all six checked submitted,
+partial and permanent cause classes and stop after one attempt; transient and
+no-cause controls still make three attempts. The baseline distinction matters:
+main's manager kept these vetoes, but its malformed Cosmos attribution could
+already discard the cause. This fix restores the manager behavior and preserves
+it downstream; it does not claim universal parity with main's Cosmos path.
+
+Local actual `withErrorHandling` benchmarks use Node 24.15, source-transpiled
+main/prior/current sanitizers with identical built dependencies, nine interleaved
+samples, five warmups and GC outside timing. The logger path runs with console
+output uniformly discarded. Median milliseconds per call:
+
+| Input | main `5a49cd4` | `ccc0665` | Current |
+| --- | ---: | ---: | ---: |
+| Unicode message (4,096 UTF-16 code units) | 0.105 | 0.230 | 0.159 |
+| Unicode details (60 × 16,384 UTF-16 code units) | 0.909 | 1.750 | 1.312 |
+| ANSI/bidi message (4,096 UTF-16 code units) | 0.113 | 0.322 | 0.241 |
+| ANSI/bidi details (60 × 16,384 UTF-16 code units) | 0.945 | 2.426 | 1.543 |
+
+The benchmark outputs match `ccc0665` byte-for-byte. An ANSI/bidi
+logging sample of 1,048,576 UTF-16 code units still takes 30.114 ms versus main's 8.813 ms (about 3.42×); its
+prior value was 32.924 ms. These are local measurements, not universal latency
+guarantees or timing assertions in the test suite.
+
+
+Retry validation passes **744 focused tests**, including **180 new paired/control
+cases** across REST/RPC identity, wallet acquisition and signing connection. The
+new matrix combines ten cause kinds, neutral/transient messages and unreadable
+attribution/incidental fields, then checks two Cosmos rebuilds and enclosing
+retry counts. It asserts exact cause identity, non-enumerability and original
+recovery facts; assertion failures inside retried operations cannot be mistaken
+for the expected rejection. The exact `ccc0665` baseline fails **80** new cases;
+100 new controls pass. No existing assertions were relaxed.
+
+On the selected **260 client cases** (180 new cases and 80 previous matrix
+cases), isolated mutations fail for removing cause copying (176), removing the
+failed-inspection gate (20), attaching the wrapper instead of its existing cause
+(160), making the cause enumerable (160), removing repaired-context enrollment
+(196), and removing the already-retryable enrollment guard (4). These are not
+counts for the full 744-test focused suite; the scope comparison and exact
+mutation definitions are recorded in the following audit. Independent source probes compare
+main, `e4a7e8d`, `ccc0665` and the fix without network or broadcasts.
+
+Fred's hostile-timeout probe covers both real factories. Five exact-source
+manager comparisons show main's inspection-exception leak, the more specific
+`3bf38f4` timeout envelope, and the same endpoint-only fallback at `e4a7e8d`,
+`ccc0665` and this correction. ENG-983 will evaluate safe timeout diagnostic
+retention alongside its producer work; this does not authorize retries after
+failed inspection. ENG-271/983/996/1000, state-changing accessors, grouped causes
+and duplicate-core provenance retain their previously documented scope.
+
+
+Full validation passes **5,211 tests / 17 existing skips / 197 files**, with no
+type errors. Coverage floors pass: **85.35% lines / 85.09% statements / 85.29%
+branches / 88.83% functions**. Fresh workspace builds (publint/attw), workspace/E2E
+types, schema, Biome, architecture, all nine package-integrity checks and all four
+unchanged SDK bundle budgets pass. Core's public entry-point declaration is
+byte-identical to the prior build. Independent final review found no blocker in
+scope (98% confidence). An initial overlapping E2E preparation rebuild invalidated
+package imports; checks were rerun successfully after that build completed.
+Fresh PR-head CI/live acceptance results are recorded on PR #233 and ENG-953.
+
+
+## PR #233 review: fallback wording and mutation-count scope (2026-09-18)
+
+[Claude's review of `cf437cc` and `93e5abf`](https://github.com/manifest-network/manifest-mcp-mono/pull/233#issuecomment-5731038826)
+confirms the cause-veto and redaction fixes. This round clarifies the remaining
+diagnostic tradeoff and reconciles mutation reporting; runtime code and tests
+are unchanged.
+
+[Claude's follow-up on `9f03199`](https://github.com/manifest-network/manifest-mcp-mono/pull/233#issuecomment-5731737226)
+confirms all twelve mutation counts and the revised diagnostic contract. It also
+corrects the attempt-count comparison and build prerequisite, as reflected below.
+
+| Finding | Resolution and evidence | Confidence |
+| --- | --- | --- |
+| Diagnostic preservation wording includes a transient-cause fallback; the attempt-count comparison used unequal retry harnesses | Limit the promise to incidental detail failures with readable named fields and successful retry inspection. A neutral SDK error with an unreadable `details.module` and transient `ECONNRESET` cause uses the endpoint-only fallback; its readable message and unrelated details are discarded. The guide and plan state this explicitly. Thirty-six fresh main/prior/head probes use the same enclosing retry budget in every lane and produce the matrix below. | 100% reproduced counts; 99% wording accuracy; 98% bounded scope assessment |
+| Mutation figures lack an explicit test-selection denominator in the PR reply | Label the original 260-case selection, publish the full 744-test counts, and correct the earlier PR/Linear records. Re-run all six exact mutations under both selections, retaining per-test results and patch/source hashes. | 100% reproduced counts for the pinned source, mutations and selections |
+| Core-only reproduction commands unnecessarily require a sibling build | Remove that prerequisite. These runtime selections import core source and external dependencies, without resolving sibling-package builds. | 100% reproduced without sibling resolution |
+
+The diagnostic probe uses `maxRetries: 0` for connection acquisition and
+`maxRetries: 2` with zero delays for an enclosing `withRetry` loop in **every**
+lane. "Unwrapped" means that loop receives the manager's error directly; the
+other lanes first attach it as the cause of a transient-message or
+`transportCode: 'ETIMEDOUT'` wrapper. An injected REST identity fetch rejects
+with `QUERY_FAILED`, a neutral message, an unreadable `details.module` and the
+specified readable cause. The 36 measurements produce these attempt counts:
+
+| Cause | Caller wrapper | main `5a49cd4` | `ccc0665` | `9f03199` |
+| --- | --- | ---: | ---: | ---: |
+| Transient `ECONNRESET` | Unwrapped | 3 | 1 | 1 |
+| Transient `ECONNRESET` | Transient message | 3 | 3 | 3 |
+| Transient `ECONNRESET` | `ETIMEDOUT` | 3 | 3 | 3 |
+| Permanent, submitted or partial (each tested) | Unwrapped | 1 | 1 | 1 |
+| Permanent, submitted or partial (each tested) | Transient message | 1 | 3 | 1 |
+| Permanent, submitted or partial (each tested) | `ETIMEDOUT` | 1 | 3 | 1 |
+
+The earlier probe invoked the unwrapped operation directly, bypassing the
+enclosing retry loop. Its one-attempt result did not establish parity with main.
+The earlier "unchanged bare/wrapped attempt counts" claim also overlooked
+`ccc0665`'s lost cause vetoes under the two wrappers. In these fixtures, current
+code retains the permanent/submitted/partial causes and recovery facts, while
+the unwrapped transient-only fallback is stricter than main. This is a bounded
+comparison, not a general retry-parity guarantee. Narrowing the documentation
+keeps the current conservative policy; it does not promise preservation of every
+readable detail.
+
+The mutation audit pins source to `93e5abf417d136125528e4387b3aaa4ea2f6aa81`,
+Node 24.15 and Vitest 4.1.10. Each mutation starts from a fresh client source in an
+isolated core-source copy with the global-fetch ban enabled. Unmodified controls
+pass **260/260** and **744/744**, respectively. Failed-test counts are:
+
+| Exact mutation in `connectionError` | Selected 260 | Full 744 |
+| --- | ---: | ---: |
+| Disable the hoisted cause-copy block (`if (false)`) | 176 | 192 |
+| Remove only `!inspectionFailed` from the cause-copy guard | 20 | 20 |
+| Replace `value: cause.value` with `value: error` in that block | 160 | 176 |
+| Add `enumerable: true` to that cause descriptor | 160 | 176 |
+| Replace both repaired-context enrollment calls with `void 0` | 196 | 204 |
+| Remove only the first branch's non-retryable enrollment guard | 4 | 4 |
+
+The first, third and fourth full-suite counts add sixteen pre-existing tests:
+terminal, transient, getter and inherited causes across REST, RPC, signing and
+wallet acquisition. The full enrollment-removal count adds eight existing tests
+for repaired `name`/`cause` fields that become unreadable during later attribution
+(two fields across four acquisition boundaries). Thus 204 is the full-suite
+result for the explicitly defined two-call-site mutation; 196 is the selected
+result. The preceding response omitted its selection denominator.
+
+From the root of an isolated checkout with dependencies installed, the equivalent
+test selections are (no sibling-package build is required for these core tests):
+
+```bash
+npx vitest run --typecheck.enabled=false packages/core/src/client.test.ts \
+  --testNamePattern 'retains a .* cause with|does not copy a transient cause|preserves nested retry semantics'
+
+npx vitest run --typecheck.enabled=false packages/core/src/client.test.ts \
+  packages/core/src/retry.test.ts \
+  packages/core/src/cosmos.read-error-boundary.test.ts \
+  packages/core/src/client-detail-salvage.test.ts
+```
+
+Apply each listed mutation independently to the pinned source for its failure
+counts, then restore that source before the next mutation. The archived audit
+uses runtime-only configs for these same file/test selections; normal source
+type-checking remains part of the unmodified project gates.
+
+The redaction timings remain individual local measurements, including the
+recorded 3.42× ANSI/bidi logging sample. The review's wider 3.16–5.03× range across
+its control-bearing samples is consistent with the documented absence of a
+parity guarantee. Fred timeout attribution, ENG-271/983/996/1000, state-changing
+accessors and duplicate-core provenance retain their existing documented scope.
+
+
+The documented unmodified root commands also pass **260/260** and **744/744**.
+Both selections reproduce in a fresh archive of the pinned revision with no
+workspace `dist` directories and a dependency facade exposing only external
+packages; resolution/import probes confirm workspace siblings are unavailable.
+`npm run check` and `git diff --check` pass. This round changes documentation
+only; the prior 5,211-test coverage run covers the unchanged runtime/test tree.
+Fresh PR-head CI/live acceptance results are recorded on PR #233 and ENG-953.

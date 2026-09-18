@@ -5,14 +5,74 @@ import {
   LeaseState,
   leaseStateToJSON,
   MAX_PAGE_LIMIT,
+  sanitizeForModelText,
   type WalletProvider,
 } from '@manifest-network/manifest-mcp-core';
-import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import type {
+  McpServer,
+  ReadResourceCallback,
+} from '@modelcontextprotocol/sdk/server/mcp.js';
+import { errorMessageOf } from '../error-diagnostics.js';
 
 interface RegisterResourcesDeps {
   mcpServer: McpServer;
   clientManager: CosmosClientManager;
   walletProvider: WalletProvider;
+}
+
+/** Preserve message-shaped wallet and cross-realm failures without exposing getters. */
+function resourceErrorMessage(error: unknown): string {
+  try {
+    if (
+      error !== null &&
+      (typeof error === 'object' || typeof error === 'function')
+    ) {
+      const message = Reflect.get(error, 'message');
+      if (typeof message === 'string') return message;
+      // Function coercion exposes source code; object coercion adds no useful
+      // protocol diagnostic, including when either is an Error's message.
+      if (
+        !(error instanceof Error) ||
+        typeof message === 'function' ||
+        (message !== null && typeof message === 'object')
+      )
+        return 'Internal error';
+      return String(message);
+    }
+  } catch {
+    return 'Error message unavailable';
+  }
+  return errorMessageOf(error);
+}
+
+/** MCP itself reads rejected errors while constructing JSON-RPC responses. */
+function readableResourceFailure(
+  read: ReadResourceCallback,
+): ReadResourceCallback {
+  return async (...args) => {
+    try {
+      return await read(...args);
+    } catch (error) {
+      // A fresh plain Error keeps hostile code/message accessors out of the protocol.
+      const normalized = new Error(
+        sanitizeForModelText(resourceErrorMessage(error)),
+      );
+      try {
+        const code =
+          error != null &&
+          (typeof error === 'object' || typeof error === 'function')
+            ? Reflect.get(error, 'code')
+            : undefined;
+        if (typeof code === 'number' && Number.isSafeInteger(code)) {
+          Object.assign(normalized, { code });
+        }
+      } catch {
+        // Unreadable codes use MCP's ordinary internal-error response.
+      }
+      // Do not forward arbitrary diagnostic data into the resource response.
+      throw normalized;
+    }
+  };
 }
 
 export function registerResources(deps: RegisterResourcesDeps): void {
@@ -44,7 +104,7 @@ export function registerResources(deps: RegisterResourcesDeps): void {
         "Snapshot of the caller wallet's leases currently in ACTIVE or PENDING state. Useful as immutable context for an agent deciding which app to operate on.",
       mimeType: 'application/json',
     },
-    async (uri) => {
+    readableResourceFailure(async (uri) => {
       await clientManager.acquireRateLimit();
       const queryClient = await clientManager.getQueryClient();
       const tenant = await walletProvider.getAddress();
@@ -85,7 +145,7 @@ export function registerResources(deps: RegisterResourcesDeps): void {
           pending: pending.leases.length,
         },
       });
-    },
+    }),
   );
 
   // -- manifest://leases/recent --
@@ -98,7 +158,7 @@ export function registerResources(deps: RegisterResourcesDeps): void {
         "The caller's leases ordered by most recent first, up to 50, regardless of state. Useful for surfacing recently-closed or rejected leases the agent may want to act on.",
       mimeType: 'application/json',
     },
-    async (uri) => {
+    readableResourceFailure(async (uri) => {
       await clientManager.acquireRateLimit();
       const queryClient = await clientManager.getQueryClient();
       const tenant = await walletProvider.getAddress();
@@ -125,7 +185,7 @@ export function registerResources(deps: RegisterResourcesDeps): void {
         })),
         total: result.pagination?.total?.toString(),
       });
-    },
+    }),
   );
 
   // -- manifest://providers --
@@ -138,7 +198,7 @@ export function registerResources(deps: RegisterResourcesDeps): void {
         'All active providers and their available SKUs (chain-side data only — no live HTTP health check). Use browse_catalog when health is needed.',
       mimeType: 'application/json',
     },
-    async (uri) => {
+    readableResourceFailure(async (uri) => {
       await clientManager.acquireRateLimit();
       const queryClient = await clientManager.getQueryClient();
       const sku = queryClient.liftedinit.sku.v1;
@@ -172,6 +232,6 @@ export function registerResources(deps: RegisterResourcesDeps): void {
           skus: skus.length,
         },
       });
-    },
+    }),
   );
 }

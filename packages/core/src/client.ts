@@ -44,6 +44,11 @@ import {
   verifyRestChainIdentity,
   verifyRpcChainIdentity,
 } from './internals/chain-identity.js';
+import { markErrorInspectionFailure } from './internals/error-inspection-failure.js';
+import {
+  guardedField,
+  snapshotErrorDetails,
+} from './internals/guarded-error-fields.js';
 import {
   type SequenceCache,
   sequencedSigningClient,
@@ -52,7 +57,13 @@ import { createLCDQueryClient } from './lcd-adapter.js';
 import { type Logger, noopLogger } from './logger.js';
 import type { ManifestQueryClient } from './manifest-query-client.js';
 import { abortableSleep, abortReason } from './options.js';
-import { withRetry } from './retry.js';
+import {
+  isRetryableError,
+  preserveRepairedErrorContext,
+  preserveRetryVerdicts,
+  retryInspectionFails,
+  withRetry,
+} from './retry.js';
 import {
   type ManifestMCPConfig,
   ManifestMCPError,
@@ -83,6 +94,92 @@ const DEFAULT_BROADCAST_POLL_INTERVAL_MS = 3_000;
 
 /** Poll for an available rate-limit token; abort-aware sleep rejects immediately on cancellation. */
 const RATE_LIMIT_POLL_MS = 25;
+
+/** Preserve readable SDK errors and normalize failures whose diagnostic fields cannot be read. */
+function connectionError(
+  error: unknown,
+  messagePrefix: string,
+  details: Record<string, unknown>,
+): ManifestMCPError {
+  let message: string;
+  try {
+    if (error instanceof ManifestMCPError) {
+      // Consumers read named status/attribution fields as well as enumerable details. A
+      // hidden getter must not escape merely because spreading the object skipped it.
+      const { code, message: sdkMessage } = error;
+      if (typeof code === 'string' && typeof sdkMessage === 'string') {
+        const sdkDetails = guardedField(error, 'details');
+        const snapshot = snapshotErrorDetails(
+          sdkDetails.ok ? sdkDetails.value : undefined,
+        );
+        const inspectionFailed = retryInspectionFails(error);
+        if (sdkDetails.ok && snapshot.readable && !inspectionFailed)
+          return error;
+        const name = guardedField(error, 'name');
+        const cause = guardedField(error, 'cause');
+        const normalized = new ManifestMCPError(code, sdkMessage, {
+          ...details,
+          ...snapshot.safeValue,
+        });
+        preserveRetryVerdicts(error, normalized);
+        // AbortError/TimeoutError names are retry vetoes, including on SDK errors.
+        if (name.ok && typeof name.value === 'string')
+          normalized.name = name.value;
+        // Attribution-only failures must not discard a readable veto (or recovery
+        // facts) on an existing cause. Use the guarded snapshot even when a named
+        // field such as module prevented a complete details snapshot.
+        if (!inspectionFailed && cause.ok && cause.value !== undefined) {
+          Object.defineProperty(normalized, 'cause', {
+            value: cause.value,
+            configurable: true,
+            writable: true,
+          });
+        }
+        if (
+          sdkDetails.ok &&
+          snapshot.namedReadable &&
+          name.ok &&
+          cause.ok &&
+          !inspectionFailed
+        ) {
+          // Only incidental diagnostics failed. Keep the independently readable verdict
+          // and details; copying must not invoke failing getters a second time.
+          // Preserve a non-retryable repair's name/cause without making it a permanent
+          // veto on enclosing transport errors. Already-retryable errors keep the
+          // established attribution behavior, which omits their existing causes.
+          if (!isRetryableError(normalized))
+            preserveRepairedErrorContext(normalized);
+          return normalized;
+        }
+        // Keep known permanent/cancellation verdicts and any independently readable
+        // cause. Use the endpoint-only fallback only if the repaired envelope could
+        // otherwise authorize another attempt.
+        if (!isRetryableError(normalized)) {
+          // A field irrelevant to the classifier (for example, module) can fail
+          // without making the independently readable retry verdict permanent.
+          if (inspectionFailed) markErrorInspectionFailure(normalized);
+          else preserveRepairedErrorContext(normalized);
+          return normalized;
+        }
+      }
+      message = 'Error message unavailable';
+    } else {
+      const rawMessage = error instanceof Error ? error.message : String(error);
+      message =
+        typeof rawMessage === 'string'
+          ? rawMessage
+          : 'Error message unavailable';
+    }
+  } catch {
+    // Both instanceof (a proxy's prototype) and message extraction can throw.
+    message = 'Error message unavailable';
+  }
+  return new ManifestMCPError(
+    ManifestMCPErrorCode.RPC_CONNECTION_FAILED,
+    `${messagePrefix}: ${message}`,
+    details,
+  );
+}
 
 /**
  * Get combined signing client options with all Manifest registries
@@ -414,13 +511,10 @@ export class CosmosClientManager {
       }
       return client;
     } catch (error) {
-      if (error instanceof ManifestMCPError) {
-        throw error;
-      }
       const endpoint = this.config.restUrl ?? this.config.rpcUrl;
-      throw new ManifestMCPError(
-        ManifestMCPErrorCode.RPC_CONNECTION_FAILED,
-        `Failed to connect to ${this.config.restUrl ? 'REST' : 'RPC'} endpoint: ${error instanceof Error ? error.message : String(error)}`,
+      throw connectionError(
+        error,
+        `Failed to connect to ${this.config.restUrl ? 'REST' : 'RPC'} endpoint`,
         { url: endpoint },
       );
     }
@@ -467,9 +561,13 @@ export class CosmosClientManager {
           client.disconnect();
         } catch (err) {
           // A failing orphan cleanup must never mask the supersede error below.
-          this.logger.debug(
-            `orphaned signing client disconnect failed: ${err instanceof Error ? err.message : String(err)}`,
-          );
+          try {
+            this.logger.debug(
+              `orphaned signing client disconnect failed: ${err instanceof Error ? String(err.message) : String(err)}`,
+            );
+          } catch {
+            // Error inspection and the diagnostic sink are both best effort during cleanup.
+          }
         }
         throw new ManifestMCPError(
           ManifestMCPErrorCode.RPC_CONNECTION_FAILED,
@@ -577,14 +675,9 @@ export class CosmosClientManager {
       );
       return client;
     } catch (error) {
-      if (error instanceof ManifestMCPError) {
-        throw error;
-      }
-      throw new ManifestMCPError(
-        ManifestMCPErrorCode.RPC_CONNECTION_FAILED,
-        `Failed to connect signing client: ${error instanceof Error ? error.message : String(error)}`,
-        { rpcUrl: this.config.rpcUrl },
-      );
+      throw connectionError(error, 'Failed to connect signing client', {
+        rpcUrl: this.config.rpcUrl,
+      });
     }
   }
 

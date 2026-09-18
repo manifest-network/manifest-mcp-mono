@@ -4,6 +4,61 @@ import { classifyDeployError } from './classify-deploy-error.js';
 const VALID_UUID = '11111111-1111-4111-8111-111111111111';
 
 describe('classifyDeployError (ENG-280 discriminant + legacy prefix fallback)', () => {
+  it('retains partial evidence when independent message and step diagnostics throw', () => {
+    const error = {
+      get message() {
+        throw new Error('message unavailable');
+      },
+      details: {
+        partial: true,
+        lease_uuid: VALID_UUID,
+        readiness_unconfirmed: true,
+        get failedStep() {
+          throw new Error('step unavailable');
+        },
+      },
+    };
+    expect(classifyDeployError(error)).toStrictEqual({
+      outcome: 'partially_succeeded',
+      leaseUuid: VALID_UUID,
+      readinessUnconfirmed: true,
+      reason: 'deploy partially succeeded; lease was created',
+    });
+  });
+
+  it('retains legacy partial evidence when details cannot be inspected', () => {
+    const { proxy, revoke } = Proxy.revocable({}, {});
+    revoke();
+    expect(
+      classifyDeployError({
+        message: `Deploy partially succeeded: lease ${VALID_UUID}`,
+        details: proxy,
+      }),
+    ).toMatchObject({
+      outcome: 'partially_succeeded',
+      leaseUuid: VALID_UUID,
+    });
+  });
+
+  it('does not throw on an unreadable root or wrapped envelope', () => {
+    const { proxy, revoke } = Proxy.revocable({}, {});
+    revoke();
+    for (const error of [
+      proxy,
+      { error: proxy },
+      {
+        get error() {
+          throw proxy;
+        },
+      },
+    ]) {
+      expect(classifyDeployError(error)).toStrictEqual({
+        outcome: 'failed',
+        reason: 'deploy_app threw an empty error',
+      });
+    }
+  });
+
   it('partial-success: extracts leaseUuid from details when present', () => {
     const r = classifyDeployError({
       message: `Deploy partially succeeded: lease ${VALID_UUID} was created but subsequent steps failed.`,
