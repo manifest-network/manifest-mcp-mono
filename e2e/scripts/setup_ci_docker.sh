@@ -14,7 +14,12 @@ if [[ "$ID" != "ubuntu" || "$VERSION_ID" != "24.04" ]]; then
     exit 1
 fi
 
+# Keep the Docker toolchain together at versions verified by the live E2E run:
+# https://github.com/manifest-network/manifest-mcp-mono/actions/runs/35370613452
 docker_version='5:29.7.2-1~ubuntu.24.04~noble'
+containerd_version='2.3.5-1~ubuntu.24.04~noble'
+buildx_version='0.37.1-1~ubuntu.24.04~noble'
+compose_version='5.5.1-1~ubuntu.24.04~noble'
 
 # Remove conflicting distribution packages if present (official Docker docs).
 conflicts=()
@@ -46,7 +51,8 @@ EOF
 sudo apt-get update
 sudo apt-get install -y --allow-downgrades \
     "docker-ce=$docker_version" "docker-ce-cli=$docker_version" \
-    containerd.io docker-buildx-plugin docker-compose-plugin
+    "containerd.io=$containerd_version" \
+    "docker-buildx-plugin=$buildx_version" "docker-compose-plugin=$compose_version"
 sudo systemctl restart docker
 docker context use default
 docker version

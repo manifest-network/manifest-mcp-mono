@@ -209,6 +209,7 @@ describe('SDK maintenance command identity', () => {
           outcome: 'unknown',
         },
       });
+      expect(error).not.toHaveProperty('details.sent');
       expect(isRetryableError(error)).toBe(false);
       expect(isTransientProviderError(error)).toBe(false);
     },
@@ -274,6 +275,7 @@ describe('SDK maintenance command identity', () => {
             outcome: 'unknown',
           },
         });
+        expect(error).not.toHaveProperty('details.sent');
         expect(isRetryableError(error)).toBe(false);
       } finally {
         client.dispose();

@@ -134,6 +134,7 @@ describe.each(operations)(
       });
       expect(wire.calls).toHaveLength(1);
       expect(isRetryableError(error)).toBe(false);
+      expect(error.details).not.toHaveProperty('sent');
       expect(error.details).not.toHaveProperty('provider_status');
       expect(error.details).not.toHaveProperty('status');
       expect(error.cause).toBeInstanceOf(ProviderApiError);
@@ -157,6 +158,22 @@ describe.each(operations)(
     });
 
     const uncertain: Array<{ title: string; response: ProbeStep }> = [
+      {
+        title: 'connection refused before submission',
+        response: {
+          transportError: Object.assign(new Error('connect ECONNREFUSED'), {
+            code: 'ECONNREFUSED',
+          }),
+        },
+      },
+      {
+        title: 'DNS lookup failure before submission',
+        response: {
+          transportError: Object.assign(new Error('getaddrinfo ENOTFOUND'), {
+            code: 'ENOTFOUND',
+          }),
+        },
+      },
       { title: '500', response: { status: 500, text: 'persistence failed' } },
       {
         title: '503',
@@ -194,6 +211,7 @@ describe.each(operations)(
         });
         expect(error.message).toContain('executes later');
         expect(error.message).toContain(COMMAND_KEY);
+        expect(error.details).not.toHaveProperty('sent');
         expect(isRetryableError(error)).toBe(false);
         expect(wire.calls).toHaveLength(1);
       },
@@ -219,6 +237,7 @@ describe.each(operations)(
       expect(error.message).toContain(
         'conflicts with a prior maintenance command',
       );
+      expect(error.details).not.toHaveProperty('sent');
       expect(isRetryableError(error)).toBe(false);
       expect(wire.calls).toHaveLength(1);
     });
@@ -493,6 +512,9 @@ describe.each(operations)(
             },
           });
           expect(error.stack).toBe(deadline.stack);
+          const details = { ...error.details, provider_url: PROVIDER_URL };
+          Object.defineProperty(error, 'details', { value: details });
+          expect(error.details).toBe(details);
           expect(isRetryableError(error)).toBe(false);
           expect(wire.calls).toHaveLength(2);
         } finally {

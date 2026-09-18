@@ -119,7 +119,9 @@ function commandDetails(
     idempotency_key: context.idempotencyKey,
     operation: context.operation,
     outcome: context.outcome,
-    sent: true,
+    // An uncertain POST failure alone is not evidence of submission. Accepted
+    // commands are known to have reached Fred even if the readiness wait fails.
+    ...(context.outcome === 'accepted' && { sent: true }),
     ...(observed && {
       // Zero is ProviderApiError's local-error sentinel, never an HTTP status.
       ...(observed.status >= 100 &&
@@ -312,6 +314,7 @@ export function maintenanceWaitError(
     const enriched = timeoutError(cause);
     Object.defineProperty(enriched, 'details', {
       value: details,
+      configurable: true,
       enumerable: true,
     });
     return retainCauseAndStack(enriched, marker);

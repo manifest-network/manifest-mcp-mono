@@ -7,8 +7,8 @@ import { MCPTestClient } from './helpers/mcp-client.js';
 /**
  * Full deploy lifecycle E2E test.
  *
- * Requires the Docker devnet to be running:
- *   docker compose -f e2e/docker-compose.yml up -d --wait
+ * Prepare prerequisites and images using docs/e2e-setup.md, then start the devnet:
+ *   bash e2e/scripts/devnet.sh up
  *
  * Tests run sequentially — each step depends on previous state.
  * Uses two MCP servers: lease (on-chain operations) and fred (provider operations).

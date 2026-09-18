@@ -27,6 +27,7 @@
 // its own JSDoc had specified. The cases below are unchanged by that move.
 import {
   type FredLeaseStatus,
+  isRetryableError,
   LeaseState,
   logger,
 } from '@manifest-network/manifest-mcp-core';
@@ -48,7 +49,7 @@ import {
   TerminalChainStateError,
   updateLease,
 } from './fred.js';
-import { ProviderApiError } from './provider.js';
+import { isTransientProviderError, ProviderApiError } from './provider.js';
 
 const PROVIDER_URL = 'https://provider.example.com';
 const LEASE_UUID = '550e8400-e29b-41d4-a716-446655440000';
@@ -1681,7 +1682,7 @@ describe.each([
         key,
       ),
   },
-])('$name raw maintenance identity', ({ invoke }) => {
+])('$name raw maintenance identity', ({ name, invoke }) => {
   it('forwards the caller key and preserves the wire response shape', async () => {
     const key = '77228fd4-4149-4981-83a8-21b4f6a2f681';
     const probe = fetchProbe({ status: 202, json: { status: 'accepted' } });
@@ -1700,6 +1701,34 @@ describe.each([
     );
     expect(probe.calls).toHaveLength(0);
   });
+
+  it.each(['ECONNREFUSED', 'ENOTFOUND', 'ECONNRESET'])(
+    '%s preserves uncertainty without asserting submission or allowing replay',
+    async (code) => {
+      const key = '77228fd4-4149-4981-83a8-21b4f6a2f681';
+      const probe = fetchProbe({
+        transportError: Object.assign(new Error(code), { code }),
+      });
+      const error = await invoke(probe.fetch, key).catch((err) => err);
+      expect(error).toBeInstanceOf(ProviderApiError);
+      expect(error).toMatchObject({
+        status: 0,
+        kind: 'network',
+        details: {
+          lease_uuid: LEASE_UUID,
+          operation: name,
+          idempotency_key: key,
+          outcome: 'unknown',
+        },
+      });
+      expect(error.details).not.toHaveProperty('sent');
+      expect(error.details).not.toHaveProperty('provider_status');
+      expect(error.cause.details).not.toHaveProperty('sent');
+      expect(isRetryableError(error)).toBe(false);
+      expect(isTransientProviderError(error)).toBe(false);
+      expect(probe.calls).toHaveLength(1);
+    },
+  );
 });
 
 /**

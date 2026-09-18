@@ -4,8 +4,9 @@ import { MCPTestClient } from './helpers/mcp-client.js';
 /**
  * Chain-only E2E tests for base tools.
  *
- * Requires at least the chain service to be running:
- *   docker compose -f e2e/docker-compose.yml up -d --wait
+ * Requires the devnet's chain service. Prepare the environment using
+ * docs/e2e-setup.md, then start it with:
+ *   bash e2e/scripts/devnet.sh up
  */
 describe('Chain tools', () => {
   const client = new MCPTestClient();

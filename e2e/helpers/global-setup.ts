@@ -46,7 +46,8 @@ export function setup() {
     console.warn(
       '[e2e] Could not extract TLS cert from providerd — fred tests will fail.\n' +
         (stderr ? `  ${stderr}\n` : '') +
-        '  Start the full stack: docker compose -f e2e/docker-compose.yml up -d --wait --wait-timeout 180',
+        '  Follow docs/e2e-setup.md for Linux/systemd/XFS prerequisites and image builds.\n' +
+        '  Start the full devnet: bash e2e/scripts/devnet.sh up',
     );
   }
 

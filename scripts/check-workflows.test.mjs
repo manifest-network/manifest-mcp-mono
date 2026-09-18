@@ -349,11 +349,16 @@ test('wiring: both live workflows install supported Docker and manage the native
 test('CI Docker installer pins signed Ubuntu packages and refuses non-CI execution', () => {
   const script = resolve(repoRoot, 'e2e/scripts/setup_ci_docker.sh');
   const source = readFileSync(script, 'utf8');
-  assert.match(source, /docker_version='5:29\.7\.2-1~ubuntu\.24\.04~noble'/);
-  assert.match(
-    source,
-    /"docker-ce=\$docker_version" "docker-ce-cli=\$docker_version"/,
-  );
+  for (const [name, variable, version] of [
+    ['docker-ce', 'docker_version', '5:29.7.2-1~ubuntu.24.04~noble'],
+    ['docker-ce-cli', 'docker_version', '5:29.7.2-1~ubuntu.24.04~noble'],
+    ['containerd.io', 'containerd_version', '2.3.5-1~ubuntu.24.04~noble'],
+    ['docker-buildx-plugin', 'buildx_version', '0.37.1-1~ubuntu.24.04~noble'],
+    ['docker-compose-plugin', 'compose_version', '5.5.1-1~ubuntu.24.04~noble'],
+  ]) {
+    assert(source.includes(`${variable}='${version}'`), `${name} version`);
+    assert(source.includes(`"${name}=$${variable}"`), `${name} install pin`);
+  }
   assert.match(source, /Signed-By: \/etc\/apt\/keyrings\/docker\.asc/);
   assert.match(source, /docker context use default/);
   const syntax = spawnSync('bash', ['-n', script], { encoding: 'utf8' });

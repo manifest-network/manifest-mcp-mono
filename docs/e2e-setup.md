@@ -10,7 +10,8 @@ Docker daemon, and commands inside the Linux VM, or use the project's Linux CI.
 Unit tests and the read-only annotation suite need no XFS mount.
 
 The PR and nightly workflows use Ubuntu 24.04 and install Docker Engine 29.7.2
-from Docker's signed package repository before preflight. Their installer is
+with pinned containerd, Buildx, and Compose versions from Docker's signed package
+repository before preflight. Their installer is
 restricted to GitHub Actions; local setup uses the Docker installation you manage.
 
 Fred PR #240 supports the backend container image only for stateless development.
