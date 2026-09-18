@@ -239,19 +239,22 @@ Note that `last_error` is now a deprecated alias kept only for providers older t
 
 ## E2E suite fails locally
 
-The Compose stack requires Linux, local Docker, initialized submodules, and a dedicated XFS project-quota mount at `/mnt/fred-xfs`. Follow [E2E environment setup](e2e-setup.md), including verification and cleanup. Then run:
+The E2E environment requires Linux, systemd, local Docker, initialized submodules, and a dedicated XFS project-quota mount at `/mnt/fred-xfs`. Fred's stateful backend runs natively on the host. Follow [E2E environment setup](e2e-setup.md), including verification and coherent resets. Then run:
 
 ```bash
 git submodule update --init --recursive
+npm ci
+npm run build
 npm run check:e2e-env
-docker compose -f e2e/docker-compose.yml up -d --wait --wait-timeout 600
+docker compose -f e2e/docker-compose.yml build
+bash e2e/scripts/devnet.sh up
 npm run test:e2e
 # Preserve the authority journals and XFS identity together for the next startup.
-docker compose -f e2e/docker-compose.yml down --remove-orphans
-# For a complete disposable reset, follow docs/e2e-setup.md; down -v alone is incomplete.
+bash e2e/scripts/devnet.sh down
+# For a complete disposable reset, follow docs/e2e-setup.md.
 ```
 
-If the chain container fails to boot, `docker compose -f e2e/docker-compose.yml logs chain` is the first place to look. The chain image is built from `submodules/manifest-ledger` at the pinned commit; if that submodule is dirty or behind, the chain won't have the right protobuf surface for manifestjs.
+Collect container and native backend logs with `bash e2e/scripts/devnet.sh logs`. If the chain container fails to boot, inspect its entries first. The chain image is built from `submodules/manifest-ledger` at the pinned commit; if that submodule is dirty or behind, the chain won't have the right protobuf surface for manifestjs.
 
 ## Still stuck
 

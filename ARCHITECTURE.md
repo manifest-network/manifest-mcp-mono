@@ -491,14 +491,15 @@ All MCP server output goes to **stderr** because stdout is reserved for the MCP 
 
 ## E2E testing
 
-End-to-end tests live in `/e2e/` and run against a real Manifest chain (and a real `providerd` for fred tests) via Docker Compose. Each `*.e2e.test.ts` spawns the relevant MCP server in a child process and drives it through the SDK's stdio transport (see `helpers/mcp-client.ts`). The chain image is built from the pinned `submodules/manifest-ledger` commit and the provider image is built from `submodules/fred`.
+End-to-end tests live in `/e2e/` and run against a real Manifest chain and `providerd` via Docker Compose, with Fred's stateful backend running natively on the host. Each `*.e2e.test.ts` spawns the relevant MCP server in a child process and drives it through the SDK's stdio transport (see `helpers/mcp-client.ts`). The chain image is built from the pinned `submodules/manifest-ledger` commit and the provider image is built from `submodules/fred`.
 
 ```
 e2e/
-├── docker-compose.yml                Spins up chain + init + docker-backend + providerd + faucet (TLS)
+├── docker-compose.yml                Chain + init + placement-init + providerd + faucet (TLS)
 ├── vitest.config.ts                  5-min test timeout; serial execution (fileParallelism:false + sequence.concurrent:false) so files share one on-chain wallet
 ├── docker/                           Dockerfiles for the chain and provider containers
 ├── scripts/
+│   ├── devnet.sh                     Starts the native stateful backend and coordinates Compose
 │   ├── init_chain.sh                 Genesis + key/funds bootstrap for the chain container
 │   ├── init_billing.sh               Registers the test provider, mints tokens, creates SKUs
 │   └── start_faucet.sh               Boots the CosmJS faucet against the test chain
@@ -524,14 +525,18 @@ e2e/
 └── sdk-acceptance.e2e.test.ts        SDK-direct acceptance — drives runAcceptanceFlow (SDK + manifestjs only) for single-service + stack leases
 ```
 
-To run:
+Follow the [Linux/systemd/XFS prerequisites](docs/e2e-setup.md), then run:
 
 ```bash
-docker compose -f e2e/docker-compose.yml up -d --wait --wait-timeout 600
+npm ci
+npm run build
+npm run check:e2e-env
+docker compose -f e2e/docker-compose.yml build
+bash e2e/scripts/devnet.sh up
 npm run test:e2e
 # Preserve the authority journals and XFS identity together for the next startup.
-docker compose -f e2e/docker-compose.yml down --remove-orphans
-# For a complete disposable reset, follow docs/e2e-setup.md; down -v alone is incomplete.
+bash e2e/scripts/devnet.sh down
+# For a complete disposable reset, follow docs/e2e-setup.md.
 ```
 
 ## Build and test
