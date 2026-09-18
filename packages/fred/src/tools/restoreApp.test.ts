@@ -251,6 +251,23 @@ describe('restoreApp', () => {
     expect(mockCreateLease).not.toHaveBeenCalled();
   });
 
+  it.each(['not a URL', 'http://127.0.0.1:8080', 'https://10.0.0.1'])(
+    'rejects an invalid provider URL before any paid lease or restore POST: %s',
+    async (providerUrl) => {
+      mockSource();
+      await expect(
+        restoreApp(
+          makeCtx(),
+          { address: 'a', sourceLeaseUuid: SOURCE },
+          { providerUrl, pollOptions: false },
+        ),
+      ).rejects.toMatchObject({ kind: 'invalid_url' });
+      expect(wire.calls).toHaveLength(0);
+      expect(mockCreateLease).not.toHaveBeenCalled();
+      expect(mockCosmosTx).not.toHaveBeenCalled();
+    },
+  );
+
   it('a relayed 422 already_provisioned verdict cannot authorize cancellation', async () => {
     mockSource();
     // Fred's backend client accepts 422 {error, code:"already_provisioned"}

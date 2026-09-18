@@ -11,8 +11,9 @@ permissions:
 
 jobs:
   e2e:
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
+    runs-on: ubuntu-24.04
+    # Allow Docker installation and fresh authority startup before the full suite.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -25,10 +26,13 @@ jobs:
           node-version: 22
           cache: npm
 
+      - name: Install supported Docker Engine
+        run: bash e2e/scripts/setup_ci_docker.sh
+
       - name: Provision loopback XFS (project quotas) for retention volumes
         run: |
           set -euo pipefail
-          sudo apt-get install -y xfsprogs          # explicit: don't rely on the ubuntu-latest preinstalled set for mkfs.xfs/xfs_quota
+          sudo apt-get install -y xfsprogs          # explicit: don't rely on the runner preinstalled set for mkfs.xfs/xfs_quota
           sudo mkdir -p /mnt/fred-xfs
           truncate -s 2G /tmp/fred-xfs.img          # > mkfs.xfs 300MB floor
           sudo mkfs.xfs -f /tmp/fred-xfs.img
@@ -43,7 +47,7 @@ jobs:
         run: docker compose -f e2e/docker-compose.yml build
 
       - name: Start devnet
-        run: docker compose -f e2e/docker-compose.yml up -d --wait --wait-timeout 180
+        run: docker compose -f e2e/docker-compose.yml up -d --wait --wait-timeout 600
 
       - name: Install and build
         run: |

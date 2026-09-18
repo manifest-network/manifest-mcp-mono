@@ -18,34 +18,12 @@ const h = vi.hoisted(() => {
     // ROOT
     createFredClient: vi.fn(),
     parseFqdn: vi.fn((s: string) => s),
-    // Local branded ProviderApiError (dual-package-safe by design — the guard accepts any object
-    // carrying the registered Symbol.for brand). Kept in vi.hoisted so the /deploy factory (hoisted
-    // above module consts) can reference it. NOT vi.importActual (that would need a built dist).
-    ProviderApiError: class ProviderApiError extends Error {
-      status: number;
-      constructor(status: number, message: string) {
-        super(message);
-        this.name = 'ProviderApiError';
-        this.status = status;
-        Object.defineProperty(
-          this,
-          Symbol.for('@manifest-network/manifest-mcp-fred.ProviderApiError'),
-          { value: true },
-        );
-      }
-      static isProviderApiError(v: unknown): v is ProviderApiError {
-        return (
-          typeof v === 'object' &&
-          v !== null &&
-          (v as Record<symbol, unknown>)[
-            Symbol.for('@manifest-network/manifest-mcp-fred.ProviderApiError')
-          ] === true
-        );
-      }
-    },
     // /deploy positional fred fns + helpers
     deployApp: vi.fn(),
     getLeaseConnectionInfo: vi.fn(),
+    getLeaseReleases: vi.fn(),
+    getLeaseStatus: vi.fn(),
+    createMaintenanceIdempotencyKey: vi.fn(() => 'test-command-key'),
     restartApp: vi.fn(),
     updateApp: vi.fn(),
     getAppLogs: vi.fn(),
@@ -75,10 +53,12 @@ vi.mock('@manifest-network/manifest-sdk', () => ({
 vi.mock('@manifest-network/manifest-sdk/deploy', () => ({
   deployApp: h.deployApp,
   getLeaseConnectionInfo: h.getLeaseConnectionInfo,
+  getLeaseReleases: h.getLeaseReleases,
+  getLeaseStatus: h.getLeaseStatus,
+  createMaintenanceIdempotencyKey: h.createMaintenanceIdempotencyKey,
   restartApp: h.restartApp,
   updateApp: h.updateApp,
   getAppLogs: h.getAppLogs,
-  ProviderApiError: h.ProviderApiError,
   buildManifest: h.buildManifest,
   buildStackManifest: h.buildStackManifest,
   LeaseState: h.LeaseState,
@@ -204,6 +184,8 @@ beforeEach(() => {
     provider_url: PROVIDER_URL,
   });
   h.getLeaseConnectionInfo.mockResolvedValue({});
+  h.getLeaseReleases.mockResolvedValue({ releases: [], release_count: 0 });
+  h.getLeaseStatus.mockResolvedValue({ provision_status: 'ready' });
   h.restartApp.mockResolvedValue({});
   h.updateApp.mockResolvedValue({});
   h.getAppLogs.mockResolvedValue({ logs: {} });
@@ -281,18 +263,31 @@ describe('runAcceptanceFlow (mocked SDK)', () => {
     expect(h.restartApp).toHaveBeenCalledTimes(1);
     expect(h.updateApp).toHaveBeenCalledTimes(1);
     expect(h.getAppLogs).toHaveBeenCalledTimes(1);
-    // The flow stays fire-and-return (single authoritative waitForLeaseStatus at
-    // step 7), so both lifecycle ops must opt out of the new default-poll. (ENG-488)
+    // Sequential maintenance polls share the 300-second E2E budget with deploy.
+    expect(h.deployApp).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      { pollOptions: { timeoutMs: 120_000 } },
+    );
     expect(h.restartApp).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ leaseUuid: LEASE_UUID }),
-      { pollOptions: false },
+      {
+        idempotencyKey: 'test-command-key',
+        pollOptions: { timeoutMs: 45_000 },
+      },
     );
     expect(h.updateApp).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ leaseUuid: LEASE_UUID }),
-      { pollOptions: false },
+      {
+        idempotencyKey: 'test-command-key',
+        pollOptions: { timeoutMs: 45_000 },
+      },
     );
+    expect(client.waitForLeaseStatus).toHaveBeenCalledWith(LEASE_UUID, {
+      timeout: 30_000,
+    });
   });
 
   it('(c/single) single uses buildManifest and a port-shaped spec (no services, no serviceName)', async () => {
@@ -416,28 +411,50 @@ describe('runAcceptanceFlow (mocked SDK)', () => {
     expect(client.dispose).toHaveBeenCalledTimes(1);
   });
 
-  it('(h) a 409 from restart is retried, then succeeds', async () => {
+  it('waits for restart readiness before submitting update', async () => {
     const client = buildFakeClient({ onSubscribeComplete: 'active' });
     h.createFredClient.mockResolvedValue(client);
-    const err409 = new h.ProviderApiError(409, 'invalid state');
-    h.restartApp.mockRejectedValueOnce(err409).mockResolvedValueOnce({});
+    let finishRestart!: () => void;
+    h.restartApp.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          finishRestart = resolve;
+        }),
+    );
 
-    await runAcceptanceFlow({ ...baseOpts(), variant: 'single' });
+    const flow = runAcceptanceFlow({ ...baseOpts(), variant: 'single' });
+    await vi.waitFor(() => expect(h.restartApp).toHaveBeenCalledTimes(1));
+    expect(h.updateApp).not.toHaveBeenCalled();
+    finishRestart();
+    await flow;
 
-    expect(h.restartApp).toHaveBeenCalledTimes(2);
+    expect(h.updateApp).toHaveBeenCalledTimes(1);
   });
 
-  it('(h) a non-409 from restart is NOT retried (propagates)', async () => {
-    const client = buildFakeClient({ onSubscribeComplete: 'active' });
-    h.createFredClient.mockResolvedValue(client);
-    const err500 = new h.ProviderApiError(500, 'boom');
-    h.restartApp.mockRejectedValue(err500);
+  it.each(['restart', 'update'] as const)(
+    'preserves a %s MaintenanceError without issuing a fresh command',
+    async (operation) => {
+      const client = buildFakeClient({ onSubscribeComplete: 'active' });
+      h.createFredClient.mockResolvedValue(client);
+      const error = Object.assign(new Error('invalid maintenance state'), {
+        name: 'MaintenanceError',
+        code: 'MAINTENANCE_REQUEST_FAILED',
+        details: {
+          provider_status: 409,
+          idempotency_key: 'original-command-key',
+          operation,
+          outcome: 'unknown',
+        },
+      });
+      const command = operation === 'restart' ? h.restartApp : h.updateApp;
+      command.mockRejectedValueOnce(error);
 
-    await expect(
-      runAcceptanceFlow({ ...baseOpts(), variant: 'single' }),
-    ).rejects.toThrow(/boom/);
-    expect(h.restartApp).toHaveBeenCalledTimes(1);
-    // dispose still runs on the failure path.
-    expect(client.dispose).toHaveBeenCalledTimes(1);
-  });
+      await expect(
+        runAcceptanceFlow({ ...baseOpts(), variant: 'single' }),
+      ).rejects.toBe(error);
+      expect(command).toHaveBeenCalledTimes(1);
+      expect(client.stopApp).not.toHaveBeenCalled();
+      expect(client.dispose).toHaveBeenCalledTimes(1);
+    },
+  );
 });

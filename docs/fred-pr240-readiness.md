@@ -13,8 +13,9 @@ the pin against Fred's final merged revision before rollout.
 - A lost response or 503 can leave an admitted command pending. Exact retries
   retain the key and final manifest bytes and use fresh authentication. Raw and
   high-level errors prevent generic automatic retries from creating new work.
-- Readiness errors distinguish an accepted command from an unknown POST outcome.
-  MCP error budgeting preserves the lease and command identity.
+- Readiness errors preserve their public subclasses, reason, timing, and failure
+  guidance while identifying the accepted command. Native call deadlines remain
+  timeouts. MCP error budgeting preserves the lease and command identity.
 - Manifest validation matches Fred's reserved Compose labels, Unicode case
   folding, and stricter user syntax. Image-baked reserved labels also cause
   upstream admission refusal; rebuilding the image is required in that case.
@@ -29,7 +30,8 @@ publication and consumer adoption.
 
 ## Devnet and verification
 
-The devnet builds Go 1.26.8 and includes `placement-preflight`. Compose seals a
+The devnet builds Go 1.26.8 and includes `placement-preflight`. CI installs a
+pinned compatible Docker daemon before checking the required server API floor. Compose seals a
 fresh backend storage identity, starts the backend with verified HTTPS, prepares
 provider placement authority, then starts providerd. Journals, the identity
 anchor, XFS data, and provider state must remain together across restarts. The

@@ -573,10 +573,10 @@ describe('validateManifest', () => {
       ['Fred.retention', 'fred.'],
       ['traefik.http.routers.web.rule', 'traefik.'],
       ['TRAEFIK.enable', 'traefik.'],
-      ['traefiK.enable', 'traefik.'],
+      ['traefi\u212A.enable', 'traefik.'],
       ['com.docker.compose.project', 'com.docker.compose.'],
       ['COM.DOCKER.COMPOSE.service', 'com.docker.compose.'],
-      ['com.docKer.compoſe.project', 'com.docker.compose.'],
+      ['com.doc\u212Aer.compo\u017Fe.project', 'com.docker.compose.'],
     ])('rejects reserved label %s case-insensitively', (key, prefix) => {
       const service = { image: 'nginx', labels: { [key]: 'abc' } };
       for (const manifest of [service, { services: { app: service } }]) {

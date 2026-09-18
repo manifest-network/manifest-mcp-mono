@@ -105,6 +105,7 @@ export {
   createProviderAuth,
   type ProviderAuthPort,
 } from './http/provider-auth.js';
+export { createMaintenanceIdempotencyKey } from './maintenance.js';
 export {
   type BuildManifestOptions,
   buildManifest,

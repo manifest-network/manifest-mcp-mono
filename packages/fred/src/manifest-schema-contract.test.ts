@@ -183,7 +183,7 @@ const contractCases: readonly ContractCase[] = [
   },
   {
     name: 'Unicode case-folded reserved Traefik label',
-    manifest: { image: 'nginx', labels: { 'traefiK.enable': 'blocked' } },
+    manifest: { image: 'nginx', labels: { 'traefi\u212A.enable': 'blocked' } },
     schemaValid: false,
   },
   {
@@ -192,7 +192,7 @@ const contractCases: readonly ContractCase[] = [
       services: {
         web: {
           image: 'nginx',
-          labels: { 'COM.DOCKER.COMPOſE.project': 'blocked' },
+          labels: { 'COM.DOC\u212AER.COMPO\u017FE.project': 'blocked' },
         },
       },
     },

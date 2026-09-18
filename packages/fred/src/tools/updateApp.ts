@@ -10,7 +10,10 @@ import {
 } from '../http/fred.js';
 import { validateProviderUrl } from '../http/provider.js';
 import { resolveMaintenanceIdempotencyKey } from '../maintenance.js';
-import { maintenanceError } from '../maintenance-error.js';
+import {
+  maintenanceError,
+  maintenanceWaitError,
+} from '../maintenance-error.js';
 import {
   isStackManifest,
   mergeManifest,
@@ -180,10 +183,10 @@ export async function updateApp(
     );
     return { ...base, ready };
   } catch (err) {
-    throw maintenanceError(err, {
+    throw maintenanceWaitError(err, {
       ...command,
-      outcome: 'accepted',
-      cancelled: signal?.aborted,
+      signal,
+      callerSignals: [opts.signal, opts.abortSignal],
     });
   }
 }

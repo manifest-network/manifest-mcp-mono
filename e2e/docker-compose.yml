@@ -9,8 +9,10 @@
 #   - providerd: Provider daemon
 #
 # Usage:
-#   docker compose -f e2e/docker-compose.yml up -d --wait
-#   docker compose -f e2e/docker-compose.yml down -v --remove-orphans
+#   docker compose -f e2e/docker-compose.yml up -d --wait --wait-timeout 600
+#   docker compose -f e2e/docker-compose.yml down --remove-orphans
+# Preserve named volumes and /mnt/fred-xfs together across restarts. A complete
+# disposable reset must recreate BOTH; see docs/e2e-setup.md before using down -v.
 
 services:
   # ===========================================================================

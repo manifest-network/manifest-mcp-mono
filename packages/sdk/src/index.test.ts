@@ -119,6 +119,7 @@ describe('manifest-sdk barrels', () => {
       'waitForAppReady',
       'createAuthTokens',
       'createProviderAuth',
+      'createMaintenanceIdempotencyKey',
       'restoreApp',
       'restoreLease',
       'restartApp',

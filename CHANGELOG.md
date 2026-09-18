@@ -7,15 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-- **fred, sdk, e2e:** prepare for Fred PR #240 at `4f00091c`: retain restart/update command keys through retries and errors, align manifest preflight and generated schema, and initialize verified backend storage/placement authority in the devnet. Maintenance uncertainty no longer invites a new command; restore target preservation remains unchanged. (ENG-1028)
-
 ### Added
 
+- **fred, sdk:** export `createMaintenanceIdempotencyKey` for generating and persisting canonical UUIDv4 command keys, including browsers that expose `getRandomValues` without `randomUUID`. (ENG-1028)
 - **core:** export `TransportErrorDetails` for verified per-attempt read/connection timeouts. `RetryOptions.signal` and `isRetryableError(error, { signal })` let callers stop retries and backoff on overall cancellation; operations must propagate the signal to cancel their own in-flight work. (ENG-805 follow-up)
 - **sdk:** export `withRetry` and `isRetryableError` from the root alongside the error classes, keeping the documented faucet-status retry composition on the SDK's pinned core dependency. (ENG-805 review)
 
 ### Changed
 
+- **BREAKING — fred, sdk:** `restartApp` / `updateApp` POST failures now expose typed maintenance error codes and recovery details instead of raw `ProviderApiError` on every transport/4xx path. Exact retries must preserve the original command key and payload; supplying no key creates a new command. Raw HTTP helpers retain `ProviderApiError`, and errors while waiting after acceptance preserve their original readiness or configuration diagnosis. Successful calls include `idempotency_key`. (ENG-1028)
+- **fred, e2e:** prepare for Fred PR #240 at `4f00091c`: align manifest preflight and generated schema, query retained data for expired leases, and initialize persistent storage/placement authority over verified HTTPS in the devnet. Live PR coverage includes maintenance replay and retained restore. Disposable reset must remove the XFS authority and named volumes together. (ENG-1028)
 - **tooling:** enforce the full workspace dependency direction and reject production import cycles; separate static command metadata from executable registration. Include never-imported source in coverage with regression floors, and enable `verbatimModuleSyntax` and `noImplicitOverride`. (ENG-805, ENG-751, ENG-753, ENG-806)
 - **core, sdk:** client configurations are immutable. Only holders with the same wallet, chain-identity transport and value-equal policy share an instance; independently configured clients coordinate broadcasts by chain/account. Verify each new RPC signing connection and REST query identity, rejecting mixed-endpoint disagreement before signing. REST endpoints must expose the Cosmos node-info route, adding an initial bounded request. (ENG-805)
 - **fred:** refuse provider redirects and preserve both restore lease IDs for reconciliation after every restore POST exception, including all 4xx/5xx, network failures, and malformed 2xx responses. These outcomes trigger neither automatic nor advised cancellation; compensation is limited to locally known failures or cancellation before the POST begins. `RESTORE_RETRYABLE` remains compatibility-only, and a 429 `Retry-After` does not authorize replay. Terminal diagnostics retrieve surviving provider records and distinguish chain state from provider provisioning state. (ENG-805)

@@ -14,6 +14,15 @@ export const DEFAULT_RETRY_CONFIG: Required<RetryConfig> = {
   maxDelayMs: 10000,
 };
 
+// These command-owned verdicts also occur across physical copies of core.
+// Structural recognition may veto a retry, never authorize one.
+const MAINTENANCE_ERROR_CODES: readonly string[] = [
+  ManifestMCPErrorCode.UPDATE_INDETERMINATE,
+  ManifestMCPErrorCode.RESTART_INDETERMINATE,
+  ManifestMCPErrorCode.MAINTENANCE_REQUEST_FAILED,
+  ManifestMCPErrorCode.MAINTENANCE_WAIT_FAILED,
+];
+
 /**
  * Error codes that should NOT be retried (permanent failures)
  */
@@ -69,14 +78,6 @@ const NON_RETRYABLE_ERROR_CODES: ManifestMCPErrorCode[] = [
   // blind retry of the deploy that produced this would create a second one. The
   // remedy is to look (app_status / wait_for_app_ready), not to re-broadcast.
   ManifestMCPErrorCode.DEPLOY_READINESS_UNCONFIRMED,
-
-  // Maintenance retries require the SAME durable command key and exact payload.
-  // Generic retries cannot ensure that identity: omitted keys create new work.
-  // Keep embedded network/HTTP diagnostics from authorizing automatic mutations.
-  ManifestMCPErrorCode.UPDATE_INDETERMINATE,
-  ManifestMCPErrorCode.RESTART_INDETERMINATE,
-  ManifestMCPErrorCode.MAINTENANCE_REQUEST_FAILED,
-  ManifestMCPErrorCode.MAINTENANCE_WAIT_FAILED,
 ];
 
 /**
@@ -171,6 +172,24 @@ function queryStatusRetryability(error: Error): boolean | undefined {
 }
 
 function isPermanentError(error: Error): boolean {
+  // A raw provider error or a foreign-core command verdict owns recovery. Stop
+  // before diagnostic messages/causes can obscure its durable command identity.
+  try {
+    if (MAINTENANCE_ERROR_CODES.includes(errorCode(error))) return true;
+    const details = (error as Error & { details?: unknown }).details;
+    if (details && typeof details === 'object') {
+      const context = details as Record<string, unknown>;
+      if (
+        (context.operation === 'restart' || context.operation === 'update') &&
+        (context.outcome === 'unknown' || context.outcome === 'accepted') &&
+        typeof context.idempotency_key === 'string'
+      )
+        return true;
+    }
+  } catch {
+    // Unreadable command metadata cannot establish that another POST is safe.
+    return true;
+  }
   // A generic "fetch failed" wrapper must not conceal NXDOMAIN on its cause.
   if (
     errorCode(error).toLowerCase() === 'enotfound' ||

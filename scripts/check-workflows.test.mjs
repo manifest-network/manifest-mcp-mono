@@ -298,6 +298,48 @@ test('wiring: PR live gate includes sequential maintenance and restore after SDK
   assert.match(vitest, /sequence:\s*\{\s*concurrent:\s*false/);
 });
 
+test('wiring: both live workflows install supported Docker before preflight and allow fresh startup', () => {
+  for (const [filename, jobName] of [
+    ['e2e-pr.yml', 'acceptance-single'],
+    ['e2e.yml', 'e2e'],
+  ]) {
+    const job = readWorkflow(filename).jobs[jobName];
+    assert.equal(job['runs-on'], 'ubuntu-24.04');
+    assert(job['timeout-minutes'] >= 45);
+    const install = job.steps.findIndex(
+      (step) => step.run === 'bash e2e/scripts/setup_ci_docker.sh',
+    );
+    const preflight = job.steps.findIndex(
+      (step) => step.run === 'node scripts/check-e2e-env.mjs',
+    );
+    assert(install >= 0 && install < preflight, filename);
+    assert.equal(job.steps[install].if, undefined);
+    assert.equal(job.steps[install]['continue-on-error'], undefined);
+    const startup = job.steps.find((step) => step.name === 'Start devnet');
+    assert.match(startup.run, /up -d --wait --wait-timeout 600$/);
+  }
+});
+
+test('CI Docker installer pins signed Ubuntu packages and refuses non-CI execution', () => {
+  const script = resolve(repoRoot, 'e2e/scripts/setup_ci_docker.sh');
+  const source = readFileSync(script, 'utf8');
+  assert.match(source, /docker_version='5:29\.7\.2-1~ubuntu\.24\.04~noble'/);
+  assert.match(
+    source,
+    /"docker-ce=\$docker_version" "docker-ce-cli=\$docker_version"/,
+  );
+  assert.match(source, /Signed-By: \/etc\/apt\/keyrings\/docker\.asc/);
+  assert.match(source, /docker context use default/);
+  const syntax = spawnSync('bash', ['-n', script], { encoding: 'utf8' });
+  assert.equal(syntax.status, 0, syntax.stderr);
+  const refused = spawnSync('bash', [script], {
+    encoding: 'utf8',
+    env: { ...process.env, GITHUB_ACTIONS: 'false', RUNNER_OS: 'Linux' },
+  });
+  assert.equal(refused.status, 1);
+  assert.match(refused.stderr, /restricted to Linux GitHub Actions runners/);
+});
+
 test('wiring: PR change filter includes the MCP lifecycle runtime dependencies', () => {
   const filter = readWorkflow('e2e-pr.yml').jobs.changes.steps.find(
     (step) => step.id === 'filter',

@@ -10,6 +10,7 @@ import {
   createFredClient,
   type FredClient,
   isRetryableError,
+  ManifestMCPError,
   type ManifestQueryClient,
   ProviderApiError,
   withRetry,
@@ -79,6 +80,70 @@ const operations = [
 ] as const;
 
 describe('SDK maintenance command identity', () => {
+  it.each(operations)(
+    'keeps raw $name recovery through a foreign-core adapter without replay',
+    async ({ name, raw }) => {
+      const wire = sealedFetchProbe({
+        [`/${name}`]: { status: 503, text: 'HTTP 503 unavailable' },
+      });
+      const readDiagnostic = vi.fn(() => {
+        throw new Error('unreadable foreign diagnostic cause');
+      });
+      let adapterError: ProviderApiError | undefined;
+      const error = await withRetry(
+        async () => {
+          try {
+            return await raw(wire.fetch);
+          } catch (cause) {
+            if (!(cause instanceof ProviderApiError)) throw cause;
+            // Simulate another physical core copy: its public code/details remain
+            // readable but instanceof our core class cannot establish ownership.
+            const foreign = Object.assign(new Error('HTTP 503'), {
+              code:
+                name === 'restart'
+                  ? 'RESTART_INDETERMINATE'
+                  : 'UPDATE_INDETERMINATE',
+              details: cause.details,
+            });
+            expect(foreign).not.toBeInstanceOf(ManifestMCPError);
+            Object.defineProperty(foreign, 'cause', { get: readDiagnostic });
+            adapterError = new ProviderApiError(cause.status, cause.message, {
+              kind: cause.kind,
+              details: { idempotency_key: cause.details?.idempotency_key },
+              cause: Object.assign(new Error('adapter'), { cause: foreign }),
+            });
+            throw adapterError;
+          }
+        },
+        {
+          config: { maxRetries: 1, baseDelayMs: 1, maxDelayMs: 1 },
+        },
+      ).catch((cause: unknown) => cause);
+
+      expect(wire.calls).toHaveLength(1);
+      const key = new Headers(wire.calls[0].init.headers).get(
+        'Idempotency-Key',
+      );
+      expect(error).toBe(adapterError);
+      expect(error).toBeInstanceOf(ProviderApiError);
+      expect(error).toMatchObject({
+        details: { idempotency_key: key },
+        cause: {
+          cause: {
+            details: {
+              operation: name,
+              outcome: 'unknown',
+              idempotency_key: key,
+            },
+          },
+        },
+      });
+      expect(isRetryableError(error)).toBe(false);
+      expect(isTransientProviderError(error)).toBe(false);
+      expect(readDiagnostic).not.toHaveBeenCalled();
+    },
+  );
+
   it.each(operations)(
     'preserves raw $name recovery when a response error has an unreadable cause',
     async ({ name, raw }) => {

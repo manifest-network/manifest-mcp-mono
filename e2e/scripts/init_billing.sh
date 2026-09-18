@@ -30,7 +30,7 @@ if [ -n "$EXISTING_PROVIDER" ]; then
     echo "Provider already exists with UUID: $EXISTING_PROVIDER"
     if [ -f /shared/providerd.yaml ] && [ -f /shared/docker-backend.yaml ] && [ -f /shared/tls/cert.pem ] && [ -f /shared/tls/key.pem ] && [ -f /shared/converter.env ]; then
         if [ "$(cat /shared/fred-bootstrap-version 2>/dev/null || true)" != "2" ]; then
-            echo "ERROR: this devnet predates Fred storage initialization. Recreate the disposable devnet and XFS image together, or migrate it using Fred's upgrade procedure."
+            echo "ERROR: Fred bootstrap version is missing or incompatible; this devnet may be old or incompletely initialized. Recreate the disposable devnet and XFS image together, or use Fred's upgrade/recovery procedure." >&2
             exit 1
         fi
         echo "Configs already exist. Skipping."

@@ -8,17 +8,20 @@ import {
 import {
   buildManifest,
   buildStackManifest,
+  createMaintenanceIdempotencyKey,
   deployApp,
   type EncodeObject,
   getAppLogs,
   getLeaseConnectionInfo,
+  getLeaseReleases,
+  getLeaseStatus,
   isLeaseFailureTerminal,
   LeaseState,
-  ProviderApiError,
   restartApp,
   updateApp,
 } from '@manifest-network/manifest-sdk/deploy';
 import { MsgFundCredit } from '@manifest-network/manifestjs/dist/codegen/liftedinit/billing/v1/tx.js'; // sanctioned
+import { submitDevnetMaintenance } from './maintenance-admission.js';
 
 /**
  * Drift-proof deploy-spec type: derived from `deployApp`'s spec param (2nd positional, after the
@@ -98,10 +101,13 @@ export async function runAcceptanceFlow(opts: AcceptanceOpts): Promise<void> {
     // Bound the readiness poll inside the e2e per-test timeout (300s). fred's
     // default is the provider's own 10-minute provisioning ceiling, which is
     // right for production but would let a stalled devnet blow the vitest
-    // timeout — an opaque kill instead of a diagnosable error. Also exercises
+    // timeout — an opaque kill instead of a diagnosable error. The deploy,
+    // restart, update, and final status polls total at most 240s. Admission
+    // recovery adds at most 20s of backoff, leaving 40s for other API and chain
+    // calls. Also exercises
     // the pollOptions pass-through the SDK publishes (ENG-661).
     const deployed = await deployApp(client, spec, {
-      pollOptions: { timeoutMs: 240_000 },
+      pollOptions: { timeoutMs: 120_000 },
     });
     const leaseUuid = deployed.lease_uuid;
     const serviceName = opts.variant === 'stack' ? 'web' : undefined;
@@ -135,11 +141,43 @@ export async function runAcceptanceFlow(opts: AcceptanceOpts): Promise<void> {
       });
     }
 
-    // 5) restart / update / getLogs (ctx; poll-on-409). The update manifest is variant-shaped.
-    // Pass the client directly as the ctx (it IS a FredAuthCtx).
-    await retryOn409(() =>
-      restartApp(client, { address: addr, leaseUuid }, { pollOptions: false }),
-    );
+    // 5) Wait for each command. The local harness can recover only the pinned
+    // provider's definitive admission fences after checking status and history.
+    const readReleases = async () =>
+      getLeaseReleases(
+        deployed.provider_url,
+        leaseUuid,
+        await client.providerAuth.providerToken({ address: addr, leaseUuid }),
+        client.fetch,
+        client.allowLoopback,
+      );
+    const reconcile =
+      (before: Awaited<ReturnType<typeof readReleases>>) => async () => {
+        const status = await getLeaseStatus(
+          deployed.provider_url,
+          leaseUuid,
+          await client.providerAuth.providerToken({ address: addr, leaseUuid }),
+          client.fetch,
+          undefined,
+          client.allowLoopback,
+        );
+        return (
+          status.provision_status === 'ready' &&
+          JSON.stringify(await readReleases()) === JSON.stringify(before)
+        );
+      };
+    const beforeRestart = await readReleases();
+    await submitDevnetMaintenance({
+      operation: 'restart',
+      createKey: createMaintenanceIdempotencyKey,
+      submit: (idempotencyKey) =>
+        restartApp(
+          client,
+          { address: addr, leaseUuid },
+          { idempotencyKey, pollOptions: { timeoutMs: 45_000 } },
+        ),
+      reconcile: reconcile(beforeRestart),
+    });
     const updateManifest =
       opts.variant === 'stack'
         ? buildStackManifest({
@@ -162,17 +200,22 @@ export async function runAcceptanceFlow(opts: AcceptanceOpts): Promise<void> {
             image: (spec as { image: string }).image,
             ports: { '8080/tcp': {} },
           });
-    await retryOn409(() =>
-      updateApp(
-        client,
-        {
-          address: addr,
-          leaseUuid,
-          manifest: JSON.stringify(updateManifest),
-        },
-        { pollOptions: false },
-      ),
-    );
+    const beforeUpdate = await readReleases();
+    await submitDevnetMaintenance({
+      operation: 'update',
+      createKey: createMaintenanceIdempotencyKey,
+      submit: (idempotencyKey) =>
+        updateApp(
+          client,
+          {
+            address: addr,
+            leaseUuid,
+            manifest: JSON.stringify(updateManifest),
+          },
+          { idempotencyKey, pollOptions: { timeoutMs: 45_000 } },
+        ),
+      reconcile: reconcile(beforeUpdate),
+    });
     await getAppLogs(client, { address: addr, leaseUuid, tail: 100 });
 
     // 6) executeTx BATCH — two MsgFundCredit (atomic double-fund); caller sets sender/tenant.
@@ -189,7 +232,7 @@ export async function runAcceptanceFlow(opts: AcceptanceOpts): Promise<void> {
     // 7) waitForLeaseStatus — resolve at any terminal; a FAILURE terminal must reject the flow
     // (else a failed deploy false-greens the metric).
     const finalStatus = await client.waitForLeaseStatus(leaseUuid, {
-      timeout: 120_000,
+      timeout: 30_000,
     });
     if (isLeaseFailureTerminal(finalStatus)) {
       throw new Error(
@@ -201,27 +244,5 @@ export async function runAcceptanceFlow(opts: AcceptanceOpts): Promise<void> {
     await client.stopApp({ leaseUuid });
   } finally {
     client.dispose();
-  }
-}
-
-/** Provider returns 409 'invalid state' until a prior change settles (lifecycle.e2e: retry ≤10×). */
-async function retryOn409(
-  fn: () => Promise<unknown>,
-  tries = 10,
-): Promise<void> {
-  for (let i = 0; i < tries; i++) {
-    try {
-      await fn();
-      return;
-    } catch (e) {
-      if (
-        !ProviderApiError.isProviderApiError(e) ||
-        e.status !== 409 ||
-        i === tries - 1
-      ) {
-        throw e;
-      }
-      await new Promise((r) => setTimeout(r, 3000));
-    }
   }
 }

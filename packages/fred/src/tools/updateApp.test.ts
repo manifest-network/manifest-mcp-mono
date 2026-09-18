@@ -673,11 +673,9 @@ describe('updateApp', () => {
     expect(wire.calls).toHaveLength(0);
   });
 
-  // Fred ENG-619 made `/update` PERSIST the payload, and a persist failure AFTER the
-  // backend already accepted the change answers 500 where the old build answered a
-  // misleading 202. All three of Fred's 500 sources emit an identical body, so "was it
-  // applied?" is unanswerable from the wire — which is exactly what the wrap must say.
-  describe('5xx is indeterminate, not a flat failure (Fred ENG-619)', () => {
+  // A POST error cannot establish the logical command's outcome: Fred may retain
+  // pending work, and an exact-key retry can fail independently of the first attempt.
+  describe('POST errors preserve uncertain command identity (Fred PR #240)', () => {
     /** Point `/update` at a status, leaving `/status` routed so a poll would work. */
     function routeUpdateFailure(status: number, text: string): void {
       wire = sealedFetchProbe({

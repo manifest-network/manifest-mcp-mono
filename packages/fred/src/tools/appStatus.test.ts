@@ -156,6 +156,30 @@ describe('appStatus', () => {
     expect(result.fredStatus?.partition).toBeUndefined();
   });
 
+  it('reads retained data for an expired lease without a deadline or connection request', async () => {
+    routeWire({
+      state: 'LEASE_STATE_EXPIRED',
+      provision_status: 'retained',
+      items: [{ sku: `s1${BIDI}`, quantity: 1 }],
+      restore_hint: `restore${BIDI}me`,
+    });
+
+    const result = await run(makeCtx(makeQc(LeaseState.LEASE_STATE_EXPIRED)));
+
+    expect(result.chainState.state).toBe(LeaseState.LEASE_STATE_EXPIRED);
+    expect(result.fredStatus).toMatchObject({
+      state: LeaseState.LEASE_STATE_EXPIRED,
+      provision_status: 'retained',
+      items: [{ sku: 's1', quantity: 1 }],
+      restore_hint: 'restore me',
+    });
+    expect(result.fredStatus?.retained_until).toBeUndefined();
+    expect(result.connection).toBeUndefined();
+    expect(wire.calls).toHaveLength(1);
+    expect(callTo('/status')).toBeDefined();
+    expect(mockGetAuthToken).toHaveBeenCalledTimes(1);
+  });
+
   it('DROPS a malformed/injected retained_until instead of leaking it raw past the sanitizer (ENG-555)', async () => {
     routeWire({
       state: 'LEASE_STATE_CLOSED',

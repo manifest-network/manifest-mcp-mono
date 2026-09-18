@@ -179,6 +179,97 @@ describe('isRetryableError', () => {
     });
   });
 
+  describe('maintenance ownership across package copies', () => {
+    const config = { maxRetries: 1, baseDelayMs: 1, maxDelayMs: 1 };
+
+    it.each([
+      'UPDATE_INDETERMINATE',
+      'RESTART_INDETERMINATE',
+      'MAINTENANCE_REQUEST_FAILED',
+      'MAINTENANCE_WAIT_FAILED',
+    ])('preserves a nested foreign %s without retrying', async (code) => {
+      const foreign = Object.assign(new Error('HTTP 503'), { code });
+      const readDiagnostic = vi.fn(() => {
+        throw new Error('unreadable diagnostic');
+      });
+      Object.defineProperties(foreign, {
+        message: { get: readDiagnostic },
+        cause: { get: readDiagnostic },
+      });
+      const wrapper = Object.assign(new Error('adapter'), { cause: foreign });
+      const error = Object.assign(new Error('fetch failed'), {
+        cause: wrapper,
+      });
+      const operation = vi.fn().mockRejectedValue(error);
+
+      expect(foreign).not.toBeInstanceOf(ManifestMCPError);
+      expect(isRetryableError(error)).toBe(false);
+      await expect(withRetry(operation, { config })).rejects.toBe(error);
+      expect(operation).toHaveBeenCalledOnce();
+      expect(readDiagnostic).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['restart', 'unknown'],
+      ['restart', 'accepted'],
+      ['update', 'unknown'],
+      ['update', 'accepted'],
+    ])('retains raw %s recovery for outcome %s', (operation, outcome) => {
+      const error = Object.assign(new Error('ECONNRESET'), {
+        details: { operation, outcome, idempotency_key: 'persisted-command' },
+      });
+      const readDiagnostic = vi.fn(() => {
+        throw new Error('unreadable diagnostic');
+      });
+      Object.defineProperties(error, {
+        message: { get: readDiagnostic },
+        cause: { get: readDiagnostic },
+      });
+
+      expect(isRetryableError(error)).toBe(false);
+      expect(readDiagnostic).not.toHaveBeenCalled();
+    });
+
+    it.each(['code', 'details', 'operation', 'outcome', 'idempotency_key'])(
+      'does not replay when command %s is unreadable',
+      async (field) => {
+        const details = {
+          operation: 'restart',
+          outcome: 'unknown',
+          idempotency_key: 'persisted-command',
+        };
+        const error = Object.assign(new Error('HTTP 503'), { details });
+        Object.defineProperty(
+          field === 'code' || field === 'details' ? error : details,
+          field,
+          {
+            get: () => {
+              throw new Error('unreadable context');
+            },
+          },
+        );
+        const operation = vi.fn().mockRejectedValue(error);
+
+        await expect(withRetry(operation, { config })).rejects.toBe(error);
+        expect(operation).toHaveBeenCalledOnce();
+      },
+    );
+
+    it('retains transient classification for an ordinary read context', () => {
+      expect(
+        isRetryableError(
+          Object.assign(new Error('HTTP 503'), {
+            details: {
+              operation: 'read',
+              outcome: 'unknown',
+              idempotency_key: 'x',
+            },
+          }),
+        ),
+      ).toBe(true);
+    });
+  });
+
   describe('Standard Error handling', () => {
     it('should retry network errors', () => {
       expect(isRetryableError(new Error('ECONNREFUSED'))).toBe(true);

@@ -219,7 +219,7 @@ test('Compose gates provider ingress on initialization and shares durable author
   );
 });
 
-test('generated Fred configuration supplies verified backend TLS and exact persistent paths', () => {
+function generatedFredConfig() {
   const script = readFileSync(
     new URL('e2e/scripts/init_billing.sh', root),
     'utf8',
@@ -230,8 +230,15 @@ test('generated Fred configuration supplies verified backend TLS and exact persi
     const bodyStart = script.indexOf('\n', start) + 1;
     return parse(script.slice(bodyStart, script.indexOf('\nYAML', bodyStart)));
   };
-  const provider = config('providerd');
-  const backend = config('docker-backend');
+  return {
+    script,
+    provider: config('providerd'),
+    backend: config('docker-backend'),
+  };
+}
+
+test('generated Fred configuration supplies verified backend TLS and exact persistent paths', () => {
+  const { script, provider, backend } = generatedFredConfig();
   assert.equal(provider.backends[0].url, 'https://docker-backend:9001');
   assert.equal(provider.backends[0].tls_ca_file, '/shared/tls/cert.pem');
   assert.equal(provider.backends[0].tls_skip_verify, undefined);
@@ -248,4 +255,111 @@ test('generated Fred configuration supplies verified backend TLS and exact persi
     assert.equal(backend[key], `/data/${filename}`);
   }
   assert.match(script, /subjectAltName=[^\n"]*DNS:docker-backend/);
+});
+
+function assertInitializerDefaultsMatchConfig(
+  provider,
+  backend,
+  backendScript,
+  placementScript,
+) {
+  const shellDefault = (script, variable) => {
+    const match = script.match(
+      new RegExp(`^${variable}=\\$\\{[^}]+:-([^}]+)\\}$`, 'm'),
+    );
+    assert(match, `missing shell default for ${variable}`);
+    return match[1];
+  };
+  assert.equal(
+    shellDefault(backendScript, 'backend_config'),
+    '/shared/docker-backend.yaml',
+  );
+  assert.equal(
+    shellDefault(placementScript, 'provider_config'),
+    '/shared/providerd.yaml',
+  );
+  assert.equal(
+    shellDefault(placementScript, 'placement_db'),
+    provider.placement_store_db_path,
+  );
+  const directories = {
+    backend_data: shellDefault(backendScript, 'backend_data'),
+    volume_data: shellDefault(backendScript, 'volume_data'),
+  };
+  const checkedPaths = [
+    ...backendScript.matchAll(/"\$(backend_data|volume_data)\/([^"\n]+)"/g),
+  ].map(([, directory, filename]) => `${directories[directory]}/${filename}`);
+  // Compare what the fresh/restart guard actually probes (without the fixture's
+  // environment overrides) with the paths that Fred will open from its config.
+  assert.deepEqual(
+    checkedPaths.sort(),
+    [
+      backend.callback_db_path,
+      backend.releases_db_path,
+      backend.retention_db_path,
+      `${backend.callback_db_path}.storage-identity-anchor.json`,
+      `${backend.volume_data_path}/.fred-backend-storage-identity.json`,
+    ].sort(),
+  );
+  const roster = placementScript.match(/^expected_backends='([^']+)'$/m);
+  assert(roster);
+  assert.deepEqual(
+    JSON.parse(roster[1]),
+    provider.backends.map(({ name }) => name),
+  );
+}
+
+test('initializer defaults and probed authority members match generated Fred config', () => {
+  const { provider, backend } = generatedFredConfig();
+  const backendScript = readFileSync(
+    new URL('e2e/scripts/init_backend.sh', root),
+    'utf8',
+  );
+  const placementScript = readFileSync(
+    new URL('e2e/scripts/init_placement.sh', root),
+    'utf8',
+  );
+  assertInitializerDefaultsMatchConfig(
+    provider,
+    backend,
+    backendScript,
+    placementScript,
+  );
+  for (const [changedBackend, changedPlacement] of [
+    [
+      backendScript.replace(
+        'FRED_BACKEND_DATA_DIR:-/data',
+        'FRED_BACKEND_DATA_DIR:-/other',
+      ),
+      placementScript,
+    ],
+    [
+      backendScript.replace('callbacks.db"', 'other-callbacks.db"'),
+      placementScript,
+    ],
+    [
+      backendScript.replace(
+        'FRED_VOLUME_DATA_PATH:-/mnt/fred-xfs',
+        'FRED_VOLUME_DATA_PATH:-/other',
+      ),
+      placementScript,
+    ],
+    [
+      backendScript,
+      placementScript.replace(
+        'FRED_PLACEMENT_DB:-/data/placements.db',
+        'FRED_PLACEMENT_DB:-/other/placements.db',
+      ),
+    ],
+    [backendScript, placementScript.replace('docker-1', 'docker-2')],
+  ]) {
+    assert.throws(() =>
+      assertInitializerDefaultsMatchConfig(
+        provider,
+        backend,
+        changedBackend,
+        changedPlacement,
+      ),
+    );
+  }
 });

@@ -6,7 +6,10 @@ import {
 } from '../http/fred.js';
 import { validateProviderUrl } from '../http/provider.js';
 import { resolveMaintenanceIdempotencyKey } from '../maintenance.js';
-import { maintenanceError } from '../maintenance-error.js';
+import {
+  maintenanceError,
+  maintenanceWaitError,
+} from '../maintenance-error.js';
 import { resolveFredSignal } from './call-signal.js';
 import { fetchActiveLease } from './fetchActiveLease.js';
 import type { LifecycleCallOptions } from './lifecycle-options.js';
@@ -79,10 +82,10 @@ export async function restartApp(
     );
     return { ...base, ready };
   } catch (err) {
-    throw maintenanceError(err, {
+    throw maintenanceWaitError(err, {
       ...command,
-      outcome: 'accepted',
-      cancelled: signal?.aborted,
+      signal,
+      callerSignals: [opts.signal, opts.abortSignal],
     });
   }
 }

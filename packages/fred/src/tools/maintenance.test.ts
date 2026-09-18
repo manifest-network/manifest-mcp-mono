@@ -1,5 +1,6 @@
 import {
   isRetryableError,
+  ManifestMCPError,
   ManifestMCPErrorCode,
   noopLogger,
 } from '@manifest-network/manifest-mcp-core';
@@ -10,7 +11,15 @@ import {
 } from '@manifest-network/manifest-mcp-core/__test-utils__/fetch-probe.js';
 import { describe, expect, it, vi } from 'vitest';
 import type { FredAuthCtx } from '../ctx.js';
-import { ProviderApiError } from '../http/provider.js';
+import { guidanceFor } from '../failure-guidance.js';
+import {
+  isTransientProviderError,
+  ProviderApiError,
+} from '../http/provider.js';
+import {
+  LeaseReadinessUnconfirmedError,
+  TerminalChainStateError,
+} from '../readiness/poll-lease-readiness.js';
 import type { LifecycleCallOptions } from './lifecycle-options.js';
 import { restartApp } from './restartApp.js';
 import { updateApp } from './updateApp.js';
@@ -29,6 +38,7 @@ const operations = [
     name: 'restart',
     status: 'restarting',
     code: ManifestMCPErrorCode.RESTART_INDETERMINATE,
+    failureReason: 'RestartFailed',
     invoke: (ctx: FredAuthCtx, options: LifecycleCallOptions) =>
       restartApp(ctx, INPUT, options),
   },
@@ -36,6 +46,7 @@ const operations = [
     name: 'update',
     status: 'updating',
     code: ManifestMCPErrorCode.UPDATE_INDETERMINATE,
+    failureReason: 'UpdateFailed',
     invoke: (ctx: FredAuthCtx, options: LifecycleCallOptions) =>
       updateApp(ctx, { ...INPUT, manifest: MANIFEST }, options),
   },
@@ -64,7 +75,7 @@ function fixture(
 
 describe.each(operations)(
   '$name maintenance commands',
-  ({ name, status, code, invoke }) => {
+  ({ name, status, code, failureReason, invoke }) => {
     const options = { providerUrl: PROVIDER_URL, pollOptions: false as const };
 
     it('generates and returns a canonical key, and starts each new call with a fresh key', async () => {
@@ -123,6 +134,11 @@ describe.each(operations)(
       });
       expect(wire.calls).toHaveLength(1);
       expect(isRetryableError(error)).toBe(false);
+      expect(error.details).not.toHaveProperty('provider_status');
+      expect(error.details).not.toHaveProperty('status');
+      expect(error.cause).toBeInstanceOf(ProviderApiError);
+      expect(error.stack).toBe(error.cause.stack);
+      expect(Object.keys(error)).not.toContain('cause');
       const key = error.details.idempotency_key as string;
       expect(key).toMatch(UUID_V4);
       const result = await invoke(ctx, { ...options, idempotencyKey: key });
@@ -215,15 +231,36 @@ describe.each(operations)(
         pollOptions: { timeoutMs: 0 },
       }).catch((err) => err);
       expect(error).toMatchObject({
-        code: ManifestMCPErrorCode.MAINTENANCE_WAIT_FAILED,
+        reason: 'deadline',
+        timeoutMs: 0,
         details: {
           idempotency_key: COMMAND_KEY,
           outcome: 'accepted',
           reason: 'deadline',
+          readiness: 'unconfirmed',
+          sent: true,
         },
       });
-      expect(ProviderApiError.isProviderApiError(error.cause)).toBe(true);
+      expect(error).toBeInstanceOf(LeaseReadinessUnconfirmedError);
+      expect(ProviderApiError.isProviderApiError(error)).toBe(true);
+      expect(error.message).toContain('This is NOT a reported failure');
+      expect(error.message).toContain('before treating it as failed.');
+      expect(error.details).not.toHaveProperty('provider_status');
       expect(isRetryableError(error)).toBe(false);
+      expect(isTransientProviderError(error)).toBe(false);
+      const enriched = error.withContext({
+        providerUuid: 'provider-1',
+        providerUrl: PROVIDER_URL,
+      });
+      expect(enriched).toBeInstanceOf(LeaseReadinessUnconfirmedError);
+      expect(enriched.details).toMatchObject({
+        idempotency_key: COMMAND_KEY,
+        outcome: 'accepted',
+        provider_uuid: 'provider-1',
+      });
+      expect(enriched.cause).toBe(error.cause);
+      expect(enriched.stack).toBe(error.stack);
+      expect(isRetryableError(enriched)).toBe(false);
       expect(wire.calls).toHaveLength(1);
     });
 
@@ -235,7 +272,8 @@ describe.each(operations)(
           json: {
             ...READY,
             provision_status: 'failed',
-            reason: 'UpdateFailed',
+            reason: failureReason,
+            message: 'The requested operation failed.',
           },
         },
       );
@@ -245,14 +283,275 @@ describe.each(operations)(
         pollOptions: {},
       }).catch((err) => err);
       expect(error).toMatchObject({
-        code: ManifestMCPErrorCode.MAINTENANCE_WAIT_FAILED,
+        kind: 'poll_verdict',
         details: {
           idempotency_key: COMMAND_KEY,
           outcome: 'accepted',
           provider_error_kind: 'poll_verdict',
+          readiness: 'failed',
+          reason: failureReason,
+          message: 'The requested operation failed.',
+          next_step: guidanceFor(failureReason)?.nextStep,
         },
       });
-      expect(error.message).toContain('UpdateFailed');
+      expect(error).toBeInstanceOf(ProviderApiError);
+      expect(error.message).toContain(failureReason);
+      expect(error.message).not.toContain('NOT a reported failure');
+      expect(isRetryableError(error)).toBe(false);
+    });
+
+    it('unreachable readiness preserves the public error type, timing, and full guidance', async () => {
+      const { ctx, wire } = fixture(
+        name,
+        { status: 202, json: { status } },
+        {
+          status: 503,
+          text: 'temporary backend outage',
+        },
+      );
+      const error = await invoke(ctx, {
+        ...options,
+        idempotencyKey: COMMAND_KEY,
+        pollOptions: { maxConsecutiveFailures: 0 },
+      }).catch((err) => err);
+      expect(error).toBeInstanceOf(LeaseReadinessUnconfirmedError);
+      expect(error).toMatchObject({
+        reason: 'provider_unreachable',
+        consecutiveFailures: 1,
+        timeoutMs: 600_000,
+        elapsedMs: expect.any(Number),
+        details: {
+          idempotency_key: COMMAND_KEY,
+          readiness: 'unconfirmed',
+          outcome: 'accepted',
+          consecutive_failures: 1,
+        },
+      });
+      expect(error.message).toContain('This is NOT a reported failure');
+      expect(error.message).toContain(
+        'app_status before treating it as failed.',
+      );
+      expect(error.stack).toBe(error.cause.stack);
+      expect(error.details).not.toHaveProperty('provider_status');
+      expect(isTransientProviderError(error)).toBe(false);
+      expect(isRetryableError(error)).toBe(false);
+      expect(
+        wire.calls.filter((call) => call.url.endsWith(`/${name}`)),
+      ).toHaveLength(1);
+    });
+
+    it('a terminal chain verdict keeps its concrete class and chain state', async () => {
+      const { ctx, wire } = fixture(name, { status: 202, json: { status } });
+      const error = await invoke(ctx, {
+        ...options,
+        idempotencyKey: COMMAND_KEY,
+        pollOptions: { checkChainState: async () => ({ state: 'closed' }) },
+      }).catch((err) => err);
+      expect(error).toBeInstanceOf(TerminalChainStateError);
+      expect(error).toMatchObject({
+        chainState: 'closed',
+        leaseUuid: LEASE_UUID,
+        details: {
+          idempotency_key: COMMAND_KEY,
+          outcome: 'accepted',
+          readiness: 'terminal',
+          chain_state: 'closed',
+        },
+      });
+      expect(error.details).not.toHaveProperty('provider_status');
+      const enriched = error
+        .withContext({ providerUuid: 'provider-1' })
+        .withContext({ providerUrl: PROVIDER_URL });
+      expect(enriched).toBeInstanceOf(TerminalChainStateError);
+      expect(enriched).toMatchObject({
+        providerUuid: 'provider-1',
+        providerUrl: PROVIDER_URL,
+        details: {
+          idempotency_key: COMMAND_KEY,
+          outcome: 'accepted',
+          readiness: 'terminal',
+        },
+      });
+      expect(enriched.cause).toBe(error.cause);
+      expect(isRetryableError(error)).toBe(false);
+      expect(wire.calls).toHaveLength(1);
+    });
+
+    it('a token failure after acceptance retains its operational code, details, and stack', async () => {
+      const { ctx, wire, providerToken } = fixture(name, {
+        status: 202,
+        json: { status },
+      });
+      const failure = new ManifestMCPError(
+        ManifestMCPErrorCode.QUERY_FAILED,
+        'HTTP 503 while refreshing token metadata',
+        { httpStatus: 503, action: 'providerToken' },
+      );
+      providerToken
+        .mockResolvedValueOnce('mutation-token')
+        .mockRejectedValueOnce(failure);
+      const error = await invoke(ctx, {
+        ...options,
+        idempotencyKey: COMMAND_KEY,
+        pollOptions: {},
+      }).catch((err) => err);
+      expect(error).toBeInstanceOf(ManifestMCPError);
+      expect(error).toMatchObject({
+        code: ManifestMCPErrorCode.QUERY_FAILED,
+        message: failure.message,
+        details: {
+          httpStatus: 503,
+          action: 'providerToken',
+          outcome: 'accepted',
+          sent: true,
+          idempotency_key: COMMAND_KEY,
+        },
+      });
+      expect(error.stack).toBe(failure.stack);
+      expect(error.cause).toBe(failure);
+      expect(isRetryableError(error)).toBe(false);
+      expect(wire.calls).toHaveLength(1);
+    });
+
+    it('a foreign-core token error retains its operational code and accepted command identity', async () => {
+      const { ctx, wire, providerToken } = fixture(name, {
+        status: 202,
+        json: { status },
+      });
+      // The public shape comes from another core package copy, so local
+      // instanceof cannot recognize it.
+      const failure = Object.assign(
+        new Error('provider signer is unavailable'),
+        {
+          name: 'ManifestMCPError',
+          code: ManifestMCPErrorCode.INVALID_CONFIG,
+          details: { option: 'providerSigner' },
+        },
+      );
+      expect(failure).not.toBeInstanceOf(ManifestMCPError);
+      providerToken
+        .mockResolvedValueOnce('mutation-token')
+        .mockRejectedValueOnce(failure);
+      const error = await invoke(ctx, {
+        ...options,
+        idempotencyKey: COMMAND_KEY,
+        pollOptions: {},
+      }).catch((err) => err);
+      expect(error).toBeInstanceOf(ManifestMCPError);
+      expect(error).toMatchObject({
+        code: ManifestMCPErrorCode.INVALID_CONFIG,
+        message: failure.message,
+        details: {
+          option: 'providerSigner',
+          idempotency_key: COMMAND_KEY,
+          outcome: 'accepted',
+          sent: true,
+        },
+      });
+      expect(error.cause).toBe(failure);
+      expect(error.stack).toBe(failure.stack);
+      expect(isRetryableError(error)).toBe(false);
+      expect(wire.calls).toHaveLength(1);
+    });
+
+    it.each(['timeout', 'signal'] as const)(
+      '%s deadline remains TimeoutError after acceptance',
+      async (option) => {
+        const controller = new AbortController();
+        const deadline = new DOMException(
+          'The operation timed out',
+          'TimeoutError',
+        );
+        const timeout = vi
+          .spyOn(AbortSignal, 'timeout')
+          .mockReturnValue(controller.signal);
+        try {
+          const { ctx, wire } = fixture(
+            name,
+            { status: 202, json: { status } },
+            {
+              json: { ...READY, provision_status: status },
+            },
+          );
+          const error = await invoke(ctx, {
+            ...options,
+            idempotencyKey: COMMAND_KEY,
+            ...(option === 'timeout'
+              ? { timeout: 1000 }
+              : { signal: controller.signal }),
+            pollOptions: { onProgress: () => controller.abort(deadline) },
+          }).catch((err) => err);
+          expect(error).toBeInstanceOf(DOMException);
+          expect(error).toMatchObject({
+            name: 'TimeoutError',
+            code: deadline.code,
+            details: {
+              reason: 'deadline',
+              readiness: 'unconfirmed',
+              outcome: 'accepted',
+              idempotency_key: COMMAND_KEY,
+            },
+          });
+          expect(error.stack).toBe(deadline.stack);
+          expect(isRetryableError(error)).toBe(false);
+          expect(wire.calls).toHaveLength(2);
+        } finally {
+          timeout.mockRestore();
+        }
+      },
+    );
+
+    it('a genuine failure racing caller abort remains the reported failure verdict', async () => {
+      const controller = new AbortController();
+      const { ctx } = fixture(
+        name,
+        { status: 202, json: { status } },
+        {
+          json: { ...READY, provision_status: 'failed', reason: failureReason },
+        },
+      );
+      const error = await invoke(ctx, {
+        ...options,
+        idempotencyKey: COMMAND_KEY,
+        signal: controller.signal,
+        pollOptions: {
+          onProgress: () =>
+            controller.abort(new Error('caller stopped waiting')),
+        },
+      }).catch((err) => err);
+      expect(error).toBeInstanceOf(ProviderApiError);
+      expect(error).toMatchObject({
+        kind: 'poll_verdict',
+        details: {
+          readiness: 'failed',
+          reason: failureReason,
+          outcome: 'accepted',
+        },
+      });
+      expect(error.code).not.toBe(ManifestMCPErrorCode.OPERATION_CANCELLED);
+    });
+
+    it('401 on an exact retry retains uncertainty and recommends fresh authentication with the same key', async () => {
+      const { ctx, wire } = fixture(name, {
+        status: 401,
+        text: 'token expired',
+      });
+      const error = await invoke(ctx, {
+        ...options,
+        idempotencyKey: COMMAND_KEY,
+      }).catch((err) => err);
+      expect(error).toMatchObject({
+        code: ManifestMCPErrorCode.MAINTENANCE_REQUEST_FAILED,
+        details: {
+          outcome: 'unknown',
+          provider_status: 401,
+          idempotency_key: COMMAND_KEY,
+        },
+      });
+      expect(error.message).toContain('Refresh provider authentication');
+      expect(error.message).toContain('reuse this key');
+      expect(error.message).toContain('earlier attempt');
+      expect(wire.calls).toHaveLength(1);
     });
 
     it('a callback error with unreadable diagnostics cannot lose the accepted command key', async () => {
@@ -282,6 +581,85 @@ describe.each(operations)(
       });
       expect(error.cause).toBe(failure);
       expect(error.message).toContain('Error details unavailable');
+    });
+
+    it('unreadable typed token diagnostics preserve the accepted command identity', async () => {
+      const { ctx, providerToken } = fixture(name, {
+        status: 202,
+        json: { status },
+      });
+      const failure = new ManifestMCPError(
+        ManifestMCPErrorCode.INVALID_CONFIG,
+        'token configuration failed',
+      );
+      for (const field of ['message', 'details', 'code']) {
+        Object.defineProperty(failure, field, {
+          get: () => {
+            throw new Error('unreadable');
+          },
+        });
+      }
+      providerToken
+        .mockResolvedValueOnce('mutation-token')
+        .mockRejectedValueOnce(failure);
+      const error = await invoke(ctx, {
+        ...options,
+        idempotencyKey: COMMAND_KEY,
+        pollOptions: {},
+      }).catch((err) => err);
+      expect(error).toMatchObject({
+        code: ManifestMCPErrorCode.MAINTENANCE_WAIT_FAILED,
+        details: { outcome: 'accepted', idempotency_key: COMMAND_KEY },
+      });
+      expect(error.cause).toBe(failure);
+    });
+
+    it('a callback proxy with unreadable prototype cannot replace command recovery context', async () => {
+      const failure = new Proxy(
+        {},
+        {
+          getPrototypeOf: () => {
+            throw new Error('unreadable prototype');
+          },
+        },
+      );
+      const { ctx } = fixture(name, { status: 202, json: { status } });
+      const error = await invoke(ctx, {
+        ...options,
+        idempotencyKey: COMMAND_KEY,
+        pollOptions: {
+          onProgress: () => {
+            throw failure;
+          },
+        },
+      }).catch((err) => err);
+      expect(error).toMatchObject({
+        code: ManifestMCPErrorCode.MAINTENANCE_WAIT_FAILED,
+        details: { outcome: 'accepted', idempotency_key: COMMAND_KEY },
+      });
+      expect(error.cause === failure).toBe(true);
+    });
+
+    it('unreadable nested request diagnostics cannot replace the original command key', async () => {
+      const failure = new ManifestMCPError(
+        ManifestMCPErrorCode.UPDATE_INDETERMINATE,
+        'network error',
+      );
+      Object.defineProperty(failure, 'details', {
+        get: () => {
+          throw new Error('unreadable details');
+        },
+      });
+      const { ctx, wire } = fixture(name, { transportError: failure });
+      const error = await invoke(ctx, {
+        ...options,
+        idempotencyKey: COMMAND_KEY,
+      }).catch((err) => err);
+      expect(error).toMatchObject({
+        code,
+        details: { outcome: 'unknown', idempotency_key: COMMAND_KEY },
+      });
+      expect(wire.calls).toHaveLength(1);
     });
 
     it('cancellation after acceptance retains the key and the original cancellation reason', async () => {

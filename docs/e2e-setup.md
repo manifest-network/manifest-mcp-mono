@@ -9,6 +9,10 @@ Windows does not provide the required host-identical XFS path. Run the checkout,
 Docker daemon, and commands inside the Linux VM, or use the project's Linux CI.
 Unit tests and the read-only annotation suite need no XFS mount.
 
+The PR and nightly workflows use Ubuntu 24.04 and install Docker Engine 29.7.2
+from Docker's signed package repository before preflight. Their installer is
+restricted to GitHub Actions; local setup uses the Docker installation you manage.
+
 ## Prepare a disposable volume
 
 The Compose file binds `/mnt/fred-xfs` at the same path inside the backend and the
@@ -47,7 +51,7 @@ git submodule update --init --recursive
 npm ci
 npm run build
 npm run check:e2e-env
-docker compose -f e2e/docker-compose.yml up -d --wait --wait-timeout 180
+docker compose -f e2e/docker-compose.yml up -d --wait --wait-timeout 600
 npm run test:e2e
 ```
 
@@ -68,7 +72,7 @@ runner stopped until `up --wait` completes. The Fred image builds with Go 1.26.8
 and includes `placement-preflight` for this step.
 
 For a normal restart, use `docker compose -f e2e/docker-compose.yml down` without
-`-v`, then `up -d --wait --wait-timeout 180`. Preserve the XFS image and every
+`-v`, then `up -d --wait --wait-timeout 600`. Preserve the XFS image and every
 Compose volume. The backend's primary identity marker lives on XFS; its anchor
 and journals live in `mcp-e2e-docker-backend-data`, and placement authority lives
 in `mcp-e2e-providerd-data`. Existing authority is verified at service startup.

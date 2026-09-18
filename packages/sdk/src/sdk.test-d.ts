@@ -20,14 +20,17 @@ import type {
 } from './deploy.js';
 import {
   type BuildManifestOptions,
+  createMaintenanceIdempotencyKey,
   createProviderAuth,
   type DeployCallOptions,
   type DeployResult,
+  LeaseReadinessUnconfirmedError,
   type LifecycleCallOptions,
   type ManifestDeploySpec,
   type PortConfig,
   type restartApp,
   restartLease,
+  TerminalChainStateError,
   type TxCallOptions,
   type updateApp,
   updateLease,
@@ -390,6 +393,32 @@ describe('ENG-531 facade completeness (re-emitted through the SDK)', () => {
 });
 
 describe('maintenance command identity through the SDK', () => {
+  it('exposes recovery context after narrowing to a readiness subclass', () => {
+    const error: unknown = undefined;
+    if (
+      error instanceof LeaseReadinessUnconfirmedError ||
+      error instanceof TerminalChainStateError
+    ) {
+      expectTypeOf(error.details.idempotency_key).toBeUnknown();
+      expectTypeOf(error.details.operation).toBeUnknown();
+      expectTypeOf(error.details.outcome).toBeUnknown();
+      expectTypeOf(error.details.lease_uuid).toBeString();
+      expectTypeOf(error.details.readiness).toEqualTypeOf<
+        'terminal' | 'unconfirmed'
+      >();
+      expectTypeOf(error.withContext({}).details.idempotency_key).toBeUnknown();
+    }
+  });
+
+  it('exports a browser-safe factory for keys persisted before dispatch', () => {
+    expectTypeOf(createMaintenanceIdempotencyKey).parameters.toEqualTypeOf<
+      []
+    >();
+    expectTypeOf(
+      createMaintenanceIdempotencyKey,
+    ).returns.toEqualTypeOf<string>();
+  });
+
   it('keeps caller-supplied keys optional on lifecycle options and raw HTTP calls', () => {
     expectTypeOf<Pick<LifecycleCallOptions, 'idempotencyKey'>>().toEqualTypeOf<{
       readonly idempotencyKey?: string;

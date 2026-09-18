@@ -23,6 +23,7 @@ describe('fred barrel — MCP server kept out (browser bundle safety, ENG-287)',
     expect(typeof barrel.deployApp).toBe('function');
     expect(typeof barrel.restartApp).toBe('function');
     expect(typeof barrel.updateApp).toBe('function');
+    expect(typeof barrel.createMaintenanceIdempotencyKey).toBe('function');
     expect(typeof barrel.buildManifest).toBe('function');
     expect(typeof barrel.appStatus).toBe('function');
   });

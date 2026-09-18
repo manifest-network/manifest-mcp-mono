@@ -39,6 +39,7 @@ export {
   createAuthToken,
   createAuthTokens,
   createLeaseDataSignMessage,
+  createMaintenanceIdempotencyKey,
   createProviderAuth,
   createSignMessage,
   DEFAULT_FETCH_TIMEOUT_MS,

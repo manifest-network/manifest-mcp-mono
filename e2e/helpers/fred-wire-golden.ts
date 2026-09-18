@@ -90,4 +90,10 @@ export function assertWireKeys(
     `${surface} (${entry.endpoint}): the provider sent unmodelled key(s) ${unknown.join(', ')}. ` +
       'Fred grew a field mono does not know about — decide whether to surface it, then record it in e2e/fred-wire-golden.json.',
   ).toEqual([]);
+
+  // Retain actual successful observations in CI without logging response values.
+  console.info(
+    '[fred-wire-keys]',
+    JSON.stringify({ surface, keys: [...observed].sort() }),
+  );
 }

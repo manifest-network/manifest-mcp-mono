@@ -292,10 +292,12 @@ try {
 
 ## Restarting and updating with a command key
 
-Fred requires a canonical lowercase UUIDv4 `Idempotency-Key` for restart and update. The helpers generate it when omitted; `restartApp` and `updateApp` return `idempotency_key`. To retain identity even if your process stops or an MCP request is cancelled before its response arrives, generate and persist the key before calling:
+Fred requires a canonical lowercase UUIDv4 `Idempotency-Key` for restart and update. The helpers generate it using Web Crypto when omitted (including a `getRandomValues` fallback when `randomUUID` is unavailable); `restartApp` and `updateApp` return `idempotency_key`. To retain identity even if your process stops or an MCP request is cancelled before its response arrives, generate and persist the key before calling:
 
 ```ts
-const idempotencyKey = crypto.randomUUID();
+import { createMaintenanceIdempotencyKey } from '@manifest-network/manifest-sdk/deploy';
+
+const idempotencyKey = createMaintenanceIdempotencyKey();
 // Persist idempotencyKey alongside the lease and exact final manifest before dispatch.
 const result = await client.updateApp(
   { address, leaseUuid, manifest: JSON.stringify(manifest) },
@@ -305,7 +307,9 @@ const result = await client.updateApp(
 
 Use a fresh key for each new logical command. An intentional retry uses the same key, lease, operation, and exact final payload bytes (including the result of any merge). Changing the command while retaining the key returns a conflict. Fred retains command receipts for the lease's authority lifetime, so an exact replay returns its recorded outcome without another replacement. These guarantees require a Fred version implementing PR #240; older providers may ignore the header and cannot promise deduplication.
 
-`UPDATE_INDETERMINATE` and `RESTART_INDETERMINATE` mean the POST outcome is uncertain. A 503, timeout, or malformed response can leave a command pending that Fred executes during recovery. `MAINTENANCE_REQUEST_FAILED` retains a non-success response without claiming no prior effects. Check `appStatus` / release history before further action. Errors preserve `lease_uuid`, `idempotency_key`, and `operation` in `details`; `outcome: 'accepted'` on a readiness error means the provider acknowledged the command, while `'unknown'` does not establish admission or rejection. `MAINTENANCE_WAIT_FAILED` reports a failed or inconclusive readiness wait; cancellation after acceptance uses `OPERATION_CANCELLED`. Waiting errors do not undo the command.
+`UPDATE_INDETERMINATE` and `RESTART_INDETERMINATE` mean the POST outcome is uncertain. A 503, timeout, or malformed response can leave a command pending that Fred executes during recovery. `MAINTENANCE_REQUEST_FAILED` preserves an unsuccessful HTTP response; even an authentication refusal cannot establish the outcome of an earlier attempt using that key. Refresh authentication for an exact retry after a 401. Errors preserve `lease_uuid`, `idempotency_key`, and `operation` in `details`; `outcome: 'accepted'` means Fred acknowledged the command, while `'unknown'` does not establish its admission or rejection. `provider_status` is included only for an actual HTTP status, not local error sentinel 0.
+
+After acceptance, waiting errors retain their original diagnosis and add the command context: `LeaseReadinessUnconfirmedError` preserves its reason and timing fields, `ProviderApiError` with `kind: 'poll_verdict'` preserves a reported failure and its recovery guidance, and signer/configuration errors retain their original `ManifestMCPError` code and details. A call deadline remains a `TimeoutError`; explicit caller cancellation uses `OPERATION_CANCELLED`. `MAINTENANCE_WAIT_FAILED` is the fallback for an otherwise unclassified wait failure. None of these errors undoes the accepted command or authorizes automatic replay.
 
 After an earlier uncertain response, an exact replay can acknowledge a command that is still queued while the old app remains ready. Returned `ready` data and `app_status` describe lease availability; they do not prove that this particular command completed. Reconcile `app_releases` and retain the original command key when recovering.
 
