@@ -1,0 +1,58 @@
+# Multi-stage build for fred (providerd + docker-backend)
+#
+# Pinned to the EXACT patch that Fred v0.13.0 (8f0cbd9431b482732d60d81fb59f94a37cd06486) go.mod names, never a floating
+# `golang:1.26-alpine`. These images set GOTOOLCHAIN=local, so the go command will
+# not download a newer toolchain to satisfy the directive — a builder even one patch
+# behind fails outright at `go mod download` below with
+#   go: go.mod requires go >= 1.26.6 (running go 1.26.5; GOTOOLCHAIN=local)
+# rather than degrading gracefully. Keep this aligned with the separate legacy
+# checkout; submodules/fred retains the PR #240 schema/provenance revision.
+FROM golang:1.26.6-alpine AS builder
+
+RUN apk add --no-cache ca-certificates build-base git
+
+WORKDIR /code
+
+# Copy go module files first for better caching
+COPY go.mod go.sum ./
+RUN go mod download
+
+# Copy source code
+COPY . .
+
+# Build both binaries
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /build/providerd ./cmd/providerd
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /build/docker-backend ./cmd/docker-backend
+
+# ============================================================================
+# Providerd runtime
+# ============================================================================
+FROM alpine:3.22 AS providerd
+
+RUN apk add --no-cache ca-certificates curl
+
+COPY --from=builder /build/providerd /usr/bin/providerd
+
+WORKDIR /app
+
+EXPOSE 8080
+
+CMD ["/usr/bin/providerd"]
+
+# ============================================================================
+# Docker-backend runtime
+# ============================================================================
+FROM alpine:3.22 AS docker-backend
+
+RUN apk add --no-cache ca-certificates curl xfsprogs-extra
+
+COPY --from=builder /build/docker-backend /usr/bin/docker-backend
+
+WORKDIR /data
+
+EXPOSE 9001
+
+HEALTHCHECK --interval=10s --timeout=5s --retries=5 \
+    CMD curl -f http://localhost:9001/health || exit 1
+
+CMD ["/usr/bin/docker-backend"]

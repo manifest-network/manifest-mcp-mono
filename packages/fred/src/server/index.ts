@@ -17,7 +17,9 @@ import {
 } from '@manifest-network/manifest-mcp-core';
 import type { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import type { FredCompatibilityConfig } from '../compatibility.js';
 import { AuthTokenService } from '../http/auth-token-service.js';
+import { serverFredCompatibility } from './compatibility.js';
 import { FRED_FETCH_GUARDED_ENV, resolveGuardedFetch } from './fetch-gate.js';
 import { registerPrompts } from './register-prompts.js';
 import { registerResources } from './register-resources.js';
@@ -25,13 +27,24 @@ import { registerTools } from './register-tools.js';
 
 export type { ManifestMCPServerOptions } from '@manifest-network/manifest-mcp-core';
 
+export interface FredMCPServerOptions extends ManifestMCPServerOptions {
+  /** Overrides MANIFEST_FRED_COMPATIBILITY; unset defaults to v0.13. */
+  readonly fredCompatibility?: FredCompatibilityConfig;
+}
+
 export class FredMCPServer {
   private mcpServer: McpServer;
   private clientManager: CosmosClientManager;
   private walletProvider: WalletProvider;
   private authTokens: AuthTokenService;
 
-  constructor(options: ManifestMCPServerOptions) {
+  constructor(options: FredMCPServerOptions) {
+    const fredCompatibility = serverFredCompatibility(
+      options.fredCompatibility,
+      typeof process !== 'undefined'
+        ? process.env.MANIFEST_FRED_COMPATIBILITY
+        : undefined,
+    );
     const config = createValidatedConfig(options.config);
     this.walletProvider = options.walletProvider;
     this.clientManager = CosmosClientManager.getInstance(
@@ -89,6 +102,7 @@ export class FredMCPServer {
       authTokens: this.authTokens,
       fetchFn,
       allowLoopback: !guarded,
+      fredCompatibility,
     });
     registerResources({
       mcpServer: this.mcpServer,

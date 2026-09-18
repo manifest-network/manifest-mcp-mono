@@ -88,9 +88,9 @@ describe('restartApp', () => {
     expect(wire.calls[0]?.init.method).toBe('POST');
     const headers = wire.calls[0]?.init.headers as Record<string, string>;
     expect(headers.Authorization).toBe('Bearer auth-token');
+    expect(headers).not.toHaveProperty('Idempotency-Key');
     expect(result).toEqual({
       lease_uuid: LEASE_UUID,
-      idempotency_key: headers['Idempotency-Key'],
       status: 'restarting',
       ready: {
         state: LeaseState.LEASE_STATE_ACTIVE,
@@ -110,7 +110,6 @@ describe('restartApp', () => {
     expect(urls()).toEqual(['restart']);
     expect(result).toEqual({
       lease_uuid: LEASE_UUID,
-      idempotency_key: expect.any(String),
       status: 'restarting',
     });
   });

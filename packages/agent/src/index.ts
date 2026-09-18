@@ -31,6 +31,7 @@ import type {
   DenomMap,
   DeployAppOptions,
   DeployResult,
+  FredCompatibilityConfig,
   LeaseStateName,
   ManageDomainArgs,
   ManageDomainOptions,
@@ -43,6 +44,7 @@ import {
   deployApp as realDeployApp,
   manageDomain as realManageDomain,
   troubleshootDeployment as realTroubleshoot,
+  resolveFredCompatibilityConfig,
 } from '@manifest-network/manifest-agent-core';
 import type { WalletProvider } from '@manifest-network/manifest-mcp-core';
 import {
@@ -133,6 +135,8 @@ export interface AgentMCPServerOptions extends ManifestMCPServerOptions {
   readonly dataDir?: string;
   /** Enable guarded HTTP fetching in agent-core. Defaults to `true`. */
   readonly fetchGuarded?: boolean;
+  /** Overrides MANIFEST_FRED_COMPATIBILITY; unset defaults to Fred v0.13. */
+  readonly fredCompatibility?: FredCompatibilityConfig;
   /**
    * Optional per-function overrides for the four agent-core
    * orchestration functions. Each provided key replaces the
@@ -169,10 +173,15 @@ export class AgentMCPServer {
   private chainDataFile: string | undefined;
   private dataDir: string | undefined;
   private fetchGuarded: boolean;
+  private fredCompatibility: FredCompatibilityConfig;
   private runtimePromise: Promise<AgentCoreRuntime> | null = null;
   private denomMapPromise: Promise<DenomMap> | null = null;
 
   constructor(options: AgentMCPServerOptions) {
+    this.fredCompatibility = resolveFredCompatibilityConfig(
+      options.fredCompatibility,
+      process.env.MANIFEST_FRED_COMPATIBILITY,
+    );
     const config = createValidatedConfig(options.config);
     this.walletProvider = options.walletProvider;
     this.clientManager = CosmosClientManager.getInstance(
@@ -233,6 +242,7 @@ export class AgentMCPServer {
       const p = buildRuntime({
         clientManager: this.clientManager,
         fetchGuarded: this.fetchGuarded,
+        fredCompatibility: this.fredCompatibility,
       });
       // Phase 2 (finding #12): clear the cache slot on rejection so a
       // transient failure (e.g. dynamic import of guarded-fetch hits a

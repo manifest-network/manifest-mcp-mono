@@ -4,6 +4,7 @@
 set -euo pipefail
 
 repo_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd -P)
+compatibility=${FRED_COMPATIBILITY:-pr240}
 compose=(docker compose -f "$repo_root/e2e/docker-compose.yml")
 native_dir=${FRED_NATIVE_BACKEND_DIR:-"$repo_root/e2e/.native-backend"}
 backend_unit=${FRED_BACKEND_UNIT:-manifest-mcp-e2e-backend}
@@ -27,11 +28,56 @@ trap cleanup_artifact EXIT
 [[ "$backend_unit" =~ ^[a-zA-Z0-9][a-zA-Z0-9_.@-]*$ ]] || fail 'Invalid FRED_BACKEND_UNIT'
 [[ "$wait_timeout" =~ ^[1-9][0-9]*$ ]] || fail 'FRED_DEVNET_WAIT_TIMEOUT must be a positive number of seconds'
 
+case "$compatibility" in
+    pr240) ;;
+    v0.13)
+        compose=(docker compose --project-name mcp-e2e-v013 -f "$repo_root/e2e/docker-compose.v013.yml")
+        ;;
+    *) fail 'FRED_COMPATIBILITY must be v0.13 or pr240' ;;
+esac
+
+build_devnet() {
+    if [ "$compatibility" = v0.13 ]; then
+        local source_dir="$repo_root/e2e/.fred-v013"
+        local expected=8f0cbd9431b482732d60d81fb59f94a37cd06486
+        [ "$(git -C "$source_dir" rev-parse --show-toplevel 2>/dev/null)" = "$source_dir" ] &&
+            [ "$(git -C "$source_dir" rev-parse HEAD)" = "$expected" ] ||
+            fail "Clone Fred $expected into e2e/.fred-v013; keep submodules/fred unchanged"
+        [ -z "$(git -C "$source_dir" status --porcelain)" ] || fail 'Legacy Fred source checkout must be clean'
+    fi
+    "${compose[@]}" build
+}
+
+refuse_opposite_storage() {
+    local prefix=$1 other_mode=$2 suffix
+    # A partial reset may remove the config volume while leaving authority or
+    # chain journals behind. Every member must be gone before changing modes.
+    for suffix in shared-data docker-backend-data providerd-data chain-data; do
+        if docker volume inspect "$prefix-$suffix" >/dev/null 2>&1; then
+            fail "$other_mode devnet storage exists ($prefix-$suffix); recreate matching disposable XFS and named volumes before switching Fred versions"
+        fi
+    done
+}
+
+start_legacy_devnet() {
+    # The two protocols have incompatible storage authority. Separate named
+    # volumes do not make their shared host XFS root safe for a downgrade.
+    [ ! -e /mnt/fred-xfs/.fred-backend-storage-identity.json ] &&
+        [ ! -L /mnt/fred-xfs/.fred-backend-storage-identity.json ] ||
+        fail 'PR #240 storage identity exists; recreate matching disposable XFS and named volumes before switching Fred versions'
+    refuse_opposite_storage mcp-e2e 'PR #240'
+    if systemctl is-active --quiet "$backend_unit"; then
+        fail 'PR #240 native backend is running; stop it before switching Fred versions'
+    fi
+    "${compose[@]}" up -d --wait --wait-timeout "$wait_timeout" --remove-orphans
+}
+
 start_devnet() {
     [ "$(uname -s)" = Linux ] || fail 'Stateful E2E requires a Linux Docker host with systemd and XFS'
     for prerequisite in docker node systemctl systemd-run curl xfs_quota; do
         command -v "$prerequisite" >/dev/null || fail "Missing prerequisite: $prerequisite"
     done
+    refuse_opposite_storage mcp-e2e-v013 v0.13
     if systemctl is-active --quiet "$backend_unit"; then
         fail "Native backend $backend_unit is already running; use devnet.sh down before up"
     fi
@@ -116,12 +162,24 @@ stop_devnet() {
 }
 
 case "${1:-}" in
-    up) [ "$#" = 1 ] || fail 'Usage: devnet.sh up'; start_devnet ;;
-    down) [ "$#" -le 2 ] || fail 'Usage: devnet.sh down [--volumes]'; stop_devnet "${2:-}" ;;
+    build) [ "$#" = 1 ] || fail 'Usage: devnet.sh build'; build_devnet ;;
+    up)
+        [ "$#" = 1 ] || fail 'Usage: devnet.sh up'
+        if [ "$compatibility" = v0.13 ]; then start_legacy_devnet; else start_devnet; fi
+        ;;
+    down)
+        [ "$#" -le 2 ] || fail 'Usage: devnet.sh down [--volumes]'
+        if [ "$compatibility" = v0.13 ]; then
+            [ -z "${2:-}" ] || [ "$2" = --volumes ] || fail 'Usage: devnet.sh down [--volumes]'
+            "${compose[@]}" down --remove-orphans ${2:+"$2"}
+        else stop_devnet "${2:-}"; fi
+        ;;
     logs)
         [ "$#" = 1 ] || fail 'Usage: devnet.sh logs'
         "${compose[@]}" logs
-        root_exec journalctl --unit "$backend_unit" --no-pager --output short-iso
+        if [ "$compatibility" = pr240 ]; then
+            root_exec journalctl --unit "$backend_unit" --no-pager --output short-iso
+        fi
         ;;
-    *) fail 'Usage: devnet.sh up | down [--volumes] | logs' ;;
+    *) fail 'Usage: devnet.sh build | up | down [--volumes] | logs' ;;
 esac

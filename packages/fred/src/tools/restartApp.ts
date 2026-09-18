@@ -1,3 +1,4 @@
+import { resolveFredCompatibility } from '../compatibility.js';
 import type { FredAuthCtx } from '../ctx.js';
 import {
   type FredLeaseStatus,
@@ -5,10 +6,10 @@ import {
   restartLease,
 } from '../http/fred.js';
 import { validateProviderUrl } from '../http/provider.js';
-import { resolveMaintenanceIdempotencyKey } from '../maintenance.js';
 import {
   maintenanceError,
   maintenanceWaitError,
+  resolveMaintenanceCommandKey,
 } from '../maintenance-error.js';
 import { resolveFredSignal } from './call-signal.js';
 import { fetchActiveLease } from './fetchActiveLease.js';
@@ -21,7 +22,7 @@ export async function restartApp(
   opts: LifecycleCallOptions = {},
 ): Promise<{
   lease_uuid: string;
-  idempotency_key: string;
+  idempotency_key?: string;
   status: string;
   ready?: FredLeaseStatus;
 }> {
@@ -29,7 +30,6 @@ export async function restartApp(
   // Resolve ONCE: a second call would mint a second timeout from the same `timeout`.
   const signal = resolveFredSignal(opts);
   signal?.throwIfAborted();
-  const idempotencyKey = resolveMaintenanceIdempotencyKey(opts.idempotencyKey);
 
   // Fast path: a supplied providerUrl skips both on-chain queries (fetchActiveLease + resolveProviderUrl).
   let providerUrl: string;
@@ -42,6 +42,15 @@ export async function restartApp(
 
   // URL rejection is local and proves no maintenance request was sent.
   validateProviderUrl(providerUrl, { allowLoopback: ctx.allowLoopback });
+  const compatibility = resolveFredCompatibility(
+    ctx.fredCompatibility,
+    providerUrl,
+    opts.fredCompatibility,
+  );
+  const idempotencyKey = resolveMaintenanceCommandKey(
+    compatibility,
+    opts.idempotencyKey,
+  );
 
   const authToken = await ctx.providerAuth.providerToken({
     address,
@@ -60,13 +69,20 @@ export async function restartApp(
       ctx.fetch,
       ctx.allowLoopback,
       idempotencyKey,
+      compatibility,
     );
   } catch (err) {
-    throw maintenanceError(err, { ...command, outcome: 'unknown' });
+    throw idempotencyKey === undefined
+      ? err
+      : maintenanceError(err, {
+          ...command,
+          idempotencyKey,
+          outcome: 'unknown',
+        });
   }
   const base = {
     lease_uuid: leaseUuid,
-    idempotency_key: idempotencyKey,
+    ...(idempotencyKey !== undefined && { idempotency_key: idempotencyKey }),
     status: result.status,
   };
 

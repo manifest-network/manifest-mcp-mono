@@ -15,7 +15,9 @@ import {
 import { sealedFetchProbe } from '@manifest-network/manifest-mcp-core/__test-utils__/fetch-probe.js';
 import { makeMockQueryClient } from '@manifest-network/manifest-mcp-core/__test-utils__/mocks.js';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { FredCompatibilityConfig } from '../compatibility.js';
 import type { FredAuthCtx } from '../ctx.js';
+import { ProviderApiError } from '../http/provider.js';
 import { updateApp } from './updateApp.js';
 import {
   MAX_MANIFEST_BYTES,
@@ -237,6 +239,57 @@ describe('updateApp', () => {
       stop_grace_period: '1000000000ns',
     });
   });
+
+  it.each([
+    { config: undefined, override: undefined, allowed: true },
+    {
+      config: { [PROVIDER_URL]: 'pr240' },
+      override: undefined,
+      allowed: false,
+    },
+    { config: 'pr240', override: 'v0.13' as const, allowed: true },
+    { config: 'v0.13', override: 'pr240' as const, allowed: false },
+  ])(
+    'validates the merged payload against the selected provider contract: %j',
+    async ({ config, override, allowed }) => {
+      const ctx = {
+        ...makeCtx(activeQc()),
+        fredCompatibility: config as FredCompatibilityConfig | undefined,
+      };
+      const result = updateApp(
+        ctx,
+        {
+          address: ADDR,
+          leaseUuid: LEASE_UUID,
+          manifest: '{"image":"nginx:2"}',
+          existingManifest: JSON.stringify({
+            image: 'nginx:1',
+            labels: { 'com.docker.compose.project': 'tenant' },
+            user: '1000:1000:1000',
+          }),
+        },
+        {
+          providerUrl: PROVIDER_URL,
+          pollOptions: false,
+          fredCompatibility: override,
+        },
+      );
+      if (allowed) {
+        await expect(result).resolves.toMatchObject({ status: 'updated' });
+        expect(sentManifest()).toMatchObject({
+          image: 'nginx:2',
+          labels: { 'com.docker.compose.project': 'tenant' },
+          user: '1000:1000:1000',
+        });
+      } else {
+        await expect(result).rejects.toMatchObject({
+          code: ManifestMCPErrorCode.INVALID_CONFIG,
+        });
+        expect(mockGetAuthToken).not.toHaveBeenCalled();
+        expect(wire.calls).toHaveLength(0);
+      }
+    },
+  );
 
   it('rejects an oversized final manifest before the update wire', async () => {
     const manifest = JSON.stringify({
@@ -510,7 +563,6 @@ describe('updateApp', () => {
     expect(wire.calls[0]?.init.method).toBe('POST');
     expect(result).toEqual({
       lease_uuid: LEASE_UUID,
-      idempotency_key: expect.any(String),
       status: 'updated',
       ready: {
         state: LeaseState.LEASE_STATE_ACTIVE,
@@ -534,7 +586,6 @@ describe('updateApp', () => {
     expect(urls()).toEqual(['update']);
     expect(result).toEqual({
       lease_uuid: LEASE_UUID,
-      idempotency_key: expect.any(String),
       status: 'updated',
     });
   });
@@ -673,9 +724,9 @@ describe('updateApp', () => {
     expect(wire.calls).toHaveLength(0);
   });
 
-  // A POST error cannot establish the logical command's outcome: Fred may retain
-  // pending work, and an exact-key retry can fail independently of the first attempt.
-  describe('POST errors preserve uncertain command identity (Fred PR #240)', () => {
+  // The default legacy contract preserves provider errors and the existing
+  // update-5xx verdict, without suggesting command deduplication is available.
+  describe('legacy POST errors preserve provider diagnostics and uncertainty', () => {
     /** Point `/update` at a status, leaving `/status` routed so a poll would work. */
     function routeUpdateFailure(status: number, text: string): void {
       wire = sealedFetchProbe({
@@ -726,7 +777,7 @@ describe('updateApp', () => {
       );
     });
 
-    it('409 preserves the provider diagnostic and command identity in a typed error', async () => {
+    it('409 preserves the legacy ProviderApiError contract', async () => {
       routeUpdateFailure(
         409,
         '{"error":"lease is in an invalid state","code":409}',
@@ -738,12 +789,12 @@ describe('updateApp', () => {
         { pollOptions: false },
       ).catch((e: unknown) => e);
 
-      expect(err).toBeInstanceOf(ManifestMCPError);
+      expect(err).toBeInstanceOf(ProviderApiError);
       expect(err).toMatchObject({
-        code: ManifestMCPErrorCode.MAINTENANCE_REQUEST_FAILED,
+        status: 409,
+        kind: 'http',
         details: {
           lease_uuid: LEASE_UUID,
-          idempotency_key: expect.any(String),
           provider_status: 409,
           outcome: 'unknown',
         },

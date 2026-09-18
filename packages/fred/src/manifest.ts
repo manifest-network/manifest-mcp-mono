@@ -17,6 +17,7 @@ import {
   ManifestMCPError,
   ManifestMCPErrorCode,
 } from '@manifest-network/manifest-mcp-core';
+import type { FredCompatibility } from './compatibility.js';
 import { FRED_MANIFEST_LIMITS } from './generated/fred-manifest-limits.js';
 
 const MAX_NAME_LENGTH = 32;
@@ -300,6 +301,9 @@ const HEALTH_CHECK_KEYS = new Set<string>([
 const ENV_NAME_BLOCKED_PREFIX_RE = /^(ld_|fred_|docker_)/i;
 // Unicode case folding matches Go's regexp policy, including K/K and ſ/S.
 const RESERVED_LABEL_PREFIX_RE = /^(fred|traefik|com\.docker\.compose)\./iu;
+// v0.13 compares an ASCII-byte-length prefix with EqualFold. Unicode folds
+// with longer UTF-8 encodings therefore do not match its reserved namespaces.
+const LEGACY_RESERVED_LABEL_PREFIX_RE = /^(fred|traefik)\./i;
 const PORT_CONFIG_KEYS = new Set<string>(['host_port', 'ingress']);
 const TMPFS_BLOCKED = new Set<string>(['/', '/tmp', '/run']);
 const TMPFS_BLOCKED_PREFIXES = ['/proc', '/sys', '/dev'];
@@ -634,6 +638,7 @@ function validateService(
   scope: string,
   inStack: boolean,
   errors: BoundedValidationErrors,
+  compatibility: FredCompatibility,
 ): void {
   if (!isPlainObject(service)) {
     errors.push(`${scope}: must be a JSON object`);
@@ -784,7 +789,11 @@ function validateService(
       }
       for (const key of labelKeys) {
         const labelPath = mapKeyPath(`${scope}.labels`, key);
-        const reserved = key.match(RESERVED_LABEL_PREFIX_RE);
+        const reserved = key.match(
+          compatibility === 'pr240'
+            ? RESERVED_LABEL_PREFIX_RE
+            : LEGACY_RESERVED_LABEL_PREFIX_RE,
+        );
         if (reserved) {
           // Normalize only the bounded, matched prefix for canonical diagnostics.
           const prefix = `${reserved[1].normalize('NFKC').toLowerCase()}.`;
@@ -852,13 +861,15 @@ function validateService(
       errors.push(`${scope}.user: must be a string`);
     } else if (service.user.length > 0) {
       const u = service.user;
-      if (/[ \t\n\r\f\v]/.test(u)) {
+      const whitespace =
+        compatibility === 'pr240' ? /[ \t\n\r\f\v]/ : /[ \t\n\r]/;
+      if (whitespace.test(u)) {
         errors.push(`${scope}.user: cannot contain whitespace`);
       } else {
         const colon = u.indexOf(':');
         if (colon === 0 || colon === u.length - 1) {
           errors.push(`${scope}.user: user/group parts cannot be empty`);
-        } else if (colon !== u.lastIndexOf(':')) {
+        } else if (compatibility === 'pr240' && colon !== u.lastIndexOf(':')) {
           errors.push(`${scope}.user: must contain at most one colon`);
         }
       }
@@ -1089,9 +1100,13 @@ function validateStackDependencies(
  * admission rules. The published schema remains a generated drift/test
  * artifact, but is deliberately not authoritative at runtime because it is
  * narrower than Fred's decoder. Diagnostics are bounded before they can enter
- * an MCP error response or model context.
+ * an MCP error response or model context. Defaults to released Fred v0.13;
+ * select 'pr240' for its stricter reserved-label and user syntax policy.
  */
-export function validateManifest(manifest: unknown): ManifestValidationResult {
+export function validateManifest(
+  manifest: unknown,
+  compatibility: FredCompatibility = 'v0.13',
+): ManifestValidationResult {
   const errors = new BoundedValidationErrors();
 
   if (!isPlainObject(manifest)) {
@@ -1133,6 +1148,7 @@ export function validateManifest(manifest: unknown): ManifestValidationResult {
           servicePath,
           true,
           errors,
+          compatibility,
         );
       }
       validateStackDependencies(decodedManifest.services, errors);
@@ -1146,7 +1162,7 @@ export function validateManifest(manifest: unknown): ManifestValidationResult {
   }
 
   // Single-service manifest.
-  validateService(decodedManifest, 'manifest', false, errors);
+  validateService(decodedManifest, 'manifest', false, errors, compatibility);
   const reportedErrors = errors.reported();
   return {
     valid: reportedErrors.length === 0,

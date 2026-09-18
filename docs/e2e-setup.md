@@ -14,6 +14,13 @@ with pinned containerd, Buildx, and Compose versions from Docker's signed packag
 repository before preflight. Their installer is
 restricted to GitHub Actions; local setup uses the Docker installation you manage.
 
+Both workflows test Fred v0.13.0 (`8f0cbd9431b482732d60d81fb59f94a37cd06486`)
+and PR #240 in separate jobs. Each deploys through the SDK, checks actual HTTP
+CORS preflight responses for its maintenance headers, runs maintenance and retained
+volume restore, and restarts with persistent state. Command-key replay and conflict
+assertions run only on PR #240. The preflight check uses Node HTTP requests; it
+does not launch a browser.
+
 Fred PR #240 supports the backend container image only for stateless development.
 Do not run the stateful backend or its initializer in containers with a writable
 bind of the XFS root: Fred correctly sees those mounts as potential writers to
@@ -58,7 +65,7 @@ git submodule update --init --recursive
 npm ci
 npm run build
 npm run check:e2e-env
-docker compose -f e2e/docker-compose.yml build
+bash e2e/scripts/devnet.sh build
 bash e2e/scripts/devnet.sh up
 npm run test:e2e
 ```
@@ -71,7 +78,30 @@ or permission fails with setup guidance. Passing preflight cannot guarantee imag
 builds, registry availability, or chain/provider health. Use
 `bash e2e/scripts/devnet.sh logs` to collect Compose and native backend logs.
 
-The launcher initializes Fred in order: billing/configuration containers, native
+The local launcher and E2E tests default to `FRED_COMPATIBILITY=pr240` and explicitly
+configure the clients for that devnet. The public SDK and MCP servers default to
+`v0.13`. To test the legacy provider, first perform the complete disposable storage
+reset below, then clone its source separately:
+
+```bash
+git clone git@github.com:manifest-network/fred.git e2e/.fred-v013
+git -C e2e/.fred-v013 checkout --detach 8f0cbd9431b482732d60d81fb59f94a37cd06486
+export FRED_COMPATIBILITY=v0.13
+export MANIFEST_FRED_COMPATIBILITY=v0.13
+bash e2e/scripts/devnet.sh build
+bash e2e/scripts/devnet.sh up
+npm run test:e2e
+```
+
+This ignored checkout leaves `submodules/fred` and the manifest schema provenance
+at PR #240. Legacy mode uses Go 1.26.6 and the v0.13 container backend, with its own
+Compose project and named volumes. Modern mode uses Go 1.26.8 and the native backend.
+The modes share fixed ports and the dedicated XFS root, so they cannot run together.
+Changing modes requires removing the current mode's named volumes **and recreating
+the matching XFS image**; neither mode may reuse the other's storage. Keep the same
+`FRED_COMPATIBILITY` value for build, up, tests, down, and logs.
+
+In PR240 mode, the launcher initializes Fred in order: billing/configuration containers, native
 backend storage identity, native backend startup, placement authority, then
 providerd. It extracts the static backend executable from the built Fred image
 and starts the dedicated `manifest-mcp-e2e-backend` systemd unit. The placement

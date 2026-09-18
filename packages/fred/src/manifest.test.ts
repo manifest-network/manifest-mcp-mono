@@ -577,15 +577,43 @@ describe('validateManifest', () => {
       ['com.docker.compose.project', 'com.docker.compose.'],
       ['COM.DOCKER.COMPOSE.service', 'com.docker.compose.'],
       ['com.doc\u212Aer.compo\u017Fe.project', 'com.docker.compose.'],
-    ])('rejects reserved label %s case-insensitively', (key, prefix) => {
+    ])('rejects PR240 reserved label %s case-insensitively', (key, prefix) => {
       const service = { image: 'nginx', labels: { [key]: 'abc' } };
       for (const manifest of [service, { services: { app: service } }]) {
-        const r = validateManifest(manifest);
+        const r = validateManifest(manifest, 'pr240');
         expect(r.valid).toBe(false);
         expect(r.errors.join(' ')).toContain(key);
         expect(r.errors.join(' ')).toContain(`reserved prefix '${prefix}'`);
       }
     });
+
+    it.each([
+      'com.docker.compose.project',
+      'COM.DOCKER.COMPOSE.service',
+      'traefi\u212A.enable',
+      'com.doc\u212Aer.compo\u017Fe.project',
+    ])('defaults to v0.13 label admission for %s', (key) => {
+      const service = { image: 'nginx', labels: { [key]: 'tenant' } };
+      for (const manifest of [service, { services: { app: service } }]) {
+        expect(validateManifest(manifest).valid).toBe(true);
+        expect(validateManifest(manifest, 'v0.13').valid).toBe(true);
+        expect(validateManifest(manifest, 'pr240').valid).toBe(false);
+      }
+    });
+
+    it.each(['fred.owner', 'Fred.owner', 'traefik.enable', 'TRAEFIK.enable'])(
+      'blocks the common reserved label %s in both modes',
+      (key) => {
+        for (const mode of ['v0.13', 'pr240'] as const) {
+          expect(
+            validateManifest(
+              { image: 'nginx', labels: { [key]: 'tenant' } },
+              mode,
+            ).valid,
+          ).toBe(false);
+        }
+      },
+    );
 
     it.each([
       'traefikish.foo',
@@ -1192,14 +1220,37 @@ describe('validateManifest', () => {
       'a\vb',
       'a:b\f',
       'a:b\v',
-    ])('rejects the Go-invalid user spelling %j', (user) => {
+    ])('rejects the PR240-invalid user spelling %j', (user) => {
       const service = { image: 'nginx', user };
       for (const manifest of [service, { services: { app: service } }]) {
-        const result = validateManifest(manifest);
+        const result = validateManifest(manifest, 'pr240');
         expect(result.valid).toBe(false);
         expect(result.errors.join(' ')).toContain('.user:');
       }
     });
+
+    it.each(['a:b:c', 'a::b', 'a:b:', 'a\fb', 'a\vb', 'a:b\f', 'a:b\v'])(
+      'retains v0.13 user admission for %j',
+      (user) => {
+        const service = { image: 'nginx', user };
+        for (const manifest of [service, { services: { app: service } }]) {
+          expect(validateManifest(manifest).valid).toBe(true);
+          expect(validateManifest(manifest, 'v0.13').valid).toBe(true);
+          expect(validateManifest(manifest, 'pr240').valid).toBe(false);
+        }
+      },
+    );
+
+    it.each([' user', 'a\tb', 'a\nb', 'a\rb', ':group', 'user:'])(
+      'rejects the common invalid user spelling %j in both modes',
+      (user) => {
+        for (const mode of ['v0.13', 'pr240'] as const) {
+          expect(validateManifest({ image: 'nginx', user }, mode).valid).toBe(
+            false,
+          );
+        }
+      },
+    );
   });
 
   describe('bounded diagnostics', () => {

@@ -359,7 +359,9 @@ describe('Fred manifest schema contract', () => {
         generatedSchemaValidate(manifest),
         JSON.stringify(sourceSchemaValidate.errors),
       ).toBe(schemaValid);
-      expect(validateManifest(manifest).valid).toBe(preflightValid);
+      // Vendored artifacts describe the pinned PR240 provider. Public runtime
+      // validation defaults to the released v0.13 policy independently.
+      expect(validateManifest(manifest, 'pr240').valid).toBe(preflightValid);
     },
   );
 

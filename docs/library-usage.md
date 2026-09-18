@@ -292,7 +292,26 @@ try {
 
 ## Restarting and updating with a command key
 
-Fred requires a canonical lowercase UUIDv4 `Idempotency-Key` for restart and update. The helpers generate it using Web Crypto when omitted (including a `getRandomValues` fallback when `randomUUID` is unavailable); `restartApp` and `updateApp` return `idempotency_key`. To retain identity even if your process stops or an MCP request is cancelled before its response arrives, generate and persist the key before calling:
+SDK clients, MCP servers, and raw HTTP helpers default to released Fred **v0.13**. In this mode restart/update omit `Idempotency-Key` and successful results omit `idempotency_key`, preserving the legacy browser CORS contract. Supplying a key fails locally because v0.13 cannot deduplicate commands. After an uncertain response, inspect `appStatus` and release history before deliberately submitting another command; automatic replay is disabled.
+
+Opt confirmed PR #240 providers into `fredCompatibility: 'pr240'`. `createFredClient` accepts a global mode or a provider API URL map; unlisted URLs remain on v0.13. The mode is explicit because Fred exposes no reliable capability endpoint. Never use a failed mutation to discover support.
+
+```ts
+const client = await createFredClient({
+  config,
+  walletProvider,
+  fredCompatibility: {
+    'https://released-provider.example': 'v0.13',
+    'https://upgraded-provider.example': 'pr240',
+  },
+});
+```
+
+Deploy and maintenance call options can override the configured mode with `fredCompatibility`. Free functions read the same configuration from `FredAuthCtx`. The exported `FredCompatibility` and `FredCompatibilityConfig` types are available from the SDK root and `/deploy`.
+
+Orchestrated deployment accepts the same configuration on `DeployAppOptions` from `/orchestration`. It snapshots the selected policy before interactive callbacks and validates the resolved provider's manifest before creating a paid lease. `AgentMCPServer` also reads `MANIFEST_FRED_COMPATIBILITY`, with its constructor option taking precedence.
+
+In PR240 mode, restart/update require a canonical lowercase UUIDv4 command key. Helpers generate it using Web Crypto when omitted (including a `getRandomValues` fallback when `randomUUID` is unavailable); `restartApp` and `updateApp` return `idempotency_key`, which is optional in their shared result types. To retain identity even if your process stops or an MCP request is cancelled before its response arrives, generate and persist the key before calling:
 
 ```ts
 import { createMaintenanceIdempotencyKey } from '@manifest-network/manifest-sdk/deploy';
@@ -301,19 +320,21 @@ const idempotencyKey = createMaintenanceIdempotencyKey();
 // Persist idempotencyKey alongside the lease and exact final manifest before dispatch.
 const result = await client.updateApp(
   { address, leaseUuid, manifest: JSON.stringify(manifest) },
-  { idempotencyKey, pollOptions: false },
+  { fredCompatibility: 'pr240', idempotencyKey, pollOptions: false },
 );
 ```
 
-Use a fresh key for each new logical command. An intentional retry uses the same key, lease, operation, and exact final payload bytes (including the result of any merge). Changing the command while retaining the key returns a conflict. Fred retains command receipts for the lease's authority lifetime, so an exact replay returns its recorded outcome without another replacement. These guarantees require a Fred version implementing PR #240; older providers may ignore the header and cannot promise deduplication.
+Use a fresh key for each new logical command. An intentional PR240 retry uses the same key, lease, operation, and exact final payload bytes (including the result of any merge). Changing the command while retaining the key returns a conflict. Fred retains command receipts for the lease's authority lifetime, so an exact replay returns its recorded outcome without another replacement. These guarantees apply only to providers implementing PR #240; opting an older provider into this mode cannot add deduplication and can break cross-origin browser requests.
 
-`UPDATE_INDETERMINATE` and `RESTART_INDETERMINATE` mean the POST outcome is uncertain. A 503, timeout, or malformed response can leave a command pending that Fred executes during recovery. `MAINTENANCE_REQUEST_FAILED` preserves an unsuccessful HTTP response; even an authentication refusal cannot establish the outcome of an earlier attempt using that key. Refresh authentication for an exact retry after a 401. Errors preserve `lease_uuid`, `idempotency_key`, and `operation` in `details`; `outcome: 'accepted'` means Fred acknowledged the command, while `'unknown'` does not establish its admission or rejection. `provider_status` is included only for an actual HTTP status, not local error sentinel 0.
+In PR240 mode, `UPDATE_INDETERMINATE` and `RESTART_INDETERMINATE` mean the POST outcome is uncertain. A 503, timeout, or malformed response can leave a command pending that Fred executes during recovery. `MAINTENANCE_REQUEST_FAILED` preserves an unsuccessful HTTP response; even an authentication refusal cannot establish the outcome of an earlier attempt using that key. Refresh authentication for an exact retry after a 401. Errors preserve `lease_uuid`, `idempotency_key`, and `operation` in `details`; `outcome: 'accepted'` means Fred acknowledged the command, while `'unknown'` does not establish its admission or rejection. `provider_status` is included only for an actual HTTP status, not local error sentinel 0. Legacy errors retain lease/operation recovery context without a command key or same-key retry guidance; legacy update HTTP 5xx retains `UPDATE_INDETERMINATE`.
 
 After acceptance, waiting errors retain their original diagnosis and add the command context, including `sent: true` for the acknowledged command. Uncertain POST failures do not infer `sent`: a network failure may occur before submission or after the response is lost. The command key and outcome prevent automatic replay independently of that field. `LeaseReadinessUnconfirmedError` preserves its reason and timing fields, `ProviderApiError` with `kind: 'poll_verdict'` preserves a reported failure and its recovery guidance, and signer/configuration errors retain their original `ManifestMCPError` code and details. A call deadline remains a `TimeoutError`; explicit caller cancellation uses `OPERATION_CANCELLED`. `MAINTENANCE_WAIT_FAILED` is the fallback for an otherwise unclassified wait failure. None of these errors undoes the accepted command or authorizes automatic replay.
 
 After an earlier uncertain response, an exact replay can acknowledge a command that is still queued while the old app remains ready. Returned `ready` data and `app_status` describe lease availability; they do not prove that this particular command completed. Reconcile `app_releases` and retain the original command key when recovering.
 
-Raw `restartLease` / `updateLease` accept the key as their final optional argument, after `allowLoopback`; supply and retain it before dispatch when you need to replay the command. Raw errors remain `ProviderApiError` with the key in `details` and a typed maintenance cause that prevents generic automatic retry. Each request needs fresh ADR-036 authentication even when reusing its command key. MCP `restart_app` / `update_app` accept `idempotency_key` and return it in structured success data or the JSON error's `details`. Supplying no key requests a new command, so their MCP annotations remain non-idempotent.
+Raw `restartLease` / `updateLease` accept the key after `allowLoopback`, followed by the optional compatibility mode. For example, use `restartLease(providerUrl, leaseUuid, authToken, fetch, false, key, 'pr240')` or `updateLease(providerUrl, leaseUuid, payload, authToken, fetch, false, key, 'pr240')`. Omitting the mode selects v0.13. Raw errors remain `ProviderApiError` with recovery details and a typed maintenance cause that prevents generic automatic retry. Each request needs fresh ADR-036 authentication even when reusing its command key.
+
+MCP operators select the mode with `MANIFEST_FRED_COMPATIBILITY=pr240`, `v0.13`, or a JSON provider URL map such as `'{"https://upgraded-provider.example":"pr240"}'`. A `FredMCPServer` constructor's `fredCompatibility` option takes precedence over the environment; neither is set by a mutation tool's caller. Under PR240, `restart_app` / `update_app` accept `idempotency_key` and return it in structured success data or JSON error `details`. Omitting it requests a new command, so MCP annotations remain non-idempotent. Under v0.13, supplied keys are rejected and results omit them.
 
 ## Restoring a closed lease
 
@@ -390,7 +411,9 @@ const ingress: PortConfig = { ingress: true };
 const manifest = buildManifest({ image: 'nginx:1.25', ports: { '80/tcp': ingress }, env: { FOO: 'bar' } });
 ```
 
-`mergeManifest` applies UI-shaped edits onto an existing manifest while preserving fields the editor doesn't touch; `validateManifest` / `parseStackManifest` / `getServiceNames` support preview UIs. A deploy accepts at most **1 MiB** of manifest JSON. Update sends the manifest base64-encoded inside a JSON request, so its maximum raw manifest is **786,420 bytes**; both limits fit Fred's default 1 MiB inbound request cap exactly. When sending raw JSON, integer fields must use integer tokens (`3`, `1000000000`), not mathematically integral decimal/exponent spellings (`3.0`, `1e9`), because Fred decodes them into Go integer types.
+`mergeManifest` applies UI-shaped edits onto an existing manifest while preserving fields the editor doesn't touch; `validateManifest` / `parseStackManifest` / `getServiceNames` support preview UIs. `validateManifest(value, compatibility?)` and `buildManifestPreview(input, compatibility?)` default to v0.13; pass `'pr240'` for its stricter Compose/Unicode reserved-label and user-syntax rules. Deploy/update select policy using the resolved provider URL before any mutation. MCP preview inherits a configured global mode; with a provider map it uses v0.13 because no provider has been selected yet. Preview success therefore does not replace deployment validation. Vendored schema artifacts remain pinned to PR240 for source-drift checks, independently of the runtime default.
+
+A deploy accepts at most **1 MiB** of manifest JSON. Update sends the manifest base64-encoded inside a JSON request, so its maximum raw manifest is **786,420 bytes**; both limits fit Fred's default 1 MiB inbound request cap exactly. When sending raw JSON, integer fields must use integer tokens (`3`, `1000000000`), not mathematically integral decimal/exponent spellings (`3.0`, `1e9`), because Fred decodes them into Go integer types.
 
 ## `fetch` injection, CORS, and the SSRF guard
 

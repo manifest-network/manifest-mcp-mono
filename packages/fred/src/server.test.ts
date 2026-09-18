@@ -113,11 +113,14 @@ import {
   makeMockQueryClient,
   makeMockWallet,
 } from '@manifest-network/manifest-mcp-core/__test-utils__/mocks.js';
+import type { FredCompatibilityConfig } from './compatibility.js';
 import {
   getLeaseProvision,
   getLeaseReleases,
   restoreLease,
 } from './http/fred.js';
+import { ProviderApiError } from './http/provider.js';
+import { maintenanceRequestError } from './maintenance-error.js';
 import { FredMCPServer } from './server/index.js';
 import { appStatus } from './tools/appStatus.js';
 import { browseCatalog } from './tools/browseCatalog.js';
@@ -2126,6 +2129,7 @@ describe('restart_app / update_app call shape (ENG-488, ENG-666)', () => {
     return new FredMCPServer({
       config: makeMockConfig(),
       walletProvider: makeMockWallet({ signArbitrary: true }),
+      fredCompatibility: 'pr240',
     });
   }
 
@@ -2214,6 +2218,98 @@ describe('restart_app / update_app call shape (ENG-488, ENG-666)', () => {
       },
     });
   });
+});
+
+describe('MCP Fred compatibility wiring', () => {
+  afterEach(() => vi.unstubAllEnvs());
+
+  function server(fredCompatibility?: FredCompatibilityConfig) {
+    return new FredMCPServer({
+      config: makeMockConfig(),
+      walletProvider: makeMockWallet({ signArbitrary: true }),
+      fredCompatibility,
+    });
+  }
+
+  it.each(['restart_app', 'update_app'] as const)(
+    '%s accepts legacy success without a command key',
+    async (tool) => {
+      vi.stubEnv('MANIFEST_FRED_COMPATIBILITY', undefined);
+      const mock = tool === 'restart_app' ? mockRestartApp : mockUpdateApp;
+      mock.mockResolvedValueOnce({
+        lease_uuid: LEASE_UUID,
+        status: 'accepted',
+      });
+      const result = await callTool(server(), tool, {
+        lease_uuid: LEASE_UUID,
+        ...(tool === 'update_app' && { manifest: '{"image":"nginx"}' }),
+      });
+      expect(mock.mock.lastCall?.[0].fredCompatibility).toBe('v0.13');
+      expect(result.isError).not.toBe(true);
+      expect(result.structuredContent).not.toHaveProperty('idempotency_key');
+    },
+  );
+
+  it('forwards environment URL maps and honors an explicit constructor override', async () => {
+    vi.stubEnv(
+      'MANIFEST_FRED_COMPATIBILITY',
+      '{"https://provider.example/":"pr240"}',
+    );
+    await callTool(server(), 'restart_app', { lease_uuid: LEASE_UUID });
+    expect(mockRestartApp.mock.lastCall?.[0].fredCompatibility).toEqual({
+      'https://provider.example': 'pr240',
+    });
+    await callTool(server('v0.13'), 'restart_app', { lease_uuid: LEASE_UUID });
+    expect(mockRestartApp.mock.lastCall?.[0].fredCompatibility).toBe('v0.13');
+  });
+
+  it('fails invalid environment configuration before creating chain clients', () => {
+    vi.stubEnv('MANIFEST_FRED_COMPATIBILITY', 'latest');
+    expect(() => server()).toThrow('MANIFEST_FRED_COMPATIBILITY');
+    expect(CosmosClientManager.getInstance).not.toHaveBeenCalled();
+  });
+
+  it.each(['restart_app', 'update_app'] as const)(
+    '%s serializes legacy reconciliation details without a key',
+    async (tool) => {
+      const mock = tool === 'restart_app' ? mockRestartApp : mockUpdateApp;
+      mock.mockRejectedValueOnce(
+        maintenanceRequestError(
+          new ProviderApiError(409, 'busy'),
+          LEASE_UUID,
+          undefined,
+          tool === 'restart_app' ? 'restart' : 'update',
+        ),
+      );
+      const result = await callTool(server('v0.13'), tool, {
+        lease_uuid: LEASE_UUID,
+        ...(tool === 'update_app' && { manifest: '{"image":"nginx"}' }),
+      });
+      expect(result.isError).toBe(true);
+      const error = JSON.parse(result.content[0]!.text);
+      expect(error).toMatchObject({
+        code: 'MAINTENANCE_REQUEST_FAILED',
+        details: { provider_status: 409, outcome: 'unknown' },
+      });
+      expect(error.details).not.toHaveProperty('idempotency_key');
+      expect(error.message).toContain('does not support command deduplication');
+    },
+  );
+
+  it.each(['v0.13', 'pr240'] as const)(
+    'uses global %s validation for manifest previews',
+    async (mode) => {
+      const result = await callTool(server(mode), 'build_manifest_preview', {
+        image: 'nginx',
+        port: 80,
+        labels: { 'com.docker.compose.project': 'legacy' },
+      });
+      expect(result.isError).not.toBe(true);
+      expect(result.structuredContent).toMatchObject({
+        validation: { valid: mode === 'v0.13' },
+      });
+    },
+  );
 });
 
 // The seam ENG-666 exposed: restoreApp's abort guards were 100% unit-tested and 0%

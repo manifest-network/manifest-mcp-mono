@@ -1,6 +1,10 @@
 import { LeaseState } from '@manifest-network/manifest-mcp-core';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { submitDevnetMaintenance } from '../examples/sdk-acceptance/src/maintenance-admission.js';
+import {
+  submitDevnetMaintenance,
+  submitLegacyDevnetMaintenance,
+} from '../examples/sdk-acceptance/src/maintenance-admission.js';
+import { fredCompatibility } from './helpers/fred-compatibility.js';
 import { assertWireKeys } from './helpers/fred-wire-golden.js';
 import { MCPTestClient } from './helpers/mcp-client.js';
 
@@ -36,6 +40,16 @@ function expectNewActiveRelease(
   );
 }
 
+function expectMaintenanceKey(result: { idempotency_key?: string }) {
+  if (fredCompatibility === 'pr240') {
+    expect(result.idempotency_key).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+    );
+  } else {
+    expect(result).not.toHaveProperty('idempotency_key');
+  }
+}
+
 describe('Deploy lifecycle', () => {
   const leaseClient = new MCPTestClient();
   const fredClient = new MCPTestClient();
@@ -54,29 +68,37 @@ describe('Deploy lifecycle', () => {
     operation: 'restart' | 'update',
     input: Record<string, unknown>,
     before: ReleaseSnapshot,
-  ) =>
-    submitDevnetMaintenance<T>({
-      operation,
-      createKey: () => crypto.randomUUID(),
-      submit: (key) =>
-        fredClient.callTool(`${operation}_app`, {
-          ...input,
-          idempotency_key: key,
-        }),
-      reconcile: async () => {
-        const status = await fredClient.callTool<{
-          fredStatus?: { provision_status?: string };
-        }>('app_status', { lease_uuid: input.lease_uuid });
-        const current = await fredClient.callTool<ReleaseSnapshot>(
-          'app_releases',
-          { lease_uuid: input.lease_uuid },
-        );
-        return (
-          status.fredStatus?.provision_status === 'ready' &&
-          JSON.stringify(current) === JSON.stringify(before)
-        );
-      },
-    });
+  ) => {
+    const reconcile = async () => {
+      const status = await fredClient.callTool<{
+        fredStatus?: { provision_status?: string };
+      }>('app_status', { lease_uuid: input.lease_uuid });
+      const current = await fredClient.callTool<ReleaseSnapshot>(
+        'app_releases',
+        { lease_uuid: input.lease_uuid },
+      );
+      return (
+        status.fredStatus?.provision_status === 'ready' &&
+        JSON.stringify(current) === JSON.stringify(before)
+      );
+    };
+    return fredCompatibility === 'pr240'
+      ? submitDevnetMaintenance<T>({
+          operation,
+          createKey: () => crypto.randomUUID(),
+          submit: (key) =>
+            fredClient.callTool(`${operation}_app`, {
+              ...input,
+              idempotency_key: key,
+            }),
+          reconcile,
+        })
+      : submitLegacyDevnetMaintenance<T>({
+          operation,
+          submit: () => fredClient.callTool(`${operation}_app`, input),
+          reconcile,
+        });
+  };
 
   beforeAll(async () => {
     await Promise.all([
@@ -294,7 +316,7 @@ describe('Deploy lifecycle', () => {
   // ------------------------------------------------------------------
   // 9. Update app
   // ------------------------------------------------------------------
-  it('update_app with new manifest succeeds and returns its command key', async () => {
+  it('update_app with new manifest follows the selected command contract', async () => {
     const beforeUpdate = await fredClient.callTool<ReleaseSnapshot>(
       'app_releases',
       { lease_uuid: leaseUuid },
@@ -308,7 +330,7 @@ describe('Deploy lifecycle', () => {
     const result = await submitMaintenance<{
       lease_uuid: string;
       status: string;
-      idempotency_key: string;
+      idempotency_key?: string;
     }>(
       'update',
       {
@@ -319,9 +341,7 @@ describe('Deploy lifecycle', () => {
     );
 
     expect(result.lease_uuid).toBe(leaseUuid);
-    expect(result.idempotency_key).toMatch(
-      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
-    );
+    expectMaintenanceKey(result);
     await waitForMaintenanceReady(leaseUuid);
     const afterUpdate = await fredClient.callTool<ReleaseSnapshot>(
       'app_releases',
@@ -330,7 +350,7 @@ describe('Deploy lifecycle', () => {
     expectNewActiveRelease(beforeUpdate, afterUpdate);
   });
 
-  it('update_app merges config and replays an exact command without a new release', async () => {
+  it('update_app merges config; PR #240 also deduplicates exact replay and rejects conflicts', async () => {
     const beforeUpdate = await fredClient.callTool<ReleaseSnapshot>(
       'app_releases',
       { lease_uuid: leaseUuid },
@@ -349,9 +369,10 @@ describe('Deploy lifecycle', () => {
     };
     const result = await submitMaintenance<{
       lease_uuid: string;
-      idempotency_key: string;
+      idempotency_key?: string;
     }>('update', input, beforeUpdate);
     expect(result.lease_uuid).toBe(leaseUuid);
+    expectMaintenanceKey(result);
     const idempotencyKey = result.idempotency_key;
     const exactInput = { ...input, idempotency_key: idempotencyKey };
     await waitForMaintenanceReady(leaseUuid);
@@ -362,6 +383,7 @@ describe('Deploy lifecycle', () => {
     // Ready also describes a successful rollback; require this new release to
     // be active before testing that a replay leaves release history unchanged.
     expectNewActiveRelease(beforeUpdate, beforeReplay);
+    if (fredCompatibility === 'v0.13') return;
 
     const replay = await fredClient.callTool<{ idempotency_key: string }>(
       'update_app',
@@ -424,7 +446,7 @@ describe('Deploy lifecycle', () => {
     ).toBe(true);
   });
 
-  it('restart_app creates one active release and preserves it on exact replay', async () => {
+  it('restart_app creates one active release; PR #240 also deduplicates exact replay', async () => {
     await waitForMaintenanceReady(leaseUuid);
     const beforeRestart = await fredClient.callTool<ReleaseSnapshot>(
       'app_releases',
@@ -435,9 +457,10 @@ describe('Deploy lifecycle', () => {
     };
     const result = await submitMaintenance<{
       lease_uuid: string;
-      idempotency_key: string;
+      idempotency_key?: string;
     }>('restart', input, beforeRestart);
     expect(result.lease_uuid).toBe(leaseUuid);
+    expectMaintenanceKey(result);
     const exactInput = { ...input, idempotency_key: result.idempotency_key };
     await waitForMaintenanceReady(leaseUuid);
     const beforeReplay = await fredClient.callTool<ReleaseSnapshot>(
@@ -445,6 +468,7 @@ describe('Deploy lifecycle', () => {
       { lease_uuid: leaseUuid },
     );
     expectNewActiveRelease(beforeRestart, beforeReplay);
+    if (fredCompatibility === 'v0.13') return;
     const replay = await fredClient.callTool<{ idempotency_key: string }>(
       'restart_app',
       exactInput,

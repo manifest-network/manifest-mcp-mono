@@ -25,6 +25,7 @@ import type {
   ServerRequest,
 } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
+import type { FredCompatibilityConfig } from '../compatibility.js';
 import type { FredAuthCtx } from '../ctx.js';
 import { guidanceFor } from '../failure-guidance.js';
 import { sanitizeFailureFields } from '../failure-reason.js';
@@ -53,6 +54,7 @@ import { sanitizeRetentionFields } from '../tools/sanitizeRetention.js';
 import { updateApp } from '../tools/updateApp.js';
 import { MAX_UPDATE_MANIFEST_BYTES } from '../tools/validateManifestPayload.js';
 import { waitForAppReady } from '../tools/waitForAppReady.js';
+import { maintenanceToolError } from './maintenance-error.js';
 import { createProgressEmitter } from './progress.js';
 
 /**
@@ -82,6 +84,7 @@ interface RegisterToolsDeps {
    * are permitted (dev/e2e). Default false → strict (ENG-490).
    */
   allowLoopback?: boolean;
+  fredCompatibility?: FredCompatibilityConfig;
 }
 
 type ManifestInputMode = 'preview' | 'deploy';
@@ -95,7 +98,7 @@ function maintenanceKeySchema() {
     )
     .optional()
     .describe(
-      'Command identity. Omit to generate a key for a new command; reuse the returned idempotency_key and exact command when retrying. An uncertain response may still execute later.',
+      'Only for providers configured for Fred PR #240. Omit to generate a new command key; reuse the returned key and exact command for recovery. Unsupported in default Fred v0.13 mode, which has no deduplication.',
     );
 }
 
@@ -238,6 +241,7 @@ export function registerTools(deps: RegisterToolsDeps): void {
     authTokens,
     fetchFn,
     allowLoopback,
+    fredCompatibility,
   } = deps;
 
   // ProviderAuthPort adapter over the server's AuthTokenService. The capability
@@ -261,6 +265,7 @@ export function registerTools(deps: RegisterToolsDeps): void {
     logger: noopLogger,
     providerAuth,
     allowLoopback,
+    fredCompatibility,
   });
 
   // -- browse_catalog --
@@ -683,22 +688,25 @@ export function registerTools(deps: RegisterToolsDeps): void {
       }),
     },
     withErrorHandling('build_manifest_preview', async (args) => {
-      const result = await buildManifestPreview({
-        manifest: args.manifest,
-        image: args.image,
-        port: args.port,
-        env: args.env,
-        command: args.command,
-        args: args.args,
-        user: args.user,
-        tmpfs: args.tmpfs,
-        health_check: args.health_check,
-        stop_grace_period: args.stop_grace_period,
-        init: args.init,
-        expose: args.expose,
-        labels: args.labels,
-        services: args.services,
-      });
+      const result = await buildManifestPreview(
+        {
+          manifest: args.manifest,
+          image: args.image,
+          port: args.port,
+          env: args.env,
+          command: args.command,
+          args: args.args,
+          user: args.user,
+          tmpfs: args.tmpfs,
+          health_check: args.health_check,
+          stop_grace_period: args.stop_grace_period,
+          init: args.init,
+          expose: args.expose,
+          labels: args.labels,
+          services: args.services,
+        },
+        typeof fredCompatibility === 'string' ? fredCompatibility : 'v0.13',
+      );
       return structuredResponse(result, bigIntReplacer);
     }),
   );
@@ -904,7 +912,7 @@ export function registerTools(deps: RegisterToolsDeps): void {
     'restart_app',
     {
       description:
-        'Restart an app via the provider without closing its lease. Retain the returned idempotency_key: a timeout or 503 may leave the command pending for automatic recovery. Retry the same logical command with that key; a different key requests another restart.',
+        'Restart an app via the provider without closing its lease. Fred v0.13 has no command deduplication: reconcile uncertain results before another attempt. For providers configured for PR #240, retain the returned idempotency_key and reuse it for the same logical command; a different key requests another restart.',
       inputSchema: {
         lease_uuid: z
           .string()
@@ -915,7 +923,7 @@ export function registerTools(deps: RegisterToolsDeps): void {
       outputSchema: {
         lease_uuid: z.string(),
         status: z.string(),
-        idempotency_key: z.string(),
+        idempotency_key: z.string().optional(),
       },
       // An omitted key creates a new command, so the tool as a whole cannot
       // advertise unconditional idempotence to an MCP host.
@@ -940,7 +948,9 @@ export function registerTools(deps: RegisterToolsDeps): void {
           signal: extra.signal,
           idempotencyKey: args.idempotency_key,
         },
-      );
+      ).catch((error: unknown) => {
+        throw maintenanceToolError(error, leaseUuid, 'restart');
+      });
       return structuredResponse(result, bigIntReplacer);
     }),
   );
@@ -994,7 +1004,7 @@ export function registerTools(deps: RegisterToolsDeps): void {
     'update_app',
     {
       description:
-        'Update a deployed app with a new container manifest without closing its lease. Retain the returned idempotency_key: a timeout or 503 may leave the command pending for automatic recovery. Retry with the same key and exact final manifest; a different key requests another update.',
+        'Update a deployed app without closing its lease. Fred v0.13 has no command deduplication: reconcile uncertain results before another attempt. For providers configured for PR #240, retain the returned idempotency_key and reuse it with the exact final manifest; a different key requests another update.',
       inputSchema: {
         lease_uuid: z
           .string()
@@ -1016,7 +1026,7 @@ export function registerTools(deps: RegisterToolsDeps): void {
       outputSchema: {
         lease_uuid: z.string(),
         status: z.string(),
-        idempotency_key: z.string(),
+        idempotency_key: z.string().optional(),
       },
       // Destructive: replaces the running app's manifest. Even with the
       // merge mode, prior config can be overwritten.
@@ -1065,7 +1075,9 @@ export function registerTools(deps: RegisterToolsDeps): void {
           signal: extra.signal,
           idempotencyKey: args.idempotency_key,
         },
-      );
+      ).catch((error: unknown) => {
+        throw maintenanceToolError(error, leaseUuid, 'update');
+      });
       return structuredResponse(result, bigIntReplacer);
     }),
   );

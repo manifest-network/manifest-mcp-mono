@@ -1,4 +1,5 @@
 import type { CapabilityCtx } from '@manifest-network/manifest-mcp-core';
+import type { FredCompatibilityConfig } from './compatibility.js';
 import type { ProviderAuthPort } from './http/provider-auth.js';
 
 /**
@@ -14,7 +15,11 @@ import type { ProviderAuthPort } from './http/provider-auth.js';
 export type FredReadCtx = Pick<
   CapabilityCtx,
   'query' | 'chain' | 'fetch' | 'logger'
-> & { readonly allowLoopback?: boolean };
+> & {
+  readonly allowLoopback?: boolean;
+  /** Provider protocol selection. Defaults to released Fred v0.13 behavior. */
+  readonly fredCompatibility?: FredCompatibilityConfig;
+};
 
 /**
  * Provider-authenticated Fred fns: a read ctx + the signer-backed token provider.

@@ -9,6 +9,8 @@ import {
   CosmosClientManager,
   createFredClient,
   type FredClient,
+  type FredCompatibility,
+  type FredCompatibilityConfig,
   isRetryableError,
   ManifestMCPError,
   type ManifestQueryClient,
@@ -17,6 +19,7 @@ import {
 } from '@manifest-network/manifest-sdk';
 import {
   isTransientProviderError,
+  type LifecycleCallOptions,
   restartLease,
   updateLease,
 } from '@manifest-network/manifest-sdk/deploy';
@@ -32,7 +35,10 @@ const MANIFEST = JSON.stringify({ image: 'nginx:1.27' });
 
 afterEach(() => vi.restoreAllMocks());
 
-async function clientWithFetch(fetch: typeof globalThis.fetch) {
+async function clientWithFetch(
+  fetch: typeof globalThis.fetch,
+  fredCompatibility?: FredCompatibilityConfig,
+) {
   const chain = makeSealedClientManager({
     getQueryClient: vi.fn(
       async () => makeMockQueryClient() as unknown as ManifestQueryClient,
@@ -46,40 +52,220 @@ async function clientWithFetch(fetch: typeof globalThis.fetch) {
     config: makeMockConfig(),
     walletProvider: makeMockWallet({ signArbitrary: true }),
     fetch,
+    fredCompatibility,
   });
 }
 
 const operations = [
   {
     name: 'restart',
-    raw: (fetch: typeof globalThis.fetch) =>
-      restartLease(PROVIDER_URL, LEASE_UUID, 'auth-token', fetch),
-    run: (client: FredClient, idempotencyKey?: string) =>
+    raw: (fetch: typeof globalThis.fetch, compatibility?: FredCompatibility) =>
+      restartLease(
+        PROVIDER_URL,
+        LEASE_UUID,
+        'auth-token',
+        fetch,
+        false,
+        undefined,
+        compatibility,
+      ),
+    run: (
+      client: FredClient,
+      idempotencyKey?: string,
+      options: Pick<
+        LifecycleCallOptions,
+        'providerUrl' | 'fredCompatibility'
+      > = {},
+    ) =>
       client.restartApp(INPUT, {
         providerUrl: PROVIDER_URL,
         pollOptions: false,
         idempotencyKey,
+        ...options,
       }),
   },
   {
     name: 'update',
-    raw: (fetch: typeof globalThis.fetch) =>
+    raw: (fetch: typeof globalThis.fetch, compatibility?: FredCompatibility) =>
       updateLease(
         PROVIDER_URL,
         LEASE_UUID,
         new TextEncoder().encode(MANIFEST),
         'auth-token',
         fetch,
+        false,
+        undefined,
+        compatibility,
       ),
-    run: (client: FredClient, idempotencyKey?: string) =>
+    run: (
+      client: FredClient,
+      idempotencyKey?: string,
+      options: Pick<
+        LifecycleCallOptions,
+        'providerUrl' | 'fredCompatibility'
+      > = {},
+    ) =>
       client.updateApp(
         { ...INPUT, manifest: MANIFEST },
-        { providerUrl: PROVIDER_URL, pollOptions: false, idempotencyKey },
+        {
+          providerUrl: PROVIDER_URL,
+          pollOptions: false,
+          idempotencyKey,
+          ...options,
+        },
       ),
   },
 ] as const;
 
 describe('SDK maintenance command identity', () => {
+  it.each(operations)(
+    'defaults raw and bound $name calls to the legacy CORS header contract',
+    async ({ name, raw, run }) => {
+      const wire = sealedFetchProbe({
+        [`/${name}`]: { status: 202, json: { status: 'accepted' } },
+      });
+      await expect(raw(wire.fetch)).resolves.toEqual({ status: 'accepted' });
+      const client = await clientWithFetch(wire.fetch);
+      try {
+        await expect(run(client)).resolves.toEqual({
+          lease_uuid: LEASE_UUID,
+          status: 'accepted',
+        });
+        expect(wire.calls).toHaveLength(2);
+        for (const request of wire.calls) {
+          // Fred v0.13 CORS permits only these author-supplied headers.
+          expect([...new Headers(request.init.headers).keys()].sort()).toEqual(
+            name === 'restart'
+              ? ['authorization']
+              : ['authorization', 'content-type'],
+          );
+        }
+      } finally {
+        client.dispose();
+      }
+    },
+  );
+
+  it.each(operations)(
+    'selects the $name protocol by provider URL in a mixed fleet',
+    async ({ name, run }) => {
+      const wire = sealedFetchProbe({
+        [`/${name}`]: { status: 202, json: { status: 'accepted' } },
+      });
+      const client = await clientWithFetch(wire.fetch, {
+        [`${PROVIDER_URL}/`]: 'pr240',
+        'https://legacy.example.com': 'v0.13',
+      });
+      try {
+        const modern = await run(client, COMMAND_KEY);
+        expect(modern.idempotency_key).toBe(COMMAND_KEY);
+        for (const providerUrl of [
+          'https://legacy.example.com',
+          'https://unlisted.example.com',
+        ]) {
+          const legacy = await run(client, undefined, { providerUrl });
+          expect(legacy).not.toHaveProperty('idempotency_key');
+        }
+        expect(wire.calls).toHaveLength(3);
+        expect(
+          new Headers(wire.calls[0].init.headers).get('Idempotency-Key'),
+        ).toBe(COMMAND_KEY);
+        for (const request of wire.calls.slice(1)) {
+          expect(new Headers(request.init.headers).has('Idempotency-Key')).toBe(
+            false,
+          );
+        }
+        expect(wire.calls.map((call) => new URL(call.url).origin)).toEqual([
+          PROVIDER_URL,
+          'https://legacy.example.com',
+          'https://unlisted.example.com',
+        ]);
+      } finally {
+        client.dispose();
+      }
+    },
+  );
+
+  it.each(operations)(
+    'allows explicit per-call $name protocol overrides in both directions',
+    async ({ name, run }) => {
+      const wire = sealedFetchProbe({
+        [`/${name}`]: { status: 202, json: { status: 'accepted' } },
+      });
+      for (const configured of ['v0.13', 'pr240'] as const) {
+        const client = await clientWithFetch(wire.fetch, configured);
+        try {
+          const override = configured === 'v0.13' ? 'pr240' : 'v0.13';
+          const key = override === 'pr240' ? COMMAND_KEY : undefined;
+          const result = await run(client, key, {
+            fredCompatibility: override,
+          });
+          expect(result.idempotency_key).toBe(key);
+          expect(
+            new Headers(wire.calls.at(-1)?.init.headers).get('Idempotency-Key'),
+          ).toBe(key ?? null);
+        } finally {
+          client.dispose();
+        }
+      }
+      expect(wire.calls).toHaveLength(2);
+    },
+  );
+
+  it.each(operations)(
+    'rejects an unsupported legacy $name key before dispatch',
+    async ({ run }) => {
+      const wire = sealedFetchProbe();
+      const client = await clientWithFetch(wire.fetch);
+      try {
+        await expect(run(client, COMMAND_KEY)).rejects.toMatchObject({
+          code: 'INVALID_ARGUMENT',
+          message: expect.stringContaining(
+            'does not support command deduplication',
+          ),
+        });
+        expect(wire.calls).toHaveLength(0);
+      } finally {
+        client.dispose();
+      }
+    },
+  );
+
+  it.each(operations)(
+    'never automatically replays an uncertain legacy $name, raw or bound',
+    async ({ name, raw, run }) => {
+      const wire = sealedFetchProbe({
+        [`/${name}`]: { transportError: new Error('ECONNRESET') },
+      });
+      const client = await clientWithFetch(wire.fetch);
+      try {
+        for (const invoke of [() => raw(wire.fetch), () => run(client)]) {
+          const error = await withRetry(invoke, {
+            config: { maxRetries: 1, baseDelayMs: 1, maxDelayMs: 1 },
+          }).catch((cause: unknown) => cause);
+          expect(error).toMatchObject({
+            details: {
+              lease_uuid: LEASE_UUID,
+              operation: name,
+              outcome: 'unknown',
+            },
+          });
+          expect(error).not.toHaveProperty('details.idempotency_key');
+          expect(isRetryableError(error)).toBe(false);
+          expect(isTransientProviderError(error)).toBe(false);
+        }
+        expect(wire.calls).toHaveLength(2);
+        for (const request of wire.calls) {
+          expect(new Headers(request.init.headers).has('Idempotency-Key')).toBe(
+            false,
+          );
+        }
+      } finally {
+        client.dispose();
+      }
+    },
+  );
+
   it.each(operations)(
     'keeps raw $name recovery through a foreign-core adapter without replay',
     async ({ name, raw }) => {
@@ -93,7 +279,7 @@ describe('SDK maintenance command identity', () => {
       const error = await withRetry(
         async () => {
           try {
-            return await raw(wire.fetch);
+            return await raw(wire.fetch, 'pr240');
           } catch (cause) {
             if (!(cause instanceof ProviderApiError)) throw cause;
             // Simulate another physical core copy: its public code/details remain
@@ -156,7 +342,7 @@ describe('SDK maintenance command identity', () => {
         [`/${name}`]: { streamError: failure },
       });
 
-      const error = await withRetry(() => raw(wire.fetch), {
+      const error = await withRetry(() => raw(wire.fetch, 'pr240'), {
         config: { maxRetries: 1, baseDelayMs: 1, maxDelayMs: 1 },
       }).catch((cause: unknown) => cause);
 
@@ -188,7 +374,7 @@ describe('SDK maintenance command identity', () => {
       const wire = sealedFetchProbe({
         [`/${name}`]: { status: 503, text: 'HTTP 503 unavailable' },
       });
-      const error = await withRetry(() => raw(wire.fetch), {
+      const error = await withRetry(() => raw(wire.fetch, 'pr240'), {
         config: { maxRetries: 1, baseDelayMs: 1, maxDelayMs: 1 },
       }).catch((cause: unknown) => cause);
       expect(wire.calls).toHaveLength(1);
@@ -221,7 +407,7 @@ describe('SDK maintenance command identity', () => {
       const wire = sealedFetchProbe({
         [`/${name}`]: { status: 202, json: { status: 'accepted' } },
       });
-      const client = await clientWithFetch(wire.fetch);
+      const client = await clientWithFetch(wire.fetch, 'pr240');
       try {
         await expect(run(client, COMMAND_KEY)).resolves.toEqual({
           lease_uuid: LEASE_UUID,
@@ -255,7 +441,7 @@ describe('SDK maintenance command identity', () => {
       const wire = sealedFetchProbe({
         [`/${name}`]: { transportError: new Error('ECONNRESET') },
       });
-      const client = await clientWithFetch(wire.fetch);
+      const client = await clientWithFetch(wire.fetch, 'pr240');
       try {
         const error = await withRetry(() => run(client), {
           config: { maxRetries: 1, baseDelayMs: 1, maxDelayMs: 1 },

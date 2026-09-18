@@ -167,8 +167,9 @@ function buildFakeClient(opts: { onSubscribeComplete?: 'active' | 'failure' }) {
 // real param types — never `as never` (that erases the spread shape).
 const baseOpts = (): Pick<
   AcceptanceOpts,
-  'config' | 'walletProvider' | 'fetch'
+  'config' | 'walletProvider' | 'fetch' | 'fredCompatibility'
 > => ({
+  fredCompatibility: 'pr240',
   config: { chainId: 'manifest-devnet' } as AcceptanceOpts['config'],
   walletProvider: {
     __wallet: true,
@@ -204,9 +205,24 @@ describe('runAcceptanceFlow (mocked SDK)', () => {
       config: opts.config,
       walletProvider: opts.walletProvider,
       fetch: opts.fetch,
+      fredCompatibility: 'pr240',
       // The compose devnet's providerd is on loopback, so the flow opts in.
       allowLoopback: true,
     });
+  });
+
+  it('defaults to v0.13 and sends no maintenance command keys', async () => {
+    const client = buildFakeClient({ onSubscribeComplete: 'active' });
+    h.createFredClient.mockResolvedValue(client);
+    const { fredCompatibility: _mode, ...opts } = baseOpts();
+    await runAcceptanceFlow({ ...opts, variant: 'single' });
+    expect(h.createFredClient).toHaveBeenCalledWith(
+      expect.objectContaining({ fredCompatibility: 'v0.13' }),
+    );
+    for (const command of [h.restartApp, h.updateApp]) {
+      expect(command).toHaveBeenCalledTimes(1);
+      expect(command.mock.calls[0][2]).not.toHaveProperty('idempotencyKey');
+    }
   });
 
   it('(b) resolves the credit denom from getSKUs (docker-micro basePrice.denom) and funds with it', async () => {

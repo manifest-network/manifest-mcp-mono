@@ -1,8 +1,11 @@
 import { restartApp } from '@manifest-network/manifest-sdk/deploy';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { submitDevnetMaintenance } from './maintenance-admission.js';
+import {
+  submitDevnetMaintenance,
+  submitLegacyDevnetMaintenance,
+} from './maintenance-admission.js';
 
-function refusal(key: string, body: string, details = {}) {
+function refusal(key: string | undefined, body: string, details = {}) {
   return Object.assign(
     new Error(
       `Diagnostic. Cause: ${JSON.stringify({ error: body, code: 409 })}`,
@@ -23,6 +26,98 @@ function refusal(key: string, body: string, details = {}) {
 
 beforeEach(() => vi.useFakeTimers());
 afterEach(() => vi.useRealTimers());
+
+describe('legacy devnet admission recovery', () => {
+  it('resubmits only a definitive invalid-state refusal without command keys', async () => {
+    const fetch = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ error: 'invalid state for restart', code: 409 }),
+          { status: 409 },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ status: 'restarting' }), { status: 202 }),
+      );
+    const providerToken = vi
+      .fn()
+      .mockResolvedValueOnce('legacy-auth-1')
+      .mockResolvedValueOnce('legacy-auth-2');
+    const ctx = {
+      fetch,
+      providerAuth: { providerToken },
+      fredCompatibility: 'v0.13',
+    } as unknown as Parameters<typeof restartApp>[0];
+    const reconcile = vi.fn().mockResolvedValue(true);
+    const result = submitLegacyDevnetMaintenance({
+      operation: 'restart',
+      submit: () =>
+        restartApp(
+          ctx,
+          { address: 'tenant', leaseUuid: 'lease' },
+          {
+            providerUrl: 'https://provider.example',
+            pollOptions: false,
+          },
+        ),
+      reconcile,
+    });
+    await vi.runAllTimersAsync();
+    expect(await result).not.toHaveProperty('idempotency_key');
+    expect(providerToken).toHaveBeenCalledTimes(2);
+    expect(reconcile).toHaveBeenCalledTimes(1);
+    expect(
+      fetch.mock.calls.map(([, init]) =>
+        new Headers(init.headers).get('Idempotency-Key'),
+      ),
+    ).toEqual([null, null]);
+    expect(
+      fetch.mock.calls.map(([, init]) =>
+        new Headers(init.headers).get('Authorization'),
+      ),
+    ).toEqual(['Bearer legacy-auth-1', 'Bearer legacy-auth-2']);
+  });
+
+  it.each([
+    ['invalid state for restart', { provider_status: 503 }],
+    ['invalid state for restart', { provider_error_kind: 'network' }],
+    ['invalid state for restart', { outcome: 'accepted' }],
+    ['invalid state for restart', { idempotency_key: 'unexpected-key' }],
+    ['lease is already undergoing a lifecycle operation', {}],
+    ['unrecognized conflict', {}],
+  ])(
+    'never retries an uncertain legacy response: %s %j',
+    async (body, details) => {
+      const error = refusal(undefined, body, details);
+      const submit = vi.fn().mockRejectedValue(error);
+      const reconcile = vi.fn();
+      await expect(
+        submitLegacyDevnetMaintenance({
+          operation: 'restart',
+          submit,
+          reconcile,
+        }),
+      ).rejects.toBe(error);
+      expect(submit).toHaveBeenCalledTimes(1);
+      expect(reconcile).not.toHaveBeenCalled();
+    },
+  );
+
+  it('stops legacy recovery when release history or readiness changed', async () => {
+    const error = refusal(undefined, 'invalid state for restart');
+    const submit = vi.fn().mockRejectedValue(error);
+    const result = submitLegacyDevnetMaintenance({
+      operation: 'restart',
+      submit,
+      reconcile: async () => false,
+    });
+    const rejection = expect(result).rejects.toBe(error);
+    await vi.runAllTimersAsync();
+    await rejection;
+    expect(submit).toHaveBeenCalledTimes(1);
+  });
+});
 
 describe('pinned devnet admission recovery', () => {
   it('recognizes the real SDK error body and mints fresh authentication per attempt', async () => {
@@ -46,6 +141,7 @@ describe('pinned devnet admission recovery', () => {
       .mockResolvedValueOnce('auth-1')
       .mockResolvedValueOnce('auth-2');
     const ctx = {
+      fredCompatibility: 'pr240',
       fetch,
       providerAuth: { providerToken },
     } as unknown as Parameters<typeof restartApp>[0];

@@ -2,6 +2,7 @@ import {
   ManifestMCPError,
   ManifestMCPErrorCode,
 } from '@manifest-network/manifest-mcp-core';
+import { resolveFredCompatibility } from '../compatibility.js';
 import type { FredAuthCtx } from '../ctx.js';
 import {
   type FredLeaseStatus,
@@ -9,10 +10,11 @@ import {
   updateLease,
 } from '../http/fred.js';
 import { validateProviderUrl } from '../http/provider.js';
-import { resolveMaintenanceIdempotencyKey } from '../maintenance.js';
 import {
+  legacyUpdateError,
   maintenanceError,
   maintenanceWaitError,
+  resolveMaintenanceCommandKey,
 } from '../maintenance-error.js';
 import {
   isStackManifest,
@@ -39,7 +41,7 @@ export async function updateApp(
   opts: LifecycleCallOptions = {},
 ): Promise<{
   lease_uuid: string;
-  idempotency_key: string;
+  idempotency_key?: string;
   status: string;
   ready?: FredLeaseStatus;
 }> {
@@ -47,7 +49,6 @@ export async function updateApp(
   // Resolve ONCE: a second call would mint a second timeout from the same `timeout`.
   const signal = resolveFredSignal(opts);
   signal?.throwIfAborted();
-  const idempotencyKey = resolveMaintenanceIdempotencyKey(opts.idempotencyKey);
 
   let finalManifest = manifest;
   if (existingManifest) {
@@ -127,8 +128,17 @@ export async function updateApp(
   // Validate the final payload after merge. This catches bad fields carried
   // forward from existing_manifest as well as new input, before provider URL
   // lookup, token minting, or the destructive update POST (ENG-637/ENG-755).
-  const { bytes: finalManifestBytes } =
-    parseAndValidateManifestPayload(finalManifest);
+  const initialCompatibility = resolveFredCompatibility(
+    typeof ctx.fredCompatibility === 'string'
+      ? ctx.fredCompatibility
+      : undefined,
+    undefined,
+    opts.fredCompatibility,
+  );
+  const { bytes: finalManifestBytes } = parseAndValidateManifestPayload(
+    finalManifest,
+    initialCompatibility,
+  );
   assertManifestFitsUpdateRequest(finalManifestBytes);
 
   // Fast path: a supplied providerUrl skips both on-chain queries (fetchActiveLease + resolveProviderUrl).
@@ -142,6 +152,17 @@ export async function updateApp(
 
   // URL rejection is local and proves no maintenance request was sent.
   validateProviderUrl(providerUrl, { allowLoopback: ctx.allowLoopback });
+  const compatibility = resolveFredCompatibility(
+    ctx.fredCompatibility,
+    providerUrl,
+    opts.fredCompatibility,
+  );
+  if (compatibility !== initialCompatibility)
+    parseAndValidateManifestPayload(finalManifest, compatibility);
+  const idempotencyKey = resolveMaintenanceCommandKey(
+    compatibility,
+    opts.idempotencyKey,
+  );
 
   const authToken = await ctx.providerAuth.providerToken({
     address,
@@ -161,13 +182,20 @@ export async function updateApp(
       ctx.fetch,
       ctx.allowLoopback,
       idempotencyKey,
+      compatibility,
     );
   } catch (err) {
-    throw maintenanceError(err, { ...command, outcome: 'unknown' });
+    throw idempotencyKey === undefined
+      ? legacyUpdateError(err, leaseUuid)
+      : maintenanceError(err, {
+          ...command,
+          idempotencyKey,
+          outcome: 'unknown',
+        });
   }
   const base = {
     lease_uuid: leaseUuid,
-    idempotency_key: idempotencyKey,
+    ...(idempotencyKey !== undefined && { idempotency_key: idempotencyKey }),
     status: result.status,
   };
 

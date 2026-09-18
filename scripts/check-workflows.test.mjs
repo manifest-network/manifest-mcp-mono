@@ -318,6 +318,35 @@ test('wiring: both live workflows install supported Docker and manage the native
     const job = readWorkflow(filename).jobs[jobName];
     assert.equal(job['runs-on'], 'ubuntu-24.04');
     assert(job['timeout-minutes'] >= 45);
+    assert.deepEqual(job.strategy.matrix.fred, ['v0.13', 'pr240']);
+    assert.equal(job.strategy['fail-fast'], false);
+    assert.equal(job['continue-on-error'], undefined);
+    assert.equal(job.env.FRED_COMPATIBILITY, `\${{ matrix.fred }}`);
+    assert.equal(job.env.MANIFEST_FRED_COMPATIBILITY, `\${{ matrix.fred }}`);
+    const legacy = job.steps.find(
+      (step) => step.name === 'Checkout Fred v0.13.0 separately',
+    );
+    assert.equal(legacy.if, "matrix.fred == 'v0.13'");
+    assert.equal(legacy.with.repository, 'manifest-network/fred');
+    assert.equal(legacy.with.ref, '8f0cbd9431b482732d60d81fb59f94a37cd06486');
+    assert.equal(legacy.with.path, 'e2e/.fred-v013');
+    assert.equal(
+      job.steps.find((step) => step.name === 'Build Docker images').run,
+      'bash e2e/scripts/devnet.sh build',
+    );
+    assert.equal(
+      job.steps.find(
+        (step) =>
+          step.name === 'Run E2E tests' ||
+          step.name === 'Run the single-variant SDK acceptance flow',
+      ).if,
+      undefined,
+    );
+    assert.match(
+      job.steps.find((step) => step.name === 'Upload logs on failure').with
+        .name,
+      /\$\{\{ matrix\.fred \}\}/,
+    );
     const install = job.steps.findIndex(
       (step) => step.run === 'bash e2e/scripts/setup_ci_docker.sh',
     );

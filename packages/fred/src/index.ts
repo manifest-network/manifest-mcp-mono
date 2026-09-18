@@ -18,6 +18,12 @@ export {
   type FredClient,
   fredActions,
 } from './client.js';
+export {
+  type FredCompatibility,
+  type FredCompatibilityConfig,
+  normalizeFredCompatibility,
+  resolveFredCompatibilityConfig,
+} from './compatibility.js';
 export type { FredAuthCtx, FredReadCtx } from './ctx.js';
 export {
   FRED_REASON_GUIDANCE,

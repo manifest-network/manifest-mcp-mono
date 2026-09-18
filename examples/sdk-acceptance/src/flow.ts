@@ -1,6 +1,7 @@
 import {
   createFredClient,
   type FredClient,
+  type FredCompatibility,
   type ManifestMCPConfig,
   parseFqdn,
   type WalletProvider,
@@ -21,7 +22,10 @@ import {
   updateApp,
 } from '@manifest-network/manifest-sdk/deploy';
 import { MsgFundCredit } from '@manifest-network/manifestjs/dist/codegen/liftedinit/billing/v1/tx.js'; // sanctioned
-import { submitDevnetMaintenance } from './maintenance-admission.js';
+import {
+  submitDevnetMaintenance,
+  submitLegacyDevnetMaintenance,
+} from './maintenance-admission.js';
 
 /**
  * Drift-proof deploy-spec type: derived from `deployApp`'s spec param (2nd positional, after the
@@ -38,6 +42,8 @@ export interface AcceptanceOpts {
   /** Injected fetch (cert-trusting undici in e2e; globalThis.fetch in browser). */
   fetch: typeof globalThis.fetch;
   variant: 'single' | 'stack';
+  /** Explicit provider contract; defaults to the SDK's v0.13 compatibility. */
+  fredCompatibility?: FredCompatibility;
   /**
    * Skip step 4 (setItemCustomDomain) when the chain image is too old to support the
    * custom-domain feature (manifest-ledger v2.1.0+ / manifestjs 2.4.1+). The e2e node harness
@@ -62,10 +68,12 @@ export interface AcceptanceOpts {
  * `FredAuthCtx` alongside `query`/`chain`/`fetch`/`logger`.
  */
 export async function runAcceptanceFlow(opts: AcceptanceOpts): Promise<void> {
+  const fredCompatibility = opts.fredCompatibility ?? 'v0.13';
   const client: FredClient = await createFredClient({
     config: opts.config,
     walletProvider: opts.walletProvider,
     fetch: opts.fetch,
+    fredCompatibility,
     // The compose devnet's providerd registers a loopback apiUrl (https://localhost:8080),
     // so this dev/e2e flow opts into the narrow loopback SSRF allowance (never RFC1918/metadata).
     allowLoopback: true,
@@ -167,17 +175,33 @@ export async function runAcceptanceFlow(opts: AcceptanceOpts): Promise<void> {
         );
       };
     const beforeRestart = await readReleases();
-    await submitDevnetMaintenance({
-      operation: 'restart',
-      createKey: createMaintenanceIdempotencyKey,
-      submit: (idempotencyKey) =>
-        restartApp(
-          client,
-          { address: addr, leaseUuid },
-          { idempotencyKey, pollOptions: { timeoutMs: 45_000 } },
-        ),
-      reconcile: reconcile(beforeRestart),
-    });
+    const submit = <T>(
+      operation: 'restart' | 'update',
+      before: Awaited<ReturnType<typeof readReleases>>,
+      command: (key?: string) => Promise<T>,
+    ) =>
+      fredCompatibility === 'pr240'
+        ? submitDevnetMaintenance({
+            operation,
+            createKey: createMaintenanceIdempotencyKey,
+            submit: command,
+            reconcile: reconcile(before),
+          })
+        : submitLegacyDevnetMaintenance({
+            operation,
+            submit: command,
+            reconcile: reconcile(before),
+          });
+    await submit('restart', beforeRestart, (idempotencyKey) =>
+      restartApp(
+        client,
+        { address: addr, leaseUuid },
+        {
+          ...(idempotencyKey === undefined ? {} : { idempotencyKey }),
+          pollOptions: { timeoutMs: 45_000 },
+        },
+      ),
+    );
     const updateManifest =
       opts.variant === 'stack'
         ? buildStackManifest({
@@ -201,21 +225,20 @@ export async function runAcceptanceFlow(opts: AcceptanceOpts): Promise<void> {
             ports: { '8080/tcp': {} },
           });
     const beforeUpdate = await readReleases();
-    await submitDevnetMaintenance({
-      operation: 'update',
-      createKey: createMaintenanceIdempotencyKey,
-      submit: (idempotencyKey) =>
-        updateApp(
-          client,
-          {
-            address: addr,
-            leaseUuid,
-            manifest: JSON.stringify(updateManifest),
-          },
-          { idempotencyKey, pollOptions: { timeoutMs: 45_000 } },
-        ),
-      reconcile: reconcile(beforeUpdate),
-    });
+    await submit('update', beforeUpdate, (idempotencyKey) =>
+      updateApp(
+        client,
+        {
+          address: addr,
+          leaseUuid,
+          manifest: JSON.stringify(updateManifest),
+        },
+        {
+          ...(idempotencyKey === undefined ? {} : { idempotencyKey }),
+          pollOptions: { timeoutMs: 45_000 },
+        },
+      ),
+    );
     await getAppLogs(client, { address: addr, leaseUuid, tail: 100 });
 
     // 6) executeTx BATCH — two MsgFundCredit (atomic double-fund); caller sets sender/tenant.

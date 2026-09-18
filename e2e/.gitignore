@@ -1,0 +1,2 @@
+# Separate immutable legacy provider checkout; never move the schema submodule.
+.fred-v013/

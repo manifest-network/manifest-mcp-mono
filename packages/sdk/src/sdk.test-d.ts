@@ -1,6 +1,7 @@
 import { describe, expectTypeOf, it } from 'vitest';
 import type {
   BuildManifestPreviewInput,
+  buildManifestPreview,
   PortConfig as CatalogPortConfig,
   ManifestPreviewServiceInput,
 } from './catalog.js';
@@ -23,6 +24,8 @@ import {
   createMaintenanceIdempotencyKey,
   createProviderAuth,
   type DeployCallOptions,
+  type FredCompatibility as DeployFredCompatibility,
+  type FredCompatibilityConfig as DeployFredCompatibilityConfig,
   type DeployResult,
   LeaseReadinessUnconfirmedError,
   type LifecycleCallOptions,
@@ -34,6 +37,7 @@ import {
   type TxCallOptions,
   type updateApp,
   updateLease,
+  type validateManifest,
 } from './deploy.js';
 import {
   type FaucetStatusResponse,
@@ -66,10 +70,13 @@ import type {
 // type-shape drift that survives a value-only test surfaces HERE as a type error.
 import {
   type CapabilityCtx,
+  type CreateFredClientOptions,
   createFredClient,
   createManifestClient,
   createManifestReadClient,
   type FredClient,
+  type FredCompatibility,
+  type FredCompatibilityConfig,
   type FullClientOptions,
   isRetryableError,
   isSkuAmbiguousError,
@@ -83,14 +90,52 @@ import {
   withRetry,
 } from './index.js';
 import type {
+  AgentCoreRuntime,
   CloseLeaseCallbacks,
   CloseLeaseResult,
   closeLease,
+  DeployAppOptions as OrchestrationDeployAppOptions,
   PortConfig as OrchestrationPortConfig,
   ServiceConfig as OrchestrationServiceConfig,
 } from './orchestration.js';
 
 describe('SDK factory return types (re-emitted; codegen-passthrough tripwire)', () => {
+  it('exposes per-provider Fred compatibility through both public entrypoints', () => {
+    expectTypeOf<FredCompatibility>().toEqualTypeOf<'v0.13' | 'pr240'>();
+    expectTypeOf<FredCompatibility>().toEqualTypeOf<DeployFredCompatibility>();
+    expectTypeOf<FredCompatibilityConfig>().toEqualTypeOf<
+      FredCompatibility | Readonly<Record<string, FredCompatibility>>
+    >();
+    expectTypeOf<FredCompatibilityConfig>().toEqualTypeOf<DeployFredCompatibilityConfig>();
+    expectTypeOf<CreateFredClientOptions['fredCompatibility']>().toEqualTypeOf<
+      FredCompatibilityConfig | undefined
+    >();
+    expectTypeOf<
+      Parameters<typeof createFredClient>[0]['fredCompatibility']
+    >().toEqualTypeOf<FredCompatibilityConfig | undefined>();
+    expectTypeOf<FredAuthCtx['fredCompatibility']>().toEqualTypeOf<
+      FredCompatibilityConfig | undefined
+    >();
+    expectTypeOf<DeployCallOptions['fredCompatibility']>().toEqualTypeOf<
+      FredCompatibility | undefined
+    >();
+    expectTypeOf<LifecycleCallOptions['fredCompatibility']>().toEqualTypeOf<
+      FredCompatibility | undefined
+    >();
+    expectTypeOf<AgentCoreRuntime['fredCompatibility']>().toEqualTypeOf<
+      FredCompatibilityConfig | undefined
+    >();
+    expectTypeOf<
+      OrchestrationDeployAppOptions['fredCompatibility']
+    >().toEqualTypeOf<FredCompatibilityConfig | undefined>();
+    expectTypeOf<Parameters<typeof validateManifest>>().toEqualTypeOf<
+      [unknown, FredCompatibility?]
+    >();
+    expectTypeOf<Parameters<typeof buildManifestPreview>[1]>().toEqualTypeOf<
+      FredCompatibility | undefined
+    >();
+  });
+
   it('the 3 client factories are async and resolve to the precise re-emitted client type', () => {
     expectTypeOf(
       createManifestClient,
@@ -431,6 +476,7 @@ describe('maintenance command identity through the SDK', () => {
         fetchFn?: typeof globalThis.fetch,
         allowLoopback?: boolean,
         idempotencyKey?: string,
+        fredCompatibility?: FredCompatibility,
       ]
     >();
     expectTypeOf(updateLease).parameters.toEqualTypeOf<
@@ -442,17 +488,18 @@ describe('maintenance command identity through the SDK', () => {
         fetchFn?: typeof globalThis.fetch,
         allowLoopback?: boolean,
         idempotencyKey?: string,
+        fredCompatibility?: FredCompatibility,
       ]
     >();
   });
 
-  it('retains required result keys and lifecycle options on free and bound calls', () => {
+  it('exposes optional PR240 result keys and lifecycle options on free and bound calls', () => {
     expectTypeOf<
       Awaited<ReturnType<typeof restartApp>>['idempotency_key']
-    >().toEqualTypeOf<string>();
+    >().toEqualTypeOf<string | undefined>();
     expectTypeOf<
       Awaited<ReturnType<typeof updateApp>>['idempotency_key']
-    >().toEqualTypeOf<string>();
+    >().toEqualTypeOf<string | undefined>();
     expectTypeOf<FredClient['restartApp']>().returns.toEqualTypeOf<
       ReturnType<typeof restartApp>
     >();

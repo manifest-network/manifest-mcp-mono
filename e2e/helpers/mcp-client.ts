@@ -1,6 +1,7 @@
 import { resolve } from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { fredCompatibility } from './fred-compatibility.js';
 
 // Test tenant mnemonic (test-only, never used for real funds)
 const DEFAULT_MNEMONIC =
@@ -152,6 +153,7 @@ export class MCPTestClient {
     // (ENG-268)
     env.MANIFEST_AGENT_FETCH_GUARDED = '0';
     env.MANIFEST_FRED_FETCH_GUARDED = '0';
+    env.MANIFEST_FRED_COMPATIBILITY = fredCompatibility;
     if (converterAddress) {
       env.MANIFEST_CONVERTER_ADDRESS = converterAddress;
     }

@@ -213,7 +213,7 @@ test('Compose preserves provider authority without admitting a container writer 
   }
 });
 
-function generatedFredConfig() {
+function generatedFredConfig(compatibility = 'pr240') {
   const script = readFileSync(
     new URL('e2e/scripts/init_billing.sh', root),
     'utf8',
@@ -222,7 +222,24 @@ function generatedFredConfig() {
     const start = script.indexOf(`cat > /shared/${name}.yaml << YAML\n`);
     assert.notEqual(start, -1);
     const bodyStart = script.indexOf('\n', start) + 1;
-    return parse(script.slice(bodyStart, script.indexOf('\nYAML', bodyStart)));
+    const body = script.slice(bodyStart, script.indexOf('\nYAML', bodyStart));
+    const mode = script.slice(
+      script.indexOf('case "${FRED_COMPATIBILITY'),
+      script.indexOf('\nesac') + 6,
+    );
+    const env = Object.fromEntries(
+      [...body.matchAll(/\$\{([A-Z_]+)\}/g)].map(([, name]) => [name, name]),
+    );
+    const result = spawnSync(
+      'bash',
+      ['-c', `${mode}\ncat << YAML\n${body}\nYAML\n`],
+      {
+        encoding: 'utf8',
+        env: { ...process.env, ...env, FRED_COMPATIBILITY: compatibility },
+      },
+    );
+    assert.equal(result.status, 0, result.stderr);
+    return parse(result.stdout);
   };
   return {
     script,
@@ -250,6 +267,36 @@ test('generated Fred configuration supplies verified backend TLS and exact persi
   }
   assert.match(script, /subjectAltName=[^\n"]*DNS:docker-backend/);
   assert.equal(provider.callback_base_url, 'https://127.0.0.1:8080');
+});
+
+test('legacy configuration keeps its supported HTTP backend and container callback topology', () => {
+  const { provider, backend } = generatedFredConfig('v0.13');
+  assert.equal(provider.backends[0].url, 'http://docker-backend:9001');
+  assert.equal(provider.backends[0].tls_ca_file, undefined);
+  assert.equal(provider.callback_base_url, 'https://providerd:8080');
+  assert.equal(provider.placement_store_db_path, '/data/placements.db');
+  assert.equal(backend.tls_cert_file, undefined);
+  assert.equal(backend.volume_mount_path, undefined);
+  assert.equal(backend.volume_data_path, '/mnt/fred-xfs');
+  const modern = parse(
+    readFileSync(new URL('e2e/docker-compose.yml', root), 'utf8'),
+  );
+  const legacy = parse(
+    readFileSync(new URL('e2e/docker-compose.v013.yml', root), 'utf8'),
+  );
+  assert.equal(legacy.services.providerd.build.context, './.fred-v013');
+  assert(
+    legacy.services['docker-backend'].volumes.includes(
+      'docker-backend-data:/data',
+    ),
+  );
+  assert.equal(legacy.services.init.environment.FRED_COMPATIBILITY, 'v0.13');
+  const modernNames = new Set(
+    Object.values(modern.volumes).map((volume) => volume.name),
+  );
+  for (const volume of Object.values(legacy.volumes))
+    assert(!modernNames.has(volume.name));
+  assert.equal(legacy.services['placement-init'], undefined);
 });
 
 test('native configuration uses the exact persistent host paths without rewriting unrelated values', () => {
@@ -462,6 +509,7 @@ if (command === 'docker') {
   if (args[0] === 'create') console.log('backend-image-export');
   if (args[0] === 'cp') fs.copyFileSync(__filename, args.at(-1));
   if (args[0] === 'volume' && args[1] === 'inspect') {
+    if (!args.includes('--format')) process.exit(args[2] === env.FRED_TEST_EXISTING_VOLUME ? 0 : 1);
     console.log(args.includes('mcp-e2e-shared-data') ? env.FRED_TEST_SHARED : env.FRED_TEST_DATA);
   }
   if (args[0] === 'volume' && args[1] === 'create') console.log(args.at(-1));
@@ -502,6 +550,7 @@ if (command === 'curl' && env.FRED_TEST_FAIL_STEP === 'health') process.exit(22)
             FRED_NATIVE_BACKEND_DIR: join(f.directory, 'native'),
             FRED_DEVNET_WAIT_TIMEOUT: '1',
             FRED_BACKEND_UNIT: 'fred-bootstrap-test',
+            FRED_COMPATIBILITY: 'pr240',
             FRED_TEST_SHARED: shared,
             FRED_TEST_DATA: join(f.directory, 'data'),
             FRED_TEST_LOG: join(f.directory, 'calls.jsonl'),
@@ -650,4 +699,52 @@ test('native devnet logs include the host backend journal', (t) => {
           args.some((arg) => arg.includes('fred-bootstrap-test')),
       ),
   );
+});
+
+for (const [compatibility, volume] of [
+  ['v0.13', 'mcp-e2e'],
+  ['pr240', 'mcp-e2e-v013'],
+].flatMap(([mode, prefix]) =>
+  ['shared-data', 'docker-backend-data', 'providerd-data', 'chain-data'].map(
+    (suffix) => [mode, `${prefix}-${suffix}`],
+  ),
+)) {
+  test(`${compatibility} refuses leftover ${volume} without the other volumes`, (t) => {
+    const f = nativeLauncherFixture(t);
+    const result = f.run('up', {
+      FRED_COMPATIBILITY: compatibility,
+      FRED_TEST_EXISTING_VOLUME: volume,
+    });
+    assert.equal(result.status, 1, result.stderr);
+    assert.match(result.stderr, /storage exists/);
+    assert(
+      !f
+        .calls()
+        .some(
+          ({ command, args }) =>
+            command === 'systemd-run' || args.includes('up'),
+        ),
+    );
+  });
+}
+
+test('legacy startup and shutdown use isolated Compose without native authority initialization', (t) => {
+  const f = nativeLauncherFixture(t);
+  for (const command of ['up', 'down']) {
+    const result = f.run(command, { FRED_COMPATIBILITY: 'v0.13' });
+    assert.equal(result.status, 0, result.stderr);
+  }
+  const commands = f.calls();
+  assert(
+    !commands.some(
+      ({ command }) => command === 'systemd-run' || command === 'sh',
+    ),
+  );
+  for (const { args } of commands.filter(({ args }) =>
+    args.includes('compose'),
+  )) {
+    assert(args.includes('mcp-e2e-v013'));
+    assert(args.some((arg) => arg.endsWith('/e2e/docker-compose.v013.yml')));
+    assert(!args.includes('--volumes'));
+  }
 });

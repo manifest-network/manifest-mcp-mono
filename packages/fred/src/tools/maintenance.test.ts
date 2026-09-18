@@ -3,6 +3,7 @@ import {
   ManifestMCPError,
   ManifestMCPErrorCode,
   noopLogger,
+  withRetry,
 } from '@manifest-network/manifest-mcp-core';
 import {
   type ProbeScript,
@@ -10,6 +11,10 @@ import {
   sealedFetchProbe,
 } from '@manifest-network/manifest-mcp-core/__test-utils__/fetch-probe.js';
 import { describe, expect, it, vi } from 'vitest';
+import type {
+  FredCompatibility,
+  FredCompatibilityConfig,
+} from '../compatibility.js';
 import type { FredAuthCtx } from '../ctx.js';
 import { guidanceFor } from '../failure-guidance.js';
 import {
@@ -74,9 +79,185 @@ function fixture(
 }
 
 describe.each(operations)(
+  '$name legacy compatibility',
+  ({ name, status, invoke }) => {
+    const options = { providerUrl: PROVIDER_URL, pollOptions: false as const };
+
+    it('keeps the default result and request free of unsupported command identity', async () => {
+      const { ctx, wire } = fixture(name, { status: 202, json: { status } });
+      await expect(invoke(ctx, options)).resolves.toEqual({
+        lease_uuid: LEASE_UUID,
+        status,
+      });
+      expect(
+        new Headers(wire.calls[0].init.headers).has('Idempotency-Key'),
+      ).toBe(false);
+    });
+
+    it('rejects an explicit key before authentication or POST in legacy mode', async () => {
+      const { ctx, wire, providerToken } = fixture(name, {
+        status: 202,
+        json: { status },
+      });
+      await expect(
+        invoke(ctx, { ...options, idempotencyKey: COMMAND_KEY }),
+      ).rejects.toMatchObject({ code: ManifestMCPErrorCode.INVALID_ARGUMENT });
+      expect(providerToken).not.toHaveBeenCalled();
+      expect(wire.calls).toHaveLength(0);
+    });
+
+    it.each<{
+      config: FredCompatibilityConfig;
+      override: FredCompatibility | undefined;
+      keyed: boolean;
+    }>([
+      { config: 'pr240' as const, override: undefined, keyed: true },
+      {
+        config: { [PROVIDER_URL]: 'pr240' as const },
+        override: undefined,
+        keyed: true,
+      },
+      {
+        config: { 'https://other.example.com': 'pr240' as const },
+        override: undefined,
+        keyed: false,
+      },
+      { config: 'pr240' as const, override: 'v0.13' as const, keyed: false },
+      { config: 'v0.13' as const, override: 'pr240' as const, keyed: true },
+    ])(
+      'selects the effective provider/call protocol: %j',
+      async ({ config, override, keyed }) => {
+        const { ctx, wire } = fixture(name, { status: 202, json: { status } });
+        const result = await invoke(
+          { ...ctx, fredCompatibility: config },
+          { ...options, fredCompatibility: override },
+        );
+        expect(
+          new Headers(wire.calls[0].init.headers).has('Idempotency-Key'),
+        ).toBe(keyed);
+        expect(Object.keys(result).includes('idempotency_key')).toBe(keyed);
+        if (keyed) expect(result.idempotency_key).toMatch(UUID_V4);
+      },
+    );
+
+    it.each([
+      { status: 409, text: 'invalid state' },
+      { status: 503, text: 'HTTP 503 unavailable' },
+      { transportError: new Error('ECONNRESET') },
+    ])(
+      'preserves the legacy error contract and never blindly replays: %j',
+      async (response) => {
+        const { ctx, wire } = fixture(name, response);
+        const error = await withRetry(() => invoke(ctx, options), {
+          config: { maxRetries: 2, baseDelayMs: 0 },
+        }).catch((err) => err);
+        if (
+          name === 'update' &&
+          'status' in response &&
+          response.status === 503
+        ) {
+          expect(error).toBeInstanceOf(ManifestMCPError);
+          expect(error.code).toBe(ManifestMCPErrorCode.UPDATE_INDETERMINATE);
+        } else {
+          expect(error).toBeInstanceOf(ProviderApiError);
+          expect(error.status).toBe('status' in response ? response.status : 0);
+        }
+        expect(error.details).toMatchObject({
+          lease_uuid: LEASE_UUID,
+          operation: name,
+          outcome: 'unknown',
+        });
+        expect(error.details).not.toHaveProperty('idempotency_key');
+        expect(error.details).not.toHaveProperty('sent');
+        expect(error.details.next_step).toContain(
+          'does not support command deduplication',
+        );
+        expect(error.message).not.toMatch(
+          /pending command|original key|reuse this key/,
+        );
+        expect(isRetryableError(error)).toBe(false);
+        expect(isTransientProviderError(error)).toBe(false);
+        expect(wire.calls).toHaveLength(1);
+      },
+    );
+
+    it('retains readiness class and accepted context without inventing a key', async () => {
+      const { ctx, wire } = fixture(
+        name,
+        { status: 202, json: { status } },
+        { transportError: new Error('ECONNRESET') },
+      );
+      const error = await withRetry(
+        () =>
+          invoke(ctx, {
+            ...options,
+            pollOptions: { maxConsecutiveFailures: 1 },
+          }),
+        { config: { maxRetries: 2, baseDelayMs: 0 } },
+      ).catch((err) => err);
+      expect(error).toBeInstanceOf(LeaseReadinessUnconfirmedError);
+      expect(error.details).toMatchObject({
+        readiness: 'unconfirmed',
+        outcome: 'accepted',
+        sent: true,
+        operation: name,
+      });
+      expect(error.details).not.toHaveProperty('idempotency_key');
+      expect(isRetryableError(error)).toBe(false);
+      expect(isTransientProviderError(error)).toBe(false);
+      expect(
+        wire.calls.filter((call) => call.url.endsWith(`/${name}`)),
+      ).toHaveLength(1);
+    });
+
+    it('preserves operational errors after acceptance and prevents replay without a key', async () => {
+      const { ctx, wire, providerToken } = fixture(name, {
+        status: 202,
+        json: { status },
+      });
+      const failure = new ManifestMCPError(
+        ManifestMCPErrorCode.QUERY_FAILED,
+        'HTTP 503 refreshing metadata',
+        { httpStatus: 503 },
+      );
+      providerToken
+        .mockResolvedValueOnce('mutation-token')
+        .mockRejectedValueOnce(failure);
+      const error = await withRetry(
+        () => invoke(ctx, { ...options, pollOptions: {} }),
+        { config: { maxRetries: 2, baseDelayMs: 0 } },
+      ).catch((err) => err);
+      expect(error).toMatchObject({
+        code: failure.code,
+        message: failure.message,
+        details: { outcome: 'accepted', sent: true, operation: name },
+      });
+      expect(error.details).not.toHaveProperty('idempotency_key');
+      expect(error.cause).toMatchObject({
+        code: ManifestMCPErrorCode.MAINTENANCE_WAIT_FAILED,
+        cause: failure,
+      });
+      expect(isRetryableError(error)).toBe(false);
+      const foreign = Object.assign(new Error(error.message), {
+        name: 'ManifestMCPError',
+        code: error.code,
+        details: error.details,
+        cause: error.cause,
+      });
+      expect(isRetryableError(foreign)).toBe(false);
+      expect(wire.calls).toHaveLength(1);
+    });
+  },
+);
+
+describe.each(operations)(
   '$name maintenance commands',
   ({ name, status, code, failureReason, invoke }) => {
-    const options = { providerUrl: PROVIDER_URL, pollOptions: false as const };
+    const options = {
+      providerUrl: PROVIDER_URL,
+      pollOptions: false as const,
+      fredCompatibility: 'pr240' as const,
+    };
 
     it('generates and returns a canonical key, and starts each new call with a fresh key', async () => {
       const { ctx, wire } = fixture(name, { status: 202, json: { status } });

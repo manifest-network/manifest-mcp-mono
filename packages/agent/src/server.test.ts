@@ -120,7 +120,7 @@ function makeServer(
   orchestrators?: Partial<AgentOrchestrators>,
   options: Pick<
     AgentMCPServerOptions,
-    'chainDataFile' | 'dataDir' | 'fetchGuarded'
+    'chainDataFile' | 'dataDir' | 'fetchGuarded' | 'fredCompatibility'
   > = {},
 ): AgentMCPServer {
   return new AgentMCPServer({
@@ -218,6 +218,55 @@ function parseResultCode(captured: CaptureResult): {
 // ---------------------------------------------------------------------
 
 describe('AgentMCPServer', () => {
+  describe('Fred compatibility configuration', () => {
+    afterEach(() => vi.unstubAllEnvs());
+
+    it.each([
+      { environment: undefined, explicit: undefined, expected: 'v0.13' },
+      { environment: 'pr240', explicit: undefined, expected: 'pr240' },
+      {
+        environment: '{"https://fred.example/":"pr240"}',
+        explicit: undefined,
+        expected: { 'https://fred.example': 'pr240' },
+      },
+      { environment: 'invalid', explicit: 'v0.13' as const, expected: 'v0.13' },
+    ])(
+      'forwards the configured contract into orchestration: %j',
+      async ({ environment, explicit, expected }) => {
+        vi.stubEnv('MANIFEST_FRED_COMPATIBILITY', environment);
+        const deploy = vi.fn<AgentOrchestrators['deployApp']>(async () => ({
+          leaseUuid: 'lease-1',
+          providerUuid: 'provider-1',
+          leaseState: 'LEASE_STATE_ACTIVE',
+          urls: [],
+          manifestPath: '',
+        }));
+        const server = makeServer(
+          { deployApp: deploy },
+          { fetchGuarded: false, fredCompatibility: explicit },
+        );
+        const result = await callToolWithCapture(
+          server,
+          'deploy_app_orchestrated',
+          { spec: { image: 'nginx', port: 80, size: 'small' } },
+          { respond: async () => ({ action: 'cancel' }) },
+        );
+        expect(result.toolResult.isError).not.toBe(true);
+        expect(deploy).toHaveBeenCalledTimes(1);
+        expect(deploy.mock.calls[0][2].fredCompatibility).toEqual(expected);
+      },
+    );
+
+    it('refuses malformed configuration before acquiring a chain client', async () => {
+      vi.stubEnv('MANIFEST_FRED_COMPATIBILITY', 'latest');
+      const { CosmosClientManager } = await import(
+        '@manifest-network/manifest-mcp-core'
+      );
+      expect(() => makeServer()).toThrow('MANIFEST_FRED_COMPATIBILITY');
+      expect(CosmosClientManager.getInstance).not.toHaveBeenCalled();
+    });
+  });
+
   // ─────────────────────────────────────────────────────────────────
   // Test #8 — PUBLIC CONTRACT — annotations + _meta.manifest matrix.
   //

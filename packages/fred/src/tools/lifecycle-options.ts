@@ -1,3 +1,4 @@
+import type { FredCompatibility } from '../compatibility.js';
 import type { PollOptions } from '../http/fred.js';
 import type { CancellableOptions } from './call-signal.js';
 
@@ -17,11 +18,14 @@ import type { CancellableOptions } from './call-signal.js';
  */
 export interface LifecycleCallOptions extends CancellableOptions {
   /**
-   * Restart/update command identity. A canonical lowercase UUIDv4 is generated
-   * when omitted. Reuse the same key and exact payload to retry one command;
-   * choose a new key for a new command. Ignored by restoreApp.
+   * PR240 restart/update command identity. A canonical lowercase UUIDv4 is generated
+   * when omitted in PR240 mode. Reuse the same key and exact payload to retry one
+   * command; choose a new key for a new command. Rejected in v0.13 mode and ignored
+   * by restoreApp.
    */
   readonly idempotencyKey?: string;
+  /** Override the configured restart/update provider contract for this call. */
+  readonly fredCompatibility?: FredCompatibility;
   /**
    * Fast path. Caller asserts an already-resolved, ACTIVE lease reachable at this
    * provider URL. When set, skip BOTH on-chain round-trips (fetchActiveLease +

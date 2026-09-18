@@ -59,6 +59,8 @@ export {
   FRED_REASON_GUIDANCE,
   type FredActionResponse,
   type FredAuthCtx,
+  type FredCompatibility,
+  type FredCompatibilityConfig,
   type FredFailure,
   type FredFailureActor,
   type FredFailureReason,

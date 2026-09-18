@@ -54,7 +54,7 @@ jobs:
           fi
 
   acceptance-single:
-    name: SDK, maintenance, and restore
+    name: SDK, maintenance, and restore (${{ matrix.fred }})
     needs: changes
     # Run the live suites ONLY when a deploy-relevant path changed, on a same-repo non-Dependabot PR.
     # FORK PRs get empty secrets → skip. Dependabot PRs are same-repo but ALSO get no secrets, so the
@@ -68,11 +68,30 @@ jobs:
     # Includes Docker installation, fresh authority startup, and the sequential
     # SDK, maintenance, and retained-volume compatibility suites.
     timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        fred: ['v0.13', 'pr240']
+    env:
+      FRED_COMPATIBILITY: ${{ matrix.fred }}
+      MANIFEST_FRED_COMPATIBILITY: ${{ matrix.fred }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           submodules: recursive
+          ssh-key: ${{ secrets.FRED_DEPLOY_KEY }}
+
+      # Keep the schema/provenance submodule at PR #240. Legacy images use an
+      # independent ignored checkout of the immutable v0.13.0 commit.
+      - name: Checkout Fred v0.13.0 separately
+        if: matrix.fred == 'v0.13'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          repository: manifest-network/fred
+          ref: 8f0cbd9431b482732d60d81fb59f94a37cd06486
+          path: e2e/.fred-v013
           ssh-key: ${{ secrets.FRED_DEPLOY_KEY }}
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -98,7 +117,7 @@ jobs:
         run: node scripts/check-e2e-env.mjs
 
       - name: Build Docker images
-        run: docker compose -f e2e/docker-compose.yml build
+        run: bash e2e/scripts/devnet.sh build
 
       - name: Install and build
         run: |
@@ -124,7 +143,7 @@ jobs:
         timeout-minutes: 10
         run: npx vitest run --config e2e/vitest.compat.config.ts
 
-      # Preserve XFS and every authority journal across a native-unit restart.
+      # Preserve each version's state; PR #240 also verifies both authorities.
       - name: Verify devnet restart preserves authority
         timeout-minutes: 10
         env:
@@ -141,7 +160,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: e2e-pr-logs
+          name: e2e-pr-logs-${{ matrix.fred }}
           path: e2e-logs.txt
 
       - name: Teardown

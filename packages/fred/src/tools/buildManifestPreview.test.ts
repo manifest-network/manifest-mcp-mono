@@ -7,6 +7,17 @@ import { metaHashHex } from '../manifest.js';
 import { buildManifestPreview } from './buildManifestPreview.js';
 
 describe('buildManifestPreview', () => {
+  it('defaults to legacy validation and can preview PR240 policy without changing bytes', async () => {
+    const manifest =
+      '{"image":"nginx","user":"a:b:c","labels":{"com.docker.compose.project":"tenant"}}';
+    const legacy = await buildManifestPreview({ manifest });
+    const modern = await buildManifestPreview({ manifest }, 'pr240');
+    expect(legacy.validation.valid).toBe(true);
+    expect(modern.validation.valid).toBe(false);
+    expect(modern.manifest_json).toBe(legacy.manifest_json);
+    expect(modern.meta_hash_hex).toBe(legacy.meta_hash_hex);
+  });
+
   describe('mode selection', () => {
     it('rejects when no input mode is provided', async () => {
       await expect(buildManifestPreview({})).rejects.toBeInstanceOf(

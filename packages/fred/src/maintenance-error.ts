@@ -2,17 +2,19 @@ import {
   ManifestMCPError,
   ManifestMCPErrorCode,
 } from '@manifest-network/manifest-mcp-core';
+import type { FredCompatibility } from './compatibility.js';
 import {
   capProviderText,
   PROVIDER_TEXT_EXCERPT_CHARS,
   ProviderApiError,
   type ProviderApiErrorOptions,
 } from './http/provider.js';
+import { resolveMaintenanceIdempotencyKey } from './maintenance.js';
 
 interface MaintenanceCommand {
   readonly operation: 'restart' | 'update';
   readonly leaseUuid: string;
-  readonly idempotencyKey: string;
+  readonly idempotencyKey?: string;
 }
 
 interface MaintenanceContext extends MaintenanceCommand {
@@ -116,7 +118,9 @@ function commandDetails(
   return {
     ...errorDetails(cause),
     lease_uuid: context.leaseUuid,
-    idempotency_key: context.idempotencyKey,
+    ...(context.idempotencyKey !== undefined && {
+      idempotency_key: context.idempotencyKey,
+    }),
     operation: context.operation,
     outcome: context.outcome,
     // An uncertain POST failure alone is not evidence of submission. Accepted
@@ -159,20 +163,67 @@ function typedError(
   );
 }
 
+/** Never promise command deduplication to a provider running the legacy contract. */
+export function resolveMaintenanceCommandKey(
+  compatibility: FredCompatibility,
+  idempotencyKey?: string,
+): string | undefined {
+  if (compatibility === 'pr240')
+    return resolveMaintenanceIdempotencyKey(idempotencyKey);
+  if (idempotencyKey !== undefined) {
+    throw new ManifestMCPError(
+      ManifestMCPErrorCode.INVALID_ARGUMENT,
+      'idempotencyKey requires fredCompatibility: "pr240"; Fred v0.13 does not support command deduplication.',
+    );
+  }
+  return undefined;
+}
+
+function legacyMaintenanceError(
+  cause: unknown,
+  context: MaintenanceContext,
+  code = ManifestMCPErrorCode.MAINTENANCE_REQUEST_FAILED,
+): ManifestMCPError {
+  const guidance =
+    'Check app_status and app_releases before deliberately submitting another command. Fred v0.13 does not support command deduplication; do not automatically replay this request or close the lease to recover from this error.';
+  return typedError(
+    code,
+    `The ${context.operation} outcome for lease ${context.leaseUuid} is unknown: it may or may not have been applied. ${guidance} Cause: ${capProviderText(failureText(cause), PROVIDER_TEXT_EXCERPT_CHARS)}`,
+    { ...commandDetails(cause, context), next_step: guidance },
+    cause,
+  );
+}
+
+/** Preserve the published legacy update-5xx verdict and other provider errors. */
+export function legacyUpdateError(cause: unknown, leaseUuid: string): unknown {
+  const observed = providerSnapshot(cause);
+  return observed && observed.status >= 500 && observed.status <= 599
+    ? legacyMaintenanceError(
+        cause,
+        { leaseUuid, operation: 'update', outcome: 'unknown' },
+        ManifestMCPErrorCode.UPDATE_INDETERMINATE,
+      )
+    : cause;
+}
+
 /** Keep the low-level ProviderApiError API while vetoing automatic command replay. */
 export function maintenanceRequestError(
   cause: unknown,
   leaseUuid: string,
-  idempotencyKey: string,
+  idempotencyKey: string | undefined,
   operation: 'restart' | 'update',
 ): ProviderApiError {
   const observed = providerSnapshot(cause);
-  const operationError = maintenanceError(cause, {
+  const context = {
     leaseUuid,
-    idempotencyKey,
+    ...(idempotencyKey !== undefined && { idempotencyKey }),
     operation,
-    outcome: 'unknown',
-  });
+    outcome: 'unknown' as const,
+  };
+  const operationError =
+    idempotencyKey === undefined
+      ? legacyMaintenanceError(cause, context)
+      : maintenanceError(cause, { ...context, idempotencyKey });
   const enriched = new ProviderApiError(
     observed?.status ?? 0,
     failureText(cause),
@@ -188,7 +239,7 @@ export function maintenanceRequestError(
 /** POST errors describe the logical command, including any earlier exact-key attempt. */
 export function maintenanceError(
   cause: unknown,
-  context: MaintenanceContext,
+  context: MaintenanceContext & { readonly idempotencyKey: string },
 ): ManifestMCPError {
   const { operation, leaseUuid, idempotencyKey } = context;
   // Raw helpers already minted this typed diagnostic. Expose it directly rather
@@ -258,6 +309,18 @@ export function maintenanceWaitError(
     ...commandDetails(cause, { ...context, outcome: 'accepted' }),
     ...(deadline && { reason: 'deadline' }),
   };
+  // Legacy calls have no command key for structural retry vetoes across core
+  // package copies. Retain a typed marker even when preserving another public
+  // error code; its cause still points to the original operational failure.
+  const operationalCause =
+    context.idempotencyKey === undefined
+      ? typedError(
+          ManifestMCPErrorCode.MAINTENANCE_WAIT_FAILED,
+          capProviderText(failureText(cause)),
+          details,
+          cause,
+        )
+      : cause;
   const cancelled =
     interrupted &&
     !deadline &&
@@ -269,7 +332,7 @@ export function maintenanceWaitError(
       ManifestMCPErrorCode.OPERATION_CANCELLED,
       `The provider accepted ${context.operation} for lease ${context.leaseUuid}, but waiting for readiness was cancelled. Cancellation does not revoke the command; check app_status or wait_for_app_ready. Cause: ${failureText(cause)}`,
       details,
-      cause,
+      operationalCause,
     );
   }
 
@@ -277,7 +340,12 @@ export function maintenanceWaitError(
   // retain their code. Raw POST reuse above still requires a local instance.
   const operationalCode = manifestCode(cause, true);
   if (operationalCode !== undefined) {
-    return typedError(operationalCode, failureText(cause), details, cause);
+    return typedError(
+      operationalCode,
+      failureText(cause),
+      details,
+      operationalCause,
+    );
   }
 
   const marker = typedError(
