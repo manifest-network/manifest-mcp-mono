@@ -2,6 +2,7 @@ import {
   ManifestMCPError,
   ManifestMCPErrorCode,
 } from '@manifest-network/manifest-mcp-core';
+import type { FredCompatibility } from '../compatibility.js';
 import {
   type ManifestFormat,
   type ManifestValidationResult,
@@ -203,6 +204,7 @@ export function assertManifestFitsUpdateRequest(bytes: Uint8Array): void {
  */
 export function parseAndValidateManifestPayload(
   manifest: string,
+  compatibility: FredCompatibility = 'v0.13',
 ): ValidatedManifestPayload {
   const bytes = new TextEncoder().encode(manifest);
   if (bytes.length > MAX_MANIFEST_BYTES) {
@@ -253,7 +255,7 @@ export function parseAndValidateManifestPayload(
     }
   }
 
-  const validation = validateManifest(parsed);
+  const validation = validateManifest(parsed, compatibility);
   if (!validation.valid || validation.format === null) {
     throw new ManifestMCPError(
       ManifestMCPErrorCode.INVALID_CONFIG,

@@ -2,13 +2,20 @@ import {
   ManifestMCPError,
   ManifestMCPErrorCode,
 } from '@manifest-network/manifest-mcp-core';
+import { resolveFredCompatibility } from '../compatibility.js';
 import type { FredAuthCtx } from '../ctx.js';
 import {
   type FredLeaseStatus,
   pollLeaseUntilReady,
   updateLease,
 } from '../http/fred.js';
-import { ProviderApiError } from '../http/provider.js';
+import { validateProviderUrl } from '../http/provider.js';
+import {
+  legacyUpdateError,
+  maintenanceError,
+  maintenanceWaitError,
+  resolveMaintenanceCommandKey,
+} from '../maintenance-error.js';
 import {
   isStackManifest,
   mergeManifest,
@@ -23,44 +30,6 @@ import {
   parseAndValidateManifestPayload,
 } from './validateManifestPayload.js';
 
-/**
- * Turn a 5xx from `POST /update` into an honest "we do not know" (ENG-619).
- *
- * Fred's `/update` persists the payload to `payloads.db` AFTER handing it to the
- * backend, and answers 500 when that persist fails — where the pre-ENG-619 build
- * answered a misleading `202`. Three faults reach that 500 and all three emit an
- * identical body, so the wire cannot tell them apart:
- *
- *   - `payload_store_db_path` unset  → refused before the backend; NOT applied.
- *   - the backend rejected           → NOT applied.
- *   - persist failed after apply     → APPLIED, and the next reprovision reverts it.
- *
- * The third is why a flat "update failed" is the wrong thing to say: a model that
- * believes the update failed typically reaches for close-and-redeploy, which
- * destroys a lease whose deployment is in fact live.
- *
- * Scoped to `status >= 500` on purpose. A 4xx is a stable answer that Fred authored
- * about the request itself, and wrapping it would break the raw-body match at
- * `e2e/lifecycle.e2e.test.ts` that polls transient 409s. Transport faults (status 0
- * — network, timeout) are also left alone: genuinely in-doubt too, but a different
- * story to tell, and unchanged by this Fred release.
- *
- * Anything not matching is rethrown untouched.
- */
-function rethrowIndeterminate(err: unknown, leaseUuid: string): unknown {
-  if (!ProviderApiError.isProviderApiError(err) || err.status < 500) return err;
-  return new ManifestMCPError(
-    ManifestMCPErrorCode.UPDATE_INDETERMINATE,
-    `The provider could not durably record the update to lease ${leaseUuid} (HTTP ${err.status}), ` +
-      'so it may or may not have been applied — and an update that WAS applied but not recorded ' +
-      "is reverted by the provider's next reprovision. Check app_status and app_releases to see " +
-      'which manifest is actually live before doing anything else. Re-invoking update_app is safe ' +
-      'and re-applies AND re-records; do NOT close the lease and redeploy — the app may be running. ' +
-      `Provider said: ${err.message}`,
-    { lease_uuid: leaseUuid, status: err.status },
-  );
-}
-
 export async function updateApp(
   ctx: FredAuthCtx,
   input: {
@@ -70,7 +39,12 @@ export async function updateApp(
     existingManifest?: string;
   },
   opts: LifecycleCallOptions = {},
-): Promise<{ lease_uuid: string; status: string; ready?: FredLeaseStatus }> {
+): Promise<{
+  lease_uuid: string;
+  idempotency_key?: string;
+  status: string;
+  ready?: FredLeaseStatus;
+}> {
   const { address, leaseUuid, manifest, existingManifest } = input;
   // Resolve ONCE: a second call would mint a second timeout from the same `timeout`.
   const signal = resolveFredSignal(opts);
@@ -154,8 +128,17 @@ export async function updateApp(
   // Validate the final payload after merge. This catches bad fields carried
   // forward from existing_manifest as well as new input, before provider URL
   // lookup, token minting, or the destructive update POST (ENG-637/ENG-755).
-  const { bytes: finalManifestBytes } =
-    parseAndValidateManifestPayload(finalManifest);
+  const initialCompatibility = resolveFredCompatibility(
+    typeof ctx.fredCompatibility === 'string'
+      ? ctx.fredCompatibility
+      : undefined,
+    undefined,
+    opts.fredCompatibility,
+  );
+  const { bytes: finalManifestBytes } = parseAndValidateManifestPayload(
+    finalManifest,
+    initialCompatibility,
+  );
   assertManifestFitsUpdateRequest(finalManifestBytes);
 
   // Fast path: a supplied providerUrl skips both on-chain queries (fetchActiveLease + resolveProviderUrl).
@@ -167,13 +150,28 @@ export async function updateApp(
     providerUrl = await resolveProviderUrl(ctx, lease.providerUuid);
   }
 
+  // URL rejection is local and proves no maintenance request was sent.
+  validateProviderUrl(providerUrl, { allowLoopback: ctx.allowLoopback });
+  const compatibility = resolveFredCompatibility(
+    ctx.fredCompatibility,
+    providerUrl,
+    opts.fredCompatibility,
+  );
+  if (compatibility !== initialCompatibility)
+    parseAndValidateManifestPayload(finalManifest, compatibility);
+  const idempotencyKey = resolveMaintenanceCommandKey(
+    compatibility,
+    opts.idempotencyKey,
+  );
+
   const authToken = await ctx.providerAuth.providerToken({
     address,
     leaseUuid,
   });
-  // Final check immediately before the non-idempotent mutate POST: an abort during the
+  // Final check immediately before the mutate POST: an abort during the
   // (slow-path) providerUrl resolution / token mint must not still fire the update.
   signal?.throwIfAborted();
+  const command = { operation: 'update' as const, leaseUuid, idempotencyKey };
   let result: Awaited<ReturnType<typeof updateLease>>;
   try {
     result = await updateLease(
@@ -183,20 +181,40 @@ export async function updateApp(
       authToken,
       ctx.fetch,
       ctx.allowLoopback,
+      idempotencyKey,
+      compatibility,
     );
   } catch (err) {
-    throw rethrowIndeterminate(err, leaseUuid);
+    throw idempotencyKey === undefined
+      ? legacyUpdateError(err, leaseUuid)
+      : maintenanceError(err, {
+          ...command,
+          idempotencyKey,
+          outcome: 'unknown',
+        });
   }
-  const base = { lease_uuid: leaseUuid, status: result.status };
+  const base = {
+    lease_uuid: leaseUuid,
+    ...(idempotencyKey !== undefined && { idempotency_key: idempotencyKey }),
+    status: result.status,
+  };
 
   if (opts.pollOptions === false) return base;
-  const ready = await pollLeaseUntilReady(
-    providerUrl,
-    leaseUuid,
-    () => ctx.providerAuth.providerToken({ address, leaseUuid }),
-    { ...opts.pollOptions, abortSignal: signal },
-    ctx.fetch,
-    ctx.allowLoopback,
-  );
-  return { ...base, ready };
+  try {
+    const ready = await pollLeaseUntilReady(
+      providerUrl,
+      leaseUuid,
+      () => ctx.providerAuth.providerToken({ address, leaseUuid }),
+      { ...opts.pollOptions, abortSignal: signal },
+      ctx.fetch,
+      ctx.allowLoopback,
+    );
+    return { ...base, ready };
+  } catch (err) {
+    throw maintenanceWaitError(err, {
+      ...command,
+      signal,
+      callerSignals: [opts.signal, opts.abortSignal],
+    });
+  }
 }

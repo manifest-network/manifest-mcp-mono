@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { isRetryableError, withRetry } from './retry.js';
+import { isRetryableError, retryInspectionFails, withRetry } from './retry.js';
 import { ManifestMCPError, ManifestMCPErrorCode } from './types.js';
 
 function transientError(): ManifestMCPError {
@@ -54,6 +54,38 @@ const unreadableErrors = [
 ];
 
 describe('retry error inspection', () => {
+  it('retains inspection-failure provenance for unreadable maintenance context', () => {
+    const error = Object.assign(new Error('HTTP 503'), {
+      details: Object.defineProperty({}, 'operation', {
+        get() {
+          throw new Error('Cannot inspect command ownership');
+        },
+      }),
+    });
+
+    expect(retryInspectionFails(error)).toBe(true);
+    expect(isRetryableError(error)).toBe(false);
+  });
+
+  it('does not mark established maintenance ownership as failed inspection', () => {
+    const readCause = vi.fn(() => {
+      throw new Error('Must not inspect diagnostic cause');
+    });
+    const command = Object.assign(new Error('HTTP 503'), {
+      details: {
+        operation: 'restart',
+        outcome: 'accepted',
+        idempotency_key: 'persisted-command',
+      },
+    });
+    Object.defineProperty(command, 'cause', { get: readCause });
+    const error = Object.assign(new Error('fetch failed'), { cause: command });
+
+    expect(retryInspectionFails(error)).toBe(false);
+    expect(isRetryableError(error)).toBe(false);
+    expect(readCause).not.toHaveBeenCalled();
+  });
+
   it.each([
     {
       verdict: 'permanent transport message',

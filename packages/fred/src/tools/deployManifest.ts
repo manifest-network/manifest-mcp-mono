@@ -15,6 +15,10 @@ import {
   sanitizeForModelText,
   setItemCustomDomain,
 } from '@manifest-network/manifest-mcp-core';
+import {
+  type FredCompatibility,
+  resolveFredCompatibility,
+} from '../compatibility.js';
 import type { FredAuthCtx } from '../ctx.js';
 import { errorMessageOf, readDiagnostic } from '../error-diagnostics.js';
 import type { FredLeaseStatus, PollOptions } from '../http/fred.js';
@@ -50,6 +54,8 @@ export type DeployManifestInput = ManifestDeploySpec;
  * `abortSignal` is deprecated but still honoured (ENG-666).
  */
 export interface DeployCallOptions extends CancellableOptions {
+  /** Override the provider's configured Fred protocol and manifest policy. */
+  fredCompatibility?: FredCompatibility;
   gasMultiplier?: number;
   onLeaseCreated?: (
     leaseUuid: string,
@@ -136,13 +142,20 @@ export async function deployManifest(
 ): Promise<DeployResult> {
   // Resolve ONCE: a second call would mint a second timeout from the same `timeout`.
   const signal = resolveFredSignal(callOptions);
+  const initialCompatibility = resolveFredCompatibility(
+    typeof ctx.fredCompatibility === 'string'
+      ? ctx.fredCompatibility
+      : undefined,
+    undefined,
+    callOptions.fredCompatibility,
+  );
   // Shared with update_app: validate the exact final wire payload before any
   // chain/provider mutation, including size and prototype-key guards.
   const {
     bytes: manifestBytes,
     parsed,
     format,
-  } = parseAndValidateManifestPayload(spec.manifest);
+  } = parseAndValidateManifestPayload(spec.manifest, initialCompatibility);
   const isStack = format === 'stack';
   const serviceNames = isStack ? getServiceNames(parsed) : [];
 
@@ -252,6 +265,17 @@ export async function deployManifest(
   }
 
   const providerUrl = await resolveProviderUrl(ctx, providerUuid);
+  // URL maps can select a stricter policy only once SKU/provider resolution
+  // completes. Apply it before the credit-reserving broadcast; common local
+  // failures have already been rejected before any chain queries above.
+  const compatibility = resolveFredCompatibility(
+    ctx.fredCompatibility,
+    providerUrl,
+    callOptions.fredCompatibility,
+  );
+  if (compatibility !== initialCompatibility) {
+    parseAndValidateManifestPayload(spec.manifest, compatibility);
+  }
 
   const overrides =
     callOptions.gasMultiplier !== undefined

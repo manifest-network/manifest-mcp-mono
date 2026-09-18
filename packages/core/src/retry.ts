@@ -18,6 +18,15 @@ export const DEFAULT_RETRY_CONFIG: Required<RetryConfig> = {
   maxDelayMs: 10000,
 };
 
+// These command-owned verdicts also occur across physical copies of core.
+// Structural recognition may veto a retry, never authorize one.
+const MAINTENANCE_ERROR_CODES: readonly string[] = [
+  ManifestMCPErrorCode.UPDATE_INDETERMINATE,
+  ManifestMCPErrorCode.RESTART_INDETERMINATE,
+  ManifestMCPErrorCode.MAINTENANCE_REQUEST_FAILED,
+  ManifestMCPErrorCode.MAINTENANCE_WAIT_FAILED,
+];
+
 /**
  * Error codes that should NOT be retried (permanent failures)
  */
@@ -73,14 +82,6 @@ const NON_RETRYABLE_ERROR_CODES: ManifestMCPErrorCode[] = [
   // blind retry of the deploy that produced this would create a second one. The
   // remedy is to look (app_status / wait_for_app_ready), not to re-broadcast.
   ManifestMCPErrorCode.DEPLOY_READINESS_UNCONFIRMED,
-
-  // Update outcome unknown (ENG-619). update_app is non-idempotent and the 5xx
-  // that produced this may mean the manifest is ALREADY applied on the backend,
-  // so an auto-retry re-applies a change the caller has not confirmed. The
-  // remedy is to look (app_status / app_releases). Enrolling it here also stops
-  // the 5xx message-sniff below from reading the embedded "HTTP 500" as
-  // retryable — the same trap the RESTORE_* codes above are enrolled against.
-  ManifestMCPErrorCode.UPDATE_INDETERMINATE,
 ];
 
 /**
@@ -241,6 +242,21 @@ function queryStatusRetryability(error: Error): boolean | undefined {
 
 function isPermanentError(error: Error): boolean {
   if (isErrorInspectionFailure(error)) return true;
+  // A raw provider error or a foreign-core command verdict owns recovery. Stop
+  // before diagnostic messages/causes can obscure its durable command identity.
+  // Failed inspection must reach classifyRetryable's caller so repair boundaries
+  // can distinguish unreadable metadata from an established permanent verdict.
+  if (MAINTENANCE_ERROR_CODES.includes(errorCode(error))) return true;
+  const details = (error as Error & { details?: unknown }).details;
+  if (details && typeof details === 'object') {
+    const context = details as Record<string, unknown>;
+    if (
+      (context.operation === 'restart' || context.operation === 'update') &&
+      (context.outcome === 'unknown' || context.outcome === 'accepted') &&
+      typeof context.idempotency_key === 'string'
+    )
+      return true;
+  }
   // A generic "fetch failed" wrapper must not conceal NXDOMAIN on its cause.
   if (
     errorCode(error).toLowerCase() === 'enotfound' ||
@@ -261,12 +277,14 @@ function isPermanentError(error: Error): boolean {
 /** Shared throwing inspection; callers choose whether failed inspection is a veto. */
 function classifyRetryable(error: unknown): boolean {
   if (!(error instanceof Error)) return false;
-  // An outer permanent/submitted verdict is final. Do not inspect retained
+  // A permanent/submitted verdict at any depth is final. Do not inspect retained
   // diagnostic causes that cannot change it and may have hostile accessors.
-  if (isPermanentError(error)) return false;
-  const chain = errorChain(error);
-  // Permanent verdicts in any cause dominate transient wrappers and markers.
-  if (chain.slice(1).some(isPermanentError)) return false;
+  let permanent = false;
+  const chain = errorChain(error, (entry) => {
+    permanent = isPermanentError(entry);
+    return permanent;
+  });
+  if (permanent) return false;
 
   let transportTimeout = false;
   for (const entry of chain) {

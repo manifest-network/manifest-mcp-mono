@@ -14,6 +14,19 @@ import {
 } from './validateManifestPayload.js';
 
 describe('parseAndValidateManifestPayload', () => {
+  it('applies the selected policy to the exact payload bytes', () => {
+    const manifest =
+      '{"image":"nginx","user":"a:b:c","labels":{"com.docker.compose.project":"tenant"}}';
+    const legacy = parseAndValidateManifestPayload(manifest);
+    expect(new TextDecoder().decode(legacy.bytes)).toBe(manifest);
+    expect(legacy.validation.valid).toBe(true);
+    expect(() =>
+      parseAndValidateManifestPayload(manifest, 'pr240'),
+    ).toThrowError(
+      expect.objectContaining({ code: ManifestMCPErrorCode.INVALID_CONFIG }),
+    );
+  });
+
   it.each([
     '{"image":"nginx","stop_grace_period":1e9}',
     '{"image":"nginx","stop_grace_period":1000000000.0}',

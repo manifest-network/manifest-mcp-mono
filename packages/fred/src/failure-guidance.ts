@@ -77,7 +77,7 @@ export const FRED_REASON_GUIDANCE: Readonly<
   },
   UpdateFailed: {
     explanation:
-      'A manifest update failed and was rolled back. The app is still running the PREVIOUS version — it is not down.',
+      'A manifest update failed. If app_status reports ready, the previous deployment remains available; otherwise recovery may also have failed.',
     nextStep:
       'Do not redeploy blindly: that would risk a working deployment. Compare against the running release with app_releases, fix the manifest, then update_app again.',
     actor: 'tenant',
@@ -86,7 +86,7 @@ export const FRED_REASON_GUIDANCE: Readonly<
   RestoreFailed: {
     explanation: 'A restore from retained data did not complete.',
     nextStep:
-      'Call app_status on the SOURCE lease and check retained_until. If the grace window is still open you can retry restore_app; once it has passed the retained data is gone.',
+      'Inspect app_status and app_diagnostics for both the SOURCE and any existing restore TARGET before retrying. The source must report retained; check retained_until when present. Its absence can mean age-based expiry is disabled. Preserve an existing target while its outcome is uncertain.',
     actor: 'tenant',
   },
   VolumeCleanupExhausted: {

@@ -17,7 +17,10 @@
  * path.
  */
 
-import type { AgentCoreRuntime } from '@manifest-network/manifest-agent-core';
+import type {
+  AgentCoreRuntime,
+  FredCompatibilityConfig,
+} from '@manifest-network/manifest-agent-core';
 import type { CosmosClientManager } from '@manifest-network/manifest-mcp-core';
 
 export interface BuildRuntimeArgs {
@@ -31,6 +34,7 @@ export interface BuildRuntimeArgs {
    * fallback.
    */
   readonly fetchGuarded: boolean;
+  readonly fredCompatibility?: FredCompatibilityConfig;
 }
 
 /**
@@ -50,6 +54,9 @@ export async function buildRuntime(
   }
   return {
     clientManager: args.clientManager,
+    ...(args.fredCompatibility !== undefined && {
+      fredCompatibility: args.fredCompatibility,
+    }),
     ...(fetchFn ? { fetchFn } : {}),
   };
 }

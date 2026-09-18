@@ -64,6 +64,12 @@ export function assertWireKeys(
     );
   }
 
+  // Record field names even when a shape mismatch fails below, never values.
+  console.info(
+    '[fred-wire-keys]',
+    JSON.stringify({ surface, keys: [...observed].sort() }),
+  );
+
   // Guard against a vacuous pass: an empty observation would satisfy the
   // unknown-key check trivially and quietly assert nothing.
   expect(

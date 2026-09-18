@@ -2,6 +2,7 @@ import {
   ManifestMCPError,
   ManifestMCPErrorCode,
 } from '@manifest-network/manifest-mcp-core';
+import type { FredCompatibility } from '../compatibility.js';
 import {
   type BuildManifestOptions,
   buildManifest,
@@ -135,6 +136,7 @@ function toBuildOptions(
  */
 export async function buildManifestPreview(
   input: BuildManifestPreviewInput,
+  compatibility: FredCompatibility = 'v0.13',
 ): Promise<BuildManifestPreviewResult> {
   let manifestObj: Record<string, unknown>;
   let exactManifestJson: string | undefined;
@@ -230,7 +232,7 @@ export async function buildManifestPreview(
     );
   }
 
-  const semanticValidation = validateManifest(manifestObj);
+  const semanticValidation = validateManifest(manifestObj, compatibility);
   const validationErrors = [...semanticValidation.errors];
 
   // A valid structured stack follows the exact same canonical builder as

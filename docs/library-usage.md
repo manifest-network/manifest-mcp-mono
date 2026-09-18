@@ -290,9 +290,55 @@ try {
 
 > **Escape hatch.** The same `deployApp` is also exported as a free `fn(ctx, spec, opts)` from `/deploy` for advanced composition. A consumer that already holds a `FredClient` can pass it directly (the client *is* a `FredAuthCtx`); a client-less consumer builds the `providerAuth` port from a bare `Signer` via `createProviderAuth(signer, { chainId })`, then assembles a `FredAuthCtx` from it plus `query`/`chain`/`fetch`/`logger`. `createProviderAuth` and the `FredAuthCtx` / `FredReadCtx` / `ProviderAuthPort` types are all re-exported from `/deploy`. Prefer the bound `client.deployApp` for everyday use.
 
+## Restarting and updating with a command key
+
+SDK clients, MCP servers, and raw HTTP helpers default to released Fred **v0.13**. In this mode restart/update omit `Idempotency-Key` and successful results omit `idempotency_key`, preserving the legacy browser CORS contract. Supplying a key fails locally because v0.13 cannot deduplicate commands. After an uncertain response, inspect `appStatus` and release history before deliberately submitting another command; automatic replay is disabled.
+
+Opt confirmed PR #240 providers into `fredCompatibility: 'pr240'`. `createFredClient` accepts a global mode or a provider API URL map; unlisted URLs remain on v0.13. The mode is explicit because Fred exposes no reliable capability endpoint. Never use a failed mutation to discover support.
+
+```ts
+const client = await createFredClient({
+  config,
+  walletProvider,
+  fredCompatibility: {
+    'https://released-provider.example': 'v0.13',
+    'https://upgraded-provider.example': 'pr240',
+  },
+});
+```
+
+Deploy and maintenance call options can override the configured mode with `fredCompatibility`. Free functions read the same configuration from `FredAuthCtx`. The exported `FredCompatibility` and `FredCompatibilityConfig` types are available from the SDK root and `/deploy`.
+
+Orchestrated deployment accepts the same configuration on `DeployAppOptions` from `/orchestration`. It snapshots the selected policy before interactive callbacks and validates the resolved provider's manifest before creating a paid lease. `AgentMCPServer` also reads `MANIFEST_FRED_COMPATIBILITY`, with its constructor option taking precedence.
+
+In PR240 mode, restart/update require a canonical lowercase UUIDv4 command key. Helpers generate it using Web Crypto when omitted (including a `getRandomValues` fallback when `randomUUID` is unavailable); `restartApp` and `updateApp` return `idempotency_key`, which is optional in their shared result types. To retain identity even if your process stops or an MCP request is cancelled before its response arrives, generate and persist the key before calling:
+
+```ts
+import { createMaintenanceIdempotencyKey } from '@manifest-network/manifest-sdk/deploy';
+
+const idempotencyKey = createMaintenanceIdempotencyKey();
+// Persist idempotencyKey alongside the lease and exact final manifest before dispatch.
+const result = await client.updateApp(
+  { address, leaseUuid, manifest: JSON.stringify(manifest) },
+  { fredCompatibility: 'pr240', idempotencyKey, pollOptions: false },
+);
+```
+
+Use a fresh key for each new logical command. An intentional PR240 retry uses the same key, lease, operation, and exact final payload bytes (including the result of any merge). Changing the command while retaining the key returns a conflict. Fred retains command receipts for the lease's authority lifetime, so an exact replay returns its recorded outcome without another replacement. These guarantees apply only to providers implementing PR #240; opting an older provider into this mode cannot add deduplication and can break cross-origin browser requests.
+
+In PR240 mode, `UPDATE_INDETERMINATE` and `RESTART_INDETERMINATE` mean the POST outcome is uncertain. A 503, timeout, or malformed response can leave a command pending that Fred executes during recovery. `MAINTENANCE_REQUEST_FAILED` preserves an unsuccessful HTTP response; even an authentication refusal cannot establish the outcome of an earlier attempt using that key. Refresh authentication for an exact retry after a 401. Errors preserve `lease_uuid`, `idempotency_key`, and `operation` in `details`; `outcome: 'accepted'` means Fred acknowledged the command, while `'unknown'` does not establish its admission or rejection. `provider_status` is included only for an actual HTTP status, not local error sentinel 0. Legacy errors retain lease/operation recovery context without a command key or same-key retry guidance; legacy update HTTP 5xx retains `UPDATE_INDETERMINATE`.
+
+After acceptance, waiting errors retain their original diagnosis and add the command context, including `sent: true` for the acknowledged command. Uncertain POST failures do not infer `sent`: a network failure may occur before submission or after the response is lost. The command key and outcome prevent automatic replay independently of that field. `LeaseReadinessUnconfirmedError` preserves its reason and timing fields, `ProviderApiError` with `kind: 'poll_verdict'` preserves a reported failure and its recovery guidance, and signer/configuration errors retain their original `ManifestMCPError` code and details. A call deadline remains a `TimeoutError`; explicit caller cancellation uses `OPERATION_CANCELLED`. `MAINTENANCE_WAIT_FAILED` is the fallback for an otherwise unclassified wait failure. None of these errors undoes the accepted command or authorizes automatic replay.
+
+After an earlier uncertain response, an exact replay can acknowledge a command that is still queued while the old app remains ready. Returned `ready` data and `app_status` describe lease availability; they do not prove that this particular command completed. Reconcile `app_releases` and retain the original command key when recovering.
+
+Raw `restartLease` / `updateLease` accept the key after `allowLoopback`, followed by the optional compatibility mode. For example, use `restartLease(providerUrl, leaseUuid, authToken, fetch, false, key, 'pr240')` or `updateLease(providerUrl, leaseUuid, payload, authToken, fetch, false, key, 'pr240')`. Omitting the mode selects v0.13. Raw errors remain `ProviderApiError` with recovery details and a typed maintenance cause that prevents generic automatic retry. Each request needs fresh ADR-036 authentication even when reusing its command key.
+
+MCP operators select the mode with `MANIFEST_FRED_COMPATIBILITY=pr240`, `v0.13`, or a JSON provider URL map such as `'{"https://upgraded-provider.example":"pr240"}'`. A `FredMCPServer` constructor's `fredCompatibility` option takes precedence over the environment; neither is set by a mutation tool's caller. Under PR240, `restart_app` / `update_app` accept `idempotency_key` and return it in structured success data or JSON error `details`. Omitting it requests a new command, so MCP annotations remain non-idempotent. Under v0.13, supplied keys are rejected and results omit them.
+
 ## Restoring a closed lease
 
-When a lease is CLOSED (e.g. credit-exhausted) but its volumes are still within the provider's retention grace window, `restoreApp` recovers them onto a **fresh** lease. It is a free function on `/deploy` — **not** a bound `client.*` method — but the `FredClient` *is* a `FredAuthCtx`, so pass the client directly as the first arg:
+When a lease is CLOSED or EXPIRED and the provider still reports its data as retained, `restoreApp` recovers them onto a **fresh** lease. It is a free function on `/deploy` — **not** a bound `client.*` method — but the `FredClient` *is* a `FredAuthCtx`, so pass the client directly as the first arg:
 
 ```ts
 import { restoreApp } from '@manifest-network/manifest-sdk/deploy';
@@ -306,7 +352,7 @@ const { lease_uuid, status, ready, custom_domain_not_restored } = await restoreA
 
 > **Branding the source id.** `parseLeaseUuid` validates at the trust boundary — use it when `closedLeaseUuid` comes from user input or an external source (a bad id fails fast with `INVALID_ARGUMENT`). If it's already a branded `LeaseUuid` from a prior SDK call (e.g. `client.getLeasesByTenant(...)`), pass it as-is with no cast; reserve the unchecked `asLeaseUuid` for values you already trust (as in the partial-success example above).
 
-It runs as a saga — pre-flight retained-check → create a new lease → `POST /restore` — and returns the new `lease_uuid`, the `source_lease_uuid`, a `status`, the final `ready` status (when the poll converges), and any `custom_domain_not_restored` FQDNs. Compensation cancels the new lease only after a locally known failure or cancellation before the restore POST begins, such as failure to mint its authentication token. Whether a source is restorable (and until when) is surfaced by `appStatus` on a CLOSED lease — its result's `fredStatus` object carries `retained_until` / `items` / `restore_hint` (`restoreApp` also fails fast with `RESTORE_NOT_RETAINED` if the source isn't retained). Restore is non-idempotent, so its `RESTORE_*` errors are never automatically retried. `RESTORE_REJECTED` means a failure before the POST was successfully compensated. `RESTORE_RETRYABLE` remains exported for compatibility; current `restoreApp` does not emit it.
+It runs as a saga — pre-flight retained-check → create a new lease → `POST /restore` — and returns the new `lease_uuid`, the `source_lease_uuid`, a `status`, the final `ready` status (when the poll converges), and any `custom_domain_not_restored` FQDNs. Compensation cancels the new lease only after a locally known failure or cancellation before the restore POST begins, such as failure to mint its authentication token. Whether a source is restorable (and until when) is surfaced by `appStatus` on the source lease — its result's `fredStatus` object carries `items` / `restore_hint` and, when age-based expiry is configured, `retained_until` (`restoreApp` also fails fast with `RESTORE_NOT_RETAINED` if the source isn't retained). Restore is non-idempotent, so its `RESTORE_*` errors are never automatically retried. `RESTORE_REJECTED` means a failure before the POST was successfully compensated. `RESTORE_RETRYABLE` remains exported for compatibility; current `restoreApp` does not emit it.
 
 **Unknown adoption.** Every exception from the restore POST leaves adoption unknown: all HTTP 4xx/5xx responses, network failures, and malformed 2xx responses. An HTTP status or response text does not establish who produced the response or whether data was adopted; the current protocol supplies no trusted non-adoption verdict. `RESTORE_ORPHAN_COMPENSATION_FAILED` retains its existing code for compatibility, but `details.adoption_status` distinguishes `'unknown'` from `'not_adopted'`. Both carry `lease_uuid`, the legacy `orphaned_lease_uuid`, `source_lease_uuid`, and `source_provider_uuid`. For `'unknown'`, the SDK neither cancels the target nor advises cancellation; `next_action` is `'app_diagnostics'`. Check status and diagnostics for both leases and reconcile with the provider before retrying restore or considering cleanup. Available `provider_status`, `provider_error_kind`, and `retry_after_ms` fields are diagnostic only: even HTTP 429 with `Retry-After` does not authorize replay. **PENDING alone is not evidence of non-adoption.** A failed compensation after a locally known failure before the POST instead reports `'not_adopted'` and advises checking the chain state before cancelling a still-PENDING lease.
 
@@ -365,7 +411,9 @@ const ingress: PortConfig = { ingress: true };
 const manifest = buildManifest({ image: 'nginx:1.25', ports: { '80/tcp': ingress }, env: { FOO: 'bar' } });
 ```
 
-`mergeManifest` applies UI-shaped edits onto an existing manifest while preserving fields the editor doesn't touch; `validateManifest` / `parseStackManifest` / `getServiceNames` support preview UIs. A deploy accepts at most **1 MiB** of manifest JSON. Update sends the manifest base64-encoded inside a JSON request, so its maximum raw manifest is **786,420 bytes**; both limits fit Fred's default 1 MiB inbound request cap exactly. When sending raw JSON, integer fields must use integer tokens (`3`, `1000000000`), not mathematically integral decimal/exponent spellings (`3.0`, `1e9`), because Fred decodes them into Go integer types.
+`mergeManifest` applies UI-shaped edits onto an existing manifest while preserving fields the editor doesn't touch; `validateManifest` / `parseStackManifest` / `getServiceNames` support preview UIs. `validateManifest(value, compatibility?)` and `buildManifestPreview(input, compatibility?)` default to v0.13; pass `'pr240'` for its stricter Compose/Unicode reserved-label and user-syntax rules. Deploy/update select policy using the resolved provider URL before any mutation. MCP preview inherits a configured global mode; with a provider map it uses v0.13 because no provider has been selected yet. Preview success therefore does not replace deployment validation. Vendored schema artifacts remain pinned to PR240 for source-drift checks, independently of the runtime default.
+
+A deploy accepts at most **1 MiB** of manifest JSON. Update sends the manifest base64-encoded inside a JSON request, so its maximum raw manifest is **786,420 bytes**; both limits fit Fred's default 1 MiB inbound request cap exactly. When sending raw JSON, integer fields must use integer tokens (`3`, `1000000000`), not mathematically integral decimal/exponent spellings (`3.0`, `1e9`), because Fred decodes them into Go integer types.
 
 ## `fetch` injection, CORS, and the SSRF guard
 
@@ -417,7 +465,7 @@ Catch the orchestration's rejected promise to observe every failure. After a suc
 
 Read-only domain lookup has no mutation receipt or outer verification wrapper. A structured `OPERATION_CANCELLED` bypasses `onFailure`, and an unclaimed domain returns `{ lease: null }`. Other lookup acquisition/query failures invoke `onFailure`; structured SDK errors pass through unchanged, while plain errors become `QUERY_FAILED` without the post-mutation cause-preservation contract.
 
-**Provider HTTP calls do not auto-retry**: several of them (`uploadLeaseData`, `restoreApp`, `updateApp`) are non-idempotent, so a transport-level retry could duplicate a side effect; `ProviderApiError` surfaces the provider's answer on the first failure. The one exception is the readiness poll (`pollLeaseUntilReady`, and therefore `waitForAppReady` / `deployApp`), which tolerates `PollOptions.maxConsecutiveFailures` consecutive status-read failures (default 3, reset on every successful read) and honours a `Retry-After` header before its next attempt. If you want retries around an idempotent provider read of your own, wrap it yourself — `isTransientProviderError` (`/deploy`) is the same classifier the poll uses.
+**Provider HTTP mutations do not auto-retry.** Upload and restore can have ambiguous side effects. Restart/update use a durable command key, but retries must retain that key and the exact command; a generic retry that omits the key creates new work. Maintenance errors carry recovery context and veto automatic retries. The one exception is the readiness poll (`pollLeaseUntilReady`, and therefore `waitForAppReady` / `deployApp`), which tolerates `PollOptions.maxConsecutiveFailures` consecutive status-read failures (default 3, reset on every successful read) and honours a `Retry-After` header before its next attempt. If you want retries around an idempotent provider read of your own, wrap it yourself — `isTransientProviderError` (`/deploy`) is the same classifier the poll uses.
 
 **HTTP 408 and 425 on reads.** Without a gRPC verdict, a `QUERY_FAILED` error with numeric `details.httpStatus: 408` permits retry, consistent with [RFC 9110 §15.5.9](https://www.rfc-editor.org/rfc/rfc9110.html#section-15.5.9). LCD queries routed through `cosmosQuery` use its existing query-call retry loop and acquire a rate-limit token per attempt; faucet `GET /status` requires an explicit caller retry loop, as shown below. Both respect that loop's configured budget, including `maxRetries: 0`. Classification alone does not add retries to typed `/reads` helpers. The allowance does not apply to other error categories or a status mentioned only in message text.
 

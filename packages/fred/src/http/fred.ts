@@ -15,6 +15,14 @@ import {
   logger,
 } from '@manifest-network/manifest-mcp-core';
 import {
+  type FredCompatibility,
+  resolveFredCompatibility,
+} from '../compatibility.js';
+import {
+  maintenanceRequestError,
+  resolveMaintenanceCommandKey,
+} from '../maintenance-error.js';
+import {
   type LeaseStatusReader,
   type PollOptions,
   pollLeaseReadiness,
@@ -144,29 +152,39 @@ export async function restartLease(
   authToken: string,
   fetchFn?: typeof globalThis.fetch,
   allowLoopback = false,
+  idempotencyKey?: string,
+  fredCompatibility: FredCompatibility = 'v0.13',
 ): Promise<FredActionResponse> {
+  const commandKey = resolveMaintenanceCommandKey(
+    resolveFredCompatibility(fredCompatibility),
+    idempotencyKey,
+  );
   const validated = validateProviderUrl(providerUrl, { allowLoopback });
   const url = `${validated}/v1/leases/${encodeURIComponent(leaseUuid)}/restart`;
   return await fetchJsonChecked(
     url,
     {
       method: 'POST',
-      headers: { Authorization: `Bearer ${authToken}` },
+      headers: {
+        Authorization: `Bearer ${authToken}`,
+        ...(commandKey !== undefined && { 'Idempotency-Key': commandKey }),
+      },
     },
     { schema: FredActionResponseSchema, fetchFn },
-  );
+  ).catch((err: unknown) => {
+    throw maintenanceRequestError(err, leaseUuid, commandKey, 'restart');
+  });
 }
 
 /**
  * Replace a running lease's deployment manifest.
  *
- * Answers 202 `{status:"updating"}` on acceptance. Since Fred ENG-619 the payload is
- * also PERSISTED to the provider's payload store after the backend accepts it — which
- * is what stops the next reprovision reverting the tenant to the as-created manifest —
- * and a persist failure answers **500** where the old build answered a misleading 202.
- * A 5xx therefore does NOT establish that the update was rejected; `updateApp` turns it
- * into `UPDATE_INDETERMINATE` rather than a flat failure. A provider running with no
- * payload store configured now refuses `/update` outright.
+ * Answers 202 `{status:"updating"}` on acceptance. The default Fred v0.13 contract
+ * has no command deduplication; reconcile uncertain outcomes before another POST.
+ * With explicit `fredCompatibility: 'pr240'`, a key is generated when omitted and
+ * retained in failure details. Exact retries require that original key, identical
+ * payload, and a fresh auth token; a new key denotes a new command. Legacy mode
+ * rejects supplied keys before dispatch.
  *
  * `payload` is sent base64-encoded inside JSON because the Go field is a `[]byte`.
  * The `payload_hash` field in Fred's backend contract is fred→backend only — a tenant
@@ -179,7 +197,13 @@ export async function updateLease(
   authToken: string,
   fetchFn?: typeof globalThis.fetch,
   allowLoopback = false,
+  idempotencyKey?: string,
+  fredCompatibility: FredCompatibility = 'v0.13',
 ): Promise<FredActionResponse> {
+  const commandKey = resolveMaintenanceCommandKey(
+    resolveFredCompatibility(fredCompatibility),
+    idempotencyKey,
+  );
   const validated = validateProviderUrl(providerUrl, { allowLoopback });
   const url = `${validated}/v1/leases/${encodeURIComponent(leaseUuid)}/update`;
   // The provider expects JSON with a base64-encoded payload (Go []byte field).
@@ -191,11 +215,14 @@ export async function updateLease(
       headers: {
         Authorization: `Bearer ${authToken}`,
         'Content-Type': 'application/json',
+        ...(commandKey !== undefined && { 'Idempotency-Key': commandKey }),
       },
       body: JSON.stringify({ payload: b64 }),
     },
     { schema: FredActionResponseSchema, fetchFn },
-  );
+  ).catch((err: unknown) => {
+    throw maintenanceRequestError(err, leaseUuid, commandKey, 'update');
+  });
 }
 
 /**

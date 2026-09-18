@@ -27,8 +27,10 @@
 // its own JSDoc had specified. The cases below are unchanged by that move.
 import {
   type FredLeaseStatus,
+  isRetryableError,
   LeaseState,
   logger,
+  withRetry,
 } from '@manifest-network/manifest-mcp-core';
 import {
   type FetchProbe,
@@ -36,6 +38,7 @@ import {
   type ProbeStep,
 } from '@manifest-network/manifest-mcp-core/__test-utils__/fetch-probe.js';
 import { describe, expect, it, vi } from 'vitest';
+import type { FredCompatibility } from '../compatibility.js';
 import {
   DEFAULT_POLL_TIMEOUT_MS,
   getLeaseLogs,
@@ -43,11 +46,12 @@ import {
   LeaseReadinessUnconfirmedError,
   MAX_TAIL,
   pollLeaseUntilReady,
+  restartLease,
   restoreLease,
   TerminalChainStateError,
   updateLease,
 } from './fred.js';
-import { ProviderApiError } from './provider.js';
+import { isTransientProviderError, ProviderApiError } from './provider.js';
 
 const PROVIDER_URL = 'https://provider.example.com';
 const LEASE_UUID = '550e8400-e29b-41d4-a716-446655440000';
@@ -1656,6 +1660,183 @@ describe('updateLease', () => {
     expect(decoded.length).toBe(128 * 1024);
     expect(decoded[0]).toBe('A');
   });
+});
+
+describe.each([
+  {
+    name: 'restart',
+    invoke: (
+      fetch: typeof globalThis.fetch,
+      key?: string,
+      mode?: FredCompatibility,
+    ) =>
+      restartLease(
+        PROVIDER_URL,
+        LEASE_UUID,
+        AUTH_TOKEN,
+        fetch,
+        false,
+        key,
+        mode,
+      ),
+  },
+  {
+    name: 'update',
+    invoke: (
+      fetch: typeof globalThis.fetch,
+      key?: string,
+      mode?: FredCompatibility,
+    ) =>
+      updateLease(
+        PROVIDER_URL,
+        LEASE_UUID,
+        new TextEncoder().encode('{}'),
+        AUTH_TOKEN,
+        fetch,
+        false,
+        key,
+        mode,
+      ),
+  },
+])('$name raw protocol selection', ({ name, invoke }) => {
+  it('defaults to the legacy header surface without generating a command identity', async () => {
+    const random = vi.spyOn(globalThis.crypto, 'randomUUID');
+    try {
+      const probe = fetchProbe({ status: 202, json: { status: 'accepted' } });
+      await expect(invoke(probe.fetch)).resolves.toEqual({
+        status: 'accepted',
+      });
+      expect(probe.calls[0].init.headers).toEqual({
+        Authorization: `Bearer ${AUTH_TOKEN}`,
+        ...(name === 'update' && { 'Content-Type': 'application/json' }),
+      });
+      expect(random).not.toHaveBeenCalled();
+    } finally {
+      random.mockRestore();
+    }
+  });
+
+  it('rejects a caller key in legacy mode before dispatch', async () => {
+    const probe = fetchProbe({ status: 202, json: { status: 'accepted' } });
+    await expect(
+      invoke(probe.fetch, '77228fd4-4149-4981-83a8-21b4f6a2f681'),
+    ).rejects.toMatchObject({ code: 'INVALID_ARGUMENT' });
+    expect(probe.calls).toHaveLength(0);
+  });
+
+  it('generates a command key only after explicit PR240 selection', async () => {
+    const probe = fetchProbe({ status: 202, json: { status: 'accepted' } });
+    await invoke(probe.fetch, undefined, 'pr240');
+    expect(
+      new Headers(probe.calls[0].init.headers).get('Idempotency-Key'),
+    ).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+    );
+  });
+
+  it.each([
+    { status: 503, text: 'HTTP 503 unavailable' },
+    { transportError: new Error('ECONNRESET') },
+  ])(
+    'legacy failure preserves ProviderApiError and vetoes whole-command retry: %j',
+    async (response) => {
+      const probe = fetchProbe(response);
+      const error = await withRetry(() => invoke(probe.fetch), {
+        config: { maxRetries: 2, baseDelayMs: 0 },
+      }).catch((err) => err);
+      expect(error).toBeInstanceOf(ProviderApiError);
+      expect(error.details).toMatchObject({
+        lease_uuid: LEASE_UUID,
+        operation: name,
+        outcome: 'unknown',
+      });
+      expect(error.details).not.toHaveProperty('idempotency_key');
+      expect(error.details).not.toHaveProperty('sent');
+      expect(error.cause.message).not.toMatch(
+        /pending command|original key|reuse this key/,
+      );
+      expect(isRetryableError(error)).toBe(false);
+      expect(isTransientProviderError(error)).toBe(false);
+      expect(probe.calls).toHaveLength(1);
+    },
+  );
+});
+
+describe.each([
+  {
+    name: 'restart',
+    invoke: (fetch: typeof globalThis.fetch, key: string) =>
+      restartLease(
+        PROVIDER_URL,
+        LEASE_UUID,
+        AUTH_TOKEN,
+        fetch,
+        false,
+        key,
+        'pr240',
+      ),
+  },
+  {
+    name: 'update',
+    invoke: (fetch: typeof globalThis.fetch, key: string) =>
+      updateLease(
+        PROVIDER_URL,
+        LEASE_UUID,
+        new TextEncoder().encode('{}'),
+        AUTH_TOKEN,
+        fetch,
+        false,
+        key,
+        'pr240',
+      ),
+  },
+])('$name raw maintenance identity', ({ name, invoke }) => {
+  it('forwards the caller key and preserves the wire response shape', async () => {
+    const key = '77228fd4-4149-4981-83a8-21b4f6a2f681';
+    const probe = fetchProbe({ status: 202, json: { status: 'accepted' } });
+    await expect(invoke(probe.fetch, key)).resolves.toEqual({
+      status: 'accepted',
+    });
+    expect(
+      new Headers(probe.calls[0].init.headers).get('Idempotency-Key'),
+    ).toBe(key);
+  });
+
+  it('rejects a malformed caller key before sending a request', async () => {
+    const probe = fetchProbe({ status: 202, json: { status: 'accepted' } });
+    await expect(invoke(probe.fetch, 'not-a-command-id')).rejects.toMatchObject(
+      { code: 'INVALID_ARGUMENT' },
+    );
+    expect(probe.calls).toHaveLength(0);
+  });
+
+  it.each(['ECONNREFUSED', 'ENOTFOUND', 'ECONNRESET'])(
+    '%s preserves uncertainty without asserting submission or allowing replay',
+    async (code) => {
+      const key = '77228fd4-4149-4981-83a8-21b4f6a2f681';
+      const probe = fetchProbe({
+        transportError: Object.assign(new Error(code), { code }),
+      });
+      const error = await invoke(probe.fetch, key).catch((err) => err);
+      expect(error).toBeInstanceOf(ProviderApiError);
+      expect(error).toMatchObject({
+        status: 0,
+        kind: 'network',
+        details: {
+          lease_uuid: LEASE_UUID,
+          operation: name,
+          idempotency_key: key,
+          outcome: 'unknown',
+        },
+      });
+      expect(error.details).not.toHaveProperty('sent');
+      expect(error.details).not.toHaveProperty('provider_status');
+      expect(error.cause.details).not.toHaveProperty('sent');
+      expect(isRetryableError(error)).toBe(false);
+      expect(isTransientProviderError(error)).toBe(false);
+      expect(probe.calls).toHaveLength(1);
+    },
+  );
 });
 
 /**

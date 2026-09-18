@@ -25,6 +25,7 @@ import type {
   ServerRequest,
 } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
+import type { FredCompatibilityConfig } from '../compatibility.js';
 import type { FredAuthCtx } from '../ctx.js';
 import { guidanceFor } from '../failure-guidance.js';
 import { sanitizeFailureFields } from '../failure-reason.js';
@@ -32,6 +33,7 @@ import type { AuthTokenService } from '../http/auth-token-service.js';
 import type { FredLeaseStatus } from '../http/fred.js';
 import { getLeaseProvision, getLeaseReleases, MAX_TAIL } from '../http/fred.js';
 import type { ProviderAuthPort } from '../http/provider-auth.js';
+import { MAINTENANCE_IDEMPOTENCY_KEY_RE } from '../maintenance.js';
 import { appStatus } from '../tools/appStatus.js';
 import { browseCatalog } from '../tools/browseCatalog.js';
 import { buildManifestPreview } from '../tools/buildManifestPreview.js';
@@ -52,6 +54,7 @@ import { sanitizeRetentionFields } from '../tools/sanitizeRetention.js';
 import { updateApp } from '../tools/updateApp.js';
 import { MAX_UPDATE_MANIFEST_BYTES } from '../tools/validateManifestPayload.js';
 import { waitForAppReady } from '../tools/waitForAppReady.js';
+import { maintenanceToolError } from './maintenance-error.js';
 import { createProgressEmitter } from './progress.js';
 
 /**
@@ -81,9 +84,23 @@ interface RegisterToolsDeps {
    * are permitted (dev/e2e). Default false → strict (ENG-490).
    */
   allowLoopback?: boolean;
+  fredCompatibility?: FredCompatibilityConfig;
 }
 
 type ManifestInputMode = 'preview' | 'deploy';
+
+function maintenanceKeySchema() {
+  return z
+    .string()
+    .regex(
+      MAINTENANCE_IDEMPOTENCY_KEY_RE,
+      'Expected a canonical lowercase UUIDv4',
+    )
+    .optional()
+    .describe(
+      'Only for providers configured for Fred PR #240. Omit to generate a new command key; reuse the returned key and exact command for recovery. Unsupported in default Fred v0.13 mode, which has no deduplication.',
+    );
+}
 
 /**
  * Zod's record parser intentionally omits an own `__proto__` property while
@@ -224,6 +241,7 @@ export function registerTools(deps: RegisterToolsDeps): void {
     authTokens,
     fetchFn,
     allowLoopback,
+    fredCompatibility,
   } = deps;
 
   // ProviderAuthPort adapter over the server's AuthTokenService. The capability
@@ -247,6 +265,7 @@ export function registerTools(deps: RegisterToolsDeps): void {
     logger: noopLogger,
     providerAuth,
     allowLoopback,
+    fredCompatibility,
   });
 
   // -- browse_catalog --
@@ -288,7 +307,7 @@ export function registerTools(deps: RegisterToolsDeps): void {
     'app_status',
     {
       description:
-        'Get detailed status and connection info for a deployed app. Use this after deploy_app to check if an app is running and get its URL. For a CLOSED lease within its retention grace window it also returns retained_until/items/restore_hint — pass that lease to restore_app to recover it.',
+        'Get detailed status and connection info for a deployed app. Use this after deploy_app to check if an app is running and get its URL. A CLOSED or EXPIRED lease may have retained data: check provision_status/items/restore_hint and, when present, retained_until before using restore_app.',
       inputSchema: {
         lease_uuid: z
           .string()
@@ -669,22 +688,25 @@ export function registerTools(deps: RegisterToolsDeps): void {
       }),
     },
     withErrorHandling('build_manifest_preview', async (args) => {
-      const result = await buildManifestPreview({
-        manifest: args.manifest,
-        image: args.image,
-        port: args.port,
-        env: args.env,
-        command: args.command,
-        args: args.args,
-        user: args.user,
-        tmpfs: args.tmpfs,
-        health_check: args.health_check,
-        stop_grace_period: args.stop_grace_period,
-        init: args.init,
-        expose: args.expose,
-        labels: args.labels,
-        services: args.services,
-      });
+      const result = await buildManifestPreview(
+        {
+          manifest: args.manifest,
+          image: args.image,
+          port: args.port,
+          env: args.env,
+          command: args.command,
+          args: args.args,
+          user: args.user,
+          tmpfs: args.tmpfs,
+          health_check: args.health_check,
+          stop_grace_period: args.stop_grace_period,
+          init: args.init,
+          expose: args.expose,
+          labels: args.labels,
+          services: args.services,
+        },
+        typeof fredCompatibility === 'string' ? fredCompatibility : 'v0.13',
+      );
       return structuredResponse(result, bigIntReplacer);
     }),
   );
@@ -890,16 +912,21 @@ export function registerTools(deps: RegisterToolsDeps): void {
     'restart_app',
     {
       description:
-        'Restart a running app via the provider without closing its lease. Use this to apply configuration changes or recover from a crash.',
+        'Restart an app via the provider without closing its lease. Fred v0.13 has no command deduplication: reconcile uncertain results before another attempt. For providers configured for PR #240, retain the returned idempotency_key and reuse it for the same logical command; a different key requests another restart.',
       inputSchema: {
         lease_uuid: z
           .string()
           .uuid()
           .describe('The lease UUID of the app to restart'),
+        idempotency_key: maintenanceKeySchema(),
       },
-      // Additive: triggers a restart cycle without replacing config.
-      // Not idempotent — each call triggers a fresh restart even when
-      // the app is already running (relies on the helper's default).
+      outputSchema: {
+        lease_uuid: z.string(),
+        status: z.string(),
+        idempotency_key: z.string().optional(),
+      },
+      // An omitted key creates a new command, so the tool as a whole cannot
+      // advertise unconditional idempotence to an MCP host.
       annotations: mutatingAnnotations('Restart a deployed app', {
         destructive: false,
       }),
@@ -916,9 +943,15 @@ export function registerTools(deps: RegisterToolsDeps): void {
       const result = await restartApp(
         ctx,
         { address, leaseUuid },
-        { pollOptions: false, signal: extra.signal },
-      );
-      return jsonResponse(result, bigIntReplacer);
+        {
+          pollOptions: false,
+          signal: extra.signal,
+          idempotencyKey: args.idempotency_key,
+        },
+      ).catch((error: unknown) => {
+        throw maintenanceToolError(error, leaseUuid, 'restart');
+      });
+      return structuredResponse(result, bigIntReplacer);
     }),
   );
 
@@ -927,7 +960,7 @@ export function registerTools(deps: RegisterToolsDeps): void {
     'restore_app',
     {
       description:
-        'Restore a CLOSED/credit-exhausted app from its retained volumes within the grace window. PRECONDITION: the source lease must be in the "retained" state — check app_status/app_diagnostics (retained_until/restore_hint) first. This BROADCASTS: it CREATES A NEW lease (reserving credit) and adopts the retained data onto it. NON-IDEMPOTENT — each call creates a new lease; do not blind-retry. (Contrast restart_app, which bounces an already-RUNNING app in place with no new lease.)',
+        'Restore a CLOSED or EXPIRED app from its retained volumes. PRECONDITION: the provider must report "retained" — check app_status/app_diagnostics and restore_hint first. retained_until is optional when age-based expiry is disabled. This BROADCASTS: it CREATES A NEW lease (reserving credit) and adopts the retained data onto it. NON-IDEMPOTENT — each call creates a new lease; do not blind-retry. (Contrast restart_app, which restarts an existing app without creating a lease.)',
       inputSchema: {
         source_lease_uuid: z
           .string()
@@ -971,12 +1004,13 @@ export function registerTools(deps: RegisterToolsDeps): void {
     'update_app',
     {
       description:
-        'Update a deployed app with a new container manifest. Use this to change the Docker image, ports, or environment variables of a running app without closing the lease.',
+        'Update a deployed app without closing its lease. Fred v0.13 has no command deduplication: reconcile uncertain results before another attempt. For providers configured for PR #240, retain the returned idempotency_key and reuse it with the exact final manifest; a different key requests another update.',
       inputSchema: {
         lease_uuid: z
           .string()
           .uuid()
           .describe('The lease UUID of the app to update'),
+        idempotency_key: maintenanceKeySchema(),
         manifest: z
           .string()
           .describe(
@@ -992,6 +1026,7 @@ export function registerTools(deps: RegisterToolsDeps): void {
       outputSchema: {
         lease_uuid: z.string(),
         status: z.string(),
+        idempotency_key: z.string().optional(),
       },
       // Destructive: replaces the running app's manifest. Even with the
       // merge mode, prior config can be overwritten.
@@ -1035,8 +1070,14 @@ export function registerTools(deps: RegisterToolsDeps): void {
           manifest,
           existingManifest: args.existing_manifest,
         },
-        { pollOptions: false, signal: extra.signal },
-      );
+        {
+          pollOptions: false,
+          signal: extra.signal,
+          idempotencyKey: args.idempotency_key,
+        },
+      ).catch((error: unknown) => {
+        throw maintenanceToolError(error, leaseUuid, 'update');
+      });
       return structuredResponse(result, bigIntReplacer);
     }),
   );

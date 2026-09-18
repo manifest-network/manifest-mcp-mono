@@ -10,6 +10,7 @@ export function validateE2EEnvironment({
   mount,
   quotaState,
   dockerHost,
+  dockerAPIVersion,
 }) {
   const errors = [];
   if (platform !== 'linux')
@@ -41,6 +42,16 @@ export function validateE2EEnvironment({
       'Use the local Linux Docker daemon at unix:///var/run/docker.sock; the backend requires host-identical bind paths.',
     );
   }
+  const api = /^(\d+)\.(\d+)$/.exec(dockerAPIVersion ?? '');
+  if (
+    !api ||
+    Number(api[1]) < 1 ||
+    (Number(api[1]) === 1 && Number(api[2]) < 49)
+  ) {
+    errors.push(
+      `Fred requires Docker Engine 28.1+ (server API 1.49+); found ${dockerAPIVersion || 'unknown'}.`,
+    );
+  }
   return errors;
 }
 
@@ -62,6 +73,7 @@ export function checkE2EEnvironment() {
   let mount;
   let quotaState;
   let dockerHost;
+  let dockerAPIVersion;
   for (const probe of [
     () => {
       mount = JSON.parse(
@@ -89,7 +101,11 @@ export function checkE2EEnvironment() {
           ]),
         ),
       );
-      read('docker', ['info', '--format', '{{.ServerVersion}}']);
+      dockerAPIVersion = read('docker', [
+        'version',
+        '--format',
+        '{{.Server.APIVersion}}',
+      ]).trim();
     },
   ]) {
     try {
@@ -107,6 +123,7 @@ export function checkE2EEnvironment() {
       mount,
       quotaState,
       dockerHost,
+      dockerAPIVersion,
     }),
   ];
 }

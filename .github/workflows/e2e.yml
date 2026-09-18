@@ -11,8 +11,17 @@ permissions:
 
 jobs:
   e2e:
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
+    name: E2E (${{ matrix.fred }})
+    runs-on: ubuntu-24.04
+    # Allow Docker installation and fresh authority startup before the full suite.
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        fred: ['v0.13', 'pr240']
+    env:
+      FRED_COMPATIBILITY: ${{ matrix.fred }}
+      MANIFEST_FRED_COMPATIBILITY: ${{ matrix.fred }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -20,15 +29,31 @@ jobs:
           submodules: recursive
           ssh-key: ${{ secrets.FRED_DEPLOY_KEY }}
 
+
+      # Keep the schema/provenance submodule at PR #240. Legacy images use an
+      # independent ignored checkout of the immutable v0.13.0 commit.
+      - name: Checkout Fred v0.13.0 separately
+        if: matrix.fred == 'v0.13'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          repository: manifest-network/fred
+          ref: 8f0cbd9431b482732d60d81fb59f94a37cd06486
+          path: e2e/.fred-v013
+          ssh-key: ${{ secrets.FRED_DEPLOY_KEY }}
+
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22
           cache: npm
 
+      - name: Install supported Docker Engine
+        run: bash e2e/scripts/setup_ci_docker.sh
+
       - name: Provision loopback XFS (project quotas) for retention volumes
         run: |
           set -euo pipefail
-          sudo apt-get install -y xfsprogs          # explicit: don't rely on the ubuntu-latest preinstalled set for mkfs.xfs/xfs_quota
+          sudo apt-get install -y xfsprogs          # explicit: don't rely on the runner preinstalled set for mkfs.xfs/xfs_quota
           sudo mkdir -p /mnt/fred-xfs
           truncate -s 2G /tmp/fred-xfs.img          # > mkfs.xfs 300MB floor
           sudo mkfs.xfs -f /tmp/fred-xfs.img
@@ -40,10 +65,7 @@ jobs:
         run: node scripts/check-e2e-env.mjs
 
       - name: Build Docker images
-        run: docker compose -f e2e/docker-compose.yml build
-
-      - name: Start devnet
-        run: docker compose -f e2e/docker-compose.yml up -d --wait --wait-timeout 180
+        run: bash e2e/scripts/devnet.sh build
 
       - name: Install and build
         run: |
@@ -51,20 +73,34 @@ jobs:
           npm run check:fred-manifest-schema
           npm run build
 
+      - name: Start devnet
+        env:
+          FRED_DEVNET_WAIT_TIMEOUT: 600
+        run: bash e2e/scripts/devnet.sh up
+
       - name: Run E2E tests
         run: npm run test:e2e
 
+      # Preserve each version's state; PR #240 also verifies both authorities.
+      - name: Verify devnet restart preserves authority
+        timeout-minutes: 10
+        env:
+          FRED_DEVNET_WAIT_TIMEOUT: 600
+        run: |
+          bash e2e/scripts/devnet.sh down
+          bash e2e/scripts/devnet.sh up
+
       - name: Collect logs on failure
         if: failure()
-        run: docker compose -f e2e/docker-compose.yml logs > e2e-logs.txt
+        run: bash e2e/scripts/devnet.sh logs > e2e-logs.txt
 
       - name: Upload logs on failure
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: e2e-logs
+          name: e2e-logs-${{ matrix.fred }}
           path: e2e-logs.txt
 
       - name: Teardown
         if: always()
-        run: docker compose -f e2e/docker-compose.yml down -v --remove-orphans
+        run: bash e2e/scripts/devnet.sh down

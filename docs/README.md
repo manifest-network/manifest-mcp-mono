@@ -11,6 +11,7 @@ Long-form documentation that complements the package READMEs.
 | [Security model](security.md) | Users + operators | How ADR-036 auth works, what the wallet sees and signs, what's redacted, what's not, and the boundary between the agent and the human |
 | [SDK reference](../packages/sdk/README.md) | Developers | Build a TypeScript app on Manifest + Fred — install, quickstart, the bound client, subpath map |
 | [SDK cookbook](library-usage.md) | Developers | The library deep dive: wallets, the three client factories, reads/txs, deploy lifecycle, live status, errors (Barney — the Manifest web frontend — is the reference consumer) |
+| [Fred PR #240 compatibility](fred-pr240-readiness.md) | Maintainers | Pinned provider contract, command identity, devnet initialization, and live acceptance requirements |
 
 For build, test, and contribution workflows, see [`../CONTRIBUTING.md`](../CONTRIBUTING.md).
 For internal architecture, see [`../ARCHITECTURE.md`](../ARCHITECTURE.md).

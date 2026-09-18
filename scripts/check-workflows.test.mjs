@@ -274,6 +274,184 @@ test('wiring: CI and release validation run the guard before building', () => {
   }
 });
 
+test('wiring: PR live gate includes sequential maintenance and restore after SDK acceptance', () => {
+  const workflow = readWorkflow('e2e-pr.yml');
+  const live = workflow.jobs['acceptance-single'];
+  const sdk = live.steps.findIndex((step) =>
+    step.run?.includes('e2e/sdk-acceptance.e2e.test.ts'),
+  );
+  const compatibility = live.steps.findIndex(
+    (step) =>
+      step.run === 'npx vitest run --config e2e/vitest.compat.config.ts',
+  );
+  assert(sdk >= 0);
+  assert(compatibility > sdk);
+  assert.equal(live.steps[compatibility].if, undefined);
+  assert.equal(live.steps[compatibility]['continue-on-error'], undefined);
+  assert(workflow.jobs['e2e-gate'].needs.includes('acceptance-single'));
+  const vitest = readFileSync(
+    resolve(repoRoot, 'e2e/vitest.config.ts'),
+    'utf8',
+  );
+  assert.match(vitest, /fileParallelism:\s*false/);
+  assert.match(vitest, /sequence:\s*\{\s*concurrent:\s*false/);
+  const compatibilityConfig = readFileSync(
+    resolve(repoRoot, 'e2e/vitest.compat.config.ts'),
+    'utf8',
+  );
+  assert.match(
+    compatibilityConfig,
+    /import e2eConfig from '\.\/vitest\.config\.js'/,
+  );
+  assert.match(compatibilityConfig, /\.\.\.e2eConfig\.test/);
+  assert.match(
+    compatibilityConfig,
+    /include:\s*\['lifecycle\.e2e\.test\.ts', 'restore-roundtrip\.e2e\.test\.ts'\]/,
+  );
+});
+
+test('wiring: both live workflows install supported Docker and manage the native devnet', () => {
+  for (const [filename, jobName] of [
+    ['e2e-pr.yml', 'acceptance-single'],
+    ['e2e.yml', 'e2e'],
+  ]) {
+    const job = readWorkflow(filename).jobs[jobName];
+    assert.equal(job['runs-on'], 'ubuntu-24.04');
+    assert(job['timeout-minutes'] >= 45);
+    assert.deepEqual(job.strategy.matrix.fred, ['v0.13', 'pr240']);
+    assert.equal(job.strategy['fail-fast'], false);
+    assert.equal(job['continue-on-error'], undefined);
+    assert.equal(job.env.FRED_COMPATIBILITY, `\${{ matrix.fred }}`);
+    assert.equal(job.env.MANIFEST_FRED_COMPATIBILITY, `\${{ matrix.fred }}`);
+    const legacy = job.steps.find(
+      (step) => step.name === 'Checkout Fred v0.13.0 separately',
+    );
+    assert.equal(legacy.if, "matrix.fred == 'v0.13'");
+    assert.equal(legacy.with.repository, 'manifest-network/fred');
+    assert.equal(legacy.with.ref, '8f0cbd9431b482732d60d81fb59f94a37cd06486');
+    assert.equal(legacy.with.path, 'e2e/.fred-v013');
+    assert.equal(
+      job.steps.find((step) => step.name === 'Build Docker images').run,
+      'bash e2e/scripts/devnet.sh build',
+    );
+    assert.equal(
+      job.steps.find(
+        (step) =>
+          step.name === 'Run E2E tests' ||
+          step.name === 'Run the single-variant SDK acceptance flow',
+      ).if,
+      undefined,
+    );
+    assert.match(
+      job.steps.find((step) => step.name === 'Upload logs on failure').with
+        .name,
+      /\$\{\{ matrix\.fred \}\}/,
+    );
+    const install = job.steps.findIndex(
+      (step) => step.run === 'bash e2e/scripts/setup_ci_docker.sh',
+    );
+    const preflight = job.steps.findIndex(
+      (step) => step.run === 'node scripts/check-e2e-env.mjs',
+    );
+    assert(install >= 0 && install < preflight, filename);
+    assert.equal(job.steps[install].if, undefined);
+    assert.equal(job.steps[install]['continue-on-error'], undefined);
+    const startup = job.steps.findIndex((step) => step.name === 'Start devnet');
+    assert.equal(job.steps[startup].run, 'bash e2e/scripts/devnet.sh up');
+    assert.equal(job.steps[startup].env.FRED_DEVNET_WAIT_TIMEOUT, 600);
+    const build = job.steps.findIndex(
+      (step) => step.name === 'Install and build',
+    );
+    assert(build >= 0 && build < startup, filename);
+    assert.match(job.steps[build].run, /npm ci/);
+    const logs = job.steps.find(
+      (step) => step.name === 'Collect logs on failure',
+    );
+    assert.equal(logs.run, 'bash e2e/scripts/devnet.sh logs > e2e-logs.txt');
+    assert.equal(logs.if, 'failure()');
+    const teardown = job.steps.find((step) => step.name === 'Teardown');
+    assert.equal(teardown.run, 'bash e2e/scripts/devnet.sh down');
+    assert.equal(teardown.if, 'always()');
+  }
+});
+
+test('CI Docker installer pins signed Ubuntu packages and refuses non-CI execution', () => {
+  const script = resolve(repoRoot, 'e2e/scripts/setup_ci_docker.sh');
+  const source = readFileSync(script, 'utf8');
+  for (const [name, variable, version] of [
+    ['docker-ce', 'docker_version', '5:29.7.2-1~ubuntu.24.04~noble'],
+    ['docker-ce-cli', 'docker_version', '5:29.7.2-1~ubuntu.24.04~noble'],
+    ['containerd.io', 'containerd_version', '2.3.5-1~ubuntu.24.04~noble'],
+    ['docker-buildx-plugin', 'buildx_version', '0.37.1-1~ubuntu.24.04~noble'],
+    ['docker-compose-plugin', 'compose_version', '5.5.1-1~ubuntu.24.04~noble'],
+  ]) {
+    assert(source.includes(`${variable}='${version}'`), `${name} version`);
+    assert(source.includes(`"${name}=$${variable}"`), `${name} install pin`);
+  }
+  assert.match(source, /Signed-By: \/etc\/apt\/keyrings\/docker\.asc/);
+  assert.match(source, /docker context use default/);
+  const syntax = spawnSync('bash', ['-n', script], { encoding: 'utf8' });
+  assert.equal(syntax.status, 0, syntax.stderr);
+  const refused = spawnSync('bash', [script], {
+    encoding: 'utf8',
+    env: { ...process.env, GITHUB_ACTIONS: 'false', RUNNER_OS: 'Linux' },
+  });
+  assert.equal(refused.status, 1);
+  assert.match(refused.stderr, /restricted to Linux GitHub Actions runners/);
+});
+
+test('wiring: successful live suites verify a bounded restart without deleting authority', () => {
+  for (const [filename, jobName, finalLiveStep] of [
+    [
+      'e2e-pr.yml',
+      'acceptance-single',
+      'Run maintenance replay and retained-volume restore',
+    ],
+    ['e2e.yml', 'e2e', 'Run E2E tests'],
+  ]) {
+    const steps = readWorkflow(filename).jobs[jobName].steps;
+    const live = steps.findIndex((step) => step.name === finalLiveStep);
+    const restart = steps.findIndex(
+      (step) => step.name === 'Verify devnet restart preserves authority',
+    );
+    const logs = steps.findIndex(
+      (step) => step.name === 'Collect logs on failure',
+    );
+    assert(live >= 0 && restart > live && logs > restart, filename);
+    assert.equal(steps[restart].if, undefined);
+    assert.equal(steps[restart]['continue-on-error'], undefined);
+    assert.equal(steps[restart]['timeout-minutes'], 10);
+    assert.equal(steps[restart].env.FRED_DEVNET_WAIT_TIMEOUT, 600);
+    assert.equal(
+      steps[restart].run,
+      'bash e2e/scripts/devnet.sh down\nbash e2e/scripts/devnet.sh up\n',
+    );
+    assert(steps.findIndex((step) => step.name === 'Teardown') > logs);
+  }
+});
+
+test('wiring: PR change filter includes the MCP lifecycle runtime dependencies', () => {
+  const filter = readWorkflow('e2e-pr.yml').jobs.changes.steps.find(
+    (step) => step.id === 'filter',
+  );
+  const pattern = /grep -Eq \\\n\s+'([^']+)'/.exec(filter.run)?.[1];
+  assert(pattern, 'expected an explicit deploy-path filter');
+  const matches = new RegExp(pattern);
+  for (const path of [
+    'packages/core/src/types.ts',
+    'packages/fred/src/http/fred.ts',
+    'packages/agent-core/src/client.ts',
+    'packages/sdk/src/client.ts',
+    'packages/lease/src/server.ts',
+    'packages/node/src/fred.ts',
+    'e2e/scripts/init_backend.sh',
+    'submodules/fred',
+  ]) {
+    assert(matches.test(path), `${path} must trigger live compatibility tests`);
+  }
+  assert.equal(matches.test('docs/library-usage.md'), false);
+});
+
 function assertWorkflowPermissions(
   directory = resolve(repoRoot, '.github/workflows'),
 ) {

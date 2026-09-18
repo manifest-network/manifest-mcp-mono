@@ -1,9 +1,16 @@
+import { resolveFredCompatibility } from '../compatibility.js';
 import type { FredAuthCtx } from '../ctx.js';
 import {
   type FredLeaseStatus,
   pollLeaseUntilReady,
   restartLease,
 } from '../http/fred.js';
+import { validateProviderUrl } from '../http/provider.js';
+import {
+  maintenanceError,
+  maintenanceWaitError,
+  resolveMaintenanceCommandKey,
+} from '../maintenance-error.js';
 import { resolveFredSignal } from './call-signal.js';
 import { fetchActiveLease } from './fetchActiveLease.js';
 import type { LifecycleCallOptions } from './lifecycle-options.js';
@@ -13,7 +20,12 @@ export async function restartApp(
   ctx: FredAuthCtx,
   input: { address: string; leaseUuid: string },
   opts: LifecycleCallOptions = {},
-): Promise<{ lease_uuid: string; status: string; ready?: FredLeaseStatus }> {
+): Promise<{
+  lease_uuid: string;
+  idempotency_key?: string;
+  status: string;
+  ready?: FredLeaseStatus;
+}> {
   const { address, leaseUuid } = input;
   // Resolve ONCE: a second call would mint a second timeout from the same `timeout`.
   const signal = resolveFredSignal(opts);
@@ -28,30 +40,68 @@ export async function restartApp(
     providerUrl = await resolveProviderUrl(ctx, lease.providerUuid);
   }
 
+  // URL rejection is local and proves no maintenance request was sent.
+  validateProviderUrl(providerUrl, { allowLoopback: ctx.allowLoopback });
+  const compatibility = resolveFredCompatibility(
+    ctx.fredCompatibility,
+    providerUrl,
+    opts.fredCompatibility,
+  );
+  const idempotencyKey = resolveMaintenanceCommandKey(
+    compatibility,
+    opts.idempotencyKey,
+  );
+
   const authToken = await ctx.providerAuth.providerToken({
     address,
     leaseUuid,
   });
-  // Final check immediately before the non-idempotent mutate POST: an abort during the
+  // Final check immediately before the mutate POST: an abort during the
   // (slow-path) providerUrl resolution / token mint must not still fire the restart.
   signal?.throwIfAborted();
-  const result = await restartLease(
-    providerUrl,
-    leaseUuid,
-    authToken,
-    ctx.fetch,
-    ctx.allowLoopback,
-  );
-  const base = { lease_uuid: leaseUuid, status: result.status };
+  const command = { operation: 'restart' as const, leaseUuid, idempotencyKey };
+  let result: Awaited<ReturnType<typeof restartLease>>;
+  try {
+    result = await restartLease(
+      providerUrl,
+      leaseUuid,
+      authToken,
+      ctx.fetch,
+      ctx.allowLoopback,
+      idempotencyKey,
+      compatibility,
+    );
+  } catch (err) {
+    throw idempotencyKey === undefined
+      ? err
+      : maintenanceError(err, {
+          ...command,
+          idempotencyKey,
+          outcome: 'unknown',
+        });
+  }
+  const base = {
+    lease_uuid: leaseUuid,
+    ...(idempotencyKey !== undefined && { idempotency_key: idempotencyKey }),
+    status: result.status,
+  };
 
   if (opts.pollOptions === false) return base;
-  const ready = await pollLeaseUntilReady(
-    providerUrl,
-    leaseUuid,
-    () => ctx.providerAuth.providerToken({ address, leaseUuid }),
-    { ...opts.pollOptions, abortSignal: signal },
-    ctx.fetch,
-    ctx.allowLoopback,
-  );
-  return { ...base, ready };
+  try {
+    const ready = await pollLeaseUntilReady(
+      providerUrl,
+      leaseUuid,
+      () => ctx.providerAuth.providerToken({ address, leaseUuid }),
+      { ...opts.pollOptions, abortSignal: signal },
+      ctx.fetch,
+      ctx.allowLoopback,
+    );
+    return { ...base, ready };
+  } catch (err) {
+    throw maintenanceWaitError(err, {
+      ...command,
+      signal,
+      callerSignals: [opts.signal, opts.abortSignal],
+    });
+  }
 }

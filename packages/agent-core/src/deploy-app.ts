@@ -70,6 +70,7 @@ import {
   fetchActiveLease,
   deployApp as fredDeployApp,
   LeaseReadinessUnconfirmedError,
+  normalizeFredCompatibility,
   pollLeaseUntilReady,
   resolveProviderUrl,
   uploadLeaseData,
@@ -169,6 +170,10 @@ export async function deployApp(
   callbacks: DeployAppCallbacks,
   opts: DeployAppOptions,
 ): Promise<DeployResult> {
+  // Snapshot before callbacks can edit caller-owned maps during confirmation.
+  const fredCompatibility = normalizeFredCompatibility(opts.fredCompatibility);
+  const previewCompatibility =
+    typeof fredCompatibility === 'string' ? fredCompatibility : 'v0.13';
   // --- Input validation -----------------------------------------------
   try {
     validateSpec(spec);
@@ -360,7 +365,7 @@ export async function deployApp(
   // checks) is meta-hash-safe and keeps preview ≡ deploy by construction
   // (both build the manifest from the same STRUCTURED_FIELDS). D3 / ENG-310.
   const previewInput: BuildManifestPreviewInput = spec;
-  let preview = await buildManifestPreview(previewInput);
+  let preview = await buildManifestPreview(previewInput, previewCompatibility);
 
   // Fee estimation for create-lease (always) + set-item-custom-domain
   // (when customDomain set). Lean port: cosmosEstimateFee invocation
@@ -472,7 +477,10 @@ export async function deployApp(
       );
     }
     const editedPreviewInput: BuildManifestPreviewInput = confirmedSpec;
-    preview = await buildManifestPreview(editedPreviewInput);
+    preview = await buildManifestPreview(
+      editedPreviewInput,
+      previewCompatibility,
+    );
     summary = summarizeSpec(confirmedSpec);
     fees = await estimateFees(
       opts,
@@ -572,6 +580,7 @@ export async function deployApp(
   try {
     fredResult = await fredDeployApp(
       {
+        fredCompatibility,
         query: queryClient,
         chain: opts.clientManager,
         fetch: opts.fetchFn ?? globalThis.fetch,

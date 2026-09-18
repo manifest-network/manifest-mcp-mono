@@ -7,6 +7,10 @@ import {
   type ManifestClient,
 } from '@manifest-network/manifest-mcp-core';
 import {
+  type FredCompatibilityConfig,
+  normalizeFredCompatibility,
+} from './compatibility.js';
+import {
   createProviderAuth,
   type ProviderAuthPort,
 } from './http/provider-auth.js';
@@ -52,6 +56,7 @@ export type FredClient = ManifestClient & {
    * provider. NEVER re-allows RFC1918 or metadata. Default false; do not enable in production.
    */
   allowLoopback?: boolean;
+  readonly fredCompatibility?: FredCompatibilityConfig;
 } & FredActions;
 
 /**
@@ -61,6 +66,8 @@ export type FredClient = ManifestClient & {
  */
 export type CreateFredClientOptions = FullClientOptions & {
   readonly allowLoopback?: boolean;
+  /** Defaults to v0.13. A provider URL map opts individual providers into PR #240. */
+  readonly fredCompatibility?: FredCompatibilityConfig;
 };
 
 /** The fred-action decorator: thin .bind(ctx) closures over the free fns (viem-style; ctx = the client). */
@@ -113,7 +120,8 @@ export async function createFredClient(
   opts: CreateFredClientOptions,
 ): Promise<FredClient> {
   warnUnguardedOnce(hasCustomFetch(opts.fetch));
-  const { allowLoopback = false, ...coreOpts } = opts;
+  const { allowLoopback = false, fredCompatibility, ...coreOpts } = opts;
+  const compatibility = normalizeFredCompatibility(fredCompatibility);
   const client = await createManifestClient(coreOpts);
   const providerAuth = createProviderAuth(client.signer, {
     chainId: client.chain.getConfig().chainId,
@@ -124,6 +132,7 @@ export async function createFredClient(
   const withAuth = Object.assign(client, {
     providerAuth,
     allowLoopback,
+    fredCompatibility: compatibility,
   }) as FredClient;
   return Object.assign(withAuth, fredActions(withAuth));
 }

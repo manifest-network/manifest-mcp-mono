@@ -34,13 +34,16 @@ npm run audit:dependencies      # Full dependency graph; high/critical findings 
 npm run check:fix      # Auto-fix anything Biome can fix
 ```
 
-4. If your changes touch chain interactions, also run the E2E suite. First follow the [Linux/XFS setup](docs/e2e-setup.md); Compose alone does not prepare its required quota mount:
+4. If your changes touch chain interactions, also run the E2E suite. First follow the [Linux/systemd/XFS setup](docs/e2e-setup.md), including prerequisites and coherent reset instructions. The launcher runs Fred's stateful backend natively:
 
 ```bash
+npm ci
+npm run build
 npm run check:e2e-env
-docker compose -f e2e/docker-compose.yml up -d --wait --wait-timeout 180
+docker compose -f e2e/docker-compose.yml build
+bash e2e/scripts/devnet.sh up
 npm run test:e2e
-docker compose -f e2e/docker-compose.yml down -v --remove-orphans
+bash e2e/scripts/devnet.sh down  # preserve journals and XFS identity
 ```
 
 5. Open a pull request against `main`. CI runs the same checks.

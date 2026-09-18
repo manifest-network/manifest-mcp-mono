@@ -1,6 +1,7 @@
 import { describe, expectTypeOf, it } from 'vitest';
 import type {
   BuildManifestPreviewInput,
+  buildManifestPreview,
   PortConfig as CatalogPortConfig,
   ManifestPreviewServiceInput,
 } from './catalog.js';
@@ -20,13 +21,23 @@ import type {
 } from './deploy.js';
 import {
   type BuildManifestOptions,
+  createMaintenanceIdempotencyKey,
   createProviderAuth,
   type DeployCallOptions,
+  type FredCompatibility as DeployFredCompatibility,
+  type FredCompatibilityConfig as DeployFredCompatibilityConfig,
   type DeployResult,
+  LeaseReadinessUnconfirmedError,
   type LifecycleCallOptions,
   type ManifestDeploySpec,
   type PortConfig,
+  type restartApp,
+  restartLease,
+  TerminalChainStateError,
   type TxCallOptions,
+  type updateApp,
+  updateLease,
+  type validateManifest,
 } from './deploy.js';
 import {
   type FaucetStatusResponse,
@@ -59,10 +70,13 @@ import type {
 // type-shape drift that survives a value-only test surfaces HERE as a type error.
 import {
   type CapabilityCtx,
+  type CreateFredClientOptions,
   createFredClient,
   createManifestClient,
   createManifestReadClient,
   type FredClient,
+  type FredCompatibility,
+  type FredCompatibilityConfig,
   type FullClientOptions,
   isRetryableError,
   isSkuAmbiguousError,
@@ -76,14 +90,52 @@ import {
   withRetry,
 } from './index.js';
 import type {
+  AgentCoreRuntime,
   CloseLeaseCallbacks,
   CloseLeaseResult,
   closeLease,
+  DeployAppOptions as OrchestrationDeployAppOptions,
   PortConfig as OrchestrationPortConfig,
   ServiceConfig as OrchestrationServiceConfig,
 } from './orchestration.js';
 
 describe('SDK factory return types (re-emitted; codegen-passthrough tripwire)', () => {
+  it('exposes per-provider Fred compatibility through both public entrypoints', () => {
+    expectTypeOf<FredCompatibility>().toEqualTypeOf<'v0.13' | 'pr240'>();
+    expectTypeOf<FredCompatibility>().toEqualTypeOf<DeployFredCompatibility>();
+    expectTypeOf<FredCompatibilityConfig>().toEqualTypeOf<
+      FredCompatibility | Readonly<Record<string, FredCompatibility>>
+    >();
+    expectTypeOf<FredCompatibilityConfig>().toEqualTypeOf<DeployFredCompatibilityConfig>();
+    expectTypeOf<CreateFredClientOptions['fredCompatibility']>().toEqualTypeOf<
+      FredCompatibilityConfig | undefined
+    >();
+    expectTypeOf<
+      Parameters<typeof createFredClient>[0]['fredCompatibility']
+    >().toEqualTypeOf<FredCompatibilityConfig | undefined>();
+    expectTypeOf<FredAuthCtx['fredCompatibility']>().toEqualTypeOf<
+      FredCompatibilityConfig | undefined
+    >();
+    expectTypeOf<DeployCallOptions['fredCompatibility']>().toEqualTypeOf<
+      FredCompatibility | undefined
+    >();
+    expectTypeOf<LifecycleCallOptions['fredCompatibility']>().toEqualTypeOf<
+      FredCompatibility | undefined
+    >();
+    expectTypeOf<AgentCoreRuntime['fredCompatibility']>().toEqualTypeOf<
+      FredCompatibilityConfig | undefined
+    >();
+    expectTypeOf<
+      OrchestrationDeployAppOptions['fredCompatibility']
+    >().toEqualTypeOf<FredCompatibilityConfig | undefined>();
+    expectTypeOf<Parameters<typeof validateManifest>>().toEqualTypeOf<
+      [unknown, FredCompatibility?]
+    >();
+    expectTypeOf<Parameters<typeof buildManifestPreview>[1]>().toEqualTypeOf<
+      FredCompatibility | undefined
+    >();
+  });
+
   it('the 3 client factories are async and resolve to the precise re-emitted client type', () => {
     expectTypeOf(
       createManifestClient,
@@ -382,5 +434,83 @@ describe('ENG-531 facade completeness (re-emitted through the SDK)', () => {
     // @ts-expect-error — FaucetStatusResponse must NOT be reachable from the root barrel.
     const _leak: import('./index.js').FaucetStatusResponse = undefined as never;
     void _leak;
+  });
+});
+
+describe('maintenance command identity through the SDK', () => {
+  it('exposes recovery context after narrowing to a readiness subclass', () => {
+    const error: unknown = undefined;
+    if (
+      error instanceof LeaseReadinessUnconfirmedError ||
+      error instanceof TerminalChainStateError
+    ) {
+      expectTypeOf(error.details.idempotency_key).toBeUnknown();
+      expectTypeOf(error.details.operation).toBeUnknown();
+      expectTypeOf(error.details.outcome).toBeUnknown();
+      expectTypeOf(error.details.lease_uuid).toBeString();
+      expectTypeOf(error.details.readiness).toEqualTypeOf<
+        'terminal' | 'unconfirmed'
+      >();
+      expectTypeOf(error.withContext({}).details.idempotency_key).toBeUnknown();
+    }
+  });
+
+  it('exports a browser-safe factory for keys persisted before dispatch', () => {
+    expectTypeOf(createMaintenanceIdempotencyKey).parameters.toEqualTypeOf<
+      []
+    >();
+    expectTypeOf(
+      createMaintenanceIdempotencyKey,
+    ).returns.toEqualTypeOf<string>();
+  });
+
+  it('keeps caller-supplied keys optional on lifecycle options and raw HTTP calls', () => {
+    expectTypeOf<Pick<LifecycleCallOptions, 'idempotencyKey'>>().toEqualTypeOf<{
+      readonly idempotencyKey?: string;
+    }>();
+    expectTypeOf(restartLease).parameters.toEqualTypeOf<
+      [
+        providerUrl: string,
+        leaseUuid: string,
+        authToken: string,
+        fetchFn?: typeof globalThis.fetch,
+        allowLoopback?: boolean,
+        idempotencyKey?: string,
+        fredCompatibility?: FredCompatibility,
+      ]
+    >();
+    expectTypeOf(updateLease).parameters.toEqualTypeOf<
+      [
+        providerUrl: string,
+        leaseUuid: string,
+        payload: Uint8Array,
+        authToken: string,
+        fetchFn?: typeof globalThis.fetch,
+        allowLoopback?: boolean,
+        idempotencyKey?: string,
+        fredCompatibility?: FredCompatibility,
+      ]
+    >();
+  });
+
+  it('exposes optional PR240 result keys and lifecycle options on free and bound calls', () => {
+    expectTypeOf<
+      Awaited<ReturnType<typeof restartApp>>['idempotency_key']
+    >().toEqualTypeOf<string | undefined>();
+    expectTypeOf<
+      Awaited<ReturnType<typeof updateApp>>['idempotency_key']
+    >().toEqualTypeOf<string | undefined>();
+    expectTypeOf<FredClient['restartApp']>().returns.toEqualTypeOf<
+      ReturnType<typeof restartApp>
+    >();
+    expectTypeOf<FredClient['updateApp']>().returns.toEqualTypeOf<
+      ReturnType<typeof updateApp>
+    >();
+    expectTypeOf<Parameters<FredClient['restartApp']>[1]>().toEqualTypeOf<
+      LifecycleCallOptions | undefined
+    >();
+    expectTypeOf<Parameters<FredClient['updateApp']>[1]>().toEqualTypeOf<
+      LifecycleCallOptions | undefined
+    >();
   });
 });

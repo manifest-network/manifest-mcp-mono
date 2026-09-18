@@ -425,7 +425,7 @@ This is handled by `http/auth.ts` in the fred package and used by all fred serve
 
 ## Error handling
 
-Errors use the `ManifestMCPErrorCode` enum (24 codes across 11 categories):
+Errors use the `ManifestMCPErrorCode` enum:
 
 | Category | Codes |
 |----------|-------|
@@ -439,7 +439,7 @@ Errors use the `ManifestMCPErrorCode` enum (24 codes across 11 categories):
 | SKU resolution | `SKU_AMBIGUOUS` (a SKU name matched more than one active SKU; disambiguate with `provider_uuid` / `sku_uuid`) |
 | Restore | `RESTORE_NOT_RETAINED`, `RESTORE_REJECTED`, `RESTORE_ORPHAN_COMPENSATION_FAILED`, `RESTORE_COMMITTED_FAILURE`; `RESTORE_RETRYABLE` remains exported for compatibility and is not emitted by current `restoreApp`. `RESTORE_REJECTED` means a locally known failure before the POST was successfully compensated. Every restore POST exception (all 4xx/5xx, network failures, malformed 2xx) reports unknown adoption for reconciliation; a 429 `Retry-After` is diagnostic only. `RESTORE_COMMITTED_FAILURE` preserves the adopted lease after a provider failure verdict. All are non-auto-retryable since restore is non-idempotent (ENG-599, ENG-805). |
 | Deploy | `DEPLOY_READINESS_UNCONFIRMED` (the lease exists and is paid for but readiness was never confirmed; diagnose before closing anything — non-retryable, since a blind retry buys a second lease; ENG-661) |
-| Update | `UPDATE_INDETERMINATE` (`update_app` got a provider 5xx, which does **not** establish whether the manifest was applied — the provider persists the payload after the backend accepts it, so a persist failure can mean the update is live now and the next reprovision reverts it; diagnose with `app_status` / `app_releases`; non-retryable, since `update_app` is non-idempotent; ENG-619) |
+| Maintenance | `UPDATE_INDETERMINATE`, `RESTART_INDETERMINATE`, `MAINTENANCE_REQUEST_FAILED`, `MAINTENANCE_WAIT_FAILED`. Preserve `details.idempotency_key` and the exact command: uncertain requests can execute during Fred recovery. Reconcile `app_status` / `app_releases`; intentional retries use the same key and fresh authentication. Generic mutation retries are disabled. |
 
 The retry classifier considers numeric gRPC status before HTTP status. Without
 a gRPC verdict, numeric `details.httpStatus: 408` permits retry only on
@@ -491,14 +491,15 @@ All MCP server output goes to **stderr** because stdout is reserved for the MCP 
 
 ## E2E testing
 
-End-to-end tests live in `/e2e/` and run against a real Manifest chain (and a real `providerd` for fred tests) via Docker Compose. Each `*.e2e.test.ts` spawns the relevant MCP server in a child process and drives it through the SDK's stdio transport (see `helpers/mcp-client.ts`). The chain image is built from the pinned `submodules/manifest-ledger` commit and the provider image is built from `submodules/fred`.
+End-to-end tests live in `/e2e/` and run against a real Manifest chain and `providerd` via Docker Compose, with Fred's stateful backend running natively on the host. Each `*.e2e.test.ts` spawns the relevant MCP server in a child process and drives it through the SDK's stdio transport (see `helpers/mcp-client.ts`). The chain image is built from the pinned `submodules/manifest-ledger` commit and the provider image is built from `submodules/fred`.
 
 ```
 e2e/
-├── docker-compose.yml                Spins up chain + init + docker-backend + providerd + faucet (TLS)
+├── docker-compose.yml                Chain + init + placement-init + providerd + faucet (TLS)
 ├── vitest.config.ts                  5-min test timeout; serial execution (fileParallelism:false + sequence.concurrent:false) so files share one on-chain wallet
 ├── docker/                           Dockerfiles for the chain and provider containers
 ├── scripts/
+│   ├── devnet.sh                     Starts the native stateful backend and coordinates Compose
 │   ├── init_chain.sh                 Genesis + key/funds bootstrap for the chain container
 │   ├── init_billing.sh               Registers the test provider, mints tokens, creates SKUs
 │   └── start_faucet.sh               Boots the CosmJS faucet against the test chain
@@ -524,12 +525,18 @@ e2e/
 └── sdk-acceptance.e2e.test.ts        SDK-direct acceptance — drives runAcceptanceFlow (SDK + manifestjs only) for single-service + stack leases
 ```
 
-To run:
+Follow the [Linux/systemd/XFS prerequisites](docs/e2e-setup.md), then run:
 
 ```bash
-docker compose -f e2e/docker-compose.yml up -d --wait --wait-timeout 180
+npm ci
+npm run build
+npm run check:e2e-env
+docker compose -f e2e/docker-compose.yml build
+bash e2e/scripts/devnet.sh up
 npm run test:e2e
-docker compose -f e2e/docker-compose.yml down -v --remove-orphans
+# Preserve the authority journals and XFS identity together for the next startup.
+bash e2e/scripts/devnet.sh down
+# For a complete disposable reset, follow docs/e2e-setup.md.
 ```
 
 ## Build and test

@@ -163,20 +163,55 @@ const contractCases: readonly ContractCase[] = [
     manifest: { services: { Web: { image: 'nginx' } } },
     schemaValid: false,
   },
+  {
+    name: 'mixed-case reserved Fred label',
+    manifest: { image: 'nginx', labels: { 'Fred.owner': 'blocked' } },
+    schemaValid: false,
+  },
+  {
+    name: 'mixed-case reserved Traefik label',
+    manifest: { image: 'nginx', labels: { 'TRAEFIK.enable': 'blocked' } },
+    schemaValid: false,
+  },
+  {
+    name: 'reserved Docker Compose label',
+    manifest: {
+      image: 'nginx',
+      labels: { 'com.docker.compose.project': 'blocked' },
+    },
+    schemaValid: false,
+  },
+  {
+    name: 'Unicode case-folded reserved Traefik label',
+    manifest: { image: 'nginx', labels: { 'traefi\u212A.enable': 'blocked' } },
+    schemaValid: false,
+  },
+  {
+    name: 'Unicode case-folded reserved Compose label in a stack',
+    manifest: {
+      services: {
+        web: {
+          image: 'nginx',
+          labels: { 'COM.DOC\u212AER.COMPO\u017FE.project': 'blocked' },
+        },
+      },
+    },
+    schemaValid: false,
+  },
+  {
+    name: 'reserved label namespace near misses',
+    manifest: {
+      image: 'nginx',
+      labels: {
+        'com.docker.compose': 'allowed',
+        'com.docker.composeish.project': 'allowed',
+        'app.com.docker.compose.project': 'allowed',
+      },
+    },
+    schemaValid: true,
+  },
   // Named Go semantic overlays below. These are intentionally stricter than
   // the published JSON schema and must remain visible as different verdicts.
-  {
-    name: 'mixed-case reserved Fred label overlay',
-    manifest: { image: 'nginx', labels: { 'Fred.owner': 'blocked' } },
-    schemaValid: true,
-    preflightValid: false,
-  },
-  {
-    name: 'mixed-case reserved Traefik label overlay',
-    manifest: { image: 'nginx', labels: { 'TRAEFIK.enable': 'blocked' } },
-    schemaValid: true,
-    preflightValid: false,
-  },
   {
     name: 'UDP ingress overlay',
     manifest: { image: 'nginx', ports: { '53/udp': { ingress: true } } },
@@ -253,16 +288,29 @@ const contractCases: readonly ContractCase[] = [
     preflightValid: true,
   },
   {
-    name: 'empty user accepted by Go',
+    name: 'empty user selects the image default',
     manifest: { image: 'nginx', user: '' },
-    schemaValid: false,
-    preflightValid: true,
+    schemaValid: true,
   },
   {
-    name: 'multi-colon user accepted by Go SplitN',
+    name: 'multi-colon user is rejected',
     manifest: { image: 'nginx', user: 'a:b:c' },
     schemaValid: false,
-    preflightValid: true,
+  },
+  {
+    name: 'form-feed in user is rejected',
+    manifest: { image: 'nginx', user: 'a\fb' },
+    schemaValid: false,
+  },
+  {
+    name: 'vertical-tab in user is rejected',
+    manifest: { services: { app: { image: 'nginx', user: 'a:b\v' } } },
+    schemaValid: false,
+  },
+  {
+    name: 'non-ASCII whitespace in user is accepted by Go',
+    manifest: { image: 'nginx', user: 'a\u00a0b\u2003c' },
+    schemaValid: true,
   },
   {
     name: 'null label value decoded as empty string by Go',
@@ -311,7 +359,9 @@ describe('Fred manifest schema contract', () => {
         generatedSchemaValidate(manifest),
         JSON.stringify(sourceSchemaValidate.errors),
       ).toBe(schemaValid);
-      expect(validateManifest(manifest).valid).toBe(preflightValid);
+      // Vendored artifacts describe the pinned PR240 provider. Public runtime
+      // validation defaults to the released v0.13 policy independently.
+      expect(validateManifest(manifest, 'pr240').valid).toBe(preflightValid);
     },
   );
 
@@ -366,7 +416,7 @@ describe('Fred manifest schema contract', () => {
   ] as const;
 
   it.each(capCases)(
-    'derives the schema-omitted $field cap from pinned Fred Go source',
+    'keeps the schema $field cap aligned with pinned Fred Go source',
     ({ cap, manifest }) => {
       const atLimit = manifest(cap);
       const overLimit = manifest(cap + 1);
@@ -374,8 +424,8 @@ describe('Fred manifest schema contract', () => {
       expect(sourceSchemaValidate(atLimit)).toBe(true);
       expect(generatedSchemaValidate(atLimit)).toBe(true);
       expect(validateManifest(atLimit).valid).toBe(true);
-      expect(sourceSchemaValidate(overLimit)).toBe(true);
-      expect(generatedSchemaValidate(overLimit)).toBe(true);
+      expect(sourceSchemaValidate(overLimit)).toBe(false);
+      expect(generatedSchemaValidate(overLimit)).toBe(false);
       expect(validateManifest(overLimit).valid).toBe(false);
     },
   );
