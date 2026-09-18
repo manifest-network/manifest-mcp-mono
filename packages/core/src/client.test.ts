@@ -107,6 +107,13 @@ vi.mock('./lcd-adapter.js', () => ({
   createLCDQueryClient: vi.fn().mockResolvedValue({ mock: 'lcdClient' }),
 }));
 
+vi.mock('./modules.js', () => ({
+  getQueryHandler: vi.fn(),
+  getTxHandler: vi.fn(),
+  getTxContextLoader: vi.fn(),
+  getTxMsgBuilder: vi.fn(),
+}));
+
 vi.mock('./retry.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./retry.js')>();
   return {
@@ -123,8 +130,10 @@ import { SigningStargateClient } from '@cosmjs/stargate';
 import { cosmwasm as cosmwasmNs } from '@manifest-network/manifestjs/dist/codegen/cosmwasm/bundle.js';
 import { liftedinit } from '@manifest-network/manifestjs/dist/codegen/liftedinit/bundle.js';
 import { CosmosClientManager } from './client.js';
+import { cosmosQuery } from './cosmos.js';
 import { createLCDQueryClient } from './lcd-adapter.js';
 import { noopLogger } from './logger.js';
+import { isRetryableError, withRetry } from './retry.js';
 import type { ManifestMCPConfig, WalletProvider } from './types.js';
 
 const mockCreateLCDQueryClient = vi.mocked(createLCDQueryClient);
@@ -194,6 +203,1181 @@ describe('CosmosClientManager', () => {
     CosmosClientManager.clearInstances();
     vi.unstubAllGlobals();
   });
+
+  describe.each(['REST', 'RPC', 'signing', 'wallet'] as const)(
+    '%s initialization error normalization',
+    (boundary) => {
+      beforeEach(async () => {
+        const actual =
+          await vi.importActual<typeof import('./retry.js')>('./retry.js');
+        vi.mocked(withRetry).mockImplementation(actual.withRetry);
+      });
+
+      afterEach(() => {
+        vi.mocked(withRetry).mockImplementation((operation) => operation());
+      });
+
+      function failInitialization(
+        error: unknown,
+        identityFetch = false,
+        maxRetries = 2,
+      ) {
+        const wallet = makeWallet();
+        const getChainId = vi.fn().mockResolvedValue('test-chain');
+        if (boundary === 'signing' && identityFetch) {
+          mockConnectWithSigner.mockResolvedValueOnce({
+            getChainId,
+            disconnect: vi.fn(),
+          } as unknown as SigningStargateClient);
+        }
+        const config = makeConfig({
+          restUrl: boundary === 'REST' ? 'https://lcd.example.com' : undefined,
+          retry: { maxRetries, baseDelayMs: 0, maxDelayMs: 0 },
+        });
+        const operation =
+          boundary === 'wallet'
+            ? vi.mocked(wallet.getSigner)
+            : identityFetch
+              ? boundary === 'signing'
+                ? getChainId
+                : vi.mocked(globalThis.fetch)
+              : boundary === 'REST'
+                ? mockCreateLCDQueryClient
+                : boundary === 'RPC'
+                  ? mockCreateRPCQueryClient
+                  : mockConnectWithSigner;
+        operation.mockRejectedValueOnce(error);
+        const manager = CosmosClientManager.getInstance(config, wallet);
+        const query = boundary === 'REST' || boundary === 'RPC';
+        const callsBefore = operation.mock.calls.length;
+        return {
+          operation,
+          callsBefore,
+          invoke: () =>
+            query ? manager.getQueryClient() : manager.getSigningClient(),
+          pending: query
+            ? manager.getQueryClient()
+            : manager.getSigningClient(),
+          messagePrefix: query
+            ? `Failed to connect to ${boundary} endpoint`
+            : 'Failed to connect signing client',
+          details: query
+            ? { url: config.restUrl ?? config.rpcUrl }
+            : { rpcUrl: config.rpcUrl },
+        };
+      }
+
+      async function expectConnectionError(
+        pending: Promise<unknown>,
+        message: string,
+        details: Record<string, unknown>,
+      ) {
+        await pending.then(
+          () => {
+            throw new Error('Expected initialization to fail');
+          },
+          (error: unknown) => {
+            expect(error).toBeInstanceOf(ManifestMCPError);
+            const normalized = error as ManifestMCPError;
+            expect(normalized.code).toBe(
+              ManifestMCPErrorCode.RPC_CONNECTION_FAILED,
+            );
+            expect(normalized.message).toBe(message);
+            expect(normalized.details).toStrictEqual(details);
+            expect('cause' in normalized).toBe(false);
+          },
+        );
+      }
+
+      it.each([
+        {
+          name: 'throwing message getter',
+          create: () =>
+            Object.defineProperty(new Error('fetch failed'), 'message', {
+              get() {
+                throw new Error('diagnostic inspection failed');
+              },
+            }),
+        },
+        {
+          name: 'revoked proxy',
+          create: () => {
+            const { proxy, revoke } = Proxy.revocable(new Error(), {});
+            revoke();
+            return proxy;
+          },
+        },
+        {
+          name: 'throwing string coercion',
+          create: () => ({
+            [Symbol.toPrimitive]() {
+              throw new Error('diagnostic coercion failed');
+            },
+          }),
+        },
+      ])('normalizes a $name without another attempt', async ({ create }) => {
+        const { pending, operation, messagePrefix, details } =
+          failInitialization(create());
+
+        await expectConnectionError(
+          pending,
+          `${messagePrefix}: Error message unavailable`,
+          details,
+        );
+        expect(operation).toHaveBeenCalledOnce();
+        expect(withRetry).toHaveBeenCalledTimes(boundary === 'wallet' ? 0 : 1);
+      });
+
+      it.each([
+        ...(['code', 'message', 'details'] as const).map((property) => ({
+          name: `throwing SDK ${property} getter`,
+          create: () =>
+            Object.defineProperty(
+              new ManifestMCPError(
+                ManifestMCPErrorCode.QUERY_FAILED,
+                'fetch failed',
+              ),
+              property,
+              {
+                get() {
+                  throw new Error(`SDK ${property} inspection failed`);
+                },
+              },
+            ),
+        })),
+        ...(
+          [
+            ['code', Symbol('connection code')],
+            ['message', Symbol('connection message')],
+            ['code', 503],
+          ] as const
+        ).map(([property, value]) => ({
+          name: `non-string SDK ${property} (${typeof value})`,
+          create: () =>
+            Object.defineProperty(
+              new ManifestMCPError(
+                ManifestMCPErrorCode.QUERY_FAILED,
+                'fetch failed',
+              ),
+              property,
+              { value },
+            ),
+        })),
+        {
+          name: 'SDK get-trap proxy',
+          create: () =>
+            new Proxy(
+              new ManifestMCPError(
+                ManifestMCPErrorCode.QUERY_FAILED,
+                'fetch failed',
+              ),
+              {
+                get(target, property, receiver) {
+                  // Promise machinery must be able to deliver this rejection.
+                  if (property === 'then') return undefined;
+                  if (property === 'code') {
+                    throw new Error('SDK get trap failed');
+                  }
+                  return Reflect.get(target, property, receiver);
+                },
+              },
+            ),
+        },
+        ...[
+          'module',
+          'partial',
+          'sent',
+          'httpStatus',
+          'grpcCode',
+          'transportCode',
+        ].flatMap((property) =>
+          ['hidden getter', 'omitted proxy key'].map((kind) => ({
+            name: `SDK details ${property} ${kind}`,
+            create: () => {
+              const details =
+                kind === 'hidden getter'
+                  ? Object.defineProperty({}, property, {
+                      get() {
+                        throw new Error(`SDK ${property} inspection failed`);
+                      },
+                    })
+                  : new Proxy(
+                      {},
+                      {
+                        ownKeys: () => [],
+                        get(_target, key) {
+                          if (key === property) {
+                            throw new Error(
+                              `SDK ${property} inspection failed`,
+                            );
+                          }
+                        },
+                      },
+                    );
+              return new ManifestMCPError(
+                ManifestMCPErrorCode.QUERY_FAILED,
+                'fetch failed',
+                details,
+              );
+            },
+          })),
+        ),
+      ])(
+        'normalizes a $name at the connection boundary',
+        async ({ create }) => {
+          const { pending, operation, messagePrefix, details } =
+            failInitialization(create(), true, 0);
+
+          await expectConnectionError(
+            pending,
+            `${messagePrefix}: Error message unavailable`,
+            details,
+          );
+          expect(operation).toHaveBeenCalledOnce();
+          expect(withRetry).toHaveBeenCalledTimes(
+            boundary === 'wallet' ? 0 : 1,
+          );
+        },
+      );
+
+      it.each(['AbortError', 'TimeoutError', 'unreadable'])(
+        'does not turn a %s name into an outer connection retry',
+        async (name) => {
+          const original = new ManifestMCPError(
+            ManifestMCPErrorCode.QUERY_FAILED,
+            'fetch failed',
+            {
+              get extra() {
+                throw new Error('extra unavailable');
+              },
+            },
+          );
+          Object.defineProperty(
+            original,
+            'name',
+            name === 'unreadable'
+              ? {
+                  get() {
+                    throw new Error('name unavailable');
+                  },
+                }
+              : { value: name },
+          );
+          expect(isRetryableError(original)).toBe(false);
+          const { pending, invoke, operation, messagePrefix, details } =
+            failInitialization(original, true);
+          let attempts = 0;
+          const outer = withRetry<unknown>(
+            () => (++attempts === 1 ? pending : invoke()),
+            {
+              config: { maxRetries: 2, baseDelayMs: 0, maxDelayMs: 0 },
+            },
+          );
+          await outer.then(
+            () => {
+              throw new Error('Expected a terminal connection failure');
+            },
+            (error: unknown) => {
+              expect(error).toBeInstanceOf(ManifestMCPError);
+              const normalized = error as ManifestMCPError;
+              expect(normalized.code).toBe(
+                name === 'unreadable'
+                  ? ManifestMCPErrorCode.RPC_CONNECTION_FAILED
+                  : ManifestMCPErrorCode.QUERY_FAILED,
+              );
+              expect(normalized.message).toBe(
+                name === 'unreadable'
+                  ? `${messagePrefix}: Error message unavailable`
+                  : 'fetch failed',
+              );
+              expect(normalized.name).toBe(
+                name === 'unreadable' ? 'ManifestMCPError' : name,
+              );
+              expect(normalized.details).toStrictEqual(details);
+              expect('cause' in normalized).toBe(false);
+              expect(isRetryableError(normalized)).toBe(false);
+            },
+          );
+          expect(attempts).toBe(1);
+          expect(operation).toHaveBeenCalledOnce();
+        },
+      );
+
+      it.each(
+        [
+          ManifestMCPErrorCode.INVALID_CONFIG,
+          ManifestMCPErrorCode.OPERATION_CANCELLED,
+        ].flatMap((code) =>
+          ['module', 'partial', 'httpStatus', 'details', 'cause', 'name'].map(
+            (field) => ({ code, field }),
+          ),
+        ),
+      )(
+        'retains the terminal $code verdict when $field is unreadable',
+        async ({ code, field }) => {
+          const metadata = {
+            reason: 'keyfile locked',
+            expected: 'chain-a',
+            actual: 'chain-b',
+          };
+          const original = new ManifestMCPError(
+            code,
+            code === ManifestMCPErrorCode.OPERATION_CANCELLED
+              ? 'user cancelled'
+              : 'keyfile locked',
+            metadata,
+          );
+          const get = () => {
+            throw new Error(`${field} unavailable`);
+          };
+          if (field === 'details') {
+            Object.defineProperty(original, field, { get });
+          } else if (field === 'cause' || field === 'name') {
+            Object.defineProperty(original, field, { get });
+            Object.defineProperty(metadata, 'extra', { enumerable: true, get });
+          } else {
+            Object.defineProperty(metadata, field, { get });
+          }
+          const { pending, operation, details } = failInitialization(
+            original,
+            true,
+          );
+          await pending.then(
+            () => {
+              throw new Error('Expected a terminal SDK failure');
+            },
+            (error: unknown) => {
+              expect(error).toBeInstanceOf(ManifestMCPError);
+              const normalized = error as ManifestMCPError;
+              expect(normalized.code).toBe(code);
+              expect(normalized.message).toBe(original.message);
+              expect(normalized.details).toStrictEqual({
+                ...details,
+                ...(field === 'details'
+                  ? {}
+                  : {
+                      reason: 'keyfile locked',
+                      expected: 'chain-a',
+                      actual: 'chain-b',
+                    }),
+              });
+              expect('cause' in normalized).toBe(false);
+              expect(isRetryableError(normalized)).toBe(false);
+            },
+          );
+          expect(operation).toHaveBeenCalledOnce();
+          expect(withRetry).toHaveBeenCalledTimes(
+            boundary === 'wallet' ? 0 : 1,
+          );
+        },
+      );
+
+      it('retains independently readable details and caller endpoint precedence during repair', async () => {
+        const metadata = {
+          reason: 'wallet locked',
+          expected: 'chain-a',
+          actual: 'chain-b',
+          rpcUrl: 'https://supplied-rpc.example.com',
+          url: 'https://supplied-query.example.com',
+        };
+        const original = new ManifestMCPError(
+          ManifestMCPErrorCode.INVALID_CONFIG,
+          'keyfile locked',
+          Object.defineProperty({ ...metadata }, 'extra', {
+            enumerable: true,
+            get() {
+              throw new Error('extra unavailable');
+            },
+          }),
+        );
+        const { pending, operation } = failInitialization(original, true);
+        await pending.then(
+          () => {
+            throw new Error('Expected initialization to fail');
+          },
+          (error: unknown) => {
+            expect(error).toBeInstanceOf(ManifestMCPError);
+            const normalized = error as ManifestMCPError;
+            expect(normalized.code).toBe(ManifestMCPErrorCode.INVALID_CONFIG);
+            expect(normalized.message).toBe('keyfile locked');
+            expect(normalized.details).toStrictEqual(metadata);
+            expect('cause' in normalized).toBe(false);
+          },
+        );
+        expect(operation).toHaveBeenCalledOnce();
+      });
+
+      it.each(['terminal', 'transient', 'getter', 'inherited'] as const)(
+        'preserves an existing %s cause when repairing incidental details',
+        async (kind) => {
+          const cause =
+            kind === 'transient'
+              ? new Error('ECONNRESET')
+              : new ManifestMCPError(
+                  ManifestMCPErrorCode.TX_FAILED,
+                  'do not replay',
+                );
+          const original = new ManifestMCPError(
+            ManifestMCPErrorCode.QUERY_FAILED,
+            kind === 'transient' ? 'query failed' : 'fetch failed',
+            {
+              get extra() {
+                throw new Error('extra diagnostic unavailable');
+              },
+            },
+          );
+          if (kind === 'inherited') {
+            Object.setPrototypeOf(
+              original,
+              Object.create(Object.getPrototypeOf(original), {
+                cause: { value: cause },
+              }),
+            );
+          } else {
+            Object.defineProperty(
+              original,
+              'cause',
+              kind === 'getter' ? { get: () => cause } : { value: cause },
+            );
+          }
+          const retryable = kind === 'transient';
+          expect(isRetryableError(original)).toBe(retryable);
+          const { pending, operation, details } = failInitialization(
+            original,
+            true,
+            retryable ? 0 : 2,
+          );
+          await pending.then(
+            () => {
+              throw new Error('Expected initialization to fail');
+            },
+            (error: unknown) => {
+              expect(error).toBeInstanceOf(ManifestMCPError);
+              const normalized = error as ManifestMCPError;
+              expect(normalized.code).toBe(ManifestMCPErrorCode.QUERY_FAILED);
+              expect(normalized.message).toBe(original.message);
+              expect(normalized.details).toStrictEqual(details);
+              const descriptor = Object.getOwnPropertyDescriptor(
+                normalized,
+                'cause',
+              );
+              expect(descriptor?.value === cause).toBe(true);
+              expect(descriptor?.enumerable).toBe(false);
+              expect(isRetryableError(normalized)).toBe(retryable);
+            },
+          );
+          expect(operation).toHaveBeenCalledOnce();
+          expect(withRetry).toHaveBeenCalledTimes(
+            boundary === 'wallet' ? 0 : 1,
+          );
+        },
+      );
+
+      it('uses the conservative endpoint fallback when an existing cause cannot be read during repair', async () => {
+        const original = Object.defineProperty(
+          new ManifestMCPError(
+            ManifestMCPErrorCode.QUERY_FAILED,
+            'fetch failed',
+            {
+              get extra() {
+                throw new Error('extra diagnostic unavailable');
+              },
+            },
+          ),
+          'cause',
+          {
+            get() {
+              throw new Error('cause unavailable');
+            },
+          },
+        );
+        const { pending, operation, messagePrefix, details } =
+          failInitialization(original, true);
+        await expectConnectionError(
+          pending,
+          `${messagePrefix}: Error message unavailable`,
+          details,
+        );
+        expect(operation).toHaveBeenCalledOnce();
+        expect(withRetry).toHaveBeenCalledTimes(boundary === 'wallet' ? 0 : 1);
+      });
+
+      it.each([
+        { kind: 'ordinary', standalone: false, transient: true, owned: true },
+        {
+          kind: 'AbortError',
+          standalone: false,
+          transient: false,
+          owned: true,
+        },
+        {
+          kind: 'TimeoutError',
+          standalone: false,
+          transient: false,
+          owned: true,
+        },
+        {
+          kind: 'abort cause',
+          standalone: false,
+          transient: false,
+          owned: true,
+        },
+        {
+          kind: 'timeout cause',
+          standalone: false,
+          transient: false,
+          owned: true,
+        },
+        {
+          kind: 'permanent code',
+          standalone: false,
+          transient: false,
+          owned: false,
+        },
+        {
+          kind: 'permanent cause',
+          standalone: false,
+          transient: false,
+          owned: false,
+        },
+        {
+          kind: 'transient cause',
+          standalone: true,
+          transient: true,
+          owned: true,
+        },
+        { kind: 'HTTP 503', standalone: true, transient: true, owned: true },
+        { kind: 'gRPC 14', standalone: true, transient: true, owned: true },
+        { kind: 'HTTP 403', standalone: false, transient: false, owned: false },
+        { kind: 'gRPC 2', standalone: false, transient: false, owned: false },
+        {
+          kind: 'unreadable status',
+          standalone: false,
+          transient: false,
+          owned: false,
+        },
+        {
+          kind: 'unreadable name',
+          standalone: false,
+          transient: false,
+          owned: false,
+        },
+        {
+          kind: 'unreadable cause',
+          standalone: false,
+          transient: false,
+          owned: false,
+        },
+        {
+          kind: 'module getter',
+          standalone: false,
+          transient: true,
+          owned: true,
+        },
+        {
+          kind: 'AbortError module getter',
+          standalone: false,
+          transient: false,
+          owned: true,
+        },
+        {
+          kind: 'TimeoutError module getter',
+          standalone: false,
+          transient: false,
+          owned: true,
+        },
+        {
+          kind: 'AbortError transport getter',
+          standalone: false,
+          transient: false,
+          owned: true,
+        },
+        {
+          kind: 'TimeoutError transport getter',
+          standalone: false,
+          transient: false,
+          owned: true,
+        },
+      ])(
+        'preserves nested retry semantics for a repaired $kind envelope through Cosmos attribution',
+        async ({ kind, standalone, transient, owned }) => {
+          const facts: Record<string, unknown> = {
+            get extra() {
+              throw new Error('incidental diagnostic unavailable');
+            },
+          };
+          if (kind.startsWith('HTTP '))
+            facts.httpStatus = Number(kind.slice(5));
+          if (kind.startsWith('gRPC ')) facts.grpcCode = Number(kind.slice(5));
+          const original = new ManifestMCPError(
+            kind === 'permanent code'
+              ? ManifestMCPErrorCode.INVALID_CONFIG
+              : ManifestMCPErrorCode.RPC_CONNECTION_FAILED,
+            'connection ended',
+            facts,
+          );
+          if (kind === 'AbortError' || kind === 'TimeoutError')
+            original.name = kind;
+          if (kind.endsWith(' getter')) {
+            Object.defineProperty(
+              facts,
+              kind.endsWith('module getter') ? 'module' : 'transportCode',
+              {
+                get() {
+                  throw new Error('unused diagnostic unavailable');
+                },
+              },
+            );
+            if (kind.startsWith('AbortError')) original.name = 'AbortError';
+            if (kind.startsWith('TimeoutError')) original.name = 'TimeoutError';
+          }
+          if (kind.endsWith(' cause') && kind !== 'unreadable cause') {
+            Object.defineProperty(original, 'cause', {
+              value:
+                kind === 'permanent cause'
+                  ? new ManifestMCPError(
+                      ManifestMCPErrorCode.TX_FAILED,
+                      'reconcile',
+                    )
+                  : kind === 'transient cause'
+                    ? new Error('ECONNRESET')
+                    : new DOMException(
+                        'operation ended',
+                        kind === 'abort cause' ? 'AbortError' : 'TimeoutError',
+                      ),
+            });
+          }
+          if (kind.startsWith('unreadable ')) {
+            Object.defineProperty(
+              kind === 'unreadable status' ? facts : original,
+              kind === 'unreadable status' ? 'httpStatus' : kind.slice(11),
+              {
+                get() {
+                  throw new Error('retry diagnostic unavailable');
+                },
+              },
+            );
+          }
+          const envelopes = (error: Error, afterAttribution = false) => [
+            {
+              error,
+              // Attribution historically drops an already-retryable connection
+              // error's cause. Repairing unrelated details must not add retries.
+              retryable:
+                kind === 'transient cause' && afterAttribution
+                  ? false
+                  : standalone,
+            },
+            {
+              error: Object.defineProperty(new Error('fetch failed'), 'cause', {
+                value: error,
+                configurable: true,
+                writable: true,
+              }),
+              retryable: transient,
+            },
+            {
+              error: Object.assign(
+                new ManifestMCPError(
+                  ManifestMCPErrorCode.QUERY_FAILED,
+                  'transport deadline',
+                  { transportCode: 'ETIMEDOUT' },
+                ),
+                { cause: error },
+              ),
+              retryable: owned,
+            },
+          ];
+          for (const { error, retryable } of envelopes(original)) {
+            expect(isRetryableError(error)).toBe(retryable);
+          }
+
+          const { pending, operation } = failInitialization(original, true, 0);
+          const normalized = await pending.then(
+            () => {
+              throw new Error('Expected initialization to fail');
+            },
+            (error: unknown) => error as ManifestMCPError,
+          );
+          expect(normalized === original).toBe(false);
+          expect(operation).toHaveBeenCalledOnce();
+
+          let current = normalized;
+          for (let attribution = 0; attribution < 3; attribution += 1) {
+            for (const { error, retryable } of envelopes(
+              current,
+              attribution > 0,
+            )) {
+              expect(isRetryableError(error)).toBe(retryable);
+              const attempt = vi.fn().mockRejectedValue(error);
+              await expect(
+                withRetry(attempt, {
+                  config: { maxRetries: 2, baseDelayMs: 0, maxDelayMs: 0 },
+                }),
+              ).rejects.toBe(error);
+              expect(attempt).toHaveBeenCalledTimes(retryable ? 3 : 1);
+            }
+            if (attribution === 2) break;
+            if (current.details) delete current.details.module;
+            const manager = {
+              getQueryClient: vi.fn().mockRejectedValue(current),
+            } as unknown as CosmosClientManager;
+            const attributed = await cosmosQuery(
+              manager,
+              'bank',
+              'balances',
+            ).then(
+              () => {
+                throw new Error('Expected query acquisition to fail');
+              },
+              (error: unknown) => error as ManifestMCPError,
+            );
+            expect(attributed).not.toBe(current);
+            expect(attributed.details?.module).toBe('bank');
+            if (kind === 'transient cause')
+              expect('cause' in attributed).toBe(false);
+            current = attributed;
+          }
+        },
+      );
+
+      it.each(
+        [
+          'TX_FAILED',
+          'sent',
+          'partial',
+          'INVALID_CONFIG',
+          'NOT_FOUND',
+          'ENOTFOUND',
+          'HTTP 400',
+          'gRPC 5',
+          'AbortError',
+          'TimeoutError',
+        ].flatMap((causeKind) =>
+          ['connection ended', 'fetch failed'].flatMap((message) =>
+            ['module', 'extra'].map((field) => ({ causeKind, message, field })),
+          ),
+        ),
+      )(
+        'retains a $causeKind cause with $field unreadable and message "$message" through real connection attempts',
+        async ({ causeKind, message, field }) => {
+          const facts =
+            causeKind === 'TX_FAILED' || causeKind === 'sent'
+              ? { sent: true, transactionHash: 'A'.repeat(64) }
+              : causeKind === 'partial'
+                ? { partial: true, lease_uuid: 'paid-lease' }
+                : causeKind === 'HTTP 400'
+                  ? { httpStatus: 400 }
+                  : causeKind === 'gRPC 5'
+                    ? { httpStatus: 500, grpcCode: 5 }
+                    : {};
+          const cancellation =
+            causeKind === 'AbortError' || causeKind === 'TimeoutError';
+          const cause = cancellation
+            ? new DOMException('operation ended', causeKind)
+            : causeKind === 'ENOTFOUND'
+              ? Object.assign(new Error('lookup failed'), { code: 'ENOTFOUND' })
+              : new ManifestMCPError(
+                  causeKind === 'TX_FAILED'
+                    ? ManifestMCPErrorCode.TX_FAILED
+                    : causeKind === 'INVALID_CONFIG'
+                      ? ManifestMCPErrorCode.INVALID_CONFIG
+                      : causeKind === 'NOT_FOUND'
+                        ? ManifestMCPErrorCode.NOT_FOUND
+                        : ManifestMCPErrorCode.QUERY_FAILED,
+                  'upstream operation ended',
+                  facts,
+                );
+          const failedField = vi.fn(() => {
+            throw new Error('diagnostic unavailable');
+          });
+          const original = Object.assign(
+            new ManifestMCPError(
+              ManifestMCPErrorCode.RPC_CONNECTION_FAILED,
+              message,
+              Object.defineProperty({}, field, {
+                enumerable: true,
+                get: failedField,
+              }),
+            ),
+            { cause },
+          );
+          expect(isRetryableError(original)).toBe(false);
+
+          for (const enclosing of ['none', 'transient', 'owned deadline']) {
+            const retryable = cancellation && enclosing === 'owned deadline';
+            let finalFailure: Error | undefined;
+            const attempt = vi.fn(async () => {
+              const { pending, operation, callsBefore } = failInitialization(
+                original,
+                true,
+                0,
+              );
+              const normalized = await pending.then(
+                () => {
+                  throw new Error('Expected initialization to fail');
+                },
+                (error: unknown) => error as ManifestMCPError,
+              );
+              expect(operation).toHaveBeenCalledTimes(callsBefore + 1);
+              expect(normalized === original).toBe(false);
+              expect(normalized.code).toBe(
+                ManifestMCPErrorCode.RPC_CONNECTION_FAILED,
+              );
+              expect(normalized.message).toBe(message);
+              expect(normalized.name).toBe('ManifestMCPError');
+              let current = normalized;
+              for (let attribution = 0; attribution < 3; attribution += 1) {
+                const descriptor = Object.getOwnPropertyDescriptor(
+                  current,
+                  'cause',
+                );
+                expect(descriptor?.value === cause).toBe(true);
+                expect(descriptor?.enumerable).toBe(false);
+                if (cause instanceof ManifestMCPError)
+                  expect(cause.details).toStrictEqual(facts);
+                expect(isRetryableError(current)).toBe(false);
+                if (attribution === 2) break;
+                if (current.details) delete current.details.module;
+                current = await cosmosQuery(
+                  {
+                    getQueryClient: vi.fn().mockRejectedValue(current),
+                  } as unknown as CosmosClientManager,
+                  'bank',
+                  'balances',
+                ).then(
+                  () => {
+                    throw new Error('Expected query acquisition to fail');
+                  },
+                  (error: unknown) => error as ManifestMCPError,
+                );
+                expect(current.details?.module).toBe('bank');
+              }
+              const failure =
+                enclosing === 'none'
+                  ? current
+                  : Object.assign(
+                      enclosing === 'transient'
+                        ? new Error('fetch failed')
+                        : new ManifestMCPError(
+                            ManifestMCPErrorCode.QUERY_FAILED,
+                            'transport deadline',
+                            { transportCode: 'ETIMEDOUT' },
+                          ),
+                      { cause: current },
+                    );
+              expect(isRetryableError(failure)).toBe(retryable);
+              finalFailure = failure;
+              throw failure;
+            });
+            const rejection = await withRetry(attempt, {
+              config: { maxRetries: 2, baseDelayMs: 0, maxDelayMs: 0 },
+            }).then(
+              () => {
+                throw new Error('Expected enclosing operation to fail');
+              },
+              (error: unknown) => error,
+            );
+            // Assertion failures inside an attempt must escape the retry harness.
+            if (rejection !== finalFailure) throw rejection;
+            expect(attempt).toHaveBeenCalledTimes(retryable ? 3 : 1);
+          }
+          expect(failedField).toHaveBeenCalled();
+        },
+      );
+
+      it.each(['httpStatus', 'grpcCode', 'transportCode', 'partial', 'sent'])(
+        'does not copy a transient cause when inspecting %s fails',
+        async (field) => {
+          const failedField = vi.fn(() => {
+            throw new Error('classifier diagnostic unavailable');
+          });
+          const original = Object.assign(
+            new ManifestMCPError(
+              ManifestMCPErrorCode.RPC_CONNECTION_FAILED,
+              'connection ended',
+              Object.defineProperty({}, field, { get: failedField }),
+            ),
+            { cause: new Error('fetch failed') },
+          );
+          let finalFailure: Error | undefined;
+          const attempt = vi.fn(async () => {
+            const { pending, operation, callsBefore } = failInitialization(
+              original,
+              true,
+              0,
+            );
+            const normalized = await pending.then(
+              () => {
+                throw new Error('Expected initialization to fail');
+              },
+              (error: unknown) => error as ManifestMCPError,
+            );
+            expect(operation).toHaveBeenCalledTimes(callsBefore + 1);
+            expect(
+              Object.getOwnPropertyDescriptor(normalized, 'cause'),
+            ).toBeUndefined();
+            const attributed = await cosmosQuery(
+              {
+                getQueryClient: vi.fn().mockRejectedValue(normalized),
+              } as unknown as CosmosClientManager,
+              'bank',
+              'balances',
+            ).then(
+              () => {
+                throw new Error('Expected query acquisition to fail');
+              },
+              (error: unknown) => error as ManifestMCPError,
+            );
+            const wrapper = Object.assign(
+              new ManifestMCPError(
+                ManifestMCPErrorCode.QUERY_FAILED,
+                'fetch failed',
+                { transportCode: 'ETIMEDOUT' },
+              ),
+              { cause: attributed },
+            );
+            expect(isRetryableError(wrapper)).toBe(false);
+            finalFailure = wrapper;
+            throw wrapper;
+          });
+          const rejection = await withRetry(attempt, {
+            config: { maxRetries: 2, baseDelayMs: 0, maxDelayMs: 0 },
+          }).then(
+            () => {
+              throw new Error('Expected enclosing operation to fail');
+            },
+            (error: unknown) => error,
+          );
+          if (rejection !== finalFailure) throw rejection;
+          expect(attempt).toHaveBeenCalledOnce();
+          expect(failedField).toHaveBeenCalled();
+        },
+      );
+
+      it.each(['name', 'cause'])(
+        'keeps a repaired %s that becomes unreadable terminal through later attribution',
+        async (field) => {
+          const original = new ManifestMCPError(
+            ManifestMCPErrorCode.RPC_CONNECTION_FAILED,
+            'connection ended',
+            {
+              get extra() {
+                throw new Error('incidental diagnostic unavailable');
+              },
+            },
+          );
+          const { pending, operation } = failInitialization(original, true, 0);
+          const normalized = await pending.then(
+            () => {
+              throw new Error('Expected initialization to fail');
+            },
+            (error: unknown) => error as ManifestMCPError,
+          );
+          Object.defineProperty(normalized, field, {
+            get() {
+              throw new Error('changed diagnostic unavailable');
+            },
+          });
+          const manager = {
+            getQueryClient: vi.fn().mockRejectedValue(normalized),
+          } as unknown as CosmosClientManager;
+          const attributed = await cosmosQuery(
+            manager,
+            'bank',
+            'balances',
+          ).then(
+            () => {
+              throw new Error('Expected query acquisition to fail');
+            },
+            (error: unknown) => error as ManifestMCPError,
+          );
+          expect(attributed === normalized).toBe(false);
+          expect(attributed.code).toBe(
+            ManifestMCPErrorCode.RPC_CONNECTION_FAILED,
+          );
+          expect(attributed.message).toBe('connection ended');
+          expect(attributed.details?.module).toBe('bank');
+          const wrapper = Object.assign(
+            new ManifestMCPError(
+              ManifestMCPErrorCode.QUERY_FAILED,
+              'fetch failed',
+              {
+                transportCode: 'ETIMEDOUT',
+              },
+            ),
+            { cause: attributed },
+          );
+          expect(isRetryableError(wrapper)).toBe(false);
+          const attempt = vi.fn().mockRejectedValue(wrapper);
+          await expect(
+            withRetry(attempt, {
+              config: { maxRetries: 2, baseDelayMs: 0, maxDelayMs: 0 },
+            }),
+          ).rejects.toBe(wrapper);
+          expect(attempt).toHaveBeenCalledOnce();
+          expect(operation).toHaveBeenCalledOnce();
+        },
+      );
+
+      it.each(['extra getter', 'ownKeys trap'])(
+        'preserves the SDK verdict when only details %s is unreadable',
+        async (kind) => {
+          const facts = { sent: true, transactionHash: 'A'.repeat(64) };
+          const details =
+            kind === 'extra getter'
+              ? Object.defineProperty({ ...facts }, 'extra', {
+                  enumerable: true,
+                  get() {
+                    throw new Error('extra diagnostic unavailable');
+                  },
+                })
+              : new Proxy(facts, {
+                  ownKeys() {
+                    throw new Error('details enumeration unavailable');
+                  },
+                });
+          const original = new ManifestMCPError(
+            ManifestMCPErrorCode.INVALID_CONFIG,
+            'keyfile locked',
+            details,
+          );
+          const {
+            pending,
+            operation,
+            details: endpoint,
+          } = failInitialization(original, true);
+
+          await pending.then(
+            () => {
+              throw new Error('Expected initialization to fail');
+            },
+            (error: unknown) => {
+              expect(error).toBeInstanceOf(ManifestMCPError);
+              expect(error === original).toBe(false);
+              const normalized = error as ManifestMCPError;
+              expect(normalized.code).toBe(ManifestMCPErrorCode.INVALID_CONFIG);
+              expect(normalized.message).toBe('keyfile locked');
+              expect(normalized.details).toStrictEqual({
+                ...facts,
+                ...endpoint,
+              });
+              expect('cause' in normalized).toBe(false);
+            },
+          );
+          expect(operation).toHaveBeenCalledOnce();
+          expect(withRetry).toHaveBeenCalledTimes(
+            boundary === 'wallet' ? 0 : 1,
+          );
+        },
+      );
+
+      it.each([
+        { name: 'HTTP 403', status: { httpStatus: 403 } },
+        { name: 'gRPC 2', status: { httpStatus: 500, grpcCode: 2 } },
+        {
+          name: 'HTTP 403 getter',
+          status: {
+            get httpStatus() {
+              return 403;
+            },
+          },
+        },
+        {
+          name: 'submitted getter',
+          status: {
+            get sent() {
+              return true;
+            },
+          },
+        },
+        {
+          name: 'partial getter',
+          status: {
+            get partial() {
+              return true;
+            },
+          },
+        },
+      ])(
+        'retains terminal $name when other details cannot be enumerated',
+        async ({ status }) => {
+          const original = new ManifestMCPError(
+            ManifestMCPErrorCode.QUERY_FAILED,
+            'fetch failed',
+            new Proxy(status, {
+              ownKeys() {
+                throw new Error('details enumeration unavailable');
+              },
+            }),
+          );
+          expect(isRetryableError(original)).toBe(false);
+          const { pending, operation, details } = failInitialization(
+            original,
+            true,
+          );
+          await pending.then(
+            () => {
+              throw new Error('Expected initialization to fail');
+            },
+            (error: unknown) => {
+              expect(error).toBeInstanceOf(ManifestMCPError);
+              const normalized = error as ManifestMCPError;
+              expect(normalized.code).toBe(ManifestMCPErrorCode.QUERY_FAILED);
+              expect(normalized.message).toBe('fetch failed');
+              expect(normalized.details).toStrictEqual({
+                ...status,
+                ...details,
+              });
+              expect(isRetryableError(normalized)).toBe(false);
+              expect('cause' in normalized).toBe(false);
+            },
+          );
+          expect(operation).toHaveBeenCalledOnce();
+          expect(withRetry).toHaveBeenCalledTimes(
+            boundary === 'wallet' ? 0 : 1,
+          );
+        },
+      );
+
+      it.each([Symbol('fetch failed'), ['fetch failed']])(
+        'does not coerce a non-string Error message (%s) into a transient connection error',
+        async (message) => {
+          const original = Object.defineProperty(new Error(), 'message', {
+            value: message,
+          });
+          const { pending, operation, messagePrefix, details } =
+            failInitialization(original);
+
+          await expectConnectionError(
+            pending,
+            `${messagePrefix}: Error message unavailable`,
+            details,
+          );
+          await pending.catch((error: unknown) => {
+            expect(isRetryableError(error)).toBe(false);
+          });
+          expect(operation).toHaveBeenCalledOnce();
+          expect(withRetry).toHaveBeenCalledTimes(
+            boundary === 'wallet' ? 0 : 1,
+          );
+        },
+      );
+
+      it('preserves the identity and details of a readable SDK error', async () => {
+        const original = new ManifestMCPError(
+          ManifestMCPErrorCode.INVALID_CONFIG,
+          'custom configuration error',
+          { source: boundary },
+        );
+        const { pending, operation } = failInitialization(original, true);
+
+        await expect(pending).rejects.toBe(original);
+        expect(operation).toHaveBeenCalledOnce();
+        expect(withRetry).toHaveBeenCalledTimes(boundary === 'wallet' ? 0 : 1);
+      });
+    },
+  );
 
   describe('getInstance', () => {
     it('returns same instance for same chainId:rpcUrl', () => {
@@ -898,6 +2082,73 @@ describe('CosmosClientManager', () => {
       expect(mockSC.disconnect).toHaveBeenCalledOnce();
       expect(mockConnectWithSigner).toHaveBeenCalledOnce();
     });
+
+    it.each(['message getter', 'revoked proxy', 'string coercion', 'logger'])(
+      'preserves the superseded verdict when cleanup diagnostics fail via %s',
+      async (failure) => {
+        let cleanupError: unknown = new Error('cleanup failed');
+        if (failure === 'message getter') {
+          cleanupError = Object.defineProperty(new Error(), 'message', {
+            get() {
+              throw new Error('cleanup message inspection failed');
+            },
+          });
+        } else if (failure === 'revoked proxy') {
+          const { proxy, revoke } = Proxy.revocable({}, {});
+          revoke();
+          cleanupError = proxy;
+        } else if (failure === 'string coercion') {
+          cleanupError = {
+            [Symbol.toPrimitive]() {
+              throw new Error('cleanup coercion failed');
+            },
+          };
+        }
+        const signer = await makeWallet().getSigner();
+        let releaseSigner!: () => void;
+        const wallet = makeWallet({
+          getSigner: vi.fn<WalletProvider['getSigner']>(
+            () =>
+              new Promise((resolve) => {
+                releaseSigner = () => resolve(signer);
+              }),
+          ),
+        });
+        let disconnectCalls = 0;
+        const orphan = {
+          getChainId: vi.fn().mockResolvedValue('test-chain'),
+          disconnect() {
+            disconnectCalls++;
+            throw cleanupError;
+          },
+        };
+        mockConnectWithSigner.mockResolvedValue(
+          orphan as unknown as SigningStargateClient,
+        );
+        const manager = CosmosClientManager.getInstance(makeConfig(), wallet);
+        const logger = makeSpyLogger();
+        if (failure === 'logger') {
+          logger.debug.mockImplementation(() => {
+            throw new Error('cleanup logger failed');
+          });
+        }
+        manager.setLogger(logger);
+        const pending = manager.getSigningClient();
+        manager.disconnect();
+        releaseSigner();
+
+        await expect(pending).rejects.toMatchObject({
+          code: ManifestMCPErrorCode.RPC_CONNECTION_FAILED,
+          message: expect.stringContaining('superseded'),
+          details: {
+            rpcUrl: 'https://rpc.example.com',
+            reason: 'superseded',
+          },
+        });
+        expect(disconnectCalls).toBe(1);
+        expect(mockConnectWithSigner).toHaveBeenCalledOnce();
+      },
+    );
 
     it('a new config cannot supersede another holder’s pending signing initialization', async () => {
       let resolveSigner!: (value: any) => void;

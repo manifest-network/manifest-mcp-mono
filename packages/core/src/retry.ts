@@ -1,5 +1,9 @@
 import type { QueryErrorDetails } from './internals/classify-query-error.js';
 import { errorChain } from './internals/error-chain.js';
+import {
+  isErrorInspectionFailure,
+  markErrorInspectionFailure,
+} from './internals/error-inspection-failure.js';
 import { abortableSleep, abortReason } from './options.js';
 import {
   ManifestMCPError,
@@ -145,6 +149,71 @@ function isTransientErrorMessage(message: string): boolean {
   return false;
 }
 
+// Keep only lexical verdicts when presentation redacts a message. Never retain
+// the original diagnostic text (which may be a secret) or invent public metadata.
+const redactedMessageVerdicts = new WeakMap<
+  Error,
+  { displayMessage: string; permanent: boolean; transient: boolean }
+>();
+
+// A non-retryable repair is not necessarily permanent. Keep only the provenance
+// needed to carry its readable cancellation name and existing cause through later
+// attribution using the standard error-chain rules. Already-retryable repairs
+// retain the established attribution behavior, without copying their causes.
+const repairedErrorContexts = new WeakSet<Error>();
+
+/** Internal: retain readable context for a non-retryable diagnostic repair. */
+export function preserveRepairedErrorContext(error: Error): void {
+  repairedErrorContexts.add(error);
+}
+
+/** Internal: preserve the existing text policy before a boundary redacts it. */
+export function preserveRetryMessageVerdict(
+  error: Error,
+  message: string,
+): void {
+  redactedMessageVerdicts.set(error, {
+    displayMessage: error.message,
+    permanent: message.toLowerCase().includes('enotfound'),
+    transient: isTransientErrorMessage(message),
+  });
+}
+
+function preservedMessageVerdicts(error: Error) {
+  const verdicts = redactedMessageVerdicts.get(error);
+  // Error messages remain mutable. Once a consumer replaces the public text,
+  // classify that text normally instead of retaining a stale lexical verdict.
+  return verdicts && verdicts.displayMessage === error.message
+    ? verdicts
+    : undefined;
+}
+
+/** Internal: carry private verdicts when readable attribution rebuilds an error. */
+export function preserveRetryVerdicts(source: Error, target: Error): void {
+  if (isErrorInspectionFailure(source)) markErrorInspectionFailure(target);
+  const messageVerdicts = redactedMessageVerdicts.get(source);
+  if (messageVerdicts) redactedMessageVerdicts.set(target, messageVerdicts);
+  if (repairedErrorContexts.has(source)) {
+    repairedErrorContexts.add(target);
+    try {
+      const name = source.name;
+      if (name === 'AbortError' || name === 'TimeoutError') target.name = name;
+      const cause = (source as Error & { cause?: unknown }).cause;
+      if (cause !== undefined) {
+        Object.defineProperty(target, 'cause', {
+          value: cause,
+          configurable: true,
+          writable: true,
+        });
+      }
+    } catch {
+      // A consumer may replace previously repaired fields with hostile getters.
+      // Failed inspection still vetoes retries through any enclosing error.
+      markErrorInspectionFailure(target);
+    }
+  }
+}
+
 function errorCode(error: Error): string {
   const code = (error as Error & { code?: unknown }).code;
   return typeof code === 'string' ? code : '';
@@ -171,10 +240,12 @@ function queryStatusRetryability(error: Error): boolean | undefined {
 }
 
 function isPermanentError(error: Error): boolean {
+  if (isErrorInspectionFailure(error)) return true;
   // A generic "fetch failed" wrapper must not conceal NXDOMAIN on its cause.
   if (
     errorCode(error).toLowerCase() === 'enotfound' ||
-    error.message.toLowerCase().includes('enotfound')
+    (preservedMessageVerdicts(error)?.permanent ??
+      error.message.toLowerCase().includes('enotfound'))
   )
     return true;
   if (queryStatusRetryability(error) === false) return true;
@@ -187,17 +258,8 @@ function isPermanentError(error: Error): boolean {
   );
 }
 
-/**
- * Classify an error and its causes. A native abort/deadline has no ownership
- * information by itself. Only a query/connection boundary that owns the failed
- * transport attempt may annotate it with `transportCode: 'ETIMEDOUT'`.
- * Pass the whole-operation signal to suppress retry after caller cancellation.
- */
-export function isRetryableError(
-  error: unknown,
-  options: { signal?: AbortSignal } = {},
-): boolean {
-  if (options.signal?.aborted) return false;
+/** Shared throwing inspection; callers choose whether failed inspection is a veto. */
+function classifyRetryable(error: unknown): boolean {
   if (!(error instanceof Error)) return false;
   // An outer permanent/submitted verdict is final. Do not inspect retained
   // diagnostic causes that cannot change it and may have hostile accessors.
@@ -226,10 +288,43 @@ export function isRetryableError(
     chain.some(
       (entry) =>
         queryStatusRetryability(entry) === true ||
-        isTransientErrorMessage(entry.message) ||
+        (preservedMessageVerdicts(entry)?.transient ??
+          isTransientErrorMessage(entry.message)) ||
         isTransientErrorMessage(errorCode(entry)),
     )
   );
+}
+
+/** Internal: distinguish unreadable diagnostics from an ordinary permanent verdict. */
+export function retryInspectionFails(error: unknown): boolean {
+  try {
+    classifyRetryable(error);
+    return false;
+  } catch {
+    return true;
+  }
+}
+
+/**
+ * Classify an error and its causes. A native abort/deadline has no ownership
+ * information by itself. Only a query/connection boundary that owns the failed
+ * transport attempt may annotate it with `transportCode: 'ETIMEDOUT'`.
+ * Pass the whole-operation signal to suppress retry after caller cancellation.
+ * An exception while inspecting the error or its standard causes returns false;
+ * withRetry preserves the original failure rather than the inspection exception.
+ */
+export function isRetryableError(
+  error: unknown,
+  options: { signal?: AbortSignal } = {},
+): boolean {
+  if (options.signal?.aborted) return false;
+  try {
+    return classifyRetryable(error);
+  } catch {
+    // Unreadable diagnostics cannot establish safe replay. Keep this boundary
+    // around the entire inspection so withRetry preserves the original error.
+    return false;
+  }
 }
 
 /**

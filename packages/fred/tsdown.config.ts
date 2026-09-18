@@ -6,6 +6,7 @@ export default defineConfig({
   // has no import edge to it, so do not emit/publish its 258 KB implementation.
   entry: [
     ...packageEntries(),
+    '!src/__test-utils__/**',
     '!src/generated/fred-manifest-schema-validator.ts',
   ],
   format: 'esm',

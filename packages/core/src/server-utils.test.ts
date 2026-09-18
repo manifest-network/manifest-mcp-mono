@@ -20,6 +20,27 @@ import { buildTxResult } from './transactions/utils.js';
 import { ManifestMCPError, ManifestMCPErrorCode } from './types.js';
 
 describe('sanitizeForModelText', () => {
+  it.each([
+    ['DEL', '\u007f'],
+    ['NEL', '\u0085'],
+    ['C1 CSI', '\u009b31m'],
+    ['soft hyphen', '\u00ad'],
+  ])(
+    'removes %s from model text while retaining raw log text',
+    (_name, control) => {
+      const text = `before${control}after`;
+      expect(sanitizeForModelText(text)).toBe('beforeafter');
+      expect(sanitizeForLogging(text)).toBe(text);
+    },
+  );
+
+  it('reuses the visible long diagnostic while applying the code-point cap', () => {
+    const text =
+      '\u001b[31mé😀\u001b[0m provider returned an error while handling this deployment and another diagnostic follows';
+    expect(sanitizeForModelText(text, 2)).toBe('é😀…');
+    expect(sanitizeForLogging(text)).toBe(text);
+  });
+
   it('redacts a mnemonic even when terminal controls initially obscure its shape', () => {
     const mnemonic = `\u001b[31m${Array(12).fill('abandon').join(' ')}\u001b[0m`;
     expect(sanitizeForModelText(mnemonic)).toBe(

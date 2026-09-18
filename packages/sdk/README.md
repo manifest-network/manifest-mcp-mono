@@ -144,7 +144,7 @@ Explicitly injecting any `fetch` opts **out** of the automatic guard and its mis
 
 ## Subpath map
 
-The root barrel carries the client factories, branded types (`parse*` / `as*`), the ports, the error vocabulary, retry helpers (`withRetry` / `isRetryableError`), and config; domain-operation functions live on scoped, tree-shakable subpaths. Import retry helpers from the SDK so they share its pinned core dependency with the error producers. See the [faucet-status retry example](../../docs/library-usage.md#errors) for per-attempt deadlines and overall cancellation.
+The root barrel carries the client factories, branded types (`parse*` / `as*`), the ports, the error vocabulary, retry helpers (`withRetry` / `isRetryableError`), and config; domain-operation functions live on scoped, tree-shakable subpaths. Import retry helpers from the SDK so they share its pinned core dependency with the error producers. Exceptions encountered while inspecting an error or its standard `.cause` chain make classification return false; `withRetry` preserves the original rejection without another attempt or `onRetry`. Grouped errors are not traversed. See the [faucet-status retry example and custom-error boundary](../../docs/library-usage.md#errors) for details, per-attempt deadlines and overall cancellation.
 
 | Import | What's there |
 |--------|--------------|

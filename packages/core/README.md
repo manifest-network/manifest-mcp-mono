@@ -19,7 +19,7 @@ npm install @manifest-network/manifest-mcp-core
 - **Tool annotation helpers** (`tool-metadata.ts`) -- `readOnlyAnnotations`, `mutatingAnnotations`, `manifestMeta` (versioned `_meta.manifest` payload, `MANIFEST_TOOL_META_VERSION = 1`)
 - **Wallet providers** (`wallet/`) -- `MnemonicWalletProvider` (BIP-39), `signArbitraryWithAmino` (ADR-036)
 - **Logger** (`logger.ts`) -- Leveled logger (stderr output; defaults to `warn`, configurable via `logger.setLevel()`; the node package's bootstrap reads `LOG_LEVEL` and applies it)
-- **Retry** (`retry.ts`) -- Exponential backoff with transient/permanent error classification
+- **Retry** (`retry.ts`) -- Exponential backoff with transient/permanent error classification. Exceptions encountered while inspecting an error or its standard `.cause` chain stop retries and preserve the original rejection. See the [retry contract](../../docs/library-usage.md#errors).
 - **Validation** (`validation.ts`) -- Input validation helpers (`requireString`, `requireUuid`, `parseArgs`, etc.)
 
 ## Supported modules

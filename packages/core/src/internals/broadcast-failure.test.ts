@@ -7,6 +7,7 @@ import {
 } from '../__test-utils__/mocks.js';
 import { ManifestMCPError, ManifestMCPErrorCode } from '../types.js';
 import {
+  attributeBroadcastFailure,
   installBroadcastFailureGuard,
   isOwnedBroadcastFailure,
 } from './broadcast-failure.js';
@@ -20,6 +21,50 @@ afterEach(() => {
 });
 
 describe('owned inclusion-timeout receiver and provenance boundaries', () => {
+  it.each([false, true])(
+    'redacts a mnemonic before adding owned transaction context while retaining local cause and receipt (controls: %s)',
+    async (controls) => {
+      const f = await makeInclusionTimeoutFixture();
+      f.installGuard();
+      const mnemonic = `${'abandon '.repeat(11)}about`;
+      const message = controls ? `\u001b[31m${mnemonic}\u001b[0m` : mnemonic;
+      const original = new Error(message);
+      f.comet.txSearchAll.mockRejectedValue(original);
+      const pending = f.client
+        .signAndBroadcast(f.sender, f.messages, f.fee)
+        .then(
+          () => ({ error: undefined }),
+          (error: unknown) => ({ error }),
+        );
+      await vi.advanceTimersByTimeAsync(2);
+      const { error } = await pending;
+      const attributed = attributeBroadcastFailure(
+        error,
+        'Tx bank send failed: ',
+        { module: 'bank', subcommand: 'send', args: [] },
+      );
+      expect(attributed).toBeInstanceOf(ManifestMCPError);
+      expect(attributed?.message).toBe(
+        'Tx bank send failed: [REDACTED - possible mnemonic]',
+      );
+      expectExactDetails(attributed, {
+        sent: true,
+        transactionHash: f.hash,
+        module: 'bank',
+        subcommand: 'send',
+        args: [],
+      });
+      expect(Object.getOwnPropertyDescriptor(attributed, 'cause')?.value).toBe(
+        error,
+      );
+      expect(Object.getOwnPropertyDescriptor(error, 'cause')?.value).toBe(
+        original,
+      );
+      expect(original.message).toBe(message);
+      expect(f.comet.broadcastTxSync).toHaveBeenCalledOnce();
+    },
+  );
+
   it('preserves a cached sequence receiver and invalidates the cache after the owned timeout', async () => {
     const f = await makeInclusionTimeoutFixture();
     f.installGuard();

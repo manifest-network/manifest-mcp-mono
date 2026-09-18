@@ -28,6 +28,8 @@
  * contain the phrase nested inside other text.
  */
 
+import { diagnosticField } from './error-diagnostics.js';
+
 /** Permissive UUID pattern (RFC-4122 8-4-4-4-12, version byte lenient). */
 const UUID_PATTERN =
   /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
@@ -67,18 +69,31 @@ export interface DeployErrorClassification {
  * `JSON.stringify(err)` produces this shape in some SDKs.
  */
 function pickEnvelope(raw: unknown): unknown {
-  if (raw !== null && typeof raw === 'object') {
-    const r = raw as { error?: unknown };
-    if (r.error !== null && typeof r.error === 'object') return r.error;
-  }
+  const inner = diagnosticField(raw, 'error');
+  if (inner !== null && typeof inner === 'object') return inner;
   return raw;
+}
+
+function envelopeDetails(envelope: unknown): unknown {
+  const details = diagnosticField(envelope, 'details');
+  try {
+    return details !== null &&
+      typeof details === 'object' &&
+      !Array.isArray(details)
+      ? details
+      : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 export function classifyDeployError(
   err: unknown,
   opts: { expectedCustomDomain?: string } = {},
 ): DeployErrorClassification {
-  const expectedCustomDomain = opts.expectedCustomDomain;
+  const rawDomain = diagnosticField(opts, 'expectedCustomDomain');
+  const expectedCustomDomain =
+    typeof rawDomain === 'string' ? rawDomain : undefined;
   const e = pickEnvelope(err);
 
   if (e === null || typeof e !== 'object') {
@@ -91,14 +106,9 @@ export function classifyDeployError(
     );
   }
 
-  const envelope = e as { message?: unknown; details?: unknown };
-  const message = typeof envelope.message === 'string' ? envelope.message : '';
-  const details =
-    envelope.details !== null &&
-    typeof envelope.details === 'object' &&
-    !Array.isArray(envelope.details)
-      ? (envelope.details as { lease_uuid?: unknown })
-      : {};
+  const rawMessage = diagnosticField(e, 'message');
+  const message = typeof rawMessage === 'string' ? rawMessage : '';
+  const details = envelopeDetails(e);
 
   // Partial-success trigger: structured `details.partial === true`
   // discriminant (the ENG-280 split surfaces it on the partial-success wrap),
@@ -107,11 +117,12 @@ export function classifyDeployError(
   // message merely contains the phrase as a substring (defended by case #5 in
   // the CJS test). `=== true` is strict to preserve the anti-false-positive
   // discipline (a truthy-but-non-`true` flag must not trigger cleanup).
-  const partialFlag = (details as { partial?: unknown }).partial === true;
+  const partialFlag = diagnosticField(details, 'partial') === true;
   if (partialFlag || message.startsWith(PARTIAL_PREFIX)) {
     let leaseUuid: string | undefined;
-    if (typeof details.lease_uuid === 'string') {
-      leaseUuid = details.lease_uuid;
+    const rawLeaseUuid = diagnosticField(details, 'lease_uuid');
+    if (typeof rawLeaseUuid === 'string') {
+      leaseUuid = rawLeaseUuid;
     } else {
       const m = message.match(UUID_PATTERN);
       if (m) leaseUuid = m[0];
@@ -121,9 +132,8 @@ export function classifyDeployError(
     // for the same anti-false-positive reason as `partial` above: a
     // truthy-but-not-`true` value must not soften destructive advice.
     const readinessUnconfirmed =
-      (details as { readiness_unconfirmed?: unknown }).readiness_unconfirmed ===
-      true;
-    const rawStep = (details as { failedStep?: unknown }).failedStep;
+      diagnosticField(details, 'readiness_unconfirmed') === true;
+    const rawStep = diagnosticField(details, 'failedStep');
     const failedStep = FAILED_STEPS.find((s) => s === rawStep);
     return finalize(
       {

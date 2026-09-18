@@ -83,6 +83,11 @@ import {
   formatEndpointAsUrl,
   normalizeFredUrl,
 } from './internals/connection.js';
+import {
+  contextualError,
+  diagnosticField,
+  diagnosticMessage,
+} from './internals/error-diagnostics.js';
 import { evaluateReadinessFromFredResponse } from './internals/evaluate-readiness-from-fred.js';
 import {
   EMPTY_DENOM_MAP,
@@ -1127,11 +1132,11 @@ async function estimateFees(
     // fall back to `SIMULATION_FAILED` only for untyped failures.
     // The prior comment claimed code-preservation but the code
     // unconditionally cast to `SIMULATION_FAILED`.
-    const msg = `Failed to estimate create-lease fee: ${err instanceof Error ? err.message : String(err)}`;
-    if (err instanceof ManifestMCPError) {
-      throw new ManifestMCPError(err.code, msg);
-    }
-    throw new ManifestMCPError(ManifestMCPErrorCode.SIMULATION_FAILED, msg);
+    throw contextualError(
+      err,
+      ManifestMCPErrorCode.SIMULATION_FAILED,
+      'Failed to estimate create-lease fee: ',
+    );
   }
 
   // FeeEstimateResult shape (per packages/core/src/types.ts):
@@ -1557,15 +1562,11 @@ async function retrySetDomainAndComplete(
     // `ManifestMCPError(INVALID_CONFIG)` for validation failures — the
     // typed branch here is LIVE for the canonical chain-side errors
     // (FQDN shape, reserved-suffix match, etc.).
-    const reason =
-      err instanceof Error
-        ? `retry_set_domain set-item-custom-domain failed for lease ${leaseUuid}: ${err.message}`
-        : `retry_set_domain set-item-custom-domain failed for lease ${leaseUuid}: ${String(err)}`;
-    const code =
-      err instanceof ManifestMCPError
-        ? err.code
-        : ManifestMCPErrorCode.TX_FAILED;
-    throw new ManifestMCPError(code, reason);
+    throw contextualError(
+      err,
+      ManifestMCPErrorCode.TX_FAILED,
+      `retry_set_domain set-item-custom-domain failed for lease ${leaseUuid}: `,
+    );
   }
 
   // Resolve the lease + provider URL via on-chain queries. The
@@ -1608,15 +1609,11 @@ async function retrySetDomainAndComplete(
     //     path); untyped → TX_FAILED fallback.
     // Typed branch is LIVE for the canonical chain-side errors at this
     // catch — both upstream call sites genuinely emit ManifestMCPError.
-    const reason =
-      err instanceof Error
-        ? `retry_set_domain failed to resolve provider for lease ${leaseUuid}: ${err.message}`
-        : `retry_set_domain failed to resolve provider for lease ${leaseUuid}: ${String(err)}`;
-    const code =
-      err instanceof ManifestMCPError
-        ? err.code
-        : ManifestMCPErrorCode.TX_FAILED;
-    throw new ManifestMCPError(code, reason);
+    throw contextualError(
+      err,
+      ManifestMCPErrorCode.TX_FAILED,
+      `retry_set_domain failed to resolve provider for lease ${leaseUuid}: `,
+    );
   }
 
   // Upload the manifest payload via the ADR-036 lease-data auth token
@@ -1648,15 +1645,11 @@ async function retrySetDomainAndComplete(
     // against future deps that DO throw typed errors (e.g. a hypothetical
     // core dependency in the upload path). For the typical fred-only
     // case, the fallback `TX_FAILED` is what surfaces.
-    const reason =
-      err instanceof Error
-        ? `retry_set_domain manifest upload failed for lease ${leaseUuid}: ${err.message}`
-        : `retry_set_domain manifest upload failed for lease ${leaseUuid}: ${String(err)}`;
-    const code =
-      err instanceof ManifestMCPError
-        ? err.code
-        : ManifestMCPErrorCode.TX_FAILED;
-    throw new ManifestMCPError(code, reason);
+    throw contextualError(
+      err,
+      ManifestMCPErrorCode.TX_FAILED,
+      `retry_set_domain manifest upload failed for lease ${leaseUuid}: `,
+    );
   }
 
   // Poll until the provider reports ACTIVE + running. Uses the LOWER-
@@ -1718,33 +1711,41 @@ async function retrySetDomainAndComplete(
     // is NOT a failure — the domain was claimed and the manifest uploaded, so
     // the lease is live and may be starting. It gets its own code so a caller
     // never reads "transaction failed" for a deployment that is merely slow.
-    if (err instanceof LeaseReadinessUnconfirmedError) {
+    let readinessUnconfirmed = false;
+    try {
+      readinessUnconfirmed = err instanceof LeaseReadinessUnconfirmedError;
+    } catch {
+      // Unreadable attribution cannot suppress the lease recovery diagnostic.
+    }
+    if (readinessUnconfirmed) {
+      const details = diagnosticField(err, 'details');
+      const lastState = diagnosticField(details, 'last_state');
+      const lastProvisionStatus = diagnosticField(
+        details,
+        'last_provision_status',
+      );
       throw new ManifestMCPError(
         ManifestMCPErrorCode.DEPLOY_READINESS_UNCONFIRMED,
-        `retry_set_domain completed for lease ${leaseUuid}, but its readiness could not be confirmed: ${err.message}`,
+        `retry_set_domain completed for lease ${leaseUuid}, but its readiness could not be confirmed: ${diagnosticMessage(err)}`,
         {
           readiness_unconfirmed: true,
           lease_uuid: leaseUuid,
           partial: true,
-          poll_reason: err.reason,
-          ...(err.details.last_state !== undefined && {
-            last_state: err.details.last_state,
+          poll_reason: diagnosticField(err, 'reason'),
+          ...(lastState !== undefined && {
+            last_state: lastState,
           }),
-          ...(err.details.last_provision_status !== undefined && {
-            last_provision_status: err.details.last_provision_status,
+          ...(lastProvisionStatus !== undefined && {
+            last_provision_status: lastProvisionStatus,
           }),
         },
       );
     }
-    const reason =
-      err instanceof Error
-        ? `retry_set_domain pollLeaseUntilReady failed for lease ${leaseUuid}: ${err.message}`
-        : `retry_set_domain pollLeaseUntilReady failed for lease ${leaseUuid}: ${String(err)}`;
-    const code =
-      err instanceof ManifestMCPError
-        ? err.code
-        : ManifestMCPErrorCode.TX_FAILED;
-    throw new ManifestMCPError(code, reason);
+    throw contextualError(
+      err,
+      ManifestMCPErrorCode.TX_FAILED,
+      `retry_set_domain pollLeaseUntilReady failed for lease ${leaseUuid}: `,
+    );
   }
 
   // Persist before every final verdict, matching the main deploy path.
