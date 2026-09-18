@@ -274,6 +274,52 @@ test('wiring: CI and release validation run the guard before building', () => {
   }
 });
 
+test('wiring: PR live gate includes sequential maintenance and restore after SDK acceptance', () => {
+  const workflow = readWorkflow('e2e-pr.yml');
+  const live = workflow.jobs['acceptance-single'];
+  const sdk = live.steps.findIndex((step) =>
+    step.run?.includes('e2e/sdk-acceptance.e2e.test.ts'),
+  );
+  const compatibility = live.steps.findIndex(
+    (step) =>
+      step.run ===
+      'npm run test:e2e -- e2e/lifecycle.e2e.test.ts e2e/restore-roundtrip.e2e.test.ts',
+  );
+  assert(sdk >= 0);
+  assert(compatibility > sdk);
+  assert.equal(live.steps[compatibility].if, undefined);
+  assert.equal(live.steps[compatibility]['continue-on-error'], undefined);
+  assert(workflow.jobs['e2e-gate'].needs.includes('acceptance-single'));
+  const vitest = readFileSync(
+    resolve(repoRoot, 'e2e/vitest.config.ts'),
+    'utf8',
+  );
+  assert.match(vitest, /fileParallelism:\s*false/);
+  assert.match(vitest, /sequence:\s*\{\s*concurrent:\s*false/);
+});
+
+test('wiring: PR change filter includes the MCP lifecycle runtime dependencies', () => {
+  const filter = readWorkflow('e2e-pr.yml').jobs.changes.steps.find(
+    (step) => step.id === 'filter',
+  );
+  const pattern = /grep -Eq \\\n\s+'([^']+)'/.exec(filter.run)?.[1];
+  assert(pattern, 'expected an explicit deploy-path filter');
+  const matches = new RegExp(pattern);
+  for (const path of [
+    'packages/core/src/types.ts',
+    'packages/fred/src/http/fred.ts',
+    'packages/agent-core/src/client.ts',
+    'packages/sdk/src/client.ts',
+    'packages/lease/src/server.ts',
+    'packages/node/src/fred.ts',
+    'e2e/scripts/init_backend.sh',
+    'submodules/fred',
+  ]) {
+    assert(matches.test(path), `${path} must trigger live compatibility tests`);
+  }
+  assert.equal(matches.test('docs/library-usage.md'), false);
+});
+
 function assertWorkflowPermissions(
   directory = resolve(repoRoot, '.github/workflows'),
 ) {

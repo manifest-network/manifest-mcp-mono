@@ -1,7 +1,7 @@
 # Local E2E environment
 
 The full suite creates a local chain and real Fred containers, including retained
-volumes. Run it on a Linux host with a local Docker Engine and Compose, initialized
+volumes. Run it on a Linux host with a local Docker Engine 28.1+ (API 1.49+) and Compose, initialized
 submodules, `xfsprogs`, and permission to create a loop device and mount a
 filesystem. Fred's backend is privileged and mounts the Docker socket. Use a
 dedicated development host or Linux VM; ordinary Docker Desktop setup on macOS or
@@ -52,16 +52,38 @@ npm run test:e2e
 ```
 
 `check:e2e-env` is read-only. It checks the exact mount, filesystem, mount flags,
-project quota state, local Docker socket selection, and daemon reachability. It
+project quota state, local Docker socket selection, daemon reachability, and the
+Docker API version required for Fred's image admission. It
 does not install packages, mount filesystems, or start containers. A missing tool
 or permission fails with setup guidance. Passing preflight cannot guarantee image
 builds, registry availability, or chain/provider health; inspect Compose logs for
 those failures.
 
+Compose initializes Fred in order: billing/configuration, backend storage
+identity, backend startup, placement authority, then providerd. The placement
+initializer verifies backend HTTPS using the generated test certificate and
+proves that the new provider and backend are empty. It explicitly accepts this
+isolated test chain's plaintext gRPC. Keep tenant lease traffic and the test
+runner stopped until `up --wait` completes. The Fred image builds with Go 1.26.8
+and includes `placement-preflight` for this step.
+
+For a normal restart, use `docker compose -f e2e/docker-compose.yml down` without
+`-v`, then `up -d --wait --wait-timeout 180`. Preserve the XFS image and every
+Compose volume. The backend's primary identity marker lives on XFS; its anchor
+and journals live in `mcp-e2e-docker-backend-data`, and placement authority lives
+in `mcp-e2e-providerd-data`. Existing authority is verified at service startup.
+The initializers refuse to replace partial, mismatched, or old authority. A
+devnet created before this bootstrap needs Fred's documented upgrade procedure,
+or a complete reset of the disposable devnet using the cleanup below followed
+by a new XFS image. Deleting only Docker volumes or only the XFS image leaves an
+incomplete storage identity and prevents startup.
+
 ## Cleanup
 
-Stop the stack before unmounting. This removes test chain and provider state.
+Stop the stack before unmounting. This removes test chain, backend, and provider state.
 Remove the image only if it is the disposable image you created above.
+Complete the whole cleanup before starting a fresh devnet; `down -v` alone does
+not remove the backend identity and tenant data on the bind-mounted XFS image.
 
 ```bash
 docker compose -f e2e/docker-compose.yml down -v --remove-orphans

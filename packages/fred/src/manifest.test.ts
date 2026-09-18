@@ -559,7 +559,7 @@ describe('validateManifest', () => {
   });
 
   describe('labels', () => {
-    it('accepts non-fred-prefix labels', () => {
+    it('accepts labels outside the reserved namespaces', () => {
       expect(
         validateManifest({
           image: 'nginx',
@@ -573,24 +573,32 @@ describe('validateManifest', () => {
       ['Fred.retention', 'fred.'],
       ['traefik.http.routers.web.rule', 'traefik.'],
       ['TRAEFIK.enable', 'traefik.'],
+      ['traefiK.enable', 'traefik.'],
+      ['com.docker.compose.project', 'com.docker.compose.'],
+      ['COM.DOCKER.COMPOSE.service', 'com.docker.compose.'],
+      ['com.docKer.compoſe.project', 'com.docker.compose.'],
     ])('rejects reserved label %s case-insensitively', (key, prefix) => {
-      const r = validateManifest({
-        image: 'nginx',
-        labels: { [key]: 'abc' },
-      });
-      expect(r.valid).toBe(false);
-      expect(r.errors.join(' ')).toContain(key);
-      expect(r.errors.join(' ')).toContain(prefix);
+      const service = { image: 'nginx', labels: { [key]: 'abc' } };
+      for (const manifest of [service, { services: { app: service } }]) {
+        const r = validateManifest(manifest);
+        expect(r.valid).toBe(false);
+        expect(r.errors.join(' ')).toContain(key);
+        expect(r.errors.join(' ')).toContain(`reserved prefix '${prefix}'`);
+      }
     });
 
-    it.each(['traefikish.foo', 'com.example.traefik', 'FREDDIE.foo'])(
-      'accepts non-reserved near-miss label %s',
-      (key) => {
-        expect(
-          validateManifest({ image: 'nginx', labels: { [key]: 'ok' } }).valid,
-        ).toBe(true);
-      },
-    );
+    it.each([
+      'traefikish.foo',
+      'com.example.traefik',
+      'FREDDIE.foo',
+      'com.docker.compose',
+      'com.docker.composeish.project',
+      'app.com.docker.compose.project',
+    ])('accepts non-reserved near-miss label %s', (key) => {
+      expect(
+        validateManifest({ image: 'nginx', labels: { [key]: 'ok' } }).valid,
+      ).toBe(true);
+    });
 
     it('rejects non-string label values through Go-compatible semantics', () => {
       const result = validateManifest({
@@ -1167,16 +1175,31 @@ describe('validateManifest', () => {
   });
 
   describe('user', () => {
-    it.each(['', 'a:b:c'])('accepts the Go-valid user spelling %j', (user) => {
-      expect(validateManifest({ image: 'nginx', user }).valid).toBe(true);
-    });
-
-    it.each([' user', ':group', 'user:'])(
-      'rejects the Go-invalid user spelling %j',
+    it.each(['', '1000', '1000:1000', 'app:group', 'a\u00a0b', 'a\u2003b'])(
+      'accepts the Go-valid user spelling %j',
       (user) => {
-        expect(validateManifest({ image: 'nginx', user }).valid).toBe(false);
+        expect(validateManifest({ image: 'nginx', user }).valid).toBe(true);
       },
     );
+
+    it.each([
+      ' user',
+      ':group',
+      'user:',
+      'a:b:c',
+      'a::b',
+      'a\fb',
+      'a\vb',
+      'a:b\f',
+      'a:b\v',
+    ])('rejects the Go-invalid user spelling %j', (user) => {
+      const service = { image: 'nginx', user };
+      for (const manifest of [service, { services: { app: service } }]) {
+        const result = validateManifest(manifest);
+        expect(result.valid).toBe(false);
+        expect(result.errors.join(' ')).toContain('.user:');
+      }
+    });
   });
 
   describe('bounded diagnostics', () => {

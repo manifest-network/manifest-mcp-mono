@@ -96,6 +96,19 @@ describe('isRetryableError', () => {
       expect(isRetryableError(error)).toBe(true);
     });
 
+    it.each([
+      ManifestMCPErrorCode.UPDATE_INDETERMINATE,
+      ManifestMCPErrorCode.RESTART_INDETERMINATE,
+      ManifestMCPErrorCode.MAINTENANCE_REQUEST_FAILED,
+      ManifestMCPErrorCode.MAINTENANCE_WAIT_FAILED,
+    ])('does not replay maintenance on transient diagnostics (%s)', (code) => {
+      const error = new ManifestMCPError(code, 'HTTP 503: connection timeout', {
+        lease_uuid: 'lease-1',
+        idempotency_key: '01c676aa-6609-436f-9da4-321f574992b0',
+      });
+      expect(isRetryableError(error)).toBe(false);
+    });
+
     it('should retry QUERY_FAILED with timeout message', () => {
       const error = new ManifestMCPError(
         ManifestMCPErrorCode.QUERY_FAILED,
@@ -639,6 +652,21 @@ describe('transport deadline ownership', () => {
     expect(
       isRetryableError(Object.assign(new Error('Opaque wrapper'), { cause })),
     ).toBe(true);
+  });
+
+  it('stops at a nested maintenance verdict before reading its diagnostic cause', () => {
+    const verdict = new ManifestMCPError(
+      ManifestMCPErrorCode.RESTART_INDETERMINATE,
+      'Command outcome is unknown',
+    );
+    const readCause = vi.fn(() => {
+      throw new Error('unreadable diagnostic cause');
+    });
+    Object.defineProperty(verdict, 'cause', { get: readCause });
+    const outer = Object.assign(new Error('HTTP 503'), { cause: verdict });
+
+    expect(isRetryableError(outer)).toBe(false);
+    expect(readCause).not.toHaveBeenCalled();
   });
 
   it('terminates cyclic cause chains while retaining a permanent verdict', () => {

@@ -32,6 +32,7 @@ import type { AuthTokenService } from '../http/auth-token-service.js';
 import type { FredLeaseStatus } from '../http/fred.js';
 import { getLeaseProvision, getLeaseReleases, MAX_TAIL } from '../http/fred.js';
 import type { ProviderAuthPort } from '../http/provider-auth.js';
+import { MAINTENANCE_IDEMPOTENCY_KEY_RE } from '../maintenance.js';
 import { appStatus } from '../tools/appStatus.js';
 import { browseCatalog } from '../tools/browseCatalog.js';
 import { buildManifestPreview } from '../tools/buildManifestPreview.js';
@@ -84,6 +85,19 @@ interface RegisterToolsDeps {
 }
 
 type ManifestInputMode = 'preview' | 'deploy';
+
+function maintenanceKeySchema() {
+  return z
+    .string()
+    .regex(
+      MAINTENANCE_IDEMPOTENCY_KEY_RE,
+      'Expected a canonical lowercase UUIDv4',
+    )
+    .optional()
+    .describe(
+      'Command identity. Omit to generate a key for a new command; reuse the returned idempotency_key and exact command when retrying. An uncertain response may still execute later.',
+    );
+}
 
 /**
  * Zod's record parser intentionally omits an own `__proto__` property while
@@ -288,7 +302,7 @@ export function registerTools(deps: RegisterToolsDeps): void {
     'app_status',
     {
       description:
-        'Get detailed status and connection info for a deployed app. Use this after deploy_app to check if an app is running and get its URL. For a CLOSED lease within its retention grace window it also returns retained_until/items/restore_hint — pass that lease to restore_app to recover it.',
+        'Get detailed status and connection info for a deployed app. Use this after deploy_app to check if an app is running and get its URL. A CLOSED or EXPIRED lease may have retained data: check provision_status/items/restore_hint and, when present, retained_until before using restore_app.',
       inputSchema: {
         lease_uuid: z
           .string()
@@ -890,16 +904,21 @@ export function registerTools(deps: RegisterToolsDeps): void {
     'restart_app',
     {
       description:
-        'Restart a running app via the provider without closing its lease. Use this to apply configuration changes or recover from a crash.',
+        'Restart an app via the provider without closing its lease. Retain the returned idempotency_key: a timeout or 503 may leave the command pending for automatic recovery. Retry the same logical command with that key; a different key requests another restart.',
       inputSchema: {
         lease_uuid: z
           .string()
           .uuid()
           .describe('The lease UUID of the app to restart'),
+        idempotency_key: maintenanceKeySchema(),
       },
-      // Additive: triggers a restart cycle without replacing config.
-      // Not idempotent — each call triggers a fresh restart even when
-      // the app is already running (relies on the helper's default).
+      outputSchema: {
+        lease_uuid: z.string(),
+        status: z.string(),
+        idempotency_key: z.string(),
+      },
+      // An omitted key creates a new command, so the tool as a whole cannot
+      // advertise unconditional idempotence to an MCP host.
       annotations: mutatingAnnotations('Restart a deployed app', {
         destructive: false,
       }),
@@ -916,9 +935,13 @@ export function registerTools(deps: RegisterToolsDeps): void {
       const result = await restartApp(
         ctx,
         { address, leaseUuid },
-        { pollOptions: false, signal: extra.signal },
+        {
+          pollOptions: false,
+          signal: extra.signal,
+          idempotencyKey: args.idempotency_key,
+        },
       );
-      return jsonResponse(result, bigIntReplacer);
+      return structuredResponse(result, bigIntReplacer);
     }),
   );
 
@@ -927,7 +950,7 @@ export function registerTools(deps: RegisterToolsDeps): void {
     'restore_app',
     {
       description:
-        'Restore a CLOSED/credit-exhausted app from its retained volumes within the grace window. PRECONDITION: the source lease must be in the "retained" state — check app_status/app_diagnostics (retained_until/restore_hint) first. This BROADCASTS: it CREATES A NEW lease (reserving credit) and adopts the retained data onto it. NON-IDEMPOTENT — each call creates a new lease; do not blind-retry. (Contrast restart_app, which bounces an already-RUNNING app in place with no new lease.)',
+        'Restore a CLOSED or EXPIRED app from its retained volumes. PRECONDITION: the provider must report "retained" — check app_status/app_diagnostics and restore_hint first. retained_until is optional when age-based expiry is disabled. This BROADCASTS: it CREATES A NEW lease (reserving credit) and adopts the retained data onto it. NON-IDEMPOTENT — each call creates a new lease; do not blind-retry. (Contrast restart_app, which restarts an existing app without creating a lease.)',
       inputSchema: {
         source_lease_uuid: z
           .string()
@@ -971,12 +994,13 @@ export function registerTools(deps: RegisterToolsDeps): void {
     'update_app',
     {
       description:
-        'Update a deployed app with a new container manifest. Use this to change the Docker image, ports, or environment variables of a running app without closing the lease.',
+        'Update a deployed app with a new container manifest without closing its lease. Retain the returned idempotency_key: a timeout or 503 may leave the command pending for automatic recovery. Retry with the same key and exact final manifest; a different key requests another update.',
       inputSchema: {
         lease_uuid: z
           .string()
           .uuid()
           .describe('The lease UUID of the app to update'),
+        idempotency_key: maintenanceKeySchema(),
         manifest: z
           .string()
           .describe(
@@ -992,6 +1016,7 @@ export function registerTools(deps: RegisterToolsDeps): void {
       outputSchema: {
         lease_uuid: z.string(),
         status: z.string(),
+        idempotency_key: z.string(),
       },
       // Destructive: replaces the running app's manifest. Even with the
       // merge mode, prior config can be overwritten.
@@ -1035,7 +1060,11 @@ export function registerTools(deps: RegisterToolsDeps): void {
           manifest,
           existingManifest: args.existing_manifest,
         },
-        { pollOptions: false, signal: extra.signal },
+        {
+          pollOptions: false,
+          signal: extra.signal,
+          idempotencyKey: args.idempotency_key,
+        },
       );
       return structuredResponse(result, bigIntReplacer);
     }),

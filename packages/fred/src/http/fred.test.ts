@@ -43,6 +43,7 @@ import {
   LeaseReadinessUnconfirmedError,
   MAX_TAIL,
   pollLeaseUntilReady,
+  restartLease,
   restoreLease,
   TerminalChainStateError,
   updateLease,
@@ -1627,6 +1628,9 @@ describe('updateLease', () => {
     expect(init.headers).toEqual({
       Authorization: `Bearer ${AUTH_TOKEN}`,
       'Content-Type': 'application/json',
+      'Idempotency-Key': expect.stringMatching(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+      ),
     });
     expect(init.signal).toBeInstanceOf(AbortSignal);
     expect(init.redirect).toBe('manual');
@@ -1655,6 +1659,46 @@ describe('updateLease', () => {
     const decoded = atob(body.payload);
     expect(decoded.length).toBe(128 * 1024);
     expect(decoded[0]).toBe('A');
+  });
+});
+
+describe.each([
+  {
+    name: 'restart',
+    invoke: (fetch: typeof globalThis.fetch, key: string) =>
+      restartLease(PROVIDER_URL, LEASE_UUID, AUTH_TOKEN, fetch, false, key),
+  },
+  {
+    name: 'update',
+    invoke: (fetch: typeof globalThis.fetch, key: string) =>
+      updateLease(
+        PROVIDER_URL,
+        LEASE_UUID,
+        new TextEncoder().encode('{}'),
+        AUTH_TOKEN,
+        fetch,
+        false,
+        key,
+      ),
+  },
+])('$name raw maintenance identity', ({ invoke }) => {
+  it('forwards the caller key and preserves the wire response shape', async () => {
+    const key = '77228fd4-4149-4981-83a8-21b4f6a2f681';
+    const probe = fetchProbe({ status: 202, json: { status: 'accepted' } });
+    await expect(invoke(probe.fetch, key)).resolves.toEqual({
+      status: 'accepted',
+    });
+    expect(
+      new Headers(probe.calls[0].init.headers).get('Idempotency-Key'),
+    ).toBe(key);
+  });
+
+  it('rejects a malformed caller key before sending a request', async () => {
+    const probe = fetchProbe({ status: 202, json: { status: 'accepted' } });
+    await expect(invoke(probe.fetch, 'not-a-command-id')).rejects.toMatchObject(
+      { code: 'INVALID_ARGUMENT' },
+    );
+    expect(probe.calls).toHaveLength(0);
   });
 });
 

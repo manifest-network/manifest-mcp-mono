@@ -636,6 +636,39 @@ describe('withErrorHandling', () => {
       expect(details.rawLog).toHaveLength(300_000);
     });
 
+    it('preserves maintenance command identity ahead of oversized diagnostics', async () => {
+      const idempotencyKey = '01c676aa-6609-436f-9da4-321f574992b0';
+      const handler = withErrorHandling<TestToolCb>('update_app', async () => {
+        throw new ManifestMCPError(
+          ManifestMCPErrorCode.UPDATE_INDETERMINATE,
+          'Update outcome unknown',
+          {
+            ...Object.fromEntries(
+              Array.from({ length: 8 }, (_, i) => [
+                `diagnostic${i}`,
+                'x'.repeat(3000),
+              ]),
+            ),
+            lease_uuid: '11111111-1111-4111-8111-111111111111',
+            idempotency_key: idempotencyKey,
+            operation: 'update',
+            outcome: 'unknown',
+          },
+        );
+      });
+      const text = textOf(await handler({}, {}));
+      expect(text.length).toBeLessThanOrEqual(MAX_TOOL_ERROR_RESPONSE_CHARS);
+      expect(JSON.parse(text)).toMatchObject({
+        truncated: true,
+        details: {
+          lease_uuid: '11111111-1111-4111-8111-111111111111',
+          idempotency_key: idempotencyKey,
+          operation: 'update',
+          outcome: 'unknown',
+        },
+      });
+    });
+
     it('keeps a reconciled failed attempt ahead of oversized unrelated diagnostics', async () => {
       const original = Object.freeze(
         new ManifestMCPError(

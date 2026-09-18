@@ -1,7 +1,7 @@
 import { LeaseState } from '@manifest-network/manifest-mcp-core';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { assertWireKeys } from './helpers/fred-wire-golden.js';
-import { MCPTestClient, parseToolErrorCode } from './helpers/mcp-client.js';
+import { MCPTestClient } from './helpers/mcp-client.js';
 
 /**
  * Full deploy lifecycle E2E test.
@@ -17,6 +17,23 @@ import { MCPTestClient, parseToolErrorCode } from './helpers/mcp-client.js';
 // provider key ever changes. Hoisted to module scope so it can be referenced
 // from earlier tests (get_providers) as well as the tenant-override tests.
 const OTHER_TENANT = 'manifest1hj5fveer5cjtn4wd6wstzugjfdxzl0xp8ws9ct';
+
+interface ReleaseSnapshot {
+  release_count: number;
+  releases: Array<{ version: number; status: string }>;
+}
+
+function expectNewActiveRelease(
+  before: ReleaseSnapshot,
+  after: ReleaseSnapshot,
+) {
+  expect(after.release_count).toBe(before.release_count + 1);
+  const newest = [...after.releases].sort((a, b) => b.version - a.version)[0];
+  expect(newest?.status).toBe('active');
+  expect(newest?.version).toBeGreaterThan(
+    Math.max(0, ...before.releases.map((release) => release.version)),
+  );
+}
 
 describe('Deploy lifecycle', () => {
   const leaseClient = new MCPTestClient();
@@ -238,7 +255,11 @@ describe('Deploy lifecycle', () => {
   // ------------------------------------------------------------------
   // 9. Update app
   // ------------------------------------------------------------------
-  it('update_app with new manifest succeeds', async () => {
+  it('update_app with new manifest succeeds and returns its command key', async () => {
+    const beforeUpdate = await fredClient.callTool<ReleaseSnapshot>(
+      'app_releases',
+      { lease_uuid: leaseUuid },
+    );
     const manifest = JSON.stringify({
       image: 'nginxinc/nginx-unprivileged:alpine',
       ports: { '8080/tcp': {} },
@@ -248,80 +269,81 @@ describe('Deploy lifecycle', () => {
     const result = await fredClient.callTool<{
       lease_uuid: string;
       status: string;
+      idempotency_key: string;
     }>('update_app', {
       lease_uuid: leaseUuid,
       manifest,
     });
 
     expect(result.lease_uuid).toBe(leaseUuid);
+    expect(result.idempotency_key).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+    );
+    await fredClient.callTool('wait_for_app_ready', { lease_uuid: leaseUuid });
+    const afterUpdate = await fredClient.callTool<ReleaseSnapshot>(
+      'app_releases',
+      { lease_uuid: leaseUuid },
+    );
+    expectNewActiveRelease(beforeUpdate, afterUpdate);
   });
 
-  it('update_app with existing_manifest merges over prior config', async () => {
-    // Merge mode: the new manifest only specifies an additional env var.
-    // existing_manifest carries the ports + base env from the previous
-    // update so the resulting manifest still has the ports binding plus
-    // the merged env (E2E_TEST + E2E_MERGE).
-    //
-    // The previous update_app left the app in a transient state — the
-    // provider returns 409 invalid-state until the deployment settles.
-    // Poll on the 409 until it succeeds.
-    //
-    // Fragility note: the 409 detection assumes update_app does NOT wrap a 4xx
-    // provider HTTP error as a typed ManifestMCPError, so the raw provider JSON
-    // body falls through and parseToolErrorCode returns 'UNKNOWN'. If a
-    // structured wrap is ever extended to 4xx (e.g. a PROVIDER_REJECTED code),
-    // the code === 'UNKNOWN' check below becomes false and the retry loop
-    // bypasses transient 409s — the test then fails flakily on the first call.
-    // The same coupling exists in the restart_app test below; fix both call
-    // sites together when the error wrapping changes.
-    //
-    // Partially narrowed already: update_app DOES wrap 5xx as
-    // UPDATE_INDETERMINATE (ENG-619 — a 5xx no longer proves the update was
-    // rejected, since fred may have applied it to the backend and then failed
-    // to persist it). 4xx is deliberately left raw precisely so this loop keeps
-    // working. `updateApp.test.ts` carries the matching unit-level guard.
-    const existingManifest = JSON.stringify({
-      image: 'nginxinc/nginx-unprivileged:alpine',
-      ports: { '8080/tcp': {} },
-      env: { E2E_TEST: 'true' },
-    });
-    const newManifest = JSON.stringify({
-      image: 'nginxinc/nginx-unprivileged:alpine',
-      env: { E2E_MERGE: 'merged' },
-    });
+  it('update_app merges config and replays an exact command without a new release', async () => {
+    const beforeUpdate = await fredClient.callTool<ReleaseSnapshot>(
+      'app_releases',
+      { lease_uuid: leaseUuid },
+    );
+    const idempotencyKey = crypto.randomUUID();
+    const input = {
+      lease_uuid: leaseUuid,
+      idempotency_key: idempotencyKey,
+      existing_manifest: JSON.stringify({
+        image: 'nginxinc/nginx-unprivileged:alpine',
+        ports: { '8080/tcp': {} },
+        env: { E2E_TEST: 'true' },
+      }),
+      manifest: JSON.stringify({
+        image: 'nginxinc/nginx-unprivileged:alpine',
+        env: { E2E_MERGE: 'merged' },
+      }),
+    };
+    const result = await fredClient.callTool<{
+      lease_uuid: string;
+      idempotency_key: string;
+    }>('update_app', input);
+    expect(result.lease_uuid).toBe(leaseUuid);
+    expect(result.idempotency_key).toBe(idempotencyKey);
+    await fredClient.callTool('wait_for_app_ready', { lease_uuid: leaseUuid });
+    const beforeReplay = await fredClient.callTool<ReleaseSnapshot>(
+      'app_releases',
+      { lease_uuid: leaseUuid },
+    );
+    // Ready also describes a successful rollback; require this new release to
+    // be active before testing that a replay leaves release history unchanged.
+    expectNewActiveRelease(beforeUpdate, beforeReplay);
 
-    const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-    let mergeOk = false;
-    let lastErr: unknown;
-    for (let attempt = 0; attempt < 10; attempt++) {
-      try {
-        const result = await fredClient.callTool<{
-          lease_uuid: string;
-        }>('update_app', {
-          lease_uuid: leaseUuid,
-          manifest: newManifest,
-          existing_manifest: existingManifest,
-        });
-        expect(result.lease_uuid).toBe(leaseUuid);
-        mergeOk = true;
-        break;
-      } catch (err) {
-        lastErr = err;
-        const code = parseToolErrorCode(err);
-        const msg = err instanceof Error ? err.message : String(err);
-        const isTransient409 =
-          code === 'UNKNOWN' &&
-          /"code"\s*:\s*409/.test(msg) &&
-          /invalid state/i.test(msg);
-        if (!isTransient409) throw err;
-        await sleep(2_000);
-      }
-    }
-    if (!mergeOk) {
-      throw new Error(
-        `update_app merge never succeeded after retries: ${lastErr}`,
-      );
-    }
+    const replay = await fredClient.callTool<{ idempotency_key: string }>(
+      'update_app',
+      input,
+    );
+    expect(replay.idempotency_key).toBe(idempotencyKey);
+    await fredClient.callTool('wait_for_app_ready', { lease_uuid: leaseUuid });
+    const afterReplay = await fredClient.callTool<ReleaseSnapshot>(
+      'app_releases',
+      { lease_uuid: leaseUuid },
+    );
+    expect(afterReplay.releases).toEqual(beforeReplay.releases);
+    expect(afterReplay.release_count).toBe(beforeReplay.release_count);
+
+    // Same identity with different bytes must never become a second command.
+    await expect(
+      fredClient.callTool('update_app', {
+        ...input,
+        manifest: JSON.stringify({
+          image: 'nginxinc/nginx-unprivileged:alpine',
+          env: { E2E_MERGE: 'different' },
+        }),
+      }),
+    ).rejects.toThrow(/MAINTENANCE_REQUEST_FAILED/);
   });
 
   it('app_releases lists at least one release after update_app', async () => {
@@ -354,44 +376,40 @@ describe('Deploy lifecycle', () => {
     ).toBe(true);
   });
 
-  // restart_app last — it briefly puts the app in a non-stable state that
-  // makes update_app return 409 invalid-state. Placed after the other
-  // provider-side ops to avoid the conflict. Also: update_app itself
-  // triggers a transient state, so wait a few seconds before issuing
-  // restart_app to give the app time to settle.
-  it('restart_app triggers a restart on the active lease', async () => {
-    // Poll until the app is in a stable state before restarting. The fred
-    // restart_app handler surfaces provider-side HTTP errors as a non-
-    // ManifestMCPError, so the thrown error code is `[UNKNOWN]` and the
-    // message is the JSON body, e.g. `{"error":"invalid state for restart","code":409}`.
-    // We retry only on that exact shape — anything else (a TX_FAILED, a
-    // transport hiccup, an UNSUPPORTED_*) is a real failure and re-throws.
-    const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-    let restartOk = false;
-    let lastErr: unknown;
-    for (let attempt = 0; attempt < 10; attempt++) {
-      try {
-        const result = await fredClient.callTool<{
-          lease_uuid: string;
-        }>('restart_app', { lease_uuid: leaseUuid });
-        expect(result.lease_uuid).toBe(leaseUuid);
-        restartOk = true;
-        break;
-      } catch (err) {
-        lastErr = err;
-        const code = parseToolErrorCode(err);
-        const msg = err instanceof Error ? err.message : String(err);
-        const isTransient409 =
-          code === 'UNKNOWN' &&
-          /"code"\s*:\s*409/.test(msg) &&
-          /invalid state/i.test(msg);
-        if (!isTransient409) throw err;
-        await sleep(2_000);
-      }
-    }
-    if (!restartOk) {
-      throw new Error(`restart_app never succeeded after retries: ${lastErr}`);
-    }
+  it('restart_app creates one active release and preserves it on exact replay', async () => {
+    await fredClient.callTool('wait_for_app_ready', { lease_uuid: leaseUuid });
+    const beforeRestart = await fredClient.callTool<ReleaseSnapshot>(
+      'app_releases',
+      { lease_uuid: leaseUuid },
+    );
+    const input = {
+      lease_uuid: leaseUuid,
+      idempotency_key: crypto.randomUUID(),
+    };
+    const result = await fredClient.callTool<{
+      lease_uuid: string;
+      idempotency_key: string;
+    }>('restart_app', input);
+    expect(result.lease_uuid).toBe(leaseUuid);
+    expect(result.idempotency_key).toBe(input.idempotency_key);
+    await fredClient.callTool('wait_for_app_ready', { lease_uuid: leaseUuid });
+    const beforeReplay = await fredClient.callTool<ReleaseSnapshot>(
+      'app_releases',
+      { lease_uuid: leaseUuid },
+    );
+    expectNewActiveRelease(beforeRestart, beforeReplay);
+    const replay = await fredClient.callTool<{ idempotency_key: string }>(
+      'restart_app',
+      input,
+    );
+    expect(replay.idempotency_key).toBe(input.idempotency_key);
+    await fredClient.callTool('wait_for_app_ready', { lease_uuid: leaseUuid });
+    const afterReplay = await fredClient.callTool<ReleaseSnapshot>(
+      'app_releases',
+      { lease_uuid: leaseUuid },
+    );
+    expect(afterReplay.releases).toEqual(beforeReplay.releases);
+    expect(afterReplay.release_count).toBe(beforeReplay.release_count);
   });
 
   // ------------------------------------------------------------------

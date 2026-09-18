@@ -23,9 +23,11 @@ npm install @manifest-network/manifest-mcp-fred
 | `get_logs` | Get logs for a deployed app by lease UUID |
 | `restart_app` | Restart a deployed app via the provider |
 | `update_app` | Update a deployed app with a new manifest |
-| `restore_app` | Restore a closed/retained app onto a fresh lease within the grace window |
+| `restore_app` | Restore a CLOSED or EXPIRED app with retained data onto a fresh lease |
 | `app_diagnostics` | Get chain state and surviving provider provision diagnostics, including terminal leases |
 | `app_releases` | Get release/version history for a deployed app (20 most recent; the stored manifest is omitted, its size reported as `manifest_bytes`) |
+
+`restart_app` and `update_app` accept an optional canonical UUIDv4 `idempotency_key` and return it. Preserve that key and the exact command for intentional retries: a timeout or 503 can leave work pending for automatic provider recovery. Omitting the key generates a new command. The SDK equivalents accept `LifecycleCallOptions.idempotencyKey`. See [maintenance command identity](../../docs/library-usage.md#restarting-and-updating-with-a-command-key).
 
 `restore_app` creates a new lease and adopts the source's retained data in separate steps. Every restore POST exception, including all HTTP 4xx/5xx, network failures, and malformed 2xx responses, leaves adoption **unknown**: preserve both lease IDs, check `app_status` / `app_diagnostics`, and reconcile with the provider before retrying or considering cleanup. The SDK does not cancel an uncertain target or advise doing so. A PENDING chain state alone does not establish that no volumes were adopted, and a 429 `Retry-After` does not authorize replay. Only locally known failures or cancellation before the restore POST begins permit automatic compensation. See [restore outcomes and cancellation](../../docs/library-usage.md#restoring-a-closed-lease) for the structured error fields.
 

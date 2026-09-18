@@ -1,4 +1,8 @@
-import { abortReason } from '@manifest-network/manifest-mcp-core';
+import {
+  abortReason,
+  ManifestMCPError,
+  ManifestMCPErrorCode,
+} from '@manifest-network/manifest-mcp-core';
 import {
   isBlocked,
   isIpLiteral,
@@ -227,6 +231,16 @@ export function parseRetryAfterMs(
  */
 export function isTransientProviderError(err: unknown): boolean {
   if (!ProviderApiError.isProviderApiError(err)) return false;
+  // Maintenance owns the mutation attempt. Retrying the whole caller could mint
+  // another command key, even when the underlying transport fault was transient.
+  if (
+    err.cause instanceof ManifestMCPError &&
+    (err.cause.code === ManifestMCPErrorCode.UPDATE_INDETERMINATE ||
+      err.cause.code === ManifestMCPErrorCode.RESTART_INDETERMINATE ||
+      err.cause.code === ManifestMCPErrorCode.MAINTENANCE_REQUEST_FAILED)
+  ) {
+    return false;
+  }
   switch (err.kind) {
     case 'network':
     case 'timeout':

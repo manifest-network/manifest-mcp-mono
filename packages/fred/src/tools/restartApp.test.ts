@@ -90,6 +90,7 @@ describe('restartApp', () => {
     expect(headers.Authorization).toBe('Bearer auth-token');
     expect(result).toEqual({
       lease_uuid: LEASE_UUID,
+      idempotency_key: headers['Idempotency-Key'],
       status: 'restarting',
       ready: {
         state: LeaseState.LEASE_STATE_ACTIVE,
@@ -107,7 +108,11 @@ describe('restartApp', () => {
 
     // `/status` IS routed, so this counts requests rather than relying on a refusal.
     expect(urls()).toEqual(['restart']);
-    expect(result).toEqual({ lease_uuid: LEASE_UUID, status: 'restarting' });
+    expect(result).toEqual({
+      lease_uuid: LEASE_UUID,
+      idempotency_key: expect.any(String),
+      status: 'restarting',
+    });
   });
 
   it('fast path: supplied providerUrl skips fetchActiveLease + resolveProviderUrl', async () => {

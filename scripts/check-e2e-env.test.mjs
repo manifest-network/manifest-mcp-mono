@@ -11,6 +11,7 @@ const ready = {
   },
   quotaState: 'Project quota state\n  Accounting: ON\n  Enforcement: ON\n',
   dockerHost: 'unix:///var/run/docker.sock',
+  dockerAPIVersion: '1.49',
 };
 
 test('accepts the documented Linux XFS setup and quota option alias', () => {
@@ -22,6 +23,29 @@ test('accepts the documented Linux XFS setup and quota option alias', () => {
     }),
     [],
   );
+});
+
+test('requires the Docker API floor for immutable platform image admission', () => {
+  for (const dockerAPIVersion of ['1.49', '1.52', '1.100', '2.0']) {
+    assert.deepEqual(
+      validateE2EEnvironment({ ...ready, dockerAPIVersion }),
+      [],
+    );
+  }
+  for (const dockerAPIVersion of [
+    undefined,
+    '',
+    'invalid',
+    '0.99',
+    '1.9',
+    '1.48',
+  ]) {
+    assert.ok(
+      validateE2EEnvironment({ ...ready, dockerAPIVersion }).some((error) =>
+        error.includes('server API 1.49+'),
+      ),
+    );
+  }
 });
 
 test('rejects directory/parent mount, wrong filesystem, inactive quotas and remote Docker', () => {

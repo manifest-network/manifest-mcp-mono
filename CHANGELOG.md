@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- **fred, sdk, e2e:** prepare for Fred PR #240 at `4f00091c`: retain restart/update command keys through retries and errors, align manifest preflight and generated schema, and initialize verified backend storage/placement authority in the devnet. Maintenance uncertainty no longer invites a new command; restore target preservation remains unchanged. (ENG-1028)
+
 ### Added
 
 - **core:** export `TransportErrorDetails` for verified per-attempt read/connection timeouts. `RetryOptions.signal` and `isRetryableError(error, { signal })` let callers stop retries and backoff on overall cancellation; operations must propagate the signal to cancel their own in-flight work. (ENG-805 follow-up)

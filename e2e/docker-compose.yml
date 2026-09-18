@@ -3,7 +3,9 @@
 # Services:
 #   - chain: Blockchain node (manifest-ledger, billing-v2 branch)
 #   - init: Register provider and create SKUs, generate configs
+#   - backend-init: Seal new backend storage before its first startup
 #   - docker-backend: Real Docker container provisioning backend
+#   - placement-init: Prove and initialize fresh provider placement authority
 #   - providerd: Provider daemon
 #
 # Usage:
@@ -59,6 +61,31 @@ services:
       - mcp-e2e
 
   # ===========================================================================
+  # Backend Storage Initialization (one-shot; existing authority is verified at startup)
+  # ===========================================================================
+  backend-init:
+    build:
+      context: ../submodules/fred
+      dockerfile: ../../e2e/docker/fred/Dockerfile
+      target: docker-backend
+    privileged: true
+    volumes:
+      - shared-data:/shared:ro
+      - docker-backend-data:/data
+      - /mnt/fred-xfs:/mnt/fred-xfs
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./scripts/init_backend.sh:/usr/local/bin/init_backend.sh:ro
+    command: ["/bin/sh", "/usr/local/bin/init_backend.sh"]
+    healthcheck:
+      disable: true
+    depends_on:
+      init:
+        condition: service_completed_successfully
+    restart: "no"
+    networks:
+      - mcp-e2e
+
+  # ===========================================================================
   # Docker Backend (Real Container Provisioning)
   # ===========================================================================
   docker-backend:
@@ -69,19 +96,20 @@ services:
     privileged: true                      # xfs_quota project quotas need the loop /dev/loopN node (cap_add:[SYS_ADMIN] alone does not expose it)
     volumes:
       - shared-data:/shared:ro
-      - /mnt/fred-xfs:/mnt/fred-xfs        # host-identical XFS pquota mount (DooD path consistency); was: docker-backend-data:/data
+      - docker-backend-data:/data         # journals + identity anchor must survive container recreation
+      - /mnt/fred-xfs:/mnt/fred-xfs        # tenant data + primary identity marker; preserve with /data
       - /var/run/docker.sock:/var/run/docker.sock
     ports:
       - "9001:9001"
     command: ["/usr/bin/docker-backend", "--config", "/shared/docker-backend.yaml"]
     healthcheck:
-      test: curl -f http://localhost:9001/health || exit 1
+      test: curl --cacert /shared/tls/cert.pem -f https://localhost:9001/health || exit 1
       interval: 10s
       timeout: 5s
       retries: 10
       start_period: 10s
     depends_on:
-      init:
+      backend-init:
         condition: service_completed_successfully
     networks:
       - mcp-e2e
@@ -127,6 +155,26 @@ services:
       - mcp-e2e
 
   # ===========================================================================
+  # Provider Placement Initialization
+  # ===========================================================================
+  placement-init:
+    build:
+      context: ../submodules/fred
+      dockerfile: ../../e2e/docker/fred/Dockerfile
+      target: providerd
+    volumes:
+      - shared-data:/shared:ro
+      - providerd-data:/data
+      - ./scripts/init_placement.sh:/usr/local/bin/init_placement.sh:ro
+    command: ["/bin/sh", "/usr/local/bin/init_placement.sh"]
+    depends_on:
+      docker-backend:
+        condition: service_healthy
+    restart: "no"
+    networks:
+      - mcp-e2e
+
+  # ===========================================================================
   # Provider Daemon
   # ===========================================================================
   providerd:
@@ -141,14 +189,14 @@ services:
       - "8080:8080"
     command: ["/usr/bin/providerd", "--config", "/shared/providerd.yaml"]
     healthcheck:
-      test: curl -fk https://localhost:8080/health || exit 1
+      test: curl --cacert /shared/tls/cert.pem -f https://localhost:8080/health || exit 1
       interval: 10s
       timeout: 5s
       retries: 10
       start_period: 30s
     depends_on:
-      docker-backend:
-        condition: service_healthy
+      placement-init:
+        condition: service_completed_successfully
     networks:
       - mcp-e2e
 
@@ -162,6 +210,8 @@ volumes:
     name: mcp-e2e-shared-data
   providerd-data:
     name: mcp-e2e-providerd-data
+  docker-backend-data:
+    name: mcp-e2e-docker-backend-data
 
 # =============================================================================
 # Networks

@@ -150,6 +150,7 @@ const mockCreateLease = vi.mocked(createLease);
 const mockRestoreLease = vi.mocked(restoreLease);
 
 const LEASE_UUID = '550e8400-e29b-41d4-a716-446655440000';
+const MAINTENANCE_KEY = '01c676aa-6609-436f-9da4-321f574992b0';
 
 let activeTransports: InMemoryTransport[] = [];
 
@@ -168,6 +169,16 @@ function callTool(
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockRestartApp.mockResolvedValue({
+    lease_uuid: LEASE_UUID,
+    status: 'restarting',
+    idempotency_key: MAINTENANCE_KEY,
+  });
+  mockUpdateApp.mockResolvedValue({
+    lease_uuid: LEASE_UUID,
+    status: 'updating',
+    idempotency_key: MAINTENANCE_KEY,
+  });
   activeTransports = [];
 });
 
@@ -2143,6 +2154,65 @@ describe('restart_app / update_app call shape (ENG-488, ENG-666)', () => {
     );
     const opts = mockUpdateApp.mock.calls.at(-1)?.[2];
     expect(opts?.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it.each(['restart_app', 'update_app'] as const)(
+    '%s preserves command identity through the MCP input and output',
+    async (tool) => {
+      const result = await callTool(makeServer(), tool, {
+        lease_uuid: LEASE_UUID,
+        idempotency_key: MAINTENANCE_KEY,
+        ...(tool === 'update_app' && { manifest: '{"image":"nginx"}' }),
+      });
+      const mock = tool === 'restart_app' ? mockRestartApp : mockUpdateApp;
+      expect(mock.mock.lastCall?.[2]?.idempotencyKey).toBe(MAINTENANCE_KEY);
+      expect(result.isError).not.toBe(true);
+      expect(result.structuredContent).toMatchObject({
+        lease_uuid: LEASE_UUID,
+        idempotency_key: MAINTENANCE_KEY,
+      });
+    },
+  );
+
+  it.each(['restart_app', 'update_app'] as const)(
+    '%s rejects a noncanonical command key before calling the operation',
+    async (tool) => {
+      const result = await callTool(makeServer(), tool, {
+        lease_uuid: LEASE_UUID,
+        idempotency_key: MAINTENANCE_KEY.toUpperCase(),
+        ...(tool === 'update_app' && { manifest: '{"image":"nginx"}' }),
+      });
+      expect(result.isError).toBe(true);
+      expect(mockRestartApp).not.toHaveBeenCalled();
+      expect(mockUpdateApp).not.toHaveBeenCalled();
+    },
+  );
+
+  it('keeps the recovery key in structured MCP errors', async () => {
+    mockRestartApp.mockRejectedValueOnce(
+      new ManifestMCPError(
+        ManifestMCPErrorCode.RESTART_INDETERMINATE,
+        'The command may execute during provider recovery.',
+        {
+          lease_uuid: LEASE_UUID,
+          idempotency_key: MAINTENANCE_KEY,
+          outcome: 'unknown',
+        },
+      ),
+    );
+    const result = await callTool(makeServer(), 'restart_app', {
+      lease_uuid: LEASE_UUID,
+      idempotency_key: MAINTENANCE_KEY,
+    });
+    expect(result.isError).toBe(true);
+    expect(JSON.parse(result.content[0]!.text)).toMatchObject({
+      code: ManifestMCPErrorCode.RESTART_INDETERMINATE,
+      details: {
+        lease_uuid: LEASE_UUID,
+        idempotency_key: MAINTENANCE_KEY,
+        outcome: 'unknown',
+      },
+    });
   });
 });
 

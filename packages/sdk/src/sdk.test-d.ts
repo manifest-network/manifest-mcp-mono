@@ -26,7 +26,11 @@ import {
   type LifecycleCallOptions,
   type ManifestDeploySpec,
   type PortConfig,
+  type restartApp,
+  restartLease,
   type TxCallOptions,
+  type updateApp,
+  updateLease,
 } from './deploy.js';
 import {
   type FaucetStatusResponse,
@@ -382,5 +386,55 @@ describe('ENG-531 facade completeness (re-emitted through the SDK)', () => {
     // @ts-expect-error — FaucetStatusResponse must NOT be reachable from the root barrel.
     const _leak: import('./index.js').FaucetStatusResponse = undefined as never;
     void _leak;
+  });
+});
+
+describe('maintenance command identity through the SDK', () => {
+  it('keeps caller-supplied keys optional on lifecycle options and raw HTTP calls', () => {
+    expectTypeOf<Pick<LifecycleCallOptions, 'idempotencyKey'>>().toEqualTypeOf<{
+      readonly idempotencyKey?: string;
+    }>();
+    expectTypeOf(restartLease).parameters.toEqualTypeOf<
+      [
+        providerUrl: string,
+        leaseUuid: string,
+        authToken: string,
+        fetchFn?: typeof globalThis.fetch,
+        allowLoopback?: boolean,
+        idempotencyKey?: string,
+      ]
+    >();
+    expectTypeOf(updateLease).parameters.toEqualTypeOf<
+      [
+        providerUrl: string,
+        leaseUuid: string,
+        payload: Uint8Array,
+        authToken: string,
+        fetchFn?: typeof globalThis.fetch,
+        allowLoopback?: boolean,
+        idempotencyKey?: string,
+      ]
+    >();
+  });
+
+  it('retains required result keys and lifecycle options on free and bound calls', () => {
+    expectTypeOf<
+      Awaited<ReturnType<typeof restartApp>>['idempotency_key']
+    >().toEqualTypeOf<string>();
+    expectTypeOf<
+      Awaited<ReturnType<typeof updateApp>>['idempotency_key']
+    >().toEqualTypeOf<string>();
+    expectTypeOf<FredClient['restartApp']>().returns.toEqualTypeOf<
+      ReturnType<typeof restartApp>
+    >();
+    expectTypeOf<FredClient['updateApp']>().returns.toEqualTypeOf<
+      ReturnType<typeof updateApp>
+    >();
+    expectTypeOf<Parameters<FredClient['restartApp']>[1]>().toEqualTypeOf<
+      LifecycleCallOptions | undefined
+    >();
+    expectTypeOf<Parameters<FredClient['updateApp']>[1]>().toEqualTypeOf<
+      LifecycleCallOptions | undefined
+    >();
   });
 });

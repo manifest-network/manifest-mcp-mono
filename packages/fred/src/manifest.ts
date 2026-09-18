@@ -298,7 +298,8 @@ const HEALTH_CHECK_KEYS = new Set<string>([
 ]);
 
 const ENV_NAME_BLOCKED_PREFIX_RE = /^(ld_|fred_|docker_)/i;
-const RESERVED_LABEL_PREFIX_RE = /^(fred|traefik)\./i;
+// Unicode case folding matches Go's regexp policy, including K/K and ſ/S.
+const RESERVED_LABEL_PREFIX_RE = /^(fred|traefik|com\.docker\.compose)\./iu;
 const PORT_CONFIG_KEYS = new Set<string>(['host_port', 'ingress']);
 const TMPFS_BLOCKED = new Set<string>(['/', '/tmp', '/run']);
 const TMPFS_BLOCKED_PREFIXES = ['/proc', '/sys', '/dev'];
@@ -770,7 +771,7 @@ function validateService(
     }
   }
 
-  // labels: fred.* and traefik.* prefixes are reserved case-insensitively.
+  // labels: Fred, Traefik, and Docker Compose own their label namespaces.
   if ('labels' in service) {
     if (!isPlainObject(service.labels)) {
       errors.push(`${scope}.labels: must be an object`);
@@ -785,7 +786,8 @@ function validateService(
         const labelPath = mapKeyPath(`${scope}.labels`, key);
         const reserved = key.match(RESERVED_LABEL_PREFIX_RE);
         if (reserved) {
-          const prefix = `${reserved[1].toLowerCase()}.`;
+          // Normalize only the bounded, matched prefix for canonical diagnostics.
+          const prefix = `${reserved[1].normalize('NFKC').toLowerCase()}.`;
           errors.push(
             `${labelPath}: reserved prefix '${prefix}' is not allowed`,
           );
@@ -850,12 +852,14 @@ function validateService(
       errors.push(`${scope}.user: must be a string`);
     } else if (service.user.length > 0) {
       const u = service.user;
-      if (/[ \t\n\r]/.test(u)) {
+      if (/[ \t\n\r\f\v]/.test(u)) {
         errors.push(`${scope}.user: cannot contain whitespace`);
       } else {
         const colon = u.indexOf(':');
         if (colon === 0 || colon === u.length - 1) {
           errors.push(`${scope}.user: user/group parts cannot be empty`);
+        } else if (colon !== u.lastIndexOf(':')) {
+          errors.push(`${scope}.user: must contain at most one colon`);
         }
       }
     }

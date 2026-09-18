@@ -8,14 +8,20 @@ import type { CancellableOptions } from './call-signal.js';
  * Cancellation is `signal` + `timeout` (inherited from core's `CallOptions`); the
  * legacy `abortSignal` is deprecated but still honoured. It is checked via
  * `throwIfAborted()` BEFORE the mutate POST and threaded into the poll. The in-flight
- * mutate POST itself is not abortable (a non-idempotent restart/update POST can't be
- * safely un-sent) — cancellation takes effect before the POST or during the poll.
+ * mutate POST itself is not abortable: cancellation cannot revoke an admitted
+ * command. Cancellation takes effect before the POST or during the poll.
  *
  * `restoreApp` is the exception worth knowing: it broadcasts a credit-reserving
  * create-lease before its POST, so a cancel landing after that broadcast rolls the
  * fresh lease back rather than propagating a bare `AbortError` (ENG-666).
  */
 export interface LifecycleCallOptions extends CancellableOptions {
+  /**
+   * Restart/update command identity. A canonical lowercase UUIDv4 is generated
+   * when omitted. Reuse the same key and exact payload to retry one command;
+   * choose a new key for a new command. Ignored by restoreApp.
+   */
+  readonly idempotencyKey?: string;
   /**
    * Fast path. Caller asserts an already-resolved, ACTIVE lease reachable at this
    * provider URL. When set, skip BOTH on-chain round-trips (fetchActiveLease +

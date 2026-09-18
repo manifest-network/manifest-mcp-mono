@@ -529,6 +529,22 @@ describe('deployManifest', () => {
       'labels["Fred.owner"]',
     ],
     [
+      'a Docker Compose label',
+      { image: 'nginx', labels: { 'com.docker.compose.project': 'tenant' } },
+      'labels["com.docker.compose.project"]',
+    ],
+    [
+      'a Unicode case-folded reserved label',
+      { image: 'nginx', labels: { 'com.docKer.compoſe.project': 'tenant' } },
+      'labels["com.docKer.compoſe.project"]',
+    ],
+    ['a multi-colon user', { image: 'nginx', user: 'a:b:c' }, 'manifest.user'],
+    [
+      'a user containing form-feed',
+      { image: 'nginx', user: 'a\fb' },
+      'manifest.user',
+    ],
+    [
       'a fixed host_port',
       { image: 'nginx', ports: { '80/tcp': { host_port: 8080 } } },
       'ports["80/tcp"].host_port',

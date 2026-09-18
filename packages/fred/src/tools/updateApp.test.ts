@@ -16,7 +16,6 @@ import { sealedFetchProbe } from '@manifest-network/manifest-mcp-core/__test-uti
 import { makeMockQueryClient } from '@manifest-network/manifest-mcp-core/__test-utils__/mocks.js';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { FredAuthCtx } from '../ctx.js';
-import { ProviderApiError } from '../http/provider.js';
 import { updateApp } from './updateApp.js';
 import {
   MAX_MANIFEST_BYTES,
@@ -511,6 +510,7 @@ describe('updateApp', () => {
     expect(wire.calls[0]?.init.method).toBe('POST');
     expect(result).toEqual({
       lease_uuid: LEASE_UUID,
+      idempotency_key: expect.any(String),
       status: 'updated',
       ready: {
         state: LeaseState.LEASE_STATE_ACTIVE,
@@ -532,7 +532,11 @@ describe('updateApp', () => {
 
     // `/status` IS routed, so this counts requests rather than relying on a refusal.
     expect(urls()).toEqual(['update']);
-    expect(result).toEqual({ lease_uuid: LEASE_UUID, status: 'updated' });
+    expect(result).toEqual({
+      lease_uuid: LEASE_UUID,
+      idempotency_key: expect.any(String),
+      status: 'updated',
+    });
   });
 
   it('fast path: supplied providerUrl skips fetchActiveLease + resolveProviderUrl', async () => {
@@ -724,11 +728,7 @@ describe('updateApp', () => {
       );
     });
 
-    // REGRESSION GUARD, do not relax. `e2e/lifecycle.e2e.test.ts` retries a transient
-    // 409 by matching `parseToolErrorCode(err) === 'UNKNOWN'` against the raw provider
-    // body. Wrapping 4xx here would silently turn that check false and the e2e retry
-    // loop would rethrow on the first call instead of polling — a flake, not a failure.
-    it('4xx is NOT wrapped: the raw ProviderApiError still reaches the caller', async () => {
+    it('409 preserves the provider diagnostic and command identity in a typed error', async () => {
       routeUpdateFailure(
         409,
         '{"error":"lease is in an invalid state","code":409}',
@@ -740,9 +740,16 @@ describe('updateApp', () => {
         { pollOptions: false },
       ).catch((e: unknown) => e);
 
-      expect(err).not.toBeInstanceOf(ManifestMCPError);
-      expect(ProviderApiError.isProviderApiError(err)).toBe(true);
-      expect((err as ProviderApiError).status).toBe(409);
+      expect(err).toBeInstanceOf(ManifestMCPError);
+      expect(err).toMatchObject({
+        code: ManifestMCPErrorCode.MAINTENANCE_REQUEST_FAILED,
+        details: {
+          lease_uuid: LEASE_UUID,
+          idempotency_key: expect.any(String),
+          provider_status: 409,
+          outcome: 'unknown',
+        },
+      });
       expect((err as Error).message).toContain('invalid state');
     });
   });

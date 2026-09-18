@@ -31,9 +31,9 @@ jobs:
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        # RUNTIME deploy-dependency closure of the acceptance flow — not just the TS import graph.
+        # RUNTIME dependency closure of SDK acceptance plus MCP maintenance/restore.
         #   TS graph:  the acceptance app imports ONLY @manifest-network/manifest-sdk + manifestjs
-        #     → core + fred + agent-core + sdk (lease / chain / node are NOT in it).
+        #     → core + fred + agent-core + sdk. The MCP suites also exercise lease + node.
         #   LIVE graph: the compose devnet builds the chain from submodules/manifest-ledger and the
         #     provider from submodules/fred — a submodule-pointer bump (submodules/**) OR a submodule
         #     URL/branch switch (.gitmodules) alters the devnet build. Both are in the closure.
@@ -47,15 +47,16 @@ jobs:
           # above makes the merge-base available.
           files="$(git diff --name-only "$BASE_SHA...$HEAD_SHA")"
           if printf '%s\n' "$files" | grep -Eq \
-            '^(packages/(core|fred|agent-core|sdk)/|examples/sdk-acceptance/|e2e/|scripts/check-e2e-env\.mjs$|submodules/|\.gitmodules$|package\.json$|package-lock\.json$|\.github/workflows/e2e-pr\.yml$)'; then
+            '^(packages/(core|fred|agent-core|sdk|lease|node)/|examples/sdk-acceptance/|e2e/|scripts/check-e2e-env\.mjs$|submodules/|\.gitmodules$|package\.json$|package-lock\.json$|\.github/workflows/e2e-pr\.yml$)'; then
             echo 'deploy=true' >> "$GITHUB_OUTPUT"
           else
             echo 'deploy=false' >> "$GITHUB_OUTPUT"
           fi
 
   acceptance-single:
+    name: SDK, maintenance, and restore
     needs: changes
-    # Run the live variant ONLY when a deploy-relevant path changed, on a same-repo non-Dependabot PR.
+    # Run the live suites ONLY when a deploy-relevant path changed, on a same-repo non-Dependabot PR.
     # FORK PRs get empty secrets → skip. Dependabot PRs are same-repo but ALSO get no secrets, so the
     # SSH submodule checkout would hard-fail — exclude them too. `github.actor` (not `triggering_actor`)
     # is deliberate: it stays 'dependabot[bot]' on a human re-run, so the skip holds.
@@ -64,7 +65,9 @@ jobs:
       github.event.pull_request.head.repo.full_name == github.repository &&
       github.actor != 'dependabot[bot]'
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # Preserve the existing build/SDK budget and allow 10 minutes for the two
+    # sequential maintenance and retained-volume compatibility suites.
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -103,10 +106,18 @@ jobs:
           npm run check:fred-manifest-schema
           npm run build
 
-      # Single variant only (stack + full matrix stay nightly, e2e.yml). The pretest:e2e hook builds
+      # Single SDK variant (stack + full matrix stay nightly, e2e.yml). The pretest:e2e hook builds
       # @manifest-network/sdk-acceptance; the trailing ':' pins the single-service it, not a substring.
       - name: Run the single-variant SDK acceptance flow
         run: npm run test:e2e -- e2e/sdk-acceptance.e2e.test.ts -t "single-service:"
+
+      # Both files fund their own credits and identify their own leases. Vitest
+      # disables file parallelism because they share the SDK flow's tenant wallet.
+      # Reuse the initialized devnet to cover update/restart command replay and
+      # the stateful close -> retained-volume restore path on every relevant PR.
+      - name: Run maintenance replay and retained-volume restore
+        timeout-minutes: 10
+        run: npm run test:e2e -- e2e/lifecycle.e2e.test.ts e2e/restore-roundtrip.e2e.test.ts
 
       - name: Collect logs on failure
         if: failure()
@@ -151,7 +162,7 @@ jobs:
             exit 1
           fi
           if [ "$ACCEPTANCE" = 'failure' ] || [ "$ACCEPTANCE" = 'cancelled' ]; then
-            echo '::error::live single-variant acceptance e2e failed'
+            echo '::error::live SDK, maintenance, or restore e2e failed'
             exit 1
           fi
           if [ "$DEPLOY" = 'true' ] && [ "$ACCEPTANCE" != 'success' ]; then
