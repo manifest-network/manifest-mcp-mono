@@ -1510,17 +1510,42 @@ confirms the cause-veto and redaction fixes. This round clarifies the remaining
 diagnostic tradeoff and reconciles mutation reporting; runtime code and tests
 are unchanged.
 
+[Claude's follow-up on `9f03199`](https://github.com/manifest-network/manifest-mcp-mono/pull/233#issuecomment-5731737226)
+confirms all twelve mutation counts and the revised diagnostic contract. It also
+corrects the attempt-count comparison and build prerequisite, as reflected below.
+
 | Finding | Resolution and evidence | Confidence |
 | --- | --- | --- |
-| Diagnostic preservation wording includes a transient-cause fallback | Limit the promise to incidental detail failures with readable named fields and successful retry inspection. A neutral SDK error with an unreadable `details.module` and transient `ECONNRESET` cause uses the endpoint-only fallback; its readable message and unrelated details are discarded. The guide and plan now state this explicitly. Thirty-six isolated main/prior/head probes reproduce unchanged bare/wrapped attempt counts and preserved permanent/submitted/partial causes and recovery facts. | 100% reproduction; 99% wording accuracy; 98% scope assessment |
+| Diagnostic preservation wording includes a transient-cause fallback; the attempt-count comparison used unequal retry harnesses | Limit the promise to incidental detail failures with readable named fields and successful retry inspection. A neutral SDK error with an unreadable `details.module` and transient `ECONNRESET` cause uses the endpoint-only fallback; its readable message and unrelated details are discarded. The guide and plan state this explicitly. Thirty-six fresh main/prior/head probes use the same enclosing retry budget in every lane and produce the matrix below. | 100% reproduced counts; 99% wording accuracy; 98% bounded scope assessment |
 | Mutation figures lack an explicit test-selection denominator in the PR reply | Label the original 260-case selection, publish the full 744-test counts, and correct the earlier PR/Linear records. Re-run all six exact mutations under both selections, retaining per-test results and patch/source hashes. | 100% reproduced counts for the pinned source, mutations and selections |
+| Core-only reproduction commands unnecessarily require a sibling build | Remove that prerequisite. These runtime selections import core source and external dependencies, without resolving sibling-package builds. | 100% reproduced without sibling resolution |
 
 The diagnostic probe uses `maxRetries: 0` for connection acquisition and
-`maxRetries: 2` for an enclosing caller loop. For the transient-only cause, all
-three source versions make one bare attempt and three transient/deadline-wrapped
-attempts. Head retains permanent/submitted/partial causes and makes one attempt
-under those same wrappers. Narrowing the documentation keeps the current
-conservative policy; it does not promise preservation of every readable detail.
+`maxRetries: 2` with zero delays for an enclosing `withRetry` loop in **every**
+lane. "Unwrapped" means that loop receives the manager's error directly; the
+other lanes first attach it as the cause of a transient-message or
+`transportCode: 'ETIMEDOUT'` wrapper. An injected REST identity fetch rejects
+with `QUERY_FAILED`, a neutral message, an unreadable `details.module` and the
+specified readable cause. The 36 measurements produce these attempt counts:
+
+| Cause | Caller wrapper | main `5a49cd4` | `ccc0665` | `9f03199` |
+| --- | --- | ---: | ---: | ---: |
+| Transient `ECONNRESET` | Unwrapped | 3 | 1 | 1 |
+| Transient `ECONNRESET` | Transient message | 3 | 3 | 3 |
+| Transient `ECONNRESET` | `ETIMEDOUT` | 3 | 3 | 3 |
+| Permanent, submitted or partial (each tested) | Unwrapped | 1 | 1 | 1 |
+| Permanent, submitted or partial (each tested) | Transient message | 1 | 3 | 1 |
+| Permanent, submitted or partial (each tested) | `ETIMEDOUT` | 1 | 3 | 1 |
+
+The earlier probe invoked the unwrapped operation directly, bypassing the
+enclosing retry loop. Its one-attempt result did not establish parity with main.
+The earlier "unchanged bare/wrapped attempt counts" claim also overlooked
+`ccc0665`'s lost cause vetoes under the two wrappers. In these fixtures, current
+code retains the permanent/submitted/partial causes and recovery facts, while
+the unwrapped transient-only fallback is stricter than main. This is a bounded
+comparison, not a general retry-parity guarantee. Narrowing the documentation
+keeps the current conservative policy; it does not promise preservation of every
+readable detail.
 
 The mutation audit pins source to `93e5abf417d136125528e4387b3aaa4ea2f6aa81`,
 Node 24.15 and Vitest 4.1.10. Each mutation starts from a fresh client source in an
@@ -1544,8 +1569,8 @@ for repaired `name`/`cause` fields that become unreadable during later attributi
 result for the explicitly defined two-call-site mutation; 196 is the selected
 result. The preceding response omitted its selection denominator.
 
-After building sibling packages, the equivalent test selections from the root
-of an isolated checkout are:
+From the root of an isolated checkout with dependencies installed, the equivalent
+test selections are (no sibling-package build is required for these core tests):
 
 ```bash
 npx vitest run --typecheck.enabled=false packages/core/src/client.test.ts \
@@ -1570,6 +1595,9 @@ accessors and duplicate-core provenance retain their existing documented scope.
 
 
 The documented unmodified root commands also pass **260/260** and **744/744**.
+Both selections reproduce in a fresh archive of the pinned revision with no
+workspace `dist` directories and a dependency facade exposing only external
+packages; resolution/import probes confirm workspace siblings are unavailable.
 `npm run check` and `git diff --check` pass. This round changes documentation
 only; the prior 5,211-test coverage run covers the unchanged runtime/test tree.
 Fresh PR-head CI/live acceptance results are recorded on PR #233 and ENG-953.
