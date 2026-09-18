@@ -74,6 +74,16 @@ text; control stripping only deletes text, so fewer than twelve original words
 cannot become a mnemonic candidate. Non-Error causes and duplicate core copies
 do not carry the same guarantees; keep those limits explicit in the guide.
 
+Preserve an independently readable existing cause before deciding which repaired
+connection envelope to return, provided retry inspection succeeded. Pair
+unreadable attribution-only fields with submitted/partial/permanent causes and
+transient outer messages: the cause must retain its veto and recovery facts
+through Cosmos attribution instead of being discarded by the endpoint fallback.
+Keep genuine inspection failures and already-retryable cause omission unchanged.
+Reuse the control-free mnemonic candidate for model formatting so each string
+needs at most one control-stripping pass. Pin the printable-ASCII fast path with
+individual DEL, NEL, C1 CSI and soft-hyphen fixtures as well as broad corpora.
+
 No dependency, compiler-target, public type, or grouped-error policy change is
 needed. AggregateError members remain outside the standard `.cause` traversal.
 

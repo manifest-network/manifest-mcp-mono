@@ -1367,7 +1367,7 @@ two recommended corrections and records the smaller contract/coverage notes.
 | Finding | Resolution and evidence | Confidence |
 | --- | --- | --- |
 | Large ordinary strings incur repeated redaction work | Reuse the raw tokenization; fewer than twelve words cannot gain words through deletion. Skip Unicode control scans for printable ASCII/layout and skip mnemonic rescanning when stripping changes nothing. Preserve raw-whitespace and control-stripped detection, including OSC removal that reduces more than 24 words to 12. A 3,038-case equivalence matrix, large ASCII/Unicode corpus, exhaustive control-category comparison and actual stderr/tool-response cases pass. | 100% reproduced overhead; 99% semantics; 98% measured performance |
-| Merely non-retryable repairs become permanent causes | Separate readable repair context from failed-inspection provenance. Only non-retryable repairs enroll for cancellation-name/existing-cause transfer through Cosmos. Ordinary messages can inherit enclosing transient/owned-deadline context; native cancellation ordering and permanent/submitted/partial verdicts stay intact. Already-retryable repairs retain prior attribution cause omission. An unreadable attribution-only field does not imply a failed classifier inspection. | 100% reproduction; 99% correction |
+| Merely non-retryable repairs become permanent causes | Separate readable repair context from failed-inspection provenance. Only non-retryable repairs enroll for cancellation-name/existing-cause transfer through Cosmos. Ordinary messages can inherit enclosing transient/owned-deadline context. The initial matrix covered permanent/submitted/partial causes separately from named-field failures; the paired cause-loss regression found in the next review is corrected below. Already-retryable repairs retain prior attribution cause omission. An unreadable attribution-only field does not imply a failed classifier inspection. | 100% reproduction; 99% correction |
 | Fred factory identity wording is too broad | Document that both Fred factories delegate to the core connection contract, which preserves identity only after successful diagnostic/retry inspection. Correct the historical broad claim; no Fred runtime change is needed. | 100% delegation and wording |
 | Own-data HTTP salvage is unpinned | Add one real identity-fetch → connection → Cosmos case with a throwing-get proxy over own HTTP 403. It retains QUERY_FAILED, the message, 403 and endpoint/operation context after one attempt. Removing only the descriptor fallback in an isolated copy fails those assertions. | 100% mutation evidence; 99% test adequacy |
 | Non-Error contextual causes do not restore vetoes | Clarify that only the supported standard Error chain carries retry verdicts. Built probes confirm raw string/object false → contextual true despite a hidden cause. Extend existing ENG-983's thrown-value scope; do not change that pre-existing policy in one wrapper. | 100% mechanism; 99% scope |
@@ -1387,8 +1387,10 @@ median milliseconds per call are:
 | Unicode prose | 8.219 | 27.540 | 22.807 |
 
 These measurements establish the improvement on the sampled inputs, not a
-universal latency guarantee. Unicode prose still pays for the control scan;
-there is no blanket main-parity claim and no timing threshold in unit tests.
+universal latency guarantee. Unicode prose still pays for the control scan, and
+control-bearing logging retains the cost of checking the control-free mnemonic
+candidate. ASCII results do not establish parity for ANSI/bidi diagnostics. There
+is no blanket main-parity claim and no timing threshold in unit tests.
 ENG-271/983/996/1000 retain the documented remaining redaction, producer,
 restore/terminal and paid-operation scope. Arbitrary state-changing accessors
 and grouped-error traversal remain outside this shallow-inspection contract.
@@ -1420,3 +1422,80 @@ and all four unchanged SDK bundle budgets pass. The first full run identified
 four ES2020 type incompatibilities; those are corrected and the complete rerun
 passes without changing the compiler target. Fresh PR-head CI/live acceptance
 results are recorded on PR #233 and ENG-953.
+
+
+## PR #233 review: cause vetoes across incomplete attribution (2026-09-18)
+
+[Claude's review of `ccc0665`](https://github.com/manifest-network/manifest-mcp-mono/pull/233#issuecomment-5729827065)
+confirms the prior performance and permanence fixes but identifies a missing
+combination: an unreadable attribution-only field with a veto on an existing
+cause. The previous matrix tested those conditions separately.
+
+| Finding | Resolution and evidence | Confidence |
+| --- | --- | --- |
+| The second repair branch drops a cause-only veto | Copy the already-read cause before selecting a repair branch, only when retry inspection succeeded and the cause read succeeded. An unreadable `details.module` can no longer erase submitted/partial/permanent causes. Keep the exact non-enumerable cause and its original hash/lease facts through repeated Cosmos attribution. | 100% reproduction; 99% correction |
+| A transient-looking repair falls into the endpoint-only fallback despite a permanent cause | The same earlier copy lets the existing classifier see the veto before deciding whether an endpoint fallback is needed. This also corrects the related pre-existing cause-loss path. Genuine classifier failures retain their conservative behavior; already-retryable repairs retain historical cause omission at Cosmos attribution. | 100% mechanism; 99% correction |
+| Model text strips a diagnostic twice | Reuse the control-free candidate from the mnemonic check for model projection. Keep raw-whitespace and control-free detection, raw non-secret logging text, short-string handling and code-point capping. The existing 3,038-case matrix now also compares model output; all 200 focused redaction/formatting tests pass. | 99% semantic preservation; 98% local performance |
+| Control-bearing diagnostics remain more expensive than main | Explicitly record the remaining cost of control-free mnemonic detection. The optimization removes duplicate model scans; it does not establish main parity for Unicode or ANSI/bidi input. | 100% observed residual; 98% measured magnitude |
+| Printable-ASCII fast-path boundaries lack direct tests | Add isolated DEL, NEL, C1 CSI and soft-hyphen fixtures in `text-controls.test.ts`, plus public model/log controls. Widening the guard to U+007F/U+0085/U+009F/U+00FF fails 1/2/3/4 targeted cases in isolated copies. | 100% mutation evidence |
+| Hostile identity-abort diagnostics lose timeout attribution | Both real Fred factories reproduce the generic endpoint-only fallback. Exact-source comparisons show the current shape predates this correction and avoids main's diagnostic-inspection leak. Record this conservative fallback in the guide and existing ENG-983 timeout scope; no Fred runtime change. | 100% reproduction; 99% scope |
+
+Independent injected manager/Cosmos probes retain all six checked submitted,
+partial and permanent cause classes and stop after one attempt; transient and
+no-cause controls still make three attempts. The baseline distinction matters:
+main's manager kept these vetoes, but its malformed Cosmos attribution could
+already discard the cause. This fix restores the manager behavior and preserves
+it downstream; it does not claim universal parity with main's Cosmos path.
+
+Local actual `withErrorHandling` benchmarks use Node 24.15, source-transpiled
+main/prior/current sanitizers with identical built dependencies, nine interleaved
+samples, five warmups and GC outside timing. The logger path runs with console
+output uniformly discarded. Median milliseconds per call:
+
+| Input | main `5a49cd4` | `ccc0665` | Current |
+| --- | ---: | ---: | ---: |
+| Unicode 4 KiB message | 0.105 | 0.230 | 0.159 |
+| Unicode 60 × 16 KiB details | 0.909 | 1.750 | 1.312 |
+| ANSI/bidi 4 KiB message | 0.113 | 0.322 | 0.241 |
+| ANSI/bidi 60 × 16 KiB details | 0.945 | 2.426 | 1.543 |
+
+The benchmark outputs match `ccc0665` byte-for-byte. A roughly 1 MiB ANSI/bidi
+logging sample still takes 30.114 ms versus main's 8.813 ms (about 3.42×); its
+prior value was 32.924 ms. These are local measurements, not universal latency
+guarantees or timing assertions in the test suite.
+
+
+Retry validation passes **744 focused tests**, including **180 new paired/control
+cases** across REST/RPC identity, wallet acquisition and signing connection. The
+new matrix combines ten cause kinds, neutral/transient messages and unreadable
+attribution/incidental fields, then checks two Cosmos rebuilds and enclosing
+retry counts. It asserts exact cause identity, non-enumerability and original
+recovery facts; assertion failures inside retried operations cannot be mistaken
+for the expected rejection. The exact `ccc0665` baseline fails **80** new cases;
+100 new controls pass. No existing assertions were relaxed.
+
+Isolated mutations fail for removing cause copying (176), removing the failed-
+inspection gate (20), attaching the wrapper instead of its existing cause (160),
+making the cause enumerable (160), removing repaired-context enrollment (196),
+and removing the already-retryable enrollment guard (4). These runs include the
+180 new cases and 80 previous matrix cases. Independent source probes compare
+main, `e4a7e8d`, `ccc0665` and the fix without network or broadcasts.
+
+Fred's hostile-timeout probe covers both real factories. Five exact-source
+manager comparisons show main's inspection-exception leak, the more specific
+`3bf38f4` timeout envelope, and the same endpoint-only fallback at `e4a7e8d`,
+`ccc0665` and this correction. ENG-983 will evaluate safe timeout diagnostic
+retention alongside its producer work; this does not authorize retries after
+failed inspection. ENG-271/983/996/1000, state-changing accessors, grouped causes
+and duplicate-core provenance retain their previously documented scope.
+
+
+Full validation passes **5,211 tests / 17 existing skips / 197 files**, with no
+type errors. Coverage floors pass: **85.35% lines / 85.09% statements / 85.29%
+branches / 88.83% functions**. Fresh workspace builds (publint/attw), workspace/E2E
+types, schema, Biome, architecture, all nine package-integrity checks and all four
+unchanged SDK bundle budgets pass. Core's public entry-point declaration is
+byte-identical to the prior build. Independent final review found no blocker in
+scope (98% confidence). An initial overlapping E2E preparation rebuild invalidated
+package imports; checks were rerun successfully after that build completed.
+Fresh PR-head CI/live acceptance results are recorded on PR #233 and ENG-953.

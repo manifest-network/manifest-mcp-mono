@@ -2,6 +2,15 @@ import { describe, expect, it } from 'vitest';
 import { stripTextControls } from './text-controls.js';
 
 describe('stripTextControls', () => {
+  it.each([
+    ['DEL', '\u007f'],
+    ['NEL', '\u0085'],
+    ['C1 CSI', '\u009b31m'],
+    ['soft hyphen', '\u00ad'],
+  ])('strips %s from otherwise printable ASCII', (_name, control) => {
+    expect(stripTextControls(`before${control}after`)).toBe('beforeafter');
+  });
+
   it('preserves printable ASCII and diagnostic layout across large bodies', () => {
     const value = `${Array.from({ length: 95 }, (_, index) =>
       String.fromCharCode(index + 32),

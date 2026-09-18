@@ -125,6 +125,16 @@ function connectionError(
         // AbortError/TimeoutError names are retry vetoes, including on SDK errors.
         if (name.ok && typeof name.value === 'string')
           normalized.name = name.value;
+        // Attribution-only failures must not discard a readable veto (or recovery
+        // facts) on an existing cause. Use the guarded snapshot even when a named
+        // field such as module prevented a complete details snapshot.
+        if (!inspectionFailed && cause.ok && cause.value !== undefined) {
+          Object.defineProperty(normalized, 'cause', {
+            value: cause.value,
+            configurable: true,
+            writable: true,
+          });
+        }
         if (
           sdkDetails.ok &&
           snapshot.namedReadable &&
@@ -134,15 +144,6 @@ function connectionError(
         ) {
           // Only incidental diagnostics failed. Keep the independently readable verdict
           // and details; copying must not invoke failing getters a second time.
-          // An existing cause participates in retry classification. Preserve it unchanged,
-          // including inherited/accessor causes, rather than attaching the original wrapper.
-          if (cause.value !== undefined) {
-            Object.defineProperty(normalized, 'cause', {
-              value: cause.value,
-              configurable: true,
-              writable: true,
-            });
-          }
           // Preserve a non-retryable repair's name/cause without making it a permanent
           // veto on enclosing transport errors. Already-retryable errors keep the
           // established attribution behavior, which omits their existing causes.
@@ -150,9 +151,9 @@ function connectionError(
             preserveRepairedErrorContext(normalized);
           return normalized;
         }
-        // A known permanent/cancellation verdict needs no replay protection from unreadable
-        // details, name or cause. Retain it without a cause; use the endpoint-only fallback
-        // only if the repaired envelope could otherwise authorize another attempt.
+        // Keep known permanent/cancellation verdicts and any independently readable
+        // cause. Use the endpoint-only fallback only if the repaired envelope could
+        // otherwise authorize another attempt.
         if (!isRetryableError(normalized)) {
           // A field irrelevant to the classifier (for example, module) can fail
           // without making the independently readable retry verdict permanent.

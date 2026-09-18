@@ -94,7 +94,7 @@ describe('mnemonic redaction output equivalence', () => {
   // The contract is the union of the raw whitespace-delimited candidate and
   // the terminal/control-free candidate. Keep a declarative reference here
   // so fast paths cannot silently drop either interpretation.
-  function reference(value: string): string {
+  function reference(value: string, removeControls = false): string {
     const visible = value
       // biome-ignore lint/suspicious/noControlCharactersInRegex: reference ANSI CSI stripping.
       .replace(/(?:\u001b\[|\u009b)[0-?]*[ -/]*[@-~]/g, '')
@@ -109,7 +109,9 @@ describe('mnemonic redaction output equivalence', () => {
         .match(/^[a-z]+(?:\s+[a-z]+){11}(?:(?:\s+[a-z]+){3}){0,4}$/),
     )
       ? redacted
-      : value;
+      : removeControls
+        ? visible
+        : value;
   }
 
   it('retains both interpretations across word counts, controls and terminal sequences', () => {
@@ -145,6 +147,10 @@ describe('mnemonic redaction output equivalence', () => {
           expect(redactPossibleMnemonic(value), JSON.stringify(value)).toBe(
             reference(value),
           );
+          expect(
+            sanitizeForModelText(value, value.length),
+            JSON.stringify(value),
+          ).toBe(reference(value, true));
         }
       }
     }
@@ -164,6 +170,9 @@ describe('mnemonic redaction output equivalence', () => {
     ];
     for (const value of corpus) {
       expect(redactPossibleMnemonic(value)).toBe(reference(value));
+      expect(sanitizeForModelText(value, value.length)).toBe(
+        reference(value, true),
+      );
     }
   });
 });

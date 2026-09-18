@@ -1,7 +1,9 @@
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { createValidatedConfig } from './config.js';
-import { redactPossibleMnemonic } from './internals/redact-mnemonic.js';
-import { stripTextControls } from './internals/text-controls.js';
+import {
+  redactAndStripTextControls,
+  redactPossibleMnemonic,
+} from './internals/redact-mnemonic.js';
 import { logger } from './logger.js';
 import {
   type ManifestMCPConfig,
@@ -305,10 +307,9 @@ export function sanitizeForModelText(
   raw: string,
   maxLength = MAX_TOOL_ERROR_MESSAGE_CHARS,
 ): string {
-  // Redact before removing controls that may also delimit mnemonic words.
-  // The redactor checks both the original and the control-free candidate.
-  const redacted = sanitizeForLogging(raw) as string;
-  return capLength(stripTextControls(redacted), maxLength);
+  // Keep both mnemonic interpretations, then reuse the control-free candidate
+  // instead of stripping the whole diagnostic again after redaction.
+  return capLength(redactAndStripTextControls(raw), maxLength);
 }
 
 // Reserve scarce space for the identifiers and facts a caller needs to reconcile

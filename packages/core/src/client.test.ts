@@ -249,8 +249,10 @@ describe('CosmosClientManager', () => {
         operation.mockRejectedValueOnce(error);
         const manager = CosmosClientManager.getInstance(config, wallet);
         const query = boundary === 'REST' || boundary === 'RPC';
+        const callsBefore = operation.mock.calls.length;
         return {
           operation,
+          callsBefore,
           invoke: () =>
             query ? manager.getQueryClient() : manager.getSigningClient(),
           pending: query
@@ -936,6 +938,220 @@ describe('CosmosClientManager', () => {
               expect('cause' in attributed).toBe(false);
             current = attributed;
           }
+        },
+      );
+
+      it.each(
+        [
+          'TX_FAILED',
+          'sent',
+          'partial',
+          'INVALID_CONFIG',
+          'NOT_FOUND',
+          'ENOTFOUND',
+          'HTTP 400',
+          'gRPC 5',
+          'AbortError',
+          'TimeoutError',
+        ].flatMap((causeKind) =>
+          ['connection ended', 'fetch failed'].flatMap((message) =>
+            ['module', 'extra'].map((field) => ({ causeKind, message, field })),
+          ),
+        ),
+      )(
+        'retains a $causeKind cause with $field unreadable and message "$message" through real connection attempts',
+        async ({ causeKind, message, field }) => {
+          const facts =
+            causeKind === 'TX_FAILED' || causeKind === 'sent'
+              ? { sent: true, transactionHash: 'A'.repeat(64) }
+              : causeKind === 'partial'
+                ? { partial: true, lease_uuid: 'paid-lease' }
+                : causeKind === 'HTTP 400'
+                  ? { httpStatus: 400 }
+                  : causeKind === 'gRPC 5'
+                    ? { httpStatus: 500, grpcCode: 5 }
+                    : {};
+          const cancellation =
+            causeKind === 'AbortError' || causeKind === 'TimeoutError';
+          const cause = cancellation
+            ? new DOMException('operation ended', causeKind)
+            : causeKind === 'ENOTFOUND'
+              ? Object.assign(new Error('lookup failed'), { code: 'ENOTFOUND' })
+              : new ManifestMCPError(
+                  causeKind === 'TX_FAILED'
+                    ? ManifestMCPErrorCode.TX_FAILED
+                    : causeKind === 'INVALID_CONFIG'
+                      ? ManifestMCPErrorCode.INVALID_CONFIG
+                      : causeKind === 'NOT_FOUND'
+                        ? ManifestMCPErrorCode.NOT_FOUND
+                        : ManifestMCPErrorCode.QUERY_FAILED,
+                  'upstream operation ended',
+                  facts,
+                );
+          const failedField = vi.fn(() => {
+            throw new Error('diagnostic unavailable');
+          });
+          const original = Object.assign(
+            new ManifestMCPError(
+              ManifestMCPErrorCode.RPC_CONNECTION_FAILED,
+              message,
+              Object.defineProperty({}, field, {
+                enumerable: true,
+                get: failedField,
+              }),
+            ),
+            { cause },
+          );
+          expect(isRetryableError(original)).toBe(false);
+
+          for (const enclosing of ['none', 'transient', 'owned deadline']) {
+            const retryable = cancellation && enclosing === 'owned deadline';
+            let finalFailure: Error | undefined;
+            const attempt = vi.fn(async () => {
+              const { pending, operation, callsBefore } = failInitialization(
+                original,
+                true,
+                0,
+              );
+              const normalized = await pending.then(
+                () => {
+                  throw new Error('Expected initialization to fail');
+                },
+                (error: unknown) => error as ManifestMCPError,
+              );
+              expect(operation).toHaveBeenCalledTimes(callsBefore + 1);
+              expect(normalized === original).toBe(false);
+              expect(normalized.code).toBe(
+                ManifestMCPErrorCode.RPC_CONNECTION_FAILED,
+              );
+              expect(normalized.message).toBe(message);
+              expect(normalized.name).toBe('ManifestMCPError');
+              let current = normalized;
+              for (let attribution = 0; attribution < 3; attribution += 1) {
+                const descriptor = Object.getOwnPropertyDescriptor(
+                  current,
+                  'cause',
+                );
+                expect(descriptor?.value === cause).toBe(true);
+                expect(descriptor?.enumerable).toBe(false);
+                if (cause instanceof ManifestMCPError)
+                  expect(cause.details).toStrictEqual(facts);
+                expect(isRetryableError(current)).toBe(false);
+                if (attribution === 2) break;
+                if (current.details) delete current.details.module;
+                current = await cosmosQuery(
+                  {
+                    getQueryClient: vi.fn().mockRejectedValue(current),
+                  } as unknown as CosmosClientManager,
+                  'bank',
+                  'balances',
+                ).then(
+                  () => {
+                    throw new Error('Expected query acquisition to fail');
+                  },
+                  (error: unknown) => error as ManifestMCPError,
+                );
+                expect(current.details?.module).toBe('bank');
+              }
+              const failure =
+                enclosing === 'none'
+                  ? current
+                  : Object.assign(
+                      enclosing === 'transient'
+                        ? new Error('fetch failed')
+                        : new ManifestMCPError(
+                            ManifestMCPErrorCode.QUERY_FAILED,
+                            'transport deadline',
+                            { transportCode: 'ETIMEDOUT' },
+                          ),
+                      { cause: current },
+                    );
+              expect(isRetryableError(failure)).toBe(retryable);
+              finalFailure = failure;
+              throw failure;
+            });
+            const rejection = await withRetry(attempt, {
+              config: { maxRetries: 2, baseDelayMs: 0, maxDelayMs: 0 },
+            }).then(
+              () => {
+                throw new Error('Expected enclosing operation to fail');
+              },
+              (error: unknown) => error,
+            );
+            // Assertion failures inside an attempt must escape the retry harness.
+            if (rejection !== finalFailure) throw rejection;
+            expect(attempt).toHaveBeenCalledTimes(retryable ? 3 : 1);
+          }
+          expect(failedField).toHaveBeenCalled();
+        },
+      );
+
+      it.each(['httpStatus', 'grpcCode', 'transportCode', 'partial', 'sent'])(
+        'does not copy a transient cause when inspecting %s fails',
+        async (field) => {
+          const failedField = vi.fn(() => {
+            throw new Error('classifier diagnostic unavailable');
+          });
+          const original = Object.assign(
+            new ManifestMCPError(
+              ManifestMCPErrorCode.RPC_CONNECTION_FAILED,
+              'connection ended',
+              Object.defineProperty({}, field, { get: failedField }),
+            ),
+            { cause: new Error('fetch failed') },
+          );
+          let finalFailure: Error | undefined;
+          const attempt = vi.fn(async () => {
+            const { pending, operation, callsBefore } = failInitialization(
+              original,
+              true,
+              0,
+            );
+            const normalized = await pending.then(
+              () => {
+                throw new Error('Expected initialization to fail');
+              },
+              (error: unknown) => error as ManifestMCPError,
+            );
+            expect(operation).toHaveBeenCalledTimes(callsBefore + 1);
+            expect(
+              Object.getOwnPropertyDescriptor(normalized, 'cause'),
+            ).toBeUndefined();
+            const attributed = await cosmosQuery(
+              {
+                getQueryClient: vi.fn().mockRejectedValue(normalized),
+              } as unknown as CosmosClientManager,
+              'bank',
+              'balances',
+            ).then(
+              () => {
+                throw new Error('Expected query acquisition to fail');
+              },
+              (error: unknown) => error as ManifestMCPError,
+            );
+            const wrapper = Object.assign(
+              new ManifestMCPError(
+                ManifestMCPErrorCode.QUERY_FAILED,
+                'fetch failed',
+                { transportCode: 'ETIMEDOUT' },
+              ),
+              { cause: attributed },
+            );
+            expect(isRetryableError(wrapper)).toBe(false);
+            finalFailure = wrapper;
+            throw wrapper;
+          });
+          const rejection = await withRetry(attempt, {
+            config: { maxRetries: 2, baseDelayMs: 0, maxDelayMs: 0 },
+          }).then(
+            () => {
+              throw new Error('Expected enclosing operation to fail');
+            },
+            (error: unknown) => error,
+          );
+          if (rejection !== finalFailure) throw rejection;
+          expect(attempt).toHaveBeenCalledOnce();
+          expect(failedField).toHaveBeenCalled();
         },
       );
 
