@@ -80,6 +80,10 @@ unreadable attribution-only fields with submitted/partial/permanent causes and
 transient outer messages: the cause must retain its veto and recovery facts
 through Cosmos attribution instead of being discarded by the endpoint fallback.
 Keep genuine inspection failures and already-retryable cause omission unchanged.
+When named-field inspection is incomplete, evaluate the reconstruction including
+its copied cause: a transient-only cause can select the endpoint-only fallback,
+while a submitted/partial/permanent cause preserves the reconstructed envelope.
+Document that distinction rather than promising all readable diagnostics survive.
 Reuse the control-free mnemonic candidate for model formatting so each string
 needs at most one control-stripping pass. Pin the printable-ASCII fast path with
 individual DEL, NEL, C1 CSI and soft-hyphen fixtures as well as broad corpora.

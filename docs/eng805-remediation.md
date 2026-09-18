@@ -1474,11 +1474,13 @@ recovery facts; assertion failures inside retried operations cannot be mistaken
 for the expected rejection. The exact `ccc0665` baseline fails **80** new cases;
 100 new controls pass. No existing assertions were relaxed.
 
-Isolated mutations fail for removing cause copying (176), removing the failed-
-inspection gate (20), attaching the wrapper instead of its existing cause (160),
-making the cause enumerable (160), removing repaired-context enrollment (196),
-and removing the already-retryable enrollment guard (4). These runs include the
-180 new cases and 80 previous matrix cases. Independent source probes compare
+On the selected **260 client cases** (180 new cases and 80 previous matrix
+cases), isolated mutations fail for removing cause copying (176), removing the
+failed-inspection gate (20), attaching the wrapper instead of its existing cause
+(160), making the cause enumerable (160), removing repaired-context enrollment
+(196), and removing the already-retryable enrollment guard (4). These are not
+counts for the full 744-test focused suite; the scope comparison and exact
+mutation definitions are recorded in the following audit. Independent source probes compare
 main, `e4a7e8d`, `ccc0665` and the fix without network or broadcasts.
 
 Fred's hostile-timeout probe covers both real factories. Five exact-source
@@ -1498,4 +1500,76 @@ unchanged SDK bundle budgets pass. Core's public entry-point declaration is
 byte-identical to the prior build. Independent final review found no blocker in
 scope (98% confidence). An initial overlapping E2E preparation rebuild invalidated
 package imports; checks were rerun successfully after that build completed.
+Fresh PR-head CI/live acceptance results are recorded on PR #233 and ENG-953.
+
+
+## PR #233 review: fallback wording and mutation-count scope (2026-09-18)
+
+[Claude's review of `cf437cc` and `93e5abf`](https://github.com/manifest-network/manifest-mcp-mono/pull/233#issuecomment-5731038826)
+confirms the cause-veto and redaction fixes. This round clarifies the remaining
+diagnostic tradeoff and reconciles mutation reporting; runtime code and tests
+are unchanged.
+
+| Finding | Resolution and evidence | Confidence |
+| --- | --- | --- |
+| Diagnostic preservation wording includes a transient-cause fallback | Limit the promise to incidental detail failures with readable named fields and successful retry inspection. A neutral SDK error with an unreadable `details.module` and transient `ECONNRESET` cause uses the endpoint-only fallback; its readable message and unrelated details are discarded. The guide and plan now state this explicitly. Thirty-six isolated main/prior/head probes reproduce unchanged bare/wrapped attempt counts and preserved permanent/submitted/partial causes and recovery facts. | 100% reproduction; 99% wording accuracy; 98% scope assessment |
+| Mutation figures lack an explicit test-selection denominator in the PR reply | Label the original 260-case selection, publish the full 744-test counts, and correct the earlier PR/Linear records. Re-run all six exact mutations under both selections, retaining per-test results and patch/source hashes. | 100% reproduced counts for the pinned source, mutations and selections |
+
+The diagnostic probe uses `maxRetries: 0` for connection acquisition and
+`maxRetries: 2` for an enclosing caller loop. For the transient-only cause, all
+three source versions make one bare attempt and three transient/deadline-wrapped
+attempts. Head retains permanent/submitted/partial causes and makes one attempt
+under those same wrappers. Narrowing the documentation keeps the current
+conservative policy; it does not promise preservation of every readable detail.
+
+The mutation audit pins source to `93e5abf417d136125528e4387b3aaa4ea2f6aa81`,
+Node 24.15 and Vitest 4.1.10. Each mutation starts from a fresh client source in an
+isolated core-source copy with the global-fetch ban enabled. Unmodified controls
+pass **260/260** and **744/744**, respectively. Failed-test counts are:
+
+| Exact mutation in `connectionError` | Selected 260 | Full 744 |
+| --- | ---: | ---: |
+| Disable the hoisted cause-copy block (`if (false)`) | 176 | 192 |
+| Remove only `!inspectionFailed` from the cause-copy guard | 20 | 20 |
+| Replace `value: cause.value` with `value: error` in that block | 160 | 176 |
+| Add `enumerable: true` to that cause descriptor | 160 | 176 |
+| Replace both repaired-context enrollment calls with `void 0` | 196 | 204 |
+| Remove only the first branch's non-retryable enrollment guard | 4 | 4 |
+
+The first, third and fourth full-suite counts add sixteen pre-existing tests:
+terminal, transient, getter and inherited causes across REST, RPC, signing and
+wallet acquisition. The full enrollment-removal count adds eight existing tests
+for repaired `name`/`cause` fields that become unreadable during later attribution
+(two fields across four acquisition boundaries). Thus 204 is the full-suite
+result for the explicitly defined two-call-site mutation; 196 is the selected
+result. The preceding response omitted its selection denominator.
+
+After building sibling packages, the equivalent test selections from the root
+of an isolated checkout are:
+
+```bash
+npx vitest run --typecheck.enabled=false packages/core/src/client.test.ts \
+  --testNamePattern 'retains a .* cause with|does not copy a transient cause|preserves nested retry semantics'
+
+npx vitest run --typecheck.enabled=false packages/core/src/client.test.ts \
+  packages/core/src/retry.test.ts \
+  packages/core/src/cosmos.read-error-boundary.test.ts \
+  packages/core/src/client-detail-salvage.test.ts
+```
+
+Apply each listed mutation independently to the pinned source for its failure
+counts, then restore that source before the next mutation. The archived audit
+uses runtime-only configs for these same file/test selections; normal source
+type-checking remains part of the unmodified project gates.
+
+The redaction timings remain individual local measurements, including the
+recorded 3.42× ANSI/bidi logging sample. The review's wider 3.16–5.03× range across
+its control-bearing samples is consistent with the documented absence of a
+parity guarantee. Fred timeout attribution, ENG-271/983/996/1000, state-changing
+accessors and duplicate-core provenance retain their existing documented scope.
+
+
+The documented unmodified root commands also pass **260/260** and **744/744**.
+`npm run check` and `git diff --check` pass. This round changes documentation
+only; the prior 5,211-test coverage run covers the unchanged runtime/test tree.
 Fresh PR-head CI/live acceptance results are recorded on PR #233 and ENG-953.
