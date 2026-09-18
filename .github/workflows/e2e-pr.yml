@@ -100,14 +100,16 @@ jobs:
       - name: Build Docker images
         run: docker compose -f e2e/docker-compose.yml build
 
-      - name: Start devnet
-        run: docker compose -f e2e/docker-compose.yml up -d --wait --wait-timeout 600
-
       - name: Install and build
         run: |
           npm ci
           npm run check:fred-manifest-schema
           npm run build
+
+      - name: Start devnet
+        env:
+          FRED_DEVNET_WAIT_TIMEOUT: 600
+        run: bash e2e/scripts/devnet.sh up
 
       # Single SDK variant (stack + full matrix stay nightly, e2e.yml). The pretest:e2e hook builds
       # @manifest-network/sdk-acceptance; the trailing ':' pins the single-service it, not a substring.
@@ -120,11 +122,20 @@ jobs:
       # the stateful close -> retained-volume restore path on every relevant PR.
       - name: Run maintenance replay and retained-volume restore
         timeout-minutes: 10
-        run: npm run test:e2e -- e2e/lifecycle.e2e.test.ts e2e/restore-roundtrip.e2e.test.ts
+        run: npx vitest run --config e2e/vitest.compat.config.ts
+
+      # Preserve XFS and every authority journal across a native-unit restart.
+      - name: Verify devnet restart preserves authority
+        timeout-minutes: 10
+        env:
+          FRED_DEVNET_WAIT_TIMEOUT: 600
+        run: |
+          bash e2e/scripts/devnet.sh down
+          bash e2e/scripts/devnet.sh up
 
       - name: Collect logs on failure
         if: failure()
-        run: docker compose -f e2e/docker-compose.yml logs > e2e-logs.txt
+        run: bash e2e/scripts/devnet.sh logs > e2e-logs.txt
 
       - name: Upload logs on failure
         if: failure()
@@ -135,7 +146,7 @@ jobs:
 
       - name: Teardown
         if: always()
-        run: docker compose -f e2e/docker-compose.yml down -v --remove-orphans
+        run: bash e2e/scripts/devnet.sh down
 
   e2e-gate:
     # Stable check for branch rulesets. Runs on EVERY PR (if: always(), even when acceptance-single

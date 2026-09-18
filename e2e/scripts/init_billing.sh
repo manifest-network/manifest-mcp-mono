@@ -29,7 +29,7 @@ EXISTING_PROVIDER=$(curl -s "http://chain:1317/liftedinit/sku/v1/provider/addres
 if [ -n "$EXISTING_PROVIDER" ]; then
     echo "Provider already exists with UUID: $EXISTING_PROVIDER"
     if [ -f /shared/providerd.yaml ] && [ -f /shared/docker-backend.yaml ] && [ -f /shared/tls/cert.pem ] && [ -f /shared/tls/key.pem ] && [ -f /shared/converter.env ]; then
-        if [ "$(cat /shared/fred-bootstrap-version 2>/dev/null || true)" != "2" ]; then
+        if [ "$(cat /shared/fred-bootstrap-version 2>/dev/null || true)" != "3" ]; then
             echo "ERROR: Fred bootstrap version is missing or incompatible; this devnet may be old or incompletely initialized. Recreate the disposable devnet and XFS image together, or use Fred's upgrade/recovery procedure." >&2
             exit 1
         fi
@@ -186,7 +186,7 @@ backends:
     timeout: 30s
     default: true
 
-callback_base_url: "https://providerd:8080"
+callback_base_url: "https://127.0.0.1:8080"
 callback_secret: "${CALLBACK_SECRET}"
 
 withdraw_interval: "1m"
@@ -226,8 +226,8 @@ releases_db_path: "/data/releases.db"
 retention_db_path: "/data/retention.db"
 
 # Retention (ENG-604 phase 2): the stateful docker-small volume is soft-deleted on
-# close and adoptable via restore_app. XFS pquota mount is bind-mounted at the
-# identical host path (docker-compose.yml) + the CI host loopback XFS (e2e.yml).
+# close and adoptable via restore_app. The native backend manages the host XFS
+# pquota mount; no infrastructure container receives a writable bind of this root.
 volume_data_path: "/mnt/fred-xfs"
 volume_mount_path: "/mnt/fred-xfs"
 volume_filesystem: "xfs"
@@ -267,7 +267,7 @@ allowed_registries:
   - "ghcr.io"
 YAML
 
-echo 2 > /shared/fred-bootstrap-version
+echo 3 > /shared/fred-bootstrap-version
 
 echo "=== Generated configs ==="
 echo "--- providerd.yaml ---"

@@ -11,6 +11,7 @@
       "packages/**",
       "examples/**",
       "e2e/**/*.ts",
+      "e2e/scripts/native-backend-config.mjs",
       "e2e/vitest.annotations.config.mjs",
       "scripts/check-packages.mjs",
       "scripts/check-packages.test.mjs",

@@ -82,16 +82,22 @@ describe('Restore roundtrip (ENG-604)', () => {
     const r = await fredClient.callTool<{
       lease_uuid: string;
       state: LeaseState;
-    }>('deploy_app', {
-      image: 'redis:7', // declares VOLUME /data → a managed, retainable volume at disk_mb>0
-      port: 6379,
-      size: 'docker-small',
-      command: [
-        'sh',
-        '-c',
-        'echo boot >> /data/boots.log; echo "MARKER_COUNT=$(wc -l < /data/boots.log)"; exec sleep 3600',
-      ],
-    });
+    }>(
+      'deploy_app',
+      {
+        image: 'redis:7', // declares VOLUME /data → a managed, retainable volume at disk_mb>0
+        port: 6379,
+        size: 'docker-small',
+        // Let the tool's diagnostic surface before MCP's request deadline.
+        timeout_seconds: 90,
+        command: [
+          'sh',
+          '-c',
+          'echo boot >> /data/boots.log; echo "MARKER_COUNT=$(wc -l < /data/boots.log)"; exec sleep 3600',
+        ],
+      },
+      { timeoutMs: 120_000 },
+    );
     expect(r.state).toBe(LeaseState.LEASE_STATE_ACTIVE);
     sourceUuid = r.lease_uuid;
     const logs = await fredClient.callTool<{ logs: unknown }>('get_logs', {
@@ -149,6 +155,7 @@ describe('Restore roundtrip (ENG-604)', () => {
         timeout_seconds: 120,
         interval_seconds: 3,
       },
+      { timeoutMs: 150_000 },
     );
     expect(ready.state).toBe('LEASE_STATE_ACTIVE');
     const logs = await fredClient.callTool<{ logs: unknown }>('get_logs', {
@@ -177,11 +184,16 @@ describe('Restore roundtrip (ENG-604)', () => {
     const dep = await fredClient.callTool<{
       lease_uuid: string;
       state: LeaseState;
-    }>('deploy_app', {
-      image: 'nginxinc/nginx-unprivileged:alpine',
-      port: 8080,
-      size: 'docker-micro',
-    });
+    }>(
+      'deploy_app',
+      {
+        image: 'nginxinc/nginx-unprivileged:alpine',
+        port: 8080,
+        size: 'docker-micro',
+        timeout_seconds: 90,
+      },
+      { timeoutMs: 120_000 },
+    );
     expect(dep.state).toBe(LeaseState.LEASE_STATE_ACTIVE);
     negativeUuid = dep.lease_uuid;
 

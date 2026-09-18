@@ -5,6 +5,7 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  statSync,
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
@@ -12,7 +13,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { parse } from 'yaml';
+import { parse, stringify } from 'yaml';
+import { nativeBackendConfig } from '../e2e/scripts/native-backend-config.mjs';
 
 const root = new URL('../', import.meta.url);
 const authorityMembers = [
@@ -184,39 +186,31 @@ for (const kind of ['empty', 'corrupt', 'dangling symlink']) {
   });
 }
 
-test('Compose gates provider ingress on initialization and shares durable authority', () => {
+test('Compose preserves provider authority without admitting a container writer on the XFS root', () => {
   const { services } = parse(
     readFileSync(new URL('e2e/docker-compose.yml', root), 'utf8'),
   );
-  assert.deepEqual(services['backend-init'].depends_on, {
-    init: { condition: 'service_completed_successfully' },
-  });
-  assert.deepEqual(services['docker-backend'].depends_on, {
-    'backend-init': { condition: 'service_completed_successfully' },
-  });
-  assert.deepEqual(services['placement-init'].depends_on, {
-    'docker-backend': { condition: 'service_healthy' },
-  });
   assert.deepEqual(services.providerd.depends_on, {
     'placement-init': { condition: 'service_completed_successfully' },
   });
-  for (const name of ['backend-init', 'docker-backend']) {
-    assert.ok(services[name].volumes.includes('docker-backend-data:/data'));
-    assert.ok(services[name].volumes.includes('/mnt/fred-xfs:/mnt/fred-xfs'));
-    assert.ok(
-      services[name].volumes.includes(
-        '/var/run/docker.sock:/var/run/docker.sock',
-      ),
-    );
+  for (const [name, service] of Object.entries(services)) {
+    for (const volume of service.volumes ?? []) {
+      const source =
+        typeof volume === 'string' ? volume.split(':')[0] : volume.source;
+      assert.notEqual(
+        source,
+        '/mnt/fred-xfs',
+        `${name} must not own a container mount of the stateful root`,
+      );
+    }
   }
   for (const name of ['placement-init', 'providerd']) {
     assert.ok(services[name].volumes.includes('providerd-data:/data'));
     assert.ok(services[name].volumes.includes('shared-data:/shared:ro'));
+    assert.ok(
+      services[name].extra_hosts.includes('docker-backend:host-gateway'),
+    );
   }
-  assert.match(
-    services['docker-backend'].healthcheck.test,
-    /--cacert .* https:\/\/localhost:9001\/health/,
-  );
 });
 
 function generatedFredConfig() {
@@ -255,6 +249,76 @@ test('generated Fred configuration supplies verified backend TLS and exact persi
     assert.equal(backend[key], `/data/${filename}`);
   }
   assert.match(script, /subjectAltName=[^\n"]*DNS:docker-backend/);
+  assert.equal(provider.callback_base_url, 'https://127.0.0.1:8080');
+});
+
+test('native configuration uses the exact persistent host paths without rewriting unrelated values', () => {
+  const { backend } = generatedFredConfig();
+  const source = {
+    ...backend,
+    callback_secret: 'literal /data/ and /shared/ text',
+  };
+  const actual = parse(
+    nativeBackendConfig(stringify(source), {
+      backendData: '/host/backend authority',
+      sharedData: '/host/shared authority',
+    }),
+  );
+  assert.deepEqual(actual, {
+    ...source,
+    tls_cert_file: '/host/shared authority/tls/cert.pem',
+    tls_key_file: '/host/shared authority/tls/key.pem',
+    callback_db_path: '/host/backend authority/callbacks.db',
+    diagnostics_db_path: '/host/backend authority/diagnostics.db',
+    releases_db_path: '/host/backend authority/releases.db',
+    retention_db_path: '/host/backend authority/retention.db',
+  });
+});
+
+test('native configuration CLI keeps generated credentials private', (t) => {
+  const f = fixture(t);
+  const source = join(f.directory, 'source.yaml');
+  const destination = join(f.directory, 'native.yaml');
+  writeFileSync(source, stringify(generatedFredConfig().backend));
+  writeFileSync(destination, 'previous configuration', { mode: 0o644 });
+  const result = spawnSync(
+    process.execPath,
+    [
+      fileURLToPath(new URL('e2e/scripts/native-backend-config.mjs', root)),
+      source,
+      destination,
+      join(f.directory, 'data'),
+      join(f.directory, 'shared'),
+    ],
+    { encoding: 'utf8' },
+  );
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(statSync(destination).mode & 0o777, 0o600);
+  assert.equal(
+    parse(readFileSync(destination, 'utf8')).callback_db_path,
+    join(f.directory, 'data/callbacks.db'),
+  );
+});
+
+test('native configuration rejects authority paths outside the expected roots', () => {
+  const { backend } = generatedFredConfig();
+  for (const callback_db_path of [
+    '/other/callbacks.db',
+    '/data/../callbacks.db',
+  ]) {
+    assert.throws(() =>
+      nativeBackendConfig(stringify({ ...backend, callback_db_path }), {
+        backendData: '/host/backend',
+        sharedData: '/host/shared',
+      }),
+    );
+  }
+  assert.throws(() =>
+    nativeBackendConfig(stringify(backend), {
+      backendData: 'relative/backend',
+      sharedData: '/host/shared',
+    }),
+  );
 });
 
 function assertInitializerDefaultsMatchConfig(
@@ -362,4 +426,228 @@ test('initializer defaults and probed authority members match generated Fred con
       ),
     );
   }
+});
+
+function nativeLauncherFixture(t) {
+  const f = fixture(t);
+  const commands = join(f.directory, 'bin');
+  const shared = join(f.directory, 'shared');
+  mkdirSync(commands);
+  mkdirSync(shared);
+  writeFileSync(
+    join(shared, 'docker-backend.yaml'),
+    stringify(generatedFredConfig().backend),
+  );
+  const shim = join(commands, 'command-probe');
+  // Storage initialization is exercised directly above. Stub that boundary here,
+  // together with every daemon command, so orchestration never inspects host XFS.
+  writeFileSync(
+    shim,
+    `#!${process.execPath}
+const fs = require('node:fs');
+const path = require('node:path');
+const command = path.basename(process.argv[1]);
+const args = process.argv.slice(2);
+const env = process.env;
+fs.appendFileSync(env.FRED_TEST_LOG, JSON.stringify({ command, args,
+  backendData: env.FRED_BACKEND_DATA_DIR, volumeData: env.FRED_VOLUME_DATA_PATH,
+  backendConfig: env.FRED_BACKEND_CONFIG }) + '\\n');
+if (command === 'id') { console.log('0'); process.exit(0); }
+if (command === 'systemctl' && args.includes('is-active')) process.exit(3);
+if (command === 'systemctl' && args[0] === 'show' && env.FRED_TEST_UNIT_MISSING) {
+  console.log('not-found'); process.exit(1);
+}
+if (command === 'docker') {
+  if (args.includes('ps') && env.FRED_TEST_RUNNING_PROVIDER) console.log('providerd');
+  if (args[0] === 'create') console.log('backend-image-export');
+  if (args[0] === 'cp') fs.copyFileSync(__filename, args.at(-1));
+  if (args[0] === 'volume' && args[1] === 'inspect') {
+    console.log(args.includes('mcp-e2e-shared-data') ? env.FRED_TEST_SHARED : env.FRED_TEST_DATA);
+  }
+  if (args[0] === 'volume' && args[1] === 'create') console.log(args.at(-1));
+}
+if (command === 'sh' && args.at(-1).endsWith('/init_backend.sh')) {
+  if (env.FRED_TEST_FAIL_STEP === 'backend-init') process.exit(17);
+}
+if (command === 'curl' && env.FRED_TEST_FAIL_STEP === 'health') process.exit(22);
+`,
+    { mode: 0o700 },
+  );
+  for (const command of [
+    'docker',
+    'systemctl',
+    'systemd-run',
+    'journalctl',
+    'curl',
+    'id',
+    'sleep',
+    'sh',
+    'xfs_quota',
+  ]) {
+    symlinkSync(shim, join(commands, command));
+  }
+  return {
+    ...f,
+    shared,
+    run(command, extra = {}) {
+      return spawnSync(
+        '/bin/bash',
+        [fileURLToPath(new URL('e2e/scripts/devnet.sh', root)), command],
+        {
+          encoding: 'utf8',
+          timeout: 15_000,
+          env: {
+            ...process.env,
+            PATH: `${commands}:${process.env.PATH}`,
+            FRED_NATIVE_BACKEND_DIR: join(f.directory, 'native'),
+            FRED_DEVNET_WAIT_TIMEOUT: '1',
+            FRED_BACKEND_UNIT: 'fred-bootstrap-test',
+            FRED_TEST_SHARED: shared,
+            FRED_TEST_DATA: join(f.directory, 'data'),
+            FRED_TEST_LOG: join(f.directory, 'calls.jsonl'),
+            ...extra,
+          },
+        },
+      );
+    },
+  };
+}
+
+test('native launcher admits storage and verifies health before exposing provider ingress', (t) => {
+  const f = nativeLauncherFixture(t);
+  const result = f.run('up');
+  assert.equal(result.status, 0, result.stderr);
+  const calls = f.calls();
+  const at = (predicate) => {
+    const index = calls.findIndex(predicate);
+    assert.notEqual(index, -1, JSON.stringify(calls));
+    return index;
+  };
+  const initialization = at(
+    ({ command, args }) =>
+      command === 'sh' && args.at(-1).endsWith('/init_backend.sh'),
+  );
+  const launch = at(({ command }) => command === 'systemd-run');
+  const healthy = at(({ command }) => command === 'curl');
+  const placement = at(
+    ({ command, args }) =>
+      command === 'docker' && args.includes('placement-init'),
+  );
+  const ingress = at(
+    ({ command, args }) => command === 'docker' && args.includes('providerd'),
+  );
+  assert.ok(
+    initialization < launch &&
+      launch < healthy &&
+      healthy < placement &&
+      placement < ingress,
+  );
+  const config = parse(
+    readFileSync(calls[initialization].backendConfig, 'utf8'),
+  );
+  assert.equal(calls[initialization].backendData, join(f.directory, 'data'));
+  assert.equal(calls[initialization].volumeData, config.volume_data_path);
+  assert.equal(
+    config.callback_db_path,
+    join(calls[initialization].backendData, 'callbacks.db'),
+  );
+  assert.ok(calls[healthy].args.includes('--cacert'));
+  assert.ok(calls[healthy].args.includes(join(f.shared, 'tls/cert.pem')));
+  assert.ok(calls[healthy].args.includes('https://127.0.0.1:9001/health'));
+});
+
+for (const step of ['backend-init', 'health']) {
+  test(`native launcher does not admit placement or ingress after ${step} refusal`, (t) => {
+    const f = nativeLauncherFixture(t);
+    const result = f.run('up', { FRED_TEST_FAIL_STEP: step });
+    assert.equal(
+      result.status,
+      step === 'backend-init' ? 17 : 1,
+      result.stderr,
+    );
+    assert.ok(
+      !f
+        .calls()
+        .some(
+          ({ args }) =>
+            args.includes('placement-init') || args.includes('providerd'),
+        ),
+    );
+  });
+}
+
+test('normal native shutdown stops the host service and preserves storage authority', (t) => {
+  const f = nativeLauncherFixture(t);
+  const result = f.run('down');
+  assert.equal(result.status, 0, result.stderr);
+  const calls = f.calls();
+  const stop = calls.findIndex(
+    ({ command, args }) => command === 'systemctl' && args.includes('stop'),
+  );
+  const down = calls.findIndex(
+    ({ command, args }) => command === 'docker' && args.includes('down'),
+  );
+  assert.ok(stop >= 0 && down > stop);
+  assert.ok(
+    !calls.some(
+      ({ args }) =>
+        args.includes('--volumes') ||
+        args.includes('-v') ||
+        (args[0] === 'volume' && args[1] === 'rm'),
+    ),
+  );
+});
+
+test('native shutdown still tears down Compose when the transient unit no longer exists', (t) => {
+  const f = nativeLauncherFixture(t);
+  const result = f.run('down', { FRED_TEST_UNIT_MISSING: '1' });
+  assert.equal(result.status, 0, result.stderr);
+  assert.ok(
+    f
+      .calls()
+      .some(
+        ({ command, args }) => command === 'docker' && args.includes('down'),
+      ),
+  );
+  assert.ok(
+    !f
+      .calls()
+      .some(
+        ({ command, args }) => command === 'systemctl' && args.includes('stop'),
+      ),
+  );
+});
+
+test('native startup refuses existing provider ingress before initializing authority', (t) => {
+  const f = nativeLauncherFixture(t);
+  const result = f.run('up', { FRED_TEST_RUNNING_PROVIDER: '1' });
+  assert.equal(result.status, 1, result.stderr);
+  assert.match(result.stderr, /Provider ingress is already running/);
+  assert.ok(
+    !f
+      .calls()
+      .some(({ command }) => command === 'systemd-run' || command === 'sh'),
+  );
+});
+
+test('native devnet logs include the host backend journal', (t) => {
+  const f = nativeLauncherFixture(t);
+  const result = f.run('logs');
+  assert.equal(result.status, 0, result.stderr);
+  assert.ok(
+    f
+      .calls()
+      .some(
+        ({ command, args }) => command === 'docker' && args.includes('logs'),
+      ),
+  );
+  assert.ok(
+    f
+      .calls()
+      .some(
+        ({ command, args }) =>
+          command === 'journalctl' &&
+          args.some((arg) => arg.includes('fred-bootstrap-test')),
+      ),
+  );
 });

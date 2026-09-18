@@ -25,6 +25,7 @@ packages/*/src/.__tcprobe_*/
 # E2E artifacts
 e2e-logs.txt
 e2e/.tls/
+e2e/.native-backend/
 
 # Quantitative Vitest reports
 coverage/

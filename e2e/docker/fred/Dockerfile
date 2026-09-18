@@ -34,27 +34,11 @@ RUN apk add --no-cache ca-certificates curl
 
 COPY --from=builder /build/providerd /usr/bin/providerd
 COPY --from=builder /build/placement-preflight /usr/bin/placement-preflight
+# devnet.sh extracts this static artifact without starting a backend container.
+COPY --from=builder /build/docker-backend /usr/bin/docker-backend
 
 WORKDIR /app
 
 EXPOSE 8080
 
 CMD ["/usr/bin/providerd"]
-
-# ============================================================================
-# Docker-backend runtime
-# ============================================================================
-FROM alpine:3.22 AS docker-backend
-
-RUN apk add --no-cache ca-certificates curl xfsprogs-extra
-
-COPY --from=builder /build/docker-backend /usr/bin/docker-backend
-
-WORKDIR /data
-
-EXPOSE 9001
-
-HEALTHCHECK --interval=10s --timeout=5s --retries=5 \
-    CMD curl --cacert /shared/tls/cert.pem -f https://localhost:9001/health || exit 1
-
-CMD ["/usr/bin/docker-backend"]

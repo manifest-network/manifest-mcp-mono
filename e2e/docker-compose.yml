@@ -3,14 +3,13 @@
 # Services:
 #   - chain: Blockchain node (manifest-ledger, billing-v2 branch)
 #   - init: Register provider and create SKUs, generate configs
-#   - backend-init: Seal new backend storage before its first startup
-#   - docker-backend: Real Docker container provisioning backend
+#   - Native docker-backend: managed by scripts/devnet.sh on the Docker host
 #   - placement-init: Prove and initialize fresh provider placement authority
 #   - providerd: Provider daemon
 #
 # Usage:
-#   docker compose -f e2e/docker-compose.yml up -d --wait --wait-timeout 600
-#   docker compose -f e2e/docker-compose.yml down --remove-orphans
+#   bash e2e/scripts/devnet.sh up
+#   bash e2e/scripts/devnet.sh down
 # Preserve named volumes and /mnt/fred-xfs together across restarts. A complete
 # disposable reset must recreate BOTH; see docs/e2e-setup.md before using down -v.
 
@@ -63,60 +62,6 @@ services:
       - mcp-e2e
 
   # ===========================================================================
-  # Backend Storage Initialization (one-shot; existing authority is verified at startup)
-  # ===========================================================================
-  backend-init:
-    build:
-      context: ../submodules/fred
-      dockerfile: ../../e2e/docker/fred/Dockerfile
-      target: docker-backend
-    privileged: true
-    volumes:
-      - shared-data:/shared:ro
-      - docker-backend-data:/data
-      - /mnt/fred-xfs:/mnt/fred-xfs
-      - /var/run/docker.sock:/var/run/docker.sock
-      - ./scripts/init_backend.sh:/usr/local/bin/init_backend.sh:ro
-    command: ["/bin/sh", "/usr/local/bin/init_backend.sh"]
-    healthcheck:
-      disable: true
-    depends_on:
-      init:
-        condition: service_completed_successfully
-    restart: "no"
-    networks:
-      - mcp-e2e
-
-  # ===========================================================================
-  # Docker Backend (Real Container Provisioning)
-  # ===========================================================================
-  docker-backend:
-    build:
-      context: ../submodules/fred
-      dockerfile: ../../e2e/docker/fred/Dockerfile
-      target: docker-backend
-    privileged: true                      # xfs_quota project quotas need the loop /dev/loopN node (cap_add:[SYS_ADMIN] alone does not expose it)
-    volumes:
-      - shared-data:/shared:ro
-      - docker-backend-data:/data         # journals + identity anchor must survive container recreation
-      - /mnt/fred-xfs:/mnt/fred-xfs        # tenant data + primary identity marker; preserve with /data
-      - /var/run/docker.sock:/var/run/docker.sock
-    ports:
-      - "9001:9001"
-    command: ["/usr/bin/docker-backend", "--config", "/shared/docker-backend.yaml"]
-    healthcheck:
-      test: curl --cacert /shared/tls/cert.pem -f https://localhost:9001/health || exit 1
-      interval: 10s
-      timeout: 5s
-      retries: 10
-      start_period: 10s
-    depends_on:
-      backend-init:
-        condition: service_completed_successfully
-    networks:
-      - mcp-e2e
-
-  # ===========================================================================
   # CosmJS Faucet (patched for tokenfactory denoms)
   #
   # Drips MFX + factory/POA_ADMIN/upwr (PWR) to any requested address.
@@ -160,6 +105,7 @@ services:
   # Provider Placement Initialization
   # ===========================================================================
   placement-init:
+    image: mcp-e2e-fred:local
     build:
       context: ../submodules/fred
       dockerfile: ../../e2e/docker/fred/Dockerfile
@@ -169,9 +115,9 @@ services:
       - providerd-data:/data
       - ./scripts/init_placement.sh:/usr/local/bin/init_placement.sh:ro
     command: ["/bin/sh", "/usr/local/bin/init_placement.sh"]
-    depends_on:
-      docker-backend:
-        condition: service_healthy
+    # devnet.sh starts the native backend and verifies HTTPS before this service.
+    extra_hosts:
+      - "docker-backend:host-gateway"
     restart: "no"
     networks:
       - mcp-e2e
@@ -180,6 +126,7 @@ services:
   # Provider Daemon
   # ===========================================================================
   providerd:
+    image: mcp-e2e-fred:local
     build:
       context: ../submodules/fred
       dockerfile: ../../e2e/docker/fred/Dockerfile
@@ -187,6 +134,8 @@ services:
     volumes:
       - shared-data:/shared:ro
       - providerd-data:/data
+    extra_hosts:
+      - "docker-backend:host-gateway"
     ports:
       - "8080:8080"
     command: ["/usr/bin/providerd", "--config", "/shared/providerd.yaml"]
@@ -212,8 +161,6 @@ volumes:
     name: mcp-e2e-shared-data
   providerd-data:
     name: mcp-e2e-providerd-data
-  docker-backend-data:
-    name: mcp-e2e-docker-backend-data
 
 # =============================================================================
 # Networks

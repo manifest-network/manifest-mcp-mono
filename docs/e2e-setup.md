@@ -2,8 +2,8 @@
 
 The full suite creates a local chain and real Fred containers, including retained
 volumes. Run it on a Linux host with a local Docker Engine 28.1+ (API 1.49+) and Compose, initialized
-submodules, `xfsprogs`, and permission to create a loop device and mount a
-filesystem. Fred's backend is privileged and mounts the Docker socket. Use a
+submodules, `xfsprogs`, systemd, and sudo permission to launch the backend and
+prepare its filesystem. Fred's stateful backend runs natively on the Docker host. Use a
 dedicated development host or Linux VM; ordinary Docker Desktop setup on macOS or
 Windows does not provide the required host-identical XFS path. Run the checkout,
 Docker daemon, and commands inside the Linux VM, or use the project's Linux CI.
@@ -13,10 +13,16 @@ The PR and nightly workflows use Ubuntu 24.04 and install Docker Engine 29.7.2
 from Docker's signed package repository before preflight. Their installer is
 restricted to GitHub Actions; local setup uses the Docker installation you manage.
 
+Fred PR #240 supports the backend container image only for stateless development.
+Do not run the stateful backend or its initializer in containers with a writable
+bind of the XFS root: Fred correctly sees those mounts as potential writers to
+every tenant volume and refuses a fresh launch. Providerd and the chain remain
+containerized; the provider reaches the native backend through Docker's host gateway.
+
 ## Prepare a disposable volume
 
-The Compose file binds `/mnt/fred-xfs` at the same path inside the backend and the
-containers it provisions. It must be a **dedicated XFS mount with project quota
+The native backend uses `/mnt/fred-xfs` directly and mounts individual tenant
+volume directories into workload containers. It must be a **dedicated XFS mount with project quota
 accounting and enforcement enabled**, not an ordinary directory on ext4.
 
 These commands match the CI setup on Debian/Ubuntu. They require sudo and create
@@ -51,7 +57,8 @@ git submodule update --init --recursive
 npm ci
 npm run build
 npm run check:e2e-env
-docker compose -f e2e/docker-compose.yml up -d --wait --wait-timeout 600
+docker compose -f e2e/docker-compose.yml build
+bash e2e/scripts/devnet.sh up
 npm run test:e2e
 ```
 
@@ -60,22 +67,26 @@ project quota state, local Docker socket selection, daemon reachability, and the
 Docker API version required for Fred's image admission. It
 does not install packages, mount filesystems, or start containers. A missing tool
 or permission fails with setup guidance. Passing preflight cannot guarantee image
-builds, registry availability, or chain/provider health; inspect Compose logs for
-those failures.
+builds, registry availability, or chain/provider health. Use
+`bash e2e/scripts/devnet.sh logs` to collect Compose and native backend logs.
 
-Compose initializes Fred in order: billing/configuration, backend storage
-identity, backend startup, placement authority, then providerd. The placement
+The launcher initializes Fred in order: billing/configuration containers, native
+backend storage identity, native backend startup, placement authority, then
+providerd. It extracts the static backend executable from the built Fred image
+and starts the dedicated `manifest-mcp-e2e-backend` systemd unit. The placement
 initializer verifies backend HTTPS using the generated test certificate and
 proves that the new provider and backend are empty. It explicitly accepts this
 isolated test chain's plaintext gRPC. Keep tenant lease traffic and the test
-runner stopped until `up --wait` completes. The Fred image builds with Go 1.26.8
+runner stopped until `devnet.sh up` completes. The Fred image builds with Go 1.26.8
 and includes `placement-preflight` for this step.
 
-For a normal restart, use `docker compose -f e2e/docker-compose.yml down` without
-`-v`, then `up -d --wait --wait-timeout 600`. Preserve the XFS image and every
+For a normal restart, use `bash e2e/scripts/devnet.sh down`, then
+`bash e2e/scripts/devnet.sh up`. Preserve the XFS image and every
 Compose volume. The backend's primary identity marker lives on XFS; its anchor
 and journals live in `mcp-e2e-docker-backend-data`, and placement authority lives
-in `mcp-e2e-providerd-data`. Existing authority is verified at service startup.
+in `mcp-e2e-providerd-data`. The native backend opens the host paths of its
+named-volume journals; they are not copied into temporary storage. Existing
+authority is verified at service startup.
 The initializers refuse to replace partial, mismatched, or old authority. A
 devnet created before this bootstrap needs Fred's documented upgrade procedure,
 or a complete reset of the disposable devnet using the cleanup below followed
@@ -86,11 +97,11 @@ incomplete storage identity and prevents startup.
 
 Stop the stack before unmounting. This removes test chain, backend, and provider state.
 Remove the image only if it is the disposable image you created above.
-Complete the whole cleanup before starting a fresh devnet; `down -v` alone does
-not remove the backend identity and tenant data on the bind-mounted XFS image.
+Complete the whole cleanup before starting a fresh devnet; removing named volumes
+alone does not remove the backend identity and tenant data on the XFS image.
 
 ```bash
-docker compose -f e2e/docker-compose.yml down -v --remove-orphans
+bash e2e/scripts/devnet.sh down --volumes
 # Confirm this mount is backed by the disposable image before unmounting.
 findmnt --mountpoint /mnt/fred-xfs
 sudo umount /mnt/fred-xfs

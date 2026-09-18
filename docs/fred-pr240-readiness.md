@@ -31,9 +31,12 @@ publication and consumer adoption.
 ## Devnet and verification
 
 The devnet builds Go 1.26.8 and includes `placement-preflight`. CI installs a
-pinned compatible Docker daemon before checking the required server API floor. Compose seals a
-fresh backend storage identity, starts the backend with verified HTTPS, prepares
-provider placement authority, then starts providerd. Journals, the identity
+pinned compatible Docker daemon before checking the required server API floor.
+The devnet launcher seals a fresh backend storage identity and runs the backend
+natively on the Docker host under systemd. Stateful backend containers are
+unsupported by the new writer inventory: their writable XFS-root mount covers
+every tenant volume. Provider placement initialization and providerd remain
+containerized and reach the native backend over verified HTTPS. Journals, the identity
 anchor, XFS data, and provider state must remain together across restarts. The
 initializers never reseal partial or existing authority. Follow
 [local E2E setup](e2e-setup.md) for fresh setup or a complete disposable reset;
@@ -59,7 +62,9 @@ the existing authority after container recreation. PR CI runs the single SDK
 acceptance flow plus lifecycle and restore tests. The nightly job retains the
 full E2E suite.
 
-`e2e/fred-wire-golden.json` still records its actual v0.13 observation. Do not
-change that provenance or its expected fields based solely on reading Go source;
-refresh it after successful live capture against the upgraded pin. Local unit
-and bootstrap-script tests do not establish live XFS or rollout acceptance.
+`e2e/fred-wire-golden.json` preserves its original baseline provenance alongside
+actual status/release observations against the new pin. The diagnostics
+projection records `lease_state` as a required field derived by mono. Conditional
+fields not seen in a healthy run retain their baseline provenance; do not invent
+observations from Go source. Local unit and bootstrap-script tests do not
+establish live XFS or rollout acceptance.

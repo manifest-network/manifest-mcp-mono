@@ -64,6 +64,12 @@ export function assertWireKeys(
     );
   }
 
+  // Record field names even when a shape mismatch fails below, never values.
+  console.info(
+    '[fred-wire-keys]',
+    JSON.stringify({ surface, keys: [...observed].sort() }),
+  );
+
   // Guard against a vacuous pass: an empty observation would satisfy the
   // unknown-key check trivially and quietly assert nothing.
   expect(
@@ -90,10 +96,4 @@ export function assertWireKeys(
     `${surface} (${entry.endpoint}): the provider sent unmodelled key(s) ${unknown.join(', ')}. ` +
       'Fred grew a field mono does not know about — decide whether to surface it, then record it in e2e/fred-wire-golden.json.',
   ).toEqual([]);
-
-  // Retain actual successful observations in CI without logging response values.
-  console.info(
-    '[fred-wire-keys]',
-    JSON.stringify({ surface, keys: [...observed].sort() }),
-  );
 }

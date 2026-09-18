@@ -282,8 +282,7 @@ test('wiring: PR live gate includes sequential maintenance and restore after SDK
   );
   const compatibility = live.steps.findIndex(
     (step) =>
-      step.run ===
-      'npm run test:e2e -- e2e/lifecycle.e2e.test.ts e2e/restore-roundtrip.e2e.test.ts',
+      step.run === 'npx vitest run --config e2e/vitest.compat.config.ts',
   );
   assert(sdk >= 0);
   assert(compatibility > sdk);
@@ -296,9 +295,22 @@ test('wiring: PR live gate includes sequential maintenance and restore after SDK
   );
   assert.match(vitest, /fileParallelism:\s*false/);
   assert.match(vitest, /sequence:\s*\{\s*concurrent:\s*false/);
+  const compatibilityConfig = readFileSync(
+    resolve(repoRoot, 'e2e/vitest.compat.config.ts'),
+    'utf8',
+  );
+  assert.match(
+    compatibilityConfig,
+    /import e2eConfig from '\.\/vitest\.config\.js'/,
+  );
+  assert.match(compatibilityConfig, /\.\.\.e2eConfig\.test/);
+  assert.match(
+    compatibilityConfig,
+    /include:\s*\['lifecycle\.e2e\.test\.ts', 'restore-roundtrip\.e2e\.test\.ts'\]/,
+  );
 });
 
-test('wiring: both live workflows install supported Docker before preflight and allow fresh startup', () => {
+test('wiring: both live workflows install supported Docker and manage the native devnet', () => {
   for (const [filename, jobName] of [
     ['e2e-pr.yml', 'acceptance-single'],
     ['e2e.yml', 'e2e'],
@@ -315,8 +327,22 @@ test('wiring: both live workflows install supported Docker before preflight and 
     assert(install >= 0 && install < preflight, filename);
     assert.equal(job.steps[install].if, undefined);
     assert.equal(job.steps[install]['continue-on-error'], undefined);
-    const startup = job.steps.find((step) => step.name === 'Start devnet');
-    assert.match(startup.run, /up -d --wait --wait-timeout 600$/);
+    const startup = job.steps.findIndex((step) => step.name === 'Start devnet');
+    assert.equal(job.steps[startup].run, 'bash e2e/scripts/devnet.sh up');
+    assert.equal(job.steps[startup].env.FRED_DEVNET_WAIT_TIMEOUT, 600);
+    const build = job.steps.findIndex(
+      (step) => step.name === 'Install and build',
+    );
+    assert(build >= 0 && build < startup, filename);
+    assert.match(job.steps[build].run, /npm ci/);
+    const logs = job.steps.find(
+      (step) => step.name === 'Collect logs on failure',
+    );
+    assert.equal(logs.run, 'bash e2e/scripts/devnet.sh logs > e2e-logs.txt');
+    assert.equal(logs.if, 'failure()');
+    const teardown = job.steps.find((step) => step.name === 'Teardown');
+    assert.equal(teardown.run, 'bash e2e/scripts/devnet.sh down');
+    assert.equal(teardown.if, 'always()');
   }
 });
 
@@ -338,6 +364,36 @@ test('CI Docker installer pins signed Ubuntu packages and refuses non-CI executi
   });
   assert.equal(refused.status, 1);
   assert.match(refused.stderr, /restricted to Linux GitHub Actions runners/);
+});
+
+test('wiring: successful live suites verify a bounded restart without deleting authority', () => {
+  for (const [filename, jobName, finalLiveStep] of [
+    [
+      'e2e-pr.yml',
+      'acceptance-single',
+      'Run maintenance replay and retained-volume restore',
+    ],
+    ['e2e.yml', 'e2e', 'Run E2E tests'],
+  ]) {
+    const steps = readWorkflow(filename).jobs[jobName].steps;
+    const live = steps.findIndex((step) => step.name === finalLiveStep);
+    const restart = steps.findIndex(
+      (step) => step.name === 'Verify devnet restart preserves authority',
+    );
+    const logs = steps.findIndex(
+      (step) => step.name === 'Collect logs on failure',
+    );
+    assert(live >= 0 && restart > live && logs > restart, filename);
+    assert.equal(steps[restart].if, undefined);
+    assert.equal(steps[restart]['continue-on-error'], undefined);
+    assert.equal(steps[restart]['timeout-minutes'], 10);
+    assert.equal(steps[restart].env.FRED_DEVNET_WAIT_TIMEOUT, 600);
+    assert.equal(
+      steps[restart].run,
+      'bash e2e/scripts/devnet.sh down\nbash e2e/scripts/devnet.sh up\n',
+    );
+    assert(steps.findIndex((step) => step.name === 'Teardown') > logs);
+  }
 });
 
 test('wiring: PR change filter includes the MCP lifecycle runtime dependencies', () => {

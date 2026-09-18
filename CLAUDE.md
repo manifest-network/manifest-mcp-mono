@@ -45,10 +45,11 @@ npm run check:type-tests   # root type-test harness: known-bad probe must fail +
 
 # E2E setup (first prepare Linux/XFS project quotas: docs/e2e-setup.md)
 npm run check:e2e-env
-docker compose -f e2e/docker-compose.yml up -d --wait --wait-timeout 600
+docker compose -f e2e/docker-compose.yml build
+bash e2e/scripts/devnet.sh up
 npm run test:e2e
 # Preserve the authority journals and XFS identity together for the next startup.
-docker compose -f e2e/docker-compose.yml down --remove-orphans
+bash e2e/scripts/devnet.sh down
 # For a complete disposable reset, follow docs/e2e-setup.md; down -v alone is incomplete.
 ```
 

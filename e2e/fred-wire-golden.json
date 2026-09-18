@@ -37,7 +37,7 @@
     "whether to model it, then record it here."
   ],
   "fred_ref": "8f0cbd9431b482732d60d81fb59f94a37cd06486",
-  "fred_ref_note": "submodules/fred pin at capture time; e2e builds the devnet from this source",
+  "fred_ref_note": "Original capture revision for the baseline and conditional-field allowlists. Later live observations are recorded separately below.",
 
   "status": {
     "endpoint": "GET /v1/leases/{uuid}/status",
@@ -77,7 +77,7 @@
   "diagnostics_projection": {
     "endpoint": "GET /v1/leases/{uuid}/provision",
     "observed_via": "app_diagnostics structuredContent (EXPLICIT projection — mono's contract, not Fred's; cannot detect a field Fred adds)",
-    "always": ["lease_uuid", "provision_status", "fail_count"],
+    "always": ["lease_uuid", "lease_state", "provision_status", "fail_count"],
     "sometimes": [
       "reason",
       "message",
@@ -87,6 +87,26 @@
       "restore_hint"
     ],
     "mono_strips": ["tenant", "provider_uuid", "partition"],
-    "mono_adds": ["next_step"]
+    "mono_adds": ["lease_state", "next_step"]
+  },
+
+  "live_observations": {
+    "fred_ref": "4f00091cd7ace41c92bb2d1ebcd2c1a68fb7d234",
+    "mono_ref": "5d7020c77a0d288bf15d1ea969f055e8a0addb20",
+    "run_url": "https://github.com/manifest-network/manifest-mcp-mono/actions/runs/35367039071",
+    "scope": "Healthy ACTIVE status and release keys observed in live lifecycle tests. Conditional-field allowlists retain their original baseline provenance. This run passed maintenance replay/conflict but failed the diagnostics projection check and stateful deployment; it is not full restore acceptance.",
+    "status": [
+      "lease_uuid",
+      "meta_hash_hex",
+      "payload_received",
+      "provider_uuid",
+      "provision_status",
+      "provisioning_started",
+      "requires_payload",
+      "state",
+      "tenant"
+    ],
+    "release": ["created_at", "image", "manifest_bytes", "status", "version"],
+    "diagnostics_projection_correction": "The live assertion observed lease_state as an extra key. It is always derived from chain state by mono, not added by Fred."
   }
 }
