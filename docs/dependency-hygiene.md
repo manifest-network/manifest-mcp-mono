@@ -59,7 +59,7 @@ version, integrity, URL and dependency declarations, including nested copies.
 An intentional fork update must refresh this adoption record and its provenance
 assessment; an unrelated lockfile update must not silently detach the evidence.
 This consistency check does not create or verify build provenance. The four
-initial repair releases are [explicitly recorded as unattested](dependency-consumers.md#publication-provenance-and-acceptance).
+initial repair releases block SDK publication and are [explicitly recorded as unattested](dependency-consumers.md#publication-provenance-and-release-gate).
 
 The dependency-cruiser positive controls scan the full workspace graph. Each scan
 has a 30-second subprocess deadline within a 45-second test deadline, so the
@@ -70,6 +70,13 @@ mandatory.
 The repository's `main` ruleset had no required status checks when inspected on
 2026-09-08. Require `test`, `audit`, and `e2e-gate` there to enforce these checks at
 merge time; this is separate from the checked-in workflow definitions.
+
+Release also runs `check:dependency-provenance` with npm 11.19.1 against the
+repository and both fresh consumers. It requires cryptographically verified npm
+bundles bound to the exact reviewed artifact, source commit and workflow identity.
+The current manual dependency releases intentionally fail; their previous
+publication exception is withdrawn. Offline regression tests run in PR CI.
+The emergency audit process below does not waive this provenance requirement.
 
 ## Consumer gate recovery
 

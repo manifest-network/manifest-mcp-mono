@@ -8,6 +8,10 @@
   "files": {
     "ignoreUnknown": true,
     "includes": [
+      "scripts/check-dependency-provenance.mjs",
+      "scripts/check-dependency-provenance.test.mjs",
+      "tools/npm-provenance.mjs",
+      "tools/candidate-registry.mjs",
       "packages/**",
       "examples/**",
       "e2e/**/*.ts",

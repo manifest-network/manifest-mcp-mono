@@ -31,9 +31,10 @@
     "release:version": "node scripts/version.mjs",
     "check:consumers": "node --test scripts/check-consumers.test.mjs && node scripts/check-consumers.mjs",
     "check:e2e-env": "node scripts/check-e2e-env.mjs",
-    "check:review-tooling": "node --test scripts/check-consumers.test.mjs scripts/check-e2e-env.test.mjs scripts/check-e2e-fred-bootstrap.test.mjs",
+    "check:review-tooling": "node --test scripts/check-consumers.test.mjs scripts/check-e2e-env.test.mjs scripts/check-e2e-fred-bootstrap.test.mjs scripts/check-dependency-provenance.test.mjs",
     "test:coverage": "vitest run --coverage --testTimeout=30000 --maxWorkers=2",
-    "check:coverage-config": "node --test scripts/check-coverage.test.mjs"
+    "check:coverage-config": "node --test scripts/check-coverage.test.mjs",
+    "check:dependency-provenance": "node --test scripts/check-dependency-provenance.test.mjs && node scripts/check-dependency-provenance.mjs"
   },
   "devDependencies": {
     "@arethetypeswrong/core": "0.18.5",

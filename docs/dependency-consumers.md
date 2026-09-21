@@ -3,15 +3,23 @@
 The v0.22.0 packages were published with declarations permitting vulnerable
 Axios and protobufjs versions. The monorepo's overrides do not travel with the libraries:
 [npm considers overrides only in the consuming application's root package.json](https://docs.npmjs.com/cli/v11/configuring-npm/package-json/#overrides).
-The unreleased dependency update raises the ManifestJS minimum to 3.0.1 and
-selects Stargate 0.32.4-ll.4. Their dependency declarations use maintained
-LCD/ICS23 npm aliases, so the repair travels with the libraries. These upstream
-versions were published and verified against public npm on 2026-09-21.
-A passing monorepo audit alone does not close ENG-805 F01.
+The unreleased branch currently selects ManifestJS 3.0.1 and Stargate
+0.32.4-ll.4. These dependency declarations repair the audited Axios/protobufjs
+paths, but their four maintained packages were published manually without
+provenance attestations. **The SDK/CLI release is blocked until coordinated,
+attested replacements are adopted. The previous manual-publication exception is
+withdrawn.** No attested successors are claimed to exist, and this branch does
+not declare proposed, unpublished versions.
 
-## Narrow repair and publication order
+The current public v0.22.0 graph also needs a compatibility correction: its core
+pins Stargate ll.3, while ManifestJS `^3.0.0` can select 3.0.1 with Stargate ll.4.
+A clean SDK/CLI installation therefore installs two class identities. Passing
+imports do not make this a compatible graph, and this observation alone does not
+establish an exploitable signing bug.
 
-Publish and verify these packages in dependency order:
+## Initial manual repair artifacts
+
+These exact versions already exist and remain in the branch lockfile for review:
 
 | Package | Version | Published dependency repair | Source |
 | --- | --- | --- | --- |
@@ -45,34 +53,92 @@ consumer check below, and retain both audit reports and the resolved trees.
 Do not commit temporary-registry URLs or replace failed audits with staging
 results. CI and release validation both run the same consumer check.
 
-## Publication provenance and acceptance
+## Publication provenance and release gate
 
-These four specific repair versions were published manually by `fmorency_`.
-Their public npm metadata has **no provenance attestations**. The `sourceCommits`
-in the evidence file are maintainer-recorded source references, not attestations;
-SHA-512 comparison establishes artifact identity, not who built the artifact or
-whether that commit produced it. npm's [provenance mechanism](https://docs.npmjs.com/generating-provenance-statements/)
-provides a verifiable build/source link when publishing through supported CI.
+The four initial repair versions were published manually by `fmorency_` and have
+**no provenance attestations**. Their recorded source commits and SHA-512 hashes
+establish neither the builder identity nor that those commits produced the
+artifacts. They are historical evidence, not an accepted release exception.
+Existing npm versions cannot gain build provenance retroactively; publish new
+versions from reviewed source using [npm trusted publishing](https://docs.npmjs.com/trusted-publishers/)
+and [npm provenance](https://docs.npmjs.com/generating-provenance-statements/).
 
-This PR retains the four recorded version/integrity pairs as a scoped manual
-publication exception: they repair known high/critical dependency paths while
-preserving the existing runtime implementation, backed by source review,
-compatibility tests and public consumer checks. This accepts the missing CI
-attestation for these versions; those checks do not replace it. Review and merge
-of this adoption must consider that limitation, including the signing and
-proof-verification code. It is not a blanket exception for future fork versions.
+`npm run check:dependency-provenance` fails release validation until each of the
+four exact adopted artifacts passes. It requires the reviewed npm **11.19.1**
+verifier and consumes the output of a successful
+`npm audit signatures --json --include-attestations`. npm checks the signature,
+certificate chain and transparency-log evidence. The additional policy inspects
+those same verified bundles, requiring the exact package/version/SHA-512 subject,
+GitHub Actions OIDC issuer, signing-certificate workflow identity and authenticated
+source repository, full commit and `refs/heads/main` identity. The signed SLSA v1
+statement must agree with those identities and name GitHub's hosted builder.
+Metadata presence or a separately downloaded, unverified statement cannot pass.
 
-Subsequent maintained-fork releases should build and publish through OIDC trusted
-publishing with npm provenance, then verify their attestations before adoption.
-Editing this repository's source references cannot attest the existing releases.
-This monorepo's own release workflow continues publishing with `--provenance`.
+The trusted source workflows are:
 
-The evidence file's `packages` array is the active adoption record:
-`check:dependency-hygiene` compares each name, version, integrity, tarball URL and
-dependency declaration with every matching lockfile entry. An intentional fork
-update must update that record and its provenance assessment in the same PR.
-The dated consumer results remain measurements of the recorded run; current
-consumer checks generate new reports instead of trusting those historical counts.
+| Dependencies | Repository | Workflow |
+| --- | --- | --- |
+| LCD, ManifestJS | `manifest-network/manifestjs` | `.github/workflows/release.yaml` |
+| ICS23, Stargate | `manifest-network/cosmjs` | `.github/workflows/manifest-release.yml` |
+
+The evidence file's `packages` array is the exact artifact/source allowlist.
+`check:dependency-hygiene` guards its name, version, integrity, URL and dependency
+declarations against the lockfile. The provenance gate additionally binds each
+artifact to its reviewed commit and the fixed workflow policy. Source references
+for the current manual artifacts deliberately cannot satisfy that gate. Adoption
+of attested successors must update versions, digests and source commits together.
+
+Release runs this check for the repository and both fresh packed consumer graphs,
+after their audits/import checks. A caret dependency resolving a different future
+artifact must be reviewed and added to the record; root-lock evidence alone is
+insufficient. Ordinary PR CI runs offline policy regression tests, so it can
+review the release repair without pretending the current packages are attested.
+There is no provenance skip flag. The general emergency audit procedure does not
+waive this provenance requirement.
+
+Provenance proves the authenticated source/build association. It does not prove
+that a source change is secure or reproducible, or attest every transitive
+package. The upstream advisory review below remains required.
+
+## Coordinated successor plan
+
+The following versions are **proposed and unpublished**. Check availability
+again before publishing:
+
+| Package | Proposed version | Purpose |
+| --- | --- | --- |
+| LCD | `0.14.7` | Attested successor with repaired Axios declaration |
+| ICS23 | `0.6.10` | Attested successor with protobufjs 7 |
+| Stargate | `0.32.4-ll.5` | Attested ICS23 edge; retain the signing workaround |
+| ManifestJS legacy line | `3.0.2` | Restore exact Stargate ll.3; adopt attested LCD |
+| ManifestJS repaired line | `4.0.0` | Exact Stargate ll.5 and attested LCD |
+| SDK/core/CLI | Next coordinated release | Adopt ManifestJS 4 and Stargate ll.5 together |
+
+1. Review and merge the source changes and publishing workflows in
+   [CosmJS PR #2](https://github.com/manifest-network/cosmjs/pull/2) and
+   [ManifestJS PR #21](https://github.com/manifest-network/manifestjs/pull/21).
+   Configure npm trusted publishers for those exact workflows and the protected
+   release environment; preserve the required reviews and source-commit checks.
+2. Publish and verify LCD and ICS23, then Stargate, then the two ManifestJS lines.
+   Retain the exact artifact digests, source commits and verified bundles. Test
+   candidate tarballs through the temporary registry before publication, then
+   repeat against public npm.
+3. Confirm fresh SDK v0.22.0 installations select ManifestJS 3.0.2 and share
+   Stargate ll.3. **This only repairs compatibility.** Old core's immutable ll.3
+   pin retains its older dependency vulnerabilities and provenance gap. Record
+   those findings; any source-release audit exception for this legacy correction
+   must be explicit, maintainer approved and scoped to that exact release.
+4. Adopt ManifestJS 4 and Stargate ll.5 together in the next SDK/core/CLI release.
+   Require verified provenance, one shared identity, zero high/critical consumer
+   findings and the existing compatibility, browser, type and live-chain gates.
+   Existing applications need an SDK upgrade and regenerated lockfile for the
+   full repair.
+
+A broad required Stargate peer was tested and rejected: npm auto-installed a
+newer peer for ManifestJS while nesting ll.3 under old core, despite `npm ls`
+passing. Separating the ManifestJS major lines preserves actual npm resolution.
+The fixture suite stages both lines in the same registry and checks real client
+constructor identities, including a negative future-patch control.
 
 ## Fork advisory coverage
 
@@ -110,9 +176,10 @@ still checks Axios, protobufjs and the other transitive packages under their rea
 names. No advisory allowlist or severity suppression is configured, but the
 upstream-name gap is a separate maintenance obligation, not automated coverage.
 
-## Verified repair (2026-09-21)
+## Historical candidate validation (2026-09-21)
 
-All four public npm tarballs match the integrities of the tested artifacts.
+All four initial public npm tarballs match the integrities of the tested artifacts.
+These checks do not make their unattested publication acceptable for release.
 The final monorepo lockfile installs with `npm ci` using a fresh public-npm cache.
 The complete consumer check then installed this branch's packed SDK and CLI
 with the published upstream dependencies and no application overrides:
@@ -131,7 +198,7 @@ record the versions, integrities, and counts. The source patches are
 
 Validation also passed the monorepo build, lint, type-test harness, workflow and
 package checks, bundle budgets, eight MCP annotation checks, and the coverage
-suite (5,539 passed, 17 skipped). Full live-chain integration was not rerun.
+suite (5,539 passed, 17 skipped). Live-chain results are tracked separately in the PR checks.
 
 This evidence covers the updated packages packed from this branch. A new
 SDK/CLI release is still required to ship these declarations. Existing v0.22.0
@@ -187,6 +254,38 @@ packed tarballs. The directory also retains its installed dependencies and npm
 cache for investigation; remove it after retaining the reports you need. The
 output location must be outside the workspace so missing consumer dependencies
 cannot accidentally resolve from the repository's `node_modules`.
+
+## Check published consumers and release provenance
+
+To reproduce the existing public graph without workspace sibling substitutions:
+
+```sh
+node scripts/check-consumers.mjs --published-version 0.22.0 --output /tmp/manifest-published-check
+```
+
+This packs only the exact published SDK/CLI entry tarballs and resolves their
+published dependencies normally. Its report separates `identityPasses`,
+`auditPasses` and `smokePasses`; any failing component still returns nonzero.
+Today both import checks pass, both install Stargate ll.3 and ll.4, and audits
+retain high/critical entries. Those entries include affected-parent rollups and
+are not counts of independently demonstrated exploits. A future legacy
+compatibility correction may fix identity while leaving its audit nonzero.
+
+After building a candidate, release validation uses a new, empty output directory
+and the pinned verifier:
+
+```sh
+npm run check:consumers -- --output /tmp/manifest-release-consumers
+# Requires npm 11.19.1; intentionally fails for the current manual dependency versions.
+npm run check:dependency-provenance -- --consumers /tmp/manifest-release-consumers
+```
+
+The gate retains complete npm signature reports and a summary under its printed
+`manifest-provenance-*` temporary directory. Multiple runs in one consumer output
+directory are rejected rather than selecting stale passing evidence. Missing or
+invalid provenance, wrong source identities, unreviewed artifacts and registry
+errors block release. Correct the source release/adoption record, then repeat the
+checks; do not substitute historical counts or remove the gate.
 
 ## Interim application workaround
 
@@ -306,7 +405,7 @@ The combined migration should proceed as follows:
    ICS23 branch; retain every remaining advisory in the audit evidence.
 
 The original assessment did not publish upstream packages or change dependency
-versions. The narrow repair above addresses F01; the separate combined migration
+versions. The narrow repair plan above targets F01; the separate combined migration
 and its compatibility checks remain necessary to close ENG-808. Lifecycle patching, library
 overrides, and bundling an opaque copy of the old dependency tree do not satisfy
 the acceptance criteria.

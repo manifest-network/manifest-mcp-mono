@@ -68,10 +68,17 @@ export function runtimeClosure(target, packages) {
   return selected;
 }
 
-export function packPackage(directory, destination, cache) {
+export function packPackage(directory, destination, cache, specifier) {
   const output = requireSuccess(
     runNpm(
-      ['pack', '--json', '--ignore-scripts', '--pack-destination', destination],
+      [
+        'pack',
+        ...(specifier ? [specifier] : []),
+        '--json',
+        '--ignore-scripts',
+        '--pack-destination',
+        destination,
+      ],
       directory,
       cache,
     ),
@@ -106,7 +113,7 @@ export function writeConsumer(directory, selected) {
   return manifest;
 }
 
-export function installConsumer(directory, cache) {
+export function installConsumer(directory, cache, registry) {
   return runNpm(
     [
       'install',
@@ -118,6 +125,7 @@ export function installConsumer(directory, cache) {
       '--audit=false',
       '--fund=false',
       '--install-strategy=hoisted',
+      ...(registry ? ['--registry', registry] : []),
     ],
     directory,
     cache,

@@ -9,6 +9,12 @@
       "tarball": "https://registry.npmjs.org/@manifest-network/lcd/-/lcd-0.14.6.tgz",
       "dependencies": {
         "axios": "^1.19.0"
+      },
+      "source": {
+        "repository": "manifest-network/manifestjs",
+        "workflow": ".github/workflows/release.yaml",
+        "ref": "refs/heads/main",
+        "sha": "5df11dcf6c41db000355ab0214c7ee091392a972"
       }
     },
     {
@@ -19,6 +25,12 @@
       "dependencies": {
         "@noble/hashes": "^1.0.0",
         "protobufjs": "^7.6.5"
+      },
+      "source": {
+        "repository": "manifest-network/cosmjs",
+        "workflow": ".github/workflows/manifest-release.yml",
+        "ref": "refs/heads/main",
+        "sha": "d9ec2a47735d252fdda90f7aaeddd8eec4d3cee7"
       }
     },
     {
@@ -37,6 +49,12 @@
         "@cosmjs/encoding": "^0.32.4",
         "@cosmjs/proto-signing": "^0.32.4",
         "@cosmjs/tendermint-rpc": "^0.32.4"
+      },
+      "source": {
+        "repository": "manifest-network/cosmjs",
+        "workflow": ".github/workflows/manifest-release.yml",
+        "ref": "refs/heads/main",
+        "sha": "d9ec2a47735d252fdda90f7aaeddd8eec4d3cee7"
       }
     },
     {
@@ -51,6 +69,12 @@
         "@cosmjs/stargate": "npm:@manifest-network/stargate@0.32.4-ll.4",
         "@cosmjs/proto-signing": "^0.32.4",
         "@cosmjs/tendermint-rpc": "^0.32.4"
+      },
+      "source": {
+        "repository": "manifest-network/manifestjs",
+        "workflow": ".github/workflows/release.yaml",
+        "ref": "refs/heads/main",
+        "sha": "5df11dcf6c41db000355ab0214c7ee091392a972"
       }
     }
   ],
@@ -98,8 +122,10 @@
     "publicationMethod": "manual npm publish",
     "metadataCheckedAt": "2026-09-21T15:28:46.374715+00:00",
     "sourceCommitsAreAttested": false,
-    "acceptanceScope": "Only the four recorded version/integrity pairs. Retained for the targeted known-advisory repair with unchanged fork runtime sources and compatibility/consumer validation; no CI source-to-artifact attestation is claimed.",
-    "followUp": "Use OIDC trusted publishing with npm provenance for subsequent maintained-fork releases and verify attestations before adoption."
+    "followUp": "Review and merge CI workflows, configure exact npm trusted publishers, publish new attested versions, then update the package/version/integrity/source allowlist and coordinated SDK declarations. Existing versions cannot acquire provenance retroactively.",
+    "releaseAccepted": false,
+    "releaseBlocker": "The four current versions have no source-to-artifact attestations. The previous manual-publication exception is withdrawn. New SDK/CLI publication requires coordinated successors with cryptographically verified provenance and reviewed source identities.",
+    "sourcePolicyNote": "The source fields define the required repository, workflow, main ref and reviewed commit for the corresponding exact artifact. Current manual source references are not attestations and cannot pass the release gate; replace them with verified successor release commits when adopting new artifacts."
   },
   "upstreamAdvisoryReview": {
     "checkedAt": "2026-09-21T15:28:46.374715+00:00",
@@ -144,5 +170,15 @@
         "advisories": []
       }
     ]
+  },
+  "versionPlan": {
+    "status": "proposed-unpublished",
+    "lcd": "0.14.7",
+    "ics23": "0.6.10",
+    "stargate": "0.32.4-ll.5",
+    "legacyManifestjs": "3.0.2",
+    "repairedManifestjs": "4.0.0",
+    "legacyScope": "Restore Stargate ll.3 identity for existing SDK ^3.0.0 consumers. This does not replace the old SDK core dependency or clear its security/provenance findings.",
+    "adoption": "Coordinated next SDK/core/CLI release must use ManifestJS 4 and Stargate ll.5 only after the artifacts pass release provenance and consumer gates."
   }
 }
