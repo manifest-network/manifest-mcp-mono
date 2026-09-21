@@ -12,7 +12,10 @@ import type {
   StopAppReconciliation,
   WalletProvider,
 } from '@manifest-network/manifest-mcp-core';
-import type { FredCompatibilityConfig } from '@manifest-network/manifest-mcp-fred';
+import type {
+  BuildManifestPreviewResult,
+  FredCompatibilityConfig,
+} from '@manifest-network/manifest-mcp-fred';
 
 export type {
   FredCompatibility,
@@ -274,6 +277,8 @@ export interface Plan {
   fees: PlanFees;
   /** Ordered create-lease items with the catalog pricing used for readiness and fees. */
   leaseItems: readonly PlannedLeaseItem[];
+  /** Applied provider policy and manifest validation shown before confirmation. */
+  manifestValidation?: BuildManifestPreviewResult['validation'];
 }
 
 export type PlanEdit =

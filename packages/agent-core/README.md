@@ -35,8 +35,12 @@ Each function takes a typed args object plus a callbacks object with `onConfirm`
 `DeployAppOptions.fredCompatibility` selects the manifest policy: `v0.13` (the default),
 `pr240`, or a map such as `{ 'https://provider.example': 'pr240' }`. Unlisted providers
 use `v0.13`. The operation snapshots this configuration before confirmation callbacks;
-provider-specific validation runs before creating the paid lease. Global modes also
-apply to initial and edited previews. The library does not read environment variables.
+provider-specific validation runs before creating the paid lease. Initial and edited
+previews use the selected provider's policy, including when an edit changes providers.
+`Plan.manifestValidation` reports `fred_compatibility`, `valid`, and `errors` to the
+`onPlan` callback; the rendered plan shows the same policy and validation result before
+confirmation. The optional field keeps manually constructed plans compatible. The
+library does not read environment variables.
 
 ## Deployment pricing
 

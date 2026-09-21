@@ -101,6 +101,13 @@ Changing modes requires removing the current mode's named volumes **and recreati
 the matching XFS image**; neither mode may reuse the other's storage. Keep the same
 `FRED_COMPATIBILITY` value for build, up, tests, down, and logs.
 
+The launcher's named-volume guards are supplemented by Fred's storage checks.
+If legacy named volumes were removed but managed tenant or retained data remains
+on XFS, PR240's `--initialize-storage-identity new` refuses the nonempty managed
+volume inventory before publishing new authority. Initialization failure stops
+the launcher before backend or provider startup; removing named volumes alone
+does not make a cross-version reset valid.
+
 In PR240 mode, the launcher initializes Fred in order: billing/configuration containers, native
 backend storage identity, native backend startup, placement authority, then
 providerd. It extracts the static backend executable from the built Fred image

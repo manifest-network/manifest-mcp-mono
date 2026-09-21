@@ -30,10 +30,18 @@ Revalidate the pin against Fred's final merged revision before rollout.
   Unicode case folding, and stricter user syntax. The vendored schema remains a
   PR240 drift/test artifact. Image-baked reserved labels also cause PR240
   admission refusal; rebuilding the image is required in that case.
+- Previews identify their applied policy in `validation.fred_compatibility`.
+  Standalone MCP preview with a provider map uses v0.13 until a provider is
+  selected. Orchestrated previews use the selected provider's actual policy,
+  including after edits, and show validation in the confirmation plan.
 - Restore continues preserving both lease IDs after every uncertain POST result.
   A missing retention deadline is valid when age-based expiry is disabled.
 
 See the [SDK command-key contract](library-usage.md#restarting-and-updating-with-a-command-key).
+Legacy label and user-syntax admission deliberately matches v0.13; applying the
+PR240 restrictions in both modes would reject previously accepted inputs. The
+provider remains responsible for enforcing its admission rules.
+
 MCP operators set `MANIFEST_FRED_COMPATIBILITY` to `v0.13`, `pr240`, or a JSON
 provider URL map; the `FredMCPServer` constructor's `fredCompatibility` option
 takes precedence. No provider version is inferred from a failed mutation.

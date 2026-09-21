@@ -620,7 +620,7 @@ export function registerTools(deps: RegisterToolsDeps): void {
     'build_manifest_preview',
     {
       description:
-        'Build a deployment manifest, validate it against the documented Fred rules, and compute its SHA-256 meta_hash. For validation.valid=true, manifest_json and the hash exactly match the corresponding deploy; an invalid structured preview preserves the rejected candidate for diagnosis, so its hash is not deployable. Use this BEFORE deploy_app to catch invalid manifests without paying for a lease. Two modes: raw `manifest` JSON string, or structured fields (image+port, or services for stacks).',
+        'Build a deployment manifest, validate it against the Fred rules identified by validation.fred_compatibility, and compute its SHA-256 meta_hash. With a provider URL map, this provider-independent preview uses v0.13 rules; deploy_app revalidates against the selected provider and can reject a preview that passed under another policy. For validation.valid=true, manifest_json and the hash represent the canonical candidate; an invalid structured preview preserves the rejected candidate for diagnosis, so its hash is not deployable. Use this BEFORE deploy_app to catch invalid manifests without paying for a lease. Two modes: raw `manifest` JSON string, or structured fields (image+port, or services for stacks).',
       inputSchema: {
         manifest: z
           .string()
@@ -677,6 +677,11 @@ export function registerTools(deps: RegisterToolsDeps): void {
             'SHA-256 of manifest_json, lowercase hex; a deploy meta_hash only when validation.valid is true',
           ),
         validation: z.object({
+          fred_compatibility: z
+            .enum(['v0.13', 'pr240'])
+            .describe(
+              'Applied validation policy; a provider URL map uses v0.13 until a provider is selected at deployment.',
+            ),
           valid: z.boolean(),
           errors: z.array(z.string()),
         }),

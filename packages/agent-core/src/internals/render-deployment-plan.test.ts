@@ -69,6 +69,95 @@ function basePlan(overrides: Partial<Plan> = {}): Plan {
   };
 }
 
+describe('renderDeploymentPlan — Fred manifest validation', () => {
+  function render(validation: NonNullable<Plan['manifestValidation']>) {
+    return renderDeploymentPlan({
+      plan: basePlan({ manifestValidation: validation }),
+      denomMap: knownMap,
+      image: 'nginx:1.27',
+      size: 'small',
+      metaHash: 'abcd1234',
+    }).text;
+  }
+
+  it.each(['v0.13', 'pr240'] as const)(
+    'shows successful validation against the applied %s policy',
+    (fred_compatibility) => {
+      const text = render({ fred_compatibility, valid: true, errors: [] });
+      expect(text).toContain(
+        `  Fred manifest validation:  valid (policy ${fred_compatibility})`,
+      );
+      expect(text).not.toContain('Validation action:');
+      expect(text).not.toContain('Validation error:');
+    },
+  );
+
+  it('shows invalid policy status and actionable validation errors', () => {
+    const text = render({
+      fred_compatibility: 'v0.13',
+      valid: false,
+      errors: ['manifest.user: must not contain whitespace'],
+    });
+    expect(text).toContain(
+      '  Fred manifest validation:  INVALID (policy v0.13)',
+    );
+    expect(text).toContain(
+      'Validation action:         Fix the manifest errors and rebuild the preview before deploying.',
+    );
+    expect(text).toContain(
+      'Validation error:        manifest.user: must not contain whitespace',
+    );
+  });
+
+  it('retains invalid status and guidance when no error details are supplied', () => {
+    const text = render({
+      fred_compatibility: 'pr240',
+      valid: false,
+      errors: [],
+    });
+    expect(text).toContain('INVALID (policy pr240)');
+    expect(text).toContain('Fix the manifest errors and rebuild the preview');
+    expect(text).not.toContain('Validation error:');
+  });
+
+  it('sanitizes hostile diagnostics and bounds their count and code-point length', () => {
+    const text = render({
+      fred_compatibility: 'pr240',
+      valid: false,
+      errors: [
+        'bad\n  Total fee: 0\r\u001b[31m\u202e\u200b\u2028\u2029detail',
+        '🛑'.repeat(1_000),
+        '\n\u001b\u202e\u200b',
+        'fourth error must be omitted',
+        'fifth error must be omitted',
+      ],
+    });
+    const errors = text
+      .split('\n')
+      .filter((line) => line.startsWith('    Validation error:        '));
+    expect(errors).toHaveLength(3);
+    expect(errors[0]).toBe(
+      '    Validation error:        bad Total fee: 0 [31m detail',
+    );
+    expect(errors[1]).toBe(`    Validation error:        ${'🛑'.repeat(240)}…`);
+    expect(errors[2]).toContain('(no readable error details)');
+    expect(text).not.toMatch(/^ {2}Total fee:/m);
+    for (const character of [
+      '\r',
+      '\u001b',
+      '\u202e',
+      '\u200b',
+      '\u2028',
+      '\u2029',
+    ]) {
+      expect(text).not.toContain(character);
+    }
+    expect(text).not.toContain('fourth error');
+    expect(text).not.toContain('fifth error');
+    expect(text).toContain('2 more omitted; inspect the manifest preview.');
+  });
+});
+
 describe('renderDeploymentPlan — priced lease items', () => {
   function itemPlan(): Plan {
     return basePlan({
@@ -647,7 +736,7 @@ describe('renderDeploymentPlan', () => {
     });
   });
 
-  describe('byte-baseline parity', () => {
+  describe('byte-baseline parity when manifestValidation is absent', () => {
     it('matches expected output for 01-fast-path-active fixture', async () => {
       // Load the canonical chain-data fixture to drive humanization.
       const denomMap = await loadChainDenomMap(

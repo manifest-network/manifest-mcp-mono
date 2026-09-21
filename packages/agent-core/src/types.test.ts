@@ -548,6 +548,11 @@ describe('Exported type shapes (load-bearing public surface)', () => {
       readiness: Readiness;
       fees: PlanFees;
       leaseItems: readonly PlannedLeaseItem[];
+      manifestValidation?: {
+        readonly fred_compatibility: 'v0.13' | 'pr240';
+        readonly valid: boolean;
+        readonly errors: readonly string[];
+      };
     }>();
   });
 

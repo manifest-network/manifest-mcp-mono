@@ -134,6 +134,11 @@ describe('SDK factory return types (re-emitted; codegen-passthrough tripwire)', 
     expectTypeOf<Parameters<typeof buildManifestPreview>[1]>().toEqualTypeOf<
       FredCompatibility | undefined
     >();
+    expectTypeOf<
+      Awaited<
+        ReturnType<typeof buildManifestPreview>
+      >['validation']['fred_compatibility']
+    >().toEqualTypeOf<FredCompatibility>();
   });
 
   it('the 3 client factories are async and resolve to the precise re-emitted client type', () => {

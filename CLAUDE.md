@@ -154,6 +154,7 @@ Both are advisory hints, not enforcement. The plugin's `PreToolUse` hook regex i
 | `COSMOS_MNEMONIC` | No | -- |
 | `MANIFEST_FAUCET_URL` | No | -- |
 | `MANIFEST_CONVERTER_ADDRESS` | Required for cosmwasm server | -- |
+| `MANIFEST_FRED_COMPATIBILITY` | No (fred and agent servers) | `v0.13` (accepts `v0.13`, `pr240`, or a JSON provider API URL map; unlisted providers use `v0.13`; an explicit server constructor `fredCompatibility` option takes precedence) |
 | `MANIFEST_AGENT_DATA_DIR` | No (agent server) | -- |
 | `MANIFEST_CHAIN_DATA_FILE` | No (agent server) | -- |
 | `MANIFEST_AGENT_FETCH_GUARDED` | No (agent server) | `1` (default ON; accepts `1`/`true`/`yes`/`on` and `0`/`false`/`no`/`off`, case-insensitive) |

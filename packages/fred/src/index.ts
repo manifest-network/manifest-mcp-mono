@@ -22,6 +22,7 @@ export {
   type FredCompatibility,
   type FredCompatibilityConfig,
   normalizeFredCompatibility,
+  resolveFredCompatibility,
   resolveFredCompatibilityConfig,
 } from './compatibility.js';
 export type { FredAuthCtx, FredReadCtx } from './ctx.js';

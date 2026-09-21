@@ -29,6 +29,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **fred, agent:** identify the Fred policy used by manifest previews and resolve provider-map policy before orchestrated confirmation, including after provider edits. Confirmation plans expose validation results; canonical CLI environment tables document `MANIFEST_FRED_COMPATIBILITY`. (ENG-1028)
+
 - **core:** retain readable cause vetoes and recovery facts when connection repair encounters unreadable attribution fields, including transient-looking envelopes that previously fell back to endpoint-only diagnostics. Reuse the control-free redaction candidate in model text instead of stripping it twice, and directly cover DEL/NEL/C1 CSI/soft-hyphen fast-path boundaries. (ENG-953 review)
 
 - **core:** avoid control stripping and duplicate mnemonic scans for ordinary large diagnostics while retaining the existing redaction set. Distinguish readable connection-repair context from failed-inspection permanence: preserved cancellation names and existing causes follow the standard retry rules when an enclosing error adds transient or owned-timeout context. Pin own-data HTTP-status salvage through real connection and Cosmos attribution; clarify Fred error identity and private-state/non-Error-cause limits. (ENG-953 review)

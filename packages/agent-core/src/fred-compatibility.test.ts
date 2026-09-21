@@ -4,23 +4,31 @@ import {
   buildManifestPreview,
   type FredCompatibilityConfig,
   deployApp as fredDeployApp,
+  resolveProviderUrl,
 } from '@manifest-network/manifest-mcp-fred';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { deployApp } from './deploy-app.js';
-import type { DeployAppCallbacks, DeployAppOptions } from './types.js';
+import type {
+  DeployAppCallbacks,
+  DeployAppOptions,
+  Plan,
+  ProgressEvent,
+} from './types.js';
 
 vi.mock('@manifest-network/manifest-mcp-core', async (importOriginal) => ({
   ...(await importOriginal<
     typeof import('@manifest-network/manifest-mcp-core')
   >()),
-  resolveSku: vi.fn(async () => ({
-    skuUuid: 'sku-fixture',
-    providerUuid: 'provider-fixture',
-    name: 'small',
-    active: true,
-    price: { amount: '1000', denom: 'umfx' },
-    billingUnit: 'hour',
-  })),
+  resolveSku: vi.fn(
+    async (_ctx: unknown, input: { providerUuid?: string }) => ({
+      skuUuid: 'sku-fixture',
+      providerUuid: input.providerUuid ?? 'provider-fixture',
+      name: 'small',
+      active: true,
+      price: { amount: '1000', denom: 'umfx' },
+      billingUnit: 'hour',
+    }),
+  ),
   cosmosEstimateFee: vi.fn(async () => ({
     module: 'billing',
     subcommand: 'create-lease',
@@ -41,6 +49,7 @@ vi.mock('@manifest-network/manifest-mcp-fred', async (importOriginal) => {
     ...actual,
     buildManifestPreview: vi.fn(actual.buildManifestPreview),
     deployApp: vi.fn(actual.deployApp),
+    resolveProviderUrl: vi.fn(actual.resolveProviderUrl),
     checkDeploymentReadiness: vi.fn(async () =>
       JSON.parse(
         readFileSync(
@@ -66,6 +75,7 @@ const spec = {
 
 function options(
   fredCompatibility?: FredCompatibilityConfig,
+  providerUrls: Record<string, string> = {},
 ): DeployAppOptions {
   return {
     fredCompatibility,
@@ -80,8 +90,8 @@ function options(
         liftedinit: {
           sku: {
             v1: {
-              provider: vi.fn(async () => ({
-                provider: { apiUrl: PROVIDER_URL },
+              provider: vi.fn(async ({ uuid }: { uuid: string }) => ({
+                provider: { apiUrl: providerUrls[uuid] ?? PROVIDER_URL },
               })),
             },
           },
@@ -174,6 +184,91 @@ describe('orchestrated Fred compatibility at the real deployment boundary', () =
     expect(
       vi.mocked(buildManifestPreview).mock.calls.map((call) => call[1]),
     ).toEqual(['pr240', 'pr240']);
+    expect(cosmosTx).not.toHaveBeenCalled();
+  });
+
+  it('shows the mapped provider policy and invalid result before any confirmation or deployment', async () => {
+    const events: ProgressEvent[] = [];
+    const onConfirm = vi.fn(async () => 'yes' as const);
+    const onPlan = vi.fn(async (plan: Plan) => {
+      expect(plan.manifestValidation).toMatchObject({
+        fred_compatibility: 'pr240',
+        valid: false,
+      });
+      expect(plan.manifestValidation?.errors.join(' ')).toContain(
+        'com.docker.compose.',
+      );
+      return 'cancel' as const;
+    });
+    await expect(
+      deployApp(
+        spec,
+        { onPlan, onConfirm, onProgress: (event) => events.push(event) },
+        options({ [PROVIDER_URL]: 'pr240' }),
+      ),
+    ).rejects.toMatchObject({ code: 'OPERATION_CANCELLED' });
+    expect(onPlan).toHaveBeenCalledTimes(1);
+    expect(onConfirm).not.toHaveBeenCalled();
+    expect(fredDeployApp).not.toHaveBeenCalled();
+    expect(cosmosTx).not.toHaveBeenCalled();
+    const rendered = events.find(
+      (event) => event.kind === 'deployment_plan_rendered',
+    );
+    expect(rendered?.kind).toBe('deployment_plan_rendered');
+    if (rendered?.kind === 'deployment_plan_rendered') {
+      expect(rendered.block.text).toContain('pr240');
+      expect(rendered.block.text).toMatch(/invalid/i);
+      expect(rendered.block.text).toContain('com.docker.compose.');
+    }
+  });
+
+  it('resolves provider-specific policy again after a provider edit and exposes both plans', async () => {
+    const legacyUrl = 'https://legacy.example.com';
+    const plans: Plan[] = [];
+    const renderedPlans: string[] = [];
+    await expect(
+      deployApp(
+        { ...spec, providerUuid: 'provider-legacy' },
+        {
+          onPlan: async (plan) => {
+            plans.push(plan);
+            return plans.length === 1
+              ? {
+                  kind: 'replace_spec',
+                  spec: { ...spec, providerUuid: 'provider-modern' },
+                }
+              : 'cancel';
+          },
+          onProgress: (event) => {
+            if (event.kind === 'deployment_plan_rendered')
+              renderedPlans.push(event.block.text);
+          },
+        },
+        options(
+          { [legacyUrl]: 'v0.13', [PROVIDER_URL]: 'pr240' },
+          { 'provider-legacy': legacyUrl },
+        ),
+      ),
+    ).rejects.toMatchObject({ code: 'OPERATION_CANCELLED' });
+    expect(
+      plans.map((plan) => ({
+        mode: plan.manifestValidation?.fred_compatibility,
+        valid: plan.manifestValidation?.valid,
+      })),
+    ).toEqual([
+      { mode: 'v0.13', valid: true },
+      { mode: 'pr240', valid: false },
+    ]);
+    expect(
+      vi.mocked(resolveProviderUrl).mock.calls.map((call) => call[1]),
+    ).toEqual(['provider-legacy', 'provider-modern']);
+    expect(
+      vi.mocked(buildManifestPreview).mock.calls.map((call) => call[1]),
+    ).toEqual(['v0.13', 'pr240']);
+    expect(renderedPlans[0]).toContain('v0.13');
+    expect(renderedPlans[1]).toContain('pr240');
+    expect(renderedPlans[1]).toMatch(/invalid/i);
+    expect(fredDeployApp).not.toHaveBeenCalled();
     expect(cosmosTx).not.toHaveBeenCalled();
   });
 

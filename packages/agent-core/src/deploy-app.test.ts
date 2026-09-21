@@ -88,6 +88,7 @@ vi.mock('@manifest-network/manifest-mcp-fred', async () => {
     // never match and the branch would be silently untested.
     LeaseReadinessUnconfirmedError: actual.LeaseReadinessUnconfirmedError,
     normalizeFredCompatibility: actual.normalizeFredCompatibility,
+    resolveFredCompatibility: actual.resolveFredCompatibility,
     AuthTimestampTracker: class {
       private last = 0;
       async next(): Promise<number> {

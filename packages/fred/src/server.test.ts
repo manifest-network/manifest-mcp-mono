@@ -2306,10 +2306,26 @@ describe('MCP Fred compatibility wiring', () => {
       });
       expect(result.isError).not.toBe(true);
       expect(result.structuredContent).toMatchObject({
-        validation: { valid: mode === 'v0.13' },
+        validation: { valid: mode === 'v0.13', fred_compatibility: mode },
       });
     },
   );
+
+  it('identifies the provisional legacy policy when preview has no selected provider', async () => {
+    const result = await callTool(
+      server({ 'https://upgraded.example': 'pr240' }),
+      'build_manifest_preview',
+      {
+        image: 'nginx',
+        port: 80,
+        labels: { 'com.docker.compose.project': 'legacy' },
+      },
+    );
+    expect(result.isError).not.toBe(true);
+    expect(result.structuredContent).toMatchObject({
+      validation: { valid: true, fred_compatibility: 'v0.13' },
+    });
+  });
 });
 
 // The seam ENG-666 exposed: restoreApp's abort guards were 100% unit-tested and 0%

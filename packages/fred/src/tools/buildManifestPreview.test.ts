@@ -14,11 +14,21 @@ describe('buildManifestPreview', () => {
     const modern = await buildManifestPreview({ manifest }, 'pr240');
     expect(legacy.validation.valid).toBe(true);
     expect(modern.validation.valid).toBe(false);
+    expect(legacy.validation).toHaveProperty('fred_compatibility', 'v0.13');
+    expect(modern.validation).toHaveProperty('fred_compatibility', 'pr240');
     expect(modern.manifest_json).toBe(legacy.manifest_json);
     expect(modern.meta_hash_hex).toBe(legacy.meta_hash_hex);
   });
 
   describe('mode selection', () => {
+    it('rejects an unknown policy instead of reporting a policy it did not apply', async () => {
+      await expect(
+        buildManifestPreview({ image: 'nginx', port: 80 }, 'latest' as never),
+      ).rejects.toMatchObject({
+        code: ManifestMCPErrorCode.INVALID_CONFIG,
+      });
+    });
+
     it('rejects when no input mode is provided', async () => {
       await expect(buildManifestPreview({})).rejects.toBeInstanceOf(
         ManifestMCPError,
