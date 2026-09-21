@@ -113,11 +113,14 @@ import {
   makeMockQueryClient,
   makeMockWallet,
 } from '@manifest-network/manifest-mcp-core/__test-utils__/mocks.js';
+import type { FredCompatibilityConfig } from './compatibility.js';
 import {
   getLeaseProvision,
   getLeaseReleases,
   restoreLease,
 } from './http/fred.js';
+import { ProviderApiError } from './http/provider.js';
+import { maintenanceRequestError } from './maintenance-error.js';
 import { FredMCPServer } from './server/index.js';
 import { appStatus } from './tools/appStatus.js';
 import { browseCatalog } from './tools/browseCatalog.js';
@@ -150,6 +153,7 @@ const mockCreateLease = vi.mocked(createLease);
 const mockRestoreLease = vi.mocked(restoreLease);
 
 const LEASE_UUID = '550e8400-e29b-41d4-a716-446655440000';
+const MAINTENANCE_KEY = '01c676aa-6609-436f-9da4-321f574992b0';
 
 let activeTransports: InMemoryTransport[] = [];
 
@@ -168,6 +172,16 @@ function callTool(
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockRestartApp.mockResolvedValue({
+    lease_uuid: LEASE_UUID,
+    status: 'restarting',
+    idempotency_key: MAINTENANCE_KEY,
+  });
+  mockUpdateApp.mockResolvedValue({
+    lease_uuid: LEASE_UUID,
+    status: 'updating',
+    idempotency_key: MAINTENANCE_KEY,
+  });
   activeTransports = [];
 });
 
@@ -2115,6 +2129,7 @@ describe('restart_app / update_app call shape (ENG-488, ENG-666)', () => {
     return new FredMCPServer({
       config: makeMockConfig(),
       walletProvider: makeMockWallet({ signArbitrary: true }),
+      fredCompatibility: 'pr240',
     });
   }
 
@@ -2143,6 +2158,173 @@ describe('restart_app / update_app call shape (ENG-488, ENG-666)', () => {
     );
     const opts = mockUpdateApp.mock.calls.at(-1)?.[2];
     expect(opts?.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it.each(['restart_app', 'update_app'] as const)(
+    '%s preserves command identity through the MCP input and output',
+    async (tool) => {
+      const result = await callTool(makeServer(), tool, {
+        lease_uuid: LEASE_UUID,
+        idempotency_key: MAINTENANCE_KEY,
+        ...(tool === 'update_app' && { manifest: '{"image":"nginx"}' }),
+      });
+      const mock = tool === 'restart_app' ? mockRestartApp : mockUpdateApp;
+      expect(mock.mock.lastCall?.[2]?.idempotencyKey).toBe(MAINTENANCE_KEY);
+      expect(result.isError).not.toBe(true);
+      expect(result.structuredContent).toMatchObject({
+        lease_uuid: LEASE_UUID,
+        idempotency_key: MAINTENANCE_KEY,
+      });
+    },
+  );
+
+  it.each(['restart_app', 'update_app'] as const)(
+    '%s rejects a noncanonical command key before calling the operation',
+    async (tool) => {
+      const result = await callTool(makeServer(), tool, {
+        lease_uuid: LEASE_UUID,
+        idempotency_key: MAINTENANCE_KEY.toUpperCase(),
+        ...(tool === 'update_app' && { manifest: '{"image":"nginx"}' }),
+      });
+      expect(result.isError).toBe(true);
+      expect(mockRestartApp).not.toHaveBeenCalled();
+      expect(mockUpdateApp).not.toHaveBeenCalled();
+    },
+  );
+
+  it('keeps the recovery key in structured MCP errors', async () => {
+    mockRestartApp.mockRejectedValueOnce(
+      new ManifestMCPError(
+        ManifestMCPErrorCode.RESTART_INDETERMINATE,
+        'The command may execute during provider recovery.',
+        {
+          lease_uuid: LEASE_UUID,
+          idempotency_key: MAINTENANCE_KEY,
+          outcome: 'unknown',
+        },
+      ),
+    );
+    const result = await callTool(makeServer(), 'restart_app', {
+      lease_uuid: LEASE_UUID,
+      idempotency_key: MAINTENANCE_KEY,
+    });
+    expect(result.isError).toBe(true);
+    expect(JSON.parse(result.content[0]!.text)).toMatchObject({
+      code: ManifestMCPErrorCode.RESTART_INDETERMINATE,
+      details: {
+        lease_uuid: LEASE_UUID,
+        idempotency_key: MAINTENANCE_KEY,
+        outcome: 'unknown',
+      },
+    });
+  });
+});
+
+describe('MCP Fred compatibility wiring', () => {
+  afterEach(() => vi.unstubAllEnvs());
+
+  function server(fredCompatibility?: FredCompatibilityConfig) {
+    return new FredMCPServer({
+      config: makeMockConfig(),
+      walletProvider: makeMockWallet({ signArbitrary: true }),
+      fredCompatibility,
+    });
+  }
+
+  it.each(['restart_app', 'update_app'] as const)(
+    '%s accepts legacy success without a command key',
+    async (tool) => {
+      vi.stubEnv('MANIFEST_FRED_COMPATIBILITY', undefined);
+      const mock = tool === 'restart_app' ? mockRestartApp : mockUpdateApp;
+      mock.mockResolvedValueOnce({
+        lease_uuid: LEASE_UUID,
+        status: 'accepted',
+      });
+      const result = await callTool(server(), tool, {
+        lease_uuid: LEASE_UUID,
+        ...(tool === 'update_app' && { manifest: '{"image":"nginx"}' }),
+      });
+      expect(mock.mock.lastCall?.[0].fredCompatibility).toBe('v0.13');
+      expect(result.isError).not.toBe(true);
+      expect(result.structuredContent).not.toHaveProperty('idempotency_key');
+    },
+  );
+
+  it('forwards environment URL maps and honors an explicit constructor override', async () => {
+    vi.stubEnv(
+      'MANIFEST_FRED_COMPATIBILITY',
+      '{"https://provider.example/":"pr240"}',
+    );
+    await callTool(server(), 'restart_app', { lease_uuid: LEASE_UUID });
+    expect(mockRestartApp.mock.lastCall?.[0].fredCompatibility).toEqual({
+      'https://provider.example': 'pr240',
+    });
+    await callTool(server('v0.13'), 'restart_app', { lease_uuid: LEASE_UUID });
+    expect(mockRestartApp.mock.lastCall?.[0].fredCompatibility).toBe('v0.13');
+  });
+
+  it('fails invalid environment configuration before creating chain clients', () => {
+    vi.stubEnv('MANIFEST_FRED_COMPATIBILITY', 'latest');
+    expect(() => server()).toThrow('MANIFEST_FRED_COMPATIBILITY');
+    expect(CosmosClientManager.getInstance).not.toHaveBeenCalled();
+  });
+
+  it.each(['restart_app', 'update_app'] as const)(
+    '%s serializes legacy reconciliation details without a key',
+    async (tool) => {
+      const mock = tool === 'restart_app' ? mockRestartApp : mockUpdateApp;
+      mock.mockRejectedValueOnce(
+        maintenanceRequestError(
+          new ProviderApiError(409, 'busy'),
+          LEASE_UUID,
+          undefined,
+          tool === 'restart_app' ? 'restart' : 'update',
+        ),
+      );
+      const result = await callTool(server('v0.13'), tool, {
+        lease_uuid: LEASE_UUID,
+        ...(tool === 'update_app' && { manifest: '{"image":"nginx"}' }),
+      });
+      expect(result.isError).toBe(true);
+      const error = JSON.parse(result.content[0]!.text);
+      expect(error).toMatchObject({
+        code: 'MAINTENANCE_REQUEST_FAILED',
+        details: { provider_status: 409, outcome: 'unknown' },
+      });
+      expect(error.details).not.toHaveProperty('idempotency_key');
+      expect(error.message).toContain('does not support command deduplication');
+    },
+  );
+
+  it.each(['v0.13', 'pr240'] as const)(
+    'uses global %s validation for manifest previews',
+    async (mode) => {
+      const result = await callTool(server(mode), 'build_manifest_preview', {
+        image: 'nginx',
+        port: 80,
+        labels: { 'com.docker.compose.project': 'legacy' },
+      });
+      expect(result.isError).not.toBe(true);
+      expect(result.structuredContent).toMatchObject({
+        validation: { valid: mode === 'v0.13', fred_compatibility: mode },
+      });
+    },
+  );
+
+  it('identifies the provisional legacy policy when preview has no selected provider', async () => {
+    const result = await callTool(
+      server({ 'https://upgraded.example': 'pr240' }),
+      'build_manifest_preview',
+      {
+        image: 'nginx',
+        port: 80,
+        labels: { 'com.docker.compose.project': 'legacy' },
+      },
+    );
+    expect(result.isError).not.toBe(true);
+    expect(result.structuredContent).toMatchObject({
+      validation: { valid: true, fred_compatibility: 'v0.13' },
+    });
   });
 });
 

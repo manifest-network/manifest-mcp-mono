@@ -119,8 +119,13 @@ describe('manifest-sdk barrels', () => {
       'waitForAppReady',
       'createAuthTokens',
       'createProviderAuth',
+      'createMaintenanceIdempotencyKey',
       'restoreApp',
       'restoreLease',
+      'restartApp',
+      'restartLease',
+      'updateApp',
+      'updateLease',
       // The bounded provider-read entry point. Raw `checkedFetch` hands back a
       // Response whose body the caller must bound itself, so the safe alternative
       // has to be reachable from the SDK too (ENG-662).

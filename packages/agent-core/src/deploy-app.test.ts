@@ -87,6 +87,8 @@ vi.mock('@manifest-network/manifest-mcp-fred', async () => {
     // confirmed" from "the deploy failed" (ENG-661). A stubbed class would
     // never match and the branch would be silently untested.
     LeaseReadinessUnconfirmedError: actual.LeaseReadinessUnconfirmedError,
+    normalizeFredCompatibility: actual.normalizeFredCompatibility,
+    resolveFredCompatibility: actual.resolveFredCompatibility,
     AuthTimestampTracker: class {
       private last = 0;
       async next(): Promise<number> {

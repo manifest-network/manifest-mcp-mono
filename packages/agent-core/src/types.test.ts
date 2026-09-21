@@ -16,6 +16,7 @@ import type {
   DeployResult,
   FailureEnvelope,
   FeeEstimate,
+  FredCompatibilityConfig,
   LeaseStateName,
   ManageDomainArgs,
   ManageDomainCallbacks,
@@ -413,6 +414,7 @@ describe('Exported type shapes (load-bearing public surface)', () => {
     expectTypeOf<AgentCoreRuntime>().toEqualTypeOf<{
       clientManager: CosmosClientManager;
       fetchFn?: typeof globalThis.fetch;
+      readonly fredCompatibility?: FredCompatibilityConfig;
     }>();
   });
 
@@ -420,6 +422,7 @@ describe('Exported type shapes (load-bearing public surface)', () => {
     expectTypeOf<DeployAppOptions>().toEqualTypeOf<{
       clientManager: CosmosClientManager;
       fetchFn?: typeof globalThis.fetch;
+      readonly fredCompatibility?: FredCompatibilityConfig;
       signal?: AbortSignal;
       timeout?: number;
       walletProvider: WalletProvider;
@@ -434,6 +437,7 @@ describe('Exported type shapes (load-bearing public surface)', () => {
     expectTypeOf<ManageDomainOptions>().toEqualTypeOf<{
       clientManager: CosmosClientManager;
       fetchFn?: typeof globalThis.fetch;
+      readonly fredCompatibility?: FredCompatibilityConfig;
       signal?: AbortSignal;
       timeout?: number;
       chainDataFile?: string;
@@ -445,6 +449,7 @@ describe('Exported type shapes (load-bearing public surface)', () => {
     expectTypeOf<CloseLeaseOptions>().toEqualTypeOf<{
       clientManager: CosmosClientManager;
       fetchFn?: typeof globalThis.fetch;
+      readonly fredCompatibility?: FredCompatibilityConfig;
       signal?: AbortSignal;
       timeout?: number;
       chainDataFile?: string;
@@ -456,6 +461,7 @@ describe('Exported type shapes (load-bearing public surface)', () => {
     expectTypeOf<TroubleshootOptions>().toEqualTypeOf<{
       clientManager: CosmosClientManager;
       fetchFn?: typeof globalThis.fetch;
+      readonly fredCompatibility?: FredCompatibilityConfig;
       signal?: AbortSignal;
       timeout?: number;
       chainDataFile?: string;
@@ -542,6 +548,11 @@ describe('Exported type shapes (load-bearing public surface)', () => {
       readiness: Readiness;
       fees: PlanFees;
       leaseItems: readonly PlannedLeaseItem[];
+      manifestValidation?: {
+        readonly fred_compatibility: 'v0.13' | 'pr240';
+        readonly valid: boolean;
+        readonly errors: readonly string[];
+      };
     }>();
   });
 

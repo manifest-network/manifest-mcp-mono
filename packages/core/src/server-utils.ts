@@ -317,6 +317,9 @@ export function sanitizeForModelText(
 const RECOVERY_FIELDS = new Set([
   'code',
   'leaseuuid',
+  'idempotencykey',
+  'operation',
+  'outcome',
   'sourceleaseuuid',
   'orphanedleaseuuid',
   'newleaseuuid',

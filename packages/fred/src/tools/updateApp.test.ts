@@ -15,6 +15,7 @@ import {
 import { sealedFetchProbe } from '@manifest-network/manifest-mcp-core/__test-utils__/fetch-probe.js';
 import { makeMockQueryClient } from '@manifest-network/manifest-mcp-core/__test-utils__/mocks.js';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { FredCompatibilityConfig } from '../compatibility.js';
 import type { FredAuthCtx } from '../ctx.js';
 import { ProviderApiError } from '../http/provider.js';
 import { updateApp } from './updateApp.js';
@@ -238,6 +239,57 @@ describe('updateApp', () => {
       stop_grace_period: '1000000000ns',
     });
   });
+
+  it.each([
+    { config: undefined, override: undefined, allowed: true },
+    {
+      config: { [PROVIDER_URL]: 'pr240' },
+      override: undefined,
+      allowed: false,
+    },
+    { config: 'pr240', override: 'v0.13' as const, allowed: true },
+    { config: 'v0.13', override: 'pr240' as const, allowed: false },
+  ])(
+    'validates the merged payload against the selected provider contract: %j',
+    async ({ config, override, allowed }) => {
+      const ctx = {
+        ...makeCtx(activeQc()),
+        fredCompatibility: config as FredCompatibilityConfig | undefined,
+      };
+      const result = updateApp(
+        ctx,
+        {
+          address: ADDR,
+          leaseUuid: LEASE_UUID,
+          manifest: '{"image":"nginx:2"}',
+          existingManifest: JSON.stringify({
+            image: 'nginx:1',
+            labels: { 'com.docker.compose.project': 'tenant' },
+            user: '1000:1000:1000',
+          }),
+        },
+        {
+          providerUrl: PROVIDER_URL,
+          pollOptions: false,
+          fredCompatibility: override,
+        },
+      );
+      if (allowed) {
+        await expect(result).resolves.toMatchObject({ status: 'updated' });
+        expect(sentManifest()).toMatchObject({
+          image: 'nginx:2',
+          labels: { 'com.docker.compose.project': 'tenant' },
+          user: '1000:1000:1000',
+        });
+      } else {
+        await expect(result).rejects.toMatchObject({
+          code: ManifestMCPErrorCode.INVALID_CONFIG,
+        });
+        expect(mockGetAuthToken).not.toHaveBeenCalled();
+        expect(wire.calls).toHaveLength(0);
+      }
+    },
+  );
 
   it('rejects an oversized final manifest before the update wire', async () => {
     const manifest = JSON.stringify({
@@ -532,7 +584,10 @@ describe('updateApp', () => {
 
     // `/status` IS routed, so this counts requests rather than relying on a refusal.
     expect(urls()).toEqual(['update']);
-    expect(result).toEqual({ lease_uuid: LEASE_UUID, status: 'updated' });
+    expect(result).toEqual({
+      lease_uuid: LEASE_UUID,
+      status: 'updated',
+    });
   });
 
   it('fast path: supplied providerUrl skips fetchActiveLease + resolveProviderUrl', async () => {
@@ -669,11 +724,9 @@ describe('updateApp', () => {
     expect(wire.calls).toHaveLength(0);
   });
 
-  // Fred ENG-619 made `/update` PERSIST the payload, and a persist failure AFTER the
-  // backend already accepted the change answers 500 where the old build answered a
-  // misleading 202. All three of Fred's 500 sources emit an identical body, so "was it
-  // applied?" is unanswerable from the wire — which is exactly what the wrap must say.
-  describe('5xx is indeterminate, not a flat failure (Fred ENG-619)', () => {
+  // The default legacy contract preserves provider errors and the existing
+  // update-5xx verdict, without suggesting command deduplication is available.
+  describe('legacy POST errors preserve provider diagnostics and uncertainty', () => {
     /** Point `/update` at a status, leaving `/status` routed so a poll would work. */
     function routeUpdateFailure(status: number, text: string): void {
       wire = sealedFetchProbe({
@@ -724,11 +777,7 @@ describe('updateApp', () => {
       );
     });
 
-    // REGRESSION GUARD, do not relax. `e2e/lifecycle.e2e.test.ts` retries a transient
-    // 409 by matching `parseToolErrorCode(err) === 'UNKNOWN'` against the raw provider
-    // body. Wrapping 4xx here would silently turn that check false and the e2e retry
-    // loop would rethrow on the first call instead of polling — a flake, not a failure.
-    it('4xx is NOT wrapped: the raw ProviderApiError still reaches the caller', async () => {
+    it('409 preserves the legacy ProviderApiError contract', async () => {
       routeUpdateFailure(
         409,
         '{"error":"lease is in an invalid state","code":409}',
@@ -740,9 +789,16 @@ describe('updateApp', () => {
         { pollOptions: false },
       ).catch((e: unknown) => e);
 
-      expect(err).not.toBeInstanceOf(ManifestMCPError);
-      expect(ProviderApiError.isProviderApiError(err)).toBe(true);
-      expect((err as ProviderApiError).status).toBe(409);
+      expect(err).toBeInstanceOf(ProviderApiError);
+      expect(err).toMatchObject({
+        status: 409,
+        kind: 'http',
+        details: {
+          lease_uuid: LEASE_UUID,
+          provider_status: 409,
+          outcome: 'unknown',
+        },
+      });
       expect((err as Error).message).toContain('invalid state');
     });
   });

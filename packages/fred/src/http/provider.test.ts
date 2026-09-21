@@ -1,3 +1,4 @@
+import { ManifestMCPError } from '@manifest-network/manifest-mcp-core';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 import {
@@ -1204,6 +1205,110 @@ describe('classifyTransportError (ENG-703)', () => {
 });
 
 describe('isTransientProviderError', () => {
+  it.each([
+    ['restart', 'unknown'],
+    ['restart', 'accepted'],
+    ['update', 'unknown'],
+    ['update', 'accepted'],
+  ])(
+    'vetoes %s/%s command context through additional wrappers',
+    (operation, outcome) => {
+      const commandError = new ProviderApiError(0, 'ECONNRESET', {
+        kind: 'network',
+        details: {
+          operation,
+          outcome,
+          idempotency_key: '77228fd4-4149-4981-83a8-21b4f6a2f681',
+        },
+      });
+      const readCause = vi.fn(() => {
+        throw new Error('unreadable cause');
+      });
+      Object.defineProperty(commandError, 'cause', { get: readCause });
+      const wrapped = new ProviderApiError(503, 'HTTP 503', {
+        kind: 'http',
+        cause: Object.assign(new Error('adapter wrapper'), {
+          cause: commandError,
+        }),
+      });
+
+      expect(isTransientProviderError(commandError)).toBe(false);
+      expect(isTransientProviderError(wrapped)).toBe(false);
+      expect(readCause).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    'UPDATE_INDETERMINATE',
+    'RESTART_INDETERMINATE',
+    'MAINTENANCE_REQUEST_FAILED',
+    'MAINTENANCE_WAIT_FAILED',
+  ])('vetoes a nested %s from another core package', (code) => {
+    const foreignError = Object.assign(new Error('HTTP 503'), { code });
+    expect(foreignError).not.toBeInstanceOf(ManifestMCPError);
+    const wrapped = new ProviderApiError(0, 'ECONNRESET', {
+      kind: 'network',
+      cause: Object.assign(new Error('adapter wrapper'), {
+        cause: foreignError,
+      }),
+    });
+    expect(isTransientProviderError(wrapped)).toBe(false);
+  });
+
+  it('continues to tolerate read transport faults with ordinary causes', () => {
+    const error = new ProviderApiError(0, 'ECONNRESET', {
+      kind: 'network',
+      cause: new Error('socket closed'),
+      details: {
+        operation: 'read',
+        outcome: 'unknown',
+        idempotency_key: 'unrelated',
+      },
+    });
+    expect(isTransientProviderError(error)).toBe(true);
+  });
+
+  it.each(['code', 'details', 'cause', 'status', 'kind'])(
+    'fails closed when %s cannot be inspected',
+    (field) => {
+      const error = new ProviderApiError(503, 'HTTP 503', { kind: 'network' });
+      Object.defineProperty(error, field, {
+        get: () => {
+          throw new Error('unreadable diagnostic');
+        },
+      });
+      expect(isTransientProviderError(error)).toBe(false);
+    },
+  );
+
+  it.each([
+    ['status', '503'],
+    ['status', Number.NaN],
+    ['kind', {}],
+  ])('fails closed on malformed %s metadata', (field, value) => {
+    const error = new ProviderApiError(503, 'HTTP 503', { kind: 'network' });
+    Object.defineProperty(error, field, { value });
+    expect(isTransientProviderError(error)).toBe(false);
+  });
+
+  it('fails closed on cyclic and excessively deep diagnostic causes', () => {
+    const cyclic = new ProviderApiError(503, 'HTTP 503');
+    Object.defineProperty(cyclic, 'cause', { value: cyclic });
+    expect(isTransientProviderError(cyclic)).toBe(false);
+
+    let deep: Error = new Error('socket closed');
+    for (let index = 0; index < 32; index++) {
+      deep = Object.assign(new Error('adapter wrapper'), { cause: deep });
+    }
+    expect(
+      isTransientProviderError(
+        new ProviderApiError(503, 'HTTP 503', {
+          cause: deep,
+        }),
+      ),
+    ).toBe(false);
+  });
+
   it.each([
     ['a 500', new ProviderApiError(500, 'boom', { kind: 'http' }), true],
     ['a 503', new ProviderApiError(503, 'boom', { kind: 'http' }), true],

@@ -215,6 +215,7 @@ A wallet is still required at startup even in query-only mode. Transaction tools
 | `COSMOS_MNEMONIC` | No | -- | BIP-39 mnemonic (fallback when no keyfile exists) |
 | `MANIFEST_FAUCET_URL` | No | -- | Faucet URL (enables `request_faucet` tool on chain server) |
 | `MANIFEST_CONVERTER_ADDRESS` | Required for cosmwasm server | -- | CosmWasm converter contract address |
+| `MANIFEST_FRED_COMPATIBILITY` | No (fred and agent servers) | `v0.13` | Fred protocol: `v0.13`, `pr240`, or a JSON provider API URL map (e.g. `{"https://provider.example":"pr240"}`); unlisted providers use `v0.13`. An explicit server constructor `fredCompatibility` option takes precedence |
 | `MANIFEST_FRED_FETCH_GUARDED` | No (fred server) | `1` (default ON) | SSRF guard for provider/Fred HTTP. Accepts `1`/`true`/`yes`/`on` and `0`/`false`/`no`/`off` (case-insensitive) |
 | `MANIFEST_AGENT_FETCH_GUARDED` | No (agent server) | `1` (default ON) | SSRF guard for agent-core provider HTTP. Same parser as `MANIFEST_FRED_FETCH_GUARDED` |
 | `MANIFEST_AGENT_DATA_DIR` | No (agent server) | -- | Directory for persisted deploy manifests (`chmod`ed to `0o700`); when unset, persistence is skipped |

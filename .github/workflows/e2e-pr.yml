@@ -31,9 +31,9 @@ jobs:
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        # RUNTIME deploy-dependency closure of the acceptance flow — not just the TS import graph.
+        # RUNTIME dependency closure of SDK acceptance plus MCP maintenance/restore.
         #   TS graph:  the acceptance app imports ONLY @manifest-network/manifest-sdk + manifestjs
-        #     → core + fred + agent-core + sdk (lease / chain / node are NOT in it).
+        #     → core + fred + agent-core + sdk. The MCP suites also exercise lease + node.
         #   LIVE graph: the compose devnet builds the chain from submodules/manifest-ledger and the
         #     provider from submodules/fred — a submodule-pointer bump (submodules/**) OR a submodule
         #     URL/branch switch (.gitmodules) alters the devnet build. Both are in the closure.
@@ -47,15 +47,16 @@ jobs:
           # above makes the merge-base available.
           files="$(git diff --name-only "$BASE_SHA...$HEAD_SHA")"
           if printf '%s\n' "$files" | grep -Eq \
-            '^(packages/(core|fred|agent-core|sdk)/|examples/sdk-acceptance/|e2e/|scripts/check-e2e-env\.mjs$|submodules/|\.gitmodules$|package\.json$|package-lock\.json$|\.github/workflows/e2e-pr\.yml$)'; then
+            '^(packages/(core|fred|agent-core|sdk|lease|node)/|examples/sdk-acceptance/|e2e/|scripts/check-e2e-env\.mjs$|submodules/|\.gitmodules$|package\.json$|package-lock\.json$|\.github/workflows/e2e-pr\.yml$)'; then
             echo 'deploy=true' >> "$GITHUB_OUTPUT"
           else
             echo 'deploy=false' >> "$GITHUB_OUTPUT"
           fi
 
   acceptance-single:
+    name: SDK, maintenance, and restore (${{ matrix.fred }})
     needs: changes
-    # Run the live variant ONLY when a deploy-relevant path changed, on a same-repo non-Dependabot PR.
+    # Run the live suites ONLY when a deploy-relevant path changed, on a same-repo non-Dependabot PR.
     # FORK PRs get empty secrets → skip. Dependabot PRs are same-repo but ALSO get no secrets, so the
     # SSH submodule checkout would hard-fail — exclude them too. `github.actor` (not `triggering_actor`)
     # is deliberate: it stays 'dependabot[bot]' on a human re-run, so the skip holds.
@@ -63,8 +64,17 @@ jobs:
       needs.changes.outputs.deploy == 'true' &&
       github.event.pull_request.head.repo.full_name == github.repository &&
       github.actor != 'dependabot[bot]'
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
+    runs-on: ubuntu-24.04
+    # Includes Docker installation, fresh authority startup, and the sequential
+    # SDK, maintenance, and retained-volume compatibility suites.
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        fred: ['v0.13', 'pr240']
+    env:
+      FRED_COMPATIBILITY: ${{ matrix.fred }}
+      MANIFEST_FRED_COMPATIBILITY: ${{ matrix.fred }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -72,15 +82,30 @@ jobs:
           submodules: recursive
           ssh-key: ${{ secrets.FRED_DEPLOY_KEY }}
 
+      # Keep the schema/provenance submodule at PR #240. Legacy images use an
+      # independent ignored checkout of the immutable v0.13.0 commit.
+      - name: Checkout Fred v0.13.0 separately
+        if: matrix.fred == 'v0.13'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          repository: manifest-network/fred
+          ref: 8f0cbd9431b482732d60d81fb59f94a37cd06486
+          path: e2e/.fred-v013
+          ssh-key: ${{ secrets.FRED_DEPLOY_KEY }}
+
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22
           cache: npm
 
+      - name: Install supported Docker Engine
+        run: bash e2e/scripts/setup_ci_docker.sh
+
       - name: Provision loopback XFS (project quotas) for retention volumes
         run: |
           set -euo pipefail
-          sudo apt-get install -y xfsprogs          # explicit: don't rely on the ubuntu-latest preinstalled set for mkfs.xfs/xfs_quota
+          sudo apt-get install -y xfsprogs          # explicit: don't rely on the runner preinstalled set for mkfs.xfs/xfs_quota
           sudo mkdir -p /mnt/fred-xfs
           truncate -s 2G /tmp/fred-xfs.img          # > mkfs.xfs 300MB floor
           sudo mkfs.xfs -f /tmp/fred-xfs.img
@@ -92,10 +117,7 @@ jobs:
         run: node scripts/check-e2e-env.mjs
 
       - name: Build Docker images
-        run: docker compose -f e2e/docker-compose.yml build
-
-      - name: Start devnet
-        run: docker compose -f e2e/docker-compose.yml up -d --wait --wait-timeout 180
+        run: bash e2e/scripts/devnet.sh build
 
       - name: Install and build
         run: |
@@ -103,25 +125,47 @@ jobs:
           npm run check:fred-manifest-schema
           npm run build
 
-      # Single variant only (stack + full matrix stay nightly, e2e.yml). The pretest:e2e hook builds
+      - name: Start devnet
+        env:
+          FRED_DEVNET_WAIT_TIMEOUT: 600
+        run: bash e2e/scripts/devnet.sh up
+
+      # Single SDK variant (stack + full matrix stay nightly, e2e.yml). The pretest:e2e hook builds
       # @manifest-network/sdk-acceptance; the trailing ':' pins the single-service it, not a substring.
       - name: Run the single-variant SDK acceptance flow
         run: npm run test:e2e -- e2e/sdk-acceptance.e2e.test.ts -t "single-service:"
 
+      # Both files fund their own credits and identify their own leases. Vitest
+      # disables file parallelism because they share the SDK flow's tenant wallet.
+      # Reuse the initialized devnet to cover update/restart command replay and
+      # the stateful close -> retained-volume restore path on every relevant PR.
+      - name: Run maintenance replay and retained-volume restore
+        timeout-minutes: 10
+        run: npx vitest run --config e2e/vitest.compat.config.ts
+
+      # Preserve each version's state; PR #240 also verifies both authorities.
+      - name: Verify devnet restart preserves authority
+        timeout-minutes: 10
+        env:
+          FRED_DEVNET_WAIT_TIMEOUT: 600
+        run: |
+          bash e2e/scripts/devnet.sh down
+          bash e2e/scripts/devnet.sh up
+
       - name: Collect logs on failure
         if: failure()
-        run: docker compose -f e2e/docker-compose.yml logs > e2e-logs.txt
+        run: bash e2e/scripts/devnet.sh logs > e2e-logs.txt
 
       - name: Upload logs on failure
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: e2e-pr-logs
+          name: e2e-pr-logs-${{ matrix.fred }}
           path: e2e-logs.txt
 
       - name: Teardown
         if: always()
-        run: docker compose -f e2e/docker-compose.yml down -v --remove-orphans
+        run: bash e2e/scripts/devnet.sh down
 
   e2e-gate:
     # Stable check for branch rulesets. Runs on EVERY PR (if: always(), even when acceptance-single
@@ -151,7 +195,7 @@ jobs:
             exit 1
           fi
           if [ "$ACCEPTANCE" = 'failure' ] || [ "$ACCEPTANCE" = 'cancelled' ]; then
-            echo '::error::live single-variant acceptance e2e failed'
+            echo '::error::live SDK, maintenance, or restore e2e failed'
             exit 1
           fi
           if [ "$DEPLOY" = 'true' ] && [ "$ACCEPTANCE" != 'success' ]; then

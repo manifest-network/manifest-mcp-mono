@@ -7,7 +7,8 @@ import {
 } from '@manifest-network/manifest-sdk';
 import { runAcceptanceFlow } from '@manifest-network/sdk-acceptance';
 import { Agent, fetch as undiciFetch } from 'undici';
-import { beforeAll, describe, it, type TestContext } from 'vitest';
+import { beforeAll, describe, expect, it, type TestContext } from 'vitest';
+import { fredCompatibility } from './helpers/fred-compatibility.js';
 
 /**
  * SDK-direct acceptance — the single tracked P0a metric (ENG-309 / spec §9).
@@ -52,6 +53,49 @@ function certTrustingFetch(): typeof globalThis.fetch {
       ...(init as Parameters<typeof undiciFetch>[1]),
       dispatcher,
     })) as unknown as typeof globalThis.fetch;
+}
+
+/** Exercise the real provider's browser preflight protocol (not a browser run). */
+function maintenanceCorsFetch(observed: Set<string>): typeof globalThis.fetch {
+  const fetch = certTrustingFetch();
+  return async (input, init) => {
+    const url = input instanceof Request ? input.url : String(input);
+    const operation = /\/v1\/leases\/[^/]+\/(restart|update)$/.exec(
+      new URL(url).pathname,
+    )?.[1];
+    if (operation && init?.method === 'POST') {
+      const headers = new Headers(init.headers);
+      expect(headers.has('idempotency-key')).toBe(
+        fredCompatibility === 'pr240',
+      );
+      const requested = [...headers.keys()].sort();
+      expect(requested).toContain('authorization');
+      const origin = 'http://localhost:5173';
+      const preflight = await fetch(url, {
+        method: 'OPTIONS',
+        headers: {
+          Origin: origin,
+          'Access-Control-Request-Method': 'POST',
+          'Access-Control-Request-Headers': requested.join(', '),
+        },
+      });
+      expect(preflight.status).toBe(204);
+      expect(['*', origin]).toContain(
+        preflight.headers.get('access-control-allow-origin'),
+      );
+      expect(
+        preflight.headers.get('access-control-allow-methods')?.split(/,\s*/),
+      ).toContain('POST');
+      const allowed =
+        preflight.headers
+          .get('access-control-allow-headers')
+          ?.toLowerCase()
+          .split(/,\s*/) ?? [];
+      for (const header of requested) expect(allowed).toContain(header);
+      observed.add(operation);
+    }
+    return fetch(input, init);
+  };
 }
 
 /**
@@ -111,14 +155,17 @@ describe('SDK acceptance (compose-only, live chain)', () => {
     }
     const walletProvider = new MnemonicWalletProvider(config, DEFAULT_MNEMONIC);
     await walletProvider.connect();
+    const preflighted = new Set<string>();
     try {
       await runAcceptanceFlow({
         config,
         walletProvider,
-        fetch: certTrustingFetch(),
+        fetch: maintenanceCorsFetch(preflighted),
+        fredCompatibility,
         variant,
         skipCustomDomain,
       });
+      expect([...preflighted].sort()).toEqual(['restart', 'update']);
     } finally {
       await walletProvider.disconnect(); // clears the mnemonic; matches probeCustomDomainSupported
     }

@@ -1,6 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { composeArgs } from './fred-compatibility.js';
 
 const CERT_DIR = resolve(import.meta.dirname, '..', '.tls');
 const CERT_PATH = resolve(CERT_DIR, 'cert.pem');
@@ -27,14 +28,7 @@ export function setup() {
   try {
     execFileSync(
       'docker',
-      [
-        'compose',
-        '-f',
-        'e2e/docker-compose.yml',
-        'cp',
-        'providerd:/shared/tls/cert.pem',
-        CERT_PATH,
-      ],
+      [...composeArgs, 'cp', 'providerd:/shared/tls/cert.pem', CERT_PATH],
       { stdio: 'pipe' },
     );
     process.env.E2E_TLS_CERT_PATH = CERT_PATH;
@@ -46,7 +40,8 @@ export function setup() {
     console.warn(
       '[e2e] Could not extract TLS cert from providerd — fred tests will fail.\n' +
         (stderr ? `  ${stderr}\n` : '') +
-        '  Start the full stack: docker compose -f e2e/docker-compose.yml up -d --wait --wait-timeout 180',
+        '  Follow docs/e2e-setup.md for Linux/systemd/XFS prerequisites and image builds.\n' +
+        '  Start the full devnet: bash e2e/scripts/devnet.sh up',
     );
   }
 
@@ -56,14 +51,7 @@ export function setup() {
   try {
     execFileSync(
       'docker',
-      [
-        'compose',
-        '-f',
-        'e2e/docker-compose.yml',
-        'cp',
-        'chain:/shared/converter.env',
-        CONVERTER_ENV_PATH,
-      ],
+      [...composeArgs, 'cp', 'chain:/shared/converter.env', CONVERTER_ENV_PATH],
       { stdio: 'pipe' },
     );
     const contents = readFileSync(CONVERTER_ENV_PATH, 'utf8');
@@ -93,9 +81,7 @@ export function setup() {
     execFileSync(
       'docker',
       [
-        'compose',
-        '-f',
-        'e2e/docker-compose.yml',
+        ...composeArgs,
         'cp',
         'chain:/usr/local/share/converter.wasm',
         CONVERTER_WASM_PATH,

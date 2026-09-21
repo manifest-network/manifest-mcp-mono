@@ -3,6 +3,10 @@ import {
   ManifestMCPErrorCode,
 } from '@manifest-network/manifest-mcp-core';
 import {
+  type FredCompatibility,
+  resolveFredCompatibility,
+} from '../compatibility.js';
+import {
   type BuildManifestOptions,
   buildManifest,
   buildStackManifest,
@@ -61,6 +65,8 @@ export interface BuildManifestPreviewResult {
   readonly format: ManifestFormat;
   readonly meta_hash_hex: string;
   readonly validation: {
+    /** The Fred rules used for this preview; provider admission is checked on deploy. */
+    readonly fred_compatibility: FredCompatibility;
     readonly valid: boolean;
     readonly errors: readonly string[];
   };
@@ -135,7 +141,9 @@ function toBuildOptions(
  */
 export async function buildManifestPreview(
   input: BuildManifestPreviewInput,
+  compatibility: FredCompatibility = 'v0.13',
 ): Promise<BuildManifestPreviewResult> {
+  const policy = resolveFredCompatibility(compatibility);
   let manifestObj: Record<string, unknown>;
   let exactManifestJson: string | undefined;
   let duplicateKey: string | undefined;
@@ -230,7 +238,7 @@ export async function buildManifestPreview(
     );
   }
 
-  const semanticValidation = validateManifest(manifestObj);
+  const semanticValidation = validateManifest(manifestObj, policy);
   const validationErrors = [...semanticValidation.errors];
 
   // A valid structured stack follows the exact same canonical builder as
@@ -277,6 +285,7 @@ export async function buildManifestPreview(
     format,
     meta_hash_hex: hash,
     validation: {
+      fred_compatibility: policy,
       valid:
         semanticValidation.valid &&
         invalidNumber === undefined &&

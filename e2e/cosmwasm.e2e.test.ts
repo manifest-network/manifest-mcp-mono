@@ -4,9 +4,9 @@ import { MCPTestClient } from './helpers/mcp-client.js';
 /**
  * E2E tests for the cosmwasm MCP server (MFX → PWR converter).
  *
- * Requires the Docker devnet to be running with the converter contract
- * deployed by `init_billing.sh`:
- *   docker compose -f e2e/docker-compose.yml up -d --wait --wait-timeout 180
+ * Requires the devnet with the converter contract deployed by `init_billing.sh`.
+ * Prepare prerequisites and images using docs/e2e-setup.md, then run:
+ *   bash e2e/scripts/devnet.sh up
  *
  * The contract address is extracted from the chain container's
  * /shared/converter.env by `helpers/global-setup.ts` and passed through

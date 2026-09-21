@@ -85,6 +85,7 @@ The agent server reads the standard chain / wallet env vars (same matrix as `man
 | `MANIFEST_AGENT_DATA_DIR` | No | — | Passes to `DeployAppOptions.dataDir` (operator-set; the `deploy_app_orchestrated` tool no longer accepts a per-call `data_dir` override). When unset, manifest persistence is skipped and success still emits. Pass a dedicated subdirectory (NOT `$HOME` or any shared dir) — `saveManifest()` `chmod`s this path to `0o700`. |
 | `MANIFEST_CHAIN_DATA_FILE` | No | — | Path to a chain-registry JSON (`{ feeTokens: [...] }`) for denom humanization (e.g. `umfx` → `MFX`). Loaded once (lazily, on first tool call) and cached. |
 | `MANIFEST_AGENT_FETCH_GUARDED` | No | `1` (default ON) | Swaps in agent-core's SSRF-guarded `createGuardedFetch` (Node-only — dynamic import keeps the platform-neutral build legal). Set to `0` / `false` / `no` / `off` to disable (e.g. for local-loopback testing). Accepted truthy: `1` / `true` / `yes` / `on`; case-insensitive. Unrecognized values throw `INVALID_CONFIG` rather than silently no-op. |
+| `MANIFEST_FRED_COMPATIBILITY` | No | `v0.13` | Deployment manifest policy: `v0.13`, `pr240`, or a JSON map of provider API URLs to these modes. Unlisted providers use `v0.13`. PR240 policy is checked before creating the paid lease. |
 | `MANIFEST_AGENT_ELICIT_TIMEOUT_MS` | No | `600000` (10 min) | Per-`elicitInput` timeout in milliseconds. The MCP SDK default of 60s is far too short for a human reading a deployment-plan recap — so this server defaults to 10 minutes. Positive integer; malformed values fall back to the default. |
 | `LOG_LEVEL` | No | `warn` | `debug` / `info` / `warn` / `error` / `silent`. |
 
@@ -140,6 +141,7 @@ const server = new AgentMCPServer({
   dataDir,         // optional; falls back to MANIFEST_AGENT_DATA_DIR
   chainDataFile,   // optional; falls back to MANIFEST_CHAIN_DATA_FILE
   fetchGuarded,    // optional; falls back to MANIFEST_AGENT_FETCH_GUARDED, then true
+  fredCompatibility, // optional; overrides MANIFEST_FRED_COMPATIBILITY, then v0.13
 });
 const mcpServer = server.getServer();
 // Connect mcpServer to your preferred MCP transport.

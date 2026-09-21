@@ -139,9 +139,11 @@ Modules reachable via the chain server's `cosmos_query` / `cosmos_tx` (enumerate
 ## Development
 
 For a deeper look at the codebase design, see [`ARCHITECTURE.md`](ARCHITECTURE.md).
+E2E tests require the [Linux/systemd/XFS setup](docs/e2e-setup.md), which also documents complete disposable resets.
 
 ```bash
-# Build all packages
+# Install dependencies and build all packages
+npm ci
 npm run build
 
 # Type-check workspace packages and the E2E suite
@@ -151,11 +153,12 @@ npm run lint:e2e
 # Run unit tests
 npm run test
 
-# Run E2E tests (Linux, local Docker, XFS project quotas; see docs/e2e-setup.md)
+# Run E2E tests with the native stateful backend
 npm run check:e2e-env
-docker compose -f e2e/docker-compose.yml up -d --wait --wait-timeout 180
+docker compose -f e2e/docker-compose.yml build
+bash e2e/scripts/devnet.sh up
 npm run test:e2e
-docker compose -f e2e/docker-compose.yml down -v --remove-orphans
+bash e2e/scripts/devnet.sh down  # preserve journals and XFS identity
 
 # Code formatting and import sorting (Biome)
 npm run check        # check only

@@ -1,3 +1,4 @@
+export { resolveFredCompatibilityConfig } from '@manifest-network/manifest-mcp-fred';
 export { closeLease } from './close-lease.js';
 export { deployApp } from './deploy-app.js';
 // M1 fix: re-export `loadChainDenomMap` for public consumption. The

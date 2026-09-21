@@ -1,4 +1,7 @@
-import { abortReason } from '@manifest-network/manifest-mcp-core';
+import {
+  abortReason,
+  ManifestMCPErrorCode,
+} from '@manifest-network/manifest-mcp-core';
 import {
   isBlocked,
   isIpLiteral,
@@ -226,25 +229,75 @@ export function parseRetryAfterMs(
  * provider is a debugging trap.
  */
 export function isTransientProviderError(err: unknown): boolean {
-  if (!ProviderApiError.isProviderApiError(err)) return false;
-  switch (err.kind) {
-    case 'network':
-    case 'timeout':
-    case 'invalid_json':
-      return true;
-    case 'invalid_url':
-    case 'redirect':
-    case 'invalid_response':
-    case 'body_cap':
-    case 'poll':
-    case 'poll_verdict':
+  try {
+    if (!ProviderApiError.isProviderApiError(err)) return false;
+    // Command identity survives duplicate core packages and additional wrappers.
+    // Never read diagnostic causes beyond an established maintenance verdict.
+    if (hasMaintenanceRetryVeto(err)) return false;
+    const { status, kind } = err;
+    if (
+      typeof status !== 'number' ||
+      !Number.isFinite(status) ||
+      (kind !== undefined && typeof kind !== 'string')
+    )
       return false;
-    default:
-      // 'http', and errors from a call site that predates `kind`: fall back to
-      // the status. 5xx = the provider is unwell; 429 = it asked us to wait.
-      // Every other 4xx is a stable answer that will not change on retry.
-      return err.status >= 500 || err.status === 429;
+    switch (kind) {
+      case 'network':
+      case 'timeout':
+      case 'invalid_json':
+        return true;
+      case 'invalid_url':
+      case 'redirect':
+      case 'invalid_response':
+      case 'body_cap':
+      case 'poll':
+      case 'poll_verdict':
+        return false;
+      default:
+        // 'http', and errors from a call site that predates `kind`: fall back to
+        // the status. 5xx = the provider is unwell; 429 = it asked us to wait.
+        // Every other 4xx is a stable answer that will not change on retry.
+        return status >= 500 || status === 429;
+    }
+  } catch {
+    // Unreadable error metadata cannot authorize another provider request.
+    return false;
   }
+}
+
+const MAINTENANCE_ERROR_CODES = new Set<string>([
+  ManifestMCPErrorCode.UPDATE_INDETERMINATE,
+  ManifestMCPErrorCode.RESTART_INDETERMINATE,
+  ManifestMCPErrorCode.MAINTENANCE_REQUEST_FAILED,
+  ManifestMCPErrorCode.MAINTENANCE_WAIT_FAILED,
+]);
+
+function hasMaintenanceRetryVeto(error: ProviderApiError): boolean {
+  const seen = new Set<object>();
+  let current: unknown = error;
+  while (current !== null && typeof current === 'object') {
+    if (seen.size >= 32 || seen.has(current)) return true;
+    seen.add(current);
+    const record = current as Record<string, unknown>;
+    const code = record.code;
+    if (typeof code === 'string' && MAINTENANCE_ERROR_CODES.has(code))
+      return true;
+    const details = record.details;
+    if (details !== null && typeof details === 'object') {
+      const { operation, outcome, idempotency_key } = details as Record<
+        string,
+        unknown
+      >;
+      if (
+        (operation === 'restart' || operation === 'update') &&
+        (outcome === 'unknown' || outcome === 'accepted') &&
+        typeof idempotency_key === 'string'
+      )
+        return true;
+    }
+    current = record.cause;
+  }
+  return false;
 }
 
 const LOCALHOST_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]']);

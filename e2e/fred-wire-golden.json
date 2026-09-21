@@ -37,7 +37,7 @@
     "whether to model it, then record it here."
   ],
   "fred_ref": "8f0cbd9431b482732d60d81fb59f94a37cd06486",
-  "fred_ref_note": "submodules/fred pin at capture time; e2e builds the devnet from this source",
+  "fred_ref_note": "Original capture revision for the baseline and conditional-field allowlists. Later live observations are recorded separately below.",
 
   "status": {
     "endpoint": "GET /v1/leases/{uuid}/status",
@@ -77,7 +77,7 @@
   "diagnostics_projection": {
     "endpoint": "GET /v1/leases/{uuid}/provision",
     "observed_via": "app_diagnostics structuredContent (EXPLICIT projection — mono's contract, not Fred's; cannot detect a field Fred adds)",
-    "always": ["lease_uuid", "provision_status", "fail_count"],
+    "always": ["lease_uuid", "lease_state", "provision_status", "fail_count"],
     "sometimes": [
       "reason",
       "message",
@@ -87,6 +87,27 @@
       "restore_hint"
     ],
     "mono_strips": ["tenant", "provider_uuid", "partition"],
-    "mono_adds": ["next_step"]
+    "mono_adds": ["lease_state", "next_step"]
+  },
+
+  "live_observations": {
+    "fred_ref": "4f00091cd7ace41c92bb2d1ebcd2c1a68fb7d234",
+    "mono_ref": "ebfdf619387935c8c0a74d4b13f96cd5279da013",
+    "run_url": "https://github.com/manifest-network/manifest-mcp-mono/actions/runs/35370613452",
+    "scope": "Healthy ACTIVE status, release, and diagnostics projection keys observed in live lifecycle tests. Conditional-field allowlists retain their original baseline provenance. This successful run also verified SDK deployment, maintenance replay/conflict, retained-volume restore, and a devnet restart preserving existing storage and placement authority.",
+    "status": [
+      "lease_uuid",
+      "meta_hash_hex",
+      "payload_received",
+      "provider_uuid",
+      "provision_status",
+      "provisioning_started",
+      "requires_payload",
+      "state",
+      "tenant"
+    ],
+    "release": ["created_at", "image", "manifest_bytes", "status", "version"],
+    "diagnostics_projection": ["fail_count", "lease_state", "lease_uuid", "provision_status"],
+    "diagnostics_projection_note": "lease_state is always derived from chain state by mono, not added by Fred."
   }
 }

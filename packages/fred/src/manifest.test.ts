@@ -559,7 +559,7 @@ describe('validateManifest', () => {
   });
 
   describe('labels', () => {
-    it('accepts non-fred-prefix labels', () => {
+    it('accepts labels outside the reserved namespaces', () => {
       expect(
         validateManifest({
           image: 'nginx',
@@ -573,24 +573,60 @@ describe('validateManifest', () => {
       ['Fred.retention', 'fred.'],
       ['traefik.http.routers.web.rule', 'traefik.'],
       ['TRAEFIK.enable', 'traefik.'],
-    ])('rejects reserved label %s case-insensitively', (key, prefix) => {
-      const r = validateManifest({
-        image: 'nginx',
-        labels: { [key]: 'abc' },
-      });
-      expect(r.valid).toBe(false);
-      expect(r.errors.join(' ')).toContain(key);
-      expect(r.errors.join(' ')).toContain(prefix);
+      ['traefi\u212A.enable', 'traefik.'],
+      ['com.docker.compose.project', 'com.docker.compose.'],
+      ['COM.DOCKER.COMPOSE.service', 'com.docker.compose.'],
+      ['com.doc\u212Aer.compo\u017Fe.project', 'com.docker.compose.'],
+    ])('rejects PR240 reserved label %s case-insensitively', (key, prefix) => {
+      const service = { image: 'nginx', labels: { [key]: 'abc' } };
+      for (const manifest of [service, { services: { app: service } }]) {
+        const r = validateManifest(manifest, 'pr240');
+        expect(r.valid).toBe(false);
+        expect(r.errors.join(' ')).toContain(key);
+        expect(r.errors.join(' ')).toContain(`reserved prefix '${prefix}'`);
+      }
     });
 
-    it.each(['traefikish.foo', 'com.example.traefik', 'FREDDIE.foo'])(
-      'accepts non-reserved near-miss label %s',
+    it.each([
+      'com.docker.compose.project',
+      'COM.DOCKER.COMPOSE.service',
+      'traefi\u212A.enable',
+      'com.doc\u212Aer.compo\u017Fe.project',
+    ])('defaults to v0.13 label admission for %s', (key) => {
+      const service = { image: 'nginx', labels: { [key]: 'tenant' } };
+      for (const manifest of [service, { services: { app: service } }]) {
+        expect(validateManifest(manifest).valid).toBe(true);
+        expect(validateManifest(manifest, 'v0.13').valid).toBe(true);
+        expect(validateManifest(manifest, 'pr240').valid).toBe(false);
+      }
+    });
+
+    it.each(['fred.owner', 'Fred.owner', 'traefik.enable', 'TRAEFIK.enable'])(
+      'blocks the common reserved label %s in both modes',
       (key) => {
-        expect(
-          validateManifest({ image: 'nginx', labels: { [key]: 'ok' } }).valid,
-        ).toBe(true);
+        for (const mode of ['v0.13', 'pr240'] as const) {
+          expect(
+            validateManifest(
+              { image: 'nginx', labels: { [key]: 'tenant' } },
+              mode,
+            ).valid,
+          ).toBe(false);
+        }
       },
     );
+
+    it.each([
+      'traefikish.foo',
+      'com.example.traefik',
+      'FREDDIE.foo',
+      'com.docker.compose',
+      'com.docker.composeish.project',
+      'app.com.docker.compose.project',
+    ])('accepts non-reserved near-miss label %s', (key) => {
+      expect(
+        validateManifest({ image: 'nginx', labels: { [key]: 'ok' } }).valid,
+      ).toBe(true);
+    });
 
     it('rejects non-string label values through Go-compatible semantics', () => {
       const result = validateManifest({
@@ -1167,14 +1203,52 @@ describe('validateManifest', () => {
   });
 
   describe('user', () => {
-    it.each(['', 'a:b:c'])('accepts the Go-valid user spelling %j', (user) => {
-      expect(validateManifest({ image: 'nginx', user }).valid).toBe(true);
+    it.each(['', '1000', '1000:1000', 'app:group', 'a\u00a0b', 'a\u2003b'])(
+      'accepts the Go-valid user spelling %j',
+      (user) => {
+        expect(validateManifest({ image: 'nginx', user }).valid).toBe(true);
+      },
+    );
+
+    it.each([
+      ' user',
+      ':group',
+      'user:',
+      'a:b:c',
+      'a::b',
+      'a\fb',
+      'a\vb',
+      'a:b\f',
+      'a:b\v',
+    ])('rejects the PR240-invalid user spelling %j', (user) => {
+      const service = { image: 'nginx', user };
+      for (const manifest of [service, { services: { app: service } }]) {
+        const result = validateManifest(manifest, 'pr240');
+        expect(result.valid).toBe(false);
+        expect(result.errors.join(' ')).toContain('.user:');
+      }
     });
 
-    it.each([' user', ':group', 'user:'])(
-      'rejects the Go-invalid user spelling %j',
+    it.each(['a:b:c', 'a::b', 'a:b:', 'a\fb', 'a\vb', 'a:b\f', 'a:b\v'])(
+      'retains v0.13 user admission for %j',
       (user) => {
-        expect(validateManifest({ image: 'nginx', user }).valid).toBe(false);
+        const service = { image: 'nginx', user };
+        for (const manifest of [service, { services: { app: service } }]) {
+          expect(validateManifest(manifest).valid).toBe(true);
+          expect(validateManifest(manifest, 'v0.13').valid).toBe(true);
+          expect(validateManifest(manifest, 'pr240').valid).toBe(false);
+        }
+      },
+    );
+
+    it.each([' user', 'a\tb', 'a\nb', 'a\rb', ':group', 'user:'])(
+      'rejects the common invalid user spelling %j in both modes',
+      (user) => {
+        for (const mode of ['v0.13', 'pr240'] as const) {
+          expect(validateManifest({ image: 'nginx', user }, mode).valid).toBe(
+            false,
+          );
+        }
       },
     );
   });

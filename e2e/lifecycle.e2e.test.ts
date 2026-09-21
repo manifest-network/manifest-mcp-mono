@@ -1,13 +1,18 @@
 import { LeaseState } from '@manifest-network/manifest-mcp-core';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import {
+  submitDevnetMaintenance,
+  submitLegacyDevnetMaintenance,
+} from '../examples/sdk-acceptance/src/maintenance-admission.js';
+import { fredCompatibility } from './helpers/fred-compatibility.js';
 import { assertWireKeys } from './helpers/fred-wire-golden.js';
-import { MCPTestClient, parseToolErrorCode } from './helpers/mcp-client.js';
+import { MCPTestClient } from './helpers/mcp-client.js';
 
 /**
  * Full deploy lifecycle E2E test.
  *
- * Requires the Docker devnet to be running:
- *   docker compose -f e2e/docker-compose.yml up -d --wait
+ * Prepare prerequisites and images using docs/e2e-setup.md, then start the devnet:
+ *   bash e2e/scripts/devnet.sh up
  *
  * Tests run sequentially — each step depends on previous state.
  * Uses two MCP servers: lease (on-chain operations) and fred (provider operations).
@@ -18,9 +23,82 @@ import { MCPTestClient, parseToolErrorCode } from './helpers/mcp-client.js';
 // from earlier tests (get_providers) as well as the tenant-override tests.
 const OTHER_TENANT = 'manifest1hj5fveer5cjtn4wd6wstzugjfdxzl0xp8ws9ct';
 
+interface ReleaseSnapshot {
+  release_count: number;
+  releases: Array<{ version: number; status: string }>;
+}
+
+function expectNewActiveRelease(
+  before: ReleaseSnapshot,
+  after: ReleaseSnapshot,
+) {
+  expect(after.release_count).toBe(before.release_count + 1);
+  const newest = [...after.releases].sort((a, b) => b.version - a.version)[0];
+  expect(newest?.status).toBe('active');
+  expect(newest?.version).toBeGreaterThan(
+    Math.max(0, ...before.releases.map((release) => release.version)),
+  );
+}
+
+function expectMaintenanceKey(result: { idempotency_key?: string }) {
+  if (fredCompatibility === 'pr240') {
+    expect(result.idempotency_key).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+    );
+  } else {
+    expect(result).not.toHaveProperty('idempotency_key');
+  }
+}
+
 describe('Deploy lifecycle', () => {
   const leaseClient = new MCPTestClient();
   const fredClient = new MCPTestClient();
+
+  // The restart test waits three times: 3 × 55s leaves 135s of the 300s
+  // test budget for submissions and release assertions. The tool expires first
+  // so its diagnostic reaches the client before the MCP request deadline.
+  const waitForMaintenanceReady = (uuid: string) =>
+    fredClient.callTool(
+      'wait_for_app_ready',
+      { lease_uuid: uuid, timeout_seconds: 45, interval_seconds: 2 },
+      { timeoutMs: 55_000 },
+    );
+
+  const submitMaintenance = <T>(
+    operation: 'restart' | 'update',
+    input: Record<string, unknown>,
+    before: ReleaseSnapshot,
+  ) => {
+    const reconcile = async () => {
+      const status = await fredClient.callTool<{
+        fredStatus?: { provision_status?: string };
+      }>('app_status', { lease_uuid: input.lease_uuid });
+      const current = await fredClient.callTool<ReleaseSnapshot>(
+        'app_releases',
+        { lease_uuid: input.lease_uuid },
+      );
+      return (
+        status.fredStatus?.provision_status === 'ready' &&
+        JSON.stringify(current) === JSON.stringify(before)
+      );
+    };
+    return fredCompatibility === 'pr240'
+      ? submitDevnetMaintenance<T>({
+          operation,
+          createKey: () => crypto.randomUUID(),
+          submit: (key) =>
+            fredClient.callTool(`${operation}_app`, {
+              ...input,
+              idempotency_key: key,
+            }),
+          reconcile,
+        })
+      : submitLegacyDevnetMaintenance<T>({
+          operation,
+          submit: () => fredClient.callTool(`${operation}_app`, input),
+          reconcile,
+        });
+  };
 
   beforeAll(async () => {
     await Promise.all([
@@ -238,90 +316,104 @@ describe('Deploy lifecycle', () => {
   // ------------------------------------------------------------------
   // 9. Update app
   // ------------------------------------------------------------------
-  it('update_app with new manifest succeeds', async () => {
+  it('update_app with new manifest follows the selected command contract', async () => {
+    const beforeUpdate = await fredClient.callTool<ReleaseSnapshot>(
+      'app_releases',
+      { lease_uuid: leaseUuid },
+    );
     const manifest = JSON.stringify({
       image: 'nginxinc/nginx-unprivileged:alpine',
       ports: { '8080/tcp': {} },
       env: { E2E_TEST: 'true' },
     });
 
-    const result = await fredClient.callTool<{
+    const result = await submitMaintenance<{
       lease_uuid: string;
       status: string;
-    }>('update_app', {
-      lease_uuid: leaseUuid,
-      manifest,
-    });
+      idempotency_key?: string;
+    }>(
+      'update',
+      {
+        lease_uuid: leaseUuid,
+        manifest,
+      },
+      beforeUpdate,
+    );
 
     expect(result.lease_uuid).toBe(leaseUuid);
+    expectMaintenanceKey(result);
+    await waitForMaintenanceReady(leaseUuid);
+    const afterUpdate = await fredClient.callTool<ReleaseSnapshot>(
+      'app_releases',
+      { lease_uuid: leaseUuid },
+    );
+    expectNewActiveRelease(beforeUpdate, afterUpdate);
   });
 
-  it('update_app with existing_manifest merges over prior config', async () => {
-    // Merge mode: the new manifest only specifies an additional env var.
-    // existing_manifest carries the ports + base env from the previous
-    // update so the resulting manifest still has the ports binding plus
-    // the merged env (E2E_TEST + E2E_MERGE).
-    //
-    // The previous update_app left the app in a transient state — the
-    // provider returns 409 invalid-state until the deployment settles.
-    // Poll on the 409 until it succeeds.
-    //
-    // Fragility note: the 409 detection assumes update_app does NOT wrap a 4xx
-    // provider HTTP error as a typed ManifestMCPError, so the raw provider JSON
-    // body falls through and parseToolErrorCode returns 'UNKNOWN'. If a
-    // structured wrap is ever extended to 4xx (e.g. a PROVIDER_REJECTED code),
-    // the code === 'UNKNOWN' check below becomes false and the retry loop
-    // bypasses transient 409s — the test then fails flakily on the first call.
-    // The same coupling exists in the restart_app test below; fix both call
-    // sites together when the error wrapping changes.
-    //
-    // Partially narrowed already: update_app DOES wrap 5xx as
-    // UPDATE_INDETERMINATE (ENG-619 — a 5xx no longer proves the update was
-    // rejected, since fred may have applied it to the backend and then failed
-    // to persist it). 4xx is deliberately left raw precisely so this loop keeps
-    // working. `updateApp.test.ts` carries the matching unit-level guard.
-    const existingManifest = JSON.stringify({
-      image: 'nginxinc/nginx-unprivileged:alpine',
-      ports: { '8080/tcp': {} },
-      env: { E2E_TEST: 'true' },
-    });
-    const newManifest = JSON.stringify({
-      image: 'nginxinc/nginx-unprivileged:alpine',
-      env: { E2E_MERGE: 'merged' },
-    });
+  it('update_app merges config; PR #240 also deduplicates exact replay and rejects conflicts', async () => {
+    const beforeUpdate = await fredClient.callTool<ReleaseSnapshot>(
+      'app_releases',
+      { lease_uuid: leaseUuid },
+    );
+    const input = {
+      lease_uuid: leaseUuid,
+      existing_manifest: JSON.stringify({
+        image: 'nginxinc/nginx-unprivileged:alpine',
+        ports: { '8080/tcp': {} },
+        env: { E2E_TEST: 'true' },
+      }),
+      manifest: JSON.stringify({
+        image: 'nginxinc/nginx-unprivileged:alpine',
+        env: { E2E_MERGE: 'merged' },
+      }),
+    };
+    const result = await submitMaintenance<{
+      lease_uuid: string;
+      idempotency_key?: string;
+    }>('update', input, beforeUpdate);
+    expect(result.lease_uuid).toBe(leaseUuid);
+    expectMaintenanceKey(result);
+    const idempotencyKey = result.idempotency_key;
+    const exactInput = { ...input, idempotency_key: idempotencyKey };
+    await waitForMaintenanceReady(leaseUuid);
+    const beforeReplay = await fredClient.callTool<ReleaseSnapshot>(
+      'app_releases',
+      { lease_uuid: leaseUuid },
+    );
+    // Ready also describes a successful rollback; require this new release to
+    // be active before testing that a replay leaves release history unchanged.
+    expectNewActiveRelease(beforeUpdate, beforeReplay);
+    if (fredCompatibility === 'v0.13') return;
 
-    const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-    let mergeOk = false;
-    let lastErr: unknown;
-    for (let attempt = 0; attempt < 10; attempt++) {
-      try {
-        const result = await fredClient.callTool<{
-          lease_uuid: string;
-        }>('update_app', {
-          lease_uuid: leaseUuid,
-          manifest: newManifest,
-          existing_manifest: existingManifest,
-        });
-        expect(result.lease_uuid).toBe(leaseUuid);
-        mergeOk = true;
-        break;
-      } catch (err) {
-        lastErr = err;
-        const code = parseToolErrorCode(err);
-        const msg = err instanceof Error ? err.message : String(err);
-        const isTransient409 =
-          code === 'UNKNOWN' &&
-          /"code"\s*:\s*409/.test(msg) &&
-          /invalid state/i.test(msg);
-        if (!isTransient409) throw err;
-        await sleep(2_000);
-      }
-    }
-    if (!mergeOk) {
-      throw new Error(
-        `update_app merge never succeeded after retries: ${lastErr}`,
-      );
-    }
+    const replay = await fredClient.callTool<{ idempotency_key: string }>(
+      'update_app',
+      exactInput,
+    );
+    expect(replay.idempotency_key).toBe(idempotencyKey);
+    await waitForMaintenanceReady(leaseUuid);
+    const afterReplay = await fredClient.callTool<ReleaseSnapshot>(
+      'app_releases',
+      { lease_uuid: leaseUuid },
+    );
+    expect(afterReplay.releases).toEqual(beforeReplay.releases);
+    expect(afterReplay.release_count).toBe(beforeReplay.release_count);
+
+    // Same identity with different bytes must never become a second command.
+    const conflict = await fredClient.callToolExpectError('update_app', {
+      ...exactInput,
+      manifest: JSON.stringify({
+        image: 'nginxinc/nginx-unprivileged:alpine',
+        env: { E2E_MERGE: 'different' },
+      }),
+    });
+    expect(conflict.code).toBe('MAINTENANCE_REQUEST_FAILED');
+    expect(conflict.message).toContain(
+      'Idempotency-Key conflicts with a prior maintenance command',
+    );
+    expect(conflict.details).toMatchObject({
+      provider_status: 409,
+      idempotency_key: idempotencyKey,
+    });
   });
 
   it('app_releases lists at least one release after update_app', async () => {
@@ -354,44 +446,41 @@ describe('Deploy lifecycle', () => {
     ).toBe(true);
   });
 
-  // restart_app last — it briefly puts the app in a non-stable state that
-  // makes update_app return 409 invalid-state. Placed after the other
-  // provider-side ops to avoid the conflict. Also: update_app itself
-  // triggers a transient state, so wait a few seconds before issuing
-  // restart_app to give the app time to settle.
-  it('restart_app triggers a restart on the active lease', async () => {
-    // Poll until the app is in a stable state before restarting. The fred
-    // restart_app handler surfaces provider-side HTTP errors as a non-
-    // ManifestMCPError, so the thrown error code is `[UNKNOWN]` and the
-    // message is the JSON body, e.g. `{"error":"invalid state for restart","code":409}`.
-    // We retry only on that exact shape — anything else (a TX_FAILED, a
-    // transport hiccup, an UNSUPPORTED_*) is a real failure and re-throws.
-    const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-    let restartOk = false;
-    let lastErr: unknown;
-    for (let attempt = 0; attempt < 10; attempt++) {
-      try {
-        const result = await fredClient.callTool<{
-          lease_uuid: string;
-        }>('restart_app', { lease_uuid: leaseUuid });
-        expect(result.lease_uuid).toBe(leaseUuid);
-        restartOk = true;
-        break;
-      } catch (err) {
-        lastErr = err;
-        const code = parseToolErrorCode(err);
-        const msg = err instanceof Error ? err.message : String(err);
-        const isTransient409 =
-          code === 'UNKNOWN' &&
-          /"code"\s*:\s*409/.test(msg) &&
-          /invalid state/i.test(msg);
-        if (!isTransient409) throw err;
-        await sleep(2_000);
-      }
-    }
-    if (!restartOk) {
-      throw new Error(`restart_app never succeeded after retries: ${lastErr}`);
-    }
+  it('restart_app creates one active release; PR #240 also deduplicates exact replay', async () => {
+    await waitForMaintenanceReady(leaseUuid);
+    const beforeRestart = await fredClient.callTool<ReleaseSnapshot>(
+      'app_releases',
+      { lease_uuid: leaseUuid },
+    );
+    const input = {
+      lease_uuid: leaseUuid,
+    };
+    const result = await submitMaintenance<{
+      lease_uuid: string;
+      idempotency_key?: string;
+    }>('restart', input, beforeRestart);
+    expect(result.lease_uuid).toBe(leaseUuid);
+    expectMaintenanceKey(result);
+    const exactInput = { ...input, idempotency_key: result.idempotency_key };
+    await waitForMaintenanceReady(leaseUuid);
+    const beforeReplay = await fredClient.callTool<ReleaseSnapshot>(
+      'app_releases',
+      { lease_uuid: leaseUuid },
+    );
+    expectNewActiveRelease(beforeRestart, beforeReplay);
+    if (fredCompatibility === 'v0.13') return;
+    const replay = await fredClient.callTool<{ idempotency_key: string }>(
+      'restart_app',
+      exactInput,
+    );
+    expect(replay.idempotency_key).toBe(exactInput.idempotency_key);
+    await waitForMaintenanceReady(leaseUuid);
+    const afterReplay = await fredClient.callTool<ReleaseSnapshot>(
+      'app_releases',
+      { lease_uuid: leaseUuid },
+    );
+    expect(afterReplay.releases).toEqual(beforeReplay.releases);
+    expect(afterReplay.release_count).toBe(beforeReplay.release_count);
   });
 
   // ------------------------------------------------------------------

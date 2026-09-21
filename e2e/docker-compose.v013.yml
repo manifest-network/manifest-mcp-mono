@@ -1,0 +1,177 @@
+# Fred v0.13.0 live compatibility devnet (isolated from the PR #240 authority).
+#
+# Services:
+#   - chain: Blockchain node (manifest-ledger, billing-v2 branch)
+#   - init: Register provider and create SKUs, generate configs
+#   - docker-backend: Real Docker container provisioning backend
+#   - providerd: Provider daemon
+#
+# Usage:
+#   FRED_COMPATIBILITY=v0.13 bash e2e/scripts/devnet.sh up
+#   FRED_COMPATIBILITY=v0.13 bash e2e/scripts/devnet.sh down
+
+services:
+  # ===========================================================================
+  # Blockchain Node
+  # ===========================================================================
+  chain:
+    build:
+      context: ../submodules/manifest-ledger
+      dockerfile: ../../e2e/docker/manifest-ledger/Dockerfile
+    volumes:
+      - chain-data:/persistent
+      - shared-data:/shared
+      - ./scripts/init_chain.sh:/usr/local/bin/init_chain.sh:ro
+    ports:
+      - "9090:9090"   # gRPC
+      - "26657:26657" # RPC
+      - "1317:1317"   # REST
+    env_file: .env
+    entrypoint: ["/bin/bash"]
+    command: ["/usr/local/bin/init_chain.sh"]
+    healthcheck:
+      test: curl -sf http://localhost:26657/status | grep -q '"catching_up":false'
+      interval: 10s
+      timeout: 5s
+      retries: 30
+    networks:
+      - mcp-e2e
+
+  # ===========================================================================
+  # Chain Initialization (Provider + SKU Registration)
+  # ===========================================================================
+  init:
+    build:
+      context: ../submodules/manifest-ledger
+      dockerfile: ../../e2e/docker/manifest-ledger/Dockerfile
+    volumes:
+      - chain-data:/persistent
+      - shared-data:/shared
+      - ./scripts/init_billing.sh:/usr/local/bin/init_billing.sh:ro
+    env_file: .env
+    entrypoint: ["/bin/bash"]
+    command: ["/usr/local/bin/init_billing.sh"]
+    environment:
+      FRED_COMPATIBILITY: v0.13
+    depends_on:
+      chain:
+        condition: service_healthy
+    restart: "no"
+    networks:
+      - mcp-e2e
+
+  # ===========================================================================
+  # Docker Backend (Real Container Provisioning)
+  # ===========================================================================
+  docker-backend:
+    build:
+      context: ./.fred-v013
+      dockerfile: ../docker/fred-v013/Dockerfile
+      target: docker-backend
+    privileged: true                      # xfs_quota project quotas need the loop /dev/loopN node (cap_add:[SYS_ADMIN] alone does not expose it)
+    volumes:
+      - shared-data:/shared:ro
+      - docker-backend-data:/data
+      - /mnt/fred-xfs:/mnt/fred-xfs        # host-identical XFS pquota mount (DooD path consistency); was: docker-backend-data:/data
+      - /var/run/docker.sock:/var/run/docker.sock
+    ports:
+      - "9001:9001"
+    command: ["/usr/bin/docker-backend", "--config", "/shared/docker-backend.yaml"]
+    healthcheck:
+      test: curl -f http://localhost:9001/health || exit 1
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    depends_on:
+      init:
+        condition: service_completed_successfully
+    networks:
+      - mcp-e2e
+
+  # ===========================================================================
+  # CosmJS Faucet (patched for tokenfactory denoms)
+  #
+  # Drips MFX + factory/POA_ADMIN/upwr (PWR) to any requested address.
+  # Used by request-faucet.e2e.test.ts to exercise the chain server's
+  # conditional `request_faucet` tool registration.
+  # ===========================================================================
+  faucet:
+    build:
+      context: ./docker/faucet
+    volumes:
+      - ./scripts/start_faucet.sh:/app/start_faucet.sh:ro
+    ports:
+      - "8000:8000"
+    environment:
+      - FAUCET_CONCURRENCY=3
+      - FAUCET_PORT=8000
+      - FAUCET_MNEMONIC=${MNEMO3}
+      - FAUCET_ADDRESS_PREFIX=manifest
+      - FAUCET_TOKENS=umfx,factory/${POA_ADMIN_ADDRESS}/upwr
+      - FAUCET_CREDIT_AMOUNT_UMFX=${FAUCET_CREDIT_AMOUNT_MFX}
+      - FAUCET_PWR_DENOM=factory/${POA_ADMIN_ADDRESS}/upwr
+      - FAUCET_CREDIT_AMOUNT_PWR=${FAUCET_CREDIT_AMOUNT_PWR}
+      - FAUCET_COOLDOWN_TIME=${FAUCET_COOLDOWN_TIME}
+      - FAUCET_GAS_LIMIT=200000
+      - FAUCET_GAS_PRICE=0umfx
+      - FAUCET_MEMO=Sent by Manifest e2e faucet
+    command: ["/bin/sh", "/app/start_faucet.sh"]
+    healthcheck:
+      test: wget -q -O /dev/null http://localhost:8000/status || exit 1
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    depends_on:
+      chain:
+        condition: service_healthy
+    networks:
+      - mcp-e2e
+
+  # ===========================================================================
+  # Provider Daemon
+  # ===========================================================================
+  providerd:
+    build:
+      context: ./.fred-v013
+      dockerfile: ../docker/fred-v013/Dockerfile
+      target: providerd
+    volumes:
+      - shared-data:/shared:ro
+      - providerd-data:/data
+    ports:
+      - "8080:8080"
+    command: ["/usr/bin/providerd", "--config", "/shared/providerd.yaml"]
+    healthcheck:
+      test: curl -fk https://localhost:8080/health || exit 1
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    depends_on:
+      docker-backend:
+        condition: service_healthy
+    networks:
+      - mcp-e2e
+
+# =============================================================================
+# Volumes
+# =============================================================================
+volumes:
+  docker-backend-data:
+    name: mcp-e2e-v013-docker-backend-data
+  chain-data:
+    name: mcp-e2e-v013-chain-data
+  shared-data:
+    name: mcp-e2e-v013-shared-data
+  providerd-data:
+    name: mcp-e2e-v013-providerd-data
+
+# =============================================================================
+# Networks
+# =============================================================================
+networks:
+  mcp-e2e:
+    name: mcp-e2e-v013-network
+    driver: bridge

@@ -13,12 +13,16 @@ import { runAcceptanceFlow } from './flow.js';
  * wallet. Nothing here is node-only.
  */
 export async function main(
-  opts: Pick<AcceptanceOpts, 'config' | 'walletProvider' | 'variant'>,
+  opts: Pick<
+    AcceptanceOpts,
+    'config' | 'walletProvider' | 'variant' | 'fredCompatibility'
+  >,
 ): Promise<void> {
   await runAcceptanceFlow({
     config: opts.config,
     walletProvider: opts.walletProvider,
     fetch: globalThis.fetch,
     variant: opts.variant,
+    fredCompatibility: opts.fredCompatibility,
   });
 }

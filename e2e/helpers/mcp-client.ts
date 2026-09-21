@@ -1,6 +1,7 @@
 import { resolve } from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { fredCompatibility } from './fred-compatibility.js';
 
 // Test tenant mnemonic (test-only, never used for real funds)
 const DEFAULT_MNEMONIC =
@@ -152,6 +153,7 @@ export class MCPTestClient {
     // (ENG-268)
     env.MANIFEST_AGENT_FETCH_GUARDED = '0';
     env.MANIFEST_FRED_FETCH_GUARDED = '0';
+    env.MANIFEST_FRED_COMPATIBILITY = fredCompatibility;
     if (converterAddress) {
       env.MANIFEST_CONVERTER_ADDRESS = converterAddress;
     }
@@ -199,14 +201,19 @@ export class MCPTestClient {
     if (result.isError) {
       let code = 'UNKNOWN';
       let message = text;
+      let details: unknown;
       try {
         const errParsed = JSON.parse(text);
         code = errParsed.code ?? code;
         message = errParsed.message ?? message;
+        details = errParsed.details;
       } catch {
         // error response is not JSON — use raw text
       }
-      throw new Error(`Tool "${name}" failed [${code}]: ${message}`);
+      throw Object.assign(
+        new Error(`Tool "${name}" failed [${code}]: ${message}`),
+        { code, details },
+      );
     }
 
     return JSON.parse(text) as T;

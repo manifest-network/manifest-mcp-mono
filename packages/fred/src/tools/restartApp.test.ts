@@ -88,6 +88,7 @@ describe('restartApp', () => {
     expect(wire.calls[0]?.init.method).toBe('POST');
     const headers = wire.calls[0]?.init.headers as Record<string, string>;
     expect(headers.Authorization).toBe('Bearer auth-token');
+    expect(headers).not.toHaveProperty('Idempotency-Key');
     expect(result).toEqual({
       lease_uuid: LEASE_UUID,
       status: 'restarting',
@@ -107,7 +108,10 @@ describe('restartApp', () => {
 
     // `/status` IS routed, so this counts requests rather than relying on a refusal.
     expect(urls()).toEqual(['restart']);
-    expect(result).toEqual({ lease_uuid: LEASE_UUID, status: 'restarting' });
+    expect(result).toEqual({
+      lease_uuid: LEASE_UUID,
+      status: 'restarting',
+    });
   });
 
   it('fast path: supplied providerUrl skips fetchActiveLease + resolveProviderUrl', async () => {

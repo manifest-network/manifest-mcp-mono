@@ -9,11 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **fred, sdk:** export `createMaintenanceIdempotencyKey` for generating and persisting canonical UUIDv4 command keys, including browsers that expose `getRandomValues` without `randomUUID`. (ENG-1028)
+- **fred, sdk, agent:** add explicit `fredCompatibility` global/provider-URL configuration and per-call overrides for released Fred v0.13 and upcoming PR #240. SDK, MCP, and raw helpers default to v0.13; Fred and Agent MCP operators can use `MANIFEST_FRED_COMPATIBILITY` or a constructor override. Orchestrated deployment snapshots the policy before interaction and validates before lease creation. Legacy restart/update preserve CORS-compatible headers, reject unsupported keys, omit returned command keys, and require reconciliation before another submission after an uncertain result. (ENG-1028)
 - **core:** export `TransportErrorDetails` for verified per-attempt read/connection timeouts. `RetryOptions.signal` and `isRetryableError(error, { signal })` let callers stop retries and backoff on overall cancellation; operations must propagate the signal to cancel their own in-flight work. (ENG-805 follow-up)
 - **sdk:** export `withRetry` and `isRetryableError` from the root alongside the error classes, keeping the documented faucet-status retry composition on the SDK's pinned core dependency. (ENG-805 review)
 
 ### Changed
 
+- **fred, sdk:** explicit PR240 restart/update calls use command keys and typed maintenance recovery errors. Exact retries retain the original key and payload; omitting a key creates a new command. Shared success types expose optional `idempotency_key`, present only in PR240 mode. Raw HTTP helpers retain `ProviderApiError`; accepted-command wait failures preserve their original readiness/configuration diagnosis. Both provider modes prevent automatic maintenance replay. (ENG-1028)
+- **fred, e2e:** prepare for Fred PR #240 at `4f00091c`: select manifest policy per provider while preserving v0.13 as the runtime default, keep generated schema artifacts pinned to PR240, and query retained data for expired leases. The PR240 devnet initializes persistent storage/placement authority over verified HTTPS and runs the stateful backend natively on the Docker host; its separate local default is PR240. Live coverage includes maintenance replay and retained restore. Disposable reset must remove the matching XFS authority and named volumes together. (ENG-1028)
 - **tooling:** enforce the full workspace dependency direction and reject production import cycles; separate static command metadata from executable registration. Include never-imported source in coverage with regression floors, and enable `verbatimModuleSyntax` and `noImplicitOverride`. (ENG-805, ENG-751, ENG-753, ENG-806)
 - **core, sdk:** client configurations are immutable. Only holders with the same wallet, chain-identity transport and value-equal policy share an instance; independently configured clients coordinate broadcasts by chain/account. Verify each new RPC signing connection and REST query identity, rejecting mixed-endpoint disagreement before signing. REST endpoints must expose the Cosmos node-info route, adding an initial bounded request. (ENG-805)
 - **fred:** refuse provider redirects and preserve both restore lease IDs for reconciliation after every restore POST exception, including all 4xx/5xx, network failures, and malformed 2xx responses. These outcomes trigger neither automatic nor advised cancellation; compensation is limited to locally known failures or cancellation before the POST begins. `RESTORE_RETRYABLE` remains compatibility-only, and a 429 `Retry-After` does not authorize replay. Terminal diagnostics retrieve surviving provider records and distinguish chain state from provider provisioning state. (ENG-805)
@@ -24,6 +28,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **core, cosmwasm, sdk:** use ManifestJS namespace entry points, guard browser bundles against the full codegen barrel, and lower SDK gzip budgets by the measured savings. (ENG-768)
 
 ### Fixed
+
+- **fred, agent:** identify the Fred policy used by manifest previews and resolve provider-map policy before orchestrated confirmation, including after provider edits. Confirmation plans expose validation results; canonical CLI environment tables document `MANIFEST_FRED_COMPATIBILITY`. (ENG-1028)
 
 - **core:** retain readable cause vetoes and recovery facts when connection repair encounters unreadable attribution fields, including transient-looking envelopes that previously fell back to endpoint-only diagnostics. Reuse the control-free redaction candidate in model text instead of stripping it twice, and directly cover DEL/NEL/C1 CSI/soft-hyphen fast-path boundaries. (ENG-953 review)
 

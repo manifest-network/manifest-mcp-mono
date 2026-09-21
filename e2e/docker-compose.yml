@@ -3,12 +3,15 @@
 # Services:
 #   - chain: Blockchain node (manifest-ledger, billing-v2 branch)
 #   - init: Register provider and create SKUs, generate configs
-#   - docker-backend: Real Docker container provisioning backend
+#   - Native docker-backend: managed by scripts/devnet.sh on the Docker host
+#   - placement-init: Prove and initialize fresh provider placement authority
 #   - providerd: Provider daemon
 #
 # Usage:
-#   docker compose -f e2e/docker-compose.yml up -d --wait
-#   docker compose -f e2e/docker-compose.yml down -v --remove-orphans
+#   bash e2e/scripts/devnet.sh up
+#   bash e2e/scripts/devnet.sh down
+# Preserve named volumes and /mnt/fred-xfs together across restarts. A complete
+# disposable reset must recreate BOTH; see docs/e2e-setup.md before using down -v.
 
 services:
   # ===========================================================================
@@ -59,34 +62,6 @@ services:
       - mcp-e2e
 
   # ===========================================================================
-  # Docker Backend (Real Container Provisioning)
-  # ===========================================================================
-  docker-backend:
-    build:
-      context: ../submodules/fred
-      dockerfile: ../../e2e/docker/fred/Dockerfile
-      target: docker-backend
-    privileged: true                      # xfs_quota project quotas need the loop /dev/loopN node (cap_add:[SYS_ADMIN] alone does not expose it)
-    volumes:
-      - shared-data:/shared:ro
-      - /mnt/fred-xfs:/mnt/fred-xfs        # host-identical XFS pquota mount (DooD path consistency); was: docker-backend-data:/data
-      - /var/run/docker.sock:/var/run/docker.sock
-    ports:
-      - "9001:9001"
-    command: ["/usr/bin/docker-backend", "--config", "/shared/docker-backend.yaml"]
-    healthcheck:
-      test: curl -f http://localhost:9001/health || exit 1
-      interval: 10s
-      timeout: 5s
-      retries: 10
-      start_period: 10s
-    depends_on:
-      init:
-        condition: service_completed_successfully
-    networks:
-      - mcp-e2e
-
-  # ===========================================================================
   # CosmJS Faucet (patched for tokenfactory denoms)
   #
   # Drips MFX + factory/POA_ADMIN/upwr (PWR) to any requested address.
@@ -127,9 +102,10 @@ services:
       - mcp-e2e
 
   # ===========================================================================
-  # Provider Daemon
+  # Provider Placement Initialization
   # ===========================================================================
-  providerd:
+  placement-init:
+    image: mcp-e2e-fred:local
     build:
       context: ../submodules/fred
       dockerfile: ../../e2e/docker/fred/Dockerfile
@@ -137,18 +113,41 @@ services:
     volumes:
       - shared-data:/shared:ro
       - providerd-data:/data
+      - ./scripts/init_placement.sh:/usr/local/bin/init_placement.sh:ro
+    command: ["/bin/sh", "/usr/local/bin/init_placement.sh"]
+    # devnet.sh starts the native backend and verifies HTTPS before this service.
+    extra_hosts:
+      - "docker-backend:host-gateway"
+    restart: "no"
+    networks:
+      - mcp-e2e
+
+  # ===========================================================================
+  # Provider Daemon
+  # ===========================================================================
+  providerd:
+    image: mcp-e2e-fred:local
+    build:
+      context: ../submodules/fred
+      dockerfile: ../../e2e/docker/fred/Dockerfile
+      target: providerd
+    volumes:
+      - shared-data:/shared:ro
+      - providerd-data:/data
+    extra_hosts:
+      - "docker-backend:host-gateway"
     ports:
       - "8080:8080"
     command: ["/usr/bin/providerd", "--config", "/shared/providerd.yaml"]
     healthcheck:
-      test: curl -fk https://localhost:8080/health || exit 1
+      test: curl --cacert /shared/tls/cert.pem -f https://localhost:8080/health || exit 1
       interval: 10s
       timeout: 5s
       retries: 10
       start_period: 30s
     depends_on:
-      docker-backend:
-        condition: service_healthy
+      placement-init:
+        condition: service_completed_successfully
     networks:
       - mcp-e2e
 

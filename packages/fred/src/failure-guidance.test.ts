@@ -79,7 +79,12 @@ describe('FRED_REASON_GUIDANCE', () => {
     // Fred retains reason/message on a healthy `ready` lease whose last update
     // rolled back. Guidance that assumes "failed => down" is wrong here.
     expect(FRED_REASON_GUIDANCE.UpdateFailed.mayBeHistorical).toBe(true);
-    expect(FRED_REASON_GUIDANCE.UpdateFailed.explanation).toContain('PREVIOUS');
+    expect(FRED_REASON_GUIDANCE.UpdateFailed.explanation).toContain(
+      'If app_status reports ready',
+    );
+    expect(FRED_REASON_GUIDANCE.UpdateFailed.explanation).toContain(
+      'recovery may also have failed',
+    );
   });
 });
 

@@ -52,7 +52,7 @@ Once it prints the recovery phrase, write it down, then `<cli> import` it under 
 
 ## Errors at tool call time
 
-Most errors returned to the MCP client are JSON objects with a `code` field drawn from `ManifestMCPErrorCode`. (An error raised outside the Manifest error path — e.g. a `ProviderApiError` from a provider HTTP call — reaches the client without a `ManifestMCPErrorCode` and is logged as `UNKNOWN`.) The 24 codes group into 11 categories:
+Most errors returned to the MCP client are JSON objects with a `code` field drawn from `ManifestMCPErrorCode`. (An error raised outside the Manifest error path — e.g. a `ProviderApiError` from a provider HTTP call — reaches the client without a `ManifestMCPErrorCode` and is logged as `UNKNOWN`.) The codes include these categories:
 
 | Category | Codes | Meaning |
 |----------|-------|---------|
@@ -66,7 +66,7 @@ Most errors returned to the MCP client are JSON objects with a `code` field draw
 | SKU resolution | `SKU_AMBIGUOUS` | A SKU `size`/`storage` name matched more than one active SKU; `details` carries `{ reason: 'AMBIGUOUS_SKU_NAME', size, candidates }` — disambiguate with `provider_uuid` / `sku_uuid` |
 | Deploy | `DEPLOY_READINESS_UNCONFIRMED` | A paid lease exists, but the client cannot safely confirm it as ready. Either the readiness poll ended without a verdict, or the canonical final provider state was absent, malformed, or not ACTIVE. Carries `details.readiness_unconfirmed`, `lease_uuid`, and `partial`; orchestration final-state disagreement additionally carries `readiness_reason: 'final_state_mismatch'`, `state_source`, and bounded `observed_state`. Diagnose the existing lease instead of repeating `deploy_app` — see below |
 | Restore | `RESTORE_NOT_RETAINED`, `RESTORE_REJECTED`, `RESTORE_ORPHAN_COMPENSATION_FAILED`, `RESTORE_COMMITTED_FAILURE`; compatibility-only `RESTORE_RETRYABLE` | Source not restorable (pre-flight, zero side effects), a locally known failure before the POST successfully compensated, unknown adoption / failed compensation, or a provider failure verdict after adoption. Current `restoreApp` does not emit `RESTORE_RETRYABLE`. Every restore POST exception, including all 4xx/5xx, network failures and malformed 2xx, preserves both lease IDs for reconciliation; do not cancel an uncertain target. `provider_status`, `provider_error_kind`, and `retry_after_ms` are diagnostic only: 429 with `Retry-After` does not authorize replay. All non-auto-retryable — restore is non-idempotent |
-| Update | `UPDATE_INDETERMINATE` | `update_app` reached the provider and got a 5xx, which does **not** establish whether the manifest was applied. The provider persists the payload after the backend accepts it, so a persist failure can mean the update is live now and the next reprovision will revert it. Diagnose with `app_status` / `app_releases` before acting; re-invoking `update_app` re-applies and re-records. Non-auto-retryable — `update_app` is non-idempotent |
+| Maintenance | `UPDATE_INDETERMINATE`, `RESTART_INDETERMINATE`, `MAINTENANCE_REQUEST_FAILED`, `MAINTENANCE_WAIT_FAILED` | A maintenance POST has an uncertain outcome or a readiness wait failed. Reconcile `app_status` / `app_releases`; never automatically replay the mutation. Default v0.13 mode has no command key or deduplication. Explicit PR240 mode carries `details.idempotency_key`: preserve it, the lease, operation, and exact payload. Intentional PR240 retries reuse the original key with fresh authentication; a new key starts another command. Accepted-wait errors retain their original readiness/configuration diagnosis and command context. |
 
 ### `INVALID_CONFIG` from a transaction tool
 
@@ -239,17 +239,22 @@ Note that `last_error` is now a deprecated alias kept only for providers older t
 
 ## E2E suite fails locally
 
-The Compose stack requires Linux, local Docker, initialized submodules, and a dedicated XFS project-quota mount at `/mnt/fred-xfs`. Follow [E2E environment setup](e2e-setup.md), including verification and cleanup. Then run:
+The E2E environment requires Linux, systemd, local Docker, initialized submodules, and a dedicated XFS project-quota mount at `/mnt/fred-xfs`. Fred's stateful backend runs natively on the host. Follow [E2E environment setup](e2e-setup.md), including verification and coherent resets. Then run:
 
 ```bash
 git submodule update --init --recursive
+npm ci
+npm run build
 npm run check:e2e-env
-docker compose -f e2e/docker-compose.yml up -d --wait --wait-timeout 180
+docker compose -f e2e/docker-compose.yml build
+bash e2e/scripts/devnet.sh up
 npm run test:e2e
-docker compose -f e2e/docker-compose.yml down -v --remove-orphans
+# Preserve the authority journals and XFS identity together for the next startup.
+bash e2e/scripts/devnet.sh down
+# For a complete disposable reset, follow docs/e2e-setup.md.
 ```
 
-If the chain container fails to boot, `docker compose -f e2e/docker-compose.yml logs chain` is the first place to look. The chain image is built from `submodules/manifest-ledger` at the pinned commit; if that submodule is dirty or behind, the chain won't have the right protobuf surface for manifestjs.
+Collect container and native backend logs with `bash e2e/scripts/devnet.sh logs`. If the chain container fails to boot, inspect its entries first. The chain image is built from `submodules/manifest-ledger` at the pinned commit; if that submodule is dirty or behind, the chain won't have the right protobuf surface for manifestjs.
 
 ## Still stuck
 

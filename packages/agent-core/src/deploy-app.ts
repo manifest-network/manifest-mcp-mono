@@ -70,7 +70,9 @@ import {
   fetchActiveLease,
   deployApp as fredDeployApp,
   LeaseReadinessUnconfirmedError,
+  normalizeFredCompatibility,
   pollLeaseUntilReady,
+  resolveFredCompatibility,
   resolveProviderUrl,
   uploadLeaseData,
   waitForAppReady,
@@ -169,6 +171,8 @@ export async function deployApp(
   callbacks: DeployAppCallbacks,
   opts: DeployAppOptions,
 ): Promise<DeployResult> {
+  // Snapshot before callbacks can edit caller-owned maps during confirmation.
+  const fredCompatibility = normalizeFredCompatibility(opts.fredCompatibility);
   // --- Input validation -----------------------------------------------
   try {
     validateSpec(spec);
@@ -255,6 +259,16 @@ export async function deployApp(
     chain: opts.clientManager,
     logger: noopLogger,
   };
+  const previewCompatibilityFor = async (providerUuid: string) =>
+    typeof fredCompatibility === 'string'
+      ? fredCompatibility
+      : resolveFredCompatibility(
+          fredCompatibility,
+          await resolveProviderUrl(
+            { ...readCtx, fetch: opts.fetchFn ?? globalThis.fetch },
+            providerUuid,
+          ),
+        );
 
   // --- SKU pin resolution (ENG-258) -----------------------------------
   // Resolve the requested `size` to a single concrete (skuUuid,
@@ -360,14 +374,23 @@ export async function deployApp(
   // checks) is meta-hash-safe and keeps preview ≡ deploy by construction
   // (both build the manifest from the same STRUCTURED_FIELDS). D3 / ENG-310.
   const previewInput: BuildManifestPreviewInput = spec;
-  let preview = await buildManifestPreview(previewInput);
+  let preview = await buildManifestPreview(
+    previewInput,
+    await previewCompatibilityFor(pinned.providerUuid),
+  );
 
   // Fee estimation for create-lease (always) + set-item-custom-domain
   // (when customDomain set). Lean port: cosmosEstimateFee invocation
   // details encapsulated in a helper to keep this fn focused on flow.
   let summary = summarizeSpec(spec);
   let fees = await estimateFees(opts, spec, preview.meta_hash_hex, leaseItems);
-  let plan: Plan = { summary, readiness, fees, leaseItems };
+  let plan: Plan = {
+    summary,
+    readiness,
+    fees,
+    leaseItems,
+    manifestValidation: preview.validation,
+  };
 
   // --- Render plan + onPlan callback ----------------------------------
   // FIX 2 (ENG-258 review): stamp the resolved pin identity onto the
@@ -472,7 +495,10 @@ export async function deployApp(
       );
     }
     const editedPreviewInput: BuildManifestPreviewInput = confirmedSpec;
-    preview = await buildManifestPreview(editedPreviewInput);
+    preview = await buildManifestPreview(
+      editedPreviewInput,
+      await previewCompatibilityFor(pinned.providerUuid),
+    );
     summary = summarizeSpec(confirmedSpec);
     fees = await estimateFees(
       opts,
@@ -480,7 +506,13 @@ export async function deployApp(
       preview.meta_hash_hex,
       leaseItems,
     );
-    plan = { summary, readiness, fees, leaseItems };
+    plan = {
+      summary,
+      readiness,
+      fees,
+      leaseItems,
+      manifestValidation: preview.validation,
+    };
     // The wrapper captures this block and uses it verbatim in the next
     // onPlan elicitation, so confirmation always shows the latest prices.
     const editedBlock = renderDeploymentPlan({
@@ -572,6 +604,7 @@ export async function deployApp(
   try {
     fredResult = await fredDeployApp(
       {
+        fredCompatibility,
         query: queryClient,
         chain: opts.clientManager,
         fetch: opts.fetchFn ?? globalThis.fetch,

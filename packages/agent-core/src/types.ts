@@ -12,6 +12,15 @@ import type {
   StopAppReconciliation,
   WalletProvider,
 } from '@manifest-network/manifest-mcp-core';
+import type {
+  BuildManifestPreviewResult,
+  FredCompatibilityConfig,
+} from '@manifest-network/manifest-mcp-fred';
+
+export type {
+  FredCompatibility,
+  FredCompatibilityConfig,
+} from '@manifest-network/manifest-mcp-fred';
 
 // Re-export workspace-dep types so public consumers can import them from
 // `@manifest-network/manifest-agent-core` directly without a separate
@@ -94,6 +103,8 @@ export interface AgentCoreRuntime {
   clientManager: CosmosClientManager;
   /** Optional fetch implementation; defaults to `globalThis.fetch` inside fred's deployApp. */
   fetchFn?: typeof globalThis.fetch;
+  /** Deployment manifest policy. Defaults to v0.13; URL maps opt selected providers into PR240. */
+  readonly fredCompatibility?: FredCompatibilityConfig;
 }
 
 /**
@@ -266,6 +277,8 @@ export interface Plan {
   fees: PlanFees;
   /** Ordered create-lease items with the catalog pricing used for readiness and fees. */
   leaseItems: readonly PlannedLeaseItem[];
+  /** Applied provider policy and manifest validation shown before confirmation. */
+  manifestValidation?: BuildManifestPreviewResult['validation'];
 }
 
 export type PlanEdit =

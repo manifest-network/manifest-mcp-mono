@@ -13,6 +13,9 @@ import {
 } from './humanize-denom.js';
 import { summarizeRecurringCosts } from './recurring-costs.js';
 
+const MAX_VALIDATION_ERRORS = 3;
+const MAX_VALIDATION_ERROR_LENGTH = 240;
+
 /**
  * Render the canonical `DeploymentPlan` block for `deployApp`'s
  * confirmation step. Consumes the typed `Plan` + `FeeEstimate {coins, gas}`
@@ -217,6 +220,31 @@ export function renderDeploymentPlan(
     `  Manifest:                  ${manifestLine}`,
     `  meta_hash:                 ${input.metaHash}`,
   );
+
+  const validation = input.plan.manifestValidation;
+  if (validation !== undefined) {
+    lines.push(
+      `  Fred manifest validation:  ${validation.valid ? 'valid' : 'INVALID'} ` +
+        `(policy ${sanitizeForDisplay(validation.fred_compatibility, 16, '(unknown)')})`,
+    );
+    if (!validation.valid) {
+      lines.push(
+        '  Validation action:         Fix the manifest errors and rebuild the preview before deploying.',
+      );
+      // Validator messages can include manifest-controlled text. Bound both
+      // their number and length, and prevent them from forging plan lines.
+      for (const error of validation.errors.slice(0, MAX_VALIDATION_ERRORS)) {
+        lines.push(
+          `    Validation error:        ${sanitizeForDisplay(error, MAX_VALIDATION_ERROR_LENGTH, '(no readable error details)')}`,
+        );
+      }
+      if (validation.errors.length > MAX_VALIDATION_ERRORS) {
+        lines.push(
+          `    Validation errors:       ${validation.errors.length - MAX_VALIDATION_ERRORS} more omitted; inspect the manifest preview.`,
+        );
+      }
+    }
+  }
 
   if (hasDomain) {
     const target =

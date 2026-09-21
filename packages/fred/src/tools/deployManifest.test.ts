@@ -52,6 +52,7 @@ import {
   makeMockQueryClient,
 } from '@manifest-network/manifest-mcp-core/__test-utils__/mocks.js';
 import { unreadableErrors } from '../__test-utils__/unreadable-errors.js';
+import type { FredCompatibilityConfig } from '../compatibility.js';
 import type { FredAuthCtx } from '../ctx.js';
 import {
   LeaseReadinessUnconfirmedError,
@@ -336,6 +337,99 @@ describe('deployManifest', () => {
     expect(uploaded).toBe(manifest); // byte-identical, not re-serialized
   });
 
+  it.each([
+    ['default', undefined],
+    ['explicit legacy', 'v0.13'],
+    ['mapped legacy', { 'https://provider.example.com': 'v0.13' }],
+    ['unlisted provider', { 'https://other.example.com': 'pr240' }],
+  ] satisfies ReadonlyArray<
+    readonly [string, FredCompatibilityConfig | undefined]
+  >)(
+    'accepts legacy-only manifests under %s compatibility',
+    async (_name, fredCompatibility) => {
+      const cm = makeMockClientManager({
+        queryClient: makeQueryClient(),
+        address: 'manifest1tenant',
+      });
+      const manifest = JSON.stringify({
+        image: 'nginx',
+        user: 'a:b:c',
+        labels: { 'com.docker.compose.project': 'tenant' },
+      });
+      const result = await deployManifest(
+        { ...(await ctx(cm)), fredCompatibility },
+        { manifest, sku: { kind: 'byName', size: 'docker-micro' } },
+      );
+      expect(result.state).toBe(LeaseState.LEASE_STATE_ACTIVE);
+      expect(new TextDecoder().decode(uploadedBytes())).toBe(manifest);
+      expect(mockCosmosTx).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it('rejects the resolved provider PR240 policy before paying for a lease', async () => {
+    const cm = makeMockClientManager({
+      queryClient: makeQueryClient(),
+      address: 'manifest1tenant',
+    });
+    await expect(
+      deployManifest(
+        {
+          ...(await ctx(cm)),
+          fredCompatibility: { 'https://provider.example.com/': 'pr240' },
+        },
+        {
+          manifest: JSON.stringify({ image: 'nginx', user: 'a:b:c' }),
+          sku: { kind: 'byName', size: 'docker-micro' },
+        },
+      ),
+    ).rejects.toMatchObject({ code: 'INVALID_CONFIG' });
+    expect(cm.getAddress).toHaveBeenCalled();
+    expect(mockCosmosTx).not.toHaveBeenCalled();
+    expect(getLeaseDataAuthToken).not.toHaveBeenCalled();
+    expect(wire.calls).toHaveLength(0);
+  });
+
+  it('honors a legacy per-call override of the configured PR240 policy', async () => {
+    const cm = makeMockClientManager({
+      queryClient: makeQueryClient(),
+      address: 'manifest1tenant',
+    });
+    await deployManifest(
+      { ...(await ctx(cm)), fredCompatibility: 'pr240' },
+      {
+        manifest: JSON.stringify({ image: 'nginx', user: 'a:b:c' }),
+        sku: { kind: 'byName', size: 'docker-micro' },
+      },
+      { fredCompatibility: 'v0.13' },
+    );
+    expect(mockCosmosTx).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps common invalid manifests local even with a provider map', async () => {
+    const cm = makeMockClientManager({
+      queryClient: makeQueryClient(),
+      address: 'manifest1tenant',
+    });
+    await expect(
+      deployManifest(
+        {
+          ...(await ctx(cm)),
+          fredCompatibility: { 'https://provider.example.com': 'pr240' },
+        },
+        {
+          manifest: JSON.stringify({
+            image: 'nginx',
+            labels: { 'Fred.owner': 'tenant' },
+          }),
+          sku: { kind: 'byName', size: 'docker-micro' },
+        },
+      ),
+    ).rejects.toMatchObject({ code: 'INVALID_CONFIG' });
+    expect(cm.getAddress).not.toHaveBeenCalled();
+    expect(mockCosmosTx).not.toHaveBeenCalled();
+    expect(wire.calls).toHaveLength(0);
+  });
+
   it('ENG-258 #1: kind:resolved skips the SKU query — trusts the supplied pair verbatim (design §4.3 + §6)', async () => {
     // Pre-resolved IDs must be trusted verbatim: the chain's create-lease is the
     // authoritative validation. Re-querying here would reject momentarily-inactive
@@ -533,12 +627,28 @@ describe('deployManifest', () => {
       'labels["Fred.owner"]',
     ],
     [
+      'a Docker Compose label',
+      { image: 'nginx', labels: { 'com.docker.compose.project': 'tenant' } },
+      'labels["com.docker.compose.project"]',
+    ],
+    [
+      'a Unicode case-folded reserved label',
+      { image: 'nginx', labels: { 'com.docKer.compoſe.project': 'tenant' } },
+      'labels["com.docKer.compoſe.project"]',
+    ],
+    ['a multi-colon user', { image: 'nginx', user: 'a:b:c' }, 'manifest.user'],
+    [
+      'a user containing form-feed',
+      { image: 'nginx', user: 'a\fb' },
+      'manifest.user',
+    ],
+    [
       'a fixed host_port',
       { image: 'nginx', ports: { '80/tcp': { host_port: 8080 } } },
       'ports["80/tcp"].host_port',
     ],
   ])(
-    'ENG-637 rejects %s before the paid create-lease broadcast',
+    'ENG-637 rejects %s under PR240 before the paid create-lease broadcast',
     async (_name, manifest, offendingField) => {
       const cm = makeMockClientManager({
         queryClient: makeQueryClient(),
@@ -553,7 +663,7 @@ describe('deployManifest', () => {
             manifest: JSON.stringify(manifest),
             sku: { kind: 'byName', size: 'docker-micro' },
           },
-          {},
+          { fredCompatibility: 'pr240' },
         );
       } catch (error) {
         thrown = error;
@@ -563,6 +673,7 @@ describe('deployManifest', () => {
       if (!(thrown instanceof Error))
         throw new Error('expected deploy to fail');
       expect(thrown.message).toContain(offendingField);
+      expect(cm.getAddress).not.toHaveBeenCalled();
       expect(mockCosmosTx).not.toHaveBeenCalled();
       expect(wire.calls).toHaveLength(0);
     },

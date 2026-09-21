@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { ManifestMCPError, ManifestMCPErrorCode } from '../types.js';
 import { errorChain } from './error-chain.js';
 
@@ -52,5 +52,23 @@ describe('error cause traversal', () => {
     });
 
     expect(errorChain(error)).toEqual([error]);
+  });
+
+  it('includes a stop verdict without reading its diagnostic cause', () => {
+    const verdict = new ManifestMCPError(
+      ManifestMCPErrorCode.RESTART_INDETERMINATE,
+      'Command outcome is unknown',
+    );
+    const readCause = vi.fn(() => {
+      throw new Error('unreadable diagnostic cause');
+    });
+    Object.defineProperty(verdict, 'cause', { get: readCause });
+    const outer = Object.assign(new Error('HTTP 503'), { cause: verdict });
+
+    const chain = errorChain(outer, (entry) => entry === verdict);
+    expect(chain).toHaveLength(2);
+    expect(chain[0]).toBe(outer);
+    expect(chain[1]).toBe(verdict);
+    expect(readCause).not.toHaveBeenCalled();
   });
 });

@@ -51,14 +51,15 @@ export async function appStatus(
   let providerError: string | undefined;
   let connectionError: string | undefined;
 
-  // ENG-600: query the provider for retention on CLOSED leases too (retained
+  // Query the provider for retention on CLOSED and EXPIRED leases too (retained
   // volumes live only there). Connection info is meaningless for a non-running
   // lease, so it stays PENDING/ACTIVE-only.
   const st = lease.state;
   const wantsStatus =
     st === LeaseState.LEASE_STATE_PENDING ||
     st === LeaseState.LEASE_STATE_ACTIVE ||
-    st === LeaseState.LEASE_STATE_CLOSED;
+    st === LeaseState.LEASE_STATE_CLOSED ||
+    st === LeaseState.LEASE_STATE_EXPIRED;
   const wantsConnection =
     st === LeaseState.LEASE_STATE_PENDING ||
     st === LeaseState.LEASE_STATE_ACTIVE;

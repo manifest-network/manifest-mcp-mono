@@ -12,6 +12,7 @@ import {
 import { makeMockQueryClient } from '@manifest-network/manifest-mcp-core/__test-utils__/mocks.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createFredClient, shouldWarnUnguarded } from './client.js';
+import type { FredCompatibilityConfig } from './compatibility.js';
 
 const FULL_CONFIG: ManifestMCPConfig = {
   chainId: 'test-1',
@@ -52,6 +53,32 @@ function fakeManager(
 afterEach(() => vi.restoreAllMocks());
 
 describe('createFredClient', () => {
+  it('defaults to v0.13 and snapshots explicit provider modes', async () => {
+    vi.spyOn(CosmosClientManager, 'getInstance').mockReturnValue(fakeManager());
+    const options = { config: FULL_CONFIG, walletProvider: fakeWallet() };
+    expect((await createFredClient(options)).fredCompatibility).toBe('v0.13');
+    const modes = { [PROVIDER_URL]: 'pr240' as const };
+    const client = await createFredClient({
+      ...options,
+      fredCompatibility: modes,
+    });
+    delete (modes as Partial<typeof modes>)[PROVIDER_URL];
+    expect(client.fredCompatibility).toEqual({ [PROVIDER_URL]: 'pr240' });
+    expect(Object.isFrozen(client.fredCompatibility)).toBe(true);
+  });
+
+  it('rejects invalid compatibility before constructing a chain client', async () => {
+    const factory = vi.spyOn(CosmosClientManager, 'getInstance');
+    await expect(
+      createFredClient({
+        config: FULL_CONFIG,
+        walletProvider: fakeWallet(),
+        fredCompatibility: 'latest' as FredCompatibilityConfig,
+      }),
+    ).rejects.toThrow('fredCompatibility');
+    expect(factory).not.toHaveBeenCalled();
+  });
+
   it('createFredClient layers waitForLeaseStatus over the core client', async () => {
     vi.spyOn(CosmosClientManager, 'getInstance').mockReturnValue(fakeManager());
     const client = await createFredClient({

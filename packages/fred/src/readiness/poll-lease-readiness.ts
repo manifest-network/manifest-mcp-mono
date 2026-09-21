@@ -4,7 +4,8 @@ import {
   LeaseState,
   logger,
 } from '@manifest-network/manifest-mcp-core';
-import { failureDetail } from '../failure-reason.js';
+import { guidanceFor } from '../failure-guidance.js';
+import { describeFredFailure, failureDetail } from '../failure-reason.js';
 import {
   capProviderText,
   isTransientProviderError,
@@ -199,7 +200,9 @@ export class TerminalChainStateError extends ProviderApiError {
    * the affected lease without re-deriving it from the message; provider keys
    * appear once `withContext` enriches the error.
    */
-  public override readonly details: {
+  public override readonly details: Readonly<Record<string, unknown>> & {
+    readonly readiness: 'terminal';
+    readonly chain_state: TerminalChainLeaseState;
     readonly lease_uuid: string;
     readonly provider_uuid?: string;
     readonly provider_url?: string;
@@ -221,6 +224,8 @@ export class TerminalChainStateError extends ProviderApiError {
     this.providerUuid = context?.providerUuid;
     this.providerUrl = context?.providerUrl;
     this.details = {
+      readiness: 'terminal',
+      chain_state: chainState,
       lease_uuid: context?.lease_uuid ?? leaseUuid,
       provider_uuid: context?.providerUuid,
       provider_url: context?.providerUrl,
@@ -239,8 +244,23 @@ export class TerminalChainStateError extends ProviderApiError {
     const enriched = new TerminalChainStateError(
       this.leaseUuid,
       this.chainState,
-      context,
+      {
+        lease_uuid: this.details.lease_uuid,
+        providerUuid: this.providerUuid,
+        providerUrl: this.providerUrl,
+        ...context,
+      },
     );
+    Object.defineProperty(enriched, 'details', {
+      value: { ...this.details, ...enriched.details },
+      enumerable: true,
+      configurable: true,
+    });
+    Object.defineProperty(enriched, 'cause', {
+      value: this.cause,
+      enumerable: false,
+      configurable: true,
+    });
     if (this.stack) enriched.stack = this.stack;
     return enriched;
   }
@@ -331,7 +351,8 @@ export class LeaseReadinessUnconfirmedError extends ProviderApiError {
   public readonly elapsedMs: number;
   public readonly consecutiveFailures?: number;
   /** Structured context for downstream classifiers (agent-core's classify-deploy-error). */
-  public override readonly details: {
+  public override readonly details: Readonly<Record<string, unknown>> & {
+    readonly readiness: 'unconfirmed';
     readonly lease_uuid: string;
     readonly provider_uuid?: string;
     readonly provider_url?: string;
@@ -340,6 +361,7 @@ export class LeaseReadinessUnconfirmedError extends ProviderApiError {
     readonly last_provision_status?: string;
     readonly timeout_ms: number;
     readonly elapsed_ms: number;
+    readonly consecutive_failures?: number;
   };
   private readonly input: LeaseReadinessUnconfirmedInput;
 
@@ -358,6 +380,7 @@ export class LeaseReadinessUnconfirmedError extends ProviderApiError {
     this.elapsedMs = input.elapsedMs;
     this.consecutiveFailures = input.consecutiveFailures;
     this.details = {
+      readiness: 'unconfirmed',
       lease_uuid: input.context?.lease_uuid ?? input.leaseUuid,
       provider_uuid: input.context?.providerUuid,
       provider_url: input.context?.providerUrl,
@@ -369,6 +392,7 @@ export class LeaseReadinessUnconfirmedError extends ProviderApiError {
       last_provision_status: input.lastProvisionStatus,
       timeout_ms: input.timeoutMs,
       elapsed_ms: input.elapsedMs,
+      consecutive_failures: input.consecutiveFailures,
     };
     Object.setPrototypeOf(this, LeaseReadinessUnconfirmedError.prototype);
   }
@@ -383,7 +407,17 @@ export class LeaseReadinessUnconfirmedError extends ProviderApiError {
   ): LeaseReadinessUnconfirmedError {
     const enriched = new LeaseReadinessUnconfirmedError({
       ...this.input,
-      context,
+      context: { ...this.input.context, ...context },
+    });
+    Object.defineProperty(enriched, 'details', {
+      value: { ...this.details, ...enriched.details },
+      enumerable: true,
+      configurable: true,
+    });
+    Object.defineProperty(enriched, 'cause', {
+      value: this.cause,
+      enumerable: false,
+      configurable: true,
     });
     if (this.stack) enriched.stack = this.stack;
     return enriched;
@@ -573,12 +607,28 @@ export async function pollLeaseReadiness(
             // agent-core (deploy-app.ts stringifies err.message), so it has to
             // stay informative for BOTH shapes.
             const detail = failureDetail(status);
+            const failure = describeFredFailure(status);
+            const guidance = guidanceFor(failure?.reason);
             throw new ProviderApiError(
               0,
               `Lease ${leaseUuid} is ACTIVE but provisioning ${ps}${
                 detail ? `: ${detail}` : ''
               }`,
-              { kind: 'poll_verdict' },
+              {
+                kind: 'poll_verdict',
+                details: {
+                  lease_uuid: leaseUuid,
+                  readiness: 'failed',
+                  provision_status: ps,
+                  ...(failure?.reason !== undefined && {
+                    reason: failure.reason,
+                  }),
+                  ...(failure?.message !== undefined && {
+                    message: failure.message,
+                  }),
+                  ...(guidance && { next_step: guidance.nextStep }),
+                },
+              },
             );
           }
           if (!PROVISION_SUCCESS.has(ps)) {
@@ -601,13 +651,27 @@ export async function pollLeaseReadiness(
         throw new ProviderApiError(
           0,
           `Lease ${leaseUuid} entered terminal state ${leaseStateName(status.state)}`,
-          { kind: 'poll_verdict' },
+          {
+            kind: 'poll_verdict',
+            details: {
+              lease_uuid: leaseUuid,
+              readiness: 'terminal',
+              state: leaseStateName(status.state),
+            },
+          },
         );
       default:
         throw new ProviderApiError(
           0,
           `Lease ${leaseUuid} returned unexpected state ${leaseStateName(status.state)}`,
-          { kind: 'poll_verdict' },
+          {
+            kind: 'poll_verdict',
+            details: {
+              lease_uuid: leaseUuid,
+              readiness: 'unconfirmed',
+              state: leaseStateName(status.state),
+            },
+          },
         );
     }
     await abortableSleep(intervalMs, abortSignal);

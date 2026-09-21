@@ -96,6 +96,19 @@ describe('isRetryableError', () => {
       expect(isRetryableError(error)).toBe(true);
     });
 
+    it.each([
+      ManifestMCPErrorCode.UPDATE_INDETERMINATE,
+      ManifestMCPErrorCode.RESTART_INDETERMINATE,
+      ManifestMCPErrorCode.MAINTENANCE_REQUEST_FAILED,
+      ManifestMCPErrorCode.MAINTENANCE_WAIT_FAILED,
+    ])('does not replay maintenance on transient diagnostics (%s)', (code) => {
+      const error = new ManifestMCPError(code, 'HTTP 503: connection timeout', {
+        lease_uuid: 'lease-1',
+        idempotency_key: '01c676aa-6609-436f-9da4-321f574992b0',
+      });
+      expect(isRetryableError(error)).toBe(false);
+    });
+
     it('should retry QUERY_FAILED with timeout message', () => {
       const error = new ManifestMCPError(
         ManifestMCPErrorCode.QUERY_FAILED,
@@ -163,6 +176,97 @@ describe('isRetryableError', () => {
         'multiple SKUs named docker-micro',
       );
       expect(isRetryableError(err)).toBe(false);
+    });
+  });
+
+  describe('maintenance ownership across package copies', () => {
+    const config = { maxRetries: 1, baseDelayMs: 1, maxDelayMs: 1 };
+
+    it.each([
+      'UPDATE_INDETERMINATE',
+      'RESTART_INDETERMINATE',
+      'MAINTENANCE_REQUEST_FAILED',
+      'MAINTENANCE_WAIT_FAILED',
+    ])('preserves a nested foreign %s without retrying', async (code) => {
+      const foreign = Object.assign(new Error('HTTP 503'), { code });
+      const readDiagnostic = vi.fn(() => {
+        throw new Error('unreadable diagnostic');
+      });
+      Object.defineProperties(foreign, {
+        message: { get: readDiagnostic },
+        cause: { get: readDiagnostic },
+      });
+      const wrapper = Object.assign(new Error('adapter'), { cause: foreign });
+      const error = Object.assign(new Error('fetch failed'), {
+        cause: wrapper,
+      });
+      const operation = vi.fn().mockRejectedValue(error);
+
+      expect(foreign).not.toBeInstanceOf(ManifestMCPError);
+      expect(isRetryableError(error)).toBe(false);
+      await expect(withRetry(operation, { config })).rejects.toBe(error);
+      expect(operation).toHaveBeenCalledOnce();
+      expect(readDiagnostic).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['restart', 'unknown'],
+      ['restart', 'accepted'],
+      ['update', 'unknown'],
+      ['update', 'accepted'],
+    ])('retains raw %s recovery for outcome %s', (operation, outcome) => {
+      const error = Object.assign(new Error('ECONNRESET'), {
+        details: { operation, outcome, idempotency_key: 'persisted-command' },
+      });
+      const readDiagnostic = vi.fn(() => {
+        throw new Error('unreadable diagnostic');
+      });
+      Object.defineProperties(error, {
+        message: { get: readDiagnostic },
+        cause: { get: readDiagnostic },
+      });
+
+      expect(isRetryableError(error)).toBe(false);
+      expect(readDiagnostic).not.toHaveBeenCalled();
+    });
+
+    it.each(['code', 'details', 'operation', 'outcome', 'idempotency_key'])(
+      'does not replay when command %s is unreadable',
+      async (field) => {
+        const details = {
+          operation: 'restart',
+          outcome: 'unknown',
+          idempotency_key: 'persisted-command',
+        };
+        const error = Object.assign(new Error('HTTP 503'), { details });
+        Object.defineProperty(
+          field === 'code' || field === 'details' ? error : details,
+          field,
+          {
+            get: () => {
+              throw new Error('unreadable context');
+            },
+          },
+        );
+        const operation = vi.fn().mockRejectedValue(error);
+
+        await expect(withRetry(operation, { config })).rejects.toBe(error);
+        expect(operation).toHaveBeenCalledOnce();
+      },
+    );
+
+    it('retains transient classification for an ordinary read context', () => {
+      expect(
+        isRetryableError(
+          Object.assign(new Error('HTTP 503'), {
+            details: {
+              operation: 'read',
+              outcome: 'unknown',
+              idempotency_key: 'x',
+            },
+          }),
+        ),
+      ).toBe(true);
     });
   });
 
@@ -639,6 +743,21 @@ describe('transport deadline ownership', () => {
     expect(
       isRetryableError(Object.assign(new Error('Opaque wrapper'), { cause })),
     ).toBe(true);
+  });
+
+  it('stops at a nested maintenance verdict before reading its diagnostic cause', () => {
+    const verdict = new ManifestMCPError(
+      ManifestMCPErrorCode.RESTART_INDETERMINATE,
+      'Command outcome is unknown',
+    );
+    const readCause = vi.fn(() => {
+      throw new Error('unreadable diagnostic cause');
+    });
+    Object.defineProperty(verdict, 'cause', { get: readCause });
+    const outer = Object.assign(new Error('HTTP 503'), { cause: verdict });
+
+    expect(isRetryableError(outer)).toBe(false);
+    expect(readCause).not.toHaveBeenCalled();
   });
 
   it('terminates cyclic cause chains while retaining a permanent verdict', () => {

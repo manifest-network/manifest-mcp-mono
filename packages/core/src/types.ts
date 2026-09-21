@@ -456,22 +456,20 @@ export enum ManifestMCPErrorCode {
   RESTORE_COMMITTED_FAILURE = 'RESTORE_COMMITTED_FAILURE', // post-pivot failure; adopted lease exists
 
   /**
-   * `update_app` reached the provider and the provider answered 5xx, which does
-   * NOT establish whether the new manifest was applied (ENG-619).
-   *
-   * Fred's `/update` now persists the payload to `payloads.db` after handing it to
-   * the backend, and answers 500 when that persist fails — where the old build
-   * answered a misleading `202`. Three different faults produce that 500 (payload
-   * store unconfigured, backend rejected, persisted-after-applied) and all three
-   * emit an identical body, so they are indistinguishable on the wire. The
-   * persisted-after-applied one is the dangerous reading: the deployment is live
-   * now and the next reprovision silently reverts it.
-   *
-   * Carries `details = { lease_uuid, status }`. Non-retryable: `update_app` is
-   * non-idempotent, so `withRetry` must never auto-re-apply. An agent may
-   * deliberately re-invoke after diagnosing — a retry re-applies AND re-persists.
+   * An update POST has an uncertain outcome. Fred may retain the admitted command
+   * and execute it during recovery, including after a 503 or client timeout.
+   * Carries the lease and idempotency key. Inspect status/releases and reuse the
+   * same key and exact command when deliberately retrying. Never auto-reinvoke
+   * the high-level operation, which generates a new key when one is omitted.
    */
   UPDATE_INDETERMINATE = 'UPDATE_INDETERMINATE',
+
+  /** Restart POST outcome is uncertain; preserve its idempotency key for recovery. */
+  RESTART_INDETERMINATE = 'RESTART_INDETERMINATE',
+  /** Maintenance POST failed; its response does not prove absence of prior effects. */
+  MAINTENANCE_REQUEST_FAILED = 'MAINTENANCE_REQUEST_FAILED',
+  /** Maintenance was accepted, but waiting for readiness failed or remained inconclusive. */
+  MAINTENANCE_WAIT_FAILED = 'MAINTENANCE_WAIT_FAILED',
 
   /**
    * A deploy created its lease and uploaded the manifest, but readiness could
