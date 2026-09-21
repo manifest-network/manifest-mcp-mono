@@ -14,6 +14,7 @@ import { fileURLToPath } from 'node:url';
 import {
   auditResult,
   installConsumer,
+  lockedPackageName,
   packPackage,
   requireSuccess,
   runtimeClosure,
@@ -173,6 +174,123 @@ test('real packed consumer resolves the unpatched dependency despite repository 
       sabotage(modified.packages);
       writeFileSync(lockPath, JSON.stringify(modified));
       assert.throws(() => verifyInstalledTarballs(consumer, selected));
+    }
+  } finally {
+    rmSync(fixture, { recursive: true, force: true });
+  }
+});
+
+test('fresh consumers reject a ManifestJS update that installs a second Stargate identity', {
+  timeout: 60_000,
+}, () => {
+  const fixture = mkdtempSync(join(tmpdir(), 'eng805-stargate-skew-'));
+  try {
+    const tarballs = join(fixture, 'tarballs');
+    const cache = join(fixture, 'npm-cache');
+    mkdirSync(tarballs);
+    function pack(name, version, dependencies, code) {
+      const directory = join(
+        fixture,
+        `${name.replaceAll('/', '-')}-${version}`,
+      );
+      mkdirSync(directory);
+      const packageJson = {
+        name,
+        version,
+        type: 'module',
+        main: 'index.js',
+        dependencies,
+      };
+      writeFileSync(
+        join(directory, 'package.json'),
+        JSON.stringify(packageJson),
+      );
+      writeFileSync(join(directory, 'index.js'), code);
+      return { packageJson, pack: packPackage(directory, tarballs, cache) };
+    }
+    const stargate = ['0.32.4-ll.4', '0.32.4-ll.5'].map((version) =>
+      pack(
+        '@manifest-network/stargate',
+        version,
+        {},
+        'export class SigningStargateClient {}',
+      ),
+    );
+    for (const [index, version] of ['3.0.1', '3.0.2'].entries()) {
+      const manifestjs = pack(
+        '@manifest-network/manifestjs',
+        version,
+        {
+          '@cosmjs/stargate': `file:${stargate[index].pack.tarball}`,
+        },
+        "export { SigningStargateClient } from '@cosmjs/stargate';",
+      );
+      const core = pack(
+        'eng805-fixture-core',
+        `1.0.${index}`,
+        {
+          '@cosmjs/stargate': `file:${stargate[0].pack.tarball}`,
+          '@manifest-network/manifestjs': `file:${manifestjs.pack.tarball}`,
+        },
+        "export { SigningStargateClient as direct } from '@cosmjs/stargate';\nexport { SigningStargateClient as generated } from '@manifest-network/manifestjs';",
+      );
+      const selected = new Map([[core.packageJson.name, core]]);
+      const consumer = join(fixture, `consumer-${version}`);
+      writeConsumer(consumer, selected);
+      requireSuccess(
+        installConsumer(consumer, cache),
+        'Install local version-skew fixture',
+      );
+      const lockPath = join(consumer, 'package-lock.json');
+      const lock = JSON.parse(readFileSync(lockPath, 'utf8'));
+      assert.equal(
+        lock.packages['node_modules/@manifest-network/manifestjs'].version,
+        version,
+      );
+      const copies = Object.entries(lock.packages).filter(
+        ([location, entry]) =>
+          lockedPackageName(location, entry) === '@manifest-network/stargate',
+      );
+      assert.equal(copies.length, index + 1);
+      requireSuccess(
+        spawnSync(
+          process.execPath,
+          [
+            '--input-type=module',
+            '-e',
+            `import assert from 'node:assert/strict'; import { direct, generated } from 'eng805-fixture-core'; assert.equal(direct === generated, ${index === 0});`,
+          ],
+          { cwd: consumer, encoding: 'utf8' },
+        ),
+        'Verify actual client constructor identity',
+      );
+      if (index === 1) {
+        assert.throws(
+          () => verifyInstalledTarballs(consumer, selected),
+          /Duplicate shared dependency identity: Stargate/,
+        );
+        continue;
+      }
+      verifyInstalledTarballs(consumer, selected);
+      // Same-version duplicates and arbitrary aliases are also separate modules.
+      for (const [name, entry, identity] of [
+        ['another-stargate-name', copies[0][1], 'Stargate'],
+        [
+          '@manifest-network/manifestjs',
+          lock.packages['node_modules/@manifest-network/manifestjs'],
+          'ManifestJS',
+        ],
+      ]) {
+        const modified = structuredClone(lock);
+        modified.packages[
+          `node_modules/eng805-fixture-core/node_modules/${name}`
+        ] = entry;
+        writeFileSync(lockPath, JSON.stringify(modified));
+        assert.throws(
+          () => verifyInstalledTarballs(consumer, selected),
+          new RegExp(`Duplicate shared dependency identity: ${identity}`),
+        );
+      }
     }
   } finally {
     rmSync(fixture, { recursive: true, force: true });

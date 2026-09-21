@@ -91,5 +91,58 @@
   },
   "remainingRuntimeAdvisories": [
     "https://github.com/advisories/GHSA-848j-6mx2-7j84"
-  ]
+  ],
+  "provenance": {
+    "status": "unattested",
+    "publisher": "fmorency_",
+    "publicationMethod": "manual npm publish",
+    "metadataCheckedAt": "2026-09-21T15:28:46.374715+00:00",
+    "sourceCommitsAreAttested": false,
+    "acceptanceScope": "Only the four recorded version/integrity pairs. Retained for the targeted known-advisory repair with unchanged fork runtime sources and compatibility/consumer validation; no CI source-to-artifact attestation is claimed.",
+    "followUp": "Use OIDC trusted publishing with npm provenance for subsequent maintained-fork releases and verify attestations before adoption."
+  },
+  "upstreamAdvisoryReview": {
+    "checkedAt": "2026-09-21T15:28:46.374715+00:00",
+    "source": "GitHub global security advisories API",
+    "query": {
+      "ecosystem": "npm",
+      "type": "reviewed"
+    },
+    "scope": "Reviewed advisories indexed against the retained upstream package versions and published upstream repository security notices; excludes unpublished/unreviewed notices and does not establish absence of vulnerabilities.",
+    "packages": [
+      {
+        "name": "@cosmology/lcd",
+        "version": "0.14.5",
+        "advisories": []
+      },
+      {
+        "name": "@confio/ics23",
+        "version": "0.6.8",
+        "advisories": []
+      },
+      {
+        "name": "@cosmjs/stargate",
+        "version": "0.32.4",
+        "advisories": []
+      }
+    ],
+    "repositoryNoticesCheckedAt": "2026-09-21T15:41:38.508605+00:00",
+    "repositories": [
+      {
+        "repository": "hyperweb-io/telescope",
+        "url": "https://github.com/hyperweb-io/telescope/security/advisories",
+        "advisories": []
+      },
+      {
+        "repository": "confio/ics23",
+        "url": "https://github.com/confio/ics23/security/advisories",
+        "advisories": []
+      },
+      {
+        "repository": "cosmos/cosmjs",
+        "url": "https://github.com/cosmos/cosmjs/security/advisories",
+        "advisories": []
+      }
+    ]
+  }
 }

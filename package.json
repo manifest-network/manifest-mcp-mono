@@ -60,8 +60,6 @@
   },
   "overrides": {
     "ipaddr.js": "2.4.0",
-    "@cosmjs/stargate": "npm:@manifest-network/stargate@0.32.4-ll.4",
-    "axios": "1.19.0",
-    "protobufjs": "7.6.5"
+    "@cosmjs/stargate": "npm:@manifest-network/stargate@0.32.4-ll.4"
   }
 }

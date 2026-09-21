@@ -1,9 +1,10 @@
 # Dependency hygiene
 
-For the separate published SDK/CLI dependency graph, its blocking consumer audit,
-and the current application-root mitigation, see
-[Published dependency security](dependency-consumers.md). Monorepo overrides do
-not propagate to consumers (ENG-805 F01).
+The locked repository graph and fresh SDK/CLI installations have separate,
+standing CI/release gates. Monorepo overrides do not propagate to consumers
+(ENG-805 F01). [Published dependency security](dependency-consumers.md) records the
+repaired declarations, fork provenance limits, upstream advisory-review obligation,
+and the temporary mitigation for applications still on v0.22.0.
 
 ## Automated gates
 
@@ -19,10 +20,27 @@ coverage is unchanged without `node_modules`, but npm's remediation hints and
 reverse-dependency annotations can differ; investigate fixes from an installed
 checkout.
 
-An override is not a permanent security exception. Auditing the resolved graph
-catches a pin that falls into a newly disclosed vulnerable range. On 2026-09-08,
-the full audit passed this threshold with seven low-severity dependency paths
-through `elliptic` (GHSA-848j-6mx2-7j84). Its crypto migration remains ENG-808.
+`npm run check:consumers` separately packs this branch's SDK/CLI and their runtime
+siblings, installs them in fresh applications without repository overrides or a
+copied lockfile, audits them, and checks imports and CLI startup. It rejects
+duplicate workspace identities and duplicate Stargate/ManifestJS copies,
+including aliases and same-version copies. CI runs the registry-dependent command
+at the end of `test`, after lint, coverage, type, browser and size checks; its
+regression suite runs once through `check:review-tooling`. Release validation runs
+the complete command after local checks. Neither gate filters advisory reports.
+
+An override is not a permanent security exception. Keep the justified Stargate
+alias and `ipaddr.js` overrides; Axios/protobufjs now have compatible repaired
+declarations and no override. Update their lockfile resolutions normally instead
+of retaining an exact override that blocks compatible fixes.
+
+The 2026-09-21 fresh-consumer baseline is zero high/critical findings, with 11 low
+affected package entries for the SDK and 15 for the CLI. These are parent rollups
+of `elliptic` (`GHSA-848j-6mx2-7j84`), not independent vulnerabilities. Repository
+and consumer counts cover different graphs and are point-in-time measurements.
+The crypto migration remains ENG-808. npm audit does not automatically cover
+renamed forks under their original package names: the release/dependency-update
+maintainer must also perform the [upstream advisory review](dependency-consumers.md#fork-advisory-coverage).
 
 `npm run check:dependency-hygiene` tests the actual E2E summary shell against
 success, failure, cancellation, missing outputs, and skipped live coverage. A
@@ -35,6 +53,14 @@ denying validator imports originating inside tsdown. Both injected validators
 must execute successfully; removing either injected module must fail. This checks
 the resolution boundary without moving the developer's shared node_modules.
 
+It also verifies that every adopted fork artifact recorded in
+`docs/dependency-repair-2026-09-21.json` matches the lockfile's real package name,
+version, integrity, URL and dependency declarations, including nested copies.
+An intentional fork update must refresh this adoption record and its provenance
+assessment; an unrelated lockfile update must not silently detach the evidence.
+This consistency check does not create or verify build provenance. The four
+initial repair releases are [explicitly recorded as unattested](dependency-consumers.md#publication-provenance-and-acceptance).
+
 The dependency-cruiser positive controls scan the full workspace graph. Each scan
 has a 30-second subprocess deadline within a 45-second test deadline, so the
 ordinary five-second unit-test default does not reject a successful scan on a
@@ -44,6 +70,38 @@ mandatory.
 The repository's `main` ruleset had no required status checks when inspected on
 2026-09-08. Require `test`, `audit`, and `e2e-gate` there to enforce these checks at
 merge time; this is separate from the checked-in workflow definitions.
+
+## Consumer gate recovery
+
+Reproduce from the failing commit after `npm ci` and `npm run build`:
+
+```sh
+npm run check:consumers -- --output /absolute/path/outside/the/workspace
+```
+
+Retain the printed run directory's SDK/CLI `audit.json`, install and smoke logs,
+dependency trees, lockfiles, and `summary.json`. The root audit and consumer audit
+can legitimately differ; inspect the graph that actually failed.
+
+- **Registry error or timeout:** restore connectivity and rerun the gate. An error
+  is not a clean audit; do not substitute the repository's passing audit.
+- **High/critical advisory:** update the declaring package or maintained fork,
+  publish its compatible fix, then update declarations/evidence/lockfile and rerun
+  both gates. A root override alone cannot repair consumers.
+- **Duplicate Stargate or ManifestJS:** compare the two reported installation
+  paths and the installed ManifestJS/Stargate declarations. Coordinate their
+  compatible versions with core, then rerun a fresh consumer install. Do not hide
+  skew with a repository override or loosen the identity check.
+- **Artifact evidence mismatch:** inspect the lockfile change against the public
+  tarball and intended source release. Correct an unintended change; for an
+  intentional adoption, update the record with its provenance assessment and
+  upstream advisory review in the same PR.
+- **Import or CLI failure:** fix the packed package's exports, files or declared
+  runtime dependencies and rebuild before repeating the check.
+
+An applicable upstream advisory discovered by manual fork review also blocks the
+release at high/critical severity, even when both automated audits pass. Use the
+same reviewed, release-specific exception process below if remediation cannot wait.
 
 ## Release audit failures and emergency exceptions
 
@@ -116,7 +174,17 @@ and reject the package-wide `dist/index` and `dist/codegen/index` modules, with 
 direct ManifestJS bundle as the positive control. Size budgets ratchet down by
 the measured savings, preserving their previous headroom.
 
-This is a small reduction. The large crypto and codegen costs need upstream work:
+The 2026-09-21 declaration repair removes the Axios/protobufjs overrides. Updating
+only their resolutions from 1.19.0/7.6.5 to 1.20.0/7.6.6 raises the root-client
+measurement from 1,077,623 to 1,078,429 gzip bytes. Dependency-only bundle probes
+confirm that both updates contribute to the increase. Its budget increases by
+the same 806 bytes to 1,078,764, preserving the previous 335 bytes of headroom.
+The other budgets stay unchanged: `/reads` measures 26,073 bytes, `/catalog`
+27,770, and `/deploy` 1,089,043. No runtime code, ignored dependencies, or
+tree-shaking settings change for this adjustment.
+
+The namespace-import reduction leaves large crypto and codegen costs that need
+upstream work:
 
 - `@cosmjs/crypto@0.32.4` uses `libsodium-wrappers-sumo` for
   `Argon2id.execute`, Ed25519, and XChaCha20-Poly1305. Argon2 calls

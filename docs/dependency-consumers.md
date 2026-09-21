@@ -20,9 +20,20 @@ Publish and verify these packages in dependency order:
 | `@manifest-network/stargate` | `0.32.4-ll.4` | `@confio/ics23: npm:@manifest-network/ics23@^0.6.9` | CosmJS fork `packages/stargate` |
 | `@manifest-network/manifestjs` | `3.0.1` | LCD alias and the patched Stargate version | ManifestJS root |
 
-The LCD and ICS23 runtime sources retain their upstream release contents and
-licenses. Their compatibility suites exercise real HTTP requests, cancellation,
-deadlines, generated LCD queries, proof verification and exact codec round trips.
+The LCD and ICS23 runtime source is preserved; package metadata and tarball
+contents intentionally differ. LCD's upstream npm tarball declares
+`SEE LICENSE IN LICENSE` but omits that file. The fork includes the upstream
+source commit's [MIT license](https://github.com/hyperweb-io/telescope/blob/eaae9e070119fe97bd63b781e070ef50ad4a35b9/packages/lcd/LICENSE-MIT)
+and [Apache license](https://github.com/hyperweb-io/telescope/blob/eaae9e070119fe97bd63b781e070ef50ad4a35b9/packages/lcd/LICENSE-Apache),
+and declares `(MIT OR Apache-2.0)`. ICS23 retains `Apache-2.0`, adds its source
+license file, and excludes compiled specs from the published artifact.
+
+Compatibility suites live in the source forks, not in these runtime tarballs or
+this monorepo's test suite. The [LCD HTTP tests](https://github.com/manifest-network/manifestjs/blob/5df11dcf6c41db000355ab0214c7ee091392a972/vendor/lcd/test/compatibility.test.cjs)
+cover requests, cancellation and deadlines; [generated LCD tests](https://github.com/manifest-network/manifestjs/blob/5df11dcf6c41db000355ab0214c7ee091392a972/__tests__/lcd.compatibility.test.ts)
+cover generated queries. The [ICS23 source suite](https://github.com/manifest-network/cosmjs/tree/d9ec2a47735d252fdda90f7aaeddd8eec4d3cee7/vendor/ics23/js/src)
+retains upstream proof vectors and adds exact codec round trips and negative
+proof controls. Reproduction commands are in each source PR's release runbook.
 The Stargate patch retains its existing Amino workaround and CosmJS 0.32.4
 dependencies. This repair does not remove elliptic; ENG-808 remains separate.
 
@@ -33,6 +44,71 @@ publication, regenerate/verify lockfiles against public npm, run the complete
 consumer check below, and retain both audit reports and the resolved trees.
 Do not commit temporary-registry URLs or replace failed audits with staging
 results. CI and release validation both run the same consumer check.
+
+## Publication provenance and acceptance
+
+These four specific repair versions were published manually by `fmorency_`.
+Their public npm metadata has **no provenance attestations**. The `sourceCommits`
+in the evidence file are maintainer-recorded source references, not attestations;
+SHA-512 comparison establishes artifact identity, not who built the artifact or
+whether that commit produced it. npm's [provenance mechanism](https://docs.npmjs.com/generating-provenance-statements/)
+provides a verifiable build/source link when publishing through supported CI.
+
+This PR retains the four recorded version/integrity pairs as a scoped manual
+publication exception: they repair known high/critical dependency paths while
+preserving the existing runtime implementation, backed by source review,
+compatibility tests and public consumer checks. This accepts the missing CI
+attestation for these versions; those checks do not replace it. Review and merge
+of this adoption must consider that limitation, including the signing and
+proof-verification code. It is not a blanket exception for future fork versions.
+
+Subsequent maintained-fork releases should build and publish through OIDC trusted
+publishing with npm provenance, then verify their attestations before adoption.
+Editing this repository's source references cannot attest the existing releases.
+This monorepo's own release workflow continues publishing with `--provenance`.
+
+The evidence file's `packages` array is the active adoption record:
+`check:dependency-hygiene` compares each name, version, integrity, tarball URL and
+dependency declaration with every matching lockfile entry. An intentional fork
+update must update that record and its provenance assessment in the same PR.
+The dated consumer results remain measurements of the recorded run; current
+consumer checks generate new reports instead of trusting those historical counts.
+
+## Fork advisory coverage
+
+npm audit matches the installed package's real name, including when an npm alias
+preserves the original import name. It does **not** automatically match advisories
+against the original package names to these renamed runtime implementations:
+
+| Installed fork | Retained upstream identity to review |
+| --- | --- |
+| `@manifest-network/lcd` | `@cosmology/lcd@0.14.5` |
+| `@manifest-network/ics23` | `@confio/ics23@0.6.8` |
+| `@manifest-network/stargate` | `@cosmjs/stargate@0.32.4` |
+
+The maintainer preparing each release or changing a fork dependency owns this
+additional review: query the upstream identities in the GitHub Advisory Database,
+check their source repositories' security notices, and assess whether each finding
+applies to the retained or modified code. Record the date, advisory URLs and
+applicability in the PR/release evidence. An applicable high/critical finding
+blocks release even if npm audit is green; use the documented
+[reviewed exception procedure](dependency-hygiene.md#release-audit-failures-and-emergency-exceptions)
+for an urgent exception. Lower-severity findings remain visible.
+
+For example, repeat this query for each identity in the table:
+
+```sh
+gh api --method GET /advisories --paginate \
+  -f ecosystem=npm -f type=reviewed -f 'affects=@confio/ics23@0.6.8'
+```
+
+On 2026-09-21 these three queries returned no matching reviewed advisories;
+the corresponding public repository advisory endpoints also returned no published
+notices. The evidence file records that bounded result. This is not proof of absence
+of vulnerabilities or coverage of unpublished/unreviewed notices. The ordinary audit
+still checks Axios, protobufjs and the other transitive packages under their real
+names. No advisory allowlist or severity suppression is configured, but the
+upstream-name gap is a separate maintenance obligation, not automated coverage.
 
 ## Verified repair (2026-09-21)
 
@@ -79,7 +155,8 @@ the unpublished release versions without modifying their dependency declarations
 External dependencies resolve from the registry. No root overrides, workspace
 symlinks, or repository lockfile are copied.
 
-The check verifies tarball integrity and rejects duplicate sibling installations,
+The check verifies tarball integrity and rejects duplicate sibling installations
+and multiple Stargate or ManifestJS copies (including aliases and same-version copies),
 validates npm's installed dependency tree, audits production/optional/peer
 dependencies, imports public runtime entries, and starts each CLI through its
 invalid-subcommand usage path. It does not read a wallet, sign, or contact a chain
@@ -88,9 +165,19 @@ tests; they are not live transaction acceptance tests.
 
 High/critical advisories, malformed audit results, registry errors, failed imports,
 and invalid installation graphs all fail the command. Lower-severity findings stay
-in the complete audit report. No advisory is suppressed. A security failure does
+in the complete audit report. The renamed-fork coverage limits and manual review
+are described above. A security failure does
 not skip import smoke tests, and both consumers are checked before returning the
 overall result.
+
+The fresh consumers resolve the libraries' ManifestJS caret ranges from npm; the
+repository's exact development pin is not copied. This catches a currently
+published ManifestJS update that would install a second Stargate alongside core's
+direct pin. It cannot prevent a future publication from causing that skew.
+Coordinate ManifestJS and core changes and retain a compatible Stargate identity
+throughout a supported ManifestJS range; use a new ManifestJS major if necessary.
+The broadcast coordination singleton itself lives in core and is already covered
+by the sibling-identity guard.
 
 The command prints its evidence directory under the system temporary directory.
 To choose a persistent location, pass `--output /absolute/path/outside/the/workspace`.
@@ -100,19 +187,6 @@ packed tarballs. The directory also retains its installed dependencies and npm
 cache for investigation; remove it after retaining the reports you need. The
 output location must be outside the workspace so missing consumer dependencies
 cannot accidentally resolve from the repository's `node_modules`.
-
-On 2026-09-08, the clean v0.22.0 SDK consumer reported one critical, nine high, and
-five low affected package entries; the CLI reported one critical, thirteen high,
-and five low. Both smoke checks passed. These counts include parent-package
-rollups, not that many independent vulnerabilities. The underlying high/critical
-paths include:
-
-```text
-@manifest-network/manifestjs@3.0.0
-  -> @cosmology/lcd@0.14.5 -> axios@1.8.2
-@manifest-network/stargate@0.32.4-ll.3
-  -> @confio/ics23@0.6.8 -> protobufjs@6.11.6
-```
 
 ## Interim application workaround
 
@@ -129,7 +203,7 @@ their lockfile with `npm install`, review the diff, and rerun their acceptance t
 }
 ```
 
-These exact versions match the validated monorepo graph. Do not overwrite existing
+These were the validated pre-repair workaround versions. Do not overwrite existing
 application overrides or force an incompatible direct dependency; reconcile any
 `EOVERRIDE` conflict in the application's declared dependencies. Recheck the
 current advisory feed when adopting or retaining these pins:
@@ -148,7 +222,28 @@ repository's library manifests will not protect its consumers. An ephemeral
 the reviewed dependency graph; CLI operators can install locally in such an
 application and invoke its `node_modules/.bin/manifest-mcp-*` commands.
 
+**Remove these two temporary overrides after upgrading the SDK/CLI to a release
+that includes the repaired declarations.** Updating ManifestJS alone is not enough
+while a v0.22.0 core package still directly pins the older Stargate. Regenerate the
+application lockfile, inspect `npm ls axios protobufjs @cosmjs/stargate --all`,
+rerun the audit and acceptance tests, and retain unrelated application overrides.
+An exact override prevents compatible dependency updates even when the audit is
+currently green; `npm update` cannot move it past the overridden version.
+
 ## Original remediation assessment (2026-09-08)
+
+On 2026-09-08, the clean v0.22.0 SDK consumer reported one critical, nine high, and
+five low affected package entries; the CLI reported one critical, thirteen high,
+and five low. Both smoke checks passed. These are historical counts with
+parent-package rollups, not current output or independent vulnerability counts.
+The underlying high/critical paths included:
+
+```text
+@manifest-network/manifestjs@3.0.0
+  -> @cosmology/lcd@0.14.5 -> axios@1.8.2
+@manifest-network/stargate@0.32.4-ll.3
+  -> @confio/ics23@0.6.8 -> protobufjs@6.11.6
+```
 
 Registry metadata was checked on 2026-09-08: ManifestJS's latest release is 3.0.0,
 the Stargate fork's is 0.32.4-ll.3, and ICS23's is 0.6.8. Even LCD's newer 0.16.0
