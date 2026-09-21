@@ -1,0 +1,95 @@
+{
+  "verifiedAt": "2026-09-21T14:21:38.255Z",
+  "registry": "https://registry.npmjs.org",
+  "packages": [
+    {
+      "name": "@manifest-network/lcd",
+      "version": "0.14.6",
+      "integrity": "sha512-DN8B5ZBJloYyndToPjzG1RGVvzcHkHFTX7L/5tqfTB6tDzd/jQkdqqBMm/lAWS08bQCNRrjF6TllTzFll4z+lw==",
+      "tarball": "https://registry.npmjs.org/@manifest-network/lcd/-/lcd-0.14.6.tgz",
+      "dependencies": {
+        "axios": "^1.19.0"
+      }
+    },
+    {
+      "name": "@manifest-network/ics23",
+      "version": "0.6.9",
+      "integrity": "sha512-SrxZiZt6JPxoFfAwa8UytlIp8ttBb3e3mauhZtldU14CZCDPDYXFjNTknS0DGbmQk/Sk4vSWEdlD1aNcbecDXQ==",
+      "tarball": "https://registry.npmjs.org/@manifest-network/ics23/-/ics23-0.6.9.tgz",
+      "dependencies": {
+        "@noble/hashes": "^1.0.0",
+        "protobufjs": "^7.6.5"
+      }
+    },
+    {
+      "name": "@manifest-network/stargate",
+      "version": "0.32.4-ll.4",
+      "integrity": "sha512-tFe6rjukHDAIJQvxew2hZc/srQ6buTrPKFThIvJp+MxZ64XMs7fHr1UF+q9Sj8WNT5YNw/pEnoMBMK/4Y4sA+Q==",
+      "tarball": "https://registry.npmjs.org/@manifest-network/stargate/-/stargate-0.32.4-ll.4.tgz",
+      "dependencies": {
+        "xstream": "^11.14.0",
+        "@cosmjs/math": "^0.32.4",
+        "cosmjs-types": "^0.9.0",
+        "@confio/ics23": "npm:@manifest-network/ics23@^0.6.9",
+        "@cosmjs/amino": "^0.32.4",
+        "@cosmjs/utils": "^0.32.4",
+        "@cosmjs/stream": "^0.32.4",
+        "@cosmjs/encoding": "^0.32.4",
+        "@cosmjs/proto-signing": "^0.32.4",
+        "@cosmjs/tendermint-rpc": "^0.32.4"
+      }
+    },
+    {
+      "name": "@manifest-network/manifestjs",
+      "version": "3.0.1",
+      "integrity": "sha512-0yxioP3C3OftE+EvLBqsHOGl190329a3dv8dKbb32vEWFpRZdSLzxvSzpAklL7H/GiRYnnHyHM00IXpLFhmckQ==",
+      "tarball": "https://registry.npmjs.org/@manifest-network/manifestjs/-/manifestjs-3.0.1.tgz",
+      "dependencies": {
+        "@cosmjs/amino": "^0.32.4",
+        "@cosmology/lcd": "npm:@manifest-network/lcd@^0.14.6",
+        "@cosmjs/encoding": "^0.32.4",
+        "@cosmjs/stargate": "npm:@manifest-network/stargate@0.32.4-ll.4",
+        "@cosmjs/proto-signing": "^0.32.4",
+        "@cosmjs/tendermint-rpc": "^0.32.4"
+      }
+    }
+  ],
+  "consumers": [
+    {
+      "target": "@manifest-network/manifest-sdk",
+      "passes": true,
+      "vulnerabilities": {
+        "info": 0,
+        "low": 11,
+        "moderate": 0,
+        "high": 0,
+        "critical": 0,
+        "total": 11
+      },
+      "auditPasses": true,
+      "smokePasses": true
+    },
+    {
+      "target": "@manifest-network/manifest-mcp-node",
+      "passes": true,
+      "vulnerabilities": {
+        "info": 0,
+        "low": 15,
+        "moderate": 0,
+        "high": 0,
+        "critical": 0,
+        "total": 15
+      },
+      "auditPasses": true,
+      "smokePasses": true
+    }
+  ],
+  "consumerScope": "Locally packed, unreleased SDK/CLI from the repair branch; upstream dependencies installed from public npm without consumer overrides.",
+  "sourceCommits": {
+    "cosmjs": "d9ec2a47735d252fdda90f7aaeddd8eec4d3cee7",
+    "manifestjs": "5df11dcf6c41db000355ab0214c7ee091392a972"
+  },
+  "remainingRuntimeAdvisories": [
+    "https://github.com/advisories/GHSA-848j-6mx2-7j84"
+  ]
+}

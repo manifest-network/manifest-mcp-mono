@@ -1,10 +1,65 @@
 # Published dependency security (ENG-805 / ENG-808)
 
-The v0.22.0 packages permit vulnerable Axios and protobufjs versions in a fresh
-application install. The monorepo's overrides do not travel with the libraries:
+The v0.22.0 packages were published with declarations permitting vulnerable
+Axios and protobufjs versions. The monorepo's overrides do not travel with the libraries:
 [npm considers overrides only in the consuming application's root package.json](https://docs.npmjs.com/cli/v11/configuring-npm/package-json/#overrides).
-The release consumer check therefore fails until the published dependency chain
-is repaired. A passing monorepo audit does not close ENG-805 F01.
+The unreleased dependency update raises the ManifestJS minimum to 3.0.1 and
+selects Stargate 0.32.4-ll.4. Their dependency declarations use maintained
+LCD/ICS23 npm aliases, so the repair travels with the libraries. These upstream
+versions were published and verified against public npm on 2026-09-21.
+A passing monorepo audit alone does not close ENG-805 F01.
+
+## Narrow repair and publication order
+
+Publish and verify these packages in dependency order:
+
+| Package | Version | Published dependency repair | Source |
+| --- | --- | --- | --- |
+| `@manifest-network/lcd` | `0.14.6` | `axios ^1.19.0` | ManifestJS `vendor/lcd` |
+| `@manifest-network/ics23` | `0.6.9` | `protobufjs ^7.6.5` | CosmJS fork `vendor/ics23/js` |
+| `@manifest-network/stargate` | `0.32.4-ll.4` | `@confio/ics23: npm:@manifest-network/ics23@^0.6.9` | CosmJS fork `packages/stargate` |
+| `@manifest-network/manifestjs` | `3.0.1` | LCD alias and the patched Stargate version | ManifestJS root |
+
+The LCD and ICS23 runtime sources retain their upstream release contents and
+licenses. Their compatibility suites exercise real HTTP requests, cancellation,
+deadlines, generated LCD queries, proof verification and exact codec round trips.
+The Stargate patch retains its existing Amino workaround and CosmJS 0.32.4
+dependencies. This repair does not remove elliptic; ENG-808 remains separate.
+
+Before publication, the candidate tarballs can be tested through a temporary
+registry using these exact declarations, without consumer overrides. That is
+candidate evidence, not proof that the public registry is repaired. After
+publication, regenerate/verify lockfiles against public npm, run the complete
+consumer check below, and retain both audit reports and the resolved trees.
+Do not commit temporary-registry URLs or replace failed audits with staging
+results. CI and release validation both run the same consumer check.
+
+## Verified repair (2026-09-21)
+
+All four public npm tarballs match the integrities of the tested artifacts.
+The final monorepo lockfile installs with `npm ci` using a fresh public-npm cache.
+The complete consumer check then installed this branch's packed SDK and CLI
+with the published upstream dependencies and no application overrides:
+
+| Consumer | High | Critical | Low | Import/CLI smoke checks |
+| --- | --- | --- | --- | --- |
+| SDK | 0 | 0 | 11 | Passed |
+| CLI | 0 | 0 | 15 | Passed |
+
+The low counts include affected-parent rollups of the existing elliptic advisory
+`GHSA-848j-6mx2-7j84`; they do not represent separate underlying vulnerabilities.
+[Publication metadata and consumer results](dependency-repair-2026-09-21.json)
+record the versions, integrities, and counts. The source patches are
+[CosmJS PR #2](https://github.com/manifest-network/cosmjs/pull/2) and
+[ManifestJS PR #21](https://github.com/manifest-network/manifestjs/pull/21).
+
+Validation also passed the monorepo build, lint, type-test harness, workflow and
+package checks, bundle budgets, eight MCP annotation checks, and the coverage
+suite (5,539 passed, 17 skipped). Full live-chain integration was not rerun.
+
+This evidence covers the updated packages packed from this branch. A new
+SDK/CLI release is still required to ship these declarations. Existing v0.22.0
+packages retain their direct pin to the older Stargate patch.
 
 ## Reproduce the consumer check
 
@@ -61,7 +116,7 @@ paths include:
 
 ## Interim application workaround
 
-Until corrected dependencies are published, npm applications using these versions
+Until corrected dependencies are published and adopted, npm applications using v0.22.0
 can merge the following into their **application-root** `package.json`, regenerate
 their lockfile with `npm install`, review the diff, and rerun their acceptance tests:
 
@@ -93,7 +148,7 @@ repository's library manifests will not protect its consumers. An ephemeral
 the reviewed dependency graph; CLI operators can install locally in such an
 application and invoke its `node_modules/.bin/manifest-mcp-*` commands.
 
-## Durable remediation and release order
+## Original remediation assessment (2026-09-08)
 
 Registry metadata was checked on 2026-09-08: ManifestJS's latest release is 3.0.0,
 the Stargate fork's is 0.32.4-ll.3, and ICS23's is 0.6.8. Even LCD's newer 0.16.0
@@ -118,7 +173,7 @@ blocked dependencies:
    and lockfile through the normal version tooling. Run the clean consumer gate
    without consumer overrides before publishing the next SDK/CLI release.
 
-The preferred combined F01/F16 repair removes obsolete crypto/proof dependencies
+The broader combined F01/F16 repair would remove obsolete crypto/proof dependencies
 through a matched CosmJS migration. **0.34.1 is a candidate for compatibility
 testing, not an approved upgrade.** [CosmJS's changelog](https://github.com/cosmos/cosmjs/blob/main/CHANGELOG.md)
 records removal of ICS23 verified queries in 0.33 and replacement of elliptic and
@@ -155,8 +210,8 @@ The combined migration should proceed as follows:
    smoke tests to pass. Confirm the installed tree has no obsolete elliptic or
    ICS23 branch; retain every remaining advisory in the audit evidence.
 
-No upstream packages were published and no repository dependency versions were
-changed while preparing this plan. These external releases and compatibility
-checks remain necessary to close F01 and ENG-808. Lifecycle patching, library
+The original assessment did not publish upstream packages or change dependency
+versions. The narrow repair above addresses F01; the separate combined migration
+and its compatibility checks remain necessary to close ENG-808. Lifecycle patching, library
 overrides, and bundling an opaque copy of the old dependency tree do not satisfy
 the acceptance criteria.

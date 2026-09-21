@@ -43,7 +43,7 @@
     "@manifest-network/manifest-mcp-core": "0.22.0",
     "@manifest-network/manifest-mcp-fred": "0.22.0",
     "@manifest-network/manifest-sdk": "0.22.0",
-    "@manifest-network/manifestjs": "3.0.0",
+    "@manifest-network/manifestjs": "3.0.1",
     "@modelcontextprotocol/sdk": "1.30.0",
     "@size-limit/preset-small-lib": "13.0.3",
     "@types/node": "22.20.1",
@@ -60,7 +60,7 @@
   },
   "overrides": {
     "ipaddr.js": "2.4.0",
-    "@cosmjs/stargate": "npm:@manifest-network/stargate@0.32.4-ll.3",
+    "@cosmjs/stargate": "npm:@manifest-network/stargate@0.32.4-ll.4",
     "axios": "1.19.0",
     "protobufjs": "7.6.5"
   }

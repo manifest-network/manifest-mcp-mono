@@ -31,6 +31,7 @@ npm run check          # Biome: format + lint + import sorting, including E2E Ty
 npm run check:workflows # Immutable action references + policy regression tests
 npm run check:dependency-hygiene # Validator resolution + E2E gate regression tests
 npm run audit:dependencies      # Full dependency graph; high/critical findings fail
+npm run check:consumers         # Packed SDK/CLI installs without repository overrides
 npm run check:fix      # Auto-fix anything Biome can fix
 ```
 
