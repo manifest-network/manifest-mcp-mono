@@ -70,16 +70,23 @@ verifier and consumes the output of a successful
 certificate chain and transparency-log evidence. The additional policy inspects
 those same verified bundles, requiring the exact package/version/SHA-512 subject,
 GitHub Actions OIDC issuer, signing-certificate workflow identity and authenticated
-source repository, full commit and `refs/heads/main` identity. The signed SLSA v1
-statement must agree with those identities and name GitHub's hosted builder.
+source repository, full commit and the repository's release branch identity.
+The signed SLSA v1 statement must agree with those identities and name GitHub's
+hosted builder.
 Metadata presence or a separately downloaded, unverified statement cannot pass.
 
 The trusted source workflows are:
 
-| Dependencies | Repository | Workflow |
-| --- | --- | --- |
-| LCD, ManifestJS | `manifest-network/manifestjs` | `.github/workflows/release.yaml` |
-| ICS23, Stargate | `manifest-network/cosmjs` | `.github/workflows/manifest-release.yml` |
+| Dependencies | Repository | Workflow | Required ref |
+| --- | --- | --- | --- |
+| LCD, ManifestJS | `manifest-network/manifestjs` | `.github/workflows/release.yaml` | `refs/heads/main` |
+| ICS23, Stargate | `manifest-network/cosmjs` | `.github/workflows/manifest-release.yml` | `refs/heads/manifest/0.32` |
+
+CosmJS releases use the protected `manifest/0.32` maintenance branch, which is
+the fork's default branch. Its `main` remains an upstream reference and is not an
+accepted release source. ManifestJS continues to release from `main`; its policy
+does not accept the CosmJS maintenance ref. The certificate and signed statement
+must both match the repository's exact allowed ref.
 
 The evidence file's `packages` array is the exact artifact/source allowlist.
 `check:dependency-hygiene` guards its name, version, integrity, URL and dependency

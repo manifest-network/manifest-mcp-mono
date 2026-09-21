@@ -29,7 +29,7 @@
       "source": {
         "repository": "manifest-network/cosmjs",
         "workflow": ".github/workflows/manifest-release.yml",
-        "ref": "refs/heads/main",
+        "ref": "refs/heads/manifest/0.32",
         "sha": "d9ec2a47735d252fdda90f7aaeddd8eec4d3cee7"
       }
     },
@@ -53,7 +53,7 @@
       "source": {
         "repository": "manifest-network/cosmjs",
         "workflow": ".github/workflows/manifest-release.yml",
-        "ref": "refs/heads/main",
+        "ref": "refs/heads/manifest/0.32",
         "sha": "d9ec2a47735d252fdda90f7aaeddd8eec4d3cee7"
       }
     },
@@ -125,7 +125,7 @@
     "followUp": "Review and merge CI workflows, configure exact npm trusted publishers, publish new attested versions, then update the package/version/integrity/source allowlist and coordinated SDK declarations. Existing versions cannot acquire provenance retroactively.",
     "releaseAccepted": false,
     "releaseBlocker": "The four current versions have no source-to-artifact attestations. The previous manual-publication exception is withdrawn. New SDK/CLI publication requires coordinated successors with cryptographically verified provenance and reviewed source identities.",
-    "sourcePolicyNote": "The source fields define the required repository, workflow, main ref and reviewed commit for the corresponding exact artifact. Current manual source references are not attestations and cannot pass the release gate; replace them with verified successor release commits when adopting new artifacts."
+    "sourcePolicyNote": "The source fields define the required repository, workflow, repository-specific release ref (ManifestJS main; CosmJS manifest/0.32) and reviewed commit for the corresponding exact artifact. Current manual source references are not attestations and cannot pass the release gate; replace them with verified successor release commits when adopting new artifacts."
   },
   "upstreamAdvisoryReview": {
     "checkedAt": "2026-09-21T15:28:46.374715+00:00",

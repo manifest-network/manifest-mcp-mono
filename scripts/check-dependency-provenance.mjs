@@ -18,18 +18,22 @@ export const requiredSources = {
   '@manifest-network/lcd': [
     'manifest-network/manifestjs',
     '.github/workflows/release.yaml',
+    'refs/heads/main',
   ],
   '@manifest-network/ics23': [
     'manifest-network/cosmjs',
     '.github/workflows/manifest-release.yml',
+    'refs/heads/manifest/0.32',
   ],
   '@manifest-network/stargate': [
     'manifest-network/cosmjs',
     '.github/workflows/manifest-release.yml',
+    'refs/heads/manifest/0.32',
   ],
   '@manifest-network/manifestjs': [
     'manifest-network/manifestjs',
     '.github/workflows/release.yaml',
+    'refs/heads/main',
   ],
 };
 
@@ -49,13 +53,13 @@ export function provenanceExpectations(evidence, lock) {
     'Provenance policy must cover exactly the four maintained dependencies',
   );
   return evidence.packages.map((record) => {
-    const [repository, workflow] = requiredSources[record.name];
+    const [repository, workflow, ref] = requiredSources[record.name];
     assert.deepEqual(
       record.source,
       {
         repository,
         workflow,
-        ref: 'refs/heads/main',
+        ref,
         sha: record.source?.sha,
       },
       `Unexpected trusted source policy for ${record.name}`,

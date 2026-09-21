@@ -80,6 +80,37 @@ test('review record binds all four actual locked fork artifacts to reviewed sour
   );
 });
 
+test('each fork accepts only its repository release branch', () => {
+  const expectations = provenanceExpectations(evidence, lock);
+  for (const [names, allowed, rejected] of [
+    [
+      ['@manifest-network/ics23', '@manifest-network/stargate'],
+      'refs/heads/manifest/0.32',
+      'refs/heads/main',
+    ],
+    [
+      ['@manifest-network/lcd', '@manifest-network/manifestjs'],
+      'refs/heads/main',
+      'refs/heads/manifest/0.32',
+    ],
+  ]) {
+    for (const name of names) {
+      assert.equal(
+        expectations.find((entry) => entry.name === name).ref,
+        allowed,
+      );
+      const changed = structuredClone(evidence);
+      changed.packages.find((entry) => entry.name === name).source.ref =
+        rejected;
+      assert.throws(
+        () => provenanceExpectations(changed, lock),
+        /Unexpected trusted source policy/,
+        `${name} must reject ${rejected}`,
+      );
+    }
+  }
+});
+
 test('offline policy fixtures accept known verified bundle bytes and reject identity/digest substitutions', () => {
   // Public SDK fixture was independently verified with npm audit signatures.
   // This offline test checks policy/schema, not fresh cryptographic verification.
