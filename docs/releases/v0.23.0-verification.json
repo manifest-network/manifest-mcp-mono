@@ -1,0 +1,193 @@
+{
+  "release": "0.23.0",
+  "githubRelease": {
+    "url": "https://github.com/manifest-network/manifest-mcp-mono/releases/tag/v0.23.0",
+    "publishedAt": "2026-09-22T14:46:33Z"
+  },
+  "releaseRun": {
+    "url": "https://github.com/manifest-network/manifest-mcp-mono/actions/runs/35741835243",
+    "conclusion": "success"
+  },
+  "source": {
+    "repository": "manifest-network/manifest-mcp-mono",
+    "workflow": ".github/workflows/release.yml",
+    "ref": "refs/tags/v0.23.0",
+    "sha": "59cfd0f5e3e487feda9625fbed2ea3dc2dc1bc15"
+  },
+  "verification": {
+    "kind": "Recorded verification summary, not an attestation; fresh verification remains required for subsequent releases.",
+    "npmVersion": "11.19.1",
+    "command": "npm audit signatures --json --include-attestations --registry=https://registry.npmjs.org",
+    "sourcePolicyImplementation": "https://github.com/manifest-network/manifest-mcp-mono/blob/59cfd0f5e3e487feda9625fbed2ea3dc2dc1bc15/tools/npm-provenance.mjs",
+    "graph": "Fresh public-npm installation of all nine exact 0.23.0 packages, without workspace substitutions or application overrides.",
+    "cryptographicVerificationPassed": true,
+    "invalidSignatures": 0,
+    "missingSignatures": 0,
+    "verifiedReleasePackages": 9,
+    "verifiedMaintainedDependencies": 4,
+    "allLatestTagsMatchedAtVerification": true,
+    "allPublicTarballsByteIdenticalToTestedCandidates": true
+  },
+  "packages": [
+    {
+      "name": "@manifest-network/manifest-agent-core",
+      "version": "0.23.0",
+      "integrity": "sha512-RgQFinHJ5NuIr+CET44b6t17mRq8IyYdAH60vPJs3UjvZU4tB7c+KRASo/e11s2F+QlxGXl+QRGliDgon24U+w==",
+      "tarball": "https://registry.npmjs.org/@manifest-network/manifest-agent-core/-/manifest-agent-core-0.23.0.tgz",
+      "attestations": "https://registry.npmjs.org/-/npm/v1/attestations/@manifest-network%2fmanifest-agent-core@0.23.0",
+      "candidateIntegrity": "sha512-RgQFinHJ5NuIr+CET44b6t17mRq8IyYdAH60vPJs3UjvZU4tB7c+KRASo/e11s2F+QlxGXl+QRGliDgon24U+w==",
+      "byteIdenticalToTestedCandidate": true
+    },
+    {
+      "name": "@manifest-network/manifest-mcp-agent",
+      "version": "0.23.0",
+      "integrity": "sha512-mxCRIDkRc0UFAN76aKizX+Xjf1XtCj+R4wd5TMHZRHrEhkZUjpvMjdoEBSFuKBlMB1zHh+Z7qahkNicPaE4RfQ==",
+      "tarball": "https://registry.npmjs.org/@manifest-network/manifest-mcp-agent/-/manifest-mcp-agent-0.23.0.tgz",
+      "attestations": "https://registry.npmjs.org/-/npm/v1/attestations/@manifest-network%2fmanifest-mcp-agent@0.23.0",
+      "candidateIntegrity": "sha512-mxCRIDkRc0UFAN76aKizX+Xjf1XtCj+R4wd5TMHZRHrEhkZUjpvMjdoEBSFuKBlMB1zHh+Z7qahkNicPaE4RfQ==",
+      "byteIdenticalToTestedCandidate": true
+    },
+    {
+      "name": "@manifest-network/manifest-mcp-chain",
+      "version": "0.23.0",
+      "integrity": "sha512-JXv9ABJJH+yWLwFrET1YHlnHqABzH7wtJnUJYX4O0kwN8e3sZvsypAU1k+Zg9CJRsK51wqyVoGhBK13qWlOPoQ==",
+      "tarball": "https://registry.npmjs.org/@manifest-network/manifest-mcp-chain/-/manifest-mcp-chain-0.23.0.tgz",
+      "attestations": "https://registry.npmjs.org/-/npm/v1/attestations/@manifest-network%2fmanifest-mcp-chain@0.23.0",
+      "candidateIntegrity": "sha512-JXv9ABJJH+yWLwFrET1YHlnHqABzH7wtJnUJYX4O0kwN8e3sZvsypAU1k+Zg9CJRsK51wqyVoGhBK13qWlOPoQ==",
+      "byteIdenticalToTestedCandidate": true
+    },
+    {
+      "name": "@manifest-network/manifest-mcp-core",
+      "version": "0.23.0",
+      "integrity": "sha512-7lElIGcSPvRXPcYvGRSaYETJWZEEJLmEmkBrZQmn6bz9KqO9dalNz3HFGMWG08PdX86R0pWpLHq7it0MS1yFPw==",
+      "tarball": "https://registry.npmjs.org/@manifest-network/manifest-mcp-core/-/manifest-mcp-core-0.23.0.tgz",
+      "attestations": "https://registry.npmjs.org/-/npm/v1/attestations/@manifest-network%2fmanifest-mcp-core@0.23.0",
+      "candidateIntegrity": "sha512-7lElIGcSPvRXPcYvGRSaYETJWZEEJLmEmkBrZQmn6bz9KqO9dalNz3HFGMWG08PdX86R0pWpLHq7it0MS1yFPw==",
+      "byteIdenticalToTestedCandidate": true
+    },
+    {
+      "name": "@manifest-network/manifest-mcp-cosmwasm",
+      "version": "0.23.0",
+      "integrity": "sha512-niPKqVCp5Vg7cfblbp63Mot3Ja6navbQ1wHAdfL/pJbLKY/WsHd+lTIKb/Vw2OWQ3ci21t9q/pY2RkoNXRbJaQ==",
+      "tarball": "https://registry.npmjs.org/@manifest-network/manifest-mcp-cosmwasm/-/manifest-mcp-cosmwasm-0.23.0.tgz",
+      "attestations": "https://registry.npmjs.org/-/npm/v1/attestations/@manifest-network%2fmanifest-mcp-cosmwasm@0.23.0",
+      "candidateIntegrity": "sha512-niPKqVCp5Vg7cfblbp63Mot3Ja6navbQ1wHAdfL/pJbLKY/WsHd+lTIKb/Vw2OWQ3ci21t9q/pY2RkoNXRbJaQ==",
+      "byteIdenticalToTestedCandidate": true
+    },
+    {
+      "name": "@manifest-network/manifest-mcp-fred",
+      "version": "0.23.0",
+      "integrity": "sha512-0T6ZvOYxcckm3uiSqoe1ML4haS4XgNUPtFgMBdCOLT2Q2grM/RW5UBdP0pRtoAhVE7k0m4w8vKlbxe6iqhcSqA==",
+      "tarball": "https://registry.npmjs.org/@manifest-network/manifest-mcp-fred/-/manifest-mcp-fred-0.23.0.tgz",
+      "attestations": "https://registry.npmjs.org/-/npm/v1/attestations/@manifest-network%2fmanifest-mcp-fred@0.23.0",
+      "candidateIntegrity": "sha512-0T6ZvOYxcckm3uiSqoe1ML4haS4XgNUPtFgMBdCOLT2Q2grM/RW5UBdP0pRtoAhVE7k0m4w8vKlbxe6iqhcSqA==",
+      "byteIdenticalToTestedCandidate": true
+    },
+    {
+      "name": "@manifest-network/manifest-mcp-lease",
+      "version": "0.23.0",
+      "integrity": "sha512-Rl40A+BwmL4QRv3+zPToKYnOYxILIVaM31JkYY3fMCV1FUwLCCBiWRqul8Sh7p+purlKsdKTHzHuZcycMcGWRQ==",
+      "tarball": "https://registry.npmjs.org/@manifest-network/manifest-mcp-lease/-/manifest-mcp-lease-0.23.0.tgz",
+      "attestations": "https://registry.npmjs.org/-/npm/v1/attestations/@manifest-network%2fmanifest-mcp-lease@0.23.0",
+      "candidateIntegrity": "sha512-Rl40A+BwmL4QRv3+zPToKYnOYxILIVaM31JkYY3fMCV1FUwLCCBiWRqul8Sh7p+purlKsdKTHzHuZcycMcGWRQ==",
+      "byteIdenticalToTestedCandidate": true
+    },
+    {
+      "name": "@manifest-network/manifest-mcp-node",
+      "version": "0.23.0",
+      "integrity": "sha512-3ooxTQsE8UobyT6hIR8fpGKAosZX2CppafYfngmkdSs6MrwdvsaJgx2YkueMGRnpB8Cp+zH9gJzGK4al1txdJA==",
+      "tarball": "https://registry.npmjs.org/@manifest-network/manifest-mcp-node/-/manifest-mcp-node-0.23.0.tgz",
+      "attestations": "https://registry.npmjs.org/-/npm/v1/attestations/@manifest-network%2fmanifest-mcp-node@0.23.0",
+      "candidateIntegrity": "sha512-3ooxTQsE8UobyT6hIR8fpGKAosZX2CppafYfngmkdSs6MrwdvsaJgx2YkueMGRnpB8Cp+zH9gJzGK4al1txdJA==",
+      "byteIdenticalToTestedCandidate": true
+    },
+    {
+      "name": "@manifest-network/manifest-sdk",
+      "version": "0.23.0",
+      "integrity": "sha512-7//BnVZ2lUPgd7gSp3/QLnBBOPLn1dDstGdKQlYsz7SmSOo04bTZK3hKQFOMPfF9C0Py9jwXcmBkYDJpB7iOnQ==",
+      "tarball": "https://registry.npmjs.org/@manifest-network/manifest-sdk/-/manifest-sdk-0.23.0.tgz",
+      "attestations": "https://registry.npmjs.org/-/npm/v1/attestations/@manifest-network%2fmanifest-sdk@0.23.0",
+      "candidateIntegrity": "sha512-7//BnVZ2lUPgd7gSp3/QLnBBOPLn1dDstGdKQlYsz7SmSOo04bTZK3hKQFOMPfF9C0Py9jwXcmBkYDJpB7iOnQ==",
+      "byteIdenticalToTestedCandidate": true
+    }
+  ],
+  "maintainedDependencyPolicy": "../dependency-repair-2026-09-21.json",
+  "maintainedDependencies": [
+    {
+      "name": "@manifest-network/lcd",
+      "version": "0.14.7",
+      "integrity": "sha512-8aEkL9AWBgv8zWsnKIHZptQENFcKAZTg5xpR/JmGfVZCLbymCV1PV/Dy6onC3umxROymybauk8mpAvcBdYeXCQ==",
+      "repository": "manifest-network/manifestjs",
+      "workflow": ".github/workflows/release.yaml",
+      "ref": "refs/heads/main",
+      "sha": "c69387ceefcb23165c58c92aee123c97dce3e9e9"
+    },
+    {
+      "name": "@manifest-network/ics23",
+      "version": "0.6.10",
+      "integrity": "sha512-L1TMv+nh1TeoQZI6szukVmLdVzNMVA5I7d7MAgmvlGD4lgH58w330YgK/B7cHDHUFbKEBhow+hBz9Ayte1FGGQ==",
+      "repository": "manifest-network/cosmjs",
+      "workflow": ".github/workflows/manifest-release.yml",
+      "ref": "refs/heads/manifest/0.32",
+      "sha": "e464b5c21ae097e06e5505b7a8d3834359199840"
+    },
+    {
+      "name": "@manifest-network/stargate",
+      "version": "0.32.4-ll.5",
+      "integrity": "sha512-jT/ooQaz3Vqm3/uRWnXdc0jPaJk6RX001VInmwEUnsckBtDgV6jclk71lDV7lPq2PwKm1ebVSV2tL1h2dfxNcg==",
+      "repository": "manifest-network/cosmjs",
+      "workflow": ".github/workflows/manifest-release.yml",
+      "ref": "refs/heads/manifest/0.32",
+      "sha": "f700b2f6268b1ee0fb41a133b1719a889f632754"
+    },
+    {
+      "name": "@manifest-network/manifestjs",
+      "version": "4.0.0",
+      "integrity": "sha512-UfK1lteQ/gNpHjAUVY/z/xMJ38XNAQCFeiFZIZB046hUfpUI0AXlBSZzTFFls4dl68A9lTxNuJXTap4BxTOhgw==",
+      "repository": "manifest-network/manifestjs",
+      "workflow": ".github/workflows/release.yaml",
+      "ref": "refs/heads/main",
+      "sha": "1c79ad8c9f968aa5cf3c7955e8b5db28a6ab2f0b"
+    }
+  ],
+  "publicConsumers": {
+    "command": "node scripts/check-consumers.mjs --published-version 0.23.0 --output /absolute/path/outside/the/workspace",
+    "scope": "Independent fresh SDK and CLI applications; each entry tarball and its dependencies came from public npm.",
+    "results": [
+      {
+        "target": "@manifest-network/manifest-sdk",
+        "source": "published@0.23.0",
+        "passes": true,
+        "identityPasses": true,
+        "vulnerabilities": {
+          "info": 0,
+          "low": 11,
+          "moderate": 0,
+          "high": 0,
+          "critical": 0,
+          "total": 11
+        },
+        "auditPasses": true,
+        "smokePasses": true
+      },
+      {
+        "target": "@manifest-network/manifest-mcp-node",
+        "source": "published@0.23.0",
+        "passes": true,
+        "identityPasses": true,
+        "vulnerabilities": {
+          "info": 0,
+          "low": 15,
+          "moderate": 0,
+          "high": 0,
+          "critical": 0,
+          "total": 15
+        },
+        "auditPasses": true,
+        "smokePasses": true
+      }
+    ],
+    "advisoryCounts": "Affected-package counts include parent rollups. Existing elliptic low findings remain; the broader crypto migration is separate."
+  },
+  "artifactVerifiedAt": "2026-09-22T14:55:33.157Z"
+}
