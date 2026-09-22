@@ -98,6 +98,17 @@ source references cannot satisfy that gate. Each adoption updates versions,
 digests and source commits together; an attestation for a different release
 cannot stand in for the installed artifact.
 
+For unpublished SDK/CLI candidates, npm 11.19.1 can mistake a sibling's semver or
+peer dependency on a locally installed tarball for a public registry package.
+The gate uses a temporary audit view with the original installed `node_modules`
+and lockfile. Its root overrides express only verified local workspace tarball
+references as `file:` dependencies; external dependency edges stay unchanged.
+Candidate names, versions, file origins, SHA-512 digests and unique installed
+identities must match before that view is created. Original consumer manifests,
+locks and tarballs are preserved, and the view's manifest is saved with the
+verification report. The four maintained artifacts are checked against each
+original graph before the unchanged npm cryptographic verifier runs.
+
 Release runs this check for the repository and both fresh packed consumer graphs,
 after their audits/import checks. A caret dependency resolving a different future
 artifact must be reviewed and added to the record; root-lock evidence alone is

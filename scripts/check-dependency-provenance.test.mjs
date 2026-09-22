@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import {
   chmodSync,
   mkdirSync,
@@ -15,6 +16,7 @@ import { parse } from 'yaml';
 import { assertVerifiedProvenance } from '../tools/npm-provenance.mjs';
 import {
   assertVerifierVersion,
+  candidateAuditManifest,
   consumerDirectories,
   provenanceExpectations,
   verifyDirectory,
@@ -25,6 +27,284 @@ const readJson = (path) => JSON.parse(readFileSync(join(root, path), 'utf8'));
 const evidence = readJson('docs/dependency-repair-2026-09-21.json');
 const lock = readJson('package-lock.json');
 const fixture = readJson('scripts/fixtures/sdk-0.22.0-provenance.json');
+
+function candidateFixture() {
+  const directory = mkdtempSync(join(tmpdir(), 'manifest-candidate-audit-'));
+  const version = readJson('package.json').version;
+  const core = readJson('packages/core/package.json').name;
+  const fred = readJson('packages/fred/package.json').name;
+  const sdk = readJson('packages/sdk/package.json').name;
+  const manifest = {
+    name: 'unpublished-candidate-consumer',
+    version: '1.0.0',
+    private: true,
+    dependencies: {},
+  };
+  const candidateLock = { lockfileVersion: 3, packages: {} };
+  const paths = new Map();
+  const writeInstalled = (location, metadata) => {
+    const path = join(directory, location);
+    mkdirSync(path, { recursive: true });
+    writeFileSync(join(path, 'package.json'), JSON.stringify(metadata));
+  };
+  const addLocal = (name, installedVersion = version, edges = {}) => {
+    const relative = `tarballs/candidate-${paths.size}.tgz`;
+    const path = join(directory, relative);
+    mkdirSync(join(directory, 'tarballs'), { recursive: true });
+    // The selection boundary checks artifact bytes and installed identities;
+    // packing/building the real runtime belongs to the consumer integration gate.
+    const bytes = Buffer.from(`candidate artifact ${name}@${installedVersion}`);
+    writeFileSync(path, bytes);
+    paths.set(name, path);
+    manifest.dependencies[name] = `file:${path}`;
+    candidateLock.packages[`node_modules/${name}`] = {
+      version: installedVersion,
+      resolved: `file:${relative}`,
+      integrity: `sha512-${createHash('sha512').update(bytes).digest('base64')}`,
+      ...edges,
+    };
+    writeInstalled(`node_modules/${name}`, {
+      name,
+      version: installedVersion,
+      ...edges,
+    });
+  };
+  addLocal(core);
+  addLocal(fred, version, { peerDependencies: { [core]: `^${version}` } });
+  addLocal(sdk, version, {
+    dependencies: { [core]: version, [fred]: version },
+  });
+
+  // Sharing the repository scope (or even a workspace package name) does not
+  // make an actually published installation an unpublished local candidate.
+  const publicName = readJson('packages/chain/package.json').name;
+  manifest.dependencies[publicName] = '0.22.0';
+  candidateLock.packages[`node_modules/${publicName}`] = {
+    version: '0.22.0',
+    resolved: `https://registry.npmjs.org/${publicName}/-/manifest-mcp-chain-0.22.0.tgz`,
+    integrity: `sha512-${Buffer.alloc(64, 1).toString('base64')}`,
+  };
+  writeInstalled(`node_modules/${publicName}`, {
+    name: publicName,
+    version: '0.22.0',
+  });
+  const save = () => {
+    candidateLock.packages[''] = structuredClone(manifest);
+    writeFileSync(join(directory, 'package.json'), JSON.stringify(manifest));
+    writeFileSync(
+      join(directory, 'package-lock.json'),
+      JSON.stringify(candidateLock),
+    );
+  };
+  save();
+  return {
+    directory,
+    version,
+    core,
+    fred,
+    sdk,
+    publicName,
+    manifest,
+    lock: candidateLock,
+    paths,
+    addLocal,
+    writeInstalled,
+    save,
+  };
+}
+
+test('candidate signature-audit manifest preserves unpublished exact and peer edges without overriding public artifacts', () => {
+  const current = candidateFixture();
+  try {
+    const originals = [
+      'package.json',
+      'package-lock.json',
+      ...Object.keys(current.lock.packages)
+        .filter((location) => location !== '')
+        .map((location) => `${location}/package.json`),
+    ].map((path) => [
+      path,
+      readFileSync(join(current.directory, path), 'utf8'),
+    ]);
+    const originalLock = structuredClone(current.lock);
+    const result = candidateAuditManifest(current.directory, current.lock);
+    assert.deepEqual(result, {
+      ...current.manifest,
+      overrides: Object.fromEntries(
+        [current.core, current.fred, current.sdk].map((name) => [
+          name,
+          `$${name}`,
+        ]),
+      ),
+    });
+    assert.equal(result.overrides[current.publicName], undefined);
+    assert.deepEqual(current.lock, originalLock);
+    // A caller may serialize or modify the returned audit-only manifest, but
+    // selection must never edit the tested consumer or its installed packages.
+    result.dependencies[current.core] = 'changed-after-selection';
+    for (const [path, contents] of originals)
+      assert.equal(
+        readFileSync(join(current.directory, path), 'utf8'),
+        contents,
+        path,
+      );
+  } finally {
+    rmSync(current.directory, { recursive: true, force: true });
+  }
+});
+
+test('registry-only consumers need no candidate audit manifest', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'manifest-public-audit-'));
+  try {
+    const manifest = {
+      private: true,
+      dependencies: { '@manifest-network/manifestjs': '4.0.0' },
+    };
+    writeFileSync(join(directory, 'package.json'), JSON.stringify(manifest));
+    assert.equal(candidateAuditManifest(directory, { packages: {} }), null);
+    assert.deepEqual(
+      JSON.parse(readFileSync(join(directory, 'package.json'), 'utf8')),
+      manifest,
+    );
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('candidate audit overrides reject artifact, identity and resolution substitutions', async (t) => {
+  const cases = [
+    [
+      'changed tarball bytes',
+      (current) => {
+        writeFileSync(current.paths.get(current.fred), 'different artifact');
+      },
+    ],
+    [
+      'changed locked integrity',
+      (current) => {
+        current.lock.packages[`node_modules/${current.fred}`].integrity =
+          `sha512-${Buffer.alloc(64).toString('base64')}`;
+      },
+    ],
+    [
+      'changed locked version',
+      (current) => {
+        current.lock.packages[`node_modules/${current.fred}`].version +=
+          '-unreviewed';
+      },
+    ],
+    [
+      'changed installed version',
+      (current) => {
+        current.writeInstalled(`node_modules/${current.fred}`, {
+          name: current.fred,
+          version: `${current.version}-unreviewed`,
+        });
+      },
+    ],
+    [
+      'changed installed name',
+      (current) => {
+        current.writeInstalled(`node_modules/${current.fred}`, {
+          name: '@manifest-network/impostor',
+          version: current.version,
+        });
+      },
+    ],
+    [
+      'registry fallback for a local candidate',
+      (current) => {
+        current.lock.packages[`node_modules/${current.fred}`].resolved =
+          `https://registry.npmjs.org/${current.fred}/-/manifest-mcp-fred-${current.version}.tgz`;
+      },
+    ],
+    [
+      'different root and locked tarballs',
+      (current) => {
+        current.manifest.dependencies[current.fred] =
+          `file:${current.paths.get(current.core)}`;
+      },
+    ],
+    [
+      'duplicate nested candidate',
+      (current) => {
+        const location = `node_modules/nested/node_modules/${current.fred}`;
+        current.lock.packages[location] = {
+          ...current.lock.packages[`node_modules/${current.fred}`],
+        };
+        current.writeInstalled(location, {
+          name: current.fred,
+          version: current.version,
+        });
+      },
+    ],
+    [
+      'candidate installed under an alias',
+      (current) => {
+        const location = 'node_modules/candidate-alias';
+        current.lock.packages[location] = {
+          ...current.lock.packages[`node_modules/${current.fred}`],
+          name: current.fred,
+        };
+        delete current.lock.packages[`node_modules/${current.fred}`];
+        current.writeInstalled(location, {
+          name: current.fred,
+          version: current.version,
+        });
+      },
+    ],
+    [
+      'maintained fork presented as a local candidate',
+      (current) => {
+        current.addLocal('@manifest-network/manifestjs', '4.0.0');
+      },
+    ],
+    [
+      'unknown scoped package presented as a local candidate',
+      (current) => {
+        current.addLocal('@manifest-network/unreviewed-candidate');
+      },
+    ],
+    ...['devDependencies', 'optionalDependencies', 'peerDependencies'].map(
+      (section) => [
+        `competing candidate in ${section}`,
+        (current) => {
+          current.manifest[section] = { [current.fred]: current.version };
+        },
+      ],
+    ),
+    [
+      'existing application overrides',
+      (current) => {
+        current.manifest.overrides = { axios: '1.19.0' };
+      },
+    ],
+  ];
+  for (const [name, change] of cases) {
+    await t.test(name, () => {
+      const current = candidateFixture();
+      try {
+        change(current);
+        current.save();
+        const before = readFileSync(
+          join(current.directory, 'package.json'),
+          'utf8',
+        );
+        const originalLock = structuredClone(current.lock);
+        assert.throws(() =>
+          candidateAuditManifest(current.directory, current.lock),
+        );
+        assert.equal(
+          readFileSync(join(current.directory, 'package.json'), 'utf8'),
+          before,
+        );
+        assert.deepEqual(current.lock, originalLock);
+      } finally {
+        rmSync(current.directory, { recursive: true, force: true });
+      }
+    });
+  }
+});
 
 test('provenance requires the reviewed npm verifier version and successful invocation', () => {
   assertVerifierVersion({ status: 0, stdout: '11.19.1\n', stderr: '' });
@@ -225,6 +505,10 @@ test('failed cryptographic verification cannot become a policy pass from its JSO
   const directory = mkdtempSync(join(tmpdir(), 'manifest-verifier-failure-'));
   const originalPath = process.env.PATH;
   try {
+    writeFileSync(
+      join(directory, 'package.json'),
+      JSON.stringify({ private: true }),
+    );
     writeFileSync(join(directory, 'package-lock.json'), JSON.stringify(lock));
     const command = join(directory, 'npm');
     writeFileSync(

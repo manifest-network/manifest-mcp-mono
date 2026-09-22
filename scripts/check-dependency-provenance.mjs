@@ -1,7 +1,15 @@
 #!/usr/bin/env node
 
 import assert from 'node:assert/strict';
-import { mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import {
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -134,26 +142,149 @@ export function consumerDirectories(output) {
   return ['sdk', 'node'].map((name) => join(run, name));
 }
 
+/** npm 11.19.1 classifies incoming semver edges as registry dependencies even
+ * when their installed target came from a local candidate tarball. An audit-only
+ * root override keeps those edges local without changing any external edge. */
+export function candidateAuditManifest(directory, lock) {
+  const manifest = JSON.parse(
+    readFileSync(join(directory, 'package.json'), 'utf8'),
+  );
+  const candidates = Object.entries(manifest.dependencies ?? {}).filter(
+    ([, spec]) => typeof spec === 'string' && spec.startsWith('file:'),
+  );
+  if (candidates.length === 0) return null;
+  assert.deepEqual(
+    manifest.overrides ?? {},
+    {},
+    'Unexpected consumer overrides',
+  );
+  const workspaces = new Map(
+    readdirSync(join(root, 'packages'), { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) =>
+        JSON.parse(
+          readFileSync(
+            join(root, 'packages', entry.name, 'package.json'),
+            'utf8',
+          ),
+        ),
+      )
+      .filter((entry) => !entry.private)
+      .map((entry) => [entry.name, entry.version]),
+  );
+  manifest.overrides = {};
+  for (const [name, spec] of candidates) {
+    assert.ok(workspaces.has(name), `Unknown local release candidate: ${name}`);
+    for (const field of [
+      'devDependencies',
+      'optionalDependencies',
+      'peerDependencies',
+    ]) {
+      assert.equal(
+        manifest[field]?.[name],
+        undefined,
+        `Ambiguous local candidate reference: ${name}`,
+      );
+    }
+    const location = `node_modules/${name}`;
+    const copies = Object.entries(lock.packages ?? {}).filter(
+      ([path, entry]) => lockedPackageName(path, entry) === name,
+    );
+    assert.deepEqual(
+      copies.map(([path]) => path),
+      [location],
+      `Duplicate or missing local candidate: ${name}`,
+    );
+    const entry = copies[0][1];
+    assert.equal(entry.link, undefined, `Linked local candidate: ${name}`);
+    assert.equal(
+      entry.version,
+      workspaces.get(name),
+      `Wrong local candidate version: ${name}`,
+    );
+    assert.ok(
+      entry.resolved?.startsWith('file:'),
+      `Registry candidate fallback: ${name}`,
+    );
+    const tarball = resolve(directory, spec.slice(5));
+    assert.equal(
+      resolve(directory, entry.resolved.slice(5)),
+      tarball,
+      `Wrong local candidate file: ${name}`,
+    );
+    assert.equal(
+      entry.integrity,
+      `sha512-${createHash('sha512').update(readFileSync(tarball)).digest('base64')}`,
+      `Changed local candidate tarball: ${name}`,
+    );
+    const installed = JSON.parse(
+      readFileSync(join(directory, location, 'package.json'), 'utf8'),
+    );
+    assert.equal(
+      installed.name,
+      name,
+      `Wrong installed candidate name: ${name}`,
+    );
+    assert.equal(
+      installed.version,
+      entry.version,
+      `Wrong installed candidate version: ${name}`,
+    );
+    manifest.dependencies[name] = `file:${tarball}`;
+    manifest.overrides[name] = `$${name}`;
+  }
+  return manifest;
+}
+
 export function verifyDirectory(directory, evidence, cache, destination) {
   assertVerifierVersion(runNpm(['--version'], directory, cache));
   const lock = JSON.parse(
     readFileSync(join(directory, 'package-lock.json'), 'utf8'),
   );
   const expectations = provenanceExpectations(evidence, lock);
+  const manifest = candidateAuditManifest(directory, lock);
+  const view = manifest
+    ? mkdtempSync(join(tmpdir(), 'manifest-signature-view-'))
+    : null;
   // No separately fetched bundle is accepted here: npm cryptographically
   // verifies these exact bundles, then the policy checks their authenticated
   // certificate and signed statement against the reviewed artifact/source.
-  const result = runNpm(
-    [
-      'audit',
-      'signatures',
-      '--json',
-      '--include-attestations',
-      '--registry=https://registry.npmjs.org',
-    ],
-    directory,
-    cache,
-  );
+  let result;
+  try {
+    if (view) {
+      writeFileSync(
+        join(view, 'package.json'),
+        `${JSON.stringify(manifest, null, 2)}\n`,
+      );
+      writeFileSync(
+        join(view, 'package-lock.json'),
+        readFileSync(join(directory, 'package-lock.json')),
+      );
+      symlinkSync(
+        resolve(directory, 'node_modules'),
+        join(view, 'node_modules'),
+        process.platform === 'win32' ? 'junction' : 'dir',
+      );
+      // Keep the exact audit input with the report after the temporary view is removed.
+      writeFileSync(
+        `${destination}.manifest.json`,
+        `${JSON.stringify(manifest, null, 2)}\n`,
+      );
+    }
+    result = runNpm(
+      [
+        'audit',
+        'signatures',
+        '--json',
+        '--include-attestations',
+        '--registry=https://registry.npmjs.org',
+      ],
+      view ?? directory,
+      cache,
+    );
+  } finally {
+    if (view) rmSync(view, { recursive: true, force: true });
+  }
   writeFileSync(destination, result.stdout);
   const audit = JSON.parse(
     requireSuccess(result, `Verify npm signatures in ${directory}`),
