@@ -21,7 +21,7 @@ jobs:
           cache: npm
 
       - name: Upgrade npm for OIDC trusted publishing
-        run: npx npm@11.5.1 install -g npm@11.5.1
+        run: npx npm@11.19.1 install -g npm@11.19.1
 
       - name: Validate tag matches all package versions
         run: |
@@ -53,10 +53,6 @@ jobs:
 
       - run: npm run check:packages
 
-      # Root overrides do not protect installed SDK/CLI consumers.
-      - name: Audit and smoke-test isolated packed consumers
-        run: npm run check:consumers -- --output "$RUNNER_TEMP/manifest-consumers"
-
       - run: npm run lint
 
       - run: npm run lint:e2e
@@ -64,6 +60,14 @@ jobs:
       - run: npm run check
 
       - run: npm test
+
+      # Finish local validation before querying the registry for fresh consumers.
+      - name: Audit and smoke-test isolated packed consumers
+        run: npm run check:consumers -- --output "$RUNNER_TEMP/manifest-consumers"
+
+      # Manual fork artifacts deliberately block release until attested successors are adopted.
+      - name: Verify maintained dependency provenance and reviewed source identities
+        run: npm run check:dependency-provenance -- --consumers "$RUNNER_TEMP/manifest-consumers"
 
   release:
     needs: validate
@@ -82,7 +86,7 @@ jobs:
           cache: npm
 
       - name: Upgrade npm for OIDC trusted publishing
-        run: npx npm@11.5.1 install -g npm@11.5.1
+        run: npx npm@11.19.1 install -g npm@11.19.1
 
       - run: npm ci
 

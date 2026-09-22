@@ -14,6 +14,7 @@ import { join } from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { parse } from 'yaml';
+import { lockedPackageName } from '../tools/consumer-packages.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const prWorkflow = parse(
@@ -21,6 +22,89 @@ const prWorkflow = parse(
 );
 const gate = prWorkflow.jobs['e2e-gate'];
 const gateStep = gate.steps.find((step) => step.env?.ACCEPTANCE);
+
+const dependencyEvidence = JSON.parse(
+  readFileSync(join(root, 'docs/dependency-repair-2026-09-21.json'), 'utf8'),
+);
+const dependencyLock = JSON.parse(
+  readFileSync(join(root, 'package-lock.json'), 'utf8'),
+);
+
+function assertRecordedDependencies(evidence, lock) {
+  assert.deepEqual(evidence.packages.map(({ name }) => name).sort(), [
+    '@manifest-network/ics23',
+    '@manifest-network/lcd',
+    '@manifest-network/manifestjs',
+    '@manifest-network/stargate',
+  ]);
+  for (const record of evidence.packages) {
+    const copies = Object.entries(lock.packages).filter(
+      ([location, entry]) => lockedPackageName(location, entry) === record.name,
+    );
+    assert.ok(
+      copies.length > 0,
+      `Recorded dependency missing from lockfile: ${record.name}`,
+    );
+    for (const [location, installed] of copies) {
+      for (const field of ['version', 'integrity']) {
+        assert.equal(
+          installed[field],
+          record[field],
+          `Dependency evidence ${field} mismatch: ${location}`,
+        );
+      }
+      assert.equal(
+        installed.resolved,
+        record.tarball,
+        `Dependency evidence tarball mismatch: ${location}`,
+      );
+      assert.deepEqual(
+        installed.dependencies,
+        record.dependencies,
+        `Dependency evidence declarations mismatch: ${location}`,
+      );
+    }
+  }
+}
+
+test('recorded dependency artifacts match every locked fork copy', () => {
+  assertRecordedDependencies(dependencyEvidence, dependencyLock);
+});
+
+test('dependency evidence guard rejects drift, missing artifacts and nested version skew', () => {
+  const location = 'node_modules/@confio/ics23';
+  for (const mutate of [
+    (lock) => {
+      lock.packages[location].version += '-unreviewed';
+    },
+    (lock) => {
+      lock.packages[location].integrity = 'sha512-different-artifact';
+    },
+    (lock) => {
+      lock.packages[location].resolved = 'https://example.invalid/ics23.tgz';
+    },
+    (lock) => {
+      lock.packages[location].dependencies.protobufjs = '^6.8.8';
+    },
+    (lock) => {
+      delete lock.packages[location];
+    },
+    (lock) => {
+      lock.packages[`node_modules/nested/${location}`] = {
+        ...lock.packages[location],
+        version: `${lock.packages[location].version}-unreviewed`,
+      };
+    },
+  ]) {
+    const changed = structuredClone(dependencyLock);
+    mutate(changed);
+    assert.throws(() =>
+      assertRecordedDependencies(dependencyEvidence, changed),
+    );
+  }
+  const empty = { ...dependencyEvidence, packages: [] };
+  assert.throws(() => assertRecordedDependencies(empty, dependencyLock));
+});
 
 // Published CLIs own their runtime dependency graph. Shared libraries retain
 // their compatibility ranges; workspace sibling policy is enforced separately.

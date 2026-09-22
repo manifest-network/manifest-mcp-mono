@@ -11,9 +11,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { startCandidateRegistry } from '../tools/candidate-registry.mjs';
 import {
   auditResult,
   installConsumer,
+  lockedPackageName,
   packPackage,
   requireSuccess,
   runtimeClosure,
@@ -32,6 +34,41 @@ test('consumer command rejects workspace output before npm can inherit repositor
     { encoding: 'utf8' },
   );
   assert.equal(result.error, undefined);
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /--output must be outside the workspace/);
+});
+
+test('published consumer command requires an exact version and rejects malformed options before npm runs', () => {
+  const script = fileURLToPath(
+    new URL('./check-consumers.mjs', import.meta.url),
+  );
+  for (const args of [
+    ['--published-version'],
+    ['--published-version', 'latest'],
+    ['--published-version', '^0.22.0'],
+    ['--published-version', '01.22.0'],
+    ['--published-version', '0.22.0', '--unknown'],
+    ['--published-version', '0.22.0', 'positional-argument'],
+    ['--published-version', '0.22.0', '--output'],
+  ]) {
+    const result = spawnSync(process.execPath, [script, ...args], {
+      encoding: 'utf8',
+    });
+    assert.equal(result.error, undefined);
+    assert.notEqual(result.status, 0, args.join(' '));
+    assert.doesNotMatch(result.stdout, /Consumer audit evidence:/);
+  }
+  const result = spawnSync(
+    process.execPath,
+    [
+      script,
+      '--published-version',
+      '0.22.0',
+      '--output',
+      fileURLToPath(new URL('../', import.meta.url)),
+    ],
+    { encoding: 'utf8' },
+  );
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /--output must be outside the workspace/);
 });
@@ -179,6 +216,123 @@ test('real packed consumer resolves the unpatched dependency despite repository 
   }
 });
 
+test('fresh consumers reject a ManifestJS update that installs a second Stargate identity', {
+  timeout: 60_000,
+}, () => {
+  const fixture = mkdtempSync(join(tmpdir(), 'eng805-stargate-skew-'));
+  try {
+    const tarballs = join(fixture, 'tarballs');
+    const cache = join(fixture, 'npm-cache');
+    mkdirSync(tarballs);
+    function pack(name, version, dependencies, code) {
+      const directory = join(
+        fixture,
+        `${name.replaceAll('/', '-')}-${version}`,
+      );
+      mkdirSync(directory);
+      const packageJson = {
+        name,
+        version,
+        type: 'module',
+        main: 'index.js',
+        dependencies,
+      };
+      writeFileSync(
+        join(directory, 'package.json'),
+        JSON.stringify(packageJson),
+      );
+      writeFileSync(join(directory, 'index.js'), code);
+      return { packageJson, pack: packPackage(directory, tarballs, cache) };
+    }
+    const stargate = ['0.32.4-ll.4', '0.32.4-ll.5'].map((version) =>
+      pack(
+        '@manifest-network/stargate',
+        version,
+        {},
+        'export class SigningStargateClient {}',
+      ),
+    );
+    for (const [index, version] of ['3.0.1', '3.0.2'].entries()) {
+      const manifestjs = pack(
+        '@manifest-network/manifestjs',
+        version,
+        {
+          '@cosmjs/stargate': `file:${stargate[index].pack.tarball}`,
+        },
+        "export { SigningStargateClient } from '@cosmjs/stargate';",
+      );
+      const core = pack(
+        'eng805-fixture-core',
+        `1.0.${index}`,
+        {
+          '@cosmjs/stargate': `file:${stargate[0].pack.tarball}`,
+          '@manifest-network/manifestjs': `file:${manifestjs.pack.tarball}`,
+        },
+        "export { SigningStargateClient as direct } from '@cosmjs/stargate';\nexport { SigningStargateClient as generated } from '@manifest-network/manifestjs';",
+      );
+      const selected = new Map([[core.packageJson.name, core]]);
+      const consumer = join(fixture, `consumer-${version}`);
+      writeConsumer(consumer, selected);
+      requireSuccess(
+        installConsumer(consumer, cache),
+        'Install local version-skew fixture',
+      );
+      const lockPath = join(consumer, 'package-lock.json');
+      const lock = JSON.parse(readFileSync(lockPath, 'utf8'));
+      assert.equal(
+        lock.packages['node_modules/@manifest-network/manifestjs'].version,
+        version,
+      );
+      const copies = Object.entries(lock.packages).filter(
+        ([location, entry]) =>
+          lockedPackageName(location, entry) === '@manifest-network/stargate',
+      );
+      assert.equal(copies.length, index + 1);
+      requireSuccess(
+        spawnSync(
+          process.execPath,
+          [
+            '--input-type=module',
+            '-e',
+            `import assert from 'node:assert/strict'; import { direct, generated } from 'eng805-fixture-core'; assert.equal(direct === generated, ${index === 0});`,
+          ],
+          { cwd: consumer, encoding: 'utf8' },
+        ),
+        'Verify actual client constructor identity',
+      );
+      if (index === 1) {
+        assert.throws(
+          () => verifyInstalledTarballs(consumer, selected),
+          /Duplicate shared dependency identity: Stargate/,
+        );
+        continue;
+      }
+      verifyInstalledTarballs(consumer, selected);
+      // Same-version duplicates and arbitrary aliases are also separate modules.
+      for (const [name, entry, identity] of [
+        ['another-stargate-name', copies[0][1], 'Stargate'],
+        [
+          '@manifest-network/manifestjs',
+          lock.packages['node_modules/@manifest-network/manifestjs'],
+          'ManifestJS',
+        ],
+      ]) {
+        const modified = structuredClone(lock);
+        modified.packages[
+          `node_modules/eng805-fixture-core/node_modules/${name}`
+        ] = entry;
+        writeFileSync(lockPath, JSON.stringify(modified));
+        assert.throws(
+          () => verifyInstalledTarballs(consumer, selected),
+          new RegExp(`Duplicate shared dependency identity: ${identity}`),
+        );
+      }
+    }
+  } finally {
+    rmSync(fixture, { recursive: true, force: true });
+  }
+});
+
 test('audit fails on high/critical findings, registry errors and malformed reports', () => {
   const clean = {
     info: 0,
@@ -213,4 +367,198 @@ test('audit fails on high/critical findings, registry errors and malformed repor
   assert.throws(() => auditResult({ status: 0, stdout: '{}' }));
   assert.throws(() => auditResult(result({ ...clean, high: '0' })));
   assert.throws(() => auditResult({ status: 0, stdout: 'not JSON' }));
+});
+
+test('registry resolution keeps existing ManifestJS caret consumers separate from the next major', {
+  timeout: 120_000,
+}, async () => {
+  const fixture = mkdtempSync(join(tmpdir(), 'manifest-release-ranges-'));
+  let registry;
+  try {
+    const tarballs = join(fixture, 'tarballs');
+    const cache = join(fixture, 'pack-cache');
+    mkdirSync(tarballs);
+    function pack(name, version, dependencies, code, tag) {
+      const directory = join(
+        fixture,
+        `${name.replaceAll('/', '-')}-${version}`,
+      );
+      mkdirSync(directory);
+      const manifest = {
+        name,
+        version,
+        type: 'module',
+        main: 'index.js',
+        dependencies,
+      };
+      writeFileSync(join(directory, 'package.json'), JSON.stringify(manifest));
+      writeFileSync(join(directory, 'index.js'), code);
+      const artifact = packPackage(directory, tarballs, cache);
+      return { manifest, path: artifact.tarball, tag };
+    }
+    const stargate = '@manifest-network/stargate';
+    const manifestjs = '@manifest-network/manifestjs';
+    const core = '@manifest-network/manifest-mcp-core';
+    const sdk = '@manifest-network/manifest-sdk';
+    const alias = (version) => `npm:${stargate}@0.32.4-ll.${version}`;
+    const entries = [3, 4, 5].map((version) =>
+      pack(
+        stargate,
+        `0.32.4-ll.${version}`,
+        {},
+        'export class SigningStargateClient {}',
+      ),
+    );
+    const generated =
+      "export { SigningStargateClient } from '@cosmjs/stargate';";
+    for (const [version, identity] of [
+      ['3.0.0', 3],
+      ['3.0.1', 4],
+    ]) {
+      entries.push(
+        pack(
+          manifestjs,
+          version,
+          { '@cosmjs/stargate': alias(identity) },
+          generated,
+          'latest',
+        ),
+      );
+    }
+    const coreCode =
+      "export { SigningStargateClient as direct } from '@cosmjs/stargate';\nexport { SigningStargateClient as generated } from '@manifest-network/manifestjs';";
+    for (const [version, identity, range] of [
+      ['0.22.0', 3, '^3.0.0'],
+      ['0.23.0', 5, '^4.0.0'],
+    ]) {
+      entries.push(
+        pack(
+          core,
+          version,
+          { '@cosmjs/stargate': alias(identity), [manifestjs]: range },
+          coreCode,
+        ),
+      );
+      // The SDK's direct ManifestJS edge also influences npm hoisting.
+      entries.push(
+        pack(
+          sdk,
+          version,
+          { [core]: version, [manifestjs]: range },
+          `export * from '${core}';`,
+        ),
+      );
+    }
+    const correction = pack(
+      manifestjs,
+      '3.0.2',
+      { '@cosmjs/stargate': alias(3) },
+      generated,
+      'latest',
+    );
+    const nextMajor = pack(
+      manifestjs,
+      '4.0.0',
+      { '@cosmjs/stargate': alias(5) },
+      generated,
+      'latest',
+    );
+    const badPatch = pack(
+      manifestjs,
+      '3.0.3',
+      { '@cosmjs/stargate': alias(5) },
+      generated,
+    );
+
+    await assert.rejects(
+      startCandidateRegistry([
+        {
+          ...entries[0],
+          manifest: { ...entries[0].manifest, dependencies: { hidden: '*' } },
+        },
+      ]),
+      /Candidate metadata differs from packed package.json/,
+    );
+    await assert.rejects(
+      startCandidateRegistry([entries[0], entries[0]]),
+      /Duplicate candidate versions/,
+    );
+
+    async function stage(name, additions, cases) {
+      registry = await startCandidateRegistry([...entries, ...additions]);
+      // Unknown packages and writes never fall back to a real registry.
+      assert.equal(
+        (await fetch(`${registry.url}/missing-package`)).status,
+        404,
+      );
+      assert.equal(
+        (await fetch(`${registry.url}/fixture`, { method: 'PUT', body: '{}' }))
+          .status,
+        404,
+      );
+      for (const [version, expectedManifestjs, aligned] of cases) {
+        const consumer = join(fixture, `${name}-${version}`);
+        mkdirSync(consumer);
+        writeFileSync(
+          join(consumer, 'package.json'),
+          JSON.stringify({ private: true, dependencies: { [sdk]: version } }),
+        );
+        requireSuccess(
+          installConsumer(consumer, join(consumer, 'cache'), registry.url),
+          'Resolve published SDK ranges against staged metadata',
+        );
+        const lock = JSON.parse(
+          readFileSync(join(consumer, 'package-lock.json'), 'utf8'),
+        );
+        assert.equal(
+          lock.packages[`node_modules/${manifestjs}`].version,
+          expectedManifestjs,
+        );
+        requireSuccess(
+          spawnSync(
+            process.execPath,
+            [
+              '--input-type=module',
+              '-e',
+              `import assert from 'node:assert/strict'; import { direct, generated } from '${sdk}'; assert.equal(direct === generated, ${aligned});`,
+            ],
+            { cwd: consumer, encoding: 'utf8' },
+          ),
+          'Verify real installed Stargate constructors',
+        );
+        if (aligned) verifyInstalledTarballs(consumer, new Map());
+        else
+          assert.throws(
+            () => verifyInstalledTarballs(consumer, new Map()),
+            /Duplicate shared dependency identity: Stargate/,
+          );
+      }
+      await registry.close();
+      registry = undefined;
+    }
+    // This is the already-published regression: ^3.0.0 selects 3.0.1, whose
+    // exact ll.4 edge disagrees with the supported SDK's exact ll.3 edge.
+    await stage('current', [], [['0.22.0', '3.0.1', false]]);
+    // Both new ManifestJS versions are available in the same registry. Real
+    // npm caret resolution (without root overrides) selects the correct line.
+    await stage(
+      'corrected',
+      [correction, nextMajor],
+      [
+        ['0.22.0', '3.0.2', true],
+        ['0.23.0', '4.0.0', true],
+      ],
+    );
+    await stage(
+      'bad-future-patch',
+      [correction, nextMajor, badPatch],
+      [
+        ['0.22.0', '3.0.3', false],
+        ['0.23.0', '4.0.0', true],
+      ],
+    );
+  } finally {
+    await registry?.close();
+    rmSync(fixture, { recursive: true, force: true });
+  }
 });

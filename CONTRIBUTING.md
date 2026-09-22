@@ -29,8 +29,9 @@ npm run test:coverage  # Full tests with explicit production coverage and thresh
 npm run check:coverage-config # Negative control for unimported files/thresholds
 npm run check          # Biome: format + lint + import sorting, including E2E TypeScript
 npm run check:workflows # Immutable action references + policy regression tests
-npm run check:dependency-hygiene # Validator resolution + E2E gate regression tests
+npm run check:dependency-hygiene # Artifact evidence, validator resolution + gate regressions
 npm run audit:dependencies      # Full dependency graph; high/critical findings fail
+npm run check:consumers         # Packed SDK/CLI installs without repository overrides
 npm run check:fix      # Auto-fix anything Biome can fix
 ```
 
@@ -92,6 +93,13 @@ optional, and peer dependencies. CI's `audit` job and release validation fail on
 or critical advisories; lower-severity findings stay visible. Registry failures also
 fail the command. Root overrides must be rechecked against current advisories when
 updating dependencies; a previously safe exact pin can become vulnerable.
+
+`npm run check:consumers` is also a standing CI/release gate. It audits fresh packed
+SDK/CLI installations, rejects duplicate shared identities, and checks imports and
+CLI startup. CI runs it after local feedback and runs its regression tests once
+through `check:review-tooling`. See [dependency hygiene](docs/dependency-hygiene.md)
+for consumer-gate recovery and the manual upstream advisory review required for
+renamed forks; a passing npm audit alone does not cover their original names.
 
 Deploy-relevant changes (including the root lockfile) require a successful
 `acceptance-single` run. `e2e-gate` fails when that run is skipped, including on

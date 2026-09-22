@@ -31,9 +31,10 @@
     "release:version": "node scripts/version.mjs",
     "check:consumers": "node --test scripts/check-consumers.test.mjs && node scripts/check-consumers.mjs",
     "check:e2e-env": "node scripts/check-e2e-env.mjs",
-    "check:review-tooling": "node --test scripts/check-consumers.test.mjs scripts/check-e2e-env.test.mjs scripts/check-e2e-fred-bootstrap.test.mjs",
+    "check:review-tooling": "node --test scripts/check-consumers.test.mjs scripts/check-e2e-env.test.mjs scripts/check-e2e-fred-bootstrap.test.mjs scripts/check-dependency-provenance.test.mjs",
     "test:coverage": "vitest run --coverage --testTimeout=30000 --maxWorkers=2",
-    "check:coverage-config": "node --test scripts/check-coverage.test.mjs"
+    "check:coverage-config": "node --test scripts/check-coverage.test.mjs",
+    "check:dependency-provenance": "node --test scripts/check-dependency-provenance.test.mjs && node scripts/check-dependency-provenance.mjs"
   },
   "devDependencies": {
     "@arethetypeswrong/core": "0.18.5",
@@ -43,7 +44,7 @@
     "@manifest-network/manifest-mcp-core": "0.22.0",
     "@manifest-network/manifest-mcp-fred": "0.22.0",
     "@manifest-network/manifest-sdk": "0.22.0",
-    "@manifest-network/manifestjs": "3.0.0",
+    "@manifest-network/manifestjs": "4.0.0",
     "@modelcontextprotocol/sdk": "1.30.0",
     "@size-limit/preset-small-lib": "13.0.3",
     "@types/node": "22.20.1",
@@ -60,8 +61,6 @@
   },
   "overrides": {
     "ipaddr.js": "2.4.0",
-    "@cosmjs/stargate": "npm:@manifest-network/stargate@0.32.4-ll.3",
-    "axios": "1.19.0",
-    "protobufjs": "7.6.5"
+    "@cosmjs/stargate": "npm:@manifest-network/stargate@0.32.4-ll.5"
   }
 }

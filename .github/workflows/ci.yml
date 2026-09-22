@@ -91,3 +91,7 @@ jobs:
       # /reads symbol-absence assertion in the browser-build test above (asserts executeTx /
       # signArbitraryWithAmino / MsgFundCredit are ABSENT from the /reads chunk). (ENG-309)
       - run: npm run size
+      # Run the registry-dependent gate after local feedback. Its regression tests
+      # already run once in check:review-tooling above.
+      - name: Audit and smoke-test isolated packed consumers
+        run: node scripts/check-consumers.mjs --output "$RUNNER_TEMP/manifest-consumers"

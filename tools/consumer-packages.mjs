@@ -6,6 +6,12 @@ import { join } from 'node:path';
 
 const npm = platform() === 'win32' ? 'npm.cmd' : 'npm';
 
+/** npm aliases keep the real package name in the lock entry. */
+export function lockedPackageName(location, entry) {
+  if (!location.includes('node_modules/')) return undefined;
+  return entry.name ?? location.split('node_modules/').at(-1);
+}
+
 export function runNpm(args, cwd, cache) {
   const env = {
     ...process.env,
@@ -62,10 +68,17 @@ export function runtimeClosure(target, packages) {
   return selected;
 }
 
-export function packPackage(directory, destination, cache) {
+export function packPackage(directory, destination, cache, specifier) {
   const output = requireSuccess(
     runNpm(
-      ['pack', '--json', '--ignore-scripts', '--pack-destination', destination],
+      [
+        'pack',
+        ...(specifier ? [specifier] : []),
+        '--json',
+        '--ignore-scripts',
+        '--pack-destination',
+        destination,
+      ],
       directory,
       cache,
     ),
@@ -100,7 +113,7 @@ export function writeConsumer(directory, selected) {
   return manifest;
 }
 
-export function installConsumer(directory, cache) {
+export function installConsumer(directory, cache, registry) {
   return runNpm(
     [
       'install',
@@ -112,13 +125,14 @@ export function installConsumer(directory, cache) {
       '--audit=false',
       '--fund=false',
       '--install-strategy=hoisted',
+      ...(registry ? ['--registry', registry] : []),
     ],
     directory,
     cache,
   );
 }
 
-/** Reject registry fallbacks, workspace links and duplicate identity-bearing sibling packages. */
+/** Reject registry fallbacks, workspace links and duplicate shared package identities. */
 export function verifyInstalledTarballs(directory, selected) {
   const lock = JSON.parse(
     readFileSync(join(directory, 'package-lock.json'), 'utf8'),
@@ -150,6 +164,23 @@ export function verifyInstalledTarballs(directory, selected) {
       copies,
       [location],
       `Duplicate workspace identity: ${name}`,
+    );
+  }
+  // ManifestJS owns a decoder registry; Stargate exports client/error classes.
+  // Fresh consumers can resolve a newer ManifestJS than the repository's dev pin.
+  // Count physical copies, including aliases and copies of the same version.
+  for (const [identity, names] of [
+    ['Stargate', ['@cosmjs/stargate', '@manifest-network/stargate']],
+    ['ManifestJS', ['@manifest-network/manifestjs']],
+  ]) {
+    const copies = Object.entries(lock.packages).filter(([location, entry]) =>
+      names.includes(lockedPackageName(location, entry)),
+    );
+    assert.ok(
+      copies.length <= 1,
+      `Duplicate shared dependency identity: ${identity}\n${copies
+        .map(([location, entry]) => `${location}: ${entry.version}`)
+        .join('\n')}`,
     );
   }
   return lock;

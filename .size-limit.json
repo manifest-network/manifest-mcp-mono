@@ -29,6 +29,6 @@
     "import": "{ createManifestClient }",
     "ignore": ["crypto"],
     "gzip": true,
-    "limit": "1077958 B"
+    "limit": "1078764 B"
   }
 ]
