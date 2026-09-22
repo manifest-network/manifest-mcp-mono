@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.23.0] - 2026-09-22
+
+### Migration notes
+
+- **Lockstep upgrade:** update directly installed `@manifest-network/manifest-mcp-*`, `@manifest-network/manifest-agent-core`, and `@manifest-network/manifest-sdk` packages together to `0.23.0`. Internal peers target `^0.23.0`; applications using `^0.22.0` must opt into this release and refresh their lockfile.
+- **Dependency identities:** the SDK now uses ManifestJS `4.0.0` and Stargate `0.32.4-ll.5`. Applications that also install these packages directly must align their versions to preserve shared constructors and types. The repaired dependency declarations reach consumers through this coordinated upgrade.
+- **Client configuration:** client configurations are immutable, and connection initialization verifies chain identity. Create a separately configured client when policy changes; REST endpoints must expose the Cosmos node-info route.
+- **Deployment plans:** custom `Plan` construction must supply the required `leaseItems` field, including storage items used for pricing and fee simulation.
+- **Fred compatibility:** v0.13 remains the default. Enable `fredCompatibility` only for providers confirmed to support PR240; persist each maintenance command key with its exact payload for an intentional retry. Reconcile uncertain maintenance, transaction, and restore outcomes before submitting another mutation.
+
 ### Added
 
 - **fred, sdk:** export `createMaintenanceIdempotencyKey` for generating and persisting canonical UUIDv4 command keys, including browsers that expose `getRandomValues` without `randomUUID`. (ENG-1028)
@@ -15,6 +25,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **sdk:** export `withRetry` and `isRetryableError` from the root alongside the error classes, keeping the documented faucet-status retry composition on the SDK's pinned core dependency. (ENG-805 review)
 
 ### Changed
+
+- **release:** verify unpublished SDK/CLI candidates through an isolated npm audit view that preserves public dependency edges and identifies checked local sibling tarballs correctly. Keep all maintained dependency signature, provenance and reviewed-source requirements; reject altered, duplicate or substituted candidates.
 
 - **deps, release:** adopt ManifestJS 4.0.0, exact Stargate 0.32.4-ll.5, LCD 0.14.7 and ICS23 0.6.10, with repaired Axios/protobufjs declarations and verified npm provenance for all four public artifacts. The ManifestJS major bump separates the repaired Stargate graph from existing `^3.0.0` consumers. Remove the obsolete Axios/protobufjs overrides. Fresh packed SDK and CLI consumers pass the public-npm high/critical advisory and cryptographic artifact/source gates without application overrides; the consumer gate also rejects duplicate Stargate/ManifestJS identities and runs after local CI checks. Keep these gates mandatory for every release; the initial manual-publication exception remains withdrawn. Add published-v0.22.0 compatibility checks. Existing public SDK/CLI 0.22.0 consumers still require a coordinated upgrade; the optional ManifestJS 3.0.2 legacy correction remains a separate policy decision. Retain upstream advisory-review requirements. The broader CosmJS/elliptic migration remains separate. (ENG-805 F01)
 
@@ -49,7 +61,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **node:** keep environment-file loading off MCP stdout, including when `DOTENV_CONFIG_DEBUG` or `DOTENV_CONFIG_QUIET` appears in the process environment or `.env`. Load the optional working-directory `.env` through pinned dotenv parsing and population without its logging/configuration wrapper; existing process values take precedence. Dotenv control variables are ordinary environment data and no longer activate its vault loader. (ENG-805 review)
 - **core, MCP servers:** route unsupported broadcast-guard initialization warnings through the servers' stderr logger. Compatible holders share the last explicitly configured sink; the exported default `noopLogger` cannot silence it, and releasing a holder does not restore an earlier sink. Post-connect initialization failures, including throwing diagnostic sinks, release the connected transport. (ENG-805 review)
 
-- **core, sdk:** bind native blocking-broadcast diagnostics to the local SHA-256 hash of the signed bytes and preserve submission evidence when an SDK-owned native CheckTx acceptance is followed by an inclusion timeout or lookup failure. Transaction entry points retain operation context and the original cause; teardown reconciliation and later verification retain the sparse evidence to prevent replay. Returned hashes of the wrong length or value fail before transaction lookup and retain the local hash. Custom lookup cancellation keeps its code; actual caller cancellation still lacks the known hash (ENG-952). No inclusion, transaction code or height is inferred. (ENG-805 follow-up)
+- **core, sdk:** bind native blocking-broadcast diagnostics to the local SHA-256 hash of the signed bytes and preserve submission evidence when an SDK-owned native CheckTx acceptance is followed by an inclusion timeout or lookup failure. Transaction entry points retain operation context and the original cause; teardown reconciliation and later verification retain the sparse evidence to prevent replay. Returned hashes of the wrong length or value fail before transaction lookup and retain the local hash. Custom lookup cancellation keeps its code. No inclusion, transaction code or height is inferred. (ENG-805 follow-up)
 
 - **core, agent-core, agent:** include optional storage in deployment pricing and create-lease fee simulation. Plans list every service/storage item with SKU identity, quantity, price, and billing unit. Readiness and rendering share exact recurring totals across hourly/daily prices and denominations; unpriced items retain the known subtotal with an explicit warning. Edited plans require fresh confirmation. Invalid or ambiguous storage fails before estimation with storage-specific diagnostics. `Plan.leaseItems` is required, and SKU choices display billing units. Storage remains name-selected at execution; UUID pinning is tracked separately. (ENG-944)
 
@@ -548,7 +560,8 @@ Initial public release.
 - Biome for formatting, linting, and import sorting
 - Tag-triggered npm publish workflow with provenance
 
-[Unreleased]: https://github.com/manifest-network/manifest-mcp-mono/compare/v0.22.0...HEAD
+[Unreleased]: https://github.com/manifest-network/manifest-mcp-mono/compare/v0.23.0...HEAD
+[0.23.0]: https://github.com/manifest-network/manifest-mcp-mono/compare/v0.22.0...v0.23.0
 [0.22.0]: https://github.com/manifest-network/manifest-mcp-mono/compare/v0.21.0...v0.22.0
 [0.21.0]: https://github.com/manifest-network/manifest-mcp-mono/compare/v0.20.1...v0.21.0
 [0.20.1]: https://github.com/manifest-network/manifest-mcp-mono/compare/v0.20.0...v0.20.1
