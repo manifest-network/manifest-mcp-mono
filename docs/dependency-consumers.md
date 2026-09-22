@@ -3,19 +3,21 @@
 The v0.22.0 packages were published with declarations permitting vulnerable
 Axios and protobufjs versions. The monorepo's overrides do not travel with the libraries:
 [npm considers overrides only in the consuming application's root package.json](https://docs.npmjs.com/cli/v11/configuring-npm/package-json/#overrides).
-The unreleased branch now adopts ManifestJS `4.0.0`, Stargate `0.32.4-ll.5`,
-LCD `0.14.7` and ICS23 `0.6.10` from the reviewed source releases below. Their
-declarations repair the audited Axios/protobufjs paths and coordinate one
-Stargate identity. **These dependency publications do not release the SDK/CLI.**
-A coordinated SDK/core/CLI release must still pass the repository, fresh-consumer
-and cryptographic provenance gates. The previous manual-publication exception
+The coordinated [SDK/core/CLI v0.23.0 release](https://github.com/manifest-network/manifest-mcp-mono/releases/tag/v0.23.0)
+is published across all nine packages. It adopts ManifestJS `4.0.0`, Stargate
+`0.32.4-ll.5`, LCD `0.14.7` and ICS23 `0.6.10` from the reviewed source releases
+below, repairing the audited Axios/protobufjs declarations and coordinating one
+Stargate identity. Public consumer checks and cryptographic source verification
+passed; [publication evidence](releases/v0.23.0-verification.json) records the
+exact artifacts. Every subsequent release must pass the same repository,
+fresh-consumer and provenance gates. The previous manual-publication exception
 remains withdrawn.
 
-The current public v0.22.0 graph also needs a compatibility correction: its core
+The public v0.22.0 graph retains a compatibility problem: its core
 pins Stargate ll.3, while ManifestJS `^3.0.0` can select 3.0.1 with Stargate ll.4.
-A clean SDK/CLI installation therefore installs two class identities. Passing
-imports do not make this a compatible graph, and this observation alone does not
-establish an exploitable signing bug.
+A clean v0.22.0 SDK/CLI installation therefore installs two class identities.
+Passing imports do not make this a compatible graph, and this observation alone
+does not establish an exploitable signing bug.
 
 ## Initial manual repair artifacts
 
@@ -121,7 +123,7 @@ Provenance proves the authenticated source/build association. It does not prove
 that a source change is secure or reproducible, or attest every transitive
 package. The upstream advisory review below remains required.
 
-## Adopted dependency releases and remaining rollout
+## Adopted dependency releases and application rollout
 
 The source changes and publishing workflows in
 [CosmJS PR #2](https://github.com/manifest-network/cosmjs/pull/2) and
@@ -153,18 +155,24 @@ ManifestJS 4 pins Stargate ll.5 exactly and raises its LCD alias floor to
 `^0.14.7`. Its major version separates this coordinated graph from existing
 ManifestJS `^3.0.0` consumers whose core still pins Stargate ll.3.
 
-The remaining SDK/core/CLI rollout is:
+The coordinated SDK/core/CLI v0.23.0 publication is complete. Existing
+applications must adopt it to receive the repaired declarations:
 
-1. Validate the adopted declarations and public-npm lockfile against the exact
-   artifact/source allowlist. Candidate-registry tests are useful preparation;
-   the release gates must verify the actual public packages.
-2. Require verified provenance for the repository and both fresh packed
-   consumers, one shared identity, zero high/critical consumer findings and the
-   existing compatibility, browser, type and live-chain gates. Preserve complete
-   reports, including lower-severity findings.
-3. Review and publish the coordinated SDK/core/CLI release. Existing applications
-   need that SDK upgrade and a regenerated lockfile for the full repair. The
-   public v0.22.0 packages remain unrepaired by these dependency publications.
+1. Upgrade directly installed monorepo packages together to `0.23.0`, following
+   the [migration notes](../CHANGELOG.md#0230---2026-09-22). Applications that also
+   install ManifestJS or Stargate directly must align those dependencies with
+   ManifestJS 4 and exact Stargate ll.5 to preserve shared constructors and types.
+2. Regenerate the application lockfile, inspect the resolved dependency tree,
+   and rerun production audits and application acceptance tests. Remove the
+   historical Axios/protobufjs overrides only after the coordinated upgrade;
+   retain unrelated application overrides.
+
+The immutable v0.22.0 packages retain their old Stargate pin; publishing v0.23.0
+does not repair an application that remains on that line. Future releases still
+require the exact artifact/source allowlist, verified provenance in the
+repository and both fresh consumers, one shared identity, zero high/critical
+consumer findings, and the existing compatibility, browser, type and live-chain
+gates. Preserve complete reports, including lower-severity findings.
 
 ManifestJS `3.0.2` remains an **optional, unpublished legacy correction requiring
 a separate policy decision**. Restoring exact Stargate ll.3 could repair the
@@ -236,7 +244,24 @@ low and four moderate affected-package entries. The moderate entries are the
 existing pinned Vitest/mocker/coverage and Hono findings; the fresh production
 consumers have none. The [adoption evidence](dependency-repair-2026-09-21.json)
 records these scopes separately. These results validate the adoption branch;
-SDK/CLI publication still requires review and a coordinated new version.
+the subsequent v0.23.0 publication is recorded below.
+
+## SDK/CLI v0.23.0 publication verification (2026-09-22)
+
+The [release workflow](https://github.com/manifest-network/manifest-mcp-mono/actions/runs/35741835243)
+succeeded and published all nine packages. Their public tarballs are
+byte-identical to the tested artifacts. Cryptographic provenance verification
+bound every package to `manifest-network/manifest-mcp-mono`,
+`.github/workflows/release.yml`, `refs/tags/v0.23.0` and reviewed commit
+`59cfd0f5e3e487feda9625fbed2ea3dc2dc1bc15`.
+
+Fresh public SDK and CLI installations passed their consumer checks without
+application overrides. Their audits retained 11 and 15 low affected-package
+entries respectively, with zero moderate, high or critical findings. These are
+release-specific results, distinct from the earlier candidate measurements.
+The [publication evidence](releases/v0.23.0-verification.json) records exact
+package digests, source identities and consumer results. This closes the
+coordinated publication step; the broader crypto migration remains ENG-808.
 
 ## Historical candidate validation (2026-09-21)
 
@@ -266,9 +291,10 @@ harness, workflow and package checks, bundle budgets, eight MCP annotation
 checks, and the coverage
 suite (5,539 passed, 17 skipped). Live-chain results are tracked separately in the PR checks.
 
-That historical evidence covered the packages packed at that time. A new
-SDK/CLI release is still required to ship these declarations. Existing v0.22.0
-packages retain their direct pin to the older Stargate patch.
+That historical evidence covered the packages packed at that time and did not
+establish an accepted release. The coordinated successors subsequently shipped
+in v0.23.0. Existing v0.22.0 packages retain their direct pin to the older
+Stargate patch.
 
 ## Reproduce the consumer check
 
@@ -323,15 +349,23 @@ cannot accidentally resolve from the repository's `node_modules`.
 
 ## Check published consumers and release provenance
 
-To reproduce the existing public graph without workspace sibling substitutions:
+To reproduce the repaired public v0.23.0 graph without workspace sibling
+substitutions:
 
 ```sh
-node scripts/check-consumers.mjs --published-version 0.22.0 --output /tmp/manifest-published-check
+node scripts/check-consumers.mjs --published-version 0.23.0 --output /tmp/manifest-published-0.23.0-check
 ```
 
 This packs only the exact published SDK/CLI entry tarballs and resolves their
 published dependencies normally. Its report separates `identityPasses`,
 `auditPasses` and `smokePasses`; any failing component still returns nonzero.
+
+For the historical v0.22.0 comparison, use a separate output directory:
+
+```sh
+node scripts/check-consumers.mjs --published-version 0.22.0 --output /tmp/manifest-published-0.22.0-check
+```
+
 In the recorded v0.22.0 check, both import checks passed, both installed Stargate
 ll.3 and ll.4, and audits retained high/critical entries. Those entries include
 affected-parent rollups and are not counts of independently demonstrated
@@ -354,10 +388,12 @@ invalid provenance, wrong source identities, unreviewed artifacts and registry
 errors block release. Correct the source release/adoption record, then repeat the
 checks; do not substitute historical counts or remove the gate.
 
-## Interim application workaround
+## Historical workaround for v0.22.0 applications
 
-Until a corrected SDK/CLI release is published and adopted, npm applications
-using v0.22.0 can merge the following into their **application-root**
+Upgrade to v0.23.0 for the coordinated repair. The following mitigation is
+retained only for npm applications still using v0.22.0 while preparing that
+upgrade; it is not needed for the verified fresh v0.23.0 consumers. Those
+v0.22.0 applications can merge it into their **application-root**
 `package.json`, regenerate their lockfile with `npm install`, review the diff,
 and rerun their acceptance tests:
 
@@ -389,8 +425,8 @@ repository's library manifests will not protect its consumers. An ephemeral
 the reviewed dependency graph; CLI operators can install locally in such an
 application and invoke its `node_modules/.bin/manifest-mcp-*` commands.
 
-**Remove these two temporary overrides after upgrading the SDK/CLI to a release
-that includes the repaired declarations.** Updating ManifestJS alone is not enough
+**Remove these two temporary overrides after upgrading the SDK/CLI together to
+v0.23.0.** Updating ManifestJS alone is not enough
 while a v0.22.0 core package still directly pins the older Stargate. Regenerate the
 application lockfile, inspect `npm ls axios protobufjs @cosmjs/stargate --all`,
 rerun the audit and acceptance tests, and retain unrelated application overrides.

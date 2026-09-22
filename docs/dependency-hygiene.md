@@ -4,15 +4,18 @@ The locked repository graph and fresh SDK/CLI installations have separate,
 standing CI/release gates. Monorepo overrides do not propagate to consumers
 (ENG-805 F01). [Published dependency security](dependency-consumers.md) records the
 repaired declarations, fork provenance limits, upstream advisory-review obligation,
-and the temporary mitigation for applications still on v0.22.0.
+and the historical temporary mitigation for applications still on v0.22.0.
 
-This unreleased branch adopts ManifestJS `4.0.0`, Stargate `0.32.4-ll.5`, LCD
-`0.14.7` and ICS23 `0.6.10`. Their protected source release runs and exact source
-commits are recorded in the [dependency rollout](dependency-consumers.md#adopted-dependency-releases-and-remaining-rollout).
+The published SDK/core/CLI v0.23.0 release adopts ManifestJS `4.0.0`, Stargate
+`0.32.4-ll.5`, LCD `0.14.7` and ICS23 `0.6.10`. Their protected source release runs and exact source
+commits are recorded in the [dependency rollout](dependency-consumers.md#adopted-dependency-releases-and-application-rollout).
 Their public artifact hashes and signed provenance have been verified; ManifestJS
 verification completed locally after the CI registry-availability retries expired.
-The public SDK/CLI v0.22.0 packages still need a coordinated successor; these
-dependency publications do not update already published SDK/core declarations.
+All nine v0.23.0 packages are published with verified provenance and public
+tarballs matching the tested artifacts; see the [publication evidence](releases/v0.23.0-verification.json).
+Applications still using v0.22.0 must upgrade their directly installed monorepo
+packages together and refresh their lockfile. The immutable v0.22.0 SDK/core
+declarations are unchanged by the new release.
 
 ## Automated gates
 
@@ -46,7 +49,10 @@ The historical 2026-09-21 manual-artifact consumer baseline was zero high/critic
 findings, with 11 low affected package entries for the SDK and 15 for the CLI.
 These are parent rollups of `elliptic` (`GHSA-848j-6mx2-7j84`), not independent vulnerabilities. Repository
 and consumer counts cover different graphs and are point-in-time measurements.
-That baseline does not establish the results of the new adoption gates.
+That baseline is separate from the post-publication v0.23.0 consumer checks:
+the public SDK/CLI installations also retained 11/15 low entries respectively,
+with zero moderate, high or critical findings. The [release evidence](releases/v0.23.0-verification.json)
+records those results; each subsequent release must run the gates again.
 The crypto migration remains ENG-808. npm audit does not automatically cover
 renamed forks under their original package names: the release/dependency-update
 maintainer must also perform the [upstream advisory review](dependency-consumers.md#fork-advisory-coverage).
